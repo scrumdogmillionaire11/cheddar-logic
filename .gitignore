@@ -90,3 +90,4 @@ temp/
 .claude/*
 .github/*
 .vscode/*
+web-bundles/*
