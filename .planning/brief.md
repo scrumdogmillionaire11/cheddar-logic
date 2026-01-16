@@ -78,7 +78,7 @@ Sports enthusiasts face several critical challenges when trying to make informed
 - **Custom Services:** Generate $25K+ annually in custom development revenue
 
 ### User Success Metrics
-- **Model Accuracy:** Maintain 55%+ win rate against market projections
+- **Model Accuracy:** Maintain 55%+ directional accuracy against market projections with RMSE <3.5 points
 - **User Retention:** 80%+ monthly retention rate for paid subscribers
 - **Community Health:** Active Discord engagement with <5% moderation issues
 - **Responsible Engagement:** Zero compliance violations, positive user feedback on responsibility features
