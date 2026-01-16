@@ -84,3 +84,9 @@ temp/
 
 # Local development
 .cache/
+
+# Bmad
+.bmad-core/*
+.claude/*
+.github/*
+.vscode/*
