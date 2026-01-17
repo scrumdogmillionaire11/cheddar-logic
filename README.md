@@ -30,6 +30,14 @@ npm install
 npm run dev
 ```
 
+#### Viewing the Site
+Once the server is running, open your browser and go to:
+
+http://localhost:3000
+
+This is the default address for the Next.js development server.
+```
+
 #### Environment Variables
 Create a `.env.local` file inside `web/` and set:
 

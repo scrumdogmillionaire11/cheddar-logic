@@ -14,14 +14,14 @@ const plexSans = IBM_Plex_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Cheddar Logic | Abstention-First Analytics",
+  title: "Cheddar Logic | Signal-Qualified Analytics",
   description:
-    "Probabilistic sports analytics, methodological transparency, and abstention-first decision-support.",
+    "Outputs based on confidence thresholds and uncertainty controls.",
   metadataBase: new URL("https://cheddarlogic.com"),
   openGraph: {
     title: "Cheddar Logic",
     description:
-      "Abstention-first sports analytics and decision-support for disciplined research teams.",
+      "We produce signal-qualified analytical outputs based on confidence thresholds and uncertainty controls.",
     url: "https://cheddarlogic.com",
     siteName: "Cheddar Logic",
   },
