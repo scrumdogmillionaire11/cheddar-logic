@@ -466,6 +466,154 @@ so that I can understand my rights and Cheddar Logic's responsible business prac
 6. Cookie policy and consent management system
 7. Regular legal review and updates to maintain compliance
 
+## Detailed Feature Requirements
+
+### 1. Live Model Results Dashboard
+
+#### Data Sources
+- Internal only: model outputs (JSON artifacts), market snapshots (totals, spreads, timestamps), injury summaries (dual-cloud outputs)
+- No third-party redistribution: do not expose raw API responses (SportsDataIO, ESPN, etc.), only derived/transformed analytics
+
+#### Update Frequency
+- Event-driven: on model run completion or manual re-run
+- Optional: scheduled refresh windows (e.g., hourly until tipoff)
+- No real-time “streaming” claims
+
+#### Privacy Considerations
+- No user-specific betting history
+- No tracking of wagers or outcomes
+- Logs must not include IP + behavior correlation or inferred betting intent
+- Aggregate usage metrics only (page views, load time)
+
+**Design Principle:** Dashboard is a read-only analytics surface, not an action console.
+
+---
+
+### 2. Member Portal
+
+#### Authentication
+- Email + password (hashed, salted)
+- Optional: OAuth (Google/GitHub)
+- Mandatory: email verification, password reset flow
+- No anonymous access to premium content
+
+#### Account Management Features
+- View/update profile (email, password)
+- Subscription status (active/canceled/trial)
+- Billing history (dates only, no card data)
+- Session/device logout
+
+#### Premium Content Types
+- Allowed: model outputs, historical performance summaries (non-promotional), methodology explanations, configuration views (thresholds, definitions)
+- Not allowed: personalized betting advice, unit sizing, “your picks today”, ROI calculators tied to user bankroll
+
+**Rule:** Content is the same for every member, just gated by access level.
+
+---
+
+### 3. Subscription Sign-up
+
+#### Payment Integration
+- Stripe (recommended): hosted checkout, customer portal for self-service
+- You never touch card data
+
+#### Trial/Demo Options
+- Safer: read-only demo dashboard (delayed data), limited historical sample, feature-restricted access
+- Risky: “free picks”, time-limited access to live slate
+
+#### Tier Details (example)
+- Free: delayed data, educational content
+- Standard: live analytics, full dashboard
+- Pro (optional): additional tooling, deeper explanations, still no “action” language
+
+**Hard Rule:** No tier may promise performance, wins, or advantage.
+
+---
+
+### 4. Contact Form
+
+#### Required Fields
+- Name, email, message
+- Optional: reason dropdown (support, billing, feedback)
+
+#### Spam Protection
+- CAPTCHA (Cloudflare Turnstile/reCAPTCHA), rate limiting by IP, honeypot field
+
+#### Routing
+- Support → ticket system or email
+- Billing → separate queue
+- Legal inquiries → flagged + archived
+
+#### Data Retention
+- Messages stored for X days (e.g., 90)
+- Auto-purge after retention window
+- No resale or marketing reuse
+
+---
+
+### 5. Legal / Compliance
+
+#### Disclaimers (non-negotiable)
+- “For informational and educational purposes only”
+- “No guarantees of outcomes”
+- “Not gambling advice”
+- “Users are responsible for their own decisions”
+
+#### Privacy Policy
+- Must explicitly state: what data is collected, what is not collected, data retention periods, third-party processors (Stripe, hosting, analytics)
+
+#### Review Process
+- Have a lawyer review language and jurisdictional exposure
+- Re-review whenever pricing, features, or marketing language changes
+
+#### Operational Discipline
+- No testimonials
+- No win-rate marketing
+- No social proof tied to betting success
+
+---
+
+## Scope Reduction & Phased Execution Plan
+
+### Phase 1 — Landing Page Only
+- Hero section with clear value proposition and abstention-first methodology
+- Philosophy and methodology deep dive (educational, not promotional)
+- Discord CTA and community invite
+- Contact form (with spam protection and routing)
+- Legal pages (privacy, terms, disclaimers)
+- No authentication, payments, dashboards, or subscriptions
+- No testimonials or social proof tied to outcomes or financial success
+- Social proof limited to community size, longevity, technical credibility, and educational usage
+- All analytics surfaces must answer: “Could this reasonably be used for research or analysis without placing a bet?”
+- Add explicit requirement: Ability to globally disable analytics outputs while keeping site live (kill switch)
+
+### Phase 2 — Community & Gated Analytics
+- Discord role sync and private dashboards (manual access, no payments)
+- Model diagnostics, calibration summaries, historical error ranges, abstention frequency
+- No win/loss framing or performance claims
+- Data lineage enforcement: All dashboard elements must reference model version, timestamp, and abstracted data sources
+
+### Phase 3 — Subscriptions & Member Portal
+- Stripe payment integration and subscription management
+- Member portal/dashboard with tiered access
+- Authentication and account management
+- Premium content gating (same for all members, no personalized betting advice)
+- Usage analytics and billing history
+
+---
+
+## Engineering-Specific Tightening
+- Remove all references to “real-time” or “live” analytics; use “event-driven,” “snapshot-based,” or “updated on model run”
+- Tighten language around performance metrics: use “model diagnostics,” “calibration summaries,” “historical error ranges,” “abstention frequency”
+- No testimonials or social proof referencing outcomes, market success, or implied financial gain
+- Data lineage enforcement for all analytics surfaces
+- Add global kill switch requirement for analytics outputs
+
+---
+
+## Final Verdict
+This PRD is strategically excellent but operationally heavy. With scope reduction, phased execution, and tightened compliance language, the project will be buildable, defensible, credible, and scalable.
+
 ## Next Steps
 
 ### UX Expert Prompt
