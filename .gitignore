@@ -86,8 +86,8 @@ temp/
 .cache/
 
 # Bmad
-.bmad-core/*
-.claude/*
-.github/*
-.vscode/*
-web-bundles/*
+.bmad-core/
+.claude/
+.github/
+.vscode/
+web-bundles/

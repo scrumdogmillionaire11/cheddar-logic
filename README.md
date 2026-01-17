@@ -15,6 +15,38 @@ Cheddar Logic specializes in abstention-first methodology - identifying when con
 
 See [.planning/](.planning/) for project requirements and development roadmap.
 
+### Landing Page Frontend (`/web`)
+
+The `web` directory contains the Next.js 14 + TypeScript marketing site.
+
+#### Prerequisites
+- Node.js 20+
+- npm 10+
+
+#### Install & Run
+```bash
+cd web
+npm install
+npm run dev
+```
+
+#### Environment Variables
+Create a `.env.local` file inside `web/` and set:
+
+| Variable | Description |
+| --- | --- |
+| `NEXT_PUBLIC_DISCORD_INVITE` | Discord invite URL for CTA buttons |
+| `NEXT_PUBLIC_DISCORD_MEMBER_COUNT` | Text used for community size display (e.g., `"412 analysts"`) |
+| `NEXT_PUBLIC_ANALYTICS_STATUS` | `online` or `paused`; drives the analytics kill switch banner |
+| `NEXT_PUBLIC_ANALYTICS_LAST_UPDATED` | ISO timestamp for the kill switch metadata |
+
+If the status is set to `paused`, analytics visuals collapse while the educational copy stays live.
+
+#### Deployment Notes
+- Designed for Vercel/Netlify. Configure the above env vars in each environment.
+- Health check endpoint TBD; add before production deployment.
+- Contact form currently client-side only. Wire to a serverless function or webhook with CAPTCHA before accepting submissions.
+
 ## Community
 
 Join our Discord research community for analytical discussions and methodology insights.

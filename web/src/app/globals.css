@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --grain: radial-gradient(circle at top, rgba(30, 58, 138, 0.18), transparent 55%),
+    radial-gradient(circle at 20% 20%, rgba(30, 181, 166, 0.15), transparent 45%);
+}
+
+@theme inline {
+  --font-sans: var(--font-ibm-plex-sans), "IBM Plex Sans", system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif;
+  --color-night: #050a1f;
+  --color-midnight: #0b1222;
+  --color-surface: #111a2f;
+  --color-surface-muted: #172440;
+  --color-grid: rgba(255, 255, 255, 0.04);
+  --color-cloud: #f5f7fb;
+  --color-graphite: #a3aec8;
+  --color-amber: #f2a93b;
+  --color-teal: #1eb5a6;
+  --color-rose: #f96262;
+  --radius-xl: 1.75rem;
+  --ring-analytics: 0 0 0 1px rgba(30, 181, 166, 0.5);
+  --shadow-panel: 0 25px 60px rgba(2, 5, 9, 0.6);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background-image: linear-gradient(130deg, #050a1f, #0c1428 45%, #050a1f 90%), var(--grain);
+  background-attachment: fixed;
+  color: var(--color-cloud);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  background: rgba(30, 181, 166, 0.35);
+  color: var(--color-night);
+}
+
+.grid-overlay {
+  position: relative;
+}
+
+.grid-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+      rgba(255, 255, 255, 0.04) 1px,
+      transparent 1px
+    ),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+  opacity: 0.4;
+  border-radius: inherit;
+}
