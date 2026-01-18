@@ -23,7 +23,7 @@ export function HeroPanel({
     <section className="grid gap-10 rounded-[2rem] border border-white/5 bg-surface/80 p-10 shadow-panel backdrop-blur-lg lg:grid-cols-[1.2fr_0.8fr]">
       <div className="space-y-6">
         <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cloud/70">
-          Abstention-first analytics
+          Confidence-gated analytics
         </p>
         <h1 className="text-balance font-display text-4xl font-semibold leading-tight text-cloud sm:text-5xl">
           {title}
@@ -37,7 +37,7 @@ export function HeroPanel({
             Discord only MVP
           </span>
           <span className="rounded-full border border-white/10 px-4 py-1">
-            Compliance-first language
+            Probabilistic outputs only
           </span>
         </div>
         <div className="flex flex-col gap-4 sm:flex-row">
@@ -47,7 +47,7 @@ export function HeroPanel({
             rel="noreferrer noopener"
             className="inline-flex items-center justify-center rounded-full bg-teal px-6 py-3 text-base font-semibold text-night transition hover:opacity-90"
           >
-            Join the research workshop
+            Access the live research feed
           </a>
           <button
             type="button"

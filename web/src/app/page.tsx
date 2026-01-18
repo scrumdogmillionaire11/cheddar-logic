@@ -11,7 +11,7 @@ import { getAnalyticsStatus } from "@/lib/config";
 
 const HERO_HIGHLIGHTS = [
   {
-    label: "Abstention frequency",
+    label: "Signal withhold rate",
     value: "42%",
     detail: "Signals withheld when variance breaches guardrails during model run 241.",
   },
@@ -29,7 +29,7 @@ const HERO_HIGHLIGHTS = [
 
 const METHODOLOGY_PILLARS = [
   {
-    title: "Structured abstention",
+    title: "Confidence-gated outputs",
     description: "If uncertainty widens, output halts before it misleads.",
     bullets: [
       "Confidence tiers derived from calibration error not opinion",
@@ -64,7 +64,7 @@ const DIAGNOSTICS = [
     caption: "Updated Jan 16 · Snapshot-based, never real-time claims",
   },
   {
-    label: "Abstention bands",
+    label: "Confidence threshold",
     value: "65th percentile",
     caption: "Threshold at which signals pause until review completes",
   },
@@ -81,7 +81,7 @@ const ANALYTICS_SERVICE = {
   ratio: "80% focus",
   bullets: [
     "Discord-based MVP with publish-ready methodology",
-    "Calibration clinics and abstention retrospectives",
+    "Calibration clinics and signal discipline reviews",
     "Future web portal with the same compliance tone",
   ],
 };
@@ -115,7 +115,7 @@ export default function Home() {
         <KillSwitchBanner status={analyticsStatus} />
         <HeroPanel
           title="We publish probabilistic guardrails so you can reason, not react"
-          subtitle={`Cheddar Logic is an abstention-first decision-support platform. We compare internal models to public reference data, show the variance in plain language, and treat "no signal" as a successful outcome.`}
+          subtitle="Probabilistic sports analytics that surface signals only when confidence, context, and data alignment justify them."
           highlights={HERO_HIGHLIGHTS}
           discordInvite={discordInvite}
           communitySize={communitySize}

@@ -4,17 +4,26 @@ This document tracks the current state and next steps for the cheddar-logic proj
 
 ---
 
-## Last Session: January 16, 2026
+## Last Session: January 17, 2026
 
 **Current Focus:**
-- Working on cheddar-logic landing page PRD
-- Installed bmad-method
+- Refining messaging and terminology for production readiness
+- Implementing "confidence-gated" framework across homepage
+
+**Completed:**
+- Updated homepage tagline from "Signal-disciplined analytics" to "Confidence-gated analytics"
+- Rewrote subtitle to professional signal-quality framing: "Probabilistic sports analytics that surface signals only when confidence, context, and data alignment justify them."
+- Globally replaced "abstention" language with confidence/signal terminology:
+  - "Abstention frequency" → "Signal withhold rate"
+  - "Structured abstention" → "Confidence-gated outputs"
+  - "Abstention bands" → "Confidence threshold"
+  - "abstention retrospectives" → "signal discipline reviews"
 
 **Next Steps:**
-1. Review and finalize the cheddar-logic landing page PRD
-2. Identify required features and user stories for the landing page
-3. Assign roles or agents for implementation (e.g., dev, ux-expert)
-4. Set up initial project tasks and timeline
+1. Review other components (MethodologyShowcase, DualServiceSplit, DiscordCTA) for any remaining "abstention" references
+2. Wire contact form + Discord metrics to real backend services with CAPTCHA
+3. Add automated testing (unit + accessibility) and initial CI checks
+4. Prepare content governance checklist for consistent compliance language
 
 ---
 
