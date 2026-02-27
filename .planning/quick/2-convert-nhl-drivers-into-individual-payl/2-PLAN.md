@@ -47,7 +47,7 @@ Replace the single monolithic NHL model output card with individual cards per dr
 
 Purpose: Each driver is a distinct analytical signal with its own confidence, direction, and rationale. Packaging them as individual cards makes each signal independently readable, filterable by cardType, and displayable on the UI without parsing nested JSON.
 
-Output: 5-6 cards per game (one per active driver), each with a specific cardType, human-readable title, driver-specific confidence, and HOME/AWAY/NEUTRAL direction. Empty Net is skipped when data is missing.
+Output: 5-7 cards per game (one per active driver), each with a specific cardType, human-readable title, driver-specific confidence, and HOME/AWAY/NEUTRAL direction. Empty Net is skipped when data is missing. Welcome Home Fade is skipped when h2h odds are absent or edge is too weak. Contract reference: docs/DATA_CONTRACTS.md §"Global Driver: welcomeHome".
 </objective>
 
 <execution_context>
@@ -118,6 +118,21 @@ pdoRegression:
   confidence: clamp(0.70 + Math.abs(score - 0.5) * 0.3, 0.70, 0.85)
   direction: score > 0.52 ? 'HOME' : score < 0.48 ? 'AWAY' : 'NEUTRAL'
   reasoning: 'PDO imbalance (delta: {inputs.delta?.toFixed(3) ?? "n/a"}) suggests regression toward {direction}'
+
+welcomeHome:
+  cardType: 'nhl-welcome-home'
+  cardTitle: 'NHL Welcome Home Fade: {direction}'
+  confidence: clamp(0.60 + score * 0.15, 0.60, 0.75)
+  direction: score > 0.6 ? 'HOME' : 'NEUTRAL'
+  reasoning: 'Home edge vs market spread ({inputs.edge?.toFixed(2) ?? "n/a"} pts) favors {direction}'
+  Implementation note: Simplified version — score = (market_corroboration * 0.4 + venue_intensity * 0.3 + rest * 0.3).
+    - market_corroboration: 1 if spread_home < -100 (market pricing home edge), else 0.5
+    - venue_intensity: 0.6 (NHL neutral baseline — can be enhanced with arena data later)
+    - rest: 0.5 (placeholder — requires schedule data; can be enhanced later)
+    - edge: h2h_home converted to implied probability minus 0.5 (positive = home favored)
+    - SKIP if oddsSnapshot has no h2h_home (status='NA', returns null)
+    - SKIP if score < 0.55 (no meaningful home edge detected)
+    Contract reference: docs/DATA_CONTRACTS.md §"Global Driver: welcomeHome"
 ```
 
 Each descriptor object shape:
@@ -311,7 +326,8 @@ const schemaByCardType = {
   'nhl-shot-environment': driverPayloadSchema,
   'nhl-empty-net': driverPayloadSchema,
   'nhl-total-fragility': driverPayloadSchema,
-  'nhl-pdo-regression': driverPayloadSchema
+  'nhl-pdo-regression': driverPayloadSchema,
+  'nhl-welcome-home': driverPayloadSchema
 };
 ```
   </action>
@@ -408,7 +424,7 @@ console.log('All assertions passed.');
 
 <success_criteria>
 - Each NHL game produces 5 cards (or 6 if emptyNet data present) instead of 1 composite card
-- Card types: nhl-goalie, nhl-special-teams, nhl-shot-environment, nhl-empty-net (when data available), nhl-total-fragility, nhl-pdo-regression
+- Card types: nhl-goalie, nhl-special-teams, nhl-shot-environment, nhl-empty-net (when data available), nhl-total-fragility, nhl-pdo-regression, nhl-welcome-home (when h2h odds available and edge detected)
 - No card with cardType 'nhl-model-output' is produced by run_nhl_model.js
 - totalFragility direction is always NEUTRAL
 - emptyNet card absent when raw_data has no pull seconds fields
