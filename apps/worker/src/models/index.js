@@ -353,14 +353,14 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
       }
 
       if (score >= 0.55) {
-        const dir = score > 0.6 ? 'HOME' : 'NEUTRAL';
+        const dir = score > 0.6 ? 'AWAY' : 'NEUTRAL';
         const conf = clamp(0.60 + score * 0.15, 0.60, 0.75);
         descriptors.push({
           cardType: 'nhl-welcome-home',
           cardTitle: `NHL Welcome Home Fade: ${dir}`,
           confidence: conf,
           prediction: dir,
-          reasoning: `Home edge vs market spread (${edge != null ? edge.toFixed(2) : 'n/a'} pts) favors ${dir}`,
+          reasoning: `Market over-prices home advantage (implied edge: ${edge != null ? edge.toFixed(2) : 'n/a'}) — fade HOME, back VISITORS`,
           ev_threshold_passed: conf > 0.60,
           driverKey: 'welcomeHome',
           driverInputs: {
