@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-02-27 — Quick task 2 complete (NHL drivers fanout: per-driver card payloads, welcomeHome meta-driver, validator schema registration)
+**Last activity:** 2026-02-27 — Quick task 3 complete (Wire /fpl page to cheddar-fpl-sage backend: Next.js rewrites proxy + relative API URL)
 
 ---
 
@@ -186,3 +186,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 |---|-----------------------------------------------------------------------------------|------------|---------|--------------------------------------------------------------|
 | 1 | Pre-ship hardening: contract check, stable ID test, job-key audit, T-120 docs     | 2026-02-27 | 42692e9 | .planning/quick/1-pre-ship-hardening-contract-checks-stabl/  |
 | 2 | NHL drivers fanout: per-driver cards, welcomeHome meta-driver, validator schema   | 2026-02-27 | ad0d4ce | .planning/quick/2-convert-nhl-drivers-into-individual-payl/  |
+| 3 | Wire /fpl page to cheddar-fpl-sage: Next.js rewrites proxy + relative API URL    | 2026-02-27 | 932cbff | .planning/quick/3-wire-cheddar-fpl-sage-frontend-to-localh/  |
