@@ -53,6 +53,20 @@ function statusFromNumbers(values) {
   return 'missing';
 }
 
+/**
+ * Determine pick tier from calibrated confidence (0-1 scale).
+ * Ported from personal-dashboard pick-schema.js.
+ * SUPER ≥ 0.75, BEST ≥ 0.70, WATCH ≥ 0.60, null otherwise.
+ * @param {number} confidence - 0 to 1
+ * @returns {'SUPER'|'BEST'|'WATCH'|null}
+ */
+function determineTier(confidence) {
+  if (confidence >= 0.75) return 'SUPER';
+  if (confidence >= 0.70) return 'BEST';
+  if (confidence >= 0.60) return 'WATCH';
+  return null;
+}
+
 function computeNHLDrivers(gameId, oddsSnapshot) {
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const homeOdds = toNumber(oddsSnapshot?.h2h_home ?? oddsSnapshot?.moneyline_home);
@@ -207,6 +221,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
       cardType: 'nhl-goalie',
       cardTitle: `NHL Goalie Edge: ${dir}`,
       confidence: conf,
+      tier: determineTier(conf),
       prediction: dir,
       reasoning: `GSaX goalie tier delta favors ${dir} (delta: ${d.inputs.delta != null ? d.inputs.delta.toFixed(2) : 'n/a'})`,
       ev_threshold_passed: conf > 0.60,
@@ -228,6 +243,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
       cardType: 'nhl-special-teams',
       cardTitle: `NHL Special Teams Mismatch: ${dir}`,
       confidence: conf,
+      tier: determineTier(conf),
       prediction: dir,
       reasoning: `PP/PK composite mismatch favors ${dir} (${d.inputs.delta != null ? d.inputs.delta.toFixed(1) : 'n/a'} pct-pt edge)`,
       ev_threshold_passed: conf > 0.60,
@@ -249,6 +265,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
       cardType: 'nhl-shot-environment',
       cardTitle: `NHL Shot Environment: ${dir}`,
       confidence: conf,
+      tier: determineTier(conf),
       prediction: dir,
       reasoning: `xGF% 5v5 shot quality profile favors ${dir} (delta: ${d.inputs.delta != null ? d.inputs.delta.toFixed(1) : 'n/a'} pct)`,
       ev_threshold_passed: conf > 0.60,
@@ -271,6 +288,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
         cardType: 'nhl-empty-net',
         cardTitle: `NHL Empty Net Tendencies: ${dir}`,
         confidence: conf,
+        tier: determineTier(conf),
         prediction: dir,
         reasoning: `Coach goalie-pull timing edge favors ${dir}`,
         ev_threshold_passed: conf > 0.60,
@@ -292,6 +310,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
       cardType: 'nhl-total-fragility',
       cardTitle: 'NHL Total Fragility',
       confidence: conf,
+      tier: determineTier(conf),
       prediction: 'NEUTRAL',
       reasoning: `Total near key number ${d.inputs.total} (distance: ${d.inputs.nearest_key_number_distance != null ? d.inputs.nearest_key_number_distance.toFixed(2) : 'n/a'} from 5.5/6.5/7.5)`,
       ev_threshold_passed: conf > 0.60,
@@ -313,6 +332,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
       cardType: 'nhl-pdo-regression',
       cardTitle: `NHL PDO Regression Signal: ${dir}`,
       confidence: conf,
+      tier: determineTier(conf),
       prediction: dir,
       reasoning: `PDO imbalance (delta: ${d.inputs.delta != null ? d.inputs.delta.toFixed(3) : 'n/a'}) suggests regression toward ${dir}`,
       ev_threshold_passed: conf > 0.60,
@@ -356,6 +376,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
           cardType: 'nhl-welcome-home',
           cardTitle: `NHL Welcome Home Fade: ${dir}`,
           confidence: conf,
+          tier: determineTier(conf),
           prediction: dir,
           reasoning: `Market prices home at ${(impliedProbHome * 100).toFixed(0)}% implied — fade HOME, back VISITORS`,
           ev_threshold_passed: conf > 0.60,
@@ -375,6 +396,201 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
           is_mock: true
         });
       }
+    }
+  }
+
+  return descriptors;
+}
+
+/**
+ * Compute per-driver NBA card descriptors from a single odds snapshot.
+ *
+ * Ported driver logic from personal-dashboard/server/drivers/nba-drivers.js.
+ * Drivers only emit when their signal is actionable — neutral/missing data skips.
+ *
+ * Drivers:
+ *   rest-advantage  — B2B fatigue (one team on 0 rest days)
+ *   travel          — Road B2B penalty (away on 0 rest days, home rested)
+ *   lineup          — Key player out / probable missing (injury_status in raw_data)
+ *   matchup-style   — Pace mismatch or elite O vs weak D
+ *   blowout-risk    — Large spread (≥8 pts) → garbage time suppresses pace
+ *
+ * @param {string} gameId
+ * @param {object} oddsSnapshot
+ * @returns {Array<object>} Array of card descriptor objects
+ */
+function computeNBADriverCards(_gameId, oddsSnapshot) {
+  const raw = parseRawData(oddsSnapshot?.raw_data);
+  const spreadHome = toNumber(oddsSnapshot?.spread_home);
+
+  const descriptors = [];
+
+  // --- rest-advantage & travel (both use same rest data) ---
+  const restDaysHome = toNumber(raw?.rest_days_home ?? raw?.home?.rest_days);
+  const restDaysAway = toNumber(raw?.rest_days_away ?? raw?.away?.rest_days);
+
+  if (restDaysHome !== null && restDaysAway !== null) {
+    const homeB2B = restDaysHome === 0;
+    const awayB2B = restDaysAway === 0;
+
+    if (homeB2B || awayB2B) {
+      const score = homeB2B && !awayB2B ? 0.1   // home exhausted → AWAY edge
+        : awayB2B && !homeB2B   ? 0.9   // away exhausted → HOME edge
+        : 0.5;                           // both B2B → neutral
+      const dir = score > 0.52 ? 'HOME' : score < 0.48 ? 'AWAY' : 'NEUTRAL';
+      const conf = clamp(0.65 + Math.abs(score - 0.5) * 0.4, 0.65, 0.85);
+      const b2bSide = homeB2B && !awayB2B ? 'HOME' : awayB2B && !homeB2B ? 'AWAY' : 'BOTH';
+
+      descriptors.push({
+        cardType: 'nba-rest-advantage',
+        cardTitle: `NBA Rest Edge: ${dir}`,
+        confidence: conf,
+        tier: determineTier(conf),
+        prediction: dir,
+        reasoning: `${b2bSide} team on B2B — fatigue factor favors ${dir}`,
+        ev_threshold_passed: conf > 0.60,
+        driverKey: 'restAdvantage',
+        driverInputs: { rest_days_home: restDaysHome, rest_days_away: restDaysAway },
+        driverScore: score,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: true
+      });
+    }
+
+    // travel: road B2B is a second compounding signal (away on B2B, home rested)
+    if (restDaysAway === 0 && restDaysHome > 0) {
+      const conf = 0.68;
+      descriptors.push({
+        cardType: 'nba-travel',
+        cardTitle: 'NBA Road B2B Penalty',
+        confidence: conf,
+        tier: determineTier(conf),
+        prediction: 'HOME',
+        reasoning: `Away team on road B2B — travel + fatigue composite favors HOME`,
+        ev_threshold_passed: conf > 0.60,
+        driverKey: 'travel',
+        driverInputs: { rest_days_away: restDaysAway, rest_days_home: restDaysHome },
+        driverScore: 0.85,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: true
+      });
+    }
+  }
+
+  // --- lineup (only fires when injuries are flagged) ---
+  const injuryHome = raw?.injury_status_home ?? raw?.home?.injury_status ?? null;
+  const injuryAway = raw?.injury_status_away ?? raw?.away?.injury_status ?? null;
+  const depleted = injuryHome === 'depleted' || injuryAway === 'depleted';
+  const questionable = injuryHome === 'probable_missing' || injuryAway === 'probable_missing';
+
+  if (depleted || questionable) {
+    const conf = depleted ? 0.62 : 0.58;
+    const depletedDir = injuryHome === 'depleted' ? 'AWAY'
+      : injuryAway === 'depleted' ? 'HOME'
+      : 'NEUTRAL';
+    const dir = depleted ? depletedDir : 'NEUTRAL';
+    const score = depleted ? (dir === 'HOME' ? 0.8 : dir === 'AWAY' ? 0.2 : 0.5) : 0.5;
+
+    descriptors.push({
+      cardType: 'nba-lineup',
+      cardTitle: `NBA Lineup Alert: ${dir}`,
+      confidence: conf,
+      tier: determineTier(conf),
+      prediction: dir,
+      reasoning: `${depleted ? 'Key player(s) out' : 'Probable starter questionable'} — lineup uncertainty is a live signal`,
+      ev_threshold_passed: conf > 0.60,
+      driverKey: 'lineup',
+      driverInputs: { injury_status_home: injuryHome, injury_status_away: injuryAway },
+      driverScore: score,
+      driverStatus: 'ok',
+      inference_source: 'driver',
+      is_mock: true
+    });
+  }
+
+  // --- matchup-style (pace mismatch or elite O vs weak D) ---
+  const paceHome = toNumber(raw?.pace_home ?? raw?.home?.pace);
+  const paceAway = toNumber(raw?.pace_away ?? raw?.away?.pace);
+  const avgPtsHome = toNumber(raw?.avg_points_home ?? raw?.home?.avg_points);
+  const avgPtsAway = toNumber(raw?.avg_points_away ?? raw?.away?.avg_points);
+  const avgPtsAllowedHome = toNumber(raw?.avg_points_allowed_home ?? raw?.home?.avg_points_allowed);
+  const avgPtsAllowedAway = toNumber(raw?.avg_points_allowed_away ?? raw?.away?.avg_points_allowed);
+
+  const hasPace = paceHome !== null && paceAway !== null;
+  const hasEfficiency = (avgPtsHome !== null && avgPtsAllowedAway !== null)
+    || (avgPtsAway !== null && avgPtsAllowedHome !== null);
+
+  if (hasPace || hasEfficiency) {
+    let score = 0.5;
+    let dir = 'NEUTRAL';
+    let reasoning = 'Pace/efficiency matchup signal';
+
+    if (hasPace) {
+      const paceDelta = paceHome - paceAway;
+      if (Math.abs(paceDelta) >= 4) {
+        reasoning = `Extreme pace mismatch (delta: ${paceDelta.toFixed(1)} poss) — total variance signal`;
+      }
+    }
+
+    // Elite O vs Weak D overrides direction
+    if (avgPtsHome > 115 && avgPtsAllowedAway > 115) {
+      score = 0.75;
+      dir = 'HOME';
+      reasoning = `Elite HOME offense vs weak AWAY defense (${avgPtsHome.toFixed(0)} pts/g vs ${avgPtsAllowedAway.toFixed(0)} allowed)`;
+    } else if (avgPtsAway !== null && avgPtsAllowedHome !== null
+        && avgPtsAway > 115 && avgPtsAllowedHome > 115) {
+      score = 0.25;
+      dir = 'AWAY';
+      reasoning = `Road elite AWAY offense vs weak HOME defense (${avgPtsAway.toFixed(0)} pts/g vs ${avgPtsAllowedHome.toFixed(0)} allowed)`;
+    }
+
+    const conf = clamp(0.60 + Math.abs(score - 0.5) * 0.4, 0.60, 0.80);
+    descriptors.push({
+      cardType: 'nba-matchup-style',
+      cardTitle: `NBA Matchup Style: ${dir}`,
+      confidence: conf,
+      tier: determineTier(conf),
+      prediction: dir,
+      reasoning,
+      ev_threshold_passed: conf > 0.60,
+      driverKey: 'matchupStyle',
+      driverInputs: {
+        pace_home: paceHome,
+        pace_away: paceAway,
+        avg_pts_home: avgPtsHome,
+        avg_pts_away: avgPtsAway,
+        avg_pts_allowed_home: avgPtsAllowedHome,
+        avg_pts_allowed_away: avgPtsAllowedAway
+      },
+      driverScore: score,
+      driverStatus: statusFromNumbers([paceHome, paceAway]),
+      inference_source: 'driver',
+      is_mock: true
+    });
+  }
+
+  // --- blowout-risk (derived from spread — always available when odds exist) ---
+  if (spreadHome !== null) {
+    const absSpread = Math.abs(spreadHome);
+    if (absSpread >= 8) {
+      const conf = absSpread >= 12 ? 0.75 : 0.65;
+      descriptors.push({
+        cardType: 'nba-blowout-risk',
+        cardTitle: 'NBA Blowout Risk',
+        confidence: conf,
+        tier: determineTier(conf),
+        prediction: 'NEUTRAL',
+        reasoning: `Large spread (${spreadHome > 0 ? '+' : ''}${spreadHome}) — garbage time risk suppresses 4Q pace`,
+        ev_threshold_passed: conf > 0.60,
+        driverKey: 'blowoutRisk',
+        driverInputs: { spread_home: spreadHome, abs_spread: absSpread },
+        driverScore: 0.5,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: true
+      });
     }
   }
 
@@ -547,5 +763,7 @@ module.exports = {
   getModel,
   callRemoteModel,
   mockModels,
-  computeNHLDriverCards
+  computeNHLDriverCards,
+  computeNBADriverCards,
+  determineTier
 };

@@ -1,15 +1,16 @@
 /**
- * NHL Model Runner Job
- * 
- * Reads latest NHL odds from DB, runs inference model, and stores:
- * - model_outputs (predictions + confidence)
- * - card_payloads (ready-to-render web cards)
- * 
+ * NBA Model Runner Job
+ *
+ * Reads latest NBA odds from DB, runs per-driver inference, and stores
+ * card_payloads (one per active driver: rest-advantage, travel, lineup,
+ * matchup-style, blowout-risk). Drivers only emit when their signal is
+ * actionable — neutral/missing data produces no card.
+ *
  * Portable job runner that can be called from:
- * - A cron job (node apps/worker/src/jobs/run_nhl_model.js)
+ * - A cron job (node apps/worker/src/jobs/run_nba_model.js)
  * - A scheduler daemon (apps/worker/src/schedulers/main.js)
- * - CLI (npm run job:run-nhl-model)
- * 
+ * - CLI (npm run job:run-nba-model)
+ *
  * Exit codes:
  *   0 = success
  *   1 = failure
@@ -17,15 +18,11 @@
 
 const { v4: uuidV4 } = require('uuid');
 
-// Import cheddar-logic data layer
 const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
-  getOddsSnapshots,
   getOddsWithUpcomingGames,
-  getLatestOdds,
-  insertModelOutput,
   insertCardPayload,
   prepareModelAndCardWrite,
   validateCardPayload,
@@ -33,18 +30,17 @@ const {
   withDb
 } = require('@cheddar-logic/data');
 
-// Import pluggable inference layer
-const { getModel, computeNHLDriverCards } = require('../models');
+const { computeNBADriverCards } = require('../models');
 
 /**
- * Generate insertable card objects from driver descriptors.
+ * Generate insertable card objects from NBA driver descriptors.
  *
  * @param {string} gameId
- * @param {Array<object>} driverDescriptors - Output of computeNHLDriverCards()
+ * @param {Array<object>} driverDescriptors - Output of computeNBADriverCards()
  * @param {object} oddsSnapshot
  * @returns {Array<object>} Array of card objects ready for insertCardPayload()
  */
-function generateNHLCards(gameId, driverDescriptors, oddsSnapshot) {
+function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
   const now = new Date().toISOString();
   let expiresAt = null;
   if (oddsSnapshot?.game_time_utc) {
@@ -53,15 +49,15 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot) {
   }
 
   return driverDescriptors.map(descriptor => {
-    const cardId = `card-nhl-${descriptor.driverKey}-${gameId}-${uuidV4().slice(0, 8)}`;
+    const cardId = `card-nba-${descriptor.driverKey}-${gameId}-${uuidV4().slice(0, 8)}`;
     const payloadData = {
       game_id: gameId,
-      sport: 'NHL',
-      model_version: 'nhl-drivers-v1',
+      sport: 'NBA',
+      model_version: 'nba-drivers-v1',
       prediction: descriptor.prediction,
       confidence: descriptor.confidence,
-      tier: descriptor.tier,
       recommended_bet_type: 'moneyline',
+      tier: descriptor.tier,
       reasoning: descriptor.reasoning,
       odds_context: {
         h2h_home: oddsSnapshot?.h2h_home,
@@ -89,7 +85,7 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot) {
     return {
       id: cardId,
       gameId,
-      sport: 'NHL',
+      sport: 'NBA',
       cardType: descriptor.cardType,
       cardTitle: descriptor.cardTitle,
       createdAt: now,
@@ -102,87 +98,77 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot) {
 
 /**
  * Main job entrypoint
- * @param {object} options - Job options
- * @param {string|null} options.jobKey - Optional deterministic window key for idempotency
+ * @param {object} options
+ * @param {string|null} options.jobKey - Deterministic window key for idempotency
  * @param {boolean} options.dryRun - If true, skip execution (log only)
  */
-async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
-  const jobRunId = `job-nhl-model-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
-  
-  console.log(`[NHLModel] Starting job run: ${jobRunId}`);
-  if (jobKey) {
-    console.log(`[NHLModel] Job key: ${jobKey}`);
-  }
-  console.log(`[NHLModel] Time: ${new Date().toISOString()}`);
-  
+async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
+  const jobRunId = `job-nba-model-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
+
+  console.log(`[NBAModel] Starting job run: ${jobRunId}`);
+  if (jobKey) console.log(`[NBAModel] Job key: ${jobKey}`);
+  console.log(`[NBAModel] Time: ${new Date().toISOString()}`);
+
   return withDb(async () => {
-    // Check idempotency if jobKey provided
     if (jobKey && !shouldRunJobKey(jobKey)) {
-      console.log(`[NHLModel] ⏭️  Skipping (already succeeded or running): ${jobKey}`);
+      console.log(`[NBAModel] ⏭️  Skipping (already succeeded or running): ${jobKey}`);
       return { success: true, jobRunId: null, skipped: true, jobKey };
     }
 
-    // DRY_RUN mode (log only, no execution)
     if (dryRun) {
-      console.log(`[NHLModel] 🔍 DRY_RUN=true — would run jobKey=${jobKey || 'none'}`);
+      console.log(`[NBAModel] 🔍 DRY_RUN=true — would run jobKey=${jobKey || 'none'}`);
       return { success: true, jobRunId: null, dryRun: true, jobKey };
     }
 
     try {
-      // Start job run
-      console.log('[NHLModel] Recording job start...');
-      insertJobRun('run_nhl_model', jobRunId, jobKey);
-      
-      // Get latest NHL odds for UPCOMING games only (prevents stale data processing)
-      console.log('[NHLModel] Fetching odds for upcoming NHL games...');
+      insertJobRun('run_nba_model', jobRunId, jobKey);
+
       const { DateTime } = require('luxon');
       const nowUtc = DateTime.utc();
       const horizonUtc = nowUtc.plus({ hours: 36 }).toISO();
-      const oddsSnapshots = getOddsWithUpcomingGames('NHL', nowUtc.toISO(), horizonUtc);
-      
+      console.log('[NBAModel] Fetching odds for upcoming NBA games...');
+      const oddsSnapshots = getOddsWithUpcomingGames('NBA', nowUtc.toISO(), horizonUtc);
+
       if (oddsSnapshots.length === 0) {
-        console.log('[NHLModel] No recent NHL odds found, exiting.');
+        console.log('[NBAModel] No upcoming NBA games found, exiting.');
         markJobRunSuccess(jobRunId);
         return { success: true, jobRunId, cardsGenerated: 0 };
       }
-      
-      console.log(`[NHLModel] Found ${oddsSnapshots.length} odds snapshots`);
-      
-      // Group by game_id and get latest for each
+
+      console.log(`[NBAModel] Found ${oddsSnapshots.length} odds snapshots`);
+
+      // Dedupe: latest snapshot per game
       const gameOdds = {};
       oddsSnapshots.forEach(snap => {
         if (!gameOdds[snap.game_id] || snap.captured_at > gameOdds[snap.game_id].captured_at) {
           gameOdds[snap.game_id] = snap;
         }
       });
-      
+
       const gameIds = Object.keys(gameOdds);
-      console.log(`[NHLModel] Running inference on ${gameIds.length} games...`);
+      console.log(`[NBAModel] Running NBA driver inference on ${gameIds.length} games...`);
 
       let cardsGenerated = 0;
       let cardsFailed = 0;
       const errors = [];
 
-      // Process each game
       for (const gameId of gameIds) {
         try {
           const oddsSnapshot = gameOdds[gameId];
-
-          // Compute per-driver card descriptors
-          const driverCards = computeNHLDriverCards(gameId, oddsSnapshot);
+          const driverCards = computeNBADriverCards(gameId, oddsSnapshot);
 
           if (driverCards.length === 0) {
-            console.log(`  [skip] ${gameId}: No driver cards (all data missing)`);
+            console.log(`  [skip] ${gameId}: No actionable NBA driver signals`);
             continue;
           }
 
-          // Prepare write: clear old driver card types for this game
+          // Clear old driver card types for this game before writing
           const driverCardTypes = [...new Set(driverCards.map(c => c.cardType))];
           for (const ct of driverCardTypes) {
-            prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct);
+            prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct);
           }
 
-          const cards = generateNHLCards(gameId, driverCards, oddsSnapshot);
+          const cards = generateNBACards(gameId, driverCards, oddsSnapshot);
 
           for (const card of cards) {
             const validation = validateCardPayload(card.cardType, card.payloadData);
@@ -191,39 +177,27 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             }
             insertCardPayload(card);
             cardsGenerated++;
-            console.log(`  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`);
+            const tierLabel = card.payloadData.tier ? ` [${card.payloadData.tier}]` : '';
+            console.log(`  [ok] ${gameId} [${card.cardType}]${tierLabel}: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`);
           }
         } catch (gameError) {
-          if (gameError.message.startsWith('Invalid card payload')) {
-            throw gameError;
-          }
+          if (gameError.message.startsWith('Invalid card payload')) throw gameError;
           cardsFailed++;
           errors.push(`${gameId}: ${gameError.message}`);
           console.error(`  [err] ${gameId}: ${gameError.message}`);
         }
       }
-      
-      // Mark success
+
       markJobRunSuccess(jobRunId);
-      console.log(`[NHLModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`);
-      
-      if (errors.length > 0) {
-        console.error('[NHLModel] Errors:');
-        errors.forEach(err => console.error(`  - ${err}`));
-      }
-      
+      console.log(`[NBAModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`);
+      if (errors.length > 0) errors.forEach(err => console.error(`  - ${err}`));
+
       return { success: true, jobRunId, cardsGenerated, cardsFailed, errors };
-      
+
     } catch (error) {
-      console.error(`[NHLModel] ❌ Job failed:`, error.message);
+      console.error(`[NBAModel] ❌ Job failed:`, error.message);
       console.error(error.stack);
-      
-      try {
-        markJobRunFailure(jobRunId, error.message);
-      } catch (dbError) {
-        console.error(`[NHLModel] Failed to record error to DB:`, dbError.message);
-      }
-      
+      try { markJobRunFailure(jobRunId, error.message); } catch (_) {}
       return { success: false, jobRunId, error: error.message };
     }
   });
@@ -231,14 +205,12 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
 
 // CLI execution
 if (require.main === module) {
-  runNHLModel()
-    .then(result => {
-      process.exit(result.success ? 0 : 1);
-    })
+  runNBAModel()
+    .then(result => process.exit(result.success ? 0 : 1))
     .catch(error => {
       console.error('Uncaught error:', error);
       process.exit(1);
     });
 }
 
-module.exports = { runNHLModel, generateNHLCards };
+module.exports = { runNBAModel, generateNBACards };
