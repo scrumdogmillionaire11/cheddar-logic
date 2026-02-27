@@ -1,8 +1,20 @@
 /**
+ * ============================================================
+ * ADAPTER API — PUBLIC CONTRACT
+ * ============================================================
+ * Export: fetchOdds({ sport, hoursAhead })
+ *
+ * DO NOT WRITE DB HERE.
+ * This package fetches and normalizes odds only.
+ * DB persistence is the responsibility of pull_odds_hourly.js.
+ * ============================================================
+ */
+
+/**
  * @cheddar-logic/odds
- * 
+ *
  * Odds fetching and normalization layer
- * 
+ *
  * Does NOT write to DB. Only fetches, normalizes, and returns data.
  * Consumer (pull_odds_hourly) is responsible for DB persistence.
  */
