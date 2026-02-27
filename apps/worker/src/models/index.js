@@ -325,33 +325,30 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
     });
   }
 
-  // --- welcomeHome (global meta-driver) ---
-  // Simplified implementation: score = (market_corroboration * 0.4 + venue_intensity * 0.3 + rest * 0.3)
-  // Skip if no h2h_home odds or score < 0.55
+  // --- welcomeHome (global meta-driver: fade of the home team) ---
+  // Fires AWAY when market over-prices home advantage; skipped when no edge.
+  // h2h odds are decimal (e.g. 1.85 = home fav, 2.10 = away fav).
+  // implied_prob = 1 / decimal_odds; edge = implied_prob - 0.5 (positive = home favored).
+  // score = (market_corroboration * 0.4 + venue_intensity * 0.3 + rest * 0.3)
+  // Skip if no h2h_home odds, or if home is not actually favored (score < 0.55).
   {
     const h2hHome = toNumber(oddsSnapshot?.h2h_home);
-    const spreadHome = toNumber(oddsSnapshot?.spread_home);
+    const h2hAway = toNumber(oddsSnapshot?.h2h_away);
 
-    if (h2hHome !== null) {
-      // market_corroboration: 1 if spread_home < -100 (market pricing home edge), else 0.5
-      const marketCorroboration = (spreadHome !== null && spreadHome < -100) ? 1 : 0.5;
-      // venue_intensity: 0.6 NHL neutral baseline
-      const venueIntensity = 0.6;
-      // rest: 0.5 placeholder
-      const rest = 0.5;
+    // Decimal odds must be > 1; negative value would mean American format (handled separately if needed)
+    if (h2hHome !== null && h2hHome > 1) {
+      const impliedProbHome = 1 / h2hHome;
+      const edge = impliedProbHome - 0.5; // positive = market prices home advantage
+
+      // market_corroboration: 1 when market meaningfully prices home (>53% implied), else 0.5
+      const marketCorroboration = impliedProbHome > 0.53 ? 1 : 0.5;
+      const venueIntensity = 0.6; // NHL neutral baseline (enhance with arena data later)
+      const rest = 0.5;           // placeholder — enhance with schedule data later
 
       const score = (marketCorroboration * 0.4) + (venueIntensity * 0.3) + (rest * 0.3);
 
-      // edge: h2h_home converted to implied probability minus 0.5
-      let edge = null;
-      if (h2hHome < 0) {
-        // Negative American odds: implied prob = abs(odds) / (abs(odds) + 100)
-        edge = Math.abs(h2hHome) / (Math.abs(h2hHome) + 100) - 0.5;
-      } else {
-        // Positive American odds: implied prob = 100 / (odds + 100)
-        edge = 100 / (h2hHome + 100) - 0.5;
-      }
-
+      // Only emit when market is actually pricing home advantage (score > 0.6 → AWAY fade)
+      // score ≤ 0.6 or < 0.55: not enough value — skip
       if (score >= 0.55) {
         const dir = score > 0.6 ? 'AWAY' : 'NEUTRAL';
         const conf = clamp(0.60 + score * 0.15, 0.60, 0.75);
@@ -360,12 +357,13 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
           cardTitle: `NHL Welcome Home Fade: ${dir}`,
           confidence: conf,
           prediction: dir,
-          reasoning: `Market over-prices home advantage (implied edge: ${edge != null ? edge.toFixed(2) : 'n/a'}) — fade HOME, back VISITORS`,
+          reasoning: `Market prices home at ${(impliedProbHome * 100).toFixed(0)}% implied — fade HOME, back VISITORS`,
           ev_threshold_passed: conf > 0.60,
           driverKey: 'welcomeHome',
           driverInputs: {
             h2h_home: h2hHome,
-            spread_home: spreadHome,
+            h2h_away: h2hAway,
+            implied_prob_home: impliedProbHome,
             market_corroboration: marketCorroboration,
             venue_intensity: venueIntensity,
             rest,
