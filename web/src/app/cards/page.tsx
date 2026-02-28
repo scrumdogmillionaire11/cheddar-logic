@@ -82,10 +82,12 @@ export default function CardsPage() {
     try {
       const date = new Date(dateStr);
       return date.toLocaleString('en-US', {
+        timeZone: 'America/New_York',
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
+        timeZoneName: 'short',
       });
     } catch {
       return dateStr;
