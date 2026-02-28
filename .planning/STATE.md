@@ -185,6 +185,16 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 
 ---
 
+## Accumulated Context
+
+### Pending Todos
+
+| File | Title | Area |
+|------|-------|------|
+| [2026-02-28-per-sport-model-health-agents...](./todos/pending/2026-02-28-per-sport-model-health-agents-nba-nhl-ncaam-agents-own-model-health-checks.md) | Per-sport model health agents — NBA/NHL/NCAAM agents own model health checks | general |
+
+---
+
 ## Quick Tasks Completed
 
 | # | Description                                                                       | Date       | Commit  | Directory                                                    |
