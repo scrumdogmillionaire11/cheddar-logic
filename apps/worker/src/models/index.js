@@ -26,6 +26,8 @@ const http = require('http');
 const https = require('https');
 const { projectNBA, projectNCAAM, projectNHL } = require('./projections');
 const { generateWelcomeHomeCard } = require('./welcome-home-v2');
+const { computeNHLMarketDecisions, selectExpressionChoice, buildMarketPayload } = require('./cross-market');
+const { analyzePaceSynergy } = require('./nba-pace-synergy');
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -613,6 +615,64 @@ function computeNBADriverCards(_gameId, oddsSnapshot) {
     }
   }
 
+  // --- Pace Matchup Driver (Synergy Model) ---
+  // Reads pace from espn_metrics; falls back to avgPoints * 0.92 derivation
+  {
+    const homePace = toNumber(raw?.espn_metrics?.home?.metrics?.pace ?? null);
+    const awayPace = toNumber(raw?.espn_metrics?.away?.metrics?.pace ?? null);
+    const homeOffEff = toNumber(raw?.espn_metrics?.home?.metrics?.avgPoints ?? null);
+    const awayOffEff = toNumber(raw?.espn_metrics?.away?.metrics?.avgPoints ?? null);
+
+    const synergy = analyzePaceSynergy(homePace, awayPace, homeOffEff, awayOffEff);
+
+    if (synergy && synergy.bettingSignal !== 'NO_EDGE') {
+      // Map synergy signal to prediction (all pace signals are totals-oriented)
+      const predictionMap = {
+        'ELITE_OVER':   'OVER',
+        'ATTACK_OVER':  'OVER',
+        'LEAN_OVER':    'OVER',
+        'STRONG_UNDER': 'UNDER',
+        'BEST_UNDER':   'UNDER'
+      };
+      const prediction = predictionMap[synergy.bettingSignal] ?? 'NEUTRAL';
+
+      // Confidence: ELITE_OVER=0.75, ATTACK_OVER=0.70, LEAN_OVER=0.63, STRONG_UNDER=0.70, BEST_UNDER=0.75
+      const confidenceMap = {
+        'ELITE_OVER':   0.75,
+        'ATTACK_OVER':  0.70,
+        'LEAN_OVER':    0.63,
+        'STRONG_UNDER': 0.70,
+        'BEST_UNDER':   0.75
+      };
+      const confidence = confidenceMap[synergy.bettingSignal] ?? 0.60;
+
+      descriptors.push({
+        cardType: 'nba-pace-matchup',
+        cardTitle: `NBA Pace: ${synergy.synergyType} \u2014 ${prediction}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction,
+        reasoning: synergy.reasoning,
+        ev_threshold_passed: confidence > 0.60,
+        driverKey: 'paceMatchup',
+        driverInputs: {
+          home_pace: homePace,
+          away_pace: awayPace,
+          home_pace_pct: synergy.homePacePct,
+          away_pace_pct: synergy.awayPacePct,
+          home_off_eff: homeOffEff,
+          away_off_eff: awayOffEff,
+          synergy_type: synergy.synergyType,
+          pace_adjustment: synergy.paceAdjustment
+        },
+        driverScore: prediction === 'OVER' ? 0.75 : prediction === 'UNDER' ? 0.25 : 0.5,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: false
+      });
+    }
+  }
+
   return descriptors;
 }
 
@@ -981,5 +1041,8 @@ module.exports = {
   computeNHLDriverCards,
   computeNBADriverCards,
   computeNCAAMDriverCards,
-  determineTier
+  determineTier,
+  computeNHLMarketDecisions,
+  selectExpressionChoice,
+  buildMarketPayload
 };

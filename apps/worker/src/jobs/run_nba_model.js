@@ -42,10 +42,11 @@ const {
 
 const NBA_DRIVER_WEIGHTS = {
   baseProjection: 0.35,
-  restAdvantage: 0.20,
-  welcomeHomeV2: 0.12,
+  restAdvantage: 0.15,
+  welcomeHomeV2: 0.10,
   matchupStyle: 0.20,
-  blowoutRisk: 0.10
+  blowoutRisk: 0.07,
+  paceMatchup: 0.13
 };
 
 function buildDriverSummary(descriptor, weightMap) {
