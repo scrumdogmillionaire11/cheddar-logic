@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-02-28 - Completed quick task 10: /cards should have logic that removes the previous days games ... and i would like an audit on whether we have complete tracking in place to settle each projections made
+**Last activity:** 2026-02-28 - Completed quick task 11: settlement jobs — settle_game_results (ESPN score ingest), settle_pending_cards (card W/L + tracking_stats), nightly scheduler sweep
 
 ---
 
@@ -198,3 +198,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 7 | Enable NCAAM odds ingest/model; disable MLB+NFL for off-season; document token math | 2026-02-28 | f2931d9 | .planning/quick/7-enable-ncaam-model-disable-out-of-season/ |
 | 8 | Fix driver confidence calculations: NHL per-driver clamp(score-0.5), composite clamp(weightedSum), NBA getInference driver-derived | 2026-02-28 | 841a92e | .planning/quick/8-fix-driver-confidence-calculations-to-pr/ |
 | 10 | Filter /api/games to today-forward (start of day); settlement audit docs 3 gaps  | 2026-02-28 | 72274c0 | .planning/quick/10-cards-should-have-logic-that-removes-the/ |
+| 11 | ESPN score ingest, card W/L settlement, tracking_stats aggregates, nightly sweep | 2026-02-28 | 7516f13 | .planning/quick/11-complete-settlement-and-tracking-ingest-/ |
