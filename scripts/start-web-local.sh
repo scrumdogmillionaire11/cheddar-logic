@@ -9,10 +9,11 @@ npm --prefix "$ROOT_DIR/packages/data" install
 echo "[2/4] Running data migrations"
 npm --prefix "$ROOT_DIR/packages/data" run migrate
 
-echo "[3/4] Seeding test odds for UI"
-npm --prefix "$ROOT_DIR/packages/data" run seed:test-odds
+# echo "[3/4] Seeding test odds for UI"
+# npm --prefix "$ROOT_DIR/packages/data" run seed:test-odds
+# ↑ Disabled: We now pull real odds via pull_odds_hourly job
 
-echo "[4/4] Installing web dependencies and starting Next.js"
+echo "[3/4] Installing web dependencies and starting Next.js"
 npm --prefix "$ROOT_DIR/web" install
 
 PORT="${PORT:-3000}"
