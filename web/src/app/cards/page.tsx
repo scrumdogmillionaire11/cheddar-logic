@@ -3,6 +3,17 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
+interface Play {
+  cardType: string;
+  cardTitle: string;
+  prediction: 'HOME' | 'AWAY' | 'NEUTRAL';
+  confidence: number;
+  tier: 'SUPER' | 'BEST' | 'WATCH' | null;
+  reasoning: string;
+  evPassed: boolean;
+  driverKey: string;
+}
+
 interface GameData {
   id: string;
   gameId: string;
@@ -20,6 +31,7 @@ interface GameData {
     spreadAway: number | null;
     capturedAt: string | null;
   } | null;
+  plays: Play[];
 }
 
 interface ApiResponse {
@@ -81,6 +93,46 @@ export default function CardsPage() {
     return value > 0 ? `+${value}` : `${value}`;
   };
 
+  const getTierBadge = (tier: Play['tier']) => {
+    switch (tier) {
+      case 'SUPER':
+        return (
+          <span className="px-2 py-0.5 text-xs font-bold bg-green-700/50 text-green-300 rounded border border-green-600/60">
+            SUPER
+          </span>
+        );
+      case 'BEST':
+        return (
+          <span className="px-2 py-0.5 text-xs font-bold bg-blue-700/50 text-blue-300 rounded border border-blue-600/60">
+            BEST
+          </span>
+        );
+      case 'WATCH':
+        return (
+          <span className="px-2 py-0.5 text-xs font-bold bg-yellow-700/50 text-yellow-300 rounded border border-yellow-600/60">
+            WATCH
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const getPredictionBadge = (prediction: Play['prediction']) => {
+    const colorMap = {
+      HOME: 'bg-indigo-700/40 text-indigo-200 border-indigo-600/50',
+      AWAY: 'bg-orange-700/40 text-orange-200 border-orange-600/50',
+      NEUTRAL: 'bg-white/10 text-cloud/70 border-white/20',
+    };
+    return (
+      <span
+        className={`px-2 py-0.5 text-xs font-semibold rounded border ${colorMap[prediction]}`}
+      >
+        {prediction}
+      </span>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-night text-cloud px-6 py-12">
       <div className="max-w-4xl mx-auto">
@@ -116,6 +168,7 @@ export default function CardsPage() {
             {games.map((game) => {
               const gameTime = formatDate(game.gameTimeUtc);
               const isNotScheduled = game.status && game.status !== 'scheduled';
+              const plays = game.plays ?? [];
 
               return (
                 <div
@@ -171,6 +224,36 @@ export default function CardsPage() {
                       <p className="text-sm text-cloud/40 italic">No odds data</p>
                     )}
                   </div>
+
+                  {plays.length > 0 && (
+                    <div className="border-t border-white/5 mt-3 pt-3">
+                      <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
+                        Driver Plays
+                      </p>
+                      <div className="space-y-2">
+                        {plays.map((play, idx) => (
+                          <div
+                            key={`${play.driverKey}-${idx}`}
+                            className="bg-white/5 rounded-md px-3 py-2"
+                          >
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              {getTierBadge(play.tier)}
+                              {getPredictionBadge(play.prediction)}
+                              <span className="text-xs font-mono text-cloud/60">
+                                {Math.round(play.confidence * 100)}%
+                              </span>
+                              <span className="text-xs text-cloud/70 font-medium">
+                                {play.cardTitle}
+                              </span>
+                            </div>
+                            <p className="text-xs text-cloud/50 leading-snug">
+                              {play.reasoning}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
