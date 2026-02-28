@@ -53,8 +53,10 @@ const {
 const NHL_DRIVER_WEIGHTS = {
   baseProjection: 0.30,
   restAdvantage: 0.14,
-  goalie: 0.22,
-  scoringEnvironment: 0.12
+  goalie: 0.18,
+  scoringEnvironment: 0.08,
+  paceTotals: 0.12,
+  paceTotals1p: 0.08
 };
 
 function buildDriverSummary(descriptor, weightMap) {
