@@ -214,8 +214,66 @@ function projectNHL(homeGoalsFor, homeGoalsAgainst, awayGoalsFor, awayGoalsAgain
   };
 }
 
+/**
+ * Canonical NBA total projection using PPP × pace formula.
+ *
+ * Ported from cheddar-nba-2.0/src/services/projection_math.py
+ * (build_projection_canonical + calculate_projected_total_from_values)
+ *
+ * Formula:
+ *   base_home_ppp = (homeOffRtg + awayDefRtg) / 200
+ *   base_away_ppp = (awayOffRtg + homeDefRtg) / 200
+ *   expected_pace = (homePace + awayPace) / 2
+ *   adjusted_pace = expected_pace + paceAdjustment  ← pace synergy baked in
+ *   home_pts = base_home_ppp * adjusted_pace
+ *   away_pts = base_away_ppp * adjusted_pace
+ *   projected_total = home_pts + away_pts
+ *
+ * Uses avgPoints as ORtg proxy and avgPointsAllowed as DRtg proxy.
+ * This is accurate when pace ≈ 100 (NBA average ~100 poss/game).
+ *
+ * @param {number} homeOffRtg - Home team avg points (ORtg proxy)
+ * @param {number} homeDefRtg - Home team avg points allowed (DRtg proxy)
+ * @param {number} homePace   - Home team possessions per game
+ * @param {number} awayOffRtg - Away team avg points (ORtg proxy)
+ * @param {number} awayDefRtg - Away team avg points allowed (DRtg proxy)
+ * @param {number} awayPace   - Away team possessions per game
+ * @param {number} paceAdjustment - Synergy pace delta (from PaceSynergyService)
+ * @returns {object|null}
+ */
+function projectNBACanonical(homeOffRtg, homeDefRtg, homePace, awayOffRtg, awayDefRtg, awayPace, paceAdjustment = 0) {
+  if (!homeOffRtg || !homeDefRtg || !homePace || !awayOffRtg || !awayDefRtg || !awayPace) {
+    return null;
+  }
+
+  // PPP (points per possession) for each team
+  const baseHomePPP = (homeOffRtg + awayDefRtg) / 200;
+  const baseAwayPPP = (awayOffRtg + homeDefRtg) / 200;
+
+  // Pace: average then apply synergy adjustment
+  const expectedPace = (homePace + awayPace) / 2;
+  const adjustedPace = Math.max(expectedPace + paceAdjustment, 85); // 85 poss/game floor
+
+  // Points = PPP × possessions
+  const homeProjected = baseHomePPP * adjustedPace;
+  const awayProjected = baseAwayPPP * adjustedPace;
+  const projectedTotal = homeProjected + awayProjected;
+
+  return {
+    homeProjected: Math.round(homeProjected * 10) / 10,
+    awayProjected: Math.round(awayProjected * 10) / 10,
+    projectedTotal: Math.round(projectedTotal * 10) / 10,
+    expectedPace: Math.round(expectedPace * 10) / 10,
+    adjustedPace: Math.round(adjustedPace * 10) / 10,
+    paceAdjustment,
+    baseHomePPP: Math.round(baseHomePPP * 1000) / 1000,
+    baseAwayPPP: Math.round(baseAwayPPP * 1000) / 1000,
+  };
+}
+
 module.exports = {
   projectNBA,
+  projectNBACanonical,
   projectNCAAM,
   projectNHL
 };

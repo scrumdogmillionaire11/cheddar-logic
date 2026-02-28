@@ -46,7 +46,7 @@ const NBA_DRIVER_WEIGHTS = {
   welcomeHomeV2: 0.10,
   matchupStyle: 0.20,
   blowoutRisk: 0.07,
-  paceMatchup: 0.13
+  totalProjection: 0.13
 };
 
 function buildDriverSummary(descriptor, weightMap) {
@@ -94,6 +94,12 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
     const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
     const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
     const market = buildMarketFromOdds(oddsSnapshot);
+    // For totals cards, populate projection.total and edge from driver inputs
+    const isTotalsCard = descriptor.cardType === 'nba-total-projection';
+    const projectedTotal = isTotalsCard ? (descriptor.driverInputs?.projected_total ?? null) : null;
+    const projectedEdge = isTotalsCard ? (descriptor.driverInputs?.edge ?? null) : null;
+    const recommendedBetType = isTotalsCard ? 'total' : 'moneyline';
+
     const payloadData = {
       game_id: gameId,
       sport: 'NBA',
@@ -111,17 +117,17 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
         pass_reason: recommendation.pass_reason
       },
       projection: {
-        total: null,
+        total: projectedTotal,
         margin_home: null,
         win_prob_home: null
       },
       market,
-      edge: null,
+      edge: projectedEdge,
       confidence_pct: Math.round(descriptor.confidence * 100),
       drivers_active: [descriptor.driverKey],
       prediction: descriptor.prediction,
       confidence: descriptor.confidence,
-      recommended_bet_type: 'moneyline',
+      recommended_bet_type: recommendedBetType,
       tier: descriptor.tier,
       reasoning: descriptor.reasoning,
       odds_context: {

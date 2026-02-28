@@ -24,7 +24,7 @@
 
 const http = require('http');
 const https = require('https');
-const { projectNBA, projectNCAAM, projectNHL } = require('./projections');
+const { projectNBA, projectNBACanonical, projectNCAAM, projectNHL } = require('./projections');
 const { generateWelcomeHomeCard } = require('./welcome-home-v2');
 const { computeNHLMarketDecisions, selectExpressionChoice, buildMarketPayload } = require('./cross-market');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
@@ -615,61 +615,90 @@ function computeNBADriverCards(_gameId, oddsSnapshot) {
     }
   }
 
-  // --- Pace Matchup Driver (Synergy Model) ---
-  // Reads pace from espn_metrics; falls back to avgPoints * 0.92 derivation
+  // --- NBA Total Projection Driver (Canonical PPP × Pace Formula) ---
+  //
+  // Ported from cheddar-nba-2.0 projection_math.py + pace_synergy.py.
+  // Every game with sufficient data gets a projected total.
+  // Pace synergy (FAST×FAST, SLOW×SLOW, etc.) is applied as a pace delta
+  // BEFORE computing points — it deforms the projection, not a separate card.
+  //
+  //   base_home_ppp = (homeOffRtg + awayDefRtg) / 200
+  //   adjusted_pace = (homePace + awayPace) / 2 + synergy.paceAdjustment
+  //   home_pts = base_home_ppp * adjusted_pace
+  //   projected_total = home_pts + away_pts
+  //   edge = projected_total - market_line → OVER / UNDER
   {
     const homePace = toNumber(raw?.espn_metrics?.home?.metrics?.pace ?? null);
     const awayPace = toNumber(raw?.espn_metrics?.away?.metrics?.pace ?? null);
     const homeOffEff = toNumber(raw?.espn_metrics?.home?.metrics?.avgPoints ?? null);
     const awayOffEff = toNumber(raw?.espn_metrics?.away?.metrics?.avgPoints ?? null);
+    const homeDefRtg = toNumber(raw?.espn_metrics?.home?.metrics?.avgPointsAllowed ?? null);
+    const awayDefRtg = toNumber(raw?.espn_metrics?.away?.metrics?.avgPointsAllowed ?? null);
+    const marketTotal = toNumber(oddsSnapshot?.total);
 
-    const synergy = analyzePaceSynergy(homePace, awayPace, homeOffEff, awayOffEff);
+    // Always run synergy to get paceAdjustment (even NO_EDGE games get 0 adjustment)
+    const synergy = (homePace && awayPace && homeOffEff && awayOffEff)
+      ? analyzePaceSynergy(homePace, awayPace, homeOffEff, awayOffEff)
+      : null;
+    const paceAdjustment = synergy ? synergy.paceAdjustment : 0;
 
-    if (synergy && synergy.bettingSignal !== 'NO_EDGE') {
-      // Map synergy signal to prediction (all pace signals are totals-oriented)
-      const predictionMap = {
-        'ELITE_OVER':   'OVER',
-        'ATTACK_OVER':  'OVER',
-        'LEAN_OVER':    'OVER',
-        'STRONG_UNDER': 'UNDER',
-        'BEST_UNDER':   'UNDER'
-      };
-      const prediction = predictionMap[synergy.bettingSignal] ?? 'NEUTRAL';
+    // Canonical projection — requires pace + both team off/def stats
+    if (homePace && awayPace && homeOffEff && homeDefRtg && awayOffEff && awayDefRtg) {
+      const canonical = projectNBACanonical(
+        homeOffEff, homeDefRtg, homePace,
+        awayOffEff, awayDefRtg, awayPace,
+        paceAdjustment
+      );
 
-      // Confidence: ELITE_OVER=0.75, ATTACK_OVER=0.70, LEAN_OVER=0.63, STRONG_UNDER=0.70, BEST_UNDER=0.75
-      const confidenceMap = {
-        'ELITE_OVER':   0.75,
-        'ATTACK_OVER':  0.70,
-        'LEAN_OVER':    0.63,
-        'STRONG_UNDER': 0.70,
-        'BEST_UNDER':   0.75
-      };
-      const confidence = confidenceMap[synergy.bettingSignal] ?? 0.60;
+      if (canonical && marketTotal) {
+        const edge = canonical.projectedTotal - marketTotal;
+        const absEdge = Math.abs(edge);
 
-      descriptors.push({
-        cardType: 'nba-pace-matchup',
-        cardTitle: `NBA Pace: ${synergy.synergyType} \u2014 ${prediction}`,
-        confidence,
-        tier: determineTier(confidence),
-        prediction,
-        reasoning: synergy.reasoning,
-        ev_threshold_passed: confidence > 0.60,
-        driverKey: 'paceMatchup',
-        driverInputs: {
-          home_pace: homePace,
-          away_pace: awayPace,
-          home_pace_pct: synergy.homePacePct,
-          away_pace_pct: synergy.awayPacePct,
-          home_off_eff: homeOffEff,
-          away_off_eff: awayOffEff,
-          synergy_type: synergy.synergyType,
-          pace_adjustment: synergy.paceAdjustment
-        },
-        driverScore: prediction === 'OVER' ? 0.75 : prediction === 'UNDER' ? 0.25 : 0.5,
-        driverStatus: 'ok',
-        inference_source: 'driver',
-        is_mock: false
-      });
+        // Only emit when edge is meaningful (< 1.0 pt is noise at this scale)
+        if (absEdge >= 1.0) {
+          const direction = edge > 0 ? 'OVER' : 'UNDER';
+
+          // Confidence scales with edge magnitude
+          let confidence;
+          if (absEdge >= 5.0)      confidence = 0.78;
+          else if (absEdge >= 3.0) confidence = 0.72;
+          else if (absEdge >= 2.0) confidence = 0.67;
+          else                     confidence = 0.62;
+
+          const synergyLabel = (synergy && synergy.synergyType !== 'NONE' && synergy.synergyType !== 'PACE_CLASH')
+            ? ` [${synergy.synergyType}, pace adj ${paceAdjustment > 0 ? '+' : ''}${paceAdjustment}]`
+            : '';
+
+          descriptors.push({
+            cardType: 'nba-total-projection',
+            cardTitle: `NBA Total: ${direction} ${canonical.projectedTotal} vs Line ${marketTotal}`,
+            confidence,
+            tier: determineTier(confidence),
+            prediction: direction,
+            reasoning: `Model projects ${canonical.projectedTotal} (${canonical.homeProjected} + ${canonical.awayProjected}) vs line ${marketTotal} — edge ${edge > 0 ? '+' : ''}${edge.toFixed(1)} pts${synergyLabel}`,
+            ev_threshold_passed: confidence > 0.60,
+            driverKey: 'totalProjection',
+            driverInputs: {
+              projected_total: canonical.projectedTotal,
+              market_total: marketTotal,
+              edge: Math.round(edge * 10) / 10,
+              expected_pace: canonical.expectedPace,
+              adjusted_pace: canonical.adjustedPace,
+              pace_adjustment: paceAdjustment,
+              synergy_type: synergy?.synergyType ?? 'NONE',
+              synergy_signal: synergy?.bettingSignal ?? 'NO_EDGE',
+              home_projected: canonical.homeProjected,
+              away_projected: canonical.awayProjected,
+              home_ppp: canonical.baseHomePPP,
+              away_ppp: canonical.baseAwayPPP
+            },
+            driverScore: direction === 'OVER' ? 0.75 : 0.25,
+            driverStatus: 'ok',
+            inference_source: 'driver',
+            is_mock: false
+          });
+        }
+      }
     }
   }
 
