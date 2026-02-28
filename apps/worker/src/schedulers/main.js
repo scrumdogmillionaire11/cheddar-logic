@@ -33,6 +33,8 @@ const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { runSoccerModel } = require('../jobs/run_soccer_model');
 const { runNCAAMModel } = require('../jobs/run_ncaam_model');
+const { settleGameResults } = require('../jobs/settle_game_results');
+const { settlePendingCards } = require('../jobs/settle_pending_cards');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -80,6 +82,10 @@ function keyFixed(sport, nowEt, hhmm) {
 
 function keyTminus(sport, gameId, minutes) {
   return `${sport}|tminus|${gameId}|${minutes}`;
+}
+
+function keyNightlySweep(nowEt) {
+  return `settle|nightly|${nowEt.toISODate()}`;
 }
 
 /**
@@ -197,6 +203,27 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     }
   }
 
+  // 4) Nightly settlement sweep (02:00 ET — after games are final)
+  if (process.env.ENABLE_SETTLEMENT !== 'false') {
+    const sweepDate = nowEt.toISODate();
+    if (isFixedDue(nowEt, '02:00')) {
+      jobs.push({
+        jobName: 'settle_game_results',
+        jobKey: `settle|game-results|${sweepDate}`,
+        execute: settleGameResults,
+        args: { jobKey: `settle|game-results|${sweepDate}`, dryRun },
+        reason: `nightly settlement sweep ${sweepDate}`
+      });
+      jobs.push({
+        jobName: 'settle_pending_cards',
+        jobKey: `settle|pending-cards|${sweepDate}`,
+        execute: settlePendingCards,
+        args: { jobKey: `settle|pending-cards|${sweepDate}`, dryRun },
+        reason: `nightly card settlement ${sweepDate}`
+      });
+    }
+  }
+
   return jobs;
 }
 
@@ -269,6 +296,7 @@ async function start() {
   console.log(`  DRY_RUN: ${process.env.DRY_RUN || 'false'}`);
   console.log(`  FIXED_CATCHUP: ${process.env.FIXED_CATCHUP !== 'false' ? 'true' : 'false'}`);
   console.log(`  ENABLE_ODDS_PULL: ${process.env.ENABLE_ODDS_PULL !== 'false' ? 'true' : 'false'}`);
+  console.log(`  ENABLE_SETTLEMENT: ${process.env.ENABLE_SETTLEMENT !== 'false' ? 'true' : 'false'}`);
   console.log(`  Enabled sports: ${enabledSports().join(', ') || 'none'}`);
   console.log('═'.repeat(60));
   console.log('');
@@ -304,14 +332,15 @@ if (require.main === module) {
   start();
 }
 
-module.exports = { 
-  start, 
-  tick, 
+module.exports = {
+  start,
+  tick,
   computeDueJobs,
   enabledSports,
   keyOddsHourly,
   keyFixed,
   keyTminus,
+  keyNightlySweep,
   isFixedDue,
   dueTminusMinutes,
   TMINUS_BANDS
