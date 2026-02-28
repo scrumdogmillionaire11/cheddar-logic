@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-02-28 — Quick task 6 complete (Fixed /cards scroll reset on background refresh with isInitialLoad ref; added prominent BET HOME/BET AWAY Play Suggestion as first element in each directional play row)
+**Last activity:** 2026-02-28 — Quick task 7 complete (Wired pull_odds_hourly to config-driven getActiveSports(); disabled MLB/NFL model execution for off-season; enabled NCAAM — 8 tokens/fetch, 192/day)
 
 ---
 
@@ -195,3 +195,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 4 | Show all odds-API games on /cards: new /api/games route (CTE+LEFT JOIN) + /cards redesign    | 2026-02-27 | e89ec1c | .planning/quick/4-ensure-all-games-from-odds-api-display-a/  |
 | 5 | Apply driver logic: model jobs -> card_payloads; /api/games returns plays[]       | 2026-02-27 | 56ca96b | .planning/quick/5-apply-driver-logic-to-games-from-odds-ap/  |
 | 6 | Fix /cards scroll reset on background refresh + add Play Suggestion per play row  | 2026-02-28 | 742c8cb | .planning/quick/6-fix-cards-page-auto-reload-scroll-reset-/  |
+| 7 | Enable NCAAM odds ingest/model; disable MLB+NFL for off-season; document token math | 2026-02-28 | f2931d9 | .planning/quick/7-enable-ncaam-model-disable-out-of-season/ |
