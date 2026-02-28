@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-02-27 — Quick task 5 complete (Driver model jobs populate card_payloads; /api/games returns plays[]; /cards shows Driver Plays section with tier/prediction/confidence/reasoning)
+**Last activity:** 2026-02-28 — Quick task 6 complete (Fixed /cards scroll reset on background refresh with isInitialLoad ref; added prominent BET HOME/BET AWAY Play Suggestion as first element in each directional play row)
 
 ---
 
@@ -132,6 +132,8 @@ Prevents old game IDs, stale model runs, phantom T-minus windows.
 - Driver model jobs produce card_payloads (NHL: 85 cards, NBA: 4 cards)
 - /api/games returns plays[] per game from card_payloads
 - /cards page shows Driver Plays with tier badges, prediction, confidence, reasoning
+- /cards background refresh is scroll-stable (isInitialLoad ref prevents DOM unmount on interval ticks)
+- /cards play rows show prominent "BET HOME -110" / "BET AWAY +120" suggestion as first visible element (NEUTRAL unchanged)
 
 ---
 
@@ -192,3 +194,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 3 | Wire /fpl page to cheddar-fpl-sage: Next.js rewrites proxy + relative API URL    | 2026-02-27 | 932cbff | .planning/quick/3-wire-cheddar-fpl-sage-frontend-to-localh/  |
 | 4 | Show all odds-API games on /cards: new /api/games route (CTE+LEFT JOIN) + /cards redesign    | 2026-02-27 | e89ec1c | .planning/quick/4-ensure-all-games-from-odds-api-display-a/  |
 | 5 | Apply driver logic: model jobs -> card_payloads; /api/games returns plays[]       | 2026-02-27 | 56ca96b | .planning/quick/5-apply-driver-logic-to-games-from-odds-ap/  |
+| 6 | Fix /cards scroll reset on background refresh + add Play Suggestion per play row  | 2026-02-28 | 742c8cb | .planning/quick/6-fix-cards-page-auto-reload-scroll-reset-/  |
