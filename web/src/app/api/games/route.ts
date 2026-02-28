@@ -79,13 +79,22 @@ export async function GET() {
     await initDb();
     db = getDatabase();
 
-    // Compute local midnight in America/New_York so the filter anchors to the
-    // user's calendar day rather than UTC midnight (which causes evening EST
-    // games to appear as the next UTC day).
-    const localMidnight = new Date(
-      new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }).split(',')[0] +
-        ', 00:00:00 America/New_York'
-    );
+    // Compute midnight America/New_York as a UTC string for the SQL param.
+    // en-CA locale gives YYYY-MM-DD; shortOffset gives "GMT-5" / "GMT-4" (DST-aware).
+    const now = new Date();
+    const etDateStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+    }).format(now); // e.g. "2026-02-28"
+    const tzPart = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      timeZoneName: 'shortOffset',
+    })
+      .formatToParts(now)
+      .find((p) => p.type === 'timeZoneName')!.value; // e.g. "GMT-5"
+    const offsetHours = parseInt(tzPart.replace('GMT', '') || '-5', 10);
+    const sign = offsetHours < 0 ? '-' : '+';
+    const absHours = Math.abs(offsetHours).toString().padStart(2, '0');
+    const localMidnight = new Date(`${etDateStr}T00:00:00${sign}${absHours}:00`);
     const todayUtc = localMidnight.toISOString().replace('T', ' ').replace('Z', '');
 
     const sql = `
