@@ -95,7 +95,9 @@ export async function GET() {
     const sign = offsetHours < 0 ? '-' : '+';
     const absHours = Math.abs(offsetHours).toString().padStart(2, '0');
     const localMidnight = new Date(`${etDateStr}T00:00:00${sign}${absHours}:00`);
-    const todayUtc = localMidnight.toISOString().replace('T', ' ').replace('Z', '');
+    // Truncate to seconds — SQLite datetime() strips sub-second precision, so
+    // "05:00:00.000" would be > "05:00:00" and exclude games at exactly midnight.
+    const todayUtc = localMidnight.toISOString().substring(0, 19).replace('T', ' ');
 
     const sql = `
       WITH latest_odds AS (
