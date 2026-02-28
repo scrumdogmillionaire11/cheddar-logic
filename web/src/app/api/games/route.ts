@@ -65,12 +65,14 @@ interface CardPayloadRow {
 interface Play {
   cardType: string;
   cardTitle: string;
-  prediction: 'HOME' | 'AWAY' | 'NEUTRAL';
+  prediction: 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';
   confidence: number;
   tier: 'SUPER' | 'BEST' | 'WATCH' | null;
   reasoning: string;
   evPassed: boolean;
   driverKey: string;
+  projectedTotal: number | null;
+  edge: number | null;
 }
 
 export async function GET() {
@@ -157,10 +159,17 @@ export async function GET() {
           continue;
         }
 
+        const driverInputs =
+          payload.driver !== null &&
+          typeof payload.driver === 'object' &&
+          'inputs' in (payload.driver as object)
+            ? (payload.driver as Record<string, unknown>).inputs as Record<string, unknown>
+            : null;
+
         const play: Play = {
           cardType: cardRow.card_type,
           cardTitle: cardRow.card_title,
-          prediction: (payload.prediction as 'HOME' | 'AWAY' | 'NEUTRAL') ?? 'NEUTRAL',
+          prediction: (payload.prediction as 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL') ?? 'NEUTRAL',
           confidence: typeof payload.confidence === 'number' ? payload.confidence : 0,
           tier: (payload.tier as 'SUPER' | 'BEST' | 'WATCH' | null) ?? null,
           reasoning: typeof payload.reasoning === 'string' ? payload.reasoning : '',
@@ -171,6 +180,18 @@ export async function GET() {
             'key' in (payload.driver as object)
               ? String((payload.driver as Record<string, unknown>).key)
               : '',
+          projectedTotal:
+            typeof (payload.projection as Record<string, unknown>)?.total === 'number'
+              ? (payload.projection as Record<string, unknown>).total as number
+              : typeof driverInputs?.projected_total === 'number'
+                ? driverInputs.projected_total as number
+                : null,
+          edge:
+            typeof payload.edge === 'number'
+              ? payload.edge as number
+              : typeof driverInputs?.edge === 'number'
+                ? driverInputs.edge as number
+                : null,
         };
 
         const existing = playsMap.get(cardRow.game_id);
