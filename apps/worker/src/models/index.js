@@ -260,7 +260,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
   {
     const d = drivers.shotEnvironment;
     const dir = direction(d.score);
-    const conf = 0.65;
+    const conf = clamp(0.60 + Math.abs(d.score - 0.5) * 0.3, 0.60, 0.75);
     descriptors.push({
       cardType: 'nhl-shot-environment',
       cardTitle: `NHL Shot Environment: ${dir}`,
@@ -283,7 +283,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
     const d = drivers.emptyNet;
     if (d.status !== 'missing') {
       const dir = direction(d.score);
-      const conf = 0.60;
+      const conf = clamp(0.58 + Math.abs(d.score - 0.5) * 0.3, 0.58, 0.72);
       descriptors.push({
         cardType: 'nhl-empty-net',
         cardTitle: `NHL Empty Net Tendencies: ${dir}`,
@@ -305,7 +305,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
   // --- totalFragility (always NEUTRAL) ---
   {
     const d = drivers.totalFragility;
-    const conf = 0.60;
+    const conf = clamp(0.58 + d.score * 0.2, 0.58, 0.78);
     descriptors.push({
       cardType: 'nhl-total-fragility',
       cardTitle: 'NHL Total Fragility',
