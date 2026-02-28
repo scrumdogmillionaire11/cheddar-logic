@@ -137,6 +137,26 @@ export default function CardsPage() {
     );
   };
 
+  const getPlaySuggestion = (play: Play, odds: GameData['odds']): string | null => {
+    if (!odds) return null;
+    if (play.prediction === 'HOME') {
+      const line = formatOddsLine(odds.h2hHome);
+      return `BET HOME ${line}`;
+    }
+    if (play.prediction === 'AWAY') {
+      const line = formatOddsLine(odds.h2hAway);
+      return `BET AWAY ${line}`;
+    }
+    // NEUTRAL = no directional suggestion
+    return null;
+  };
+
+  const getSuggestionClassName = (tier: Play['tier']): string => {
+    if (tier === 'SUPER') return 'text-lg font-bold text-green-200 tracking-wide mb-1';
+    if (tier === 'BEST') return 'text-base font-bold text-green-300 tracking-wide mb-1';
+    return 'text-sm font-bold text-green-300/80 tracking-wide mb-1';
+  };
+
   return (
     <div className="min-h-screen bg-night text-cloud px-6 py-12">
       <div className="max-w-4xl mx-auto">
@@ -235,26 +255,32 @@ export default function CardsPage() {
                         Driver Plays
                       </p>
                       <div className="space-y-2">
-                        {plays.map((play, idx) => (
-                          <div
-                            key={`${play.driverKey}-${idx}`}
-                            className="bg-white/5 rounded-md px-3 py-2"
-                          >
-                            <div className="flex items-center gap-2 flex-wrap mb-1">
-                              {getTierBadge(play.tier)}
-                              {getPredictionBadge(play.prediction)}
-                              <span className="text-xs font-mono text-cloud/60">
-                                {Math.round(play.confidence * 100)}%
-                              </span>
-                              <span className="text-xs text-cloud/70 font-medium">
-                                {play.cardTitle}
-                              </span>
+                        {plays.map((play, idx) => {
+                          const suggestion = getPlaySuggestion(play, game.odds);
+                          return (
+                            <div
+                              key={`${play.driverKey}-${idx}`}
+                              className="bg-white/5 rounded-md px-3 py-2"
+                            >
+                              {suggestion && (
+                                <p className={getSuggestionClassName(play.tier)}>
+                                  {suggestion}
+                                </p>
+                              )}
+                              <div className="flex items-center gap-2 flex-wrap mb-1">
+                                {getTierBadge(play.tier)}
+                                {getPredictionBadge(play.prediction)}
+                                <span className="text-xs font-mono text-cloud/60">
+                                  {Math.round(play.confidence * 100)}%
+                                </span>
+                                <span className="text-xs text-cloud/70 font-medium">
+                                  {play.cardTitle}
+                                </span>
+                              </div>
+                              <p className="text-xs text-cloud/50 leading-snug">{play.reasoning}</p>
                             </div>
-                            <p className="text-xs text-cloud/50 leading-snug">
-                              {play.reasoning}
-                            </p>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
