@@ -199,3 +199,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 8 | Fix driver confidence calculations: NHL per-driver clamp(score-0.5), composite clamp(weightedSum), NBA getInference driver-derived | 2026-02-28 | 841a92e | .planning/quick/8-fix-driver-confidence-calculations-to-pr/ |
 | 10 | Filter /api/games to today-forward (start of day); settlement audit docs 3 gaps  | 2026-02-28 | 72274c0 | .planning/quick/10-cards-should-have-logic-that-removes-the/ |
 | 11 | ESPN score ingest, card W/L settlement, tracking_stats aggregates, nightly sweep | 2026-02-28 | 7516f13 | .planning/quick/11-complete-settlement-and-tracking-ingest-/ |
+| 13 | NBA pace synergy model: JS port of PaceSynergyService, paceMatchup driver card (FAST x FAST / SLOW x SLOW totals signal) | 2026-02-28 | 0b5d112 | .planning/quick/13-import-nba-pace-model-from-cheddar-nba-2/ |
