@@ -5,13 +5,20 @@
   "main": "index.js",
   "scripts": {
     "migrate": "node src/migrate.js",
+    "auth:add-comped": "node src/add-comped-user.js",
     "db:init": "node src/db-init.js",
     "db:reset": "node src/db-reset.js",
     "seed:test-odds": "node src/seed-test-odds.js",
+    "seed:test-results": "node src/seed-test-results.js",
+    "seed:purge": "node src/purge-seed-odds.js",
+    "seed:purge-results": "node src/purge-seed-results.js",
+    "seed:assert-none": "node src/assert-no-seed-odds.js",
+    "seed:test-lifecycle": "node src/run-seeded-test.js",
     "check:duplicates": "node src/check-duplicates.js",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "test:auth": "jest auth.test.js auth-session.test.js auth-persistence.test.js"
   },
   "keywords": [
     "database",

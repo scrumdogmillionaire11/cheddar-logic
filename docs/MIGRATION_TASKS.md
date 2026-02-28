@@ -5,6 +5,7 @@
 - [ ] Create `packages/data` with DB schema + migrations
 - [ ] Create DB connection layer
 - [ ] Implement `job_runs` table
+- [x] Implement Phase 1 auth magic-link foundation (`users`, `subscriptions`, `auth_magic_links`, `sessions`, `/login`, `/api/auth/send-link`, `/auth/verify`)
 - [ ] Create `packages/adapters` skeleton
 - [ ] Create `apps/worker` skeleton
 - [ ] Create `apps/web` skeleton
@@ -24,10 +25,12 @@
 ## Phase 3 — First Sport Runner
 
 Choose one sport:
+
 - [ ] Move runner into worker
 - [ ] Persist model_outputs
 - [ ] Persist card_payloads
 - [ ] Web renders stored card_payload
+- [x] Add cross-market orchestration payload (expression_choice) for NHL drivers
 
 ---
 
@@ -52,6 +55,7 @@ Choose one sport:
 ## Completion Criteria
 
 Migration complete when:
+
 - All ingestion + runners live in monorepo
 - Web renders only from DB
 - Legacy repos are read-only

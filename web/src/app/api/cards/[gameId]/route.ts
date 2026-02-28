@@ -31,7 +31,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { RESOURCE, initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { requireEntitlementForRequest } from '@/lib/auth/server';
 
 interface CardRow {
   id: string;
@@ -69,9 +70,17 @@ export async function GET(
   request: NextRequest,
   { params }: { params: { gameId: string } }
 ) {
-  let db: ReturnType<typeof getDatabase> | null = null;
   try {
     await initDb();
+
+    const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
+    if (!access.ok) {
+      return NextResponse.json(
+        { success: false, error: access.error },
+        { status: access.status }
+      );
+    }
+
     const { gameId } = await params;
     const { searchParams } = request.nextUrl;
     const cardType = searchParams.get('cardType') || searchParams.get('card_type');
@@ -88,7 +97,7 @@ export async function GET(
     }
     
     // Open database connection
-    db = getDatabase();
+    const db = getDatabase();
     
     const where: string[] = ['game_id = ?'];
     const paramsList: Array<string | number> = [gameId];
@@ -163,8 +172,6 @@ export async function GET(
       { status: 500 }
     );
   } finally {
-    if (db) {
-      closeDatabase();
-    }
+    closeDatabase();
   }
 }

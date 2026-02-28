@@ -35,8 +35,9 @@
  * }
  */
 
-import { NextResponse } from 'next/server';
-import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { NextRequest, NextResponse } from 'next/server';
+import { RESOURCE, initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { requireEntitlementForRequest } from '@/lib/auth/server';
 
 interface GameRow {
   id: string;
@@ -75,11 +76,19 @@ interface Play {
   edge: number | null;
 }
 
-export async function GET() {
-  let db: ReturnType<typeof getDatabase> | null = null;
+export async function GET(request: NextRequest) {
   try {
     await initDb();
-    db = getDatabase();
+
+    const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
+    if (!access.ok) {
+      return NextResponse.json(
+        { success: false, error: access.error },
+        { status: access.status }
+      );
+    }
+
+    const db = getDatabase();
 
     // Compute midnight America/New_York as a UTC string for the SQL param.
     // en-CA locale gives YYYY-MM-DD; shortOffset gives "GMT-5" / "GMT-4" (DST-aware).
@@ -246,8 +255,6 @@ export async function GET() {
       { status: 500 }
     );
   } finally {
-    if (db) {
-      closeDatabase();
-    }
+    closeDatabase();
   }
 }

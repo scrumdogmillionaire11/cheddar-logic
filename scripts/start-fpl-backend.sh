@@ -20,10 +20,13 @@ fi
 source venv/bin/activate
 
 # Install dependencies if needed
-if ! python -c "import fastapi" 2>/dev/null; then
+if ! python -c "import fastapi, pydantic_settings" 2>/dev/null; then
     echo "📦 Installing dependencies..."
     pip install -r config/requirements.txt
 fi
+
+# Ensure local package imports resolve
+export PYTHONPATH="$(pwd):$(pwd)/src"
 
 # Initialize database if needed
 if [ ! -f "db/fpl_sage.db" ]; then

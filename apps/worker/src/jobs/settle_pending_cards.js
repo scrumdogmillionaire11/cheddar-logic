@@ -29,6 +29,44 @@ const {
   withDb
 } = require('@cheddar-logic/data');
 
+function parseAmericanOdds(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.startsWith('+') ? trimmed.slice(1) : trimmed;
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function pickMoneylineOdds(payloadData, prediction) {
+  const oddsContext = payloadData?.odds_context || null;
+  const market = payloadData?.market || null;
+
+  const homeOdds = parseAmericanOdds(oddsContext?.h2h_home ?? oddsContext?.moneyline_home ?? null)
+    ?? parseAmericanOdds(market?.moneyline_home ?? null);
+  const awayOdds = parseAmericanOdds(oddsContext?.h2h_away ?? oddsContext?.moneyline_away ?? null)
+    ?? parseAmericanOdds(market?.moneyline_away ?? null);
+
+  if (prediction === 'HOME') return homeOdds;
+  if (prediction === 'AWAY') return awayOdds;
+  return null;
+}
+
+function computePnlUnits(result, odds) {
+  if (result === 'push') return 0.0;
+  if (result === 'loss') return -1.0;
+  if (result !== 'win') return null;
+  if (!Number.isFinite(odds) || odds === 0) return null;
+
+  if (odds > 0) {
+    return odds / 100;
+  }
+
+  return 100 / Math.abs(odds);
+}
+
 /**
  * Main job entrypoint
  * @param {object} options - Job options
@@ -116,28 +154,28 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         if (prediction === 'HOME') {
           if (homeScore > awayScore) {
             result = 'win';
-            pnlUnits = 0.909;
           } else if (homeScore < awayScore) {
             result = 'loss';
-            pnlUnits = -1.0;
           } else {
             result = 'push';
-            pnlUnits = 0.0;
           }
         } else if (prediction === 'AWAY') {
           if (awayScore > homeScore) {
             result = 'win';
-            pnlUnits = 0.909;
           } else if (awayScore < homeScore) {
             result = 'loss';
-            pnlUnits = -1.0;
           } else {
             result = 'push';
-            pnlUnits = 0.0;
           }
         } else {
           console.warn(`[SettleCards] Unknown prediction value "${prediction}" for card ${row.card_id} — skipping`);
           continue;
+        }
+
+        const odds = pickMoneylineOdds(payloadData, prediction);
+        pnlUnits = computePnlUnits(result, odds);
+        if (pnlUnits === null) {
+          console.warn(`[SettleCards] Missing/invalid moneyline odds for card ${row.card_id} — pnl_units will be null`);
         }
 
         // Prepare fresh statement per row — sql.js does not reliably support re-binding

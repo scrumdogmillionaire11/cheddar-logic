@@ -7,7 +7,7 @@
  * 3. Behavior is consistent across list and game-specific endpoints
  */
 
-const db = require('../../../packages/data/src/db.js');
+import db from '../../../packages/data/src/db.js';
 
 async function runTests() {
   console.log('🧪 Starting API Dedupe Behavior Tests...\n');

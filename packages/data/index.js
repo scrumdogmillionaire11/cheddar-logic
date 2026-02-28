@@ -8,6 +8,7 @@
 const db = require('./src/db');
 const { runMigrations } = require('./src/migrate');
 const { withDb } = require('./src/job-runtime');
+const auth = require('./src/auth');
 const { validateCardPayload } = require('./src/validators/card-payload');
 const { getTeamMetrics, getTeamMetricsWithGames, computeMetricsFromGames } = require('./src/team-metrics');
 const { enrichOddsSnapshotWithEspnMetrics, enrichOddsSnapshotsWithEspnMetrics } = require('./src/odds-enrichment');
@@ -85,6 +86,21 @@ module.exports = {
 
   // Validation
   validateCardPayload,
+
+  // Auth + entitlement helpers
+  USER_ROLE: auth.USER_ROLE,
+  USER_STATUS: auth.USER_STATUS,
+  SUBSCRIPTION_STATUS: auth.SUBSCRIPTION_STATUS,
+  RESOURCE: auth.RESOURCE,
+  normalizeEmail: auth.normalizeEmail,
+  hashTokenHmac: auth.hashTokenHmac,
+  timingSafeEqualHex: auth.timingSafeEqualHex,
+  randomToken: auth.randomToken,
+  addMsIso: auth.addMsIso,
+  parseFlags: auth.parseFlags,
+  hasEntitlement: auth.hasEntitlement,
+  createAccessToken: auth.createAccessToken,
+  verifySignedPayload: auth.verifySignedPayload,
 
   // ESPN team metrics
   getTeamMetrics,

@@ -35,7 +35,13 @@ const {
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
-const { getModel, computeNHLDriverCards } = require('../models');
+const {
+  getModel,
+  computeNHLDriverCards,
+  computeNHLMarketDecisions,
+  selectExpressionChoice,
+  buildMarketPayload
+} = require('../models');
 const {
   buildRecommendationFromPrediction,
   buildMatchup,
@@ -78,7 +84,8 @@ function buildDriverSummary(descriptor, weightMap) {
  * @param {object} oddsSnapshot
  * @returns {Array<object>} Array of card objects ready for insertCardPayload()
  */
-function generateNHLCards(gameId, driverDescriptors, oddsSnapshot) {
+function generateNHLCards(gameId, driverDescriptors, oddsSnapshot, marketPayload) {
+  const marketData = marketPayload || {};
   const now = new Date().toISOString();
   let expiresAt = null;
   if (oddsSnapshot?.game_time_utc) {
@@ -147,7 +154,8 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot) {
       meta: {
         inference_source: descriptor.inference_source,
         is_mock: descriptor.is_mock
-      }
+      },
+      ...marketData
     };
 
     return {
@@ -238,6 +246,10 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           // Compute per-driver card descriptors
           const driverCards = computeNHLDriverCards(gameId, oddsSnapshot);
 
+          const marketDecisions = computeNHLMarketDecisions(oddsSnapshot);
+          const expressionChoice = selectExpressionChoice(marketDecisions);
+          const marketPayload = buildMarketPayload({ decisions: marketDecisions, expressionChoice });
+
           if (driverCards.length === 0) {
             console.log(`  [skip] ${gameId}: No driver cards (all data missing)`);
             continue;
@@ -249,7 +261,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct);
           }
 
-          const cards = generateNHLCards(gameId, driverCards, oddsSnapshot);
+          const cards = generateNHLCards(gameId, driverCards, oddsSnapshot, marketPayload);
 
           for (const card of cards) {
             const validation = validateCardPayload(card.cardType, card.payloadData);

@@ -60,7 +60,7 @@ if [ "$SKIP_DB_SETUP" = false ]; then
     cd packages/data
     npm install
     npm run migrate
-    npm run seed:test-odds
+  echo "   Skipping seed:test-odds (disabled for shared DB safety)"
     cd ../..
 else
     echo "⏭️  Skipping database setup"

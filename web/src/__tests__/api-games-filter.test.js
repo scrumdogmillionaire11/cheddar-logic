@@ -8,7 +8,7 @@
  * 4. ET midnight computation is DST-aware and produces a valid UTC string
  */
 
-const db = require('../../../packages/data/src/db.js');
+import db from '../../../packages/data/src/db.js';
 
 // ---------------------------------------------------------------------------
 // Helper: same ET-midnight logic as the route
@@ -98,7 +98,6 @@ async function runTests() {
   // Clean up any leftover test data
   client.prepare(`DELETE FROM games WHERE game_id LIKE '${TEST_PREFIX}%'`).run();
 
-  const now = new Date();
   const etMidnight = new Date(midnightUtc.replace(' ', 'T') + 'Z');
 
   // Build test cases relative to ET midnight

@@ -135,18 +135,18 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
           <div className="grid gap-6 md:grid-cols-2">
             <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
               <div className="text-xs font-semibold uppercase text-teal">Captain</div>
-              <div className="mt-2 text-lg font-semibold">{(data.captain as any)?.name || "TBD"}</div>
-              <div className="text-sm text-cloud/60">{formatPts((data.captain as any)?.expected_pts)} pts</div>
-              {(data.captain as any)?.rationale && (
-                <p className="mt-2 text-xs text-cloud/60">{(data.captain as any).rationale}</p>
+              <div className="mt-2 text-lg font-semibold">{String(data.captain?.name ?? "TBD")}</div>
+              <div className="text-sm text-cloud/60">{formatPts(Number(data.captain?.expected_pts) || undefined)} pts</div>
+              {data.captain?.rationale && (
+                <p className="mt-2 text-xs text-cloud/60">{String(data.captain.rationale)}</p>
               )}
             </div>
             <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
               <div className="text-xs font-semibold uppercase text-cloud/60">Vice Captain</div>
-              <div className="mt-2 text-lg font-semibold">{(data.vice_captain as any)?.name || "TBD"}</div>
-              <div className="text-sm text-cloud/60">{formatPts((data.vice_captain as any)?.expected_pts)} pts</div>
-              {(data.vice_captain as any)?.rationale && (
-                <p className="mt-2 text-xs text-cloud/60">{(data.vice_captain as any).rationale}</p>
+              <div className="mt-2 text-lg font-semibold">{String(data.vice_captain?.name ?? "TBD")}</div>
+              <div className="text-sm text-cloud/60">{formatPts(Number(data.vice_captain?.expected_pts) || undefined)} pts</div>
+              {data.vice_captain?.rationale && (
+                <p className="mt-2 text-xs text-cloud/60">{String(data.vice_captain.rationale)}</p>
               )}
             </div>
           </div>
@@ -202,12 +202,12 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
       {data.chip_recommendation && (
         <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
           <h2 className="mb-6 text-2xl font-semibold">💎 Chip Strategy</h2>
-          <div className="text-lg font-semibold">{(data.chip_recommendation as any)?.recommendation || "Hold"}</div>
-          {(data.chip_recommendation as any)?.rationale && (
-            <p className="mt-2 text-sm text-cloud/70">{(data.chip_recommendation as any).rationale}</p>
+          <div className="text-lg font-semibold">{String(data.chip_recommendation?.recommendation ?? "Hold")}</div>
+          {data.chip_recommendation?.rationale && (
+            <p className="mt-2 text-sm text-cloud/70">{String(data.chip_recommendation.rationale)}</p>
           )}
-          {(data.chip_recommendation as any)?.timing && (
-            <p className="mt-2 text-xs text-cloud/60">Timing: {(data.chip_recommendation as any).timing}</p>
+          {data.chip_recommendation?.timing && (
+            <p className="mt-2 text-xs text-cloud/60">Timing: {String(data.chip_recommendation.timing)}</p>
           )}
           {data.available_chips.length > 0 && (
             <p className="mt-3 text-xs text-cloud/60">Available chips: {data.available_chips.join(" · ")}</p>
@@ -228,7 +228,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
             <ul className="space-y-2 text-sm text-cloud/70">
               {data.risk_scenarios.map((risk, idx) => (
                 <li key={idx} className="rounded-lg border border-white/10 bg-surface/50 px-3 py-2">
-                  {(risk as any).scenario || (risk as any).condition || "Risk scenario"}
+                  {String(risk.scenario || risk.condition || "Risk scenario")}
                 </li>
               ))}
             </ul>

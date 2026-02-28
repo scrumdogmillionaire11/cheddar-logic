@@ -2,6 +2,7 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,7 +10,14 @@
     "lint": "eslint",
     "test:dedupe": "node src/__tests__/api-dedupe.test.js",
     "test:api:nhl-contract": "node src/__tests__/api-nhl-payload-contract.test.js",
-    "test:games-filter": "node src/__tests__/api-games-filter.test.js"
+    "test:games-filter": "node src/__tests__/api-games-filter.test.js",
+    "test:filters": "node src/__tests__/game-card-filters.test.js",
+    "test:card-decision": "node src/__tests__/game-card-decision.test.js",
+    "test:filters:play-first": "node src/__tests__/game-card-filters-play-first.test.js",
+    "test:transform:sport": "node src/__tests__/game-card-transform-sport.test.js",
+    "test:transform:truth-price": "node src/__tests__/game-card-transform-truth-price.test.js",
+    "test:auth:refresh": "node src/__tests__/auth-refresh-flow.test.js",
+    "test:auth": "node src/__tests__/auth-refresh-flow.test.js"
   },
   "dependencies": {
     "@cheddar-logic/data": "file:../packages/data",
