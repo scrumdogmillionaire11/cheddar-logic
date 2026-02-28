@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-02-27 — Quick task 4 complete (All games from odds API display on /cards page via new /api/games route)
+**Last activity:** 2026-02-27 — Quick task 5 complete (Driver model jobs populate card_payloads; /api/games returns plays[]; /cards shows Driver Plays section with tier/prediction/confidence/reasoning)
 
 ---
 
@@ -129,6 +129,9 @@ Prevents old game IDs, stale model runs, phantom T-minus windows.
 - T-minus logic works correctly
 - No adapter DB writes
 - No fake seed dependency
+- Driver model jobs produce card_payloads (NHL: 85 cards, NBA: 4 cards)
+- /api/games returns plays[] per game from card_payloads
+- /cards page shows Driver Plays with tier badges, prediction, confidence, reasoning
 
 ---
 
@@ -188,3 +191,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 2 | NHL drivers fanout: per-driver cards, welcomeHome meta-driver, validator schema   | 2026-02-27 | ad0d4ce | .planning/quick/2-convert-nhl-drivers-into-individual-payl/  |
 | 3 | Wire /fpl page to cheddar-fpl-sage: Next.js rewrites proxy + relative API URL    | 2026-02-27 | 932cbff | .planning/quick/3-wire-cheddar-fpl-sage-frontend-to-localh/  |
 | 4 | Show all odds-API games on /cards: new /api/games route (CTE+LEFT JOIN) + /cards redesign    | 2026-02-27 | e89ec1c | .planning/quick/4-ensure-all-games-from-odds-api-display-a/  |
+| 5 | Apply driver logic: model jobs -> card_payloads; /api/games returns plays[]       | 2026-02-27 | 56ca96b | .planning/quick/5-apply-driver-logic-to-games-from-odds-ap/  |
