@@ -9,7 +9,7 @@ export default function Home() {
       <main className="w-full max-w-2xl space-y-12 text-center">
         <div className="space-y-4">
           <h1 className="font-display text-5xl font-semibold text-cloud sm:text-6xl">
-            Cheddar Logic
+            cheddar logic
           </h1>
           <p className="text-lg text-cloud/80">
             Probabilistic sports analytics and insights
@@ -21,14 +21,21 @@ export default function Home() {
             href="/fpl"
             className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
           >
-            FPL Team Check
+            🧙‍♂️ FPL SAGE 🧙‍♂️
+          </Link>
+
+          <Link
+            href="/cards"
+            className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
+          >
+            🧀 The Cheddar Board 🧀
           </Link>
 
           <Link
             href="/education"
             className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
           >
-            Educational Materials
+            📓 Educational Materials 📓
           </Link>
 
           <a
@@ -37,14 +44,14 @@ export default function Home() {
             rel="noreferrer noopener"
             className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
           >
-            Join Discord
+            👾 Join Discord 👾
           </a>
 
           <Link
             href="/admin"
             className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
           >
-            Admin
+            🛠️ Admin 🛠️
           </Link>
         </nav>
 

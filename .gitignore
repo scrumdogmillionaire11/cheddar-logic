@@ -91,3 +91,14 @@ temp/
 .github/
 .vscode/
 web-bundles/
+
+# Planning documents
+.planning/*
+
+# Duplicate/temporary files
+*copy.*
+*backup.*
+
+# Test/debug scripts (loose)
+test_*.js
+debug_*.js

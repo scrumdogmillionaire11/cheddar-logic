@@ -1,0 +1,16 @@
+{
+  "name": "@cheddar-logic/adapters",
+  "version": "1.0.0",
+  "description": "Adapters for external data sources (odds, injuries, splits) that persist to cheddar-logic DB",
+  "main": "index.js",
+  "keywords": [
+    "adapters",
+    "odds",
+    "integration"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "@cheddar-logic/data": "file:../data",
+    "uuid": "^9.0.0"
+  }
+}

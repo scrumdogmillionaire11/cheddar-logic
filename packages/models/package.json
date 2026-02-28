@@ -1,0 +1,13 @@
+{
+  "name": "@cheddar-logic/models",
+  "version": "1.0.0",
+  "description": "Shared card model contract and edge calculations",
+  "main": "src/index.js",
+  "keywords": [
+    "cards",
+    "models",
+    "edge",
+    "contracts"
+  ],
+  "license": "ISC"
+}

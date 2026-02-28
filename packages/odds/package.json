@@ -1,0 +1,17 @@
+{
+  "name": "@cheddar-logic/odds",
+  "version": "1.0.0",
+  "description": "Odds fetching and normalization layer for cheddar-logic",
+  "main": "src/index.js",
+  "keywords": [
+    "odds",
+    "fetching",
+    "normalization"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^0.27.2",
+    "dotenv": "^16.0.3",
+    "luxon": "^3.3.0"
+  }
+}

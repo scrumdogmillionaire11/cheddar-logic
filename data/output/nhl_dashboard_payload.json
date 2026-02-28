@@ -1,0 +1,200 @@
+{
+  "sport": "NHL",
+  "version": "3.2.0",
+  "generatedAt": "2026-02-27T21:05:10.342447Z",
+  "modelHealth": {
+    "status": "healthy",
+    "overallHitRate": 0.0,
+    "last10HitRate": 0.0,
+    "last20HitRate": 0.0,
+    "totalPredictions": 0,
+    "wins": 0,
+    "losses": 0,
+    "pushes": 0,
+    "currentStreak": "N0",
+    "roi": 0.0,
+    "lastUpdated": null,
+    "degradationSignals": [],
+    "warnings": [],
+    "sog": {
+      "status": "healthy",
+      "overallHitRate": 0.0,
+      "last10HitRate": 0.0,
+      "last20HitRate": 0.0,
+      "totalPredictions": 27,
+      "wins": 0,
+      "losses": 0,
+      "pushes": 0,
+      "currentStreak": "N0",
+      "roi": 0.0,
+      "rmse": 0.0,
+      "lastUpdated": null,
+      "degradationSignals": [],
+      "warnings": [
+        "DATA_QUALITY: 4 opportunities with quality score < 0.7"
+      ]
+    }
+  },
+  "segmentPerformance": {
+    "byTotalsRange": {},
+    "byDriver": {},
+    "bestActiveSignal": null
+  },
+  "predictions": [],
+  "predictions1P": [],
+  "predictionsShots": [
+    {
+      "nhl_game_id": "2025020933",
+      "player_id": 8476885,
+      "player": "Jacob Trouba",
+      "team": "ANA",
+      "model_projection": 4.45,
+      "market_line": 3.5,
+      "edge": 0.95,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    },
+    {
+      "nhl_game_id": "2025020933",
+      "player_id": 8478398,
+      "player": "Kyle Connor",
+      "team": "WPG",
+      "model_projection": 4.1,
+      "market_line": 3.5,
+      "edge": 0.6,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    },
+    {
+      "nhl_game_id": "2025020930",
+      "player_id": 8477933,
+      "player": "Sam Reinhart",
+      "team": "FLA",
+      "model_projection": 3.41,
+      "market_line": 2.5,
+      "edge": 0.91,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    },
+    {
+      "nhl_game_id": "2025020932",
+      "player_id": 8481557,
+      "player": "Matt Boldy",
+      "team": "MIN",
+      "model_projection": 2.6,
+      "market_line": 1.5,
+      "edge": 1.1,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    }
+  ],
+  "fullGameTotal": [],
+  "full_game_total": [],
+  "firstPeriodTotal": [],
+  "first_period_total": [],
+  "1p_total": [],
+  "shotPlays": [
+    {
+      "nhl_game_id": "2025020933",
+      "player_id": 8476885,
+      "player": "Jacob Trouba",
+      "team": "ANA",
+      "model_projection": 4.45,
+      "market_line": 3.5,
+      "edge": 0.95,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    },
+    {
+      "nhl_game_id": "2025020933",
+      "player_id": 8478398,
+      "player": "Kyle Connor",
+      "team": "WPG",
+      "model_projection": 4.1,
+      "market_line": 3.5,
+      "edge": 0.6,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    },
+    {
+      "nhl_game_id": "2025020930",
+      "player_id": 8477933,
+      "player": "Sam Reinhart",
+      "team": "FLA",
+      "model_projection": 3.41,
+      "market_line": 2.5,
+      "edge": 0.91,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    },
+    {
+      "nhl_game_id": "2025020932",
+      "player_id": 8481557,
+      "player": "Matt Boldy",
+      "team": "MIN",
+      "model_projection": 2.6,
+      "market_line": 1.5,
+      "edge": 1.1,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    }
+  ],
+  "playShots": [
+    {
+      "nhl_game_id": "2025020933",
+      "player_id": 8476885,
+      "player": "Jacob Trouba",
+      "team": "ANA",
+      "model_projection": 4.45,
+      "market_line": 3.5,
+      "edge": 0.95,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    },
+    {
+      "nhl_game_id": "2025020933",
+      "player_id": 8478398,
+      "player": "Kyle Connor",
+      "team": "WPG",
+      "model_projection": 4.1,
+      "market_line": 3.5,
+      "edge": 0.6,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    },
+    {
+      "nhl_game_id": "2025020930",
+      "player_id": 8477933,
+      "player": "Sam Reinhart",
+      "team": "FLA",
+      "model_projection": 3.41,
+      "market_line": 2.5,
+      "edge": 0.91,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    },
+    {
+      "nhl_game_id": "2025020932",
+      "player_id": 8481557,
+      "player": "Matt Boldy",
+      "team": "MIN",
+      "model_projection": 2.6,
+      "market_line": 1.5,
+      "edge": 1.1,
+      "direction": "OVER",
+      "confidence": "SIGNIFICANT",
+      "typical_error": 0.0
+    }
+  ]
+}

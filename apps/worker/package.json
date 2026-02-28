@@ -1,0 +1,48 @@
+{
+  "name": "cheddar-worker",
+  "version": "1.0.0",
+  "description": "Worker jobs for cheddar-logic: odds fetching, model runs, etc.",
+  "main": "src/index.js",
+  "scripts": {
+    "job:pull-odds": "node src/jobs/pull_odds_hourly.js",
+    "job:pull-odds:test": "node -e \"require('./src/jobs/pull_odds_hourly.js').pullOddsHourly().then(console.log).catch(console.error)\"",
+    "job:run-nhl-model": "node src/jobs/run_nhl_model.js",
+    "job:run-nhl-model:test": "node -e \"require('./src/jobs/run_nhl_model.js').runNHLModel().then(console.log).catch(console.error)\"",
+    "job:run-nba-model": "node src/jobs/run_nba_model.js",
+    "job:run-nba-model:test": "node -e \"require('./src/jobs/run_nba_model.js').runNBAModel().then(console.log).catch(console.error)\"",
+    "job:run-fpl-model": "node src/jobs/run_fpl_model.js",
+    "job:run-fpl-model:test": "node -e \"require('./src/jobs/run_fpl_model.js').runFPLModel().then(console.log).catch(console.error)\"",
+    "job:run-nfl-model": "node src/jobs/run_nfl_model.js",
+    "job:run-nfl-model:test": "node -e \"require('./src/jobs/run_nfl_model.js').runNFLModel().then(console.log).catch(console.error)\"",
+    "job:run-mlb-model": "node src/jobs/run_mlb_model.js",
+    "job:run-mlb-model:test": "node -e \"require('./src/jobs/run_mlb_model.js').runMLBModel().then(console.log).catch(console.error)\"",
+    "job:run-soccer-model": "node src/jobs/run_soccer_model.js",
+    "job:run-soccer-model:test": "node -e \"require('./src/jobs/run_soccer_model.js').runSoccerModel().then(console.log).catch(console.error)\"",
+    "job:run-ncaam-model": "node src/jobs/run_ncaam_model.js",
+    "job:run-ncaam-model:test": "node -e \"require('./src/jobs/run_ncaam_model.js').runNCAAMModel().then(console.log).catch(console.error)\"",
+    "scheduler": "node src/schedulers/main.js",
+    "scheduler:dev": "ENABLE_ODDS_PULL=true ENABLE_NHL_MODEL=true node src/schedulers/main.js",
+    "test": "jest",
+    "test:pipeline:nhl": "jest src/jobs/__tests__/pipeline_nhl_idempotency.test.js",
+    "test:scheduler:windows": "node src/__tests__/scheduler-windows.test.js",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [
+    "worker",
+    "jobs",
+    "scheduler"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "@cheddar-logic/adapters": "file:../../packages/adapters",
+    "@cheddar-logic/data": "file:../../packages/data",
+    "@cheddar-logic/models": "file:../../packages/models",
+    "@cheddar-logic/odds": "file:../../packages/odds",
+    "luxon": "^3.7.2",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}

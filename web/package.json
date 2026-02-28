@@ -6,10 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:dedupe": "node src/__tests__/api-dedupe.test.js",
+    "test:api:nhl-contract": "node src/__tests__/api-nhl-payload-contract.test.js"
   },
   "dependencies": {
-    "next": "16.1.3",
+    "@cheddar-logic/data": "file:../packages/data",
+    "next": "^16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },

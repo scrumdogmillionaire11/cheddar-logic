@@ -6,7 +6,9 @@
 'use strict';
 
 jest.mock('@cheddar-logic/odds', () => ({
-  fetchOdds: jest.fn()
+  fetchOdds: jest.fn(),
+  getActiveSports: jest.fn(() => ['NHL']),
+  getTokensForFetch: jest.fn(() => 2)
 }));
 
 jest.mock('@cheddar-logic/data', () => ({

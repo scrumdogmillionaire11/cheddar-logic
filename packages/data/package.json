@@ -1,0 +1,31 @@
+{
+  "name": "@cheddar-logic/data",
+  "version": "1.0.0",
+  "description": "Shared data layer: database schema, migrations, and access patterns",
+  "main": "index.js",
+  "scripts": {
+    "migrate": "node src/migrate.js",
+    "db:init": "node src/db-init.js",
+    "db:reset": "node src/db-reset.js",
+    "seed:test-odds": "node src/seed-test-odds.js",
+    "check:duplicates": "node src/check-duplicates.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [
+    "database",
+    "schema",
+    "migrations"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.3.0",
+    "sql.js": "^1.14.0",
+    "uuid": "^9.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}

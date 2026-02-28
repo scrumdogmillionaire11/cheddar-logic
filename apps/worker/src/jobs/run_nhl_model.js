@@ -30,11 +30,45 @@ const {
   prepareModelAndCardWrite,
   validateCardPayload,
   shouldRunJobKey,
-  withDb
+  withDb,
+  enrichOddsSnapshotWithEspnMetrics
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
 const { getModel, computeNHLDriverCards } = require('../models');
+const {
+  buildRecommendationFromPrediction,
+  buildMatchup,
+  formatStartTimeLocal,
+  formatCountdown,
+  buildMarketFromOdds
+} = require('@cheddar-logic/models');
+
+const NHL_DRIVER_WEIGHTS = {
+  baseProjection: 0.30,
+  restAdvantage: 0.14,
+  goalie: 0.22,
+  scoringEnvironment: 0.12
+};
+
+function buildDriverSummary(descriptor, weightMap) {
+  const weight = descriptor.driverWeight ?? weightMap[descriptor.driverKey] ?? 1;
+  const score = descriptor.driverScore ?? null;
+  const impact = score !== null ? Number(((score - 0.5) * weight).toFixed(3)) : null;
+
+  return {
+    weights: [
+      {
+        driver: descriptor.driverKey,
+        weight,
+        score,
+        impact,
+        status: descriptor.driverStatus ?? null
+      }
+    ],
+    impact_note: 'Impact = (score - 0.5) * weight. Positive favors HOME, negative favors AWAY.'
+  };
+}
 
 /**
  * Generate insertable card objects from driver descriptors.
@@ -54,10 +88,39 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot) {
 
   return driverDescriptors.map(descriptor => {
     const cardId = `card-nhl-${descriptor.driverKey}-${gameId}-${uuidV4().slice(0, 8)}`;
+    const recommendation = buildRecommendationFromPrediction({
+      prediction: descriptor.prediction,
+      recommendedBetType: 'moneyline'
+    });
+    const matchup = buildMatchup(oddsSnapshot?.home_team, oddsSnapshot?.away_team);
+    const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
+    const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
+    const market = buildMarketFromOdds(oddsSnapshot);
     const payloadData = {
       game_id: gameId,
       sport: 'NHL',
       model_version: 'nhl-drivers-v1',
+      home_team: oddsSnapshot?.home_team ?? null,
+      away_team: oddsSnapshot?.away_team ?? null,
+      matchup,
+      start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+      start_time_local: startTimeLocal,
+      timezone,
+      countdown,
+      recommendation: {
+        type: recommendation.type,
+        text: recommendation.text,
+        pass_reason: recommendation.pass_reason
+      },
+      projection: {
+        total: null,
+        margin_home: null,
+        win_prob_home: null
+      },
+      market,
+      edge: null,
+      confidence_pct: Math.round(descriptor.confidence * 100),
+      drivers_active: [descriptor.driverKey],
       prediction: descriptor.prediction,
       confidence: descriptor.confidence,
       tier: descriptor.tier,
@@ -80,6 +143,7 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot) {
         status: descriptor.driverStatus,
         inputs: descriptor.driverInputs
       },
+      driver_summary: buildDriverSummary(descriptor, NHL_DRIVER_WEIGHTS),
       meta: {
         inference_source: descriptor.inference_source,
         is_mock: descriptor.is_mock
@@ -166,7 +230,10 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
       // Process each game
       for (const gameId of gameIds) {
         try {
-          const oddsSnapshot = gameOdds[gameId];
+          let oddsSnapshot = gameOdds[gameId];
+
+          // Enrich with ESPN team metrics
+          oddsSnapshot = await enrichOddsSnapshotWithEspnMetrics(oddsSnapshot);
 
           // Compute per-driver card descriptors
           const driverCards = computeNHLDriverCards(gameId, oddsSnapshot);

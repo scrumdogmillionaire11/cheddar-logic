@@ -3,11 +3,35 @@
  * Communicates with the FastAPI backend for FPL analysis
  */
 
-const FPL_API_BASE_URL = process.env.NEXT_PUBLIC_FPL_API_URL || '/api/v1';
+const FPL_API_BASE_URL =
+  process.env.NEXT_PUBLIC_FPL_API_URL ||
+  (process.env.NODE_ENV === "development" ? "http://localhost:8000/api/v1" : "/api/v1");
 
 export interface AnalyzeRequest {
   team_id: number;
   gameweek?: number;
+  available_chips?: string[];
+  free_transfers?: number;
+  risk_posture?: "conservative" | "balanced" | "aggressive";
+  thresholds?: {
+    transferGainFloor?: number;
+    hitNetFloor?: number;
+    maxHitsPerGW?: number;
+    chipDeployBoost?: number;
+    captainDiffMaxOwnership?: number;
+    bbMinBenchXPts?: number;
+    tcRequiresDGW?: boolean;
+  };
+  manual_transfers?: Array<{
+    player_out: string;
+    player_in: string;
+  }>;
+  injury_overrides?: Array<{
+    player_name: string;
+    status: "FIT" | "DOUBTFUL" | "OUT";
+    chance?: number;
+  }>;
+  force_refresh?: boolean;
 }
 
 export interface AnalyzeResponse {
@@ -55,39 +79,106 @@ export interface ChipAdvice {
   timing?: string;
 }
 
+export interface PlayerProjection {
+  name: string;
+  team: string;
+  position: string;
+  price?: number;
+  expected_pts?: number;
+  ownership?: number;
+  form?: number;
+  fixture_difficulty?: number;
+  injury_status?: string;
+  playing_chance?: number;
+  reasoning?: string;
+  is_new?: boolean;
+}
+
+export interface TransferPlan {
+  out: string;
+  in: string;
+  hit_cost: number;
+  net_cost: number;
+  delta_pts_4gw?: number;
+  delta_pts_6gw?: number;
+  reason: string;
+  confidence?: string;
+  confidence_context?: string;
+  urgency?: string;
+  is_marginal?: boolean;
+  alternatives?: Array<{
+    name: string;
+    price: number;
+    points: number;
+    strategy: "VALUE" | "PREMIUM" | "BALANCED";
+  }>;
+}
+
+export interface TransferPlans {
+  primary?: TransferPlan;
+  secondary?: TransferPlan;
+  additional?: TransferPlan[];
+  no_transfer_reason?: string;
+}
+
+export interface SquadHealth {
+  total_players: number;
+  available: number;
+  injured: number;
+  doubtful: number;
+  health_pct: number;
+  critical_positions: string[];
+}
+
+export interface DetailedAnalysisResponse {
+  team_name: string;
+  manager_name: string;
+  current_gw?: number | null;
+  overall_rank?: number | null;
+  overall_points?: number | null;
+  primary_decision: string;
+  confidence: "HIGH" | "MEDIUM" | "LOW" | string;
+  reasoning: string;
+  transfer_recommendations: Array<Record<string, unknown>>;
+  transfer_plans?: TransferPlans | null;
+  captain?: Record<string, unknown> | null;
+  vice_captain?: Record<string, unknown> | null;
+  captain_delta?: { delta_pts?: number; delta_pts_4gw?: number } | null;
+  starting_xi_projections: PlayerProjection[];
+  bench_projections: PlayerProjection[];
+  projected_xi?: PlayerProjection[] | null;
+  projected_bench?: PlayerProjection[] | null;
+  transfer_targets?: PlayerProjection[] | null;
+  risk_scenarios: Array<Record<string, unknown>>;
+  chip_recommendation?: Record<string, unknown> | null;
+  available_chips: string[];
+  squad_health?: SquadHealth | null;
+}
+
 export interface DashboardData {
-  gameweek: {
-    current: number;
-    season: string;
-    deadline?: string;
+  analysis_id: string;
+  team_id: number;
+  status: string;
+  gameweek: number | null;
+  quick_actions: Array<{
+    action: string;
+    priority?: string;
+    from_player?: string;
+    to_player?: string;
+    gain?: number;
+  }>;
+  captain?: {
+    player?: string | null;
+    expected_points?: number | null;
+    confidence?: number;
   };
-  my_team?: {
-    starting_11: PlayerData[];
-    bench: PlayerData[];
-    value?: number;
-    bank?: number;
-    transfers_available?: number;
+  chips?: {
+    bench_boost?: string;
+    triple_captain?: string;
+    free_hit?: string;
   };
-  weaknesses: WeaknessData[];
-  transfer_targets: TransferTarget[];
-  chip_advice: ChipAdvice[];
-  captain_advice?: {
-    captain: string;
-    vice_captain: string;
-    reasoning: string;
-  };
-  decision_summary?: {
-    decision: string;
-    reasoning: string;
-    status: string;
-    confidence: string;
-  };
-  metadata: {
-    analysis_id: string;
-    generated_at: string;
-    analysis_timestamp: string;
-    run_id: string;
-  };
+  health_score?: number;
+  key_risks?: string[];
 }
 
 export interface AnalysisStatusResponse {
@@ -135,7 +226,7 @@ export async function getAnalysisStatus(analysisId: string): Promise<AnalysisSta
  * Get dashboard data for a completed analysis
  */
 export async function getDashboardData(analysisId: string): Promise<DashboardData> {
-  const response = await fetch(`${FPL_API_BASE_URL}/dashboard/${analysisId}`);
+  const response = await fetch(`${FPL_API_BASE_URL}/analyze/${analysisId}/dashboard`);
 
   if (!response.ok) {
     if (response.status === 202) {
@@ -143,6 +234,30 @@ export async function getDashboardData(analysisId: string): Promise<DashboardDat
     }
     const error = await response.json();
     throw new Error(error.detail || 'Failed to fetch dashboard data');
+  }
+
+  const data = await response.json();
+  
+  // Backend may return 200 with status="analyzing" instead of 202
+  if (data.status === 'analyzing' || data.status === 'queued') {
+    throw new Error('STILL_RUNNING');
+  }
+  
+  return data;
+}
+
+/**
+ * Get detailed projections for a completed analysis
+ */
+export async function getDetailedProjections(analysisId: string): Promise<DetailedAnalysisResponse> {
+  const response = await fetch(`${FPL_API_BASE_URL}/analyze/${analysisId}/projections`);
+
+  if (!response.ok) {
+    if (response.status === 425 || response.status === 202) {
+      throw new Error('STILL_RUNNING');
+    }
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to fetch detailed projections');
   }
 
   return response.json();
@@ -163,6 +278,30 @@ export async function pollForDashboard(
     } catch (error) {
       if (error instanceof Error && error.message === 'STILL_RUNNING') {
         // Still running, wait and try again
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error('Analysis timed out. Please try again.');
+}
+
+/**
+ * Poll for detailed projections
+ */
+export async function pollForDetailedProjections(
+  analysisId: string,
+  maxAttempts = 60,
+  intervalMs = 2000
+): Promise<DetailedAnalysisResponse> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const data = await getDetailedProjections(analysisId);
+      return data;
+    } catch (error) {
+      if (error instanceof Error && error.message === 'STILL_RUNNING') {
         await new Promise(resolve => setTimeout(resolve, intervalMs));
         continue;
       }

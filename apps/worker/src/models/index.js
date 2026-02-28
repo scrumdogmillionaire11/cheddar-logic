@@ -24,6 +24,8 @@
 
 const http = require('http');
 const https = require('https');
+const { projectNBA, projectNCAAM, projectNHL } = require('./projections');
+const { generateWelcomeHomeCard } = require('./welcome-home-v2');
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -196,200 +198,162 @@ function computeNHLDrivers(gameId, oddsSnapshot) {
  * @returns {Array<object>} Array of card descriptor objects
  */
 function computeNHLDriverCards(gameId, oddsSnapshot) {
-  const drivers = computeNHLDrivers(gameId, oddsSnapshot).drivers;
-
-  function direction(score) {
-    if (score > 0.52) return 'HOME';
-    if (score < 0.48) return 'AWAY';
-    return 'NEUTRAL';
-  }
+  const raw = parseRawData(oddsSnapshot?.raw_data);
+  const total = toNumber(oddsSnapshot?.total);
 
   const descriptors = [];
 
-  // --- goalie ---
-  {
-    const d = drivers.goalie;
-    const dir = direction(d.score);
-    const conf = clamp(0.65 + Math.abs(d.score - 0.5) * 0.4, 0.65, 0.85);
-    descriptors.push({
-      cardType: 'nhl-goalie',
-      cardTitle: `NHL Goalie Edge: ${dir}`,
-      confidence: conf,
-      tier: determineTier(conf),
-      prediction: dir,
-      reasoning: `GSaX goalie tier delta favors ${dir} (delta: ${d.inputs.delta != null ? d.inputs.delta.toFixed(2) : 'n/a'})`,
-      ev_threshold_passed: conf > 0.60,
-      driverKey: 'goalie',
-      driverInputs: d.inputs,
-      driverScore: d.score,
-      driverStatus: d.status,
-      inference_source: 'driver',
-      is_mock: true
-    });
-  }
+  // Extract ESPN-enriched metrics (for future integration with advanced stats)
+  const goalsForHome = toNumber(raw?.espn_metrics?.home?.metrics?.avgGoalsFor ?? raw?.goals_for_home ?? null);
+  const goalsForAway = toNumber(raw?.espn_metrics?.away?.metrics?.avgGoalsFor ?? raw?.goals_for_away ?? null);
+  const goalsAgainstHome = toNumber(raw?.espn_metrics?.home?.metrics?.avgGoalsAgainst ?? raw?.goals_against_home ?? null);
+  const goalsAgainstAway = toNumber(raw?.espn_metrics?.away?.metrics?.avgGoalsAgainst ?? raw?.goals_against_away ?? null);
+  const restDaysHome = toNumber(raw?.espn_metrics?.home?.metrics?.restDays ?? raw?.rest_days_home ?? null);
+  const restDaysAway = toNumber(raw?.espn_metrics?.away?.metrics?.restDays ?? raw?.rest_days_away ?? null);
 
-  // --- specialTeams ---
-  {
-    const d = drivers.specialTeams;
-    const dir = direction(d.score);
-    const conf = clamp(0.60 + Math.abs(d.score - 0.5) * 0.2, 0.60, 0.70);
-    descriptors.push({
-      cardType: 'nhl-special-teams',
-      cardTitle: `NHL Special Teams Mismatch: ${dir}`,
-      confidence: conf,
-      tier: determineTier(conf),
-      prediction: dir,
-      reasoning: `PP/PK composite mismatch favors ${dir} (${d.inputs.delta != null ? d.inputs.delta.toFixed(1) : 'n/a'} pct-pt edge)`,
-      ev_threshold_passed: conf > 0.60,
-      driverKey: 'specialTeams',
-      driverInputs: d.inputs,
-      driverScore: d.score,
-      driverStatus: d.status,
-      inference_source: 'driver',
-      is_mock: true
-    });
-  }
+  const goalieHomeGsax = toNumber(
+    raw?.goalie_home_gsax ?? raw?.goalie?.home?.gsax ?? raw?.goalies?.home?.gsax
+  );
+  const goalieAwayGsax = toNumber(
+    raw?.goalie_away_gsax ?? raw?.goalie?.away?.gsax ?? raw?.goalies?.away?.gsax
+  );
+  const homeGoalieConfirmed = goalieHomeGsax !== null && goalieHomeGsax !== undefined;
+  const awayGoalieConfirmed = goalieAwayGsax !== null && goalieAwayGsax !== undefined;
 
-  // --- shotEnvironment ---
-  {
-    const d = drivers.shotEnvironment;
-    const dir = direction(d.score);
-    const conf = clamp(0.60 + Math.abs(d.score - 0.5) * 0.3, 0.60, 0.75);
-    descriptors.push({
-      cardType: 'nhl-shot-environment',
-      cardTitle: `NHL Shot Environment: ${dir}`,
-      confidence: conf,
-      tier: determineTier(conf),
-      prediction: dir,
-      reasoning: `xGF% 5v5 shot quality profile favors ${dir} (delta: ${d.inputs.delta != null ? d.inputs.delta.toFixed(1) : 'n/a'} pct)`,
-      ev_threshold_passed: conf > 0.60,
-      driverKey: 'shotEnvironment',
-      driverInputs: d.inputs,
-      driverScore: d.score,
-      driverStatus: d.status,
-      inference_source: 'driver',
-      is_mock: true
-    });
-  }
+  // --- Base Projection Driver (Real Formula with Goalie Adjustment) ---
+  if (goalsForHome && goalsForAway && goalsAgainstHome && goalsAgainstAway) {
+    const projection = projectNHL(
+      goalsForHome, goalsAgainstHome,
+      goalsForAway, goalsAgainstAway,
+      homeGoalieConfirmed, awayGoalieConfirmed
+    );
 
-  // --- emptyNet (skip when missing) ---
-  {
-    const d = drivers.emptyNet;
-    if (d.status !== 'missing') {
-      const dir = direction(d.score);
-      const conf = clamp(0.58 + Math.abs(d.score - 0.5) * 0.3, 0.58, 0.72);
+    if (projection.homeProjected && projection.awayProjected) {
+      const projectedMargin = projection.homeProjected - projection.awayProjected;
+      
       descriptors.push({
-        cardType: 'nhl-empty-net',
-        cardTitle: `NHL Empty Net Tendencies: ${dir}`,
-        confidence: conf,
-        tier: determineTier(conf),
-        prediction: dir,
-        reasoning: `Coach goalie-pull timing edge favors ${dir}`,
-        ev_threshold_passed: conf > 0.60,
-        driverKey: 'emptyNet',
-        driverInputs: d.inputs,
-        driverScore: d.score,
-        driverStatus: d.status,
+        cardType: 'nhl-base-projection',
+        cardTitle: `NHL Projection: ${projectedMargin > 0 ? 'HOME' : 'AWAY'} ${Math.abs(projectedMargin).toFixed(2)} Goals`,
+        confidence: projection.confidence,
+        tier: determineTier(projection.confidence),
+        prediction: projectedMargin > 0 ? 'HOME' : 'AWAY',
+        reasoning: `Base projection: ${projection.homeProjected.toFixed(2)} vs ${projection.awayProjected.toFixed(2)} goals (${homeGoalieConfirmed ? 'confirmed' : 'unconfirmed'} goalies)`,
+        ev_threshold_passed: projection.confidence > 0.60,
+        driverKey: 'baseProjection',
+        driverInputs: {
+          home_goals_for: goalsForHome,
+          away_goals_for: goalsForAway,
+          home_goals_against: goalsAgainstHome,
+          away_goals_against: goalsAgainstAway,
+          home_goalie_confirmed: homeGoalieConfirmed,
+          away_goalie_confirmed: awayGoalieConfirmed,
+          projected_margin: projectedMargin
+        },
+        driverScore: clamp((projectedMargin + 2) / 4, 0, 1),  // Normalize
+        driverStatus: 'ok',
         inference_source: 'driver',
-        is_mock: true
+        is_mock: false,
+        projectionDetails: {
+          homeProjected: projection.homeProjected,
+          awayProjected: projection.awayProjected,
+          totalProjected: projection.totalProjected,
+          goalieConfirmedPenalty: projection.goalieConfirmedPenalty
+        }
       });
     }
   }
 
-  // --- totalFragility (always NEUTRAL) ---
-  {
-    const d = drivers.totalFragility;
-    const conf = clamp(0.58 + d.score * 0.2, 0.58, 0.78);
-    descriptors.push({
-      cardType: 'nhl-total-fragility',
-      cardTitle: 'NHL Total Fragility',
-      confidence: conf,
-      tier: determineTier(conf),
-      prediction: 'NEUTRAL',
-      reasoning: `Total near key number ${d.inputs.total} (distance: ${d.inputs.nearest_key_number_distance != null ? d.inputs.nearest_key_number_distance.toFixed(2) : 'n/a'} from 5.5/6.5/7.5)`,
-      ev_threshold_passed: conf > 0.60,
-      driverKey: 'totalFragility',
-      driverInputs: d.inputs,
-      driverScore: d.score,
-      driverStatus: d.status,
-      inference_source: 'driver',
-      is_mock: true
-    });
-  }
+  // --- Rest Advantage Driver (NHL-specific: smaller penalties than NBA) ---
+  if (restDaysHome !== null && restDaysAway !== null) {
+    const homeB2B = restDaysHome === 0;
+    const awayB2B = restDaysAway === 0;
 
-  // --- pdoRegression ---
-  {
-    const d = drivers.pdoRegression;
-    const dir = direction(d.score);
-    const conf = clamp(0.70 + Math.abs(d.score - 0.5) * 0.3, 0.70, 0.85);
-    descriptors.push({
-      cardType: 'nhl-pdo-regression',
-      cardTitle: `NHL PDO Regression Signal: ${dir}`,
-      confidence: conf,
-      tier: determineTier(conf),
-      prediction: dir,
-      reasoning: `PDO imbalance (delta: ${d.inputs.delta != null ? d.inputs.delta.toFixed(3) : 'n/a'}) suggests regression toward ${dir}`,
-      ev_threshold_passed: conf > 0.60,
-      driverKey: 'pdoRegression',
-      driverInputs: d.inputs,
-      driverScore: d.score,
-      driverStatus: d.status,
-      inference_source: 'driver',
-      is_mock: true
-    });
-  }
+    if (homeB2B || awayB2B) {
+      let prediction, confidence, reasoning;
 
-  // --- welcomeHome (global meta-driver: fade of the home team) ---
-  // Fires AWAY when market over-prices home advantage; skipped when no edge.
-  // h2h odds are decimal (e.g. 1.85 = home fav, 2.10 = away fav).
-  // implied_prob = 1 / decimal_odds; edge = implied_prob - 0.5 (positive = home favored).
-  // score = (market_corroboration * 0.4 + venue_intensity * 0.3 + rest * 0.3)
-  // Skip if no h2h_home odds, or if home is not actually favored (score < 0.55).
-  {
-    const h2hHome = toNumber(oddsSnapshot?.h2h_home);
-    const h2hAway = toNumber(oddsSnapshot?.h2h_away);
-
-    // Decimal odds must be > 1; negative value would mean American format (handled separately if needed)
-    if (h2hHome !== null && h2hHome > 1) {
-      const impliedProbHome = 1 / h2hHome;
-      const edge = impliedProbHome - 0.5; // positive = market prices home advantage
-
-      // market_corroboration: 1 when market meaningfully prices home (>53% implied), else 0.5
-      const marketCorroboration = impliedProbHome > 0.53 ? 1 : 0.5;
-      const venueIntensity = 0.6; // NHL neutral baseline (enhance with arena data later)
-      const rest = 0.5;           // placeholder — enhance with schedule data later
-
-      const score = (marketCorroboration * 0.4) + (venueIntensity * 0.3) + (rest * 0.3);
-
-      // Only emit when market is actually pricing home advantage (score > 0.6 → AWAY fade)
-      // score ≤ 0.6 or < 0.55: not enough value — skip
-      if (score >= 0.55) {
-        const dir = score > 0.6 ? 'AWAY' : 'NEUTRAL';
-        const conf = clamp(0.60 + score * 0.15, 0.60, 0.75);
-        descriptors.push({
-          cardType: 'nhl-welcome-home',
-          cardTitle: `NHL Welcome Home Fade: ${dir}`,
-          confidence: conf,
-          tier: determineTier(conf),
-          prediction: dir,
-          reasoning: `Market prices home at ${(impliedProbHome * 100).toFixed(0)}% implied — fade HOME, back VISITORS`,
-          ev_threshold_passed: conf > 0.60,
-          driverKey: 'welcomeHome',
-          driverInputs: {
-            h2h_home: h2hHome,
-            h2h_away: h2hAway,
-            implied_prob_home: impliedProbHome,
-            market_corroboration: marketCorroboration,
-            venue_intensity: venueIntensity,
-            rest,
-            edge
-          },
-          driverScore: score,
-          driverStatus: 'ok',
-          inference_source: 'driver',
-          is_mock: true
-        });
+      if (homeB2B && !awayB2B) {
+        prediction = 'AWAY';
+        confidence = clamp(0.62 + (restDaysAway - restDaysHome) * 0.04, 0.58, 0.72);
+        reasoning = `HOME on B2B (minor NHL penalty) vs AWAY well-rested — slight fatigue edge to AWAY`;
+      } else if (awayB2B && !homeB2B) {
+        prediction = 'HOME';
+        confidence = clamp(0.62 + (restDaysHome - restDaysAway) * 0.04, 0.58, 0.72);
+        reasoning = `AWAY on B2B vs HOME rested — slight fatigue edge to HOME`;
+      } else {
+        prediction = 'NEUTRAL';
+        confidence = 0.55;
+        reasoning = 'Both teams on B2B — rest neutral';
       }
+
+      descriptors.push({
+        cardType: 'nhl-rest-advantage',
+        cardTitle: `NHL Rest: ${prediction}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction,
+        reasoning,
+        ev_threshold_passed: confidence > 0.60,
+        driverKey: 'restAdvantage',
+        driverInputs: { rest_days_home: restDaysHome, rest_days_away: restDaysAway },
+        driverScore: prediction === 'HOME' ? 0.65 : prediction === 'AWAY' ? 0.35 : 0.5,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: false
+      });
+    }
+  }
+
+  // --- Goalie Tier Driver (Advanced Stats) ---
+  {
+    const goalieDelta = goalieHomeGsax !== null && goalieAwayGsax !== null
+      ? goalieHomeGsax - goalieAwayGsax
+      : null;
+
+    if (goalieDelta !== null) {
+      const score = clamp((goalieDelta + 3) / 6, 0, 1);
+      const direction = score > 0.52 ? 'HOME' : score < 0.48 ? 'AWAY' : 'NEUTRAL';
+      const confidence = clamp(0.65 + Math.abs(score - 0.5) * 0.3, 0.60, 0.80);
+
+      descriptors.push({
+        cardType: 'nhl-goalie',
+        cardTitle: `NHL Goalie Edge: ${direction}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction: direction,
+        reasoning: `GSaX goalie tier delta (${goalieDelta.toFixed(2)}) favors ${direction}`,
+        ev_threshold_passed: confidence > 0.60,
+        driverKey: 'goalie',
+        driverInputs: { home_gsax: goalieHomeGsax, away_gsax: goalieAwayGsax, delta: goalieDelta },
+        driverScore: score,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: false
+      });
+    }
+  }
+
+  // --- Scoring Environment Driver (Total Over/Under Signal) ---
+  if (total !== null) {
+    const fragilityDistance = Math.min(Math.abs(total - 5.5), Math.abs(total - 6.5));
+    const score = clamp(1 - (fragilityDistance / 0.6), 0, 1);
+
+    if (fragilityDistance < 0.6) {
+      const confidence = clamp(0.68 - fragilityDistance * 0.1, 0.60, 0.75);
+      descriptors.push({
+        cardType: 'nhl-model-output',
+        cardTitle: `NHL Total Fragility: Over/Under Variance`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction: 'NEUTRAL',
+        reasoning: `Total ${total} near key numbers (5.5/6.5) — high O/U variance sensitivity`,
+        ev_threshold_passed: confidence > 0.60,
+        driverKey: 'scoringEnvironment',
+        driverInputs: { total, key_number_distance: fragilityDistance },
+        driverScore: score,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: false
+      });
     }
   }
 
@@ -419,171 +383,232 @@ function computeNBADriverCards(_gameId, oddsSnapshot) {
 
   const descriptors = [];
 
-  // --- rest-advantage & travel (both use same rest data) ---
-  const restDaysHome = toNumber(raw?.rest_days_home ?? raw?.home?.rest_days);
-  const restDaysAway = toNumber(raw?.rest_days_away ?? raw?.away?.rest_days);
+  // Extract ESPN-enriched metrics (with legacy fallback)
+  const paceHome = toNumber(raw?.espn_metrics?.home?.metrics?.pace ?? raw?.pace_home ?? raw?.home?.pace);
+  const paceAway = toNumber(raw?.espn_metrics?.away?.metrics?.pace ?? raw?.pace_away ?? raw?.away?.pace);
+  const avgPtsHome = toNumber(raw?.espn_metrics?.home?.metrics?.avgPoints ?? raw?.avg_points_home ?? raw?.home?.avg_points);
+  const avgPtsAway = toNumber(raw?.espn_metrics?.away?.metrics?.avgPoints ?? raw?.avg_points_away ?? raw?.away?.avg_points);
+  const avgPtsAllowedHome = toNumber(raw?.espn_metrics?.home?.metrics?.avgPointsAllowed ?? raw?.avg_points_allowed_home ?? raw?.home?.avg_points_allowed);
+  const avgPtsAllowedAway = toNumber(raw?.espn_metrics?.away?.metrics?.avgPointsAllowed ?? raw?.avg_points_allowed_away ?? raw?.away?.avg_points_allowed);
+  const restDaysHome = toNumber(raw?.espn_metrics?.home?.metrics?.restDays ?? raw?.rest_days_home ?? raw?.home?.rest_days);
+  const restDaysAway = toNumber(raw?.espn_metrics?.away?.metrics?.restDays ?? raw?.rest_days_away ?? raw?.away?.rest_days);
+  const homeNetRating = avgPtsHome && avgPtsAllowedHome ? avgPtsHome - avgPtsAllowedHome : null;
+  const awayNetRating = avgPtsAway && avgPtsAllowedAway ? avgPtsAway - avgPtsAllowedAway : null;
 
+  // --- Base Projection Driver (Real Formula) ---
+  if (avgPtsHome && avgPtsAway && avgPtsAllowedHome && avgPtsAllowedAway) {
+    const projection = projectNBA(
+      avgPtsHome, avgPtsAllowedHome,
+      avgPtsAway, avgPtsAllowedAway,
+      paceHome || 100, paceAway || 100,
+      restDaysHome || 1, restDaysAway || 1
+    );
+
+    if (projection.homeProjected && projection.awayProjected) {
+      const projectedMargin = projection.homeProjected - projection.awayProjected;
+      const highConfidenceProjection = projection.confidence >= 0.70;
+
+      descriptors.push({
+        cardType: 'nba-base-projection',
+        cardTitle: `NBA Projection: ${projectedMargin > 0 ? 'HOME' : 'AWAY'} ${Math.abs(projectedMargin).toFixed(1)}`,
+        confidence: projection.confidence,
+        tier: determineTier(projection.confidence),
+        prediction: projectedMargin > 0 ? 'HOME' : 'AWAY',
+        reasoning: `Base projection: ${projection.homeProjected.toFixed(1)} vs ${projection.awayProjected.toFixed(1)} (pace multiplier: ${projection.paceMultiplier.toFixed(2)}x, rest adj: ${projection.homeRestAdj}/${projection.awayRestAdj})`,
+        ev_threshold_passed: projection.confidence > 0.60,
+        driverKey: 'baseProjection',
+        driverInputs: {
+          home_avg_pts: avgPtsHome,
+          away_avg_pts: avgPtsAway,
+          home_def: avgPtsAllowedHome,
+          away_def: avgPtsAllowedAway,
+          home_pace: paceHome,
+          away_pace: paceAway,
+          home_rest: restDaysHome,
+          away_rest: restDaysAway,
+          projected_margin: projectedMargin
+        },
+        driverScore: clamp((projectedMargin + 20) / 40, 0, 1),  // Normalize to 0-1
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: false,
+        projectionDetails: {
+          homeProjected: projection.homeProjected,
+          awayProjected: projection.awayProjected,
+          paceMultiplier: projection.paceMultiplier,
+          netRatingGap: projection.netRatingGap
+        }
+      });
+    }
+  }
+
+  // --- Rest Advantage Driver (Enhanced with Real Rest Data) ---
   if (restDaysHome !== null && restDaysAway !== null) {
     const homeB2B = restDaysHome === 0;
     const awayB2B = restDaysAway === 0;
 
     if (homeB2B || awayB2B) {
-      const score = homeB2B && !awayB2B ? 0.1   // home exhausted → AWAY edge
-        : awayB2B && !homeB2B   ? 0.9   // away exhausted → HOME edge
-        : 0.5;                           // both B2B → neutral
-      const dir = score > 0.52 ? 'HOME' : score < 0.48 ? 'AWAY' : 'NEUTRAL';
-      const conf = clamp(0.65 + Math.abs(score - 0.5) * 0.4, 0.65, 0.85);
-      const b2bSide = homeB2B && !awayB2B ? 'HOME' : awayB2B && !homeB2B ? 'AWAY' : 'BOTH';
+      let score, prediction, confidence, reasoning;
+
+      if (homeB2B && !awayB2B) {
+        score = 0.2;
+        prediction = 'AWAY';
+        confidence = clamp(0.65 + (restDaysAway - restDaysHome) * 0.08, 0.60, 0.80);
+        reasoning = `HOME on B2B (${restDaysHome}d rest) vs AWAY rested (${restDaysAway}d) — fatigue favors AWAY`;
+      } else if (awayB2B && !homeB2B) {
+        score = 0.8;
+        prediction = 'HOME';
+        confidence = clamp(0.65 + (restDaysHome - restDaysAway) * 0.08, 0.60, 0.80);
+        reasoning = `AWAY on B2B (${restDaysAway}d rest) vs HOME rested (${restDaysHome}d) — fatigue favors HOME`;
+      } else {
+        score = 0.5;
+        prediction = 'NEUTRAL';
+        confidence = 0.58;
+        reasoning = 'Both teams on B2B — rest neutral';
+      }
 
       descriptors.push({
         cardType: 'nba-rest-advantage',
-        cardTitle: `NBA Rest Edge: ${dir}`,
-        confidence: conf,
-        tier: determineTier(conf),
-        prediction: dir,
-        reasoning: `${b2bSide} team on B2B — fatigue factor favors ${dir}`,
-        ev_threshold_passed: conf > 0.60,
+        cardTitle: `NBA Rest: ${prediction}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction,
+        reasoning,
+        ev_threshold_passed: confidence > 0.60,
         driverKey: 'restAdvantage',
         driverInputs: { rest_days_home: restDaysHome, rest_days_away: restDaysAway },
         driverScore: score,
         driverStatus: 'ok',
         inference_source: 'driver',
-        is_mock: true
+        is_mock: false
       });
-    }
+    } else if (Math.abs(restDaysHome - restDaysAway) >= 2) {
+      // Partial rest advantage (not B2B but significant gap)
+      const restGap = restDaysHome - restDaysAway;
+      const score = restGap > 0 ? 0.65 : 0.35;
+      const prediction = restGap > 0 ? 'HOME' : 'AWAY';
+      const confidence = clamp(0.60 + Math.abs(restGap) * 0.05, 0.58, 0.72);
 
-    // travel: road B2B is a second compounding signal (away on B2B, home rested)
-    if (restDaysAway === 0 && restDaysHome > 0) {
-      const conf = 0.68;
       descriptors.push({
-        cardType: 'nba-travel',
-        cardTitle: 'NBA Road B2B Penalty',
-        confidence: conf,
-        tier: determineTier(conf),
-        prediction: 'HOME',
-        reasoning: `Away team on road B2B — travel + fatigue composite favors HOME`,
-        ev_threshold_passed: conf > 0.60,
-        driverKey: 'travel',
-        driverInputs: { rest_days_away: restDaysAway, rest_days_home: restDaysHome },
-        driverScore: 0.85,
+        cardType: 'nba-rest-advantage',
+        cardTitle: `NBA Rest: ${prediction}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction,
+        reasoning: `Rest gap: ${prediction} team has ${Math.abs(restGap)} more days rest`,
+        ev_threshold_passed: confidence > 0.60,
+        driverKey: 'restAdvantage',
+        driverInputs: { rest_days_home: restDaysHome, rest_days_away: restDaysAway, rest_gap: restGap },
+        driverScore: score,
         driverStatus: 'ok',
         inference_source: 'driver',
-        is_mock: true
+        is_mock: false
       });
     }
   }
 
-  // --- lineup (only fires when injuries are flagged) ---
-  const injuryHome = raw?.injury_status_home ?? raw?.home?.injury_status ?? null;
-  const injuryAway = raw?.injury_status_away ?? raw?.away?.injury_status ?? null;
-  const depleted = injuryHome === 'depleted' || injuryAway === 'depleted';
-  const questionable = injuryHome === 'probable_missing' || injuryAway === 'probable_missing';
+  // --- Welcome Home v2 Driver (Cross-sport road fatigue signal) ---
+  if (restDaysAway !== null) {
+    const awayTeam = {
+      netRating: awayNetRating,
+      restDays: restDaysAway
+    };
+    const homeTeam = {
+      netRating: homeNetRating
+    };
+    
+    // Simplified trigger: away on 2+ game road stretch (would need game history in production)
+    // For now, detect via back-to-back penalty
+    if (restDaysAway === 0) {
+      const welcomeCard = generateWelcomeHomeCard({
+        gameId: _gameId,
+        awayTeam,
+        homeTeam,
+        sport: 'NBA',
+        isBackToBack: true,
+        recentRoadGames: [{ isHome: false }, { isHome: false }]  // Simplified 2-game road trip
+      });
 
-  if (depleted || questionable) {
-    const conf = depleted ? 0.62 : 0.58;
-    const depletedDir = injuryHome === 'depleted' ? 'AWAY'
-      : injuryAway === 'depleted' ? 'HOME'
-      : 'NEUTRAL';
-    const dir = depleted ? depletedDir : 'NEUTRAL';
-    const score = depleted ? (dir === 'HOME' ? 0.8 : dir === 'AWAY' ? 0.2 : 0.5) : 0.5;
-
-    descriptors.push({
-      cardType: 'nba-lineup',
-      cardTitle: `NBA Lineup Alert: ${dir}`,
-      confidence: conf,
-      tier: determineTier(conf),
-      prediction: dir,
-      reasoning: `${depleted ? 'Key player(s) out' : 'Probable starter questionable'} — lineup uncertainty is a live signal`,
-      ev_threshold_passed: conf > 0.60,
-      driverKey: 'lineup',
-      driverInputs: { injury_status_home: injuryHome, injury_status_away: injuryAway },
-      driverScore: score,
-      driverStatus: 'ok',
-      inference_source: 'driver',
-      is_mock: true
-    });
+      if (welcomeCard) {
+        descriptors.push(welcomeCard);
+      }
+    }
   }
 
-  // --- matchup-style (pace mismatch or elite O vs weak D) ---
-  const paceHome = toNumber(raw?.pace_home ?? raw?.home?.pace);
-  const paceAway = toNumber(raw?.pace_away ?? raw?.away?.pace);
-  const avgPtsHome = toNumber(raw?.avg_points_home ?? raw?.home?.avg_points);
-  const avgPtsAway = toNumber(raw?.avg_points_away ?? raw?.away?.avg_points);
-  const avgPtsAllowedHome = toNumber(raw?.avg_points_allowed_home ?? raw?.home?.avg_points_allowed);
-  const avgPtsAllowedAway = toNumber(raw?.avg_points_allowed_away ?? raw?.away?.avg_points_allowed);
-
-  const hasPace = paceHome !== null && paceAway !== null;
-  const hasEfficiency = (avgPtsHome !== null && avgPtsAllowedAway !== null)
-    || (avgPtsAway !== null && avgPtsAllowedHome !== null);
-
-  if (hasPace || hasEfficiency) {
+  // --- Matchup Style Driver (Elite O vs Weak D) ---
+  if (avgPtsHome && avgPtsAllowedAway && avgPtsAway && avgPtsAllowedHome) {
     let score = 0.5;
-    let dir = 'NEUTRAL';
-    let reasoning = 'Pace/efficiency matchup signal';
+    let prediction = 'NEUTRAL';
+    let reasoning = 'Balanced matchup';
 
-    if (hasPace) {
-      const paceDelta = paceHome - paceAway;
-      if (Math.abs(paceDelta) >= 4) {
-        reasoning = `Extreme pace mismatch (delta: ${paceDelta.toFixed(1)} poss) — total variance signal`;
+    // Elite home offense vs weak away defense
+    if (avgPtsHome >= 115 && avgPtsAllowedAway >= 115) {
+      score = 0.80;
+      prediction = 'HOME';
+      reasoning = `Elite HOME offense (${avgPtsHome.toFixed(0)} pts/g) faces weak AWAY defense (${avgPtsAllowedAway.toFixed(0)} allowed)`;
+    } 
+    // Elite away offense vs weak home defense
+    else if (avgPtsAway >= 115 && avgPtsAllowedHome >= 115) {
+      score = 0.20;
+      prediction = 'AWAY';
+      reasoning = `Elite AWAY offense (${avgPtsAway.toFixed(0)} pts/g) faces weak HOME defense (${avgPtsAllowedHome.toFixed(0)} allowed)`;
+    }
+    // Balanced efficiency advantage
+    else {
+      const homeEfficiency = avgPtsHome - avgPtsAllowedHome;
+      const awayEfficiency = avgPtsAway - avgPtsAllowedAway;
+      if (Math.abs(homeEfficiency - awayEfficiency) >= 3) {
+        score = homeEfficiency > awayEfficiency ? 0.65 : 0.35;
+        prediction = homeEfficiency > awayEfficiency ? 'HOME' : 'AWAY';
+        reasoning = `Efficiency gap: ${prediction} has +${Math.abs(homeEfficiency - awayEfficiency).toFixed(1)} net rating advantage`;
       }
     }
 
-    // Elite O vs Weak D overrides direction
-    if (avgPtsHome > 115 && avgPtsAllowedAway > 115) {
-      score = 0.75;
-      dir = 'HOME';
-      reasoning = `Elite HOME offense vs weak AWAY defense (${avgPtsHome.toFixed(0)} pts/g vs ${avgPtsAllowedAway.toFixed(0)} allowed)`;
-    } else if (avgPtsAway !== null && avgPtsAllowedHome !== null
-        && avgPtsAway > 115 && avgPtsAllowedHome > 115) {
-      score = 0.25;
-      dir = 'AWAY';
-      reasoning = `Road elite AWAY offense vs weak HOME defense (${avgPtsAway.toFixed(0)} pts/g vs ${avgPtsAllowedHome.toFixed(0)} allowed)`;
-    }
+    const confidence = clamp(0.62 + Math.abs(score - 0.5) * 0.25, 0.58, 0.80);
 
-    const conf = clamp(0.60 + Math.abs(score - 0.5) * 0.4, 0.60, 0.80);
-    descriptors.push({
-      cardType: 'nba-matchup-style',
-      cardTitle: `NBA Matchup Style: ${dir}`,
-      confidence: conf,
-      tier: determineTier(conf),
-      prediction: dir,
-      reasoning,
-      ev_threshold_passed: conf > 0.60,
-      driverKey: 'matchupStyle',
-      driverInputs: {
-        pace_home: paceHome,
-        pace_away: paceAway,
-        avg_pts_home: avgPtsHome,
-        avg_pts_away: avgPtsAway,
-        avg_pts_allowed_home: avgPtsAllowedHome,
-        avg_pts_allowed_away: avgPtsAllowedAway
-      },
-      driverScore: score,
-      driverStatus: statusFromNumbers([paceHome, paceAway]),
-      inference_source: 'driver',
-      is_mock: true
-    });
+    if (prediction !== 'NEUTRAL') {
+      descriptors.push({
+        cardType: 'nba-matchup-style',
+        cardTitle: `NBA Matchup: ${prediction}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction,
+        reasoning,
+        ev_threshold_passed: confidence > 0.60,
+        driverKey: 'matchupStyle',
+        driverInputs: {
+          home_offensive_rating: avgPtsHome,
+          home_defensive_rating: avgPtsAllowedHome,
+          away_offensive_rating: avgPtsAway,
+          away_defensive_rating: avgPtsAllowedAway
+        },
+        driverScore: score,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: false
+      });
+    }
   }
 
-  // --- blowout-risk (derived from spread — always available when odds exist) ---
+  // --- Blowout Risk Driver (From Spread Clarity) ---
   if (spreadHome !== null) {
     const absSpread = Math.abs(spreadHome);
     if (absSpread >= 8) {
-      const conf = absSpread >= 12 ? 0.75 : 0.65;
+      const confidence = absSpread >= 12 ? 0.75 : 0.65;
       descriptors.push({
         cardType: 'nba-blowout-risk',
         cardTitle: 'NBA Blowout Risk',
-        confidence: conf,
-        tier: determineTier(conf),
+        confidence,
+        tier: determineTier(confidence),
         prediction: 'NEUTRAL',
-        reasoning: `Large spread (${spreadHome > 0 ? '+' : ''}${spreadHome}) — garbage time risk suppresses 4Q pace`,
-        ev_threshold_passed: conf > 0.60,
+        reasoning: `Large spread (${spreadHome > 0 ? '+' : ''}${spreadHome}) indicates expected blowout — garbage time risk`,
+        ev_threshold_passed: confidence > 0.60,
         driverKey: 'blowoutRisk',
-        driverInputs: { spread_home: spreadHome, abs_spread: absSpread },
+        driverInputs: { spread_home: spreadHome },
         driverScore: 0.5,
         driverStatus: 'ok',
         inference_source: 'driver',
-        is_mock: true
+        is_mock: false
       });
     }
   }
@@ -744,7 +769,27 @@ async function getInference(sport, gameId, oddsSnapshot) {
     }
   }
 
-  // Remaining sports (NFL, MLB, FPL) — keep mock constant fallback
+  if (sport === 'NCAAM' || sport === 'NCAA') {
+    const ncaamCards = computeNCAAMDriverCards(gameId, oddsSnapshot);
+    if (ncaamCards.length > 0) {
+      // Aggregate: take the highest-confidence card
+      const best = ncaamCards.reduce((a, b) => b.confidence > a.confidence ? b : a);
+      return {
+        prediction: best.prediction,
+        confidence: best.confidence,
+        ev_threshold_passed: best.ev_threshold_passed,
+        reasoning: best.reasoning,
+        drivers: ncaamCards,
+        inference_source: 'mock',
+        model_endpoint: null,
+        is_mock: true
+      };
+    }
+  }
+
+  // Remaining sports (NFL, MLB, FPL) — keep mock constant fallback.
+  // Note: For FPL this is a shared-contract compatibility signal only;
+  // the domain strategy engine is FPL Sage.
   const confidence = mockConfig.confidence;
   const predictHome = homeOdds < awayOdds;
 
@@ -757,6 +802,163 @@ async function getInference(sport, gameId, oddsSnapshot) {
     model_endpoint: null,
     is_mock: true
   };
+}
+
+/**
+ * Compute per-driver NCAAM card descriptors from a single odds snapshot.
+ *
+ * Uses college basketball specific formulas with 2.5pt HCA and Welcome Home adjustment.
+ * Drivers: base-projection, matchup-style
+ *
+ * @param {string} gameId
+ * @param {object} oddsSnapshot
+ * @returns {Array<object>} Array of card descriptor objects
+ */
+function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
+  const raw = parseRawData(oddsSnapshot?.raw_data);
+  const spreadHome = toNumber(oddsSnapshot?.spread_home);
+
+  const descriptors = [];
+
+  // Extract ESPN-enriched metrics
+  const avgPtsHome = toNumber(raw?.espn_metrics?.home?.metrics?.avgPoints ?? raw?.avg_points_home);
+  const avgPtsAway = toNumber(raw?.espn_metrics?.away?.metrics?.avgPoints ?? raw?.avg_points_away);
+  const avgPtsAllowedHome = toNumber(raw?.espn_metrics?.home?.metrics?.avgPointsAllowed ?? raw?.avg_points_allowed_home);
+  const avgPtsAllowedAway = toNumber(raw?.espn_metrics?.away?.metrics?.avgPointsAllowed ?? raw?.avg_points_allowed_away);
+  const restDaysHome = toNumber(raw?.espn_metrics?.home?.metrics?.restDays ?? raw?.rest_days_home);
+  const restDaysAway = toNumber(raw?.espn_metrics?.away?.metrics?.restDays ?? raw?.rest_days_away);
+
+  // --- Base Projection Driver (NCAAM Formula with HCA) ---
+  if (avgPtsHome && avgPtsAway && avgPtsAllowedHome && avgPtsAllowedAway) {
+    const projection = projectNCAAM(avgPtsHome, avgPtsAllowedHome, avgPtsAway, avgPtsAllowedAway);
+
+    if (projection.homeProjected && projection.awayProjected) {
+      const projectedMargin = projection.projectedMargin;
+      
+      // NCAAM confidence slightly different from NBA (college variance higher)
+      let confidence = 0.55;
+      
+      if (Math.abs(projectedMargin) >= 10) {
+        confidence = 0.72;
+      } else if (Math.abs(projectedMargin) >= 5) {
+        confidence = 0.65;
+      } else if (Math.abs(projectedMargin) < 3) {
+        confidence = 0.50 + (Math.random() * 0.05);  // Slight variance in toss-up games
+      }
+
+      descriptors.push({
+        cardType: 'ncaam-base-projection',
+        cardTitle: `NCAAM Projection: ${projectedMargin > 0 ? 'HOME' : 'AWAY'} ${Math.abs(projectedMargin).toFixed(1)}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction: projectedMargin > 0 ? 'HOME' : 'AWAY',
+        reasoning: `Projection: ${projection.homeProjected.toFixed(1)} vs ${projection.awayProjected.toFixed(1)} (HCA: +2.5pts)`,
+        ev_threshold_passed: confidence > 0.60,
+        driverKey: 'baseProjection',
+        driverInputs: {
+          home_avg_pts: avgPtsHome,
+          away_avg_pts: avgPtsAway,
+          home_def: avgPtsAllowedHome,
+          away_def: avgPtsAllowedAway,
+          projected_margin: projectedMargin
+        },
+        driverScore: clamp((projectedMargin + 25) / 50, 0, 1),
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: false,
+        projectionDetails: {
+          homeProjected: projection.homeProjected,
+          awayProjected: projection.awayProjected,
+          hca: 2.5
+        }
+      });
+    }
+  }
+
+  // --- Rest Advantage Driver (College-specific) ---
+  if (restDaysHome !== null && restDaysAway !== null) {
+    const homeB2B = restDaysHome === 0;
+    const awayB2B = restDaysAway !== 0;
+
+    if (homeB2B || awayB2B) {
+      let prediction, confidence, reasoning;
+
+      if (homeB2B && !awayB2B) {
+        prediction = 'AWAY';
+        confidence = clamp(0.64 + (restDaysAway - restDaysHome) * 0.08, 0.58, 0.75);
+        reasoning = `HOME on B2B vs AWAY rested — college fatigue compounds quickly`;
+      } else if (awayB2B && !homeB2B) {
+        prediction = 'HOME';
+        confidence = clamp(0.64 + (restDaysHome - restDaysAway) * 0.08, 0.58, 0.75);
+        reasoning = `AWAY on B2B vs HOME rested — home court + rest edge`;
+      } else {
+        prediction = 'NEUTRAL';
+        confidence = 0.55;
+        reasoning = 'Both on B2B — rest neutral';
+      }
+
+      if (confidence > 0.60) {
+        descriptors.push({
+          cardType: 'ncaam-rest-advantage',
+          cardTitle: `NCAAM Rest: ${prediction}`,
+          confidence,
+          tier: determineTier(confidence),
+          prediction,
+          reasoning,
+          ev_threshold_passed: true,
+          driverKey: 'restAdvantage',
+          driverInputs: { rest_days_home: restDaysHome, rest_days_away: restDaysAway },
+          driverScore: prediction === 'HOME' ? 0.70 : prediction === 'AWAY' ? 0.30 : 0.5,
+          driverStatus: 'ok',
+          inference_source: 'driver',
+          is_mock: false
+        });
+      }
+    }
+  }
+
+  // --- Matchup Style Driver (Elite O vs Weak D) ---
+  if (avgPtsHome && avgPtsAllowedAway && avgPtsAway && avgPtsAllowedHome) {
+    let prediction = 'NEUTRAL';
+    let confidence = 0.55;
+    let reasoning = 'Balanced matchup';
+
+    const homeEfficiency = avgPtsHome - avgPtsAllowedHome;
+    const awayEfficiency = avgPtsAway - avgPtsAllowedAway;
+    const efficiencyGap = homeEfficiency - awayEfficiency;
+
+    if (Math.abs(efficiencyGap) >= 5) {
+      confidence = clamp(0.65 + Math.abs(efficiencyGap) * 0.04, 0.60, 0.78);
+      prediction = efficiencyGap > 0 ? 'HOME' : 'AWAY';
+      reasoning = `Efficiency gap: ${prediction} has +${Math.abs(efficiencyGap).toFixed(1)} net rating`;
+    }
+
+    if (prediction !== 'NEUTRAL' && confidence > 0.60) {
+      descriptors.push({
+        cardType: 'ncaam-matchup-style',
+        cardTitle: `NCAAM Matchup: ${prediction}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction,
+        reasoning,
+        ev_threshold_passed: true,
+        driverKey: 'matchupStyle',
+        driverInputs: {
+          home_offensive_rating: avgPtsHome,
+          home_defensive_rating: avgPtsAllowedHome,
+          away_offensive_rating: avgPtsAway,
+          away_defensive_rating: avgPtsAllowedAway,
+          efficiency_gap: efficiencyGap
+        },
+        driverScore: prediction === 'HOME' ? 0.70 : 0.30,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: false
+      });
+    }
+  }
+
+  return descriptors;
 }
 
 /**
@@ -778,5 +980,6 @@ module.exports = {
   mockModels,
   computeNHLDriverCards,
   computeNBADriverCards,
+  computeNCAAMDriverCards,
   determineTier
 };

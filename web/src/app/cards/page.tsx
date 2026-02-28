@@ -162,7 +162,7 @@ export default function CardsPage() {
       <div className="max-w-4xl mx-auto">
         <div className="mb-8 space-y-2">
           <div className="flex items-center justify-between gap-4">
-            <h1 className="text-4xl font-bold">Games</h1>
+            <h1 className="text-4xl font-bold">🧀 The Cheddar Board 🧀</h1>
             <Link
               href="/"
               className="px-4 py-2 rounded-lg border border-white/20 hover:border-white/40 hover:bg-surface/50 transition"
