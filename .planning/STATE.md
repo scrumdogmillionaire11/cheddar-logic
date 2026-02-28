@@ -196,3 +196,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 5 | Apply driver logic: model jobs -> card_payloads; /api/games returns plays[]       | 2026-02-27 | 56ca96b | .planning/quick/5-apply-driver-logic-to-games-from-odds-ap/  |
 | 6 | Fix /cards scroll reset on background refresh + add Play Suggestion per play row  | 2026-02-28 | 742c8cb | .planning/quick/6-fix-cards-page-auto-reload-scroll-reset-/  |
 | 7 | Enable NCAAM odds ingest/model; disable MLB+NFL for off-season; document token math | 2026-02-28 | f2931d9 | .planning/quick/7-enable-ncaam-model-disable-out-of-season/ |
+| 8 | Fix driver confidence calculations: NHL per-driver clamp(score-0.5), composite clamp(weightedSum), NBA getInference driver-derived | 2026-02-28 | 841a92e | .planning/quick/8-fix-driver-confidence-calculations-to-pr/ |
