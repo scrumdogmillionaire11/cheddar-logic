@@ -5,7 +5,7 @@
  * odds snapshot per game, plus any active driver play calls from card_payloads.
  * Games with no card_payloads still appear.
  *
- * Query window: datetime(game_time_utc) >= midnight today UTC (today + future games only)
+ * Query window: datetime(game_time_utc) >= midnight today America/New_York (today + future games only)
  * Sort: game_time_utc ASC
  * Limit: 200
  *
@@ -79,6 +79,15 @@ export async function GET() {
     await initDb();
     db = getDatabase();
 
+    // Compute local midnight in America/New_York so the filter anchors to the
+    // user's calendar day rather than UTC midnight (which causes evening EST
+    // games to appear as the next UTC day).
+    const localMidnight = new Date(
+      new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }).split(',')[0] +
+        ', 00:00:00 America/New_York'
+    );
+    const todayUtc = localMidnight.toISOString().replace('T', ' ').replace('Z', '');
+
     const sql = `
       WITH latest_odds AS (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY captured_at DESC) AS rn
@@ -101,13 +110,13 @@ export async function GET() {
         o.captured_at AS odds_captured_at
       FROM games g
       LEFT JOIN latest_odds o ON o.game_id = g.game_id AND o.rn = 1
-      WHERE datetime(g.game_time_utc) >= datetime('now', 'start of day')
+      WHERE datetime(g.game_time_utc) >= ?
       ORDER BY g.game_time_utc ASC
       LIMIT 200
     `;
 
     const stmt = db.prepare(sql);
-    const rows = stmt.all() as GameRow[];
+    const rows = stmt.all(todayUtc) as GameRow[];
 
     // Collect all game IDs for the card_payloads query
     const gameIds = rows.map((r) => r.game_id);
