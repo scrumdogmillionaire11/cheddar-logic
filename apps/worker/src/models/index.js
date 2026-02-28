@@ -726,6 +726,25 @@ async function getInference(sport, gameId, oddsSnapshot) {
     };
   }
 
+  if (sport === 'NBA') {
+    const nbaCards = computeNBADriverCards(gameId, oddsSnapshot);
+    if (nbaCards.length > 0) {
+      // Aggregate: take the highest-confidence card as the representative signal
+      const best = nbaCards.reduce((a, b) => b.confidence > a.confidence ? b : a);
+      return {
+        prediction: best.prediction,
+        confidence: best.confidence,
+        ev_threshold_passed: best.ev_threshold_passed,
+        reasoning: best.reasoning,
+        drivers: nbaCards,
+        inference_source: 'mock',
+        model_endpoint: null,
+        is_mock: true
+      };
+    }
+  }
+
+  // Remaining sports (NFL, MLB, FPL) — keep mock constant fallback
   const confidence = mockConfig.confidence;
   const predictHome = homeOdds < awayOdds;
 
