@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
 interface Play {
@@ -44,11 +44,14 @@ export default function CardsPage() {
   const [games, setGames] = useState<GameData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const isInitialLoad = useRef(true);
 
   useEffect(() => {
     const fetchGames = async () => {
       try {
-        setLoading(true);
+        if (isInitialLoad.current) {
+          setLoading(true);
+        }
         const response = await fetch('/api/games');
         const data: ApiResponse = await response.json();
 
@@ -65,11 +68,12 @@ export default function CardsPage() {
         setGames([]);
       } finally {
         setLoading(false);
+        isInitialLoad.current = false;
       }
     };
 
     fetchGames();
-    // Refresh every 30 seconds
+    // Updates in background every 30s
     const interval = setInterval(fetchGames, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -147,7 +151,7 @@ export default function CardsPage() {
             </Link>
           </div>
           <p className="text-cloud/70">
-            {games.length} game{games.length !== 1 ? 's' : ''} from odds API (auto-refreshes every 30 seconds)
+            {games.length} game{games.length !== 1 ? 's' : ''} from odds API (updates in background every 30s)
           </p>
         </div>
 
