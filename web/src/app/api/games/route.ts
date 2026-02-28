@@ -5,7 +5,7 @@
  * odds snapshot per game, plus any active driver play calls from card_payloads.
  * Games with no card_payloads still appear.
  *
- * Query window: game_time_utc >= midnight today UTC (today + future games only)
+ * Query window: datetime(game_time_utc) >= midnight today UTC (today + future games only)
  * Sort: game_time_utc ASC
  * Limit: 200
  *
@@ -101,7 +101,7 @@ export async function GET() {
         o.captured_at AS odds_captured_at
       FROM games g
       LEFT JOIN latest_odds o ON o.game_id = g.game_id AND o.rn = 1
-      WHERE g.game_time_utc >= datetime('now', 'start of day')
+      WHERE datetime(g.game_time_utc) >= datetime('now', 'start of day')
       ORDER BY g.game_time_utc ASC
       LIMIT 200
     `;
