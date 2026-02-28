@@ -69,8 +69,6 @@ function determineTier(confidence) {
 
 function computeNHLDrivers(gameId, oddsSnapshot) {
   const raw = parseRawData(oddsSnapshot?.raw_data);
-  const homeOdds = toNumber(oddsSnapshot?.h2h_home ?? oddsSnapshot?.moneyline_home);
-  const awayOdds = toNumber(oddsSnapshot?.h2h_away ?? oddsSnapshot?.moneyline_away);
   const total = toNumber(oddsSnapshot?.total);
 
   const goalieHomeGsax = toNumber(
@@ -164,13 +162,9 @@ function computeNHLDrivers(gameId, oddsSnapshot) {
 
   const weightedScores = Object.values(drivers).map((driver) => driver.score * driver.weight);
   const weightedSum = weightedScores.reduce((sum, value) => sum + value, 0);
-  const baselineConfidence = mockModels.NHL.confidence;
-  const confidenceAdjustment = (weightedSum - 0.5) * 0.22;
-  const confidence = clamp(baselineConfidence + confidenceAdjustment, 0.56, 0.78);
+  const confidence = clamp(weightedSum, 0.50, 0.85);
 
-  const prediction = homeOdds !== null && awayOdds !== null
-    ? (homeOdds < awayOdds ? 'HOME' : 'AWAY')
-    : (confidence >= 0.64 ? 'HOME' : 'AWAY');
+  const prediction = weightedSum > 0.5 ? 'HOME' : weightedSum < 0.5 ? 'AWAY' : 'NEUTRAL';
 
   const topDrivers = Object.entries(drivers)
     .sort((a, b) => Math.abs(b[1].score - 0.5) - Math.abs(a[1].score - 0.5))
