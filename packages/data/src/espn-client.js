@@ -46,6 +46,23 @@ async function espnGet(path) {
  * @param {number} [limit=5]
  * @returns {Promise<Array>} Array of completed game objects (date, isHome, pointsFor, pointsAgainst, result)
  */
+/**
+ * Parse a competitor score from ESPN API response.
+ * ESPN returns scores as strings ("3"), numbers (3), or objects ({value: 3}).
+ * @param {*} score
+ * @returns {number|null}
+ */
+function parseScore(score) {
+  if (score == null) return null;
+  if (typeof score === 'number') return score;
+  if (typeof score === 'string') {
+    const n = Number(score);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (typeof score === 'object' && 'value' in score) return score.value ?? null;
+  return null;
+}
+
 async function fetchTeamSchedule(espnLeague, teamId, limit = 5) {
   const data = await espnGet(`${espnLeague}/teams/${teamId}/schedule`);
   if (!data || !data.events) return [];
@@ -64,8 +81,8 @@ async function fetchTeamSchedule(espnLeague, teamId, limit = 5) {
       return {
         date: e.date,
         isHome,
-        pointsFor: mine?.score?.value || null,
-        pointsAgainst: opp?.score?.value || null,
+        pointsFor: parseScore(mine?.score),
+        pointsAgainst: parseScore(opp?.score),
         result: mine?.winner ? 'W' : 'L'
       };
     });
