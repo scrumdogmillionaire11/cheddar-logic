@@ -89,7 +89,8 @@ jobs:
           script: |
             set -e
             cd /opt/cheddar-logic
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
             npm --prefix apps/worker install --omit=dev
             sudo systemctl restart cheddar-worker
             echo "Deploy complete — worker restarted"
