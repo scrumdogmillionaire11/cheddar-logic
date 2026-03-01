@@ -167,15 +167,40 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           } else {
             result = 'push';
           }
+        } else if (prediction === 'OVER' || prediction === 'UNDER') {
+          const marketTotal = payloadData?.odds_context?.total
+            ?? payloadData?.driver?.inputs?.market_total
+            ?? null;
+
+          if (!Number.isFinite(Number(marketTotal))) {
+            console.warn(`[SettleCards] No market total for card ${row.card_id} — skipping`);
+            continue;
+          }
+
+          const line = Number(marketTotal);
+          const actualTotal = homeScore + awayScore;
+
+          if (actualTotal > line) {
+            result = prediction === 'OVER' ? 'win' : 'loss';
+          } else if (actualTotal < line) {
+            result = prediction === 'UNDER' ? 'win' : 'loss';
+          } else {
+            result = 'push';
+          }
+
+          // Total bet odds not stored per-card; assume standard -110 juice
+          pnlUnits = computePnlUnits(result, -110);
         } else {
           console.warn(`[SettleCards] Unknown prediction value "${prediction}" for card ${row.card_id} — skipping`);
           continue;
         }
 
-        const odds = pickMoneylineOdds(payloadData, prediction);
-        pnlUnits = computePnlUnits(result, odds);
-        if (pnlUnits === null) {
-          console.warn(`[SettleCards] Missing/invalid moneyline odds for card ${row.card_id} — pnl_units will be null`);
+        if (prediction === 'HOME' || prediction === 'AWAY') {
+          const odds = pickMoneylineOdds(payloadData, prediction);
+          pnlUnits = computePnlUnits(result, odds);
+          if (pnlUnits === null) {
+            console.warn(`[SettleCards] Missing/invalid moneyline odds for card ${row.card_id} — pnl_units will be null`);
+          }
         }
 
         // Prepare fresh statement per row — sql.js does not reliably support re-binding

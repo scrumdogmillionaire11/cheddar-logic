@@ -30,6 +30,9 @@ const {
   withDb
 } = require('@cheddar-logic/data');
 
+const { settleGameResults } = require('./settle_game_results');
+const { settlePendingCards } = require('./settle_pending_cards');
+
 // Import odds fetching package (no DB writes)
 const { fetchOdds, getActiveSports, getTokensForFetch } = require('@cheddar-logic/odds');
 
@@ -105,11 +108,13 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
           // Accumulate skipped game count
           skippedMissingFields += (rawCount - (normalizedGames ? normalizedGames.length : 0));
 
-          // Contract check: fail job if normalization drops >40% of games
+          // Contract check: skip this sport if normalization drops >40% of games
+          // Use continue (not return) so other sports are not aborted
           if (rawCount > 0 && normalizedGames.length < rawCount * 0.6) {
-            console.error(`[PullOdds] CONTRACT VIOLATION: ${sport} normalized ${normalizedGames.length}/${rawCount} games (threshold 60%). Marking job failed.`);
-            markJobRunFailure(jobRunId, `Normalization dropped too many games for ${sport}: ${normalizedGames.length}/${rawCount}`);
-            return { success: false, jobRunId, jobKey, contractViolation: true, sport, normalizedCount: normalizedGames.length, rawCount };
+            const msg = `CONTRACT VIOLATION: ${sport} normalized ${normalizedGames.length}/${rawCount} games (threshold 60%) — skipping sport`;
+            console.error(`[PullOdds] ${msg}`);
+            errors.push(`${sport}: ${msg}`);
+            continue;
           }
 
           if (!normalizedGames || normalizedGames.length === 0) {
@@ -168,6 +173,26 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       if (errors.length > 0) {
         console.log(`[PullOdds] ⚠️  ${errors.length} errors:`);
         errors.forEach(e => console.log(`  - ${e}`));
+      }
+
+      if (process.env.ENABLE_SETTLEMENT !== 'false') {
+        const settleKey = jobKey ? `settle|after-odds|${jobKey}` : `settle|after-odds|${jobRunId}`;
+        console.log(`[PullOdds] Triggering settlement sweep after odds update (${settleKey})...`);
+
+        try {
+          await settleGameResults({
+            jobKey: `${settleKey}|games`,
+            dryRun,
+            minHoursAfterStart: 0
+          });
+
+          await settlePendingCards({
+            jobKey: `${settleKey}|cards`,
+            dryRun
+          });
+        } catch (settleErr) {
+          console.warn(`[PullOdds] Settlement sweep failed: ${settleErr.message}`);
+        }
       }
 
       return { success: true, jobRunId, jobKey, gamesUpserted, snapshotsInserted, skippedMissingFields, errors };
