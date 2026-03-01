@@ -21,15 +21,16 @@ export function AuthRefresher() {
         if (!response.ok) {
           // Only redirect to login if we get 401 (unauthorized) and have exhausted retries
           if (response.status === 401) {
-            retryCountRef.current++;
-            
-            if (retryCountRef.current >= MAX_RETRIES) {
-              console.warn('[AuthRefresher] Token refresh failed after retries, redirecting to login');
-              window.location.href = '/login';
-            } else {
-              console.warn(`[AuthRefresher] Token refresh failed, retrying (${retryCountRef.current}/${MAX_RETRIES})`);
-              setTimeout(refreshToken, RETRY_DELAY_MS);
-            }
+            // AUTH DISABLED: redirect suppressed while auth is open to all users
+            // Re-enable when auth is restored:
+            // retryCountRef.current++;
+            // if (retryCountRef.current >= MAX_RETRIES) {
+            //   console.warn('[AuthRefresher] Token refresh failed after retries, redirecting to login');
+            //   window.location.href = '/login';
+            // } else {
+            //   console.warn(`[AuthRefresher] Token refresh failed, retrying (${retryCountRef.current}/${MAX_RETRIES})`);
+            //   setTimeout(refreshToken, RETRY_DELAY_MS);
+            // }
           } else {
             // Network error or server error - don't redirect, just log
             console.warn('[AuthRefresher] Token refresh encountered error:', response.status);
