@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bmad-gsd"
+version = "1.0.0"
+description = "BMAD-GSD Framework: Multi-agent framework combining BMAD-METHOD planning agents and GSD execution agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+keywords = ["bmad", "gsd", "agents", "framework", "multi-agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.setuptools]
+py-modules = []
+
+[tool.setuptools.package-dir]
+"" = ".."
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["bmad_gsd"]
+
+[tool.setuptools.package-data]
+bmad_gsd = ["py.typed"]

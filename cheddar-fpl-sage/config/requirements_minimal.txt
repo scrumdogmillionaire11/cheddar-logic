@@ -1,0 +1,12 @@
+# Minimal requirements for FPL data collection
+aiohttp>=3.9.0
+pandas>=2.0.0
+requests>=2.31.0
+click>=8.1.0
+
+# Optional for full automation (install when ready)
+# psycopg2-binary>=2.9.0
+# redis>=5.0.0
+# sqlalchemy>=2.0.0
+# schedule>=1.2.0
+# tenacity>=8.2.0

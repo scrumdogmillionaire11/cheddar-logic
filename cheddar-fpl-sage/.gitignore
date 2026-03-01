@@ -1,0 +1,112 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyc
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Testing
+.coverage
+.coverage.*
+.pytest_cache/
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Build and testing caches
+.ruff_cache/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific - Runtime outputs
+outputs/
+outputs/*
+db/*.sqlite
+db/*.sqlite3
+db/*.db
+
+# Project specific - Data folders
+data/
+data/*
+
+# Project specific - Logs and temp files
+*.log
+*.log.*
+.env
+.env.local
+.env.*.local
+run_context.json
+
+# Project specific - BMAD (local development only)
+.bmad-core/
+.bmad-*/
+AGENTS.md
+
+# Project specific - Web bundles (generated)
+web-bundles/
+
+# Project specific - Vendor dependencies (build artifacts)
+vendor/wheels/
+
+# Project specific - Root level dynamic files
+/__init__.py
+/run_context.json
+/team_config.json
+
+# Project specific - Test artifacts (keep test files in tests/ only)
+test_*.py
+test_*.json
+*_test.py
+*_test.json
+
+# Project specific - Build and packaging artifacts
+*.egg-info/
+MANIFEST_BMAD_GSD.in
+pyproject-bmad-gsd.toml

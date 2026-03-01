@@ -1,0 +1,8 @@
+{
+  "model_profile": "budget",
+  "workflow": {
+    "research": false,
+    "plan_check": false,
+    "verifier": true
+  }
+}

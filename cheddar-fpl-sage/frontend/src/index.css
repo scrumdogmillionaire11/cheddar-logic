@@ -1,0 +1,69 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@theme {
+  /* Control Room Base Colors */
+  --color-surface-primary: #0E1116;
+  --color-surface-card: #151A21;
+  --color-surface-elevated: #1C222B;
+  --color-surface-disabled: #2A2F36;
+  
+  --color-sage-white: #E6E9EE;
+  --color-sage-light: #B3BAC6;
+  --color-sage-muted: #7C8594;
+  --color-sage-disabled: #4B5160;
+  
+  /* Decision States */
+  --color-execute: #2ECC71;
+  --color-hold: #8FA3BF;
+  --color-risky: #F2B705;
+  --color-veto: #E5533D;
+  
+  /* Risk Indicators */
+  --color-risk-low: #4FB3A2;
+  --color-risk-med: #F2B705;
+  --color-risk-high: #E5533D;
+  
+  /* Typography Sizes */
+  --font-size-page-title: 22px;
+  --font-size-decision: 20px;
+  --font-size-section: 14px;
+  --font-size-body: 14px;
+  --font-size-body-sm: 13px;
+  --font-size-meta: 12px;
+  
+  /* Max Width */
+  --breakpoint-reading: 780px;
+}
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  
+  html {
+    background-color: #0E1116;
+  }
+  
+  body {
+    background-color: #0E1116;
+    color: #E6E9EE;
+    font-family: 'Inter', 'SF Pro Text', system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  /* Control Room Cards */
+  .card {
+    @apply bg-surface-card border border-surface-elevated;
+  }
+  
+  /* Transitions - Keep them tight */
+  * {
+    transition-duration: 120ms;
+    transition-timing-function: ease-out;
+  }
+}

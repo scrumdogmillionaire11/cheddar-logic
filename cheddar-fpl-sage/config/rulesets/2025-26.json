@@ -1,0 +1,45 @@
+{
+  "season_id": "2025-26",
+  "ruleset_version": "1.0.0",
+  "chip_policy": {
+    "chip_windows": [
+      {
+        "name": "first_half",
+        "start_event": 1,
+        "end_event": 19,
+        "chips": ["Free Hit", "Wildcard", "Bench Boost", "Triple Captain"]
+      },
+      {
+        "name": "second_half",
+        "start_event": 20,
+        "end_event": 38,
+        "chips": ["Free Hit", "Wildcard", "Bench Boost", "Triple Captain"]
+      }
+    ],
+    "force_use_if_expiring": true
+  },
+  "scoring_policy": {
+    "appearance": {"start": 1, "60min": 2},
+    "goals": {"GK": 6, "DEF": 6, "MID": 5, "FWD": 4},
+    "assists": 3,
+    "clean_sheets": {"GK": 4, "DEF": 4, "MID": 1, "FWD": 0},
+    "saves": {"per_3": 1},
+    "cards": {"yellow": -1, "red": -3},
+    "own_goal": -2,
+    "penalty_save": 5,
+    "penalty_miss": -2,
+    "defensive_contributions": 1,
+    "bps_note": "approximate uplift applied in projections"
+  },
+  "transfer_policy": {
+    "max_free_transfers_carry": 2,
+    "hit_cost": 4,
+    "sell_profit_increment": 0.1,
+    "sell_profit_step": 0.2
+  },
+  "constraints": {
+    "max_per_club": 3,
+    "squad_positions": {"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+    "on_field_min": {"GK": 1, "DEF": 3, "MID": 3, "FWD": 1}
+  }
+}

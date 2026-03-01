@@ -1,0 +1,70 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  darkMode: ["class"],
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        // Control Room Base Colors
+        surface: {
+          primary: '#0E1116',
+          card: '#151A21',
+          elevated: '#1C222B',
+          disabled: '#2A2F36',
+        },
+        sage: {
+          white: '#E6E9EE',
+          light: '#B3BAC6',
+          muted: '#7C8594',
+          disabled: '#4B5160',
+        },
+        // Decision States
+        execute: '#2ECC71',
+        hold: '#8FA3BF',
+        risky: '#F2B705',
+        veto: '#E5533D',
+        // Risk Indicators
+        risk: {
+          low: '#4FB3A2',
+          med: '#F2B705',
+          high: '#E5533D',
+        },
+        // Structural Tags
+        tag: {
+          fixture: '#4C7ED9',
+          trap: '#D97706',
+          minutes: '#E5533D',
+          nailed: '#4FB3A2',
+          dgw: '#9B6DFF',
+        },
+        // Chips
+        chip: {
+          wildcard: '#9B6DFF',
+          boost: '#4FB3A2',
+          hit: '#4C7ED9',
+          captain: '#E3B341',
+          none: '#7C8594',
+        },
+      },
+      fontFamily: {
+        sans: ['Inter', 'SF Pro Text', 'system-ui', 'sans-serif'],
+      },
+      fontSize: {
+        // Control Room Typography (Ops Console Scale)
+        'page-title': ['22px', { lineHeight: '1.2', fontWeight: '600', letterSpacing: '-0.01em' }],
+        'decision': ['20px', { lineHeight: '1.3', fontWeight: '600', letterSpacing: '-0.005em' }],
+        'section': ['14px', { lineHeight: '1.4', fontWeight: '600', letterSpacing: '0.02em' }],
+        'body': ['14px', { lineHeight: '1.6', fontWeight: '400' }],
+        'body-sm': ['13px', { lineHeight: '1.5', fontWeight: '400', letterSpacing: '0.01em' }],
+        'meta': ['12px', { lineHeight: '1.4', fontWeight: '400', letterSpacing: '0.01em' }],
+      },
+      maxWidth: {
+        'reading': '780px', // Centered reading column
+      },
+    },
+  },
+  plugins: [],
+}

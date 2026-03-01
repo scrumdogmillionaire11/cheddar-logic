@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-01-01T00:00:00Z",
+  "source": "secondary_stub",
+  "reports": [
+    {
+      "player_id": 1,
+      "status": "DOUBTFUL",
+      "chance": 65,
+      "reason": "Secondary feed sample - fitness concern",
+      "confidence": "MED"
+    }
+  ]
+}

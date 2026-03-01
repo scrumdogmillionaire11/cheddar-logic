@@ -1,0 +1,21 @@
+{
+  "manual_chip_status": {
+    "Wildcard": {
+      "available": false,
+      "played_gw": "unknown"
+    },
+    "Free Hit": {
+      "available": true,
+      "played_gw": null
+    },
+    "Bench Boost": {
+      "available": false,
+      "played_gw": "unknown"
+    },
+    "Triple Captain": {
+      "available": true,
+      "played_gw": null
+    }
+  },
+  "chip_data_source": "manual"
+}
