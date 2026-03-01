@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { closeDatabase, initDb } from '@cheddar-logic/data';
+import { closeDatabase, initDb, RESOURCE } from '@cheddar-logic/data';
 import {
+  ACCESS_COOKIE_NAME,
   consumeMagicLinkAndCreateSession,
+  getAccessTokenAuthResult,
   sanitizeNextPath,
   setAuthCookies,
 } from '@/lib/auth/server';
@@ -18,6 +20,18 @@ export async function GET(request: NextRequest) {
 
   try {
     await initDb();
+
+    // Check if user already has a valid session - if so, just redirect
+    // This prevents the "link already used" error when clicking the same link twice
+    const existingToken = request.cookies.get(ACCESS_COOKIE_NAME)?.value;
+    if (existingToken) {
+      const auth = getAccessTokenAuthResult(existingToken, RESOURCE.CHEDDAR_BOARD);
+      if (auth.isAuthenticated && auth.isEntitled) {
+        console.log('[Auth] User already has valid session, skipping magic link consumption');
+        const redirectUrl = new URL(next, request.url);
+        return NextResponse.redirect(redirectUrl);
+      }
+    }
 
     const session = consumeMagicLinkAndCreateSession(request, token, code);
     const redirectUrl = new URL(next, request.url);

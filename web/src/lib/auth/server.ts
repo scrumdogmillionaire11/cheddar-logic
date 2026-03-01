@@ -44,9 +44,36 @@ export type AuthenticatedUserContext = {
   current_period_end: string | null;
 };
 
+/**
+ * DEV ONLY: Creates a bypass user for easier local development
+ * Set DEV_BYPASS_AUTH_EMAIL env var to enable
+ */
+function getDevBypassUser(): AuthenticatedUserContext | null {
+  if (process.env.NODE_ENV === 'production') return null;
+  
+  const bypassEmail = process.env.DEV_BYPASS_AUTH_EMAIL;
+  if (!bypassEmail) return null;
+
+  return {
+    id: 'dev-bypass-user',
+    email: bypassEmail,
+    role: 'ADMIN',
+    user_status: 'ACTIVE',
+    flags: '[]',
+    ambassador_expires_at: null,
+    subscription_status: 'ACTIVE',
+    trial_ends_at: null,
+    current_period_end: null,
+  };
+}
+
 export function getUserContextFromAccessToken(
   accessToken: string | null | undefined,
 ): AuthenticatedUserContext | null {
+  // DEV ONLY: Bypass auth if configured
+  const devUser = getDevBypassUser();
+  if (devUser) return devUser;
+
   if (!accessToken) return null;
 
   const payload = verifySignedPayload(accessToken) as TokenPayload | null;
@@ -235,8 +262,8 @@ export function consumeMagicLinkAndCreateSession(
       }
     | null;
 
-  if (!record || record.used_at) {
-    throw new Error('Link expired or already used');
+  if (!record) {
+    throw new Error('Invalid link');
   }
 
   if (new Date(nowIso) > new Date(record.expires_at)) {
@@ -246,6 +273,104 @@ export function consumeMagicLinkAndCreateSession(
   const providedHash = hashTokenHmac(code);
   if (!timingSafeEqualHex(record.token_hash, providedHash)) {
     throw new Error('Invalid link');
+  }
+
+  // If link was already used, check if it was recent and a session exists
+  // This handles browser prefetch, double-clicks, etc.
+  if (record.used_at) {
+    const usedAt = new Date(record.used_at);
+    const now = new Date(nowIso);
+    const secondsSinceUse = (now.getTime() - usedAt.getTime()) / 1000;
+    
+    // If link was used in the last 60 seconds, check for valid session
+    if (secondsSinceUse < 60) {
+      const existingUser = db.prepare(`SELECT id FROM users WHERE email = ?`).get(record.email) as
+        | { id: string }
+        | null;
+      
+      if (existingUser) {
+        // Check for a recent valid session
+        const recentSession = db
+          .prepare(
+            `SELECT id, refresh_token_hash, expires_at 
+             FROM sessions 
+             WHERE user_id = ? 
+               AND revoked_at IS NULL 
+               AND expires_at > ?
+             ORDER BY created_at DESC 
+             LIMIT 1`
+          )
+          .get(existingUser.id, nowIso) as
+          | { id: string; refresh_token_hash: string; expires_at: string }
+          | null;
+        
+        if (recentSession) {
+          console.log('[Auth] Link already used but valid session exists (idempotent behavior)');
+          
+          // Create new tokens for this request (we don't have the old refresh token)
+          const refreshToken = randomToken(32);
+          const refreshTokenHash = hashTokenHmac(refreshToken);
+          const sessionId = crypto.randomUUID();
+
+          db.prepare(
+            `INSERT INTO sessions (id, user_id, refresh_token_hash, expires_at, ip_address, user_agent)
+             VALUES (?, ?, ?, ?, ?, ?)`
+          ).run(
+            sessionId,
+            existingUser.id,
+            refreshTokenHash,
+            addMsIso(REFRESH_TTL_MS),
+            getIpAddress(request),
+            request.headers.get('user-agent')
+          );
+
+          const userContext = db
+            .prepare(
+              `SELECT
+                u.id,
+                u.email,
+                u.role,
+                u.user_status,
+                u.flags,
+                u.ambassador_expires_at,
+                s.status AS subscription_status,
+                s.trial_ends_at,
+                s.current_period_end
+               FROM users u
+               LEFT JOIN subscriptions s ON s.user_id = u.id
+               WHERE u.id = ?`
+            )
+            .get(existingUser.id) as {
+            id: string;
+            email: string;
+            role: string;
+            user_status: string;
+            flags: string;
+            ambassador_expires_at: string | null;
+            subscription_status: string | null;
+            trial_ends_at: string | null;
+            current_period_end: string | null;
+          };
+
+          const accessToken = createAccessToken({
+            userId: userContext.id,
+            role: userContext.role,
+            flags: parseFlags(userContext.flags),
+            sessionId,
+          }, ACCESS_TTL_MS);
+
+          return {
+            user: userContext,
+            sessionId,
+            accessToken,
+            refreshToken,
+          };
+        }
+      }
+    }
+    
+    // Link was used too long ago or no valid session - reject
+    throw new Error('Link expired or already used');
   }
 
   try {
@@ -280,10 +405,14 @@ export function consumeMagicLinkAndCreateSession(
     let userId = existingUser?.id;
     if (!userId) {
       userId = crypto.randomUUID();
+      
+      // DEV: Grant COMPED access automatically in development for easier testing
+      const devFlags = process.env.NODE_ENV === 'production' ? '[]' : '["COMPED"]';
+      
       db.prepare(
         `INSERT INTO users (id, email, role, user_status, flags, created_at, last_login_at)
-         VALUES (?, ?, 'FREE_ACCOUNT', 'ACTIVE', '[]', ?, ?)`
-      ).run(userId, record.email, nowIso, nowIso);
+         VALUES (?, ?, 'FREE_ACCOUNT', 'ACTIVE', ?, ?, ?)`
+      ).run(userId, record.email, devFlags, nowIso, nowIso);
     } else {
       db.prepare(`UPDATE users SET last_login_at = ? WHERE id = ?`).run(nowIso, userId);
     }

@@ -55,6 +55,13 @@ export default function LoginPage() {
           ← Back to Home
         </Link>
 
+        {process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_DEV_BYPASS_ENABLED && (
+          <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+            <p className="font-semibold mb-1">🚀 Dev Mode Active</p>
+            <p>Auth bypass is enabled. You can skip login and <Link href="/cards" className="underline font-semibold">go directly to /cards</Link>.</p>
+          </div>
+        )}
+
         <div>
           <h1 className="mb-2 font-display text-4xl font-semibold">Sign in</h1>
           <p className="text-cloud/70">Sign in to view your cards.</p>
