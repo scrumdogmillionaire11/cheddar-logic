@@ -31,8 +31,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { RESOURCE, initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
-import { requireEntitlementForRequest } from '@/lib/auth/server';
+import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
 
 interface CardRow {
   id: string;

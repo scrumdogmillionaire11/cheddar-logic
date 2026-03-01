@@ -35,9 +35,8 @@
  * }
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { RESOURCE, initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
-import { requireEntitlementForRequest } from '@/lib/auth/server';
+import { NextResponse } from 'next/server';
+import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
 
 interface GameRow {
   id: string;
@@ -76,7 +75,7 @@ interface Play {
   edge: number | null;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     await initDb();
 
