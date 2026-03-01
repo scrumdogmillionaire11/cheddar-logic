@@ -86,11 +86,19 @@ jobs:
           username: ${{ secrets.PI_USER }}
           key: ${{ secrets.PI_SSH_KEY }}
           port: 22
+          command_timeout: 20m
           script: |
             set -e
             cd /opt/cheddar-logic
             git fetch origin main
             git reset --hard origin/main
+            npm --prefix packages/data install --omit=dev
+            npm --prefix packages/models install --omit=dev
+            npm --prefix packages/adapters install --omit=dev
+            npm --prefix packages/odds install --omit=dev
             npm --prefix apps/worker install --omit=dev
+            npm --prefix web install --omit=dev
+            npm --prefix web run build
             sudo systemctl restart cheddar-worker
-            echo "Deploy complete — worker restarted"
+            sudo systemctl restart cheddar-web
+            echo "Deploy complete — worker and web restarted"
