@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-03-01 - Completed quick task 18: Settlement pipeline ran (33 games, 39 cards settled); /results UI verified showing real graded data; Price+Edge columns deferred to next task
+**Last activity:** 2026-03-01 - Completed quick task 19: Play Ledger enriched with Matchup (Away @ Home), real Price from odds_context, and real Confidence % from payload_data; 8-column ledger live on /results
 
 ---
 
@@ -215,3 +215,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 16 | Add Totals and Spread play call cards for NHL and NBA using all driver and model data | 2026-03-01 | 27c85f0 | [16-add-totals-and-spread-play-call-cards-fo](./quick/16-add-totals-and-spread-play-call-cards-fo/) |
 | 17 | Fix /cards and /fpl in production: systemd service files for web + fpl-sage, deploy workflow installs services + injects env at build time | 2026-03-01 | d3eb000 | .planning/quick/17-fix-cards-and-fpl-sage-in-production/ |
 | 18 | Settle yesterday's plays: ESPN score ingest + card grading (33 games settled, 39 cards: 24W/15L); /api/results and /results UI verified | 2026-03-01 | edf529c | .planning/quick/18-settle-yesterday-plays-in-db-and-ensure-/ |
+| 19 | Enrich Play Ledger: Matchup (Away @ Home), real Price from odds_context, real Confidence % — 8-column ledger on /results | 2026-03-01 | a6fefb8 | .planning/quick/19-add-matchup-teams-fix-price-odds-column-/ |
