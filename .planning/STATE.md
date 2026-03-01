@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-02-28 - Completed quick task 14: import NHL pace model (TotalsPredictor) and player shots model (mu.py) from cheddar-nhl to integrate as nhl-pace-totals and nhl-pace-1p driver cards
+**Last activity:** 2026-02-28 - Completed quick task 15: fix magic link expiry and sign-in loop (24h access TTL, idempotent verify, 3-retry AuthRefresher, dev bypass env vars)
 
 ---
 
@@ -211,3 +211,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 11 | ESPN score ingest, card W/L settlement, tracking_stats aggregates, nightly sweep | 2026-02-28 | 7516f13 | .planning/quick/11-complete-settlement-and-tracking-ingest-/ |
 | 13 | NBA pace synergy model: JS port of PaceSynergyService, paceMatchup driver card (FAST x FAST / SLOW x SLOW totals signal) | 2026-02-28 | 0b5d112 | .planning/quick/13-import-nba-pace-model-from-cheddar-nba-2/ |
 | 14 | NHL pace model: JS port of TotalsPredictor (predictNHLGame) and mu.py (calcMu, classifyEdge); nhl-pace-totals and nhl-pace-1p driver cards | 2026-02-28 | 6ad319b | .planning/quick/14-import-nhl-pace-model-and-player-shots-m/ |
+| 15 | Fix magic link expiry + sign-in loop: 24h access TTL, idempotent verify, 3-retry AuthRefresher, dev bypass env vars | 2026-02-28 | dcdc7b4 | .planning/quick/15-fix-magic-link-expiry-and-sign-in-loop-i/ |
