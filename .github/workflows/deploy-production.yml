@@ -1,0 +1,83 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      
+      - name: Install web dependencies
+        run: npm --prefix web install
+      
+      - name: Lint web
+        run: npm --prefix web run lint
+      
+      - name: Build web
+        run: npm --prefix web run build
+
+  deploy-web-vercel:
+    name: Deploy Web (Vercel)
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    # Note: Vercel GitHub integration handles auto-deploy
+    # This job is optional and can be removed if using Vercel's native integration
+    if: false  # Disabled by default - enable if you want manual GitHub Actions deploys
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+          working-directory: ./web
+
+  deploy-backend-railway:
+    name: Deploy Backend (Railway)
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    # Enable this if using Railway with GitHub integration
+    if: false  # Disabled by default
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Railway
+        run: |
+          echo "Railway deployment via GitHub app"
+          echo "Configure at: https://railway.app/project/[your-project]/settings"
+
+  deploy-worker-pi:
+    name: Deploy Worker (Raspberry Pi)
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy to Pi
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PI_HOST }}
+          username: ${{ secrets.PI_USER }}
+          key: ${{ secrets.PI_SSH_KEY }}
+          port: ${{ secrets.PI_SSH_PORT || 22 }}
+          script: |
+            set -e
+            cd /opt/cheddar-logic
+            git pull origin main
+            npm --prefix apps/worker install --omit=dev
+            sudo systemctl restart cheddar-worker
+            echo "Deploy complete — worker restarted"
