@@ -68,7 +68,7 @@ function safeJsonParse(payload: string | null) {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { gameId: string } }
+  { params }: { params: Promise<{ gameId: string }> }
 ) {
   try {
     await initDb();

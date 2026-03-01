@@ -7,6 +7,7 @@
 
 import { useState } from 'react';
 import type { GameFilters, SortMode } from '@/lib/game-card/filters';
+import { resetFilters } from '@/lib/game-card/filters';
 import type { Sport, Market, DriverTier, ExpressionStatus } from '@/lib/types/game-card';
 import { FILTER_PRESETS } from '@/lib/game-card/presets';
 
@@ -50,10 +51,41 @@ export default function FilterPanel({
     updateFilters({ markets });
   };
 
+  const doesPresetMatchCurrentFilters = (presetFilters: Partial<GameFilters>) => {
+    return (Object.keys(presetFilters) as (keyof GameFilters)[]).every(key => {
+      if (key === 'customTimeRange') {
+        const presetRange = presetFilters.customTimeRange;
+        const currentRange = filters.customTimeRange;
+
+        if (!presetRange && !currentRange) return true;
+        if (!presetRange || !currentRange) return false;
+
+        return presetRange.start === currentRange.start && presetRange.end === currentRange.end;
+      }
+
+      const presetValue = presetFilters[key];
+      const currentValue = filters[key];
+
+      if (Array.isArray(presetValue)) {
+        if (!Array.isArray(currentValue) || currentValue.length !== presetValue.length) {
+          return false;
+        }
+        return presetValue.every((value, index) => value === currentValue[index]);
+      }
+
+      return presetValue === currentValue;
+    });
+  };
+
   const applyPreset = (presetId: string) => {
     const preset = FILTER_PRESETS.find(p => p.id === presetId);
     if (preset) {
-      onFiltersChange({ ...filters, ...preset.filters });
+      if (doesPresetMatchCurrentFilters(preset.filters)) {
+        onFiltersChange(resetFilters());
+        return;
+      }
+
+      onFiltersChange({ ...resetFilters(), ...preset.filters });
     }
   };
 
@@ -105,17 +137,26 @@ export default function FilterPanel({
           Quick Presets
         </p>
         <div className="flex flex-wrap gap-2">
-          {FILTER_PRESETS.map(preset => (
+          {FILTER_PRESETS.map(preset => {
+            const isActive = doesPresetMatchCurrentFilters(preset.filters);
+
+            return (
             <button
               key={preset.id}
               onClick={() => applyPreset(preset.id)}
-              className="px-3 py-1.5 text-sm rounded bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition"
+              className={`px-3 py-1.5 text-sm rounded border transition ${
+                isActive
+                  ? 'bg-blue-700/50 text-blue-200 border-blue-600/60'
+                  : 'bg-white/5 hover:bg-white/10 border-white/10 hover:border-white/20'
+              }`}
               title={preset.description}
+              aria-pressed={isActive}
             >
               <span className="mr-1.5">{preset.icon}</span>
               {preset.name}
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
 

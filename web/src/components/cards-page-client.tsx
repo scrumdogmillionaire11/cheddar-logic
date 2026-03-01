@@ -355,7 +355,7 @@ export default function CardsPageClient() {
                   {originalGame.odds.total !== null ? `O/U ${originalGame.odds.total}` : '--'}
                 </p>
                 {(() => {
-                  const totalPlay = originalGame.plays.find(p => p.cardType === 'nba-total-projection');
+                  const totalPlay = originalGame.plays.find(p => p.cardType === 'nba-total-projection' || p.cardType === 'nhl-pace-totals');
                   if (!totalPlay?.projectedTotal) return null;
                   const edge = totalPlay.edge ?? 0;
                   const sign = edge >= 0 ? '+' : '';

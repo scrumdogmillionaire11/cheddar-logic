@@ -63,8 +63,9 @@ function teamsMatch(ourName, espnName) {
  * @param {object} options - Job options
  * @param {string|null} options.jobKey - Optional deterministic window key for idempotency
  * @param {boolean} options.dryRun - If true, skip execution (log only)
+ * @param {number} options.minHoursAfterStart - Minimum hours after start time before settling
  */
-async function settleGameResults({ jobKey = null, dryRun = false } = {}) {
+async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterStart = 3 } = {}) {
   const jobRunId = `job-settle-games-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[SettleGames] Starting job run: ${jobRunId}`);
@@ -92,8 +93,9 @@ async function settleGameResults({ jobKey = null, dryRun = false } = {}) {
 
       const db = getDatabase();
       const now = new Date();
-      // Give games 3 hours after start time before we try to settle them
-      const cutoffUtc = new Date(now.getTime() - 3 * 60 * 60 * 1000).toISOString();
+      const safeHoursAfterStart = Number.isFinite(minHoursAfterStart) ? Math.max(0, minHoursAfterStart) : 3;
+      // Allow faster settlement when upstream confirms status is final
+      const cutoffUtc = new Date(now.getTime() - safeHoursAfterStart * 60 * 60 * 1000).toISOString();
 
       // Query games that are past the cutoff and not yet in game_results as 'final'
       const pendingGamesStmt = db.prepare(`

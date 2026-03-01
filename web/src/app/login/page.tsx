@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, Suspense, useMemo, useState } from 'react';
 
 type SendLinkResponse = {
   success: boolean;
@@ -12,7 +12,7 @@ type SendLinkResponse = {
   expiresAt?: string;
 };
 
-export default function LoginPage() {
+function LoginForm() {
   const searchParams = useSearchParams();
   const nextPath = searchParams.get('next') || '/cards';
   const errorCode = searchParams.get('error');
@@ -117,5 +117,17 @@ export default function LoginPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-night px-6 py-12 text-cloud">
+        <div className="mx-auto w-full max-w-xl">Loading...</div>
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }

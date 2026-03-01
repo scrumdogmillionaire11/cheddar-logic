@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "buildCommand": "cd web && npm install && npm run build",
+  "outputDirectory": "web/.next",
+  "framework": "nextjs",
+  "installCommand": "npm install --prefix web",
+  "devCommand": "npm run dev --prefix web",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD ./web",
+  "git": {
+    "deploymentEnabled": {
+      "main": true
+    }
+  }
+}

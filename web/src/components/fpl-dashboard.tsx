@@ -1,6 +1,7 @@
 "use client";
 
-import type { DetailedAnalysisResponse, PlayerProjection, TransferPlan, TransferPlans } from "@/lib/fpl-api";
+import type { DetailedAnalysisResponse, TransferPlan, TransferPlans } from "@/lib/fpl-api";
+import FPLLineupView from "@/components/fpl-lineup-view";
 
 interface FPLDashboardProps {
   data: DetailedAnalysisResponse;
@@ -14,21 +15,6 @@ const getConfidenceTone = (confidence: string) => {
   if (normalized === "LOW") return "text-rose";
   return "text-amber";
 };
-
-const renderPlayerRow = (player: PlayerProjection, index: number) => (
-  <div key={`${player.name}-${index}`} className="flex items-center justify-between rounded-lg border border-white/10 bg-surface/50 px-4 py-2">
-    <div>
-      <div className="text-sm font-semibold">
-        {player.name}
-        {player.is_new && <span className="ml-2 rounded bg-teal/15 px-2 py-0.5 text-[10px] uppercase text-teal">New</span>}
-      </div>
-      <div className="text-xs text-cloud/60">
-        {player.team} · {player.position}
-      </div>
-    </div>
-    <div className="text-sm text-cloud/70">{formatPts(player.expected_pts)} pts</div>
-  </div>
-);
 
 const renderTransferPlan = (label: string, plan: TransferPlan) => (
   <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
@@ -60,7 +46,6 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
   }
 
   const plans: TransferPlans | null | undefined = data.transfer_plans;
-  const hasProjected = (data.projected_xi?.length || 0) + (data.projected_bench?.length || 0) > 0;
 
   return (
     <div className="space-y-8">
@@ -137,17 +122,17 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
               <div className="text-xs font-semibold uppercase text-teal">Captain</div>
               <div className="mt-2 text-lg font-semibold">{String(data.captain?.name ?? "TBD")}</div>
               <div className="text-sm text-cloud/60">{formatPts(Number(data.captain?.expected_pts) || undefined)} pts</div>
-              {data.captain?.rationale && (
+              {data.captain?.rationale ? (
                 <p className="mt-2 text-xs text-cloud/60">{String(data.captain.rationale)}</p>
-              )}
+              ) : null}
             </div>
             <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
               <div className="text-xs font-semibold uppercase text-cloud/60">Vice Captain</div>
               <div className="mt-2 text-lg font-semibold">{String(data.vice_captain?.name ?? "TBD")}</div>
               <div className="text-sm text-cloud/60">{formatPts(Number(data.vice_captain?.expected_pts) || undefined)} pts</div>
-              {data.vice_captain?.rationale && (
+              {data.vice_captain?.rationale ? (
                 <p className="mt-2 text-xs text-cloud/60">{String(data.vice_captain.rationale)}</p>
-              )}
+              ) : null}
             </div>
           </div>
           {data.captain_delta?.delta_pts !== undefined && (
@@ -158,60 +143,28 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
         </div>
       )}
 
-      {/* Current Squad */}
-      <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-        <h2 className="mb-6 text-2xl font-semibold">Current Squad</h2>
-        <div className="space-y-6">
-          <div>
-            <div className="mb-3 text-xs font-semibold uppercase text-cloud/60">Starting XI</div>
-            <div className="space-y-2">
-              {data.starting_xi_projections.map(renderPlayerRow)}
-            </div>
-          </div>
-          <div>
-            <div className="mb-3 text-xs font-semibold uppercase text-cloud/60">Bench</div>
-            <div className="space-y-2">
-              {data.bench_projections.map(renderPlayerRow)}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Projected Squad */}
-      {hasProjected && (
-        <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-          <h2 className="mb-6 text-2xl font-semibold">Projected Squad</h2>
-          <div className="space-y-6">
-            <div>
-              <div className="mb-3 text-xs font-semibold uppercase text-cloud/60">Projected XI</div>
-              <div className="space-y-2">
-                {(data.projected_xi || []).map(renderPlayerRow)}
-              </div>
-            </div>
-            <div>
-              <div className="mb-3 text-xs font-semibold uppercase text-cloud/60">Projected Bench</div>
-              <div className="space-y-2">
-                {(data.projected_bench || []).map(renderPlayerRow)}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Squad Lineup with Toggle */}
+      <FPLLineupView
+        currentStarting={data.starting_xi_projections}
+        currentBench={data.bench_projections}
+        projectedStarting={data.projected_xi}
+        projectedBench={data.projected_bench}
+      />
 
       {/* Chip Strategy */}
       {data.chip_recommendation && (
         <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
           <h2 className="mb-6 text-2xl font-semibold">💎 Chip Strategy</h2>
           <div className="text-lg font-semibold">{String(data.chip_recommendation?.recommendation ?? "Hold")}</div>
-          {data.chip_recommendation?.rationale && (
+          {data.chip_recommendation?.rationale ? (
             <p className="mt-2 text-sm text-cloud/70">{String(data.chip_recommendation.rationale)}</p>
-          )}
-          {data.chip_recommendation?.timing && (
+          ) : null}
+          {data.chip_recommendation?.timing ? (
             <p className="mt-2 text-xs text-cloud/60">Timing: {String(data.chip_recommendation.timing)}</p>
-          )}
-          {data.available_chips.length > 0 && (
+          ) : null}
+          {data.available_chips.length > 0 ? (
             <p className="mt-3 text-xs text-cloud/60">Available chips: {data.available_chips.join(" · ")}</p>
-          )}
+          ) : null}
         </div>
       )}
 
