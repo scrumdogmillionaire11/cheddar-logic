@@ -15,13 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-      
+
       - name: Install package dependencies
         run: |
           npm --prefix packages/data install
@@ -92,13 +92,20 @@ jobs:
             cd /opt/cheddar-logic
             git fetch origin main
             git reset --hard origin/main
+            sudo cp /opt/cheddar-logic/cheddar-worker.service /etc/systemd/system/cheddar-worker.service
+            sudo cp /opt/cheddar-logic/cheddar-web.service /etc/systemd/system/cheddar-web.service
+            sudo cp /opt/cheddar-logic/cheddar-fpl-sage.service /etc/systemd/system/cheddar-fpl-sage.service
+            sudo systemctl daemon-reload
+            sudo systemctl enable cheddar-worker cheddar-web cheddar-fpl-sage
             npm --prefix packages/data install --omit=dev
             npm --prefix packages/models install --omit=dev
             npm --prefix packages/adapters install --omit=dev
             npm --prefix packages/odds install --omit=dev
             npm --prefix apps/worker install --omit=dev
             npm --prefix web install --omit=dev
-            npm --prefix web run build
+            rm -rf web/.next
+            env $(cat /opt/cheddar-logic/.env.production | grep -v '^#' | xargs) npm --prefix web run build
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
-            echo "Deploy complete — worker and web restarted"
+            sudo systemctl restart cheddar-fpl-sage
+            echo "Deploy complete — worker, web, and fpl-sage restarted"
