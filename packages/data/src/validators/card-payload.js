@@ -29,7 +29,7 @@ const driverPayloadSchema = basePayloadSchema.extend({
 });
 
 const schemaByCardType = {
-  // NHL
+  // NHL driver cards
   'nhl-model-output': basePayloadSchema,        // keep for backward compat
   'nhl-goalie': driverPayloadSchema,
   'nhl-special-teams': driverPayloadSchema,
@@ -38,13 +38,30 @@ const schemaByCardType = {
   'nhl-total-fragility': driverPayloadSchema,
   'nhl-pdo-regression': driverPayloadSchema,
   'nhl-welcome-home': driverPayloadSchema,
-  // NBA
+  'nhl-base-projection': driverPayloadSchema,
+  'nhl-rest-advantage': driverPayloadSchema,
+  'nhl-pace-totals': driverPayloadSchema,
+  'nhl-pace-1p': driverPayloadSchema,
+  // NHL market call cards
+  'nhl-totals-call': driverPayloadSchema,
+  'nhl-spread-call': driverPayloadSchema,
+  // NBA driver cards
   'nba-model-output': basePayloadSchema,        // keep for backward compat
   'nba-rest-advantage': driverPayloadSchema,
   'nba-travel': driverPayloadSchema,
   'nba-lineup': driverPayloadSchema,
   'nba-matchup-style': driverPayloadSchema,
-  'nba-blowout-risk': driverPayloadSchema
+  'nba-blowout-risk': driverPayloadSchema,
+  'nba-base-projection': driverPayloadSchema,
+  'nba-total-projection': driverPayloadSchema,
+  'nba-pace-matchup': driverPayloadSchema,
+  // NBA market call cards
+  'nba-totals-call': driverPayloadSchema,
+  'nba-spread-call': driverPayloadSchema,
+  // NCAAM driver cards
+  'ncaam-base-projection': driverPayloadSchema,
+  'ncaam-rest-advantage': driverPayloadSchema,
+  'ncaam-matchup-style': driverPayloadSchema,
 };
 
 /**

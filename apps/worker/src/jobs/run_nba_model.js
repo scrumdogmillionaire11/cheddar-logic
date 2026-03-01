@@ -31,7 +31,7 @@ const {
   enrichOddsSnapshotWithEspnMetrics
 } = require('@cheddar-logic/data');
 
-const { computeNBADriverCards } = require('../models');
+const { computeNBADriverCards, computeNBAMarketDecisions, determineTier } = require('../models');
 const {
   buildRecommendationFromPrediction,
   buildMatchup,
@@ -169,6 +169,177 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
 }
 
 /**
+ * Generate standalone market call cards (nba-totals-call, nba-spread-call)
+ * from cross-market decisions. Only emits for FIRE or WATCH status.
+ */
+function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
+  const now = new Date().toISOString();
+  let expiresAt = null;
+  if (oddsSnapshot?.game_time_utc) {
+    const gameTime = new Date(oddsSnapshot.game_time_utc);
+    expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
+  }
+
+  const matchup = buildMatchup(oddsSnapshot?.home_team, oddsSnapshot?.away_team);
+  const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
+  const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
+  const market = buildMarketFromOdds(oddsSnapshot);
+
+  const cards = [];
+  const CONFIDENCE_MAP = { FIRE: 0.74, WATCH: 0.61 };
+
+  // TOTAL decision → nba-totals-call
+  const totalDecision = marketDecisions?.TOTAL;
+  if (totalDecision && (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')) {
+    const confidence = CONFIDENCE_MAP[totalDecision.status];
+    const tier = determineTier(confidence);
+    const { side, line } = totalDecision.best_candidate;
+    const lineText = line != null ? ` ${line}` : '';
+    const pickText = `${side === 'OVER' ? 'OVER' : 'UNDER'}${lineText}`;
+    const activeDrivers = (totalDecision.drivers || [])
+      .filter(d => d.eligible)
+      .map(d => d.driverKey);
+    const topDrivers = (totalDecision.drivers || [])
+      .filter(d => d.eligible)
+      .sort((a, b) => Math.abs(b.signal) - Math.abs(a.signal))
+      .slice(0, 3)
+      .map(d => ({ driver: d.driverKey, weight: d.weight, score: Number(((d.signal + 1) / 2).toFixed(3)) }));
+
+    const cardId = `card-nba-totals-call-${gameId}-${uuidV4().slice(0, 8)}`;
+    cards.push({
+      id: cardId,
+      gameId,
+      sport: 'NBA',
+      cardType: 'nba-totals-call',
+      cardTitle: `NBA Totals: ${pickText}`,
+      createdAt: now,
+      expiresAt,
+      payloadData: {
+        game_id: gameId,
+        sport: 'NBA',
+        model_version: 'nba-cross-market-v1',
+        home_team: oddsSnapshot?.home_team ?? null,
+        away_team: oddsSnapshot?.away_team ?? null,
+        matchup,
+        start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+        start_time_local: startTimeLocal,
+        timezone,
+        countdown,
+        prediction: side,
+        confidence,
+        tier,
+        recommended_bet_type: 'total',
+        reasoning: `${pickText}: ${totalDecision.reasoning}`,
+        edge: totalDecision.edge ?? null,
+        projection: {
+          total: line ?? null,
+          margin_home: null,
+          win_prob_home: null
+        },
+        market,
+        drivers_active: activeDrivers,
+        driver_summary: { weights: topDrivers, impact_note: 'Cross-market totals decision.' },
+        ev_passed: totalDecision.status === 'FIRE',
+        odds_context: {
+          h2h_home: oddsSnapshot?.h2h_home,
+          h2h_away: oddsSnapshot?.h2h_away,
+          spread_home: oddsSnapshot?.spread_home,
+          spread_away: oddsSnapshot?.spread_away,
+          total: oddsSnapshot?.total,
+          captured_at: oddsSnapshot?.captured_at
+        },
+        confidence_pct: Math.round(confidence * 100),
+        driver: {
+          key: 'cross_market_total',
+          score: totalDecision.score,
+          status: totalDecision.status,
+          inputs: { net: totalDecision.net, conflict: totalDecision.conflict, coverage: totalDecision.coverage }
+        },
+        disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
+        generated_at: now
+      },
+      modelOutputIds: null
+    });
+  }
+
+  // SPREAD decision → nba-spread-call
+  const spreadDecision = marketDecisions?.SPREAD;
+  if (spreadDecision && (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH')) {
+    const confidence = CONFIDENCE_MAP[spreadDecision.status];
+    const tier = determineTier(confidence);
+    const { side, line } = spreadDecision.best_candidate;
+    const lineText = line != null ? ` ${line > 0 ? '+' + line : line}` : '';
+    const pickText = `${side === 'HOME' ? 'Home' : 'Away'}${lineText}`;
+    const activeDrivers = (spreadDecision.drivers || [])
+      .filter(d => d.eligible)
+      .map(d => d.driverKey);
+    const topDrivers = (spreadDecision.drivers || [])
+      .filter(d => d.eligible)
+      .sort((a, b) => Math.abs(b.signal) - Math.abs(a.signal))
+      .slice(0, 3)
+      .map(d => ({ driver: d.driverKey, weight: d.weight, score: Number(((d.signal + 1) / 2).toFixed(3)) }));
+
+    const cardId = `card-nba-spread-call-${gameId}-${uuidV4().slice(0, 8)}`;
+    cards.push({
+      id: cardId,
+      gameId,
+      sport: 'NBA',
+      cardType: 'nba-spread-call',
+      cardTitle: `NBA Spread: ${pickText}`,
+      createdAt: now,
+      expiresAt,
+      payloadData: {
+        game_id: gameId,
+        sport: 'NBA',
+        model_version: 'nba-cross-market-v1',
+        home_team: oddsSnapshot?.home_team ?? null,
+        away_team: oddsSnapshot?.away_team ?? null,
+        matchup,
+        start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+        start_time_local: startTimeLocal,
+        timezone,
+        countdown,
+        prediction: side,
+        confidence,
+        tier,
+        recommended_bet_type: 'spread',
+        reasoning: `${pickText}: ${spreadDecision.reasoning}`,
+        edge: spreadDecision.edge ?? null,
+        projection: {
+          total: null,
+          margin_home: line ?? null,
+          win_prob_home: null
+        },
+        market,
+        drivers_active: activeDrivers,
+        driver_summary: { weights: topDrivers, impact_note: 'Cross-market spread decision.' },
+        ev_passed: spreadDecision.status === 'FIRE',
+        odds_context: {
+          h2h_home: oddsSnapshot?.h2h_home,
+          h2h_away: oddsSnapshot?.h2h_away,
+          spread_home: oddsSnapshot?.spread_home,
+          spread_away: oddsSnapshot?.spread_away,
+          total: oddsSnapshot?.total,
+          captured_at: oddsSnapshot?.captured_at
+        },
+        confidence_pct: Math.round(confidence * 100),
+        driver: {
+          key: 'cross_market_spread',
+          score: spreadDecision.score,
+          status: spreadDecision.status,
+          inputs: { net: spreadDecision.net, conflict: spreadDecision.conflict, coverage: spreadDecision.coverage }
+        },
+        disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
+        generated_at: now
+      },
+      modelOutputIds: null
+    });
+  }
+
+  return cards;
+}
+
+/**
  * Main job entrypoint
  * @param {object} options
  * @param {string|null} options.jobKey - Deterministic window key for idempotency
@@ -247,6 +418,23 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           const cards = generateNBACards(gameId, driverCards, oddsSnapshot);
 
           for (const card of cards) {
+            const validation = validateCardPayload(card.cardType, card.payloadData);
+            if (!validation.success) {
+              throw new Error(`Invalid card payload for ${card.cardType}: ${validation.errors.join('; ')}`);
+            }
+            insertCardPayload(card);
+            cardsGenerated++;
+            const tierLabel = card.payloadData.tier ? ` [${card.payloadData.tier}]` : '';
+            console.log(`  [ok] ${gameId} [${card.cardType}]${tierLabel}: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`);
+          }
+
+          // Generate and insert NBA market call cards (nba-totals-call, nba-spread-call)
+          const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);
+          const nbaMarketCallCards = generateNBAMarketCallCards(gameId, nbaMarketDecisions, oddsSnapshot);
+          for (const ct of ['nba-totals-call', 'nba-spread-call']) {
+            prepareModelAndCardWrite(gameId, 'nba-cross-market-v1', ct);
+          }
+          for (const card of nbaMarketCallCards) {
             const validation = validateCardPayload(card.cardType, card.payloadData);
             if (!validation.success) {
               throw new Error(`Invalid card payload for ${card.cardType}: ${validation.errors.join('; ')}`);
