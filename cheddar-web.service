@@ -1,0 +1,32 @@
+[Unit]
+Description=Cheddar Logic Web App (Next.js)
+After=network.target
+
+[Service]
+Type=simple
+User=cheddar-worker
+WorkingDirectory=/opt/cheddar-logic/web
+Environment="NODE_ENV=production"
+Environment="PORT=3000"
+EnvironmentFile=/opt/cheddar-logic/.env.production
+
+ExecStart=/usr/bin/node /opt/cheddar-logic/web/node_modules/.bin/next start --port 3000
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cheddar-web
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/data
+
+[Install]
+WantedBy=multi-user.target

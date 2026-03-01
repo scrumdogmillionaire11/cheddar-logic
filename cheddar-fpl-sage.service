@@ -1,0 +1,24 @@
+[Unit]
+Description=Cheddar FPL Sage FastAPI Backend
+After=network.target
+
+[Service]
+Type=simple
+User=cheddar-worker
+WorkingDirectory=/opt/cheddar-logic/cheddar-fpl-sage
+Environment="PYTHONPATH=/opt/cheddar-logic/cheddar-fpl-sage"
+EnvironmentFile=-/opt/cheddar-logic/.env.production
+
+ExecStart=/opt/cheddar-logic/cheddar-fpl-sage/venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000
+
+# Restart policy
+Restart=on-failure
+RestartSec=15s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cheddar-fpl-sage
+
+[Install]
+WantedBy=multi-user.target
