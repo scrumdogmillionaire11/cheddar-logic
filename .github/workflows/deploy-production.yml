@@ -22,12 +22,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       
+      - name: Install package dependencies
+        run: |
+          npm --prefix packages/data install
+          npm --prefix packages/models install
+          npm --prefix packages/adapters install
+          npm --prefix packages/odds install
+
       - name: Install web dependencies
         run: npm --prefix web install
-      
+
       - name: Lint web
         run: npm --prefix web run lint
-      
+
       - name: Build web
         run: npm --prefix web run build
 
