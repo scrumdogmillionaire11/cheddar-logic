@@ -112,6 +112,46 @@ export async function GET(request: NextRequest) {
         ? payload.recommended_bet_type
         : null;
 
+      // homeTeam / awayTeam
+      const homeTeam = payload && typeof payload.home_team === 'string'
+        ? payload.home_team
+        : null;
+      const awayTeam = payload && typeof payload.away_team === 'string'
+        ? payload.away_team
+        : null;
+
+      // price — extracted from odds_context based on prediction
+      let price: number | null = null;
+      if (payload && payload.odds_context && typeof payload.odds_context === 'object') {
+        const oddsCtx = payload.odds_context as Record<string, unknown>;
+        if (prediction === 'HOME') {
+          const val = oddsCtx.h2h_home;
+          price = typeof val === 'number' ? val : null;
+        } else if (prediction === 'AWAY') {
+          const val = oddsCtx.h2h_away;
+          price = typeof val === 'number' ? val : null;
+        } else if (prediction === 'OVER' || prediction === 'UNDER') {
+          const val = oddsCtx.total;
+          price = typeof val === 'number' ? val : null;
+        } else if (typeof prediction === 'string' && prediction.startsWith('SPREAD_HOME')) {
+          const val = oddsCtx.spread_home;
+          price = typeof val === 'number' ? val : null;
+        } else if (typeof prediction === 'string' && prediction.startsWith('SPREAD_AWAY')) {
+          const val = oddsCtx.spread_away;
+          price = typeof val === 'number' ? val : null;
+        }
+      }
+
+      // confidencePct — prefer confidence_pct, fall back to confidence * 100
+      let confidencePct: number | null = null;
+      if (payload) {
+        if (typeof payload.confidence_pct === 'number') {
+          confidencePct = Math.round(payload.confidence_pct * 10) / 10;
+        } else if (typeof payload.confidence === 'number') {
+          confidencePct = Math.round(payload.confidence * 100 * 10) / 10;
+        }
+      }
+
       return {
         id: row.id,
         gameId: row.game_id,
@@ -124,6 +164,10 @@ export async function GET(request: NextRequest) {
         prediction,
         tier,
         market,
+        homeTeam,
+        awayTeam,
+        price,
+        confidencePct,
         payloadParseError: parsed.error,
       };
     });
