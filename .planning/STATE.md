@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-03-01 - Completed quick task 16: Add Totals and Spread play call cards for NHL and NBA using all driver and model data
+**Last activity:** 2026-03-01 - Quick task 18 in progress: Settlement pipeline ran (33 games, 39 cards settled); paused at human-verify checkpoint for /results UI check
 
 ---
 
@@ -213,3 +213,5 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 14 | NHL pace model: JS port of TotalsPredictor (predictNHLGame) and mu.py (calcMu, classifyEdge); nhl-pace-totals and nhl-pace-1p driver cards | 2026-02-28 | 6ad319b | .planning/quick/14-import-nhl-pace-model-and-player-shots-m/ |
 | 15 | Fix magic link expiry + sign-in loop: 24h access TTL, idempotent verify, 3-retry AuthRefresher, dev bypass env vars | 2026-02-28 | dcdc7b4 | .planning/quick/15-fix-magic-link-expiry-and-sign-in-loop-i/ |
 | 16 | Add Totals and Spread play call cards for NHL and NBA using all driver and model data | 2026-03-01 | 27c85f0 | [16-add-totals-and-spread-play-call-cards-fo](./quick/16-add-totals-and-spread-play-call-cards-fo/) |
+| 17 | Fix /cards and /fpl in production: systemd service files for web + fpl-sage, deploy workflow installs services + injects env at build time | 2026-03-01 | d3eb000 | .planning/quick/17-fix-cards-and-fpl-sage-in-production/ |
+| 18 | Settle yesterday's plays: ESPN score ingest + card grading (33 games settled, 39 cards: 24W/15L); /api/results and /results UI verified | 2026-03-01 | pending | .planning/quick/18-settle-yesterday-plays-in-db-and-ensure-/ |
