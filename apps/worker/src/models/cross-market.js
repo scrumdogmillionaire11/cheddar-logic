@@ -8,7 +8,8 @@ const {
   oddsToProbability
 } = require('@cheddar-logic/models');
 
-const { projectNHL } = require('./projections');
+const { projectNHL, projectNBA } = require('./projections');
+const { analyzePaceSynergy } = require('./nba-pace-synergy');
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -517,6 +518,159 @@ function computeNHLMarketDecisions(oddsSnapshot) {
   };
 }
 
+function computeNBAMarketDecisions(oddsSnapshot) {
+  const raw = parseRawData(oddsSnapshot?.raw_data);
+  const totalLine = toNumber(oddsSnapshot?.total);
+  const spreadHome = toNumber(oddsSnapshot?.spread_home);
+
+  const avgPtsHome = toNumber(raw?.espn_metrics?.home?.metrics?.avgPtsHome ?? raw?.espn_metrics?.home?.metrics?.avgPoints ?? null);
+  const avgPtsAway = toNumber(raw?.espn_metrics?.away?.metrics?.avgPtsAway ?? raw?.espn_metrics?.away?.metrics?.avgPoints ?? null);
+  const avgPtsAllowedHome = toNumber(raw?.espn_metrics?.home?.metrics?.avgPtsAllowedHome ?? raw?.espn_metrics?.home?.metrics?.avgPointsAllowed ?? null);
+  const avgPtsAllowedAway = toNumber(raw?.espn_metrics?.away?.metrics?.avgPtsAllowedAway ?? raw?.espn_metrics?.away?.metrics?.avgPointsAllowed ?? null);
+  const paceHome = toNumber(raw?.espn_metrics?.home?.metrics?.paceHome ?? raw?.espn_metrics?.home?.metrics?.pace ?? null);
+  const paceAway = toNumber(raw?.espn_metrics?.away?.metrics?.paceAway ?? raw?.espn_metrics?.away?.metrics?.pace ?? null);
+  const restDaysHome = toNumber(raw?.espn_metrics?.home?.metrics?.restDays ?? null);
+  const restDaysAway = toNumber(raw?.espn_metrics?.away?.metrics?.restDays ?? null);
+
+  const projection = projectNBA(avgPtsHome, avgPtsAllowedHome, avgPtsAway, avgPtsAllowedAway, paceHome, paceAway, restDaysHome, restDaysAway);
+  const projectedHome = projection.homeProjected;
+  const projectedAway = projection.awayProjected;
+  const projectedTotal = projectedHome !== null && projectedAway !== null ? projectedHome + projectedAway : null;
+  const projectedMargin = projectedHome !== null && projectedAway !== null ? projectedHome - projectedAway : null;
+  const paceSignalData = (paceHome !== null && paceAway !== null)
+    ? analyzePaceSynergy(paceHome, paceAway, avgPtsHome, avgPtsAway)
+    : null;
+
+  const restGap = restDaysHome !== null && restDaysAway !== null ? restDaysHome - restDaysAway : null;
+
+  // TOTAL market drivers
+  const paceEnvSignalMap = {
+    'ELITE_OVER': 0.6,
+    'ATTACK_OVER': 0.6,
+    'LEAN_OVER': 0.4,
+    'BEST_UNDER': -0.6,
+    'STRONG_UNDER': -0.4
+  };
+  const paceEnvRawSignal = paceSignalData
+    ? (paceEnvSignalMap[paceSignalData.bettingSignal] ?? 0)
+    : 0;
+
+  const defensiveShellSignal =
+    avgPtsAllowedHome !== null && avgPtsAllowedAway !== null
+      ? (avgPtsAllowedHome < 108 && avgPtsAllowedAway < 108 ? -0.5
+        : avgPtsAllowedHome > 115 && avgPtsAllowedAway > 115 ? 0.4
+        : 0)
+      : 0;
+
+  const totalDrivers = [
+    buildDriver({
+      driverKey: 'totalProjection',
+      weight: 0.45,
+      eligible: projectedTotal !== null && totalLine !== null,
+      signal: projectedTotal !== null && totalLine !== null
+        ? clamp((projectedTotal - totalLine) / 10, -1, 1)
+        : 0,
+      status: statusFromNumbers([projectedTotal, totalLine]),
+      note: 'Projected total vs. line — positive favors OVER.'
+    }),
+    buildDriver({
+      driverKey: 'paceEnvironment',
+      weight: 0.35,
+      eligible: paceSignalData !== null,
+      signal: paceEnvRawSignal,
+      status: paceSignalData !== null ? 'ok' : 'missing',
+      note: 'Pace synergy environment signal.'
+    }),
+    buildDriver({
+      driverKey: 'defensiveShell',
+      weight: 0.20,
+      eligible: avgPtsAllowedHome !== null && avgPtsAllowedAway !== null,
+      signal: defensiveShellSignal,
+      status: statusFromNumbers([avgPtsAllowedHome, avgPtsAllowedAway]),
+      note: 'Both teams allow low/high points — defensive shell or open game.'
+    })
+  ];
+
+  const totalFragilityPenalty =
+    totalLine !== null &&
+    Math.min(Math.abs(totalLine - 224), Math.abs(totalLine - 225), Math.abs(totalLine - 226)) <= 0.5
+      ? 0.06
+      : 0;
+
+  const totalDecision = buildMarketDecision({
+    market: 'TOTAL',
+    defaultSide: 'OVER',
+    drivers: totalDrivers,
+    penalties: [{ key: 'total_fragility', value: totalFragilityPenalty }],
+    thresholds: { t_dir: 0.12, t_fire: 0.38, t_watch: 0.20, conflict_cap: 0.25, min_coverage_fire: 0.55, min_coverage_watch: 0.45 },
+    edgeResolver: () => (projectedTotal !== null && totalLine !== null) ? Number(Math.abs(projectedTotal - totalLine).toFixed(2)) : null,
+    fairPriceResolver: null,
+    lineResolver: () => totalLine,
+    priceResolver: null,
+    riskFlags: totalFragilityPenalty > 0 ? ['KEY_NUMBER'] : []
+  });
+
+  // SPREAD market drivers
+  const homeNetRating = avgPtsHome !== null && avgPtsAllowedHome !== null ? avgPtsHome - avgPtsAllowedHome : null;
+  const awayNetRating = avgPtsAway !== null && avgPtsAllowedAway !== null ? avgPtsAway - avgPtsAllowedAway : null;
+
+  const spreadBadNumber = spreadHome !== null && Math.abs(spreadHome) >= 8;
+
+  const spreadDrivers = [
+    buildDriver({
+      driverKey: 'powerRating',
+      weight: 0.40,
+      eligible: projectedMargin !== null,
+      signal: projectedMargin !== null ? clamp(projectedMargin / 15, -1, 1) : 0,
+      status: statusFromNumbers([projectedMargin]),
+      note: 'Projected margin favors HOME when positive.'
+    }),
+    buildDriver({
+      driverKey: 'restAdvantage',
+      weight: 0.20,
+      eligible: restGap !== null,
+      signal: restGap !== null ? clamp(restGap / 3, -1, 1) : 0,
+      status: statusFromNumbers([restDaysHome, restDaysAway]),
+      note: 'Rest gap favors the more rested team.'
+    }),
+    buildDriver({
+      driverKey: 'matchupStyle',
+      weight: 0.25,
+      eligible: homeNetRating !== null && awayNetRating !== null,
+      signal: homeNetRating !== null && awayNetRating !== null
+        ? clamp((homeNetRating - awayNetRating) / 10, -1, 1)
+        : 0,
+      status: statusFromNumbers([avgPtsHome, avgPtsAllowedHome, avgPtsAway, avgPtsAllowedAway]),
+      note: 'Net rating differential favors HOME when positive.'
+    }),
+    buildDriver({
+      driverKey: 'blowoutRisk',
+      weight: spreadBadNumber ? 0.15 : 0,
+      eligible: spreadBadNumber,
+      signal: -0.3,
+      status: statusFromNumbers([spreadHome]),
+      note: 'Risk-only: large spread reduces confidence toward favored side.'
+    })
+  ];
+
+  const spreadBadNumberPenalty = spreadBadNumber ? 0.06 : 0;
+
+  const spreadDecision = buildMarketDecision({
+    market: 'SPREAD',
+    defaultSide: 'HOME',
+    drivers: spreadDrivers,
+    penalties: [{ key: 'bad_number', value: spreadBadNumberPenalty }],
+    thresholds: { t_dir: 0.12, t_fire: 0.42, t_watch: 0.22, conflict_cap: 0.22, min_coverage_fire: 0.55, min_coverage_watch: 0.45 },
+    edgeResolver: () => (projectedMargin !== null && spreadHome !== null) ? Number(Math.abs(Math.abs(projectedMargin) - Math.abs(spreadHome)).toFixed(2)) : null,
+    fairPriceResolver: null,
+    lineResolver: (side) => spreadHome !== null ? (side === 'HOME' ? spreadHome : -spreadHome) : null,
+    priceResolver: null,
+    riskFlags: spreadBadNumber ? ['BAD_NUMBER'] : []
+  });
+
+  return { TOTAL: totalDecision, SPREAD: spreadDecision };
+}
+
 function selectExpressionChoice(decisions) {
   const orderedMarkets = [Market.TOTAL, Market.SPREAD, Market.ML];
   const available = orderedMarkets.map((market) => decisions[market]).filter(Boolean);
@@ -619,6 +773,7 @@ function buildMarketPayload({ decisions, expressionChoice }) {
 
 module.exports = {
   computeNHLMarketDecisions,
+  computeNBAMarketDecisions,
   selectExpressionChoice,
   buildMarketPayload
 };

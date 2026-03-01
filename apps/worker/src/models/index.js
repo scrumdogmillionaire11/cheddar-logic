@@ -26,7 +26,7 @@ const http = require('http');
 const https = require('https');
 const { projectNBA, projectNBACanonical, projectNCAAM, projectNHL } = require('./projections');
 const { generateWelcomeHomeCard } = require('./welcome-home-v2');
-const { computeNHLMarketDecisions, selectExpressionChoice, buildMarketPayload } = require('./cross-market');
+const { computeNHLMarketDecisions, computeNBAMarketDecisions, selectExpressionChoice, buildMarketPayload } = require('./cross-market');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { predictNHLGame } = require('./nhl-pace-model');
 
@@ -1180,6 +1180,7 @@ module.exports = {
   computeNCAAMDriverCards,
   determineTier,
   computeNHLMarketDecisions,
+  computeNBAMarketDecisions,
   selectExpressionChoice,
   buildMarketPayload
 };
