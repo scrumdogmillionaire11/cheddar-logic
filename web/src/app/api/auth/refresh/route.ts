@@ -8,6 +8,11 @@ import {
 
 export async function POST(request: NextRequest) {
   try {
+    // DEV ONLY: Bypass auth refresh when DEV_BYPASS_AUTH_EMAIL is set
+    if (process.env.NODE_ENV !== 'production' && process.env.DEV_BYPASS_AUTH_EMAIL) {
+      return NextResponse.json({ ok: true });
+    }
+
     await initDb();
 
     const refreshToken = request.cookies.get(REFRESH_COOKIE_NAME)?.value;
