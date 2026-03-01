@@ -12,15 +12,14 @@ export default async function FPLPage() {
   const cookieStore = await cookies();
   const accessToken = cookieStore.get(ACCESS_COOKIE_NAME)?.value;
   try {
-    const auth = getAccessTokenAuthResult(accessToken, RESOURCE.FPL_SAGE);
-
-    if (!auth.isAuthenticated) {
-      redirect('/login?next=/fpl');
-    }
-
-    if (!auth.isEntitled) {
-      redirect('/subscribe?next=/fpl');
-    }
+    // AUTH DISABLED: Commenting out auth walls to allow public access
+    // const auth = getAccessTokenAuthResult(accessToken, RESOURCE.FPL_SAGE);
+    // if (!auth.isAuthenticated) {
+    //   redirect('/login?next=/fpl');
+    // }
+    // if (!auth.isEntitled) {
+    //   redirect('/subscribe?next=/fpl');
+    // }
 
     return (
       <>
