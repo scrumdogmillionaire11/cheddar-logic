@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-02-28 - Completed quick task 15: fix magic link expiry and sign-in loop (24h access TTL, idempotent verify, 3-retry AuthRefresher, dev bypass env vars)
+**Last activity:** 2026-03-01 - Completed quick task 16: Add Totals and Spread play call cards for NHL and NBA using all driver and model data
 
 ---
 
@@ -212,3 +212,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 13 | NBA pace synergy model: JS port of PaceSynergyService, paceMatchup driver card (FAST x FAST / SLOW x SLOW totals signal) | 2026-02-28 | 0b5d112 | .planning/quick/13-import-nba-pace-model-from-cheddar-nba-2/ |
 | 14 | NHL pace model: JS port of TotalsPredictor (predictNHLGame) and mu.py (calcMu, classifyEdge); nhl-pace-totals and nhl-pace-1p driver cards | 2026-02-28 | 6ad319b | .planning/quick/14-import-nhl-pace-model-and-player-shots-m/ |
 | 15 | Fix magic link expiry + sign-in loop: 24h access TTL, idempotent verify, 3-retry AuthRefresher, dev bypass env vars | 2026-02-28 | dcdc7b4 | .planning/quick/15-fix-magic-link-expiry-and-sign-in-loop-i/ |
+| 16 | Add Totals and Spread play call cards for NHL and NBA using all driver and model data | 2026-03-01 | 27c85f0 | [16-add-totals-and-spread-play-call-cards-fo](./quick/16-add-totals-and-spread-play-call-cards-fo/) |
