@@ -1,0 +1,3 @@
+[submodule "cheddar-fpl-sage"]
+	path = cheddar-fpl-sage
+	url = https://github.com/scrumdogmillionaire11/cheddar-fpl-sage.git
