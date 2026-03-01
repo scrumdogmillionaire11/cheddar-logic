@@ -249,7 +249,7 @@ function computeMetricsFromGames(games, sport) {
     ? parseFloat((avgPoints * 0.92).toFixed(1))
     : null;
 
-  return {
+  const base = {
     avgPoints,
     avgPointsAllowed,
     netRating,
@@ -259,6 +259,14 @@ function computeMetricsFromGames(games, sport) {
     rank: null,
     record: null
   };
+
+  // NHL sport-specific aliases so NHL driver models can use domain-correct names
+  if (sport === 'NHL') {
+    base.avgGoalsFor = avgPoints;
+    base.avgGoalsAgainst = avgPointsAllowed;
+  }
+
+  return base;
 }
 
 /**
