@@ -20,6 +20,8 @@
     "job:run-soccer-model:test": "node -e \"require('./src/jobs/run_soccer_model.js').runSoccerModel().then(console.log).catch(console.error)\"",
     "job:run-ncaam-model": "node src/jobs/run_ncaam_model.js",
     "job:run-ncaam-model:test": "node -e \"require('./src/jobs/run_ncaam_model.js').runNCAAMModel().then(console.log).catch(console.error)\"",
+    "job:settle-games": "node src/jobs/settle_game_results.js",
+    "job:settle-cards": "node src/jobs/settle_pending_cards.js",
     "scheduler": "node src/schedulers/main.js",
     "scheduler:dev": "ENABLE_ODDS_PULL=true ENABLE_NHL_MODEL=true node src/schedulers/main.js",
     "test": "jest",

@@ -136,17 +136,47 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
           continue;
         }
 
-        console.log(`[SettleGames] Fetching ESPN scoreboard for ${sport} (${espnPath})...`);
+        // Collect unique UTC dates from pending game times.
+        // Include the next calendar day too — games starting late ET (e.g. 11 PM)
+        // cross into the next UTC date, and overtime can push completion further.
+        const dateSet = new Set();
+        for (const g of sportGames) {
+          const d = new Date(g.game_time_utc);
+          const utcDate = d.toISOString().slice(0, 10).replace(/-/g, '');
+          dateSet.add(utcDate);
+          const nextDay = new Date(d.getTime() + 24 * 60 * 60 * 1000);
+          dateSet.add(nextDay.toISOString().slice(0, 10).replace(/-/g, ''));
+        }
 
-        const scoreboardData = await espnGet(`${espnPath}/scoreboard`);
-        if (!scoreboardData || !scoreboardData.events) {
-          console.warn(`[SettleGames] No scoreboard data returned for ${sport}`);
-          errors.push(`${sport}: ESPN scoreboard returned no data`);
+        console.log(`[SettleGames] Fetching ESPN scoreboard for ${sport} — dates: ${[...dateSet].join(', ')}`);
+
+        // Fetch all dated scoreboards and merge events (dedup by ESPN event ID).
+        // Without a date param ESPN returns today's scoreboard, which misses
+        // yesterday's completed games when running at 02:00 ET.
+        const eventMap = new Map();
+        let fetchErrors = 0;
+        for (const dateStr of dateSet) {
+          const scoreboardData = await espnGet(`${espnPath}/scoreboard?dates=${dateStr}`);
+          if (!scoreboardData || !scoreboardData.events) {
+            console.warn(`[SettleGames] No scoreboard data for ${sport} on ${dateStr}`);
+            fetchErrors++;
+            continue;
+          }
+          for (const event of scoreboardData.events) {
+            if (!eventMap.has(event.id)) {
+              eventMap.set(event.id, event);
+            }
+          }
+        }
+
+        if (eventMap.size === 0 && fetchErrors === dateSet.size) {
+          console.warn(`[SettleGames] All scoreboard fetches failed for ${sport}`);
+          errors.push(`${sport}: ESPN scoreboard returned no data for any date`);
           continue;
         }
 
-        const events = scoreboardData.events;
-        console.log(`[SettleGames] ${sport}: ${events.length} ESPN events, ${sportGames.length} DB games to match`);
+        const events = [...eventMap.values()];
+        console.log(`[SettleGames] ${sport}: ${events.length} ESPN events across ${dateSet.size} date(s), ${sportGames.length} DB games to match`);
         sportsProcessed.push(sport);
 
         // Only work with completed events
