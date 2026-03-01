@@ -3,12 +3,14 @@
 import { useEffect, useRef } from 'react';
 
 const REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000; // Refresh every 12 hours (access token TTL is 24 hours)
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 5000; // 5 seconds
+// AUTH DISABLED: MAX_RETRIES and RETRY_DELAY_MS unused while redirect is suppressed
+// const MAX_RETRIES = 3;
+// const RETRY_DELAY_MS = 5000;
 
 export function AuthRefresher() {
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const retryCountRef = useRef(0);
+  // AUTH DISABLED: retryCountRef unused while redirect is suppressed
+  // const retryCountRef = useRef(0);
 
   useEffect(() => {
     async function refreshToken() {
@@ -36,8 +38,7 @@ export function AuthRefresher() {
             console.warn('[AuthRefresher] Token refresh encountered error:', response.status);
           }
         } else {
-          // Success - reset retry counter
-          retryCountRef.current = 0;
+          // Success
         }
       } catch (error) {
         console.error('[AuthRefresher] Error refreshing token:', error);
