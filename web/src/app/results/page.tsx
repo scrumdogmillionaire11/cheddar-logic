@@ -35,6 +35,10 @@ type LedgerRow = {
   prediction: string | null;
   tier: string | null;
   market: string | null;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  price: number | null;
+  confidencePct: number | null;
   payloadParseError: boolean;
 };
 
@@ -239,13 +243,14 @@ export default function ResultsPage() {
           </div>
 
           <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
-            <div className="grid grid-cols-7 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+            <div className="grid grid-cols-8 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
               <span>Date</span>
               <span>Sport</span>
+              <span>Matchup</span>
               <span>Market</span>
               <span>Pick</span>
               <span>Price</span>
-              <span>Edge</span>
+              <span>Confidence</span>
               <span>Result</span>
             </div>
             {ledger.length === 0 ? (
@@ -255,13 +260,14 @@ export default function ResultsPage() {
             ) : (
               <div className="divide-y divide-white/10">
                 {ledger.map((row) => (
-                  <div key={row.id} className="grid grid-cols-7 gap-4 px-4 py-3 text-sm text-cloud/70">
+                  <div key={row.id} className="grid grid-cols-8 gap-4 px-4 py-3 text-sm text-cloud/70">
                     <span>{row.settledAt ? row.settledAt.split('T')[0] : '--'}</span>
                     <span>{row.sport}</span>
+                    <span>{row.homeTeam && row.awayTeam ? `${row.awayTeam} @ ${row.homeTeam}` : '--'}</span>
                     <span>{row.market || '--'}</span>
                     <span>{row.prediction || '--'}</span>
-                    <span>--</span>
-                    <span>--</span>
+                    <span>{row.price !== null ? String(row.price) : '--'}</span>
+                    <span>{row.confidencePct !== null ? `${row.confidencePct}%` : '--'}</span>
                     <span>{row.result ? row.result.toUpperCase() : '--'}</span>
                   </div>
                 ))}
