@@ -55,6 +55,34 @@ docs/
 
 ---
 
+## Deploy to Production
+
+### Self-Hosted (Raspberry Pi)
+
+**Run the entire stack on your Pi:**
+
+```bash
+# One-time setup on Pi
+/opt/cheddar-logic/deploy.sh
+
+# Future updates
+git push origin main  # Push to GitHub
+ssh pi@your-ip "/opt/cheddar-logic/deploy.sh"  # Deploy to Pi
+```
+
+See **[docs/DEPLOY_RASPBERRY_PI.md](docs/DEPLOY_RASPBERRY_PI.md)** for complete Pi setup guide.
+
+### Cloud Hosting (Vercel + Railway)
+
+**Auto-deploy via GitHub push:**
+
+1. Connect GitHub repo to Vercel (web) and Railway (backend)
+2. `git push origin main` — auto-deploys both services
+
+See **[docs/DEPLOY_GITHUB.md](docs/DEPLOY_GITHUB.md)** for cloud setup.
+
+---
+
 ## Quick start (local)
 
 ### Prereqs
