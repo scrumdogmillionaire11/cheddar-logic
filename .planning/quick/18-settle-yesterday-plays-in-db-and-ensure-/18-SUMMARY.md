@@ -11,7 +11,7 @@ decisions:
   - "DB path is consistent between worker and web app (both default to /tmp/cheddar-logic/cheddar.db) — no env var fix needed"
 metrics:
   completed_date: "2026-03-01"
-  tasks_completed: 2
+  tasks_completed: 3
   tasks_total: 3
   files_created: 0
   files_modified: 0
@@ -80,9 +80,19 @@ GET /api/results -> 200 OK
 
 API is functioning correctly. No code changes required.
 
-### Task 3: Human Verification (Checkpoint - Paused)
+### Task 3: Human Verification (Approved)
 
-Awaiting user to visit http://localhost:3000/results to confirm UI displays the graded data.
+User visited `http://localhost:3000/results` and confirmed the page is showing real graded play data:
+
+- Summary row: ROI, Win Rate (~61.5%), Total Settled Plays (39) — all populated
+- Segments table: 3 rows (NBA, NCAAM, NHL) with play counts and win rates
+- Play Ledger: 39 individual card rows with Date, Sport, Market, Pick, Result populated
+
+**Known gaps noted during review (deferred):**
+
+- "Price" column in Play Ledger shows "--" — needs best odds at last fetch to be surfaced from card_payload
+- "Edge" column shows "--" — needs edge calculation at call time to be stored and displayed
+- These are UI display enhancements, not settlement correctness issues; logged as a future todo
 
 ## Deviations from Plan
 
