@@ -124,8 +124,16 @@ export function getUserContextFromAccessToken(
 
   if (!userContext) return null;
 
+  // DEV ONLY: Ensure any authenticated user has COMPED access in development
+  const baseFlags = parseFlags(userContext.flags);
+  const devFlags =
+    process.env.NODE_ENV !== 'production' && !baseFlags.includes('COMPED')
+      ? JSON.stringify([...baseFlags, 'COMPED'])
+      : userContext.flags;
+
   return {
     ...userContext,
+    flags: devFlags || '[]',
     subscription_status: userContext.subscription_status || 'NONE',
   };
 }
