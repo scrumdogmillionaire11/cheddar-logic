@@ -99,8 +99,10 @@ APP_ENV=production
 PUBLIC_DOMAIN=https://cheddarlogic.com
 
 # Database (SQLite on Pi)
-DATABASE_URL=file:/opt/cheddar-logic/packages/data/cheddar.db
+# Required by the data layer (sql.js):
 DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db
+# Optional (future Turso/URL support, currently ignored by sql.js):
+DATABASE_URL=file:/opt/cheddar-logic/packages/data/cheddar.db
 
 # API routing
 FPL_API_BASE_URL=http://localhost:8000/api/v1
@@ -151,7 +153,13 @@ pip install -r config/requirements.txt
 ```bash
 cd /opt/cheddar-logic
 npm --prefix packages/data install --production
-npm --prefix packages/data run migrate
+DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm --prefix packages/data run migrate
+
+# Verify schema
+sqlite3 /opt/cheddar-logic/packages/data/cheddar.db ".tables"
+
+# Seed cards if the UI is empty
+DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm --prefix packages/data run seed:cards
 ```
 
 ---
@@ -228,6 +236,10 @@ sudo cp /opt/cheddar-logic/cheddar-worker.service /etc/systemd/system/
 
 # Edit paths if needed
 sudo nano /etc/systemd/system/cheddar-worker.service
+
+# Ensure the worker uses the same DB path as the web app
+grep DATABASE_PATH /etc/systemd/system/cheddar-worker.service || \
+  echo 'Environment="DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db"'
 
 # Enable and start
 sudo systemctl daemon-reload

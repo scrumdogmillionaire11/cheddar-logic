@@ -218,3 +218,26 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 19 | Enrich Play Ledger: Matchup (Away @ Home), real Price from odds_context, real Confidence % — 8-column ledger on /results | 2026-03-01 | a6fefb8 | .planning/quick/19-add-matchup-teams-fix-price-odds-column-/ |
 | 20 | Smart filtering: sport/card_category/min_confidence params on API; live filter controls + 60%+ segment highlighting on /results | 2026-03-01 | 4739ddb | .planning/quick/20-smart-filtering-for-record-transparency-/ |
 | 21 | Fix settlement to use recommendation.type (actual BET direction); market-level segments + market filter dropdown on /results | 2026-03-02 | 0d76679 | .planning/quick/21-fix-results-settlement-to-use-actual-pla/ |
+
+
+
+
+
+
+to do
+Yes — we can make this **one‑time** and enforce it.
+
+**Permanent fixes to prevent a repeat:**
+1. **Stop hard‑coding `DATABASE_PATH` in the worker script** so `npm run job:pull-odds` always uses the real env.
+   - Edit package.json `job:pull-odds` to remove cheddar.db.
+2. **Lock the service env and write path** (so systemd always reads the right .env.production and can write to the DB).
+   - Fix the broken `DATABASE_URL` line and keep `DATABASE_PATH` correct in `/etc/systemd/system/cheddar-worker.service`.
+   - Keep `ReadWritePaths=/opt/cheddar-logic/packages/data` in that service.
+3. **Add a “prod smoke test” script** that checks:
+   - service env vars
+   - DB tables exist
+   - card count > 0
+   - `/api/games` returns data
+
+If you want, I can implement #1 and #3 in the repo now, plus a short runbook entry.  
+Say the word and I’ll patch it.

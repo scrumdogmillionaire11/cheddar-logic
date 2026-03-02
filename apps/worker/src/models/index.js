@@ -412,7 +412,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
           confidence: cardConfidence,
           tier: determineTier(cardConfidence),
           prediction: direction,
-          reasoning: `Pace model projects ${paceResult.expectedTotal.toFixed(2)} total (HOME ${paceResult.homeExpected.toFixed(2)} + AWAY ${paceResult.awayExpected.toFixed(2)}) vs market ${marketTotal} — edge ${edgeLabel}${paceResult.homeGoalieConfirmed ? ' [confirmed goalies]' : ''}`,
+          reasoning: `Pace model projects ${paceResult.expectedTotal.toFixed(2)} total (${paceResult.homeExpected.toFixed(2)} home + ${paceResult.awayExpected.toFixed(2)} away) vs market ${marketTotal} — edge ${edgeLabel}${paceResult.homeGoalieConfirmed ? ' [confirmed goalies]' : ''}`,
           ev_threshold_passed: cardConfidence > 0.60,
           driverKey: 'paceTotals',
           driverInputs: {
