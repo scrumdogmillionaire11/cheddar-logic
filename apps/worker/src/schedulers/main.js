@@ -35,6 +35,7 @@ const { runSoccerModel } = require('../jobs/run_soccer_model');
 const { runNCAAMModel } = require('../jobs/run_ncaam_model');
 const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
+const { backfillCardResults } = require('../jobs/backfill_card_results');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -207,6 +208,13 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   if (process.env.ENABLE_SETTLEMENT !== 'false') {
     const sweepDate = nowEt.toISODate();
     if (isFixedDue(nowEt, '02:00')) {
+      jobs.push({
+        jobName: 'backfill_card_results',
+        jobKey: `settle|backfill-card-results|${sweepDate}`,
+        execute: backfillCardResults,
+        args: { jobKey: `settle|backfill-card-results|${sweepDate}`, dryRun },
+        reason: `nightly card_results backfill ${sweepDate}`
+      });
       jobs.push({
         jobName: 'settle_game_results',
         jobKey: `settle|game-results|${sweepDate}`,
