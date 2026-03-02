@@ -90,6 +90,20 @@ export async function GET() {
 
     const db = getDatabase();
 
+    // Check if database is empty or uninitialized
+    const tableCheckStmt = db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='games'`
+    );
+    const hasGamesTable = tableCheckStmt.get();
+
+    if (!hasGamesTable) {
+      // Database is not initialized - return empty data
+      return NextResponse.json(
+        { success: true, data: [] },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Compute midnight America/New_York as a UTC string for the SQL param.
     // en-CA locale gives YYYY-MM-DD; shortOffset gives "GMT-5" / "GMT-4" (DST-aware).
     const now = new Date();

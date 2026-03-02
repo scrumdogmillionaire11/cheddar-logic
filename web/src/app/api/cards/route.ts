@@ -94,6 +94,20 @@ export async function GET(request: NextRequest) {
 
     const db = getDatabase();
 
+    // Check if database is empty or uninitialized
+    const tableCheckStmt = db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads'`
+    );
+    const hasCardsTable = tableCheckStmt.get();
+
+    if (!hasCardsTable) {
+      // Database is not initialized - return empty data
+      return NextResponse.json(
+        { success: true, data: [] },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const where: string[] = [];
     const params: Array<string | number> = [];
 

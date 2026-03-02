@@ -89,6 +89,20 @@ export async function GET(request: NextRequest) {
     await initDb();
     db = getDatabase();
 
+    // Check if database is empty or uninitialized
+    const tableCheckStmt = db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='game_results'`
+    );
+    const hasResultsTable = tableCheckStmt.get();
+
+    if (!hasResultsTable) {
+      // Database is not initialized - return empty data
+      return NextResponse.json(
+        { success: true, data: { summary: {}, segments: [], ledger: [] } },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const { searchParams } = request.nextUrl;
     const limit = clampNumber(searchParams.get('limit'), 50, 1, 200);
 
