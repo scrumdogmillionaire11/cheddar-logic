@@ -6,6 +6,16 @@
   "installCommand": "npm install --prefix web",
   "devCommand": "npm run dev --prefix web",
   "ignoreCommand": "git diff --quiet HEAD^ HEAD ./web",
+  "routes": [
+    {
+      "src": "/favicon\\.ico",
+      "dest": "/favicon.ico",
+      "headers": {
+        "Cache-Control": "public, max-age=31536000, immutable"
+      },
+      "continue": true
+    }
+  ],
   "git": {
     "deploymentEnabled": {
       "main": true
