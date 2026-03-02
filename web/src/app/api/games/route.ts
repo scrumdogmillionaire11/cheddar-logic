@@ -296,6 +296,8 @@ export async function GET() {
           status:
             payload.status === 'FIRE' || payload.status === 'WATCH' || payload.status === 'PASS'
               ? payload.status
+              : payload.action === 'HOLD' ? 'WATCH'
+              : payload.action === 'FIRE' ? 'FIRE'
               : undefined,
           // Canonical decision fields (preferred over legacy status field)
           classification:
