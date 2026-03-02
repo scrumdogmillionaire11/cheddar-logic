@@ -104,7 +104,7 @@ jobs:
             npm --prefix apps/worker install --omit=dev
             npm --prefix web install
             sudo rm -rf web/.next
-            env $(cat /opt/cheddar-logic/.env.production | grep -v '^#' | xargs) npm --prefix web run build
+            set -a && source /opt/cheddar-logic/.env.production && set +a && npm --prefix web run build
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage
