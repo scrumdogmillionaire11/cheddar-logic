@@ -470,14 +470,40 @@ function buildPlay(
   const truthStatus = truthStatusFromStrength(truthStrength);
   const modelProb = clamp(0.5 + (truthStrength - 0.5) * 0.9 - conflict * 0.12, 0.5, 0.78);
 
-  const market = selectExpressionMarket(truthDirection, truthStatus, truthDriver, game.odds);
+  // Check if there's an explicit high-confidence SPREAD or TOTAL play available
+  // Prefer those over defaulting to MONEYLINE
+  const spreadPlay = playCandidates.find(
+    (p) => p.market_type === 'SPREAD' && p.confidence >= 0.6 && p.tier !== null
+  );
+  const totalPlay = playCandidates.find(
+    (p) => p.market_type === 'TOTAL' && p.confidence >= 0.6 && p.tier !== null
+  );
+
+  // If we have an explicit SPREAD or TOTAL play, use that market directly
+  let market: Market | 'NONE';
+  let direction: Direction;
+  
+  if (spreadPlay) {
+    market = 'SPREAD';
+    direction = (spreadPlay.prediction === 'HOME' || spreadPlay.prediction === 'AWAY') 
+      ? spreadPlay.prediction 
+      : truthDirection;
+  } else if (totalPlay) {
+    market = 'TOTAL';
+    direction = (totalPlay.prediction === 'OVER' || totalPlay.prediction === 'UNDER') 
+      ? totalPlay.prediction 
+      : truthDirection;
+  } else {
+    // Fall back to standard market selection logic
+    market = selectExpressionMarket(truthDirection, truthStatus, truthDriver, game.odds);
+    direction = truthDirection;
+  }
 
   // Build pick string with proper price/line
   let pick = 'NO PLAY';
   let price: number | undefined;
   let line: number | undefined;
 
-  const direction = truthDirection;
   const teamName = direction === 'HOME' ? game.homeTeam : game.awayTeam;
 
   if (market === 'ML') {
