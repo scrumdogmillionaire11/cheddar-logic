@@ -41,7 +41,7 @@ const {
   edgeCalculator,
   marginToWinProbability
 } = require('@cheddar-logic/models');
-const { publishDecisionForCard } = require('../utils/decision-publisher');
+const { publishDecisionForCard, applyUiActionFields } = require('../utils/decision-publisher');
 
 const NBA_DRIVER_WEIGHTS = {
   baseProjection: 0.35,
@@ -551,6 +551,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
               blockedCount++;
               console.log(`  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`);
             }
+            applyUiActionFields(card.payloadData);
             insertCardPayload(card);
             cardsGenerated++;
             const tierLabel = card.payloadData.tier ? ` [${card.payloadData.tier}]` : '';
@@ -573,6 +574,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
               blockedCount++;
               console.log(`  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`);
             }
+            applyUiActionFields(card.payloadData);
             insertCardPayload(card);
             cardsGenerated++;
             const tierLabel = card.payloadData.tier ? ` [${card.payloadData.tier}]` : '';

@@ -38,7 +38,7 @@ const {
   edgeCalculator,
   marginToWinProbability
 } = require('@cheddar-logic/models');
-const { publishDecisionForCard } = require('../utils/decision-publisher');
+const { publishDecisionForCard, applyUiActionFields } = require('../utils/decision-publisher');
 
 const NCAAM_DRIVER_WEIGHTS = {
   baseProjection: 0.40,
@@ -304,6 +304,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
               console.log(`  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`);
             }
 
+            applyUiActionFields(card.payloadData);
             insertCardPayload(card);
             cardsGenerated++;
             console.log(`  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`);

@@ -52,7 +52,7 @@ const {
   edgeCalculator,
   marginToWinProbability
 } = require('@cheddar-logic/models');
-const { publishDecisionForCard } = require('../utils/decision-publisher');
+const { publishDecisionForCard, applyUiActionFields } = require('../utils/decision-publisher');
 
 const NHL_DRIVER_WEIGHTS = {
   baseProjection: 0.30,
