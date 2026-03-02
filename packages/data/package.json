@@ -8,6 +8,10 @@
     "auth:add-comped": "node src/add-comped-user.js",
     "db:init": "node src/db-init.js",
     "db:reset": "node src/db-reset.js",
+    "db:inspect": "node src/inspect-db.js",
+    "db:check-dates": "node src/check-game-dates.js",
+    "db:check-coverage": "node src/check-card-coverage.js",
+    "db:test-query": "node src/test-api-query.js",
     "seed:test-odds": "node src/seed-test-odds.js",
     "seed:test-results": "node src/seed-test-results.js",
     "seed:cards": "node src/seed-cards.js",
@@ -19,7 +23,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "test:auth": "jest auth.test.js auth-session.test.js auth-persistence.test.js"
+    "test:auth": "jest auth.test.js auth-session.test.js auth-persistence.test.js",
+    "test:integration": "jest integration.test.js"
   },
   "keywords": [
     "database",

@@ -14,27 +14,54 @@ async function seedCards() {
   const now = new Date();
   const createdAt = now.toISOString();
 
-  // Get all games from the database
-  const gameStmt = db.prepare('SELECT game_id, sport, home_team, away_team FROM games LIMIT 20');
+  // Get future games from the database (prioritize upcoming games)
+  const gameStmt = db.prepare(`
+    SELECT game_id, sport, home_team, away_team, game_time_utc
+    FROM games
+    WHERE game_time_utc >= datetime('now')
+    ORDER BY game_time_utc ASC
+    LIMIT 100
+  `);
   const games = gameStmt.all();
 
   if (games.length === 0) {
-    console.log('[SeedCards] ℹ️  No games found. Run seed:test-odds first.');
-    closeDatabase();
-    return;
+    console.log('[SeedCards] ℹ️  No future games found. Trying all games...');
+    const allGamesStmt = db.prepare('SELECT game_id, sport, home_team, away_team, game_time_utc FROM games LIMIT 50');
+    const allGames = allGamesStmt.all();
+    
+    if (allGames.length === 0) {
+      console.log('[SeedCards] ℹ️  No games found. Run seed:test-odds first.');
+      closeDatabase();
+      return;
+    }
+    games.push(...allGames);
   }
 
-  console.log(`[SeedCards] Inserting cards for ${games.length} games...`);
+  console.log(`[SeedCards] Inserting cards for ${games.length} games (${games.filter(g => g.game_time_utc >= now.toISOString()).length} future)...`);
 
   const cardTypes = ['nhl_moneyline', 'nba_spread', 'soccer_total', 'ncaam_moneyline'];
   const predictions = ['HOME', 'AWAY', 'OVER', 'UNDER'];
   const tiers = ['SUPER', 'BEST', 'WATCH', null];
 
   let inserted = 0;
+  let skipped = 0;
 
   for (const game of games) {
-    // Create 2-3 cards per game
-    const numCards = Math.floor(Math.random() * 2) + 2;
+    // Check if game already has cards
+    const existingCards = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM card_payloads
+      WHERE game_id = ?
+        AND (expires_at IS NULL OR expires_at > datetime('now'))
+    `).get(game.game_id);
+
+    if (existingCards.count > 0) {
+      skipped++;
+      continue;
+    }
+
+    // Create 2-4 cards per game
+    const numCards = Math.floor(Math.random() * 3) + 2;
 
     for (let i = 0; i < numCards; i++) {
       const cardType = cardTypes[Math.floor(Math.random() * cardTypes.length)];
@@ -63,12 +90,12 @@ async function seedCards() {
       };
 
       const insertStmt = db.prepare(`
-        INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, payload_data, created_at)
+        INSERT OR IGNORE INTO card_payloads (id, game_id, sport, card_type, card_title, payload_data, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
 
-      insertStmt.run(
-        `card-${uuidV4()}`,
+      const result = insertStmt.run(
+        `card-seed-${uuidV4()}`,
         game.game_id,
         game.sport,
         cardType,
@@ -77,11 +104,13 @@ async function seedCards() {
         createdAt
       );
 
-      inserted++;
+      if (result.changes > 0) {
+        inserted++;
+      }
     }
   }
 
-  console.log(`[SeedCards] ✅ Inserted ${inserted} cards`);
+  console.log(`[SeedCards] ✅ Inserted ${inserted} new cards, skipped ${skipped} games with existing cards`);
   closeDatabase();
 }
 
