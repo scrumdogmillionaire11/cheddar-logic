@@ -17,6 +17,43 @@ const {
   upsertDecisionRecord
 } = require('@cheddar-logic/data');
 
+/**
+ * Derive UI action from tier
+ * Maps model tier to display action for UI filtering
+ */
+function deriveAction({ tier }) {
+  const t = String(tier || '').toUpperCase();
+
+  // Simple tier-based mapping ensures UI sees plays immediately
+  if (t === 'SUPER') return 'FIRE';
+  if (t === 'BEST') return 'HOLD';
+  if (t === 'WATCH') return 'HOLD';
+  return 'PASS';
+}
+
+/**
+ * Apply UI action fields to payload
+ * Ensures every PLAY payload has `action` and `status` fields
+ * so getPlayDisplayAction() in UI can properly recognize plays
+ */
+function applyUiActionFields(payload) {
+  if (!payload || payload.kind !== 'PLAY') {
+    return payload; // Only apply to PLAY payloads
+  }
+
+  const action = deriveAction({
+    tier: payload.tier,
+    edge: payload.edge,
+    confidence: payload.confidence,
+  });
+
+  payload.action = action;
+  // Legacy fallback for getPlayDisplayAction() backward compatibility
+  payload.status = action === 'FIRE' ? 'FIRE' : action === 'HOLD' ? 'WATCH' : 'PASS';
+
+  return payload;
+}
+
 function buildPickText(market, side, line) {
   if (market === 'total' || market === 'team_total') {
     const lineText = line != null ? ` ${line}` : '';
@@ -193,6 +230,9 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
     applyPublishedDecisionToPayload(card, current, market, decisionKey, gateResult.reason_code);
   }
 
+  // Apply UI action fields so getPlayDisplayAction() recognizes plays
+  applyUiActionFields(card.payloadData);
+
   return {
     card,
     gated: true,
@@ -203,5 +243,7 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
 }
 
 module.exports = {
-  publishDecisionForCard
+  publishDecisionForCard,
+  applyUiActionFields,
+  deriveAction
 };
