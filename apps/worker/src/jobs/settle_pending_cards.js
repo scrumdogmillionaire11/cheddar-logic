@@ -18,7 +18,7 @@
 'use strict';
 
 const { v4: uuidV4 } = require('uuid');
-const dbBackup = require('./../../utils/db-backup.js');
+const dbBackup = require('../utils/db-backup.js');
 
 const {
   upsertTrackingStat,
