@@ -86,9 +86,21 @@ export default function ResultsPage() {
       if (filterHighConf) params.set('min_confidence', '60');
       if (filterMarket) params.set('market', filterMarket);
       const response = await fetch(`/api/results?${params.toString()}`);
-      const payload: ResultsResponse = await response.json();
 
-      if (!response.ok || !payload.success || !payload.data) {
+      if (!response.ok) {
+        setError(`API error: ${response.status} ${response.statusText}`);
+        return;
+      }
+
+      let payload: ResultsResponse;
+      try {
+        payload = await response.json();
+      } catch (parseErr) {
+        setError('Failed to parse API response');
+        return;
+      }
+
+      if (!payload.success || !payload.data) {
         setError(payload.error || 'Failed to load results');
         return;
       }

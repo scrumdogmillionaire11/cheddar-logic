@@ -202,8 +202,20 @@ export async function triggerAnalysis(request: AnalyzeRequest): Promise<AnalyzeR
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail?.detail || error.detail || 'Analysis failed to start');
+    let errorMessage = 'Analysis failed to start';
+    try {
+      const errorData = await response.json();
+      errorMessage = errorData.detail?.detail || errorData.detail || errorMessage;
+    } catch {
+      // If response isn't JSON, try to get text
+      try {
+        const text = await response.text();
+        errorMessage = text || `HTTP ${response.status}: ${response.statusText}`;
+      } catch {
+        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      }
+    }
+    throw new Error(errorMessage);
   }
 
   return response.json();
@@ -216,7 +228,14 @@ export async function getAnalysisStatus(analysisId: string): Promise<AnalysisSta
   const response = await fetch(`${FPL_API_BASE_URL}/analyze/${analysisId}/status`);
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch analysis status: ${response.statusText}`);
+    let errorMessage = `Failed to fetch analysis status: ${response.statusText}`;
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch {
+      // Response isn't JSON, use status text
+    }
+    throw new Error(errorMessage);
   }
 
   return response.json();
@@ -232,8 +251,15 @@ export async function getDashboardData(analysisId: string): Promise<DashboardDat
     if (response.status === 202) {
       throw new Error('STILL_RUNNING');
     }
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to fetch dashboard data');
+    let errorMessage = 'Failed to fetch dashboard data';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch {
+      // Response isn't JSON, use status text
+      errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+    }
+    throw new Error(errorMessage);
   }
 
   const data = await response.json();
@@ -256,8 +282,15 @@ export async function getDetailedProjections(analysisId: string): Promise<Detail
     if (response.status === 425 || response.status === 202) {
       throw new Error('STILL_RUNNING');
     }
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || 'Failed to fetch detailed projections');
+    let errorMessage = 'Failed to fetch detailed projections';
+    try {
+      const error = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch {
+      // Response isn't JSON, use status text
+      errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+    }
+    throw new Error(errorMessage);
   }
 
   return response.json();
