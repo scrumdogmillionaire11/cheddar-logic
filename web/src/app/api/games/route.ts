@@ -27,6 +27,10 @@
  *       total: number | null,
  *       spreadHome: number | null,
  *       spreadAway: number | null,
+ *       spreadPriceHome: number | null,
+ *       spreadPriceAway: number | null,
+ *       totalPriceOver: number | null,
+ *       totalPriceUnder: number | null,
  *       capturedAt: string | null,
  *     } | null,
  *     plays: Play[],
@@ -52,6 +56,8 @@ interface GameRow {
   total: number | null;
   spread_home: number | null;
   spread_away: number | null;
+  spread_price_home: number | null;
+  spread_price_away: number | null;
   total_price_over: number | null;
   total_price_under: number | null;
   odds_captured_at: string | null;
@@ -216,6 +222,8 @@ export async function GET() {
         o.total,
         o.spread_home,
         o.spread_away,
+        o.spread_price_home,
+        o.spread_price_away,
         o.total_price_over,
         o.total_price_under,
         o.captured_at AS odds_captured_at
@@ -483,6 +491,8 @@ export async function GET() {
               total: row.total,
               spreadHome: row.spread_home,
               spreadAway: row.spread_away,
+              spreadPriceHome: row.spread_price_home,
+              spreadPriceAway: row.spread_price_away,
               totalPriceOver: row.total_price_over,
               totalPriceUnder: row.total_price_under,
               capturedAt: row.odds_captured_at,

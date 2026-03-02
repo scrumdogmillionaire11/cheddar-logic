@@ -80,6 +80,8 @@ interface GameData {
     total: number | null;
     spreadHome: number | null;
     spreadAway: number | null;
+    spreadPriceHome: number | null;
+    spreadPriceAway: number | null;
     totalPriceOver: number | null;
     totalPriceUnder: number | null;
     capturedAt: string | null;
@@ -518,6 +520,7 @@ function buildPlay(
     }
   } else if (market === 'SPREAD') {
     line = direction === 'HOME' ? game.odds?.spreadHome ?? undefined : game.odds?.spreadAway ?? undefined;
+    price = direction === 'HOME' ? game.odds?.spreadPriceHome ?? undefined : game.odds?.spreadPriceAway ?? undefined;
     if (line !== undefined) {
       const lineStr = line > 0 ? `+${line}` : `${line}`;
       pick = `${teamName} ${lineStr}`;
@@ -537,7 +540,7 @@ function buildPlay(
     }
   }
 
-  const impliedProb = market === 'ML' || market === 'TOTAL' ? americanToImpliedProbability(price) : undefined;
+  const impliedProb = market === 'ML' || market === 'SPREAD' || market === 'TOTAL' ? americanToImpliedProbability(price) : undefined;
   const edge = impliedProb !== undefined ? modelProb - impliedProb : undefined;
   const valueStatus = getValueStatus(edge);
   const priceFlags = getPriceFlags(direction, price);
