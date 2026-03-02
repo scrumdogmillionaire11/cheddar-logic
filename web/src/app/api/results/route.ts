@@ -96,9 +96,25 @@ export async function GET(request: NextRequest) {
     const hasResultsTable = tableCheckStmt.get();
 
     if (!hasResultsTable) {
-      // Database is not initialized - return empty data
+      // Database is not initialized - return empty data with proper structure
       return NextResponse.json(
-        { success: true, data: { summary: {}, segments: [], ledger: [] } },
+        { 
+          success: true, 
+          data: { 
+            summary: { 
+              totalCards: 0, 
+              settledCards: 0, 
+              wins: 0, 
+              losses: 0, 
+              pushes: 0, 
+              totalPnlUnits: 0, 
+              winRate: 0, 
+              avgPnl: 0 
+            }, 
+            segments: [], 
+            ledger: [] 
+          } 
+        },
         { headers: { 'Content-Type': 'application/json' } }
       );
     }

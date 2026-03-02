@@ -55,11 +55,13 @@ type ResultsResponse = {
   error?: string;
 };
 
-function formatPercent(value: number) {
+function formatPercent(value: number | null | undefined) {
+  if (value === null || value === undefined || isNaN(value)) return "N/A";
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function formatUnits(value: number) {
+function formatUnits(value: number | null | undefined) {
+  if (value === null || value === undefined || isNaN(value)) return "N/A";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(2)}u`;
 }
@@ -121,20 +123,21 @@ export default function ResultsPage() {
   }, [loadResults]);
 
   const summaryCards = useMemo(() => {
+    const isValidSummary = summary && typeof summary.totalCards === 'number';
     return [
       {
         label: "ROI (units)",
-        value: summary ? formatUnits(summary.totalPnlUnits) : "N/A",
+        value: isValidSummary ? formatUnits(summary.totalPnlUnits) : "N/A",
         note: "Logged plays only",
       },
       {
         label: "Win Rate",
-        value: summary ? formatPercent(summary.winRate) : "N/A",
+        value: isValidSummary ? formatPercent(summary.winRate) : "N/A",
         note: "Graded outcomes",
       },
       {
         label: "Total Settled Plays",
-        value: summary ? String(summary.totalCards) : "N/A",
+        value: isValidSummary ? String(summary.totalCards) : "N/A",
         note: "Graded with outcomes",
       },
       {
