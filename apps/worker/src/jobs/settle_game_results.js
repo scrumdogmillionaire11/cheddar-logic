@@ -17,6 +17,7 @@
 'use strict';
 
 const { v4: uuidV4 } = require('uuid');
+const dbBackup = require('./../../utils/db-backup.js');
 
 const {
   upsertGameResult,
@@ -73,6 +74,9 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
     console.log(`[SettleGames] Job key: ${jobKey}`);
   }
   console.log(`[SettleGames] Time: ${new Date().toISOString()}`);
+
+  // Backup database before settlement
+  dbBackup.backupDatabase('before-settle-games');
 
   return withDb(async () => {
     // Check idempotency if jobKey provided

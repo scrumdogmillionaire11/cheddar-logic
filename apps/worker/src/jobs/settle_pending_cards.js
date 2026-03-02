@@ -18,6 +18,7 @@
 'use strict';
 
 const { v4: uuidV4 } = require('uuid');
+const dbBackup = require('./../../utils/db-backup.js');
 
 const {
   upsertTrackingStat,
@@ -117,6 +118,9 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
     console.log(`[SettleCards] Job key: ${jobKey}`);
   }
   console.log(`[SettleCards] Time: ${new Date().toISOString()}`);
+
+  // Backup database before settlement
+  dbBackup.backupDatabase('before-settle-cards');
 
   return withDb(async () => {
     // Check idempotency if jobKey provided
