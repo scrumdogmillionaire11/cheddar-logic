@@ -40,17 +40,53 @@ function parseAmericanOdds(value) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-function pickMoneylineOdds(payloadData, prediction) {
+/**
+ * Extract the actual play direction and market from recommendation.type (authoritative BET decision).
+ * Falls back to raw prediction field for legacy cards that lack recommendation.type.
+ *
+ * @param {object} payloadData - Parsed card payload
+ * @returns {{ direction: string, market: string } | null}
+ */
+function extractActualPlay(payloadData) {
+  const recType = payloadData?.recommendation?.type;
+  if (recType && recType !== 'PASS') {
+    if (recType === 'ML_HOME') return { direction: 'HOME', market: 'moneyline' };
+    if (recType === 'ML_AWAY') return { direction: 'AWAY', market: 'moneyline' };
+    if (recType === 'SPREAD_HOME') return { direction: 'HOME', market: 'spread' };
+    if (recType === 'SPREAD_AWAY') return { direction: 'AWAY', market: 'spread' };
+    if (recType === 'TOTAL_OVER') return { direction: 'OVER', market: 'total' };
+    if (recType === 'TOTAL_UNDER') return { direction: 'UNDER', market: 'total' };
+  }
+
+  if (recType === 'PASS') return null;
+
+  // Fallback: no recommendation.type present — use raw prediction (legacy cards)
+  const prediction = payloadData?.prediction;
+  if (!prediction || prediction === 'NEUTRAL') return null;
+  const betType = (payloadData?.recommended_bet_type || 'moneyline').toLowerCase();
+  return { direction: prediction, market: betType };
+}
+
+function pickBetOdds(payloadData, direction, market) {
   const oddsContext = payloadData?.odds_context || null;
-  const market = payloadData?.market || null;
+  const marketData = payloadData?.market || null;
 
+  if (market === 'spread' || market === 'puck_line') {
+    // Spread odds are ~-110 (not always stored per-team); fall back to standard juice
+    const spreadOdds = direction === 'HOME'
+      ? (oddsContext?.spread_home_odds ?? oddsContext?.h2h_home ?? -110)
+      : (oddsContext?.spread_away_odds ?? oddsContext?.h2h_away ?? -110);
+    return parseAmericanOdds(spreadOdds);
+  }
+
+  // moneyline
   const homeOdds = parseAmericanOdds(oddsContext?.h2h_home ?? oddsContext?.moneyline_home ?? null)
-    ?? parseAmericanOdds(market?.moneyline_home ?? null);
+    ?? parseAmericanOdds(marketData?.moneyline_home ?? null);
   const awayOdds = parseAmericanOdds(oddsContext?.h2h_away ?? oddsContext?.moneyline_away ?? null)
-    ?? parseAmericanOdds(market?.moneyline_away ?? null);
+    ?? parseAmericanOdds(marketData?.moneyline_away ?? null);
 
-  if (prediction === 'HOME') return homeOdds;
-  if (prediction === 'AWAY') return awayOdds;
+  if (direction === 'HOME') return homeOdds;
+  if (direction === 'AWAY') return awayOdds;
   return null;
 }
 
@@ -137,13 +173,12 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           continue;
         }
 
-        const prediction = payloadData?.prediction;
-
-        // NEUTRAL predictions are informational only — do not settle
-        if (!prediction || prediction === 'NEUTRAL') {
-          console.log(`[SettleCards] Skipping NEUTRAL/missing prediction for card ${row.card_id}`);
+        const actualPlay = extractActualPlay(payloadData);
+        if (!actualPlay) {
+          console.log(`[SettleCards] Skipping card ${row.card_id}: no actionable recommendation`);
           continue;
         }
+        const { direction, market } = actualPlay;
 
         const homeScore = Number(row.final_score_home) || 0;
         const awayScore = Number(row.final_score_away) || 0;
@@ -151,7 +186,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         let result;
         let pnlUnits;
 
-        if (prediction === 'HOME') {
+        if (direction === 'HOME') {
           if (homeScore > awayScore) {
             result = 'win';
           } else if (homeScore < awayScore) {
@@ -159,7 +194,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           } else {
             result = 'push';
           }
-        } else if (prediction === 'AWAY') {
+        } else if (direction === 'AWAY') {
           if (awayScore > homeScore) {
             result = 'win';
           } else if (awayScore < homeScore) {
@@ -167,7 +202,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           } else {
             result = 'push';
           }
-        } else if (prediction === 'OVER' || prediction === 'UNDER') {
+        } else if (direction === 'OVER' || direction === 'UNDER') {
           const marketTotal = payloadData?.odds_context?.total
             ?? payloadData?.driver?.inputs?.market_total
             ?? null;
@@ -181,9 +216,9 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           const actualTotal = homeScore + awayScore;
 
           if (actualTotal > line) {
-            result = prediction === 'OVER' ? 'win' : 'loss';
+            result = direction === 'OVER' ? 'win' : 'loss';
           } else if (actualTotal < line) {
-            result = prediction === 'UNDER' ? 'win' : 'loss';
+            result = direction === 'UNDER' ? 'win' : 'loss';
           } else {
             result = 'push';
           }
@@ -191,15 +226,15 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           // Total bet odds not stored per-card; assume standard -110 juice
           pnlUnits = computePnlUnits(result, -110);
         } else {
-          console.warn(`[SettleCards] Unknown prediction value "${prediction}" for card ${row.card_id} — skipping`);
+          console.warn(`[SettleCards] Unknown direction "${direction}" for card ${row.card_id} — skipping`);
           continue;
         }
 
-        if (prediction === 'HOME' || prediction === 'AWAY') {
-          const odds = pickMoneylineOdds(payloadData, prediction);
+        if (direction === 'HOME' || direction === 'AWAY') {
+          const odds = pickBetOdds(payloadData, direction, market);
           pnlUnits = computePnlUnits(result, odds);
           if (pnlUnits === null) {
-            console.warn(`[SettleCards] Missing/invalid moneyline odds for card ${row.card_id} — pnl_units will be null`);
+            console.warn(`[SettleCards] Missing/invalid bet odds for card ${row.card_id} — pnl_units will be null`);
           }
         }
 
@@ -212,7 +247,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         `);
         updateStmt.run(result, settledAt, pnlUnits, row.result_id);
         cardsSettled++;
-        console.log(`[SettleCards] Settled card ${row.card_id}: ${prediction} -> ${result} (pnl: ${pnlUnits})`);
+        console.log(`[SettleCards] Settled card ${row.card_id}: ${direction} (${market}) -> ${result} (pnl: ${pnlUnits})`);
       }
 
       console.log(`[SettleCards] Step 1 complete — ${cardsSettled} cards settled`);
