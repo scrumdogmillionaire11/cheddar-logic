@@ -101,18 +101,34 @@ sqlite3 /opt/data/cheddar.db "SELECT status, COUNT(*) FROM card_results GROUP BY
 sqlite3 /opt/data/cheddar.db "SELECT status, COUNT(*) FROM game_results GROUP BY status;"
 ```
 
-### Migrate local DB to production
+### Backups
+
+Daily backups run automatically at 3am ET via cron (set up once on Pi):
+
 ```bash
-# 1. Back up prod DB (on Pi)
+mkdir -p /opt/data/backups
+(crontab -l 2>/dev/null; echo "0 3 * * * cp /opt/data/cheddar.db /opt/data/backups/cheddar-\$(date +\%Y\%m\%d).db && find /opt/data/backups -name 'cheddar-*.db' -mtime +7 -delete") | crontab -
+```
+
+Backups live at `/opt/data/backups/cheddar-YYYYMMDD.db`. To restore:
+
+```bash
+cp /opt/data/backups/cheddar-20260301.db /opt/data/cheddar.db
+sudo systemctl restart cheddar-web cheddar-worker
+```
+
+### Migrate local DB to production
+
+> **WARNING: This overwrites the entire production database.** Always back up first.
+
+```bash
+# 1. Back up prod DB first (on Pi)
 ssh babycheeses11@192.168.200.198 "cp /opt/data/cheddar.db /opt/data/cheddar.db.bak-$(date +%Y%m%d)"
 
 # 2. Copy local DB to Pi (from Mac)
 scp /Users/ajcolubiale/projects/cheddar-logic/data/cheddar.db babycheeses11@192.168.200.198:/opt/data/cheddar.db
 
-# 3. Fix ownership
-ssh babycheeses11@192.168.200.198 "sudo chown cheddar-worker:cheddar-worker /opt/data/cheddar.db"
-
-# 4. Restart services
+# 3. Restart services
 ssh babycheeses11@192.168.200.198 "sudo systemctl restart cheddar-web cheddar-worker"
 ```
 
