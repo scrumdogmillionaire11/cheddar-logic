@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 type ResultsSummary = {
@@ -16,6 +16,7 @@ type ResultsSummary = {
 
 type SegmentRow = {
   sport: string;
+  cardCategory: string;
   settledCards: number;
   wins: number;
   losses: number;
@@ -48,18 +49,10 @@ type ResultsResponse = {
     summary: ResultsSummary;
     segments: SegmentRow[];
     ledger: LedgerRow[];
+    filters?: { sport: string | null; cardCategory: string | null; minConfidence: number | null };
   };
   error?: string;
 };
-
-const filterChips = [
-  "Sport",
-  "Market",
-  "Tier",
-  "Edge Band",
-  "Odds Band",
-  "Date Range",
-];
 
 function formatPercent(value: number) {
   return `${(value * 100).toFixed(1)}%`;
@@ -77,31 +70,40 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const loadResults = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch('/api/results');
-        const payload: ResultsResponse = await response.json();
+  // Filter state
+  const [filterSport, setFilterSport] = useState<string>('');
+  const [filterCategory, setFilterCategory] = useState<string>('');
+  const [filterHighConf, setFilterHighConf] = useState<boolean>(false);
 
-        if (!response.ok || !payload.success || !payload.data) {
-          setError(payload.error || 'Failed to load results');
-          return;
-        }
+  const loadResults = useCallback(async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (filterSport) params.set('sport', filterSport);
+      if (filterCategory) params.set('card_category', filterCategory);
+      if (filterHighConf) params.set('min_confidence', '60');
+      const response = await fetch(`/api/results?${params.toString()}`);
+      const payload: ResultsResponse = await response.json();
 
-        setSummary(payload.data.summary);
-        setSegments(payload.data.segments);
-        setLedger(payload.data.ledger);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
-      } finally {
-        setLoading(false);
+      if (!response.ok || !payload.success || !payload.data) {
+        setError(payload.error || 'Failed to load results');
+        return;
       }
-    };
 
+      setSummary(payload.data.summary);
+      setSegments(payload.data.segments);
+      setLedger(payload.data.ledger);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  }, [filterSport, filterCategory, filterHighConf]);
+
+  useEffect(() => {
     loadResults();
-  }, []);
+  }, [loadResults]);
 
   const summaryCards = useMemo(() => {
     return [
@@ -128,6 +130,8 @@ export default function ResultsPage() {
     ];
   }, [summary]);
 
+  const hasActiveFilters = filterSport || filterCategory || filterHighConf;
+
   return (
     <div className="min-h-screen bg-night text-cloud">
       <div className="relative overflow-hidden">
@@ -138,7 +142,7 @@ export default function ResultsPage() {
       <div className="relative mx-auto max-w-6xl px-6 py-12">
         <div className="mb-8">
           <Link href="/" className="text-sm text-cloud/60 hover:text-cloud/80">
-            ← Back to Home
+            &larr; Back to Home
           </Link>
         </div>
 
@@ -146,7 +150,7 @@ export default function ResultsPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cloud/50">
             Accountability Ledger
           </p>
-          <h1 className="font-display text-4xl font-semibold sm:text-5xl">📊 Results 📊</h1>
+          <h1 className="font-display text-4xl font-semibold sm:text-5xl">Results</h1>
           <p className="max-w-2xl text-lg text-cloud/70">
             Every call is logged at decision time and graded after the final whistle. No
             recomputation, no deletions, no retroactive edits.
@@ -182,21 +186,63 @@ export default function ResultsPage() {
                 Slice results by market, tier, and edge band to validate pricing logic.
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {filterChips.map((label) => (
-                <span
-                  key={label}
-                  className="rounded-full border border-white/15 bg-night/60 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60"
+
+            {/* Filter controls */}
+            <div className="flex flex-wrap gap-3 items-center">
+              {/* Sport select */}
+              <select
+                value={filterSport}
+                onChange={(e) => setFilterSport(e.target.value)}
+                className="rounded-full border border-white/15 bg-night/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/70 focus:outline-none"
+              >
+                <option value="">All Sports</option>
+                <option value="NHL">NHL</option>
+                <option value="NBA">NBA</option>
+                <option value="NCAAM">NCAAM</option>
+              </select>
+
+              {/* Card category select */}
+              <select
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                className="rounded-full border border-white/15 bg-night/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/70 focus:outline-none"
+              >
+                <option value="">All Types</option>
+                <option value="driver">Driver</option>
+                <option value="call">Call</option>
+              </select>
+
+              {/* 60% confidence toggle */}
+              <button
+                type="button"
+                onClick={() => setFilterHighConf((v) => !v)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] transition-colors ${
+                  filterHighConf
+                    ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-300'
+                    : 'border-white/15 bg-night/60 text-cloud/60'
+                }`}
+              >
+                60%+ Confidence
+              </button>
+
+              {/* Reset */}
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={() => { setFilterSport(''); setFilterCategory(''); setFilterHighConf(false); }}
+                  className="rounded-full border border-white/10 bg-night/40 px-3 py-1.5 text-xs text-cloud/40 hover:text-cloud/60"
                 >
-                  {label}
-                </span>
-              ))}
+                  Clear
+                </button>
+              )}
             </div>
           </div>
 
           <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
-            <div className="grid grid-cols-5 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+            {/* 6-column header: Segment | Type | Plays | Win Rate | ROI | Avg Edge */}
+            <div className="grid grid-cols-6 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
               <span>Segment</span>
+              <span>Type</span>
               <span>Plays</span>
               <span>Win Rate</span>
               <span>ROI</span>
@@ -211,13 +257,20 @@ export default function ResultsPage() {
                 {segments.map((row) => {
                   const total = row.wins + row.losses + row.pushes;
                   const winRate = row.wins + row.losses > 0 ? row.wins / (row.wins + row.losses) : 0;
+                  const isHighWinRate = winRate >= 0.6;
                   return (
-                    <div key={row.sport} className="grid grid-cols-5 gap-4 px-4 py-3 text-sm text-cloud/70">
-                      <span>{row.sport}</span>
-                      <span>{total}</span>
-                      <span>{formatPercent(winRate)}</span>
-                      <span>{formatUnits(row.totalPnlUnits)}</span>
-                      <span>N/A</span>
+                    <div
+                      key={`${row.sport}-${row.cardCategory}`}
+                      className={`grid grid-cols-6 gap-4 px-4 py-3 text-sm ${isHighWinRate ? 'bg-emerald-500/10' : ''}`}
+                    >
+                      <span className="text-cloud/70">{row.sport}</span>
+                      <span className="text-cloud/70 capitalize">{row.cardCategory}</span>
+                      <span className="text-cloud/70">{total}</span>
+                      <span className={isHighWinRate ? 'text-emerald-300' : 'text-cloud/70'}>
+                        {formatPercent(winRate)}
+                      </span>
+                      <span className="text-cloud/70">{formatUnits(row.totalPnlUnits)}</span>
+                      <span className="text-cloud/70">N/A</span>
                     </div>
                   );
                 })}
