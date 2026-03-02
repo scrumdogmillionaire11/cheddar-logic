@@ -4,7 +4,13 @@
  * Creates card payloads for existing games so /cards page displays data
  */
 
+const path = require('path');
 const { v4: uuidV4 } = require('uuid');
+
+require('dotenv').config({
+  path: path.resolve(__dirname, '../../../.env')
+});
+
 const { initDb, getDatabase, closeDatabase } = require('./db.js');
 
 async function seedCards() {

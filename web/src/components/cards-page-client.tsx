@@ -11,6 +11,48 @@ import { DEFAULT_FILTERS } from '@/lib/game-card/filters';
 import type { Direction, DriverRow, DriverTier, Market } from '@/lib/types/game-card';
 import { getCardDecisionModel } from '@/lib/game-card/decision';
 
+const TRACKED_SPORTS = ['NCAAM', 'NBA', 'NHL', 'SOCCER'] as const;
+
+type SportCountMap = Record<string, number>;
+
+function createEmptySportCounts(): SportCountMap {
+  return TRACKED_SPORTS.reduce<SportCountMap>((acc, sport) => {
+    acc[sport] = 0;
+    return acc;
+  }, {});
+}
+
+function countBySport(items: Array<{ sport: string }>): SportCountMap {
+  const counts = createEmptySportCounts();
+
+  for (const item of items) {
+    const sport = (item.sport || '').toUpperCase();
+    if (Object.prototype.hasOwnProperty.call(counts, sport)) {
+      counts[sport] += 1;
+      continue;
+    }
+
+    counts.OTHER = (counts.OTHER || 0) + 1;
+  }
+
+  return counts;
+}
+
+function getEtDayKey(dateInput: Date | string): string {
+  const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+function formatSportCounts(counts: SportCountMap): string {
+  const base = TRACKED_SPORTS.map((sport) => `${sport} ${counts[sport] || 0}`).join(' | ');
+  return counts.OTHER ? `${base} | OTHER ${counts.OTHER}` : base;
+}
+
 interface GameData {
   id: string;
   gameId: string;
@@ -88,6 +130,35 @@ export default function CardsPageClient() {
   }, [games, filters]);
 
   const activeFilterCount = getActiveFilterCount(filters);
+  const todayEtKey = useMemo(() => getEtDayKey(new Date()), []);
+
+  const traceStats = useMemo(() => {
+    const fetchedBySport = countBySport(games);
+    const transformedBySport = countBySport(enrichedCards);
+    const displayedBySport = countBySport(filteredCards);
+
+    const fetchedTodayBySport = countBySport(
+      games.filter((game) => getEtDayKey(game.gameTimeUtc) === todayEtKey)
+    );
+    const transformedTodayBySport = countBySport(
+      enrichedCards.filter((card) => getEtDayKey(card.startTime) === todayEtKey)
+    );
+    const displayedTodayBySport = countBySport(
+      filteredCards.filter((card) => getEtDayKey(card.startTime) === todayEtKey)
+    );
+
+    return {
+      fetchedTotal: games.length,
+      transformedTotal: enrichedCards.length,
+      displayedTotal: filteredCards.length,
+      fetchedBySport,
+      transformedBySport,
+      displayedBySport,
+      fetchedTodayBySport,
+      transformedTodayBySport,
+      displayedTodayBySport,
+    };
+  }, [games, enrichedCards, filteredCards, todayEtKey]);
 
   const handleResetFilters = () => {
     setFilters(resetFilters());
@@ -124,6 +195,23 @@ export default function CardsPageClient() {
     const interval = setInterval(fetchGames, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    console.info('[cards-trace]', {
+      todayEt: todayEtKey,
+      fetchedTotal: traceStats.fetchedTotal,
+      transformedTotal: traceStats.transformedTotal,
+      displayedTotal: traceStats.displayedTotal,
+      fetchedBySport: traceStats.fetchedBySport,
+      transformedBySport: traceStats.transformedBySport,
+      displayedBySport: traceStats.displayedBySport,
+      fetchedTodayBySport: traceStats.fetchedTodayBySport,
+      transformedTodayBySport: traceStats.transformedTodayBySport,
+      displayedTodayBySport: traceStats.displayedTodayBySport,
+      filters,
+    });
+  }, [loading, traceStats, todayEtKey, filters]);
 
   const formatDate = (dateStr: string) => {
     try {
@@ -529,6 +617,16 @@ export default function CardsPageClient() {
           <p className="text-cloud/70">
             {enrichedCards.length} game{enrichedCards.length !== 1 ? 's' : ''} total, showing {filteredCards.length} (updates in background every 30s)
           </p>
+          {!loading && !error && (
+            <div className="rounded-lg border border-white/10 bg-surface/30 px-3 py-2 text-xs text-cloud/70 space-y-1">
+              <p>
+                Trace (all): fetched {traceStats.fetchedTotal} ({formatSportCounts(traceStats.fetchedBySport)}) → transformed {traceStats.transformedTotal} ({formatSportCounts(traceStats.transformedBySport)}) → displayed {traceStats.displayedTotal} ({formatSportCounts(traceStats.displayedBySport)})
+              </p>
+              <p>
+                Trace (today ET {todayEtKey}): fetched ({formatSportCounts(traceStats.fetchedTodayBySport)}) → transformed ({formatSportCounts(traceStats.transformedTodayBySport)}) → displayed ({formatSportCounts(traceStats.displayedTodayBySport)})
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Filter Panel */}

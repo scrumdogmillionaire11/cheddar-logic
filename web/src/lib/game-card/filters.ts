@@ -56,7 +56,7 @@ export interface GameFilters {
  */
 export const DEFAULT_FILTERS: GameFilters = {
   sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER'],
-   statuses: ['FIRE', 'WATCH'],
+  statuses: ['FIRE', 'WATCH'],
   markets: ['ML', 'SPREAD', 'TOTAL'],
   onlyGamesWithPicks: false,
    hasClearPlay: false,
