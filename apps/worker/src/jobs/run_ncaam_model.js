@@ -38,6 +38,7 @@ const {
   edgeCalculator,
   marginToWinProbability
 } = require('@cheddar-logic/models');
+const { publishDecisionForCard } = require('../utils/decision-publisher');
 
 const NCAAM_DRIVER_WEIGHTS = {
   baseProjection: 0.40,
@@ -265,6 +266,8 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       console.log(`[NCAAMModel] Running inference on ${gameIds.length} games...`);
 
       let cardsGenerated = 0;
+      let gatedCount = 0;
+      let blockedCount = 0;
 
       // Process each game
       for (const gameId of gameIds) {
@@ -294,6 +297,13 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
               throw new Error(`Invalid card payload for ${card.cardType}: ${validation.errors.join('; ')}`);
             }
 
+            const decisionOutcome = publishDecisionForCard({ card, oddsSnapshot });
+            if (decisionOutcome.gated) gatedCount++;
+            if (decisionOutcome.gated && !decisionOutcome.allow) {
+              blockedCount++;
+              console.log(`  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`);
+            }
+
             insertCardPayload(card);
             cardsGenerated++;
             console.log(`  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`);
@@ -305,6 +315,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
 
       // Mark job as success
       console.log(`[NCAAMModel] ✅ Complete: ${cardsGenerated} cards generated`);
+      console.log(`[NCAAMModel] Decision gate: ${gatedCount} gated, ${blockedCount} blocked`);
       markJobRunSuccess(jobRunId);
       
       return { success: true, jobRunId, cardsGenerated };

@@ -52,6 +52,7 @@ const {
   edgeCalculator,
   marginToWinProbability
 } = require('@cheddar-logic/models');
+const { publishDecisionForCard } = require('../utils/decision-publisher');
 
 const NHL_DRIVER_WEIGHTS = {
   baseProjection: 0.30,
@@ -528,6 +529,8 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
 
       let cardsGenerated = 0;
       let cardsFailed = 0;
+      let gatedCount = 0;
+      let blockedCount = 0;
       const errors = [];
 
       // Process each game
@@ -563,6 +566,12 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             if (!validation.success) {
               throw new Error(`Invalid card payload for ${card.cardType}: ${validation.errors.join('; ')}`);
             }
+            const decisionOutcome = publishDecisionForCard({ card, oddsSnapshot });
+            if (decisionOutcome.gated) gatedCount++;
+            if (decisionOutcome.gated && !decisionOutcome.allow) {
+              blockedCount++;
+              console.log(`  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`);
+            }
             insertCardPayload(card);
             cardsGenerated++;
             console.log(`  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`);
@@ -577,6 +586,12 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             const validation = validateCardPayload(card.cardType, card.payloadData);
             if (!validation.success) {
               throw new Error(`Invalid card payload for ${card.cardType}: ${validation.errors.join('; ')}`);
+            }
+            const decisionOutcome = publishDecisionForCard({ card, oddsSnapshot });
+            if (decisionOutcome.gated) gatedCount++;
+            if (decisionOutcome.gated && !decisionOutcome.allow) {
+              blockedCount++;
+              console.log(`  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`);
             }
             insertCardPayload(card);
             cardsGenerated++;
@@ -595,6 +610,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
       // Mark success
       markJobRunSuccess(jobRunId);
       console.log(`[NHLModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`);
+      console.log(`[NHLModel] Decision gate: ${gatedCount} gated, ${blockedCount} blocked`);
       
       if (errors.length > 0) {
         console.error('[NHLModel] Errors:');

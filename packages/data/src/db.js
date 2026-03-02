@@ -948,6 +948,187 @@ function deleteExpiredCards(daysOld = 30) {
 }
 
 /**
+ * Get the current published decision record
+ * @param {string} decisionKey
+ * @returns {object|null}
+ */
+function getDecisionRecord(decisionKey) {
+  const db = getDatabase();
+
+  const stmt = db.prepare(`
+    SELECT * FROM decision_records
+    WHERE decision_key = ?
+  `);
+
+  return stmt.get(decisionKey) || null;
+}
+
+/**
+ * Upsert a decision record (published decision)
+ * @param {object} record
+ */
+function upsertDecisionRecord(record) {
+  const db = getDatabase();
+
+  const stmt = db.prepare(`
+    INSERT INTO decision_records (
+      decision_key, sport, game_id, market, period, side_family,
+      recommended_side, recommended_line, recommended_price, book,
+      edge, confidence, locked_status, locked_at, last_seen_at,
+      result_version, inputs_hash, odds_snapshot_id,
+      flip_count, last_flip_at, last_reason_code, last_reason_detail,
+      last_candidate_hash, candidate_seen_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(decision_key) DO UPDATE SET
+      sport = excluded.sport,
+      game_id = excluded.game_id,
+      market = excluded.market,
+      period = excluded.period,
+      side_family = excluded.side_family,
+      recommended_side = excluded.recommended_side,
+      recommended_line = excluded.recommended_line,
+      recommended_price = excluded.recommended_price,
+      book = excluded.book,
+      edge = excluded.edge,
+      confidence = excluded.confidence,
+      locked_status = CASE
+        WHEN decision_records.locked_status = 'HARD' THEN 'HARD'
+        ELSE excluded.locked_status
+      END,
+      locked_at = CASE
+        WHEN decision_records.locked_status = 'HARD' THEN decision_records.locked_at
+        WHEN excluded.locked_status = 'HARD' THEN excluded.locked_at
+        ELSE decision_records.locked_at
+      END,
+      last_seen_at = excluded.last_seen_at,
+      result_version = excluded.result_version,
+      inputs_hash = excluded.inputs_hash,
+      odds_snapshot_id = excluded.odds_snapshot_id,
+      flip_count = CASE
+        WHEN excluded.recommended_side != decision_records.recommended_side THEN decision_records.flip_count + 1
+        ELSE decision_records.flip_count
+      END,
+      last_flip_at = CASE
+        WHEN excluded.recommended_side != decision_records.recommended_side THEN excluded.last_seen_at
+        ELSE decision_records.last_flip_at
+      END,
+      last_reason_code = excluded.last_reason_code,
+      last_reason_detail = excluded.last_reason_detail,
+      last_candidate_hash = excluded.last_candidate_hash,
+      candidate_seen_count = excluded.candidate_seen_count
+  `);
+
+  stmt.run(
+    record.decisionKey,
+    record.sport,
+    record.gameId,
+    record.market,
+    record.period,
+    record.sideFamily,
+    record.recommendedSide,
+    record.recommendedLine,
+    record.recommendedPrice,
+    record.book || null,
+    record.edge,
+    record.confidence ?? null,
+    record.lockedStatus,
+    record.lockedAt || null,
+    record.lastSeenAt,
+    record.resultVersion || null,
+    record.inputsHash || null,
+    record.oddsSnapshotId || null,
+    record.flipCount ?? 0,
+    record.lastFlipAt || null,
+    record.lastReasonCode || null,
+    record.lastReasonDetail || null,
+    record.lastCandidateHash || null,
+    record.candidateSeenCount ?? 0
+  );
+}
+
+/**
+ * Update candidate tracking without changing published decision
+ * @param {object} update
+ */
+function updateDecisionCandidateTracking(update) {
+  const db = getDatabase();
+
+  const stmt = db.prepare(`
+    UPDATE decision_records
+    SET last_seen_at = ?,
+        last_candidate_hash = ?,
+        candidate_seen_count = ?,
+        last_reason_code = ?,
+        last_reason_detail = ?,
+        locked_status = CASE
+          WHEN ? IS NULL THEN locked_status
+          WHEN locked_status = 'HARD' THEN locked_status
+          ELSE ?
+        END,
+        locked_at = CASE
+          WHEN ? IS NULL THEN locked_at
+          WHEN locked_status = 'HARD' THEN locked_at
+          WHEN ? = 'HARD' THEN ?
+          ELSE locked_at
+        END
+    WHERE decision_key = ?
+  `);
+
+  stmt.run(
+    update.lastSeenAt,
+    update.lastCandidateHash || null,
+    update.candidateSeenCount ?? 0,
+    update.lastReasonCode || null,
+    update.lastReasonDetail || null,
+    update.lockedStatus || null,
+    update.lockedStatus || null,
+    update.lockedStatus || null,
+    update.lockedStatus || null,
+    update.lockedAt || null,
+    update.decisionKey
+  );
+}
+
+/**
+ * Insert a decision event audit record
+ * @param {object} event
+ */
+function insertDecisionEvent(event) {
+  const db = getDatabase();
+
+  const stmt = db.prepare(`
+    INSERT INTO decision_events (
+      ts, decision_key, action, reason_code, reason_detail,
+      prev_side, prev_line, prev_price, prev_edge,
+      cand_side, cand_line, cand_price, cand_edge,
+      edge_delta, line_delta, price_delta,
+      inputs_hash, result_version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  stmt.run(
+    event.ts,
+    event.decisionKey,
+    event.action,
+    event.reasonCode,
+    event.reasonDetail || null,
+    event.prevSide || null,
+    event.prevLine ?? null,
+    event.prevPrice ?? null,
+    event.prevEdge ?? null,
+    event.candSide,
+    event.candLine ?? null,
+    event.candPrice ?? null,
+    event.candEdge,
+    event.edgeDelta ?? null,
+    event.lineDelta ?? null,
+    event.priceDelta ?? null,
+    event.inputsHash || null,
+    event.resultVersion || null
+  );
+}
+
+/**
  * Get upcoming games for scheduler window detection
  * @param {object} params
  * @param {string} params.startUtcIso - Start time (ISO 8601 UTC)
@@ -1201,6 +1382,10 @@ module.exports = {
   getCardPayloadsBySport,
   expireCardPayload,
   deleteExpiredCards,
+  getDecisionRecord,
+  upsertDecisionRecord,
+  updateDecisionCandidateTracking,
+  insertDecisionEvent,
   getUpcomingGames,
   upsertGame,
   upsertGameResult,

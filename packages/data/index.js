@@ -70,6 +70,10 @@ module.exports = {
   getCardPayloadsBySport: db.getCardPayloadsBySport,
   expireCardPayload: db.expireCardPayload,
   deleteExpiredCards: db.deleteExpiredCards,
+  getDecisionRecord: db.getDecisionRecord,
+  upsertDecisionRecord: db.upsertDecisionRecord,
+  updateDecisionCandidateTracking: db.updateDecisionCandidateTracking,
+  insertDecisionEvent: db.insertDecisionEvent,
 
   // Convenience exports - games
   getUpcomingGames: db.getUpcomingGames,
