@@ -20,6 +20,8 @@
     "job:run-soccer-model:test": "DATABASE_PATH=../../packages/data/cheddar.db node -e \"require('./src/jobs/run_soccer_model.js').runSoccerModel().then(console.log).catch(console.error)\"",
     "job:run-ncaam-model": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/run_ncaam_model.js",
     "job:run-ncaam-model:test": "DATABASE_PATH=../../packages/data/cheddar.db node -e \"require('./src/jobs/run_ncaam_model.js').runNCAAMModel().then(console.log).catch(console.error)\"",
+    "job:backfill-card-results": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/backfill_card_results.js",
+    "job:backfill-card-results:dry-run": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/backfill_card_results.js --dry-run",
     "job:settle-games": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/settle_game_results.js",
     "job:settle-cards": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/settle_pending_cards.js",
     "job:resettle-history": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/resettle_historical_cards.js",

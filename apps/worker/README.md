@@ -17,7 +17,10 @@ npm install
 npm run job:pull-odds
 
 # Run with local env
-DATABASE_PATH=/tmp/cheddar.db npm run job:pull-odds
+DATABASE_PATH=/tmp/cheddar-logic/cheddar.db npm run job:pull-odds
+
+# Run against production DB on the Pi
+DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm run job:pull-odds
 ```
 
 **What it does:**
@@ -34,6 +37,7 @@ DATABASE_PATH=/tmp/cheddar.db npm run job:pull-odds
 
 **Environment variables:**
 - `DATABASE_PATH`: Path to SQLite database (default: `/tmp/cheddar-logic/cheddar.db`)
+- `DATABASE_URL`: Present but ignored by the sql.js data layer (future use)
 - `CHEDDAR_DATA_DIR`: Data directory for DB (default: `/tmp/cheddar-logic`)
 - Any shared-data env vars (API keys, etc.)
 
