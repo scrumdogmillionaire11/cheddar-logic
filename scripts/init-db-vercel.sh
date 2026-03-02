@@ -5,22 +5,30 @@
 set -e
 
 echo "🗄️  Initializing SQLite database for Vercel..."
+echo "Current directory: $(pwd)"
+
+# Set database path to be within the build (not /tmp)
+export DATABASE_PATH="$(pwd)/packages/data/cheddar.db"
+export CHEDDAR_DATA_DIR="$(pwd)/packages/data"
+
+echo "DATABASE_PATH: ${DATABASE_PATH}"
+echo "CHEDDAR_DATA_DIR: ${CHEDDAR_DATA_DIR}"
 
 cd packages/data
 
 # Run migrations to create schema
 echo "Creating schema..."
-npm run migrate > /dev/null 2>&1
+npm run migrate
 
 # Seed test games and odds
 echo "Seeding test games and odds..."
-npm run seed:test-odds > /dev/null 2>&1
+npm run seed:test-odds
 
 # Seed cards
 echo "Seeding card predictions..."
-npm run seed:cards > /dev/null 2>&1
+npm run seed:cards
 
 echo "✅ Database initialization complete"
-ls -lh cheddar.db
+ls -lh cheddar.db || echo "Warning: cheddar.db not found in packages/data"
 
 exit 0

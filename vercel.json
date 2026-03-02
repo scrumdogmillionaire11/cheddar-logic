@@ -1,9 +1,9 @@
 {
   "version": 2,
-  "buildCommand": "bash scripts/init-db-vercel.sh && cd web && npm install && npm run build",
+  "buildCommand": "npm install --prefix packages/data && bash scripts/init-db-vercel.sh && cd web && npm install && npm run build",
   "outputDirectory": "web/.next",
   "framework": "nextjs",
-  "installCommand": "npm install --prefix web",
+  "installCommand": "npm install --prefix web && npm install --prefix packages/data",
   "devCommand": "npm run dev --prefix web",
   "ignoreCommand": "git diff --quiet HEAD^ HEAD ./web",
   "routes": [
