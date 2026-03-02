@@ -103,7 +103,7 @@ jobs:
             npm --prefix packages/odds install --omit=dev
             npm --prefix apps/worker install --omit=dev
             npm --prefix web install
-            rm -rf web/.next
+            sudo rm -rf web/.next
             env $(cat /opt/cheddar-logic/.env.production | grep -v '^#' | xargs) npm --prefix web run build
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
