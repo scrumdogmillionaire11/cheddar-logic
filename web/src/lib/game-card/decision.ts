@@ -8,7 +8,7 @@
  * 4. Filter contributors by market relevance
  */
 
-import type { GameCard, DriverRow, Market, Direction, DriverTier, ExpressionStatus } from '../types/game-card';
+import type { GameCard, DriverRow, Market, Direction, DriverTier, ExpressionStatus, Play } from '../types/game-card';
 
 type DecisionPolarity = 'pro' | 'contra' | 'neutral';
 
@@ -504,7 +504,7 @@ export function getCardDecisionModel(card: GameCard, odds: Odds | null): Decisio
  * @param play - Play object from GameCard
  * @returns 'FIRE' | 'HOLD' | 'PASS'
  */
-export function getPlayDisplayAction(play?: any): 'FIRE' | 'HOLD' | 'PASS' {
+export function getPlayDisplayAction(play?: Play | null): 'FIRE' | 'HOLD' | 'PASS' {
   if (!play) {
     return 'PASS';
   }

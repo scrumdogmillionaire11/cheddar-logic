@@ -1,0 +1,39 @@
+# Build outputs
+dist/
+build/
+.next/
+out/
+coverage/
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Database & data files
+*.db
+*.sqlite
+*.sqlite3
+packages/data/**
+
+# Generated & temp files
+_bmad-output/
+**/*.log
+tmp/
+/tmp/
+
+# Documentation & MDX
+*.md
+docs/
+
+# Web-specific bundles (handled by web's own linter)
+web-bundles/
+
+# Archive & vendor
+cheddar-fpl-sage/archive/
+cheddar-fpl-sage/vendor/
+
+# Environment
+.env
+.env.local
+.env.*.local
