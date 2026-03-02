@@ -80,6 +80,8 @@ interface GameData {
     total: number | null;
     spreadHome: number | null;
     spreadAway: number | null;
+    totalPriceOver: number | null;
+    totalPriceUnder: number | null;
     capturedAt: string | null;
   } | null;
   consistency?: {
@@ -524,6 +526,10 @@ function buildPlay(
     }
   } else if (market === 'TOTAL') {
     line = game.odds?.total ?? undefined;
+    // Get the over/under price based on direction
+    if (market === 'TOTAL') {
+      price = direction === 'OVER' ? game.odds?.totalPriceOver ?? undefined : game.odds?.totalPriceUnder ?? undefined;
+    }
     if (line !== undefined) {
       pick = `${direction === 'OVER' ? 'Over' : 'Under'} ${line}`;
     } else {
@@ -531,7 +537,7 @@ function buildPlay(
     }
   }
 
-  const impliedProb = market === 'ML' ? americanToImpliedProbability(price) : undefined;
+  const impliedProb = market === 'ML' || market === 'TOTAL' ? americanToImpliedProbability(price) : undefined;
   const edge = impliedProb !== undefined ? modelProb - impliedProb : undefined;
   const valueStatus = getValueStatus(edge);
   const priceFlags = getPriceFlags(direction, price);
