@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-03-01 - Completed quick task 20: Smart filtering for /results — sport/card_category/min_confidence filter params on API, live filter controls on page, segments split by sport+driver-vs-call with 60%+ win rate highlighting
+**Last activity:** 2026-03-02 - Completed quick task 21: Settlement uses recommendation.type as authoritative BET direction (ML_HOME/ML_AWAY/SPREAD_HOME/SPREAD_AWAY/TOTAL_OVER/TOTAL_UNDER); /results segments now 3-key (sport+category+market) with market filter dropdown
 
 ---
 
@@ -217,3 +217,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 18 | Settle yesterday's plays: ESPN score ingest + card grading (33 games settled, 39 cards: 24W/15L); /api/results and /results UI verified | 2026-03-01 | edf529c | .planning/quick/18-settle-yesterday-plays-in-db-and-ensure-/ |
 | 19 | Enrich Play Ledger: Matchup (Away @ Home), real Price from odds_context, real Confidence % — 8-column ledger on /results | 2026-03-01 | a6fefb8 | .planning/quick/19-add-matchup-teams-fix-price-odds-column-/ |
 | 20 | Smart filtering: sport/card_category/min_confidence params on API; live filter controls + 60%+ segment highlighting on /results | 2026-03-01 | 4739ddb | .planning/quick/20-smart-filtering-for-record-transparency-/ |
+| 21 | Fix settlement to use recommendation.type (actual BET direction); market-level segments + market filter dropdown on /results | 2026-03-02 | 0d76679 | .planning/quick/21-fix-results-settlement-to-use-actual-pla/ |
