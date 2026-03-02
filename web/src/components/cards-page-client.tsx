@@ -754,8 +754,8 @@ export default function CardsPageClient() {
                 Evidence ({card.evidence?.length})
               </p>
               <div className="space-y-2">
-                {card.evidence?.slice(0, 5).map((evidence) => (
-                  <div key={evidence.id} className="bg-white/5 rounded-md px-3 py-2">
+                {card.evidence?.slice(0, 5).map((evidence, index) => (
+                  <div key={`${evidence.id}-${index}`} className="bg-white/5 rounded-md px-3 py-2">
                     <p className="text-sm text-cloud/80 font-medium">{evidence.cardTitle}</p>
                     {evidence.reasoning && (
                       <p className="text-xs text-cloud/60 mt-1">{evidence.reasoning}</p>
