@@ -117,6 +117,8 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot, marketPayload
     const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
     const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
     const market = buildMarketFromOdds(oddsSnapshot);
+    const marketType = isPaceTotalsCard || isPace1pCard ? 'TOTAL' : 'INFO';
+    const selectionSide = descriptor.prediction === 'NEUTRAL' ? 'NONE' : descriptor.prediction;
     const payloadData = {
       game_id: gameId,
       sport: 'NHL',
@@ -146,6 +148,26 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot, marketPayload
       confidence: descriptor.confidence,
       tier: descriptor.tier,
       recommended_bet_type: recommendedBetType,
+      kind: marketType === 'INFO' ? 'EVIDENCE' : 'PLAY',
+      market_type: marketType,
+      selection: {
+        side: selectionSide,
+        team:
+          descriptor.prediction === 'HOME'
+            ? oddsSnapshot?.home_team ?? undefined
+            : descriptor.prediction === 'AWAY'
+              ? oddsSnapshot?.away_team ?? undefined
+              : undefined
+      },
+      line: marketType === 'TOTAL' ? (oddsSnapshot?.total ?? null) : null,
+      price:
+        marketType !== 'TOTAL' && descriptor.prediction === 'HOME'
+          ? oddsSnapshot?.h2h_home ?? null
+          : marketType !== 'TOTAL' && descriptor.prediction === 'AWAY'
+            ? oddsSnapshot?.h2h_away ?? null
+            : null,
+      reason_codes: projectedEdge == null ? ['PASS_MISSING_EDGE'] : [],
+      tags: [],
       reasoning: descriptor.reasoning,
       odds_context: {
         h2h_home: oddsSnapshot?.h2h_home,
@@ -208,12 +230,26 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
 
   // TOTAL decision → nhl-totals-call
   const totalDecision = marketDecisions?.TOTAL;
-  if (totalDecision && (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')) {
-    const confidence = CONFIDENCE_MAP[totalDecision.status];
+  const totalBias =
+    totalDecision &&
+    totalDecision.status !== 'PASS' &&
+    typeof totalDecision.edge === 'number' &&
+    totalDecision.best_candidate?.line != null
+      ? 'OK'
+      : 'INSUFFICIENT_DATA';
+  if (totalDecision) {
+    const status = totalDecision.status || 'PASS';
+    const confidence = CONFIDENCE_MAP[status] ?? 0.5;
     const tier = determineTier(confidence);
     const { side, line } = totalDecision.best_candidate;
+    const hasLine = line != null;
     const lineText = line != null ? ` ${line}` : '';
     const pickText = `${side === 'OVER' ? 'OVER' : 'UNDER'}${lineText}`;
+    const reasonCodes = [];
+    if (!hasLine) reasonCodes.push('PASS_MISSING_LINE');
+    if (totalBias !== 'OK') reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
+    if (status === 'PASS') reasonCodes.push('SKIP_MARKET_NO_EDGE');
+    reasonCodes.push('PASS_NO_MARKET_PRICE');
     const activeDrivers = (totalDecision.drivers || [])
       .filter(d => d.eligible)
       .map(d => d.driverKey);
@@ -246,7 +282,20 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         prediction: side,
         confidence,
         tier,
+        status,
         recommended_bet_type: 'total',
+        kind: hasLine ? 'PLAY' : 'EVIDENCE',
+        market_type: hasLine ? 'TOTAL' : 'INFO',
+        selection: {
+          side,
+        },
+        line: line ?? null,
+        price: null,
+        reason_codes: reasonCodes,
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
         reasoning: `${pickText}: ${totalDecision.reasoning}`,
         edge: totalDecision.edge ?? null,
         projection: {
@@ -321,6 +370,19 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         confidence,
         tier,
         recommended_bet_type: 'spread',
+        kind: 'PLAY',
+        market_type: 'SPREAD',
+        selection: {
+          side,
+          team: side === 'HOME' ? oddsSnapshot?.home_team ?? undefined : oddsSnapshot?.away_team ?? undefined,
+        },
+        line: line ?? null,
+        price: null,
+        reason_codes: [],
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
         reasoning: `${pickText}: ${spreadDecision.reasoning}`,
         edge: spreadDecision.edge ?? null,
         projection: {

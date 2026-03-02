@@ -153,13 +153,17 @@ function generateTestData() {
         gameId: 'nhl-2026-02-27-tor-mtl',
         sport: 'NHL',
         capturedAt,
-        h2hHome: 1.85,  // Toronto Maple Leafs (favorite)
-        h2hAway: 2.10,  // Montreal Canadiens
+        h2hHome: -118,  // Toronto Maple Leafs (favorite)
+        h2hAway: 105,  // Montreal Canadiens
         total: 6.5,
+        totalPriceOver: -110,
+        totalPriceUnder: -110,
         spreadHome: -1.5,
         spreadAway: 1.5,
+        spreadPriceHome: -110,
+        spreadPriceAway: -110,
         monelineHome: -118,
-        monelineAway: +105,
+        monelineAway: 105,
         jobRunId,
         rawData: {
           bookmaker: 'test-bookmaker',
@@ -176,13 +180,17 @@ function generateTestData() {
         gameId: 'nhl-2026-02-27-edm-cgy',
         sport: 'NHL',
         capturedAt,
-        h2hHome: 1.75,  // Edmonton Oilers (strong favorite)
-        h2hAway: 2.25,  // Calgary Flames
+        h2hHome: -133,  // Edmonton Oilers (strong favorite)
+        h2hAway: 120,  // Calgary Flames
         total: 6.0,
+        totalPriceOver: -110,
+        totalPriceUnder: -110,
         spreadHome: -1.5,
         spreadAway: 1.5,
+        spreadPriceHome: -110,
+        spreadPriceAway: -110,
         monelineHome: -133,
-        monelineAway: +120,
+        monelineAway: 120,
         jobRunId,
         rawData: {
           bookmaker: 'test-bookmaker',
@@ -199,12 +207,16 @@ function generateTestData() {
         gameId: 'nhl-2026-02-27-van-sea',
         sport: 'NHL',
         capturedAt,
-        h2hHome: 2.00,  // Vancouver Canucks (even matchup)
-        h2hAway: 1.95,  // Seattle Kraken
+        h2hHome: -110,  // Vancouver Canucks (even matchup)
+        h2hAway: -110,  // Seattle Kraken
         total: 5.5,
+        totalPriceOver: -110,
+        totalPriceUnder: -110,
         spreadHome: -0.5,
         spreadAway: 0.5,
-        monelineHome: -105,
+        spreadPriceHome: -110,
+        spreadPriceAway: -110,
+        monelineHome: -110,
         monelineAway: -110,
         jobRunId,
         rawData: {
@@ -223,13 +235,17 @@ function generateTestData() {
         gameId: 'nba-2026-02-27-lal-gsw',
         sport: 'NBA',
         capturedAt,
-        h2hHome: 1.92,  // Golden State Warriors (favorite)
-        h2hAway: 1.95,  // Los Angeles Lakers
+        h2hHome: -110,  // Golden State Warriors (favorite)
+        h2hAway: -110,  // Los Angeles Lakers
         total: 216.5,
+        totalPriceOver: -110,
+        totalPriceUnder: -110,
         spreadHome: -2.5,
         spreadAway: 2.5,
-        monelineHome: -110,
-        monelineAway: -110,
+        spreadPriceHome: -110,
+        spreadPriceAway: -110,
+        monelineHome: -135,
+        monelineAway: 115,
         jobRunId,
         rawData: {
           bookmaker: 'test-bookmaker',
@@ -246,12 +262,16 @@ function generateTestData() {
         gameId: 'nba-2026-02-27-bos-mia',
         sport: 'NBA',
         capturedAt,
-        h2hHome: 2.05,  // Miami Heat (slight underdog)
-        h2hAway: 1.80,  // Boston Celtics (favorite)
+        h2hHome: -110,  // Miami Heat (slight underdog)
+        h2hAway: -110,  // Boston Celtics (favorite)
         total: 208.0,
+        totalPriceOver: -110,
+        totalPriceUnder: -110,
         spreadHome: 2.5,
         spreadAway: -2.5,
-        monelineHome: +105,
+        spreadPriceHome: -110,
+        spreadPriceAway: -110,
+        monelineHome: 105,
         monelineAway: -125,
         jobRunId,
         rawData: {
@@ -270,12 +290,13 @@ function generateTestData() {
         gameId: 'soccer-epl-2026-02-27-mun-liv',
         sport: 'SOCCER',
         capturedAt,
-        h2hHome: 2.10,  // Liverpool FC
-        h2hAway: 1.80,  // Manchester United
+        h2hHome: -120,  // Liverpool FC
+        h2hAway: 105,  // Manchester United
         total: 2.5,
-        drawOdds: 3.20,
-        monelineHome: +105,
-        monelineAway: -125,
+        totalPriceOver: -110,
+        totalPriceUnder: -110,
+        monelineHome: -120,
+        monelineAway: 105,
         jobRunId,
         rawData: {
           bookmaker: 'test-bookmaker',
@@ -294,10 +315,11 @@ function generateTestData() {
         gameId: 'soccer-mls-2026-02-27-lafc-vsl',
         sport: 'SOCCER',
         capturedAt,
-        h2hHome: 1.88,  // Vancouver Whitecaps
-        h2hAway: 2.00,  // LAFC
+        h2hHome: -110,  // Vancouver Whitecaps
+        h2hAway: -110,  // LAFC
         total: 2.75,
-        drawOdds: 3.40,
+        totalPriceOver: -110,
+        totalPriceUnder: -110,
         monelineHome: -110,
         monelineAway: -110,
         jobRunId,
@@ -318,10 +340,11 @@ function generateTestData() {
         gameId: 'soccer-ucl-2026-02-27-rm-psg',
         sport: 'SOCCER',
         capturedAt,
-        h2hHome: 1.95,  // Paris Saint-Germain
-        h2hAway: 1.95,  // Real Madrid
+        h2hHome: -110,  // Paris Saint-Germain
+        h2hAway: -110,  // Real Madrid
         total: 2.75,
-        drawOdds: 3.10,
+        totalPriceOver: -110,
+        totalPriceUnder: -110,
         monelineHome: -110,
         monelineAway: -110,
         jobRunId,
@@ -342,12 +365,16 @@ function generateTestData() {
         gameId: 'ncaam-2026-02-27-duke-unc',
         sport: 'NCAAM',
         capturedAt,
-        h2hHome: 2.05,  // UNC Tar Heels
-        h2hAway: 1.78,  // Duke Blue Devils
+        h2hHome: 105,  // UNC Tar Heels
+        h2hAway: -125,  // Duke Blue Devils
         total: 155.0,
+        totalPriceOver: -110,
+        totalPriceUnder: -110,
         spreadHome: 3.5,
         spreadAway: -3.5,
-        monelineHome: +105,
+        spreadPriceHome: -110,
+        spreadPriceAway: -110,
+        monelineHome: 105,
         monelineAway: -125,
         jobRunId,
         rawData: {
@@ -365,11 +392,15 @@ function generateTestData() {
         gameId: 'ncaam-2026-02-27-kansas-baylor',
         sport: 'NCAAM',
         capturedAt,
-        h2hHome: 1.85,  // Baylor Bears
-        h2hAway: 2.05,  // Kansas Jayhawks
+        h2hHome: -110,  // Baylor Bears
+        h2hAway: -110,  // Kansas Jayhawks
         total: 147.5,
+        totalPriceOver: -110,
+        totalPriceUnder: -110,
         spreadHome: -2.5,
         spreadAway: 2.5,
+        spreadPriceHome: -110,
+        spreadPriceAway: -110,
         monelineHome: -110,
         monelineAway: -110,
         jobRunId,

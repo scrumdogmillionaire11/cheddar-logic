@@ -70,8 +70,12 @@ function normalizeGame(rawGame, sport) {
       h2hHome: h2h?.home ?? null,
       h2hAway: h2h?.away ?? null,
       total: totals?.line ?? null,
+      totalPriceOver: totals?.over ?? null,
+      totalPriceUnder: totals?.under ?? null,
       spreadHome: spreads?.home_line ?? null,
       spreadAway: spreads?.away_line ?? null,
+      spreadPriceHome: spreads?.home ?? null,
+      spreadPriceAway: spreads?.away ?? null,
       monelineHome: h2h?.home ?? null,
       monelineAway: h2h?.away ?? null
     },

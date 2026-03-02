@@ -751,9 +751,33 @@ function selectExpressionChoice(decisions) {
 }
 
 function buildMarketPayload({ decisions, expressionChoice }) {
-  if (!expressionChoice) return {};
+  const totalDecision = decisions?.TOTAL;
+  const totalEligibleDrivers = (totalDecision?.drivers || []).filter((driver) => driver.eligible).length;
+  const hasTotalLine = totalDecision?.best_candidate?.line !== undefined && totalDecision?.best_candidate?.line !== null;
+  const hasTotalEdge = typeof totalDecision?.edge === 'number';
+  const hasTotalCoverage = typeof totalDecision?.coverage === 'number' && totalDecision.coverage >= 0.45;
+  const totalBias =
+    totalDecision &&
+    totalDecision.status !== DecisionStatus.PASS &&
+    totalEligibleDrivers > 0 &&
+    hasTotalLine &&
+    hasTotalEdge &&
+    hasTotalCoverage
+      ? 'OK'
+      : 'INSUFFICIENT_DATA';
+
+  if (!expressionChoice) {
+    return {
+      consistency: {
+        total_bias: totalBias
+      }
+    };
+  }
   const chosen = expressionChoice.chosen;
   return {
+    consistency: {
+      total_bias: totalBias
+    },
     expression_choice: {
       chosen_market: expressionChoice.chosen_market,
       pick: formatPick(chosen),

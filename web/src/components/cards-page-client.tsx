@@ -5,15 +5,61 @@ import Link from 'next/link';
 import FilterPanel from '@/components/filter-panel';
 import { transformGames } from '@/lib/game-card/transform';
 import { enrichCards } from '@/lib/game-card/tags';
-import { applyFilters, getActiveFilterCount, resetFilters } from '@/lib/game-card/filters';
+import { applyFilters, getActiveFilterCount, getFilterDebugFlags, resetFilters } from '@/lib/game-card/filters';
 import type { GameFilters } from '@/lib/game-card/filters';
 import { DEFAULT_FILTERS } from '@/lib/game-card/filters';
-import type { Direction, DriverRow, DriverTier, Market } from '@/lib/types/game-card';
-import { getCardDecisionModel } from '@/lib/game-card/decision';
+import type { Direction, DriverRow, DriverTier, GameCard, Market } from '@/lib/types/game-card';
+import { GAME_TAGS } from '@/lib/types/game-card';
+import { getPlayDisplayAction, getCardDecisionModel } from '@/lib/game-card/decision';
 
 const TRACKED_SPORTS = ['NCAAM', 'NBA', 'NHL', 'SOCCER'] as const;
 
 type SportCountMap = Record<string, number>;
+
+type DropReason =
+  | 'DROP_SPORT_NOT_ALLOWED'
+  | 'DROP_TIME_WINDOW'
+  | 'DROP_STALE_ODDS'
+  | 'DROP_MARKET_NOT_ALLOWED'
+  | 'DROP_NO_BETTABLE_STATUS'
+  | 'DROP_DRIVER_STRENGTH'
+  | 'DROP_RISK_FILTER'
+  | 'DROP_SEARCH'
+  | 'DROP_NO_PLAY'
+  | 'DROP_PRESET_RULE'
+  | 'DROP_UNKNOWN';
+
+type DropReasonCounts = Record<DropReason, number>;
+
+type PlayStatusCounts = {
+  FIRE: number;
+  WATCH: number;
+  PASS: number;
+};
+
+type DroppedMeta = {
+  games: number;
+  playCount: number;
+  hasAnyPlay: number;
+  hasBettable: number;
+  hasBlockedTotals: number;
+  playStatusCounts: PlayStatusCounts;
+  playMarkets: Record<string, number>;
+};
+
+const DROP_REASONS: DropReason[] = [
+  'DROP_SPORT_NOT_ALLOWED',
+  'DROP_TIME_WINDOW',
+  'DROP_STALE_ODDS',
+  'DROP_MARKET_NOT_ALLOWED',
+  'DROP_NO_BETTABLE_STATUS',
+  'DROP_DRIVER_STRENGTH',
+  'DROP_RISK_FILTER',
+  'DROP_SEARCH',
+  'DROP_NO_PLAY',
+  'DROP_PRESET_RULE',
+  'DROP_UNKNOWN',
+];
 
 function createEmptySportCounts(): SportCountMap {
   return TRACKED_SPORTS.reduce<SportCountMap>((acc, sport) => {
@@ -36,6 +82,84 @@ function countBySport(items: Array<{ sport: string }>): SportCountMap {
   }
 
   return counts;
+}
+
+function createDropReasonCounts(): DropReasonCounts {
+  return DROP_REASONS.reduce<DropReasonCounts>((acc, reason) => {
+    acc[reason] = 0;
+    return acc;
+  }, {} as DropReasonCounts);
+}
+
+function createPlayStatusCounts(): PlayStatusCounts {
+  return { FIRE: 0, WATCH: 0, PASS: 0 };
+}
+
+function createDroppedMeta(): DroppedMeta {
+  return {
+    games: 0,
+    playCount: 0,
+    hasAnyPlay: 0,
+    hasBettable: 0,
+    hasBlockedTotals: 0,
+    playStatusCounts: createPlayStatusCounts(),
+    playMarkets: {},
+  };
+}
+
+function bumpReason(counts: DropReasonCounts, reason: DropReason) {
+  counts[reason] = (counts[reason] || 0) + 1;
+}
+
+function getFirstDropReason(flags: ReturnType<typeof getFilterDebugFlags>): DropReason {
+  if (!flags.sport) return 'DROP_SPORT_NOT_ALLOWED';
+  if (!flags.timeWindow) return 'DROP_TIME_WINDOW';
+  if (!flags.oddsFreshness) return 'DROP_STALE_ODDS';
+  if (!flags.market) return 'DROP_MARKET_NOT_ALLOWED';
+  if (!flags.actionability) return 'DROP_NO_BETTABLE_STATUS';
+  if (!flags.driverStrength) return 'DROP_DRIVER_STRENGTH';
+  if (!flags.riskFlags) return 'DROP_RISK_FILTER';
+  if (!flags.search) return 'DROP_SEARCH';
+  if (!flags.hasPicks) return 'DROP_NO_PLAY';
+  if (!flags.clearPlay) return 'DROP_PRESET_RULE';
+  return 'DROP_UNKNOWN';
+}
+
+function getCardDebugMeta(card: GameCard) {
+  const playStatusCounts = createPlayStatusCounts();
+  const displayAction = getPlayDisplayAction(card.play);
+  if (displayAction) {
+    // Map display action back to status names for counting
+    const statusName = displayAction === 'FIRE' ? 'FIRE' : displayAction === 'HOLD' ? 'WATCH' : 'PASS';
+    playStatusCounts[statusName] += 1;
+  }
+
+  const playMarkets = new Set<string>();
+  if (card.play?.market && card.play.market !== 'NONE') {
+    playMarkets.add(card.play.market);
+  }
+  for (const driver of card.drivers) {
+    playMarkets.add(driver.market);
+  }
+
+  const playCount = card.drivers.length;
+  const hasAnyPlay = playCount > 0;
+  const hasBettable = card.tags.includes(GAME_TAGS.HAS_FIRE) || card.tags.includes(GAME_TAGS.HAS_WATCH);
+  const hasBlockedTotals = Boolean(
+    card.play?.market_type === 'TOTAL' &&
+      card.play?.status === 'PASS' &&
+      (card.play?.reason_codes?.includes('PASS_TOTAL_INSUFFICIENT_DATA') ||
+        card.play?.tags?.includes('CONSISTENCY_BLOCK_TOTALS'))
+  );
+
+  return {
+    playCount,
+    playStatusCounts,
+    playMarkets: Array.from(playMarkets),
+    hasAnyPlay,
+    hasBettable,
+    hasBlockedTotals,
+  };
 }
 
 function getEtDayKey(dateInput: Date | string): string {
@@ -73,6 +197,8 @@ interface GameData {
   plays: Array<{
     cardType: string;
     cardTitle: string;
+    kind?: 'PLAY' | 'EVIDENCE';
+    status?: 'FIRE' | 'WATCH' | 'PASS';
     prediction: 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';
     confidence: number;
     tier: 'SUPER' | 'BEST' | 'WATCH' | null;
@@ -81,7 +207,15 @@ interface GameData {
     driverKey: string;
     projectedTotal: number | null;
     edge: number | null;
+    market_type?: 'MONEYLINE' | 'SPREAD' | 'TOTAL' | 'PUCKLINE' | 'TEAM_TOTAL' | 'PROP' | 'INFO';
+    selection?: { side: string; team?: string };
+    line?: number;
+    price?: number;
+    reason_codes?: string[];
+    tags?: string[];
+    consistency?: { total_bias?: 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN' };
   }>;
+  consistency?: { total_bias?: 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN' };
 }
 
 interface ApiResponse {
@@ -120,6 +254,7 @@ export default function CardsPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<GameFilters>(DEFAULT_FILTERS);
   const isInitialLoad = useRef(true);
+  const showTrace = process.env.NODE_ENV !== 'production';
 
   // Compute enriched and filtered cards
   const { enrichedCards, filteredCards } = useMemo(() => {
@@ -160,6 +295,53 @@ export default function CardsPageClient() {
     };
   }, [games, enrichedCards, filteredCards, todayEtKey]);
 
+  const dropTraceStats = useMemo(() => {
+    const droppedByReason = createDropReasonCounts();
+    const droppedByReasonBySport: Record<string, DropReasonCounts> = {};
+    const droppedMetaBySport: Record<string, DroppedMeta> = {};
+
+    for (const card of enrichedCards) {
+      const flags = getFilterDebugFlags(card, filters);
+      const passesAll = Object.values(flags).every(Boolean);
+      if (passesAll) continue;
+
+      const reason = getFirstDropReason(flags);
+      bumpReason(droppedByReason, reason);
+
+      const sportKey = (card.sport || 'UNKNOWN').toUpperCase();
+      if (!droppedByReasonBySport[sportKey]) {
+        droppedByReasonBySport[sportKey] = createDropReasonCounts();
+      }
+      bumpReason(droppedByReasonBySport[sportKey], reason);
+
+      if (!droppedMetaBySport[sportKey]) {
+        droppedMetaBySport[sportKey] = createDroppedMeta();
+      }
+
+      const meta = droppedMetaBySport[sportKey];
+      const cardMeta = getCardDebugMeta(card);
+
+      meta.games += 1;
+      meta.playCount += cardMeta.playCount;
+      meta.hasAnyPlay += cardMeta.hasAnyPlay ? 1 : 0;
+      meta.hasBettable += cardMeta.hasBettable ? 1 : 0;
+      meta.hasBlockedTotals += cardMeta.hasBlockedTotals ? 1 : 0;
+      meta.playStatusCounts.FIRE += cardMeta.playStatusCounts.FIRE;
+      meta.playStatusCounts.WATCH += cardMeta.playStatusCounts.WATCH;
+      meta.playStatusCounts.PASS += cardMeta.playStatusCounts.PASS;
+
+      for (const market of cardMeta.playMarkets) {
+        meta.playMarkets[market] = (meta.playMarkets[market] || 0) + 1;
+      }
+    }
+
+    return {
+      droppedByReason,
+      droppedByReasonBySport,
+      droppedMetaBySport,
+    };
+  }, [enrichedCards, filters]);
+
   const handleResetFilters = () => {
     setFilters(resetFilters());
   };
@@ -197,7 +379,8 @@ export default function CardsPageClient() {
   }, []);
 
   useEffect(() => {
-    if (loading) return;
+    const isDevTrace = process.env.NODE_ENV !== 'production';
+    if (loading || !isDevTrace) return;
     console.info('[cards-trace]', {
       todayEt: todayEtKey,
       fetchedTotal: traceStats.fetchedTotal,
@@ -209,9 +392,12 @@ export default function CardsPageClient() {
       fetchedTodayBySport: traceStats.fetchedTodayBySport,
       transformedTodayBySport: traceStats.transformedTodayBySport,
       displayedTodayBySport: traceStats.displayedTodayBySport,
+      dropTraceStats,
       filters,
     });
-  }, [loading, traceStats, todayEtKey, filters]);
+    console.warn('[DROP REASONS BY SPORT]', dropTraceStats.droppedByReasonBySport);
+    console.warn('[DROPPED META BY SPORT]', dropTraceStats.droppedMetaBySport);
+  }, [loading, traceStats, todayEtKey, filters, dropTraceStats]);
 
   const formatDate = (dateStr: string) => {
     try {
@@ -372,9 +558,18 @@ export default function CardsPageClient() {
       updatedAt: card.updatedAt,
       whyCode: decision.whyReason,
       whyText: decision.whyReason.replace(/_/g, ' '),
+      // Canonical fields (fallback from decision)
+      classification: decision.status === 'FIRE' ? 'BASE' : decision.status === 'WATCH' ? 'LEAN' : 'PASS',
+      action: decision.status === 'FIRE' ? 'FIRE' : decision.status === 'WATCH' ? 'HOLD' : 'PASS',
     };
     
     const [showAllDrivers, setShowAllDrivers] = useState(false);
+    const blockedTotals = (originalGame.plays || []).filter((play) => {
+      if (play.kind !== 'PLAY') return false;
+      if (play.market_type !== 'TOTAL') return false;
+      if (play.status && play.status !== 'PASS') return false;
+      return true;
+    });
     const storageKey = `cheddar-card-show-drivers:${card.id}`;
 
     useEffect(() => {
@@ -472,8 +667,11 @@ export default function CardsPageClient() {
           <div className="rounded-md border border-white/10 bg-white/5 p-3">
             <div className="flex items-center justify-between gap-4 flex-wrap">
               <div className="flex items-center gap-3">
-                <span className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">LEAN:</span>
-                <span className="text-lg font-bold text-cloud">{displayPlay.lean}</span>
+                <span className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">Classification:</span>
+                <span className="text-lg font-bold text-cloud">{displayPlay.classification ?? 'UNKNOWN'}</span>
+                {displayPlay.lean && (
+                  <span className="text-xs text-cloud/60">({displayPlay.lean})</span>
+                )}
                 <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-white/10 text-cloud/70 border-white/20">
                   Truth {displayPlay.truthStatus}
                 </span>
@@ -485,7 +683,11 @@ export default function CardsPageClient() {
             <div className="mt-2 flex items-center gap-3 flex-wrap">
               <span className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">BET:</span>
               <span className="text-xl font-bold text-cloud">{displayPlay.pick}</span>
-                {getStatusBadge(displayPlay.status)}
+              {displayPlay.action && (
+                <span className={`px-2 py-1 text-xs font-bold rounded border ${displayPlay.action === 'FIRE' ? 'bg-green-700/50 text-green-200 border-green-600/60' : displayPlay.action === 'HOLD' ? 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60' : 'bg-slate-700/50 text-slate-200 border-slate-600/60'}`}>
+                  {displayPlay.action}
+                </span>
+              )}
               <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-white/10 text-cloud/70 border-white/20">
                 Value {displayPlay.valueStatus}
               </span>
@@ -545,6 +747,47 @@ export default function CardsPageClient() {
               </div>
             )}
           </div>
+
+          {(card.evidence?.length ?? 0) > 0 && (
+            <div className="rounded-md border border-white/10 bg-white/5 p-3">
+              <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
+                Evidence ({card.evidence?.length})
+              </p>
+              <div className="space-y-2">
+                {card.evidence?.slice(0, 5).map((evidence) => (
+                  <div key={evidence.id} className="bg-white/5 rounded-md px-3 py-2">
+                    <p className="text-sm text-cloud/80 font-medium">{evidence.cardTitle}</p>
+                    {evidence.reasoning && (
+                      <p className="text-xs text-cloud/60 mt-1">{evidence.reasoning}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {displayPlay.pick === 'NO PLAY' && (
+                <p className="text-xs text-cloud/50 mt-2">No official play for this game; evidence signals are shown for context.</p>
+              )}
+            </div>
+          )}
+
+          {blockedTotals.length > 0 && (
+            <details className="rounded-md border border-white/10 bg-white/5 p-3">
+              <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold">
+                Totals (Blocked)
+              </summary>
+              <div className="mt-2 space-y-2">
+                {blockedTotals.map((totalPlay) => (
+                  <div key={`${totalPlay.cardType}-${totalPlay.cardTitle}`} className="bg-white/5 rounded-md px-3 py-2">
+                    <p className="text-sm text-cloud/80 font-medium">{totalPlay.cardTitle}</p>
+                    {totalPlay.reason_codes?.length ? (
+                      <p className="text-xs text-cloud/60 mt-1">{totalPlay.reason_codes.join(', ')}</p>
+                    ) : (
+                      <p className="text-xs text-cloud/60 mt-1">PASS</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
 
           <details className="rounded-md border border-white/10 bg-white/5 p-3">
             <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold">
@@ -617,7 +860,7 @@ export default function CardsPageClient() {
           <p className="text-cloud/70">
             {enrichedCards.length} game{enrichedCards.length !== 1 ? 's' : ''} total, showing {filteredCards.length} (updates in background every 30s)
           </p>
-          {!loading && !error && (
+          {!loading && !error && showTrace && (
             <div className="rounded-lg border border-white/10 bg-surface/30 px-3 py-2 text-xs text-cloud/70 space-y-1">
               <p>
                 Trace (all): fetched {traceStats.fetchedTotal} ({formatSportCounts(traceStats.fetchedBySport)}) → transformed {traceStats.transformedTotal} ({formatSportCounts(traceStats.transformedBySport)}) → displayed {traceStats.displayedTotal} ({formatSportCounts(traceStats.displayedBySport)})

@@ -31,7 +31,7 @@ const {
   enrichOddsSnapshotWithEspnMetrics
 } = require('@cheddar-logic/data');
 
-const { computeNBADriverCards, computeNBAMarketDecisions, determineTier } = require('../models');
+const { computeNBADriverCards, computeNBAMarketDecisions, selectExpressionChoice, buildMarketPayload, determineTier } = require('../models');
 const {
   buildRecommendationFromPrediction,
   buildMatchup,
@@ -76,7 +76,8 @@ function buildDriverSummary(descriptor, weightMap) {
  * @param {object} oddsSnapshot
  * @returns {Array<object>} Array of card objects ready for insertCardPayload()
  */
-function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
+function generateNBACards(gameId, driverDescriptors, oddsSnapshot, marketPayload) {
+  const marketData = marketPayload || {};
   const now = new Date().toISOString();
   let expiresAt = null;
   if (oddsSnapshot?.game_time_utc) {
@@ -99,6 +100,8 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
     const projectedTotal = isTotalsCard ? (descriptor.driverInputs?.projected_total ?? null) : null;
     const projectedEdge = isTotalsCard ? (descriptor.driverInputs?.edge ?? null) : null;
     const recommendedBetType = isTotalsCard ? 'total' : 'moneyline';
+    const marketType = isTotalsCard ? 'TOTAL' : 'INFO';
+    const selectionSide = descriptor.prediction === 'NEUTRAL' ? 'NONE' : descriptor.prediction;
 
     const payloadData = {
       game_id: gameId,
@@ -128,6 +131,26 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
       prediction: descriptor.prediction,
       confidence: descriptor.confidence,
       recommended_bet_type: recommendedBetType,
+      kind: marketType === 'INFO' ? 'EVIDENCE' : 'PLAY',
+      market_type: marketType,
+      selection: {
+        side: selectionSide,
+        team:
+          descriptor.prediction === 'HOME'
+            ? oddsSnapshot?.home_team ?? undefined
+            : descriptor.prediction === 'AWAY'
+              ? oddsSnapshot?.away_team ?? undefined
+              : undefined
+      },
+      line: isTotalsCard ? (oddsSnapshot?.total ?? null) : null,
+      price:
+        !isTotalsCard && descriptor.prediction === 'HOME'
+          ? oddsSnapshot?.h2h_home ?? null
+          : !isTotalsCard && descriptor.prediction === 'AWAY'
+            ? oddsSnapshot?.h2h_away ?? null
+            : null,
+      reason_codes: projectedEdge == null ? ['PASS_MISSING_EDGE'] : [],
+      tags: [],
       tier: descriptor.tier,
       reasoning: descriptor.reasoning,
       odds_context: {
@@ -151,7 +174,8 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
       meta: {
         inference_source: descriptor.inference_source,
         is_mock: descriptor.is_mock
-      }
+      },
+      ...marketData
     };
 
     return {
@@ -190,12 +214,26 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
 
   // TOTAL decision → nba-totals-call
   const totalDecision = marketDecisions?.TOTAL;
-  if (totalDecision && (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')) {
-    const confidence = CONFIDENCE_MAP[totalDecision.status];
+  const totalBias =
+    totalDecision &&
+    totalDecision.status !== 'PASS' &&
+    typeof totalDecision.edge === 'number' &&
+    totalDecision.best_candidate?.line != null
+      ? 'OK'
+      : 'INSUFFICIENT_DATA';
+  if (totalDecision) {
+    const status = totalDecision.status || 'PASS';
+    const confidence = CONFIDENCE_MAP[status] ?? 0.5;
     const tier = determineTier(confidence);
     const { side, line } = totalDecision.best_candidate;
+    const hasLine = line != null;
     const lineText = line != null ? ` ${line}` : '';
     const pickText = `${side === 'OVER' ? 'OVER' : 'UNDER'}${lineText}`;
+    const reasonCodes = [];
+    if (!hasLine) reasonCodes.push('PASS_MISSING_LINE');
+    if (totalBias !== 'OK') reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
+    if (status === 'PASS') reasonCodes.push('SKIP_MARKET_NO_EDGE');
+    reasonCodes.push('PASS_NO_MARKET_PRICE');
     const activeDrivers = (totalDecision.drivers || [])
       .filter(d => d.eligible)
       .map(d => d.driverKey);
@@ -228,7 +266,20 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         prediction: side,
         confidence,
         tier,
+        status,
         recommended_bet_type: 'total',
+        kind: hasLine ? 'PLAY' : 'EVIDENCE',
+        market_type: hasLine ? 'TOTAL' : 'INFO',
+        selection: {
+          side,
+        },
+        line: line ?? null,
+        price: null,
+        reason_codes: reasonCodes,
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
         reasoning: `${pickText}: ${totalDecision.reasoning}`,
         edge: totalDecision.edge ?? null,
         projection: {
@@ -303,6 +354,19 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         confidence,
         tier,
         recommended_bet_type: 'spread',
+        kind: 'PLAY',
+        market_type: 'SPREAD',
+        selection: {
+          side,
+          team: side === 'HOME' ? oddsSnapshot?.home_team ?? undefined : oddsSnapshot?.away_team ?? undefined,
+        },
+        line: line ?? null,
+        price: null,
+        reason_codes: [],
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
         reasoning: `${pickText}: ${spreadDecision.reasoning}`,
         edge: spreadDecision.edge ?? null,
         projection: {
@@ -415,7 +479,14 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct);
           }
 
-          const cards = generateNBACards(gameId, driverCards, oddsSnapshot);
+          const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);
+          const nbaExpressionChoice = selectExpressionChoice(nbaMarketDecisions);
+          const nbaMarketPayload = buildMarketPayload({
+            decisions: nbaMarketDecisions,
+            expressionChoice: nbaExpressionChoice,
+          });
+
+          const cards = generateNBACards(gameId, driverCards, oddsSnapshot, nbaMarketPayload);
 
           for (const card of cards) {
             const validation = validateCardPayload(card.cardType, card.payloadData);
@@ -429,7 +500,6 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           }
 
           // Generate and insert NBA market call cards (nba-totals-call, nba-spread-call)
-          const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);
           const nbaMarketCallCards = generateNBAMarketCallCards(gameId, nbaMarketDecisions, oddsSnapshot);
           for (const ct of ['nba-totals-call', 'nba-spread-call']) {
             prepareModelAndCardWrite(gameId, 'nba-cross-market-v1', ct);

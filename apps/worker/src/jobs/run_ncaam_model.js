@@ -84,6 +84,7 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
     const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
     const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
     const market = buildMarketFromOdds(oddsSnapshot);
+    const selectionSide = descriptor.prediction === 'NEUTRAL' ? 'NONE' : descriptor.prediction;
 
     const payloadData = {
       game_id: gameId,
@@ -113,6 +114,24 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
       prediction: descriptor.prediction,
       confidence: descriptor.confidence,
       recommended_bet_type: 'moneyline',
+      kind: 'EVIDENCE',
+      market_type: 'INFO',
+      selection: {
+        side: selectionSide,
+        team:
+          descriptor.prediction === 'HOME'
+            ? oddsSnapshot?.home_team ?? undefined
+            : descriptor.prediction === 'AWAY'
+              ? oddsSnapshot?.away_team ?? undefined
+              : undefined
+      },
+      line: null,
+      price: null,
+      reason_codes: ['PASS_MISSING_EDGE'],
+      tags: [],
+      consistency: {
+        total_bias: 'INSUFFICIENT_DATA'
+      },
       tier: descriptor.tier,
       reasoning: descriptor.reasoning,
       odds_context: {
