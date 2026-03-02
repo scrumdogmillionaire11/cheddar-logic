@@ -1,0 +1,19 @@
+{
+  "name": "cheddar-logic-root",
+  "private": true,
+  "scripts": {
+    "lint": "npm --prefix web run lint && eslint . --ext .js,.cjs,.mjs,.ts,.tsx",
+    "lint:fix": "npm --prefix web run lint && eslint . --ext .js,.cjs,.mjs,.ts,.tsx --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.3",
+    "eslint": "^9.39.3",
+    "eslint-config-prettier": "^9.1.2",
+    "globals": "^15.15.0",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
+  }
+}
