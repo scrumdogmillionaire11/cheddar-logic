@@ -26,7 +26,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/cheddar-logic/packages/data
+ReadWritePaths=/opt/cheddar-logic/packages/data /opt/cheddar-logic/web/.next
 
 [Install]
 WantedBy=multi-user.target

@@ -104,7 +104,10 @@ jobs:
             npm --prefix apps/worker install --omit=dev
             npm --prefix web install
             sudo rm -rf web/.next
-            set -a && source /opt/cheddar-logic/.env.production && set +a && npm --prefix web run build
+            grep -E '^[A-Za-z_][A-Za-z0-9_]*=' /opt/cheddar-logic/.env.production > /tmp/cheddar_build_env
+            set -a && source /tmp/cheddar_build_env && set +a && npm --prefix web run build
+            rm -f /tmp/cheddar_build_env
+            test -f web/.next/BUILD_ID || { echo "ERROR: next build did not produce web/.next/BUILD_ID"; exit 1; }
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage
