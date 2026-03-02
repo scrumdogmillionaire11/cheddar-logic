@@ -48,7 +48,9 @@ const {
   buildMatchup,
   formatStartTimeLocal,
   formatCountdown,
-  buildMarketFromOdds
+  buildMarketFromOdds,
+  edgeCalculator,
+  marginToWinProbability
 } = require('@cheddar-logic/models');
 
 const NHL_DRIVER_WEIGHTS = {
@@ -59,6 +61,13 @@ const NHL_DRIVER_WEIGHTS = {
   paceTotals: 0.12,
   paceTotals1p: 0.08
 };
+
+function computeWinProbHome(projectedMargin, sport) {
+  if (!Number.isFinite(projectedMargin)) return null;
+  const sigma = edgeCalculator.getSigmaDefaults(sport)?.margin ?? 12;
+  const winProb = marginToWinProbability(projectedMargin, sigma);
+  return Number.isFinite(winProb) ? Number(winProb.toFixed(4)) : null;
+}
 
 function buildDriverSummary(descriptor, weightMap) {
   const weight = descriptor.driverWeight ?? weightMap[descriptor.driverKey] ?? 1;
@@ -105,9 +114,10 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot, marketPayload
       : isPace1pCard
         ? (descriptor.driverInputs?.expected_1p_total ?? null)
         : null;
-    const projectedEdge = (isPaceTotalsCard || isPace1pCard)
-      ? (descriptor.driverInputs?.edge ?? null)
+    const projectedMargin = Number.isFinite(descriptor.driverInputs?.projected_margin)
+      ? descriptor.driverInputs.projected_margin
       : null;
+    const winProbHome = computeWinProbHome(projectedMargin, 'NHL');
     const recommendedBetType = (isPaceTotalsCard || isPace1pCard) ? 'total' : 'moneyline';
     const recommendation = buildRecommendationFromPrediction({
       prediction: descriptor.prediction,
@@ -119,6 +129,32 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot, marketPayload
     const market = buildMarketFromOdds(oddsSnapshot);
     const marketType = isPaceTotalsCard || isPace1pCard ? 'TOTAL' : 'INFO';
     const selectionSide = descriptor.prediction === 'NEUTRAL' ? 'NONE' : descriptor.prediction;
+    const isPredictionOver = descriptor.prediction === 'OVER';
+    const isPredictionHome = descriptor.prediction === 'HOME';
+    const isPredictionAway = descriptor.prediction === 'AWAY';
+    const totalEdgeResult = isPaceTotalsCard && (isPredictionOver || descriptor.prediction === 'UNDER')
+      ? edgeCalculator.computeTotalEdge({
+        projectionTotal: projectedTotal,
+        totalLine: oddsSnapshot?.total ?? null,
+        totalPriceOver: oddsSnapshot?.total_price_over ?? null,
+        totalPriceUnder: oddsSnapshot?.total_price_under ?? null,
+        sigmaTotal: edgeCalculator.getSigmaDefaults('NHL')?.total ?? 1.8,
+        isPredictionOver
+      })
+      : { edge: null, p_fair: null, p_implied: null };
+    const moneylineOdds = isPredictionHome
+      ? oddsSnapshot?.h2h_home ?? null
+      : isPredictionAway
+        ? oddsSnapshot?.h2h_away ?? null
+        : null;
+    const moneylineEdgeResult = (isPredictionHome || isPredictionAway)
+      ? edgeCalculator.computeMoneylineEdge({
+        projectionWinProbHome: winProbHome,
+        americanOdds: moneylineOdds,
+        isPredictionHome
+      })
+      : { edge: null, p_fair: null, p_implied: null };
+    const edgeResult = isPaceTotalsCard ? totalEdgeResult : moneylineEdgeResult;
     const payloadData = {
       game_id: gameId,
       sport: 'NHL',
@@ -137,11 +173,13 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot, marketPayload
       },
       projection: {
         total: projectedTotal,
-        margin_home: null,
-        win_prob_home: null
+        margin_home: projectedMargin,
+        win_prob_home: winProbHome
       },
       market,
-      edge: projectedEdge,
+      edge: edgeResult.edge ?? null,
+      p_fair: edgeResult.p_fair ?? null,
+      p_implied: edgeResult.p_implied ?? null,
       confidence_pct: Math.round(descriptor.confidence * 100),
       drivers_active: [descriptor.driverKey],
       prediction: descriptor.prediction,
@@ -161,12 +199,10 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot, marketPayload
       },
       line: marketType === 'TOTAL' ? (oddsSnapshot?.total ?? null) : null,
       price:
-        marketType !== 'TOTAL' && descriptor.prediction === 'HOME'
-          ? oddsSnapshot?.h2h_home ?? null
-          : marketType !== 'TOTAL' && descriptor.prediction === 'AWAY'
-            ? oddsSnapshot?.h2h_away ?? null
-            : null,
-      reason_codes: projectedEdge == null ? ['PASS_MISSING_EDGE'] : [],
+        marketType === 'TOTAL'
+          ? (isPredictionOver ? oddsSnapshot?.total_price_over ?? null : oddsSnapshot?.total_price_under ?? null)
+          : moneylineOdds,
+      reason_codes: edgeResult.edge == null ? ['PASS_MISSING_EDGE'] : [],
       tags: [],
       reasoning: descriptor.reasoning,
       odds_context: {
@@ -175,6 +211,10 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot, marketPayload
         spread_home: oddsSnapshot?.spread_home,
         spread_away: oddsSnapshot?.spread_away,
         total: oddsSnapshot?.total,
+        spread_price_home: oddsSnapshot?.spread_price_home,
+        spread_price_away: oddsSnapshot?.spread_price_away,
+        total_price_over: oddsSnapshot?.total_price_over,
+        total_price_under: oddsSnapshot?.total_price_under,
         captured_at: oddsSnapshot?.captured_at
       },
       ev_passed: descriptor.ev_threshold_passed,
@@ -313,6 +353,10 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at
         },
         confidence_pct: Math.round(confidence * 100),
@@ -400,6 +444,10 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at
         },
         confidence_pct: Math.round(confidence * 100),

@@ -37,7 +37,9 @@ const {
   buildMatchup,
   formatStartTimeLocal,
   formatCountdown,
-  buildMarketFromOdds
+  buildMarketFromOdds,
+  edgeCalculator,
+  marginToWinProbability
 } = require('@cheddar-logic/models');
 
 const NBA_DRIVER_WEIGHTS = {
@@ -48,6 +50,13 @@ const NBA_DRIVER_WEIGHTS = {
   blowoutRisk: 0.07,
   totalProjection: 0.13
 };
+
+function computeWinProbHome(projectedMargin, sport) {
+  if (!Number.isFinite(projectedMargin)) return null;
+  const sigma = edgeCalculator.getSigmaDefaults(sport)?.margin ?? 12;
+  const winProb = marginToWinProbability(projectedMargin, sigma);
+  return Number.isFinite(winProb) ? Number(winProb.toFixed(4)) : null;
+}
 
 function buildDriverSummary(descriptor, weightMap) {
   const weight = descriptor.driverWeight ?? weightMap[descriptor.driverKey] ?? 1;
@@ -95,13 +104,41 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot, marketPayload
     const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
     const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
     const market = buildMarketFromOdds(oddsSnapshot);
-    // For totals cards, populate projection.total and edge from driver inputs
     const isTotalsCard = descriptor.cardType === 'nba-total-projection';
     const projectedTotal = isTotalsCard ? (descriptor.driverInputs?.projected_total ?? null) : null;
-    const projectedEdge = isTotalsCard ? (descriptor.driverInputs?.edge ?? null) : null;
+    const projectedMargin = Number.isFinite(descriptor.driverInputs?.projected_margin)
+      ? descriptor.driverInputs.projected_margin
+      : null;
+    const winProbHome = computeWinProbHome(projectedMargin, 'NBA');
     const recommendedBetType = isTotalsCard ? 'total' : 'moneyline';
     const marketType = isTotalsCard ? 'TOTAL' : 'INFO';
     const selectionSide = descriptor.prediction === 'NEUTRAL' ? 'NONE' : descriptor.prediction;
+    const isPredictionOver = descriptor.prediction === 'OVER';
+    const isPredictionHome = descriptor.prediction === 'HOME';
+    const isPredictionAway = descriptor.prediction === 'AWAY';
+    const totalEdgeResult = isTotalsCard && (isPredictionOver || descriptor.prediction === 'UNDER')
+      ? edgeCalculator.computeTotalEdge({
+        projectionTotal: projectedTotal,
+        totalLine: oddsSnapshot?.total ?? null,
+        totalPriceOver: oddsSnapshot?.total_price_over ?? null,
+        totalPriceUnder: oddsSnapshot?.total_price_under ?? null,
+        sigmaTotal: edgeCalculator.getSigmaDefaults('NBA')?.total ?? 14,
+        isPredictionOver
+      })
+      : { edge: null, p_fair: null, p_implied: null };
+    const moneylineOdds = isPredictionHome
+      ? oddsSnapshot?.h2h_home ?? null
+      : isPredictionAway
+        ? oddsSnapshot?.h2h_away ?? null
+        : null;
+    const moneylineEdgeResult = (isPredictionHome || isPredictionAway)
+      ? edgeCalculator.computeMoneylineEdge({
+        projectionWinProbHome: winProbHome,
+        americanOdds: moneylineOdds,
+        isPredictionHome
+      })
+      : { edge: null, p_fair: null, p_implied: null };
+    const edgeResult = isTotalsCard ? totalEdgeResult : moneylineEdgeResult;
 
     const payloadData = {
       game_id: gameId,
@@ -121,11 +158,13 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot, marketPayload
       },
       projection: {
         total: projectedTotal,
-        margin_home: null,
-        win_prob_home: null
+        margin_home: projectedMargin,
+        win_prob_home: winProbHome
       },
       market,
-      edge: projectedEdge,
+      edge: edgeResult.edge ?? null,
+      p_fair: edgeResult.p_fair ?? null,
+      p_implied: edgeResult.p_implied ?? null,
       confidence_pct: Math.round(descriptor.confidence * 100),
       drivers_active: [descriptor.driverKey],
       prediction: descriptor.prediction,
@@ -144,12 +183,10 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot, marketPayload
       },
       line: isTotalsCard ? (oddsSnapshot?.total ?? null) : null,
       price:
-        !isTotalsCard && descriptor.prediction === 'HOME'
-          ? oddsSnapshot?.h2h_home ?? null
-          : !isTotalsCard && descriptor.prediction === 'AWAY'
-            ? oddsSnapshot?.h2h_away ?? null
-            : null,
-      reason_codes: projectedEdge == null ? ['PASS_MISSING_EDGE'] : [],
+        isTotalsCard
+          ? (isPredictionOver ? oddsSnapshot?.total_price_over ?? null : oddsSnapshot?.total_price_under ?? null)
+          : moneylineOdds,
+      reason_codes: edgeResult.edge == null ? ['PASS_MISSING_EDGE'] : [],
       tags: [],
       tier: descriptor.tier,
       reasoning: descriptor.reasoning,
@@ -159,6 +196,10 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot, marketPayload
         spread_home: oddsSnapshot?.spread_home,
         spread_away: oddsSnapshot?.spread_away,
         total: oddsSnapshot?.total,
+        spread_price_home: oddsSnapshot?.spread_price_home,
+        spread_price_away: oddsSnapshot?.spread_price_away,
+        total_price_over: oddsSnapshot?.total_price_over,
+        total_price_under: oddsSnapshot?.total_price_under,
         captured_at: oddsSnapshot?.captured_at
       },
       ev_passed: descriptor.ev_threshold_passed,
@@ -297,6 +338,10 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at
         },
         confidence_pct: Math.round(confidence * 100),
@@ -384,6 +429,10 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at
         },
         confidence_pct: Math.round(confidence * 100),

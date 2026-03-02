@@ -34,7 +34,9 @@ const {
   buildMatchup,
   formatStartTimeLocal,
   formatCountdown,
-  buildMarketFromOdds
+  buildMarketFromOdds,
+  edgeCalculator,
+  marginToWinProbability
 } = require('@cheddar-logic/models');
 
 const NCAAM_DRIVER_WEIGHTS = {
@@ -42,6 +44,13 @@ const NCAAM_DRIVER_WEIGHTS = {
   restAdvantage: 0.20,
   matchupStyle: 0.20
 };
+
+function computeWinProbHome(projectedMargin, sport) {
+  if (!Number.isFinite(projectedMargin)) return null;
+  const sigma = edgeCalculator.getSigmaDefaults(sport)?.margin ?? 11;
+  const winProb = marginToWinProbability(projectedMargin, sigma);
+  return Number.isFinite(winProb) ? Number(winProb.toFixed(4)) : null;
+}
 
 function buildDriverSummary(descriptor, weightMap) {
   const weight = descriptor.driverWeight ?? weightMap[descriptor.driverKey] ?? 1;
@@ -85,6 +94,24 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
     const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
     const market = buildMarketFromOdds(oddsSnapshot);
     const selectionSide = descriptor.prediction === 'NEUTRAL' ? 'NONE' : descriptor.prediction;
+    const projectedMargin = Number.isFinite(descriptor.driverInputs?.projected_margin)
+      ? descriptor.driverInputs.projected_margin
+      : null;
+    const winProbHome = computeWinProbHome(projectedMargin, 'NCAAM');
+    const isPredictionHome = descriptor.prediction === 'HOME';
+    const isPredictionAway = descriptor.prediction === 'AWAY';
+    const moneylineOdds = isPredictionHome
+      ? oddsSnapshot?.h2h_home ?? null
+      : isPredictionAway
+        ? oddsSnapshot?.h2h_away ?? null
+        : null;
+    const edgeResult = (isPredictionHome || isPredictionAway)
+      ? edgeCalculator.computeMoneylineEdge({
+        projectionWinProbHome: winProbHome,
+        americanOdds: moneylineOdds,
+        isPredictionHome
+      })
+      : { edge: null, p_fair: null, p_implied: null };
 
     const payloadData = {
       game_id: gameId,
@@ -104,11 +131,13 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
       },
       projection: {
         total: null,
-        margin_home: null,
-        win_prob_home: null
+        margin_home: projectedMargin,
+        win_prob_home: winProbHome
       },
       market,
-      edge: null,
+      edge: edgeResult.edge ?? null,
+      p_fair: edgeResult.p_fair ?? null,
+      p_implied: edgeResult.p_implied ?? null,
       confidence_pct: Math.round(descriptor.confidence * 100),
       drivers_active: [descriptor.driverKey],
       prediction: descriptor.prediction,
@@ -126,8 +155,8 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
               : undefined
       },
       line: null,
-      price: null,
-      reason_codes: ['PASS_MISSING_EDGE'],
+      price: moneylineOdds,
+      reason_codes: edgeResult.edge == null ? ['PASS_MISSING_EDGE'] : [],
       tags: [],
       consistency: {
         total_bias: 'INSUFFICIENT_DATA'
@@ -140,6 +169,10 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
         spread_home: oddsSnapshot?.spread_home,
         spread_away: oddsSnapshot?.spread_away,
         total: oddsSnapshot?.total,
+        spread_price_home: oddsSnapshot?.spread_price_home,
+        spread_price_away: oddsSnapshot?.spread_price_away,
+        total_price_over: oddsSnapshot?.total_price_over,
+        total_price_under: oddsSnapshot?.total_price_under,
         captured_at: oddsSnapshot?.captured_at
       },
       ev_passed: descriptor.ev_threshold_passed,
