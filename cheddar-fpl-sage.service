@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=cheddar-worker
+User=babycheeses11
 WorkingDirectory=/opt/cheddar-logic/cheddar-fpl-sage
 Environment="PYTHONPATH=/opt/cheddar-logic/cheddar-fpl-sage"
 EnvironmentFile=-/opt/cheddar-logic/.env.production

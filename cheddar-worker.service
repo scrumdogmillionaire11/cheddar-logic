@@ -6,7 +6,7 @@ Wants=cheddar-logic-db.service
 
 [Service]
 Type=simple
-User=cheddar-worker
+User=babycheeses11
 WorkingDirectory=/opt/cheddar-logic/apps/worker
 Environment="NODE_ENV=production"
 Environment="DATABASE_URL=/opt/data/cheddar.db"
