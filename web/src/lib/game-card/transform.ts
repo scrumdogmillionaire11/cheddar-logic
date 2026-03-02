@@ -14,12 +14,12 @@ import type {
   Direction,
   GameMarkets,
   Play,
-  ExpressionStatus,
   TruthStatus,
   ValueStatus,
   PriceFlag,
   PassReasonCode,
 } from '../types/game-card';
+import type { CanonicalPlay, MarketType, SelectionKey, Sport as CanonicalSport } from '../types/canonical-play';
 import { deduplicateDrivers } from './decision';
 import {
   derivePlayDecision,
@@ -368,16 +368,6 @@ function getValueStatus(edge?: number): ValueStatus {
   return 'BAD';
 }
 
-function deriveBetStatus(
-  betAction: 'BET' | 'NO_PLAY',
-  truthStatus: TruthStatus,
-  valueStatus: ValueStatus
-): ExpressionStatus {
-  if (betAction === 'NO_PLAY') return 'PASS';
-  if (truthStatus === 'STRONG' && valueStatus === 'GOOD') return 'FIRE';
-  return 'WATCH';
-}
-
 /**
  * Determine best market from drivers + available odds
  * Uses same logic as decision.ts but at transform time
@@ -539,7 +529,6 @@ function buildPlay(
     betAction = 'NO_PLAY';
   }
 
-  const status = deriveBetStatus(betAction, truthStatus, valueStatus);
   const whyCode = getPlayWhyCode(betAction, market, drivers, priceFlags);
   const whyText = whyCode.replace(/_/g, ' ');
   const sourcePlay = playCandidates.find((play) => play.driverKey === truthDriver.key) ?? playCandidates[0];
@@ -622,24 +611,23 @@ function buildPlay(
   }
 
   // Build initial play object for canonical decision
-  const playForDecision: any = {
-    market_type: resolvedMarketType,
-    sport: game.sport,
-    selection:
-      direction === 'HOME' || direction === 'AWAY' || direction === 'OVER' || direction === 'UNDER'
-        ? {
-            side: direction,
-            team: direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : undefined,
-          }
-        : undefined,
-    selection_key: direction,
+  const playForDecision: CanonicalPlay = {
+    play_id: sourcePlay?.driverKey ?? `${game.id}:${resolvedMarketType}:${direction}`,
+    sport: game.sport as CanonicalSport,
+    game_id: game.gameId,
+    market_type: resolvedMarketType as MarketType,
+    side: direction === 'HOME' || direction === 'AWAY' || direction === 'OVER' || direction === 'UNDER' ? direction : undefined,
+    selection_key: direction as SelectionKey,
     line,
-    price,
+    price_american: price,
     model: {
       edge,
       confidence: truthStrength,
     },
     warning_tags: tags,
+    classification: 'PASS',
+    action: 'PASS',
+    created_at: game.createdAt,
   };
 
   // Market context: refine later with real availability checks

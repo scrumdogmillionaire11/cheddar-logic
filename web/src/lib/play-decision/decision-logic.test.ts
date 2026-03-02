@@ -47,14 +47,20 @@ const basePlayFactory = (overrides?: Partial<CanonicalPlay>): CanonicalPlay => (
 describe('deriveClassification', () => {
   describe('Hard veto conditions', () => {
     it('should return PASS for missing market_type', () => {
-      const play = basePlayFactory({ market_type: undefined as any });
+      const play = {
+        ...basePlayFactory(),
+        market_type: undefined,
+      } as unknown as CanonicalPlay;
       const result = deriveClassification(play);
       expect(result.classification).toBe('PASS');
       expect(result.pass_reason).toBe('MISSING_MARKET_TYPE');
     });
 
     it('should return PASS for missing selection_key', () => {
-      const play = basePlayFactory({ selection_key: undefined as any });
+      const play = {
+        ...basePlayFactory(),
+        selection_key: undefined,
+      } as unknown as CanonicalPlay;
       const result = deriveClassification(play);
       expect(result.classification).toBe('PASS');
       expect(result.pass_reason).toBe('MISSING_SELECTION');
@@ -218,11 +224,15 @@ describe('deriveClassification', () => {
 
     it('should reject SOCCER + SPREAD if not supported', () => {
       // (Assuming SPREAD is not SOCCER-only)
-      const play = basePlayFactory({
-        sport: 'SOCCER',
-        market_type: 'SPREAD',  // If SPREAD is NBA/NHL only
-        selection_key: 'HOME_SPREAD',
-      });
+      expect(() =>
+        deriveClassification(
+          basePlayFactory({
+            sport: 'SOCCER',
+            market_type: 'SPREAD', // If SPREAD is NBA/NHL only
+            selection_key: 'HOME_SPREAD',
+          }),
+        ),
+      ).not.toThrow();
       // If SPREAD is universally supported, this would pass
       // Adjust test based on actual sport support matrix
     });
