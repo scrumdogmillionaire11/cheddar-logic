@@ -1,6 +1,6 @@
 # Cheddar-Logic — System State
 
-**Last activity:** 2026-03-01 - Completed quick task 19: Play Ledger enriched with Matchup (Away @ Home), real Price from odds_context, and real Confidence % from payload_data; 8-column ledger live on /results
+**Last activity:** 2026-03-01 - Completed quick task 20: Smart filtering for /results — sport/card_category/min_confidence filter params on API, live filter controls on page, segments split by sport+driver-vs-call with 60%+ win rate highlighting
 
 ---
 
@@ -216,3 +216,4 @@ None currently. System is structurally sound and ready for pre-ship hardening.
 | 17 | Fix /cards and /fpl in production: systemd service files for web + fpl-sage, deploy workflow installs services + injects env at build time | 2026-03-01 | d3eb000 | .planning/quick/17-fix-cards-and-fpl-sage-in-production/ |
 | 18 | Settle yesterday's plays: ESPN score ingest + card grading (33 games settled, 39 cards: 24W/15L); /api/results and /results UI verified | 2026-03-01 | edf529c | .planning/quick/18-settle-yesterday-plays-in-db-and-ensure-/ |
 | 19 | Enrich Play Ledger: Matchup (Away @ Home), real Price from odds_context, real Confidence % — 8-column ledger on /results | 2026-03-01 | a6fefb8 | .planning/quick/19-add-matchup-teams-fix-price-odds-column-/ |
+| 20 | Smart filtering: sport/card_category/min_confidence params on API; live filter controls + 60%+ segment highlighting on /results | 2026-03-01 | 4739ddb | .planning/quick/20-smart-filtering-for-record-transparency-/ |
