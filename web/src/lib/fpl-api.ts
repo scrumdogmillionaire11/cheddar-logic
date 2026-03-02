@@ -5,7 +5,7 @@
 
 const FPL_API_BASE_URL =
   process.env.NEXT_PUBLIC_FPL_API_URL ||
-  (process.env.NODE_ENV === "development" ? "http://localhost:8000/api/v1" : "/api/v1");
+  (process.env.NODE_ENV === "development" ? "http://localhost:8001/api/v1" : "/api/v1");
 
 export interface AnalyzeRequest {
   team_id: number;

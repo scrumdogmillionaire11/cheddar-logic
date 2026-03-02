@@ -195,6 +195,8 @@ async def run_analysis_task(
     overrides: Optional[Dict] = None,
 ):
     """Background task to run the analysis and cache results."""
+    job = engine_service.get_job(analysis_id)
+    
     try:
         results = await engine_service.run_analysis(analysis_id, overrides=overrides)
 
@@ -206,6 +208,12 @@ async def run_analysis_task(
             logger.info(f"Analysis {analysis_id} completed (not cached due to overrides)")
     except Exception as e:
         logger.exception(f"Analysis {analysis_id} failed: {e}")
+        # Store error state in job so clients can see what went wrong
+        if job:
+            job.status = "failed"
+            job.error = str(e)
+            job.completed_at = datetime.now(timezone.utc)
+            engine_service._persist_job(job)
 
 
 @router.get(

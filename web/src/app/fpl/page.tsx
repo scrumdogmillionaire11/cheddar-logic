@@ -1,6 +1,5 @@
 import { closeDatabase, initDb } from '@cheddar-logic/data';
 import FPLPageClient from '@/components/fpl-page-client';
-import { AuthRefresher } from '@/components/auth-refresher';
 
 export const runtime = 'nodejs';
 
@@ -16,12 +15,7 @@ export default async function FPLPage() {
     //   redirect('/subscribe?next=/fpl');
     // }
 
-    return (
-      <>
-        <AuthRefresher />
-        <FPLPageClient />
-      </>
-    );
+    return <FPLPageClient />;
   } finally {
     closeDatabase();
   }

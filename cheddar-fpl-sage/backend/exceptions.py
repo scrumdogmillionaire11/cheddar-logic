@@ -190,6 +190,5 @@ def register_exception_handlers(app):
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
-    # Note: General exception handler should be last resort
-    # Only uncomment in production:
-    # app.add_exception_handler(Exception, general_exception_handler)
+    # Catch-all handler for unhandled exceptions to ensure JSON response
+    app.add_exception_handler(Exception, general_exception_handler)

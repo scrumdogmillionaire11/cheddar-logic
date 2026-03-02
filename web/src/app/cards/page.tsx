@@ -1,6 +1,5 @@
 import { closeDatabase, initDb } from '@cheddar-logic/data';
 import CardsPageClient from '@/components/cards-page-client';
-import { AuthRefresher } from '@/components/auth-refresher';
 
 export const runtime = 'nodejs';
 
@@ -16,12 +15,7 @@ export default async function CardsPage() {
     //   redirect('/subscribe?next=/cards');
     // }
 
-    return (
-      <>
-        <AuthRefresher />
-        <CardsPageClient />
-      </>
-    );
+    return <CardsPageClient />;
   } finally {
     closeDatabase();
   }
