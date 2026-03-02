@@ -34,8 +34,10 @@
     "test": "jest",
     "test:pipeline:nhl": "jest src/jobs/__tests__/pipeline_nhl_idempotency.test.js",
     "test:scheduler:windows": "node src/__tests__/scheduler-windows.test.js",
+    "test:pipeline:settlement": "DATABASE_PATH=../../packages/data/cheddar.db node src/__tests__/settlement-pipeline-integration.test.js",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "deployment:verify": "node ../../scripts/deployment-verify.js"
   },
   "keywords": [
     "worker",
