@@ -95,7 +95,7 @@ export default function ResultsPage() {
       let payload: ResultsResponse;
       try {
         payload = await response.json();
-      } catch (parseErr) {
+      } catch {
         setError('Failed to parse API response');
         return;
       }
