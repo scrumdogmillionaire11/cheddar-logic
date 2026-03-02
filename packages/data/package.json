@@ -10,6 +10,7 @@
     "db:reset": "node src/db-reset.js",
     "seed:test-odds": "node src/seed-test-odds.js",
     "seed:test-results": "node src/seed-test-results.js",
+    "seed:cards": "node src/seed-cards.js",
     "seed:purge": "node src/purge-seed-odds.js",
     "seed:purge-results": "node src/purge-seed-results.js",
     "seed:assert-none": "node src/assert-no-seed-odds.js",
