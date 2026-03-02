@@ -17,6 +17,7 @@ type ResultsSummary = {
 type SegmentRow = {
   sport: string;
   cardCategory: string;
+  recommendedBetType: string;
   settledCards: number;
   wins: number;
   losses: number;
@@ -49,7 +50,7 @@ type ResultsResponse = {
     summary: ResultsSummary;
     segments: SegmentRow[];
     ledger: LedgerRow[];
-    filters?: { sport: string | null; cardCategory: string | null; minConfidence: number | null };
+    filters?: { sport: string | null; cardCategory: string | null; minConfidence: number | null; market: string | null };
   };
   error?: string;
 };
@@ -74,6 +75,7 @@ export default function ResultsPage() {
   const [filterSport, setFilterSport] = useState<string>('');
   const [filterCategory, setFilterCategory] = useState<string>('');
   const [filterHighConf, setFilterHighConf] = useState<boolean>(false);
+  const [filterMarket, setFilterMarket] = useState<string>('');
 
   const loadResults = useCallback(async () => {
     try {
@@ -82,6 +84,7 @@ export default function ResultsPage() {
       if (filterSport) params.set('sport', filterSport);
       if (filterCategory) params.set('card_category', filterCategory);
       if (filterHighConf) params.set('min_confidence', '60');
+      if (filterMarket) params.set('market', filterMarket);
       const response = await fetch(`/api/results?${params.toString()}`);
       const payload: ResultsResponse = await response.json();
 
@@ -99,7 +102,7 @@ export default function ResultsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filterSport, filterCategory, filterHighConf]);
+  }, [filterSport, filterCategory, filterHighConf, filterMarket]);
 
   useEffect(() => {
     loadResults();
@@ -130,7 +133,7 @@ export default function ResultsPage() {
     ];
   }, [summary]);
 
-  const hasActiveFilters = filterSport || filterCategory || filterHighConf;
+  const hasActiveFilters = filterSport || filterCategory || filterHighConf || filterMarket;
 
   return (
     <div className="min-h-screen bg-night text-cloud">
@@ -212,6 +215,18 @@ export default function ResultsPage() {
                 <option value="call">Call</option>
               </select>
 
+              {/* Market select */}
+              <select
+                value={filterMarket}
+                onChange={(e) => setFilterMarket(e.target.value)}
+                className="rounded-full border border-white/15 bg-night/60 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/70 focus:outline-none"
+              >
+                <option value="">All Markets</option>
+                <option value="moneyline">Moneyline</option>
+                <option value="spread">Spread</option>
+                <option value="total">Total</option>
+              </select>
+
               {/* 60% confidence toggle */}
               <button
                 type="button"
@@ -229,7 +244,7 @@ export default function ResultsPage() {
               {hasActiveFilters && (
                 <button
                   type="button"
-                  onClick={() => { setFilterSport(''); setFilterCategory(''); setFilterHighConf(false); }}
+                  onClick={() => { setFilterSport(''); setFilterCategory(''); setFilterHighConf(false); setFilterMarket(''); }}
                   className="rounded-full border border-white/10 bg-night/40 px-3 py-1.5 text-xs text-cloud/40 hover:text-cloud/60"
                 >
                   Clear
@@ -239,10 +254,11 @@ export default function ResultsPage() {
           </div>
 
           <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
-            {/* 6-column header: Segment | Type | Plays | Win Rate | ROI | Avg Edge */}
-            <div className="grid grid-cols-6 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+            {/* 7-column header: Segment | Type | Market | Plays | Win Rate | ROI | Avg Edge */}
+            <div className="grid grid-cols-7 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
               <span>Segment</span>
               <span>Type</span>
+              <span>Market</span>
               <span>Plays</span>
               <span>Win Rate</span>
               <span>ROI</span>
@@ -260,11 +276,12 @@ export default function ResultsPage() {
                   const isHighWinRate = winRate >= 0.6;
                   return (
                     <div
-                      key={`${row.sport}-${row.cardCategory}`}
-                      className={`grid grid-cols-6 gap-4 px-4 py-3 text-sm ${isHighWinRate ? 'bg-emerald-500/10' : ''}`}
+                      key={`${row.sport}-${row.cardCategory}-${row.recommendedBetType}`}
+                      className={`grid grid-cols-7 gap-4 px-4 py-3 text-sm ${isHighWinRate ? 'bg-emerald-500/10' : ''}`}
                     >
                       <span className="text-cloud/70">{row.sport}</span>
                       <span className="text-cloud/70 capitalize">{row.cardCategory}</span>
+                      <span className="text-cloud/70 capitalize">{row.recommendedBetType || '--'}</span>
                       <span className="text-cloud/70">{total}</span>
                       <span className={isHighWinRate ? 'text-emerald-300' : 'text-cloud/70'}>
                         {formatPercent(winRate)}

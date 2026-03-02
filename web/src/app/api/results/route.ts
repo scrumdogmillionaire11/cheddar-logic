@@ -3,6 +3,7 @@ import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
 
 const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
 const ALLOWED_CATEGORIES = ['driver', 'call'] as const;
+const ALLOWED_MARKETS = ['moneyline', 'spread', 'total'] as const;
 
 type SummaryRow = {
   total_cards: number;
@@ -16,6 +17,7 @@ type SummaryRow = {
 type SegmentRow = {
   sport: string;
   card_category: string;
+  recommended_bet_type: string;
   settled_cards: number;
   wins: number;
   losses: number;
@@ -106,6 +108,11 @@ export async function GET(request: NextRequest) {
       ? Math.min(Math.max(Number.parseFloat(rawConfidence), 0), 100)
       : null;
 
+    const rawMarket = searchParams.get('market');
+    const market: string | null = rawMarket && (ALLOWED_MARKETS as readonly string[]).includes(rawMarket.toLowerCase())
+      ? rawMarket.toLowerCase()
+      : null;
+
     // Build filter SQL fragments for the dedup subquery (inner)
     const sportFilter = sport ? `AND UPPER(cr3.sport) = ?` : '';
     const sportParams = sport ? [sport] : [];
@@ -116,6 +123,9 @@ export async function GET(request: NextRequest) {
       : '';
     const confidenceParams3 = minConfidence !== null ? [minConfidence] : [];
 
+    const marketFilter3 = market ? `AND LOWER(cr3.recommended_bet_type) = ?` : '';
+    const marketParams3 = market ? [market] : [];
+
     // Same for outer dedup query
     const sportFilter2 = sport ? `AND UPPER(cr2.sport) = ?` : '';
     const categoryFilter2 = buildCardCategoryFilter(cardCategory, 'cr2');
@@ -123,6 +133,9 @@ export async function GET(request: NextRequest) {
       ? `AND CAST(json_extract(cp2.payload_data, '$.confidence_pct') AS REAL) >= ?`
       : '';
     const confidenceParams2 = minConfidence !== null ? [minConfidence] : [];
+
+    const marketFilter2 = market ? `AND LOWER(cr2.recommended_bet_type) = ?` : '';
+    const marketParams2 = market ? [market] : [];
 
     // Deduplication: one card per game per market (moneyline/total),
     // highest confidence, excluding PASS recommendations.
@@ -141,6 +154,7 @@ export async function GET(request: NextRequest) {
           ${sportFilter}
           ${categoryFilter3.sql}
           ${confidenceFilter3}
+          ${marketFilter3}
         GROUP BY cr3.game_id, cr3.recommended_bet_type
       ) best ON cr2.game_id = best.game_id
             AND cr2.recommended_bet_type = best.recommended_bet_type
@@ -150,6 +164,7 @@ export async function GET(request: NextRequest) {
         ${sportFilter2}
         ${categoryFilter2.sql}
         ${confidenceFilter2}
+        ${marketFilter2}
       GROUP BY cr2.game_id, cr2.recommended_bet_type
     `;
 
@@ -157,9 +172,11 @@ export async function GET(request: NextRequest) {
       ...sportParams,
       ...categoryFilter3.params,
       ...confidenceParams3,
+      ...marketParams3,
       ...sportParams,
       ...categoryFilter2.params,
       ...confidenceParams2,
+      ...marketParams2,
     ];
 
     const dedupedIdRows = db.prepare(dedupSql).all(...dedupParams) as { id: string }[];
@@ -173,7 +190,7 @@ export async function GET(request: NextRequest) {
             summary: { totalCards: 0, settledCards: 0, wins: 0, losses: 0, pushes: 0, totalPnlUnits: 0, winRate: 0, avgPnl: 0 },
             segments: [],
             ledger: [],
-            filters: { sport, cardCategory, minConfidence },
+            filters: { sport, cardCategory, minConfidence, market },
           },
         },
         { headers: { 'Content-Type': 'application/json' } }
@@ -208,6 +225,7 @@ export async function GET(request: NextRequest) {
       SELECT
         cr.sport,
         ${cardCaseSql},
+        cr.recommended_bet_type,
         COUNT(*) AS settled_cards,
         SUM(CASE WHEN cr.result = 'win' THEN 1 ELSE 0 END) AS wins,
         SUM(CASE WHEN cr.result = 'loss' THEN 1 ELSE 0 END) AS losses,
@@ -216,8 +234,8 @@ export async function GET(request: NextRequest) {
       FROM card_results cr
       INNER JOIN card_payloads cp ON cr.card_id = cp.id
       WHERE cr.id IN (${placeholders})
-      GROUP BY cr.sport, card_category
-      ORDER BY cr.sport ASC, card_category ASC
+      GROUP BY cr.sport, card_category, cr.recommended_bet_type
+      ORDER BY cr.sport ASC, card_category ASC, cr.recommended_bet_type ASC
     `).all(...ids) as SegmentRow[];
 
     const ledger = db.prepare(`
@@ -336,6 +354,7 @@ export async function GET(request: NextRequest) {
           segments: segments.map((row) => ({
             sport: row.sport,
             cardCategory: row.card_category,
+            recommendedBetType: row.recommended_bet_type || 'unknown',
             settledCards: Number(row.settled_cards || 0),
             wins: Number(row.wins || 0),
             losses: Number(row.losses || 0),
@@ -343,7 +362,7 @@ export async function GET(request: NextRequest) {
             totalPnlUnits: Number(row.total_pnl_units || 0),
           })),
           ledger: ledgerRows,
-          filters: { sport, cardCategory, minConfidence },
+          filters: { sport, cardCategory, minConfidence, market },
         },
       },
       { headers: { 'Content-Type': 'application/json' } }
