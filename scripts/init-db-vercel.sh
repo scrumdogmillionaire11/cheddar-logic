@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/bash
 # Initialize database for Vercel deployment
 # This runs during the build phase to populate the SQLite database with test data
 
@@ -28,7 +28,14 @@ npm run seed:test-odds
 echo "Seeding card predictions..."
 npm run seed:cards
 
+# Verify database was populated
+echo "Verifying database..."
+node src/verify-db.js || {
+  echo "❌ Database verification failed!"
+  exit 1
+}
+
 echo "✅ Database initialization complete"
-ls -lh cheddar.db || echo "Warning: cheddar.db not found in packages/data"
+ls -lh cheddar.db
 
 exit 0
