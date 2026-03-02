@@ -44,6 +44,9 @@ function parseAmericanOdds(value) {
 /**
  * Extract the actual play direction and market from recommendation.type (authoritative BET decision).
  * Falls back to raw prediction field for legacy cards that lack recommendation.type.
+ * 
+ * NOTE: PASS recommendations ARE settled (graded for accountability), not skipped.
+ * The PASS status only affects whether we recommend a BET, not whether we grade the prediction.
  *
  * @param {object} payloadData - Parsed card payload
  * @returns {{ direction: string, market: string } | null}
@@ -59,9 +62,10 @@ function extractActualPlay(payloadData) {
     if (recType === 'TOTAL_UNDER') return { direction: 'UNDER', market: 'total' };
   }
 
-  if (recType === 'PASS') return null;
+  // For PASS recommendations: fall through to prediction-based settlement
+  // PASS plays still have predictions that can be graded for accountability
 
-  // Fallback: no recommendation.type present — use raw prediction (legacy cards)
+  // Extract from prediction field for all recommendations (including PASS and legacy cards)
   const prediction = payloadData?.prediction;
   if (!prediction || prediction === 'NEUTRAL') return null;
   const betType = (payloadData?.recommended_bet_type || 'moneyline').toLowerCase();
