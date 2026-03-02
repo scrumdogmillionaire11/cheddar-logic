@@ -29,12 +29,17 @@ async function initDb() {
  * Load database from disk or create new
  */
 function loadDatabase() {
-  const dbFile = dbPath || (process.env.DATABASE_PATH || 
-    path.join(process.env.CHEDDAR_DATA_DIR || '/tmp/cheddar-logic', 'cheddar.db'));
-  
+  const explicitPath = process.env.DATABASE_PATH || null;
+  const dbFile = dbPath || explicitPath ||
+    path.join(process.env.CHEDDAR_DATA_DIR || '/tmp/cheddar-logic', 'cheddar.db');
+
+  if (explicitPath && !fs.existsSync(explicitPath)) {
+    throw new Error(`DATABASE_PATH does not exist: ${explicitPath}`);
+  }
+
   dbPath = dbFile;
   const dir = path.dirname(dbFile);
-  
+
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -270,9 +275,10 @@ function insertOddsSnapshot(snapshot) {
     INSERT INTO odds_snapshots (
       id, game_id, sport, captured_at, h2h_home, h2h_away, total,
       spread_home, spread_away, moneyline_home, moneyline_away,
+      spread_price_home, spread_price_away, total_price_over, total_price_under,
       raw_data, job_run_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   stmt.run(
@@ -287,6 +293,10 @@ function insertOddsSnapshot(snapshot) {
     snapshot.spreadAway || null,
     snapshot.monelineHome || null,
     snapshot.monelineAway || null,
+    snapshot.spreadPriceHome || null,
+    snapshot.spreadPriceAway || null,
+    snapshot.totalPriceOver || null,
+    snapshot.totalPriceUnder || null,
     snapshot.rawData ? JSON.stringify(snapshot.rawData) : null,
     snapshot.jobRunId
   );

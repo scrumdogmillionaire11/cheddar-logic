@@ -31,13 +31,15 @@ const {
   enrichOddsSnapshotWithEspnMetrics
 } = require('@cheddar-logic/data');
 
-const { computeNBADriverCards, computeNBAMarketDecisions, determineTier } = require('../models');
+const { computeNBADriverCards, computeNBAMarketDecisions, selectExpressionChoice, buildMarketPayload, determineTier } = require('../models');
 const {
   buildRecommendationFromPrediction,
   buildMatchup,
   formatStartTimeLocal,
   formatCountdown,
-  buildMarketFromOdds
+  buildMarketFromOdds,
+  edgeCalculator,
+  marginToWinProbability
 } = require('@cheddar-logic/models');
 
 const NBA_DRIVER_WEIGHTS = {
@@ -48,6 +50,13 @@ const NBA_DRIVER_WEIGHTS = {
   blowoutRisk: 0.07,
   totalProjection: 0.13
 };
+
+function computeWinProbHome(projectedMargin, sport) {
+  if (!Number.isFinite(projectedMargin)) return null;
+  const sigma = edgeCalculator.getSigmaDefaults(sport)?.margin ?? 12;
+  const winProb = marginToWinProbability(projectedMargin, sigma);
+  return Number.isFinite(winProb) ? Number(winProb.toFixed(4)) : null;
+}
 
 function buildDriverSummary(descriptor, weightMap) {
   const weight = descriptor.driverWeight ?? weightMap[descriptor.driverKey] ?? 1;
@@ -76,7 +85,8 @@ function buildDriverSummary(descriptor, weightMap) {
  * @param {object} oddsSnapshot
  * @returns {Array<object>} Array of card objects ready for insertCardPayload()
  */
-function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
+function generateNBACards(gameId, driverDescriptors, oddsSnapshot, marketPayload) {
+  const marketData = marketPayload || {};
   const now = new Date().toISOString();
   let expiresAt = null;
   if (oddsSnapshot?.game_time_utc) {
@@ -94,11 +104,41 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
     const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
     const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
     const market = buildMarketFromOdds(oddsSnapshot);
-    // For totals cards, populate projection.total and edge from driver inputs
     const isTotalsCard = descriptor.cardType === 'nba-total-projection';
     const projectedTotal = isTotalsCard ? (descriptor.driverInputs?.projected_total ?? null) : null;
-    const projectedEdge = isTotalsCard ? (descriptor.driverInputs?.edge ?? null) : null;
+    const projectedMargin = Number.isFinite(descriptor.driverInputs?.projected_margin)
+      ? descriptor.driverInputs.projected_margin
+      : null;
+    const winProbHome = computeWinProbHome(projectedMargin, 'NBA');
     const recommendedBetType = isTotalsCard ? 'total' : 'moneyline';
+    const marketType = isTotalsCard ? 'TOTAL' : 'INFO';
+    const selectionSide = descriptor.prediction === 'NEUTRAL' ? 'NONE' : descriptor.prediction;
+    const isPredictionOver = descriptor.prediction === 'OVER';
+    const isPredictionHome = descriptor.prediction === 'HOME';
+    const isPredictionAway = descriptor.prediction === 'AWAY';
+    const totalEdgeResult = isTotalsCard && (isPredictionOver || descriptor.prediction === 'UNDER')
+      ? edgeCalculator.computeTotalEdge({
+        projectionTotal: projectedTotal,
+        totalLine: oddsSnapshot?.total ?? null,
+        totalPriceOver: oddsSnapshot?.total_price_over ?? null,
+        totalPriceUnder: oddsSnapshot?.total_price_under ?? null,
+        sigmaTotal: edgeCalculator.getSigmaDefaults('NBA')?.total ?? 14,
+        isPredictionOver
+      })
+      : { edge: null, p_fair: null, p_implied: null };
+    const moneylineOdds = isPredictionHome
+      ? oddsSnapshot?.h2h_home ?? null
+      : isPredictionAway
+        ? oddsSnapshot?.h2h_away ?? null
+        : null;
+    const moneylineEdgeResult = (isPredictionHome || isPredictionAway)
+      ? edgeCalculator.computeMoneylineEdge({
+        projectionWinProbHome: winProbHome,
+        americanOdds: moneylineOdds,
+        isPredictionHome
+      })
+      : { edge: null, p_fair: null, p_implied: null };
+    const edgeResult = isTotalsCard ? totalEdgeResult : moneylineEdgeResult;
 
     const payloadData = {
       game_id: gameId,
@@ -118,16 +158,36 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
       },
       projection: {
         total: projectedTotal,
-        margin_home: null,
-        win_prob_home: null
+        margin_home: projectedMargin,
+        win_prob_home: winProbHome
       },
       market,
-      edge: projectedEdge,
+      edge: edgeResult.edge ?? null,
+      p_fair: edgeResult.p_fair ?? null,
+      p_implied: edgeResult.p_implied ?? null,
       confidence_pct: Math.round(descriptor.confidence * 100),
       drivers_active: [descriptor.driverKey],
       prediction: descriptor.prediction,
       confidence: descriptor.confidence,
       recommended_bet_type: recommendedBetType,
+      kind: marketType === 'INFO' ? 'EVIDENCE' : 'PLAY',
+      market_type: marketType,
+      selection: {
+        side: selectionSide,
+        team:
+          descriptor.prediction === 'HOME'
+            ? oddsSnapshot?.home_team ?? undefined
+            : descriptor.prediction === 'AWAY'
+              ? oddsSnapshot?.away_team ?? undefined
+              : undefined
+      },
+      line: isTotalsCard ? (oddsSnapshot?.total ?? null) : null,
+      price:
+        isTotalsCard
+          ? (isPredictionOver ? oddsSnapshot?.total_price_over ?? null : oddsSnapshot?.total_price_under ?? null)
+          : moneylineOdds,
+      reason_codes: edgeResult.edge == null ? ['PASS_MISSING_EDGE'] : [],
+      tags: [],
       tier: descriptor.tier,
       reasoning: descriptor.reasoning,
       odds_context: {
@@ -136,6 +196,10 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
         spread_home: oddsSnapshot?.spread_home,
         spread_away: oddsSnapshot?.spread_away,
         total: oddsSnapshot?.total,
+        spread_price_home: oddsSnapshot?.spread_price_home,
+        spread_price_away: oddsSnapshot?.spread_price_away,
+        total_price_over: oddsSnapshot?.total_price_over,
+        total_price_under: oddsSnapshot?.total_price_under,
         captured_at: oddsSnapshot?.captured_at
       },
       ev_passed: descriptor.ev_threshold_passed,
@@ -151,7 +215,8 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot) {
       meta: {
         inference_source: descriptor.inference_source,
         is_mock: descriptor.is_mock
-      }
+      },
+      ...marketData
     };
 
     return {
@@ -190,12 +255,26 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
 
   // TOTAL decision → nba-totals-call
   const totalDecision = marketDecisions?.TOTAL;
-  if (totalDecision && (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')) {
-    const confidence = CONFIDENCE_MAP[totalDecision.status];
+  const totalBias =
+    totalDecision &&
+    totalDecision.status !== 'PASS' &&
+    typeof totalDecision.edge === 'number' &&
+    totalDecision.best_candidate?.line != null
+      ? 'OK'
+      : 'INSUFFICIENT_DATA';
+  if (totalDecision) {
+    const status = totalDecision.status || 'PASS';
+    const confidence = CONFIDENCE_MAP[status] ?? 0.5;
     const tier = determineTier(confidence);
     const { side, line } = totalDecision.best_candidate;
+    const hasLine = line != null;
     const lineText = line != null ? ` ${line}` : '';
     const pickText = `${side === 'OVER' ? 'OVER' : 'UNDER'}${lineText}`;
+    const reasonCodes = [];
+    if (!hasLine) reasonCodes.push('PASS_MISSING_LINE');
+    if (totalBias !== 'OK') reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
+    if (status === 'PASS') reasonCodes.push('SKIP_MARKET_NO_EDGE');
+    reasonCodes.push('PASS_NO_MARKET_PRICE');
     const activeDrivers = (totalDecision.drivers || [])
       .filter(d => d.eligible)
       .map(d => d.driverKey);
@@ -228,7 +307,20 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         prediction: side,
         confidence,
         tier,
+        status,
         recommended_bet_type: 'total',
+        kind: hasLine ? 'PLAY' : 'EVIDENCE',
+        market_type: hasLine ? 'TOTAL' : 'INFO',
+        selection: {
+          side,
+        },
+        line: line ?? null,
+        price: null,
+        reason_codes: reasonCodes,
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
         reasoning: `${pickText}: ${totalDecision.reasoning}`,
         edge: totalDecision.edge ?? null,
         projection: {
@@ -246,6 +338,10 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at
         },
         confidence_pct: Math.round(confidence * 100),
@@ -303,6 +399,19 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         confidence,
         tier,
         recommended_bet_type: 'spread',
+        kind: 'PLAY',
+        market_type: 'SPREAD',
+        selection: {
+          side,
+          team: side === 'HOME' ? oddsSnapshot?.home_team ?? undefined : oddsSnapshot?.away_team ?? undefined,
+        },
+        line: line ?? null,
+        price: null,
+        reason_codes: [],
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
         reasoning: `${pickText}: ${spreadDecision.reasoning}`,
         edge: spreadDecision.edge ?? null,
         projection: {
@@ -320,6 +429,10 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at
         },
         confidence_pct: Math.round(confidence * 100),
@@ -415,7 +528,14 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct);
           }
 
-          const cards = generateNBACards(gameId, driverCards, oddsSnapshot);
+          const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);
+          const nbaExpressionChoice = selectExpressionChoice(nbaMarketDecisions);
+          const nbaMarketPayload = buildMarketPayload({
+            decisions: nbaMarketDecisions,
+            expressionChoice: nbaExpressionChoice,
+          });
+
+          const cards = generateNBACards(gameId, driverCards, oddsSnapshot, nbaMarketPayload);
 
           for (const card of cards) {
             const validation = validateCardPayload(card.cardType, card.payloadData);
@@ -429,7 +549,6 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           }
 
           // Generate and insert NBA market call cards (nba-totals-call, nba-spread-call)
-          const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);
           const nbaMarketCallCards = generateNBAMarketCallCards(gameId, nbaMarketDecisions, oddsSnapshot);
           for (const ct of ['nba-totals-call', 'nba-spread-call']) {
             prepareModelAndCardWrite(gameId, 'nba-cross-market-v1', ct);

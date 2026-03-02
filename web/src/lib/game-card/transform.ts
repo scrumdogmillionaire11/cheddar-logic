@@ -6,8 +6,10 @@
 import type {
   GameCard,
   DriverRow,
+  EvidenceItem,
   Sport,
   Market,
+  CanonicalMarketType,
   DriverTier,
   Direction,
   GameMarkets,
@@ -16,8 +18,13 @@ import type {
   TruthStatus,
   ValueStatus,
   PriceFlag,
+  PassReasonCode,
 } from '../types/game-card';
 import { deduplicateDrivers } from './decision';
+import {
+  derivePlayDecision,
+  classificationToLegacyStatus,
+} from '../play-decision/canonical-decision';
 
 const TIER_SCORE: Record<DriverTier, number> = {
   BEST: 1,
@@ -42,6 +49,20 @@ interface ApiPlay {
   reasoning: string;
   evPassed: boolean;
   driverKey: string;
+  market_type?: CanonicalMarketType;
+  selection?: { side?: string; team?: string };
+  line?: number;
+  price?: number;
+  reason_codes?: string[];
+  tags?: string[];
+  recommendation?: { type?: string };
+  recommended_bet_type?: string;
+  kind?: 'PLAY' | 'EVIDENCE';
+  evidence_for_play_id?: string;
+  aggregation_key?: string;
+  consistency?: {
+    total_bias?: 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN';
+  };
 }
 
 interface GameData {
@@ -61,13 +82,29 @@ interface GameData {
     spreadAway: number | null;
     capturedAt: string | null;
   } | null;
+  consistency?: {
+    total_bias?: 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN';
+  };
   plays: ApiPlay[];
 }
 
-/**
- * Extract market type from card title
- */
-function inferMarket(cardTitle: string): Market {
+function isPlayItem(play: ApiPlay): boolean {
+  return (play.kind ?? 'PLAY') === 'PLAY';
+}
+
+function isEvidenceItem(play: ApiPlay): boolean {
+  return (play.kind ?? 'PLAY') === 'EVIDENCE';
+}
+
+function mapCanonicalToLegacyMarket(canonical?: CanonicalMarketType): Market | 'NONE' {
+  if (!canonical) return 'NONE';
+  if (canonical === 'TOTAL' || canonical === 'TEAM_TOTAL') return 'TOTAL';
+  if (canonical === 'SPREAD' || canonical === 'PUCKLINE') return 'SPREAD';
+  if (canonical === 'MONEYLINE') return 'ML';
+  return 'UNKNOWN';
+}
+
+function inferMarketFromCardTitle(cardTitle: string): Market {
   const titleLower = cardTitle.toLowerCase();
   
   if (titleLower.includes('total') || titleLower.includes('o/u') || 
@@ -89,12 +126,85 @@ function inferMarket(cardTitle: string): Market {
     return 'ML';
   }
   
-  if (titleLower.includes('risk') || titleLower.includes('fragility') ||
-      titleLower.includes('blowout') || titleLower.includes('key number')) {
-    return 'RISK';
-  }
-  
   return 'UNKNOWN';
+}
+
+function inferCanonicalFromSecondary(play: ApiPlay): CanonicalMarketType | undefined {
+  const recommendationType = play.recommendation?.type?.toLowerCase();
+  if (recommendationType) {
+    if (recommendationType.includes('total')) return 'TOTAL';
+    if (recommendationType.includes('spread')) return 'SPREAD';
+    if (recommendationType.includes('moneyline') || recommendationType.includes('ml')) return 'MONEYLINE';
+  }
+
+  const recommendedBetType = play.recommended_bet_type?.toLowerCase();
+  if (recommendedBetType) {
+    if (recommendedBetType === 'total') return 'TOTAL';
+    if (recommendedBetType === 'spread') return 'SPREAD';
+    if (recommendedBetType === 'moneyline' || recommendedBetType === 'ml') return 'MONEYLINE';
+  }
+
+  return undefined;
+}
+
+function inferMarketFromPlay(play: ApiPlay): { market: Market; canonical?: CanonicalMarketType; reasonCodes: string[]; tags: string[] } {
+  const reasonCodes = [...(play.reason_codes ?? [])];
+  const tags = [...(play.tags ?? [])];
+
+  if (!isPlayItem(play)) {
+    return {
+      market: 'UNKNOWN',
+      canonical: 'INFO',
+      reasonCodes,
+      tags,
+    };
+  }
+
+  if (play.market_type) {
+    return {
+      market: mapCanonicalToLegacyMarket(play.market_type) as Market,
+      canonical: play.market_type,
+      reasonCodes,
+      tags,
+    };
+  }
+
+  const secondary = inferCanonicalFromSecondary(play);
+  if (secondary) {
+    return {
+      market: mapCanonicalToLegacyMarket(secondary) as Market,
+      canonical: secondary,
+      reasonCodes,
+      tags,
+    };
+  }
+
+  const side = play.selection?.side || play.prediction;
+  if ((side === 'OVER' || side === 'UNDER') && typeof play.line === 'number') {
+    return { market: 'TOTAL', canonical: 'TOTAL', reasonCodes, tags };
+  }
+  if ((side === 'HOME' || side === 'AWAY') && typeof play.line === 'number') {
+    return { market: 'SPREAD', canonical: 'SPREAD', reasonCodes, tags };
+  }
+  if ((side === 'HOME' || side === 'AWAY') && typeof play.price === 'number') {
+    return { market: 'ML', canonical: 'MONEYLINE', reasonCodes, tags };
+  }
+
+  const fallbackMarket = inferMarketFromCardTitle(play.cardTitle);
+  reasonCodes.push('LEGACY_TITLE_INFERENCE_USED');
+  return {
+    market: fallbackMarket,
+    canonical:
+      fallbackMarket === 'TOTAL'
+        ? 'TOTAL'
+        : fallbackMarket === 'SPREAD'
+          ? 'SPREAD'
+          : fallbackMarket === 'ML'
+            ? 'MONEYLINE'
+            : undefined,
+    reasonCodes,
+    tags,
+  };
 }
 
 /**
@@ -115,7 +225,8 @@ function normalizeSport(sport: string): Sport {
 function playToDriver(play: ApiPlay): DriverRow {
   const direction: Direction = play.prediction === 'NEUTRAL' ? 'NEUTRAL' : play.prediction;
   const tier: DriverTier = play.tier || 'WATCH';
-  const market = inferMarket(play.cardTitle);
+  const inference = inferMarketFromPlay(play);
+  const market = inference.market;
   
   return {
     key: play.driverKey || `${play.cardType}_${market.toLowerCase()}`,
@@ -276,7 +387,7 @@ function getPlayWhyCode(
   market: Market | 'NONE',
   drivers: DriverRow[],
   priceFlags: PriceFlag[]
-): string {
+): PassReasonCode {
   if (betAction === 'NO_PLAY') {
     if (priceFlags.includes('PRICE_TOO_STEEP')) return 'PRICE_TOO_STEEP';
     if (priceFlags.includes('VIG_HEAVY')) return 'MISSING_PRICE_EDGE';
@@ -310,6 +421,15 @@ function getPlayWhyCode(
   return 'EDGE_FOUND';
 }
 
+function getRiskTagsFromText(...texts: string[]): string[] {
+  const source = texts.join(' ').toLowerCase();
+  const tags: string[] = [];
+  if (source.includes('fragility')) tags.push('RISK_FRAGILITY');
+  if (source.includes('blowout')) tags.push('RISK_BLOWOUT');
+  if (source.includes('key number')) tags.push('RISK_KEY_NUMBER');
+  return tags;
+}
+
 /**
  * Build canonical Play object at transform time
  */
@@ -317,6 +437,10 @@ function buildPlay(
   game: GameData,
   drivers: DriverRow[]
 ): Play {
+  const playCandidates = game.plays.filter(isPlayItem);
+  const evidenceCandidates = game.plays.filter(isEvidenceItem);
+  const inferredPlays = playCandidates.map((sourcePlay) => ({ sourcePlay, inference: inferMarketFromPlay(sourcePlay) }));
+  const canonicalPlayableCount = inferredPlays.filter(({ inference }) => inference.canonical && inference.canonical !== 'INFO').length;
   const truthDriver = pickTruthDriver(drivers);
 
   if (!truthDriver) {
@@ -335,6 +459,13 @@ function buildPlay(
       updatedAt: game.odds?.capturedAt || game.createdAt,
       whyCode: 'NO_DECISION',
       whyText: 'No clear edge found',
+      market_type: 'INFO',
+      kind: 'PLAY',
+      consistency: {
+        total_bias: game.consistency?.total_bias ?? 'UNKNOWN',
+      },
+      reason_codes: ['PASS_NO_QUALIFIED_PLAYS'],
+      tags: [],
     };
   }
 
@@ -411,13 +542,140 @@ function buildPlay(
   const status = deriveBetStatus(betAction, truthStatus, valueStatus);
   const whyCode = getPlayWhyCode(betAction, market, drivers, priceFlags);
   const whyText = whyCode.replace(/_/g, ' ');
+  const sourcePlay = playCandidates.find((play) => play.driverKey === truthDriver.key) ?? playCandidates[0];
+  const sourceInference = sourcePlay ? inferMarketFromPlay(sourcePlay) : { market, canonical: undefined, reasonCodes: [], tags: [] };
+  const totalBias = game.consistency?.total_bias ?? sourcePlay?.consistency?.total_bias ?? 'UNKNOWN';
 
-  if (betAction === 'NO_PLAY') {
+  const reasonCodes: string[] = [...sourceInference.reasonCodes];
+  if (!sourcePlay?.kind) reasonCodes.push('PASS_MISSING_KIND');
+  if (!sourceInference.canonical) reasonCodes.push('PASS_MISSING_MARKET_TYPE');
+  if (sourceInference.canonical === 'TOTAL' && line === undefined) reasonCodes.push('PASS_MISSING_LINE');
+  if ((sourceInference.canonical === 'SPREAD' || sourceInference.canonical === 'MONEYLINE') && direction === 'NEUTRAL') {
+    reasonCodes.push('PASS_MISSING_SELECTION');
+  }
+  if (
+    (sourceInference.canonical === 'TOTAL' || sourceInference.canonical === 'SPREAD' || sourceInference.canonical === 'MONEYLINE') &&
+    price === undefined
+  ) {
+    reasonCodes.push('PASS_NO_MARKET_PRICE');
+  }
+  if (edge === undefined) reasonCodes.push('PASS_MISSING_EDGE');
+  if (canonicalPlayableCount === 0) reasonCodes.push('PASS_NO_QUALIFIED_PLAYS');
+  if (betAction === 'NO_PLAY' && !reasonCodes.includes(whyCode)) reasonCodes.push(whyCode);
+
+  const riskTags = getRiskTagsFromText(
+    sourcePlay?.cardTitle ?? '',
+    sourcePlay?.reasoning ?? '',
+    truthDriver.cardTitle,
+    truthDriver.note,
+  );
+  const tags = [...new Set([...(sourceInference.tags ?? []), ...riskTags])];
+
+  const sourceAggregationKey = sourcePlay?.aggregation_key;
+  const linkedEvidence = evidenceCandidates.filter((evidence) => {
+    if (sourcePlay?.driverKey && evidence.evidence_for_play_id === sourcePlay.driverKey) return true;
+    if (sourceAggregationKey && evidence.aggregation_key === sourceAggregationKey) return true;
+    return false;
+  });
+
+  const resolvedMarketType = sourceInference.canonical ?? (market === 'TOTAL'
+    ? 'TOTAL'
+    : market === 'SPREAD'
+      ? 'SPREAD'
+      : market === 'ML'
+        ? 'MONEYLINE'
+        : 'INFO');
+
+  if (resolvedMarketType === 'TOTAL' && totalBias !== 'OK') {
+    reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
+    tags.push('CONSISTENCY_BLOCK_TOTALS');
+  }
+
+  const hasTeamContext =
+    direction === 'HOME' ||
+    direction === 'AWAY' ||
+    Boolean(sourcePlay?.selection?.team);
+
+  const hasTotalInvariantViolation =
+    resolvedMarketType === 'TOTAL' &&
+    (!((direction === 'OVER' || direction === 'UNDER') && typeof line === 'number'));
+  const hasSpreadInvariantViolation =
+    resolvedMarketType === 'SPREAD' &&
+    (!((direction === 'HOME' || direction === 'AWAY') && typeof line === 'number'));
+  const hasMoneylineInvariantViolation =
+    resolvedMarketType === 'MONEYLINE' &&
+    !((direction === 'HOME' || direction === 'AWAY') && hasTeamContext);
+
+  if (betAction === 'NO_PLAY' || (resolvedMarketType === 'TOTAL' && totalBias !== 'OK')) {
     pick = 'NO PLAY';
   }
 
+  const forcedPass = hasTotalInvariantViolation || hasSpreadInvariantViolation || hasMoneylineInvariantViolation;
+  if (forcedPass) {
+    if (hasTotalInvariantViolation) reasonCodes.push('PASS_MISSING_LINE');
+    if (hasSpreadInvariantViolation) {
+      reasonCodes.push('PASS_MISSING_SELECTION');
+      reasonCodes.push('PASS_MISSING_LINE');
+    }
+    if (hasMoneylineInvariantViolation) reasonCodes.push('PASS_MISSING_SELECTION');
+    pick = 'NO PLAY';
+  }
+
+  // Build initial play object for canonical decision
+  const playForDecision: any = {
+    market_type: resolvedMarketType,
+    sport: game.sport,
+    selection:
+      direction === 'HOME' || direction === 'AWAY' || direction === 'OVER' || direction === 'UNDER'
+        ? {
+            side: direction,
+            team: direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : undefined,
+          }
+        : undefined,
+    selection_key: direction,
+    line,
+    price,
+    model: {
+      edge,
+      confidence: truthStrength,
+    },
+    warning_tags: tags,
+  };
+
+  // Market context: refine later with real availability checks
+  const marketContext = {
+    market_available: Boolean(game?.odds), // refine later if you have per-market availability
+    time_window_ok: true, // refine later based on game time
+    wrapper_blocks: false, // set true in wrappers (NHL goalie, Soccer scope, etc.)
+  };
+
+  // Derive canonical decision (classification + action)
+  const decision = derivePlayDecision(playForDecision, marketContext, {});
+
   return {
-    status,
+    market_type: resolvedMarketType,
+    kind: 'PLAY',
+    evidence_count: linkedEvidence.length,
+    consistency: {
+      total_bias: totalBias,
+    },
+    selection:
+      direction === 'HOME' || direction === 'AWAY' || direction === 'OVER' || direction === 'UNDER'
+        ? {
+            side: direction,
+            team: direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : undefined,
+          }
+        : undefined,
+    reason_codes: Array.from(new Set(reasonCodes)),
+    tags,
+    // Canonical fields (preferred)
+    classification: (decision.classification as 'BASE' | 'LEAN' | 'PASS') || undefined,
+    action: (decision.action as 'FIRE' | 'HOLD' | 'PASS') || undefined,
+    pass_reason_code: decision.play?.pass_reason_code ?? null,
+    // Legacy compatibility (keep until UI migration complete)
+    status: forcedPass || (resolvedMarketType === 'TOTAL' && totalBias !== 'OK') 
+      ? 'PASS' 
+      : classificationToLegacyStatus(decision.classification, decision.action),
     market,
     pick,
     lean: direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : direction,
@@ -444,8 +702,25 @@ function buildPlay(
  */
 export function transformToGameCard(game: GameData): GameCard {
   // Convert plays to drivers and dedupe
-  const rawDrivers = game.plays.map(playToDriver);
+  const rawDrivers = game.plays.filter(isPlayItem).map(playToDriver);
   const drivers = deduplicateDrivers(rawDrivers);
+  const evidence: EvidenceItem[] = game.plays
+    .filter(isEvidenceItem)
+    .map((play, index) => ({
+      id: `${game.gameId}:evidence:${play.driverKey || play.cardType || index}`,
+      cardType: play.cardType,
+      cardTitle: play.cardTitle,
+      reasoning: play.reasoning,
+      driverKey: play.driverKey,
+      selection: play.selection?.side
+        ? {
+            side: play.selection.side as 'OVER' | 'UNDER' | 'HOME' | 'AWAY' | 'FAV' | 'DOG' | 'NONE',
+            team: play.selection.team,
+          }
+        : undefined,
+      aggregation_key: play.aggregation_key,
+      evidence_for_play_id: play.evidence_for_play_id,
+    }));
   
   // Build canonical play object
   const play = buildPlay(game, drivers);
@@ -467,6 +742,7 @@ export function transformToGameCard(game: GameData): GameCard {
     markets: buildMarkets(game.odds),
     play,
     drivers,
+    evidence,
     tags: initialTags,
   };
 }

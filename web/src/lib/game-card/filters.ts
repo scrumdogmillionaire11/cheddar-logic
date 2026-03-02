@@ -5,11 +5,25 @@
 
 import type { GameCard, Sport, Market, DriverTier, ExpressionStatus } from '../types/game-card';
 import { GAME_TAGS } from '../types/game-card';
+import { getPlayDisplayAction } from './decision';
 
 /**
  * Sort modes for game cards
  */
 export type SortMode = 'start_time' | 'odds_updated' | 'signal_strength' | 'pick_score';
+
+export type FilterDebugFlags = {
+  sport: boolean;
+  timeWindow: boolean;
+  oddsFreshness: boolean;
+  market: boolean;
+  actionability: boolean;
+  driverStrength: boolean;
+  riskFlags: boolean;
+  search: boolean;
+  hasPicks: boolean;
+  clearPlay: boolean;
+};
 
 /**
  * Filter configuration
@@ -56,7 +70,7 @@ export interface GameFilters {
  */
 export const DEFAULT_FILTERS: GameFilters = {
   sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER'],
-   statuses: ['FIRE', 'WATCH'],
+  statuses: ['FIRE', 'WATCH'],
   markets: ['ML', 'SPREAD', 'TOTAL'],
   onlyGamesWithPicks: false,
    hasClearPlay: false,
@@ -110,30 +124,112 @@ function filterByOddsFreshness(card: GameCard, filters: GameFilters): boolean {
 }
 
 /**
+ * Normalize market string to canonical format
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function normalizeMarket(m?: string): string {
+  if (!m) return 'INFO';
+  const upper = m.toUpperCase();
+  if (upper === 'ML' || upper === 'H2H') return 'MONEYLINE';
+  if (upper === 'PUCKLINE') return 'SPREAD';
+  if (upper === 'TEAM_TOTAL') return 'TOTAL';
+  return upper;
+}
+
+/**
+ * Map canonical market type to legacy Market enum for comparison
+ */
+function canonicalToLegacyMarket(canonical?: string): Market | null {
+  if (!canonical) return null;
+  const upper = canonical.toUpperCase();
+  if (upper === 'MONEYLINE' || upper === 'ML') return 'ML';
+  if (upper === 'SPREAD' || upper === 'PUCKLINE') return 'SPREAD';
+  if (upper === 'TOTAL' || upper === 'TEAM_TOTAL') return 'TOTAL';
+  if (upper === 'INFO') return null; // INFO items don't count as bettable markets
+  return 'UNKNOWN';
+}
+
+/**
  * Filter by market availability
+ * Checks both canonical market_type and legacy market fields
+ * 
+ * Special rule for Full Slate (when PASS is included):
+ * - Allow PASS plays through even if their market doesn't match the filter
  */
 function filterByMarketAvailability(card: GameCard, filters: GameFilters): boolean {
   if (filters.markets.length === 0) return true;
 
-  const playMarket = card.play?.market;
-  if (playMarket && playMarket !== 'NONE') {
-    return filters.markets.includes(playMarket);
+  const includePass = filters.statuses.includes('PASS');
+  const displayAction = getPlayDisplayAction(card.play);
+  
+  // Full Slate lenient mode: let PASS plays through regardless of market
+  if (includePass && displayAction === 'PASS') {
+    return true;
   }
 
+  // Check play's canonical market_type first
+  const canonicalMarket = canonicalToLegacyMarket(card.play?.market_type);
+  if (canonicalMarket && filters.markets.includes(canonicalMarket)) {
+    return true;
+  }
+
+  // Fallback to legacy play.market
+  const playMarket = card.play?.market;
+  if (playMarket && playMarket !== 'NONE' && filters.markets.includes(playMarket)) {
+    return true;
+  }
+
+  // Check drivers as final fallback
   return card.drivers.some(d => filters.markets.includes(d.market));
 }
 
 /**
  * Filter by actionability status
+ * 
+ * Special rule for Full Slate (when PASS is included):
+ * - If statuses includes PASS, show any game with a play object OR blocked totals
+ * - Otherwise, require exact status match
  */
 function filterByActionability(card: GameCard, filters: GameFilters): boolean {
   if (filters.statuses.length === 0) return true;
 
-  let status: ExpressionStatus = card.play?.status || card.expressionChoice?.status || 'PASS';
-  if (!card.play?.status && !card.expressionChoice?.status) {
-    if (card.tags.includes(GAME_TAGS.HAS_FIRE)) status = 'FIRE';
-    else if (card.tags.includes(GAME_TAGS.HAS_WATCH)) status = 'WATCH';
-    else status = 'PASS';
+  const includePass = filters.statuses.includes('PASS');
+  const displayAction = getPlayDisplayAction(card.play);
+  
+  // Full Slate mode: include any game with a play or blocked totals
+  if (includePass) {
+    const hasPlay = card.play !== undefined;
+    const hasBlockedTotals = Boolean(
+      card.play?.market_type === 'TOTAL' &&
+      displayAction === 'PASS' &&
+      (card.play?.reason_codes?.includes('PASS_TOTAL_INSUFFICIENT_DATA') ||
+        card.play?.tags?.includes('CONSISTENCY_BLOCK_TOTALS'))
+    );
+    const hasDrivers = card.drivers.length > 0;
+    
+    if (hasPlay || hasBlockedTotals || hasDrivers) {
+      return true;
+    }
+  }
+  
+  // Standard mode: Check displayAction against filter
+  // Map display action to filter status names
+  let status: ExpressionStatus = 'PASS';
+  if (displayAction === 'FIRE') {
+    status = 'FIRE';
+  } else if (displayAction === 'HOLD') {
+    status = 'WATCH';
+  }
+  
+  // Also check legacy expression choice if no play
+  if (!displayAction || displayAction === 'PASS') {
+    if (card.expressionChoice?.status) {
+      status = card.expressionChoice.status;
+    } else if (card.tags.includes(GAME_TAGS.HAS_FIRE)) {
+      status = 'FIRE';
+    } else if (card.tags.includes(GAME_TAGS.HAS_WATCH)) {
+      status = 'WATCH';
+    }
   }
   
   return filters.statuses.includes(status);
@@ -218,6 +314,21 @@ function filterByClearPlay(card: GameCard, filters: GameFilters): boolean {
   if (!filters.hasClearPlay) return true;
 
   return card.play !== undefined && card.play.market !== 'NONE' && card.play.pick !== 'NO PLAY';
+}
+
+export function getFilterDebugFlags(card: GameCard, filters: GameFilters): FilterDebugFlags {
+  return {
+    sport: filterBySport(card, filters),
+    timeWindow: filterByTimeWindow(card, filters),
+    oddsFreshness: filterByOddsFreshness(card, filters),
+    market: filterByMarketAvailability(card, filters),
+    actionability: filterByActionability(card, filters),
+    driverStrength: filterByDriverStrength(card, filters),
+    riskFlags: filterByRiskFlags(card, filters),
+    search: filterBySearch(card, filters),
+    hasPicks: filterByHasPicks(card, filters),
+    clearPlay: filterByClearPlay(card, filters),
+  };
 }
 
 /**

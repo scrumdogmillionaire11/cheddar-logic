@@ -5,7 +5,8 @@ const {
   computeConflict,
   computeCoverage,
   marginToWinProbability,
-  oddsToProbability
+  oddsToProbability,
+  edgeCalculator
 } = require('@cheddar-logic/models');
 
 const { projectNHL, projectNBA } = require('./projections');
@@ -14,6 +15,7 @@ const { analyzePaceSynergy } = require('./nba-pace-synergy');
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
+
 
 function toNumber(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -335,9 +337,17 @@ function computeNHLMarketDecisions(oddsSnapshot) {
       min_coverage_fire: 0.60,
       min_coverage_watch: 0.50
     },
-    edgeResolver: () => {
+    edgeResolver: (side) => {
       if (totalLine === null || projectedTotal === null) return null;
-      return Number(Math.abs(projectedTotal - totalLine).toFixed(2));
+      const totalEdge = edgeCalculator.computeTotalEdge({
+        projectionTotal: projectedTotal,
+        totalLine,
+        totalPriceOver: toNumber(oddsSnapshot?.total_price_over),
+        totalPriceUnder: toNumber(oddsSnapshot?.total_price_under),
+        sigmaTotal: edgeCalculator.getSigmaDefaults('NHL')?.total ?? 1.8,
+        isPredictionOver: side === 'OVER'
+      });
+      return totalEdge.edge;
     },
     fairPriceResolver: null,
     lineResolver: () => totalLine,
@@ -445,9 +455,17 @@ function computeNHLMarketDecisions(oddsSnapshot) {
       min_coverage_fire: 0.60,
       min_coverage_watch: 0.50
     },
-    edgeResolver: () => {
+    edgeResolver: (side) => {
       if (projectedMargin === null || spreadHome === null) return null;
-      return Number(Math.abs(Math.abs(projectedMargin) - Math.abs(spreadHome)).toFixed(2));
+      const spreadEdge = edgeCalculator.computeSpreadEdge({
+        projectionMarginHome: projectedMargin,
+        spreadLine: spreadHome,
+        spreadPriceHome: toNumber(oddsSnapshot?.spread_price_home),
+        spreadPriceAway: toNumber(oddsSnapshot?.spread_price_away),
+        sigmaMargin: edgeCalculator.getSigmaDefaults('NHL')?.margin ?? 1.8,
+        isPredictionHome: side === 'HOME'
+      });
+      return spreadEdge.edge;
     },
     fairPriceResolver: null,
     lineResolver: (side) => {
@@ -603,7 +621,18 @@ function computeNBAMarketDecisions(oddsSnapshot) {
     drivers: totalDrivers,
     penalties: [{ key: 'total_fragility', value: totalFragilityPenalty }],
     thresholds: { t_dir: 0.12, t_fire: 0.38, t_watch: 0.20, conflict_cap: 0.25, min_coverage_fire: 0.55, min_coverage_watch: 0.45 },
-    edgeResolver: () => (projectedTotal !== null && totalLine !== null) ? Number(Math.abs(projectedTotal - totalLine).toFixed(2)) : null,
+      edgeResolver: (side) => {
+        if (projectedTotal === null || totalLine === null) return null;
+        const totalEdge = edgeCalculator.computeTotalEdge({
+          projectionTotal: projectedTotal,
+          totalLine,
+          totalPriceOver: toNumber(oddsSnapshot?.total_price_over),
+          totalPriceUnder: toNumber(oddsSnapshot?.total_price_under),
+          sigmaTotal: edgeCalculator.getSigmaDefaults('NBA')?.total ?? 14,
+          isPredictionOver: side === 'OVER'
+        });
+        return totalEdge.edge;
+      },
     fairPriceResolver: null,
     lineResolver: () => totalLine,
     priceResolver: null,
@@ -661,7 +690,18 @@ function computeNBAMarketDecisions(oddsSnapshot) {
     drivers: spreadDrivers,
     penalties: [{ key: 'bad_number', value: spreadBadNumberPenalty }],
     thresholds: { t_dir: 0.12, t_fire: 0.42, t_watch: 0.22, conflict_cap: 0.22, min_coverage_fire: 0.55, min_coverage_watch: 0.45 },
-    edgeResolver: () => (projectedMargin !== null && spreadHome !== null) ? Number(Math.abs(Math.abs(projectedMargin) - Math.abs(spreadHome)).toFixed(2)) : null,
+      edgeResolver: (side) => {
+        if (projectedMargin === null || spreadHome === null) return null;
+        const spreadEdge = edgeCalculator.computeSpreadEdge({
+          projectionMarginHome: projectedMargin,
+          spreadLine: spreadHome,
+          spreadPriceHome: toNumber(oddsSnapshot?.spread_price_home),
+          spreadPriceAway: toNumber(oddsSnapshot?.spread_price_away),
+          sigmaMargin: edgeCalculator.getSigmaDefaults('NBA')?.margin ?? 12,
+          isPredictionHome: side === 'HOME'
+        });
+        return spreadEdge.edge;
+      },
     fairPriceResolver: null,
     lineResolver: (side) => spreadHome !== null ? (side === 'HOME' ? spreadHome : -spreadHome) : null,
     priceResolver: null,
@@ -751,9 +791,33 @@ function selectExpressionChoice(decisions) {
 }
 
 function buildMarketPayload({ decisions, expressionChoice }) {
-  if (!expressionChoice) return {};
+  const totalDecision = decisions?.TOTAL;
+  const totalEligibleDrivers = (totalDecision?.drivers || []).filter((driver) => driver.eligible).length;
+  const hasTotalLine = totalDecision?.best_candidate?.line !== undefined && totalDecision?.best_candidate?.line !== null;
+  const hasTotalEdge = typeof totalDecision?.edge === 'number';
+  const hasTotalCoverage = typeof totalDecision?.coverage === 'number' && totalDecision.coverage >= 0.45;
+  const totalBias =
+    totalDecision &&
+    totalDecision.status !== DecisionStatus.PASS &&
+    totalEligibleDrivers > 0 &&
+    hasTotalLine &&
+    hasTotalEdge &&
+    hasTotalCoverage
+      ? 'OK'
+      : 'INSUFFICIENT_DATA';
+
+  if (!expressionChoice) {
+    return {
+      consistency: {
+        total_bias: totalBias
+      }
+    };
+  }
   const chosen = expressionChoice.chosen;
   return {
+    consistency: {
+      total_bias: totalBias
+    },
     expression_choice: {
       chosen_market: expressionChoice.chosen_market,
       pick: formatPick(chosen),

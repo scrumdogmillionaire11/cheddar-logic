@@ -494,3 +494,30 @@ export function getCardDecisionModel(card: GameCard, odds: Odds | null): Decisio
     allDrivers: drivers,
   };
 }
+
+/**
+ * Get display action from play object, respecting canonical fields with fallback to legacy
+ * 
+ * This is the single source of truth for UI filtering and display.
+ * Uses the new canonical 'action' field if available, falls back to legacy 'status' field.
+ * 
+ * @param play - Play object from GameCard
+ * @returns 'FIRE' | 'HOLD' | 'PASS'
+ */
+export function getPlayDisplayAction(play?: any): 'FIRE' | 'HOLD' | 'PASS' {
+  if (!play) {
+    return 'PASS';
+  }
+
+  // Prefer canonical action field
+  if (play?.action === 'FIRE' || play?.action === 'HOLD' || play?.action === 'PASS') {
+    return play.action;
+  }
+
+  // Fallback to legacy status field for backward compatibility
+  const status = String(play?.status ?? '').toUpperCase();
+  if (status.includes('FIRE')) return 'FIRE';
+  if (status.includes('WATCH') || status.includes('HOLD')) return 'HOLD';
+  
+  return 'PASS';
+}

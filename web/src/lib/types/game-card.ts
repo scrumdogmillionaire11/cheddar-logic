@@ -1,17 +1,115 @@
 /**
  * Normalized game card types for filtering
  * Based on FILTER-FEATURE.md design
+ *
+ * CANONICAL MARKET TYPES (used throughout system, never guessed)
+ * MONEYLINE, SPREAD, TOTAL, PUCKLINE, TEAM_TOTAL, PROP, INFO
  */
 
 export type Sport = 'NHL' | 'NBA' | 'NCAAM' | 'SOCCER' | 'UNKNOWN';
+
+// CANONICAL market types — authoritative, not inferred
+export type CanonicalMarketType = 'MONEYLINE' | 'SPREAD' | 'TOTAL' | 'PUCKLINE' | 'TEAM_TOTAL' | 'PROP' | 'INFO';
+
+// Legacy market types for UI compatibility
 export type Market = 'TOTAL' | 'SPREAD' | 'ML' | 'RISK' | 'UNKNOWN';
+
 export type DriverTier = 'BEST' | 'SUPER' | 'WATCH';
 export type Direction = 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';
+export type SelectionSide = 'OVER' | 'UNDER' | 'HOME' | 'AWAY' | 'FAV' | 'DOG' | 'NONE';
+
 export type ExpressionStatus = 'FIRE' | 'WATCH' | 'PASS';
+export type ActionStatus = 'BASE' | 'LEAN' | 'PASS' | 'FIRE_NOW' | 'HOLD'; // NHL totals: FIRE_NOW | HOLD
+
 export type TruthStatus = 'STRONG' | 'MEDIUM' | 'WEAK';
 export type ValueStatus = 'GOOD' | 'OK' | 'BAD';
 export type BetAction = 'BET' | 'NO_PLAY';
 export type PriceFlag = 'PRICE_TOO_STEEP' | 'COINFLIP' | 'CHASED_LINE' | 'VIG_HEAVY';
+
+// Reason codes for PASS status: deterministic blockers
+export type PassReasonCode =
+  | 'PASS_MISSING_KIND'
+  | 'PASS_MISSING_MARKET_TYPE'
+  | 'PASS_MISSING_EDGE'
+  | 'PASS_MISSING_LINE'
+  | 'PASS_MISSING_SELECTION'
+  | 'PASS_MISSING_PRICE'
+  | 'PASS_NO_MARKET_PRICE'
+  | 'PASS_UNREPAIRABLE_LEGACY'
+  | 'PASS_TOTAL_INSUFFICIENT_DATA'
+  | 'PASS_NO_QUALIFIED_PLAYS'
+  | 'INSUFFICIENT_DATA'
+  | 'MARKET_STALE_EDGE'
+  | 'PRICE_TOO_STEEP'
+  | 'MISSING_PRICE_EDGE'
+  | 'NO_VALUE_AT_PRICE'
+  | 'NO_DECISION'
+  | 'KEY_NUMBER_FRAGILITY_TOTAL'
+  | 'EDGE_FOUND_TOTAL'
+  | 'REST_EDGE_SIDE'
+  | 'WELCOME_HOME_FADE'
+  | 'MATCHUP_EDGE_SIDE'
+  | 'EDGE_FOUND_SIDE'
+  | 'EDGE_FOUND'
+  | 'REPAIRED_LEGACY_CARD'
+  | 'LEGACY_TITLE_INFERENCE_USED';
+
+export type RiskTag = 'RISK_BLOWOUT' | 'RISK_FRAGILITY' | 'RISK_KEY_NUMBER' | 'RISK_STALE' | 'LEGACY_REPAIR';
+
+/**
+ * Canonical selection (bet side/direction)
+ */
+export interface Selection {
+  side: SelectionSide;
+  team?: string; // optional team name or identifier
+}
+
+/**
+ * Canonical model metadata
+ */
+export interface ModelMetadata {
+  projection?: number; // e.g., model total
+  edge?: number; // model - market
+  confidence?: number; // 0..1
+  sigma?: number; // optional
+}
+
+/**
+ * Canonical API Play — all fields required at emission, validates present during transform
+ */
+export interface CanonicalApiPlay {
+  // Authoritative market classification
+  market_type: CanonicalMarketType; // MONEYLINE, SPREAD, TOTAL, INFO, PUCKLINE, etc.
+  
+  // Selection (what we're betting on)
+  selection: Selection;
+  
+  // Market data
+  line?: number; // spread/total/team total line
+  price?: number; // American odds
+  book?: string; // sportsbook identifier
+  
+  // Model data
+  model: ModelMetadata;
+  
+  // Deterministic messaging
+  tags?: string[]; // e.g. ["RISK_BLOWOUT", "ACCELERANT_SCORE"]
+  reason_codes?: (PassReasonCode | string)[]; // e.g. ["PASS_MISSING_EDGE", "LEGACY_REPAIR"]
+  
+  // Repair metadata (if API applied inference)
+  repair_applied?: boolean;
+  repair_rule_id?: string;
+  
+  // Legacy fields (for backward compat, but not authoritative)
+  cardTitle?: string;
+  prediction?: Direction;
+  confidence?: number;
+  tier?: DriverTier | null;
+  reasoning?: string;
+  evPassed?: boolean;
+  driverKey?: string;
+  cardType?: string;
+}
 
 /**
  * Normalized driver row with stable key and deduped data
@@ -37,6 +135,17 @@ export interface GameMarkets {
   total?: { line: number; over?: number; under?: number };
 }
 
+export interface EvidenceItem {
+  id: string;
+  cardType: string;
+  cardTitle: string;
+  reasoning: string;
+  driverKey: string;
+  selection?: Selection;
+  aggregation_key?: string;
+  evidence_for_play_id?: string;
+}
+
 /**
  * Expression choice (orchestration result)
  */
@@ -49,9 +158,36 @@ export interface ExpressionChoice {
 }
 
 /**
- * Canonical play decision
+ * Canonical play decision — merges legacy and canonical fields
+ * 
+ * CANONICAL FIELDS (preferred if present):
+ *  - market_type (MONEYLINE, SPREAD, TOTAL, etc.)
+ *  - selection (explicit side + optional team)
+ *  - reason_codes (deterministic blockers)
+ *  - tags (risk tags, inference markers, etc.)
+ * 
+ * LEGACY FIELDS (for backward compat during migration):
+ *  - market (legacy: ML, SPREAD, TOTAL, RISK, UNKNOWN)
+ *  - side (legacy direction)
  */
 export interface Play {
+  // Canonical fields (preferred)
+  market_type?: CanonicalMarketType;
+  selection?: Selection;
+  reason_codes?: (PassReasonCode | string)[];
+  tags?: (RiskTag | string)[];
+  kind?: 'PLAY' | 'EVIDENCE';
+  evidence_count?: number;
+  consistency?: {
+    total_bias?: 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN';
+  };
+  
+  // Canonical decision fields (new)
+  classification?: 'BASE' | 'LEAN' | 'PASS';
+  action?: 'FIRE' | 'HOLD' | 'PASS';
+  pass_reason_code?: string | null;
+  
+  // Legacy fields (kept for compat)
   status: ExpressionStatus;
   market: Market | 'NONE';
   pick: string;
@@ -90,6 +226,7 @@ export interface GameCard {
   play?: Play;
   expressionChoice?: ExpressionChoice;
   drivers: DriverRow[];
+  evidence?: EvidenceItem[];
   tags: string[]; // derived for fast filtering
 }
 

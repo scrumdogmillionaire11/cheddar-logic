@@ -33,6 +33,7 @@ export const FILTER_PRESETS: FilterPreset[] = [
     filters: {
       ...DEFAULT_FILTERS,
       statuses: ['FIRE', 'WATCH', 'PASS'],
+      markets: ['ML', 'SPREAD', 'TOTAL'],
     },
   },
   {
