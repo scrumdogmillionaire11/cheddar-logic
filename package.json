@@ -2,10 +2,12 @@
   "name": "cheddar-logic-root",
   "private": true,
   "scripts": {
-    "lint": "npm --prefix web run lint && eslint . --ext .js,.cjs,.mjs,.ts,.tsx",
-    "lint:fix": "npm --prefix web run lint && eslint . --ext .js,.cjs,.mjs,.ts,.tsx --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "lint:web": "npm --prefix web run lint",
+    "lint:repo": "eslint \"apps/worker/src/**/*.{js,ts}\" \"packages/**/src/**/*.{js,ts}\" --ext .js,.ts",
+    "lint": "npm run lint:web && npm run lint:repo",
+    "lint:fix": "npm run lint:repo -- --fix",
+    "format:check": "prettier --check \"apps/worker/src/**/*\" \"packages/**/src/**/*\" \"web/src/**/*\"",
+    "format": "prettier --write \"apps/worker/src/**/*\" \"packages/**/src/**/*\" \"web/src/**/*\""
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
