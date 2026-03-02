@@ -21,6 +21,7 @@ next-env.d.ts
 .env.development.local
 .env.test.local
 .env.production.local
+.env.production
 
 # IDE and editor files
 .vscode/settings.json
