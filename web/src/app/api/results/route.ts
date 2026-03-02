@@ -259,9 +259,6 @@ export async function GET(request: NextRequest) {
     const ledgerRows = ledger.map((row) => {
       const parsed = safeJsonParse(row.payload_data);
       const payload = parsed.data as Record<string, unknown> | null;
-      const prediction = payload && typeof payload.prediction === 'string'
-        ? payload.prediction
-        : null;
       const tier = payload && typeof payload.tier === 'string' ? payload.tier : null;
       const market = payload && typeof payload.recommended_bet_type === 'string'
         ? payload.recommended_bet_type
@@ -275,25 +272,43 @@ export async function GET(request: NextRequest) {
         ? payload.away_team
         : null;
 
-      // price — extracted from odds_context based on prediction
+      // Derive display prediction from recommendation.type (authoritative BET decision).
+      // Falls back to raw prediction field for legacy cards without recommendation.type.
+      const recType = payload
+        && typeof (payload.recommendation as Record<string, unknown> | null | undefined)?.['type'] === 'string'
+        ? ((payload.recommendation as Record<string, unknown>)['type'] as string)
+        : null;
+
+      let prediction: string | null = null;
+      if (recType && recType !== 'PASS') {
+        if (recType === 'ML_HOME' || recType === 'SPREAD_HOME') prediction = 'HOME';
+        else if (recType === 'ML_AWAY' || recType === 'SPREAD_AWAY') prediction = 'AWAY';
+        else if (recType === 'TOTAL_OVER') prediction = 'OVER';
+        else if (recType === 'TOTAL_UNDER') prediction = 'UNDER';
+      } else if (!recType && payload && typeof payload.prediction === 'string') {
+        prediction = payload.prediction;
+      }
+
+      // price — extracted from odds_context based on recommendation.type (preferred) or prediction (legacy)
       let price: number | null = null;
       if (payload && payload.odds_context && typeof payload.odds_context === 'object') {
         const oddsCtx = payload.odds_context as Record<string, unknown>;
-        if (prediction === 'HOME') {
-          const val = oddsCtx.h2h_home;
-          price = typeof val === 'number' ? val : null;
+        if (recType === 'ML_HOME') {
+          price = typeof oddsCtx.h2h_home === 'number' ? oddsCtx.h2h_home : null;
+        } else if (recType === 'ML_AWAY') {
+          price = typeof oddsCtx.h2h_away === 'number' ? oddsCtx.h2h_away : null;
+        } else if (recType === 'TOTAL_OVER' || recType === 'TOTAL_UNDER') {
+          price = typeof oddsCtx.total === 'number' ? oddsCtx.total : null;
+        } else if (recType === 'SPREAD_HOME') {
+          price = typeof oddsCtx.spread_home === 'number' ? oddsCtx.spread_home : null;
+        } else if (recType === 'SPREAD_AWAY') {
+          price = typeof oddsCtx.spread_away === 'number' ? oddsCtx.spread_away : null;
+        } else if (prediction === 'HOME') {
+          price = typeof oddsCtx.h2h_home === 'number' ? oddsCtx.h2h_home : null;
         } else if (prediction === 'AWAY') {
-          const val = oddsCtx.h2h_away;
-          price = typeof val === 'number' ? val : null;
+          price = typeof oddsCtx.h2h_away === 'number' ? oddsCtx.h2h_away : null;
         } else if (prediction === 'OVER' || prediction === 'UNDER') {
-          const val = oddsCtx.total;
-          price = typeof val === 'number' ? val : null;
-        } else if (typeof prediction === 'string' && prediction.startsWith('SPREAD_HOME')) {
-          const val = oddsCtx.spread_home;
-          price = typeof val === 'number' ? val : null;
-        } else if (typeof prediction === 'string' && prediction.startsWith('SPREAD_AWAY')) {
-          const val = oddsCtx.spread_away;
-          price = typeof val === 'number' ? val : null;
+          price = typeof oddsCtx.total === 'number' ? oddsCtx.total : null;
         }
       }
 
@@ -369,10 +384,15 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     console.error('[API] Error fetching results:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    let errorMessage = 'Unknown error';
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    }
     return NextResponse.json(
-      { success: false, error: message },
-      { status: 500 }
+      { success: false, error: errorMessage },
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   } finally {
     if (db) {
