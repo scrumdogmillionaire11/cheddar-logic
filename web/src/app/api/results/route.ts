@@ -55,6 +55,39 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const limit = clampNumber(searchParams.get('limit'), 50, 1, 200);
 
+    // Deduplication: one card per game per market (moneyline/total),
+    // highest confidence, excluding PASS recommendations.
+    const dedupedIdRows = db.prepare(`
+      SELECT cr2.id
+      FROM card_results cr2
+      INNER JOIN card_payloads cp2 ON cr2.card_id = cp2.id
+      INNER JOIN (
+        SELECT cr3.game_id, cr3.recommended_bet_type,
+               MAX(CAST(json_extract(cp3.payload_data, '$.confidence_pct') AS REAL)) AS max_conf
+        FROM card_results cr3
+        INNER JOIN card_payloads cp3 ON cr3.card_id = cp3.id
+        WHERE cr3.status = 'settled'
+          AND json_extract(cp3.payload_data, '$.recommendation.type') != 'PASS'
+        GROUP BY cr3.game_id, cr3.recommended_bet_type
+      ) best ON cr2.game_id = best.game_id
+            AND cr2.recommended_bet_type = best.recommended_bet_type
+            AND CAST(json_extract(cp2.payload_data, '$.confidence_pct') AS REAL) = best.max_conf
+      WHERE cr2.status = 'settled'
+        AND json_extract(cp2.payload_data, '$.recommendation.type') != 'PASS'
+      GROUP BY cr2.game_id, cr2.recommended_bet_type
+    `).all() as { id: string }[];
+    const dedupedIdSet = new Set(dedupedIdRows.map((r) => r.id));
+    const placeholders = dedupedIdRows.map(() => '?').join(',');
+
+    if (dedupedIdRows.length === 0) {
+      return NextResponse.json(
+        { success: true, data: { summary: { totalCards: 0, settledCards: 0, wins: 0, losses: 0, pushes: 0, totalPnlUnits: 0, winRate: 0, avgPnl: 0 }, segments: [], ledger: [] } },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const ids = dedupedIdRows.map((r) => r.id);
+
     const summary = db.prepare(`
       SELECT
         COUNT(*) AS total_cards,
@@ -65,23 +98,23 @@ export async function GET(request: NextRequest) {
         SUM(COALESCE(cr.pnl_units, 0)) AS total_pnl_units
       FROM card_results cr
       INNER JOIN card_payloads cp ON cr.card_id = cp.id
-      WHERE cp.payload_data IS NOT NULL AND cp.payload_data != '' AND cr.status = 'settled'
-    `).get() as SummaryRow;
+      WHERE cr.id IN (${placeholders})
+    `).get(...ids) as SummaryRow;
 
     const segments = db.prepare(`
       SELECT
         cr.sport,
-        SUM(CASE WHEN cr.status = 'settled' THEN 1 ELSE 0 END) AS settled_cards,
+        COUNT(*) AS settled_cards,
         SUM(CASE WHEN cr.result = 'win' THEN 1 ELSE 0 END) AS wins,
         SUM(CASE WHEN cr.result = 'loss' THEN 1 ELSE 0 END) AS losses,
         SUM(CASE WHEN cr.result = 'push' THEN 1 ELSE 0 END) AS pushes,
         SUM(COALESCE(cr.pnl_units, 0)) AS total_pnl_units
       FROM card_results cr
       INNER JOIN card_payloads cp ON cr.card_id = cp.id
-      WHERE cp.payload_data IS NOT NULL AND cp.payload_data != '' AND cr.status = 'settled'
+      WHERE cr.id IN (${placeholders})
       GROUP BY cr.sport
       ORDER BY cr.sport ASC
-    `).all() as SegmentRow[];
+    `).all(...ids) as SegmentRow[];
 
     const ledger = db.prepare(`
       SELECT
@@ -96,10 +129,10 @@ export async function GET(request: NextRequest) {
         cp.payload_data
       FROM card_results cr
       INNER JOIN card_payloads cp ON cr.card_id = cp.id
-      WHERE cr.status = 'settled'
+      WHERE cr.id IN (${placeholders})
       ORDER BY cr.settled_at DESC
-      LIMIT ?
-    `).all(limit) as LedgerRow[];
+      LIMIT ${limit}
+    `).all(...ids) as LedgerRow[];
 
     const ledgerRows = ledger.map((row) => {
       const parsed = safeJsonParse(row.payload_data);
