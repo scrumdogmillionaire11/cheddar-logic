@@ -124,21 +124,34 @@ function listDbFiles(directory) {
 }
 
 function chooseBestDatabasePath(primaryPath) {
+  const primaryDir = path.dirname(primaryPath);
+  const configuredDataDir = normalizeConfiguredPath(process.env.CHEDDAR_DATA_DIR);
+
   const seedCandidates = [
     primaryPath,
     normalizeConfiguredPath(process.env.CHEDDAR_DB_PATH),
     normalizeConfiguredPath(path.join(process.env.CHEDDAR_DATA_DIR || '', 'cheddar.db')),
+    normalizeConfiguredPath(path.join(primaryDir, 'backups', path.basename(primaryPath))),
+    configuredDataDir ? path.join(configuredDataDir, 'backups', 'cheddar.db') : null,
+    '/opt/data/backups/cheddar.db',
     '/opt/data/cheddar.db',
     '/opt/cheddar-logic/packages/data/cheddar.db',
+    '/opt/cheddar-logic/packages/data/backups/cheddar.db',
     '/tmp/cheddar-logic/cheddar.db',
+    '/tmp/cheddar-logic/backups/cheddar.db',
   ].filter(Boolean);
 
   const searchDirs = [
-    path.dirname(primaryPath),
+    primaryDir,
+    path.join(primaryDir, 'backups'),
     normalizeConfiguredPath(process.env.CHEDDAR_DATA_DIR),
+    configuredDataDir ? path.join(configuredDataDir, 'backups') : null,
     '/opt/data',
+    '/opt/data/backups',
     '/opt/cheddar-logic/packages/data',
+    '/opt/cheddar-logic/packages/data/backups',
     '/tmp/cheddar-logic',
+    '/tmp/cheddar-logic/backups',
   ].filter(Boolean);
 
   const candidates = [
