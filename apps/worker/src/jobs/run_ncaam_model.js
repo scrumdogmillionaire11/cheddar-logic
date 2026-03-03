@@ -361,7 +361,10 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
             applyUiActionFields(card.payloadData);
             insertCardPayload(card);
             cardsGenerated++;
-            console.log(`  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`);
+            console.log(
+              `  [ok] ${gameId} [${card.cardType}/${card.payloadData.market_type}]: ` +
+              `${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`
+            );
           }
         } catch (gameError) {
           gameErrorCount++;

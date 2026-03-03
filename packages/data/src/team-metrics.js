@@ -12,7 +12,8 @@
 
 'use strict';
 
-const { fetchTeamSchedule, fetchTeamInfo } = require('./espn-client');
+const { fetchTeamSchedule, fetchTeamInfo, fetchScoreboardEvents } = require('./espn-client');
+const { normalizeSportCode } = require('./normalize');
 
 // ---------------------------------------------------------------------------
 // Team ID Mapping Tables
@@ -204,6 +205,18 @@ const NCAAM_TEAMS = {
   'Princeton Tigers':      { id: 163,  abbr: 'PRIN' }
 };
 
+const SCOREBOARD_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const SCOREBOARD_LOOKBACK_DAYS = Number.isFinite(Number(process.env.TEAM_METRICS_SCOREBOARD_LOOKBACK_DAYS))
+  ? Number(process.env.TEAM_METRICS_SCOREBOARD_LOOKBACK_DAYS)
+  : 3;
+const SCOREBOARD_LOOKAHEAD_DAYS = Number.isFinite(Number(process.env.TEAM_METRICS_SCOREBOARD_LOOKAHEAD_DAYS))
+  ? Number(process.env.TEAM_METRICS_SCOREBOARD_LOOKAHEAD_DAYS)
+  : 4;
+
+const resolvedTeamCache = new Map();
+const scoreboardIndexCache = new Map();
+const scoreboardIndexInFlight = new Map();
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -229,6 +242,11 @@ function neutral() {
  * @returns {object}
  */
 function computeMetricsFromGames(games, sport) {
+  const normalizedSport = normalizeSportCode(
+    typeof sport === 'string' ? sport : String(sport || ''),
+    'computeMetricsFromGames'
+  ) || String(sport || '').trim().toUpperCase();
+
   if (!games || games.length === 0) return neutral();
   const scored = games.filter(g => g.pointsFor !== null && g.pointsAgainst !== null);
   if (scored.length === 0) return neutral();
@@ -245,7 +263,7 @@ function computeMetricsFromGames(games, sport) {
     : null;
 
   // pace: NBA/NCAAM rough possession proxy (null for NHL)
-  const pace = (sport === 'NBA' || sport === 'NCAAM')
+  const pace = (normalizedSport === 'NBA' || normalizedSport === 'NCAAM')
     ? parseFloat((avgPoints * 0.92).toFixed(1))
     : null;
 
@@ -261,7 +279,7 @@ function computeMetricsFromGames(games, sport) {
   };
 
   // NHL sport-specific aliases so NHL driver models can use domain-correct names
-  if (sport === 'NHL') {
+  if (normalizedSport === 'NHL') {
     base.avgGoalsFor = avgPoints;
     base.avgGoalsAgainst = avgPointsAllowed;
   }
@@ -281,11 +299,22 @@ function removeDiacritics(text) {
 }
 
 function normalizeTeamKey(teamName) {
-  return removeDiacritics(String(teamName || ''))
+  const normalized = removeDiacritics(String(teamName || ''))
+    .replace(/&/g, ' and ')
     .replace(/[.'\u2019]/g, '')
+    .replace(/[^A-Za-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+
+  const tokens = normalized.split(' ').filter(Boolean);
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (tokens[i] === 'st' && i > 0) {
+      tokens[i] = 'state';
+    }
+  }
+
+  return tokens.join(' ');
 }
 
 function lookupTeam(teamName, table) {
@@ -303,10 +332,150 @@ function lookupTeam(teamName, table) {
   return null;
 }
 
+function toDateKeyUtc(date) {
+  return date.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+function addScoreboardAlias(index, alias, entry) {
+  const key = normalizeTeamKey(alias);
+  if (!key || index.has(key)) return;
+  index.set(key, entry);
+}
+
+function teamEntryFromCompetitor(competitor) {
+  const team = competitor?.team;
+  if (!team?.id) return null;
+  return {
+    id: team.id,
+    abbr: team.abbreviation || null
+  };
+}
+
+function addTeamFromCompetitor(index, competitor) {
+  const entry = teamEntryFromCompetitor(competitor);
+  if (!entry) return;
+
+  const team = competitor.team;
+  addScoreboardAlias(index, team.displayName, entry);
+  addScoreboardAlias(index, team.shortDisplayName, entry);
+  if (team.location && team.name) {
+    addScoreboardAlias(index, `${team.location} ${team.name}`, entry);
+  }
+}
+
+async function buildScoreboardTeamIndex(sport, league) {
+  const now = new Date();
+  const dayKeys = [];
+  const base = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  for (let offset = -SCOREBOARD_LOOKBACK_DAYS; offset <= SCOREBOARD_LOOKAHEAD_DAYS; offset += 1) {
+    const d = new Date(base.getTime());
+    d.setUTCDate(base.getUTCDate() + offset);
+    dayKeys.push(toDateKeyUtc(d));
+  }
+
+  const options = sport === 'NCAAM' ? { groups: '50', limit: '1000' } : null;
+  const index = new Map();
+
+  for (const dayKey of dayKeys) {
+    const events = await fetchScoreboardEvents(league, dayKey, options);
+    for (const event of events || []) {
+      const competitors = event?.competitions?.[0]?.competitors || [];
+      for (const competitor of competitors) {
+        addTeamFromCompetitor(index, competitor);
+      }
+    }
+  }
+
+  return index;
+}
+
+async function getScoreboardTeamIndex(sport, league) {
+  const now = Date.now();
+  const cached = scoreboardIndexCache.get(sport);
+  if (cached && cached.expiresAt > now) {
+    return cached.index;
+  }
+
+  if (scoreboardIndexInFlight.has(sport)) {
+    return scoreboardIndexInFlight.get(sport);
+  }
+
+  const pending = (async () => {
+    const index = await buildScoreboardTeamIndex(sport, league);
+    scoreboardIndexCache.set(sport, {
+      index,
+      expiresAt: Date.now() + SCOREBOARD_CACHE_TTL_MS
+    });
+    return index;
+  })();
+
+  scoreboardIndexInFlight.set(sport, pending);
+
+  try {
+    return await pending;
+  } finally {
+    scoreboardIndexInFlight.delete(sport);
+  }
+}
+
+async function lookupTeamFromScoreboard(teamName, sport, league) {
+  const normalized = normalizeTeamKey(teamName);
+  if (!normalized) return null;
+
+  const index = await getScoreboardTeamIndex(sport, league);
+  if (!index || index.size === 0) return null;
+
+  const direct = index.get(normalized);
+  if (direct) return direct;
+
+  if (sport === 'NHL') {
+    const firstToken = normalized.split(' ')[0];
+    if (!firstToken) return null;
+    const matches = [];
+    for (const [key, val] of index.entries()) {
+      if (key.startsWith(`${firstToken} `)) {
+        matches.push(val);
+      }
+    }
+    const unique = new Map(matches.map(m => [String(m.id), m]));
+    if (unique.size === 1) {
+      return Array.from(unique.values())[0];
+    }
+  }
+
+  return null;
+}
+
+async function resolveTeamEntry(teamName, sport, table, league) {
+  if (!teamName) return null;
+
+  const cacheKey = `${sport}:${normalizeTeamKey(teamName)}`;
+  if (resolvedTeamCache.has(cacheKey)) {
+    return resolvedTeamCache.get(cacheKey);
+  }
+
+  let entry = lookupTeam(teamName, table);
+  if (!entry) {
+    entry = await lookupTeamFromScoreboard(teamName, sport, league);
+    if (entry) {
+      table[teamName] = entry;
+      console.log(`[TeamMetrics] Resolved "${teamName}" via scoreboard fallback (sport: ${sport}, id: ${entry.id})`);
+    }
+  }
+
+  resolvedTeamCache.set(cacheKey, entry || null);
+  return entry;
+}
+
 function selectTeamTable(sport) {
-  if (sport === 'NHL') return { table: NHL_TEAMS, league: 'hockey/nhl' };
-  if (sport === 'NBA') return { table: NBA_TEAMS, league: 'basketball/nba' };
-  if (sport === 'NCAAM') return { table: NCAAM_TEAMS, league: 'basketball/mens-college-basketball' };
+  const normalizedSport = normalizeSportCode(
+    typeof sport === 'string' ? sport : String(sport || ''),
+    'selectTeamTable'
+  ) || String(sport || '').trim().toUpperCase();
+
+  if (normalizedSport === 'NHL') return { table: NHL_TEAMS, league: 'hockey/nhl' };
+  if (normalizedSport === 'NBA') return { table: NBA_TEAMS, league: 'basketball/nba' };
+  if (normalizedSport === 'NCAAM') return { table: NCAAM_TEAMS, league: 'basketball/mens-college-basketball' };
   return { table: null, league: null };
 }
 
@@ -337,17 +506,21 @@ async function getTeamMetrics(teamName, sport) {
 async function getTeamMetricsWithGames(teamName, sport, options = {}) {
   const includeGames = options.includeGames === true;
   const limit = Number.isFinite(options.limit) ? options.limit : 5;
+  const normalizedSport = normalizeSportCode(
+    typeof sport === 'string' ? sport : String(sport || ''),
+    'getTeamMetricsWithGames'
+  ) || String(sport || '').trim().toUpperCase();
 
   try {
-    const { table, league } = selectTeamTable(sport);
+    const { table, league } = selectTeamTable(normalizedSport);
     if (!table || !league) {
       console.warn(`[TeamMetrics] Unknown sport: ${sport}`);
       return { metrics: neutral(), teamInfo: null, games: [] };
     }
 
-    const teamEntry = lookupTeam(teamName, table);
+    const teamEntry = await resolveTeamEntry(teamName, normalizedSport, table, league);
     if (!teamEntry) {
-      console.warn(`[TeamMetrics] Unknown team: "${teamName}" (sport: ${sport})`);
+      console.warn(`[TeamMetrics] Unknown team: "${teamName}" (sport: ${normalizedSport})`);
       return { metrics: neutral(), teamInfo: null, games: [] };
     }
 
@@ -364,7 +537,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
       return { metrics: neutral(), teamInfo: null, games: [] };
     }
 
-    const metrics = computeMetricsFromGames(games || [], sport);
+    const metrics = computeMetricsFromGames(games || [], normalizedSport);
 
     if (teamInfo) {
       metrics.rank = teamInfo.rank;

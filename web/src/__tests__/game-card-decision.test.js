@@ -20,7 +20,7 @@ function buildDriver(overrides) {
 async function run() {
   const assertModule = await import('node:assert');
   const assert = assertModule.default || assertModule;
-  const { deduplicateDrivers, getCardDecisionModel } = await import('../lib/game-card/decision.js');
+  const { deduplicateDrivers, getCardDecisionModel, resolvePlayDisplayDecision } = await import('../lib/game-card/decision.js');
 
   console.log('🧪 Game Card Decision Tests');
 
@@ -31,6 +31,17 @@ async function run() {
   const deduped = deduplicateDrivers(duplicateDrivers);
   assert.strictEqual(deduped.length, 1, 'dedupe should collapse identical drivers');
   assert.strictEqual(deduped[0].tier, 'BEST', 'dedupe should keep strongest tier');
+
+  const fromBaseClassification = resolvePlayDisplayDecision({ classification: 'BASE' });
+  assert.strictEqual(fromBaseClassification.action, 'FIRE', 'BASE classification should map to FIRE action');
+  assert.strictEqual(fromBaseClassification.status, 'FIRE', 'BASE classification should map to FIRE status');
+
+  const fromLeanClassification = resolvePlayDisplayDecision({ classification: 'LEAN' });
+  assert.strictEqual(fromLeanClassification.action, 'HOLD', 'LEAN classification should map to HOLD action');
+  assert.strictEqual(fromLeanClassification.status, 'WATCH', 'LEAN classification should map to WATCH status');
+
+  const fromFireAction = resolvePlayDisplayDecision({ action: 'FIRE' });
+  assert.strictEqual(fromFireAction.classification, 'BASE', 'FIRE action should map back to BASE classification');
 
   const card = {
     id: 'card-1',

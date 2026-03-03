@@ -1117,7 +1117,7 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
   // --- Rest Advantage Driver (College-specific) ---
   if (restDaysHome !== null && restDaysAway !== null) {
     const homeB2B = restDaysHome === 0;
-    const awayB2B = restDaysAway !== 0;
+    const awayB2B = restDaysAway === 0;
 
     if (homeB2B || awayB2B) {
       let prediction, confidence, reasoning;

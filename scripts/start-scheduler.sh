@@ -47,10 +47,10 @@ fi
 
 # Start scheduler in background
 echo -e "${GREEN}✓ Starting scheduler...${NC}"
-cd "$WORKER_DIR"
+cd "$ROOT_DIR"
 
 # Run with nohup so it survives SSH disconnect
-nohup npm run scheduler > "$LOG_DIR/scheduler.log" 2>&1 &
+nohup npm --prefix "$WORKER_DIR" run scheduler > "$LOG_DIR/scheduler.log" 2>&1 &
 
 SCHEDULER_PID=$!
 sleep 2

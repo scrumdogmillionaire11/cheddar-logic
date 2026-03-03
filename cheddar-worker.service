@@ -7,14 +7,14 @@ Wants=cheddar-logic-db.service
 [Service]
 Type=simple
 User=babycheeses11
-WorkingDirectory=/opt/cheddar-logic/apps/worker
+WorkingDirectory=/opt/cheddar-logic
 Environment="NODE_ENV=production"
 Environment="DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db"
 Environment="CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db"
 Environment="CHEDDAR_DATA_DIR=/opt/cheddar-logic/packages/data"
 EnvironmentFile=/opt/cheddar-logic/.env.production
 
-ExecStart=/usr/bin/node /opt/cheddar-logic/apps/worker/src/schedulers/main.js
+ExecStart=/usr/bin/npm --prefix /opt/cheddar-logic/apps/worker run scheduler
 
 # Restart policy
 Restart=on-failure
