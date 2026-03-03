@@ -111,4 +111,21 @@ jobs:
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage
+            sleep 5
+            node -e "const u=['http://127.0.0.1:3000/api/games','http://127.0.0.1:3000/api/results?limit=20&include_orphaned=1&dedupe=0']; (async()=>{const out={}; for (const x of u){const r=await fetch(x); const j=await r.json(); out[x]={status:r.status,games:Array.isArray(j?.data)?j.data.length:undefined,ledger:Array.isArray(j?.data?.ledger)?j.data.ledger.length:undefined,summary:j?.data?.summary||null};} console.log('post_restart_snapshot', JSON.stringify(out)); const games=out[u[0]]?.games||0; const ledger=out[u[1]]?.ledger||0; if (games===0 && ledger===0){console.log('empty_local_data_detected=true'); process.exit(42);} })().catch(e=>{console.error('snapshot_error',e); process.exit(0);});" || RECOVER_EMPTY=1
+            if [ "${RECOVER_EMPTY:-0}" = "1" ]; then
+              echo "Local API empty after restart; running recovery jobs"
+              DB_PATH=/opt/data/cheddar.db
+              CHEDDAR_DB_PATH="$DB_PATH" DATABASE_PATH="$DB_PATH" npm --prefix packages/data run migrate || true
+              CHEDDAR_DB_PATH="$DB_PATH" DATABASE_PATH="$DB_PATH" npm --prefix apps/worker run job:pull-odds || true
+              CHEDDAR_DB_PATH="$DB_PATH" DATABASE_PATH="$DB_PATH" npm --prefix apps/worker run job:run-nhl-model || true
+              CHEDDAR_DB_PATH="$DB_PATH" DATABASE_PATH="$DB_PATH" npm --prefix apps/worker run job:run-nba-model || true
+              CHEDDAR_DB_PATH="$DB_PATH" DATABASE_PATH="$DB_PATH" npm --prefix apps/worker run job:run-ncaam-model || true
+              CHEDDAR_DB_PATH="$DB_PATH" DATABASE_PATH="$DB_PATH" npm --prefix apps/worker run job:settle-games || true
+              CHEDDAR_DB_PATH="$DB_PATH" DATABASE_PATH="$DB_PATH" npm --prefix apps/worker run job:settle-cards || true
+              sudo systemctl restart cheddar-worker
+              sudo systemctl restart cheddar-web
+              sleep 5
+              node -e "const u=['http://127.0.0.1:3000/api/games','http://127.0.0.1:3000/api/results?limit=20&include_orphaned=1&dedupe=0']; (async()=>{const out={}; for (const x of u){const r=await fetch(x); const j=await r.json(); out[x]={status:r.status,games:Array.isArray(j?.data)?j.data.length:undefined,ledger:Array.isArray(j?.data?.ledger)?j.data.ledger.length:undefined,summary:j?.data?.summary||null};} console.log('post_recovery_snapshot', JSON.stringify(out));})().catch(e=>{console.error('recovery_snapshot_error',e); process.exit(0);});"
+            fi
             echo "Deploy complete — worker, web, and fpl-sage restarted"
