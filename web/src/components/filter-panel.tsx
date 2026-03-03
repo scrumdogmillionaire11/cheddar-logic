@@ -6,7 +6,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { GameFilters, SortMode, ViewMode } from '@/lib/game-card/filters';
+import type { GameFilters, PropSearchTarget, SortMode, ViewMode } from '@/lib/game-card/filters';
 import { resetFilters } from '@/lib/game-card/filters';
 import type { Sport, Market, DriverTier, ExpressionStatus } from '@/lib/types/game-card';
 import { getPresetsForMode } from '@/lib/game-card/presets';
@@ -390,7 +390,7 @@ export default function FilterPanel({
               {viewMode === 'props' && 'searchTarget' in filters && (
                 <select
                   value={filters.searchTarget}
-                  onChange={(e) => updateFilters({ searchTarget: e.target.value })}
+                  onChange={(e) => updateFilters({ searchTarget: e.target.value as PropSearchTarget })}
                   className="px-2 py-1 text-xs rounded bg-surface border border-white/10 hover:border-white/20"
                 >
                   <option value="player">Player</option>
