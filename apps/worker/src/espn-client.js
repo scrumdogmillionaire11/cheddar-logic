@@ -91,4 +91,17 @@ async function fetchTeamInfo(espnLeague, teamId) {
   };
 }
 
-module.exports = { espnGet, fetchTeamSchedule, fetchTeamInfo };
+/**
+ * Fetch scoreboard events for a league and optional date.
+ * @param {string} espnLeague
+ * @param {string|null} dateStr - YYYYMMDD or null for today
+ * @returns {Promise<Array>}
+ */
+async function fetchScoreboardEvents(espnLeague, dateStr = null) {
+  const suffix = dateStr ? `?dates=${dateStr}` : '';
+  const data = await espnGet(`${espnLeague}/scoreboard${suffix}`);
+  if (!data || !Array.isArray(data.events)) return [];
+  return data.events;
+}
+
+module.exports = { espnGet, fetchTeamSchedule, fetchTeamInfo, fetchScoreboardEvents };

@@ -78,6 +78,7 @@ module.exports = {
   // Convenience exports - games
   getUpcomingGames: db.getUpcomingGames,
   upsertGame: db.upsertGame,
+  upsertGameIdMap: db.upsertGameIdMap,
 
   // Convenience exports - game_results (settlement)
   upsertGameResult: db.upsertGameResult,

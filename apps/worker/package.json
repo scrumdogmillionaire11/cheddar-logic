@@ -6,6 +6,9 @@
   "scripts": {
     "job:pull-odds": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/pull_odds_hourly.js",
     "job:pull-odds:test": "DATABASE_PATH=../../packages/data/cheddar.db node -e \"require('./src/jobs/pull_odds_hourly.js').pullOddsHourly().then(console.log).catch(console.error)\"",
+    "job:pull-schedule-ncaam": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/pull_schedule_ncaam.js",
+    "job:pull-schedule-nhl": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/pull_schedule_nhl.js",
+    "job:pull-schedule-nba": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/pull_schedule_nba.js",
     "job:run-nhl-model": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/run_nhl_model.js",
     "job:run-nhl-model:test": "DATABASE_PATH=../../packages/data/cheddar.db node -e \"require('./src/jobs/run_nhl_model.js').runNHLModel().then(console.log).catch(console.error)\"",
     "job:run-nba-model": "DATABASE_PATH=../../packages/data/cheddar.db node src/jobs/run_nba_model.js",

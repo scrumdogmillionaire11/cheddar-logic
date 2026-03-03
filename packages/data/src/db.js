@@ -16,6 +16,18 @@ const path = require('path');
 let SQL = null;
 let dbInstance = null;
 let dbPath = null;
+const warnedSportValues = new Set();
+
+function normalizeSportValue(sport, context) {
+  if (sport == null) return null;
+  const raw = String(sport);
+  const normalized = raw.trim().toLowerCase();
+  if (raw !== normalized && !warnedSportValues.has(raw)) {
+    console.warn(`[DB] Normalizing sport "${raw}" -> "${normalized}"${context ? ` (${context})` : ''}`);
+    warnedSportValues.add(raw);
+  }
+  return normalized;
+}
 
 /**
  * Initialize SQL.js (must be called once at startup)
@@ -119,7 +131,8 @@ class Statement {
       this.stmt.reset();
       return results;
     } catch (e) {
-      throw new Error(`Statement all error: ${e.message}`);
+      const errorMsg = e?.message || e?.toString() || JSON.stringify(e) || 'unknown error';
+      throw new Error(`Statement all error: ${errorMsg} | Query: ${this.query} | Params: ${JSON.stringify(params)}`);
     }
   }
 }
@@ -270,6 +283,7 @@ function markJobRunFailure(jobRunId, errorMessage) {
  */
 function insertOddsSnapshot(snapshot) {
   const db = getDatabase();
+  const normalizedSport = normalizeSportValue(snapshot.sport, 'insertOddsSnapshot');
   
   const stmt = db.prepare(`
     INSERT INTO odds_snapshots (
@@ -284,7 +298,7 @@ function insertOddsSnapshot(snapshot) {
   stmt.run(
     snapshot.id,
     snapshot.gameId,
-    snapshot.sport,
+    normalizedSport,
     snapshot.capturedAt,
     snapshot.h2hHome,
     snapshot.h2hAway,
@@ -356,6 +370,7 @@ function getLatestOdds(gameId) {
  */
 function getOddsSnapshots(sport, sinceUtc) {
   const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'getOddsSnapshots');
   
   const stmt = db.prepare(`
     SELECT * FROM odds_snapshots
@@ -363,7 +378,7 @@ function getOddsSnapshots(sport, sinceUtc) {
     ORDER BY game_id, captured_at DESC
   `);
   
-  return stmt.all(sport, sinceUtc);
+  return stmt.all(normalizedSport, sinceUtc);
 }
 
 /**
@@ -376,6 +391,7 @@ function getOddsSnapshots(sport, sinceUtc) {
  */
 function getOddsWithUpcomingGames(sport, nowUtc, horizonUtc) {
   const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'getOddsWithUpcomingGames');
   
   const stmt = db.prepare(`
     SELECT 
@@ -392,7 +408,7 @@ function getOddsWithUpcomingGames(sport, nowUtc, horizonUtc) {
     ORDER BY o.game_id, o.captured_at DESC
   `);
   
-  return stmt.all(sport, nowUtc, horizonUtc);
+  return stmt.all(normalizedSport, nowUtc, horizonUtc);
 }
 
 /**
@@ -408,6 +424,7 @@ function getOddsWithUpcomingGames(sport, nowUtc, horizonUtc) {
  */
 function upsertGame({ id, gameId, sport, homeTeam, awayTeam, gameTimeUtc, status = 'scheduled' }) {
   const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'upsertGame');
   
   const stmt = db.prepare(`
     INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
@@ -420,7 +437,89 @@ function upsertGame({ id, gameId, sport, homeTeam, awayTeam, gameTimeUtc, status
       updated_at = CURRENT_TIMESTAMP
   `);
   
-  stmt.run(id, sport, gameId, homeTeam, awayTeam, gameTimeUtc, status);
+  stmt.run(id, normalizedSport, gameId, homeTeam, awayTeam, gameTimeUtc, status);
+}
+
+/**
+ * Upsert a game ID mapping (external provider -> canonical game_id)
+ * @param {object} row - Mapping data
+ * @param {string} row.sport - Sport code (canonical lowercase)
+ * @param {string} row.provider - Provider name (e.g., 'espn')
+ * @param {string} row.externalGameId - Provider game ID
+ * @param {string} row.gameId - Canonical game ID
+ * @param {string} row.matchMethod - 'exact' | 'teams_time_fuzzy'
+ * @param {number} row.matchConfidence - 0..1
+ * @param {string} row.matchedAt - ISO 8601 timestamp
+ * @param {string|null} row.extGameTimeUtc
+ * @param {string|null} row.extHomeTeam
+ * @param {string|null} row.extAwayTeam
+ * @param {string|null} row.oddsGameTimeUtc
+ * @param {string|null} row.oddsHomeTeam
+ * @param {string|null} row.oddsAwayTeam
+ */
+function upsertGameIdMap(row) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(row.sport, 'upsertGameIdMap');
+  const provider = row.provider ? String(row.provider).trim().toLowerCase() : null;
+
+  const stmt = db.prepare(`
+    INSERT INTO game_id_map (
+      sport, provider, external_game_id, game_id,
+      match_method, match_confidence, matched_at,
+      ext_game_time_utc, ext_home_team, ext_away_team,
+      odds_game_time_utc, odds_home_team, odds_away_team
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(sport, provider, external_game_id) DO UPDATE SET
+      game_id = excluded.game_id,
+      match_method = excluded.match_method,
+      match_confidence = excluded.match_confidence,
+      matched_at = excluded.matched_at,
+      ext_game_time_utc = excluded.ext_game_time_utc,
+      ext_home_team = excluded.ext_home_team,
+      ext_away_team = excluded.ext_away_team,
+      odds_game_time_utc = excluded.odds_game_time_utc,
+      odds_home_team = excluded.odds_home_team,
+      odds_away_team = excluded.odds_away_team
+  `);
+
+  stmt.run(
+    normalizedSport,
+    provider,
+    row.externalGameId,
+    row.gameId,
+    row.matchMethod,
+    row.matchConfidence,
+    row.matchedAt,
+    row.extGameTimeUtc || null,
+    row.extHomeTeam || null,
+    row.extAwayTeam || null,
+    row.oddsGameTimeUtc || null,
+    row.oddsHomeTeam || null,
+    row.oddsAwayTeam || null
+  );
+}
+
+/**
+ * Resolve canonical game_id from external provider ID
+ * @param {string} sport - Sport code
+ * @param {string} provider - Provider name (e.g., 'espn')
+ * @param {string} externalGameId - Provider game ID
+ * @returns {object|null} Mapping row or null
+ */
+function getCanonicalGameIdByExternal(sport, provider, externalGameId) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'getCanonicalGameIdByExternal');
+  const normalizedProvider = provider ? String(provider).trim().toLowerCase() : null;
+
+  const stmt = db.prepare(`
+    SELECT *
+    FROM game_id_map
+    WHERE sport = ? AND provider = ? AND external_game_id = ?
+    LIMIT 1
+  `);
+
+  return stmt.get(normalizedSport, normalizedProvider, externalGameId) || null;
 }
 
 /**
@@ -1172,6 +1271,7 @@ function getUpcomingGames({ startUtcIso, endUtcIso, sports = [] }) {
  */
 function upsertGameResult(result) {
   const db = getDatabase();
+  const normalizedSport = normalizeSportValue(result.sport, 'upsertGameResult');
   
   const stmt = db.prepare(`
     INSERT INTO game_results (
@@ -1192,7 +1292,7 @@ function upsertGameResult(result) {
   stmt.run(
     result.id,
     result.gameId,
-    result.sport,
+    normalizedSport,
     result.finalScoreHome,
     result.finalScoreAway,
     result.status,
@@ -1388,6 +1488,8 @@ module.exports = {
   insertDecisionEvent,
   getUpcomingGames,
   upsertGame,
+  upsertGameIdMap,
+  getCanonicalGameIdByExternal,
   upsertGameResult,
   getGameResult,
   getGameResults,
