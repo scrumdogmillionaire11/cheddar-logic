@@ -28,7 +28,6 @@ let SQL = null;
 let dbInstance = null;
 let dbPath = null;
 const warnedSportValues = new Set();
-const oddsContextReferenceRegistry = new WeakMap();
 const EXPECTED_TABLE_NAMES = ['games', 'card_payloads', 'card_results', 'game_results'];
 
 function normalizeConfiguredPath(rawPath) {
@@ -218,13 +217,15 @@ async function initDb() {
  * Load database from disk or create new
  */
 function loadDatabase() {
-  const resolved = resolveDatabasePath();
-  const preferredPath = dbPath || resolved.dbPath;
+  const explicitPath =
+    normalizeConfiguredPath(process.env.DATABASE_PATH) ||
+    normalizeConfiguredPath(process.env.DATABASE_URL) ||
+    normalizeConfiguredPath(process.env.CHEDDAR_DB_PATH);
+  const preferredPath =
+    dbPath ||
+    explicitPath ||
+    normalizeConfiguredPath(path.join(process.env.CHEDDAR_DATA_DIR || '/tmp/cheddar-logic', 'cheddar.db'));
   const dbFile = chooseBestDatabasePath(preferredPath);
-
-  if (resolved.isExplicitFile && !fs.existsSync(preferredPath)) {
-    console.warn(`[DB] ${resolved.source} points to missing DB file. Creating new DB at: ${preferredPath}`);
-  }
 
   dbPath = dbFile;
   const dir = path.dirname(dbFile);
