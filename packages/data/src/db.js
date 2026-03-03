@@ -50,38 +50,87 @@ function normalizeConfiguredPath(rawPath) {
   return path.isAbsolute(trimmed) ? path.normalize(trimmed) : path.resolve(trimmed);
 }
 
-function inspectDatabaseTableScore(dbFile) {
+function inspectDatabaseStats(dbFile) {
   try {
-    if (!fs.existsSync(dbFile)) return -1;
+    if (!fs.existsSync(dbFile)) {
+      return { exists: false, tableCount: 0, rowCount: 0, score: -1 };
+    }
     const buffer = fs.readFileSync(dbFile);
     const db = new SQL.Database(buffer);
-    const stmt = db.prepare(
+    const tableStmt = db.prepare(
       `SELECT COUNT(*) AS c
        FROM sqlite_master
        WHERE type='table' AND name IN (?, ?, ?, ?)`
     );
-    stmt.bind(EXPECTED_TABLE_NAMES);
-    let score = 0;
-    if (stmt.step()) {
-      const row = stmt.getAsObject();
-      score = Number(row.c || 0);
+    tableStmt.bind(EXPECTED_TABLE_NAMES);
+    let tableCount = 0;
+    if (tableStmt.step()) {
+      const row = tableStmt.getAsObject();
+      tableCount = Number(row.c || 0);
     }
-    stmt.free();
+    tableStmt.free();
+
+    let rowCount = 0;
+    if (tableCount > 0) {
+      for (const tableName of EXPECTED_TABLE_NAMES) {
+        try {
+          const countStmt = db.prepare(`SELECT COUNT(*) AS c FROM ${tableName}`);
+          if (countStmt.step()) {
+            const row = countStmt.getAsObject();
+            rowCount += Number(row.c || 0);
+          }
+          countStmt.free();
+        } catch {
+          // Ignore missing/incompatible tables.
+        }
+      }
+    }
+
     db.close();
-    return score;
+    return {
+      exists: true,
+      tableCount,
+      rowCount,
+      score: tableCount * 100000 + rowCount,
+    };
   } catch {
-    return -1;
+    return { exists: true, tableCount: 0, rowCount: 0, score: -1 };
+  }
+}
+
+function listDbFiles(directory) {
+  try {
+    if (!directory || !fs.existsSync(directory)) return [];
+    return fs
+      .readdirSync(directory)
+      .filter((name) => name.toLowerCase().endsWith('.db'))
+      .map((name) => path.join(directory, name));
+  } catch {
+    return [];
   }
 }
 
 function chooseBestDatabasePath(primaryPath) {
-  const candidates = [
+  const seedCandidates = [
     primaryPath,
     normalizeConfiguredPath(process.env.CHEDDAR_DB_PATH),
     normalizeConfiguredPath(path.join(process.env.CHEDDAR_DATA_DIR || '', 'cheddar.db')),
     '/opt/data/cheddar.db',
     '/opt/cheddar-logic/packages/data/cheddar.db',
     '/tmp/cheddar-logic/cheddar.db',
+  ].filter(Boolean);
+
+  const searchDirs = [
+    path.dirname(primaryPath),
+    normalizeConfiguredPath(process.env.CHEDDAR_DATA_DIR),
+    '/opt/data',
+    '/opt/cheddar-logic/packages/data',
+    '/tmp/cheddar-logic',
+  ].filter(Boolean);
+
+  const candidates = [
+    ...seedCandidates,
+    ...searchDirs.flatMap((dir) => listDbFiles(dir)),
   ]
     .filter(Boolean)
     .map((candidate) => path.normalize(candidate));
@@ -89,19 +138,19 @@ function chooseBestDatabasePath(primaryPath) {
   const uniqueCandidates = [...new Set(candidates)];
 
   let bestPath = primaryPath;
-  let bestScore = inspectDatabaseTableScore(primaryPath);
+  let bestStats = inspectDatabaseStats(primaryPath);
 
   for (const candidate of uniqueCandidates) {
-    const score = inspectDatabaseTableScore(candidate);
-    if (score > bestScore) {
-      bestScore = score;
+    const stats = inspectDatabaseStats(candidate);
+    if (stats.score > bestStats.score) {
+      bestStats = stats;
       bestPath = candidate;
     }
   }
 
-  if (bestPath !== primaryPath && bestScore > 0) {
+  if (bestPath !== primaryPath && bestStats.score > 0) {
     console.warn(
-      `[DB] Using database with existing tables: ${bestPath} (score=${bestScore}) instead of ${primaryPath}`
+      `[DB] Using populated database: ${bestPath} (tables=${bestStats.tableCount}, rows=${bestStats.rowCount}) instead of ${primaryPath}`
     );
   }
 
