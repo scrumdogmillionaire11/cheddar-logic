@@ -44,6 +44,8 @@ const {
 } = require('@cheddar-logic/models');
 const { publishDecisionForCard, applyUiActionFields } = require('../utils/decision-publisher');
 
+const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
+
 const NBA_DRIVER_WEIGHTS = {
   baseProjection: 0.35,
   restAdvantage: 0.15,
@@ -52,6 +54,15 @@ const NBA_DRIVER_WEIGHTS = {
   blowoutRisk: 0.07,
   totalProjection: 0.13
 };
+
+const NBA_DRIVER_CARD_TYPES = [
+  'nba-base-projection',
+  'nba-rest-advantage',
+  'welcome-home-v2',
+  'nba-matchup-style',
+  'nba-blowout-risk',
+  'nba-total-projection',
+];
 
 /**
  * Get recent road games for a team from schedule
@@ -601,6 +612,9 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
       }
 
       console.log(`[NBAModel] Found ${oddsSnapshots.length} odds snapshots`);
+      if (!ENABLE_WELCOME_HOME) {
+        console.log('[NBAModel] Welcome Home driver disabled (ENABLE_WELCOME_HOME=false)');
+      }
 
       // Dedupe: latest snapshot per game
       const gameOdds = {};
@@ -628,26 +642,31 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
 
           // Query schedule for Welcome Home Fade
           // Welcome Home Fade: Home team coming back from a road trip (first game back)
-          const homeTeamRoadTrip = getHomeTeamRecentRoadTrip(
-            oddsSnapshot.home_team,
-            'nba',
-            oddsSnapshot.game_time_utc,
-            10
-          );
+          const homeTeamRoadTrip = ENABLE_WELCOME_HOME
+            ? getHomeTeamRecentRoadTrip(
+                oddsSnapshot.home_team,
+                'nba',
+                oddsSnapshot.game_time_utc,
+                10
+              )
+            : [];
 
           const driverCards = computeNBADriverCards(gameId, oddsSnapshot, {
             recentRoadGames: homeTeamRoadTrip
           });
 
+          // Clear known driver card types even if a signal no longer emits.
+          const driverCardTypesToClear = [...new Set([
+            ...NBA_DRIVER_CARD_TYPES,
+            ...driverCards.map((card) => card.cardType),
+          ])];
+          for (const ct of driverCardTypesToClear) {
+            prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct);
+          }
+
           if (driverCards.length === 0) {
             console.log(`  [skip] ${gameId}: No actionable NBA driver signals`);
             continue;
-          }
-
-          // Clear old driver card types for this game before writing
-          const driverCardTypes = [...new Set(driverCards.map(c => c.cardType))];
-          for (const ct of driverCardTypes) {
-            prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct);
           }
 
           const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { EDUCATION_ARTICLES } from "@/lib/education/content";
 
 export default function EducationPage() {
   return (
@@ -19,49 +20,21 @@ export default function EducationPage() {
           </div>
 
           <div className="grid gap-6">
-            <article className="rounded-xl border border-white/10 bg-surface/80 p-6 transition hover:border-white/20">
-              <h2 className="mb-3 text-xl font-semibold">Getting Started with FPL Analytics</h2>
-              <p className="mb-4 text-cloud/70">
-                Understanding the basics of Fantasy Premier League analytics and how to use data to
-                inform your decisions.
-              </p>
-              <button className="text-sm font-semibold text-teal hover:underline">
-                Read More →
-              </button>
-            </article>
-
-            <article className="rounded-xl border border-white/10 bg-surface/80 p-6 transition hover:border-white/20">
-              <h2 className="mb-3 text-xl font-semibold">Probabilistic Thinking in Sports</h2>
-              <p className="mb-4 text-cloud/70">
-                Learn how to think in probabilities rather than certainties when analyzing sports
-                and making predictions.
-              </p>
-              <button className="text-sm font-semibold text-teal hover:underline">
-                Read More →
-              </button>
-            </article>
-
-            <article className="rounded-xl border border-white/10 bg-surface/80 p-6 transition hover:border-white/20">
-              <h2 className="mb-3 text-xl font-semibold">Understanding Expected Value</h2>
-              <p className="mb-4 text-cloud/70">
-                A deep dive into expected value calculations and how they apply to FPL team
-                selection and transfers.
-              </p>
-              <button className="text-sm font-semibold text-teal hover:underline">
-                Read More →
-              </button>
-            </article>
-
-            <article className="rounded-xl border border-white/10 bg-surface/80 p-6 transition hover:border-white/20">
-              <h2 className="mb-3 text-xl font-semibold">Data Sources and Methodology</h2>
-              <p className="mb-4 text-cloud/70">
-                Learn about the data sources we use and the methodology behind our analytical
-                approach.
-              </p>
-              <button className="text-sm font-semibold text-teal hover:underline">
-                Read More →
-              </button>
-            </article>
+            {EDUCATION_ARTICLES.map((article) => (
+              <article
+                key={article.slug}
+                className="rounded-xl border border-white/10 bg-surface/80 p-6 transition hover:border-white/20"
+              >
+                <h2 className="mb-3 text-xl font-semibold">{article.title}</h2>
+                <p className="mb-4 text-cloud/70">{article.summary}</p>
+                <Link
+                  href={`/education/${article.slug}`}
+                  className="text-sm font-semibold text-teal hover:underline"
+                >
+                  Read More →
+                </Link>
+              </article>
+            ))}
           </div>
 
           <div className="rounded-xl border border-white/10 bg-surface/80 p-8">

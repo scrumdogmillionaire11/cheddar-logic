@@ -30,11 +30,15 @@ type LedgerRow = {
   game_id: string;
   sport: string;
   card_type: string;
+  recommended_bet_type: string | null;
   result: string | null;
   pnl_units: number | null;
   settled_at: string | null;
   created_at: string | null;
   payload_data: string | null;
+  payload_id: string | null;
+  game_home_team: string | null;
+  game_away_team: string | null;
 };
 
 function clampNumber(value: string | null, fallback: number, min: number, max: number) {
@@ -43,12 +47,24 @@ function clampNumber(value: string | null, fallback: number, min: number, max: n
   return Math.min(Math.max(parsed, min), max);
 }
 
+function parseBooleanParam(value: string | null, defaultValue: boolean) {
+  if (value === null) return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true;
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false;
+  }
+  return defaultValue;
+}
+
 function safeJsonParse(payload: string | null) {
-  if (!payload) return { data: null, error: true };
+  if (!payload) return { data: null, error: false, missing: true };
   try {
-    return { data: JSON.parse(payload), error: false };
+    return { data: JSON.parse(payload), error: false, missing: false };
   } catch {
-    return { data: null, error: true };
+    return { data: null, error: true, missing: false };
   }
 }
 
@@ -142,74 +158,110 @@ export async function GET(request: NextRequest) {
     const market: string | null = rawMarket && (ALLOWED_MARKETS as readonly string[]).includes(rawMarket.toLowerCase())
       ? rawMarket.toLowerCase()
       : null;
+    // Always enforce payload-backed rows in results.
+    const includeOrphaned = false;
+    const dedupe = parseBooleanParam(searchParams.get('dedupe'), true);
 
-    // Build filter SQL fragments for the dedup subquery (inner)
-    const sportFilter = sport ? `AND UPPER(cr3.sport) = ?` : '';
+    // Build filter SQL fragments
+    const sportFilter = sport ? `AND UPPER(cr.sport) = ?` : '';
     const sportParams = sport ? [sport] : [];
 
-    const categoryFilter3 = buildCardCategoryFilter(cardCategory, 'cr3');
-    const confidenceFilter3 = minConfidence !== null
-      ? `AND CAST(json_extract(cp3.payload_data, '$.confidence_pct') AS REAL) >= ?`
+    const categoryFilter = buildCardCategoryFilter(cardCategory, 'cr');
+    const confidenceExpr =
+      `COALESCE(CAST(json_extract(cp.payload_data, '$.confidence_pct') AS REAL), CAST(json_extract(cp.payload_data, '$.confidence') AS REAL) * 100.0)`;
+    const confidenceFilter = minConfidence !== null
+      ? `AND ${confidenceExpr} >= ?`
       : '';
-    const confidenceParams3 = minConfidence !== null ? [minConfidence] : [];
+    const confidenceParams = minConfidence !== null ? [minConfidence] : [];
 
-    const marketFilter3 = market ? `AND LOWER(cr3.recommended_bet_type) = ?` : '';
-    const marketParams3 = market ? [market] : [];
-
-    // Same for outer dedup query
-    const sportFilter2 = sport ? `AND UPPER(cr2.sport) = ?` : '';
-    const categoryFilter2 = buildCardCategoryFilter(cardCategory, 'cr2');
-    const confidenceFilter2 = minConfidence !== null
-      ? `AND CAST(json_extract(cp2.payload_data, '$.confidence_pct') AS REAL) >= ?`
-      : '';
-    const confidenceParams2 = minConfidence !== null ? [minConfidence] : [];
-
-    const marketFilter2 = market ? `AND LOWER(cr2.recommended_bet_type) = ?` : '';
-    const marketParams2 = market ? [market] : [];
-
-    // Deduplication: one card per game per market (moneyline/total),
-    // highest confidence, excluding PASS recommendations.
-    // Apply filters in inner subquery so dedupedIdSet is pre-filtered.
-    const dedupSql = `
-      SELECT cr2.id
-      FROM card_results cr2
-      INNER JOIN card_payloads cp2 ON cr2.card_id = cp2.id
-      INNER JOIN (
-        SELECT cr3.game_id, cr3.recommended_bet_type,
-               MAX(CAST(json_extract(cp3.payload_data, '$.confidence_pct') AS REAL)) AS max_conf
-        FROM card_results cr3
-        INNER JOIN card_payloads cp3 ON cr3.card_id = cp3.id
-        WHERE cr3.status = 'settled'
-          AND json_extract(cp3.payload_data, '$.recommendation.type') != 'PASS'
-          ${sportFilter}
-          ${categoryFilter3.sql}
-          ${confidenceFilter3}
-          ${marketFilter3}
-        GROUP BY cr3.game_id, cr3.recommended_bet_type
-      ) best ON cr2.game_id = best.game_id
-            AND cr2.recommended_bet_type = best.recommended_bet_type
-            AND CAST(json_extract(cp2.payload_data, '$.confidence_pct') AS REAL) = best.max_conf
-      WHERE cr2.status = 'settled'
-        AND json_extract(cp2.payload_data, '$.recommendation.type') != 'PASS'
-        ${sportFilter2}
-        ${categoryFilter2.sql}
-        ${confidenceFilter2}
-        ${marketFilter2}
-      GROUP BY cr2.game_id, cr2.recommended_bet_type
+    const marketFilter = market ? `AND LOWER(cr.recommended_bet_type) = ?` : '';
+    const marketParams = market ? [market] : [];
+    const orphanedFilter = includeOrphaned ? '' : 'AND cp.id IS NOT NULL';
+    const passFilter = `
+      AND (
+        json_extract(cp.payload_data, '$.recommendation.type') IS NULL
+        OR json_extract(cp.payload_data, '$.recommendation.type') != 'PASS'
+      )
     `;
+
+    const filteredCteSql = `
+      WITH filtered AS (
+        SELECT
+          cr.id,
+          cr.game_id,
+          cr.recommended_bet_type,
+          cr.settled_at,
+          ${confidenceExpr} AS confidence_pct
+        FROM card_results cr
+        LEFT JOIN card_payloads cp ON cr.card_id = cp.id
+        WHERE cr.status = 'settled'
+          ${orphanedFilter}
+          ${passFilter}
+          ${sportFilter}
+          ${categoryFilter.sql}
+          ${confidenceFilter}
+          ${marketFilter}
+      )
+    `;
+
+    const dedupSql = dedupe
+      ? `
+        ${filteredCteSql},
+        ranked AS (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY game_id, recommended_bet_type
+              ORDER BY
+                CASE WHEN confidence_pct IS NULL THEN 1 ELSE 0 END ASC,
+                confidence_pct DESC,
+                settled_at DESC,
+                id DESC
+            ) AS rn
+          FROM filtered
+        )
+        SELECT id
+        FROM ranked
+        WHERE rn = 1
+      `
+      : `
+        ${filteredCteSql}
+        SELECT id
+        FROM filtered
+      `;
 
     const dedupParams = [
       ...sportParams,
-      ...categoryFilter3.params,
-      ...confidenceParams3,
-      ...marketParams3,
-      ...sportParams,
-      ...categoryFilter2.params,
-      ...confidenceParams2,
-      ...marketParams2,
+      ...categoryFilter.params,
+      ...confidenceParams,
+      ...marketParams,
     ];
 
     const dedupedIdRows = db.prepare(dedupSql).all(...dedupParams) as { id: string }[];
+
+    const filteredCountSql = `
+      ${filteredCteSql}
+      SELECT COUNT(*) AS count
+      FROM filtered
+    `;
+    const filteredCountRow = db.prepare(filteredCountSql).get(...dedupParams) as { count: number } | null;
+    const filteredCount = Number(filteredCountRow?.count || 0);
+
+    const totalSettledRow = db
+      .prepare(`SELECT COUNT(*) AS count FROM card_results WHERE status = 'settled'`)
+      .get() as { count: number } | null;
+    const orphanedSettledRow = db
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM card_results cr
+        LEFT JOIN card_payloads cp ON cr.card_id = cp.id
+        WHERE cr.status = 'settled' AND cp.id IS NULL
+      `)
+      .get() as { count: number } | null;
+    const totalSettled = Number(totalSettledRow?.count || 0);
+    const orphanedSettled = Number(orphanedSettledRow?.count || 0);
+    const withPayloadSettled = totalSettled - orphanedSettled;
+
     const placeholders = dedupedIdRows.map(() => '?').join(',');
 
     if (dedupedIdRows.length === 0) {
@@ -220,7 +272,16 @@ export async function GET(request: NextRequest) {
             summary: { totalCards: 0, settledCards: 0, wins: 0, losses: 0, pushes: 0, totalPnlUnits: 0, winRate: 0, avgPnl: 0 },
             segments: [],
             ledger: [],
-            filters: { sport, cardCategory, minConfidence, market },
+            filters: { sport, cardCategory, minConfidence, market, includeOrphaned, dedupe },
+            meta: {
+              totalSettled,
+              withPayloadSettled,
+              orphanedSettled,
+              filteredCount,
+              returnedCount: 0,
+              includeOrphaned,
+              dedupe,
+            },
           },
         },
         { headers: { 'Content-Type': 'application/json' } }
@@ -238,7 +299,6 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN cr.result = 'push' THEN 1 ELSE 0 END) AS pushes,
         SUM(COALESCE(cr.pnl_units, 0)) AS total_pnl_units
       FROM card_results cr
-      INNER JOIN card_payloads cp ON cr.card_id = cp.id
       WHERE cr.id IN (${placeholders})
     `).get(...ids) as SummaryRow;
 
@@ -262,7 +322,6 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN cr.result = 'push' THEN 1 ELSE 0 END) AS pushes,
         SUM(COALESCE(cr.pnl_units, 0)) AS total_pnl_units
       FROM card_results cr
-      INNER JOIN card_payloads cp ON cr.card_id = cp.id
       WHERE cr.id IN (${placeholders})
       GROUP BY cr.sport, card_category, cr.recommended_bet_type
       ORDER BY cr.sport ASC, card_category ASC, cr.recommended_bet_type ASC
@@ -274,13 +333,18 @@ export async function GET(request: NextRequest) {
         cr.game_id,
         cr.sport,
         cr.card_type,
+        cr.recommended_bet_type,
         cr.result,
         cr.pnl_units,
         cr.settled_at,
+        cp.id AS payload_id,
         cp.created_at,
-        cp.payload_data
+        cp.payload_data,
+        g.home_team AS game_home_team,
+        g.away_team AS game_away_team
       FROM card_results cr
-      INNER JOIN card_payloads cp ON cr.card_id = cp.id
+      LEFT JOIN card_payloads cp ON cr.card_id = cp.id
+      LEFT JOIN games g ON g.game_id = cr.game_id
       WHERE cr.id IN (${placeholders})
       ORDER BY cr.settled_at DESC
       LIMIT ${limit}
@@ -292,15 +356,15 @@ export async function GET(request: NextRequest) {
       const tier = payload && typeof payload.tier === 'string' ? payload.tier : null;
       const market = payload && typeof payload.recommended_bet_type === 'string'
         ? payload.recommended_bet_type
-        : null;
+        : row.recommended_bet_type;
 
       // homeTeam / awayTeam
       const homeTeam = payload && typeof payload.home_team === 'string'
         ? payload.home_team
-        : null;
+        : row.game_home_team;
       const awayTeam = payload && typeof payload.away_team === 'string'
         ? payload.away_team
-        : null;
+        : row.game_away_team;
 
       // Derive display prediction from recommendation.type (authoritative BET decision).
       // Falls back to raw prediction field for legacy cards without recommendation.type.
@@ -369,6 +433,7 @@ export async function GET(request: NextRequest) {
         price,
         confidencePct,
         payloadParseError: parsed.error,
+        payloadMissing: parsed.missing || row.payload_id === null,
       };
     });
 
@@ -407,7 +472,16 @@ export async function GET(request: NextRequest) {
             totalPnlUnits: Number(row.total_pnl_units || 0),
           })),
           ledger: ledgerRows,
-          filters: { sport, cardCategory, minConfidence, market },
+          filters: { sport, cardCategory, minConfidence, market, includeOrphaned, dedupe },
+          meta: {
+            totalSettled,
+            withPayloadSettled,
+            orphanedSettled,
+            filteredCount,
+            returnedCount: dedupedIdRows.length,
+            includeOrphaned,
+            dedupe,
+          },
         },
       },
       { headers: { 'Content-Type': 'application/json' } }

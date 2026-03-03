@@ -42,6 +42,9 @@
 import { NextResponse } from 'next/server';
 import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
 
+const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true'
+  || process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+
 interface GameRow {
   id: string;
   game_id: string;
@@ -257,7 +260,8 @@ export async function GET() {
         SELECT game_id, card_type, card_title, payload_data
         FROM card_payloads
         WHERE game_id IN (${placeholders})
-          AND (expires_at IS NULL OR expires_at > datetime('now'))
+          AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+          ${ENABLE_WELCOME_HOME ? '' : "AND card_type != 'welcome-home-v2'"}
         ORDER BY created_at DESC
       `;
       const cardsStmt = db.prepare(cardsSql);

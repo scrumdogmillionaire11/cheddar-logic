@@ -37,6 +37,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
 
+const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true'
+  || process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+
 interface CardRow {
   id: string;
   game_id: string;
@@ -127,11 +130,14 @@ export async function GET(request: NextRequest) {
     }
 
     if (!includeExpired) {
-      where.push('(expires_at IS NULL OR expires_at > datetime(\'now\'))');
+      where.push('(expires_at IS NULL OR datetime(expires_at) > datetime(\'now\'))');
     }
 
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
     where.push('sport != \'FPL\'');
+    if (!ENABLE_WELCOME_HOME) {
+      where.push('card_type != \'welcome-home-v2\'');
+    }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 

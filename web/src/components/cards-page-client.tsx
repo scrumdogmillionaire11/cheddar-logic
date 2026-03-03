@@ -2,15 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import FilterPanel from '@/components/filter-panel';
+import FilterPanel from './filter-panel';
 import { transformGames } from '@/lib/game-card/transform';
 import { enrichCards } from '@/lib/game-card/tags';
-import { applyFilters, getActiveFilterCount, getFilterDebugFlags, resetFilters } from '@/lib/game-card/filters';
-import type { GameFilters } from '@/lib/game-card/filters';
-import { DEFAULT_FILTERS } from '@/lib/game-card/filters';
+import { applyFilters, getActiveFilterCount, getDefaultFilters, getFilterDebugFlags, resetFilters } from '@/lib/game-card/filters';
+import type { GameFilters, ViewMode } from '@/lib/game-card/filters';
 import type { Direction, DriverRow, DriverTier, GameCard, Market } from '@/lib/types/game-card';
 import { GAME_TAGS } from '@/lib/types/game-card';
 import { getPlayDisplayAction, getCardDecisionModel } from '@/lib/game-card/decision';
+import { StickyBackButton } from '@/components/sticky-back-button';
 
 const TRACKED_SPORTS = ['NCAAM', 'NBA', 'NHL', 'SOCCER'] as const;
 
@@ -256,19 +256,21 @@ export default function CardsPageClient() {
   const [games, setGames] = useState<GameData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<GameFilters>(DEFAULT_FILTERS);
+  const [viewMode, setViewMode] = useState<ViewMode>('game');
+  const [filters, setFilters] = useState<GameFilters>(getDefaultFilters('game'));
   const isInitialLoad = useRef(true);
   const showTrace = process.env.NODE_ENV !== 'production';
+  const propsEnabled = process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true';
 
   // Compute enriched and filtered cards
   const { enrichedCards, filteredCards } = useMemo(() => {
     const transformed = transformGames(games);
     const enriched = enrichCards(transformed);
-    const filtered = applyFilters(enriched, filters);
+    const filtered = applyFilters(enriched, filters, viewMode);
     return { enrichedCards: enriched, filteredCards: filtered };
-  }, [games, filters]);
+  }, [games, filters, viewMode]);
 
-  const activeFilterCount = getActiveFilterCount(filters);
+  const activeFilterCount = getActiveFilterCount(filters, viewMode);
   const todayEtKey = useMemo(() => getEtDayKey(new Date()), []);
 
   const traceStats = useMemo(() => {
@@ -305,7 +307,7 @@ export default function CardsPageClient() {
     const droppedMetaBySport: Record<string, DroppedMeta> = {};
 
     for (const card of enrichedCards) {
-      const flags = getFilterDebugFlags(card, filters);
+      const flags = getFilterDebugFlags(card, filters, viewMode);
       const passesAll = Object.values(flags).every(Boolean);
       if (passesAll) continue;
 
@@ -344,10 +346,25 @@ export default function CardsPageClient() {
       droppedByReasonBySport,
       droppedMetaBySport,
     };
-  }, [enrichedCards, filters]);
+  }, [enrichedCards, filters, viewMode]);
 
   const handleResetFilters = () => {
-    setFilters(resetFilters());
+    setFilters(resetFilters(viewMode));
+  };
+
+  const handleModeChange = (nextMode: ViewMode) => {
+    if (nextMode === viewMode) return;
+    if (nextMode === 'props' && !propsEnabled) return;
+    setViewMode(nextMode);
+    setFilters((current) => {
+      const defaults = getDefaultFilters(nextMode);
+      return {
+        ...defaults,
+        sports: current.sports,
+        timeWindow: current.timeWindow,
+        customTimeRange: current.customTimeRange,
+      };
+    });
   };
 
   useEffect(() => {
@@ -381,6 +398,41 @@ export default function CardsPageClient() {
     const interval = setInterval(fetchGames, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const modeParam = params.get('mode');
+    if (modeParam === 'props' && propsEnabled) {
+      setViewMode('props');
+      setFilters((current) => {
+        const defaults = getDefaultFilters('props');
+        return {
+          ...defaults,
+          sports: current.sports,
+          timeWindow: current.timeWindow,
+          customTimeRange: current.customTimeRange,
+        };
+      });
+    }
+  }, [propsEnabled]);
+
+  useEffect(() => {
+    if (propsEnabled || viewMode !== 'props') return;
+    setViewMode('game');
+    setFilters(getDefaultFilters('game'));
+  }, [propsEnabled, viewMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (viewMode === 'game') {
+      url.searchParams.delete('mode');
+    } else {
+      url.searchParams.set('mode', viewMode);
+    }
+    window.history.replaceState({}, '', url.toString());
+  }, [viewMode]);
 
   useEffect(() => {
     const isDevTrace = process.env.NODE_ENV !== 'production';
@@ -440,7 +492,7 @@ export default function CardsPageClient() {
     if (nbaSample.length > 0) {
       console.log('[NBA PLAY SAMPLE (PASS or not bettable)]', nbaSample);
     }
-  }, [loading, traceStats, todayEtKey, filters, dropTraceStats, enrichedCards]);
+  }, [loading, traceStats, todayEtKey, filters, dropTraceStats, enrichedCards, viewMode]);
 
   const formatDate = (dateStr: string) => {
     try {
@@ -891,9 +943,11 @@ export default function CardsPageClient() {
 
   return (
     <div className="min-h-screen bg-night text-cloud px-6 py-12">
+      <StickyBackButton fallbackHref="/" fallbackLabel="Home" showAfterPx={120} />
+
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
-          <Link href="/" className="text-sm text-cloud/60 hover:text-cloud/80">
+          <Link href="/" className="hidden text-sm text-cloud/60 hover:text-cloud/80 md:inline-flex">
             ← Back to Home
           </Link>
         </div>
@@ -915,9 +969,35 @@ export default function CardsPageClient() {
           )}
         </div>
 
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => handleModeChange('game')}
+            className={`px-4 py-2 rounded-md border text-sm font-semibold transition ${
+              viewMode === 'game'
+                ? 'bg-emerald-700/50 text-emerald-100 border-emerald-600/60'
+                : 'bg-white/5 text-cloud/70 border-white/10 hover:border-white/20'
+            }`}
+          >
+            Game Lines
+          </button>
+          {propsEnabled && (
+            <button
+              onClick={() => handleModeChange('props')}
+              className={`px-4 py-2 rounded-md border text-sm font-semibold transition ${
+                viewMode === 'props'
+                  ? 'bg-emerald-700/50 text-emerald-100 border-emerald-600/60'
+                  : 'bg-white/5 text-cloud/70 border-white/10 hover:border-white/20'
+              }`}
+            >
+              Player Props
+            </button>
+          )}
+        </div>
+
         {/* Filter Panel */}
         <FilterPanel
           filters={filters}
+          viewMode={viewMode}
           onFiltersChange={setFilters}
           onReset={handleResetFilters}
           activeCount={activeFilterCount}
@@ -933,7 +1013,11 @@ export default function CardsPageClient() {
 
         {!loading && filteredCards.length === 0 && !error && (
           <div className="text-center py-8 space-y-4">
-            <div className="text-cloud/60">No games match your filters</div>
+            <div className="text-cloud/60">
+              {viewMode === 'props'
+                ? 'No qualified props match your filters'
+                : 'No games match your filters'}
+            </div>
             {activeFilterCount > 0 && (
               <button
                 onClick={handleResetFilters}

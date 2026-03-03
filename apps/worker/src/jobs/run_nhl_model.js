@@ -55,6 +55,8 @@ const {
 } = require('@cheddar-logic/models');
 const { publishDecisionForCard, applyUiActionFields } = require('../utils/decision-publisher');
 
+const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
+
 const NHL_DRIVER_WEIGHTS = {
   baseProjection: 0.30,
   restAdvantage: 0.14,
@@ -63,6 +65,16 @@ const NHL_DRIVER_WEIGHTS = {
   paceTotals: 0.12,
   paceTotals1p: 0.08
 };
+
+const NHL_DRIVER_CARD_TYPES = [
+  'nhl-base-projection',
+  'nhl-rest-advantage',
+  'welcome-home-v2',
+  'nhl-goalie',
+  'nhl-model-output',
+  'nhl-pace-totals',
+  'nhl-pace-1p',
+];
 
 /**
  * Get recent road games for a team from schedule
@@ -623,6 +635,9 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
       }
       
       console.log(`[NHLModel] Found ${oddsSnapshots.length} odds snapshots`);
+      if (!ENABLE_WELCOME_HOME) {
+        console.log('[NHLModel] Welcome Home driver disabled (ENABLE_WELCOME_HOME=false)');
+      }
       
       // Group by game_id and get latest for each
       const gameOdds = {};
@@ -651,17 +666,28 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
 
           // Query schedule for Welcome Home Fade
           // Welcome Home Fade: Home team coming back from a road trip (first game back)
-          const homeTeamRoadTrip = getHomeTeamRecentRoadTrip(
-            oddsSnapshot.home_team,
-            'nhl',
-            oddsSnapshot.game_time_utc,
-            10
-          );
+          const homeTeamRoadTrip = ENABLE_WELCOME_HOME
+            ? getHomeTeamRecentRoadTrip(
+                oddsSnapshot.home_team,
+                'nhl',
+                oddsSnapshot.game_time_utc,
+                10
+              )
+            : [];
 
           // Compute per-driver card descriptors
           const driverCards = computeNHLDriverCards(gameId, oddsSnapshot, {
             recentRoadGames: homeTeamRoadTrip
           });
+
+          // Clear known driver card types even if a signal no longer emits.
+          const driverCardTypesToClear = [...new Set([
+            ...NHL_DRIVER_CARD_TYPES,
+            ...driverCards.map((card) => card.cardType),
+          ])];
+          for (const ct of driverCardTypesToClear) {
+            prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct);
+          }
 
           const marketDecisions = computeNHLMarketDecisions(oddsSnapshot);
           const expressionChoice = selectExpressionChoice(marketDecisions);
@@ -670,12 +696,6 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           if (driverCards.length === 0) {
             console.log(`  [skip] ${gameId}: No driver cards (all data missing)`);
             continue;
-          }
-
-          // Prepare write: clear old driver card types for this game
-          const driverCardTypes = [...new Set(driverCards.map(c => c.cardType))];
-          for (const ct of driverCardTypes) {
-            prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct);
           }
 
           const cards = generateNHLCards(gameId, driverCards, oddsSnapshot, marketPayload);

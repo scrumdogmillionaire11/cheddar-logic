@@ -29,7 +29,7 @@ const {
   withDb
 } = require('@cheddar-logic/data');
 
-const { espnGet } = require('../espn-client');
+const { espnGet, fetchScoreboardEvents } = require('../espn-client');
 
 /**
  * ESPN sport path mapping
@@ -41,22 +41,275 @@ const ESPN_SPORT_MAP = {
   NCAAM: 'basketball/mens-college-basketball',
 };
 
+const ESPN_SCOREBOARD_OPTIONS_BY_SPORT = {
+  NCAAM: { groups: '50', limit: '1000' },
+};
+
 /**
- * Case-insensitive substring team name matching.
- * Returns true if any word from espnName appears in our team name (or vice versa).
- * @param {string} ourName - Team name from our games table
- * @param {string} espnName - ESPN competitor displayName
- * @returns {boolean}
+ * Keep matching strict so one completed ESPN event cannot fan out into unrelated games.
  */
-function teamsMatch(ourName, espnName) {
-  if (!ourName || !espnName) return false;
-  const a = ourName.toLowerCase();
-  const b = espnName.toLowerCase();
-  // Try substring match in either direction first
-  if (a.includes(b) || b.includes(a)) return true;
-  // Word-level: any word from ESPN display name found in our name
-  const espnWords = b.split(/\s+/).filter(w => w.length > 2);
-  return espnWords.some(word => a.includes(word));
+const STRICT_MATCH_MAX_DELTA_MINUTES = 120;
+const MAPPED_ID_MATCH_MAX_DELTA_MINUTES = 180;
+const NCAAM_FUZZY_MATCH_MAX_DELTA_MINUTES = 180;
+const NCAAM_FUZZY_MIN_TEAM_SIMILARITY = 0.75;
+const NCAAM_FUZZY_MIN_AVG_SIMILARITY = 0.86;
+
+function normalizeTeamName(name) {
+  if (!name) return '';
+  return String(name)
+    .replace(/[^a-z0-9\s]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function canonicalizeTeamToken(token) {
+  let t = String(token || '').trim().toUpperCase();
+  if (!t) return '';
+  if (t === 'THE') return '';
+  if (t.length === 1 && t !== 'U') return '';
+  if (['ST', 'SAINT', 'STATE'].includes(t)) return 'STX';
+  if (['INTL', 'INTL.', 'INT', 'INTL\'', 'INTERNATIONAL'].includes(t)) return 'INTERNATIONAL';
+  if (['UNIV', 'UNIVERSITY'].includes(t)) return 'UNIVERSITY';
+  if (['FT', 'FORT'].includes(t)) return 'FORT';
+  if (['MOUNT', 'MT'].includes(t)) return 'MOUNT';
+  if (['N', 'NORTH'].includes(t)) return 'NORTH';
+  if (['S', 'SOUTH'].includes(t)) return 'SOUTH';
+  if (['E', 'EAST'].includes(t)) return 'EAST';
+  if (['W', 'WEST'].includes(t)) return 'WEST';
+  if (t.length > 4 && t.endsWith('S')) {
+    t = t.slice(0, -1);
+  }
+  return t;
+}
+
+function teamTokenSet(name) {
+  const normalized = normalizeTeamName(name);
+  if (!normalized) return new Set();
+  const tokens = normalized
+    .split(' ')
+    .map(canonicalizeTeamToken)
+    .filter(Boolean);
+  return new Set(tokens);
+}
+
+function tokenSimilarity(aName, bName) {
+  const a = teamTokenSet(aName);
+  const b = teamTokenSet(bName);
+  if (a.size === 0 || b.size === 0) return 0;
+
+  let overlap = 0;
+  for (const tok of a) {
+    if (b.has(tok)) overlap++;
+  }
+
+  return overlap / Math.max(a.size, b.size);
+}
+
+function toEpochMs(isoLike) {
+  const ms = new Date(isoLike).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function scoreMatchConfidence(deltaMinutes) {
+  if (deltaMinutes <= 15) return 1.0;
+  if (deltaMinutes <= 30) return 0.95;
+  if (deltaMinutes <= 60) return 0.9;
+  if (deltaMinutes <= 120) return 0.8;
+  return 0;
+}
+
+function eventToComparable(event) {
+  const comp = event.competitions?.[0];
+  if (!comp || comp.status?.type?.completed !== true) return null;
+
+  const homeComp = comp.competitors?.find(c => c.homeAway === 'home');
+  const awayComp = comp.competitors?.find(c => c.homeAway === 'away');
+  if (!homeComp || !awayComp) return null;
+
+  const homeName = homeComp.team?.displayName || '';
+  const awayName = awayComp.team?.displayName || '';
+  const homeScore = Number.parseFloat(homeComp.score);
+  const awayScore = Number.parseFloat(awayComp.score);
+  const eventTimeMs = toEpochMs(event.date || comp.date);
+
+  if (!homeName || !awayName || !Number.isFinite(homeScore) || !Number.isFinite(awayScore) || eventTimeMs === null) {
+    return null;
+  }
+
+  return {
+    id: String(event.id),
+    homeName,
+    awayName,
+    homeNorm: normalizeTeamName(homeName),
+    awayNorm: normalizeTeamName(awayName),
+    homeScore,
+    awayScore,
+    eventTimeMs
+  };
+}
+
+function getGameSignature(game) {
+  return `${normalizeTeamName(game.home_team)}|${normalizeTeamName(game.away_team)}|${game.game_time_utc}`;
+}
+
+function findStrictNameTimeMatch(dbGame, completedEvents) {
+  const gameTimeMs = toEpochMs(dbGame.game_time_utc);
+  if (gameTimeMs === null) return { match: null, reason: 'invalid_game_time' };
+
+  const homeNorm = normalizeTeamName(dbGame.home_team);
+  const awayNorm = normalizeTeamName(dbGame.away_team);
+
+  const matches = completedEvents
+    .map((evt) => {
+      const exactOrientation = evt.homeNorm === homeNorm && evt.awayNorm === awayNorm;
+      const swappedOrientation = evt.homeNorm === awayNorm && evt.awayNorm === homeNorm;
+      if (!exactOrientation && !swappedOrientation) return null;
+      const deltaMinutes = Math.abs(evt.eventTimeMs - gameTimeMs) / 60000;
+      if (deltaMinutes > STRICT_MATCH_MAX_DELTA_MINUTES) return null;
+
+      const dbHomeScore = swappedOrientation ? evt.awayScore : evt.homeScore;
+      const dbAwayScore = swappedOrientation ? evt.homeScore : evt.awayScore;
+
+      return {
+        event: evt,
+        deltaMinutes,
+        confidence: swappedOrientation
+          ? Math.max(0.7, scoreMatchConfidence(deltaMinutes) - 0.05)
+          : scoreMatchConfidence(deltaMinutes),
+        swappedTeams: swappedOrientation,
+        dbHomeScore,
+        dbAwayScore,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.deltaMinutes - b.deltaMinutes);
+
+  if (matches.length === 0) return { match: null, reason: 'no_strict_candidate' };
+  if (matches.length > 1 && matches[0].deltaMinutes === matches[1].deltaMinutes) {
+    return { match: null, reason: 'ambiguous_tie' };
+  }
+  return {
+    match: {
+      ...matches[0],
+      method: matches[0].swappedTeams ? 'strict_name_time_swapped' : 'strict_name_time'
+    },
+    reason: null
+  };
+}
+
+function findNcaamFuzzyNameTimeMatch(dbGame, completedEvents) {
+  const gameTimeMs = toEpochMs(dbGame.game_time_utc);
+  if (gameTimeMs === null) return { match: null, reason: 'invalid_game_time' };
+
+  const matches = completedEvents
+    .map((evt) => {
+      const deltaMinutes = Math.abs(evt.eventTimeMs - gameTimeMs) / 60000;
+      if (deltaMinutes > NCAAM_FUZZY_MATCH_MAX_DELTA_MINUTES) return null;
+
+      const homeSimilarity = tokenSimilarity(dbGame.home_team, evt.homeName);
+      const awaySimilarity = tokenSimilarity(dbGame.away_team, evt.awayName);
+      const avgSimilarity = (homeSimilarity + awaySimilarity) / 2;
+
+      if (homeSimilarity < NCAAM_FUZZY_MIN_TEAM_SIMILARITY) return null;
+      if (awaySimilarity < NCAAM_FUZZY_MIN_TEAM_SIMILARITY) return null;
+      if (avgSimilarity < NCAAM_FUZZY_MIN_AVG_SIMILARITY) return null;
+
+      return {
+        event: evt,
+        deltaMinutes,
+        confidence: Math.min(0.89, scoreMatchConfidence(deltaMinutes) * avgSimilarity),
+        swappedTeams: false,
+        dbHomeScore: evt.homeScore,
+        dbAwayScore: evt.awayScore,
+        homeSimilarity,
+        awaySimilarity,
+        avgSimilarity,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (b.avgSimilarity !== a.avgSimilarity) return b.avgSimilarity - a.avgSimilarity;
+      return a.deltaMinutes - b.deltaMinutes;
+    });
+
+  if (matches.length === 0) return { match: null, reason: 'no_ncaam_fuzzy_candidate' };
+
+  if (
+    matches.length > 1
+    && Math.abs(matches[0].avgSimilarity - matches[1].avgSimilarity) < 0.01
+    && Math.abs(matches[0].deltaMinutes - matches[1].deltaMinutes) < 5
+  ) {
+    return { match: null, reason: 'ambiguous_ncaam_fuzzy' };
+  }
+
+  return {
+    match: {
+      ...matches[0],
+      method: 'ncaam_fuzzy_name_time',
+    },
+    reason: null,
+  };
+}
+
+function findMatchForGame(dbGame, completedEvents, completedEventById, mappedEspnEventId) {
+  const gameTimeMs = toEpochMs(dbGame.game_time_utc);
+  if (mappedEspnEventId) {
+    const mappedEvent = completedEventById.get(String(mappedEspnEventId));
+    if (!mappedEvent) return { match: null, reason: 'mapped_event_not_completed' };
+
+    const homeNorm = normalizeTeamName(dbGame.home_team);
+    const awayNorm = normalizeTeamName(dbGame.away_team);
+    const exactOrientation = homeNorm === mappedEvent.homeNorm && awayNorm === mappedEvent.awayNorm;
+    const swappedOrientation = homeNorm === mappedEvent.awayNorm && awayNorm === mappedEvent.homeNorm;
+    if (!exactOrientation && !swappedOrientation) {
+      return { match: null, reason: 'mapped_event_team_mismatch' };
+    }
+
+    if (gameTimeMs === null) return { match: null, reason: 'invalid_game_time' };
+    const deltaMinutes = Math.abs(mappedEvent.eventTimeMs - gameTimeMs) / 60000;
+    if (deltaMinutes > MAPPED_ID_MATCH_MAX_DELTA_MINUTES) {
+      return { match: null, reason: 'mapped_event_time_too_far' };
+    }
+
+    return {
+      match: {
+        event: mappedEvent,
+        deltaMinutes,
+        confidence: 1.0,
+        swappedTeams: swappedOrientation,
+        dbHomeScore: swappedOrientation ? mappedEvent.awayScore : mappedEvent.homeScore,
+        dbAwayScore: swappedOrientation ? mappedEvent.homeScore : mappedEvent.awayScore,
+        method: swappedOrientation ? 'mapped_event_id_swapped' : 'mapped_event_id',
+      },
+      reason: null
+    };
+  }
+
+  const strict = findStrictNameTimeMatch(dbGame, completedEvents);
+  if (strict.match) return strict;
+
+  if (String(dbGame.sport || '').toUpperCase() === 'NCAAM') {
+    return findNcaamFuzzyNameTimeMatch(dbGame, completedEvents);
+  }
+
+  return strict;
+}
+
+async function fetchComparableEventFromSummary(espnPath, eventId) {
+  if (!eventId) return null;
+
+  const summary = await espnGet(`${espnPath}/summary?event=${eventId}`);
+  const competition = summary?.header?.competitions?.[0];
+  if (!competition) return null;
+
+  const pseudoEvent = {
+    id: String(eventId),
+    date: competition.date,
+    competitions: [competition],
+  };
+
+  return eventToComparable(pseudoEvent);
 }
 
 /**
@@ -101,14 +354,24 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
       // Allow faster settlement when upstream confirms status is final
       const cutoffUtc = new Date(now.getTime() - safeHoursAfterStart * 60 * 60 * 1000).toISOString();
 
-      // Query games that are past the cutoff and not yet in game_results as 'final'
+      // Query only games with pending cards, past cutoff, and not yet final.
+      // This narrows blast radius and avoids settling schedule-only rows.
       const pendingGamesStmt = db.prepare(`
-        SELECT g.game_id, g.sport, g.home_team, g.away_team, g.game_time_utc
+        SELECT
+          g.game_id,
+          g.sport,
+          g.home_team,
+          g.away_team,
+          g.game_time_utc,
+          COUNT(cr.id) AS pending_card_count
         FROM games g
+        INNER JOIN card_results cr ON cr.game_id = g.game_id
         WHERE g.game_time_utc < ?
+          AND cr.status = 'pending'
           AND g.game_id NOT IN (
             SELECT game_id FROM game_results WHERE status = 'final'
           )
+        GROUP BY g.game_id, g.sport, g.home_team, g.away_team, g.game_time_utc
         ORDER BY g.game_time_utc ASC
       `);
 
@@ -160,13 +423,19 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
         const eventMap = new Map();
         let fetchErrors = 0;
         for (const dateStr of dateSet) {
-          const scoreboardData = await espnGet(`${espnPath}/scoreboard?dates=${dateStr}`);
-          if (!scoreboardData || !scoreboardData.events) {
+          const scoreboardEvents = await fetchScoreboardEvents(
+            espnPath,
+            dateStr,
+            ESPN_SCOREBOARD_OPTIONS_BY_SPORT[sport] || null
+          );
+
+          if (!scoreboardEvents || scoreboardEvents.length === 0) {
             console.warn(`[SettleGames] No scoreboard data for ${sport} on ${dateStr}`);
             fetchErrors++;
             continue;
           }
-          for (const event of scoreboardData.events) {
+
+          for (const event of scoreboardEvents) {
             if (!eventMap.has(event.id)) {
               eventMap.set(event.id, event);
             }
@@ -183,44 +452,82 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
         console.log(`[SettleGames] ${sport}: ${events.length} ESPN events across ${dateSet.size} date(s), ${sportGames.length} DB games to match`);
         sportsProcessed.push(sport);
 
-        // Only work with completed events
-        const completedEvents = events.filter(e => {
-          return e.competitions?.[0]?.status?.type?.completed === true;
-        });
+        // Only work with completed events with parseable teams/scores.
+        let completedEvents = events
+          .map(eventToComparable)
+          .filter(Boolean);
+        const completedEventById = new Map(completedEvents.map((e) => [e.id, e]));
+        const eventUseById = new Map();
+
+        const normalizedSport = String(sport).toLowerCase();
+        const mappedRows = db.prepare(`
+          SELECT game_id, external_game_id
+          FROM game_id_map
+          WHERE sport = ?
+            AND provider = 'espn'
+        `).all(normalizedSport);
+        const mappedEspnEventIdByGameId = new Map(mappedRows.map((row) => [String(row.game_id), String(row.external_game_id)]));
+
+        const mappedIdsToHydrate = [...new Set(
+          sportGames
+            .map((game) => mappedEspnEventIdByGameId.get(String(game.game_id)))
+            .filter((eventId) => eventId && !completedEventById.has(String(eventId)))
+        )];
+
+        let hydratedCompletedEvents = 0;
+        for (const eventId of mappedIdsToHydrate) {
+          try {
+            const comparable = await fetchComparableEventFromSummary(espnPath, String(eventId));
+            if (!comparable) continue;
+            if (!completedEventById.has(comparable.id)) {
+              completedEventById.set(comparable.id, comparable);
+              hydratedCompletedEvents++;
+            }
+          } catch (summaryErr) {
+            console.warn(`[SettleGames] Failed to hydrate ESPN summary for event ${eventId}: ${summaryErr.message}`);
+          }
+        }
+
+        if (hydratedCompletedEvents > 0) {
+          completedEvents = [...completedEventById.values()];
+          console.log(`[SettleGames] ${sport}: hydrated ${hydratedCompletedEvents} completed event(s) from mapped ESPN IDs`);
+        }
 
         console.log(`[SettleGames] ${sport}: ${completedEvents.length} completed events on ESPN`);
 
         for (const dbGame of sportGames) {
-          // Try to find a matching ESPN event
-          let matched = null;
-          let homeScore = null;
-          let awayScore = null;
+          const mappedEspnEventId =
+            mappedEspnEventIdByGameId.get(String(dbGame.game_id))
+            || (/^\d+$/.test(String(dbGame.game_id)) ? String(dbGame.game_id) : null);
+          const { match, reason } = findMatchForGame(
+            dbGame,
+            completedEvents,
+            completedEventById,
+            mappedEspnEventId
+          );
 
-          for (const event of completedEvents) {
-            const comp = event.competitions?.[0];
-            if (!comp) continue;
-
-            const homeComp = comp.competitors?.find(c => c.homeAway === 'home');
-            const awayComp = comp.competitors?.find(c => c.homeAway === 'away');
-            if (!homeComp || !awayComp) continue;
-
-            const espnHomeName = homeComp.team?.displayName || '';
-            const espnAwayName = awayComp.team?.displayName || '';
-
-            if (teamsMatch(dbGame.home_team, espnHomeName) && teamsMatch(dbGame.away_team, espnAwayName)) {
-              matched = event;
-              homeScore = parseFloat(homeComp.score) || 0;
-              awayScore = parseFloat(awayComp.score) || 0;
-              break;
-            }
-          }
-
-          if (!matched) {
-            console.warn(`[SettleGames] No ESPN match for: ${dbGame.game_id} (${dbGame.home_team} vs ${dbGame.away_team})`);
+          if (!match) {
+            console.warn(
+              `[SettleGames] No safe ESPN match for ${dbGame.game_id} (${dbGame.home_team} vs ${dbGame.away_team})` +
+              ` reason=${reason} mappedEspnEventId=${mappedEspnEventId || 'none'}`
+            );
             continue;
           }
 
-          console.log(`[SettleGames] Settling ${dbGame.game_id}: ${dbGame.home_team} ${homeScore} - ${awayScore} ${dbGame.away_team}`);
+          const gameSignature = getGameSignature(dbGame);
+          const existingSignature = eventUseById.get(match.event.id);
+          if (existingSignature && existingSignature !== gameSignature) {
+            const msg = `[SettleGames] Collision: ESPN event ${match.event.id} already used for ${existingSignature}; refusing to reuse for ${gameSignature}`;
+            console.warn(msg);
+            errors.push(msg);
+            continue;
+          }
+          eventUseById.set(match.event.id, gameSignature);
+
+          console.log(
+            `[SettleGames] Settling ${dbGame.game_id}: ${dbGame.home_team} ${match.dbHomeScore} - ${match.dbAwayScore} ${dbGame.away_team}` +
+            ` (event=${match.event.id}, method=${match.method}, delta=${match.deltaMinutes.toFixed(1)}m)`
+          );
 
           if (dryRun) {
             console.log(`[SettleGames] DRY_RUN: would upsert game_result for ${dbGame.game_id}`);
@@ -233,12 +540,18 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
               id: `result-${dbGame.game_id}-${Date.now()}`,
               gameId: dbGame.game_id,
               sport: dbGame.sport,
-              finalScoreHome: homeScore,
-              finalScoreAway: awayScore,
+              finalScoreHome: match.dbHomeScore,
+              finalScoreAway: match.dbAwayScore,
               status: 'final',
               resultSource: 'primary_api',
               settledAt: new Date().toISOString(),
-              metadata: { espnEventId: matched.id }
+              metadata: {
+                espnEventId: match.event.id,
+                matchMethod: match.method,
+                matchConfidence: match.confidence,
+                expectedEspnEventId: mappedEspnEventId,
+                timeDeltaMinutes: Number(match.deltaMinutes.toFixed(2))
+              }
             });
             gamesSettled++;
           } catch (gameErr) {
@@ -285,4 +598,19 @@ if (require.main === module) {
     });
 }
 
-module.exports = { settleGameResults };
+module.exports = {
+  settleGameResults,
+  __private: {
+    normalizeTeamName,
+    canonicalizeTeamToken,
+    teamTokenSet,
+    tokenSimilarity,
+    toEpochMs,
+    eventToComparable,
+    findStrictNameTimeMatch,
+    findNcaamFuzzyNameTimeMatch,
+    findMatchForGame,
+    getGameSignature,
+    scoreMatchConfidence,
+  }
+};

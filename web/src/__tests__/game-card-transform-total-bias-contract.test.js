@@ -18,8 +18,10 @@ assert(
 );
 
 assert(
-  source.includes("resolvedMarketType === 'TOTAL' && totalBias !== 'OK'"),
-  'transform should hard-block totals when total_bias is not OK'
+  source.includes("resolvedMarketType === 'TOTAL' &&") &&
+    source.includes("totalBias !== 'OK'") &&
+    source.includes("totalBias !== 'UNKNOWN'"),
+  'transform should block totals only for explicit non-OK consistency states'
 );
 
 assert(
@@ -33,8 +35,8 @@ assert(
 );
 
 assert(
-  source.includes("status: forcedPass || (resolvedMarketType === 'TOTAL' && totalBias !== 'OK') ? 'PASS' : status"),
-  'transform should force PASS status for blocked totals'
+  source.includes('status: hardPass') && source.includes("? 'PASS'"),
+  'transform should force PASS status for blocked totals/invariant violations'
 );
 
 console.log('✅ Transform total_bias contract source tests passed');

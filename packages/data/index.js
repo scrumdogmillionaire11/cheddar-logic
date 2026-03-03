@@ -49,6 +49,8 @@ module.exports = {
   getLatestOdds: db.getLatestOdds,
   getOddsSnapshots: db.getOddsSnapshots,
   getOddsWithUpcomingGames: db.getOddsWithUpcomingGames,
+  upsertPlayerShotLog: db.upsertPlayerShotLog,
+  getPlayerShotLogs: db.getPlayerShotLogs,
   
   // Convenience exports - model_outputs
   insertModelOutput: db.insertModelOutput,

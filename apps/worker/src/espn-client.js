@@ -95,10 +95,22 @@ async function fetchTeamInfo(espnLeague, teamId) {
  * Fetch scoreboard events for a league and optional date.
  * @param {string} espnLeague
  * @param {string|null} dateStr - YYYYMMDD or null for today
+ * @param {object|null} options - Optional query params (e.g. { groups: '50', limit: '1000' })
  * @returns {Promise<Array>}
  */
-async function fetchScoreboardEvents(espnLeague, dateStr = null) {
-  const suffix = dateStr ? `?dates=${dateStr}` : '';
+async function fetchScoreboardEvents(espnLeague, dateStr = null, options = null) {
+  const params = new URLSearchParams();
+  if (dateStr) params.set('dates', dateStr);
+  if (options && typeof options === 'object') {
+    for (const [key, value] of Object.entries(options)) {
+      if (value != null && value !== '') {
+        params.set(String(key), String(value));
+      }
+    }
+  }
+
+  const qs = params.toString();
+  const suffix = qs ? `?${qs}` : '';
   const data = await espnGet(`${espnLeague}/scoreboard${suffix}`);
   if (!data || !Array.isArray(data.events)) return [];
   return data.events;

@@ -24,12 +24,14 @@
     "test:ui:evidence": "node src/__tests__/ui-evidence-no-play-contract.test.js",
     "test:api:games:market": "node src/__tests__/api-games-market-smoke.test.js",
     "test:api:games:repair-budget": "node src/__tests__/api-games-repair-budget.test.js",
+    "test:api:results:flags": "node src/__tests__/api-results-flags.test.js",
     "test:auth:refresh": "node src/__tests__/auth-refresh-flow.test.js",
     "test:auth": "node src/__tests__/auth-refresh-flow.test.js",
     "test:decision:canonical": "node src/__tests__/canonical-play-decision.test.js"
   },
   "dependencies": {
     "@cheddar-logic/data": "file:../packages/data",
+    "@cheddar-logic/models": "file:../packages/models",
     "next": "^16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",

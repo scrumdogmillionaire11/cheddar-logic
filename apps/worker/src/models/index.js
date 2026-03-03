@@ -30,6 +30,8 @@ const { computeNHLMarketDecisions, computeNBAMarketDecisions, selectExpressionCh
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { predictNHLGame } = require('./nhl-pace-model');
 
+const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -308,7 +310,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
   }
 
   // --- Welcome Home Fade v2 Driver (Cross-sport road fatigue signal) ---
-  if (restDaysHome !== null && restDaysAway !== null) {
+  if (ENABLE_WELCOME_HOME && restDaysHome !== null && restDaysAway !== null) {
     const awayNetRating = goalsForAway && goalsAgainstAway
       ? ((goalsForAway - goalsAgainstAway) * 10)
       : null;
@@ -331,9 +333,11 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
         awayTeam,
         homeTeam,
         sport: 'NHL',
-        isBackToBack: restDaysAway === 0,
+        isBackToBack: restDaysHome === 0,
         recentRoadGames,
-        homeTeamRoadTrip: true
+        homeTeamRoadTrip: true,
+        homeRestDays: restDaysHome,
+        gameTimeUtc: oddsSnapshot?.game_time_utc
       });
 
       if (welcomeCard) {
@@ -657,7 +661,7 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
   }
 
   // --- Welcome Home v2 Driver (Cross-sport road fatigue signal) ---
-  if (restDaysAway !== null) {
+  if (ENABLE_WELCOME_HOME && restDaysHome !== null && restDaysAway !== null) {
     const awayTeam = {
       netRating: awayNetRating,
       restDays: restDaysAway
@@ -673,9 +677,11 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
         awayTeam,
         homeTeam,
         sport: 'NBA',
-        isBackToBack: restDaysAway === 0,
+        isBackToBack: restDaysHome === 0,
         recentRoadGames,
-        homeTeamRoadTrip: true
+        homeTeamRoadTrip: true,
+        homeRestDays: restDaysHome,
+        gameTimeUtc: oddsSnapshot?.game_time_utc
       });
 
       if (welcomeCard) {
