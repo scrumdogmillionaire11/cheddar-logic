@@ -29,6 +29,84 @@ let dbInstance = null;
 let dbPath = null;
 const warnedSportValues = new Set();
 const oddsContextReferenceRegistry = new WeakMap();
+const EXPECTED_TABLE_NAMES = ['games', 'card_payloads', 'card_results', 'game_results'];
+
+function normalizeConfiguredPath(rawPath) {
+  if (!rawPath || typeof rawPath !== 'string') return null;
+  const trimmed = rawPath.trim();
+  if (!trimmed) return null;
+
+  // Support sqlite-style URLs as file paths:
+  // sqlite:////abs/path.db | sqlite:///abs/path.db | sqlite:./relative.db
+  if (trimmed.toLowerCase().startsWith('sqlite:')) {
+    const raw = trimmed.slice('sqlite:'.length);
+    if (!raw) return null;
+    if (raw.startsWith('//')) {
+      return path.normalize(`/${raw.replace(/^\/+/, '')}`);
+    }
+    return path.resolve(raw);
+  }
+
+  return path.isAbsolute(trimmed) ? path.normalize(trimmed) : path.resolve(trimmed);
+}
+
+function inspectDatabaseTableScore(dbFile) {
+  try {
+    if (!fs.existsSync(dbFile)) return -1;
+    const buffer = fs.readFileSync(dbFile);
+    const db = new SQL.Database(buffer);
+    const stmt = db.prepare(
+      `SELECT COUNT(*) AS c
+       FROM sqlite_master
+       WHERE type='table' AND name IN (?, ?, ?, ?)`
+    );
+    stmt.bind(EXPECTED_TABLE_NAMES);
+    let score = 0;
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      score = Number(row.c || 0);
+    }
+    stmt.free();
+    db.close();
+    return score;
+  } catch {
+    return -1;
+  }
+}
+
+function chooseBestDatabasePath(primaryPath) {
+  const candidates = [
+    primaryPath,
+    normalizeConfiguredPath(process.env.CHEDDAR_DB_PATH),
+    normalizeConfiguredPath(path.join(process.env.CHEDDAR_DATA_DIR || '', 'cheddar.db')),
+    '/opt/data/cheddar.db',
+    '/opt/cheddar-logic/packages/data/cheddar.db',
+    '/tmp/cheddar-logic/cheddar.db',
+  ]
+    .filter(Boolean)
+    .map((candidate) => path.normalize(candidate));
+
+  const uniqueCandidates = [...new Set(candidates)];
+
+  let bestPath = primaryPath;
+  let bestScore = inspectDatabaseTableScore(primaryPath);
+
+  for (const candidate of uniqueCandidates) {
+    const score = inspectDatabaseTableScore(candidate);
+    if (score > bestScore) {
+      bestScore = score;
+      bestPath = candidate;
+    }
+  }
+
+  if (bestPath !== primaryPath && bestScore > 0) {
+    console.warn(
+      `[DB] Using database with existing tables: ${bestPath} (score=${bestScore}) instead of ${primaryPath}`
+    );
+  }
+
+  return bestPath;
+}
 
 function normalizeSportValue(sport, context) {
   if (sport == null) return null;
@@ -54,10 +132,11 @@ async function initDb() {
  */
 function loadDatabase() {
   const resolved = resolveDatabasePath();
-  const dbFile = dbPath || resolved.dbPath;
+  const preferredPath = dbPath || resolved.dbPath;
+  const dbFile = chooseBestDatabasePath(preferredPath);
 
-  if (resolved.isExplicitFile && !fs.existsSync(dbFile)) {
-    console.warn(`[DB] ${resolved.source} points to missing DB file. Creating new DB at: ${dbFile}`);
+  if (resolved.isExplicitFile && !fs.existsSync(preferredPath)) {
+    console.warn(`[DB] ${resolved.source} points to missing DB file. Creating new DB at: ${preferredPath}`);
   }
 
   dbPath = dbFile;
