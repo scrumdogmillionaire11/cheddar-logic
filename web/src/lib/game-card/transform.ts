@@ -51,6 +51,10 @@ interface ApiPlay {
   reasoning: string;
   evPassed: boolean;
   driverKey: string;
+  status?: 'FIRE' | 'WATCH' | 'PASS';
+  classification?: 'BASE' | 'LEAN' | 'PASS';
+  action?: 'FIRE' | 'HOLD' | 'PASS';
+  pass_reason_code?: string | null;
   market_type?: CanonicalMarketType;
   selection?: { side?: string; team?: string };
   line?: number;
@@ -137,6 +141,19 @@ function inferMarketFromCardTitle(cardTitle: string): Market {
   }
   
   return 'UNKNOWN';
+}
+
+function getSourcePlayAction(play?: ApiPlay): 'FIRE' | 'HOLD' | 'PASS' | undefined {
+  if (!play) return undefined;
+  if (play.action === 'FIRE' || play.action === 'HOLD' || play.action === 'PASS') {
+    return play.action;
+  }
+
+  const legacyStatus = String(play.status ?? '').toUpperCase();
+  if (legacyStatus === 'FIRE') return 'FIRE';
+  if (legacyStatus === 'WATCH' || legacyStatus === 'HOLD') return 'HOLD';
+  if (legacyStatus === 'PASS') return 'PASS';
+  return undefined;
 }
 
 function inferCanonicalFromSecondary(play: ApiPlay): CanonicalMarketType | undefined {
@@ -443,12 +460,15 @@ function buildPlay(
   game: GameData,
   drivers: DriverRow[]
 ): Play {
-  const sourcePlays = ENABLE_WELCOME_HOME
-    ? game.plays
-    : game.plays.filter((play) => !isWelcomeHomePlay(play));
-  const playCandidates = sourcePlays.filter(isPlayItem);
-  const evidenceCandidates = sourcePlays.filter(isEvidenceItem);
-  const inferredPlays = playCandidates.map((sourcePlay) => ({ sourcePlay, inference: inferMarketFromPlay(sourcePlay) }));
+  const playCandidates = game.plays.filter(isPlayItem);
+  const evidenceCandidates = game.plays.filter(isEvidenceItem);
+  const scopedPlayCandidates = ENABLE_WELCOME_HOME
+    ? playCandidates
+    : playCandidates.filter((play) => !isWelcomeHomePlay(play));
+  const scopedEvidenceCandidates = ENABLE_WELCOME_HOME
+    ? evidenceCandidates
+    : evidenceCandidates.filter((play) => !isWelcomeHomePlay(play));
+  const inferredPlays = scopedPlayCandidates.map((sourcePlay) => ({ sourcePlay, inference: inferMarketFromPlay(sourcePlay) }));
   const canonicalPlayableCount = inferredPlays.filter(({ inference }) => inference.canonical && inference.canonical !== 'INFO').length;
   const truthDriver = pickTruthDriver(drivers);
 
@@ -491,10 +511,10 @@ function buildPlay(
 
   // Check if there's an explicit high-confidence SPREAD or TOTAL play available
   // Prefer those over defaulting to MONEYLINE
-  const spreadPlay = playCandidates.find(
+  const spreadPlay = scopedPlayCandidates.find(
     (p) => p.market_type === 'SPREAD' && p.confidence >= 0.6 && p.tier !== null
   );
-  const totalPlay = playCandidates.find(
+  const totalPlay = scopedPlayCandidates.find(
     (p) => p.market_type === 'TOTAL' && p.confidence >= 0.6 && p.tier !== null
   );
 
@@ -581,7 +601,12 @@ function buildPlay(
 
   let whyCode = getPlayWhyCode(betAction, market, drivers, priceFlags);
   let whyText = whyCode.replace(/_/g, ' ');
-  const sourcePlay = playCandidates.find((play) => play.driverKey === truthDriver.key) ?? playCandidates[0];
+  const sourcePlayByTruthDriver = scopedPlayCandidates.find((play) => play.driverKey === truthDriver.key);
+  const actionableSourcePlay = scopedPlayCandidates.find((play) => {
+    const sourceAction = getSourcePlayAction(play);
+    return sourceAction === 'FIRE' || sourceAction === 'HOLD';
+  });
+  const sourcePlay = actionableSourcePlay ?? sourcePlayByTruthDriver ?? scopedPlayCandidates[0];
   const sourceInference = sourcePlay ? inferMarketFromPlay(sourcePlay) : { market, canonical: undefined, reasonCodes: [], tags: [] };
   const totalBias = game.consistency?.total_bias ?? sourcePlay?.consistency?.total_bias ?? 'UNKNOWN';
 
@@ -611,7 +636,7 @@ function buildPlay(
   const tags = [...new Set([...(sourceInference.tags ?? []), ...riskTags])];
 
   const sourceAggregationKey = sourcePlay?.aggregation_key;
-  const linkedEvidence = evidenceCandidates.filter((evidence) => {
+  const linkedEvidence = scopedEvidenceCandidates.filter((evidence) => {
     if (sourcePlay?.driverKey && evidence.evidence_for_play_id === sourcePlay.driverKey) return true;
     if (sourceAggregationKey && evidence.aggregation_key === sourceAggregationKey) return true;
     return false;
@@ -699,6 +724,32 @@ function buildPlay(
 
   // Derive canonical decision (classification + action)
   const decision = derivePlayDecision(playForDecision, marketContext, {});
+  const explicitAction = getSourcePlayAction(sourcePlay);
+  const explicitClassification =
+    sourcePlay?.classification === 'BASE' ||
+    sourcePlay?.classification === 'LEAN' ||
+    sourcePlay?.classification === 'PASS'
+      ? sourcePlay.classification
+      : undefined;
+
+  const resolvedAction = hardPass
+    ? 'PASS'
+    : explicitAction ?? (decision.action as 'FIRE' | 'HOLD' | 'PASS') ?? undefined;
+  const resolvedClassification = hardPass
+    ? 'PASS'
+    : explicitClassification ??
+      (resolvedAction === 'FIRE'
+        ? 'LEAN'
+        : resolvedAction === 'HOLD'
+          ? 'BASE'
+          : (decision.classification as 'BASE' | 'LEAN' | 'PASS') ?? undefined);
+  const resolvedLegacyStatus: 'FIRE' | 'WATCH' | 'PASS' = hardPass
+    ? 'PASS'
+    : resolvedAction === 'FIRE'
+      ? 'FIRE'
+      : resolvedAction === 'HOLD'
+        ? 'WATCH'
+        : classificationToLegacyStatus(decision.classification, decision.action);
 
   return {
     market_type: resolvedMarketType,
@@ -717,19 +768,13 @@ function buildPlay(
     reason_codes: Array.from(new Set(reasonCodes)),
     tags,
     // Canonical fields (preferred)
-    classification: hardPass
-      ? 'PASS'
-      : (decision.classification as 'BASE' | 'LEAN' | 'PASS') || undefined,
-    action: hardPass
-      ? 'PASS'
-      : (decision.action as 'FIRE' | 'HOLD' | 'PASS') || undefined,
+    classification: resolvedClassification,
+    action: resolvedAction,
     pass_reason_code: hardPass
       ? passReasonCode
-      : decision.play?.pass_reason_code ?? null,
+      : sourcePlay?.pass_reason_code ?? decision.play?.pass_reason_code ?? null,
     // Legacy compatibility (keep until UI migration complete)
-    status: hardPass
-      ? 'PASS' 
-      : classificationToLegacyStatus(decision.classification, decision.action),
+    status: resolvedLegacyStatus,
     market,
     pick,
     lean: direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : direction,
@@ -755,15 +800,16 @@ function buildPlay(
  * Transform GameData to normalized GameCard with deduped drivers and canonical Play
  */
 export function transformToGameCard(game: GameData): GameCard {
-  const sourcePlays = ENABLE_WELCOME_HOME
-    ? game.plays
-    : game.plays.filter((play) => !isWelcomeHomePlay(play));
-
   // Convert plays to drivers and dedupe
-  const rawDrivers = sourcePlays.filter(isPlayItem).map(playToDriver);
-  const drivers = deduplicateDrivers(rawDrivers);
-  const evidence: EvidenceItem[] = sourcePlays
-    .filter(isEvidenceItem)
+  const rawDrivers = game.plays.filter(isPlayItem).map(playToDriver);
+  const scopedRawDrivers = ENABLE_WELCOME_HOME
+    ? rawDrivers
+    : rawDrivers.filter((driver) => driver.cardType !== 'welcome-home-v2');
+  const drivers = deduplicateDrivers(scopedRawDrivers);
+  const evidenceSource = ENABLE_WELCOME_HOME
+    ? game.plays.filter(isEvidenceItem)
+    : game.plays.filter((play) => !isWelcomeHomePlay(play) && isEvidenceItem(play));
+  const evidence: EvidenceItem[] = evidenceSource
     .map((play, index) => ({
       id: `${game.gameId}:evidence:${play.driverKey || play.cardType || index}`,
       cardType: play.cardType,
