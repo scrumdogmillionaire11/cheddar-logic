@@ -34,6 +34,14 @@ export type DecisionModel = {
   allDrivers: DriverRow[];
 };
 
+export type PlayDisplayAction = 'FIRE' | 'HOLD' | 'PASS';
+
+export type ResolvedPlayDisplayDecision = {
+  action: PlayDisplayAction;
+  status: ExpressionStatus;
+  classification: 'BASE' | 'LEAN' | 'PASS';
+};
+
 interface Odds {
   h2hHome: number | null;
   h2hAway: number | null;
@@ -54,6 +62,51 @@ const DIRECTION_OPPOSITE: Partial<Record<Direction, Direction>> = {
 function normalizeText(value: unknown): string {
   if (typeof value !== 'string') return '';
   return value.trim();
+}
+
+function isValidAction(value: unknown): value is PlayDisplayAction {
+  return value === 'FIRE' || value === 'HOLD' || value === 'PASS';
+}
+
+function actionFromLegacyStatus(value: unknown): PlayDisplayAction | undefined {
+  const status = String(value ?? '').toUpperCase();
+  if (status.includes('FIRE')) return 'FIRE';
+  if (status.includes('WATCH') || status.includes('HOLD')) return 'HOLD';
+  if (status.includes('PASS')) return 'PASS';
+  return undefined;
+}
+
+function actionFromClassification(value: unknown): PlayDisplayAction | undefined {
+  if (value === 'LEAN') return 'FIRE';
+  if (value === 'BASE') return 'HOLD';
+  if (value === 'PASS') return 'PASS';
+  return undefined;
+}
+
+function classificationFromAction(action: PlayDisplayAction): 'BASE' | 'LEAN' | 'PASS' {
+  if (action === 'FIRE') return 'LEAN';
+  if (action === 'HOLD') return 'BASE';
+  return 'PASS';
+}
+
+function expressionStatusFromAction(action: PlayDisplayAction): ExpressionStatus {
+  if (action === 'HOLD') return 'WATCH';
+  return action;
+}
+
+export function resolvePlayDisplayDecision(
+  play?: Partial<Pick<Play, 'action' | 'status' | 'classification'>> | null
+): ResolvedPlayDisplayDecision {
+  const explicitAction = isValidAction(play?.action) ? play.action : undefined;
+  const legacyAction = actionFromLegacyStatus(play?.status);
+  const classificationAction = actionFromClassification(play?.classification);
+  const action = explicitAction ?? legacyAction ?? classificationAction ?? 'PASS';
+
+  return {
+    action,
+    status: expressionStatusFromAction(action),
+    classification: classificationFromAction(action),
+  };
 }
 
 function buildDriverHash(driver: DriverRow): string {
@@ -360,10 +413,11 @@ function selectPrimaryPlay(
 
   // Use pre-built play if available
   if (card.play) {
+    const resolved = resolvePlayDisplayDecision(card.play);
     return {
       source: 'play',
       market: card.play.market === 'NONE' ? 'NONE' : (card.play.market as Market),
-      status: card.play.status,
+      status: resolved.status,
       pick: card.play.pick,
       direction: card.play.side,
       tier: null,
@@ -505,19 +559,5 @@ export function getCardDecisionModel(card: GameCard, odds: Odds | null): Decisio
  * @returns 'FIRE' | 'HOLD' | 'PASS'
  */
 export function getPlayDisplayAction(play?: Play | null): 'FIRE' | 'HOLD' | 'PASS' {
-  if (!play) {
-    return 'PASS';
-  }
-
-  // Prefer canonical action field
-  if (play?.action === 'FIRE' || play?.action === 'HOLD' || play?.action === 'PASS') {
-    return play.action;
-  }
-
-  // Fallback to legacy status field for backward compatibility
-  const status = String(play?.status ?? '').toUpperCase();
-  if (status.includes('FIRE')) return 'FIRE';
-  if (status.includes('WATCH') || status.includes('HOLD')) return 'HOLD';
-  
-  return 'PASS';
+  return resolvePlayDisplayDecision(play).action;
 }

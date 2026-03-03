@@ -145,9 +145,10 @@ function getCardDebugMeta(card: GameCard) {
   const playCount = card.drivers.length;
   const hasAnyPlay = playCount > 0;
   const hasBettable = card.tags.includes(GAME_TAGS.HAS_FIRE) || card.tags.includes(GAME_TAGS.HAS_WATCH);
+  const playDisplayAction = getPlayDisplayAction(card.play);
   const hasBlockedTotals = Boolean(
     card.play?.market_type === 'TOTAL' &&
-      card.play?.status === 'PASS' &&
+      playDisplayAction === 'PASS' &&
       (card.play?.reason_codes?.includes('PASS_TOTAL_INSUFFICIENT_DATA') ||
         card.play?.tags?.includes('CONSISTENCY_BLOCK_TOTALS'))
   );
