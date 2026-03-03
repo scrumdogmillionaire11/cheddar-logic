@@ -188,7 +188,7 @@ function generateWelcomeHomeCard(gameCtx) {
 
   return {
     cardType: 'welcome-home-v2',
-    cardTitle: `[${sport}] Road Fatigue: Home Advantage Signal`,
+    cardTitle: `[${sport}] Welcome Home Fade: Road Trip Fatigue`,
     confidence,
     tier,
     prediction: 'HOME',
