@@ -52,6 +52,44 @@ const NBA_DRIVER_WEIGHTS = {
   totalProjection: 0.13
 };
 
+/**
+ * Get recent road games for a team from schedule
+ * @param {string} teamName - Team display name
+ * @param {string} sport - Sport code (lowercase)
+ * @param {string} currentGameTime - Current game time in UTC
+ * @param {number} limit - Max games to retrieve
+ * @returns {Array<{isHome: boolean, date: string}>}
+ */
+function getRecentRoadGames(teamName, sport, currentGameTime, limit = 10) {
+  if (!teamName || !currentGameTime) return [];
+  
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT game_id, game_time_utc, home_team, away_team, status
+    FROM games
+    WHERE LOWER(sport) = ?
+      AND UPPER(away_team) = UPPER(?)
+      AND game_time_utc < ?
+    ORDER BY game_time_utc DESC
+    LIMIT ?
+  `);
+  
+  try {
+    const results = stmt.all(sport.toLowerCase(), teamName, currentGameTime, limit);
+    return results
+      .filter(g => g.status === 'final' || g.status === 'STATUS_FINAL' || g.status === 'in_progress')
+      .map(g => ({
+        isHome: false,
+        date: g.game_time_utc,
+        opponent: g.home_team
+      }))
+      .reverse(); // Chronological order (oldest to newest)
+  } catch (error) {
+    console.error(`[Schedule] Failed to query road games for ${teamName}:`, error.message);
+    return [];
+  }
+}
+
 function computeWinProbHome(projectedMargin, sport) {
   if (!Number.isFinite(projectedMargin)) return null;
   const sigma = edgeCalculator.getSigmaDefaults(sport)?.margin ?? 12;
@@ -518,7 +556,17 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           // Enrich with ESPN team metrics
           oddsSnapshot = await enrichOddsSnapshotWithEspnMetrics(oddsSnapshot);
 
-          const driverCards = computeNBADriverCards(gameId, oddsSnapshot);
+          // Query schedule for Welcome Home Fade
+          const awayTeamRoadGames = getRecentRoadGames(
+            oddsSnapshot.away_team,
+            'nba',
+            oddsSnapshot.game_time_utc,
+            10
+          );
+
+          const driverCards = computeNBADriverCards(gameId, oddsSnapshot, {
+            recentRoadGames: awayTeamRoadGames
+          });
 
           if (driverCards.length === 0) {
             console.log(`  [skip] ${gameId}: No actionable NBA driver signals`);
