@@ -253,6 +253,32 @@ type DecisionModel = {
   allDrivers: DriverRow[];
 };
 
+const CLIENT_POLL_INTERVAL_MS = 60_000;
+const CLIENT_MIN_FETCH_INTERVAL_MS = 5_000;
+const CLIENT_FETCH_TIMEOUT_MS = 10_000;
+const CLIENT_DEFAULT_BACKOFF_MS = 30_000;
+
+let globalGamesFetchInFlight = false;
+let globalGamesLastFetchAt = 0;
+let globalGamesBlockedUntil = 0;
+
+function parseRetryAfterMs(retryAfterHeader: string | null): number | null {
+  if (!retryAfterHeader) return null;
+
+  const numeric = Number(retryAfterHeader.trim());
+  if (Number.isFinite(numeric)) {
+    // Accept both delta-seconds and absolute epoch-seconds.
+    if (numeric > 1_000_000_000) {
+      return Math.max(0, numeric * 1000 - Date.now());
+    }
+    return Math.max(0, numeric * 1000);
+  }
+
+  const asDate = Date.parse(retryAfterHeader);
+  if (!Number.isFinite(asDate)) return null;
+  return Math.max(0, asDate - Date.now());
+}
+
 export default function CardsPageClient() {
   const [games, setGames] = useState<GameData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -261,7 +287,8 @@ export default function CardsPageClient() {
   const [filters, setFilters] = useState<GameFilters>(getDefaultFilters('game'));
   const isInitialLoad = useRef(true);
   const showTrace = process.env.NODE_ENV !== 'production';
-  const propsEnabled = process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true';
+  const propsEnabled =
+    process.env.NODE_ENV !== 'production' || process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true';
 
   // Compute enriched and filtered cards
   const { enrichedCards, filteredCards } = useMemo(() => {
@@ -369,35 +396,102 @@ export default function CardsPageClient() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+
     const fetchGames = async () => {
+      const now = Date.now();
+
+      if (globalGamesFetchInFlight) {
+        console.debug('[cards] Skipping fetch - global request already in flight');
+        return;
+      }
+
+      if (globalGamesBlockedUntil > now) {
+        const retryAfterSec = Math.max(1, Math.ceil((globalGamesBlockedUntil - now) / 1000));
+        if (!cancelled) {
+          setError(`Server rate limited. Retrying in ${retryAfterSec} seconds...`);
+        }
+        return;
+      }
+
+      if (globalGamesLastFetchAt && now - globalGamesLastFetchAt < CLIENT_MIN_FETCH_INTERVAL_MS) {
+        console.debug('[cards] Skipping fetch - throttled');
+        return;
+      }
+
       try {
+        globalGamesFetchInFlight = true;
+        globalGamesLastFetchAt = now;
+
         if (isInitialLoad.current) {
           setLoading(true);
         }
-        const response = await fetch('/api/games');
-        const data: ApiResponse = await response.json();
 
-        if (!response.ok || !data.success) {
-          setError(data.error || 'Failed to fetch games');
-          setGames([]);
+        const response = await fetch('/api/games', {
+          signal: AbortSignal.timeout(CLIENT_FETCH_TIMEOUT_MS),
+          cache: 'no-store',
+        });
+
+        if (response.status === 429) {
+          const retryAfterMs =
+            parseRetryAfterMs(response.headers.get('Retry-After')) ?? CLIENT_DEFAULT_BACKOFF_MS;
+          globalGamesBlockedUntil = Date.now() + retryAfterMs;
+          const retryAfterSec = Math.max(1, Math.ceil(retryAfterMs / 1000));
+          console.warn('[cards] Rate limited, backing off', { retryAfterSec });
+          if (!cancelled) {
+            setError(`Server rate limited. Retrying in ${retryAfterSec} seconds...`);
+          }
           return;
         }
 
-        setGames(data.data || []);
-        setError(null);
+        globalGamesBlockedUntil = 0;
+        const data: ApiResponse = await response.json();
+
+        if (!response.ok || !data.success) {
+          if (!cancelled) {
+            setError(data.error || 'Failed to fetch games');
+            setGames([]);
+          }
+          return;
+        }
+
+        if (!cancelled) {
+          setGames(data.data || []);
+          setError(null);
+        }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
-        setGames([]);
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        if (!cancelled && message !== 'The operation was aborted') {
+          setError(message);
+          setGames([]);
+        }
       } finally {
-        setLoading(false);
-        isInitialLoad.current = false;
+        globalGamesFetchInFlight = false;
+        if (!cancelled) {
+          setLoading(false);
+          isInitialLoad.current = false;
+        }
       }
     };
 
-    fetchGames();
-    // Updates in background every 30s
-    const interval = setInterval(fetchGames, 30000);
-    return () => clearInterval(interval);
+    void fetchGames();
+    const interval = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      void fetchGames();
+    }, CLIENT_POLL_INTERVAL_MS);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void fetchGames();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, []);
 
   useEffect(() => {

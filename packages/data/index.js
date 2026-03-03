@@ -12,6 +12,8 @@ const auth = require('./src/auth');
 const { validateCardPayload } = require('./src/validators/card-payload');
 const { getTeamMetrics, getTeamMetricsWithGames, computeMetricsFromGames } = require('./src/team-metrics');
 const { enrichOddsSnapshotWithEspnMetrics, enrichOddsSnapshotsWithEspnMetrics } = require('./src/odds-enrichment');
+const marketContract = require('./src/market-contract');
+const dbPath = require('./src/db-path');
 
 // Ensure migrations are run on first import (optional but recommended)
 // Uncomment to auto-run migrations:
@@ -116,4 +118,24 @@ module.exports = {
 
   // Odds enrichment
   enrichOddsSnapshotWithEspnMetrics,
-  enrichOddsSnapshotsWithEspnMetrics};
+  enrichOddsSnapshotsWithEspnMetrics,
+
+  // Market contract
+  CANONICAL_MARKET_TYPES: marketContract.CANONICAL_MARKET_TYPES,
+  LOCKABLE_SELECTIONS: marketContract.LOCKABLE_SELECTIONS,
+  buildMarketKey: marketContract.buildMarketKey,
+  createMarketError: marketContract.createMarketError,
+  deriveLockedMarketContext: marketContract.deriveLockedMarketContext,
+  formatMarketSelectionLabel: marketContract.formatMarketSelectionLabel,
+  normalizeMarketType: marketContract.normalizeMarketType,
+  normalizeSelectionForMarket: marketContract.normalizeSelectionForMarket,
+  parseAmericanOdds: marketContract.parseAmericanOdds,
+  parseLine: marketContract.parseLine,
+  resolveLockedPrice: marketContract.resolveLockedPrice,
+  toRecommendedBetType: marketContract.toRecommendedBetType,
+
+  // DB path contract
+  DEFAULT_DATABASE_PATH: dbPath.DEFAULT_DATABASE_PATH,
+  parseSqliteUrl: dbPath.parseSqliteUrl,
+  resolveDatabasePath: dbPath.resolveDatabasePath,
+};

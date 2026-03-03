@@ -5,6 +5,7 @@
  */
 
 const { z } = require('zod');
+const { deriveLockedMarketContext } = require('../market-contract');
 
 const isoDateString = z.string().refine(value => !Number.isNaN(Date.parse(value)), {
   message: 'generated_at must be an ISO date string'
@@ -75,6 +76,20 @@ function validateCardPayload(cardType, payloadData) {
   const result = schema.safeParse(payloadData);
 
   if (result.success) {
+    try {
+      // Parser boundary guard: actionable plays must satisfy strict market/selection contract.
+      deriveLockedMarketContext(payloadData, {
+        gameId: payloadData?.game_id,
+        homeTeam: payloadData?.home_team,
+        awayTeam: payloadData?.away_team,
+        requirePrice: true,
+        requireLineForMarket: true,
+      });
+    } catch (error) {
+      const errorCode = error?.code || 'INVALID_MARKET_CONTRACT';
+      return { success: false, errors: [`market_contract: ${errorCode} ${error.message}`] };
+    }
+
     return { success: true, errors: [] };
   }
 

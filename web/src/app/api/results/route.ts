@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
+import {
+  deriveLockedMarketContext,
+  formatMarketSelectionLabel,
+  initDb,
+  getDatabase,
+  closeDatabase,
+} from '@cheddar-logic/data';
+import { performSecurityChecks, addRateLimitHeaders } from '../../../lib/api-security';
 
 const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
 const ALLOWED_CATEGORIES = ['driver', 'call'] as const;
@@ -31,6 +38,11 @@ type LedgerRow = {
   sport: string;
   card_type: string;
   recommended_bet_type: string | null;
+  market_key: string | null;
+  market_type: string | null;
+  selection: string | null;
+  line: number | null;
+  locked_price: number | null;
   result: string | null;
   pnl_units: number | null;
   settled_at: string | null;
@@ -102,6 +114,12 @@ function buildCardCategoryFilter(category: string | null, alias: string): { sql:
 export async function GET(request: NextRequest) {
   let db: ReturnType<typeof getDatabase> | null = null;
   try {
+    // Security checks: rate limiting, input validation
+    const securityCheck = performSecurityChecks(request, '/api/results');
+    if (!securityCheck.allowed) {
+      return securityCheck.error!;
+    }
+
     await initDb();
     db = getDatabase();
 
@@ -113,7 +131,7 @@ export async function GET(request: NextRequest) {
 
     if (!hasResultsTable) {
       // Database is not initialized - return empty data with proper structure
-      return NextResponse.json(
+      const response = NextResponse.json(
         { 
           success: true, 
           data: { 
@@ -133,6 +151,7 @@ export async function GET(request: NextRequest) {
         },
         { headers: { 'Content-Type': 'application/json' } }
       );
+      return addRateLimitHeaders(response, request);
     }
 
     const { searchParams } = request.nextUrl;
@@ -190,6 +209,11 @@ export async function GET(request: NextRequest) {
           cr.id,
           cr.game_id,
           cr.recommended_bet_type,
+          cr.market_key,
+          cr.market_type,
+          cr.selection,
+          cr.line,
+          cr.locked_price,
           cr.settled_at,
           ${confidenceExpr} AS confidence_pct
         FROM card_results cr
@@ -211,7 +235,7 @@ export async function GET(request: NextRequest) {
           SELECT
             id,
             ROW_NUMBER() OVER (
-              PARTITION BY game_id, recommended_bet_type
+              PARTITION BY COALESCE(market_key, game_id || ':' || recommended_bet_type)
               ORDER BY
                 CASE WHEN confidence_pct IS NULL THEN 1 ELSE 0 END ASC,
                 confidence_pct DESC,
@@ -334,6 +358,11 @@ export async function GET(request: NextRequest) {
         cr.sport,
         cr.card_type,
         cr.recommended_bet_type,
+        cr.market_key,
+        cr.market_type,
+        cr.selection,
+        cr.line,
+        cr.locked_price,
         cr.result,
         cr.pnl_units,
         cr.settled_at,
@@ -357,6 +386,11 @@ export async function GET(request: NextRequest) {
       const market = payload && typeof payload.recommended_bet_type === 'string'
         ? payload.recommended_bet_type
         : row.recommended_bet_type;
+      let marketType = row.market_type;
+      let selection = row.selection;
+      let line = row.line ?? null;
+      let marketKey = row.market_key;
+      let lockedPrice = typeof row.locked_price === 'number' ? row.locked_price : null;
 
       // homeTeam / awayTeam
       const homeTeam = payload && typeof payload.home_team === 'string'
@@ -366,43 +400,80 @@ export async function GET(request: NextRequest) {
         ? payload.away_team
         : row.game_away_team;
 
-      // Derive display prediction from recommendation.type (authoritative BET decision).
-      // Falls back to raw prediction field for legacy cards without recommendation.type.
+      if ((!marketType || !selection || marketKey == null || lockedPrice == null) && payload && typeof payload === 'object') {
+        try {
+          const derived = deriveLockedMarketContext(payload, {
+            gameId: row.game_id,
+            homeTeam,
+            awayTeam,
+            requirePrice: true,
+            requireLineForMarket: true,
+          });
+          if (derived) {
+            marketType = derived.marketType;
+            selection = derived.selection;
+            line = derived.line;
+            marketKey = derived.marketKey;
+            lockedPrice = derived.lockedPrice;
+          }
+        } catch {
+          // Keep DB-backed values when payload contract cannot be derived.
+        }
+      }
+
+      let prediction: string | null = selection ?? null;
+      let marketSelectionLabel: string | null = null;
+      if (marketType && selection) {
+        try {
+          marketSelectionLabel = formatMarketSelectionLabel(marketType, selection);
+          prediction = selection;
+        } catch {
+          marketSelectionLabel = null;
+        }
+      }
+
+      // Legacy display fallback for historical rows that predate locked market fields.
       const recType = payload
         && typeof (payload.recommendation as Record<string, unknown> | null | undefined)?.['type'] === 'string'
         ? ((payload.recommendation as Record<string, unknown>)['type'] as string)
         : null;
 
-      let prediction: string | null = null;
-      if (recType && recType !== 'PASS') {
-        if (recType === 'ML_HOME' || recType === 'SPREAD_HOME') prediction = 'HOME';
-        else if (recType === 'ML_AWAY' || recType === 'SPREAD_AWAY') prediction = 'AWAY';
-        else if (recType === 'TOTAL_OVER') prediction = 'OVER';
-        else if (recType === 'TOTAL_UNDER') prediction = 'UNDER';
-      } else if (!recType && payload && typeof payload.prediction === 'string') {
+      if (!prediction && payload && typeof payload.prediction === 'string') {
         prediction = payload.prediction;
       }
 
-      // price — extracted from odds_context based on recommendation.type (preferred) or prediction (legacy)
-      let price: number | null = null;
-      if (payload && payload.odds_context && typeof payload.odds_context === 'object') {
+      if (!marketSelectionLabel) {
+        if (recType === 'ML_HOME') marketSelectionLabel = 'ML/Home';
+        else if (recType === 'ML_AWAY') marketSelectionLabel = 'ML/Away';
+        else if (recType === 'SPREAD_HOME') marketSelectionLabel = 'Spread/Home';
+        else if (recType === 'SPREAD_AWAY') marketSelectionLabel = 'Spread/Away';
+        else if (recType === 'TOTAL_OVER') marketSelectionLabel = 'Total/Over';
+        else if (recType === 'TOTAL_UNDER') marketSelectionLabel = 'Total/Under';
+        else if (market && prediction) marketSelectionLabel = `${String(market).toUpperCase()}/${prediction}`;
+      }
+
+      if (lockedPrice == null && payload && payload.odds_context && typeof payload.odds_context === 'object') {
         const oddsCtx = payload.odds_context as Record<string, unknown>;
         if (recType === 'ML_HOME') {
-          price = typeof oddsCtx.h2h_home === 'number' ? oddsCtx.h2h_home : null;
+          lockedPrice = typeof oddsCtx.h2h_home === 'number' ? oddsCtx.h2h_home : null;
         } else if (recType === 'ML_AWAY') {
-          price = typeof oddsCtx.h2h_away === 'number' ? oddsCtx.h2h_away : null;
-        } else if (recType === 'TOTAL_OVER' || recType === 'TOTAL_UNDER') {
-          price = typeof oddsCtx.total === 'number' ? oddsCtx.total : null;
+          lockedPrice = typeof oddsCtx.h2h_away === 'number' ? oddsCtx.h2h_away : null;
+        } else if (recType === 'TOTAL_OVER') {
+          lockedPrice = typeof oddsCtx.total_price_over === 'number' ? oddsCtx.total_price_over : null;
+        } else if (recType === 'TOTAL_UNDER') {
+          lockedPrice = typeof oddsCtx.total_price_under === 'number' ? oddsCtx.total_price_under : null;
         } else if (recType === 'SPREAD_HOME') {
-          price = typeof oddsCtx.spread_home === 'number' ? oddsCtx.spread_home : null;
+          lockedPrice = typeof oddsCtx.spread_price_home === 'number' ? oddsCtx.spread_price_home : null;
         } else if (recType === 'SPREAD_AWAY') {
-          price = typeof oddsCtx.spread_away === 'number' ? oddsCtx.spread_away : null;
+          lockedPrice = typeof oddsCtx.spread_price_away === 'number' ? oddsCtx.spread_price_away : null;
         } else if (prediction === 'HOME') {
-          price = typeof oddsCtx.h2h_home === 'number' ? oddsCtx.h2h_home : null;
+          lockedPrice = typeof oddsCtx.h2h_home === 'number' ? oddsCtx.h2h_home : null;
         } else if (prediction === 'AWAY') {
-          price = typeof oddsCtx.h2h_away === 'number' ? oddsCtx.h2h_away : null;
-        } else if (prediction === 'OVER' || prediction === 'UNDER') {
-          price = typeof oddsCtx.total === 'number' ? oddsCtx.total : null;
+          lockedPrice = typeof oddsCtx.h2h_away === 'number' ? oddsCtx.h2h_away : null;
+        } else if (prediction === 'OVER') {
+          lockedPrice = typeof oddsCtx.total_price_over === 'number' ? oddsCtx.total_price_over : null;
+        } else if (prediction === 'UNDER') {
+          lockedPrice = typeof oddsCtx.total_price_under === 'number' ? oddsCtx.total_price_under : null;
         }
       }
 
@@ -428,9 +499,14 @@ export async function GET(request: NextRequest) {
         prediction,
         tier,
         market,
+        marketType,
+        selection,
+        marketSelectionLabel,
         homeTeam,
         awayTeam,
-        price,
+        line,
+        marketKey,
+        price: lockedPrice,
         confidencePct,
         payloadParseError: parsed.error,
         payloadMissing: parsed.missing || row.payload_id === null,
@@ -447,7 +523,7 @@ export async function GET(request: NextRequest) {
     const winRate = wins + losses > 0 ? wins / (wins + losses) : 0;
     const avgPnl = settledCards > 0 ? totalPnlUnits / settledCards : 0;
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         success: true,
         data: {
@@ -486,6 +562,7 @@ export async function GET(request: NextRequest) {
       },
       { headers: { 'Content-Type': 'application/json' } }
     );
+    return addRateLimitHeaders(response, request);
   } catch (error) {
     console.error('[API] Error fetching results:', error);
     let errorMessage = 'Unknown error';
@@ -494,10 +571,11 @@ export async function GET(request: NextRequest) {
     } else if (typeof error === 'string') {
       errorMessage = error;
     }
-    return NextResponse.json(
+    const errorResponse = NextResponse.json(
       { success: false, error: errorMessage },
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
+    return addRateLimitHeaders(errorResponse, request);
   } finally {
     if (db) {
       closeDatabase();

@@ -13,8 +13,11 @@ const { getTeamMetricsWithGames } = require('./team-metrics');
  * @returns {string}
  */
 function mapOddsSportToEspnSport(sport) {
-  if (sport === 'NCAAM' || sport === 'NCAA' || sport === 'NCAAB') return 'NCAAM';
-  return sport;
+  const normalized = String(sport || '').trim().toUpperCase();
+  if (normalized === 'NCAAM' || normalized === 'NCAA' || normalized === 'NCAAB') return 'NCAAM';
+  if (normalized === 'NBA') return 'NBA';
+  if (normalized === 'NHL') return 'NHL';
+  return normalized || sport;
 }
 
 /**

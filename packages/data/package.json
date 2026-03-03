@@ -22,6 +22,8 @@
     "seed:assert-none": "node src/assert-no-seed-odds.js",
     "seed:test-lifecycle": "node src/run-seeded-test.js",
     "check:duplicates": "node src/check-duplicates.js",
+    "normalize:review": "node src/review-discovered-variants.js",
+    "normalize:review-clear": "node src/review-discovered-variants.js --clear",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",

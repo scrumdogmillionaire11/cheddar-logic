@@ -1,13 +1,14 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require('fs');
 const path = require('path');
+const { resolveDatabasePath } = require('@cheddar-logic/data');
 
 /**
  * Automatic database backup utility
  * Creates timestamped backups before critical operations
  */
 
-const getDbPath = () => process.env.DATABASE_PATH || '../../packages/data/cheddar.db';
+const getDbPath = () => resolveDatabasePath().dbPath;
 
 const getBackupDir = () => {
   const dbPath = getDbPath();

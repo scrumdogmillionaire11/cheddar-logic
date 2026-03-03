@@ -12,11 +12,23 @@
 const initSqlJs = require('sql.js/dist/sql-asm.js');
 const fs = require('fs');
 const path = require('path');
+const {
+  createMarketError,
+  deriveLockedMarketContext,
+  toRecommendedBetType,
+} = require('./market-contract');
+const { resolveDatabasePath } = require('./db-path');
+const {
+  normalizeTeamName,
+  normalizeCardTitle,
+  normalizeSportCode,
+} = require('./normalize');
 
 let SQL = null;
 let dbInstance = null;
 let dbPath = null;
 const warnedSportValues = new Set();
+const oddsContextReferenceRegistry = new WeakMap();
 
 function normalizeSportValue(sport, context) {
   if (sport == null) return null;
@@ -41,12 +53,11 @@ async function initDb() {
  * Load database from disk or create new
  */
 function loadDatabase() {
-  const explicitPath = process.env.DATABASE_PATH || process.env.DATABASE_URL || null;
-  const dbFile = dbPath || explicitPath ||
-    path.join(process.env.CHEDDAR_DATA_DIR || '/tmp/cheddar-logic', 'cheddar.db');
+  const resolved = resolveDatabasePath();
+  const dbFile = dbPath || resolved.dbPath;
 
-  if (explicitPath && !fs.existsSync(explicitPath)) {
-    throw new Error(`Database path does not exist (DATABASE_PATH/DATABASE_URL): ${explicitPath}`);
+  if (resolved.isExplicitFile && !fs.existsSync(dbFile)) {
+    console.warn(`[DB] ${resolved.source} points to missing DB file. Creating new DB at: ${dbFile}`);
   }
 
   dbPath = dbFile;
@@ -496,6 +507,8 @@ function getPlayerShotLogs(playerId, limit = 5) {
 function upsertGame({ id, gameId, sport, homeTeam, awayTeam, gameTimeUtc, status = 'scheduled' }) {
   const db = getDatabase();
   const normalizedSport = normalizeSportValue(sport, 'upsertGame');
+  const normalizedHomeTeam = normalizeTeamName(homeTeam, 'upsertGame:homeTeam');
+  const normalizedAwayTeam = normalizeTeamName(awayTeam, 'upsertGame:awayTeam');
   
   const stmt = db.prepare(`
     INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
@@ -508,7 +521,7 @@ function upsertGame({ id, gameId, sport, homeTeam, awayTeam, gameTimeUtc, status
       updated_at = CURRENT_TIMESTAMP
   `);
   
-  stmt.run(id, normalizedSport, gameId, homeTeam, awayTeam, gameTimeUtc, status);
+  stmt.run(id, normalizedSport, gameId, normalizedHomeTeam, normalizedAwayTeam, gameTimeUtc, status);
 }
 
 /**
@@ -968,9 +981,10 @@ function insertCardResult(result) {
   const stmt = db.prepare(`
     INSERT OR IGNORE INTO card_results (
       id, card_id, game_id, sport, card_type, recommended_bet_type,
+      market_key, market_type, selection, line, locked_price,
       status, result, settled_at, pnl_units, metadata
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -980,6 +994,11 @@ function insertCardResult(result) {
     result.sport,
     result.cardType,
     result.recommendedBetType,
+    result.marketKey || null,
+    result.marketType || null,
+    result.selection || null,
+    result.line !== undefined ? result.line : null,
+    result.lockedPrice !== undefined ? result.lockedPrice : null,
     result.status,
     result.result || null,
     result.settledAt || null,
@@ -1004,6 +1023,68 @@ function insertCardResult(result) {
  */
 function insertCardPayload(card) {
   const db = getDatabase();
+  const normalizedCardTitle = normalizeCardTitle(card.cardTitle, 'insertCardPayload');
+  const payloadData = card.payloadData && typeof card.payloadData === 'object'
+    ? card.payloadData
+    : {};
+
+  let lockedMarket = null;
+  try {
+    lockedMarket = deriveLockedMarketContext(payloadData, {
+      gameId: card.gameId,
+      homeTeam: payloadData.home_team ?? null,
+      awayTeam: payloadData.away_team ?? null,
+      requirePrice: true,
+      requireLineForMarket: true,
+    });
+  } catch (error) {
+    const code = error?.code || 'INVALID_MARKET_CONTRACT';
+    throw createMarketError(
+      code,
+      `[DB] Refusing to lock invalid market payload for card ${card.id}: ${error.message}`,
+      { cardId: card.id, gameId: card.gameId, cause: error?.details || null }
+    );
+  }
+
+  if (lockedMarket) {
+    payloadData.market_type = lockedMarket.marketType;
+    payloadData.recommended_bet_type = toRecommendedBetType(lockedMarket.marketType);
+    payloadData.selection = {
+      ...(payloadData.selection && typeof payloadData.selection === 'object' ? payloadData.selection : {}),
+      side: lockedMarket.selection,
+    };
+    if (lockedMarket.line !== null) payloadData.line = lockedMarket.line;
+    if (lockedMarket.lockedPrice !== null) payloadData.price = lockedMarket.lockedPrice;
+    payloadData.market_key = lockedMarket.marketKey;
+  }
+
+  const oddsContext = payloadData?.odds_context;
+  if (lockedMarket && oddsContext && typeof oddsContext === 'object') {
+    const existing = oddsContextReferenceRegistry.get(oddsContext);
+    if (
+      existing &&
+      existing.gameId === card.gameId &&
+      existing.marketKey !== lockedMarket.marketKey
+    ) {
+      throw createMarketError(
+        'SHARED_ODDS_CONTEXT_REFERENCE',
+        `[DB] Two market rows share the same odds_context object reference for game ${card.gameId}`,
+        {
+          gameId: card.gameId,
+          firstCardId: existing.cardId,
+          firstMarketKey: existing.marketKey,
+          secondCardId: card.id,
+          secondMarketKey: lockedMarket.marketKey,
+        }
+      );
+    }
+
+    oddsContextReferenceRegistry.set(oddsContext, {
+      cardId: card.id,
+      gameId: card.gameId,
+      marketKey: lockedMarket.marketKey,
+    });
+  }
   
   const stmt = db.prepare(`
     INSERT INTO card_payloads (
@@ -1018,15 +1099,17 @@ function insertCardPayload(card) {
     card.gameId,
     card.sport,
     card.cardType,
-    card.cardTitle,
+    normalizedCardTitle,
     card.createdAt,
     card.expiresAt || null,
-    card.payloadData ? JSON.stringify(card.payloadData) : '{}',
+    JSON.stringify(payloadData),
     card.modelOutputIds || null,
     card.metadata ? JSON.stringify(card.metadata) : null
   );
 
-  const recommendedBetType = card.payloadData?.recommended_bet_type || 'unknown';
+  const recommendedBetType = lockedMarket
+    ? toRecommendedBetType(lockedMarket.marketType)
+    : (payloadData?.recommended_bet_type || 'unknown');
 
   insertCardResult({
     id: `card-result-${card.id}`,
@@ -1035,11 +1118,18 @@ function insertCardPayload(card) {
     sport: card.sport,
     cardType: card.cardType,
     recommendedBetType,
+    marketKey: lockedMarket?.marketKey || null,
+    marketType: lockedMarket?.marketType || null,
+    selection: lockedMarket?.selection || null,
+    line: lockedMarket?.line ?? null,
+    lockedPrice: lockedMarket?.lockedPrice ?? null,
     status: 'pending',
     result: null,
     settledAt: null,
     pnlUnits: null,
-    metadata: null
+    metadata: lockedMarket
+      ? { lockedAt: card.createdAt || new Date().toISOString(), marketKey: lockedMarket.marketKey }
+      : null
   });
 }
 

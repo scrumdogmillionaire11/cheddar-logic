@@ -74,6 +74,7 @@ function buildDriverSummary(descriptor, weightMap) {
 
 /**
  * Generate insertable card objects from NCAAM driver descriptors.
+ * Generates both moneyline AND spread cards for each driver signal.
  */
 function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
   const now = new Date().toISOString();
@@ -83,11 +84,29 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
     expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
   }
 
-  return driverDescriptors.map(descriptor => {
-    const cardId = `card-ncaam-${descriptor.driverKey}-${gameId}-${uuidV4().slice(0, 8)}`;
+  const cards = [];
+  
+  for (const descriptor of driverDescriptors) {
+    // Generate MONEYLINE card
+    cards.push(generateSingleCard(gameId, descriptor, oddsSnapshot, 'moneyline', now, expiresAt));
+    
+    // Generate SPREAD card (if spread odds available)
+    if (oddsSnapshot?.spread_home != null && oddsSnapshot?.spread_away != null) {
+      cards.push(generateSingleCard(gameId, descriptor, oddsSnapshot, 'spread', now, expiresAt));
+    }
+  }
+  
+  return cards;
+}
+
+/**
+ * Generate a single card for a specific market type
+ */
+function generateSingleCard(gameId, descriptor, oddsSnapshot, marketType, now, expiresAt) {
+    const cardId = `card-ncaam-${descriptor.driverKey}-${marketType}-${gameId}-${uuidV4().slice(0, 8)}`;
     const recommendation = buildRecommendationFromPrediction({
       prediction: descriptor.prediction,
-      recommendedBetType: 'moneyline'
+      recommendedBetType: marketType
     });
 
     const matchup = buildMatchup(oddsSnapshot?.home_team, oddsSnapshot?.away_team);
@@ -101,18 +120,51 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
     const winProbHome = computeWinProbHome(projectedMargin, 'NCAAM');
     const isPredictionHome = descriptor.prediction === 'HOME';
     const isPredictionAway = descriptor.prediction === 'AWAY';
-    const moneylineOdds = isPredictionHome
-      ? oddsSnapshot?.h2h_home ?? null
-      : isPredictionAway
-        ? oddsSnapshot?.h2h_away ?? null
-        : null;
-    const edgeResult = (isPredictionHome || isPredictionAway)
-      ? edgeCalculator.computeMoneylineEdge({
-        projectionWinProbHome: winProbHome,
-        americanOdds: moneylineOdds,
-        isPredictionHome
-      })
-      : { edge: null, p_fair: null, p_implied: null };
+    
+    // Market-specific odds and edge calculation
+    let price = null;
+    let line = null;
+    let edgeResult = { edge: null, p_fair: null, p_implied: null };
+    let marketTypeUpper = 'MONEYLINE';
+    
+    if (marketType === 'moneyline') {
+      marketTypeUpper = 'MONEYLINE';
+      price = isPredictionHome
+        ? oddsSnapshot?.h2h_home ?? null
+        : isPredictionAway
+          ? oddsSnapshot?.h2h_away ?? null
+          : null;
+      line = null;
+      
+      if ((isPredictionHome || isPredictionAway) && price !== null) {
+        edgeResult = edgeCalculator.computeMoneylineEdge({
+          projectionWinProbHome: winProbHome,
+          americanOdds: price,
+          isPredictionHome
+        });
+      }
+    } else if (marketType === 'spread') {
+      marketTypeUpper = 'SPREAD';
+      line = isPredictionHome
+        ? oddsSnapshot?.spread_home ?? null
+        : isPredictionAway
+          ? oddsSnapshot?.spread_away ?? null
+          : null;
+      price = isPredictionHome
+        ? oddsSnapshot?.spread_price_home ?? null
+        : isPredictionAway
+          ? oddsSnapshot?.spread_price_away ?? null
+          : null;
+      
+      if ((isPredictionHome || isPredictionAway) && line !== null && price !== null) {
+        edgeResult = edgeCalculator.computeSpreadEdge({
+          projectionMarginHome: projectedMargin,
+          spreadLine: line,
+          americanOdds: price,
+          isPredictionHome
+        });
+      }
+    }
 
     const payloadData = {
       game_id: gameId,
@@ -143,9 +195,9 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
       drivers_active: [descriptor.driverKey],
       prediction: descriptor.prediction,
       confidence: descriptor.confidence,
-      recommended_bet_type: 'moneyline',
-      kind: 'EVIDENCE',
-      market_type: 'INFO',
+      recommended_bet_type: marketType,
+      kind: 'PLAY',
+      market_type: marketTypeUpper,
       selection: {
         side: selectionSide,
         team:
@@ -155,8 +207,8 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
               ? oddsSnapshot?.away_team ?? undefined
               : undefined
       },
-      line: null,
-      price: moneylineOdds,
+      line,
+      price,
       reason_codes: edgeResult.edge == null ? ['PASS_MISSING_EDGE'] : [],
       tags: [],
       consistency: {
@@ -197,13 +249,12 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
       gameId,
       sport: 'NCAAM',
       cardType: descriptor.cardType,
-      cardTitle: descriptor.cardTitle,
+      cardTitle: `${descriptor.cardTitle} (${marketTypeUpper})`,
       createdAt: now,
       expiresAt,
       payloadData,
       modelOutputIds: null
     };
-  });
 }
 
 /**
@@ -268,8 +319,11 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       let cardsGenerated = 0;
       let gatedCount = 0;
       let blockedCount = 0;
+      let noSignalCount = 0;
+      let gameErrorCount = 0;
 
-      // Process each game
+      // Process each game independently. Missing signals for one game should not
+      // block card generation for other games.
       for (const gameId of gameIds) {
         try {
           let oddsSnapshot = gameOdds[gameId];
@@ -278,9 +332,9 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
           oddsSnapshot = await enrichOddsSnapshotWithEspnMetrics(oddsSnapshot);
 
           const driverCards = computeNCAAMDriverCards(gameId, oddsSnapshot);
-
           if (driverCards.length === 0) {
-            console.log(`  [skip] ${gameId}: No actionable NCAAM driver signals`);
+            noSignalCount++;
+            console.warn(`  [skip] ${gameId}: No actionable NCAAM driver signals`);
             continue;
           }
 
@@ -310,8 +364,22 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
             console.log(`  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`);
           }
         } catch (gameError) {
+          gameErrorCount++;
           console.error(`  [error] ${gameId}: ${gameError.message}`);
         }
+      }
+
+      if (noSignalCount > 0) {
+        console.warn(`[NCAAMModel] No-signal games skipped: ${noSignalCount}/${gameIds.length}`);
+      }
+      if (gameErrorCount > 0) {
+        console.warn(`[NCAAMModel] Game-level errors: ${gameErrorCount}/${gameIds.length}`);
+      }
+
+      if (cardsGenerated === 0) {
+        throw new Error(
+          `NCAAM model generated 0 cards (${noSignalCount} no-signal, ${gameErrorCount} errored)`
+        );
       }
 
       // Mark job as success
@@ -323,8 +391,13 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
     } catch (error) {
       console.error(`[NCAAMModel] ❌ Job failed:`, error.message);
       console.error(error.stack);
-      markJobRunFailure(jobRunId, error.message);
-      process.exit(1);
+      try {
+        markJobRunFailure(jobRunId, error.message);
+      } catch (dbError) {
+        console.error(`[NCAAMModel] Failed to record error to DB:`, dbError.message);
+      }
+
+      return { success: false, jobRunId, jobKey, error: error.message };
     }
   });
 }

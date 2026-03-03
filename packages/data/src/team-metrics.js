@@ -275,16 +275,29 @@ function computeMetricsFromGames(games, sport) {
  * @param {object} table
  * @returns {object|null} { id, abbr } or null
  */
+function removeDiacritics(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function normalizeTeamKey(teamName) {
+  return removeDiacritics(String(teamName || ''))
+    .replace(/[.'\u2019]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 function lookupTeam(teamName, table) {
   if (!teamName) return null;
-  const normalized = teamName.trim().toLowerCase();
+  const normalized = normalizeTeamKey(teamName);
   // Exact key match first
   for (const [key, val] of Object.entries(table)) {
-    if (key.toLowerCase() === normalized) return val;
+    if (normalizeTeamKey(key) === normalized) return val;
   }
   // Partial match fallback (team name is contained in key or vice versa)
   for (const [key, val] of Object.entries(table)) {
-    const k = key.toLowerCase();
+    const k = normalizeTeamKey(key);
     if (k.includes(normalized) || normalized.includes(k)) return val;
   }
   return null;

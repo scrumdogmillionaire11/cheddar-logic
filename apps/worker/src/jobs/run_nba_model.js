@@ -387,6 +387,9 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
     const confidence = CONFIDENCE_MAP[status] ?? 0.5;
     const tier = determineTier(confidence);
     const { side, line } = totalDecision.best_candidate;
+    const totalPrice = side === 'OVER'
+      ? oddsSnapshot?.total_price_over ?? null
+      : oddsSnapshot?.total_price_under ?? null;
     const hasLine = line != null;
     const lineText = line != null ? ` ${line}` : '';
     const pickText = `${side === 'OVER' ? 'OVER' : 'UNDER'}${lineText}`;
@@ -394,7 +397,7 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
     if (!hasLine) reasonCodes.push('PASS_MISSING_LINE');
     if (totalBias !== 'OK') reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
     if (status === 'PASS') reasonCodes.push('SKIP_MARKET_NO_EDGE');
-    reasonCodes.push('PASS_NO_MARKET_PRICE');
+    if (totalPrice == null) reasonCodes.push('PASS_NO_MARKET_PRICE');
     const activeDrivers = (totalDecision.drivers || [])
       .filter(d => d.eligible)
       .map(d => d.driverKey);
@@ -435,7 +438,7 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           side,
         },
         line: line ?? null,
-        price: null,
+        price: totalPrice,
         reason_codes: reasonCodes,
         tags: [],
         consistency: {
@@ -484,6 +487,9 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
     const confidence = CONFIDENCE_MAP[spreadDecision.status];
     const tier = determineTier(confidence);
     const { side, line } = spreadDecision.best_candidate;
+    const spreadPrice = side === 'HOME'
+      ? oddsSnapshot?.spread_price_home ?? null
+      : oddsSnapshot?.spread_price_away ?? null;
     const lineText = line != null ? ` ${line > 0 ? '+' + line : line}` : '';
     const pickText = `${side === 'HOME' ? 'Home' : 'Away'}${lineText}`;
     const activeDrivers = (spreadDecision.drivers || [])
@@ -526,8 +532,8 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           team: side === 'HOME' ? oddsSnapshot?.home_team ?? undefined : oddsSnapshot?.away_team ?? undefined,
         },
         line: line ?? null,
-        price: null,
-        reason_codes: [],
+        price: spreadPrice,
+        reason_codes: spreadPrice == null ? ['PASS_NO_MARKET_PRICE'] : [],
         tags: [],
         consistency: {
           total_bias: totalBias,

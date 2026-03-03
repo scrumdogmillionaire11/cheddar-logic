@@ -1056,7 +1056,6 @@ async function getInference(sport, gameId, oddsSnapshot) {
  */
 function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
   const raw = parseRawData(oddsSnapshot?.raw_data);
-  const spreadHome = toNumber(oddsSnapshot?.spread_home);
 
   const descriptors = [];
 
@@ -1193,6 +1192,43 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
         driverScore: prediction === 'HOME' ? 0.70 : 0.30,
         driverStatus: 'ok',
         inference_source: 'driver',
+        is_mock: false
+      });
+    }
+  }
+
+  // --- FALLBACK: Use market spread when team metrics unavailable ---
+  if (descriptors.length === 0) {
+    const spreadHome = toNumber(oddsSnapshot?.spread_home);
+    
+    if (spreadHome !== null && Number.isFinite(spreadHome)) {
+      // Use market spread as projected margin proxy
+      const projectedMargin = spreadHome;
+      
+      let confidence = 0.55;
+      if (Math.abs(projectedMargin) >= 10) {
+        confidence = 0.70;
+      } else if (Math.abs(projectedMargin) >= 5) {
+        confidence = 0.65;
+      }
+
+      descriptors.push({
+        cardType: 'ncaam-base-projection',
+        cardTitle: `NCAAM Projection: ${projectedMargin < 0 ? 'HOME' : 'AWAY'} ${Math.abs(projectedMargin).toFixed(1)}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction: projectedMargin < 0 ? 'HOME' : 'AWAY',
+        reasoning: `Fallback to market spread proxy (${spreadHome}) because team metrics were unavailable`,
+        ev_threshold_passed: confidence > 0.60,
+        driverKey: 'baseProjection',
+        driverInputs: {
+          projected_margin: -1 * projectedMargin,
+          spread_home: spreadHome,
+          fallback_source: 'market_spread'
+        },
+        driverScore: clamp(0.5 + (-1 * projectedMargin) / 50, 0, 1),
+        driverStatus: 'fallback',
+        inference_source: 'market_fallback',
         is_mock: false
       });
     }

@@ -249,6 +249,18 @@ function filterByMarketAvailability(card: GameCard, filters: GameModeFilters): b
   return card.drivers.some(d => filters.markets.includes(d.market));
 }
 
+function filterByPropAvailability(card: GameCard): boolean {
+  const play = card.play;
+  if (!play) return false;
+  if (play.market_type !== 'PROP') return false;
+
+  const selectionSide = play.selection?.side ?? play.side;
+  const hasSelection = Boolean(selectionSide) && selectionSide !== 'NEUTRAL';
+  const hasLineOrPrice = typeof play.line === 'number' || typeof play.price === 'number';
+
+  return hasSelection && hasLineOrPrice;
+}
+
 /**
  * Filter by actionability status
  * 
@@ -358,6 +370,11 @@ function filterBySearch(card: GameCard, filters: CommonFilters): boolean {
   const awayTeam = card.awayTeam.toLowerCase();
 
   if ('searchTarget' in filters) {
+    if (filters.searchTarget === 'player') {
+      const playerName = (card.play?.selection?.team || '').toLowerCase();
+      const pickText = (card.play?.pick || '').toLowerCase();
+      return playerName.includes(query) || pickText.includes(query);
+    }
     if (filters.searchTarget === 'opponent') {
       return awayTeam.includes(query) || homeTeam.includes(query);
     }
@@ -414,7 +431,7 @@ export function getFilterDebugFlags(
       sport: filterBySport(card, filters),
       timeWindow: filterByTimeWindow(card, filters),
       oddsFreshness: true,
-      market: true,
+      market: filterByPropAvailability(card),
       actionability: filterByActionability(card, filters),
       driverStrength: true,
       riskFlags: true,
@@ -529,6 +546,7 @@ export function applyFilters(
 ): GameCard[] {
   if (mode === 'props' && isPropsModeFilters(filters)) {
     const filtered = cards
+      .filter(card => filterByPropAvailability(card))
       .filter(card => filterBySport(card, filters))
       .filter(card => filterByTimeWindow(card, filters))
       .filter(card => filterByActionability(card, filters))
