@@ -93,14 +93,14 @@ function getRecentRoadGames(teamName, sport, currentGameTime, limit = 10) {
 
 /**
  * Get home team's recent road trip (consecutive away games)
- * Returns only if the team just returned home (last game was away, this is first home game)
- * Welcome Home Fade: Home team coming back from road trip
+ * Returns if the team JUST COMPLETED a road trip and is now playing at home
+ * Welcome Home Fade: Home team's first game after returning from road trip
  *
  * @param {string} teamName - Team display name  
  * @param {string} sport - Sport code (lowercase)
  * @param {string} currentGameTime - Current game time in UTC
  * @param {number} limit - Max games to retrieve
- * @returns {Array<{isHome: boolean, date: string}>} Recent road games, or [] if not first game back
+ * @returns {Array<{isHome: boolean, date: string}>} Recent road games if just returning home, else []
  */
 function getHomeTeamRecentRoadTrip(teamName, sport, currentGameTime, limit = 10) {
   if (!teamName || !currentGameTime) return [];
@@ -124,34 +124,36 @@ function getHomeTeamRecentRoadTrip(teamName, sport, currentGameTime, limit = 10)
     
     if (!completedGames.length) return [];
     
-    // Check if last game was away (team is now home)
-    const lastGame = completedGames[completedGames.length - 1];
-    const teamWasAway = lastGame.away_team && lastGame.away_team.toUpperCase() === teamName.toUpperCase();
+    // Find the most recent game to see if it started a change pattern
+    // Pattern: if recent games are [away, away, away, ...]
+    // and we're now at a home game, that's Welcome Home Fade
     
-    if (!teamWasAway) {
-      // Team's last game was at home, not first game back from road trip
-      return [];
-    }
-    
-    // Collect consecutive road games (going backwards in time until we hit a home game)
     const roadTrip = [];
+    
+    // Start from most recent game and work backwards
+    // Collect consecutive AWAY games
     for (let i = completedGames.length - 1; i >= 0; i--) {
       const game = completedGames[i];
       const isAway = game.away_team && game.away_team.toUpperCase() === teamName.toUpperCase();
+      const isHome = game.home_team && game.home_team.toUpperCase() === teamName.toUpperCase();
       
       if (isAway) {
-        roadTrip.push({
+        // Team was away in this game - part of road trip
+        roadTrip.unshift({
           isHome: false,
           date: game.game_time_utc,
-          opponent: game.home_team
+          opponent: game.home_team,
+          location: 'away'
         });
-      } else {
-        // Hit a home game, end the road trip
+      } else if (isHome) {
+        // Team was home - this breaks the road trip
+        // If we have a road trip, return it (the next game is home after road trip)
         break;
       }
     }
     
-    return roadTrip;
+    // Need at least 2 away games to be a meaningful road trip
+    return roadTrip.length >= 2 ? roadTrip : [];
   } catch (error) {
     console.error(`[WhF] Failed to query road trip for ${teamName}:`, error.message);
     return [];
