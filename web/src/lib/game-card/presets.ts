@@ -4,6 +4,7 @@
  */
 
 import type { GameFilters, ViewMode } from './filters';
+import type { ExpressionStatus } from '@/lib/types/game-card';
 import { DEFAULT_FILTERS_BY_MODE } from './filters';
 
 export interface FilterPreset {
@@ -15,6 +16,23 @@ export interface FilterPreset {
 }
 
 const ENABLE_WELCOME_HOME = process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+
+const FIRE_WATCH: ExpressionStatus[] = ['FIRE', 'WATCH'];
+const FIRE_WATCH_PASS: ExpressionStatus[] = ['FIRE', 'WATCH', 'PASS'];
+const FIRE_ONLY: ExpressionStatus[] = ['FIRE'];
+
+const WELCOME_HOME_PRESET: FilterPreset = {
+  id: 'welcome_home',
+  name: 'Welcome Home Fade',
+  description: 'Road trip fatigue plays (NBA/NHL)',
+  icon: '🏠',
+  filters: {
+    ...DEFAULT_FILTERS_BY_MODE.game,
+    onlyWelcomeHome: true,
+    statuses: FIRE_WATCH,
+    sortMode: 'signal_strength',
+  },
+};
 
 /**
  * Built-in Cheddar Presets
@@ -34,7 +52,7 @@ const GAME_PRESETS: FilterPreset[] = [
     icon: '📋',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
-      statuses: ['FIRE', 'WATCH', 'PASS'],
+      statuses: FIRE_WATCH_PASS,
       markets: ['ML', 'SPREAD', 'TOTAL'],
     },
   },
@@ -45,7 +63,7 @@ const GAME_PRESETS: FilterPreset[] = [
     icon: '🔥',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
-      statuses: ['FIRE'],
+      statuses: FIRE_ONLY,
       timeWindow: 'today',
       minTier: 'BEST',
       sortMode: 'start_time',
@@ -58,7 +76,7 @@ const GAME_PRESETS: FilterPreset[] = [
     icon: '👀',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
-      statuses: ['FIRE', 'WATCH'],
+      statuses: FIRE_WATCH,
       timeWindow: 'custom',
       customTimeRange: {
         start: new Date().toISOString(),
@@ -113,23 +131,12 @@ const GAME_PRESETS: FilterPreset[] = [
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
       minTier: 'BEST',
-      statuses: ['FIRE', 'WATCH'],
+      statuses: FIRE_WATCH,
       sortMode: 'signal_strength',
     },
   },
   ...(ENABLE_WELCOME_HOME
-    ? [{
-        id: 'welcome_home',
-        name: 'Welcome Home Fade',
-        description: 'Road trip fatigue plays (NBA/NHL)',
-        icon: '🏠',
-        filters: {
-          ...DEFAULT_FILTERS_BY_MODE.game,
-          onlyWelcomeHome: true,
-          statuses: ['FIRE', 'WATCH'],
-          sortMode: 'signal_strength',
-        },
-      }]
+    ? [WELCOME_HOME_PRESET]
     : []),
 ];
 
@@ -141,7 +148,7 @@ const PROPS_PRESETS: FilterPreset[] = [
     icon: '🎯',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.props,
-      statuses: ['FIRE', 'WATCH'],
+      statuses: FIRE_WATCH,
       sortMode: 'signal_strength',
     },
   },
