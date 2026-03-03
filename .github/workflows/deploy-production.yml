@@ -111,4 +111,6 @@ jobs:
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage
+            sleep 5
+            node -e "const u=['http://127.0.0.1:3000/api/games','http://127.0.0.1:3000/api/cards?limit=5','http://127.0.0.1:3000/api/results?limit=20']; (async()=>{const out={}; for (const x of u){const r=await fetch(x); const j=await r.json(); out[x]={status:r.status,games:Array.isArray(j?.data)?j.data.length:undefined,cards:Array.isArray(j?.data)?j.data.length:undefined,ledger:Array.isArray(j?.data?.ledger)?j.data.ledger.length:undefined,summary:j?.data?.summary||null};} console.log('post_restart_snapshot', JSON.stringify(out)); })().catch(e=>{console.error('post_restart_snapshot_error', e); process.exit(0);});"
             echo "Deploy complete — worker, web, and fpl-sage restarted"
