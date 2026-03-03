@@ -28,7 +28,8 @@ const {
   validateCardPayload,
   shouldRunJobKey,
   withDb,
-  enrichOddsSnapshotWithEspnMetrics
+  enrichOddsSnapshotWithEspnMetrics,
+  getDatabase
 } = require('@cheddar-logic/data');
 
 const { computeNBADriverCards, computeNBAMarketDecisions, selectExpressionChoice, buildMarketPayload, determineTier } = require('../models');

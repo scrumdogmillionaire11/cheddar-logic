@@ -401,7 +401,7 @@ function getOddsWithUpcomingGames(sport, nowUtc, horizonUtc) {
       g.away_team
     FROM odds_snapshots o
     INNER JOIN games g ON o.game_id = g.game_id
-    WHERE o.sport = ?
+    WHERE LOWER(o.sport) = ?
       AND g.game_time_utc IS NOT NULL
       AND g.game_time_utc > ?
       AND g.game_time_utc <= ?
