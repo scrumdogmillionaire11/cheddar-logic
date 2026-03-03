@@ -21,6 +21,7 @@ export type FilterDebugFlags = {
   driverStrength: boolean;
   riskFlags: boolean;
   search: boolean;
+  welcomeHome: boolean;
   hasPicks: boolean;
   clearPlay: boolean;
 };
@@ -47,6 +48,7 @@ export interface GameFilters {
   markets: Market[];
   onlyGamesWithPicks: boolean;
    hasClearPlay: boolean; // play.market != 'NONE'
+  onlyWelcomeHome?: boolean;
   
   // Driver strength
   minTier?: DriverTier; // BEST only / SUPER+ / WATCH+
@@ -74,6 +76,7 @@ export const DEFAULT_FILTERS: GameFilters = {
   markets: ['ML', 'SPREAD', 'TOTAL'],
   onlyGamesWithPicks: false,
    hasClearPlay: false,
+  onlyWelcomeHome: false,
   hideFragility: false,
   hideBlowout: false,
   hideLowCoverage: false,
@@ -308,6 +311,16 @@ function filterByHasPicks(card: GameCard, filters: GameFilters): boolean {
 }
 
 /**
+ * Filter for Welcome Home Fade cards only
+ */
+function filterByWelcomeHome(card: GameCard, filters: GameFilters): boolean {
+  if (!filters.onlyWelcomeHome) return true;
+  
+  // Check if any driver is Welcome Home Fade
+  return card.drivers.some(d => d.cardType === 'welcome-home-v2' || d.key === 'welcomeHomeV2');
+}
+
+/**
  * Filter by clear play (has canonical play with valid market)
  */
 function filterByClearPlay(card: GameCard, filters: GameFilters): boolean {
@@ -326,6 +339,7 @@ export function getFilterDebugFlags(card: GameCard, filters: GameFilters): Filte
     driverStrength: filterByDriverStrength(card, filters),
     riskFlags: filterByRiskFlags(card, filters),
     search: filterBySearch(card, filters),
+    welcomeHome: filterByWelcomeHome(card, filters),
     hasPicks: filterByHasPicks(card, filters),
     clearPlay: filterByClearPlay(card, filters),
   };
@@ -405,6 +419,7 @@ export function applyFilters(cards: GameCard[], filters: GameFilters): GameCard[
     .filter(card => filterByDriverStrength(card, filters))
     .filter(card => filterByRiskFlags(card, filters))
     .filter(card => filterBySearch(card, filters))
+    .filter(card => filterByWelcomeHome(card, filters))
      .filter(card => filterByHasPicks(card, filters))
      .filter(card => filterByClearPlay(card, filters));
   
@@ -423,6 +438,7 @@ export function getActiveFilterCount(filters: GameFilters): number {
   if (filters.markets.length !== DEFAULT_FILTERS.markets.length) count++;
   if (filters.onlyGamesWithPicks) count++;
    if (filters.hasClearPlay) count++;
+  if (filters.onlyWelcomeHome) count++;
   if (filters.minTier) count++;
   if (filters.minConfidence) count++;
   if (filters.hideFragility) count++;

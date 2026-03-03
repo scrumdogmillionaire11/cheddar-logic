@@ -128,6 +128,18 @@ export const FILTER_PRESETS: FilterPreset[] = [
       sortMode: 'signal_strength',
     },
   },
+  {
+    id: 'welcome_home',
+    name: 'Welcome Home Fade',
+    description: 'Road trip fatigue plays (NBA/NHL)',
+    icon: '🏠',
+    filters: {
+      ...DEFAULT_FILTERS,
+      onlyWelcomeHome: true,
+      statuses: ['FIRE', 'WATCH'],
+      sortMode: 'signal_strength',
+    },
+  },
 ];
 
 /**
