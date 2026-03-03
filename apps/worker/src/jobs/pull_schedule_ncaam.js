@@ -30,8 +30,8 @@ const { fetchScoreboardEvents } = require('../espn-client');
 
 const SPORT = 'ncaam';
 const ESPN_LEAGUE = 'basketball/mens-college-basketball';
-const BACKFILL_DAYS = 60;
-const FORWARD_DAYS = 30;
+const BACKFILL_DAYS = Number(process.env.NCAAM_SCHEDULE_BACKFILL_DAYS || 60);
+const FORWARD_DAYS = Number(process.env.NCAAM_SCHEDULE_FORWARD_DAYS || 30);
 
 function toDateKeyUtc(date) {
   return date.toISOString().slice(0, 10).replace(/-/g, '');
@@ -146,6 +146,10 @@ async function pullScheduleNcaam({ jobKey = null, dryRun = false } = {}) {
       const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - BACKFILL_DAYS));
       const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + FORWARD_DAYS));
       const days = buildDateRangeUtc(start, end);
+      console.log(
+        `[Schedule:NCAAM] Window: backfill=${BACKFILL_DAYS}d forward=${FORWARD_DAYS}d ` +
+        `(${days.length} day(s): ${days[0]}..${days[days.length - 1]})`
+      );
 
       const db = getDatabase();
 
@@ -155,10 +159,16 @@ async function pullScheduleNcaam({ jobKey = null, dryRun = false } = {}) {
       let mappingsFailedNoCandidate = 0;
       let mappingsFailedAmbiguous = 0;
 
-      for (const day of days) {
-        const events = await fetchScoreboardEvents(ESPN_LEAGUE, day);
+      for (let index = 0; index < days.length; index += 1) {
+        const day = days[index];
+        if (index % 5 === 0 || index === days.length - 1) {
+          console.log(`[Schedule:NCAAM] Progress: day ${index + 1}/${days.length} (${day})`);
+        }
+
+        const events = await fetchScoreboardEvents(ESPN_LEAGUE, day, { groups: '50', limit: '1000' });
         if (!events || events.length === 0) continue;
         daysWithEvents += 1;
+        console.log(`[Schedule:NCAAM] ${day}: ${events.length} event(s)`);
 
         for (const event of events) {
           const normalized = normalizeEvent(event);
