@@ -8,9 +8,9 @@ User=babycheeses11
 WorkingDirectory=/opt/cheddar-logic/web
 Environment="NODE_ENV=production"
 Environment="PORT=3000"
-Environment="DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db"
-Environment="CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db"
-Environment="CHEDDAR_DATA_DIR=/opt/cheddar-logic/packages/data"
+Environment="DATABASE_PATH=/opt/data/cheddar.db"
+Environment="CHEDDAR_DB_PATH=/opt/data/cheddar.db"
+Environment="CHEDDAR_DATA_DIR=/opt/data"
 EnvironmentFile=/opt/cheddar-logic/.env.production
 
 ExecStart=/usr/bin/node /opt/cheddar-logic/web/node_modules/.bin/next start --port 3000
@@ -29,7 +29,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/cheddar-logic/packages/data /opt/cheddar-logic/web/.next
+ReadWritePaths=/opt/data /opt/cheddar-logic/packages/data /opt/cheddar-logic/web/.next
 
 [Install]
 WantedBy=multi-user.target
