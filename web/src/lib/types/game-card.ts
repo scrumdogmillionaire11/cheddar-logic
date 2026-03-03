@@ -6,7 +6,7 @@
  * MONEYLINE, SPREAD, TOTAL, PUCKLINE, TEAM_TOTAL, PROP, INFO
  */
 
-export type Sport = 'NHL' | 'NBA' | 'NCAAM' | 'SOCCER' | 'UNKNOWN';
+export type Sport = 'NHL' | 'NBA' | 'NCAAM' | 'SOCCER' | 'MLB' | 'NFL' | 'UNKNOWN';
 
 // CANONICAL market types — authoritative, not inferred
 export type CanonicalMarketType = 'MONEYLINE' | 'SPREAD' | 'TOTAL' | 'PUCKLINE' | 'TEAM_TOTAL' | 'PROP' | 'INFO';

@@ -12,7 +12,7 @@ import { GAME_TAGS } from '@/lib/types/game-card';
 import { getPlayDisplayAction, getCardDecisionModel } from '@/lib/game-card/decision';
 import { StickyBackButton } from '@/components/sticky-back-button';
 
-const TRACKED_SPORTS = ['NCAAM', 'NBA', 'NHL', 'SOCCER'] as const;
+const TRACKED_SPORTS = ['NCAAM', 'NBA', 'NHL', 'SOCCER', 'MLB', 'NFL'] as const;
 
 type SportCountMap = Record<string, number>;
 

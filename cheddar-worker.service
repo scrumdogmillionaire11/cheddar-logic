@@ -9,7 +9,7 @@ Type=simple
 User=babycheeses11
 WorkingDirectory=/opt/cheddar-logic/apps/worker
 Environment="NODE_ENV=production"
-Environment="DATABASE_PATH=/opt/data/cheddar.db"
+Environment="DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db"
 EnvironmentFile=/opt/cheddar-logic/.env.production
 
 ExecStart=/usr/bin/node /opt/cheddar-logic/apps/worker/src/schedulers/main.js
@@ -34,7 +34,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/data
+ReadWritePaths=/opt/cheddar-logic/packages/data
 
 [Install]
 WantedBy=multi-user.target

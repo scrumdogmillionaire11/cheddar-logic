@@ -108,7 +108,7 @@ export type GameFilters = GameModeFilters | PropsModeFilters;
  * Default filter state
  */
 export const DEFAULT_GAME_FILTERS: GameModeFilters = {
-  sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER'],
+  sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER', 'MLB', 'NFL'],
   statuses: ['FIRE', 'WATCH'],
   markets: ['ML', 'SPREAD', 'TOTAL'],
   onlyGamesWithPicks: false,
@@ -123,7 +123,7 @@ export const DEFAULT_GAME_FILTERS: GameModeFilters = {
 };
 
 export const DEFAULT_PROPS_FILTERS: PropsModeFilters = {
-  sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER'],
+  sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER', 'MLB', 'NFL'],
   statuses: ['FIRE', 'WATCH'],
   searchQuery: '',
   sortMode: 'signal_strength',

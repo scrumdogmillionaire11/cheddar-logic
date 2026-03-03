@@ -222,8 +222,14 @@ function inferMarketFromPlay(play: ApiPlay): { market: Market; canonical?: Canon
  */
 function normalizeSport(sport: string): Sport {
   const sportUpper = sport.toUpperCase();
-  if (sportUpper === 'NHL' || sportUpper === 'NBA' || 
-      sportUpper === 'NCAAM' || sportUpper === 'SOCCER') {
+  if (
+    sportUpper === 'NHL' ||
+    sportUpper === 'NBA' ||
+    sportUpper === 'NCAAM' ||
+    sportUpper === 'SOCCER' ||
+    sportUpper === 'MLB' ||
+    sportUpper === 'NFL'
+  ) {
     return sportUpper as Sport;
   }
   return 'UNKNOWN';
