@@ -5,13 +5,17 @@
 
 import type { GameCard, GameTag, ExpressionStatus } from '../types/game-card';
 import { GAME_TAGS } from '../types/game-card';
+import { getPlayDisplayAction } from './decision';
 
 /**
  * Derive expression status from drivers if not explicitly provided
  */
 function deriveStatus(card: GameCard): ExpressionStatus {
-  if (card.play?.status) {
-    return card.play.status;
+  if (card.play) {
+    const action = getPlayDisplayAction(card.play);
+    if (action === 'FIRE') return 'FIRE';
+    if (action === 'HOLD') return 'WATCH';
+    return 'PASS';
   }
 
   if (card.expressionChoice?.status) {

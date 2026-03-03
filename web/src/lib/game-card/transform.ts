@@ -20,10 +20,9 @@ import type {
   PassReasonCode,
 } from '../types/game-card';
 import type { CanonicalPlay, MarketType, SelectionKey, Sport as CanonicalSport } from '../types/canonical-play';
-import { deduplicateDrivers } from './decision';
+import { deduplicateDrivers, resolvePlayDisplayDecision } from './decision';
 import {
   derivePlayDecision,
-  classificationToLegacyStatus,
 } from '../play-decision/canonical-decision';
 
 const ENABLE_WELCOME_HOME = process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
@@ -650,10 +649,13 @@ function buildPlay(
         ? 'MONEYLINE'
         : 'INFO');
 
+  const sourcePlayAction = getSourcePlayAction(sourcePlay);
+  const sourcePlayIsActionable = sourcePlayAction === 'FIRE' || sourcePlayAction === 'HOLD';
   const hasExplicitTotalsConsistencyBlock =
     resolvedMarketType === 'TOTAL' &&
     totalBias !== 'OK' &&
-    totalBias !== 'UNKNOWN';
+    totalBias !== 'UNKNOWN' &&
+    !sourcePlayIsActionable;
 
   if (hasExplicitTotalsConsistencyBlock) {
     reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
@@ -724,32 +726,15 @@ function buildPlay(
 
   // Derive canonical decision (classification + action)
   const decision = derivePlayDecision(playForDecision, marketContext, {});
-  const explicitAction = getSourcePlayAction(sourcePlay);
-  const explicitClassification =
-    sourcePlay?.classification === 'BASE' ||
-    sourcePlay?.classification === 'LEAN' ||
-    sourcePlay?.classification === 'PASS'
-      ? sourcePlay.classification
-      : undefined;
-
-  const resolvedAction = hardPass
-    ? 'PASS'
-    : explicitAction ?? (decision.action as 'FIRE' | 'HOLD' | 'PASS') ?? undefined;
-  const resolvedClassification = hardPass
-    ? 'PASS'
-    : explicitClassification ??
-      (resolvedAction === 'FIRE'
-        ? 'LEAN'
-        : resolvedAction === 'HOLD'
-          ? 'BASE'
-          : (decision.classification as 'BASE' | 'LEAN' | 'PASS') ?? undefined);
-  const resolvedLegacyStatus: 'FIRE' | 'WATCH' | 'PASS' = hardPass
-    ? 'PASS'
-    : resolvedAction === 'FIRE'
-      ? 'FIRE'
-      : resolvedAction === 'HOLD'
-        ? 'WATCH'
-        : classificationToLegacyStatus(decision.classification, decision.action);
+  const resolvedDisplayDecision = resolvePlayDisplayDecision({
+    action: hardPass
+      ? 'PASS'
+      : sourcePlayAction ?? (decision.action as 'FIRE' | 'HOLD' | 'PASS' | undefined),
+    status: sourcePlay?.status,
+    classification: hardPass
+      ? 'PASS'
+      : (decision.classification as 'BASE' | 'LEAN' | 'PASS' | undefined),
+  });
 
   return {
     market_type: resolvedMarketType,
@@ -768,13 +753,13 @@ function buildPlay(
     reason_codes: Array.from(new Set(reasonCodes)),
     tags,
     // Canonical fields (preferred)
-    classification: resolvedClassification,
-    action: resolvedAction,
+    classification: resolvedDisplayDecision.classification,
+    action: resolvedDisplayDecision.action,
     pass_reason_code: hardPass
       ? passReasonCode
       : sourcePlay?.pass_reason_code ?? decision.play?.pass_reason_code ?? null,
     // Legacy compatibility (keep until UI migration complete)
-    status: resolvedLegacyStatus,
+    status: resolvedDisplayDecision.status,
     market,
     pick,
     lean: direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : direction,
