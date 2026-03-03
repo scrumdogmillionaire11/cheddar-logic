@@ -53,8 +53,9 @@ function normalizeConfiguredPath(rawPath) {
 function inspectDatabaseStats(dbFile) {
   try {
     if (!fs.existsSync(dbFile)) {
-      return { exists: false, tableCount: 0, rowCount: 0, score: -1 };
+      return { exists: false, tableCount: 0, rowCount: 0, modifiedMs: 0 };
     }
+    const stats = fs.statSync(dbFile);
     const buffer = fs.readFileSync(dbFile);
     const db = new SQL.Database(buffer);
     const tableStmt = db.prepare(
@@ -91,11 +92,35 @@ function inspectDatabaseStats(dbFile) {
       exists: true,
       tableCount,
       rowCount,
-      score: tableCount * 100000 + rowCount,
+      modifiedMs: Number(stats.mtimeMs || 0),
     };
   } catch {
-    return { exists: true, tableCount: 0, rowCount: 0, score: -1 };
+    return { exists: true, tableCount: 0, rowCount: 0, modifiedMs: 0 };
   }
+}
+
+function shouldPreferCandidate(candidate, currentBest) {
+  const candidateHasRows = candidate.rowCount > 0;
+  const currentHasRows = currentBest.rowCount > 0;
+  if (candidateHasRows !== currentHasRows) return candidateHasRows;
+
+  if (candidate.rowCount !== currentBest.rowCount) {
+    return candidate.rowCount > currentBest.rowCount;
+  }
+
+  if (candidate.tableCount !== currentBest.tableCount) {
+    return candidate.tableCount > currentBest.tableCount;
+  }
+
+  if (candidate.modifiedMs !== currentBest.modifiedMs) {
+    return candidate.modifiedMs > currentBest.modifiedMs;
+  }
+
+  if (candidate.exists !== currentBest.exists) {
+    return candidate.exists;
+  }
+
+  return false;
 }
 
 function listDbFiles(directory) {
@@ -142,13 +167,13 @@ function chooseBestDatabasePath(primaryPath) {
 
   for (const candidate of uniqueCandidates) {
     const stats = inspectDatabaseStats(candidate);
-    if (stats.score > bestStats.score) {
+    if (shouldPreferCandidate(stats, bestStats)) {
       bestStats = stats;
       bestPath = candidate;
     }
   }
 
-  if (bestPath !== primaryPath && bestStats.score > 0) {
+  if (bestPath !== primaryPath && bestStats.rowCount > 0) {
     console.warn(
       `[DB] Using populated database: ${bestPath} (tables=${bestStats.tableCount}, rows=${bestStats.rowCount}) instead of ${primaryPath}`
     );
