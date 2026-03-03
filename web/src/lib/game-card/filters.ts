@@ -316,8 +316,10 @@ function filterByHasPicks(card: GameCard, filters: GameFilters): boolean {
 function filterByWelcomeHome(card: GameCard, filters: GameFilters): boolean {
   if (!filters.onlyWelcomeHome) return true;
   
-  // Check if any driver is Welcome Home Fade
-  return card.drivers.some(d => d.cardType === 'welcome-home-v2' || d.key === 'welcomeHomeV2');
+  // Check if any driver or evidence item is Welcome Home Fade
+  const hasWHF = card.drivers.some(d => d.cardType === 'welcome-home-v2') ||
+    (card.evidence?.some(e => e.cardType === 'welcome-home-v2') ?? false);
+  return hasWHF;
 }
 
 /**
