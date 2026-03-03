@@ -192,6 +192,10 @@ interface GameData {
     total: number | null;
     spreadHome: number | null;
     spreadAway: number | null;
+    spreadPriceHome: number | null;
+    spreadPriceAway: number | null;
+    totalPriceOver: number | null;
+    totalPriceUnder: number | null;
     capturedAt: string | null;
   } | null;
   plays: Array<{
