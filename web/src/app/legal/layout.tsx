@@ -24,16 +24,6 @@ export default function LegalLayout({
             community or services.
           </p>
         </header>
-        <section className="space-y-4 rounded-[2rem] border border-white/10 bg-surface/70 p-8 text-sm text-cloud/75">
-          <p>
-            Last updated {new Date().toLocaleDateString(undefined, { dateStyle: "long" })}. For questions or
-            legal notifications contact <a className="text-teal" href="mailto:legal@cheddarlogic.com">legal@cheddarlogic.com</a>.
-          </p>
-          <p>
-            Cheddar Logic LLC, 8 The Green, Suite B, Dover, DE 19901. State of incorporation: Delaware, United
-            States.
-          </p>
-        </section>
         {children}
       </main>
     </div>

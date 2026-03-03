@@ -144,10 +144,6 @@ export function getDefaultFilters(mode: ViewMode): GameFilters {
   return DEFAULT_FILTERS_BY_MODE[mode];
 }
 
-function isGameModeFilters(filters: GameFilters): filters is GameModeFilters {
-  return 'markets' in filters;
-}
-
 function isPropsModeFilters(filters: GameFilters): filters is PropsModeFilters {
   return 'propStatGroups' in filters;
 }

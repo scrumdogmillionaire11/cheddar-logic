@@ -35,5 +35,32 @@ export default [
       },
     },
   },
+  {
+    files: [
+      'apps/worker/**/*.js',
+      'packages/models/**/*.js',
+      'packages/odds/**/*.js',
+    ],
+    languageOptions: {
+      sourceType: 'commonjs',
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+      'no-empty': 'off',
+    },
+  },
+  {
+    files: [
+      '**/__tests__/**/*.{js,ts}',
+      '**/*.test.{js,ts}',
+      '**/*.spec.{js,ts}',
+    ],
+    languageOptions: {
+      globals: {
+        ...globals.jest,
+      },
+    },
+  },
   prettier,
 ];
