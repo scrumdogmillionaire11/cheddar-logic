@@ -397,7 +397,46 @@ export default function CardsPageClient() {
     });
     console.warn('[DROP REASONS BY SPORT]', dropTraceStats.droppedByReasonBySport);
     console.warn('[DROPPED META BY SPORT]', dropTraceStats.droppedMetaBySport);
-  }, [loading, traceStats, todayEtKey, filters, dropTraceStats]);
+
+    // DEBUG: Sample NBA plays to understand why they're PASS/not bettable
+    const nbaSample = enrichedCards
+      .filter((c) => c.sport === 'NBA')
+      .flatMap((c) => {
+        const displayAction = getPlayDisplayAction(c.play);
+        const hasBettable = c.tags.includes(GAME_TAGS.HAS_FIRE) || c.tags.includes(GAME_TAGS.HAS_WATCH);
+        // Only sample plays that are PASS or not bettable
+        if (displayAction === 'PASS' || !hasBettable) {
+          return [{
+            gameId: c.gameId,
+            homeTeam: c.homeTeam,
+            awayTeam: c.awayTeam,
+            playMarket: c.play?.market_type,
+            action: c.play?.action,
+            status: c.play?.status,
+            classification: c.play?.classification,
+            displayAction,
+            hasBettable,
+            truthStrength: c.play?.truthStrength,
+            edge: c.play?.edge,
+            line: c.play?.line,
+            price: c.play?.price,
+            updatedAt: c.play?.updatedAt,
+            reasonCodes: c.play?.reason_codes,
+            tags: c.play?.tags,
+            driverCount: c.drivers.length,
+            driverMarkets: c.drivers.map((d) => d.market).join(','),
+            modelProb: c.play?.modelProb,
+            impliedProb: c.play?.impliedProb,
+          }];
+        }
+        return [];
+      })
+      .slice(0, 10);
+
+    if (nbaSample.length > 0) {
+      console.log('[NBA PLAY SAMPLE (PASS or not bettable)]', nbaSample);
+    }
+  }, [loading, traceStats, todayEtKey, filters, dropTraceStats, enrichedCards]);
 
   const formatDate = (dateStr: string) => {
     try {
