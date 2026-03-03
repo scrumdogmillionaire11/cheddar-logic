@@ -38,6 +38,11 @@ type LedgerRow = {
   prediction: string | null;
   tier: string | null;
   market: string | null;
+  marketType?: string | null;
+  selection?: string | null;
+  marketSelectionLabel?: string | null;
+  line?: number | null;
+  marketKey?: string | null;
   homeTeam: string | null;
   awayTeam: string | null;
   price: number | null;
@@ -101,6 +106,10 @@ function formatPrice(value: number | null | undefined) {
 function formatLabel(value: string | null | undefined) {
   if (!value) return "--";
   return value.replace(/_/g, " ");
+}
+
+function formatMarketSelectionLabel(row: LedgerRow) {
+  return row.marketSelectionLabel || '--';
 }
 
 function normalizeResult(result: string | null | undefined): "WIN" | "LOSS" | "PUSH" | "PENDING" {
@@ -569,7 +578,7 @@ export default function ResultsPage() {
                       <span>{formatLedgerDate(row.settledAt)}</span>
                       <span>{row.sport}</span>
                       <span>{row.homeTeam && row.awayTeam ? `${row.awayTeam} @ ${row.homeTeam}` : '--'}</span>
-                      <span className="capitalize">{formatLabel(row.market)}</span>
+                      <span>{formatMarketSelectionLabel(row)}</span>
                       <span>{row.prediction || '--'}</span>
                       <span>{formatPrice(row.price)}</span>
                       <span className="font-semibold">{row.confidencePct !== null ? `${row.confidencePct}%` : '--'}</span>
@@ -595,8 +604,8 @@ export default function ResultsPage() {
                 const outcome = normalizeResult(row.result);
                 const matchup = row.homeTeam && row.awayTeam ? `${row.awayTeam} @ ${row.homeTeam}` : '--';
                 const prediction = row.prediction || '--';
-                const marketLabel = formatLabel(row.market);
-                const predictionLine = `${prediction} ${marketLabel !== "--" ? marketLabel.toUpperCase() : ''} ${row.price !== null ? `(${formatPrice(row.price)})` : ''}`.trim();
+                const marketLabel = formatMarketSelectionLabel(row);
+                const predictionLine = `${marketLabel} ${row.price !== null ? `(${formatPrice(row.price)})` : ''}`.trim();
                 return (
                   <details key={`${row.id}-mobile`} className="rounded-xl border border-white/10 bg-night/35">
                     <summary className="cursor-pointer list-none px-4 py-4">
@@ -621,7 +630,7 @@ export default function ResultsPage() {
                     <div className="grid grid-cols-2 gap-3 border-t border-white/10 px-4 py-3 text-xs">
                       <div>
                         <p className="text-cloud/50">Market</p>
-                        <p className="mt-0.5 capitalize text-cloud/80">{marketLabel}</p>
+                        <p className="mt-0.5 text-cloud/80">{marketLabel}</p>
                       </div>
                       <div>
                         <p className="text-cloud/50">Pick</p>

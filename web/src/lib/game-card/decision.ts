@@ -77,15 +77,15 @@ function actionFromLegacyStatus(value: unknown): PlayDisplayAction | undefined {
 }
 
 function actionFromClassification(value: unknown): PlayDisplayAction | undefined {
-  if (value === 'LEAN') return 'FIRE';
-  if (value === 'BASE') return 'HOLD';
+  if (value === 'BASE' || value === 'PLAY') return 'FIRE';
+  if (value === 'LEAN') return 'HOLD';
   if (value === 'PASS') return 'PASS';
   return undefined;
 }
 
 function classificationFromAction(action: PlayDisplayAction): 'BASE' | 'LEAN' | 'PASS' {
-  if (action === 'FIRE') return 'LEAN';
-  if (action === 'HOLD') return 'BASE';
+  if (action === 'FIRE') return 'BASE';
+  if (action === 'HOLD') return 'LEAN';
   return 'PASS';
 }
 

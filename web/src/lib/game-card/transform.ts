@@ -18,6 +18,7 @@ import type {
   ValueStatus,
   PriceFlag,
   PassReasonCode,
+  SelectionSide,
 } from '../types/game-card';
 import type { CanonicalPlay, MarketType, SelectionKey, Sport as CanonicalSport } from '../types/canonical-play';
 import { deduplicateDrivers, resolvePlayDisplayDecision } from './decision';
@@ -508,6 +509,11 @@ function buildPlay(
   const truthStatus = truthStatusFromStrength(truthStrength);
   const modelProb = clamp(0.5 + (truthStrength - 0.5) * 0.9 - conflict * 0.12, 0.5, 0.78);
 
+  // Check if there's a PROP play first (preferred for player props view)
+  const propPlay = scopedPlayCandidates.find(
+    (p) => p.market_type === 'PROP' && p.confidence >= 0.0
+  );
+
   // Check if there's an explicit high-confidence SPREAD or TOTAL play available
   // Prefer those over defaulting to MONEYLINE
   const spreadPlay = scopedPlayCandidates.find(
@@ -517,11 +523,18 @@ function buildPlay(
     (p) => p.market_type === 'TOTAL' && p.confidence >= 0.6 && p.tier !== null
   );
 
-  // If we have an explicit SPREAD or TOTAL play, use that market directly
+  // If we have a PROP play, use it for the canonical play object
+  // Otherwise, default to SPREAD/TOTAL/MONEYLINE logic
   let market: Market | 'NONE';
   let direction: Direction;
+  let isPropMarket = false;
   
-  if (spreadPlay) {
+  if (propPlay) {
+    // For PROP plays, preserve them as-is for the player props view
+    market = 'UNKNOWN'; // Use UNKNOWN as placeholder since PROP isn't in Market enum
+    direction = propPlay.prediction as Direction || 'NEUTRAL';
+    isPropMarket = true;
+  } else if (spreadPlay) {
     market = 'SPREAD';
     direction = (spreadPlay.prediction === 'HOME' || spreadPlay.prediction === 'AWAY') 
       ? spreadPlay.prediction 
@@ -542,35 +555,50 @@ function buildPlay(
   let price: number | undefined;
   let line: number | undefined;
 
-  const teamName = direction === 'HOME' ? game.homeTeam : game.awayTeam;
+  if (isPropMarket && propPlay) {
+    // For PROP plays, use the selection and line/price from the prop play
+    const playerName = propPlay.selection?.team || 'Player';
+    const propSelection = propPlay.selection?.side || propPlay.prediction || 'UNKNOWN';
+    line = propPlay.line;
+    price = propPlay.price;
+    if (line !== undefined) {
+      pick = `${playerName} ${propSelection} ${line}`;
+    } else if (price !== undefined) {
+      pick = `${playerName} ${propSelection} (${price > 0 ? '+' : ''}${price})`;
+    } else {
+      pick = `${playerName} ${propSelection}`;
+    }
+  } else {
+    const teamName = direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : '';
 
-  if (market === 'ML') {
-    price = direction === 'HOME' ? game.odds?.h2hHome ?? undefined : game.odds?.h2hAway ?? undefined;
-    if (price !== undefined) {
-      const priceStr = price > 0 ? `+${price}` : `${price}`;
-      pick = `${teamName} ML ${priceStr}`;
-    } else {
-      pick = `${teamName} ML (Price N/A)`;
-    }
-  } else if (market === 'SPREAD') {
-    line = direction === 'HOME' ? game.odds?.spreadHome ?? undefined : game.odds?.spreadAway ?? undefined;
-    price = direction === 'HOME' ? game.odds?.spreadPriceHome ?? undefined : game.odds?.spreadPriceAway ?? undefined;
-    if (line !== undefined) {
-      const lineStr = line > 0 ? `+${line}` : `${line}`;
-      pick = `${teamName} ${lineStr}`;
-    } else {
-      pick = `${teamName} Spread (Line N/A)`;
-    }
-  } else if (market === 'TOTAL') {
-    line = game.odds?.total ?? undefined;
-    // Get the over/under price based on direction
-    if (market === 'TOTAL') {
-      price = direction === 'OVER' ? game.odds?.totalPriceOver ?? undefined : game.odds?.totalPriceUnder ?? undefined;
-    }
-    if (line !== undefined) {
-      pick = `${direction === 'OVER' ? 'Over' : 'Under'} ${line}`;
-    } else {
-      pick = `${direction === 'OVER' ? 'Over' : 'Under'} (Line N/A)`;
+    if (market === 'ML') {
+      price = direction === 'HOME' ? game.odds?.h2hHome ?? undefined : game.odds?.h2hAway ?? undefined;
+      if (price !== undefined) {
+        const priceStr = price > 0 ? `+${price}` : `${price}`;
+        pick = `${teamName} ML ${priceStr}`;
+      } else {
+        pick = `${teamName} ML (Price N/A)`;
+      }
+    } else if (market === 'SPREAD') {
+      line = direction === 'HOME' ? game.odds?.spreadHome ?? undefined : game.odds?.spreadAway ?? undefined;
+      price = direction === 'HOME' ? game.odds?.spreadPriceHome ?? undefined : game.odds?.spreadPriceAway ?? undefined;
+      if (line !== undefined) {
+        const lineStr = line > 0 ? `+${line}` : `${line}`;
+        pick = `${teamName} ${lineStr}`;
+      } else {
+        pick = `${teamName} Spread (Line N/A)`;
+      }
+    } else if (market === 'TOTAL') {
+      line = game.odds?.total ?? undefined;
+      // Get the over/under price based on direction
+      if (market === 'TOTAL') {
+        price = direction === 'OVER' ? game.odds?.totalPriceOver ?? undefined : game.odds?.totalPriceUnder ?? undefined;
+      }
+      if (line !== undefined) {
+        pick = `${direction === 'OVER' ? 'Over' : 'Under'} ${line}`;
+      } else {
+        pick = `${direction === 'OVER' ? 'Over' : 'Under'} (Line N/A)`;
+      }
     }
   }
 
@@ -605,26 +633,12 @@ function buildPlay(
     const sourceAction = getSourcePlayAction(play);
     return sourceAction === 'FIRE' || sourceAction === 'HOLD';
   });
-  const sourcePlay = actionableSourcePlay ?? sourcePlayByTruthDriver ?? scopedPlayCandidates[0];
+  // Prefer PROP play if available, otherwise use standard selection logic
+  const sourcePlay = isPropMarket && propPlay 
+    ? propPlay 
+    : actionableSourcePlay ?? sourcePlayByTruthDriver ?? scopedPlayCandidates[0];
   const sourceInference = sourcePlay ? inferMarketFromPlay(sourcePlay) : { market, canonical: undefined, reasonCodes: [], tags: [] };
   const totalBias = game.consistency?.total_bias ?? sourcePlay?.consistency?.total_bias ?? 'UNKNOWN';
-
-  const reasonCodes: string[] = [...sourceInference.reasonCodes];
-  if (!sourcePlay?.kind) reasonCodes.push('PASS_MISSING_KIND');
-  if (!sourceInference.canonical) reasonCodes.push('PASS_MISSING_MARKET_TYPE');
-  if (sourceInference.canonical === 'TOTAL' && line === undefined) reasonCodes.push('PASS_MISSING_LINE');
-  if ((sourceInference.canonical === 'SPREAD' || sourceInference.canonical === 'MONEYLINE') && direction === 'NEUTRAL') {
-    reasonCodes.push('PASS_MISSING_SELECTION');
-  }
-  if (
-    (sourceInference.canonical === 'TOTAL' || sourceInference.canonical === 'SPREAD' || sourceInference.canonical === 'MONEYLINE') &&
-    price === undefined
-  ) {
-    reasonCodes.push('PASS_NO_MARKET_PRICE');
-  }
-  if (edge === undefined) reasonCodes.push('PASS_MISSING_EDGE');
-  if (canonicalPlayableCount === 0) reasonCodes.push('PASS_NO_QUALIFIED_PLAYS');
-  if (betAction === 'NO_PLAY' && !reasonCodes.includes(whyCode)) reasonCodes.push(whyCode);
 
   const riskTags = getRiskTagsFromText(
     sourcePlay?.cardTitle ?? '',
@@ -641,13 +655,40 @@ function buildPlay(
     return false;
   });
 
-  const resolvedMarketType = sourceInference.canonical ?? (market === 'TOTAL'
-    ? 'TOTAL'
-    : market === 'SPREAD'
-      ? 'SPREAD'
-      : market === 'ML'
-        ? 'MONEYLINE'
-        : 'INFO');
+  // Resolve market type: prefer explicit market_type from play, otherwise infer from direction/market
+  const resolvedMarketType = isPropMarket && propPlay?.market_type === 'PROP'
+    ? 'PROP'
+    : sourceInference.canonical ?? (market === 'TOTAL'
+      ? 'TOTAL'
+      : market === 'SPREAD'
+        ? 'SPREAD'
+        : market === 'ML'
+          ? 'MONEYLINE'
+          : 'INFO');
+
+  const reasonCodes: string[] = [...sourceInference.reasonCodes];
+  if (!sourcePlay?.kind) reasonCodes.push('PASS_MISSING_KIND');
+  
+  // For PROP plays, the validation is different
+  if (resolvedMarketType === 'PROP') {
+    if (!sourcePlay?.selection?.side && !sourcePlay?.selection?.team) reasonCodes.push('PASS_MISSING_SELECTION');
+  } else {
+    if (!sourceInference.canonical) reasonCodes.push('PASS_MISSING_MARKET_TYPE');
+    if (sourceInference.canonical === 'TOTAL' && line === undefined) reasonCodes.push('PASS_MISSING_LINE');
+    if ((sourceInference.canonical === 'SPREAD' || sourceInference.canonical === 'MONEYLINE') && direction === 'NEUTRAL') {
+      reasonCodes.push('PASS_MISSING_SELECTION');
+    }
+    if (
+      (sourceInference.canonical === 'TOTAL' || sourceInference.canonical === 'SPREAD' || sourceInference.canonical === 'MONEYLINE') &&
+      price === undefined
+    ) {
+      reasonCodes.push('PASS_NO_MARKET_PRICE');
+    }
+  }
+  
+  if (edge === undefined) reasonCodes.push('PASS_MISSING_EDGE');
+  if (canonicalPlayableCount === 0) reasonCodes.push('PASS_NO_QUALIFIED_PLAYS');
+  if (betAction === 'NO_PLAY' && !reasonCodes.includes(whyCode)) reasonCodes.push(whyCode);
 
   const sourcePlayAction = getSourcePlayAction(sourcePlay);
   const sourcePlayIsActionable = sourcePlayAction === 'FIRE' || sourcePlayAction === 'HOLD';
@@ -669,6 +710,7 @@ function buildPlay(
     direction === 'AWAY' ||
     Boolean(sourcePlay?.selection?.team);
 
+  // Invariant violations only apply to standard markets, not PROP
   const hasTotalInvariantViolation =
     resolvedMarketType === 'TOTAL' &&
     (!((direction === 'OVER' || direction === 'UNDER') && typeof line === 'number'));
@@ -683,7 +725,8 @@ function buildPlay(
     pick = 'NO PLAY';
   }
 
-  const forcedPass = hasTotalInvariantViolation || hasSpreadInvariantViolation || hasMoneylineInvariantViolation;
+  // For PROP plays, don't enforce standard market invariants
+  const forcedPass = resolvedMarketType !== 'PROP' && (hasTotalInvariantViolation || hasSpreadInvariantViolation || hasMoneylineInvariantViolation);
   if (forcedPass) {
     if (hasTotalInvariantViolation) reasonCodes.push('PASS_MISSING_LINE');
     if (hasSpreadInvariantViolation) {
@@ -744,12 +787,17 @@ function buildPlay(
       total_bias: totalBias,
     },
     selection:
-      direction === 'HOME' || direction === 'AWAY' || direction === 'OVER' || direction === 'UNDER'
+      resolvedMarketType === 'PROP' && propPlay?.selection?.side
         ? {
-            side: direction,
-            team: direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : undefined,
+            side: propPlay.selection.side as SelectionSide,
+            team: propPlay.selection.team,
           }
-        : undefined,
+        : direction === 'HOME' || direction === 'AWAY' || direction === 'OVER' || direction === 'UNDER'
+          ? {
+              side: direction as SelectionSide,
+              team: direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : undefined,
+            }
+          : undefined,
     reason_codes: Array.from(new Set(reasonCodes)),
     tags,
     // Canonical fields (preferred)
@@ -762,7 +810,7 @@ function buildPlay(
     status: resolvedDisplayDecision.status,
     market,
     pick,
-    lean: direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : direction,
+    lean: resolvedMarketType === 'PROP' && propPlay?.selection?.team ? propPlay.selection.team : direction === 'HOME' ? game.homeTeam : direction === 'AWAY' ? game.awayTeam : direction,
     side: direction,
     truthStatus,
     truthStrength,

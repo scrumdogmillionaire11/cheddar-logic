@@ -23,7 +23,9 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   shouldRunJobKey,
-  withDb
+  withDb,
+  deriveLockedMarketContext,
+  toRecommendedBetType,
 } = require('@cheddar-logic/data');
 
 function parseArgs(argv) {
@@ -74,7 +76,7 @@ async function backfillCardResults({ jobKey = null, dryRun = false, since = null
           cp.game_id,
           cp.sport,
           cp.card_type,
-          COALESCE(json_extract(cp.payload_data, '$.recommended_bet_type'), 'unknown') AS recommended_bet_type
+          cp.payload_data
         FROM card_payloads cp
         LEFT JOIN card_results cr ON cr.card_id = cp.id
         WHERE cr.card_id IS NULL
@@ -86,6 +88,34 @@ async function backfillCardResults({ jobKey = null, dryRun = false, since = null
 
       let inserted = 0;
       for (const row of rows) {
+        let payload = null;
+        try {
+          payload = row.payload_data ? JSON.parse(row.payload_data) : null;
+        } catch {
+          payload = null;
+        }
+
+        let lockedMarket = null;
+        if (payload && typeof payload === 'object') {
+          try {
+            lockedMarket = deriveLockedMarketContext(payload, {
+              gameId: row.game_id,
+              homeTeam: payload.home_team,
+              awayTeam: payload.away_team,
+              requirePrice: true,
+              requireLineForMarket: true,
+            });
+          } catch (error) {
+            console.warn(
+              `[BackfillCardResults] Card ${row.card_id} failed market contract: ${error.code || 'INVALID_MARKET_CONTRACT'} ${error.message}`
+            );
+          }
+        }
+
+        const recommendedBetType = lockedMarket
+          ? toRecommendedBetType(lockedMarket.marketType)
+          : (payload?.recommended_bet_type || 'unknown');
+
         if (dryRun) {
           inserted++;
           continue;
@@ -97,12 +127,20 @@ async function backfillCardResults({ jobKey = null, dryRun = false, since = null
           gameId: row.game_id,
           sport: row.sport,
           cardType: row.card_type,
-          recommendedBetType: row.recommended_bet_type || 'unknown',
+          recommendedBetType,
+          marketKey: lockedMarket?.marketKey || null,
+          marketType: lockedMarket?.marketType || null,
+          selection: lockedMarket?.selection || null,
+          line: lockedMarket?.line ?? null,
+          lockedPrice: lockedMarket?.lockedPrice ?? null,
           status: 'pending',
           result: null,
           settledAt: null,
           pnlUnits: null,
-          metadata: { backfilledAt: new Date().toISOString() }
+          metadata: {
+            backfilledAt: new Date().toISOString(),
+            marketContractValid: Boolean(lockedMarket),
+          }
         });
 
         inserted++;

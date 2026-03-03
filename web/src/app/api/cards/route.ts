@@ -36,6 +36,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { performSecurityChecks, addRateLimitHeaders } from '../../../lib/api-security';
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true'
   || process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
@@ -74,6 +75,12 @@ function safeJsonParse(payload: string | null) {
 
 export async function GET(request: NextRequest) {
   try {
+    // Security checks: rate limiting, input validation
+    const securityCheck = performSecurityChecks(request, '/api/cards');
+    if (!securityCheck.allowed) {
+      return securityCheck.error!;
+    }
+
     await initDb();
 
     // AUTH DISABLED: Commenting out auth walls to allow public access
@@ -105,10 +112,11 @@ export async function GET(request: NextRequest) {
 
     if (!hasCardsTable) {
       // Database is not initialized - return empty data
-      return NextResponse.json(
+      const response = NextResponse.json(
         { success: true, data: [] },
         { headers: { 'Content-Type': 'application/json' } }
       );
+      return addRateLimitHeaders(response, request);
     }
 
     const where: string[] = [];
@@ -185,17 +193,19 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json(
+    const apiResponse = NextResponse.json(
       { success: true, data: response },
       { headers: { 'Content-Type': 'application/json' } }
     );
+    return addRateLimitHeaders(apiResponse, request);
   } catch (error) {
     console.error('[API] Error fetching cards:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json(
+    const errorResponse = NextResponse.json(
       { success: false, error: message },
       { status: 500 }
     );
+    return addRateLimitHeaders(errorResponse, request);
   } finally {
     closeDatabase();
   }

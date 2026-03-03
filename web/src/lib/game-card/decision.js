@@ -5,6 +5,49 @@
 const TIER_RANK = { BEST: 3, SUPER: 2, WATCH: 1 };
 const DIRECTION_OPPOSITE = { HOME: 'AWAY', AWAY: 'HOME', OVER: 'UNDER', UNDER: 'OVER' };
 
+function isValidAction(value) {
+  return value === 'FIRE' || value === 'HOLD' || value === 'PASS';
+}
+
+function actionFromLegacyStatus(value) {
+  const status = String(value ?? '').toUpperCase();
+  if (status.includes('FIRE')) return 'FIRE';
+  if (status.includes('WATCH') || status.includes('HOLD')) return 'HOLD';
+  if (status.includes('PASS')) return 'PASS';
+  return undefined;
+}
+
+function actionFromClassification(value) {
+  if (value === 'BASE' || value === 'PLAY') return 'FIRE';
+  if (value === 'LEAN') return 'HOLD';
+  if (value === 'PASS') return 'PASS';
+  return undefined;
+}
+
+function classificationFromAction(action) {
+  if (action === 'FIRE') return 'BASE';
+  if (action === 'HOLD') return 'LEAN';
+  return 'PASS';
+}
+
+function expressionStatusFromAction(action) {
+  if (action === 'HOLD') return 'WATCH';
+  return action;
+}
+
+export function resolvePlayDisplayDecision(play) {
+  const explicitAction = isValidAction(play?.action) ? play.action : undefined;
+  const legacyAction = actionFromLegacyStatus(play?.status);
+  const classificationAction = actionFromClassification(play?.classification);
+  const action = explicitAction ?? legacyAction ?? classificationAction ?? 'PASS';
+
+  return {
+    action,
+    status: expressionStatusFromAction(action),
+    classification: classificationFromAction(action),
+  };
+}
+
 function normalizeText(value) {
   if (typeof value !== 'string') return '';
   return value.trim();

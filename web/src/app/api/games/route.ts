@@ -39,8 +39,9 @@
  * }
  */
 
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
 import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { performSecurityChecks, addRateLimitHeaders } from '../../../lib/api-security';
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true'
   || process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
@@ -157,8 +158,123 @@ function hasMinimumViability(play: Play, marketType: MarketType): boolean {
   }
   return true;
 }
-export async function GET() {
+
+function normalizeMarketType(value: unknown): Play['market_type'] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const upper = value.trim().toUpperCase();
+
+  if (
+    upper === 'MONEYLINE' ||
+    upper === 'SPREAD' ||
+    upper === 'TOTAL' ||
+    upper === 'PUCKLINE' ||
+    upper === 'TEAM_TOTAL' ||
+    upper === 'PROP' ||
+    upper === 'INFO'
+  ) {
+    return upper as Play['market_type'];
+  }
+
+  if (upper === 'PUCK_LINE') return 'PUCKLINE';
+  if (upper === 'TEAMTOTAL') return 'TEAM_TOTAL';
+  return undefined;
+}
+
+function normalizeTier(value: unknown): Play['tier'] {
+  if (typeof value !== 'string') return null;
+  const upper = value.trim().toUpperCase();
+  if (upper === 'SUPER') return 'SUPER';
+  if (upper === 'BEST' || upper === 'HOT') return 'BEST';
+  if (upper === 'WATCH') return 'WATCH';
+  return null;
+}
+
+function normalizeAction(value: unknown): Play['action'] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const upper = value.trim().toUpperCase();
+  if (upper === 'FIRE' || upper === 'HOLD' || upper === 'PASS') {
+    return upper as Play['action'];
+  }
+  if (upper === 'WATCH') return 'HOLD';
+  return undefined;
+}
+
+function normalizeStatus(value: unknown): Play['status'] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const upper = value.trim().toUpperCase();
+  if (upper === 'FIRE' || upper === 'WATCH' || upper === 'PASS') {
+    return upper as Play['status'];
+  }
+  if (upper === 'HOLD') return 'WATCH';
+  return undefined;
+}
+
+function normalizeSelectionSide(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const upper = value.trim().toUpperCase();
+  if (
+    upper === 'HOME' ||
+    upper === 'AWAY' ||
+    upper === 'OVER' ||
+    upper === 'UNDER' ||
+    upper === 'FAV' ||
+    upper === 'DOG' ||
+    upper === 'NONE' ||
+    upper === 'NEUTRAL'
+  ) {
+    return upper;
+  }
+  return undefined;
+}
+
+function normalizePrediction(value: unknown): Play['prediction'] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const upper = value.trim().toUpperCase();
+  if (
+    upper === 'HOME' ||
+    upper === 'AWAY' ||
+    upper === 'OVER' ||
+    upper === 'UNDER' ||
+    upper === 'NEUTRAL'
+  ) {
+    return upper as Play['prediction'];
+  }
+  if (upper.includes(' OVER ')) return 'OVER';
+  if (upper.includes(' UNDER ')) return 'UNDER';
+  return undefined;
+}
+
+function toObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object') return null;
+  return value as Record<string, unknown>;
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function firstNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+export async function GET(request: NextRequest) {
   try {
+    // Security checks: rate limiting, input validation
+    const securityCheck = performSecurityChecks(request, '/api/games');
+    if (!securityCheck.allowed) {
+      return securityCheck.error!;
+    }
+
     await initDb();
 
     // AUTH DISABLED: Commenting out auth walls to allow public access
@@ -180,10 +296,11 @@ export async function GET() {
 
     if (!hasGamesTable) {
       // Database is not initialized - return empty data
-      return NextResponse.json(
+      const response = NextResponse.json(
         { success: true, data: [] },
         { headers: { 'Content-Type': 'application/json' } }
       );
+      return addRateLimitHeaders(response, request);
     }
 
     // Compute midnight America/New_York as a UTC string for the SQL param.
@@ -231,7 +348,7 @@ export async function GET() {
         o.total_price_under,
         o.captured_at AS odds_captured_at
       FROM games g
-      LEFT JOIN latest_odds o ON o.game_id = g.game_id AND o.rn = 1
+      INNER JOIN latest_odds o ON o.game_id = g.game_id AND o.rn = 1
       WHERE datetime(g.game_time_utc) >= ?
       ORDER BY g.game_time_utc ASC
       LIMIT 200
@@ -283,14 +400,72 @@ export async function GET() {
             ? (payload.driver as Record<string, unknown>).inputs as Record<string, unknown>
             : null;
 
+        const payloadPlay = toObject(payload.play);
+        const payloadSelection = toObject(payload.selection) ?? toObject(payloadPlay?.selection);
+        const normalizedSelectionSide = normalizeSelectionSide(
+          payloadSelection?.side ?? payloadPlay?.side ?? payload.prediction
+        ) ?? 'NONE';
+        const normalizedAction = normalizeAction(payload.action ?? payloadPlay?.action);
+        const normalizedStatus = normalizeStatus(payload.status ?? payloadPlay?.status);
+        const normalizedTier = normalizeTier(payload.tier ?? payloadPlay?.tier);
+        const normalizedPrediction =
+          normalizePrediction(payload.prediction) ??
+          normalizePrediction(payloadPlay?.prediction) ??
+          (normalizedSelectionSide === 'HOME' ||
+          normalizedSelectionSide === 'AWAY' ||
+          normalizedSelectionSide === 'OVER' ||
+          normalizedSelectionSide === 'UNDER'
+            ? normalizedSelectionSide
+            : undefined) ??
+          'NEUTRAL';
+        const normalizedMarketType = normalizeMarketType(payload.market_type ?? payloadPlay?.market_type);
+        const normalizedPlayerName = firstString(
+          payloadSelection?.player_name,
+          payloadPlay?.player_name
+        );
+        const normalizedSelectionTeam = firstString(
+          normalizedPlayerName,
+          payloadSelection?.team,
+          payloadPlay?.team
+        );
+        const normalizedLine = firstNumber(
+          payload.line,
+          (payload.market as Record<string, unknown>)?.line,
+          payloadPlay?.line,
+          payloadSelection?.line
+        );
+        const normalizedPrice = firstNumber(
+          payload.price,
+          payloadPlay?.price,
+          payloadSelection?.price
+        );
+        const combinedReasonCodes = [
+          ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
+          ...(Array.isArray(payloadPlay?.reason_codes) ? payloadPlay.reason_codes : []),
+        ].map((value) => String(value));
+        const combinedTags = [
+          ...(Array.isArray(payload.tags) ? payload.tags : []),
+          ...(Array.isArray(payloadPlay?.tags) ? payloadPlay.tags : []),
+        ].map((value) => String(value));
+
         const play: Play = {
           cardType: cardRow.card_type,
           cardTitle: cardRow.card_title,
-          prediction: (payload.prediction as 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL') ?? 'NEUTRAL',
-          confidence: typeof payload.confidence === 'number' ? payload.confidence : 0,
-          tier: (payload.tier as 'SUPER' | 'BEST' | 'WATCH' | null) ?? null,
-          reasoning: typeof payload.reasoning === 'string' ? payload.reasoning : '',
-          evPassed: payload.ev_passed === true,
+          prediction: normalizedPrediction,
+          confidence:
+            typeof payload.confidence === 'number'
+              ? payload.confidence
+              : typeof payloadPlay?.confidence === 'number'
+                ? payloadPlay.confidence
+                : 0,
+          tier: normalizedTier,
+          reasoning:
+            typeof payload.reasoning === 'string'
+              ? payload.reasoning
+              : typeof payloadPlay?.reasoning === 'string'
+                ? payloadPlay.reasoning
+                : '',
+          evPassed: payload.ev_passed === true || payloadPlay?.ev_passed === true,
           driverKey:
             payload.driver !== null &&
             typeof payload.driver === 'object' &&
@@ -310,35 +485,54 @@ export async function GET() {
                 ? driverInputs.edge as number
                 : null,
           status:
-            payload.status === 'FIRE' || payload.status === 'WATCH' || payload.status === 'PASS'
-              ? payload.status
-              : payload.action === 'HOLD' ? 'WATCH'
-              : payload.action === 'FIRE' ? 'FIRE'
-              : undefined,
+            normalizedStatus ??
+            (normalizedAction === 'HOLD'
+              ? 'WATCH'
+              : normalizedAction === 'FIRE'
+                ? 'FIRE'
+                : normalizedAction === 'PASS'
+                  ? 'PASS'
+                  : normalizedTier === 'BEST'
+                    ? 'FIRE'
+                    : normalizedTier === 'WATCH'
+                      ? 'WATCH'
+                      : undefined),
           // Canonical decision fields (preferred over legacy status field)
           classification:
             payload.classification === 'BASE' || payload.classification === 'LEAN' || payload.classification === 'PASS'
               ? (payload.classification as 'BASE' | 'LEAN' | 'PASS')
-              : undefined,
-          action:
-            payload.action === 'FIRE' || payload.action === 'HOLD' || payload.action === 'PASS'
-              ? (payload.action as 'FIRE' | 'HOLD' | 'PASS')
-              : undefined,
+              : payloadPlay?.classification === 'BASE' || payloadPlay?.classification === 'LEAN' || payloadPlay?.classification === 'PASS'
+                ? (payloadPlay.classification as 'BASE' | 'LEAN' | 'PASS')
+                : normalizedAction === 'FIRE'
+                  ? 'BASE'
+                  : normalizedAction === 'HOLD'
+                    ? 'LEAN'
+                    : normalizedAction === 'PASS'
+                      ? 'PASS'
+                      : undefined,
+          action: normalizedAction,
           pass_reason_code:
-            typeof payload.pass_reason_code === 'string' ? payload.pass_reason_code : null,
+            typeof payload.pass_reason_code === 'string'
+              ? payload.pass_reason_code
+              : typeof payloadPlay?.pass_reason_code === 'string'
+                ? payloadPlay.pass_reason_code
+                : null,
           kind:
             payload.kind === 'PLAY' || payload.kind === 'EVIDENCE'
               ? payload.kind as 'PLAY' | 'EVIDENCE'
+              : payloadPlay?.kind === 'PLAY' || payloadPlay?.kind === 'EVIDENCE'
+                ? payloadPlay.kind as 'PLAY' | 'EVIDENCE'
               : undefined,
           market_type:
-            typeof payload.market_type === 'string'
-              ? (payload.market_type as Play['market_type'])
+            normalizedMarketType !== undefined
+              ? normalizedMarketType
               : typeof (payload.recommendation as Record<string, unknown>)?.type === 'string'
                 ? (() => {
                     const recommendationType = String((payload.recommendation as Record<string, unknown>).type).toLowerCase();
                     if (recommendationType.includes('total')) return 'TOTAL';
                     if (recommendationType.includes('spread')) return 'SPREAD';
                     if (recommendationType.includes('moneyline') || recommendationType.includes('ml')) return 'MONEYLINE';
+                    if (recommendationType.includes('prop') || recommendationType.includes('player')) return 'PROP';
                     return undefined;
                   })()
                 : typeof payload.recommended_bet_type === 'string'
@@ -347,37 +541,18 @@ export async function GET() {
                       if (betType === 'total') return 'TOTAL';
                       if (betType === 'spread') return 'SPREAD';
                       if (betType === 'moneyline' || betType === 'ml') return 'MONEYLINE';
+                      if (betType === 'prop' || betType === 'player_prop') return 'PROP';
                       return undefined;
                     })()
                   : undefined,
-          selection:
-            payload.selection && typeof payload.selection === 'object'
-              ? {
-                  side: String((payload.selection as Record<string, unknown>).side ?? 'NONE'),
-                  team:
-                    typeof (payload.selection as Record<string, unknown>).team === 'string'
-                      ? String((payload.selection as Record<string, unknown>).team)
-                      : undefined,
-                }
-              : {
-                  side: String((payload.prediction as string) ?? 'NONE'),
-                },
-          line:
-            typeof payload.line === 'number'
-              ? payload.line as number
-              : typeof (payload.market as Record<string, unknown>)?.line === 'number'
-                ? (payload.market as Record<string, unknown>).line as number
-                : undefined,
-          price:
-            typeof payload.price === 'number'
-              ? payload.price as number
-              : undefined,
-          reason_codes: Array.isArray(payload.reason_codes)
-            ? payload.reason_codes.map((value) => String(value))
-            : [],
-          tags: Array.isArray(payload.tags)
-            ? payload.tags.map((value) => String(value))
-            : [],
+          selection: {
+            side: normalizedSelectionSide,
+            team: normalizedSelectionTeam,
+          },
+          line: normalizedLine,
+          price: normalizedPrice,
+          reason_codes: combinedReasonCodes,
+          tags: combinedTags,
           consistency:
             payload.consistency && typeof payload.consistency === 'object'
               ? {
@@ -390,6 +565,17 @@ export async function GET() {
                           ? (payload.consistency as Record<string, unknown>).total_bias as 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN'
                       : undefined,
                 }
+              : payloadPlay?.consistency && typeof payloadPlay.consistency === 'object'
+                ? {
+                    total_bias:
+                      (payloadPlay.consistency as Record<string, unknown>).total_bias === 'OK' ||
+                      (payloadPlay.consistency as Record<string, unknown>).total_bias === 'INSUFFICIENT_DATA' ||
+                      (payloadPlay.consistency as Record<string, unknown>).total_bias === 'CONFLICTING_SIGNALS' ||
+                      (payloadPlay.consistency as Record<string, unknown>).total_bias === 'VOLATILE_ENV' ||
+                      (payloadPlay.consistency as Record<string, unknown>).total_bias === 'UNKNOWN'
+                        ? (payloadPlay.consistency as Record<string, unknown>).total_bias as 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN'
+                        : undefined,
+                  }
               : undefined,
           repair_applied: payload.repair_applied === true,
           repair_rule_id:
@@ -510,7 +696,7 @@ export async function GET() {
     const repairRatio = totalPlayCount > 0 ? repairedPlayCount / totalPlayCount : 0;
     const repairCap = 0.2;
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         success: true,
         data,
@@ -534,13 +720,15 @@ export async function GET() {
       },
       { headers: { 'Content-Type': 'application/json' } }
     );
+    return addRateLimitHeaders(response, request);
   } catch (error) {
     console.error('[API] Error fetching games:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json(
+    const response = NextResponse.json(
       { success: false, error: message },
       { status: 500 }
     );
+    return addRateLimitHeaders(response, request);
   } finally {
     closeDatabase();
   }

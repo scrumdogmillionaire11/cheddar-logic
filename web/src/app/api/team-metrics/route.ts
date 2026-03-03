@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTeamMetricsWithGames } from '@cheddar-logic/data';
+import { performSecurityChecks, addRateLimitHeaders } from '../../../lib/api-security';
 
 export const runtime = 'nodejs';
 
@@ -46,6 +47,12 @@ async function buildTeamResponse(teamName: string, sport: string, includeGames: 
 
 export async function GET(request: NextRequest) {
   try {
+    // Security checks: rate limiting, input validation
+    const securityCheck = performSecurityChecks(request, '/api/team-metrics');
+    if (!securityCheck.allowed) {
+      return securityCheck.error!;
+    }
+
     const { searchParams } = request.nextUrl;
     const sport = normalizeSport(searchParams.get('sport'));
     if (!sport) {
@@ -99,7 +106,7 @@ export async function GET(request: NextRequest) {
       awayTeam ? buildTeamResponse(awayTeam, sport, includeGames, limit) : null
     ]);
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         success: true,
         data: {
@@ -113,12 +120,13 @@ export async function GET(request: NextRequest) {
       },
       { headers: { 'Content-Type': 'application/json' } }
     );
-  } catch (error) {
+    return addRateLimitHeaders(response, request);  } catch (error) {
     console.error('[API] Error fetching team metrics:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json(
+    const errorResponse = NextResponse.json(
       { success: false, error: message },
       { status: 500 }
     );
+    return addRateLimitHeaders(errorResponse, request);
   }
 }

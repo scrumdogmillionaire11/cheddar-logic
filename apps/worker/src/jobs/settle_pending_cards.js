@@ -21,78 +21,133 @@ const { v4: uuidV4 } = require('uuid');
 const dbBackup = require('../utils/db-backup.js');
 
 const {
+  buildMarketKey,
+  createMarketError,
   upsertTrackingStat,
   getDatabase,
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  normalizeMarketType,
+  normalizeSelectionForMarket,
+  parseLine,
   shouldRunJobKey,
   withDb
 } = require('@cheddar-logic/data');
 
-function parseAmericanOdds(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const normalized = trimmed.startsWith('+') ? trimmed.slice(1) : trimmed;
-  const parsed = Number.parseInt(normalized, 10);
-  return Number.isNaN(parsed) ? null : parsed;
+function parseLockedPrice(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.trunc(parsed);
 }
 
-/**
- * Extract the actual play direction and market from recommendation.type (authoritative BET decision).
- * Falls back to raw prediction field for legacy cards that lack recommendation.type.
- * 
- * NOTE: PASS recommendations ARE settled (graded for accountability), not skipped.
- * The PASS status only affects whether we recommend a BET, not whether we grade the prediction.
- *
- * @param {object} payloadData - Parsed card payload
- * @returns {{ direction: string, market: string } | null}
- */
-function extractActualPlay(payloadData) {
-  const recType = payloadData?.recommendation?.type;
-  if (recType && recType !== 'PASS') {
-    if (recType === 'ML_HOME') return { direction: 'HOME', market: 'moneyline' };
-    if (recType === 'ML_AWAY') return { direction: 'AWAY', market: 'moneyline' };
-    if (recType === 'SPREAD_HOME') return { direction: 'HOME', market: 'spread' };
-    if (recType === 'SPREAD_AWAY') return { direction: 'AWAY', market: 'spread' };
-    if (recType === 'TOTAL_OVER') return { direction: 'OVER', market: 'total' };
-    if (recType === 'TOTAL_UNDER') return { direction: 'UNDER', market: 'total' };
+function assertLockedMarketContext(row, payloadData) {
+  if (!row.market_key) {
+    throw createMarketError(
+      'SETTLEMENT_REQUIRES_MARKET_KEY',
+      `Card ${row.card_id} cannot settle without market_key`,
+      { cardId: row.card_id, gameId: row.game_id }
+    );
   }
 
-  // For PASS recommendations: fall through to prediction-based settlement
-  // PASS plays still have predictions that can be graded for accountability
+  const marketType = normalizeMarketType(row.market_type);
+  if (!marketType) {
+    throw createMarketError(
+      'INVALID_MARKET_TYPE',
+      `Card ${row.card_id} has invalid stored market_type "${row.market_type}"`,
+      { cardId: row.card_id, marketType: row.market_type }
+    );
+  }
 
-  // Extract from prediction field for all recommendations (including PASS and legacy cards)
-  const prediction = payloadData?.prediction;
-  if (!prediction || prediction === 'NEUTRAL') return null;
-  const betType = (payloadData?.recommended_bet_type || 'moneyline').toLowerCase();
-  return { direction: prediction, market: betType };
+  const selection = normalizeSelectionForMarket({
+    marketType,
+    selection: row.selection,
+    homeTeam: payloadData?.home_team ?? null,
+    awayTeam: payloadData?.away_team ?? null
+  });
+
+  const line = parseLine(row.line);
+  if ((marketType === 'SPREAD' || marketType === 'TOTAL') && line === null) {
+    throw createMarketError(
+      'MISSING_MARKET_LINE',
+      `Card ${row.card_id} missing line for ${marketType} settlement`,
+      { cardId: row.card_id, marketType, line: row.line }
+    );
+  }
+
+  const lockedPrice = parseLockedPrice(row.locked_price);
+  if (lockedPrice === null) {
+    throw createMarketError(
+      'MISSING_LOCKED_PRICE',
+      `Card ${row.card_id} missing locked_price at settlement`,
+      { cardId: row.card_id, marketType, selection }
+    );
+  }
+
+  const expectedMarketKey = buildMarketKey({
+    gameId: row.game_id,
+    marketType,
+    selection,
+    line
+  });
+
+  if (expectedMarketKey !== row.market_key) {
+    throw createMarketError(
+      'MARKET_KEY_MISMATCH',
+      `Card ${row.card_id} market_key mismatch`,
+      {
+        cardId: row.card_id,
+        marketKey: row.market_key,
+        expectedMarketKey,
+      }
+    );
+  }
+
+  return {
+    marketKey: row.market_key,
+    marketType,
+    selection,
+    line,
+    lockedPrice,
+  };
 }
 
-function pickBetOdds(payloadData, direction, market) {
-  const oddsContext = payloadData?.odds_context || null;
-  const marketData = payloadData?.market || null;
+function gradeLockedMarket({ marketType, selection, line, homeScore, awayScore }) {
+  if (marketType === 'MONEYLINE') {
+    if (selection === 'HOME') {
+      if (homeScore > awayScore) return 'win';
+      if (homeScore < awayScore) return 'loss';
+      return 'push';
+    }
 
-  if (market === 'spread' || market === 'puck_line') {
-    // Spread odds are ~-110 (not always stored per-team); fall back to standard juice
-    const spreadOdds = direction === 'HOME'
-      ? (oddsContext?.spread_home_odds ?? oddsContext?.h2h_home ?? -110)
-      : (oddsContext?.spread_away_odds ?? oddsContext?.h2h_away ?? -110);
-    return parseAmericanOdds(spreadOdds);
+    if (awayScore > homeScore) return 'win';
+    if (awayScore < homeScore) return 'loss';
+    return 'push';
   }
 
-  // moneyline
-  const homeOdds = parseAmericanOdds(oddsContext?.h2h_home ?? oddsContext?.moneyline_home ?? null)
-    ?? parseAmericanOdds(marketData?.moneyline_home ?? null);
-  const awayOdds = parseAmericanOdds(oddsContext?.h2h_away ?? oddsContext?.moneyline_away ?? null)
-    ?? parseAmericanOdds(marketData?.moneyline_away ?? null);
+  if (marketType === 'SPREAD') {
+    if (!Number.isFinite(line)) {
+      throw createMarketError('MISSING_MARKET_LINE', 'Spread settlement requires finite line', { marketType, selection, line });
+    }
 
-  if (direction === 'HOME') return homeOdds;
-  if (direction === 'AWAY') return awayOdds;
-  return null;
+    const diff = selection === 'HOME'
+      ? (homeScore + line) - awayScore
+      : (awayScore + line) - homeScore;
+
+    if (diff > 0) return 'win';
+    if (diff < 0) return 'loss';
+    return 'push';
+  }
+
+  if (!Number.isFinite(line)) {
+    throw createMarketError('MISSING_MARKET_LINE', 'Total settlement requires finite line', { marketType, selection, line });
+  }
+
+  const actualTotal = homeScore + awayScore;
+  if (actualTotal > line) return selection === 'OVER' ? 'win' : 'loss';
+  if (actualTotal < line) return selection === 'UNDER' ? 'win' : 'loss';
+  return 'push';
 }
 
 function computePnlUnits(result, odds) {
@@ -154,6 +209,12 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           cr.card_id,
           cr.game_id,
           cr.sport,
+          cr.market_key,
+          cr.market_type,
+          cr.selection,
+          cr.line,
+          cr.locked_price,
+          cr.metadata,
           cp.payload_data,
           gr.final_score_home,
           gr.final_score_away
@@ -161,6 +222,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         INNER JOIN game_results gr ON cr.game_id = gr.game_id
         INNER JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'pending'
+          AND cr.market_key IS NOT NULL
           AND gr.status = 'final'
       `);
 
@@ -168,6 +230,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       console.log(`[SettleCards] Found ${pendingRows.length} pending card_results with final game scores`);
 
       let cardsSettled = 0;
+      let cardsErrored = 0;
       const settledAt = new Date().toISOString();
 
       for (const row of pendingRows) {
@@ -181,84 +244,61 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           continue;
         }
 
-        const actualPlay = extractActualPlay(payloadData);
-        if (!actualPlay) {
-          console.log(`[SettleCards] Skipping card ${row.card_id}: no actionable recommendation`);
-          continue;
-        }
-        const { direction, market } = actualPlay;
-
         const homeScore = Number(row.final_score_home) || 0;
         const awayScore = Number(row.final_score_away) || 0;
+        try {
+          const lockedMarket = assertLockedMarketContext(row, payloadData);
+          const result = gradeLockedMarket({
+            marketType: lockedMarket.marketType,
+            selection: lockedMarket.selection,
+            line: lockedMarket.line,
+            homeScore,
+            awayScore
+          });
+          const pnlUnits = computePnlUnits(result, lockedMarket.lockedPrice);
 
-        let result;
-        let pnlUnits;
+          const updateStmt = db.prepare(`
+            UPDATE card_results
+            SET status = 'settled', result = ?, settled_at = ?, pnl_units = ?
+            WHERE id = ?
+          `);
+          updateStmt.run(result, settledAt, pnlUnits, row.result_id);
+          cardsSettled++;
+          console.log(
+            `[SettleCards] Settled card ${row.card_id}: ${lockedMarket.marketType}/${lockedMarket.selection} ` +
+            `(${lockedMarket.marketKey}) -> ${result} (pnl: ${pnlUnits})`
+          );
+        } catch (settlementErr) {
+          cardsErrored++;
+          const errorCode = settlementErr?.code || 'SETTLEMENT_CONTRACT_ERROR';
+          console.warn(
+            `[SettleCards] Contract error for card ${row.card_id}: ${errorCode} ${settlementErr.message}`
+          );
 
-        if (direction === 'HOME') {
-          if (homeScore > awayScore) {
-            result = 'win';
-          } else if (homeScore < awayScore) {
-            result = 'loss';
-          } else {
-            result = 'push';
+          let metadata = {};
+          if (typeof row.metadata === 'string' && row.metadata) {
+            try {
+              metadata = JSON.parse(row.metadata);
+            } catch {
+              metadata = {};
+            }
           }
-        } else if (direction === 'AWAY') {
-          if (awayScore > homeScore) {
-            result = 'win';
-          } else if (awayScore < homeScore) {
-            result = 'loss';
-          } else {
-            result = 'push';
-          }
-        } else if (direction === 'OVER' || direction === 'UNDER') {
-          const marketTotal = payloadData?.odds_context?.total
-            ?? payloadData?.driver?.inputs?.market_total
-            ?? null;
+          metadata.settlement_error = {
+            code: errorCode,
+            message: settlementErr.message,
+            at: settledAt,
+          };
 
-          if (!Number.isFinite(Number(marketTotal))) {
-            console.warn(`[SettleCards] No market total for card ${row.card_id} — skipping`);
-            continue;
-          }
-
-          const line = Number(marketTotal);
-          const actualTotal = homeScore + awayScore;
-
-          if (actualTotal > line) {
-            result = direction === 'OVER' ? 'win' : 'loss';
-          } else if (actualTotal < line) {
-            result = direction === 'UNDER' ? 'win' : 'loss';
-          } else {
-            result = 'push';
-          }
-
-          // Total bet odds not stored per-card; assume standard -110 juice
-          pnlUnits = computePnlUnits(result, -110);
-        } else {
-          console.warn(`[SettleCards] Unknown direction "${direction}" for card ${row.card_id} — skipping`);
-          continue;
+          const errorStmt = db.prepare(`
+            UPDATE card_results
+            SET status = 'error', result = 'void', settled_at = ?, metadata = ?
+            WHERE id = ?
+          `);
+          errorStmt.run(settledAt, JSON.stringify(metadata), row.result_id);
         }
-
-        if (direction === 'HOME' || direction === 'AWAY') {
-          const odds = pickBetOdds(payloadData, direction, market);
-          pnlUnits = computePnlUnits(result, odds);
-          if (pnlUnits === null) {
-            console.warn(`[SettleCards] Missing/invalid bet odds for card ${row.card_id} — pnl_units will be null`);
-          }
-        }
-
-        // Prepare fresh statement per row — sql.js does not reliably support re-binding
-        // the same prepared statement after a saveDatabase() flush within a loop
-        const updateStmt = db.prepare(`
-          UPDATE card_results
-          SET status = 'settled', result = ?, settled_at = ?, pnl_units = ?
-          WHERE id = ?
-        `);
-        updateStmt.run(result, settledAt, pnlUnits, row.result_id);
-        cardsSettled++;
-        console.log(`[SettleCards] Settled card ${row.card_id}: ${direction} (${market}) -> ${result} (pnl: ${pnlUnits})`);
       }
 
-      console.log(`[SettleCards] Step 1 complete — ${cardsSettled} cards settled`);
+      console.log(`[SettleCards] Step 1 complete — ${cardsSettled} cards settled, ${cardsErrored} cards errored`);
 
       // --- Step 2: Compute and upsert tracking_stats ---
 
@@ -330,9 +370,9 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       console.log(`[SettleCards] Step 2 complete — ${statsUpserted} tracking_stats upserted`);
 
       markJobRunSuccess(jobRunId);
-      console.log(`[SettleCards] Job complete — cardsSettled: ${cardsSettled}, statsUpserted: ${statsUpserted}`);
+      console.log(`[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, statsUpserted: ${statsUpserted}`);
 
-      return { success: true, jobRunId, jobKey, cardsSettled, statsUpserted, errors: [] };
+      return { success: true, jobRunId, jobKey, cardsSettled, cardsErrored, statsUpserted, errors: [] };
 
     } catch (error) {
       console.error(`[SettleCards] Job failed:`, error.message);
@@ -361,4 +401,11 @@ if (require.main === module) {
     });
 }
 
-module.exports = { settlePendingCards };
+module.exports = {
+  settlePendingCards,
+  __private: {
+    assertLockedMarketContext,
+    computePnlUnits,
+    gradeLockedMarket,
+  },
+};

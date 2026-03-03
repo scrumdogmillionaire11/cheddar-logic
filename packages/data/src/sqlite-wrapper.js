@@ -9,6 +9,7 @@
 const initSqlJs = require('sql.js/dist/sql-asm.js');
 const fs = require('fs');
 const path = require('path');
+const { resolveDatabasePath } = require('./db-path');
 
 let dbInstance = null;
 let SQL = null;
@@ -29,8 +30,12 @@ async function initDatabase() {
  * Load database from disk or create new
  */
 function loadDatabase() {
-  const dbFile = dbPath || (process.env.DATABASE_PATH || 
-    path.join(process.env.CHEDDAR_DATA_DIR || '/tmp/cheddar-logic', 'cheddar.db'));
+  const resolved = resolveDatabasePath();
+  const dbFile = dbPath || resolved.dbPath;
+
+  if (resolved.isExplicitFile && !fs.existsSync(dbFile)) {
+    console.warn(`[DB] ${resolved.source} points to missing DB file. Creating new DB at: ${dbFile}`);
+  }
   
   dbPath = dbFile;
   const dir = path.dirname(dbFile);
