@@ -5,7 +5,7 @@
  * Each sport has a model factory that can be swapped for real inference.
  * 
  * Usage:
- *   const { getModel } = require('./models');
+ *   const { getModel } = require('./index');
  *   const model = getModel('NHL');
  *   const result = model.infer(gameId, oddsSnapshot);
  * 
