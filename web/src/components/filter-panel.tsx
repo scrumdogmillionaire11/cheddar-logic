@@ -92,7 +92,7 @@ export default function FilterPanel({
     }
   };
 
-  const sportOptions: Sport[] = ['NHL', 'NBA', 'NCAAM', 'SOCCER'];
+  const sportOptions: Sport[] = ['NHL', 'NBA', 'NCAAM', 'SOCCER', 'MLB', 'NFL'];
   const statusOptions: ExpressionStatus[] = ['FIRE', 'WATCH', 'PASS'];
   const marketOptions: Market[] = ['ML', 'SPREAD', 'TOTAL'];
   const tierOptions: { value: DriverTier | undefined; label: string }[] = [
