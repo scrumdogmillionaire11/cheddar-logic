@@ -28,7 +28,8 @@ const {
   validateCardPayload,
   shouldRunJobKey,
   withDb,
-  enrichOddsSnapshotWithEspnMetrics
+  enrichOddsSnapshotWithEspnMetrics,
+  getDatabase
 } = require('@cheddar-logic/data');
 
 const { computeNBADriverCards, computeNBAMarketDecisions, selectExpressionChoice, buildMarketPayload, determineTier } = require('../models');
@@ -43,6 +44,8 @@ const {
 } = require('@cheddar-logic/models');
 const { publishDecisionForCard, applyUiActionFields } = require('../utils/decision-publisher');
 
+const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
+
 const NBA_DRIVER_WEIGHTS = {
   baseProjection: 0.35,
   restAdvantage: 0.15,
@@ -51,6 +54,122 @@ const NBA_DRIVER_WEIGHTS = {
   blowoutRisk: 0.07,
   totalProjection: 0.13
 };
+
+const NBA_DRIVER_CARD_TYPES = [
+  'nba-base-projection',
+  'nba-rest-advantage',
+  'welcome-home-v2',
+  'nba-matchup-style',
+  'nba-blowout-risk',
+  'nba-total-projection',
+];
+
+/**
+ * Get recent road games for a team from schedule
+ * @param {string} teamName - Team display name
+ * @param {string} sport - Sport code (lowercase)
+ * @param {string} currentGameTime - Current game time in UTC
+ * @param {number} limit - Max games to retrieve
+ * @returns {Array<{isHome: boolean, date: string}>}
+ */
+function getRecentRoadGames(teamName, sport, currentGameTime, limit = 10) {
+  if (!teamName || !currentGameTime) return [];
+  
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT game_id, game_time_utc, home_team, away_team, status
+    FROM games
+    WHERE LOWER(sport) = ?
+      AND UPPER(away_team) = UPPER(?)
+      AND game_time_utc < ?
+    ORDER BY game_time_utc DESC
+    LIMIT ?
+  `);
+  
+  try {
+    const results = stmt.all(sport.toLowerCase(), teamName, currentGameTime, limit);
+    return results
+      .filter(g => g.status === 'final' || g.status === 'STATUS_FINAL' || g.status === 'in_progress')
+      .map(g => ({
+        isHome: false,
+        date: g.game_time_utc,
+        opponent: g.home_team
+      }))
+      .reverse(); // Chronological order (oldest to newest)
+  } catch (error) {
+    console.error(`[Schedule] Failed to query road games for ${teamName}:`, error.message);
+    return [];
+  }
+}
+
+/**
+ * Get home team's recent road trip (consecutive away games)
+ * Returns if the team JUST COMPLETED a road trip and is now playing at home
+ * Welcome Home Fade: Home team's first game after returning from road trip
+ *
+ * @param {string} teamName - Team display name  
+ * @param {string} sport - Sport code (lowercase)
+ * @param {string} currentGameTime - Current game time in UTC
+ * @param {number} limit - Max games to retrieve
+ * @returns {Array<{isHome: boolean, date: string}>} Recent road games if just returning home, else []
+ */
+function getHomeTeamRecentRoadTrip(teamName, sport, currentGameTime, limit = 10) {
+  if (!teamName || !currentGameTime) return [];
+  
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT game_id, game_time_utc, home_team, away_team, status
+    FROM games
+    WHERE LOWER(sport) = ?
+      AND (UPPER(away_team) = UPPER(?) OR UPPER(home_team) = UPPER(?))
+      AND game_time_utc < ?
+    ORDER BY game_time_utc DESC
+    LIMIT ?
+  `);
+  
+  try {
+    const results = stmt.all(sport.toLowerCase(), teamName, teamName, currentGameTime, limit);
+    const completedGames = results
+      .filter(g => g.status === 'final' || g.status === 'STATUS_FINAL')
+      .reverse(); // Chronological order (oldest to newest)
+    
+    if (!completedGames.length) return [];
+    
+    // Find the most recent game to see if it started a change pattern
+    // Pattern: if recent games are [away, away, away, ...]
+    // and we're now at a home game, that's Welcome Home Fade
+    
+    const roadTrip = [];
+    
+    // Start from most recent game and work backwards
+    // Collect consecutive AWAY games
+    for (let i = completedGames.length - 1; i >= 0; i--) {
+      const game = completedGames[i];
+      const isAway = game.away_team && game.away_team.toUpperCase() === teamName.toUpperCase();
+      const isHome = game.home_team && game.home_team.toUpperCase() === teamName.toUpperCase();
+      
+      if (isAway) {
+        // Team was away in this game - part of road trip
+        roadTrip.unshift({
+          isHome: false,
+          date: game.game_time_utc,
+          opponent: game.home_team,
+          location: 'away'
+        });
+      } else if (isHome) {
+        // Team was home - this breaks the road trip
+        // If we have a road trip, return it (the next game is home after road trip)
+        break;
+      }
+    }
+    
+    // Need at least 2 away games to be a meaningful road trip
+    return roadTrip.length >= 2 ? roadTrip : [];
+  } catch (error) {
+    console.error(`[WhF] Failed to query road trip for ${teamName}:`, error.message);
+    return [];
+  }
+}
 
 function computeWinProbHome(projectedMargin, sport) {
   if (!Number.isFinite(projectedMargin)) return null;
@@ -493,6 +612,9 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
       }
 
       console.log(`[NBAModel] Found ${oddsSnapshots.length} odds snapshots`);
+      if (!ENABLE_WELCOME_HOME) {
+        console.log('[NBAModel] Welcome Home driver disabled (ENABLE_WELCOME_HOME=false)');
+      }
 
       // Dedupe: latest snapshot per game
       const gameOdds = {};
@@ -518,17 +640,33 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           // Enrich with ESPN team metrics
           oddsSnapshot = await enrichOddsSnapshotWithEspnMetrics(oddsSnapshot);
 
-          const driverCards = computeNBADriverCards(gameId, oddsSnapshot);
+          // Query schedule for Welcome Home Fade
+          // Welcome Home Fade: Home team coming back from a road trip (first game back)
+          const homeTeamRoadTrip = ENABLE_WELCOME_HOME
+            ? getHomeTeamRecentRoadTrip(
+                oddsSnapshot.home_team,
+                'nba',
+                oddsSnapshot.game_time_utc,
+                10
+              )
+            : [];
+
+          const driverCards = computeNBADriverCards(gameId, oddsSnapshot, {
+            recentRoadGames: homeTeamRoadTrip
+          });
+
+          // Clear known driver card types even if a signal no longer emits.
+          const driverCardTypesToClear = [...new Set([
+            ...NBA_DRIVER_CARD_TYPES,
+            ...driverCards.map((card) => card.cardType),
+          ])];
+          for (const ct of driverCardTypesToClear) {
+            prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct);
+          }
 
           if (driverCards.length === 0) {
             console.log(`  [skip] ${gameId}: No actionable NBA driver signals`);
             continue;
-          }
-
-          // Clear old driver card types for this game before writing
-          const driverCardTypes = [...new Set(driverCards.map(c => c.cardType))];
-          for (const ct of driverCardTypes) {
-            prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct);
           }
 
           const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);

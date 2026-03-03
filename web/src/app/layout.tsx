@@ -1,17 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 import "./globals.css";
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-space-grotesk",
-});
-
-const plexSans = IBM_Plex_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-ibm-plex-sans",
-});
 
 export const metadata: Metadata = {
   title: "Cheddar Logic | Signal-Qualified Analytics",
@@ -34,9 +22,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${spaceGrotesk.variable} ${plexSans.variable} bg-night text-cloud antialiased`}
-      >
+      <body className="bg-night text-cloud antialiased">
         {children}
       </body>
     </html>

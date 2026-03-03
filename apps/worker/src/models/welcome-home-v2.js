@@ -20,6 +20,38 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function toTimestamp(value) {
+  if (!value) return null;
+  const ts = Date.parse(value);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+/**
+ * Normalize and validate road-game legs.
+ * Keeps only away legs with valid timestamps and chronological order.
+ */
+function normalizeRoadGames(recentRoadGames) {
+  if (!Array.isArray(recentRoadGames)) return [];
+
+  return recentRoadGames
+    .map((game) => {
+      const ts = toTimestamp(game?.date);
+      return {
+        ...game,
+        isAwayLeg: game?.location === 'away' || game?.isHome === false || game?.isHome === undefined,
+        _ts: ts
+      };
+    })
+    .filter((game) => game.isAwayLeg && game._ts !== null)
+    .sort((a, b) => a._ts - b._ts);
+}
+
+function daysBetweenTs(startTs, endTs) {
+  if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) return null;
+  if (endTs < startTs) return 0;
+  return (endTs - startTs) / (24 * 60 * 60 * 1000);
+}
+
 /**
  * Score trip length component
  * @param {number} roadsGamesCount - number of consecutive road games
@@ -93,16 +125,26 @@ function scoreSpotRisk(isBackToBack) {
 
 /**
  * Calculate Welcome Home v2 tier
- * @param {object} awayTeam - { restDays, record, netRating, recentGames }
- * @param {object} homeTeam - { netRating, record }
- * @param {object} context - { sport, isBackToBack, recentRoadGames }
+ * Home team coming back from road trip (first game back at home)
+ * Uses fatigue from road trip travel, but applied to home team's performance
+ *
+ * @param {object} awayTeam - { netRating }
+ * @param {object} homeTeam - { netRating, restDays }
+ * @param {object} context - { sport, isBackToBack, recentRoadGames, homeTeamRoadTrip: boolean }
  * @returns {object} { tier, score, components, signal }
  */
 function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
-  const { sport = 'NBA', isBackToBack = false, recentRoadGames = [] } = context;
+  const {
+    isBackToBack = false,
+    recentRoadGames = [],
+    homeTeamRoadTrip = false,
+    homeRestDays = null,
+    gameTimeUtc = null
+  } = context;
+  const normalizedRoadGames = normalizeRoadGames(recentRoadGames);
 
   // Require minimum road trip length (2+ games)
-  if (!recentRoadGames || recentRoadGames.length < 2) {
+  if (normalizedRoadGames.length < 2) {
     return {
       tier: 'NO_PLAY',
       score: 0,
@@ -112,19 +154,76 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
     };
   }
 
+  // This driver is only valid when the HOME team is the one returning.
+  if (!homeTeamRoadTrip) {
+    return {
+      tier: 'NO_PLAY',
+      score: 0,
+      components: {},
+      signal: 'Home return context missing',
+      reasoning: 'Road-trip owner is not the current home team'
+    };
+  }
+
+  // Harden stale-spot noise: long post-trip rest is not a true "welcome home fade".
+  if (homeRestDays !== null && homeRestDays > 3) {
+    return {
+      tier: 'NO_PLAY',
+      score: 0,
+      components: {},
+      signal: 'Rest window too long',
+      reasoning: `Home team has ${homeRestDays} rest days after trip (stale fade spot)`
+    };
+  }
+
+  const firstRoadTs = normalizedRoadGames[0]._ts;
+  const lastRoadTs = normalizedRoadGames[normalizedRoadGames.length - 1]._ts;
+  const tripSpanDays = daysBetweenTs(firstRoadTs, lastRoadTs) ?? 0;
+
+  // Require the road trip to look like a contiguous trip, not isolated away games.
+  const maxGapDays = normalizedRoadGames.reduce((maxGap, leg, idx, arr) => {
+    if (idx === 0) return 0;
+    const prev = arr[idx - 1];
+    const gap = daysBetweenTs(prev._ts, leg._ts) ?? 999;
+    return Math.max(maxGap, gap);
+  }, 0);
+  if (maxGapDays > 5) {
+    return {
+      tier: 'NO_PLAY',
+      score: 0,
+      components: {},
+      signal: 'Road legs too spread out',
+      reasoning: `Road games are not contiguous enough (max gap ${maxGapDays.toFixed(1)} days)`
+    };
+  }
+
+  if (gameTimeUtc) {
+    const gameTs = toTimestamp(gameTimeUtc);
+    const daysSinceLastRoad = daysBetweenTs(lastRoadTs, gameTs);
+    if (daysSinceLastRoad !== null && daysSinceLastRoad > 4) {
+      return {
+        tier: 'NO_PLAY',
+        score: 0,
+        components: {},
+        signal: 'Return spot too old',
+        reasoning: `Last road game was ${daysSinceLastRoad.toFixed(1)} days ago`
+      };
+    }
+  }
+
   // Calculate components
-  const tripLength = scoreTripLength(recentRoadGames.length);
-  const travelDisruption = scoreTravelDisruption(recentRoadGames.length);
-  
-  // Calculate days elapsed (simplified: each game is ~1-2 days apart)
-  const daysBetween = recentRoadGames.length > 1 
-    ? (recentRoadGames.length - 1) * 1.5  // Rough estimate
-    : 0;
-  const compression = scoreCompression(recentRoadGames.length, daysBetween);
+  const tripLength = scoreTripLength(normalizedRoadGames.length);
+  const travelDisruption = scoreTravelDisruption(normalizedRoadGames.length);
+  const compression = scoreCompression(normalizedRoadGames.length, tripSpanDays);
 
   const awayNetRating = toNumber(awayTeam?.netRating);
   const homeNetRating = toNumber(homeTeam?.netRating);
-  const opponentQuality = scoreOpponentQuality(homeNetRating, null);
+  
+  // If home team had the road trip, they're the fatigued ones
+  // Award points for opponent quality (away team) being strong
+  const opponentQuality = homeTeamRoadTrip 
+    ? scoreOpponentQuality(awayNetRating, null)  // Away team is the fresh opponent
+    : scoreOpponentQuality(homeNetRating, null); // Away team's opponent (home) is strong
   
   const spotRisk = scoreSpotRisk(isBackToBack);
 
@@ -145,30 +244,43 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
       travelDisruption,
       compression,
       spotRisk,
-      opponentQuality
+      opponentQuality,
+      tripSpanDays: Number(tripSpanDays.toFixed(2)),
+      maxGapDays: Number(maxGapDays.toFixed(2))
     },
-    reasoning: `Road trip strength: ${recentRoadGames.length} games, compression=${compression}pts, opponent=${opponentQuality}pts`,
+    reasoning: `${homeTeamRoadTrip ? 'Home' : 'Away'} team road trip: ${normalizedRoadGames.length} games over ${tripSpanDays.toFixed(1)} days, compression=${compression}pts, opponent=${opponentQuality}pts`,
     signal: tier !== 'NO_PLAY'
   };
 }
 
 /**
  * Generate Welcome Home v2 card descriptor
- * Emits only for tiers S, A (high conviction) and optionally B
- * @param {object} gameCtx - { gameId, awayTeam, homeTeam, sport, isBackToBack, recentRoadGames }
+ * Home team returning from road trip (first game back at home)
+ * Signal: Home team fatigue from travel → likely underperformance
+ * 
+ * @param {object} gameCtx - { gameId, awayTeam, homeTeam, sport, isBackToBack, recentRoadGames, homeTeamRoadTrip: boolean }
  * @returns {object|null} Card descriptor or null if NO_PLAY tier
  */
 function generateWelcomeHomeCard(gameCtx) {
   const {
-    gameId,
     awayTeam = {},
     homeTeam = {},
     sport = 'NBA',
     isBackToBack = false,
-    recentRoadGames = []
+    recentRoadGames = [],
+    homeTeamRoadTrip = false,
+    homeRestDays = null,
+    gameTimeUtc = null
   } = gameCtx;
 
-  const analysis = calculateWelcomeHome(awayTeam, homeTeam, { sport, isBackToBack, recentRoadGames });
+  const analysis = calculateWelcomeHome(awayTeam, homeTeam, { 
+    sport, 
+    isBackToBack, 
+    recentRoadGames,
+    homeTeamRoadTrip,
+    homeRestDays,
+    gameTimeUtc
+  });
 
   // Only emit for meaningful signals
   if (!analysis.signal || analysis.tier === 'NO_PLAY') {
@@ -182,26 +294,30 @@ function generateWelcomeHomeCard(gameCtx) {
     'B': 0.58   // B-tier = WATCH
   };
 
-  // Prediction: away team fatigue → favor home
+  // Home team fatigued from road trip → signal is inverse (fade home team)
   const confidence = confidenceMap[analysis.tier] || 0.55;
   const tier = confidence >= 0.75 ? 'SUPER' : confidence >= 0.70 ? 'BEST' : 'WATCH';
+  const awayDirectionalScore = Number(
+    Math.max(0, 0.5 - Math.min(analysis.score / 10, 1) * 0.5).toFixed(3)
+  );
 
   return {
     cardType: 'welcome-home-v2',
-    cardTitle: `[${sport}] Road Fatigue: Home Advantage Signal`,
+    cardTitle: `[${sport}] Welcome Home Fade: Road Trip Fatigue`,
     confidence,
     tier,
-    prediction: 'HOME',
-    reasoning: `Away team on ${recentRoadGames.length}-game road trip (tier: ${analysis.tier}). ${analysis.reasoning}`,
+    prediction: 'AWAY',
+    reasoning: `Fade HOME team after ${recentRoadGames.length}-game road trip (tier: ${analysis.tier}). ${analysis.reasoning}`,
     ev_threshold_passed: confidence > 0.60,
     driverKey: 'welcomeHomeV2',
     driverInputs: {
       road_games_count: recentRoadGames.length,
       is_back_to_back: isBackToBack,
+      home_rest_days: toNumber(homeRestDays),
       away_team_rest: toNumber(awayTeam?.restDays),
       home_net_rating: toNumber(homeTeam?.netRating)
     },
-    driverScore: Math.min(analysis.score / 10, 1.0),  // Normalize 0-10 to 0-1
+    driverScore: awayDirectionalScore,
     driverStatus: 'ok',
     inference_source: 'driver',
     is_mock: false,

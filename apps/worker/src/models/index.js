@@ -5,7 +5,7 @@
  * Each sport has a model factory that can be swapped for real inference.
  * 
  * Usage:
- *   const { getModel } = require('./models');
+ *   const { getModel } = require('./index');
  *   const model = getModel('NHL');
  *   const result = model.infer(gameId, oddsSnapshot);
  * 
@@ -29,6 +29,8 @@ const { generateWelcomeHomeCard } = require('./welcome-home-v2');
 const { computeNHLMarketDecisions, computeNBAMarketDecisions, selectExpressionChoice, buildMarketPayload } = require('./cross-market');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { predictNHLGame } = require('./nhl-pace-model');
+
+const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -200,7 +202,8 @@ function computeNHLDrivers(gameId, oddsSnapshot) {
  * @param {object} oddsSnapshot
  * @returns {Array<object>} Array of card descriptor objects
  */
-function computeNHLDriverCards(gameId, oddsSnapshot) {
+function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
+  const { recentRoadGames = null } = context;
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const total = toNumber(oddsSnapshot?.total);
 
@@ -303,6 +306,43 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
         inference_source: 'driver',
         is_mock: false
       });
+    }
+  }
+
+  // --- Welcome Home Fade v2 Driver (Cross-sport road fatigue signal) ---
+  if (ENABLE_WELCOME_HOME && restDaysHome !== null && restDaysAway !== null) {
+    const awayNetRating = goalsForAway && goalsAgainstAway
+      ? ((goalsForAway - goalsAgainstAway) * 10)
+      : null;
+    const homeNetRating = goalsForHome && goalsAgainstHome
+      ? ((goalsForHome - goalsAgainstHome) * 10)
+      : null;
+
+    const awayTeam = {
+      netRating: awayNetRating,
+      restDays: restDaysAway
+    };
+    const homeTeam = {
+      netRating: homeNetRating
+    };
+
+    // Welcome Home Fade v2: Use real schedule data if available
+    if (recentRoadGames && recentRoadGames.length >= 2) {
+      const welcomeCard = generateWelcomeHomeCard({
+        gameId,
+        awayTeam,
+        homeTeam,
+        sport: 'NHL',
+        isBackToBack: restDaysHome === 0,
+        recentRoadGames,
+        homeTeamRoadTrip: true,
+        homeRestDays: restDaysHome,
+        gameTimeUtc: oddsSnapshot?.game_time_utc
+      });
+
+      if (welcomeCard) {
+        descriptors.push(welcomeCard);
+      }
     }
   }
 
@@ -489,7 +529,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot) {
  * @param {object} oddsSnapshot
  * @returns {Array<object>} Array of card descriptor objects
  */
-function computeNBADriverCards(_gameId, oddsSnapshot) {
+function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
+  const { recentRoadGames = null } = context;
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const spreadHome = toNumber(oddsSnapshot?.spread_home);
 
@@ -620,7 +661,7 @@ function computeNBADriverCards(_gameId, oddsSnapshot) {
   }
 
   // --- Welcome Home v2 Driver (Cross-sport road fatigue signal) ---
-  if (restDaysAway !== null) {
+  if (ENABLE_WELCOME_HOME && restDaysHome !== null && restDaysAway !== null) {
     const awayTeam = {
       netRating: awayNetRating,
       restDays: restDaysAway
@@ -629,16 +670,18 @@ function computeNBADriverCards(_gameId, oddsSnapshot) {
       netRating: homeNetRating
     };
     
-    // Simplified trigger: away on 2+ game road stretch (would need game history in production)
-    // For now, detect via back-to-back penalty
-    if (restDaysAway === 0) {
+    // Welcome Home Fade v2: Use real schedule data if available
+    if (recentRoadGames && recentRoadGames.length >= 2) {
       const welcomeCard = generateWelcomeHomeCard({
         gameId: _gameId,
         awayTeam,
         homeTeam,
         sport: 'NBA',
-        isBackToBack: true,
-        recentRoadGames: [{ isHome: false }, { isHome: false }]  // Simplified 2-game road trip
+        isBackToBack: restDaysHome === 0,
+        recentRoadGames,
+        homeTeamRoadTrip: true,
+        homeRestDays: restDaysHome,
+        gameTimeUtc: oddsSnapshot?.game_time_utc
       });
 
       if (welcomeCard) {

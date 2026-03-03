@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
-const crypto = require('crypto');
+const nodeCrypto = require('crypto');
 
 const DEFAULTS = {
   EDGE_UPGRADE_MIN: 0.5,
@@ -85,12 +85,12 @@ function computeInputsHash(payload) {
     driver_inputs: modelInputs
   };
   const raw = stableStringify(base);
-  return crypto.createHash('sha256').update(raw).digest('hex');
+  return nodeCrypto.createHash('sha256').update(raw).digest('hex');
 }
 
 function computeCandidateHash({ side, line, price, inputsHash, market, period, sideFamily }) {
   const raw = stableStringify({ side, line, price, inputs_hash: inputsHash, market, period, side_family: sideFamily });
-  return crypto.createHash('sha256').update(raw).digest('hex');
+  return nodeCrypto.createHash('sha256').update(raw).digest('hex');
 }
 
 function shouldFlip(current, candidate, ctx = {}) {

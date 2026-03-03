@@ -6,13 +6,14 @@
 'use client';
 
 import { useState } from 'react';
-import type { GameFilters, SortMode } from '@/lib/game-card/filters';
+import type { GameFilters, SortMode, ViewMode } from '@/lib/game-card/filters';
 import { resetFilters } from '@/lib/game-card/filters';
 import type { Sport, Market, DriverTier, ExpressionStatus } from '@/lib/types/game-card';
-import { FILTER_PRESETS } from '@/lib/game-card/presets';
+import { getPresetsForMode } from '@/lib/game-card/presets';
 
 interface FilterPanelProps {
   filters: GameFilters;
+  viewMode: ViewMode;
   onFiltersChange: (filters: GameFilters) => void;
   onReset: () => void;
   activeCount: number;
@@ -20,6 +21,7 @@ interface FilterPanelProps {
 
 export default function FilterPanel({
   filters,
+  viewMode,
   onFiltersChange,
   onReset,
   activeCount,
@@ -32,27 +34,28 @@ export default function FilterPanel({
 
   const toggleSport = (sport: Sport) => {
     const sports = filters.sports.includes(sport)
-      ? filters.sports.filter(s => s !== sport)
+      ? filters.sports.filter((s) => s !== sport)
       : [...filters.sports, sport];
     updateFilters({ sports });
   };
 
   const toggleStatus = (status: ExpressionStatus) => {
     const statuses = filters.statuses.includes(status)
-      ? filters.statuses.filter(s => s !== status)
+      ? filters.statuses.filter((s) => s !== status)
       : [...filters.statuses, status];
     updateFilters({ statuses });
   };
 
   const toggleMarket = (market: Market) => {
+    if (!('markets' in filters)) return;
     const markets = filters.markets.includes(market)
-      ? filters.markets.filter(m => m !== market)
+      ? filters.markets.filter((m) => m !== market)
       : [...filters.markets, market];
     updateFilters({ markets });
   };
 
   const doesPresetMatchCurrentFilters = (presetFilters: Partial<GameFilters>) => {
-    return (Object.keys(presetFilters) as (keyof GameFilters)[]).every(key => {
+    return (Object.keys(presetFilters) as (keyof GameFilters)[]).every((key) => {
       if (key === 'customTimeRange') {
         const presetRange = presetFilters.customTimeRange;
         const currentRange = filters.customTimeRange;
@@ -78,14 +81,14 @@ export default function FilterPanel({
   };
 
   const applyPreset = (presetId: string) => {
-    const preset = FILTER_PRESETS.find(p => p.id === presetId);
+    const preset = getPresetsForMode(viewMode).find((p) => p.id === presetId);
     if (preset) {
       if (doesPresetMatchCurrentFilters(preset.filters)) {
-        onFiltersChange(resetFilters());
+        onFiltersChange(resetFilters(viewMode));
         return;
       }
 
-      onFiltersChange({ ...resetFilters(), ...preset.filters });
+      onFiltersChange({ ...resetFilters(viewMode), ...preset.filters });
     }
   };
 
@@ -137,24 +140,24 @@ export default function FilterPanel({
           Quick Presets
         </p>
         <div className="flex flex-wrap gap-2">
-          {FILTER_PRESETS.map(preset => {
+          {getPresetsForMode(viewMode).map((preset) => {
             const isActive = doesPresetMatchCurrentFilters(preset.filters);
 
             return (
-            <button
-              key={preset.id}
-              onClick={() => applyPreset(preset.id)}
-              className={`px-3 py-1.5 text-sm rounded border transition ${
-                isActive
-                  ? 'bg-blue-700/50 text-blue-200 border-blue-600/60'
-                  : 'bg-white/5 hover:bg-white/10 border-white/10 hover:border-white/20'
-              }`}
-              title={preset.description}
-              aria-pressed={isActive}
-            >
-              <span className="mr-1.5">{preset.icon}</span>
-              {preset.name}
-            </button>
+              <button
+                key={preset.id}
+                onClick={() => applyPreset(preset.id)}
+                className={`px-3 py-1.5 text-sm rounded border transition ${
+                  isActive
+                    ? 'bg-blue-700/50 text-blue-200 border-blue-600/60'
+                    : 'bg-white/5 hover:bg-white/10 border-white/10 hover:border-white/20'
+                }`}
+                title={preset.description}
+                aria-pressed={isActive}
+              >
+                <span className="mr-1.5">{preset.icon}</span>
+                {preset.name}
+              </button>
             );
           })}
         </div>
@@ -169,7 +172,7 @@ export default function FilterPanel({
               Sports
             </p>
             <div className="flex flex-wrap gap-2">
-              {sportOptions.map(sport => (
+              {sportOptions.map((sport) => (
                 <button
                   key={sport}
                   onClick={() => toggleSport(sport)}
@@ -191,7 +194,7 @@ export default function FilterPanel({
               Actionability
             </p>
             <div className="flex flex-wrap gap-2">
-              {statusOptions.map(status => (
+              {statusOptions.map((status) => (
                 <button
                   key={status}
                   onClick={() => toggleStatus(status)}
@@ -211,45 +214,47 @@ export default function FilterPanel({
             </div>
           </div>
 
-          {/* Market Selection */}
-          <div>
-            <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
-              Markets
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {marketOptions.map(market => (
-                <button
-                  key={market}
-                  onClick={() => toggleMarket(market)}
-                  className={`px-3 py-1.5 text-sm rounded border transition ${
-                    filters.markets.includes(market)
-                      ? 'bg-orange-700/50 text-orange-200 border-orange-600/60'
-                      : 'bg-white/5 border-white/10 hover:border-white/20'
-                  }`}
-                >
-                  {market}
-                </button>
-              ))}
+          {/* Market Selection (Game mode only) */}
+          {viewMode === 'game' && 'markets' in filters && (
+            <div>
+              <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
+                Markets
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {marketOptions.map((market) => (
+                  <button
+                    key={market}
+                    onClick={() => toggleMarket(market)}
+                    className={`px-3 py-1.5 text-sm rounded border transition ${
+                      filters.markets.includes(market)
+                        ? 'bg-orange-700/50 text-orange-200 border-orange-600/60'
+                        : 'bg-white/5 border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    {market}
+                  </button>
+                ))}
+              </div>
+              <label className="flex items-center gap-2 mt-2 text-sm text-cloud/70">
+                <input
+                  type="checkbox"
+                  checked={filters.onlyGamesWithPicks}
+                  onChange={(e) => updateFilters({ onlyGamesWithPicks: e.target.checked })}
+                  className="rounded"
+                />
+                Only games with picks
+              </label>
+              <label className="flex items-center gap-2 mt-2 text-sm text-cloud/70">
+                <input
+                  type="checkbox"
+                  checked={filters.hasClearPlay}
+                  onChange={(e) => updateFilters({ hasClearPlay: e.target.checked })}
+                  className="rounded"
+                />
+                Has clear play
+              </label>
             </div>
-            <label className="flex items-center gap-2 mt-2 text-sm text-cloud/70">
-              <input
-                type="checkbox"
-                checked={filters.onlyGamesWithPicks}
-                onChange={e => updateFilters({ onlyGamesWithPicks: e.target.checked })}
-                className="rounded"
-              />
-              Only games with picks
-            </label>
-            <label className="flex items-center gap-2 mt-2 text-sm text-cloud/70">
-              <input
-                type="checkbox"
-                checked={filters.hasClearPlay}
-                onChange={e => updateFilters({ hasClearPlay: e.target.checked })}
-                className="rounded"
-              />
-              Has clear play
-            </label>
-          </div>
+          )}
 
           {/* Time Window */}
           <div>
@@ -290,70 +295,73 @@ export default function FilterPanel({
             </div>
           </div>
 
-          {/* Driver Strength */}
-          <div>
-            <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
-              Minimum Tier
-            </p>
-            <select
-              value={filters.minTier || ''}
-              onChange={e =>
-                updateFilters({ minTier: e.target.value ? (e.target.value as DriverTier) : undefined })
-              }
-              className="px-3 py-2 rounded bg-surface border border-white/10 hover:border-white/20"
-            >
-              {tierOptions.map(opt => (
-                <option key={opt.label} value={opt.value || ''}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Risk Flags */}
-          <div>
-            <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
-              Hide Risk Flags
-            </p>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm text-cloud/70">
-                <input
-                  type="checkbox"
-                  checked={filters.hideFragility}
-                  onChange={e => updateFilters({ hideFragility: e.target.checked })}
-                  className="rounded"
-                />
-                Fragility / Key Numbers
-              </label>
-              <label className="flex items-center gap-2 text-sm text-cloud/70">
-                <input
-                  type="checkbox"
-                  checked={filters.hideBlowout}
-                  onChange={e => updateFilters({ hideBlowout: e.target.checked })}
-                  className="rounded"
-                />
-                Blowout Risk
-              </label>
-              <label className="flex items-center gap-2 text-sm text-cloud/70">
-                <input
-                  type="checkbox"
-                  checked={filters.hideLowCoverage}
-                  onChange={e => updateFilters({ hideLowCoverage: e.target.checked })}
-                  className="rounded"
-                />
-                Low Coverage
-              </label>
-              <label className="flex items-center gap-2 text-sm text-cloud/70">
-                <input
-                  type="checkbox"
-                  checked={filters.hideStaleOdds}
-                  onChange={e => updateFilters({ hideStaleOdds: e.target.checked })}
-                  className="rounded"
-                />
-                Stale Odds (5+ min)
-              </label>
+          {/* Driver Strength (Game mode only) */}
+          {viewMode === 'game' && 'minTier' in filters && (
+            <div>
+              <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
+                Minimum Tier
+              </p>
+              <select
+                value={filters.minTier || ''}
+                onChange={(e) =>
+                  updateFilters({ minTier: e.target.value ? (e.target.value as DriverTier) : undefined })}
+                className="px-3 py-2 rounded bg-surface border border-white/10 hover:border-white/20"
+              >
+                {tierOptions.map((opt) => (
+                  <option key={opt.label} value={opt.value || ''}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
-          </div>
+          )}
+
+          {/* Risk Flags (Game mode only) */}
+          {viewMode === 'game' && 'hideFragility' in filters && (
+            <div>
+              <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
+                Hide Risk Flags
+              </p>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm text-cloud/70">
+                  <input
+                    type="checkbox"
+                    checked={filters.hideFragility}
+                    onChange={(e) => updateFilters({ hideFragility: e.target.checked })}
+                    className="rounded"
+                  />
+                  Fragility / Key Numbers
+                </label>
+                <label className="flex items-center gap-2 text-sm text-cloud/70">
+                  <input
+                    type="checkbox"
+                    checked={filters.hideBlowout}
+                    onChange={(e) => updateFilters({ hideBlowout: e.target.checked })}
+                    className="rounded"
+                  />
+                  Blowout Risk
+                </label>
+                <label className="flex items-center gap-2 text-sm text-cloud/70">
+                  <input
+                    type="checkbox"
+                    checked={filters.hideLowCoverage}
+                    onChange={(e) => updateFilters({ hideLowCoverage: e.target.checked })}
+                    className="rounded"
+                  />
+                  Low Coverage
+                </label>
+                <label className="flex items-center gap-2 text-sm text-cloud/70">
+                  <input
+                    type="checkbox"
+                    checked={filters.hideStaleOdds}
+                    onChange={(e) => updateFilters({ hideStaleOdds: e.target.checked })}
+                    className="rounded"
+                  />
+                  Stale Odds (5+ min)
+                </label>
+              </div>
+            </div>
+          )}
 
           {/* Sort */}
           <div>
@@ -362,10 +370,10 @@ export default function FilterPanel({
             </p>
             <select
               value={filters.sortMode}
-              onChange={e => updateFilters({ sortMode: e.target.value as SortMode })}
+              onChange={(e) => updateFilters({ sortMode: e.target.value as SortMode })}
               className="px-3 py-2 rounded bg-surface border border-white/10 hover:border-white/20"
             >
-              {sortOptions.map(opt => (
+              {sortOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>
@@ -375,14 +383,27 @@ export default function FilterPanel({
 
           {/* Search */}
           <div>
-            <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
-              Search Teams
-            </p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">
+                {viewMode === 'props' ? 'Search Players' : 'Search Teams'}
+              </p>
+              {viewMode === 'props' && 'searchTarget' in filters && (
+                <select
+                  value={filters.searchTarget}
+                  onChange={(e) => updateFilters({ searchTarget: e.target.value })}
+                  className="px-2 py-1 text-xs rounded bg-surface border border-white/10 hover:border-white/20"
+                >
+                  <option value="player">Player</option>
+                  <option value="team">Team</option>
+                  <option value="opponent">Opponent</option>
+                </select>
+              )}
+            </div>
             <input
               type="text"
               value={filters.searchQuery}
-              onChange={e => updateFilters({ searchQuery: e.target.value })}
-              placeholder="Search by team name..."
+              onChange={(e) => updateFilters({ searchQuery: e.target.value })}
+              placeholder={viewMode === 'props' ? 'Search by player name...' : 'Search by team name...'}
               className="w-full px-3 py-2 rounded bg-surface border border-white/10 hover:border-white/20 focus:border-white/40 focus:outline-none"
             />
           </div>

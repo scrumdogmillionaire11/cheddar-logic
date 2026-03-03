@@ -41,12 +41,12 @@ async function initDb() {
  * Load database from disk or create new
  */
 function loadDatabase() {
-  const explicitPath = process.env.DATABASE_PATH || null;
+  const explicitPath = process.env.DATABASE_PATH || process.env.DATABASE_URL || null;
   const dbFile = dbPath || explicitPath ||
     path.join(process.env.CHEDDAR_DATA_DIR || '/tmp/cheddar-logic', 'cheddar.db');
 
   if (explicitPath && !fs.existsSync(explicitPath)) {
-    throw new Error(`DATABASE_PATH does not exist: ${explicitPath}`);
+    throw new Error(`Database path does not exist (DATABASE_PATH/DATABASE_URL): ${explicitPath}`);
   }
 
   dbPath = dbFile;
@@ -401,7 +401,7 @@ function getOddsWithUpcomingGames(sport, nowUtc, horizonUtc) {
       g.away_team
     FROM odds_snapshots o
     INNER JOIN games g ON o.game_id = g.game_id
-    WHERE o.sport = ?
+    WHERE LOWER(o.sport) = ?
       AND g.game_time_utc IS NOT NULL
       AND g.game_time_utc > ?
       AND g.game_time_utc <= ?
@@ -409,6 +409,77 @@ function getOddsWithUpcomingGames(sport, nowUtc, horizonUtc) {
   `);
   
   return stmt.all(normalizedSport, nowUtc, horizonUtc);
+}
+
+/**
+ * Upsert a player shot log row
+ * @param {object} log
+ * @param {string} log.id - Unique ID
+ * @param {string} log.sport - Sport code
+ * @param {number} log.playerId - Player ID
+ * @param {string} [log.playerName]
+ * @param {string} log.gameId - Game ID
+ * @param {string} [log.gameDate] - ISO date
+ * @param {string} [log.opponent]
+ * @param {boolean} [log.isHome]
+ * @param {number} [log.shots]
+ * @param {number} [log.toiMinutes]
+ * @param {object} [log.rawData]
+ * @param {string} log.fetchedAt - ISO timestamp
+ */
+function upsertPlayerShotLog(log) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(log.sport, 'upsertPlayerShotLog');
+
+  const stmt = db.prepare(`
+    INSERT INTO player_shot_logs (
+      id, sport, player_id, player_name, game_id, game_date,
+      opponent, is_home, shots, toi_minutes, raw_data, fetched_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(sport, player_id, game_id) DO UPDATE SET
+      player_name = excluded.player_name,
+      game_date = excluded.game_date,
+      opponent = excluded.opponent,
+      is_home = excluded.is_home,
+      shots = excluded.shots,
+      toi_minutes = excluded.toi_minutes,
+      raw_data = excluded.raw_data,
+      fetched_at = excluded.fetched_at
+  `);
+
+  stmt.run(
+    log.id,
+    normalizedSport,
+    log.playerId,
+    log.playerName || null,
+    log.gameId,
+    log.gameDate || null,
+    log.opponent || null,
+    log.isHome ? 1 : 0,
+    Number.isFinite(log.shots) ? log.shots : null,
+    Number.isFinite(log.toiMinutes) ? log.toiMinutes : null,
+    log.rawData ? JSON.stringify(log.rawData) : null,
+    log.fetchedAt
+  );
+}
+
+/**
+ * Get latest shot logs for a player
+ * @param {number} playerId
+ * @param {number} limit
+ * @returns {array}
+ */
+function getPlayerShotLogs(playerId, limit = 5) {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT * FROM player_shot_logs
+    WHERE player_id = ?
+    ORDER BY game_date DESC, fetched_at DESC
+    LIMIT ?
+  `);
+
+  return stmt.all(playerId, limit);
 }
 
 /**
@@ -566,8 +637,8 @@ function wasJobRecentlySuccessful(jobName, minutesAgo = 60) {
     WHERE job_name = ? AND status = 'success' AND started_at > ?
     LIMIT 1
   `);
-  
-  return stmt.get(jobName, threshold) !== undefined;
+
+  return Boolean(stmt.get(jobName, threshold));
 }
 
 /**
@@ -835,14 +906,45 @@ function prepareModelAndCardWrite(gameId, modelName, cardType) {
  */
 function deleteCardPayloadsForGame(gameId, cardType) {
   const db = getDatabase();
-  
-  const stmt = db.prepare(`
+  const now = new Date().toISOString();
+
+  // Rewrites are only allowed for unsettled rows. Remove pending result links first,
+  // then delete unreferenced payloads. Settled payloads are retained for audit integrity.
+  const deletePendingResultsStmt = db.prepare(`
+    DELETE FROM card_results
+    WHERE status = 'pending'
+      AND card_id IN (
+        SELECT id
+        FROM card_payloads
+        WHERE game_id = ? AND card_type = ?
+      )
+  `);
+  deletePendingResultsStmt.run(gameId, cardType);
+
+  const deleteUnreferencedPayloadsStmt = db.prepare(`
     DELETE FROM card_payloads
     WHERE game_id = ? AND card_type = ?
+      AND id NOT IN (
+        SELECT card_id
+        FROM card_results
+      )
   `);
-  
-  const result = stmt.run(gameId, cardType);
-  return result.changes;
+  const deleted = deleteUnreferencedPayloadsStmt.run(gameId, cardType).changes;
+
+  // Keep referenced payloads immutable but stale so current-card reads ignore them.
+  const expireReferencedPayloadsStmt = db.prepare(`
+    UPDATE card_payloads
+    SET expires_at = COALESCE(expires_at, ?), updated_at = ?
+    WHERE game_id = ? AND card_type = ?
+      AND id IN (
+        SELECT card_id
+        FROM card_results
+      )
+      AND expires_at IS NULL
+  `);
+  expireReferencedPayloadsStmt.run(now, now, gameId, cardType);
+
+  return deleted;
 }
 
 /**
@@ -1036,12 +1138,30 @@ function expireCardPayload(cardId) {
 function deleteExpiredCards(daysOld = 30) {
   const db = getDatabase();
   const threshold = new Date(Date.now() - daysOld * 86400000).toISOString();
-  
+
+  // Drop pending settlement rows for payloads that are already expired and being pruned.
+  const deletePendingResultsStmt = db.prepare(`
+    DELETE FROM card_results
+    WHERE status = 'pending'
+      AND card_id IN (
+        SELECT id
+        FROM card_payloads
+        WHERE expires_at IS NOT NULL AND expires_at < ?
+      )
+  `);
+  deletePendingResultsStmt.run(threshold);
+
+  // Never delete payloads still referenced by card_results; preserve audit integrity.
   const stmt = db.prepare(`
     DELETE FROM card_payloads
-    WHERE expires_at IS NOT NULL AND expires_at < ?
+    WHERE expires_at IS NOT NULL
+      AND expires_at < ?
+      AND id NOT IN (
+        SELECT card_id
+        FROM card_results
+      )
   `);
-  
+
   const result = stmt.run(threshold);
   return result.changes;
 }
@@ -1463,6 +1583,8 @@ module.exports = {
   getLatestOdds,
   getOddsSnapshots,
   getOddsWithUpcomingGames,
+  upsertPlayerShotLog,
+  getPlayerShotLogs,
   getJobRunHistory,
   wasJobRecentlySuccessful,
   insertModelOutput,
@@ -1496,4 +1618,3 @@ module.exports = {
   upsertTrackingStat,
   getTrackingStats
 };
-

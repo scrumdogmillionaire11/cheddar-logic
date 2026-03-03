@@ -3,8 +3,8 @@
  * Based on FILTER-FEATURE.md design
  */
 
-import type { GameFilters } from './filters';
-import { DEFAULT_FILTERS } from './filters';
+import type { GameFilters, ViewMode } from './filters';
+import { DEFAULT_FILTERS_BY_MODE } from './filters';
 
 export interface FilterPreset {
   id: string;
@@ -14,16 +14,18 @@ export interface FilterPreset {
   filters: Partial<GameFilters>;
 }
 
+const ENABLE_WELCOME_HOME = process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+
 /**
  * Built-in Cheddar Presets
  */
-export const FILTER_PRESETS: FilterPreset[] = [
+const GAME_PRESETS: FilterPreset[] = [
   {
     id: 'all',
     name: 'Main View (FIRE+WATCH)',
     description: 'Default actionable board view',
     icon: '🎯',
-    filters: DEFAULT_FILTERS,
+    filters: DEFAULT_FILTERS_BY_MODE.game,
   },
   {
     id: 'full_slate',
@@ -31,7 +33,7 @@ export const FILTER_PRESETS: FilterPreset[] = [
     description: 'Show FIRE, WATCH, and PASS games',
     icon: '📋',
     filters: {
-      ...DEFAULT_FILTERS,
+      ...DEFAULT_FILTERS_BY_MODE.game,
       statuses: ['FIRE', 'WATCH', 'PASS'],
       markets: ['ML', 'SPREAD', 'TOTAL'],
     },
@@ -42,7 +44,7 @@ export const FILTER_PRESETS: FilterPreset[] = [
     description: 'High-confidence plays starting today',
     icon: '🔥',
     filters: {
-      ...DEFAULT_FILTERS,
+      ...DEFAULT_FILTERS_BY_MODE.game,
       statuses: ['FIRE'],
       timeWindow: 'today',
       minTier: 'BEST',
@@ -55,7 +57,7 @@ export const FILTER_PRESETS: FilterPreset[] = [
     description: 'WATCH tier games in next 4 hours',
     icon: '👀',
     filters: {
-      ...DEFAULT_FILTERS,
+      ...DEFAULT_FILTERS_BY_MODE.game,
       statuses: ['FIRE', 'WATCH'],
       timeWindow: 'custom',
       customTimeRange: {
@@ -72,24 +74,11 @@ export const FILTER_PRESETS: FilterPreset[] = [
     description: 'All NHL total picks',
     icon: '🏒',
     filters: {
-      ...DEFAULT_FILTERS,
+      ...DEFAULT_FILTERS_BY_MODE.game,
       sports: ['NHL'],
       markets: ['TOTAL'],
       onlyGamesWithPicks: true,
       sortMode: 'signal_strength',
-    },
-  },
-  {
-    id: 'avoid_risk',
-    name: 'Avoid Fragility',
-    description: 'Hide risky games (fragility/blowout)',
-    icon: '🛡️',
-    filters: {
-      ...DEFAULT_FILTERS,
-      hideFragility: true,
-      hideBlowout: true,
-      hideLowCoverage: true,
-      sortMode: 'start_time',
     },
   },
   {
@@ -98,7 +87,7 @@ export const FILTER_PRESETS: FilterPreset[] = [
     description: 'Close ML odds (-120 to +120)',
     icon: '🪙',
     filters: {
-      ...DEFAULT_FILTERS,
+      ...DEFAULT_FILTERS_BY_MODE.game,
       markets: ['ML'],
       onlyGamesWithPicks: true,
       // Note: coinflip detection happens via tags
@@ -111,7 +100,7 @@ export const FILTER_PRESETS: FilterPreset[] = [
     description: 'Games starting in next 2 hours',
     icon: '⏰',
     filters: {
-      ...DEFAULT_FILTERS,
+      ...DEFAULT_FILTERS_BY_MODE.game,
       timeWindow: 'next_2h',
       sortMode: 'start_time',
     },
@@ -122,30 +111,87 @@ export const FILTER_PRESETS: FilterPreset[] = [
     description: 'Only highest-tier drivers',
     icon: '⭐',
     filters: {
-      ...DEFAULT_FILTERS,
+      ...DEFAULT_FILTERS_BY_MODE.game,
       minTier: 'BEST',
       statuses: ['FIRE', 'WATCH'],
       sortMode: 'signal_strength',
     },
   },
+  ...(ENABLE_WELCOME_HOME
+    ? [{
+        id: 'welcome_home',
+        name: 'Welcome Home Fade',
+        description: 'Road trip fatigue plays (NBA/NHL)',
+        icon: '🏠',
+        filters: {
+          ...DEFAULT_FILTERS_BY_MODE.game,
+          onlyWelcomeHome: true,
+          statuses: ['FIRE', 'WATCH'],
+          sortMode: 'signal_strength',
+        },
+      }]
+    : []),
 ];
+
+const PROPS_PRESETS: FilterPreset[] = [
+  {
+    id: 'props_best',
+    name: 'Best Props',
+    description: 'Top qualified props only',
+    icon: '🎯',
+    filters: {
+      ...DEFAULT_FILTERS_BY_MODE.props,
+      statuses: ['FIRE', 'WATCH'],
+      sortMode: 'signal_strength',
+    },
+  },
+  {
+    id: 'props_plus_money',
+    name: 'Plus Money',
+    description: 'Props with plus odds',
+    icon: '💸',
+    filters: {
+      ...DEFAULT_FILTERS_BY_MODE.props,
+      priceBands: ['plus'],
+    },
+  },
+  {
+    id: 'props_low_variance',
+    name: 'Low Variance',
+    description: 'Lower volatility props',
+    icon: '🧊',
+    filters: {
+      ...DEFAULT_FILTERS_BY_MODE.props,
+      varianceBands: ['LOW'],
+    },
+  },
+];
+
+export const PRESETS_BY_MODE: Record<ViewMode, FilterPreset[]> = {
+  game: GAME_PRESETS,
+  props: PROPS_PRESETS,
+};
 
 /**
  * Get preset by ID
  */
-export function getPreset(id: string): FilterPreset | undefined {
-  return FILTER_PRESETS.find(p => p.id === id);
+export function getPresetsForMode(mode: ViewMode): FilterPreset[] {
+  return PRESETS_BY_MODE[mode] || [];
+}
+
+export function getPreset(mode: ViewMode, id: string): FilterPreset | undefined {
+  return getPresetsForMode(mode).find(p => p.id === id);
 }
 
 /**
  * Apply preset to get filter configuration
  */
-export function applyPreset(presetId: string): GameFilters {
-  const preset = getPreset(presetId);
-  if (!preset) return DEFAULT_FILTERS;
-  
+export function applyPreset(mode: ViewMode, presetId: string): GameFilters {
+  const preset = getPreset(mode, presetId);
+  if (!preset) return DEFAULT_FILTERS_BY_MODE[mode];
+
   return {
-    ...DEFAULT_FILTERS,
+    ...DEFAULT_FILTERS_BY_MODE[mode],
     ...preset.filters,
   };
 }

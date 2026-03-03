@@ -3,9 +3,12 @@
  * Communicates with the FastAPI backend for FPL analysis
  */
 
+// Production should always use same-origin /api/v1 so Next.js rewrites handle backend routing.
+// NEXT_PUBLIC_FPL_API_URL is kept as a development override only.
 const FPL_API_BASE_URL =
-  process.env.NEXT_PUBLIC_FPL_API_URL ||
-  (process.env.NODE_ENV === "development" ? "http://localhost:8001/api/v1" : "/api/v1");
+  process.env.NODE_ENV === "development"
+    ? process.env.NEXT_PUBLIC_FPL_API_URL || "/api/v1"
+    : "/api/v1";
 
 export interface AnalyzeRequest {
   team_id: number;

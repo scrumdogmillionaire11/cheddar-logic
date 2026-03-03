@@ -12,6 +12,8 @@ const {
 const { projectNHL, projectNBA } = require('./projections');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
 
+const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -364,7 +366,7 @@ function computeNHLMarketDecisions(oddsSnapshot) {
     ? clamp((recentTrendValue - recentTrendAway) / 20, -1, 1)
     : 0;
 
-  const welcomeHomeActive = Boolean(raw?.welcome_home_fade_active);
+  const welcomeHomeActive = ENABLE_WELCOME_HOME && Boolean(raw?.welcome_home_fade_active);
   const welcomeHomeSignal = welcomeHomeActive ? -0.4 : 0;
 
   const spreadDrivers = [

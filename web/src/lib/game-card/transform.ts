@@ -26,6 +26,8 @@ import {
   classificationToLegacyStatus,
 } from '../play-decision/canonical-decision';
 
+const ENABLE_WELCOME_HOME = process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+
 const TIER_SCORE: Record<DriverTier, number> = {
   BEST: 1,
   SUPER: 0.72,
@@ -98,6 +100,10 @@ function isPlayItem(play: ApiPlay): boolean {
 
 function isEvidenceItem(play: ApiPlay): boolean {
   return (play.kind ?? 'PLAY') === 'EVIDENCE';
+}
+
+function isWelcomeHomePlay(play: ApiPlay): boolean {
+  return play.cardType === 'welcome-home-v2';
 }
 
 function mapCanonicalToLegacyMarket(canonical?: CanonicalMarketType): Market | 'NONE' {
@@ -431,8 +437,11 @@ function buildPlay(
   game: GameData,
   drivers: DriverRow[]
 ): Play {
-  const playCandidates = game.plays.filter(isPlayItem);
-  const evidenceCandidates = game.plays.filter(isEvidenceItem);
+  const sourcePlays = ENABLE_WELCOME_HOME
+    ? game.plays
+    : game.plays.filter((play) => !isWelcomeHomePlay(play));
+  const playCandidates = sourcePlays.filter(isPlayItem);
+  const evidenceCandidates = sourcePlays.filter(isEvidenceItem);
   const inferredPlays = playCandidates.map((sourcePlay) => ({ sourcePlay, inference: inferMarketFromPlay(sourcePlay) }));
   const canonicalPlayableCount = inferredPlays.filter(({ inference }) => inference.canonical && inference.canonical !== 'INFO').length;
   const truthDriver = pickTruthDriver(drivers);
@@ -564,8 +573,8 @@ function buildPlay(
     betAction = 'NO_PLAY';
   }
 
-  const whyCode = getPlayWhyCode(betAction, market, drivers, priceFlags);
-  const whyText = whyCode.replace(/_/g, ' ');
+  let whyCode = getPlayWhyCode(betAction, market, drivers, priceFlags);
+  let whyText = whyCode.replace(/_/g, ' ');
   const sourcePlay = playCandidates.find((play) => play.driverKey === truthDriver.key) ?? playCandidates[0];
   const sourceInference = sourcePlay ? inferMarketFromPlay(sourcePlay) : { market, canonical: undefined, reasonCodes: [], tags: [] };
   const totalBias = game.consistency?.total_bias ?? sourcePlay?.consistency?.total_bias ?? 'UNKNOWN';
@@ -610,9 +619,16 @@ function buildPlay(
         ? 'MONEYLINE'
         : 'INFO');
 
-  if (resolvedMarketType === 'TOTAL' && totalBias !== 'OK') {
+  const hasExplicitTotalsConsistencyBlock =
+    resolvedMarketType === 'TOTAL' &&
+    totalBias !== 'OK' &&
+    totalBias !== 'UNKNOWN';
+
+  if (hasExplicitTotalsConsistencyBlock) {
     reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
     tags.push('CONSISTENCY_BLOCK_TOTALS');
+    whyCode = 'PASS_TOTAL_INSUFFICIENT_DATA';
+    whyText = 'PASS TOTAL INSUFFICIENT DATA';
   }
 
   const hasTeamContext =
@@ -630,7 +646,7 @@ function buildPlay(
     resolvedMarketType === 'MONEYLINE' &&
     !((direction === 'HOME' || direction === 'AWAY') && hasTeamContext);
 
-  if (betAction === 'NO_PLAY' || (resolvedMarketType === 'TOTAL' && totalBias !== 'OK')) {
+  if (betAction === 'NO_PLAY' || hasExplicitTotalsConsistencyBlock) {
     pick = 'NO PLAY';
   }
 
@@ -644,6 +660,9 @@ function buildPlay(
     if (hasMoneylineInvariantViolation) reasonCodes.push('PASS_MISSING_SELECTION');
     pick = 'NO PLAY';
   }
+
+  const hardPass = forcedPass || hasExplicitTotalsConsistencyBlock;
+  const passReasonCode = Array.from(new Set(reasonCodes)).find((code) => code.startsWith('PASS_')) ?? null;
 
   // Build initial play object for canonical decision
   const playForDecision: CanonicalPlay = {
@@ -692,11 +711,17 @@ function buildPlay(
     reason_codes: Array.from(new Set(reasonCodes)),
     tags,
     // Canonical fields (preferred)
-    classification: (decision.classification as 'BASE' | 'LEAN' | 'PASS') || undefined,
-    action: (decision.action as 'FIRE' | 'HOLD' | 'PASS') || undefined,
-    pass_reason_code: decision.play?.pass_reason_code ?? null,
+    classification: hardPass
+      ? 'PASS'
+      : (decision.classification as 'BASE' | 'LEAN' | 'PASS') || undefined,
+    action: hardPass
+      ? 'PASS'
+      : (decision.action as 'FIRE' | 'HOLD' | 'PASS') || undefined,
+    pass_reason_code: hardPass
+      ? passReasonCode
+      : decision.play?.pass_reason_code ?? null,
     // Legacy compatibility (keep until UI migration complete)
-    status: forcedPass || (resolvedMarketType === 'TOTAL' && totalBias !== 'OK') 
+    status: hardPass
       ? 'PASS' 
       : classificationToLegacyStatus(decision.classification, decision.action),
     market,
@@ -724,10 +749,14 @@ function buildPlay(
  * Transform GameData to normalized GameCard with deduped drivers and canonical Play
  */
 export function transformToGameCard(game: GameData): GameCard {
+  const sourcePlays = ENABLE_WELCOME_HOME
+    ? game.plays
+    : game.plays.filter((play) => !isWelcomeHomePlay(play));
+
   // Convert plays to drivers and dedupe
-  const rawDrivers = game.plays.filter(isPlayItem).map(playToDriver);
+  const rawDrivers = sourcePlays.filter(isPlayItem).map(playToDriver);
   const drivers = deduplicateDrivers(rawDrivers);
-  const evidence: EvidenceItem[] = game.plays
+  const evidence: EvidenceItem[] = sourcePlays
     .filter(isEvidenceItem)
     .map((play, index) => ({
       id: `${game.gameId}:evidence:${play.driverKey || play.cardType || index}`,

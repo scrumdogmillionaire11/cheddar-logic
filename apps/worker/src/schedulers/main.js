@@ -22,7 +22,13 @@
  */
 
 const { DateTime } = require('luxon');
-const { initDb, getUpcomingGames, shouldRunJobKey, hasRunningJobRun } = require('@cheddar-logic/data');
+const {
+  initDb,
+  getUpcomingGames,
+  shouldRunJobKey,
+  hasRunningJobRun,
+  wasJobRecentlySuccessful,
+} = require('@cheddar-logic/data');
 
 // Import all jobs
 const { pullOddsHourly } = require('../jobs/pull_odds_hourly');
@@ -39,6 +45,9 @@ const { backfillCardResults } = require('../jobs/backfill_card_results');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
+const ODDS_GAP_ALERT_MINUTES = Number(process.env.ODDS_GAP_ALERT_MINUTES || 90);
+const ODDS_GAP_ALERT_COOLDOWN_MS = Number(process.env.ODDS_GAP_ALERT_COOLDOWN_MS || 15 * 60 * 1000);
+let lastOddsGapAlertAt = 0;
 
 /**
  * Sport-to-job mapping
@@ -87,6 +96,30 @@ function keyTminus(sport, gameId, minutes) {
 
 function keyNightlySweep(nowEt) {
   return `settle|nightly|${nowEt.toISODate()}`;
+}
+
+/**
+ * Health check: detect stale odds pipeline based on last successful pull job
+ */
+function checkOddsFreshnessHealth(nowUtc) {
+  if (process.env.ENABLE_ODDS_PULL === 'false') return;
+
+  const recentlySuccessful = wasJobRecentlySuccessful('pull_odds_hourly', ODDS_GAP_ALERT_MINUTES);
+  if (recentlySuccessful) {
+    lastOddsGapAlertAt = 0;
+    return;
+  }
+
+  const nowMs = nowUtc.toMillis();
+  if (nowMs - lastOddsGapAlertAt < ODDS_GAP_ALERT_COOLDOWN_MS) {
+    return;
+  }
+
+  lastOddsGapAlertAt = nowMs;
+  console.warn(
+    `[SCHEDULER][HEALTH] No successful pull_odds_hourly run in the last ${ODDS_GAP_ALERT_MINUTES} minutes. ` +
+    'Odds pipeline may be stale.'
+  );
 }
 
 /**
@@ -242,6 +275,8 @@ async function tick() {
   const dryRun = process.env.DRY_RUN === 'true';
   const nowEt = nowET();
   const nowUtc = DateTime.utc();
+
+  checkOddsFreshnessHealth(nowUtc);
 
   // Get games in the next 36 hours (covers tomorrow + late games)
   const startUtcIso = nowUtc.minus({ hours: 1 }).toISO();   // small back buffer

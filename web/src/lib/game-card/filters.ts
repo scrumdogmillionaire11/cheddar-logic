@@ -7,10 +7,14 @@ import type { GameCard, Sport, Market, DriverTier, ExpressionStatus } from '../t
 import { GAME_TAGS } from '../types/game-card';
 import { getPlayDisplayAction } from './decision';
 
+const ENABLE_WELCOME_HOME = process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+
 /**
  * Sort modes for game cards
  */
 export type SortMode = 'start_time' | 'odds_updated' | 'signal_strength' | 'pick_score';
+
+export type ViewMode = 'game' | 'props';
 
 export type FilterDebugFlags = {
   sport: boolean;
@@ -21,6 +25,7 @@ export type FilterDebugFlags = {
   driverStrength: boolean;
   riskFlags: boolean;
   search: boolean;
+  welcomeHome: boolean;
   hasPicks: boolean;
   clearPlay: boolean;
 };
@@ -28,7 +33,26 @@ export type FilterDebugFlags = {
 /**
  * Filter configuration
  */
-export interface GameFilters {
+export type PropStatGroup =
+  | 'PTS'
+  | 'REB'
+  | 'AST'
+  | 'PRA'
+  | '3PM'
+  | 'SOG'
+  | 'SAVES'
+  | 'GOALS'
+  | 'HITS'
+  | 'BLOCKS'
+  | 'OTHER';
+
+export type PropType = 'OVER' | 'UNDER' | 'ALT' | 'COMBO';
+
+export type PropVarianceBand = 'LOW' | 'MED' | 'HIGH';
+
+export type PropSearchTarget = 'player' | 'team' | 'opponent';
+
+export interface CommonFilters {
   // Sport / League
   sports: Sport[];
   leagues?: string[];
@@ -42,11 +66,21 @@ export interface GameFilters {
   
   // Actionability
   statuses: ExpressionStatus[];
+
+  // Search
+  searchQuery: string;
+
+  // Sort
+  sortMode: SortMode;
+}
+
+export interface GameModeFilters extends CommonFilters {
   
   // Market type
   markets: Market[];
   onlyGamesWithPicks: boolean;
    hasClearPlay: boolean; // play.market != 'NONE'
+  onlyWelcomeHome?: boolean;
   
   // Driver strength
   minTier?: DriverTier; // BEST only / SUPER+ / WATCH+
@@ -57,23 +91,29 @@ export interface GameFilters {
   hideBlowout: boolean;
   hideLowCoverage: boolean;
   hideStaleOdds: boolean;
-  
-  // Search
-  searchQuery: string;
-  
-  // Sort
-  sortMode: SortMode;
 }
+
+export interface PropsModeFilters extends CommonFilters {
+  propStatGroups: PropStatGroup[];
+  propTypes: PropType[];
+  lineBands: string[];
+  priceBands: string[];
+  varianceBands: PropVarianceBand[];
+  searchTarget: PropSearchTarget;
+}
+
+export type GameFilters = GameModeFilters | PropsModeFilters;
 
 /**
  * Default filter state
  */
-export const DEFAULT_FILTERS: GameFilters = {
+export const DEFAULT_GAME_FILTERS: GameModeFilters = {
   sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER'],
   statuses: ['FIRE', 'WATCH'],
   markets: ['ML', 'SPREAD', 'TOTAL'],
   onlyGamesWithPicks: false,
-   hasClearPlay: false,
+  hasClearPlay: false,
+  onlyWelcomeHome: false,
   hideFragility: false,
   hideBlowout: false,
   hideLowCoverage: false,
@@ -82,14 +122,40 @@ export const DEFAULT_FILTERS: GameFilters = {
   sortMode: 'start_time',
 };
 
-function filterBySport(card: GameCard, filters: GameFilters): boolean {
+export const DEFAULT_PROPS_FILTERS: PropsModeFilters = {
+  sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER'],
+  statuses: ['FIRE', 'WATCH'],
+  searchQuery: '',
+  sortMode: 'signal_strength',
+  propStatGroups: [],
+  propTypes: [],
+  lineBands: [],
+  priceBands: [],
+  varianceBands: [],
+  searchTarget: 'player',
+};
+
+export const DEFAULT_FILTERS_BY_MODE: Record<ViewMode, GameFilters> = {
+  game: DEFAULT_GAME_FILTERS,
+  props: DEFAULT_PROPS_FILTERS,
+};
+
+export function getDefaultFilters(mode: ViewMode): GameFilters {
+  return DEFAULT_FILTERS_BY_MODE[mode];
+}
+
+function isPropsModeFilters(filters: GameFilters): filters is PropsModeFilters {
+  return 'propStatGroups' in filters;
+}
+
+function filterBySport(card: GameCard, filters: CommonFilters): boolean {
   return filters.sports.includes(card.sport);
 }
 
 /**
  * Filter by time window
  */
-function filterByTimeWindow(card: GameCard, filters: GameFilters): boolean {
+function filterByTimeWindow(card: GameCard, filters: CommonFilters): boolean {
   if (!filters.timeWindow) return true;
   
   const startTime = new Date(card.startTime).getTime();
@@ -116,7 +182,7 @@ function filterByTimeWindow(card: GameCard, filters: GameFilters): boolean {
 /**
  * Filter by odds freshness (stale filter)
  */
-function filterByOddsFreshness(card: GameCard, filters: GameFilters): boolean {
+function filterByOddsFreshness(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.hideStaleOdds) return true;
   
   // Hide if stale by 5+ minutes
@@ -156,7 +222,7 @@ function canonicalToLegacyMarket(canonical?: string): Market | null {
  * Special rule for Full Slate (when PASS is included):
  * - Allow PASS plays through even if their market doesn't match the filter
  */
-function filterByMarketAvailability(card: GameCard, filters: GameFilters): boolean {
+function filterByMarketAvailability(card: GameCard, filters: GameModeFilters): boolean {
   if (filters.markets.length === 0) return true;
 
   const includePass = filters.statuses.includes('PASS');
@@ -190,7 +256,7 @@ function filterByMarketAvailability(card: GameCard, filters: GameFilters): boole
  * - If statuses includes PASS, show any game with a play object OR blocked totals
  * - Otherwise, require exact status match
  */
-function filterByActionability(card: GameCard, filters: GameFilters): boolean {
+function filterByActionability(card: GameCard, filters: CommonFilters): boolean {
   if (filters.statuses.length === 0) return true;
 
   const includePass = filters.statuses.includes('PASS');
@@ -238,7 +304,7 @@ function filterByActionability(card: GameCard, filters: GameFilters): boolean {
 /**
  * Filter by driver tier and confidence
  */
-function filterByDriverStrength(card: GameCard, filters: GameFilters): boolean {
+function filterByDriverStrength(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.minTier && !filters.minConfidence) return true;
   
   const tierRank: Record<DriverTier, number> = { BEST: 3, SUPER: 2, WATCH: 1 };
@@ -267,7 +333,7 @@ function filterByDriverStrength(card: GameCard, filters: GameFilters): boolean {
 /**
  * Filter by risk flags
  */
-function filterByRiskFlags(card: GameCard, filters: GameFilters): boolean {
+function filterByRiskFlags(card: GameCard, filters: GameModeFilters): boolean {
   if (filters.hideFragility && card.tags.includes(GAME_TAGS.HAS_RISK_FRAGILITY)) {
     return false;
   }
@@ -284,20 +350,29 @@ function filterByRiskFlags(card: GameCard, filters: GameFilters): boolean {
 /**
  * Filter by search query (team names)
  */
-function filterBySearch(card: GameCard, filters: GameFilters): boolean {
+function filterBySearch(card: GameCard, filters: CommonFilters): boolean {
   if (!filters.searchQuery) return true;
   
   const query = filters.searchQuery.toLowerCase();
   const homeTeam = card.homeTeam.toLowerCase();
   const awayTeam = card.awayTeam.toLowerCase();
-  
+
+  if ('searchTarget' in filters) {
+    if (filters.searchTarget === 'opponent') {
+      return awayTeam.includes(query) || homeTeam.includes(query);
+    }
+    if (filters.searchTarget === 'team') {
+      return homeTeam.includes(query) || awayTeam.includes(query);
+    }
+  }
+
   return homeTeam.includes(query) || awayTeam.includes(query);
 }
 
 /**
  * Filter games with picks only
  */
-function filterByHasPicks(card: GameCard, filters: GameFilters): boolean {
+function filterByHasPicks(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.onlyGamesWithPicks) return true;
 
   if (card.play && card.play.market !== 'NONE' && card.play.pick !== 'NO PLAY') {
@@ -308,26 +383,61 @@ function filterByHasPicks(card: GameCard, filters: GameFilters): boolean {
 }
 
 /**
+ * Filter for Welcome Home Fade cards only
+ */
+function filterByWelcomeHome(card: GameCard, filters: GameModeFilters): boolean {
+  if (!filters.onlyWelcomeHome) return true;
+  if (!ENABLE_WELCOME_HOME) return false;
+  
+  // Check if any driver or evidence item is Welcome Home Fade
+  const hasWHF = card.drivers.some(d => d.cardType === 'welcome-home-v2') ||
+    (card.evidence?.some(e => e.cardType === 'welcome-home-v2') ?? false);
+  return hasWHF;
+}
+
+/**
  * Filter by clear play (has canonical play with valid market)
  */
-function filterByClearPlay(card: GameCard, filters: GameFilters): boolean {
+function filterByClearPlay(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.hasClearPlay) return true;
 
   return card.play !== undefined && card.play.market !== 'NONE' && card.play.pick !== 'NO PLAY';
 }
 
-export function getFilterDebugFlags(card: GameCard, filters: GameFilters): FilterDebugFlags {
+export function getFilterDebugFlags(
+  card: GameCard,
+  filters: GameFilters,
+  mode: ViewMode = 'game'
+): FilterDebugFlags {
+  if (mode === 'props' && isPropsModeFilters(filters)) {
+    return {
+      sport: filterBySport(card, filters),
+      timeWindow: filterByTimeWindow(card, filters),
+      oddsFreshness: true,
+      market: true,
+      actionability: filterByActionability(card, filters),
+      driverStrength: true,
+      riskFlags: true,
+      search: filterBySearch(card, filters),
+      welcomeHome: true,
+      hasPicks: true,
+      clearPlay: true,
+    };
+  }
+
+  const gameFilters = filters as GameModeFilters;
   return {
-    sport: filterBySport(card, filters),
-    timeWindow: filterByTimeWindow(card, filters),
-    oddsFreshness: filterByOddsFreshness(card, filters),
-    market: filterByMarketAvailability(card, filters),
-    actionability: filterByActionability(card, filters),
-    driverStrength: filterByDriverStrength(card, filters),
-    riskFlags: filterByRiskFlags(card, filters),
-    search: filterBySearch(card, filters),
-    hasPicks: filterByHasPicks(card, filters),
-    clearPlay: filterByClearPlay(card, filters),
+    sport: filterBySport(card, gameFilters),
+    timeWindow: filterByTimeWindow(card, gameFilters),
+    oddsFreshness: filterByOddsFreshness(card, gameFilters),
+    market: filterByMarketAvailability(card, gameFilters),
+    actionability: filterByActionability(card, gameFilters),
+    driverStrength: filterByDriverStrength(card, gameFilters),
+    riskFlags: filterByRiskFlags(card, gameFilters),
+    search: filterBySearch(card, gameFilters),
+    welcomeHome: filterByWelcomeHome(card, gameFilters),
+    hasPicks: filterByHasPicks(card, gameFilters),
+    clearPlay: filterByClearPlay(card, gameFilters),
   };
 }
 
@@ -395,7 +505,7 @@ function sortCards(cards: GameCard[], sortMode: SortMode): GameCard[] {
 /**
  * Apply all filters to game cards
  */
-export function applyFilters(cards: GameCard[], filters: GameFilters): GameCard[] {
+function applyGameFilters(cards: GameCard[], filters: GameModeFilters): GameCard[] {
   const filtered = cards
     .filter(card => filterBySport(card, filters))
     .filter(card => filterByTimeWindow(card, filters))
@@ -405,39 +515,77 @@ export function applyFilters(cards: GameCard[], filters: GameFilters): GameCard[
     .filter(card => filterByDriverStrength(card, filters))
     .filter(card => filterByRiskFlags(card, filters))
     .filter(card => filterBySearch(card, filters))
-     .filter(card => filterByHasPicks(card, filters))
-     .filter(card => filterByClearPlay(card, filters));
-  
+    .filter(card => filterByWelcomeHome(card, filters))
+    .filter(card => filterByHasPicks(card, filters))
+    .filter(card => filterByClearPlay(card, filters));
+
   return sortCards(filtered, filters.sortMode);
+}
+
+export function applyFilters(
+  cards: GameCard[],
+  filters: GameFilters,
+  mode: ViewMode = 'game'
+): GameCard[] {
+  if (mode === 'props' && isPropsModeFilters(filters)) {
+    const filtered = cards
+      .filter(card => filterBySport(card, filters))
+      .filter(card => filterByTimeWindow(card, filters))
+      .filter(card => filterByActionability(card, filters))
+      .filter(card => filterBySearch(card, filters));
+
+    return sortCards(filtered, filters.sortMode);
+  }
+
+  return applyGameFilters(cards, filters as GameModeFilters);
 }
 
 /**
  * Get count of active filters (excluding defaults)
  */
-export function getActiveFilterCount(filters: GameFilters): number {
+export function getActiveFilterCount(filters: GameFilters, mode: ViewMode = 'game'): number {
   let count = 0;
-  
-  // Compare against defaults
-  if (filters.sports.length !== DEFAULT_FILTERS.sports.length) count++;
-  if (filters.statuses.length !== DEFAULT_FILTERS.statuses.length) count++;
-  if (filters.markets.length !== DEFAULT_FILTERS.markets.length) count++;
-  if (filters.onlyGamesWithPicks) count++;
-   if (filters.hasClearPlay) count++;
-  if (filters.minTier) count++;
-  if (filters.minConfidence) count++;
-  if (filters.hideFragility) count++;
-  if (filters.hideBlowout) count++;
-  if (filters.hideLowCoverage) count++;
-  if (filters.hideStaleOdds) count++;
-  if (filters.searchQuery) count++;
-  if (filters.timeWindow) count++;
-  
+
+  if (mode === 'props' && isPropsModeFilters(filters)) {
+    const defaults = DEFAULT_PROPS_FILTERS;
+    if (filters.sports.length !== defaults.sports.length) count++;
+    if (filters.statuses.length !== defaults.statuses.length) count++;
+    if (filters.searchQuery) count++;
+    if (filters.timeWindow) count++;
+    if (filters.propStatGroups.length) count++;
+    if (filters.propTypes.length) count++;
+    if (filters.lineBands.length) count++;
+    if (filters.priceBands.length) count++;
+    if (filters.varianceBands.length) count++;
+    if (filters.searchTarget !== defaults.searchTarget) count++;
+    if (filters.sortMode !== defaults.sortMode) count++;
+    return count;
+  }
+
+  const gameFilters = filters as GameModeFilters;
+  const defaults = DEFAULT_GAME_FILTERS;
+  if (gameFilters.sports.length !== defaults.sports.length) count++;
+  if (gameFilters.statuses.length !== defaults.statuses.length) count++;
+  if (gameFilters.markets.length !== defaults.markets.length) count++;
+  if (gameFilters.onlyGamesWithPicks) count++;
+  if (gameFilters.hasClearPlay) count++;
+  if (ENABLE_WELCOME_HOME && gameFilters.onlyWelcomeHome) count++;
+  if (gameFilters.minTier) count++;
+  if (gameFilters.minConfidence) count++;
+  if (gameFilters.hideFragility) count++;
+  if (gameFilters.hideBlowout) count++;
+  if (gameFilters.hideLowCoverage) count++;
+  if (gameFilters.hideStaleOdds) count++;
+  if (gameFilters.searchQuery) count++;
+  if (gameFilters.timeWindow) count++;
+  if (gameFilters.sortMode !== defaults.sortMode) count++;
+
   return count;
 }
 
 /**
  * Reset filters to defaults
  */
-export function resetFilters(): GameFilters {
-  return { ...DEFAULT_FILTERS };
+export function resetFilters(mode: ViewMode = 'game'): GameFilters {
+  return { ...getDefaultFilters(mode) };
 }

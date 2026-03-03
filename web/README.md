@@ -27,7 +27,11 @@ npm run test:ui:cards
 npm run test:ui:results
 ```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Build Constraints
+
+- This repository must build in restricted/offline environments.
+- Do not use `next/font/google` or any runtime/build-time remote font fetch.
+- Use local font stacks in CSS (or vendored local font files) only.
 
 ## Learn More
 

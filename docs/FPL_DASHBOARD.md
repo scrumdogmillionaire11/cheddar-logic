@@ -48,7 +48,10 @@ The backend will be available at `http://localhost:8000`
 Create `.env.local` in the project root (or update `.env`):
 
 ```bash
-# FPL Sage API URL
+# Next.js server-side rewrite target for /api/v1/*
+FPL_API_BASE_URL=http://localhost:8000/api/v1
+
+# Optional dev-only browser override (usually not needed)
 NEXT_PUBLIC_FPL_API_URL=http://localhost:8000/api/v1
 ```
 
@@ -138,8 +141,9 @@ FPL_SAGE_REDIS_URL=redis://production-redis:6379
 FPL_SAGE_CORS_ALLOWED_ORIGINS=https://cheddarlogic.com
 FPL_SAGE_RATE_LIMIT_ENABLED=true
 
-# Web App
-NEXT_PUBLIC_FPL_API_URL=https://api.cheddarlogic.com/fpl/v1
+# Web App (Vercel)
+FPL_API_BASE_URL=https://api.cheddarlogic.com/api/v1
+# Leave NEXT_PUBLIC_FPL_API_URL unset in production.
 ```
 
 ### CORS Configuration
@@ -154,8 +158,8 @@ Update `CORS_ALLOWED_ORIGINS` in `cheddar-fpl-sage/backend/config.py` for additi
 
 ### "Analysis failed to start"
 - Verify backend is running: `curl http://localhost:8000/health`
-- Check console for CORS errors
-- Verify `.env.local` has correct `NEXT_PUBLIC_FPL_API_URL`
+- Verify rewrite target is set: `FPL_API_BASE_URL=.../api/v1`
+- In production, keep `NEXT_PUBLIC_FPL_API_URL` unset so requests stay same-origin via `/api/v1`
 
 ### "Analysis timed out"
 - Backend may be processing slowly (cold start, FPL API delays)
