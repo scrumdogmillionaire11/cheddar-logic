@@ -332,7 +332,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
         homeTeam,
         sport: 'NHL',
         isBackToBack: restDaysAway === 0,
-        recentRoadGames
+        recentRoadGames,
+        homeTeamRoadTrip: true
       });
 
       if (welcomeCard) {
@@ -673,7 +674,8 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
         homeTeam,
         sport: 'NBA',
         isBackToBack: restDaysAway === 0,
-        recentRoadGames
+        recentRoadGames,
+        homeTeamRoadTrip: true
       });
 
       if (welcomeCard) {

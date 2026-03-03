@@ -93,13 +93,16 @@ function scoreSpotRisk(isBackToBack) {
 
 /**
  * Calculate Welcome Home v2 tier
- * @param {object} awayTeam - { restDays, record, netRating, recentGames }
- * @param {object} homeTeam - { netRating, record }
- * @param {object} context - { sport, isBackToBack, recentRoadGames }
+ * Home team coming back from road trip (first game back at home)
+ * Uses fatigue from road trip travel, but applied to home team's performance
+ *
+ * @param {object} awayTeam - { netRating }
+ * @param {object} homeTeam - { netRating, restDays }
+ * @param {object} context - { sport, isBackToBack, recentRoadGames, homeTeamRoadTrip: boolean }
  * @returns {object} { tier, score, components, signal }
  */
 function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
-  const { sport = 'NBA', isBackToBack = false, recentRoadGames = [] } = context;
+  const { sport = 'NBA', isBackToBack = false, recentRoadGames = [], homeTeamRoadTrip = false } = context;
 
   // Require minimum road trip length (2+ games)
   if (!recentRoadGames || recentRoadGames.length < 2) {
@@ -124,7 +127,12 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
 
   const awayNetRating = toNumber(awayTeam?.netRating);
   const homeNetRating = toNumber(homeTeam?.netRating);
-  const opponentQuality = scoreOpponentQuality(homeNetRating, null);
+  
+  // If home team had the road trip, they're the fatigued ones
+  // Award points for opponent quality (away team) being strong
+  const opponentQuality = homeTeamRoadTrip 
+    ? scoreOpponentQuality(awayNetRating, null)  // Away team is the fresh opponent
+    : scoreOpponentQuality(homeNetRating, null); // Away team's opponent (home) is strong
   
   const spotRisk = scoreSpotRisk(isBackToBack);
 
@@ -147,15 +155,17 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
       spotRisk,
       opponentQuality
     },
-    reasoning: `Road trip strength: ${recentRoadGames.length} games, compression=${compression}pts, opponent=${opponentQuality}pts`,
+    reasoning: `${homeTeamRoadTrip ? 'Home' : 'Away'} team road trip: ${recentRoadGames.length} games, compression=${compression}pts, opponent=${opponentQuality}pts`,
     signal: tier !== 'NO_PLAY'
   };
 }
 
 /**
  * Generate Welcome Home v2 card descriptor
- * Emits only for tiers S, A (high conviction) and optionally B
- * @param {object} gameCtx - { gameId, awayTeam, homeTeam, sport, isBackToBack, recentRoadGames }
+ * Home team returning from road trip (first game back at home)
+ * Signal: Home team fatigue from travel → likely underperformance
+ * 
+ * @param {object} gameCtx - { gameId, awayTeam, homeTeam, sport, isBackToBack, recentRoadGames, homeTeamRoadTrip: boolean }
  * @returns {object|null} Card descriptor or null if NO_PLAY tier
  */
 function generateWelcomeHomeCard(gameCtx) {
@@ -165,10 +175,16 @@ function generateWelcomeHomeCard(gameCtx) {
     homeTeam = {},
     sport = 'NBA',
     isBackToBack = false,
-    recentRoadGames = []
+    recentRoadGames = [],
+    homeTeamRoadTrip = false
   } = gameCtx;
 
-  const analysis = calculateWelcomeHome(awayTeam, homeTeam, { sport, isBackToBack, recentRoadGames });
+  const analysis = calculateWelcomeHome(awayTeam, homeTeam, { 
+    sport, 
+    isBackToBack, 
+    recentRoadGames,
+    homeTeamRoadTrip
+  });
 
   // Only emit for meaningful signals
   if (!analysis.signal || analysis.tier === 'NO_PLAY') {
@@ -182,7 +198,8 @@ function generateWelcomeHomeCard(gameCtx) {
     'B': 0.58   // B-tier = WATCH
   };
 
-  // Prediction: away team fatigue → favor home
+  // Home team fatigued from road trip → signal is inverse (fade home team)
+  // Or conservative: neutral because fatigue offsets home advantage
   const confidence = confidenceMap[analysis.tier] || 0.55;
   const tier = confidence >= 0.75 ? 'SUPER' : confidence >= 0.70 ? 'BEST' : 'WATCH';
 
@@ -191,8 +208,8 @@ function generateWelcomeHomeCard(gameCtx) {
     cardTitle: `[${sport}] Welcome Home Fade: Road Trip Fatigue`,
     confidence,
     tier,
-    prediction: 'HOME',
-    reasoning: `Away team on ${recentRoadGames.length}-game road trip (tier: ${analysis.tier}). ${analysis.reasoning}`,
+    prediction: 'HOME',  // Home returns from trip - signal strength based on trip exhaustion
+    reasoning: `Home team returning from ${recentRoadGames.length}-game road trip (tier: ${analysis.tier}). ${analysis.reasoning}`,
     ev_threshold_passed: confidence > 0.60,
     driverKey: 'welcomeHomeV2',
     driverInputs: {
