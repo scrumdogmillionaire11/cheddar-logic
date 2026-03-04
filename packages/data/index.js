@@ -3,9 +3,19 @@
  * 
  * Entry point for data package
  * Exports database client and migration utilities
+ * 
+ * DUAL-DATABASE MODE (recommended for prod):
+ *   - Record DB: shared reference data (read-only)
+ *   - Local DB: environment-specific state (writable)
+ *   Usage: await require('.').initDualDb({ recordDbPath, localDbPath })
+ * 
+ * SINGLE-DATABASE MODE (legacy, default):
+ *   - Single DB for all data
+ *   Usage: await require('.').initDb()
  */
 
 const db = require('./src/db');
+const dbDualInit = require('./src/db-dual-init');
 const { runMigrations } = require('./src/migrate');
 const { withDb } = require('./src/job-runtime');
 const auth = require('./src/auth');
@@ -138,4 +148,12 @@ module.exports = {
   DEFAULT_DATABASE_PATH: dbPath.DEFAULT_DATABASE_PATH,
   parseSqliteUrl: dbPath.parseSqliteUrl,
   resolveDatabasePath: dbPath.resolveDatabasePath,
+
+  // Dual-database mode (recommended for production)
+  initDualDb: dbDualInit.initDualDb,
+  closeDualDb: dbDualInit.closeDualDb,
+  isDualModeActive: dbDualInit.isDualModeActive,
+  getDualDb: dbDualInit.getDb,
+  RECORD_TABLES: dbDualInit.RECORD_TABLES,
+  LOCAL_TABLES: dbDualInit.LOCAL_TABLES,
 };
