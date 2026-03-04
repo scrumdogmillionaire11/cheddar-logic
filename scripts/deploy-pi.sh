@@ -31,7 +31,7 @@ echo "✓ Data directory ready"
 # 3. Build web
 echo "⚙️  Building Next.js web app..."
 cd "$DEPLOY_DIR/web"
-npm install --production --no-save > /dev/null 2>&1
+npm install --include=dev --no-save > /dev/null 2>&1
 npm run build > /dev/null 2>&1
 echo "✓ Web app built"
 
