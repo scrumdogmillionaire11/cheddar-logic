@@ -15,7 +15,7 @@
  *   - job_runs (environment logs)
  * 
  * Usage:
- *   const { initDualDb, getDb } = require('./src/db-dual-init');
+ *   const { initDualDb, getDb } = require('./db-dual-init');
  *   await initDualDb({
  *     recordDbPath: '/opt/cheddar-logic/packages/data/cheddar.db',
  *     localDbPath: process.env.LOCAL_DB_PATH
