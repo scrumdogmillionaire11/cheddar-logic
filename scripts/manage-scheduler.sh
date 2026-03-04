@@ -4,6 +4,18 @@
 
 COMMAND="${1:-status}"
 LOG_FILE="./apps/worker/logs/scheduler.log"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Load environment from repo .env if present (single DB source of truth)
+ENV_FILE="${CHEDDAR_ENV_FILE:-$ROOT_DIR/.env}"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+fi
+
+EXPECTED_DB_PATH="${CHEDDAR_DB_PATH:-$ROOT_DIR/packages/data/cheddar.db}"
 
 # Color output
 BLUE='\033[0;34m'
@@ -21,6 +33,7 @@ function show_help() {
     echo "  restart    - Restart the scheduler"
     echo "  logs       - Tail the scheduler logs (Ctrl+C to exit)"
     echo "  status     - Show scheduler status"
+    echo "  db         - Show expected DB path and scheduler-open DB file"
     echo ""
 }
 
@@ -30,6 +43,50 @@ function scheduler_running() {
 
 function get_scheduler_pid() {
     pgrep -f "node.*schedulers/main.js" | head -1
+}
+
+function get_scheduler_open_db() {
+    local pid
+    pid=$(get_scheduler_pid)
+    if [ -z "$pid" ]; then
+        echo ""
+        return
+    fi
+    lsof -p "$pid" 2>/dev/null | awk '/cheddar\.db$/ {print $9; exit}'
+}
+
+function infer_active_db_from_job_runs() {
+    local candidates=(
+        "$EXPECTED_DB_PATH"
+        "$ROOT_DIR/packages/data/cheddar.db"
+        "/tmp/cheddar-logic/cheddar.db"
+        "$ROOT_DIR/data/cheddar.db"
+    )
+    local best_db=""
+    local best_ts=""
+    local seen=""
+
+    for db in "${candidates[@]}"; do
+        [ -n "$db" ] || continue
+        if [[ " $seen " == *" $db "* ]]; then
+            continue
+        fi
+        seen="$seen $db"
+        [ -f "$db" ] || continue
+
+        local ts
+        ts=$(sqlite3 "$db" "SELECT COALESCE(MAX(started_at), '') FROM job_runs WHERE job_name = 'pull_odds_hourly';" 2>/dev/null)
+        [ -n "$ts" ] || continue
+
+        if [ -z "$best_ts" ] || [[ "$ts" > "$best_ts" ]]; then
+            best_ts="$ts"
+            best_db="$db"
+        fi
+    done
+
+    if [ -n "$best_db" ]; then
+        echo "$best_db|$best_ts"
+    fi
 }
 
 case "$COMMAND" in
@@ -77,6 +134,21 @@ case "$COMMAND" in
         if scheduler_running; then
             PID=$(get_scheduler_pid)
             echo -e "${GREEN}✓ Scheduler is running (PID: $PID)${NC}"
+            echo "Expected DB: $EXPECTED_DB_PATH"
+            OPEN_DB=$(get_scheduler_open_db)
+            if [ -n "$OPEN_DB" ]; then
+                echo "Scheduler DB: $OPEN_DB"
+            else
+                INFERRED=$(infer_active_db_from_job_runs)
+                if [ -n "$INFERRED" ]; then
+                    INFERRED_DB="${INFERRED%%|*}"
+                    INFERRED_TS="${INFERRED#*|}"
+                    echo "Scheduler DB: (inferred) $INFERRED_DB"
+                    echo "Last odds run: $INFERRED_TS"
+                else
+                    echo "Scheduler DB: (unable to detect open .db file)"
+                fi
+            fi
             echo ""
             echo "Recent logs:"
             tail -5 "$LOG_FILE"
@@ -84,8 +156,33 @@ case "$COMMAND" in
             echo "View full logs: ./scripts/manage-scheduler.sh logs"
         else
             echo -e "${RED}✗ Scheduler is not running${NC}"
+            echo "Expected DB: $EXPECTED_DB_PATH"
             echo ""
             echo "Start it with: ./scripts/manage-scheduler.sh start"
+        fi
+        ;;
+
+    db)
+        echo "Expected DB: $EXPECTED_DB_PATH"
+        if scheduler_running; then
+            PID=$(get_scheduler_pid)
+            OPEN_DB=$(get_scheduler_open_db)
+            echo "Scheduler PID: $PID"
+            if [ -n "$OPEN_DB" ]; then
+                echo "Scheduler DB: $OPEN_DB"
+            else
+                INFERRED=$(infer_active_db_from_job_runs)
+                if [ -n "$INFERRED" ]; then
+                    INFERRED_DB="${INFERRED%%|*}"
+                    INFERRED_TS="${INFERRED#*|}"
+                    echo "Scheduler DB: (inferred) $INFERRED_DB"
+                    echo "Last odds run: $INFERRED_TS"
+                else
+                    echo "Scheduler DB: (unable to detect open .db file)"
+                fi
+            fi
+        else
+            echo "Scheduler PID: not running"
         fi
         ;;
     

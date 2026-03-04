@@ -216,6 +216,15 @@ function trackUnknownTeamVariant(variant) {
   }
 }
 
+function normalizeTeamVariantKey(teamName) {
+  if (!teamName || typeof teamName !== 'string') return '';
+  return removeDiacritics(cleanText(teamName))
+    .replace(/[^A-Za-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 // Common team name variants for case-insensitive lookup fallback
 const TEAM_VARIANTS = {
   'TORONTO MAPLE LEAFS': ['toronto maple leafs', 'tor maple leafs', 'maple leafs'],
@@ -231,6 +240,179 @@ const TEAM_VARIANTS = {
   'CLEVELAND CAVALIERS': ['cleveland cavaliers', 'cavs', 'cavaliers'],
 };
 
+const LOGGED_TEAM_VARIANTS = [
+  // NHL
+  'Anaheim Ducks',
+  'Calgary Flames',
+  'Carolina Hurricanes',
+  'Chicago Blackhawks',
+  'Colorado Avalanche',
+  'Dallas Stars',
+  'Detroit Red Wings',
+  'Edmonton Oilers',
+  'Minnesota Wild',
+  'Montreal Canadiens',
+  'New Jersey Devils',
+  'New York Islanders',
+  'Ottawa Senators',
+  'San Jose Sharks',
+  'Seattle Kraken',
+  'St Louis Blues',
+  'Tampa Bay Lightning',
+  'Vancouver Canucks',
+  'Vegas Golden Knights',
+  'Winnipeg Jets',
+  // NBA
+  'Atlanta Hawks',
+  'Brooklyn Nets',
+  'Charlotte Hornets',
+  'Memphis Grizzlies',
+  'Milwaukee Bucks',
+  'Minnesota Timberwolves',
+  'New Orleans Pelicans',
+  'Oklahoma City Thunder',
+  'Philadelphia 76ers',
+  'Sacramento Kings',
+  'San Antonio Spurs',
+  'Toronto Raptors',
+  // NCAAM
+  'Alabama A&M Bulldogs',
+  'Alabama St Hornets',
+  'Air Force Falcons',
+  'Alcorn St Braves',
+  'Arizona St Sun Devils',
+  'Arkansas Razorbacks',
+  'Arkansas-Little Rock Trojans',
+  'Arkansas-Pine Bluff Golden Lions',
+  'Auburn Tigers',
+  'Baylor Bears',
+  'Bellarmine Knights',
+  'Boise State Broncos',
+  'Boston College Eagles',
+  'Butler Bulldogs',
+  'BYU Cougars',
+  'California Golden Bears',
+  'Charlotte 49ers',
+  'Cincinnati Bearcats',
+  'Cleveland St Vikings',
+  'Colorado Buffaloes',
+  'Colorado St Rams',
+  'Creighton Bluejays',
+  'Davidson Wildcats',
+  'DePaul Blue Demons',
+  'Detroit Mercy Titans',
+  'Duquesne Dukes',
+  'Eastern Illinois Panthers',
+  'Eastern Kentucky Colonels',
+  'Florida Gators',
+  'Florida Gulf Coast Eagles',
+  'Florida St Seminoles',
+  'Fordham Rams',
+  'Fort Wayne Mastodons',
+  'Fresno St Bulldogs',
+  'Georgia Tech Yellow Jackets',
+  'Grambling St Tigers',
+  'Grand Canyon Antelopes',
+  'Green Bay Phoenix',
+  'GW Revolutionaries',
+  'Houston Cougars',
+  'Illinois Fighting Illini',
+  'Indiana Hoosiers',
+  'Jackson St Tigers',
+  'Jacksonville Dolphins',
+  'Kansas Jayhawks',
+  'Kansas St Wildcats',
+  'Kent State Golden Flashes',
+  'La Salle Explorers',
+  'Lindenwood Lions',
+  'Loyola (Chi) Ramblers',
+  'Louisville Cardinals',
+  'LSU Tigers',
+  'Marquette Golden Eagles',
+  'Maryland Terrapins',
+  'Miami Hurricanes',
+  'Milwaukee Panthers',
+  'Minnesota Golden Gophers',
+  'Miss Valley St Delta Devils',
+  'Mississippi St Bulldogs',
+  'Nebraska Cornhuskers',
+  'Nevada Wolf Pack',
+  'New Mexico Lobos',
+  'North Alabama Lions',
+  'Northern Illinois Huskies',
+  'Northern Kentucky Norse',
+  'North Texas Mean Green',
+  'Northwestern Wildcats',
+  'Notre Dame Fighting Irish',
+  'Oakland Golden Grizzlies',
+  'Ohio State Buckeyes',
+  'Old Dominion Monarchs',
+  'Ole Miss Rebels',
+  'Oregon Ducks',
+  'Oral Roberts Golden Eagles',
+  'Penn State Nittany Lions',
+  'Pittsburgh Panthers',
+  'Providence Friars',
+  'Purdue Boilermakers',
+  'Rhode Island Rams',
+  'Rice Owls',
+  'Robert Morris Colonials',
+  'Saint Joseph\'s Hawks',
+  'Saint Louis Billikens',
+  'San Diego St Aztecs',
+  'San Jose St Spartans',
+  'SIU-Edwardsville Cougars',
+  'SMU Mustangs',
+  'Southern Jaguars',
+  'St. Bonaventure Bonnies',
+  'Stanford Cardinal',
+  'Stetson Hatters',
+  'Syracuse Orange',
+  'Texas Longhorns',
+  'UAB Blazers',
+  'UCLA Bruins',
+  'UL Monroe Warhawks',
+  'UMKC Kangaroos',
+  'UNLV Rebels',
+  'USC Trojans',
+  'Utah State Aggies',
+  'Utah Utes',
+  'Vanderbilt Commodores',
+  'Villanova Wildcats',
+  'Virginia Tech Hokies',
+  'Washington Huskies',
+  'West Virginia Mountaineers',
+  'Wisconsin Badgers',
+  'Wright St Raiders',
+  'Wyoming Cowboys',
+  'Youngstown St Penguins',
+];
+
+for (const teamName of LOGGED_TEAM_VARIANTS) {
+  const canonical = teamName.toUpperCase();
+  if (!TEAM_VARIANTS[canonical]) {
+    TEAM_VARIANTS[canonical] = [];
+  }
+  const variant = teamName.toLowerCase();
+  if (!TEAM_VARIANTS[canonical].includes(variant)) {
+    TEAM_VARIANTS[canonical].push(variant);
+  }
+}
+
+const TEAM_VARIANT_LOOKUP = new Map();
+for (const [canonical, variants] of Object.entries(TEAM_VARIANTS)) {
+  const canonicalKey = normalizeTeamVariantKey(canonical);
+  if (canonicalKey && !TEAM_VARIANT_LOOKUP.has(canonicalKey)) {
+    TEAM_VARIANT_LOOKUP.set(canonicalKey, canonical);
+  }
+  for (const variant of variants) {
+    const key = normalizeTeamVariantKey(variant);
+    if (key && !TEAM_VARIANT_LOOKUP.has(key)) {
+      TEAM_VARIANT_LOOKUP.set(key, canonical);
+    }
+  }
+}
+
 /**
  * Normalize team name: trim, preserve case, build reverse variant map
  * Returns the canonical form if found in variants
@@ -243,13 +425,10 @@ function normalizeTeamName(teamName, context = 'normalizeTeamName') {
   if (!teamName || typeof teamName !== 'string') return '';
   
   const cleaned = cleanText(teamName);
-  const lowerClean = cleaned.toLowerCase();
+  const lookupKey = normalizeTeamVariantKey(cleaned);
   
-  // Build reverse lookup from TEAM_VARIANTS
-  for (const [canonical, variants] of Object.entries(TEAM_VARIANTS)) {
-    if (variants.includes(lowerClean)) {
-      return canonical;
-    }
+  if (lookupKey && TEAM_VARIANT_LOOKUP.has(lookupKey)) {
+    return TEAM_VARIANT_LOOKUP.get(lookupKey);
   }
   
   // Unknown variant: track it for discovery, then return cleaned

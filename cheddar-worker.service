@@ -22,6 +22,11 @@ RestartSec=30s
 StartLimitInterval=300s
 StartLimitBurst=5
 
+# Shutdown handling
+TimeoutStopSec=10s
+KillMode=mixed
+KillSignal=SIGTERM
+
 # Resource limits
 MemoryLimit=512M
 CPUQuota=50%

@@ -28,7 +28,9 @@ let SQL = null;
 let dbInstance = null;
 let dbPath = null;
 const warnedSportValues = new Set();
+let oddsContextReferenceRegistry = new WeakMap();
 const EXPECTED_TABLE_NAMES = ['games', 'card_payloads', 'card_results', 'game_results'];
+const REQUIRED_CARD_RESULTS_MARKET_COLUMNS = ['market_key', 'market_type', 'selection', 'line', 'locked_price'];
 
 function normalizeConfiguredPath(rawPath) {
   if (!rawPath || typeof rawPath !== 'string') return null;
@@ -52,15 +54,23 @@ function normalizeConfiguredPath(rawPath) {
 function inspectDatabaseStats(dbFile) {
   try {
     if (!fs.existsSync(dbFile)) {
-      return { exists: false, tableCount: 0, rowCount: 0, modifiedMs: 0 };
+      return {
+        exists: false,
+        tableCount: 0,
+        rowCount: 0,
+        cardPayloadCount: 0,
+        hasMarketContractColumns: false,
+        modifiedMs: 0,
+      };
     }
     const stats = fs.statSync(dbFile);
     const buffer = fs.readFileSync(dbFile);
     const db = new SQL.Database(buffer);
+    const tablePlaceholders = EXPECTED_TABLE_NAMES.map(() => '?').join(', ');
     const tableStmt = db.prepare(
       `SELECT COUNT(*) AS c
        FROM sqlite_master
-       WHERE type='table' AND name IN (?, ?, ?, ?)`
+       WHERE type='table' AND name IN (${tablePlaceholders})`
     );
     tableStmt.bind(EXPECTED_TABLE_NAMES);
     let tableCount = 0;
@@ -71,18 +81,41 @@ function inspectDatabaseStats(dbFile) {
     tableStmt.free();
 
     let rowCount = 0;
+    let cardPayloadCount = 0;
+    let hasMarketContractColumns = false;
     if (tableCount > 0) {
       for (const tableName of EXPECTED_TABLE_NAMES) {
         try {
           const countStmt = db.prepare(`SELECT COUNT(*) AS c FROM ${tableName}`);
           if (countStmt.step()) {
             const row = countStmt.getAsObject();
-            rowCount += Number(row.c || 0);
+            const count = Number(row.c || 0);
+            rowCount += count;
+            if (tableName === 'card_payloads') {
+              cardPayloadCount = count;
+            }
           }
           countStmt.free();
         } catch {
           // Ignore missing/incompatible tables.
         }
+      }
+
+      try {
+        const columnStmt = db.prepare(`PRAGMA table_info(card_results)`);
+        const columnNames = new Set();
+        while (columnStmt.step()) {
+          const row = columnStmt.getAsObject();
+          if (typeof row.name === 'string') {
+            columnNames.add(row.name);
+          }
+        }
+        columnStmt.free();
+        hasMarketContractColumns = REQUIRED_CARD_RESULTS_MARKET_COLUMNS.every((name) =>
+          columnNames.has(name)
+        );
+      } catch {
+        // Best-effort schema inspection.
       }
     }
 
@@ -91,10 +124,19 @@ function inspectDatabaseStats(dbFile) {
       exists: true,
       tableCount,
       rowCount,
+      cardPayloadCount,
+      hasMarketContractColumns,
       modifiedMs: Number(stats.mtimeMs || 0),
     };
   } catch {
-    return { exists: true, tableCount: 0, rowCount: 0, modifiedMs: 0 };
+    return {
+      exists: true,
+      tableCount: 0,
+      rowCount: 0,
+      cardPayloadCount: 0,
+      hasMarketContractColumns: false,
+      modifiedMs: 0,
+    };
   }
 }
 
@@ -177,6 +219,16 @@ function chooseBestDatabasePath(primaryPath) {
   let bestPath = primaryPath;
   let bestStats = inspectDatabaseStats(primaryPath);
 
+  const primaryLooksHealthy =
+    bestStats.exists
+    && bestStats.tableCount === EXPECTED_TABLE_NAMES.length
+    && bestStats.cardPayloadCount > 0
+    && bestStats.hasMarketContractColumns;
+
+  if (primaryLooksHealthy) {
+    return primaryPath;
+  }
+
   for (const candidate of uniqueCandidates) {
     const stats = inspectDatabaseStats(candidate);
     if (shouldPreferCandidate(stats, bestStats)) {
@@ -187,7 +239,7 @@ function chooseBestDatabasePath(primaryPath) {
 
   if (bestPath !== primaryPath && bestStats.rowCount > 0) {
     console.warn(
-      `[DB] Using populated database: ${bestPath} (tables=${bestStats.tableCount}, rows=${bestStats.rowCount}) instead of ${primaryPath}`
+      `[DB] Using populated database: ${bestPath} (tables=${bestStats.tableCount}, rows=${bestStats.rowCount}, payloads=${bestStats.cardPayloadCount}) instead of ${primaryPath}`
     );
   }
 
@@ -211,21 +263,21 @@ function normalizeSportValue(sport, context) {
 async function initDb() {
   if (SQL) return;
   SQL = await initSqlJs();
+  // Ensure registry is fresh on init
+  oddsContextReferenceRegistry = new WeakMap();
 }
 
 /**
  * Load database from disk or create new
  */
 function loadDatabase() {
-  const explicitPath =
-    normalizeConfiguredPath(process.env.DATABASE_PATH) ||
-    normalizeConfiguredPath(process.env.DATABASE_URL) ||
-    normalizeConfiguredPath(process.env.CHEDDAR_DB_PATH);
-  const preferredPath =
-    dbPath ||
-    explicitPath ||
-    normalizeConfiguredPath(path.join(process.env.CHEDDAR_DATA_DIR || '/tmp/cheddar-logic', 'cheddar.db'));
+  const resolved = resolveDatabasePath();
+  const preferredPath = dbPath || resolved.dbPath;
   const dbFile = chooseBestDatabasePath(preferredPath);
+
+  if (resolved.isExplicitFile && !fs.existsSync(preferredPath)) {
+    console.warn(`[DB] ${resolved.source} points to missing DB file. Creating new DB at: ${preferredPath}`);
+  }
 
   dbPath = dbFile;
   const dir = path.dirname(dbFile);
@@ -390,6 +442,8 @@ function closeDatabase() {
     dbInstance.close();
     dbInstance = null;
   }
+  // Reset odds context registry on close
+  oddsContextReferenceRegistry = new WeakMap();
 }
 
 /**
@@ -1227,6 +1281,11 @@ function insertCardPayload(card) {
 
   const oddsContext = payloadData?.odds_context;
   if (lockedMarket && oddsContext && typeof oddsContext === 'object') {
+    // Ensure registry exists (defensive check)
+    if (!oddsContextReferenceRegistry) {
+      oddsContextReferenceRegistry = new WeakMap();
+    }
+    
     const existing = oddsContextReferenceRegistry.get(oddsContext);
     if (
       existing &&
