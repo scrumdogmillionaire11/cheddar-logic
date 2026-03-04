@@ -288,6 +288,26 @@ function normalizeNumberArray(value: unknown): number[] | undefined {
   return numbers.length > 0 ? numbers : undefined;
 }
 
+function extractShotsFromRecentGames(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const shots = value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return undefined;
+      const row = item as Record<string, unknown>;
+      const direct = row.shots;
+      if (typeof direct === 'number' && Number.isFinite(direct)) return direct;
+      if (typeof direct === 'string') {
+        const parsed = Number(direct);
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      return undefined;
+    })
+    .filter((num): num is number => typeof num === 'number' && Number.isFinite(num));
+
+  return shots.length > 0 ? shots : undefined;
+}
+
 export async function GET(request: NextRequest) {
   try {
     // Security checks: rate limiting, input validation
@@ -536,12 +556,31 @@ export async function GET(request: NextRequest) {
           (payload as Record<string, unknown>).data_quality,
           payloadPlay?.data_quality
         );
+        const payloadDrivers: Record<string, unknown> | null = 
+          payload.drivers && typeof payload.drivers === 'object' ? 
+            (payload.drivers as Record<string, unknown>) : null;
         const normalizedL5Sog =
           normalizeNumberArray((payload as Record<string, unknown>).l5_sog) ??
-          normalizeNumberArray(payloadPlay?.l5_sog);
+          normalizeNumberArray(payloadPlay?.l5_sog) ??
+          normalizeNumberArray(payloadDrivers?.l5_sog) ??
+          normalizeNumberArray((payload as Record<string, unknown>).last5_sog) ??
+          normalizeNumberArray((payload as Record<string, unknown>).last5Shots) ??
+          normalizeNumberArray((payload as Record<string, unknown>).l5) ??
+          extractShotsFromRecentGames((payload as Record<string, unknown>).last5Games) ??
+          extractShotsFromRecentGames((payload as Record<string, unknown>).recent_games) ??
+          extractShotsFromRecentGames(payloadPlay?.last5Games) ??
+          extractShotsFromRecentGames(payloadPlay?.recent_games);
         const normalizedL5Mean = firstNumber(
           (payload as Record<string, unknown>).l5_mean,
-          payloadPlay?.l5_mean
+          payloadPlay?.l5_mean,
+          payloadDrivers?.l5_avg,
+          (payload as Record<string, unknown>).last5_mean,
+          payloadPlay?.last5_mean,
+          (payload as Record<string, unknown>).last5_avg,
+          payloadPlay?.last5_avg,
+          normalizedL5Sog && normalizedL5Sog.length > 0
+            ? normalizedL5Sog.reduce((acc, value) => acc + value, 0) / normalizedL5Sog.length
+            : undefined
         );
         const combinedReasonCodes = [
           ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),

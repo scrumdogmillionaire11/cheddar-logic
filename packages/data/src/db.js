@@ -177,6 +177,12 @@ function listDbFiles(directory) {
   }
 }
 
+function isTruthyEnv(value) {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+}
+
 function chooseBestDatabasePath(primaryPath) {
   const primaryDir = path.dirname(primaryPath);
   const configuredDataDir = normalizeConfiguredPath(process.env.CHEDDAR_DATA_DIR);
@@ -289,10 +295,26 @@ function loadDatabase() {
     warnedRecordPathContract = true;
   }
   const preferredPath = dbPath || resolved.dbPath;
-  const dbFile = chooseBestDatabasePath(preferredPath);
+  const autoDiscoverEnabled = isTruthyEnv(process.env.CHEDDAR_DB_AUTODISCOVER);
+  const dbFile = autoDiscoverEnabled ? chooseBestDatabasePath(preferredPath) : preferredPath;
 
   if (resolved.isExplicitFile && !fs.existsSync(preferredPath)) {
-    console.warn(`[DB] ${resolved.source} points to missing DB file. Creating new DB at: ${preferredPath}`);
+    const message = `[DB] ${resolved.source} points to missing DB file: ${preferredPath}`;
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(message);
+    }
+    console.warn(`${message}. Creating new DB at this path.`);
+  }
+
+  if (process.env.NODE_ENV === 'production' && !autoDiscoverEnabled && dbFile !== preferredPath) {
+    throw new Error(
+      `[DB] Production DB path drift detected. Expected ${preferredPath}, got ${dbFile}. ` +
+      `Disable fallback selection and keep one canonical record database.`
+    );
+  }
+
+  if (process.env.NODE_ENV === 'production' && !autoDiscoverEnabled) {
+    console.log(`[DB] Using strict DB path in production (${resolved.source}): ${dbFile}`);
   }
 
   dbPath = dbFile;

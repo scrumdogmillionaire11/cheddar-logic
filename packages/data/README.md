@@ -294,6 +294,7 @@ The client uses SQLite with a singleton connection.
 - `DATABASE_PATH`: Legacy alias for DB path (supported for compatibility)
 - `DATABASE_URL`: SQLite URL format (`sqlite:///...`) supported for compatibility
 - `CHEDDAR_DATA_DIR`: Fallback directory if explicit file path env vars are not set
+- `CHEDDAR_DB_AUTODISCOVER`: Optional emergency fallback (`true` enables scanning alternate DB files; default strict single-path mode)
 
 ## Datetime Standard
 
