@@ -154,6 +154,22 @@ export async function GET(request: NextRequest) {
       return addRateLimitHeaders(response, request);
     }
 
+    const cardResultsColumns = new Set(
+      (db.prepare(`PRAGMA table_info(card_results)`).all() as Array<{ name?: string }>)
+        .map((row) => String(row.name || '').toLowerCase())
+        .filter(Boolean)
+    );
+    const hasMarketKeyColumn = cardResultsColumns.has('market_key');
+    const hasMarketTypeColumn = cardResultsColumns.has('market_type');
+    const hasSelectionColumn = cardResultsColumns.has('selection');
+    const hasLineColumn = cardResultsColumns.has('line');
+    const hasLockedPriceColumn = cardResultsColumns.has('locked_price');
+    const marketKeySelect = hasMarketKeyColumn ? 'cr.market_key AS market_key' : 'NULL AS market_key';
+    const marketTypeSelect = hasMarketTypeColumn ? 'cr.market_type AS market_type' : 'NULL AS market_type';
+    const selectionSelect = hasSelectionColumn ? 'cr.selection AS selection' : 'NULL AS selection';
+    const lineSelect = hasLineColumn ? 'cr.line AS line' : 'NULL AS line';
+    const lockedPriceSelect = hasLockedPriceColumn ? 'cr.locked_price AS locked_price' : 'NULL AS locked_price';
+
     const { searchParams } = request.nextUrl;
     const limit = clampNumber(searchParams.get('limit'), 50, 1, 200);
 
@@ -209,11 +225,11 @@ export async function GET(request: NextRequest) {
           cr.id,
           cr.game_id,
           cr.recommended_bet_type,
-          cr.market_key,
-          cr.market_type,
-          cr.selection,
-          cr.line,
-          cr.locked_price,
+          ${marketKeySelect},
+          ${marketTypeSelect},
+          ${selectionSelect},
+          ${lineSelect},
+          ${lockedPriceSelect},
           cr.settled_at,
           ${confidenceExpr} AS confidence_pct
         FROM card_results cr
@@ -358,11 +374,11 @@ export async function GET(request: NextRequest) {
         cr.sport,
         cr.card_type,
         cr.recommended_bet_type,
-        cr.market_key,
-        cr.market_type,
-        cr.selection,
-        cr.line,
-        cr.locked_price,
+        ${marketKeySelect},
+        ${marketTypeSelect},
+        ${selectionSelect},
+        ${lineSelect},
+        ${lockedPriceSelect},
         cr.result,
         cr.pnl_units,
         cr.settled_at,

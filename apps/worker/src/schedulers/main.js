@@ -47,6 +47,8 @@ const { backfillCardResults } = require('../jobs/backfill_card_results');
 const TZ = process.env.TZ || 'America/New_York';
 const ODDS_GAP_ALERT_MINUTES = Number(process.env.ODDS_GAP_ALERT_MINUTES || 90);
 const ODDS_GAP_ALERT_COOLDOWN_MS = Number(process.env.ODDS_GAP_ALERT_COOLDOWN_MS || 15 * 60 * 1000);
+const REQUIRE_FRESH_ODDS_FOR_MODELS = process.env.REQUIRE_FRESH_ODDS_FOR_MODELS !== 'false';
+const MODEL_ODDS_MAX_AGE_MINUTES = Number(process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES);
 let lastOddsGapAlertAt = 0;
 
 /**
@@ -120,6 +122,16 @@ function checkOddsFreshnessHealth(nowUtc) {
     `[SCHEDULER][HEALTH] No successful pull_odds_hourly run in the last ${ODDS_GAP_ALERT_MINUTES} minutes. ` +
     'Odds pipeline may be stale.'
   );
+}
+
+function isModelJob(jobName) {
+  return typeof jobName === 'string' && jobName.startsWith('run_') && jobName.endsWith('_model');
+}
+
+function hasFreshOddsForModels() {
+  if (!REQUIRE_FRESH_ODDS_FOR_MODELS) return true;
+  if (process.env.ENABLE_ODDS_PULL === 'false') return true;
+  return wasJobRecentlySuccessful('pull_odds_hourly', MODEL_ODDS_MAX_AGE_MINUTES);
 }
 
 /**
@@ -296,8 +308,20 @@ async function tick() {
   });
 
   console.log(`[SCHEDULER] Tick ${nowEt.toISO()} ET — due candidates: ${uniqueDue.length}`);
+  let staleOddsSkipLogged = false;
 
   for (const job of uniqueDue) {
+    if (isModelJob(job.jobName) && !hasFreshOddsForModels()) {
+      if (!staleOddsSkipLogged) {
+        console.warn(
+          `[SCHEDULER][GATE] Skipping model jobs: no successful pull_odds_hourly in last ${MODEL_ODDS_MAX_AGE_MINUTES} minutes`
+        );
+        staleOddsSkipLogged = true;
+      }
+      console.log(`  ⏭️  skip ${job.jobKey} (${job.jobName}) — stale odds`);
+      continue;
+    }
+
     // Idempotency gate
     if (!shouldRunJobKey(job.jobKey)) {
       console.log(`  ⏭️  skip ${job.jobKey} (${job.jobName})`);
@@ -339,6 +363,8 @@ async function start() {
   console.log(`  DRY_RUN: ${process.env.DRY_RUN || 'false'}`);
   console.log(`  FIXED_CATCHUP: ${process.env.FIXED_CATCHUP !== 'false' ? 'true' : 'false'}`);
   console.log(`  ENABLE_ODDS_PULL: ${process.env.ENABLE_ODDS_PULL !== 'false' ? 'true' : 'false'}`);
+  console.log(`  REQUIRE_FRESH_ODDS_FOR_MODELS: ${REQUIRE_FRESH_ODDS_FOR_MODELS ? 'true' : 'false'}`);
+  console.log(`  MODEL_ODDS_MAX_AGE_MINUTES: ${MODEL_ODDS_MAX_AGE_MINUTES}`);
   console.log(`  ENABLE_SETTLEMENT: ${process.env.ENABLE_SETTLEMENT !== 'false' ? 'true' : 'false'}`);
   console.log(`  Enabled sports: ${enabledSports().join(', ') || 'none'}`);
   console.log('═'.repeat(60));
