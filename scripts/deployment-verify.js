@@ -17,10 +17,22 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { resolveDatabasePath } = require('../packages/data/src/db-path');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const DB_PATH = path.resolve(PROJECT_ROOT, 'packages/data/cheddar.db');
 const BACKUP_DIR = path.resolve(PROJECT_ROOT, 'packages/data/.backups');
+const RESOLVED_DB = (() => {
+  try {
+    return resolveDatabasePath({ env: process.env, cwd: PROJECT_ROOT });
+  } catch {
+    return {
+      dbPath: path.resolve(PROJECT_ROOT, 'packages/data/cheddar.db'),
+      source: 'DEFAULT',
+      isExplicitFile: false,
+    };
+  }
+})();
+const DB_PATH = RESOLVED_DB.dbPath;
 
 const RED = '\x1b[31m';
 const GREEN = '\x1b[32m';
@@ -134,11 +146,11 @@ async function checkGitStatus() {
 
 async function checkDatabase() {
   if (!fs.existsSync(DB_PATH)) {
-    fail(`Database not found: ${DB_PATH}`);
+    fail(`Database not found (${RESOLVED_DB.source}): ${DB_PATH}`);
     return;
   }
 
-  ok(`Database exists: ${DB_PATH}`);
+  ok(`Database exists (${RESOLVED_DB.source}): ${DB_PATH}`);
 
   // Check file permissions
   try {
@@ -200,14 +212,24 @@ function checkJobPaths() {
 }
 
 function checkEnvironment() {
-  // Check if we can resolve DATABASE_PATH
-  const dbPath = process.env.DATABASE_PATH || 
-    path.resolve(PROJECT_ROOT, 'packages/data/cheddar.db');
-  
-  if (fs.existsSync(dbPath)) {
-    ok(`DATABASE_PATH resolves: ${dbPath}`);
-  } else {
-    warn(`DATABASE_PATH may not be set correctly`);
+  // Resolve DB path using the same precedence contract as runtime code.
+  let resolved = RESOLVED_DB;
+  try {
+    resolveDatabasePath({ env: process.env, cwd: PROJECT_ROOT });
+    ok(`Record DB resolves (${resolved.source}): ${resolved.dbPath}`);
+  } catch (e) {
+    fail(`Database path contract violation: ${e.message}`);
+    resolved = null;
+  }
+
+  if (process.env.NODE_ENV === 'production' && !process.env.RECORD_DATABASE_PATH) {
+    warn('RECORD_DATABASE_PATH is not set in production env (recommended canonical source)');
+  }
+
+  if (resolved && fs.existsSync(resolved.dbPath)) {
+    ok('Resolved DB file exists');
+  } else if (resolved) {
+    warn(`Resolved DB file is missing: ${resolved.dbPath}`);
   }
 
   const nodeEnv = process.env.NODE_ENV || 'development';

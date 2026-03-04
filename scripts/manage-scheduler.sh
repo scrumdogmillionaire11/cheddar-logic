@@ -18,7 +18,7 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
-EXPECTED_DB_PATH="${CHEDDAR_DB_PATH:-${DATABASE_PATH:-$ROOT_DIR/packages/data/cheddar.db}}"
+EXPECTED_DB_PATH="${RECORD_DATABASE_PATH:-${CHEDDAR_DB_PATH:-${DATABASE_PATH:-$ROOT_DIR/packages/data/cheddar.db}}}"
 
 # Color output
 BLUE='\033[0;34m'

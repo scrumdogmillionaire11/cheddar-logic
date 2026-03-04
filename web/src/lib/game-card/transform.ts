@@ -1011,7 +1011,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       homeTeam: game.homeTeam,
       awayTeam: game.awayTeam,
       status: game.status,
-      oddsUpdatedUtc: game.odds?.capturedAt,
+      oddsUpdatedUtc: game.odds?.capturedAt ?? undefined,
       moneyline: game.odds?.h2hHome && game.odds?.h2hAway
         ? { home: game.odds.h2hHome, away: game.odds.h2hAway }
         : undefined,

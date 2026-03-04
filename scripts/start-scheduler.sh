@@ -22,9 +22,10 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Canonical DB settings (all worker processes should use these)
-# Prefer existing DATABASE_PATH from env; otherwise default repo-local for dev.
-DEFAULT_DB_PATH="${DATABASE_PATH:-$ROOT_DIR/packages/data/cheddar.db}"
-export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-$DEFAULT_DB_PATH}"
+# Prefer existing RECORD_DATABASE_PATH from env; otherwise fallback for dev.
+DEFAULT_DB_PATH="${RECORD_DATABASE_PATH:-${DATABASE_PATH:-$ROOT_DIR/packages/data/cheddar.db}}"
+export RECORD_DATABASE_PATH="${RECORD_DATABASE_PATH:-$DEFAULT_DB_PATH}"
+export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-$RECORD_DATABASE_PATH}"
 export CHEDDAR_DATA_DIR="${CHEDDAR_DATA_DIR:-$(dirname "$CHEDDAR_DB_PATH")}" 
 export DATABASE_PATH="${DATABASE_PATH:-$CHEDDAR_DB_PATH}"
 

@@ -4,6 +4,20 @@ const { resolveDatabasePath, parseSqliteUrl, DEFAULT_DATABASE_PATH } = require('
 describe('db-path resolver', () => {
   const cwd = '/repo';
 
+  test('uses RECORD_DATABASE_PATH as canonical source when present', () => {
+    const resolved = resolveDatabasePath({
+      cwd,
+      env: {
+        RECORD_DATABASE_PATH: './shared/record.db',
+        CHEDDAR_DB_PATH: './shared/record.db',
+        DATABASE_PATH: './shared/record.db',
+      },
+    });
+
+    expect(resolved.dbPath).toBe(path.resolve(cwd, 'shared/record.db'));
+    expect(resolved.source).toBe('RECORD_DATABASE_PATH');
+  });
+
   test('uses CHEDDAR_DB_PATH as canonical source when present', () => {
     const resolved = resolveDatabasePath({
       cwd,
@@ -22,6 +36,7 @@ describe('db-path resolver', () => {
       resolveDatabasePath({
         cwd,
         env: {
+          RECORD_DATABASE_PATH: '/tmp/shared.db',
           CHEDDAR_DB_PATH: '/tmp/a.db',
           DATABASE_PATH: '/tmp/b.db',
         },

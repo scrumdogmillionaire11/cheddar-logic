@@ -289,7 +289,8 @@ Delete cards older than N days. Returns count deleted.
 The client uses SQLite with a singleton connection.
 
 **Environment variables:**
-- `CHEDDAR_DB_PATH`: Canonical SQLite path (recommended single source of truth)
+- `RECORD_DATABASE_PATH`: Canonical SQLite record DB path (preferred single source of truth)
+- `CHEDDAR_DB_PATH`: Legacy canonical alias for record DB path (supported for compatibility)
 - `DATABASE_PATH`: Legacy alias for DB path (supported for compatibility)
 - `DATABASE_URL`: SQLite URL format (`sqlite:///...`) supported for compatibility
 - `CHEDDAR_DATA_DIR`: Fallback directory if explicit file path env vars are not set
