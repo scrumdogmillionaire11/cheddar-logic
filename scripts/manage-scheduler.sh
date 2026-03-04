@@ -6,8 +6,11 @@ COMMAND="${1:-status}"
 LOG_FILE="./apps/worker/logs/scheduler.log"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Load environment from repo .env if present (single DB source of truth)
+# Load environment from repo .env (dev) or .env.production (prod)
 ENV_FILE="${CHEDDAR_ENV_FILE:-$ROOT_DIR/.env}"
+if [ ! -f "$ENV_FILE" ] && [ -f "$ROOT_DIR/.env.production" ]; then
+    ENV_FILE="$ROOT_DIR/.env.production"
+fi
 if [ -f "$ENV_FILE" ]; then
     set -a
     # shellcheck disable=SC1090
@@ -15,7 +18,7 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
-EXPECTED_DB_PATH="${CHEDDAR_DB_PATH:-$ROOT_DIR/packages/data/cheddar.db}"
+EXPECTED_DB_PATH="${CHEDDAR_DB_PATH:-${DATABASE_PATH:-$ROOT_DIR/packages/data/cheddar.db}}"
 
 # Color output
 BLUE='\033[0;34m'
@@ -59,6 +62,7 @@ function infer_active_db_from_job_runs() {
     local candidates=(
         "$EXPECTED_DB_PATH"
         "$ROOT_DIR/packages/data/cheddar.db"
+        "/opt/data/cheddar.db"
         "/tmp/cheddar-logic/cheddar.db"
         "$ROOT_DIR/data/cheddar.db"
     )

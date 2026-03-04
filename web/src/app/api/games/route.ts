@@ -100,6 +100,21 @@ interface Play {
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
+  // Prop-specific fields
+  run_id?: string;
+  created_at?: string;
+  player_id?: string;
+  player_name?: string;
+  team_abbr?: string;
+  game_id?: string;
+  mu?: number | null;
+  suggested_line?: number | null;
+  threshold?: number | null;
+  is_trending?: boolean;
+  role_gate_pass?: boolean;
+  data_quality?: string | null;
+  l5_sog?: number[] | null;
+  l5_mean?: number | null;
   // Legacy repair fields
   repair_applied?: boolean;
   repair_rule_id?: string;
@@ -267,6 +282,12 @@ function firstNumber(...values: unknown[]): number | undefined {
   return undefined;
 }
 
+function normalizeNumberArray(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const numbers = value.filter((item) => typeof item === 'number' && Number.isFinite(item)) as number[];
+  return numbers.length > 0 ? numbers : undefined;
+}
+
 export async function GET(request: NextRequest) {
   try {
     // Security checks: rate limiting, input validation
@@ -360,7 +381,7 @@ export async function GET(request: NextRequest) {
     // Collect all game IDs for the card_payloads query
     const gameIds = rows.map((r) => r.game_id);
 
-    // Build a plays map keyed by game_id
+    // Build a plays map keyed by canonical game_id
     const playsMap = new Map<string, Play[]>();
     const gameConsistencyMap = new Map<string, Play['consistency']>();
     let repairedPlayCount = 0;
@@ -370,9 +391,29 @@ export async function GET(request: NextRequest) {
     const marketTypeCounts = new Map<string, number>();
     const reasonCodeCounts = new Map<string, number>();
 
+    // STEP 1 FIX: Resolve external game IDs (ESPN, etc.) that map to our canonical game_ids
+    // This allows props stored with external IDs to be joined to games with canonical IDs
+    const externalToCanonicalMap = new Map<string, string>(); // external_game_id -> canonical game_id
+    const allQueryableIds: string[] = [...gameIds]; // Start with canonical IDs
+
     if (gameIds.length > 0) {
-      // SQLite doesn't support array binding; build placeholders manually
-      const placeholders = gameIds.map(() => '?').join(', ');
+      // Look up external game IDs that map to our canonical game IDs
+      const idMapPlaceholders = gameIds.map(() => '?').join(', ');
+      const idMapSql = `
+        SELECT game_id, external_game_id
+        FROM game_id_map
+        WHERE game_id IN (${idMapPlaceholders})
+      `;
+      const idMapStmt = db.prepare(idMapSql);
+      const idMapRows = idMapStmt.all(...gameIds) as Array<{ game_id: string; external_game_id: string }>;
+      
+      for (const row of idMapRows) {
+        externalToCanonicalMap.set(row.external_game_id, row.game_id);
+        allQueryableIds.push(row.external_game_id);
+      }
+
+      // SQLite doesn't support array binding; build placeholders for ALL IDs (canonical + external)
+      const placeholders = allQueryableIds.map(() => '?').join(', ');
       const cardsSql = `
         SELECT game_id, card_type, card_title, payload_data
         FROM card_payloads
@@ -382,7 +423,7 @@ export async function GET(request: NextRequest) {
         ORDER BY created_at DESC
       `;
       const cardsStmt = db.prepare(cardsSql);
-      const cardRows = cardsStmt.all(...gameIds) as CardPayloadRow[];
+      const cardRows = cardsStmt.all(...allQueryableIds) as CardPayloadRow[];
 
       for (const cardRow of cardRows) {
         let payload: Record<string, unknown> | null = null;
@@ -421,7 +462,8 @@ export async function GET(request: NextRequest) {
         const normalizedMarketType = normalizeMarketType(payload.market_type ?? payloadPlay?.market_type);
         const normalizedPlayerName = firstString(
           payloadSelection?.player_name,
-          payloadPlay?.player_name
+          payloadPlay?.player_name,
+          (payload as Record<string, unknown>).player_name
         );
         const normalizedSelectionTeam = firstString(
           normalizedPlayerName,
@@ -438,6 +480,68 @@ export async function GET(request: NextRequest) {
           payload.price,
           payloadPlay?.price,
           payloadSelection?.price
+        );
+        const normalizedRunId = firstString(
+          (payload as Record<string, unknown>).run_id,
+          payloadPlay?.run_id
+        );
+        const normalizedCreatedAt = firstString(
+          (payload as Record<string, unknown>).created_at,
+          payloadPlay?.created_at
+        );
+        const normalizedPlayerId = firstString(
+          payloadSelection?.player_id,
+          payloadPlay?.player_id,
+          (payload as Record<string, unknown>).player_id
+        );
+        const normalizedTeamAbbr = firstString(
+          (payload as Record<string, unknown>).team_abbr,
+          payloadSelection?.team_abbr,
+          payloadPlay?.team_abbr
+        );
+        const normalizedGameId = firstString(
+          (payload as Record<string, unknown>).game_id,
+          payloadPlay?.game_id
+        );
+        const normalizedMu = firstNumber(
+          (payload as Record<string, unknown>).mu,
+          payloadPlay?.mu,
+          (payload.projection as Record<string, unknown>)?.mu,
+          (payload.projection as Record<string, unknown>)?.total,
+          driverInputs?.mu,
+          driverInputs?.projected_total
+        );
+        const normalizedSuggestedLine = firstNumber(
+          (payload as Record<string, unknown>).suggested_line,
+          payloadPlay?.suggested_line,
+          normalizedLine
+        );
+        const normalizedThreshold = firstNumber(
+          (payload as Record<string, unknown>).threshold,
+          payloadPlay?.threshold
+        );
+        const normalizedIsTrending =
+          typeof (payload as Record<string, unknown>).is_trending === 'boolean'
+            ? (payload as Record<string, unknown>).is_trending as boolean
+            : typeof payloadPlay?.is_trending === 'boolean'
+              ? payloadPlay.is_trending as boolean
+              : undefined;
+        const normalizedRoleGatePass =
+          typeof (payload as Record<string, unknown>).role_gate_pass === 'boolean'
+            ? (payload as Record<string, unknown>).role_gate_pass as boolean
+            : typeof payloadPlay?.role_gate_pass === 'boolean'
+              ? payloadPlay.role_gate_pass as boolean
+              : undefined;
+        const normalizedDataQuality = firstString(
+          (payload as Record<string, unknown>).data_quality,
+          payloadPlay?.data_quality
+        );
+        const normalizedL5Sog =
+          normalizeNumberArray((payload as Record<string, unknown>).l5_sog) ??
+          normalizeNumberArray(payloadPlay?.l5_sog);
+        const normalizedL5Mean = firstNumber(
+          (payload as Record<string, unknown>).l5_mean,
+          payloadPlay?.l5_mean
         );
         const combinedReasonCodes = [
           ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
@@ -553,6 +657,20 @@ export async function GET(request: NextRequest) {
           price: normalizedPrice,
           reason_codes: combinedReasonCodes,
           tags: combinedTags,
+          run_id: normalizedRunId,
+          created_at: normalizedCreatedAt,
+          player_id: normalizedPlayerId,
+          player_name: normalizedPlayerName,
+          team_abbr: normalizedTeamAbbr,
+          game_id: normalizedGameId ?? cardRow.game_id,
+          mu: normalizedMu ?? null,
+          suggested_line: normalizedSuggestedLine ?? null,
+          threshold: normalizedThreshold ?? null,
+          is_trending: normalizedIsTrending,
+          role_gate_pass: normalizedRoleGatePass,
+          data_quality: normalizedDataQuality ?? null,
+          l5_sog: normalizedL5Sog ?? null,
+          l5_mean: normalizedL5Mean ?? null,
           consistency:
             payload.consistency && typeof payload.consistency === 'object'
               ? {
@@ -644,15 +762,18 @@ export async function GET(request: NextRequest) {
           reasonCodeCounts.set(reasonCode, (reasonCodeCounts.get(reasonCode) ?? 0) + 1);
         }
 
-        if (!gameConsistencyMap.has(cardRow.game_id)) {
-          gameConsistencyMap.set(cardRow.game_id, play.consistency ?? { total_bias: 'UNKNOWN' });
+        // Map external game_id to canonical game_id for proper association
+        const canonicalGameId = externalToCanonicalMap.get(cardRow.game_id) ?? cardRow.game_id;
+
+        if (!gameConsistencyMap.has(canonicalGameId)) {
+          gameConsistencyMap.set(canonicalGameId, play.consistency ?? { total_bias: 'UNKNOWN' });
         }
 
-        const existing = playsMap.get(cardRow.game_id);
+        const existing = playsMap.get(canonicalGameId);
         if (existing) {
           existing.push(play);
         } else {
-          playsMap.set(cardRow.game_id, [play]);
+          playsMap.set(canonicalGameId, [play]);
         }
       }
     }
@@ -696,11 +817,22 @@ export async function GET(request: NextRequest) {
     const repairRatio = totalPlayCount > 0 ? repairedPlayCount / totalPlayCount : 0;
     const repairCap = 0.2;
 
+    // Join diagnostics for game ID mapping (dev mode only)
+    const isDev = process.env.NODE_ENV !== 'production';
+    const joinDebug = isDev ? {
+      canonical_game_ids_queried: gameIds.length,
+      external_ids_resolved: externalToCanonicalMap.size,
+      total_queryable_ids: allQueryableIds.length,
+      plays_found: totalPlayCount,
+      games_with_plays: playsMap.size,
+    } : undefined;
+
     const response = NextResponse.json(
       {
         success: true,
         data,
         warning: repairRatio > repairCap,
+        ...(joinDebug ? { join_debug: joinDebug } : {}),
         repair_stats: {
           repaired_count: repairedPlayCount,
           total_count: totalPlayCount,

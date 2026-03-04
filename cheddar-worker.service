@@ -9,9 +9,6 @@ Type=simple
 User=babycheeses11
 WorkingDirectory=/opt/cheddar-logic
 Environment="NODE_ENV=production"
-Environment="DATABASE_PATH=/opt/data/cheddar.db"
-Environment="CHEDDAR_DB_PATH=/opt/data/cheddar.db"
-Environment="CHEDDAR_DATA_DIR=/opt/data"
 EnvironmentFile=/opt/cheddar-logic/.env.production
 
 ExecStart=/usr/bin/npm --prefix /opt/cheddar-logic/apps/worker run scheduler

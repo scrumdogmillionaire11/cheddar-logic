@@ -9,8 +9,11 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 WORKER_DIR="$ROOT_DIR/apps/worker"
 LOG_DIR="$WORKER_DIR/logs"
 
-# Load environment from repo .env if present (allows single source of truth)
+# Load environment from repo .env (dev) or .env.production (prod)
 ENV_FILE="${CHEDDAR_ENV_FILE:-$ROOT_DIR/.env}"
+if [ ! -f "$ENV_FILE" ] && [ -f "$ROOT_DIR/.env.production" ]; then
+    ENV_FILE="$ROOT_DIR/.env.production"
+fi
 if [ -f "$ENV_FILE" ]; then
     set -a
     # shellcheck disable=SC1090
@@ -19,8 +22,8 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Canonical DB settings (all worker processes should use these)
-# Default to repo-local DB so local web + worker stay in sync.
-DEFAULT_DB_PATH="$ROOT_DIR/packages/data/cheddar.db"
+# Prefer existing DATABASE_PATH from env; otherwise default repo-local for dev.
+DEFAULT_DB_PATH="${DATABASE_PATH:-$ROOT_DIR/packages/data/cheddar.db}"
 export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-$DEFAULT_DB_PATH}"
 export CHEDDAR_DATA_DIR="${CHEDDAR_DATA_DIR:-$(dirname "$CHEDDAR_DB_PATH")}" 
 export DATABASE_PATH="${DATABASE_PATH:-$CHEDDAR_DB_PATH}"
