@@ -206,12 +206,15 @@ const NCAAM_TEAMS = {
 };
 
 const SCOREBOARD_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const SCOREBOARD_EMPTY_CACHE_TTL_MS = 60 * 1000;
 const SCOREBOARD_LOOKBACK_DAYS = Number.isFinite(Number(process.env.TEAM_METRICS_SCOREBOARD_LOOKBACK_DAYS))
   ? Number(process.env.TEAM_METRICS_SCOREBOARD_LOOKBACK_DAYS)
   : 3;
 const SCOREBOARD_LOOKAHEAD_DAYS = Number.isFinite(Number(process.env.TEAM_METRICS_SCOREBOARD_LOOKAHEAD_DAYS))
   ? Number(process.env.TEAM_METRICS_SCOREBOARD_LOOKAHEAD_DAYS)
   : 4;
+const RESOLVED_TEAM_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const RESOLVED_TEAM_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const resolvedTeamCache = new Map();
 const scoreboardIndexCache = new Map();
@@ -404,7 +407,8 @@ async function getScoreboardTeamIndex(sport, league) {
     const index = await buildScoreboardTeamIndex(sport, league);
     scoreboardIndexCache.set(sport, {
       index,
-      expiresAt: Date.now() + SCOREBOARD_CACHE_TTL_MS
+      // Empty index is usually a transient ESPN/network failure; retry quickly.
+      expiresAt: Date.now() + (index.size > 0 ? SCOREBOARD_CACHE_TTL_MS : SCOREBOARD_EMPTY_CACHE_TTL_MS)
     });
     return index;
   })();
@@ -450,8 +454,13 @@ async function resolveTeamEntry(teamName, sport, table, league) {
   if (!teamName) return null;
 
   const cacheKey = `${sport}:${normalizeTeamKey(teamName)}`;
-  if (resolvedTeamCache.has(cacheKey)) {
-    return resolvedTeamCache.get(cacheKey);
+  const now = Date.now();
+  const cached = resolvedTeamCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+  if (cached) {
+    resolvedTeamCache.delete(cacheKey);
   }
 
   let entry = lookupTeam(teamName, table);
@@ -463,8 +472,11 @@ async function resolveTeamEntry(teamName, sport, table, league) {
     }
   }
 
-  resolvedTeamCache.set(cacheKey, entry || null);
-  return entry;
+  resolvedTeamCache.set(cacheKey, {
+    value: entry || null,
+    expiresAt: Date.now() + (entry ? RESOLVED_TEAM_CACHE_TTL_MS : RESOLVED_TEAM_NEGATIVE_CACHE_TTL_MS)
+  });
+  return entry || null;
 }
 
 function selectTeamTable(sport) {
@@ -527,10 +539,34 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
     // Small delay to avoid ESPN rate limiting
     await new Promise(r => setTimeout(r, 200));
 
-    const [games, teamInfo] = await Promise.all([
+    let [games, teamInfo] = await Promise.all([
       fetchTeamSchedule(league, teamEntry.id, limit),
       fetchTeamInfo(league, teamEntry.id)
     ]);
+
+    // Existing static map entries can drift. If ESPN returns nothing, retry with scoreboard ID.
+    if ((!games || games.length === 0) && !teamInfo) {
+      const fallbackEntry = await lookupTeamFromScoreboard(teamName, normalizedSport, league);
+      const fallbackId = fallbackEntry?.id != null ? String(fallbackEntry.id) : null;
+      const currentId = teamEntry?.id != null ? String(teamEntry.id) : null;
+      if (fallbackEntry && fallbackId && fallbackId !== currentId) {
+        [games, teamInfo] = await Promise.all([
+          fetchTeamSchedule(league, fallbackEntry.id, limit),
+          fetchTeamInfo(league, fallbackEntry.id)
+        ]);
+        if ((games && games.length > 0) || teamInfo) {
+          const cacheKey = `${normalizedSport}:${normalizeTeamKey(teamName)}`;
+          table[teamName] = fallbackEntry;
+          resolvedTeamCache.set(cacheKey, {
+            value: fallbackEntry,
+            expiresAt: Date.now() + RESOLVED_TEAM_CACHE_TTL_MS
+          });
+          console.log(
+            `[TeamMetrics] Re-resolved "${teamName}" to scoreboard ID ${fallbackEntry.id} after empty ESPN response for ID ${teamEntry.id}`
+          );
+        }
+      }
+    }
 
     if ((!games || games.length === 0) && !teamInfo) {
       console.warn(`[TeamMetrics] ESPN returned no data for "${teamName}" (id: ${teamEntry.id})`);

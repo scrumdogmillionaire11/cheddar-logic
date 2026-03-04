@@ -64,6 +64,12 @@ function normalizeText(value: unknown): string {
   return value.trim();
 }
 
+function hasPlaceholderDriverText(value: string): boolean {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) return true;
+  return normalized.includes('generic analysis for') || normalized.includes('ncaam ncaam generic');
+}
+
 function isValidAction(value: unknown): value is PlayDisplayAction {
   return value === 'FIRE' || value === 'HOLD' || value === 'PASS';
 }
@@ -461,18 +467,73 @@ function filterDriversByMarket(drivers: DriverRow[], market: Market | 'NONE'): D
   if (market === 'NONE') return [];
 
   if (market === 'TOTAL') {
-    return drivers.filter(
-      (d) => d.direction === 'OVER' || d.direction === 'UNDER' || d.direction === 'NEUTRAL'
+    const filtered = drivers.filter(
+      (d) =>
+        (d.market === 'TOTAL' || d.market === 'UNKNOWN' || d.market === 'RISK') &&
+        (d.direction === 'OVER' || d.direction === 'UNDER' || d.direction === 'NEUTRAL')
     );
+    if (filtered.length > 0) return filtered;
+    return drivers.filter((d) => d.direction === 'OVER' || d.direction === 'UNDER' || d.direction === 'NEUTRAL');
   }
 
-  if (market === 'ML' || market === 'SPREAD') {
+  if (market === 'ML') {
+    const filtered = drivers.filter(
+      (d) =>
+        (d.market === 'ML' || d.market === 'UNKNOWN' || d.market === 'RISK') &&
+        (d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL')
+    );
+    if (filtered.length > 0) return filtered;
+    return drivers.filter((d) => d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL');
+  }
+
+  if (market === 'SPREAD') {
+    const filtered = drivers.filter(
+      (d) =>
+        (d.market === 'SPREAD' || d.market === 'UNKNOWN' || d.market === 'RISK') &&
+        (d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL')
+    );
+    if (filtered.length > 0) return filtered;
     return drivers.filter(
-      (d) => d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL'
+      (d) =>
+        (d.market === 'UNKNOWN' || d.market === 'RISK') &&
+        (d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL')
     );
   }
 
   return drivers;
+}
+
+function marketPreferenceScore(driverMarket: Market, chosenMarket: Market | 'NONE'): number {
+  if (chosenMarket === 'NONE') return 0;
+  if (driverMarket === chosenMarket) return 3;
+  if (driverMarket === 'UNKNOWN') return 2;
+  if (driverMarket === 'RISK') return 1;
+  return 0;
+}
+
+function dedupeContributorsByIntent(drivers: DriverRow[], market: Market | 'NONE'): DriverRow[] {
+  const byIntent = new Map<string, DriverRow>();
+
+  for (const driver of drivers) {
+    const intentKey = `${driver.key}|${driver.direction}|${normalizeText(driver.note)}`;
+    const existing = byIntent.get(intentKey);
+    if (!existing) {
+      byIntent.set(intentKey, driver);
+      continue;
+    }
+
+    const nextPref = marketPreferenceScore(driver.market, market);
+    const currentPref = marketPreferenceScore(existing.market, market);
+    if (nextPref > currentPref) {
+      byIntent.set(intentKey, driver);
+      continue;
+    }
+    if (nextPref === currentPref && isStrongerDriver(driver, existing)) {
+      byIntent.set(intentKey, driver);
+    }
+  }
+
+  return Array.from(byIntent.values());
 }
 
 /**
@@ -487,7 +548,8 @@ function pickTopContributors(
   }
 
   // Filter to market-relevant drivers
-  const relevantDrivers = filterDriversByMarket(drivers, primary.market);
+  const relevantDrivers = dedupeContributorsByIntent(filterDriversByMarket(drivers, primary.market), primary.market)
+    .filter((driver) => !hasPlaceholderDriverText(driver.note) && !hasPlaceholderDriverText(driver.cardTitle));
   const sorted = sortDrivers(relevantDrivers);
   const nonNeutral = sorted.filter((d) => d.direction !== 'NEUTRAL');
 

@@ -85,6 +85,7 @@ interface Play {
   driverKey: string;
   projectedTotal: number | null;
   edge: number | null;
+  model_prob?: number | null;
   status?: 'FIRE' | 'WATCH' | 'PASS';
   kind?: 'PLAY' | 'EVIDENCE';
   market_type?: 'MONEYLINE' | 'SPREAD' | 'TOTAL' | 'PUCKLINE' | 'TEAM_TOTAL' | 'PROP' | 'INFO';
@@ -162,14 +163,15 @@ function inferMarketCandidatesFromTitle(title: string): MarketType[] {
 
 function hasMinimumViability(play: Play, marketType: MarketType): boolean {
   const side = play.selection?.side;
+  const hasPrice = typeof play.price === 'number' && Number.isFinite(play.price);
   if (marketType === 'TOTAL') {
-    return (side === 'OVER' || side === 'UNDER') && typeof play.line === 'number';
+    return (side === 'OVER' || side === 'UNDER') && typeof play.line === 'number' && hasPrice;
   }
   if (marketType === 'SPREAD') {
-    return (side === 'HOME' || side === 'AWAY') && typeof play.line === 'number';
+    return (side === 'HOME' || side === 'AWAY') && typeof play.line === 'number' && hasPrice;
   }
   if (marketType === 'MONEYLINE') {
-    return side === 'HOME' || side === 'AWAY';
+    return (side === 'HOME' || side === 'AWAY') && hasPrice;
   }
   return true;
 }
@@ -280,6 +282,12 @@ function firstNumber(...values: unknown[]): number | undefined {
     }
   }
   return undefined;
+}
+
+function impliedProbFromAmericanOdds(rawOdds: unknown): number | undefined {
+  if (typeof rawOdds !== 'number' || !Number.isFinite(rawOdds) || rawOdds === 0) return undefined;
+  if (rawOdds < 0) return (-rawOdds) / ((-rawOdds) + 100);
+  return 100 / (rawOdds + 100);
 }
 
 function normalizeNumberArray(value: unknown): number[] | undefined {
@@ -479,6 +487,7 @@ export async function GET(request: NextRequest) {
             ? normalizedSelectionSide
             : undefined) ??
           'NEUTRAL';
+        const normalizedConfidence = firstNumber(payload.confidence, payloadPlay?.confidence);
         const normalizedMarketType = normalizeMarketType(payload.market_type ?? payloadPlay?.market_type);
         const normalizedPlayerName = firstString(
           payloadSelection?.player_name,
@@ -582,6 +591,45 @@ export async function GET(request: NextRequest) {
             ? normalizedL5Sog.reduce((acc, value) => acc + value, 0) / normalizedL5Sog.length
             : undefined
         );
+        const payloadProjection = toObject(payload.projection);
+        const payloadPlayObj = toObject(payloadPlay);
+        const payloadPlayProjection = toObject(payloadPlayObj?.projection);
+        const normalizedEdge = firstNumber(
+          payload.edge,
+          payloadPlayObj?.edge,
+          driverInputs?.edge
+        );
+        const projectionWinProbHome = firstNumber(
+          payloadProjection?.win_prob_home,
+          payloadPlayProjection?.win_prob_home
+        );
+        let normalizedModelProb = firstNumber(
+          (payload as Record<string, unknown>).model_prob,
+          payloadPlayObj?.model_prob,
+          (payload as Record<string, unknown>).p_fair,
+          payloadPlayObj?.p_fair
+        );
+        if (
+          normalizedModelProb === undefined &&
+          normalizedMarketType === 'MONEYLINE' &&
+          typeof projectionWinProbHome === 'number'
+        ) {
+          normalizedModelProb = normalizedSelectionSide === 'AWAY'
+            ? 1 - projectionWinProbHome
+            : projectionWinProbHome;
+        }
+        if (normalizedModelProb === undefined) {
+          const impliedProb = impliedProbFromAmericanOdds(normalizedPrice);
+          if (typeof impliedProb === 'number' && typeof normalizedEdge === 'number') {
+            normalizedModelProb = impliedProb + normalizedEdge;
+          }
+        }
+        if (
+          typeof normalizedModelProb === 'number' &&
+          (!Number.isFinite(normalizedModelProb) || normalizedModelProb < 0 || normalizedModelProb > 1)
+        ) {
+          normalizedModelProb = undefined;
+        }
         const combinedReasonCodes = [
           ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
           ...(Array.isArray(payloadPlay?.reason_codes) ? payloadPlay.reason_codes : []),
@@ -595,12 +643,7 @@ export async function GET(request: NextRequest) {
           cardType: cardRow.card_type,
           cardTitle: cardRow.card_title,
           prediction: normalizedPrediction,
-          confidence:
-            typeof payload.confidence === 'number'
-              ? payload.confidence
-              : typeof payloadPlay?.confidence === 'number'
-                ? payloadPlay.confidence
-                : 0,
+          confidence: normalizedConfidence ?? 0,
           tier: normalizedTier,
           reasoning:
             typeof payload.reasoning === 'string'
@@ -622,11 +665,10 @@ export async function GET(request: NextRequest) {
                 ? driverInputs.projected_total as number
                 : null,
           edge:
-            typeof payload.edge === 'number'
-              ? payload.edge as number
-              : typeof driverInputs?.edge === 'number'
-                ? driverInputs.edge as number
-                : null,
+            typeof normalizedEdge === 'number'
+              ? normalizedEdge
+              : null,
+          model_prob: normalizedModelProb,
           status:
             normalizedStatus ??
             (normalizedAction === 'HOLD'
@@ -658,11 +700,11 @@ export async function GET(request: NextRequest) {
               ? 'FIRE'
               : normalizedTier === 'WATCH'
                 ? 'HOLD'
-                : typeof (payload.confidence ?? payloadPlay?.confidence) === 'number' &&
-                  (payload.confidence ?? payloadPlay?.confidence) >= 0.75
+                : typeof normalizedConfidence === 'number' &&
+                  normalizedConfidence >= 0.75
                   ? 'FIRE'
-                  : typeof (payload.confidence ?? payloadPlay?.confidence) === 'number' &&
-                    (payload.confidence ?? payloadPlay?.confidence) >= 0.6
+                  : typeof normalizedConfidence === 'number' &&
+                    normalizedConfidence >= 0.6
                     ? 'HOLD'
                     : undefined),
           pass_reason_code:

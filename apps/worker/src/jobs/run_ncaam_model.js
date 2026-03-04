@@ -46,6 +46,12 @@ const NCAAM_DRIVER_WEIGHTS = {
   matchupStyle: 0.20
 };
 
+const NCAAM_DRIVER_CARD_TYPES = [
+  'ncaam-base-projection',
+  'ncaam-rest-advantage',
+  'ncaam-matchup-style',
+];
+
 function computeWinProbHome(projectedMargin, sport) {
   if (!Number.isFinite(projectedMargin)) return null;
   const sigma = edgeCalculator.getSigmaDefaults(sport)?.margin ?? 11;
@@ -90,8 +96,13 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
     // Generate MONEYLINE card
     cards.push(generateSingleCard(gameId, descriptor, oddsSnapshot, 'moneyline', now, expiresAt));
     
-    // Generate SPREAD card (if spread odds available)
-    if (oddsSnapshot?.spread_home != null && oddsSnapshot?.spread_away != null) {
+    // Generate SPREAD card only when both line and price are available for lock contract
+    if (
+      oddsSnapshot?.spread_home != null &&
+      oddsSnapshot?.spread_away != null &&
+      oddsSnapshot?.spread_price_home != null &&
+      oddsSnapshot?.spread_price_away != null
+    ) {
       cards.push(generateSingleCard(gameId, descriptor, oddsSnapshot, 'spread', now, expiresAt));
     }
   }
@@ -165,6 +176,25 @@ function generateSingleCard(gameId, descriptor, oddsSnapshot, marketType, now, e
         });
       }
     }
+    const hasLockableMoneyline =
+      marketType === 'moneyline' &&
+      (isPredictionHome || isPredictionAway) &&
+      price !== null;
+    const hasLockableSpread =
+      marketType === 'spread' &&
+      (isPredictionHome || isPredictionAway) &&
+      line !== null &&
+      price !== null;
+    const isLockableMarket = hasLockableMoneyline || hasLockableSpread;
+    const hasEdgeSignal =
+      edgeResult.edge !== null &&
+      edgeResult.p_fair !== null &&
+      edgeResult.p_implied !== null;
+    const isPlayableMarket = isLockableMarket && hasEdgeSignal;
+    const effectiveMarketType = isPlayableMarket ? marketTypeUpper : 'INFO';
+    const reasonCodes = [];
+    if (!isLockableMarket) reasonCodes.push('PASS_NO_MARKET_PRICE');
+    if (!hasEdgeSignal) reasonCodes.push('PASS_MISSING_EDGE');
 
     const payloadData = {
       game_id: gameId,
@@ -196,8 +226,8 @@ function generateSingleCard(gameId, descriptor, oddsSnapshot, marketType, now, e
       prediction: descriptor.prediction,
       confidence: descriptor.confidence,
       recommended_bet_type: marketType,
-      kind: 'PLAY',
-      market_type: marketTypeUpper,
+      kind: isPlayableMarket ? 'PLAY' : 'EVIDENCE',
+      market_type: effectiveMarketType,
       selection: {
         side: selectionSide,
         team:
@@ -207,9 +237,9 @@ function generateSingleCard(gameId, descriptor, oddsSnapshot, marketType, now, e
               ? oddsSnapshot?.away_team ?? undefined
               : undefined
       },
-      line,
-      price,
-      reason_codes: edgeResult.edge == null ? ['PASS_MISSING_EDGE'] : [],
+      line: isPlayableMarket ? line : null,
+      price: isPlayableMarket ? price : null,
+      reason_codes: reasonCodes,
       tags: [],
       consistency: {
         total_bias: 'INSUFFICIENT_DATA'
@@ -338,8 +368,11 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
             continue;
           }
 
-          const driverCardTypes = [...new Set(driverCards.map(c => c.cardType))];
-          for (const ct of driverCardTypes) {
+          const driverCardTypesToClear = [...new Set([
+            ...NCAAM_DRIVER_CARD_TYPES,
+            ...driverCards.map((c) => c.cardType),
+          ])];
+          for (const ct of driverCardTypesToClear) {
             prepareModelAndCardWrite(gameId, 'ncaam-drivers-v1', ct);
           }
 

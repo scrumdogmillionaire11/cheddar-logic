@@ -10,17 +10,16 @@ import path from 'node:path';
 const filePath = path.resolve('src/components/cards-page-client.tsx');
 const source = fs.readFileSync(filePath, 'utf8');
 
-console.log('🧪 UI evidence/no-play contract source tests');
+console.log('🧪 UI degraded-data contract source tests');
 
 assert(
-  source.includes('Evidence ({card.evidence?.length})'),
-  'cards page should render explicit Evidence section when evidence exists'
+  source.includes('Analysis unavailable (drivers missing).'),
+  'cards page should render an explicit degraded-analysis message when drivers are unavailable'
 );
 
 assert(
-  source.includes("displayPlay.pick === 'NO PLAY'") &&
-    source.includes('No official play for this game; evidence signals are shown for context.'),
-  'UI should show explicit no-official-play message while still surfacing evidence'
+  !source.includes('Evidence ({card.evidence?.length})'),
+  'cards page should not render the legacy Evidence section in the main card body'
 );
 
-console.log('✅ UI evidence/no-play contract source tests passed');
+console.log('✅ UI degraded-data contract source tests passed');

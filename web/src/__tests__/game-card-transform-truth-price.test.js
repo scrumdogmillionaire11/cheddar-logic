@@ -18,8 +18,14 @@ assert(
 );
 
 assert(
-  source.includes('const edge = impliedProb !== undefined ? modelProb - impliedProb : undefined;'),
-  'transform should compute edge from model probability vs implied probability'
+  source.includes('const edge = impliedProb !== undefined && modelProb !== undefined ? modelProb - impliedProb : undefined;'),
+  'transform should compute edge only when both model probability and implied probability are present'
+);
+
+assert(
+  source.includes('requiresModelProbForEdge') &&
+    source.includes("missingInputs.add('model_prob')"),
+  'transform should explicitly mark missing model probability as a data quality issue'
 );
 
 assert(

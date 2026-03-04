@@ -20,8 +20,10 @@ npm --prefix packages/data run migrate
 
 **Tab 1 — Web App** ([localhost:3000](http://localhost:3000))
 
+**Important:** use the same `CHEDDAR_DB_PATH` for web + worker. If these differ, UI can show stale/broken cards even when jobs succeed.
+
 ```bash
-npm --prefix web run dev
+CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
 ```
 
 **Tab 2 — Scheduler** (automatic hourly pulls + model runs)
@@ -66,6 +68,9 @@ npm --prefix packages/data install
 npm --prefix apps/worker install
 
 npm --prefix packages/data run migrate
+
+# Start web against the SAME DB path used by worker jobs
+CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
 
 # Pull live odds (requires ODDS_API_KEY from https://theoddsapi.com)
 CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db ODDS_API_KEY=YOUR_ACTUAL_KEY_HERE npm --prefix apps/worker run job:pull-odds
