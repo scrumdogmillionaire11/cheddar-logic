@@ -26,7 +26,7 @@ const {
   withDb
 } = require('@cheddar-logic/data');
 
-const { fetchScoreboardEvents } = require('../espn-client');
+const { fetchScoreboardEvents } = require('../../../../packages/data/src/espn-client');
 
 const SPORT = 'nba';
 const ESPN_LEAGUE = 'basketball/nba';

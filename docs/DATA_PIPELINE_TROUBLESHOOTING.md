@@ -176,8 +176,9 @@ This will:
 
 None required for SQLite (file-based DB). 
 
-For production Postgres/PlanetScale (future):
-- `DATABASE_URL` - Connection string
+For future external DB support (not currently used):
+
+- `DATABASE_URL` - Connection string (planned)
 - `CHEDDAR_DATA_DIR` - Override data directory
 
 ## Need More Help?

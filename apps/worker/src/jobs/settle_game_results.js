@@ -29,7 +29,7 @@ const {
   withDb
 } = require('@cheddar-logic/data');
 
-const { espnGet, fetchScoreboardEvents } = require('../espn-client');
+const { espnGet, fetchScoreboardEvents } = require('../../../../packages/data/src/espn-client');
 
 /**
  * ESPN sport path mapping

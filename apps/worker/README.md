@@ -20,11 +20,11 @@ npm run job:pull-odds
 # Or run from repo root
 npm --prefix apps/worker run job:pull-odds
 
-# Run with explicit canonical record DB path
-RECORD_DATABASE_PATH=/tmp/cheddar-logic/cheddar.db npm run job:pull-odds
+# Run with explicit DB path (use CHEDDAR_DB_PATH as canonical source)
+CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm run job:pull-odds
 
 # Run against production DB on the Pi
-RECORD_DATABASE_PATH=/opt/data/cheddar.db npm run job:pull-odds
+CHEDDAR_DB_PATH=/opt/data/cheddar.db npm run job:pull-odds
 ```
 
 **What it does:**
@@ -43,13 +43,15 @@ RECORD_DATABASE_PATH=/opt/data/cheddar.db npm run job:pull-odds
 
 **Environment variables:**
 
-- `RECORD_DATABASE_PATH`: Canonical SQLite record DB path (recommended)
-- `CHEDDAR_DB_PATH`: Legacy canonical alias (supported for compatibility)
-- `DATABASE_PATH`: Legacy alias for compatibility
-- `DATABASE_URL`: SQLite URL (`sqlite:///...`) supported for compatibility
-- `CHEDDAR_DATA_DIR`: Fallback directory for `cheddar.db` if explicit file path env vars are absent
-- `CHEDDAR_DB_AUTODISCOVER`: Optional emergency fallback (`true` enables scanning alternate DB files; default strict single-path mode)
+- `CHEDDAR_DB_PATH`: **Recommended** - Single source of truth for SQLite database path
+- `CHEDDAR_DATA_DIR`: Fallback directory for `cheddar.db` if CHEDDAR_DB_PATH is not set
 - Any shared-data env vars (API keys, etc.)
+
+**Legacy compatibility** (avoid setting these):
+
+- `RECORD_DATABASE_PATH`, `DATABASE_PATH`, `DATABASE_URL`: Supported for backward compatibility, but setting multiple path variables will cause a conflict error. Use CHEDDAR_DB_PATH only.
+
+
 
 
 **Idempotency:**
@@ -170,7 +172,7 @@ node src/jobs/pull_nhl_player_shots.js --dry-run
 - `NHL_SOG_PLAYER_IDS`: Comma-separated list of NHL player IDs to pull
 - `NHL_SOG_SLEEP_MS`: Delay between players (ms). Default: `500`
 - `NHL_SOG_FETCH_RETRIES`: Max fetch retries per player. Default: `4`
-- `RECORD_DATABASE_PATH` / `CHEDDAR_DB_PATH` / `DATABASE_PATH` / `DATABASE_URL`: DB configuration
+- `CHEDDAR_DB_PATH`: **Recommended** - Single source of truth for database path
 
 
 **Exit codes:**

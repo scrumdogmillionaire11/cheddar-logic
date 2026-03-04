@@ -10,7 +10,7 @@
 
 const { execSync } = require('child_process');
 const fs = require('fs');
-const { initDb, getDatabase, closeDatabase } = require('@cheddar-logic/data');
+const { initDb, getDatabase, closeDatabase, runMigrations } = require('@cheddar-logic/data');
 
 const TEST_DB_PATH = '/tmp/cheddar-test.db';
 
@@ -25,12 +25,20 @@ async function queryDb(fn) {
 }
 
 describe('pull_odds_hourly job', () => {
-  beforeAll(() => {
+  const hasOddsKey = Boolean(process.env.ODDS_API_KEY);
+  const maybeTest = hasOddsKey ? test : test.skip;
+
+  beforeAll(async () => {
     process.env.DATABASE_PATH = TEST_DB_PATH;
+    process.env.RECORD_DATABASE_PATH = '';
+    process.env.CHEDDAR_DB_PATH = '';
+    process.env.DATABASE_URL = '';
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
     // Remove test DB if exists
     if (fs.existsSync(TEST_DB_PATH)) {
       fs.unlinkSync(TEST_DB_PATH);
     }
+    await runMigrations();
   });
 
   afterAll(() => {
@@ -40,7 +48,7 @@ describe('pull_odds_hourly job', () => {
     }
   });
 
-  test('job executes successfully with exit code 0', () => {
+  maybeTest('job executes successfully with exit code 0', () => {
     try {
       const result = execSync(
         `DATABASE_PATH=${TEST_DB_PATH} npm run job:pull-odds`,
@@ -56,7 +64,7 @@ describe('pull_odds_hourly job', () => {
     }
   });
 
-  test('job_runs table records job execution as success', async () => {
+  maybeTest('job_runs table records job execution as success', async () => {
     const result = await queryDb((db) => {
       const stmt = db.prepare(`
         SELECT id, job_name, status, started_at, ended_at
@@ -76,7 +84,7 @@ describe('pull_odds_hourly job', () => {
     expect(new Date(result.started_at).getTime()).toBeLessThan(new Date(result.ended_at).getTime());
   });
 
-  test('odds_snapshots table has valid schema and non-null required fields', async () => {
+  maybeTest('odds_snapshots table has valid schema and non-null required fields', async () => {
     const results = await queryDb((db) => {
       const stmt = db.prepare(`
         SELECT 
@@ -113,7 +121,7 @@ describe('pull_odds_hourly job', () => {
     });
   });
 
-  test('odds_snapshots has at least one snapshot per fetched sport', async () => {
+  maybeTest('odds_snapshots has at least one snapshot per fetched sport', async () => {
     const results = await queryDb((db) => {
       const stmt = db.prepare(`
         SELECT DISTINCT sport, COUNT(*) as count
@@ -132,7 +140,7 @@ describe('pull_odds_hourly job', () => {
     });
   });
 
-  test('all odds_snapshots reference valid job_run', async () => {
+  maybeTest('all odds_snapshots reference valid job_run', async () => {
     const orphaned = await queryDb((db) => {
       const stmt = db.prepare(`
         SELECT os.id as snapshot_id, os.job_run_id
@@ -147,7 +155,7 @@ describe('pull_odds_hourly job', () => {
     expect(orphaned).toBeUndefined();
   });
 
-  test('job_runs record has no error_message on success', async () => {
+  maybeTest('job_runs record has no error_message on success', async () => {
     const result = await queryDb((db) => {
       const stmt = db.prepare(`
         SELECT error_message
@@ -161,4 +169,8 @@ describe('pull_odds_hourly job', () => {
     expect(result).toBeDefined();
     expect(result.error_message).toBeNull();
   });
+
+  if (!hasOddsKey) {
+    console.warn('[pull_odds_hourly.test] Skipping: ODDS_API_KEY not set.');
+  }
 });

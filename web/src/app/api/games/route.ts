@@ -653,7 +653,18 @@ export async function GET(request: NextRequest) {
                     : normalizedAction === 'PASS'
                       ? 'PASS'
                       : undefined,
-          action: normalizedAction,
+          action: normalizedAction ??
+            (normalizedTier === 'SUPER' || normalizedTier === 'BEST'
+              ? 'FIRE'
+              : normalizedTier === 'WATCH'
+                ? 'HOLD'
+                : typeof (payload.confidence ?? payloadPlay?.confidence) === 'number' &&
+                  (payload.confidence ?? payloadPlay?.confidence) >= 0.75
+                  ? 'FIRE'
+                  : typeof (payload.confidence ?? payloadPlay?.confidence) === 'number' &&
+                    (payload.confidence ?? payloadPlay?.confidence) >= 0.6
+                    ? 'HOLD'
+                    : undefined),
           pass_reason_code:
             typeof payload.pass_reason_code === 'string'
               ? payload.pass_reason_code
@@ -687,7 +698,20 @@ export async function GET(request: NextRequest) {
                       if (betType === 'prop' || betType === 'player_prop') return 'PROP';
                       return undefined;
                     })()
-                  : undefined,
+                  : // Check legacy 'market' field
+                    payload.market === 'ML' || 
+                    payload.market === 'MONEYLINE'
+                      ? 'MONEYLINE'
+                      : payload.market === 'SPREAD'
+                        ? 'SPREAD'
+                        : payload.market === 'TOTAL'
+                          ? 'TOTAL'
+                          : // Infer from selection side
+                          normalizedSelectionSide === 'OVER' || normalizedSelectionSide === 'UNDER'
+                            ? 'TOTAL'
+                            : normalizedSelectionSide === 'HOME' || normalizedSelectionSide === 'AWAY'
+                              ? 'SPREAD'
+                              : undefined,
           selection: {
             side: normalizedSelectionSide,
             team: normalizedSelectionTeam,

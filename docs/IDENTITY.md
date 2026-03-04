@@ -62,7 +62,7 @@ Incorrect Examples
 
 ❌ cheddar-logic.com
 ❌ import cheddar-logic
-❌ DATABASE_URL=postgres://.../cheddar-logic
+❌ CHEDDAR_DB_PATH=postgres://.../cheddar-logic
 ❌ docker service: cheddar-logic-web
 
 Why This Exists

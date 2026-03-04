@@ -149,7 +149,7 @@ curl http://localhost:3000/api/games | jq '.data | length'
 
 **Requirements:**
 - [x] `scripts/init-db-vercel.sh` executes during Vercel build
-- [x] DATABASE_PATH environment variable set correctly
+- [x] CHEDDAR_DB_PATH environment variable set correctly
 - [x] seed-test-odds.js runs successfully
 - [x] seed-cards.js runs successfully
 - [x] verify-db.js passes (exits 0)
@@ -176,7 +176,7 @@ curl https://<your-domain>/api/games | jq '.data | length'
 
 **Possible Issues:**
 1. Database file not persisted between build and runtime
-2. DATABASE_PATH points to wrong location in production
+2. CHEDDAR_DB_PATH points to wrong location in production
 3. Seed scripts failing silently in build
 4. Vercel build timeout
 5. SQLite not included in deployment
@@ -185,7 +185,7 @@ curl https://<your-domain>/api/games | jq '.data | length'
 - [vercel.json](vercel.json) - Check build command
 - [package.json](package.json) - Check scripts
 - [scripts/init-db-vercel.sh](scripts/init-db-vercel.sh) - Check paths
-- Vercel Environment Variables - DATABASE_PATH
+- Vercel Environment Variables - CHEDDAR_DB_PATH
 
 **Next Action:** Review Vercel build logs and deployment config
 
@@ -258,13 +258,13 @@ curl https://<your-domain>/api/games | jq '.data | length'
 **Tasks:**
 1. Review Vercel configuration
    - Check [vercel.json](vercel.json) build command
-   - Verify DATABASE_PATH env var
+   - Verify CHEDDAR_DB_PATH env var
    - Check if database file is in correct location
 
 2. Test build process locally
    ```bash
    cd /Users/ajcolubiale/projects/cheddar-logic
-   DATABASE_PATH=/tmp/test-cheddar.db ./scripts/init-db-vercel.sh
+   CHEDDAR_DB_PATH=/tmp/test-cheddar.db ./scripts/init-db-vercel.sh
    ls -lh /tmp/test-cheddar.db
    ```
 
@@ -387,7 +387,7 @@ vercel deploy --prod
 
 ### If prod shows 0 games:
 1. Check Vercel build logs for init-db errors
-2. Verify DATABASE_PATH in Vercel dashboard
+2. Verify CHEDDAR_DB_PATH in Vercel dashboard
 3. Test API endpoint: `curl https://your-domain/api/games`
 4. Check if SQLite is supported in Vercel runtime
 5. Consider migrating to Vercel Postgres or Turso

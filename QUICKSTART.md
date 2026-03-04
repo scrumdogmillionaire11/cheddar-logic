@@ -33,9 +33,8 @@ npm --prefix web run dev
 **DB consistency note:** keep one canonical DB path in `.env` so scheduler + manual commands hit the same file:
 
 ```bash
+# Use ONLY CHEDDAR_DB_PATH - do not set DATABASE_PATH or RECORD_DATABASE_PATH
 CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
-CHEDDAR_DATA_DIR=/tmp/cheddar-logic
-DATABASE_PATH=/tmp/cheddar-logic/cheddar.db
 ```
 
 **Tab 3 — Watch Logs** (optional)

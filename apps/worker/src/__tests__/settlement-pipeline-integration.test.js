@@ -10,11 +10,14 @@
  * Uses real test data to ensure settlement logic is sound.
  */
 
+const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const sqlite3 = require('sqlite3');
 
-const DB_PATH = path.resolve(__dirname, '../../packages/data/cheddar.db');
+const DEFAULT_DB_PATH = path.resolve(__dirname, '../../packages/data/cheddar.db');
+const DB_PATH = process.env.SETTLEMENT_DB_PATH || DEFAULT_DB_PATH;
+const HAS_DB = fs.existsSync(DB_PATH);
 
 const RED = '\x1b[31m';
 const GREEN = '\x1b[32m';
@@ -55,7 +58,7 @@ async function runTest() {
   db = new sqlite3.Database(DB_PATH, (err) => {
     if (err) {
       fail(`Failed to open database: ${err.message}`);
-      process.exit(1);
+      throw new Error(`Failed to open database: ${err.message}`);
     }
   });
 
@@ -93,7 +96,10 @@ async function runTest() {
     console.error(`${RED}Failed: ${testsFailed}${RESET}`);
   }
 
-  process.exit(testsFailed > 0 ? 1 : 0);
+  if (testsFailed > 0) {
+    throw new Error(`Settlement pipeline failed (${testsFailed} failures)`);
+  }
+  return { testsPassed, testsFailed };
 }
 
 async function runBackfill() {
@@ -210,5 +216,25 @@ async function validateTrackingStats() {
   }
 }
 
-// Run the test
-runTest().catch(console.error);
+const maybeTest = HAS_DB ? test : test.skip;
+
+maybeTest('settlement pipeline integration', async () => {
+  await runTest();
+});
+
+if (!HAS_DB) {
+  console.warn(`[Settlement Pipeline] Skipping integration test; DB not found at ${DB_PATH}`);
+}
+
+if (require.main === module) {
+  if (!HAS_DB) {
+    console.error(`[Settlement Pipeline] DB not found at ${DB_PATH}`);
+    process.exit(1);
+  }
+  runTest()
+    .then(() => process.exit(0))
+    .catch(err => {
+      console.error('Unhandled error:', err);
+      process.exit(1);
+    });
+}

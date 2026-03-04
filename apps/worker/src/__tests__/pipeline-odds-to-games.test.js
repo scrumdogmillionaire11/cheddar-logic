@@ -8,6 +8,7 @@
  * 4. Model jobs are scheduled (not executed, just enqueued)
  */
 
+const fs = require('fs');
 const { v4: uuidV4 } = require('uuid');
 const { DateTime } = require('luxon');
 const {
@@ -15,10 +16,13 @@ const {
   getDatabase,
   upsertGame,
   insertOddsSnapshot,
+  runMigrations,
   shouldRunJobKey
 } = require('@cheddar-logic/data');
 
 const { computeDueJobs, enabledSports } = require('../schedulers/main');
+
+const TEST_DB_PATH = '/tmp/cheddar-test-odds-to-games.db';
 
 async function testPipelineOddsToPipeline() {
   console.log('\n=== E2E TEST: Odds → Games → Scheduler → T-Minus ===\n');
@@ -139,3 +143,26 @@ if (require.main === module) {
 }
 
 module.exports = { testPipelineOddsToPipeline };
+
+beforeAll(async () => {
+  process.env.DATABASE_PATH = TEST_DB_PATH;
+  process.env.RECORD_DATABASE_PATH = '';
+  process.env.CHEDDAR_DB_PATH = '';
+  process.env.DATABASE_URL = '';
+  process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+  if (fs.existsSync(TEST_DB_PATH)) {
+    fs.unlinkSync(TEST_DB_PATH);
+  }
+  await runMigrations();
+});
+
+afterAll(() => {
+  if (fs.existsSync(TEST_DB_PATH)) {
+    fs.unlinkSync(TEST_DB_PATH);
+  }
+});
+
+test('odds ingest pipeline integration', async () => {
+  const success = await testPipelineOddsToPipeline();
+  expect(success).toBe(true);
+});

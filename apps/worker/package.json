@@ -63,6 +63,7 @@
     "uuid": "^9.0.0"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "jest": "^29.7.0",
+    "sqlite3": "^5.1.7"
   }
 }

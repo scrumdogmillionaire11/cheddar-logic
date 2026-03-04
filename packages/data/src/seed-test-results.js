@@ -1,5 +1,5 @@
 const { v4: uuidV4 } = require('uuid');
-const { upsertGame, insertCardPayload, upsertGameResult } = require('./db.js');
+const { upsertGame, insertCardPayload, upsertGameResult, insertOddsSnapshot } = require('./db.js');
 const { withDb } = require('./job-runtime');
 
 const SEED_KEY = 'seed-results-2026-02-27';
@@ -33,11 +33,14 @@ function computePnlUnits(result, odds) {
 
 async function seedTestResults() {
   const settledAt = new Date().toISOString();
-  const baseTime = new Date('2026-02-27T23:00:00Z');
+  // Use tomorrow at 7pm ET as base time (future games)
+  const now = new Date();
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const baseTime = new Date(`${tomorrow.toISOString().substring(0, 10)}T23:00:00Z`);
 
   const games = [
     {
-      gameId: `${GAME_PREFIX}-nhl-001`,
+      gameId: `seed-nhl-001-${Date.now()}`,
       sport: 'NHL',
       homeTeam: 'Seed Maple Leafs',
       awayTeam: 'Seed Canadiens',
@@ -49,7 +52,7 @@ async function seedTestResults() {
       finalScoreAway: 2,
     },
     {
-      gameId: `${GAME_PREFIX}-nba-001`,
+      gameId: `seed-nba-001-${Date.now()}`,
       sport: 'NBA',
       homeTeam: 'Seed Warriors',
       awayTeam: 'Seed Lakers',
@@ -61,7 +64,7 @@ async function seedTestResults() {
       finalScoreAway: 109,
     },
     {
-      gameId: `${GAME_PREFIX}-nhl-002`,
+      gameId: `seed-nhl-002-${Date.now()}`,
       sport: 'NHL',
       homeTeam: 'Seed Bruins',
       awayTeam: 'Seed Rangers',
@@ -83,7 +86,28 @@ async function seedTestResults() {
         homeTeam: game.homeTeam,
         awayTeam: game.awayTeam,
         gameTimeUtc: game.gameTimeUtc,
-        status: 'final',
+        status: 'scheduled',
+      });
+
+      // Insert odds snapshot
+      insertOddsSnapshot({
+        id: `seed-odds-${uuidV4()}`,
+        gameId: game.gameId,
+        sport: game.sport,
+        capturedAt: settledAt,
+        h2hHome: game.oddsHome,
+        h2hAway: game.oddsAway,
+        total: null,
+        spreadHome: null,
+        spreadAway: null,
+        monelineHome: null,
+        monelineAway: null,
+        spreadPriceHome: null,
+        spreadPriceAway: null,
+        totalPriceOver: null,
+        totalPriceUnder: null,
+        rawData: null,
+        jobRunId: null,
       });
 
       const cardId = `seed-card-${uuidV4().slice(0, 8)}`;
@@ -97,6 +121,24 @@ async function seedTestResults() {
         },
         seed_key: SEED_KEY,
         note: `Seeded result card ${index + 1}`,
+        // Add play object with proper structure
+        action: 'FIRE',  // Default to FIRE for seeded cards
+        market_type: 'MONEYLINE',
+        tier: 'BEST',
+        confidence: 0.75,
+        play: {
+          prediction: game.prediction,
+          market_type: 'MONEYLINE',
+          action: 'FIRE',
+          status: 'FIRE',
+          tier: 'BEST',
+          confidence: 0.75,
+          selection: {
+            side: game.prediction
+          },
+          line: null,
+          price: game.prediction === 'HOME' ? game.oddsHome : game.oddsAway
+        }
       };
 
       insertCardPayload({

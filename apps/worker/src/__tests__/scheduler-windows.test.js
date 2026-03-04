@@ -9,14 +9,18 @@
  * 4. Failed jobs can retry
  */
 
+const fs = require('fs');
 const {
   initDb,
   getDatabase,
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  runMigrations,
   shouldRunJobKey
 } = require('@cheddar-logic/data');
+
+const TEST_DB_PATH = '/tmp/cheddar-test-scheduler.db';
 
 /**
  * Compute due T-minus windows for a game
@@ -49,7 +53,7 @@ function makeJobKey(sport, windowType, context, value) {
   return `${sport}|${windowType}|${context}|${value}`;
 }
 
-async function runTests() {
+async function runSchedulerWindowTests() {
   console.log('🧪 Starting Scheduler Window Integration Tests...\n');
 
   try {
@@ -72,7 +76,7 @@ async function runTests() {
       console.log(`   Delta: 120 minutes, windows: [${windows1}]\n`);
     } else {
       console.log(`❌ FAIL: Expected [120], got [${windows1}]`);
-      process.exit(1);
+      throw new Error(`Expected [120], got [${windows1}]`);
     }
 
     // Test 2: Mark window as successful and verify skip
@@ -85,7 +89,7 @@ async function runTests() {
     // First check: should run
     if (!shouldRunJobKey(jobKey120)) {
       console.log('❌ FAIL: shouldRunJobKey returned false before first run');
-      process.exit(1);
+      throw new Error('shouldRunJobKey returned false before first run');
     }
     console.log('   ✓ shouldRunJobKey: true (first run)');
     
@@ -98,7 +102,7 @@ async function runTests() {
     // Second check: should skip
     if (shouldRunJobKey(jobKey120)) {
       console.log('❌ FAIL: shouldRunJobKey returned true after success');
-      process.exit(1);
+      throw new Error('shouldRunJobKey returned true after success');
     }
     console.log('   ✅ PASS: shouldRunJobKey: false (skip after success)\n');
 
@@ -112,13 +116,13 @@ async function runTests() {
       console.log(`   Delta: 30 minutes, windows: [${windows3}]`);
     } else {
       console.log(`❌ FAIL: Expected [30], got [${windows3}]`);
-      process.exit(1);
+      throw new Error(`Expected [30], got [${windows3}]`);
     }
     
     const jobKey30 = makeJobKey('nhl', 'tminus', gameId, '30');
     if (!shouldRunJobKey(jobKey30)) {
       console.log('❌ FAIL: T-30 should run (different window from T-120)');
-      process.exit(1);
+      throw new Error('T-30 should run (different window from T-120)');
     }
     console.log('   ✅ PASS: T-30 can run (independent from T-120)\n');
 
@@ -135,7 +139,7 @@ async function runTests() {
     // Check if retry allowed
     if (!shouldRunJobKey(jobKeyFailed)) {
       console.log('❌ FAIL: shouldRunJobKey returned false after failure (should allow retry)');
-      process.exit(1);
+      throw new Error('shouldRunJobKey returned false after failure (should allow retry)');
     }
     console.log('   ✅ PASS: Failed jobs can retry\n');
 
@@ -151,7 +155,7 @@ async function runTests() {
     // Check if skipped
     if (shouldRunJobKey(jobKeyRunning)) {
       console.log('❌ FAIL: shouldRunJobKey returned true for running job (should prevent overlap)');
-      process.exit(1);
+      throw new Error('shouldRunJobKey returned true for running job (should prevent overlap)');
     }
     console.log('   ✅ PASS: Running jobs prevent overlap\n');
 
@@ -165,7 +169,7 @@ async function runTests() {
       console.log('   ✅ PASS: T-126 (outside tolerance) does not trigger T-120');
     } else {
       console.log(`   ❌ FAIL: Expected [], got [${windowsTooEarly}] for delta=126`);
-      process.exit(1);
+      throw new Error(`Expected [], got [${windowsTooEarly}] for delta=126`);
     }
     
     // Just inside T-120 range (118 mins before, inside [115, 125])
@@ -175,7 +179,7 @@ async function runTests() {
       console.log('   ✅ PASS: T-118 (within tolerance) triggers T-120\n');
     } else {
       console.log(`   ❌ FAIL: Expected [120], got [${windowsJustInside}] for delta=118`);
-      process.exit(1);
+      throw new Error(`Expected [120], got [${windowsJustInside}] for delta=118`);
     }
 
     // Cleanup
@@ -186,8 +190,34 @@ async function runTests() {
     console.log('✅ All scheduler window tests passed!\n');
   } catch (error) {
     console.error('❌ Test error:', error);
-    process.exit(1);
+    throw error;
   }
 }
 
-runTests();
+beforeAll(async () => {
+  process.env.DATABASE_PATH = TEST_DB_PATH;
+  process.env.RECORD_DATABASE_PATH = '';
+  process.env.CHEDDAR_DB_PATH = '';
+  process.env.DATABASE_URL = '';
+  process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+  if (fs.existsSync(TEST_DB_PATH)) {
+    fs.unlinkSync(TEST_DB_PATH);
+  }
+  await runMigrations();
+});
+
+afterAll(() => {
+  if (fs.existsSync(TEST_DB_PATH)) {
+    fs.unlinkSync(TEST_DB_PATH);
+  }
+});
+
+test('scheduler windows integration', async () => {
+  await runSchedulerWindowTests();
+});
+
+if (require.main === module) {
+  runSchedulerWindowTests()
+    .then(() => process.exit(0))
+    .catch(() => process.exit(1));
+}
