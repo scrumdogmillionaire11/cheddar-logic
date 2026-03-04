@@ -12,6 +12,7 @@ const {
 
 const NHL_API_BASE = 'https://api-web.nhle.com/v1/player';
 const DEFAULT_SLEEP_MS = Number(process.env.NHL_SOG_SLEEP_MS || 500);
+const MAX_RETRIES = Number(process.env.NHL_SOG_FETCH_RETRIES || 4);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -48,26 +49,62 @@ function parseToiMinutes(toi) {
 
 async function fetchPlayerLanding(playerId) {
   const url = `${NHL_API_BASE}/${playerId}/landing`;
-  const response = await fetch(url, {
-    headers: {
-      'user-agent': 'cheddar-logic-worker'
-    }
-  });
+  let lastError = null;
 
-  if (!response.ok) {
-    throw new Error(`NHL API ${response.status} for player ${playerId}`);
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'user-agent': 'cheddar-logic-worker'
+        }
+      });
+
+      if (response.ok) {
+        return response.json();
+      }
+
+      if (response.status === 429 || response.status >= 500) {
+        const waitMs = attempt * 1000;
+        await sleep(waitMs);
+        continue;
+      }
+
+      throw new Error(`NHL API ${response.status} for player ${playerId}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt < MAX_RETRIES) {
+        const waitMs = attempt * 1000;
+        await sleep(waitMs);
+      }
+    }
   }
 
-  return response.json();
+  throw new Error(`NHL API fetch failed for player ${playerId}: ${lastError?.message || 'unknown error'}`);
+}
+
+function extractLocalizedText(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    if (typeof value.default === 'string') return value.default;
+    if (typeof value.en === 'string') return value.en;
+  }
+  return null;
+}
+
+function resolvePlayerName(payload) {
+  const fullName = extractLocalizedText(payload?.fullName);
+  if (fullName && fullName.trim()) return fullName.trim();
+
+  const first = extractLocalizedText(payload?.firstName);
+  const last = extractLocalizedText(payload?.lastName);
+  const joined = [first, last].filter(Boolean).join(' ').trim();
+  return joined || null;
 }
 
 function buildLogRows(playerId, payload, fetchedAt) {
   const last5 = Array.isArray(payload?.last5Games) ? payload.last5Games : [];
-  const playerName = payload?.fullName
-    ? payload.fullName
-    : (payload?.firstName || payload?.lastName)
-      ? `${payload?.firstName || ''} ${payload?.lastName || ''}`.trim()
-      : null;
+  const playerName = resolvePlayerName(payload);
 
   return last5.map((game) => {
     const gameId = game?.gameId ? String(game.gameId) : null;

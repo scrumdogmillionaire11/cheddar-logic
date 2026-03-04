@@ -69,6 +69,7 @@ async function runNHLPlayerShotsModel() {
     const uniquePlayersStmt = db.prepare(`
       SELECT DISTINCT
         player_id,
+        player_name,
         json_extract(raw_data, '$.teamAbbrev') as team_abbrev
       FROM player_shot_logs
       WHERE fetched_at > datetime('now', '-7 days')
@@ -83,22 +84,6 @@ async function runNHLPlayerShotsModel() {
     }
     
     console.log(`[${JOB_NAME}] Found ${uniquePlayers.length} players with recent data`);
-    
-    // Step 3: For each player, get their L5 game logs
-    const getPlayerL5Stmt = db.prepare(`
-      SELECT 
-        game_id,
-        game_date,
-        opponent,
-        is_home,
-        shots,
-        toi_minutes,
-        raw_data
-      FROM player_shot_logs
-      WHERE player_id = ?
-      ORDER BY game_date DESC
-      LIMIT 5
-    `);
     
     // Step 4: Generate cards for each player in upcoming games
     let cardsCreated = 0;
@@ -127,25 +112,32 @@ async function runNHLPlayerShotsModel() {
       
       for (const player of gamePlayers) {
         try {
-          // Get L5 games for this player
+          // Get L5 games for this player (prepare fresh to avoid statement closure issues)
+          const getPlayerL5Stmt = db.prepare(`
+            SELECT 
+              game_id,
+              game_date,
+              opponent,
+              is_home,
+              shots,
+              toi_minutes,
+              raw_data
+            FROM player_shot_logs
+            WHERE player_id = ?
+            ORDER BY game_date DESC
+            LIMIT 5
+          `);
           const l5Games = getPlayerL5Stmt.all(player.player_id);
           
           if (l5Games.length < 5) {
             continue;
           }
           
-          // Get player name from first game's raw data
-          let playerName = `Player #${player.player_id}`;
-          if (l5Games[0]?.raw_data) {
-            try {
-              const rawData = JSON.parse(l5Games[0].raw_data);
-              if (rawData.firstName || rawData.lastName) {
-                playerName = `${rawData.firstName || ''} ${rawData.lastName || ''}`.trim();
-              }
-            } catch {
-              // Keep default
-            }
-          }
+          // Prefer stored player name from pull job; fallback to stable placeholder
+          const hasValidName = typeof player.player_name === 'string'
+            && player.player_name.trim().length > 0
+            && !player.player_name.includes('[object Object]');
+          const playerName = hasValidName ? player.player_name.trim() : `Player #${player.player_id}`;
           
           // Build L5 SOG array (most recent first)
           const l5Sog = l5Games.map(g => g.shots || 0);
@@ -201,6 +193,8 @@ async function runNHLPlayerShotsModel() {
           if (fullGameEdge.tier === 'HOT' || fullGameEdge.tier === 'WATCH') {
             const cardId = `nhl-player-sog-${player.player_id}-${gameId}-full-${uuidV4().slice(0, 8)}`;
             
+            // For PROP cards, don't set market_type to 'PROP' in the root; keep it implied
+            // and let the data layer treat it as a PROP without trying to lock it via deriveLockedMarketContext
             const payloadData = {
               sport: 'NHL',
               home_team: homeTeam,
@@ -229,7 +223,8 @@ async function runNHLPlayerShotsModel() {
                   line: syntheticLine,
                   price: -110,
                   team: player.team_abbrev,
-                  player_name: playerName
+                  player_name: playerName,
+                  player_id: player.player_id.toString()
                 }
               },
               decision: {
@@ -299,7 +294,8 @@ async function runNHLPlayerShotsModel() {
                   line: syntheticLine1p,
                   price: -110,
                   team: player.team_abbrev,
-                  player_name: playerName
+                  player_name: playerName,
+                  player_id: player.player_id.toString()
                 }
               },
               decision: {

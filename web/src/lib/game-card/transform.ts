@@ -909,12 +909,80 @@ export function transformGames(games: GameData[]): GameCard[] {
   return games.map(transformToGameCard);
 }
 
+function isPlaceholderPlayerName(value?: string | null): boolean {
+  if (!value) return true;
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  const lower = trimmed.toLowerCase();
+  return lower === 'unknown player' || lower === 'player' || /^player\s*#?\d+$/i.test(trimmed);
+}
+
+function extractPlayerId(play: ApiPlay): string {
+  if (play.player_id) return String(play.player_id);
+
+  const selectionTeam = play.selection?.team;
+  if (selectionTeam) {
+    const idMatch = selectionTeam.match(/#(\d+)/);
+    if (idMatch?.[1]) return idMatch[1];
+  }
+
+  return selectionTeam || 'unknown';
+}
+
+function inferPlayerNameFromText(play: ApiPlay): string | undefined {
+  const fromPayload = play.player_name;
+  if (fromPayload && !isPlaceholderPlayerName(fromPayload)) {
+    return fromPayload;
+  }
+
+  const selectionTeam = play.selection?.team;
+  if (selectionTeam && !isPlaceholderPlayerName(selectionTeam)) {
+    return selectionTeam;
+  }
+
+  const title = play.cardTitle || '';
+  const titlePatterns = [
+    /shots\s+on\s+goal\s*[-:]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/i,
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s+(?:shots\s+on\s+goal|sog|over|under)/i,
+    /player\s+prop\s*[-:]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/i,
+  ];
+
+  for (const pattern of titlePatterns) {
+    const match = title.match(pattern);
+    const candidate = match?.[1]?.trim();
+    if (candidate && !isPlaceholderPlayerName(candidate)) {
+      return candidate;
+    }
+  }
+
+  const reasoning = play.reasoning || '';
+  const reasoningMatch = reasoning.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/);
+  const reasoningCandidate = reasoningMatch?.[1]?.trim();
+  if (reasoningCandidate && !isPlaceholderPlayerName(reasoningCandidate)) {
+    return reasoningCandidate;
+  }
+
+  return undefined;
+}
+
 /**
  * Transform games to PropGameCard format - for player props view
  * Groups all PROP plays under each game as rows
  */
 export function transformPropGames(games: GameData[]): PropGameCard[] {
   const propGames: PropGameCard[] = [];
+  const playerNameById = new Map<string, string>();
+
+  for (const game of games) {
+    for (const play of game.plays) {
+      if (play.market_type !== 'PROP') continue;
+      const playerId = extractPlayerId(play);
+      const inferredName = inferPlayerNameFromText(play);
+      if (playerId && inferredName) {
+        playerNameById.set(playerId, inferredName);
+      }
+    }
+  }
   
   for (const game of games) {
     // Extract all PROP plays from this game
@@ -925,9 +993,10 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
     
     // Convert each play to a PropPlayRow
     const propPlayRows: PropPlayRow[] = propPlays.map(play => {
-      const selectionTeam = play.selection?.team;
-      const playerName = play.player_name || selectionTeam || 'Unknown Player';
-      const playerId = play.player_id || selectionTeam || 'unknown';
+      const playerId = extractPlayerId(play);
+      const inferredName = inferPlayerNameFromText(play);
+      const mappedName = playerNameById.get(playerId);
+      const playerName = inferredName || mappedName || 'Unknown Player';
       
       // Infer prop type from card title or type
       let propType = 'Unknown';
