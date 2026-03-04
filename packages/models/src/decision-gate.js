@@ -54,10 +54,22 @@ function isRecommendationPayload(payload) {
   if (!payload) return false;
   if (payload.kind !== 'PLAY') return false;
   if (payload.market_type === 'INFO') return false;
-  const driverKey = typeof payload.driver?.key === 'string' ? payload.driver.key : '';
-  if (!driverKey.startsWith('cross_market')) return false;
+
+  const market = normalizeMarketType(payload.market_type, payload.recommended_bet_type);
+  if (market === 'unknown' || market === 'prop') return false;
+
   const side = payload.selection?.side || payload.prediction;
-  return side === 'HOME' || side === 'AWAY' || side === 'OVER' || side === 'UNDER';
+  const hasValidSide = side === 'HOME' || side === 'AWAY' || side === 'OVER' || side === 'UNDER';
+  if (!hasValidSide) return false;
+
+  const hasPrice = Number.isFinite(payload.price);
+  if (!hasPrice) return false;
+
+  if (market === 'total' || market === 'team_total' || market === 'spread' || market === 'puckline') {
+    return Number.isFinite(payload.line);
+  }
+
+  return true;
 }
 
 function stableStringify(value) {
@@ -122,15 +134,6 @@ function shouldFlip(current, candidate, ctx = {}) {
     };
   }
 
-  if ((ctx.candidateSeenCount ?? 0) < config.REQUIRE_STABILITY_RUNS) {
-    return {
-      allow: false,
-      reason_code: 'NOT_STABLE',
-      reason_detail: `Candidate seen ${ctx.candidateSeenCount ?? 0} runs; need ${config.REQUIRE_STABILITY_RUNS}`,
-      edge_delta: (candidate.edge ?? 0) - (current.edge ?? 0)
-    };
-  }
-
   const sideChanged = candidate.side !== current.recommended_side;
   const edgeDelta = (candidate.edge ?? 0) - (current.edge ?? 0);
 
@@ -139,6 +142,15 @@ function shouldFlip(current, candidate, ctx = {}) {
       allow: true,
       reason_code: 'REFRESH_SAME_SIDE',
       reason_detail: 'Same side; refresh price/line',
+      edge_delta: edgeDelta
+    };
+  }
+
+  if ((ctx.candidateSeenCount ?? 0) < config.REQUIRE_STABILITY_RUNS) {
+    return {
+      allow: false,
+      reason_code: 'NOT_STABLE',
+      reason_detail: `Candidate seen ${ctx.candidateSeenCount ?? 0} runs; need ${config.REQUIRE_STABILITY_RUNS}`,
       edge_delta: edgeDelta
     };
   }

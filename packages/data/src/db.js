@@ -296,7 +296,9 @@ function loadDatabase() {
   }
   const preferredPath = dbPath || resolved.dbPath;
   const autoDiscoverEnabled = isTruthyEnv(process.env.CHEDDAR_DB_AUTODISCOVER);
-  const dbFile = autoDiscoverEnabled ? chooseBestDatabasePath(preferredPath) : preferredPath;
+  // Explicit DB paths must be deterministic and should never be auto-swapped.
+  const shouldAutoDiscover = autoDiscoverEnabled && !resolved.isExplicitFile && !dbPath;
+  const dbFile = shouldAutoDiscover ? chooseBestDatabasePath(preferredPath) : preferredPath;
 
   if (resolved.isExplicitFile && !fs.existsSync(preferredPath)) {
     const message = `[DB] ${resolved.source} points to missing DB file: ${preferredPath}`;
@@ -320,8 +322,22 @@ function loadDatabase() {
   dbPath = dbFile;
   const dir = path.dirname(dbFile);
 
+  // Only create directory if it's a reasonable path (not /ROOT or similar invalid paths)
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    // Prevent creating directories in invalid paths
+    if (!path.isAbsolute(dir) || dir === '/' || dir === '/ROOT' || dir.includes('/ROOT')) {
+      console.warn(
+        `[DB] Skipping invalid directory creation attempt: ${dir}\n` +
+        `    Set CHEDDAR_DB_PATH explicitly to use a custom database location.\n` +
+        `    Example: CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm run dev`
+      );
+    } else {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+      } catch (mkdirError) {
+        console.warn(`[DB] Failed to create directory ${dir}: ${mkdirError.message}`);
+      }
+    }
   }
 
   try {

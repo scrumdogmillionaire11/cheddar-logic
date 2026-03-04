@@ -25,6 +25,8 @@ export type TruthStatus = 'STRONG' | 'MEDIUM' | 'WEAK';
 export type ValueStatus = 'GOOD' | 'OK' | 'BAD';
 export type BetAction = 'BET' | 'NO_PLAY';
 export type PriceFlag = 'PRICE_TOO_STEEP' | 'COINFLIP' | 'CHASED_LINE' | 'VIG_HEAVY';
+export type DecisionLabel = 'FIRE' | 'WATCH' | 'PASS';
+export type DecisionClassification = 'PLAY' | 'LEAN' | 'NONE';
 
 // Reason codes for PASS status: deterministic blockers
 export type PassReasonCode =
@@ -38,6 +40,10 @@ export type PassReasonCode =
   | 'PASS_UNREPAIRABLE_LEGACY'
   | 'PASS_TOTAL_INSUFFICIENT_DATA'
   | 'PASS_NO_QUALIFIED_PLAYS'
+  | 'PASS_DATA_ERROR'
+  | 'PASS_DRIVER_SUPPORT_WEAK'
+  | 'PASS_DRIVER_CONFLICT'
+  | 'PASS_LONGSHOT_GUARD'
   | 'INSUFFICIENT_DATA'
   | 'MARKET_STALE_EDGE'
   | 'PRICE_TOO_STEEP'
@@ -72,6 +78,43 @@ export interface ModelMetadata {
   edge?: number; // model - market
   confidence?: number; // 0..1
   sigma?: number; // optional
+}
+
+export interface CanonicalGate {
+  code: string;
+  severity: 'INFO' | 'WARN' | 'BLOCK';
+  blocks_bet: boolean;
+}
+
+export type BetMarketType = 'moneyline' | 'spread' | 'total' | 'team_total' | 'player_prop';
+export type BetSide = 'home' | 'away' | 'over' | 'under';
+
+export interface CanonicalBet {
+  market_type: BetMarketType;
+  side: BetSide;
+  team?: 'home' | 'away';
+  line?: number;
+  odds_american: number;
+  book?: string;
+  as_of_iso: string;
+}
+
+export interface DecisionData {
+  status: DecisionLabel;
+  truth: TruthStatus;
+  value_tier: ValueStatus;
+  edge_pct: number | null;
+  edge_tier: 'BEST' | 'GOOD' | 'OK' | 'BAD';
+  coinflip: boolean;
+  reason_code: string;
+}
+
+export type CardQuality = 'OK' | 'DEGRADED' | 'BROKEN';
+
+export interface TransformMeta {
+  quality: CardQuality;
+  missing_inputs: string[];
+  placeholders_found: string[];
 }
 
 /**
@@ -171,6 +214,15 @@ export interface ExpressionChoice {
  *  - side (legacy direction)
  */
 export interface Play {
+  // Canonical contract fields for display/reducer invariants
+  market_key?: string;
+  decision?: DecisionLabel;
+  classificationLabel?: DecisionClassification;
+  bet?: CanonicalBet | null;
+  gates?: CanonicalGate[];
+  decision_data?: DecisionData;
+  transform_meta?: TransformMeta;
+
   // Canonical fields (preferred)
   market_type?: CanonicalMarketType;
   selection?: Selection;

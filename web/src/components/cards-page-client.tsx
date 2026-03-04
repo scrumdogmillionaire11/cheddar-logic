@@ -44,6 +44,7 @@ type DroppedMeta = {
   hasAnyPlay: number;
   hasBettable: number;
   hasBlockedTotals: number;
+  hasDataError: number;
   playStatusCounts: PlayStatusCounts;
   playMarkets: Record<string, number>;
 };
@@ -103,6 +104,7 @@ function createDroppedMeta(): DroppedMeta {
     hasAnyPlay: 0,
     hasBettable: 0,
     hasBlockedTotals: 0,
+    hasDataError: 0,
     playStatusCounts: createPlayStatusCounts(),
     playMarkets: {},
   };
@@ -153,6 +155,11 @@ function getCardDebugMeta(card: GameCard) {
       (card.play?.reason_codes?.includes('PASS_TOTAL_INSUFFICIENT_DATA') ||
         card.play?.tags?.includes('CONSISTENCY_BLOCK_TOTALS'))
   );
+  const hasDataError = Boolean(
+    card.play?.transform_meta?.quality === 'BROKEN' ||
+    card.play?.reason_codes?.includes('PASS_DATA_ERROR') ||
+    card.play?.gates?.some((gate) => gate.code === 'PASS_DATA_ERROR')
+  );
 
   return {
     playCount,
@@ -161,6 +168,7 @@ function getCardDebugMeta(card: GameCard) {
     hasAnyPlay,
     hasBettable,
     hasBlockedTotals,
+    hasDataError,
   };
 }
 
@@ -205,6 +213,7 @@ interface GameData {
     cardTitle: string;
     kind?: 'PLAY' | 'EVIDENCE';
     status?: 'FIRE' | 'WATCH' | 'PASS';
+    action?: 'FIRE' | 'HOLD' | 'PASS';
     prediction: 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';
     confidence: number;
     tier: 'SUPER' | 'BEST' | 'WATCH' | null;
@@ -213,6 +222,7 @@ interface GameData {
     driverKey: string;
     projectedTotal: number | null;
     edge: number | null;
+    model_prob?: number | null;
     market_type?: 'MONEYLINE' | 'SPREAD' | 'TOTAL' | 'PUCKLINE' | 'TEAM_TOTAL' | 'PROP' | 'INFO';
     selection?: { side: string; team?: string };
     line?: number;
@@ -387,6 +397,7 @@ export default function CardsPageClient() {
       meta.hasAnyPlay += cardMeta.hasAnyPlay ? 1 : 0;
       meta.hasBettable += cardMeta.hasBettable ? 1 : 0;
       meta.hasBlockedTotals += cardMeta.hasBlockedTotals ? 1 : 0;
+      meta.hasDataError += cardMeta.hasDataError ? 1 : 0;
       meta.playStatusCounts.FIRE += cardMeta.playStatusCounts.FIRE;
       meta.playStatusCounts.WATCH += cardMeta.playStatusCounts.WATCH;
       meta.playStatusCounts.PASS += cardMeta.playStatusCounts.PASS;
@@ -402,6 +413,27 @@ export default function CardsPageClient() {
       droppedMetaBySport,
     };
   }, [enrichedCards, filters, viewMode]);
+  const hiddenDataErrors = useMemo(
+    () =>
+      Object.values(dropTraceStats.droppedMetaBySport).reduce(
+        (sum, meta) => sum + (meta?.hasDataError ?? 0),
+        0
+      ),
+    [dropTraceStats]
+  );
+  const hiddenDataErrorCards = useMemo(() => {
+    const visibleIds = new Set(filteredCards.map((card) => card.id));
+    return enrichedCards
+      .filter((card) => {
+        if (visibleIds.has(card.id)) return false;
+        return Boolean(
+          card.play?.transform_meta?.quality === 'BROKEN' ||
+          card.play?.reason_codes?.includes('PASS_DATA_ERROR') ||
+          card.play?.gates?.some((gate) => gate.code === 'PASS_DATA_ERROR')
+        );
+      })
+      .slice(0, 25);
+  }, [enrichedCards, filteredCards]);
 
   const handleResetFilters = () => {
     setFilters(resetFilters(viewMode));
@@ -712,6 +744,45 @@ export default function CardsPageClient() {
     return market;
   };
 
+  const formatBetMarketLabel = (marketType?: string) => {
+    if (!marketType) return null;
+    if (marketType === 'moneyline') return 'ML';
+    if (marketType === 'spread') return 'SPREAD';
+    if (marketType === 'total') return 'TOTAL';
+    if (marketType === 'team_total') return 'TT';
+    if (marketType === 'player_prop') return 'PROP';
+    return marketType.toUpperCase();
+  };
+
+  const formatCanonicalBetText = (bet: { market_type: string; side: string; line?: number; odds_american: number } | null | undefined, homeTeam: string, awayTeam: string) => {
+    if (!bet) return 'NO PLAY';
+    const oddsText = bet.odds_american > 0 ? `+${bet.odds_american}` : `${bet.odds_american}`;
+    if (bet.market_type === 'moneyline') {
+      const teamLabel = bet.side === 'home' ? homeTeam : bet.side === 'away' ? awayTeam : bet.side.toUpperCase();
+      return `${teamLabel} ML ${oddsText}`;
+    }
+    if (bet.market_type === 'spread') {
+      const teamLabel = bet.side === 'home' ? homeTeam : awayTeam;
+      const lineText = typeof bet.line === 'number' ? (bet.line > 0 ? `+${bet.line}` : `${bet.line}`) : 'Line N/A';
+      return `${teamLabel} ${lineText} (${oddsText})`;
+    }
+    if (bet.market_type === 'total') {
+      const sideLabel = bet.side === 'over' ? 'Over' : 'Under';
+      const lineText = typeof bet.line === 'number' ? `${bet.line}` : 'Line N/A';
+      return `${sideLabel} ${lineText} (${oddsText})`;
+    }
+    const sideLabel = bet.side.toUpperCase();
+    const lineText = typeof bet.line === 'number' ? ` ${bet.line}` : '';
+    return `${sideLabel}${lineText} (${oddsText})`;
+  };
+
+  const formatContributorMarketLabel = (driverMarket: Market, cardMarket: Market | 'NONE') => {
+    if (driverMarket === cardMarket) return `${formatMarketLabel(driverMarket)} (native)`;
+    if (driverMarket === 'UNKNOWN') return 'BASE (shared)';
+    if (driverMarket === 'RISK') return 'RISK';
+    return formatMarketLabel(driverMarket);
+  };
+
   const getStatusBadge = (status: 'FIRE' | 'WATCH' | 'PASS') => {
     const colorMap = {
       FIRE: 'bg-green-700/50 text-green-200 border-green-600/60',
@@ -776,17 +847,64 @@ export default function CardsPageClient() {
       whyCode: decision.whyReason,
       whyText: decision.whyReason.replace(/_/g, ' '),
       // Canonical fields (fallback from decision)
+      market_key: undefined,
+      decision: decision.status === 'FIRE' ? 'FIRE' : decision.status === 'WATCH' ? 'WATCH' : 'PASS',
+      classificationLabel: decision.status === 'FIRE' ? 'PLAY' : decision.status === 'WATCH' ? 'LEAN' : 'NONE',
+      bet: decision.primaryPlay.pick === 'NO PLAY' ? null : undefined,
+      gates: [],
+      decision_data: {
+        status: decision.status === 'FIRE' ? 'FIRE' : decision.status === 'WATCH' ? 'WATCH' : 'PASS',
+        truth: decision.primaryPlay.tier === 'BEST' ? 'STRONG' : decision.primaryPlay.tier === 'SUPER' ? 'MEDIUM' : 'WEAK',
+        value_tier: 'BAD',
+        edge_pct: null,
+        edge_tier: 'BAD',
+        coinflip: false,
+        reason_code: decision.whyReason,
+      },
+      transform_meta: {
+        quality: 'BROKEN',
+        missing_inputs: ['play'],
+        placeholders_found: [],
+      },
       classification: decision.status === 'FIRE' ? 'BASE' : decision.status === 'WATCH' ? 'LEAN' : 'PASS',
       action: decision.status === 'FIRE' ? 'FIRE' : decision.status === 'WATCH' ? 'HOLD' : 'PASS',
     };
+    const quality = displayPlay.transform_meta?.quality ?? 'OK';
+    const isBroken = quality === 'BROKEN';
+    const isDegraded = quality === 'DEGRADED';
+    const inferredDecision = displayPlay.decision ?? (displayPlay.action === 'FIRE' ? 'FIRE' : displayPlay.action === 'HOLD' ? 'WATCH' : 'PASS');
+    const displayDecision = isBroken ? 'PASS' : inferredDecision;
+    const displayClassification =
+      displayPlay.bet
+        ? 'PLAY'
+        : displayDecision === 'WATCH'
+          ? 'WATCHLIST'
+          : 'NO PLAY';
+    const canonicalGates = (displayPlay.gates ?? []).map((gate) => gate.code);
+    const activeRiskCodes = Array.from(new Set([...canonicalGates, ...decision.riskCodes]));
+    const hasActiveTotalBet =
+      displayPlay.bet?.market_type === 'total' &&
+      displayDecision === 'FIRE';
+    const displayBetText = displayPlay.bet
+      ? formatCanonicalBetText(displayPlay.bet, card.homeTeam, card.awayTeam)
+      : displayPlay.pick;
+    const displayMarketText = formatBetMarketLabel(displayPlay.bet?.market_type) ?? (displayPlay.market_key ?? formatMarketLabel(displayPlay.market));
+    const updatedTime = formatDate(displayPlay.updatedAt);
+    const displayOddsTimestamp = displayPlay.bet?.as_of_iso ? formatDate(displayPlay.bet.as_of_iso) : updatedTime;
+    const canRenderModelSummary = !isBroken && card.drivers.length > 0;
     
     const [showAllDrivers, setShowAllDrivers] = useState(false);
-    const blockedTotals = (originalGame.plays || []).filter((play) => {
-      if (play.kind !== 'PLAY') return false;
-      if (play.market_type !== 'TOTAL') return false;
-      if (play.status && play.status !== 'PASS') return false;
-      return true;
-    });
+    const blockedTotals = hasActiveTotalBet
+      ? []
+      : (originalGame.plays || []).filter((play) => {
+          if (play.kind !== 'PLAY') return false;
+          if (play.market_type !== 'TOTAL') return false;
+          const blockedByReason =
+            play.reason_codes?.includes('PASS_TOTAL_INSUFFICIENT_DATA') ||
+            play.tags?.includes('CONSISTENCY_BLOCK_TOTALS');
+          const blockedByStatus = play.action === 'PASS' || play.status === 'PASS';
+          return Boolean(blockedByReason || blockedByStatus);
+        });
     const storageKey = `cheddar-card-show-drivers:${card.id}`;
 
     useEffect(() => {
@@ -809,7 +927,6 @@ export default function CardsPageClient() {
 
     const gameTime = formatDate(card.startTime);
     const isNotScheduled = card.status && card.status !== 'scheduled';
-    const updatedTime = formatDate(displayPlay.updatedAt);
 
     return (
       <div
@@ -830,7 +947,7 @@ export default function CardsPageClient() {
                   {card.status}
                 </span>
               )}
-              {getStatusBadge(displayPlay.status)}
+              {getStatusBadge(displayDecision === 'WATCH' ? 'WATCH' : displayDecision)}
             </div>
             <div className="text-sm text-cloud/70">
               <span>{gameTime}</span>
@@ -886,31 +1003,50 @@ export default function CardsPageClient() {
               <div className="flex items-center gap-3">
                 <span className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">Classification:</span>
                 <span className="text-lg font-bold text-cloud">
-                  {displayPlay.classification === 'BASE' ? 'PLAY' : (displayPlay.classification ?? 'UNKNOWN')}
+                  {displayClassification}
                 </span>
-                {displayPlay.lean && (
+                {displayPlay.bet && displayPlay.lean && (
                   <span className="text-xs text-cloud/60">({displayPlay.lean})</span>
                 )}
-                <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-white/10 text-cloud/70 border-white/20">
-                  Truth {displayPlay.truthStatus}
-                </span>
+                {canRenderModelSummary && (
+                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-white/10 text-cloud/70 border-white/20">
+                    Truth {displayPlay.truthStatus}
+                  </span>
+                )}
+                {isDegraded && (
+                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-amber-700/30 text-amber-200 border-amber-600/50">
+                    Degraded
+                  </span>
+                )}
+                {isBroken && (
+                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-red-700/30 text-red-200 border-red-600/50">
+                    Data issue
+                  </span>
+                )}
               </div>
               <div className="text-right text-xs text-cloud/60 space-y-0.5">
-                <div>{formatMarketLabel(displayPlay.market)} | {updatedTime}</div>
+                <div>{displayMarketText} | Odds as of {displayOddsTimestamp}</div>
               </div>
             </div>
             <div className="mt-2 flex items-center gap-3 flex-wrap">
               <span className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">BET:</span>
-              <span className="text-xl font-bold text-cloud">{displayPlay.pick}</span>
-              {displayPlay.action && (
-                <span className={`px-2 py-1 text-xs font-bold rounded border ${displayPlay.action === 'FIRE' ? 'bg-green-700/50 text-green-200 border-green-600/60' : displayPlay.action === 'HOLD' ? 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60' : 'bg-slate-700/50 text-slate-200 border-slate-600/60'}`}>
-                  {displayPlay.action}
+              <span className="text-xl font-bold text-cloud">{displayBetText}</span>
+              {displayDecision && (
+                <span className={`px-2 py-1 text-xs font-bold rounded border ${displayDecision === 'FIRE' ? 'bg-green-700/50 text-green-200 border-green-600/60' : displayDecision === 'WATCH' ? 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60' : 'bg-slate-700/50 text-slate-200 border-slate-600/60'}`}>
+                  {displayDecision}
                 </span>
               )}
-              <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-white/10 text-cloud/70 border-white/20">
-                Value {displayPlay.valueStatus}
-              </span>
-              {displayPlay.priceFlags.length > 0 && (
+              {canRenderModelSummary && (
+                <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-white/10 text-cloud/70 border-white/20">
+                  Value {displayPlay.decision_data?.value_tier ?? displayPlay.valueStatus}
+                </span>
+              )}
+              {canRenderModelSummary && displayPlay.decision_data?.coinflip && (
+                <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-blue-700/30 text-blue-200 border-blue-600/50">
+                  Coinflip
+                </span>
+              )}
+              {canRenderModelSummary && displayPlay.priceFlags.length > 0 && (
                 <div className="flex items-center gap-2 flex-wrap">
                   {displayPlay.priceFlags.map((flag) => (
                     <span
@@ -923,9 +1059,13 @@ export default function CardsPageClient() {
                 </div>
               )}
               </div>
-            {displayPlay.edge !== undefined && (
+            {canRenderModelSummary ? (
               <div className="text-xs text-cloud/60">
-                Edge {(displayPlay.edge * 100).toFixed(1)}%
+                Truth {displayPlay.decision_data?.truth ?? displayPlay.truthStatus} • Edge {(typeof displayPlay.decision_data?.edge_pct === 'number' ? displayPlay.decision_data.edge_pct : (displayPlay.edge ?? 0)) * 100 >= 0 ? '+' : ''}{((typeof displayPlay.decision_data?.edge_pct === 'number' ? displayPlay.decision_data.edge_pct : (displayPlay.edge ?? 0)) * 100).toFixed(1)}% • Tier {displayPlay.decision_data?.edge_tier ?? displayPlay.valueStatus}
+              </div>
+            ) : (
+              <div className="text-xs text-amber-200/90">
+                Analysis unavailable (drivers missing).
               </div>
             )}
           </div>
@@ -935,7 +1075,9 @@ export default function CardsPageClient() {
               Why
             </p>
             <p className="text-sm text-cloud/80">
-              {displayPlay.whyText || displayPlay.whyCode.replace(/_/g, ' ')}
+              {canRenderModelSummary
+                ? (displayPlay.whyText || displayPlay.whyCode.replace(/_/g, ' '))
+                : 'Data issue: drivers unavailable'}
             </p>
           </div>
 
@@ -943,8 +1085,12 @@ export default function CardsPageClient() {
             <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
               Top Contributors
             </p>
-            {decision.topContributors.length === 0 ? (
-              <p className="text-xs text-cloud/50">No contributors available.</p>
+            {!canRenderModelSummary || decision.topContributors.length === 0 ? (
+              <p className="text-xs text-cloud/50">
+                {canRenderModelSummary
+                  ? 'No strong contributors passed market filters.'
+                  : 'Analysis unavailable (drivers missing).'}
+              </p>
             ) : (
               <div className="space-y-2">
                 {decision.topContributors.map(({ driver, polarity }) => (
@@ -956,6 +1102,9 @@ export default function CardsPageClient() {
                       <span className="text-xs font-mono text-cloud/60">
                         {formatConfidence(driver.confidence)}
                       </span>
+                      <span className="text-xs font-mono text-cloud/60">
+                        {formatContributorMarketLabel(driver.market, displayPlay.market)}
+                      </span>
                       <span className="text-xs text-cloud/70 font-medium">
                         {driver.cardTitle}
                       </span>
@@ -965,28 +1114,12 @@ export default function CardsPageClient() {
                 ))}
               </div>
             )}
-          </div>
-
-          {(card.evidence?.length ?? 0) > 0 && (
-            <div className="rounded-md border border-white/10 bg-white/5 p-3">
-              <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
-                Evidence ({card.evidence?.length})
+            {(isBroken || isDegraded) && (displayPlay.transform_meta?.missing_inputs?.length ?? 0) > 0 && (
+              <p className="text-xs text-amber-200/90 mt-2">
+                Missing inputs: {displayPlay.transform_meta?.missing_inputs.join(', ')}
               </p>
-              <div className="space-y-2">
-                {card.evidence?.slice(0, 5).map((evidence, index) => (
-                  <div key={`${evidence.id}-${index}`} className="bg-white/5 rounded-md px-3 py-2">
-                    <p className="text-sm text-cloud/80 font-medium">{evidence.cardTitle}</p>
-                    {evidence.reasoning && (
-                      <p className="text-xs text-cloud/60 mt-1">{evidence.reasoning}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {displayPlay.pick === 'NO PLAY' && (
-                <p className="text-xs text-cloud/50 mt-2">No official play for this game; evidence signals are shown for context.</p>
-              )}
-            </div>
-          )}
+            )}
+          </div>
 
           {blockedTotals.length > 0 && (
             <details className="rounded-md border border-white/10 bg-white/5 p-3">
@@ -1013,11 +1146,11 @@ export default function CardsPageClient() {
               Risk / Gates
             </summary>
             <div className="mt-2 space-y-2">
-              {decision.riskCodes.length === 0 ? (
+              {activeRiskCodes.length === 0 ? (
                 <p className="text-xs text-cloud/50">No active risk gates.</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  {decision.riskCodes.map((code) => (
+                  {activeRiskCodes.map((code) => (
                     <span
                       key={code}
                       className="px-2 py-0.5 text-xs font-semibold rounded border bg-amber-700/30 text-amber-200 border-amber-600/50"
@@ -1089,7 +1222,30 @@ export default function CardsPageClient() {
               <p>
                 Trace (today ET {todayEtKey}): fetched ({formatSportCounts(traceStats.fetchedTodayBySport)}) → transformed ({formatSportCounts(traceStats.transformedTodayBySport)}) → displayed ({formatSportCounts(traceStats.displayedTodayBySport)})
               </p>
+              <p>
+                Filter drops: status {dropTraceStats.droppedByReason.DROP_NO_BETTABLE_STATUS} • market {dropTraceStats.droppedByReason.DROP_MARKET_NOT_ALLOWED} • time {dropTraceStats.droppedByReason.DROP_TIME_WINDOW} • data errors {hiddenDataErrors}
+              </p>
             </div>
+          )}
+          {!loading && !error && hiddenDataErrors > 0 && (
+            <details className="rounded-md border border-amber-600/50 bg-amber-700/20 px-3 py-2 text-xs text-amber-100">
+              <summary className="cursor-pointer font-semibold">
+                Some cards hidden due to data errors ({hiddenDataErrors})
+              </summary>
+              {hiddenDataErrorCards.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {hiddenDataErrorCards.map((card) => (
+                    <div key={`hidden-error-${card.id}`} className="rounded bg-amber-900/20 px-2 py-1">
+                      <span className="font-semibold">{card.awayTeam} @ {card.homeTeam}</span>
+                      <span className="text-amber-200/90"> · {card.play?.transform_meta?.quality ?? 'BROKEN'}</span>
+                      {card.play?.transform_meta?.missing_inputs?.length ? (
+                        <span className="text-amber-200/90"> · missing: {card.play.transform_meta.missing_inputs.join(', ')}</span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </details>
           )}
         </div>
 
