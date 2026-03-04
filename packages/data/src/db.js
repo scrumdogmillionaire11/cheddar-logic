@@ -27,6 +27,7 @@ const {
 let SQL = null;
 let dbInstance = null;
 let dbPath = null;
+let warnedRecordPathContract = false;
 const warnedSportValues = new Set();
 let oddsContextReferenceRegistry = new WeakMap();
 const EXPECTED_TABLE_NAMES = ['games', 'card_payloads', 'card_results', 'game_results'];
@@ -182,6 +183,7 @@ function chooseBestDatabasePath(primaryPath) {
 
   const seedCandidates = [
     primaryPath,
+    normalizeConfiguredPath(process.env.RECORD_DATABASE_PATH),
     normalizeConfiguredPath(process.env.CHEDDAR_DB_PATH),
     normalizeConfiguredPath(path.join(process.env.CHEDDAR_DATA_DIR || '', 'cheddar.db')),
     normalizeConfiguredPath(path.join(primaryDir, 'backups', path.basename(primaryPath))),
@@ -197,6 +199,9 @@ function chooseBestDatabasePath(primaryPath) {
   const searchDirs = [
     primaryDir,
     path.join(primaryDir, 'backups'),
+    normalizeConfiguredPath(process.env.RECORD_DATABASE_PATH)
+      ? path.dirname(normalizeConfiguredPath(process.env.RECORD_DATABASE_PATH))
+      : null,
     normalizeConfiguredPath(process.env.CHEDDAR_DATA_DIR),
     configuredDataDir ? path.join(configuredDataDir, 'backups') : null,
     '/opt/data',
@@ -272,6 +277,17 @@ async function initDb() {
  */
 function loadDatabase() {
   const resolved = resolveDatabasePath();
+  if (process.env.NODE_ENV === 'production' && !warnedRecordPathContract) {
+    const hasCanonicalRecordPath =
+      typeof process.env.RECORD_DATABASE_PATH === 'string'
+      && process.env.RECORD_DATABASE_PATH.trim().length > 0;
+    if (!hasCanonicalRecordPath || resolved.source !== 'RECORD_DATABASE_PATH') {
+      console.warn(
+        `[DB] Production should set RECORD_DATABASE_PATH as the single source of truth (resolved from ${resolved.source}: ${resolved.dbPath})`
+      );
+    }
+    warnedRecordPathContract = true;
+  }
   const preferredPath = dbPath || resolved.dbPath;
   const dbFile = chooseBestDatabasePath(preferredPath);
 

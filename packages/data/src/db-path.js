@@ -32,11 +32,13 @@ function parseSqliteUrl(value, cwd = process.cwd()) {
 }
 
 function resolveDatabasePath({ env = process.env, cwd = process.cwd() } = {}) {
+  const recordPath = normalizePath(env.RECORD_DATABASE_PATH, cwd);
   const canonical = normalizePath(env.CHEDDAR_DB_PATH, cwd);
   const legacyPath = normalizePath(env.DATABASE_PATH, cwd);
   const fromUrl = parseSqliteUrl(env.DATABASE_URL, cwd);
 
   const explicitCandidates = [
+    recordPath ? { source: 'RECORD_DATABASE_PATH', value: recordPath } : null,
     canonical ? { source: 'CHEDDAR_DB_PATH', value: canonical } : null,
     legacyPath ? { source: 'DATABASE_PATH', value: legacyPath } : null,
     fromUrl ? { source: 'DATABASE_URL', value: fromUrl } : null,
@@ -54,6 +56,7 @@ function resolveDatabasePath({ env = process.env, cwd = process.cwd() } = {}) {
     throw error;
   }
 
+  if (recordPath) return { dbPath: recordPath, source: 'RECORD_DATABASE_PATH', isExplicitFile: true };
   if (canonical) return { dbPath: canonical, source: 'CHEDDAR_DB_PATH', isExplicitFile: true };
   if (legacyPath) return { dbPath: legacyPath, source: 'DATABASE_PATH', isExplicitFile: true };
   if (fromUrl) return { dbPath: fromUrl, source: 'DATABASE_URL', isExplicitFile: true };

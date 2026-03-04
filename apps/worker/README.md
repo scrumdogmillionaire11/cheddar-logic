@@ -16,11 +16,11 @@ npm install
 # Run the job once
 npm run job:pull-odds
 
-# Run with explicit canonical DB path
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm run job:pull-odds
+# Run with explicit canonical record DB path
+RECORD_DATABASE_PATH=/tmp/cheddar-logic/cheddar.db npm run job:pull-odds
 
 # Run against production DB on the Pi
-CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm run job:pull-odds
+RECORD_DATABASE_PATH=/opt/data/cheddar.db npm run job:pull-odds
 ```
 
 **What it does:**
@@ -36,7 +36,8 @@ CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm run job:pull-odd
 - `1` = job failed (see logs for details)
 
 **Environment variables:**
-- `CHEDDAR_DB_PATH`: Canonical SQLite path (recommended)
+- `RECORD_DATABASE_PATH`: Canonical SQLite record DB path (recommended)
+- `CHEDDAR_DB_PATH`: Legacy canonical alias (supported for compatibility)
 - `DATABASE_PATH`: Legacy alias for compatibility
 - `DATABASE_URL`: SQLite URL (`sqlite:///...`) supported for compatibility
 - `CHEDDAR_DATA_DIR`: Fallback directory for `cheddar.db` if explicit file path env vars are absent

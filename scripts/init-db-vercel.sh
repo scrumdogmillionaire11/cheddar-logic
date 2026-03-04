@@ -8,9 +8,11 @@ echo "🗄️  Initializing SQLite database for Vercel..."
 echo "Current directory: $(pwd)"
 
 # Set database path to be within the build (not /tmp)
-export DATABASE_PATH="$(pwd)/packages/data/cheddar.db"
+export RECORD_DATABASE_PATH="$(pwd)/packages/data/cheddar.db"
+export DATABASE_PATH="${DATABASE_PATH:-$RECORD_DATABASE_PATH}"
 export CHEDDAR_DATA_DIR="$(pwd)/packages/data"
 
+echo "RECORD_DATABASE_PATH: ${RECORD_DATABASE_PATH}"
 echo "DATABASE_PATH: ${DATABASE_PATH}"
 echo "CHEDDAR_DATA_DIR: ${CHEDDAR_DATA_DIR}"
 

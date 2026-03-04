@@ -22,7 +22,9 @@ async function main() {
   console.log('🧪 Dual-Database Verification\n');
 
   const recordDbPath = process.env.RECORD_DATABASE_PATH || 
-    '/opt/cheddar-logic/packages/data/cheddar.db';
+    process.env.CHEDDAR_DB_PATH ||
+    process.env.DATABASE_PATH ||
+    '/opt/data/cheddar.db';
   const localDbPath = process.env.LOCAL_DATABASE_PATH || 
     '/tmp/cheddar-test-local-' + Date.now() + '.db';
 
