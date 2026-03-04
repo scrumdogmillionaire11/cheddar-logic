@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import FilterPanel from './filter-panel';
-import { transformGames } from '@/lib/game-card/transform';
+import { transformGames, transformPropGames } from '@/lib/game-card/transform';
 import { enrichCards } from '@/lib/game-card/tags';
 import { applyFilters, getActiveFilterCount, getDefaultFilters, getFilterDebugFlags, resetFilters } from '@/lib/game-card/filters';
+import PropGameCard from './prop-game-card';
 import type { GameFilters, ViewMode } from '@/lib/game-card/filters';
 import type { Direction, DriverRow, DriverTier, GameCard, Market } from '@/lib/types/game-card';
 import { GAME_TAGS } from '@/lib/types/game-card';
@@ -287,15 +288,41 @@ export default function CardsPageClient() {
   const [filters, setFilters] = useState<GameFilters>(getDefaultFilters('game'));
   const isInitialLoad = useRef(true);
   const showTrace = process.env.NODE_ENV !== 'production';
+  // Player props feature flag - dev mode OR explicit production opt-in
   const propsEnabled =
     process.env.NODE_ENV !== 'production' || process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true';
 
-  // Compute enriched and filtered cards
-  const { enrichedCards, filteredCards } = useMemo(() => {
+  // Compute cards based on view mode
+  const { enrichedCards, filteredCards, propCards } = useMemo(() => {
+    if (viewMode === 'props') {
+      // Props mode: use transformPropGames, no enrichment/filters yet
+      const propGameCards = transformPropGames(games);
+      
+      // Props mode debugging
+      if (process.env.NODE_ENV !== 'production') {
+        console.info('[props-debug]', {
+          total_prop_games: propGameCards.length,
+          total_prop_plays: propGameCards.reduce((sum, g) => sum + g.propPlays.length, 0),
+          sample_prop_game: propGameCards[0] ? {
+            gameId: propGameCards[0].gameId,
+            sport: propGameCards[0].sport,
+            homeTeam: propGameCards[0].homeTeam,
+            awayTeam: propGameCards[0].awayTeam,
+            propPlays_count: propGameCards[0].propPlays.length,
+            sample_play: propGameCards[0].propPlays[0],
+          } : null,
+        });
+      }
+      
+      return { enrichedCards: [], filteredCards: [], propCards: propGameCards };
+    }
+    
+    // Game mode: existing pipeline
     const transformed = transformGames(games);
     const enriched = enrichCards(transformed);
     const filtered = applyFilters(enriched, filters, viewMode);
-    return { enrichedCards: enriched, filteredCards: filtered };
+    
+    return { enrichedCards: enriched, filteredCards: filtered, propCards: [] };
   }, [games, filters, viewMode]);
 
   const activeFilterCount = getActiveFilterCount(filters, viewMode);
@@ -1108,7 +1135,10 @@ export default function CardsPageClient() {
           </div>
         )}
 
-        {!loading && filteredCards.length === 0 && !error && (
+        {!loading && 
+         ((viewMode === 'props' && propCards.length === 0) || 
+          (viewMode === 'game' && filteredCards.length === 0)) && 
+         !error && (
           <div className="text-center py-8 space-y-4">
             <div className="text-cloud/60">
               {viewMode === 'props'
@@ -1126,7 +1156,15 @@ export default function CardsPageClient() {
           </div>
         )}
 
-        {!loading && filteredCards.length > 0 && (
+        {!loading && viewMode === 'props' && propCards.length > 0 && (
+          <div className="space-y-4">
+            {propCards.map((card) => (
+              <PropGameCard key={card.gameId} card={card} />
+            ))}
+          </div>
+        )}
+
+        {!loading && viewMode === 'game' && filteredCards.length > 0 && (
           <div className="space-y-4">
             {filteredCards.map((card) => {
               const originalGame = games.find((game) => game.gameId === card.gameId);

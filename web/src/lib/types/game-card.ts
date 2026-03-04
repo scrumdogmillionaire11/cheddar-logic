@@ -231,6 +231,63 @@ export interface GameCard {
 }
 
 /**
+ * Player Props specific types - separate from game lines
+ */
+export interface PropPlayRow {
+  // core IDs
+  runId?: string;
+  createdAt?: string;
+  playerId: string;           // player identifier from API/model
+  playerName: string;         // display name (not raw ID)
+  teamAbbr?: string;
+  gameId?: string;
+  propType: string;           // SOG, Points, Assists, etc.
+  line: number | null;
+  projection: number | null;
+  mu?: number | null;
+  suggestedLine?: number | null;
+  threshold?: number | null;
+  confidence: number | null;  // 0-1 (convert to 0-100 for display)
+  price: number | null;
+  status: 'FIRE' | 'WATCH' | 'HOLD' | 'NO_PLAY';
+  action?: 'FIRE' | 'HOLD' | 'PASS';
+  edge: number | null;
+  isTrending?: boolean;
+  roleGatePass?: boolean;
+  dataQuality?: string | null;
+  reasonCodes?: string[];
+  l5Sog?: number[];
+  l5Mean?: number | null;
+  
+  // metadata
+  sourceCardType: string;
+  sourceCardTitle: string;
+  updatedAtUtc: string;
+  reasoning?: string;
+}
+
+export interface PropGameCard {
+  gameId: string;
+  sport: Sport;
+  gameTimeUtc: string;
+  homeTeam: string;
+  awayTeam: string;
+  status: string;
+  
+  // optional game context
+  oddsUpdatedUtc?: string;
+  moneyline?: { home: number; away: number };
+  total?: { line: number };
+  
+  // ALL prop plays for this game
+  propPlays: PropPlayRow[];
+  
+  // for filtering/sorting
+  maxConfidence: number;
+  tags: string[];
+}
+
+/**
  * Tags that can be derived from a GameCard for fast filtering
  */
 export const GAME_TAGS = {

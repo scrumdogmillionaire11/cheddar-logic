@@ -19,6 +19,8 @@ import type {
   PriceFlag,
   PassReasonCode,
   SelectionSide,
+  PropGameCard,
+  PropPlayRow,
 } from '../types/game-card';
 import type { CanonicalPlay, MarketType, SelectionKey, Sport as CanonicalSport } from '../types/canonical-play';
 import { deduplicateDrivers, resolvePlayDisplayDecision } from './decision';
@@ -51,10 +53,26 @@ interface ApiPlay {
   reasoning: string;
   evPassed: boolean;
   driverKey: string;
+  projectedTotal?: number | null;
+  edge?: number | null;
   status?: 'FIRE' | 'WATCH' | 'PASS';
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
+  run_id?: string;
+  created_at?: string;
+  player_id?: string;
+  player_name?: string;
+  team_abbr?: string;
+  game_id?: string;
+  mu?: number | null;
+  suggested_line?: number | null;
+  threshold?: number | null;
+  is_trending?: boolean;
+  role_gate_pass?: boolean;
+  data_quality?: string | null;
+  l5_sog?: number[] | null;
+  l5_mean?: number | null;
   market_type?: CanonicalMarketType;
   selection?: { side?: string; team?: string };
   line?: number;
@@ -889,4 +907,125 @@ export function transformToGameCard(game: GameData): GameCard {
  */
 export function transformGames(games: GameData[]): GameCard[] {
   return games.map(transformToGameCard);
+}
+
+/**
+ * Transform games to PropGameCard format - for player props view
+ * Groups all PROP plays under each game as rows
+ */
+export function transformPropGames(games: GameData[]): PropGameCard[] {
+  const propGames: PropGameCard[] = [];
+  
+  for (const game of games) {
+    // Extract all PROP plays from this game
+    const propPlays = game.plays.filter(p => p.market_type === 'PROP');
+    
+    // Skip games with no props
+    if (propPlays.length === 0) continue;
+    
+    // Convert each play to a PropPlayRow
+    const propPlayRows: PropPlayRow[] = propPlays.map(play => {
+      const selectionTeam = play.selection?.team;
+      const playerName = play.player_name || selectionTeam || 'Unknown Player';
+      const playerId = play.player_id || selectionTeam || 'unknown';
+      
+      // Infer prop type from card title or type
+      let propType = 'Unknown';
+      const titleLower = (play.cardTitle || '').toLowerCase();
+      if (titleLower.includes('shots') || titleLower.includes('sog')) {
+        propType = 'Shots on Goal';
+      } else if (titleLower.includes('points')) {
+        propType = 'Points';
+      } else if (titleLower.includes('assists')) {
+        propType = 'Assists';
+      } else if (titleLower.includes('rebounds')) {
+        propType = 'Rebounds';
+      }
+      
+      // Determine status from action or legacy status field
+      let status: PropPlayRow['status'] = 'NO_PLAY';
+      if (play.action === 'FIRE') {
+        status = 'FIRE';
+      } else if (play.action === 'HOLD') {
+        status = 'HOLD';
+      } else if (play.action === 'PASS') {
+        status = 'NO_PLAY';
+      } else if (play.status === 'FIRE') {
+        status = 'FIRE';
+      } else if (play.status === 'WATCH') {
+        status = 'WATCH';
+      } else if (play.status === 'PASS') {
+        status = 'NO_PLAY';
+      }
+      
+      const mu = play.mu ?? play.projectedTotal ?? null;
+      const suggestedLine = play.suggested_line ?? play.line ?? null;
+      const edge = play.edge ?? (mu !== null && suggestedLine !== null ? mu - suggestedLine : null);
+
+      return {
+        runId: play.run_id,
+        createdAt: play.created_at,
+        playerId,
+        playerName,
+        teamAbbr: play.team_abbr ?? undefined,
+        gameId: play.game_id ?? game.gameId,
+        propType,
+        line: play.line ?? play.suggested_line ?? null,
+        projection: play.projectedTotal ?? play.mu ?? null,
+        mu,
+        suggestedLine,
+        threshold: play.threshold ?? null,
+        confidence: play.confidence ?? null,
+        price: play.price ?? null,
+        status,
+        action: play.action,
+        edge,
+        isTrending: play.is_trending,
+        roleGatePass: play.role_gate_pass,
+        dataQuality: play.data_quality ?? null,
+        reasonCodes: play.reason_codes,
+        l5Sog: play.l5_sog ?? undefined,
+        l5Mean: play.l5_mean ?? null,
+        sourceCardType: play.cardType,
+        sourceCardTitle: play.cardTitle,
+        updatedAtUtc: game.odds?.capturedAt || game.createdAt,
+        reasoning: play.reasoning,
+      };
+    });
+    
+    // Sort rows by confidence desc, then edge desc
+    propPlayRows.sort((a, b) => {
+      if ((a.confidence ?? 0) !== (b.confidence ?? 0)) {
+        return (b.confidence ?? 0) - (a.confidence ?? 0);
+      }
+      return (b.edge ?? 0) - (a.edge ?? 0);
+    });
+    
+    const maxConfidence = Math.max(...propPlayRows.map(p => p.confidence ?? 0));
+    
+    // Build prop game card
+    const propGameCard: PropGameCard = {
+      gameId: game.gameId,
+      sport: normalizeSport(game.sport),
+      gameTimeUtc: game.gameTimeUtc,
+      homeTeam: game.homeTeam,
+      awayTeam: game.awayTeam,
+      status: game.status,
+      oddsUpdatedUtc: game.odds?.capturedAt,
+      moneyline: game.odds?.h2hHome && game.odds?.h2hAway
+        ? { home: game.odds.h2hHome, away: game.odds.h2hAway }
+        : undefined,
+      total: game.odds?.total ? { line: game.odds.total } : undefined,
+      propPlays: propPlayRows,
+      maxConfidence,
+      tags: [], // add filtering tags as needed
+    };
+    
+    propGames.push(propGameCard);
+  }
+  
+  // Sort games by max confidence desc
+  propGames.sort((a, b) => b.maxConfidence - a.maxConfidence);
+  
+  return propGames;
 }
