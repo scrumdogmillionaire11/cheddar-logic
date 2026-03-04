@@ -2,9 +2,9 @@
 
 ## Executive Summary
 
-**Root Cause Found:** Dev was showing only NHL because `.env.local` pointed DATABASE_PATH to `/data/cheddar.db` instead of `/packages/data/cheddar.db`. The seed scripts and API were using different databases!
+**Root Cause Found:** Dev was showing only NHL because `.env.local` pointed CHEDDAR_DB_PATH to `/data/cheddar.db` instead of `/packages/data/cheddar.db`. The seed scripts and API were using different databases!
 
-**Fix Applied:** Corrected DATABASE_PATH in `.env.local` → Now API returns all 4 sports ✅
+**Fix Applied:** Corrected CHEDDAR_DB_PATH in `.env.local` → Now API returns all 4 sports ✅
 
 **Remaining Work:** 
 1. Implement settlement logic (only top-level play per game)
@@ -39,15 +39,15 @@ packages/data/cheddar.db              (368K - CORRECT data, all sports)
 
 `.env.local` pointed to wrong location:
 ```
-DATABASE_PATH=/...data/cheddar.db     ❌ WRONG (location doesn't exist)
+CHEDDAR_DB_PATH=/...data/cheddar.db     ❌ WRONG (location doesn't exist)
                                       Falls back to /tmp/cheddar-logic/
 ```
 
 #### Solution
 Updated `web/.env.local`:
 ```diff
-- DATABASE_PATH=/Users/ajcolubiale/projects/cheddar-logic/data/cheddar.db
-+ DATABASE_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db
+- CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/data/cheddar.db
++ CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db
 - CHEDDAR_DATA_DIR=/Users/ajcolubiale/projects/cheddar-logic/data
 + CHEDDAR_DATA_DIR=/Users/ajcolubiale/projects/cheddar-logic/packages/data
 ```
@@ -173,7 +173,7 @@ Vercel's serverless environment has:
 4. Database written to /tmp/cheddar-logic/cheddar.db
 5. Build completes ✅
 6. Vercel deploys Next.js app
-7. Runtime starts → DATABASE_PATH=/tmp/.../cheddar.db doesn't exist
+7. Runtime starts → CHEDDAR_DB_PATH=/tmp/.../cheddar.db doesn't exist
 8. SQL.js creates NEW empty database in memory
 9. API returns 0 games ❌
 ```
@@ -205,7 +205,7 @@ Vercel's serverless environment has:
 1. Make `packages/data/cheddar.db` git-tracked
 2. Update `scripts/init-db-vercel.sh` to not overwrite if file exists
 3. Vercel includes `cheddar.db` in deployment
-4. Update DATABASE_PATH to use `cheddar.db` from app root
+4. Update CHEDDAR_DB_PATH to use `cheddar.db` from app root
 
 **Implementation Steps:**
 ```bash
@@ -218,7 +218,7 @@ git add packages/data/cheddar.db
 git commit -m "chore: include seeded database for production"
 
 # 3. Update .env.production to use correct path
-DATABASE_PATH=/var/task/packages/data/cheddar.db
+CHEDDAR_DB_PATH=/var/task/packages/data/cheddar.db
 
 # 4. Verify vercel.json points to correct output directory
 # (should include packages/ in deployment)
@@ -226,7 +226,7 @@ DATABASE_PATH=/var/task/packages/data/cheddar.db
 
 **Files to Update:**
 - `.gitignore` - Remove database exclusion
-- `.env.production` - Set DATABASE_PATH for Vercel
+- `.env.production` - Set CHEDDAR_DB_PATH for Vercel
 - `vercel.json` - Verify output includes database file
 - `scripts/init-db-vercel.sh` - Skip seeding if DB already exists
 
@@ -235,13 +235,15 @@ DATABASE_PATH=/var/task/packages/data/cheddar.db
 ## 🎯 Implementation Checklist
 
 ### Phase 1: Confirm Dev Multi-Sport Works ✅
-- [x] Fix DATABASE_PATH in `.env.local`
+
+- [x] Fix CHEDDAR_DB_PATH in `.env.local`
 - [x] Restart dev server
 - [x] Verify /api/games returns all 4 sports
 - [x] Check /cards page displays all games
 - [x] Remove debug logging
 
 ### Phase 2: Define & Implement Settlement Logic (THIS WEEK)
+
 - [ ] Clarify "top level play" definition with user
   - Option: Highest confidence? First in array? Tier-based?
 - [ ] Add `selectTopLevelPlay()` function to settle_pending_cards.js
@@ -254,7 +256,7 @@ DATABASE_PATH=/var/task/packages/data/cheddar.db
 - [ ] If bundled DB:
   - [ ] Update .gitignore to track `packages/data/cheddar.db`
   - [ ] Commit seeded database
-  - [ ] Update `.env.production` with DATABASE_PATH
+  - [ ] Update `.env.production` with CHEDDAR_DB_PATH
 - [ ] If KV:
   - [ ] Add Vercel KV environment variable
   - [ ] Implement KV serialization in init-db-vercel.sh
@@ -279,7 +281,7 @@ DATABASE_PATH=/var/task/packages/data/cheddar.db
 ### Already Fixed ✅
 ```
 web/.env.local
-  └─ DATABASE_PATH:
+  └─ CHEDDAR_DB_PATH:
     ❌ /Users/ajcolubiale/projects/cheddar-logic/data/cheddar.db
     ✅ /Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db
   └─ CHEDDAR_DATA_DIR:

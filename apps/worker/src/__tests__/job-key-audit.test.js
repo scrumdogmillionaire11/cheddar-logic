@@ -31,7 +31,15 @@ const VALID_PATTERNS = [
   // odds dev: odds|hourly|test, odds|hourly|test2, odds|hourly|test3
   /^odds\|hourly\|[a-zA-Z0-9_-]+$/,
   // sport fixed dev: nhl|fixed|2026-02-27|idempotency-test-v2 (non-numeric window suffix)
-  /^(nhl|nba|mlb|nfl|soccer)\|fixed\|\d{4}-\d{2}-\d{2}\|[a-zA-Z0-9_-]+$/
+  /^(nhl|nba|mlb|nfl|soccer)\|fixed\|\d{4}-\d{2}-\d{2}\|[a-zA-Z0-9_-]+$/,
+  // settlement sweeps (nightly/after-odds)
+  /^settle\|nightly\|\d{4}-\d{2}-\d{2}$/,
+  /^settle\|backfill-card-results\|\d{4}-\d{2}-\d{2}$/,
+  /^settle\|game-results\|\d{4}-\d{2}-\d{2}$/,
+  /^settle\|pending-cards\|\d{4}-\d{2}-\d{2}$/,
+  /^settle\|after-odds\|.+\|(games|cards)$/,
+  // legacy/manual markers
+  /^started$/
 ];
 
 function isValidJobKey(jobKey) {

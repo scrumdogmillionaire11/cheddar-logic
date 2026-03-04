@@ -19,6 +19,12 @@ git clone <repository-url>
 pip install -r config/requirements.txt
 ```
 
+### Config Files
+
+- `config/team_config.json` is the canonical configuration used by the tools.
+- `team_config.json` in this folder is a template for local customization.
+- `backend/team_config.json` is reserved for alternate testing profiles.
+
 ### Development Setup (Offline-Compatible)
 
 For sandboxed environments or offline development:

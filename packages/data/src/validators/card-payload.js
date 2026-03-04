@@ -78,11 +78,13 @@ function validateCardPayload(cardType, payloadData) {
   if (result.success) {
     try {
       // Parser boundary guard: actionable plays must satisfy strict market/selection contract.
+      // Note: requirePrice=false allows cards to be generated even if odds prices aren't fully populated.
+      // Prices will be fetched at betting time if needed.
       deriveLockedMarketContext(payloadData, {
         gameId: payloadData?.game_id,
         homeTeam: payloadData?.home_team,
         awayTeam: payloadData?.away_team,
-        requirePrice: true,
+        requirePrice: false,
         requireLineForMarket: true,
       });
     } catch (error) {

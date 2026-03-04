@@ -66,8 +66,8 @@ sudo journalctl -u cheddar-worker -n 50 --no-pager
 sudo systemctl status cheddar-web cheddar-worker
 
 # Env points to the correct DB
-sudo systemctl show cheddar-web -p Environment | grep DATABASE_PATH
-sudo systemctl show cheddar-worker -p Environment | grep DATABASE_PATH
+sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
+sudo systemctl show cheddar-worker -p Environment | grep CHEDDAR_DB_PATH
 
 # Schema exists
 sqlite3 /opt/cheddar-logic/packages/data/cheddar.db ".tables"
@@ -175,7 +175,7 @@ sudo journalctl -u cheddar-web -n 30 --no-pager
 
 Fix: see "no production build" section above.
 
-**2. `DATABASE_PATH` wrong or not set → empty DB** — The data layer uses `DATABASE_PATH` (not `DATABASE_URL`). If the path is wrong or missing, the DB layer loads an empty in-memory DB and you see "no such table" errors on every query.
+**2. `CHEDDAR_DB_PATH` wrong or not set → empty DB** — The data layer uses `CHEDDAR_DB_PATH` (not `DATABASE_URL` or legacy vars). If the path is wrong or missing, the DB layer loads an empty in-memory DB and you see "no such table" errors on every query.
 
 Telltale log pattern:
 
@@ -183,7 +183,7 @@ Telltale log pattern:
 Error: no such table: card_results
 ```
 
-The DB must live at `/opt/cheddar-logic/packages/data/cheddar.db` and both services must set `DATABASE_PATH` to that exact file.
+The DB must live at `/opt/cheddar-logic/packages/data/cheddar.db` and both services must set `CHEDDAR_DB_PATH` to that exact file.
 
 Check:
 
@@ -191,13 +191,13 @@ Check:
 # Verify env var is being injected
 sudo systemctl show cheddar-web -p Environment
 sudo systemctl show cheddar-worker -p Environment
-sudo -u babycheeses11 cat /opt/cheddar-logic/.env.production | grep DATABASE_PATH
+sudo -u babycheeses11 cat /opt/cheddar-logic/.env.production | grep CHEDDAR_DB_PATH
 ```
 
-Fix: the correct value is `DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db`. Update and restart:
+Fix: the correct value is `CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db`. Update and restart:
 
 ```bash
-sed -i 's|DATABASE_PATH=.*|DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db|' /opt/cheddar-logic/.env.production
+sed -i 's|CHEDDAR_DB_PATH=.*|CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db|' /opt/cheddar-logic/.env.production
 ```
 
 Then reload:
@@ -218,14 +218,14 @@ print(f'settled: {s[\"settledCards\"]}, wins: {s[\"wins\"]}')
 
 ### Worker shows "no such table: games" or API returns empty `data: []`
 
-**Cause:** Migrations ran against a different SQLite file than the worker is using. The worker reads `DATABASE_PATH` only.
+**Cause:** Migrations ran against a different SQLite file than the worker is using. The worker reads `CHEDDAR_DB_PATH` only.
 
 **Fix:** Point both services to the same file, migrate it, then restart:
 
 ```bash
-sed -i 's|DATABASE_PATH=.*|DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db|' /opt/cheddar-logic/.env.production
+sed -i 's|CHEDDAR_DB_PATH=.*|CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db|' /opt/cheddar-logic/.env.production
 sudo systemctl daemon-reload
-DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm --prefix /opt/cheddar-logic/packages/data run migrate
+CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm --prefix /opt/cheddar-logic/packages/data run migrate
 sudo systemctl restart cheddar-web cheddar-worker
 ```
 
@@ -238,7 +238,7 @@ sqlite3 /opt/cheddar-logic/packages/data/cheddar.db ".tables"
 If tables exist but the UI still shows no cards, seed cards:
 
 ```bash
-DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm --prefix /opt/cheddar-logic/packages/data run seed:cards
+CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm --prefix /opt/cheddar-logic/packages/data run seed:cards
 ```
 
 ---
@@ -318,13 +318,13 @@ The nightly settlement sweep runs automatically at **02:00 ET** via the worker s
 ```bash
 # On Pi
 cd /opt/cheddar-logic/apps/worker
-DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db node -e "
+CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db node -e "
 const { settleGameResults } = require('./src/jobs/settle_game_results');
 settleGameResults({ jobKey: null, dryRun: false, minHoursAfterStart: 3 })
   .then(r => console.log(JSON.stringify(r, null, 2)));
 "
 
-DATABASE_PATH=/opt/cheddar-logic/packages/data/cheddar.db node -e "
+CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db node -e "
 const { settlePendingCards } = require('./src/jobs/settle_pending_cards');
 settlePendingCards({ jobKey: null, dryRun: false })
   .then(r => console.log(JSON.stringify(r, null, 2)));

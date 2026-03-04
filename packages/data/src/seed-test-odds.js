@@ -23,7 +23,8 @@ const {
   insertOddsSnapshot,
   insertJobRun,
   markJobRunSuccess,
-  upsertGame
+  upsertGame,
+  insertCardPayload
 } = require('./db.js');
 const { withDb } = require('./job-runtime');
 
@@ -449,6 +450,73 @@ async function seedTestOdds() {
       snapshots.forEach((snapshot, idx) => {
         insertOddsSnapshot(snapshot);
         console.log(`  ✅ [${idx + 1}/${snapshots.length}] ${snapshot.gameId} (${snapshot.sport})`);
+      });
+      
+      // Insert mock card payloads (plays) so games display in UI
+      console.log(`[SeedTestOdds] Inserting ${games.length} mock card payloads...`);
+      const cardPayloads = games.map((game, idx) => {
+        // Find corresponding odds snapshot
+        const odds = snapshots.find(s => s.gameId === game.gameId);
+        const homeTeam = game.homeTeam;
+        
+        // Create a mock FIRE play on the moneyline (home team to win)
+        return {
+          id: `card-${uuidV4()}`,
+          gameId: game.gameId,
+          sport: game.sport,
+          cardType: 'test-card-ml',
+          cardTitle: `${homeTeam} ML to Win`,
+          createdAt: new Date().toISOString(),
+          payloadData: {
+            pick: homeTeam,
+            market: 'ML',
+            market_type: 'MONEYLINE',
+            selection: { side: 'HOME' },
+            confidence: 0.72,
+            tier: 'BEST',
+            action: 'FIRE',
+            status: 'FIRE',
+            reasoning: 'Mock test play for UI display',
+            ev_passed: true,
+            driver_key: 'test-driver',
+            projected_total: null,
+            edge: 0.05,
+            kind: 'PLAY',
+            tags: ['TEST_DATA'],
+            home_team: game.homeTeam,
+            away_team: game.awayTeam,
+            reason_codes: [],
+            // Required pricing to pass market contract validation
+            price: odds?.monelineHome || odds?.h2hHome || -110,
+            line: null,
+            // Odds context for market locking
+            odds_context: {
+              sport: game.sport.toLowerCase(),
+              home_team: game.homeTeam,
+              away_team: game.awayTeam,
+              h2h_home: odds?.h2hHome || odds?.monelineHome || -110,
+              h2h_away: odds?.h2hAway || odds?.monelineAway || 105,
+              spread_home: odds?.spreadHome || null,
+              spread_away: odds?.spreadAway || null,
+              spread_price_home: odds?.spreadPriceHome || null,
+              spread_price_away: odds?.spreadPriceAway || null,
+              total: odds?.total || null,
+              total_price_over: odds?.totalPriceOver || null,
+              total_price_under: odds?.totalPriceUnder || null,
+              captured_at: odds?.capturedAt || new Date().toISOString()
+            }
+          }
+        };
+      });
+      
+      cardPayloads.forEach((payload, idx) => {
+        try {
+          insertCardPayload(payload);
+          console.log(`  ✅ [${idx + 1}/${cardPayloads.length}] ${payload.gameId} (${payload.cardTitle})`);
+        } catch (err) {
+          // Card insertion may fail if market contract issues - log and continue
+          console.log(`  ⚠️  [${idx + 1}/${cardPayloads.length}] ${payload.gameId}: ${err.message}`);
+        }
       });
       
       // Mark job as success

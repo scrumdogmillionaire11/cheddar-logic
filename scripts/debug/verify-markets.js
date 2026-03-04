@@ -1,4 +1,4 @@
-const {initDb,getDatabase,closeDatabase}=require('./packages/data/src/db.js');
+const {initDb,getDatabase,closeDatabase}=require('../../packages/data/src/db.js');
 
 (async()=>{
   await initDb();

@@ -88,12 +88,14 @@ turso db show cheddar_dev --json
 # Save credentials to .env files (NOT committed)
 # .env.local (dev): DATABASE_URL=<turso_dev_connection_string>
 # .env.production (create): DATABASE_URL=<turso_prod_connection_string>
+
+> Note: Turso/DATABASE_URL is future work. The current runtime uses CHEDDAR_DB_PATH.
 ```
 
 ### Step 2.2: Update Database Client
 **File:** `packages/data/src/db.js`
 
-Add support for `DATABASE_URL` (Turso) in addition to `DATABASE_PATH` (local SQLite):
+Add support for `DATABASE_URL` (Turso) in addition to `CHEDDAR_DB_PATH` (local SQLite):
 
 ```javascript
 function loadDatabase() {
@@ -102,8 +104,8 @@ function loadDatabase() {
     return initTursoClient(process.env.DATABASE_URL);
   }
   
-  // Priority 2: DATABASE_PATH (local SQLite)
-  const dbFile = process.env.DATABASE_PATH || ...
+  // Priority 2: CHEDDAR_DB_PATH (local SQLite)
+  const dbFile = process.env.CHEDDAR_DB_PATH || ...
   return loadSqliteDatabase(dbFile);
 }
 ```
@@ -170,11 +172,11 @@ git push origin main
 
 ```javascript
 function loadDatabase() {
-  const dbPath = process.env.DATABASE_PATH;
+  const dbPath = process.env.CHEDDAR_DB_PATH;
   
   if (dbPath && !fs.existsSync(dbPath)) {
-    console.error(`ERROR: DATABASE_PATH specified but file not found: ${dbPath}`);
-    console.error(`Set DATABASE_PATH to an existing file, or use DATABASE_URL for Turso.`);
+    console.error(`ERROR: CHEDDAR_DB_PATH specified but file not found: ${dbPath}`);
+    console.error(`Set CHEDDAR_DB_PATH to an existing file, or use DATABASE_URL for Turso.`);
     process.exit(1);
   }
   
@@ -192,7 +194,7 @@ All API routes and scripts must import from **one place**:
 const { getDatabase, initDb } = require('@cheddar-logic/data');
 
 // ❌ DON'T DO THIS
-const db = new Database(process.env.DATABASE_PATH);
+const db = new Database(process.env.CHEDDAR_DB_PATH);
 ```
 
 ### Step 3.3: Environment Validation on Startup
@@ -202,7 +204,7 @@ const db = new Database(process.env.DATABASE_PATH);
 function validateDbConfig() {
   const env = process.env.APP_ENV || 'dev';
   const hasUrl = !!process.env.DATABASE_URL;
-  const hasPath = !!process.env.DATABASE_PATH;
+  const hasPath = !!process.env.CHEDDAR_DB_PATH;
   
   if (env === 'prod') {
     if (!hasUrl) {
@@ -210,7 +212,7 @@ function validateDbConfig() {
       process.exit(1);
     }
     if (hasPath) {
-      console.error('ERROR: APP_ENV=prod should not have DATABASE_PATH');
+      console.error('ERROR: APP_ENV=prod should not have CHEDDAR_DB_PATH');
       process.exit(1);
     }
   }
@@ -303,7 +305,7 @@ npm test  # Should pass
 - [ ] Commit: `feat: add Turso database support`
 
 ### Guardrails
-- [ ] Add fail-fast on missing DATABASE_PATH
+- [ ] Add fail-fast on missing CHEDDAR_DB_PATH
 - [ ] Centralize database client (one import path)
 - [ ] Add `db-validator.js` with environment checks
 - [ ] Call validator on API startup + script startup
@@ -317,7 +319,7 @@ npm test  # Should pass
 
 ### Documentation
 - [ ] Create TURSO_SETUP.md with credentials + recovery steps
-- [ ] Create ENVIRONMENT_VARIABLES.md (how to set DATABASE_URL vs DATABASE_PATH)
+- [ ] Create ENVIRONMENT_VARIABLES.md (how to set DATABASE_URL vs CHEDDAR_DB_PATH)
 - [ ] Update DEPLOYMENT.md with prod→dev refresh steps
 - [ ] Commit: `docs: add production database documentation`
 
@@ -339,7 +341,7 @@ npm test  # Should pass
 |----------|-----|---------|------|-------|
 | `APP_ENV` | `dev` | `staging` | `prod` | Controls which DB to use |
 | `DATABASE_URL` | ❌ (local) | ✅ | ✅ | Turso connection string |
-| `DATABASE_PATH` | ✅ | ❌ | ❌ | Local SQLite file path |
+| `CHEDDAR_DB_PATH` | ✅ | ❌ | ❌ | Local SQLite file path |
 | `NODE_ENV` | `development` | `production` | `production` | Standard Node var |
 
 ---
