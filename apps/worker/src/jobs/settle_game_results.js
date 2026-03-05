@@ -18,6 +18,9 @@
 
 const { v4: uuidV4 } = require('uuid');
 const dbBackup = require('../utils/db-backup.js');
+const { ResilientESPNClient } = require('../utils/espn-resilient-client.js');
+const { ScoringValidator } = require('../utils/scoring-validator.js');
+const { SettlementMonitor } = require('../utils/settlement-monitor.js');
 
 const {
   upsertGameResult,
@@ -30,7 +33,6 @@ const {
 } = require('@cheddar-logic/data');
 
 const {
-  espnGet,
   fetchScoreboardEvents,
 } = require('../../../../packages/data/src/espn-client');
 
@@ -47,6 +49,13 @@ const ESPN_SPORT_MAP = {
 const ESPN_SCOREBOARD_OPTIONS_BY_SPORT = {
   NCAAM: { groups: '50', limit: '1000' },
 };
+
+/**
+ * Environment variables for Phase 1 hardening
+ */
+const ESPN_API_TIMEOUT_MS = Math.max(5000, Number(process.env.ESPN_API_TIMEOUT_MS) || 30000);
+const SETTLEMENT_MAX_RETRIES = Math.max(0, Number(process.env.SETTLEMENT_MAX_RETRIES) || 3);
+const SETTLEMENT_MIN_HOURS_AFTER_START = Math.max(0, Number(process.env.SETTLEMENT_MIN_HOURS_AFTER_START) || 3);
 
 /**
  * Keep matching strict so one completed ESPN event cannot fan out into unrelated games.
@@ -336,10 +345,10 @@ function findMatchForGame(
   return strict;
 }
 
-async function fetchComparableEventFromSummary(espnPath, eventId) {
+async function fetchComparableEventFromSummary(espnClient, espnPath, eventId) {
   if (!eventId) return null;
 
-  const summary = await espnGet(`${espnPath}/summary?event=${eventId}`);
+  const summary = await espnClient.fetch(`${espnPath}/summary?event=${eventId}`);
   const competition = summary?.header?.competitions?.[0];
   if (!competition) return null;
 
@@ -362,7 +371,7 @@ async function fetchComparableEventFromSummary(espnPath, eventId) {
 async function settleGameResults({
   jobKey = null,
   dryRun = false,
-  minHoursAfterStart = 3,
+  minHoursAfterStart = null,
 } = {}) {
   const jobRunId = `job-settle-games-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
@@ -396,11 +405,42 @@ async function settleGameResults({
       console.log('[SettleGames] Recording job start...');
       insertJobRun('settle_game_results', jobRunId, jobKey);
 
+      // Initialize resilient ESPN client with env var config
+      const monitor = new SettlementMonitor({
+        maxConsecutiveFailures: 3,
+        warningThresholdPerRun: 10,
+        onMetric: (msg) => console.log(msg),
+        onAlert: (msg) => console.warn(msg),
+        onError: (msg) => console.error(msg),
+      });
+      monitor.initializeRun(jobRunId);
+
+      const espnClient = new ResilientESPNClient({
+        maxRetries: SETTLEMENT_MAX_RETRIES,
+        timeoutMs: ESPN_API_TIMEOUT_MS,
+        baseDelayMs: 1000,
+        onLog: (msg, ctx) => console.log(msg, ctx ? JSON.stringify(ctx) : ''),
+        onWarn: (msg, ctx) => console.warn(msg, ctx ? JSON.stringify(ctx) : ''),
+        onError: (msg, ctx) => console.error(msg, ctx ? JSON.stringify(ctx) : ''),
+        monitor, // Integrate monitoring
+      });
+
+      // Initialize scoring validator
+      const scoringValidator = new ScoringValidator({
+        strictMode: false, // Warn but allow settlement
+        onWarn: (msg, ctx) => console.warn(msg, ctx ? JSON.stringify(ctx) : ''),
+      });
+
+      console.log(
+        `[SettleGames] Initialized with ESPN_API_TIMEOUT_MS=${ESPN_API_TIMEOUT_MS}ms, SETTLEMENT_MAX_RETRIES=${SETTLEMENT_MAX_RETRIES}`,
+      );
+
       const db = getDatabase();
       const now = new Date();
+      // Use environment variable if minHoursAfterStart not explicitly provided
       const safeHoursAfterStart = Number.isFinite(minHoursAfterStart)
         ? Math.max(0, minHoursAfterStart)
-        : 3;
+        : SETTLEMENT_MIN_HOURS_AFTER_START;
       // Allow faster settlement when upstream confirms status is final
       const cutoffUtc = new Date(
         now.getTime() - safeHoursAfterStart * 60 * 60 * 1000,
@@ -490,7 +530,7 @@ async function settleGameResults({
         const eventMap = new Map();
         let fetchErrors = 0;
         for (const dateStr of dateSet) {
-          const scoreboardEvents = await fetchScoreboardEvents(
+          const scoreboardEvents = await espnClient.fetchScoreboardEvents(
             espnPath,
             dateStr,
             ESPN_SCOREBOARD_OPTIONS_BY_SPORT[sport] || null,
@@ -569,6 +609,7 @@ async function settleGameResults({
         for (const eventId of mappedIdsToHydrate) {
           try {
             const comparable = await fetchComparableEventFromSummary(
+              espnClient,
               espnPath,
               String(eventId),
             );
@@ -626,10 +667,38 @@ async function settleGameResults({
           }
           eventUseById.set(match.event.id, gameSignature);
 
+          // Validate scores before settlement
+          const scoringCheck = scoringValidator.validateGameScore(
+            sport,
+            match.dbHomeScore,
+            match.dbAwayScore,
+          );
+          const typicalCheck = scoringValidator.isTypicalScoreRange(
+            sport,
+            match.dbHomeScore,
+            match.dbAwayScore,
+          );
+
           console.log(
             `[SettleGames] Settling ${dbGame.game_id}: ${dbGame.home_team} ${match.dbHomeScore} - ${match.dbAwayScore} ${dbGame.away_team}` +
-              ` (event=${match.event.id}, method=${match.method}, delta=${match.deltaMinutes.toFixed(1)}m)`,
+              ` (event=${match.event.id}, method=${match.method}, delta=${match.deltaMinutes.toFixed(1)}m)` +
+              ` [scoreValid=${scoringCheck.valid}, typical=${typicalCheck.isTypical}]`,
           );
+
+          if (scoringCheck.warnings.length > 0) {
+            console.warn(
+              `[SettleGames] Score validation warnings for ${dbGame.game_id}:`,
+              scoringCheck.warnings,
+            );
+            
+            // Track warnings in monitor
+            scoringCheck.warnings.forEach((warning) => {
+              monitor.recordScoreValidationWarning(dbGame.game_id, warning, {
+                home: match.dbHomeScore,
+                away: match.dbAwayScore,
+              });
+            });
+          }
 
           if (dryRun) {
             console.log(
@@ -658,6 +727,12 @@ async function settleGameResults({
               },
             });
             gamesSettled++;
+            
+            // Track in monitor
+            monitor.recordGameSettled(dbGame.game_id, {
+              home: match.dbHomeScore,
+              away: match.dbAwayScore,
+            });
           } catch (gameErr) {
             console.error(
               `[SettleGames] Error upserting result for ${dbGame.game_id}: ${gameErr.message}`,
@@ -677,6 +752,9 @@ async function settleGameResults({
         errors.forEach((e) => console.log(`  - ${e}`));
       }
 
+      // Finalize monitoring
+      const monitorSummary = monitor.finalizeRun(true);
+
       return {
         success: true,
         jobRunId,
@@ -684,10 +762,14 @@ async function settleGameResults({
         gamesSettled,
         sportsProcessed,
         errors,
+        monitoring: monitorSummary,
       };
     } catch (error) {
       console.error(`[SettleGames] Job failed:`, error.message);
       console.error(error.stack);
+
+      // Finalize monitoring with failure
+      const monitorSummary = monitor.finalizeRun(false, error.message);
 
       try {
         markJobRunFailure(jobRunId, error.message);
@@ -698,7 +780,13 @@ async function settleGameResults({
         );
       }
 
-      return { success: false, jobRunId, jobKey, error: error.message };
+      return {
+        success: false,
+        jobRunId,
+        jobKey,
+        error: error.message,
+        monitoring: monitorSummary,
+      };
     }
   });
 }

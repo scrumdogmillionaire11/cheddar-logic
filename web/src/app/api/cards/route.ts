@@ -4,6 +4,8 @@
  * Returns betting dashboard cards (NBA, NHL, SOCCER, NCAAM).
  * FPL projections are served from cheddar-fpl-sage backend.
  *
+ * Cards are automatically sorted by game start time (soonest first).
+ *
  * Query params:
  * - sport: optional sport filter (case-insensitive)
  * - card_type: optional card type filter
@@ -132,30 +134,30 @@ export async function GET(request: NextRequest) {
     const params: Array<string | number> = [];
 
     if (sport) {
-      where.push('sport = ?');
+      where.push('cp.sport = ?');
       params.push(sport);
     }
 
     if (cardType) {
-      where.push('card_type = ?');
+      where.push('cp.card_type = ?');
       params.push(cardType);
     }
 
     if (gameId) {
-      where.push('game_id = ?');
+      where.push('cp.game_id = ?');
       params.push(gameId);
     }
 
     if (!includeExpired) {
       where.push(
-        "(expires_at IS NULL OR datetime(expires_at) > datetime('now'))",
+        "(cp.expires_at IS NULL OR datetime(cp.expires_at) > datetime('now'))",
       );
     }
 
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
-    where.push("sport != 'FPL'");
+    where.push("cp.sport != 'FPL'");
     if (!ENABLE_WELCOME_HOME) {
-      where.push("card_type != 'welcome-home-v2'");
+      where.push("cp.card_type != 'welcome-home-v2'");
     }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -164,24 +166,27 @@ export async function GET(request: NextRequest) {
     const sql =
       dedupeMode === 'none'
         ? `
-        SELECT * FROM card_payloads
+        SELECT cp.* FROM card_payloads cp
+        LEFT JOIN games g ON cp.game_id = g.game_id
         ${whereSql}
-        ORDER BY created_at DESC
+        ORDER BY COALESCE(g.game_time_utc, cp.created_at) ASC, cp.created_at DESC
         LIMIT ? OFFSET ?
       `
         : `
         WITH ranked AS (
-          SELECT *,
+          SELECT cp.*,
+            g.game_time_utc,
             ROW_NUMBER() OVER (
-              PARTITION BY game_id, card_type
-              ORDER BY created_at DESC
+              PARTITION BY cp.game_id, cp.card_type
+              ORDER BY cp.created_at DESC
             ) AS rn
-          FROM card_payloads
+          FROM card_payloads cp
+          LEFT JOIN games g ON cp.game_id = g.game_id
           ${whereSql}
         )
         SELECT * FROM ranked
         WHERE rn = 1
-        ORDER BY created_at DESC
+        ORDER BY COALESCE(game_time_utc, created_at) ASC
         LIMIT ? OFFSET ?
       `;
 
