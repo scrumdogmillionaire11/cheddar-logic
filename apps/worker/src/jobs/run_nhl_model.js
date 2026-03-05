@@ -184,31 +184,7 @@ function getHomeTeamRecentRoadTrip(teamName, sport, currentGameTime, limit = 10)
   }
 }
 
-function computeWinProbHome(projectedMargin, sport) {
-  if (!Number.isFinite(projectedMargin)) return null;
-  const sigma = edgeCalculator.getSigmaDefaults(sport)?.margin ?? 12;
-  const winProb = marginToWinProbability(projectedMargin, sigma);
-  return Number.isFinite(winProb) ? Number(winProb.toFixed(4)) : null;
-}
 
-function buildDriverSummary(descriptor, weightMap) {
-  const weight = descriptor.driverWeight ?? weightMap[descriptor.driverKey] ?? 1;
-  const score = descriptor.driverScore ?? null;
-  const impact = score !== null ? Number(((score - 0.5) * weight).toFixed(3)) : null;
-
-  return {
-    weights: [
-      {
-        driver: descriptor.driverKey,
-        weight,
-        score,
-        impact,
-        status: descriptor.driverStatus ?? null
-      }
-    ],
-    impact_note: 'Impact = (score - 0.5) * weight. Positive favors HOME, negative favors AWAY.'
-  };
-}
 
 /**
  * Generate insertable card objects from driver descriptors.
