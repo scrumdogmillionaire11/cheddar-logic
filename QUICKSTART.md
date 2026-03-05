@@ -73,12 +73,12 @@ npm --prefix packages/data run migrate
 CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
 
 # Pull live odds (requires ODDS_API_KEY from https://theoddsapi.com)
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db ODDS_API_KEY=YOUR_ACTUAL_KEY_HERE npm --prefix apps/worker run job:pull-odds
+set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
 
 # Run models
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:run-nba-model
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:run-nhl-model
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:run-ncaam-model
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
 ```
 
 ### Standard Runbook
@@ -96,26 +96,26 @@ npm --prefix packages/data run migrate
 ```bash
 # Pull live odds from The Odds API
 # Get your free key from: https://theoddsapi.com
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db ODDS_API_KEY=YOUR_ACTUAL_KEY_HERE npm --prefix apps/worker run job:pull-odds
+set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
 ```
 
 #### 3) Run Jobs
 
 ```bash
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:run-nba-model
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:run-nhl-model
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:run-ncaam-model
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
 ```
 
 #### 4) Verify Output
 
 ```bash
 # Spot-check most recent cards in SQLite (requires sqlite3 CLI)
-sqlite3 /tmp/cheddar-logic/cheddar.db \
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" \
   "SELECT sport, card_type, prediction, confidence, created_at FROM card_payloads ORDER BY created_at DESC LIMIT 10;"
 
 # Verify odds pipeline freshness against the same DB path
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:check-odds-health
+set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
 ```
 
 ### Ops Notes

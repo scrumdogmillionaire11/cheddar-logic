@@ -102,7 +102,10 @@ const RESOURCE_ROLES: Record<ResourceType, Set<string>> = {
 /**
  * Check if user has required role for resource
  */
-export function hasRequiredRole(user: AuthToken | null, resource: ResourceType): boolean {
+export function hasRequiredRole(
+  user: AuthToken | null,
+  resource: ResourceType,
+): boolean {
   if (!user) return false;
 
   const allowedRoles = RESOURCE_ROLES[resource] || new Set();
@@ -130,7 +133,9 @@ export function hasFlag(user: AuthToken | null, flag: string): boolean {
 /**
  * Create 401 Unauthorized response
  */
-export function createUnauthorizedResponse(message = 'Unauthorized'): NextResponse {
+export function createUnauthorizedResponse(
+  message = 'Unauthorized',
+): NextResponse {
   return NextResponse.json(
     {
       success: false,
@@ -141,20 +146,22 @@ export function createUnauthorizedResponse(message = 'Unauthorized'): NextRespon
       headers: {
         'WWW-Authenticate': 'Bearer realm="API"',
       },
-    }
+    },
   );
 }
 
 /**
  * Create 403 Forbidden response
  */
-export function createForbiddenResponse(message = 'Insufficient permissions'): NextResponse {
+export function createForbiddenResponse(
+  message = 'Insufficient permissions',
+): NextResponse {
   return NextResponse.json(
     {
       success: false,
       error: message,
     },
-    { status: 403 }
+    { status: 403 },
   );
 }
 
@@ -162,7 +169,10 @@ export function createForbiddenResponse(message = 'Insufficient permissions'): N
  * Require authentication middleware
  * Use in protected routes
  */
-export function requireAuth(request: NextRequest): { context: AuthContext; error?: NextResponse } {
+export function requireAuth(request: NextRequest): {
+  context: AuthContext;
+  error?: NextResponse;
+} {
   if (!SECURITY_CONFIG.rbacEnforcement) {
     return {
       context: {
@@ -177,7 +187,9 @@ export function requireAuth(request: NextRequest): { context: AuthContext; error
   if (!context.authenticated || !context.user) {
     return {
       context,
-      error: createUnauthorizedResponse(context.error || 'Authentication required'),
+      error: createUnauthorizedResponse(
+        context.error || 'Authentication required',
+      ),
     };
   }
 
@@ -189,7 +201,7 @@ export function requireAuth(request: NextRequest): { context: AuthContext; error
  */
 export function requireRole(
   request: NextRequest,
-  resource: ResourceType
+  resource: ResourceType,
 ): { context: AuthContext; error?: NextResponse } {
   if (!SECURITY_CONFIG.rbacEnforcement) {
     return {
@@ -224,7 +236,7 @@ export function requireRole(
     return {
       context,
       error: createForbiddenResponse(
-        `This endpoint requires ${resource} access. Your role: ${context.user?.role || 'unknown'}`
+        `This endpoint requires ${resource} access. Your role: ${context.user?.role || 'unknown'}`,
       ),
     };
   }

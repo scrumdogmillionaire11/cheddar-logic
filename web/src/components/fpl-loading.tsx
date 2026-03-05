@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 interface LoadingStateProps {
   phase?: string;
@@ -7,16 +7,16 @@ interface LoadingStateProps {
 
 export default function LoadingState({ phase, progress }: LoadingStateProps) {
   const phases = [
-    { key: "initializing", label: "Initializing analysis" },
-    { key: "data_collection", label: "Collecting FPL data" },
-    { key: "injury_analysis", label: "Analyzing injuries" },
-    { key: "transfer_optimization", label: "Optimizing transfers" },
-    { key: "chip_strategy", label: "Evaluating chip strategy" },
-    { key: "captain_analysis", label: "Scoring captaincy" },
-    { key: "finalization", label: "Finalizing results" },
+    { key: 'initializing', label: 'Initializing analysis' },
+    { key: 'data_collection', label: 'Collecting FPL data' },
+    { key: 'injury_analysis', label: 'Analyzing injuries' },
+    { key: 'transfer_optimization', label: 'Optimizing transfers' },
+    { key: 'chip_strategy', label: 'Evaluating chip strategy' },
+    { key: 'captain_analysis', label: 'Scoring captaincy' },
+    { key: 'finalization', label: 'Finalizing results' },
   ];
 
-  const currentPhaseIndex = phases.findIndex(p => p.key === phase);
+  const currentPhaseIndex = phases.findIndex((p) => p.key === phase);
   const progressPercent = progress ? Math.round(progress * 100) : 0;
 
   return (
@@ -62,19 +62,19 @@ export default function LoadingState({ phase, progress }: LoadingStateProps) {
                   key={p.key}
                   className={`flex items-center gap-3 text-sm transition-all ${
                     isActive
-                      ? "font-semibold text-teal"
+                      ? 'font-semibold text-teal'
                       : isComplete
-                        ? "text-cloud/60"
-                        : "text-cloud/30"
+                        ? 'text-cloud/60'
+                        : 'text-cloud/30'
                   }`}
                 >
                   <div
                     className={`h-2 w-2 rounded-full ${
                       isActive
-                        ? "bg-teal"
+                        ? 'bg-teal'
                         : isComplete
-                          ? "bg-cloud/60"
-                          : "bg-cloud/20"
+                          ? 'bg-cloud/60'
+                          : 'bg-cloud/20'
                     }`}
                   ></div>
                   {p.label}

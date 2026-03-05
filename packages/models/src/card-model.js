@@ -5,12 +5,13 @@ const RecommendationType = Object.freeze({
   SPREAD_HOME: 'SPREAD_HOME',
   SPREAD_AWAY: 'SPREAD_AWAY',
   ML_HOME: 'ML_HOME',
-  ML_AWAY: 'ML_AWAY'
+  ML_AWAY: 'ML_AWAY',
 });
 
 const PassReason = Object.freeze({
   NONE: '',
-  DRIVER_CONTRADICTED_BY_MATCHUP: 'Driver signal contradicted by matchup analysis',
+  DRIVER_CONTRADICTED_BY_MATCHUP:
+    'Driver signal contradicted by matchup analysis',
   MISSING_INPUTS: 'Required data unavailable',
   EDGE_SANITY_FAIL: 'Edge too large without corroboration',
   NO_MARKET_DATA: 'No market line available',
@@ -18,13 +19,13 @@ const PassReason = Object.freeze({
   INJURY_UNCERTAINTY: 'Key injury status unclear',
   CLOSE_LINE: 'Line too close to projection',
   TIME_CONSTRAINEDPASS: 'Game time constraint violation',
-  MODEL_DISAGREEMENT: 'Multiple models disagree significantly'
+  MODEL_DISAGREEMENT: 'Multiple models disagree significantly',
 });
 
 const EdgeUnits = Object.freeze({
   POINTS: 'pts',
   PROBABILITY: 'prob',
-  EXPECTED_VALUE: 'ev'
+  EXPECTED_VALUE: 'ev',
 });
 
 function calculateTotalEdge(recommendationType, projTotal, marketTotalLine) {
@@ -38,7 +39,11 @@ function calculateTotalEdge(recommendationType, projTotal, marketTotalLine) {
   return null;
 }
 
-function calculateSpreadEdge(recommendationType, projMarginHome, marketSpreadHome) {
+function calculateSpreadEdge(
+  recommendationType,
+  projMarginHome,
+  marketSpreadHome,
+) {
   if (projMarginHome == null || marketSpreadHome == null) return null;
   if (recommendationType === RecommendationType.SPREAD_AWAY) {
     return roundTo(Math.abs(marketSpreadHome) - projMarginHome, 1);
@@ -59,7 +64,12 @@ function oddsToProbability(americanOdds) {
   return 100 / (odds + 100);
 }
 
-function calculateMoneylineEdge(recommendationType, projWinProbHome, marketMoneylineHome, marketMoneylineAway) {
+function calculateMoneylineEdge(
+  recommendationType,
+  projWinProbHome,
+  marketMoneylineHome,
+  marketMoneylineAway,
+) {
   if (projWinProbHome == null) return null;
   if (recommendationType === RecommendationType.ML_HOME) {
     if (marketMoneylineHome == null) return null;
@@ -71,7 +81,7 @@ function calculateMoneylineEdge(recommendationType, projWinProbHome, marketMoney
     if (marketMoneylineAway == null) return null;
     const implied = oddsToProbability(marketMoneylineAway);
     if (implied == null) return null;
-    return roundTo((1 - projWinProbHome) - implied, 3);
+    return roundTo(1 - projWinProbHome - implied, 3);
   }
   return null;
 }
@@ -86,7 +96,7 @@ function buildRecommendationFromPrediction({ prediction, recommendedBetType }) {
     return {
       type: RecommendationType.PASS,
       text: 'PASS',
-      pass_reason: PassReason.INSUFFICIENT_CONFIDENCE
+      pass_reason: PassReason.INSUFFICIENT_CONFIDENCE,
     };
   }
 
@@ -95,35 +105,59 @@ function buildRecommendationFromPrediction({ prediction, recommendedBetType }) {
 
   if (betType === 'moneyline' || betType === 'ml') {
     if (pred === 'HOME') {
-      return { type: RecommendationType.ML_HOME, text: 'HOME ML', pass_reason: null };
+      return {
+        type: RecommendationType.ML_HOME,
+        text: 'HOME ML',
+        pass_reason: null,
+      };
     }
     if (pred === 'AWAY') {
-      return { type: RecommendationType.ML_AWAY, text: 'AWAY ML', pass_reason: null };
+      return {
+        type: RecommendationType.ML_AWAY,
+        text: 'AWAY ML',
+        pass_reason: null,
+      };
     }
   }
 
   if (betType === 'spread' || betType === 'puck_line') {
     if (pred === 'HOME') {
-      return { type: RecommendationType.SPREAD_HOME, text: 'HOME SPREAD', pass_reason: null };
+      return {
+        type: RecommendationType.SPREAD_HOME,
+        text: 'HOME SPREAD',
+        pass_reason: null,
+      };
     }
     if (pred === 'AWAY') {
-      return { type: RecommendationType.SPREAD_AWAY, text: 'AWAY SPREAD', pass_reason: null };
+      return {
+        type: RecommendationType.SPREAD_AWAY,
+        text: 'AWAY SPREAD',
+        pass_reason: null,
+      };
     }
   }
 
   if (betType === 'total') {
     if (pred === 'OVER') {
-      return { type: RecommendationType.TOTAL_OVER, text: 'OVER TOTAL', pass_reason: null };
+      return {
+        type: RecommendationType.TOTAL_OVER,
+        text: 'OVER TOTAL',
+        pass_reason: null,
+      };
     }
     if (pred === 'UNDER') {
-      return { type: RecommendationType.TOTAL_UNDER, text: 'UNDER TOTAL', pass_reason: null };
+      return {
+        type: RecommendationType.TOTAL_UNDER,
+        text: 'UNDER TOTAL',
+        pass_reason: null,
+      };
     }
   }
 
   return {
     type: RecommendationType.PASS,
     text: 'PASS',
-    pass_reason: PassReason.NO_MARKET_DATA
+    pass_reason: PassReason.NO_MARKET_DATA,
   };
 }
 
@@ -140,9 +174,9 @@ function formatStartTimeLocal(startTimeUtc, timeZone = 'UTC') {
       hour: 'numeric',
       minute: '2-digit',
       timeZone,
-      timeZoneName: 'short'
+      timeZoneName: 'short',
     }),
-    timezone: timeZone
+    timezone: timeZone,
   };
 }
 
@@ -167,8 +201,14 @@ function buildMarketFromOdds(oddsSnapshot) {
   return {
     total_line: oddsSnapshot.total ?? null,
     spread_home: oddsSnapshot.spread_home ?? null,
-    moneyline_home: oddsSnapshot.h2h_home != null ? formatAmerican(oddsSnapshot.h2h_home) : null,
-    moneyline_away: oddsSnapshot.h2h_away != null ? formatAmerican(oddsSnapshot.h2h_away) : null
+    moneyline_home:
+      oddsSnapshot.h2h_home != null
+        ? formatAmerican(oddsSnapshot.h2h_home)
+        : null,
+    moneyline_away:
+      oddsSnapshot.h2h_away != null
+        ? formatAmerican(oddsSnapshot.h2h_away)
+        : null,
   };
 }
 
@@ -197,7 +237,9 @@ function erf(x) {
   const a5 = 1.061405429;
   const p = 0.3275911;
   const t = 1 / (1 + p * absX);
-  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
+  const y =
+    1 -
+    ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
   return sign * y;
 }
 
@@ -234,5 +276,5 @@ module.exports = {
   formatStartTimeLocal,
   formatCountdown,
   buildMarketFromOdds,
-  validateCardOutput
+  validateCardOutput,
 };

@@ -5,14 +5,21 @@
 
 import { NextResponse, type NextRequest } from 'next/server';
 import { checkRateLimit } from './rate-limiter';
-import { validateQueryParams, validateRequestSize, createValidationErrorResponse } from './validation';
+import {
+  validateQueryParams,
+  validateRequestSize,
+  createValidationErrorResponse,
+} from './validation';
 
 export interface SecurityCheckResult {
   allowed: boolean;
   error?: NextResponse;
 }
 
-const rateLimitCache = new WeakMap<Request, ReturnType<typeof checkRateLimit>>();
+const rateLimitCache = new WeakMap<
+  Request,
+  ReturnType<typeof checkRateLimit>
+>();
 
 /**
  * Perform all security checks on incoming request
@@ -22,7 +29,7 @@ const rateLimitCache = new WeakMap<Request, ReturnType<typeof checkRateLimit>>()
  */
 export function performSecurityChecks(
   request: NextRequest,
-  routePath: string
+  routePath: string,
 ): SecurityCheckResult {
   // Check 1: Rate limiting
   const rateLimitResult = checkRateLimit(request);
@@ -30,7 +37,7 @@ export function performSecurityChecks(
   if (!rateLimitResult.allowed) {
     const retryAfterSeconds = Math.max(
       1,
-      Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000)
+      Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
     );
     const response = NextResponse.json(
       {
@@ -38,7 +45,7 @@ export function performSecurityChecks(
         error: 'Rate limit exceeded',
         retryAfter: retryAfterSeconds,
       },
-      { status: 429 }
+      { status: 429 },
     );
 
     // Add rate limit headers
@@ -59,7 +66,7 @@ export function performSecurityChecks(
           success: false,
           error: 'Request body too large (max 1MB)',
         },
-        { status: 413 }
+        { status: 413 },
       ),
     };
   }
@@ -87,7 +94,7 @@ export function performSecurityChecks(
         allowed: false,
         error: NextResponse.json(
           createValidationErrorResponse(validation.errors),
-          { status: 400 }
+          { status: 400 },
         ),
       };
     }
@@ -99,8 +106,12 @@ export function performSecurityChecks(
 /**
  * Helper to add rate limit headers to any response
  */
-export function addRateLimitHeaders(response: NextResponse, request: NextRequest): NextResponse {
-  const rateLimitResult = rateLimitCache.get(request) ?? checkRateLimit(request);
+export function addRateLimitHeaders(
+  response: NextResponse,
+  request: NextRequest,
+): NextResponse {
+  const rateLimitResult =
+    rateLimitCache.get(request) ?? checkRateLimit(request);
   rateLimitCache.delete(request);
   Object.entries(rateLimitResult.headers).forEach(([key, value]) => {
     response.headers.set(key, value);

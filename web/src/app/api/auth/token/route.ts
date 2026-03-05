@@ -1,21 +1,24 @@
 /**
  * GET /api/auth/token
  * Development endpoint to generate test tokens
- * 
+ *
  * Query parameters:
  * - role: ADMIN | PAID | FREE_ACCOUNT (default: FREE_ACCOUNT)
  * - subscription: NONE | TRIAL | ACTIVE | PAST_DUE (default: NONE)
  * - email: email address (default: test@example.com)
  * - userId: user ID (default: test-user-123)
- * 
+ *
  * Example: http://localhost:3000/api/auth/token?role=PAID&subscription=ACTIVE&email=user@example.com
- * 
+ *
  * SECURITY: Remove or restrict this endpoint in production!
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAccessToken } from '../../../../lib/api-security/jwt';
-import { performSecurityChecks, addRateLimitHeaders } from '../../../../lib/api-security';
+import {
+  performSecurityChecks,
+  addRateLimitHeaders,
+} from '../../../../lib/api-security';
 import auditLogger from '../../../../lib/api-security/audit-logger';
 import { AuditEventType } from '../../../../lib/api-security/event-types';
 import { getClientIp } from '../../../../lib/api-security/rate-limiter';
@@ -35,14 +38,18 @@ export async function GET(request: NextRequest) {
     const isDevelopment = process.env.NODE_ENV === 'development';
     if (!isDevelopment) {
       return NextResponse.json(
-        { success: false, error: 'Token generation not available in production' },
-        { status: 403 }
+        {
+          success: false,
+          error: 'Token generation not available in production',
+        },
+        { status: 403 },
       );
     }
 
     const { searchParams } = request.nextUrl;
     const role = (searchParams.get('role') || 'FREE_ACCOUNT') as RoleType;
-    const subscription_status = (searchParams.get('subscription') || 'NONE') as SubscriptionType;
+    const subscription_status = (searchParams.get('subscription') ||
+      'NONE') as SubscriptionType;
     const email = searchParams.get('email') || 'test@example.com';
     const userId = searchParams.get('userId') || 'test-user-123';
 
@@ -50,20 +57,28 @@ export async function GET(request: NextRequest) {
     const validRoles: RoleType[] = ['ADMIN', 'PAID', 'FREE_ACCOUNT'];
     if (!validRoles.includes(role)) {
       return NextResponse.json(
-        { success: false, error: `Invalid role. Must be one of: ${validRoles.join(', ')}` },
-        { status: 400 }
+        {
+          success: false,
+          error: `Invalid role. Must be one of: ${validRoles.join(', ')}`,
+        },
+        { status: 400 },
       );
     }
 
     // Validate subscription status
-    const validStatuses: SubscriptionType[] = ['NONE', 'TRIAL', 'ACTIVE', 'PAST_DUE'];
+    const validStatuses: SubscriptionType[] = [
+      'NONE',
+      'TRIAL',
+      'ACTIVE',
+      'PAST_DUE',
+    ];
     if (!validStatuses.includes(subscription_status)) {
       return NextResponse.json(
         {
           success: false,
           error: `Invalid subscription. Must be one of: ${validStatuses.join(', ')}`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -107,7 +122,7 @@ export async function GET(request: NextRequest) {
           curl: `curl -H "Authorization: Bearer ${token}" http://localhost:3000/api/games`,
         },
       },
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json' } },
     );
 
     return addRateLimitHeaders(response, request);
@@ -116,7 +131,7 @@ export async function GET(request: NextRequest) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     const response = NextResponse.json(
       { success: false, error: message },
-      { status: 500 }
+      { status: 500 },
     );
     return addRateLimitHeaders(response, request);
   }

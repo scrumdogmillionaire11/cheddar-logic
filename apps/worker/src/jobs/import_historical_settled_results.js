@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * Import Historical Settled Results
  *
@@ -21,15 +20,19 @@
 
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
+const nodeCrypto = require('crypto');
 const dbBackup = require('../utils/db-backup.js');
 const {
   deriveLockedMarketContext,
   resolveDatabasePath,
   withDb,
 } = require('@cheddar-logic/data');
-const dataPackageRoot = path.dirname(require.resolve('@cheddar-logic/data/package.json'));
-const initSqlJs = require(path.join(dataPackageRoot, 'node_modules/sql.js/dist/sql-asm.js'));
+const dataPackageRoot = path.dirname(
+  require.resolve('@cheddar-logic/data/package.json'),
+);
+const initSqlJs = require(
+  path.join(dataPackageRoot, 'node_modules/sql.js/dist/sql-asm.js'),
+);
 
 function parseArgs(argv) {
   const args = {
@@ -72,7 +75,11 @@ function parseArgs(argv) {
 }
 
 function stableId(prefix, input) {
-  const digest = crypto.createHash('sha1').update(String(input)).digest('hex').slice(0, 12);
+  const digest = nodeCrypto
+    .createHash('sha1')
+    .update(String(input))
+    .digest('hex')
+    .slice(0, 12);
   return `${prefix}-${digest}`;
 }
 
@@ -100,7 +107,13 @@ function normalizeText(value, fallback = null) {
   return text;
 }
 
-function buildSyntheticPayload({ gameId, sport, recommendedBetType, homeTeam, awayTeam }) {
+function buildSyntheticPayload({
+  gameId,
+  sport,
+  recommendedBetType,
+  homeTeam,
+  awayTeam,
+}) {
   return {
     historical_import: true,
     payload_stub: true,
@@ -120,7 +133,9 @@ async function importHistoricalSettledResults({
 } = {}) {
   const activeResolution = resolveDatabasePath();
   const activePath = path.resolve(activeResolution.dbPath);
-  const resolvedSource = sourcePath ? path.resolve(process.cwd(), sourcePath) : null;
+  const resolvedSource = sourcePath
+    ? path.resolve(process.cwd(), sourcePath)
+    : null;
 
   if (!resolvedSource) {
     throw new Error('Missing required --source <path-to-source-db>');
@@ -162,15 +177,21 @@ async function importHistoricalSettledResults({
       FROM card_results
       WHERE status = 'settled'
       ORDER BY settled_at ASC, created_at ASC
-    `
+    `,
   );
   const sourceGames = queryAll(sourceDb, 'SELECT * FROM games');
   const sourcePayloads = queryAll(sourceDb, 'SELECT * FROM card_payloads');
   const sourceGameResults = queryAll(sourceDb, 'SELECT * FROM game_results');
 
-  const sourceGameByGameId = new Map(sourceGames.map((row) => [String(row.game_id), row]));
-  const sourcePayloadById = new Map(sourcePayloads.map((row) => [String(row.id), row]));
-  const sourceGameResultByGameId = new Map(sourceGameResults.map((row) => [String(row.game_id), row]));
+  const sourceGameByGameId = new Map(
+    sourceGames.map((row) => [String(row.game_id), row]),
+  );
+  const sourcePayloadById = new Map(
+    sourcePayloads.map((row) => [String(row.id), row]),
+  );
+  const sourceGameResultByGameId = new Map(
+    sourceGameResults.map((row) => [String(row.game_id), row]),
+  );
 
   const rowsToProcess = limit ? settledRows.slice(0, limit) : settledRows;
 
@@ -194,16 +215,21 @@ async function importHistoricalSettledResults({
     const gameId = normalizeText(row.game_id);
     const sport = normalizeText(row.sport, 'unknown');
     const cardType = normalizeText(row.card_type, 'historical-settled');
-    const recommendedBetType = normalizeText(row.recommended_bet_type, 'unknown');
+    const recommendedBetType = normalizeText(
+      row.recommended_bet_type,
+      'unknown',
+    );
 
     if (!resultId || !cardId || !gameId) {
-      throw new Error(`Invalid settled source row: id/card_id/game_id missing (${JSON.stringify(row)})`);
+      throw new Error(
+        `Invalid settled source row: id/card_id/game_id missing (${JSON.stringify(row)})`,
+      );
     }
 
     const existingResult = queryOne(
       activeDb,
       'SELECT 1 AS ok FROM card_results WHERE id = ? LIMIT 1',
-      [resultId]
+      [resultId],
     );
     if (existingResult) {
       stats.skippedExistingResults++;
@@ -214,18 +240,27 @@ async function importHistoricalSettledResults({
     const existingGame = queryOne(
       activeDb,
       'SELECT 1 AS ok FROM games WHERE game_id = ? LIMIT 1',
-      [gameId]
+      [gameId],
     );
     if (!existingGame) {
       const homeTeam = normalizeText(sourceGame?.home_team, 'Unknown Home');
       const awayTeam = normalizeText(sourceGame?.away_team, 'Unknown Away');
       const gameTimeUtc = normalizeText(
         sourceGame?.game_time_utc,
-        normalizeText(row.settled_at, normalizeText(row.created_at, new Date().toISOString()))
+        normalizeText(
+          row.settled_at,
+          normalizeText(row.created_at, new Date().toISOString()),
+        ),
       );
       const gameStatus = normalizeText(sourceGame?.status, 'final');
-      const createdAt = normalizeText(sourceGame?.created_at, normalizeText(row.created_at, new Date().toISOString()));
-      const updatedAt = normalizeText(sourceGame?.updated_at, normalizeText(row.updated_at, createdAt));
+      const createdAt = normalizeText(
+        sourceGame?.created_at,
+        normalizeText(row.created_at, new Date().toISOString()),
+      );
+      const updatedAt = normalizeText(
+        sourceGame?.updated_at,
+        normalizeText(row.updated_at, createdAt),
+      );
       const gamePkId = stableId('game', gameId);
 
       activeDb.run(
@@ -234,7 +269,17 @@ async function importHistoricalSettledResults({
             id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        [gamePkId, sport, gameId, homeTeam, awayTeam, gameTimeUtc, gameStatus, createdAt, updatedAt]
+        [
+          gamePkId,
+          sport,
+          gameId,
+          homeTeam,
+          awayTeam,
+          gameTimeUtc,
+          gameStatus,
+          createdAt,
+          updatedAt,
+        ],
       );
       stats.insertedGames++;
     }
@@ -242,7 +287,7 @@ async function importHistoricalSettledResults({
     const existingPayload = queryOne(
       activeDb,
       'SELECT 1 AS ok FROM card_payloads WHERE id = ? LIMIT 1',
-      [cardId]
+      [cardId],
     );
     if (!existingPayload) {
       const sourcePayload = sourcePayloadById.get(cardId) || null;
@@ -259,14 +304,29 @@ async function importHistoricalSettledResults({
             normalizeText(sourcePayload.game_id, gameId),
             normalizeText(sourcePayload.sport, sport),
             normalizeText(sourcePayload.card_type, cardType),
-            normalizeText(sourcePayload.card_title, `Historical Settled ${cardType}`),
-            normalizeText(sourcePayload.created_at, normalizeText(row.created_at, new Date().toISOString())),
-            sourcePayload.expires_at == null ? null : normalizeText(sourcePayload.expires_at),
+            normalizeText(
+              sourcePayload.card_title,
+              `Historical Settled ${cardType}`,
+            ),
+            normalizeText(
+              sourcePayload.created_at,
+              normalizeText(row.created_at, new Date().toISOString()),
+            ),
+            sourcePayload.expires_at == null
+              ? null
+              : normalizeText(sourcePayload.expires_at),
             normalizeText(sourcePayload.payload_data, '{}'),
-            sourcePayload.model_output_ids == null ? null : normalizeText(sourcePayload.model_output_ids),
-            sourcePayload.metadata == null ? null : normalizeText(sourcePayload.metadata),
-            normalizeText(sourcePayload.updated_at, normalizeText(sourcePayload.created_at, new Date().toISOString())),
-          ]
+            sourcePayload.model_output_ids == null
+              ? null
+              : normalizeText(sourcePayload.model_output_ids),
+            sourcePayload.metadata == null
+              ? null
+              : normalizeText(sourcePayload.metadata),
+            normalizeText(
+              sourcePayload.updated_at,
+              normalizeText(sourcePayload.created_at, new Date().toISOString()),
+            ),
+          ],
         );
         stats.insertedPayloadsReal++;
       } else {
@@ -290,7 +350,10 @@ async function importHistoricalSettledResults({
             sport,
             cardType,
             `Historical Settled ${cardType}`.trim(),
-            normalizeText(row.created_at, normalizeText(row.settled_at, new Date().toISOString())),
+            normalizeText(
+              row.created_at,
+              normalizeText(row.settled_at, new Date().toISOString()),
+            ),
             null,
             JSON.stringify(syntheticPayload),
             null,
@@ -299,8 +362,11 @@ async function importHistoricalSettledResults({
               payload_stub: true,
               imported_at: new Date().toISOString(),
             }),
-            normalizeText(row.updated_at, normalizeText(row.created_at, new Date().toISOString())),
-          ]
+            normalizeText(
+              row.updated_at,
+              normalizeText(row.created_at, new Date().toISOString()),
+            ),
+          ],
         );
         stats.insertedPayloadsStub++;
       }
@@ -311,17 +377,38 @@ async function importHistoricalSettledResults({
       const existingGameResult = queryOne(
         activeDb,
         'SELECT 1 AS ok FROM game_results WHERE game_id = ? LIMIT 1',
-        [gameId]
+        [gameId],
       );
       const sportValue = normalizeText(sourceGameResult.sport, sport);
-      const finalHome = sourceGameResult.final_score_home == null ? null : Number(sourceGameResult.final_score_home);
-      const finalAway = sourceGameResult.final_score_away == null ? null : Number(sourceGameResult.final_score_away);
+      const finalHome =
+        sourceGameResult.final_score_home == null
+          ? null
+          : Number(sourceGameResult.final_score_home);
+      const finalAway =
+        sourceGameResult.final_score_away == null
+          ? null
+          : Number(sourceGameResult.final_score_away);
       const statusValue = normalizeText(sourceGameResult.status, 'final');
-      const resultSource = normalizeText(sourceGameResult.result_source, 'historical-import');
-      const settledAt = sourceGameResult.settled_at == null ? null : normalizeText(sourceGameResult.settled_at);
-      const metadata = sourceGameResult.metadata == null ? null : normalizeText(sourceGameResult.metadata);
-      const createdAt = normalizeText(sourceGameResult.created_at, normalizeText(row.created_at, new Date().toISOString()));
-      const updatedAt = normalizeText(sourceGameResult.updated_at, normalizeText(row.updated_at, createdAt));
+      const resultSource = normalizeText(
+        sourceGameResult.result_source,
+        'historical-import',
+      );
+      const settledAt =
+        sourceGameResult.settled_at == null
+          ? null
+          : normalizeText(sourceGameResult.settled_at);
+      const metadata =
+        sourceGameResult.metadata == null
+          ? null
+          : normalizeText(sourceGameResult.metadata);
+      const createdAt = normalizeText(
+        sourceGameResult.created_at,
+        normalizeText(row.created_at, new Date().toISOString()),
+      );
+      const updatedAt = normalizeText(
+        sourceGameResult.updated_at,
+        normalizeText(row.updated_at, createdAt),
+      );
 
       if (!existingGameResult) {
         activeDb.run(
@@ -343,7 +430,7 @@ async function importHistoricalSettledResults({
             metadata,
             createdAt,
             updatedAt,
-          ]
+          ],
         );
         stats.insertedGameResults++;
       } else {
@@ -354,7 +441,16 @@ async function importHistoricalSettledResults({
                 settled_at = ?, metadata = ?, updated_at = ?
             WHERE game_id = ?
           `,
-          [finalHome, finalAway, statusValue, resultSource, settledAt, metadata, updatedAt, gameId]
+          [
+            finalHome,
+            finalAway,
+            statusValue,
+            resultSource,
+            settledAt,
+            metadata,
+            updatedAt,
+            gameId,
+          ],
         );
         stats.updatedGameResults++;
       }
@@ -381,13 +477,16 @@ async function importHistoricalSettledResults({
         row.pnl_units == null ? null : Number(row.pnl_units),
         row.metadata == null ? null : normalizeText(row.metadata),
         normalizeText(row.created_at, new Date().toISOString()),
-        normalizeText(row.updated_at, normalizeText(row.created_at, new Date().toISOString())),
+        normalizeText(
+          row.updated_at,
+          normalizeText(row.created_at, new Date().toISOString()),
+        ),
         null,
         null,
         null,
         null,
         null,
-      ]
+      ],
     );
     stats.insertedResults++;
   }
@@ -406,15 +505,16 @@ async function importHistoricalSettledResults({
         INNER JOIN card_payloads cp ON cp.id = cr.card_id
         LEFT JOIN games g ON g.game_id = cr.game_id
         WHERE cr.market_key IS NULL
-      `
+      `,
     );
 
     for (const row of repairCandidates) {
       stats.marketRowsChecked++;
       try {
-        const payload = typeof row.payload_data === 'string'
-          ? JSON.parse(row.payload_data)
-          : row.payload_data;
+        const payload =
+          typeof row.payload_data === 'string'
+            ? JSON.parse(row.payload_data)
+            : row.payload_data;
 
         if (payload && payload.payload_stub) {
           continue;
@@ -436,7 +536,14 @@ async function importHistoricalSettledResults({
             SET market_key = ?, market_type = ?, selection = ?, line = ?, locked_price = ?
             WHERE id = ?
           `,
-          [locked.marketKey, locked.marketType, locked.selection, locked.line, locked.lockedPrice, row.id]
+          [
+            locked.marketKey,
+            locked.marketType,
+            locked.selection,
+            locked.line,
+            locked.lockedPrice,
+            row.id,
+          ],
         );
         stats.marketRowsRepaired++;
       } catch {
@@ -454,15 +561,15 @@ async function importHistoricalSettledResults({
         SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled,
         SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errored
       FROM card_results
-    `
+    `,
   );
   const settledGames = queryOne(
     activeDb,
-    `SELECT COUNT(DISTINCT game_id) AS c FROM card_results WHERE status='settled'`
+    `SELECT COUNT(DISTINCT game_id) AS c FROM card_results WHERE status='settled'`,
   );
   const settledMissingMarketKey = queryOne(
     activeDb,
-    `SELECT COUNT(*) AS c FROM card_results WHERE status='settled' AND market_key IS NULL`
+    `SELECT COUNT(*) AS c FROM card_results WHERE status='settled' AND market_key IS NULL`,
   );
   const settledWithPayload = queryOne(
     activeDb,
@@ -471,7 +578,7 @@ async function importHistoricalSettledResults({
       FROM card_results cr
       INNER JOIN card_payloads cp ON cp.id = cr.card_id
       WHERE cr.status='settled'
-    `
+    `,
   );
 
   if (!dryRun) {
@@ -482,8 +589,14 @@ async function importHistoricalSettledResults({
   console.log('[ImportHistory] Stats:', stats);
   console.log('[ImportHistory] Summary:', summary);
   console.log('[ImportHistory] Settled games:', settledGames?.c || 0);
-  console.log('[ImportHistory] Settled with payload:', settledWithPayload?.c || 0);
-  console.log('[ImportHistory] Settled missing market_key:', settledMissingMarketKey?.c || 0);
+  console.log(
+    '[ImportHistory] Settled with payload:',
+    settledWithPayload?.c || 0,
+  );
+  console.log(
+    '[ImportHistory] Settled missing market_key:',
+    settledMissingMarketKey?.c || 0,
+  );
 
   return {
     success: true,

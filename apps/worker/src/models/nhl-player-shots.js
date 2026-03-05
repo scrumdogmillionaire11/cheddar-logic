@@ -19,14 +19,14 @@
 // ============================================================================
 // Constants (from cheddar-nhl ModelConfig — backtest-calibrated Feb 2026)
 // ============================================================================
-const RECENCY_DECAY_ALPHA = 0.65;  // Exponential decay for L5 weights (alpha^i, i=0..4)
-const L5_WEIGHT = 0.65;            // L5 vs prior blend weight
-const PRIOR_WEIGHT = 0.35;         // Prior (season stats) weight
-const HOME_ICE_SOG_BOOST = 1.05;   // Home teams shoot ~5% more
+const RECENCY_DECAY_ALPHA = 0.65; // Exponential decay for L5 weights (alpha^i, i=0..4)
+const L5_WEIGHT = 0.65; // L5 vs prior blend weight
+const PRIOR_WEIGHT = 0.35; // Prior (season stats) weight
+const HOME_ICE_SOG_BOOST = 1.05; // Home teams shoot ~5% more
 const HIGH_VOLUME_THRESHOLD = 4.5; // SOG/game above which regression applies
-const HIGH_VOLUME_REGRESSION = 0.90; // Reduce μ by 10% for high-volume projections
+const HIGH_VOLUME_REGRESSION = 0.9; // Reduce μ by 10% for high-volume projections
 const FIRST_PERIOD_SOG_SHARE = 0.32; // ~32% of game shots in 1P
-const FIRST_PERIOD_PACE_FACTOR = 1.00; // calibrated to 1.00 to avoid 1P RMSE spike
+const FIRST_PERIOD_PACE_FACTOR = 1.0; // calibrated to 1.00 to avoid 1P RMSE spike
 const FIRST_PERIOD_HOME_ICE_BOOST = 1.03; // 1P home boost (config.first_period_home_ice_boost)
 
 // ============================================================================
@@ -46,7 +46,7 @@ function getL5Weights() {
     raw.push(Math.pow(RECENCY_DECAY_ALPHA, i));
   }
   const total = raw.reduce((s, w) => s + w, 0);
-  return raw.map(w => w / total);
+  return raw.map((w) => w / total);
 }
 
 // ============================================================================
@@ -74,7 +74,7 @@ function calcMu(inputs) {
     projToi = null,
     opponentFactor = 1.0,
     paceFactor = 1.0,
-    isHome = null
+    isHome = null,
   } = inputs || {};
 
   if (!Array.isArray(l5Sog) || l5Sog.length !== 5) {
@@ -131,8 +131,8 @@ function calcMu1p(inputs) {
 
   // Adjust home ice advantage: remove full-game boost, apply 1P boost
   if (isHome === true) {
-    mu1p /= HOME_ICE_SOG_BOOST;            // Remove full-game home boost
-    mu1p *= FIRST_PERIOD_HOME_ICE_BOOST;   // Apply 1P home boost (1.03)
+    mu1p /= HOME_ICE_SOG_BOOST; // Remove full-game home boost
+    mu1p *= FIRST_PERIOD_HOME_ICE_BOOST; // Apply 1P home boost (1.03)
   }
 
   return Math.max(0.0, mu1p);
@@ -165,9 +165,9 @@ function classifyEdge(mu, marketLine, confidence) {
   const direction = edge >= 0 ? 'OVER' : 'UNDER';
 
   let tier;
-  if (absEdge >= 0.8 && confidence >= 0.50) {
+  if (absEdge >= 0.8 && confidence >= 0.5) {
     tier = 'HOT';
-  } else if (absEdge >= 0.5 && confidence >= 0.50) {
+  } else if (absEdge >= 0.5 && confidence >= 0.5) {
     tier = 'WATCH';
   } else {
     tier = 'COLD';

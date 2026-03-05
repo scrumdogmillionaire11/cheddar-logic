@@ -1,49 +1,43 @@
-<!-- BMAD:START -->
-# BMAD Method — Project Instructions
+# Copilot Instructions for PAX Agents Repo
 
-## Project Configuration
+This repo stores PAX agent definitions and workflows for cross-tool usage.
 
-- **Project**: {{project_name}}
-- **User**: Ajcolubiale
-- **Communication Language**: English
-- **Document Output Language**: English
-- **User Skill Level**: {{user_skill_level}}
-- **Output Folder**: {project-root}/_bmad-output
-- **Planning Artifacts**: {{planning_artifacts}}
-- **Implementation Artifacts**: {{implementation_artifacts}}
-- **Project Knowledge**: {{project_knowledge}}
+## Source of Truth
 
-## BMAD Runtime Structure
+- Agent prompts: `.claude/agents/pax-*.md`
+- Commands: `.claude/commands/pax/*.md`
+- Workflow templates/references: `.claude/process-acceleration-executors/**`
 
-- **Agent definitions**: `_bmad/bmm/agents/` (BMM module) and `_bmad/core/agents/` (core)
-- **Workflow definitions**: `_bmad/bmm/workflows/` (organized by phase)
-- **Core tasks**: `_bmad/core/tasks/` (help, editorial review, indexing, sharding, adversarial review)
-- **Core workflows**: `_bmad/core/workflows/` (brainstorming, party-mode, advanced-elicitation)
-- **Workflow engine**: `_bmad/core/tasks/workflow.xml` (executes YAML-based workflows)
-- **Module configuration**: `_bmad/bmm/config.yaml`
-- **Core configuration**: `_bmad/core/config.yaml`
-- **Agent manifest**: `_bmad/_config/agent-manifest.csv`
-- **Workflow manifest**: `_bmad/_config/workflow-manifest.csv`
-- **Help manifest**: `_bmad/_config/bmad-help.csv`
-- **Agent memory**: `_bmad/_memory/`
+## Working Rules
 
-## Key Conventions
+1. Preserve paths and relative references used by command/workflow markdown files.
+2. Do not modify `.planning/**` in this package repo (consumer runtime state only).
+3. Keep updates backward-compatible unless explicitly doing a major release.
+4. Validate changes with:
+   - `./scripts/doctor.sh .`
+   - `./tests/link-integrity.sh .`
 
-- Always load `_bmad/bmm/config.yaml` before any agent activation or workflow execution
-- Store all config fields as session variables: `{user_name}`, `{communication_language}`, `{output_folder}`, `{planning_artifacts}`, `{implementation_artifacts}`, `{project_knowledge}`
-- MD-based workflows execute directly — load and follow the `.md` file
-- YAML-based workflows require the workflow engine — load `workflow.xml` first, then pass the `.yaml` config
-- Follow step-based workflow execution: load steps JIT, never multiple at once
-- Save outputs after EACH step when using the workflow engine
-- The `{project-root}` variable resolves to the workspace root at runtime
+## Copilot Usage Pattern
 
-## Available Agents
+- Interpret user intent against PAX commands (e.g., "plan phase", "execute phase", "verify work").
+- Reference corresponding docs in `.claude/commands/pax/` and `.claude/process-acceleration-executors/workflows/`.
+- For implementation changes, edit canonical files in `.claude/agents/` and related workflow docs.
 
-| Agent | Persona | Title | Capabilities |
-|---|---|---|---|
-| bmad-master | BMad Master | BMad Master Executor, Knowledge Custodian, and Workflow Orchestrator | runtime resource management, workflow orchestration, task execution, knowledge custodian |
+## Tool Access & Capabilities
 
-## Slash Commands
+**For VS Code Copilot Chat:**
+- ✅ File Read: Use read_file tool for all `.claude/`, `.github/`, `.planning/**` paths
+- ✅ File Create/Edit: Use create_file and replace_string_in_file tools
+- ✅ Terminal Execution: Use run_in_terminal for all bash/shell commands
+- ✅ Git Operations: Use git tools for commits, branches, pushes
+- ⚠️ If tools not showing: Reload VS Code (Cmd+Shift+P → "Developer: Reload Window")
 
-Type `/bmad-` in Copilot Chat to see all available BMAD workflows and agent activators. Agents are also available in the agents dropdown.
-<!-- BMAD:END -->
+**For Full Automation (Recommended):**
+- Use **Claude Desktop** or **Cursor IDE** which have native MCP support
+- These can directly execute workflows without tool coordination
+
+**Tool Usage Rules:**
+1. Always use run_in_terminal for: git operations, npm/node commands, python execution, file system operations
+2. Use edit tools for: updating markdown plans, modifying configuration files, code changes
+3. Batch independent operations together (parallel tool calls) when possible
+4. For Phase execution: Read plan → Execute tasks → Update STATE.md → Commit changes

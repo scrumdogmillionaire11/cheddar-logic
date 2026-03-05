@@ -26,10 +26,24 @@ function toNumber(value) {
  * @param {number} awayRest - days since last game
  * @returns {object} { homeProjected, awayProjected, confidence }
  */
-function projectNBA(homeOffense, homeDefense, awayOffense, awayDefense, homePace, awayPace, homeRest, awayRest) {
+function projectNBA(
+  homeOffense,
+  homeDefense,
+  awayOffense,
+  awayDefense,
+  homePace,
+  awayPace,
+  homeRest,
+  awayRest,
+) {
   // Validate inputs
   if (!homeOffense || !awayDefense || !awayOffense || !homeDefense) {
-    return { homeProjected: null, awayProjected: null, confidence: 0.50, reasoning: 'Missing offense/defense data' };
+    return {
+      homeProjected: null,
+      awayProjected: null,
+      confidence: 0.5,
+      reasoning: 'Missing offense/defense data',
+    };
   }
 
   // Pace multiplier matrix (from dashboard)
@@ -37,10 +51,10 @@ function projectNBA(homeOffense, homeDefense, awayOffense, awayDefense, homePace
     'Fast|Fast': 1.04,
     'Fast|Avg': 1.02,
     'Avg|Fast': 1.02,
-    'Avg|Avg': 1.00,
+    'Avg|Avg': 1.0,
     'Avg|Slow': 0.98,
     'Slow|Avg': 0.98,
-    'Slow|Slow': 0.96
+    'Slow|Slow': 0.96,
   };
 
   // Categorize pace (avg NBA ~100 poss/game)
@@ -52,14 +66,15 @@ function projectNBA(homeOffense, homeDefense, awayOffense, awayDefense, homePace
 
   const homePaceCategory = categorizePace(homePace || 100);
   const awayPaceCategory = categorizePace(awayPace || 100);
-  const paceMultiplier = paceMap[`${homePaceCategory}|${awayPaceCategory}`] || 1.00;
+  const paceMultiplier =
+    paceMap[`${homePaceCategory}|${awayPaceCategory}`] || 1.0;
 
   // Rest adjustments (days since last game)
   const restAdjustment = (rest) => {
-    if (rest === 0) return -4;    // Back-to-back
+    if (rest === 0) return -4; // Back-to-back
     if (rest === 1) return 0;
     if (rest === 2) return 0;
-    if (rest >= 3) return 2;      // Well-rested
+    if (rest >= 3) return 2; // Well-rested
     return 0;
   };
 
@@ -67,8 +82,10 @@ function projectNBA(homeOffense, homeDefense, awayOffense, awayDefense, homePace
   const awayRestAdj = restAdjustment(awayRest);
 
   // Base projection
-  const homeProjected = ((homeOffense + awayDefense) / 2) * paceMultiplier + homeRestAdj;
-  const awayProjected = ((awayOffense + homeDefense) / 2) * paceMultiplier + awayRestAdj;
+  const homeProjected =
+    ((homeOffense + awayDefense) / 2) * paceMultiplier + homeRestAdj;
+  const awayProjected =
+    ((awayOffense + homeDefense) / 2) * paceMultiplier + awayRestAdj;
 
   // Confidence calculation (base 50)
   let confidence = 50;
@@ -76,9 +93,9 @@ function projectNBA(homeOffense, homeDefense, awayOffense, awayDefense, homePace
   // Rest difference signal
   const restDiff = Math.abs(homeRest - awayRest);
   if (homeRest === 0 && awayRest > 0) {
-    confidence -= 12;  // Home exhausted
+    confidence -= 12; // Home exhausted
   } else if (awayRest === 0 && homeRest > 0) {
-    confidence += 12;  // Away exhausted
+    confidence += 12; // Away exhausted
   } else if (restDiff >= 2) {
     confidence += 8;
   }
@@ -96,11 +113,11 @@ function projectNBA(homeOffense, homeDefense, awayOffense, awayDefense, homePace
   // Spread clarity signal (margin of victory confidence)
   const projectedMargin = Math.abs(homeProjected - awayProjected);
   if (projectedMargin >= 10) {
-    confidence += 15;  // Clear winner
+    confidence += 15; // Clear winner
   } else if (projectedMargin >= 5) {
     confidence += 10;
   } else if (projectedMargin < 3) {
-    confidence -= 5;   // Toss-up
+    confidence -= 5; // Toss-up
   }
 
   // Clamp confidence
@@ -113,7 +130,7 @@ function projectNBA(homeOffense, homeDefense, awayOffense, awayDefense, homePace
     paceMultiplier,
     homeRestAdj,
     awayRestAdj,
-    netRatingGap
+    netRatingGap,
   };
 }
 
@@ -130,14 +147,14 @@ function projectNCAAM(homeOffense, homeDefense, awayOffense, awayDefense) {
     return { homeProjected: null, awayProjected: null, projectedMargin: null };
   }
 
-  const HCA = 2.5;  // Home court advantage
+  const HCA = 2.5; // Home court advantage
   const homeProjected = (homeOffense + awayDefense) / 2 + HCA;
   const awayProjected = (awayOffense + homeDefense) / 2;
 
   return {
     homeProjected: Math.round(homeProjected * 10) / 10,
     awayProjected: Math.round(awayProjected * 10) / 10,
-    projectedMargin: Math.round((homeProjected - awayProjected) * 10) / 10
+    projectedMargin: Math.round((homeProjected - awayProjected) * 10) / 10,
   };
 }
 
@@ -151,9 +168,26 @@ function projectNCAAM(homeOffense, homeDefense, awayOffense, awayDefense) {
  * @param {boolean} awayGoalieConfirmed - is goalie known
  * @returns {object} { homeProjected, awayProjected, confidence }
  */
-function projectNHL(homeGoalsFor, homeGoalsAgainst, awayGoalsFor, awayGoalsAgainst, homeGoalieConfirmed = true, awayGoalieConfirmed = true) {
-  if (!homeGoalsFor || !homeGoalsAgainst || !awayGoalsFor || !awayGoalsAgainst) {
-    return { homeProjected: null, awayProjected: null, confidence: 0.45, reasoning: 'Missing goals data' };
+function projectNHL(
+  homeGoalsFor,
+  homeGoalsAgainst,
+  awayGoalsFor,
+  awayGoalsAgainst,
+  homeGoalieConfirmed = true,
+  awayGoalieConfirmed = true,
+) {
+  if (
+    !homeGoalsFor ||
+    !homeGoalsAgainst ||
+    !awayGoalsFor ||
+    !awayGoalsAgainst
+  ) {
+    return {
+      homeProjected: null,
+      awayProjected: null,
+      confidence: 0.45,
+      reasoning: 'Missing goals data',
+    };
   }
 
   // Base projection
@@ -171,7 +205,7 @@ function projectNHL(homeGoalsFor, homeGoalsAgainst, awayGoalsFor, awayGoalsAgain
   const homeGoalDiff = homeGoalsFor - homeGoalsAgainst;
   const awayGoalDiff = awayGoalsFor - awayGoalsAgainst;
   const goalDiffGap = Math.abs(homeGoalDiff - awayGoalDiff);
-  
+
   if (goalDiffGap >= 1.5) {
     confidence += 10;
   } else if (goalDiffGap >= 0.8) {
@@ -191,9 +225,9 @@ function projectNHL(homeGoalsFor, homeGoalsAgainst, awayGoalsFor, awayGoalsAgain
   // Scoring environment signals
   const totalProjected = homeProjected + awayProjected;
   if (totalProjected > 7) {
-    confidence += 3;   // High-scoring = more variance but clearer signals
+    confidence += 3; // High-scoring = more variance but clearer signals
   } else if (totalProjected < 5) {
-    confidence -= 6;   // Low-scoring = defensive duel, hard to predict
+    confidence -= 6; // Low-scoring = defensive duel, hard to predict
   }
 
   // Goalie unconfirmed penalty
@@ -210,7 +244,8 @@ function projectNHL(homeGoalsFor, homeGoalsAgainst, awayGoalsFor, awayGoalsAgain
     confidence: Math.round(confidence) / 100,
     goalDiffGap,
     totalProjected: Math.round(totalProjected * 100) / 100,
-    goalieConfirmedPenalty: (!homeGoalieConfirmed || !awayGoalieConfirmed) ? -10 : 0
+    goalieConfirmedPenalty:
+      !homeGoalieConfirmed || !awayGoalieConfirmed ? -10 : 0,
   };
 }
 
@@ -241,8 +276,23 @@ function projectNHL(homeGoalsFor, homeGoalsAgainst, awayGoalsFor, awayGoalsAgain
  * @param {number} paceAdjustment - Synergy pace delta (from PaceSynergyService)
  * @returns {object|null}
  */
-function projectNBACanonical(homeOffRtg, homeDefRtg, homePace, awayOffRtg, awayDefRtg, awayPace, paceAdjustment = 0) {
-  if (!homeOffRtg || !homeDefRtg || !homePace || !awayOffRtg || !awayDefRtg || !awayPace) {
+function projectNBACanonical(
+  homeOffRtg,
+  homeDefRtg,
+  homePace,
+  awayOffRtg,
+  awayDefRtg,
+  awayPace,
+  paceAdjustment = 0,
+) {
+  if (
+    !homeOffRtg ||
+    !homeDefRtg ||
+    !homePace ||
+    !awayOffRtg ||
+    !awayDefRtg ||
+    !awayPace
+  ) {
     return null;
   }
 
@@ -275,5 +325,5 @@ module.exports = {
   projectNBA,
   projectNBACanonical,
   projectNCAAM,
-  projectNHL
+  projectNHL,
 };

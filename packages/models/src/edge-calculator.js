@@ -1,11 +1,11 @@
 /**
  * Edge Calculation Library
- * 
+ *
  * Computes probability edges (0-1 scale) for all market types.
  * Edge = p_fair - p_implied
- * 
+ *
  * Ranges: roughly [-1, +1], thresholds in canonical-decision use 0.02-0.025 (2-2.5%)
- * 
+ *
  * All computation uses Normal approximation for projections vs market lines.
  */
 
@@ -16,7 +16,7 @@
  */
 function impliedProbFromAmerican(odds) {
   if (odds == null || !Number.isFinite(odds) || odds === 0) return null;
-  return odds < 0 ? (-odds) / ((-odds) + 100) : 100 / (odds + 100);
+  return odds < 0 ? -odds / (-odds + 100) : 100 / (odds + 100);
 }
 
 /**
@@ -25,7 +25,7 @@ function impliedProbFromAmerican(odds) {
  * @returns {number} - Φ(z), probability
  */
 function normCdf(z) {
-  const b1 = 0.319381530;
+  const b1 = 0.31938153;
   const b2 = -0.356563782;
   const b3 = 1.781477937;
   const b4 = -1.821255978;
@@ -42,7 +42,12 @@ function normCdf(z) {
   const t3 = t2 * t;
   const t4 = t3 * t;
   const t5 = t4 * t;
-  return 1 - c * Math.exp(-z * z / 2) * (b1 * t + b2 * t2 + b3 * t3 + b4 * t4 + b5 * t5);
+  return (
+    1 -
+    c *
+      Math.exp((-z * z) / 2) *
+      (b1 * t + b2 * t2 + b3 * t3 + b4 * t4 + b5 * t5)
+  );
 }
 
 /**
@@ -55,13 +60,23 @@ function normCdf(z) {
 function computeMoneylineEdge({
   projectionWinProbHome,
   americanOdds,
-  isPredictionHome = true
+  isPredictionHome = true,
 }) {
-  if (!Number.isFinite(projectionWinProbHome) || !Number.isFinite(americanOdds)) {
-    return { edge: null, p_fair: null, p_implied: null, reason: 'missing_projection_or_odds' };
+  if (
+    !Number.isFinite(projectionWinProbHome) ||
+    !Number.isFinite(americanOdds)
+  ) {
+    return {
+      edge: null,
+      p_fair: null,
+      p_implied: null,
+      reason: 'missing_projection_or_odds',
+    };
   }
 
-  const p_fair = isPredictionHome ? projectionWinProbHome : 1 - projectionWinProbHome;
+  const p_fair = isPredictionHome
+    ? projectionWinProbHome
+    : 1 - projectionWinProbHome;
   const p_implied = impliedProbFromAmerican(americanOdds);
 
   if (p_implied == null) {
@@ -73,7 +88,7 @@ function computeMoneylineEdge({
     edge: Number(edge.toFixed(4)),
     p_fair: Number(p_fair.toFixed(4)),
     p_implied: Number(p_implied.toFixed(4)),
-    confidence: 0.95
+    confidence: 0.95,
   };
 }
 
@@ -94,7 +109,7 @@ function computeSpreadEdge({
   spreadPriceHome,
   spreadPriceAway,
   sigmaMargin = 12,
-  isPredictionHome = true
+  isPredictionHome = true,
 }) {
   if (!Number.isFinite(projectionMarginHome) || !Number.isFinite(spreadLine)) {
     return {
@@ -102,7 +117,7 @@ function computeSpreadEdge({
       edgePoints: null,
       p_fair: null,
       p_implied: null,
-      reason: 'missing_projection_or_line'
+      reason: 'missing_projection_or_line',
     };
   }
 
@@ -124,7 +139,7 @@ function computeSpreadEdge({
       edgePoints: mu - T,
       p_fair,
       p_implied: null,
-      reason: 'invalid_spread_odds'
+      reason: 'invalid_spread_odds',
     };
   }
 
@@ -137,7 +152,7 @@ function computeSpreadEdge({
     p_fair: Number(p_fair.toFixed(4)),
     p_implied: Number(p_implied.toFixed(4)),
     confidence: 0.85, // spread projections less calibrated than ML
-    sigma_used: sigmaMargin
+    sigma_used: sigmaMargin,
   };
 }
 
@@ -158,7 +173,7 @@ function computeTotalEdge({
   totalPriceOver,
   totalPriceUnder,
   sigmaTotal = 14,
-  isPredictionOver = true
+  isPredictionOver = true,
 }) {
   if (!Number.isFinite(projectionTotal) || !Number.isFinite(totalLine)) {
     return {
@@ -166,7 +181,7 @@ function computeTotalEdge({
       edgePoints: null,
       p_fair: null,
       p_implied: null,
-      reason: 'missing_projection_or_line'
+      reason: 'missing_projection_or_line',
     };
   }
 
@@ -187,7 +202,7 @@ function computeTotalEdge({
       edgePoints: mu - L,
       p_fair,
       p_implied: null,
-      reason: 'invalid_total_odds'
+      reason: 'invalid_total_odds',
     };
   }
 
@@ -200,7 +215,7 @@ function computeTotalEdge({
     p_fair: Number(p_fair.toFixed(4)),
     p_implied: Number(p_implied.toFixed(4)),
     confidence: 0.88,
-    sigma_used: sigmaTotal
+    sigma_used: sigmaTotal,
   };
 }
 
@@ -213,7 +228,7 @@ function getSigmaDefaults(sport) {
     NCAAM: { margin: 11, total: 13 },
     NHL: { margin: 1.8, total: 1.8 }, // Hockey uses lower vig
     NFL: { margin: 14, total: 16 },
-    MLB: { margin: 4, total: 9.5 }
+    MLB: { margin: 4, total: 9.5 },
   };
   return sigmaMap[sport?.toUpperCase()] || { margin: 12, total: 14 };
 }
@@ -224,5 +239,5 @@ module.exports = {
   computeMoneylineEdge,
   computeSpreadEdge,
   computeTotalEdge,
-  getSigmaDefaults
+  getSigmaDefaults,
 };

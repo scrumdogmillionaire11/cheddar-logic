@@ -238,7 +238,7 @@ interface AuditEntry {
 
 function runAudit(): void {
   console.log('🔐 Database Security Audit Report\n');
-  console.log('=' .repeat(80));
+  console.log('='.repeat(80));
 
   const results: AuditEntry[] = [];
 
@@ -270,7 +270,8 @@ function runAudit(): void {
 
     for (const entry of entries) {
       const statusIcon = entry.safe ? '✅' : '⚠️ ';
-      const riskBadge = entry.riskLevel === 'SAFE' ? '✅ SAFE' : `🔴 ${entry.riskLevel}`;
+      const riskBadge =
+        entry.riskLevel === 'SAFE' ? '✅ SAFE' : `🔴 ${entry.riskLevel}`;
       const paramBadge = entry.parameterized ? '[PARAMETERIZED]' : '[STATIC]';
 
       console.log(`\n${statusIcon} ${entry.name}`);
@@ -286,7 +287,10 @@ function runAudit(): void {
   }
 
   // Generate summary report
-  const auditQueryObjects = QUERIES_TO_AUDIT.map((q) => ({ name: q.name, sql: q.sql }));
+  const auditQueryObjects = QUERIES_TO_AUDIT.map((q) => ({
+    name: q.name,
+    sql: q.sql,
+  }));
   const report = generateAuditReport(auditQueryObjects);
   console.log('\n' + '='.repeat(80));
   console.log('\n📊 Audit Summary');
@@ -300,11 +304,11 @@ function runAudit(): void {
   const allSafe = results.every((r) => r.safe);
   if (allSafe) {
     console.log(
-      '\n✅ AUDIT PASSED: All queries are properly parameterized and safe from SQL injection.\n'
+      '\n✅ AUDIT PASSED: All queries are properly parameterized and safe from SQL injection.\n',
     );
   } else {
     console.log(
-      '\n⚠️  AUDIT WARNINGS: Some queries have potential issues. Review above.\n'
+      '\n⚠️  AUDIT WARNINGS: Some queries have potential issues. Review above.\n',
     );
   }
 }

@@ -1,12 +1,40 @@
-const { computeConflict, Market, DecisionStatus } = require('@cheddar-logic/models');
-const { computeNHLMarketDecisions, selectExpressionChoice } = require('../cross-market');
+const {
+  computeConflict,
+  Market,
+  DecisionStatus,
+} = require('@cheddar-logic/models');
+const {
+  computeNHLMarketDecisions,
+  selectExpressionChoice,
+} = require('../cross-market');
 
 describe('cross-market orchestration', () => {
   test('computeConflict uses min(support, oppose)', () => {
     const drivers = [
-      { driverKey: 'a', weight: 0.6, eligible: true, signal: 0.4, contrib: 0.24, status: 'ok' },
-      { driverKey: 'b', weight: 0.2, eligible: true, signal: -0.3, contrib: -0.06, status: 'ok' },
-      { driverKey: 'c', weight: 0.2, eligible: true, signal: 0.2, contrib: 0.04, status: 'ok' }
+      {
+        driverKey: 'a',
+        weight: 0.6,
+        eligible: true,
+        signal: 0.4,
+        contrib: 0.24,
+        status: 'ok',
+      },
+      {
+        driverKey: 'b',
+        weight: 0.2,
+        eligible: true,
+        signal: -0.3,
+        contrib: -0.06,
+        status: 'ok',
+      },
+      {
+        driverKey: 'c',
+        weight: 0.2,
+        eligible: true,
+        signal: 0.2,
+        contrib: 0.04,
+        status: 'ok',
+      },
     ];
 
     expect(computeConflict(drivers)).toBeCloseTo(0.2, 3);
@@ -20,8 +48,12 @@ describe('cross-market orchestration', () => {
       h2h_away: 110,
       raw_data: {
         espn_metrics: {
-          home: { metrics: { avgGoalsFor: 3.2, avgGoalsAgainst: 2.7, restDays: 2 } },
-          away: { metrics: { avgGoalsFor: 2.9, avgGoalsAgainst: 3.1, restDays: 1 } }
+          home: {
+            metrics: { avgGoalsFor: 3.2, avgGoalsAgainst: 2.7, restDays: 2 },
+          },
+          away: {
+            metrics: { avgGoalsFor: 2.9, avgGoalsAgainst: 3.1, restDays: 1 },
+          },
         },
         goalie_home_gsax: 1.2,
         goalie_away_gsax: -0.5,
@@ -38,8 +70,8 @@ describe('cross-market orchestration', () => {
         pace: 102,
         recent_trend_home: 60,
         recent_trend_away: 45,
-        welcome_home_fade_active: true
-      }
+        welcome_home_fade_active: true,
+      },
     };
 
     const decisions = computeNHLMarketDecisions(oddsSnapshot);
@@ -47,11 +79,22 @@ describe('cross-market orchestration', () => {
     const spreadDrivers = decisions.SPREAD.drivers;
     const mlDrivers = decisions.ML.drivers;
 
-    expect(totalDrivers.find((driver) => driver.driverKey === 'rest').eligible).toBe(true);
-    expect(spreadDrivers.find((driver) => driver.driverKey === 'pace').eligible).toBe(false);
-    expect(spreadDrivers.find((driver) => driver.driverKey === 'pdoRegression').eligible).toBe(false);
-    expect(mlDrivers.find((driver) => driver.driverKey === 'pace').eligible).toBe(false);
-    expect(mlDrivers.find((driver) => driver.driverKey === 'pdoRegression').eligible).toBe(false);
+    expect(
+      totalDrivers.find((driver) => driver.driverKey === 'rest').eligible,
+    ).toBe(true);
+    expect(
+      spreadDrivers.find((driver) => driver.driverKey === 'pace').eligible,
+    ).toBe(false);
+    expect(
+      spreadDrivers.find((driver) => driver.driverKey === 'pdoRegression')
+        .eligible,
+    ).toBe(false);
+    expect(
+      mlDrivers.find((driver) => driver.driverKey === 'pace').eligible,
+    ).toBe(false);
+    expect(
+      mlDrivers.find((driver) => driver.driverKey === 'pdoRegression').eligible,
+    ).toBe(false);
   });
 
   test('selector prefers ML when spread is bad number and scores are tight', () => {
@@ -61,22 +104,22 @@ describe('cross-market orchestration', () => {
         status: DecisionStatus.WATCH,
         score: 0.32,
         risk_flags: [],
-        edge: 0.4
+        edge: 0.4,
       },
       [Market.SPREAD]: {
         market: Market.SPREAD,
         status: DecisionStatus.WATCH,
-        score: 0.40,
+        score: 0.4,
         risk_flags: ['BAD_NUMBER'],
-        edge: 0.15
+        edge: 0.15,
       },
       [Market.ML]: {
         market: Market.ML,
         status: DecisionStatus.WATCH,
         score: 0.39,
         risk_flags: ['COINFLIP_ZONE'],
-        edge: 0.02
-      }
+        edge: 0.02,
+      },
     };
 
     const choice = selectExpressionChoice(decisions);

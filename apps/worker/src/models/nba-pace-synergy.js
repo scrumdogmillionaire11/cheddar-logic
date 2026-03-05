@@ -21,21 +21,21 @@ const PACE_MIN = 99.3;
 const PACE_MAX = 107.8;
 
 // Percentile thresholds for pace classification
-const FAST_THRESHOLD_PCT   = 70.0;  // 70th percentile = FAST (~105.0+ pace)
-const VERY_FAST_THRESHOLD  = 80.0;  // 80th percentile = VERY FAST (~105.4+ pace)
-const SLOW_THRESHOLD_PCT   = 30.0;  // 30th percentile = SLOW (~102.5- pace)
-const VERY_SLOW_THRESHOLD  = 20.0;  // 20th percentile = VERY SLOW (~101.5- pace)
-const PACE_CLASH_THRESHOLD = 40.0;  // Percentile gap to classify as pace clash
+const FAST_THRESHOLD_PCT = 70.0; // 70th percentile = FAST (~105.0+ pace)
+const VERY_FAST_THRESHOLD = 80.0; // 80th percentile = VERY FAST (~105.4+ pace)
+const SLOW_THRESHOLD_PCT = 30.0; // 30th percentile = SLOW (~102.5- pace)
+const VERY_SLOW_THRESHOLD = 20.0; // 20th percentile = VERY SLOW (~101.5- pace)
+const PACE_CLASH_THRESHOLD = 40.0; // Percentile gap to classify as pace clash
 
 // NBA 2025-26 league median ORtg (offensive efficiency proxy)
 const LEAGUE_MEDIAN_OFF_EFF = 113.0;
 
 // Possession adjustments (from Python constants)
-const FAST_FAST_BOOST_FULL   = 0.6;
-const FAST_FAST_BOOST_HALF   = 0.3;
-const VERY_FAST_BOOST_FULL   = 1.2;
-const VERY_FAST_BOOST_HALF   = 0.6;
-const SLOW_SLOW_PENALTY      = -0.6;
+const FAST_FAST_BOOST_FULL = 0.6;
+const FAST_FAST_BOOST_HALF = 0.3;
+const VERY_FAST_BOOST_FULL = 1.2;
+const VERY_FAST_BOOST_HALF = 0.6;
+const SLOW_SLOW_PENALTY = -0.6;
 const VERY_SLOW_SLOW_PENALTY = -1.2;
 
 /**
@@ -47,7 +47,7 @@ const VERY_SLOW_SLOW_PENALTY = -1.2;
  */
 function paceToPct(pace) {
   if (pace === null || pace === undefined) return null;
-  const pct = (pace - PACE_MIN) / (PACE_MAX - PACE_MIN) * 100;
+  const pct = ((pace - PACE_MIN) / (PACE_MAX - PACE_MIN)) * 100;
   return Math.max(0, Math.min(100, pct));
 }
 
@@ -55,8 +55,11 @@ function paceToPct(pace) {
  * Handle VERY FAST x VERY FAST matchup (both >= 80th percentile).
  */
 function _handleVeryFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
-  const passesGate = (homeOffEff !== null && homeOffEff >= LEAGUE_MEDIAN_OFF_EFF)
-                  && (awayOffEff !== null && awayOffEff >= LEAGUE_MEDIAN_OFF_EFF);
+  const passesGate =
+    homeOffEff !== null &&
+    homeOffEff >= LEAGUE_MEDIAN_OFF_EFF &&
+    awayOffEff !== null &&
+    awayOffEff >= LEAGUE_MEDIAN_OFF_EFF;
 
   if (passesGate) {
     return {
@@ -66,7 +69,7 @@ function _handleVeryFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
       homePacePct,
       awayPacePct,
       bettingSignal: 'ELITE_OVER',
-      reasoning: `VERY_FAST\xd7VERY_FAST elite synergy (both \u226580th pct). Both highly efficient (ORtg \u2265${LEAGUE_MEDIAN_OFF_EFF}). Maximum boost: totals explosion territory.`
+      reasoning: `VERY_FAST\xd7VERY_FAST elite synergy (both \u226580th pct). Both highly efficient (ORtg \u2265${LEAGUE_MEDIAN_OFF_EFF}). Maximum boost: totals explosion territory.`,
     };
   }
 
@@ -77,7 +80,7 @@ function _handleVeryFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
     homePacePct,
     awayPacePct,
     bettingSignal: 'ATTACK_OVER',
-    reasoning: `VERY_FAST\xd7VERY_FAST pace (both \u226580th pct) but mediocre efficiency. Home ORtg=${(homeOffEff ?? 'N/A')}, Away ORtg=${(awayOffEff ?? 'N/A')}. Reduced boost: extreme pace still compounds possessions despite scoring limits.`
+    reasoning: `VERY_FAST\xd7VERY_FAST pace (both \u226580th pct) but mediocre efficiency. Home ORtg=${homeOffEff ?? 'N/A'}, Away ORtg=${awayOffEff ?? 'N/A'}. Reduced boost: extreme pace still compounds possessions despite scoring limits.`,
   };
 }
 
@@ -85,8 +88,11 @@ function _handleVeryFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
  * Handle FAST x FAST matchup (both >= 70th percentile, < 80th).
  */
 function _handleFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
-  const passesGate = (homeOffEff !== null && homeOffEff >= LEAGUE_MEDIAN_OFF_EFF)
-                  && (awayOffEff !== null && awayOffEff >= LEAGUE_MEDIAN_OFF_EFF);
+  const passesGate =
+    homeOffEff !== null &&
+    homeOffEff >= LEAGUE_MEDIAN_OFF_EFF &&
+    awayOffEff !== null &&
+    awayOffEff >= LEAGUE_MEDIAN_OFF_EFF;
 
   if (passesGate) {
     return {
@@ -96,7 +102,7 @@ function _handleFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
       homePacePct,
       awayPacePct,
       bettingSignal: 'ATTACK_OVER',
-      reasoning: `FAST\xd7FAST synergy (both \u226570th pct). Both efficient (ORtg \u2265${LEAGUE_MEDIAN_OFF_EFF}). Full boost: possessions compound.`
+      reasoning: `FAST\xd7FAST synergy (both \u226570th pct). Both efficient (ORtg \u2265${LEAGUE_MEDIAN_OFF_EFF}). Full boost: possessions compound.`,
     };
   }
 
@@ -107,7 +113,7 @@ function _handleFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
     homePacePct,
     awayPacePct,
     bettingSignal: 'LEAN_OVER',
-    reasoning: `FAST\xd7FAST pace (both \u226570th pct) but mediocre efficiency. Home ORtg=${(homeOffEff ?? 'N/A')}, Away ORtg=${(awayOffEff ?? 'N/A')}. Reduced boost: pace creates chances but scoring efficiency limits upside.`
+    reasoning: `FAST\xd7FAST pace (both \u226570th pct) but mediocre efficiency. Home ORtg=${homeOffEff ?? 'N/A'}, Away ORtg=${awayOffEff ?? 'N/A'}. Reduced boost: pace creates chances but scoring efficiency limits upside.`,
   };
 }
 
@@ -132,8 +138,16 @@ function analyzePaceSynergy(homePace, awayPace, homeOffEff, awayOffEff) {
   }
 
   // VERY FAST x VERY FAST (both >= 80th pct)
-  if (homePacePct >= VERY_FAST_THRESHOLD && awayPacePct >= VERY_FAST_THRESHOLD) {
-    return _handleVeryFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff);
+  if (
+    homePacePct >= VERY_FAST_THRESHOLD &&
+    awayPacePct >= VERY_FAST_THRESHOLD
+  ) {
+    return _handleVeryFastFast(
+      homePacePct,
+      awayPacePct,
+      homeOffEff,
+      awayOffEff,
+    );
   }
 
   // FAST x FAST (both >= 70th pct)
@@ -142,15 +156,19 @@ function analyzePaceSynergy(homePace, awayPace, homeOffEff, awayOffEff) {
   }
 
   // VERY SLOW x VERY SLOW (both <= 20th pct)
-  if (homePacePct <= VERY_SLOW_THRESHOLD && awayPacePct <= VERY_SLOW_THRESHOLD) {
+  if (
+    homePacePct <= VERY_SLOW_THRESHOLD &&
+    awayPacePct <= VERY_SLOW_THRESHOLD
+  ) {
     return {
       synergyType: 'VERY_SLOW\xd7VERY_SLOW',
       paceAdjustment: VERY_SLOW_SLOW_PENALTY,
-      passesEfficiencyGate: true,  // No gate required for slow matchups
+      passesEfficiencyGate: true, // No gate required for slow matchups
       homePacePct,
       awayPacePct,
       bettingSignal: 'BEST_UNDER',
-      reasoning: 'VERY_SLOW\xd7VERY_SLOW elite grind (both \u226420th pct). Extreme possession suppression. These are best UNDER environments. Market often inflated due to brand names.'
+      reasoning:
+        'VERY_SLOW\xd7VERY_SLOW elite grind (both \u226420th pct). Extreme possession suppression. These are best UNDER environments. Market often inflated due to brand names.',
     };
   }
 
@@ -159,11 +177,12 @@ function analyzePaceSynergy(homePace, awayPace, homeOffEff, awayOffEff) {
     return {
       synergyType: 'SLOW\xd7SLOW',
       paceAdjustment: SLOW_SLOW_PENALTY,
-      passesEfficiencyGate: true,  // No gate required for slow matchups
+      passesEfficiencyGate: true, // No gate required for slow matchups
       homePacePct,
       awayPacePct,
       bettingSignal: 'STRONG_UNDER',
-      reasoning: 'SLOW\xd7SLOW grind game (both \u226430th pct). Both teams shorten the game. Half-court possessions dominate. Fewer transition opportunities.'
+      reasoning:
+        'SLOW\xd7SLOW grind game (both \u226430th pct). Both teams shorten the game. Half-court possessions dominate. Fewer transition opportunities.',
     };
   }
 
@@ -177,7 +196,7 @@ function analyzePaceSynergy(homePace, awayPace, homeOffEff, awayOffEff) {
       homePacePct,
       awayPacePct,
       bettingSignal: 'NO_EDGE',
-      reasoning: `Pace clash detected (${paceGap.toFixed(0)} percentile gap). One team likely dictates tempo.`
+      reasoning: `Pace clash detected (${paceGap.toFixed(0)} percentile gap). One team likely dictates tempo.`,
     };
   }
 
@@ -189,7 +208,7 @@ function analyzePaceSynergy(homePace, awayPace, homeOffEff, awayOffEff) {
     homePacePct,
     awayPacePct,
     bettingSignal: 'NO_EDGE',
-    reasoning: 'No pace synergy (teams not both fast or both slow)'
+    reasoning: 'No pace synergy (teams not both fast or both slow)',
   };
 }
 

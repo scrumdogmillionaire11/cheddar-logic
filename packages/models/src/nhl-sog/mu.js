@@ -3,7 +3,10 @@ function weightedMean(values) {
   const weights = values.map((_, idx) => idx + 1);
   const weightSum = weights.reduce((sum, w) => sum + w, 0);
   if (weightSum <= 0) return null;
-  const total = values.reduce((sum, value, idx) => sum + value * weights[idx], 0);
+  const total = values.reduce(
+    (sum, value, idx) => sum + value * weights[idx],
+    0,
+  );
   return total / weightSum;
 }
 
@@ -12,7 +15,8 @@ function clampNumber(value, fallback = null) {
 }
 
 function computePriorShotsPerGame(shotsPer60, projectedToiMinutes) {
-  if (!Number.isFinite(shotsPer60) || !Number.isFinite(projectedToiMinutes)) return null;
+  if (!Number.isFinite(shotsPer60) || !Number.isFinite(projectedToiMinutes))
+    return null;
   return (shotsPer60 * projectedToiMinutes) / 60;
 }
 
@@ -28,7 +32,7 @@ function computeMu({
   homeIceBoost = 1.05,
   l5Weight = 0.65,
   priorWeight = 0.35,
-  redistributionBoost = 0
+  redistributionBoost = 0,
 }) {
   const l5 = weightedMean(l5Shots);
   const prior = computePriorShotsPerGame(shotsPer60, projectedToiMinutes);
@@ -40,7 +44,8 @@ function computeMu({
   const priorWeightAdj = prior == null ? 0 : priorWeight;
   const weightSum = l5WeightAdj + priorWeightAdj || 1;
 
-  const muBase = (l5Value * l5WeightAdj + priorValue * priorWeightAdj) / weightSum;
+  const muBase =
+    (l5Value * l5WeightAdj + priorValue * priorWeightAdj) / weightSum;
   let mu = muBase * clampNumber(opponentFactor, 1) * clampNumber(paceFactor, 1);
 
   if (isHome) mu *= homeIceBoost;
@@ -60,7 +65,7 @@ function computeMuFirstPeriod({
   muFullGame,
   isHome = false,
   periodShare = 0.32,
-  homeIceBoost = 1.03
+  homeIceBoost = 1.03,
 }) {
   if (!Number.isFinite(muFullGame)) return null;
   let mu = muFullGame * periodShare;
@@ -72,5 +77,5 @@ module.exports = {
   computeMu,
   computeMuFirstPeriod,
   computePriorShotsPerGame,
-  weightedMean
+  weightedMean,
 };

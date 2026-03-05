@@ -1,6 +1,9 @@
-import Link from "next/link";
-import { notFound } from "next/navigation";
-import { EDUCATION_ARTICLES, getEducationArticleBySlug } from "@/lib/education/content";
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import {
+  EDUCATION_ARTICLES,
+  getEducationArticleBySlug,
+} from '@/lib/education/content';
 
 type EducationArticlePageProps = {
   params: Promise<{ slug: string }>;
@@ -10,7 +13,9 @@ export async function generateStaticParams() {
   return EDUCATION_ARTICLES.map((article) => ({ slug: article.slug }));
 }
 
-export default async function EducationArticlePage({ params }: EducationArticlePageProps) {
+export default async function EducationArticlePage({
+  params,
+}: EducationArticlePageProps) {
   const { slug } = await params;
   const article = getEducationArticleBySlug(slug);
 
@@ -22,24 +27,35 @@ export default async function EducationArticlePage({ params }: EducationArticleP
     <div className="min-h-screen bg-night px-6 py-12 text-cloud">
       <div className="mx-auto max-w-4xl">
         <div className="mb-8">
-          <Link href="/education" className="text-sm text-cloud/60 hover:text-cloud/80">
+          <Link
+            href="/education"
+            className="text-sm text-cloud/60 hover:text-cloud/80"
+          >
             ← Back to Education
           </Link>
         </div>
 
         <article className="space-y-8 rounded-xl border border-white/10 bg-surface/80 p-8">
           <header className="space-y-4">
-            <h1 className="font-display text-4xl font-semibold">{article.title}</h1>
+            <h1 className="font-display text-4xl font-semibold">
+              {article.title}
+            </h1>
             <p className="text-lg text-cloud/75">{article.intro}</p>
           </header>
 
           {article.sections && article.sections.length > 0 ? (
             article.sections.map((section) => (
-              <section key={`${article.slug}-${section.title}`} className="space-y-4">
+              <section
+                key={`${article.slug}-${section.title}`}
+                className="space-y-4"
+              >
                 <h2 className="text-xl font-semibold">{section.title}</h2>
 
                 {section.paragraphs?.map((paragraph) => (
-                  <p key={`${section.title}-${paragraph}`} className="text-cloud/80">
+                  <p
+                    key={`${section.title}-${paragraph}`}
+                    className="text-cloud/80"
+                  >
                     {paragraph}
                   </p>
                 ))}
@@ -53,7 +69,10 @@ export default async function EducationArticlePage({ params }: EducationArticleP
                 {section.bullets && section.bullets.length > 0 ? (
                   <ul className="space-y-2 text-cloud/80">
                     {section.bullets.map((bullet) => (
-                      <li key={`${section.title}-${bullet}`} className="list-inside list-disc">
+                      <li
+                        key={`${section.title}-${bullet}`}
+                        className="list-inside list-disc"
+                      >
                         {bullet}
                       </li>
                     ))}
@@ -77,11 +96,14 @@ export default async function EducationArticlePage({ params }: EducationArticleP
           {article.takeaways && article.takeaways.length > 0 ? (
             <section>
               <h2 className="mb-4 text-xl font-semibold">
-                {article.takeawaysTitle ?? "Takeaways"}
+                {article.takeawaysTitle ?? 'Takeaways'}
               </h2>
               <ol className="space-y-2 text-cloud/80">
                 {article.takeaways.map((takeaway) => (
-                  <li key={`${article.slug}-takeaway-${takeaway}`} className="list-inside list-decimal">
+                  <li
+                    key={`${article.slug}-takeaway-${takeaway}`}
+                    className="list-inside list-decimal"
+                  >
                     {takeaway}
                   </li>
                 ))}
@@ -89,17 +111,20 @@ export default async function EducationArticlePage({ params }: EducationArticleP
             </section>
           ) : null}
 
-          {article.outro ? <p className="text-cloud/80">{article.outro}</p> : null}
+          {article.outro ? (
+            <p className="text-cloud/80">{article.outro}</p>
+          ) : null}
 
           {article.resources.length > 0 ? (
             <section>
               <h2 className="mb-4 text-xl font-semibold">Educational Links</h2>
               <div className="grid gap-3">
                 {article.resources.map((resource) => {
-                  const isExternal = resource.external || resource.href.startsWith("http");
+                  const isExternal =
+                    resource.external || resource.href.startsWith('http');
                   const key = `${article.slug}-${resource.href}-${resource.label}`;
                   const className =
-                    "rounded-lg border border-white/10 bg-night/20 px-4 py-3 text-teal transition hover:border-white/20";
+                    'rounded-lg border border-white/10 bg-night/20 px-4 py-3 text-teal transition hover:border-white/20';
 
                   if (isExternal) {
                     return (

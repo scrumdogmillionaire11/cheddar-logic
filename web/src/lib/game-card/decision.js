@@ -3,7 +3,12 @@
  */
 
 const TIER_RANK = { BEST: 3, SUPER: 2, WATCH: 1 };
-const DIRECTION_OPPOSITE = { HOME: 'AWAY', AWAY: 'HOME', OVER: 'UNDER', UNDER: 'OVER' };
+const DIRECTION_OPPOSITE = {
+  HOME: 'AWAY',
+  AWAY: 'HOME',
+  OVER: 'UNDER',
+  UNDER: 'OVER',
+};
 
 function isValidAction(value) {
   return value === 'FIRE' || value === 'HOLD' || value === 'PASS';
@@ -39,7 +44,8 @@ export function resolvePlayDisplayDecision(play) {
   const explicitAction = isValidAction(play?.action) ? play.action : undefined;
   const legacyAction = actionFromLegacyStatus(play?.status);
   const classificationAction = actionFromClassification(play?.classification);
-  const action = explicitAction ?? legacyAction ?? classificationAction ?? 'PASS';
+  const action =
+    explicitAction ?? legacyAction ?? classificationAction ?? 'PASS';
 
   return {
     action,
@@ -56,7 +62,10 @@ function normalizeText(value) {
 function hasPlaceholderDriverText(value) {
   const normalized = normalizeText(value).toLowerCase();
   if (!normalized) return true;
-  return normalized.includes('generic analysis for') || normalized.includes('ncaam ncaam generic');
+  return (
+    normalized.includes('generic analysis for') ||
+    normalized.includes('ncaam ncaam generic')
+  );
 }
 
 function buildDriverHash(driver) {
@@ -69,9 +78,12 @@ function isStrongerDriver(next, current) {
   const currentRank = TIER_RANK[current.tier] || 0;
   if (nextRank !== currentRank) return nextRank > currentRank;
 
-  const nextConfidence = typeof next.confidence === 'number' ? next.confidence : -1;
-  const currentConfidence = typeof current.confidence === 'number' ? current.confidence : -1;
-  if (nextConfidence !== currentConfidence) return nextConfidence > currentConfidence;
+  const nextConfidence =
+    typeof next.confidence === 'number' ? next.confidence : -1;
+  const currentConfidence =
+    typeof current.confidence === 'number' ? current.confidence : -1;
+  if (nextConfidence !== currentConfidence)
+    return nextConfidence > currentConfidence;
 
   return false;
 }
@@ -124,7 +136,10 @@ function isSideIntentDriver(driver) {
 
 function isRiskOnlyDriver(driver) {
   const text = `${driver.key} ${driver.cardTitle} ${driver.note}`.toLowerCase();
-  return text.includes('blowout risk') || (driver.market === 'RISK' && text.includes('blowout'));
+  return (
+    text.includes('blowout risk') ||
+    (driver.market === 'RISK' && text.includes('blowout'))
+  );
 }
 
 function deriveStatus(card, drivers) {
@@ -133,13 +148,14 @@ function deriveStatus(card, drivers) {
   }
 
   const hasBestNonNeutral = drivers.some(
-    (driver) => driver.tier === 'BEST' && driver.direction !== 'NEUTRAL'
+    (driver) => driver.tier === 'BEST' && driver.direction !== 'NEUTRAL',
   );
   if (hasBestNonNeutral) return 'FIRE';
 
   const hasWatchOrSuper = drivers.some(
     (driver) =>
-      (driver.tier === 'WATCH' || driver.tier === 'SUPER') && driver.direction !== 'NEUTRAL'
+      (driver.tier === 'WATCH' || driver.tier === 'SUPER') &&
+      driver.direction !== 'NEUTRAL',
   );
   if (hasWatchOrSuper) return 'WATCH';
 
@@ -182,7 +198,10 @@ function deriveRiskCodes(card, drivers) {
   const codes = new Set();
   const tags = Array.isArray(card.tags) ? card.tags : [];
 
-  if (tags.includes('has_risk_fragility') || tags.includes('has_risk_key_number')) {
+  if (
+    tags.includes('has_risk_fragility') ||
+    tags.includes('has_risk_key_number')
+  ) {
     codes.add('KEY_NUMBER_FRAGILITY');
   }
   if (tags.includes('has_risk_blowout')) {
@@ -200,7 +219,9 @@ function deriveRiskCodes(card, drivers) {
 
   if (codes.size > 0) return Array.from(codes);
 
-  const allText = drivers.map((d) => `${d.cardTitle} ${d.note}`.toLowerCase()).join(' ');
+  const allText = drivers
+    .map((d) => `${d.cardTitle} ${d.note}`.toLowerCase())
+    .join(' ');
   if (allText.includes('fragility') || allText.includes('key number')) {
     codes.add('KEY_NUMBER_FRAGILITY');
   }
@@ -240,7 +261,7 @@ function selectPrimaryPlay(card, odds, drivers) {
   }
 
   const nonNeutral = drivers.filter(
-    (driver) => driver.direction !== 'NEUTRAL' && !isRiskOnlyDriver(driver)
+    (driver) => driver.direction !== 'NEUTRAL' && !isRiskOnlyDriver(driver),
   );
   if (nonNeutral.length === 0) {
     return {
@@ -256,11 +277,20 @@ function selectPrimaryPlay(card, odds, drivers) {
 
   const sideCompatible = nonNeutral.filter(
     (driver) =>
-      (driver.direction === 'HOME' || driver.direction === 'AWAY' || driver.direction === 'OVER' || driver.direction === 'UNDER') &&
-      (driver.market === 'ML' || driver.market === 'SPREAD' || driver.market === 'TOTAL' || driver.market === 'UNKNOWN' || isSideIntentDriver(driver))
+      (driver.direction === 'HOME' ||
+        driver.direction === 'AWAY' ||
+        driver.direction === 'OVER' ||
+        driver.direction === 'UNDER') &&
+      (driver.market === 'ML' ||
+        driver.market === 'SPREAD' ||
+        driver.market === 'TOTAL' ||
+        driver.market === 'UNKNOWN' ||
+        isSideIntentDriver(driver)),
   );
 
-  const strongest = sortDrivers(sideCompatible.length > 0 ? sideCompatible : nonNeutral)[0];
+  const strongest = sortDrivers(
+    sideCompatible.length > 0 ? sideCompatible : nonNeutral,
+  )[0];
   const hasMLOdds = odds && (odds.h2hHome !== null || odds.h2hAway !== null);
   const resolvedMarket =
     strongest.market === 'UNKNOWN' &&
@@ -269,7 +299,11 @@ function selectPrimaryPlay(card, odds, drivers) {
       ? 'ML'
       : strongest.market;
   const status = deriveStatus(card, drivers);
-  const pick = buildPickString({ ...strongest, market: resolvedMarket }, card, odds);
+  const pick = buildPickString(
+    { ...strongest, market: resolvedMarket },
+    card,
+    odds,
+  );
 
   return {
     source: 'drivers',
@@ -285,17 +319,27 @@ function selectPrimaryPlay(card, odds, drivers) {
 function pickTopContributors(drivers, primary) {
   if (!drivers.length) return [];
 
-  const relevantDrivers = dedupeContributorsByIntent(filterDriversByMarket(drivers, primary?.market ?? 'NONE'), primary?.market ?? 'NONE')
-    .filter((driver) => !hasPlaceholderDriverText(driver.note) && !hasPlaceholderDriverText(driver.cardTitle));
+  const relevantDrivers = dedupeContributorsByIntent(
+    filterDriversByMarket(drivers, primary?.market ?? 'NONE'),
+    primary?.market ?? 'NONE',
+  ).filter(
+    (driver) =>
+      !hasPlaceholderDriverText(driver.note) &&
+      !hasPlaceholderDriverText(driver.cardTitle),
+  );
   const sorted = sortDrivers(relevantDrivers);
   const nonNeutral = sorted.filter((driver) => driver.direction !== 'NEUTRAL');
 
   if (!primary || !primary.direction || primary.direction === 'NEUTRAL') {
-    return nonNeutral.slice(0, 3).map((driver) => ({ driver, polarity: 'neutral' }));
+    return nonNeutral
+      .slice(0, 3)
+      .map((driver) => ({ driver, polarity: 'neutral' }));
   }
 
   const opposite = DIRECTION_OPPOSITE[primary.direction];
-  const pro = nonNeutral.filter((driver) => driver.direction === primary.direction);
+  const pro = nonNeutral.filter(
+    (driver) => driver.direction === primary.direction,
+  );
   const contra = nonNeutral.filter((driver) => driver.direction === opposite);
   const neutral = sorted.filter((driver) => driver.direction === 'NEUTRAL');
 
@@ -350,34 +394,56 @@ function filterDriversByMarket(drivers, market) {
   if (market === 'TOTAL') {
     const filtered = drivers.filter(
       (d) =>
-        (d.market === 'TOTAL' || d.market === 'UNKNOWN' || d.market === 'RISK') &&
-        (d.direction === 'OVER' || d.direction === 'UNDER' || d.direction === 'NEUTRAL')
+        (d.market === 'TOTAL' ||
+          d.market === 'UNKNOWN' ||
+          d.market === 'RISK') &&
+        (d.direction === 'OVER' ||
+          d.direction === 'UNDER' ||
+          d.direction === 'NEUTRAL'),
     );
     if (filtered.length > 0) return filtered;
-    return drivers.filter((d) => d.direction === 'OVER' || d.direction === 'UNDER' || d.direction === 'NEUTRAL');
+    return drivers.filter(
+      (d) =>
+        d.direction === 'OVER' ||
+        d.direction === 'UNDER' ||
+        d.direction === 'NEUTRAL',
+    );
   }
 
   if (market === 'ML') {
     const filtered = drivers.filter(
       (d) =>
         (d.market === 'ML' || d.market === 'UNKNOWN' || d.market === 'RISK') &&
-        (d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL')
+        (d.direction === 'HOME' ||
+          d.direction === 'AWAY' ||
+          d.direction === 'NEUTRAL'),
     );
     if (filtered.length > 0) return filtered;
-    return drivers.filter((d) => d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL');
+    return drivers.filter(
+      (d) =>
+        d.direction === 'HOME' ||
+        d.direction === 'AWAY' ||
+        d.direction === 'NEUTRAL',
+    );
   }
 
   if (market === 'SPREAD') {
     const filtered = drivers.filter(
       (d) =>
-        (d.market === 'SPREAD' || d.market === 'UNKNOWN' || d.market === 'RISK') &&
-        (d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL')
+        (d.market === 'SPREAD' ||
+          d.market === 'UNKNOWN' ||
+          d.market === 'RISK') &&
+        (d.direction === 'HOME' ||
+          d.direction === 'AWAY' ||
+          d.direction === 'NEUTRAL'),
     );
     if (filtered.length > 0) return filtered;
     return drivers.filter(
       (d) =>
         (d.market === 'UNKNOWN' || d.market === 'RISK') &&
-        (d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL')
+        (d.direction === 'HOME' ||
+          d.direction === 'AWAY' ||
+          d.direction === 'NEUTRAL'),
     );
   }
 

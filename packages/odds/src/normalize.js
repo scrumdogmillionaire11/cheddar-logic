@@ -1,6 +1,6 @@
 /**
  * Odds Normalization Layer
- * 
+ *
  * Converts game data from shared-data odds-fetcher to standardized format
  * Required fields (hard gates):
  * - gameId
@@ -48,7 +48,9 @@ function normalizeGame(rawGame, sport) {
   // Validate gameTimeUtc is parseable ISO string
   const gameDate = new Date(gameTimeUtc);
   if (isNaN(gameDate.getTime())) {
-    console.warn(`[Normalize] Skipped game ${gameId}: gameTimeUtc not valid ISO "${gameTimeUtc}"`);
+    console.warn(
+      `[Normalize] Skipped game ${gameId}: gameTimeUtc not valid ISO "${gameTimeUtc}"`,
+    );
     return null;
   }
 
@@ -70,16 +72,16 @@ function normalizeGame(rawGame, sport) {
       h2hHome: h2h?.home ?? null,
       h2hAway: h2h?.away ?? null,
       total: totals?.line ?? null,
-        totalPriceOver: totals?.over ?? null,
-        totalPriceUnder: totals?.under ?? null,
-        spreadHome: spreads?.home_line ?? null,
-        spreadAway: spreads?.away_line ?? null,
-        spreadPriceHome: spreads?.home_price ?? null,
-        spreadPriceAway: spreads?.away_price ?? null,
+      totalPriceOver: totals?.over ?? null,
+      totalPriceUnder: totals?.under ?? null,
+      spreadHome: spreads?.home_line ?? null,
+      spreadAway: spreads?.away_line ?? null,
+      spreadPriceHome: spreads?.home_price ?? null,
+      spreadPriceAway: spreads?.away_price ?? null,
       monelineHome: h2h?.home ?? null,
-      monelineAway: h2h?.away ?? null
+      monelineAway: h2h?.away ?? null,
     },
-    raw: rawGame // Keep raw for debugging
+    raw: rawGame, // Keep raw for debugging
   };
 }
 
@@ -118,5 +120,5 @@ function normalizeGames(rawGames, sport) {
 
 module.exports = {
   normalizeGame,
-  normalizeGames
+  normalizeGames,
 };

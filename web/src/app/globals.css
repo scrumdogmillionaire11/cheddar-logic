@@ -1,15 +1,22 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 :root {
   color-scheme: dark;
-  --grain: radial-gradient(circle at top, rgba(30, 58, 138, 0.18), transparent 55%),
-    radial-gradient(circle at 20% 20%, rgba(30, 181, 166, 0.15), transparent 45%);
+  --grain:
+    radial-gradient(circle at top, rgba(30, 58, 138, 0.18), transparent 55%),
+    radial-gradient(
+      circle at 20% 20%,
+      rgba(30, 181, 166, 0.15),
+      transparent 45%
+    );
 }
 
 @theme inline {
-  --font-sans: "IBM Plex Sans", "Avenir Next", "Segoe UI", system-ui, -apple-system,
+  --font-sans:
+    'IBM Plex Sans', 'Avenir Next', 'Segoe UI', system-ui, -apple-system,
     BlinkMacSystemFont, sans-serif;
-  --font-display: "Space Grotesk", "Avenir Next Condensed", "Arial Narrow", "Segoe UI",
+  --font-display:
+    'Space Grotesk', 'Avenir Next Condensed', 'Arial Narrow', 'Segoe UI',
     sans-serif;
   --color-night: #050a1f;
   --color-midnight: #0b1222;
@@ -33,7 +40,8 @@
 body {
   min-height: 100vh;
   margin: 0;
-  background-image: linear-gradient(130deg, #050a1f, #0c1428 45%, #050a1f 90%), var(--grain);
+  background-image:
+    linear-gradient(130deg, #050a1f, #0c1428 45%, #050a1f 90%), var(--grain);
   background-attachment: fixed;
   color: var(--color-cloud);
   font-family: var(--font-sans);
@@ -54,14 +62,12 @@ a {
 }
 
 .grid-overlay::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image: linear-gradient(
-      rgba(255, 255, 255, 0.04) 1px,
-      transparent 1px
-    ),
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
   background-size: 40px 40px;
   opacity: 0.4;

@@ -4,6 +4,8 @@
  * Returns betting dashboard cards (NBA, NHL, SOCCER, NCAAM).
  * FPL projections are served from cheddar-fpl-sage backend.
  *
+ * Cards are automatically sorted by game start time (soonest first).
+ *
  * Query params:
  * - sport: optional sport filter (case-insensitive)
  * - card_type: optional card type filter
@@ -36,10 +38,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
-import { performSecurityChecks, addRateLimitHeaders } from '../../../lib/api-security';
+import {
+  performSecurityChecks,
+  addRateLimitHeaders,
+} from '../../../lib/api-security';
 
-const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true'
-  || process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+const ENABLE_WELCOME_HOME =
+  process.env.ENABLE_WELCOME_HOME === 'true' ||
+  process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
 interface CardRow {
   id: string;
@@ -53,7 +59,12 @@ interface CardRow {
   model_output_ids: string | null;
 }
 
-function clampNumber(value: string | null, fallback: number, min: number, max: number) {
+function clampNumber(
+  value: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+) {
   const parsed = value ? Number.parseInt(value, 10) : NaN;
   if (Number.isNaN(parsed)) return fallback;
   return Math.min(Math.max(parsed, min), max);
@@ -106,7 +117,7 @@ export async function GET(request: NextRequest) {
 
     // Check if database is empty or uninitialized
     const tableCheckStmt = db.prepare(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads'`
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads'`,
     );
     const hasCardsTable = tableCheckStmt.get();
 
@@ -114,7 +125,7 @@ export async function GET(request: NextRequest) {
       // Database is not initialized - return empty data
       const response = NextResponse.json(
         { success: true, data: [] },
-        { headers: { 'Content-Type': 'application/json' } }
+        { headers: { 'Content-Type': 'application/json' } },
       );
       return addRateLimitHeaders(response, request);
     }
@@ -123,53 +134,59 @@ export async function GET(request: NextRequest) {
     const params: Array<string | number> = [];
 
     if (sport) {
-      where.push('sport = ?');
+      where.push('cp.sport = ?');
       params.push(sport);
     }
 
     if (cardType) {
-      where.push('card_type = ?');
+      where.push('cp.card_type = ?');
       params.push(cardType);
     }
 
     if (gameId) {
-      where.push('game_id = ?');
+      where.push('cp.game_id = ?');
       params.push(gameId);
     }
 
     if (!includeExpired) {
-      where.push('(expires_at IS NULL OR datetime(expires_at) > datetime(\'now\'))');
+      where.push(
+        "(cp.expires_at IS NULL OR datetime(cp.expires_at) > datetime('now'))",
+      );
     }
 
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
-    where.push('sport != \'FPL\'');
+    where.push("cp.sport != 'FPL'");
     if (!ENABLE_WELCOME_HOME) {
-      where.push('card_type != \'welcome-home-v2\'');
+      where.push("cp.card_type != 'welcome-home-v2'");
     }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
     const dedupeMode = dedupe === 'none' ? 'none' : 'latest_per_game_type';
-    const sql = dedupeMode === 'none'
-      ? `
-        SELECT * FROM card_payloads
+    const sql =
+      dedupeMode === 'none'
+        ? `
+        SELECT cp.* FROM card_payloads cp
+        LEFT JOIN games g ON cp.game_id = g.game_id
         ${whereSql}
-        ORDER BY created_at DESC
+        ORDER BY COALESCE(g.game_time_utc, cp.created_at) ASC, cp.created_at DESC
         LIMIT ? OFFSET ?
       `
-      : `
+        : `
         WITH ranked AS (
-          SELECT *,
+          SELECT cp.*,
+            g.game_time_utc,
             ROW_NUMBER() OVER (
-              PARTITION BY game_id, card_type
-              ORDER BY created_at DESC
+              PARTITION BY cp.game_id, cp.card_type
+              ORDER BY cp.created_at DESC
             ) AS rn
-          FROM card_payloads
+          FROM card_payloads cp
+          LEFT JOIN games g ON cp.game_id = g.game_id
           ${whereSql}
         )
         SELECT * FROM ranked
         WHERE rn = 1
-        ORDER BY created_at DESC
+        ORDER BY COALESCE(game_time_utc, created_at) ASC
         LIMIT ? OFFSET ?
       `;
 
@@ -189,13 +206,13 @@ export async function GET(request: NextRequest) {
         expiresAt: card.expires_at,
         payloadData: parsed.data,
         payloadParseError: parsed.error,
-        modelOutputIds: card.model_output_ids
+        modelOutputIds: card.model_output_ids,
       };
     });
 
     const apiResponse = NextResponse.json(
       { success: true, data: response },
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json' } },
     );
     return addRateLimitHeaders(apiResponse, request);
   } catch (error) {
@@ -203,7 +220,7 @@ export async function GET(request: NextRequest) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     const errorResponse = NextResponse.json(
       { success: false, error: message },
-      { status: 500 }
+      { status: 500 },
     );
     return addRateLimitHeaders(errorResponse, request);
   } finally {

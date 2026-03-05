@@ -6,17 +6,38 @@
  * MONEYLINE, SPREAD, TOTAL, PUCKLINE, TEAM_TOTAL, PROP, INFO
  */
 
-export type Sport = 'NHL' | 'NBA' | 'NCAAM' | 'SOCCER' | 'MLB' | 'NFL' | 'UNKNOWN';
+export type Sport =
+  | 'NHL'
+  | 'NBA'
+  | 'NCAAM'
+  | 'SOCCER'
+  | 'MLB'
+  | 'NFL'
+  | 'UNKNOWN';
 
 // CANONICAL market types — authoritative, not inferred
-export type CanonicalMarketType = 'MONEYLINE' | 'SPREAD' | 'TOTAL' | 'PUCKLINE' | 'TEAM_TOTAL' | 'PROP' | 'INFO';
+export type CanonicalMarketType =
+  | 'MONEYLINE'
+  | 'SPREAD'
+  | 'TOTAL'
+  | 'PUCKLINE'
+  | 'TEAM_TOTAL'
+  | 'PROP'
+  | 'INFO';
 
 // Legacy market types for UI compatibility
 export type Market = 'TOTAL' | 'SPREAD' | 'ML' | 'RISK' | 'UNKNOWN';
 
 export type DriverTier = 'BEST' | 'SUPER' | 'WATCH';
 export type Direction = 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';
-export type SelectionSide = 'OVER' | 'UNDER' | 'HOME' | 'AWAY' | 'FAV' | 'DOG' | 'NONE';
+export type SelectionSide =
+  | 'OVER'
+  | 'UNDER'
+  | 'HOME'
+  | 'AWAY'
+  | 'FAV'
+  | 'DOG'
+  | 'NONE';
 
 export type ExpressionStatus = 'FIRE' | 'WATCH' | 'PASS';
 export type ActionStatus = 'BASE' | 'LEAN' | 'PASS' | 'FIRE_NOW' | 'HOLD'; // NHL totals: FIRE_NOW | HOLD
@@ -24,7 +45,11 @@ export type ActionStatus = 'BASE' | 'LEAN' | 'PASS' | 'FIRE_NOW' | 'HOLD'; // NH
 export type TruthStatus = 'STRONG' | 'MEDIUM' | 'WEAK';
 export type ValueStatus = 'GOOD' | 'OK' | 'BAD';
 export type BetAction = 'BET' | 'NO_PLAY';
-export type PriceFlag = 'PRICE_TOO_STEEP' | 'COINFLIP' | 'CHASED_LINE' | 'VIG_HEAVY';
+export type PriceFlag =
+  | 'PRICE_TOO_STEEP'
+  | 'COINFLIP'
+  | 'CHASED_LINE'
+  | 'VIG_HEAVY';
 export type DecisionLabel = 'FIRE' | 'WATCH' | 'PASS';
 export type DecisionClassification = 'PLAY' | 'LEAN' | 'NONE';
 
@@ -60,7 +85,12 @@ export type PassReasonCode =
   | 'REPAIRED_LEGACY_CARD'
   | 'LEGACY_TITLE_INFERENCE_USED';
 
-export type RiskTag = 'RISK_BLOWOUT' | 'RISK_FRAGILITY' | 'RISK_KEY_NUMBER' | 'RISK_STALE' | 'LEGACY_REPAIR';
+export type RiskTag =
+  | 'RISK_BLOWOUT'
+  | 'RISK_FRAGILITY'
+  | 'RISK_KEY_NUMBER'
+  | 'RISK_STALE'
+  | 'LEGACY_REPAIR';
 
 /**
  * Canonical selection (bet side/direction)
@@ -86,7 +116,12 @@ export interface CanonicalGate {
   blocks_bet: boolean;
 }
 
-export type BetMarketType = 'moneyline' | 'spread' | 'total' | 'team_total' | 'player_prop';
+export type BetMarketType =
+  | 'moneyline'
+  | 'spread'
+  | 'total'
+  | 'team_total'
+  | 'player_prop';
 export type BetSide = 'home' | 'away' | 'over' | 'under';
 
 export interface CanonicalBet {
@@ -123,26 +158,26 @@ export interface TransformMeta {
 export interface CanonicalApiPlay {
   // Authoritative market classification
   market_type: CanonicalMarketType; // MONEYLINE, SPREAD, TOTAL, INFO, PUCKLINE, etc.
-  
+
   // Selection (what we're betting on)
   selection: Selection;
-  
+
   // Market data
   line?: number; // spread/total/team total line
   price?: number; // American odds
   book?: string; // sportsbook identifier
-  
+
   // Model data
   model: ModelMetadata;
-  
+
   // Deterministic messaging
   tags?: string[]; // e.g. ["RISK_BLOWOUT", "ACCELERANT_SCORE"]
   reason_codes?: (PassReasonCode | string)[]; // e.g. ["PASS_MISSING_EDGE", "LEGACY_REPAIR"]
-  
+
   // Repair metadata (if API applied inference)
   repair_applied?: boolean;
   repair_rule_id?: string;
-  
+
   // Legacy fields (for backward compat, but not authoritative)
   cardTitle?: string;
   prediction?: Direction;
@@ -202,13 +237,13 @@ export interface ExpressionChoice {
 
 /**
  * Canonical play decision — merges legacy and canonical fields
- * 
+ *
  * CANONICAL FIELDS (preferred if present):
  *  - market_type (MONEYLINE, SPREAD, TOTAL, etc.)
  *  - selection (explicit side + optional team)
  *  - reason_codes (deterministic blockers)
  *  - tags (risk tags, inference markers, etc.)
- * 
+ *
  * LEGACY FIELDS (for backward compat during migration):
  *  - market (legacy: ML, SPREAD, TOTAL, RISK, UNKNOWN)
  *  - side (legacy direction)
@@ -231,14 +266,19 @@ export interface Play {
   kind?: 'PLAY' | 'EVIDENCE';
   evidence_count?: number;
   consistency?: {
-    total_bias?: 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN';
+    total_bias?:
+      | 'OK'
+      | 'INSUFFICIENT_DATA'
+      | 'CONFLICTING_SIGNALS'
+      | 'VOLATILE_ENV'
+      | 'UNKNOWN';
   };
-  
+
   // Canonical decision fields (new)
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
-  
+
   // Legacy fields (kept for compat)
   status: ExpressionStatus;
   market: Market | 'NONE';
@@ -289,17 +329,17 @@ export interface PropPlayRow {
   // core IDs
   runId?: string;
   createdAt?: string;
-  playerId: string;           // player identifier from API/model
-  playerName: string;         // display name (not raw ID)
+  playerId: string; // player identifier from API/model
+  playerName: string; // display name (not raw ID)
   teamAbbr?: string;
   gameId?: string;
-  propType: string;           // SOG, Points, Assists, etc.
+  propType: string; // SOG, Points, Assists, etc.
   line: number | null;
   projection: number | null;
   mu?: number | null;
   suggestedLine?: number | null;
   threshold?: number | null;
-  confidence: number | null;  // 0-1 (convert to 0-100 for display)
+  confidence: number | null; // 0-1 (convert to 0-100 for display)
   price: number | null;
   status: 'FIRE' | 'WATCH' | 'HOLD' | 'NO_PLAY';
   action?: 'FIRE' | 'HOLD' | 'PASS';
@@ -310,7 +350,7 @@ export interface PropPlayRow {
   reasonCodes?: string[];
   l5Sog?: number[];
   l5Mean?: number | null;
-  
+
   // metadata
   sourceCardType: string;
   sourceCardTitle: string;
@@ -325,15 +365,15 @@ export interface PropGameCard {
   homeTeam: string;
   awayTeam: string;
   status: string;
-  
+
   // optional game context
   oddsUpdatedUtc?: string;
   moneyline?: { home: number; away: number };
   total?: { line: number };
-  
+
   // ALL prop plays for this game
   propPlays: PropPlayRow[];
-  
+
   // for filtering/sorting
   maxConfidence: number;
   tags: string[];
@@ -347,40 +387,40 @@ export const GAME_TAGS = {
   HAS_FIRE: 'has_fire',
   HAS_WATCH: 'has_watch',
   HAS_PASS: 'has_pass',
-  
+
   // Market picks
   HAS_SIDE_PICK: 'has_side_pick',
   HAS_TOTAL_PICK: 'has_total_pick',
   HAS_ML_PICK: 'has_ml_pick',
-  
+
   // Driver strength
   HAS_BEST_DRIVER: 'has_best_driver',
   HAS_SUPER_DRIVER: 'has_super_driver',
   HAS_WATCH_DRIVER: 'has_watch_driver',
-  
+
   // Risk flags
   HAS_RISK_FRAGILITY: 'has_risk_fragility',
   HAS_RISK_BLOWOUT: 'has_risk_blowout',
   HAS_RISK_KEY_NUMBER: 'has_risk_key_number',
   HAS_LOW_COVERAGE: 'has_low_coverage',
-  
+
   // Odds freshness
   UPDATED_WITHIN_60S: 'updated_within_60s',
   UPDATED_WITHIN_5M: 'updated_within_5m',
   STALE_5M: 'stale_5m',
   STALE_30M: 'stale_30m',
-  
+
   // ML odds patterns
   COINFLIP_ML: 'coinflip_ml',
-  
+
   // Time windows
   STARTS_WITHIN_2H: 'starts_within_2h',
   STARTS_TODAY: 'starts_today',
-  
+
   // Data quality
   HAS_DRIVER_CONTRADICTION: 'has_driver_contradiction',
   NO_ODDS: 'no_odds',
   UNKNOWN_SPORT: 'unknown_sport',
 } as const;
 
-export type GameTag = typeof GAME_TAGS[keyof typeof GAME_TAGS];
+export type GameTag = (typeof GAME_TAGS)[keyof typeof GAME_TAGS];

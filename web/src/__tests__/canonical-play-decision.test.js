@@ -1,8 +1,8 @@
 /**
  * Tests for Canonical Play Decision Logic
- * 
+ *
  * Run: node src/__tests__/canonical-play-decision.test.js
- * 
+ *
  * Covers:
  * 1. Classification layer (deriveClassification)
  * 2. Action layer (deriveAction)
@@ -48,7 +48,9 @@ function expect(actual) {
     },
     toEqual(expected) {
       if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-        throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+        throw new Error(
+          `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+        );
       }
     },
     toBeUndefined() {
@@ -58,7 +60,9 @@ function expect(actual) {
     },
     toBeInclude(item) {
       if (!Array.isArray(actual) || !actual.includes(item)) {
-        throw new Error(`Expected array to include ${item}, got ${JSON.stringify(actual)}`);
+        throw new Error(
+          `Expected array to include ${item}, got ${JSON.stringify(actual)}`,
+        );
       }
     },
   };
@@ -104,16 +108,21 @@ const THRESHOLDS = {
 
 function isMarketTypeSupportedForSport(market, sport) {
   const supportedByAll = ['MONEYLINE', 'SPREAD', 'TOTAL', 'PROP'];
-  
+
   if (supportedByAll.includes(market)) {
     return true;
   }
-  
+
   switch (sport) {
     case 'NHL':
       return ['PUCKLINE', 'SOG'].includes(market);
     case 'SOCCER':
-      return ['DOUBLE_CHANCE', 'DRAW_NO_BET', 'TSOA', 'SHOTS_ON_TARGET'].includes(market);
+      return [
+        'DOUBLE_CHANCE',
+        'DRAW_NO_BET',
+        'TSOA',
+        'SHOTS_ON_TARGET',
+      ].includes(market);
     default:
       return false;
   }
@@ -134,7 +143,7 @@ function getThresholdsForMarket(market) {
     SHOTS_ON_TARGET: THRESHOLDS.PROP,
     INFO: undefined,
   };
-  
+
   return threshMap[market];
 }
 
@@ -143,64 +152,68 @@ function deriveClassification(play) {
   if (!play.market_type) {
     return { classification: 'PASS', pass_reason: 'MISSING_MARKET_TYPE' };
   }
-  
+
   // Hard veto: missing selection_key
   if (!play.selection_key) {
     return { classification: 'PASS', pass_reason: 'MISSING_SELECTION' };
   }
-  
+
   // Hard veto: TOTAL_BIAS_CONFLICT
-  if (play.market_type === 'TOTAL' && play.warning_tags?.includes('TOTAL_BIAS_CONFLICT')) {
+  if (
+    play.market_type === 'TOTAL' &&
+    play.warning_tags?.includes('TOTAL_BIAS_CONFLICT')
+  ) {
     return { classification: 'PASS', pass_reason: 'TOTAL_BIAS_CONFLICT' };
   }
-  
+
   // Hard veto: OUT_OF_SCOPE_MARKET
   if (play.warning_tags?.includes('OUT_OF_SCOPE_MARKET')) {
     return { classification: 'PASS', pass_reason: 'OUT_OF_SCOPE_MARKET' };
   }
-  
+
   // Hard veto: unsupported market for sport
   if (!isMarketTypeSupportedForSport(play.market_type, play.sport)) {
     return { classification: 'PASS', pass_reason: 'UNSUPPORTED_MARKET' };
   }
-  
+
   // Hard veto: missing edge
   if (play.model.edge === undefined || play.model.edge === null) {
     return { classification: 'PASS', pass_reason: 'NO_EDGE' };
   }
-  
+
   // Hard veto: non-positive edge
   if (play.model.edge <= 0) {
     return { classification: 'PASS', pass_reason: 'NO_EDGE' };
   }
-  
+
   // Get thresholds
   const thresholds = getThresholdsForMarket(play.market_type);
   if (!thresholds) {
     return { classification: 'PASS', pass_reason: 'UNSUPPORTED_MARKET' };
   }
-  
+
   const confidence = play.model.confidence ?? 0.5;
   const edge = play.model.edge;
-  
+
   // Apply adjustments
   let adjustedThreshold = thresholds.base_edge_threshold ?? 0.02;
   if (confidence < 0.6) {
     adjustedThreshold += thresholds.weak_signal_adjustment ?? 0.015;
   }
-  
+
   // Determine BASE vs LEAN
   const meetsBaseThreshold = edge >= adjustedThreshold;
-  const meetsConfidenceFloor = confidence >= (thresholds.confidence_floor ?? 0.55);
-  
+  const meetsConfidenceFloor =
+    confidence >= (thresholds.confidence_floor ?? 0.55);
+
   if (meetsBaseThreshold && meetsConfidenceFloor) {
     return { classification: 'BASE' };
   }
-  
+
   if (edge > 0) {
     return { classification: 'LEAN' };
   }
-  
+
   return { classification: 'PASS', pass_reason: 'INSUFFICIENT_DATA' };
 }
 
@@ -210,10 +223,11 @@ function deriveAction(classification, marketContext = {}, wrapperContext = {}) {
     return {
       action: 'PASS',
       why_code: 'CLASSIFICATION_PASS',
-      why_text: 'Model does not endorse (no edge, hard veto, or insufficient data)',
+      why_text:
+        'Model does not endorse (no edge, hard veto, or insufficient data)',
     };
   }
-  
+
   // Wrapper blocks
   if (wrapperContext.enforced_blockers?.length) {
     return {
@@ -222,7 +236,7 @@ function deriveAction(classification, marketContext = {}, wrapperContext = {}) {
       why_text: `Execution blocked by: ${wrapperContext.enforced_blockers.join(', ')}`,
     };
   }
-  
+
   // Market availability
   const marketAvailable = marketContext.market_available ?? true;
   if (marketAvailable === false) {
@@ -232,7 +246,7 @@ function deriveAction(classification, marketContext = {}, wrapperContext = {}) {
       why_text: 'This market is not currently available at the book',
     };
   }
-  
+
   // Time window
   const timeWindowOk = marketContext.time_window_ok ?? true;
   if (timeWindowOk === false) {
@@ -242,7 +256,7 @@ function deriveAction(classification, marketContext = {}, wrapperContext = {}) {
       why_text: 'Bet window has closed for this game',
     };
   }
-  
+
   // Classification to action
   if (classification === 'BASE') {
     return {
@@ -251,15 +265,16 @@ function deriveAction(classification, marketContext = {}, wrapperContext = {}) {
       why_text: 'Model strongly endorses (BASE classification)',
     };
   }
-  
+
   if (classification === 'LEAN') {
     return {
       action: 'HOLD',
       why_code: 'CLASSIFICATION_LEAN',
-      why_text: 'Model suggests mild edge (LEAN classification) - watch for confirmation',
+      why_text:
+        'Model suggests mild edge (LEAN classification) - watch for confirmation',
     };
   }
-  
+
   return {
     action: 'PASS',
     why_code: 'UNKNOWN',
@@ -269,10 +284,18 @@ function deriveAction(classification, marketContext = {}, wrapperContext = {}) {
 
 function derivePlayDecision(play, marketContext, wrapperContext) {
   const classResult = deriveClassification(play);
-  const actionResult = deriveAction(classResult.classification, marketContext, wrapperContext);
-  
+  const actionResult = deriveAction(
+    classResult.classification,
+    marketContext,
+    wrapperContext,
+  );
+
   return {
-    play: { ...play, classification: classResult.classification, action: actionResult.action },
+    play: {
+      ...play,
+      classification: classResult.classification,
+      action: actionResult.action,
+    },
     classification: classResult.classification,
     action: actionResult.action,
     why_code: actionResult.why_code,
@@ -383,7 +406,7 @@ async function runTests() {
     it('should return BASE for strong edge and high confidence', () => {
       const play = basePlayFactory({
         market_type: 'MONEYLINE',
-        model: { edge: 0.035, confidence: 0.70 },
+        model: { edge: 0.035, confidence: 0.7 },
       });
       const result = deriveClassification(play);
       expect(result.classification).toBe('BASE');
@@ -393,7 +416,7 @@ async function runTests() {
       const play = basePlayFactory({
         market_type: 'TOTAL',
         selection_key: 'OVER',
-        model: { edge: 0.025, confidence: 0.70 },
+        model: { edge: 0.025, confidence: 0.7 },
       });
       const result = deriveClassification(play);
       expect(result.classification).toBe('BASE');
@@ -459,7 +482,10 @@ async function runTests() {
   // ====== ACTION TESTS ======
   describe('deriveAction - PASS always stays PASS', () => {
     it('should return PASS action for PASS classification', () => {
-      const result = deriveAction('PASS', { market_available: true, time_window_ok: true });
+      const result = deriveAction('PASS', {
+        market_available: true,
+        time_window_ok: true,
+      });
       expect(result.action).toBe('PASS');
       expect(result.why_code).toBe('CLASSIFICATION_PASS');
     });
@@ -484,7 +510,11 @@ async function runTests() {
         sport: 'NHL',
         enforced_blockers: ['GOALIE_UNCONFIRMED'],
       };
-      const result = deriveAction('BASE', { market_available: true }, wrapperCtx);
+      const result = deriveAction(
+        'BASE',
+        { market_available: true },
+        wrapperCtx,
+      );
       expect(result.action).toBe('HOLD');
       expect(result.why_code).toBe('WRAPPER_BLOCKS');
     });
@@ -492,13 +522,19 @@ async function runTests() {
 
   describe('deriveAction - Classification rules', () => {
     it('should return FIRE for BASE classification', () => {
-      const result = deriveAction('BASE', { market_available: true, time_window_ok: true });
+      const result = deriveAction('BASE', {
+        market_available: true,
+        time_window_ok: true,
+      });
       expect(result.action).toBe('FIRE');
       expect(result.why_code).toBe('CLASSIFICATION_BASE');
     });
 
     it('should return HOLD for LEAN classification', () => {
-      const result = deriveAction('LEAN', { market_available: true, time_window_ok: true });
+      const result = deriveAction('LEAN', {
+        market_available: true,
+        time_window_ok: true,
+      });
       expect(result.action).toBe('HOLD');
       expect(result.why_code).toBe('CLASSIFICATION_LEAN');
     });
@@ -509,10 +545,13 @@ async function runTests() {
     it('should combine classification and action into decision', () => {
       const play = basePlayFactory({
         market_type: 'MONEYLINE',
-        model: { edge: 0.035, confidence: 0.70 },
+        model: { edge: 0.035, confidence: 0.7 },
       });
-      const decision = derivePlayDecision(play, { market_available: true, time_window_ok: true });
-      
+      const decision = derivePlayDecision(play, {
+        market_available: true,
+        time_window_ok: true,
+      });
+
       expect(decision.classification).toBe('BASE');
       expect(decision.action).toBe('FIRE');
     });
@@ -522,7 +561,7 @@ async function runTests() {
         model: { edge: -0.01, confidence: 0.65 },
       });
       const decision = derivePlayDecision(play, { market_available: true });
-      
+
       expect(decision.classification).toBe('PASS');
       expect(decision.action).toBe('PASS');
     });
@@ -530,14 +569,18 @@ async function runTests() {
     it('should apply wrapper blocks to BASE classification', () => {
       const play = basePlayFactory({
         sport: 'NHL',
-        model: { edge: 0.035, confidence: 0.70 },
+        model: { edge: 0.035, confidence: 0.7 },
       });
       const wrapperCtx = {
         sport: 'NHL',
         enforced_blockers: ['GOALIE_UNCONFIRMED'],
       };
-      const decision = derivePlayDecision(play, { market_available: true }, wrapperCtx);
-      
+      const decision = derivePlayDecision(
+        play,
+        { market_available: true },
+        wrapperCtx,
+      );
+
       expect(decision.classification).toBe('BASE');
       expect(decision.action).toBe('HOLD');
     });
@@ -552,13 +595,13 @@ async function runTests() {
         selection_key: 'HOME_WIN',
         model: { edge: 0.04, confidence: 0.75 },
       });
-      
+
       const { classification } = deriveClassification(play);
       const { action } = deriveAction(classification, {
         market_available: true,
         time_window_ok: true,
       });
-      
+
       expect(classification).toBe('BASE');
       expect(action).toBe('FIRE');
     });
@@ -568,12 +611,12 @@ async function runTests() {
         sport: 'NHL',
         market_type: 'TOTAL',
         selection_key: 'OVER',
-        model: { edge: 0.03, confidence: 0.70 },
+        model: { edge: 0.03, confidence: 0.7 },
         warning_tags: ['TOTAL_BIAS_CONFLICT'],
       });
-      
+
       const { classification, pass_reason } = deriveClassification(play);
-      
+
       expect(classification).toBe('PASS');
       expect(pass_reason).toBe('TOTAL_BIAS_CONFLICT');
     });
@@ -583,9 +626,9 @@ async function runTests() {
         sport: 'SOCCER',
         market_type: 'TSOA',
         selection_key: 'HOME_TSOA',
-        model: { edge: 0.025, confidence: 0.60 },
+        model: { edge: 0.025, confidence: 0.6 },
       });
-      
+
       const { classification } = deriveClassification(play);
       expect(classification).toBe('LEAN');
     });
@@ -595,19 +638,23 @@ async function runTests() {
         sport: 'NHL',
         market_type: 'MONEYLINE',
         selection_key: 'HOME_WIN',
-        model: { edge: 0.035, confidence: 0.70 },
+        model: { edge: 0.035, confidence: 0.7 },
       });
-      
+
       const { classification } = deriveClassification(play);
       expect(classification).toBe('BASE');
-      
+
       const wrapperCtx = {
         sport: 'NHL',
         goalie_status: 'UNCONFIRMED',
         enforced_blockers: ['GOALIE_UNCONFIRMED'],
       };
-      
-      const { action } = deriveAction(classification, { market_available: true }, wrapperCtx);
+
+      const { action } = deriveAction(
+        classification,
+        { market_available: true },
+        wrapperCtx,
+      );
       expect(action).toBe('HOLD');
     });
   });

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 const { v4: uuidV4 } = require('uuid');
 
 const {
@@ -7,7 +6,7 @@ const {
   markJobRunFailure,
   shouldRunJobKey,
   withDb,
-  upsertPlayerShotLog
+  upsertPlayerShotLog,
 } = require('@cheddar-logic/data');
 
 const NHL_API_BASE = 'https://api-web.nhle.com/v1/player';
@@ -25,7 +24,8 @@ function parsePlayerIds(raw) {
   if (trimmed.startsWith('[')) {
     try {
       const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) return parsed.map((value) => Number(value)).filter(Number.isFinite);
+      if (Array.isArray(parsed))
+        return parsed.map((value) => Number(value)).filter(Number.isFinite);
     } catch {
       return [];
     }
@@ -55,8 +55,8 @@ async function fetchPlayerLanding(playerId) {
     try {
       const response = await fetch(url, {
         headers: {
-          'user-agent': 'cheddar-logic-worker'
-        }
+          'user-agent': 'cheddar-logic-worker',
+        },
       });
 
       if (response.ok) {
@@ -79,7 +79,9 @@ async function fetchPlayerLanding(playerId) {
     }
   }
 
-  throw new Error(`NHL API fetch failed for player ${playerId}: ${lastError?.message || 'unknown error'}`);
+  throw new Error(
+    `NHL API fetch failed for player ${playerId}: ${lastError?.message || 'unknown error'}`,
+  );
 }
 
 function extractLocalizedText(value) {
@@ -121,10 +123,12 @@ function buildLogRows(playerId, payload, fetchedAt) {
       gameDate,
       opponent: game?.opponentAbbrev || null,
       isHome,
-      shots: Number.isFinite(game?.shots) ? game.shots : Number(game?.shots) || null,
+      shots: Number.isFinite(game?.shots)
+        ? game.shots
+        : Number(game?.shots) || null,
       toiMinutes,
       rawData: game,
-      fetchedAt
+      fetchedAt,
     };
   });
 }
@@ -138,7 +142,9 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
 
   return withDb(async () => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
-      console.log(`[NHLPlayerShots] ⏭️  Skipping (already succeeded or running): ${jobKey}`);
+      console.log(
+        `[NHLPlayerShots] ⏭️  Skipping (already succeeded or running): ${jobKey}`,
+      );
       return { success: true, jobRunId: null, skipped: true, jobKey };
     }
 
@@ -149,8 +155,15 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
 
     const playerIds = parsePlayerIds(process.env.NHL_SOG_PLAYER_IDS);
     if (playerIds.length === 0) {
-      console.log('[NHLPlayerShots] No player IDs configured. Set NHL_SOG_PLAYER_IDS.');
-      return { success: true, jobRunId: null, skipped: true, reason: 'no_player_ids' };
+      console.log(
+        '[NHLPlayerShots] No player IDs configured. Set NHL_SOG_PLAYER_IDS.',
+      );
+      return {
+        success: true,
+        jobRunId: null,
+        skipped: true,
+        reason: 'no_player_ids',
+      };
     }
 
     try {
@@ -182,14 +195,19 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
       }
 
       markJobRunSuccess(jobRunId);
-      console.log(`[NHLPlayerShots] ✅ Job complete: ${playersProcessed} players, ${logsInserted} logs`);
+      console.log(
+        `[NHLPlayerShots] ✅ Job complete: ${playersProcessed} players, ${logsInserted} logs`,
+      );
       return { success: true, jobRunId, playersProcessed, logsInserted };
     } catch (error) {
       console.error('[NHLPlayerShots] ❌ Job failed:', error.message);
       try {
         markJobRunFailure(jobRunId, error.message);
       } catch (dbError) {
-        console.error('[NHLPlayerShots] Failed to record error to DB:', dbError.message);
+        console.error(
+          '[NHLPlayerShots] Failed to record error to DB:',
+          dbError.message,
+        );
       }
       return { success: false, jobRunId, error: error.message };
     }

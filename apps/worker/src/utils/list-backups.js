@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 const dbBackup = require('./db-backup.js');
 
 const backups = dbBackup.listBackups();

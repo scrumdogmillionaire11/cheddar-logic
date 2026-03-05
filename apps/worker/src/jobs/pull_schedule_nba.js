@@ -10,7 +10,6 @@
  *   node src/jobs/pull_schedule_nba.js --dry-run
  */
 
-/* eslint-disable @typescript-eslint/no-require-imports */
 'use strict';
 
 const { v4: uuidV4 } = require('uuid');
@@ -23,10 +22,12 @@ const {
   upsertGame,
   upsertGameIdMap,
   getDatabase,
-  withDb
+  withDb,
 } = require('@cheddar-logic/data');
 
-const { fetchScoreboardEvents } = require('../../../../packages/data/src/espn-client');
+const {
+  fetchScoreboardEvents,
+} = require('../../../../packages/data/src/espn-client');
 
 const SPORT = 'nba';
 const ESPN_LEAGUE = 'basketball/nba';
@@ -59,8 +60,8 @@ function normalizeEvent(event) {
   const comp = event?.competitions?.[0];
   if (!comp) return null;
 
-  const homeComp = comp.competitors?.find(c => c.homeAway === 'home');
-  const awayComp = comp.competitors?.find(c => c.homeAway === 'away');
+  const homeComp = comp.competitors?.find((c) => c.homeAway === 'home');
+  const awayComp = comp.competitors?.find((c) => c.homeAway === 'away');
   if (!homeComp || !awayComp) return null;
 
   const homeTeam = homeComp.team?.displayName;
@@ -73,7 +74,7 @@ function normalizeEvent(event) {
     homeTeam: homeTeam.trim(),
     awayTeam: awayTeam.trim(),
     gameTimeUtc,
-    status: normalizeStatus(comp.status?.type)
+    status: normalizeStatus(comp.status?.type),
   };
 }
 
@@ -95,7 +96,7 @@ function selectBestCandidate(candidates, target) {
   const targetTime = new Date(target.gameTimeUtc).getTime();
 
   const matches = candidates
-    .map(candidate => {
+    .map((candidate) => {
       const home = normalizeTeamName(candidate.home_team);
       const away = normalizeTeamName(candidate.away_team);
       if (home !== targetHome || away !== targetAway) return null;
@@ -107,14 +108,17 @@ function selectBestCandidate(candidates, target) {
       return {
         candidate,
         deltaMinutes,
-        confidence: scoreMatchConfidence(deltaMinutes)
+        confidence: scoreMatchConfidence(deltaMinutes),
       };
     })
     .filter(Boolean)
     .sort((a, b) => a.deltaMinutes - b.deltaMinutes);
 
   if (matches.length === 0) return { status: 'no_candidate' };
-  if (matches.length > 1 && matches[0].deltaMinutes === matches[1].deltaMinutes) {
+  if (
+    matches.length > 1 &&
+    matches[0].deltaMinutes === matches[1].deltaMinutes
+  ) {
     return { status: 'ambiguous', matches };
   }
 
@@ -130,12 +134,16 @@ async function pullScheduleNba({ jobKey = null, dryRun = false } = {}) {
 
   return withDb(async () => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
-      console.log(`[Schedule:NBA] Skipping (already succeeded or running): ${jobKey}`);
+      console.log(
+        `[Schedule:NBA] Skipping (already succeeded or running): ${jobKey}`,
+      );
       return { success: true, jobRunId: null, skipped: true, jobKey };
     }
 
     if (dryRun) {
-      console.log('[Schedule:NBA] DRY_RUN=true -- would fetch ESPN scoreboards');
+      console.log(
+        '[Schedule:NBA] DRY_RUN=true -- would fetch ESPN scoreboards',
+      );
       return { success: true, jobRunId: null, dryRun: true, jobKey };
     }
 
@@ -143,8 +151,20 @@ async function pullScheduleNba({ jobKey = null, dryRun = false } = {}) {
       insertJobRun('pull_schedule_nba', jobRunId, jobKey);
 
       const now = new Date();
-      const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - BACKFILL_DAYS));
-      const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + FORWARD_DAYS));
+      const start = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate() - BACKFILL_DAYS,
+        ),
+      );
+      const end = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate() + FORWARD_DAYS,
+        ),
+      );
       const days = buildDateRangeUtc(start, end);
 
       const db = getDatabase();
@@ -172,7 +192,7 @@ async function pullScheduleNba({ jobKey = null, dryRun = false } = {}) {
             homeTeam: normalized.homeTeam,
             awayTeam: normalized.awayTeam,
             gameTimeUtc: normalized.gameTimeUtc,
-            status: normalized.status
+            status: normalized.status,
           });
           gamesUpserted += 1;
 
@@ -182,9 +202,13 @@ async function pullScheduleNba({ jobKey = null, dryRun = false } = {}) {
             continue;
           }
 
-          const windowStart = new Date(eventTime.getTime() - 24 * 60 * 60 * 1000).toISOString();
-          const windowEnd = new Date(eventTime.getTime() + 24 * 60 * 60 * 1000).toISOString();
-          
+          const windowStart = new Date(
+            eventTime.getTime() - 24 * 60 * 60 * 1000,
+          ).toISOString();
+          const windowEnd = new Date(
+            eventTime.getTime() + 24 * 60 * 60 * 1000,
+          ).toISOString();
+
           // sql.js statements can't be reused, so prepare fresh each time
           const oddsCandidatesStmt = db.prepare(`
             SELECT DISTINCT g.game_id, g.game_time_utc, g.home_team, g.away_team
@@ -194,7 +218,11 @@ async function pullScheduleNba({ jobKey = null, dryRun = false } = {}) {
               AND g.game_time_utc >= ?
               AND g.game_time_utc <= ?
           `);
-          const candidates = oddsCandidatesStmt.all(SPORT, windowStart, windowEnd);
+          const candidates = oddsCandidatesStmt.all(
+            SPORT,
+            windowStart,
+            windowEnd,
+          );
           const selection = selectBestCandidate(candidates, normalized);
 
           if (selection.status === 'no_candidate') {
@@ -221,15 +249,19 @@ async function pullScheduleNba({ jobKey = null, dryRun = false } = {}) {
             extAwayTeam: normalized.awayTeam,
             oddsGameTimeUtc: match.candidate.game_time_utc,
             oddsHomeTeam: match.candidate.home_team,
-            oddsAwayTeam: match.candidate.away_team
+            oddsAwayTeam: match.candidate.away_team,
           });
           mappingsCreated += 1;
         }
       }
 
       markJobRunSuccess(jobRunId);
-      console.log(`[Schedule:NBA] OK: upserted ${gamesUpserted} games across ${daysWithEvents}/${days.length} days`);
-      console.log(`[Schedule:NBA] Mapping: created=${mappingsCreated} no_candidate=${mappingsFailedNoCandidate} ambiguous=${mappingsFailedAmbiguous}`);
+      console.log(
+        `[Schedule:NBA] OK: upserted ${gamesUpserted} games across ${daysWithEvents}/${days.length} days`,
+      );
+      console.log(
+        `[Schedule:NBA] Mapping: created=${mappingsCreated} no_candidate=${mappingsFailedNoCandidate} ambiguous=${mappingsFailedAmbiguous}`,
+      );
       return {
         success: true,
         jobRunId,
@@ -239,7 +271,7 @@ async function pullScheduleNba({ jobKey = null, dryRun = false } = {}) {
         daysWithEvents,
         mappingsCreated,
         mappingsFailedNoCandidate,
-        mappingsFailedAmbiguous
+        mappingsFailedAmbiguous,
       };
     } catch (error) {
       console.error('[Schedule:NBA] ERROR: job failed:', error.message);
@@ -248,7 +280,10 @@ async function pullScheduleNba({ jobKey = null, dryRun = false } = {}) {
       try {
         markJobRunFailure(jobRunId, error.message);
       } catch (dbError) {
-        console.error(`[Schedule:NBA] Failed to record error to DB:`, dbError.message);
+        console.error(
+          `[Schedule:NBA] Failed to record error to DB:`,
+          dbError.message,
+        );
       }
 
       return { success: false, jobRunId, jobKey, error: error.message };
@@ -259,8 +294,8 @@ async function pullScheduleNba({ jobKey = null, dryRun = false } = {}) {
 if (require.main === module) {
   const dryRun = process.argv.includes('--dry-run');
   pullScheduleNba({ dryRun })
-    .then(result => process.exit(result.success ? 0 : 1))
-    .catch(err => {
+    .then((result) => process.exit(result.success ? 0 : 1))
+    .catch((err) => {
       console.error('Unhandled error:', err);
       process.exit(1);
     });

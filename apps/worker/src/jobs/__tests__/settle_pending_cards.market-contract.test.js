@@ -75,8 +75,12 @@ describe('settle_pending_cards market contract', () => {
 
     expect(spreadResult).toBe('win');
     expect(moneylineResult).toBe('win');
-    expect(__private.computePnlUnits(spreadResult, spread.lockedPrice)).toBeCloseTo(100 / 110, 6);
-    expect(__private.computePnlUnits(moneylineResult, moneyline.lockedPrice)).toBeCloseTo(100 / 180, 6);
+    expect(
+      __private.computePnlUnits(spreadResult, spread.lockedPrice),
+    ).toBeCloseTo(100 / 110, 6);
+    expect(
+      __private.computePnlUnits(moneylineResult, moneyline.lockedPrice),
+    ).toBeCloseTo(100 / 180, 6);
   });
 
   test('spread with OVER selection throws INVALID_SPREAD_SELECTION', () => {
@@ -99,7 +103,7 @@ describe('settle_pending_cards market contract', () => {
         awayTeam: 'Suns',
         requirePrice: true,
         requireLineForMarket: true,
-      })
+      }),
     ).toThrow(/INVALID_SPREAD_SELECTION|Spread selection/);
   });
 
@@ -119,6 +123,8 @@ describe('settle_pending_cards market contract', () => {
       away_team: 'Bulls',
     };
 
-    expect(() => __private.assertLockedMarketContext(row, payload)).toThrow(/market_key/);
+    expect(() => __private.assertLockedMarketContext(row, payload)).toThrow(
+      /market_key/,
+    );
   });
 });

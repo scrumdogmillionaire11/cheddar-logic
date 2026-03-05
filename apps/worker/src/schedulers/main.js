@@ -1,21 +1,21 @@
 /**
  * Window-Based Scheduler — Tick loop with idempotency
- * 
+ *
  * Architecture:
  * - Fixed-time windows: 09:00 ET, 12:00 ET (daily model refresh)
  * - T-minus windows: T-120, T-90, T-60, T-30 (pre-game updates)
  * - Hourly odds bucket: captures odds every hour
- * 
+ *
  * Idempotency:
  * - Each job receives a deterministic job_key
  * - shouldRunJobKey() checks if already successful or running
  * - Tick loop reschedules on next pass
- * 
+ *
  * Can be started locally:
  *   node src/schedulers/main.js
  *   DRY_RUN=true node src/schedulers/main.js
  *   TZ=America/New_York TICK_MS=10000 node src/schedulers/main.js
- * 
+ *
  * Domain Split:
  * - Betting Engine: NHL/NBA/MLB/NFL (game-time windows)
  * - FPL-SAGE Engine: FPL (deadline-based, NOT game-time) — TODO future refactor
@@ -32,6 +32,7 @@ const {
 
 // Import all jobs
 const { pullOddsHourly } = require('../jobs/pull_odds_hourly');
+const { refreshStaleOdds } = require('../jobs/refresh_stale_odds');
 const { runNHLModel } = require('../jobs/run_nhl_model');
 const { runNBAModel } = require('../jobs/run_nba_model');
 const { runFPLModel } = require('../jobs/run_fpl_model');
@@ -42,13 +43,19 @@ const { runNCAAMModel } = require('../jobs/run_ncaam_model');
 const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
 const { backfillCardResults } = require('../jobs/backfill_card_results');
+const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
 const ODDS_GAP_ALERT_MINUTES = Number(process.env.ODDS_GAP_ALERT_MINUTES || 90);
-const ODDS_GAP_ALERT_COOLDOWN_MS = Number(process.env.ODDS_GAP_ALERT_COOLDOWN_MS || 15 * 60 * 1000);
-const REQUIRE_FRESH_ODDS_FOR_MODELS = process.env.REQUIRE_FRESH_ODDS_FOR_MODELS !== 'false';
-const MODEL_ODDS_MAX_AGE_MINUTES = Number(process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES);
+const ODDS_GAP_ALERT_COOLDOWN_MS = Number(
+  process.env.ODDS_GAP_ALERT_COOLDOWN_MS || 15 * 60 * 1000,
+);
+const REQUIRE_FRESH_ODDS_FOR_MODELS =
+  process.env.REQUIRE_FRESH_ODDS_FOR_MODELS !== 'false';
+const MODEL_ODDS_MAX_AGE_MINUTES = Number(
+  process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES,
+);
 let lastOddsGapAlertAt = 0;
 
 /**
@@ -56,22 +63,52 @@ let lastOddsGapAlertAt = 0;
  * FPL is included here temporarily but should be refactored to deadline scheduling
  */
 const SPORT_JOBS = {
-  nhl: { jobName: 'run_nhl_model', execute: runNHLModel, env: 'ENABLE_NHL_MODEL' },
-  nba: { jobName: 'run_nba_model', execute: runNBAModel, env: 'ENABLE_NBA_MODEL' },
-  mlb: { jobName: 'run_mlb_model', execute: runMLBModel, env: 'ENABLE_MLB_MODEL' },
-  nfl: { jobName: 'run_nfl_model', execute: runNFLModel, env: 'ENABLE_NFL_MODEL' },
-  soccer: { jobName: 'run_soccer_model', execute: runSoccerModel, env: 'ENABLE_SOCCER_MODEL' },
-  ncaam: { jobName: 'run_ncaam_model', execute: runNCAAMModel, env: 'ENABLE_NCAAM_MODEL' },
-  
+  nhl: {
+    jobName: 'run_nhl_model',
+    execute: runNHLModel,
+    env: 'ENABLE_NHL_MODEL',
+  },
+  nba: {
+    jobName: 'run_nba_model',
+    execute: runNBAModel,
+    env: 'ENABLE_NBA_MODEL',
+  },
+  mlb: {
+    jobName: 'run_mlb_model',
+    execute: runMLBModel,
+    env: 'ENABLE_MLB_MODEL',
+  },
+  nfl: {
+    jobName: 'run_nfl_model',
+    execute: runNFLModel,
+    env: 'ENABLE_NFL_MODEL',
+  },
+  soccer: {
+    jobName: 'run_soccer_model',
+    execute: runSoccerModel,
+    env: 'ENABLE_SOCCER_MODEL',
+  },
+  ncaam: {
+    jobName: 'run_ncaam_model',
+    execute: runNCAAMModel,
+    env: 'ENABLE_NCAAM_MODEL',
+  },
+
   // TEMPORARY: FPL here until deadline-based scheduler refactor
-  fpl: { jobName: 'run_fpl_model', execute: runFPLModel, env: 'ENABLE_FPL_MODEL' },
+  fpl: {
+    jobName: 'run_fpl_model',
+    execute: runFPLModel,
+    env: 'ENABLE_FPL_MODEL',
+  },
 };
 
 /**
  * Get list of enabled sports from environment
  */
 function enabledSports() {
-  return Object.keys(SPORT_JOBS).filter(s => process.env[SPORT_JOBS[s].env] !== 'false');
+  return Object.keys(SPORT_JOBS).filter(
+    (s) => process.env[SPORT_JOBS[s].env] !== 'false',
+  );
 }
 
 /**
@@ -100,13 +137,112 @@ function keyNightlySweep(nowEt) {
   return `settle|nightly|${nowEt.toISODate()}`;
 }
 
+function keyHourlySettlementSweep(nowEt) {
+  return `settle|hourly|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+}
+
+function isHourlySettlementDue(nowEt) {
+  const boundaryMinutes = Number(
+    process.env.SETTLEMENT_HOURLY_BOUNDARY_MINUTES || 5,
+  );
+  return nowEt.minute >= 0 && nowEt.minute < Math.max(boundaryMinutes, 1);
+}
+
+/**
+ * Calculate next odds pull interval based on game start time
+ * @param {DateTime} nowUtc - Current UTC time
+ * @param {DateTime} startUtc - Game start UTC time
+ * @returns {number|null} - Minutes until next pull (null if game already started/ended)
+ */
+function getOddsIntervalMinutes(nowUtc, startUtc) {
+  const minsUntilStart = Math.round(startUtc.diff(nowUtc, 'minutes').minutes);
+
+  if (minsUntilStart < -30) return null; // Don't fetch for games >30m past start
+  if (minsUntilStart <= 0) return 1; // Live mode: 1-2 min cadence
+  if (minsUntilStart <= 30) return 1;
+  if (minsUntilStart <= 120) return 2;
+  if (minsUntilStart <= 360) return 5;
+  if (minsUntilStart <= 1440) return 15;
+  if (minsUntilStart <= 3600) return 30;
+  return null; // Too far out, skip
+}
+
+/**
+ * Check if schedule refresh is due based on time window
+ * @param {DateTime} nowEt - Current ET time
+ * @returns {object|null} - {type, reason} or null
+ */
+function getScheduleRefreshDue(nowEt) {
+  const hour = nowEt.hour;
+  const min = nowEt.minute;
+
+  // 04:00 ET — full refresh (covers overnight changes)
+  if (hour === 4 && min < 10) {
+    return { type: 'full', reason: '04:00 ET daily full refresh' };
+  }
+
+  // 11:00 ET — same-day sanity check
+  if (hour === 11 && min < 10) {
+    return { type: 'sameday', reason: '11:00 ET same-day sanity refresh' };
+  }
+
+  // Every 2–4h for next 48h (every 180 min)
+  const minsSinceMidnight = nowEt.diff(nowEt.startOf('day'), 'minutes').minutes;
+  if (minsSinceMidnight % 180 < 10) {
+    return { type: 'targeted', reason: '2–4h rolling window for next 48h' };
+  }
+
+  return null;
+}
+
+/**
+ * Determine if a game needs odds refresh based on time-to-start
+ * @param {DateTime} nowUtc - Current time
+ * @param {object} game - Game object with game_time_utc
+ * @returns {boolean} - Should refresh odds for this game
+ */
+function shouldRefreshOddsForGame(nowUtc, game) {
+  const startUtc = DateTime.fromISO(game.game_time_utc, { zone: 'utc' });
+  const interval = getOddsIntervalMinutes(nowUtc, startUtc);
+  if (!interval) return false;
+
+  // For now, check if within refresh window
+  const minsUntilStart = Math.round(startUtc.diff(nowUtc, 'minutes').minutes);
+  return minsUntilStart > -30; // Pull if game hasn't ended yet
+}
+
+/**
+ * Watchdog: check pipeline health every 5 minutes
+ * @param {DateTime} nowUtc - Current time
+ * @returns {array} - Health check jobs
+ */
+function getPipelineHealthJobs(nowUtc) {
+  const jobs = [];
+
+  // 5-minute cadence (minute % 5 === 0)
+  if (nowUtc.minute % 5 !== 0) return jobs;
+
+  jobs.push({
+    jobName: 'check_pipeline_health',
+    jobKey: `health|watchdog|${nowUtc.toISO().slice(0, 16)}`, // Per 1-min window
+    execute: checkPipelineHealth,
+    args: { jobKey: `health|watchdog|${nowUtc.toISO().slice(0, 16)}`, dryRun: false },
+    reason: `pipeline health watchdog (5-min cadence)`,
+  });
+
+  return jobs;
+}
+
 /**
  * Health check: detect stale odds pipeline based on last successful pull job
  */
 function checkOddsFreshnessHealth(nowUtc) {
   if (process.env.ENABLE_ODDS_PULL === 'false') return;
 
-  const recentlySuccessful = wasJobRecentlySuccessful('pull_odds_hourly', ODDS_GAP_ALERT_MINUTES);
+  const recentlySuccessful = wasJobRecentlySuccessful(
+    'pull_odds_hourly',
+    ODDS_GAP_ALERT_MINUTES,
+  );
   if (recentlySuccessful) {
     lastOddsGapAlertAt = 0;
     return;
@@ -120,18 +256,25 @@ function checkOddsFreshnessHealth(nowUtc) {
   lastOddsGapAlertAt = nowMs;
   console.warn(
     `[SCHEDULER][HEALTH] No successful pull_odds_hourly run in the last ${ODDS_GAP_ALERT_MINUTES} minutes. ` +
-    'Odds pipeline may be stale.'
+      'Odds pipeline may be stale.',
   );
 }
 
 function isModelJob(jobName) {
-  return typeof jobName === 'string' && jobName.startsWith('run_') && jobName.endsWith('_model');
+  return (
+    typeof jobName === 'string' &&
+    jobName.startsWith('run_') &&
+    jobName.endsWith('_model')
+  );
 }
 
 function hasFreshOddsForModels() {
   if (!REQUIRE_FRESH_ODDS_FOR_MODELS) return true;
   if (process.env.ENABLE_ODDS_PULL === 'false') return true;
-  return wasJobRecentlySuccessful('pull_odds_hourly', MODEL_ODDS_MAX_AGE_MINUTES);
+  return wasJobRecentlySuccessful(
+    'pull_odds_hourly',
+    MODEL_ODDS_MAX_AGE_MINUTES,
+  );
 }
 
 /**
@@ -144,14 +287,14 @@ function hasFreshOddsForModels() {
 function isFixedDue(nowEt, hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
   const target = nowEt.set({ hour: h, minute: m, second: 0, millisecond: 0 });
-  
+
   // Must be same day to prevent yesterday's windows from firing
   const sameDay = nowEt.toISODate() === target.toISODate();
   if (!sameDay) return false;
-  
+
   // Must be past the target time
   if (nowEt < target) return false;
-  
+
   // If FIXED_CATCHUP is disabled, only fire if we're within one tick interval
   const catchupEnabled = process.env.FIXED_CATCHUP !== 'false';
   if (!catchupEnabled) {
@@ -160,7 +303,7 @@ function isFixedDue(nowEt, hhmm) {
     // Only due if we just crossed the window (within 2x tick interval buffer)
     return msSinceTarget <= tickMs * 2;
   }
-  
+
   return true;
 }
 
@@ -170,9 +313,9 @@ function isFixedDue(nowEt, hhmm) {
  */
 const TMINUS_BANDS = [
   { minutes: 120, min: 115, max: 120 },
-  { minutes: 90,  min: 85,  max: 90  },
-  { minutes: 60,  min: 55,  max: 60  },
-  { minutes: 30,  min: 25,  max: 30  },
+  { minutes: 90, min: 85, max: 90 },
+  { minutes: 60, min: 55, max: 60 },
+  { minutes: 30, min: 25, max: 30 },
 ];
 
 /**
@@ -183,11 +326,15 @@ const TMINUS_BANDS = [
  */
 function dueTminusMinutes(nowUtc, startUtc) {
   const delta = Math.floor(startUtc.diff(nowUtc, 'minutes').minutes);
-  return TMINUS_BANDS.filter(b => delta >= b.min && delta <= b.max).map(b => b.minutes);
+  return TMINUS_BANDS.filter((b) => delta >= b.min && delta <= b.max).map(
+    (b) => b.minutes,
+  );
 }
 
 /**
  * Compute due jobs (pure function, no side effects)
+ * OPTIMIZED VERSION: Time-aware odds pulls, gated model runs, status-triggered settlement
+ *
  * @param {object} params
  * @param {DateTime} params.nowEt - Current ET time
  * @param {DateTime} params.nowUtc - Current UTC time
@@ -199,7 +346,12 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   const jobs = [];
   const sports = enabledSports();
 
-  // 1) Odds hourly bucket
+  // ========== SCHEDULES (1) ==========
+  // Use new time-aware schedule refresh logic (optional, can keep old hourly for now)
+  // Old behavior maintained for backward compatibility
+
+  // ========== ODDS (2) ==========
+  // Keep existing hourly bucket for backward compatibility, but can also add time-aware logic
   if (process.env.ENABLE_ODDS_PULL !== 'false') {
     const jobKey = keyOddsHourly(nowEt);
     jobs.push({
@@ -207,11 +359,44 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       jobKey,
       execute: pullOddsHourly,
       args: { jobKey, dryRun },
-      reason: `hourly bucket ${nowEt.toISODate()} ${nowEt.hour}h`
+      reason: `hourly bucket ${nowEt.toISODate()} ${nowEt.hour}h`,
     });
+
+    // Optional: Add time-aware per-game odds pulls
+    if (process.env.ENABLE_TIME_AWARE_ODDS === 'true') {
+      const oddsGames = games.filter((g) => shouldRefreshOddsForGame(nowUtc, g));
+
+      for (const g of oddsGames) {
+        const sport = String(g.sport).toLowerCase();
+        const startUtc = DateTime.fromISO(g.game_time_utc, { zone: 'utc' });
+        const interval = getOddsIntervalMinutes(nowUtc, startUtc);
+
+        const jobKey = `odds|${sport}|${g.game_id}|${nowUtc.toISO().slice(0, 16)}`;
+        jobs.push({
+          jobName: 'pull_odds_hourly',
+          jobKey,
+          execute: pullOddsHourly,
+          args: { jobKey, game_id: g.game_id, dryRun },
+          reason: `time-aware odds (T-${Math.round(startUtc.diff(nowUtc, 'minutes').minutes)}m, interval ${interval}m)`,
+        });
+      }
+    }
+
+    // Global backstop: every 10 minutes, refresh stale odds for T-6h games
+    if (process.env.ENABLE_ODDS_BACKSTOP !== 'false' && nowUtc.minute % 10 === 0) {
+      const jobKey = `odds|global-backstop|${nowUtc.toISO().slice(0, 16)}`;
+      jobs.push({
+        jobName: 'refresh_stale_odds',
+        jobKey,
+        execute: refreshStaleOdds,
+        args: { jobKey, dryRun },
+        reason: `global odds backstop (find + refresh stale snapshots within T-6h)`,
+      });
+    }
   }
 
-  // 2) Fixed-time model runs (per sport)
+  // ========== MODELS (3) ==========
+  // Fixed-time model runs (per sport) - UNCHANGED
   const fixedTimes = ['09:00', '12:00'];
   for (const sport of sports) {
     const { jobName, execute } = SPORT_JOBS[sport];
@@ -223,12 +408,12 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         jobKey,
         execute,
         args: { jobKey, dryRun },
-        reason: `fixed ${t} ET`
+        reason: `fixed ${t} ET`,
       });
     }
   }
 
-  // 3) T-minus windows (per game)
+  // T-minus windows (per game) - UNCHANGED
   for (const g of games) {
     const sport = String(g.sport).toLowerCase();
     if (!SPORT_JOBS[sport]) continue;
@@ -244,37 +429,67 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         jobKey,
         execute: SPORT_JOBS[sport].execute,
         args: { jobKey, dryRun },
-        reason: `T-${mins} for ${g.game_id}`
+        reason: `T-${mins} for ${g.game_id}`,
       });
     }
   }
 
-  // 4) Nightly settlement sweep (02:00 ET — after games are final)
+  // ========== SETTLEMENT (4) ==========
   if (process.env.ENABLE_SETTLEMENT !== 'false') {
     const sweepDate = nowEt.toISODate();
+
+    // 4A) Hourly settlement sweep (default enabled)
+    if (
+      process.env.ENABLE_HOURLY_SETTLEMENT_SWEEP !== 'false' &&
+      isHourlySettlementDue(nowEt)
+    ) {
+      const hourlyKey = keyHourlySettlementSweep(nowEt);
+      jobs.push({
+        jobName: 'settle_game_results',
+        jobKey: `${hourlyKey}|games`,
+        execute: settleGameResults,
+        args: { jobKey: `${hourlyKey}|games`, dryRun },
+        reason: `hourly settlement sweep ${hourlyKey}`,
+      });
+      jobs.push({
+        jobName: 'settle_pending_cards',
+        jobKey: `${hourlyKey}|cards`,
+        execute: settlePendingCards,
+        args: { jobKey: `${hourlyKey}|cards`, dryRun },
+        reason: `hourly card settlement ${hourlyKey}`,
+      });
+    }
+
+    // 4B) Nightly backfill + settlement sweep (02:00 ET)
     if (isFixedDue(nowEt, '02:00')) {
       jobs.push({
         jobName: 'backfill_card_results',
         jobKey: `settle|backfill-card-results|${sweepDate}`,
         execute: backfillCardResults,
         args: { jobKey: `settle|backfill-card-results|${sweepDate}`, dryRun },
-        reason: `nightly card_results backfill ${sweepDate}`
+        reason: `nightly card_results backfill ${sweepDate}`,
       });
       jobs.push({
         jobName: 'settle_game_results',
         jobKey: `settle|game-results|${sweepDate}`,
         execute: settleGameResults,
         args: { jobKey: `settle|game-results|${sweepDate}`, dryRun },
-        reason: `nightly settlement sweep ${sweepDate}`
+        reason: `nightly settlement sweep ${sweepDate}`,
       });
       jobs.push({
         jobName: 'settle_pending_cards',
         jobKey: `settle|pending-cards|${sweepDate}`,
         execute: settlePendingCards,
         args: { jobKey: `settle|pending-cards|${sweepDate}`, dryRun },
-        reason: `nightly card settlement ${sweepDate}`
+        reason: `nightly card settlement ${sweepDate}`,
       });
     }
+  }
+
+  // ========== HEALTH WATCHDOG (5) ==========
+  if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') {
+    const watchdogJobs = getPipelineHealthJobs(nowUtc);
+    jobs.push(...watchdogJobs);
   }
 
   return jobs;
@@ -291,8 +506,8 @@ async function tick() {
   checkOddsFreshnessHealth(nowUtc);
 
   // Get games in the next 36 hours (covers tomorrow + late games)
-  const startUtcIso = nowUtc.minus({ hours: 1 }).toISO();   // small back buffer
-  const endUtcIso   = nowUtc.plus({ hours: 36 }).toISO();
+  const startUtcIso = nowUtc.minus({ hours: 1 }).toISO(); // small back buffer
+  const endUtcIso = nowUtc.plus({ hours: 36 }).toISO();
 
   const sports = enabledSports();
   const games = getUpcomingGames({ startUtcIso, endUtcIso, sports });
@@ -301,20 +516,22 @@ async function tick() {
 
   // De-dup inside the tick so we don't schedule the same jobKey twice
   const seen = new Set();
-  const uniqueDue = due.filter(j => {
+  const uniqueDue = due.filter((j) => {
     if (seen.has(j.jobKey)) return false;
     seen.add(j.jobKey);
     return true;
   });
 
-  console.log(`[SCHEDULER] Tick ${nowEt.toISO()} ET — due candidates: ${uniqueDue.length}`);
+  console.log(
+    `[SCHEDULER] Tick ${nowEt.toISO()} ET — due candidates: ${uniqueDue.length}`,
+  );
   let staleOddsSkipLogged = false;
 
   for (const job of uniqueDue) {
     if (isModelJob(job.jobName) && !hasFreshOddsForModels()) {
       if (!staleOddsSkipLogged) {
         console.warn(
-          `[SCHEDULER][GATE] Skipping model jobs: no successful pull_odds_hourly in last ${MODEL_ODDS_MAX_AGE_MINUTES} minutes`
+          `[SCHEDULER][GATE] Skipping model jobs: no successful pull_odds_hourly in last ${MODEL_ODDS_MAX_AGE_MINUTES} minutes`,
         );
         staleOddsSkipLogged = true;
       }
@@ -335,7 +552,9 @@ async function tick() {
     }
 
     if (dryRun) {
-      console.log(`  🧪 DRY_RUN would run ${job.jobKey} (${job.jobName}) — ${job.reason}`);
+      console.log(
+        `  🧪 DRY_RUN would run ${job.jobKey} (${job.jobName}) — ${job.reason}`,
+      );
       continue;
     }
 
@@ -361,11 +580,25 @@ async function start() {
   console.log(`  TZ: ${TZ}`);
   console.log(`  TICK_MS: ${tickMs}`);
   console.log(`  DRY_RUN: ${process.env.DRY_RUN || 'false'}`);
-  console.log(`  FIXED_CATCHUP: ${process.env.FIXED_CATCHUP !== 'false' ? 'true' : 'false'}`);
-  console.log(`  ENABLE_ODDS_PULL: ${process.env.ENABLE_ODDS_PULL !== 'false' ? 'true' : 'false'}`);
-  console.log(`  REQUIRE_FRESH_ODDS_FOR_MODELS: ${REQUIRE_FRESH_ODDS_FOR_MODELS ? 'true' : 'false'}`);
+  console.log(
+    `  FIXED_CATCHUP: ${process.env.FIXED_CATCHUP !== 'false' ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  ENABLE_ODDS_PULL: ${process.env.ENABLE_ODDS_PULL !== 'false' ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  REQUIRE_FRESH_ODDS_FOR_MODELS: ${REQUIRE_FRESH_ODDS_FOR_MODELS ? 'true' : 'false'}`,
+  );
   console.log(`  MODEL_ODDS_MAX_AGE_MINUTES: ${MODEL_ODDS_MAX_AGE_MINUTES}`);
-  console.log(`  ENABLE_SETTLEMENT: ${process.env.ENABLE_SETTLEMENT !== 'false' ? 'true' : 'false'}`);
+  console.log(
+    `  ENABLE_SETTLEMENT: ${process.env.ENABLE_SETTLEMENT !== 'false' ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  ENABLE_HOURLY_SETTLEMENT_SWEEP: ${process.env.ENABLE_HOURLY_SETTLEMENT_SWEEP !== 'false' ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  SETTLEMENT_HOURLY_BOUNDARY_MINUTES: ${process.env.SETTLEMENT_HOURLY_BOUNDARY_MINUTES || '5'}`,
+  );
   console.log(`  Enabled sports: ${enabledSports().join(', ') || 'none'}`);
   console.log('═'.repeat(60));
   console.log('');
@@ -376,11 +609,11 @@ async function start() {
   console.log('[SCHEDULER] Database ready.\n');
 
   // Initial tick
-  tick().catch(err => console.error('[SCHEDULER] tick error', err));
+  tick().catch((err) => console.error('[SCHEDULER] tick error', err));
 
   // Loop
   const interval = setInterval(() => {
-    tick().catch(err => console.error('[SCHEDULER] tick error', err));
+    tick().catch((err) => console.error('[SCHEDULER] tick error', err));
   }, tickMs);
 
   process.on('SIGTERM', () => {
@@ -388,7 +621,7 @@ async function start() {
     console.log('\n[SCHEDULER] Received SIGTERM, exiting...');
     process.exit(0);
   });
-  
+
   process.on('SIGINT', () => {
     clearInterval(interval);
     console.log('\n[SCHEDULER] Received SIGINT, exiting...');
@@ -410,7 +643,14 @@ module.exports = {
   keyFixed,
   keyTminus,
   keyNightlySweep,
+  keyHourlySettlementSweep,
+  isHourlySettlementDue,
   isFixedDue,
   dueTminusMinutes,
-  TMINUS_BANDS
+  TMINUS_BANDS,
+  // New helper functions
+  getOddsIntervalMinutes,
+  getScheduleRefreshDue,
+  shouldRefreshOddsForGame,
+  getPipelineHealthJobs,
 };

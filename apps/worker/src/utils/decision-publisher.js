@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 const {
   buildDecisionKey,
   computeCandidateHash,
@@ -7,14 +6,14 @@ const {
   isRecommendationPayload,
   normalizeMarketType,
   normalizePeriod,
-  shouldFlip
+  shouldFlip,
 } = require('@cheddar-logic/models');
 
 const {
   getDecisionRecord,
   insertDecisionEvent,
   updateDecisionCandidateTracking,
-  upsertDecisionRecord
+  upsertDecisionRecord,
 } = require('@cheddar-logic/data');
 
 /**
@@ -49,7 +48,8 @@ function applyUiActionFields(payload) {
 
   payload.action = action;
   // Legacy fallback for getPlayDisplayAction() backward compatibility
-  payload.status = action === 'FIRE' ? 'FIRE' : action === 'HOLD' ? 'WATCH' : 'PASS';
+  payload.status =
+    action === 'FIRE' ? 'FIRE' : action === 'HOLD' ? 'WATCH' : 'PASS';
 
   return payload;
 }
@@ -72,7 +72,13 @@ function buildPickText(market, side, line) {
   return side;
 }
 
-function applyPublishedDecisionToPayload(card, decision, market, decisionKey, gateReason) {
+function applyPublishedDecisionToPayload(
+  card,
+  decision,
+  market,
+  decisionKey,
+  gateReason,
+) {
   if (!decision) return;
 
   const payload = card.payloadData || {};
@@ -95,11 +101,17 @@ function applyPublishedDecisionToPayload(card, decision, market, decisionKey, ga
   payload.published_from_gate = true;
   payload.gate_reason = gateReason || null;
   payload.published_decision_key = decisionKey || null;
-  payload.reason_codes = Array.from(new Set([...(payload.reason_codes || []), 'DECISION_HELD']));
-  payload.tags = Array.from(new Set([...(payload.tags || []), 'PUBLISHED_FROM_GATE']));
+  payload.reason_codes = Array.from(
+    new Set([...(payload.reason_codes || []), 'DECISION_HELD']),
+  );
+  payload.tags = Array.from(
+    new Set([...(payload.tags || []), 'PUBLISHED_FROM_GATE']),
+  );
 
   const pickText = buildPickText(market, side, line);
-  const sportLabel = payload.sport ? String(payload.sport).toUpperCase() : 'SPORT';
+  const sportLabel = payload.sport
+    ? String(payload.sport).toUpperCase()
+    : 'SPORT';
   if (market === 'total' || market === 'team_total') {
     card.cardTitle = `${sportLabel} Totals: ${pickText}`;
   } else if (market === 'spread' || market === 'puckline') {
@@ -118,7 +130,10 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
     return { card, gated: false };
   }
 
-  const market = normalizeMarketType(payload.market_type, payload.recommended_bet_type);
+  const market = normalizeMarketType(
+    payload.market_type,
+    payload.recommended_bet_type,
+  );
   const period = normalizePeriod(payload);
   const sideFamily = getSideFamily(market);
   const decisionKey = buildDecisionKey({
@@ -126,7 +141,7 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
     gameId: card.gameId,
     market,
     period,
-    sideFamily
+    sideFamily,
   });
 
   const side = payload.selection?.side || payload.prediction;
@@ -134,24 +149,44 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
   const price = Number.isFinite(payload.price) ? payload.price : null;
   const edge = Number.isFinite(payload.edge) ? payload.edge : 0;
   const inputsHash = computeInputsHash(payload);
-  const candidateHash = computeCandidateHash({ side, line, price, inputsHash, market, period, sideFamily });
+  const candidateHash = computeCandidateHash({
+    side,
+    line,
+    price,
+    inputsHash,
+    market,
+    period,
+    sideFamily,
+  });
 
   const current = getDecisionRecord(decisionKey);
-  const candidateSeenCount = current && current.last_candidate_hash === candidateHash
-    ? (current.candidate_seen_count || 0) + 1
-    : 1;
+  const candidateSeenCount =
+    current && current.last_candidate_hash === candidateHash
+      ? (current.candidate_seen_count || 0) + 1
+      : 1;
 
   const nowIso = new Date().toISOString();
-  const gameTime = oddsSnapshot?.game_time_utc ? new Date(oddsSnapshot.game_time_utc) : null;
-  const minutesToStart = gameTime ? (gameTime.getTime() - Date.now()) / 60000 : 9999;
-  const lineDelta = current && current.recommended_line != null && line != null
-    ? Math.abs(line - current.recommended_line)
-    : 0;
+  const gameTime = oddsSnapshot?.game_time_utc
+    ? new Date(oddsSnapshot.game_time_utc)
+    : null;
+  const minutesToStart = gameTime
+    ? (gameTime.getTime() - Date.now()) / 60000
+    : 9999;
+  const lineDelta =
+    current && current.recommended_line != null && line != null
+      ? Math.abs(line - current.recommended_line)
+      : 0;
   const lineMoved = lineDelta > 0;
 
   const hardLockMinutes = options.hardLockMinutes ?? 120;
-  const lockStatus = (current?.locked_status === 'HARD' || minutesToStart <= hardLockMinutes) ? 'HARD' : 'SOFT';
-  const lockAt = lockStatus === 'HARD' && current?.locked_status !== 'HARD' ? nowIso : (current?.locked_at || null);
+  const lockStatus =
+    current?.locked_status === 'HARD' || minutesToStart <= hardLockMinutes
+      ? 'HARD'
+      : 'SOFT';
+  const lockAt =
+    lockStatus === 'HARD' && current?.locked_status !== 'HARD'
+      ? nowIso
+      : current?.locked_at || null;
 
   const gateResult = shouldFlip(
     current ? { ...current, locked_status: lockStatus } : null,
@@ -160,12 +195,16 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
       candidateSeenCount,
       lineMoved,
       lineDelta,
-      criticalOverride: options.criticalOverride === true
-    }
+      criticalOverride: options.criticalOverride === true,
+    },
   );
 
   const action = gateResult.allow
-    ? (current ? (current.recommended_side === side ? 'KEEP' : 'FLIP_ALLOWED') : 'INIT')
+    ? current
+      ? current.recommended_side === side
+        ? 'KEEP'
+        : 'FLIP_ALLOWED'
+      : 'INIT'
     : 'FLIP_BLOCKED';
 
   insertDecisionEvent({
@@ -184,9 +223,12 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
     candEdge: edge,
     edgeDelta: gateResult.edge_delta ?? null,
     lineDelta,
-    priceDelta: current?.recommended_price != null && price != null ? price - current.recommended_price : null,
+    priceDelta:
+      current?.recommended_price != null && price != null
+        ? price - current.recommended_price
+        : null,
     inputsHash,
-    resultVersion: payload.model_version || null
+    resultVersion: payload.model_version || null,
   });
 
   if (gateResult.allow) {
@@ -212,7 +254,7 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
       lastReasonCode: gateResult.reason_code,
       lastReasonDetail: gateResult.reason_detail,
       lastCandidateHash: candidateHash,
-      candidateSeenCount
+      candidateSeenCount,
     });
     payload.published_decision_key = decisionKey;
   } else if (current) {
@@ -224,10 +266,16 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
       lastReasonCode: gateResult.reason_code,
       lastReasonDetail: gateResult.reason_detail,
       lockedStatus: lockStatus,
-      lockedAt: lockAt
+      lockedAt: lockAt,
     });
 
-    applyPublishedDecisionToPayload(card, current, market, decisionKey, gateResult.reason_code);
+    applyPublishedDecisionToPayload(
+      card,
+      current,
+      market,
+      decisionKey,
+      gateResult.reason_code,
+    );
   }
 
   // Apply UI action fields so getPlayDisplayAction() recognizes plays
@@ -238,12 +286,12 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
     gated: true,
     allow: gateResult.allow,
     decisionKey,
-    reasonCode: gateResult.reason_code
+    reasonCode: gateResult.reason_code,
   };
 }
 
 module.exports = {
   publishDecisionForCard,
   applyUiActionFields,
-  deriveAction
+  deriveAction,
 };

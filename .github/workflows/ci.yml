@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh tests/*.sh
+
+      - name: Run doctor (self)
+        run: ./scripts/doctor.sh .
+
+      - name: Run link integrity checks
+        run: ./tests/link-integrity.sh .

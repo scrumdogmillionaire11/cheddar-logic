@@ -1,6 +1,6 @@
 /**
  * Decision helpers for card display (dedupe, primary play, contributors, risks).
- * 
+ *
  * Implements market-first decision logic:
  * 1. Determine best market from drivers + available odds
  * 2. Build canonical Play object with proper price/line
@@ -8,7 +8,15 @@
  * 4. Filter contributors by market relevance
  */
 
-import type { GameCard, DriverRow, Market, Direction, DriverTier, ExpressionStatus, Play } from '../types/game-card';
+import type {
+  GameCard,
+  DriverRow,
+  Market,
+  Direction,
+  DriverTier,
+  ExpressionStatus,
+  Play,
+} from '../types/game-card';
 
 type DecisionPolarity = 'pro' | 'contra' | 'neutral';
 
@@ -67,7 +75,10 @@ function normalizeText(value: unknown): string {
 function hasPlaceholderDriverText(value: string): boolean {
   const normalized = normalizeText(value).toLowerCase();
   if (!normalized) return true;
-  return normalized.includes('generic analysis for') || normalized.includes('ncaam ncaam generic');
+  return (
+    normalized.includes('generic analysis for') ||
+    normalized.includes('ncaam ncaam generic')
+  );
 }
 
 function isValidAction(value: unknown): value is PlayDisplayAction {
@@ -82,31 +93,38 @@ function actionFromLegacyStatus(value: unknown): PlayDisplayAction | undefined {
   return undefined;
 }
 
-function actionFromClassification(value: unknown): PlayDisplayAction | undefined {
+function actionFromClassification(
+  value: unknown,
+): PlayDisplayAction | undefined {
   if (value === 'BASE' || value === 'PLAY') return 'FIRE';
   if (value === 'LEAN') return 'HOLD';
   if (value === 'PASS') return 'PASS';
   return undefined;
 }
 
-function classificationFromAction(action: PlayDisplayAction): 'BASE' | 'LEAN' | 'PASS' {
+function classificationFromAction(
+  action: PlayDisplayAction,
+): 'BASE' | 'LEAN' | 'PASS' {
   if (action === 'FIRE') return 'BASE';
   if (action === 'HOLD') return 'LEAN';
   return 'PASS';
 }
 
-function expressionStatusFromAction(action: PlayDisplayAction): ExpressionStatus {
+function expressionStatusFromAction(
+  action: PlayDisplayAction,
+): ExpressionStatus {
   if (action === 'HOLD') return 'WATCH';
   return action;
 }
 
 export function resolvePlayDisplayDecision(
-  play?: Partial<Pick<Play, 'action' | 'status' | 'classification'>> | null
+  play?: Partial<Pick<Play, 'action' | 'status' | 'classification'>> | null,
 ): ResolvedPlayDisplayDecision {
   const explicitAction = isValidAction(play?.action) ? play.action : undefined;
   const legacyAction = actionFromLegacyStatus(play?.status);
   const classificationAction = actionFromClassification(play?.classification);
-  const action = explicitAction ?? legacyAction ?? classificationAction ?? 'PASS';
+  const action =
+    explicitAction ?? legacyAction ?? classificationAction ?? 'PASS';
 
   return {
     action,
@@ -125,9 +143,12 @@ function isStrongerDriver(next: DriverRow, current: DriverRow): boolean {
   const currentRank = TIER_RANK[current.tier] || 0;
   if (nextRank !== currentRank) return nextRank > currentRank;
 
-  const nextConfidence = typeof next.confidence === 'number' ? next.confidence : -1;
-  const currentConfidence = typeof current.confidence === 'number' ? current.confidence : -1;
-  if (nextConfidence !== currentConfidence) return nextConfidence > currentConfidence;
+  const nextConfidence =
+    typeof next.confidence === 'number' ? next.confidence : -1;
+  const currentConfidence =
+    typeof current.confidence === 'number' ? current.confidence : -1;
+  if (nextConfidence !== currentConfidence)
+    return nextConfidence > currentConfidence;
 
   return false;
 }
@@ -180,7 +201,10 @@ function isSideIntentDriver(driver: DriverRow): boolean {
 
 function isRiskOnlyDriver(driver: DriverRow): boolean {
   const text = `${driver.key} ${driver.cardTitle} ${driver.note}`.toLowerCase();
-  return text.includes('blowout risk') || (driver.market === 'RISK' && text.includes('blowout'));
+  return (
+    text.includes('blowout risk') ||
+    (driver.market === 'RISK' && text.includes('blowout'))
+  );
 }
 
 /**
@@ -189,19 +213,27 @@ function isRiskOnlyDriver(driver: DriverRow): boolean {
  */
 function determineBestMarket(
   drivers: DriverRow[],
-  odds: Odds | null
+  odds: Odds | null,
 ): { market: Market | 'NONE'; driver: DriverRow | null } {
-  const nonNeutral = drivers.filter((d) => d.direction !== 'NEUTRAL' && !isRiskOnlyDriver(d));
+  const nonNeutral = drivers.filter(
+    (d) => d.direction !== 'NEUTRAL' && !isRiskOnlyDriver(d),
+  );
   if (nonNeutral.length === 0) {
     return { market: 'NONE', driver: null };
   }
 
   // Check for TOTAL drivers with SUPER+ tier
   const totalDrivers = nonNeutral.filter(
-    (d) => (d.direction === 'OVER' || d.direction === 'UNDER') && (d.tier === 'SUPER' || d.tier === 'BEST')
+    (d) =>
+      (d.direction === 'OVER' || d.direction === 'UNDER') &&
+      (d.tier === 'SUPER' || d.tier === 'BEST'),
   );
-  
-  if (totalDrivers.length > 0 && odds?.total !== null && odds?.total !== undefined) {
+
+  if (
+    totalDrivers.length > 0 &&
+    odds?.total !== null &&
+    odds?.total !== undefined
+  ) {
     const sorted = sortDrivers(totalDrivers);
     return { market: 'TOTAL', driver: sorted[0] };
   }
@@ -211,7 +243,10 @@ function determineBestMarket(
     (d) =>
       (d.direction === 'HOME' || d.direction === 'AWAY') &&
       (d.tier === 'SUPER' || d.tier === 'BEST') &&
-      (d.market === 'ML' || d.market === 'SPREAD' || d.market === 'UNKNOWN' || isSideIntentDriver(d))
+      (d.market === 'ML' ||
+        d.market === 'SPREAD' ||
+        d.market === 'UNKNOWN' ||
+        isSideIntentDriver(d)),
   );
 
   if (sideDrivers.length > 0) {
@@ -222,11 +257,12 @@ function determineBestMarket(
     const hasSpreadOdds =
       (odds?.spreadHome !== null && odds?.spreadHome !== undefined) ||
       (odds?.spreadAway !== null && odds?.spreadAway !== undefined);
-    
+
     // Look for projection vs line indicators in the driver
-    const hasSpreadEdge = best.note.toLowerCase().includes('spread') || 
-                         best.cardTitle.toLowerCase().includes('spread') ||
-                         best.key.toLowerCase().includes('spread');
+    const hasSpreadEdge =
+      best.note.toLowerCase().includes('spread') ||
+      best.cardTitle.toLowerCase().includes('spread') ||
+      best.key.toLowerCase().includes('spread');
 
     if (hasSpreadEdge && hasSpreadOdds) {
       return { market: 'SPREAD', driver: best };
@@ -254,7 +290,7 @@ function buildPickString(
   direction: Direction | null,
   homeTeam: string,
   awayTeam: string,
-  odds: Odds | null
+  odds: Odds | null,
 ): { pick: string; price?: number; line?: number } {
   if (!direction || direction === 'NEUTRAL' || market === 'NONE') {
     return { pick: 'NO PLAY' };
@@ -294,38 +330,81 @@ function buildPickString(
 /**
  * Derive risk codes scoped to market
  */
-function deriveRiskCodes(card: GameCard, drivers: DriverRow[], market: Market | 'NONE'): string[] {
+function deriveRiskCodes(
+  card: GameCard,
+  drivers: DriverRow[],
+  market: Market | 'NONE',
+): string[] {
   const codes = new Set<string>();
   const tags = Array.isArray(card.tags) ? card.tags : [];
-  const allText = drivers.map((d) => `${d.cardTitle} ${d.note}`.toLowerCase()).join(' ');
+  const allText = drivers
+    .map((d) => `${d.cardTitle} ${d.note}`.toLowerCase())
+    .join(' ');
 
   const isTotalMarket = market === 'TOTAL';
   const isSideMarket = market === 'ML' || market === 'SPREAD';
 
   // Fragility / key number is TOTALS only
-  if (isTotalMarket && (tags.includes('has_risk_fragility') || tags.includes('has_risk_key_number') ||
-      allText.includes('fragility') || allText.includes('key number'))) {
+  if (
+    isTotalMarket &&
+    (tags.includes('has_risk_fragility') ||
+      tags.includes('has_risk_key_number') ||
+      allText.includes('fragility') ||
+      allText.includes('key number'))
+  ) {
     codes.add('KEY_NUMBER_FRAGILITY_TOTAL');
   }
 
   // Blowout is SIDE only
-  if (isSideMarket && (tags.includes('has_risk_blowout') || allText.includes('blowout'))) {
+  if (
+    isSideMarket &&
+    (tags.includes('has_risk_blowout') || allText.includes('blowout'))
+  ) {
     codes.add('BLOWOUT_RISK_SIDE');
   }
 
   // Low coverage applies to all
-  if (tags.includes('has_low_coverage') || allText.includes('low coverage') || allText.includes('limited data')) {
-    codes.add(isTotalMarket ? 'LOW_COVERAGE_TOTAL' : isSideMarket ? 'LOW_COVERAGE_SIDE' : 'LOW_COVERAGE');
+  if (
+    tags.includes('has_low_coverage') ||
+    allText.includes('low coverage') ||
+    allText.includes('limited data')
+  ) {
+    codes.add(
+      isTotalMarket
+        ? 'LOW_COVERAGE_TOTAL'
+        : isSideMarket
+          ? 'LOW_COVERAGE_SIDE'
+          : 'LOW_COVERAGE',
+    );
   }
 
   // Stale odds applies to all
-  if (tags.includes('stale_5m') || tags.includes('stale_30m') || allText.includes('stale')) {
-    codes.add(isTotalMarket ? 'STALE_ODDS_TOTAL' : isSideMarket ? 'STALE_ODDS_SIDE' : 'STALE_ODDS');
+  if (
+    tags.includes('stale_5m') ||
+    tags.includes('stale_30m') ||
+    allText.includes('stale')
+  ) {
+    codes.add(
+      isTotalMarket
+        ? 'STALE_ODDS_TOTAL'
+        : isSideMarket
+          ? 'STALE_ODDS_SIDE'
+          : 'STALE_ODDS',
+    );
   }
 
   // Conflict applies to all
-  if (tags.includes('has_driver_contradiction') || allText.includes('conflict')) {
-    codes.add(isTotalMarket ? 'CONFLICT_HIGH_TOTAL' : isSideMarket ? 'CONFLICT_HIGH_SIDE' : 'CONFLICT_HIGH');
+  if (
+    tags.includes('has_driver_contradiction') ||
+    allText.includes('conflict')
+  ) {
+    codes.add(
+      isTotalMarket
+        ? 'CONFLICT_HIGH_TOTAL'
+        : isSideMarket
+          ? 'CONFLICT_HIGH_SIDE'
+          : 'CONFLICT_HIGH',
+    );
   }
 
   return Array.from(codes);
@@ -338,7 +417,7 @@ function getWhyReason(
   status: ExpressionStatus,
   riskCodes: string[],
   market: Market | 'NONE',
-  drivers: DriverRow[]
+  drivers: DriverRow[],
 ): string {
   if (status === 'PASS' || market === 'NONE') return 'NO_DECISION';
 
@@ -346,7 +425,9 @@ function getWhyReason(
     return riskCodes[0];
   }
 
-  const allText = drivers.map((d) => `${d.cardTitle} ${d.note}`.toLowerCase()).join(' ');
+  const allText = drivers
+    .map((d) => `${d.cardTitle} ${d.note}`.toLowerCase())
+    .join(' ');
 
   if (market === 'TOTAL') {
     if (allText.includes('fragility') || allText.includes('key number')) {
@@ -374,7 +455,11 @@ function getWhyReason(
 /**
  * Derive status from drivers and market selection
  */
-function deriveStatus(card: GameCard, drivers: DriverRow[], market: Market | 'NONE'): ExpressionStatus {
+function deriveStatus(
+  card: GameCard,
+  drivers: DriverRow[],
+  market: Market | 'NONE',
+): ExpressionStatus {
   if (card.expressionChoice?.status) {
     return card.expressionChoice.status;
   }
@@ -384,12 +469,12 @@ function deriveStatus(card: GameCard, drivers: DriverRow[], market: Market | 'NO
   }
 
   const hasBestNonNeutral = drivers.some(
-    (driver) => driver.tier === 'BEST' && driver.direction !== 'NEUTRAL'
+    (driver) => driver.tier === 'BEST' && driver.direction !== 'NEUTRAL',
   );
   if (hasBestNonNeutral) return 'FIRE';
 
   const hasSuperNonNeutral = drivers.some(
-    (driver) => driver.tier === 'SUPER' && driver.direction !== 'NEUTRAL'
+    (driver) => driver.tier === 'SUPER' && driver.direction !== 'NEUTRAL',
   );
   if (hasSuperNonNeutral) return 'WATCH';
 
@@ -402,7 +487,7 @@ function deriveStatus(card: GameCard, drivers: DriverRow[], market: Market | 'NO
 function selectPrimaryPlay(
   card: GameCard,
   odds: Odds | null,
-  drivers: DriverRow[]
+  drivers: DriverRow[],
 ): DecisionModel['primaryPlay'] {
   // Use expression choice if available
   if (card.expressionChoice?.pick) {
@@ -422,7 +507,8 @@ function selectPrimaryPlay(
     const resolved = resolvePlayDisplayDecision(card.play);
     return {
       source: 'play',
-      market: card.play.market === 'NONE' ? 'NONE' : (card.play.market as Market),
+      market:
+        card.play.market === 'NONE' ? 'NONE' : (card.play.market as Market),
       status: resolved.status,
       pick: card.play.pick,
       direction: card.play.side,
@@ -447,7 +533,13 @@ function selectPrimaryPlay(
   }
 
   const status = deriveStatus(card, drivers, market);
-  const { pick } = buildPickString(market, driver.direction, card.homeTeam, card.awayTeam, odds);
+  const { pick } = buildPickString(
+    market,
+    driver.direction,
+    card.homeTeam,
+    card.awayTeam,
+    odds,
+  );
 
   return {
     source: 'drivers',
@@ -463,47 +555,75 @@ function selectPrimaryPlay(
 /**
  * Filter drivers by market relevance
  */
-function filterDriversByMarket(drivers: DriverRow[], market: Market | 'NONE'): DriverRow[] {
+function filterDriversByMarket(
+  drivers: DriverRow[],
+  market: Market | 'NONE',
+): DriverRow[] {
   if (market === 'NONE') return [];
 
   if (market === 'TOTAL') {
     const filtered = drivers.filter(
       (d) =>
-        (d.market === 'TOTAL' || d.market === 'UNKNOWN' || d.market === 'RISK') &&
-        (d.direction === 'OVER' || d.direction === 'UNDER' || d.direction === 'NEUTRAL')
+        (d.market === 'TOTAL' ||
+          d.market === 'UNKNOWN' ||
+          d.market === 'RISK') &&
+        (d.direction === 'OVER' ||
+          d.direction === 'UNDER' ||
+          d.direction === 'NEUTRAL'),
     );
     if (filtered.length > 0) return filtered;
-    return drivers.filter((d) => d.direction === 'OVER' || d.direction === 'UNDER' || d.direction === 'NEUTRAL');
+    return drivers.filter(
+      (d) =>
+        d.direction === 'OVER' ||
+        d.direction === 'UNDER' ||
+        d.direction === 'NEUTRAL',
+    );
   }
 
   if (market === 'ML') {
     const filtered = drivers.filter(
       (d) =>
         (d.market === 'ML' || d.market === 'UNKNOWN' || d.market === 'RISK') &&
-        (d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL')
+        (d.direction === 'HOME' ||
+          d.direction === 'AWAY' ||
+          d.direction === 'NEUTRAL'),
     );
     if (filtered.length > 0) return filtered;
-    return drivers.filter((d) => d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL');
+    return drivers.filter(
+      (d) =>
+        d.direction === 'HOME' ||
+        d.direction === 'AWAY' ||
+        d.direction === 'NEUTRAL',
+    );
   }
 
   if (market === 'SPREAD') {
     const filtered = drivers.filter(
       (d) =>
-        (d.market === 'SPREAD' || d.market === 'UNKNOWN' || d.market === 'RISK') &&
-        (d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL')
+        (d.market === 'SPREAD' ||
+          d.market === 'UNKNOWN' ||
+          d.market === 'RISK') &&
+        (d.direction === 'HOME' ||
+          d.direction === 'AWAY' ||
+          d.direction === 'NEUTRAL'),
     );
     if (filtered.length > 0) return filtered;
     return drivers.filter(
       (d) =>
         (d.market === 'UNKNOWN' || d.market === 'RISK') &&
-        (d.direction === 'HOME' || d.direction === 'AWAY' || d.direction === 'NEUTRAL')
+        (d.direction === 'HOME' ||
+          d.direction === 'AWAY' ||
+          d.direction === 'NEUTRAL'),
     );
   }
 
   return drivers;
 }
 
-function marketPreferenceScore(driverMarket: Market, chosenMarket: Market | 'NONE'): number {
+function marketPreferenceScore(
+  driverMarket: Market,
+  chosenMarket: Market | 'NONE',
+): number {
   if (chosenMarket === 'NONE') return 0;
   if (driverMarket === chosenMarket) return 3;
   if (driverMarket === 'UNKNOWN') return 2;
@@ -511,7 +631,10 @@ function marketPreferenceScore(driverMarket: Market, chosenMarket: Market | 'NON
   return 0;
 }
 
-function dedupeContributorsByIntent(drivers: DriverRow[], market: Market | 'NONE'): DriverRow[] {
+function dedupeContributorsByIntent(
+  drivers: DriverRow[],
+  market: Market | 'NONE',
+): DriverRow[] {
   const byIntent = new Map<string, DriverRow>();
 
   for (const driver of drivers) {
@@ -541,15 +664,25 @@ function dedupeContributorsByIntent(drivers: DriverRow[], market: Market | 'NONE
  */
 function pickTopContributors(
   drivers: DriverRow[],
-  primary: DecisionModel['primaryPlay']
+  primary: DecisionModel['primaryPlay'],
 ): DecisionContributor[] {
-  if (!drivers.length || !primary.direction || primary.direction === 'NEUTRAL') {
+  if (
+    !drivers.length ||
+    !primary.direction ||
+    primary.direction === 'NEUTRAL'
+  ) {
     return [];
   }
 
   // Filter to market-relevant drivers
-  const relevantDrivers = dedupeContributorsByIntent(filterDriversByMarket(drivers, primary.market), primary.market)
-    .filter((driver) => !hasPlaceholderDriverText(driver.note) && !hasPlaceholderDriverText(driver.cardTitle));
+  const relevantDrivers = dedupeContributorsByIntent(
+    filterDriversByMarket(drivers, primary.market),
+    primary.market,
+  ).filter(
+    (driver) =>
+      !hasPlaceholderDriverText(driver.note) &&
+      !hasPlaceholderDriverText(driver.cardTitle),
+  );
   const sorted = sortDrivers(relevantDrivers);
   const nonNeutral = sorted.filter((d) => d.direction !== 'NEUTRAL');
 
@@ -591,14 +724,22 @@ function pickTopContributors(
 /**
  * Build canonical decision model for card display
  */
-export function getCardDecisionModel(card: GameCard, odds: Odds | null): DecisionModel {
+export function getCardDecisionModel(
+  card: GameCard,
+  odds: Odds | null,
+): DecisionModel {
   const baseDrivers = Array.isArray(card.drivers) ? card.drivers : [];
   const drivers = deduplicateDrivers(baseDrivers);
-  
+
   const primaryPlay = selectPrimaryPlay(card, odds, drivers);
   const status = primaryPlay.status;
   const riskCodes = deriveRiskCodes(card, drivers, primaryPlay.market);
-  const whyReason = getWhyReason(status, riskCodes, primaryPlay.market, drivers);
+  const whyReason = getWhyReason(
+    status,
+    riskCodes,
+    primaryPlay.market,
+    drivers,
+  );
   const topContributors = pickTopContributors(drivers, primaryPlay);
 
   return {
@@ -613,13 +754,15 @@ export function getCardDecisionModel(card: GameCard, odds: Odds | null): Decisio
 
 /**
  * Get display action from play object, respecting canonical fields with fallback to legacy
- * 
+ *
  * This is the single source of truth for UI filtering and display.
  * Uses the new canonical 'action' field if available, falls back to legacy 'status' field.
- * 
+ *
  * @param play - Play object from GameCard
  * @returns 'FIRE' | 'HOLD' | 'PASS'
  */
-export function getPlayDisplayAction(play?: Play | null): 'FIRE' | 'HOLD' | 'PASS' {
+export function getPlayDisplayAction(
+  play?: Play | null,
+): 'FIRE' | 'HOLD' | 'PASS' {
   return resolvePlayDisplayDecision(play).action;
 }

@@ -1,6 +1,6 @@
 /**
  * Scheduler Window Logic Integration Test
- * 
+ *
  * Validates:
  * 1. T-minus windows trigger correctly based on game start times
  *    (e.g., a game 150 minutes away does NOT trigger T-120; T-120 triggers only within 120 ± tolerance)
@@ -17,7 +17,7 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   runMigrations,
-  shouldRunJobKey
+  shouldRunJobKey,
 } = require('@cheddar-logic/data');
 
 const TEST_DB_PATH = '/tmp/cheddar-test-scheduler.db';
@@ -32,17 +32,17 @@ function computeDueTminusWindows(gameStartUtc, nowUtc) {
   const gameTime = new Date(gameStartUtc).getTime();
   const now = new Date(nowUtc).getTime();
   const deltaMins = Math.floor((gameTime - now) / 60000);
-  
+
   const windows = [];
   const targets = [120, 90, 60, 30];
   const tolerance = 5; // +/- 5 minutes
-  
+
   for (const target of targets) {
     if (deltaMins >= target - tolerance && deltaMins <= target + tolerance) {
       windows.push(target);
     }
   }
-  
+
   return windows;
 }
 
@@ -69,7 +69,7 @@ async function runSchedulerWindowTests() {
     console.log('🧪 Test 1: T-120 window triggers correctly');
     const gameStart = '2026-02-27T20:00:00Z'; // 8pm UTC
     const nowT120 = '2026-02-27T18:00:00Z'; // 6pm UTC (exactly T-120)
-    
+
     const windows1 = computeDueTminusWindows(gameStart, nowT120);
     if (windows1.includes(120) && windows1.length === 1) {
       console.log('✅ PASS: T-120 detected at correct time');
@@ -83,22 +83,22 @@ async function runSchedulerWindowTests() {
     console.log('🧪 Test 2: Successful window prevents re-run');
     const gameId = 'test-game-nhl-2026-02-27-van-sea';
     const jobKey120 = makeJobKey('nhl', 'tminus', gameId, '120');
-    
+
     console.log(`   Job key: ${jobKey120}`);
-    
+
     // First check: should run
     if (!shouldRunJobKey(jobKey120)) {
       console.log('❌ FAIL: shouldRunJobKey returned false before first run');
       throw new Error('shouldRunJobKey returned false before first run');
     }
     console.log('   ✓ shouldRunJobKey: true (first run)');
-    
+
     // Simulate successful run
     const runId = `job-test-${Date.now()}`;
     insertJobRun('run_nhl_model', runId, jobKey120);
     markJobRunSuccess(runId);
     console.log('   ✓ Marked as successful');
-    
+
     // Second check: should skip
     if (shouldRunJobKey(jobKey120)) {
       console.log('❌ FAIL: shouldRunJobKey returned true after success');
@@ -110,7 +110,7 @@ async function runSchedulerWindowTests() {
     console.log('🧪 Test 3: T-30 window triggers independently');
     const nowT30 = '2026-02-27T19:30:00Z'; // 7:30pm UTC (T-30)
     const windows3 = computeDueTminusWindows(gameStart, nowT30);
-    
+
     if (windows3.includes(30) && windows3.length === 1) {
       console.log('✅ PASS: T-30 detected at correct time');
       console.log(`   Delta: 30 minutes, windows: [${windows3}]`);
@@ -118,7 +118,7 @@ async function runSchedulerWindowTests() {
       console.log(`❌ FAIL: Expected [30], got [${windows3}]`);
       throw new Error(`Expected [30], got [${windows3}]`);
     }
-    
+
     const jobKey30 = makeJobKey('nhl', 'tminus', gameId, '30');
     if (!shouldRunJobKey(jobKey30)) {
       console.log('❌ FAIL: T-30 should run (different window from T-120)');
@@ -129,57 +129,73 @@ async function runSchedulerWindowTests() {
     // Test 4: Failed jobs can retry
     console.log('🧪 Test 4: Failed jobs allow retry');
     const jobKeyFailed = makeJobKey('nhl', 'tminus', gameId, '60');
-    
+
     // Simulate failed run
     const failedRunId = `job-test-failed-${Date.now()}`;
     insertJobRun('run_nhl_model', failedRunId, jobKeyFailed);
     markJobRunFailure(failedRunId, 'Test error');
     console.log('   ✓ Marked as failed');
-    
+
     // Check if retry allowed
     if (!shouldRunJobKey(jobKeyFailed)) {
-      console.log('❌ FAIL: shouldRunJobKey returned false after failure (should allow retry)');
-      throw new Error('shouldRunJobKey returned false after failure (should allow retry)');
+      console.log(
+        '❌ FAIL: shouldRunJobKey returned false after failure (should allow retry)',
+      );
+      throw new Error(
+        'shouldRunJobKey returned false after failure (should allow retry)',
+      );
     }
     console.log('   ✅ PASS: Failed jobs can retry\n');
 
     // Test 5: Running jobs prevent overlap
     console.log('🧪 Test 5: Running jobs prevent overlap');
     const jobKeyRunning = makeJobKey('nhl', 'tminus', gameId, '90');
-    
+
     // Simulate running job (not marked complete)
     const runningRunId = `job-test-running-${Date.now()}`;
     insertJobRun('run_nhl_model', runningRunId, jobKeyRunning);
     console.log('   ✓ Job marked as running (not complete)');
-    
+
     // Check if skipped
     if (shouldRunJobKey(jobKeyRunning)) {
-      console.log('❌ FAIL: shouldRunJobKey returned true for running job (should prevent overlap)');
-      throw new Error('shouldRunJobKey returned true for running job (should prevent overlap)');
+      console.log(
+        '❌ FAIL: shouldRunJobKey returned true for running job (should prevent overlap)',
+      );
+      throw new Error(
+        'shouldRunJobKey returned true for running job (should prevent overlap)',
+      );
     }
     console.log('   ✅ PASS: Running jobs prevent overlap\n');
 
     // Test 6: Window tolerance (edge cases)
     console.log('🧪 Test 6: Window tolerance edge cases');
-    
+
     // Just outside T-120 range (126 mins before, outside [115, 125])
     const nowTooEarly = '2026-02-27T17:54:00Z';
     const windowsTooEarly = computeDueTminusWindows(gameStart, nowTooEarly);
     if (windowsTooEarly.length === 0) {
-      console.log('   ✅ PASS: T-126 (outside tolerance) does not trigger T-120');
+      console.log(
+        '   ✅ PASS: T-126 (outside tolerance) does not trigger T-120',
+      );
     } else {
-      console.log(`   ❌ FAIL: Expected [], got [${windowsTooEarly}] for delta=126`);
+      console.log(
+        `   ❌ FAIL: Expected [], got [${windowsTooEarly}] for delta=126`,
+      );
       throw new Error(`Expected [], got [${windowsTooEarly}] for delta=126`);
     }
-    
+
     // Just inside T-120 range (118 mins before, inside [115, 125])
     const nowJustInside = '2026-02-27T18:02:00Z';
     const windowsJustInside = computeDueTminusWindows(gameStart, nowJustInside);
     if (windowsJustInside.includes(120)) {
       console.log('   ✅ PASS: T-118 (within tolerance) triggers T-120\n');
     } else {
-      console.log(`   ❌ FAIL: Expected [120], got [${windowsJustInside}] for delta=118`);
-      throw new Error(`Expected [120], got [${windowsJustInside}] for delta=118`);
+      console.log(
+        `   ❌ FAIL: Expected [120], got [${windowsJustInside}] for delta=118`,
+      );
+      throw new Error(
+        `Expected [120], got [${windowsJustInside}] for delta=118`,
+      );
     }
 
     // Cleanup

@@ -27,9 +27,21 @@ async function run() {
   const payloadIncludeOrphaned = await getJson(`${base}&include_orphaned=1`);
   const payloadNoDedupe = await getJson(`${base}&include_orphaned=1&dedupe=0`);
 
-  assert.strictEqual(payloadDefault.success, true, 'default response success=false');
-  assert.strictEqual(payloadIncludeOrphaned.success, true, 'include_orphaned response success=false');
-  assert.strictEqual(payloadNoDedupe.success, true, 'dedupe=0 response success=false');
+  assert.strictEqual(
+    payloadDefault.success,
+    true,
+    'default response success=false',
+  );
+  assert.strictEqual(
+    payloadIncludeOrphaned.success,
+    true,
+    'include_orphaned response success=false',
+  );
+  assert.strictEqual(
+    payloadNoDedupe.success,
+    true,
+    'dedupe=0 response success=false',
+  );
 
   const defaultCount = payloadDefault.data?.ledger?.length ?? 0;
   const includeOrphanedCount = payloadIncludeOrphaned.data?.ledger?.length ?? 0;
@@ -39,13 +51,13 @@ async function run() {
   assert.strictEqual(
     includeOrphanedCount,
     defaultCount,
-    `include_orphaned unexpectedly changed rows: default=${defaultCount}, include_orphaned=${includeOrphanedCount}`
+    `include_orphaned unexpectedly changed rows: default=${defaultCount}, include_orphaned=${includeOrphanedCount}`,
   );
 
   // dedupe=0 should never reduce cardinality vs deduped mode for the same filters.
   assert.ok(
     noDedupeCount >= includeOrphanedCount,
-    `dedupe=0 reduced rows: include_orphaned=${includeOrphanedCount}, dedupe=0=${noDedupeCount}`
+    `dedupe=0 reduced rows: include_orphaned=${includeOrphanedCount}, dedupe=0=${noDedupeCount}`,
   );
 
   const defaultMeta = payloadDefault.data?.meta;
@@ -56,14 +68,36 @@ async function run() {
   assert.ok(includeMeta, 'include_orphaned response missing meta');
   assert.ok(noDedupeMeta, 'dedupe=0 response missing meta');
 
-  assert.strictEqual(defaultMeta.includeOrphaned, false, 'default includeOrphaned meta should be false');
-  assert.strictEqual(defaultMeta.dedupe, true, 'default dedupe meta should be true');
-  assert.strictEqual(includeMeta.includeOrphaned, false, 'include_orphaned meta should remain false');
-  assert.strictEqual(noDedupeMeta.includeOrphaned, false, 'no-dedupe includeOrphaned meta should remain false');
-  assert.strictEqual(noDedupeMeta.dedupe, false, 'no-dedupe meta should be false');
+  assert.strictEqual(
+    defaultMeta.includeOrphaned,
+    false,
+    'default includeOrphaned meta should be false',
+  );
+  assert.strictEqual(
+    defaultMeta.dedupe,
+    true,
+    'default dedupe meta should be true',
+  );
+  assert.strictEqual(
+    includeMeta.includeOrphaned,
+    false,
+    'include_orphaned meta should remain false',
+  );
+  assert.strictEqual(
+    noDedupeMeta.includeOrphaned,
+    false,
+    'no-dedupe includeOrphaned meta should remain false',
+  );
+  assert.strictEqual(
+    noDedupeMeta.dedupe,
+    false,
+    'no-dedupe meta should be false',
+  );
 
   console.log('✅ API results flags regression test passed');
-  console.log(`   default=${defaultCount}, include_orphaned=${includeOrphanedCount}, no_dedupe=${noDedupeCount}`);
+  console.log(
+    `   default=${defaultCount}, include_orphaned=${includeOrphanedCount}, no_dedupe=${noDedupeCount}`,
+  );
 }
 
 run().catch((error) => {

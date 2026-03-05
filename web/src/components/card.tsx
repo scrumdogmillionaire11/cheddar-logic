@@ -1,6 +1,6 @@
 /**
  * Unified Betting Card Component (Adopted from Personal-Dashboard)
- * 
+ *
  * Renders betting cards with structured display sections:
  * 1. SignalHeaderBar (sport, confidence signal)
  * 2. Confidence Bar (visual 0-100%)
@@ -130,7 +130,7 @@ function getAccentColor(confidence: number): {
       bg: 'bg-green-500/10',
       text: 'text-green-300',
       bar: 'bg-green-500',
-      label: 'text-green-400 font-semibold'
+      label: 'text-green-400 font-semibold',
     };
   }
   if (confidence >= 0.6) {
@@ -139,7 +139,7 @@ function getAccentColor(confidence: number): {
       bg: 'bg-amber-500/10',
       text: 'text-amber-300',
       bar: 'bg-amber-500',
-      label: 'text-amber-400 font-semibold'
+      label: 'text-amber-400 font-semibold',
     };
   }
   return {
@@ -147,7 +147,7 @@ function getAccentColor(confidence: number): {
     bg: 'bg-slate-500/10',
     text: 'text-slate-300',
     bar: 'bg-slate-500',
-    label: 'text-slate-400'
+    label: 'text-slate-400',
   };
 }
 
@@ -163,7 +163,11 @@ function formatConfidence(confidence: number): string {
  */
 function formatTimestamp(iso: string): string {
   const date = new Date(iso);
-  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  return date.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
 }
 
 function formatEdge(value: number, units?: string | null): string {
@@ -173,22 +177,24 @@ function formatEdge(value: number, units?: string | null): string {
   return `${value}`;
 }
 
-export default function Card({ 
-  id, 
-  gameId, 
-  sport, 
+export default function Card({
+  id,
+  gameId,
+  sport,
   cardTitle,
   createdAt,
-  expiresAt, 
+  expiresAt,
   payloadData,
-  modelOutputIds
+  modelOutputIds,
 }: CardProps) {
   const [expanded, setExpanded] = useState(false);
   const expired = isCardExpired(expiresAt);
   const recommendationType = payloadData.recommendation?.type ?? null;
   const passReason = payloadData.recommendation?.pass_reason ?? null;
   const hasPass = recommendationType === 'PASS';
-  const recommendation = hasPass ? 'PASS' : getRecommendationLevel(payloadData.confidence);
+  const recommendation = hasPass
+    ? 'PASS'
+    : getRecommendationLevel(payloadData.confidence);
   const accentColor = getAccentColor(hasPass ? 0 : payloadData.confidence);
   const confidencePercent = formatConfidence(payloadData.confidence);
   const generatedTime = formatTimestamp(payloadData.generated_at);
@@ -202,10 +208,10 @@ export default function Card({
     payloadData.odds_context?.spread_away !== undefined;
 
   return (
-    <article 
+    <article
       className={`rounded-xl border transition ${
-        expired 
-          ? 'border-slate-700 bg-slate-900/50 opacity-60' 
+        expired
+          ? 'border-slate-700 bg-slate-900/50 opacity-60'
           : `border-l-4 ${accentColor.border} bg-night shadow-lg`
       } overflow-hidden`}
       data-card-id={id}
@@ -215,13 +221,13 @@ export default function Card({
       {/* === SIGNAL HEADER BAR === */}
       <div className="px-6 py-4 border-b border-slate-700/50 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className={`px-3 py-1 rounded-lg ${accentColor.bg} ${accentColor.text} text-xs font-mono font-semibold`}>
+          <div
+            className={`px-3 py-1 rounded-lg ${accentColor.bg} ${accentColor.text} text-xs font-mono font-semibold`}
+          >
             {sport}
           </div>
           <div className="flex-1">
-            <h3 className="text-sm font-semibold text-cloud">
-              {cardTitle}
-            </h3>
+            <h3 className="text-sm font-semibold text-cloud">{cardTitle}</h3>
           </div>
         </div>
 
@@ -231,7 +237,9 @@ export default function Card({
               MOCK
             </span>
           )}
-          <span className={`px-3 py-1 rounded-lg font-bold text-sm ${accentColor.bg} ${accentColor.label}`}>
+          <span
+            className={`px-3 py-1 rounded-lg font-bold text-sm ${accentColor.bg} ${accentColor.label}`}
+          >
             {recommendation}
           </span>
         </div>
@@ -254,7 +262,9 @@ export default function Card({
       </div>
 
       {/* === PLAY BLOCK === */}
-      <div className={`px-6 py-4 border-b border-slate-700/50 ${accentColor.bg}`}>
+      <div
+        className={`px-6 py-4 border-b border-slate-700/50 ${accentColor.bg}`}
+      >
         <div className="space-y-2">
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-bold text-cloud">
@@ -273,13 +283,14 @@ export default function Card({
           )}
           {edgeValue != null && !hasPass && (
             <p className="text-xs text-slate-300">
-              Edge: <span className="font-mono text-cloud">{formatEdge(edgeValue, edgeUnits)}</span>
+              Edge:{' '}
+              <span className="font-mono text-cloud">
+                {formatEdge(edgeValue, edgeUnits)}
+              </span>
             </p>
           )}
           {hasPass && passReason && (
-            <p className="text-xs text-amber-200">
-              Pass reason: {passReason}
-            </p>
+            <p className="text-xs text-amber-200">Pass reason: {passReason}</p>
           )}
           <p className="text-xs text-slate-400">
             Model: {payloadData.model_version}
@@ -289,23 +300,47 @@ export default function Card({
 
       {/* === DRIVER PANEL === */}
       <div className="px-6 py-4 border-b border-slate-700/50 space-y-2">
-        <p className="text-xs text-slate-400 font-mono uppercase tracking-wider">Why</p>
+        <p className="text-xs text-slate-400 font-mono uppercase tracking-wider">
+          Why
+        </p>
         <p className="text-sm text-slate-200 leading-relaxed">
           {payloadData.reasoning}
         </p>
       </div>
 
       {/* === ALERT BLOCK === */}
-      <div className={`px-6 py-3 border-b border-slate-700/50 flex items-center gap-3 ${
-        hasPass ? 'bg-slate-900/30' : payloadData.ev_passed ? 'bg-green-900/20' : 'bg-amber-900/20'
-      }`}>
-        <div className={`w-2 h-2 rounded-full ${
-          hasPass ? 'bg-slate-500' : payloadData.ev_passed ? 'bg-green-500' : 'bg-amber-500'
-        }`} />
-        <span className={`text-xs font-medium ${
-          hasPass ? 'text-slate-300' : payloadData.ev_passed ? 'text-green-300' : 'text-amber-300'
-        }`}>
-          {hasPass ? 'PASS — no recommended market' : payloadData.ev_passed ? '✓ EV Threshold Passed' : '⚠ Low Expected Value'}
+      <div
+        className={`px-6 py-3 border-b border-slate-700/50 flex items-center gap-3 ${
+          hasPass
+            ? 'bg-slate-900/30'
+            : payloadData.ev_passed
+              ? 'bg-green-900/20'
+              : 'bg-amber-900/20'
+        }`}
+      >
+        <div
+          className={`w-2 h-2 rounded-full ${
+            hasPass
+              ? 'bg-slate-500'
+              : payloadData.ev_passed
+                ? 'bg-green-500'
+                : 'bg-amber-500'
+          }`}
+        />
+        <span
+          className={`text-xs font-medium ${
+            hasPass
+              ? 'text-slate-300'
+              : payloadData.ev_passed
+                ? 'text-green-300'
+                : 'text-amber-300'
+          }`}
+        >
+          {hasPass
+            ? 'PASS — no recommended market'
+            : payloadData.ev_passed
+              ? '✓ EV Threshold Passed'
+              : '⚠ Low Expected Value'}
         </span>
       </div>
 
@@ -313,14 +348,18 @@ export default function Card({
       {payloadData.odds_context && (
         <div className="px-6 py-4 border-b border-slate-700/50 space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-400 font-mono uppercase tracking-wider">Market Snapshot</p>
+            <p className="text-xs text-slate-400 font-mono uppercase tracking-wider">
+              Market Snapshot
+            </p>
             <p className="text-xs text-slate-500">
               {formatTimestamp(payloadData.odds_context.captured_at)}
             </p>
           </div>
-          
+
           {(hasMoneyline || hasSpread) && (
-            <div className={`grid gap-4 ${hasMoneyline && hasSpread ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            <div
+              className={`grid gap-4 ${hasMoneyline && hasSpread ? 'grid-cols-2' : 'grid-cols-1'}`}
+            >
               {hasMoneyline && (
                 <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700/50">
                   <p className="text-xs text-slate-500 mb-1">Moneyline</p>
@@ -328,13 +367,19 @@ export default function Card({
                     {payloadData.odds_context.h2h_home !== undefined && (
                       <div className="flex justify-between">
                         <span className="text-slate-400">Home</span>
-                        <span className="text-cloud font-mono">{payloadData.odds_context.h2h_home > 0 ? '+' : ''}{payloadData.odds_context.h2h_home}</span>
+                        <span className="text-cloud font-mono">
+                          {payloadData.odds_context.h2h_home > 0 ? '+' : ''}
+                          {payloadData.odds_context.h2h_home}
+                        </span>
                       </div>
                     )}
                     {payloadData.odds_context.h2h_away !== undefined && (
                       <div className="flex justify-between">
                         <span className="text-slate-400">Away</span>
-                        <span className="text-cloud font-mono">{payloadData.odds_context.h2h_away > 0 ? '+' : ''}{payloadData.odds_context.h2h_away}</span>
+                        <span className="text-cloud font-mono">
+                          {payloadData.odds_context.h2h_away > 0 ? '+' : ''}
+                          {payloadData.odds_context.h2h_away}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -347,13 +392,19 @@ export default function Card({
                     {payloadData.odds_context.spread_home !== undefined && (
                       <div className="flex justify-between">
                         <span className="text-slate-400">Home</span>
-                        <span className="text-cloud font-mono">{payloadData.odds_context.spread_home > 0 ? '+' : ''}{payloadData.odds_context.spread_home}</span>
+                        <span className="text-cloud font-mono">
+                          {payloadData.odds_context.spread_home > 0 ? '+' : ''}
+                          {payloadData.odds_context.spread_home}
+                        </span>
                       </div>
                     )}
                     {payloadData.odds_context.spread_away !== undefined && (
                       <div className="flex justify-between">
                         <span className="text-slate-400">Away</span>
-                        <span className="text-cloud font-mono">{payloadData.odds_context.spread_away > 0 ? '+' : ''}{payloadData.odds_context.spread_away}</span>
+                        <span className="text-cloud font-mono">
+                          {payloadData.odds_context.spread_away > 0 ? '+' : ''}
+                          {payloadData.odds_context.spread_away}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -361,11 +412,13 @@ export default function Card({
               )}
             </div>
           )}
-          
+
           {payloadData.odds_context.total !== undefined && (
             <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700/50">
               <p className="text-xs text-slate-500 mb-1">Total</p>
-              <p className="text-sm text-cloud font-mono">{payloadData.odds_context.total}</p>
+              <p className="text-sm text-cloud font-mono">
+                {payloadData.odds_context.total}
+              </p>
             </div>
           )}
         </div>
@@ -384,7 +437,11 @@ export default function Card({
         className="w-full px-6 py-3 text-xs text-slate-400 hover:text-slate-300 hover:bg-slate-900/30 transition flex items-center justify-between font-mono uppercase tracking-wider"
       >
         <span>Audit Details</span>
-        <span className={`transition-transform ${expanded ? 'rotate-180' : ''}`}>▼</span>
+        <span
+          className={`transition-transform ${expanded ? 'rotate-180' : ''}`}
+        >
+          ▼
+        </span>
       </button>
 
       {expanded && (
@@ -392,7 +449,9 @@ export default function Card({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-slate-500 mb-1">Card ID</p>
-              <p className="text-slate-300 font-mono break-all">{id.slice(0, 20)}...</p>
+              <p className="text-slate-300 font-mono break-all">
+                {id.slice(0, 20)}...
+              </p>
             </div>
             <div>
               <p className="text-slate-500 mb-1">Generated</p>
@@ -404,45 +463,67 @@ export default function Card({
             </div>
             <div>
               <p className="text-slate-500 mb-1">Created</p>
-              <p className="text-slate-300 font-mono">{formatTimestamp(createdAt)}</p>
+              <p className="text-slate-300 font-mono">
+                {formatTimestamp(createdAt)}
+              </p>
             </div>
             {payloadData.meta?.inference_source && (
               <div>
                 <p className="text-slate-500 mb-1">Inference</p>
-                <p className="text-slate-300 font-mono capitalize">{payloadData.meta.inference_source}</p>
+                <p className="text-slate-300 font-mono capitalize">
+                  {payloadData.meta.inference_source}
+                </p>
               </div>
             )}
             {expiresAt && (
               <div>
                 <p className="text-slate-500 mb-1">Expires</p>
-                <p className="text-slate-300 font-mono">{new Date(expiresAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</p>
+                <p className="text-slate-300 font-mono">
+                  {new Date(expiresAt).toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: true,
+                  })}
+                </p>
               </div>
             )}
           </div>
-          {payloadData.driver_summary?.weights && payloadData.driver_summary.weights.length > 0 && (
-            <div>
-              <p className="text-slate-500 mb-1">Driver Weights</p>
-              <div className="space-y-1">
-                {payloadData.driver_summary.weights.map((item, index) => (
-                  <div key={`${item.driver}-${index}`} className="flex items-center justify-between text-slate-300 font-mono">
-                    <span>{item.driver}</span>
-                    <span>
-                      w={item.weight.toFixed(2)}
-                      {item.score != null ? `, s=${item.score.toFixed(2)}` : ''}
-                      {item.impact != null ? `, impact=${item.impact.toFixed(3)}` : ''}
-                    </span>
-                  </div>
-                ))}
+          {payloadData.driver_summary?.weights &&
+            payloadData.driver_summary.weights.length > 0 && (
+              <div>
+                <p className="text-slate-500 mb-1">Driver Weights</p>
+                <div className="space-y-1">
+                  {payloadData.driver_summary.weights.map((item, index) => (
+                    <div
+                      key={`${item.driver}-${index}`}
+                      className="flex items-center justify-between text-slate-300 font-mono"
+                    >
+                      <span>{item.driver}</span>
+                      <span>
+                        w={item.weight.toFixed(2)}
+                        {item.score != null
+                          ? `, s=${item.score.toFixed(2)}`
+                          : ''}
+                        {item.impact != null
+                          ? `, impact=${item.impact.toFixed(3)}`
+                          : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {payloadData.driver_summary.impact_note && (
+                  <p className="text-slate-500 mt-2">
+                    {payloadData.driver_summary.impact_note}
+                  </p>
+                )}
               </div>
-              {payloadData.driver_summary.impact_note && (
-                <p className="text-slate-500 mt-2">{payloadData.driver_summary.impact_note}</p>
-              )}
-            </div>
-          )}
+            )}
           {modelOutputIds && (
             <div>
               <p className="text-slate-500 mb-1">Model Output IDs</p>
-              <p className="text-slate-300 font-mono break-all">{modelOutputIds}</p>
+              <p className="text-slate-300 font-mono break-all">
+                {modelOutputIds}
+              </p>
             </div>
           )}
         </div>
@@ -450,7 +531,9 @@ export default function Card({
 
       {expired && (
         <div className="px-6 py-3 bg-red-900/20 border-t border-slate-700/50">
-          <p className="text-xs text-red-300 font-medium">⏱ This card has expired</p>
+          <p className="text-xs text-red-300 font-medium">
+            ⏱ This card has expired
+          </p>
         </div>
       )}
     </article>

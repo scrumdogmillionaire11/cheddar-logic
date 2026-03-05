@@ -1,6 +1,6 @@
 /**
  * Smoke Test — Pull Odds Hourly Job
- * 
+ *
  * Verifies:
  * 1. Job runs without error (exit code 0)
  * 2. job_runs table records job execution (status='success')
@@ -10,7 +10,12 @@
 
 const { execSync } = require('child_process');
 const fs = require('fs');
-const { initDb, getDatabase, closeDatabase, runMigrations } = require('@cheddar-logic/data');
+const {
+  initDb,
+  getDatabase,
+  closeDatabase,
+  runMigrations,
+} = require('@cheddar-logic/data');
 
 const TEST_DB_PATH = '/tmp/cheddar-test.db';
 
@@ -55,12 +60,14 @@ describe('pull_odds_hourly job', () => {
         {
           cwd: '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
           stdio: 'pipe',
-          encoding: 'utf-8'
-        }
+          encoding: 'utf-8',
+        },
       );
       expect(result).toBeDefined();
     } catch (error) {
-      throw new Error(`Job failed with exit code ${error.status}: ${error.stdout || error.message}`);
+      throw new Error(
+        `Job failed with exit code ${error.status}: ${error.stdout || error.message}`,
+      );
     }
   });
 
@@ -81,12 +88,16 @@ describe('pull_odds_hourly job', () => {
     expect(result.status).toBe('success');
     expect(result.started_at).toBeTruthy();
     expect(result.ended_at).toBeTruthy();
-    expect(new Date(result.started_at).getTime()).toBeLessThan(new Date(result.ended_at).getTime());
+    expect(new Date(result.started_at).getTime()).toBeLessThan(
+      new Date(result.ended_at).getTime(),
+    );
   });
 
-  maybeTest('odds_snapshots table has valid schema and non-null required fields', async () => {
-    const results = await queryDb((db) => {
-      const stmt = db.prepare(`
+  maybeTest(
+    'odds_snapshots table has valid schema and non-null required fields',
+    async () => {
+      const results = await queryDb((db) => {
+        const stmt = db.prepare(`
         SELECT 
           id, game_id, sport, captured_at,
           h2h_home, h2h_away, total,
@@ -94,51 +105,62 @@ describe('pull_odds_hourly job', () => {
         FROM odds_snapshots
         LIMIT 100
       `);
-      return stmt.all();
-    });
+        return stmt.all();
+      });
 
-    expect(results.length).toBeGreaterThan(0);
+      expect(results.length).toBeGreaterThan(0);
 
-    // Verify each row has required fields
-    results.forEach(row => {
-      expect(row.id).toBeTruthy();
-      expect(row.game_id).toBeTruthy();
-      expect(row.sport).toBeTruthy();
-      expect(row.captured_at).toBeTruthy();
-      
-      // captured_at should be ISO 8601 UTC
-      const capturedTime = new Date(row.captured_at);
-      expect(capturedTime.getTime()).toBeGreaterThan(0);
-      expect(row.captured_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+      // Verify each row has required fields
+      results.forEach((row) => {
+        expect(row.id).toBeTruthy();
+        expect(row.game_id).toBeTruthy();
+        expect(row.sport).toBeTruthy();
+        expect(row.captured_at).toBeTruthy();
 
-      // Odds should be numbers (or null for optional fields)
-      expect(typeof row.h2h_home === 'number' || row.h2h_home === null).toBe(true);
-      expect(typeof row.h2h_away === 'number' || row.h2h_away === null).toBe(true);
-      expect(typeof row.total === 'number' || row.total === null).toBe(true);
+        // captured_at should be ISO 8601 UTC
+        const capturedTime = new Date(row.captured_at);
+        expect(capturedTime.getTime()).toBeGreaterThan(0);
+        expect(row.captured_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
 
-      // Should link to job_run
-      expect(row.job_run_id).toBeTruthy();
-    });
-  });
+        // Odds should be numbers (or null for optional fields)
+        expect(typeof row.h2h_home === 'number' || row.h2h_home === null).toBe(
+          true,
+        );
+        expect(typeof row.h2h_away === 'number' || row.h2h_away === null).toBe(
+          true,
+        );
+        expect(typeof row.total === 'number' || row.total === null).toBe(true);
 
-  maybeTest('odds_snapshots has at least one snapshot per fetched sport', async () => {
-    const results = await queryDb((db) => {
-      const stmt = db.prepare(`
+        // Should link to job_run
+        expect(row.job_run_id).toBeTruthy();
+      });
+    },
+  );
+
+  maybeTest(
+    'odds_snapshots has at least one snapshot per fetched sport',
+    async () => {
+      const results = await queryDb((db) => {
+        const stmt = db.prepare(`
         SELECT DISTINCT sport, COUNT(*) as count
         FROM odds_snapshots
         GROUP BY sport
         ORDER BY sport
       `);
-      return stmt.all();
-    });
+        return stmt.all();
+      });
 
-    expect(results.length).toBeGreaterThan(0);
-    console.log('Sports fetched:', results.map(r => `${r.sport}(${r.count})`).join(', '));
+      expect(results.length).toBeGreaterThan(0);
+      console.log(
+        'Sports fetched:',
+        results.map((r) => `${r.sport}(${r.count})`).join(', '),
+      );
 
-    results.forEach(row => {
-      expect(row.count).toBeGreaterThan(0);
-    });
-  });
+      results.forEach((row) => {
+        expect(row.count).toBeGreaterThan(0);
+      });
+    },
+  );
 
   maybeTest('all odds_snapshots reference valid job_run', async () => {
     const orphaned = await queryDb((db) => {

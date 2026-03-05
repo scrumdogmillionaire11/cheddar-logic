@@ -1,6 +1,6 @@
 /**
  * Cards Display Container
- * 
+ *
  * Fetches and displays all cards for a game.
  * Handles loading states, filtering, and empty states.
  */
@@ -17,11 +17,11 @@ interface CardsContainerProps {
   maxCards?: number;
 }
 
-export default function CardsContainer({ 
-  gameId, 
+export default function CardsContainer({
+  gameId,
   sport,
   cardType,
-  maxCards = 10 
+  maxCards = 10,
 }: CardsContainerProps) {
   const [cards, setCards] = useState<CardProps[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,15 +101,11 @@ export default function CardsContainer({
         <h2 className="text-xl font-semibold text-white">
           Analytical Cards ({cards.length})
         </h2>
-        {sport && (
-          <span className="text-sm text-slate-400">
-            {sport}
-          </span>
-        )}
+        {sport && <span className="text-sm text-slate-400">{sport}</span>}
       </div>
 
       <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2">
-        {cards.map(card => (
+        {cards.map((card) => (
           <Card key={card.id} {...card} />
         ))}
       </div>

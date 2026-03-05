@@ -4,12 +4,7 @@ function mean(values) {
   return total / values.length;
 }
 
-function isTrending({
-  l5Shots,
-  suggestedLine,
-  minHits = 4,
-  meanBuffer = 1.0
-}) {
+function isTrending({ l5Shots, suggestedLine, minHits = 4, meanBuffer = 1.0 }) {
   if (!Array.isArray(l5Shots) || l5Shots.length === 0) return false;
   if (!Number.isFinite(suggestedLine)) return false;
 
@@ -29,5 +24,5 @@ function isTrending({
 
 module.exports = {
   isTrending,
-  mean
+  mean,
 };

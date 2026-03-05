@@ -9,15 +9,19 @@ export default function SubscribePage() {
         </Link>
 
         <div>
-          <h1 className="mb-2 font-display text-4xl font-semibold">Subscription Required</h1>
+          <h1 className="mb-2 font-display text-4xl font-semibold">
+            Subscription Required
+          </h1>
           <p className="text-cloud/70">
-            Your account is signed in but does not have access to this resource yet.
+            Your account is signed in but does not have access to this resource
+            yet.
           </p>
         </div>
 
         <div className="rounded-xl border border-white/10 bg-surface/80 p-6 space-y-4">
           <p className="text-sm text-cloud/80">
-            If you should already have access, sign out and sign in again from your approved email.
+            If you should already have access, sign out and sign in again from
+            your approved email.
           </p>
 
           <div className="flex gap-3">

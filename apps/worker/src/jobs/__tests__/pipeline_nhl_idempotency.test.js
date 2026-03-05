@@ -1,6 +1,6 @@
 /**
  * Pipeline Idempotency Test — NHL Model
- * 
+ *
  * Verifies that re-running the NHL model job does not create duplicates.
  * Steps:
  * 1) Seed deterministic NHL odds
@@ -36,15 +36,19 @@ function runCommand(command, cwd) {
       RECORD_DATABASE_PATH: '',
       CHEDDAR_DB_PATH: '',
       DATABASE_URL: '',
-      CHEDDAR_DB_AUTODISCOVER: 'false'
-    }
+      CHEDDAR_DB_AUTODISCOVER: 'false',
+    },
   });
 }
 
 async function getCounts() {
   return queryDb((db) => {
-    const modelOutputs = db.prepare('SELECT COUNT(*) as n FROM model_outputs').get().n;
-    const cardPayloads = db.prepare('SELECT COUNT(*) as n FROM card_payloads').get().n;
+    const modelOutputs = db
+      .prepare('SELECT COUNT(*) as n FROM model_outputs')
+      .get().n;
+    const cardPayloads = db
+      .prepare('SELECT COUNT(*) as n FROM card_payloads')
+      .get().n;
     return { modelOutputs, cardPayloads };
   });
 }
@@ -61,7 +65,7 @@ describe('pipeline idempotency (NHL)', () => {
     }
     runCommand(
       'node ../../packages/data/src/seed-test-odds.js',
-      '/Users/ajcolubiale/projects/cheddar-logic/apps/worker'
+      '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
     );
   });
 
@@ -74,33 +78,41 @@ describe('pipeline idempotency (NHL)', () => {
   test('re-running NHL model job does not create duplicates', async () => {
     runCommand(
       'npm run job:run-nhl-model',
-      '/Users/ajcolubiale/projects/cheddar-logic/apps/worker'
+      '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
     );
 
     const firstCounts = await getCounts();
 
     runCommand(
       'npm run job:run-nhl-model',
-      '/Users/ajcolubiale/projects/cheddar-logic/apps/worker'
+      '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
     );
 
     const secondCounts = await getCounts();
     expect(secondCounts).toEqual(firstCounts);
 
     const { modelDupes, cardDupes } = await queryDb((db) => {
-      const modelDupes = db.prepare(`
+      const modelDupes = db
+        .prepare(
+          `
         SELECT game_id, model_name, COUNT(*) as count
         FROM model_outputs
         GROUP BY game_id, model_name
         HAVING COUNT(*) > 1
-      `).all();
+      `,
+        )
+        .all();
 
-      const cardDupes = db.prepare(`
+      const cardDupes = db
+        .prepare(
+          `
         SELECT game_id, card_type, COUNT(*) as count
         FROM card_payloads
         GROUP BY game_id, card_type
         HAVING COUNT(*) > 1
-      `).all();
+      `,
+        )
+        .all();
 
       return { modelDupes, cardDupes };
     });

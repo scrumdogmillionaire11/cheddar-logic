@@ -18,12 +18,14 @@ const DANGEROUS_PATTERNS = [
   {
     pattern: /\$\{.*?\}/,
     risk: 'CRITICAL',
-    message: 'Template literal interpolation detected - use parameterized queries instead',
+    message:
+      'Template literal interpolation detected - use parameterized queries instead',
   },
   {
     pattern: /\+\s*['"`]/,
     risk: 'HIGH',
-    message: 'String concatenation with quotes detected - may indicate SQL injection risk',
+    message:
+      'String concatenation with quotes detected - may indicate SQL injection risk',
   },
   {
     pattern: /WHERE\s+\w+\s*=\s*['"`][^'"` ]/,
@@ -33,12 +35,14 @@ const DANGEROUS_PATTERNS = [
   {
     pattern: /LIKE\s*['"`]/,
     risk: 'MEDIUM',
-    message: 'LIKE with potential unescaped wildcards - ensure values are sanitized',
+    message:
+      'LIKE with potential unescaped wildcards - ensure values are sanitized',
   },
   {
     pattern: /UNION\s+SELECT|UNION\s+ALL/i,
     risk: 'MEDIUM',
-    message: 'UNION query detected - ensure all SELECT statements are authorized',
+    message:
+      'UNION query detected - ensure all SELECT statements are authorized',
   },
   {
     pattern: /exec|execute|pragma|pragma\s+writable_schema/i,
@@ -54,7 +58,8 @@ const SAFE_PATTERNS = [
   },
   {
     pattern: /\?/,
-    message: 'Question mark placeholders detected - parameterized query pattern',
+    message:
+      'Question mark placeholders detected - parameterized query pattern',
   },
   {
     pattern: /stmt\.(?:all|get|run|bind)/,
@@ -97,23 +102,41 @@ export function auditSQLQuery(query: string): SQLAuditResult {
 
   // If no placeholders and query has parameters, flag it
   if (!SAFE_PATTERNS[1].pattern.test(query) && query.includes('WHERE')) {
-    result.warnings.push('No parameter placeholders detected - ensure query is parameterized');
+    result.warnings.push(
+      'No parameter placeholders detected - ensure query is parameterized',
+    );
   }
 
   // Recommendations based on risk level
   if (result.riskLevel === 'CRITICAL') {
-    result.recommendations.push('⛔ STOP - Do not use this query in production without major refactoring');
-    result.recommendations.push('Use parameterized queries with ? placeholders instead');
-    result.recommendations.push('Never use template literals or string concatenation for query building');
+    result.recommendations.push(
+      '⛔ STOP - Do not use this query in production without major refactoring',
+    );
+    result.recommendations.push(
+      'Use parameterized queries with ? placeholders instead',
+    );
+    result.recommendations.push(
+      'Never use template literals or string concatenation for query building',
+    );
   } else if (result.riskLevel === 'HIGH') {
-    result.recommendations.push('⚠️  Use parameterized queries (?) for all variable values');
-    result.recommendations.push('Validate and sanitize all user inputs before use');
-    result.recommendations.push('Use prepared statements instead of string concatenation');
+    result.recommendations.push(
+      '⚠️  Use parameterized queries (?) for all variable values',
+    );
+    result.recommendations.push(
+      'Validate and sanitize all user inputs before use',
+    );
+    result.recommendations.push(
+      'Use prepared statements instead of string concatenation',
+    );
   } else if (result.riskLevel === 'MEDIUM') {
     result.recommendations.push('Review query for proper parameterization');
-    result.recommendations.push('Ensure wildcards (%) are escaped if from user input');
+    result.recommendations.push(
+      'Ensure wildcards (%) are escaped if from user input',
+    );
   } else if (hasSafePatterns > 0) {
-    result.recommendations.push('✅ Query appears to use safe parameterized pattern');
+    result.recommendations.push(
+      '✅ Query appears to use safe parameterized pattern',
+    );
   }
 
   return result;
@@ -140,7 +163,7 @@ export function getParameterCount(query: string): number {
  */
 export function validateParameterCount(
   query: string,
-  params: Array<string | number | null>
+  params: Array<string | number | null>,
 ): { valid: boolean; message?: string } {
   const expectedCount = getParameterCount(query);
   const actualCount = params.length;
@@ -158,7 +181,10 @@ export function validateParameterCount(
 /**
  * Check for SQL keywords that may indicate injection attempts
  */
-export function detectInjectionAttempts(input: string): { suspicious: boolean; keywords: string[] } {
+export function detectInjectionAttempts(input: string): {
+  suspicious: boolean;
+  keywords: string[];
+} {
   const injectionKeywords = [
     'UNION',
     'SELECT',
@@ -176,7 +202,9 @@ export function detectInjectionAttempts(input: string): { suspicious: boolean; k
     ';',
   ];
 
-  const found = injectionKeywords.filter((kw) => new RegExp(`\\b${kw}\\b`, 'i').test(input));
+  const found = injectionKeywords.filter((kw) =>
+    new RegExp(`\\b${kw}\\b`, 'i').test(input),
+  );
 
   return {
     suspicious: found.length > 0,
@@ -205,7 +233,9 @@ export function isValidIdentifier(name: string): boolean {
 /**
  * Generate report showing all SQL queries and their safety
  */
-export function generateAuditReport(queries: Array<{ name: string; sql: string }>) {
+export function generateAuditReport(
+  queries: Array<{ name: string; sql: string }>,
+) {
   const report = queries.map((q) => {
     const audit = auditSQLQuery(q.sql);
     return {
@@ -216,7 +246,9 @@ export function generateAuditReport(queries: Array<{ name: string; sql: string }
     };
   });
 
-  const critical = report.filter((r) => r.audit.riskLevel === 'CRITICAL').length;
+  const critical = report.filter(
+    (r) => r.audit.riskLevel === 'CRITICAL',
+  ).length;
   const high = report.filter((r) => r.audit.riskLevel === 'HIGH').length;
   const medium = report.filter((r) => r.audit.riskLevel === 'MEDIUM').length;
   const safe = report.filter((r) => r.audit.riskLevel === 'SAFE').length;

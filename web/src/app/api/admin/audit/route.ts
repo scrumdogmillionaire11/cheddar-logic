@@ -29,7 +29,10 @@
 
 import { NextResponse, NextRequest } from 'next/server';
 import auditLogger from '../../../../lib/api-security/audit-logger';
-import { AuditEventType, AuditEventSeverity } from '../../../../lib/api-security/event-types';
+import {
+  AuditEventType,
+  AuditEventSeverity,
+} from '../../../../lib/api-security/event-types';
 
 export async function GET(request: NextRequest) {
   // Development-only endpoint
@@ -39,7 +42,7 @@ export async function GET(request: NextRequest) {
         success: false,
         error: 'Audit endpoint only available in development',
       },
-      { status: 403, headers: { 'Content-Type': 'application/json' } }
+      { status: 403, headers: { 'Content-Type': 'application/json' } },
     );
   }
 
@@ -51,7 +54,10 @@ export async function GET(request: NextRequest) {
     const severity = searchParams.get('severity') as AuditEventSeverity | null;
     const clientIp = searchParams.get('clientIp');
     const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 1000);
-    const timeWindowHours = Math.min(parseInt(searchParams.get('timeWindow') || '1'), 24);
+    const timeWindowHours = Math.min(
+      parseInt(searchParams.get('timeWindow') || '1'),
+      24,
+    );
     const timeWindowMs = timeWindowHours * 60 * 60 * 1000;
 
     // Get events with filters
@@ -68,7 +74,7 @@ export async function GET(request: NextRequest) {
 
     // Detect suspicious IPs
     const suspiciousIps = Array.from(
-      new Set(events.map((e: { clientIp: string }) => e.clientIp))
+      new Set(events.map((e: { clientIp: string }) => e.clientIp)),
     ).map((ip) => {
       const patterns = auditLogger.detectSuspiciousPatterns(ip, 5 * 60 * 1000);
       return {
@@ -95,7 +101,7 @@ export async function GET(request: NextRequest) {
           },
         },
       },
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json' } },
     );
 
     return response;
@@ -108,7 +114,7 @@ export async function GET(request: NextRequest) {
         success: false,
         error: `Failed to fetch audit data: ${message}`,
       },
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
     );
   }
 }

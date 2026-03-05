@@ -28,7 +28,9 @@ const ACCESS_TOKEN_EXPIRES_IN = 15 * 60 * 1000; // 15 minutes
 function getAuthSecret(): string {
   const secret = process.env.AUTH_SECRET || process.env.CHEDDAR_AUTH_SECRET;
   if (!secret || secret === 'dev-auth-secret-change-me') {
-    console.warn('⚠️  WARNING: Using default AUTH_SECRET. This is insecure in production.');
+    console.warn(
+      '⚠️  WARNING: Using default AUTH_SECRET. This is insecure in production.',
+    );
   }
   return secret || 'dev-auth-secret-change-me';
 }
@@ -43,7 +45,10 @@ function base64UrlEncode(data: string): string {
 
 function base64UrlDecode(data: string): string {
   const padded = data + '==='.slice((data.length + 3) % 4);
-  return Buffer.from(padded.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString();
+  return Buffer.from(
+    padded.replace(/-/g, '+').replace(/_/g, '/'),
+    'base64',
+  ).toString();
 }
 
 function createSignature(message: string, secret: string): string {
@@ -52,14 +57,16 @@ function createSignature(message: string, secret: string): string {
       .createHmac('sha256', secret)
       .update(message)
       .digest()
-      .toString('binary')
+      .toString('binary'),
   );
 }
 
 /**
  * Create an access token (short-lived JWT)
  */
-export function createAccessToken(claims: Omit<AuthToken, 'iat' | 'exp'>): string {
+export function createAccessToken(
+  claims: Omit<AuthToken, 'iat' | 'exp'>,
+): string {
   const secret = getAuthSecret();
   const now = Math.floor(Date.now() / 1000);
   const expiresAt = now + Math.floor(ACCESS_TOKEN_EXPIRES_IN / 1000);
@@ -146,7 +153,9 @@ function timingSafeEqual(a: string, b: string): boolean {
 /**
  * Extract token from Authorization header
  */
-export function extractTokenFromHeader(authHeader: string | null): string | null {
+export function extractTokenFromHeader(
+  authHeader: string | null,
+): string | null {
   if (!authHeader) return null;
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   return match ? match[1] : null;

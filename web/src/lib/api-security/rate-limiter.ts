@@ -1,7 +1,7 @@
 /**
  * In-memory rate limiter using sliding window algorithm
  * Tracks requests by IP address
- * 
+ *
  * For production, consider Redis-based implementation for distributed systems
  */
 
@@ -22,17 +22,24 @@ class RateLimiter {
     this.windowMs = windowMs;
 
     // Clean up old entries every 5 minutes
-    this.cleanupInterval = setInterval(() => {
-      const now = Date.now();
-      for (const [key, entry] of this.store.entries()) {
-        if (entry.resetTime < now) {
-          this.store.delete(key);
+    this.cleanupInterval = setInterval(
+      () => {
+        const now = Date.now();
+        for (const [key, entry] of this.store.entries()) {
+          if (entry.resetTime < now) {
+            this.store.delete(key);
+          }
         }
-      }
-    }, 5 * 60 * 1000);
+      },
+      5 * 60 * 1000,
+    );
   }
 
-  isAllowed(identifier: string): { allowed: boolean; remaining: number; resetTime: number } {
+  isAllowed(identifier: string): {
+    allowed: boolean;
+    remaining: number;
+    resetTime: number;
+  } {
     const now = Date.now();
     let entry = this.store.get(identifier);
 
@@ -46,7 +53,9 @@ class RateLimiter {
     }
 
     // Remove timestamps outside the window
-    entry.timestamps = entry.timestamps.filter((ts) => ts > now - this.windowMs);
+    entry.timestamps = entry.timestamps.filter(
+      (ts) => ts > now - this.windowMs,
+    );
 
     // Check if limit exceeded
     if (entry.timestamps.length >= this.maxRequests) {
