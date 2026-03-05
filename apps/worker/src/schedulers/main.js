@@ -1,21 +1,21 @@
 /**
  * Window-Based Scheduler — Tick loop with idempotency
- * 
+ *
  * Architecture:
  * - Fixed-time windows: 09:00 ET, 12:00 ET (daily model refresh)
  * - T-minus windows: T-120, T-90, T-60, T-30 (pre-game updates)
  * - Hourly odds bucket: captures odds every hour
- * 
+ *
  * Idempotency:
  * - Each job receives a deterministic job_key
  * - shouldRunJobKey() checks if already successful or running
  * - Tick loop reschedules on next pass
- * 
+ *
  * Can be started locally:
  *   node src/schedulers/main.js
  *   DRY_RUN=true node src/schedulers/main.js
  *   TZ=America/New_York TICK_MS=10000 node src/schedulers/main.js
- * 
+ *
  * Domain Split:
  * - Betting Engine: NHL/NBA/MLB/NFL (game-time windows)
  * - FPL-SAGE Engine: FPL (deadline-based, NOT game-time) — TODO future refactor
@@ -46,9 +46,14 @@ const { backfillCardResults } = require('../jobs/backfill_card_results');
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
 const ODDS_GAP_ALERT_MINUTES = Number(process.env.ODDS_GAP_ALERT_MINUTES || 90);
-const ODDS_GAP_ALERT_COOLDOWN_MS = Number(process.env.ODDS_GAP_ALERT_COOLDOWN_MS || 15 * 60 * 1000);
-const REQUIRE_FRESH_ODDS_FOR_MODELS = process.env.REQUIRE_FRESH_ODDS_FOR_MODELS !== 'false';
-const MODEL_ODDS_MAX_AGE_MINUTES = Number(process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES);
+const ODDS_GAP_ALERT_COOLDOWN_MS = Number(
+  process.env.ODDS_GAP_ALERT_COOLDOWN_MS || 15 * 60 * 1000,
+);
+const REQUIRE_FRESH_ODDS_FOR_MODELS =
+  process.env.REQUIRE_FRESH_ODDS_FOR_MODELS !== 'false';
+const MODEL_ODDS_MAX_AGE_MINUTES = Number(
+  process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES,
+);
 let lastOddsGapAlertAt = 0;
 
 /**
@@ -56,22 +61,52 @@ let lastOddsGapAlertAt = 0;
  * FPL is included here temporarily but should be refactored to deadline scheduling
  */
 const SPORT_JOBS = {
-  nhl: { jobName: 'run_nhl_model', execute: runNHLModel, env: 'ENABLE_NHL_MODEL' },
-  nba: { jobName: 'run_nba_model', execute: runNBAModel, env: 'ENABLE_NBA_MODEL' },
-  mlb: { jobName: 'run_mlb_model', execute: runMLBModel, env: 'ENABLE_MLB_MODEL' },
-  nfl: { jobName: 'run_nfl_model', execute: runNFLModel, env: 'ENABLE_NFL_MODEL' },
-  soccer: { jobName: 'run_soccer_model', execute: runSoccerModel, env: 'ENABLE_SOCCER_MODEL' },
-  ncaam: { jobName: 'run_ncaam_model', execute: runNCAAMModel, env: 'ENABLE_NCAAM_MODEL' },
-  
+  nhl: {
+    jobName: 'run_nhl_model',
+    execute: runNHLModel,
+    env: 'ENABLE_NHL_MODEL',
+  },
+  nba: {
+    jobName: 'run_nba_model',
+    execute: runNBAModel,
+    env: 'ENABLE_NBA_MODEL',
+  },
+  mlb: {
+    jobName: 'run_mlb_model',
+    execute: runMLBModel,
+    env: 'ENABLE_MLB_MODEL',
+  },
+  nfl: {
+    jobName: 'run_nfl_model',
+    execute: runNFLModel,
+    env: 'ENABLE_NFL_MODEL',
+  },
+  soccer: {
+    jobName: 'run_soccer_model',
+    execute: runSoccerModel,
+    env: 'ENABLE_SOCCER_MODEL',
+  },
+  ncaam: {
+    jobName: 'run_ncaam_model',
+    execute: runNCAAMModel,
+    env: 'ENABLE_NCAAM_MODEL',
+  },
+
   // TEMPORARY: FPL here until deadline-based scheduler refactor
-  fpl: { jobName: 'run_fpl_model', execute: runFPLModel, env: 'ENABLE_FPL_MODEL' },
+  fpl: {
+    jobName: 'run_fpl_model',
+    execute: runFPLModel,
+    env: 'ENABLE_FPL_MODEL',
+  },
 };
 
 /**
  * Get list of enabled sports from environment
  */
 function enabledSports() {
-  return Object.keys(SPORT_JOBS).filter(s => process.env[SPORT_JOBS[s].env] !== 'false');
+  return Object.keys(SPORT_JOBS).filter(
+    (s) => process.env[SPORT_JOBS[s].env] !== 'false',
+  );
 }
 
 /**
@@ -106,7 +141,10 @@ function keyNightlySweep(nowEt) {
 function checkOddsFreshnessHealth(nowUtc) {
   if (process.env.ENABLE_ODDS_PULL === 'false') return;
 
-  const recentlySuccessful = wasJobRecentlySuccessful('pull_odds_hourly', ODDS_GAP_ALERT_MINUTES);
+  const recentlySuccessful = wasJobRecentlySuccessful(
+    'pull_odds_hourly',
+    ODDS_GAP_ALERT_MINUTES,
+  );
   if (recentlySuccessful) {
     lastOddsGapAlertAt = 0;
     return;
@@ -120,18 +158,25 @@ function checkOddsFreshnessHealth(nowUtc) {
   lastOddsGapAlertAt = nowMs;
   console.warn(
     `[SCHEDULER][HEALTH] No successful pull_odds_hourly run in the last ${ODDS_GAP_ALERT_MINUTES} minutes. ` +
-    'Odds pipeline may be stale.'
+      'Odds pipeline may be stale.',
   );
 }
 
 function isModelJob(jobName) {
-  return typeof jobName === 'string' && jobName.startsWith('run_') && jobName.endsWith('_model');
+  return (
+    typeof jobName === 'string' &&
+    jobName.startsWith('run_') &&
+    jobName.endsWith('_model')
+  );
 }
 
 function hasFreshOddsForModels() {
   if (!REQUIRE_FRESH_ODDS_FOR_MODELS) return true;
   if (process.env.ENABLE_ODDS_PULL === 'false') return true;
-  return wasJobRecentlySuccessful('pull_odds_hourly', MODEL_ODDS_MAX_AGE_MINUTES);
+  return wasJobRecentlySuccessful(
+    'pull_odds_hourly',
+    MODEL_ODDS_MAX_AGE_MINUTES,
+  );
 }
 
 /**
@@ -144,14 +189,14 @@ function hasFreshOddsForModels() {
 function isFixedDue(nowEt, hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
   const target = nowEt.set({ hour: h, minute: m, second: 0, millisecond: 0 });
-  
+
   // Must be same day to prevent yesterday's windows from firing
   const sameDay = nowEt.toISODate() === target.toISODate();
   if (!sameDay) return false;
-  
+
   // Must be past the target time
   if (nowEt < target) return false;
-  
+
   // If FIXED_CATCHUP is disabled, only fire if we're within one tick interval
   const catchupEnabled = process.env.FIXED_CATCHUP !== 'false';
   if (!catchupEnabled) {
@@ -160,7 +205,7 @@ function isFixedDue(nowEt, hhmm) {
     // Only due if we just crossed the window (within 2x tick interval buffer)
     return msSinceTarget <= tickMs * 2;
   }
-  
+
   return true;
 }
 
@@ -170,9 +215,9 @@ function isFixedDue(nowEt, hhmm) {
  */
 const TMINUS_BANDS = [
   { minutes: 120, min: 115, max: 120 },
-  { minutes: 90,  min: 85,  max: 90  },
-  { minutes: 60,  min: 55,  max: 60  },
-  { minutes: 30,  min: 25,  max: 30  },
+  { minutes: 90, min: 85, max: 90 },
+  { minutes: 60, min: 55, max: 60 },
+  { minutes: 30, min: 25, max: 30 },
 ];
 
 /**
@@ -183,7 +228,9 @@ const TMINUS_BANDS = [
  */
 function dueTminusMinutes(nowUtc, startUtc) {
   const delta = Math.floor(startUtc.diff(nowUtc, 'minutes').minutes);
-  return TMINUS_BANDS.filter(b => delta >= b.min && delta <= b.max).map(b => b.minutes);
+  return TMINUS_BANDS.filter((b) => delta >= b.min && delta <= b.max).map(
+    (b) => b.minutes,
+  );
 }
 
 /**
@@ -207,7 +254,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       jobKey,
       execute: pullOddsHourly,
       args: { jobKey, dryRun },
-      reason: `hourly bucket ${nowEt.toISODate()} ${nowEt.hour}h`
+      reason: `hourly bucket ${nowEt.toISODate()} ${nowEt.hour}h`,
     });
   }
 
@@ -223,7 +270,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         jobKey,
         execute,
         args: { jobKey, dryRun },
-        reason: `fixed ${t} ET`
+        reason: `fixed ${t} ET`,
       });
     }
   }
@@ -244,7 +291,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         jobKey,
         execute: SPORT_JOBS[sport].execute,
         args: { jobKey, dryRun },
-        reason: `T-${mins} for ${g.game_id}`
+        reason: `T-${mins} for ${g.game_id}`,
       });
     }
   }
@@ -258,21 +305,21 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         jobKey: `settle|backfill-card-results|${sweepDate}`,
         execute: backfillCardResults,
         args: { jobKey: `settle|backfill-card-results|${sweepDate}`, dryRun },
-        reason: `nightly card_results backfill ${sweepDate}`
+        reason: `nightly card_results backfill ${sweepDate}`,
       });
       jobs.push({
         jobName: 'settle_game_results',
         jobKey: `settle|game-results|${sweepDate}`,
         execute: settleGameResults,
         args: { jobKey: `settle|game-results|${sweepDate}`, dryRun },
-        reason: `nightly settlement sweep ${sweepDate}`
+        reason: `nightly settlement sweep ${sweepDate}`,
       });
       jobs.push({
         jobName: 'settle_pending_cards',
         jobKey: `settle|pending-cards|${sweepDate}`,
         execute: settlePendingCards,
         args: { jobKey: `settle|pending-cards|${sweepDate}`, dryRun },
-        reason: `nightly card settlement ${sweepDate}`
+        reason: `nightly card settlement ${sweepDate}`,
       });
     }
   }
@@ -291,8 +338,8 @@ async function tick() {
   checkOddsFreshnessHealth(nowUtc);
 
   // Get games in the next 36 hours (covers tomorrow + late games)
-  const startUtcIso = nowUtc.minus({ hours: 1 }).toISO();   // small back buffer
-  const endUtcIso   = nowUtc.plus({ hours: 36 }).toISO();
+  const startUtcIso = nowUtc.minus({ hours: 1 }).toISO(); // small back buffer
+  const endUtcIso = nowUtc.plus({ hours: 36 }).toISO();
 
   const sports = enabledSports();
   const games = getUpcomingGames({ startUtcIso, endUtcIso, sports });
@@ -301,20 +348,22 @@ async function tick() {
 
   // De-dup inside the tick so we don't schedule the same jobKey twice
   const seen = new Set();
-  const uniqueDue = due.filter(j => {
+  const uniqueDue = due.filter((j) => {
     if (seen.has(j.jobKey)) return false;
     seen.add(j.jobKey);
     return true;
   });
 
-  console.log(`[SCHEDULER] Tick ${nowEt.toISO()} ET — due candidates: ${uniqueDue.length}`);
+  console.log(
+    `[SCHEDULER] Tick ${nowEt.toISO()} ET — due candidates: ${uniqueDue.length}`,
+  );
   let staleOddsSkipLogged = false;
 
   for (const job of uniqueDue) {
     if (isModelJob(job.jobName) && !hasFreshOddsForModels()) {
       if (!staleOddsSkipLogged) {
         console.warn(
-          `[SCHEDULER][GATE] Skipping model jobs: no successful pull_odds_hourly in last ${MODEL_ODDS_MAX_AGE_MINUTES} minutes`
+          `[SCHEDULER][GATE] Skipping model jobs: no successful pull_odds_hourly in last ${MODEL_ODDS_MAX_AGE_MINUTES} minutes`,
         );
         staleOddsSkipLogged = true;
       }
@@ -335,7 +384,9 @@ async function tick() {
     }
 
     if (dryRun) {
-      console.log(`  🧪 DRY_RUN would run ${job.jobKey} (${job.jobName}) — ${job.reason}`);
+      console.log(
+        `  🧪 DRY_RUN would run ${job.jobKey} (${job.jobName}) — ${job.reason}`,
+      );
       continue;
     }
 
@@ -361,11 +412,19 @@ async function start() {
   console.log(`  TZ: ${TZ}`);
   console.log(`  TICK_MS: ${tickMs}`);
   console.log(`  DRY_RUN: ${process.env.DRY_RUN || 'false'}`);
-  console.log(`  FIXED_CATCHUP: ${process.env.FIXED_CATCHUP !== 'false' ? 'true' : 'false'}`);
-  console.log(`  ENABLE_ODDS_PULL: ${process.env.ENABLE_ODDS_PULL !== 'false' ? 'true' : 'false'}`);
-  console.log(`  REQUIRE_FRESH_ODDS_FOR_MODELS: ${REQUIRE_FRESH_ODDS_FOR_MODELS ? 'true' : 'false'}`);
+  console.log(
+    `  FIXED_CATCHUP: ${process.env.FIXED_CATCHUP !== 'false' ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  ENABLE_ODDS_PULL: ${process.env.ENABLE_ODDS_PULL !== 'false' ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  REQUIRE_FRESH_ODDS_FOR_MODELS: ${REQUIRE_FRESH_ODDS_FOR_MODELS ? 'true' : 'false'}`,
+  );
   console.log(`  MODEL_ODDS_MAX_AGE_MINUTES: ${MODEL_ODDS_MAX_AGE_MINUTES}`);
-  console.log(`  ENABLE_SETTLEMENT: ${process.env.ENABLE_SETTLEMENT !== 'false' ? 'true' : 'false'}`);
+  console.log(
+    `  ENABLE_SETTLEMENT: ${process.env.ENABLE_SETTLEMENT !== 'false' ? 'true' : 'false'}`,
+  );
   console.log(`  Enabled sports: ${enabledSports().join(', ') || 'none'}`);
   console.log('═'.repeat(60));
   console.log('');
@@ -376,11 +435,11 @@ async function start() {
   console.log('[SCHEDULER] Database ready.\n');
 
   // Initial tick
-  tick().catch(err => console.error('[SCHEDULER] tick error', err));
+  tick().catch((err) => console.error('[SCHEDULER] tick error', err));
 
   // Loop
   const interval = setInterval(() => {
-    tick().catch(err => console.error('[SCHEDULER] tick error', err));
+    tick().catch((err) => console.error('[SCHEDULER] tick error', err));
   }, tickMs);
 
   process.on('SIGTERM', () => {
@@ -388,7 +447,7 @@ async function start() {
     console.log('\n[SCHEDULER] Received SIGTERM, exiting...');
     process.exit(0);
   });
-  
+
   process.on('SIGINT', () => {
     clearInterval(interval);
     console.log('\n[SCHEDULER] Received SIGINT, exiting...');
@@ -412,5 +471,5 @@ module.exports = {
   keyNightlySweep,
   isFixedDue,
   dueTminusMinutes,
-  TMINUS_BANDS
+  TMINUS_BANDS,
 };

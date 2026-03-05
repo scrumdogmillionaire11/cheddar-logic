@@ -12,7 +12,12 @@
  * - Suspicious pattern detection
  */
 
-import { AuditEventType, AuditEventSeverity, EVENT_SEVERITY_MAP, EVENT_DESCRIPTION_MAP } from './event-types';
+import {
+  AuditEventType,
+  AuditEventSeverity,
+  EVENT_SEVERITY_MAP,
+  EVENT_DESCRIPTION_MAP,
+} from './event-types';
 import { SECURITY_CONFIG } from './config';
 
 export interface AuditEvent {
@@ -62,7 +67,7 @@ class AuditLogger {
       method?: string;
       userAgent?: string;
       details?: Record<string, unknown>;
-    }
+    },
   ): AuditEvent {
     const eventId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const severity = EVENT_SEVERITY_MAP[eventType];
@@ -191,7 +196,7 @@ class AuditLogger {
    */
   detectSuspiciousPatterns(
     clientIp: string,
-    windowMs = 5 * 60 * 1000
+    windowMs = 5 * 60 * 1000,
   ): {
     totalEvents: number;
     authFailures: number;
@@ -213,35 +218,40 @@ class AuditLogger {
 
     const now = Date.now();
     const clientEvents = this.getClientEvents(clientIp, 1000);
-    const recentEvents = clientEvents.filter((e) => now - e.timestamp < windowMs);
+    const recentEvents = clientEvents.filter(
+      (e) => now - e.timestamp < windowMs,
+    );
 
     const authFailures = recentEvents.filter((e) =>
       [
         AuditEventType.AUTH_TOKEN_INVALID,
         AuditEventType.AUTH_TOKEN_EXPIRED,
         AuditEventType.AUTH_MISSING,
-      ].includes(e.eventType)
+      ].includes(e.eventType),
     ).length;
 
     const rateLimitViolations = recentEvents.filter(
-      (e) => e.eventType === AuditEventType.RATE_LIMIT_EXCEEDED
+      (e) => e.eventType === AuditEventType.RATE_LIMIT_EXCEEDED,
     ).length;
 
     const validationErrors = recentEvents.filter(
       (e) =>
         e.eventType === AuditEventType.VALIDATION_ERROR ||
-        e.eventType === AuditEventType.INVALID_QUERY_PARAM
+        e.eventType === AuditEventType.INVALID_QUERY_PARAM,
     ).length;
 
     const injectionAttempts = recentEvents.filter((e) =>
       [
         AuditEventType.SQL_INJECTION_ATTEMPT,
         AuditEventType.SUSPICIOUS_SQL_PATTERN,
-      ].includes(e.eventType)
+      ].includes(e.eventType),
     ).length;
 
     const isSuspicious =
-      rateLimitViolations > 3 || authFailures > 5 || injectionAttempts > 0 || validationErrors > 10;
+      rateLimitViolations > 3 ||
+      authFailures > 5 ||
+      injectionAttempts > 0 ||
+      validationErrors > 10;
 
     return {
       totalEvents: recentEvents.length,
@@ -298,7 +308,8 @@ class AuditLogger {
 
     const criticalEvents = events.filter(
       (e) =>
-        e.severity === AuditEventSeverity.CRITICAL || e.severity === AuditEventSeverity.ERROR
+        e.severity === AuditEventSeverity.CRITICAL ||
+        e.severity === AuditEventSeverity.ERROR,
     );
 
     const hours = Math.round(timeWindowMs / (60 * 60 * 1000));

@@ -1,79 +1,110 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import Link from "next/link";
-import { triggerAnalysis, pollForDetailedProjections, type DetailedAnalysisResponse, type AnalyzeRequest } from "@/lib/fpl-api";
-import FPLDashboard from "@/components/fpl-dashboard";
-import LoadingState, { ErrorState } from "@/components/fpl-loading";
+import { useState } from 'react';
+import Link from 'next/link';
+import {
+  triggerAnalysis,
+  pollForDetailedProjections,
+  type DetailedAnalysisResponse,
+  type AnalyzeRequest,
+} from '@/lib/fpl-api';
+import FPLDashboard from '@/components/fpl-dashboard';
+import LoadingState, { ErrorState } from '@/components/fpl-loading';
 
 const RISK_POSTURES = [
   {
-    value: "conservative",
-    label: "🛡️ Conservative",
+    value: 'conservative',
+    label: '🛡️ Conservative',
     description: "Protect your rank. Don't chase.",
   },
   {
-    value: "balanced",
-    label: "⚖️ Balanced",
-    description: "Optimal EV. Standard thresholds.",
+    value: 'balanced',
+    label: '⚖️ Balanced',
+    description: 'Optimal EV. Standard thresholds.',
   },
   {
-    value: "aggressive",
-    label: "⚡ Aggressive",
-    description: "Chase the ceiling. High variance, high upside.",
+    value: 'aggressive',
+    label: '⚡ Aggressive',
+    description: 'Chase the ceiling. High variance, high upside.',
   },
 ];
 
 export default function FPLPageClient() {
-  const [teamId, setTeamId] = useState("");
-  const [state, setState] = useState<"input" | "loading" | "dashboard" | "error">("input");
-  const [dashboardData, setDashboardData] = useState<DetailedAnalysisResponse | null>(null);
-  const [error, setError] = useState<string>("");
+  const [teamId, setTeamId] = useState('');
+  const [state, setState] = useState<
+    'input' | 'loading' | 'dashboard' | 'error'
+  >('input');
+  const [dashboardData, setDashboardData] =
+    useState<DetailedAnalysisResponse | null>(null);
+  const [error, setError] = useState<string>('');
 
   // Analysis options
-  const [riskPosture, setRiskPosture] = useState<"conservative" | "balanced" | "aggressive">(
-    "balanced"
-  );
+  const [riskPosture, setRiskPosture] = useState<
+    'conservative' | 'balanced' | 'aggressive'
+  >('balanced');
   const [freeTransfers, setFreeTransfers] = useState<number>(2);
-  const [availableChips, setAvailableChips] = useState<string[]>(["bench_boost", "triple_captain", "free_hit"]);
-  const [manualTransfers, setManualTransfers] = useState<Array<{player_out: string; player_in: string}>>([]); 
-  const [injuryOverrides, setInjuryOverrides] = useState<Array<{player_name: string; status: "FIT" | "DOUBTFUL" | "OUT"; chance?: number}>>([]); 
+  const [availableChips, setAvailableChips] = useState<string[]>([
+    'bench_boost',
+    'triple_captain',
+    'free_hit',
+  ]);
+  const [manualTransfers, setManualTransfers] = useState<
+    Array<{ player_out: string; player_in: string }>
+  >([]);
+  const [injuryOverrides, setInjuryOverrides] = useState<
+    Array<{
+      player_name: string;
+      status: 'FIT' | 'DOUBTFUL' | 'OUT';
+      chance?: number;
+    }>
+  >([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const toggleChip = (chip: string) => {
-    setAvailableChips(prev => 
-      prev.includes(chip) ? prev.filter(c => c !== chip) : [...prev, chip]
+    setAvailableChips((prev) =>
+      prev.includes(chip) ? prev.filter((c) => c !== chip) : [...prev, chip],
     );
   };
 
   const addManualTransfer = () => {
-    setManualTransfers([...manualTransfers, { player_out: "", player_in: "" }]);
+    setManualTransfers([...manualTransfers, { player_out: '', player_in: '' }]);
   };
 
   const removeManualTransfer = (index: number) => {
     setManualTransfers(manualTransfers.filter((_, i) => i !== index));
   };
 
-  const updateManualTransfer = (index: number, field: "player_out" | "player_in", value: string) => {
+  const updateManualTransfer = (
+    index: number,
+    field: 'player_out' | 'player_in',
+    value: string,
+  ) => {
     const updated = [...manualTransfers];
     updated[index][field] = value;
     setManualTransfers(updated);
   };
 
   const addInjuryOverride = () => {
-    setInjuryOverrides([...injuryOverrides, { player_name: "", status: "FIT", chance: 100 }]);
+    setInjuryOverrides([
+      ...injuryOverrides,
+      { player_name: '', status: 'FIT', chance: 100 },
+    ]);
   };
 
   const removeInjuryOverride = (index: number) => {
     setInjuryOverrides(injuryOverrides.filter((_, i) => i !== index));
   };
 
-  const updateInjuryOverride = (index: number, field: "player_name" | "status" | "chance", value: string | number) => {
+  const updateInjuryOverride = (
+    index: number,
+    field: 'player_name' | 'status' | 'chance',
+    value: string | number,
+  ) => {
     const updated = [...injuryOverrides];
-    if (field === "chance") {
+    if (field === 'chance') {
       updated[index][field] = value as number;
-    } else if (field === "status") {
-      updated[index][field] = value as "FIT" | "DOUBTFUL" | "OUT";
+    } else if (field === 'status') {
+      updated[index][field] = value as 'FIT' | 'DOUBTFUL' | 'OUT';
     } else {
       updated[index][field] = value as string;
     }
@@ -85,13 +116,13 @@ export default function FPLPageClient() {
     const teamIdNum = parseInt(targetId);
 
     if (!targetId || isNaN(teamIdNum)) {
-      setError("Please enter a valid Team ID");
-      setState("error");
+      setError('Please enter a valid Team ID');
+      setState('error');
       return;
     }
 
-    setState("loading");
-    setError("");
+    setState('loading');
+    setError('');
 
     try {
       // Trigger analysis with risk posture and overrides
@@ -100,40 +131,50 @@ export default function FPLPageClient() {
         risk_posture: riskPosture,
         free_transfers: freeTransfers,
         available_chips: availableChips.length > 0 ? availableChips : undefined,
-        manual_transfers: manualTransfers.filter(t => t.player_out && t.player_in).length > 0 
-          ? manualTransfers.filter(t => t.player_out && t.player_in)
-          : undefined,
-        injury_overrides: injuryOverrides.filter(o => o.player_name).length > 0
-          ? injuryOverrides.filter(o => o.player_name)
-          : undefined,
+        manual_transfers:
+          manualTransfers.filter((t) => t.player_out && t.player_in).length > 0
+            ? manualTransfers.filter((t) => t.player_out && t.player_in)
+            : undefined,
+        injury_overrides:
+          injuryOverrides.filter((o) => o.player_name).length > 0
+            ? injuryOverrides.filter((o) => o.player_name)
+            : undefined,
       };
 
       const response = await triggerAnalysis(request);
 
       // Poll for completion with live updates
-      const data = await pollForDetailedProjections(response.analysis_id, 120, 3000); // 120 attempts x 3s = 6 min max
+      const data = await pollForDetailedProjections(
+        response.analysis_id,
+        120,
+        3000,
+      ); // 120 attempts x 3s = 6 min max
       setDashboardData(data);
-      setState("dashboard");
+      setState('dashboard');
 
       // Update URL
       const url = new URL(window.location.href);
-      url.searchParams.set("team", targetId);
-      window.history.pushState({}, "", url);
+      url.searchParams.set('team', targetId);
+      window.history.pushState({}, '', url);
     } catch (err) {
-      console.error("Analysis failed:", err);
-      setError(err instanceof Error ? err.message : "Analysis failed. Please try again.");
-      setState("error");
+      console.error('Analysis failed:', err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Analysis failed. Please try again.',
+      );
+      setState('error');
     }
   };
 
   const handleReset = () => {
-    setState("input");
-    setTeamId("");
+    setState('input');
+    setTeamId('');
     setDashboardData(null);
-    setError("");
+    setError('');
     const url = new URL(window.location.href);
-    url.searchParams.delete("team");
-    window.history.pushState({}, "", url);
+    url.searchParams.delete('team');
+    window.history.pushState({}, '', url);
   };
 
   return (
@@ -146,12 +187,15 @@ export default function FPLPageClient() {
         </div>
 
         {/* Input State */}
-        {state === "input" && (
+        {state === 'input' && (
           <div className="space-y-8">
             <div>
-              <h1 className="mb-2 font-display text-4xl font-semibold">🧙‍♂️ FPL Sage 🧙‍♂️</h1>
+              <h1 className="mb-2 font-display text-4xl font-semibold">
+                🧙‍♂️ FPL Sage 🧙‍♂️
+              </h1>
               <p className="text-lg text-cloud/70">
-                Deeply analytical transfer advice, chip strategy, and captain picks
+                Deeply analytical transfer advice, chip strategy, and captain
+                picks
               </p>
             </div>
 
@@ -159,7 +203,10 @@ export default function FPLPageClient() {
               <div className="space-y-6">
                 {/* Team ID Input */}
                 <div>
-                  <label htmlFor="teamId" className="mb-2 block text-sm font-semibold text-cloud/70">
+                  <label
+                    htmlFor="teamId"
+                    className="mb-2 block text-sm font-semibold text-cloud/70"
+                  >
                     Enter your FPL Team ID
                   </label>
                   <input
@@ -167,7 +214,7 @@ export default function FPLPageClient() {
                     id="teamId"
                     value={teamId}
                     onChange={(e) => setTeamId(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleAnalysis()}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAnalysis()}
                     placeholder="e.g., 123456"
                     className="w-full rounded-lg border border-white/20 bg-surface px-4 py-3 text-cloud outline-none transition focus:border-teal"
                   />
@@ -183,16 +230,23 @@ export default function FPLPageClient() {
                       <button
                         key={posture.value}
                         onClick={() =>
-                          setRiskPosture(posture.value as "conservative" | "balanced" | "aggressive")
+                          setRiskPosture(
+                            posture.value as
+                              | 'conservative'
+                              | 'balanced'
+                              | 'aggressive',
+                          )
                         }
                         className={`rounded-lg border-2 p-4 text-left transition ${
                           riskPosture === posture.value
-                            ? "border-teal bg-teal/10"
-                            : "border-white/10 bg-surface/50 hover:border-white/20"
+                            ? 'border-teal bg-teal/10'
+                            : 'border-white/10 bg-surface/50 hover:border-white/20'
                         }`}
                       >
                         <div className="font-semibold">{posture.label}</div>
-                        <div className="text-sm text-cloud/60">{posture.description}</div>
+                        <div className="text-sm text-cloud/60">
+                          {posture.description}
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -200,7 +254,10 @@ export default function FPLPageClient() {
 
                 {/* Free Transfers */}
                 <div>
-                  <label htmlFor="transfers" className="mb-2 block text-sm font-semibold text-cloud/70">
+                  <label
+                    htmlFor="transfers"
+                    className="mb-2 block text-sm font-semibold text-cloud/70"
+                  >
                     Free Transfers Available: {freeTransfers}
                   </label>
                   <input
@@ -221,10 +278,10 @@ export default function FPLPageClient() {
                   </label>
                   <div className="grid grid-cols-2 gap-3">
                     {[
-                      { key: "bench_boost", label: "Bench Boost" },
-                      { key: "triple_captain", label: "Triple Captain" },
-                      { key: "free_hit", label: "Free Hit" },
-                      { key: "wildcard", label: "Wildcard" },
+                      { key: 'bench_boost', label: 'Bench Boost' },
+                      { key: 'triple_captain', label: 'Triple Captain' },
+                      { key: 'free_hit', label: 'Free Hit' },
+                      { key: 'wildcard', label: 'Wildcard' },
                     ].map((chip) => (
                       <button
                         key={chip.key}
@@ -232,8 +289,8 @@ export default function FPLPageClient() {
                         onClick={() => toggleChip(chip.key)}
                         className={`rounded-lg border-2 p-3 text-sm transition ${
                           availableChips.includes(chip.key)
-                            ? "border-teal bg-teal/10 text-teal"
-                            : "border-white/10 bg-surface/50 text-cloud/60 hover:border-white/20"
+                            ? 'border-teal bg-teal/10 text-teal'
+                            : 'border-white/10 bg-surface/50 text-cloud/60 hover:border-white/20'
                         }`}
                       >
                         <div className="font-semibold">{chip.label}</div>
@@ -248,7 +305,8 @@ export default function FPLPageClient() {
                   onClick={() => setShowAdvanced(!showAdvanced)}
                   className="w-full rounded-lg border border-white/20 bg-surface/50 px-4 py-2 text-sm font-semibold text-cloud/80 transition hover:border-white/40"
                 >
-                  {showAdvanced ? "▼" : "▶"} Advanced Options (Manual Transfers & Injury Overrides)
+                  {showAdvanced ? '▼' : '▶'} Advanced Options (Manual Transfers
+                  & Injury Overrides)
                 </button>
 
                 {/* Advanced Options */}
@@ -274,15 +332,29 @@ export default function FPLPageClient() {
                             type="text"
                             placeholder="Player out"
                             value={transfer.player_out}
-                            onChange={(e) => updateManualTransfer(idx, "player_out", e.target.value)}
+                            onChange={(e) =>
+                              updateManualTransfer(
+                                idx,
+                                'player_out',
+                                e.target.value,
+                              )
+                            }
                             className="flex-1 rounded-lg border border-white/20 bg-surface px-3 py-2 text-sm text-cloud outline-none focus:border-teal"
                           />
-                          <span className="flex items-center text-cloud/60">→</span>
+                          <span className="flex items-center text-cloud/60">
+                            →
+                          </span>
                           <input
                             type="text"
                             placeholder="Player in"
                             value={transfer.player_in}
-                            onChange={(e) => updateManualTransfer(idx, "player_in", e.target.value)}
+                            onChange={(e) =>
+                              updateManualTransfer(
+                                idx,
+                                'player_in',
+                                e.target.value,
+                              )
+                            }
                             className="flex-1 rounded-lg border border-white/20 bg-surface px-3 py-2 text-sm text-cloud outline-none focus:border-teal"
                           />
                           <button
@@ -295,7 +367,9 @@ export default function FPLPageClient() {
                         </div>
                       ))}
                       {manualTransfers.length === 0 && (
-                        <p className="text-xs text-cloud/50">No manual transfers added</p>
+                        <p className="text-xs text-cloud/50">
+                          No manual transfers added
+                        </p>
                       )}
                     </div>
 
@@ -319,12 +393,24 @@ export default function FPLPageClient() {
                             type="text"
                             placeholder="Player name"
                             value={override.player_name}
-                            onChange={(e) => updateInjuryOverride(idx, "player_name", e.target.value)}
+                            onChange={(e) =>
+                              updateInjuryOverride(
+                                idx,
+                                'player_name',
+                                e.target.value,
+                              )
+                            }
                             className="flex-1 rounded-lg border border-white/20 bg-surface px-3 py-2 text-sm text-cloud outline-none focus:border-teal"
                           />
                           <select
                             value={override.status}
-                            onChange={(e) => updateInjuryOverride(idx, "status", e.target.value)}
+                            onChange={(e) =>
+                              updateInjuryOverride(
+                                idx,
+                                'status',
+                                e.target.value,
+                              )
+                            }
                             className="w-32 rounded-lg border border-white/20 bg-surface px-3 py-2 text-sm text-cloud outline-none focus:border-teal"
                           >
                             <option value="FIT">Fit</option>
@@ -337,7 +423,13 @@ export default function FPLPageClient() {
                             min="0"
                             max="100"
                             value={override.chance}
-                            onChange={(e) => updateInjuryOverride(idx, "chance", parseInt(e.target.value) || 0)}
+                            onChange={(e) =>
+                              updateInjuryOverride(
+                                idx,
+                                'chance',
+                                parseInt(e.target.value) || 0,
+                              )
+                            }
                             className="w-20 rounded-lg border border-white/20 bg-surface px-3 py-2 text-sm text-cloud outline-none focus:border-teal"
                           />
                           <button
@@ -350,7 +442,9 @@ export default function FPLPageClient() {
                         </div>
                       ))}
                       {injuryOverrides.length === 0 && (
-                        <p className="text-xs text-cloud/50">No injury overrides added</p>
+                        <p className="text-xs text-cloud/50">
+                          No injury overrides added
+                        </p>
                       )}
                     </div>
                   </div>
@@ -370,11 +464,16 @@ export default function FPLPageClient() {
 
             {/* How to find Your Team ID */}
             <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-              <h2 className="mb-4 text-xl font-semibold">How to find your Team ID</h2>
+              <h2 className="mb-4 text-xl font-semibold">
+                How to find your Team ID
+              </h2>
               <ol className="list-decimal space-y-2 pl-5 text-cloud/70">
                 <li>Go to the Fantasy Premier League website</li>
                 <li>Navigate to your team page</li>
-                <li>Look at the URL - your Team ID is the number after &quot;entry/&quot;</li>
+                <li>
+                  Look at the URL - your Team ID is the number after
+                  &quot;entry/&quot;
+                </li>
                 <li>Example: fantasy.premierleague.com/entry/123456/</li>
               </ol>
             </div>
@@ -382,7 +481,7 @@ export default function FPLPageClient() {
         )}
 
         {/* Loading State */}
-        {state === "loading" && (
+        {state === 'loading' && (
           <div className="space-y-6">
             <div>
               <h1 className="mb-2 font-display text-4xl font-semibold">
@@ -403,7 +502,7 @@ export default function FPLPageClient() {
         )}
 
         {/* Dashboard State - Show form at top, results below */}
-        {state === "dashboard" && dashboardData && (
+        {state === 'dashboard' && dashboardData && (
           <div className="space-y-8">
             {/* Form sticky at top */}
             <div className="rounded-xl border border-white/10 bg-surface/80 p-6">
@@ -418,7 +517,9 @@ export default function FPLPageClient() {
               </div>
               <div className="grid gap-4 md:grid-cols-4">
                 <div>
-                  <label className="mb-2 block text-xs font-semibold text-cloud/70">Team ID</label>
+                  <label className="mb-2 block text-xs font-semibold text-cloud/70">
+                    Team ID
+                  </label>
                   <input
                     type="text"
                     value={teamId}
@@ -427,10 +528,19 @@ export default function FPLPageClient() {
                   />
                 </div>
                 <div>
-                  <label className="mb-2 block text-xs font-semibold text-cloud/70">Risk Posture</label>
+                  <label className="mb-2 block text-xs font-semibold text-cloud/70">
+                    Risk Posture
+                  </label>
                   <select
                     value={riskPosture}
-                    onChange={(e) => setRiskPosture(e.target.value as "conservative" | "balanced" | "aggressive")}
+                    onChange={(e) =>
+                      setRiskPosture(
+                        e.target.value as
+                          | 'conservative'
+                          | 'balanced'
+                          | 'aggressive',
+                      )
+                    }
                     className="w-full rounded-lg border border-white/20 bg-surface px-3 py-2 text-sm text-cloud outline-none transition focus:border-teal"
                   >
                     <option value="conservative">🛡️ Conservative</option>
@@ -439,7 +549,9 @@ export default function FPLPageClient() {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-2 block text-xs font-semibold text-cloud/70">Free Transfers: {freeTransfers}</label>
+                  <label className="mb-2 block text-xs font-semibold text-cloud/70">
+                    Free Transfers: {freeTransfers}
+                  </label>
                   <input
                     type="range"
                     min="0"
@@ -450,13 +562,15 @@ export default function FPLPageClient() {
                   />
                 </div>
                 <div>
-                  <label className="mb-2 block text-xs font-semibold text-cloud/70">Available Chips</label>
+                  <label className="mb-2 block text-xs font-semibold text-cloud/70">
+                    Available Chips
+                  </label>
                   <div className="flex gap-1 text-xs">
                     {[
-                      { key: "bench_boost", label: "BB" },
-                      { key: "triple_captain", label: "TC" },
-                      { key: "free_hit", label: "FH" },
-                      { key: "wildcard", label: "WC" },
+                      { key: 'bench_boost', label: 'BB' },
+                      { key: 'triple_captain', label: 'TC' },
+                      { key: 'free_hit', label: 'FH' },
+                      { key: 'wildcard', label: 'WC' },
                     ].map((chip) => (
                       <button
                         key={chip.key}
@@ -464,8 +578,8 @@ export default function FPLPageClient() {
                         onClick={() => toggleChip(chip.key)}
                         className={`flex-1 rounded border px-2 py-1 font-semibold transition ${
                           availableChips.includes(chip.key)
-                            ? "border-teal bg-teal/10 text-teal"
-                            : "border-white/10 text-cloud/40"
+                            ? 'border-teal bg-teal/10 text-teal'
+                            : 'border-white/10 text-cloud/40'
                         }`}
                       >
                         {chip.label}
@@ -474,25 +588,30 @@ export default function FPLPageClient() {
                   </div>
                 </div>
               </div>
-              
+
               {/* Advanced section toggle for dashboard */}
               {showAdvanced && (
                 <div className="mt-4 space-y-3 rounded-lg border border-white/10 bg-surface/50 p-4">
                   <div className="text-xs font-semibold text-cloud/70">
-                    Manual Transfers: {manualTransfers.filter(t => t.player_out && t.player_in).length}
-                    {" • "}
-                    Injury Overrides: {injuryOverrides.filter(o => o.player_name).length}
+                    Manual Transfers:{' '}
+                    {
+                      manualTransfers.filter((t) => t.player_out && t.player_in)
+                        .length
+                    }
+                    {' • '}
+                    Injury Overrides:{' '}
+                    {injuryOverrides.filter((o) => o.player_name).length}
                   </div>
                 </div>
               )}
-              
+
               <div className="mt-4 flex gap-2">
                 <button
                   type="button"
                   onClick={() => setShowAdvanced(!showAdvanced)}
                   className="flex-shrink-0 rounded-lg border border-white/20 bg-surface/50 px-3 py-2 text-xs font-semibold text-cloud/80 transition hover:border-white/40"
                 >
-                  {showAdvanced ? "▼" : "▶"} Advanced
+                  {showAdvanced ? '▼' : '▶'} Advanced
                 </button>
                 <button
                   type="button"
@@ -515,12 +634,14 @@ export default function FPLPageClient() {
         )}
 
         {/* Error State */}
-        {state === "error" && (
+        {state === 'error' && (
           <div className="space-y-6">
             <div>
-              <h1 className="mb-2 font-display text-4xl font-semibold">FPL Team Analysis</h1>
+              <h1 className="mb-2 font-display text-4xl font-semibold">
+                FPL Team Analysis
+              </h1>
             </div>
-            <ErrorState error={error} onRetry={() => setState("input")} />
+            <ErrorState error={error} onRetry={() => setState('input')} />
           </div>
         )}
       </div>

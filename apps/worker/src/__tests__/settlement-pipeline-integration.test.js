@@ -1,12 +1,12 @@
 /**
  * Settlement Pipeline Integration Test
- * 
+ *
  * Validates the complete settlement flow:
  * 1. Backfill card_results where missing
  * 2. Settle game_results from ESPN
  * 3. Settle pending_cards with win/loss logic
  * 4. Verify tracking_stats are accurate
- * 
+ *
  * Uses real test data to ensure settlement logic is sound.
  */
 
@@ -15,7 +15,10 @@ const path = require('path');
 const { execSync } = require('child_process');
 const sqlite3 = require('sqlite3');
 
-const DEFAULT_DB_PATH = path.resolve(__dirname, '../../packages/data/cheddar.db');
+const DEFAULT_DB_PATH = path.resolve(
+  __dirname,
+  '../../packages/data/cheddar.db',
+);
 const DB_PATH = process.env.SETTLEMENT_DB_PATH || DEFAULT_DB_PATH;
 const HAS_DB = fs.existsSync(DB_PATH);
 
@@ -66,7 +69,7 @@ async function runTest() {
     // Test 1: Check backfill works
     log('Test 1: Backfill card_results');
     await runBackfill();
-    
+
     // Test 2: Validate card_results structure
     log('\nTest 2: Card results structure');
     await validateCardResults();
@@ -82,7 +85,6 @@ async function runTest() {
     // Test 5: Tracking stats calculation
     log('\nTest 5: Tracking stats aggregation');
     await validateTrackingStats();
-
   } catch (err) {
     fail(`Test error: ${err.message}`);
   }
@@ -104,10 +106,10 @@ async function runTest() {
 
 async function runBackfill() {
   try {
-    execSync(
-      'npm run job:backfill-card-results',
-      { cwd: path.join(__dirname, '..'), stdio: 'pipe' }
-    );
+    execSync('npm run job:backfill-card-results', {
+      cwd: path.join(__dirname, '..'),
+      stdio: 'pipe',
+    });
     ok('Backfill job executed');
   } catch (e) {
     fail(`Backfill job failed: ${e.message}`);
@@ -117,7 +119,7 @@ async function runBackfill() {
 async function validateCardResults() {
   const results = await runQuery('SELECT COUNT(*) as cnt FROM card_results');
   const count = results[0]?.cnt || 0;
-  
+
   if (count > 0) {
     ok(`Found ${count} card_results rows`);
   } else {
@@ -145,13 +147,14 @@ async function validateJobsPaths() {
   const jobs = [
     'job:backfill-card-results',
     'job:settle-games',
-    'job:settle-cards'
+    'job:settle-cards',
   ];
 
   for (const job of jobs) {
     try {
-      execSync(`npm run ${job} --help 2>/dev/null || npm run ${job} 2>&1 | head -1`, 
-        { cwd: path.join(__dirname, '..'), stdio: 'pipe' }
+      execSync(
+        `npm run ${job} --help 2>/dev/null || npm run ${job} 2>&1 | head -1`,
+        { cwd: path.join(__dirname, '..'), stdio: 'pipe' },
       );
       ok(`Job executable: ${job}`);
     } catch (e) {
@@ -164,8 +167,9 @@ async function validateDatabaseIntegrity() {
   try {
     // Check foreign keys constraint
     const result = await runQuery('PRAGMA foreign_keys');
-    const enabled = result[0]?.foreign_keys === 1 || result[0]?.foreign_keys === '1';
-    
+    const enabled =
+      result[0]?.foreign_keys === 1 || result[0]?.foreign_keys === '1';
+
     if (enabled) {
       ok('Foreign key constraints enabled');
     } else {
@@ -174,11 +178,17 @@ async function validateDatabaseIntegrity() {
 
     // Check tables exist
     const tables = await runQuery(
-      `SELECT name FROM sqlite_master WHERE type='table'`
+      `SELECT name FROM sqlite_master WHERE type='table'`,
     );
-    const tableNames = tables.map(t => t.name);
+    const tableNames = tables.map((t) => t.name);
 
-    const required = ['games', 'odds_snapshots', 'card_results', 'card_payloads', 'tracking_stats'];
+    const required = [
+      'games',
+      'odds_snapshots',
+      'card_results',
+      'card_payloads',
+      'tracking_stats',
+    ];
     for (const table of required) {
       if (tableNames.includes(table)) {
         ok(`Table exists: ${table}`);
@@ -201,11 +211,14 @@ async function validateTrackingStats() {
 
     if (stats.length > 0) {
       ok(`Found ${stats.length} tracking_stats records`);
-      
-      stats.forEach(stat => {
-        const total = (stat.wins || 0) + (stat.losses || 0) + (stat.pushes || 0);
+
+      stats.forEach((stat) => {
+        const total =
+          (stat.wins || 0) + (stat.losses || 0) + (stat.pushes || 0);
         if (total > 0) {
-          ok(`${stat.sport}: ${stat.wins}W / ${stat.losses}L / ${stat.pushes}P (pnl: ${stat.pnl?.toFixed(2) || 'N/A'})`);
+          ok(
+            `${stat.sport}: ${stat.wins}W / ${stat.losses}L / ${stat.pushes}P (pnl: ${stat.pnl?.toFixed(2) || 'N/A'})`,
+          );
         }
       });
     } else {
@@ -223,7 +236,9 @@ maybeTest('settlement pipeline integration', async () => {
 });
 
 if (!HAS_DB) {
-  console.warn(`[Settlement Pipeline] Skipping integration test; DB not found at ${DB_PATH}`);
+  console.warn(
+    `[Settlement Pipeline] Skipping integration test; DB not found at ${DB_PATH}`,
+  );
 }
 
 if (require.main === module) {
@@ -233,7 +248,7 @@ if (require.main === module) {
   }
   runTest()
     .then(() => process.exit(0))
-    .catch(err => {
+    .catch((err) => {
       console.error('Unhandled error:', err);
       process.exit(1);
     });

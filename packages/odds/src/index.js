@@ -30,9 +30,9 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
 
 /**
  * Fetch odds for a sport and normalize the output
- * 
+ *
  * Does NOT write to DB — returns normalized games only.
- * 
+ *
  * @param {object} params
  * @param {string} params.sport - Sport code (NHL, NBA, MLB, NFL)
  * @param {number} params.hoursAhead - Fetch games within this many hours (default 36)
@@ -45,7 +45,7 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
     return {
       games: [],
       errors: ['ODDS_API_KEY not found in environment variables'],
-      rawCount: 0
+      rawCount: 0,
     };
   }
 
@@ -54,7 +54,7 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
     return {
       games: [],
       errors: [`Unknown sport: ${sport}`],
-      rawCount: 0
+      rawCount: 0,
     };
   }
 
@@ -68,19 +68,26 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
 
     // Filter to games within time window
     const now = Date.now();
-    const cutoff = now + (hoursAhead * 60 * 60 * 1000);
-    const filteredGames = rawGames.filter(game => {
+    const cutoff = now + hoursAhead * 60 * 60 * 1000;
+    const filteredGames = rawGames.filter((game) => {
       const gameTime = new Date(game.commence_time).getTime();
       return gameTime > now && gameTime <= cutoff;
     });
 
-    console.log(`[Odds] ${filteredGames.length} games within ${hoursAhead}h window`);
+    console.log(
+      `[Odds] ${filteredGames.length} games within ${hoursAhead}h window`,
+    );
 
     // Normalize the games
-    const { games, skippedMissingFields, errors } = normalizeGames(filteredGames, sport);
+    const { games, skippedMissingFields, errors } = normalizeGames(
+      filteredGames,
+      sport,
+    );
 
     if (skippedMissingFields > 0) {
-      console.warn(`[Odds] skippedMissingFields=${skippedMissingFields} for ${sport}`);
+      console.warn(
+        `[Odds] skippedMissingFields=${skippedMissingFields} for ${sport}`,
+      );
     }
 
     if (games.length === 0) {
@@ -93,7 +100,7 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
     return {
       games: [],
       errors: [`${sport}: ${err.message}`],
-      rawCount: 0
+      rawCount: 0,
     };
   }
 }
@@ -109,14 +116,14 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
     regions: 'us',
     markets: config.markets.join(','),
     bookmakers: config.bookmakers.join(','),
-    oddsFormat: 'american'
+    oddsFormat: 'american',
   };
 
   console.log(`[Odds] API call: ${url}?markets=${config.markets.join(',')}`);
 
   const response = await axios.get(url, {
     params,
-    timeout: 10000
+    timeout: 10000,
   });
 
   const remaining = response.headers['x-requests-remaining'];
@@ -142,7 +149,7 @@ function transformAPIResponse(apiData, sport) {
     return [];
   }
 
-  return apiData.map(game => {
+  return apiData.map((game) => {
     const transformed = {
       gameId: game.id,
       sport: sport.toUpperCase(),
@@ -150,41 +157,51 @@ function transformAPIResponse(apiData, sport) {
       home_team: game.home_team,
       away_team: game.away_team,
       commence_time: game.commence_time,
-      markets: {}
+      markets: {},
     };
 
     // Extract market data from all bookmakers
     if (game.bookmakers && game.bookmakers.length > 0) {
-      game.bookmakers.forEach(bookmaker => {
-        bookmaker.markets?.forEach(market => {
+      game.bookmakers.forEach((bookmaker) => {
+        bookmaker.markets?.forEach((market) => {
           if (market.key === 'h2h') {
-            const homeOutcome = market.outcomes.find(o => o.name === game.home_team);
-            const awayOutcome = market.outcomes.find(o => o.name === game.away_team);
+            const homeOutcome = market.outcomes.find(
+              (o) => o.name === game.home_team,
+            );
+            const awayOutcome = market.outcomes.find(
+              (o) => o.name === game.away_team,
+            );
 
             if (!transformed.markets.h2h) transformed.markets.h2h = [];
             transformed.markets.h2h.push({
               book: bookmaker.key,
               home: homeOutcome?.price,
-              away: awayOutcome?.price
+              away: awayOutcome?.price,
             });
           }
 
           if (market.key === 'totals') {
-            const overOutcome = market.outcomes.find(o => o.name === 'Over');
-            const underOutcome = market.outcomes.find(o => o.name === 'Under');
+            const overOutcome = market.outcomes.find((o) => o.name === 'Over');
+            const underOutcome = market.outcomes.find(
+              (o) => o.name === 'Under',
+            );
 
             if (!transformed.markets.totals) transformed.markets.totals = [];
             transformed.markets.totals.push({
               book: bookmaker.key,
               line: overOutcome?.point,
               over: overOutcome?.price,
-              under: underOutcome?.price
+              under: underOutcome?.price,
             });
           }
 
           if (market.key === 'spreads') {
-            const homeOutcome = market.outcomes.find(o => o.name === game.home_team);
-            const awayOutcome = market.outcomes.find(o => o.name === game.away_team);
+            const homeOutcome = market.outcomes.find(
+              (o) => o.name === game.home_team,
+            );
+            const awayOutcome = market.outcomes.find(
+              (o) => o.name === game.away_team,
+            );
 
             if (!transformed.markets.spreads) transformed.markets.spreads = [];
             transformed.markets.spreads.push({
@@ -192,7 +209,7 @@ function transformAPIResponse(apiData, sport) {
               home_line: homeOutcome?.point,
               home_price: homeOutcome?.price,
               away_line: awayOutcome?.point,
-              away_price: awayOutcome?.price
+              away_price: awayOutcome?.price,
             });
           }
         });
@@ -209,5 +226,5 @@ module.exports = {
   getSportConfig,
   getActiveSports: require('./config').getActiveSports,
   getTokensForFetch: require('./config').getTokensForFetch,
-  isInSeason: require('./config').isInSeason
+  isInSeason: require('./config').isInSeason,
 };

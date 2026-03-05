@@ -1,6 +1,6 @@
 /**
  * Smoke Test — Run NHL Model Job
- * 
+ *
  * Verifies:
  * 1. Job runs without error (exit code 0)
  * 2. job_runs table records job execution (status='success')
@@ -32,19 +32,18 @@ describe('run_nhl_model job', () => {
     if (fs.existsSync(TEST_DB_PATH)) {
       fs.unlinkSync(TEST_DB_PATH);
     }
-    
+
     // Run odds job first to populate test data
     try {
-      execSync(
-        `DATABASE_PATH=${TEST_DB_PATH} npm run job:pull-odds`,
-        {
-          cwd: '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
-          stdio: 'pipe',
-          encoding: 'utf-8'
-        }
-      );
+      execSync(`DATABASE_PATH=${TEST_DB_PATH} npm run job:pull-odds`, {
+        cwd: '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+        stdio: 'pipe',
+        encoding: 'utf-8',
+      });
     } catch (e) {
-      console.log('Note: odds job may not have API key, continuing with test setup');
+      console.log(
+        'Note: odds job may not have API key, continuing with test setup',
+      );
     }
   });
 
@@ -62,12 +61,14 @@ describe('run_nhl_model job', () => {
         {
           cwd: '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
           stdio: 'pipe',
-          encoding: 'utf-8'
-        }
+          encoding: 'utf-8',
+        },
       );
       expect(result).toBeDefined();
     } catch (error) {
-      throw new Error(`Job failed with exit code ${error.status}: ${error.stdout || error.message}`);
+      throw new Error(
+        `Job failed with exit code ${error.status}: ${error.stdout || error.message}`,
+      );
     }
   });
 
@@ -89,7 +90,9 @@ describe('run_nhl_model job', () => {
       expect(result.status).toBe('success');
       expect(result.started_at).toBeTruthy();
       expect(result.ended_at).toBeTruthy();
-      expect(new Date(result.started_at).getTime()).toBeLessThan(new Date(result.ended_at).getTime());
+      expect(new Date(result.started_at).getTime()).toBeLessThan(
+        new Date(result.ended_at).getTime(),
+      );
     }
   });
 
@@ -106,7 +109,7 @@ describe('run_nhl_model job', () => {
 
     // It's OK if no results (no odds data), but if they exist, verify schema
     if (results && results.length > 0) {
-      results.forEach(row => {
+      results.forEach((row) => {
         expect(row.id).toBeTruthy();
         expect(row.game_id).toBeTruthy();
         expect(row.sport).toBe('NHL');
@@ -114,7 +117,7 @@ describe('run_nhl_model job', () => {
         expect(row.confidence).toBeGreaterThanOrEqual(0);
         expect(row.confidence).toBeLessThanOrEqual(1);
         expect(row.output_data).toBeTruthy();
-        
+
         // output_data should be valid JSON
         const parsed = JSON.parse(row.output_data);
         expect(parsed).toHaveProperty('prediction');
@@ -137,7 +140,7 @@ describe('run_nhl_model job', () => {
 
     // It's OK if no results (no odds data or all abstained), but if they exist, verify schema
     if (results && results.length > 0) {
-      results.forEach(row => {
+      results.forEach((row) => {
         expect(row.id).toBeTruthy();
         expect(row.game_id).toBeTruthy();
         expect(row.sport).toBe('NHL');
@@ -145,7 +148,7 @@ describe('run_nhl_model job', () => {
         expect(row.card_title).toBeTruthy();
         expect(row.payload_data).toBeTruthy();
         expect(row.created_at).toBeTruthy();
-        
+
         // payload_data should be valid JSON
         const parsed = JSON.parse(row.payload_data);
         expect(parsed).toHaveProperty('game_id');
@@ -180,7 +183,7 @@ describe('run_nhl_model job', () => {
         return stmt.all();
       });
 
-      rows.forEach(row => {
+      rows.forEach((row) => {
         expect(row.card_id).toBeTruthy();
         expect(row.status).toBe('pending');
         expect(row.recommended_bet_type).toBeTruthy();
@@ -202,15 +205,17 @@ describe('run_nhl_model job', () => {
     });
 
     if (results && results.length > 0) {
-      results.forEach(row => {
+      results.forEach((row) => {
         if (row.game_time_utc) {
           const expiresTime = new Date(row.expires_at).getTime();
           const gameTime = new Date(row.game_time_utc).getTime();
           expect(expiresTime).toBeLessThan(gameTime);
-          
+
           // Should expire 1 hour before game
-          const onlyHourBefore = gameTime - (60 * 60 * 1000);
-          expect(Math.abs(expiresTime - onlyHourBefore)).toBeLessThan(60 * 1000); // Within 1 minute
+          const onlyHourBefore = gameTime - 60 * 60 * 1000;
+          expect(Math.abs(expiresTime - onlyHourBefore)).toBeLessThan(
+            60 * 1000,
+          ); // Within 1 minute
         }
       });
     }

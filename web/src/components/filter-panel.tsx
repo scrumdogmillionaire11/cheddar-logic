@@ -6,9 +6,19 @@
 'use client';
 
 import { useState } from 'react';
-import type { GameFilters, PropSearchTarget, SortMode, ViewMode } from '@/lib/game-card/filters';
+import type {
+  GameFilters,
+  PropSearchTarget,
+  SortMode,
+  ViewMode,
+} from '@/lib/game-card/filters';
 import { resetFilters } from '@/lib/game-card/filters';
-import type { Sport, Market, DriverTier, ExpressionStatus } from '@/lib/types/game-card';
+import type {
+  Sport,
+  Market,
+  DriverTier,
+  ExpressionStatus,
+} from '@/lib/types/game-card';
 import { getPresetsForMode } from '@/lib/game-card/presets';
 
 interface FilterPanelProps {
@@ -54,30 +64,42 @@ export default function FilterPanel({
     updateFilters({ markets });
   };
 
-  const doesPresetMatchCurrentFilters = (presetFilters: Partial<GameFilters>) => {
-    return (Object.keys(presetFilters) as (keyof GameFilters)[]).every((key) => {
-      if (key === 'customTimeRange') {
-        const presetRange = presetFilters.customTimeRange;
-        const currentRange = filters.customTimeRange;
+  const doesPresetMatchCurrentFilters = (
+    presetFilters: Partial<GameFilters>,
+  ) => {
+    return (Object.keys(presetFilters) as (keyof GameFilters)[]).every(
+      (key) => {
+        if (key === 'customTimeRange') {
+          const presetRange = presetFilters.customTimeRange;
+          const currentRange = filters.customTimeRange;
 
-        if (!presetRange && !currentRange) return true;
-        if (!presetRange || !currentRange) return false;
+          if (!presetRange && !currentRange) return true;
+          if (!presetRange || !currentRange) return false;
 
-        return presetRange.start === currentRange.start && presetRange.end === currentRange.end;
-      }
-
-      const presetValue = presetFilters[key];
-      const currentValue = filters[key];
-
-      if (Array.isArray(presetValue)) {
-        if (!Array.isArray(currentValue) || currentValue.length !== presetValue.length) {
-          return false;
+          return (
+            presetRange.start === currentRange.start &&
+            presetRange.end === currentRange.end
+          );
         }
-        return presetValue.every((value, index) => value === currentValue[index]);
-      }
 
-      return presetValue === currentValue;
-    });
+        const presetValue = presetFilters[key];
+        const currentValue = filters[key];
+
+        if (Array.isArray(presetValue)) {
+          if (
+            !Array.isArray(currentValue) ||
+            currentValue.length !== presetValue.length
+          ) {
+            return false;
+          }
+          return presetValue.every(
+            (value, index) => value === currentValue[index],
+          );
+        }
+
+        return presetValue === currentValue;
+      },
+    );
   };
 
   const applyPreset = (presetId: string) => {
@@ -203,8 +225,8 @@ export default function FilterPanel({
                       ? status === 'FIRE'
                         ? 'bg-green-700/50 text-green-300 border-green-600/60'
                         : status === 'WATCH'
-                        ? 'bg-yellow-700/50 text-yellow-300 border-yellow-600/60'
-                        : 'bg-white/20 text-cloud border-white/30'
+                          ? 'bg-yellow-700/50 text-yellow-300 border-yellow-600/60'
+                          : 'bg-white/20 text-cloud border-white/30'
                       : 'bg-white/5 border-white/10 hover:border-white/20'
                   }`}
                 >
@@ -239,7 +261,9 @@ export default function FilterPanel({
                 <input
                   type="checkbox"
                   checked={filters.onlyGamesWithPicks}
-                  onChange={(e) => updateFilters({ onlyGamesWithPicks: e.target.checked })}
+                  onChange={(e) =>
+                    updateFilters({ onlyGamesWithPicks: e.target.checked })
+                  }
                   className="rounded"
                 />
                 Only games with picks
@@ -248,7 +272,9 @@ export default function FilterPanel({
                 <input
                   type="checkbox"
                   checked={filters.hasClearPlay}
-                  onChange={(e) => updateFilters({ hasClearPlay: e.target.checked })}
+                  onChange={(e) =>
+                    updateFilters({ hasClearPlay: e.target.checked })
+                  }
                   className="rounded"
                 />
                 Has clear play
@@ -304,7 +330,12 @@ export default function FilterPanel({
               <select
                 value={filters.minTier || ''}
                 onChange={(e) =>
-                  updateFilters({ minTier: e.target.value ? (e.target.value as DriverTier) : undefined })}
+                  updateFilters({
+                    minTier: e.target.value
+                      ? (e.target.value as DriverTier)
+                      : undefined,
+                  })
+                }
                 className="px-3 py-2 rounded bg-surface border border-white/10 hover:border-white/20"
               >
                 {tierOptions.map((opt) => (
@@ -327,7 +358,9 @@ export default function FilterPanel({
                   <input
                     type="checkbox"
                     checked={filters.hideFragility}
-                    onChange={(e) => updateFilters({ hideFragility: e.target.checked })}
+                    onChange={(e) =>
+                      updateFilters({ hideFragility: e.target.checked })
+                    }
                     className="rounded"
                   />
                   Fragility / Key Numbers
@@ -336,7 +369,9 @@ export default function FilterPanel({
                   <input
                     type="checkbox"
                     checked={filters.hideBlowout}
-                    onChange={(e) => updateFilters({ hideBlowout: e.target.checked })}
+                    onChange={(e) =>
+                      updateFilters({ hideBlowout: e.target.checked })
+                    }
                     className="rounded"
                   />
                   Blowout Risk
@@ -345,7 +380,9 @@ export default function FilterPanel({
                   <input
                     type="checkbox"
                     checked={filters.hideLowCoverage}
-                    onChange={(e) => updateFilters({ hideLowCoverage: e.target.checked })}
+                    onChange={(e) =>
+                      updateFilters({ hideLowCoverage: e.target.checked })
+                    }
                     className="rounded"
                   />
                   Low Coverage
@@ -354,7 +391,9 @@ export default function FilterPanel({
                   <input
                     type="checkbox"
                     checked={filters.hideStaleOdds}
-                    onChange={(e) => updateFilters({ hideStaleOdds: e.target.checked })}
+                    onChange={(e) =>
+                      updateFilters({ hideStaleOdds: e.target.checked })
+                    }
                     className="rounded"
                   />
                   Stale Odds (5+ min)
@@ -370,7 +409,9 @@ export default function FilterPanel({
             </p>
             <select
               value={filters.sortMode}
-              onChange={(e) => updateFilters({ sortMode: e.target.value as SortMode })}
+              onChange={(e) =>
+                updateFilters({ sortMode: e.target.value as SortMode })
+              }
               className="px-3 py-2 rounded bg-surface border border-white/10 hover:border-white/20"
             >
               {sortOptions.map((opt) => (
@@ -390,7 +431,11 @@ export default function FilterPanel({
               {viewMode === 'props' && 'searchTarget' in filters && (
                 <select
                   value={filters.searchTarget}
-                  onChange={(e) => updateFilters({ searchTarget: e.target.value as PropSearchTarget })}
+                  onChange={(e) =>
+                    updateFilters({
+                      searchTarget: e.target.value as PropSearchTarget,
+                    })
+                  }
                   className="px-2 py-1 text-xs rounded bg-surface border border-white/10 hover:border-white/20"
                 >
                   <option value="player">Player</option>
@@ -403,7 +448,11 @@ export default function FilterPanel({
               type="text"
               value={filters.searchQuery}
               onChange={(e) => updateFilters({ searchQuery: e.target.value })}
-              placeholder={viewMode === 'props' ? 'Search by player name...' : 'Search by team name...'}
+              placeholder={
+                viewMode === 'props'
+                  ? 'Search by player name...'
+                  : 'Search by team name...'
+              }
               className="w-full px-3 py-2 rounded bg-surface border border-white/10 hover:border-white/20 focus:border-white/40 focus:outline-none"
             />
           </div>

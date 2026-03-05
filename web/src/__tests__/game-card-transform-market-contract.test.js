@@ -13,28 +13,31 @@ const source = fs.readFileSync(filePath, 'utf8');
 console.log('🧪 Transform market contract source tests');
 
 assert(
-  source.includes('if (play.market_type) {') && source.includes('mapCanonicalToLegacyMarket(play.market_type)'),
-  'transform should prioritize payload market_type before all fallbacks'
+  source.includes('if (play.market_type) {') &&
+    source.includes('mapCanonicalToLegacyMarket(play.market_type)'),
+  'transform should prioritize payload market_type before all fallbacks',
 );
 
 assert(
   source.includes('const secondary = inferCanonicalFromSecondary(play);'),
-  'transform should use recommended/recommendation fallback before title inference'
+  'transform should use recommended/recommendation fallback before title inference',
 );
 
 assert(
   source.includes("reasonCodes.push('LEGACY_TITLE_INFERENCE_USED');"),
-  'transform should mark legacy title inference usage explicitly'
+  'transform should mark legacy title inference usage explicitly',
 );
 
 assert(
   source.includes("reasonCodes.push('PASS_MISSING_MARKET_TYPE');"),
-  'transform should attach deterministic pass reason when canonical market is missing'
+  'transform should attach deterministic pass reason when canonical market is missing',
 );
 
 assert(
-  source.includes('getRiskTagsFromText') && source.includes("'RISK_FRAGILITY'") && source.includes("'RISK_BLOWOUT'"),
-  'risk should be modeled as tags, not as a market bucket'
+  source.includes('getRiskTagsFromText') &&
+    source.includes("'RISK_FRAGILITY'") &&
+    source.includes("'RISK_BLOWOUT'"),
+  'risk should be modeled as tags, not as a market bucket',
 );
 
 console.log('✅ Transform market contract source tests passed');

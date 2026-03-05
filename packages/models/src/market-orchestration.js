@@ -1,13 +1,13 @@
 const Market = Object.freeze({
   TOTAL: 'TOTAL',
   SPREAD: 'SPREAD',
-  ML: 'ML'
+  ML: 'ML',
 });
 
 const DecisionStatus = Object.freeze({
   FIRE: 'FIRE',
   WATCH: 'WATCH',
-  PASS: 'PASS'
+  PASS: 'PASS',
 });
 
 /**
@@ -60,8 +60,8 @@ function computeConflict(drivers) {
   let support = 0;
   let oppose = 0;
   for (const driver of drivers.filter((item) => item.eligible)) {
-    if (driver.signal > 0.10) support += driver.weight;
-    if (driver.signal < -0.10) oppose += driver.weight;
+    if (driver.signal > 0.1) support += driver.weight;
+    if (driver.signal < -0.1) oppose += driver.weight;
   }
   return Math.min(support, oppose);
 }
@@ -83,5 +83,5 @@ module.exports = {
   DecisionStatus,
   renormalizeDriverWeights,
   computeConflict,
-  computeCoverage
+  computeCoverage,
 };

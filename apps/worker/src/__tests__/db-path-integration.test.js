@@ -1,15 +1,15 @@
 /**
  * End-to-End Integration Test: Web + Worker Database Path Alignment
- * 
+ *
  * This test reproduces and validates the fix for the issue:
  * "Error: [DB] Conflicting explicit DB paths detected"
- * 
+ *
  * Scenario:
  * 1. Worker runs models with CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
  * 2. Web app needs to read same database
  * 3. web/.env.local previously hardcoded DATABASE_PATH=/Users/.../cheddar.db
  * 4. Result: Conflict error
- * 
+ *
  * Fix:
  * 1. Remove web/.env.local
  * 2. Use only CHEDDAR_DB_PATH in web startup
@@ -76,7 +76,7 @@ describe('Integration: Worker + Web database path alignment', () => {
       // This is the EXACT error that occurred:
       // CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db (from CLI)
       // DATABASE_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db (from web/.env.local)
-      
+
       const buggyEnv = {
         CHEDDAR_DB_PATH: tmpDbPath,
         DATABASE_PATH: path.join(unixHomeDir, 'packages/data/cheddar.db'),
@@ -84,14 +84,14 @@ describe('Integration: Worker + Web database path alignment', () => {
 
       // This SHOULD throw now because we detect the conflict
       expect(() => resolveDatabasePath({ env: buggyEnv })).toThrow(
-        'Conflicting explicit DB paths detected'
+        'Conflicting explicit DB paths detected',
       );
     });
 
     test('fix: web startup ONLY uses CHEDDAR_DB_PATH', () => {
       // After fix, web/.env.local was deleted
       // Web startup only receives CHEDDAR_DB_PATH from CLI
-      
+
       const fixedEnv = {
         CHEDDAR_DB_PATH: tmpDbPath,
         DATABASE_PATH: '', // No longer in web/.env.local
@@ -126,7 +126,7 @@ describe('Integration: Worker + Web database path alignment', () => {
       };
 
       expect(() => resolveDatabasePath({ env: badStartupEnv })).toThrow(
-        'Conflicting explicit DB paths detected'
+        'Conflicting explicit DB paths detected',
       );
     });
   });
@@ -185,7 +185,7 @@ describe('Integration: Worker + Web database path alignment', () => {
       };
 
       expect(() => resolveDatabasePath({ env })).toThrow(
-        'Conflicting explicit DB paths detected'
+        'Conflicting explicit DB paths detected',
       );
     });
 
@@ -197,7 +197,7 @@ describe('Integration: Worker + Web database path alignment', () => {
       };
 
       expect(() => resolveDatabasePath({ env })).toThrow(
-        'Conflicting explicit DB paths detected'
+        'Conflicting explicit DB paths detected',
       );
     });
 

@@ -20,7 +20,7 @@ import { createSecurityHeaders } from './lib/api-security/security-headers';
 export function middleware() {
   // Create response with security headers
   const response = NextResponse.next();
-  
+
   // Add all security headers
   const securityHeaders = createSecurityHeaders();
   Object.entries(securityHeaders).forEach(([key, value]: [string, string]) => {

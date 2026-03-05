@@ -76,12 +76,14 @@ export const EVENT_SEVERITY_MAP: Record<AuditEventType, AuditEventSeverity> = {
 export const EVENT_DESCRIPTION_MAP: Record<AuditEventType, string> = {
   [AuditEventType.AUTH_TOKEN_GENERATED]: 'JWT token generated for dev/testing',
   [AuditEventType.AUTH_TOKEN_VALID]: 'Token verified successfully',
-  [AuditEventType.AUTH_TOKEN_INVALID]: 'Token signature or claim validation failed',
+  [AuditEventType.AUTH_TOKEN_INVALID]:
+    'Token signature or claim validation failed',
   [AuditEventType.AUTH_TOKEN_EXPIRED]: 'Token has expired',
   [AuditEventType.AUTH_MISSING]: 'Authorization header missing or malformed',
   [AuditEventType.AUTH_ROLE_DENIED]: 'User lacks required role for resource',
 
-  [AuditEventType.RATE_LIMIT_EXCEEDED]: 'Request rate limit exceeded for IP address',
+  [AuditEventType.RATE_LIMIT_EXCEEDED]:
+    'Request rate limit exceeded for IP address',
   [AuditEventType.RATE_LIMIT_WARN]: 'Client approaching rate limit threshold',
 
   [AuditEventType.VALIDATION_ERROR]: 'Request validation failed',
@@ -89,10 +91,13 @@ export const EVENT_DESCRIPTION_MAP: Record<AuditEventType, string> = {
   [AuditEventType.REQUEST_SIZE_EXCEEDED]: 'Request payload exceeds size limit',
   [AuditEventType.MALFORMED_INPUT]: 'Request body or parameters malformed',
 
-  [AuditEventType.SQL_INJECTION_ATTEMPT]: 'Potential SQL injection detected in query',
-  [AuditEventType.SUSPICIOUS_SQL_PATTERN]: 'Suspicious SQL pattern in parameterized query',
+  [AuditEventType.SQL_INJECTION_ATTEMPT]:
+    'Potential SQL injection detected in query',
+  [AuditEventType.SUSPICIOUS_SQL_PATTERN]:
+    'Suspicious SQL pattern in parameterized query',
 
   [AuditEventType.API_SUCCESS]: 'Request processed successfully',
   [AuditEventType.API_ERROR]: 'Request failed with error',
-  [AuditEventType.SUSPICIOUS_REQUEST]: 'Request exhibits suspicious characteristics',
+  [AuditEventType.SUSPICIOUS_REQUEST]:
+    'Request exhibits suspicious characteristics',
 };

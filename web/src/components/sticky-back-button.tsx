@@ -36,7 +36,10 @@ export function StickyBackButton({
     };
   }, [showAfterPx]);
 
-  const hasFallback = useMemo(() => fallbackHref.trim().length > 0, [fallbackHref]);
+  const hasFallback = useMemo(
+    () => fallbackHref.trim().length > 0,
+    [fallbackHref],
+  );
   const isVisible = isScrolled && (canGoBack || hasFallback);
   const label = canGoBack ? 'Back' : fallbackLabel;
 
@@ -66,7 +69,9 @@ export function StickyBackButton({
         'backdrop-blur-sm',
         'shadow-[0_6px_18px_rgba(0,0,0,0.22)]',
         'transition-all duration-200 ease-out',
-        isVisible ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-[6px] opacity-0',
+        isVisible
+          ? 'translate-y-0 opacity-100'
+          : 'pointer-events-none -translate-y-[6px] opacity-0',
         className,
       ].join(' ')}
     >

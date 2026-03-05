@@ -50,14 +50,11 @@ function scoreConservatism(buffer, config) {
   return 0.6;
 }
 
-function computeQuality({
-  l5Shots,
-  gamesObserved,
-  role,
-  buffer,
-  config
-}) {
-  const sampleScore = scoreSampleIntegrity(gamesObserved, config.sampleGamesMax);
+function computeQuality({ l5Shots, gamesObserved, role, buffer, config }) {
+  const sampleScore = scoreSampleIntegrity(
+    gamesObserved,
+    config.sampleGamesMax,
+  );
   const cv = coefficientOfVariation(l5Shots);
   const varianceScore = scoreVariancePreference(cv, config);
   const roleScore = scoreRole(role, config.roleWeights);
@@ -72,11 +69,11 @@ function computeQuality({
       varianceScore: Number(varianceScore.toFixed(3)),
       roleScore: Number(roleScore.toFixed(3)),
       bufferScore: Number(bufferScore.toFixed(3)),
-      cv: cv == null ? null : Number(cv.toFixed(3))
-    }
+      cv: cv == null ? null : Number(cv.toFixed(3)),
+    },
   };
 }
 
 module.exports = {
-  computeQuality
+  computeQuality,
 };

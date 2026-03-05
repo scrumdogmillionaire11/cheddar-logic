@@ -35,7 +35,7 @@ export interface ValidationResult {
  */
 export function validateQueryParams(
   path: string,
-  params: Record<string, string | string[]>
+  params: Record<string, string | string[]>,
 ): ValidationResult {
   const errors: string[] = [];
   const sanitized: Record<string, string | number> = {};
@@ -138,7 +138,10 @@ export function validateQueryParams(
  * @param maxBytes - Maximum allowed size in bytes (default: 1MB)
  * @returns Whether request is within size limit
  */
-export function validateRequestSize(request: Request, maxBytes = 1024 * 1024): boolean {
+export function validateRequestSize(
+  request: Request,
+  maxBytes = 1024 * 1024,
+): boolean {
   const contentLength = request.headers.get('content-length');
   if (!contentLength) return true; // Allow if not specified (GET requests)
 

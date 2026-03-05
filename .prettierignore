@@ -28,6 +28,7 @@ docs/
 
 # Web-specific bundles (handled by web's own linter)
 web-bundles/
+web/src/app/favicon.ico
 
 # Archive & vendor
 cheddar-fpl-sage/archive/

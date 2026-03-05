@@ -6,16 +6,16 @@
 // Production should always use same-origin /api/v1 so Next.js rewrites handle backend routing.
 // NEXT_PUBLIC_FPL_API_URL is kept as a development override only.
 const FPL_API_BASE_URL =
-  process.env.NODE_ENV === "development"
-    ? process.env.NEXT_PUBLIC_FPL_API_URL || "/api/v1"
-    : "/api/v1";
+  process.env.NODE_ENV === 'development'
+    ? process.env.NEXT_PUBLIC_FPL_API_URL || '/api/v1'
+    : '/api/v1';
 
 export interface AnalyzeRequest {
   team_id: number;
   gameweek?: number;
   available_chips?: string[];
   free_transfers?: number;
-  risk_posture?: "conservative" | "balanced" | "aggressive";
+  risk_posture?: 'conservative' | 'balanced' | 'aggressive';
   thresholds?: {
     transferGainFloor?: number;
     hitNetFloor?: number;
@@ -31,7 +31,7 @@ export interface AnalyzeRequest {
   }>;
   injury_overrides?: Array<{
     player_name: string;
-    status: "FIT" | "DOUBTFUL" | "OUT";
+    status: 'FIT' | 'DOUBTFUL' | 'OUT';
     chance?: number;
   }>;
   force_refresh?: boolean;
@@ -113,7 +113,7 @@ export interface TransferPlan {
     name: string;
     price: number;
     points: number;
-    strategy: "VALUE" | "PREMIUM" | "BALANCED";
+    strategy: 'VALUE' | 'PREMIUM' | 'BALANCED';
   }>;
 }
 
@@ -140,7 +140,7 @@ export interface DetailedAnalysisResponse {
   overall_rank?: number | null;
   overall_points?: number | null;
   primary_decision: string;
-  confidence: "HIGH" | "MEDIUM" | "LOW" | string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | string;
   reasoning: string;
   transfer_recommendations: Array<Record<string, unknown>>;
   transfer_plans?: TransferPlans | null;
@@ -195,7 +195,9 @@ export interface AnalysisStatusResponse {
 /**
  * Trigger a new FPL analysis
  */
-export async function triggerAnalysis(request: AnalyzeRequest): Promise<AnalyzeResponse> {
+export async function triggerAnalysis(
+  request: AnalyzeRequest,
+): Promise<AnalyzeResponse> {
   const response = await fetch(`${FPL_API_BASE_URL}/analyze`, {
     method: 'POST',
     headers: {
@@ -208,12 +210,14 @@ export async function triggerAnalysis(request: AnalyzeRequest): Promise<AnalyzeR
     let errorMessage = 'Analysis failed to start';
     try {
       const errorData = await response.json();
-      errorMessage = errorData.detail?.detail || errorData.detail || errorMessage;
+      errorMessage =
+        errorData.detail?.detail || errorData.detail || errorMessage;
     } catch {
       // If response isn't JSON, try to get text
       try {
         const text = await response.text();
-        errorMessage = text || `HTTP ${response.status}: ${response.statusText}`;
+        errorMessage =
+          text || `HTTP ${response.status}: ${response.statusText}`;
       } catch {
         errorMessage = `HTTP ${response.status}: ${response.statusText}`;
       }
@@ -227,8 +231,12 @@ export async function triggerAnalysis(request: AnalyzeRequest): Promise<AnalyzeR
 /**
  * Check analysis status
  */
-export async function getAnalysisStatus(analysisId: string): Promise<AnalysisStatusResponse> {
-  const response = await fetch(`${FPL_API_BASE_URL}/analyze/${analysisId}/status`);
+export async function getAnalysisStatus(
+  analysisId: string,
+): Promise<AnalysisStatusResponse> {
+  const response = await fetch(
+    `${FPL_API_BASE_URL}/analyze/${analysisId}/status`,
+  );
 
   if (!response.ok) {
     let errorMessage = `Failed to fetch analysis status: ${response.statusText}`;
@@ -247,8 +255,12 @@ export async function getAnalysisStatus(analysisId: string): Promise<AnalysisSta
 /**
  * Get dashboard data for a completed analysis
  */
-export async function getDashboardData(analysisId: string): Promise<DashboardData> {
-  const response = await fetch(`${FPL_API_BASE_URL}/analyze/${analysisId}/dashboard`);
+export async function getDashboardData(
+  analysisId: string,
+): Promise<DashboardData> {
+  const response = await fetch(
+    `${FPL_API_BASE_URL}/analyze/${analysisId}/dashboard`,
+  );
 
   if (!response.ok) {
     if (response.status === 202) {
@@ -266,20 +278,24 @@ export async function getDashboardData(analysisId: string): Promise<DashboardDat
   }
 
   const data = await response.json();
-  
+
   // Backend may return 200 with status="analyzing" instead of 202
   if (data.status === 'analyzing' || data.status === 'queued') {
     throw new Error('STILL_RUNNING');
   }
-  
+
   return data;
 }
 
 /**
  * Get detailed projections for a completed analysis
  */
-export async function getDetailedProjections(analysisId: string): Promise<DetailedAnalysisResponse> {
-  const response = await fetch(`${FPL_API_BASE_URL}/analyze/${analysisId}/projections`);
+export async function getDetailedProjections(
+  analysisId: string,
+): Promise<DetailedAnalysisResponse> {
+  const response = await fetch(
+    `${FPL_API_BASE_URL}/analyze/${analysisId}/projections`,
+  );
 
   if (!response.ok) {
     if (response.status === 425 || response.status === 202) {
@@ -305,7 +321,7 @@ export async function getDetailedProjections(analysisId: string): Promise<Detail
 export async function pollForDashboard(
   analysisId: string,
   maxAttempts = 60,
-  intervalMs = 2000
+  intervalMs = 2000,
 ): Promise<DashboardData> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
@@ -314,7 +330,7 @@ export async function pollForDashboard(
     } catch (error) {
       if (error instanceof Error && error.message === 'STILL_RUNNING') {
         // Still running, wait and try again
-        await new Promise(resolve => setTimeout(resolve, intervalMs));
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
         continue;
       }
       throw error;
@@ -330,7 +346,7 @@ export async function pollForDashboard(
 export async function pollForDetailedProjections(
   analysisId: string,
   maxAttempts = 60,
-  intervalMs = 2000
+  intervalMs = 2000,
 ): Promise<DetailedAnalysisResponse> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
@@ -338,7 +354,7 @@ export async function pollForDetailedProjections(
       return data;
     } catch (error) {
       if (error instanceof Error && error.message === 'STILL_RUNNING') {
-        await new Promise(resolve => setTimeout(resolve, intervalMs));
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
         continue;
       }
       throw error;

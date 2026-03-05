@@ -4,14 +4,14 @@ const {
   buildMatchup,
   formatStartTimeLocal,
   formatCountdown,
-  buildMarketFromOdds
+  buildMarketFromOdds,
 } = require('@cheddar-logic/models');
 const { buildDriverSummary, computeWinProbHome } = require('./card-utilities');
 
 /**
  * Unified card factory for all sports (NBA, NHL, NCAAM)
  * Consolidates generateNBACards, generateNHLCards, and generateSingleCard
- * 
+ *
  * @param {Object} params
  * @param {string} params.sport - 'NBA', 'NHL', or 'NCAAM'
  * @param {string} params.gameId - game identifier
@@ -24,7 +24,17 @@ const { buildDriverSummary, computeWinProbHome } = require('./card-utilities');
  * @param {Object} params.driverWeights - sport-specific driver weights
  * @returns {Object} card object
  */
-function generateCard({ sport, gameId, descriptor, oddsSnapshot, marketPayload, now, expiresAt, marketType, driverWeights }) {
+function generateCard({
+  sport,
+  gameId,
+  descriptor,
+  oddsSnapshot,
+  marketPayload,
+  now,
+  expiresAt,
+  marketType,
+  driverWeights,
+}) {
   if (!sport || !gameId || !descriptor || !oddsSnapshot || !now || !expiresAt) {
     throw new Error('Missing required card generation parameters');
   }
@@ -36,11 +46,17 @@ function generateCard({ sport, gameId, descriptor, oddsSnapshot, marketPayload, 
   // Build common card metadata
   const recommendation = buildRecommendationFromPrediction({
     prediction: descriptor.prediction,
-    recommendedBetType: sport === 'NCAAM' ? (marketType || 'moneyline') : 'moneyline'
+    recommendedBetType:
+      sport === 'NCAAM' ? marketType || 'moneyline' : 'moneyline',
   });
 
-  const matchup = buildMatchup(oddsSnapshot?.home_team, oddsSnapshot?.away_team);
-  const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
+  const matchup = buildMatchup(
+    oddsSnapshot?.home_team,
+    oddsSnapshot?.away_team,
+  );
+  const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(
+    oddsSnapshot?.game_time_utc,
+  );
   const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
   const market = buildMarketFromOdds(oddsSnapshot);
 
@@ -60,7 +76,7 @@ function generateCard({ sport, gameId, descriptor, oddsSnapshot, marketPayload, 
       market,
       recommendation,
       driverWeights,
-      marketPayload
+      marketPayload,
     });
   } else if (sport === 'NCAAM') {
     // NCAAM builds payload per market type
@@ -75,7 +91,7 @@ function generateCard({ sport, gameId, descriptor, oddsSnapshot, marketPayload, 
       recommendation,
       marketType,
       driverWeights,
-      now
+      now,
     });
   }
 
@@ -97,18 +113,34 @@ function generateCard({ sport, gameId, descriptor, oddsSnapshot, marketPayload, 
     createdAt: now,
     expiresAt,
     payloadData,
-    modelOutputIds: null
+    modelOutputIds: null,
   };
 }
 
 /**
  * Build payload for NBA/NHL ball sports
  */
-function buildBallSportPayload({ sport, descriptor, oddsSnapshot, matchup, startTimeLocal, timezone, countdown, market, recommendation, driverWeights, marketPayload }) {
-  const projectedMargin = Number.isFinite(descriptor.driverInputs?.projected_margin)
+function buildBallSportPayload({
+  sport,
+  descriptor,
+  oddsSnapshot,
+  matchup,
+  startTimeLocal,
+  timezone,
+  countdown,
+  market,
+  recommendation,
+  driverWeights,
+  marketPayload,
+}) {
+  const projectedMargin = Number.isFinite(
+    descriptor.driverInputs?.projected_margin,
+  )
     ? descriptor.driverInputs.projected_margin
     : null;
-  const projectedTotal = Number.isFinite(descriptor.driverInputs?.projected_total)
+  const projectedTotal = Number.isFinite(
+    descriptor.driverInputs?.projected_total,
+  )
     ? descriptor.driverInputs.projected_total
     : null;
 
@@ -128,12 +160,12 @@ function buildBallSportPayload({ sport, descriptor, oddsSnapshot, matchup, start
     recommendation: {
       type: recommendation.type,
       text: recommendation.text,
-      pass_reason: recommendation.pass_reason
+      pass_reason: recommendation.pass_reason,
     },
     projection: {
       total: projectedTotal,
       margin_home: projectedMargin,
-      win_prob_home: winProbHome
+      win_prob_home: winProbHome,
     },
     market,
     edge: undefined,
@@ -144,23 +176,23 @@ function buildBallSportPayload({ sport, descriptor, oddsSnapshot, matchup, start
     prediction: descriptor.prediction,
     confidence: descriptor.confidence,
     recommended_bet_type: 'moneyline',
-    consistency: (marketPayload?.consistency || {}),
-    expression_choice: (marketPayload?.expression_choice || {}),
-    market_narrative: (marketPayload?.market_narrative || {}),
-    all_markets: (marketPayload?.all_markets || {}),
+    consistency: marketPayload?.consistency || {},
+    expression_choice: marketPayload?.expression_choice || {},
+    market_narrative: marketPayload?.market_narrative || {},
+    all_markets: marketPayload?.all_markets || {},
     tier: descriptor.tier,
     reasoning: descriptor.reasoning,
     driver: {
       key: descriptor.driverKey,
       score: descriptor.driverScore,
       status: descriptor.driverStatus,
-      inputs: descriptor.driverInputs
+      inputs: descriptor.driverInputs,
     },
     driver_summary: buildDriverSummary(descriptor, driverWeights),
     meta: {
       inference_source: descriptor.inference_source,
-      is_mock: descriptor.is_mock
-    }
+      is_mock: descriptor.is_mock,
+    },
   };
 
   return payloadData;
@@ -169,11 +201,27 @@ function buildBallSportPayload({ sport, descriptor, oddsSnapshot, matchup, start
 /**
  * Build payload for NCAAM (college basketball)
  */
-function buildNCAAMPayload({ descriptor, oddsSnapshot, matchup, startTimeLocal, timezone, countdown, market, recommendation, marketType, driverWeights, now }) {
-  const projectedMargin = Number.isFinite(descriptor.driverInputs?.projected_margin)
+function buildNCAAMPayload({
+  descriptor,
+  oddsSnapshot,
+  matchup,
+  startTimeLocal,
+  timezone,
+  countdown,
+  market,
+  recommendation,
+  marketType,
+  driverWeights,
+  now,
+}) {
+  const projectedMargin = Number.isFinite(
+    descriptor.driverInputs?.projected_margin,
+  )
     ? descriptor.driverInputs.projected_margin
     : null;
-  const projectedTotal = Number.isFinite(descriptor.driverInputs?.projected_total)
+  const projectedTotal = Number.isFinite(
+    descriptor.driverInputs?.projected_total,
+  )
     ? descriptor.driverInputs.projected_total
     : null;
 
@@ -188,23 +236,24 @@ function buildNCAAMPayload({ descriptor, oddsSnapshot, matchup, startTimeLocal, 
 
   if (marketType === 'moneyline') {
     price = isPredictionHome
-      ? oddsSnapshot?.h2h_home ?? null
+      ? (oddsSnapshot?.h2h_home ?? null)
       : isPredictionAway
-        ? oddsSnapshot?.h2h_away ?? null
+        ? (oddsSnapshot?.h2h_away ?? null)
         : null;
     isPlayableMarket = (isPredictionHome || isPredictionAway) && price !== null;
   } else if (marketType === 'spread') {
     line = isPredictionHome
-      ? oddsSnapshot?.spread_home ?? null
+      ? (oddsSnapshot?.spread_home ?? null)
       : isPredictionAway
-        ? oddsSnapshot?.spread_away ?? null
+        ? (oddsSnapshot?.spread_away ?? null)
         : null;
     price = isPredictionHome
-      ? oddsSnapshot?.spread_price_home ?? null
+      ? (oddsSnapshot?.spread_price_home ?? null)
       : isPredictionAway
-        ? oddsSnapshot?.spread_price_away ?? null
+        ? (oddsSnapshot?.spread_price_away ?? null)
         : null;
-    isPlayableMarket = (isPredictionHome || isPredictionAway) && line !== null && price !== null;
+    isPlayableMarket =
+      (isPredictionHome || isPredictionAway) && line !== null && price !== null;
   }
 
   const payloadData = {
@@ -221,12 +270,12 @@ function buildNCAAMPayload({ descriptor, oddsSnapshot, matchup, startTimeLocal, 
     recommendation: {
       type: recommendation.type,
       text: recommendation.text,
-      pass_reason: recommendation.pass_reason
+      pass_reason: recommendation.pass_reason,
     },
     projection: {
       total: projectedTotal,
       margin_home: projectedMargin,
-      win_prob_home: winProbHome
+      win_prob_home: winProbHome,
     },
     market,
     market_type: marketType,
@@ -235,7 +284,7 @@ function buildNCAAMPayload({ descriptor, oddsSnapshot, matchup, startTimeLocal, 
     reason_codes: reasonCodes,
     tags: [],
     consistency: {
-      total_bias: 'INSUFFICIENT_DATA'
+      total_bias: 'INSUFFICIENT_DATA',
     },
     tier: descriptor.tier,
     reasoning: descriptor.reasoning,
@@ -249,22 +298,23 @@ function buildNCAAMPayload({ descriptor, oddsSnapshot, matchup, startTimeLocal, 
       spread_price_away: oddsSnapshot?.spread_price_away,
       total_price_over: oddsSnapshot?.total_price_over,
       total_price_under: oddsSnapshot?.total_price_under,
-      captured_at: oddsSnapshot?.captured_at
+      captured_at: oddsSnapshot?.captured_at,
     },
     ev_passed: descriptor.ev_threshold_passed,
-    disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
+    disclaimer:
+      'Analysis provided for educational purposes. Not a recommendation.',
     generated_at: now,
     driver: {
       key: descriptor.driverKey,
       score: descriptor.driverScore,
       status: descriptor.driverStatus,
-      inputs: descriptor.driverInputs
+      inputs: descriptor.driverInputs,
     },
     driver_summary: buildDriverSummary(descriptor, driverWeights),
     meta: {
       inference_source: descriptor.inference_source,
-      is_mock: descriptor.is_mock
-    }
+      is_mock: descriptor.is_mock,
+    },
   };
 
   return payloadData;

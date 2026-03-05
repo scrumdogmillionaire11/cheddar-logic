@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * Backfill Card Results Job
  *
@@ -42,7 +41,11 @@ function parseArgs(argv) {
   return args;
 }
 
-async function backfillCardResults({ jobKey = null, dryRun = false, since = null } = {}) {
+async function backfillCardResults({
+  jobKey = null,
+  dryRun = false,
+  since = null,
+} = {}) {
   const jobRunId = `job-backfill-card-results-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[BackfillCardResults] Starting job run: ${jobRunId}`);
@@ -55,12 +58,16 @@ async function backfillCardResults({ jobKey = null, dryRun = false, since = null
 
   return withDb(async () => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
-      console.log(`[BackfillCardResults] Skipping (already succeeded or running): ${jobKey}`);
+      console.log(
+        `[BackfillCardResults] Skipping (already succeeded or running): ${jobKey}`,
+      );
       return { success: true, jobRunId: null, skipped: true, jobKey };
     }
 
     if (dryRun) {
-      console.log('[BackfillCardResults] DRY_RUN=true — no DB writes will occur');
+      console.log(
+        '[BackfillCardResults] DRY_RUN=true — no DB writes will occur',
+      );
     }
 
     try {
@@ -70,7 +77,9 @@ async function backfillCardResults({ jobKey = null, dryRun = false, since = null
       const sinceClause = since ? 'AND cp.created_at >= ?' : '';
       const params = since ? [since] : [];
 
-      const rows = db.prepare(`
+      const rows = db
+        .prepare(
+          `
         SELECT
           cp.id AS card_id,
           cp.game_id,
@@ -82,9 +91,13 @@ async function backfillCardResults({ jobKey = null, dryRun = false, since = null
         WHERE cr.card_id IS NULL
           ${sinceClause}
         ORDER BY cp.created_at ASC
-      `).all(...params);
+      `,
+        )
+        .all(...params);
 
-      console.log(`[BackfillCardResults] Missing card_results rows: ${rows.length}`);
+      console.log(
+        `[BackfillCardResults] Missing card_results rows: ${rows.length}`,
+      );
 
       let inserted = 0;
       for (const row of rows) {
@@ -107,14 +120,14 @@ async function backfillCardResults({ jobKey = null, dryRun = false, since = null
             });
           } catch (error) {
             console.warn(
-              `[BackfillCardResults] Card ${row.card_id} failed market contract: ${error.code || 'INVALID_MARKET_CONTRACT'} ${error.message}`
+              `[BackfillCardResults] Card ${row.card_id} failed market contract: ${error.code || 'INVALID_MARKET_CONTRACT'} ${error.message}`,
             );
           }
         }
 
         const recommendedBetType = lockedMarket
           ? toRecommendedBetType(lockedMarket.marketType)
-          : (payload?.recommended_bet_type || 'unknown');
+          : payload?.recommended_bet_type || 'unknown';
 
         if (dryRun) {
           inserted++;
@@ -140,7 +153,7 @@ async function backfillCardResults({ jobKey = null, dryRun = false, since = null
           metadata: {
             backfilledAt: new Date().toISOString(),
             marketContractValid: Boolean(lockedMarket),
-          }
+          },
         });
 
         inserted++;
@@ -157,7 +170,10 @@ async function backfillCardResults({ jobKey = null, dryRun = false, since = null
       try {
         markJobRunFailure(jobRunId, error.message);
       } catch (dbError) {
-        console.error('[BackfillCardResults] Failed to record error to DB:', dbError.message);
+        console.error(
+          '[BackfillCardResults] Failed to record error to DB:',
+          dbError.message,
+        );
       }
 
       return { success: false, jobRunId, jobKey, error: error.message };
@@ -168,10 +184,10 @@ async function backfillCardResults({ jobKey = null, dryRun = false, since = null
 if (require.main === module) {
   const args = parseArgs(process.argv.slice(2));
   backfillCardResults({ dryRun: args.dryRun, since: args.since })
-    .then(result => {
+    .then((result) => {
       process.exit(result.success ? 0 : 1);
     })
-    .catch(error => {
+    .catch((error) => {
       console.error('Unhandled error:', error);
       process.exit(1);
     });

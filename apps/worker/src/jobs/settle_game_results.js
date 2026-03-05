@@ -26,18 +26,21 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   shouldRunJobKey,
-  withDb
+  withDb,
 } = require('@cheddar-logic/data');
 
-const { espnGet, fetchScoreboardEvents } = require('../../../../packages/data/src/espn-client');
+const {
+  espnGet,
+  fetchScoreboardEvents,
+} = require('../../../../packages/data/src/espn-client');
 
 /**
  * ESPN sport path mapping
  * Keys are uppercase sport codes from our games table
  */
 const ESPN_SPORT_MAP = {
-  NHL:   'hockey/nhl',
-  NBA:   'basketball/nba',
+  NHL: 'hockey/nhl',
+  NBA: 'basketball/nba',
   NCAAM: 'basketball/mens-college-basketball',
 };
 
@@ -64,12 +67,15 @@ function normalizeTeamName(name) {
 }
 
 function canonicalizeTeamToken(token) {
-  let t = String(token || '').trim().toUpperCase();
+  let t = String(token || '')
+    .trim()
+    .toUpperCase();
   if (!t) return '';
   if (t === 'THE') return '';
   if (t.length === 1 && t !== 'U') return '';
   if (['ST', 'SAINT', 'STATE'].includes(t)) return 'STX';
-  if (['INTL', 'INTL.', 'INT', 'INTL\'', 'INTERNATIONAL'].includes(t)) return 'INTERNATIONAL';
+  if (['INTL', 'INTL.', 'INT', "INTL'", 'INTERNATIONAL'].includes(t))
+    return 'INTERNATIONAL';
   if (['UNIV', 'UNIVERSITY'].includes(t)) return 'UNIVERSITY';
   if (['FT', 'FORT'].includes(t)) return 'FORT';
   if (['MOUNT', 'MT'].includes(t)) return 'MOUNT';
@@ -123,8 +129,8 @@ function eventToComparable(event) {
   const comp = event.competitions?.[0];
   if (!comp || comp.status?.type?.completed !== true) return null;
 
-  const homeComp = comp.competitors?.find(c => c.homeAway === 'home');
-  const awayComp = comp.competitors?.find(c => c.homeAway === 'away');
+  const homeComp = comp.competitors?.find((c) => c.homeAway === 'home');
+  const awayComp = comp.competitors?.find((c) => c.homeAway === 'away');
   if (!homeComp || !awayComp) return null;
 
   const homeName = homeComp.team?.displayName || '';
@@ -133,7 +139,13 @@ function eventToComparable(event) {
   const awayScore = Number.parseFloat(awayComp.score);
   const eventTimeMs = toEpochMs(event.date || comp.date);
 
-  if (!homeName || !awayName || !Number.isFinite(homeScore) || !Number.isFinite(awayScore) || eventTimeMs === null) {
+  if (
+    !homeName ||
+    !awayName ||
+    !Number.isFinite(homeScore) ||
+    !Number.isFinite(awayScore) ||
+    eventTimeMs === null
+  ) {
     return null;
   }
 
@@ -145,7 +157,7 @@ function eventToComparable(event) {
     awayNorm: normalizeTeamName(awayName),
     homeScore,
     awayScore,
-    eventTimeMs
+    eventTimeMs,
   };
 }
 
@@ -162,8 +174,10 @@ function findStrictNameTimeMatch(dbGame, completedEvents) {
 
   const matches = completedEvents
     .map((evt) => {
-      const exactOrientation = evt.homeNorm === homeNorm && evt.awayNorm === awayNorm;
-      const swappedOrientation = evt.homeNorm === awayNorm && evt.awayNorm === homeNorm;
+      const exactOrientation =
+        evt.homeNorm === homeNorm && evt.awayNorm === awayNorm;
+      const swappedOrientation =
+        evt.homeNorm === awayNorm && evt.awayNorm === homeNorm;
       if (!exactOrientation && !swappedOrientation) return null;
       const deltaMinutes = Math.abs(evt.eventTimeMs - gameTimeMs) / 60000;
       if (deltaMinutes > STRICT_MATCH_MAX_DELTA_MINUTES) return null;
@@ -185,16 +199,22 @@ function findStrictNameTimeMatch(dbGame, completedEvents) {
     .filter(Boolean)
     .sort((a, b) => a.deltaMinutes - b.deltaMinutes);
 
-  if (matches.length === 0) return { match: null, reason: 'no_strict_candidate' };
-  if (matches.length > 1 && matches[0].deltaMinutes === matches[1].deltaMinutes) {
+  if (matches.length === 0)
+    return { match: null, reason: 'no_strict_candidate' };
+  if (
+    matches.length > 1 &&
+    matches[0].deltaMinutes === matches[1].deltaMinutes
+  ) {
     return { match: null, reason: 'ambiguous_tie' };
   }
   return {
     match: {
       ...matches[0],
-      method: matches[0].swappedTeams ? 'strict_name_time_swapped' : 'strict_name_time'
+      method: matches[0].swappedTeams
+        ? 'strict_name_time_swapped'
+        : 'strict_name_time',
     },
-    reason: null
+    reason: null,
   };
 }
 
@@ -218,7 +238,10 @@ function findNcaamFuzzyNameTimeMatch(dbGame, completedEvents) {
       return {
         event: evt,
         deltaMinutes,
-        confidence: Math.min(0.89, scoreMatchConfidence(deltaMinutes) * avgSimilarity),
+        confidence: Math.min(
+          0.89,
+          scoreMatchConfidence(deltaMinutes) * avgSimilarity,
+        ),
         swappedTeams: false,
         dbHomeScore: evt.homeScore,
         dbAwayScore: evt.awayScore,
@@ -229,16 +252,18 @@ function findNcaamFuzzyNameTimeMatch(dbGame, completedEvents) {
     })
     .filter(Boolean)
     .sort((a, b) => {
-      if (b.avgSimilarity !== a.avgSimilarity) return b.avgSimilarity - a.avgSimilarity;
+      if (b.avgSimilarity !== a.avgSimilarity)
+        return b.avgSimilarity - a.avgSimilarity;
       return a.deltaMinutes - b.deltaMinutes;
     });
 
-  if (matches.length === 0) return { match: null, reason: 'no_ncaam_fuzzy_candidate' };
+  if (matches.length === 0)
+    return { match: null, reason: 'no_ncaam_fuzzy_candidate' };
 
   if (
-    matches.length > 1
-    && Math.abs(matches[0].avgSimilarity - matches[1].avgSimilarity) < 0.01
-    && Math.abs(matches[0].deltaMinutes - matches[1].deltaMinutes) < 5
+    matches.length > 1 &&
+    Math.abs(matches[0].avgSimilarity - matches[1].avgSimilarity) < 0.01 &&
+    Math.abs(matches[0].deltaMinutes - matches[1].deltaMinutes) < 5
   ) {
     return { match: null, reason: 'ambiguous_ncaam_fuzzy' };
   }
@@ -252,21 +277,30 @@ function findNcaamFuzzyNameTimeMatch(dbGame, completedEvents) {
   };
 }
 
-function findMatchForGame(dbGame, completedEvents, completedEventById, mappedEspnEventId) {
+function findMatchForGame(
+  dbGame,
+  completedEvents,
+  completedEventById,
+  mappedEspnEventId,
+) {
   const gameTimeMs = toEpochMs(dbGame.game_time_utc);
   if (mappedEspnEventId) {
     const mappedEvent = completedEventById.get(String(mappedEspnEventId));
-    if (!mappedEvent) return { match: null, reason: 'mapped_event_not_completed' };
+    if (!mappedEvent)
+      return { match: null, reason: 'mapped_event_not_completed' };
 
     const homeNorm = normalizeTeamName(dbGame.home_team);
     const awayNorm = normalizeTeamName(dbGame.away_team);
-    const exactOrientation = homeNorm === mappedEvent.homeNorm && awayNorm === mappedEvent.awayNorm;
-    const swappedOrientation = homeNorm === mappedEvent.awayNorm && awayNorm === mappedEvent.homeNorm;
+    const exactOrientation =
+      homeNorm === mappedEvent.homeNorm && awayNorm === mappedEvent.awayNorm;
+    const swappedOrientation =
+      homeNorm === mappedEvent.awayNorm && awayNorm === mappedEvent.homeNorm;
     if (!exactOrientation && !swappedOrientation) {
       return { match: null, reason: 'mapped_event_team_mismatch' };
     }
 
-    if (gameTimeMs === null) return { match: null, reason: 'invalid_game_time' };
+    if (gameTimeMs === null)
+      return { match: null, reason: 'invalid_game_time' };
     const deltaMinutes = Math.abs(mappedEvent.eventTimeMs - gameTimeMs) / 60000;
     if (deltaMinutes > MAPPED_ID_MATCH_MAX_DELTA_MINUTES) {
       return { match: null, reason: 'mapped_event_time_too_far' };
@@ -278,11 +312,17 @@ function findMatchForGame(dbGame, completedEvents, completedEventById, mappedEsp
         deltaMinutes,
         confidence: 1.0,
         swappedTeams: swappedOrientation,
-        dbHomeScore: swappedOrientation ? mappedEvent.awayScore : mappedEvent.homeScore,
-        dbAwayScore: swappedOrientation ? mappedEvent.homeScore : mappedEvent.awayScore,
-        method: swappedOrientation ? 'mapped_event_id_swapped' : 'mapped_event_id',
+        dbHomeScore: swappedOrientation
+          ? mappedEvent.awayScore
+          : mappedEvent.homeScore,
+        dbAwayScore: swappedOrientation
+          ? mappedEvent.homeScore
+          : mappedEvent.awayScore,
+        method: swappedOrientation
+          ? 'mapped_event_id_swapped'
+          : 'mapped_event_id',
       },
-      reason: null
+      reason: null,
     };
   }
 
@@ -319,7 +359,11 @@ async function fetchComparableEventFromSummary(espnPath, eventId) {
  * @param {boolean} options.dryRun - If true, skip execution (log only)
  * @param {number} options.minHoursAfterStart - Minimum hours after start time before settling
  */
-async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterStart = 3 } = {}) {
+async function settleGameResults({
+  jobKey = null,
+  dryRun = false,
+  minHoursAfterStart = 3,
+} = {}) {
   const jobRunId = `job-settle-games-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[SettleGames] Starting job run: ${jobRunId}`);
@@ -334,13 +378,17 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
   return withDb(async () => {
     // Check idempotency if jobKey provided
     if (jobKey && !shouldRunJobKey(jobKey)) {
-      console.log(`[SettleGames] Skipping (already succeeded or running): ${jobKey}`);
+      console.log(
+        `[SettleGames] Skipping (already succeeded or running): ${jobKey}`,
+      );
       return { success: true, jobRunId: null, skipped: true, jobKey };
     }
 
     // DRY_RUN mode (log only, no execution)
     if (dryRun) {
-      console.log(`[SettleGames] DRY_RUN=true — would run jobKey=${jobKey || 'none'}`);
+      console.log(
+        `[SettleGames] DRY_RUN=true — would run jobKey=${jobKey || 'none'}`,
+      );
       return { success: true, jobRunId: null, dryRun: true, jobKey };
     }
 
@@ -350,9 +398,13 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
 
       const db = getDatabase();
       const now = new Date();
-      const safeHoursAfterStart = Number.isFinite(minHoursAfterStart) ? Math.max(0, minHoursAfterStart) : 3;
+      const safeHoursAfterStart = Number.isFinite(minHoursAfterStart)
+        ? Math.max(0, minHoursAfterStart)
+        : 3;
       // Allow faster settlement when upstream confirms status is final
-      const cutoffUtc = new Date(now.getTime() - safeHoursAfterStart * 60 * 60 * 1000).toISOString();
+      const cutoffUtc = new Date(
+        now.getTime() - safeHoursAfterStart * 60 * 60 * 1000,
+      ).toISOString();
 
       // Query only games with pending cards, past cutoff, and not yet final.
       // This narrows blast radius and avoids settling schedule-only rows.
@@ -376,12 +428,23 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
       `);
 
       const pendingGames = pendingGamesStmt.all(cutoffUtc);
-      console.log(`[SettleGames] Found ${pendingGames.length} unsettled past games`);
+      console.log(
+        `[SettleGames] Found ${pendingGames.length} unsettled past games`,
+      );
 
       if (pendingGames.length === 0) {
         markJobRunSuccess(jobRunId);
-        console.log('[SettleGames] Job complete — 0 games settled (none pending)');
-        return { success: true, jobRunId, jobKey, gamesSettled: 0, sportsProcessed: [], errors: [] };
+        console.log(
+          '[SettleGames] Job complete — 0 games settled (none pending)',
+        );
+        return {
+          success: true,
+          jobRunId,
+          jobKey,
+          gamesSettled: 0,
+          sportsProcessed: [],
+          errors: [],
+        };
       }
 
       // Group games by sport for ESPN API efficiency
@@ -399,7 +462,9 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
       for (const [sport, sportGames] of Object.entries(bySport)) {
         const espnPath = ESPN_SPORT_MAP[sport];
         if (!espnPath) {
-          console.log(`[SettleGames] No ESPN mapping for sport: ${sport} — skipping`);
+          console.log(
+            `[SettleGames] No ESPN mapping for sport: ${sport} — skipping`,
+          );
           continue;
         }
 
@@ -415,7 +480,9 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
           dateSet.add(nextDay.toISOString().slice(0, 10).replace(/-/g, ''));
         }
 
-        console.log(`[SettleGames] Fetching ESPN scoreboard for ${sport} — dates: ${[...dateSet].join(', ')}`);
+        console.log(
+          `[SettleGames] Fetching ESPN scoreboard for ${sport} — dates: ${[...dateSet].join(', ')}`,
+        );
 
         // Fetch all dated scoreboards and merge events (dedup by ESPN event ID).
         // Without a date param ESPN returns today's scoreboard, which misses
@@ -426,11 +493,13 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
           const scoreboardEvents = await fetchScoreboardEvents(
             espnPath,
             dateStr,
-            ESPN_SCOREBOARD_OPTIONS_BY_SPORT[sport] || null
+            ESPN_SCOREBOARD_OPTIONS_BY_SPORT[sport] || null,
           );
 
           if (!scoreboardEvents || scoreboardEvents.length === 0) {
-            console.warn(`[SettleGames] No scoreboard data for ${sport} on ${dateStr}`);
+            console.warn(
+              `[SettleGames] No scoreboard data for ${sport} on ${dateStr}`,
+            );
             fetchErrors++;
             continue;
           }
@@ -443,73 +512,106 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
         }
 
         if (eventMap.size === 0 && fetchErrors === dateSet.size) {
-          console.warn(`[SettleGames] All scoreboard fetches failed for ${sport}`);
-          errors.push(`${sport}: ESPN scoreboard returned no data for any date`);
+          console.warn(
+            `[SettleGames] All scoreboard fetches failed for ${sport}`,
+          );
+          errors.push(
+            `${sport}: ESPN scoreboard returned no data for any date`,
+          );
           continue;
         }
 
         const events = [...eventMap.values()];
-        console.log(`[SettleGames] ${sport}: ${events.length} ESPN events across ${dateSet.size} date(s), ${sportGames.length} DB games to match`);
+        console.log(
+          `[SettleGames] ${sport}: ${events.length} ESPN events across ${dateSet.size} date(s), ${sportGames.length} DB games to match`,
+        );
         sportsProcessed.push(sport);
 
         // Only work with completed events with parseable teams/scores.
-        let completedEvents = events
-          .map(eventToComparable)
-          .filter(Boolean);
-        const completedEventById = new Map(completedEvents.map((e) => [e.id, e]));
+        let completedEvents = events.map(eventToComparable).filter(Boolean);
+        const completedEventById = new Map(
+          completedEvents.map((e) => [e.id, e]),
+        );
         const eventUseById = new Map();
 
         const normalizedSport = String(sport).toLowerCase();
-        const mappedRows = db.prepare(`
+        const mappedRows = db
+          .prepare(
+            `
           SELECT game_id, external_game_id
           FROM game_id_map
           WHERE sport = ?
             AND provider = 'espn'
-        `).all(normalizedSport);
-        const mappedEspnEventIdByGameId = new Map(mappedRows.map((row) => [String(row.game_id), String(row.external_game_id)]));
+        `,
+          )
+          .all(normalizedSport);
+        const mappedEspnEventIdByGameId = new Map(
+          mappedRows.map((row) => [
+            String(row.game_id),
+            String(row.external_game_id),
+          ]),
+        );
 
-        const mappedIdsToHydrate = [...new Set(
-          sportGames
-            .map((game) => mappedEspnEventIdByGameId.get(String(game.game_id)))
-            .filter((eventId) => eventId && !completedEventById.has(String(eventId)))
-        )];
+        const mappedIdsToHydrate = [
+          ...new Set(
+            sportGames
+              .map((game) =>
+                mappedEspnEventIdByGameId.get(String(game.game_id)),
+              )
+              .filter(
+                (eventId) =>
+                  eventId && !completedEventById.has(String(eventId)),
+              ),
+          ),
+        ];
 
         let hydratedCompletedEvents = 0;
         for (const eventId of mappedIdsToHydrate) {
           try {
-            const comparable = await fetchComparableEventFromSummary(espnPath, String(eventId));
+            const comparable = await fetchComparableEventFromSummary(
+              espnPath,
+              String(eventId),
+            );
             if (!comparable) continue;
             if (!completedEventById.has(comparable.id)) {
               completedEventById.set(comparable.id, comparable);
               hydratedCompletedEvents++;
             }
           } catch (summaryErr) {
-            console.warn(`[SettleGames] Failed to hydrate ESPN summary for event ${eventId}: ${summaryErr.message}`);
+            console.warn(
+              `[SettleGames] Failed to hydrate ESPN summary for event ${eventId}: ${summaryErr.message}`,
+            );
           }
         }
 
         if (hydratedCompletedEvents > 0) {
           completedEvents = [...completedEventById.values()];
-          console.log(`[SettleGames] ${sport}: hydrated ${hydratedCompletedEvents} completed event(s) from mapped ESPN IDs`);
+          console.log(
+            `[SettleGames] ${sport}: hydrated ${hydratedCompletedEvents} completed event(s) from mapped ESPN IDs`,
+          );
         }
 
-        console.log(`[SettleGames] ${sport}: ${completedEvents.length} completed events on ESPN`);
+        console.log(
+          `[SettleGames] ${sport}: ${completedEvents.length} completed events on ESPN`,
+        );
 
         for (const dbGame of sportGames) {
           const mappedEspnEventId =
-            mappedEspnEventIdByGameId.get(String(dbGame.game_id))
-            || (/^\d+$/.test(String(dbGame.game_id)) ? String(dbGame.game_id) : null);
+            mappedEspnEventIdByGameId.get(String(dbGame.game_id)) ||
+            (/^\d+$/.test(String(dbGame.game_id))
+              ? String(dbGame.game_id)
+              : null);
           const { match, reason } = findMatchForGame(
             dbGame,
             completedEvents,
             completedEventById,
-            mappedEspnEventId
+            mappedEspnEventId,
           );
 
           if (!match) {
             console.warn(
               `[SettleGames] No safe ESPN match for ${dbGame.game_id} (${dbGame.home_team} vs ${dbGame.away_team})` +
-              ` reason=${reason} mappedEspnEventId=${mappedEspnEventId || 'none'}`
+                ` reason=${reason} mappedEspnEventId=${mappedEspnEventId || 'none'}`,
             );
             continue;
           }
@@ -526,11 +628,13 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
 
           console.log(
             `[SettleGames] Settling ${dbGame.game_id}: ${dbGame.home_team} ${match.dbHomeScore} - ${match.dbAwayScore} ${dbGame.away_team}` +
-            ` (event=${match.event.id}, method=${match.method}, delta=${match.deltaMinutes.toFixed(1)}m)`
+              ` (event=${match.event.id}, method=${match.method}, delta=${match.deltaMinutes.toFixed(1)}m)`,
           );
 
           if (dryRun) {
-            console.log(`[SettleGames] DRY_RUN: would upsert game_result for ${dbGame.game_id}`);
+            console.log(
+              `[SettleGames] DRY_RUN: would upsert game_result for ${dbGame.game_id}`,
+            );
             gamesSettled++;
             continue;
           }
@@ -550,27 +654,37 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
                 matchMethod: match.method,
                 matchConfidence: match.confidence,
                 expectedEspnEventId: mappedEspnEventId,
-                timeDeltaMinutes: Number(match.deltaMinutes.toFixed(2))
-              }
+                timeDeltaMinutes: Number(match.deltaMinutes.toFixed(2)),
+              },
             });
             gamesSettled++;
           } catch (gameErr) {
-            console.error(`[SettleGames] Error upserting result for ${dbGame.game_id}: ${gameErr.message}`);
+            console.error(
+              `[SettleGames] Error upserting result for ${dbGame.game_id}: ${gameErr.message}`,
+            );
             errors.push(`${dbGame.game_id}: ${gameErr.message}`);
           }
         }
       }
 
       markJobRunSuccess(jobRunId);
-      console.log(`[SettleGames] Job complete — ${gamesSettled} games settled across ${sportsProcessed.join(', ') || 'no sports'}`);
+      console.log(
+        `[SettleGames] Job complete — ${gamesSettled} games settled across ${sportsProcessed.join(', ') || 'no sports'}`,
+      );
 
       if (errors.length > 0) {
         console.log(`[SettleGames] ${errors.length} errors:`);
-        errors.forEach(e => console.log(`  - ${e}`));
+        errors.forEach((e) => console.log(`  - ${e}`));
       }
 
-      return { success: true, jobRunId, jobKey, gamesSettled, sportsProcessed, errors };
-
+      return {
+        success: true,
+        jobRunId,
+        jobKey,
+        gamesSettled,
+        sportsProcessed,
+        errors,
+      };
     } catch (error) {
       console.error(`[SettleGames] Job failed:`, error.message);
       console.error(error.stack);
@@ -578,7 +692,10 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
       try {
         markJobRunFailure(jobRunId, error.message);
       } catch (dbError) {
-        console.error(`[SettleGames] Failed to record error to DB:`, dbError.message);
+        console.error(
+          `[SettleGames] Failed to record error to DB:`,
+          dbError.message,
+        );
       }
 
       return { success: false, jobRunId, jobKey, error: error.message };
@@ -589,10 +706,10 @@ async function settleGameResults({ jobKey = null, dryRun = false, minHoursAfterS
 // CLI execution
 if (require.main === module) {
   settleGameResults()
-    .then(result => {
+    .then((result) => {
       process.exit(result.success ? 0 : 1);
     })
-    .catch(error => {
+    .catch((error) => {
       console.error('Unhandled error:', error);
       process.exit(1);
     });
@@ -612,5 +729,5 @@ module.exports = {
     findMatchForGame,
     getGameSignature,
     scoreMatchConfidence,
-  }
+  },
 };

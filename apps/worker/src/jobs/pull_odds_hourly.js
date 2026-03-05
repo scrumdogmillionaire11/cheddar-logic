@@ -1,17 +1,17 @@
 /**
  * Pull Odds Hourly Job
- * 
+ *
  * Fetches current odds from The Odds API and persists both:
  * - game records (with start times)
  * - odds snapshots
- * 
+ *
  * Makes games table authoritative for scheduler time-window queries.
- * 
+ *
  * Portable job runner that can be called from:
  * - A cron job (node apps/worker/src/jobs/pull_odds_hourly.js)
  * - A scheduler daemon (apps/worker/src/schedulers/main.js)
  * - CLI (npm run job:pull-odds)
- * 
+ *
  * Exit codes:
  *   0 = success
  *   1 = failure
@@ -27,14 +27,18 @@ const {
   shouldRunJobKey,
   upsertGame,
   insertOddsSnapshot,
-  withDb
+  withDb,
 } = require('@cheddar-logic/data');
 
 const { settleGameResults } = require('./settle_game_results');
 const { settlePendingCards } = require('./settle_pending_cards');
 
 // Import odds fetching package (no DB writes)
-const { fetchOdds, getActiveSports, getTokensForFetch } = require('@cheddar-logic/odds');
+const {
+  fetchOdds,
+  getActiveSports,
+  getTokensForFetch,
+} = require('@cheddar-logic/odds');
 
 /**
  * Main job entrypoint
@@ -54,13 +58,17 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
   return withDb(async () => {
     // Check idempotency if jobKey provided
     if (jobKey && !shouldRunJobKey(jobKey)) {
-      console.log(`[PullOdds] ⏭️  Skipping (already succeeded or running): ${jobKey}`);
+      console.log(
+        `[PullOdds] ⏭️  Skipping (already succeeded or running): ${jobKey}`,
+      );
       return { success: true, jobRunId: null, skipped: true, jobKey };
     }
 
     // DRY_RUN mode (log only, no execution)
     if (dryRun) {
-      console.log(`[PullOdds] 🔍 DRY_RUN=true — would run jobKey=${jobKey || 'none'}`);
+      console.log(
+        `[PullOdds] 🔍 DRY_RUN=true — would run jobKey=${jobKey || 'none'}`,
+      );
       return { success: true, jobRunId: null, dryRun: true, jobKey };
     }
 
@@ -68,7 +76,7 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       // Start job run
       console.log('[PullOdds] Recording job start...');
       insertJobRun('pull_odds_hourly', jobRunId, jobKey);
-  
+
       // Fetch odds for active sports (driven by packages/odds/src/config.js active flags)
       // To add/remove sports, update the `active` field in config.js — not here.
       const activeSports = getActiveSports();
@@ -81,9 +89,11 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       // The Odds API free tier: 500 tokens/month → not viable for production
       // Paid tier: 10,000+ tokens/month → 192/day = 5,760/month (OK on starter plan)
       const tokenCost = getTokensForFetch(activeSports);
-      console.log(`[PullOdds] Active sports (from config): ${activeSports.join(', ')} | tokens/fetch: ${tokenCost} | ~${tokenCost * 24}/day`);
+      console.log(
+        `[PullOdds] Active sports (from config): ${activeSports.join(', ')} | tokens/fetch: ${tokenCost} | ~${tokenCost * 24}/day`,
+      );
       console.log(`[PullOdds] Fetching odds for: ${activeSports.join(', ')}`);
-  
+
       let gamesUpserted = 0;
       let snapshotsInserted = 0;
       let skippedMissingFields = 0;
@@ -93,20 +103,25 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
         try {
           console.log(`[PullOdds] Processing ${sport}...`);
 
-          const { games: normalizedGames, errors: fetchErrors, rawCount } = await fetchOdds({
+          const {
+            games: normalizedGames,
+            errors: fetchErrors,
+            rawCount,
+          } = await fetchOdds({
             sport,
-            hoursAhead: 36
+            hoursAhead: 36,
           });
 
           if (fetchErrors && fetchErrors.length > 0) {
-            fetchErrors.forEach(errorMessage => {
+            fetchErrors.forEach((errorMessage) => {
               console.error(`[PullOdds]   ❌ ${errorMessage}`);
               errors.push(`${sport}: ${errorMessage}`);
             });
           }
 
           // Accumulate skipped game count
-          skippedMissingFields += (rawCount - (normalizedGames ? normalizedGames.length : 0));
+          skippedMissingFields +=
+            rawCount - (normalizedGames ? normalizedGames.length : 0);
 
           // Contract check: skip this sport if normalization drops >40% of games
           // Use continue (not return) so other sports are not aborted
@@ -135,7 +150,7 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 homeTeam: normalized.homeTeam,
                 awayTeam: normalized.awayTeam,
                 gameTimeUtc: normalized.gameTimeUtc,
-                status: 'scheduled'
+                status: 'scheduled',
               });
               gamesUpserted++;
 
@@ -157,60 +172,82 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 monelineHome: normalized.odds?.monelineHome,
                 monelineAway: normalized.odds?.monelineAway,
                 rawData: normalized.market,
-                jobRunId
+                jobRunId,
               });
               snapshotsInserted++;
             } catch (gameErr) {
-              errors.push(`${sport}/${normalized?.gameId || 'unknown'}: ${gameErr.message}`);
+              errors.push(
+                `${sport}/${normalized?.gameId || 'unknown'}: ${gameErr.message}`,
+              );
             }
           }
         } catch (sportErr) {
-          console.error(`[PullOdds]   ❌ Error fetching ${sport}: ${sportErr.message}`);
+          console.error(
+            `[PullOdds]   ❌ Error fetching ${sport}: ${sportErr.message}`,
+          );
           errors.push(`${sport}: ${sportErr.message}`);
         }
       }
 
       // Mark success
       markJobRunSuccess(jobRunId);
-      console.log(`[PullOdds] ✅ Job complete: ${gamesUpserted} games upserted, ${snapshotsInserted} snapshots inserted`);
-      
+      console.log(
+        `[PullOdds] ✅ Job complete: ${gamesUpserted} games upserted, ${snapshotsInserted} snapshots inserted`,
+      );
+
       if (errors.length > 0) {
         console.log(`[PullOdds] ⚠️  ${errors.length} errors:`);
-        errors.forEach(e => console.log(`  - ${e}`));
+        errors.forEach((e) => console.log(`  - ${e}`));
       }
 
       if (process.env.ENABLE_SETTLEMENT !== 'false') {
-        const settleKey = jobKey ? `settle|after-odds|${jobKey}` : `settle|after-odds|${jobRunId}`;
-        console.log(`[PullOdds] Triggering settlement sweep after odds update (${settleKey})...`);
+        const settleKey = jobKey
+          ? `settle|after-odds|${jobKey}`
+          : `settle|after-odds|${jobRunId}`;
+        console.log(
+          `[PullOdds] Triggering settlement sweep after odds update (${settleKey})...`,
+        );
 
         try {
           await settleGameResults({
             jobKey: `${settleKey}|games`,
             dryRun,
-            minHoursAfterStart: 0
+            minHoursAfterStart: 0,
           });
 
           await settlePendingCards({
             jobKey: `${settleKey}|cards`,
-            dryRun
+            dryRun,
           });
         } catch (settleErr) {
-          console.warn(`[PullOdds] Settlement sweep failed: ${settleErr.message}`);
+          console.warn(
+            `[PullOdds] Settlement sweep failed: ${settleErr.message}`,
+          );
         }
       }
 
-      return { success: true, jobRunId, jobKey, gamesUpserted, snapshotsInserted, skippedMissingFields, errors };
-  
+      return {
+        success: true,
+        jobRunId,
+        jobKey,
+        gamesUpserted,
+        snapshotsInserted,
+        skippedMissingFields,
+        errors,
+      };
     } catch (error) {
       console.error(`[PullOdds] ❌ Job failed:`, error.message);
       console.error(error.stack);
-  
+
       try {
         markJobRunFailure(jobRunId, error.message);
       } catch (dbError) {
-        console.error(`[PullOdds] Failed to record error to DB:`, dbError.message);
+        console.error(
+          `[PullOdds] Failed to record error to DB:`,
+          dbError.message,
+        );
       }
-  
+
       return { success: false, jobRunId, jobKey, error: error.message };
     }
   });
@@ -219,14 +256,13 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
 // CLI execution
 if (require.main === module) {
   pullOddsHourly()
-    .then(result => {
+    .then((result) => {
       process.exit(result.success ? 0 : 1);
     })
-    .catch(error => {
+    .catch((error) => {
       console.error('Unhandled error:', error);
       process.exit(1);
     });
 }
 
 module.exports = { pullOddsHourly };
-

@@ -11,7 +11,7 @@
  */
 export function buildInClause(
   column: string,
-  values: Array<string | number>
+  values: Array<string | number>,
 ): { clause: string; params: Array<string | number> } {
   if (!values.length) {
     return {
@@ -38,7 +38,7 @@ export function buildInClause(
  *   const rows = db.prepare(sql).all(...where.params);
  */
 export function buildWhereClause(
-  conditions: Record<string, string | number | boolean | null>
+  conditions: Record<string, string | number | boolean | null>,
 ): { sql: string; params: Array<string | number> } {
   const parts: string[] = [];
   const params: Array<string | number> = [];
@@ -67,7 +67,7 @@ export function buildWhereClause(
 export function buildLikeClause(
   column: string,
   pattern: string,
-  escapeWildcards = true
+  escapeWildcards = true,
 ): { clause: string; params: [string] } {
   let safePattern = pattern;
 
@@ -91,7 +91,7 @@ export function buildLikeClause(
 export function buildOrderByClause(
   column: string,
   direction: 'ASC' | 'DESC',
-  allowedColumns: Set<string>
+  allowedColumns: Set<string>,
 ): { sql: string } {
   if (!allowedColumns.has(column)) {
     throw new Error(`Invalid column name for ORDER BY: ${column}`);
@@ -109,7 +109,7 @@ export function buildOrderByClause(
  */
 export function buildLimitClause(
   limit: number,
-  offset = 0
+  offset = 0,
 ): { sql: string; params: [number, number] } {
   const safeLimit = Math.max(0, Math.min(limit, 10000)); // Cap at 10k
   const safeOffset = Math.max(0, offset);

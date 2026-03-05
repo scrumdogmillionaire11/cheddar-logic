@@ -13,7 +13,11 @@ async function run() {
   const baseUrl = process.env.CARDS_API_BASE_URL || DEFAULT_BASE_URL;
   const response = await fetch(`${baseUrl}/api/results?limit=5`);
 
-  assert.strictEqual(response.ok, true, `API response not ok: ${response.status}`);
+  assert.strictEqual(
+    response.ok,
+    true,
+    `API response not ok: ${response.status}`,
+  );
 
   const payload = await response.json();
   assert.strictEqual(payload.success, true, 'API returned success=false');
@@ -21,10 +25,21 @@ async function run() {
 
   const summary = payload.data.summary;
   assert.ok(summary, 'Summary missing');
-  ['totalCards', 'settledCards', 'wins', 'losses', 'pushes', 'totalPnlUnits', 'winRate', 'avgPnl']
-    .forEach((key) => {
-      assert.ok(Object.prototype.hasOwnProperty.call(summary, key), `Summary missing ${key}`);
-    });
+  [
+    'totalCards',
+    'settledCards',
+    'wins',
+    'losses',
+    'pushes',
+    'totalPnlUnits',
+    'winRate',
+    'avgPnl',
+  ].forEach((key) => {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(summary, key),
+      `Summary missing ${key}`,
+    );
+  });
 
   assert.ok(Array.isArray(payload.data.segments), 'Segments is not an array');
   assert.ok(Array.isArray(payload.data.ledger), 'Ledger is not an array');

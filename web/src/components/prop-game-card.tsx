@@ -1,6 +1,6 @@
 /**
  * PropGameCard Component
- * 
+ *
  * Displays a game with all player prop projections listed as rows
  * Designed for player props view - shows multiple plays per game
  */
@@ -68,10 +68,10 @@ const getStatusBadge = (status: PropPlayRow['status']) => {
 
 export default function PropGameCardComponent({ card }: PropGameCardProps) {
   const [isExpanded, setIsExpanded] = useState(card.propPlays.length <= 5);
-  
+
   const displayPlays = isExpanded ? card.propPlays : card.propPlays.slice(0, 5);
   const hasMore = card.propPlays.length > 5;
-  
+
   return (
     <article className="rounded-xl border border-white/10 bg-night shadow-lg overflow-hidden">
       {/* Game Header */}
@@ -91,22 +91,23 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
             </span>
           )}
         </div>
-        
+
         <div className="text-lg font-bold text-sage-white">
           {card.awayTeam} @ {card.homeTeam}
         </div>
-        
+
         {/* Optional odds context */}
         {(card.moneyline || card.total) && (
           <div className="mt-2 flex gap-4 text-xs text-cloud/60">
             {card.moneyline && (
               <span>
-                ML: {card.homeTeam.split(' ').pop()} {formatOdds(card.moneyline.home)} / {card.awayTeam.split(' ').pop()} {formatOdds(card.moneyline.away)}
+                ML: {card.homeTeam.split(' ').pop()}{' '}
+                {formatOdds(card.moneyline.home)} /{' '}
+                {card.awayTeam.split(' ').pop()}{' '}
+                {formatOdds(card.moneyline.away)}
               </span>
             )}
-            {card.total && (
-              <span>O/U {card.total.line}</span>
-            )}
+            {card.total && <span>O/U {card.total.line}</span>}
           </div>
         )}
       </div>
@@ -116,7 +117,7 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
         <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-cloud/60">
           Player Projections ({card.propPlays.length})
         </div>
-        
+
         <div className="space-y-2">
           {displayPlays.map((prop, idx) => (
             <div
@@ -134,7 +135,9 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                       {prop.teamAbbr ? ` · ${prop.teamAbbr}` : ''}
                     </div>
                   </div>
-                  <span className={getStatusBadge(prop.status)}>{prop.status}</span>
+                  <span className={getStatusBadge(prop.status)}>
+                    {prop.status}
+                  </span>
                 </div>
 
                 <div className="grid gap-3">
@@ -143,7 +146,8 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                       Model Snapshot
                     </div>
                     <div className="mt-1 text-sm font-semibold text-cloud">
-                      Proj {formatNumber(prop.mu ?? prop.projection)} vs Fair Line {formatNumber(prop.suggestedLine ?? prop.line)}
+                      Proj {formatNumber(prop.mu ?? prop.projection)} vs Fair
+                      Line {formatNumber(prop.suggestedLine ?? prop.line)}
                     </div>
                     <div className="mt-1 text-xs text-cloud/70">
                       Conf {formatPercent(prop.confidence)}
@@ -151,18 +155,26 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                     <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
                       <div
                         className="h-1.5 rounded-full bg-teal"
-                        style={{ width: `${Math.min(Math.max((prop.confidence ?? 0) * 100, 0), 100)}%` }}
+                        style={{
+                          width: `${Math.min(Math.max((prop.confidence ?? 0) * 100, 0), 100)}%`,
+                        }}
                       />
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-cloud/60">
                       {prop.isTrending !== undefined && (
-                        <span className={`rounded-full border px-2 py-0.5 ${prop.isTrending ? 'border-teal/40 text-teal' : 'border-cloud/30 text-cloud/60'}`}>
+                        <span
+                          className={`rounded-full border px-2 py-0.5 ${prop.isTrending ? 'border-teal/40 text-teal' : 'border-cloud/30 text-cloud/60'}`}
+                        >
                           {prop.isTrending ? 'Trending' : 'Not Trending'}
                         </span>
                       )}
                       {prop.roleGatePass !== undefined && (
-                        <span className={`rounded-full border px-2 py-0.5 ${prop.roleGatePass ? 'border-teal/40 text-teal' : 'border-rose/40 text-rose'}`}>
-                          {prop.roleGatePass ? 'Role Gate Pass' : 'Role Gate Fail'}
+                        <span
+                          className={`rounded-full border px-2 py-0.5 ${prop.roleGatePass ? 'border-teal/40 text-teal' : 'border-rose/40 text-rose'}`}
+                        >
+                          {prop.roleGatePass
+                            ? 'Role Gate Pass'
+                            : 'Role Gate Fail'}
                         </span>
                       )}
                       {prop.dataQuality && (
@@ -174,7 +186,10 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                     {prop.reasonCodes && prop.reasonCodes.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-cloud/50">
                         {prop.reasonCodes.slice(0, 3).map((code) => (
-                          <span key={code} className="rounded-full border border-cloud/20 px-2 py-0.5">
+                          <span
+                            key={code}
+                            className="rounded-full border border-cloud/20 px-2 py-0.5"
+                          >
                             {code}
                           </span>
                         ))}
@@ -185,9 +200,13 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                         )}
                       </div>
                     )}
-                    {(prop.l5Sog && prop.l5Sog.length > 0) || (prop.l5Mean !== null && prop.l5Mean !== undefined) ? (
+                    {(prop.l5Sog && prop.l5Sog.length > 0) ||
+                    (prop.l5Mean !== null && prop.l5Mean !== undefined) ? (
                       <div className="mt-2 text-xs text-cloud/60">
-                        L5: {prop.l5Sog && prop.l5Sog.length > 0 ? prop.l5Sog.join(', ') : '—'}
+                        L5:{' '}
+                        {prop.l5Sog && prop.l5Sog.length > 0
+                          ? prop.l5Sog.join(', ')
+                          : '—'}
                         {' • '}L5 Avg {formatNumber(getAverage(prop.l5Sog), 2)}
                         {' • '}L5 Mean {formatNumber(prop.l5Mean, 2)}
                       </div>
@@ -198,7 +217,7 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
             </div>
           ))}
         </div>
-        
+
         {/* Expand/Collapse */}
         {hasMore && (
           <button
@@ -208,7 +227,7 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
             {isExpanded ? 'Show Less' : `Show All (${card.propPlays.length})`}
           </button>
         )}
-        
+
         {/* Odds Updated Footer */}
         {card.oddsUpdatedUtc && (
           <div className="mt-4 pt-3 border-t border-white/10 text-xs text-cloud/40">

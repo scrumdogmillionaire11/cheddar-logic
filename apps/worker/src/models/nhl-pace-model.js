@@ -24,22 +24,22 @@
 // ============================================================================
 // Constants (from cheddar-nhl ModelConfig, 2024-25 season benchmarks)
 // ============================================================================
-const LEAGUE_AVG_GOALS_PER_GAME = 3.0;    // Per team per game
-const LEAGUE_AVG_SAVE_PCT = 0.900;
+const LEAGUE_AVG_GOALS_PER_GAME = 3.0; // Per team per game
+const LEAGUE_AVG_SAVE_PCT = 0.9;
 const LEAGUE_AVG_PP_PCT = 0.22;
-const LEAGUE_AVG_PK_PCT = 0.80;
+const LEAGUE_AVG_PK_PCT = 0.8;
 
-const HOME_ICE_ADVANTAGE = 1.03;           // CALIBRATED: Was 1.05, reduced to address UNDER bias
-const REST_B2B_PENALTY = 0.95;             // goals * 0.95 for B2B team
-const REST_EXTENDED_BOOST = 1.02;          // 3+ days rest
-const PACE_DAMPENING = 0.5;               // dampened multiplicative: 1 + (raw-1)*0.5
+const HOME_ICE_ADVANTAGE = 1.03; // CALIBRATED: Was 1.05, reduced to address UNDER bias
+const REST_B2B_PENALTY = 0.95; // goals * 0.95 for B2B team
+const REST_EXTENDED_BOOST = 1.02; // 3+ days rest
+const PACE_DAMPENING = 0.5; // dampened multiplicative: 1 + (raw-1)*0.5
 const DEFENSE_DAMPENING = 0.5;
 const PP_GOAL_SCALE = 0.035;
 const GOALIE_ADJ_SCALE = 5.0;
 const GOALIE_ADJ_MIN = 0.75;
 const GOALIE_ADJ_MAX = 1.25;
-const FIRST_PERIOD_FACTOR = 0.30;          // 30% of full game goals in 1P
-const GOALS_L5_WEIGHT = 0.30;             // 30% recent, 70% season
+const FIRST_PERIOD_FACTOR = 0.3; // 30% of full game goals in 1P
+const GOALS_L5_WEIGHT = 0.3; // 30% recent, 70% season
 
 // ============================================================================
 // Helpers
@@ -122,7 +122,7 @@ function predictNHLGame(opts) {
     homeGoalsForL5 = null,
     awayGoalsForL5 = null,
     homeGoalsAgainstL5 = null,
-    awayGoalsAgainstL5 = null
+    awayGoalsAgainstL5 = null,
   } = opts || {};
 
   // Cannot compute without base offensive/defensive stats
@@ -135,28 +135,43 @@ function predictNHLGame(opts) {
   // ---- 1. Base offensive ratings — blend L5 with season (if L5 > 0.5) ----
   let homeOffRating = homeGoalsFor;
   if (homeGoalsForL5 !== null && homeGoalsForL5 > 0.5) {
-    homeOffRating = (GOALS_L5_WEIGHT * homeGoalsForL5) + ((1 - GOALS_L5_WEIGHT) * homeGoalsFor);
+    homeOffRating =
+      GOALS_L5_WEIGHT * homeGoalsForL5 + (1 - GOALS_L5_WEIGHT) * homeGoalsFor;
   }
 
   let awayOffRating = awayGoalsFor;
   if (awayGoalsForL5 !== null && awayGoalsForL5 > 0.5) {
-    awayOffRating = (GOALS_L5_WEIGHT * awayGoalsForL5) + ((1 - GOALS_L5_WEIGHT) * awayGoalsFor);
+    awayOffRating =
+      GOALS_L5_WEIGHT * awayGoalsForL5 + (1 - GOALS_L5_WEIGHT) * awayGoalsFor;
   }
 
-  let homeDefRating = homeGoalsAgainst !== null ? homeGoalsAgainst : LEAGUE_AVG_GOALS_PER_GAME;
-  if (homeGoalsAgainstL5 !== null && homeGoalsAgainstL5 > 0.5 && homeGoalsAgainst !== null) {
-    homeDefRating = (GOALS_L5_WEIGHT * homeGoalsAgainstL5) + ((1 - GOALS_L5_WEIGHT) * homeGoalsAgainst);
+  let homeDefRating =
+    homeGoalsAgainst !== null ? homeGoalsAgainst : LEAGUE_AVG_GOALS_PER_GAME;
+  if (
+    homeGoalsAgainstL5 !== null &&
+    homeGoalsAgainstL5 > 0.5 &&
+    homeGoalsAgainst !== null
+  ) {
+    homeDefRating =
+      GOALS_L5_WEIGHT * homeGoalsAgainstL5 +
+      (1 - GOALS_L5_WEIGHT) * homeGoalsAgainst;
   }
 
-  let awayDefRating = awayGoalsAgainst !== null ? awayGoalsAgainst : LEAGUE_AVG_GOALS_PER_GAME;
-  if (awayGoalsAgainstL5 !== null && awayGoalsAgainstL5 > 0.5 && awayGoalsAgainst !== null) {
-    awayDefRating = (GOALS_L5_WEIGHT * awayGoalsAgainstL5) + ((1 - GOALS_L5_WEIGHT) * awayGoalsAgainst);
+  let awayDefRating =
+    awayGoalsAgainst !== null ? awayGoalsAgainst : LEAGUE_AVG_GOALS_PER_GAME;
+  if (
+    awayGoalsAgainstL5 !== null &&
+    awayGoalsAgainstL5 > 0.5 &&
+    awayGoalsAgainst !== null
+  ) {
+    awayDefRating =
+      GOALS_L5_WEIGHT * awayGoalsAgainstL5 +
+      (1 - GOALS_L5_WEIGHT) * awayGoalsAgainst;
   }
 
-  const l5Blended = (
+  const l5Blended =
     (homeGoalsForL5 !== null && homeGoalsForL5 > 0.5) ||
-    (awayGoalsForL5 !== null && awayGoalsForL5 > 0.5)
-  );
+    (awayGoalsForL5 !== null && awayGoalsForL5 > 0.5);
 
   // ---- 2. Combined pace (dampened multiplicative) ----
   const hPace = homePaceFactor !== null ? homePaceFactor : 1.0;
@@ -186,11 +201,16 @@ function predictNHLGame(opts) {
   }
 
   // ---- 4. PP/PK matchup (only when all 4 values present) ----
-  const hasPpPk = homePpPct !== null && awayPpPct !== null &&
-                  homePkPct !== null && awayPkPct !== null;
+  const hasPpPk =
+    homePpPct !== null &&
+    awayPpPct !== null &&
+    homePkPct !== null &&
+    awayPkPct !== null;
   if (hasPpPk) {
-    const homePpEdge = (homePpPct - LEAGUE_AVG_PP_PCT) + ((1 - awayPkPct) - (1 - LEAGUE_AVG_PK_PCT));
-    const awayPpEdge = (awayPpPct - LEAGUE_AVG_PP_PCT) + ((1 - homePkPct) - (1 - LEAGUE_AVG_PK_PCT));
+    const homePpEdge =
+      homePpPct - LEAGUE_AVG_PP_PCT + (1 - awayPkPct - (1 - LEAGUE_AVG_PK_PCT));
+    const awayPpEdge =
+      awayPpPct - LEAGUE_AVG_PP_PCT + (1 - homePkPct - (1 - LEAGUE_AVG_PK_PCT));
 
     if (homePpEdge > 0) {
       const homePpBoost = 1.0 + homePpEdge * PP_GOAL_SCALE;
@@ -231,12 +251,12 @@ function predictNHLGame(opts) {
   // ---- 8. Goalie adjustment (goalie affects OPPONENT's goals) ----
   if (homeGoalieSavePct !== null) {
     const factor = goalieAdjFactor(homeGoalieSavePct);
-    awayGoals *= factor;   // home goalie reduces away scoring
+    awayGoals *= factor; // home goalie reduces away scoring
     adjustments.away.opponent_goalie = factor;
   }
   if (awayGoalieSavePct !== null) {
     const factor = goalieAdjFactor(awayGoalieSavePct);
-    homeGoals *= factor;   // away goalie reduces home scoring
+    homeGoals *= factor; // away goalie reduces home scoring
     adjustments.home.opponent_goalie = factor;
   }
 
@@ -244,14 +264,15 @@ function predictNHLGame(opts) {
   const homeExpected = Math.round(homeGoals * 1000) / 1000;
   const awayExpected = Math.round(awayGoals * 1000) / 1000;
   const expectedTotal = Math.round((homeGoals + awayGoals) * 1000) / 1000;
-  const expected1pTotal = Math.round((homeGoals + awayGoals) * FIRST_PERIOD_FACTOR * 1000) / 1000;
+  const expected1pTotal =
+    Math.round((homeGoals + awayGoals) * FIRST_PERIOD_FACTOR * 1000) / 1000;
 
   // ---- 10. Confidence (0.55–0.80) ----
-  let confidence = 0.60;
+  let confidence = 0.6;
   if (homeGoalieConfirmed && awayGoalieConfirmed) confidence += 0.05;
-  if (hasPpPk)   confidence += 0.05;
+  if (hasPpPk) confidence += 0.05;
   if (l5Blended) confidence += 0.03;
-  confidence = clamp(confidence, 0.55, 0.80);
+  confidence = clamp(confidence, 0.55, 0.8);
 
   return {
     homeExpected,
@@ -261,7 +282,7 @@ function predictNHLGame(opts) {
     homeGoalieConfirmed,
     awayGoalieConfirmed,
     adjustments,
-    confidence
+    confidence,
   };
 }
 

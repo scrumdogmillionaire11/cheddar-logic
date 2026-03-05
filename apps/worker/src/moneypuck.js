@@ -18,10 +18,18 @@ const MONEYPUCK_URLS = {
   goalies: 'https://moneypuck.com/goalies.htm',
   stats: 'https://moneypuck.com/stats.htm',
   injuries: 'https://moneypuck.com/injuries.htm',
-  power: 'https://moneypuck.com/power.htm'
+  power: 'https://moneypuck.com/power.htm',
 };
 
-const DEFAULT_CACHE_PATH = path.join(__dirname, '..', '..', '..', 'data', 'output', 'moneypuck-cache.json');
+const DEFAULT_CACHE_PATH = path.join(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  'data',
+  'output',
+  'moneypuck-cache.json',
+);
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
 let memoryCache = null;
 
@@ -58,17 +66,17 @@ const NHL_CANONICAL_TEAMS = [
   'Washington Capitals',
   'Winnipeg Jets',
   'Arizona Coyotes',
-  'Utah Hockey Club'
+  'Utah Hockey Club',
 ];
 
 const TEAM_ALIASES = {
   'montreal canadiens': 'Montreal Canadiens',
-  'montreal': 'Montreal Canadiens',
+  montreal: 'Montreal Canadiens',
   'st louis blues': 'St. Louis Blues',
   'st. louis blues': 'St. Louis Blues',
   'utah mammoth': 'Utah Hockey Club',
   'utah hc': 'Utah Hockey Club',
-  'utah hockey club': 'Utah Hockey Club'
+  'utah hockey club': 'Utah Hockey Club',
 };
 
 function fetchUrl(url) {
@@ -76,15 +84,20 @@ function fetchUrl(url) {
     const options = {
       headers: {
         'User-Agent': 'cheddar-logic/1.0 (+https://github.com/cheddar-logic)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        Accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache'
-      }
+        'Cache-Control': 'no-cache',
+      },
     };
     https
       .get(url, options, (res) => {
         if (res.statusCode && res.statusCode >= 400) {
-          reject(new Error(`MoneyPuck request failed (${res.statusCode}) for ${url}`));
+          reject(
+            new Error(
+              `MoneyPuck request failed (${res.statusCode}) for ${url}`,
+            ),
+          );
           res.resume();
           return;
         }
@@ -136,7 +149,9 @@ function normalizeHeader(text) {
 
 function parseNumber(value) {
   if (value == null) return null;
-  const cleaned = String(value).replace(/[%\s,]/g, '').trim();
+  const cleaned = String(value)
+    .replace(/[%\s,]/g, '')
+    .trim();
   if (!cleaned) return null;
   const num = Number(cleaned);
   return Number.isFinite(num) ? num : null;
@@ -144,25 +159,32 @@ function parseNumber(value) {
 
 function tableHeaders($, $table) {
   const headers = [];
-  $table.find('tr').first().find('th, td').each((_, cell) => {
-    headers.push(normalizeHeader($(cell).text()));
-  });
+  $table
+    .find('tr')
+    .first()
+    .find('th, td')
+    .each((_, cell) => {
+      headers.push(normalizeHeader($(cell).text()));
+    });
   return headers;
 }
 
 function tableRows($, $table) {
   const headers = tableHeaders($, $table);
   const rows = [];
-  $table.find('tr').slice(1).each((_, row) => {
-    const cells = $(row).find('th, td');
-    if (!cells.length) return;
-    const entry = {};
-    cells.each((idx, cell) => {
-      const key = headers[idx] || `col_${idx}`;
-      entry[key] = $(cell).text().replace(/\s+/g, ' ').trim();
+  $table
+    .find('tr')
+    .slice(1)
+    .each((_, row) => {
+      const cells = $(row).find('th, td');
+      if (!cells.length) return;
+      const entry = {};
+      cells.each((idx, cell) => {
+        const key = headers[idx] || `col_${idx}`;
+        entry[key] = $(cell).text().replace(/\s+/g, ' ').trim();
+      });
+      if (Object.keys(entry).length > 0) rows.push(entry);
     });
-    if (Object.keys(entry).length > 0) rows.push(entry);
-  });
   return rows;
 }
 
@@ -172,7 +194,9 @@ function findTable($, headerCandidates) {
     const $table = $(table);
     const headers = tableHeaders($, $table);
     const headerSet = new Set(headers);
-    const matches = headerCandidates.some((candidate) => headerSet.has(candidate));
+    const matches = headerCandidates.some((candidate) =>
+      headerSet.has(candidate),
+    );
     if (matches) return $table;
   }
   return null;
@@ -199,7 +223,7 @@ function parseTeamStats(html) {
       xgf_pct: xgf,
       pdo,
       pp_pct: pp,
-      pk_pct: pk
+      pk_pct: pk,
     };
   });
   return teams;
@@ -224,7 +248,7 @@ function parsePowerStats(html) {
     teams[canonical] = {
       pp_pct: pp,
       pk_pct: pk,
-      power_index: power
+      power_index: power,
     };
   });
   return teams;
@@ -239,7 +263,9 @@ function parseGoalies(html) {
   const goaliesByTeam = {};
   rows.forEach((row) => {
     const teamName = row.team || row['team name'] || row['club'] || null;
-    const gsax = parseNumber(row['gsax'] ?? row['gsax/60'] ?? row['gsax (total)']);
+    const gsax = parseNumber(
+      row['gsax'] ?? row['gsax/60'] ?? row['gsax (total)'],
+    );
     if (!teamName || gsax === null) return;
     const canonical = canonicalizeTeamName(teamName);
     if (!canonical) return;
@@ -248,7 +274,7 @@ function parseGoalies(html) {
     if (!existing || gsax > existing.gsax) {
       goaliesByTeam[canonical] = {
         gsax,
-        source: 'moneypuck'
+        source: 'moneypuck',
       };
     }
   });
@@ -272,7 +298,7 @@ function parseInjuries(html) {
     injuries[canonical].push({
       player,
       status: row.status || row['injury status'] || null,
-      detail: row.details || row.note || null
+      detail: row.details || row.note || null,
     });
   });
   return injuries;
@@ -283,13 +309,16 @@ function mergeTeamStats(base, updates) {
   for (const [team, data] of Object.entries(updates || {})) {
     merged[team] = {
       ...(merged[team] || {}),
-      ...data
+      ...data,
     };
   }
   return merged;
 }
 
-async function fetchMoneyPuckSnapshot({ cachePath = DEFAULT_CACHE_PATH, ttlMs = DEFAULT_TTL_MS } = {}) {
+async function fetchMoneyPuckSnapshot({
+  cachePath = DEFAULT_CACHE_PATH,
+  ttlMs = DEFAULT_TTL_MS,
+} = {}) {
   if (memoryCache) {
     const cachedAt = new Date(memoryCache?.fetched_at || 0).getTime();
     if (cachedAt && Date.now() - cachedAt < ttlMs) {
@@ -319,13 +348,14 @@ async function fetchMoneyPuckSnapshot({ cachePath = DEFAULT_CACHE_PATH, ttlMs = 
   let powerHtml;
 
   try {
-    [teamsHtml, goaliesHtml, statsHtml, injuriesHtml, powerHtml] = await Promise.all([
-      fetchUrl(MONEYPUCK_URLS.teams),
-      fetchUrl(MONEYPUCK_URLS.goalies),
-      fetchUrl(MONEYPUCK_URLS.stats),
-      fetchUrl(MONEYPUCK_URLS.injuries),
-      fetchUrl(MONEYPUCK_URLS.power)
-    ]);
+    [teamsHtml, goaliesHtml, statsHtml, injuriesHtml, powerHtml] =
+      await Promise.all([
+        fetchUrl(MONEYPUCK_URLS.teams),
+        fetchUrl(MONEYPUCK_URLS.goalies),
+        fetchUrl(MONEYPUCK_URLS.stats),
+        fetchUrl(MONEYPUCK_URLS.injuries),
+        fetchUrl(MONEYPUCK_URLS.power),
+      ]);
   } catch (err) {
     console.warn(`[MoneyPuck] Fetch failed: ${err.message}`);
     const fallback = {
@@ -333,7 +363,7 @@ async function fetchMoneyPuckSnapshot({ cachePath = DEFAULT_CACHE_PATH, ttlMs = 
       teams: {},
       goalies: {},
       injuries: {},
-      error: err.message
+      error: err.message,
     };
     memoryCache = fallback;
     return fallback;
@@ -343,7 +373,10 @@ async function fetchMoneyPuckSnapshot({ cachePath = DEFAULT_CACHE_PATH, ttlMs = 
   const statsTeams = parseTeamStats(statsHtml);
   const powerTeams = parsePowerStats(powerHtml);
 
-  const teams = mergeTeamStats(mergeTeamStats(baseTeams, statsTeams), powerTeams);
+  const teams = mergeTeamStats(
+    mergeTeamStats(baseTeams, statsTeams),
+    powerTeams,
+  );
   const goalies = parseGoalies(goaliesHtml);
   const injuries = parseInjuries(injuriesHtml);
 
@@ -351,7 +384,7 @@ async function fetchMoneyPuckSnapshot({ cachePath = DEFAULT_CACHE_PATH, ttlMs = 
     fetched_at: new Date().toISOString(),
     teams,
     goalies,
-    injuries
+    injuries,
   };
 
   memoryCache = snapshot;
@@ -372,7 +405,7 @@ function mergeRawData(rawData, payload) {
   const merged = { ...(rawData || {}) };
   merged.moneypuck = {
     ...(merged.moneypuck || {}),
-    ...payload
+    ...payload,
   };
   return merged;
 }
@@ -383,9 +416,10 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
   let rawData = {};
   if (oddsSnapshot.raw_data) {
     try {
-      rawData = typeof oddsSnapshot.raw_data === 'string'
-        ? JSON.parse(oddsSnapshot.raw_data)
-        : oddsSnapshot.raw_data;
+      rawData =
+        typeof oddsSnapshot.raw_data === 'string'
+          ? JSON.parse(oddsSnapshot.raw_data)
+          : oddsSnapshot.raw_data;
     } catch {
       rawData = {};
     }
@@ -409,37 +443,37 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
       home: {
         ...(rawData.teams?.home || {}),
         xgf_pct: homeStats.xgf_pct ?? rawData.teams?.home?.xgf_pct ?? null,
-        pdo: homeStats.pdo ?? rawData.teams?.home?.pdo ?? null
+        pdo: homeStats.pdo ?? rawData.teams?.home?.pdo ?? null,
       },
       away: {
         ...(rawData.teams?.away || {}),
         xgf_pct: awayStats.xgf_pct ?? rawData.teams?.away?.xgf_pct ?? null,
-        pdo: awayStats.pdo ?? rawData.teams?.away?.pdo ?? null
-      }
+        pdo: awayStats.pdo ?? rawData.teams?.away?.pdo ?? null,
+      },
     },
     special_teams: {
       ...(rawData.special_teams || {}),
       home: {
         ...(rawData.special_teams?.home || {}),
         pp_pct: homeStats.pp_pct ?? rawData.special_teams?.home?.pp_pct ?? null,
-        pk_pct: homeStats.pk_pct ?? rawData.special_teams?.home?.pk_pct ?? null
+        pk_pct: homeStats.pk_pct ?? rawData.special_teams?.home?.pk_pct ?? null,
       },
       away: {
         ...(rawData.special_teams?.away || {}),
         pp_pct: awayStats.pp_pct ?? rawData.special_teams?.away?.pp_pct ?? null,
-        pk_pct: awayStats.pk_pct ?? rawData.special_teams?.away?.pk_pct ?? null
-      }
+        pk_pct: awayStats.pk_pct ?? rawData.special_teams?.away?.pk_pct ?? null,
+      },
     },
     goalie: {
       ...(rawData.goalie || {}),
       home: {
         ...(rawData.goalie?.home || {}),
-        gsax: homeGoalie.gsax ?? rawData.goalie?.home?.gsax ?? null
+        gsax: homeGoalie.gsax ?? rawData.goalie?.home?.gsax ?? null,
       },
       away: {
         ...(rawData.goalie?.away || {}),
-        gsax: awayGoalie.gsax ?? rawData.goalie?.away?.gsax ?? null
-      }
+        gsax: awayGoalie.gsax ?? rawData.goalie?.away?.gsax ?? null,
+      },
     },
     goalie_home_gsax: homeGoalie.gsax ?? rawData.goalie_home_gsax ?? null,
     goalie_away_gsax: awayGoalie.gsax ?? rawData.goalie_away_gsax ?? null,
@@ -454,8 +488,8 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
     injury_status: {
       ...(rawData.injury_status || {}),
       home: homeInjuries,
-      away: awayInjuries
-    }
+      away: awayInjuries,
+    },
   };
 
   const enriched = {
@@ -465,9 +499,9 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
       source: 'moneypuck',
       team_keys: {
         home: homeTeam,
-        away: awayTeam
-      }
-    })
+        away: awayTeam,
+      },
+    }),
   };
 
   if (typeof oddsSnapshot.raw_data === 'string') {
@@ -479,5 +513,5 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
 
 module.exports = {
   fetchMoneyPuckSnapshot,
-  enrichOddsSnapshotWithMoneyPuck
+  enrichOddsSnapshotWithMoneyPuck,
 };

@@ -11,7 +11,7 @@
 const { initDb, getJobRunHistory } = require('@cheddar-logic/data');
 
 function getLatestSuccessfulRun(jobRuns) {
-  return jobRuns.find(run => run && run.status === 'success') || null;
+  return jobRuns.find((run) => run && run.status === 'success') || null;
 }
 
 async function checkOddsHealth() {
@@ -23,29 +23,49 @@ async function checkOddsHealth() {
   const latestSuccess = getLatestSuccessfulRun(history);
 
   if (!latestSuccess || !latestSuccess.started_at) {
-    console.error('[OddsHealth] CRITICAL: no successful pull_odds_hourly run found in history');
-    return { ok: false, reason: 'no-successful-run', lastSuccessAt: null, ageMinutes: null, maxAgeMinutes };
+    console.error(
+      '[OddsHealth] CRITICAL: no successful pull_odds_hourly run found in history',
+    );
+    return {
+      ok: false,
+      reason: 'no-successful-run',
+      lastSuccessAt: null,
+      ageMinutes: null,
+      maxAgeMinutes,
+    };
   }
 
   const lastSuccessAt = latestSuccess.started_at;
-  const ageMinutes = Math.floor((Date.now() - new Date(lastSuccessAt).getTime()) / 60000);
+  const ageMinutes = Math.floor(
+    (Date.now() - new Date(lastSuccessAt).getTime()) / 60000,
+  );
   const ok = ageMinutes <= maxAgeMinutes;
 
   if (ok) {
-    console.log(`[OddsHealth] OK: last successful pull_odds_hourly at ${lastSuccessAt} (${ageMinutes}m ago, threshold ${maxAgeMinutes}m)`);
+    console.log(
+      `[OddsHealth] OK: last successful pull_odds_hourly at ${lastSuccessAt} (${ageMinutes}m ago, threshold ${maxAgeMinutes}m)`,
+    );
   } else {
-    console.error(`[OddsHealth] STALE: last successful pull_odds_hourly at ${lastSuccessAt} (${ageMinutes}m ago, threshold ${maxAgeMinutes}m)`);
+    console.error(
+      `[OddsHealth] STALE: last successful pull_odds_hourly at ${lastSuccessAt} (${ageMinutes}m ago, threshold ${maxAgeMinutes}m)`,
+    );
   }
 
-  return { ok, reason: ok ? 'fresh' : 'stale', lastSuccessAt, ageMinutes, maxAgeMinutes };
+  return {
+    ok,
+    reason: ok ? 'fresh' : 'stale',
+    lastSuccessAt,
+    ageMinutes,
+    maxAgeMinutes,
+  };
 }
 
 if (require.main === module) {
   checkOddsHealth()
-    .then(result => {
+    .then((result) => {
       process.exit(result.ok ? 0 : 1);
     })
-    .catch(error => {
+    .catch((error) => {
       console.error('[OddsHealth] ERROR:', error.message);
       process.exit(2);
     });

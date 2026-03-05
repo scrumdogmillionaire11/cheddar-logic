@@ -7,7 +7,7 @@ const NUMBER_FIELDS = [
   'paceFactor',
   'marketLine',
   'gamesObserved',
-  'redistributionBoost'
+  'redistributionBoost',
 ] as const;
 
 type ShotsRequest = {
@@ -50,7 +50,9 @@ function normalizeInput(payload: Record<string, unknown>): ShotsRequest {
   const l5Raw = payload.l5Shots;
   if (Array.isArray(l5Raw)) {
     const parsed = l5Raw
-      .map((value) => (typeof value === 'string' ? Number.parseFloat(value) : value))
+      .map((value) =>
+        typeof value === 'string' ? Number.parseFloat(value) : value,
+      )
       .filter((value) => isNumber(value));
     if (parsed.length > 0) normalized.l5Shots = parsed;
   }
@@ -75,7 +77,10 @@ function normalizeInput(payload: Record<string, unknown>): ShotsRequest {
 function validateInput(input: ShotsRequest): string[] {
   const errors: string[] = [];
 
-  if (!input.l5Shots && !(isNumber(input.shotsPer60) && isNumber(input.projectedToiMinutes))) {
+  if (
+    !input.l5Shots &&
+    !(isNumber(input.shotsPer60) && isNumber(input.projectedToiMinutes))
+  ) {
     errors.push('Provide l5Shots or both shotsPer60 and projectedToiMinutes.');
   }
 
@@ -99,7 +104,7 @@ export async function POST(request: NextRequest) {
     if (errors.length > 0) {
       return NextResponse.json(
         { success: false, errors },
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
       );
     }
 
@@ -108,13 +113,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       { success: true, data: projection, input: normalized },
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json' } },
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json(
       { success: false, error: message },
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
     );
   }
 }

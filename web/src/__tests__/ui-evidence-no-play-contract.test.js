@@ -14,12 +14,12 @@ console.log('🧪 UI degraded-data contract source tests');
 
 assert(
   source.includes('Analysis unavailable (drivers missing).'),
-  'cards page should render an explicit degraded-analysis message when drivers are unavailable'
+  'cards page should render an explicit degraded-analysis message when drivers are unavailable',
 );
 
 assert(
   !source.includes('Evidence ({card.evidence?.length})'),
-  'cards page should not render the legacy Evidence section in the main card body'
+  'cards page should not render the legacy Evidence section in the main card body',
 );
 
 console.log('✅ UI degraded-data contract source tests passed');

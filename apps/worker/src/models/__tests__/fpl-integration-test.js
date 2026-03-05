@@ -1,10 +1,13 @@
 /**
  * FPL Dual-Engine Integration Tests
- * 
+ *
  * Validates contract between Worker JS and Sage Python
  */
 
-const { getSagePrediction, validatePredictionSchema } = require('../fpl-types.js');
+const {
+  getSagePrediction,
+  validatePredictionSchema,
+} = require('../fpl-types.js');
 
 describe('FPL Worker-Sage Contract', () => {
   it('should validate prediction schema from Sage', () => {
@@ -15,7 +18,7 @@ describe('FPL Worker-Sage Contract', () => {
       model_version: '1.0.0',
       timestamp: new Date().toISOString(),
     };
-    
+
     expect(validatePredictionSchema(mockPrediction)).toBe(true);
   });
 
@@ -25,7 +28,7 @@ describe('FPL Worker-Sage Contract', () => {
       predicted_points: 7.5,
       // Missing confidence, model_version, timestamp
     };
-    
+
     expect(validatePredictionSchema(invalidPrediction)).toBe(false);
   });
 
@@ -37,7 +40,7 @@ describe('FPL Worker-Sage Contract', () => {
       model_version: '1.0.0',
       timestamp: new Date().toISOString(),
     };
-    
+
     expect(validatePredictionSchema(invalidPrediction)).toBe(false);
   });
 });

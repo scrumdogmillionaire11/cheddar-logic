@@ -21,19 +21,20 @@ function deriveStatus(card: GameCard): ExpressionStatus {
   if (card.expressionChoice?.status) {
     return card.expressionChoice.status;
   }
-  
+
   // FIRE if any driver is BEST and direction != NEUTRAL
   const hasBestNonNeutral = card.drivers.some(
-    d => d.tier === 'BEST' && d.direction !== 'NEUTRAL'
+    (d) => d.tier === 'BEST' && d.direction !== 'NEUTRAL',
   );
   if (hasBestNonNeutral) return 'FIRE';
-  
+
   // WATCH if any SUPER/WATCH non-neutral
   const hasWatchOrSuper = card.drivers.some(
-    d => (d.tier === 'WATCH' || d.tier === 'SUPER') && d.direction !== 'NEUTRAL'
+    (d) =>
+      (d.tier === 'WATCH' || d.tier === 'SUPER') && d.direction !== 'NEUTRAL',
   );
   if (hasWatchOrSuper) return 'WATCH';
-  
+
   // Otherwise PASS
   return 'PASS';
 }
@@ -44,9 +45,10 @@ function deriveStatus(card: GameCard): ExpressionStatus {
 function isCoinflipML(card: GameCard): boolean {
   const ml = card.markets.ml;
   if (!ml) return false;
-  
-  return (ml.home >= -120 && ml.home <= 120) || 
-         (ml.away >= -120 && ml.away <= 120);
+
+  return (
+    (ml.home >= -120 && ml.home <= 120) || (ml.away >= -120 && ml.away <= 120)
+  );
 }
 
 /**
@@ -69,15 +71,15 @@ function getTimeUntilStart(startTime: string): number {
 function isUpdatedToday(timestamp: string): boolean {
   const now = new Date();
   const updated = new Date(timestamp);
-  
+
   const nowET = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
   }).format(now);
-  
+
   const updatedET = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
   }).format(updated);
-  
+
   return nowET === updatedET;
 }
 
@@ -92,7 +94,7 @@ export function deriveTags(card: GameCard): GameTag[] {
       tags.add(existingTag as GameTag);
     }
   }
-  
+
   // Actionability status
   const status = deriveStatus(card);
   if (status === 'FIRE') tags.add(GAME_TAGS.HAS_FIRE);
@@ -102,34 +104,44 @@ export function deriveTags(card: GameCard): GameTag[] {
   if (card.sport === 'UNKNOWN') {
     tags.add(GAME_TAGS.UNKNOWN_SPORT);
   }
-  
+
   // Market picks
   const playMarket = card.play?.market;
   const hasPlayML = playMarket === 'ML';
   const hasPlaySpread = playMarket === 'SPREAD';
   const hasPlayTotal = playMarket === 'TOTAL';
-  const hasMLPick = hasPlayML || card.drivers.some(d => d.market === 'ML' && d.direction !== 'NEUTRAL');
-  const hasSpreadPick = hasPlaySpread || card.drivers.some(d => d.market === 'SPREAD' && d.direction !== 'NEUTRAL');
-  const hasTotalPick = hasPlayTotal || card.drivers.some(d => d.market === 'TOTAL' && d.direction !== 'NEUTRAL');
-  
+  const hasMLPick =
+    hasPlayML ||
+    card.drivers.some((d) => d.market === 'ML' && d.direction !== 'NEUTRAL');
+  const hasSpreadPick =
+    hasPlaySpread ||
+    card.drivers.some(
+      (d) => d.market === 'SPREAD' && d.direction !== 'NEUTRAL',
+    );
+  const hasTotalPick =
+    hasPlayTotal ||
+    card.drivers.some((d) => d.market === 'TOTAL' && d.direction !== 'NEUTRAL');
+
   if (hasMLPick) tags.add(GAME_TAGS.HAS_ML_PICK);
   if (hasSpreadPick || hasMLPick) tags.add(GAME_TAGS.HAS_SIDE_PICK);
   if (hasTotalPick) tags.add(GAME_TAGS.HAS_TOTAL_PICK);
-  
+
   // Driver strength
-  if (card.drivers.some(d => d.tier === 'BEST')) {
+  if (card.drivers.some((d) => d.tier === 'BEST')) {
     tags.add(GAME_TAGS.HAS_BEST_DRIVER);
   }
-  if (card.drivers.some(d => d.tier === 'SUPER')) {
+  if (card.drivers.some((d) => d.tier === 'SUPER')) {
     tags.add(GAME_TAGS.HAS_SUPER_DRIVER);
   }
-  if (card.drivers.some(d => d.tier === 'WATCH')) {
+  if (card.drivers.some((d) => d.tier === 'WATCH')) {
     tags.add(GAME_TAGS.HAS_WATCH_DRIVER);
   }
-  
+
   // Risk flags (check card titles and notes for risk keywords)
-  const allText = card.drivers.map(d => `${d.cardTitle} ${d.note}`.toLowerCase()).join(' ');
-  
+  const allText = card.drivers
+    .map((d) => `${d.cardTitle} ${d.note}`.toLowerCase())
+    .join(' ');
+
   if (allText.includes('fragility') || allText.includes('fragile')) {
     tags.add(GAME_TAGS.HAS_RISK_FRAGILITY);
   }
@@ -142,13 +154,13 @@ export function deriveTags(card: GameCard): GameTag[] {
   if (allText.includes('low coverage') || allText.includes('limited data')) {
     tags.add(GAME_TAGS.HAS_LOW_COVERAGE);
   }
-  
+
   // Odds freshness
   const updatedDiff = getTimeDiff(card.updatedAt);
   const oneMinute = 60 * 1000;
   const fiveMinutes = 5 * oneMinute;
   const thirtyMinutes = 30 * oneMinute;
-  
+
   if (updatedDiff <= oneMinute) {
     tags.add(GAME_TAGS.UPDATED_WITHIN_60S);
   }
@@ -161,40 +173,40 @@ export function deriveTags(card: GameCard): GameTag[] {
   if (updatedDiff > thirtyMinutes) {
     tags.add(GAME_TAGS.STALE_30M);
   }
-  
+
   // ML patterns
   if (isCoinflipML(card)) {
     tags.add(GAME_TAGS.COINFLIP_ML);
   }
-  
+
   // Time windows
   const timeUntilStart = getTimeUntilStart(card.startTime);
   const twoHours = 2 * 60 * 60 * 1000;
-  
+
   if (timeUntilStart <= twoHours && timeUntilStart > 0) {
     tags.add(GAME_TAGS.STARTS_WITHIN_2H);
   }
   if (isUpdatedToday(card.startTime)) {
     tags.add(GAME_TAGS.STARTS_TODAY);
   }
-  
+
   // Data quality
   if (Object.keys(card.markets).length === 0) {
     tags.add(GAME_TAGS.NO_ODDS);
   }
-  
+
   // Check for contradictions (HOME and AWAY picks on same market)
   const marketDirections = new Map<string, Set<string>>();
   for (const driver of card.drivers) {
     if (driver.direction === 'NEUTRAL') continue;
-    
+
     const key = driver.market;
     if (!marketDirections.has(key)) {
       marketDirections.set(key, new Set());
     }
     marketDirections.get(key)!.add(driver.direction);
   }
-  
+
   for (const directions of marketDirections.values()) {
     if (directions.has('HOME') && directions.has('AWAY')) {
       tags.add(GAME_TAGS.HAS_DRIVER_CONTRADICTION);
@@ -205,7 +217,7 @@ export function deriveTags(card: GameCard): GameTag[] {
       break;
     }
   }
-  
+
   return Array.from(tags);
 }
 

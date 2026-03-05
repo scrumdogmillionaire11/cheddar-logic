@@ -20,7 +20,11 @@ function buildDriver(overrides) {
 async function run() {
   const assertModule = await import('node:assert');
   const assert = assertModule.default || assertModule;
-  const { deduplicateDrivers, getCardDecisionModel, resolvePlayDisplayDecision } = await import('../lib/game-card/decision.js');
+  const {
+    deduplicateDrivers,
+    getCardDecisionModel,
+    resolvePlayDisplayDecision,
+  } = await import('../lib/game-card/decision.js');
 
   console.log('🧪 Game Card Decision Tests');
 
@@ -29,19 +33,51 @@ async function run() {
     buildDriver({ tier: 'BEST', confidence: 0.72, note: 'Same note' }),
   ];
   const deduped = deduplicateDrivers(duplicateDrivers);
-  assert.strictEqual(deduped.length, 1, 'dedupe should collapse identical drivers');
-  assert.strictEqual(deduped[0].tier, 'BEST', 'dedupe should keep strongest tier');
+  assert.strictEqual(
+    deduped.length,
+    1,
+    'dedupe should collapse identical drivers',
+  );
+  assert.strictEqual(
+    deduped[0].tier,
+    'BEST',
+    'dedupe should keep strongest tier',
+  );
 
-  const fromBaseClassification = resolvePlayDisplayDecision({ classification: 'BASE' });
-  assert.strictEqual(fromBaseClassification.action, 'FIRE', 'BASE classification should map to FIRE action');
-  assert.strictEqual(fromBaseClassification.status, 'FIRE', 'BASE classification should map to FIRE status');
+  const fromBaseClassification = resolvePlayDisplayDecision({
+    classification: 'BASE',
+  });
+  assert.strictEqual(
+    fromBaseClassification.action,
+    'FIRE',
+    'BASE classification should map to FIRE action',
+  );
+  assert.strictEqual(
+    fromBaseClassification.status,
+    'FIRE',
+    'BASE classification should map to FIRE status',
+  );
 
-  const fromLeanClassification = resolvePlayDisplayDecision({ classification: 'LEAN' });
-  assert.strictEqual(fromLeanClassification.action, 'HOLD', 'LEAN classification should map to HOLD action');
-  assert.strictEqual(fromLeanClassification.status, 'WATCH', 'LEAN classification should map to WATCH status');
+  const fromLeanClassification = resolvePlayDisplayDecision({
+    classification: 'LEAN',
+  });
+  assert.strictEqual(
+    fromLeanClassification.action,
+    'HOLD',
+    'LEAN classification should map to HOLD action',
+  );
+  assert.strictEqual(
+    fromLeanClassification.status,
+    'WATCH',
+    'LEAN classification should map to WATCH status',
+  );
 
   const fromFireAction = resolvePlayDisplayDecision({ action: 'FIRE' });
-  assert.strictEqual(fromFireAction.classification, 'BASE', 'FIRE action should map back to BASE classification');
+  assert.strictEqual(
+    fromFireAction.classification,
+    'BASE',
+    'FIRE action should map back to BASE classification',
+  );
 
   const card = {
     id: 'card-1',
@@ -102,10 +138,24 @@ async function run() {
 
   const decision = getCardDecisionModel(card, odds);
   assert.strictEqual(decision.status, 'FIRE', 'status should resolve to FIRE');
-  assert.strictEqual(decision.primaryPlay.pick, 'AWAY +200', 'primary play should use best away ML');
-  assert.ok(decision.topContributors.length <= 3, 'top contributors should cap at 3');
-  assert.strictEqual(decision.topContributors[0].polarity, 'pro', 'first contributor should be pro');
-  assert.ok(decision.riskCodes.includes('LOW_COVERAGE'), 'risk codes should surface LOW_COVERAGE');
+  assert.strictEqual(
+    decision.primaryPlay.pick,
+    'AWAY +200',
+    'primary play should use best away ML',
+  );
+  assert.ok(
+    decision.topContributors.length <= 3,
+    'top contributors should cap at 3',
+  );
+  assert.strictEqual(
+    decision.topContributors[0].polarity,
+    'pro',
+    'first contributor should be pro',
+  );
+  assert.ok(
+    decision.riskCodes.includes('LOW_COVERAGE'),
+    'risk codes should surface LOW_COVERAGE',
+  );
 
   const nbaCard = {
     ...card,
@@ -136,10 +186,14 @@ async function run() {
   };
 
   const nbaDecision = getCardDecisionModel(nbaCard, odds);
-  assert.ok(nbaDecision.primaryPlay.pick !== 'NO PLAY', 'NBA fixture should produce a play');
   assert.ok(
-    nbaDecision.primaryPlay.market === 'ML' || nbaDecision.primaryPlay.market === 'SPREAD',
-    'NBA fixture should resolve to a side market'
+    nbaDecision.primaryPlay.pick !== 'NO PLAY',
+    'NBA fixture should produce a play',
+  );
+  assert.ok(
+    nbaDecision.primaryPlay.market === 'ML' ||
+      nbaDecision.primaryPlay.market === 'SPREAD',
+    'NBA fixture should resolve to a side market',
   );
 
   const ncaamCard = {
@@ -171,10 +225,14 @@ async function run() {
   };
 
   const ncaamDecision = getCardDecisionModel(ncaamCard, odds);
-  assert.ok(ncaamDecision.primaryPlay.pick !== 'NO PLAY', 'NCAAM fixture should produce a play');
   assert.ok(
-    ncaamDecision.primaryPlay.market === 'ML' || ncaamDecision.primaryPlay.market === 'SPREAD',
-    'NCAAM fixture should resolve to a side market'
+    ncaamDecision.primaryPlay.pick !== 'NO PLAY',
+    'NCAAM fixture should produce a play',
+  );
+  assert.ok(
+    ncaamDecision.primaryPlay.market === 'ML' ||
+      ncaamDecision.primaryPlay.market === 'SPREAD',
+    'NCAAM fixture should resolve to a side market',
   );
 
   console.log('✅ Game card decision tests passed');

@@ -38,8 +38,11 @@ function normalizeRoadGames(recentRoadGames) {
       const ts = toTimestamp(game?.date);
       return {
         ...game,
-        isAwayLeg: game?.location === 'away' || game?.isHome === false || game?.isHome === undefined,
-        _ts: ts
+        isAwayLeg:
+          game?.location === 'away' ||
+          game?.isHome === false ||
+          game?.isHome === undefined,
+        _ts: ts,
       };
     })
     .filter((game) => game.isAwayLeg && game._ts !== null)
@@ -88,7 +91,7 @@ function scoreCompression(roadsGamesCount, daysBetweenFirstAndLast) {
   }
 
   const gamesPerDay = roadsGamesCount / daysBetweenFirstAndLast;
-  if (gamesPerDay >= 0.6) return 2;  // ≥3 games in ≤5 days
+  if (gamesPerDay >= 0.6) return 2; // ≥3 games in ≤5 days
   if (gamesPerDay >= 0.33) return 1; // ≤3 games in ≤3 days
   return 0;
 }
@@ -103,11 +106,11 @@ function scoreOpponentQuality(opponentNetRating, opponentWinPct) {
   let points = 0;
 
   if (opponentNetRating && opponentNetRating >= 3) {
-    points += 1;  // Strong opponent
+    points += 1; // Strong opponent
   }
 
-  if (opponentWinPct && opponentWinPct >= 0.60) {
-    points += 1;  // Elite opponent
+  if (opponentWinPct && opponentWinPct >= 0.6) {
+    points += 1; // Elite opponent
   }
 
   return Math.min(points, 2);
@@ -139,7 +142,7 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
     recentRoadGames = [],
     homeTeamRoadTrip = false,
     homeRestDays = null,
-    gameTimeUtc = null
+    gameTimeUtc = null,
   } = context;
   const normalizedRoadGames = normalizeRoadGames(recentRoadGames);
 
@@ -150,7 +153,7 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
       score: 0,
       components: {},
       signal: 'Insufficient road games (need 2+)',
-      reasoning: 'Not on meaningful road trip'
+      reasoning: 'Not on meaningful road trip',
     };
   }
 
@@ -161,7 +164,7 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
       score: 0,
       components: {},
       signal: 'Home return context missing',
-      reasoning: 'Road-trip owner is not the current home team'
+      reasoning: 'Road-trip owner is not the current home team',
     };
   }
 
@@ -172,7 +175,7 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
       score: 0,
       components: {},
       signal: 'Rest window too long',
-      reasoning: `Home team has ${homeRestDays} rest days after trip (stale fade spot)`
+      reasoning: `Home team has ${homeRestDays} rest days after trip (stale fade spot)`,
     };
   }
 
@@ -193,7 +196,7 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
       score: 0,
       components: {},
       signal: 'Road legs too spread out',
-      reasoning: `Road games are not contiguous enough (max gap ${maxGapDays.toFixed(1)} days)`
+      reasoning: `Road games are not contiguous enough (max gap ${maxGapDays.toFixed(1)} days)`,
     };
   }
 
@@ -206,7 +209,7 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
         score: 0,
         components: {},
         signal: 'Return spot too old',
-        reasoning: `Last road game was ${daysSinceLastRoad.toFixed(1)} days ago`
+        reasoning: `Last road game was ${daysSinceLastRoad.toFixed(1)} days ago`,
       };
     }
   }
@@ -214,21 +217,25 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
   // Calculate components
   const tripLength = scoreTripLength(normalizedRoadGames.length);
   const travelDisruption = scoreTravelDisruption(normalizedRoadGames.length);
-  const compression = scoreCompression(normalizedRoadGames.length, tripSpanDays);
+  const compression = scoreCompression(
+    normalizedRoadGames.length,
+    tripSpanDays,
+  );
 
   const awayNetRating = toNumber(awayTeam?.netRating);
   const homeNetRating = toNumber(homeTeam?.netRating);
-  
+
   // If home team had the road trip, they're the fatigued ones
   // Award points for opponent quality (away team) being strong
-  const opponentQuality = homeTeamRoadTrip 
-    ? scoreOpponentQuality(awayNetRating, null)  // Away team is the fresh opponent
+  const opponentQuality = homeTeamRoadTrip
+    ? scoreOpponentQuality(awayNetRating, null) // Away team is the fresh opponent
     : scoreOpponentQuality(homeNetRating, null); // Away team's opponent (home) is strong
-  
+
   const spotRisk = scoreSpotRisk(isBackToBack);
 
   // Total score
-  const totalScore = tripLength + travelDisruption + compression + spotRisk + opponentQuality;
+  const totalScore =
+    tripLength + travelDisruption + compression + spotRisk + opponentQuality;
 
   // Tier determination
   let tier = 'NO_PLAY';
@@ -246,10 +253,10 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
       spotRisk,
       opponentQuality,
       tripSpanDays: Number(tripSpanDays.toFixed(2)),
-      maxGapDays: Number(maxGapDays.toFixed(2))
+      maxGapDays: Number(maxGapDays.toFixed(2)),
     },
     reasoning: `${homeTeamRoadTrip ? 'Home' : 'Away'} team road trip: ${normalizedRoadGames.length} games over ${tripSpanDays.toFixed(1)} days, compression=${compression}pts, opponent=${opponentQuality}pts`,
-    signal: tier !== 'NO_PLAY'
+    signal: tier !== 'NO_PLAY',
   };
 }
 
@@ -257,7 +264,7 @@ function calculateWelcomeHome(awayTeam, homeTeam, context = {}) {
  * Generate Welcome Home v2 card descriptor
  * Home team returning from road trip (first game back at home)
  * Signal: Home team fatigue from travel → likely underperformance
- * 
+ *
  * @param {object} gameCtx - { gameId, awayTeam, homeTeam, sport, isBackToBack, recentRoadGames, homeTeamRoadTrip: boolean }
  * @returns {object|null} Card descriptor or null if NO_PLAY tier
  */
@@ -270,16 +277,16 @@ function generateWelcomeHomeCard(gameCtx) {
     recentRoadGames = [],
     homeTeamRoadTrip = false,
     homeRestDays = null,
-    gameTimeUtc = null
+    gameTimeUtc = null,
   } = gameCtx;
 
-  const analysis = calculateWelcomeHome(awayTeam, homeTeam, { 
-    sport, 
-    isBackToBack, 
+  const analysis = calculateWelcomeHome(awayTeam, homeTeam, {
+    sport,
+    isBackToBack,
     recentRoadGames,
     homeTeamRoadTrip,
     homeRestDays,
-    gameTimeUtc
+    gameTimeUtc,
   });
 
   // Only emit for meaningful signals
@@ -289,16 +296,17 @@ function generateWelcomeHomeCard(gameCtx) {
 
   // Confidence mapping
   const confidenceMap = {
-    'S': 0.78,  // S-tier = SUPER
-    'A': 0.68,  // A-tier = BEST/WATCH
-    'B': 0.58   // B-tier = WATCH
+    S: 0.78, // S-tier = SUPER
+    A: 0.68, // A-tier = BEST/WATCH
+    B: 0.58, // B-tier = WATCH
   };
 
   // Home team fatigued from road trip → signal is inverse (fade home team)
   const confidence = confidenceMap[analysis.tier] || 0.55;
-  const tier = confidence >= 0.75 ? 'SUPER' : confidence >= 0.70 ? 'BEST' : 'WATCH';
+  const tier =
+    confidence >= 0.75 ? 'SUPER' : confidence >= 0.7 ? 'BEST' : 'WATCH';
   const awayDirectionalScore = Number(
-    Math.max(0, 0.5 - Math.min(analysis.score / 10, 1) * 0.5).toFixed(3)
+    Math.max(0, 0.5 - Math.min(analysis.score / 10, 1) * 0.5).toFixed(3),
   );
 
   return {
@@ -308,20 +316,20 @@ function generateWelcomeHomeCard(gameCtx) {
     tier,
     prediction: 'AWAY',
     reasoning: `Fade HOME team after ${recentRoadGames.length}-game road trip (tier: ${analysis.tier}). ${analysis.reasoning}`,
-    ev_threshold_passed: confidence > 0.60,
+    ev_threshold_passed: confidence > 0.6,
     driverKey: 'welcomeHomeV2',
     driverInputs: {
       road_games_count: recentRoadGames.length,
       is_back_to_back: isBackToBack,
       home_rest_days: toNumber(homeRestDays),
       away_team_rest: toNumber(awayTeam?.restDays),
-      home_net_rating: toNumber(homeTeam?.netRating)
+      home_net_rating: toNumber(homeTeam?.netRating),
     },
     driverScore: awayDirectionalScore,
     driverStatus: 'ok',
     inference_source: 'driver',
     is_mock: false,
-    welcomeHomeComponents: analysis.components
+    welcomeHomeComponents: analysis.components,
   };
 }
 
@@ -332,5 +340,5 @@ module.exports = {
   scoreTravelDisruption,
   scoreCompression,
   scoreOpponentQuality,
-  scoreSpotRisk
+  scoreSpotRisk,
 };

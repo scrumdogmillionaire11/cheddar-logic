@@ -15,7 +15,8 @@ export interface FilterPreset {
   filters: Partial<GameFilters>;
 }
 
-const ENABLE_WELCOME_HOME = process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+const ENABLE_WELCOME_HOME =
+  process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
 const FIRE_WATCH: ExpressionStatus[] = ['FIRE', 'WATCH'];
 const FIRE_WATCH_PASS: ExpressionStatus[] = ['FIRE', 'WATCH', 'PASS'];
@@ -135,9 +136,7 @@ const GAME_PRESETS: FilterPreset[] = [
       sortMode: 'signal_strength',
     },
   },
-  ...(ENABLE_WELCOME_HOME
-    ? [WELCOME_HOME_PRESET]
-    : []),
+  ...(ENABLE_WELCOME_HOME ? [WELCOME_HOME_PRESET] : []),
 ];
 
 const PROPS_PRESETS: FilterPreset[] = [
@@ -186,8 +185,11 @@ export function getPresetsForMode(mode: ViewMode): FilterPreset[] {
   return PRESETS_BY_MODE[mode] || [];
 }
 
-export function getPreset(mode: ViewMode, id: string): FilterPreset | undefined {
-  return getPresetsForMode(mode).find(p => p.id === id);
+export function getPreset(
+  mode: ViewMode,
+  id: string,
+): FilterPreset | undefined {
+  return getPresetsForMode(mode).find((p) => p.id === id);
 }
 
 /**

@@ -11,7 +11,11 @@ async function run() {
 
   const baseUrl = process.env.CARDS_API_BASE_URL || DEFAULT_BASE_URL;
   const response = await fetch(`${baseUrl}/api/games?limit=200`);
-  assert.strictEqual(response.ok, true, `API response not ok: ${response.status}`);
+  assert.strictEqual(
+    response.ok,
+    true,
+    `API response not ok: ${response.status}`,
+  );
 
   const payload = await response.json();
   assert.strictEqual(payload.success, true, 'API returned success=false');
@@ -51,7 +55,7 @@ async function run() {
 
   assert.ok(
     ratio <= cap,
-    `Repair budget exceeded (${ratio.toFixed(4)} > ${cap.toFixed(2)}). Top repair_rule_ids: [${topRuleIds}]. Top card types: [${topCardTypes}]`
+    `Repair budget exceeded (${ratio.toFixed(4)} > ${cap.toFixed(2)}). Top repair_rule_ids: [${topRuleIds}]. Top card types: [${topCardTypes}]`,
   );
 
   console.log('✅ API games repair budget test passed');

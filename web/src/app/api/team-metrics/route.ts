@@ -12,7 +12,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTeamMetricsWithGames } from '@cheddar-logic/data';
-import { performSecurityChecks, addRateLimitHeaders } from '../../../lib/api-security';
+import {
+  performSecurityChecks,
+  addRateLimitHeaders,
+} from '../../../lib/api-security';
 
 export const runtime = 'nodejs';
 
@@ -21,7 +24,12 @@ function parseBoolean(value: string | null) {
   return ['true', '1', 'yes'].includes(value.toLowerCase());
 }
 
-function clampNumber(value: string | null, fallback: number, min: number, max: number) {
+function clampNumber(
+  value: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+) {
   const parsed = value ? Number.parseInt(value, 10) : NaN;
   if (Number.isNaN(parsed)) return fallback;
   return Math.min(Math.max(parsed, min), max);
@@ -35,13 +43,21 @@ function normalizeSport(value: string | null) {
   return null;
 }
 
-async function buildTeamResponse(teamName: string, sport: string, includeGames: boolean, limit: number) {
-  const snapshot = await getTeamMetricsWithGames(teamName, sport, { includeGames, limit });
+async function buildTeamResponse(
+  teamName: string,
+  sport: string,
+  includeGames: boolean,
+  limit: number,
+) {
+  const snapshot = await getTeamMetricsWithGames(teamName, sport, {
+    includeGames,
+    limit,
+  });
   return {
     name: teamName,
     metrics: snapshot.metrics,
     teamInfo: snapshot.teamInfo,
-    games: snapshot.games
+    games: snapshot.games,
   };
 }
 
@@ -58,7 +74,7 @@ export async function GET(request: NextRequest) {
     if (!sport) {
       return NextResponse.json(
         { success: false, error: 'sport is required (NBA | NCAAM | NHL)' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -71,21 +87,26 @@ export async function GET(request: NextRequest) {
     if (!team && !homeTeam && !awayTeam) {
       return NextResponse.json(
         { success: false, error: 'team or home_team/away_team is required' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (team && (homeTeam || awayTeam)) {
       return NextResponse.json(
         { success: false, error: 'use team or home_team/away_team, not both' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const fetchedAt = new Date().toISOString();
 
     if (team) {
-      const teamData = await buildTeamResponse(team, sport, includeGames, limit);
+      const teamData = await buildTeamResponse(
+        team,
+        sport,
+        includeGames,
+        limit,
+      );
       return NextResponse.json(
         {
           success: true,
@@ -94,16 +115,16 @@ export async function GET(request: NextRequest) {
             source: 'espn',
             window_games: limit,
             fetched_at: fetchedAt,
-            team: teamData
-          }
+            team: teamData,
+          },
         },
-        { headers: { 'Content-Type': 'application/json' } }
+        { headers: { 'Content-Type': 'application/json' } },
       );
     }
 
     const [homeData, awayData] = await Promise.all([
       homeTeam ? buildTeamResponse(homeTeam, sport, includeGames, limit) : null,
-      awayTeam ? buildTeamResponse(awayTeam, sport, includeGames, limit) : null
+      awayTeam ? buildTeamResponse(awayTeam, sport, includeGames, limit) : null,
     ]);
 
     const response = NextResponse.json(
@@ -115,17 +136,18 @@ export async function GET(request: NextRequest) {
           window_games: limit,
           fetched_at: fetchedAt,
           home: homeData,
-          away: awayData
-        }
+          away: awayData,
+        },
       },
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json' } },
     );
-    return addRateLimitHeaders(response, request);  } catch (error) {
+    return addRateLimitHeaders(response, request);
+  } catch (error) {
     console.error('[API] Error fetching team metrics:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     const errorResponse = NextResponse.json(
       { success: false, error: message },
-      { status: 500 }
+      { status: 500 },
     );
     return addRateLimitHeaders(errorResponse, request);
   }

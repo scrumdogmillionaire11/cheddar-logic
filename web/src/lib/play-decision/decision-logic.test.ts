@@ -1,6 +1,6 @@
 /**
  * Tests for Canonical Play Decision Logic
- * 
+ *
  * Covers:
  * 1. Classification layer (deriveClassification)
  * 2. Action layer (deriveAction)
@@ -20,7 +20,9 @@ import type { CanonicalPlay, WrapperContext } from '../types/canonical-play';
 // TEST FIXTURES
 // ============================================================================
 
-const basePlayFactory = (overrides?: Partial<CanonicalPlay>): CanonicalPlay => ({
+const basePlayFactory = (
+  overrides?: Partial<CanonicalPlay>,
+): CanonicalPlay => ({
   play_id: 'test-play-001',
   sport: 'NBA',
   league: 'NBA',
@@ -129,7 +131,7 @@ describe('deriveClassification', () => {
     it('should return BASE for strong edge and high confidence', () => {
       const play = basePlayFactory({
         market_type: 'MONEYLINE',
-        model: { edge: 0.035, confidence: 0.70 },  // 3.5% edge, 70% confidence
+        model: { edge: 0.035, confidence: 0.7 }, // 3.5% edge, 70% confidence
       });
       const result = deriveClassification(play);
       expect(result.classification).toBe('BASE');
@@ -139,7 +141,7 @@ describe('deriveClassification', () => {
       const play = basePlayFactory({
         market_type: 'TOTAL',
         selection_key: 'OVER',
-        model: { edge: 0.025, confidence: 0.70 },  // 2.5% edge (meets TOTAL threshold)
+        model: { edge: 0.025, confidence: 0.7 }, // 2.5% edge (meets TOTAL threshold)
       });
       const result = deriveClassification(play);
       expect(result.classification).toBe('BASE');
@@ -160,7 +162,7 @@ describe('deriveClassification', () => {
     it('should return LEAN for positive edge below BASE threshold', () => {
       const play = basePlayFactory({
         market_type: 'MONEYLINE',
-        model: { edge: 0.015, confidence: 0.65 },  // 1.5% edge < 2.5% threshold
+        model: { edge: 0.015, confidence: 0.65 }, // 1.5% edge < 2.5% threshold
       });
       const result = deriveClassification(play);
       expect(result.classification).toBe('LEAN');
@@ -169,7 +171,7 @@ describe('deriveClassification', () => {
     it('should return LEAN for low confidence despite meeting edge threshold', () => {
       const play = basePlayFactory({
         market_type: 'MONEYLINE',
-        model: { edge: 0.035, confidence: 0.45 },  // Good edge but low confidence
+        model: { edge: 0.035, confidence: 0.45 }, // Good edge but low confidence
       });
       const result = deriveClassification(play);
       // Should be LEAN due to low confidence + weak signal adjustment
@@ -180,7 +182,7 @@ describe('deriveClassification', () => {
       const play = basePlayFactory({
         market_type: 'TOTAL',
         selection_key: 'OVER',
-        model: { edge: 0.025, confidence: 0.55 },  // Meets base 2% threshold but below 55% floor
+        model: { edge: 0.025, confidence: 0.55 }, // Meets base 2% threshold but below 55% floor
       });
       const result = deriveClassification(play);
       expect(result.classification).toBe('LEAN');
@@ -246,7 +248,10 @@ describe('deriveClassification', () => {
 describe('deriveAction', () => {
   describe('PASS classification always → PASS action', () => {
     it('should return PASS action for PASS classification', () => {
-      const result = deriveAction('PASS', { market_available: true, time_window_ok: true });
+      const result = deriveAction('PASS', {
+        market_available: true,
+        time_window_ok: true,
+      });
       expect(result.action).toBe('PASS');
       expect(result.why_code).toBe('CLASSIFICATION_PASS');
     });
@@ -285,7 +290,10 @@ describe('deriveAction', () => {
     });
 
     it('should return FIRE when BASE and time window open', () => {
-      const result = deriveAction('BASE', { time_window_ok: true, market_available: true });
+      const result = deriveAction('BASE', {
+        time_window_ok: true,
+        market_available: true,
+      });
       expect(result.action).toBe('FIRE');
     });
   });
@@ -296,33 +304,50 @@ describe('deriveAction', () => {
         sport: 'NHL',
         enforced_blockers: ['GOALIE_UNCONFIRMED'],
       };
-      const result = deriveAction('BASE', { market_available: true }, wrapperCtx);
+      const result = deriveAction(
+        'BASE',
+        { market_available: true },
+        wrapperCtx,
+      );
       expect(result.action).toBe('HOLD');
       expect(result.why_code).toBe('WRAPPER_BLOCKS');
     });
 
     it('should fire when BASE, available, and no wrappers', () => {
       const wrapperCtx: WrapperContext = { sport: 'NBA' };
-      const result = deriveAction('BASE', { market_available: true }, wrapperCtx);
+      const result = deriveAction(
+        'BASE',
+        { market_available: true },
+        wrapperCtx,
+      );
       expect(result.action).toBe('FIRE');
     });
   });
 
   describe('Classification rules', () => {
     it('should return FIRE for BASE classification', () => {
-      const result = deriveAction('BASE', { market_available: true, time_window_ok: true });
+      const result = deriveAction('BASE', {
+        market_available: true,
+        time_window_ok: true,
+      });
       expect(result.action).toBe('FIRE');
       expect(result.why_code).toBe('CLASSIFICATION_BASE');
     });
 
     it('should return HOLD for LEAN classification', () => {
-      const result = deriveAction('LEAN', { market_available: true, time_window_ok: true });
+      const result = deriveAction('LEAN', {
+        market_available: true,
+        time_window_ok: true,
+      });
       expect(result.action).toBe('HOLD');
       expect(result.why_code).toBe('CLASSIFICATION_LEAN');
     });
 
     it('should return PASS for PASS classification', () => {
-      const result = deriveAction('PASS', { market_available: true, time_window_ok: true });
+      const result = deriveAction('PASS', {
+        market_available: true,
+        time_window_ok: true,
+      });
       expect(result.action).toBe('PASS');
     });
   });
@@ -348,10 +373,13 @@ describe('derivePlayDecision', () => {
   it('should combine classification and action into decision', () => {
     const play = basePlayFactory({
       market_type: 'MONEYLINE',
-      model: { edge: 0.035, confidence: 0.70 },
+      model: { edge: 0.035, confidence: 0.7 },
     });
-    const decision = derivePlayDecision(play, { market_available: true, time_window_ok: true });
-    
+    const decision = derivePlayDecision(play, {
+      market_available: true,
+      time_window_ok: true,
+    });
+
     expect(decision.classification).toBe('BASE');
     expect(decision.action).toBe('FIRE');
     expect(decision.why_code).toBe('CLASSIFICATION_BASE');
@@ -359,10 +387,10 @@ describe('derivePlayDecision', () => {
 
   it('should pass through classification PASS to action PASS', () => {
     const play = basePlayFactory({
-      model: { edge: -0.01, confidence: 0.65 },  // Negative edge
+      model: { edge: -0.01, confidence: 0.65 }, // Negative edge
     });
     const decision = derivePlayDecision(play, { market_available: true });
-    
+
     expect(decision.classification).toBe('PASS');
     expect(decision.action).toBe('PASS');
   });
@@ -370,14 +398,18 @@ describe('derivePlayDecision', () => {
   it('should apply wrapper blocks to BASE classification', () => {
     const play = basePlayFactory({
       sport: 'NHL',
-      model: { edge: 0.035, confidence: 0.70 },
+      model: { edge: 0.035, confidence: 0.7 },
     });
     const wrapperCtx: WrapperContext = {
       sport: 'NHL',
       enforced_blockers: ['GOALIE_UNCONFIRMED'],
     };
-    const decision = derivePlayDecision(play, { market_available: true }, wrapperCtx);
-    
+    const decision = derivePlayDecision(
+      play,
+      { market_available: true },
+      wrapperCtx,
+    );
+
     expect(decision.classification).toBe('BASE');
     expect(decision.action).toBe('HOLD');
     expect(decision.why_code).toBe('WRAPPER_BLOCKS');
@@ -416,15 +448,15 @@ describe('Real-world scenarios', () => {
       sport: 'NBA',
       market_type: 'MONEYLINE',
       selection_key: 'HOME_WIN',
-      model: { edge: 0.04, confidence: 0.75 },  // 4% edge, 75% confidence
+      model: { edge: 0.04, confidence: 0.75 }, // 4% edge, 75% confidence
     });
-    
+
     const { classification } = deriveClassification(play);
     const { action } = deriveAction(classification, {
       market_available: true,
       time_window_ok: true,
     });
-    
+
     expect(classification).toBe('BASE');
     expect(action).toBe('FIRE');
   });
@@ -434,12 +466,12 @@ describe('Real-world scenarios', () => {
       sport: 'NHL',
       market_type: 'TOTAL',
       selection_key: 'OVER',
-      model: { edge: 0.03, confidence: 0.70 },
+      model: { edge: 0.03, confidence: 0.7 },
       warning_tags: ['TOTAL_BIAS_CONFLICT'],
     });
-    
+
     const { classification, pass_reason } = deriveClassification(play);
-    
+
     expect(classification).toBe('PASS');
     expect(pass_reason).toBe('TOTAL_BIAS_CONFLICT');
   });
@@ -449,9 +481,9 @@ describe('Real-world scenarios', () => {
       sport: 'SOCCER',
       market_type: 'TSOA',
       selection_key: 'HOME_TSOA',
-      model: { edge: 0.025, confidence: 0.60 },  // Below 3.5% threshold
+      model: { edge: 0.025, confidence: 0.6 }, // Below 3.5% threshold
     });
-    
+
     const { classification } = deriveClassification(play);
     expect(classification).toBe('LEAN');
   });
@@ -461,35 +493,39 @@ describe('Real-world scenarios', () => {
       sport: 'NHL',
       market_type: 'MONEYLINE',
       selection_key: 'HOME_WIN',
-      model: { edge: 0.035, confidence: 0.70 },
+      model: { edge: 0.035, confidence: 0.7 },
     });
-    
+
     const { classification } = deriveClassification(play);
     expect(classification).toBe('BASE');
-    
+
     // But goalie unconfirmed
     const wrapperCtx: WrapperContext = {
       sport: 'NHL',
       goalie_status: 'UNCONFIRMED',
       enforced_blockers: ['GOALIE_UNCONFIRMED'],
     };
-    
-    const { action } = deriveAction(classification, { market_available: true }, wrapperCtx);
+
+    const { action } = deriveAction(
+      classification,
+      { market_available: true },
+      wrapperCtx,
+    );
     expect(action).toBe('HOLD');
   });
 
   it('Scenario 5: LEAN classification blocks immediate bet', () => {
     const play = basePlayFactory({
       market_type: 'MONEYLINE',
-      model: { edge: 0.015, confidence: 0.60 },  // Below threshold
+      model: { edge: 0.015, confidence: 0.6 }, // Below threshold
     });
-    
+
     const { classification } = deriveClassification(play);
     const { action } = deriveAction(classification, {
       market_available: true,
       time_window_ok: true,
     });
-    
+
     expect(classification).toBe('LEAN');
     expect(action).toBe('HOLD');
   });

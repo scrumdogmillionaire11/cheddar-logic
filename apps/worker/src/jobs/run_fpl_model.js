@@ -10,7 +10,7 @@
  * Reads latest Fantasy Premier League snapshots from DB, runs inference, and stores:
  * - model_outputs (raw inference output)
  * - card_payloads (ready-to-render cards)
- * 
+ *
  * Portable job runner that can be called from:
  * - A cron job (node apps/worker/src/jobs/run_fpl_model.js)
  * - A scheduler daemon (apps/worker/src/schedulers/main.js)
@@ -34,7 +34,7 @@ const {
   insertCardPayload,
   prepareModelAndCardWrite,
   validateCardPayload,
-  withDb
+  withDb,
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
@@ -44,7 +44,7 @@ const {
   buildMatchup,
   formatStartTimeLocal,
   formatCountdown,
-  buildMarketFromOdds
+  buildMarketFromOdds,
 } = require('@cheddar-logic/models');
 
 /**
@@ -56,22 +56,29 @@ const {
 function generateFPLCard(gameId, modelOutput, oddsSnapshot) {
   const cardId = `card-fpl-${gameId}-${uuidV4().slice(0, 8)}`;
   const now = new Date().toISOString();
-  
+
   // Card expires 1 hour before the game starts (if game_time_utc is known)
   let expiresAt = null;
   if (oddsSnapshot && oddsSnapshot.game_time_utc) {
     const gameTime = new Date(oddsSnapshot.game_time_utc);
-    const oneHourBefore = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
+    const oneHourBefore = new Date(
+      gameTime.getTime() - 60 * 60 * 1000,
+    ).toISOString();
     expiresAt = oneHourBefore;
   }
-  
+
   const recommendedBetType = modelOutput.recommended_bet_type || 'unknown';
   const recommendation = buildRecommendationFromPrediction({
     prediction: modelOutput.prediction,
-    recommendedBetType
+    recommendedBetType,
   });
-  const matchup = buildMatchup(oddsSnapshot?.home_team, oddsSnapshot?.away_team);
-  const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
+  const matchup = buildMatchup(
+    oddsSnapshot?.home_team,
+    oddsSnapshot?.away_team,
+  );
+  const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(
+    oddsSnapshot?.game_time_utc,
+  );
   const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
   const market = buildMarketFromOdds(oddsSnapshot);
 
@@ -90,12 +97,12 @@ function generateFPLCard(gameId, modelOutput, oddsSnapshot) {
     recommendation: {
       type: recommendation.type,
       text: recommendation.text,
-      pass_reason: recommendation.pass_reason
+      pass_reason: recommendation.pass_reason,
     },
     projection: {
       total: null,
       margin_home: null,
-      win_prob_home: null
+      win_prob_home: null,
     },
     market,
     edge: null,
@@ -111,20 +118,21 @@ function generateFPLCard(gameId, modelOutput, oddsSnapshot) {
       spread_home: oddsSnapshot?.spread_home,
       spread_away: oddsSnapshot?.spread_away,
       total: oddsSnapshot?.total,
-      captured_at: oddsSnapshot?.captured_at
+      captured_at: oddsSnapshot?.captured_at,
     },
     ev_passed: modelOutput.ev_threshold_passed,
-    disclaimer: 'FPL strategy analysis for informational use only. Not gambling advice.',
+    disclaimer:
+      'FPL strategy analysis for informational use only. Not gambling advice.',
     generated_at: now,
     meta: {
       inference_source: modelOutput.inference_source || 'unknown',
       model_endpoint: modelOutput.model_endpoint || null,
       is_mock: Boolean(modelOutput.is_mock),
       domain: 'fpl-sage',
-      contract_mode: 'shared-betting-compat'
-    }
+      contract_mode: 'shared-betting-compat',
+    },
   };
-  
+
   return {
     id: cardId,
     gameId,
@@ -134,7 +142,7 @@ function generateFPLCard(gameId, modelOutput, oddsSnapshot) {
     createdAt: now,
     expiresAt,
     payloadData,
-    modelOutputIds: null // Will be linked after model_output is inserted
+    modelOutputIds: null, // Will be linked after model_output is inserted
   };
 }
 
@@ -143,74 +151,88 @@ function generateFPLCard(gameId, modelOutput, oddsSnapshot) {
  */
 async function runFPLModel() {
   const jobRunId = `job-fpl-model-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
-  
+
   console.log(`[FPLSageAdapter] Starting job run: ${jobRunId}`);
   console.log(`[FPLSageAdapter] Time: ${new Date().toISOString()}`);
-  
+
   return withDb(async () => {
     try {
       // Start job run
       console.log('[FPLSageAdapter] Recording job start...');
       insertJobRun('run_fpl_model', jobRunId);
-      
+
       // Get latest FPL odds for all games
       console.log('[FPLSageAdapter] Fetching latest FPL snapshots...');
       const now = new Date();
-      const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+      const twentyFourHoursAgo = new Date(
+        now.getTime() - 24 * 60 * 60 * 1000,
+      ).toISOString();
       const oddsSnapshots = getOddsSnapshots('FPL', twentyFourHoursAgo);
-      
+
       if (oddsSnapshots.length === 0) {
         console.log('[FPLSageAdapter] No recent FPL snapshots found, exiting.');
         markJobRunSuccess(jobRunId);
         return { success: true, jobRunId, cardsGenerated: 0 };
       }
-      
+
       console.log(`[FPLSageAdapter] Found ${oddsSnapshots.length} snapshots`);
-      
+
       // Group by game_id and get latest for each
       const gameOdds = {};
-      oddsSnapshots.forEach(snap => {
-        if (!gameOdds[snap.game_id] || snap.captured_at > gameOdds[snap.game_id].captured_at) {
+      oddsSnapshots.forEach((snap) => {
+        if (
+          !gameOdds[snap.game_id] ||
+          snap.captured_at > gameOdds[snap.game_id].captured_at
+        ) {
           gameOdds[snap.game_id] = snap;
         }
       });
-      
+
       const gameIds = Object.keys(gameOdds);
-      console.log(`[FPLSageAdapter] Running inference on ${gameIds.length} games...`);
-      
+      console.log(
+        `[FPLSageAdapter] Running inference on ${gameIds.length} games...`,
+      );
+
       // Get model instance
       const model = getModel('FPL');
-      
+
       let cardsGenerated = 0;
       let cardsFailed = 0;
       const errors = [];
-      
+
       // Process each game
       for (const gameId of gameIds) {
         try {
           const oddsSnapshot = gameOdds[gameId];
-          
+
           // Run inference (using pluggable model)
           const modelOutput = await model.infer(gameId, oddsSnapshot);
-          
+
           // Only generate card if inference passed confidence threshold
           if (modelOutput.ev_threshold_passed) {
             const card = generateFPLCard(gameId, modelOutput, oddsSnapshot);
-            const validation = validateCardPayload(card.cardType, card.payloadData);
+            const validation = validateCardPayload(
+              card.cardType,
+              card.payloadData,
+            );
             if (!validation.success) {
-              throw new Error(`Invalid card payload: ${validation.errors.join('; ')}`);
+              throw new Error(
+                `Invalid card payload: ${validation.errors.join('; ')}`,
+              );
             }
-            
+
             const { deletedOutputs, deletedCards } = prepareModelAndCardWrite(
               gameId,
               'fpl-model-v1',
-              'fpl-model-output'
+              'fpl-model-output',
             );
-            
+
             if (deletedOutputs > 0 || deletedCards > 0) {
-              console.log(`  🔄 ${gameId}: Removed ${deletedOutputs} output(s), ${deletedCards} card(s)`);
+              console.log(
+                `  🔄 ${gameId}: Removed ${deletedOutputs} output(s), ${deletedCards} card(s)`,
+              );
             }
-            
+
             // Store model output
             const modelOutputId = `model-fpl-${gameId}-${uuidV4().slice(0, 8)}`;
             insertModelOutput({
@@ -224,17 +246,21 @@ async function runFPLModel() {
               confidence: modelOutput.confidence,
               outputData: modelOutput,
               oddsSnapshotId: oddsSnapshot.id,
-              jobRunId
+              jobRunId,
             });
-            
+
             // Generate and store card
             card.modelOutputIds = modelOutputId;
             insertCardPayload(card);
-            
+
             cardsGenerated++;
-            console.log(`  ✅ ${gameId}: ${modelOutput.prediction} (${(modelOutput.confidence * 100).toFixed(0)}% confidence)`);
+            console.log(
+              `  ✅ ${gameId}: ${modelOutput.prediction} (${(modelOutput.confidence * 100).toFixed(0)}% confidence)`,
+            );
           } else {
-            console.log(`  ⏭️  ${gameId}: Abstained (confidence ${(modelOutput.confidence * 100).toFixed(0)}% below threshold)`);
+            console.log(
+              `  ⏭️  ${gameId}: Abstained (confidence ${(modelOutput.confidence * 100).toFixed(0)}% below threshold)`,
+            );
           }
         } catch (gameError) {
           if (gameError.message.startsWith('Invalid card payload')) {
@@ -245,28 +271,32 @@ async function runFPLModel() {
           console.error(`  ❌ ${gameId}: ${gameError.message}`);
         }
       }
-      
+
       // Mark success
       markJobRunSuccess(jobRunId);
-      console.log(`[FPLSageAdapter] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`);
-      
+      console.log(
+        `[FPLSageAdapter] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
+      );
+
       if (errors.length > 0) {
         console.error('[FPLSageAdapter] Errors:');
-        errors.forEach(err => console.error(`  - ${err}`));
+        errors.forEach((err) => console.error(`  - ${err}`));
       }
-      
+
       return { success: true, jobRunId, cardsGenerated, cardsFailed, errors };
-      
     } catch (error) {
       console.error(`[FPLSageAdapter] ❌ Job failed:`, error.message);
       console.error(error.stack);
-      
+
       try {
         markJobRunFailure(jobRunId, error.message);
       } catch (dbError) {
-        console.error(`[FPLSageAdapter] Failed to record error to DB:`, dbError.message);
+        console.error(
+          `[FPLSageAdapter] Failed to record error to DB:`,
+          dbError.message,
+        );
       }
-      
+
       return { success: false, jobRunId, error: error.message };
     }
   });
@@ -275,10 +305,10 @@ async function runFPLModel() {
 // CLI execution
 if (require.main === module) {
   runFPLModel()
-    .then(result => {
+    .then((result) => {
       process.exit(result.success ? 0 : 1);
     })
-    .catch(error => {
+    .catch((error) => {
       console.error('Uncaught error:', error);
       process.exit(1);
     });

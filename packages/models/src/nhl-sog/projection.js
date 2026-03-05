@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 const { DEFAULT_CONFIG } = require('./config');
 const { computeMu, computeMuFirstPeriod, weightedMean } = require('./mu');
 const { isTrending } = require('./trending');
@@ -18,7 +17,10 @@ function normalizeLine(line, mu) {
 
 function classify({ quality, isTrendingValue, mu, config }) {
   if (quality <= config.classification.hotMaxQuality) return 'HOT';
-  if (quality <= config.classification.watchMaxQuality || (isTrendingValue && mu >= config.classification.watchMinMu)) {
+  if (
+    quality <= config.classification.watchMaxQuality ||
+    (isTrendingValue && mu >= config.classification.watchMinMu)
+  ) {
     return 'WATCH';
   }
   return 'COLD';
@@ -30,11 +32,18 @@ function computeSogProjection(inputs, overrides = {}) {
     ...overrides,
     trending: { ...DEFAULT_CONFIG.trending, ...(overrides.trending || {}) },
     quality: { ...DEFAULT_CONFIG.quality, ...(overrides.quality || {}) },
-    classification: { ...DEFAULT_CONFIG.classification, ...(overrides.classification || {}) }
+    classification: {
+      ...DEFAULT_CONFIG.classification,
+      ...(overrides.classification || {}),
+    },
   };
 
-  const l5Shots = Array.isArray(inputs.l5Shots) ? inputs.l5Shots.map((value) => Number(value)) : [];
-  const gamesObserved = Number.isFinite(inputs.gamesObserved) ? inputs.gamesObserved : l5Shots.length;
+  const l5Shots = Array.isArray(inputs.l5Shots)
+    ? inputs.l5Shots.map((value) => Number(value))
+    : [];
+  const gamesObserved = Number.isFinite(inputs.gamesObserved)
+    ? inputs.gamesObserved
+    : l5Shots.length;
   const role = normalizeRole(inputs.role);
 
   const mu = computeMu({
@@ -49,50 +58,55 @@ function computeSogProjection(inputs, overrides = {}) {
     homeIceBoost: config.homeIceSogBoost,
     l5Weight: config.l5Weight,
     priorWeight: config.priorWeight,
-    redistributionBoost: inputs.redistributionBoost ?? 0
+    redistributionBoost: inputs.redistributionBoost ?? 0,
   });
 
   const muFirstPeriod = computeMuFirstPeriod({
     muFullGame: mu,
     isHome: Boolean(inputs.isHome),
     periodShare: config.periodShare1P,
-    homeIceBoost: config.homeIce1PBoost
+    homeIceBoost: config.homeIce1PBoost,
   });
 
   const suggestedLine = normalizeLine(inputs.marketLine, mu);
-  const threshold = Number.isFinite(suggestedLine) ? Math.floor(suggestedLine) + 1 : null;
+  const threshold = Number.isFinite(suggestedLine)
+    ? Math.floor(suggestedLine) + 1
+    : null;
 
   const trendingValue = isTrending({
     l5Shots,
     suggestedLine,
     minHits: config.trending.minHits,
-    meanBuffer: config.trending.meanBuffer
+    meanBuffer: config.trending.meanBuffer,
   });
 
   const l5Mean = weightedMean(l5Shots);
-  const buffer = (Number.isFinite(l5Mean) && Number.isFinite(suggestedLine))
-    ? l5Mean - suggestedLine
-    : null;
+  const buffer =
+    Number.isFinite(l5Mean) && Number.isFinite(suggestedLine)
+      ? l5Mean - suggestedLine
+      : null;
 
   const quality = computeQuality({
     l5Shots,
     gamesObserved,
     role,
     buffer,
-    config: config.quality
+    config: config.quality,
   });
 
   const classification = classify({
     quality: quality.quality,
     isTrendingValue: trendingValue,
     mu: mu ?? 0,
-    config
+    config,
   });
 
   const reasonCodes = [];
   if (trendingValue) reasonCodes.push('TRENDING');
-  if (quality.quality <= config.classification.hotMaxQuality) reasonCodes.push('LOW_QUALITY');
-  if (mu != null && mu >= config.classification.watchMinMu) reasonCodes.push('HIGH_VOLUME');
+  if (quality.quality <= config.classification.hotMaxQuality)
+    reasonCodes.push('LOW_QUALITY');
+  if (mu != null && mu >= config.classification.watchMinMu)
+    reasonCodes.push('HIGH_VOLUME');
 
   return {
     mu,
@@ -107,11 +121,11 @@ function computeSogProjection(inputs, overrides = {}) {
     reason_codes: reasonCodes,
     diagnostics: {
       quality_components: quality.components,
-      l5_mean: l5Mean == null ? null : Number(l5Mean.toFixed(3))
-    }
+      l5_mean: l5Mean == null ? null : Number(l5Mean.toFixed(3)),
+    },
   };
 }
 
 module.exports = {
-  computeSogProjection
+  computeSogProjection,
 };

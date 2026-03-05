@@ -1,5 +1,5 @@
-import Link from "next/link";
-import { EDUCATION_ARTICLES } from "@/lib/education/content";
+import Link from 'next/link';
+import { EDUCATION_ARTICLES } from '@/lib/education/content';
 
 export default function EducationPage() {
   return (
@@ -13,7 +13,9 @@ export default function EducationPage() {
 
         <div className="space-y-8">
           <div>
-            <h1 className="mb-2 font-display text-4xl font-semibold">Educational Materials</h1>
+            <h1 className="mb-2 font-display text-4xl font-semibold">
+              Educational Materials
+            </h1>
             <p className="text-lg text-cloud/70">
               Learn about probabilistic analytics and FPL strategy
             </p>
@@ -39,7 +41,9 @@ export default function EducationPage() {
 
           <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
             <h2 className="mb-4 text-xl font-semibold">Video Tutorials</h2>
-            <p className="text-cloud/70">Coming soon - video content explaining key concepts</p>
+            <p className="text-cloud/70">
+              Coming soon - video content explaining key concepts
+            </p>
           </div>
         </div>
       </div>

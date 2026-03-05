@@ -3,16 +3,27 @@
  * Based on FILTER-FEATURE.md design
  */
 
-import type { GameCard, Sport, Market, DriverTier, ExpressionStatus } from '../types/game-card';
+import type {
+  GameCard,
+  Sport,
+  Market,
+  DriverTier,
+  ExpressionStatus,
+} from '../types/game-card';
 import { GAME_TAGS } from '../types/game-card';
 import { getPlayDisplayAction } from './decision';
 
-const ENABLE_WELCOME_HOME = process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+const ENABLE_WELCOME_HOME =
+  process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
 /**
  * Sort modes for game cards
  */
-export type SortMode = 'start_time' | 'odds_updated' | 'signal_strength' | 'pick_score';
+export type SortMode =
+  | 'start_time'
+  | 'odds_updated'
+  | 'signal_strength'
+  | 'pick_score';
 
 export type ViewMode = 'game' | 'props';
 
@@ -56,14 +67,14 @@ export interface CommonFilters {
   // Sport / League
   sports: Sport[];
   leagues?: string[];
-  
+
   // Time window
   timeWindow?: 'next_2h' | 'today' | 'custom';
   customTimeRange?: {
     start: string; // ISO
     end: string; // ISO
   };
-  
+
   // Actionability
   statuses: ExpressionStatus[];
 
@@ -75,17 +86,16 @@ export interface CommonFilters {
 }
 
 export interface GameModeFilters extends CommonFilters {
-  
   // Market type
   markets: Market[];
   onlyGamesWithPicks: boolean;
-   hasClearPlay: boolean; // play.market != 'NONE'
+  hasClearPlay: boolean; // play.market != 'NONE'
   onlyWelcomeHome?: boolean;
-  
+
   // Driver strength
   minTier?: DriverTier; // BEST only / SUPER+ / WATCH+
   minConfidence?: number; // 0-1 range
-  
+
   // Risk flags
   hideFragility: boolean;
   hideBlowout: boolean;
@@ -157,34 +167,37 @@ function filterBySport(card: GameCard, filters: CommonFilters): boolean {
  */
 function filterByTimeWindow(card: GameCard, filters: CommonFilters): boolean {
   if (!filters.timeWindow) return true;
-  
+
   const startTime = new Date(card.startTime).getTime();
   const now = new Date().getTime();
-  
+
   if (filters.timeWindow === 'next_2h') {
     const twoHours = 2 * 60 * 60 * 1000;
     return startTime <= now + twoHours && startTime > now;
   }
-  
+
   if (filters.timeWindow === 'today') {
     return card.tags.includes(GAME_TAGS.STARTS_TODAY);
   }
-  
+
   if (filters.timeWindow === 'custom' && filters.customTimeRange) {
     const rangeStart = new Date(filters.customTimeRange.start).getTime();
     const rangeEnd = new Date(filters.customTimeRange.end).getTime();
     return startTime >= rangeStart && startTime <= rangeEnd;
   }
-  
+
   return true;
 }
 
 /**
  * Filter by odds freshness (stale filter)
  */
-function filterByOddsFreshness(card: GameCard, filters: GameModeFilters): boolean {
+function filterByOddsFreshness(
+  card: GameCard,
+  filters: GameModeFilters,
+): boolean {
   if (!filters.hideStaleOdds) return true;
-  
+
   // Hide if stale by 5+ minutes
   return !card.tags.includes(GAME_TAGS.STALE_5M);
 }
@@ -218,16 +231,19 @@ function canonicalToLegacyMarket(canonical?: string): Market | null {
 /**
  * Filter by market availability
  * Checks both canonical market_type and legacy market fields
- * 
+ *
  * Special rule for Full Slate (when PASS is included):
  * - Allow PASS plays through even if their market doesn't match the filter
  */
-function filterByMarketAvailability(card: GameCard, filters: GameModeFilters): boolean {
+function filterByMarketAvailability(
+  card: GameCard,
+  filters: GameModeFilters,
+): boolean {
   if (filters.markets.length === 0) return true;
 
   const includePass = filters.statuses.includes('PASS');
   const displayAction = getPlayDisplayAction(card.play);
-  
+
   // Full Slate lenient mode: let PASS plays through regardless of market
   if (includePass && displayAction === 'PASS') {
     return true;
@@ -241,12 +257,16 @@ function filterByMarketAvailability(card: GameCard, filters: GameModeFilters): b
 
   // Fallback to legacy play.market
   const playMarket = card.play?.market;
-  if (playMarket && playMarket !== 'NONE' && filters.markets.includes(playMarket)) {
+  if (
+    playMarket &&
+    playMarket !== 'NONE' &&
+    filters.markets.includes(playMarket)
+  ) {
     return true;
   }
 
   // Check drivers as final fallback
-  return card.drivers.some(d => filters.markets.includes(d.market));
+  return card.drivers.some((d) => filters.markets.includes(d.market));
 }
 
 function filterByPropAvailability(card: GameCard): boolean {
@@ -256,24 +276,28 @@ function filterByPropAvailability(card: GameCard): boolean {
 
   const selectionSide = play.selection?.side ?? play.side;
   const hasSelection = Boolean(selectionSide) && selectionSide !== 'NEUTRAL';
-  const hasLineOrPrice = typeof play.line === 'number' || typeof play.price === 'number';
+  const hasLineOrPrice =
+    typeof play.line === 'number' || typeof play.price === 'number';
 
   return hasSelection && hasLineOrPrice;
 }
 
 /**
  * Filter by actionability status
- * 
+ *
  * Special rule for Full Slate (when PASS is included):
  * - If statuses includes PASS, show any game with a play object OR blocked totals
  * - Otherwise, require exact status match
  */
-function filterByActionability(card: GameCard, filters: CommonFilters): boolean {
+function filterByActionability(
+  card: GameCard,
+  filters: CommonFilters,
+): boolean {
   if (filters.statuses.length === 0) return true;
 
   const includePass = filters.statuses.includes('PASS');
   const displayAction = getPlayDisplayAction(card.play);
-  
+
   // Full Slate mode: include any game with a play or blocked totals
   if (includePass) {
     const hasPlay = card.play !== undefined;
@@ -281,15 +305,15 @@ function filterByActionability(card: GameCard, filters: CommonFilters): boolean 
       card.play?.market_type === 'TOTAL' &&
       displayAction === 'PASS' &&
       (card.play?.reason_codes?.includes('PASS_TOTAL_INSUFFICIENT_DATA') ||
-        card.play?.tags?.includes('CONSISTENCY_BLOCK_TOTALS'))
+        card.play?.tags?.includes('CONSISTENCY_BLOCK_TOTALS')),
     );
     const hasDrivers = card.drivers.length > 0;
-    
+
     if (hasPlay || hasBlockedTotals || hasDrivers) {
       return true;
     }
   }
-  
+
   // Standard mode: Check displayAction against filter
   // Map display action to filter status names
   let status: ExpressionStatus = 'PASS';
@@ -298,7 +322,7 @@ function filterByActionability(card: GameCard, filters: CommonFilters): boolean 
   } else if (displayAction === 'HOLD') {
     status = 'WATCH';
   }
-  
+
   // Also check legacy expression choice if no play
   if (!displayAction || displayAction === 'PASS') {
     if (card.expressionChoice?.status) {
@@ -309,18 +333,21 @@ function filterByActionability(card: GameCard, filters: CommonFilters): boolean 
       status = 'WATCH';
     }
   }
-  
+
   return filters.statuses.includes(status);
 }
 
 /**
  * Filter by driver tier and confidence
  */
-function filterByDriverStrength(card: GameCard, filters: GameModeFilters): boolean {
+function filterByDriverStrength(
+  card: GameCard,
+  filters: GameModeFilters,
+): boolean {
   if (!filters.minTier && !filters.minConfidence) return true;
-  
+
   const tierRank: Record<DriverTier, number> = { BEST: 3, SUPER: 2, WATCH: 1 };
-  
+
   for (const driver of card.drivers) {
     // Check tier
     if (filters.minTier) {
@@ -328,16 +355,16 @@ function filterByDriverStrength(card: GameCard, filters: GameModeFilters): boole
       const driverRank = tierRank[driver.tier];
       if (driverRank < minRank) continue;
     }
-    
+
     // Check confidence
     if (filters.minConfidence && driver.confidence !== undefined) {
       if (driver.confidence < filters.minConfidence) continue;
     }
-    
+
     // If we got here, this driver passes
     return true;
   }
-  
+
   // No drivers passed filters
   return filters.minTier === undefined && filters.minConfidence === undefined;
 }
@@ -346,16 +373,22 @@ function filterByDriverStrength(card: GameCard, filters: GameModeFilters): boole
  * Filter by risk flags
  */
 function filterByRiskFlags(card: GameCard, filters: GameModeFilters): boolean {
-  if (filters.hideFragility && card.tags.includes(GAME_TAGS.HAS_RISK_FRAGILITY)) {
+  if (
+    filters.hideFragility &&
+    card.tags.includes(GAME_TAGS.HAS_RISK_FRAGILITY)
+  ) {
     return false;
   }
   if (filters.hideBlowout && card.tags.includes(GAME_TAGS.HAS_RISK_BLOWOUT)) {
     return false;
   }
-  if (filters.hideLowCoverage && card.tags.includes(GAME_TAGS.HAS_LOW_COVERAGE)) {
+  if (
+    filters.hideLowCoverage &&
+    card.tags.includes(GAME_TAGS.HAS_LOW_COVERAGE)
+  ) {
     return false;
   }
-  
+
   return true;
 }
 
@@ -364,7 +397,7 @@ function filterByRiskFlags(card: GameCard, filters: GameModeFilters): boolean {
  */
 function filterBySearch(card: GameCard, filters: CommonFilters): boolean {
   if (!filters.searchQuery) return true;
-  
+
   const query = filters.searchQuery.toLowerCase();
   const homeTeam = card.homeTeam.toLowerCase();
   const awayTeam = card.awayTeam.toLowerCase();
@@ -392,23 +425,31 @@ function filterBySearch(card: GameCard, filters: CommonFilters): boolean {
 function filterByHasPicks(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.onlyGamesWithPicks) return true;
 
-  if (card.play && card.play.market !== 'NONE' && card.play.pick !== 'NO PLAY') {
+  if (
+    card.play &&
+    card.play.market !== 'NONE' &&
+    card.play.pick !== 'NO PLAY'
+  ) {
     return true;
   }
 
-  return card.drivers.some(d => d.direction !== 'NEUTRAL');
+  return card.drivers.some((d) => d.direction !== 'NEUTRAL');
 }
 
 /**
  * Filter for Welcome Home Fade cards only
  */
-function filterByWelcomeHome(card: GameCard, filters: GameModeFilters): boolean {
+function filterByWelcomeHome(
+  card: GameCard,
+  filters: GameModeFilters,
+): boolean {
   if (!filters.onlyWelcomeHome) return true;
   if (!ENABLE_WELCOME_HOME) return false;
-  
+
   // Check if any driver or evidence item is Welcome Home Fade
-  const hasWHF = card.drivers.some(d => d.cardType === 'welcome-home-v2') ||
-    (card.evidence?.some(e => e.cardType === 'welcome-home-v2') ?? false);
+  const hasWHF =
+    card.drivers.some((d) => d.cardType === 'welcome-home-v2') ||
+    (card.evidence?.some((e) => e.cardType === 'welcome-home-v2') ?? false);
   return hasWHF;
 }
 
@@ -418,13 +459,17 @@ function filterByWelcomeHome(card: GameCard, filters: GameModeFilters): boolean 
 function filterByClearPlay(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.hasClearPlay) return true;
 
-  return card.play !== undefined && card.play.market !== 'NONE' && card.play.pick !== 'NO PLAY';
+  return (
+    card.play !== undefined &&
+    card.play.market !== 'NONE' &&
+    card.play.pick !== 'NO PLAY'
+  );
 }
 
 export function getFilterDebugFlags(
   card: GameCard,
   filters: GameFilters,
-  mode: ViewMode = 'game'
+  mode: ViewMode = 'game',
 ): FilterDebugFlags {
   if (mode === 'props' && isPropsModeFilters(filters)) {
     return {
@@ -465,27 +510,28 @@ function getSortValue(card: GameCard, sortMode: SortMode): number {
   switch (sortMode) {
     case 'start_time':
       return new Date(card.startTime).getTime();
-    
+
     case 'odds_updated':
       return new Date(card.updatedAt).getTime();
-    
+
     case 'signal_strength': {
-      const tierRank: Record<DriverTier, number> = { BEST: 3, SUPER: 2, WATCH: 1 };
-      const maxTier = Math.max(
-        0,
-        ...card.drivers.map(d => tierRank[d.tier])
-      );
+      const tierRank: Record<DriverTier, number> = {
+        BEST: 3,
+        SUPER: 2,
+        WATCH: 1,
+      };
+      const maxTier = Math.max(0, ...card.drivers.map((d) => tierRank[d.tier]));
       const maxConfidence = Math.max(
         0,
-        ...card.drivers.map(d => d.confidence || 0)
+        ...card.drivers.map((d) => d.confidence || 0),
       );
       // Combine tier (weighted 10x) and confidence
       return maxTier * 10 + maxConfidence;
     }
-    
+
     case 'pick_score':
       return card.expressionChoice?.score || 0;
-    
+
     default:
       return 0;
   }
@@ -503,10 +549,10 @@ function sortCards(cards: GameCard[], sortMode: SortMode): GameCard[] {
       if (aIsFire && !bIsFire) return -1;
       if (!aIsFire && bIsFire) return 1;
     }
-    
+
     const aVal = getSortValue(a, sortMode);
     const bVal = getSortValue(b, sortMode);
-    
+
     // For start_time and odds_updated: ascending (soonest first)
     // For signal_strength and pick_score: descending (strongest first)
     if (sortMode === 'start_time' || sortMode === 'odds_updated') {
@@ -515,26 +561,29 @@ function sortCards(cards: GameCard[], sortMode: SortMode): GameCard[] {
       return bVal - aVal;
     }
   });
-  
+
   return sorted;
 }
 
 /**
  * Apply all filters to game cards
  */
-function applyGameFilters(cards: GameCard[], filters: GameModeFilters): GameCard[] {
+function applyGameFilters(
+  cards: GameCard[],
+  filters: GameModeFilters,
+): GameCard[] {
   const filtered = cards
-    .filter(card => filterBySport(card, filters))
-    .filter(card => filterByTimeWindow(card, filters))
-    .filter(card => filterByOddsFreshness(card, filters))
-    .filter(card => filterByMarketAvailability(card, filters))
-    .filter(card => filterByActionability(card, filters))
-    .filter(card => filterByDriverStrength(card, filters))
-    .filter(card => filterByRiskFlags(card, filters))
-    .filter(card => filterBySearch(card, filters))
-    .filter(card => filterByWelcomeHome(card, filters))
-    .filter(card => filterByHasPicks(card, filters))
-    .filter(card => filterByClearPlay(card, filters));
+    .filter((card) => filterBySport(card, filters))
+    .filter((card) => filterByTimeWindow(card, filters))
+    .filter((card) => filterByOddsFreshness(card, filters))
+    .filter((card) => filterByMarketAvailability(card, filters))
+    .filter((card) => filterByActionability(card, filters))
+    .filter((card) => filterByDriverStrength(card, filters))
+    .filter((card) => filterByRiskFlags(card, filters))
+    .filter((card) => filterBySearch(card, filters))
+    .filter((card) => filterByWelcomeHome(card, filters))
+    .filter((card) => filterByHasPicks(card, filters))
+    .filter((card) => filterByClearPlay(card, filters));
 
   return sortCards(filtered, filters.sortMode);
 }
@@ -542,15 +591,15 @@ function applyGameFilters(cards: GameCard[], filters: GameModeFilters): GameCard
 export function applyFilters(
   cards: GameCard[],
   filters: GameFilters,
-  mode: ViewMode = 'game'
+  mode: ViewMode = 'game',
 ): GameCard[] {
   if (mode === 'props' && isPropsModeFilters(filters)) {
     const filtered = cards
-      .filter(card => filterByPropAvailability(card))
-      .filter(card => filterBySport(card, filters))
-      .filter(card => filterByTimeWindow(card, filters))
-      .filter(card => filterByActionability(card, filters))
-      .filter(card => filterBySearch(card, filters));
+      .filter((card) => filterByPropAvailability(card))
+      .filter((card) => filterBySport(card, filters))
+      .filter((card) => filterByTimeWindow(card, filters))
+      .filter((card) => filterByActionability(card, filters))
+      .filter((card) => filterBySearch(card, filters));
 
     return sortCards(filtered, filters.sortMode);
   }
@@ -561,7 +610,10 @@ export function applyFilters(
 /**
  * Get count of active filters (excluding defaults)
  */
-export function getActiveFilterCount(filters: GameFilters, mode: ViewMode = 'game'): number {
+export function getActiveFilterCount(
+  filters: GameFilters,
+  mode: ViewMode = 'game',
+): number {
   let count = 0;
 
   if (mode === 'props' && isPropsModeFilters(filters)) {

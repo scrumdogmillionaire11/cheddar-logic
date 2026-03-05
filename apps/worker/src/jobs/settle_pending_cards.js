@@ -32,7 +32,7 @@ const {
   normalizeSelectionForMarket,
   parseLine,
   shouldRunJobKey,
-  withDb
+  withDb,
 } = require('@cheddar-logic/data');
 
 function parseLockedPrice(value) {
@@ -47,7 +47,7 @@ function assertLockedMarketContext(row, payloadData) {
     throw createMarketError(
       'SETTLEMENT_REQUIRES_MARKET_KEY',
       `Card ${row.card_id} cannot settle without market_key`,
-      { cardId: row.card_id, gameId: row.game_id }
+      { cardId: row.card_id, gameId: row.game_id },
     );
   }
 
@@ -56,7 +56,7 @@ function assertLockedMarketContext(row, payloadData) {
     throw createMarketError(
       'INVALID_MARKET_TYPE',
       `Card ${row.card_id} has invalid stored market_type "${row.market_type}"`,
-      { cardId: row.card_id, marketType: row.market_type }
+      { cardId: row.card_id, marketType: row.market_type },
     );
   }
 
@@ -64,7 +64,7 @@ function assertLockedMarketContext(row, payloadData) {
     marketType,
     selection: row.selection,
     homeTeam: payloadData?.home_team ?? null,
-    awayTeam: payloadData?.away_team ?? null
+    awayTeam: payloadData?.away_team ?? null,
   });
 
   const line = parseLine(row.line);
@@ -72,7 +72,7 @@ function assertLockedMarketContext(row, payloadData) {
     throw createMarketError(
       'MISSING_MARKET_LINE',
       `Card ${row.card_id} missing line for ${marketType} settlement`,
-      { cardId: row.card_id, marketType, line: row.line }
+      { cardId: row.card_id, marketType, line: row.line },
     );
   }
 
@@ -81,7 +81,7 @@ function assertLockedMarketContext(row, payloadData) {
     throw createMarketError(
       'MISSING_LOCKED_PRICE',
       `Card ${row.card_id} missing locked_price at settlement`,
-      { cardId: row.card_id, marketType, selection }
+      { cardId: row.card_id, marketType, selection },
     );
   }
 
@@ -89,7 +89,7 @@ function assertLockedMarketContext(row, payloadData) {
     gameId: row.game_id,
     marketType,
     selection,
-    line
+    line,
   });
 
   if (expectedMarketKey !== row.market_key) {
@@ -100,7 +100,7 @@ function assertLockedMarketContext(row, payloadData) {
         cardId: row.card_id,
         marketKey: row.market_key,
         expectedMarketKey,
-      }
+      },
     );
   }
 
@@ -113,7 +113,13 @@ function assertLockedMarketContext(row, payloadData) {
   };
 }
 
-function gradeLockedMarket({ marketType, selection, line, homeScore, awayScore }) {
+function gradeLockedMarket({
+  marketType,
+  selection,
+  line,
+  homeScore,
+  awayScore,
+}) {
   if (marketType === 'MONEYLINE') {
     if (selection === 'HOME') {
       if (homeScore > awayScore) return 'win';
@@ -128,12 +134,17 @@ function gradeLockedMarket({ marketType, selection, line, homeScore, awayScore }
 
   if (marketType === 'SPREAD') {
     if (!Number.isFinite(line)) {
-      throw createMarketError('MISSING_MARKET_LINE', 'Spread settlement requires finite line', { marketType, selection, line });
+      throw createMarketError(
+        'MISSING_MARKET_LINE',
+        'Spread settlement requires finite line',
+        { marketType, selection, line },
+      );
     }
 
-    const diff = selection === 'HOME'
-      ? (homeScore + line) - awayScore
-      : (awayScore + line) - homeScore;
+    const diff =
+      selection === 'HOME'
+        ? homeScore + line - awayScore
+        : awayScore + line - homeScore;
 
     if (diff > 0) return 'win';
     if (diff < 0) return 'loss';
@@ -141,7 +152,11 @@ function gradeLockedMarket({ marketType, selection, line, homeScore, awayScore }
   }
 
   if (!Number.isFinite(line)) {
-    throw createMarketError('MISSING_MARKET_LINE', 'Total settlement requires finite line', { marketType, selection, line });
+    throw createMarketError(
+      'MISSING_MARKET_LINE',
+      'Total settlement requires finite line',
+      { marketType, selection, line },
+    );
   }
 
   const actualTotal = homeScore + awayScore;
@@ -184,13 +199,17 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
   return withDb(async () => {
     // Check idempotency if jobKey provided
     if (jobKey && !shouldRunJobKey(jobKey)) {
-      console.log(`[SettleCards] Skipping (already succeeded or running): ${jobKey}`);
+      console.log(
+        `[SettleCards] Skipping (already succeeded or running): ${jobKey}`,
+      );
       return { success: true, jobRunId: null, skipped: true, jobKey };
     }
 
     // DRY_RUN mode (log only, no execution)
     if (dryRun) {
-      console.log(`[SettleCards] DRY_RUN=true — would run jobKey=${jobKey || 'none'}`);
+      console.log(
+        `[SettleCards] DRY_RUN=true — would run jobKey=${jobKey || 'none'}`,
+      );
       return { success: true, jobRunId: null, dryRun: true, jobKey };
     }
 
@@ -227,7 +246,9 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       `);
 
       const pendingRows = pendingStmt.all();
-      console.log(`[SettleCards] Found ${pendingRows.length} pending card_results with final game scores`);
+      console.log(
+        `[SettleCards] Found ${pendingRows.length} pending card_results with final game scores`,
+      );
 
       let cardsSettled = 0;
       let cardsErrored = 0;
@@ -236,11 +257,14 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       for (const row of pendingRows) {
         let payloadData;
         try {
-          payloadData = typeof row.payload_data === 'string'
-            ? JSON.parse(row.payload_data)
-            : row.payload_data;
+          payloadData =
+            typeof row.payload_data === 'string'
+              ? JSON.parse(row.payload_data)
+              : row.payload_data;
         } catch (parseErr) {
-          console.warn(`[SettleCards] Failed to parse payload_data for card ${row.card_id}: ${parseErr.message}`);
+          console.warn(
+            `[SettleCards] Failed to parse payload_data for card ${row.card_id}: ${parseErr.message}`,
+          );
           continue;
         }
 
@@ -253,7 +277,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
             selection: lockedMarket.selection,
             line: lockedMarket.line,
             homeScore,
-            awayScore
+            awayScore,
           });
           const pnlUnits = computePnlUnits(result, lockedMarket.lockedPrice);
 
@@ -266,13 +290,13 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           cardsSettled++;
           console.log(
             `[SettleCards] Settled card ${row.card_id}: ${lockedMarket.marketType}/${lockedMarket.selection} ` +
-            `(${lockedMarket.marketKey}) -> ${result} (pnl: ${pnlUnits})`
+              `(${lockedMarket.marketKey}) -> ${result} (pnl: ${pnlUnits})`,
           );
         } catch (settlementErr) {
           cardsErrored++;
           const errorCode = settlementErr?.code || 'SETTLEMENT_CONTRACT_ERROR';
           console.warn(
-            `[SettleCards] Contract error for card ${row.card_id}: ${errorCode} ${settlementErr.message}`
+            `[SettleCards] Contract error for card ${row.card_id}: ${errorCode} ${settlementErr.message}`,
           );
 
           let metadata = {};
@@ -298,7 +322,9 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         }
       }
 
-      console.log(`[SettleCards] Step 1 complete — ${cardsSettled} cards settled, ${cardsErrored} cards errored`);
+      console.log(
+        `[SettleCards] Step 1 complete — ${cardsSettled} cards settled, ${cardsErrored} cards errored`,
+      );
 
       // --- Step 2: Compute and upsert tracking_stats ---
 
@@ -357,23 +383,36 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           losses,
           pushes,
           totalPnlUnits: totalPnl,
-          winRate: (wins + losses) > 0 ? wins / (wins + losses) : 0,
+          winRate: wins + losses > 0 ? wins / (wins + losses) : 0,
           avgPnlPerCard: total > 0 ? totalPnl / total : 0,
           confidenceCalibration: null,
-          metadata: { computedAt: new Date().toISOString() }
+          metadata: { computedAt: new Date().toISOString() },
         });
 
-        console.log(`[SettleCards] Upserted tracking_stat for ${sport}: ${wins}W / ${losses}L / ${pushes}P (pnl: ${totalPnl.toFixed(3)})`);
+        console.log(
+          `[SettleCards] Upserted tracking_stat for ${sport}: ${wins}W / ${losses}L / ${pushes}P (pnl: ${totalPnl.toFixed(3)})`,
+        );
         statsUpserted++;
       }
 
-      console.log(`[SettleCards] Step 2 complete — ${statsUpserted} tracking_stats upserted`);
+      console.log(
+        `[SettleCards] Step 2 complete — ${statsUpserted} tracking_stats upserted`,
+      );
 
       markJobRunSuccess(jobRunId);
-      console.log(`[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, statsUpserted: ${statsUpserted}`);
+      console.log(
+        `[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, statsUpserted: ${statsUpserted}`,
+      );
 
-      return { success: true, jobRunId, jobKey, cardsSettled, cardsErrored, statsUpserted, errors: [] };
-
+      return {
+        success: true,
+        jobRunId,
+        jobKey,
+        cardsSettled,
+        cardsErrored,
+        statsUpserted,
+        errors: [],
+      };
     } catch (error) {
       console.error(`[SettleCards] Job failed:`, error.message);
       console.error(error.stack);
@@ -381,7 +420,10 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       try {
         markJobRunFailure(jobRunId, error.message);
       } catch (dbError) {
-        console.error(`[SettleCards] Failed to record error to DB:`, dbError.message);
+        console.error(
+          `[SettleCards] Failed to record error to DB:`,
+          dbError.message,
+        );
       }
 
       return { success: false, jobRunId, jobKey, error: error.message };
@@ -392,10 +434,10 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
 // CLI execution
 if (require.main === module) {
   settlePendingCards()
-    .then(result => {
+    .then((result) => {
       process.exit(result.success ? 0 : 1);
     })
-    .catch(error => {
+    .catch((error) => {
       console.error('Unhandled error:', error);
       process.exit(1);
     });

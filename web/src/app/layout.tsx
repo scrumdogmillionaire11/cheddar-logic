@@ -1,17 +1,17 @@
-import type { Metadata } from "next";
-import "./globals.css";
+import type { Metadata } from 'next';
+import './globals.css';
 
 export const metadata: Metadata = {
-  title: "Cheddar Logic | Signal-Qualified Analytics",
+  title: 'Cheddar Logic | Signal-Qualified Analytics',
   description:
-    "Outputs based on confidence thresholds and uncertainty controls.",
-  metadataBase: new URL("https://cheddarlogic.com"),
+    'Outputs based on confidence thresholds and uncertainty controls.',
+  metadataBase: new URL('https://cheddarlogic.com'),
   openGraph: {
-    title: "Cheddar Logic",
+    title: 'Cheddar Logic',
     description:
-      "We produce signal-qualified analytical outputs based on confidence thresholds and uncertainty controls.",
-    url: "https://cheddarlogic.com",
-    siteName: "Cheddar Logic",
+      'We produce signal-qualified analytical outputs based on confidence thresholds and uncertainty controls.',
+    url: 'https://cheddarlogic.com',
+    siteName: 'Cheddar Logic',
   },
 };
 
@@ -22,9 +22,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="bg-night text-cloud antialiased">
-        {children}
-      </body>
+      <body className="bg-night text-cloud antialiased">{children}</body>
     </html>
   );
 }

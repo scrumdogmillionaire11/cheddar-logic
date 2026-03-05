@@ -86,7 +86,12 @@ export function computeCanonicalDecision(play: {
   // Build bet object (null if PASS)
   let bet: Bet | null = null;
   if (decision !== 'PASS' && market !== 'NONE') {
-    const selection = (play.selection?.side || play.selection?.side) as 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | null;
+    const selection = (play.selection?.side || play.selection?.side) as
+      | 'HOME'
+      | 'AWAY'
+      | 'OVER'
+      | 'UNDER'
+      | null;
     const pick = inferPickFromPlay(market, selection, play.line, play.price);
 
     bet = {
@@ -165,11 +170,16 @@ export function computeCanonicalDecision(play: {
   // Rule 7: Bet selection must match market
   if (bet) {
     if (
-      (bet.market === 'MONEYLINE' && !['HOME', 'AWAY'].includes(bet.selection || '')) ||
-      (bet.market === 'SPREAD' && !['HOME', 'AWAY'].includes(bet.selection || '')) ||
-      (bet.market === 'TOTAL' && !['OVER', 'UNDER'].includes(bet.selection || ''))
+      (bet.market === 'MONEYLINE' &&
+        !['HOME', 'AWAY'].includes(bet.selection || '')) ||
+      (bet.market === 'SPREAD' &&
+        !['HOME', 'AWAY'].includes(bet.selection || '')) ||
+      (bet.market === 'TOTAL' &&
+        !['OVER', 'UNDER'].includes(bet.selection || ''))
     ) {
-      violations.push(`bet selection=${bet.selection} invalid for market=${bet.market}`);
+      violations.push(
+        `bet selection=${bet.selection} invalid for market=${bet.market}`,
+      );
     }
   }
 
@@ -188,7 +198,7 @@ function inferPickFromPlay(
   market: CanonicalMarket,
   selection: string | null,
   line: number | undefined,
-  price: number | undefined
+  price: number | undefined,
 ): string | null {
   if (!selection) return null;
 
@@ -221,7 +231,9 @@ function inferPickFromPlay(
 /**
  * Derive classification label from decision (for legacy compat)
  */
-export function classificationFromDecision(decision: Decision): 'BASE' | 'LEAN' | 'PASS' {
+export function classificationFromDecision(
+  decision: Decision,
+): 'BASE' | 'LEAN' | 'PASS' {
   if (decision === 'FIRE') return 'BASE';
   if (decision === 'HOLD' || decision === 'WATCH') return 'LEAN';
   return 'PASS';

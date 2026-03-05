@@ -1,7 +1,6 @@
-
 /**
  * FPL Dual-Engine Contract - Worker Types
- * 
+ *
  * These types define the contract between:
  * - Worker JS (this service)
  * - Sage Python (source of truth)

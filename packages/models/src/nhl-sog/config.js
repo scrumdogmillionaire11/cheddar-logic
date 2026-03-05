@@ -8,7 +8,7 @@ const DEFAULT_CONFIG = {
   periodShare1P: 0.32,
   trending: {
     minHits: 4,
-    meanBuffer: 1.0
+    meanBuffer: 1.0,
   },
   quality: {
     sampleGamesMax: 5,
@@ -21,18 +21,18 @@ const DEFAULT_CONFIG = {
       top6: 0.85,
       topLine: 0.7,
       pp1: 0.65,
-      elite: 0.6
+      elite: 0.6,
     },
     bufferLow: 0.2,
-    bufferHigh: 0.6
+    bufferHigh: 0.6,
   },
   classification: {
     hotMaxQuality: 0.6,
     watchMaxQuality: 0.72,
-    watchMinMu: 3.5
-  }
+    watchMinMu: 3.5,
+  },
 };
 
 module.exports = {
-  DEFAULT_CONFIG
+  DEFAULT_CONFIG,
 };

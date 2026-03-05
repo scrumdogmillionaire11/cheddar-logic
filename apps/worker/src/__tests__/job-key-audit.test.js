@@ -11,10 +11,7 @@
  */
 'use strict';
 
-const {
-  initDb,
-  getDatabase
-} = require('@cheddar-logic/data');
+const { initDb, getDatabase } = require('@cheddar-logic/data');
 
 const VALID_PATTERNS = [
   // odds hourly: odds|hourly|2026-02-27|15
@@ -39,12 +36,12 @@ const VALID_PATTERNS = [
   /^settle\|pending-cards\|\d{4}-\d{2}-\d{2}$/,
   /^settle\|after-odds\|.+\|(games|cards)$/,
   // legacy/manual markers
-  /^started$/
+  /^started$/,
 ];
 
 function isValidJobKey(jobKey) {
   if (jobKey === null || jobKey === undefined || jobKey === '') return true;
-  return VALID_PATTERNS.some(pattern => pattern.test(jobKey));
+  return VALID_PATTERNS.some((pattern) => pattern.test(jobKey));
 }
 
 describe('Job Key Audit', () => {
@@ -56,24 +53,32 @@ describe('Job Key Audit', () => {
   });
 
   test('last 50 job_runs have valid or null jobKey', () => {
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT id, job_name, job_key, status, started_at
       FROM job_runs
       ORDER BY started_at DESC
       LIMIT 50
-    `).all();
+    `,
+      )
+      .all();
 
     if (rows.length === 0) {
-      console.warn('[JobKeyAudit] No job_runs found — skipping pattern assertions');
+      console.warn(
+        '[JobKeyAudit] No job_runs found — skipping pattern assertions',
+      );
       return;
     }
 
-    const violations = rows.filter(row => !isValidJobKey(row.job_key));
+    const violations = rows.filter((row) => !isValidJobKey(row.job_key));
 
     if (violations.length > 0) {
       console.error('[JobKeyAudit] Invalid job keys found:');
-      violations.forEach(v => {
-        console.error(`  id=${v.id} job_name=${v.job_name} job_key=${v.job_key}`);
+      violations.forEach((v) => {
+        console.error(
+          `  id=${v.id} job_name=${v.job_name} job_key=${v.job_key}`,
+        );
       });
     }
 
@@ -81,18 +86,22 @@ describe('Job Key Audit', () => {
   });
 
   test('odds ingest job keys include hour bucket (YYYY-MM-DD|HH) for production-format keys', () => {
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT job_key FROM job_runs
       WHERE job_name = 'pull_odds_hourly'
         AND job_key IS NOT NULL
       ORDER BY started_at DESC
       LIMIT 20
-    `).all();
+    `,
+      )
+      .all();
 
     // Filter to only keys with the 4-segment production format (odds|hourly|YYYY-MM-DD|HH)
     // Dev/test keys (odds|hourly|test, odds|hourly|test2) are expected legacy entries
     const productionKeys = rows.filter(({ job_key }) =>
-      /^odds\|hourly\|\d{4}-\d{2}-\d{2}\|/.test(job_key)
+      /^odds\|hourly\|\d{4}-\d{2}-\d{2}\|/.test(job_key),
     );
 
     productionKeys.forEach(({ job_key }) => {
@@ -101,13 +110,17 @@ describe('Job Key Audit', () => {
   });
 
   test('sport model job keys include date+window for fixed or game_id+minutes for tminus', () => {
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT job_name, job_key FROM job_runs
       WHERE job_name IN ('run_nhl_model', 'run_nba_model', 'run_mlb_model', 'run_nfl_model')
         AND job_key IS NOT NULL
       ORDER BY started_at DESC
       LIMIT 30
-    `).all();
+    `,
+      )
+      .all();
 
     rows.forEach(({ job_name, job_key }) => {
       const valid = isValidJobKey(job_key);

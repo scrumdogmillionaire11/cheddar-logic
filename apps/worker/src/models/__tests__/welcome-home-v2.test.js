@@ -1,4 +1,7 @@
-const { calculateWelcomeHome, generateWelcomeHomeCard } = require('../welcome-home-v2');
+const {
+  calculateWelcomeHome,
+  generateWelcomeHomeCard,
+} = require('../welcome-home-v2');
 
 describe('welcome-home-v2', () => {
   const awayTeam = { netRating: 6, restDays: 1 };
@@ -16,9 +19,9 @@ describe('welcome-home-v2', () => {
       recentRoadGames: [
         { isHome: false, location: 'away', date: '2026-02-03T00:00:00.000Z' },
         { isHome: false, location: 'away', date: '2026-02-05T00:00:00.000Z' },
-        { isHome: false, location: 'away', date: '2026-02-08T00:00:00.000Z' }
+        { isHome: false, location: 'away', date: '2026-02-08T00:00:00.000Z' },
       ],
-      homeTeamRoadTrip: true
+      homeTeamRoadTrip: true,
     });
 
     expect(card).toBeTruthy();
@@ -37,9 +40,9 @@ describe('welcome-home-v2', () => {
       gameTimeUtc: '2026-02-15T00:00:00.000Z',
       recentRoadGames: [
         { isHome: false, location: 'away', date: '2026-02-07T00:00:00.000Z' },
-        { isHome: false, location: 'away', date: '2026-02-09T00:00:00.000Z' }
+        { isHome: false, location: 'away', date: '2026-02-09T00:00:00.000Z' },
       ],
-      homeTeamRoadTrip: true
+      homeTeamRoadTrip: true,
     });
 
     expect(card).toBeNull();
@@ -53,9 +56,9 @@ describe('welcome-home-v2', () => {
       gameTimeUtc: '2026-02-20T00:00:00.000Z',
       recentRoadGames: [
         { isHome: false, location: 'away', date: '2026-02-01T00:00:00.000Z' },
-        { isHome: false, location: 'away', date: '2026-02-12T00:00:00.000Z' }
+        { isHome: false, location: 'away', date: '2026-02-12T00:00:00.000Z' },
       ],
-      homeTeamRoadTrip: true
+      homeTeamRoadTrip: true,
     });
 
     expect(analysis.tier).toBe('NO_PLAY');

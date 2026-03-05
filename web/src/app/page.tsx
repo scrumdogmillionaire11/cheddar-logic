@@ -1,8 +1,9 @@
-import Link from "next/link";
+import Link from 'next/link';
 
 export default function Home() {
   const discordInvite =
-    process.env.NEXT_PUBLIC_DISCORD_INVITE ?? "https://discord.com/invite/cheddarlogic";
+    process.env.NEXT_PUBLIC_DISCORD_INVITE ??
+    'https://discord.com/invite/cheddarlogic';
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-night px-6 text-cloud">

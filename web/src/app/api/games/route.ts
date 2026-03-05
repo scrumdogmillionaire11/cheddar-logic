@@ -41,10 +41,14 @@
 
 import { NextResponse, NextRequest } from 'next/server';
 import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
-import { performSecurityChecks, addRateLimitHeaders } from '../../../lib/api-security';
+import {
+  performSecurityChecks,
+  addRateLimitHeaders,
+} from '../../../lib/api-security';
 
-const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true'
-  || process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+const ENABLE_WELCOME_HOME =
+  process.env.ENABLE_WELCOME_HOME === 'true' ||
+  process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
 interface GameRow {
   id: string;
@@ -88,14 +92,26 @@ interface Play {
   model_prob?: number | null;
   status?: 'FIRE' | 'WATCH' | 'PASS';
   kind?: 'PLAY' | 'EVIDENCE';
-  market_type?: 'MONEYLINE' | 'SPREAD' | 'TOTAL' | 'PUCKLINE' | 'TEAM_TOTAL' | 'PROP' | 'INFO';
+  market_type?:
+    | 'MONEYLINE'
+    | 'SPREAD'
+    | 'TOTAL'
+    | 'PUCKLINE'
+    | 'TEAM_TOTAL'
+    | 'PROP'
+    | 'INFO';
   selection?: { side: string; team?: string };
   line?: number;
   price?: number;
   reason_codes?: string[];
   tags?: string[];
   consistency?: {
-    total_bias?: 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN';
+    total_bias?:
+      | 'OK'
+      | 'INSUFFICIENT_DATA'
+      | 'CONFLICTING_SIGNALS'
+      | 'VOLATILE_ENV'
+      | 'UNKNOWN';
   };
   // Canonical decision fields
   classification?: 'BASE' | 'LEAN' | 'PASS';
@@ -143,7 +159,12 @@ const REPAIR_ALLOWLIST = new Set([
 function inferMarketCandidatesFromTitle(title: string): MarketType[] {
   const titleLower = title.toLowerCase();
   const candidates = new Set<MarketType>();
-  if (titleLower.includes('total') || titleLower.includes('o/u') || titleLower.includes('over') || titleLower.includes('under')) {
+  if (
+    titleLower.includes('total') ||
+    titleLower.includes('o/u') ||
+    titleLower.includes('over') ||
+    titleLower.includes('under')
+  ) {
     candidates.add('TOTAL');
   }
   if (titleLower.includes('spread') || titleLower.includes('line')) {
@@ -163,12 +184,21 @@ function inferMarketCandidatesFromTitle(title: string): MarketType[] {
 
 function hasMinimumViability(play: Play, marketType: MarketType): boolean {
   const side = play.selection?.side;
-  const hasPrice = typeof play.price === 'number' && Number.isFinite(play.price);
+  const hasPrice =
+    typeof play.price === 'number' && Number.isFinite(play.price);
   if (marketType === 'TOTAL') {
-    return (side === 'OVER' || side === 'UNDER') && typeof play.line === 'number' && hasPrice;
+    return (
+      (side === 'OVER' || side === 'UNDER') &&
+      typeof play.line === 'number' &&
+      hasPrice
+    );
   }
   if (marketType === 'SPREAD') {
-    return (side === 'HOME' || side === 'AWAY') && typeof play.line === 'number' && hasPrice;
+    return (
+      (side === 'HOME' || side === 'AWAY') &&
+      typeof play.line === 'number' &&
+      hasPrice
+    );
   }
   if (marketType === 'MONEYLINE') {
     return (side === 'HOME' || side === 'AWAY') && hasPrice;
@@ -285,14 +315,17 @@ function firstNumber(...values: unknown[]): number | undefined {
 }
 
 function impliedProbFromAmericanOdds(rawOdds: unknown): number | undefined {
-  if (typeof rawOdds !== 'number' || !Number.isFinite(rawOdds) || rawOdds === 0) return undefined;
-  if (rawOdds < 0) return (-rawOdds) / ((-rawOdds) + 100);
+  if (typeof rawOdds !== 'number' || !Number.isFinite(rawOdds) || rawOdds === 0)
+    return undefined;
+  if (rawOdds < 0) return -rawOdds / (-rawOdds + 100);
   return 100 / (rawOdds + 100);
 }
 
 function normalizeNumberArray(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const numbers = value.filter((item) => typeof item === 'number' && Number.isFinite(item)) as number[];
+  const numbers = value.filter(
+    (item) => typeof item === 'number' && Number.isFinite(item),
+  ) as number[];
   return numbers.length > 0 ? numbers : undefined;
 }
 
@@ -311,7 +344,9 @@ function extractShotsFromRecentGames(value: unknown): number[] | undefined {
       }
       return undefined;
     })
-    .filter((num): num is number => typeof num === 'number' && Number.isFinite(num));
+    .filter(
+      (num): num is number => typeof num === 'number' && Number.isFinite(num),
+    );
 
   return shots.length > 0 ? shots : undefined;
 }
@@ -339,7 +374,7 @@ export async function GET(request: NextRequest) {
 
     // Check if database is empty or uninitialized
     const tableCheckStmt = db.prepare(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='games'`
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='games'`,
     );
     const hasGamesTable = tableCheckStmt.get();
 
@@ -347,7 +382,7 @@ export async function GET(request: NextRequest) {
       // Database is not initialized - return empty data
       const response = NextResponse.json(
         { success: true, data: [] },
-        { headers: { 'Content-Type': 'application/json' } }
+        { headers: { 'Content-Type': 'application/json' } },
       );
       return addRateLimitHeaders(response, request);
     }
@@ -367,10 +402,15 @@ export async function GET(request: NextRequest) {
     const offsetHours = parseInt(tzPart.replace('GMT', '') || '-5', 10);
     const sign = offsetHours < 0 ? '-' : '+';
     const absHours = Math.abs(offsetHours).toString().padStart(2, '0');
-    const localMidnight = new Date(`${etDateStr}T00:00:00${sign}${absHours}:00`);
+    const localMidnight = new Date(
+      `${etDateStr}T00:00:00${sign}${absHours}:00`,
+    );
     // Truncate to seconds — SQLite datetime() strips sub-second precision, so
     // "05:00:00.000" would be > "05:00:00" and exclude games at exactly midnight.
-    const todayUtc = localMidnight.toISOString().substring(0, 19).replace('T', ' ');
+    const todayUtc = localMidnight
+      .toISOString()
+      .substring(0, 19)
+      .replace('T', ' ');
 
     const sql = `
       WITH latest_odds AS (
@@ -433,8 +473,11 @@ export async function GET(request: NextRequest) {
         WHERE game_id IN (${idMapPlaceholders})
       `;
       const idMapStmt = db.prepare(idMapSql);
-      const idMapRows = idMapStmt.all(...gameIds) as Array<{ game_id: string; external_game_id: string }>;
-      
+      const idMapRows = idMapStmt.all(...gameIds) as Array<{
+        game_id: string;
+        external_game_id: string;
+      }>;
+
       for (const row of idMapRows) {
         externalToCanonicalMap.set(row.external_game_id, row.game_id);
         allQueryableIds.push(row.external_game_id);
@@ -466,16 +509,25 @@ export async function GET(request: NextRequest) {
           payload.driver !== null &&
           typeof payload.driver === 'object' &&
           'inputs' in (payload.driver as object)
-            ? (payload.driver as Record<string, unknown>).inputs as Record<string, unknown>
+            ? ((payload.driver as Record<string, unknown>).inputs as Record<
+                string,
+                unknown
+              >)
             : null;
 
         const payloadPlay = toObject(payload.play);
-        const payloadSelection = toObject(payload.selection) ?? toObject(payloadPlay?.selection);
-        const normalizedSelectionSide = normalizeSelectionSide(
-          payloadSelection?.side ?? payloadPlay?.side ?? payload.prediction
-        ) ?? 'NONE';
-        const normalizedAction = normalizeAction(payload.action ?? payloadPlay?.action);
-        const normalizedStatus = normalizeStatus(payload.status ?? payloadPlay?.status);
+        const payloadSelection =
+          toObject(payload.selection) ?? toObject(payloadPlay?.selection);
+        const normalizedSelectionSide =
+          normalizeSelectionSide(
+            payloadSelection?.side ?? payloadPlay?.side ?? payload.prediction,
+          ) ?? 'NONE';
+        const normalizedAction = normalizeAction(
+          payload.action ?? payloadPlay?.action,
+        );
+        const normalizedStatus = normalizeStatus(
+          payload.status ?? payloadPlay?.status,
+        );
         const normalizedTier = normalizeTier(payload.tier ?? payloadPlay?.tier);
         const normalizedPrediction =
           normalizePrediction(payload.prediction) ??
@@ -487,50 +539,55 @@ export async function GET(request: NextRequest) {
             ? normalizedSelectionSide
             : undefined) ??
           'NEUTRAL';
-        const normalizedConfidence = firstNumber(payload.confidence, payloadPlay?.confidence);
-        const normalizedMarketType = normalizeMarketType(payload.market_type ?? payloadPlay?.market_type);
+        const normalizedConfidence = firstNumber(
+          payload.confidence,
+          payloadPlay?.confidence,
+        );
+        const normalizedMarketType = normalizeMarketType(
+          payload.market_type ?? payloadPlay?.market_type,
+        );
         const normalizedPlayerName = firstString(
           payloadSelection?.player_name,
           payloadPlay?.player_name,
-          (payload as Record<string, unknown>).player_name
+          (payload as Record<string, unknown>).player_name,
         );
         const normalizedSelectionTeam = firstString(
           normalizedPlayerName,
           payloadSelection?.team,
-          payloadPlay?.team
+          payloadPlay?.team,
         );
         const normalizedLine = firstNumber(
           payload.line,
           (payload.market as Record<string, unknown>)?.line,
           payloadPlay?.line,
-          payloadSelection?.line
+          payloadSelection?.line,
         );
         const normalizedPrice = firstNumber(
           payload.price,
           payloadPlay?.price,
-          payloadSelection?.price
+          payloadSelection?.price,
         );
         const normalizedRunId = firstString(
           (payload as Record<string, unknown>).run_id,
-          payloadPlay?.run_id
+          payloadPlay?.run_id,
         );
         const normalizedCreatedAt = firstString(
           (payload as Record<string, unknown>).created_at,
-          payloadPlay?.created_at
+          payloadPlay?.created_at,
         );
         const normalizedPlayerId = firstString(
           payloadSelection?.player_id,
           payloadPlay?.player_id,
-          (payload as Record<string, unknown>).player_id
+          (payload as Record<string, unknown>).player_id,
         );
         const normalizedTeamAbbr = firstString(
           (payload as Record<string, unknown>).team_abbr,
           payloadSelection?.team_abbr,
-          payloadPlay?.team_abbr
+          payloadPlay?.team_abbr,
         );
         const normalizedGameId = firstString(
           (payload as Record<string, unknown>).game_id,
-          payloadPlay?.game_id
+          payloadPlay?.game_id,
         );
         const normalizedMu = firstNumber(
           (payload as Record<string, unknown>).mu,
@@ -538,45 +595,55 @@ export async function GET(request: NextRequest) {
           (payload.projection as Record<string, unknown>)?.mu,
           (payload.projection as Record<string, unknown>)?.total,
           driverInputs?.mu,
-          driverInputs?.projected_total
+          driverInputs?.projected_total,
         );
         const normalizedSuggestedLine = firstNumber(
           (payload as Record<string, unknown>).suggested_line,
           payloadPlay?.suggested_line,
-          normalizedLine
+          normalizedLine,
         );
         const normalizedThreshold = firstNumber(
           (payload as Record<string, unknown>).threshold,
-          payloadPlay?.threshold
+          payloadPlay?.threshold,
         );
         const normalizedIsTrending =
           typeof (payload as Record<string, unknown>).is_trending === 'boolean'
-            ? (payload as Record<string, unknown>).is_trending as boolean
+            ? ((payload as Record<string, unknown>).is_trending as boolean)
             : typeof payloadPlay?.is_trending === 'boolean'
-              ? payloadPlay.is_trending as boolean
+              ? (payloadPlay.is_trending as boolean)
               : undefined;
         const normalizedRoleGatePass =
-          typeof (payload as Record<string, unknown>).role_gate_pass === 'boolean'
-            ? (payload as Record<string, unknown>).role_gate_pass as boolean
+          typeof (payload as Record<string, unknown>).role_gate_pass ===
+          'boolean'
+            ? ((payload as Record<string, unknown>).role_gate_pass as boolean)
             : typeof payloadPlay?.role_gate_pass === 'boolean'
-              ? payloadPlay.role_gate_pass as boolean
+              ? (payloadPlay.role_gate_pass as boolean)
               : undefined;
         const normalizedDataQuality = firstString(
           (payload as Record<string, unknown>).data_quality,
-          payloadPlay?.data_quality
+          payloadPlay?.data_quality,
         );
-        const payloadDrivers: Record<string, unknown> | null = 
-          payload.drivers && typeof payload.drivers === 'object' ? 
-            (payload.drivers as Record<string, unknown>) : null;
+        const payloadDrivers: Record<string, unknown> | null =
+          payload.drivers && typeof payload.drivers === 'object'
+            ? (payload.drivers as Record<string, unknown>)
+            : null;
         const normalizedL5Sog =
           normalizeNumberArray((payload as Record<string, unknown>).l5_sog) ??
           normalizeNumberArray(payloadPlay?.l5_sog) ??
           normalizeNumberArray(payloadDrivers?.l5_sog) ??
-          normalizeNumberArray((payload as Record<string, unknown>).last5_sog) ??
-          normalizeNumberArray((payload as Record<string, unknown>).last5Shots) ??
+          normalizeNumberArray(
+            (payload as Record<string, unknown>).last5_sog,
+          ) ??
+          normalizeNumberArray(
+            (payload as Record<string, unknown>).last5Shots,
+          ) ??
           normalizeNumberArray((payload as Record<string, unknown>).l5) ??
-          extractShotsFromRecentGames((payload as Record<string, unknown>).last5Games) ??
-          extractShotsFromRecentGames((payload as Record<string, unknown>).recent_games) ??
+          extractShotsFromRecentGames(
+            (payload as Record<string, unknown>).last5Games,
+          ) ??
+          extractShotsFromRecentGames(
+            (payload as Record<string, unknown>).recent_games,
+          ) ??
           extractShotsFromRecentGames(payloadPlay?.last5Games) ??
           extractShotsFromRecentGames(payloadPlay?.recent_games);
         const normalizedL5Mean = firstNumber(
@@ -588,8 +655,9 @@ export async function GET(request: NextRequest) {
           (payload as Record<string, unknown>).last5_avg,
           payloadPlay?.last5_avg,
           normalizedL5Sog && normalizedL5Sog.length > 0
-            ? normalizedL5Sog.reduce((acc, value) => acc + value, 0) / normalizedL5Sog.length
-            : undefined
+            ? normalizedL5Sog.reduce((acc, value) => acc + value, 0) /
+                normalizedL5Sog.length
+            : undefined,
         );
         const payloadProjection = toObject(payload.projection);
         const payloadPlayObj = toObject(payloadPlay);
@@ -597,42 +665,50 @@ export async function GET(request: NextRequest) {
         const normalizedEdge = firstNumber(
           payload.edge,
           payloadPlayObj?.edge,
-          driverInputs?.edge
+          driverInputs?.edge,
         );
         const projectionWinProbHome = firstNumber(
           payloadProjection?.win_prob_home,
-          payloadPlayProjection?.win_prob_home
+          payloadPlayProjection?.win_prob_home,
         );
         let normalizedModelProb = firstNumber(
           (payload as Record<string, unknown>).model_prob,
           payloadPlayObj?.model_prob,
           (payload as Record<string, unknown>).p_fair,
-          payloadPlayObj?.p_fair
+          payloadPlayObj?.p_fair,
         );
         if (
           normalizedModelProb === undefined &&
           normalizedMarketType === 'MONEYLINE' &&
           typeof projectionWinProbHome === 'number'
         ) {
-          normalizedModelProb = normalizedSelectionSide === 'AWAY'
-            ? 1 - projectionWinProbHome
-            : projectionWinProbHome;
+          normalizedModelProb =
+            normalizedSelectionSide === 'AWAY'
+              ? 1 - projectionWinProbHome
+              : projectionWinProbHome;
         }
         if (normalizedModelProb === undefined) {
           const impliedProb = impliedProbFromAmericanOdds(normalizedPrice);
-          if (typeof impliedProb === 'number' && typeof normalizedEdge === 'number') {
+          if (
+            typeof impliedProb === 'number' &&
+            typeof normalizedEdge === 'number'
+          ) {
             normalizedModelProb = impliedProb + normalizedEdge;
           }
         }
         if (
           typeof normalizedModelProb === 'number' &&
-          (!Number.isFinite(normalizedModelProb) || normalizedModelProb < 0 || normalizedModelProb > 1)
+          (!Number.isFinite(normalizedModelProb) ||
+            normalizedModelProb < 0 ||
+            normalizedModelProb > 1)
         ) {
           normalizedModelProb = undefined;
         }
         const combinedReasonCodes = [
           ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
-          ...(Array.isArray(payloadPlay?.reason_codes) ? payloadPlay.reason_codes : []),
+          ...(Array.isArray(payloadPlay?.reason_codes)
+            ? payloadPlay.reason_codes
+            : []),
         ].map((value) => String(value));
         const combinedTags = [
           ...(Array.isArray(payload.tags) ? payload.tags : []),
@@ -651,7 +727,8 @@ export async function GET(request: NextRequest) {
               : typeof payloadPlay?.reasoning === 'string'
                 ? payloadPlay.reasoning
                 : '',
-          evPassed: payload.ev_passed === true || payloadPlay?.ev_passed === true,
+          evPassed:
+            payload.ev_passed === true || payloadPlay?.ev_passed === true,
           driverKey:
             payload.driver !== null &&
             typeof payload.driver === 'object' &&
@@ -659,15 +736,14 @@ export async function GET(request: NextRequest) {
               ? String((payload.driver as Record<string, unknown>).key)
               : '',
           projectedTotal:
-            typeof (payload.projection as Record<string, unknown>)?.total === 'number'
-              ? (payload.projection as Record<string, unknown>).total as number
+            typeof (payload.projection as Record<string, unknown>)?.total ===
+            'number'
+              ? ((payload.projection as Record<string, unknown>)
+                  .total as number)
               : typeof driverInputs?.projected_total === 'number'
-                ? driverInputs.projected_total as number
+                ? (driverInputs.projected_total as number)
                 : null,
-          edge:
-            typeof normalizedEdge === 'number'
-              ? normalizedEdge
-              : null,
+          edge: typeof normalizedEdge === 'number' ? normalizedEdge : null,
           model_prob: normalizedModelProb,
           status:
             normalizedStatus ??
@@ -684,9 +760,13 @@ export async function GET(request: NextRequest) {
                       : undefined),
           // Canonical decision fields (preferred over legacy status field)
           classification:
-            payload.classification === 'BASE' || payload.classification === 'LEAN' || payload.classification === 'PASS'
+            payload.classification === 'BASE' ||
+            payload.classification === 'LEAN' ||
+            payload.classification === 'PASS'
               ? (payload.classification as 'BASE' | 'LEAN' | 'PASS')
-              : payloadPlay?.classification === 'BASE' || payloadPlay?.classification === 'LEAN' || payloadPlay?.classification === 'PASS'
+              : payloadPlay?.classification === 'BASE' ||
+                  payloadPlay?.classification === 'LEAN' ||
+                  payloadPlay?.classification === 'PASS'
                 ? (payloadPlay.classification as 'BASE' | 'LEAN' | 'PASS')
                 : normalizedAction === 'FIRE'
                   ? 'BASE'
@@ -695,16 +775,17 @@ export async function GET(request: NextRequest) {
                     : normalizedAction === 'PASS'
                       ? 'PASS'
                       : undefined,
-          action: normalizedAction ??
+          action:
+            normalizedAction ??
             (normalizedTier === 'SUPER' || normalizedTier === 'BEST'
               ? 'FIRE'
               : normalizedTier === 'WATCH'
                 ? 'HOLD'
                 : typeof normalizedConfidence === 'number' &&
-                  normalizedConfidence >= 0.75
+                    normalizedConfidence >= 0.75
                   ? 'FIRE'
                   : typeof normalizedConfidence === 'number' &&
-                    normalizedConfidence >= 0.6
+                      normalizedConfidence >= 0.6
                     ? 'HOLD'
                     : undefined),
           pass_reason_code:
@@ -715,45 +796,61 @@ export async function GET(request: NextRequest) {
                 : null,
           kind:
             payload.kind === 'PLAY' || payload.kind === 'EVIDENCE'
-              ? payload.kind as 'PLAY' | 'EVIDENCE'
+              ? (payload.kind as 'PLAY' | 'EVIDENCE')
               : payloadPlay?.kind === 'PLAY' || payloadPlay?.kind === 'EVIDENCE'
-                ? payloadPlay.kind as 'PLAY' | 'EVIDENCE'
-              : undefined,
+                ? (payloadPlay.kind as 'PLAY' | 'EVIDENCE')
+                : undefined,
           market_type:
             normalizedMarketType !== undefined
               ? normalizedMarketType
-              : typeof (payload.recommendation as Record<string, unknown>)?.type === 'string'
+              : typeof (payload.recommendation as Record<string, unknown>)
+                    ?.type === 'string'
                 ? (() => {
-                    const recommendationType = String((payload.recommendation as Record<string, unknown>).type).toLowerCase();
+                    const recommendationType = String(
+                      (payload.recommendation as Record<string, unknown>).type,
+                    ).toLowerCase();
                     if (recommendationType.includes('total')) return 'TOTAL';
                     if (recommendationType.includes('spread')) return 'SPREAD';
-                    if (recommendationType.includes('moneyline') || recommendationType.includes('ml')) return 'MONEYLINE';
-                    if (recommendationType.includes('prop') || recommendationType.includes('player')) return 'PROP';
+                    if (
+                      recommendationType.includes('moneyline') ||
+                      recommendationType.includes('ml')
+                    )
+                      return 'MONEYLINE';
+                    if (
+                      recommendationType.includes('prop') ||
+                      recommendationType.includes('player')
+                    )
+                      return 'PROP';
                     return undefined;
                   })()
                 : typeof payload.recommended_bet_type === 'string'
                   ? (() => {
-                      const betType = String(payload.recommended_bet_type).toLowerCase();
+                      const betType = String(
+                        payload.recommended_bet_type,
+                      ).toLowerCase();
                       if (betType === 'total') return 'TOTAL';
                       if (betType === 'spread') return 'SPREAD';
-                      if (betType === 'moneyline' || betType === 'ml') return 'MONEYLINE';
-                      if (betType === 'prop' || betType === 'player_prop') return 'PROP';
+                      if (betType === 'moneyline' || betType === 'ml')
+                        return 'MONEYLINE';
+                      if (betType === 'prop' || betType === 'player_prop')
+                        return 'PROP';
                       return undefined;
                     })()
                   : // Check legacy 'market' field
-                    payload.market === 'ML' || 
-                    payload.market === 'MONEYLINE'
-                      ? 'MONEYLINE'
-                      : payload.market === 'SPREAD'
-                        ? 'SPREAD'
-                        : payload.market === 'TOTAL'
+                    payload.market === 'ML' || payload.market === 'MONEYLINE'
+                    ? 'MONEYLINE'
+                    : payload.market === 'SPREAD'
+                      ? 'SPREAD'
+                      : payload.market === 'TOTAL'
+                        ? 'TOTAL'
+                        : // Infer from selection side
+                          normalizedSelectionSide === 'OVER' ||
+                            normalizedSelectionSide === 'UNDER'
                           ? 'TOTAL'
-                          : // Infer from selection side
-                          normalizedSelectionSide === 'OVER' || normalizedSelectionSide === 'UNDER'
-                            ? 'TOTAL'
-                            : normalizedSelectionSide === 'HOME' || normalizedSelectionSide === 'AWAY'
-                              ? 'SPREAD'
-                              : undefined,
+                          : normalizedSelectionSide === 'HOME' ||
+                              normalizedSelectionSide === 'AWAY'
+                            ? 'SPREAD'
+                            : undefined,
           selection: {
             side: normalizedSelectionSide,
             team: normalizedSelectionTeam,
@@ -780,26 +877,49 @@ export async function GET(request: NextRequest) {
             payload.consistency && typeof payload.consistency === 'object'
               ? {
                   total_bias:
-                    (payload.consistency as Record<string, unknown>).total_bias === 'OK' ||
-                    (payload.consistency as Record<string, unknown>).total_bias === 'INSUFFICIENT_DATA' ||
-                    (payload.consistency as Record<string, unknown>).total_bias === 'CONFLICTING_SIGNALS' ||
-                    (payload.consistency as Record<string, unknown>).total_bias === 'VOLATILE_ENV' ||
-                    (payload.consistency as Record<string, unknown>).total_bias === 'UNKNOWN'
-                          ? (payload.consistency as Record<string, unknown>).total_bias as 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN'
+                    (payload.consistency as Record<string, unknown>)
+                      .total_bias === 'OK' ||
+                    (payload.consistency as Record<string, unknown>)
+                      .total_bias === 'INSUFFICIENT_DATA' ||
+                    (payload.consistency as Record<string, unknown>)
+                      .total_bias === 'CONFLICTING_SIGNALS' ||
+                    (payload.consistency as Record<string, unknown>)
+                      .total_bias === 'VOLATILE_ENV' ||
+                    (payload.consistency as Record<string, unknown>)
+                      .total_bias === 'UNKNOWN'
+                      ? ((payload.consistency as Record<string, unknown>)
+                          .total_bias as
+                          | 'OK'
+                          | 'INSUFFICIENT_DATA'
+                          | 'CONFLICTING_SIGNALS'
+                          | 'VOLATILE_ENV'
+                          | 'UNKNOWN')
                       : undefined,
                 }
-              : payloadPlay?.consistency && typeof payloadPlay.consistency === 'object'
+              : payloadPlay?.consistency &&
+                  typeof payloadPlay.consistency === 'object'
                 ? {
                     total_bias:
-                      (payloadPlay.consistency as Record<string, unknown>).total_bias === 'OK' ||
-                      (payloadPlay.consistency as Record<string, unknown>).total_bias === 'INSUFFICIENT_DATA' ||
-                      (payloadPlay.consistency as Record<string, unknown>).total_bias === 'CONFLICTING_SIGNALS' ||
-                      (payloadPlay.consistency as Record<string, unknown>).total_bias === 'VOLATILE_ENV' ||
-                      (payloadPlay.consistency as Record<string, unknown>).total_bias === 'UNKNOWN'
-                        ? (payloadPlay.consistency as Record<string, unknown>).total_bias as 'OK' | 'INSUFFICIENT_DATA' | 'CONFLICTING_SIGNALS' | 'VOLATILE_ENV' | 'UNKNOWN'
+                      (payloadPlay.consistency as Record<string, unknown>)
+                        .total_bias === 'OK' ||
+                      (payloadPlay.consistency as Record<string, unknown>)
+                        .total_bias === 'INSUFFICIENT_DATA' ||
+                      (payloadPlay.consistency as Record<string, unknown>)
+                        .total_bias === 'CONFLICTING_SIGNALS' ||
+                      (payloadPlay.consistency as Record<string, unknown>)
+                        .total_bias === 'VOLATILE_ENV' ||
+                      (payloadPlay.consistency as Record<string, unknown>)
+                        .total_bias === 'UNKNOWN'
+                        ? ((payloadPlay.consistency as Record<string, unknown>)
+                            .total_bias as
+                            | 'OK'
+                            | 'INSUFFICIENT_DATA'
+                            | 'CONFLICTING_SIGNALS'
+                            | 'VOLATILE_ENV'
+                            | 'UNKNOWN')
                         : undefined,
                   }
-              : undefined,
+                : undefined,
           repair_applied: payload.repair_applied === true,
           repair_rule_id:
             typeof payload.repair_rule_id === 'string'
@@ -816,15 +936,28 @@ export async function GET(request: NextRequest) {
             payload.all_markets &&
             typeof payload.all_markets === 'object' &&
             (payload.all_markets as Record<string, unknown>).TOTAL &&
-            typeof (payload.all_markets as Record<string, unknown>).TOTAL === 'object'
-              ? (payload.all_markets as Record<string, unknown>).TOTAL as Record<string, unknown>
+            typeof (payload.all_markets as Record<string, unknown>).TOTAL ===
+              'object'
+              ? ((payload.all_markets as Record<string, unknown>)
+                  .TOTAL as Record<string, unknown>)
               : null;
-          const decisionStatus = typeof totalDecision?.status === 'string' ? totalDecision.status : null;
-          const decisionLine = typeof (totalDecision?.best_candidate as Record<string, unknown> | undefined)?.line === 'number';
+          const decisionStatus =
+            typeof totalDecision?.status === 'string'
+              ? totalDecision.status
+              : null;
+          const decisionLine =
+            typeof (
+              totalDecision?.best_candidate as
+                | Record<string, unknown>
+                | undefined
+            )?.line === 'number';
           const decisionEdge = typeof totalDecision?.edge === 'number';
           play.consistency = {
             total_bias:
-              decisionStatus && decisionStatus !== 'PASS' && decisionLine && decisionEdge
+              decisionStatus &&
+              decisionStatus !== 'PASS' &&
+              decisionLine &&
+              decisionEdge
                 ? 'OK'
                 : 'INSUFFICIENT_DATA',
           };
@@ -838,18 +971,29 @@ export async function GET(request: NextRequest) {
           const unambiguous = uniqueCandidates.length === 1;
           const inferredCandidate = uniqueCandidates[0];
 
-          if (isAllowlisted && unambiguous && hasMinimumViability(play, inferredCandidate)) {
+          if (
+            isAllowlisted &&
+            unambiguous &&
+            hasMinimumViability(play, inferredCandidate)
+          ) {
             play.market_type = inferredCandidate;
             play.repair_applied = true;
             play.repair_rule_id = 'R001';
-            play.tags = Array.from(new Set([...(play.tags ?? []), 'LEGACY_REPAIR']));
-            play.reason_codes = Array.from(new Set([...(play.reason_codes ?? []), 'REPAIRED_LEGACY_CARD']));
+            play.tags = Array.from(
+              new Set([...(play.tags ?? []), 'LEGACY_REPAIR']),
+            );
+            play.reason_codes = Array.from(
+              new Set([...(play.reason_codes ?? []), 'REPAIRED_LEGACY_CARD']),
+            );
             legacyTitleInferenceUsedCount += 1;
           } else {
             play.market_type = 'INFO';
             play.kind = 'EVIDENCE';
             play.reason_codes = Array.from(
-              new Set([...(play.reason_codes ?? []), 'PASS_UNREPAIRABLE_LEGACY'])
+              new Set([
+                ...(play.reason_codes ?? []),
+                'PASS_UNREPAIRABLE_LEGACY',
+              ]),
             );
           }
         }
@@ -857,21 +1001,33 @@ export async function GET(request: NextRequest) {
         if (!hasMinimumViability(play, play.market_type)) {
           play.market_type = 'INFO';
           play.kind = 'EVIDENCE';
-          play.reason_codes = Array.from(new Set([...(play.reason_codes ?? []), 'PASS_UNREPAIRABLE_LEGACY']));
+          play.reason_codes = Array.from(
+            new Set([...(play.reason_codes ?? []), 'PASS_UNREPAIRABLE_LEGACY']),
+          );
         }
 
         totalPlayCount += 1;
         if (play.repair_applied) repairedPlayCount += 1;
-        marketTypeCounts.set(play.market_type, (marketTypeCounts.get(play.market_type) ?? 0) + 1);
+        marketTypeCounts.set(
+          play.market_type,
+          (marketTypeCounts.get(play.market_type) ?? 0) + 1,
+        );
         for (const reasonCode of play.reason_codes ?? []) {
-          reasonCodeCounts.set(reasonCode, (reasonCodeCounts.get(reasonCode) ?? 0) + 1);
+          reasonCodeCounts.set(
+            reasonCode,
+            (reasonCodeCounts.get(reasonCode) ?? 0) + 1,
+          );
         }
 
         // Map external game_id to canonical game_id for proper association
-        const canonicalGameId = externalToCanonicalMap.get(cardRow.game_id) ?? cardRow.game_id;
+        const canonicalGameId =
+          externalToCanonicalMap.get(cardRow.game_id) ?? cardRow.game_id;
 
         if (!gameConsistencyMap.has(canonicalGameId)) {
-          gameConsistencyMap.set(canonicalGameId, play.consistency ?? { total_bias: 'UNKNOWN' });
+          gameConsistencyMap.set(
+            canonicalGameId,
+            play.consistency ?? { total_bias: 'UNKNOWN' },
+          );
         }
 
         const existing = playsMap.get(canonicalGameId);
@@ -914,23 +1070,28 @@ export async function GET(request: NextRequest) {
               capturedAt: row.odds_captured_at,
             }
           : null,
-        consistency: gameConsistencyMap.get(row.game_id) ?? { total_bias: 'UNKNOWN' },
+        consistency: gameConsistencyMap.get(row.game_id) ?? {
+          total_bias: 'UNKNOWN',
+        },
         plays: playsMap.get(row.game_id) ?? [],
       };
     });
 
-    const repairRatio = totalPlayCount > 0 ? repairedPlayCount / totalPlayCount : 0;
+    const repairRatio =
+      totalPlayCount > 0 ? repairedPlayCount / totalPlayCount : 0;
     const repairCap = 0.2;
 
     // Join diagnostics for game ID mapping (dev mode only)
     const isDev = process.env.NODE_ENV !== 'production';
-    const joinDebug = isDev ? {
-      canonical_game_ids_queried: gameIds.length,
-      external_ids_resolved: externalToCanonicalMap.size,
-      total_queryable_ids: allQueryableIds.length,
-      plays_found: totalPlayCount,
-      games_with_plays: playsMap.size,
-    } : undefined;
+    const joinDebug = isDev
+      ? {
+          canonical_game_ids_queried: gameIds.length,
+          external_ids_resolved: externalToCanonicalMap.size,
+          total_queryable_ids: allQueryableIds.length,
+          plays_found: totalPlayCount,
+          games_with_plays: playsMap.size,
+        }
+      : undefined;
 
     const response = NextResponse.json(
       {
@@ -951,11 +1112,11 @@ export async function GET(request: NextRequest) {
           top_reason_codes: Object.fromEntries(
             Array.from(reasonCodeCounts.entries())
               .sort((a, b) => b[1] - a[1])
-              .slice(0, 5)
+              .slice(0, 5),
           ),
         },
       },
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json' } },
     );
     return addRateLimitHeaders(response, request);
   } catch (error) {
@@ -963,7 +1124,7 @@ export async function GET(request: NextRequest) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     const response = NextResponse.json(
       { success: false, error: message },
-      { status: 500 }
+      { status: 500 },
     );
     return addRateLimitHeaders(response, request);
   } finally {

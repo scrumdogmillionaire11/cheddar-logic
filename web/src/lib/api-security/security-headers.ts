@@ -34,7 +34,8 @@ export const CONTENT_SECURITY_POLICY =
  * includeSubDomains: Apply to all subdomains
  * preload: Allow inclusion in HSTS preload list for browsers
  */
-export const STRICT_TRANSPORT_SECURITY = 'max-age=31536000; includeSubDomains; preload';
+export const STRICT_TRANSPORT_SECURITY =
+  'max-age=31536000; includeSubDomains; preload';
 
 /**
  * X-Frame-Options header value
@@ -103,7 +104,9 @@ export const SECURITY_HEADERS: Record<string, string> = {
  * @param additionalHeaders - Optional headers to merge with security headers
  * @returns Headers object ready for NextResponse
  */
-export function createSecurityHeaders(additionalHeaders?: Record<string, string>): Record<string, string> {
+export function createSecurityHeaders(
+  additionalHeaders?: Record<string, string>,
+): Record<string, string> {
   return {
     ...SECURITY_HEADERS,
     ...(additionalHeaders || {}),

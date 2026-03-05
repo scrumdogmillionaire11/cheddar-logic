@@ -1,6 +1,6 @@
 /**
  * API Dedupe Behavior Tests
- * 
+ *
  * Verifies:
  * 1. Default dedupe returns latest per (game_id, card_type)
  * 2. dedupe=none returns all cards in creation order
@@ -20,14 +20,10 @@ async function runTests() {
     // Clean up test data first
     console.log('📝 Cleaning up test data...');
     client
-      .prepare(
-        `DELETE FROM card_payloads WHERE game_id LIKE 'test-dedupe-%'`
-      )
+      .prepare(`DELETE FROM card_payloads WHERE game_id LIKE 'test-dedupe-%'`)
       .run();
     client
-      .prepare(
-        `DELETE FROM model_outputs WHERE game_id LIKE 'test-dedupe-%'`
-      )
+      .prepare(`DELETE FROM model_outputs WHERE game_id LIKE 'test-dedupe-%'`)
       .run();
     console.log('✓ Test data cleaned\n');
 
@@ -77,7 +73,7 @@ async function runTests() {
       .prepare(
         `INSERT INTO card_payloads 
        (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'card-1',
@@ -87,14 +83,14 @@ async function runTests() {
         'Test Card 1 (Oldest)',
         JSON.stringify(payload1),
         card1CreatedAt,
-        new Date(now.getTime() + 3600000).toISOString()
+        new Date(now.getTime() + 3600000).toISOString(),
       );
 
     client
       .prepare(
         `INSERT INTO card_payloads 
        (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'card-2',
@@ -104,14 +100,14 @@ async function runTests() {
         'Test Card 2 (Middle)',
         JSON.stringify(payload2),
         card2CreatedAt,
-        new Date(now.getTime() + 3600000).toISOString()
+        new Date(now.getTime() + 3600000).toISOString(),
       );
 
     client
       .prepare(
         `INSERT INTO card_payloads 
        (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'card-3',
@@ -121,7 +117,7 @@ async function runTests() {
         'Test Card 3 (Latest)',
         JSON.stringify(payload3),
         card3CreatedAt,
-        new Date(now.getTime() + 3600000).toISOString()
+        new Date(now.getTime() + 3600000).toISOString(),
       );
 
     console.log(`✓ Inserted 3 cards for game_id: ${testGameId}\n`);
@@ -140,14 +136,9 @@ async function runTests() {
     const dedupeResult = client.prepare(dedupeSQL).all(testGameId, sport);
     if (dedupeResult.length === 1 && dedupeResult[0].id === 'card-3') {
       console.log('✅ PASS: Returns only latest card (card-3)');
-      console.log(
-        `   Card title: ${dedupeResult[0].card_title}\n`
-      );
+      console.log(`   Card title: ${dedupeResult[0].card_title}\n`);
     } else {
-      console.log(
-        '❌ FAIL: Expected 1 card (card-3), got:',
-        dedupeResult
-      );
+      console.log('❌ FAIL: Expected 1 card (card-3), got:', dedupeResult);
       process.exit(1);
     }
 
@@ -166,7 +157,9 @@ async function runTests() {
       noDedupeResult[1].id === 'card-2' &&
       noDedupeResult[2].id === 'card-1'
     ) {
-      console.log('✅ PASS: Returns all 3 cards in correct order (latest first)');
+      console.log(
+        '✅ PASS: Returns all 3 cards in correct order (latest first)',
+      );
       noDedupeResult.forEach((r, i) => {
         console.log(`   ${i + 1}. ${r.card_title} (${r.id})`);
       });
@@ -174,7 +167,7 @@ async function runTests() {
     } else {
       console.log(
         '❌ FAIL: Expected 3 cards in order [card-3, card-2, card-1], got:',
-        noDedupeResult
+        noDedupeResult,
       );
       process.exit(1);
     }
@@ -186,7 +179,7 @@ async function runTests() {
       .prepare(
         `INSERT INTO card_payloads 
        (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'card-alt-1',
@@ -196,7 +189,7 @@ async function runTests() {
         'Alt Card Type',
         JSON.stringify(payload1),
         card1CreatedAt,
-        new Date(now.getTime() + 3600000).toISOString()
+        new Date(now.getTime() + 3600000).toISOString(),
       );
 
     const dedupeWithAltSQL = `
@@ -214,8 +207,12 @@ async function runTests() {
       .all(testGameId);
     if (
       dedupeWithAltResult.length === 2 &&
-      dedupeWithAltResult.some((r) => r.id === 'card-3' && r.card_type === cardType) &&
-      dedupeWithAltResult.some((r) => r.id === 'card-alt-1' && r.card_type === altCardType)
+      dedupeWithAltResult.some(
+        (r) => r.id === 'card-3' && r.card_type === cardType,
+      ) &&
+      dedupeWithAltResult.some(
+        (r) => r.id === 'card-alt-1' && r.card_type === altCardType,
+      )
     ) {
       console.log('✅ PASS: Dedupe respects card_type boundary');
       dedupeWithAltResult.forEach((r) => {
@@ -225,7 +222,7 @@ async function runTests() {
     } else {
       console.log(
         '❌ FAIL: Expected 2 cards (different types), got:',
-        dedupeWithAltResult
+        dedupeWithAltResult,
       );
       process.exit(1);
     }
@@ -233,9 +230,7 @@ async function runTests() {
     // Cleanup
     console.log('🧹 Cleaning up test data...');
     client
-      .prepare(
-        `DELETE FROM card_payloads WHERE game_id LIKE 'test-dedupe-%'`
-      )
+      .prepare(`DELETE FROM card_payloads WHERE game_id LIKE 'test-dedupe-%'`)
       .run();
     console.log('✓ Test data cleaned\n');
 

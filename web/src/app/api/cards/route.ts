@@ -36,10 +36,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
-import { performSecurityChecks, addRateLimitHeaders } from '../../../lib/api-security';
+import {
+  performSecurityChecks,
+  addRateLimitHeaders,
+} from '../../../lib/api-security';
 
-const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true'
-  || process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+const ENABLE_WELCOME_HOME =
+  process.env.ENABLE_WELCOME_HOME === 'true' ||
+  process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
 interface CardRow {
   id: string;
@@ -53,7 +57,12 @@ interface CardRow {
   model_output_ids: string | null;
 }
 
-function clampNumber(value: string | null, fallback: number, min: number, max: number) {
+function clampNumber(
+  value: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+) {
   const parsed = value ? Number.parseInt(value, 10) : NaN;
   if (Number.isNaN(parsed)) return fallback;
   return Math.min(Math.max(parsed, min), max);
@@ -106,7 +115,7 @@ export async function GET(request: NextRequest) {
 
     // Check if database is empty or uninitialized
     const tableCheckStmt = db.prepare(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads'`
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads'`,
     );
     const hasCardsTable = tableCheckStmt.get();
 
@@ -114,7 +123,7 @@ export async function GET(request: NextRequest) {
       // Database is not initialized - return empty data
       const response = NextResponse.json(
         { success: true, data: [] },
-        { headers: { 'Content-Type': 'application/json' } }
+        { headers: { 'Content-Type': 'application/json' } },
       );
       return addRateLimitHeaders(response, request);
     }
@@ -138,26 +147,29 @@ export async function GET(request: NextRequest) {
     }
 
     if (!includeExpired) {
-      where.push('(expires_at IS NULL OR datetime(expires_at) > datetime(\'now\'))');
+      where.push(
+        "(expires_at IS NULL OR datetime(expires_at) > datetime('now'))",
+      );
     }
 
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
-    where.push('sport != \'FPL\'');
+    where.push("sport != 'FPL'");
     if (!ENABLE_WELCOME_HOME) {
-      where.push('card_type != \'welcome-home-v2\'');
+      where.push("card_type != 'welcome-home-v2'");
     }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
     const dedupeMode = dedupe === 'none' ? 'none' : 'latest_per_game_type';
-    const sql = dedupeMode === 'none'
-      ? `
+    const sql =
+      dedupeMode === 'none'
+        ? `
         SELECT * FROM card_payloads
         ${whereSql}
         ORDER BY created_at DESC
         LIMIT ? OFFSET ?
       `
-      : `
+        : `
         WITH ranked AS (
           SELECT *,
             ROW_NUMBER() OVER (
@@ -189,13 +201,13 @@ export async function GET(request: NextRequest) {
         expiresAt: card.expires_at,
         payloadData: parsed.data,
         payloadParseError: parsed.error,
-        modelOutputIds: card.model_output_ids
+        modelOutputIds: card.model_output_ids,
       };
     });
 
     const apiResponse = NextResponse.json(
       { success: true, data: response },
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json' } },
     );
     return addRateLimitHeaders(apiResponse, request);
   } catch (error) {
@@ -203,7 +215,7 @@ export async function GET(request: NextRequest) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     const errorResponse = NextResponse.json(
       { success: false, error: message },
-      { status: 500 }
+      { status: 500 },
     );
     return addRateLimitHeaders(errorResponse, request);
   } finally {
