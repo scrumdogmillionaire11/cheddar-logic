@@ -306,12 +306,16 @@ ssh babycheeses11@192.168.200.198 "sudo systemctl restart cheddar-web cheddar-wo
 
 ## Settlement
 
-The nightly settlement sweep runs automatically at **02:00 ET** via the worker scheduler.
+Settlement runs automatically via the worker scheduler:
+
+- **Hourly sweep**: runs once per hour (during first 5 minutes by default)
+- **Nightly sweep**: runs at **02:00 ET** (includes backfill)
 
 **Why games may not be settled:**
 
-- Scheduler ran at 2am but games weren't final yet (late games)
-- The dated jobKey was consumed — idempotency prevents re-run with the same key
+- Hourly sweep window was disabled (`ENABLE_HOURLY_SETTLEMENT_SWEEP=false`)
+- Games were not final yet at the time of a sweep
+- A specific hourly/nightly `jobKey` already succeeded, so the same window is skipped
 
 ### Manually run settlement (bypasses idempotency)
 
