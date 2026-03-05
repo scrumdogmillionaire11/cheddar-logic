@@ -1,4 +1,5 @@
 /**
+import { computeCardEdgeDecision } from '@cheddar-logic/models';
  * NHL Model Runner Job
  * 
  * Reads latest NHL odds from DB, runs inference model, and stores:
@@ -184,8 +185,6 @@ function getHomeTeamRecentRoadTrip(teamName, sport, currentGameTime, limit = 10)
   }
 }
 
-
-
 /**
  * Generate insertable card objects from driver descriptors.
  *
@@ -246,24 +245,9 @@ function generateNHLCards(gameId, driverDescriptors, oddsSnapshot, marketPayload
       moneylineOdds != null;
     const hasLockableMarket = hasLockableTotal || hasLockableMoneyline;
     const selectionSide = descriptor.prediction === 'NEUTRAL' ? 'NONE' : descriptor.prediction;
-    const totalEdgeResult = isPaceTotalsCard && hasLockableTotal
-      ? edgeCalculator.computeTotalEdge({
-        projectionTotal: projectedTotal,
-        totalLine,
-        totalPriceOver: oddsSnapshot?.total_price_over ?? null,
-        totalPriceUnder: oddsSnapshot?.total_price_under ?? null,
-        sigmaTotal: edgeCalculator.getSigmaDefaults('NHL')?.total ?? 1.8,
-        isPredictionOver
-      })
-      : { edge: null, p_fair: null, p_implied: null };
-    const moneylineEdgeResult = (isPredictionHome || isPredictionAway)
-      ? edgeCalculator.computeMoneylineEdge({
-        projectionWinProbHome: winProbHome,
-        americanOdds: moneylineOdds,
-        isPredictionHome
-      })
-      : { edge: null, p_fair: null, p_implied: null };
-    const edgeResult = isPaceTotalsCard ? totalEdgeResult : moneylineEdgeResult;
+    const marketDecisions = computeCardEdgeDecision({sport: "NHL", gameId: descriptor.gameId, marketType: isPaceTotalsCard ? "TOTAL" : "MONEYLINE", prediction: descriptor.prediction, projectedMargin, projectedTotal, oddsSnapshot}) || {};
+    const selectedDecision = isPaceTotalsCard ? marketDecisions.TOTAL : marketDecisions.ML;
+    const edgeResult = selectedDecision ? {edge: selectedDecision.edge ?? null, p_fair: selectedDecision.p_fair ?? null, p_implied: selectedDecision.p_implied ?? null} : {edge: null, p_fair: null, p_implied: null};
     const hasEdgeSignal =
       edgeResult.edge !== null &&
       edgeResult.p_fair !== null &&

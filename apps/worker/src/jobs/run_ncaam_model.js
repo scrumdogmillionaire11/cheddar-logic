@@ -1,4 +1,5 @@
 /**
+import { computeCardEdgeDecision } from '@cheddar-logic/models';
  * NCAAM Model Runner Job
  * 
  * Reads latest NCAAM (college basketball) odds from DB, runs inference model, and stores:
@@ -51,8 +52,6 @@ const NCAAM_DRIVER_CARD_TYPES = [
   'ncaam-rest-advantage',
   'ncaam-matchup-style',
 ];
-
-
 
 /**
  * Generate insertable card objects from NCAAM driver descriptors.
@@ -108,11 +107,24 @@ function generateSingleCard(gameId, descriptor, oddsSnapshot, marketType, now, e
     const isPredictionHome = descriptor.prediction === 'HOME';
     const isPredictionAway = descriptor.prediction === 'AWAY';
     
-    // Market-specific odds and edge calculation
+        // Market-specific odds and edge calculation
     let price = null;
     let line = null;
+    let marketTypeUpper = marketType.toUpperCase();
+    
+    // Call centralized edge decision function
+    const marketDecisions = computeCardEdgeDecision({
+      sport: 'NCAAM',
+      gameId: descriptor.gameId,
+      marketType: marketTypeUpper,
+      prediction: descriptor.prediction,
+      projectedMargin,
+      projectedTotal,
+      oddsSnapshot
+    }) || {};
+    
+    // Extract edge and market details based on market type
     let edgeResult = { edge: null, p_fair: null, p_implied: null };
-    let marketTypeUpper = 'MONEYLINE';
     
     if (marketType === 'moneyline') {
       marketTypeUpper = 'MONEYLINE';
@@ -122,13 +134,9 @@ function generateSingleCard(gameId, descriptor, oddsSnapshot, marketType, now, e
           ? oddsSnapshot?.h2h_away ?? null
           : null;
       line = null;
-      
-      if ((isPredictionHome || isPredictionAway) && price !== null) {
-        edgeResult = edgeCalculator.computeMoneylineEdge({
-          projectionWinProbHome: winProbHome,
-          americanOdds: price,
-          isPredictionHome
-        });
+      const mlDecision = marketDecisions.ML;
+      if (mlDecision) {
+        edgeResult = { edge: mlDecision.edge ?? null, p_fair: mlDecision.p_fair ?? null, p_implied: mlDecision.p_implied ?? null };
       }
     } else if (marketType === 'spread') {
       marketTypeUpper = 'SPREAD';
@@ -142,14 +150,9 @@ function generateSingleCard(gameId, descriptor, oddsSnapshot, marketType, now, e
         : isPredictionAway
           ? oddsSnapshot?.spread_price_away ?? null
           : null;
-      
-      if ((isPredictionHome || isPredictionAway) && line !== null && price !== null) {
-        edgeResult = edgeCalculator.computeSpreadEdge({
-          projectionMarginHome: projectedMargin,
-          spreadLine: line,
-          americanOdds: price,
-          isPredictionHome
-        });
+      const spreadDecision = marketDecisions.SPREAD;
+      if (spreadDecision) {
+        edgeResult = { edge: spreadDecision.edge ?? null, p_fair: spreadDecision.p_fair ?? null, p_implied: spreadDecision.p_implied ?? null };
       }
     }
     const hasLockableMoneyline =

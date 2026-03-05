@@ -171,8 +171,6 @@ function getHomeTeamRecentRoadTrip(teamName, sport, currentGameTime, limit = 10)
   }
 }
 
-
-
 /**
  * Generate insertable card objects from NBA driver descriptors.
  *
@@ -221,24 +219,9 @@ function generateNBACards(gameId, driverDescriptors, oddsSnapshot, marketPayload
     const hasLockableTotal = isTotalsCard && (isPredictionOver || descriptor.prediction === 'UNDER') && totalLine != null && totalPrice != null;
     const hasLockableMoneyline = !isTotalsCard && (isPredictionHome || isPredictionAway) && moneylineOdds != null;
     const hasLockableMarket = hasLockableTotal || hasLockableMoneyline;
-    const totalEdgeResult = hasLockableTotal
-      ? edgeCalculator.computeTotalEdge({
-        projectionTotal: projectedTotal,
-        totalLine,
-        totalPriceOver: oddsSnapshot?.total_price_over ?? null,
-        totalPriceUnder: oddsSnapshot?.total_price_under ?? null,
-        sigmaTotal: edgeCalculator.getSigmaDefaults('NBA')?.total ?? 14,
-        isPredictionOver
-      })
-      : { edge: null, p_fair: null, p_implied: null };
-    const moneylineEdgeResult = (isPredictionHome || isPredictionAway)
-      ? edgeCalculator.computeMoneylineEdge({
-        projectionWinProbHome: winProbHome,
-        americanOdds: moneylineOdds,
-        isPredictionHome
-      })
-      : { edge: null, p_fair: null, p_implied: null };
-    const edgeResult = isTotalsCard ? totalEdgeResult : moneylineEdgeResult;
+    const marketDecisions = computeCardEdgeDecision({sport: "NBA", gameId: descriptor.gameId, marketType: isTotalsCard ? "TOTAL" : "MONEYLINE", prediction: descriptor.prediction, projectedMargin, projectedTotal, oddsSnapshot}) || {};
+    const selectedDecision = isTotalsCard ? marketDecisions.TOTAL : marketDecisions.ML;
+    const edgeResult = selectedDecision ? {edge: selectedDecision.edge ?? null, p_fair: selectedDecision.p_fair ?? null, p_implied: selectedDecision.p_implied ?? null} : {edge: null, p_fair: null, p_implied: null};
     const hasEdgeSignal =
       edgeResult.edge !== null &&
       edgeResult.p_fair !== null &&
