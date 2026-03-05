@@ -10,6 +10,8 @@ module.exports = {
 	edgeCalculator,
 	...decisionGate,
 	...nhlSog
+,
+  generateCard
 };
 
 // Consolidated card utilities (2026-03-04)

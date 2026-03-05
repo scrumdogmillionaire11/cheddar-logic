@@ -29,7 +29,7 @@ const {
   withDb,
   enrichOddsSnapshotWithEspnMetrics
 } = require('@cheddar-logic/data');
-const { computeNCAAMDriverCards } = require('../models');
+const { computeNCAAMDriverCards, generateCard } = require('../models');
 const {
   buildRecommendationFromPrediction,
   buildMatchup,
@@ -66,19 +66,43 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
   }
 
   const cards = [];
+  const now = new Date().toISOString();
+  let expiresAt = null;
+  if (oddsSnapshot?.game_time_utc) {
+    const gameTime = new Date(oddsSnapshot.game_time_utc);
+    expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
+  }
   
   for (const descriptor of driverDescriptors) {
     // Generate MONEYLINE card
-    cards.push(generateSingleCard(gameId, descriptor, oddsSnapshot, 'moneyline', now, expiresAt));
+    cards.push(generateCard({
+      sport: 'NCAAM',
+      gameId,
+      descriptor,
+      oddsSnapshot,
+      now,
+      expiresAt,
+      marketType: 'moneyline',
+      driverWeights: NCAAM_DRIVER_WEIGHTS
+    }));
     
-    // Generate SPREAD card only when both line and price are available for lock contract
+    // Generate SPREAD card only when both line and price are available
     if (
       oddsSnapshot?.spread_home != null &&
       oddsSnapshot?.spread_away != null &&
       oddsSnapshot?.spread_price_home != null &&
       oddsSnapshot?.spread_price_away != null
     ) {
-      cards.push(generateSingleCard(gameId, descriptor, oddsSnapshot, 'spread', now, expiresAt));
+      cards.push(generateCard({
+        sport: 'NCAAM',
+        gameId,
+        descriptor,
+        oddsSnapshot,
+        now,
+        expiresAt,
+        marketType: 'spread',
+        driverWeights: NCAAM_DRIVER_WEIGHTS
+      }));
     }
   }
   
@@ -88,183 +112,7 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
 /**
  * Generate a single card for a specific market type
  */
-function generateSingleCard(gameId, descriptor, oddsSnapshot, marketType, now, expiresAt) {
-    const cardId = `card-ncaam-${descriptor.driverKey}-${marketType}-${gameId}-${uuidV4().slice(0, 8)}`;
-    const recommendation = buildRecommendationFromPrediction({
-      prediction: descriptor.prediction,
-      recommendedBetType: marketType
-    });
 
-    const matchup = buildMatchup(oddsSnapshot?.home_team, oddsSnapshot?.away_team);
-    const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
-    const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
-    const market = buildMarketFromOdds(oddsSnapshot);
-    const selectionSide = descriptor.prediction === 'NEUTRAL' ? 'NONE' : descriptor.prediction;
-    const projectedMargin = Number.isFinite(descriptor.driverInputs?.projected_margin)
-      ? descriptor.driverInputs.projected_margin
-      : null;
-    const winProbHome = computeWinProbHome(projectedMargin, 'NCAAM');
-    const isPredictionHome = descriptor.prediction === 'HOME';
-    const isPredictionAway = descriptor.prediction === 'AWAY';
-    
-        // Market-specific odds and edge calculation
-    let price = null;
-    let line = null;
-    let marketTypeUpper = marketType.toUpperCase();
-    
-    // Call centralized edge decision function
-    const marketDecisions = computeCardEdgeDecision({
-      sport: 'NCAAM',
-      gameId: descriptor.gameId,
-      marketType: marketTypeUpper,
-      prediction: descriptor.prediction,
-      projectedMargin,
-      projectedTotal,
-      oddsSnapshot
-    }) || {};
-    
-    // Extract edge and market details based on market type
-    let edgeResult = { edge: null, p_fair: null, p_implied: null };
-    
-    if (marketType === 'moneyline') {
-      marketTypeUpper = 'MONEYLINE';
-      price = isPredictionHome
-        ? oddsSnapshot?.h2h_home ?? null
-        : isPredictionAway
-          ? oddsSnapshot?.h2h_away ?? null
-          : null;
-      line = null;
-      const mlDecision = marketDecisions.ML;
-      if (mlDecision) {
-        edgeResult = { edge: mlDecision.edge ?? null, p_fair: mlDecision.p_fair ?? null, p_implied: mlDecision.p_implied ?? null };
-      }
-    } else if (marketType === 'spread') {
-      marketTypeUpper = 'SPREAD';
-      line = isPredictionHome
-        ? oddsSnapshot?.spread_home ?? null
-        : isPredictionAway
-          ? oddsSnapshot?.spread_away ?? null
-          : null;
-      price = isPredictionHome
-        ? oddsSnapshot?.spread_price_home ?? null
-        : isPredictionAway
-          ? oddsSnapshot?.spread_price_away ?? null
-          : null;
-      const spreadDecision = marketDecisions.SPREAD;
-      if (spreadDecision) {
-        edgeResult = { edge: spreadDecision.edge ?? null, p_fair: spreadDecision.p_fair ?? null, p_implied: spreadDecision.p_implied ?? null };
-      }
-    }
-    const hasLockableMoneyline =
-      marketType === 'moneyline' &&
-      (isPredictionHome || isPredictionAway) &&
-      price !== null;
-    const hasLockableSpread =
-      marketType === 'spread' &&
-      (isPredictionHome || isPredictionAway) &&
-      line !== null &&
-      price !== null;
-    const isLockableMarket = hasLockableMoneyline || hasLockableSpread;
-    const hasEdgeSignal =
-      edgeResult.edge !== null &&
-      edgeResult.p_fair !== null &&
-      edgeResult.p_implied !== null;
-    const isPlayableMarket = isLockableMarket && hasEdgeSignal;
-    const effectiveMarketType = isPlayableMarket ? marketTypeUpper : 'INFO';
-    const reasonCodes = [];
-    if (!isLockableMarket) reasonCodes.push('PASS_NO_MARKET_PRICE');
-    if (!hasEdgeSignal) reasonCodes.push('PASS_MISSING_EDGE');
-
-    const payloadData = {
-      game_id: gameId,
-      sport: 'NCAAM',
-      model_version: 'ncaam-drivers-v1',
-      home_team: oddsSnapshot?.home_team ?? null,
-      away_team: oddsSnapshot?.away_team ?? null,
-      matchup,
-      start_time_utc: oddsSnapshot?.game_time_utc ?? null,
-      start_time_local: startTimeLocal,
-      timezone,
-      countdown,
-      recommendation: {
-        type: recommendation.type,
-        text: recommendation.text,
-        pass_reason: recommendation.pass_reason
-      },
-      projection: {
-        total: null,
-        margin_home: projectedMargin,
-        win_prob_home: winProbHome
-      },
-      market,
-      edge: edgeResult.edge ?? null,
-      p_fair: edgeResult.p_fair ?? null,
-      p_implied: edgeResult.p_implied ?? null,
-      confidence_pct: Math.round(descriptor.confidence * 100),
-      drivers_active: [descriptor.driverKey],
-      prediction: descriptor.prediction,
-      confidence: descriptor.confidence,
-      recommended_bet_type: marketType,
-      kind: isPlayableMarket ? 'PLAY' : 'EVIDENCE',
-      market_type: effectiveMarketType,
-      selection: {
-        side: selectionSide,
-        team:
-          descriptor.prediction === 'HOME'
-            ? oddsSnapshot?.home_team ?? undefined
-            : descriptor.prediction === 'AWAY'
-              ? oddsSnapshot?.away_team ?? undefined
-              : undefined
-      },
-      line: isPlayableMarket ? line : null,
-      price: isPlayableMarket ? price : null,
-      reason_codes: reasonCodes,
-      tags: [],
-      consistency: {
-        total_bias: 'INSUFFICIENT_DATA'
-      },
-      tier: descriptor.tier,
-      reasoning: descriptor.reasoning,
-      odds_context: {
-        h2h_home: oddsSnapshot?.h2h_home,
-        h2h_away: oddsSnapshot?.h2h_away,
-        spread_home: oddsSnapshot?.spread_home,
-        spread_away: oddsSnapshot?.spread_away,
-        total: oddsSnapshot?.total,
-        spread_price_home: oddsSnapshot?.spread_price_home,
-        spread_price_away: oddsSnapshot?.spread_price_away,
-        total_price_over: oddsSnapshot?.total_price_over,
-        total_price_under: oddsSnapshot?.total_price_under,
-        captured_at: oddsSnapshot?.captured_at
-      },
-      ev_passed: descriptor.ev_threshold_passed,
-      disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
-      generated_at: now,
-      driver: {
-        key: descriptor.driverKey,
-        score: descriptor.driverScore,
-        status: descriptor.driverStatus,
-        inputs: descriptor.driverInputs
-      },
-      driver_summary: buildDriverSummary(descriptor, NCAAM_DRIVER_WEIGHTS),
-      meta: {
-        inference_source: descriptor.inference_source,
-        is_mock: descriptor.is_mock
-      }
-    };
-
-    return {
-      id: cardId,
-      gameId,
-      sport: 'NCAAM',
-      cardType: descriptor.cardType,
-      cardTitle: `${descriptor.cardTitle} (${marketTypeUpper})`,
-      createdAt: now,
-      expiresAt,
-      payloadData,
-      modelOutputIds: null
-    };
-}
 
 /**
  * Main job entrypoint

@@ -40,7 +40,7 @@ const { enrichOddsSnapshotWithMoneyPuck } = require('../moneypuck');
 // Import pluggable inference layer
 const {
   getModel,
-  computeNHLDriverCards,
+  computeNHLDriverCards, generateCard,
   computeNHLMarketDecisions,
   selectExpressionChoice,
   buildMarketPayload,
@@ -193,167 +193,7 @@ function getHomeTeamRecentRoadTrip(teamName, sport, currentGameTime, limit = 10)
  * @param {object} oddsSnapshot
  * @returns {Array<object>} Array of card objects ready for insertCardPayload()
  */
-function generateNHLCards(gameId, driverDescriptors, oddsSnapshot, marketPayload) {
-  const marketData = marketPayload || {};
-  const now = new Date().toISOString();
-  let expiresAt = null;
-  if (oddsSnapshot?.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
 
-  return driverDescriptors.map(descriptor => {
-    const cardId = `card-nhl-${descriptor.driverKey}-${gameId}-${uuidV4().slice(0, 8)}`;
-    const isPaceTotalsCard = descriptor.cardType === 'nhl-pace-totals';
-    const isPace1pCard = descriptor.cardType === 'nhl-pace-1p';
-    const projectedTotal = isPaceTotalsCard
-      ? (descriptor.driverInputs?.expected_total ?? null)
-      : isPace1pCard
-        ? (descriptor.driverInputs?.expected_1p_total ?? null)
-        : null;
-    const projectedMargin = Number.isFinite(descriptor.driverInputs?.projected_margin)
-      ? descriptor.driverInputs.projected_margin
-      : null;
-    const winProbHome = computeWinProbHome(projectedMargin, 'NHL');
-    const recommendedBetType = (isPaceTotalsCard || isPace1pCard) ? 'total' : 'moneyline';
-    const recommendation = buildRecommendationFromPrediction({
-      prediction: descriptor.prediction,
-      recommendedBetType
-    });
-    const matchup = buildMatchup(oddsSnapshot?.home_team, oddsSnapshot?.away_team);
-    const { start_time_local: startTimeLocal, timezone } = formatStartTimeLocal(oddsSnapshot?.game_time_utc);
-    const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
-    const market = buildMarketFromOdds(oddsSnapshot);
-    const isPredictionOver = descriptor.prediction === 'OVER';
-    const isPredictionHome = descriptor.prediction === 'HOME';
-    const isPredictionAway = descriptor.prediction === 'AWAY';
-    const totalLine = oddsSnapshot?.total ?? null;
-    const totalPrice = isPredictionOver ? oddsSnapshot?.total_price_over ?? null : oddsSnapshot?.total_price_under ?? null;
-    const moneylineOdds = isPredictionHome
-      ? oddsSnapshot?.h2h_home ?? null
-      : isPredictionAway
-        ? oddsSnapshot?.h2h_away ?? null
-        : null;
-    const hasLockableTotal =
-      (isPaceTotalsCard || isPace1pCard) &&
-      (isPredictionOver || descriptor.prediction === 'UNDER') &&
-      totalLine != null &&
-      totalPrice != null;
-    const hasLockableMoneyline =
-      !(isPaceTotalsCard || isPace1pCard) &&
-      (isPredictionHome || isPredictionAway) &&
-      moneylineOdds != null;
-    const hasLockableMarket = hasLockableTotal || hasLockableMoneyline;
-    const selectionSide = descriptor.prediction === 'NEUTRAL' ? 'NONE' : descriptor.prediction;
-    const marketDecisions = computeCardEdgeDecision({sport: "NHL", gameId: descriptor.gameId, marketType: isPaceTotalsCard ? "TOTAL" : "MONEYLINE", prediction: descriptor.prediction, projectedMargin, projectedTotal, oddsSnapshot}) || {};
-    const selectedDecision = isPaceTotalsCard ? marketDecisions.TOTAL : marketDecisions.ML;
-    const edgeResult = selectedDecision ? {edge: selectedDecision.edge ?? null, p_fair: selectedDecision.p_fair ?? null, p_implied: selectedDecision.p_implied ?? null} : {edge: null, p_fair: null, p_implied: null};
-    const hasEdgeSignal =
-      edgeResult.edge !== null &&
-      edgeResult.p_fair !== null &&
-      edgeResult.p_implied !== null;
-    const isPlayableMarket = hasLockableMarket && hasEdgeSignal;
-    const marketType = isPlayableMarket
-      ? (hasLockableTotal ? 'TOTAL' : 'MONEYLINE')
-      : 'INFO';
-    const payloadData = {
-      game_id: gameId,
-      sport: 'NHL',
-      model_version: 'nhl-drivers-v1',
-      home_team: oddsSnapshot?.home_team ?? null,
-      away_team: oddsSnapshot?.away_team ?? null,
-      matchup,
-      start_time_utc: oddsSnapshot?.game_time_utc ?? null,
-      start_time_local: startTimeLocal,
-      timezone,
-      countdown,
-      recommendation: {
-        type: recommendation.type,
-        text: recommendation.text,
-        pass_reason: recommendation.pass_reason
-      },
-      projection: {
-        total: projectedTotal,
-        margin_home: projectedMargin,
-        win_prob_home: winProbHome
-      },
-      market,
-      edge: edgeResult.edge ?? null,
-      p_fair: edgeResult.p_fair ?? null,
-      p_implied: edgeResult.p_implied ?? null,
-      confidence_pct: Math.round(descriptor.confidence * 100),
-      drivers_active: [descriptor.driverKey],
-      prediction: descriptor.prediction,
-      confidence: descriptor.confidence,
-      tier: descriptor.tier,
-      recommended_bet_type: recommendedBetType,
-      kind: isPlayableMarket ? 'PLAY' : 'EVIDENCE',
-      market_type: marketType,
-      selection: {
-        side: selectionSide,
-        team:
-          descriptor.prediction === 'HOME'
-            ? oddsSnapshot?.home_team ?? undefined
-            : descriptor.prediction === 'AWAY'
-              ? oddsSnapshot?.away_team ?? undefined
-              : undefined
-      },
-      line: isPlayableMarket && marketType === 'TOTAL' ? totalLine : null,
-      price:
-        isPlayableMarket && marketType === 'TOTAL'
-          ? totalPrice
-          : isPlayableMarket && marketType === 'MONEYLINE'
-            ? moneylineOdds
-            : null,
-      reason_codes: !hasLockableMarket
-        ? ['PASS_NO_MARKET_PRICE']
-        : !hasEdgeSignal
-          ? ['PASS_MISSING_EDGE']
-          : [],
-      tags: [],
-      reasoning: descriptor.reasoning,
-      odds_context: {
-        h2h_home: oddsSnapshot?.h2h_home,
-        h2h_away: oddsSnapshot?.h2h_away,
-        spread_home: oddsSnapshot?.spread_home,
-        spread_away: oddsSnapshot?.spread_away,
-        total: oddsSnapshot?.total,
-        spread_price_home: oddsSnapshot?.spread_price_home,
-        spread_price_away: oddsSnapshot?.spread_price_away,
-        total_price_over: oddsSnapshot?.total_price_over,
-        total_price_under: oddsSnapshot?.total_price_under,
-        captured_at: oddsSnapshot?.captured_at
-      },
-      ev_passed: descriptor.ev_threshold_passed,
-      disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
-      generated_at: now,
-      driver: {
-        key: descriptor.driverKey,
-        score: descriptor.driverScore,
-        status: descriptor.driverStatus,
-        inputs: descriptor.driverInputs
-      },
-      driver_summary: buildDriverSummary(descriptor, NHL_DRIVER_WEIGHTS),
-      meta: {
-        inference_source: descriptor.inference_source,
-        is_mock: descriptor.is_mock
-      },
-      ...marketData
-    };
-
-    return {
-      id: cardId,
-      gameId,
-      sport: 'NHL',
-      cardType: descriptor.cardType,
-      cardTitle: descriptor.cardTitle,
-      createdAt: now,
-      expiresAt,
-      payloadData,
-      modelOutputIds: null
-    };
-  });
-}
 
 /**
  * Generate standalone market call cards (nhl-totals-call, nhl-spread-call)
@@ -696,7 +536,22 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct);
           }
 
-          const cards = generateNHLCards(gameId, driverCards, oddsSnapshot, marketPayload);
+          const cards = driverCards.map(descriptor => generateCard({
+            sport: 'NHL',
+            gameId,
+            descriptor,
+            oddsSnapshot,
+            marketPayload,
+            now: new Date().toISOString(),
+            expiresAt: null,
+            driverWeights: NHL_DRIVER_WEIGHTS
+          }));
+          
+          if (oddsSnapshot?.game_time_utc) {
+            const gameTime = new Date(oddsSnapshot.game_time_utc);
+            const expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
+            cards.forEach(card => { card.expiresAt = expiresAt; });
+          }
 
           for (const card of cards) {
             const validation = validateCardPayload(card.cardType, card.payloadData);
@@ -787,4 +642,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runNHLModel, generateNHLCards, generateNHLMarketCallCards };
+module.exports = { runNHLModel, generateNHLMarketCallCards };
