@@ -9,5 +9,8 @@
     "edge",
     "contracts"
   ],
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "uuid": "^9.0.0"
+  }
 }

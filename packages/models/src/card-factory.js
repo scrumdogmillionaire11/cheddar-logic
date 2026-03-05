@@ -5,7 +5,7 @@ const {
   formatStartTimeLocal,
   formatCountdown,
   buildMarketFromOdds,
-} = require('@cheddar-logic/models');
+} = require('./card-model');
 const { buildDriverSummary, computeWinProbHome } = require('./card-utilities');
 
 /**
@@ -35,13 +35,25 @@ function generateCard({
   marketType,
   driverWeights,
 }) {
-  if (!sport || !gameId || !descriptor || !oddsSnapshot || !now || !expiresAt) {
+  if (!sport || !gameId || !descriptor || !oddsSnapshot || !now) {
     throw new Error('Missing required card generation parameters');
+  }
+
+  // Calculate expiresAt if not provided (1 hour before game time)
+  let finalExpiresAt = expiresAt;
+  if (!finalExpiresAt && oddsSnapshot?.game_time_utc) {
+    const gameTime = new Date(oddsSnapshot.game_time_utc);
+    finalExpiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
   }
 
   // Generate unique card ID
   const cardIdSuffix = `${descriptor.driverKey}${marketType ? `-${marketType}` : ''}-${gameId}-${uuidV4().slice(0, 8)}`;
   const cardId = `card-${sport.toLowerCase()}-${cardIdSuffix}`;
+
+  // Validate that expiresAt was calculated or provided
+  if (!finalExpiresAt) {
+    throw new Error('Missing expiresAt and cannot calculate from game_time_utc');
+  }
 
   // Build common card metadata
   const recommendation = buildRecommendationFromPrediction({
@@ -77,6 +89,7 @@ function generateCard({
       recommendation,
       driverWeights,
       marketPayload,
+      now,
     });
   } else if (sport === 'NCAAM') {
     // NCAAM builds payload per market type
@@ -111,7 +124,7 @@ function generateCard({
     cardType,
     cardTitle,
     createdAt: now,
-    expiresAt,
+    expiresAt: finalExpiresAt,
     payloadData,
     modelOutputIds: null,
   };
@@ -132,6 +145,7 @@ function buildBallSportPayload({
   recommendation,
   driverWeights,
   marketPayload,
+  now,
 }) {
   const projectedMargin = Number.isFinite(
     descriptor.driverInputs?.projected_margin,
@@ -189,6 +203,22 @@ function buildBallSportPayload({
       inputs: descriptor.driverInputs,
     },
     driver_summary: buildDriverSummary(descriptor, driverWeights),
+    odds_context: {
+      h2h_home: oddsSnapshot?.h2h_home,
+      h2h_away: oddsSnapshot?.h2h_away,
+      spread_home: oddsSnapshot?.spread_home,
+      spread_away: oddsSnapshot?.spread_away,
+      total: oddsSnapshot?.total,
+      spread_price_home: oddsSnapshot?.spread_price_home,
+      spread_price_away: oddsSnapshot?.spread_price_away,
+      total_price_over: oddsSnapshot?.total_price_over,
+      total_price_under: oddsSnapshot?.total_price_under,
+      captured_at: oddsSnapshot?.captured_at,
+    },
+    ev_passed: descriptor.ev_threshold_passed,
+    disclaimer:
+      'Analysis provided for educational purposes. Not a recommendation.',
+    generated_at: now,
     meta: {
       inference_source: descriptor.inference_source,
       is_mock: descriptor.is_mock,
@@ -272,6 +302,9 @@ function buildNCAAMPayload({
       text: recommendation.text,
       pass_reason: recommendation.pass_reason,
     },
+    prediction: descriptor.prediction,
+    confidence: descriptor.confidence,
+    recommended_bet_type: marketType || 'moneyline',
     projection: {
       total: projectedTotal,
       margin_home: projectedMargin,

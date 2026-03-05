@@ -11,7 +11,8 @@
  * is parameterized via the sport argument.
  */
 
-const { marginToWinProbability, edgeCalculator } = require('./index');
+const { marginToWinProbability } = require('./card-model');
+const edgeCalculator = require('./edge-calculator');
 
 /**
  * Compute home team win probability from projected margin.
