@@ -97,6 +97,8 @@ jobs:
             sudo cp /opt/cheddar-logic/cheddar-fpl-sage.service /etc/systemd/system/cheddar-fpl-sage.service
             sudo systemctl daemon-reload
             sudo systemctl enable cheddar-worker cheddar-web cheddar-fpl-sage
+            # Clean node_modules to avoid corrupted tar state from stale backups
+            rm -rf packages/*/node_modules apps/*/node_modules web/node_modules
             npm --prefix packages/data install --omit=dev
             npm --prefix packages/models install --omit=dev
             npm --prefix packages/adapters install --omit=dev
