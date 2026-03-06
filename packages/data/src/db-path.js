@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 
 const DEFAULT_DATABASE_PATH = path.resolve(__dirname, '..', 'cheddar.db');
 
@@ -29,6 +30,64 @@ function parseSqliteUrl(value, cwd = process.cwd()) {
   }
 
   return normalizePath(raw, cwd);
+}
+
+function hasCardPayloads(dbPath) {
+  try {
+    if (!fs.existsSync(dbPath)) return false;
+    // Lazy load sql.js only when needed for auto-discovery
+    let initSqlJs;
+    try {
+      initSqlJs = require('sql.js/dist/sql-asm.js');
+    } catch (err) {
+      // sql.js not available, skip auto-discovery
+      return false;
+    }
+    
+    // Load the database file
+    const buffer = fs.readFileSync(dbPath);
+    
+    // Initialize sql.js synchronously (we're in a sync context)
+    // Note: This blocks, but it's only during startup and only when CHEDDAR_DATA_DIR is used
+    let SQL;
+    initSqlJs().then(sqljs => {
+      SQL = sqljs;
+    });
+    
+    // For synchronous operation, we need to use a different approach
+    // Just check if the file looks like it has the table by reading the schema
+    const fileContent = buffer.toString('utf8', 0, Math.min(buffer.length, 100000));
+    return fileContent.includes('card_payloads');
+  } catch (err) {
+    return false;
+  }
+}
+
+function findBestDatabase(dataDir) {
+  try {
+    if (!fs.existsSync(dataDir)) return null;
+    
+    const files = fs.readdirSync(dataDir);
+    const dbFiles = files.filter(f => f.endsWith('.db'));
+    
+    if (dbFiles.length === 0) return null;
+    
+    // Check which databases have card_payloads
+    const validDbs = dbFiles
+      .map(f => path.join(dataDir, f))
+      .filter(hasCardPayloads);
+    
+    if (validDbs.length === 0) return null;
+    
+    // Prefer databases with -prod in the name
+    const prodDb = validDbs.find(db => path.basename(db).includes('-prod'));
+    if (prodDb) return prodDb;
+    
+    // Fall back to first valid database
+    return validDbs[0];
+  } catch (err) {
+    return null;
+  }
 }
 
 function resolveDatabasePath({ env = process.env, cwd = process.cwd() } = {}) {
@@ -63,6 +122,16 @@ function resolveDatabasePath({ env = process.env, cwd = process.cwd() } = {}) {
 
   const dataDir = normalizePath(env.CHEDDAR_DATA_DIR, cwd);
   if (dataDir) {
+    // Try to find the best database with card_payloads, preferring -prod
+    const bestDb = findBestDatabase(dataDir);
+    if (bestDb) {
+      return {
+        dbPath: bestDb,
+        source: 'CHEDDAR_DATA_DIR (auto-discovered)',
+        isExplicitFile: true,
+      };
+    }
+    // Fall back to default cheddar.db in the directory
     return {
       dbPath: path.join(dataDir, 'cheddar.db'),
       source: 'CHEDDAR_DATA_DIR',
