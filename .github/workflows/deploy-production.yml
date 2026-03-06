@@ -116,17 +116,34 @@ jobs:
               echo "ERROR: Neither CHEDDAR_DB_PATH nor CHEDDAR_DATA_DIR set in /opt/cheddar-logic/.env.production"
               exit 1
             fi
-            # Resolve the actual database path (handles auto-discovery)
-            CANONICAL_DB_PATH=$(node -e "const { resolveDatabasePath } = require('/opt/cheddar-logic/packages/data/src/db-path'); const result = resolveDatabasePath(); console.log(result.dbPath);")
-            echo "Resolved database path: $CANONICAL_DB_PATH (source: $(node -e "const { resolveDatabasePath } = require('/opt/cheddar-logic/packages/data/src/db-path'); const result = resolveDatabasePath(); console.log(result.source);"))"
+            # Resolve the actual database path (with timeout to prevent hanging)
+            echo "Resolving database path..."
+            TIMEOUT=5
+            CANONICAL_DB_PATH=$(timeout $TIMEOUT node -e "const { resolveDatabasePath } = require('/opt/cheddar-logic/packages/data/src/db-path'); const result = resolveDatabasePath(); console.log(result.dbPath);" 2>&1 || echo "")
+            if [ -z "$CANONICAL_DB_PATH" ] || [ "$CANONICAL_DB_PATH" = "timeout" ]; then
+              # Fallback: if path resolution times out or fails, use explicit fallback
+              if [ -n "${CHEDDAR_DB_PATH:-}" ]; then
+                CANONICAL_DB_PATH="$CHEDDAR_DB_PATH"
+                echo "Path resolution timed out, using CHEDDAR_DB_PATH: $CANONICAL_DB_PATH"
+              elif [ -n "${CHEDDAR_DATA_DIR:-}" ]; then
+                CANONICAL_DB_PATH="${CHEDDAR_DATA_DIR}/cheddar.db"
+                echo "Path resolution timed out, using fallback: $CANONICAL_DB_PATH"
+              else
+                echo "ERROR: Could not resolve database path"
+                exit 1
+              fi
+            else
+              echo "Resolved database path: $CANONICAL_DB_PATH"
+            fi
             sudo mkdir -p "$(dirname "$CANONICAL_DB_PATH")"
             sudo chown $(id -u):$(id -g) "$(dirname "$CANONICAL_DB_PATH")"
             # Ensure proper permissions if DB exists
             if [ -f "$CANONICAL_DB_PATH" ]; then
               chmod 664 "$CANONICAL_DB_PATH"
             fi
-            # Run database migrations
-            CHEDDAR_DB_PATH="$CANONICAL_DB_PATH" NODE_ENV=production node scripts/run-migrations.js
+            # Run database migrations (will create DB if it doesn't exist)
+            echo "Running migrations against: $CANONICAL_DB_PATH"
+            CHEDDAR_DB_PATH="$CANONICAL_DB_PATH" NODE_ENV=production timeout 10m node scripts/run-migrations.js || { echo "ERROR: Migrations failed or timed out"; exit 1; }
             sudo apt-get update -y
             sudo apt-get install -y sqlite3
             # Fail deploy if expected schema is missing from production DB

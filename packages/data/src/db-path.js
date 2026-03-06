@@ -35,30 +35,28 @@ function parseSqliteUrl(value, cwd = process.cwd()) {
 function hasCardPayloads(dbPath) {
   try {
     if (!fs.existsSync(dbPath)) return false;
-    // Lazy load sql.js only when needed for auto-discovery
-    let initSqlJs;
+    
+    // Quick check: just look at file size. If file is 0 bytes, it's a new empty DB
+    const stats = fs.statSync(dbPath);
+    if (stats.size === 0) return false;
+    
+    // For non-empty files, do a limited read to check for the table
+    // Read only first 500KB to avoid hanging on large files
+    const maxBytesToRead = 500 * 1024;
+    const buffer = Buffer.alloc(Math.min(stats.size, maxBytesToRead));
+    const fd = fs.openSync(dbPath, 'r');
     try {
-      initSqlJs = require('sql.js/dist/sql-asm.js');
-    } catch (err) {
-      // sql.js not available, skip auto-discovery
-      return false;
+      fs.readSync(fd, buffer, 0, buffer.length);
+      const fileContent = buffer.toString('utf8');
+      return fileContent.includes('card_payloads');
+    } finally {
+      fs.closeSync(fd);
     }
-    
-    // Load the database file
-    const buffer = fs.readFileSync(dbPath);
-    
-    // Initialize sql.js synchronously (we're in a sync context)
-    // Note: This blocks, but it's only during startup and only when CHEDDAR_DATA_DIR is used
-    let SQL;
-    initSqlJs().then(sqljs => {
-      SQL = sqljs;
-    });
-    
-    // For synchronous operation, we need to use a different approach
-    // Just check if the file looks like it has the table by reading the schema
-    const fileContent = buffer.toString('utf8', 0, Math.min(buffer.length, 100000));
-    return fileContent.includes('card_payloads');
   } catch (err) {
+    // Log errors but don't throw - just return false
+    if (process.env.DEBUG_DB_PATH) {
+      console.error(`[DB-Path] Error checking ${dbPath}: ${err.message}`);
+    }
     return false;
   }
 }
