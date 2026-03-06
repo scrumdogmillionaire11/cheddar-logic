@@ -1,0 +1,17 @@
+# Exclude backup database files from npm package
+backups/
+*.db
+!db/migrations/*.sql
+
+# Exclude test files
+__tests__/
+*.test.js
+jest.config.js
+
+# Exclude development files
+DISCOVERY_WORKFLOW.md
+TEXT_NORMALIZATION.md
+verify-state.js
+
+# Exclude build artifacts
+node_modules/
