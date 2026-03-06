@@ -91,7 +91,14 @@ temp/
 
 # Bmad
 .bmad-core/
-.claude/
+# Claude - ignore all except specific PAX directories (required for CI validation)
+.claude/*
+!.claude/agents/
+!.claude/commands/
+.claude/commands/*
+!.claude/commands/pax/
+!.claude/hooks/
+!.claude/process-acceleration-executors/
 .vscode/
 web-bundles/
 
