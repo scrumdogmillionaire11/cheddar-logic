@@ -110,7 +110,7 @@ jobs:
             npm --prefix apps/worker install --omit=dev
             npm --prefix web install --include=dev
             # Run database migrations
-            node scripts/run-migrations.js
+              NODE_ENV=production node scripts/run-migrations.js
             # Fail deploy if expected schema is missing from production DB
             test -s /opt/data/cheddar-prod.db || { echo "ERROR: missing or empty /opt/data/cheddar-prod.db after migrations"; exit 1; }
             sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" | grep -qx "card_payloads" || { echo "ERROR: required table card_payloads missing after migrations"; exit 1; }
