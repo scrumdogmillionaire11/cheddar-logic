@@ -133,6 +133,32 @@ function buildCardCategoryFilter(
   }
 }
 
+function ensureCardDisplayLogSchema(db: ReturnType<typeof getDatabase>) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS card_display_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pick_id TEXT UNIQUE NOT NULL,
+      run_id TEXT,
+      game_id TEXT,
+      sport TEXT,
+      market_type TEXT,
+      selection TEXT,
+      line REAL,
+      odds REAL,
+      odds_book TEXT,
+      confidence_pct REAL,
+      displayed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      api_endpoint TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_card_display_log_run_game
+      ON card_display_log (run_id, game_id);
+    CREATE INDEX IF NOT EXISTS idx_card_display_log_game_sport
+      ON card_display_log (game_id, sport);
+    CREATE INDEX IF NOT EXISTS idx_card_display_log_displayed_at
+      ON card_display_log (displayed_at DESC);
+  `);
+}
+
 export async function GET(request: NextRequest) {
   let db: ReturnType<typeof getDatabase> | null = null;
   try {
@@ -144,6 +170,7 @@ export async function GET(request: NextRequest) {
 
     await initDb();
     db = getDatabase();
+    ensureCardDisplayLogSchema(db);
 
     // Check if database is empty or uninitialized
     const tableCheckStmt = db.prepare(
@@ -236,12 +263,11 @@ export async function GET(request: NextRequest) {
       (ALLOWED_MARKETS as readonly string[]).includes(rawMarket.toLowerCase())
         ? rawMarket.toLowerCase()
         : null;
-    // Always enforce payload-backed rows in results.
     const includeOrphaned = false;
-    const dedupe = parseBooleanParam(searchParams.get('dedupe'), true);
+    const dedupe = false;
 
     // Build filter SQL fragments
-    const sportFilter = sport ? `AND UPPER(cr.sport) = ?` : '';
+    const sportFilter = sport ? `AND UPPER(COALESCE(cdl.sport, cr.sport)) = ?` : '';
     const sportParams = sport ? [sport] : [];
 
     const categoryFilter = buildCardCategoryFilter(cardCategory, 'cr');
@@ -252,13 +278,6 @@ export async function GET(request: NextRequest) {
 
     const marketFilter = market ? `AND LOWER(cr.recommended_bet_type) = ?` : '';
     const marketParams = market ? [market] : [];
-    const orphanedFilter = includeOrphaned ? '' : 'AND cp.id IS NOT NULL';
-    const passFilter = `
-      AND (
-        json_extract(cp.payload_data, '$.recommendation.type') IS NULL
-        OR json_extract(cp.payload_data, '$.recommendation.type') != 'PASS'
-      )
-    `;
 
     const filteredCteSql = `
       WITH filtered AS (
@@ -274,10 +293,9 @@ export async function GET(request: NextRequest) {
           cr.settled_at,
           ${confidenceExpr} AS confidence_pct
         FROM card_results cr
+        INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
         LEFT JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'settled'
-          ${orphanedFilter}
-          ${passFilter}
           ${sportFilter}
           ${categoryFilter.sql}
           ${confidenceFilter}
@@ -337,19 +355,19 @@ export async function GET(request: NextRequest) {
         `SELECT COUNT(*) AS count FROM card_results WHERE status = 'settled'`,
       )
       .get() as { count: number } | null;
-    const orphanedSettledRow = db
+    const displayedSettledRow = db
       .prepare(
         `
-        SELECT COUNT(*) AS count
+        SELECT COUNT(DISTINCT cr.id) AS count
         FROM card_results cr
-        LEFT JOIN card_payloads cp ON cr.card_id = cp.id
-        WHERE cr.status = 'settled' AND cp.id IS NULL
+        INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
+        WHERE cr.status = 'settled'
       `,
       )
       .get() as { count: number } | null;
     const totalSettled = Number(totalSettledRow?.count || 0);
-    const orphanedSettled = Number(orphanedSettledRow?.count || 0);
-    const withPayloadSettled = totalSettled - orphanedSettled;
+    const withPayloadSettled = Number(displayedSettledRow?.count || 0);
+    const orphanedSettled = totalSettled - withPayloadSettled;
 
     const placeholders = dedupedIdRows.map(() => '?').join(',');
 
@@ -457,16 +475,19 @@ export async function GET(request: NextRequest) {
         cr.result,
         cr.pnl_units,
         cr.settled_at,
+        cdl.displayed_at,
+        cdl.api_endpoint,
         cp.id AS payload_id,
-        cp.created_at,
+        cdl.displayed_at AS created_at,
         cp.payload_data,
         g.home_team AS game_home_team,
         g.away_team AS game_away_team
       FROM card_results cr
+      INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
       LEFT JOIN card_payloads cp ON cr.card_id = cp.id
       LEFT JOIN games g ON g.game_id = cr.game_id
       WHERE cr.id IN (${placeholders})
-      ORDER BY cr.settled_at DESC
+      ORDER BY cdl.displayed_at DESC
       LIMIT ${limit}
     `,
       )

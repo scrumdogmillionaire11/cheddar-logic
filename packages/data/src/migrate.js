@@ -57,8 +57,33 @@ async function runMigrations() {
       
       console.log(`[Migrations] ✓ ${file}`);
     } catch (error) {
+      const message = error?.message || '';
+      const isRunIdMigration = file === '020_add_card_payloads_run_id.sql';
+      const isDuplicateRunId = message.includes('duplicate column name: run_id');
+
+      if (isRunIdMigration && isDuplicateRunId) {
+        try {
+          const fallbackSql = sql.replace(
+            /ALTER TABLE card_payloads ADD COLUMN run_id TEXT;\s*/i,
+            '',
+          );
+          db.exec(fallbackSql);
+          const insertStmt = db.prepare(`
+            INSERT INTO migrations (name) VALUES (?)
+          `);
+          insertStmt.run(file);
+          console.log(`[Migrations] ✓ ${file} (column already existed)`);
+          continue;
+        } catch (fallbackError) {
+          console.error(`[Migrations] ✗ ${file}:`);
+          console.error(`  ${fallbackError.message}`);
+          db.close();
+          process.exit(1);
+        }
+      }
+
       console.error(`[Migrations] ✗ ${file}:`);
-      console.error(`  ${error.message}`);
+      console.error(`  ${message}`);
       db.close();
       process.exit(1);
     }

@@ -22,6 +22,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  setCurrentRunId,
   getOddsWithUpcomingGames,
   insertCardPayload,
   prepareModelAndCardWrite,
@@ -37,6 +38,7 @@ const {
   generateCard,
   computeNBAMarketDecisions,
   selectExpressionChoice,
+  computeTotalBias,
   buildMarketPayload,
   determineTier,
 } = require('../models');
@@ -73,6 +75,16 @@ const NBA_DRIVER_CARD_TYPES = [
   'nba-blowout-risk',
   'nba-total-projection',
 ];
+
+function attachRunId(card, runId) {
+  if (!card) return;
+  card.runId = runId;
+  if (card.payloadData && typeof card.payloadData === 'object') {
+    if (!card.payloadData.run_id) {
+      card.payloadData.run_id = runId;
+    }
+  }
+}
 
 /**
  * Get recent road games for a team from schedule
@@ -248,13 +260,7 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
 
   // TOTAL decision → nba-totals-call
   const totalDecision = marketDecisions?.TOTAL;
-  const totalBias =
-    totalDecision &&
-    totalDecision.status !== 'PASS' &&
-    typeof totalDecision.edge === 'number' &&
-    totalDecision.best_candidate?.line != null
-      ? 'OK'
-      : 'INSUFFICIENT_DATA';
+  const totalBias = computeTotalBias(totalDecision);
   if (
     totalDecision &&
     (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')
@@ -656,6 +662,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
               );
             }
             applyUiActionFields(card.payloadData);
+            attachRunId(card, jobRunId);
             insertCardPayload(card);
             cardsGenerated++;
             const tierLabel = card.payloadData.tier
@@ -699,6 +706,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
               );
             }
             applyUiActionFields(card.payloadData);
+            attachRunId(card, jobRunId);
             insertCardPayload(card);
             cardsGenerated++;
             const tierLabel = card.payloadData.tier
@@ -718,6 +726,13 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
       }
 
       markJobRunSuccess(jobRunId);
+      try {
+        setCurrentRunId(jobRunId);
+      } catch (runStateError) {
+        console.error(
+          `[NBAModel] Failed to update run state: ${runStateError.message}`,
+        );
+      }
       console.log(
         `[NBAModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
       );

@@ -1002,27 +1002,20 @@ function selectExpressionChoice(decisions) {
   };
 }
 
+function computeTotalBias(totalDecision) {
+  const hasTotalLine = totalDecision?.best_candidate?.line != null;
+  const hasTotalEdge = typeof totalDecision?.edge === 'number';
+  const isPlayableTotalStatus =
+    totalDecision && totalDecision.status !== DecisionStatus.PASS;
+
+  return isPlayableTotalStatus && hasTotalLine && hasTotalEdge
+    ? 'OK'
+    : 'INSUFFICIENT_DATA';
+}
+
 function buildMarketPayload({ decisions, expressionChoice }) {
   const totalDecision = decisions?.TOTAL;
-  const totalEligibleDrivers = (totalDecision?.drivers || []).filter(
-    (driver) => driver.eligible,
-  ).length;
-  const hasTotalLine =
-    totalDecision?.best_candidate?.line !== undefined &&
-    totalDecision?.best_candidate?.line !== null;
-  const hasTotalEdge = typeof totalDecision?.edge === 'number';
-  const hasTotalCoverage =
-    typeof totalDecision?.coverage === 'number' &&
-    totalDecision.coverage >= 0.45;
-  const totalBias =
-    totalDecision &&
-    totalDecision.status !== DecisionStatus.PASS &&
-    totalEligibleDrivers > 0 &&
-    hasTotalLine &&
-    hasTotalEdge &&
-    hasTotalCoverage
-      ? 'OK'
-      : 'INSUFFICIENT_DATA';
+  const totalBias = computeTotalBias(totalDecision);
 
   if (!expressionChoice) {
     return {
@@ -1053,141 +1046,10 @@ function buildMarketPayload({ decisions, expressionChoice }) {
   };
 }
 
-// Edge ownership metadata
-const EDGE_SOURCE = 'cross-market';
-const EDGE_VERSION = 'v1';
-
-function buildEdgeKey({ sport, gameId, market, side, line, book }) {
-  if (!sport || !gameId || !market || !side || line === null || !book)
-    return null;
-  // Deterministic: sport|gameId|market|side|line|book (no timestamps, no UUIDs)
-  return `${sport}|${gameId}|${market}|${side}|${line}|${book}`;
-}
-
-function formatEdgeFields({
-  sport,
-  gameId,
-  market,
-  side,
-  line,
-  book,
-  edgeResult,
-}) {
-  if (!edgeResult || !edgeResult.edge) return null;
-  return {
-    edge_key: buildEdgeKey({ sport, gameId, market, side, line, book }),
-    edge_source: EDGE_SOURCE,
-    edge_version: EDGE_VERSION,
-    p_fair: edgeResult.pFair || null,
-    p_implied: edgeResult.pImplied || null,
-  };
-}
-
-function getBookLabel(oddsSnapshot) {
-  if (!oddsSnapshot) return 'unknown';
-  if (oddsSnapshot.book === 'DraftKings') return 'DK';
-  if (oddsSnapshot.book === 'FanDuel') return 'FD';
-  if (oddsSnapshot.book === 'BetMGM') return 'MGM';
-  if (oddsSnapshot.book === 'Caesars') return 'CZR';
-  return (oddsSnapshot.book || 'unknown').substring(0, 3).toUpperCase();
-}
-
-function computeCardEdgeDecision({
-  sport,
-  gameId,
-  marketType,
-  prediction,
-  projectedMargin,
-  projectedTotal,
-  oddsSnapshot,
-}) {
-  if (!sport || !gameId || !marketType) return null;
-
-  const decisions = {};
-
-  if (
-    marketType === 'TOTAL' &&
-    projectedTotal !== null &&
-    oddsSnapshot?.total_line !== null
-  ) {
-    const totalEdge = edgeCalculator.computeTotalEdge({
-      projectionTotal: projectedTotal,
-      totalLine: oddsSnapshot.total_line,
-      totalPriceUnder: toNumber(oddsSnapshot?.total_price_under),
-      totalPriceOver: toNumber(oddsSnapshot?.total_price_over),
-      sigmaTotal: edgeCalculator.getSigmaDefaults(sport)?.total ?? 11,
-    });
-
-    if (totalEdge) {
-      decisions.TOTAL = formatEdgeFields({
-        sport,
-        gameId,
-        market: 'TOTAL',
-        side: 'OVER',
-        line: oddsSnapshot.total_line,
-        book: getBookLabel(oddsSnapshot),
-        edgeResult: totalEdge,
-      });
-    }
-  }
-
-  if (
-    (marketType === 'SPREAD' || marketType === 'MONEYLINE') &&
-    projectedMargin !== null
-  ) {
-    if (oddsSnapshot?.spread_line !== null) {
-      const spreadEdge = edgeCalculator.computeSpreadEdge({
-        projectionMarginHome: projectedMargin,
-        spreadLine: oddsSnapshot.spread_line,
-        spreadPriceHome: toNumber(oddsSnapshot?.spread_price_home),
-        spreadPriceAway: toNumber(oddsSnapshot?.spread_price_away),
-        sigmaMargin: edgeCalculator.getSigmaDefaults(sport)?.margin ?? 12,
-      });
-
-      if (spreadEdge) {
-        decisions.SPREAD = formatEdgeFields({
-          sport,
-          gameId,
-          market: 'SPREAD',
-          side: prediction?.spreadSide || 'HOME',
-          line: oddsSnapshot.spread_line,
-          book: getBookLabel(oddsSnapshot),
-          edgeResult: spreadEdge,
-        });
-      }
-    }
-
-    if (
-      oddsSnapshot?.ml_price_home !== null &&
-      oddsSnapshot?.ml_price_away !== null
-    ) {
-      const mlEdge = edgeCalculator.computeMoneylineEdge({
-        projectionMarginHome: projectedMargin,
-        mlPriceHome: toNumber(oddsSnapshot.ml_price_home),
-        mlPriceAway: toNumber(oddsSnapshot.ml_price_away),
-        sigmaMargin: edgeCalculator.getSigmaDefaults(sport)?.margin ?? 12,
-      });
-
-      if (mlEdge) {
-        decisions.ML = formatEdgeFields({
-          sport,
-          gameId,
-          market: 'MONEYLINE',
-          side: prediction?.mlSide || 'HOME',
-          line: null,
-          book: getBookLabel(oddsSnapshot),
-          edgeResult: mlEdge,
-        });
-      }
-    }
-  }
-
-  return decisions;
-}
-
 module.exports = {
   computeNHLMarketDecisions,
   computeNBAMarketDecisions,
   selectExpressionChoice,
+  computeTotalBias,
   buildMarketPayload,
 };

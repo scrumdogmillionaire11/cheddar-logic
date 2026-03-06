@@ -144,7 +144,7 @@ describe('db-path resolver - Production scenarios', () => {
       ).toThrow('Conflicting explicit DB paths detected');
     });
 
-    test('production with RECORD_DATABASE_PATH (settlement DB)', () => {
+    test('production with legacy RECORD_DATABASE_PATH fallback', () => {
       const resolved = resolveDatabasePath({
         cwd,
         env: {

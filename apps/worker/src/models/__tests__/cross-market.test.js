@@ -6,6 +6,7 @@ const {
 const {
   computeNHLMarketDecisions,
   selectExpressionChoice,
+  computeTotalBias,
 } = require('../cross-market');
 
 describe('cross-market orchestration', () => {
@@ -124,5 +125,47 @@ describe('cross-market orchestration', () => {
 
     const choice = selectExpressionChoice(decisions);
     expect(choice.chosen_market).toBe(Market.ML);
+  });
+
+  test('total bias is OK for WATCH with strong edge even at low coverage', () => {
+    const totalDecision = {
+      status: DecisionStatus.WATCH,
+      edge: 1.8,
+      coverage: 0.44,
+      best_candidate: { side: 'OVER', line: 6.5 },
+      drivers: [],
+    };
+
+    expect(computeTotalBias(totalDecision)).toBe('OK');
+  });
+
+  test('total bias is INSUFFICIENT_DATA for PASS decisions', () => {
+    const totalDecision = {
+      status: DecisionStatus.PASS,
+      edge: 2.2,
+      best_candidate: { side: 'UNDER', line: 6.0 },
+    };
+
+    expect(computeTotalBias(totalDecision)).toBe('INSUFFICIENT_DATA');
+  });
+
+  test('total bias is INSUFFICIENT_DATA when WATCH lacks edge', () => {
+    const totalDecision = {
+      status: DecisionStatus.WATCH,
+      edge: null,
+      best_candidate: { side: 'OVER', line: 220.5 },
+    };
+
+    expect(computeTotalBias(totalDecision)).toBe('INSUFFICIENT_DATA');
+  });
+
+  test('total bias is OK for FIRE decisions with line and edge', () => {
+    const totalDecision = {
+      status: DecisionStatus.FIRE,
+      edge: 3.1,
+      best_candidate: { side: 'UNDER', line: 221.5 },
+    };
+
+    expect(computeTotalBias(totalDecision)).toBe('OK');
   });
 });

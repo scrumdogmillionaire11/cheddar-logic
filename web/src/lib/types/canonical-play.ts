@@ -157,22 +157,27 @@ export type Action = 'FIRE' | 'HOLD' | 'PASS';
 
 export type PassReasonCode =
   // Data missing
+  | 'PASS_MISSING_KIND'
   | 'NO_EDGE'
   | 'MISSING_REQUIRED_FIELDS'
   | 'MISSING_MARKET_TYPE'
   | 'MISSING_SELECTION'
   | 'MISSING_LINE'
   | 'MISSING_PRICE'
+  | 'PASS_NO_MARKET_PRICE'
 
   // Hard veto (bias/consistency)
   | 'TOTAL_BIAS_CONFLICT'
   | 'CONSISTENCY_FAIL'
   | 'OUT_OF_SCOPE_MARKET'
   | 'UNSUPPORTED_MARKET'
+  | 'PASS_TOTAL_INSUFFICIENT_DATA'
 
   // Model veto
   | 'MODEL_VETO'
   | 'INSUFFICIENT_DATA'
+  | 'PASS_UNREPAIRABLE_LEGACY'
+  | 'LEGACY_TITLE_INFERENCE_USED'
 
   // Generic
   | 'UNKNOWN_REASON';

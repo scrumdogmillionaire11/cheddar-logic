@@ -1,5 +1,4 @@
 /**
-import { computeCardEdgeDecision } from '@cheddar-logic/models';
  * NHL Model Runner Job
  * 
  * Reads latest NHL odds from DB, runs inference model, and stores:
@@ -23,6 +22,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  setCurrentRunId,
   getOddsSnapshots,
   getOddsWithUpcomingGames,
   getLatestOdds,
@@ -44,6 +44,7 @@ const {
   generateCard,
   computeNHLMarketDecisions,
   selectExpressionChoice,
+  computeTotalBias,
   buildMarketPayload,
   determineTier,
 } = require('../models');
@@ -81,6 +82,16 @@ const NHL_DRIVER_CARD_TYPES = [
   'nhl-pace-totals',
   'nhl-pace-1p',
 ];
+
+function attachRunId(card, runId) {
+  if (!card) return;
+  card.runId = runId;
+  if (card.payloadData && typeof card.payloadData === 'object') {
+    if (!card.payloadData.run_id) {
+      card.payloadData.run_id = runId;
+    }
+  }
+}
 
 /**
  * Get recent road games for a team from schedule
@@ -256,13 +267,7 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
 
   // TOTAL decision → nhl-totals-call
   const totalDecision = marketDecisions?.TOTAL;
-  const totalBias =
-    totalDecision &&
-    totalDecision.status !== 'PASS' &&
-    typeof totalDecision.edge === 'number' &&
-    totalDecision.best_candidate?.line != null
-      ? 'OK'
-      : 'INSUFFICIENT_DATA';
+  const totalBias = computeTotalBias(totalDecision);
   if (
     totalDecision &&
     (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')
@@ -675,6 +680,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
               );
             }
             applyUiActionFields(card.payloadData);
+            attachRunId(card, jobRunId);
             insertCardPayload(card);
             cardsGenerated++;
             console.log(
@@ -715,6 +721,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
               );
             }
             applyUiActionFields(card.payloadData);
+            attachRunId(card, jobRunId);
             insertCardPayload(card);
             cardsGenerated++;
             console.log(
@@ -733,6 +740,13 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
 
       // Mark success
       markJobRunSuccess(jobRunId);
+      try {
+        setCurrentRunId(jobRunId);
+      } catch (runStateError) {
+        console.error(
+          `[NHLModel] Failed to update run state: ${runStateError.message}`,
+        );
+      }
       console.log(
         `[NHLModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
       );

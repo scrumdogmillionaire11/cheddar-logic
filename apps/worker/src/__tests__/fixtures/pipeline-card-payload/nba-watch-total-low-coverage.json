@@ -1,0 +1,54 @@
+{
+  "sport": "NBA",
+  "decision": {
+    "status": "WATCH",
+    "edge": 0.021,
+    "coverage": 0.43,
+    "best_candidate": {
+      "side": "UNDER",
+      "line": 228.5
+    }
+  },
+  "payload": {
+    "game_id": "NBA-GAME-001",
+    "sport": "NBA",
+    "model_version": "nba-cross-market-v1",
+    "prediction": "UNDER",
+    "confidence": 0.61,
+    "tier": "WATCH",
+    "status": "WATCH",
+    "action": "HOLD",
+    "kind": "PLAY",
+    "recommended_bet_type": "total",
+    "market_type": "TOTAL",
+    "selection": {
+      "side": "UNDER"
+    },
+    "line": 228.5,
+    "price": -108,
+    "edge": 0.021,
+    "consistency": {
+      "total_bias": "OK"
+    },
+    "driver": {
+      "key": "cross_market_total",
+      "score": 0.66,
+      "status": "WATCH",
+      "inputs": {
+        "net": 0.78,
+        "conflict": 0.16,
+        "coverage": 0.43
+      }
+    },
+    "odds_context": {
+      "total": 228.5,
+      "total_price_over": -112,
+      "total_price_under": -108,
+      "h2h_home": -135,
+      "h2h_away": 118,
+      "spread_home": -2.5,
+      "spread_away": 2.5
+    },
+    "generated_at": "2026-03-05T12:00:00.000Z"
+  }
+}

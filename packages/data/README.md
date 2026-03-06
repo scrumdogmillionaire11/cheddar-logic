@@ -23,6 +23,8 @@ npm run migrate
 
 This creates the SQLite database at `$CHEDDAR_DB_PATH` (or `packages/data/cheddar.db` by default) and creates all tables.
 
+`CHEDDAR_DB_PATH` is the canonical database path. Avoid setting `DATABASE_PATH`, `RECORD_DATABASE_PATH`, or `DATABASE_URL` to prevent conflicts.
+
 ## Schema
 
 ### job_runs
@@ -289,8 +291,9 @@ Delete cards older than N days. Returns count deleted.
 The client uses SQLite with a singleton connection.
 
 **Environment variables:**
-- `RECORD_DATABASE_PATH`: Canonical SQLite record DB path (preferred single source of truth)
-- `CHEDDAR_DB_PATH`: Legacy canonical alias for record DB path (supported for compatibility)
+
+- `CHEDDAR_DB_PATH`: Canonical SQLite DB path (single source of truth)
+- `RECORD_DATABASE_PATH`: Legacy alias for DB path (supported for compatibility)
 - `DATABASE_PATH`: Legacy alias for DB path (supported for compatibility)
 - `DATABASE_URL`: SQLite URL format (`sqlite:///...`) supported for compatibility
 - `CHEDDAR_DATA_DIR`: Fallback directory if explicit file path env vars are not set
@@ -299,7 +302,8 @@ The client uses SQLite with a singleton connection.
 ## Datetime Standard
 
 All timestamps (started_at, ended_at, captured_at, predicted_at, created_at, game_time_utc) are stored in **ISO 8601 UTC format**, e.g.:
-```
+
+```text
 2026-02-27T07:00:00.000Z
 ```
 

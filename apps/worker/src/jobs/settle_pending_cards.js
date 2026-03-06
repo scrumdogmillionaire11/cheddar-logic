@@ -179,62 +179,6 @@ function computePnlUnits(result, odds) {
 }
 
 /**
- * PHASE 2: Select top-level card per game (highest confidence)
- * 
- * Prevents settling duplicate picks for the same game (e.g., both HOME and AWAY on ML).
- * Only the highest-confidence card should count toward the user's record.
- * 
- * @param {Array} cardsForGame - All pending cards for a single game_id
- * @returns {object|null} - The top-level card, or null if no valid cards
- */
-function selectTopLevelCard(cardsForGame) {
-  // Filter out invalid cards (missing required fields)
-  const validCards = cardsForGame.filter(c => 
-    c.market_key && 
-    c.market_type && 
-    c.locked_price !== null
-  );
-  
-  if (validCards.length === 0) {
-    console.warn(
-      `[SettleCards] Game ${cardsForGame[0]?.game_id}: no valid cards to settle`
-    );
-    return null;
-  }
-  
-  if (validCards.length === 1) {
-    return validCards[0]; // Only one card, auto-select
-  }
-  
-  // SELECTION STRATEGY: Highest confidence
-  // Parse confidence from payload_data, default to 0 if missing
-  return validCards.reduce((top, curr) => {
-    let currConf = 0;
-    let topConf = 0;
-    
-    try {
-      const currPayload = typeof curr.payload_data === 'string' 
-        ? JSON.parse(curr.payload_data) 
-        : curr.payload_data;
-      currConf = Number(currPayload?.confidence ?? 0);
-    } catch {
-      currConf = 0;
-    }
-    
-    try {
-      const topPayload = typeof top.payload_data === 'string'
-        ? JSON.parse(top.payload_data)
-        : top.payload_data;
-      topConf = Number(topPayload?.confidence ?? 0);
-    } catch {
-      topConf = 0;
-    }
-    
-    return currConf > topConf ? curr : top;
-  });
-}
-
-/**
  * Main job entrypoint
  * @param {object} options - Job options
  * @param {string|null} options.jobKey - Optional deterministic window key for idempotency
@@ -277,7 +221,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
 
       // --- Step 1: Settle pending card_results ---
 
-      // Join pending card_results with final game_results and card_payloads
+      // Join pending card_results with final game_results and display ledger
       const pendingStmt = db.prepare(`
         SELECT
           cr.id AS result_id,
@@ -290,12 +234,16 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           cr.line,
           cr.locked_price,
           cr.metadata,
+          cdl.pick_id,
+          cdl.displayed_at,
+          cdl.api_endpoint,
           cp.payload_data,
           gr.final_score_home,
           gr.final_score_away
         FROM card_results cr
+        INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
         INNER JOIN game_results gr ON cr.game_id = gr.game_id
-        INNER JOIN card_payloads cp ON cr.card_id = cp.id
+        LEFT JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'pending'
           AND cr.market_key IS NOT NULL
           AND gr.status = 'final'
@@ -306,64 +254,32 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         `[SettleCards] Found ${pendingRows.length} pending card_results with final game scores`,
       );
 
-      // PHASE 2: Group cards by game_id
-      const cardsByGame = {};
-      for (const row of pendingRows) {
-        if (!cardsByGame[row.game_id]) {
-          cardsByGame[row.game_id] = [];
-        }
-        cardsByGame[row.game_id].push(row);
-      }
-
-      console.log(
-        `[SettleCards] Grouped into ${Object.keys(cardsByGame).length} unique games`,
-      );
-
       let cardsSettled = 0;
       let cardsErrored = 0;
-      let cardsArchived = 0;
       const settledAt = new Date().toISOString();
 
-      // PHASE 2: Process top-level card per game only
-      for (const [gameId, cardsForGame] of Object.entries(cardsByGame)) {
-        const gameInfo = `${cardsForGame[0].sport} ${gameId}`;
-        
-        // Select the top-level card (highest confidence)
-        const topLevelCard = selectTopLevelCard(cardsForGame);
-        
-        if (!topLevelCard) {
-          console.warn(`[SettleCards] ${gameInfo}: No valid top-level card found`);
-          continue;
-        }
-
-        // Log selection decision if multiple cards existed
-        if (cardsForGame.length > 1) {
-          console.log(
-            `[SettleCards] ${gameInfo}: Selected card ${topLevelCard.card_id} ` +
-            `(highest confidence) from ${cardsForGame.length} candidates`,
-          );
-        }
+      for (const pendingCard of pendingRows) {
+        const gameInfo = `${pendingCard.sport} ${pendingCard.game_id}`;
 
         // Parse payload data
         let payloadData;
         try {
           payloadData =
-            typeof topLevelCard.payload_data === 'string'
-              ? JSON.parse(topLevelCard.payload_data)
-              : topLevelCard.payload_data;
+            typeof pendingCard.payload_data === 'string'
+              ? JSON.parse(pendingCard.payload_data)
+              : pendingCard.payload_data;
         } catch (parseErr) {
           console.warn(
-            `[SettleCards] Failed to parse payload_data for card ${topLevelCard.card_id}: ${parseErr.message}`,
+            `[SettleCards] Failed to parse payload_data for card ${pendingCard.card_id}: ${parseErr.message}`,
           );
           continue;
         }
 
-        const homeScore = Number(topLevelCard.final_score_home) || 0;
-        const awayScore = Number(topLevelCard.final_score_away) || 0;
-        
-        // Settle the top-level card
+        const homeScore = Number(pendingCard.final_score_home) || 0;
+        const awayScore = Number(pendingCard.final_score_away) || 0;
+
         try {
-          const lockedMarket = assertLockedMarketContext(topLevelCard, payloadData);
+          const lockedMarket = assertLockedMarketContext(pendingCard, payloadData);
           const result = gradeLockedMarket({
             marketType: lockedMarket.marketType,
             selection: lockedMarket.selection,
@@ -378,23 +294,23 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
             SET status = 'settled', result = ?, settled_at = ?, pnl_units = ?
             WHERE id = ?
           `);
-          updateStmt.run(result, settledAt, pnlUnits, topLevelCard.result_id);
+          updateStmt.run(result, settledAt, pnlUnits, pendingCard.result_id);
           cardsSettled++;
           console.log(
-            `[SettleCards] Settled card ${topLevelCard.card_id}: ${lockedMarket.marketType}/${lockedMarket.selection} ` +
+            `[SettleCards] Settled card ${pendingCard.card_id}: ${lockedMarket.marketType}/${lockedMarket.selection} ` +
               `(${lockedMarket.marketKey}) -> ${result} (pnl: ${pnlUnits})`,
           );
         } catch (settlementErr) {
           cardsErrored++;
           const errorCode = settlementErr?.code || 'SETTLEMENT_CONTRACT_ERROR';
           console.warn(
-            `[SettleCards] Contract error for card ${topLevelCard.card_id}: ${errorCode} ${settlementErr.message}`,
+            `[SettleCards] Contract error for card ${pendingCard.card_id}: ${errorCode} ${settlementErr.message}`,
           );
 
           let metadata = {};
-          if (typeof topLevelCard.metadata === 'string' && topLevelCard.metadata) {
+          if (typeof pendingCard.metadata === 'string' && pendingCard.metadata) {
             try {
-              metadata = JSON.parse(topLevelCard.metadata);
+              metadata = JSON.parse(pendingCard.metadata);
             } catch {
               metadata = {};
             }
@@ -410,40 +326,12 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
             SET status = 'error', result = 'void', settled_at = ?, metadata = ?
             WHERE id = ?
           `);
-          errorStmt.run(settledAt, JSON.stringify(metadata), topLevelCard.result_id);
-        }
-
-        // PHASE 2: Archive non-top-level cards
-        const nonTopLevelCards = cardsForGame.filter(
-          c => c.result_id !== topLevelCard.result_id
-        );
-        
-        if (nonTopLevelCards.length > 0) {
-          const archiveStmt = db.prepare(`
-            UPDATE card_results
-            SET status = 'archived', 
-                result = 'void',
-                settled_at = ?,
-                metadata = json_insert(
-                  COALESCE(metadata, '{}'),
-                  '$.archive_reason', 'not_top_level',
-                  '$.archived_at', ?
-                )
-            WHERE id = ?
-          `);
-          
-          for (const card of nonTopLevelCards) {
-            archiveStmt.run(settledAt, settledAt, card.result_id);
-            cardsArchived++;
-            console.log(
-              `[SettleCards] Archived card ${card.card_id} (not top-level for ${gameInfo})`,
-            );
-          }
+          errorStmt.run(settledAt, JSON.stringify(metadata), pendingCard.result_id);
         }
       }
 
       console.log(
-        `[SettleCards] Step 1 complete — ${cardsSettled} cards settled, ${cardsErrored} cards errored, ${cardsArchived} cards archived`,
+        `[SettleCards] Step 1 complete — ${cardsSettled} cards settled, ${cardsErrored} cards errored`,
       );
 
       // --- Step 2: Compute and upsert tracking_stats ---
@@ -530,7 +418,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         jobKey,
         cardsSettled,
         cardsErrored,
-        cardsArchived,
+        cardsArchived: 0,
         statsUpserted,
         errors: [],
       };
@@ -570,6 +458,5 @@ module.exports = {
     assertLockedMarketContext,
     computePnlUnits,
     gradeLockedMarket,
-    selectTopLevelCard,
   },
 };

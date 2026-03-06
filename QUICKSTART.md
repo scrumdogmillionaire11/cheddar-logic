@@ -35,7 +35,7 @@ CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
 **DB consistency note:** keep one canonical DB path in `.env` so scheduler + manual commands hit the same file:
 
 ```bash
-# Use ONLY CHEDDAR_DB_PATH - do not set DATABASE_PATH or RECORD_DATABASE_PATH
+# Use ONLY CHEDDAR_DB_PATH - do not set DATABASE_PATH, RECORD_DATABASE_PATH, or DATABASE_URL
 CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 ```
 
@@ -142,4 +142,36 @@ npm --prefix packages/data test
 
 # Start scheduler (if configured)
 npm --prefix apps/worker run scheduler
+```
+
+---
+
+## Frontend Testing (Web)
+
+Run focused checks from the repo root:
+
+```bash
+# Lint the Next.js app
+npm --prefix web run lint
+
+# Contract and UI smoke tests
+npm --prefix web run test:api:games:market
+npm --prefix web run test:ui:cards
+npm --prefix web run test:ui:results
+
+# Full canonical decision guard
+npm --prefix web run test:decision:canonical
+```
+
+If you need a one-shot script:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+npm --prefix web run lint
+npm --prefix web run test:api:games:market
+npm --prefix web run test:ui:cards
+npm --prefix web run test:ui:results
+npm --prefix web run test:decision:canonical
 ```

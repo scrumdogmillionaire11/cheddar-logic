@@ -208,6 +208,10 @@ function getSourcePlayAction(
     return play.action;
   }
 
+  if (play.classification === 'BASE') return 'FIRE';
+  if (play.classification === 'LEAN') return 'HOLD';
+  if (play.classification === 'PASS') return 'PASS';
+
   const legacyStatus = String(play.status ?? '').toUpperCase();
   if (legacyStatus === 'FIRE') return 'FIRE';
   if (legacyStatus === 'WATCH' || legacyStatus === 'HOLD') return 'HOLD';

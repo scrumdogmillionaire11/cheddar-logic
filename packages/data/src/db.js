@@ -27,7 +27,7 @@ const {
 let SQL = null;
 let dbInstance = null;
 let dbPath = null;
-let warnedRecordPathContract = false;
+let warnedDbPathContract = false;
 const warnedSportValues = new Set();
 let oddsContextReferenceRegistry = new WeakMap();
 const EXPECTED_TABLE_NAMES = ['games', 'card_payloads', 'card_results', 'game_results'];
@@ -189,7 +189,6 @@ function chooseBestDatabasePath(primaryPath) {
 
   const seedCandidates = [
     primaryPath,
-    normalizeConfiguredPath(process.env.RECORD_DATABASE_PATH),
     normalizeConfiguredPath(process.env.CHEDDAR_DB_PATH),
     normalizeConfiguredPath(path.join(process.env.CHEDDAR_DATA_DIR || '', 'cheddar.db')),
     normalizeConfiguredPath(path.join(primaryDir, 'backups', path.basename(primaryPath))),
@@ -205,9 +204,6 @@ function chooseBestDatabasePath(primaryPath) {
   const searchDirs = [
     primaryDir,
     path.join(primaryDir, 'backups'),
-    normalizeConfiguredPath(process.env.RECORD_DATABASE_PATH)
-      ? path.dirname(normalizeConfiguredPath(process.env.RECORD_DATABASE_PATH))
-      : null,
     normalizeConfiguredPath(process.env.CHEDDAR_DATA_DIR),
     configuredDataDir ? path.join(configuredDataDir, 'backups') : null,
     '/opt/data',
@@ -283,16 +279,16 @@ async function initDb() {
  */
 function loadDatabase() {
   const resolved = resolveDatabasePath();
-  if (process.env.NODE_ENV === 'production' && !warnedRecordPathContract) {
-    const hasCanonicalRecordPath =
-      typeof process.env.RECORD_DATABASE_PATH === 'string'
-      && process.env.RECORD_DATABASE_PATH.trim().length > 0;
-    if (!hasCanonicalRecordPath || resolved.source !== 'RECORD_DATABASE_PATH') {
+  if (process.env.NODE_ENV === 'production' && !warnedDbPathContract) {
+    const hasCanonicalDbPath =
+      typeof process.env.CHEDDAR_DB_PATH === 'string'
+      && process.env.CHEDDAR_DB_PATH.trim().length > 0;
+    if (!hasCanonicalDbPath || resolved.source !== 'CHEDDAR_DB_PATH') {
       console.warn(
-        `[DB] Production should set RECORD_DATABASE_PATH as the single source of truth (resolved from ${resolved.source}: ${resolved.dbPath})`
+        `[DB] Production should set CHEDDAR_DB_PATH as the single source of truth (resolved from ${resolved.source}: ${resolved.dbPath})`
       );
     }
-    warnedRecordPathContract = true;
+    warnedDbPathContract = true;
   }
   const preferredPath = dbPath || resolved.dbPath;
   const autoDiscoverEnabled = isTruthyEnv(process.env.CHEDDAR_DB_AUTODISCOVER);
@@ -311,7 +307,7 @@ function loadDatabase() {
   if (process.env.NODE_ENV === 'production' && !autoDiscoverEnabled && dbFile !== preferredPath) {
     throw new Error(
       `[DB] Production DB path drift detected. Expected ${preferredPath}, got ${dbFile}. ` +
-      `Disable fallback selection and keep one canonical record database.`
+      `Disable fallback selection and keep one canonical database path.`
     );
   }
 
@@ -498,6 +494,52 @@ function closeDatabase() {
   }
   // Reset odds context registry on close
   oddsContextReferenceRegistry = new WeakMap();
+}
+
+function ensureRunStateSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS run_state (
+      id TEXT PRIMARY KEY,
+      current_run_id TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT OR IGNORE INTO run_state (id, current_run_id, updated_at)
+    VALUES ('singleton', NULL, CURRENT_TIMESTAMP);
+  `);
+}
+
+function ensureCardPayloadRunIdColumn(db) {
+  const columns = db.prepare(`PRAGMA table_info(card_payloads)`).all();
+  const hasRunId = columns.some(
+    (column) => String(column.name || '').toLowerCase() === 'run_id',
+  );
+  if (!hasRunId) {
+    db.exec(`ALTER TABLE card_payloads ADD COLUMN run_id TEXT`);
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_card_payloads_run_id ON card_payloads(run_id)`,
+  );
+}
+
+function getCurrentRunId() {
+  const db = getDatabase();
+  ensureRunStateSchema(db);
+  const stmt = db.prepare(
+    `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
+  );
+  const row = stmt.get();
+  return row?.current_run_id ?? null;
+}
+
+function setCurrentRunId(runId) {
+  const db = getDatabase();
+  ensureRunStateSchema(db);
+  const stmt = db.prepare(`
+    UPDATE run_state
+    SET current_run_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = 'singleton'
+  `);
+  return stmt.run(runId ?? null);
 }
 
 /**
@@ -1295,6 +1337,7 @@ function insertCardResult(result) {
  * @param {object} card.payloadData - The actual card data (will be stringified)
  * @param {string} card.modelOutputIds - Optional comma-separated IDs of related model outputs
  * @param {object} card.metadata - Optional metadata object
+ * @param {string} card.runId - Optional snapshot run ID
  */
 function insertCardPayload(card) {
   const db = getDatabase();
@@ -1302,6 +1345,11 @@ function insertCardPayload(card) {
   const payloadData = card.payloadData && typeof card.payloadData === 'object'
     ? card.payloadData
     : {};
+  const runId = card.runId ?? payloadData.run_id ?? null;
+  const normalizedRunId = runId ? String(runId) : null;
+  if (normalizedRunId && !payloadData.run_id) {
+    payloadData.run_id = normalizedRunId;
+  }
 
   let lockedMarket = null;
   try {
@@ -1366,12 +1414,14 @@ function insertCardPayload(card) {
     });
   }
   
+  ensureCardPayloadRunIdColumn(db);
+
   const stmt = db.prepare(`
     INSERT INTO card_payloads (
       id, game_id, sport, card_type, card_title, created_at,
-      expires_at, payload_data, model_output_ids, metadata
+      expires_at, payload_data, model_output_ids, metadata, run_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   stmt.run(
@@ -1384,7 +1434,8 @@ function insertCardPayload(card) {
     card.expiresAt || null,
     JSON.stringify(payloadData),
     card.modelOutputIds || null,
-    card.metadata ? JSON.stringify(card.metadata) : null
+    card.metadata ? JSON.stringify(card.metadata) : null,
+    normalizedRunId
   );
 
   const recommendedBetType = lockedMarket
@@ -1939,6 +1990,8 @@ module.exports = {
   initDb,
   getDatabase,
   closeDatabase,
+  getCurrentRunId,
+  setCurrentRunId,
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,

@@ -160,6 +160,11 @@ function buildBallSportPayload({
 
   const winProbHome = computeWinProbHome(projectedMargin, sport);
 
+  // Derive status from expression_choice if available (prioritize cross-market decision)
+  const crossMarketStatus = marketPayload?.expression_choice?.status;
+  const derivedStatus = crossMarketStatus || undefined;
+  const derivedAction = derivedStatus === 'FIRE' ? 'FIRE' : derivedStatus === 'WATCH' ? 'HOLD' : derivedStatus === 'PASS' ? 'PASS' : undefined;
+
   const payloadData = {
     game_id: oddsSnapshot?.game_id ?? null,
     sport,
@@ -194,6 +199,8 @@ function buildBallSportPayload({
     expression_choice: marketPayload?.expression_choice || {},
     market_narrative: marketPayload?.market_narrative || {},
     all_markets: marketPayload?.all_markets || {},
+    status: derivedStatus,
+    action: derivedAction,
     tier: descriptor.tier,
     reasoning: descriptor.reasoning,
     driver: {
