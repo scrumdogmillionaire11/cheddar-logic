@@ -21,6 +21,8 @@
  * - FPL-SAGE Engine: FPL (deadline-based, NOT game-time) — TODO future refactor
  */
 
+require('dotenv').config();
+
 const { DateTime } = require('luxon');
 const {
   initDb,

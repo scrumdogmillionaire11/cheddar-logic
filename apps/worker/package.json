@@ -59,6 +59,7 @@
     "@cheddar-logic/models": "file:../../packages/models",
     "@cheddar-logic/odds": "file:../../packages/odds",
     "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.4.5",
     "luxon": "^3.7.2",
     "uuid": "^9.0.0"
   },
