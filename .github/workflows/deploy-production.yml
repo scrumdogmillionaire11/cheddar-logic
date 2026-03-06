@@ -103,6 +103,8 @@ jobs:
             sudo systemctl enable cheddar-worker cheddar-web cheddar-fpl-sage
             sudo mkdir -p /opt/data
             sudo chown $(id -u):$(id -g) /opt/data
+            touch /opt/data/cheddar-prod.db
+            chmod 664 /opt/data/cheddar-prod.db
             # Clean node_modules to avoid corrupted tar state from stale backups
             rm -rf packages/*/node_modules apps/*/node_modules web/node_modules
             npm --prefix packages/data install --omit=dev
