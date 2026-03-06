@@ -101,6 +101,8 @@ jobs:
             sudo cp /opt/cheddar-logic/cheddar-fpl-sage.service /etc/systemd/system/cheddar-fpl-sage.service
             sudo systemctl daemon-reload
             sudo systemctl enable cheddar-worker cheddar-web cheddar-fpl-sage
+            sudo mkdir -p /opt/data
+            sudo chown $(id -u):$(id -g) /opt/data
             # Clean node_modules to avoid corrupted tar state from stale backups
             rm -rf packages/*/node_modules apps/*/node_modules web/node_modules
             npm --prefix packages/data install --omit=dev
@@ -110,7 +112,7 @@ jobs:
             npm --prefix apps/worker install --omit=dev
             npm --prefix web install --include=dev
             # Run database migrations
-              NODE_ENV=production node scripts/run-migrations.js
+            CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db NODE_ENV=production node scripts/run-migrations.js
             # Fail deploy if expected schema is missing from production DB
             test -s /opt/data/cheddar-prod.db || { echo "ERROR: missing or empty /opt/data/cheddar-prod.db after migrations"; exit 1; }
             sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" | grep -qx "card_payloads" || { echo "ERROR: required table card_payloads missing after migrations"; exit 1; }
