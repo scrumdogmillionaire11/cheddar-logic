@@ -102,15 +102,6 @@ function actionFromClassificationValue(
   return undefined;
 }
 
-function actionFromClassification(
-  value: unknown,
-): PlayDisplayAction | undefined {
-  if (value === 'BASE' || value === 'PLAY') return 'FIRE';
-  if (value === 'LEAN') return 'HOLD';
-  if (value === 'PASS') return 'PASS';
-  return undefined;
-}
-
 function classificationFromAction(
   action: PlayDisplayAction,
 ): 'BASE' | 'LEAN' | 'PASS' {
