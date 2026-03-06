@@ -487,12 +487,24 @@ function ensureRunStateSchema(db: ReturnType<typeof getDatabase>) {
   }
 }
 
-function getCurrentRunId(db: ReturnType<typeof getDatabase>) {
-  const stmt = db.prepare(
-    `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
-  );
-  const row = stmt.get() as { current_run_id?: string | null } | undefined;
-  return row?.current_run_id ?? null;
+function getActiveRunIds(db: ReturnType<typeof getDatabase>): string[] {
+  // Prefer per-sport rows (added by migration 021); fall back to singleton
+  try {
+    const sportRows = db
+      .prepare(
+        `SELECT current_run_id FROM run_state WHERE id != 'singleton' AND current_run_id IS NOT NULL AND TRIM(current_run_id) != ''`,
+      )
+      .all() as Array<{ current_run_id: string }>;
+    if (sportRows.length > 0) {
+      return [...new Set(sportRows.map((r) => r.current_run_id))];
+    }
+  } catch {
+    // fall through to singleton
+  }
+  const row = db
+    .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
+    .get() as { current_run_id?: string | null } | undefined;
+  return row?.current_run_id ? [row.current_run_id] : [];
 }
 
 function getRunStatus(
@@ -554,7 +566,8 @@ export async function GET(request: NextRequest) {
 
     const db = getDatabase();
     ensureRunStateSchema(db);
-    const currentRunId = getCurrentRunId(db);
+    const activeRunIds = getActiveRunIds(db);
+    const currentRunId = activeRunIds[0] ?? null;
     const runStatus = getRunStatus(db, currentRunId);
 
     // Check if database is empty or uninitialized
@@ -571,23 +584,6 @@ export async function GET(request: NextRequest) {
           data: [],
           meta: {
             current_run_id: currentRunId,
-            generated_at: new Date().toISOString(),
-            run_status: runStatus,
-            items_count: 0,
-          },
-        },
-        { headers: { 'Content-Type': 'application/json' } },
-      );
-      return addRateLimitHeaders(response, request);
-    }
-
-    if (!currentRunId) {
-      const response = NextResponse.json(
-        {
-          success: true,
-          data: [],
-          meta: {
-            current_run_id: null,
             generated_at: new Date().toISOString(),
             run_status: runStatus,
             items_count: 0,
@@ -696,11 +692,12 @@ export async function GET(request: NextRequest) {
 
       // SQLite doesn't support array binding; build placeholders for ALL IDs (canonical + external)
       const placeholders = allQueryableIds.map(() => '?').join(', ');
+      const runIdPlaceholders = activeRunIds.length > 0 ? activeRunIds.map(() => '?').join(', ') : 'NULL';
       const cardsSql = `
         SELECT id, game_id, card_type, card_title, payload_data
         FROM card_payloads
         WHERE game_id IN (${placeholders})
-          AND run_id = ?
+          AND run_id IN (${runIdPlaceholders})
           AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
           ${ENABLE_WELCOME_HOME ? '' : "AND card_type != 'welcome-home-v2'"}
         ORDER BY created_at DESC
@@ -708,7 +705,7 @@ export async function GET(request: NextRequest) {
       const cardsStmt = db.prepare(cardsSql);
       const cardRows = cardsStmt.all(
         ...allQueryableIds,
-        currentRunId,
+        ...activeRunIds,
       ) as CardPayloadRow[];
 
       for (const cardRow of cardRows) {

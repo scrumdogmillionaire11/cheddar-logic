@@ -8,6 +8,7 @@
  * - ODDS_HEALTH_MAX_AGE_MINUTES (default: 90)
  */
 
+require('dotenv').config();
 const { initDb, getJobRunHistory } = require('@cheddar-logic/data');
 
 function getLatestSuccessfulRun(jobRuns) {

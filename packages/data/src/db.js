@@ -521,25 +521,27 @@ function ensureCardPayloadRunIdColumn(db) {
   );
 }
 
-function getCurrentRunId() {
+function getCurrentRunId(sport = null) {
   const db = getDatabase();
   ensureRunStateSchema(db);
+  const rowId = sport ? sport.toLowerCase() : 'singleton';
   const stmt = db.prepare(
-    `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
+    `SELECT current_run_id FROM run_state WHERE id = ? LIMIT 1`,
   );
-  const row = stmt.get();
+  const row = stmt.get(rowId);
   return row?.current_run_id ?? null;
 }
 
-function setCurrentRunId(runId) {
+function setCurrentRunId(runId, sport = null) {
   const db = getDatabase();
   ensureRunStateSchema(db);
+  const rowId = sport ? sport.toLowerCase() : 'singleton';
   const stmt = db.prepare(`
     UPDATE run_state
     SET current_run_id = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = 'singleton'
+    WHERE id = ?
   `);
-  return stmt.run(runId ?? null);
+  return stmt.run(runId ?? null, rowId);
 }
 
 /**

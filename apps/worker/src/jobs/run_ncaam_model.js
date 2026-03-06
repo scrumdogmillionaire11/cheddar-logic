@@ -14,6 +14,7 @@
  *   1 = failure
  */
 
+require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
 
 const {
@@ -176,7 +177,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
         console.log('[NCAAMModel] No recent NCAAM odds found, exiting.');
         markJobRunSuccess(jobRunId);
         try {
-          setCurrentRunId(jobRunId);
+          setCurrentRunId(jobRunId, 'ncaam');
         } catch (runStateError) {
           console.error(
             `[NCAAMModel] Failed to update run state: ${runStateError.message}`,
@@ -303,7 +304,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       );
       markJobRunSuccess(jobRunId);
       try {
-        setCurrentRunId(jobRunId);
+        setCurrentRunId(jobRunId, 'ncaam');
       } catch (runStateError) {
         console.error(
           `[NCAAMModel] Failed to update run state: ${runStateError.message}`,

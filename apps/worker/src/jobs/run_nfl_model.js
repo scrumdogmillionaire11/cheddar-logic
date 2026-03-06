@@ -15,6 +15,7 @@
  *   1 = failure
  */
 
+require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
 
 // Import cheddar-logic data layer

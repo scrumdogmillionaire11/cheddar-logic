@@ -16,6 +16,7 @@
  * - CARDS_FRESHNESS_MAX_AGE_MINUTES (default: 30)
  */
 
+require('dotenv').config();
 const { DateTime } = require('luxon');
 const {
   initDb,

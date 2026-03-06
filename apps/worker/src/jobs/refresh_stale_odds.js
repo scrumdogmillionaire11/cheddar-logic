@@ -17,6 +17,7 @@
  *   1 = failure
  */
 
+require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
 const { DateTime } = require('luxon');
 

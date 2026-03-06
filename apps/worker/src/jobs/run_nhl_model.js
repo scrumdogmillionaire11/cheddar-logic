@@ -15,6 +15,7 @@
  *   1 = failure
  */
 
+require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
 
 // Import cheddar-logic data layer
@@ -741,7 +742,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
       // Mark success
       markJobRunSuccess(jobRunId);
       try {
-        setCurrentRunId(jobRunId);
+        setCurrentRunId(jobRunId, 'nhl');
       } catch (runStateError) {
         console.error(
           `[NHLModel] Failed to update run state: ${runStateError.message}`,

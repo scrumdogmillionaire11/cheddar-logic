@@ -610,13 +610,26 @@ async function start() {
   await initDb();
   console.log('[SCHEDULER] Database ready.\n');
 
+  let tickRunning = false;
+
+  function runTick() {
+    if (tickRunning) {
+      console.log('[SCHEDULER] Skipping tick — previous tick still running');
+      return;
+    }
+    tickRunning = true;
+    tick()
+      .catch((err) => console.error('[SCHEDULER] tick error', err))
+      .finally(() => {
+        tickRunning = false;
+      });
+  }
+
   // Initial tick
-  tick().catch((err) => console.error('[SCHEDULER] tick error', err));
+  runTick();
 
   // Loop
-  const interval = setInterval(() => {
-    tick().catch((err) => console.error('[SCHEDULER] tick error', err));
-  }, tickMs);
+  const interval = setInterval(runTick, tickMs);
 
   process.on('SIGTERM', () => {
     clearInterval(interval);

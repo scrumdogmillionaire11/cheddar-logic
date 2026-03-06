@@ -241,40 +241,69 @@ const TEAM_VARIANTS = {
 };
 
 const LOGGED_TEAM_VARIANTS = [
-  // NHL
+  // NHL (all 32 teams)
   'Anaheim Ducks',
+  'Boston Bruins',
+  'Buffalo Sabres',
   'Calgary Flames',
   'Carolina Hurricanes',
   'Chicago Blackhawks',
   'Colorado Avalanche',
+  'Columbus Blue Jackets',
   'Dallas Stars',
   'Detroit Red Wings',
   'Edmonton Oilers',
+  'Florida Panthers',
+  'Los Angeles Kings',
   'Minnesota Wild',
   'Montreal Canadiens',
+  'Nashville Predators',
   'New Jersey Devils',
   'New York Islanders',
+  'New York Rangers',
   'Ottawa Senators',
+  'Philadelphia Flyers',
+  'Pittsburgh Penguins',
   'San Jose Sharks',
   'Seattle Kraken',
   'St Louis Blues',
   'Tampa Bay Lightning',
+  'Toronto Maple Leafs',
+  'Utah Mammoth',
   'Vancouver Canucks',
   'Vegas Golden Knights',
+  'Washington Capitals',
   'Winnipeg Jets',
-  // NBA
+  // NBA (all 30 teams)
   'Atlanta Hawks',
   'Brooklyn Nets',
   'Charlotte Hornets',
+  'Chicago Bulls',
+  'Cleveland Cavaliers',
+  'Dallas Mavericks',
+  'Denver Nuggets',
+  'Detroit Pistons',
+  'Golden State Warriors',
+  'Houston Rockets',
+  'Indiana Pacers',
+  'Los Angeles Clippers',
+  'Los Angeles Lakers',
   'Memphis Grizzlies',
+  'Miami Heat',
   'Milwaukee Bucks',
   'Minnesota Timberwolves',
   'New Orleans Pelicans',
+  'New York Knicks',
   'Oklahoma City Thunder',
+  'Orlando Magic',
   'Philadelphia 76ers',
+  'Phoenix Suns',
+  'Portland Trail Blazers',
   'Sacramento Kings',
   'San Antonio Spurs',
   'Toronto Raptors',
+  'Utah Jazz',
+  'Washington Wizards',
   // NCAAM
   'Alabama A&M Bulldogs',
   'Alabama St Hornets',
@@ -432,11 +461,8 @@ function normalizeTeamName(teamName, context = 'normalizeTeamName') {
   }
   
   // Unknown variant: track it for discovery, then return cleaned
+  // (tracked in-memory via trackUnknownTeamVariant; no log to avoid noise for NCAAM)
   trackUnknownTeamVariant(cleaned);
-  console.warn(
-    `[NORMALIZE] Unknown team "${cleaned}" in ${context}. ` +
-    `Add to TEAM_VARIANTS map if this becomes a recurring variant.`
-  );
   
   // Return cleaned original (preserves case for human review in logs/UI)
   return cleaned;

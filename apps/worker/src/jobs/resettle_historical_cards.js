@@ -19,6 +19,7 @@
 
 'use strict';
 
+require('dotenv').config();
 const {
   getDatabase,
   withDb,
