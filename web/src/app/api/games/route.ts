@@ -464,26 +464,28 @@ function ensureRunStateSchema(db: ReturnType<typeof getDatabase>) {
   const columns = db.prepare(`PRAGMA table_info(card_payloads)`).all() as Array<{
     name?: string;
   }>;
-  const hasRunId = columns.some(
-    (column) => String(column.name || '').toLowerCase() === 'run_id',
-  );
-  if (!hasRunId) {
-    db.exec(`ALTER TABLE card_payloads ADD COLUMN run_id TEXT`);
-  }
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_card_payloads_run_id ON card_payloads(run_id)`,
-  );
+  if (columns.length > 0) {
+    const hasRunId = columns.some(
+      (column) => String(column.name || '').toLowerCase() === 'run_id',
+    );
+    if (!hasRunId) {
+      db.exec(`ALTER TABLE card_payloads ADD COLUMN run_id TEXT`);
+    }
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_card_payloads_run_id ON card_payloads(run_id)`,
+    );
 
-  const runIdCountRow = db
-    .prepare(
-      `SELECT COUNT(*) AS count FROM card_payloads WHERE run_id IS NOT NULL AND TRIM(run_id) != ''`,
-    )
-    .get() as { count?: number } | undefined;
-  if (Number(runIdCountRow?.count || 0) === 0) {
-    db.exec(`UPDATE card_payloads SET run_id = 'bootstrap-initial' WHERE run_id IS NULL`);
-    db.prepare(
-      `UPDATE run_state SET current_run_id = 'bootstrap-initial', updated_at = CURRENT_TIMESTAMP WHERE id = 'singleton'`,
-    ).run();
+    const runIdCountRow = db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM card_payloads WHERE run_id IS NOT NULL AND TRIM(run_id) != ''`,
+      )
+      .get() as { count?: number } | undefined;
+    if (Number(runIdCountRow?.count || 0) === 0) {
+      db.exec(`UPDATE card_payloads SET run_id = 'bootstrap-initial' WHERE run_id IS NULL`);
+      db.prepare(
+        `UPDATE run_state SET current_run_id = 'bootstrap-initial', updated_at = CURRENT_TIMESTAMP WHERE id = 'singleton'`,
+      ).run();
+    }
   }
 }
 
@@ -702,11 +704,16 @@ export async function GET(request: NextRequest) {
           ${ENABLE_WELCOME_HOME ? '' : "AND card_type != 'welcome-home-v2'"}
         ORDER BY created_at DESC
       `;
-      const cardsStmt = db.prepare(cardsSql);
-      const cardRows = cardsStmt.all(
-        ...allQueryableIds,
-        ...activeRunIds,
-      ) as CardPayloadRow[];
+      let cardRows: CardPayloadRow[] = [];
+      try {
+        const cardsStmt = db.prepare(cardsSql);
+        cardRows = cardsStmt.all(
+          ...allQueryableIds,
+          ...activeRunIds,
+        ) as CardPayloadRow[];
+      } catch {
+        // card_payloads table not yet created; plays will be empty
+      }
 
       for (const cardRow of cardRows) {
         let payload: Record<string, unknown> | null = null;
