@@ -2,6 +2,18 @@
 
 ## Automated Setup (Recommended)
 
+### Runtime Modes (Important)
+
+- **Local mode** (recommended for model testing): web + worker + scheduler all use one local DB.
+- **Snapshot mode** (read-only parity checks): web reads `~/.cheddar/prod-snapshot.db`; do not mix with local model runs unless intentional.
+
+Use these helpers to verify your active mode:
+
+```bash
+bash scripts/dev-mode-local.sh --check
+bash scripts/dev-mode-snapshot.sh --check
+```
+
 ### One-Time Setup
 
 ```bash
@@ -23,7 +35,7 @@ npm --prefix packages/data run migrate
 **Important:** use the same `CHEDDAR_DB_PATH` for web + worker. If these differ, UI can show stale/broken cards even when jobs succeed.
 
 ```bash
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
+CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db npm --prefix web run dev
 ```
 
 **Tab 2 — Scheduler** (automatic hourly pulls + model runs)
@@ -36,7 +48,7 @@ CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
 
 ```bash
 # Use ONLY CHEDDAR_DB_PATH - do not set DATABASE_PATH, RECORD_DATABASE_PATH, or DATABASE_URL
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
+CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db
 ```
 
 **Tab 3 — Watch Logs** (optional)
@@ -70,7 +82,10 @@ npm --prefix apps/worker install
 npm --prefix packages/data run migrate
 
 # Start web against the SAME DB path used by worker jobs
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
+CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db npm --prefix web run dev
+
+# Pin local mode DB path for all worker commands in this shell
+export CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db
 
 # Pull live odds (requires ODDS_API_KEY from https://theoddsapi.com)
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
@@ -102,6 +117,8 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
 #### 3) Run Jobs
 
 ```bash
+export CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db
+
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
@@ -125,6 +142,12 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
 - NCAAM cards are driver-based; if no cards appear, there may be no actionable signals.
 
 ### Troubleshooting
+
+- Confirm active mode/path before running jobs:
+  - `bash scripts/db-context.sh`
+- Snapshot mode mismatch symptom (worker logs cards, UI empty):
+  - Web is reading `~/.cheddar/prod-snapshot.db` while worker writes local DB.
+  - Fix by restarting web with your local `CHEDDAR_DB_PATH`.
 
 - No cards generated:
   - Ensure odds exist in the DB for the sport and time window.

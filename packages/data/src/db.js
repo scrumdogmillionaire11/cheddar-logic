@@ -537,11 +537,13 @@ function setCurrentRunId(runId, sport = null) {
   ensureRunStateSchema(db);
   const rowId = sport ? sport.toLowerCase() : 'singleton';
   const stmt = db.prepare(`
-    UPDATE run_state
-    SET current_run_id = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
+    INSERT INTO run_state (id, current_run_id, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      current_run_id = excluded.current_run_id,
+      updated_at = CURRENT_TIMESTAMP
   `);
-  return stmt.run(runId ?? null, rowId);
+  return stmt.run(rowId, runId ?? null);
 }
 
 /**

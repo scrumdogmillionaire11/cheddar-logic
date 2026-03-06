@@ -18,7 +18,7 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
-EXPECTED_DB_PATH="${RECORD_DATABASE_PATH:-${CHEDDAR_DB_PATH:-${DATABASE_PATH:-$ROOT_DIR/packages/data/cheddar.db}}}"
+EXPECTED_DB_PATH="${CHEDDAR_DB_PATH:-$ROOT_DIR/packages/data/cheddar.db}"
 
 # Color output
 BLUE='\033[0;34m'
@@ -26,6 +26,10 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
+
+if [ -n "${DATABASE_PATH:-}" ] || [ -n "${RECORD_DATABASE_PATH:-}" ] || [ -n "${DATABASE_URL:-}" ]; then
+    echo -e "${YELLOW}⚠️  Legacy DB env vars detected. This script expects CHEDDAR_DB_PATH as canonical source.${NC}" >&2
+fi
 
 function show_help() {
     echo "Usage: ./scripts/manage-scheduler.sh [COMMAND]"
