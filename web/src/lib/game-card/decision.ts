@@ -93,6 +93,15 @@ function actionFromLegacyStatus(value: unknown): PlayDisplayAction | undefined {
   return undefined;
 }
 
+function actionFromClassificationValue(
+  value: unknown,
+): PlayDisplayAction | undefined {
+  if (value === 'BASE' || value === 'PLAY') return 'FIRE';
+  if (value === 'LEAN') return 'HOLD';
+  if (value === 'PASS') return 'PASS';
+  return undefined;
+}
+
 function actionFromClassification(
   value: unknown,
 ): PlayDisplayAction | undefined {
@@ -121,10 +130,12 @@ export function resolvePlayDisplayDecision(
   play?: Partial<Pick<Play, 'action' | 'status' | 'classification'>> | null,
 ): ResolvedPlayDisplayDecision {
   const explicitAction = isValidAction(play?.action) ? play.action : undefined;
+  const classificationAction = actionFromClassificationValue(
+    play?.classification,
+  );
   const legacyAction = actionFromLegacyStatus(play?.status);
-  const classificationAction = actionFromClassification(play?.classification);
   const action =
-    explicitAction ?? legacyAction ?? classificationAction ?? 'PASS';
+    explicitAction ?? classificationAction ?? legacyAction ?? 'PASS';
 
   return {
     action,

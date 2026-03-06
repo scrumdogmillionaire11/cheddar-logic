@@ -272,6 +272,42 @@ function normalizeStatus(value: unknown): Play['status'] | undefined {
   return undefined;
 }
 
+function normalizeClassification(
+  value: unknown,
+): Play['classification'] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const upper = value.trim().toUpperCase();
+  if (upper === 'BASE' || upper === 'LEAN' || upper === 'PASS') {
+    return upper as Play['classification'];
+  }
+  return undefined;
+}
+
+function actionFromClassification(
+  classification?: Play['classification'],
+): Play['action'] | undefined {
+  if (classification === 'BASE') return 'FIRE';
+  if (classification === 'LEAN') return 'HOLD';
+  if (classification === 'PASS') return 'PASS';
+  return undefined;
+}
+
+function classificationFromAction(
+  action?: Play['action'],
+): Play['classification'] | undefined {
+  if (action === 'FIRE') return 'BASE';
+  if (action === 'HOLD') return 'LEAN';
+  if (action === 'PASS') return 'PASS';
+  return undefined;
+}
+
+function statusFromAction(action?: Play['action']): Play['status'] | undefined {
+  if (action === 'FIRE') return 'FIRE';
+  if (action === 'HOLD') return 'WATCH';
+  if (action === 'PASS') return 'PASS';
+  return undefined;
+}
+
 function normalizeSelectionSide(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const upper = value.trim().toUpperCase();
@@ -707,6 +743,9 @@ export async function GET(request: NextRequest) {
         const normalizedStatus = normalizeStatus(
           payload.status ?? payloadPlay?.status,
         );
+        const normalizedClassification = normalizeClassification(
+          payload.classification ?? payloadPlay?.classification,
+        );
         const normalizedTier = normalizeTier(payload.tier ?? payloadPlay?.tier);
         const normalizedPrediction =
           normalizePrediction(payload.prediction) ??
@@ -894,6 +933,34 @@ export async function GET(request: NextRequest) {
           ...(Array.isArray(payloadPlay?.tags) ? payloadPlay.tags : []),
         ].map((value) => String(value));
 
+        const inferredActionFromTierOrConfidence: Play['action'] | undefined =
+          normalizedTier === 'SUPER' || normalizedTier === 'BEST'
+            ? 'FIRE'
+            : normalizedTier === 'WATCH'
+              ? 'HOLD'
+              : typeof normalizedConfidence === 'number' &&
+                  normalizedConfidence >= 0.75
+                ? 'FIRE'
+                : typeof normalizedConfidence === 'number' &&
+                    normalizedConfidence >= 0.6
+                  ? 'HOLD'
+                  : undefined;
+        const resolvedAction: Play['action'] | undefined =
+          normalizedAction ??
+          actionFromClassification(normalizedClassification) ??
+          (normalizedStatus === 'FIRE'
+            ? 'FIRE'
+            : normalizedStatus === 'WATCH'
+              ? 'HOLD'
+              : normalizedStatus === 'PASS'
+                ? 'PASS'
+                : undefined) ??
+          inferredActionFromTierOrConfidence;
+        const resolvedClassification: Play['classification'] | undefined =
+          normalizedClassification ?? classificationFromAction(resolvedAction);
+        const resolvedStatus: Play['status'] | undefined =
+          statusFromAction(resolvedAction) ?? normalizedStatus;
+
         const play: Play = {
           source_card_id: cardRow.id,
           cardType: cardRow.card_type,
@@ -925,49 +992,10 @@ export async function GET(request: NextRequest) {
                 : null,
           edge: typeof normalizedEdge === 'number' ? normalizedEdge : null,
           model_prob: normalizedModelProb,
-          status:
-            normalizedStatus ??
-            (normalizedAction === 'HOLD'
-              ? 'WATCH'
-              : normalizedAction === 'FIRE'
-                ? 'FIRE'
-                : normalizedAction === 'PASS'
-                  ? 'PASS'
-                  : normalizedTier === 'BEST'
-                    ? 'FIRE'
-                    : normalizedTier === 'WATCH'
-                      ? 'WATCH'
-                      : undefined),
+          status: resolvedStatus,
           // Canonical decision fields (preferred over legacy status field)
-          classification:
-            payload.classification === 'BASE' ||
-            payload.classification === 'LEAN' ||
-            payload.classification === 'PASS'
-              ? (payload.classification as 'BASE' | 'LEAN' | 'PASS')
-              : payloadPlay?.classification === 'BASE' ||
-                  payloadPlay?.classification === 'LEAN' ||
-                  payloadPlay?.classification === 'PASS'
-                ? (payloadPlay.classification as 'BASE' | 'LEAN' | 'PASS')
-                : normalizedAction === 'FIRE'
-                  ? 'BASE'
-                  : normalizedAction === 'HOLD'
-                    ? 'LEAN'
-                    : normalizedAction === 'PASS'
-                      ? 'PASS'
-                      : undefined,
-          action:
-            normalizedAction ??
-            (normalizedTier === 'SUPER' || normalizedTier === 'BEST'
-              ? 'FIRE'
-              : normalizedTier === 'WATCH'
-                ? 'HOLD'
-                : typeof normalizedConfidence === 'number' &&
-                    normalizedConfidence >= 0.75
-                  ? 'FIRE'
-                  : typeof normalizedConfidence === 'number' &&
-                      normalizedConfidence >= 0.6
-                    ? 'HOLD'
-                    : undefined),
+          classification: resolvedClassification,
+          action: resolvedAction,
           pass_reason_code:
             typeof payload.pass_reason_code === 'string'
               ? payload.pass_reason_code
@@ -1145,6 +1173,9 @@ export async function GET(request: NextRequest) {
 
         if (!play.market_type) {
           missingMarketTypeBeforeRepair += 1;
+          play.reason_codes = Array.from(
+            new Set([...(play.reason_codes ?? []), 'PASS_MISSING_MARKET_TYPE']),
+          );
           const isAllowlisted = REPAIR_ALLOWLIST.has(cardRow.card_type);
           const candidates = inferMarketCandidatesFromTitle(cardRow.card_title);
           const uniqueCandidates = Array.from(new Set(candidates));
@@ -1160,10 +1191,18 @@ export async function GET(request: NextRequest) {
             play.repair_applied = true;
             play.repair_rule_id = 'R001';
             play.tags = Array.from(
-              new Set([...(play.tags ?? []), 'LEGACY_REPAIR']),
+              new Set([
+                ...(play.tags ?? []),
+                'LEGACY_REPAIR',
+                'LEGACY_TITLE_INFERENCE_USED',
+              ]),
             );
             play.reason_codes = Array.from(
-              new Set([...(play.reason_codes ?? []), 'REPAIRED_LEGACY_CARD']),
+              new Set([
+                ...(play.reason_codes ?? []),
+                'REPAIRED_LEGACY_CARD',
+                'LEGACY_TITLE_INFERENCE_USED',
+              ]),
             );
             legacyTitleInferenceUsedCount += 1;
           } else {
@@ -1173,7 +1212,11 @@ export async function GET(request: NextRequest) {
               new Set([
                 ...(play.reason_codes ?? []),
                 'PASS_UNREPAIRABLE_LEGACY',
+                'LEGACY_TITLE_INFERENCE_USED',
               ]),
+            );
+            play.tags = Array.from(
+              new Set([...(play.tags ?? []), 'LEGACY_TITLE_INFERENCE_USED']),
             );
           }
         }

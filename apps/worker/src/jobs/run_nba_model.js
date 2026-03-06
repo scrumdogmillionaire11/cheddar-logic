@@ -37,6 +37,7 @@ const {
   generateCard,
   computeNBAMarketDecisions,
   selectExpressionChoice,
+  computeTotalBias,
   buildMarketPayload,
   determineTier,
 } = require('../models');
@@ -248,13 +249,7 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
 
   // TOTAL decision → nba-totals-call
   const totalDecision = marketDecisions?.TOTAL;
-  const totalBias =
-    totalDecision &&
-    totalDecision.status !== 'PASS' &&
-    typeof totalDecision.edge === 'number' &&
-    totalDecision.best_candidate?.line != null
-      ? 'OK'
-      : 'INSUFFICIENT_DATA';
+  const totalBias = computeTotalBias(totalDecision);
   if (
     totalDecision &&
     (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')

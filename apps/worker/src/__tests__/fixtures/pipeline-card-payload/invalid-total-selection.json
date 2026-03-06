@@ -1,0 +1,38 @@
+{
+  "sport": "NBA",
+  "payload": {
+    "game_id": "NBA-GAME-ERR-001",
+    "sport": "NBA",
+    "model_version": "nba-cross-market-v1",
+    "prediction": "HOME",
+    "confidence": 0.63,
+    "tier": "WATCH",
+    "status": "WATCH",
+    "action": "HOLD",
+    "kind": "PLAY",
+    "recommended_bet_type": "total",
+    "market_type": "TOTAL",
+    "selection": {
+      "side": "HOME"
+    },
+    "line": 223.5,
+    "price": -110,
+    "edge": 0.015,
+    "driver": {
+      "key": "cross_market_total",
+      "score": 0.58,
+      "status": "WATCH",
+      "inputs": {
+        "net": 0.65,
+        "conflict": 0.18,
+        "coverage": 0.48
+      }
+    },
+    "odds_context": {
+      "total": 223.5,
+      "total_price_over": -110,
+      "total_price_under": -110
+    },
+    "generated_at": "2026-03-05T12:00:00.000Z"
+  }
+}

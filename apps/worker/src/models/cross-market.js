@@ -1002,27 +1002,20 @@ function selectExpressionChoice(decisions) {
   };
 }
 
+function computeTotalBias(totalDecision) {
+  const hasTotalLine = totalDecision?.best_candidate?.line != null;
+  const hasTotalEdge = typeof totalDecision?.edge === 'number';
+  const isPlayableTotalStatus =
+    totalDecision && totalDecision.status !== DecisionStatus.PASS;
+
+  return isPlayableTotalStatus && hasTotalLine && hasTotalEdge
+    ? 'OK'
+    : 'INSUFFICIENT_DATA';
+}
+
 function buildMarketPayload({ decisions, expressionChoice }) {
   const totalDecision = decisions?.TOTAL;
-  const totalEligibleDrivers = (totalDecision?.drivers || []).filter(
-    (driver) => driver.eligible,
-  ).length;
-  const hasTotalLine =
-    totalDecision?.best_candidate?.line !== undefined &&
-    totalDecision?.best_candidate?.line !== null;
-  const hasTotalEdge = typeof totalDecision?.edge === 'number';
-  const hasTotalCoverage =
-    typeof totalDecision?.coverage === 'number' &&
-    totalDecision.coverage >= 0.45;
-  const totalBias =
-    totalDecision &&
-    totalDecision.status !== DecisionStatus.PASS &&
-    totalEligibleDrivers > 0 &&
-    hasTotalLine &&
-    hasTotalEdge &&
-    hasTotalCoverage
-      ? 'OK'
-      : 'INSUFFICIENT_DATA';
+  const totalBias = computeTotalBias(totalDecision);
 
   if (!expressionChoice) {
     return {
@@ -1057,5 +1050,6 @@ module.exports = {
   computeNHLMarketDecisions,
   computeNBAMarketDecisions,
   selectExpressionChoice,
+  computeTotalBias,
   buildMarketPayload,
 };

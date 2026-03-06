@@ -35,6 +35,7 @@ const {
   computeNHLMarketDecisions,
   computeNBAMarketDecisions,
   selectExpressionChoice,
+  computeTotalBias,
   buildMarketPayload,
 } = require('./cross-market');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
@@ -1516,6 +1517,7 @@ module.exports = {
   computeNHLMarketDecisions,
   computeNBAMarketDecisions,
   selectExpressionChoice,
+  computeTotalBias,
   buildMarketPayload,
   generateCard,
 };

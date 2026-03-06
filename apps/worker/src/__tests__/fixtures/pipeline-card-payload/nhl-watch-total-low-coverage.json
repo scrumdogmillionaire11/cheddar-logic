@@ -1,0 +1,54 @@
+{
+  "sport": "NHL",
+  "decision": {
+    "status": "WATCH",
+    "edge": 0.018,
+    "coverage": 0.44,
+    "best_candidate": {
+      "side": "OVER",
+      "line": 6.5
+    }
+  },
+  "payload": {
+    "game_id": "NHL-GAME-001",
+    "sport": "NHL",
+    "model_version": "nhl-cross-market-v1",
+    "prediction": "OVER",
+    "confidence": 0.61,
+    "tier": "WATCH",
+    "status": "WATCH",
+    "action": "HOLD",
+    "kind": "PLAY",
+    "recommended_bet_type": "total",
+    "market_type": "TOTAL",
+    "selection": {
+      "side": "OVER"
+    },
+    "line": 6.5,
+    "price": -110,
+    "edge": 0.018,
+    "consistency": {
+      "total_bias": "OK"
+    },
+    "driver": {
+      "key": "cross_market_total",
+      "score": 0.63,
+      "status": "WATCH",
+      "inputs": {
+        "net": 0.72,
+        "conflict": 0.14,
+        "coverage": 0.44
+      }
+    },
+    "odds_context": {
+      "total": 6.5,
+      "total_price_over": -110,
+      "total_price_under": -110,
+      "h2h_home": -120,
+      "h2h_away": 105,
+      "spread_home": -1.5,
+      "spread_away": 1.5
+    },
+    "generated_at": "2026-03-05T12:00:00.000Z"
+  }
+}
