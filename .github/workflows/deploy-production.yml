@@ -141,6 +141,8 @@ jobs:
             if [ -f "$CANONICAL_DB_PATH" ]; then
               chmod 664 "$CANONICAL_DB_PATH"
             fi
+            # Stop worker before migrations to prevent concurrent writes to DB file
+            sudo systemctl stop cheddar-worker || true
             # Run database migrations (will create DB if it doesn't exist)
             echo "Running migrations against: $CANONICAL_DB_PATH"
             CHEDDAR_DB_PATH="$CANONICAL_DB_PATH" NODE_ENV=production timeout 10m node scripts/run-migrations.js || { echo "ERROR: Migrations failed or timed out"; exit 1; }
