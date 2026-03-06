@@ -79,6 +79,14 @@ sqlite3 /opt/data/cheddar-prod.db "SELECT COUNT(*) AS cards FROM card_payloads;"
 curl -s http://localhost:3000/api/games?limit=1 | head -20
 ```
 
+### Go/no-go checklist (3 commands)
+
+```bash
+sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
+sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='job_runs';"
+curl -s http://localhost:3000/api/cards?limit=1 | head -20
+```
+
 ### DB path drop-in precedence (critical)
 
 `CHEDDAR_DB_PATH` for both services must come from exactly one drop-in per unit:

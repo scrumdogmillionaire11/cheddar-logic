@@ -66,6 +66,7 @@ function infer_active_db_from_job_runs() {
     local candidates=(
         "$EXPECTED_DB_PATH"
         "$ROOT_DIR/packages/data/cheddar.db"
+        "/opt/data/cheddar-prod.db"
         "/opt/data/cheddar.db"
         "/tmp/cheddar-logic/cheddar.db"
         "$ROOT_DIR/data/cheddar.db"
@@ -146,6 +147,9 @@ case "$COMMAND" in
             OPEN_DB=$(get_scheduler_open_db)
             if [ -n "$OPEN_DB" ]; then
                 echo "Scheduler DB: $OPEN_DB"
+                if [ "$OPEN_DB" != "$EXPECTED_DB_PATH" ]; then
+                    echo -e "${YELLOW}⚠️  Scheduler DB path differs from CHEDDAR_DB_PATH${NC}"
+                fi
             else
                 INFERRED=$(infer_active_db_from_job_runs)
                 if [ -n "$INFERRED" ]; then
@@ -178,6 +182,9 @@ case "$COMMAND" in
             echo "Scheduler PID: $PID"
             if [ -n "$OPEN_DB" ]; then
                 echo "Scheduler DB: $OPEN_DB"
+                if [ "$OPEN_DB" != "$EXPECTED_DB_PATH" ]; then
+                    echo -e "${YELLOW}⚠️  Scheduler DB path differs from CHEDDAR_DB_PATH${NC}"
+                fi
             else
                 INFERRED=$(infer_active_db_from_job_runs)
                 if [ -n "$INFERRED" ]; then

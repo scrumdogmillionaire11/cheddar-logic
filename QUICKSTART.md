@@ -34,6 +34,8 @@ npm --prefix packages/data run migrate
 
 **Important:** use the same `CHEDDAR_DB_PATH` for web + worker. If these differ, UI can show stale/broken cards even when jobs succeed.
 
+Production note: systemd services should point to `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db` (see ops runbook).
+
 ```bash
 CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db npm --prefix web run dev
 ```
