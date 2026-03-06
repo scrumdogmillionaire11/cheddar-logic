@@ -26,7 +26,7 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   shouldRunJobKey,
-  getDb,
+  getDatabase,
   upsertGame,
   insertOddsSnapshot,
   withDb,
@@ -57,7 +57,7 @@ function getOddsIntervalMinutes(minsUntilStart) {
  * Find games within T-6h that have stale odds
  */
 function findGamesWithStaleOdds() {
-  const db = getDb();
+  const db = getDatabase();
   const nowUtc = DateTime.utc();
   const startUtc = nowUtc.minus({ minutes: 30 }); // Include games that just started
   const endUtc = nowUtc.plus({ hours: 6 }); // T-6h window
