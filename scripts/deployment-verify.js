@@ -215,15 +215,15 @@ function checkEnvironment() {
   // Resolve DB path using the same precedence contract as runtime code.
   let resolved = RESOLVED_DB;
   try {
-    resolveDatabasePath({ env: process.env, cwd: PROJECT_ROOT });
-    ok(`Record DB resolves (${resolved.source}): ${resolved.dbPath}`);
+    resolved = resolveDatabasePath({ env: process.env, cwd: PROJECT_ROOT });
+    ok(`DB resolves (${resolved.source}): ${resolved.dbPath}`);
   } catch (e) {
     fail(`Database path contract violation: ${e.message}`);
     resolved = null;
   }
 
-  if (process.env.NODE_ENV === 'production' && !process.env.RECORD_DATABASE_PATH) {
-    warn('RECORD_DATABASE_PATH is not set in production env (recommended canonical source)');
+  if (process.env.NODE_ENV === 'production' && !process.env.CHEDDAR_DB_PATH) {
+    warn('CHEDDAR_DB_PATH is not set in production env (recommended canonical source)');
   }
 
   if (resolved && fs.existsSync(resolved.dbPath)) {

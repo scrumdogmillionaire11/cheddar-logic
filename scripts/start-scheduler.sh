@@ -21,6 +21,11 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
+# Clear legacy DB vars to enforce CHEDDAR_DB_PATH as the single source of truth
+unset DATABASE_PATH
+unset RECORD_DATABASE_PATH
+unset DATABASE_URL
+
 # Canonical DB settings (all worker processes should use CHEDDAR_DB_PATH only)
 # CRITICAL: Only set CHEDDAR_DB_PATH to avoid path conflicts
 DEFAULT_DB_PATH="$ROOT_DIR/packages/data/cheddar.db"

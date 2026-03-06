@@ -4,21 +4,21 @@ const { resolveDatabasePath, parseSqliteUrl, DEFAULT_DATABASE_PATH } = require('
 describe('db-path resolver', () => {
   const cwd = '/repo';
 
-  test('uses RECORD_DATABASE_PATH as canonical source when present', () => {
+  test('uses CHEDDAR_DB_PATH as canonical source when present', () => {
     const resolved = resolveDatabasePath({
       cwd,
       env: {
-        RECORD_DATABASE_PATH: './shared/record.db',
         CHEDDAR_DB_PATH: './shared/record.db',
+        RECORD_DATABASE_PATH: './shared/record.db',
         DATABASE_PATH: './shared/record.db',
       },
     });
 
     expect(resolved.dbPath).toBe(path.resolve(cwd, 'shared/record.db'));
-    expect(resolved.source).toBe('RECORD_DATABASE_PATH');
+    expect(resolved.source).toBe('CHEDDAR_DB_PATH');
   });
 
-  test('uses CHEDDAR_DB_PATH as canonical source when present', () => {
+  test('respects CHEDDAR_DB_PATH priority over DATABASE_PATH when same value', () => {
     const resolved = resolveDatabasePath({
       cwd,
       env: {
@@ -29,6 +29,18 @@ describe('db-path resolver', () => {
 
     expect(resolved.dbPath).toBe(path.resolve(cwd, 'data/main.db'));
     expect(resolved.source).toBe('CHEDDAR_DB_PATH');
+  });
+
+  test('falls back to RECORD_DATABASE_PATH when CHEDDAR_DB_PATH is not set', () => {
+    const resolved = resolveDatabasePath({
+      cwd,
+      env: {
+        RECORD_DATABASE_PATH: './shared/record.db',
+      },
+    });
+
+    expect(resolved.dbPath).toBe(path.resolve(cwd, 'shared/record.db'));
+    expect(resolved.source).toBe('RECORD_DATABASE_PATH');
   });
 
   test('throws on conflicting explicit DB paths', () => {

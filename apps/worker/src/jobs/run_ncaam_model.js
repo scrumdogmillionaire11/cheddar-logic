@@ -20,6 +20,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  setCurrentRunId,
   getOddsWithUpcomingGames,
   insertCardPayload,
   prepareModelAndCardWrite,
@@ -54,6 +55,16 @@ const NCAAM_DRIVER_CARD_TYPES = [
   'ncaam-rest-advantage',
   'ncaam-matchup-style',
 ];
+
+function attachRunId(card, runId) {
+  if (!card) return;
+  card.runId = runId;
+  if (card.payloadData && typeof card.payloadData === 'object') {
+    if (!card.payloadData.run_id) {
+      card.payloadData.run_id = runId;
+    }
+  }
+}
 
 /**
  * Generate insertable card objects from NCAAM driver descriptors.
@@ -164,6 +175,13 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       if (oddsSnapshots.length === 0) {
         console.log('[NCAAMModel] No recent NCAAM odds found, exiting.');
         markJobRunSuccess(jobRunId);
+        try {
+          setCurrentRunId(jobRunId);
+        } catch (runStateError) {
+          console.error(
+            `[NCAAMModel] Failed to update run state: ${runStateError.message}`,
+          );
+        }
         return { success: true, jobRunId, cardsGenerated: 0 };
       }
 
@@ -245,6 +263,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
             }
 
             applyUiActionFields(card.payloadData);
+            attachRunId(card, jobRunId);
             insertCardPayload(card);
             cardsGenerated++;
             console.log(
@@ -283,6 +302,13 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
         `[NCAAMModel] Decision gate: ${gatedCount} gated, ${blockedCount} blocked`,
       );
       markJobRunSuccess(jobRunId);
+      try {
+        setCurrentRunId(jobRunId);
+      } catch (runStateError) {
+        console.error(
+          `[NCAAMModel] Failed to update run state: ${runStateError.message}`,
+        );
+      }
 
       return { success: true, jobRunId, cardsGenerated };
     } catch (error) {

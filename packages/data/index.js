@@ -43,6 +43,8 @@ module.exports = {
   // Convenience exports - job_runs
   getDatabase: db.getDatabase,
   closeDatabase: db.closeDatabase,
+  getCurrentRunId: db.getCurrentRunId,
+  setCurrentRunId: db.setCurrentRunId,
   insertJobRun: db.insertJobRun,
   markJobRunSuccess: db.markJobRunSuccess,
   markJobRunFailure: db.markJobRunFailure,
