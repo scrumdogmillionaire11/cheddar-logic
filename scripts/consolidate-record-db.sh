@@ -15,7 +15,7 @@ if [ ! -d "$PROD_ROOT" ]; then
   PROD_ROOT="$REPO_ROOT"
 fi
 
-CANONICAL_DB="/opt/data/cheddar.db"
+CANONICAL_DB="/opt/data/cheddar-prod.db"
 SOURCE_DB=""
 AUTO_SOURCE=false
 APPLY=false
@@ -32,7 +32,7 @@ usage() {
 Usage: $0 [options]
 
 Options:
-  --canonical <path>   Canonical DB path (default: /opt/data/cheddar.db)
+  --canonical <path>   Canonical DB path (default: /opt/data/cheddar-prod.db)
   --source <path>      Explicit source DB to promote
   --auto-source        Choose source DB with highest data score
   --apply              Apply changes (default: dry-run)
@@ -252,14 +252,19 @@ upsert_env() {
   fi
 }
 
-data_dir="$(dirname "$CANONICAL_DB")"
-db_url="sqlite:////${CANONICAL_DB#/}"
+remove_env() {
+  local key="$1"
+  local file="$2"
+  if run_root grep -q "^${key}=" "$file"; then
+    run_root sed -i "/^${key}=.*/d" "$file"
+  fi
+}
 
-upsert_env "RECORD_DATABASE_PATH" "$CANONICAL_DB" "$ENV_FILE"
+remove_env "RECORD_DATABASE_PATH" "$ENV_FILE"
+remove_env "DATABASE_PATH" "$ENV_FILE"
+remove_env "DATABASE_URL" "$ENV_FILE"
+remove_env "CHEDDAR_DATA_DIR" "$ENV_FILE"
 upsert_env "CHEDDAR_DB_PATH" "$CANONICAL_DB" "$ENV_FILE"
-upsert_env "DATABASE_PATH" "$CANONICAL_DB" "$ENV_FILE"
-upsert_env "DATABASE_URL" "$db_url" "$ENV_FILE"
-upsert_env "CHEDDAR_DATA_DIR" "$data_dir" "$ENV_FILE"
 upsert_env "CHEDDAR_DB_AUTODISCOVER" "false" "$ENV_FILE"
 echo "Updated env contract in $ENV_FILE"
 
@@ -269,11 +274,7 @@ for unit in cheddar-web cheddar-worker; do
   run_root mkdir -p "$dropin_dir"
   cat <<EOF | run_root tee "$dropin_dir/10-record-db.conf" >/dev/null
 [Service]
-Environment="RECORD_DATABASE_PATH=$CANONICAL_DB"
 Environment="CHEDDAR_DB_PATH=$CANONICAL_DB"
-Environment="DATABASE_PATH=$CANONICAL_DB"
-Environment="DATABASE_URL=$db_url"
-Environment="CHEDDAR_DATA_DIR=$data_dir"
 Environment="CHEDDAR_DB_AUTODISCOVER=false"
 EOF
 done

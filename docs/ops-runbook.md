@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | Next.js web app | `/opt/cheddar-logic/web/` | `cheddar-web` (systemd) |
 | Worker/scheduler | `/opt/cheddar-logic/apps/worker/` | `cheddar-worker` (systemd) |
-| SQLite database | `/opt/data/cheddar-prod.db` | read/write by `cheddar-web` + `cheddar-worker` |
+| SQLite database | `CHEDDAR_DB_PATH` from `/opt/cheddar-logic/.env.production` | read/write by `cheddar-web` + `cheddar-worker` |
 | FPL Sage (FastAPI) | Pi — separate service | `cheddar-fpl-sage` (systemd) |
 
 **SSH to Pi:**
@@ -62,6 +62,9 @@ sudo journalctl -u cheddar-worker -n 50 --no-pager
 ## Post-deploy verification (Pi)
 
 ```bash
+# Load canonical DB path from prod env
+set -a; source /opt/cheddar-logic/.env.production; set +a
+
 # Services are up
 sudo systemctl status cheddar-web cheddar-worker
 
@@ -70,10 +73,10 @@ sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
 sudo systemctl show cheddar-worker -p Environment | grep CHEDDAR_DB_PATH
 
 # Schema exists
-sqlite3 /opt/data/cheddar-prod.db ".tables"
+sqlite3 "$CHEDDAR_DB_PATH" ".tables"
 
 # Data present
-sqlite3 /opt/data/cheddar-prod.db "SELECT COUNT(*) AS cards FROM card_payloads;"
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT COUNT(*) AS cards FROM card_payloads;"
 
 # API returns games
 curl -s http://localhost:3000/api/games?limit=1 | head -20
@@ -82,8 +85,8 @@ curl -s http://localhost:3000/api/games?limit=1 | head -20
 ### Go/no-go checklist (3 commands)
 
 ```bash
-sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
-sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='job_runs';"
+set -a; source /opt/cheddar-logic/.env.production; set +a; sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name='job_runs';"
 curl -s http://localhost:3000/api/cards?limit=1 | head -20
 ```
 
@@ -108,7 +111,7 @@ Expected value for both services:
 ```bash
 sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
 sudo systemctl show cheddar-worker -p Environment | grep CHEDDAR_DB_PATH
-# CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db
+# CHEDDAR_DB_PATH=<canonical-prod-db>
 ```
 
 If `cards = 0`, run the seed step from the "Worker shows no such table" section and re-check.
@@ -186,7 +189,8 @@ Symptoms that confirm this:
 To check if a card has `odds_context` data:
 
 ```bash
-sqlite3 /opt/data/cheddar-prod.db "
+set -a; source /opt/cheddar-logic/.env.production; set +a
+sqlite3 "$CHEDDAR_DB_PATH" "
   SELECT id, json_extract(payload_data, '$.odds_context') IS NOT NULL AS has_odds
   FROM card_payloads
   ORDER BY created_at DESC
@@ -215,7 +219,7 @@ Telltale log pattern:
 Error: no such table: card_results
 ```
 
-The DB must live at `/opt/data/cheddar-prod.db` and both services must set `CHEDDAR_DB_PATH` to that exact file.
+The DB must live at the canonical path (the file that already contains `card_payloads`), and both services must set `CHEDDAR_DB_PATH` to that exact file.
 
 Check:
 
@@ -226,11 +230,7 @@ sudo systemctl show cheddar-worker -p Environment
 sudo -u babycheeses11 cat /opt/cheddar-logic/.env.production | grep CHEDDAR_DB_PATH
 ```
 
-Fix: the correct value is `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db`. Update and restart:
-
-```bash
-sed -i 's|CHEDDAR_DB_PATH=.*|CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db|' /opt/cheddar-logic/.env.production
-```
+Fix: update `CHEDDAR_DB_PATH` in `/opt/cheddar-logic/.env.production` to the canonical DB file (contains `card_payloads`), then restart.
 
 Then reload:
 
@@ -252,25 +252,25 @@ print(f'settled: {s[\"settledCards\"]}, wins: {s[\"wins\"]}')
 
 **Cause:** Migrations ran against a different SQLite file than the worker is using. The worker reads `CHEDDAR_DB_PATH` only.
 
-**Fix:** Point both services to the same file, migrate it, then restart:
+**Fix:** Point both services to the same canonical file, migrate it, then restart:
 
 ```bash
-sed -i 's|CHEDDAR_DB_PATH=.*|CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db|' /opt/cheddar-logic/.env.production
+sudo nano /opt/cheddar-logic/.env.production
 sudo systemctl daemon-reload
-CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix /opt/cheddar-logic/packages/data run migrate
+set -a; source /opt/cheddar-logic/.env.production; set +a; npm --prefix /opt/cheddar-logic/packages/data run migrate
 sudo systemctl restart cheddar-web cheddar-worker
 ```
 
 **Verify tables:**
 
 ```bash
-sqlite3 /opt/data/cheddar-prod.db ".tables"
+set -a; source /opt/cheddar-logic/.env.production; set +a; sqlite3 "$CHEDDAR_DB_PATH" ".tables"
 ```
 
 If tables exist but the UI still shows no cards, seed cards:
 
 ```bash
-CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix /opt/cheddar-logic/packages/data run seed:cards
+set -a; source /opt/cheddar-logic/.env.production; set +a; npm --prefix /opt/cheddar-logic/packages/data run seed:cards
 ```
 
 ---
@@ -290,17 +290,18 @@ CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix /opt/cheddar-logic/packag
 ### DB location
 
 ```text
-Production:  /opt/data/cheddar-prod.db
-Local dev:   /Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db
+Production:  CHEDDAR_DB_PATH in /opt/cheddar-logic/.env.production
+Local dev:   /tmp/cheddar-logic/cheddar.db (recommended)
 ```
 
-> **Warning:** The local DB was previously stored in `/tmp/cheddar-logic/cheddar.db` which is wiped on reboot. It's now fixed to `packages/data/cheddar.db` in the project root.
+> **Note:** If you need a persistent local DB, set `CHEDDAR_DB_PATH` to a stable path in your `.env`.
 
 ### Check DB health (run on Pi)
 
 ```bash
-sqlite3 /opt/data/cheddar-prod.db "SELECT status, COUNT(*) FROM card_results GROUP BY status;"
-sqlite3 /opt/data/cheddar-prod.db "SELECT status, COUNT(*) FROM game_results GROUP BY status;"
+set -a; source /opt/cheddar-logic/.env.production; set +a
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT status, COUNT(*) FROM card_results GROUP BY status;"
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT status, COUNT(*) FROM game_results GROUP BY status;"
 ```
 
 ### Backups
@@ -308,14 +309,17 @@ sqlite3 /opt/data/cheddar-prod.db "SELECT status, COUNT(*) FROM game_results GRO
 Daily backups run automatically at 3am ET via cron (set up once on Pi):
 
 ```bash
-mkdir -p /opt/data/backups
-(crontab -l 2>/dev/null; echo "0 3 * * * cp /opt/data/cheddar-prod.db /opt/data/backups/cheddar-\$(date +\%Y\%m\%d).db && find /opt/data/backups -name 'cheddar-*.db' -mtime +7 -delete") | crontab -
+set -a; source /opt/cheddar-logic/.env.production; set +a
+BACKUP_DIR="$(dirname "$CHEDDAR_DB_PATH")/backups"
+mkdir -p "$BACKUP_DIR"
+(crontab -l 2>/dev/null; echo "0 3 * * * cp $CHEDDAR_DB_PATH $BACKUP_DIR/cheddar-$(date +\%Y\%m\%d).db && find $BACKUP_DIR -name 'cheddar-*.db' -mtime +7 -delete") | crontab -
 ```
 
-Backups live at `/opt/data/backups/cheddar-YYYYMMDD.db`. To restore:
+Backups live in the `backups/` folder next to the canonical DB. To restore:
 
 ```bash
-cp /opt/data/backups/cheddar-20260301.db /opt/data/cheddar-prod.db
+set -a; source /opt/cheddar-logic/.env.production; set +a
+cp "$(dirname "$CHEDDAR_DB_PATH")/backups/cheddar-20260301.db" "$CHEDDAR_DB_PATH"
 sudo systemctl restart cheddar-web cheddar-worker
 ```
 
@@ -325,10 +329,11 @@ sudo systemctl restart cheddar-web cheddar-worker
 
 ```bash
 # 1. Back up prod DB first (on Pi)
-ssh babycheeses11@192.168.200.198 "cp /opt/data/cheddar-prod.db /opt/data/cheddar-prod.db.bak-$(date +%Y%m%d)"
+ssh babycheeses11@192.168.200.198 "set -a; source /opt/cheddar-logic/.env.production; set +a; cp \"$CHEDDAR_DB_PATH\" \"$CHEDDAR_DB_PATH\".bak-$(date +%Y%m%d)"
 
 # 2. Copy local DB to Pi (from Mac)
-scp /Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db babycheeses11@192.168.200.198:/opt/data/cheddar-prod.db
+CANONICAL_PROD_DB_PATH=$(ssh babycheeses11@192.168.200.198 "grep -E '^CHEDDAR_DB_PATH=' /opt/cheddar-logic/.env.production | cut -d= -f2-")
+scp /tmp/cheddar-logic/cheddar.db "babycheeses11@192.168.200.198:$CANONICAL_PROD_DB_PATH"
 
 # 3. Restart services
 ssh babycheeses11@192.168.200.198 "sudo systemctl restart cheddar-web cheddar-worker"
@@ -354,13 +359,13 @@ Settlement runs automatically via the worker scheduler:
 ```bash
 # On Pi
 cd /opt/cheddar-logic/apps/worker
-CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db node -e "
+set -a; source /opt/cheddar-logic/.env.production; set +a
+node -e "
 const { settleGameResults } = require('./src/jobs/settle_game_results');
 settleGameResults({ jobKey: null, dryRun: false, minHoursAfterStart: 3 })
   .then(r => console.log(JSON.stringify(r, null, 2)));
 "
-
-CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db node -e "
+node -e "
 const { settlePendingCards } = require('./src/jobs/settle_pending_cards');
 settlePendingCards({ jobKey: null, dryRun: false })
   .then(r => console.log(JSON.stringify(r, null, 2)));

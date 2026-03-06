@@ -34,10 +34,10 @@ npm --prefix packages/data run migrate
 
 **Important:** use the same `CHEDDAR_DB_PATH` for web + worker. If these differ, UI can show stale/broken cards even when jobs succeed.
 
-Production note: systemd services should point to `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db` (see ops runbook).
+Production note: systemd services should use `CHEDDAR_DB_PATH` from `/opt/cheddar-logic/.env.production` (canonical DB file with `card_payloads`).
 
 ```bash
-CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db npm --prefix web run dev
+CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
 ```
 
 **Tab 2 — Scheduler** (automatic hourly pulls + model runs)
@@ -50,7 +50,7 @@ CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.
 
 ```bash
 # Use ONLY CHEDDAR_DB_PATH - do not set DATABASE_PATH, RECORD_DATABASE_PATH, or DATABASE_URL
-CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db
+CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 ```
 
 **Tab 3 — Watch Logs** (optional)
@@ -85,10 +85,10 @@ npm --prefix apps/worker install
 npm --prefix packages/data run migrate
 
 # Start web against the SAME DB path used by worker jobs
-CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db npm --prefix web run dev
+CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
 
 # Pin local mode DB path for all worker commands in this shell
-export CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db
+export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 
 # Pull live odds (requires ODDS_API_KEY from https://theoddsapi.com)
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
@@ -120,7 +120,7 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
 #### 3) Run Jobs
 
 ```bash
-export CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db
+export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model

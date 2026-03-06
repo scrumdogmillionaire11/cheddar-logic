@@ -101,10 +101,20 @@ jobs:
             sudo cp /opt/cheddar-logic/cheddar-fpl-sage.service /etc/systemd/system/cheddar-fpl-sage.service
             sudo systemctl daemon-reload
             sudo systemctl enable cheddar-worker cheddar-web cheddar-fpl-sage
-            sudo mkdir -p /opt/data
-            sudo chown $(id -u):$(id -g) /opt/data
-            touch /opt/data/cheddar-prod.db
-            chmod 664 /opt/data/cheddar-prod.db
+            # Load canonical DB path from prod env
+            set -a; . /opt/cheddar-logic/.env.production; set +a
+            if [ -z "${CHEDDAR_DB_PATH:-}" ]; then
+              echo "ERROR: CHEDDAR_DB_PATH missing in /opt/cheddar-logic/.env.production"
+              exit 1
+            fi
+            CANONICAL_DB_PATH="$CHEDDAR_DB_PATH"
+            sudo mkdir -p "$(dirname "$CANONICAL_DB_PATH")"
+            sudo chown $(id -u):$(id -g) "$(dirname "$CANONICAL_DB_PATH")"
+            if [ ! -f "$CANONICAL_DB_PATH" ]; then
+              echo "ERROR: canonical DB not found: $CANONICAL_DB_PATH"
+              exit 1
+            fi
+            chmod 664 "$CANONICAL_DB_PATH"
             # Clean node_modules to avoid corrupted tar state from stale backups
             rm -rf packages/*/node_modules apps/*/node_modules web/node_modules
             npm --prefix packages/data install --omit=dev
@@ -114,12 +124,12 @@ jobs:
             npm --prefix apps/worker install --omit=dev
             npm --prefix web install --include=dev
             # Run database migrations
-            CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db NODE_ENV=production node scripts/run-migrations.js
+            CHEDDAR_DB_PATH="$CANONICAL_DB_PATH" NODE_ENV=production node scripts/run-migrations.js
             sudo apt-get update -y
             sudo apt-get install -y sqlite3
             # Fail deploy if expected schema is missing from production DB
-            test -s /opt/data/cheddar-prod.db || { echo "ERROR: missing or empty /opt/data/cheddar-prod.db after migrations"; exit 1; }
-            sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" | grep -qx "card_payloads" || { echo "ERROR: required table card_payloads missing after migrations"; exit 1; }
+            test -s "$CANONICAL_DB_PATH" || { echo "ERROR: missing or empty canonical DB after migrations: $CANONICAL_DB_PATH"; exit 1; }
+            sqlite3 "$CANONICAL_DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" | grep -qx "card_payloads" || { echo "ERROR: required table card_payloads missing after migrations"; exit 1; }
             sudo rm -rf web/.next
             grep -E '^[A-Za-z_][A-Za-z0-9_]*=' /opt/cheddar-logic/.env.production > /tmp/cheddar_build_env
             set -a && source /tmp/cheddar_build_env && set +a && npm --prefix web run build

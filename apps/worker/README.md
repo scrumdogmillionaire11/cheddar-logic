@@ -24,7 +24,7 @@ npm --prefix apps/worker run job:pull-odds
 CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm run job:pull-odds
 
 # Run against production DB on the Pi
-CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm run job:pull-odds
+set -a; source /opt/cheddar-logic/.env.production; set +a; npm run job:pull-odds
 ```
 
 **What it does:**

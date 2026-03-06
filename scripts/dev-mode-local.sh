@@ -15,7 +15,7 @@ unset DATABASE_PATH
 unset RECORD_DATABASE_PATH
 unset DATABASE_URL
 
-DEFAULT_LOCAL_DB="$ROOT_DIR/packages/data/cheddar.db"
+DEFAULT_LOCAL_DB="/tmp/cheddar-logic/cheddar.db"
 export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-$DEFAULT_LOCAL_DB}"
 export CHEDDAR_DATA_DIR="${CHEDDAR_DATA_DIR:-$(dirname "$CHEDDAR_DB_PATH")}"
 

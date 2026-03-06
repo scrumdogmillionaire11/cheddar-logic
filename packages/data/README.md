@@ -23,6 +23,8 @@ npm run migrate
 
 This creates the SQLite database at `$CHEDDAR_DB_PATH` (or `packages/data/cheddar.db` by default) and creates all tables.
 
+For local dev, we recommend setting `CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db` for consistency across tools.
+
 `CHEDDAR_DB_PATH` is the canonical database path. Avoid setting `DATABASE_PATH`, `RECORD_DATABASE_PATH`, or `DATABASE_URL` to prevent conflicts.
 
 ## Schema

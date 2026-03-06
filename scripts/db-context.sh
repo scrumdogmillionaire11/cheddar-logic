@@ -21,7 +21,7 @@ unset DATABASE_PATH
 unset RECORD_DATABASE_PATH
 unset DATABASE_URL
 
-export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-$ROOT_DIR/packages/data/cheddar.db}"
+export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-/tmp/cheddar-logic/cheddar.db}"
 
 echo "[DB-CONTEXT] root: $ROOT_DIR"
 echo "[DB-CONTEXT] CHEDDAR_DB_PATH: $CHEDDAR_DB_PATH"
