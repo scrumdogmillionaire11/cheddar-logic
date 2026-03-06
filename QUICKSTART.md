@@ -63,6 +63,7 @@ CHEDDAR_DB_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.
 ./scripts/manage-scheduler.sh status    # Check if running
 ./scripts/manage-scheduler.sh restart   # Restart scheduler
 ./scripts/manage-scheduler.sh stop      # Stop scheduler
+./scripts/manage-scheduler.sh db        # Show expected vs active DB path
 ```
 
 Your cheddar board updates automatically. See [AUTOMATED_SETUP.md](AUTOMATED_SETUP.md) for full documentation.
@@ -145,6 +146,8 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
 
 - Confirm active mode/path before running jobs:
   - `bash scripts/db-context.sh`
+- Confirm scheduler is using the same DB path:
+  - `./scripts/manage-scheduler.sh db`
 - Snapshot mode mismatch symptom (worker logs cards, UI empty):
   - Web is reading `~/.cheddar/prod-snapshot.db` while worker writes local DB.
   - Fix by restarting web with your local `CHEDDAR_DB_PATH`.
@@ -156,6 +159,11 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
   - Jobs degrade gracefully; drivers will skip if required metrics are missing.
 - Validation failure:
   - Inspect payload_data for missing fields required by card schema.
+- Database corruption ("database disk image is malformed"):
+  - Stop the scheduler: `./scripts/manage-scheduler.sh stop`
+  - Back up the DB: `cp "$CHEDDAR_DB_PATH" "$CHEDDAR_DB_PATH.corrupt"`
+  - Run an integrity check: `sqlite3 "$CHEDDAR_DB_PATH" "PRAGMA integrity_check;"`
+  - Restore from a known-good backup or re-run migrations to a fresh DB.
 
 ### Related Commands
 
