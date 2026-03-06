@@ -13,7 +13,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Make scripts executable
-        run: chmod +x scripts/*.sh tests/*.sh
+        run: |
+          chmod +x scripts/*.sh
+          [ -e tests/*.sh ] && chmod +x tests/*.sh || echo "No test scripts to chmod"
 
       - name: Run doctor (self)
         run: ./scripts/doctor.sh .
