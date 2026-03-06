@@ -401,12 +401,14 @@ async function settleGameResults({
       return { success: true, jobRunId: null, dryRun: true, jobKey };
     }
 
+    let monitor;
+
     try {
       console.log('[SettleGames] Recording job start...');
       insertJobRun('settle_game_results', jobRunId, jobKey);
 
       // Initialize resilient ESPN client with env var config
-      const monitor = new SettlementMonitor({
+      monitor = new SettlementMonitor({
         maxConsecutiveFailures: 3,
         warningThresholdPerRun: 10,
         onMetric: (msg) => console.log(msg),
@@ -769,7 +771,9 @@ async function settleGameResults({
       console.error(error.stack);
 
       // Finalize monitoring with failure
-      const monitorSummary = monitor.finalizeRun(false, error.message);
+      const monitorSummary = monitor
+        ? monitor.finalizeRun(false, error.message)
+        : null;
 
       try {
         markJobRunFailure(jobRunId, error.message);

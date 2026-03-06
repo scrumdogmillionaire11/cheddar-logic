@@ -407,6 +407,8 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         `[SettleCards] Step 2 complete — ${statsUpserted} tracking_stats upserted`,
       );
 
+      const cardsArchived = 0;
+
       markJobRunSuccess(jobRunId);
       console.log(
         `[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, cardsArchived: ${cardsArchived}, statsUpserted: ${statsUpserted}`,
@@ -418,7 +420,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         jobKey,
         cardsSettled,
         cardsErrored,
-        cardsArchived: 0,
+        cardsArchived,
         statsUpserted,
         errors: [],
       };
