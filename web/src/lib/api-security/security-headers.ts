@@ -15,17 +15,17 @@
  *
  * Policy strategy:
  * - default-src 'self': Only allow resources from same origin by default
- * - script-src 'self' 'unsafe-inline': Allow scripts from self + inline (needed for Next.js client hydration)
+ * - script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com: Allow scripts from self, inline (Next.js), and Cloudflare Insights
  * - style-src 'self' 'unsafe-inline': Allow styles from self + inline (needed for styled-components)
  * - img-src 'self' https: data:: Allow images from self, any https, and data URIs
  * - font-src 'self' data:: Allow fonts from self and data URIs
- * - connect-src 'self': Only allow API calls to same origin
+ * - connect-src 'self' https://cloudflareinsights.com: Allow API calls to same origin and Cloudflare analytics
  * - frame-ancestors 'none': Prevent embedding in iframes
  * - form-action 'self': Only allow form submissions to same origin
  * - base-uri 'self': Only allow base tag href to same origin
  */
 export const CONTENT_SECURITY_POLICY =
-  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'";
+  "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; font-src 'self' data:; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'; form-action 'self'; base-uri 'self'";
 
 /**
  * HTTP Strict Transport Security header value

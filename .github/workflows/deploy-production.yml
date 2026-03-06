@@ -105,6 +105,8 @@ jobs:
             npm --prefix packages/odds install --omit=dev
             npm --prefix apps/worker install --omit=dev
             npm --prefix web install --include=dev
+            # Run database migrations
+            node scripts/run-migrations.js
             sudo rm -rf web/.next
             grep -E '^[A-Za-z_][A-Za-z0-9_]*=' /opt/cheddar-logic/.env.production > /tmp/cheddar_build_env
             set -a && source /tmp/cheddar_build_env && set +a && npm --prefix web run build
