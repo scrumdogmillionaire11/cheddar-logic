@@ -36,7 +36,6 @@ const {
   computeNBAMarketDecisions,
   selectExpressionChoice,
   buildMarketPayload,
-  computeCardEdgeDecision,
 } = require('./cross-market');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { predictNHLGame } = require('./nhl-pace-model');
@@ -1518,6 +1517,5 @@ module.exports = {
   computeNBAMarketDecisions,
   selectExpressionChoice,
   buildMarketPayload,
-  computeCardEdgeDecision,
   generateCard,
 };

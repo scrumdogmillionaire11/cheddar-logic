@@ -1,5 +1,4 @@
 /**
-import { computeCardEdgeDecision } from '@cheddar-logic/models';
  * NHL Model Runner Job
  * 
  * Reads latest NHL odds from DB, runs inference model, and stores:

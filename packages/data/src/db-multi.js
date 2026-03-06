@@ -37,8 +37,140 @@ const RECORD_TABLES = new Set([
 
 const LOCAL_TABLES = new Set([
   'card_results',
-  'game_results'
+  'game_results',
+  'card_display_log'
 ]);
+
+function toFiniteNumber(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return value;
+}
+
+function normalizeConfidencePct(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value >= 0 && value <= 1) {
+    return Number((value * 100).toFixed(2));
+  }
+  return value;
+}
+
+function logCardDisplay(db, payload) {
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO card_display_log (
+      pick_id,
+      run_id,
+      game_id,
+      sport,
+      market_type,
+      selection,
+      line,
+      odds,
+      odds_book,
+      confidence_pct,
+      displayed_at,
+      api_endpoint
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  return stmt.run(
+    String(payload.pick_id),
+    payload.run_id ?? null,
+    payload.game_id ?? null,
+    payload.sport ?? null,
+    payload.market_type ?? null,
+    payload.selection ?? null,
+    toFiniteNumber(payload.line),
+    toFiniteNumber(payload.odds),
+    payload.odds_book ?? null,
+    normalizeConfidencePct(payload.confidence_pct),
+    new Date().toISOString(),
+    payload.endpoint ?? null
+  );
+}
+
+function getDisplayedPickIds(db, runId) {
+  const stmt = db.prepare(
+    `SELECT pick_id FROM card_display_log WHERE run_id = ? ORDER BY displayed_at ASC`
+  );
+  return stmt.all(runId).map((row) => row.pick_id);
+}
+
+function getSettlementLedger(db, sport, minDate, maxDate) {
+  const where = [];
+  const params = [];
+
+  if (sport) {
+    where.push('sport = ?');
+    params.push(sport);
+  }
+  if (minDate) {
+    where.push('datetime(displayed_at) >= datetime(?)');
+    params.push(minDate);
+  }
+  if (maxDate) {
+    where.push('datetime(displayed_at) <= datetime(?)');
+    params.push(maxDate);
+  }
+
+  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+  const stmt = db.prepare(
+    `SELECT * FROM card_display_log ${whereSql} ORDER BY datetime(displayed_at) DESC`
+  );
+
+  return stmt.all(...params);
+}
+
+function getCurrentRunId(db) {
+  const stmt = db.prepare(
+    `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`
+  );
+  const row = stmt.get();
+  return row?.current_run_id ?? null;
+}
+
+function setCurrentRunId(db, runId) {
+  const stmt = db.prepare(`
+    UPDATE run_state
+    SET current_run_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = 'singleton'
+  `);
+  return stmt.run(runId ?? null);
+}
+
+function insertRun(db, runId, status, itemsCount = 0) {
+  const stmt = db.prepare(`
+    INSERT INTO job_runs (id, job_name, status, started_at, metadata)
+    VALUES (?, 'snapshot_publish', ?, CURRENT_TIMESTAMP, ?)
+  `);
+  return stmt.run(
+    String(runId),
+    String(status),
+    JSON.stringify({ items_count: itemsCount })
+  );
+}
+
+function getRun(db, runId) {
+  const stmt = db.prepare(`SELECT * FROM job_runs WHERE id = ? LIMIT 1`);
+  return stmt.get(runId) ?? null;
+}
+
+function markRunSuccess(db, runId) {
+  const stmt = db.prepare(`
+    UPDATE job_runs
+    SET status = 'success', completed_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  return stmt.run(runId);
+}
+
+function markRunFailure(db, runId, errorMessage) {
+  const stmt = db.prepare(`
+    UPDATE job_runs
+    SET status = 'failed', completed_at = CURRENT_TIMESTAMP, error_message = ?
+    WHERE id = ?
+  `);
+  return stmt.run(errorMessage ?? null, runId);
+}
 
 /**
  * Initialize SQL.js
@@ -263,5 +395,14 @@ module.exports = {
   AutoRoutingDb,
   DatabaseWrapper,
   RECORD_TABLES,
-  LOCAL_TABLES
+  LOCAL_TABLES,
+  logCardDisplay,
+  getDisplayedPickIds,
+  getSettlementLedger,
+  getCurrentRunId,
+  setCurrentRunId,
+  insertRun,
+  getRun,
+  markRunSuccess,
+  markRunFailure
 };

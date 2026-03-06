@@ -72,13 +72,29 @@ interface GameRow {
 }
 
 interface CardPayloadRow {
+  id: string;
   game_id: string;
   card_type: string;
   card_title: string;
   payload_data: string;
 }
 
+interface CardDisplayLogPayload {
+  pickId: string;
+  runId?: string | null;
+  gameId?: string | null;
+  sport?: string | null;
+  marketType?: string | null;
+  selection?: string | null;
+  line?: number | null;
+  odds?: number | null;
+  oddsBook?: string | null;
+  confidencePct?: number | null;
+  endpoint: '/api/cards' | '/api/games';
+}
+
 interface Play {
+  source_card_id?: string;
   cardType: string;
   cardTitle: string;
   prediction: 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';
@@ -329,6 +345,136 @@ function normalizeNumberArray(value: unknown): number[] | undefined {
   return numbers.length > 0 ? numbers : undefined;
 }
 
+function normalizeConfidencePct(value: number | null | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value >= 0 && value <= 1) return Number((value * 100).toFixed(2));
+  return value;
+}
+
+function logCardDisplay(
+  db: ReturnType<typeof getDatabase>,
+  payload: CardDisplayLogPayload,
+) {
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO card_display_log (
+      pick_id,
+      run_id,
+      game_id,
+      sport,
+      market_type,
+      selection,
+      line,
+      odds,
+      odds_book,
+      confidence_pct,
+      displayed_at,
+      api_endpoint
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  stmt.run(
+    payload.pickId,
+    payload.runId ?? null,
+    payload.gameId ?? null,
+    payload.sport ?? null,
+    payload.marketType ?? null,
+    payload.selection ?? null,
+    payload.line ?? null,
+    payload.odds ?? null,
+    payload.oddsBook ?? null,
+    normalizeConfidencePct(payload.confidencePct),
+    new Date().toISOString(),
+    payload.endpoint,
+  );
+}
+
+function ensureCardDisplayLogSchema(db: ReturnType<typeof getDatabase>) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS card_display_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pick_id TEXT UNIQUE NOT NULL,
+      run_id TEXT,
+      game_id TEXT,
+      sport TEXT,
+      market_type TEXT,
+      selection TEXT,
+      line REAL,
+      odds REAL,
+      odds_book TEXT,
+      confidence_pct REAL,
+      displayed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      api_endpoint TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_card_display_log_run_game
+      ON card_display_log (run_id, game_id);
+    CREATE INDEX IF NOT EXISTS idx_card_display_log_game_sport
+      ON card_display_log (game_id, sport);
+    CREATE INDEX IF NOT EXISTS idx_card_display_log_displayed_at
+      ON card_display_log (displayed_at DESC);
+  `);
+}
+
+function ensureRunStateSchema(db: ReturnType<typeof getDatabase>) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS run_state (
+      id TEXT PRIMARY KEY,
+      current_run_id TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT OR IGNORE INTO run_state (id, current_run_id, updated_at)
+    VALUES ('singleton', NULL, CURRENT_TIMESTAMP);
+  `);
+
+  const columns = db.prepare(`PRAGMA table_info(card_payloads)`).all() as Array<{
+    name?: string;
+  }>;
+  const hasRunId = columns.some(
+    (column) => String(column.name || '').toLowerCase() === 'run_id',
+  );
+  if (!hasRunId) {
+    db.exec(`ALTER TABLE card_payloads ADD COLUMN run_id TEXT`);
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_card_payloads_run_id ON card_payloads(run_id)`,
+  );
+
+  const runIdCountRow = db
+    .prepare(
+      `SELECT COUNT(*) AS count FROM card_payloads WHERE run_id IS NOT NULL AND TRIM(run_id) != ''`,
+    )
+    .get() as { count?: number } | undefined;
+  if (Number(runIdCountRow?.count || 0) === 0) {
+    db.exec(`UPDATE card_payloads SET run_id = 'bootstrap-initial' WHERE run_id IS NULL`);
+    db.prepare(
+      `UPDATE run_state SET current_run_id = 'bootstrap-initial', updated_at = CURRENT_TIMESTAMP WHERE id = 'singleton'`,
+    ).run();
+  }
+}
+
+function getCurrentRunId(db: ReturnType<typeof getDatabase>) {
+  const stmt = db.prepare(
+    `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
+  );
+  const row = stmt.get() as { current_run_id?: string | null } | undefined;
+  return row?.current_run_id ?? null;
+}
+
+function getRunStatus(
+  db: ReturnType<typeof getDatabase>,
+  runId: string | null,
+): string {
+  if (!runId) return 'NONE';
+  try {
+    const stmt = db.prepare(
+      `SELECT status FROM job_runs WHERE id = ? ORDER BY started_at DESC LIMIT 1`,
+    );
+    const row = stmt.get(runId) as { status?: string | null } | undefined;
+    return row?.status ? String(row.status).toUpperCase() : 'UNKNOWN';
+  } catch {
+    return 'UNKNOWN';
+  }
+}
+
 function extractShotsFromRecentGames(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined;
 
@@ -371,6 +517,9 @@ export async function GET(request: NextRequest) {
     // }
 
     const db = getDatabase();
+    ensureRunStateSchema(db);
+    const currentRunId = getCurrentRunId(db);
+    const runStatus = getRunStatus(db, currentRunId);
 
     // Check if database is empty or uninitialized
     const tableCheckStmt = db.prepare(
@@ -381,7 +530,33 @@ export async function GET(request: NextRequest) {
     if (!hasGamesTable) {
       // Database is not initialized - return empty data
       const response = NextResponse.json(
-        { success: true, data: [] },
+        {
+          success: true,
+          data: [],
+          meta: {
+            current_run_id: currentRunId,
+            generated_at: new Date().toISOString(),
+            run_status: runStatus,
+            items_count: 0,
+          },
+        },
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+      return addRateLimitHeaders(response, request);
+    }
+
+    if (!currentRunId) {
+      const response = NextResponse.json(
+        {
+          success: true,
+          data: [],
+          meta: {
+            current_run_id: null,
+            generated_at: new Date().toISOString(),
+            run_status: runStatus,
+            items_count: 0,
+          },
+        },
         { headers: { 'Content-Type': 'application/json' } },
       );
       return addRateLimitHeaders(response, request);
@@ -486,15 +661,19 @@ export async function GET(request: NextRequest) {
       // SQLite doesn't support array binding; build placeholders for ALL IDs (canonical + external)
       const placeholders = allQueryableIds.map(() => '?').join(', ');
       const cardsSql = `
-        SELECT game_id, card_type, card_title, payload_data
+        SELECT id, game_id, card_type, card_title, payload_data
         FROM card_payloads
         WHERE game_id IN (${placeholders})
+          AND run_id = ?
           AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
           ${ENABLE_WELCOME_HOME ? '' : "AND card_type != 'welcome-home-v2'"}
         ORDER BY created_at DESC
       `;
       const cardsStmt = db.prepare(cardsSql);
-      const cardRows = cardsStmt.all(...allQueryableIds) as CardPayloadRow[];
+      const cardRows = cardsStmt.all(
+        ...allQueryableIds,
+        currentRunId,
+      ) as CardPayloadRow[];
 
       for (const cardRow of cardRows) {
         let payload: Record<string, unknown> | null = null;
@@ -716,6 +895,7 @@ export async function GET(request: NextRequest) {
         ].map((value) => String(value));
 
         const play: Play = {
+          source_card_id: cardRow.id,
           cardType: cardRow.card_type,
           cardTitle: cardRow.card_title,
           prediction: normalizedPrediction,
@@ -1077,6 +1257,31 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    ensureCardDisplayLogSchema(db);
+
+    for (const game of data) {
+      for (let index = 0; index < game.plays.length; index += 1) {
+        const play = game.plays[index];
+        if (!play.source_card_id) {
+          continue;
+        }
+        logCardDisplay(db, {
+          pickId: play.source_card_id,
+          runId: play.run_id ?? null,
+          gameId: game.gameId,
+          sport: game.sport,
+          marketType: play.market_type ?? null,
+          selection: play.selection?.side ?? play.prediction ?? null,
+          line: typeof play.line === 'number' ? play.line : null,
+          odds: typeof play.price === 'number' ? play.price : null,
+          oddsBook: null,
+          confidencePct:
+            typeof play.confidence === 'number' ? play.confidence : null,
+          endpoint: '/api/games',
+        });
+      }
+    }
+
     const repairRatio =
       totalPlayCount > 0 ? repairedPlayCount / totalPlayCount : 0;
     const repairCap = 0.2;
@@ -1097,6 +1302,12 @@ export async function GET(request: NextRequest) {
       {
         success: true,
         data,
+        meta: {
+          current_run_id: currentRunId,
+          generated_at: new Date().toISOString(),
+          run_status: runStatus,
+          items_count: data.length,
+        },
         warning: repairRatio > repairCap,
         ...(joinDebug ? { join_debug: joinDebug } : {}),
         repair_stats: {

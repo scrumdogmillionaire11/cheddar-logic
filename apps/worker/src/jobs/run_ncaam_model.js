@@ -1,5 +1,4 @@
 /**
-import { computeCardEdgeDecision } from '@cheddar-logic/models';
  * NCAAM Model Runner Job
  * 
  * Reads latest NCAAM (college basketball) odds from DB, runs inference model, and stores:
