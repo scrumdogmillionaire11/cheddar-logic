@@ -39,12 +39,16 @@ const RECORD_TABLES = new Set([
   'odds_snapshots',
   'card_payloads',
   'tracking_stats',
+  'game_id_map',
 ]);
 
 const LOCAL_TABLES = new Set([
   'card_results',
   'game_results',
-  'job_runs'
+  'job_runs',
+  'card_display_log',
+  'run_state',
+  'migrations',
 ]);
 
 /**
@@ -183,10 +187,11 @@ function getDb(mode = 'auto') {
  * Statement wrapper (mimics better-sqlite3)
  */
 class Statement {
-  constructor(db, query, mode) {
+  constructor(db, query, mode, filePath) {
     this.db = db;
     this.query = query;
     this.mode = mode;
+    this._filePath = filePath;
     this.stmt = db.prepare(query);
   }
 
@@ -199,6 +204,10 @@ class Statement {
       this.stmt.bind(params);
       this.stmt.step();
       this.stmt.reset();
+      // Persist to disk after every write (sql.js is in-memory; must flush explicitly)
+      if (this._filePath) {
+        saveDbFile(this.db, this._filePath);
+      }
       return { changes: this.db.getRowsModified() };
     } catch (e) {
       throw new Error(`Statement run error: ${e.message}`);
@@ -245,7 +254,7 @@ class DatabaseWrapper {
   }
 
   prepare(query) {
-    return new Statement(this._db, query, this._mode);
+    return new Statement(this._db, query, this._mode, this._filePath);
   }
 
   exec(sql) {
@@ -302,11 +311,26 @@ class AutoRoutingDb {
   }
 
   _extractTableName(query) {
+    const q = query.trim();
+
+    // PRAGMA table_info(tableName) — route based on the target table
+    const pragmaMatch = q.match(/PRAGMA\s+table_info\s*\(\s*(\w+)\s*\)/i);
+    if (pragmaMatch) return pragmaMatch[1].toLowerCase();
+
+    // sqlite_master queries checking for a specific table name in WHERE clause
+    // e.g. SELECT name FROM sqlite_master WHERE type='table' AND name='games'
+    if (/sqlite_master/i.test(q)) {
+      const nameMatch = q.match(/name\s*=\s*['"](\w+)['"]/i);
+      if (nameMatch) return nameMatch[1].toLowerCase();
+      // Generic sqlite_master query (e.g. listing all tables) — use record DB
+      return 'games';
+    }
+
     const matches = [
-      query.match(/FROM\s+(\w+)/i),
-      query.match(/INTO\s+(\w+)/i),
-      query.match(/UPDATE\s+(\w+)/i),
-      query.match(/JOIN\s+(\w+)/i)
+      q.match(/FROM\s+(\w+)/i),
+      q.match(/INTO\s+(\w+)/i),
+      q.match(/UPDATE\s+(\w+)/i),
+      q.match(/JOIN\s+(\w+)/i)
     ];
 
     for (const match of matches) {
@@ -338,7 +362,7 @@ function closeDualDb() {
   
   try {
     if (recordDb) {
-      saveDbFile(recordDb, recordPath);
+      // Do NOT save record DB — it is read-only and must never be written back
       recordDb.close();
       recordDb = null;
     }
