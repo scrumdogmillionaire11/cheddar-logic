@@ -29,6 +29,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  setCurrentRunId,
   getOddsSnapshots,
   getLatestOdds,
   insertModelOutput,
@@ -47,6 +48,16 @@ const {
   formatCountdown,
   buildMarketFromOdds,
 } = require('@cheddar-logic/models');
+
+function attachRunId(card, runId) {
+  if (!card) return;
+  card.runId = runId;
+  if (card.payloadData && typeof card.payloadData === 'object') {
+    if (!card.payloadData.run_id) {
+      card.payloadData.run_id = runId;
+    }
+  }
+}
 
 /**
  * Generate a card payload from FPL inference + snapshot context.
@@ -226,6 +237,7 @@ async function runFPLModel() {
               gameId,
               'fpl-model-v1',
               'fpl-model-output',
+              { runId: jobRunId },
             );
 
             if (deletedOutputs > 0 || deletedCards > 0) {
@@ -252,6 +264,7 @@ async function runFPLModel() {
 
             // Generate and store card
             card.modelOutputIds = modelOutputId;
+            attachRunId(card, jobRunId);
             insertCardPayload(card);
 
             cardsGenerated++;
@@ -275,6 +288,13 @@ async function runFPLModel() {
 
       // Mark success
       markJobRunSuccess(jobRunId);
+      try {
+        setCurrentRunId(jobRunId, 'fpl');
+      } catch (runStateError) {
+        console.error(
+          `[FPLSageAdapter] Failed to update run state: ${runStateError.message}`,
+        );
+      }
       console.log(
         `[FPLSageAdapter] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
       );

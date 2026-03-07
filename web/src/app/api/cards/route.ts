@@ -88,9 +88,34 @@ function safeJsonParse(payload: string | null) {
 function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   // Prefer per-sport rows (added by migration 021); fall back to singleton
   try {
+    const successRows = db
+      .prepare(
+        `SELECT rs.current_run_id
+         FROM run_state rs
+         WHERE id != 'singleton'
+           AND rs.current_run_id IS NOT NULL
+           AND TRIM(rs.current_run_id) != ''
+           AND EXISTS (
+             SELECT 1
+             FROM job_runs jr
+             WHERE jr.id = rs.current_run_id
+               AND LOWER(jr.status) = 'success'
+           )
+         ORDER BY datetime(rs.updated_at) DESC, rs.id ASC`,
+      )
+      .all() as Array<{ current_run_id: string }>;
+    if (successRows.length > 0) {
+      return [...new Set(successRows.map((r) => r.current_run_id))];
+    }
+
     const sportRows = db
       .prepare(
-        `SELECT current_run_id FROM run_state WHERE id != 'singleton' AND current_run_id IS NOT NULL AND TRIM(current_run_id) != ''`,
+        `SELECT current_run_id
+         FROM run_state
+         WHERE id != 'singleton'
+           AND current_run_id IS NOT NULL
+           AND TRIM(current_run_id) != ''
+         ORDER BY datetime(updated_at) DESC, id ASC`,
       )
       .all() as Array<{ current_run_id: string }>;
     if (sportRows.length > 0) {
@@ -184,49 +209,52 @@ export async function GET(request: NextRequest) {
       return addRateLimitHeaders(response, request);
     }
 
-    const where: string[] = [];
-    const params: Array<string | number> = [];
+    const baseWhere: string[] = [];
+    const baseParams: Array<string | number> = [];
 
     if (sport) {
-      where.push('cp.sport = ?');
-      params.push(sport);
+      baseWhere.push('cp.sport = ?');
+      baseParams.push(sport);
     }
 
     if (cardType) {
-      where.push('cp.card_type = ?');
-      params.push(cardType);
+      baseWhere.push('cp.card_type = ?');
+      baseParams.push(cardType);
     }
 
     if (gameId) {
-      where.push('cp.game_id = ?');
-      params.push(gameId);
+      baseWhere.push('cp.game_id = ?');
+      baseParams.push(gameId);
     }
 
     if (!includeExpired) {
-      where.push(
+      baseWhere.push(
         "(cp.expires_at IS NULL OR datetime(cp.expires_at) > datetime('now'))",
       );
     }
 
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
-    where.push("cp.sport != 'FPL'");
+    baseWhere.push("cp.sport != 'FPL'");
     if (!ENABLE_WELCOME_HOME) {
-      where.push("cp.card_type != 'welcome-home-v2'");
+      baseWhere.push("cp.card_type != 'welcome-home-v2'");
     }
-    const runIdPlaceholders = activeRunIds.length > 0 ? activeRunIds.map(() => '?').join(', ') : 'NULL';
-    where.push(`cp.run_id IN (${runIdPlaceholders})`);
-    params.push(...activeRunIds);
 
-    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const runScopedWhere = [...baseWhere];
+    const runScopedParams = [...baseParams];
+    if (activeRunIds.length > 0) {
+      const runIdPlaceholders = activeRunIds.map(() => '?').join(', ');
+      runScopedWhere.push(`cp.run_id IN (${runIdPlaceholders})`);
+      runScopedParams.push(...activeRunIds);
+    }
 
     const dedupeMode = dedupe === 'none' ? 'none' : 'latest_per_game_type';
-    const sql =
+    const buildSql = (whereSql: string) =>
       dedupeMode === 'none'
         ? `
         SELECT cp.* FROM card_payloads cp
         LEFT JOIN games g ON cp.game_id = g.game_id
         ${whereSql}
-        ORDER BY COALESCE(g.game_time_utc, cp.created_at) ASC, cp.created_at DESC
+        ORDER BY COALESCE(g.game_time_utc, cp.created_at) ASC, cp.created_at DESC, cp.id DESC
         LIMIT ? OFFSET ?
       `
         : `
@@ -235,7 +263,7 @@ export async function GET(request: NextRequest) {
             g.game_time_utc,
             ROW_NUMBER() OVER (
               PARTITION BY cp.game_id, cp.card_type
-              ORDER BY cp.created_at DESC
+              ORDER BY cp.created_at DESC, cp.id DESC
             ) AS rn
           FROM card_payloads cp
           LEFT JOIN games g ON cp.game_id = g.game_id
@@ -243,13 +271,21 @@ export async function GET(request: NextRequest) {
         )
         SELECT * FROM ranked
         WHERE rn = 1
-        ORDER BY COALESCE(game_time_utc, created_at) ASC
+        ORDER BY COALESCE(game_time_utc, created_at) ASC, created_at DESC, id DESC
         LIMIT ? OFFSET ?
       `;
 
-    const stmt = db.prepare(sql);
+    const runScopedWhereSql =
+      runScopedWhere.length > 0 ? `WHERE ${runScopedWhere.join(' AND ')}` : '';
+    const runScopedStmt = db.prepare(buildSql(runScopedWhereSql));
+    let rows = runScopedStmt.all(...runScopedParams, limit, offset) as CardRow[];
 
-    const rows = stmt.all(...params, limit, offset) as CardRow[];
+    if (activeRunIds.length > 0 && rows.length === 0) {
+      const baseWhereSql =
+        baseWhere.length > 0 ? `WHERE ${baseWhere.join(' AND ')}` : '';
+      const fallbackStmt = db.prepare(buildSql(baseWhereSql));
+      rows = fallbackStmt.all(...baseParams, limit, offset) as CardRow[];
+    }
 
     const response = rows.map((card) => {
       const parsed = safeJsonParse(card.payload_data);

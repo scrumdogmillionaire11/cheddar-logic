@@ -28,9 +28,15 @@ async function runTests() {
     console.log('✓ Test data cleaned\n');
 
     // Insert test game
-    const testGameId = 'test-dedupe-nhl-2026-01-01-team1-team2';
+    const testSuffix = Date.now().toString(36);
+    const testGameId = `test-dedupe-nhl-${testSuffix}`;
     const cardType = 'nhl-model-output';
-    const sport = 'nhl';
+    const sport = 'NHL';
+    const runId = `test-run-${testSuffix}`;
+    const card1Id = `card-${testSuffix}-1`;
+    const card2Id = `card-${testSuffix}-2`;
+    const card3Id = `card-${testSuffix}-3`;
+    const cardAltId = `card-${testSuffix}-alt-1`;
 
     console.log('📋 Inserting test cards...');
     const now = new Date();
@@ -72,11 +78,11 @@ async function runTests() {
     client
       .prepare(
         `INSERT INTO card_payloads 
-       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        'card-1',
+        card1Id,
         testGameId,
         sport,
         cardType,
@@ -84,16 +90,17 @@ async function runTests() {
         JSON.stringify(payload1),
         card1CreatedAt,
         new Date(now.getTime() + 3600000).toISOString(),
+        runId,
       );
 
     client
       .prepare(
         `INSERT INTO card_payloads 
-       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        'card-2',
+        card2Id,
         testGameId,
         sport,
         cardType,
@@ -101,16 +108,17 @@ async function runTests() {
         JSON.stringify(payload2),
         card2CreatedAt,
         new Date(now.getTime() + 3600000).toISOString(),
+        runId,
       );
 
     client
       .prepare(
         `INSERT INTO card_payloads 
-       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        'card-3',
+        card3Id,
         testGameId,
         sport,
         cardType,
@@ -118,6 +126,7 @@ async function runTests() {
         JSON.stringify(payload3),
         card3CreatedAt,
         new Date(now.getTime() + 3600000).toISOString(),
+        runId,
       );
 
     console.log(`✓ Inserted 3 cards for game_id: ${testGameId}\n`);
@@ -126,7 +135,7 @@ async function runTests() {
     console.log('🧪 Test 1: Default dedupe (latest_per_game_type)');
     const dedupeSQL = `
       WITH ranked AS (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY game_id, card_type ORDER BY created_at DESC) AS rn
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY game_id, card_type ORDER BY created_at DESC, id DESC) AS rn
         FROM card_payloads
         WHERE game_id = ? AND sport = ?
       )
@@ -134,11 +143,11 @@ async function runTests() {
     `;
 
     const dedupeResult = client.prepare(dedupeSQL).all(testGameId, sport);
-    if (dedupeResult.length === 1 && dedupeResult[0].id === 'card-3') {
-      console.log('✅ PASS: Returns only latest card (card-3)');
+    if (dedupeResult.length === 1 && dedupeResult[0].id === card3Id) {
+      console.log(`✅ PASS: Returns only latest card (${card3Id})`);
       console.log(`   Card title: ${dedupeResult[0].card_title}\n`);
     } else {
-      console.log('❌ FAIL: Expected 1 card (card-3), got:', dedupeResult);
+      console.log(`❌ FAIL: Expected 1 card (${card3Id}), got:`, dedupeResult);
       process.exit(1);
     }
 
@@ -147,15 +156,15 @@ async function runTests() {
     const noDedupeSQL = `
       SELECT id, card_title, created_at FROM card_payloads
       WHERE game_id = ? AND sport = ?
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
     `;
 
     const noDedupeResult = client.prepare(noDedupeSQL).all(testGameId, sport);
     if (
       noDedupeResult.length === 3 &&
-      noDedupeResult[0].id === 'card-3' &&
-      noDedupeResult[1].id === 'card-2' &&
-      noDedupeResult[2].id === 'card-1'
+      noDedupeResult[0].id === card3Id &&
+      noDedupeResult[1].id === card2Id &&
+      noDedupeResult[2].id === card1Id
     ) {
       console.log(
         '✅ PASS: Returns all 3 cards in correct order (latest first)',
@@ -166,7 +175,7 @@ async function runTests() {
       console.log();
     } else {
       console.log(
-        '❌ FAIL: Expected 3 cards in order [card-3, card-2, card-1], got:',
+        `❌ FAIL: Expected 3 cards in order [${card3Id}, ${card2Id}, ${card1Id}], got:`,
         noDedupeResult,
       );
       process.exit(1);
@@ -178,11 +187,11 @@ async function runTests() {
     client
       .prepare(
         `INSERT INTO card_payloads 
-       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        'card-alt-1',
+        cardAltId,
         testGameId,
         sport,
         altCardType,
@@ -190,11 +199,12 @@ async function runTests() {
         JSON.stringify(payload1),
         card1CreatedAt,
         new Date(now.getTime() + 3600000).toISOString(),
+        runId,
       );
 
     const dedupeWithAltSQL = `
       WITH ranked AS (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY game_id, card_type ORDER BY created_at DESC) AS rn
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY game_id, card_type ORDER BY created_at DESC, id DESC) AS rn
         FROM card_payloads
         WHERE game_id = ?
       )
@@ -208,10 +218,10 @@ async function runTests() {
     if (
       dedupeWithAltResult.length === 2 &&
       dedupeWithAltResult.some(
-        (r) => r.id === 'card-3' && r.card_type === cardType,
+        (r) => r.id === card3Id && r.card_type === cardType,
       ) &&
       dedupeWithAltResult.some(
-        (r) => r.id === 'card-alt-1' && r.card_type === altCardType,
+        (r) => r.id === cardAltId && r.card_type === altCardType,
       )
     ) {
       console.log('✅ PASS: Dedupe respects card_type boundary');

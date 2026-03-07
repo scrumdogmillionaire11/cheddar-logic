@@ -16,6 +16,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  setCurrentRunId,
   insertCardPayload,
   validateCardPayload,
   withDb,
@@ -27,6 +28,16 @@ const {
 } = require('../models/nhl-player-shots');
 
 const JOB_NAME = 'run-nhl-player-shots-model';
+
+function attachRunId(card, runId) {
+  if (!card) return;
+  card.runId = runId;
+  if (card.payloadData && typeof card.payloadData === 'object') {
+    if (!card.payloadData.run_id) {
+      card.payloadData.run_id = runId;
+    }
+  }
+}
 
 // Map NHL abbreviations to full team names
 const TEAM_ABBREV_TO_NAME = {
@@ -280,6 +291,7 @@ async function runNHLPlayerShotsModel() {
                 createdAt: timestamp,
                 payloadData: payloadData,
               };
+              attachRunId(card, jobRunId);
 
               try {
                 insertCardPayload(card);
@@ -362,6 +374,7 @@ async function runNHLPlayerShotsModel() {
                 createdAt: timestamp,
                 payloadData: payloadData1p,
               };
+              attachRunId(card1p, jobRunId);
 
               try {
                 insertCardPayload(card1p);
@@ -389,6 +402,15 @@ async function runNHLPlayerShotsModel() {
       };
 
       markJobRunSuccess(jobRunId, result);
+      if (cardsCreated > 0) {
+        try {
+          setCurrentRunId(jobRunId, 'nhl_props');
+        } catch (runStateError) {
+          console.error(
+            `[${JOB_NAME}] Failed to update run state: ${runStateError.message}`,
+          );
+        }
+      }
       console.log(
         `[${JOB_NAME}] ✅ Job complete: ${cardsCreated} cards created from ${games.length} games`,
       );

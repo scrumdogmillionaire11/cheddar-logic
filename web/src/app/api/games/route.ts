@@ -390,9 +390,34 @@ function normalizeConfidencePct(value: number | null | undefined) {
 function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   // Prefer per-sport rows (added by migration 021); fall back to singleton
   try {
+    const successRows = db
+      .prepare(
+        `SELECT rs.current_run_id
+         FROM run_state rs
+         WHERE id != 'singleton'
+           AND rs.current_run_id IS NOT NULL
+           AND TRIM(rs.current_run_id) != ''
+           AND EXISTS (
+             SELECT 1
+             FROM job_runs jr
+             WHERE jr.id = rs.current_run_id
+               AND LOWER(jr.status) = 'success'
+           )
+         ORDER BY datetime(rs.updated_at) DESC, rs.id ASC`,
+      )
+      .all() as Array<{ current_run_id: string }>;
+    if (successRows.length > 0) {
+      return [...new Set(successRows.map((r) => r.current_run_id))];
+    }
+
     const sportRows = db
       .prepare(
-        `SELECT current_run_id FROM run_state WHERE id != 'singleton' AND current_run_id IS NOT NULL AND TRIM(current_run_id) != ''`,
+        `SELECT current_run_id
+         FROM run_state
+         WHERE id != 'singleton'
+           AND current_run_id IS NOT NULL
+           AND TRIM(current_run_id) != ''
+         ORDER BY datetime(updated_at) DESC, id ASC`,
       )
       .all() as Array<{ current_run_id: string }>;
     if (sportRows.length > 0) {
@@ -637,23 +662,27 @@ export async function GET(request: NextRequest) {
       const runIdClause = activeRunIds.length > 0
         ? `AND run_id IN (${runIdPlaceholders})`
         : '';
-      const cardsSql = `
+      const buildCardsSql = (runClause: string) => `
         SELECT id, game_id, card_type, card_title, payload_data
         FROM card_payloads
         WHERE game_id IN (${placeholders})
-          ${runIdClause}
+          ${runClause}
           AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
           ${ENABLE_WELCOME_HOME ? '' : "AND card_type != 'welcome-home-v2'"}
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
       `;
       let cardRows: CardPayloadRow[] = [];
       try {
-        const cardsStmt = db.prepare(cardsSql);
+        const cardsStmt = db.prepare(buildCardsSql(runIdClause));
         const cardsParams =
           activeRunIds.length > 0
             ? [...allQueryableIds, ...activeRunIds]
             : [...allQueryableIds];
         cardRows = cardsStmt.all(...cardsParams) as CardPayloadRow[];
+        if (activeRunIds.length > 0 && cardRows.length === 0) {
+          const fallbackStmt = db.prepare(buildCardsSql(''));
+          cardRows = fallbackStmt.all(...allQueryableIds) as CardPayloadRow[];
+        }
       } catch {
         // card_payloads table not yet created; plays will be empty
       }

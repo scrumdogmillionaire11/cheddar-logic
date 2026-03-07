@@ -23,6 +23,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  setCurrentRunId,
   getOddsSnapshots,
   getOddsWithUpcomingGames,
   getLatestOdds,
@@ -43,6 +44,16 @@ const {
   formatCountdown,
   buildMarketFromOdds,
 } = require('@cheddar-logic/models');
+
+function attachRunId(card, runId) {
+  if (!card) return;
+  card.runId = runId;
+  if (card.payloadData && typeof card.payloadData === 'object') {
+    if (!card.payloadData.run_id) {
+      card.payloadData.run_id = runId;
+    }
+  }
+}
 
 /**
  * Generate a card payload from model output + odds
@@ -237,6 +248,7 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
               gameId,
               'nfl-model-v1',
               'nfl-model-output',
+              { runId: jobRunId },
             );
 
             if (deletedOutputs > 0 || deletedCards > 0) {
@@ -263,6 +275,7 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
 
             // Generate and store card
             card.modelOutputIds = modelOutputId;
+            attachRunId(card, jobRunId);
             insertCardPayload(card);
 
             cardsGenerated++;
@@ -286,6 +299,13 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
 
       // Mark success
       markJobRunSuccess(jobRunId);
+      try {
+        setCurrentRunId(jobRunId, 'nfl');
+      } catch (runStateError) {
+        console.error(
+          `[NFLModel] Failed to update run state: ${runStateError.message}`,
+        );
+      }
       console.log(
         `[NFLModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
       );

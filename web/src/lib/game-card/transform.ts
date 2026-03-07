@@ -1919,7 +1919,8 @@ function compareCardsForDedupe(next: GameCard, current: GameCard): number {
     (typeof current.play?.edge === 'number' ? current.play.edge : -Infinity);
   if (edgeDelta !== 0) return edgeDelta;
 
-  return 0;
+  // Stable tie-break so dedupe selection does not depend on map insertion order.
+  return next.id.localeCompare(current.id);
 }
 
 function getCardMarketKey(card: GameCard): string {

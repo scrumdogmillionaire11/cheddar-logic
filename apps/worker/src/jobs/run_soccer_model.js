@@ -23,6 +23,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  setCurrentRunId,
   getOddsWithUpcomingGames,
   insertCardPayload,
   validateCardPayload,
@@ -36,6 +37,16 @@ const {
   formatCountdown,
   buildMarketFromOdds,
 } = require('@cheddar-logic/models');
+
+function attachRunId(card, runId) {
+  if (!card) return;
+  card.runId = runId;
+  if (card.payloadData && typeof card.payloadData === 'object') {
+    if (!card.payloadData.run_id) {
+      card.payloadData.run_id = runId;
+    }
+  }
+}
 
 /**
  * Generate a basic soccer card from odds data
@@ -211,6 +222,7 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
             );
           }
 
+          attachRunId(card, jobRunId);
           insertCardPayload(card);
           cardsGenerated++;
           console.log(
@@ -226,6 +238,13 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
         `[SoccerModel] ✅ Complete: ${cardsGenerated} cards generated`,
       );
       markJobRunSuccess(jobRunId);
+      try {
+        setCurrentRunId(jobRunId, 'soccer');
+      } catch (runStateError) {
+        console.error(
+          `[SoccerModel] Failed to update run state: ${runStateError.message}`,
+        );
+      }
 
       return { success: true, jobRunId, cardsGenerated };
     } catch (error) {

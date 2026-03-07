@@ -177,13 +177,6 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       if (oddsSnapshots.length === 0) {
         console.log('[NCAAMModel] No recent NCAAM odds found, exiting.');
         markJobRunSuccess(jobRunId);
-        try {
-          setCurrentRunId(jobRunId, 'ncaam');
-        } catch (runStateError) {
-          console.error(
-            `[NCAAMModel] Failed to update run state: ${runStateError.message}`,
-          );
-        }
         return { success: true, jobRunId, cardsGenerated: 0 };
       }
 
