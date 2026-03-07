@@ -899,9 +899,10 @@ function deleteOddsSnapshotsByGameAndCapturedAt(gameId, capturedAt) {
 /**
  * Update the raw_data field of the latest odds snapshot for a game.
  * Used to persist ESPN enrichment after the fact.
+ * Optimized to avoid expensive verification on large JSON strings.
  * @param {string} snapshotId - The odds_snapshots.id to update
  * @param {object|string} enrichedRawData - The enriched raw_data (object or JSON string)
- * @returns {boolean} True if update succeeded, false if no matching row found
+ * @returns {boolean} True if update was attempted (row exists), false if not found
  */
 function updateOddsSnapshotRawData(snapshotId, enrichedRawData) {
   try {
@@ -915,24 +916,23 @@ function updateOddsSnapshotRawData(snapshotId, enrichedRawData) {
         : JSON.stringify(enrichedRawData);
     }
     
-    // First verify the row exists
-    const existing = db.prepare('SELECT id FROM odds_snapshots WHERE id = ?').get(snapshotId);
+    // First verify the row exists (lightweight check, just id)
+    const existing = db.prepare('SELECT 1 FROM odds_snapshots WHERE id = ?').get(snapshotId);
     if (!existing) {
       console.warn(`[updateOddsSnapshotRawData] Snapshot ${snapshotId} not found`);
       return false;
     }
     
-    // Perform the update
-    db.prepare('UPDATE odds_snapshots SET raw_data = ? WHERE id = ?').run(rawDataJson, snapshotId);
-    
-    // Verify the update succeeded by checking the new value
-    const updated = db.prepare('SELECT raw_data FROM odds_snapshots WHERE id = ?').get(snapshotId);
-    if (updated && updated.raw_data === rawDataJson) {
-      return true;
+    // Warn if raw_data is getting very large (suggests bloat from repeated enrichments)
+    if (rawDataJson && rawDataJson.length > 1024 * 1024) {
+      console.warn(`[updateOddsSnapshotRawData] Large raw_data for ${snapshotId}: ${Math.round(rawDataJson.length / 1024)}KB`);
     }
     
-    console.warn(`[updateOddsSnapshotRawData] Update verification failed for snapshot ${snapshotId}`);
-    return false;
+    // Perform the update (trust SQLite to execute correctly)
+    // Skip expensive verification step that loads entire JSON back into memory
+    const result = db.prepare('UPDATE odds_snapshots SET raw_data = ? WHERE id = ?').run(rawDataJson, snapshotId);
+    
+    return result.changes > 0;
   } catch (err) {
     console.error(`[updateOddsSnapshotRawData] Error for snapshot ${snapshotId}: ${err.message}`);
     return false;
