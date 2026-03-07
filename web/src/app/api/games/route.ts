@@ -1230,30 +1230,8 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    ensureCardDisplayLogSchema(db);
-
-    for (const game of data) {
-      for (let index = 0; index < game.plays.length; index += 1) {
-        const play = game.plays[index];
-        if (!play.source_card_id) {
-          continue;
-        }
-        logCardDisplay(db, {
-          pickId: play.source_card_id,
-          runId: play.run_id ?? null,
-          gameId: game.gameId,
-          sport: game.sport,
-          marketType: play.market_type ?? null,
-          selection: play.selection?.side ?? play.prediction ?? null,
-          line: typeof play.line === 'number' ? play.line : null,
-          odds: typeof play.price === 'number' ? play.price : null,
-          oddsBook: null,
-          confidencePct:
-            typeof play.confidence === 'number' ? play.confidence : null,
-          endpoint: '/api/games',
-        });
-      }
-    }
+    // NOTE: card_display_log writes intentionally removed.
+    // Worker owns all DB writes (single-writer architecture).
 
     const repairRatio =
       totalPlayCount > 0 ? repairedPlayCount / totalPlayCount : 0;
