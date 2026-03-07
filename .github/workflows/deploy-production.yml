@@ -156,6 +156,10 @@ jobs:
             set -a && source /tmp/cheddar_build_env && set +a && npm --prefix web run build
             rm -f /tmp/cheddar_build_env
             test -f web/.next/BUILD_ID || { echo "ERROR: next build did not produce web/.next/BUILD_ID"; exit 1; }
+            test -d web/.next/static || { echo "ERROR: next build did not produce web/.next/static directory"; exit 1; }
+            CHUNK_COUNT=$(find web/.next/static/chunks -name "*.js" 2>/dev/null | wc -l)
+            test "$CHUNK_COUNT" -gt 0 || { echo "ERROR: next build produced no JS chunks (found: $CHUNK_COUNT)"; exit 1; }
+            echo "Build verification passed: BUILD_ID exists, static dir exists, $CHUNK_COUNT JS chunks found"
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage

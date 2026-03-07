@@ -23,10 +23,10 @@ SyslogIdentifier=cheddar-web
 
 # Security
 NoNewPrivileges=true
-PrivateTmp=true
+PrivateTmp=false
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/data /opt/cheddar-logic/packages/data /opt/cheddar-logic/web/.next
+ReadWritePaths=/opt/data /opt/cheddar-logic/packages/data /opt/cheddar-logic/web/.next /tmp
 
 [Install]
 WantedBy=multi-user.target
