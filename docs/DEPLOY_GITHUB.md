@@ -136,6 +136,14 @@ Then open in browser:
 
 ---
 
+## Pre-Deploy Checklist
+
+Before promoting to production:
+
+- [ ] `CHEDDAR_DB_PATH` is set identically in web and worker env vars (persistent path, not /tmp)
+- [ ] `run_state` table exists and has a non-null `current_run_id` (worker must have run at least once)
+- [ ] `/api/games` returns non-empty plays array in staging before promoting to prod
+
 ## No-Plays Prevention Checklist
 
 Use this after deploys to avoid PASS-only boards:
