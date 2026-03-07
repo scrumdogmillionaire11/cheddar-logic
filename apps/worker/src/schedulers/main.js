@@ -355,14 +355,20 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // ========== ODDS (2) ==========
   // Keep existing hourly bucket for backward compatibility, but can also add time-aware logic
   if (process.env.ENABLE_ODDS_PULL !== 'false') {
-    const jobKey = keyOddsHourly(nowEt);
-    jobs.push({
-      jobName: 'pull_odds_hourly',
-      jobKey,
-      execute: pullOddsHourly,
-      args: { jobKey, dryRun },
-      reason: `hourly bucket ${nowEt.toISODate()} ${nowEt.hour}h`,
-    });
+    // Skip overnight hours (2am-5am ET) when no games start
+    // Saves 3 fetches/day × 30 days × 8 tokens = 720 tokens/month
+    const isOvernightHours = nowEt.hour >= 2 && nowEt.hour <= 5;
+    
+    if (!isOvernightHours) {
+      const jobKey = keyOddsHourly(nowEt);
+      jobs.push({
+        jobName: 'pull_odds_hourly',
+        jobKey,
+        execute: pullOddsHourly,
+        args: { jobKey, dryRun },
+        reason: `hourly bucket ${nowEt.toISODate()} ${nowEt.hour}h (21/day, skip 2am-5am)`,
+      });
+    }
 
     // Optional: Add time-aware per-game odds pulls
     if (process.env.ENABLE_TIME_AWARE_ODDS === 'true') {

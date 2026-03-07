@@ -82,16 +82,17 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       // To add/remove sports, update the `active` field in config.js — not here.
       const activeSports = getActiveSports();
 
-      // Token math (2026-02-27, current season):
-      // NHL:   2 tokens/fetch × 24 fetches/day = 48 tokens/day
-      // NBA:   3 tokens/fetch × 24 fetches/day = 72 tokens/day
-      // NCAAM: 3 tokens/fetch × 24 fetches/day = 72 tokens/day
-      // Total: 8 tokens/fetch × 24 fetches/day = 192 tokens/day
+      // Token math (2026-03-07, optimized schedule):
+      // NHL:   2 tokens/fetch × 21 fetches/day = 42 tokens/day
+      // NBA:   3 tokens/fetch × 21 fetches/day = 63 tokens/day
+      // NCAAM: 3 tokens/fetch × 21 fetches/day = 63 tokens/day
+      // Total: 8 tokens/fetch × 21 fetches/day = 168 tokens/day
+      // Skips 2am-5am ET (3 hours) when no games occur
       // The Odds API free tier: 500 tokens/month → not viable for production
-      // Paid tier: 10,000+ tokens/month → 192/day = 5,760/month (OK on starter plan)
+      // Paid tier: 20,000 tokens/month → 168/day = 5,040/month (25% utilization)
       const tokenCost = getTokensForFetch(activeSports);
       console.log(
-        `[PullOdds] Active sports (from config): ${activeSports.join(', ')} | tokens/fetch: ${tokenCost} | ~${tokenCost * 24}/day`,
+        `[PullOdds] Active sports (from config): ${activeSports.join(', ')} | tokens/fetch: ${tokenCost} | ~${tokenCost * 21}/day (skip 2am-5am)`,
       );
       console.log(`[PullOdds] Fetching odds for: ${activeSports.join(', ')}`);
 
