@@ -779,6 +779,48 @@ function pickTopContributors(
 }
 
 /**
+ * Apply consensus-gate override to a pre-built play status.
+ *
+ * Only downgrades — never upgrades. Applied at display time so that cards where
+ * buildPlay() produced an over-confident label get corrected without touching
+ * the stored data. expressionChoice and driver-derived statuses are not overridden.
+ *
+ * Rules:
+ *  - No primary driver aligned → cap at PASS (context-only plays cannot be FIRE)
+ *  - FIRE stored but FIRE threshold not met → downgrade to WATCH or PASS
+ *  - WATCH and PASS are never upgraded
+ */
+function applyConsensusOverride(
+  storedStatus: ExpressionStatus,
+  scores: SupportScore,
+): ExpressionStatus {
+  // No primary driver aligned with the play — cannot be higher than PASS
+  if (scores.primary_count === 0) {
+    return storedStatus === 'FIRE' ? 'PASS' : storedStatus;
+  }
+
+  // Stored FIRE: verify it actually clears the FIRE gate, downgrade if not
+  if (storedStatus === 'FIRE') {
+    if (
+      scores.net_support >= GATE.FIRE_NET_SUPPORT &&
+      scores.conflict_ratio < GATE.FIRE_CONFLICT_MAX
+    ) {
+      return 'FIRE';
+    }
+    if (
+      scores.net_support >= GATE.WATCH_NET_SUPPORT &&
+      scores.conflict_ratio < GATE.WATCH_CONFLICT_MAX
+    ) {
+      return 'WATCH';
+    }
+    return 'PASS';
+  }
+
+  // WATCH and PASS are not upgraded
+  return storedStatus;
+}
+
+/**
  * Build canonical decision model for card display
  */
 export function getCardDecisionModel(
@@ -789,33 +831,45 @@ export function getCardDecisionModel(
   const drivers = deduplicateDrivers(baseDrivers);
 
   const primaryPlay = selectPrimaryPlay(card, odds, drivers);
-  const status = primaryPlay.status;
 
-  // Compute consensus scores for the primary direction (used for supportGrade + passReasonCode)
+  // Compute consensus scores for the primary direction
   const direction = primaryPlay.direction;
   const scores =
     direction && direction !== 'NEUTRAL'
       ? computeSupportScores(drivers, direction)
       : null;
 
+  // For pre-built plays (source === 'play'), apply display-side consensus override.
+  // This corrects labels from buildPlay() without modifying stored data.
+  // expressionChoice and driver-derived statuses are not overridden.
+  const rawStatus = primaryPlay.status;
+  const status: ExpressionStatus =
+    primaryPlay.source === 'play' && scores
+      ? applyConsensusOverride(rawStatus, scores)
+      : rawStatus;
+
+  // Sync primaryPlay.status if the override changed it
+  const syncedPrimaryPlay =
+    status !== rawStatus ? { ...primaryPlay, status } : primaryPlay;
+
   const supportGrade: SupportGrade = scores?.support_grade ?? 'WEAK';
   const passReasonCode: PassReasonCode | null =
     status === 'PASS'
-      ? derivePassReason(card, scores, primaryPlay.market)
+      ? derivePassReason(card, scores, syncedPrimaryPlay.market)
       : null;
 
-  const riskCodes = deriveRiskCodes(card, drivers, primaryPlay.market);
+  const riskCodes = deriveRiskCodes(card, drivers, syncedPrimaryPlay.market);
   const whyReason = getWhyReason(
     status,
     riskCodes,
-    primaryPlay.market,
+    syncedPrimaryPlay.market,
     drivers,
   );
-  const topContributors = pickTopContributors(drivers, primaryPlay);
+  const topContributors = pickTopContributors(drivers, syncedPrimaryPlay);
 
   return {
     status,
-    primaryPlay,
+    primaryPlay: syncedPrimaryPlay,
     whyReason,
     riskCodes,
     topContributors,
