@@ -37,7 +37,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase, closeDatabaseReadOnly } from '@cheddar-logic/data';
+import { getDatabaseReadOnly, closeReadOnlyInstance } from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
@@ -85,7 +85,7 @@ function safeJsonParse(payload: string | null) {
   }
 }
 
-function getActiveRunIds(db: ReturnType<typeof getDatabase>): string[] {
+function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   // Prefer per-sport rows (added by migration 021); fall back to singleton
   try {
     const sportRows = db
@@ -106,7 +106,7 @@ function getActiveRunIds(db: ReturnType<typeof getDatabase>): string[] {
 }
 
 function getRunStatus(
-  db: ReturnType<typeof getDatabase>,
+  db: ReturnType<typeof getDatabaseReadOnly>,
   runId: string | null,
 ): string {
   if (!runId) return 'NONE';
@@ -122,6 +122,7 @@ function getRunStatus(
 }
 
 export async function GET(request: NextRequest) {
+  let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
   try {
     // Security checks: rate limiting, input validation
     const securityCheck = performSecurityChecks(request, '/api/cards');
@@ -150,7 +151,7 @@ export async function GET(request: NextRequest) {
     const limit = clampNumber(searchParams.get('limit'), 20, 1, 100);
     const offset = clampNumber(searchParams.get('offset'), 0, 0, 1000);
 
-    const db = getDatabase();
+    db = getDatabaseReadOnly();
     const activeRunIds = getActiveRunIds(db);
     const currentRunId = activeRunIds[0] ?? null;
     const runStatus = getRunStatus(db, currentRunId);
@@ -289,6 +290,6 @@ export async function GET(request: NextRequest) {
     );
     return addRateLimitHeaders(errorResponse, request);
   } finally {
-    closeDatabaseReadOnly();
+    if (db) closeReadOnlyInstance(db);
   }
 }

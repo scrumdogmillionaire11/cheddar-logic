@@ -660,6 +660,49 @@ function closeDatabaseReadOnly() {
   oddsContextReferenceRegistry = new WeakMap();
 }
 
+/**
+ * Open the database for reading WITHOUT acquiring the write lock.
+ * Safe for read-only consumers (web server) that must coexist with the worker.
+ *
+ * Returns a fresh DatabaseWrapper per call — no module-level singleton.
+ * Always reads the latest bytes from disk, so it sees worker writes immediately.
+ *
+ * MUST be paired with closeReadOnlyInstance(db) — never closeDatabase().
+ */
+function getDatabaseReadOnly() {
+  if (!SQL) {
+    throw new Error('Database not initialized. Call initDb() first.');
+  }
+  const resolved = resolveDatabasePath();
+  const filePath = dbPath || resolved.dbPath;
+  let instance;
+  try {
+    if (filePath && fs.existsSync(filePath)) {
+      const buffer = fs.readFileSync(filePath);
+      instance = new SQL.Database(buffer);
+    } else {
+      instance = new SQL.Database();
+    }
+  } catch (e) {
+    console.warn(`[DB] getDatabaseReadOnly: failed to load ${filePath}: ${e.message}`);
+    instance = new SQL.Database();
+  }
+  try {
+    instance.run('PRAGMA foreign_keys = ON');
+  } catch { /* ignore */ }
+  return new DatabaseWrapper(instance);
+}
+
+/**
+ * Close a per-request read-only database instance returned by getDatabaseReadOnly().
+ * Closes the sql.js in-memory database without touching the lock or saving to disk.
+ */
+function closeReadOnlyInstance(db) {
+  if (db && db._db) {
+    try { db._db.close(); } catch { /* ignore */ }
+  }
+}
+
 function ensureRunStateSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS run_state (
@@ -2183,8 +2226,10 @@ function getTrackingStats(filters = {}) {
 module.exports = {
   initDb,
   getDatabase,
+  getDatabaseReadOnly,
   closeDatabase,
   closeDatabaseReadOnly,
+  closeReadOnlyInstance,
   getCurrentRunId,
   setCurrentRunId,
   insertJobRun,

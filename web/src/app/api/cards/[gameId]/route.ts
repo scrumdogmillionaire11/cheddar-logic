@@ -31,7 +31,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase, closeDatabaseReadOnly } from '@cheddar-logic/data';
+import { getDatabaseReadOnly, closeReadOnlyInstance } from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 
 const ENABLE_WELCOME_HOME =
@@ -78,7 +78,7 @@ function safeJsonParse(payload: string | null) {
 // NOTE: ensureRunStateSchema removed — worker owns all DB writes (single-writer architecture).
 // run_state table is created and managed exclusively by the worker.
 
-function getCurrentRunId(db: ReturnType<typeof getDatabase>): string | null {
+function getCurrentRunId(db: ReturnType<typeof getDatabaseReadOnly>): string | null {
   // Wrap in try/catch: run_state table may not exist yet if worker hasn't migrated.
   try {
     const row = db
@@ -91,7 +91,7 @@ function getCurrentRunId(db: ReturnType<typeof getDatabase>): string | null {
 }
 
 function getRunStatus(
-  db: ReturnType<typeof getDatabase>,
+  db: ReturnType<typeof getDatabaseReadOnly>,
   runId: string | null,
 ): string {
   if (!runId) return 'NONE';
@@ -110,6 +110,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ gameId: string }> },
 ) {
+  let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
   try {
     await ensureDbReady();
 
@@ -139,7 +140,7 @@ export async function GET(
     }
 
     // Open database connection
-    const db = getDatabase();
+    db = getDatabaseReadOnly();
     const currentRunId = getCurrentRunId(db);
     const runStatus = getRunStatus(db, currentRunId);
 
@@ -248,6 +249,6 @@ export async function GET(
       { status: 500 },
     );
   } finally {
-    closeDatabaseReadOnly();
+    if (db) closeReadOnlyInstance(db);
   }
 }

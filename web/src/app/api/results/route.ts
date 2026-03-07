@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   deriveLockedMarketContext,
   formatMarketSelectionLabel,
-  getDatabase,
-  closeDatabaseReadOnly,
+  getDatabaseReadOnly,
+  closeReadOnlyInstance,
 } from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
@@ -114,7 +114,7 @@ function buildCardCategoryFilter(
 // NOTE: ensureCardDisplayLogSchema removed — worker owns all DB writes (single-writer architecture).
 
 export async function GET(request: NextRequest) {
-  let db: ReturnType<typeof getDatabase> | null = null;
+  let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
   try {
     // Security checks: rate limiting, input validation
     const securityCheck = performSecurityChecks(request, '/api/results');
@@ -123,7 +123,7 @@ export async function GET(request: NextRequest) {
     }
 
     await ensureDbReady();
-    db = getDatabase();
+    db = getDatabaseReadOnly();
 
     // Check if database is empty or uninitialized
     const tableCheckStmt = db.prepare(
@@ -703,7 +703,7 @@ export async function GET(request: NextRequest) {
     return addRateLimitHeaders(errorResponse, request);
   } finally {
     if (db) {
-      closeDatabaseReadOnly();
+      closeReadOnlyInstance(db);
     }
   }
 }
