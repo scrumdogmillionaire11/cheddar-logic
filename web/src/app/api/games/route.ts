@@ -489,15 +489,18 @@ function ensureRunStateSchema(db: ReturnType<typeof getDatabase>) {
       `CREATE INDEX IF NOT EXISTS idx_card_payloads_run_id ON card_payloads(run_id)`,
     );
 
+    // Always assign null run_ids to bootstrap-initial — covers test seeds and
+    // partial migrations where some rows already have run_ids but new ones were
+    // inserted without one (e.g. by dev seed scripts).
+    db.exec(`UPDATE card_payloads SET run_id = 'bootstrap-initial' WHERE run_id IS NULL`);
     const runIdCountRow = db
       .prepare(
         `SELECT COUNT(*) AS count FROM card_payloads WHERE run_id IS NOT NULL AND TRIM(run_id) != ''`,
       )
       .get() as { count?: number } | undefined;
-    if (Number(runIdCountRow?.count || 0) === 0) {
-      db.exec(`UPDATE card_payloads SET run_id = 'bootstrap-initial' WHERE run_id IS NULL`);
+    if (Number(runIdCountRow?.count || 0) > 0) {
       db.prepare(
-        `UPDATE run_state SET current_run_id = 'bootstrap-initial', updated_at = CURRENT_TIMESTAMP WHERE id = 'singleton'`,
+        `UPDATE run_state SET current_run_id = 'bootstrap-initial', updated_at = CURRENT_TIMESTAMP WHERE id = 'singleton' AND (current_run_id IS NULL OR TRIM(current_run_id) = '')`,
       ).run();
     }
   }

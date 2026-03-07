@@ -196,6 +196,28 @@ function isProcessAlive(pid) {
   }
 }
 
+function isLockOwnerAlive(lockInfo) {
+  const pid = Number(lockInfo && lockInfo.pid);
+  if (!isProcessAlive(pid)) return false;
+
+  // On Linux, verify the process at this PID started before the lock was written.
+  // If its creation time is newer than startedAt, the original owner died and the
+  // PID was recycled by an unrelated process (common in container restarts).
+  if (process.platform === 'linux' && lockInfo && lockInfo.startedAt) {
+    try {
+      const procStat = fs.statSync(`/proc/${pid}`);
+      const lockCreatedMs = new Date(lockInfo.startedAt).getTime();
+      if (procStat.ctimeMs > lockCreatedMs + 5000) {
+        return false;
+      }
+    } catch {
+      // /proc not available — trust isProcessAlive result.
+    }
+  }
+
+  return true;
+}
+
 function releaseDbFileLock() {
   if (dbLockHandle) {
     try {
@@ -258,7 +280,7 @@ function acquireDbFileLock(dbFile) {
     lockInfo = null;
   }
 
-  if (lockInfo && !isProcessAlive(Number(lockInfo.pid))) {
+  if (!isLockOwnerAlive(lockInfo)) {
     try {
       fs.unlinkSync(lockPath);
     } catch {
