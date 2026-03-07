@@ -1599,8 +1599,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     gates.push({ code, severity: 'BLOCK', blocks_bet: true });
   }
 
-  // WI-0333: Extreme edge validation - edges >30% are suspicious
-  if (edge > 0.30) {
+  // WI-0333: Extreme edge validation — edges >30% are suspicious for moneyline/spread.
+  // Exempt TOTAL/TEAM_TOTAL: pace-model edge is in goal units (0.4–0.8 is normal).
+  if (edge > 0.30 && resolvedMarketType !== 'TOTAL' && resolvedMarketType !== 'TEAM_TOTAL') {
     gates.push({ code: 'STALE_EDGE_SUSPECTED', severity: 'BLOCK', blocks_bet: true });
     reasonCodesUnique.push('PASS_STALE_EDGE_SUSPECTED');
   }

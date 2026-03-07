@@ -616,6 +616,12 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           driverStatus: 'ok',
           inference_source: 'driver',
           is_mock: false,
+          market_type: 'TOTAL',
+          selection: { side: direction },
+          line: marketTotal,
+          price: direction === 'OVER'
+            ? toNumber(oddsSnapshot?.total_price_over ?? null)
+            : toNumber(oddsSnapshot?.total_price_under ?? null),
         });
       }
 
@@ -649,6 +655,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
             driverStatus: 'ok',
             inference_source: 'driver',
             is_mock: false,
+            market_type: 'TOTAL',
+            selection: { side: direction1p },
+            line: market1pTotal,
+            price: null,
           });
         }
       }

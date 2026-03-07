@@ -203,10 +203,10 @@ function hasMinimumViability(play: Play, marketType: MarketType): boolean {
   const hasPrice =
     typeof play.price === 'number' && Number.isFinite(play.price);
   if (marketType === 'TOTAL') {
+    // Price is sourced from odds snapshot at display time — only require side + line.
     return (
       (side === 'OVER' || side === 'UNDER') &&
-      typeof play.line === 'number' &&
-      hasPrice
+      typeof play.line === 'number'
     );
   }
   if (marketType === 'SPREAD') {
