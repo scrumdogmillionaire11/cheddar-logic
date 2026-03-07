@@ -13,7 +13,7 @@
       "Bash(node apps/worker/src/jobs/run_nba_model.js)",
       "Bash(arp -a)",
       "Bash(ping -c 1 -W 2 cheddarpi.local)",
-      "Bash(gh secret set PI_HOST --body \"100.82.80.89\")",
+      "Bash(gh secret set PI_HOST --body \"100.71.1.87\")",
       "Bash(gh secret set PI_USER --body \"babycheeses11\")",
       "Bash(gh secret list --repo ajcolubiale/cheddar-logic)",
       "Bash(gh run list --repo scrumdogmillionaire11/cheddar-logic --limit 3)",

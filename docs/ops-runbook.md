@@ -18,7 +18,7 @@
 ```bash
 ssh babycheeses11@192.168.200.198   # local network
 # or via Tailscale IP:
-ssh babycheeses11@100.82.80.89
+ssh babycheeses11@100.71.1.87
 ```
 
 ---
@@ -111,7 +111,7 @@ Expected value for both services:
 ```bash
 sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
 sudo systemctl show cheddar-worker -p Environment | grep CHEDDAR_DB_PATH
-# CHEDDAR_DB_PATH=<canonical-prod-db>
+# CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db
 ```
 
 If `cards = 0`, run the seed step from the "Worker shows no such table" section and re-check.
