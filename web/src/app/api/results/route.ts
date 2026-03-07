@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   deriveLockedMarketContext,
   formatMarketSelectionLabel,
-  initDb,
   getDatabase,
   closeDatabase,
 } from '@cheddar-logic/data';
+import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
   addRateLimitHeaders,
@@ -146,7 +146,7 @@ export async function GET(request: NextRequest) {
       return securityCheck.error!;
     }
 
-    await initDb();
+    await ensureDbReady();
     db = getDatabase();
     ensureCardDisplayLogSchema(db);
 

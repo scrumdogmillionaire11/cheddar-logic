@@ -28,6 +28,9 @@ let SQL = null;
 let dbInstance = null;
 let dbPath = null;
 let warnedDbPathContract = false;
+let dbLockHandle = null;
+let dbLockPath = null;
+let dbLockRegistered = false;
 const warnedSportValues = new Set();
 let oddsContextReferenceRegistry = new WeakMap();
 const EXPECTED_TABLE_NAMES = ['games', 'card_payloads', 'card_results', 'game_results'];
@@ -183,6 +186,108 @@ function isTruthyEnv(value) {
   return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
+function isProcessAlive(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releaseDbFileLock() {
+  if (dbLockHandle) {
+    try {
+      fs.closeSync(dbLockHandle);
+    } catch {
+      // Best-effort cleanup.
+    }
+    dbLockHandle = null;
+  }
+  if (dbLockPath) {
+    try {
+      fs.unlinkSync(dbLockPath);
+    } catch {
+      // Best-effort cleanup.
+    }
+    dbLockPath = null;
+  }
+}
+
+function registerDbLockCleanup() {
+  if (dbLockRegistered) return;
+  dbLockRegistered = true;
+  const cleanup = () => releaseDbFileLock();
+  process.on('exit', cleanup);
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
+}
+
+function acquireDbFileLock(dbFile) {
+  if (!dbFile) return;
+  if (process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS === 'true') {
+    console.warn(
+      `[DB] CHEDDAR_DB_ALLOW_MULTI_PROCESS=true — skipping DB lock for ${dbFile} (unsafe for sql.js file writes).`,
+    );
+    return;
+  }
+
+  const lockPath = `${dbFile}.lock`;
+  if (dbLockHandle && dbLockPath === lockPath) return;
+
+  const payload = `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`;
+
+  try {
+    const handle = fs.openSync(lockPath, 'wx');
+    fs.writeFileSync(handle, payload);
+    dbLockHandle = handle;
+    dbLockPath = lockPath;
+    registerDbLockCleanup();
+    return;
+  } catch (error) {
+    if (error.code !== 'EEXIST') {
+      throw error;
+    }
+  }
+
+  let lockInfo = null;
+  try {
+    lockInfo = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  } catch {
+    lockInfo = null;
+  }
+
+  if (lockInfo && !isProcessAlive(Number(lockInfo.pid))) {
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      // Best-effort cleanup.
+    }
+    try {
+      const handle = fs.openSync(lockPath, 'wx');
+      fs.writeFileSync(handle, payload);
+      dbLockHandle = handle;
+      dbLockPath = lockPath;
+      registerDbLockCleanup();
+      return;
+    } catch (error) {
+      if (error.code !== 'EEXIST') {
+        throw error;
+      }
+    }
+  }
+
+  const ownerPid = lockInfo && Number.isFinite(Number(lockInfo.pid)) ? lockInfo.pid : 'unknown';
+  const message =
+    `[DB] Refusing to open ${dbFile} because another process holds the lock (${lockPath}, pid=${ownerPid}). ` +
+    'Set CHEDDAR_DB_ALLOW_MULTI_PROCESS=true to bypass (unsafe for sql.js file writes).';
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(message);
+  }
+  console.warn(message);
+}
+
 function chooseBestDatabasePath(primaryPath) {
   const primaryDir = path.dirname(primaryPath);
   const configuredDataDir = normalizeConfiguredPath(process.env.CHEDDAR_DATA_DIR);
@@ -316,6 +421,7 @@ function loadDatabase() {
   }
 
   dbPath = dbFile;
+  acquireDbFileLock(dbFile);
   const dir = path.dirname(dbFile);
 
   // Only create directory if it's a reasonable path (not /ROOT or similar invalid paths)
@@ -455,6 +561,7 @@ class DatabaseWrapper {
       dbInstance.close();
       dbInstance = null;
     }
+    releaseDbFileLock();
   }
 
   getRowsModified() {
@@ -492,6 +599,7 @@ function closeDatabase() {
     dbInstance.close();
     dbInstance = null;
   }
+  releaseDbFileLock();
   // Reset odds context registry on close
   oddsContextReferenceRegistry = new WeakMap();
 }
@@ -556,12 +664,35 @@ function setCurrentRunId(runId, sport = null) {
 function insertJobRun(jobName, id, jobKey = null) {
   const db = getDatabase();
   const started_at = new Date().toISOString();
-  
+
+  if (jobKey) {
+    const stmt = db.prepare(`
+      INSERT INTO job_runs (id, job_name, job_key, status, started_at)
+      SELECT ?, ?, ?, 'running', ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM job_runs WHERE job_key = ? AND status IN ('running', 'success')
+      )
+    `);
+    const result = stmt.run(id, jobName, jobKey, started_at, jobKey);
+    if (!result.changes) {
+      const confirmStmt = db.prepare(
+        `SELECT 1 FROM job_runs WHERE id = ? LIMIT 1`,
+      );
+      const exists = Boolean(confirmStmt.get(id));
+      if (!exists) {
+        const error = new Error(`Job key already claimed: ${jobKey}`);
+        error.code = 'JOB_RUN_ALREADY_CLAIMED';
+        throw error;
+      }
+    }
+    return;
+  }
+
   const stmt = db.prepare(`
     INSERT INTO job_runs (id, job_name, job_key, status, started_at)
     VALUES (?, ?, ?, 'running', ?)
   `);
-  
+
   stmt.run(id, jobName, jobKey, started_at);
 }
 

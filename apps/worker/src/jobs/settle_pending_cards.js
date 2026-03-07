@@ -293,14 +293,25 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           const updateStmt = db.prepare(`
             UPDATE card_results
             SET status = 'settled', result = ?, settled_at = ?, pnl_units = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'pending'
           `);
-          updateStmt.run(result, settledAt, pnlUnits, pendingCard.result_id);
-          cardsSettled++;
-          console.log(
-            `[SettleCards] Settled card ${pendingCard.card_id}: ${lockedMarket.marketType}/${lockedMarket.selection} ` +
-              `(${lockedMarket.marketKey}) -> ${result} (pnl: ${pnlUnits})`,
+          const updateResult = updateStmt.run(
+            result,
+            settledAt,
+            pnlUnits,
+            pendingCard.result_id,
           );
+          if (updateResult.changes) {
+            cardsSettled++;
+            console.log(
+              `[SettleCards] Settled card ${pendingCard.card_id}: ${lockedMarket.marketType}/${lockedMarket.selection} ` +
+                `(${lockedMarket.marketKey}) -> ${result} (pnl: ${pnlUnits})`,
+            );
+          } else {
+            console.log(
+              `[SettleCards] Skipping already-settled card ${pendingCard.card_id}`,
+            );
+          }
         } catch (settlementErr) {
           cardsErrored++;
           const errorCode = settlementErr?.code || 'SETTLEMENT_CONTRACT_ERROR';
@@ -325,9 +336,18 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           const errorStmt = db.prepare(`
             UPDATE card_results
             SET status = 'error', result = 'void', settled_at = ?, metadata = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'pending'
           `);
-          errorStmt.run(settledAt, JSON.stringify(metadata), pendingCard.result_id);
+          const errorResult = errorStmt.run(
+            settledAt,
+            JSON.stringify(metadata),
+            pendingCard.result_id,
+          );
+          if (!errorResult.changes) {
+            console.log(
+              `[SettleCards] Skipping error update for already-settled card ${pendingCard.card_id}`,
+            );
+          }
         }
       }
 
@@ -426,6 +446,12 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         errors: [],
       };
     } catch (error) {
+      if (error.code === 'JOB_RUN_ALREADY_CLAIMED') {
+        console.log(
+          `[SettleCards] Skipping (job already claimed): ${jobKey || 'none'}`,
+        );
+        return { success: true, jobRunId: null, skipped: true, jobKey };
+      }
       console.error(`[SettleCards] Job failed:`, error.message);
       console.error(error.stack);
 

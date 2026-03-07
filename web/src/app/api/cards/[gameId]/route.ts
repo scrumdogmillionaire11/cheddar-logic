@@ -31,7 +31,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { ensureDbReady } from '@/lib/db-init';
 
 const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
@@ -140,7 +141,7 @@ export async function GET(
   { params }: { params: Promise<{ gameId: string }> },
 ) {
   try {
-    await initDb();
+    await ensureDbReady();
 
     // AUTH DISABLED: Commenting out auth walls to allow public access
     // const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);

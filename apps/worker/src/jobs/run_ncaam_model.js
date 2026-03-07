@@ -313,6 +313,12 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
 
       return { success: true, jobRunId, cardsGenerated };
     } catch (error) {
+      if (error.code === 'JOB_RUN_ALREADY_CLAIMED') {
+        console.log(
+          `[NCAAMModel] ⏭️  Skipping (job already claimed): ${jobKey || 'none'}`,
+        );
+        return { success: true, jobRunId: null, skipped: true, jobKey };
+      }
       console.error(`[NCAAMModel] ❌ Job failed:`, error.message);
       console.error(error.stack);
       try {

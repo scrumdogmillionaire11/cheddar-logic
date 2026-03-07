@@ -392,7 +392,9 @@ async function fetchMoneyPuckSnapshot({
   if (cachePath) {
     try {
       fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-      fs.writeFileSync(cachePath, JSON.stringify(snapshot, null, 2));
+      const tmpPath = `${cachePath}.${process.pid}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(snapshot, null, 2));
+      fs.renameSync(tmpPath, cachePath);
     } catch (err) {
       console.warn(`[MoneyPuck] Failed to write cache: ${err.message}`);
     }

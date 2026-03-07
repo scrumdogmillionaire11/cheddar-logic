@@ -40,7 +40,8 @@
  */
 
 import { NextResponse, NextRequest } from 'next/server';
-import { initDb, getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
   addRateLimitHeaders,
@@ -555,7 +556,7 @@ export async function GET(request: NextRequest) {
       return securityCheck.error!;
     }
 
-    await initDb();
+    await ensureDbReady();
 
     // AUTH DISABLED: Commenting out auth walls to allow public access
     // const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
