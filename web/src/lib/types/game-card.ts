@@ -94,7 +94,11 @@ export type PassReasonCode =
   | 'PASS_NO_EDGE'
   | 'PASS_MISSING_PRIMARY_DRIVER'
   | 'PASS_CONFLICT_HIGH'
-  | 'PASS_BLOCKED_STALE';
+  | 'PASS_BLOCKED_STALE'
+  // Missing-data taxonomy (distinct from no-edge outcomes)
+  | 'MISSING_DATA_NO_PLAYS'
+  | 'MISSING_DATA_DRIVERS'
+  | 'MISSING_DATA_NO_ODDS';
 
 export type RiskTag =
   | 'RISK_BLOWOUT'

@@ -834,6 +834,21 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const truthDriver = pickTruthDriver(drivers);
 
   if (!truthDriver) {
+    // Distinguish: no driver plays loaded vs plays exist but no truth driver qualified
+    const hasNoOdds = game.odds === null;
+    const hasNoPlays = game.plays.length === 0;
+    const missingDataCode: string =
+      hasNoOdds && hasNoPlays
+        ? 'MISSING_DATA_NO_ODDS'
+        : hasNoPlays
+          ? 'MISSING_DATA_NO_PLAYS'
+          : 'MISSING_DATA_DRIVERS';
+    const missingDataText: string =
+      hasNoOdds && hasNoPlays
+        ? 'No odds data loaded'
+        : hasNoPlays
+          ? 'No driver plays loaded'
+          : 'Driver load failed — no qualified drivers';
     return {
       market_key: 'INFO|NONE',
       decision: 'PASS',
@@ -872,14 +887,14 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       betAction: 'NO_PLAY',
       priceFlags: ['VIG_HEAVY'],
       updatedAt: game.odds?.capturedAt || game.createdAt,
-      whyCode: 'NO_DECISION',
-      whyText: 'No clear edge found',
+      whyCode: missingDataCode,
+      whyText: missingDataText,
       market_type: 'INFO',
       kind: 'PLAY',
       consistency: {
         total_bias: game.consistency?.total_bias ?? 'UNKNOWN',
       },
-      reason_codes: ['PASS_NO_QUALIFIED_PLAYS'],
+      reason_codes: [missingDataCode, 'PASS_NO_QUALIFIED_PLAYS'],
       tags: [],
     };
   }
@@ -1685,8 +1700,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   }
 
   if (quality === 'BROKEN') {
+    const brokenCodes = ['PASS_DATA_ERROR'];
+    if (missingInputs.has('drivers')) {
+      brokenCodes.push('MISSING_DATA_DRIVERS');
+    }
     reasonCodesUnique = Array.from(
-      new Set([...reasonCodesUnique, 'PASS_DATA_ERROR']),
+      new Set([...reasonCodesUnique, ...brokenCodes]),
     );
     gateCodes.add('PASS_DATA_ERROR');
     finalBet = null;
