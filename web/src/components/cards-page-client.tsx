@@ -356,6 +356,10 @@ export default function CardsPageClient() {
     getDefaultFilters('game'),
   );
   const isInitialLoad = useRef(true);
+  const [diagnosticFilter, setDiagnosticFilter] = useState<{
+    sport: string;
+    bucket: 'missingMapping' | 'driverLoadFailed' | 'noOdds' | 'noProjection';
+  } | null>(null);
   const showTrace =
     process.env.NODE_ENV !== 'production' ||
     process.env.NEXT_PUBLIC_CARDS_TRACE === 'true';
@@ -482,6 +486,93 @@ export default function CardsPageClient() {
       droppedMetaBySport,
     };
   }, [enrichedCards, filters, viewMode]);
+  type SportBuckets = {
+    missingMapping: number;
+    driverLoadFailed: number;
+    noOdds: number;
+    noProjection: number;
+  };
+  type SportDiagnosticsMap = Record<string, SportBuckets>;
+
+  const sportDiagnostics = useMemo((): SportDiagnosticsMap => {
+    const visibleIds = new Set(filteredCards.map((card) => card.id));
+    const result: SportDiagnosticsMap = {};
+    for (const card of enrichedCards) {
+      if (visibleIds.has(card.id)) continue;
+      const codes = card.play?.reason_codes ?? [];
+      const missingInputs = card.play?.transform_meta?.missing_inputs ?? [];
+      const sportKey = (card.sport || 'UNKNOWN').toUpperCase();
+      if (!result[sportKey]) {
+        result[sportKey] = {
+          missingMapping: 0,
+          driverLoadFailed: 0,
+          noOdds: 0,
+          noProjection: 0,
+        };
+      }
+      const buckets = result[sportKey];
+      // Priority: noOdds > missingMapping > driverLoadFailed > noProjection
+      if (
+        codes.includes('MISSING_DATA_NO_ODDS') ||
+        missingInputs.includes('odds_timestamp')
+      ) {
+        buckets.noOdds += 1;
+      } else if (
+        codes.includes('MISSING_DATA_NO_PLAYS') ||
+        codes.includes('PASS_MISSING_MARKET_TYPE')
+      ) {
+        buckets.missingMapping += 1;
+      } else if (
+        codes.includes('MISSING_DATA_DRIVERS') ||
+        codes.includes('PASS_DATA_ERROR')
+      ) {
+        buckets.driverLoadFailed += 1;
+      } else {
+        buckets.noProjection += 1;
+      }
+    }
+    return result;
+  }, [enrichedCards, filteredCards]);
+
+  const diagnosticCards = useMemo(() => {
+    if (!diagnosticFilter) return [];
+    const visibleIds = new Set(filteredCards.map((card) => card.id));
+    return enrichedCards.filter((card) => {
+      if (visibleIds.has(card.id)) return false;
+      if ((card.sport || 'UNKNOWN').toUpperCase() !== diagnosticFilter.sport) return false;
+      const codes = card.play?.reason_codes ?? [];
+      const missingInputs = card.play?.transform_meta?.missing_inputs ?? [];
+      switch (diagnosticFilter.bucket) {
+        case 'noOdds':
+          return (
+            codes.includes('MISSING_DATA_NO_ODDS') ||
+            missingInputs.includes('odds_timestamp')
+          );
+        case 'missingMapping':
+          return (
+            codes.includes('MISSING_DATA_NO_PLAYS') ||
+            codes.includes('PASS_MISSING_MARKET_TYPE')
+          );
+        case 'driverLoadFailed':
+          return (
+            codes.includes('MISSING_DATA_DRIVERS') ||
+            codes.includes('PASS_DATA_ERROR')
+          );
+        case 'noProjection':
+          return (
+            !codes.includes('MISSING_DATA_NO_ODDS') &&
+            !missingInputs.includes('odds_timestamp') &&
+            !codes.includes('MISSING_DATA_NO_PLAYS') &&
+            !codes.includes('PASS_MISSING_MARKET_TYPE') &&
+            !codes.includes('MISSING_DATA_DRIVERS') &&
+            !codes.includes('PASS_DATA_ERROR')
+          );
+        default:
+          return false;
+      }
+    });
+  }, [diagnosticFilter, enrichedCards, filteredCards]);
+
   const hiddenDataErrors = useMemo(
     () =>
       Object.values(dropTraceStats.droppedMetaBySport).reduce(
@@ -1083,6 +1174,91 @@ export default function CardsPageClient() {
 
   const driverRowKey = (driver: DriverRow) =>
     `${driver.key}-${driver.market}-${driver.direction}-${driver.cardTitle}`;
+
+  const BUCKET_LABELS: Record<
+    'missingMapping' | 'driverLoadFailed' | 'noOdds' | 'noProjection',
+    string
+  > = {
+    missingMapping: 'Missing mapping',
+    driverLoadFailed: 'Driver load failed',
+    noOdds: 'No odds',
+    noProjection: 'No projection',
+  };
+
+  const SportDiagnosticsPanel = ({
+    diagnostics,
+    onBucketClick,
+  }: {
+    diagnostics: SportDiagnosticsMap;
+    onBucketClick: (
+      sport: string,
+      bucket: 'missingMapping' | 'driverLoadFailed' | 'noOdds' | 'noProjection',
+    ) => void;
+  }) => {
+    const sportsWithBlocked = Object.entries(diagnostics).filter(
+      ([, buckets]) =>
+        buckets.missingMapping +
+          buckets.driverLoadFailed +
+          buckets.noOdds +
+          buckets.noProjection >
+        0,
+    );
+    if (sportsWithBlocked.length === 0) return null;
+    const totalBlocked = sportsWithBlocked.reduce(
+      (sum, [, b]) =>
+        sum + b.missingMapping + b.driverLoadFailed + b.noOdds + b.noProjection,
+      0,
+    );
+    return (
+      <details className="mb-4 border-t border-white/10 pt-2">
+        <summary className="cursor-pointer text-xs text-cloud/50 hover:text-cloud/70 select-none">
+          Diagnostics — {totalBlocked} game{totalBlocked !== 1 ? 's' : ''} blocked
+        </summary>
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-xs text-cloud/50">
+            <thead>
+              <tr>
+                <th className="text-left pr-4 pb-1 font-normal">Sport</th>
+                <th className="text-center px-2 pb-1 font-normal">No odds</th>
+                <th className="text-center px-2 pb-1 font-normal">Missing map</th>
+                <th className="text-center px-2 pb-1 font-normal">Driver failed</th>
+                <th className="text-center px-2 pb-1 font-normal">No projection</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sportsWithBlocked.map(([sport, buckets]) => (
+                <tr key={sport}>
+                  <td className="pr-4 py-0.5 font-mono">{sport}</td>
+                  {(
+                    [
+                      'noOdds',
+                      'missingMapping',
+                      'driverLoadFailed',
+                      'noProjection',
+                    ] as const
+                  ).map((bucket) => (
+                    <td key={bucket} className="text-center px-2 py-0.5">
+                      {buckets[bucket] > 0 ? (
+                        <button
+                          onClick={() => onBucketClick(sport, bucket)}
+                          className="underline decoration-dotted hover:text-cloud/80 tabular-nums"
+                          title={`Show ${buckets[bucket]} blocked ${sport} — ${BUCKET_LABELS[bucket]}`}
+                        >
+                          {buckets[bucket]}
+                        </button>
+                      ) : (
+                        <span className="text-cloud/20">—</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    );
+  };
 
   const GameCardItem = ({
     card,
@@ -1811,6 +1987,36 @@ export default function CardsPageClient() {
           </div>
         )}
 
+        {!loading && viewMode === 'game' && !error && enrichedCards.length > 0 && (
+          <SportDiagnosticsPanel
+            diagnostics={sportDiagnostics}
+            onBucketClick={(sport, bucket) =>
+              setDiagnosticFilter((prev) =>
+                prev?.sport === sport && prev?.bucket === bucket
+                  ? null
+                  : { sport, bucket },
+              )
+            }
+          />
+        )}
+
+        {!loading && viewMode === 'game' && diagnosticFilter && (
+          <div className="mb-3 flex items-center gap-2 rounded-md border border-white/10 bg-surface/40 px-3 py-1.5 text-xs text-cloud/70">
+            <span>
+              Showing {diagnosticCards.length} blocked {diagnosticFilter.sport} games
+              {' — '}
+              {BUCKET_LABELS[diagnosticFilter.bucket]}
+            </span>
+            <button
+              onClick={() => setDiagnosticFilter(null)}
+              className="ml-auto text-cloud/40 hover:text-cloud/70"
+              aria-label="Dismiss diagnostic filter"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {!loading &&
           ((viewMode === 'props' && propCards.length === 0) ||
             (viewMode === 'game' && filteredCards.length === 0)) &&
@@ -1821,6 +2027,27 @@ export default function CardsPageClient() {
                   ? 'No qualified props match your filters'
                   : 'No games match your filters'}
               </div>
+              {viewMode === 'game' && enrichedCards.length > 0 && (
+                <div className="mt-2 text-left mx-auto max-w-sm text-xs text-cloud/40 space-y-1">
+                  <div className="font-semibold text-cloud/50 mb-1">
+                    {enrichedCards.length} game{enrichedCards.length !== 1 ? 's' : ''} excluded — breakdown by sport:
+                  </div>
+                  {Object.entries(sportDiagnostics)
+                    .filter(
+                      ([, b]) =>
+                        b.missingMapping + b.driverLoadFailed + b.noOdds + b.noProjection > 0,
+                    )
+                    .map(([sport, b]) => (
+                      <div key={sport} className="flex gap-2 font-mono">
+                        <span className="w-16">{sport}</span>
+                        {b.noOdds > 0 && <span>no-odds:{b.noOdds}</span>}
+                        {b.missingMapping > 0 && <span>no-map:{b.missingMapping}</span>}
+                        {b.driverLoadFailed > 0 && <span>driver-fail:{b.driverLoadFailed}</span>}
+                        {b.noProjection > 0 && <span>no-proj:{b.noProjection}</span>}
+                      </div>
+                    ))}
+                </div>
+              )}
               {activeFilterCount > 0 && (
                 <button
                   onClick={handleResetFilters}
@@ -1853,6 +2080,40 @@ export default function CardsPageClient() {
                   card={card}
                   originalGame={originalGame}
                 />
+              );
+            })}
+          </div>
+        )}
+
+        {!loading && viewMode === 'game' && diagnosticFilter && diagnosticCards.length > 0 && (
+          <div className="mt-6 space-y-2">
+            <div className="text-xs text-cloud/40 border-t border-white/10 pt-3 mb-2">
+              Blocked games — {BUCKET_LABELS[diagnosticFilter.bucket]}
+            </div>
+            {diagnosticCards.map((card) => {
+              const codes = card.play?.reason_codes ?? [];
+              const badge = codes
+                .filter((c) =>
+                  c.startsWith('MISSING_DATA') ||
+                  c.startsWith('PASS_DATA') ||
+                  c.startsWith('PASS_MISSING') ||
+                  c === 'PASS_NO_QUALIFIED_PLAYS',
+                )
+                .join(', ');
+              return (
+                <div
+                  key={`diag-${card.id}`}
+                  className="flex items-center gap-3 rounded-md border border-white/5 bg-surface/20 px-3 py-2 opacity-60 text-xs"
+                >
+                  <span className="text-cloud/50 font-medium">
+                    {card.awayTeam} @ {card.homeTeam}
+                  </span>
+                  {badge && (
+                    <span className="ml-auto font-mono text-amber-400/70 text-[10px]">
+                      {badge}
+                    </span>
+                  )}
+                </div>
               );
             })}
           </div>
