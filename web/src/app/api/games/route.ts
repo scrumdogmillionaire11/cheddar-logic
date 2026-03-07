@@ -401,10 +401,14 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   } catch {
     // fall through to singleton
   }
-  const row = db
-    .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
-    .get() as { current_run_id?: string | null } | undefined;
-  return row?.current_run_id ? [row.current_run_id] : [];
+  try {
+    const row = db
+      .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
+      .get() as { current_run_id?: string | null } | undefined;
+    return row?.current_run_id ? [row.current_run_id] : [];
+  } catch {
+    return [];
+  }
 }
 
 function getRunStatus(
@@ -537,7 +541,14 @@ export async function GET(request: NextRequest) {
 
     const sql = `
       WITH latest_odds AS (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY captured_at DESC) AS rn
+        SELECT
+          id, game_id, sport, captured_at,
+          h2h_home, h2h_away, total,
+          spread_home, spread_away,
+          spread_price_home, spread_price_away,
+          total_price_over, total_price_under,
+          moneyline_home, moneyline_away,
+          ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY captured_at DESC) AS rn
         FROM odds_snapshots
       )
       SELECT
