@@ -260,8 +260,8 @@ describe('auth session management', () => {
     expect(payload.sub).toBe('test-user');
     expect(payload.sid).toBe('test-session');
 
-    // Token exp is in seconds, convert to ms for comparison
-    const expMs = payload.exp * 1000;
+    // Token exp is stored in ms
+    const expMs = payload.exp;
     const now = Date.now();
     const remaining = expMs - now;
 

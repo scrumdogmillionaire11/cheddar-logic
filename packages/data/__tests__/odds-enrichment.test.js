@@ -3,29 +3,50 @@
  * Validates that ESPN enrichment data is properly stored in odds_snapshots.raw_data
  */
 
-const {
-  initDb,
-  getDatabase,
-  closeDatabase,
-  updateOddsSnapshotRawData,
-} = require('../src/db.js');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+function makeTempDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'cheddar-odds-enrichment-'));
+}
+
+function resetEnv() {
+  delete process.env.CHEDDAR_DB_PATH;
+}
 
 describe('Odds Enrichment Persistence', () => {
   let testSnapshotId;
+  let tempDir;
+  let dbPath;
+  let dbModule;
   const TEST_GAME_ID = 'test-game-enrichment-001';
   const TEST_SPORT = 'NBA';
 
   beforeAll(async () => {
-    await initDb();
+    tempDir = makeTempDir();
+    dbPath = path.join(tempDir, 'cheddar.db');
+    process.env.CHEDDAR_DB_PATH = dbPath;
+
+    jest.resetModules();
+    dbModule = require('../src/db.js');
+    await dbModule.initDb();
+    const { runMigrations } = require('../src/migrate');
+    await runMigrations();
   });
 
   afterAll(() => {
-    closeDatabase();
+    if (dbModule) {
+      dbModule.closeDatabase();
+    }
+    resetEnv();
+    jest.resetModules();
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   beforeEach(() => {
     // Insert a test odds snapshot
-    const db = getDatabase();
+    const db = dbModule.getDatabase();
     
     // Clean up any existing test data
     db.prepare('DELETE FROM odds_snapshots WHERE game_id = ?').run(TEST_GAME_ID);
@@ -83,14 +104,14 @@ describe('Odds Enrichment Persistence', () => {
 
   afterEach(() => {
     // Clean up test data
-    const db = getDatabase();
+    const db = dbModule.getDatabase();
     db.prepare('DELETE FROM odds_snapshots WHERE game_id = ?').run(TEST_GAME_ID);
     db.prepare('DELETE FROM games WHERE game_id = ?').run(TEST_GAME_ID);
   });
 
   describe('updateOddsSnapshotRawData', () => {
     test('should successfully update raw_data with ESPN metrics', () => {
-      const db = getDatabase();
+      const db = dbModule.getDatabase();
       
       // First verify the snapshot exists
       const beforeUpdate = db.prepare(
@@ -112,7 +133,7 @@ describe('Odds Enrichment Persistence', () => {
         original_spread: -5.5,
       };
 
-      const result = updateOddsSnapshotRawData(testSnapshotId, enrichedData);
+      const result = dbModule.updateOddsSnapshotRawData(testSnapshotId, enrichedData);
       
       // Check if data was actually updated, regardless of return value
       const afterUpdate = db.prepare(
@@ -131,11 +152,11 @@ describe('Odds Enrichment Persistence', () => {
     });
 
     test('should handle null enriched data gracefully', () => {
-      const result = updateOddsSnapshotRawData(testSnapshotId, null);
+      const result = dbModule.updateOddsSnapshotRawData(testSnapshotId, null);
       
       expect(result).toBe(true);
 
-      const db = getDatabase();
+      const db = dbModule.getDatabase();
       const snapshot = db.prepare(
         'SELECT raw_data FROM odds_snapshots WHERE id = ?'
       ).get(testSnapshotId);
@@ -148,20 +169,20 @@ describe('Odds Enrichment Persistence', () => {
         espn_metrics: { home_pace: 100 },
       };
 
-      const result = updateOddsSnapshotRawData(999999, enrichedData);
+      const result = dbModule.updateOddsSnapshotRawData(999999, enrichedData);
       
       expect(result).toBe(false);
     });
 
     test('should update existing raw_data without losing other fields', () => {
-      const db = getDatabase();
+      const db = dbModule.getDatabase();
       
       // First, add some initial data
       const initialData = {
         custom_field: 'test_value',
         timestamp: new Date().toISOString(),
       };
-      updateOddsSnapshotRawData(testSnapshotId, initialData);
+      dbModule.updateOddsSnapshotRawData(testSnapshotId, initialData);
 
       // Now update with ESPN metrics
       const enrichedData = {
@@ -173,7 +194,7 @@ describe('Odds Enrichment Persistence', () => {
         },
       };
       
-      const result = updateOddsSnapshotRawData(testSnapshotId, enrichedData);
+      const result = dbModule.updateOddsSnapshotRawData(testSnapshotId, enrichedData);
       expect(result).toBe(true);
 
       // Verify both old and new data exist
@@ -195,10 +216,10 @@ describe('Odds Enrichment Persistence', () => {
         },
       };
 
-      updateOddsSnapshotRawData(testSnapshotId, enrichedData);
+      dbModule.updateOddsSnapshotRawData(testSnapshotId, enrichedData);
 
       // Test JSON extraction query (used in acceptance criteria)
-      const db = getDatabase();
+      const db = dbModule.getDatabase();
       const result = db.prepare(`
         SELECT 
           json_extract(raw_data, '$.espn_metrics') as espn_metrics,
@@ -218,10 +239,10 @@ describe('Odds Enrichment Persistence', () => {
         },
       };
 
-      updateOddsSnapshotRawData(testSnapshotId, enrichedData);
+      dbModule.updateOddsSnapshotRawData(testSnapshotId, enrichedData);
 
       // Run the acceptance criteria query
-      const db = getDatabase();
+      const db = dbModule.getDatabase();
       const result = db.prepare(`
         SELECT COUNT(*) as count 
         FROM odds_snapshots 
@@ -241,7 +262,7 @@ describe('Odds Enrichment Persistence', () => {
       };
       
       // First update with original data (simulating initial snapshot)
-      updateOddsSnapshotRawData(testSnapshotId, originalRawData);
+      dbModule.updateOddsSnapshotRawData(testSnapshotId, originalRawData);
 
       // Then enrich and update (simulating enrichment step)
       const enrichedRawData = {
@@ -254,11 +275,11 @@ describe('Odds Enrichment Persistence', () => {
         },
       };
 
-      const result = updateOddsSnapshotRawData(testSnapshotId, enrichedRawData);
+      const result = dbModule.updateOddsSnapshotRawData(testSnapshotId, enrichedRawData);
       expect(result).toBe(true);
 
       // Verify enrichment is queryable
-      const db = getDatabase();
+      const db = dbModule.getDatabase();
       const snapshot = db.prepare(
         'SELECT raw_data FROM odds_snapshots WHERE id = ?'
       ).get(testSnapshotId);

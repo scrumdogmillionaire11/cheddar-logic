@@ -7,6 +7,7 @@ function makeTempDir() {
 }
 
 function resetEnv() {
+  delete process.env.CHEDDAR_DB_PATH;
   delete process.env.DATABASE_PATH;
   delete process.env.CHEDDAR_DATA_DIR;
 }
@@ -17,6 +18,7 @@ describe('seed-cards DATABASE_PATH', () => {
   let altDir;
 
   beforeEach(() => {
+    delete process.env.CHEDDAR_DB_PATH;
     tempDir = makeTempDir();
     dbPath = path.join(tempDir, 'cheddar.db');
     altDir = path.join(tempDir, 'alt-data');
@@ -31,6 +33,7 @@ describe('seed-cards DATABASE_PATH', () => {
   test('writes card payloads to DATABASE_PATH', async () => {
     process.env.DATABASE_PATH = dbPath;
     process.env.CHEDDAR_DATA_DIR = altDir;
+    process.env.CHEDDAR_DB_PATH = '';
 
     jest.resetModules();
     const { initDb, getDatabase, closeDatabase } = require('../src/db.js');

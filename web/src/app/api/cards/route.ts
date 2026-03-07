@@ -99,10 +99,14 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   } catch {
     // fall through to singleton
   }
-  const row = db
-    .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
-    .get() as { current_run_id?: string | null } | undefined;
-  return row?.current_run_id ? [row.current_run_id] : [];
+  try {
+    const row = db
+      .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
+      .get() as { current_run_id?: string | null } | undefined;
+    return row?.current_run_id ? [row.current_run_id] : [];
+  } catch {
+    return [];
+  }
 }
 
 function getRunStatus(

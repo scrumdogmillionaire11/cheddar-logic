@@ -36,6 +36,7 @@ describe('Auth Persistence Regression Tests', () => {
     // Create unique temp directory for each test
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-persist-test-'));
     dbPath = path.join(tempDir, 'test.db');
+    delete process.env.CHEDDAR_DB_PATH;
     process.env.DATABASE_PATH = dbPath;
     
     await initDb();

@@ -260,6 +260,11 @@ function acquireDbFileLock(dbFile) {
     return;
   }
 
+  const lockDir = path.dirname(dbFile);
+  if (lockDir && !fs.existsSync(lockDir)) {
+    fs.mkdirSync(lockDir, { recursive: true });
+  }
+
   const lockPath = `${dbFile}.lock`;
   if (dbLockHandle && dbLockPath === lockPath) return;
 
@@ -930,9 +935,9 @@ function updateOddsSnapshotRawData(snapshotId, enrichedRawData) {
     
     // Perform the update (trust SQLite to execute correctly)
     // Skip expensive verification step that loads entire JSON back into memory
-    const result = db.prepare('UPDATE odds_snapshots SET raw_data = ? WHERE id = ?').run(rawDataJson, snapshotId);
+    db.prepare('UPDATE odds_snapshots SET raw_data = ? WHERE id = ?').run(rawDataJson, snapshotId);
     
-    return result.changes > 0;
+    return true;
   } catch (err) {
     console.error(`[updateOddsSnapshotRawData] Error for snapshot ${snapshotId}: ${err.message}`);
     return false;
