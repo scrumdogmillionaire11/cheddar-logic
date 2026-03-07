@@ -919,6 +919,32 @@ export default function CardsPageClient() {
     return marketType.toUpperCase();
   };
 
+  const getMarketTypeBadge = (betMarketType?: string | null, market?: Market | 'NONE') => {
+    const t = betMarketType?.toLowerCase() ?? market?.toLowerCase() ?? '';
+    if (t === 'moneyline' || t === 'ml') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-bold rounded border bg-blue-700/40 text-blue-200 border-blue-600/60">
+          ML
+        </span>
+      );
+    }
+    if (t === 'spread') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-bold rounded border bg-purple-700/40 text-purple-200 border-purple-600/60">
+          SPREAD
+        </span>
+      );
+    }
+    if (t === 'total') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-bold rounded border bg-teal-700/40 text-teal-200 border-teal-600/60">
+          TOTAL
+        </span>
+      );
+    }
+    return null;
+  };
+
   const formatCanonicalBetText = (
     bet:
       | {
@@ -1118,11 +1144,6 @@ export default function CardsPageClient() {
           ? 'WATCH'
           : 'PASS');
     const displayDecision = isBroken ? 'PASS' : inferredDecision;
-    const displayClassification = displayPlay.bet
-      ? 'PLAY'
-      : displayDecision === 'WATCH'
-        ? 'WATCHLIST'
-        : 'NO PLAY';
     const canonicalGates = (displayPlay.gates ?? []).map((gate) => gate.code);
     const activeRiskCodes = Array.from(
       new Set([...canonicalGates, ...decision.riskCodes]),
@@ -1141,6 +1162,13 @@ export default function CardsPageClient() {
       ? formatDate(displayPlay.bet.as_of_iso)
       : updatedTime;
     const canRenderModelSummary = !isBroken && card.drivers.length > 0;
+    const effectiveEdgePct =
+      typeof displayPlay.decision_data?.edge_pct === 'number'
+        ? displayPlay.decision_data.edge_pct
+        : (displayPlay.edge ?? 0);
+    const isCoinflip = Boolean(canRenderModelSummary && displayPlay.decision_data?.coinflip);
+    const isCoinflipHighEdge = isCoinflip && effectiveEdgePct > 0.05;
+    const isCoinflipLowEdge = isCoinflip && effectiveEdgePct <= 0.05;
 
     const [showAllDrivers, setShowAllDrivers] = useState(false);
     const blockedTotals = hasActiveTotalBet
@@ -1263,23 +1291,26 @@ export default function CardsPageClient() {
           {/* Compact Play Strip */}
           <div className="rounded-md border border-white/10 bg-white/5 p-3">
             <div className="flex items-center justify-between gap-4 flex-wrap">
-              <div className="flex items-center gap-3">
-                <span className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">
-                  Classification:
-                </span>
-                <span className="text-lg font-bold text-cloud">
-                  {displayClassification}
-                </span>
-                {displayPlay.bet && displayPlay.lean && (
-                  <span className="text-xs text-cloud/60">
-                    ({displayPlay.lean})
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* WI-0331: Market type badge */}
+                {getMarketTypeBadge(displayPlay.bet?.market_type, displayPlay.market)}
+                {/* Decision badge — muted when coinflip + low edge */}
+                {displayDecision && (
+                  <span
+                    className={`px-2 py-1 text-xs font-bold rounded border ${
+                      isCoinflipLowEdge
+                        ? 'bg-slate-700/50 text-slate-300 border-slate-600/60'
+                        : displayDecision === 'FIRE'
+                          ? 'bg-green-700/50 text-green-200 border-green-600/60'
+                          : displayDecision === 'WATCH'
+                            ? 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60'
+                            : 'bg-slate-700/50 text-slate-200 border-slate-600/60'
+                    }`}
+                  >
+                    {displayDecision}
                   </span>
                 )}
-                {canRenderModelSummary && (
-                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-white/10 text-cloud/70 border-white/20">
-                    Truth {displayPlay.truthStatus}
-                  </span>
-                )}
+                {/* Quality badges */}
                 {isDegraded && (
                   <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-amber-700/30 text-amber-200 border-amber-600/50">
                     Degraded
@@ -1289,6 +1320,24 @@ export default function CardsPageClient() {
                   <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-red-700/30 text-red-200 border-red-600/50">
                     Data issue
                   </span>
+                )}
+                {/* Flags */}
+                {isCoinflip && (
+                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-blue-700/30 text-blue-200 border-blue-600/50">
+                    Coinflip
+                  </span>
+                )}
+                {canRenderModelSummary && displayPlay.priceFlags.length > 0 && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {displayPlay.priceFlags.map((flag) => (
+                      <span
+                        key={flag}
+                        className={`px-2 py-0.5 text-xs font-semibold rounded border ${getPriceFlagClass(flag)}`}
+                      >
+                        {formatPriceFlagLabel(flag)}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
               <div className="text-right text-xs text-cloud/60 space-y-0.5">
@@ -1304,65 +1353,87 @@ export default function CardsPageClient() {
               <span className="text-xl font-bold text-cloud">
                 {displayBetText}
               </span>
-              {displayDecision && (
-                <span
-                  className={`px-2 py-1 text-xs font-bold rounded border ${displayDecision === 'FIRE' ? 'bg-green-700/50 text-green-200 border-green-600/60' : displayDecision === 'WATCH' ? 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60' : 'bg-slate-700/50 text-slate-200 border-slate-600/60'}`}
-                >
-                  {displayDecision}
-                </span>
-              )}
-              {canRenderModelSummary && (
-                <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-white/10 text-cloud/70 border-white/20">
-                  Value{' '}
-                  {displayPlay.decision_data?.value_tier ??
-                    displayPlay.valueStatus}
-                </span>
-              )}
-              {canRenderModelSummary && displayPlay.decision_data?.coinflip && (
-                <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-blue-700/30 text-blue-200 border-blue-600/50">
-                  Coinflip
-                </span>
-              )}
-              {canRenderModelSummary && displayPlay.priceFlags.length > 0 && (
-                <div className="flex items-center gap-2 flex-wrap">
-                  {displayPlay.priceFlags.map((flag) => (
-                    <span
-                      key={flag}
-                      className={`px-2 py-0.5 text-xs font-semibold rounded border ${getPriceFlagClass(flag)}`}
-                    >
-                      {formatPriceFlagLabel(flag)}
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
             {canRenderModelSummary ? (
-              <div className="text-xs text-cloud/60">
-                Truth{' '}
-                {displayPlay.decision_data?.truth ?? displayPlay.truthStatus} •
+              <div className="mt-1 text-xs text-cloud/60">
                 Edge{' '}
-                {(typeof displayPlay.decision_data?.edge_pct === 'number'
-                  ? displayPlay.decision_data.edge_pct
-                  : (displayPlay.edge ?? 0)) *
-                  100 >=
-                0
-                  ? '+'
-                  : ''}
-                {(
-                  (typeof displayPlay.decision_data?.edge_pct === 'number'
-                    ? displayPlay.decision_data.edge_pct
-                    : (displayPlay.edge ?? 0)) * 100
-                ).toFixed(1)}
-                % • Tier{' '}
-                {displayPlay.decision_data?.edge_tier ??
-                  displayPlay.valueStatus}
+                {effectiveEdgePct * 100 >= 0 ? '+' : ''}
+                {(effectiveEdgePct * 100).toFixed(1)}% • Tier{' '}
+                {displayPlay.decision_data?.edge_tier ?? displayPlay.valueStatus}
               </div>
             ) : (
-              <div className="text-xs text-amber-200/90">
+              <div className="mt-1 text-xs text-amber-200/90">
                 Analysis unavailable (drivers missing).
               </div>
             )}
           </div>
+
+          {/* WI-0327: Edge Math section */}
+          {canRenderModelSummary &&
+            typeof displayPlay.modelProb === 'number' &&
+            typeof displayPlay.impliedProb === 'number' &&
+            typeof effectiveEdgePct === 'number' && (
+              <div className="rounded-md border border-white/10 bg-white/5 p-3">
+                <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
+                  Edge Math
+                </p>
+                <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+                  <span className="text-cloud/60">
+                    Fair{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {(displayPlay.modelProb * 100).toFixed(1)}%
+                    </span>
+                  </span>
+                  <span className="text-cloud/40">→</span>
+                  <span className="text-cloud/60">
+                    Implied{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {(displayPlay.impliedProb * 100).toFixed(1)}%
+                    </span>
+                  </span>
+                  <span className="text-cloud/40">→</span>
+                  <span className="text-cloud/60">
+                    Edge{' '}
+                    <span
+                      className={`font-bold ${effectiveEdgePct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+                    >
+                      {effectiveEdgePct >= 0 ? '+' : ''}
+                      {(effectiveEdgePct * 100).toFixed(1)}%
+                    </span>
+                  </span>
+                </div>
+                <p className="text-xs text-cloud/50 mt-1">
+                  Edge = Fair% − Implied%
+                </p>
+                {effectiveEdgePct > 0.3 && (
+                  <p className="text-xs text-amber-300/90 mt-1 font-semibold">
+                    Caution: edge above 30% — verify line freshness
+                  </p>
+                )}
+              </div>
+            )}
+
+          {/* WI-0332: Coinflip + edge messaging */}
+          {isCoinflipHighEdge && (
+            <div className="rounded-md border border-blue-600/40 bg-blue-900/20 p-3">
+              <p className="text-xs font-semibold text-blue-200 mb-1">
+                Pricing Inefficiency Detected
+              </p>
+              <p className="text-xs text-blue-100/80">
+                Model gives ~50% win probability, but the market is pricing this
+                significantly off. The edge here comes from an exploitable line,
+                not a strong directional signal.
+              </p>
+            </div>
+          )}
+          {isCoinflipLowEdge && (
+            <div className="rounded-md border border-white/5 bg-white/3 p-3">
+              <p className="text-xs text-cloud/50">
+                Near-even matchup with minimal market edge. Treat with caution —
+                small variance swings could flip this outcome.
+              </p>
+            </div>
+          )}
 
           <div className="rounded-md border border-white/10 bg-white/5 p-3">
             <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-1">
@@ -1452,14 +1523,13 @@ export default function CardsPageClient() {
             </details>
           )}
 
-          <details className="rounded-md border border-white/10 bg-white/5 p-3">
-            <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold">
-              Risk / Gates
-            </summary>
-            <div className="mt-2 space-y-2">
-              {activeRiskCodes.length === 0 ? (
-                <p className="text-xs text-cloud/50">No active risk gates.</p>
-              ) : (
+          {/* WI-0328: only render Risk/Gates when there are active codes */}
+          {activeRiskCodes.length > 0 && (
+            <details className="rounded-md border border-white/10 bg-white/5 p-3">
+              <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold">
+                Risk / Gates
+              </summary>
+              <div className="mt-2 space-y-2">
                 <div className="flex flex-wrap gap-2">
                   {activeRiskCodes.map((code) => (
                     <span
@@ -1470,45 +1540,45 @@ export default function CardsPageClient() {
                     </span>
                   ))}
                 </div>
-              )}
 
-              <button
-                type="button"
-                onClick={toggleDrivers}
-                className="text-xs text-cloud/60 hover:text-cloud underline underline-offset-4"
-              >
-                {showAllDrivers ? 'Hide all drivers' : 'Show all drivers'}
-              </button>
+                <button
+                  type="button"
+                  onClick={toggleDrivers}
+                  className="text-xs text-cloud/60 hover:text-cloud underline underline-offset-4"
+                >
+                  {showAllDrivers ? 'Hide all drivers' : 'Show all drivers'}
+                </button>
 
-              {showAllDrivers && (
-                <div className="space-y-2">
-                  {decision.allDrivers.map((driver) => (
-                    <div
-                      key={`all-${driverRowKey(driver)}`}
-                      className="bg-white/5 rounded-md px-3 py-2"
-                    >
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        {getTierBadge(driver.tier)}
-                        {getDirectionBadge(driver.direction)}
-                        <span className="text-xs font-mono text-cloud/60">
-                          {formatMarketLabel(driver.market)}
-                        </span>
-                        <span className="text-xs font-mono text-cloud/60">
-                          {formatConfidence(driver.confidence)}
-                        </span>
-                        <span className="text-xs text-cloud/70 font-medium">
-                          {driver.cardTitle}
-                        </span>
+                {showAllDrivers && (
+                  <div className="space-y-2">
+                    {decision.allDrivers.map((driver) => (
+                      <div
+                        key={`all-${driverRowKey(driver)}`}
+                        className="bg-white/5 rounded-md px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          {getTierBadge(driver.tier)}
+                          {getDirectionBadge(driver.direction)}
+                          <span className="text-xs font-mono text-cloud/60">
+                            {formatMarketLabel(driver.market)}
+                          </span>
+                          <span className="text-xs font-mono text-cloud/60">
+                            {formatConfidence(driver.confidence)}
+                          </span>
+                          <span className="text-xs text-cloud/70 font-medium">
+                            {driver.cardTitle}
+                          </span>
+                        </div>
+                        <p className="text-xs text-cloud/50 leading-snug">
+                          {driver.note}
+                        </p>
                       </div>
-                      <p className="text-xs text-cloud/50 leading-snug">
-                        {driver.note}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </details>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
         </div>
       </div>
     );
@@ -1569,7 +1639,7 @@ export default function CardsPageClient() {
           {!loading && !error && hiddenDataErrors > 0 && (
             <details className="rounded-md border border-amber-600/50 bg-amber-700/20 px-3 py-2 text-xs text-amber-100">
               <summary className="cursor-pointer font-semibold">
-                Some cards hidden due to data errors ({hiddenDataErrors})
+                {hiddenDataErrors} game{hiddenDataErrors !== 1 ? 's' : ''} excluded due to incomplete data
               </summary>
               {hiddenDataErrorCards.length > 0 && (
                 <div className="mt-2 space-y-1">
@@ -1583,7 +1653,7 @@ export default function CardsPageClient() {
                       </span>
                       <span className="text-amber-200/90">
                         {' '}
-                        · {card.play?.transform_meta?.quality ?? 'BROKEN'}
+                        · {formatDate(card.startTime)}
                       </span>
                       {card.play?.transform_meta?.missing_inputs?.length ? (
                         <span className="text-amber-200/90">
