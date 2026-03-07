@@ -30,6 +30,12 @@ export type Market = 'TOTAL' | 'SPREAD' | 'ML' | 'RISK' | 'UNKNOWN';
 
 export type DriverTier = 'BEST' | 'SUPER' | 'WATCH';
 export type Direction = 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';
+
+/** Role classification for driver gating logic */
+export type DriverRole = 'PRIMARY' | 'CONTEXT' | 'RISK';
+
+/** Consensus grade derived from weighted support vs contra scores */
+export type SupportGrade = 'STRONG' | 'MIXED' | 'WEAK';
 export type SelectionSide =
   | 'OVER'
   | 'UNDER'
@@ -83,7 +89,12 @@ export type PassReasonCode =
   | 'EDGE_FOUND_SIDE'
   | 'EDGE_FOUND'
   | 'REPAIRED_LEGACY_CARD'
-  | 'LEGACY_TITLE_INFERENCE_USED';
+  | 'LEGACY_TITLE_INFERENCE_USED'
+  // Consensus-gated pass reasons (from driver-scoring framework)
+  | 'PASS_NO_EDGE'
+  | 'PASS_MISSING_PRIMARY_DRIVER'
+  | 'PASS_CONFLICT_HIGH'
+  | 'PASS_BLOCKED_STALE';
 
 export type RiskTag =
   | 'RISK_BLOWOUT'
@@ -202,6 +213,8 @@ export interface DriverRow {
   note: string;
   cardType: string;
   cardTitle: string;
+  /** Driver role assigned at transform time from DRIVER_ROLES registry */
+  role?: DriverRole;
 }
 
 /**
@@ -421,6 +434,11 @@ export const GAME_TAGS = {
   HAS_DRIVER_CONTRADICTION: 'has_driver_contradiction',
   NO_ODDS: 'no_odds',
   UNKNOWN_SPORT: 'unknown_sport',
+
+  // Driver consensus / support grade
+  SUPPORT_STRONG: 'support_strong',
+  SUPPORT_MIXED:  'support_mixed',
+  SUPPORT_WEAK:   'support_weak',
 } as const;
 
 export type GameTag = (typeof GAME_TAGS)[keyof typeof GAME_TAGS];

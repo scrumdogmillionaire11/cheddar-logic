@@ -37,6 +37,7 @@ import type {
   Sport as CanonicalSport,
 } from '../types/canonical-play';
 import { deduplicateDrivers, resolvePlayDisplayDecision } from './decision';
+import { DRIVER_ROLES } from './driver-scoring';
 import { derivePlayDecision } from '../play-decision/canonical-decision';
 
 const ENABLE_WELCOME_HOME =
@@ -587,6 +588,7 @@ function playToDriver(play: ApiPlay): DriverRow {
     note: play.reasoning,
     cardType: play.cardType,
     cardTitle: play.cardTitle,
+    role: DRIVER_ROLES[play.cardType] ?? 'CONTEXT',
   };
 }
 

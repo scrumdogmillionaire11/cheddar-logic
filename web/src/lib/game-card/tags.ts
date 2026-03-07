@@ -3,9 +3,10 @@
  * Based on FILTER-FEATURE.md design
  */
 
-import type { GameCard, GameTag, ExpressionStatus } from '../types/game-card';
+import type { GameCard, GameTag, ExpressionStatus, Direction } from '../types/game-card';
 import { GAME_TAGS } from '../types/game-card';
 import { getPlayDisplayAction } from './decision';
+import { computeSupportScores } from './driver-scoring';
 
 /**
  * Derive expression status from drivers if not explicitly provided
@@ -193,6 +194,21 @@ export function deriveTags(card: GameCard): GameTag[] {
   // Data quality
   if (Object.keys(card.markets).length === 0) {
     tags.add(GAME_TAGS.NO_ODDS);
+  }
+
+  // Support grade — consensus strength of driver alignment
+  // Primary direction: prefer card.play.side, fallback to strongest non-neutral driver
+  const rawSide = card.play?.side ?? null;
+  const primaryDirection: Direction | null =
+    rawSide && rawSide !== 'NEUTRAL'
+      ? rawSide
+      : (card.drivers.find((d) => d.direction !== 'NEUTRAL')?.direction ?? null);
+
+  if (primaryDirection && primaryDirection !== 'NEUTRAL') {
+    const scores = computeSupportScores(card.drivers, primaryDirection);
+    if (scores.support_grade === 'STRONG') tags.add(GAME_TAGS.SUPPORT_STRONG);
+    else if (scores.support_grade === 'MIXED') tags.add(GAME_TAGS.SUPPORT_MIXED);
+    else tags.add(GAME_TAGS.SUPPORT_WEAK);
   }
 
   // Check for contradictions (HOME and AWAY picks on same market)

@@ -899,22 +899,40 @@ function deleteOddsSnapshotsByGameAndCapturedAt(gameId, capturedAt) {
 /**
  * Update the raw_data field of the latest odds snapshot for a game.
  * Used to persist ESPN enrichment after the fact.
- * @param {string} gameId - Game ID
- * @param {string} sport - Sport code (NBA, NCAAM, NHL)
- * @param {string} capturedAt - The captured_at timestamp (used for logging only)
- * @param {object} enrichedRawData - The enriched raw_data object to persist
+ * @param {string} snapshotId - The odds_snapshots.id to update
+ * @param {object|string} enrichedRawData - The enriched raw_data (object or JSON string)
  * @returns {boolean} True if update succeeded, false if no matching row found
  */
 function updateOddsSnapshotRawData(snapshotId, enrichedRawData) {
   try {
     const db = getDatabase();
-    const rawDataJson = enrichedRawData ? JSON.stringify(enrichedRawData) : null;
-    const result = db.prepare('UPDATE odds_snapshots SET raw_data = ? WHERE id = ?').run(rawDataJson, snapshotId);
-    if (result.changes === 0) {
-      console.warn(`[updateOddsSnapshotRawData] Failed to update snapshot ${snapshotId} (0 rows changed)`);
+    
+    // Handle both object and string inputs (enrichment functions may return either)
+    let rawDataJson = null;
+    if (enrichedRawData) {
+      rawDataJson = typeof enrichedRawData === 'string'
+        ? enrichedRawData
+        : JSON.stringify(enrichedRawData);
+    }
+    
+    // First verify the row exists
+    const existing = db.prepare('SELECT id FROM odds_snapshots WHERE id = ?').get(snapshotId);
+    if (!existing) {
+      console.warn(`[updateOddsSnapshotRawData] Snapshot ${snapshotId} not found`);
       return false;
     }
-    return true;
+    
+    // Perform the update
+    db.prepare('UPDATE odds_snapshots SET raw_data = ? WHERE id = ?').run(rawDataJson, snapshotId);
+    
+    // Verify the update succeeded by checking the new value
+    const updated = db.prepare('SELECT raw_data FROM odds_snapshots WHERE id = ?').get(snapshotId);
+    if (updated && updated.raw_data === rawDataJson) {
+      return true;
+    }
+    
+    console.warn(`[updateOddsSnapshotRawData] Update verification failed for snapshot ${snapshotId}`);
+    return false;
   } catch (err) {
     console.error(`[updateOddsSnapshotRawData] Error for snapshot ${snapshotId}: ${err.message}`);
     return false;
@@ -971,15 +989,17 @@ function getOddsSnapshots(sport, sinceUtc) {
 /**
  * Get latest odds snapshots for upcoming games only (prevents stale data processing)
  * Joins with games table to filter by game_time_utc
+ * Deduplicates to one snapshot per game (most recent) to prevent OOM on large datasets
  * @param {string} sport - Sport code (e.g., 'NHL')
  * @param {string} nowUtc - Current time in ISO UTC
  * @param {string} horizonUtc - End of time window in ISO UTC (e.g., now + 36 hours)
- * @returns {array} Odds snapshots with game_time_utc attached
+ * @returns {array} Latest odds snapshot per game with game_time_utc attached
  */
 function getOddsWithUpcomingGames(sport, nowUtc, horizonUtc) {
   const db = getDatabase();
   const normalizedSport = normalizeSportValue(sport, 'getOddsWithUpcomingGames');
   
+  // Deduplicate to latest snapshot per game at SQL level to prevent OOM
   const stmt = db.prepare(`
     SELECT 
       o.*,
@@ -987,15 +1007,21 @@ function getOddsWithUpcomingGames(sport, nowUtc, horizonUtc) {
       g.home_team,
       g.away_team
     FROM odds_snapshots o
+    INNER JOIN (
+      SELECT game_id, MAX(captured_at) as max_captured_at
+      FROM odds_snapshots
+      WHERE LOWER(sport) = ?
+      GROUP BY game_id
+    ) latest ON o.game_id = latest.game_id AND o.captured_at = latest.max_captured_at
     INNER JOIN games g ON o.game_id = g.game_id
     WHERE LOWER(o.sport) = ?
       AND g.game_time_utc IS NOT NULL
       AND g.game_time_utc > ?
       AND g.game_time_utc <= ?
-    ORDER BY o.game_id, o.captured_at DESC
+    ORDER BY g.game_time_utc ASC
   `);
   
-  return stmt.all(normalizedSport, nowUtc, horizonUtc);
+  return stmt.all(normalizedSport, normalizedSport, nowUtc, horizonUtc);
 }
 
 /**

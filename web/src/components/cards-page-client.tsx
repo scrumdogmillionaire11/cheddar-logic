@@ -20,6 +20,8 @@ import type {
   DriverTier,
   GameCard,
   Market,
+  SupportGrade,
+  PassReasonCode,
 } from '@/lib/types/game-card';
 import { GAME_TAGS } from '@/lib/types/game-card';
 import {
@@ -309,6 +311,8 @@ type DecisionModel = {
   riskCodes: string[];
   topContributors: DecisionContributor[];
   allDrivers: DriverRow[];
+  supportGrade: SupportGrade;
+  passReasonCode: PassReasonCode | null;
 };
 
 const CLIENT_POLL_INTERVAL_MS = 60_000;
@@ -1468,9 +1472,36 @@ export default function CardsPageClient() {
           </div>
 
           <div className="rounded-md border border-white/10 bg-white/5 p-3">
-            <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
-              Top Contributors
-            </p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">
+                Top Contributors
+              </p>
+              {canRenderModelSummary && decision.supportGrade === 'STRONG' && (
+                <span className="text-xs font-semibold text-emerald-400">Strong</span>
+              )}
+              {canRenderModelSummary && decision.supportGrade === 'MIXED' && (
+                <span className="text-xs font-semibold text-amber-400">
+                  Mixed signals
+                  {decision.topContributors.length > 0 && (
+                    <span className="font-normal text-cloud/50 ml-1">
+                      ({decision.topContributors.filter(c => c.polarity === 'pro').length} aligned
+                      {decision.topContributors.some(c => c.polarity === 'contra')
+                        ? `, ${decision.topContributors.filter(c => c.polarity === 'contra').length} opposing`
+                        : ''})
+                    </span>
+                  )}
+                </span>
+              )}
+              {canRenderModelSummary && decision.supportGrade === 'WEAK' && (
+                <span className="text-xs font-semibold text-cloud/40">
+                  {decision.passReasonCode === 'PASS_MISSING_PRIMARY_DRIVER'
+                    ? 'No primary driver'
+                    : decision.passReasonCode === 'PASS_CONFLICT_HIGH'
+                      ? 'High conflict'
+                      : 'Weak support'}
+                </span>
+              )}
+            </div>
             {!canRenderModelSummary || decision.topContributors.length === 0 ? (
               <p className="text-xs text-cloud/50">
                 {canRenderModelSummary

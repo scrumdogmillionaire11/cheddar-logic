@@ -16,7 +16,14 @@ import type {
   DriverTier,
   ExpressionStatus,
   Play,
+  SupportGrade,
+  PassReasonCode,
 } from '../types/game-card';
+import {
+  computeSupportScores,
+  GATE,
+  type SupportScore,
+} from './driver-scoring';
 
 type DecisionPolarity = 'pro' | 'contra' | 'neutral';
 
@@ -40,6 +47,10 @@ export type DecisionModel = {
   riskCodes: string[];
   topContributors: DecisionContributor[];
   allDrivers: DriverRow[];
+  /** Consensus grade: STRONG / MIXED / WEAK — separate from Edge Tier */
+  supportGrade: SupportGrade;
+  /** Specific reason why a play is PASS (null when FIRE or WATCH) */
+  passReasonCode: PassReasonCode | null;
 };
 
 export type PlayDisplayAction = 'FIRE' | 'HOLD' | 'PASS';
@@ -455,32 +466,76 @@ function getWhyReason(
 }
 
 /**
- * Derive status from drivers and market selection
+ * Derive status using consensus-gated logic.
+ *
+ * Requires:
+ *   - at least 1 PRIMARY-role driver aligned with the play direction
+ *   - net_support above threshold
+ *   - conflict_ratio below threshold
+ *
+ * This replaces the old "any BEST tier = FIRE" heuristic, which allowed a single
+ * loud driver to hijack the label regardless of driver consensus.
  */
 function deriveStatus(
   card: GameCard,
   drivers: DriverRow[],
   market: Market | 'NONE',
+  direction: Direction | null,
 ): ExpressionStatus {
   if (card.expressionChoice?.status) {
     return card.expressionChoice.status;
   }
 
-  if (market === 'NONE') {
+  if (market === 'NONE' || !direction || direction === 'NEUTRAL') {
     return 'PASS';
   }
 
-  const hasBestNonNeutral = drivers.some(
-    (driver) => driver.tier === 'BEST' && driver.direction !== 'NEUTRAL',
-  );
-  if (hasBestNonNeutral) return 'FIRE';
+  const scores = computeSupportScores(drivers, direction);
 
-  const hasSuperNonNeutral = drivers.some(
-    (driver) => driver.tier === 'SUPER' && driver.direction !== 'NEUTRAL',
-  );
-  if (hasSuperNonNeutral) return 'WATCH';
+  if (scores.primary_count === 0) return 'PASS';
+
+  if (
+    scores.net_support >= GATE.FIRE_NET_SUPPORT &&
+    scores.conflict_ratio < GATE.FIRE_CONFLICT_MAX
+  ) {
+    return 'FIRE';
+  }
+
+  if (
+    scores.net_support >= GATE.WATCH_NET_SUPPORT &&
+    scores.conflict_ratio < GATE.WATCH_CONFLICT_MAX
+  ) {
+    return 'WATCH';
+  }
 
   return 'PASS';
+}
+
+/**
+ * Derive a specific PASS reason code for display.
+ * Only called when status === 'PASS'.
+ */
+function derivePassReason(
+  card: GameCard,
+  scores: SupportScore | null,
+  market: Market | 'NONE',
+): PassReasonCode {
+  if (market === 'NONE') return 'PASS_NO_EDGE';
+
+  const tags = Array.isArray(card.tags) ? card.tags : [];
+  if (tags.includes('stale_5m') || tags.includes('stale_30m')) {
+    return 'PASS_BLOCKED_STALE';
+  }
+
+  if (!scores || scores.primary_count === 0) {
+    return 'PASS_MISSING_PRIMARY_DRIVER';
+  }
+
+  if (scores.conflict_ratio >= GATE.WATCH_CONFLICT_MAX) {
+    return 'PASS_CONFLICT_HIGH';
+  }
+
+  return 'PASS_DRIVER_SUPPORT_WEAK';
 }
 
 /**
@@ -534,7 +589,7 @@ function selectPrimaryPlay(
     };
   }
 
-  const status = deriveStatus(card, drivers, market);
+  const status = deriveStatus(card, drivers, market, driver.direction);
   const { pick } = buildPickString(
     market,
     driver.direction,
@@ -735,6 +790,20 @@ export function getCardDecisionModel(
 
   const primaryPlay = selectPrimaryPlay(card, odds, drivers);
   const status = primaryPlay.status;
+
+  // Compute consensus scores for the primary direction (used for supportGrade + passReasonCode)
+  const direction = primaryPlay.direction;
+  const scores =
+    direction && direction !== 'NEUTRAL'
+      ? computeSupportScores(drivers, direction)
+      : null;
+
+  const supportGrade: SupportGrade = scores?.support_grade ?? 'WEAK';
+  const passReasonCode: PassReasonCode | null =
+    status === 'PASS'
+      ? derivePassReason(card, scores, primaryPlay.market)
+      : null;
+
   const riskCodes = deriveRiskCodes(card, drivers, primaryPlay.market);
   const whyReason = getWhyReason(
     status,
@@ -751,6 +820,8 @@ export function getCardDecisionModel(
     riskCodes,
     topContributors,
     allDrivers: drivers,
+    supportGrade,
+    passReasonCode,
   };
 }
 
