@@ -1241,11 +1241,14 @@ export default function CardsPageClient() {
               <div>
                 <p className="text-cloud/50 text-xs mb-1">Moneyline</p>
                 <p className="font-mono text-cloud/80">
-                  {card.homeTeam.split(' ').slice(-1)[0]}{' '}
-                  {formatOddsLine(originalGame.odds.h2hHome)}
-                  {' / '}
-                  {card.awayTeam.split(' ').slice(-1)[0]}{' '}
-                  {formatOddsLine(originalGame.odds.h2hAway)}
+                  {(() => {
+                    const homeMascot = card.homeTeam.split(' ').slice(-1)[0];
+                    const awayMascot = card.awayTeam.split(' ').slice(-1)[0];
+                    const useFullNames = homeMascot === awayMascot;
+                    const homeDisplay = useFullNames ? card.homeTeam : homeMascot;
+                    const awayDisplay = useFullNames ? card.awayTeam : awayMascot;
+                    return `${homeDisplay} ${formatOddsLine(originalGame.odds.h2hHome)} / ${awayDisplay} ${formatOddsLine(originalGame.odds.h2hAway)}`;
+                  })()}
                 </p>
               </div>
               <div>
@@ -1381,7 +1384,7 @@ export default function CardsPageClient() {
               </div>
             ) : (
               <div className="mt-1 text-xs text-amber-200/90">
-                Analysis unavailable (drivers missing).
+                {displayPlay.whyText || displayPlay.decision_data?.reason_code?.replace(/^PASS_/, '').replace(/_/g, ' ').toLowerCase() || 'Analysis unavailable (drivers missing).'}
               </div>
             )}
           </div>
@@ -1438,9 +1441,9 @@ export default function CardsPageClient() {
                 Pricing Inefficiency Detected
               </p>
               <p className="text-xs text-blue-100/80">
-                Model gives ~50% win probability, but the market is pricing this
-                significantly off. The edge here comes from an exploitable line,
-                not a strong directional signal.
+                Model fair probability: {typeof displayPlay.modelProb === 'number' ? `${(displayPlay.modelProb * 100).toFixed(1)}%` : '~50%'}, 
+                but market pricing is significantly off (edge {(effectiveEdgePct * 100).toFixed(1)}%). 
+                The edge here comes from an exploitable line, not a strong directional signal.
               </p>
             </div>
           )}
@@ -1472,7 +1475,7 @@ export default function CardsPageClient() {
               <p className="text-xs text-cloud/50">
                 {canRenderModelSummary
                   ? 'No strong contributors passed market filters.'
-                  : 'Analysis unavailable (drivers missing).'}
+                  : (displayPlay.whyText || displayPlay.decision_data?.reason_code?.replace(/^PASS_/, '').replace(/_/g, ' ').toLowerCase() || 'Analysis unavailable (drivers missing).')}
               </p>
             ) : (
               <div className="space-y-2">
@@ -1488,6 +1491,9 @@ export default function CardsPageClient() {
                       <span className="text-xs font-mono text-cloud/60">
                         {formatConfidence(driver.confidence)}
                       </span>
+                      {displayPlay.decision === 'PASS' && driver.tier === 'BEST' && (
+                        <span className="text-xs text-amber-400">(Overridden)</span>
+                      )}
                       <span className="text-xs font-mono text-cloud/60">
                         {formatContributorMarketLabel(
                           driver.market,

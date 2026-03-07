@@ -1599,14 +1599,32 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     gates.push({ code, severity: 'BLOCK', blocks_bet: true });
   }
 
-  const coinflip =
+  // WI-0333: Extreme edge validation - edges >30% are suspicious
+  if (edge > 0.30) {
+    gates.push({ code: 'STALE_EDGE_SUSPECTED', severity: 'BLOCK', blocks_bet: true });
+    reasonCodesUnique.push('PASS_STALE_EDGE_SUSPECTED');
+  }
+
+  // WI-0333: Coinflip detection - require BOTH market odds AND model fair_prob ~50%
+  const marketCoinflip =
     resolvedMarketType === 'MONEYLINE' &&
     typeof game.odds?.h2hHome === 'number' &&
     typeof game.odds?.h2hAway === 'number' &&
     Math.abs(game.odds.h2hHome) <= 120 &&
     Math.abs(game.odds.h2hAway) <= 120;
+  const modelFairProb = decision.model_prob ?? modelProb;
+  const modelCoinflip = typeof modelFairProb === 'number' && modelFairProb >= 0.45 && modelFairProb <= 0.55;
+  const coinflip = marketCoinflip && modelCoinflip;
+  const mispricing = marketCoinflip && !modelCoinflip; // Market says coinflip, model has conviction
+  
   if (coinflip) {
     gates.push({ code: 'COINFLIP', severity: 'WARN', blocks_bet: false });
+  }
+  if (mispricing && edge > 0.05) {
+    // Tag as mispricing opportunity, not coinflip
+    if (!tags.includes('MISPRICING')) {
+      tags.push('MISPRICING');
+    }
   }
 
   const decisionAction =

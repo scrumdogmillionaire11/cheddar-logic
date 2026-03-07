@@ -632,12 +632,16 @@ export async function GET(request: NextRequest) {
 
       // SQLite doesn't support array binding; build placeholders for ALL IDs (canonical + external)
       const placeholders = allQueryableIds.map(() => '?').join(', ');
-      const runIdPlaceholders = activeRunIds.length > 0 ? activeRunIds.map(() => '?').join(', ') : 'NULL';
+      const runIdPlaceholders =
+        activeRunIds.length > 0 ? activeRunIds.map(() => '?').join(', ') : '';
+      const runIdClause = activeRunIds.length > 0
+        ? `AND run_id IN (${runIdPlaceholders})`
+        : '';
       const cardsSql = `
         SELECT id, game_id, card_type, card_title, payload_data
         FROM card_payloads
         WHERE game_id IN (${placeholders})
-          AND run_id IN (${runIdPlaceholders})
+          ${runIdClause}
           AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
           ${ENABLE_WELCOME_HOME ? '' : "AND card_type != 'welcome-home-v2'"}
         ORDER BY created_at DESC
@@ -645,10 +649,11 @@ export async function GET(request: NextRequest) {
       let cardRows: CardPayloadRow[] = [];
       try {
         const cardsStmt = db.prepare(cardsSql);
-        cardRows = cardsStmt.all(
-          ...allQueryableIds,
-          ...activeRunIds,
-        ) as CardPayloadRow[];
+        const cardsParams =
+          activeRunIds.length > 0
+            ? [...allQueryableIds, ...activeRunIds]
+            : [...allQueryableIds];
+        cardRows = cardsStmt.all(...cardsParams) as CardPayloadRow[];
       } catch {
         // card_payloads table not yet created; plays will be empty
       }

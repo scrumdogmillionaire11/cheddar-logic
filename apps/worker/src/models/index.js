@@ -327,7 +327,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
 
       descriptors.push({
         cardType: 'nhl-base-projection',
-        cardTitle: `NHL Projection: ${projectedMargin > 0 ? 'HOME' : 'AWAY'} ${Math.abs(projectedMargin).toFixed(2)} Goals`,
+        cardTitle: `NHL Projection: ${projectedMargin > 0 ? 'HOME' : 'AWAY'} ${projectedMargin > 0 ? '+' : ''}${projectedMargin.toFixed(2)}`,
         confidence: projection.confidence,
         tier: determineTier(projection.confidence),
         prediction: projectedMargin > 0 ? 'HOME' : 'AWAY',

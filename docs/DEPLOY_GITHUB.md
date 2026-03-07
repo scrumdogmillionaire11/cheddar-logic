@@ -24,12 +24,17 @@ Both web and backend auto-deploy from your GitHub repo.
    - Build: `npm run build`
    - Install: `npm install`
 4. **Environment variables** (in Vercel dashboard):
+
    ```env
    FPL_API_BASE_URL=https://api.cheddarlogic.com/api/v1
    NEXT_PUBLIC_PUBLIC_DOMAIN=https://cheddarlogic.com
    NEXT_PUBLIC_API_BASE_URL=https://cheddarlogic.com
    AUTH_SECRET=your-secret-here
-   CHEDDAR_DB_PATH=...
+   # Persistent DB path (must match worker)
+   CHEDDAR_DB_PATH=/opt/cheddar-logic/data/cheddar-prod.db
+   # Feature flags (explicitly set in production)
+   NEXT_PUBLIC_ENABLE_PLAYER_PROPS=false
+   NEXT_PUBLIC_CARDS_TRACE_VERBOSE=false
    ODDS_API_KEY=...
    ```
 5. **Custom domain**: Settings → Domains → Add `cheddarlogic.com`
@@ -41,6 +46,7 @@ Both web and backend auto-deploy from your GitHub repo.
 3. **Railway auto-detects** `railway.json` config in repo root
 4. **Add Redis**: New → Redis → Copy URL to env vars
 5. **Environment variables**:
+
    ```env
    FPL_SAGE_REDIS_URL=redis://default:password@host:port
    FPL_SAGE_UNLIMITED_ACCESS_ENABLED=true
@@ -123,9 +129,34 @@ curl -i https://cheddarlogic.com/api/v1/health  # Proxied through Next.js
 ```
 
 Then open in browser:
-- https://cheddarlogic.com
-- https://cheddarlogic.com/cards
-- https://cheddarlogic.com/fpl
+
+- [cheddarlogic.com](https://cheddarlogic.com)
+- [cheddarlogic.com/cards](https://cheddarlogic.com/cards)
+- [cheddarlogic.com/fpl](https://cheddarlogic.com/fpl)
+
+---
+
+## No-Plays Prevention Checklist
+
+Use this after deploys to avoid PASS-only boards:
+
+1. **DB path consistency**
+   - Web and worker must resolve the same `CHEDDAR_DB_PATH` (persistent file).
+2. **Run state present**
+   - `run_state.current_run_id` exists and matches recent `card_payloads.run_id`.
+3. **Fresh odds**
+   - `odds_snapshots` has a recent `captured_at` for each active sport.
+4. **Model jobs enabled**
+   - `ENABLE_NHL_MODEL`, `ENABLE_NBA_MODEL`, `ENABLE_NCAAM_MODEL` are `true` in production.
+
+Sample checks on the server:
+
+```bash
+set -a; source /opt/cheddar-logic/.env.production; set +a
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT id, current_run_id FROM run_state;"
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT sport, MAX(captured_at) FROM odds_snapshots GROUP BY sport;"
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT run_id, COUNT(*) FROM card_payloads GROUP BY run_id ORDER BY COUNT(*) DESC LIMIT 5;"
+```
 
 ---
 
@@ -141,22 +172,26 @@ Then open in browser:
 
 ## Troubleshooting
 
-**Build fails on Vercel**
+### Build fails on Vercel
+
 - Check build logs in Vercel dashboard
 - Verify all env vars are set
 - Run `npm --prefix web run build` locally first
 
-**Backend not responding**
+### Backend not responding
+
 - Check Railway logs for startup errors
 - Verify Redis is connected
 - Check `FPL_SAGE_REDIS_URL` env var
 
-**DNS not resolving**
+### DNS not resolving
+
 - Wait 5-60 minutes for propagation
 - Verify CNAME targets match platform dashboards
 - Check Cloudflare proxy status (orange vs gray cloud)
 
-**API calls fail from web**
+### API calls fail from web
+
 - Check `FPL_API_BASE_URL` in Vercel env vars
 - Verify backend health: `curl https://api.cheddarlogic.com/api/v1/health`
 - Check Next.js rewrite in `web/next.config.ts`
