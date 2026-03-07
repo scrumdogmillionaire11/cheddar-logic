@@ -686,7 +686,20 @@ export async function GET(request: NextRequest) {
     `;
 
     const stmt = db.prepare(sql);
-    const rows = stmt.all(gamesStartUtc) as GameRow[];
+    let rows = stmt.all(gamesStartUtc) as GameRow[];
+
+    if (isNonProd && rows.length === 0 && !shouldUseDevLookback) {
+      const fallbackLookbackHours = Number(process.env.DEV_GAMES_FALLBACK_HOURS || 72);
+      if (Number.isFinite(fallbackLookbackHours) && fallbackLookbackHours > 0) {
+        const fallbackStartUtc = new Date(
+          now.getTime() - fallbackLookbackHours * 60 * 60 * 1000,
+        )
+          .toISOString()
+          .substring(0, 19)
+          .replace('T', ' ');
+        rows = stmt.all(fallbackStartUtc) as GameRow[];
+      }
+    }
 
     // Collect all game IDs for the card_payloads query
     const gameIds = rows.map((r) => r.game_id);
