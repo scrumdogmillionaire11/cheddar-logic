@@ -597,7 +597,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           oddsSnapshot = await enrichOddsSnapshotWithMoneyPuck(oddsSnapshot);
           
           // Persist enrichment to database so models have access to ESPN metrics
-          updateOddsSnapshotRawData(gameId, 'NHL', oddsSnapshot.captured_at, oddsSnapshot.raw_data);
+          updateOddsSnapshotRawData(oddsSnapshot.id, oddsSnapshot.raw_data);
 
           // Query schedule for Welcome Home Fade
           // Welcome Home Fade: Home team coming back from a road trip (first game back)

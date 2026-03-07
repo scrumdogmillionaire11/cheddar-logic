@@ -221,7 +221,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
           oddsSnapshot = await enrichOddsSnapshotWithEspnMetrics(oddsSnapshot);
           
           // Persist enrichment to database so models have access to ESPN metrics
-          updateOddsSnapshotRawData(gameId, 'NCAAM', oddsSnapshot.captured_at, oddsSnapshot.raw_data);
+          updateOddsSnapshotRawData(oddsSnapshot.id, oddsSnapshot.raw_data);
 
           const driverCards = computeNCAAMDriverCards(gameId, oddsSnapshot);
           if (driverCards.length === 0) {

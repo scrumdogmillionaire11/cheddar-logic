@@ -905,44 +905,18 @@ function deleteOddsSnapshotsByGameAndCapturedAt(gameId, capturedAt) {
  * @param {object} enrichedRawData - The enriched raw_data object to persist
  * @returns {boolean} True if update succeeded, false if no matching row found
  */
-function updateOddsSnapshotRawData(gameId, sport, capturedAt, enrichedRawData) {
+function updateOddsSnapshotRawData(snapshotId, enrichedRawData) {
   try {
     const db = getDatabase();
-    
-    // First, find the ID of the latest snapshot for this game
-    const findStmt = db.prepare(`
-      SELECT id FROM odds_snapshots
-      WHERE game_id = ?
-      ORDER BY captured_at DESC
-      LIMIT 1
-    `);
-    const latestSnap = findStmt.get(gameId);
-    
-    if (!latestSnap) {
-      console.warn(`[updateOddsSnapshotRawData] No odds snapshot found for game ${gameId}`);
-      return false;
-    }
-    
-    // Prepare the raw_data JSON
     const rawDataJson = enrichedRawData ? JSON.stringify(enrichedRawData) : null;
-    
-    // Update using the snapshot ID
-    const updateStmt = db.prepare(`
-      UPDATE odds_snapshots
-      SET raw_data = ?
-      WHERE id = ?
-    `);
-    
-    const result = updateStmt.run(rawDataJson, latestSnap.id);
+    const result = db.prepare('UPDATE odds_snapshots SET raw_data = ? WHERE id = ?').run(rawDataJson, snapshotId);
     if (result.changes === 0) {
-      console.warn(`[updateOddsSnapshotRawData] Failed to update snapshot ${latestSnap.id} for game ${gameId} at ${capturedAt}`);
+      console.warn(`[updateOddsSnapshotRawData] Failed to update snapshot ${snapshotId} (0 rows changed)`);
       return false;
     }
-    
-    console.log(`[updateOddsSnapshotRawData] Updated raw_data for game ${gameId} (snapshot ${latestSnap.id}) captured at ${capturedAt}`);
     return true;
   } catch (err) {
-    console.error(`[updateOddsSnapshotRawData] Error updating game ${gameId}: ${err.message}`);
+    console.error(`[updateOddsSnapshotRawData] Error for snapshot ${snapshotId}: ${err.message}`);
     return false;
   }
 }
