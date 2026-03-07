@@ -31,7 +31,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { getDatabase, closeDatabaseReadOnly } from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 
 const ENABLE_WELCOME_HOME =
@@ -75,49 +75,19 @@ function safeJsonParse(payload: string | null) {
   }
 }
 
-function ensureRunStateSchema(db: ReturnType<typeof getDatabase>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS run_state (
-      id TEXT PRIMARY KEY,
-      current_run_id TEXT,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    INSERT OR IGNORE INTO run_state (id, current_run_id, updated_at)
-    VALUES ('singleton', NULL, CURRENT_TIMESTAMP);
-  `);
+// NOTE: ensureRunStateSchema removed — worker owns all DB writes (single-writer architecture).
+// run_state table is created and managed exclusively by the worker.
 
-  const columns = db.prepare(`PRAGMA table_info(card_payloads)`).all() as Array<{
-    name?: string;
-  }>;
-  const hasRunId = columns.some(
-    (column) => String(column.name || '').toLowerCase() === 'run_id',
-  );
-  if (!hasRunId) {
-    db.exec(`ALTER TABLE card_payloads ADD COLUMN run_id TEXT`);
+function getCurrentRunId(db: ReturnType<typeof getDatabase>): string | null {
+  // Wrap in try/catch: run_state table may not exist yet if worker hasn't migrated.
+  try {
+    const row = db
+      .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
+      .get() as { current_run_id?: string | null } | undefined;
+    return row?.current_run_id ?? null;
+  } catch {
+    return null;
   }
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_card_payloads_run_id ON card_payloads(run_id)`,
-  );
-
-  const runIdCountRow = db
-    .prepare(
-      `SELECT COUNT(*) AS count FROM card_payloads WHERE run_id IS NOT NULL AND TRIM(run_id) != ''`,
-    )
-    .get() as { count?: number } | undefined;
-  if (Number(runIdCountRow?.count || 0) === 0) {
-    db.exec(`UPDATE card_payloads SET run_id = 'bootstrap-initial' WHERE run_id IS NULL`);
-    db.prepare(
-      `UPDATE run_state SET current_run_id = 'bootstrap-initial', updated_at = CURRENT_TIMESTAMP WHERE id = 'singleton'`,
-    ).run();
-  }
-}
-
-function getCurrentRunId(db: ReturnType<typeof getDatabase>) {
-  const stmt = db.prepare(
-    `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
-  );
-  const row = stmt.get() as { current_run_id?: string | null } | undefined;
-  return row?.current_run_id ?? null;
 }
 
 function getRunStatus(
@@ -170,7 +140,6 @@ export async function GET(
 
     // Open database connection
     const db = getDatabase();
-    ensureRunStateSchema(db);
     const currentRunId = getCurrentRunId(db);
     const runStatus = getRunStatus(db, currentRunId);
 
@@ -279,6 +248,6 @@ export async function GET(
       { status: 500 },
     );
   } finally {
-    closeDatabase();
+    closeDatabaseReadOnly();
   }
 }

@@ -3,7 +3,7 @@ import {
   deriveLockedMarketContext,
   formatMarketSelectionLabel,
   getDatabase,
-  closeDatabase,
+  closeDatabaseReadOnly,
 } from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
@@ -111,31 +111,7 @@ function buildCardCategoryFilter(
   }
 }
 
-function ensureCardDisplayLogSchema(db: ReturnType<typeof getDatabase>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS card_display_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      pick_id TEXT UNIQUE NOT NULL,
-      run_id TEXT,
-      game_id TEXT,
-      sport TEXT,
-      market_type TEXT,
-      selection TEXT,
-      line REAL,
-      odds REAL,
-      odds_book TEXT,
-      confidence_pct REAL,
-      displayed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      api_endpoint TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_card_display_log_run_game
-      ON card_display_log (run_id, game_id);
-    CREATE INDEX IF NOT EXISTS idx_card_display_log_game_sport
-      ON card_display_log (game_id, sport);
-    CREATE INDEX IF NOT EXISTS idx_card_display_log_displayed_at
-      ON card_display_log (displayed_at DESC);
-  `);
-}
+// NOTE: ensureCardDisplayLogSchema removed — worker owns all DB writes (single-writer architecture).
 
 export async function GET(request: NextRequest) {
   let db: ReturnType<typeof getDatabase> | null = null;
@@ -148,7 +124,6 @@ export async function GET(request: NextRequest) {
 
     await ensureDbReady();
     db = getDatabase();
-    ensureCardDisplayLogSchema(db);
 
     // Check if database is empty or uninitialized
     const tableCheckStmt = db.prepare(
@@ -728,7 +703,7 @@ export async function GET(request: NextRequest) {
     return addRateLimitHeaders(errorResponse, request);
   } finally {
     if (db) {
-      closeDatabase();
+      closeDatabaseReadOnly();
     }
   }
 }
