@@ -5,7 +5,9 @@
  * odds snapshot per game, plus any active driver play calls from card_payloads.
  * Games with no card_payloads still appear.
  *
- * Query window: datetime(game_time_utc) >= midnight today America/New_York (today + future games only)
+ * Query window:
+ *   - Production default: datetime(game_time_utc) >= midnight today America/New_York
+ *   - Dev override (optional): include recent past games via lookback window
  * Sort: game_time_utc ASC
  * Limit: 200
  *
@@ -50,6 +52,17 @@ import {
 const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
+
+const ENABLE_DEV_PAST_GAMES =
+  process.env.ENABLE_DEV_PAST_GAMES === 'true' ||
+  process.env.CHEDDAR_DEV_INCLUDE_PAST_GAMES === 'true';
+
+const DEV_GAMES_LOOKBACK_HOURS = Number.parseInt(
+  process.env.DEV_GAMES_LOOKBACK_HOURS ||
+    process.env.CHEDDAR_DEV_GAMES_LOOKBACK_HOURS ||
+    '24',
+  10,
+);
 
 interface GameRow {
   id: string;
@@ -622,6 +635,22 @@ export async function GET(request: NextRequest) {
       .substring(0, 19)
       .replace('T', ' ');
 
+    const isNonProd = process.env.NODE_ENV !== 'production';
+    const shouldUseDevLookback =
+      isNonProd &&
+      ENABLE_DEV_PAST_GAMES &&
+      Number.isFinite(DEV_GAMES_LOOKBACK_HOURS) &&
+      DEV_GAMES_LOOKBACK_HOURS > 0;
+
+    const lookbackUtc = shouldUseDevLookback
+      ? new Date(now.getTime() - DEV_GAMES_LOOKBACK_HOURS * 60 * 60 * 1000)
+          .toISOString()
+          .substring(0, 19)
+          .replace('T', ' ')
+      : null;
+
+    const gamesStartUtc = lookbackUtc ?? todayUtc;
+
     const sql = `
       WITH latest_odds AS (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY captured_at DESC) AS rn
@@ -654,7 +683,7 @@ export async function GET(request: NextRequest) {
     `;
 
     const stmt = db.prepare(sql);
-    const rows = stmt.all(todayUtc) as GameRow[];
+    const rows = stmt.all(gamesStartUtc) as GameRow[];
 
     // Collect all game IDs for the card_payloads query
     const gameIds = rows.map((r) => r.game_id);

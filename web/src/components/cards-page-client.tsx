@@ -662,7 +662,35 @@ export default function CardsPageClient() {
 
   useEffect(() => {
     const isDevTrace = process.env.NODE_ENV !== 'production';
-    if (loading || !isDevTrace) return;
+    const isVerboseCardsTrace =
+      process.env.NEXT_PUBLIC_CARDS_TRACE_VERBOSE === 'true';
+    if (loading || !isDevTrace || !isVerboseCardsTrace) return;
+
+    const displayedMetaBySport: Record<string, DroppedMeta> = {};
+    for (const card of filteredCards) {
+      const sportKey = (card.sport || 'UNKNOWN').toUpperCase();
+      if (!displayedMetaBySport[sportKey]) {
+        displayedMetaBySport[sportKey] = createDroppedMeta();
+      }
+
+      const meta = displayedMetaBySport[sportKey];
+      const cardMeta = getCardDebugMeta(card);
+
+      meta.games += 1;
+      meta.playCount += cardMeta.playCount;
+      meta.hasAnyPlay += cardMeta.hasAnyPlay ? 1 : 0;
+      meta.hasBettable += cardMeta.hasBettable ? 1 : 0;
+      meta.hasBlockedTotals += cardMeta.hasBlockedTotals ? 1 : 0;
+      meta.hasDataError += cardMeta.hasDataError ? 1 : 0;
+      meta.playStatusCounts.FIRE += cardMeta.playStatusCounts.FIRE;
+      meta.playStatusCounts.WATCH += cardMeta.playStatusCounts.WATCH;
+      meta.playStatusCounts.PASS += cardMeta.playStatusCounts.PASS;
+
+      for (const market of cardMeta.playMarkets) {
+        meta.playMarkets[market] = (meta.playMarkets[market] || 0) + 1;
+      }
+    }
+
     console.info('[cards-trace]', {
       todayEt: todayEtKey,
       fetchedTotal: traceStats.fetchedTotal,
@@ -675,13 +703,18 @@ export default function CardsPageClient() {
       transformedTodayBySport: traceStats.transformedTodayBySport,
       displayedTodayBySport: traceStats.displayedTodayBySport,
       dropTraceStats,
+      displayedMetaBySport,
       filters,
     });
     console.warn(
-      '[DROP REASONS BY SPORT]',
+      '[🚫 FILTERED OUT - REASONS BY SPORT]',
       dropTraceStats.droppedByReasonBySport,
     );
-    console.warn('[DROPPED META BY SPORT]', dropTraceStats.droppedMetaBySport);
+    console.warn(
+      '[🚫 FILTERED OUT - META BY SPORT]',
+      dropTraceStats.droppedMetaBySport,
+    );
+    console.info('[✅ DISPLAYED - META BY SPORT]', displayedMetaBySport);
 
     // DEBUG: Sample NBA plays to understand why they're PASS/not bettable
     const nbaSample = enrichedCards
@@ -723,7 +756,49 @@ export default function CardsPageClient() {
       .slice(0, 10);
 
     if (nbaSample.length > 0) {
-      console.log('[NBA PLAY SAMPLE (PASS or not bettable)]', nbaSample);
+      console.log('[NBA FILTERED OUT SAMPLE (PASS or not bettable)]', nbaSample);
+    }
+
+    const nbaDisplayedSample = filteredCards
+      .filter((c) => c.sport === 'NBA')
+      .flatMap((c) => {
+        const displayAction = getPlayDisplayAction(c.play);
+        const hasBettable =
+          c.tags.includes(GAME_TAGS.HAS_FIRE) ||
+          c.tags.includes(GAME_TAGS.HAS_WATCH);
+
+        if (displayAction === 'FIRE' || displayAction === 'HOLD' || hasBettable) {
+          return [
+            {
+              gameId: c.gameId,
+              homeTeam: c.homeTeam,
+              awayTeam: c.awayTeam,
+              playMarket: c.play?.market_type,
+              action: c.play?.action,
+              status: c.play?.status,
+              classification: c.play?.classification,
+              displayAction,
+              hasBettable,
+              truthStrength: c.play?.truthStrength,
+              edge: c.play?.edge,
+              line: c.play?.line,
+              price: c.play?.price,
+              updatedAt: c.play?.updatedAt,
+              reasonCodes: c.play?.reason_codes,
+              tags: c.play?.tags,
+              driverCount: c.drivers.length,
+              driverMarkets: c.drivers.map((d) => d.market).join(','),
+              modelProb: c.play?.modelProb,
+              impliedProb: c.play?.impliedProb,
+            },
+          ];
+        }
+        return [];
+      })
+      .slice(0, 10);
+
+    if (nbaDisplayedSample.length > 0) {
+      console.log('[NBA DISPLAYED SAMPLE (FIRE/WATCH/bettable)]', nbaDisplayedSample);
     }
   }, [
     loading,
@@ -732,6 +807,7 @@ export default function CardsPageClient() {
     filters,
     dropTraceStats,
     enrichedCards,
+    filteredCards,
     viewMode,
   ]);
 
