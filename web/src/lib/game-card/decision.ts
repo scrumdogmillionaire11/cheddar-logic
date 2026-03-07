@@ -794,9 +794,9 @@ function applyConsensusOverride(
   storedStatus: ExpressionStatus,
   scores: SupportScore,
 ): ExpressionStatus {
-  // No primary driver aligned with the play — cannot be higher than PASS
+  // No primary driver aligned with the play — neither FIRE nor WATCH is valid
   if (scores.primary_count === 0) {
-    return storedStatus === 'FIRE' ? 'PASS' : storedStatus;
+    return 'PASS';
   }
 
   // Stored FIRE: verify it actually clears the FIRE gate, downgrade if not
