@@ -49,6 +49,7 @@ const {
   computeTotalBias,
   buildMarketPayload,
   determineTier,
+  buildMarketCallCard,
 } = require('../models');
 const {
   buildRecommendationFromPrediction,
@@ -302,16 +303,7 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           score: Number(((d.signal + 1) / 2).toFixed(3)),
         }));
 
-      const cardId = `card-nhl-totals-call-${gameId}-${uuidV4().slice(0, 8)}`;
-      cards.push({
-        id: cardId,
-        gameId,
-        sport: 'NHL',
-        cardType: 'nhl-totals-call',
-        cardTitle: `NHL Totals: ${pickText}`,
-        createdAt: now,
-        expiresAt,
-        payloadData: {
+      const payloadData = {
           game_id: gameId,
           sport: 'NHL',
           model_version: 'nhl-cross-market-v1',
@@ -379,9 +371,19 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           disclaimer:
             'Analysis provided for educational purposes. Not a recommendation.',
           generated_at: now,
-        },
-        modelOutputIds: null,
-      });
+        };
+
+      cards.push(
+        buildMarketCallCard({
+          sport: 'NHL',
+          gameId,
+          cardType: 'nhl-totals-call',
+          cardTitle: `NHL Totals: ${pickText}`,
+          payloadData,
+          now,
+          expiresAt,
+        }),
+      );
     }
   }
 
@@ -417,16 +419,7 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           score: Number(((d.signal + 1) / 2).toFixed(3)),
         }));
 
-      const cardId = `card-nhl-spread-call-${gameId}-${uuidV4().slice(0, 8)}`;
-      cards.push({
-        id: cardId,
-        gameId,
-        sport: 'NHL',
-        cardType: 'nhl-spread-call',
-        cardTitle: `NHL Spread: ${pickText}`,
-        createdAt: now,
-        expiresAt,
-        payloadData: {
+      const payloadData = {
           game_id: gameId,
           sport: 'NHL',
           model_version: 'nhl-cross-market-v1',
@@ -497,9 +490,19 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           disclaimer:
             'Analysis provided for educational purposes. Not a recommendation.',
           generated_at: now,
-        },
-        modelOutputIds: null,
-      });
+        };
+
+      cards.push(
+        buildMarketCallCard({
+          sport: 'NHL',
+          gameId,
+          cardType: 'nhl-spread-call',
+          cardTitle: `NHL Spread: ${pickText}`,
+          payloadData,
+          now,
+          expiresAt,
+        }),
+      );
     }
   }
 
@@ -637,7 +640,9 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             ]),
           ];
           for (const ct of driverCardTypesToClear) {
-            prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct);
+            prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct, {
+              runId: jobRunId,
+            });
           }
 
           const cards = driverCards.map((descriptor) =>
@@ -701,7 +706,9 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           );
           if (marketCallCards.length > 0) {
             for (const ct of ['nhl-totals-call', 'nhl-spread-call']) {
-              prepareModelAndCardWrite(gameId, 'nhl-cross-market-v1', ct);
+              prepareModelAndCardWrite(gameId, 'nhl-cross-market-v1', ct, {
+                runId: jobRunId,
+              });
             }
           }
           for (const card of marketCallCards) {
@@ -785,7 +792,12 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
 
 // CLI execution
 if (require.main === module) {
-  runNHLModel()
+  const jobKey = process.env.CHEDDAR_JOB_KEY || process.env.JOB_KEY || null;
+  const dryRun =
+    process.env.CHEDDAR_DRY_RUN === 'true'
+    || process.env.DRY_RUN === 'true';
+
+  runNHLModel({ jobKey, dryRun })
     .then((result) => {
       process.exit(result.success ? 0 : 1);
     })

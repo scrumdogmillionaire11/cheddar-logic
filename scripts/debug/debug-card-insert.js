@@ -1,9 +1,10 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * Debug card insertion
  */
 const { v4: uuidV4 } = require('uuid');
-const { initDb, getDatabase, closeDatabase } = require('./db.js');
+const { initDb, getDatabase, closeDatabase } = require('../../packages/data/src/db.js');
 
 async function debugCardInsert() {
   await initDb();
@@ -13,7 +14,8 @@ async function debugCardInsert() {
   const createdAt = now.toISOString();
 
   // Get a future game without cards
-  const game = db.prepare(`
+  const game = db
+    .prepare(`
     SELECT g.game_id, g.sport, g.home_team, g.away_team
     FROM games g
     LEFT JOIN card_payloads cp ON g.game_id = cp.game_id
@@ -21,7 +23,8 @@ async function debugCardInsert() {
     WHERE g.game_time_utc >= datetime('now')
       AND cp.id IS NULL
     LIMIT 1
-  `).get();
+  `)
+    .get();
 
   if (!game) {
     console.log('No games found without cards');
@@ -38,22 +41,22 @@ async function debugCardInsert() {
     confidence: 0.75,
     tier: 'BEST',
     ev_passed: true,
-    reasoning: `Debug test card`,
+    reasoning: 'Debug test card',
     driver: {
-      key: `test_driver`,
+      key: 'test_driver',
       inputs: {
         projected_total: 5.5,
         edge: 0.15,
-      }
+      },
     },
     projection: {
-      total: 5.5
+      total: 5.5,
     },
-    edge: 0.15
+    edge: 0.15,
   };
 
   const cardId = `card-debug-${uuidV4()}`;
-  
+
   try {
     const insertStmt = db.prepare(`
       INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, payload_data, created_at)
@@ -67,7 +70,7 @@ async function debugCardInsert() {
       'debug_test',
       'Debug Test Card',
       JSON.stringify(payloadData),
-      createdAt
+      createdAt,
     );
 
     console.log(`✅ Inserted card: ${cardId}`);
@@ -75,9 +78,10 @@ async function debugCardInsert() {
     console.log(`   Last insert row ID: ${result.lastInsertRowid}`);
 
     // Verify it was inserted
-    const verify = db.prepare('SELECT COUNT(*) as count FROM card_payloads WHERE id = ?').get(cardId);
+    const verify = db
+      .prepare('SELECT COUNT(*) as count FROM card_payloads WHERE id = ?')
+      .get(cardId);
     console.log(`\n✓ Verification: ${verify.count} card(s) found\n`);
-
   } catch (error) {
     console.error('❌ Error inserting card:', error.message);
     console.error('   Stack:', error.stack);
@@ -87,7 +91,7 @@ async function debugCardInsert() {
 }
 
 if (require.main === module) {
-  debugCardInsert().catch(err => {
+  debugCardInsert().catch((err) => {
     console.error('Failed:', err.message);
     process.exit(1);
   });

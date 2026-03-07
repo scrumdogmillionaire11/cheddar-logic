@@ -21,9 +21,8 @@ pip install -r config/requirements.txt
 
 ### Config Files
 
-- `config/team_config.json` is the canonical configuration used by the tools.
-- `team_config.json` in this folder is a template for local customization.
-- `backend/team_config.json` is reserved for alternate testing profiles.
+- `config/team_config.json` is the canonical configuration used by the tools (local, user-specific).
+- `config/team_config.template.json` is the starter template. Copy it to `config/team_config.json`.
 
 ### Development Setup (Offline-Compatible)
 

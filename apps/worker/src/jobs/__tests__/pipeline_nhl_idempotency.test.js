@@ -25,7 +25,7 @@ async function queryDb(fn) {
   }
 }
 
-function runCommand(command, cwd) {
+function runCommand(command, cwd, envOverrides = {}) {
   execSync(command, {
     cwd,
     stdio: 'pipe',
@@ -37,6 +37,7 @@ function runCommand(command, cwd) {
       CHEDDAR_DB_PATH: '',
       DATABASE_URL: '',
       CHEDDAR_DB_AUTODISCOVER: 'false',
+      ...envOverrides,
     },
   });
 }
@@ -76,9 +77,12 @@ describe('pipeline idempotency (NHL)', () => {
   });
 
   test('re-running NHL model job does not create duplicates', async () => {
+    const jobKey = 'nhl|fixed|2026-03-07|0900';
+
     runCommand(
       'npm run job:run-nhl-model',
       '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+      { JOB_KEY: jobKey },
     );
 
     const firstCounts = await getCounts();
@@ -86,6 +90,7 @@ describe('pipeline idempotency (NHL)', () => {
     runCommand(
       'npm run job:run-nhl-model',
       '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+      { JOB_KEY: jobKey },
     );
 
     const secondCounts = await getCounts();

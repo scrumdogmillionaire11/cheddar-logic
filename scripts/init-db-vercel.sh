@@ -31,10 +31,33 @@ npm run seed:cards
 
 # Verify database was populated
 echo "Verifying database..."
-node src/verify-db.js || {
-  echo "❌ Database verification failed!"
-  exit 1
+node <<'NODE'
+const { initDb, getDatabase, closeDatabase } = require('./src/db.js');
+
+async function verifyDb() {
+  await initDb();
+  const db = getDatabase();
+
+  const stats = {
+    games: db.prepare('SELECT COUNT(*) as c FROM games').get().c,
+    cards: db.prepare('SELECT COUNT(*) as c FROM card_payloads').get().c,
+    odds: db.prepare('SELECT COUNT(*) as c FROM odds_snapshots').get().c,
+  };
+
+  console.log(`[verify] games=${stats.games} cards=${stats.cards} odds=${stats.odds}`);
+
+  if (stats.games === 0 || stats.cards === 0 || stats.odds === 0) {
+    throw new Error('Database verification failed: missing seeded data');
+  }
+
+  closeDatabase();
 }
+
+verifyDb().catch((err) => {
+  console.error(`❌ ${err.message}`);
+  process.exit(1);
+});
+NODE
 
 echo "✅ Database initialization complete"
 ls -lh cheddar.db

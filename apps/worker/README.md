@@ -83,13 +83,11 @@ apps/worker/
 ```text
 The Odds API
     ↓
-shared-data/lib/odds-fetcher.js  ← Fetch & format
+@cheddar-logic/odds               ← Fetch & normalize (wraps shared-data)
     ↓
-@cheddar-logic/adapters          ← Normalize & persist
+@cheddar-logic/data               ← DB schema + queries
     ↓
-@cheddar-logic/data              ← DB schema + queries
-    ↓
-SQLite (cheddar.db)              ← odds_snapshots table
+SQLite (cheddar.db)               ← odds_snapshots table
 ```
 
 ## Integration with Scheduler
@@ -122,7 +120,7 @@ WantedBy=timers.target
 
 ## Testing
 
-See [shared-data test suite](../../shared-data/). The adapter assumes odds-fetcher works correctly; we test the DB persistence separately.
+See [@cheddar-logic/odds](../../packages/odds/) for odds-fetch/normalize coverage. The job tests DB persistence separately.
 
 Example smoke test:
 

@@ -133,6 +133,45 @@ function generateCard({
 }
 
 /**
+ * Build a market call card (totals/spread) with shared metadata.
+ */
+function buildMarketCallCard({
+  sport,
+  gameId,
+  cardType,
+  cardTitle,
+  payloadData,
+  now,
+  expiresAt,
+}) {
+  if (!sport || !gameId || !cardType || !payloadData || !now) {
+    throw new Error('Missing required market call card parameters');
+  }
+
+  const normalizedSport = typeof sport === 'string' ? sport.toUpperCase() : sport;
+
+  let finalExpiresAt = expiresAt;
+  if (!finalExpiresAt && payloadData?.start_time_utc) {
+    const gameTime = new Date(payloadData.start_time_utc);
+    finalExpiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
+  }
+
+  const cardId = `card-${cardType}-${gameId}-${uuidV4().slice(0, 8)}`;
+
+  return {
+    id: cardId,
+    gameId,
+    sport: normalizedSport,
+    cardType,
+    cardTitle,
+    createdAt: now,
+    expiresAt: finalExpiresAt || null,
+    payloadData,
+    modelOutputIds: null,
+  };
+}
+
+/**
  * Build payload for NBA/NHL ball sports
  */
 function buildBallSportPayload({
@@ -362,4 +401,4 @@ function buildNCAAMPayload({
   return payloadData;
 }
 
-module.exports = { generateCard };
+module.exports = { generateCard, buildMarketCallCard };

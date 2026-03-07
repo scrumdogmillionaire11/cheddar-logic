@@ -43,6 +43,7 @@ const {
   computeTotalBias,
   buildMarketPayload,
   determineTier,
+  buildMarketCallCard,
 } = require('../models');
 const {
   buildRecommendationFromPrediction,
@@ -295,16 +296,7 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           score: Number(((d.signal + 1) / 2).toFixed(3)),
         }));
 
-      const cardId = `card-nba-totals-call-${gameId}-${uuidV4().slice(0, 8)}`;
-      cards.push({
-        id: cardId,
-        gameId,
-        sport: 'NBA',
-        cardType: 'nba-totals-call',
-        cardTitle: `NBA Totals: ${pickText}`,
-        createdAt: now,
-        expiresAt,
-        payloadData: {
+      const payloadData = {
           game_id: gameId,
           sport: 'NBA',
           model_version: 'nba-cross-market-v1',
@@ -372,9 +364,19 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           disclaimer:
             'Analysis provided for educational purposes. Not a recommendation.',
           generated_at: now,
-        },
-        modelOutputIds: null,
-      });
+        };
+
+      cards.push(
+        buildMarketCallCard({
+          sport: 'NBA',
+          gameId,
+          cardType: 'nba-totals-call',
+          cardTitle: `NBA Totals: ${pickText}`,
+          payloadData,
+          now,
+          expiresAt,
+        }),
+      );
     }
   }
 
@@ -407,16 +409,7 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           score: Number(((d.signal + 1) / 2).toFixed(3)),
         }));
 
-      const cardId = `card-nba-spread-call-${gameId}-${uuidV4().slice(0, 8)}`;
-      cards.push({
-        id: cardId,
-        gameId,
-        sport: 'NBA',
-        cardType: 'nba-spread-call',
-        cardTitle: `NBA Spread: ${pickText}`,
-        createdAt: now,
-        expiresAt,
-        payloadData: {
+      const payloadData = {
           game_id: gameId,
           sport: 'NBA',
           model_version: 'nba-cross-market-v1',
@@ -487,9 +480,19 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           disclaimer:
             'Analysis provided for educational purposes. Not a recommendation.',
           generated_at: now,
-        },
-        modelOutputIds: null,
-      });
+        };
+
+      cards.push(
+        buildMarketCallCard({
+          sport: 'NBA',
+          gameId,
+          cardType: 'nba-spread-call',
+          cardTitle: `NBA Spread: ${pickText}`,
+          payloadData,
+          now,
+          expiresAt,
+        }),
+      );
     }
   }
 
@@ -610,7 +613,9 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             ]),
           ];
           for (const ct of driverCardTypesToClear) {
-            prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct);
+            prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct, {
+              runId: jobRunId,
+            });
           }
 
           const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);
@@ -686,7 +691,9 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           );
           if (nbaMarketCallCards.length > 0) {
             for (const ct of ['nba-totals-call', 'nba-spread-call']) {
-              prepareModelAndCardWrite(gameId, 'nba-cross-market-v1', ct);
+              prepareModelAndCardWrite(gameId, 'nba-cross-market-v1', ct, {
+                runId: jobRunId,
+              });
             }
           }
           for (const card of nbaMarketCallCards) {

@@ -188,7 +188,7 @@ jobs:
             }
             retry_url "http://127.0.0.1:3000/_next/static/chunks/$SAMPLE_CHUNK_REL" "origin sample chunk" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             HOMEPAGE_HTML=$(curl -fsS "http://127.0.0.1:3000/" || true)
-            REFERENCED_CHUNK=$(printf "%s" "$HOMEPAGE_HTML" | grep -Eo '/_next/static/chunks/[^"'"' ]+\.js' | head -n 1)
+            REFERENCED_CHUNK=$(printf "%s" "$HOMEPAGE_HTML" | grep -Eo "/_next/static/chunks/[^\"' ]+\.js" | head -n 1)
             test -n "$REFERENCED_CHUNK" || { echo "ERROR: could not find a chunk reference in homepage HTML after restart"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             retry_url "http://127.0.0.1:3000$REFERENCED_CHUNK" "origin homepage chunk" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             PUBLIC_DOMAIN_URL="${NEXT_PUBLIC_PUBLIC_DOMAIN:-${PUBLIC_DOMAIN:-https://cheddarlogic.com}}"

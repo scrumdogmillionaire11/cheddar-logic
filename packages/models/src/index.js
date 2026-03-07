@@ -3,7 +3,7 @@ const marketOrchestration = require('./market-orchestration');
 const edgeCalculator = require('./edge-calculator');
 const decisionGate = require('./decision-gate');
 const nhlSog = require('./nhl-sog/projection');
-const { generateCard } = require('./card-factory');
+const { generateCard, buildMarketCallCard } = require('./card-factory');
 
 module.exports = {
   ...cardModel,
@@ -12,6 +12,7 @@ module.exports = {
   ...decisionGate,
   ...nhlSog,
   generateCard,
+  buildMarketCallCard,
 };
 
 // Consolidated card utilities (2026-03-04)

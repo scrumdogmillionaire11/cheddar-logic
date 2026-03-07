@@ -11,7 +11,18 @@
  */
 'use strict';
 
-const { initDb, getDatabase } = require('@cheddar-logic/data');
+const fs = require('fs');
+const {
+  closeDatabase,
+  getDatabase,
+  initDb,
+  runMigrations,
+} = require('@cheddar-logic/data');
+
+const TEST_DB_PATH = '/tmp/cheddar-test-job-key-audit.db';
+const LOCK_PATH = `${TEST_DB_PATH}.lock`;
+const USE_REAL_DB = process.env.CHEDDAR_JOB_KEY_AUDIT_DB === 'true';
+const maybeTest = USE_REAL_DB ? test : test.skip;
 
 const VALID_PATTERNS = [
   // odds hourly: odds|hourly|2026-02-27|15
@@ -48,11 +59,45 @@ describe('Job Key Audit', () => {
   let db;
 
   beforeAll(async () => {
+    if (!USE_REAL_DB) {
+      console.warn(
+        '[JobKeyAudit] Skipping DB-backed audit. Set CHEDDAR_JOB_KEY_AUDIT_DB=true to enable.',
+      );
+      return;
+    }
+
+    process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+    process.env.DATABASE_PATH = '';
+    process.env.RECORD_DATABASE_PATH = '';
+    process.env.DATABASE_URL = '';
+
+    if (fs.existsSync(TEST_DB_PATH)) {
+      fs.unlinkSync(TEST_DB_PATH);
+    }
+    if (fs.existsSync(LOCK_PATH)) {
+      fs.unlinkSync(LOCK_PATH);
+    }
+
+    await runMigrations();
     await initDb();
     db = getDatabase();
   });
 
-  test('last 50 job_runs have valid or null jobKey', () => {
+  afterAll(() => {
+    if (!USE_REAL_DB) return;
+
+    closeDatabase();
+    if (fs.existsSync(TEST_DB_PATH)) {
+      fs.unlinkSync(TEST_DB_PATH);
+    }
+    if (fs.existsSync(LOCK_PATH)) {
+      fs.unlinkSync(LOCK_PATH);
+    }
+  });
+
+  maybeTest('last 50 job_runs have valid or null jobKey', () => {
     const rows = db
       .prepare(
         `
@@ -85,7 +130,7 @@ describe('Job Key Audit', () => {
     expect(violations).toHaveLength(0);
   });
 
-  test('odds ingest job keys include hour bucket (YYYY-MM-DD|HH) for production-format keys', () => {
+  maybeTest('odds ingest job keys include hour bucket (YYYY-MM-DD|HH) for production-format keys', () => {
     const rows = db
       .prepare(
         `
@@ -109,7 +154,7 @@ describe('Job Key Audit', () => {
     });
   });
 
-  test('sport model job keys include date+window for fixed or game_id+minutes for tminus', () => {
+  maybeTest('sport model job keys include date+window for fixed or game_id+minutes for tminus', () => {
     const rows = db
       .prepare(
         `

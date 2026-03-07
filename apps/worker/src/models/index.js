@@ -40,7 +40,7 @@ const {
 } = require('./cross-market');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { predictNHLGame } = require('./nhl-pace-model');
-const { generateCard } = require('@cheddar-logic/models');
+const { generateCard, buildMarketCallCard } = require('@cheddar-logic/models');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -1529,4 +1529,5 @@ module.exports = {
   computeTotalBias,
   buildMarketPayload,
   generateCard,
+  buildMarketCallCard,
 };

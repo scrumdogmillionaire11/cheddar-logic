@@ -20,7 +20,7 @@ jest.mock('@cheddar-logic/data', () => ({
   withDb: jest.fn((fn) => fn()),
 }));
 
-jest.mock('../../../../packages/data/src/espn-client', () => ({
+jest.mock('../../../../../packages/data/src/espn-client', () => ({
   fetchScoreboardEvents: jest.fn(),
 }));
 
@@ -54,7 +54,7 @@ describe('settle_game_results.js Integration', () => {
     mockInsertJobRun = dataModule.insertJobRun;
     mockMarkJobRunSuccess = dataModule.markJobRunSuccess;
 
-    const espnModule = require('../../../../packages/data/src/espn-client');
+    const espnModule = require('../../../../../packages/data/src/espn-client');
     mockFetchScoreboardEvents = espnModule.fetchScoreboardEvents;
 
     // Mock database
@@ -126,8 +126,7 @@ describe('settle_game_results.js Integration', () => {
 
       expect(result.success).toBe(true);
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Initialized with'),
-        expect.any(String)
+        expect.stringContaining('DRY_RUN=true'),
       );
 
       consoleSpy.mockRestore();
@@ -247,8 +246,8 @@ describe('settle_game_results.js Integration', () => {
       const pendingGame = {
         game_id: 'game-456',
         sport: 'NBA',
-        home_team: 'Lakers',
-        away_team: 'Celtics',
+        home_team: 'Los Angeles Lakers',
+        away_team: 'Boston Celtics',
         game_time_utc: new Date(Date.now() - 14400000).toISOString(),
         pending_card_count: 1,
       };
@@ -263,7 +262,7 @@ describe('settle_game_results.js Integration', () => {
       mockFetchScoreboardEvents.mockResolvedValue([
         {
           id: '456',
-          date: new Date().toISOString(),
+          date: pendingGame.game_time_utc,
           competitions: [
             {
               status: { type: { completed: true } },
@@ -281,7 +280,6 @@ describe('settle_game_results.js Integration', () => {
       // Log should mention scoring validation
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Settling'),
-        expect.any(String)
       );
 
       consoleSpy.mockRestore();

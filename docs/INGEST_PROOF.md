@@ -81,7 +81,8 @@ DB counts after run:
 **Symptom:** `[PullOdds] No games returned for <sport>` — gamesUpserted stays 0.
 
 **Likely causes:**
-- shared-data odds-fetcher cache is stale or empty for that sport
+
+- shared-data odds-fetcher cache is stale or empty for that sport (used under @cheddar-logic/odds)
 - `hoursAhead=36` window has no upcoming games (off-season, late night)
 - shared-data module not found at expected path
 
@@ -100,6 +101,7 @@ Confirm the file exists and getUpcomingGames returns a non-empty array for the s
 **Symptom:** `[PullOdds] CONTRACT VIOLATION: <sport> normalized <N>/<M> games (threshold 60%). Marking job failed.` — job exits with `success: false`.
 
 **Likely causes:**
+
 - Provider payload shape changed (missing `home_team`, `away_team`, or `commence_time` fields)
 - A new sport's data format differs from expected schema in normalize.js
 
@@ -113,6 +115,7 @@ Confirm the file exists and getUpcomingGames returns a non-empty array for the s
 **Symptom:** `Error: SQLITE_CANTOPEN: unable to open database file` or games count stays 0 despite successful log output.
 
 **Likely causes:**
+
 - packages/data is looking for DB at a path that doesn't exist yet
 - Running from wrong working directory (initDb uses relative path resolution)
 - DB file was deleted or moved

@@ -239,7 +239,9 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
             ]),
           ];
           for (const ct of driverCardTypesToClear) {
-            prepareModelAndCardWrite(gameId, 'ncaam-drivers-v1', ct);
+            prepareModelAndCardWrite(gameId, 'ncaam-drivers-v1', ct, {
+              runId: jobRunId,
+            });
           }
 
           const cards = generateNCAAMCards(gameId, driverCards, oddsSnapshot);

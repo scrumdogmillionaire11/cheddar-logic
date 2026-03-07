@@ -1501,8 +1501,8 @@ function deleteModelOutputsForGame(gameId, modelName) {
  * @param {string} cardType - Card type
  * @returns {number} Count of deleted rows
  */
-function deleteCardPayloadsByGameAndType(gameId, cardType) {
-  return deleteCardPayloadsForGame(gameId, cardType);
+function deleteCardPayloadsByGameAndType(gameId, cardType, options = {}) {
+  return deleteCardPayloadsForGame(gameId, cardType, options);
 }
 
 /**
@@ -1510,11 +1510,16 @@ function deleteCardPayloadsByGameAndType(gameId, cardType) {
  * @param {string} gameId - Game ID
  * @param {string} modelName - Model name
  * @param {string} cardType - Card type
+ * @param {{runId?: string}} options - Optional run scope for payload cleanup
  * @returns {{deletedOutputs: number, deletedCards: number}}
  */
-function prepareModelAndCardWrite(gameId, modelName, cardType) {
+function prepareModelAndCardWrite(gameId, modelName, cardType, options = {}) {
   const deletedOutputs = deleteModelOutputsByGame(gameId, modelName);
-  const deletedCards = deleteCardPayloadsByGameAndType(gameId, cardType);
+  const deletedCards = deleteCardPayloadsByGameAndType(
+    gameId,
+    cardType,
+    options,
+  );
   return { deletedOutputs, deletedCards };
 }
 
@@ -1522,11 +1527,21 @@ function prepareModelAndCardWrite(gameId, modelName, cardType) {
  * Delete card payloads for a game + card type combo (for idempotency)
  * @param {string} gameId - Game ID
  * @param {string} cardType - Card type
+ * @param {{runId?: string}} options - Optional run scope for payload cleanup
  * @returns {number} Count of deleted rows
  */
-function deleteCardPayloadsForGame(gameId, cardType) {
+function deleteCardPayloadsForGame(gameId, cardType, options = {}) {
   const db = getDatabase();
   const now = new Date().toISOString();
+  const runId =
+    typeof options.runId === 'string' && options.runId.trim().length > 0
+      ? options.runId.trim()
+      : null;
+
+  // Run-scoped cleanup allows workers to stage new run rows without removing
+  // currently published run rows, preventing transient empty API reads.
+  const runScopeClause = runId ? ' AND run_id = ?' : '';
+  const runScopeParams = runId ? [runId] : [];
 
   // Rewrites are only allowed for unsettled rows. Remove pending result links first,
   // then delete unreferenced payloads. Settled payloads are retained for audit integrity.
@@ -1536,33 +1551,39 @@ function deleteCardPayloadsForGame(gameId, cardType) {
       AND card_id IN (
         SELECT id
         FROM card_payloads
-        WHERE game_id = ? AND card_type = ?
+        WHERE game_id = ? AND card_type = ?${runScopeClause}
       )
   `);
-  deletePendingResultsStmt.run(gameId, cardType);
+  deletePendingResultsStmt.run(gameId, cardType, ...runScopeParams);
 
   const deleteUnreferencedPayloadsStmt = db.prepare(`
     DELETE FROM card_payloads
     WHERE game_id = ? AND card_type = ?
+      ${runScopeClause}
       AND id NOT IN (
         SELECT card_id
         FROM card_results
       )
   `);
-  const deleted = deleteUnreferencedPayloadsStmt.run(gameId, cardType).changes;
+  const deleted = deleteUnreferencedPayloadsStmt.run(
+    gameId,
+    cardType,
+    ...runScopeParams,
+  ).changes;
 
   // Keep referenced payloads immutable but stale so current-card reads ignore them.
   const expireReferencedPayloadsStmt = db.prepare(`
     UPDATE card_payloads
     SET expires_at = COALESCE(expires_at, ?), updated_at = ?
     WHERE game_id = ? AND card_type = ?
+      ${runScopeClause}
       AND id IN (
         SELECT card_id
         FROM card_results
       )
       AND expires_at IS NULL
   `);
-  expireReferencedPayloadsStmt.run(now, now, gameId, cardType);
+  expireReferencedPayloadsStmt.run(now, now, gameId, cardType, ...runScopeParams);
 
   return deleted;
 }
