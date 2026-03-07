@@ -101,6 +101,24 @@ const NBA_TEAMS = {
 /**
  * NCAAM teams: full name -> { id, abbr }
  * ESPN college basketball IDs for top ~50 programs.
+ * 
+ * ESPN Team ID Lookup Guide (WI-0326):
+ * ----------------------------------------
+ * To find missing team IDs:
+ * 1. Visit https://www.espn.com/mens-college-basketball/teams
+ * 2. Find the team and click through to their page
+ * 3. Extract numeric ID from URL: espn.com/mens-college-basketball/team/_/id/{ID}/{slug}
+ * 4. Verify abbreviation from ESPN's official display
+ * 5. Add 2-3 name variations to handle odds API inconsistencies:
+ *    - Full official name (e.g., "Oklahoma State Cowboys")
+ *    - Abbreviated form (e.g., "Oklahoma St" or "Oklahoma St Cowboys")
+ *    - Location only (e.g., "Oklahoma State")
+ * 
+ * Scoreboard Fallback: Teams playing in the next 7 days are auto-discovered
+ * if they're not in this static table. The dynamic ID will be logged and can
+ * be added here for permanent resolution.
+ * 
+ * Note: IDs marked with PLACEHOLDER_ prefix need verification via ESPN website.
  */
 const NCAAM_TEAMS = {
   'Duke':                  { id: 150,  abbr: 'DUKE' },
@@ -202,7 +220,272 @@ const NCAAM_TEAMS = {
   'Dayton':                { id: 2065, abbr: 'DAY' },
   'Dayton Flyers':         { id: 2065, abbr: 'DAY' },
   'Princeton':             { id: 163,  abbr: 'PRIN' },
-  'Princeton Tigers':      { id: 163,  abbr: 'PRIN' }
+  'Princeton Tigers':      { id: 163,  abbr: 'PRIN' },
+
+  // --- Additional teams added WI-0326 to fix hidden games ---
+  // Priority teams from user's reported issues (72 hidden NCAAM games)
+  
+  // George Washington Colonials
+  'George Washington':             { id: 45, abbr: 'GW' },
+  'GW':                            { id: 45, abbr: 'GW' },
+  'GW Revolutionaries':            { id: 45, abbr: 'GW' },
+  'George Washington Colonials':   { id: 45, abbr: 'GW' },
+  
+  // Loyola Chicago Ramblers
+  'Loyola Chicago':                { id: 2350, abbr: 'LUC' },
+  'Loyola (Chi)':                  { id: 2350, abbr: 'LUC' },
+  'Loyola (Chi) Ramblers':         { id: 2350, abbr: 'LUC' },
+  'Loyola Chicago Ramblers':       { id: 2350, abbr: 'LUC' },
+  
+  // Albany Great Danes
+  'Albany':                        { id: 399, abbr: 'ALB' },
+  'Albany Great Danes':            { id: 399, abbr: 'ALB' },
+  
+  // Long Beach State Beach
+  'Long Beach State':              { id: 2116, abbr: 'LBSU' },
+  'Long Beach St':                 { id: 2116, abbr: 'LBSU' },
+  'Long Beach St 49ers':           { id: 2116, abbr: 'LBSU' },
+  'Long Beach State Beach':        { id: 2116, abbr: 'LBSU' },
+  
+  // Oklahoma State Cowboys
+  'Oklahoma State':                { id: 197, abbr: 'OKST' },
+  'Oklahoma St':                   { id: 197, abbr: 'OKST' },
+  'Oklahoma St Cowboys':           { id: 197, abbr: 'OKST' },
+  'Oklahoma State Cowboys':        { id: 197, abbr: 'OKST' },
+  
+  // Appalachian State Mountaineers
+  'Appalachian State':             { id: 2026, abbr: 'APP' },
+  'Appalachian St':                { id: 2026, abbr: 'APP' },
+  'Appalachian St Mountaineers':   { id: 2026, abbr: 'APP' },
+  'Appalachian State Mountaineers':{ id: 2026, abbr: 'APP' },
+
+  // Additional mid-major and smaller programs from normalize.js LOGGED_TEAM_VARIANTS
+  
+  // Alabama State
+  'Alabama State':                 { id: 2010, abbr: 'ALST' },
+  'Alabama St':                    { id: 2010, abbr: 'ALST' },
+  'Alabama St Hornets':            { id: 2010, abbr: 'ALST' },
+  'Alabama State Hornets':         { id: 2010, abbr: 'ALST' },
+  
+  // Air Force
+  'Air Force':                     { id: 2005, abbr: 'AFA' },
+  'Air Force Falcons':             { id: 2005, abbr: 'AFA' },
+  
+  // Arizona State
+  'Arizona State':                 { id: 9, abbr: 'ASU' },
+  'Arizona St':                    { id: 9, abbr: 'ASU' },
+  'Arizona State Sun Devils':      { id: 9, abbr: 'ASU' },
+  'Arizona St Sun Devils':         { id: 9, abbr: 'ASU' },
+  
+  // Boston College
+  'Boston College':                { id: 103, abbr: 'BC' },
+  'Boston College Eagles':         { id: 103, abbr: 'BC' },
+  
+  // Butler
+  'Butler':                        { id: 2086, abbr: 'BUT' },
+  'Butler Bulldogs':               { id: 2086, abbr: 'BUT' },
+  
+  // California
+  'California':                    { id: 25, abbr: 'CAL' },
+  'California Golden Bears':       { id: 25, abbr: 'CAL' },
+  
+  // Charlotte (49ers)
+  'Charlotte':                     { id: 2429, abbr: 'CHAR' },
+  'Charlotte 49ers':               { id: 2429, abbr: 'CHAR' },
+  
+  // Cincinnati
+  'Cincinnati':                    { id: 2132, abbr: 'CIN' },
+  'Cincinnati Bearcats':           { id: 2132, abbr: 'CIN' },
+  
+  // Colorado State
+  'Colorado State':                { id: 36, abbr: 'CSU' },
+  'Colorado St':                   { id: 36, abbr: 'CSU' },
+  'Colorado State Rams':           { id: 36, abbr: 'CSU' },
+  'Colorado St Rams':              { id: 36, abbr: 'CSU' },
+  
+  // Davidson
+  'Davidson':                      { id: 2166, abbr: 'DAV' },
+  'Davidson Wildcats':             { id: 2166, abbr: 'DAV' },
+  
+  // DePaul
+  'DePaul':                        { id: 305, abbr: 'DEP' },
+  'DePaul Blue Demons':            { id: 305, abbr: 'DEP' },
+  
+  // Florida State (add "St" variant)
+  'Florida St':                    { id: 52, abbr: 'FSU' },
+  'Florida St Seminoles':          { id: 52, abbr: 'FSU' },
+  
+  // Fresno State
+  'Fresno State':                  { id: 278, abbr: 'FRES' },
+  'Fresno St':                     { id: 278, abbr: 'FRES' },
+  'Fresno State Bulldogs':         { id: 278, abbr: 'FRES' },
+  'Fresno St Bulldogs':            { id: 278, abbr: 'FRES' },
+  
+  // Georgia Tech
+  'Georgia Tech':                  { id: 59, abbr: 'GT' },
+  'Georgia Tech Yellow Jackets':   { id: 59, abbr: 'GT' },
+  
+  // Grand Canyon
+  'Grand Canyon':                  { id: 2253, abbr: 'GCU' },
+  'Grand Canyon Antelopes':        { id: 2253, abbr: 'GCU' },
+  
+  // Kansas State
+  'Kansas State':                  { id: 2306, abbr: 'KSU' },
+  'Kansas St':                     { id: 2306, abbr: 'KSU' },
+  'Kansas State Wildcats':         { id: 2306, abbr: 'KSU' },
+  'Kansas St Wildcats':            { id: 2306, abbr: 'KSU' },
+  
+  // Kent State
+  'Kent State':                    { id: 2309, abbr: 'KENT' },
+  'Kent St':                       { id: 2309, abbr: 'KENT' },
+  'Kent State Golden Flashes':     { id: 2309, abbr: 'KENT' },
+  'Kent St Golden Flashes':        { id: 2309, abbr: 'KENT' },
+  
+  // La Salle
+  'La Salle':                      { id: 2325, abbr: 'LAS' },
+  'La Salle Explorers':            { id: 2325, abbr: 'LAS' },
+  
+  // Maryland
+  'Maryland':                      { id: 120, abbr: 'MD' },
+  'Maryland Terrapins':            { id: 120, abbr: 'MD' },
+  
+  // Mississippi State (add "St" variant)
+  'Mississippi St':                { id: 344, abbr: 'MSST' },
+  'Mississippi St Bulldogs':       { id: 344, abbr: 'MSST' },
+  
+  // Nebraska
+  'Nebraska':                      { id: 158, abbr: 'NEB' },
+  'Nebraska Cornhuskers':          { id: 158, abbr: 'NEB' },
+  
+  // Nevada
+  'Nevada':                        { id: 2440, abbr: 'NEV' },
+  'Nevada Wolf Pack':              { id: 2440, abbr: 'NEV' },
+  
+  // New Mexico
+  'New Mexico':                    { id: 167, abbr: 'UNM' },
+  'New Mexico Lobos':              { id: 167, abbr: 'UNM' },
+  
+  // Northwestern
+  'Northwestern':                  { id: 77, abbr: 'NW' },
+  'Northwestern Wildcats':         { id: 77, abbr: 'NW' },
+  
+  // Old Dominion
+  'Old Dominion':                  { id: 295, abbr: 'ODU' },
+  'Old Dominion Monarchs':         { id: 295, abbr: 'ODU' },
+  
+  // Ole Miss (Mississippi)
+  'Ole Miss':                      { id: 145, abbr: 'MISS' },
+  'Ole Miss Rebels':               { id: 145, abbr: 'MISS' },
+  'Mississippi':                   { id: 145, abbr: 'MISS' },
+  'Mississippi Rebels':            { id: 145, abbr: 'MISS' },
+  
+  // Penn State
+  'Penn State':                    { id: 213, abbr: 'PSU' },
+  'Penn St':                       { id: 213, abbr: 'PSU' },
+  'Penn State Nittany Lions':      { id: 213, abbr: 'PSU' },
+  'Penn St Nittany Lions':         { id: 213, abbr: 'PSU' },
+  
+  // Providence
+  'Providence':                    { id: 2507, abbr: 'PROV' },
+  'Providence Friars':             { id: 2507, abbr: 'PROV' },
+  
+  // Saint Joseph's
+  "Saint Joseph's":                { id: 2603, abbr: 'SJU' },
+  "Saint Joseph's Hawks":          { id: 2603, abbr: 'SJU' },
+  "St. Joseph's":                  { id: 2603, abbr: 'SJU' },
+  "St. Joseph's Hawks":            { id: 2603, abbr: 'SJU' },
+  
+  // Saint Louis
+  'Saint Louis':                   { id: 139, abbr: 'SLU' },
+  'Saint Louis Billikens':         { id: 139, abbr: 'SLU' },
+  'St. Louis':                     { id: 139, abbr: 'SLU' },
+  'St. Louis Billikens':           { id: 139, abbr: 'SLU' },
+  
+  // San Diego State (add "St" variant)
+  'San Diego St':                  { id: 21, abbr: 'SDSU' },
+  'San Diego St Aztecs':           { id: 21, abbr: 'SDSU' },
+  
+  // SMU (Southern Methodist)
+  'SMU':                           { id: 2567, abbr: 'SMU' },
+  'SMU Mustangs':                  { id: 2567, abbr: 'SMU' },
+  'Southern Methodist':            { id: 2567, abbr: 'SMU' },
+  
+  // Stanford
+  'Stanford':                      { id: 24, abbr: 'STAN' },
+  'Stanford Cardinal':             { id: 24, abbr: 'STAN' },
+  
+  // UAB (Alabama Birmingham)
+  'UAB':                           { id: 5, abbr: 'UAB' },
+  'UAB Blazers':                   { id: 5, abbr: 'UAB' },
+  
+  // USC (Southern California)
+  'USC':                           { id: 30, abbr: 'USC' },
+  'USC Trojans':                   { id: 30, abbr: 'USC' },
+  'Southern California':           { id: 30, abbr: 'USC' },
+  
+  // Utah
+  'Utah':                          { id: 254, abbr: 'UTAH' },
+  'Utah Utes':                     { id: 254, abbr: 'UTAH' },
+  
+  // Utah State
+  'Utah State':                    { id: 328, abbr: 'USU' },
+  'Utah St':                       { id: 328, abbr: 'USU' },
+  'Utah State Aggies':             { id: 328, abbr: 'USU' },
+  'Utah St Aggies':                { id: 328, abbr: 'USU' },
+  
+  // Vanderbilt
+  'Vanderbilt':                    { id: 238, abbr: 'VAN' },
+  'Vanderbilt Commodores':         { id: 238, abbr: 'VAN' },
+  
+  // Virginia Tech
+  'Virginia Tech':                 { id: 259, abbr: 'VT' },
+  'Virginia Tech Hokies':          { id: 259, abbr: 'VT' },
+  
+  // Washington
+  'Washington':                    { id: 264, abbr: 'WASH' },
+  'Washington Huskies':            { id: 264, abbr: 'WASH' },
+  
+  // Wyoming
+  'Wyoming':                       { id: 2751, abbr: 'WYO' },
+  'Wyoming Cowboys':               { id: 2751, abbr: 'WYO' },
+  
+  // Boise State
+  'Boise State':                   { id: 68, abbr: 'BSU' },
+  'Boise St':                      { id: 68, abbr: 'BSU' },
+  'Boise State Broncos':           { id: 68, abbr: 'BSU' },
+  'Boise St Broncos':              { id: 68, abbr: 'BSU' },
+  
+  // Mississippi State (add "Miss St" variant)
+  'Miss St':                       { id: 344, abbr: 'MSST' },
+  'Miss State':                    { id: 344, abbr: 'MSST' },
+  
+  // UNLV
+  'UNLV':                          { id: 2439, abbr: 'UNLV' },
+  'UNLV Rebels':                   { id: 2439, abbr: 'UNLV' },
+  
+  // Seton Hall
+  'Seton Hall':                    { id: 2550, abbr: 'SETON' },
+  'Seton Hall Pirates':            { id: 2550, abbr: 'SETON' },
+  
+  // Rhode Island
+  'Rhode Island':                  { id: 227, abbr: 'URI' },
+  'Rhode Island Rams':             { id: 227, abbr: 'URI' },
+  
+  // St. Bonaventure
+  'St. Bonaventure':               { id: 179, abbr: 'BON' },
+  'St. Bonaventure Bonnies':       { id: 179, abbr: 'BON' },
+  'Saint Bonaventure':             { id: 179, abbr: 'BON' },
+  
+  // VCU (Virginia Commonwealth)
+  'VCU':                           { id: 2670, abbr: 'VCU' },
+  'VCU Rams':                      { id: 2670, abbr: 'VCU' },
+  'Virginia Commonwealth':         { id: 2670, abbr: 'VCU' },
+  
+  // Wichita State
+  'Wichita State':                 { id: 2724, abbr: 'WSU' },
+  'Wichita St':                    { id: 2724, abbr: 'WSU' },
+  'Wichita State Shockers':        { id: 2724, abbr: 'WSU' },
+  'Wichita St Shockers':           { id: 2724, abbr: 'WSU' }
 };
 
 const SCOREBOARD_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
