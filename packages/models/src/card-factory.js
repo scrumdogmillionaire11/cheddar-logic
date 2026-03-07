@@ -39,6 +39,8 @@ function generateCard({
     throw new Error('Missing required card generation parameters');
   }
 
+  const normalizedSport = typeof sport === 'string' ? sport.toUpperCase() : sport;
+
   // Calculate expiresAt if not provided (1 hour before game time)
   let finalExpiresAt = expiresAt;
   if (!finalExpiresAt && oddsSnapshot?.game_time_utc) {
@@ -48,7 +50,7 @@ function generateCard({
 
   // Generate unique card ID
   const cardIdSuffix = `${descriptor.driverKey}${marketType ? `-${marketType}` : ''}-${gameId}-${uuidV4().slice(0, 8)}`;
-  const cardId = `card-${sport.toLowerCase()}-${cardIdSuffix}`;
+  const cardId = `card-${normalizedSport.toLowerCase()}-${cardIdSuffix}`;
 
   // Validate that expiresAt was calculated or provided
   if (!finalExpiresAt) {
@@ -59,7 +61,7 @@ function generateCard({
   const recommendation = buildRecommendationFromPrediction({
     prediction: descriptor.prediction,
     recommendedBetType:
-      sport === 'NCAAM' ? marketType || 'moneyline' : 'moneyline',
+      normalizedSport === 'NCAAM' ? marketType || 'moneyline' : 'moneyline',
   });
 
   const matchup = buildMatchup(
@@ -75,10 +77,10 @@ function generateCard({
   // Sport-specific payload construction
   let payloadData;
 
-  if (sport === 'NBA' || sport === 'NHL') {
+  if (normalizedSport === 'NBA' || normalizedSport === 'NHL') {
     // NBA/NHL use marketPayload from cross-market decisions
     payloadData = buildBallSportPayload({
-      sport,
+      sport: normalizedSport,
       descriptor,
       oddsSnapshot,
       matchup,
@@ -91,7 +93,7 @@ function generateCard({
       marketPayload,
       now,
     });
-  } else if (sport === 'NCAAM') {
+  } else if (normalizedSport === 'NCAAM') {
     // NCAAM builds payload per market type
     payloadData = buildNCAAMPayload({
       descriptor,
@@ -112,7 +114,7 @@ function generateCard({
   let cardType = descriptor.cardType;
   let cardTitle = descriptor.cardTitle;
 
-  if (sport === 'NCAAM') {
+  if (normalizedSport === 'NCAAM') {
     cardTitle = `${descriptor.cardTitle} (${marketType.toUpperCase()})`;
   }
 
@@ -120,7 +122,7 @@ function generateCard({
   return {
     id: cardId,
     gameId,
-    sport,
+    sport: normalizedSport,
     cardType,
     cardTitle,
     createdAt: now,

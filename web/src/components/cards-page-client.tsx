@@ -346,11 +346,11 @@ export default function CardsPageClient() {
     getDefaultFilters('game'),
   );
   const isInitialLoad = useRef(true);
-  const showTrace = process.env.NODE_ENV !== 'production';
-  // Player props feature flag - dev mode OR explicit production opt-in
-  const propsEnabled =
+  const showTrace =
     process.env.NODE_ENV !== 'production' ||
-    process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true';
+    process.env.NEXT_PUBLIC_CARDS_TRACE === 'true';
+  // Player props feature flag - explicit opt-in only (hidden by default)
+  const propsEnabled = process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true';
 
   // Compute cards based on view mode
   const { enrichedCards, filteredCards, propCards } = useMemo(() => {
