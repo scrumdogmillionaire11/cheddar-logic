@@ -58,7 +58,7 @@ export const X_CONTENT_TYPE_OPTIONS = 'nosniff';
  * strict-no-referrer: Never send referrer info
  * Alternatives: no-referrer, same-origin, strict-no-referrer-when-downgrade
  */
-export const REFERRER_POLICY = 'strict-no-referrer';
+export const REFERRER_POLICY = 'no-referrer';
 
 /**
  * X-XSS-Protection header value
