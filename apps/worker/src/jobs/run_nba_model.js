@@ -31,6 +31,7 @@ const {
   shouldRunJobKey,
   withDb,
   enrichOddsSnapshotWithEspnMetrics,
+  updateOddsSnapshotRawData,
   getDatabase,
 } = require('@cheddar-logic/data');
 
@@ -577,6 +578,9 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
 
           // Enrich with ESPN team metrics
           oddsSnapshot = await enrichOddsSnapshotWithEspnMetrics(oddsSnapshot);
+          
+          // Persist enrichment to database so models have access to ESPN metrics
+          updateOddsSnapshotRawData(gameId, 'NBA', oddsSnapshot.captured_at, oddsSnapshot.raw_data);
 
           // Query schedule for Welcome Home Fade
           // Welcome Home Fade: Home team coming back from a road trip (first game back)

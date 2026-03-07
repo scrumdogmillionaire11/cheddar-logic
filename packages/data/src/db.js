@@ -897,6 +897,57 @@ function deleteOddsSnapshotsByGameAndCapturedAt(gameId, capturedAt) {
 }
 
 /**
+ * Update the raw_data field of the latest odds snapshot for a game.
+ * Used to persist ESPN enrichment after the fact.
+ * @param {string} gameId - Game ID
+ * @param {string} sport - Sport code (NBA, NCAAM, NHL)
+ * @param {string} capturedAt - The captured_at timestamp (used for logging only)
+ * @param {object} enrichedRawData - The enriched raw_data object to persist
+ * @returns {boolean} True if update succeeded, false if no matching row found
+ */
+function updateOddsSnapshotRawData(gameId, sport, capturedAt, enrichedRawData) {
+  try {
+    const db = getDatabase();
+    
+    // First, find the ID of the latest snapshot for this game
+    const findStmt = db.prepare(`
+      SELECT id FROM odds_snapshots
+      WHERE game_id = ?
+      ORDER BY captured_at DESC
+      LIMIT 1
+    `);
+    const latestSnap = findStmt.get(gameId);
+    
+    if (!latestSnap) {
+      console.warn(`[updateOddsSnapshotRawData] No odds snapshot found for game ${gameId}`);
+      return false;
+    }
+    
+    // Prepare the raw_data JSON
+    const rawDataJson = enrichedRawData ? JSON.stringify(enrichedRawData) : null;
+    
+    // Update using the snapshot ID
+    const updateStmt = db.prepare(`
+      UPDATE odds_snapshots
+      SET raw_data = ?
+      WHERE id = ?
+    `);
+    
+    const result = updateStmt.run(rawDataJson, latestSnap.id);
+    if (result.changes === 0) {
+      console.warn(`[updateOddsSnapshotRawData] Failed to update snapshot ${latestSnap.id} for game ${gameId} at ${capturedAt}`);
+      return false;
+    }
+    
+    console.log(`[updateOddsSnapshotRawData] Updated raw_data for game ${gameId} (snapshot ${latestSnap.id}) captured at ${capturedAt}`);
+    return true;
+  } catch (err) {
+    console.error(`[updateOddsSnapshotRawData] Error updating game ${gameId}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
  * Prepare idempotent odds snapshot writes
  * @param {string} gameId - Game ID
  * @param {string} capturedAt - ISO 8601 timestamp
@@ -2241,6 +2292,7 @@ module.exports = {
   getLatestJobRunByKey,
   wasJobKeyRecentlySuccessful,
   insertOddsSnapshot,
+  updateOddsSnapshotRawData,
   deleteOddsSnapshotsByGameAndCapturedAt,
   prepareOddsSnapshotWrite,
   getLatestOdds,

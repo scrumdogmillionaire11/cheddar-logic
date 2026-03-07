@@ -29,6 +29,7 @@ const {
   shouldRunJobKey,
   withDb,
   enrichOddsSnapshotWithEspnMetrics,
+  updateOddsSnapshotRawData,
 } = require('@cheddar-logic/data');
 const { computeNCAAMDriverCards, generateCard } = require('../models');
 const {
@@ -218,6 +219,9 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
 
           // Enrich with ESPN team metrics
           oddsSnapshot = await enrichOddsSnapshotWithEspnMetrics(oddsSnapshot);
+          
+          // Persist enrichment to database so models have access to ESPN metrics
+          updateOddsSnapshotRawData(gameId, 'NCAAM', oddsSnapshot.captured_at, oddsSnapshot.raw_data);
 
           const driverCards = computeNCAAMDriverCards(gameId, oddsSnapshot);
           if (driverCards.length === 0) {
