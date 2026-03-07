@@ -26,6 +26,7 @@ export const DRIVER_ROLES: Record<string, DriverRole> = {
   'nba-total-projection':  'PRIMARY',
   'nba-spread-call':       'PRIMARY',
   'nhl-totals-call':       'PRIMARY',
+  'nhl-spread-call':       'PRIMARY',
   'nhl-pace-totals':       'PRIMARY',
   'nhl-pace-1p':           'PRIMARY',
   'ncaam-base-projection': 'PRIMARY',
