@@ -6,6 +6,35 @@
   "installCommand": "npm install --prefix web && npm install --prefix packages/data",
   "devCommand": "npm run dev --prefix web",
   "ignoreCommand": "git diff --quiet HEAD^ HEAD ./web",
+  "headers": [
+    {
+      "source": "/(.*)\\.html$",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/static/chunks/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/static/media/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    }
+  ],
   "routes": [
     {
       "src": "/favicon\\.ico",
