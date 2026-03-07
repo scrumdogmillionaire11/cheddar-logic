@@ -2,7 +2,7 @@
 
 **Phase:** 2 of 4 - ✅ COMPLETE  
 **Status:** Ready for Phase 3  
-**Last Activity:** 2026-03-07 - Completed quick task 22: fix DB lock error in production
+**Last Activity:** 2026-03-07 - Completed quick task 23: single-writer architecture: worker owns DB writes, web is read-only
 
 ## Full Roadmap
 
@@ -74,6 +74,7 @@
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 22 | fix DB lock error in production | 2026-03-07 | e051636 | [22-fix-db-lock-error-in-production](./quick/22-fix-db-lock-error-in-production/) |
+| 23 | single-writer architecture: worker owns DB writes, web is read-only | 2026-03-07 | cf1edec | [23-single-writer-architecture-worker-owns-d](./quick/23-single-writer-architecture-worker-owns-d/) |
 
 ## Session Continuity
 
