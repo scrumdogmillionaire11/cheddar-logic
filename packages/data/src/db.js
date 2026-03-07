@@ -246,6 +246,11 @@ function registerDbLockCleanup() {
   process.on('SIGTERM', cleanup);
 }
 
+function spinSleepMs(ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { /* spin */ }
+}
+
 function acquireDbFileLock(dbFile) {
   if (!dbFile) return;
   if (process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS === 'true') {
@@ -260,42 +265,58 @@ function acquireDbFileLock(dbFile) {
 
   const payload = `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`;
 
-  try {
-    const handle = fs.openSync(lockPath, 'wx');
-    fs.writeFileSync(handle, payload);
-    dbLockHandle = handle;
-    dbLockPath = lockPath;
-    registerDbLockCleanup();
-    return;
-  } catch (error) {
-    if (error.code !== 'EEXIST') {
-      throw error;
-    }
-  }
-
-  let lockInfo = null;
-  try {
-    lockInfo = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
-  } catch {
-    lockInfo = null;
-  }
-
-  if (!isLockOwnerAlive(lockInfo)) {
-    try {
-      fs.unlinkSync(lockPath);
-    } catch {
-      // Best-effort cleanup.
-    }
+  function tryAcquire() {
     try {
       const handle = fs.openSync(lockPath, 'wx');
       fs.writeFileSync(handle, payload);
       dbLockHandle = handle;
       dbLockPath = lockPath;
       registerDbLockCleanup();
-      return;
+      return true;
     } catch (error) {
-      if (error.code !== 'EEXIST') {
-        throw error;
+      if (error.code !== 'EEXIST') throw error;
+      return false;
+    }
+  }
+
+  function readLockInfo() {
+    try {
+      return JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    } catch {
+      return null;
+    }
+  }
+
+  function claimStaleLock() {
+    try { fs.unlinkSync(lockPath); } catch { /* best-effort */ }
+    return tryAcquire();
+  }
+
+  if (tryAcquire()) return;
+
+  let lockInfo = readLockInfo();
+
+  if (!isLockOwnerAlive(lockInfo)) {
+    if (claimStaleLock()) return;
+    // Lost race after unlink — fall through to retry/error path
+    lockInfo = readLockInfo();
+  }
+
+  // Lock is held by a live process.
+  // CHEDDAR_DB_LOCK_TIMEOUT_MS > 0 enables retry-with-backoff (intended for worker
+  // processes that need to wait for the web server to release between requests).
+  const lockTimeoutMs = Number(process.env.CHEDDAR_DB_LOCK_TIMEOUT_MS || 0);
+  if (lockTimeoutMs > 0) {
+    const retryIntervalMs = 100;
+    const deadline = Date.now() + lockTimeoutMs;
+    while (Date.now() < deadline) {
+      spinSleepMs(retryIntervalMs);
+      lockInfo = readLockInfo();
+      if (!isLockOwnerAlive(lockInfo)) {
+        if (claimStaleLock()) return;
+        lockInfo = readLockInfo();
+      } else if (tryAcquire()) {
+        return;
       }
     }
   }
