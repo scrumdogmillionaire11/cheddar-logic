@@ -341,6 +341,12 @@ function parseRetryAfterMs(retryAfterHeader: string | null): number | null {
   return Math.max(0, asDate - Date.now());
 }
 
+function summarizeNonJsonBody(bodyText: string): string {
+  const compact = bodyText.replace(/\s+/g, ' ').trim();
+  if (!compact) return 'empty response body';
+  return compact.length > 120 ? `${compact.slice(0, 120)}...` : compact;
+}
+
 export default function CardsPageClient() {
   const [games, setGames] = useState<GameData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -580,9 +586,45 @@ export default function CardsPageClient() {
         }
 
         globalGamesBlockedUntil = 0;
-        const data: ApiResponse = await response.json();
+        const contentType = (
+          response.headers.get('content-type') || ''
+        ).toLowerCase();
+        const responseText = await response.text();
+        let data: ApiResponse | null = null;
+        if (contentType.includes('application/json')) {
+          try {
+            data = JSON.parse(responseText) as ApiResponse;
+          } catch {
+            data = null;
+          }
+        }
 
-        if (!response.ok || !data.success) {
+        if (!response.ok) {
+          const nonJsonDetail =
+            data?.error ||
+            `HTTP ${response.status} ${response.statusText}${
+              responseText
+                ? `: ${summarizeNonJsonBody(responseText)}`
+                : ''
+            }`;
+          if (!cancelled) {
+            setError(nonJsonDetail);
+            setGames([]);
+          }
+          return;
+        }
+
+        if (!data) {
+          if (!cancelled) {
+            setError(
+              `Invalid API response format (expected JSON, got ${contentType || 'unknown content-type'})`,
+            );
+            setGames([]);
+          }
+          return;
+        }
+
+        if (!data.success) {
           if (!cancelled) {
             setError(data.error || 'Failed to fetch games');
             setGames([]);

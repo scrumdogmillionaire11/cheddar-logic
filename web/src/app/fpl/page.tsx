@@ -1,7 +1,8 @@
-import { closeDatabase, initDb } from '@cheddar-logic/data';
+import { closeDatabaseReadOnly, initDb } from '@cheddar-logic/data';
 import FPLPageClient from '@/components/fpl-page-client';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export default async function FPLPage() {
   await initDb();
@@ -17,6 +18,6 @@ export default async function FPLPage() {
 
     return <FPLPageClient />;
   } finally {
-    closeDatabase();
+    closeDatabaseReadOnly();
   }
 }
