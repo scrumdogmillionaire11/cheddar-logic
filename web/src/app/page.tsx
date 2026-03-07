@@ -1,5 +1,8 @@
 import Link from 'next/link';
 
+// Revalidate homepage every 5 minutes to prevent stale HTML with old chunk references
+export const revalidate = 300;
+
 export default function Home() {
   const discordInvite =
     process.env.NEXT_PUBLIC_DISCORD_INVITE ??
