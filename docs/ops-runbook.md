@@ -277,11 +277,56 @@ set -a; source /opt/cheddar-logic/.env.production; set +a; npm --prefix /opt/che
 
 ### Web app returns 502 Bad Gateway
 
-**Cause:** Cloudflare can't reach the Pi — either the service is down or still starting.
+**Cause:** Usually one of these:
 
-1. Check service status: `sudo systemctl status cheddar-web`
-2. If `activating (auto-restart)` — check journal for crash reason
-3. If `active (running)` — give it 15–30 seconds to fully initialize, then retry
+- `cheddar-web` is down/restarting and Cloudflare returns upstream 502
+- Static build artifacts are missing/incomplete under `web/.next`
+- Home page references chunk paths that the running origin cannot serve
+
+**Fast diagnosis (run on Pi):**
+
+```bash
+# 1) Service health
+sudo systemctl status cheddar-web --no-pager
+sudo journalctl -u cheddar-web -n 80 --no-pager
+
+# 2) Build artifacts exist
+test -f /opt/cheddar-logic/web/.next/BUILD_ID && echo "BUILD_ID OK" || echo "BUILD_ID MISSING"
+find /opt/cheddar-logic/web/.next/static/chunks -name "*.js" | head -5
+
+# 3) Origin serves chunk files
+SAMPLE=$(find /opt/cheddar-logic/web/.next/static/chunks -name "*.js" | sort | head -n1)
+REL=${SAMPLE#/opt/cheddar-logic/web/.next/static/chunks/}
+curl -I "http://127.0.0.1:3000/_next/static/chunks/$REL"
+
+# 4) Home page references a chunk that is actually reachable on origin
+REF=$(curl -s http://127.0.0.1:3000/ | grep -Eo '/_next/static/chunks/[^" ]+\.js' | head -n1)
+echo "$REF"
+curl -I "http://127.0.0.1:3000$REF"
+```
+
+If origin is `200` but public URL is `502`, check edge/proxy path:
+
+```bash
+curl -I "https://cheddarlogic.com$REF"
+sudo tail -n 100 /var/log/nginx/error.log
+sudo tail -n 100 /var/log/nginx/access.log
+```
+
+**Recovery:**
+
+```bash
+cd /opt/cheddar-logic
+git fetch origin main && git reset --hard origin/main
+npm --prefix web install --include=dev
+set -a; source /opt/cheddar-logic/.env.production; set +a
+npm --prefix web run build
+sudo systemctl restart cheddar-web
+sleep 5
+curl -I http://127.0.0.1:3000/
+```
+
+If the chunk still fails on origin after rebuild, do not proceed with traffic changes — inspect latest `cheddar-web` journal errors first.
 
 ---
 
