@@ -168,16 +168,31 @@ jobs:
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage
             sleep 5
-            LOCAL_SAMPLE_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "http://127.0.0.1:3000/_next/static/chunks/$SAMPLE_CHUNK_REL" || true)
-            test "$LOCAL_SAMPLE_STATUS" = "200" || { echo "ERROR: sample chunk is not served by origin after restart (status=$LOCAL_SAMPLE_STATUS): /_next/static/chunks/$SAMPLE_CHUNK_REL"; sudo journalctl -u cheddar-web -n 60 --no-pager || true; exit 1; }
+            retry_url() {
+              local url="$1"
+              local label="$2"
+              local attempts=12
+              local delay=3
+              local status=""
+              for i in $(seq 1 "$attempts"); do
+                status=$(curl -sS -o /dev/null -w "%{http_code}" "$url" || true)
+                if [ "$status" = "200" ]; then
+                  echo "$label ok (status=$status)"
+                  return 0
+                fi
+                echo "$label not ready (status=$status) attempt $i/$attempts"
+                sleep "$delay"
+              done
+              echo "$label failed after $attempts attempts (last status=$status): $url"
+              return 1
+            }
+            retry_url "http://127.0.0.1:3000/_next/static/chunks/$SAMPLE_CHUNK_REL" "origin sample chunk" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             HOMEPAGE_HTML=$(curl -fsS "http://127.0.0.1:3000/" || true)
-            REFERENCED_CHUNK=$(printf "%s" "$HOMEPAGE_HTML" | grep -Eo '/_next/static/chunks/[^"'"'"' ]+\.js' | head -n 1)
-            test -n "$REFERENCED_CHUNK" || { echo "ERROR: could not find a chunk reference in homepage HTML after restart"; exit 1; }
-            LOCAL_REFERENCED_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "http://127.0.0.1:3000$REFERENCED_CHUNK" || true)
-            test "$LOCAL_REFERENCED_STATUS" = "200" || { echo "ERROR: homepage-referenced chunk is not served by origin (status=$LOCAL_REFERENCED_STATUS): $REFERENCED_CHUNK"; exit 1; }
+            REFERENCED_CHUNK=$(printf "%s" "$HOMEPAGE_HTML" | grep -Eo '/_next/static/chunks/[^"'"' ]+\.js' | head -n 1)
+            test -n "$REFERENCED_CHUNK" || { echo "ERROR: could not find a chunk reference in homepage HTML after restart"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            retry_url "http://127.0.0.1:3000$REFERENCED_CHUNK" "origin homepage chunk" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             PUBLIC_DOMAIN_URL="${NEXT_PUBLIC_PUBLIC_DOMAIN:-${PUBLIC_DOMAIN:-https://cheddarlogic.com}}"
-            PUBLIC_REFERENCED_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "$PUBLIC_DOMAIN_URL$REFERENCED_CHUNK" || true)
-            test "$PUBLIC_REFERENCED_STATUS" = "200" || { echo "ERROR: public chunk request failed after restart (status=$PUBLIC_REFERENCED_STATUS): $PUBLIC_DOMAIN_URL$REFERENCED_CHUNK"; exit 1; }
+            retry_url "$PUBLIC_DOMAIN_URL$REFERENCED_CHUNK" "public homepage chunk" || { echo "ERROR: public chunk request failed after restart"; exit 1; }
             echo "Chunk verification passed: origin and public domain serve homepage-referenced assets"
             node -e "const u=['http://127.0.0.1:3000/api/games','http://127.0.0.1:3000/api/cards?limit=5','http://127.0.0.1:3000/api/results?limit=20']; (async()=>{const out={}; for (const x of u){const r=await fetch(x); const j=await r.json(); out[x]={status:r.status,games:Array.isArray(j?.data)?j.data.length:undefined,cards:Array.isArray(j?.data)?j.data.length:undefined,ledger:Array.isArray(j?.data?.ledger)?j.data.ledger.length:undefined,summary:j?.data?.summary||null};} console.log('post_restart_snapshot', JSON.stringify(out)); })().catch(e=>{console.error('post_restart_snapshot_error', e); process.exit(0);});"
             echo "Deploy complete — worker, web, and fpl-sage restarted"
