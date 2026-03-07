@@ -1272,6 +1272,24 @@ export default function CardsPageClient() {
                     </p>
                   );
                 })()}
+                {(() => {
+                  const total1pPlay = originalGame.plays.find(
+                    (p) => p.cardType === 'nhl-pace-1p',
+                  );
+                  if (!total1pPlay?.projectedTotal) return null;
+                  const edge1p = total1pPlay.edge ?? 0;
+                  const sign1p = edge1p >= 0 ? '+' : '';
+                  const color1p =
+                    edge1p >= 0 ? 'text-emerald-400' : 'text-red-400';
+                  return (
+                    <p
+                      className={`font-mono text-xs mt-0.5 opacity-75 ${color1p}`}
+                    >
+                      1P: {total1pPlay.projectedTotal} ({sign1p}
+                      {edge1p} {total1pPlay.prediction})
+                    </p>
+                  );
+                })()}
               </div>
               <div>
                 <p className="text-cloud/50 text-xs mb-1">Odds Updated</p>

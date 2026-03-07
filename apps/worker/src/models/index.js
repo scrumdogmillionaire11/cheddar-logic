@@ -619,11 +619,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
         });
       }
 
-      // 1P Driver — only emit when 1P market total is available
-      const market1pTotal = toNumber(
-        raw?.total_1p ?? raw?.first_period_total ?? null,
-      );
-      if (market1pTotal && paceResult.expected1pTotal) {
+      // 1P Driver — use market 1P line if available, otherwise default to 1.5
+      const market1pTotal =
+        toNumber(raw?.total_1p ?? raw?.first_period_total ?? null) ?? 1.5;
+      if (paceResult.expected1pTotal) {
         const edge1p =
           Math.round((paceResult.expected1pTotal - market1pTotal) * 100) / 100;
         const absEdge1p = Math.abs(edge1p);
