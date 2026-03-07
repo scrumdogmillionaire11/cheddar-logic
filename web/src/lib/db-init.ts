@@ -1,39 +1,29 @@
 /**
- * Database Initialization Wrapper
+ * Database Read-Only Initialization
  *
- * Ensures the database is fully initialized and migrated before any operations.
- * Uses promise caching to prevent concurrent duplicate work in the same process.
- * 
- * Key behavior:
- * - First call: runs initDb() + runMigrations()
- * - Subsequent calls: await the cached promise
- * - On failure: clears cache so next caller retries
+ * The web server is strictly read-only. It MUST NOT run migrations,
+ * write snapshots, or acquire write locks.
+ * The worker process owns all DB writes.
  */
 
-import { initDb, runMigrations } from '@cheddar-logic/data';
+import { initDb } from '@cheddar-logic/data';
 
 let dbReadyPromise: Promise<void> | null = null;
 
 export async function ensureDbReady(): Promise<void> {
-  // Return cached promise if already running or resolved
   if (dbReadyPromise) {
     return dbReadyPromise;
   }
 
-  // Create new promise and cache it
   dbReadyPromise = (async () => {
     try {
       await initDb();
-      await runMigrations();
-      console.log('[DB] Database initialized and migrated successfully');
+      // NOTE: No runMigrations() here. Worker owns all schema changes.
+      console.log('[DB] SQL.js engine initialized (read-only mode)');
     } catch (error) {
-      // 🔑 Critical: clear cache on failure so next caller retries
-      // This prevents a single transient failure from poisoning the process forever
       dbReadyPromise = null;
-      
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('[DB] Initialization failed, cache cleared for retry:', errorMsg);
-      
+      console.error('[DB] Read-only init failed:', errorMsg);
       throw error;
     }
   })();

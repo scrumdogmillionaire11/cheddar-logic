@@ -647,6 +647,19 @@ function closeDatabase() {
   oddsContextReferenceRegistry = new WeakMap();
 }
 
+/**
+ * Close database without saving to disk (read-only consumers).
+ * Use this in the web server — it must never write or acquire write locks.
+ */
+function closeDatabaseReadOnly() {
+  if (dbInstance) {
+    dbInstance.close();
+    dbInstance = null;
+  }
+  releaseDbFileLock();
+  oddsContextReferenceRegistry = new WeakMap();
+}
+
 function ensureRunStateSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS run_state (
@@ -2171,6 +2184,7 @@ module.exports = {
   initDb,
   getDatabase,
   closeDatabase,
+  closeDatabaseReadOnly,
   getCurrentRunId,
   setCurrentRunId,
   insertJobRun,
