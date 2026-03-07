@@ -1601,7 +1601,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
 
   // WI-0333: Extreme edge validation — edges >30% are suspicious for moneyline/spread.
   // Exempt TOTAL/TEAM_TOTAL: pace-model edge is in goal units (0.4–0.8 is normal).
-  if (edge > 0.30 && resolvedMarketType !== 'TOTAL' && resolvedMarketType !== 'TEAM_TOTAL') {
+  if (typeof edge === 'number' && edge > 0.30 && resolvedMarketType !== 'TOTAL' && resolvedMarketType !== 'TEAM_TOTAL') {
     gates.push({ code: 'STALE_EDGE_SUSPECTED', severity: 'BLOCK', blocks_bet: true });
     reasonCodesUnique.push('PASS_STALE_EDGE_SUSPECTED');
   }
@@ -1613,7 +1613,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     typeof game.odds?.h2hAway === 'number' &&
     Math.abs(game.odds.h2hHome) <= 120 &&
     Math.abs(game.odds.h2hAway) <= 120;
-  const modelFairProb = decision.model_prob ?? modelProb;
+  const modelFairProb = modelProb;
   const modelCoinflip = typeof modelFairProb === 'number' && modelFairProb >= 0.45 && modelFairProb <= 0.55;
   const coinflip = marketCoinflip && modelCoinflip;
   const mispricing = marketCoinflip && !modelCoinflip; // Market says coinflip, model has conviction
@@ -1621,7 +1621,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   if (coinflip) {
     gates.push({ code: 'COINFLIP', severity: 'WARN', blocks_bet: false });
   }
-  if (mispricing && edge > 0.05) {
+  if (mispricing && typeof edge === 'number' && edge > 0.05) {
     // Tag as mispricing opportunity, not coinflip
     if (!tags.includes('MISPRICING')) {
       tags.push('MISPRICING');
