@@ -77,10 +77,11 @@
 | 23 | single-writer architecture: worker owns DB writes, web is read-only | 2026-03-07 | cf1edec | [23-single-writer-architecture-worker-owns-d](./quick/23-single-writer-architecture-worker-owns-d/) |
 | 24 | WI-0327 through WI-0332: Edge math display, hide empty risk/gates, collapsible hidden errors, simplify label hierarchy, market type badges, coinflip messaging | 2026-03-07 | 002765d | [24-wi-0327-through-wi-0332-edge-math-displa](./quick/24-wi-0327-through-wi-0332-edge-math-displa/) |
 | 25 | investigate why NHL totals are not displaying on cards and check unfinished work items | 2026-03-07 | 7492360 | [25-investigate-why-nhl-totals-are-not-displ](./quick/25-investigate-why-nhl-totals-are-not-displ/) |
+| 26 | WI-0336: missing-data taxonomy diagnostic — distinct MISSING_DATA_* reason codes + SportDiagnosticsPanel | 2026-03-07 | 2cb5d11 | [26-wi-0336-missing-data-taxonomy-diagnostic](./quick/26-wi-0336-missing-data-taxonomy-diagnostic/) |
 
 ## Session Continuity
 
-**Last Session:** 2026-03-04  
-**Stopped At:** Phase 2 complete  
-**Resume File:** None (ready for Phase 3)  
+**Last Session:** 2026-03-07
+**Stopped At:** Quick task 26 complete
+**Resume File:** None
 **Next Action:** Begin Phase 3 - Consolidation boundary documentation
