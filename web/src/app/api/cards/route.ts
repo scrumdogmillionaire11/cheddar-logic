@@ -37,7 +37,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase, closeDatabase } from '@cheddar-logic/data';
+import { getDatabase, closeDatabaseReadOnly } from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
@@ -58,20 +58,6 @@ interface CardRow {
   expires_at: string | null;
   payload_data: string;
   model_output_ids: string | null;
-}
-
-interface CardDisplayLogPayload {
-  pickId: string;
-  runId?: string | null;
-  gameId?: string | null;
-  sport?: string | null;
-  marketType?: string | null;
-  selection?: string | null;
-  line?: number | null;
-  odds?: number | null;
-  oddsBook?: string | null;
-  confidencePct?: number | null;
-  endpoint: '/api/cards' | '/api/games';
 }
 
 function clampNumber(
@@ -96,126 +82,6 @@ function safeJsonParse(payload: string | null) {
     return { data: JSON.parse(payload), error: false };
   } catch {
     return { data: null, error: true };
-  }
-}
-
-function firstString(...values: unknown[]) {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return null;
-}
-
-function firstNumber(...values: unknown[]) {
-  for (const value of values) {
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-  }
-  return null;
-}
-
-function normalizeConfidencePct(value: number | null) {
-  if (value === null) return null;
-  if (value >= 0 && value <= 1) return Number((value * 100).toFixed(2));
-  return value;
-}
-
-function logCardDisplay(
-  db: ReturnType<typeof getDatabase>,
-  payload: CardDisplayLogPayload,
-) {
-  const stmt = db.prepare(`
-    INSERT OR IGNORE INTO card_display_log (
-      pick_id,
-      run_id,
-      game_id,
-      sport,
-      market_type,
-      selection,
-      line,
-      odds,
-      odds_book,
-      confidence_pct,
-      displayed_at,
-      api_endpoint
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  stmt.run(
-    payload.pickId,
-    payload.runId ?? null,
-    payload.gameId ?? null,
-    payload.sport ?? null,
-    payload.marketType ?? null,
-    payload.selection ?? null,
-    payload.line ?? null,
-    payload.odds ?? null,
-    payload.oddsBook ?? null,
-    normalizeConfidencePct(payload.confidencePct ?? null),
-    new Date().toISOString(),
-    payload.endpoint,
-  );
-}
-
-function ensureCardDisplayLogSchema(db: ReturnType<typeof getDatabase>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS card_display_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      pick_id TEXT UNIQUE NOT NULL,
-      run_id TEXT,
-      game_id TEXT,
-      sport TEXT,
-      market_type TEXT,
-      selection TEXT,
-      line REAL,
-      odds REAL,
-      odds_book TEXT,
-      confidence_pct REAL,
-      displayed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      api_endpoint TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_card_display_log_run_game
-      ON card_display_log (run_id, game_id);
-    CREATE INDEX IF NOT EXISTS idx_card_display_log_game_sport
-      ON card_display_log (game_id, sport);
-    CREATE INDEX IF NOT EXISTS idx_card_display_log_displayed_at
-      ON card_display_log (displayed_at DESC);
-  `);
-}
-
-function ensureRunStateSchema(db: ReturnType<typeof getDatabase>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS run_state (
-      id TEXT PRIMARY KEY,
-      current_run_id TEXT,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    INSERT OR IGNORE INTO run_state (id, current_run_id, updated_at)
-    VALUES ('singleton', NULL, CURRENT_TIMESTAMP);
-  `);
-
-  const columns = db.prepare(`PRAGMA table_info(card_payloads)`).all() as Array<{
-    name?: string;
-  }>;
-  const hasRunId = columns.some(
-    (column) => String(column.name || '').toLowerCase() === 'run_id',
-  );
-  if (!hasRunId) {
-    db.exec(`ALTER TABLE card_payloads ADD COLUMN run_id TEXT`);
-  }
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_card_payloads_run_id ON card_payloads(run_id)`,
-  );
-
-  const runIdCountRow = db
-    .prepare(
-      `SELECT COUNT(*) AS count FROM card_payloads WHERE run_id IS NOT NULL AND TRIM(run_id) != ''`,
-    )
-    .get() as { count?: number } | undefined;
-  if (Number(runIdCountRow?.count || 0) === 0) {
-    db.exec(`UPDATE card_payloads SET run_id = 'bootstrap-initial' WHERE run_id IS NULL`);
-    db.prepare(
-      `UPDATE run_state SET current_run_id = 'bootstrap-initial', updated_at = CURRENT_TIMESTAMP WHERE id = 'singleton'`,
-    ).run();
   }
 }
 
@@ -285,7 +151,6 @@ export async function GET(request: NextRequest) {
     const offset = clampNumber(searchParams.get('offset'), 0, 0, 1000);
 
     const db = getDatabase();
-    ensureRunStateSchema(db);
     const activeRunIds = getActiveRunIds(db);
     const currentRunId = activeRunIds[0] ?? null;
     const runStatus = getRunStatus(db, currentRunId);
@@ -397,32 +262,9 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    ensureCardDisplayLogSchema(db);
-
-    for (let index = 0; index < rows.length; index += 1) {
-      const row = rows[index];
-      const parsedPayload = response[index]?.payloadData as
-        | Record<string, unknown>
-        | null;
-
-      logCardDisplay(db, {
-        pickId: row.id,
-        runId: firstString(parsedPayload?.run_id),
-        gameId: row.game_id,
-        sport: row.sport,
-        marketType: firstString(parsedPayload?.market_type),
-        selection: firstString(
-          (parsedPayload?.selection as Record<string, unknown> | undefined)
-            ?.side,
-          parsedPayload?.prediction,
-        ),
-        line: firstNumber(parsedPayload?.line),
-        odds: firstNumber(parsedPayload?.price, parsedPayload?.odds),
-        oddsBook: firstString(parsedPayload?.odds_book),
-        confidencePct: firstNumber(parsedPayload?.confidence),
-        endpoint: '/api/cards',
-      });
-    }
+    // NOTE: card_display_log writes intentionally removed.
+    // Worker owns all DB writes (single-writer architecture).
+    // Display analytics can be added back via worker-side logging if needed.
 
     const apiResponse = NextResponse.json(
       {
@@ -447,6 +289,6 @@ export async function GET(request: NextRequest) {
     );
     return addRateLimitHeaders(errorResponse, request);
   } finally {
-    closeDatabase();
+    closeDatabaseReadOnly();
   }
 }

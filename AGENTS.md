@@ -4,10 +4,11 @@
 Multiple agents contribute safely by enforcing exclusive scopes, work-item claims, and serialized shared touchpoints.
 
 ## Current State Snapshot (Authoritative)
-- Source: `.planning/STATE.md` (last activity: 2026-03-04)
+- Source: `.planning/STATE.md` (last activity: 2026-03-07)
 - Current phase: `2 of 4` complete
 - Status: `Ready for Phase 3 (Documentation & Handoff)`
 - Phase 3 objective: formalize ownership contracts, runbooks, and enforcement guardrails
+- DB architecture: **single-writer** — worker is sole DB writer; web server is read-only (see ADR-0002)
 
 ## Source-Of-Truth Order
 When files conflict, apply this precedence in order:
@@ -53,6 +54,7 @@ When files conflict, apply this precedence in order:
 - No repo-wide formatting, cleanup, or renames outside scope.
 - If a change is not in scope, it does not happen.
 - Production DB path must be set via CHEDDAR_DB_PATH to the canonical DB file that contains card_payloads; avoid legacy DB path vars and keep docs/workflows aligned.
+- **Single-writer DB contract:** The worker is the only process that writes to, migrates, or saves snapshots of the sql.js database. Web server routes must never call `closeDatabase()`, `runMigrations()`, `db.exec()`, or `stmt.run()`. Use `closeDatabaseReadOnly()` for all web-side DB teardown. See ADR-0002.
 
 ## Branch/Commit Protocol
 - Branch: `agent/<agent-name>/WI-####-short-slug`
