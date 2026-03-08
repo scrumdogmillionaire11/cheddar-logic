@@ -30,6 +30,7 @@ import {
   getCardDecisionModel,
 } from '@/lib/game-card/decision';
 import { StickyBackButton } from '@/components/sticky-back-button';
+import { createTimeoutSignal } from '@/lib/network/timeout-signal';
 
 const TRACKED_SPORTS = ['NCAAM', 'NBA', 'NHL', 'SOCCER', 'MLB', 'NFL'] as const;
 
@@ -338,6 +339,9 @@ const CLIENT_POLL_INTERVAL_MS = 60_000;
 const CLIENT_MIN_FETCH_INTERVAL_MS = 5_000;
 const CLIENT_FETCH_TIMEOUT_MS = 10_000;
 const CLIENT_DEFAULT_BACKOFF_MS = 30_000;
+const CHUNK_RELOAD_GUARD_KEY = 'cards_chunk_reload_once';
+const CHUNK_ERROR_LOG_CODE = 'CARDS_CHUNK_LOAD_FAILED';
+const FETCH_ERROR_LOG_CODE = 'CARDS_FETCH_FAILED';
 
 let globalGamesFetchInFlight = false;
 let globalGamesLastFetchAt = 0;
@@ -364,6 +368,33 @@ function summarizeNonJsonBody(bodyText: string): string {
   const compact = bodyText.replace(/\s+/g, ' ').trim();
   if (!compact) return 'empty response body';
   return compact.length > 120 ? `${compact.slice(0, 120)}...` : compact;
+}
+
+function extractChunkPath(message: string): string | null {
+  const match = message.match(/\/_next\/static\/[^"'\s)]+/);
+  return match ? match[0] : null;
+}
+
+function isChunkLoadFailure(message: string): boolean {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('chunkloaderror') ||
+    normalized.includes('loading chunk') ||
+    normalized.includes('failed to fetch dynamically imported module') ||
+    (normalized.includes('/_next/static/chunks/') &&
+      normalized.includes('404'))
+  );
+}
+
+function stringifyUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 export default function CardsPageClient() {
@@ -702,6 +733,60 @@ export default function CardsPageClient() {
   };
 
   useEffect(() => {
+    const handleChunkFailure = (
+      message: string,
+      source: 'error' | 'unhandledrejection',
+    ) => {
+      if (!isChunkLoadFailure(message)) return;
+      const chunkPath = extractChunkPath(message);
+      console.error(`[${CHUNK_ERROR_LOG_CODE}]`, {
+        source,
+        message,
+        chunk_path: chunkPath,
+      });
+
+      if (typeof window === 'undefined') return;
+      const alreadyReloaded =
+        window.sessionStorage.getItem(CHUNK_RELOAD_GUARD_KEY) === '1';
+
+      if (!alreadyReloaded) {
+        window.sessionStorage.setItem(CHUNK_RELOAD_GUARD_KEY, '1');
+        window.location.reload();
+        return;
+      }
+
+      const assetSuffix = chunkPath ? ` (${chunkPath})` : '';
+      setError(`App assets are out of date${assetSuffix}. Hard refresh required.`);
+      setGames([]);
+    };
+
+    const onError = (event: Event) => {
+      const errorEvent = event as ErrorEvent;
+      const parts = [
+        errorEvent.message,
+        stringifyUnknownError(errorEvent.error),
+      ];
+      const target = errorEvent.target as HTMLScriptElement | null;
+      if (target?.src) {
+        parts.push(target.src);
+      }
+      handleChunkFailure(parts.filter(Boolean).join(' | '), 'error');
+    };
+
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      handleChunkFailure(stringifyUnknownError(event.reason), 'unhandledrejection');
+    };
+
+    window.addEventListener('error', onError, true);
+    window.addEventListener('unhandledrejection', onUnhandledRejection);
+
+    return () => {
+      window.removeEventListener('error', onError, true);
+      window.removeEventListener('unhandledrejection', onUnhandledRejection);
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     const fetchGames = async () => {
@@ -743,9 +828,12 @@ export default function CardsPageClient() {
           setLoading(true);
         }
 
+        const timeoutHandle = createTimeoutSignal(CLIENT_FETCH_TIMEOUT_MS);
         const response = await fetch('/api/games', {
-          signal: AbortSignal.timeout(CLIENT_FETCH_TIMEOUT_MS),
+          ...(timeoutHandle.signal ? { signal: timeoutHandle.signal } : {}),
           cache: 'no-store',
+        }).finally(() => {
+          timeoutHandle.cleanup();
         });
 
         if (response.status === 429) {
@@ -816,6 +904,10 @@ export default function CardsPageClient() {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
+        console.error(`[${FETCH_ERROR_LOG_CODE}]`, {
+          message,
+          error_name: err instanceof Error ? err.name : 'UnknownError',
+        });
         if (!cancelled && message !== 'The operation was aborted') {
           setError(message);
           setGames([]);

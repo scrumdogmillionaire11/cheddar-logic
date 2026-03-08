@@ -424,7 +424,11 @@ If the chunk still fails on origin after rebuild, do not proceed with traffic ch
 
 ### Vercel + Cloudflare: Static chunk 404s (CSS/JS missing)
 
-**Symptoms:** Console shows `/_next/static/chunks/*.js` 404s, CSS not loading, or hydration failures after a successful deploy.
+**Symptoms:**
+
+- Console shows `/_next/static/chunks/*.js` 404s, CSS not loading, or hydration failures after a successful deploy.
+- `/cards` renders shell UI but shows `0 games` and **no `/api/games` request appears in Network**.
+  - This indicates the client bundle failed before the cards fetch effect could run.
 
 **Diagnosis (public domain):**
 
@@ -451,6 +455,10 @@ curl -I "https://cheddarlogic.com$REF" | grep -iE 'http/|cache-control|cf-cache-
 1. Purge Cloudflare cache (full purge).
 2. Re-deploy on Vercel (clean build) if the origin still returns 404 for the referenced chunk.
 3. Re-run the diagnosis steps to confirm `200` responses and expected cache headers.
+4. Browser validation (post-fix):
+   - Open `/cards`
+   - Confirm `/api/games` appears in Network on first load
+   - Confirm card list populates
 
 ---
 

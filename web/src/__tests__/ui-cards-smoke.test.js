@@ -6,6 +6,38 @@
 
 const DEFAULT_BASE_URL = 'http://localhost:3000';
 
+function isConnectionIssue(error) {
+  const message = String(error?.message || error || '');
+  return (
+    message.includes('fetch failed') ||
+    message.includes('ECONNREFUSED') ||
+    message.includes('ENOTFOUND')
+  );
+}
+
+async function validateCardsChunkReachable(baseUrl, assert) {
+  const response = await fetch(`${baseUrl}/cards`, {
+    headers: { Accept: 'text/html' },
+  });
+  assert.strictEqual(
+    response.ok,
+    true,
+    `Cards page response not ok: ${response.status}`,
+  );
+  const html = await response.text();
+  const match = html.match(/\/_next\/static\/[^"'\s>]+\.js/);
+  assert.ok(match, 'Cards HTML did not reference a Next.js static JS asset');
+  const ref = match[0];
+  const assetResponse = await fetch(`${baseUrl}${ref}`, {
+    headers: { Accept: 'application/javascript,text/javascript,*/*' },
+  });
+  assert.strictEqual(
+    assetResponse.ok,
+    true,
+    `Referenced cards chunk not reachable (${assetResponse.status}): ${ref}`,
+  );
+}
+
 async function validateApiSmoke(baseUrl, assert) {
   const response = await fetch(`${baseUrl}/api/games?limit=50`);
 
@@ -88,18 +120,14 @@ async function run() {
 
   const baseUrl = process.env.CARDS_API_BASE_URL || DEFAULT_BASE_URL;
   try {
+    await validateCardsChunkReachable(baseUrl, assert);
     await validateApiSmoke(baseUrl, assert);
   } catch (error) {
-    const message = String(error?.message || error || '');
-    const isConnectionIssue =
-      message.includes('fetch failed') ||
-      message.includes('ECONNREFUSED') ||
-      message.includes('ENOTFOUND');
-    if (!isConnectionIssue) {
+    if (!isConnectionIssue(error)) {
       throw error;
     }
     console.warn(
-      `⚠️ API smoke endpoint unavailable at ${baseUrl}; running DB fallback check`,
+      `⚠️ Cards/API smoke endpoint unavailable at ${baseUrl}; running DB fallback check`,
     );
     await validateDbFallback(assert);
   }
