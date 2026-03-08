@@ -12,6 +12,7 @@
 const initSqlJs = require('sql.js/dist/sql-asm.js');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 const {
   createMarketError,
   deriveLockedMarketContext,
@@ -193,6 +194,66 @@ function isProcessAlive(pid) {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Check native SQLite database integrity using sqlite3 CLI.
+ * This is for detecting corruption in native SQLite files (e.g., FPL Sage DB),
+ * not the in-memory sql.js database used by Cheddar main DB.
+ *
+ * @param {string} dbPath - Absolute path to SQLite database file
+ * @returns {{ ok: boolean, error: string | null }} - Integrity check result
+ */
+function checkSqliteIntegrity(dbPath) {
+  // Handle missing or invalid path
+  if (!dbPath || typeof dbPath !== 'string') {
+    return { ok: true, error: null }; // Not configured = not an error
+  }
+
+  const normalizedPath = path.resolve(dbPath);
+
+  // Handle non-existent file (not an error for new installations)
+  if (!fs.existsSync(normalizedPath)) {
+    return { ok: true, error: null };
+  }
+
+  try {
+    // Shell out to sqlite3 CLI for integrity check
+    // Using 2>&1 to capture both stdout and stderr
+    const result = execSync(
+      `sqlite3 "${normalizedPath}" "PRAGMA integrity_check;"`,
+      { encoding: 'utf8', timeout: 10000 }
+    ).trim();
+
+    if (result === 'ok') {
+      return { ok: true, error: null };
+    }
+
+    // Integrity check returned non-ok result
+    return {
+      ok: false,
+      error: `FPL Sage DB corrupted at ${normalizedPath}. PRAGMA integrity_check returned: ${result}`,
+    };
+  } catch (err) {
+    // Command execution failed (e.g., sqlite3 not installed, disk I/O error, corrupt file)
+    const errorMsg = err.stderr || err.message || String(err);
+    
+    // Check if this is a "file is not a database" error (indicates corruption)
+    if (errorMsg.includes('file is not a database') || 
+        errorMsg.includes('database disk image is malformed') ||
+        errorMsg.includes('not a database')) {
+      return {
+        ok: false,
+        error: `FPL Sage DB corrupted at ${normalizedPath}: ${errorMsg}`,
+      };
+    }
+    
+    // Other errors (sqlite3 not installed, permission denied, etc.)
+    return {
+      ok: false,
+      error: `Failed to check FPL Sage DB integrity at ${normalizedPath}: ${errorMsg}`,
+    };
   }
 }
 
@@ -2429,6 +2490,7 @@ module.exports = {
   closeDatabase,
   closeDatabaseReadOnly,
   closeReadOnlyInstance,
+  checkSqliteIntegrity,
   getCurrentRunId,
   setCurrentRunId,
   insertJobRun,

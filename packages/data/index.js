@@ -46,6 +46,7 @@ module.exports = {
   closeDatabase: db.closeDatabase,
   closeDatabaseReadOnly: db.closeDatabaseReadOnly,
   closeReadOnlyInstance: db.closeReadOnlyInstance,
+  checkSqliteIntegrity: db.checkSqliteIntegrity,
   getCurrentRunId: db.getCurrentRunId,
   setCurrentRunId: db.setCurrentRunId,
   insertJobRun: db.insertJobRun,

@@ -37,6 +37,7 @@ const {
   prepareModelAndCardWrite,
   validateCardPayload,
   withDb,
+  checkSqliteIntegrity,
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
@@ -172,6 +173,27 @@ async function runFPLModel() {
       // Start job run
       console.log('[FPLSageAdapter] Recording job start...');
       insertJobRun('run_fpl_model', jobRunId);
+
+      // Pre-flight check: Verify FPL Sage DB integrity if configured
+      const fplDbPath = process.env.CHEDDAR_FPL_DB_PATH;
+      if (fplDbPath) {
+        console.log(`[FPLSageAdapter] Checking FPL Sage DB integrity at: ${fplDbPath}`);
+        const integrityCheck = checkSqliteIntegrity(fplDbPath);
+        if (!integrityCheck.ok) {
+          const errorMsg = `❌ FATAL: ${integrityCheck.error}\n\n` +
+            `Remediation steps:\n` +
+            `1. Stop the scheduler: ./scripts/manage-scheduler.sh stop\n` +
+            `2. Back up corrupt DB: cp "${fplDbPath}" "${fplDbPath}.corrupt.$(date +%Y%m%d-%H%M%S)"\n` +
+            `3. Check integrity: sqlite3 "${fplDbPath}" "PRAGMA integrity_check;"\n` +
+            `4. Restore from backup or re-collect data: python cheddar-fpl-sage/scripts/data_pipeline_cli.py run-full\n` +
+            `5. Restart scheduler\n\n` +
+            `See docs/ops-runbook.md for detailed recovery procedures.`;
+          console.error(errorMsg);
+          markJobRunFailure(jobRunId, integrityCheck.error);
+          throw new Error(integrityCheck.error);
+        }
+        console.log('[FPLSageAdapter] ✓ FPL Sage DB integrity check passed');
+      }
 
       // Get latest FPL odds for all games
       console.log('[FPLSageAdapter] Fetching latest FPL snapshots...');

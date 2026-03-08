@@ -437,6 +437,66 @@ sqlite3 "$CHEDDAR_DB_PATH" "SELECT status, COUNT(*) FROM card_results GROUP BY s
 sqlite3 "$CHEDDAR_DB_PATH" "SELECT status, COUNT(*) FROM game_results GROUP BY status;"
 ```
 
+### FPL Sage Database Corruption Recovery
+
+The FPL Sage service uses a **separate SQLite database** from the main Cheddar Logic DB. If corruption is detected, the worker job will fail with a detailed error message.
+
+**Symptoms:**
+
+- Worker logs show: `❌ FATAL: FPL Sage DB corrupted at /opt/data/fpl_snapshots.sqlite`
+- FPL model job fails repeatedly on every scheduler tick
+- Error mentions "database disk image is malformed" or PRAGMA integrity_check failure
+
+**Recovery procedure:**
+
+```bash
+# 1. Stop the scheduler to prevent repeated errors
+sudo systemctl stop cheddar-worker
+
+# 2. Back up the corrupt database with timestamp
+cp "$CHEDDAR_FPL_DB_PATH" "$CHEDDAR_FPL_DB_PATH.corrupt.$(date +%Y%m%d-%H%M%S)"
+
+# 3. Run integrity check to confirm corruption
+sqlite3 "$CHEDDAR_FPL_DB_PATH" "PRAGMA integrity_check;"
+# If output is NOT "ok", database is corrupt
+
+# 4. Choose recovery option:
+
+# Option A: Restore from backup (if available)
+LATEST_BACKUP=$(ls -t /opt/data/backups/fpl_snapshots-*.db 2>/dev/null | head -1)
+if [ -n "$LATEST_BACKUP" ]; then
+  cp "$LATEST_BACKUP" "$CHEDDAR_FPL_DB_PATH"
+  echo "Restored from: $LATEST_BACKUP"
+fi
+
+# Option B: Re-collect fresh FPL data (if no backup or backup also corrupt)
+cd /opt/cheddar-logic/cheddar-fpl-sage
+rm -f "$CHEDDAR_FPL_DB_PATH"  # Remove corrupt DB
+python scripts/data_pipeline_cli.py run-full --season 2025-26 --gw 29
+# This re-initializes the DB and collects current gameweek data
+
+# 5. Verify new DB is healthy
+sqlite3 "$CHEDDAR_FPL_DB_PATH" "PRAGMA integrity_check;"
+# Should output: ok
+
+# 6. Restart the scheduler
+sudo systemctl start cheddar-worker
+sudo systemctl status cheddar-worker
+```
+
+**Prevention:**
+
+- Set up automatic backups of FPL Sage DB (similar to main DB cron job)
+- Monitor disk space on `/opt/data` partition
+- Review worker logs regularly for I/O errors or power loss events
+
+**Environment variable:**
+
+```bash
+# In /opt/cheddar-logic/.env.production
+CHEDDAR_FPL_DB_PATH=/opt/data/fpl_snapshots.sqlite
+```
+
 ### Backups
 
 Daily backups run automatically at 3am ET via cron (set up once on Pi):
