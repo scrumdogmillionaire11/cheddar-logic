@@ -159,11 +159,13 @@ jobs:
             test -d web/.next/static || { echo "ERROR: next build did not produce web/.next/static directory"; exit 1; }
             CHUNK_COUNT=$(find web/.next/static/chunks -name "*.js" 2>/dev/null | wc -l)
             test "$CHUNK_COUNT" -gt 0 || { echo "ERROR: next build produced no JS chunks (found: $CHUNK_COUNT)"; exit 1; }
+            CSS_COUNT=$(find web/.next/static/chunks -name "*.css" 2>/dev/null | wc -l)
+            test "$CSS_COUNT" -gt 0 || { echo "ERROR: next build produced no CSS chunks — styles will not load"; exit 1; }
             SAMPLE_CHUNK_FILE=$(find web/.next/static/chunks -name "*.js" | sort | head -n 1)
             test -n "$SAMPLE_CHUNK_FILE" || { echo "ERROR: unable to select a sample JS chunk from web/.next/static/chunks"; exit 1; }
             SAMPLE_CHUNK_REL="${SAMPLE_CHUNK_FILE#web/.next/static/chunks/}"
             echo "Selected sample chunk: /_next/static/chunks/$SAMPLE_CHUNK_REL"
-            echo "Build verification passed: BUILD_ID exists, static dir exists, $CHUNK_COUNT JS chunks found"
+            echo "Build verification passed: BUILD_ID exists, static dir exists, $CHUNK_COUNT JS chunks, $CSS_COUNT CSS chunks found"
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage
