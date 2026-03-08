@@ -18,6 +18,11 @@ import type {
 } from '../types/canonical-play';
 import { THRESHOLDS } from '../types/canonical-play';
 
+// Guardrail constants shared with transform/UI layers.
+export const EDGE_SANITY_NON_TOTAL_THRESHOLD = 0.2;
+export const EDGE_SANITY_GATE_CODE = 'EDGE_SANITY_NON_TOTAL';
+export const PROXY_CAP_GATE_CODE = 'PROXY_CAP';
+
 // ============================================================================
 // LAYER 1: CLASSIFICATION (Model Truth)
 // ============================================================================

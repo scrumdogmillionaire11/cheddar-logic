@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import FilterPanel from './filter-panel';
 import { transformGames, transformPropGames } from '@/lib/game-card/transform';
-import { enrichCards } from '@/lib/game-card/tags';
+import { enrichCards, hasEdgeVerification, hasProxyCap } from '@/lib/game-card/tags';
 import {
   applyFilters,
   getActiveFilterCount,
@@ -65,6 +65,23 @@ type DroppedMeta = {
   hasDataError: number;
   playStatusCounts: PlayStatusCounts;
   playMarkets: Record<string, number>;
+};
+
+type GuardrailTriggeredCounts = {
+  edge_sanity_triggered: number;
+  proxy_cap_triggered: number;
+};
+
+type GuardrailOutcomeCounts = {
+  fire_to_watch: number;
+  watch_to_pass: number;
+  fire_to_pass: number;
+  bet_removed: number;
+};
+
+type GuardrailBreakdownEntry = {
+  triggered: GuardrailTriggeredCounts;
+  outcome: GuardrailOutcomeCounts;
 };
 
 const DROP_REASONS: DropReason[] = [
@@ -362,9 +379,9 @@ export default function CardsPageClient() {
     sport: string;
     bucket: 'missingMapping' | 'driverLoadFailed' | 'noOdds' | 'noProjection';
   } | null>(null);
-  const showTrace =
-    process.env.NODE_ENV !== 'production' ||
-    process.env.NEXT_PUBLIC_CARDS_TRACE === 'true';
+  const diagnosticsEnabled =
+    process.env.NODE_ENV !== 'production' &&
+    process.env.NEXT_PUBLIC_ENABLE_CARDS_DIAGNOSTICS === 'true';
   // Player props feature flag - explicit opt-in only (hidden by default)
   const propsEnabled = process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true';
 
@@ -440,6 +457,74 @@ export default function CardsPageClient() {
       displayedTodayBySport,
     };
   }, [games, enrichedCards, filteredCards, todayEtKey]);
+
+  const guardrailStats = useMemo(() => {
+    const triggered: GuardrailTriggeredCounts = {
+      edge_sanity_triggered: 0,
+      proxy_cap_triggered: 0,
+    };
+    const outcome: GuardrailOutcomeCounts = {
+      fire_to_watch: 0,
+      watch_to_pass: 0,
+      fire_to_pass: 0,
+      bet_removed: 0,
+    };
+    const breakdownBySportMarketBook: Record<string, GuardrailBreakdownEntry> = {};
+
+    for (const card of enrichedCards) {
+      const play = card.play;
+      const tags = play?.tags ?? [];
+      const edgeTriggered = hasEdgeVerification(card);
+      const proxyTriggered = hasProxyCap(card);
+      const market = play?.market_type ?? play?.market ?? 'UNKNOWN';
+      const book = play?.bet?.book ?? 'unknown';
+      const key = `${card.sport}|${market}|${book}`;
+
+      if (!breakdownBySportMarketBook[key]) {
+        breakdownBySportMarketBook[key] = {
+          triggered: {
+            edge_sanity_triggered: 0,
+            proxy_cap_triggered: 0,
+          },
+          outcome: {
+            fire_to_watch: 0,
+            watch_to_pass: 0,
+            fire_to_pass: 0,
+            bet_removed: 0,
+          },
+        };
+      }
+      const bucket = breakdownBySportMarketBook[key];
+
+      if (edgeTriggered) {
+        triggered.edge_sanity_triggered += 1;
+        bucket.triggered.edge_sanity_triggered += 1;
+      }
+      if (proxyTriggered) {
+        triggered.proxy_cap_triggered += 1;
+        bucket.triggered.proxy_cap_triggered += 1;
+      }
+
+      if (tags.includes('OUTCOME_FIRE_TO_WATCH')) {
+        outcome.fire_to_watch += 1;
+        bucket.outcome.fire_to_watch += 1;
+      }
+      if (tags.includes('OUTCOME_WATCH_TO_PASS')) {
+        outcome.watch_to_pass += 1;
+        bucket.outcome.watch_to_pass += 1;
+      }
+      if (tags.includes('OUTCOME_FIRE_TO_PASS')) {
+        outcome.fire_to_pass += 1;
+        bucket.outcome.fire_to_pass += 1;
+      }
+      if (tags.includes('OUTCOME_BET_REMOVED')) {
+        outcome.bet_removed += 1;
+        bucket.outcome.bet_removed += 1;
+      }
+    }
+
+    return { triggered, outcome, breakdownBySportMarketBook };
+  }, [enrichedCards]);
 
   const dropTraceStats = useMemo(() => {
     const droppedByReason = createDropReasonCounts();
@@ -800,10 +885,9 @@ export default function CardsPageClient() {
   }, [viewMode]);
 
   useEffect(() => {
-    const isDevTrace = process.env.NODE_ENV !== 'production';
     const isVerboseCardsTrace =
       process.env.NEXT_PUBLIC_CARDS_TRACE_VERBOSE === 'true';
-    if (loading || !isDevTrace || !isVerboseCardsTrace) return;
+    if (loading || !diagnosticsEnabled || !isVerboseCardsTrace) return;
 
     const displayedMetaBySport: Record<string, DroppedMeta> = {};
     for (const card of filteredCards) {
@@ -843,6 +927,11 @@ export default function CardsPageClient() {
       displayedTodayBySport: traceStats.displayedTodayBySport,
       dropTraceStats,
       displayedMetaBySport,
+      guardrail_telemetry: {
+        triggered: guardrailStats.triggered,
+        outcome: guardrailStats.outcome,
+        breakdown_by_sport_market_book: guardrailStats.breakdownBySportMarketBook,
+      },
       filters,
     });
     console.warn(
@@ -941,10 +1030,12 @@ export default function CardsPageClient() {
     }
   }, [
     loading,
+    diagnosticsEnabled,
     traceStats,
     todayEtKey,
     filters,
     dropTraceStats,
+    guardrailStats,
     enrichedCards,
     filteredCards,
     viewMode,
@@ -1393,6 +1484,8 @@ export default function CardsPageClient() {
     const isCoinflip = Boolean(canRenderModelSummary && displayPlay.decision_data?.coinflip);
     const isCoinflipHighEdge = isCoinflip && effectiveEdgePct > 0.05;
     const isCoinflipLowEdge = isCoinflip && effectiveEdgePct <= 0.05;
+    const isEdgeVerification = hasEdgeVerification(card);
+    const isProxyCapped = hasProxyCap(card);
 
     const [showAllDrivers, setShowAllDrivers] = useState(false);
     const blockedTotals = hasActiveTotalBet
@@ -1566,6 +1659,16 @@ export default function CardsPageClient() {
                     Data issue
                   </span>
                 )}
+                {isEdgeVerification && (
+                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-amber-700/30 text-amber-200 border-amber-600/50">
+                    Verification Required
+                  </span>
+                )}
+                {isProxyCapped && (
+                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-indigo-700/30 text-indigo-200 border-indigo-600/50">
+                    Proxy Capped
+                  </span>
+                )}
                 {/* Flags */}
                 {isCoinflip && (
                   <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-blue-700/30 text-blue-200 border-blue-600/50">
@@ -1650,9 +1753,9 @@ export default function CardsPageClient() {
                 <p className="text-xs text-cloud/50 mt-1">
                   Edge = Fair% − Implied%
                 </p>
-                {effectiveEdgePct > 0.3 && (
+                {isEdgeVerification && (
                   <p className="text-xs text-amber-300/90 mt-1 font-semibold">
-                    Caution: edge above 30% — verify line freshness
+                    Caution: edge above 20% on a non-total market — verification required
                   </p>
                 )}
               </div>
@@ -1792,7 +1895,9 @@ export default function CardsPageClient() {
                       <span className="text-xs font-mono text-cloud/60">
                         {formatConfidence(driver.confidence)}
                       </span>
-                      {displayPlay.decision === 'PASS' && driver.tier === 'BEST' && (
+                      {diagnosticsEnabled &&
+                        displayPlay.decision === 'PASS' &&
+                        driver.tier === 'BEST' && (
                         <span className="text-xs text-amber-400">(Overridden)</span>
                       )}
                       <span className="text-xs font-mono text-cloud/60">
@@ -1934,7 +2039,13 @@ export default function CardsPageClient() {
             total, showing {filteredCards.length} (updates in background every
             30s)
           </p>
-          {!loading && !error && showTrace && (
+          {!loading && !error && diagnosticsEnabled && viewMode === 'game' && (
+            <p className="text-xs text-cloud/60">
+              Guardrails: edge verification {guardrailStats.triggered.edge_sanity_triggered} •
+              proxy capped {guardrailStats.triggered.proxy_cap_triggered}
+            </p>
+          )}
+          {!loading && !error && diagnosticsEnabled && (
             <div className="rounded-lg border border-white/10 bg-surface/30 px-3 py-2 text-xs text-cloud/70 space-y-1">
               <p>
                 Trace (all): fetched {traceStats.fetchedTotal} (
@@ -1959,9 +2070,20 @@ export default function CardsPageClient() {
                 • time {dropTraceStats.droppedByReason.DROP_TIME_WINDOW} • data
                 errors {hiddenDataErrors}
               </p>
+              <p>
+                Guardrails (triggered): edge{' '}
+                {guardrailStats.triggered.edge_sanity_triggered} • proxy{' '}
+                {guardrailStats.triggered.proxy_cap_triggered}
+              </p>
+              <p>
+                Guardrails (outcome): FIRE→WATCH {guardrailStats.outcome.fire_to_watch}{' '}
+                • WATCH→PASS {guardrailStats.outcome.watch_to_pass} • FIRE→PASS{' '}
+                {guardrailStats.outcome.fire_to_pass} • bet removed{' '}
+                {guardrailStats.outcome.bet_removed}
+              </p>
             </div>
           )}
-          {!loading && !error && hiddenDataErrors > 0 && (
+          {!loading && !error && diagnosticsEnabled && hiddenDataErrors > 0 && (
             <details className="rounded-md border border-amber-600/50 bg-amber-700/20 px-3 py-2 text-xs text-amber-100">
               <summary className="cursor-pointer font-semibold">
                 {hiddenDataErrors} game{hiddenDataErrors !== 1 ? 's' : ''} excluded due to incomplete data
@@ -2039,7 +2161,11 @@ export default function CardsPageClient() {
           </div>
         )}
 
-        {!loading && viewMode === 'game' && !error && enrichedCards.length > 0 && (
+        {!loading &&
+          diagnosticsEnabled &&
+          viewMode === 'game' &&
+          !error &&
+          enrichedCards.length > 0 && (
           <SportDiagnosticsPanel
             diagnostics={sportDiagnostics}
             onBucketClick={(sport, bucket) =>
@@ -2052,7 +2178,7 @@ export default function CardsPageClient() {
           />
         )}
 
-        {!loading && viewMode === 'game' && diagnosticFilter && (
+        {!loading && diagnosticsEnabled && viewMode === 'game' && diagnosticFilter && (
           <div className="mb-3 flex items-center gap-2 rounded-md border border-white/10 bg-surface/40 px-3 py-1.5 text-xs text-cloud/70">
             <span>
               Showing {diagnosticCards.length} blocked {diagnosticFilter.sport} games
@@ -2079,7 +2205,7 @@ export default function CardsPageClient() {
                   ? 'No qualified props match your filters'
                   : 'No games match your filters'}
               </div>
-              {viewMode === 'game' && enrichedCards.length > 0 && (
+              {diagnosticsEnabled && viewMode === 'game' && enrichedCards.length > 0 && (
                 <div className="mt-2 text-left mx-auto max-w-sm text-xs text-cloud/40 space-y-1">
                   <div className="font-semibold text-cloud/50 mb-1">
                     {enrichedCards.length} game{enrichedCards.length !== 1 ? 's' : ''} excluded — breakdown by sport:
@@ -2137,7 +2263,11 @@ export default function CardsPageClient() {
           </div>
         )}
 
-        {!loading && viewMode === 'game' && diagnosticFilter && diagnosticCards.length > 0 && (
+        {!loading &&
+          diagnosticsEnabled &&
+          viewMode === 'game' &&
+          diagnosticFilter &&
+          diagnosticCards.length > 0 && (
           <div className="mt-6 space-y-2">
             <div className="text-xs text-cloud/40 border-t border-white/10 pt-3 mb-2">
               Blocked games — {BUCKET_LABELS[diagnosticFilter.bucket]}

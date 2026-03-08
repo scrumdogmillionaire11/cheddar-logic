@@ -865,6 +865,7 @@ export async function GET(request: NextRequest) {
           payloadProjection?.win_prob_home,
           payloadPlayProjection?.win_prob_home,
         );
+        let modelProbInferredFromEdge = false;
         let normalizedModelProb = firstNumber(
           (payload as Record<string, unknown>).model_prob,
           payloadPlayObj?.model_prob,
@@ -888,6 +889,7 @@ export async function GET(request: NextRequest) {
             typeof normalizedEdge === 'number'
           ) {
             normalizedModelProb = impliedProb + normalizedEdge;
+            modelProbInferredFromEdge = true;
           }
         }
         if (
@@ -897,6 +899,7 @@ export async function GET(request: NextRequest) {
             normalizedModelProb > 1)
         ) {
           normalizedModelProb = undefined;
+          modelProbInferredFromEdge = false;
         }
         const combinedReasonCodes = [
           ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
@@ -908,6 +911,10 @@ export async function GET(request: NextRequest) {
           ...(Array.isArray(payload.tags) ? payload.tags : []),
           ...(Array.isArray(payloadPlay?.tags) ? payloadPlay.tags : []),
         ].map((value) => String(value));
+        if (modelProbInferredFromEdge) {
+          combinedTags.push('PROXY_MODEL_PROB_INFERRED');
+          combinedReasonCodes.push('PROXY_MODEL_PROB_INFERRED');
+        }
 
         const inferredActionFromTierOrConfidence: Play['action'] | undefined =
           normalizedTier === 'SUPER' || normalizedTier === 'BEST'
@@ -1171,6 +1178,7 @@ export async function GET(request: NextRequest) {
                 ...(play.tags ?? []),
                 'LEGACY_REPAIR',
                 'LEGACY_TITLE_INFERENCE_USED',
+                'PROXY_LEGACY_MARKET_INFERRED',
               ]),
             );
             play.reason_codes = Array.from(
@@ -1192,7 +1200,11 @@ export async function GET(request: NextRequest) {
               ]),
             );
             play.tags = Array.from(
-              new Set([...(play.tags ?? []), 'LEGACY_TITLE_INFERENCE_USED']),
+              new Set([
+                ...(play.tags ?? []),
+                'LEGACY_TITLE_INFERENCE_USED',
+                'PROXY_LEGACY_MARKET_INFERRED',
+              ]),
             );
           }
         }

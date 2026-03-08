@@ -39,6 +39,11 @@ import type {
 import { deduplicateDrivers, resolvePlayDisplayDecision } from './decision';
 import { DRIVER_ROLES } from './driver-scoring';
 import { derivePlayDecision } from '../play-decision/canonical-decision';
+import {
+  EDGE_SANITY_NON_TOTAL_THRESHOLD,
+  EDGE_SANITY_GATE_CODE,
+  PROXY_CAP_GATE_CODE,
+} from '../play-decision/decision-logic';
 
 const ENABLE_WELCOME_HOME =
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
@@ -55,6 +60,12 @@ const OPPOSITE_DIRECTION: Partial<Record<Direction, Direction>> = {
   OVER: 'UNDER',
   UNDER: 'OVER',
 };
+
+const PROXY_SIGNAL_TAGS = new Set<string>([
+  'PROXY_MODEL_PROB_INFERRED',
+  'PROXY_LEGACY_MARKET_INFERRED',
+  'LEGACY_REPAIR',
+]);
 
 // API types from cards page
 interface ApiPlay {
@@ -1238,10 +1249,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     resolvedMarketType === 'TOTAL'
       ? americanToImpliedProbability(price)
       : undefined;
-  const edge =
-    impliedProb !== undefined && modelProb !== undefined
-      ? modelProb - impliedProb
-      : undefined;
+  const edge = impliedProb !== undefined && modelProb !== undefined ? modelProb - impliedProb : undefined;
   const valueStatus = getValueStatus(edge);
   const displayMarketForPriceFlags =
     resolvedMarketType === 'MONEYLINE'
@@ -1616,13 +1624,6 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     gates.push({ code, severity: 'BLOCK', blocks_bet: true });
   }
 
-  // WI-0333: Extreme edge validation — edges >30% are suspicious for moneyline/spread.
-  // Exempt TOTAL/TEAM_TOTAL: pace-model edge is in goal units (0.4–0.8 is normal).
-  if (typeof edge === 'number' && edge > 0.30 && resolvedMarketType !== 'TOTAL' && resolvedMarketType !== 'TEAM_TOTAL') {
-    gates.push({ code: 'STALE_EDGE_SUSPECTED', severity: 'BLOCK', blocks_bet: true });
-    reasonCodesUnique.push('PASS_STALE_EDGE_SUSPECTED');
-  }
-
   // WI-0333: Coinflip detection - require BOTH market odds AND model fair_prob ~50%
   const marketCoinflip =
     resolvedMarketType === 'MONEYLINE' &&
@@ -1713,6 +1714,61 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     pick = 'NO PLAY';
   }
 
+  const preGuardDecision = finalDecision;
+  const preGuardHasBet = Boolean(finalBet);
+  const edgeSanityTriggered =
+    typeof edge === 'number' &&
+    edge > EDGE_SANITY_NON_TOTAL_THRESHOLD &&
+    resolvedMarketType !== 'TOTAL' &&
+    resolvedMarketType !== 'TEAM_TOTAL';
+  const proxyTriggered = tags.some((tag) => PROXY_SIGNAL_TAGS.has(tag));
+
+  if (edgeSanityTriggered) {
+    tags.push('EDGE_VERIFICATION_REQUIRED');
+    gateCodes.add(EDGE_SANITY_GATE_CODE);
+  }
+  if (proxyTriggered) {
+    tags.push('PROXY_CARD');
+    gateCodes.add(PROXY_CAP_GATE_CODE);
+  }
+
+  if (edgeSanityTriggered && proxyTriggered) {
+    finalDecision = 'PASS';
+    finalBet = null;
+    reasonCodesUnique.push('PASS_PROXY_EDGE_SANITY_COMBO');
+  } else if (edgeSanityTriggered) {
+    finalBet = null;
+    if (finalDecision === 'PASS') {
+      reasonCodesUnique.push('PASS_EDGE_SANITY_NON_TOTAL');
+    } else {
+      finalDecision = 'WATCH';
+      reasonCodesUnique.push('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
+    }
+  } else if (proxyTriggered) {
+    finalBet = null;
+    const proxyCanRemainWatch =
+      truthStrength >= 0.62 && quality !== 'BROKEN' && !edgeSanityTriggered;
+    if (finalDecision === 'FIRE' || finalDecision === 'WATCH') {
+      finalDecision = proxyCanRemainWatch ? 'WATCH' : 'PASS';
+    }
+    if (finalDecision === 'PASS') {
+      reasonCodesUnique.push('PASS_PROXY_CAPPED');
+    }
+  }
+
+  if (preGuardDecision === 'FIRE' && finalDecision === 'WATCH') {
+    tags.push('OUTCOME_FIRE_TO_WATCH');
+  }
+  if (preGuardDecision === 'WATCH' && finalDecision === 'PASS') {
+    tags.push('OUTCOME_WATCH_TO_PASS');
+  }
+  if (preGuardDecision === 'FIRE' && finalDecision === 'PASS') {
+    tags.push('OUTCOME_FIRE_TO_PASS');
+  }
+  if (preGuardHasBet && !finalBet) {
+    tags.push('OUTCOME_BET_REMOVED');
+  }
+
   for (const code of gateCodes) {
     if (!gates.some((gate) => gate.code === code)) {
       gates.push({ code, severity: 'BLOCK', blocks_bet: true });
@@ -1737,14 +1793,25 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     pick = 'NO PLAY';
   }
   const finalBetAction: 'BET' | 'NO_PLAY' = finalBet ? 'BET' : 'NO_PLAY';
+  reasonCodesUnique = Array.from(new Set(reasonCodesUnique));
+  const dedupedTags = Array.from(new Set(tags));
   const passReasonCode =
     reasonCodesUnique.find((code) => code.startsWith('PASS_')) ?? null;
-  const resolvedPassReasonCode = finalBet
-    ? null
-    : (passReasonCode ??
-      decision.play?.pass_reason_code ??
-      gates.find((gate) => gate.blocks_bet)?.code ??
-      null);
+  const resolvedPassReasonCode =
+    finalDecision === 'PASS'
+      ? (passReasonCode ??
+        decision.play?.pass_reason_code ??
+        gates.find((gate) => gate.blocks_bet)?.code ??
+        null)
+      : null;
+  const decisionReasonCode =
+    finalDecision === 'PASS'
+      ? (resolvedPassReasonCode ?? whyCode)
+      : edgeSanityTriggered && finalDecision === 'WATCH'
+        ? 'DOWNGRADED_EDGE_SANITY_NON_TOTAL'
+        : proxyTriggered && finalDecision === 'WATCH'
+          ? PROXY_CAP_GATE_CODE
+          : whyCode;
   const decisionData: DecisionData = {
     status: finalDecision,
     truth: truthStatus,
@@ -1752,7 +1819,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     edge_pct: edgePct,
     edge_tier: edgeTier,
     coinflip,
-    reason_code: resolvedPassReasonCode ?? whyCode,
+    reason_code: decisionReasonCode,
   };
 
   return {
@@ -1794,7 +1861,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             }
           : undefined,
     reason_codes: reasonCodesUnique,
-    tags,
+    tags: dedupedTags,
     // Canonical fields (preferred)
     classification: resolvedDisplayDecision.classification,
     action: resolvedDisplayDecision.action,
