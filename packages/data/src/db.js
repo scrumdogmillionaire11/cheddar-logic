@@ -1510,15 +1510,30 @@ function deleteCardPayloadsByGameAndType(gameId, cardType, options = {}) {
  * @param {string} gameId - Game ID
  * @param {string} modelName - Model name
  * @param {string} cardType - Card type
- * @param {{runId?: string}} options - Optional run scope for payload cleanup
+ * @param {{runId?: string}} options - Run scope for payload cleanup (required)
  * @returns {{deletedOutputs: number, deletedCards: number}}
  */
+function normalizeRunScopeId(options = {}) {
+  if (typeof options.runId !== 'string') return null;
+  const normalized = options.runId.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function prepareModelAndCardWrite(gameId, modelName, cardType, options = {}) {
+  const runId = normalizeRunScopeId(options);
+  if (!runId) {
+    const error = new Error(
+      '[DB] prepareModelAndCardWrite requires a non-empty options.runId for run-scoped writes.',
+    );
+    error.code = 'RUN_ID_REQUIRED';
+    throw error;
+  }
+
   const deletedOutputs = deleteModelOutputsByGame(gameId, modelName);
   const deletedCards = deleteCardPayloadsByGameAndType(
     gameId,
     cardType,
-    options,
+    { ...options, runId },
   );
   return { deletedOutputs, deletedCards };
 }
@@ -1533,10 +1548,7 @@ function prepareModelAndCardWrite(gameId, modelName, cardType, options = {}) {
 function deleteCardPayloadsForGame(gameId, cardType, options = {}) {
   const db = getDatabase();
   const now = new Date().toISOString();
-  const runId =
-    typeof options.runId === 'string' && options.runId.trim().length > 0
-      ? options.runId.trim()
-      : null;
+  const runId = normalizeRunScopeId(options);
 
   // Run-scoped cleanup allows workers to stage new run rows without removing
   // currently published run rows, preventing transient empty API reads.

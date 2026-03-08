@@ -5,6 +5,8 @@
  * 1. Default dedupe returns latest per (game_id, card_type)
  * 2. dedupe=none returns all cards in creation order
  * 3. Behavior is consistent across list and game-specific endpoints
+ * 4. Timestamp ties are deterministic via id DESC tie-break
+ * 5. Run-scoped query safely falls back when active run has no matching rows
  */
 
 import db from '../../../packages/data/src/db.js';
@@ -37,6 +39,12 @@ async function runTests() {
     const card2Id = `card-${testSuffix}-2`;
     const card3Id = `card-${testSuffix}-3`;
     const cardAltId = `card-${testSuffix}-alt-1`;
+    const tieGameId = `test-dedupe-nhl-tie-${testSuffix}`;
+    const tieCardType = 'nhl-model-output';
+    const tieCardLowId = `card-${testSuffix}-tie-a`;
+    const tieCardHighId = `card-${testSuffix}-tie-b`;
+    const runScopeGameId = `test-dedupe-runscope-${testSuffix}`;
+    const runScopeCardId = `card-${testSuffix}-runscope-1`;
 
     console.log('📋 Inserting test cards...');
     const now = new Date();
@@ -233,6 +241,132 @@ async function runTests() {
       console.log(
         '❌ FAIL: Expected 2 cards (different types), got:',
         dedupeWithAltResult,
+      );
+      process.exit(1);
+    }
+
+    // Test 4: Deterministic tie-break under identical created_at timestamp
+    console.log(
+      '🧪 Test 4: Deterministic tie-break with identical created_at timestamps',
+    );
+    const tieCreatedAt = new Date(now.getTime() + 1000).toISOString();
+    client
+      .prepare(
+        `INSERT INTO card_payloads
+       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        tieCardLowId,
+        tieGameId,
+        sport,
+        tieCardType,
+        'Tie Card A',
+        JSON.stringify(payload1),
+        tieCreatedAt,
+        new Date(now.getTime() + 3600000).toISOString(),
+        runId,
+      );
+    client
+      .prepare(
+        `INSERT INTO card_payloads
+       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        tieCardHighId,
+        tieGameId,
+        sport,
+        tieCardType,
+        'Tie Card B',
+        JSON.stringify(payload2),
+        tieCreatedAt,
+        new Date(now.getTime() + 3600000).toISOString(),
+        runId,
+      );
+    const tieDedupeResult = client
+      .prepare(
+        `WITH ranked AS (
+           SELECT *,
+             ROW_NUMBER() OVER (
+               PARTITION BY game_id, card_type
+               ORDER BY created_at DESC, id DESC
+             ) AS rn
+           FROM card_payloads
+           WHERE game_id = ? AND card_type = ?
+         )
+         SELECT id FROM ranked WHERE rn = 1`,
+      )
+      .all(tieGameId, tieCardType);
+    if (tieDedupeResult.length === 1 && tieDedupeResult[0].id === tieCardHighId) {
+      console.log(
+        `✅ PASS: Tie-break picks lexicographically higher id (${tieCardHighId})`,
+      );
+      console.log();
+    } else {
+      console.log(
+        `❌ FAIL: Expected tie winner ${tieCardHighId}, got:`,
+        tieDedupeResult,
+      );
+      process.exit(1);
+    }
+
+    // Test 5: Run-scoped fallback behavior mirrors API safety semantics
+    console.log('🧪 Test 5: Run-scoped fallback returns base rows when scoped set is empty');
+    const activeRunIds = [`active-run-missing-${testSuffix}`];
+    client
+      .prepare(
+        `INSERT INTO card_payloads
+       (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        runScopeCardId,
+        runScopeGameId,
+        sport,
+        cardType,
+        'Run Scope Fallback Card',
+        JSON.stringify(payload3),
+        now.toISOString(),
+        new Date(now.getTime() + 3600000).toISOString(),
+        runId,
+      );
+
+    const baseWhere = [
+      'cp.game_id = ?',
+      'cp.sport = ?',
+      "(cp.expires_at IS NULL OR datetime(cp.expires_at) > datetime('now'))",
+      "cp.sport != 'FPL'",
+      "cp.card_type != 'welcome-home-v2'",
+    ];
+    const baseParams = [runScopeGameId, sport];
+    const runIdPlaceholders = activeRunIds.map(() => '?').join(', ');
+    const runScopedWhere = [...baseWhere, `cp.run_id IN (${runIdPlaceholders})`];
+    const sqlForWhere = (whereSql) => `
+      SELECT cp.id
+      FROM card_payloads cp
+      LEFT JOIN games g ON cp.game_id = g.game_id
+      WHERE ${whereSql}
+      ORDER BY COALESCE(g.game_time_utc, cp.created_at) ASC, cp.created_at DESC, cp.id DESC
+    `;
+    const runScopedRows = client
+      .prepare(sqlForWhere(runScopedWhere.join(' AND ')))
+      .all(...baseParams, ...activeRunIds);
+    if (runScopedRows.length !== 0) {
+      console.log('❌ FAIL: Expected run-scoped query to return 0 rows, got:', runScopedRows);
+      process.exit(1);
+    }
+
+    const fallbackRows = client
+      .prepare(sqlForWhere(baseWhere.join(' AND ')))
+      .all(...baseParams);
+    if (fallbackRows.length === 1 && fallbackRows[0].id === runScopeCardId) {
+      console.log('✅ PASS: Fallback query returned base rows as expected');
+      console.log();
+    } else {
+      console.log(
+        `❌ FAIL: Expected fallback row ${runScopeCardId}, got:`,
+        fallbackRows,
       );
       process.exit(1);
     }

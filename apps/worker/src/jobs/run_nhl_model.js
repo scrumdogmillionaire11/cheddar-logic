@@ -599,6 +599,20 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           oddsSnapshot = await enrichOddsSnapshotWithEspnMetrics(oddsSnapshot);
           oddsSnapshot = await enrichOddsSnapshotWithMoneyPuck(oddsSnapshot);
           
+          // Check enrichment completeness
+          const rawData = typeof oddsSnapshot.raw_data === 'string' 
+            ? JSON.parse(oddsSnapshot.raw_data) 
+            : oddsSnapshot.raw_data;
+          const espnMetrics = rawData?.espn_metrics;
+          const hasHomeMetrics = espnMetrics?.home?.metrics && 
+            Object.values(espnMetrics.home.metrics).some(v => v !== null);
+          const hasAwayMetrics = espnMetrics?.away?.metrics && 
+            Object.values(espnMetrics.away.metrics).some(v => v !== null);
+          
+          if (!hasHomeMetrics || !hasAwayMetrics) {
+            console.log(`  [warn] ${gameId}: Incomplete ESPN enrichment - home: ${hasHomeMetrics ? '✓' : '✗'}, away: ${hasAwayMetrics ? '✓' : '✗'}`);
+          }
+          
           // Persist enrichment to database so models have access to ESPN metrics
           updateOddsSnapshotRawData(oddsSnapshot.id, oddsSnapshot.raw_data);
 

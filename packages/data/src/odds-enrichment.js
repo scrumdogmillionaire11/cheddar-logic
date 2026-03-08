@@ -45,12 +45,29 @@ async function enrichOddsSnapshotWithEspnMetrics(oddsSnapshot, options = {}) {
       getTeamMetricsWithGames(oddsSnapshot.home_team, espnSport, {
         includeGames,
         limit: gameLimit
+      }).catch(err => {
+        console.warn(`[OddsEnrichment] Home team ERROR for ${oddsSnapshot.home_team} (${oddsSnapshot.game_id}): ${err.message}`);
+        return null;
       }),
       getTeamMetricsWithGames(oddsSnapshot.away_team, espnSport, {
         includeGames,
         limit: gameLimit
+      }).catch(err => {
+        console.warn(`[OddsEnrichment] Away team ERROR for ${oddsSnapshot.away_team} (${oddsSnapshot.game_id}): ${err.message}`);
+        return null;
       })
     ]);
+
+    // Check for null/incomplete metrics (neutral() returns)
+    const hasHomeMetrics = homeData?.metrics && Object.values(homeData.metrics).some(v => v !== null);
+    const hasAwayMetrics = awayData?.metrics && Object.values(awayData.metrics).some(v => v !== null);
+    
+    if (!hasHomeMetrics) {
+      console.warn(`[OddsEnrichment] Home team INCOMPLETE metrics for ${oddsSnapshot.home_team} (${oddsSnapshot.game_id})`);
+    }
+    if (!hasAwayMetrics) {
+      console.warn(`[OddsEnrichment] Away team INCOMPLETE metrics for ${oddsSnapshot.away_team} (${oddsSnapshot.game_id})`);
+    }
 
     // Parse existing raw_data or create new object
     let rawData = {};
@@ -92,7 +109,7 @@ async function enrichOddsSnapshotWithEspnMetrics(oddsSnapshot, options = {}) {
 
     return enriched;
   } catch (err) {
-    console.warn(`[OddsEnrichment] Error enriching ${oddsSnapshot?.game_id}: ${err.message}`);
+    console.warn(`[OddsEnrichment] FAILED for ${oddsSnapshot?.game_id} (${oddsSnapshot.home_team} vs ${oddsSnapshot.away_team}): ${err.message}`);
     return oddsSnapshot;
   }
 }
