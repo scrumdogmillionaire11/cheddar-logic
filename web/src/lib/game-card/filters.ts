@@ -473,7 +473,9 @@ function filterByClearPlay(card: GameCard, filters: GameModeFilters): boolean {
 function filterByCardType(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.cardTypes || filters.cardTypes.length === 0) return true;
 
-  return filters.cardTypes.includes(card.cardType ?? '');
+  // Get card type from first (primary) driver
+  const cardType = card.drivers[0]?.cardType ?? '';
+  return filters.cardTypes.includes(cardType);
 }
 
 export function getFilterDebugFlags(
