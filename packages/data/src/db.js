@@ -2273,6 +2273,116 @@ function upsertTrackingStat(stat) {
 }
 
 /**
+ * Atomically increment tracking stat counters by delta values.
+ * Race-safe for concurrent settlement processes.
+ * 
+ * @param {object} params - Increment parameters
+ * @param {string} params.statKey - Unique stat key (e.g., "NHL|moneyline|all|all|all|alltime")
+ * @param {string} params.id - Stat ID (used only on first insert)
+ * @param {string} params.sport - Sport name
+ * @param {string} params.marketType - Market type
+ * @param {string} params.direction - Direction (HOME/AWAY/OVER/UNDER/all)
+ * @param {string} params.confidenceTier - Confidence tier
+ * @param {string} params.driverKey - Driver key
+ * @param {string} params.timePeriod - Time period
+ * @param {number} params.deltaWins - Wins to add (default 0)
+ * @param {number} params.deltaLosses - Losses to add (default 0)
+ * @param {number} params.deltaPushes - Pushes to add (default 0)
+ * @param {number} params.deltaPnl - PnL units to add (default 0)
+ * @param {object|null} params.metadata - Optional metadata
+ */
+function incrementTrackingStat(params) {
+  const db = getDatabase();
+  
+  const {
+    statKey,
+    id,
+    sport,
+    marketType,
+    direction,
+    confidenceTier,
+    driverKey,
+    timePeriod,
+    deltaWins = 0,
+    deltaLosses = 0,
+    deltaPushes = 0,
+    deltaPnl = 0,
+    metadata = null
+  } = params;
+  
+  const deltaTotal = deltaWins + deltaLosses + deltaPushes;
+  const deltaDecided = deltaWins + deltaLosses;
+  const winRate = deltaDecided > 0 ? deltaWins / deltaDecided : 0;
+  const avgPnlPerCard = deltaTotal > 0 ? deltaPnl / deltaTotal : 0;
+  
+  // Insert new row or increment existing counters atomically
+  const stmt = db.prepare(`
+    INSERT INTO tracking_stats (
+      id, stat_key, sport, market_type, direction, confidence_tier, driver_key, time_period,
+      total_cards, settled_cards, wins, losses, pushes, total_pnl_units,
+      win_rate, avg_pnl_per_card, confidence_calibration, metadata, computed_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(stat_key) DO UPDATE SET
+      total_cards = total_cards + ?,
+      settled_cards = settled_cards + ?,
+      wins = wins + ?,
+      losses = losses + ?,
+      pushes = pushes + ?,
+      total_pnl_units = total_pnl_units + ?,
+      win_rate = CASE 
+        WHEN (wins + ? + losses + ?) > 0 
+        THEN CAST(wins + ? AS REAL) / (wins + ? + losses + ?)
+        ELSE 0 
+      END,
+      avg_pnl_per_card = CASE
+        WHEN (settled_cards + ?) > 0
+        THEN (total_pnl_units + ?) / (settled_cards + ?)
+        ELSE 0
+      END,
+      metadata = CASE WHEN ? IS NOT NULL THEN ? ELSE metadata END,
+      computed_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  
+  const metadataJson = metadata ? JSON.stringify(metadata) : null;
+  
+  stmt.run(
+    // INSERT values (used only on first creation)
+    id,
+    statKey,
+    sport || null,
+    marketType || null,
+    direction || null,
+    confidenceTier || null,
+    driverKey || null,
+    timePeriod || null,
+    deltaTotal,
+    deltaTotal,
+    deltaWins,
+    deltaLosses,
+    deltaPushes,
+    deltaPnl,
+    winRate,
+    avgPnlPerCard,
+    metadataJson,
+    // UPDATE deltas
+    deltaTotal,
+    deltaTotal,
+    deltaWins,
+    deltaLosses,
+    deltaPushes,
+    deltaPnl,
+    // win_rate calculation
+    deltaWins, deltaLosses, deltaWins, deltaWins, deltaLosses,
+    // avg_pnl_per_card calculation
+    deltaTotal, deltaPnl, deltaTotal,
+    // metadata
+    metadataJson, metadataJson
+  );
+}
+
+/**
  * Get tracking stats by filters
  * @param {object} filters - Filter object
  * @param {string} filters.sport - Sport filter (optional)
@@ -2369,5 +2479,6 @@ module.exports = {
   getGameResult,
   getGameResults,
   upsertTrackingStat,
+  incrementTrackingStat,
   getTrackingStats
 };

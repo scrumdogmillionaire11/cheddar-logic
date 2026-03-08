@@ -446,26 +446,40 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   if (process.env.ENABLE_SETTLEMENT !== 'false') {
     const sweepDate = nowEt.toISODate();
 
+    // Enforce singleton settlement across all processes (race mitigation)
+    const settlementGameRunning = hasRunningJobRun('settle|global|game-results');
+    const settlementCardsRunning = hasRunningJobRun('settle|global|pending-cards');
+
     // 4A) Hourly settlement sweep (default enabled)
     if (
       process.env.ENABLE_HOURLY_SETTLEMENT_SWEEP !== 'false' &&
       isHourlySettlementDue(nowEt)
     ) {
       const hourlyKey = keyHourlySettlementSweep(nowEt);
-      jobs.push({
-        jobName: 'settle_game_results',
-        jobKey: `${hourlyKey}|games`,
-        execute: settleGameResults,
-        args: { jobKey: `${hourlyKey}|games`, dryRun },
-        reason: `hourly settlement sweep ${hourlyKey}`,
-      });
-      jobs.push({
-        jobName: 'settle_pending_cards',
-        jobKey: `${hourlyKey}|cards`,
-        execute: settlePendingCards,
-        args: { jobKey: `${hourlyKey}|cards`, dryRun },
-        reason: `hourly card settlement ${hourlyKey}`,
-      });
+      
+      if (!settlementGameRunning) {
+        jobs.push({
+          jobName: 'settle_game_results',
+          jobKey: 'settle|global|game-results',
+          execute: settleGameResults,
+          args: { jobKey: 'settle|global|game-results', dryRun },
+          reason: `hourly settlement sweep ${hourlyKey}`,
+        });
+      } else {
+        console.log(`[Scheduler] Skipping settle_game_results — already running in another process`);
+      }
+      
+      if (!settlementCardsRunning) {
+        jobs.push({
+          jobName: 'settle_pending_cards',
+          jobKey: 'settle|global|pending-cards',
+          execute: settlePendingCards,
+          args: { jobKey: 'settle|global|pending-cards', dryRun },
+          reason: `hourly card settlement ${hourlyKey}`,
+        });
+      } else {
+        console.log(`[Scheduler] Skipping settle_pending_cards — already running in another process`);
+      }
     }
 
     // 4B) Nightly backfill + settlement sweep (02:00 ET)
@@ -477,20 +491,30 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         args: { jobKey: `settle|backfill-card-results|${sweepDate}`, dryRun },
         reason: `nightly card_results backfill ${sweepDate}`,
       });
-      jobs.push({
-        jobName: 'settle_game_results',
-        jobKey: `settle|game-results|${sweepDate}`,
-        execute: settleGameResults,
-        args: { jobKey: `settle|game-results|${sweepDate}`, dryRun },
-        reason: `nightly settlement sweep ${sweepDate}`,
-      });
-      jobs.push({
-        jobName: 'settle_pending_cards',
-        jobKey: `settle|pending-cards|${sweepDate}`,
-        execute: settlePendingCards,
-        args: { jobKey: `settle|pending-cards|${sweepDate}`, dryRun },
-        reason: `nightly card settlement ${sweepDate}`,
-      });
+      
+      if (!settlementGameRunning) {
+        jobs.push({
+          jobName: 'settle_game_results',
+          jobKey: 'settle|global|game-results',
+          execute: settleGameResults,
+          args: { jobKey: 'settle|global|game-results', dryRun },
+          reason: `nightly settlement sweep ${sweepDate}`,
+        });
+      } else {
+        console.log(`[Scheduler] Skipping settle_game_results — already running in another process`);
+      }
+      
+      if (!settlementCardsRunning) {
+        jobs.push({
+          jobName: 'settle_pending_cards',
+          jobKey: 'settle|global|pending-cards',
+          execute: settlePendingCards,
+          args: { jobKey: 'settle|global|pending-cards', dryRun },
+          reason: `nightly card settlement ${sweepDate}`,
+        });
+      } else {
+        console.log(`[Scheduler] Skipping settle_pending_cards — already running in another process`);
+      }
     }
   }
 

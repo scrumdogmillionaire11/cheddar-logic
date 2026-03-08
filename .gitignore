@@ -79,6 +79,13 @@ temp/
 *.sqlite
 *.sqlite3
 *.db
+*.db.lock
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 
 # Stripe CLI
 .stripe/

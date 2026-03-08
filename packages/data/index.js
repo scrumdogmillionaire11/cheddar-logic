@@ -107,6 +107,7 @@ module.exports = {
 
   // Convenience exports - tracking_stats (analytics)
   upsertTrackingStat: db.upsertTrackingStat,
+  incrementTrackingStat: db.incrementTrackingStat,
   getTrackingStats: db.getTrackingStats,
 
   // Validation

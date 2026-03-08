@@ -25,6 +25,7 @@ const {
   buildMarketKey,
   createMarketError,
   upsertTrackingStat,
+  incrementTrackingStat,
   getDatabase,
   insertJobRun,
   markJobRunSuccess,
@@ -215,6 +216,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
     }
 
     try {
+      const jobStartTime = new Date().toISOString();
       console.log('[SettleCards] Recording job start...');
       insertJobRun('settle_pending_cards', jobRunId, jobKey);
 
@@ -355,9 +357,9 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         `[SettleCards] Step 1 complete — ${cardsSettled} cards settled, ${cardsErrored} cards errored`,
       );
 
-      // --- Step 2: Compute and upsert tracking_stats ---
+      // --- Step 2: Increment tracking_stats (race-safe) ---
 
-      // Aggregate settled card_results by sport + result
+      // Aggregate only cards settled in THIS run (delta-based)
       const aggregateStmt = db.prepare(`
         SELECT
           sport,
@@ -366,38 +368,38 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           SUM(pnl_units) AS total_pnl
         FROM card_results
         WHERE status = 'settled'
+          AND settled_at >= ?
         GROUP BY sport, result
       `);
 
-      const aggregateRows = aggregateStmt.all();
+      const aggregateRows = aggregateStmt.all(jobStartTime);
 
-      // Build per-sport aggregates
-      const sportStats = {};
+      // Build per-sport deltas for this run only
+      const sportDeltas = {};
       for (const row of aggregateRows) {
         const sport = row.sport;
-        if (!sportStats[sport]) {
-          sportStats[sport] = { wins: 0, losses: 0, pushes: 0, totalPnl: 0 };
+        if (!sportDeltas[sport]) {
+          sportDeltas[sport] = { deltaWins: 0, deltaLosses: 0, deltaPushes: 0, deltaPnl: 0 };
         }
         const count = Number(row.count) || 0;
         const pnl = Number(row.total_pnl) || 0;
         if (row.result === 'win') {
-          sportStats[sport].wins += count;
-          sportStats[sport].totalPnl += pnl;
+          sportDeltas[sport].deltaWins += count;
+          sportDeltas[sport].deltaPnl += pnl;
         } else if (row.result === 'loss') {
-          sportStats[sport].losses += count;
-          sportStats[sport].totalPnl += pnl;
+          sportDeltas[sport].deltaLosses += count;
+          sportDeltas[sport].deltaPnl += pnl;
         } else if (row.result === 'push') {
-          sportStats[sport].pushes += count;
-          sportStats[sport].totalPnl += pnl;
+          sportDeltas[sport].deltaPushes += count;
+          sportDeltas[sport].deltaPnl += pnl;
         }
       }
 
-      let statsUpserted = 0;
-      for (const [sport, stats] of Object.entries(sportStats)) {
-        const { wins, losses, pushes, totalPnl } = stats;
-        const total = wins + losses + pushes;
+      let statsIncremented = 0;
+      for (const [sport, deltas] of Object.entries(sportDeltas)) {
+        const { deltaWins, deltaLosses, deltaPushes, deltaPnl } = deltas;
 
-        upsertTrackingStat({
+        incrementTrackingStat({
           id: `stat-${sport}-all-alltime`,
           statKey: `${sport}|moneyline|all|all|all|alltime`,
           sport,
@@ -406,33 +408,28 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           confidenceTier: 'all',
           driverKey: 'all',
           timePeriod: 'alltime',
-          totalCards: total,
-          settledCards: total,
-          wins,
-          losses,
-          pushes,
-          totalPnlUnits: totalPnl,
-          winRate: wins + losses > 0 ? wins / (wins + losses) : 0,
-          avgPnlPerCard: total > 0 ? totalPnl / total : 0,
-          confidenceCalibration: null,
-          metadata: { computedAt: new Date().toISOString() },
+          deltaWins,
+          deltaLosses,
+          deltaPushes,
+          deltaPnl,
+          metadata: { lastIncrementAt: new Date().toISOString(), jobRunId },
         });
 
         console.log(
-          `[SettleCards] Upserted tracking_stat for ${sport}: ${wins}W / ${losses}L / ${pushes}P (pnl: ${totalPnl.toFixed(3)})`,
+          `[SettleCards] Incremented tracking_stat for ${sport}: +${deltaWins}W / +${deltaLosses}L / +${deltaPushes}P (pnl: ${deltaPnl >= 0 ? '+' : ''}${deltaPnl.toFixed(3)})`,
         );
-        statsUpserted++;
+        statsIncremented++;
       }
 
       console.log(
-        `[SettleCards] Step 2 complete — ${statsUpserted} tracking_stats upserted`,
+        `[SettleCards] Step 2 complete — ${statsIncremented} tracking_stats incremented`,
       );
 
       const cardsArchived = 0;
 
       markJobRunSuccess(jobRunId);
       console.log(
-        `[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, cardsArchived: ${cardsArchived}, statsUpserted: ${statsUpserted}`,
+        `[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, cardsArchived: ${cardsArchived}, statsIncremented: ${statsIncremented}`,
       );
 
       return {
@@ -442,13 +439,13 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         cardsSettled,
         cardsErrored,
         cardsArchived,
-        statsUpserted,
+        statsIncremented,
         errors: [],
       };
     } catch (error) {
       if (error.code === 'JOB_RUN_ALREADY_CLAIMED') {
         console.log(
-          `[SettleCards] Skipping (job already claimed): ${jobKey || 'none'}`,
+          `[RaceGuard] Skipping settle_pending_cards (job already claimed): ${jobKey || 'none'}`,
         );
         return { success: true, jobRunId: null, skipped: true, jobKey };
       }

@@ -770,7 +770,7 @@ async function settleGameResults({
     } catch (error) {
       if (error.code === 'JOB_RUN_ALREADY_CLAIMED') {
         console.log(
-          `[SettleGames] Skipping (job already claimed): ${jobKey || 'none'}`,
+          `[RaceGuard] Skipping settle_game_results (job already claimed): ${jobKey || 'none'}`,
         );
         return { success: true, jobRunId: null, skipped: true, jobKey };
       }

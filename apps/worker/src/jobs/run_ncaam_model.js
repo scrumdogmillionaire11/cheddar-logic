@@ -203,10 +203,31 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       let blockedCount = 0;
       let noSignalCount = 0;
       let gameErrorCount = 0;
+      let skippedRaceCount = 0;
 
       // Process each game independently. Missing signals for one game should not
       // block card generation for other games.
       for (const gameId of gameIds) {
+        const gameJobKey = `ncaam-model|${gameId}|${jobKey || 'adhoc'}`;
+        const gameJobRunId = `job-ncaam-game-${gameId}-${jobRunId.slice(-8)}`;
+        
+        if (!shouldRunJobKey(gameJobKey)) {
+          console.log(`  [RaceGuard] Skipping ${gameId} — job key already running or successful`);
+          skippedRaceCount++;
+          continue;
+        }
+
+        try {
+          insertJobRun('run_ncaam_model_game', gameJobRunId, gameJobKey);
+        } catch (claimError) {
+          if (claimError.code === 'JOB_RUN_ALREADY_CLAIMED') {
+            console.log(`  [RaceGuard] Skipping ${gameId} — another process claimed model job`);
+            skippedRaceCount++;
+            continue;
+          }
+          throw claimError;
+        }
+
         try {
           let oddsSnapshot = gameOdds[gameId];
 
@@ -271,9 +292,17 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
                 `${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
             );
           }
+          markJobRunSuccess(gameJobRunId);
         } catch (gameError) {
           gameErrorCount++;
           console.error(`  [error] ${gameId}: ${gameError.message}`);
+          try {
+            markJobRunFailure(gameJobRunId, gameError.message);
+          } catch (markError) {
+            console.error(
+              `  [error] Failed to mark game job failure for ${gameId}: ${markError.message}`,
+            );
+          }
         }
       }
 
@@ -285,6 +314,11 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       if (gameErrorCount > 0) {
         console.warn(
           `[NCAAMModel] Game-level errors: ${gameErrorCount}/${gameIds.length}`,
+        );
+      }
+      if (skippedRaceCount > 0) {
+        console.log(
+          `[NCAAMModel] Race-guard skipped: ${skippedRaceCount}/${gameIds.length} (another process running)`,
         );
       }
 
@@ -314,7 +348,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
     } catch (error) {
       if (error.code === 'JOB_RUN_ALREADY_CLAIMED') {
         console.log(
-          `[NCAAMModel] ⏭️  Skipping (job already claimed): ${jobKey || 'none'}`,
+          `[RaceGuard] Skipping run_ncaam_model (job already claimed): ${jobKey || 'none'}`,
         );
         return { success: true, jobRunId: null, skipped: true, jobKey };
       }
