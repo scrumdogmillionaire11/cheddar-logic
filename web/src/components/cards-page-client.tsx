@@ -22,6 +22,7 @@ import type {
   Market,
   SupportGrade,
   PassReasonCode,
+  SpreadCompare,
 } from '@/lib/types/game-card';
 import { GAME_TAGS } from '@/lib/types/game-card';
 import {
@@ -313,6 +314,7 @@ type DecisionModel = {
   allDrivers: DriverRow[];
   supportGrade: SupportGrade;
   passReasonCode: PassReasonCode | null;
+  spreadCompare: SpreadCompare | null;
 };
 
 const CLIENT_POLL_INTERVAL_MS = 60_000;
@@ -1678,6 +1680,51 @@ export default function CardsPageClient() {
             </div>
           )}
 
+          {/* WI-0337: Spread line compare */}
+          {decision.spreadCompare && (
+            <div className="rounded-md border border-white/10 bg-white/5 p-3">
+              <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
+                Spread Compare
+              </p>
+              <div className="flex items-center gap-3 text-xs font-mono flex-wrap">
+                {decision.spreadCompare.projectedSpread !== null ? (
+                  <>
+                    <span className="text-cloud/60">
+                      Proj{' '}
+                      <span className="text-cloud/90 font-bold">
+                        {decision.spreadCompare.projectedSpread > 0
+                          ? `+${decision.spreadCompare.projectedSpread}`
+                          : `${decision.spreadCompare.projectedSpread}`}
+                      </span>
+                    </span>
+                    <span className="text-cloud/40">vs</span>
+                    <span className="text-cloud/60">
+                      Market{' '}
+                      <span className="text-cloud/90 font-bold">
+                        {decision.spreadCompare.marketLine !== null
+                          ? decision.spreadCompare.marketLine > 0
+                            ? `+${decision.spreadCompare.marketLine}`
+                            : `${decision.spreadCompare.marketLine}`
+                          : 'N/A'}
+                      </span>
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-cloud/60">
+                    Market line{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {decision.spreadCompare.marketLine !== null
+                        ? decision.spreadCompare.marketLine > 0
+                          ? `+${decision.spreadCompare.marketLine}`
+                          : `${decision.spreadCompare.marketLine}`
+                        : 'N/A'}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="rounded-md border border-white/10 bg-white/5 p-3">
             <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-1">
               Why
@@ -1712,11 +1759,16 @@ export default function CardsPageClient() {
               )}
               {canRenderModelSummary && decision.supportGrade === 'WEAK' && (
                 <span className="text-xs font-semibold text-cloud/40">
-                  {decision.passReasonCode === 'PASS_MISSING_PRIMARY_DRIVER'
-                    ? 'No primary driver'
-                    : decision.passReasonCode === 'PASS_CONFLICT_HIGH'
-                      ? 'High conflict'
-                      : 'Weak support'}
+                  {displayDecision === 'PASS' &&
+                   decision.topContributors.length > 0 &&
+                   (decision.passReasonCode === 'PASS_DRIVER_SUPPORT_WEAK' ||
+                    decision.passReasonCode === 'PASS_NO_EDGE')
+                    ? 'Model lean only — no betting edge'
+                    : decision.passReasonCode === 'PASS_MISSING_PRIMARY_DRIVER'
+                      ? 'No primary driver'
+                      : decision.passReasonCode === 'PASS_CONFLICT_HIGH'
+                        ? 'High conflict'
+                        : 'Weak support'}
                 </span>
               )}
             </div>
