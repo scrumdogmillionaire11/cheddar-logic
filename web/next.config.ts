@@ -10,6 +10,9 @@ const defaultApiBase = isProduction
 const apiBase = (overrideApiBase || defaultApiBase).replace(/\/+$/, "");
 
 const nextConfig: NextConfig = {
+  turbopack: {
+    root: __dirname,
+  },
   async rewrites() {
     return [
       {
