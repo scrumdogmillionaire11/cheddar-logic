@@ -25,11 +25,13 @@ if [[ "${1:-}" == "--sync" ]]; then
 fi
 
 if [[ "${1:-}" == "--check" ]] || [[ "${1:-}" == "--sync" ]]; then
+  echo "[DEV-MODE:snapshot] Mode: snapshot (read-only parity checks)"
   echo "[DEV-MODE:snapshot] CHEDDAR_DB_PATH=$CHEDDAR_DB_PATH"
   bash "$ROOT_DIR/scripts/db-context.sh"
   exit 0
 fi
 
+echo "[DEV-MODE:snapshot] Mode: snapshot (web only)"
 echo "[DEV-MODE:snapshot] Using DB: $CHEDDAR_DB_PATH"
 echo "[DEV-MODE:snapshot] Start web: CHEDDAR_DB_PATH=$CHEDDAR_DB_PATH npm --prefix web run dev"
 echo "[DEV-MODE:snapshot] Do NOT run local model jobs against this mode unless intentional"

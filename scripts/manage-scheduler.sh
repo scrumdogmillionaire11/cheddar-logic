@@ -20,6 +20,11 @@ fi
 
 EXPECTED_DB_PATH="${CHEDDAR_DB_PATH:-/tmp/cheddar-logic/cheddar.db}"
 
+EXPECTED_MODE="local"
+if [[ "$EXPECTED_DB_PATH" == *"snapshot"* ]] || [[ "$EXPECTED_DB_PATH" == *"/.cheddar/"* ]]; then
+    EXPECTED_MODE="snapshot"
+fi
+
 # Color output
 BLUE='\033[0;34m'
 GREEN='\033[0;32m'
@@ -143,6 +148,7 @@ case "$COMMAND" in
         if scheduler_running; then
             PID=$(get_scheduler_pid)
             echo -e "${GREEN}✓ Scheduler is running (PID: $PID)${NC}"
+            echo "Mode: $EXPECTED_MODE"
             echo "Expected DB: $EXPECTED_DB_PATH"
             OPEN_DB=$(get_scheduler_open_db)
             if [ -n "$OPEN_DB" ]; then
@@ -168,6 +174,7 @@ case "$COMMAND" in
             echo "View full logs: ./scripts/manage-scheduler.sh logs"
         else
             echo -e "${RED}✗ Scheduler is not running${NC}"
+            echo "Mode: $EXPECTED_MODE"
             echo "Expected DB: $EXPECTED_DB_PATH"
             echo ""
             echo "Start it with: ./scripts/manage-scheduler.sh start"
@@ -175,6 +182,7 @@ case "$COMMAND" in
         ;;
 
     db)
+        echo "Mode: $EXPECTED_MODE"
         echo "Expected DB: $EXPECTED_DB_PATH"
         if scheduler_running; then
             PID=$(get_scheduler_pid)

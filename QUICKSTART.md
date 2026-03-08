@@ -4,8 +4,24 @@
 
 ### Runtime Modes (Important)
 
-- **Local mode** (recommended for model testing): web + worker + scheduler all use one local DB.
-- **Snapshot mode** (read-only parity checks): web reads `~/.cheddar/prod-snapshot.db`; do not mix with local model runs unless intentional.
+- **Local mode** (recommended for model testing): web + worker + scheduler all use one local DB via `CHEDDAR_DB_PATH`.
+- **Snapshot mode** (read-only parity checks): web reads `~/.cheddar/prod-snapshot.db`; do not run worker/scheduler jobs against this DB.
+
+Mode comparison:
+
+| Mode | Primary use | Expected DB path | Processes that should run | Writes allowed |
+| --- | --- | --- | --- | --- |
+| Local | Development + model runs | `'/tmp/cheddar-logic/cheddar.db'` (default) | Web + Worker + Scheduler | Yes (worker only) |
+| Snapshot | Parity checks against prod snapshot | `'~/.cheddar/prod-snapshot.db'` | Web only | No |
+
+Single-writer contract: worker is the only process that writes to the DB. Web must stay read-only. See [docs/decisions/ADR-0002-single-writer-db-contract.md](docs/decisions/ADR-0002-single-writer-db-contract.md).
+
+Mode switching:
+
+1. Stop web and scheduler.
+2. Update `CHEDDAR_DB_PATH` (and `CHEDDAR_DATA_DIR` if you use it).
+3. Restart web and scheduler.
+4. Verify with `bash scripts/db-context.sh`.
 
 Use these helpers to verify your active mode:
 

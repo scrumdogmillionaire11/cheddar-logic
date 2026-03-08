@@ -32,6 +32,11 @@ DEFAULT_DB_PATH="/tmp/cheddar-logic/cheddar.db"
 export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-$DEFAULT_DB_PATH}"
 export CHEDDAR_DATA_DIR="${CHEDDAR_DATA_DIR:-$(dirname "$CHEDDAR_DB_PATH")}"
 
+MODE="local"
+if [[ "$CHEDDAR_DB_PATH" == *"snapshot"* ]] || [[ "$CHEDDAR_DB_PATH" == *"/.cheddar/"* ]]; then
+    MODE="snapshot"
+fi
+
 # Create log directory
 mkdir -p "$LOG_DIR"
 mkdir -p "$CHEDDAR_DATA_DIR"
@@ -45,7 +50,12 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}════════════════════════════════════════════${NC}"
 echo -e "${BLUE}  CHEDDAR-LOGIC SCHEDULER STARTUP${NC}"
 echo -e "${BLUE}════════════════════════════════════════════${NC}"
+echo "Mode: $MODE"
 echo "DB: $CHEDDAR_DB_PATH"
+
+if [ "$MODE" = "snapshot" ]; then
+    echo -e "${YELLOW}⚠️  Snapshot mode detected. Scheduler should not run against snapshot DBs.${NC}"
+fi
 
 # Check if scheduler is already running
 if pgrep -f "node.*schedulers/main.js" > /dev/null; then

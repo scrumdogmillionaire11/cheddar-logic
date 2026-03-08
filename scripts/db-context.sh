@@ -23,7 +23,13 @@ unset DATABASE_URL
 
 export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-/tmp/cheddar-logic/cheddar.db}"
 
+MODE="local"
+if [[ "$CHEDDAR_DB_PATH" == *"snapshot"* ]] || [[ "$CHEDDAR_DB_PATH" == *"/.cheddar/"* ]]; then
+  MODE="snapshot"
+fi
+
 echo "[DB-CONTEXT] root: $ROOT_DIR"
+echo "[DB-CONTEXT] mode: $MODE"
 echo "[DB-CONTEXT] CHEDDAR_DB_PATH: $CHEDDAR_DB_PATH"
 
 node - <<'NODE'
