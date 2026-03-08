@@ -199,12 +199,20 @@ jobs:
             retry_url "http://127.0.0.1:3000/_next/static/chunks/$SAMPLE_CHUNK_REL" "origin sample chunk" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             retry_url "http://127.0.0.1:3000/_next/static/$SAMPLE_CSS_REL" "origin sample css" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             HOMEPAGE_HTML=$(curl -fsS "http://127.0.0.1:3000/" || true)
-            REFERENCED_CHUNK=$(printf "%s" "$HOMEPAGE_HTML" | grep -Eo "/_next/static/chunks/[^\"' ]+\.js" | head -n 1)
-            test -n "$REFERENCED_CHUNK" || { echo "ERROR: could not find a chunk reference in homepage HTML after restart"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
-            REFERENCED_CSS=$(printf "%s" "$HOMEPAGE_HTML" | grep -Eo "/_next/static/[^\"' ]+\.css" | head -n 1)
-            test -n "$REFERENCED_CSS" || { echo "ERROR: could not find a CSS chunk reference in homepage HTML after restart"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
-            retry_url "http://127.0.0.1:3000$REFERENCED_CHUNK" "origin homepage chunk" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
-            retry_url "http://127.0.0.1:3000$REFERENCED_CSS" "origin homepage css" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            HOMEPAGE_JS_REFS=$(printf "%s" "$HOMEPAGE_HTML" | grep -Eo "/_next/static/[^\"' ]+\.js" | sort -u)
+            HOMEPAGE_CSS_REFS=$(printf "%s" "$HOMEPAGE_HTML" | grep -Eo "/_next/static/[^\"' ]+\.css" | sort -u)
+            HOMEPAGE_JS_COUNT=$(printf "%s\n" "$HOMEPAGE_JS_REFS" | grep -c . || true)
+            HOMEPAGE_CSS_COUNT=$(printf "%s\n" "$HOMEPAGE_CSS_REFS" | grep -c . || true)
+            test "$HOMEPAGE_JS_COUNT" -gt 0 || { echo "ERROR: could not find JS asset references in homepage HTML after restart"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            test "$HOMEPAGE_CSS_COUNT" -gt 0 || { echo "ERROR: could not find CSS asset references in homepage HTML after restart"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            while IFS= read -r ref; do
+              [ -n "$ref" ] || continue
+              retry_url "http://127.0.0.1:3000$ref" "origin homepage js $ref" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            done <<< "$HOMEPAGE_JS_REFS"
+            while IFS= read -r ref; do
+              [ -n "$ref" ] || continue
+              retry_url "http://127.0.0.1:3000$ref" "origin homepage css $ref" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            done <<< "$HOMEPAGE_CSS_REFS"
             if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
               echo "ERROR: Cloudflare secrets missing (CF_API_TOKEN and CF_ZONE_ID required for cache purge)";
               exit 1;
@@ -218,9 +226,15 @@ jobs:
             echo "Cloudflare cache purged (everything) — waiting 30s for propagation..."
             sleep 30
             PUBLIC_DOMAIN_URL="${NEXT_PUBLIC_PUBLIC_DOMAIN:-${PUBLIC_DOMAIN:-https://cheddarlogic.com}}"
-            retry_url "$PUBLIC_DOMAIN_URL$REFERENCED_CHUNK" "public homepage chunk" || { echo "ERROR: public chunk request failed after restart"; exit 1; }
-            retry_url "$PUBLIC_DOMAIN_URL$REFERENCED_CSS" "public homepage css" || { echo "ERROR: public css request failed after restart"; exit 1; }
-            echo "Chunk verification passed: origin and public domain serve homepage-referenced assets"
+            while IFS= read -r ref; do
+              [ -n "$ref" ] || continue
+              retry_url "$PUBLIC_DOMAIN_URL$ref" "public homepage js $ref" || { echo "ERROR: public JS request failed after restart: $ref"; exit 1; }
+            done <<< "$HOMEPAGE_JS_REFS"
+            while IFS= read -r ref; do
+              [ -n "$ref" ] || continue
+              retry_url "$PUBLIC_DOMAIN_URL$ref" "public homepage css $ref" || { echo "ERROR: public CSS request failed after restart: $ref"; exit 1; }
+            done <<< "$HOMEPAGE_CSS_REFS"
+            echo "Chunk verification passed: origin/public served $HOMEPAGE_JS_COUNT JS refs and $HOMEPAGE_CSS_COUNT CSS refs from homepage HTML"
             DEPLOY_LOG="/opt/cheddar-logic/logs/deploy.log"
             mkdir -p "$(dirname "$DEPLOY_LOG")"
             node - <<'NODE' | tee -a "$DEPLOY_LOG"
