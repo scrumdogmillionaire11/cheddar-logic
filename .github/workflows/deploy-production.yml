@@ -165,6 +165,10 @@ jobs:
             test -n "$SAMPLE_CHUNK_FILE" || { echo "ERROR: unable to select a sample JS chunk from web/.next/static/chunks"; exit 1; }
             SAMPLE_CHUNK_REL="${SAMPLE_CHUNK_FILE#web/.next/static/chunks/}"
             echo "Selected sample chunk: /_next/static/chunks/$SAMPLE_CHUNK_REL"
+            SAMPLE_CSS_FILE=$(find web/.next/static/chunks -name "*.css" | sort | head -n 1)
+            test -n "$SAMPLE_CSS_FILE" || { echo "ERROR: unable to select a sample CSS chunk from web/.next/static/chunks"; exit 1; }
+            SAMPLE_CSS_REL="${SAMPLE_CSS_FILE#web/.next/static/chunks/}"
+            echo "Selected sample CSS: /_next/static/chunks/$SAMPLE_CSS_REL"
             echo "Build verification passed: BUILD_ID exists, static dir exists, $CHUNK_COUNT JS chunks, $CSS_COUNT CSS chunks found"
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
@@ -189,12 +193,27 @@ jobs:
               return 1
             }
             retry_url "http://127.0.0.1:3000/_next/static/chunks/$SAMPLE_CHUNK_REL" "origin sample chunk" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            retry_url "http://127.0.0.1:3000/_next/static/chunks/$SAMPLE_CSS_REL" "origin sample css" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             HOMEPAGE_HTML=$(curl -fsS "http://127.0.0.1:3000/" || true)
             REFERENCED_CHUNK=$(printf "%s" "$HOMEPAGE_HTML" | grep -Eo "/_next/static/chunks/[^\"' ]+\.js" | head -n 1)
             test -n "$REFERENCED_CHUNK" || { echo "ERROR: could not find a chunk reference in homepage HTML after restart"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            REFERENCED_CSS=$(printf "%s" "$HOMEPAGE_HTML" | grep -Eo "/_next/static/chunks/[A-Za-z0-9]+\.css" | head -n 1)
+            test -n "$REFERENCED_CSS" || { echo "ERROR: could not find a CSS chunk reference in homepage HTML after restart"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             retry_url "http://127.0.0.1:3000$REFERENCED_CHUNK" "origin homepage chunk" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            retry_url "http://127.0.0.1:3000$REFERENCED_CSS" "origin homepage css" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
+              echo "ERROR: Cloudflare secrets missing (CF_API_TOKEN and CF_ZONE_ID required for cache purge)";
+              exit 1;
+            fi
+            curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data '{"files":["https://cheddarlogic.com/_next/static/*"]}' \
+              | tee /tmp/cloudflare_purge.json
+            grep -q '"success":true' /tmp/cloudflare_purge.json || { echo "ERROR: Cloudflare purge failed"; cat /tmp/cloudflare_purge.json; exit 1; }
             PUBLIC_DOMAIN_URL="${NEXT_PUBLIC_PUBLIC_DOMAIN:-${PUBLIC_DOMAIN:-https://cheddarlogic.com}}"
             retry_url "$PUBLIC_DOMAIN_URL$REFERENCED_CHUNK" "public homepage chunk" || { echo "ERROR: public chunk request failed after restart"; exit 1; }
+            retry_url "$PUBLIC_DOMAIN_URL$REFERENCED_CSS" "public homepage css" || { echo "ERROR: public css request failed after restart"; exit 1; }
             echo "Chunk verification passed: origin and public domain serve homepage-referenced assets"
             node -e "const u=['http://127.0.0.1:3000/api/games','http://127.0.0.1:3000/api/cards?limit=5','http://127.0.0.1:3000/api/results?limit=20']; (async()=>{const out={}; for (const x of u){const r=await fetch(x); const j=await r.json(); out[x]={status:r.status,games:Array.isArray(j?.data)?j.data.length:undefined,cards:Array.isArray(j?.data)?j.data.length:undefined,ledger:Array.isArray(j?.data?.ledger)?j.data.ledger.length:undefined,summary:j?.data?.summary||null};} console.log('post_restart_snapshot', JSON.stringify(out)); })().catch(e=>{console.error('post_restart_snapshot_error', e); process.exit(0);});"
             echo "Deploy complete — worker, web, and fpl-sage restarted"

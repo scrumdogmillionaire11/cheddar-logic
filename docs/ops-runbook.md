@@ -303,12 +303,18 @@ curl -I "http://127.0.0.1:3000/_next/static/chunks/$REL"
 REF=$(curl -s http://127.0.0.1:3000/ | grep -Eo '/_next/static/chunks/[^" ]+\.js' | head -n1)
 echo "$REF"
 curl -I "http://127.0.0.1:3000$REF"
+
+# 5) CSS chunk exists and is reachable on origin
+CSS_REF=$(curl -s http://127.0.0.1:3000/ | grep -Eo '/_next/static/chunks/[A-Za-z0-9]+\.css' | head -n1)
+echo "$CSS_REF"
+curl -I "http://127.0.0.1:3000$CSS_REF"
 ```
 
-If origin is `200` but public URL is `502`, check edge/proxy path:
+If origin is `200` but public URL is `502`, purge Cloudflare cache and check edge/proxy path:
 
 ```bash
 curl -I "https://cheddarlogic.com$REF"
+curl -I "https://cheddarlogic.com$CSS_REF"
 sudo tail -n 100 /var/log/nginx/error.log
 sudo tail -n 100 /var/log/nginx/access.log
 ```
