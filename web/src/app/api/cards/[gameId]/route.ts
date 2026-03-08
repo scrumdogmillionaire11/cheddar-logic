@@ -75,6 +75,19 @@ function safeJsonParse(payload: string | null) {
   }
 }
 
+function normalizePayloadMeta(payload: Record<string, unknown> | null) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const meta =
+    payload.meta && typeof payload.meta === 'object'
+      ? (payload.meta as Record<string, unknown>)
+      : null;
+  if (!meta) return payload;
+  if (!Object.prototype.hasOwnProperty.call(meta, 'model_endpoint')) {
+    meta.model_endpoint = null;
+  }
+  return payload;
+}
+
 function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   // Prefer per-sport rows (added by migration 021); fall back to singleton
   try {
@@ -249,6 +262,7 @@ export async function GET(
     // Parse JSON fields for response
     const response = cards.map((card) => {
       const parsed = safeJsonParse(card.payload_data);
+      const normalizedPayload = normalizePayloadMeta(parsed.data);
       return {
         id: card.id,
         gameId: card.game_id,
@@ -257,7 +271,7 @@ export async function GET(
         cardTitle: card.card_title,
         createdAt: card.created_at,
         expiresAt: card.expires_at,
-        payloadData: parsed.data,
+        payloadData: normalizedPayload,
         payloadParseError: parsed.error,
         modelOutputIds: card.model_output_ids,
       };

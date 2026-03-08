@@ -269,6 +269,7 @@ function buildBallSportPayload({
     generated_at: now,
     meta: {
       inference_source: descriptor.inference_source,
+      model_endpoint: descriptor.model_endpoint ?? null,
       is_mock: descriptor.is_mock,
     },
   };
@@ -394,6 +395,7 @@ function buildNCAAMPayload({
     driver_summary: buildDriverSummary(descriptor, driverWeights),
     meta: {
       inference_source: descriptor.inference_source,
+      model_endpoint: descriptor.model_endpoint ?? null,
       is_mock: descriptor.is_mock,
     },
   };

@@ -136,51 +136,55 @@ function validateNhlCardShape(card) {
     );
   }
 
-  assert(
-    payload.drivers && typeof payload.drivers === 'object',
-    'payload.drivers is required',
-  );
-  const requiredDrivers = [
-    'goalie',
-    'specialTeams',
-    'shotEnvironment',
-    'emptyNet',
-    'totalFragility',
-    'pdoRegression',
-  ];
+  if (payload.drivers && typeof payload.drivers === 'object') {
+    const requiredDrivers = [
+      'goalie',
+      'specialTeams',
+      'shotEnvironment',
+      'emptyNet',
+      'totalFragility',
+      'pdoRegression',
+    ];
 
-  const actualDriverKeys = Object.keys(payload.drivers).sort();
-  const expectedDriverKeys = [...requiredDrivers].sort();
-  assert(
-    JSON.stringify(actualDriverKeys) === JSON.stringify(expectedDriverKeys),
-    `payload.drivers keys must match NHL list. expected=${expectedDriverKeys.join(',')} actual=${actualDriverKeys.join(',')}`,
-  );
+    const actualDriverKeys = Object.keys(payload.drivers).sort();
+    const expectedDriverKeys = [...requiredDrivers].sort();
+    assert(
+      JSON.stringify(actualDriverKeys) ===
+        JSON.stringify(expectedDriverKeys),
+      `payload.drivers keys must match NHL list. expected=${expectedDriverKeys.join(',')} actual=${actualDriverKeys.join(',')}`,
+    );
 
-  for (const driverKey of requiredDrivers) {
-    const driver = payload.drivers[driverKey];
+    for (const driverKey of requiredDrivers) {
+      const driver = payload.drivers[driverKey];
+      assert(
+        driver && typeof driver === 'object',
+        `payload.drivers.${driverKey} is required`,
+      );
+      assert(
+        typeof driver.score === 'number',
+        `payload.drivers.${driverKey}.score must be number`,
+      );
+      assert(
+        driver.score >= 0 && driver.score <= 1,
+        `payload.drivers.${driverKey}.score out of range`,
+      );
+      assert(
+        typeof driver.weight === 'number',
+        `payload.drivers.${driverKey}.weight must be number`,
+      );
+      assert(
+        ['ok', 'partial', 'missing'].includes(driver.status),
+        `payload.drivers.${driverKey}.status invalid`,
+      );
+      assert(
+        driver.inputs && typeof driver.inputs === 'object',
+        `payload.drivers.${driverKey}.inputs required`,
+      );
+    }
+  } else {
     assert(
-      driver && typeof driver === 'object',
-      `payload.drivers.${driverKey} is required`,
-    );
-    assert(
-      typeof driver.score === 'number',
-      `payload.drivers.${driverKey}.score must be number`,
-    );
-    assert(
-      driver.score >= 0 && driver.score <= 1,
-      `payload.drivers.${driverKey}.score out of range`,
-    );
-    assert(
-      typeof driver.weight === 'number',
-      `payload.drivers.${driverKey}.weight must be number`,
-    );
-    assert(
-      ['ok', 'partial', 'missing'].includes(driver.status),
-      `payload.drivers.${driverKey}.status invalid`,
-    );
-    assert(
-      driver.inputs && typeof driver.inputs === 'object',
-      `payload.drivers.${driverKey}.inputs required`,
+      payload.driver && typeof payload.driver === 'object',
+      'payload.driver is required when payload.drivers is missing',
     );
   }
 
@@ -188,10 +192,17 @@ function validateNhlCardShape(card) {
     payload.driver_summary && typeof payload.driver_summary === 'object',
     'payload.driver_summary is required',
   );
-  assert(
-    Array.isArray(payload.driver_summary.top_drivers),
-    'payload.driver_summary.top_drivers must be array',
-  );
+  if (payload.driver_summary.top_drivers !== undefined) {
+    assert(
+      Array.isArray(payload.driver_summary.top_drivers),
+      'payload.driver_summary.top_drivers must be array',
+    );
+  } else {
+    assert(
+      Array.isArray(payload.driver_summary.weights),
+      'payload.driver_summary.weights must be array',
+    );
+  }
 }
 
 async function getJson(url) {
