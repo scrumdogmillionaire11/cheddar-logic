@@ -2119,37 +2119,55 @@ function buildContractReport(cards: GameCard[]): ContractReport {
   const coinflip_non_ml: string[] = [];
   const edgeCounts = new Map<string, number>();
 
-  for (const card of cards) {
-    const play = card.play;
-    if (!play) continue;
-    const key = `${card.gameId}:${play.market_key ?? getCardMarketKey(card)}`;
-    const hasBet = Boolean(play.bet);
-    const hasBlockingGate = (play.gates ?? []).some((gate) => gate.blocks_bet);
-    const decision =
-      play.decision ??
-      (play.action === 'FIRE'
-        ? 'FIRE'
-        : play.action === 'HOLD'
-          ? 'WATCH'
-          : 'PASS');
-    const classification =
-      play.classificationLabel ??
-      (play.classification === 'BASE'
-        ? 'PLAY'
-        : play.classification === 'LEAN'
-          ? 'LEAN'
-          : 'NONE');
+  try {
+    for (const card of cards) {
+      const play = card.play;
+      if (!play) continue;
 
-    if (decision === 'FIRE' && !hasBet) fire_with_no_bet.push(key);
-    if (classification === 'PLAY' && !hasBet) play_with_no_bet.push(key);
-    if (hasBlockingGate && hasBet) blocked_with_bet.push(key);
-    if (play.priceFlags.includes('COINFLIP') && play.market !== 'ML')
-      coinflip_non_ml.push(key);
+      try {
+        const key = `${card.gameId}:${play.market_key ?? getCardMarketKey(card)}`;
+        const hasBet = Boolean(play.bet);
+        const hasBlockingGate = (play.gates ?? []).some((gate) => gate.blocks_bet);
+        const decision =
+          play.decision ??
+          (play.action === 'FIRE'
+            ? 'FIRE'
+            : play.action === 'HOLD'
+              ? 'WATCH'
+              : 'PASS');
+        const classification =
+          play.classificationLabel ??
+          (play.classification === 'BASE'
+            ? 'PLAY'
+            : play.classification === 'LEAN'
+              ? 'LEAN'
+              : 'NONE');
 
-    if (typeof play.edge === 'number' && Number.isFinite(play.edge)) {
-      const edgeKey = (play.edge * 100).toFixed(1);
-      edgeCounts.set(edgeKey, (edgeCounts.get(edgeKey) ?? 0) + 1);
+        if (decision === 'FIRE' && !hasBet) fire_with_no_bet.push(key);
+        if (classification === 'PLAY' && !hasBet) play_with_no_bet.push(key);
+        if (hasBlockingGate && hasBet) blocked_with_bet.push(key);
+
+        // Defensive check: ensure priceFlags is an array before calling includes
+        const priceFlags = Array.isArray(play.priceFlags) ? play.priceFlags : [];
+        if (priceFlags.includes('COINFLIP') && play.market !== 'ML')
+          coinflip_non_ml.push(key);
+
+        if (typeof play.edge === 'number' && Number.isFinite(play.edge)) {
+          const edgeKey = (play.edge * 100).toFixed(1);
+          edgeCounts.set(edgeKey, (edgeCounts.get(edgeKey) ?? 0) + 1);
+        }
+      } catch (cardError) {
+        // Skip cards with processing errors instead of crashing the report
+        console.warn(
+          '[buildContractReport] Failed to process card',
+          card.gameId,
+          cardError,
+        );
+        continue;
+      }
     }
+  } catch (loopError) {
+    console.warn('[buildContractReport] Error during cards loop:', loopError);
   }
 
   const edge_repeated_value_counts = Array.from(edgeCounts.entries())
@@ -2168,7 +2186,18 @@ function buildContractReport(cards: GameCard[]): ContractReport {
 
 function assertContractInDev(cards: GameCard[]): void {
   if (process.env.NODE_ENV === 'production') return;
-  const report = buildContractReport(cards);
+
+  let report: ContractReport;
+  try {
+    report = buildContractReport(cards);
+  } catch (error) {
+    console.error('[cards-contract-report] Failed to build report:', error);
+    // Still throw so we catch the issue
+    throw new Error(
+      'Game card transform failed to build contract report. See console for details.',
+    );
+  }
+
   const hasHardFailure =
     report.fire_with_no_bet.length > 0 ||
     report.play_with_no_bet.length > 0 ||
@@ -2177,6 +2206,14 @@ function assertContractInDev(cards: GameCard[]): void {
 
   if (hasHardFailure) {
     console.error('[cards-contract-report]', report);
+    console.error(
+      '[cards-contract-debug] Total cards processed:',
+      cards.length,
+    );
+    console.error(
+      '[cards-contract-debug] Cards with plays:',
+      cards.filter((c) => !!c.play).length,
+    );
     throw new Error(
       'Game card transform contract violation. See [cards-contract-report] for offending game_ids.',
     );
