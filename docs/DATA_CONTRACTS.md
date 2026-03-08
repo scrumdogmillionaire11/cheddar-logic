@@ -270,6 +270,81 @@ CREATE INDEX idx_card_results_settled_at ON card_results(settled_at);
 - `prediction` (string) — Enum depends on sport/market
 - `recommended_bet_type` (string) — "moneyline" | "spread" | "puck_line" | "total" | "unknown"
 
+### Decision Pipeline v2 (Wave-1 Game Lines)
+
+For wave-1 betting rows, worker-emitted `decision_v2` is canonical:
+
+- Sports: `NBA`, `NHL`, `NCAAM`
+- Markets: `MONEYLINE`, `SPREAD`, `TOTAL`, `PUCKLINE`, `TEAM_TOTAL`
+- Consumer rule: web/API/UI must not recompute or repair verdicts
+- Canonical verdict fields:
+  - `decision_v2.official_status` (`PLAY` | `LEAN` | `PASS`)
+  - `decision_v2.play_tier` (`BEST` | `GOOD` | `OK` | `BAD`)
+  - `decision_v2.primary_reason_code` (single top-level reason)
+
+`decision_v2` shape:
+
+```ts
+type DecisionV2 = {
+  direction: 'HOME'|'AWAY'|'OVER'|'UNDER'|'NONE';
+  support_score: number;
+  conflict_score: number;
+  drivers_used: string[];
+  driver_reasons: string[];
+
+  watchdog_status: 'OK'|'CAUTION'|'BLOCKED';
+  watchdog_reason_codes: string[];
+  missing_data: {
+    missing_fields: string[];
+    source_attempts: Array<{
+      field: string;
+      source: string;
+      result: 'FOUND'|'MISSING'|'ERROR';
+      note?: string;
+    }>;
+    severity: 'INFO'|'WARNING'|'BLOCKING';
+  };
+
+  consistency: {
+    pace_tier: string;
+    event_env: string;
+    event_direction_tag: string;
+    vol_env: string;
+    total_bias: string;
+  };
+
+  fair_prob: number | null;
+  implied_prob: number | null;
+  edge_pct: number | null;
+
+  sharp_price_status: 'CHEDDAR'|'COTTAGE'|'UNPRICED';
+  price_reason_codes: string[];
+
+  official_status: 'PLAY'|'LEAN'|'PASS';
+  play_tier: 'BEST'|'GOOD'|'OK'|'BAD';
+  primary_reason_code: string;
+
+  pipeline_version: 'v2';
+  decided_at: string;
+};
+```
+
+Fixed constants for wave-1:
+
+- stale caution: `5m..30m`
+- stale block: `>30m`
+- LEAN edge/support: `0.03` / `0.45`
+- PLAY edge/support: `0.06` / `0.60`
+- BEST edge: `0.10`
+
+Reason precedence for `primary_reason_code`:
+
+1. blocking watchdog reason
+2. price failure reason
+3. qualification reason
+
+No-play behavior is explicit: if watchdog blocks, price is `UNPRICED`/`COTTAGE`, or support thresholds fail, final status is `PASS`.
+
 **FPL Compatibility Rule (Shared Contract):**
 
 - FPL cards may still carry `recommended_bet_type` for cross-sport schema compatibility.

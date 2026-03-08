@@ -1,8 +1,10 @@
 const {
   buildDecisionKey,
+  buildDecisionV2,
   computeCandidateHash,
   computeInputsHash,
   getSideFamily,
+  isWave1EligiblePayload,
   isRecommendationPayload,
   normalizeMarketType,
   normalizePeriod,
@@ -30,14 +32,118 @@ function deriveAction({ tier }) {
   return 'PASS';
 }
 
+function asNonEmptyString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function derivePaceTier(payload) {
+  const total =
+    typeof payload?.odds_context?.total === 'number'
+      ? payload.odds_context.total
+      : typeof payload?.projection?.total === 'number'
+        ? payload.projection.total
+        : null;
+  const sport = String(payload?.sport || '').toUpperCase();
+  if (total === null || !Number.isFinite(total)) return 'UNKNOWN';
+  if (sport === 'NBA' || sport === 'NCAAM') {
+    if (total >= 230) return 'HIGH';
+    if (total <= 215) return 'LOW';
+    return 'MID';
+  }
+  if (sport === 'NHL') {
+    if (total >= 6.5) return 'HIGH';
+    if (total <= 5.5) return 'LOW';
+    return 'MID';
+  }
+  return 'UNKNOWN';
+}
+
+function deriveEventEnv(payload) {
+  const sport = String(payload?.sport || '').toUpperCase();
+  if (sport === 'NBA' || sport === 'NCAAM' || sport === 'NHL') return 'INDOOR';
+  return 'UNKNOWN';
+}
+
+function deriveEventDirectionTag(payload) {
+  const side = String(
+    payload?.selection?.side || payload?.prediction || '',
+  ).toUpperCase();
+  if (side === 'OVER') return 'FAVOR_OVER';
+  if (side === 'UNDER') return 'FAVOR_UNDER';
+  if (side === 'HOME') return 'FAVOR_HOME';
+  if (side === 'AWAY') return 'FAVOR_AWAY';
+  return 'UNKNOWN';
+}
+
+function deriveVolEnv(payload) {
+  const conflict =
+    typeof payload?.driver?.inputs?.conflict === 'number'
+      ? payload.driver.inputs.conflict
+      : typeof payload?.expression_choice?.chosen?.conflict === 'number'
+        ? payload.expression_choice.chosen.conflict
+        : null;
+  if (conflict === null || !Number.isFinite(conflict)) return 'UNKNOWN';
+  return conflict >= 0.4 ? 'VOLATILE' : 'STABLE';
+}
+
+function ensureDecisionConsistencyEnvelope(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  const existing =
+    payload.consistency && typeof payload.consistency === 'object'
+      ? payload.consistency
+      : {};
+
+  const totalBias =
+    asNonEmptyString(existing.total_bias) ||
+    asNonEmptyString(payload?.driver?.inputs?.total_bias) ||
+    'UNKNOWN';
+
+  payload.consistency = {
+    ...existing,
+    pace_tier: asNonEmptyString(existing.pace_tier) || derivePaceTier(payload),
+    event_env: asNonEmptyString(existing.event_env) || deriveEventEnv(payload),
+    event_direction_tag:
+      asNonEmptyString(existing.event_direction_tag) ||
+      deriveEventDirectionTag(payload),
+    vol_env: asNonEmptyString(existing.vol_env) || deriveVolEnv(payload),
+    total_bias: totalBias,
+  };
+}
+
 /**
  * Apply UI action fields to payload
  * Ensures every PLAY payload has `action` and `status` fields
  * so getPlayDisplayAction() in UI can properly recognize plays
  */
-function applyUiActionFields(payload) {
+function applyUiActionFields(payload, context = {}) {
   if (!payload || payload.kind !== 'PLAY') {
     return payload; // Only apply to PLAY payloads
+  }
+
+  if (isWave1EligiblePayload(payload)) {
+    ensureDecisionConsistencyEnvelope(payload);
+    const decisionV2 = buildDecisionV2(payload, context);
+    if (decisionV2) {
+      payload.decision_v2 = decisionV2;
+      const official = decisionV2.official_status;
+      payload.classification =
+        official === 'PLAY' ? 'BASE' : official === 'LEAN' ? 'LEAN' : 'PASS';
+      payload.action =
+        official === 'PLAY' ? 'FIRE' : official === 'LEAN' ? 'HOLD' : 'PASS';
+      payload.status =
+        official === 'PLAY' ? 'FIRE' : official === 'LEAN' ? 'WATCH' : 'PASS';
+      payload.pass_reason_code =
+        official === 'PASS' ? decisionV2.primary_reason_code : null;
+      payload.reason_codes = Array.from(
+        new Set([
+          ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
+          decisionV2.primary_reason_code,
+        ]),
+      );
+      return payload;
+    }
   }
 
   const action = deriveAction({
@@ -278,8 +384,8 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
     );
   }
 
-  // Apply UI action fields so getPlayDisplayAction() recognizes plays
-  applyUiActionFields(card.payloadData);
+  // Attach canonical decision fields before insert.
+  applyUiActionFields(card.payloadData, { oddsSnapshot });
 
   return {
     card,

@@ -22,4 +22,16 @@ assert(
   'cards page should not render the legacy Evidence section in the main card body',
 );
 
+assert(
+  source.includes("const getStatusBadge = (status: 'PLAY' | 'LEAN' | 'PASS')"),
+  'cards page badge contract should only allow PLAY/LEAN/PASS labels',
+);
+
+assert(
+  source.includes('PASS Breakdown') &&
+    source.includes('Model Lean Indicators') &&
+    source.includes('Sharp Verdict:'),
+  'cards page should show PASS diagnostics and model lean indicators in v2',
+);
+
 console.log('✅ UI degraded-data contract source tests passed');

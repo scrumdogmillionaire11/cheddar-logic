@@ -1,9 +1,28 @@
 /*
- * CI guardrail: repair budget must stay <= 20%.
+ * Contract guard for wave-1 decision_v2 pass-through.
  * Run: npm --prefix web run test:api:games:repair-budget
  */
 
 const DEFAULT_BASE_URL = 'http://localhost:3000';
+const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
+const WAVE1_MARKETS = new Set([
+  'MONEYLINE',
+  'SPREAD',
+  'TOTAL',
+  'PUCKLINE',
+  'TEAM_TOTAL',
+]);
+
+function isWave1Play(game, play) {
+  const sport = String(game?.sport ?? '').toUpperCase();
+  const kind = String(play?.kind ?? 'PLAY').toUpperCase();
+  const marketType = String(play?.market_type ?? '').toUpperCase();
+  return (
+    kind === 'PLAY' &&
+    WAVE1_SPORTS.has(sport) &&
+    WAVE1_MARKETS.has(marketType)
+  );
+}
 
 async function runSourceContractAssertions(assert) {
   const fsModule = await import('node:fs');
@@ -14,18 +33,17 @@ async function runSourceContractAssertions(assert) {
   const source = fs.readFileSync(routePath, 'utf8');
 
   assert.ok(
-    source.includes('const resolvedAction: Play[\'action\'] | undefined =') &&
-      source.includes('normalizedAction ??') &&
-      source.includes('actionFromClassification(normalizedClassification)') &&
-      source.includes('statusFromAction(resolvedAction) ?? normalizedStatus'),
-    'route should enforce action-first precedence with controlled canonical/legacy fallback',
+    source.includes('if (wave1Eligible) {') &&
+      source.includes('if (!play.decision_v2) {') &&
+      source.includes('applyWave1DecisionFields(play);'),
+    'route must hard-require worker decision_v2 and map wave-1 fields from it',
   );
 
   assert.ok(
-    source.includes("'PASS_MISSING_MARKET_TYPE'") &&
-      source.includes("'LEGACY_TITLE_INFERENCE_USED'") &&
-      source.includes("'REPAIRED_LEGACY_CARD'"),
-    'route should make legacy repair/inference explicit via deterministic reason codes',
+    !source.includes('repair_applied') &&
+      !source.includes('repair_rule_id') &&
+      !source.includes('repair_stats:'),
+    'route must not inject legacy repair metadata in API output',
   );
 }
 
@@ -37,58 +55,60 @@ async function run() {
 
   const baseUrl = process.env.CARDS_API_BASE_URL || DEFAULT_BASE_URL;
   const response = await fetch(`${baseUrl}/api/games?limit=200`);
-  assert.strictEqual(
-    response.ok,
-    true,
-    `API response not ok: ${response.status}`,
-  );
+  assert.strictEqual(response.ok, true, `API response not ok: ${response.status}`);
 
   const payload = await response.json();
   assert.strictEqual(payload.success, true, 'API returned success=false');
-
-  const repairStats = payload.repair_stats || {};
-  const repairedCount = Number(repairStats.repaired_count || 0);
-  const totalCount = Number(repairStats.total_count || 0);
-  const ratio = totalCount > 0 ? repairedCount / totalCount : 0;
-  const cap = 0.2;
-
-  const plays = (payload.data || []).flatMap((game) => game.plays || []);
-  const repairedPlays = plays.filter((play) => play.repair_applied === true);
-
-  const byRuleId = repairedPlays.reduce((acc, play) => {
-    const key = play.repair_rule_id || 'UNKNOWN_RULE';
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
-
-  const byCardType = repairedPlays.reduce((acc, play) => {
-    const key = play.cardType || 'UNKNOWN_CARD_TYPE';
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
-
-  const topRuleIds = Object.entries(byRuleId)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([ruleId, count]) => `${ruleId}:${count}`)
-    .join(', ');
-
-  const topCardTypes = Object.entries(byCardType)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([cardType, count]) => `${cardType}:${count}`)
-    .join(', ');
-
-  assert.ok(
-    ratio <= cap,
-    `Repair budget exceeded (${ratio.toFixed(4)} > ${cap.toFixed(2)}). Top repair_rule_ids: [${topRuleIds}]. Top card types: [${topCardTypes}]`,
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(payload, 'repair_stats'),
+    false,
+    'API payload must not include repair_stats metadata',
   );
 
-  console.log('✅ API games repair budget test passed');
+  const games = Array.isArray(payload.data) ? payload.data : [];
+  const wave1Plays = games.flatMap((game) =>
+    (Array.isArray(game.plays) ? game.plays : []).filter((play) =>
+      isWave1Play(game, play),
+    ),
+  );
+
+  for (const play of wave1Plays) {
+    assert.ok(play.decision_v2, 'wave-1 play must include decision_v2');
+    assert.strictEqual(
+      play.decision_v2.pipeline_version,
+      'v2',
+      'wave-1 decision_v2 must be v2',
+    );
+    assert.ok(
+      ['PLAY', 'LEAN', 'PASS'].includes(play.decision_v2.official_status),
+      'wave-1 decision_v2.official_status must be PLAY/LEAN/PASS',
+    );
+    assert.strictEqual(
+      typeof play.decision_v2.primary_reason_code,
+      'string',
+      'wave-1 decision_v2.primary_reason_code must be a string',
+    );
+    assert.ok(
+      play.decision_v2.primary_reason_code.length > 0,
+      'wave-1 decision_v2.primary_reason_code must be non-empty',
+    );
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(play, 'repair_applied'),
+      false,
+      'wave-1 play must not expose repair_applied',
+    );
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(play, 'repair_rule_id'),
+      false,
+      'wave-1 play must not expose repair_rule_id',
+    );
+  }
+
+  console.log('✅ API games decision_v2 pass-through contract test passed');
 }
 
 run().catch((error) => {
-  console.error('❌ API games repair budget test failed');
+  console.error('❌ API games decision_v2 pass-through contract test failed');
   console.error(error.message || error);
   process.exit(1);
 });

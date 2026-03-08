@@ -671,7 +671,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
                 `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
               );
             }
-            applyUiActionFields(card.payloadData);
+            applyUiActionFields(card.payloadData, { oddsSnapshot });
             attachRunId(card, jobRunId);
             insertCardPayload(card);
             cardsGenerated++;
@@ -717,7 +717,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
                 `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
               );
             }
-            applyUiActionFields(card.payloadData);
+            applyUiActionFields(card.payloadData, { oddsSnapshot });
             attachRunId(card, jobRunId);
             insertCardPayload(card);
             cardsGenerated++;

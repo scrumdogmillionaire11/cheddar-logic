@@ -283,7 +283,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
               );
             }
 
-            applyUiActionFields(card.payloadData);
+            applyUiActionFields(card.payloadData, { oddsSnapshot });
             attachRunId(card, jobRunId);
             insertCardPayload(card);
             cardsGenerated++;

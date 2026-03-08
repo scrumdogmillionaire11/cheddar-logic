@@ -138,6 +138,42 @@ interface Play {
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
+  decision_v2?: {
+    direction: 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NONE';
+    support_score: number;
+    conflict_score: number;
+    drivers_used: string[];
+    driver_reasons: string[];
+    watchdog_status: 'OK' | 'CAUTION' | 'BLOCKED';
+    watchdog_reason_codes: string[];
+    missing_data: {
+      missing_fields: string[];
+      source_attempts: Array<{
+        field: string;
+        source: string;
+        result: 'FOUND' | 'MISSING' | 'ERROR';
+        note?: string;
+      }>;
+      severity: 'INFO' | 'WARNING' | 'BLOCKING';
+    };
+    consistency: {
+      pace_tier: string;
+      event_env: string;
+      event_direction_tag: string;
+      vol_env: string;
+      total_bias: string;
+    };
+    fair_prob: number | null;
+    implied_prob: number | null;
+    edge_pct: number | null;
+    sharp_price_status: 'CHEDDAR' | 'COTTAGE' | 'UNPRICED';
+    price_reason_codes: string[];
+    official_status: 'PLAY' | 'LEAN' | 'PASS';
+    play_tier: 'BEST' | 'GOOD' | 'OK' | 'BAD';
+    primary_reason_code: string;
+    pipeline_version: 'v2';
+    decided_at: string;
+  };
   // Prop-specific fields
   run_id?: string;
   created_at?: string;
@@ -153,55 +189,18 @@ interface Play {
   data_quality?: string | null;
   l5_sog?: number[] | null;
   l5_mean?: number | null;
-  // Legacy repair fields
-  repair_applied?: boolean;
-  repair_rule_id?: string;
 }
 
 type MarketType = NonNullable<Play['market_type']>;
-
-const REPAIR_ALLOWLIST = new Set([
-  'nba-totals-call',
-  'nba-spread-call',
-  'nhl-totals-call',
-  'nhl-spread-call',
-  'nba-total-projection',
-  'nhl-pace-totals',
-  'nhl-pace-1p',
-  'nhl-rest-advantage',
-  'ncaam-base-projection',
-  'ncaam-rest-advantage',
-  'ncaam-matchup-style',
-  'nba-base-projection',
-  'nba-rest-advantage',
-  'nba-matchup-style',
+type DecisionV2 = NonNullable<Play['decision_v2']>;
+const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
+const WAVE1_MARKETS = new Set<MarketType>([
+  'MONEYLINE',
+  'SPREAD',
+  'TOTAL',
+  'PUCKLINE',
+  'TEAM_TOTAL',
 ]);
-
-function inferMarketCandidatesFromTitle(title: string): MarketType[] {
-  const titleLower = title.toLowerCase();
-  const candidates = new Set<MarketType>();
-  if (
-    titleLower.includes('total') ||
-    titleLower.includes('o/u') ||
-    titleLower.includes('over') ||
-    titleLower.includes('under')
-  ) {
-    candidates.add('TOTAL');
-  }
-  if (titleLower.includes('spread') || titleLower.includes('line')) {
-    candidates.add('SPREAD');
-  }
-  if (
-    titleLower.includes('moneyline') ||
-    titleLower.includes('ml') ||
-    titleLower.includes('projection') ||
-    titleLower.includes('rest') ||
-    titleLower.includes('matchup')
-  ) {
-    candidates.add('MONEYLINE');
-  }
-  return Array.from(candidates);
-}
 
 function hasMinimumViability(play: Play, marketType: MarketType): boolean {
   const side = play.selection?.side;
@@ -378,18 +377,202 @@ function impliedProbFromAmericanOdds(rawOdds: unknown): number | undefined {
   return 100 / (rawOdds + 100);
 }
 
+function normalizeSport(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const upper = value.trim().toUpperCase();
+  return upper || undefined;
+}
+
+function isWave1EligibleRow(
+  sport: unknown,
+  kind: Play['kind'] | undefined,
+  marketType: Play['market_type'] | undefined,
+): boolean {
+  const normalizedSport = normalizeSport(sport);
+  if (!normalizedSport || !WAVE1_SPORTS.has(normalizedSport)) return false;
+  if ((kind ?? 'PLAY') !== 'PLAY') return false;
+  if (!marketType) return false;
+  return WAVE1_MARKETS.has(marketType);
+}
+
+function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
+  const input = toObject(value);
+  if (!input) return undefined;
+
+  const officialStatusRaw =
+    typeof input.official_status === 'string'
+      ? input.official_status.toUpperCase()
+      : '';
+  const official_status =
+    officialStatusRaw === 'PLAY' ||
+    officialStatusRaw === 'LEAN' ||
+    officialStatusRaw === 'PASS'
+      ? (officialStatusRaw as DecisionV2['official_status'])
+      : null;
+  if (!official_status) return undefined;
+
+  const directionRaw =
+    typeof input.direction === 'string' ? input.direction.toUpperCase() : '';
+  const direction =
+    directionRaw === 'HOME' ||
+    directionRaw === 'AWAY' ||
+    directionRaw === 'OVER' ||
+    directionRaw === 'UNDER' ||
+    directionRaw === 'NONE'
+      ? (directionRaw as DecisionV2['direction'])
+      : 'NONE';
+
+  const watchdogStatusRaw =
+    typeof input.watchdog_status === 'string'
+      ? input.watchdog_status.toUpperCase()
+      : '';
+  const watchdog_status =
+    watchdogStatusRaw === 'OK' ||
+    watchdogStatusRaw === 'CAUTION' ||
+    watchdogStatusRaw === 'BLOCKED'
+      ? (watchdogStatusRaw as DecisionV2['watchdog_status'])
+      : 'BLOCKED';
+
+  const sharpStatusRaw =
+    typeof input.sharp_price_status === 'string'
+      ? input.sharp_price_status.toUpperCase()
+      : '';
+  const sharp_price_status =
+    sharpStatusRaw === 'CHEDDAR' ||
+    sharpStatusRaw === 'COTTAGE' ||
+    sharpStatusRaw === 'UNPRICED'
+      ? (sharpStatusRaw as DecisionV2['sharp_price_status'])
+      : 'UNPRICED';
+
+  const playTierRaw =
+    typeof input.play_tier === 'string' ? input.play_tier.toUpperCase() : '';
+  const play_tier =
+    playTierRaw === 'BEST' ||
+    playTierRaw === 'GOOD' ||
+    playTierRaw === 'OK' ||
+    playTierRaw === 'BAD'
+      ? (playTierRaw as DecisionV2['play_tier'])
+      : 'BAD';
+
+  const missingDataObject = toObject(input.missing_data);
+  const consistencyObject = toObject(input.consistency);
+  if (!missingDataObject || !consistencyObject) return undefined;
+
+  return {
+    direction,
+    support_score: firstNumber(input.support_score, 0) ?? 0,
+    conflict_score: firstNumber(input.conflict_score, 0) ?? 0,
+    drivers_used: Array.isArray(input.drivers_used)
+      ? input.drivers_used.map((item) => String(item))
+      : [],
+    driver_reasons: Array.isArray(input.driver_reasons)
+      ? input.driver_reasons.map((item) => String(item))
+      : [],
+    watchdog_status,
+    watchdog_reason_codes: Array.isArray(input.watchdog_reason_codes)
+      ? input.watchdog_reason_codes.map((item) => String(item))
+      : [],
+    missing_data: {
+      missing_fields: Array.isArray(missingDataObject.missing_fields)
+        ? missingDataObject.missing_fields.map((item) => String(item))
+        : [],
+      source_attempts: Array.isArray(missingDataObject.source_attempts)
+        ? missingDataObject.source_attempts
+            .map((attempt) => toObject(attempt))
+            .filter((attempt): attempt is Record<string, unknown> => Boolean(attempt))
+            .map((attempt) => {
+              const resultRaw =
+                typeof attempt.result === 'string'
+                  ? attempt.result.toUpperCase()
+                  : 'ERROR';
+              const result =
+                resultRaw === 'FOUND' ||
+                resultRaw === 'MISSING' ||
+                resultRaw === 'ERROR'
+                  ? (resultRaw as 'FOUND' | 'MISSING' | 'ERROR')
+                  : 'ERROR';
+              return {
+                field: String(attempt.field ?? ''),
+                source: String(attempt.source ?? ''),
+                result,
+                note:
+                  typeof attempt.note === 'string' ? attempt.note : undefined,
+              };
+            })
+        : [],
+      severity:
+        missingDataObject.severity === 'INFO' ||
+        missingDataObject.severity === 'WARNING' ||
+        missingDataObject.severity === 'BLOCKING'
+          ? (missingDataObject.severity as 'INFO' | 'WARNING' | 'BLOCKING')
+          : 'INFO',
+    },
+    consistency: {
+      pace_tier: String(consistencyObject.pace_tier ?? 'MISSING'),
+      event_env: String(consistencyObject.event_env ?? 'MISSING'),
+      event_direction_tag: String(
+        consistencyObject.event_direction_tag ?? 'MISSING',
+      ),
+      vol_env: String(consistencyObject.vol_env ?? 'MISSING'),
+      total_bias: String(consistencyObject.total_bias ?? 'MISSING'),
+    },
+    fair_prob:
+      typeof input.fair_prob === 'number' && Number.isFinite(input.fair_prob)
+        ? input.fair_prob
+        : null,
+    implied_prob:
+      typeof input.implied_prob === 'number' &&
+      Number.isFinite(input.implied_prob)
+        ? input.implied_prob
+        : null,
+    edge_pct:
+      typeof input.edge_pct === 'number' && Number.isFinite(input.edge_pct)
+        ? input.edge_pct
+        : null,
+    sharp_price_status,
+    price_reason_codes: Array.isArray(input.price_reason_codes)
+      ? input.price_reason_codes.map((item) => String(item))
+      : [],
+    official_status,
+    play_tier,
+    primary_reason_code: String(input.primary_reason_code ?? 'UNKNOWN'),
+    pipeline_version: 'v2',
+    decided_at:
+      typeof input.decided_at === 'string' && input.decided_at.trim().length > 0
+        ? input.decided_at
+        : new Date().toISOString(),
+  };
+}
+
+function applyWave1DecisionFields(play: Play): void {
+  const decisionV2 = play.decision_v2;
+  if (!decisionV2) return;
+  if (decisionV2.official_status === 'PLAY') {
+    play.action = 'FIRE';
+    play.classification = 'BASE';
+    play.status = 'FIRE';
+    play.pass_reason_code = null;
+    return;
+  }
+  if (decisionV2.official_status === 'LEAN') {
+    play.action = 'HOLD';
+    play.classification = 'LEAN';
+    play.status = 'WATCH';
+    play.pass_reason_code = null;
+    return;
+  }
+  play.action = 'PASS';
+  play.classification = 'PASS';
+  play.status = 'PASS';
+  play.pass_reason_code = decisionV2.primary_reason_code;
+}
+
 function normalizeNumberArray(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const numbers = value.filter(
     (item) => typeof item === 'number' && Number.isFinite(item),
   ) as number[];
   return numbers.length > 0 ? numbers : undefined;
-}
-
-function normalizeConfidencePct(value: number | null | undefined) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  if (value >= 0 && value <= 1) return Number((value * 100).toFixed(2));
-  return value;
 }
 
 function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
@@ -723,16 +906,11 @@ export async function GET(request: NextRequest) {
 
     // Collect all game IDs for the card_payloads query
     const gameIds = rows.map((r) => r.game_id);
+    const sportByGameId = new Map(rows.map((r) => [r.game_id, r.sport]));
 
     // Build a plays map keyed by canonical game_id
     const playsMap = new Map<string, Play[]>();
     const gameConsistencyMap = new Map<string, Play['consistency']>();
-    let repairedPlayCount = 0;
-    let totalPlayCount = 0;
-    let missingMarketTypeBeforeRepair = 0;
-    let legacyTitleInferenceUsedCount = 0;
-    const marketTypeCounts = new Map<string, number>();
-    const reasonCodeCounts = new Map<string, number>();
 
     // STEP 1 FIX: Resolve external game IDs (ESPN, etc.) that map to our canonical game_ids
     // This allows props stored with external IDs to be joined to games with canonical IDs
@@ -755,6 +933,10 @@ export async function GET(request: NextRequest) {
 
       for (const row of idMapRows) {
         externalToCanonicalMap.set(row.external_game_id, row.game_id);
+        const canonicalSport = sportByGameId.get(row.game_id);
+        if (canonicalSport) {
+          sportByGameId.set(row.external_game_id, canonicalSport);
+        }
         allQueryableIds.push(row.external_game_id);
       }
 
@@ -830,6 +1012,10 @@ export async function GET(request: NextRequest) {
         );
         const normalizedClassification = normalizeClassification(
           payload.classification ?? payloadPlay?.classification,
+        );
+        const normalizedDecisionV2 = normalizeDecisionV2(
+          (payload as Record<string, unknown>).decision_v2 ??
+            payloadPlay?.decision_v2,
         );
         const normalizedTier = normalizeTier(payload.tier ?? payloadPlay?.tier);
         const normalizedPrediction =
@@ -1025,18 +1211,6 @@ export async function GET(request: NextRequest) {
           combinedReasonCodes.push('PROXY_MODEL_PROB_INFERRED');
         }
 
-        const inferredActionFromTierOrConfidence: Play['action'] | undefined =
-          normalizedTier === 'SUPER' || normalizedTier === 'BEST'
-            ? 'FIRE'
-            : normalizedTier === 'WATCH'
-              ? 'HOLD'
-              : typeof normalizedConfidence === 'number' &&
-                  normalizedConfidence >= 0.75
-                ? 'FIRE'
-                : typeof normalizedConfidence === 'number' &&
-                    normalizedConfidence >= 0.6
-                  ? 'HOLD'
-                  : undefined;
         const resolvedAction: Play['action'] | undefined =
           normalizedAction ??
           actionFromClassification(normalizedClassification) ??
@@ -1046,8 +1220,7 @@ export async function GET(request: NextRequest) {
               ? 'HOLD'
               : normalizedStatus === 'PASS'
                 ? 'PASS'
-                : undefined) ??
-          inferredActionFromTierOrConfidence;
+                : undefined);
         const resolvedClassification: Play['classification'] | undefined =
           normalizedClassification ?? classificationFromAction(resolvedAction);
         const resolvedStatus: Play['status'] | undefined =
@@ -1094,6 +1267,7 @@ export async function GET(request: NextRequest) {
               : typeof payloadPlay?.pass_reason_code === 'string'
                 ? payloadPlay.pass_reason_code
                 : null,
+          decision_v2: normalizedDecisionV2,
           kind:
             payload.kind === 'PLAY' || payload.kind === 'EVIDENCE'
               ? (payload.kind as 'PLAY' | 'EVIDENCE')
@@ -1220,18 +1394,37 @@ export async function GET(request: NextRequest) {
                         : undefined,
                   }
                 : undefined,
-          repair_applied: payload.repair_applied === true,
-          repair_rule_id:
-            typeof payload.repair_rule_id === 'string'
-              ? payload.repair_rule_id
-              : undefined,
         };
+
+        const canonicalGameId =
+          externalToCanonicalMap.get(cardRow.game_id) ?? cardRow.game_id;
+        const playSport =
+          normalizeSport(
+            firstString(payload.sport, payloadPlay?.sport, payloadPlayObj?.sport),
+          ) || normalizeSport(sportByGameId.get(canonicalGameId));
 
         if (!play.kind) {
           play.kind = play.market_type === 'INFO' ? 'EVIDENCE' : 'PLAY';
         }
 
-        if (!play.consistency?.total_bias) {
+        const wave1Eligible = isWave1EligibleRow(
+          playSport,
+          play.kind,
+          play.market_type,
+        );
+
+        if (wave1Eligible) {
+          if (!play.decision_v2) {
+            continue;
+          }
+          applyWave1DecisionFields(play);
+          play.reason_codes = Array.from(
+            new Set([
+              ...(play.reason_codes ?? []),
+              play.decision_v2.primary_reason_code,
+            ]),
+          );
+        } else if (!play.consistency?.total_bias) {
           const totalDecision =
             payload.all_markets &&
             typeof payload.all_markets === 'object' &&
@@ -1264,61 +1457,9 @@ export async function GET(request: NextRequest) {
         }
 
         if (!play.market_type) {
-          missingMarketTypeBeforeRepair += 1;
           play.reason_codes = Array.from(
             new Set([...(play.reason_codes ?? []), 'PASS_MISSING_MARKET_TYPE']),
           );
-          const isAllowlisted = REPAIR_ALLOWLIST.has(cardRow.card_type);
-          const candidates = inferMarketCandidatesFromTitle(cardRow.card_title);
-          const uniqueCandidates = Array.from(new Set(candidates));
-          const unambiguous = uniqueCandidates.length === 1;
-          const inferredCandidate = uniqueCandidates[0];
-
-          if (
-            isAllowlisted &&
-            unambiguous &&
-            hasMinimumViability(play, inferredCandidate)
-          ) {
-            play.market_type = inferredCandidate;
-            play.repair_applied = true;
-            play.repair_rule_id = 'R001';
-            play.tags = Array.from(
-              new Set([
-                ...(play.tags ?? []),
-                'LEGACY_REPAIR',
-                'LEGACY_TITLE_INFERENCE_USED',
-                'PROXY_LEGACY_MARKET_INFERRED',
-              ]),
-            );
-            play.reason_codes = Array.from(
-              new Set([
-                ...(play.reason_codes ?? []),
-                'REPAIRED_LEGACY_CARD',
-                'LEGACY_TITLE_INFERENCE_USED',
-              ]),
-            );
-            legacyTitleInferenceUsedCount += 1;
-          } else {
-            play.market_type = 'INFO';
-            play.kind = 'EVIDENCE';
-            play.reason_codes = Array.from(
-              new Set([
-                ...(play.reason_codes ?? []),
-                'PASS_UNREPAIRABLE_LEGACY',
-                'LEGACY_TITLE_INFERENCE_USED',
-              ]),
-            );
-            play.tags = Array.from(
-              new Set([
-                ...(play.tags ?? []),
-                'LEGACY_TITLE_INFERENCE_USED',
-                'PROXY_LEGACY_MARKET_INFERRED',
-              ]),
-            );
-          }
-        }
-
-        if (!hasMinimumViability(play, play.market_type)) {
           play.market_type = 'INFO';
           play.kind = 'EVIDENCE';
           play.reason_codes = Array.from(
@@ -1326,22 +1467,13 @@ export async function GET(request: NextRequest) {
           );
         }
 
-        totalPlayCount += 1;
-        if (play.repair_applied) repairedPlayCount += 1;
-        marketTypeCounts.set(
-          play.market_type,
-          (marketTypeCounts.get(play.market_type) ?? 0) + 1,
-        );
-        for (const reasonCode of play.reason_codes ?? []) {
-          reasonCodeCounts.set(
-            reasonCode,
-            (reasonCodeCounts.get(reasonCode) ?? 0) + 1,
+        if (!wave1Eligible && !hasMinimumViability(play, play.market_type)) {
+          play.market_type = 'INFO';
+          play.kind = 'EVIDENCE';
+          play.reason_codes = Array.from(
+            new Set([...(play.reason_codes ?? []), 'PASS_UNREPAIRABLE_LEGACY']),
           );
         }
-
-        // Map external game_id to canonical game_id for proper association
-        const canonicalGameId =
-          externalToCanonicalMap.get(cardRow.game_id) ?? cardRow.game_id;
 
         if (!gameConsistencyMap.has(canonicalGameId)) {
           gameConsistencyMap.set(
@@ -1401,10 +1533,6 @@ export async function GET(request: NextRequest) {
     // NOTE: card_display_log writes intentionally removed.
     // Worker owns all DB writes (single-writer architecture).
 
-    const repairRatio =
-      totalPlayCount > 0 ? repairedPlayCount / totalPlayCount : 0;
-    const repairCap = 0.2;
-
     // Join diagnostics for game ID mapping (dev mode only)
     const isDev = process.env.NODE_ENV !== 'production';
     const joinDebug = isDev
@@ -1412,7 +1540,10 @@ export async function GET(request: NextRequest) {
           canonical_game_ids_queried: gameIds.length,
           external_ids_resolved: externalToCanonicalMap.size,
           total_queryable_ids: allQueryableIds.length,
-          plays_found: totalPlayCount,
+          plays_found: Array.from(playsMap.values()).reduce(
+            (acc, plays) => acc + plays.length,
+            0,
+          ),
           games_with_plays: playsMap.size,
         }
       : undefined;
@@ -1451,24 +1582,7 @@ export async function GET(request: NextRequest) {
                 }
               : undefined,
         },
-        warning: repairRatio > repairCap,
         ...(joinDebug ? { join_debug: joinDebug } : {}),
-        repair_stats: {
-          repaired_count: repairedPlayCount,
-          total_count: totalPlayCount,
-          ratio: Number(repairRatio.toFixed(4)),
-          cap: repairCap,
-        },
-        contract_stats: {
-          missing_market_type_before_repair: missingMarketTypeBeforeRepair,
-          legacy_title_inference_used_count: legacyTitleInferenceUsedCount,
-          market_type_counts: Object.fromEntries(marketTypeCounts.entries()),
-          top_reason_codes: Object.fromEntries(
-            Array.from(reasonCodeCounts.entries())
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 5),
-          ),
-        },
       },
       { headers: { 'Content-Type': 'application/json' } },
     );

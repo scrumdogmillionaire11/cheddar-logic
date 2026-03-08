@@ -29,6 +29,8 @@ import type {
   BetSide,
   DecisionData,
   CardQuality,
+  DecisionV2,
+  ExpressionStatus,
 } from '../types/game-card';
 import type {
   CanonicalPlay,
@@ -38,8 +40,8 @@ import type {
 } from '../types/canonical-play';
 import { deduplicateDrivers, resolvePlayDisplayDecision } from './decision';
 import { DRIVER_ROLES } from './driver-scoring';
-import { derivePlayDecision } from '../play-decision/canonical-decision';
 import {
+  derivePlayDecision,
   EDGE_SANITY_NON_TOTAL_THRESHOLD,
   EDGE_SANITY_GATE_CODE,
   PROXY_CAP_GATE_CODE,
@@ -65,6 +67,14 @@ const PROXY_SIGNAL_TAGS = new Set<string>([
   'PROXY_MODEL_PROB_INFERRED',
   'PROXY_LEGACY_MARKET_INFERRED',
   'LEGACY_REPAIR',
+]);
+const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
+const WAVE1_MARKETS = new Set<CanonicalMarketType>([
+  'MONEYLINE',
+  'SPREAD',
+  'TOTAL',
+  'PUCKLINE',
+  'TEAM_TOTAL',
 ]);
 
 // API types from cards page
@@ -117,6 +127,7 @@ interface ApiPlay {
       | 'VOLATILE_ENV'
       | 'UNKNOWN';
   };
+  decision_v2?: DecisionV2;
 }
 
 interface GameData {
@@ -550,6 +561,101 @@ function validateCanonicalBet(bet: CanonicalBet): boolean {
   return false;
 }
 
+function isWave1EligibleDecisionPlay(play: ApiPlay, sport: string): boolean {
+  if (!play.decision_v2) return false;
+  if ((play.kind ?? 'PLAY') !== 'PLAY') return false;
+  if (!WAVE1_SPORTS.has(normalizeSport(sport))) return false;
+  if (!play.market_type) return false;
+  return WAVE1_MARKETS.has(play.market_type);
+}
+
+function statusFromOfficial(
+  official: DecisionV2['official_status'],
+): ExpressionStatus {
+  if (official === 'PLAY') return 'FIRE';
+  if (official === 'LEAN') return 'WATCH';
+  return 'PASS';
+}
+
+function actionFromOfficial(
+  official: DecisionV2['official_status'],
+): 'FIRE' | 'HOLD' | 'PASS' {
+  if (official === 'PLAY') return 'FIRE';
+  if (official === 'LEAN') return 'HOLD';
+  return 'PASS';
+}
+
+function directionToLean(
+  direction: DecisionV2['direction'],
+  game: GameData,
+): string {
+  if (direction === 'HOME') return game.homeTeam;
+  if (direction === 'AWAY') return game.awayTeam;
+  if (direction === 'OVER' || direction === 'UNDER') return direction;
+  return 'NO LEAN';
+}
+
+function buildWave1PickText(
+  play: ApiPlay,
+  game: GameData,
+  direction: DecisionV2['direction'],
+): string {
+  if (direction === 'NONE') return 'NO PLAY';
+  if (play.market_type === 'MONEYLINE') {
+    const team = direction === 'HOME' ? game.homeTeam : game.awayTeam;
+    if (typeof play.price === 'number') {
+      return `${team} ML ${play.price > 0 ? `+${play.price}` : `${play.price}`}`;
+    }
+    return `${team} ML`;
+  }
+  if (play.market_type === 'SPREAD' || play.market_type === 'PUCKLINE') {
+    const team = direction === 'HOME' ? game.homeTeam : game.awayTeam;
+    if (typeof play.line === 'number') {
+      const lineText = play.line > 0 ? `+${play.line}` : `${play.line}`;
+      return `${team} ${lineText}`;
+    }
+    return `${team} Spread`;
+  }
+  if (play.market_type === 'TOTAL' || play.market_type === 'TEAM_TOTAL') {
+    if (typeof play.line === 'number') {
+      return `${direction === 'OVER' ? 'Over' : 'Under'} ${play.line}`;
+    }
+    return direction === 'OVER' ? 'Over' : 'Under';
+  }
+  return direction;
+}
+
+function selectWave1DecisionCandidate(
+  plays: ApiPlay[],
+  sport: string,
+): ApiPlay | null {
+  const candidates = plays.filter((play) => isWave1EligibleDecisionPlay(play, sport));
+  if (candidates.length === 0) return null;
+
+  const officialRank = (official: DecisionV2['official_status']): number => {
+    if (official === 'PLAY') return 3;
+    if (official === 'LEAN') return 2;
+    return 1;
+  };
+
+  const sorted = [...candidates].sort((a, b) => {
+    const aDecision = a.decision_v2!;
+    const bDecision = b.decision_v2!;
+    const statusDiff =
+      officialRank(bDecision.official_status) -
+      officialRank(aDecision.official_status);
+    if (statusDiff !== 0) return statusDiff;
+
+    const aEdge = typeof aDecision.edge_pct === 'number' ? aDecision.edge_pct : -1;
+    const bEdge = typeof bDecision.edge_pct === 'number' ? bDecision.edge_pct : -1;
+    if (bEdge !== aEdge) return bEdge - aEdge;
+
+    return bDecision.support_score - aDecision.support_score;
+  });
+
+  return sorted[0];
+}
+
 function clamp01(value: number): number {
   return clamp(value, 0, 1);
 }
@@ -834,6 +940,153 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const scopedEvidenceCandidates = ENABLE_WELCOME_HOME
     ? evidenceCandidates
     : evidenceCandidates.filter((play) => !isWelcomeHomePlay(play));
+  const wave1DecisionPlay = selectWave1DecisionCandidate(
+    scopedPlayCandidates,
+    game.sport,
+  );
+  if (wave1DecisionPlay?.decision_v2) {
+    const decisionV2 = wave1DecisionPlay.decision_v2;
+    const officialStatus = decisionV2.official_status;
+    const status = statusFromOfficial(officialStatus);
+    const action = actionFromOfficial(officialStatus);
+    const marketType = wave1DecisionPlay.market_type ?? 'INFO';
+    const market = mapCanonicalToLegacyMarket(marketType);
+    const direction = decisionV2.direction === 'NONE' ? null : decisionV2.direction;
+    const pick =
+      officialStatus === 'PASS'
+        ? 'NO PLAY'
+        : buildWave1PickText(wave1DecisionPlay, game, decisionV2.direction);
+    const edgePct =
+      typeof decisionV2.edge_pct === 'number' ? decisionV2.edge_pct : null;
+    const betMarketType = mapCanonicalToBetMarketType(marketType);
+    const betSide = direction ? mapDirectionToBetSide(direction) : null;
+    const candidateBet: CanonicalBet | null =
+      officialStatus === 'PLAY' &&
+      betMarketType &&
+      betSide &&
+      typeof wave1DecisionPlay.price === 'number'
+        ? {
+            market_type: betMarketType,
+            side: betSide,
+            team:
+              direction === 'HOME'
+                ? 'home'
+                : direction === 'AWAY'
+                  ? 'away'
+                  : undefined,
+            line:
+              typeof wave1DecisionPlay.line === 'number'
+                ? wave1DecisionPlay.line
+                : undefined,
+            odds_american: wave1DecisionPlay.price,
+            as_of_iso: game.odds?.capturedAt || game.createdAt,
+          }
+        : null;
+    const bet = candidateBet && validateCanonicalBet(candidateBet) ? candidateBet : null;
+    const valueStatus: ValueStatus =
+      decisionV2.play_tier === 'BEST' || decisionV2.play_tier === 'GOOD'
+        ? 'GOOD'
+        : decisionV2.play_tier === 'OK'
+          ? 'OK'
+          : 'BAD';
+    const mergedReasonCodes = Array.from(
+      new Set([
+        ...(wave1DecisionPlay.reason_codes ?? []),
+        ...decisionV2.watchdog_reason_codes,
+        ...decisionV2.price_reason_codes,
+        decisionV2.primary_reason_code,
+      ]),
+    );
+    const tags = Array.from(new Set([...(wave1DecisionPlay.tags ?? [])]));
+    const gates: CanonicalGate[] = decisionV2.watchdog_reason_codes.map((code) => ({
+      code,
+      severity: decisionV2.watchdog_status === 'BLOCKED' ? 'BLOCK' : 'WARN',
+      blocks_bet: decisionV2.watchdog_status === 'BLOCKED',
+    }));
+
+    return {
+      market_key: `${marketType}|${decisionV2.direction}`,
+      decision: status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'WATCH' : 'PASS',
+      classificationLabel:
+        officialStatus === 'PLAY' ? 'PLAY' : officialStatus === 'LEAN' ? 'LEAN' : 'NONE',
+      bet,
+      gates,
+      decision_data: {
+        status: status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'WATCH' : 'PASS',
+        truth:
+          decisionV2.support_score >= 0.6
+            ? 'STRONG'
+            : decisionV2.support_score >= 0.45
+              ? 'MEDIUM'
+              : 'WEAK',
+        value_tier: valueStatus,
+        edge_pct: edgePct,
+        edge_tier: decisionV2.play_tier,
+        coinflip: false,
+        reason_code: decisionV2.primary_reason_code,
+      },
+      transform_meta: {
+        quality: decisionV2.watchdog_status === 'BLOCKED' ? 'DEGRADED' : 'OK',
+        missing_inputs: decisionV2.missing_data.missing_fields,
+        placeholders_found: [],
+      },
+      market_type: marketType,
+      kind: 'PLAY',
+      evidence_count: scopedEvidenceCandidates.length,
+      consistency: {
+        total_bias:
+          decisionV2.consistency.total_bias === 'OK' ||
+          decisionV2.consistency.total_bias === 'INSUFFICIENT_DATA' ||
+          decisionV2.consistency.total_bias === 'CONFLICTING_SIGNALS' ||
+          decisionV2.consistency.total_bias === 'VOLATILE_ENV' ||
+          decisionV2.consistency.total_bias === 'UNKNOWN'
+            ? decisionV2.consistency.total_bias
+            : 'UNKNOWN',
+      },
+      selection: wave1DecisionPlay.selection
+        ? {
+            side: (wave1DecisionPlay.selection.side ?? 'NONE') as SelectionSide,
+            team: wave1DecisionPlay.selection.team,
+          }
+        : undefined,
+      reason_codes: mergedReasonCodes,
+      tags,
+      classification:
+        officialStatus === 'PLAY' ? 'BASE' : officialStatus === 'LEAN' ? 'LEAN' : 'PASS',
+      action,
+      pass_reason_code:
+        officialStatus === 'PASS' ? decisionV2.primary_reason_code : null,
+      decision_v2: decisionV2,
+      status,
+      market,
+      pick,
+      lean: directionToLean(decisionV2.direction, game),
+      side: direction as Direction | null,
+      truthStatus:
+        decisionV2.support_score >= 0.6
+          ? 'STRONG'
+          : decisionV2.support_score >= 0.45
+            ? 'MEDIUM'
+            : 'WEAK',
+      truthStrength: clamp(decisionV2.support_score, 0.5, 0.95),
+      conflict: decisionV2.conflict_score,
+      modelProb:
+        typeof decisionV2.fair_prob === 'number' ? decisionV2.fair_prob : undefined,
+      impliedProb:
+        typeof decisionV2.implied_prob === 'number'
+          ? decisionV2.implied_prob
+          : undefined,
+      edge: edgePct ?? undefined,
+      valueStatus,
+      betAction: officialStatus === 'PLAY' && bet ? 'BET' : 'NO_PLAY',
+      priceFlags: [],
+      line: wave1DecisionPlay.line,
+      price: wave1DecisionPlay.price,
+      updatedAt: game.odds?.capturedAt || game.createdAt,
+      whyCode: decisionV2.primary_reason_code,
+      whyText: decisionV2.primary_reason_code.replace(/_/g, ' '),
+    };
+  }
   const inferredPlays = scopedPlayCandidates.map((sourcePlay) => ({
     sourcePlay,
     inference: inferMarketFromPlay(sourcePlay),
@@ -1502,7 +1755,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   };
 
   // Derive canonical decision (classification + action)
-  const decision = derivePlayDecision(playForDecision, marketContext, {});
+  const decision = derivePlayDecision(playForDecision, marketContext, {
+    sport: playForDecision.sport,
+  });
   const market_key = buildMarketKey(
     resolvedMarketType,
     normalizeSideForCanonicalMarket(

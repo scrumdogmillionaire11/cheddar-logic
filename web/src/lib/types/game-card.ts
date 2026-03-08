@@ -168,6 +168,51 @@ export interface DecisionData {
   reason_code: string;
 }
 
+export interface DecisionV2MissingData {
+  missing_fields: string[];
+  source_attempts: Array<{
+    field: string;
+    source: string;
+    result: 'FOUND' | 'MISSING' | 'ERROR';
+    note?: string;
+  }>;
+  severity: 'INFO' | 'WARNING' | 'BLOCKING';
+}
+
+export interface DecisionV2 {
+  direction: 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NONE';
+  support_score: number;
+  conflict_score: number;
+  drivers_used: string[];
+  driver_reasons: string[];
+
+  watchdog_status: 'OK' | 'CAUTION' | 'BLOCKED';
+  watchdog_reason_codes: string[];
+  missing_data: DecisionV2MissingData;
+
+  consistency: {
+    pace_tier: string;
+    event_env: string;
+    event_direction_tag: string;
+    vol_env: string;
+    total_bias: string;
+  };
+
+  fair_prob: number | null;
+  implied_prob: number | null;
+  edge_pct: number | null;
+
+  sharp_price_status: 'CHEDDAR' | 'COTTAGE' | 'UNPRICED';
+  price_reason_codes: string[];
+
+  official_status: 'PLAY' | 'LEAN' | 'PASS';
+  play_tier: 'BEST' | 'GOOD' | 'OK' | 'BAD';
+  primary_reason_code: string;
+
+  pipeline_version: 'v2';
+  decided_at: string;
+}
+
 export type CardQuality = 'OK' | 'DEGRADED' | 'BROKEN';
 
 export interface TransformMeta {
@@ -304,6 +349,7 @@ export interface Play {
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
+  decision_v2?: DecisionV2;
 
   // Legacy fields (kept for compat)
   status: ExpressionStatus;

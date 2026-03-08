@@ -707,7 +707,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
                 `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
               );
             }
-            applyUiActionFields(card.payloadData);
+            applyUiActionFields(card.payloadData, { oddsSnapshot });
             attachRunId(card, jobRunId);
             insertCardPayload(card);
             cardsGenerated++;
@@ -750,7 +750,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
                 `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
               );
             }
-            applyUiActionFields(card.payloadData);
+            applyUiActionFields(card.payloadData, { oddsSnapshot });
             attachRunId(card, jobRunId);
             insertCardPayload(card);
             cardsGenerated++;

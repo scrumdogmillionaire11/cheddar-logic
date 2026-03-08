@@ -318,7 +318,7 @@ type DecisionModel = {
   status: 'FIRE' | 'WATCH' | 'PASS';
   primaryPlay: {
     pick: string;
-    market: Market;
+    market: Market | 'NONE';
     status: 'FIRE' | 'WATCH' | 'PASS';
     direction: Direction | null;
     tier: DriverTier | null;
@@ -944,90 +944,6 @@ export default function CardsPageClient() {
     );
     console.info('[✅ DISPLAYED - META BY SPORT]', displayedMetaBySport);
 
-    // DEBUG: Sample NBA plays to understand why they're PASS/not bettable
-    const nbaSample = enrichedCards
-      .filter((c) => c.sport === 'NBA')
-      .flatMap((c) => {
-        const displayAction = getPlayDisplayAction(c.play);
-        const hasBettable =
-          c.tags.includes(GAME_TAGS.HAS_FIRE) ||
-          c.tags.includes(GAME_TAGS.HAS_WATCH);
-        // Only sample plays that are PASS or not bettable
-        if (displayAction === 'PASS' || !hasBettable) {
-          return [
-            {
-              gameId: c.gameId,
-              homeTeam: c.homeTeam,
-              awayTeam: c.awayTeam,
-              playMarket: c.play?.market_type,
-              action: c.play?.action,
-              status: c.play?.status,
-              classification: c.play?.classification,
-              displayAction,
-              hasBettable,
-              truthStrength: c.play?.truthStrength,
-              edge: c.play?.edge,
-              line: c.play?.line,
-              price: c.play?.price,
-              updatedAt: c.play?.updatedAt,
-              reasonCodes: c.play?.reason_codes,
-              tags: c.play?.tags,
-              driverCount: c.drivers.length,
-              driverMarkets: c.drivers.map((d) => d.market).join(','),
-              modelProb: c.play?.modelProb,
-              impliedProb: c.play?.impliedProb,
-            },
-          ];
-        }
-        return [];
-      })
-      .slice(0, 10);
-
-    if (nbaSample.length > 0) {
-      console.log('[NBA FILTERED OUT SAMPLE (PASS or not bettable)]', nbaSample);
-    }
-
-    const nbaDisplayedSample = filteredCards
-      .filter((c) => c.sport === 'NBA')
-      .flatMap((c) => {
-        const displayAction = getPlayDisplayAction(c.play);
-        const hasBettable =
-          c.tags.includes(GAME_TAGS.HAS_FIRE) ||
-          c.tags.includes(GAME_TAGS.HAS_WATCH);
-
-        if (displayAction === 'FIRE' || displayAction === 'HOLD' || hasBettable) {
-          return [
-            {
-              gameId: c.gameId,
-              homeTeam: c.homeTeam,
-              awayTeam: c.awayTeam,
-              playMarket: c.play?.market_type,
-              action: c.play?.action,
-              status: c.play?.status,
-              classification: c.play?.classification,
-              displayAction,
-              hasBettable,
-              truthStrength: c.play?.truthStrength,
-              edge: c.play?.edge,
-              line: c.play?.line,
-              price: c.play?.price,
-              updatedAt: c.play?.updatedAt,
-              reasonCodes: c.play?.reason_codes,
-              tags: c.play?.tags,
-              driverCount: c.drivers.length,
-              driverMarkets: c.drivers.map((d) => d.market).join(','),
-              modelProb: c.play?.modelProb,
-              impliedProb: c.play?.impliedProb,
-            },
-          ];
-        }
-        return [];
-      })
-      .slice(0, 10);
-
-    if (nbaDisplayedSample.length > 0) {
-      console.log('[NBA DISPLAYED SAMPLE (FIRE/WATCH/bettable)]', nbaDisplayedSample);
-    }
   }, [
     loading,
     diagnosticsEnabled,
@@ -1232,10 +1148,10 @@ export default function CardsPageClient() {
     return formatMarketLabel(driverMarket);
   };
 
-  const getStatusBadge = (status: 'FIRE' | 'WATCH' | 'PASS') => {
+  const getStatusBadge = (status: 'PLAY' | 'LEAN' | 'PASS') => {
     const colorMap = {
-      FIRE: 'bg-green-700/50 text-green-200 border-green-600/60',
-      WATCH: 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60',
+      PLAY: 'bg-green-700/50 text-green-200 border-green-600/60',
+      LEAN: 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60',
       PASS: 'bg-slate-700/50 text-slate-200 border-slate-600/60',
     };
     return (
@@ -1362,73 +1278,100 @@ export default function CardsPageClient() {
   }) => {
     const decision = useMemo(
       () =>
-        getCardDecisionModel(card, originalGame?.odds || null) as DecisionModel,
+        card.play?.decision_v2
+          ? null
+          : (getCardDecisionModel(
+              card,
+              originalGame?.odds || null,
+            ) as DecisionModel),
       [card, originalGame],
     );
+    const fallbackDecision: DecisionModel =
+      decision ??
+      ({
+        status: 'PASS',
+        primaryPlay: {
+          pick: 'NO PLAY',
+          market: 'NONE',
+          status: 'PASS',
+          direction: null,
+          tier: null,
+          confidence: null,
+          source: 'none',
+        },
+        whyReason: 'NO_DECISION',
+        riskCodes: [],
+        topContributors: [],
+        allDrivers: card.drivers,
+        supportGrade: 'WEAK',
+        passReasonCode: 'PASS_NO_EDGE',
+        spreadCompare: null,
+      } as DecisionModel);
 
     // Prefer canonical play object from transform, fallback to decision model
     const displayPlay = card.play || {
-      status: decision.status,
-      market: decision.primaryPlay.market,
-      pick: decision.primaryPlay.pick,
+      status: fallbackDecision.status,
+      market: fallbackDecision.primaryPlay.market,
+      pick: fallbackDecision.primaryPlay.pick,
       lean:
-        decision.primaryPlay.direction === 'HOME'
+        fallbackDecision.primaryPlay.direction === 'HOME'
           ? card.homeTeam
-          : decision.primaryPlay.direction === 'AWAY'
+          : fallbackDecision.primaryPlay.direction === 'AWAY'
             ? card.awayTeam
-            : decision.primaryPlay.direction || 'NO LEAN',
-      side: decision.primaryPlay.direction,
+            : fallbackDecision.primaryPlay.direction || 'NO LEAN',
+      side: fallbackDecision.primaryPlay.direction,
       truthStatus:
-        decision.primaryPlay.tier === 'BEST'
+        fallbackDecision.primaryPlay.tier === 'BEST'
           ? 'STRONG'
-          : decision.primaryPlay.tier === 'SUPER'
+          : fallbackDecision.primaryPlay.tier === 'SUPER'
             ? 'MEDIUM'
             : 'WEAK',
-      truthStrength: decision.primaryPlay.confidence ?? 0.5,
+      truthStrength: fallbackDecision.primaryPlay.confidence ?? 0.5,
       conflict: 0,
       modelProb: undefined,
       impliedProb: undefined,
       edge: undefined,
       valueStatus: 'BAD',
-      betAction: decision.primaryPlay.pick === 'NO PLAY' ? 'NO_PLAY' : 'BET',
+      betAction:
+        fallbackDecision.primaryPlay.pick === 'NO PLAY' ? 'NO_PLAY' : 'BET',
       priceFlags: [],
       updatedAt: card.updatedAt,
-      whyCode: decision.whyReason,
-      whyText: decision.whyReason.replace(/_/g, ' '),
+      whyCode: fallbackDecision.whyReason,
+      whyText: fallbackDecision.whyReason.replace(/_/g, ' '),
       // Canonical fields (fallback from decision)
       market_key: undefined,
       decision:
-        decision.status === 'FIRE'
+        fallbackDecision.status === 'FIRE'
           ? 'FIRE'
-          : decision.status === 'WATCH'
+          : fallbackDecision.status === 'WATCH'
             ? 'WATCH'
             : 'PASS',
       classificationLabel:
-        decision.status === 'FIRE'
+        fallbackDecision.status === 'FIRE'
           ? 'PLAY'
-          : decision.status === 'WATCH'
+          : fallbackDecision.status === 'WATCH'
             ? 'LEAN'
             : 'NONE',
-      bet: decision.primaryPlay.pick === 'NO PLAY' ? null : undefined,
+      bet: fallbackDecision.primaryPlay.pick === 'NO PLAY' ? null : undefined,
       gates: [],
       decision_data: {
         status:
-          decision.status === 'FIRE'
+          fallbackDecision.status === 'FIRE'
             ? 'FIRE'
-            : decision.status === 'WATCH'
+            : fallbackDecision.status === 'WATCH'
               ? 'WATCH'
               : 'PASS',
         truth:
-          decision.primaryPlay.tier === 'BEST'
+          fallbackDecision.primaryPlay.tier === 'BEST'
             ? 'STRONG'
-            : decision.primaryPlay.tier === 'SUPER'
+            : fallbackDecision.primaryPlay.tier === 'SUPER'
               ? 'MEDIUM'
               : 'WEAK',
         value_tier: 'BAD',
         edge_pct: null,
         edge_tier: 'BAD',
         coinflip: false,
-        reason_code: decision.whyReason,
+        reason_code: fallbackDecision.whyReason,
       },
       transform_meta: {
         quality: 'BROKEN',
@@ -1436,35 +1379,49 @@ export default function CardsPageClient() {
         placeholders_found: [],
       },
       classification:
-        decision.status === 'FIRE'
+        fallbackDecision.status === 'FIRE'
           ? 'BASE'
-          : decision.status === 'WATCH'
+          : fallbackDecision.status === 'WATCH'
             ? 'LEAN'
             : 'PASS',
       action:
-        decision.status === 'FIRE'
+        fallbackDecision.status === 'FIRE'
           ? 'FIRE'
-          : decision.status === 'WATCH'
+          : fallbackDecision.status === 'WATCH'
             ? 'HOLD'
             : 'PASS',
     };
     const quality = displayPlay.transform_meta?.quality ?? 'OK';
     const isBroken = quality === 'BROKEN';
     const isDegraded = quality === 'DEGRADED';
+    const decisionV2 = displayPlay.decision_v2;
     const inferredDecision =
-      displayPlay.decision ??
-      (displayPlay.action === 'FIRE'
-        ? 'FIRE'
-        : displayPlay.action === 'HOLD'
-          ? 'WATCH'
-          : 'PASS');
+      decisionV2?.official_status ??
+      (displayPlay.decision === 'FIRE'
+        ? 'PLAY'
+        : displayPlay.decision === 'WATCH'
+          ? 'LEAN'
+          : displayPlay.action === 'FIRE'
+            ? 'PLAY'
+            : displayPlay.action === 'HOLD'
+              ? 'LEAN'
+              : 'PASS');
     const displayDecision = isBroken ? 'PASS' : inferredDecision;
+    const isPlayDecision = displayDecision === 'PLAY';
     const canonicalGates = (displayPlay.gates ?? []).map((gate) => gate.code);
     const activeRiskCodes = Array.from(
-      new Set([...canonicalGates, ...decision.riskCodes]),
+      new Set(
+        decisionV2
+          ? [
+              ...canonicalGates,
+              ...decisionV2.watchdog_reason_codes,
+              ...decisionV2.price_reason_codes,
+            ]
+          : [...canonicalGates, ...fallbackDecision.riskCodes],
+      ),
     );
     const hasActiveTotalBet =
-      displayPlay.bet?.market_type === 'total' && displayDecision === 'FIRE';
+      displayPlay.bet?.market_type === 'total' && isPlayDecision;
     const displayBetText = displayPlay.bet
       ? formatCanonicalBetText(displayPlay.bet, card.homeTeam, card.awayTeam)
       : displayPlay.pick;
@@ -1478,10 +1435,21 @@ export default function CardsPageClient() {
       : updatedTime;
     const canRenderModelSummary = !isBroken && card.drivers.length > 0;
     const effectiveEdgePct =
-      typeof displayPlay.decision_data?.edge_pct === 'number'
-        ? displayPlay.decision_data.edge_pct
-        : (displayPlay.edge ?? 0);
-    const isCoinflip = Boolean(canRenderModelSummary && displayPlay.decision_data?.coinflip);
+      typeof decisionV2?.edge_pct === 'number'
+        ? decisionV2.edge_pct
+        : typeof displayPlay.decision_data?.edge_pct === 'number'
+          ? displayPlay.decision_data.edge_pct
+          : (displayPlay.edge ?? 0);
+    const primaryReasonCode =
+      decisionV2?.primary_reason_code ??
+      displayPlay.pass_reason_code ??
+      displayPlay.decision_data?.reason_code ??
+      displayPlay.whyCode;
+    const sharpVerdict = decisionV2?.sharp_price_status;
+    const modelLean = decisionV2?.direction;
+    const isCoinflip = Boolean(
+      canRenderModelSummary && displayPlay.decision_data?.coinflip,
+    );
     const isCoinflipHighEdge = isCoinflip && effectiveEdgePct > 0.05;
     const isCoinflipLowEdge = isCoinflip && effectiveEdgePct <= 0.05;
     const isEdgeVerification = hasEdgeVerification(card);
@@ -1543,7 +1511,11 @@ export default function CardsPageClient() {
                 </span>
               )}
               {getStatusBadge(
-                displayDecision === 'WATCH' ? 'WATCH' : displayDecision,
+                displayDecision === 'PLAY' ||
+                  displayDecision === 'LEAN' ||
+                  displayDecision === 'PASS'
+                  ? displayDecision
+                  : 'PASS',
               )}
             </div>
             <div className="text-sm text-cloud/70">
@@ -1638,9 +1610,9 @@ export default function CardsPageClient() {
                     className={`px-2 py-1 text-xs font-bold rounded border ${
                       isCoinflipLowEdge
                         ? 'bg-slate-700/50 text-slate-300 border-slate-600/60'
-                        : displayDecision === 'FIRE'
+                        : displayDecision === 'PLAY'
                           ? 'bg-green-700/50 text-green-200 border-green-600/60'
-                          : displayDecision === 'WATCH'
+                          : displayDecision === 'LEAN'
                             ? 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60'
                             : 'bg-slate-700/50 text-slate-200 border-slate-600/60'
                     }`}
@@ -1707,11 +1679,13 @@ export default function CardsPageClient() {
                 Edge{' '}
                 {effectiveEdgePct * 100 >= 0 ? '+' : ''}
                 {(effectiveEdgePct * 100).toFixed(1)}% • Tier{' '}
-                {displayPlay.decision_data?.edge_tier ?? displayPlay.valueStatus}
+                {decisionV2?.play_tier ??
+                  displayPlay.decision_data?.edge_tier ??
+                  displayPlay.valueStatus}
               </div>
             ) : (
               <div className="mt-1 text-xs text-amber-200/90">
-                {displayPlay.whyText || displayPlay.decision_data?.reason_code?.replace(/^PASS_/, '').replace(/_/g, ' ').toLowerCase() || 'Analysis unavailable (drivers missing).'}
+                {primaryReasonCode || 'Analysis unavailable (drivers missing).'}
               </div>
             )}
           </div>
@@ -1784,30 +1758,30 @@ export default function CardsPageClient() {
           )}
 
           {/* WI-0337: Spread line compare */}
-          {decision.spreadCompare && (
+          {fallbackDecision.spreadCompare && (
             <div className="rounded-md border border-white/10 bg-white/5 p-3">
               <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
                 Spread Compare
               </p>
               <div className="flex items-center gap-3 text-xs font-mono flex-wrap">
-                {decision.spreadCompare.projectedSpread !== null ? (
+                {fallbackDecision.spreadCompare.projectedSpread !== null ? (
                   <>
                     <span className="text-cloud/60">
                       Proj{' '}
                       <span className="text-cloud/90 font-bold">
-                        {decision.spreadCompare.projectedSpread > 0
-                          ? `+${decision.spreadCompare.projectedSpread}`
-                          : `${decision.spreadCompare.projectedSpread}`}
+                        {fallbackDecision.spreadCompare.projectedSpread > 0
+                          ? `+${fallbackDecision.spreadCompare.projectedSpread}`
+                          : `${fallbackDecision.spreadCompare.projectedSpread}`}
                       </span>
                     </span>
                     <span className="text-cloud/40">vs</span>
                     <span className="text-cloud/60">
                       Market{' '}
                       <span className="text-cloud/90 font-bold">
-                        {decision.spreadCompare.marketLine !== null
-                          ? decision.spreadCompare.marketLine > 0
-                            ? `+${decision.spreadCompare.marketLine}`
-                            : `${decision.spreadCompare.marketLine}`
+                        {fallbackDecision.spreadCompare.marketLine !== null
+                          ? fallbackDecision.spreadCompare.marketLine > 0
+                            ? `+${fallbackDecision.spreadCompare.marketLine}`
+                            : `${fallbackDecision.spreadCompare.marketLine}`
                           : 'N/A'}
                       </span>
                     </span>
@@ -1816,10 +1790,10 @@ export default function CardsPageClient() {
                   <span className="text-cloud/60">
                     Market line{' '}
                     <span className="text-cloud/90 font-bold">
-                      {decision.spreadCompare.marketLine !== null
-                        ? decision.spreadCompare.marketLine > 0
-                          ? `+${decision.spreadCompare.marketLine}`
-                          : `${decision.spreadCompare.marketLine}`
+                      {fallbackDecision.spreadCompare.marketLine !== null
+                        ? fallbackDecision.spreadCompare.marketLine > 0
+                          ? `+${fallbackDecision.spreadCompare.marketLine}`
+                          : `${fallbackDecision.spreadCompare.marketLine}`
                         : 'N/A'}
                     </span>
                   </span>
@@ -1833,49 +1807,105 @@ export default function CardsPageClient() {
               Why
             </p>
             <p className="text-sm text-cloud/80">
-              {canRenderModelSummary
-                ? displayPlay.whyText || displayPlay.whyCode.replace(/_/g, ' ')
-                : 'Data issue: drivers unavailable'}
+              {primaryReasonCode
+                ? primaryReasonCode.replace(/_/g, ' ')
+                : canRenderModelSummary
+                  ? displayPlay.whyText ||
+                    displayPlay.whyCode.replace(/_/g, ' ')
+                  : 'Data issue: drivers unavailable'}
             </p>
           </div>
+
+          {displayDecision === 'PASS' && decisionV2 && (
+            <div className="rounded-md border border-white/10 bg-white/5 p-3">
+              <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
+                PASS Breakdown
+              </p>
+              <div className="space-y-1 text-xs text-cloud/70">
+                <p>
+                  Model Lean:{' '}
+                  <span className="text-cloud/90 font-semibold">
+                    {modelLean ?? 'NONE'}
+                  </span>
+                </p>
+                <p>
+                  Sharp Verdict:{' '}
+                  <span className="text-cloud/90 font-semibold">
+                    {sharpVerdict ?? 'UNPRICED'}
+                  </span>
+                </p>
+                <p>
+                  Reason:{' '}
+                  <span className="text-cloud/90 font-semibold">
+                    {primaryReasonCode}
+                  </span>
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="rounded-md border border-white/10 bg-white/5 p-3">
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">
-                Top Contributors
+                Model Lean Indicators
               </p>
-              {canRenderModelSummary && decision.supportGrade === 'STRONG' && (
+              {!decisionV2 &&
+                canRenderModelSummary &&
+                fallbackDecision.supportGrade === 'STRONG' && (
                 <span className="text-xs font-semibold text-emerald-400">Strong</span>
               )}
-              {canRenderModelSummary && decision.supportGrade === 'MIXED' && (
+              {!decisionV2 &&
+                canRenderModelSummary &&
+                fallbackDecision.supportGrade === 'MIXED' && (
                 <span className="text-xs font-semibold text-amber-400">
                   Mixed signals
-                  {decision.topContributors.length > 0 && (
+                  {fallbackDecision.topContributors.length > 0 && (
                     <span className="font-normal text-cloud/50 ml-1">
-                      ({decision.topContributors.filter(c => c.polarity === 'pro').length} aligned
-                      {decision.topContributors.some(c => c.polarity === 'contra')
-                        ? `, ${decision.topContributors.filter(c => c.polarity === 'contra').length} opposing`
+                      ({fallbackDecision.topContributors.filter(c => c.polarity === 'pro').length} aligned
+                      {fallbackDecision.topContributors.some(c => c.polarity === 'contra')
+                        ? `, ${fallbackDecision.topContributors.filter(c => c.polarity === 'contra').length} opposing`
                         : ''})
                     </span>
                   )}
                 </span>
               )}
-              {canRenderModelSummary && decision.supportGrade === 'WEAK' && (
+              {!decisionV2 &&
+                canRenderModelSummary &&
+                fallbackDecision.supportGrade === 'WEAK' && (
                 <span className="text-xs font-semibold text-cloud/40">
                   {displayDecision === 'PASS' &&
-                   decision.topContributors.length > 0 &&
-                   (decision.passReasonCode === 'PASS_DRIVER_SUPPORT_WEAK' ||
-                    decision.passReasonCode === 'PASS_NO_EDGE')
+                   fallbackDecision.topContributors.length > 0 &&
+                   (fallbackDecision.passReasonCode === 'PASS_DRIVER_SUPPORT_WEAK' ||
+                    fallbackDecision.passReasonCode === 'PASS_NO_EDGE')
                     ? 'Model lean only — no betting edge'
-                    : decision.passReasonCode === 'PASS_MISSING_PRIMARY_DRIVER'
+                    : fallbackDecision.passReasonCode === 'PASS_MISSING_PRIMARY_DRIVER'
                       ? 'No primary driver'
-                      : decision.passReasonCode === 'PASS_CONFLICT_HIGH'
+                      : fallbackDecision.passReasonCode === 'PASS_CONFLICT_HIGH'
                         ? 'High conflict'
                         : 'Weak support'}
                 </span>
               )}
             </div>
-            {!canRenderModelSummary || decision.topContributors.length === 0 ? (
+            {decisionV2 ? (
+              decisionV2.driver_reasons.length === 0 ? (
+                <p className="text-xs text-cloud/50">
+                  No model lean indicators were provided by the worker.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {decisionV2.driver_reasons.map((reason, index) => (
+                    <div
+                      key={`${card.id}-indicator-${index}`}
+                      className="bg-white/5 rounded-md px-3 py-2"
+                    >
+                      <p className="text-xs text-cloud/50 leading-snug">
+                        {reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : !canRenderModelSummary || fallbackDecision.topContributors.length === 0 ? (
               <p className="text-xs text-cloud/50">
                 {canRenderModelSummary
                   ? 'No strong contributors passed market filters.'
@@ -1883,7 +1913,7 @@ export default function CardsPageClient() {
               </p>
             ) : (
               <div className="space-y-2">
-                {decision.topContributors.map(({ driver, polarity }) => (
+                {fallbackDecision.topContributors.map(({ driver, polarity }) => (
                   <div
                     key={driverRowKey(driver)}
                     className="bg-white/5 rounded-md px-3 py-2"
@@ -1917,13 +1947,19 @@ export default function CardsPageClient() {
                 ))}
               </div>
             )}
-            {(isBroken || isDegraded) &&
+            {!decisionV2 &&
+              (isBroken || isDegraded) &&
               (displayPlay.transform_meta?.missing_inputs?.length ?? 0) > 0 && (
                 <p className="text-xs text-amber-200/90 mt-2">
                   Missing inputs:{' '}
                   {displayPlay.transform_meta?.missing_inputs.join(', ')}
                 </p>
               )}
+            {decisionV2 && decisionV2.missing_data.missing_fields.length > 0 && (
+              <p className="text-xs text-amber-200/90 mt-2">
+                Missing inputs: {decisionV2.missing_data.missing_fields.join(', ')}
+              </p>
+            )}
           </div>
 
           {blockedTotals.length > 0 && (
@@ -1981,7 +2017,7 @@ export default function CardsPageClient() {
 
                 {showAllDrivers && (
                   <div className="space-y-2">
-                    {decision.allDrivers.map((driver) => (
+                    {fallbackDecision.allDrivers.map((driver) => (
                       <div
                         key={`all-${driverRowKey(driver)}`}
                         className="bg-white/5 rounded-md px-3 py-2"
