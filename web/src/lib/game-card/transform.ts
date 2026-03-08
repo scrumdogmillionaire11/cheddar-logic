@@ -1778,7 +1778,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     }
   }
 
-  // WI-DECISION-FIX: Proxy cap downgrades tier, doesn't cancel plays with positive edge
+  // WI-DECISION-FIX: Edge sanity blocks bet but doesn't downgrade FIRE
+  // (FIRE should stay visible in FIRE filter even if edge is questionable)
   if (edgeSanityTriggered && proxyTriggered) {
     // Both gates triggered - only PASS if edge insufficient
     if (!hasMinimumEdge) {
@@ -1786,21 +1787,20 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       reasonCodesUnique.push('PASS_PROXY_EDGE_SANITY_COMBO');
       finalBet = null;
     } else {
-      // Downgrade to WATCH but keep play - don't remove bet
-      finalDecision = 'WATCH';
-      reasonCodesUnique.push('DOWNGRADED_PROXY_EDGE_SANITY_COMBO');
-      // Keep finalBet for positive edge even with sanity check
+      // Both triggered but edge is good: keep FIRE/WATCH, just block bet
+      reasonCodesUnique.push('EDGE_SANITY_COMBO_BLOCKED_BET');
+      finalBet = null;
     }
   } else if (edgeSanityTriggered) {
+    finalBet = null;
     if (finalDecision === 'PASS') {
-      finalBet = null;
       reasonCodesUnique.push('PASS_EDGE_SANITY_NON_TOTAL');
-    } else {
-      // Downgrade to WATCH but preserve bet if edge positive
-      finalDecision = 'WATCH';
-      reasonCodesUnique.push('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
-      // Keep finalBet for positive edge even with sanity check
+    } else if (finalDecision === 'WATCH') {
+      // WATCH with edge sanity - downgrade to PASS since it's already weak signal
+      finalDecision = 'PASS';
+      reasonCodesUnique.push('PASS_WATCH_EDGE_SANITY');
     }
+    // Note: FIRE stays FIRE even with edge sanity check (just blocks bet)
   } else if (proxyTriggered) {
     // WI-DECISION-FIX: Proxy cap downgrades tier (FIRE→WATCH) but keeps bet recommendation
     const hasStrongSignal =
