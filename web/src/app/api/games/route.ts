@@ -64,6 +64,11 @@ const DEV_GAMES_LOOKBACK_HOURS = Number.parseInt(
   10,
 );
 
+const API_GAMES_MAX_CARD_ROWS = Math.max(
+  100,
+  Number.parseInt(process.env.API_GAMES_MAX_CARD_ROWS || '1500', 10) || 1500,
+);
+
 interface GameRow {
   id: string;
   game_id: string;
@@ -496,6 +501,15 @@ function extractShotsFromRecentGames(value: unknown): number[] | undefined {
 
 export async function GET(request: NextRequest) {
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
+  const requestStartedAt = Date.now();
+  const perf = {
+    dbReadyMs: 0,
+    loadGamesMs: 0,
+    cardsQueryMs: 0,
+    cardsParseMs: 0,
+    cardRows: 0,
+    totalMs: 0,
+  };
   try {
     // Security checks: rate limiting, input validation
     const securityCheck = performSecurityChecks(request, '/api/games');
@@ -503,7 +517,9 @@ export async function GET(request: NextRequest) {
       return securityCheck.error!;
     }
 
+    const dbReadyStartedAt = Date.now();
     await ensureDbReady();
+    perf.dbReadyMs = Date.now() - dbReadyStartedAt;
 
     // AUTH DISABLED: Commenting out auth walls to allow public access
     // const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
@@ -587,18 +603,7 @@ export async function GET(request: NextRequest) {
 
     const gamesStartUtc = lookbackUtc ?? todayUtc;
 
-    const sql = `
-      WITH latest_odds AS (
-        SELECT
-          id, game_id, sport, captured_at,
-          h2h_home, h2h_away, total,
-          spread_home, spread_away,
-          spread_price_home, spread_price_away,
-          total_price_over, total_price_under,
-          moneyline_home, moneyline_away,
-          ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY captured_at DESC) AS rn
-        FROM odds_snapshots
-      )
+    const baseGamesSql = `
       SELECT
         g.id,
         g.game_id,
@@ -607,26 +612,100 @@ export async function GET(request: NextRequest) {
         g.away_team,
         g.game_time_utc,
         g.status,
-        g.created_at,
-        o.h2h_home,
-        o.h2h_away,
-        o.total,
-        o.spread_home,
-        o.spread_away,
-        o.spread_price_home,
-        o.spread_price_away,
-        o.total_price_over,
-        o.total_price_under,
-        o.captured_at AS odds_captured_at
+        g.created_at
       FROM games g
-      INNER JOIN latest_odds o ON o.game_id = g.game_id AND o.rn = 1
       WHERE datetime(g.game_time_utc) >= ?
       ORDER BY g.game_time_utc ASC
       LIMIT 200
     `;
 
-    const stmt = db.prepare(sql);
-    let rows = stmt.all(gamesStartUtc) as GameRow[];
+    const loadGamesWithLatestOdds = (startUtc: string): GameRow[] => {
+      const baseGamesStmt = db.prepare(baseGamesSql);
+      const baseGames = baseGamesStmt.all(startUtc) as Array<
+        Omit<
+          GameRow,
+          | 'h2h_home'
+          | 'h2h_away'
+          | 'total'
+          | 'spread_home'
+          | 'spread_away'
+          | 'spread_price_home'
+          | 'spread_price_away'
+          | 'total_price_over'
+          | 'total_price_under'
+          | 'odds_captured_at'
+        >
+      >;
+
+      if (baseGames.length === 0) {
+        return [];
+      }
+
+      const gameIdsForOdds = baseGames.map((row) => row.game_id);
+      const oddsPlaceholders = gameIdsForOdds.map(() => '?').join(', ');
+      const latestOddsSql = `
+        SELECT
+          o.game_id,
+          o.h2h_home,
+          o.h2h_away,
+          o.total,
+          o.spread_home,
+          o.spread_away,
+          o.spread_price_home,
+          o.spread_price_away,
+          o.total_price_over,
+          o.total_price_under,
+          o.captured_at AS odds_captured_at
+        FROM odds_snapshots o
+        INNER JOIN (
+          SELECT game_id, MAX(captured_at) AS max_captured_at
+          FROM odds_snapshots
+          WHERE game_id IN (${oddsPlaceholders})
+          GROUP BY game_id
+        ) latest
+          ON latest.game_id = o.game_id
+         AND latest.max_captured_at = o.captured_at
+      `;
+
+      const latestOddsStmt = db.prepare(latestOddsSql);
+      const latestOddsRows = latestOddsStmt.all(...gameIdsForOdds) as Array<{
+        game_id: string;
+        h2h_home: number | null;
+        h2h_away: number | null;
+        total: number | null;
+        spread_home: number | null;
+        spread_away: number | null;
+        spread_price_home: number | null;
+        spread_price_away: number | null;
+        total_price_over: number | null;
+        total_price_under: number | null;
+        odds_captured_at: string | null;
+      }>;
+
+      const latestOddsByGameId = new Map(
+        latestOddsRows.map((row) => [row.game_id, row]),
+      );
+
+      return baseGames.map((game) => {
+        const odds = latestOddsByGameId.get(game.game_id);
+        return {
+          ...game,
+          h2h_home: odds?.h2h_home ?? null,
+          h2h_away: odds?.h2h_away ?? null,
+          total: odds?.total ?? null,
+          spread_home: odds?.spread_home ?? null,
+          spread_away: odds?.spread_away ?? null,
+          spread_price_home: odds?.spread_price_home ?? null,
+          spread_price_away: odds?.spread_price_away ?? null,
+          total_price_over: odds?.total_price_over ?? null,
+          total_price_under: odds?.total_price_under ?? null,
+          odds_captured_at: odds?.odds_captured_at ?? null,
+        };
+      });
+    };
+
+    const loadGamesStartedAt = Date.now();
+    let rows = loadGamesWithLatestOdds(gamesStartUtc);
 
     if (isNonProd && rows.length === 0 && !shouldUseDevLookback) {
       const fallbackLookbackHours = Number(process.env.DEV_GAMES_FALLBACK_HOURS || 72);
@@ -637,9 +716,10 @@ export async function GET(request: NextRequest) {
           .toISOString()
           .substring(0, 19)
           .replace('T', ' ');
-        rows = stmt.all(fallbackStartUtc) as GameRow[];
+        rows = loadGamesWithLatestOdds(fallbackStartUtc);
       }
     }
+    perf.loadGamesMs = Date.now() - loadGamesStartedAt;
 
     // Collect all game IDs for the card_payloads query
     const gameIds = rows.map((r) => r.game_id);
@@ -693,9 +773,11 @@ export async function GET(request: NextRequest) {
           AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
           ${ENABLE_WELCOME_HOME ? '' : "AND card_type != 'welcome-home-v2'"}
         ORDER BY created_at DESC, id DESC
+        LIMIT ${API_GAMES_MAX_CARD_ROWS}
       `;
       let cardRows: CardPayloadRow[] = [];
       try {
+        const cardsQueryStartedAt = Date.now();
         const cardsStmt = db.prepare(buildCardsSql(runIdClause));
         const cardsParams =
           activeRunIds.length > 0
@@ -706,9 +788,13 @@ export async function GET(request: NextRequest) {
           const fallbackStmt = db.prepare(buildCardsSql(''));
           cardRows = fallbackStmt.all(...allQueryableIds) as CardPayloadRow[];
         }
+        perf.cardsQueryMs += Date.now() - cardsQueryStartedAt;
       } catch {
         // card_payloads table not yet created; plays will be empty
       }
+
+      perf.cardRows = cardRows.length;
+      const cardsParseStartedAt = Date.now();
 
       for (const cardRow of cardRows) {
         let payload: Record<string, unknown> | null = null;
@@ -1271,6 +1357,7 @@ export async function GET(request: NextRequest) {
           playsMap.set(canonicalGameId, [play]);
         }
       }
+      perf.cardsParseMs = Date.now() - cardsParseStartedAt;
     }
 
     const data = rows.map((row) => {
@@ -1330,6 +1417,19 @@ export async function GET(request: NextRequest) {
         }
       : undefined;
 
+    perf.totalMs = Date.now() - requestStartedAt;
+    if (perf.totalMs > 1500) {
+      console.warn('[API] /api/games slow request', {
+        total_ms: perf.totalMs,
+        db_ready_ms: perf.dbReadyMs,
+        load_games_ms: perf.loadGamesMs,
+        cards_query_ms: perf.cardsQueryMs,
+        cards_parse_ms: perf.cardsParseMs,
+        card_rows: perf.cardRows,
+        active_run_ids: activeRunIds.length,
+      });
+    }
+
     const response = NextResponse.json(
       {
         success: true,
@@ -1339,6 +1439,17 @@ export async function GET(request: NextRequest) {
           generated_at: new Date().toISOString(),
           run_status: runStatus,
           items_count: data.length,
+          perf_ms:
+            process.env.NODE_ENV !== 'production'
+              ? {
+                  total: perf.totalMs,
+                  db_ready: perf.dbReadyMs,
+                  load_games: perf.loadGamesMs,
+                  cards_query: perf.cardsQueryMs,
+                  cards_parse: perf.cardsParseMs,
+                  card_rows: perf.cardRows,
+                }
+              : undefined,
         },
         warning: repairRatio > repairCap,
         ...(joinDebug ? { join_debug: joinDebug } : {}),
