@@ -47,9 +47,23 @@ set -a; source /opt/cheddar-logic/.env.production; set +a; npm run job:pull-odds
 - `CHEDDAR_DATA_DIR`: Fallback directory for `cheddar.db` if CHEDDAR_DB_PATH is not set
 - Any shared-data env vars (API keys, etc.)
 
-**Legacy compatibility** (avoid setting these):
+**Production Configuration:**
 
-- `RECORD_DATABASE_PATH`, `DATABASE_PATH`, `DATABASE_URL`: Supported for backward compatibility, but setting multiple path variables will cause a conflict error. Use CHEDDAR_DB_PATH only.
+Canonical production DB path: `/opt/data/cheddar-prod.db` (validated by presence of `card_payloads` table with data)
+
+- Set explicit `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db` in `/opt/cheddar-logic/.env.production`
+- Set `CHEDDAR_DB_AUTODISCOVER=false` to disable fallback auto-discovery
+- Remove legacy variables: `DATABASE_PATH`, `RECORD_DATABASE_PATH`, `DATABASE_URL`
+
+Validate production DB:
+
+```bash
+sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';"
+```
+
+**Legacy compatibility** (deprecated in production):
+
+- `RECORD_DATABASE_PATH`, `DATABASE_PATH`, `DATABASE_URL`: Supported for backward compatibility in local dev, but **must be removed from production config**. Setting multiple path variables causes a `DB_PATH_CONFLICT` error.
 
 
 

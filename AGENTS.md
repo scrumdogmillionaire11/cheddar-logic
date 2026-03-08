@@ -53,7 +53,7 @@ When files conflict, apply this precedence in order:
 - Every change is traceable to a single work item ID.
 - No repo-wide formatting, cleanup, or renames outside scope.
 - If a change is not in scope, it does not happen.
-- Production DB path must be set via CHEDDAR_DB_PATH to the canonical DB file that contains card_payloads; avoid legacy DB path vars and keep docs/workflows aligned.
+- Production DB path must be set via `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db` (validated: contains card_payloads); avoid legacy DB path vars and keep docs/workflows aligned.
 - **Single-writer DB contract:** The worker is the only process that writes to, migrates, or saves snapshots of the sql.js database. Web server routes must never call `closeDatabase()`, `runMigrations()`, `db.exec()`, or `stmt.run()`. Use `closeDatabaseReadOnly()` for all web-side DB teardown. See ADR-0002.
 
 ## Branch/Commit Protocol

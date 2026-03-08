@@ -34,10 +34,16 @@ npm --prefix packages/data run migrate
 
 **Important:** use the same `CHEDDAR_DB_PATH` for web + worker. If these differ, UI can show stale/broken cards even when jobs succeed.
 
-Production note: systemd services can use either:
+Production configuration:
 
-- `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db` (explicit path), OR
-- `CHEDDAR_DATA_DIR=/opt/data` (auto-discovers databases with `card_payloads`, prefers `-prod` in filename)
+- **Recommended:** Set explicit `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db` (prevents ambiguity)
+- **Fallback:** `CHEDDAR_DATA_DIR=/opt/data` enables auto-discovery (scans for databases with `card_payloads`, prefers `-prod` in filename)
+
+Validate production DB:
+
+```bash
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT COUNT(*) FROM card_payloads;"
+```
 
 ```bash
 CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
@@ -52,7 +58,7 @@ CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
 **DB consistency note:** keep one canonical DB path in `.env` so scheduler + manual commands hit the same file:
 
 ```bash
-# Use ONLY CHEDDAR_DB_PATH - do not set DATABASE_PATH, RECORD_DATABASE_PATH, or DATABASE_URL
+# Use ONLY CHEDDAR_DB_PATH - legacy vars (DATABASE_PATH, RECORD_DATABASE_PATH, DATABASE_URL) must not be set in production
 CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 ```
 

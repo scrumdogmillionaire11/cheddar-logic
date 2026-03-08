@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | Next.js web app | `/opt/cheddar-logic/web/` | `cheddar-web` (systemd) |
 | Worker/scheduler | `/opt/cheddar-logic/apps/worker/` | `cheddar-worker` (systemd) |
-| SQLite database | `CHEDDAR_DB_PATH` from `/opt/cheddar-logic/.env.production` | read/write by `cheddar-web` + `cheddar-worker` |
+| SQLite database | `CHEDDAR_DB_PATH` from `/opt/cheddar-logic/.env.production` | read-only by `cheddar-web`, write-only by `cheddar-worker` (ADR-0002) |
 | FPL Sage (FastAPI) | Pi — separate service | `cheddar-fpl-sage` (systemd) |
 
 **SSH to Pi:**
@@ -19,6 +19,48 @@
 ssh babycheeses11@192.168.200.198   # local network
 # or via Tailscale IP:
 ssh babycheeses11@100.71.1.87
+```
+
+---
+
+## Database Path Contract
+
+**Canonical Production DB Path:** `/opt/data/cheddar-prod.db`
+
+**Identification:** The production database is identified by the presence of the `card_payloads` table with data. This is the file that contains historical card decisions and must be preserved across deployments.
+
+**Path Configuration:**
+
+- **Recommended:** Set explicit `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db` in `/opt/cheddar-logic/.env.production`
+- **Fallback:** `CHEDDAR_DATA_DIR=/opt/data` enables auto-discovery (scans for databases with `card_payloads`, prefers `-prod` in filename)
+- **Explicit path is strongly preferred** to prevent ambiguity and drift
+
+**Legacy Variables (Must Remove in Production):**
+
+- `DATABASE_PATH` (oldest legacy variable)
+- `RECORD_DATABASE_PATH` (mid-era variable)
+- `DATABASE_URL` (SQLite URL format, no longer supported)
+
+Setting multiple path variables causes `DB_PATH_CONFLICT` error. These are actively unset by `scripts/start-scheduler.sh` and removed by `scripts/consolidate-record-db.sh`.
+
+**Single-Writer Contract (ADR-0002):**
+
+- **Worker** is the sole DB writer (INSERT/UPDATE/DELETE, migrations, snapshots)
+- **Web server** is strictly read-only (SELECT/PRAGMA only, uses `closeDatabaseReadOnly()`)
+- See [docs/decisions/ADR-0002-single-writer-db-contract.md](decisions/ADR-0002-single-writer-db-contract.md) for rationale
+
+**Validation Commands:**
+
+```bash
+# Verify production DB contains card_payloads table
+sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';"
+
+# Check services are using canonical path
+sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
+sudo systemctl show cheddar-worker -p Environment | grep CHEDDAR_DB_PATH
+
+# Detect DB path drift (expected vs actual)
+./scripts/manage-scheduler.sh db
 ```
 
 ---
@@ -78,16 +120,32 @@ sqlite3 "$CHEDDAR_DB_PATH" ".tables"
 # Data present
 sqlite3 "$CHEDDAR_DB_PATH" "SELECT COUNT(*) AS cards FROM card_payloads;"
 
+# Validate production DB identity (card_payloads table must exist)
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" | grep -qx card_payloads && echo "✅ Production DB validated" || echo "❌ card_payloads missing"
+
 # API returns games
 curl -s http://localhost:3000/api/games?limit=1 | head -20
 ```
 
 ### Go/no-go checklist (3 commands)
 
+These three checks cover the critical production contract: DB path, schema integrity, and API health.
+
 ```bash
-set -a; source /opt/cheddar-logic/.env.production; set +a; sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
-sqlite3 "$CHEDDAR_DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name='job_runs';"
-curl -s http://localhost:3000/api/cards?limit=1 | head -20
+# 1. DB Path Check — worker uses canonical production DB
+sudo systemctl show cheddar-worker -p Environment | grep -q "CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db" && echo "✅ DB path correct" || echo "❌ DB path mismatch"
+
+# 2. Schema Check — production DB contains card_payloads table
+sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" | grep -qx card_payloads && echo "✅ Schema valid" || echo "❌ card_payloads missing"
+
+# 3. API Health Check — web server responds with cards
+curl -sf http://localhost:3000/api/cards?limit=1 >/dev/null && echo "✅ API responding" || echo "❌ API down or empty"
+```
+
+**One-liner version:**
+
+```bash
+sudo systemctl show cheddar-worker -p Environment | grep -q "CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db" && sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" | grep -qx card_payloads && curl -sf http://localhost:3000/api/cards?limit=1 >/dev/null && echo "✅ All checks passed" || echo "❌ Preflight failed"
 ```
 
 ### DB path drop-in precedence (critical)
@@ -221,12 +279,28 @@ Error: no such table: card_results
 
 The DB must live at the canonical path (the file that already contains `card_payloads`), and both services must set `CHEDDAR_DB_PATH` to that exact file.
 
-Check:
+**Detect DB path drift:**
+
+The `manage-scheduler.sh` script compares expected DB path from env vars against the actual DB file the scheduler is using (via `lsof` or job_runs inference):
+
+```bash
+./scripts/manage-scheduler.sh db
+```
+
+Example output showing drift:
+
+```plaintext
+Expected DB: /opt/data/cheddar-prod.db
+Scheduler DB: /tmp/cheddar.db
+⚠️  Scheduler DB path differs from CHEDDAR_DB_PATH
+```
+
+**Check environment configuration:**
 
 ```bash
 # Verify env var is being injected
-sudo systemctl show cheddar-web -p Environment
-sudo systemctl show cheddar-worker -p Environment
+sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
+sudo systemctl show cheddar-worker -p Environment | grep CHEDDAR_DB_PATH
 sudo -u babycheeses11 cat /opt/cheddar-logic/.env.production | grep CHEDDAR_DB_PATH
 ```
 
