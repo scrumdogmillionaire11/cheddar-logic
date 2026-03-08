@@ -1778,8 +1778,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     }
   }
 
-  // WI-DECISION-FIX: Edge sanity blocks bet but doesn't downgrade FIRE
-  // (FIRE should stay visible in FIRE filter even if edge is questionable)
+  // WI-DECISION-FIX: Edge sanity adds gate but may remove bet depending on decision
   if (edgeSanityTriggered && proxyTriggered) {
     // Both gates triggered - only PASS if edge insufficient
     if (!hasMinimumEdge) {
@@ -1787,21 +1786,21 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       reasonCodesUnique.push('PASS_PROXY_EDGE_SANITY_COMBO');
       finalBet = null;
     } else {
-      // Both triggered but edge is good: keep FIRE/WATCH, gate blocks bet
+      // Both triggered but edge is good: add gate that blocks bet
       reasonCodesUnique.push('EDGE_SANITY_COMBO_BLOCKED_BET');
-      // DO NOT set finalBet = null - gate will block it
+      finalBet = null; // Gate blocks it
     }
   } else if (edgeSanityTriggered) {
+    // Edge sanity always removes bet (the gate blocks execution)
+    finalBet = null;
     if (finalDecision === 'PASS') {
-      finalBet = null;
       reasonCodesUnique.push('PASS_EDGE_SANITY_NON_TOTAL');
     } else if (finalDecision === 'WATCH') {
       // WATCH with edge sanity - downgrade to PASS since weak signal
       finalDecision = 'PASS';
-      finalBet = null;
       reasonCodesUnique.push('PASS_WATCH_EDGE_SANITY');
     } else if (finalDecision === 'FIRE') {
-      // FIRE with high edge: keep FIRE, keep bet (gate will block it)
+      // FIRE with edge sanity - keep FIRE but remove bet (gate blocks it)
       reasonCodesUnique.push('FIRE_EDGE_SANITY_GATE');
     }
   } else if (proxyTriggered) {
@@ -2187,25 +2186,48 @@ function buildContractReport(cards: GameCard[]): ContractReport {
 function assertContractInDev(cards: GameCard[]): void {
   if (process.env.NODE_ENV === 'production') return;
 
-  let report: ContractReport;
+  let report: ContractReport | null = null;
+
   try {
     report = buildContractReport(cards);
   } catch (error) {
-    console.error('[cards-contract-report] Failed to build report:', error);
+    console.error(
+      '[cards-contract-report] FATAL: Failed to build report:',
+      error instanceof Error ? error.message : String(error),
+    );
+    console.error('[cards-contract-report] Error stack:', error);
     // Still throw so we catch the issue
     throw new Error(
       'Game card transform failed to build contract report. See console for details.',
     );
   }
 
-  const hasHardFailure =
-    report.fire_with_no_bet.length > 0 ||
-    report.play_with_no_bet.length > 0 ||
-    report.blocked_with_bet.length > 0 ||
-    report.coinflip_non_ml.length > 0;
+  if (!report) {
+    console.error('[cards-contract-report] FATAL: Report is null after build');
+    throw new Error('Contract report build returned null');
+  }
+
+  let hasHardFailure = false;
+  try {
+    hasHardFailure =
+      (report.fire_with_no_bet?.length ?? 0) > 0 ||
+      (report.play_with_no_bet?.length ?? 0) > 0 ||
+      (report.blocked_with_bet?.length ?? 0) > 0 ||
+      (report.coinflip_non_ml?.length ?? 0) > 0;
+  } catch (failureError) {
+    console.error(
+      '[cards-contract-report] FATAL: Error checking hasHardFailure:',
+      failureError,
+    );
+    throw failureError;
+  }
 
   if (hasHardFailure) {
-    console.error('[cards-contract-report]', report);
+    console.error('[cards-contract-report]', JSON.stringify(report, null, 2));
+    console.error('[cards-contract-details] fire_with_no_bet:', report.fire_with_no_bet);
+    console.error('[cards-contract-details] play_with_no_bet:', report.play_with_no_bet);
+    console.error('[cards-contract-details] blocked_with_bet:', report.blocked_with_bet);
+    console.error('[cards-contract-details] coinflip_non_ml:', report.coinflip_non_ml);
     console.error(
       '[cards-contract-debug] Total cards processed:',
       cards.length,
