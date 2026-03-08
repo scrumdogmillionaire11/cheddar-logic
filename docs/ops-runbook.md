@@ -304,8 +304,8 @@ REF=$(curl -s http://127.0.0.1:3000/ | grep -Eo '/_next/static/chunks/[^" ]+\.js
 echo "$REF"
 curl -I "http://127.0.0.1:3000$REF"
 
-# 5) CSS chunk exists and is reachable on origin
-CSS_REF=$(curl -s http://127.0.0.1:3000/ | grep -Eo '/_next/static/chunks/[A-Za-z0-9]+\.css' | head -n1)
+# 5) CSS asset exists and is reachable on origin
+CSS_REF=$(curl -s http://127.0.0.1:3000/ | grep -Eo '/_next/static/[^" ]+\.css' | head -n1)
 echo "$CSS_REF"
 curl -I "http://127.0.0.1:3000$CSS_REF"
 ```
@@ -313,17 +313,14 @@ curl -I "http://127.0.0.1:3000$CSS_REF"
 If origin is `200` but public URL is `502`, purge Cloudflare cache and check edge/proxy path:
 
 ```bash
-# Manual Cloudflare cache purge (requires CF_API_TOKEN and CF_ZONE_ID)
+# Manual Cloudflare cache purge (matches deploy workflow behavior)
 curl -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/purge_cache" \
   -H "Authorization: Bearer $CF_API_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"prefixes":["cheddarlogic.com/_next/static/"]}'
+  --data '{"purge_everything":true}'
 
-# Or purge everything via Cloudflare dashboard:
-# https://dash.cloudflare.com → cheddarlogic.com → Caching → Purge Everything
-
-# Wait 10s for propagation, then test
-sleep 10
+# Wait 30s for propagation, then test
+sleep 30
 curl -I "https://cheddarlogic.com$REF"
 curl -I "https://cheddarlogic.com$CSS_REF"
 sudo tail -n 100 /var/log/nginx/error.log
