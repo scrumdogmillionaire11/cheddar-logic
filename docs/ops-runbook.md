@@ -313,6 +313,17 @@ curl -I "http://127.0.0.1:3000$CSS_REF"
 If origin is `200` but public URL is `502`, purge Cloudflare cache and check edge/proxy path:
 
 ```bash
+# Manual Cloudflare cache purge (requires CF_API_TOKEN and CF_ZONE_ID)
+curl -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/purge_cache" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"prefixes":["https://cheddarlogic.com/_next/static/"]}'
+
+# Or purge everything via Cloudflare dashboard:
+# https://dash.cloudflare.com → cheddarlogic.com → Caching → Purge Everything
+
+# Wait 10s for propagation, then test
+sleep 10
 curl -I "https://cheddarlogic.com$REF"
 curl -I "https://cheddarlogic.com$CSS_REF"
 sudo tail -n 100 /var/log/nginx/error.log

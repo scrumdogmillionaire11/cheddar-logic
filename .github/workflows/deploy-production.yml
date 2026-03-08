@@ -212,9 +212,11 @@ jobs:
             curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
               -H "Content-Type: application/json" \
-              --data '{"files":["https://cheddarlogic.com/_next/static/*"]}' \
+              --data '{"prefixes":["https://cheddarlogic.com/_next/static/"]}' \
               | tee /tmp/cloudflare_purge.json
             grep -q '"success":true' /tmp/cloudflare_purge.json || { echo "ERROR: Cloudflare purge failed"; cat /tmp/cloudflare_purge.json; exit 1; }
+            echo "Cloudflare cache purged for /_next/static/ — waiting 10s for propagation..."
+            sleep 10
             PUBLIC_DOMAIN_URL="${NEXT_PUBLIC_PUBLIC_DOMAIN:-${PUBLIC_DOMAIN:-https://cheddarlogic.com}}"
             retry_url "$PUBLIC_DOMAIN_URL$REFERENCED_CHUNK" "public homepage chunk" || { echo "ERROR: public chunk request failed after restart"; exit 1; }
             retry_url "$PUBLIC_DOMAIN_URL$REFERENCED_CSS" "public homepage css" || { echo "ERROR: public css request failed after restart"; exit 1; }
