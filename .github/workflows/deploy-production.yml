@@ -214,7 +214,7 @@ jobs:
               -H "Content-Type: application/json" \
               --data '{"purge_everything":true}' \
               | tee /tmp/cloudflare_purge.json
-            grep -q '"success":true' /tmp/cloudflare_purge.json || { echo "ERROR: Cloudflare purge failed"; cat /tmp/cloudflare_purge.json; exit 1; }
+            grep -qE "\"success\"[[:space:]]*:[[:space:]]*true" /tmp/cloudflare_purge.json; exit 1; }
             echo "Cloudflare cache purged (everything) — waiting 30s for propagation..."
             sleep 30
             PUBLIC_DOMAIN_URL="${NEXT_PUBLIC_PUBLIC_DOMAIN:-${PUBLIC_DOMAIN:-https://cheddarlogic.com}}"
