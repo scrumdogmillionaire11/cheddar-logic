@@ -1666,10 +1666,20 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       ? decision.action
       : 'PASS';
   let finalDecision: DecisionLabel = decisionFromAction(decisionAction);
-  if (scoreDecision === 'PASS') finalDecision = 'PASS';
-  if (scoreDecision === 'WATCH' && finalDecision === 'FIRE')
-    finalDecision = 'WATCH';
-  if (scoreDecision === 'FIRE') finalDecision = 'FIRE';
+  
+  // WI-DECISION-FIX: Edge is the master gate
+  // If edge < 1%, force PASS regardless of other signals
+  const hasMinimumEdge = typeof edge === 'number' && edge >= 0.01;
+  if (!hasMinimumEdge && typeof edge === 'number') {
+    finalDecision = 'PASS';
+    reasonCodesUnique.push('PASS_INSUFFICIENT_EDGE');
+  } else {
+    // Only allow scoreDecision to affect decision if edge gate passes
+    if (scoreDecision === 'PASS') finalDecision = 'PASS';
+    if (scoreDecision === 'WATCH' && finalDecision === 'FIRE')
+      finalDecision = 'WATCH';
+    if (scoreDecision === 'FIRE') finalDecision = 'FIRE';
+  }
   if (
     sourceAction === 'FIRE' &&
     !hardPass &&
@@ -1759,10 +1769,18 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     gateCodes.add(PROXY_CAP_GATE_CODE);
   }
 
+  // WI-DECISION-FIX: Proxy cap downgrades tier, doesn't cancel plays with positive edge
   if (edgeSanityTriggered && proxyTriggered) {
-    finalDecision = 'PASS';
+    // Both gates triggered - only PASS if edge insufficient
+    if (!hasMinimumEdge) {
+      finalDecision = 'PASS';
+      reasonCodesUnique.push('PASS_PROXY_EDGE_SANITY_COMBO');
+    } else {
+      // Downgrade to WATCH but keep play
+      finalDecision = 'WATCH';
+      reasonCodesUnique.push('DOWNGRADED_PROXY_EDGE_SANITY_COMBO');
+    }
     finalBet = null;
-    reasonCodesUnique.push('PASS_PROXY_EDGE_SANITY_COMBO');
   } else if (edgeSanityTriggered) {
     finalBet = null;
     if (finalDecision === 'PASS') {
@@ -1772,13 +1790,18 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       reasonCodesUnique.push('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
     }
   } else if (proxyTriggered) {
+    // WI-DECISION-FIX: Proxy cap downgrades tier (FIRE→WATCH) but doesn't cancel if edge positive
     finalBet = null;
-    const proxyCanRemainWatch =
+    const hasStrongSignal =
       truthStrength >= 0.62 && quality !== 'BROKEN' && !edgeSanityTriggered;
-    if (finalDecision === 'FIRE' || finalDecision === 'WATCH') {
-      finalDecision = proxyCanRemainWatch ? 'WATCH' : 'PASS';
-    }
-    if (finalDecision === 'PASS') {
+    
+    if (finalDecision === 'FIRE') {
+      // FIRE with proxy → downgrade to WATCH
+      finalDecision = 'WATCH';
+      reasonCodesUnique.push('DOWNGRADED_PROXY_CAPPED');
+    } else if (finalDecision === 'WATCH' && !hasStrongSignal) {
+      // WATCH with weak signal + proxy → PASS
+      finalDecision = 'PASS';
       reasonCodesUnique.push('PASS_PROXY_CAPPED');
     }
   }

@@ -254,7 +254,9 @@ export function hasProxyCap(card: GameCard): boolean {
   return Boolean(
     play.tags?.includes('PROXY_CARD') ||
       play.reason_codes?.includes('PASS_PROXY_CAPPED') ||
+      play.reason_codes?.includes('DOWNGRADED_PROXY_CAPPED') ||
       play.reason_codes?.includes('PASS_PROXY_EDGE_SANITY_COMBO') ||
+      play.reason_codes?.includes('DOWNGRADED_PROXY_EDGE_SANITY_COMBO') ||
       play.gates?.some((gate) => gate.code === 'PROXY_CAP'),
   );
 }
