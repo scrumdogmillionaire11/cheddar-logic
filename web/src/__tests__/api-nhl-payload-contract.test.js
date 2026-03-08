@@ -62,8 +62,8 @@ function validateNhlCardShape(card) {
     'payload.model_version is required',
   );
   assert(
-    ['HOME', 'AWAY'].includes(payload.prediction),
-    `payload.prediction must be HOME/AWAY, got ${payload.prediction}`,
+    ['HOME', 'AWAY', 'NEUTRAL'].includes(payload.prediction),
+    `payload.prediction must be HOME/AWAY/NEUTRAL, got ${payload.prediction}`,
   );
   assert(
     typeof payload.confidence === 'number',
@@ -110,7 +110,7 @@ function validateNhlCardShape(card) {
     'payload.meta is required',
   );
   assert(
-    ['mock', 'remote'].includes(payload.meta.inference_source),
+    ['mock', 'remote', 'driver'].includes(payload.meta.inference_source),
     `payload.meta.inference_source invalid: ${payload.meta.inference_source}`,
   );
   assert(
@@ -205,7 +205,7 @@ async function getJson(url) {
 
 async function run() {
   const baseUrl = process.env.API_BASE_URL || 'http://localhost:3000';
-  const listUrl = `${baseUrl}/api/cards?sport=nhl&limit=50`;
+  const listUrl = `${baseUrl}/api/cards?sport=nhl&card_type=nhl-model-output&limit=50`;
 
   console.log('🧪 NHL payload contract check');
   console.log(`→ Base URL: ${baseUrl}`);
@@ -240,7 +240,7 @@ async function run() {
   }
 
   const sampleGameId = listResult.data[0].gameId;
-  const gameUrl = `${baseUrl}/api/cards/${encodeURIComponent(sampleGameId)}?limit=10`;
+  const gameUrl = `${baseUrl}/api/cards/${encodeURIComponent(sampleGameId)}?cardType=nhl-model-output&limit=10`;
   const gameResult = await getJson(gameUrl);
 
   assert(gameResult.success === true, 'game response success must be true');

@@ -273,6 +273,10 @@ function predictNHLGame(opts) {
   if (hasPpPk) confidence += 0.05;
   if (l5Blended) confidence += 0.03;
   confidence = clamp(confidence, 0.55, 0.8);
+  const goalieConfidenceCapped = !(homeGoalieConfirmed && awayGoalieConfirmed);
+  if (goalieConfidenceCapped) {
+    confidence = Math.min(confidence, 0.35);
+  }
 
   return {
     homeExpected,
@@ -281,6 +285,7 @@ function predictNHLGame(opts) {
     expected1pTotal,
     homeGoalieConfirmed,
     awayGoalieConfirmed,
+    goalieConfidenceCapped,
     adjustments,
     confidence,
   };

@@ -71,6 +71,8 @@ const NHL_DRIVER_WEIGHTS = {
   baseProjection: 0.3,
   restAdvantage: 0.14,
   goalie: 0.18,
+  goalieCertainty: 0.06,
+  shotEnvironment: 0.06,
   scoringEnvironment: 0.08,
   paceTotals: 0.12,
   paceTotals1p: 0.08,
@@ -81,7 +83,9 @@ const NHL_DRIVER_CARD_TYPES = [
   'nhl-rest-advantage',
   'welcome-home-v2',
   'nhl-goalie',
+  'nhl-goalie-certainty',
   'nhl-model-output',
+  'nhl-shot-environment',
   'nhl-pace-totals',
   'nhl-pace-1p',
 ];
