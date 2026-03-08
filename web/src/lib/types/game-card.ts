@@ -100,6 +100,15 @@ export type PassReasonCode =
   | 'MISSING_DATA_DRIVERS'
   | 'MISSING_DATA_NO_ODDS';
 
+/**
+ * Spread line comparison — projected vs market line for spread cards
+ */
+export interface SpreadCompare {
+  direction: Direction;           // HOME or AWAY — which side's perspective
+  marketLine: number | null;      // Market spread for the chosen side (e.g., -9.5)
+  projectedSpread: number | null; // Model projection if parseable from driver note; null otherwise
+}
+
 export type RiskTag =
   | 'RISK_BLOWOUT'
   | 'RISK_FRAGILITY'

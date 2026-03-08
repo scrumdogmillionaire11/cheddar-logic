@@ -483,6 +483,52 @@ function dedupeContributorsByIntent(drivers, market) {
   return Array.from(byIntent.values());
 }
 
+const PROJ_SPREAD_REGEX = /[Pp]roj(?:ected)?\s*(?:spread|margin)?:?\s*([+-]?\d+\.?\d*)/;
+
+function deriveSpreadCompare(primaryPlay, odds, topContributors, allDrivers) {
+  if (primaryPlay.market !== 'SPREAD') return null;
+  const direction = primaryPlay.direction;
+  if (direction !== 'HOME' && direction !== 'AWAY') return null;
+
+  let marketLine = null;
+  if (direction === 'HOME') {
+    marketLine =
+      odds?.spreadHome !== null && odds?.spreadHome !== undefined
+        ? odds.spreadHome
+        : odds?.spreadAway !== null && odds?.spreadAway !== undefined
+          ? -odds.spreadAway
+          : null;
+  } else {
+    marketLine =
+      odds?.spreadAway !== null && odds?.spreadAway !== undefined
+        ? odds.spreadAway
+        : odds?.spreadHome !== null && odds?.spreadHome !== undefined
+          ? -odds.spreadHome
+          : null;
+  }
+
+  const candidateDrivers = [
+    ...topContributors.map((c) => c.driver),
+    ...allDrivers.filter(
+      (d) => d.market === 'SPREAD' || d.market === 'UNKNOWN',
+    ),
+  ];
+
+  let projectedSpread = null;
+  for (const driver of candidateDrivers) {
+    const match = PROJ_SPREAD_REGEX.exec(driver.note);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (!Number.isNaN(parsed)) {
+        projectedSpread = parsed;
+        break;
+      }
+    }
+  }
+
+  return { direction, marketLine, projectedSpread };
+}
+
 export function getCardDecisionModel(card, odds) {
   const baseDrivers = Array.isArray(card.drivers) ? card.drivers : [];
   const drivers = deduplicateDrivers(baseDrivers);
@@ -491,6 +537,7 @@ export function getCardDecisionModel(card, odds) {
   const riskCodes = deriveRiskCodes(card, drivers);
   const whyReason = getWhyReason(status, riskCodes);
   const topContributors = pickTopContributors(drivers, primaryPlay);
+  const spreadCompare = deriveSpreadCompare(primaryPlay, odds, topContributors, drivers);
 
   return {
     status,
@@ -499,5 +546,6 @@ export function getCardDecisionModel(card, odds) {
     riskCodes,
     topContributors,
     allDrivers: drivers,
+    spreadCompare,
   };
 }

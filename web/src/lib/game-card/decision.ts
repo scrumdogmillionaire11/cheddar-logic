@@ -18,6 +18,7 @@ import type {
   Play,
   SupportGrade,
   PassReasonCode,
+  SpreadCompare,
 } from '../types/game-card';
 import {
   computeSupportScores,
@@ -51,6 +52,8 @@ export type DecisionModel = {
   supportGrade: SupportGrade;
   /** Specific reason why a play is PASS (null when FIRE or WATCH) */
   passReasonCode: PassReasonCode | null;
+  /** Spread line comparison — non-null only when market=SPREAD */
+  spreadCompare: SpreadCompare | null;
 };
 
 export type PlayDisplayAction = 'FIRE' | 'HOLD' | 'PASS';
@@ -820,6 +823,63 @@ function applyConsensusOverride(
   return storedStatus;
 }
 
+const PROJ_SPREAD_REGEX = /[Pp]roj(?:ected)?\s*(?:spread|margin)?:?\s*([+-]?\d+\.?\d*)/;
+
+/**
+ * Derive SpreadCompare when the primary play is for the SPREAD market.
+ * Returns null for ML, TOTAL, and NONE markets.
+ */
+function deriveSpreadCompare(
+  primaryPlay: DecisionModel['primaryPlay'],
+  odds: Odds | null,
+  topContributors: DecisionContributor[],
+  allDrivers: DriverRow[],
+): SpreadCompare | null {
+  if (primaryPlay.market !== 'SPREAD') return null;
+  const direction = primaryPlay.direction;
+  if (direction !== 'HOME' && direction !== 'AWAY') return null;
+
+  // Pick market line for the chosen side; fall back to negated opposite if needed
+  let marketLine: number | null = null;
+  if (direction === 'HOME') {
+    marketLine =
+      odds?.spreadHome !== null && odds?.spreadHome !== undefined
+        ? odds.spreadHome
+        : odds?.spreadAway !== null && odds?.spreadAway !== undefined
+          ? -odds.spreadAway
+          : null;
+  } else {
+    marketLine =
+      odds?.spreadAway !== null && odds?.spreadAway !== undefined
+        ? odds.spreadAway
+        : odds?.spreadHome !== null && odds?.spreadHome !== undefined
+          ? -odds.spreadHome
+          : null;
+  }
+
+  // Scan driver notes for a parseable projected spread
+  const candidateDrivers = [
+    ...topContributors.map((c) => c.driver),
+    ...allDrivers.filter(
+      (d) => d.market === 'SPREAD' || d.market === 'UNKNOWN',
+    ),
+  ];
+
+  let projectedSpread: number | null = null;
+  for (const driver of candidateDrivers) {
+    const match = PROJ_SPREAD_REGEX.exec(driver.note);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (!Number.isNaN(parsed)) {
+        projectedSpread = parsed;
+        break;
+      }
+    }
+  }
+
+  return { direction, marketLine, projectedSpread };
+}
+
 /**
  * Build canonical decision model for card display
  */
@@ -866,6 +926,12 @@ export function getCardDecisionModel(
     drivers,
   );
   const topContributors = pickTopContributors(drivers, syncedPrimaryPlay);
+  const spreadCompare = deriveSpreadCompare(
+    syncedPrimaryPlay,
+    odds,
+    topContributors,
+    drivers,
+  );
 
   return {
     status,
@@ -876,6 +942,7 @@ export function getCardDecisionModel(
     allDrivers: drivers,
     supportGrade,
     passReasonCode,
+    spreadCompare,
   };
 }
 
