@@ -1,13 +1,13 @@
 import type { NextConfig } from "next";
 
-const configuredApiBase =
-  process.env.FPL_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_FPL_API_URL ||
-  (process.env.NODE_ENV === "development"
-    ? "http://localhost:8000/api/v1"
-    : "https://api.cheddarlogic.com/api/v1");
-
-const apiBase = configuredApiBase.replace(/\/+$/, "");
+const isProduction = process.env.NODE_ENV === "production";
+const overrideApiBase = isProduction
+  ? undefined
+  : process.env.FPL_API_BASE_URL || process.env.NEXT_PUBLIC_FPL_API_URL;
+const defaultApiBase = isProduction
+  ? "https://api.cheddarlogic.com/api/v1"
+  : "http://localhost:8000/api/v1";
+const apiBase = (overrideApiBase || defaultApiBase).replace(/\/+$/, "");
 
 const nextConfig: NextConfig = {
   async rewrites() {

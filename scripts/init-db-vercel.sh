@@ -7,6 +7,11 @@ set -e
 echo "🗄️  Initializing SQLite database for Vercel..."
 echo "Current directory: $(pwd)"
 
+if [[ "${VERCEL_ENV:-}" == "production" ]]; then
+  echo "Skipping init-db seeding for production build."
+  exit 0
+fi
+
 # Set database path to be within the build (not /tmp)
 # Use ONLY CHEDDAR_DB_PATH to avoid conflicts
 export CHEDDAR_DB_PATH="$(pwd)/packages/data/cheddar.db"
