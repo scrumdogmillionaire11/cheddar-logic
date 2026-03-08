@@ -92,6 +92,9 @@ export interface GameModeFilters extends CommonFilters {
   hasClearPlay: boolean; // play.market != 'NONE'
   onlyWelcomeHome?: boolean;
 
+  // Card types
+  cardTypes?: string[]; // e.g., ['nhl-pace-1p']
+
   // Driver strength
   minTier?: DriverTier; // BEST only / SUPER+ / WATCH+
   minConfidence?: number; // 0-1 range
@@ -124,6 +127,7 @@ export const DEFAULT_GAME_FILTERS: GameModeFilters = {
   onlyGamesWithPicks: false,
   hasClearPlay: false,
   onlyWelcomeHome: false,
+  cardTypes: [],
   hideFragility: false,
   hideBlowout: false,
   hideLowCoverage: false,
@@ -466,6 +470,12 @@ function filterByClearPlay(card: GameCard, filters: GameModeFilters): boolean {
   );
 }
 
+function filterByCardType(card: GameCard, filters: GameModeFilters): boolean {
+  if (!filters.cardTypes || filters.cardTypes.length === 0) return true;
+
+  return filters.cardTypes.includes(card.cardType ?? '');
+}
+
 export function getFilterDebugFlags(
   card: GameCard,
   filters: GameFilters,
@@ -580,6 +590,7 @@ function applyGameFilters(
     .filter((card) => filterByActionability(card, filters))
     .filter((card) => filterByDriverStrength(card, filters))
     .filter((card) => filterByRiskFlags(card, filters))
+    .filter((card) => filterByCardType(card, filters))
     .filter((card) => filterBySearch(card, filters))
     .filter((card) => filterByWelcomeHome(card, filters))
     .filter((card) => filterByHasPicks(card, filters))

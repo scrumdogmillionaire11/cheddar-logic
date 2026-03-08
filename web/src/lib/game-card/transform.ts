@@ -1118,6 +1118,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             }
           : null));
   const sourcePlay = selectedSource?.play ?? scopedPlayCandidates[0];
+  const sourceAction = getSourcePlayAction(sourcePlay);
   const sourceInference =
     selectedSource?.inference ??
     (sourcePlay
@@ -1272,10 +1273,23 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
 
   let betAction: 'BET' | 'NO_PLAY' = 'NO_PLAY';
   const isEdgeBackedMarket =
-    resolvedMarketType === 'MONEYLINE' ||
-    resolvedMarketType === 'SPREAD' ||
-    resolvedMarketType === 'TOTAL';
+    (resolvedMarketType === 'MONEYLINE' ||
+      resolvedMarketType === 'SPREAD' ||
+      resolvedMarketType === 'TOTAL') &&
+    typeof price === 'number';
   if (isEdgeBackedMarket && edge !== undefined && edge >= edgeThreshold) {
+    betAction = 'BET';
+  }
+
+  const isTotalWithLineNoPrice =
+    (resolvedMarketType === 'TOTAL' || resolvedMarketType === 'TEAM_TOTAL') &&
+    (direction === 'OVER' || direction === 'UNDER') &&
+    typeof line === 'number' &&
+    typeof price !== 'number';
+  if (
+    isTotalWithLineNoPrice &&
+    (sourceAction === 'FIRE' || sourceAction === 'HOLD')
+  ) {
     betAction = 'BET';
   }
 
@@ -1286,7 +1300,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     betAction = 'NO_PLAY';
   }
 
-  if (edge === undefined) {
+  if (edge === undefined && !isTotalWithLineNoPrice) {
     betAction = 'NO_PLAY';
   }
 
@@ -1374,8 +1388,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       reasonCodes.push('PASS_MISSING_SELECTION');
     }
     if (
-      (sourceInference.canonical === 'TOTAL' ||
-        sourceInference.canonical === 'SPREAD' ||
+      (sourceInference.canonical === 'SPREAD' ||
         sourceInference.canonical === 'MONEYLINE') &&
       price === undefined
     ) {
@@ -1383,7 +1396,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     }
   }
 
-  if (edge === undefined) reasonCodes.push('PASS_MISSING_EDGE');
+  if (edge === undefined && !isTotalWithLineNoPrice)
+    reasonCodes.push('PASS_MISSING_EDGE');
   const requiresModelProbForEdge =
     (resolvedMarketType === 'MONEYLINE' ||
       resolvedMarketType === 'SPREAD' ||
@@ -1656,6 +1670,20 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   if (scoreDecision === 'WATCH' && finalDecision === 'FIRE')
     finalDecision = 'WATCH';
   if (scoreDecision === 'FIRE') finalDecision = 'FIRE';
+  if (
+    sourceAction === 'FIRE' &&
+    !hardPass &&
+    !hasExplicitTotalsConsistencyBlock
+  ) {
+    finalDecision = 'FIRE';
+  } else if (
+    sourceAction === 'HOLD' &&
+    !hardPass &&
+    !hasExplicitTotalsConsistencyBlock &&
+    finalDecision === 'PASS'
+  ) {
+    finalDecision = 'WATCH';
+  }
   if (hardPass) finalDecision = 'PASS';
 
   const hasBlockingGate = gates.some((gate) => gate.blocks_bet);

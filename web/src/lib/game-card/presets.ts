@@ -136,6 +136,17 @@ const GAME_PRESETS: FilterPreset[] = [
       sortMode: 'signal_strength',
     },
   },
+  {
+    id: '1p_totals',
+    name: '1P Totals View',
+    description: 'NHL 1P pace projections',
+    icon: '📊',
+    filters: {
+      ...DEFAULT_FILTERS_BY_MODE.game,
+      cardTypes: ['nhl-pace-1p'],
+      sortMode: 'signal_strength',
+    },
+  },
   ...(ENABLE_WELCOME_HOME ? [WELCOME_HOME_PRESET] : []),
 ];
 
