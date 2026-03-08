@@ -1,6 +1,7 @@
 #!/bin/bash
-# Demo: Database Auto-Discovery
-# Shows how CHEDDAR_DATA_DIR finds databases with card_payloads and prefers -prod
+# Demo: Database Auto-Discovery (non-production only)
+# Shows how CHEDDAR_DATA_DIR finds databases with card_payloads and prefers -prod.
+# Production should set CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db explicitly.
 
 set -euo pipefail
 

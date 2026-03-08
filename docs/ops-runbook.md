@@ -103,6 +103,10 @@ sudo journalctl -u cheddar-worker -n 50 --no-pager
 
 ## Post-deploy verification (Pi)
 
+Deploy workflow also logs API warnings to `/opt/cheddar-logic/logs/deploy.log` after restart.
+API checks are warning-only (they do not block deploy completion).
+Each deploy writes a compact `[deploy-summary]` log line for quick triage.
+
 ```bash
 # Load canonical DB path from prod env
 set -a; source /opt/cheddar-logic/.env.production; set +a

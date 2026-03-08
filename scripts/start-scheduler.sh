@@ -28,6 +28,7 @@ unset DATABASE_URL
 
 # Canonical DB settings (all worker processes should use CHEDDAR_DB_PATH only)
 # CRITICAL: Only set CHEDDAR_DB_PATH to avoid path conflicts
+# Production should set CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db in .env.production.
 DEFAULT_DB_PATH="/tmp/cheddar-logic/cheddar.db"
 export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-$DEFAULT_DB_PATH}"
 export CHEDDAR_DATA_DIR="${CHEDDAR_DATA_DIR:-$(dirname "$CHEDDAR_DB_PATH")}"

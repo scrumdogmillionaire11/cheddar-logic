@@ -31,7 +31,7 @@ Both web and backend auto-deploy from your GitHub repo.
    NEXT_PUBLIC_API_BASE_URL=https://cheddarlogic.com
    AUTH_SECRET=your-secret-here
    # Persistent DB path (must match worker)
-   CHEDDAR_DB_PATH=/opt/cheddar-logic/data/cheddar-prod.db
+   CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db
    # Feature flags (explicitly set in production)
    NEXT_PUBLIC_ENABLE_PLAYER_PROPS=false
    NEXT_PUBLIC_CARDS_TRACE_VERBOSE=false
@@ -143,6 +143,12 @@ Before promoting to production:
 - [ ] `CHEDDAR_DB_PATH` is set identically in web and worker env vars (persistent path, not /tmp)
 - [ ] `run_state` table exists and has a non-null `current_run_id` (worker must have run at least once)
 - [ ] `/api/games` returns non-empty plays array in staging before promoting to prod
+
+**Deploy gates** (automatic):
+
+- Deploy workflow verifies CSS/JS assets load and logs API warnings to `/opt/cheddar-logic/logs/deploy.log`.
+- API checks are warning-only (observability-first) and do not block deploys.
+- Each deploy writes one compact `[deploy-summary]` line with warning count and endpoint status snapshot.
 
 ## No-Plays Prevention Checklist
 

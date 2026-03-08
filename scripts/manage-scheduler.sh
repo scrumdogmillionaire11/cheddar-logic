@@ -72,7 +72,6 @@ function infer_active_db_from_job_runs() {
         "$EXPECTED_DB_PATH"
         "$ROOT_DIR/packages/data/cheddar.db"
         "/opt/data/cheddar-prod.db"
-        "/opt/data/cheddar.db"
         "/tmp/cheddar-logic/cheddar.db"
         "$ROOT_DIR/data/cheddar.db"
     )

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Dual-Database Verification Script
+ * Dual-Database Verification Script (non-production only)
  * 
  * Tests that:
  * 1. Both databases initialize correctly
@@ -13,6 +13,9 @@
  * Usage:
  *   node scripts/verify-dual-db.js
  *   NODE_ENV=test node scripts/verify-dual-db.js
+ *
+ * NOTE: Production should use CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db
+ * and should not rely on legacy DB path env vars.
  */
 
 const path = require('path');
@@ -21,10 +24,16 @@ const fs = require('fs');
 async function main() {
   console.log('🧪 Dual-Database Verification\n');
 
-  const recordDbPath = process.env.RECORD_DATABASE_PATH || 
-    process.env.CHEDDAR_DB_PATH ||
-    process.env.DATABASE_PATH ||
-    '/opt/data/cheddar.db';
+  const legacyRecordPath =
+    process.env.RECORD_DATABASE_PATH || process.env.DATABASE_PATH || null;
+  if (legacyRecordPath && !process.env.CHEDDAR_DB_PATH) {
+    console.warn(
+      '⚠️  Legacy DB env var detected. Prefer CHEDDAR_DB_PATH for non-prod usage.',
+    );
+  }
+
+  const recordDbPath =
+    process.env.CHEDDAR_DB_PATH || legacyRecordPath || '/opt/data/cheddar-prod.db';
   const localDbPath = process.env.LOCAL_DATABASE_PATH || 
     '/tmp/cheddar-test-local-' + Date.now() + '.db';
 

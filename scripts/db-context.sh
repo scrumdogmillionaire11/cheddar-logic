@@ -21,6 +21,7 @@ unset DATABASE_PATH
 unset RECORD_DATABASE_PATH
 unset DATABASE_URL
 
+# Production should set CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db in .env.production.
 export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-/tmp/cheddar-logic/cheddar.db}"
 
 MODE="local"

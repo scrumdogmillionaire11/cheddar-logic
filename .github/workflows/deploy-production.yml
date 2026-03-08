@@ -221,5 +221,115 @@ jobs:
             retry_url "$PUBLIC_DOMAIN_URL$REFERENCED_CHUNK" "public homepage chunk" || { echo "ERROR: public chunk request failed after restart"; exit 1; }
             retry_url "$PUBLIC_DOMAIN_URL$REFERENCED_CSS" "public homepage css" || { echo "ERROR: public css request failed after restart"; exit 1; }
             echo "Chunk verification passed: origin and public domain serve homepage-referenced assets"
-            node -e "const u=['http://127.0.0.1:3000/api/games','http://127.0.0.1:3000/api/cards?limit=5','http://127.0.0.1:3000/api/results?limit=20']; (async()=>{const out={}; for (const x of u){const r=await fetch(x); const j=await r.json(); out[x]={status:r.status,games:Array.isArray(j?.data)?j.data.length:undefined,cards:Array.isArray(j?.data)?j.data.length:undefined,ledger:Array.isArray(j?.data?.ledger)?j.data.ledger.length:undefined,summary:j?.data?.summary||null};} console.log('post_restart_snapshot', JSON.stringify(out)); })().catch(e=>{console.error('post_restart_snapshot_error', e); process.exit(0);});"
+            DEPLOY_LOG="/opt/cheddar-logic/logs/deploy.log"
+            mkdir -p "$(dirname "$DEPLOY_LOG")"
+            node - <<'NODE' | tee -a "$DEPLOY_LOG"
+            const endpoints = [
+              { name: 'api/games', url: 'http://127.0.0.1:3000/api/games' },
+              { name: 'api/cards', url: 'http://127.0.0.1:3000/api/cards?limit=5' },
+            ];
+
+            const now = new Date().toISOString();
+            const stats = {
+              warnings: 0,
+              infos: 0,
+              endpointSummary: {},
+            };
+
+            const warn = (message) => {
+              stats.warnings += 1;
+              console.warn(`[deploy-warn] ${now} ${message}`);
+            };
+
+            const info = (message) => {
+              stats.infos += 1;
+              console.log(`[deploy-info] ${now} ${message}`);
+            };
+
+            async function checkEndpoint({ name, url }) {
+              const endpointStats = {
+                status: null,
+                success: null,
+                dataCount: null,
+                warnings: 0,
+              };
+
+              let response;
+              try {
+                response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+              } catch (err) {
+                endpointStats.warnings += 1;
+                warn(`${name} request failed: ${err.message}`);
+                stats.endpointSummary[name] = endpointStats;
+                return;
+              }
+
+              if (!response.ok) {
+                endpointStats.warnings += 1;
+                warn(`${name} returned HTTP ${response.status}`);
+              }
+              endpointStats.status = response.status;
+              info(`${name} status=${response.status}`);
+
+              const contentType = (response.headers.get('content-type') || '').toLowerCase();
+              info(`${name} content-type=${contentType || 'unknown'}`);
+              const rawText = await response.text();
+              const snippet = rawText ? rawText.slice(0, 220).replace(/\s+/g, ' ').trim() : '';
+              let payload = null;
+              if (contentType.includes('application/json')) {
+                try {
+                  payload = JSON.parse(rawText);
+                } catch (err) {
+                  endpointStats.warnings += 1;
+                  warn(`${name} returned invalid JSON (${err.message})`);
+                  if (snippet) warn(`${name} body-snippet="${snippet}"`);
+                }
+              } else {
+                endpointStats.warnings += 1;
+                warn(`${name} returned non-JSON content-type: ${contentType || 'unknown'}`);
+                if (snippet) warn(`${name} body-snippet="${snippet}"`);
+              }
+
+              if (!payload) {
+                stats.endpointSummary[name] = endpointStats;
+                return;
+              }
+
+              if (payload.success === false) {
+                endpointStats.warnings += 1;
+                warn(`${name} success=false${payload.error ? ` (${payload.error})` : ''}`);
+              }
+              endpointStats.success = payload.success === true;
+
+              const dataCount = Array.isArray(payload.data) ? payload.data.length : null;
+              if (dataCount !== null) {
+                info(`${name} data count: ${dataCount}`);
+                if (dataCount === 0) {
+                  endpointStats.warnings += 1;
+                  warn(`${name} returned empty data`);
+                }
+              }
+              endpointStats.dataCount = dataCount;
+
+              stats.endpointSummary[name] = endpointStats;
+            }
+
+            (async () => {
+              for (const endpoint of endpoints) {
+                await checkEndpoint(endpoint);
+              }
+
+              const compact = Object.entries(stats.endpointSummary)
+                .map(([name, s]) => `${name}:status=${s.status ?? 'n/a'},success=${s.success === null ? 'n/a' : s.success},count=${s.dataCount ?? 'n/a'},warn=${s.warnings}`)
+                .join(' | ');
+              console.log(
+                `[deploy-summary] ${now} warnings=${stats.warnings} infos=${stats.infos} endpoints=[${compact}]`,
+              );
+            })().catch((err) => {
+              warn(`API checks failed: ${err.message}`);
+              console.log(
+                `[deploy-summary] ${now} warnings=${stats.warnings} infos=${stats.infos} endpoints=[error-path]`,
+              );
+            });
+            NODE
             echo "Deploy complete — worker, web, and fpl-sage restarted"
