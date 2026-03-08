@@ -226,21 +226,35 @@ jobs:
             }
             retry_url "http://127.0.0.1:3000/_next/static/chunks/$SAMPLE_CHUNK_REL" "origin sample chunk" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             retry_url "http://127.0.0.1:3000/_next/static/$SAMPLE_CSS_REL" "origin sample css" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            extract_asset_refs() {
+              route="$1"
+              html="$2"
+              kind="$3"
+              if [ "$kind" = "js" ]; then
+                pattern='src="/_next/static/[^"]+\.js"'
+              else
+                pattern='href="/_next/static/[^"]+\.css"'
+              fi
+              printf "%s\n" "$html" \
+                | grep -Eo "$pattern" \
+                | sed -E 's#^(src|href)="([^"]+)"$#\2#' \
+                | sed "s#^#${route}|#"
+            }
             ORIGIN_HOMEPAGE_HTML=$(curl -fsS "http://127.0.0.1:3000/" || true)
             ORIGIN_CARDS_HTML=$(curl -fsS "http://127.0.0.1:3000/cards" || true)
             ORIGIN_FPL_HTML=$(curl -fsS "http://127.0.0.1:3000/fpl" || true)
             ORIGIN_ROUTE_JS_REFS=$(
               {
-                { printf "%s\n" "$ORIGIN_HOMEPAGE_HTML" | grep -Eo "/_next/static/[^\"' ]+\.js" | sed 's#^#origin:/|#'; } || true
-                { printf "%s\n" "$ORIGIN_CARDS_HTML" | grep -Eo "/_next/static/[^\"' ]+\.js" | sed 's#^#origin:/cards|#'; } || true
-                { printf "%s\n" "$ORIGIN_FPL_HTML" | grep -Eo "/_next/static/[^\"' ]+\.js" | sed 's#^#origin:/fpl|#'; } || true
+                { extract_asset_refs "origin:/" "$ORIGIN_HOMEPAGE_HTML" "js"; } || true
+                { extract_asset_refs "origin:/cards" "$ORIGIN_CARDS_HTML" "js"; } || true
+                { extract_asset_refs "origin:/fpl" "$ORIGIN_FPL_HTML" "js"; } || true
               } | sort -u
             )
             ORIGIN_ROUTE_CSS_REFS=$(
               {
-                { printf "%s\n" "$ORIGIN_HOMEPAGE_HTML" | grep -Eo "/_next/static/[^\"' ]+\.css" | sed 's#^#origin:/|#'; } || true
-                { printf "%s\n" "$ORIGIN_CARDS_HTML" | grep -Eo "/_next/static/[^\"' ]+\.css" | sed 's#^#origin:/cards|#'; } || true
-                { printf "%s\n" "$ORIGIN_FPL_HTML" | grep -Eo "/_next/static/[^\"' ]+\.css" | sed 's#^#origin:/fpl|#'; } || true
+                { extract_asset_refs "origin:/" "$ORIGIN_HOMEPAGE_HTML" "css"; } || true
+                { extract_asset_refs "origin:/cards" "$ORIGIN_CARDS_HTML" "css"; } || true
+                { extract_asset_refs "origin:/fpl" "$ORIGIN_FPL_HTML" "css"; } || true
               } | sort -u
             )
             for route in "/" "/cards" "/fpl"; do
@@ -279,16 +293,16 @@ jobs:
             PUBLIC_FPL_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/fpl" || true)
             PUBLIC_ROUTE_JS_REFS=$(
               {
-                { printf "%s\n" "$PUBLIC_HOMEPAGE_HTML" | grep -Eo "/_next/static/[^\"' ]+\.js" | sed 's#^#public:/|#'; } || true
-                { printf "%s\n" "$PUBLIC_CARDS_HTML" | grep -Eo "/_next/static/[^\"' ]+\.js" | sed 's#^#public:/cards|#'; } || true
-                { printf "%s\n" "$PUBLIC_FPL_HTML" | grep -Eo "/_next/static/[^\"' ]+\.js" | sed 's#^#public:/fpl|#'; } || true
+                { extract_asset_refs "public:/" "$PUBLIC_HOMEPAGE_HTML" "js"; } || true
+                { extract_asset_refs "public:/cards" "$PUBLIC_CARDS_HTML" "js"; } || true
+                { extract_asset_refs "public:/fpl" "$PUBLIC_FPL_HTML" "js"; } || true
               } | sort -u
             )
             PUBLIC_ROUTE_CSS_REFS=$(
               {
-                { printf "%s\n" "$PUBLIC_HOMEPAGE_HTML" | grep -Eo "/_next/static/[^\"' ]+\.css" | sed 's#^#public:/|#'; } || true
-                { printf "%s\n" "$PUBLIC_CARDS_HTML" | grep -Eo "/_next/static/[^\"' ]+\.css" | sed 's#^#public:/cards|#'; } || true
-                { printf "%s\n" "$PUBLIC_FPL_HTML" | grep -Eo "/_next/static/[^\"' ]+\.css" | sed 's#^#public:/fpl|#'; } || true
+                { extract_asset_refs "public:/" "$PUBLIC_HOMEPAGE_HTML" "css"; } || true
+                { extract_asset_refs "public:/cards" "$PUBLIC_CARDS_HTML" "css"; } || true
+                { extract_asset_refs "public:/fpl" "$PUBLIC_FPL_HTML" "css"; } || true
               } | sort -u
             )
             for route in "/" "/cards" "/fpl"; do

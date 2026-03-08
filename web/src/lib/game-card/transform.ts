@@ -1784,19 +1784,22 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     if (!hasMinimumEdge) {
       finalDecision = 'PASS';
       reasonCodesUnique.push('PASS_PROXY_EDGE_SANITY_COMBO');
+      finalBet = null;
     } else {
-      // Downgrade to WATCH but keep play
+      // Downgrade to WATCH but keep play - don't remove bet
       finalDecision = 'WATCH';
       reasonCodesUnique.push('DOWNGRADED_PROXY_EDGE_SANITY_COMBO');
+      // Keep finalBet for positive edge even with sanity check
     }
-    finalBet = null;
   } else if (edgeSanityTriggered) {
-    finalBet = null;
     if (finalDecision === 'PASS') {
+      finalBet = null;
       reasonCodesUnique.push('PASS_EDGE_SANITY_NON_TOTAL');
     } else {
+      // Downgrade to WATCH but preserve bet if edge positive
       finalDecision = 'WATCH';
       reasonCodesUnique.push('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
+      // Keep finalBet for positive edge even with sanity check
     }
   } else if (proxyTriggered) {
     // WI-DECISION-FIX: Proxy cap downgrades tier (FIRE→WATCH) but keeps bet recommendation
