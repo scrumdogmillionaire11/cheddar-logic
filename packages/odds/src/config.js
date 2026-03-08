@@ -112,6 +112,24 @@ const SPORTS_CONFIG = {
       'fliff',
     ],
   },
+
+  SOCCER: {
+    active: true,
+    season: { start: '08-01', end: '06-30' }, // EPL/European football season
+    markets: ['h2h'],
+    tokensPerFetch: 1,
+    defaultTTL: 240,
+    pregameTTL: 30,
+    sharpWindowTTL: 0,
+    apiKey: 'soccer_epl',
+    bookmakers: [
+      'betmgm',
+      'draftkings',
+      'fanduel',
+      'williamhill_us',
+      'espnbet',
+    ],
+  },
 };
 
 /**

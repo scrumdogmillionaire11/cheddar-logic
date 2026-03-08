@@ -200,6 +200,24 @@ function buildBallSportPayload({
     : null;
 
   const winProbHome = computeWinProbHome(projectedMargin, sport);
+  const normalizedMarketType =
+    typeof descriptor.market_type === 'string'
+      ? descriptor.market_type.toUpperCase()
+      : null;
+  const selectionSide = descriptor.selection?.side;
+  const hasPrice = Number.isFinite(descriptor.price);
+  const hasLine = Number.isFinite(descriptor.line);
+  const isPlayableMarket =
+    (normalizedMarketType === 'MONEYLINE' &&
+      (selectionSide === 'HOME' || selectionSide === 'AWAY') &&
+      hasPrice) ||
+    ((normalizedMarketType === 'SPREAD' || normalizedMarketType === 'PUCKLINE') &&
+      (selectionSide === 'HOME' || selectionSide === 'AWAY') &&
+      hasLine &&
+      hasPrice) ||
+    ((normalizedMarketType === 'TOTAL' || normalizedMarketType === 'TEAM_TOTAL') &&
+      (selectionSide === 'OVER' || selectionSide === 'UNDER') &&
+      hasLine);
 
   // Derive status from expression_choice if available (prioritize cross-market decision)
   const crossMarketStatus = marketPayload?.expression_choice?.status;
@@ -228,6 +246,12 @@ function buildBallSportPayload({
       win_prob_home: winProbHome,
     },
     market,
+    // Propagate market fields from descriptor when driver specifies a market call
+    market_type: normalizedMarketType ?? null,
+    selection: descriptor.selection ?? null,
+    line: descriptor.line ?? null,
+    price: descriptor.price ?? null,
+    kind: isPlayableMarket ? 'PLAY' : 'EVIDENCE',
     edge: undefined,
     p_fair: undefined,
     p_implied: undefined,
@@ -235,7 +259,14 @@ function buildBallSportPayload({
     drivers_active: [descriptor.driverKey],
     prediction: descriptor.prediction,
     confidence: descriptor.confidence,
-    recommended_bet_type: 'moneyline',
+    recommended_bet_type:
+      normalizedMarketType === 'TOTAL' || normalizedMarketType === 'TEAM_TOTAL'
+        ? 'total'
+        : normalizedMarketType === 'PUCKLINE'
+          ? 'puck_line'
+          : normalizedMarketType === 'SPREAD'
+            ? 'spread'
+          : 'moneyline',
     consistency: marketPayload?.consistency || {},
     expression_choice: marketPayload?.expression_choice || {},
     market_narrative: marketPayload?.market_narrative || {},
@@ -361,6 +392,10 @@ function buildNCAAMPayload({
     },
     market,
     market_type: marketType,
+    kind: isPlayableMarket ? 'PLAY' : 'EVIDENCE',
+    selection: isPlayableMarket
+      ? { side: isPredictionHome ? 'HOME' : 'AWAY' }
+      : null,
     line: isPlayableMarket ? line : null,
     price: isPlayableMarket ? price : null,
     reason_codes: reasonCodes,

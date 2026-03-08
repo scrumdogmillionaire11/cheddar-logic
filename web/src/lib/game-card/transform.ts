@@ -397,8 +397,7 @@ function hasPlayableBet(
   if (canonical === 'TOTAL' || canonical === 'TEAM_TOTAL') {
     return (
       (side === 'OVER' || side === 'UNDER') &&
-      typeof play.line === 'number' &&
-      typeof play.price === 'number'
+      typeof play.line === 'number'
     );
   }
   if (canonical === 'PROP') {

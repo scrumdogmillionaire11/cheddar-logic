@@ -37,6 +37,10 @@ const {
   formatCountdown,
   buildMarketFromOdds,
 } = require('@cheddar-logic/models');
+const {
+  publishDecisionForCard,
+  applyUiActionFields,
+} = require('../utils/decision-publisher');
 
 function attachRunId(card, runId) {
   if (!card) return;
@@ -222,6 +226,8 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
             );
           }
 
+          publishDecisionForCard({ card, oddsSnapshot });
+          applyUiActionFields(card.payloadData);
           attachRunId(card, jobRunId);
           insertCardPayload(card);
           cardsGenerated++;

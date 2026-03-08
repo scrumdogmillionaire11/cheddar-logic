@@ -37,6 +37,7 @@
     "job:resettle-history:dry-run": "node src/jobs/resettle_historical_cards.js --dry-run",
     "job:import-historical-settled": "node src/jobs/import_historical_settled_results.js --apply",
     "job:import-historical-settled:dry-run": "node src/jobs/import_historical_settled_results.js --dry-run",
+    "job:dev-refresh": "node src/jobs/pull_odds_hourly.js && node src/jobs/run_nhl_model.js && node src/jobs/run_nba_model.js && node src/jobs/run_ncaam_model.js && node src/jobs/run_soccer_model.js",
     "scheduler": "node src/schedulers/main.js",
     "scheduler:dev": "ENABLE_ODDS_PULL=true ENABLE_NHL_MODEL=true node src/schedulers/main.js",
     "test": "jest",

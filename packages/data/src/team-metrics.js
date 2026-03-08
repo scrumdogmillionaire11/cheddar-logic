@@ -56,9 +56,10 @@ const NHL_TEAMS = {
   'Vegas Golden Knights':   { id: 54, abbr: 'VGK' },
   'Washington Capitals':    { id: 3,  abbr: 'WSH' },
   'Winnipeg Jets':          { id: 21, abbr: 'WPG' },
-  // Arizona/Utah relocated -- use Utah HC (ESPN ID 53 was ARI Coyotes, now Utah)
+  // Arizona/Utah relocated -- rebranded Utah HC → Utah Mammoth for 2025-26
   'Arizona Coyotes':        { id: 53, abbr: 'ARI' },
-  'Utah Hockey Club':       { id: 53, abbr: 'UTA' }
+  'Utah Hockey Club':       { id: 53, abbr: 'UTA' },
+  'Utah Mammoth':           { id: 53, abbr: 'UTA' }
 };
 
 /**
