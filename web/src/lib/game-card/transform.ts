@@ -1790,18 +1790,18 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       reasonCodesUnique.push('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
     }
   } else if (proxyTriggered) {
-    // WI-DECISION-FIX: Proxy cap downgrades tier (FIRE→WATCH) but doesn't cancel if edge positive
-    finalBet = null;
+    // WI-DECISION-FIX: Proxy cap downgrades tier (FIRE→WATCH) but keeps bet recommendation
     const hasStrongSignal =
       truthStrength >= 0.62 && quality !== 'BROKEN' && !edgeSanityTriggered;
     
     if (finalDecision === 'FIRE') {
-      // FIRE with proxy → downgrade to WATCH
+      // FIRE with proxy → downgrade to WATCH but KEEP bet
       finalDecision = 'WATCH';
       reasonCodesUnique.push('DOWNGRADED_PROXY_CAPPED');
     } else if (finalDecision === 'WATCH' && !hasStrongSignal) {
-      // WATCH with weak signal + proxy → PASS
+      // WATCH with weak signal + proxy → PASS and remove bet
       finalDecision = 'PASS';
+      finalBet = null;
       reasonCodesUnique.push('PASS_PROXY_CAPPED');
     }
   }
