@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 
 const isProduction = process.env.NODE_ENV === "production";
 const overrideApiBase = isProduction
@@ -11,7 +12,9 @@ const apiBase = (overrideApiBase || defaultApiBase).replace(/\/+$/, "");
 
 const nextConfig: NextConfig = {
   turbopack: {
-    root: __dirname,
+    // Include monorepo-local packages (e.g. @cheddar-logic/data, @cheddar-logic/models)
+    // so Turbopack can resolve file-linked dependencies during builds.
+    root: path.join(__dirname, ".."),
   },
   async rewrites() {
     return [
