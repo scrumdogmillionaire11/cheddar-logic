@@ -436,6 +436,26 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   }
 }
 
+function getFallbackRunIdsFromCards(
+  db: ReturnType<typeof getDatabaseReadOnly>,
+): string[] {
+  try {
+    const row = db
+      .prepare(
+        `SELECT run_id
+         FROM card_payloads
+         WHERE run_id IS NOT NULL
+           AND TRIM(run_id) != ''
+         ORDER BY datetime(created_at) DESC, id DESC
+         LIMIT 1`,
+      )
+      .get() as { run_id?: string | null } | undefined;
+    return row?.run_id ? [String(row.run_id)] : [];
+  } catch {
+    return [];
+  }
+}
+
 function getRunStatus(
   db: ReturnType<typeof getDatabaseReadOnly>,
   runId: string | null,
@@ -495,7 +515,10 @@ export async function GET(request: NextRequest) {
     // }
 
     db = getDatabaseReadOnly();
-    const activeRunIds = getActiveRunIds(db);
+    let activeRunIds = getActiveRunIds(db);
+    if (activeRunIds.length === 0) {
+      activeRunIds = getFallbackRunIdsFromCards(db);
+    }
     const currentRunId = activeRunIds[0] ?? null;
     const runStatus = getRunStatus(db, currentRunId);
 
