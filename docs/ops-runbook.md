@@ -418,6 +418,38 @@ If the chunk still fails on origin after rebuild, do not proceed with traffic ch
 
 ---
 
+### Vercel + Cloudflare: Static chunk 404s (CSS/JS missing)
+
+**Symptoms:** Console shows `/_next/static/chunks/*.js` 404s, CSS not loading, or hydration failures after a successful deploy.
+
+**Diagnosis (public domain):**
+
+```bash
+# 1) Inspect HTML cache headers
+curl -I https://cheddarlogic.com/ | grep -iE 'cache-control|cf-cache-status|x-vercel-cache'
+
+# 2) Extract a referenced chunk/CSS from the homepage HTML
+HOMEPAGE=$(curl -fsS https://cheddarlogic.com/)
+REF=$(printf "%s" "$HOMEPAGE" | grep -Eo '/_next/static/[^" ]+\.(js|css)' | head -n 1)
+echo "$REF"
+
+# 3) Verify the referenced asset is reachable
+curl -I "https://cheddarlogic.com$REF" | grep -iE 'http/|cache-control|cf-cache-status|x-vercel-cache'
+```
+
+**Interpretation:**
+
+- `cf-cache-status: HIT` with a 404 suggests stale Cloudflare cache — purge and re-check.
+- `x-vercel-cache: MISS` with a 404 suggests the Vercel origin is missing the chunk — trigger a redeploy and verify the build output.
+
+**Recovery:**
+
+1. Purge Cloudflare cache (full purge).
+2. Re-deploy on Vercel (clean build) if the origin still returns 404 for the referenced chunk.
+3. Re-run the diagnosis steps to confirm `200` responses and expected cache headers.
+
+---
+
 ## Database Operations
 
 ### DB location
