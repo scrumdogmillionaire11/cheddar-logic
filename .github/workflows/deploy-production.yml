@@ -212,7 +212,7 @@ jobs:
             curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
               -H "Content-Type: application/json" \
-              --data '{"prefixes":["https://cheddarlogic.com/_next/static/"]}' \
+              --data '{"prefixes":["cheddarlogic.com/_next/static/"]}' \
               | tee /tmp/cloudflare_purge.json
             grep -q '"success":true' /tmp/cloudflare_purge.json || { echo "ERROR: Cloudflare purge failed"; cat /tmp/cloudflare_purge.json; exit 1; }
             echo "Cloudflare cache purged for /_next/static/ — waiting 10s for propagation..."

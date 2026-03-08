@@ -317,7 +317,7 @@ If origin is `200` but public URL is `502`, purge Cloudflare cache and check edg
 curl -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/purge_cache" \
   -H "Authorization: Bearer $CF_API_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"prefixes":["https://cheddarlogic.com/_next/static/"]}'
+  --data '{"prefixes":["cheddarlogic.com/_next/static/"]}'
 
 # Or purge everything via Cloudflare dashboard:
 # https://dash.cloudflare.com → cheddarlogic.com → Caching → Purge Everything
