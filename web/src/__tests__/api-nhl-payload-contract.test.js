@@ -1,9 +1,34 @@
 /**
  * NHL API Payload Contract Check (live API)
  *
+ * Post-WI-0338: NHL uses multi-driver architecture with 14+ card types.
+ * This test validates against the canonical type list in:
+ * packages/data/src/validators/card-payload.js
+ *
  * Usage:
  *   API_BASE_URL=http://localhost:3000 node src/__tests__/api-nhl-payload-contract.test.js
  */
+
+// Canonical NHL card types (source: packages/data/src/validators/card-payload.js)
+const VALID_NHL_CARD_TYPES = [
+  // Driver cards
+  'nhl-model-output',        // backward compat
+  'nhl-goalie',
+  'nhl-goalie-certainty',    // WI-0338
+  'nhl-special-teams',
+  'nhl-shot-environment',
+  'nhl-empty-net',
+  'nhl-total-fragility',
+  'nhl-pdo-regression',
+  'nhl-welcome-home',
+  'nhl-base-projection',
+  'nhl-rest-advantage',
+  'nhl-pace-totals',         // WI-0338
+  'nhl-pace-1p',             // WI-0338
+  // Market call cards
+  'nhl-totals-call',
+  'nhl-spread-call',
+];
 
 function isIsoDate(value) {
   return typeof value === 'string' && !Number.isNaN(Date.parse(value));
@@ -26,8 +51,8 @@ function validateNhlCardShape(card) {
   );
   assert(card.sport === 'NHL', `card.sport must be NHL, got ${card.sport}`);
   assert(
-    card.cardType === 'nhl-model-output',
-    `card.cardType must be nhl-model-output, got ${card.cardType}`,
+    VALID_NHL_CARD_TYPES.includes(card.cardType),
+    `card.cardType must be valid NHL type (got ${card.cardType}). Valid: ${VALID_NHL_CARD_TYPES.join(', ')}`,
   );
   assert(
     typeof card.cardTitle === 'string' && card.cardTitle.length > 0,
@@ -105,6 +130,7 @@ function validateNhlCardShape(card) {
     'payload.generated_at must be ISO date',
   );
 
+  // Meta validation (strengthened post-WI-0338)
   assert(
     payload.meta && typeof payload.meta === 'object',
     'payload.meta is required',
@@ -119,9 +145,21 @@ function validateNhlCardShape(card) {
   );
   assert(
     payload.meta.model_endpoint === null ||
-      typeof payload.meta.model_endpoint === 'string',
-    'payload.meta.model_endpoint must be null/string',
+      (typeof payload.meta.model_endpoint === 'string' && payload.meta.model_endpoint.length > 0),
+    `payload.meta.model_endpoint must be null or non-empty string, got: ${payload.meta.model_endpoint}`,
   );
+
+  // Driver-based cards must have null model_endpoint
+  if (payload.meta.inference_source === 'driver') {
+    assert(
+      payload.meta.model_endpoint === null,
+      'driver-based cards must have meta.model_endpoint === null',
+    );
+    assert(
+      payload.meta.is_mock === false,
+      'driver-based cards must have meta.is_mock === false',
+    );
+  }
 
   if (payload.meta.inference_source === 'mock') {
     assert(
@@ -134,75 +172,81 @@ function validateNhlCardShape(card) {
       payload.meta.is_mock === false,
       'remote source must set meta.is_mock=false',
     );
+    assert(
+      typeof payload.meta.model_endpoint === 'string' && payload.meta.model_endpoint.length > 0,
+      'remote source must provide non-empty meta.model_endpoint',
+    );
   }
 
+  // Driver validation (post-WI-0338: accepts both multi-driver and single-driver formats)
   if (payload.drivers && typeof payload.drivers === 'object') {
-    const requiredDrivers = [
-      'goalie',
-      'specialTeams',
-      'shotEnvironment',
-      'emptyNet',
-      'totalFragility',
-      'pdoRegression',
-    ];
-
-    const actualDriverKeys = Object.keys(payload.drivers).sort();
-    const expectedDriverKeys = [...requiredDrivers].sort();
+    // Legacy multi-driver format (older nhl-model-output cards)
+    const driverKeys = Object.keys(payload.drivers);
     assert(
-      JSON.stringify(actualDriverKeys) ===
-        JSON.stringify(expectedDriverKeys),
-      `payload.drivers keys must match NHL list. expected=${expectedDriverKeys.join(',')} actual=${actualDriverKeys.join(',')}`,
+      driverKeys.length > 0,
+      'payload.drivers object must have at least one driver',
     );
 
-    for (const driverKey of requiredDrivers) {
+    for (const driverKey of driverKeys) {
       const driver = payload.drivers[driverKey];
       assert(
         driver && typeof driver === 'object',
-        `payload.drivers.${driverKey} is required`,
+        `payload.drivers.${driverKey} must be object`,
       );
       assert(
-        typeof driver.score === 'number',
-        `payload.drivers.${driverKey}.score must be number`,
+        typeof driver.score === 'number' && driver.score >= 0 && driver.score <= 1,
+        `payload.drivers.${driverKey}.score must be number 0-1`,
       );
       assert(
-        driver.score >= 0 && driver.score <= 1,
-        `payload.drivers.${driverKey}.score out of range`,
-      );
-      assert(
-        typeof driver.weight === 'number',
-        `payload.drivers.${driverKey}.weight must be number`,
+        typeof driver.weight === 'number' && driver.weight >= 0,
+        `payload.drivers.${driverKey}.weight must be non-negative number`,
       );
       assert(
         ['ok', 'partial', 'missing'].includes(driver.status),
-        `payload.drivers.${driverKey}.status invalid`,
+        `payload.drivers.${driverKey}.status must be ok/partial/missing`,
       );
       assert(
         driver.inputs && typeof driver.inputs === 'object',
-        `payload.drivers.${driverKey}.inputs required`,
+        `payload.drivers.${driverKey}.inputs must be object`,
       );
     }
-  } else {
+  } else if (payload.driver && typeof payload.driver === 'object') {
+    // Single-driver format (current driver-based cards)
+    const driver = payload.driver;
     assert(
-      payload.driver && typeof payload.driver === 'object',
-      'payload.driver is required when payload.drivers is missing',
+      typeof driver.key === 'string' && driver.key.length > 0,
+      'payload.driver.key must be non-empty string',
+    );
+    assert(
+      typeof driver.score === 'number' && driver.score >= 0 && driver.score <= 1,
+      'payload.driver.score must be number 0-1',
+    );
+    assert(
+      ['ok', 'partial', 'missing'].includes(driver.status),
+      'payload.driver.status must be ok/partial/missing',
+    );
+    assert(
+      driver.inputs && typeof driver.inputs === 'object',
+      'payload.driver.inputs must be object',
+    );
+  } else {
+    throw new Error(
+      'Card must have either payload.drivers (legacy) or payload.driver (current)',
     );
   }
 
+  // Driver summary validation
   assert(
     payload.driver_summary && typeof payload.driver_summary === 'object',
     'payload.driver_summary is required',
   );
-  if (payload.driver_summary.top_drivers !== undefined) {
-    assert(
-      Array.isArray(payload.driver_summary.top_drivers),
-      'payload.driver_summary.top_drivers must be array',
-    );
-  } else {
-    assert(
-      Array.isArray(payload.driver_summary.weights),
-      'payload.driver_summary.weights must be array',
-    );
-  }
+  // Accept either format: top_drivers array OR weights array
+  const hasTopDrivers = Array.isArray(payload.driver_summary.top_drivers);
+  const hasWeights = Array.isArray(payload.driver_summary.weights);
+  assert(
+    hasTopDrivers || hasWeights,
+    'payload.driver_summary must have either top_drivers or weights array',
+  );
 }
 
 async function getJson(url) {
