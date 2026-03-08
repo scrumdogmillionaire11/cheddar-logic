@@ -181,11 +181,23 @@ jobs:
             retry_url() {
               url="$1"
               label="$2"
+              cache_bust="${3:-0}"
               attempts=12
               delay=3
               status=""
               for i in $(seq 1 "$attempts"); do
-                status=$(curl -sS -o /dev/null -w "%{http_code}" "$url" || true)
+                probe_url="$url"
+                if [ "$cache_bust" = "1" ]; then
+                  sep='?'
+                  case "$probe_url" in
+                    *\?*) sep='&' ;;
+                  esac
+                  probe_url="${probe_url}${sep}cf_probe=$(date +%s)-${i}"
+                fi
+                status=$(curl -sS \
+                  -H "Cache-Control: no-cache, no-store, must-revalidate" \
+                  -H "Pragma: no-cache" \
+                  -o /dev/null -w "%{http_code}" "$probe_url" || true)
                 if [ "$status" = "200" ]; then
                   echo "$label ok (status=$status)"
                   return 0
@@ -228,11 +240,11 @@ jobs:
             PUBLIC_DOMAIN_URL="${NEXT_PUBLIC_PUBLIC_DOMAIN:-${PUBLIC_DOMAIN:-https://cheddarlogic.com}}"
             printf '%s\n' "$HOMEPAGE_JS_REFS" | while IFS= read -r ref; do
               [ -n "$ref" ] || continue
-              retry_url "$PUBLIC_DOMAIN_URL$ref" "public homepage js $ref" || { echo "ERROR: public JS request failed after restart: $ref"; exit 1; }
+              retry_url "$PUBLIC_DOMAIN_URL$ref" "public homepage js $ref" 1 || { echo "ERROR: public JS request failed after restart: $ref"; exit 1; }
             done
             printf '%s\n' "$HOMEPAGE_CSS_REFS" | while IFS= read -r ref; do
               [ -n "$ref" ] || continue
-              retry_url "$PUBLIC_DOMAIN_URL$ref" "public homepage css $ref" || { echo "ERROR: public CSS request failed after restart: $ref"; exit 1; }
+              retry_url "$PUBLIC_DOMAIN_URL$ref" "public homepage css $ref" 1 || { echo "ERROR: public CSS request failed after restart: $ref"; exit 1; }
             done
             echo "Chunk verification passed: origin/public served $HOMEPAGE_JS_COUNT JS refs and $HOMEPAGE_CSS_COUNT CSS refs from homepage HTML"
             DEPLOY_LOG="/opt/cheddar-logic/logs/deploy.log"
