@@ -1699,7 +1699,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const hasBlockingGate = gates.some((gate) => gate.blocks_bet);
   let finalBet = candidateBet;
   if (betAction === 'NO_PLAY') finalBet = null;
-  if (hasBlockingGate) {
+  
+  // WI-DECISION-FIX: Don't remove bet for proxy-capped plays with positive edge
+  const proxyTriggeredEarly = tags.some((tag) => PROXY_SIGNAL_TAGS.has(tag));
+  const hasPositiveEdge = typeof edge === 'number' && edge >= 0.01;
+  const shouldKeepBetDespiteGates = proxyTriggeredEarly && hasPositiveEdge && finalBet;
+  
+  if (hasBlockingGate && !shouldKeepBetDespiteGates) {
     finalBet = null;
     if (finalDecision !== 'PASS') finalDecision = 'WATCH';
   }
@@ -1766,7 +1772,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   }
   if (proxyTriggered) {
     tags.push('PROXY_CARD');
-    gateCodes.add(PROXY_CAP_GATE_CODE);
+    // WI-DECISION-FIX: Only add blocking gate if no positive edge
+    if (!hasMinimumEdge) {
+      gateCodes.add(PROXY_CAP_GATE_CODE);
+    }
   }
 
   // WI-DECISION-FIX: Proxy cap downgrades tier, doesn't cancel plays with positive edge
