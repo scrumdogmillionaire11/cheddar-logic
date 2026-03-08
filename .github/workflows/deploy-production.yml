@@ -157,7 +157,7 @@ jobs:
             sqlite3 "$CANONICAL_DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" | grep -qx "card_payloads" || { echo "ERROR: required table card_payloads missing after migrations"; exit 1; }
             sudo rm -rf web/.next
             grep -E '^[A-Za-z_][A-Za-z0-9_]*=' /opt/cheddar-logic/.env.production > /tmp/cheddar_build_env
-            set -a && source /tmp/cheddar_build_env && set +a && npm --prefix web run build
+            set -a && . /tmp/cheddar_build_env && set +a && npm --prefix web run build
             rm -f /tmp/cheddar_build_env
             test -f web/.next/BUILD_ID || { echo "ERROR: next build did not produce web/.next/BUILD_ID"; exit 1; }
             test -d web/.next/static || { echo "ERROR: next build did not produce web/.next/static directory"; exit 1; }
@@ -179,11 +179,11 @@ jobs:
             sudo systemctl restart cheddar-fpl-sage
             sleep 5
             retry_url() {
-              local url="$1"
-              local label="$2"
-              local attempts=12
-              local delay=3
-              local status=""
+              url="$1"
+              label="$2"
+              attempts=12
+              delay=3
+              status=""
               for i in $(seq 1 "$attempts"); do
                 status=$(curl -sS -o /dev/null -w "%{http_code}" "$url" || true)
                 if [ "$status" = "200" ]; then
@@ -205,14 +205,14 @@ jobs:
             HOMEPAGE_CSS_COUNT=$(printf "%s\n" "$HOMEPAGE_CSS_REFS" | grep -c . || true)
             test "$HOMEPAGE_JS_COUNT" -gt 0 || { echo "ERROR: could not find JS asset references in homepage HTML after restart"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
             test "$HOMEPAGE_CSS_COUNT" -gt 0 || { echo "ERROR: could not find CSS asset references in homepage HTML after restart"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
-            while IFS= read -r ref; do
+            printf '%s\n' "$HOMEPAGE_JS_REFS" | while IFS= read -r ref; do
               [ -n "$ref" ] || continue
               retry_url "http://127.0.0.1:3000$ref" "origin homepage js $ref" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
-            done <<< "$HOMEPAGE_JS_REFS"
-            while IFS= read -r ref; do
+            done
+            printf '%s\n' "$HOMEPAGE_CSS_REFS" | while IFS= read -r ref; do
               [ -n "$ref" ] || continue
               retry_url "http://127.0.0.1:3000$ref" "origin homepage css $ref" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
-            done <<< "$HOMEPAGE_CSS_REFS"
+            done
             if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
               echo "ERROR: Cloudflare secrets missing (CF_API_TOKEN and CF_ZONE_ID required for cache purge)";
               exit 1;
@@ -226,14 +226,14 @@ jobs:
             echo "Cloudflare cache purged (everything) — waiting 30s for propagation..."
             sleep 30
             PUBLIC_DOMAIN_URL="${NEXT_PUBLIC_PUBLIC_DOMAIN:-${PUBLIC_DOMAIN:-https://cheddarlogic.com}}"
-            while IFS= read -r ref; do
+            printf '%s\n' "$HOMEPAGE_JS_REFS" | while IFS= read -r ref; do
               [ -n "$ref" ] || continue
               retry_url "$PUBLIC_DOMAIN_URL$ref" "public homepage js $ref" || { echo "ERROR: public JS request failed after restart: $ref"; exit 1; }
-            done <<< "$HOMEPAGE_JS_REFS"
-            while IFS= read -r ref; do
+            done
+            printf '%s\n' "$HOMEPAGE_CSS_REFS" | while IFS= read -r ref; do
               [ -n "$ref" ] || continue
               retry_url "$PUBLIC_DOMAIN_URL$ref" "public homepage css $ref" || { echo "ERROR: public CSS request failed after restart: $ref"; exit 1; }
-            done <<< "$HOMEPAGE_CSS_REFS"
+            done
             echo "Chunk verification passed: origin/public served $HOMEPAGE_JS_COUNT JS refs and $HOMEPAGE_CSS_COUNT CSS refs from homepage HTML"
             DEPLOY_LOG="/opt/cheddar-logic/logs/deploy.log"
             mkdir -p "$(dirname "$DEPLOY_LOG")"
