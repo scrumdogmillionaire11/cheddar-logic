@@ -651,6 +651,26 @@ function computeWatchdog(payload, context = {}) {
   const watchdogReasonCodes = [];
   const { consistency, sourceAttempts, missingFields } = resolveConsistency(payload);
 
+  const projectionInputsComplete = payload?.projection_inputs_complete;
+  const projectionMissingInputs = Array.isArray(payload?.missing_inputs)
+    ? payload.missing_inputs.filter((field) => asString(field))
+    : [];
+
+  if (projectionInputsComplete === false || projectionMissingInputs.length > 0) {
+    watchdogReasonCodes.push(WATCHDOG_REASONS.CONSISTENCY_MISSING);
+    for (const field of projectionMissingInputs) {
+      const normalizedField = `projection.${field}`;
+      if (!missingFields.includes(normalizedField)) {
+        missingFields.push(normalizedField);
+      }
+      sourceAttempts.push({
+        field: normalizedField,
+        source: 'missing_inputs',
+        result: 'MISSING',
+      });
+    }
+  }
+
   const direction = getDirection(payload);
   if (direction === 'NONE') {
     watchdogReasonCodes.push(WATCHDOG_REASONS.MARKET_UNAVAILABLE);

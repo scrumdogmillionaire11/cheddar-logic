@@ -31,6 +31,10 @@ const {
   withDb,
 } = require('@cheddar-logic/data');
 
+const {
+  resolveTeamVariant,
+} = require('@cheddar-logic/data/src/normalize');
+
 const { settleGameResults } = require('./settle_game_results');
 const { settlePendingCards } = require('./settle_pending_cards');
 
@@ -143,6 +147,17 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
 
           for (const normalized of normalizedGames) {
             try {
+              // Validate team variant mapping before persisting
+              const homeVariant = resolveTeamVariant(normalized.homeTeam, `pull-odds:${sport}`);
+              const awayVariant = resolveTeamVariant(normalized.awayTeam, `pull-odds:${sport}`);
+
+              if (!homeVariant.matched || !awayVariant.matched) {
+                const msg = `TEAM_MAPPING_UNMAPPED: game=${normalized.gameId} sport=${sport} home="${normalized.homeTeam}"(matched=${homeVariant.matched}) away="${normalized.awayTeam}"(matched=${awayVariant.matched})`;
+                console.warn(`[PullOdds]   ⚠️  ${msg}`);
+                errors.push(`${sport}/${normalized.gameId}: ${msg}`);
+                continue; // Skip unmapped teams entirely
+              }
+
               // Upsert game record with deterministic stable ID
               const stableGameId = `game-${sport.toLowerCase()}-${normalized.gameId}`;
               upsertGame({

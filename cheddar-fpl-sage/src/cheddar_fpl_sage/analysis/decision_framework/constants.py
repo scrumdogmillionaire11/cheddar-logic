@@ -30,6 +30,10 @@ FALLBACK_NEXT_5GW_PTS = 25.0
 RISK_POSTURES = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"]
 DEFAULT_RISK_POSTURE = "BALANCED"
 
+# Strategy mode options (rank-aware planning layer)
+STRATEGY_MODES = ["DEFEND", "CONTROLLED", "BALANCED", "RECOVERY"]
+DEFAULT_STRATEGY_MODE = "BALANCED"
+
 # Chip names (consistent naming)
 CHIP_NAMES = frozenset([
     "Wildcard", "Free Hit", "Bench Boost", "Triple Captain"
@@ -88,3 +92,68 @@ def get_volatility_multiplier(risk_posture: str) -> float:
         "AGGRESSIVE": 0.8
     }
     return multipliers.get(risk_posture, 1.0)
+
+
+def derive_rank_bucket(overall_rank: Optional[int]) -> str:
+    """
+    Map overall rank to explicit bucket used by strategy mode.
+
+    Buckets:
+    - <= 50k: elite
+    - 50,001-500k: strong
+    - 500,001-3M: mid
+    - > 3M: recovery
+    """
+    if not overall_rank or overall_rank <= 0:
+        return "unknown"
+    if overall_rank <= 50_000:
+        return "elite"
+    if overall_rank <= 500_000:
+        return "strong"
+    if overall_rank <= 3_000_000:
+        return "mid"
+    return "recovery"
+
+
+def derive_strategy_mode(
+    overall_rank: Optional[int],
+    risk_posture: str = DEFAULT_RISK_POSTURE,
+) -> str:
+    """
+    Derive strategy mode from rank bucket + risk posture nudge.
+    """
+    posture = normalize_risk_posture(risk_posture)
+    bucket = derive_rank_bucket(overall_rank)
+
+    base_by_bucket = {
+        "elite": "DEFEND",
+        "strong": "CONTROLLED",
+        "mid": "BALANCED",
+        "recovery": "RECOVERY",
+        "unknown": DEFAULT_STRATEGY_MODE,
+    }
+    base_mode = base_by_bucket.get(bucket, DEFAULT_STRATEGY_MODE)
+
+    # Conservative shifts one step safer, aggressive shifts one step riskier.
+    order = ["DEFEND", "CONTROLLED", "BALANCED", "RECOVERY"]
+    idx = order.index(base_mode)
+    if posture == "CONSERVATIVE":
+        idx = max(0, idx - 1)
+    elif posture == "AGGRESSIVE":
+        idx = min(len(order) - 1, idx + 1)
+
+    return order[idx]
+
+
+def get_transfer_threshold_base(strategy_mode: str) -> float:
+    """
+    Base projected gain required before FT multiplier is applied.
+    """
+    base = {
+        "DEFEND": 2.8,
+        "CONTROLLED": 2.2,
+        "BALANCED": 1.8,
+        "RECOVERY": 0.9,
+        "DEFAULT": 1.8,
+    }
+    return base.get((strategy_mode or "").upper(), base["DEFAULT"])

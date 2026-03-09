@@ -34,6 +34,26 @@
 | balanced | Balanced | ⚖️ | Take calculated risks when value is clear, standard FPL strategy |
 | aggressive | Aggressive | 🎲 | Take risks for rank improvement, consider differential captains and punts |
 
+## Strategy Modes (Auto-Selected)
+
+| Mode | Trigger (Rank Bucket Default) | Behavior |
+|------|-------------------------------|----------|
+| DEFEND | `<= 50k` | Protect floor, favor high-ownership/template picks, stricter transfer bar |
+| CONTROLLED | `50,001-500k` | Stable upgrades with moderate variance |
+| BALANCED | `500,001-3M` | Standard EV posture with normal thresholding |
+| RECOVERY | `> 3M` | Lower transfer thresholds, higher leverage/differential tolerance |
+
+Risk posture then nudges this mode one step safer (`conservative`) or riskier (`aggressive`) when possible.
+
+## Rank Bucket Ladder
+
+| Bucket | Overall Rank |
+|--------|--------------|
+| elite | `<= 50,000` |
+| strong | `50,001-500,000` |
+| mid | `500,001-3,000,000` |
+| recovery | `> 3,000,000` |
+
 ## Transfer Metrics Explained
 
 | Metric | What It Means |
@@ -43,6 +63,18 @@
 | **Net £** | How your bank changes after the transfer (positive = more money, negative = less money) |
 | **Δ pts (4 GW)** | Expected total point gain over the next 4 gameweeks |
 | **Δ pts (6 GW)** | Expected total point gain over the next 6 gameweeks |
+
+## New Transparency Fields (API/UI)
+
+| Field | Meaning |
+|-------|---------|
+| `strategy_mode` | Active rank-aware mode used to score and gate moves |
+| `manager_state` | Rank/posture/mode context (`overall_rank`, `risk_posture`, `strategy_mode`, `rank_bucket`, `free_transfers`) |
+| `near_threshold_moves` | Moves that almost passed thresholds with explicit rejection reasons |
+| `strategy_paths` | Safe/Balanced/Aggressive alternatives for override decisions |
+| `squad_issues` | Structural diagnostics (lineup weakness, bench risk, availability flags) |
+| `chip_timing_outlook` | Suggested future windows for BB/TC/FH with rationale |
+| `transfer_plans.no_transfer_reason` | Threshold-aware explanation when no move is recommended |
 
 ## Captain Roles
 

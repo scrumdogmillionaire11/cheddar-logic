@@ -415,6 +415,42 @@ const LOGGED_TEAM_VARIANTS = [
   'Wright St Raiders',
   'Wyoming Cowboys',
   'Youngstown St Penguins',
+  // Additional mid-major/smaller NCAAM programs discovered from live odds API
+  'Campbell Fighting Camels',
+  'East Tennessee St Buccaneers',
+  'Eastern Washington Eagles',
+  'Florida Int\'l Golden Panthers',
+  'Gonzaga Bulldogs',
+  'Hofstra Pride',
+  'Jacksonville St Gamecocks',
+  'LIU Sharks',
+  'Merrimack Warriors',
+  'Monmouth Hawks',
+  'Montana Grizzlies',
+  'N Colorado Bears',
+  'New Mexico St Aggies',
+  'New Orleans Privateers',
+  'NJIT Highlanders',
+  'Oklahoma St Cowboys',
+  'Oregon St Beavers',
+  'Santa Clara Broncos',
+  'Siena Saints',
+  'Saint Mary\'s Gaels',
+  'Texas A&M-CC Islanders',
+  'Troy Trojans',
+  'UMBC Retrievers',
+  'UMass Lowell River Hawks',
+  'UT Rio Grande Valley Vaqueros',
+  'Wake Forest Demon Deacons',
+  // Additional variants discovered from live odds pull
+  'Furman Paladins',
+  'Georgia Southern Eagles',
+  'Mercyhurst Lakers',
+  'Missouri St Bears',
+  'Nicholls St Colonels',
+  'Towson Tigers',
+  'Vermont Catamounts',
+  'Weber State Wildcats',
 ];
 
 for (const teamName of LOGGED_TEAM_VARIANTS) {
@@ -466,6 +502,42 @@ function normalizeTeamName(teamName, context = 'normalizeTeamName') {
   
   // Return cleaned original (preserves case for human review in logs/UI)
   return cleaned;
+}
+
+/**
+ * Resolve team name against TEAM_VARIANTS and return match metadata.
+ * Unknown variants are tracked via discovery map and returned as unmatched.
+ *
+ * @param {unknown} teamName - Input team name
+ * @param {string} context - Optional context for logging/discovery
+ * @returns {{normalized: string, canonical: string, matched: boolean, key: string}}
+ */
+function resolveTeamVariant(teamName, context = 'resolveTeamVariant') {
+  if (!teamName || typeof teamName !== 'string') {
+    return { normalized: '', canonical: '', matched: false, key: '' };
+  }
+
+  const normalized = cleanText(teamName);
+  const key = normalizeTeamVariantKey(normalized);
+
+  if (key && TEAM_VARIANT_LOOKUP.has(key)) {
+    const canonical = TEAM_VARIANT_LOOKUP.get(key);
+    return { normalized, canonical, matched: true, key };
+  }
+
+  trackUnknownTeamVariant(normalized);
+  return { normalized, canonical: normalized, matched: false, key };
+}
+
+/**
+ * Check whether the provided team name is covered by TEAM_VARIANTS.
+ *
+ * @param {unknown} teamName - Input team name
+ * @returns {boolean}
+ */
+function isKnownTeamVariant(teamName) {
+  const result = resolveTeamVariant(teamName, 'isKnownTeamVariant');
+  return result.matched;
 }
 
 /**
@@ -591,6 +663,8 @@ module.exports = {
   
   // Team
   normalizeTeamName,
+  resolveTeamVariant,
+  isKnownTeamVariant,
   teamLookupKey,
   getDiscoveredTeamVariants,
   clearDiscoveredTeamVariants,

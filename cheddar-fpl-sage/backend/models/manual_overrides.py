@@ -102,10 +102,15 @@ class DetailedAnalysisResponse(BaseModel):
     primary_decision: str
     confidence: str
     reasoning: str
+    strategy_mode: Optional[str] = None
+    manager_state: Optional[Dict] = None
     
     # Transfers with detailed reasoning
     transfer_recommendations: List[Dict]
     transfer_plans: Optional[Dict] = None
+    near_threshold_moves: Optional[List[Dict]] = None
+    strategy_paths: Optional[Dict] = None
+    squad_issues: Optional[List[Dict]] = None
     
     # Captaincy
     captain: Optional[Dict]
@@ -128,6 +133,7 @@ class DetailedAnalysisResponse(BaseModel):
     
     # Chip guidance
     chip_recommendation: Optional[Dict]
+    chip_timing_outlook: Optional[Dict] = None
     available_chips: List[str]
     
     # Squad health metrics

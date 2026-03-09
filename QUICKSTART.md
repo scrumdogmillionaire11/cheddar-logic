@@ -168,6 +168,7 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
 - Jobs are idempotent when run with a jobKey. The CLI scripts use time-based job keys internally.
 - Cards expire 1 hour before game start; stale odds will not emit cards.
 - NCAAM cards are driver-based; if no cards appear, there may be no actionable signals.
+- Projection completeness gate: NBA/NHL/NCAAM jobs now block per-game driver/pricing output when required projection inputs are missing. Logs show `PROJECTION_INPUTS_INCOMPLETE (...)` with explicit missing fields.
 
 ### Troubleshooting
 
@@ -183,7 +184,10 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
   - Ensure odds exist in the DB for the sport and time window.
   - Run seed data and try again.
 - ESPN enrichment missing:
-  - Jobs degrade gracefully; drivers will skip if required metrics are missing.
+  - Jobs degrade gracefully; games with missing required projection fields are gated with `PROJECTION_INPUTS_INCOMPLETE`.
+  - Check worker logs for missing fields and refresh odds/enrichment before rerunning.
+- Enrichment persistence warning:
+  - If you see `Failed to persist enrichment payload`, the run continues in-memory for that game, but you should rerun ingestion to restore DB persistence consistency.
 - Validation failure:
   - Inspect payload_data for missing fields required by card schema.
 - Database corruption ("database disk image is malformed"):
@@ -201,6 +205,52 @@ npm --prefix packages/data test
 # Start scheduler (if configured)
 npm --prefix apps/worker run scheduler
 ```
+
+---
+
+## Production/Pi Manual Execution
+
+**Important:** The scheduler must be stopped before running manual jobs to avoid database lock conflicts due to the single-writer contract.
+
+### Quick Commands (Production)
+
+```bash
+# Stop scheduler
+./scripts/manage-scheduler.sh stop
+
+# Verify scheduler is stopped before manual writes
+./scripts/manage-scheduler.sh status
+
+# Run models with production DB
+CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:run-nba-model
+CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:run-nhl-model
+CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:run-ncaam-model
+
+# Restart scheduler
+./scripts/manage-scheduler.sh start
+
+# Verify scheduler resumed on the same DB path
+./scripts/manage-scheduler.sh db
+```
+
+### With .env.production
+
+```bash
+# Stop scheduler
+./scripts/manage-scheduler.sh stop
+
+# Load production env and run models
+cd /opt/cheddar-logic
+set -a; source .env.production; set +a
+npm --prefix apps/worker run job:run-nba-model
+npm --prefix apps/worker run job:run-nhl-model
+npm --prefix apps/worker run job:run-ncaam-model
+
+# Restart scheduler
+./scripts/manage-scheduler.sh start
+```
+
+**Note:** The single-writer contract prevents simultaneous DB access. Always stop the scheduler before manual runs to avoid "Refusing to open /opt/data/cheddar-prod.db because another process holds the lock" errors.
 
 ---
 

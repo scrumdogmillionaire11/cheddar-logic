@@ -4,6 +4,39 @@
 **Status:** Active Discussion  
 **Context:** With 4-5 free transfers, system still recommends "Roll Transfer"
 
+## March 9, 2026 Update (Rank-Recovery Layer Implemented)
+
+The transfer engine now uses an explicit rank-aware strategy mode before applying transfer gates.
+
+### Strategy Mode Derivation
+
+1. Base mode from rank bucket:
+   - `<=50k -> DEFEND`
+   - `50,001-500k -> CONTROLLED`
+   - `500,001-3M -> BALANCED`
+   - `>3M -> RECOVERY`
+2. Risk posture nudge:
+   - `conservative`: one step safer (if possible)
+   - `aggressive`: one step riskier (if possible)
+
+### Transfer Threshold Bases (before FT multiplier)
+
+| Strategy Mode | Base Required Gain |
+|---------------|--------------------|
+| DEFEND | `2.8` |
+| CONTROLLED | `2.2` |
+| BALANCED | `1.8` |
+| RECOVERY | `0.9` |
+
+Free transfer multipliers remain active (`1 FT = 1.0x`, `2 FT = 0.75x`, `3 FT = 0.6x`, `4 FT = 0.5x`, `5 FT = 0.4x`), so `RECOVERY` materially lowers the barrier vs `BALANCED`.
+
+### New Output Diagnostics
+
+- `near_threshold_moves`: explicitly shows almost-qualifying moves and rejection reasons.
+- `strategy_paths`: safe/balanced/aggressive alternatives surfaced for user override.
+- `squad_issues`: structural problem list (lineup, bench, availability).
+- `no_transfer_reason`: threshold-specific message (not generic).
+
 ## 🔍 Current Issues Identified
 
 ### 1. **Max Free Transfers Cap** ✅ FIXED

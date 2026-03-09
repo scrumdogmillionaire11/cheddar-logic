@@ -530,10 +530,15 @@ async def get_detailed_projections(analysis_id: str):
         primary_decision=results.get("primary_decision", "HOLD"),
         confidence=results.get("confidence", "MEDIUM"),
         reasoning=results.get("reasoning", "Analysis complete"),
-        
+        strategy_mode=results.get("strategy_mode"),
+        manager_state=results.get("manager_state"),
+
         # Transfer details
         transfer_recommendations=results.get("transfer_recommendations", []),
         transfer_plans=results.get("transfer_plans"),
+        near_threshold_moves=results.get("near_threshold_moves"),
+        strategy_paths=results.get("strategy_paths"),
+        squad_issues=results.get("squad_issues"),
         captain=results.get("captain"),
         vice_captain=results.get("vice_captain"),
         captain_delta=results.get("captain_delta"),
@@ -548,6 +553,7 @@ async def get_detailed_projections(analysis_id: str):
         # Risk & chips
         risk_scenarios=results.get("risk_scenarios", []),
         chip_recommendation=results.get("chip_recommendation"),
+        chip_timing_outlook=results.get("chip_timing_outlook"),
         available_chips=results.get("available_chips", []),
         squad_health=results.get("squad_health"),
     )

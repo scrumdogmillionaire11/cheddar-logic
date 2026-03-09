@@ -282,6 +282,16 @@ For wave-1 betting rows, worker-emitted `decision_v2` is canonical and required:
   - `decision_v2.play_tier` (`BEST` | `GOOD` | `OK` | `BAD`)
   - `decision_v2.primary_reason_code` (single top-level reason)
 
+Projection input contract (worker-emitted card payload metadata):
+
+- `projection_inputs_complete` (boolean)
+- `missing_inputs` (string[])
+
+Worker execution gate:
+
+- If `projection_inputs_complete` is `false`, the worker must block downstream driver/pricing emission for that game in the run.
+- When `missing_inputs` is present, `decision_v2.missing_data.missing_fields` may include normalized projection entries (for example `projection.home_avg_goals_for`) and `watchdog_reason_codes` should include `WATCHDOG_CONSISTENCY_MISSING`.
+
 `decision_v2` shape:
 
 ```ts

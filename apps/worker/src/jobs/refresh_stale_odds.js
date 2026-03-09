@@ -33,11 +33,11 @@ const {
   withDb,
 } = require('@cheddar-logic/data');
 
-// Import odds fetching package
 const {
-  fetchOdds,
-  getActiveSports,
-} = require('@cheddar-logic/odds');
+  resolveTeamVariant,
+} = require('@cheddar-logic/data/src/normalize');
+
+const { fetchOdds, getActiveSports } = require('@cheddar-logic/odds');
 
 /**
  * Get odds interval minutes based on time-to-start
@@ -272,6 +272,17 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
             }
 
             try {
+              // Validate team variant mapping before persisting
+              const homeVariant = resolveTeamVariant(normalized.homeTeam, `refresh-stale-odds:${sport}`);
+              const awayVariant = resolveTeamVariant(normalized.awayTeam, `refresh-stale-odds:${sport}`);
+
+              if (!homeVariant.matched || !awayVariant.matched) {
+                const msg = `TEAM_MAPPING_UNMAPPED: game=${normalized.gameId} sport=${sport} home="${normalized.homeTeam}"(matched=${homeVariant.matched}) away="${normalized.awayTeam}"(matched=${awayVariant.matched})`;
+                console.warn(`[RefreshStaleOdds]   ⚠️  ${msg}`);
+                errors.push(`${sport}/${normalized.gameId}: ${msg}`);
+                continue; // Skip unmapped teams entirely
+              }
+
               const stableGameId = `game-${sport.toLowerCase()}-${normalized.gameId}`;
 
               // Update game record (may have status changes)

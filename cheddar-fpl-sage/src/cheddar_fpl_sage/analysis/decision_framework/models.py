@@ -62,4 +62,20 @@ class DecisionSummary(BaseModel):
     captain: Optional[CaptainPick] = None
     chip: Optional[ChipRecommendation] = None
     optimized_xi: Optional[OptimizedXI] = None
-    risk_posture: Literal["CHASE", "DEFEND", "BALANCED"] = "BALANCED"
+    risk_posture: Literal[
+        "CHASE",
+        "DEFEND",
+        "BALANCED",
+        "CONSERVATIVE",
+        "AGGRESSIVE",
+    ] = "BALANCED"
+    strategy_mode: Literal["DEFEND", "CONTROLLED", "BALANCED", "RECOVERY"] = "BALANCED"
+
+
+class ManagerState(BaseModel):
+    """Rank-aware strategy context surfaced to API/UI layers."""
+    overall_rank: Optional[int] = None
+    risk_posture: str = "BALANCED"
+    strategy_mode: str = "BALANCED"
+    rank_bucket: str = "unknown"
+    free_transfers: int = 0

@@ -93,6 +93,15 @@ class DecisionOutput:
     free_hit_context: Optional[Dict] = None
     free_hit_plan: Optional[Dict] = None
     post_free_hit_plan: Optional[Dict] = None
+    strategy_mode: str = "BALANCED"
+    rank_bucket: str = "unknown"
+    manager_state: Optional[Dict] = None
+    near_threshold_moves: List[Dict] = None
+    strategy_paths: Optional[Dict] = None
+    squad_issues: List[Dict] = None
+    chip_timing_outlook: Optional[Dict] = None
+    no_transfer_reason: Optional[str] = None
+    fixture_planner: Optional[Dict] = None
 
 
 class EnhancedDecisionFramework:
@@ -135,6 +144,43 @@ class EnhancedDecisionFramework:
             "tc_setup_gameweeks_ahead": 2
         }
         self._window_context: Dict[str, Any] = {}
+
+    def _derive_manager_state(self, team_data: Dict, free_transfers: int = 0) -> Dict[str, Any]:
+        """Build rank-aware manager state used by solver and API transparency."""
+        from .decision_framework.constants import derive_rank_bucket, derive_strategy_mode
+
+        team_info = team_data.get("team_info", {}) if isinstance(team_data, dict) else {}
+        overall_rank = team_info.get("overall_rank")
+        rank_bucket = derive_rank_bucket(overall_rank)
+        strategy_mode = derive_strategy_mode(overall_rank, self.risk_posture)
+        return {
+            "overall_rank": overall_rank,
+            "risk_posture": self.risk_posture,
+            "strategy_mode": strategy_mode,
+            "rank_bucket": rank_bucket,
+            "free_transfers": int(free_transfers or 0),
+        }
+
+    def _derive_chip_timing_outlook(self, manager_state: Dict[str, Any], window_context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Summarize chip windows even when recommendation is save/none.
+        """
+        current_name = window_context.get("current_window_name")
+        best_name = window_context.get("best_future_window_name")
+        best_gw = window_context.get("best_future_window_score")
+        return {
+            "bench_boost_window": best_name or current_name,
+            "triple_captain_window": best_name or current_name,
+            "free_hit_window": best_name or current_name,
+            "rationale": (
+                f"Strategy mode {manager_state.get('strategy_mode', 'BALANCED')} "
+                f"prefers {best_name or 'current'} window based on chip window scores."
+            ),
+            "window_rank": window_context.get("window_rank"),
+            "current_window_name": current_name,
+            "best_future_window_name": best_name,
+            "best_future_window_score": best_gw,
+        }
     
     def _load_injury_reports(self, team_data: Dict) -> Optional[Dict[int, InjuryReport]]:
         """Load injury reports from resolved data if available"""
@@ -486,6 +532,29 @@ class EnhancedDecisionFramework:
             
         available_chips = self._get_available_chips(team_data.get('chip_status', {}))
         free_transfers = team_data.get('team_info', {}).get('free_transfers', 0)
+        manager_state = self._derive_manager_state(team_data, free_transfers=free_transfers)
+        strategy_mode = manager_state.get("strategy_mode", "BALANCED")
+
+        # Expose strategy context across orchestrator + delegates.
+        self.strategy_mode = strategy_mode
+        self._transfer_advisor.strategy_mode = strategy_mode
+        self._captain_selector.strategy_mode = strategy_mode
+        fixture_horizon_context = team_data.get("fixture_horizon_context", {})
+        self._transfer_advisor.fixture_horizon_context = (
+            fixture_horizon_context if isinstance(fixture_horizon_context, dict) else {}
+        )
+        self._captain_selector.fixture_horizon_context = (
+            fixture_horizon_context if isinstance(fixture_horizon_context, dict) else {}
+        )
+        setattr(self._chip_analyzer, "strategy_mode", strategy_mode)
+        team_data["manager_state"] = manager_state
+        manager_context = team_data.get("manager_context")
+        if not isinstance(manager_context, dict):
+            manager_context = {}
+        manager_context["mode"] = strategy_mode
+        manager_context["risk_posture"] = self.risk_posture
+        team_data["manager_context"] = manager_context
+
         window_context = self._build_chip_window_context(team_data, fixture_data, current_gw)
         window_context['available_chips'] = available_chips
         window_context['current_gw'] = current_gw
@@ -500,6 +569,17 @@ class EnhancedDecisionFramework:
         decision.captaincy = self._recommend_captaincy_from_xi(optimized_xi, fixture_data, projections, injury_reports)
         decision.transfer_recommendations = self._recommend_transfers(team_data, free_transfers, projections)
         decision.optimized_xi = optimized_xi
+        transfer_audit = getattr(self._transfer_advisor, "last_transfer_audit", {}) or {}
+        decision.strategy_mode = strategy_mode
+        decision.rank_bucket = manager_state.get("rank_bucket", "unknown")
+        decision.manager_state = manager_state
+        decision.near_threshold_moves = transfer_audit.get("near_threshold_moves", [])
+        decision.strategy_paths = transfer_audit.get("strategy_paths", {})
+        decision.squad_issues = transfer_audit.get("squad_issues", [])
+        decision.no_transfer_reason = transfer_audit.get("no_transfer_reason")
+        decision.chip_timing_outlook = self._derive_chip_timing_outlook(manager_state, window_context)
+        if not decision.reasoning and transfer_audit.get("no_transfer_reason"):
+            decision.reasoning = transfer_audit["no_transfer_reason"]
         return decision
     
     def _decide_optimal_chip_strategy(self, team_data: Dict, fixture_data: Dict, 
@@ -1352,19 +1432,62 @@ class EnhancedDecisionFramework:
 
     def _score_window_for_team(self, fixtures: List[Dict], team_id: Optional[int],
                                start_event: int, end_event: int, current_gw: int) -> float:
-        score = 0
+        from .decision_framework.fixture_horizon import TIME_DECAY_WEIGHTS
+
+        def _clamp(value: float, minimum: float, maximum: float) -> float:
+            return max(minimum, min(maximum, value))
+
+        score = 0.0
         window_start = max(start_event, current_gw)
         if team_id is None:
             return 0.0
+        per_gw: Dict[int, Dict[str, Any]] = {
+            gw: {"fixture_count": 0, "difficulty_values": []}
+            for gw in range(window_start, end_event + 1)
+        }
+
+        seen = set()
         for fixture in fixtures:
+            fixture_id = fixture.get("id")
+            if fixture_id is not None:
+                uniq = ("id", fixture_id)
+            else:
+                uniq = (
+                    "fallback",
+                    fixture.get("event") or fixture.get("gw"),
+                    fixture.get("team_h"),
+                    fixture.get("team_a"),
+                    fixture.get("kickoff_time"),
+                )
+            if uniq in seen:
+                continue
+            seen.add(uniq)
+
             event = fixture.get("event") or fixture.get("gw")
             if event is None or event < window_start or event > end_event:
                 continue
-            if team_id is not None:
-                if fixture.get("team_h") != team_id and fixture.get("team_a") != team_id:
-                    continue
-            score += 1
-        return float(score)
+            if fixture.get("team_h") == team_id:
+                per_gw[event]["fixture_count"] += 1
+                per_gw[event]["difficulty_values"].append(float(fixture.get("team_h_difficulty") or 3.0))
+            elif fixture.get("team_a") == team_id:
+                per_gw[event]["fixture_count"] += 1
+                per_gw[event]["difficulty_values"].append(float(fixture.get("team_a_difficulty") or 3.0))
+
+        for idx, gw in enumerate(range(window_start, end_event + 1)):
+            row = per_gw.get(gw, {"fixture_count": 0, "difficulty_values": []})
+            fixture_count = int(row.get("fixture_count") or 0)
+            diffs = row.get("difficulty_values") or []
+            avg_diff = (sum(diffs) / len(diffs)) if diffs else 3.0
+            if fixture_count == 0:
+                gw_raw = -4.0
+            else:
+                gw_raw = fixture_count * (3.0 - avg_diff)
+                if fixture_count >= 2:
+                    gw_raw += 1.0
+            weight = TIME_DECAY_WEIGHTS[idx] if idx < len(TIME_DECAY_WEIGHTS) else TIME_DECAY_WEIGHTS[-1]
+            score += gw_raw * weight
+
+        return _clamp(float(score), -25.0, 25.0)
 
     def _return_no_chip_action(self, window_context: Dict[str, Any], available_chips: List[ChipType],
                                reason: str, reason_code: str = None) -> DecisionOutput:
@@ -1531,8 +1654,8 @@ class EnhancedDecisionFramework:
         Resolve manager context mode for plan discipline.
         Uses orchestrator's risk_posture as authoritative source.
         """
-        # Use orchestrator's risk_posture (set from config at initialization)
-        return self.risk_posture
+        manager_state = team_data.get("manager_state", {}) if isinstance(team_data, dict) else {}
+        return manager_state.get("strategy_mode", getattr(self, "strategy_mode", "BALANCED"))
 
     def _context_allows_transfer(self, context_mode: str, projected_gain: float, free_transfers: int = 1) -> bool:
         """Determine whether the requested transfer gain satisfies context thresholds.
@@ -1540,19 +1663,9 @@ class EnhancedDecisionFramework:
         With multiple free transfers, we should be MORE aggressive as the cost is lower.
         Adjust thresholds based on available free transfers.
         """
-        base_thresholds = {
-            "CHASE": 1.2,
-            "AGGRESSIVE": 1.2,      # LOWERED from 2.0 - more proactive
-            "RISK_ON": 0.8,
-            "DEFEND": 3.5,
-            "FORCE_CHIP": 0.5,
-            "TC_COMMITMENT": 0.0,
-            "BALANCED": 2.0,        # LOWERED from 2.5
-            "DEFAULT": 2.0,
-            "CONSERVATIVE": 2.8
-        }
-        
-        base_required = base_thresholds.get(context_mode, base_thresholds["DEFAULT"])
+        from .decision_framework.constants import get_transfer_threshold_base
+
+        base_required = get_transfer_threshold_base(context_mode)
         
         # Apply free transfer multiplier - more FTs = lower threshold
         if free_transfers >= 5:

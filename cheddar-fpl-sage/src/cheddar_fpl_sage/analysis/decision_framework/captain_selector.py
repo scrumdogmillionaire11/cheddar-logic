@@ -13,6 +13,66 @@ class CaptainSelector:
 
     def __init__(self, risk_posture: str = "BALANCED"):
         self.risk_posture = risk_posture
+        self.strategy_mode = "BALANCED"
+        self.fixture_horizon_context: Dict = {}
+
+    @staticmethod
+    def _clamp(value: float, minimum: float, maximum: float) -> float:
+        return max(minimum, min(maximum, value))
+
+    def _get_horizon_summary(self, player) -> Dict:
+        ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
+        summary_by_id = ctx.get("player_summary_by_id") or {}
+        player_id = getattr(player, "player_id", None)
+        if player_id is None:
+            return {}
+        return summary_by_id.get(player_id) or summary_by_id.get(str(player_id)) or {}
+
+    def _horizon_captain_adjustment(self, player) -> float:
+        """
+        DGW/BGW captain adjustment with deterministic caps.
+        Formula:
+        clamp((0.40*near_dgw) - (0.95*near_bgw), -1.00, +0.70)
+        """
+        summary = self._get_horizon_summary(player)
+        if not summary:
+            return 0.0
+
+        near_dgw = float(summary.get("near_dgw") or 0.0)
+        near_bgw = float(summary.get("near_bgw") or 0.0)
+
+        # DGW bonus gate: minutes >= 60 and not injury-risk.
+        xmins = float(getattr(player, "xMins_next", 0.0) or 0.0)
+        is_injury_risk = bool(getattr(player, "is_injury_risk", False))
+        if xmins < 60 or is_injury_risk:
+            near_dgw = 0.0
+
+        raw_adj = (0.40 * near_dgw) - (0.95 * near_bgw)
+        return self._clamp(raw_adj, -1.00, 0.70)
+
+    def _score_captain_candidate(self, player, strategy_mode: str) -> float:
+        """Score captain options with strategy-specific leverage/floor profiles."""
+        strategy = (strategy_mode or "BALANCED").upper()
+        next_pts = float(getattr(player, "nextGW_pts", 0) or 0)
+        ownership = float(getattr(player, "ownership_pct", 20) or 20)
+        floor = float(getattr(player, "floor", next_pts * 0.8) or next_pts * 0.8)
+        ceiling = float(getattr(player, "ceiling", next_pts * 1.2) or next_pts * 1.2)
+
+        if strategy == "RECOVERY":
+            base_score = next_pts + ((100 - ownership) * 0.035) + ((ceiling - next_pts) * 0.7)
+        elif strategy == "DEFEND":
+            base_score = next_pts + (ownership * 0.02) + (floor * 0.25)
+        elif strategy == "CONTROLLED":
+            base_score = next_pts + (floor * 0.15) + ((100 - ownership) * 0.015)
+        else:
+            base_score = next_pts + (floor * 0.10)
+
+        horizon_adj = self._horizon_captain_adjustment(player)
+        dominance_cap = 0.2 * abs(base_score)
+        if dominance_cap <= 0:
+            return base_score
+        capped_adj = self._clamp(horizon_adj, -dominance_cap, dominance_cap)
+        return base_score + capped_adj
 
     def recommend_captaincy(
         self,
@@ -117,8 +177,13 @@ class CaptainSelector:
                 }
             }
             
-        captain = eligible[0]
-        vice = eligible[1] if len(eligible) > 1 else eligible[0]
+        ranked = sorted(
+            eligible,
+            key=lambda p: self._score_captain_candidate(p, self.strategy_mode),
+            reverse=True,
+        )
+        captain = ranked[0]
+        vice = ranked[1] if len(ranked) > 1 else ranked[0]
         
         # Build candidate list for transparency
         candidate_list = [
@@ -128,9 +193,10 @@ class CaptainSelector:
                 "team": p.team,
                 "position": p.position,
                 "nextGW_pts": getattr(p, "nextGW_pts", 0),
-                "ownership_pct": getattr(p, "ownership_pct", 0)
+                "ownership_pct": getattr(p, "ownership_pct", 0),
+                "strategy_score": round(self._score_captain_candidate(p, self.strategy_mode), 2),
             }
-            for p in eligible[:3]
+            for p in ranked[:3]
         ]
         
         return {

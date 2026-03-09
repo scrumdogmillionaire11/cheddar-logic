@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 # These calculations happen once in the backend, consumed by all frontends
 # =============================================================================
 
+
+def _to_float(value: Any) -> Optional[float]:
+    """Best-effort numeric coercion for additive contract fields."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
 def _calculate_captain_delta(captain_data: Optional[Dict], vice_data: Optional[Dict]) -> Dict[str, Any]:
     """
     Calculate the points delta between captain and vice captain.
@@ -26,19 +36,29 @@ def _calculate_captain_delta(captain_data: Optional[Dict], vice_data: Optional[D
     if not captain_data or not vice_data:
         return {"delta_pts": None, "delta_pts_4gw": None}
 
-    captain_pts = captain_data.get("expected_pts") or captain_data.get("nextGW_pts") or 0
-    vice_pts = vice_data.get("expected_pts") or vice_data.get("nextGW_pts") or 0
+    captain_pts = _to_float(captain_data.get("expected_pts"))
+    if captain_pts is None:
+        captain_pts = _to_float(captain_data.get("nextGW_pts"))
+    vice_pts = _to_float(vice_data.get("expected_pts"))
+    if vice_pts is None:
+        vice_pts = _to_float(vice_data.get("nextGW_pts"))
 
     # Calculate 4GW delta if available
-    captain_4gw = captain_data.get("next4gw_pts") or captain_data.get("next4_pts")
-    vice_4gw = vice_data.get("next4gw_pts") or vice_data.get("next4_pts")
+    captain_4gw = _to_float(captain_data.get("next4gw_pts"))
+    if captain_4gw is None:
+        captain_4gw = _to_float(captain_data.get("next4_pts"))
+    vice_4gw = _to_float(vice_data.get("next4gw_pts"))
+    if vice_4gw is None:
+        vice_4gw = _to_float(vice_data.get("next4_pts"))
 
     delta_4gw = None
     if captain_4gw is not None and vice_4gw is not None:
         delta_4gw = round(captain_4gw - vice_4gw, 1)
 
     return {
-        "delta_pts": round(captain_pts - vice_pts, 1) if captain_pts and vice_pts else None,
+        "delta_pts": round(captain_pts - vice_pts, 1)
+        if captain_pts is not None and vice_pts is not None
+        else None,
         "delta_pts_4gw": delta_4gw
     }
 
@@ -593,6 +613,21 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
     else:
         decision_dict = decision if isinstance(decision, dict) else {}
     
+    strategy_mode = decision_dict.get("strategy_mode")
+    manager_state = decision_dict.get("manager_state")
+    if not isinstance(manager_state, dict):
+        manager_state = {}
+    if not strategy_mode:
+        strategy_mode = manager_state.get("strategy_mode") or "BALANCED"
+    if not manager_state:
+        manager_state = {
+            "overall_rank": overall_rank,
+            "risk_posture": decision_dict.get("risk_posture", "BALANCED"),
+            "strategy_mode": strategy_mode,
+            "rank_bucket": "unknown",
+            "free_transfers": free_transfers or 0,
+        }
+
     # Build transformed result
     result = {
         "team_name": team_name,
@@ -606,6 +641,13 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         "decision_status": decision_dict.get("decision_status"),
         "confidence": _map_confidence(decision_dict.get("decision_status")),
         "reasoning": decision_dict.get("reasoning", ""),
+        "strategy_mode": strategy_mode,
+        "manager_state": manager_state,
+        "near_threshold_moves": decision_dict.get("near_threshold_moves") or [],
+        "strategy_paths": decision_dict.get("strategy_paths") or {},
+        "squad_issues": decision_dict.get("squad_issues") or [],
+        "chip_timing_outlook": decision_dict.get("chip_timing_outlook") or None,
+        "no_transfer_reason": decision_dict.get("no_transfer_reason"),
     }
     
     # Captain and vice captain with delta calculation
@@ -712,7 +754,32 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         result["transfer_plans"] = transfer_plans
     else:
         logger.warning("NO transfer_recommendations found in decision_dict!")
-        result["transfer_plans"] = {"primary": None, "secondary": None, "no_transfer_reason": "No transfer clears value thresholds this GW."}
+        result["transfer_recommendations"] = []
+        result["forced_transfers"] = []
+        result["optional_transfers"] = []
+        transfer_audit_reason = decision_dict.get("no_transfer_reason") or decision_dict.get("reasoning")
+        if not transfer_audit_reason:
+            transfer_audit_reason = (
+                "No transfer met threshold requirements this gameweek."
+            )
+        result["transfer_plans"] = {
+            "primary": None,
+            "secondary": None,
+            "no_transfer_reason": transfer_audit_reason,
+        }
+
+    if result.get("transfer_plans"):
+        audit_reason = decision_dict.get("no_transfer_reason") or decision_dict.get("reasoning")
+        current_reason = result["transfer_plans"].get("no_transfer_reason")
+        if (
+            audit_reason
+            and "threshold" in audit_reason.lower()
+            and (
+                not current_reason
+                or current_reason == "No transfer clears value thresholds this GW."
+            )
+        ):
+            result["transfer_plans"]["no_transfer_reason"] = audit_reason
     
     # Chip guidance - handle both dict and dataclass (ChipDecisionContext)
     chip_guidance = decision_dict.get("chip_guidance", {})

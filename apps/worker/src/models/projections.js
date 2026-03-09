@@ -14,6 +14,107 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseRawData(rawData) {
+  if (!rawData) return {};
+  if (typeof rawData === 'string') {
+    try {
+      return JSON.parse(rawData);
+    } catch {
+      return {};
+    }
+  }
+  return rawData;
+}
+
+function hasNumeric(value) {
+  return toNumber(value) !== null;
+}
+
+function assessProjectionInputs(sport, oddsSnapshot) {
+  const normalizedSport = String(sport || '').toUpperCase();
+  const raw = parseRawData(oddsSnapshot?.raw_data);
+  const missingInputs = [];
+
+  if (normalizedSport === 'NBA') {
+    const homeAvgPoints =
+      raw?.espn_metrics?.home?.metrics?.avgPoints ??
+      raw?.avg_points_home ??
+      raw?.home?.avg_points;
+    const awayAvgPoints =
+      raw?.espn_metrics?.away?.metrics?.avgPoints ??
+      raw?.avg_points_away ??
+      raw?.away?.avg_points;
+    const homeAvgPointsAllowed =
+      raw?.espn_metrics?.home?.metrics?.avgPointsAllowed ??
+      raw?.avg_points_allowed_home ??
+      raw?.home?.avg_points_allowed;
+    const awayAvgPointsAllowed =
+      raw?.espn_metrics?.away?.metrics?.avgPointsAllowed ??
+      raw?.avg_points_allowed_away ??
+      raw?.away?.avg_points_allowed;
+
+    if (!hasNumeric(homeAvgPoints)) missingInputs.push('home_avg_points');
+    if (!hasNumeric(awayAvgPoints)) missingInputs.push('away_avg_points');
+    if (!hasNumeric(homeAvgPointsAllowed)) {
+      missingInputs.push('home_avg_points_allowed');
+    }
+    if (!hasNumeric(awayAvgPointsAllowed)) {
+      missingInputs.push('away_avg_points_allowed');
+    }
+  } else if (normalizedSport === 'NHL') {
+    const homeGoalsFor =
+      raw?.espn_metrics?.home?.metrics?.avgGoalsFor ??
+      raw?.avg_goals_for_home ??
+      raw?.home?.avg_goals_for;
+    const awayGoalsFor =
+      raw?.espn_metrics?.away?.metrics?.avgGoalsFor ??
+      raw?.avg_goals_for_away ??
+      raw?.away?.avg_goals_for;
+    const homeGoalsAgainst =
+      raw?.espn_metrics?.home?.metrics?.avgGoalsAgainst ??
+      raw?.avg_goals_against_home ??
+      raw?.home?.avg_goals_against;
+    const awayGoalsAgainst =
+      raw?.espn_metrics?.away?.metrics?.avgGoalsAgainst ??
+      raw?.avg_goals_against_away ??
+      raw?.away?.avg_goals_against;
+
+    if (!hasNumeric(homeGoalsFor)) missingInputs.push('home_avg_goals_for');
+    if (!hasNumeric(awayGoalsFor)) missingInputs.push('away_avg_goals_for');
+    if (!hasNumeric(homeGoalsAgainst)) {
+      missingInputs.push('home_avg_goals_against');
+    }
+    if (!hasNumeric(awayGoalsAgainst)) {
+      missingInputs.push('away_avg_goals_against');
+    }
+  } else if (normalizedSport === 'NCAAM') {
+    const homeAvgPoints =
+      raw?.espn_metrics?.home?.metrics?.avgPoints ?? raw?.avg_points_home;
+    const awayAvgPoints =
+      raw?.espn_metrics?.away?.metrics?.avgPoints ?? raw?.avg_points_away;
+    const homeAvgPointsAllowed =
+      raw?.espn_metrics?.home?.metrics?.avgPointsAllowed ??
+      raw?.avg_points_allowed_home;
+    const awayAvgPointsAllowed =
+      raw?.espn_metrics?.away?.metrics?.avgPointsAllowed ??
+      raw?.avg_points_allowed_away;
+
+    if (!hasNumeric(homeAvgPoints)) missingInputs.push('home_avg_points');
+    if (!hasNumeric(awayAvgPoints)) missingInputs.push('away_avg_points');
+    if (!hasNumeric(homeAvgPointsAllowed)) {
+      missingInputs.push('home_avg_points_allowed');
+    }
+    if (!hasNumeric(awayAvgPointsAllowed)) {
+      missingInputs.push('away_avg_points_allowed');
+    }
+  }
+
+  return {
+    projection_inputs_complete: missingInputs.length === 0,
+    missing_inputs: missingInputs,
+  };
+}
+
 /**
  * Calculate NBA base projection
  * @param {number} homeOffense - avgPoints
@@ -322,6 +423,7 @@ function projectNBACanonical(
 }
 
 module.exports = {
+  assessProjectionInputs,
   projectNBA,
   projectNBACanonical,
   projectNCAAM,

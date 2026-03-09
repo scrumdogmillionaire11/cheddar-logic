@@ -133,6 +133,55 @@ export interface SquadHealth {
   critical_positions: string[];
 }
 
+export interface ManagerState {
+  overall_rank?: number | null;
+  risk_posture?: string;
+  strategy_mode?: string;
+  rank_bucket?: string;
+  free_transfers?: number;
+}
+
+export interface NearThresholdMove {
+  out: string;
+  in: string;
+  hit_cost?: number;
+  delta_pts_4gw?: number;
+  delta_pts_6gw?: number;
+  threshold_required?: number;
+  rejection_reason?: string;
+}
+
+export interface StrategyPathMove {
+  out: string;
+  in: string;
+  hit_cost?: number;
+  delta_pts_4gw?: number;
+  delta_pts_6gw?: number;
+  confidence?: string;
+  rationale?: string;
+}
+
+export interface StrategyPaths {
+  safe?: StrategyPathMove;
+  balanced?: StrategyPathMove;
+  aggressive?: StrategyPathMove;
+}
+
+export interface SquadIssue {
+  category?: string;
+  severity?: string;
+  title?: string;
+  detail?: string;
+  players?: string[];
+}
+
+export interface ChipTimingOutlook {
+  bench_boost_window?: string;
+  triple_captain_window?: string;
+  free_hit_window?: string;
+  rationale?: string;
+}
+
 export interface DetailedAnalysisResponse {
   team_name: string;
   manager_name: string;
@@ -142,8 +191,13 @@ export interface DetailedAnalysisResponse {
   primary_decision: string;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW' | string;
   reasoning: string;
+  strategy_mode?: string | null;
+  manager_state?: ManagerState | null;
   transfer_recommendations: Array<Record<string, unknown>>;
   transfer_plans?: TransferPlans | null;
+  near_threshold_moves?: NearThresholdMove[] | null;
+  strategy_paths?: StrategyPaths | null;
+  squad_issues?: SquadIssue[] | null;
   captain?: Record<string, unknown> | null;
   vice_captain?: Record<string, unknown> | null;
   captain_delta?: { delta_pts?: number; delta_pts_4gw?: number } | null;
@@ -154,6 +208,7 @@ export interface DetailedAnalysisResponse {
   transfer_targets?: PlayerProjection[] | null;
   risk_scenarios: Array<Record<string, unknown>>;
   chip_recommendation?: Record<string, unknown> | null;
+  chip_timing_outlook?: ChipTimingOutlook | null;
   available_chips: string[];
   squad_health?: SquadHealth | null;
 }

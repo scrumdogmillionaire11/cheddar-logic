@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Optional, List, Any
+import unicodedata
 
 from cheddar_fpl_sage.collectors.enhanced_fpl_collector import EnhancedFPLCollector
 from cheddar_fpl_sage.collectors.weekly_bundle_collector import collect_weekly_bundle, BundlePaths
@@ -25,6 +26,9 @@ from cheddar_fpl_sage.models.injury_report import InjuryReport
 from cheddar_fpl_sage.models.canonical_projections import (
     CanonicalProjectionSet,
     CanonicalPlayerProjection,
+)
+from cheddar_fpl_sage.analysis.decision_framework.fixture_horizon import (
+    build_fixture_horizon_context,
 )
 from cheddar_fpl_sage.validation.data_gate import validate_bundle
 from cheddar_fpl_sage.validation.id_integrity import validate_player_identity
@@ -243,6 +247,11 @@ class FPLSageIntegration:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _normalize_text(value: Any) -> str:
+        text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+        return " ".join(text.lower().split())
+
     def _build_fixture_lookup(self, fixtures: List[Dict], current_gw: int) -> Dict[int, Dict[str, Any]]:
         """Map each team to its next upcoming fixture (event >= current_gw)."""
         lookup: Dict[int, Dict[str, Any]] = {}
@@ -268,6 +277,174 @@ class FPLSageIntegration:
                     "opponent": fixture.get("team_a" if is_home else "team_h"),
                 }
         return lookup
+
+    def _extract_squad_player_refs(self, team_data: Dict) -> List[Dict[str, Any]]:
+        refs: List[Dict[str, Any]] = []
+        for player in team_data.get("current_squad", []) or []:
+            refs.append(
+                {
+                    "player_id": player.get("player_id") or player.get("id") or player.get("element"),
+                    "name": player.get("name"),
+                    "team": player.get("team"),
+                }
+            )
+        return refs
+
+    def _build_fixture_planner_candidate_refs(
+        self,
+        decision: DecisionOutput,
+        projections: CanonicalProjectionSet,
+        team_data: Dict,
+    ) -> List[Dict[str, Any]]:
+        projection_by_id = {p.player_id: p for p in projections.projections}
+        projection_by_name_team = {
+            f"{self._normalize_text(p.name)}|{self._normalize_text(p.team)}": p
+            for p in projections.projections
+        }
+        projection_by_name = {}
+        for p in projections.projections:
+            projection_by_name.setdefault(self._normalize_text(p.name), []).append(p)
+
+        squad_ids = {
+            int(pid)
+            for pid in [
+                (player.get("player_id") or player.get("id") or player.get("element"))
+                for player in (team_data.get("current_squad") or [])
+            ]
+            if isinstance(pid, int) or (isinstance(pid, str) and pid.isdigit())
+        }
+
+        def resolve_projection(ref: Dict[str, Any]):
+            player_id = ref.get("player_id")
+            if player_id is not None:
+                try:
+                    player_id = int(player_id)
+                except (TypeError, ValueError):
+                    player_id = None
+            if player_id is not None and player_id in projection_by_id:
+                return projection_by_id[player_id]
+            name = self._normalize_text(ref.get("name"))
+            team = self._normalize_text(ref.get("team"))
+            if name and team:
+                match = projection_by_name_team.get(f"{name}|{team}")
+                if match:
+                    return match
+            matches = projection_by_name.get(name, [])
+            if len(matches) == 1:
+                return matches[0]
+            return None
+
+        ordered_refs: List[Dict[str, Any]] = []
+        transfer_recs = decision.transfer_recommendations or []
+        for rec in transfer_recs:
+            if not isinstance(rec, dict):
+                continue
+            transfer_in = rec.get("transfer_in") or {}
+            if transfer_in:
+                ordered_refs.append(
+                    {
+                        "player_id": transfer_in.get("player_id"),
+                        "name": transfer_in.get("name"),
+                        "team": transfer_in.get("team"),
+                    }
+                )
+
+        strategy_paths = decision.strategy_paths or {}
+        for key in ("safe", "balanced", "aggressive"):
+            move = strategy_paths.get(key) or {}
+            if move.get("in"):
+                ordered_refs.append({"name": move.get("in")})
+
+        near_threshold_moves = decision.near_threshold_moves or []
+        for move in near_threshold_moves:
+            if not isinstance(move, dict):
+                continue
+            if move.get("in"):
+                ordered_refs.append({"name": move.get("in")})
+
+        filtered: List[Dict[str, Any]] = []
+        seen = set()
+        for ref in ordered_refs:
+            match = resolve_projection(ref)
+            if match:
+                if match.player_id in squad_ids:
+                    continue
+                if match.is_injury_risk or getattr(match, "xMins_next", 0) < 60:
+                    continue
+                key = f"id:{match.player_id}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                filtered.append(
+                    {
+                        "player_id": match.player_id,
+                        "name": match.name,
+                        "team": match.team,
+                        "next6_pts": getattr(match, "next6_pts", 0),
+                    }
+                )
+            else:
+                name = ref.get("name")
+                team = ref.get("team")
+                key = f"name:{self._normalize_text(name)}|team:{self._normalize_text(team)}"
+                if key in seen or not name:
+                    continue
+                seen.add(key)
+                filtered.append({"name": name, "team": team, "next6_pts": 0})
+
+            if len(filtered) >= 12:
+                break
+
+        return filtered
+
+    def _attach_fixture_planner_to_decision(
+        self,
+        decision: DecisionOutput,
+        team_data: Dict,
+        raw_data: Dict[str, Any],
+        current_gw: int,
+        projections: CanonicalProjectionSet,
+    ) -> None:
+        start_gw = team_data.get("next_gameweek") or current_gw
+        try:
+            start_gw = int(start_gw)
+        except (TypeError, ValueError):
+            start_gw = int(current_gw or 1)
+
+        squad_refs = self._extract_squad_player_refs(team_data)
+        candidate_refs = self._build_fixture_planner_candidate_refs(decision, projections, team_data)
+        captain_refs: List[Dict[str, Any]] = []
+        captain_pool = (decision.captaincy or {}).get("candidate_pool") if isinstance(decision.captaincy, dict) else []
+        for candidate in captain_pool or []:
+            if not isinstance(candidate, dict):
+                continue
+            captain_refs.append(
+                {
+                    "player_id": candidate.get("player_id"),
+                    "name": candidate.get("name"),
+                    "team": candidate.get("team"),
+                }
+            )
+
+        context = build_fixture_horizon_context(
+            fixtures=raw_data.get("fixtures", []) or [],
+            teams=raw_data.get("teams", []) or [],
+            players=raw_data.get("players", []) or [],
+            start_gw=start_gw,
+            horizon_gws=8,
+            squad_player_refs=squad_refs,
+            candidate_player_refs=candidate_refs,
+            captain_candidate_refs=captain_refs,
+        )
+        team_data["fixture_horizon_context"] = context
+        decision.fixture_planner = {
+            "horizon_gws": context.get("horizon_gws", 8),
+            "start_gw": context.get("start_gw", start_gw),
+            "gw_timeline": context.get("gw_timeline", []),
+            "squad_windows": context.get("squad_player_windows", []),
+            "target_windows": context.get("candidate_player_windows", []),
+            "key_planning_notes": context.get("key_planning_notes", []),
+        }
     
     async def run_full_analysis(self, save_data: bool = True, overrides: Optional[Dict] = None) -> Dict:
         """
@@ -1319,6 +1496,14 @@ class FPLSageIntegration:
                     'confidence_score': decision_obj.confidence_score,
                     'block_reason': decision_obj.block_reason,
                     'risk_posture': decision_obj.risk_posture,  # CRITICAL: Include risk posture!
+                    'strategy_mode': getattr(decision_obj, "strategy_mode", "BALANCED"),
+                    'rank_bucket': getattr(decision_obj, "rank_bucket", "unknown"),
+                    'manager_state': getattr(decision_obj, "manager_state", None),
+                    'near_threshold_moves': getattr(decision_obj, "near_threshold_moves", None),
+                    'strategy_paths': getattr(decision_obj, "strategy_paths", None),
+                    'squad_issues': getattr(decision_obj, "squad_issues", None),
+                    'chip_timing_outlook': getattr(decision_obj, "chip_timing_outlook", None),
+                    'no_transfer_reason': getattr(decision_obj, "no_transfer_reason", None),
                     'chip_guidance': (
                         decision_obj.chip_guidance.__dict__
                         if getattr(decision_obj, "chip_guidance", None) else None

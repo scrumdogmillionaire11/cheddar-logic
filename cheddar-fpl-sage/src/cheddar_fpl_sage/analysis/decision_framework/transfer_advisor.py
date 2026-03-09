@@ -11,7 +11,9 @@ from .constants import (
     MANUAL_PLAYER_ID_START,
     FALLBACK_PROJECTION_PTS,
     FALLBACK_NEXT_3GW_PTS,
-    FALLBACK_NEXT_5GW_PTS
+    FALLBACK_NEXT_5GW_PTS,
+    get_transfer_threshold_base,
+    get_volatility_multiplier,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,295 @@ class TransferAdvisor:
     def __init__(self, risk_posture: str = "BALANCED", horizon_gws: int = 5):
         self.risk_posture = risk_posture
         self.horizon_gws = horizon_gws
+        self.strategy_mode = "BALANCED"
+        self.last_transfer_audit: Dict[str, Any] = {}
+        self.fixture_horizon_context: Dict[str, Any] = {}
+
+    @staticmethod
+    def _clamp(value: float, minimum: float, maximum: float) -> float:
+        return max(minimum, min(maximum, value))
+
+    def _get_horizon_summary(self, candidate: Any) -> Dict[str, Any]:
+        ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
+        summary_by_id = ctx.get("player_summary_by_id") or {}
+        candidate_id = getattr(candidate, "player_id", None)
+        if candidate_id is None:
+            return {}
+        return summary_by_id.get(candidate_id) or summary_by_id.get(str(candidate_id)) or {}
+
+    def _horizon_transfer_adjustment(self, candidate: Any) -> float:
+        """
+        DGW/BGW transfer adjustment with deterministic caps.
+        Formula:
+        clamp((0.55*near_dgw + 0.30*far_dgw) - (1.10*near_bgw + 0.60*far_bgw), -1.20, +0.90)
+        """
+        summary = self._get_horizon_summary(candidate)
+        if not summary:
+            return 0.0
+
+        near_dgw = float(summary.get("near_dgw") or 0.0)
+        far_dgw = float(summary.get("far_dgw") or 0.0)
+        near_bgw = float(summary.get("near_bgw") or 0.0)
+        far_bgw = float(summary.get("far_bgw") or 0.0)
+
+        # DGW bonus gate: minutes >= 60 and not injury-risk.
+        xmins = float(getattr(candidate, "xMins_next", 0.0) or 0.0)
+        is_injury_risk = bool(getattr(candidate, "is_injury_risk", False))
+        if xmins < 60 or is_injury_risk:
+            near_dgw = 0.0
+            far_dgw = 0.0
+
+        raw_adj = (0.55 * near_dgw + 0.30 * far_dgw) - (1.10 * near_bgw + 0.60 * far_bgw)
+        return self._clamp(raw_adj, -1.20, 0.90)
+
+    def _required_gain(self, context_mode: str, free_transfers: int = 1) -> float:
+        """Calculate required gain threshold with FT multiplier."""
+        base_required = get_transfer_threshold_base(context_mode)
+
+        if free_transfers >= 5:
+            ft_multiplier = 0.4
+        elif free_transfers >= 4:
+            ft_multiplier = 0.5
+        elif free_transfers >= 3:
+            ft_multiplier = 0.6
+        elif free_transfers >= 2:
+            ft_multiplier = 0.75
+        else:
+            ft_multiplier = 1.0
+
+        return round(base_required * ft_multiplier, 2)
+
+    def _score_candidate_for_strategy(self, candidate, strategy_mode: str) -> float:
+        """Rank transfer/captain candidates according to strategy profile."""
+        strategy = (strategy_mode or "BALANCED").upper()
+        next_pts = float(getattr(candidate, "nextGW_pts", 0.0) or 0.0)
+        floor = float(getattr(candidate, "floor", next_pts * 0.8) or (next_pts * 0.8))
+        ceiling = float(getattr(candidate, "ceiling", next_pts * 1.2) or (next_pts * 1.2))
+        ownership = float(getattr(candidate, "ownership_pct", 25.0) or 25.0)
+        volatility = float(getattr(candidate, "volatility_score", 0.5) or 0.5)
+        ppm = float(getattr(candidate, "points_per_million", 0.0) or 0.0)
+
+        if strategy == "RECOVERY":
+            # Rank-chasing mode: allow volatility and reward leverage + upside.
+            base_score = (
+                (next_pts * 1.00)
+                + ((100.0 - ownership) * 0.04)
+                + ((ceiling - next_pts) * 0.60)
+                - (volatility * (0.20 * get_volatility_multiplier(self.risk_posture)))
+            )
+        elif strategy == "DEFEND":
+            # Protect rank: stronger floor/template bias.
+            base_score = (
+                (next_pts * 1.00)
+                + (floor * 0.30)
+                + (ownership * 0.02)
+                - (volatility * (1.20 * get_volatility_multiplier(self.risk_posture)))
+            )
+        elif strategy == "CONTROLLED":
+            base_score = (
+                (next_pts * 1.00)
+                + (ppm * 0.80)
+                + (floor * 0.20)
+                - (volatility * (0.80 * get_volatility_multiplier(self.risk_posture)))
+            )
+        else:
+            # BALANCED default
+            base_score = (
+                (next_pts * 1.00)
+                + (ppm * 0.90)
+                + ((ceiling - floor) * 0.10)
+                - (volatility * (0.60 * get_volatility_multiplier(self.risk_posture)))
+            )
+
+        horizon_adj = self._horizon_transfer_adjustment(candidate)
+        dominance_cap = 0.2 * abs(base_score)
+        if dominance_cap <= 0:
+            return base_score
+        capped_adj = self._clamp(horizon_adj, -dominance_cap, dominance_cap)
+        return base_score + capped_adj
+
+    def _build_strategy_paths(
+        self,
+        squad: List[Dict],
+        projections,
+        bank_value: float,
+        free_transfers: int,
+    ) -> Dict[str, Any]:
+        """
+        Build strategy alternatives (safe/balanced/aggressive) for user override UX.
+        """
+        if not projections or not squad:
+            return {}
+
+        starters = [p for p in squad if p.get("is_starter")]
+        if not starters:
+            return {}
+
+        # Choose weakest starter as the swap-out reference.
+        weakest = None
+        weakest_proj = None
+        for player in starters:
+            proj = projections.get_by_id(player.get("player_id") or player.get("id", 0))
+            if not proj:
+                continue
+            if weakest_proj is None or proj.nextGW_pts < weakest_proj.nextGW_pts:
+                weakest = player
+                weakest_proj = proj
+
+        if weakest is None or weakest_proj is None:
+            return {}
+
+        pos = weakest.get("position")
+        alternatives = [
+            p for p in projections.get_by_position(pos)
+            if p.player_id != weakest_proj.player_id
+            and p.current_price <= (weakest_proj.current_price + bank_value + 0.5)
+            and not p.is_injury_risk
+            and p.xMins_next >= 60
+        ]
+        if not alternatives:
+            return {}
+
+        def pick_for_mode(mode: str) -> Dict[str, Any]:
+            ranked = sorted(
+                alternatives,
+                key=lambda c: self._score_candidate_for_strategy(c, mode),
+                reverse=True,
+            )
+            choice = ranked[0]
+            delta_pts_4gw = round((choice.nextGW_pts - weakest_proj.nextGW_pts) * 4.0, 1)
+            return {
+                "out": weakest_proj.name,
+                "in": choice.name,
+                "hit_cost": 0 if free_transfers > 0 else 4,
+                "delta_pts_4gw": delta_pts_4gw,
+                "delta_pts_6gw": round((choice.next6_pts - weakest_proj.next6_pts), 1),
+                "confidence": "MEDIUM",
+                "rationale": (
+                    f"{mode.title()} path from {weakest_proj.name} to {choice.name} "
+                    f"(Δ4GW {delta_pts_4gw:+.1f})."
+                ),
+            }
+
+        return {
+            "safe": pick_for_mode("DEFEND"),
+            "balanced": pick_for_mode("BALANCED"),
+            "aggressive": pick_for_mode("RECOVERY"),
+        }
+
+    def _build_near_threshold_moves(
+        self,
+        squad: List[Dict],
+        projections,
+        bank_value: float,
+        free_transfers: int,
+        strategy_mode: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Provide transparency for moves that almost met thresholds.
+        """
+        if not projections:
+            return []
+
+        required = self._required_gain(strategy_mode, free_transfers)
+        candidates: List[Dict[str, Any]] = []
+
+        starters = [p for p in squad if p.get("is_starter")]
+        starters_with_proj = []
+        for starter in starters:
+            starter_proj = projections.get_by_id(starter.get("player_id") or starter.get("id", 0))
+            if starter_proj:
+                starters_with_proj.append((starter, starter_proj))
+
+        starters_with_proj.sort(key=lambda item: item[1].nextGW_pts)
+        for starter, starter_proj in starters_with_proj[:3]:
+            alternatives = [
+                p for p in projections.get_by_position(starter.get("position"))
+                if p.player_id != starter_proj.player_id
+                and p.current_price <= (starter_proj.current_price + bank_value + 0.5)
+                and p.xMins_next >= 60
+            ]
+            if not alternatives:
+                continue
+
+            best = sorted(
+                alternatives,
+                key=lambda c: self._score_candidate_for_strategy(c, strategy_mode),
+                reverse=True,
+            )[0]
+            gain = round(best.nextGW_pts - starter_proj.nextGW_pts, 2)
+            if gain >= required:
+                continue
+            if (required - gain) > 1.25:
+                continue
+
+            hit_cost = 0 if free_transfers > 0 else 4
+            candidates.append({
+                "out": starter_proj.name,
+                "in": best.name,
+                "hit_cost": hit_cost,
+                "delta_pts_4gw": round(gain * 4.0, 1),
+                "delta_pts_6gw": round(best.next6_pts - starter_proj.next6_pts, 1),
+                "threshold_required": required,
+                "rejection_reason": (
+                    f"Projected gain {gain:.2f} below required {required:.2f} "
+                    f"for {strategy_mode.upper()} mode."
+                ),
+            })
+
+        return candidates[:3]
+
+    def _build_squad_issues(self, squad: List[Dict], projections) -> List[Dict[str, Any]]:
+        """Surface structural issues for dashboard diagnostics."""
+        issues: List[Dict[str, Any]] = []
+        if not squad:
+            return issues
+
+        starters = [p for p in squad if p.get("is_starter")]
+        bench = [p for p in squad if not p.get("is_starter")]
+        fwd_starters = [p for p in starters if p.get("position") == "FWD"]
+
+        if fwd_starters and projections:
+            weak_fwd = []
+            for fwd in fwd_starters:
+                proj = projections.get_by_id(fwd.get("player_id") or fwd.get("id", 0))
+                if proj and proj.next6_pts < 20:
+                    weak_fwd.append(fwd.get("name"))
+            if weak_fwd:
+                issues.append({
+                    "category": "lineup",
+                    "severity": "MEDIUM",
+                    "title": "Forward line weak",
+                    "detail": "Low 6-GW projection in current FWD starters.",
+                    "players": weak_fwd,
+                })
+
+        if bench and projections:
+            bench_low_minutes = []
+            for player in bench:
+                proj = projections.get_by_id(player.get("player_id") or player.get("id", 0))
+                if proj and proj.xMins_next < 60:
+                    bench_low_minutes.append(player.get("name"))
+            if bench_low_minutes:
+                issues.append({
+                    "category": "bench",
+                    "severity": "MEDIUM",
+                    "title": "Bench minutes risk",
+                    "detail": "Bench depth includes low-minute players.",
+                    "players": bench_low_minutes,
+                })
+
+        flagged = [p.get("name") for p in squad if p.get("status_flag") in {"OUT", "DOUBT"}]
+        if flagged:
+            issues.append({
+                "category": "availability",
+                "severity": "HIGH" if any(p.get("status_flag") == "OUT" for p in squad) else "MEDIUM",
+                "title": "Availability flags",
+                "detail": "Injury/doubt concerns present in squad.",
+                "players": flagged,
+            })
+
+        return issues
 
     def apply_manual_transfers(self, team_data: Dict) -> Dict:
         """
@@ -261,6 +552,18 @@ class TransferAdvisor:
         if 'squad' not in locals():
             squad = team_data.get('current_squad', [])
         manager_context = self._get_manager_context_mode(team_data)
+        strategy_mode = (
+            (team_data.get("manager_state") or {}).get("strategy_mode")
+            or manager_context
+            or self.strategy_mode
+            or "BALANCED"
+        )
+        self.strategy_mode = str(strategy_mode).upper()
+        self.fixture_horizon_context = (
+            team_data.get("fixture_horizon_context")
+            if isinstance(team_data.get("fixture_horizon_context"), dict)
+            else {}
+        )
         bank_value = team_data.get('team_info', {}).get('bank_value', 0.0)
         recommendations = []
         context_block_reason = None
@@ -325,7 +628,12 @@ class TransferAdvisor:
             ]
 
             if viable_replacements:
-                # Provide strategic alternatives: best value AND best premium option
+                # Provide strategic alternatives while choosing primary by strategy profile.
+                viable_replacements.sort(
+                    key=lambda x: self._score_candidate_for_strategy(x, self.strategy_mode),
+                    reverse=True
+                )
+                best_strategy = viable_replacements[0]
                 viable_replacements.sort(key=lambda x: x.points_per_million, reverse=True)
                 
                 # Best value option (highest points per million)
@@ -340,7 +648,9 @@ class TransferAdvisor:
                     best_premium = viable_replacements[1]
                 
                 # Build strategic options list
-                strategic_options = [best_value]
+                strategic_options = [best_strategy]
+                if best_value.player_id != best_strategy.player_id:
+                    strategic_options.append(best_value)
                 if best_premium.player_id != best_value.player_id:
                     strategic_options.append(best_premium)
                 
@@ -372,14 +682,14 @@ class TransferAdvisor:
                     player_proj,
                     strategic_options[0],
                     strategic_options[1:],
-                    manager_context,
+                    self.strategy_mode,
                     free_transfers,
                     bank_value
                 )
             else:
                 suggestion_text = f"Find reliable £{price_limit:.1f}m {position} - any starter better than 0 points"
                 plan = self.build_general_plan(
-                    manager_context,
+                    self.strategy_mode,
                     bank_value,
                     f"No vetted replacement available for {player['name']}; hold until a plan emerges."
                 )
@@ -419,7 +729,10 @@ class TransferAdvisor:
             ]
 
             if viable_replacements:
-                viable_replacements.sort(key=lambda x: x.points_per_million, reverse=True)
+                viable_replacements.sort(
+                    key=lambda x: self._score_candidate_for_strategy(x, self.strategy_mode),
+                    reverse=True
+                )
                 top_options = viable_replacements[:2]
                 replacement_names = [f"{p.name} (£{p.current_price:.1f}m, {p.nextGW_pts:.1f}pts)"
                                    for p in top_options]
@@ -433,14 +746,14 @@ class TransferAdvisor:
                     player_proj,
                     top_options[0],
                     top_options[1:],
-                    manager_context,
+                    self.strategy_mode,
                     free_transfers,
                     bank_value
                 )
             else:
                 suggestion_text = f"Monitor closely - find £{price_limit:.1f}m {position} if news worsens"
                 plan = self.build_general_plan(
-                    manager_context,
+                    self.strategy_mode,
                     bank_value,
                     f"Wait for clarity on {player['name']} before committing transfer."
                 )
@@ -448,6 +761,9 @@ class TransferAdvisor:
             # Doubtful players with very low chance (<30%) should bypass threshold like injured
             is_very_doubtful = chance_next is not None and chance_next < 30
             priority = "URGENT" if is_very_doubtful else "MONITOR"
+            gain = 0.0
+            if viable_replacements and top_options:
+                gain = round(top_options[0].nextGW_pts - player_proj.nextGW_pts, 2)
             
             if is_very_doubtful:
                 # Very low chance - treat as urgent, bypass threshold
@@ -459,6 +775,14 @@ class TransferAdvisor:
                     "priority": "URGENT"
                 })
             else:
+                if gain and not self.context_allows_transfer(self.strategy_mode, gain, free_transfers):
+                    logger.info(
+                        "Doubtful move near threshold skipped: %s gain %.2f < %.2f",
+                        player.get("name"),
+                        gain,
+                        self._required_gain(self.strategy_mode, free_transfers),
+                    )
+                    continue
                 # Monitor but not urgent
                 recommendations.append({
                     "action": f"⚠️ MONITOR: {player['name']} flagged as doubtful",
@@ -474,7 +798,7 @@ class TransferAdvisor:
         if remaining_fts > 0:
             bench_upgrades = self._identify_bench_upgrades(
                 squad, projections, remaining_fts, bank_value,
-                squad_player_ids, recommended_in_ids
+                squad_player_ids, recommended_in_ids, self.strategy_mode
             )
             for upgrade in bench_upgrades:
                 recommendations.append(upgrade)
@@ -564,6 +888,37 @@ class TransferAdvisor:
                 "profile": "No immediate unacceptable risks; conserve transfer flexibility"
             })
 
+        near_threshold_moves = self._build_near_threshold_moves(
+            squad=squad,
+            projections=projections,
+            bank_value=bank_value,
+            free_transfers=free_transfers,
+            strategy_mode=self.strategy_mode,
+        )
+        strategy_paths = self._build_strategy_paths(
+            squad=squad,
+            projections=projections,
+            bank_value=bank_value,
+            free_transfers=free_transfers,
+        )
+        squad_issues = self._build_squad_issues(squad=squad, projections=projections)
+        no_transfer_reason = None
+        if not enriched_recs:
+            required = self._required_gain(self.strategy_mode, free_transfers)
+            no_transfer_reason = (
+                f"No transfer met the {self.strategy_mode} threshold "
+                f"(required gain {required:.2f} pts with {free_transfers} FT)."
+            )
+
+        self.last_transfer_audit = {
+            "strategy_mode": self.strategy_mode,
+            "threshold_required": self._required_gain(self.strategy_mode, free_transfers),
+            "near_threshold_moves": near_threshold_moves,
+            "strategy_paths": strategy_paths,
+            "squad_issues": squad_issues,
+            "no_transfer_reason": no_transfer_reason,
+        }
+
         return enriched_recs
 
     def context_allows_transfer(self, context_mode: str, projected_gain: float, free_transfers: int = 1) -> bool:
@@ -572,34 +927,14 @@ class TransferAdvisor:
         With multiple free transfers, we should be MORE aggressive as the cost is lower.
         Adjust thresholds based on available free transfers.
         """
-        base_thresholds = {
-            "CHASE": 1.2,
-            "AGGRESSIVE": 1.2,      # LOWERED from 2.0 - more proactive
-            "RISK_ON": 0.8,
-            "DEFEND": 3.5,
-            "FORCE_CHIP": 0.5,
-            "TC_COMMITMENT": 0.0,
-            "BALANCED": 2.0,        # LOWERED from 2.5
-            "DEFAULT": 2.0,
-            "CONSERVATIVE": 2.8
-        }
-        
-        base_required = base_thresholds.get(context_mode, base_thresholds["DEFAULT"])
-        
-        # Apply free transfer multiplier - more FTs = lower threshold
-        if free_transfers >= 5:
-            ft_multiplier = 0.4  # With 5 FTs, accept 40% of normal threshold
-        elif free_transfers >= 4:
-            ft_multiplier = 0.5  # With 4 FTs, accept 50% of normal threshold
-        elif free_transfers >= 3:
-            ft_multiplier = 0.6  # With 3 FTs, accept 60% of normal threshold
-        elif free_transfers >= 2:
-            ft_multiplier = 0.75 # With 2 FTs, accept 75% of normal threshold
-        else:
-            ft_multiplier = 1.0  # Normal threshold with 1 FT
-        
-        required = base_required * ft_multiplier
-        logger.info(f"Transfer threshold check: {projected_gain:.2f} vs {required:.2f} (base={base_required:.2f}, FTs={free_transfers})")
+        required = self._required_gain(context_mode, free_transfers)
+        logger.info(
+            "Transfer threshold check: %.2f vs %.2f (mode=%s, FTs=%s)",
+            projected_gain,
+            required,
+            context_mode,
+            free_transfers,
+        )
         
         return projected_gain >= required
 
@@ -676,7 +1011,7 @@ class TransferAdvisor:
         # Ensure manager_context is a dict (it might be a string from config)
         if not isinstance(manager_context, dict):
             manager_context = {}
-        return manager_context.get('mode', 'BALANCED')
+        return manager_context.get('mode', self.strategy_mode or 'BALANCED')
 
     def _create_fallback_projection(self, player: Dict) -> Dict:
         """
@@ -721,7 +1056,8 @@ class TransferAdvisor:
         remaining_fts: int,
         bank_value: float,
         squad_player_ids: set = None,
-        recommended_in_ids: set = None
+        recommended_in_ids: set = None,
+        strategy_mode: str = "BALANCED",
     ) -> List[Dict]:
         """
         Identify bench players that could be upgraded with available free transfers.
@@ -777,8 +1113,14 @@ class TransferAdvisor:
         bench_with_projections.sort(key=lambda x: x[1].nextGW_pts)
 
         # Thresholds for considering an upgrade
-        WEAK_BENCH_THRESHOLD = 3.0  # Below 3 pts projected = weak
-        MIN_UPGRADE_GAIN = 1.5      # Need at least 1.5 pts improvement
+        weak_thresholds = {
+            "DEFEND": 2.5,
+            "CONTROLLED": 3.0,
+            "BALANCED": 3.2,
+            "RECOVERY": 4.0,
+        }
+        WEAK_BENCH_THRESHOLD = weak_thresholds.get(strategy_mode, 3.2)
+        MIN_UPGRADE_GAIN = max(0.6, self._required_gain(strategy_mode, remaining_fts))
 
         upgrades_suggested = 0
 
@@ -847,7 +1189,7 @@ class TransferAdvisor:
                 player_proj,
                 strategic_options[0],
                 strategic_options[1:],
-                self.risk_posture,
+                strategy_mode,
                 remaining_fts - upgrades_suggested,
                 bank_value
             )

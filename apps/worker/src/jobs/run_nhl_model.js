@@ -51,6 +51,7 @@ const {
   determineTier,
   buildMarketCallCard,
 } = require('../models');
+const { assessProjectionInputs } = require('../models/projections');
 const {
   buildRecommendationFromPrediction,
   buildMatchup,
@@ -98,6 +99,27 @@ function attachRunId(card, runId) {
       card.payloadData.run_id = runId;
     }
   }
+}
+
+function applyProjectionInputMetadata(card, projectionGate) {
+  if (!card?.payloadData || !projectionGate) return;
+  card.payloadData.projection_inputs_complete =
+    projectionGate.projection_inputs_complete;
+  card.payloadData.missing_inputs = Array.isArray(projectionGate.missing_inputs)
+    ? projectionGate.missing_inputs
+    : [];
+}
+
+function normalizeRawDataPayload(rawData) {
+  if (!rawData) return {};
+  if (typeof rawData === 'string') {
+    try {
+      return JSON.parse(rawData);
+    } catch {
+      return {};
+    }
+  }
+  return rawData;
 }
 
 /**
@@ -625,6 +647,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
       let cardsFailed = 0;
       let gatedCount = 0;
       let blockedCount = 0;
+      let projectionBlockedCount = 0;
       const errors = [];
 
       // Process each game
@@ -637,9 +660,8 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           oddsSnapshot = await enrichOddsSnapshotWithMoneyPuck(oddsSnapshot);
           
           // Check enrichment completeness
-          const rawData = typeof oddsSnapshot.raw_data === 'string' 
-            ? JSON.parse(oddsSnapshot.raw_data) 
-            : oddsSnapshot.raw_data;
+          const rawData = normalizeRawDataPayload(oddsSnapshot.raw_data);
+          oddsSnapshot.raw_data = rawData;
           const espnMetrics = rawData?.espn_metrics;
           const hasHomeMetrics = espnMetrics?.home?.metrics && 
             Object.values(espnMetrics.home.metrics).some(v => v !== null);
@@ -651,7 +673,22 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           }
           
           // Persist enrichment to database so models have access to ESPN metrics
-          updateOddsSnapshotRawData(oddsSnapshot.id, oddsSnapshot.raw_data);
+          try {
+            updateOddsSnapshotRawData(oddsSnapshot.id, rawData);
+          } catch (persistError) {
+            console.log(
+              `  [warn] ${gameId}: Failed to persist enrichment payload (${persistError.message})`,
+            );
+          }
+
+          const projectionGate = assessProjectionInputs('NHL', oddsSnapshot);
+          if (!projectionGate.projection_inputs_complete) {
+            projectionBlockedCount++;
+            console.log(
+              `  [gate] ${gameId}: PROJECTION_INPUTS_INCOMPLETE (${projectionGate.missing_inputs.join(', ')})`,
+            );
+            continue;
+          }
 
           // Query schedule for Welcome Home Fade
           // Welcome Home Fade: Home team coming back from a road trip (first game back)
@@ -720,6 +757,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           }
 
           for (const card of cards) {
+            applyProjectionInputMetadata(card, projectionGate);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -763,6 +801,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             }
           }
           for (const card of marketCallCards) {
+            applyProjectionInputMetadata(card, projectionGate);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -816,6 +855,11 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
       console.log(
         `[NHLModel] Decision gate: ${gatedCount} gated, ${blockedCount} blocked`,
       );
+      if (projectionBlockedCount > 0) {
+        console.log(
+          `[NHLModel] Projection input gate: ${projectionBlockedCount}/${gameIds.length} games blocked`,
+        );
+      }
 
       if (errors.length > 0) {
         console.error('[NHLModel] Errors:');

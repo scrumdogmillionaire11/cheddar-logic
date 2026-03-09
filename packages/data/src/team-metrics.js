@@ -13,7 +13,7 @@
 'use strict';
 
 const { fetchTeamSchedule, fetchTeamInfo, fetchScoreboardEvents } = require('./espn-client');
-const { normalizeSportCode } = require('./normalize');
+const { normalizeSportCode, resolveTeamVariant } = require('./normalize');
 
 // ---------------------------------------------------------------------------
 // Team ID Mapping Tables
@@ -734,25 +734,52 @@ async function lookupTeamFromScoreboard(teamName, sport, league) {
   return null;
 }
 
-async function resolveTeamEntry(teamName, sport, table, league) {
-  if (!teamName) return null;
+async function resolveTeamEntry(teamName, sport, table, league, options = {}) {
+  if (!teamName) return { entry: null, resolution: { status: 'missing_name' } };
 
-  const cacheKey = `${sport}:${normalizeTeamKey(teamName)}`;
+  const strictVariantMatch = options.strictVariantMatch !== false;
+  const variantResolution = resolveTeamVariant(teamName, `resolveTeamEntry:${sport}`);
+
+  if (strictVariantMatch && !variantResolution.matched) {
+    return {
+      entry: null,
+      resolution: {
+        status: 'variant_unmapped',
+        inputTeamName: teamName,
+        normalizedTeamName: variantResolution.normalized,
+        canonicalTeamName: variantResolution.canonical,
+      }
+    };
+  }
+
+  const lookupTeamName = variantResolution.matched
+    ? variantResolution.canonical
+    : teamName;
+
+  const cacheKey = `${sport}:${normalizeTeamKey(lookupTeamName)}`;
   const now = Date.now();
   const cached = resolvedTeamCache.get(cacheKey);
   if (cached && cached.expiresAt > now) {
-    return cached.value;
+    return {
+      entry: cached.value,
+      resolution: {
+        status: 'resolved_cached',
+        inputTeamName: teamName,
+        normalizedTeamName: variantResolution.normalized,
+        canonicalTeamName: variantResolution.canonical,
+      }
+    };
   }
   if (cached) {
     resolvedTeamCache.delete(cacheKey);
   }
 
-  let entry = lookupTeam(teamName, table);
+  let entry = lookupTeam(lookupTeamName, table);
   if (!entry) {
-    entry = await lookupTeamFromScoreboard(teamName, sport, league);
+    entry = await lookupTeamFromScoreboard(lookupTeamName, sport, league);
     if (entry) {
-      table[teamName] = entry;
-      console.log(`[TeamMetrics] Resolved "${teamName}" via scoreboard fallback (sport: ${sport}, id: ${entry.id})`);
+      table[lookupTeamName] = entry;
+      console.log(`[TeamMetrics] Resolved "${lookupTeamName}" via scoreboard fallback (sport: ${sport}, id: ${entry.id})`);
     }
   }
 
@@ -760,7 +787,15 @@ async function resolveTeamEntry(teamName, sport, table, league) {
     value: entry || null,
     expiresAt: Date.now() + (entry ? RESOLVED_TEAM_CACHE_TTL_MS : RESOLVED_TEAM_NEGATIVE_CACHE_TTL_MS)
   });
-  return entry || null;
+  return {
+    entry: entry || null,
+    resolution: {
+      status: entry ? 'resolved' : 'unresolved',
+      inputTeamName: teamName,
+      normalizedTeamName: variantResolution.normalized,
+      canonicalTeamName: variantResolution.canonical,
+    }
+  };
 }
 
 function selectTeamTable(sport) {
@@ -802,6 +837,7 @@ async function getTeamMetrics(teamName, sport) {
 async function getTeamMetricsWithGames(teamName, sport, options = {}) {
   const includeGames = options.includeGames === true;
   const limit = Number.isFinite(options.limit) ? options.limit : 5;
+  const strictVariantMatch = options.strictVariantMatch !== false;
   const normalizedSport = normalizeSportCode(
     typeof sport === 'string' ? sport : String(sport || ''),
     'getTeamMetricsWithGames'
@@ -811,13 +847,33 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
     const { table, league } = selectTeamTable(normalizedSport);
     if (!table || !league) {
       console.warn(`[TeamMetrics] Unknown sport: ${sport}`);
-      return { metrics: neutral(), teamInfo: null, games: [] };
+      return {
+        metrics: neutral(),
+        teamInfo: null,
+        games: [],
+        resolution: { status: 'unknown_sport', sport: normalizedSport }
+      };
     }
 
-    const teamEntry = await resolveTeamEntry(teamName, normalizedSport, table, league);
+    const { entry: teamEntry, resolution } = await resolveTeamEntry(
+      teamName,
+      normalizedSport,
+      table,
+      league,
+      { strictVariantMatch }
+    );
     if (!teamEntry) {
-      console.warn(`[TeamMetrics] Unknown team: "${teamName}" (sport: ${normalizedSport})`);
-      return { metrics: neutral(), teamInfo: null, games: [] };
+      const reason = resolution?.status || 'unknown_team';
+      console.warn(`[TeamMetrics] Unknown team: "${teamName}" (sport: ${normalizedSport}, reason: ${reason})`);
+      return {
+        metrics: neutral(),
+        teamInfo: null,
+        games: [],
+        resolution: {
+          ...resolution,
+          sport: normalizedSport,
+        }
+      };
     }
 
     // Small delay to avoid ESPN rate limiting
@@ -854,7 +910,17 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
 
     if ((!games || games.length === 0) && !teamInfo) {
       console.warn(`[TeamMetrics] ESPN returned no data for "${teamName}" (id: ${teamEntry.id})`);
-      return { metrics: neutral(), teamInfo: null, games: [] };
+      return {
+        metrics: neutral(),
+        teamInfo: null,
+        games: [],
+        resolution: {
+          ...resolution,
+          sport: normalizedSport,
+          status: 'espn_no_data',
+          teamId: teamEntry.id,
+        }
+      };
     }
 
     const metrics = computeMetricsFromGames(games || [], normalizedSport);
@@ -867,11 +933,27 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
     return {
       metrics,
       teamInfo: teamInfo || null,
-      games: includeGames ? (games || []) : []
+      games: includeGames ? (games || []) : [],
+      resolution: {
+        ...resolution,
+        sport: normalizedSport,
+        teamId: teamEntry.id,
+        status: 'ok'
+      }
     };
   } catch (err) {
     console.warn(`[TeamMetrics] Error fetching metrics for "${teamName}": ${err.message}`);
-    return { metrics: neutral(), teamInfo: null, games: [] };
+    return {
+      metrics: neutral(),
+      teamInfo: null,
+      games: [],
+      resolution: {
+        status: 'error',
+        sport: normalizedSport,
+        inputTeamName: teamName,
+        message: err.message,
+      }
+    };
   }
 }
 

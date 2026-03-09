@@ -45,6 +45,7 @@ const {
   publishDecisionForCard,
   applyUiActionFields,
 } = require('../utils/decision-publisher');
+const { assessProjectionInputs } = require('../models/projections');
 
 const NCAAM_DRIVER_WEIGHTS = {
   baseProjection: 0.4,
@@ -66,6 +67,27 @@ function attachRunId(card, runId) {
       card.payloadData.run_id = runId;
     }
   }
+}
+
+function applyProjectionInputMetadata(card, projectionGate) {
+  if (!card?.payloadData || !projectionGate) return;
+  card.payloadData.projection_inputs_complete =
+    projectionGate.projection_inputs_complete;
+  card.payloadData.missing_inputs = Array.isArray(projectionGate.missing_inputs)
+    ? projectionGate.missing_inputs
+    : [];
+}
+
+function normalizeRawDataPayload(rawData) {
+  if (!rawData) return {};
+  if (typeof rawData === 'string') {
+    try {
+      return JSON.parse(rawData);
+    } catch {
+      return {};
+    }
+  }
+  return rawData;
 }
 
 /**
@@ -204,6 +226,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       let noSignalCount = 0;
       let gameErrorCount = 0;
       let skippedRaceCount = 0;
+      let projectionBlockedCount = 0;
 
       // Process each game independently. Missing signals for one game should not
       // block card generation for other games.
@@ -233,9 +256,29 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
 
           // Enrich with ESPN team metrics
           oddsSnapshot = await enrichOddsSnapshotWithEspnMetrics(oddsSnapshot);
+
+          const normalizedRawData = normalizeRawDataPayload(
+            oddsSnapshot.raw_data,
+          );
+          oddsSnapshot.raw_data = normalizedRawData;
           
           // Persist enrichment to database so models have access to ESPN metrics
-          updateOddsSnapshotRawData(oddsSnapshot.id, oddsSnapshot.raw_data);
+          try {
+            updateOddsSnapshotRawData(oddsSnapshot.id, normalizedRawData);
+          } catch (persistError) {
+            console.log(
+              `  [warn] ${gameId}: Failed to persist enrichment payload (${persistError.message})`,
+            );
+          }
+
+          const projectionGate = assessProjectionInputs('NCAAM', oddsSnapshot);
+          if (!projectionGate.projection_inputs_complete) {
+            projectionBlockedCount++;
+            console.log(
+              `  [gate] ${gameId}: PROJECTION_INPUTS_INCOMPLETE (${projectionGate.missing_inputs.join(', ')})`,
+            );
+            continue;
+          }
 
           const driverCards = computeNCAAMDriverCards(gameId, oddsSnapshot);
           if (driverCards.length === 0) {
@@ -261,6 +304,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
           const cards = generateNCAAMCards(gameId, driverCards, oddsSnapshot);
 
           for (const card of cards) {
+            applyProjectionInputMetadata(card, projectionGate);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -319,6 +363,11 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       if (skippedRaceCount > 0) {
         console.log(
           `[NCAAMModel] Race-guard skipped: ${skippedRaceCount}/${gameIds.length} (another process running)`,
+        );
+      }
+      if (projectionBlockedCount > 0) {
+        console.log(
+          `[NCAAMModel] Projection input gate: ${projectionBlockedCount}/${gameIds.length} games blocked`,
         );
       }
 
