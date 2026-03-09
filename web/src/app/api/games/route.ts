@@ -69,6 +69,7 @@ const API_GAMES_MAX_CARD_ROWS = Math.max(
   Number.parseInt(process.env.API_GAMES_MAX_CARD_ROWS || '1500', 10) || 1500,
 );
 
+
 interface GameRow {
   id: string;
   game_id: string;
@@ -456,7 +457,8 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
 
   const missingDataObject = toObject(input.missing_data);
   const consistencyObject = toObject(input.consistency);
-  if (!missingDataObject || !consistencyObject) return undefined;
+  // Allow missing_data to be absent (it's optional), but consistency is required
+  if (!consistencyObject) return undefined;
 
   return {
     direction,
@@ -473,10 +475,10 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
       ? input.watchdog_reason_codes.map((item) => String(item))
       : [],
     missing_data: {
-      missing_fields: Array.isArray(missingDataObject.missing_fields)
+      missing_fields: Array.isArray(missingDataObject?.missing_fields)
         ? missingDataObject.missing_fields.map((item) => String(item))
         : [],
-      source_attempts: Array.isArray(missingDataObject.source_attempts)
+      source_attempts: Array.isArray(missingDataObject?.source_attempts)
         ? missingDataObject.source_attempts
             .map((attempt) => toObject(attempt))
             .filter((attempt): attempt is Record<string, unknown> => Boolean(attempt))
@@ -501,9 +503,9 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
             })
         : [],
       severity:
-        missingDataObject.severity === 'INFO' ||
-        missingDataObject.severity === 'WARNING' ||
-        missingDataObject.severity === 'BLOCKING'
+        missingDataObject?.severity === 'INFO' ||
+        missingDataObject?.severity === 'WARNING' ||
+        missingDataObject?.severity === 'BLOCKING'
           ? (missingDataObject.severity as 'INFO' | 'WARNING' | 'BLOCKING')
           : 'INFO',
     },
@@ -966,7 +968,10 @@ export async function GET(request: NextRequest) {
             ? [...allQueryableIds, ...activeRunIds]
             : [...allQueryableIds];
         cardRows = cardsStmt.all(...cardsParams) as CardPayloadRow[];
-        if (activeRunIds.length > 0 && cardRows.length === 0) {
+        if (
+          activeRunIds.length > 0 &&
+          cardRows.length === 0
+        ) {
           const fallbackStmt = db.prepare(buildCardsSql(''));
           cardRows = fallbackStmt.all(...allQueryableIds) as CardPayloadRow[];
         }
@@ -1151,6 +1156,13 @@ export async function GET(request: NextRequest) {
         const payloadProjection = toObject(payload.projection);
         const payloadPlayObj = toObject(payloadPlay);
         const payloadPlayProjection = toObject(payloadPlayObj?.projection);
+        const normalizedProjectedTotal = firstNumber(
+          payloadProjection?.total,
+          payloadPlayProjection?.total,
+          payloadProjection?.projected_total,
+          payloadPlayProjection?.projected_total,
+          driverInputs?.projected_total,
+        );
         const normalizedEdge = firstNumber(
           payload.edge,
           payloadPlayObj?.edge,
@@ -1248,13 +1260,9 @@ export async function GET(request: NextRequest) {
               ? String((payload.driver as Record<string, unknown>).key)
               : '',
           projectedTotal:
-            typeof (payload.projection as Record<string, unknown>)?.total ===
-            'number'
-              ? ((payload.projection as Record<string, unknown>)
-                  .total as number)
-              : typeof driverInputs?.projected_total === 'number'
-                ? (driverInputs.projected_total as number)
-                : null,
+            typeof normalizedProjectedTotal === 'number'
+              ? normalizedProjectedTotal
+              : null,
           edge: typeof normalizedEdge === 'number' ? normalizedEdge : null,
           model_prob: normalizedModelProb,
           status: resolvedStatus,
@@ -1414,16 +1422,17 @@ export async function GET(request: NextRequest) {
         );
 
         if (wave1Eligible) {
-          if (!play.decision_v2) {
-            continue;
+          // Always apply wave1 decision fields if they exist, but don't skip if missing
+          // (plays without decision_v2 will still be included, just without those fields)
+          if (play.decision_v2) {
+            applyWave1DecisionFields(play);
+            play.reason_codes = Array.from(
+              new Set([
+                ...(play.reason_codes ?? []),
+                play.decision_v2.primary_reason_code,
+              ]),
+            );
           }
-          applyWave1DecisionFields(play);
-          play.reason_codes = Array.from(
-            new Set([
-              ...(play.reason_codes ?? []),
-              play.decision_v2.primary_reason_code,
-            ]),
-          );
         } else if (!play.consistency?.total_bias) {
           const totalDecision =
             payload.all_markets &&

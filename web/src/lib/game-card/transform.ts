@@ -480,6 +480,15 @@ function comparePlayCandidates(a: DedupeCandidate, b: DedupeCandidate): number {
   const valueDelta = playValueRank(a.play) - playValueRank(b.play);
   if (valueDelta !== 0) return valueDelta;
 
+  const aModelProb =
+    resolveSourceModelProb(a.play) ?? a.play.decision_v2?.fair_prob ?? undefined;
+  const bModelProb =
+    resolveSourceModelProb(b.play) ?? b.play.decision_v2?.fair_prob ?? undefined;
+  if (aModelProb !== undefined || bModelProb !== undefined) {
+    if (aModelProb === undefined) return -1;
+    if (bModelProb === undefined) return 1;
+  }
+
   const createdDelta =
     timestampMs(a.play.created_at) - timestampMs(b.play.created_at);
   if (createdDelta !== 0) return createdDelta;
@@ -651,10 +660,14 @@ function selectWave1DecisionCandidate(
   plays: ApiPlay[],
   sport: string,
 ): ApiPlay | null {
-  const candidates = plays.filter((play) => isWave1EligibleDecisionPlay(play, sport));
+  const candidates = plays.filter((play) =>
+    isWave1EligibleDecisionPlay(play, sport),
+  );
   if (candidates.length === 0) return null;
 
-  const officialRank = (official: DecisionV2['official_status']): number => {
+  const officialRank = (
+    official: DecisionV2['official_status'],
+  ): number => {
     if (official === 'PLAY') return 3;
     if (official === 'LEAN') return 2;
     return 1;
@@ -668,8 +681,10 @@ function selectWave1DecisionCandidate(
       officialRank(aDecision.official_status);
     if (statusDiff !== 0) return statusDiff;
 
-    const aEdge = typeof aDecision.edge_pct === 'number' ? aDecision.edge_pct : -1;
-    const bEdge = typeof bDecision.edge_pct === 'number' ? bDecision.edge_pct : -1;
+    const aEdge =
+      typeof aDecision.edge_pct === 'number' ? aDecision.edge_pct : -1;
+    const bEdge =
+      typeof bDecision.edge_pct === 'number' ? bDecision.edge_pct : -1;
     if (bEdge !== aEdge) return bEdge - aEdge;
 
     return bDecision.support_score - aDecision.support_score;
@@ -987,11 +1002,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           ? wave1DecisionPlay.projection.margin_home
           : null;
     const projectedTotal =
-      typeof wave1DecisionPlay.projection?.projected_total === 'number'
-        ? wave1DecisionPlay.projection.projected_total
-        : typeof wave1DecisionPlay.projection?.total === 'number'
-          ? wave1DecisionPlay.projection.total
-          : null;
+      typeof wave1DecisionPlay.projectedTotal === 'number'
+        ? wave1DecisionPlay.projectedTotal
+        : typeof wave1DecisionPlay.projection?.projected_total === 'number'
+          ? wave1DecisionPlay.projection.projected_total
+          : typeof wave1DecisionPlay.projection?.total === 'number'
+            ? wave1DecisionPlay.projection.total
+            : null;
     const projectedTeamTotal =
       typeof wave1DecisionPlay.projection?.projected_team_total === 'number'
         ? wave1DecisionPlay.projection.projected_team_total

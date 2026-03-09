@@ -16,6 +16,7 @@ import { getPlayDisplayAction } from './decision';
 const ENABLE_WELCOME_HOME =
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
+
 /**
  * Sort modes for game cards
  */
@@ -429,15 +430,13 @@ function filterBySearch(card: GameCard, filters: CommonFilters): boolean {
 function filterByHasPicks(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.onlyGamesWithPicks) return true;
 
-  if (
-    card.play &&
+  const displayAction = getPlayDisplayAction(card.play);
+  return (
+    displayAction !== 'PASS' &&
+    card.play !== undefined &&
     card.play.market !== 'NONE' &&
     card.play.pick !== 'NO PLAY'
-  ) {
-    return true;
-  }
-
-  return card.drivers.some((d) => d.direction !== 'NEUTRAL');
+  );
 }
 
 /**
@@ -463,7 +462,9 @@ function filterByWelcomeHome(
 function filterByClearPlay(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.hasClearPlay) return true;
 
+  const displayAction = getPlayDisplayAction(card.play);
   return (
+    displayAction !== 'PASS' &&
     card.play !== undefined &&
     card.play.market !== 'NONE' &&
     card.play.pick !== 'NO PLAY'

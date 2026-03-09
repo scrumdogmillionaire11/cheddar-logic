@@ -112,57 +112,6 @@ function normalizeRawDataPayload(rawData) {
 }
 
 /**
- * Get recent road games for a team from schedule
- * @param {string} teamName - Team display name
- * @param {string} sport - Sport code (lowercase)
- * @param {string} currentGameTime - Current game time in UTC
- * @param {number} limit - Max games to retrieve
- * @returns {Array<{isHome: boolean, date: string}>}
- */
-function getRecentRoadGames(teamName, sport, currentGameTime, limit = 10) {
-  if (!teamName || !currentGameTime) return [];
-
-  const db = getDatabase();
-  const stmt = db.prepare(`
-    SELECT game_id, game_time_utc, home_team, away_team, status
-    FROM games
-    WHERE LOWER(sport) = ?
-      AND UPPER(away_team) = UPPER(?)
-      AND game_time_utc < ?
-    ORDER BY game_time_utc DESC
-    LIMIT ?
-  `);
-
-  try {
-    const results = stmt.all(
-      sport.toLowerCase(),
-      teamName,
-      currentGameTime,
-      limit,
-    );
-    return results
-      .filter(
-        (g) =>
-          g.status === 'final' ||
-          g.status === 'STATUS_FINAL' ||
-          g.status === 'in_progress',
-      )
-      .map((g) => ({
-        isHome: false,
-        date: g.game_time_utc,
-        opponent: g.home_team,
-      }))
-      .reverse(); // Chronological order (oldest to newest)
-  } catch (error) {
-    console.error(
-      `[Schedule] Failed to query road games for ${teamName}:`,
-      error.message,
-    );
-    return [];
-  }
-}
-
-/**
  * Get home team's recent road trip (consecutive away games)
  * Returns if the team JUST COMPLETED a road trip and is now playing at home
  * Welcome Home Fade: Home team's first game after returning from road trip
@@ -248,15 +197,6 @@ function getHomeTeamRecentRoadTrip(
     return [];
   }
 }
-
-/**
- * Generate insertable card objects from NBA driver descriptors.
- *
- * @param {string} gameId
- * @param {Array<object>} driverDescriptors - Output of computeNBADriverCards()
- * @param {object} oddsSnapshot
- * @returns {Array<object>} Array of card objects ready for insertCardPayload()
- */
 
 /**
  * Generate standalone market call cards (nba-totals-call, nba-spread-call)

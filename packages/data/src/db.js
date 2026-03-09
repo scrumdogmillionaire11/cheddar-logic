@@ -1800,8 +1800,8 @@ function insertCardPayload(card) {
   
   ensureCardPayloadRunIdColumn(db);
 
-  // Normalize sport to uppercase for consistency with odds_snapshots and API queries
-  const normalizedSport = card.sport ? card.sport.toUpperCase() : card.sport;
+    // Normalize sport to lowercase for consistency with odds_snapshots and games table
+    const normalizedSport = card.sport ? card.sport.toLowerCase() : card.sport;
 
   const stmt = db.prepare(`
     INSERT INTO card_payloads (
