@@ -12,8 +12,10 @@
 
 'use strict';
 
+const { DateTime } = require('luxon');
 const { fetchTeamSchedule, fetchTeamInfo, fetchScoreboardEvents } = require('./espn-client');
 const { normalizeSportCode, resolveTeamVariant } = require('./normalize');
+const { getTeamMetricsCache, upsertTeamMetricsCache } = require('./db');
 
 // ---------------------------------------------------------------------------
 // Team ID Mapping Tables
@@ -838,10 +840,37 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
   const includeGames = options.includeGames === true;
   const limit = Number.isFinite(options.limit) ? options.limit : 5;
   const strictVariantMatch = options.strictVariantMatch !== false;
+  const skipCache = options.skipCache === true;
   const normalizedSport = normalizeSportCode(
     typeof sport === 'string' ? sport : String(sport || ''),
     'getTeamMetricsWithGames'
   ) || String(sport || '').trim().toUpperCase();
+
+  // Check daily DB cache first (unless skipCache=true)
+  if (!skipCache) {
+    try {
+      const nowEt = DateTime.now().setZone('America/New_York');
+      const cacheDate = nowEt.toISODate();
+      const cached = getTeamMetricsCache(normalizedSport, teamName, cacheDate);
+      
+      if (cached && cached.status === 'ok') {
+        return {
+          metrics: cached.metrics || neutral(),
+          teamInfo: cached.teamInfo || null,
+          games: includeGames && cached.recentGames ? cached.recentGames : [],
+          resolution: {
+            ...cached.resolution,
+            cached: true,
+            cacheDate: cached.cacheDate,
+            fetchedAt: cached.fetchedAt
+          }
+        };
+      }
+    } catch (cacheErr) {
+      console.warn(`[TeamMetrics] Cache lookup failed for "${teamName}": ${cacheErr.message}`);
+      // Fall through to live fetch on cache error
+    }
+  }
 
   try {
     const { table, league } = selectTeamTable(normalizedSport);
@@ -930,16 +959,38 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
       metrics.record = teamInfo.record;
     }
 
+    const finalResolution = {
+      ...resolution,
+      sport: normalizedSport,
+      teamId: teamEntry.id,
+      status: 'ok'
+    };
+
+    // Write successful fetch to cache (best-effort, don't fail on cache write error)
+    if (!skipCache) {
+      try {
+        const nowEt = DateTime.now().setZone('America/New_York');
+        const cacheDate = nowEt.toISODate();
+        upsertTeamMetricsCache({
+          sport: normalizedSport,
+          teamName: teamName,
+          cacheDate: cacheDate,
+          status: 'ok',
+          metrics: metrics,
+          teamInfo: teamInfo,
+          recentGames: games || [],
+          resolution: finalResolution
+        });
+      } catch (cacheWriteErr) {
+        console.warn(`[TeamMetrics] Cache write failed for "${teamName}": ${cacheWriteErr.message}`);
+      }
+    }
+
     return {
       metrics,
       teamInfo: teamInfo || null,
       games: includeGames ? (games || []) : [],
-      resolution: {
-        ...resolution,
-        sport: normalizedSport,
-        teamId: teamEntry.id,
-        status: 'ok'
-      }
+      resolution: finalResolution
     };
   } catch (err) {
     console.warn(`[TeamMetrics] Error fetching metrics for "${teamName}": ${err.message}`);

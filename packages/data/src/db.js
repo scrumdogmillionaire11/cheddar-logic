@@ -2483,6 +2483,114 @@ function getTrackingStats(filters = {}) {
   return stmt.all(...params);
 }
 
+/**
+ * Get cached team metrics for a specific sport/team/date
+ * @param {string} sport - Sport (e.g., 'NBA', 'NHL')
+ * @param {string} teamName - Team name (as normalized by team-metrics.js)
+ * @param {string} cacheDate - Cache date in ET (YYYY-MM-DD format)
+ * @returns {object|null} Cached metrics object or null if not found/expired
+ */
+function getTeamMetricsCache(sport, teamName, cacheDate) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSport(sport);
+  
+  const stmt = db.prepare(`
+    SELECT 
+      id, sport, team_name, cache_date, status,
+      metrics, team_info, recent_games, resolution,
+      fetched_at, created_at
+    FROM team_metrics_cache
+    WHERE sport = ? AND team_name = ? AND cache_date = ?
+  `);
+  
+  const row = stmt.get(normalizedSport, teamName, cacheDate);
+  
+  if (!row) return null;
+  
+  // Parse JSON columns
+  return {
+    id: row.id,
+    sport: row.sport,
+    teamName: row.team_name,
+    cacheDate: row.cache_date,
+    status: row.status,
+    metrics: row.metrics ? JSON.parse(row.metrics) : null,
+    teamInfo: row.team_info ? JSON.parse(row.team_info) : null,
+    recentGames: row.recent_games ? JSON.parse(row.recent_games) : null,
+    resolution: row.resolution ? JSON.parse(row.resolution) : null,
+    fetchedAt: row.fetched_at,
+    createdAt: row.created_at
+  };
+}
+
+/**
+ * Upsert team metrics cache entry
+ * @param {object} cacheEntry - Cache entry object
+ * @param {string} cacheEntry.sport - Sport
+ * @param {string} cacheEntry.teamName - Team name
+ * @param {string} cacheEntry.cacheDate - Cache date (ET, YYYY-MM-DD)
+ * @param {string} cacheEntry.status - Status ('ok', 'missing', 'failed', 'partial')
+ * @param {object} cacheEntry.metrics - Metrics object (optional)
+ * @param {object} cacheEntry.teamInfo - Team info object (optional)
+ * @param {array} cacheEntry.recentGames - Recent games array (optional)
+ * @param {object} cacheEntry.resolution - Resolution metadata (optional)
+ * @returns {number} Row ID
+ */
+function upsertTeamMetricsCache(cacheEntry) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSport(cacheEntry.sport);
+  
+  const metricsJson = cacheEntry.metrics ? JSON.stringify(cacheEntry.metrics) : null;
+  const teamInfoJson = cacheEntry.teamInfo ? JSON.stringify(cacheEntry.teamInfo) : null;
+  const recentGamesJson = cacheEntry.recentGames ? JSON.stringify(cacheEntry.recentGames) : null;
+  const resolutionJson = cacheEntry.resolution ? JSON.stringify(cacheEntry.resolution) : null;
+  
+  const stmt = db.prepare(`
+    INSERT INTO team_metrics_cache (
+      sport, team_name, cache_date, status,
+      metrics, team_info, recent_games, resolution,
+      fetched_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(sport, team_name, cache_date) DO UPDATE SET
+      status = excluded.status,
+      metrics = excluded.metrics,
+      team_info = excluded.team_info,
+      recent_games = excluded.recent_games,
+      resolution = excluded.resolution,
+      fetched_at = CURRENT_TIMESTAMP
+  `);
+  
+  const info = stmt.run(
+    normalizedSport,
+    cacheEntry.teamName,
+    cacheEntry.cacheDate,
+    cacheEntry.status,
+    metricsJson,
+    teamInfoJson,
+    recentGamesJson,
+    resolutionJson
+  );
+  
+  return info.lastInsertRowid;
+}
+
+/**
+ * Delete team metrics cache entries older than a given date
+ * @param {string} beforeDate - Delete entries before this date (YYYY-MM-DD)
+ * @returns {number} Number of rows deleted
+ */
+function deleteStaleTeamMetricsCache(beforeDate) {
+  const db = getDatabase();
+  
+  const stmt = db.prepare(`
+    DELETE FROM team_metrics_cache
+    WHERE cache_date < ?
+  `);
+  
+  const info = stmt.run(beforeDate);
+  return info.changes;
+}
+
 module.exports = {
   initDb,
   getDatabase,
@@ -2542,5 +2650,8 @@ module.exports = {
   getGameResults,
   upsertTrackingStat,
   incrementTrackingStat,
-  getTrackingStats
+  getTrackingStats,
+  getTeamMetricsCache,
+  upsertTeamMetricsCache,
+  deleteStaleTeamMetricsCache
 };
