@@ -2492,7 +2492,8 @@ function getTrackingStats(filters = {}) {
  */
 function getTeamMetricsCache(sport, teamName, cacheDate) {
   const db = getDatabase();
-  const normalizedSport = normalizeSport(sport);
+  // Keep sport uppercase for CHECK constraint
+  const normalizedSport = String(sport || '').trim().toUpperCase();
   
   const stmt = db.prepare(`
     SELECT 
@@ -2538,7 +2539,8 @@ function getTeamMetricsCache(sport, teamName, cacheDate) {
  */
 function upsertTeamMetricsCache(cacheEntry) {
   const db = getDatabase();
-  const normalizedSport = normalizeSport(cacheEntry.sport);
+  // Keep sport uppercase for CHECK constraint
+  const normalizedSport = String(cacheEntry.sport || '').trim().toUpperCase();
   
   const metricsJson = cacheEntry.metrics ? JSON.stringify(cacheEntry.metrics) : null;
   const teamInfoJson = cacheEntry.teamInfo ? JSON.stringify(cacheEntry.teamInfo) : null;
