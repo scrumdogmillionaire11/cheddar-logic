@@ -249,6 +249,15 @@ function applyPublishedDecisionToPayload(
   }
 
   payload.reasoning = `${pickText}: published decision held`;
+
+  // Keep pricing_trace consistent with the held decision so validateExactWager
+  // does not flag EXACT_WAGER_MISMATCH when the gate overwrites prediction/price.
+  if (payload.pricing_trace && typeof payload.pricing_trace === 'object') {
+    if (side) payload.pricing_trace = { ...payload.pricing_trace, called_side: side };
+    if (line !== null) payload.pricing_trace = { ...payload.pricing_trace, called_line: line };
+    if (price !== null) payload.pricing_trace = { ...payload.pricing_trace, called_price: price };
+  }
+
   card.payloadData = payload;
 }
 

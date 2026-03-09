@@ -1555,8 +1555,30 @@ export default function CardsPageClient() {
     const isBroken = quality === 'BROKEN';
     const isDegraded = quality === 'DEGRADED';
     const decisionV2 = displayPlay.decision_v2;
+    const totalFallbackPlay =
+      displayPlay.market_type === 'TOTAL' ||
+      displayPlay.market_type === 'TEAM_TOTAL'
+        ? (originalGame?.plays || []).find(
+            (play) =>
+              (play.market_type === 'TOTAL' ||
+                play.market_type === 'TEAM_TOTAL') &&
+              (typeof play.model_prob === 'number' ||
+                typeof (play as { decision_v2?: { fair_prob?: number } })
+                  .decision_v2?.fair_prob === 'number') &&
+              typeof play.projectedTotal === 'number',
+          )
+        : undefined;
+    const totalFallbackDecision = (
+      totalFallbackPlay as { decision_v2?: typeof decisionV2 }
+    )?.decision_v2;
+    const resolvedDecisionV2 =
+      (decisionV2?.primary_reason_code === 'MODEL_PROB_MISSING' ||
+        decisionV2?.fair_prob === null) &&
+      totalFallbackDecision
+        ? totalFallbackDecision
+        : decisionV2;
     const inferredDecision =
-      decisionV2?.official_status ??
+      resolvedDecisionV2?.official_status ??
       (displayPlay.decision === 'FIRE'
         ? 'PLAY'
         : displayPlay.decision === 'WATCH'
@@ -1571,11 +1593,11 @@ export default function CardsPageClient() {
     const canonicalGates = (displayPlay.gates ?? []).map((gate) => gate.code);
     const activeRiskCodes = Array.from(
       new Set(
-        decisionV2
+        resolvedDecisionV2
           ? [
               ...canonicalGates,
-              ...decisionV2.watchdog_reason_codes,
-              ...decisionV2.price_reason_codes,
+              ...resolvedDecisionV2.watchdog_reason_codes,
+              ...resolvedDecisionV2.price_reason_codes,
             ]
           : [...canonicalGates, ...fallbackDecision.riskCodes],
       ),
@@ -1595,8 +1617,8 @@ export default function CardsPageClient() {
       : updatedTime;
     const canRenderModelSummary = !isBroken && card.drivers.length > 0;
     const effectiveEdgePct =
-      typeof decisionV2?.edge_pct === 'number'
-        ? decisionV2.edge_pct
+      typeof resolvedDecisionV2?.edge_pct === 'number'
+        ? resolvedDecisionV2.edge_pct
         : typeof displayPlay.decision_data?.edge_pct === 'number'
           ? displayPlay.decision_data.edge_pct
           : typeof displayPlay.edge === 'number'
@@ -1604,7 +1626,7 @@ export default function CardsPageClient() {
             : undefined;
     const hasMarketSpecificEdge = typeof effectiveEdgePct === 'number';
     const primaryReasonCode =
-      decisionV2?.primary_reason_code ??
+      resolvedDecisionV2?.primary_reason_code ??
       displayPlay.pass_reason_code ??
       displayPlay.decision_data?.reason_code ??
       displayPlay.whyCode;
@@ -1621,7 +1643,23 @@ export default function CardsPageClient() {
     const projectedTotal =
       typeof displayPlay.projectedTotal === 'number'
         ? displayPlay.projectedTotal
-        : undefined;
+        : typeof totalFallbackPlay?.projectedTotal === 'number'
+          ? totalFallbackPlay.projectedTotal
+          : undefined;
+    const resolvedModelProb =
+      typeof displayPlay.modelProb === 'number'
+        ? displayPlay.modelProb
+        : typeof resolvedDecisionV2?.fair_prob === 'number'
+          ? resolvedDecisionV2.fair_prob
+          : typeof totalFallbackPlay?.model_prob === 'number'
+            ? totalFallbackPlay.model_prob
+            : undefined;
+    const resolvedImpliedProb =
+      typeof displayPlay.impliedProb === 'number'
+        ? displayPlay.impliedProb
+        : typeof resolvedDecisionV2?.implied_prob === 'number'
+          ? resolvedDecisionV2.implied_prob
+          : undefined;
     const projectedTeamTotal =
       typeof displayPlay.projectedTeamTotal === 'number'
         ? displayPlay.projectedTeamTotal
@@ -1921,8 +1959,8 @@ export default function CardsPageClient() {
 
           {/* WI-0327: Edge Math section */}
           {canRenderModelSummary &&
-            typeof displayPlay.modelProb === 'number' &&
-            typeof displayPlay.impliedProb === 'number' &&
+            typeof resolvedModelProb === 'number' &&
+            typeof resolvedImpliedProb === 'number' &&
             hasActionableEdge &&
             primaryReasonCode !== 'EXACT_WAGER_MISMATCH' && (
               <div className="rounded-md border border-white/10 bg-white/5 p-3">
@@ -1933,14 +1971,14 @@ export default function CardsPageClient() {
                   <span className="text-cloud/60">
                     Fair{' '}
                     <span className="text-cloud/90 font-bold">
-                      {(displayPlay.modelProb * 100).toFixed(1)}%
+                      {(resolvedModelProb * 100).toFixed(1)}%
                     </span>
                   </span>
                   <span className="text-cloud/40">→</span>
                   <span className="text-cloud/60">
                     Implied{' '}
                     <span className="text-cloud/90 font-bold">
-                      {(displayPlay.impliedProb * 100).toFixed(1)}%
+                      {(resolvedImpliedProb * 100).toFixed(1)}%
                     </span>
                   </span>
                   <span className="text-cloud/40">→</span>
@@ -2060,7 +2098,7 @@ export default function CardsPageClient() {
                 Pricing Inefficiency Detected
               </p>
               <p className="text-xs text-blue-100/80">
-                Model fair probability: {typeof displayPlay.modelProb === 'number' ? `${(displayPlay.modelProb * 100).toFixed(1)}%` : '~50%'}, 
+                Model fair probability: {typeof resolvedModelProb === 'number' ? `${(resolvedModelProb * 100).toFixed(1)}%` : '~50%'}, 
                 but market pricing is significantly off (edge {(effectiveEdgePct * 100).toFixed(1)}%). 
                 The edge here comes from an exploitable line, not a strong directional signal.
               </p>
@@ -2445,8 +2483,8 @@ export default function CardsPageClient() {
                 {guardrailStats.triggered.market_price_missing}
               </p>
               <p>
-                Guardrails (outcome): FIRE→WATCH {guardrailStats.outcome.fire_to_watch}{' '}
-                • WATCH→PASS {guardrailStats.outcome.watch_to_pass} • FIRE→PASS{' '}
+                Guardrails (outcome): PLAY→LEAN {guardrailStats.outcome.fire_to_watch}{' '}
+                • LEAN→PASS {guardrailStats.outcome.watch_to_pass} • PLAY→PASS{' '}
                 {guardrailStats.outcome.fire_to_pass} • bet removed{' '}
                 {guardrailStats.outcome.bet_removed}
               </p>

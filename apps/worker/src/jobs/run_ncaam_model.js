@@ -231,7 +231,11 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       // Process each game independently. Missing signals for one game should not
       // block card generation for other games.
       for (const gameId of gameIds) {
-        const gameJobKey = `ncaam-model|${gameId}|${jobKey || 'adhoc'}`;
+        // Scope the per-game race guard to the current parent run so that each
+        // new model invocation can reprocess games. Using jobRunId (unique per run)
+        // prevents two concurrent instances of the same run from double-processing a
+        // game while still allowing the next scheduled run to process it fresh.
+        const gameJobKey = `ncaam-model|${gameId}|${jobRunId}`;
         const gameJobRunId = `job-ncaam-game-${gameId}-${jobRunId.slice(-8)}`;
         
         if (!shouldRunJobKey(gameJobKey)) {

@@ -12,8 +12,10 @@
 
 'use strict';
 
+const { DateTime } = require('luxon');
 const { fetchTeamSchedule, fetchTeamInfo, fetchScoreboardEvents } = require('./espn-client');
 const { normalizeSportCode, resolveTeamVariant } = require('./normalize');
+const { getTeamMetricsCache, upsertTeamMetricsCache } = require('./db');
 
 // ---------------------------------------------------------------------------
 // Team ID Mapping Tables
@@ -504,6 +506,53 @@ const resolvedTeamCache = new Map();
 const scoreboardIndexCache = new Map();
 const scoreboardIndexInFlight = new Map();
 
+function logTeamMetricsEvent(event, payload) {
+  try {
+    console.log(`[TeamMetrics][${event}] ${JSON.stringify(payload)}`);
+  } catch {
+    console.log(`[TeamMetrics][${event}]`);
+  }
+}
+
+function coalesceNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function ensureNhlMetricAliases(metrics) {
+  if (!metrics || typeof metrics !== 'object') return metrics;
+
+  const avgGoalsFor = coalesceNumber(metrics.avgGoalsFor);
+  const avgGoalsAgainst = coalesceNumber(metrics.avgGoalsAgainst);
+  const avgPoints = coalesceNumber(metrics.avgPoints);
+  const avgPointsAllowed = coalesceNumber(metrics.avgPointsAllowed);
+
+  const normalized = { ...metrics };
+  if (avgGoalsFor === null && avgPoints !== null) {
+    normalized.avgGoalsFor = avgPoints;
+  }
+  if (avgGoalsAgainst === null && avgPointsAllowed !== null) {
+    normalized.avgGoalsAgainst = avgPointsAllowed;
+  }
+  return normalized;
+}
+
+function isFiniteMetric(value) {
+  return Number.isFinite(coalesceNumber(value));
+}
+
+function hasSufficientNumericMetricsForSport(metrics, sport) {
+  if (!metrics || typeof metrics !== 'object') return false;
+  if (sport === 'NHL') {
+    return isFiniteMetric(metrics.avgGoalsFor) && isFiniteMetric(metrics.avgGoalsAgainst);
+  }
+  if (sport === 'NBA' || sport === 'NCAAM') {
+    return isFiniteMetric(metrics.avgPoints) && isFiniteMetric(metrics.avgPointsAllowed);
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -689,6 +738,14 @@ async function getScoreboardTeamIndex(sport, league) {
 
   const pending = (async () => {
     const index = await buildScoreboardTeamIndex(sport, league);
+    if (index.size === 0) {
+      logTeamMetricsEvent('SCOREBOARD_INDEX_EMPTY', {
+        sport,
+        league,
+        lookbackDays: SCOREBOARD_LOOKBACK_DAYS,
+        lookaheadDays: SCOREBOARD_LOOKAHEAD_DAYS,
+      });
+    }
     scoreboardIndexCache.set(sport, {
       index,
       // Empty index is usually a transient ESPN/network failure; retry quickly.
@@ -741,6 +798,31 @@ async function resolveTeamEntry(teamName, sport, table, league, options = {}) {
   const variantResolution = resolveTeamVariant(teamName, `resolveTeamEntry:${sport}`);
 
   if (strictVariantMatch && !variantResolution.matched) {
+    const fallbackEntry = await lookupTeamFromScoreboard(
+      teamName,
+      sport,
+      league,
+    );
+    if (fallbackEntry) {
+      table[teamName] = fallbackEntry;
+      logTeamMetricsEvent('TEAM_RESOLVED_SCOREBOARD_UNMAPPED_VARIANT', {
+        sport,
+        inputTeamName: teamName,
+        normalizedTeamName: variantResolution.normalized,
+        canonicalTeamName: variantResolution.canonical,
+        resolvedTeamId: fallbackEntry.id,
+        resolvedTeamAbbr: fallbackEntry.abbr || null,
+      });
+      return {
+        entry: fallbackEntry,
+        resolution: {
+          status: 'resolved_unmapped_variant',
+          inputTeamName: teamName,
+          normalizedTeamName: variantResolution.normalized,
+          canonicalTeamName: variantResolution.canonical,
+        },
+      };
+    }
     return {
       entry: null,
       resolution: {
@@ -775,11 +857,36 @@ async function resolveTeamEntry(teamName, sport, table, league, options = {}) {
   }
 
   let entry = lookupTeam(lookupTeamName, table);
-  if (!entry) {
-    entry = await lookupTeamFromScoreboard(lookupTeamName, sport, league);
-    if (entry) {
-      table[lookupTeamName] = entry;
-      console.log(`[TeamMetrics] Resolved "${lookupTeamName}" via scoreboard fallback (sport: ${sport}, id: ${entry.id})`);
+  const scoreboardEntry = await lookupTeamFromScoreboard(lookupTeamName, sport, league);
+  if (!entry && scoreboardEntry) {
+    entry = scoreboardEntry;
+    table[lookupTeamName] = entry;
+    logTeamMetricsEvent('TEAM_RESOLVED_SCOREBOARD_FALLBACK', {
+      sport,
+      inputTeamName: teamName,
+      lookupTeamName,
+      normalizedTeamName: variantResolution.normalized,
+      canonicalTeamName: variantResolution.canonical,
+      resolvedTeamId: entry.id,
+      resolvedTeamAbbr: entry.abbr || null,
+    });
+  }
+
+  if (sport === 'NHL' && entry && scoreboardEntry) {
+    const staticId = entry?.id != null ? String(entry.id) : null;
+    const scoreboardId = scoreboardEntry?.id != null ? String(scoreboardEntry.id) : null;
+    if (staticId && scoreboardId && staticId !== scoreboardId) {
+      entry = scoreboardEntry;
+      table[lookupTeamName] = scoreboardEntry;
+      logTeamMetricsEvent('TEAM_RESOLVED_SCOREBOARD_OVERRIDE_STALE_STATIC_ID', {
+        sport,
+        inputTeamName: teamName,
+        lookupTeamName,
+        staticId,
+        scoreboardId,
+        normalizedTeamName: variantResolution.normalized,
+        canonicalTeamName: variantResolution.canonical,
+      });
     }
   }
 
@@ -838,10 +945,47 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
   const includeGames = options.includeGames === true;
   const limit = Number.isFinite(options.limit) ? options.limit : 5;
   const strictVariantMatch = options.strictVariantMatch !== false;
+  const skipCache = options.skipCache === true;
   const normalizedSport = normalizeSportCode(
     typeof sport === 'string' ? sport : String(sport || ''),
     'getTeamMetricsWithGames'
   ) || String(sport || '').trim().toUpperCase();
+
+  // Check daily DB cache first (unless skipCache=true)
+  if (!skipCache) {
+    try {
+      const nowEt = DateTime.now().setZone('America/New_York');
+      const cacheDate = nowEt.toISODate();
+      const cached = getTeamMetricsCache(normalizedSport, teamName, cacheDate);
+      
+      if (cached && cached.status === 'ok') {
+        const cachedMetrics = normalizedSport === 'NHL'
+          ? ensureNhlMetricAliases(cached.metrics || neutral())
+          : (cached.metrics || neutral());
+        if (hasSufficientNumericMetricsForSport(cachedMetrics, normalizedSport)) {
+          return {
+            metrics: cachedMetrics,
+            teamInfo: cached.teamInfo || null,
+            games: includeGames && cached.recentGames ? cached.recentGames : [],
+            resolution: {
+              ...cached.resolution,
+              cached: true,
+              cacheDate: cached.cacheDate,
+              fetchedAt: cached.fetchedAt
+            }
+          };
+        }
+        logTeamMetricsEvent('TEAM_METRICS_CACHE_INSUFFICIENT_NUMERIC', {
+          sport: normalizedSport,
+          inputTeamName: teamName,
+          cacheDate: cached.cacheDate,
+        });
+      }
+    } catch (cacheErr) {
+      console.warn(`[TeamMetrics] Cache lookup failed for "${teamName}": ${cacheErr.message}`);
+      // Fall through to live fetch on cache error
+    }
+  }
 
   try {
     const { table, league } = selectTeamTable(normalizedSport);
@@ -865,6 +1009,12 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
     if (!teamEntry) {
       const reason = resolution?.status || 'unknown_team';
       console.warn(`[TeamMetrics] Unknown team: "${teamName}" (sport: ${normalizedSport}, reason: ${reason})`);
+      logTeamMetricsEvent('TEAM_METRICS_NULL', {
+        sport: normalizedSport,
+        inputTeamName: teamName,
+        reason,
+        resolution,
+      });
       return {
         metrics: neutral(),
         teamInfo: null,
@@ -901,15 +1051,25 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
             value: fallbackEntry,
             expiresAt: Date.now() + RESOLVED_TEAM_CACHE_TTL_MS
           });
-          console.log(
-            `[TeamMetrics] Re-resolved "${teamName}" to scoreboard ID ${fallbackEntry.id} after empty ESPN response for ID ${teamEntry.id}`
-          );
+          logTeamMetricsEvent('TEAM_RERESOLVED_AFTER_EMPTY_ESPN', {
+            sport: normalizedSport,
+            inputTeamName: teamName,
+            priorTeamId: teamEntry.id,
+            scoreboardTeamId: fallbackEntry.id,
+          });
         }
       }
     }
 
     if ((!games || games.length === 0) && !teamInfo) {
       console.warn(`[TeamMetrics] ESPN returned no data for "${teamName}" (id: ${teamEntry.id})`);
+      logTeamMetricsEvent('TEAM_METRICS_NULL', {
+        sport: normalizedSport,
+        inputTeamName: teamName,
+        reason: 'espn_no_data',
+        teamId: teamEntry.id,
+        resolution,
+      });
       return {
         metrics: neutral(),
         teamInfo: null,
@@ -924,25 +1084,75 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
     }
 
     const metrics = computeMetricsFromGames(games || [], normalizedSport);
+    const normalizedMetrics = normalizedSport === 'NHL'
+      ? ensureNhlMetricAliases(metrics)
+      : metrics;
 
     if (teamInfo) {
-      metrics.rank = teamInfo.rank;
-      metrics.record = teamInfo.record;
+      normalizedMetrics.rank = teamInfo.rank;
+      normalizedMetrics.record = teamInfo.record;
+    }
+
+    if (!hasSufficientNumericMetricsForSport(normalizedMetrics, normalizedSport)) {
+      logTeamMetricsEvent('TEAM_METRICS_INSUFFICIENT_NUMERIC', {
+        sport: normalizedSport,
+        inputTeamName: teamName,
+        teamId: teamEntry.id,
+        resolution,
+      });
+      return {
+        metrics: normalizedMetrics,
+        teamInfo: teamInfo || null,
+        games: includeGames ? (games || []) : [],
+        resolution: {
+          ...resolution,
+          sport: normalizedSport,
+          teamId: teamEntry.id,
+          status: 'insufficient_numeric_metrics',
+        }
+      };
+    }
+
+    const finalResolution = {
+      ...resolution,
+      sport: normalizedSport,
+      teamId: teamEntry.id,
+      status: 'ok'
+    };
+
+    // Write successful fetch to cache (best-effort, don't fail on cache write error)
+    if (!skipCache) {
+      try {
+        const nowEt = DateTime.now().setZone('America/New_York');
+        const cacheDate = nowEt.toISODate();
+        upsertTeamMetricsCache({
+          sport: normalizedSport,
+          teamName: teamName,
+          cacheDate: cacheDate,
+          status: 'ok',
+          metrics: normalizedMetrics,
+          teamInfo: teamInfo,
+          recentGames: games || [],
+          resolution: finalResolution
+        });
+      } catch (cacheWriteErr) {
+        console.warn(`[TeamMetrics] Cache write failed for "${teamName}": ${cacheWriteErr.message}`);
+      }
     }
 
     return {
-      metrics,
+      metrics: normalizedMetrics,
       teamInfo: teamInfo || null,
       games: includeGames ? (games || []) : [],
-      resolution: {
-        ...resolution,
-        sport: normalizedSport,
-        teamId: teamEntry.id,
-        status: 'ok'
-      }
+      resolution: finalResolution
     };
   } catch (err) {
     console.warn(`[TeamMetrics] Error fetching metrics for "${teamName}": ${err.message}`);
+    logTeamMetricsEvent('TEAM_METRICS_ERROR', {
+      sport: normalizedSport,
+      inputTeamName: teamName,
+      message: err.message,
+    });
     return {
       metrics: neutral(),
       teamInfo: null,

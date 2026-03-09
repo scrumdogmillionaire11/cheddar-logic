@@ -2,6 +2,36 @@
 
 Worker jobs for cheddar-logic: scheduled tasks, ETL jobs, model runs.
 
+## NBA/NHL/NCAAM null-data diagnostic loop
+
+Use this run order when tracking missing ESPN/projection inputs in the main Cheddar DB.
+
+```bash
+# 1) Load environment
+set -a; source .env; set +a
+
+# 2) Pre-warm team metrics cache (all sports)
+node src/jobs/refresh_team_metrics_daily.js
+
+# 3) Pull latest odds snapshots
+npm run job:pull-odds
+
+# 4) Run each model (same shell/env)
+npm run job:run-nba-model
+npm run job:run-nhl-model
+npm run job:run-ncaam-model
+```
+
+Structured null-data tags to filter:
+
+```bash
+# Projection-input blocks from model runners
+grep -E "\[NBAModel\]\[PROJECTION_INPUTS_INCOMPLETE\]|\[NHLModel\]\[PROJECTION_INPUTS_INCOMPLETE\]|\[NCAAMModel\]\[PROJECTION_INPUTS_INCOMPLETE\]" logs/worker-*.log
+
+# Team metrics / enrichment nulls from data layer
+grep -E "\[TeamMetrics\]\[TEAM_METRICS_NULL\]|\[TeamMetrics\]\[TEAM_METRICS_ERROR\]|\[OddsEnrichment\]\[NULL_TEAM_METRICS\]|\[OddsEnrichment\]\[SOURCE_CONTRACT_FAILURE_TEAM_MAPPING\]" logs/worker-*.log
+```
+
 ## Jobs
 
 ### pull_odds_hourly

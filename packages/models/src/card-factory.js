@@ -198,7 +198,9 @@ function buildBallSportPayload({
     descriptor.driverInputs?.projected_total,
   )
     ? descriptor.driverInputs.projected_total
-    : null;
+    : Number.isFinite(descriptor.driverInputs?.expected_total)
+      ? descriptor.driverInputs.expected_total
+      : null;
 
   const winProbHome = computeWinProbHome(projectedMargin, sport);
   const normalizedMarketType =

@@ -46,6 +46,7 @@ const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
 const { backfillCardResults } = require('../jobs/backfill_card_results');
 const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
+const { run: refreshTeamMetricsDaily } = require('../jobs/refresh_team_metrics_daily');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -401,6 +402,20 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         reason: `global odds backstop (find + refresh stale snapshots within T-6h)`,
       });
     }
+  }
+
+  // ========== TEAM METRICS CACHE (2.5) ==========
+  // Daily prewarm at 09:00 ET (before first model run)
+  if (process.env.ENABLE_TEAM_METRICS_CACHE !== 'false' && isFixedDue(nowEt, '09:00')) {
+    const cacheDate = nowEt.toISODate();
+    const jobKey = `refresh_team_metrics|${cacheDate}`;
+    jobs.push({
+      jobName: 'refresh_team_metrics_daily',
+      jobKey,
+      execute: refreshTeamMetricsDaily,
+      args: { jobKey, dryRun },
+      reason: `daily team metrics cache prewarm (09:00 ET)`,
+    });
   }
 
   // ========== MODELS (3) ==========

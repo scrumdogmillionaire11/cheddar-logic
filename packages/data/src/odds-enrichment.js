@@ -7,6 +7,30 @@
 
 const { getTeamMetricsWithGames } = require('./team-metrics');
 
+function logOddsEnrichmentEvent(event, payload) {
+  try {
+    console.warn(`[OddsEnrichment][${event}] ${JSON.stringify(payload)}`);
+  } catch {
+    console.warn(`[OddsEnrichment][${event}]`);
+  }
+}
+
+function hasNumericEspnMetrics(metrics) {
+  if (!metrics || typeof metrics !== 'object') return false;
+  const keys = [
+    'avgPoints',
+    'avgPointsAllowed',
+    'avgGoalsFor',
+    'avgGoalsAgainst',
+  ];
+  return keys.some((key) => {
+    const value = metrics[key];
+    if (value === null || value === undefined || value === '') return false;
+    const parsed = Number(value);
+    return Number.isFinite(parsed);
+  });
+}
+
 /**
  * Map sport names: odds format to ESPN format
  * @param {string} sport - 'NBA' | 'NCAAM' | 'NHL'
@@ -62,28 +86,21 @@ async function enrichOddsSnapshotWithEspnMetrics(oddsSnapshot, options = {}) {
     ]);
 
     // Check for null/incomplete metrics (neutral() returns)
-    const hasHomeMetrics = homeData?.metrics && Object.values(homeData.metrics).some(v => v !== null);
-    const hasAwayMetrics = awayData?.metrics && Object.values(awayData.metrics).some(v => v !== null);
-    
-    if (!hasHomeMetrics) {
-      console.warn(`[OddsEnrichment] Home team INCOMPLETE metrics for ${oddsSnapshot.home_team} (${oddsSnapshot.game_id})`);
-    }
-    if (!hasAwayMetrics) {
-      console.warn(`[OddsEnrichment] Away team INCOMPLETE metrics for ${oddsSnapshot.away_team} (${oddsSnapshot.game_id})`);
-    }
+    const hasHomeMetrics = hasNumericEspnMetrics(homeData?.metrics);
+    const hasAwayMetrics = hasNumericEspnMetrics(awayData?.metrics);
 
-    const mappingFailures = [];
-    if (homeData?.resolution?.status && homeData.resolution.status !== 'ok') {
-      mappingFailures.push({ side: 'home', team: oddsSnapshot.home_team, ...homeData.resolution });
-    }
-    if (awayData?.resolution?.status && awayData.resolution.status !== 'ok') {
-      mappingFailures.push({ side: 'away', team: oddsSnapshot.away_team, ...awayData.resolution });
-    }
-
-    if (mappingFailures.length > 0) {
-      console.warn(
-        `[OddsEnrichment] SOURCE_CONTRACT_FAILURE team_mapping game=${oddsSnapshot.game_id} failures=${JSON.stringify(mappingFailures)}`,
-      );
+    if (!hasHomeMetrics || !hasAwayMetrics) {
+      logOddsEnrichmentEvent('NULL_TEAM_METRICS', {
+        gameId: oddsSnapshot.game_id,
+        sport: oddsSnapshot.sport,
+        homeTeam: oddsSnapshot.home_team,
+        awayTeam: oddsSnapshot.away_team,
+        hasHomeMetrics,
+        hasAwayMetrics,
+        homeResolutionStatus: homeData?.resolution?.status || null,
+        awayResolutionStatus: awayData?.resolution?.status || null,
+        strictTeamMapping,
+      });
     }
 
     // Parse existing raw_data or create new object
@@ -96,6 +113,44 @@ async function enrichOddsSnapshotWithEspnMetrics(oddsSnapshot, options = {}) {
       } catch {
         rawData = {};
       }
+    }
+
+    // Guard: if the new fetch produced no numeric metrics for either side, check whether
+    // the snapshot already has valid ESPN metrics from a prior enrichment. If so, preserve
+    // them rather than overwriting with null values — this prevents a transient ESPN
+    // lookup failure from destroying previously good cached data.
+    if (!hasHomeMetrics || !hasAwayMetrics) {
+      const existingEspn = rawData.espn_metrics;
+      const existingHomeOk = hasNumericEspnMetrics(existingEspn?.home?.metrics);
+      const existingAwayOk = hasNumericEspnMetrics(existingEspn?.away?.metrics);
+      if (existingHomeOk && existingAwayOk) {
+        logOddsEnrichmentEvent('PRESERVING_EXISTING_ESPN_METRICS', {
+          gameId: oddsSnapshot.game_id,
+          sport: oddsSnapshot.sport,
+          homeTeam: oddsSnapshot.home_team,
+          awayTeam: oddsSnapshot.away_team,
+          reason: 'new_fetch_returned_null_metrics_existing_metrics_intact',
+        });
+        return oddsSnapshot;
+      }
+    }
+
+    const mappingFailures = [];
+    if (homeData?.resolution?.status && homeData.resolution.status !== 'ok') {
+      mappingFailures.push({ side: 'home', team: oddsSnapshot.home_team, ...homeData.resolution });
+    }
+    if (awayData?.resolution?.status && awayData.resolution.status !== 'ok') {
+      mappingFailures.push({ side: 'away', team: oddsSnapshot.away_team, ...awayData.resolution });
+    }
+
+    if (mappingFailures.length > 0) {
+      logOddsEnrichmentEvent('SOURCE_CONTRACT_FAILURE_TEAM_MAPPING', {
+        gameId: oddsSnapshot.game_id,
+        sport: oddsSnapshot.sport,
+        homeTeam: oddsSnapshot.home_team,
+        awayTeam: oddsSnapshot.away_team,
+        failures: mappingFailures,
+      });
     }
 
     // Merge ESPN metrics into raw_data
@@ -111,14 +166,14 @@ async function enrichOddsSnapshotWithEspnMetrics(oddsSnapshot, options = {}) {
             mapping_failures: mappingFailures,
           },
           home: {
-            metrics: homeData.metrics,
-            team_info: homeData.teamInfo,
-            recent_games: includeGames ? homeData.games : undefined
+            metrics: homeData?.metrics || null,
+            team_info: homeData?.teamInfo || null,
+            recent_games: includeGames ? (homeData?.games || []) : undefined
           },
           away: {
-            metrics: awayData.metrics,
-            team_info: awayData.teamInfo,
-            recent_games: includeGames ? awayData.games : undefined
+            metrics: awayData?.metrics || null,
+            team_info: awayData?.teamInfo || null,
+            recent_games: includeGames ? (awayData?.games || []) : undefined
           }
         }
       }

@@ -41,7 +41,7 @@ const WELCOME_HOME_PRESET: FilterPreset = {
 const GAME_PRESETS: FilterPreset[] = [
   {
     id: 'all',
-    name: 'Main View (FIRE+WATCH)',
+    name: 'Main View (PLAY + LEAN)',
     description: 'Default actionable board view',
     icon: '🎯',
     filters: DEFAULT_FILTERS_BY_MODE.game,
@@ -49,7 +49,7 @@ const GAME_PRESETS: FilterPreset[] = [
   {
     id: 'full_slate',
     name: 'Full Slate (Include PASS)',
-    description: 'Show FIRE, WATCH, and PASS games',
+    description: 'Show PLAY, LEAN, and PASS games',
     icon: '📋',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
@@ -58,8 +58,8 @@ const GAME_PRESETS: FilterPreset[] = [
     },
   },
   {
-    id: 'fire_tonight',
-    name: 'FIRE Tonight',
+    id: 'play_tonight',
+    name: 'PLAY Tonight',
     description: 'High-confidence plays starting today',
     icon: '🔥',
     filters: {
@@ -73,7 +73,7 @@ const GAME_PRESETS: FilterPreset[] = [
   {
     id: 'watch_next_4h',
     name: 'Watch List (Next 4h)',
-    description: 'WATCH tier games in next 4 hours',
+    description: 'LEAN games in next 4 hours',
     icon: '👀',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
@@ -101,19 +101,6 @@ const GAME_PRESETS: FilterPreset[] = [
     },
   },
   {
-    id: 'coinflip_ml',
-    name: 'Coinflip ML Value',
-    description: 'Close ML odds (-120 to +120)',
-    icon: '🪙',
-    filters: {
-      ...DEFAULT_FILTERS_BY_MODE.game,
-      markets: ['ML'],
-      onlyGamesWithPicks: true,
-      // Note: coinflip detection happens via tags
-      sortMode: 'signal_strength',
-    },
-  },
-  {
     id: 'next_2h',
     name: 'Starting Soon',
     description: 'Games starting in next 2 hours',
@@ -126,7 +113,7 @@ const GAME_PRESETS: FilterPreset[] = [
   },
   {
     id: 'best_only',
-    name: 'BEST Tier Only',
+    name: 'PLAY Tier Only',
     description: 'Only highest-tier drivers',
     icon: '⭐',
     filters: {

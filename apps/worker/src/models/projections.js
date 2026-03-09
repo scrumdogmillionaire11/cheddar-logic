@@ -30,6 +30,16 @@ function hasNumeric(value) {
   return toNumber(value) !== null;
 }
 
+function hasNumericMetricSet(metrics) {
+  if (!metrics || typeof metrics !== 'object') return false;
+  return [
+    metrics.avgPoints,
+    metrics.avgPointsAllowed,
+    metrics.avgGoalsFor,
+    metrics.avgGoalsAgainst,
+  ].some((value) => hasNumeric(value));
+}
+
 function assessProjectionInputs(sport, oddsSnapshot) {
   const normalizedSport = String(sport || '').toUpperCase();
   const raw = parseRawData(oddsSnapshot?.raw_data);
@@ -112,6 +122,31 @@ function assessProjectionInputs(sport, oddsSnapshot) {
   return {
     projection_inputs_complete: missingInputs.length === 0,
     missing_inputs: missingInputs,
+  };
+}
+
+function buildProjectionNullDiagnostic(sport, oddsSnapshot, projectionGate = null) {
+  const gate = projectionGate || assessProjectionInputs(sport, oddsSnapshot);
+  const raw = parseRawData(oddsSnapshot?.raw_data);
+  const espnMetrics = raw?.espn_metrics || {};
+  const sourceContract = espnMetrics?.source_contract || {};
+
+  return {
+    sport: String(sport || '').toUpperCase(),
+    gameId: oddsSnapshot?.game_id || null,
+    homeTeam: oddsSnapshot?.home_team || null,
+    awayTeam: oddsSnapshot?.away_team || null,
+    missingInputs: Array.isArray(gate.missing_inputs) ? gate.missing_inputs : [],
+    projectionInputsComplete: Boolean(gate.projection_inputs_complete),
+    hasHomeMetrics: hasNumericMetricSet(espnMetrics?.home?.metrics),
+    hasAwayMetrics: hasNumericMetricSet(espnMetrics?.away?.metrics),
+    sourceContractMappingOk:
+      typeof sourceContract.mapping_ok === 'boolean'
+        ? sourceContract.mapping_ok
+        : null,
+    sourceContractFailures: Array.isArray(sourceContract.mapping_failures)
+      ? sourceContract.mapping_failures
+      : [],
   };
 }
 
@@ -424,6 +459,7 @@ function projectNBACanonical(
 
 module.exports = {
   assessProjectionInputs,
+  buildProjectionNullDiagnostic,
   projectNBA,
   projectNBACanonical,
   projectNCAAM,

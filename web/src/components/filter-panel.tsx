@@ -115,7 +115,11 @@ export default function FilterPanel({
   };
 
   const sportOptions: Sport[] = ['NHL', 'NBA', 'NCAAM', 'SOCCER', 'MLB', 'NFL'];
-  const statusOptions: ExpressionStatus[] = ['FIRE', 'WATCH', 'PASS'];
+  const statusOptions: Array<{ value: ExpressionStatus; label: string }> = [
+    { value: 'FIRE', label: 'PLAY' },
+    { value: 'WATCH', label: 'LEAN' },
+    { value: 'PASS', label: 'PASS' },
+  ];
   const marketOptions: Market[] = ['ML', 'SPREAD', 'TOTAL'];
   const tierOptions: { value: DriverTier | undefined; label: string }[] = [
     { value: undefined, label: 'Any' },
@@ -216,21 +220,21 @@ export default function FilterPanel({
               Actionability
             </p>
             <div className="flex flex-wrap gap-2">
-              {statusOptions.map((status) => (
+              {statusOptions.map(({ value, label }) => (
                 <button
-                  key={status}
-                  onClick={() => toggleStatus(status)}
+                  key={value}
+                  onClick={() => toggleStatus(value)}
                   className={`px-3 py-1.5 text-sm rounded border transition ${
-                    filters.statuses.includes(status)
-                      ? status === 'FIRE'
+                    filters.statuses.includes(value)
+                      ? value === 'FIRE'
                         ? 'bg-green-700/50 text-green-300 border-green-600/60'
-                        : status === 'WATCH'
+                        : value === 'WATCH'
                           ? 'bg-yellow-700/50 text-yellow-300 border-yellow-600/60'
                           : 'bg-white/20 text-cloud border-white/30'
                       : 'bg-white/5 border-white/10 hover:border-white/20'
                   }`}
                 >
-                  {status}
+                  {label}
                 </button>
               ))}
             </div>
