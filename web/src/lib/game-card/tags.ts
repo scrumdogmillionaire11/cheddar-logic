@@ -248,6 +248,7 @@ export function hasEdgeVerification(card: GameCard): boolean {
   if (!play) return false;
   return Boolean(
     play.tags?.includes('EDGE_VERIFICATION_REQUIRED') ||
+      play.decision_v2?.price_reason_codes?.includes('EDGE_VERIFICATION_REQUIRED') ||
       play.reason_codes?.includes('DOWNGRADED_EDGE_SANITY_NON_TOTAL') ||
       play.reason_codes?.includes('PASS_EDGE_SANITY_NON_TOTAL') ||
       play.gates?.some((gate) => gate.code === 'EDGE_SANITY_NON_TOTAL'),
@@ -258,7 +259,10 @@ export function hasProxyCap(card: GameCard): boolean {
   const play = card.play;
   if (!play) return false;
   return Boolean(
-    play.tags?.includes('PROXY_CARD') ||
+    play.decision_v2?.proxy_capped === true ||
+      play.decision_v2?.price_reason_codes?.includes('PROXY_EDGE_CAPPED') ||
+      play.decision_v2?.price_reason_codes?.includes('PROXY_EDGE_BLOCKED') ||
+      play.tags?.includes('PROXY_CARD') ||
       play.reason_codes?.includes('PASS_PROXY_CAPPED') ||
       play.reason_codes?.includes('DOWNGRADED_PROXY_CAPPED') ||
       play.reason_codes?.includes('PASS_PROXY_EDGE_SANITY_COMBO') ||

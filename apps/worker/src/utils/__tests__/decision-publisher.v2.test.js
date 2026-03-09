@@ -23,6 +23,7 @@ function buildWave1Payload(overrides = {}) {
     market_type: 'TOTAL',
     selection: { side: 'OVER' },
     prediction: 'OVER',
+    line: 220.5,
     price: -110,
     edge: 0.09,
     model_prob: 0.59,
@@ -46,6 +47,15 @@ function buildWave1Payload(overrides = {}) {
     },
     odds_context: {
       captured_at: minutesAgoIso(1),
+      h2h_home: -120,
+      h2h_away: 100,
+      spread_home: -5.5,
+      spread_away: 5.5,
+      spread_price_home: -110,
+      spread_price_away: -110,
+      total: 220.5,
+      total_price_over: -110,
+      total_price_under: -110,
     },
     reason_codes: [],
     ...overrides,
@@ -63,6 +73,9 @@ function buildWave1Payload(overrides = {}) {
         ...overrides.driver.inputs,
       },
     };
+  }
+  if (overrides.odds_context) {
+    payload.odds_context = { ...payload.odds_context, ...overrides.odds_context };
   }
 
   return payload;
@@ -234,5 +247,156 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2).toBeUndefined();
     expect(payload.action).toBe('HOLD');
     expect(payload.status).toBe('WATCH');
+  });
+
+  test('blocks priced promotion when proxy edge is marked as proxy_used', () => {
+    const payload = buildWave1Payload({
+      proxy_used: true,
+      edge: 0.07,
+      model_prob: 0.6,
+      price: -110,
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.price_reason_codes).toContain('PROXY_EDGE_CAPPED');
+    expect(payload.decision_v2.primary_reason_code).toBe(
+      'PROXY_EDGE_CAPPED',
+    );
+  });
+
+  test('marks fallback inference payloads as proxy-used and blocks priced promotion', () => {
+    const payload = buildWave1Payload({
+      market_type: 'SPREAD',
+      recommended_bet_type: 'spread',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: -5.5,
+      price: -110,
+      model_prob: 0.58,
+      edge: 0.056,
+      meta: { inference_source: 'market_fallback' },
+      odds_context: {
+        spread_home: -5.5,
+        spread_away: 5.5,
+        spread_price_home: -110,
+        spread_price_away: -110,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.proxy_used).toBe(true);
+    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'PROXY_EDGE_CAPPED',
+    );
+  });
+
+  test('hard-fails proxy non-total cards with oversized edge', () => {
+    const payload = buildWave1Payload({
+      market_type: 'SPREAD',
+      recommended_bet_type: 'spread',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: -5.5,
+      price: -110,
+      model_prob: 0.82,
+      edge: 0.296,
+      proxy_used: true,
+      odds_context: {
+        spread_home: -5.5,
+        spread_away: 5.5,
+        spread_price_home: -110,
+        spread_price_away: -110,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.sharp_price_status).toBe('UNPRICED');
+    expect(payload.decision_v2.official_status).toBe('PASS');
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'PROXY_EDGE_BLOCKED',
+    );
+  });
+
+  test('requires verification for oversized non-total edges and blocks priced promotion', () => {
+    const payload = buildWave1Payload({
+      market_type: 'SPREAD',
+      recommended_bet_type: 'spread',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: -5.5,
+      price: -110,
+      model_prob: 0.8,
+      edge: 0.276,
+      odds_context: {
+        spread_home: -5.5,
+        spread_away: 5.5,
+        spread_price_home: -110,
+        spread_price_away: -110,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.sharp_price_status).toBe('UNPRICED');
+    expect(payload.decision_v2.official_status).toBe('PASS');
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'EDGE_VERIFICATION_REQUIRED',
+    );
+    expect(payload.decision_v2.primary_reason_code).toBe(
+      'EDGE_VERIFICATION_REQUIRED',
+    );
+  });
+
+  test('does not price spread from moneyline win probability fallback', () => {
+    // Only win_prob_home present — no projected margin, so market-aware edge cannot fire.
+    // Ensures win_prob_home alone is never used to price a spread card.
+    const payload = buildWave1Payload({
+      market_type: 'SPREAD',
+      recommended_bet_type: 'spread',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: -5.5,
+      price: -110,
+      edge: null,
+      model_prob: null,
+      p_fair: null,
+      projection: { win_prob_home: 0.74 },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.fair_prob).toBeNull();
+    expect(payload.decision_v2.edge_pct).toBeNull();
+    expect(payload.decision_v2.official_status).toBe('PASS');
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'MODEL_PROB_MISSING',
+    );
+  });
+
+  test('blocks pricing when called wager line mismatches odds context', () => {
+    const payload = buildWave1Payload({
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 221.5,
+      price: -110,
+      model_prob: 0.59,
+      edge: null,
+      p_fair: null,
+      odds_context: {
+        total: 220.5,
+        total_price_over: -110,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.official_status).toBe('PASS');
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'EXACT_WAGER_MISMATCH',
+    );
+    expect(payload.decision_v2.primary_reason_code).toBe(
+      'EXACT_WAGER_MISMATCH',
+    );
   });
 });

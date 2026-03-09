@@ -1,3 +1,5 @@
+const edgeCalculator = require('./edge-calculator');
+
 const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
 const WAVE1_MARKETS = new Set([
   'MONEYLINE',
@@ -18,9 +20,25 @@ const PRICE_REASONS = {
   EDGE_CLEAR: 'EDGE_CLEAR',
   NO_EDGE_AT_PRICE: 'NO_EDGE_AT_PRICE',
   MARKET_PRICE_MISSING: 'MARKET_PRICE_MISSING',
+  MODEL_PROB_MISSING: 'MODEL_PROB_MISSING',
+  MARKET_EDGE_UNAVAILABLE: 'MARKET_EDGE_UNAVAILABLE',
+  EXACT_WAGER_MISMATCH: 'EXACT_WAGER_MISMATCH',
+  PROXY_EDGE_BLOCKED: 'PROXY_EDGE_BLOCKED',
+  PROXY_EDGE_CAPPED: 'PROXY_EDGE_CAPPED',
+  NO_PRIMARY_SUPPORT: 'NO_PRIMARY_SUPPORT',
+  EDGE_VERIFICATION_REQUIRED: 'EDGE_VERIFICATION_REQUIRED',
 };
 
 const PIPELINE_VERSION = 'v2';
+const EDGE_SANITY_NON_TOTAL_THRESHOLD = 0.2;
+const PLAY_EDGE_MIN = 0.06;
+const LEAN_EDGE_MIN = 0.03;
+const PROXY_SIGNAL_TAGS = new Set([
+  'PROXY_MODEL_PROB_INFERRED',
+  'PROXY_LEGACY_MARKET_INFERRED',
+  'LEGACY_REPAIR',
+  'PROXY_CARD',
+]);
 
 const FIELD_SOURCES = {
   pace_tier: ['consistency.pace_tier', 'driver.inputs.pace_tier'],
@@ -98,6 +116,39 @@ function getDirection(payload) {
   const fromPrediction = normalizeDirection(payload?.prediction);
   if (fromPrediction !== 'NONE') return fromPrediction;
   return 'NONE';
+}
+
+function detectProxyUsed(payload) {
+  if (payload?.proxy_used === true || payload?.pricing_trace?.proxy_used === true) {
+    return true;
+  }
+
+  if (
+    Array.isArray(payload?.tags) &&
+    payload.tags.some((tag) => PROXY_SIGNAL_TAGS.has(String(tag || '')))
+  ) {
+    return true;
+  }
+
+  const inferenceSource = asString(payload?.meta?.inference_source) || asString(payload?.inference_source);
+  if (inferenceSource === 'market_fallback') {
+    return true;
+  }
+
+  if (asString(payload?.driver?.status) === 'fallback') {
+    return true;
+  }
+
+  if (asString(payload?.driver?.inputs?.fallback_source) === 'market_spread') {
+    return true;
+  }
+
+  const reasoning = asString(payload?.reasoning);
+  if (reasoning && /fallback to market spread proxy/i.test(reasoning)) {
+    return true;
+  }
+
+  return false;
 }
 
 function getSupportAndConflict(payload) {
@@ -245,25 +296,272 @@ function impliedProbFromAmerican(price) {
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
-function classifyPrice(edgePct, fairProb, impliedProb) {
-  if (fairProb === null || impliedProb === null || edgePct === null) {
+function getSupportThresholds(marketType) {
+  if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+    return { play: 0.65, lean: 0.5 };
+  }
+  if (marketType === 'TOTAL' || marketType === 'TEAM_TOTAL') {
+    return { play: 0.55, lean: 0.45 };
+  }
+  return { play: 0.6, lean: 0.45 };
+}
+
+function classifyPrice({
+  marketType,
+  edgePct,
+  fairProb,
+  impliedProb,
+  missingReason = null,
+  exactWagerValid = true,
+  hasPrimarySupport = true,
+  proxyUsed = false,
+  proxyAllowed = false,
+}) {
+  if (missingReason) {
     return {
       sharp_price_status: 'UNPRICED',
-      price_reason_codes: [PRICE_REASONS.MARKET_PRICE_MISSING],
+      price_reason_codes: [missingReason],
+      proxy_capped: false,
     };
   }
 
-  if (edgePct < 0.03) {
+  if (!exactWagerValid) {
+    return {
+      sharp_price_status: 'UNPRICED',
+      price_reason_codes: [PRICE_REASONS.EXACT_WAGER_MISMATCH],
+      proxy_capped: false,
+    };
+  }
+
+  if (!hasPrimarySupport) {
+    return {
+      sharp_price_status: 'UNPRICED',
+      price_reason_codes: [PRICE_REASONS.NO_PRIMARY_SUPPORT],
+      proxy_capped: false,
+    };
+  }
+
+  if (fairProb === null) {
+    return {
+      sharp_price_status: 'UNPRICED',
+      price_reason_codes: [PRICE_REASONS.MODEL_PROB_MISSING],
+      proxy_capped: false,
+    };
+  }
+
+  if (impliedProb === null || edgePct === null) {
+    return {
+      sharp_price_status: 'UNPRICED',
+      price_reason_codes: [PRICE_REASONS.MARKET_PRICE_MISSING],
+      proxy_capped: false,
+    };
+  }
+
+  if (
+    proxyUsed &&
+    marketType !== 'TOTAL' &&
+    edgePct > EDGE_SANITY_NON_TOTAL_THRESHOLD
+  ) {
+    return {
+      sharp_price_status: 'UNPRICED',
+      price_reason_codes: [PRICE_REASONS.PROXY_EDGE_BLOCKED],
+      proxy_capped: false,
+    };
+  }
+
+  if (
+    marketType !== 'TOTAL' &&
+    edgePct > EDGE_SANITY_NON_TOTAL_THRESHOLD
+  ) {
+    return {
+      sharp_price_status: 'UNPRICED',
+      price_reason_codes: [PRICE_REASONS.EDGE_VERIFICATION_REQUIRED],
+      proxy_capped: false,
+    };
+  }
+
+  if (proxyUsed && !proxyAllowed) {
+    if (edgePct < LEAN_EDGE_MIN) {
+      return {
+        sharp_price_status: 'COTTAGE',
+        price_reason_codes: [PRICE_REASONS.PROXY_EDGE_CAPPED, PRICE_REASONS.NO_EDGE_AT_PRICE],
+        proxy_capped: true,
+      };
+    }
+    return {
+      sharp_price_status: 'CHEDDAR',
+      price_reason_codes: [PRICE_REASONS.PROXY_EDGE_CAPPED, PRICE_REASONS.EDGE_CLEAR],
+      proxy_capped: true,
+    };
+  }
+
+  if (edgePct < LEAN_EDGE_MIN) {
     return {
       sharp_price_status: 'COTTAGE',
       price_reason_codes: [PRICE_REASONS.NO_EDGE_AT_PRICE],
+      proxy_capped: false,
     };
   }
 
   return {
     sharp_price_status: 'CHEDDAR',
     price_reason_codes: [PRICE_REASONS.EDGE_CLEAR],
+    proxy_capped: false,
   };
+}
+
+function isHomeAwayDirection(direction) {
+  return direction === 'HOME' || direction === 'AWAY';
+}
+
+function isOverUnderDirection(direction) {
+  return direction === 'OVER' || direction === 'UNDER';
+}
+
+function marketRequiresLine(marketType) {
+  return (
+    marketType === 'SPREAD' ||
+    marketType === 'PUCKLINE' ||
+    marketType === 'TOTAL' ||
+    marketType === 'TEAM_TOTAL'
+  );
+}
+
+function marketRequiresPrice(marketType) {
+  return (
+    marketType === 'MONEYLINE' ||
+    marketType === 'SPREAD' ||
+    marketType === 'PUCKLINE' ||
+    marketType === 'TOTAL' ||
+    marketType === 'TEAM_TOTAL'
+  );
+}
+
+function sideValidForMarket(marketType, direction) {
+  if (marketType === 'MONEYLINE' || marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+    return isHomeAwayDirection(direction);
+  }
+  if (marketType === 'TOTAL' || marketType === 'TEAM_TOTAL') {
+    return isOverUnderDirection(direction);
+  }
+  return false;
+}
+
+function nearlyEqual(a, b, epsilon = 1e-6) {
+  return Math.abs(a - b) <= epsilon;
+}
+
+function getExpectedWagerFromOddsContext(payload, marketType, direction) {
+  const odds = payload?.odds_context;
+  if (!odds || typeof odds !== 'object') {
+    return { expectedLine: null, expectedPrice: null };
+  }
+
+  if (marketType === 'MONEYLINE') {
+    return {
+      expectedLine: null,
+      expectedPrice:
+        direction === 'HOME'
+          ? asNumber(odds.h2h_home ?? odds.moneyline_home)
+          : direction === 'AWAY'
+            ? asNumber(odds.h2h_away ?? odds.moneyline_away)
+            : null,
+    };
+  }
+
+  if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+    return {
+      expectedLine:
+        direction === 'HOME'
+          ? asNumber(odds.spread_home)
+          : direction === 'AWAY'
+            ? asNumber(odds.spread_away)
+            : null,
+      expectedPrice:
+        direction === 'HOME'
+          ? asNumber(odds.spread_price_home)
+          : direction === 'AWAY'
+            ? asNumber(odds.spread_price_away)
+            : null,
+    };
+  }
+
+  if (marketType === 'TOTAL' || marketType === 'TEAM_TOTAL') {
+    return {
+      expectedLine: asNumber(odds.total),
+      expectedPrice:
+        direction === 'OVER'
+          ? asNumber(odds.total_price_over)
+          : direction === 'UNDER'
+            ? asNumber(odds.total_price_under)
+            : null,
+    };
+  }
+
+  return { expectedLine: null, expectedPrice: null };
+}
+
+function validateExactWager({
+  payload,
+  marketType,
+  direction,
+  line,
+  price,
+}) {
+  const trace =
+    payload?.pricing_trace && typeof payload.pricing_trace === 'object'
+      ? payload.pricing_trace
+      : null;
+
+  if (trace?.exact_wager_valid === false) {
+    return false;
+  }
+
+  const calledMarket = normalizeMarketType(trace?.called_market_type);
+  if (calledMarket && calledMarket !== marketType) {
+    return false;
+  }
+
+  const calledSide = normalizeDirection(trace?.called_side);
+  if (calledSide !== 'NONE' && calledSide !== direction) {
+    return false;
+  }
+
+  const calledLine = asNumber(trace?.called_line);
+  if (calledLine !== null && line !== null && !nearlyEqual(calledLine, line)) {
+    return false;
+  }
+
+  const calledPrice = asNumber(trace?.called_price);
+  if (calledPrice !== null && price !== null && !nearlyEqual(calledPrice, price)) {
+    return false;
+  }
+
+  const { expectedLine, expectedPrice } = getExpectedWagerFromOddsContext(
+    payload,
+    marketType,
+    direction,
+  );
+
+  if (
+    expectedLine !== null &&
+    line !== null &&
+    marketRequiresLine(marketType) &&
+    !nearlyEqual(expectedLine, line)
+  ) {
+    return false;
+  }
+
+  if (
+    expectedPrice !== null &&
+    price !== null &&
+    marketRequiresPrice(marketType) &&
+    !nearlyEqual(expectedPrice, price)
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function derivePlayTier(edgePct) {
@@ -274,27 +572,38 @@ function derivePlayTier(edgePct) {
   return 'BAD';
 }
 
-function computeOfficialStatus({ watchdogStatus, sharpPriceStatus, supportScore, edgePct }) {
+function computeOfficialStatus({
+  watchdogStatus,
+  sharpPriceStatus,
+  supportScore,
+  edgePct,
+  marketType,
+  proxyCapped = false,
+}) {
+  const thresholds = getSupportThresholds(marketType);
+
   if (watchdogStatus === 'BLOCKED') return 'PASS';
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
     return 'PASS';
   }
+  if (edgePct === null) return 'PASS';
+
   if (
     sharpPriceStatus === 'CHEDDAR' &&
-    supportScore >= 0.6 &&
-    edgePct !== null &&
-    edgePct >= 0.06
+    supportScore >= thresholds.play &&
+    edgePct >= PLAY_EDGE_MIN
   ) {
-    return 'PLAY';
+    return proxyCapped ? 'LEAN' : 'PLAY';
   }
+
   if (
     sharpPriceStatus === 'CHEDDAR' &&
-    supportScore >= 0.45 &&
-    edgePct !== null &&
-    edgePct >= 0.03
+    supportScore >= thresholds.lean &&
+    edgePct >= LEAN_EDGE_MIN
   ) {
     return 'LEAN';
   }
+
   return 'PASS';
 }
 
@@ -306,7 +615,11 @@ function resolvePrimaryReason({
   officialStatus,
   supportScore,
   edgePct,
+  marketType,
+  proxyCapped = false,
 }) {
+  const thresholds = getSupportThresholds(marketType);
+
   if (watchdogStatus === 'BLOCKED' && watchdogReasonCodes.length > 0) {
     return watchdogReasonCodes[0];
   }
@@ -315,15 +628,19 @@ function resolvePrimaryReason({
     return priceReasonCodes[0] || PRICE_REASONS.MARKET_PRICE_MISSING;
   }
 
+  if (proxyCapped) {
+    return PRICE_REASONS.PROXY_EDGE_CAPPED;
+  }
+
   if (officialStatus === 'PLAY' || officialStatus === 'LEAN') {
     return PRICE_REASONS.EDGE_CLEAR;
   }
 
-  if (supportScore < 0.45) {
+  if (supportScore < thresholds.lean) {
     return 'SUPPORT_BELOW_LEAN_THRESHOLD';
   }
 
-  if (edgePct !== null && edgePct < 0.06) {
+  if (edgePct !== null && edgePct < PLAY_EDGE_MIN) {
     return 'SUPPORT_BELOW_PLAY_THRESHOLD';
   }
 
@@ -423,6 +740,24 @@ function buildDecisionV2(payload, context = {}) {
   if (!isWave1EligiblePayload(payload)) return null;
 
   try {
+    const market_type = normalizeMarketType(
+      payload?.market_type ?? payload?.recommended_bet_type,
+    );
+
+    // TEMP: projection debug — remove after confirming margin/total routing
+    if (market_type === 'SPREAD' || market_type === 'PUCKLINE' || market_type === 'TOTAL' || market_type === 'TEAM_TOTAL') {
+      console.log('[EDGE_DEBUG]', {
+        gameId: payload?.game_id,
+        marketType: payload?.market_type,
+        sport: payload?.sport,
+        projectionRaw: payload?.projection,
+        margin_home: payload?.projection?.margin_home,
+        total: payload?.projection?.total,
+        model_prob: payload?.model_prob,
+        p_fair: payload?.p_fair,
+      });
+    }
+
     const direction = getDirection(payload);
     const { support_score, conflict_score } = getSupportAndConflict(payload);
     const drivers_used = getDriversUsed(payload);
@@ -430,12 +765,39 @@ function buildDecisionV2(payload, context = {}) {
 
     const watchdog = computeWatchdog(payload, context);
 
-    const implied_prob = impliedProbFromAmerican(payload?.price);
+    const line = asNumber(payload?.line);
+    const price = asNumber(payload?.price);
+    const implied_prob = impliedProbFromAmerican(price);
     const winProbHome = asNumber(payload?.projection?.win_prob_home);
+    let proxy_used = detectProxyUsed(payload);
+    const proxy_allowed = payload?.proxy_policy_allow_priced === true;
+
+    const validSide = sideValidForMarket(market_type, direction);
+    const hasRequiredLine = !marketRequiresLine(market_type) || line !== null;
+    const hasRequiredPrice = !marketRequiresPrice(market_type) || price !== null;
+    const exact_wager_valid =
+      validSide &&
+      validateExactWager({
+        payload,
+        marketType: market_type,
+        direction,
+        line,
+        price,
+      });
+
+    let missingReason = null;
+    if (!validSide || !hasRequiredLine) {
+      missingReason = PRICE_REASONS.MARKET_EDGE_UNAVAILABLE;
+    } else if (!hasRequiredPrice) {
+      missingReason = PRICE_REASONS.MARKET_PRICE_MISSING;
+    }
+
     let fair_prob =
       asNumber(payload?.model_prob) ??
       asNumber(payload?.p_fair) ??
-      (winProbHome !== null && (direction === 'HOME' || direction === 'AWAY')
+      (market_type === 'MONEYLINE' &&
+      winProbHome !== null &&
+      (direction === 'HOME' || direction === 'AWAY')
         ? direction === 'AWAY'
           ? 1 - winProbHome
           : winProbHome
@@ -444,7 +806,9 @@ function buildDecisionV2(payload, context = {}) {
     if (
       fair_prob === null &&
       implied_prob !== null &&
-      asNumber(payload?.edge) !== null
+      asNumber(payload?.edge) !== null &&
+      exact_wager_valid &&
+      !proxy_used
     ) {
       fair_prob = implied_prob + asNumber(payload.edge);
     }
@@ -453,16 +817,104 @@ function buildDecisionV2(payload, context = {}) {
       fair_prob = clamp(fair_prob, 0, 1);
     }
 
+    // For SPREAD/PUCKLINE/TOTAL: if fair_prob not yet set, derive from projection data
+    // using market-aware normal CDF edge (NBA/NHL don't set model_prob in payload)
+    let edge_method = null;
+    let edge_line_delta = null;
+    let edge_lean = null;
+
+    if (fair_prob === null) {
+      const sport = normalizeSport(payload?.sport);
+      const sigmaDefaults = edgeCalculator.getSigmaDefaults(sport);
+      const oddsCtx = payload?.odds_context;
+
+      if (market_type === 'SPREAD' || market_type === 'PUCKLINE') {
+        const projectedMargin = asNumber(payload?.projection?.margin_home);
+        const spreadLineHome = asNumber(oddsCtx?.spread_home);
+        if (projectedMargin !== null && spreadLineHome !== null) {
+          const result = edgeCalculator.computeSpreadEdge({
+            projectionMarginHome: projectedMargin,
+            spreadLine: spreadLineHome,
+            spreadPriceHome: asNumber(oddsCtx?.spread_price_home),
+            spreadPriceAway: asNumber(oddsCtx?.spread_price_away),
+            sigmaMargin: sigmaDefaults.margin,
+            isPredictionHome: direction === 'HOME',
+          });
+          if (result.p_fair !== null) {
+            fair_prob = clamp(result.p_fair, 0, 1);
+            edge_method = 'MARGIN_DELTA';
+            edge_line_delta = result.edgePoints ?? null;
+          }
+        } else {
+          proxy_used = true;
+        }
+      } else if (market_type === 'TOTAL' || market_type === 'TEAM_TOTAL') {
+        const projectedTotal = asNumber(payload?.projection?.total);
+        const totalLine = asNumber(oddsCtx?.total);
+        if (projectedTotal !== null && totalLine !== null) {
+          const result = edgeCalculator.computeTotalEdge({
+            projectionTotal: projectedTotal,
+            totalLine,
+            totalPriceOver: asNumber(oddsCtx?.total_price_over),
+            totalPriceUnder: asNumber(oddsCtx?.total_price_under),
+            sigmaTotal: sigmaDefaults.total,
+            isPredictionOver: direction === 'OVER',
+          });
+          if (result.p_fair !== null) {
+            fair_prob = clamp(result.p_fair, 0, 1);
+            edge_method = 'TOTAL_DELTA';
+            edge_line_delta = result.edgePoints ?? null;
+            edge_lean = result.edgePoints > 0 ? 'OVER' : result.edgePoints < 0 ? 'UNDER' : null;
+          }
+        } else {
+          proxy_used = true;
+        }
+      }
+    }
+
+    // When fair_prob was resolved from model_prob/p_fair (cross-market already computed
+    // market-aware CDF), set method and read line delta from payload.edge_points
+    if (edge_method === null && fair_prob !== null) {
+      if (market_type === 'MONEYLINE') {
+        edge_method = 'ML_PROB';
+      } else if (market_type === 'SPREAD' || market_type === 'PUCKLINE') {
+        edge_method = 'MARGIN_DELTA';
+        edge_line_delta = asNumber(payload?.edge_points);
+      } else if (market_type === 'TOTAL' || market_type === 'TEAM_TOTAL') {
+        edge_method = 'TOTAL_DELTA';
+        edge_line_delta = asNumber(payload?.edge_points);
+        if (edge_line_delta !== null) {
+          edge_lean = edge_line_delta > 0 ? 'OVER' : edge_line_delta < 0 ? 'UNDER' : null;
+        }
+      }
+    }
+
     const edge_pct =
       fair_prob !== null && implied_prob !== null ? fair_prob - implied_prob : null;
 
-    const priceDecision = classifyPrice(edge_pct, fair_prob, implied_prob);
+    const hasPrimarySupport =
+      drivers_used.length > 0 || asString(payload?.driver?.key) !== null;
+
+    const priceDecision = classifyPrice({
+      marketType: market_type,
+      edgePct: edge_pct,
+      fairProb: fair_prob,
+      impliedProb: implied_prob,
+      missingReason,
+      exactWagerValid: exact_wager_valid,
+      hasPrimarySupport,
+      proxyUsed: proxy_used,
+      proxyAllowed: proxy_allowed,
+    });
+    const proxy_capped = priceDecision.proxy_capped === true;
 
     const official_status = computeOfficialStatus({
       watchdogStatus: watchdog.watchdog_status,
       sharpPriceStatus: priceDecision.sharp_price_status,
       supportScore: support_score,
       edgePct: edge_pct,
+      marketType: market_type,
+      proxyCapped: proxy_capped,
     });
 
     const play_tier = derivePlayTier(edge_pct);
@@ -475,6 +927,8 @@ function buildDecisionV2(payload, context = {}) {
       officialStatus: official_status,
       supportScore: support_score,
       edgePct: edge_pct,
+      marketType: market_type,
+      proxyCapped: proxy_capped,
     });
 
     return {
@@ -490,9 +944,32 @@ function buildDecisionV2(payload, context = {}) {
 
       consistency: watchdog.consistency,
 
+      market_type,
+      market_line: line,
+      market_price: price,
       fair_prob,
       implied_prob,
       edge_pct,
+      edge_method,
+      edge_line_delta,
+      edge_lean,
+      proxy_used,
+      proxy_capped,
+      exact_wager_valid,
+      pricing_trace: {
+        market_type,
+        market_side: direction !== 'NONE' ? direction : null,
+        market_line: line,
+        market_price: price,
+        line_source:
+          asString(payload?.pricing_trace?.line_source) ||
+          asString(payload?.line_source) ||
+          'unknown',
+        price_source:
+          asString(payload?.pricing_trace?.price_source) ||
+          asString(payload?.price_source) ||
+          'unknown',
+      },
 
       sharp_price_status: priceDecision.sharp_price_status,
       price_reason_codes: priceDecision.price_reason_codes,

@@ -71,6 +71,10 @@ export type PassReasonCode =
   | 'PASS_UNREPAIRABLE_LEGACY'
   | 'PASS_TOTAL_INSUFFICIENT_DATA'
   | 'PASS_NO_QUALIFIED_PLAYS'
+  | 'PASS_DRIVER_LOAD_FAILED'
+  | 'PASS_MISSING_DRIVER_INPUTS'
+  | 'PASS_NO_PRIMARY_SUPPORT'
+  | 'PASS_MARKET_PRICE_MISSING'
   | 'PASS_DATA_ERROR'
   | 'PASS_DRIVER_SUPPORT_WEAK'
   | 'PASS_DRIVER_CONFLICT'
@@ -198,9 +202,27 @@ export interface DecisionV2 {
     total_bias: string;
   };
 
+  market_type?: CanonicalMarketType | null;
+  market_line?: number | null;
+  market_price?: number | null;
+
   fair_prob: number | null;
   implied_prob: number | null;
   edge_pct: number | null;
+  edge_method?: 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA' | null;
+  edge_line_delta?: number | null;
+  edge_lean?: 'OVER' | 'UNDER' | null;
+  proxy_used?: boolean;
+  proxy_capped?: boolean;
+  exact_wager_valid?: boolean;
+  pricing_trace?: {
+    market_type?: CanonicalMarketType | string | null;
+    market_side?: SelectionSide | string | null;
+    market_line?: number | null;
+    market_price?: number | null;
+    line_source?: string | null;
+    price_source?: string | null;
+  };
 
   sharp_price_status: 'CHEDDAR' | 'COTTAGE' | 'UNPRICED';
   price_reason_codes: string[];
@@ -363,6 +385,15 @@ export interface Play {
   modelProb?: number;
   impliedProb?: number;
   edge?: number;
+  edgePoints?: number;
+  projectedMargin?: number;
+  projectedTotal?: number;
+  projectedTeamTotal?: number;
+  projectedGoalDiff?: number;
+  projectedScoreHome?: number;
+  projectedScoreAway?: number;
+  lineSource?: string;
+  priceSource?: string;
   valueStatus: ValueStatus;
   betAction: BetAction;
   priceFlags: PriceFlag[];

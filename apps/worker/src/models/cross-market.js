@@ -133,6 +133,7 @@ function buildMarketDecision({
   fairPriceResolver,
   lineResolver,
   priceResolver,
+  projectionResolver,
   riskFlags,
 }) {
   const normalized = renormalizeDriverWeights(drivers);
@@ -165,10 +166,17 @@ function buildMarketDecision({
   if (coverage < thresholds.min_coverage_watch) flags.push('LOW_COVERAGE');
   if (conflict > thresholds.conflict_cap) flags.push('CONFLICT_HIGH');
 
-  const edge = edgeResolver ? edgeResolver(candidateSide) : null;
+  const edgeRaw = edgeResolver ? edgeResolver(candidateSide) : null;
+  const edgeData =
+    typeof edgeRaw === 'number'
+      ? { edge: edgeRaw }
+      : edgeRaw && typeof edgeRaw === 'object'
+        ? edgeRaw
+        : null;
   const fairPrice = fairPriceResolver ? fairPriceResolver(candidateSide) : null;
   const line = lineResolver ? lineResolver(candidateSide) : null;
   const price = priceResolver ? priceResolver(candidateSide) : null;
+  const projection = projectionResolver ? projectionResolver(candidateSide) : null;
 
   return {
     market,
@@ -182,8 +190,23 @@ function buildMarketDecision({
     net,
     conflict,
     coverage,
-    edge: edge ?? undefined,
+    edge: edgeData?.edge ?? undefined,
+    p_fair: edgeData?.p_fair ?? undefined,
+    p_implied: edgeData?.p_implied ?? undefined,
+    edge_points: edgeData?.edge_points ?? undefined,
     fair_price: fairPrice ?? undefined,
+    projection: projection ?? undefined,
+    line_source: 'odds_snapshot',
+    price_source: 'odds_snapshot',
+    pricing_trace: {
+      called_market_type: market,
+      called_side: candidateSide,
+      called_line: line ?? null,
+      called_price: price ?? null,
+      line_source: 'odds_snapshot',
+      price_source: 'odds_snapshot',
+      proxy_used: false,
+    },
     drivers: directed,
     risk_flags: flags,
     reasoning: buildReasoning({
@@ -439,11 +462,23 @@ function computeNHLMarketDecisions(oddsSnapshot) {
         sigmaTotal: edgeCalculator.getSigmaDefaults('NHL')?.total ?? 1.8,
         isPredictionOver: side === 'OVER',
       });
-      return totalEdge.edge;
+      return {
+        edge: totalEdge.edge ?? null,
+        p_fair: totalEdge.p_fair ?? null,
+        p_implied: totalEdge.p_implied ?? null,
+        edge_points: totalEdge.edgePoints ?? null,
+      };
     },
     fairPriceResolver: null,
     lineResolver: () => totalLine,
-    priceResolver: null,
+    priceResolver: (side) =>
+      side === 'OVER'
+        ? toNumber(oddsSnapshot?.total_price_over)
+        : toNumber(oddsSnapshot?.total_price_under),
+    projectionResolver: () => ({
+      projected_total: projectedTotal,
+      total_line: totalLine,
+    }),
     riskFlags: totalFragilityPenalty > 0 ? ['KEY_NUMBER'] : [],
   });
 
@@ -567,14 +602,26 @@ function computeNHLMarketDecisions(oddsSnapshot) {
         sigmaMargin: edgeCalculator.getSigmaDefaults('NHL')?.margin ?? 1.8,
         isPredictionHome: side === 'HOME',
       });
-      return spreadEdge.edge;
+      return {
+        edge: spreadEdge.edge ?? null,
+        p_fair: spreadEdge.p_fair ?? null,
+        p_implied: spreadEdge.p_implied ?? null,
+        edge_points: spreadEdge.edgePoints ?? null,
+      };
     },
     fairPriceResolver: null,
     lineResolver: (side) => {
       if (spreadHome === null) return null;
       return side === 'HOME' ? spreadHome : -spreadHome;
     },
-    priceResolver: null,
+    priceResolver: (side) =>
+      side === 'HOME'
+        ? toNumber(oddsSnapshot?.spread_price_home)
+        : toNumber(oddsSnapshot?.spread_price_away),
+    projectionResolver: () => ({
+      projected_margin: projectedMargin,
+      spread_home_line: spreadHome,
+    }),
     riskFlags: spreadBadNumber ? ['BAD_NUMBER'] : [],
   });
 
@@ -636,7 +683,11 @@ function computeNHLMarketDecisions(oddsSnapshot) {
             : 1 - modelWinProb
           : null;
       if (implied === null || modelProb === null) return null;
-      return Number(Math.abs(modelProb - implied).toFixed(3));
+      return {
+        edge: Number((modelProb - implied).toFixed(3)),
+        p_fair: Number(modelProb.toFixed(4)),
+        p_implied: Number(implied.toFixed(4)),
+      };
     },
     fairPriceResolver: (side) => {
       const implied = side === 'HOME' ? impliedHome : impliedAway;
@@ -644,6 +695,11 @@ function computeNHLMarketDecisions(oddsSnapshot) {
     },
     lineResolver: () => null,
     priceResolver: (side) => (side === 'HOME' ? moneylineHome : moneylineAway),
+    projectionResolver: () => ({
+      projected_margin: projectedMargin,
+      win_prob_home:
+        modelWinProb !== null ? Number(modelWinProb.toFixed(4)) : null,
+    }),
     riskFlags: mlCoinflip ? ['COINFLIP_ZONE'] : [],
   });
 
@@ -810,11 +866,23 @@ function computeNBAMarketDecisions(oddsSnapshot) {
         sigmaTotal: edgeCalculator.getSigmaDefaults('NBA')?.total ?? 14,
         isPredictionOver: side === 'OVER',
       });
-      return totalEdge.edge;
+      return {
+        edge: totalEdge.edge ?? null,
+        p_fair: totalEdge.p_fair ?? null,
+        p_implied: totalEdge.p_implied ?? null,
+        edge_points: totalEdge.edgePoints ?? null,
+      };
     },
     fairPriceResolver: null,
     lineResolver: () => totalLine,
-    priceResolver: null,
+    priceResolver: (side) =>
+      side === 'OVER'
+        ? toNumber(oddsSnapshot?.total_price_over)
+        : toNumber(oddsSnapshot?.total_price_under),
+    projectionResolver: () => ({
+      projected_total: projectedTotal,
+      total_line: totalLine,
+    }),
     riskFlags: totalFragilityPenalty > 0 ? ['KEY_NUMBER'] : [],
   });
 
@@ -898,12 +966,24 @@ function computeNBAMarketDecisions(oddsSnapshot) {
         sigmaMargin: edgeCalculator.getSigmaDefaults('NBA')?.margin ?? 12,
         isPredictionHome: side === 'HOME',
       });
-      return spreadEdge.edge;
+      return {
+        edge: spreadEdge.edge ?? null,
+        p_fair: spreadEdge.p_fair ?? null,
+        p_implied: spreadEdge.p_implied ?? null,
+        edge_points: spreadEdge.edgePoints ?? null,
+      };
     },
     fairPriceResolver: null,
     lineResolver: (side) =>
       spreadHome !== null ? (side === 'HOME' ? spreadHome : -spreadHome) : null,
-    priceResolver: null,
+    priceResolver: (side) =>
+      side === 'HOME'
+        ? toNumber(oddsSnapshot?.spread_price_home)
+        : toNumber(oddsSnapshot?.spread_price_away),
+    projectionResolver: () => ({
+      projected_margin: projectedMargin,
+      spread_home_line: spreadHome,
+    }),
     riskFlags: spreadBadNumber ? ['BAD_NUMBER'] : [],
   });
 

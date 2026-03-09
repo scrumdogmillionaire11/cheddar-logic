@@ -71,6 +71,11 @@ type DroppedMeta = {
 type GuardrailTriggeredCounts = {
   edge_sanity_triggered: number;
   proxy_cap_triggered: number;
+  proxy_blocked: number;
+  high_edge_non_total_blocked: number;
+  driver_load_failures: number;
+  exact_wager_mismatch: number;
+  market_price_missing: number;
 };
 
 type GuardrailOutcomeCounts = {
@@ -493,6 +498,11 @@ export default function CardsPageClient() {
     const triggered: GuardrailTriggeredCounts = {
       edge_sanity_triggered: 0,
       proxy_cap_triggered: 0,
+      proxy_blocked: 0,
+      high_edge_non_total_blocked: 0,
+      driver_load_failures: 0,
+      exact_wager_mismatch: 0,
+      market_price_missing: 0,
     };
     const outcome: GuardrailOutcomeCounts = {
       fire_to_watch: 0,
@@ -509,13 +519,19 @@ export default function CardsPageClient() {
       const proxyTriggered = hasProxyCap(card);
       const market = play?.market_type ?? play?.market ?? 'UNKNOWN';
       const book = play?.bet?.book ?? 'unknown';
-      const key = `${card.sport}|${market}|${book}`;
+      const source = play?.priceSource ?? play?.lineSource ?? 'unknown';
+      const key = `${card.sport}|${market}|${book}|${source}`;
 
       if (!breakdownBySportMarketBook[key]) {
         breakdownBySportMarketBook[key] = {
           triggered: {
             edge_sanity_triggered: 0,
             proxy_cap_triggered: 0,
+            proxy_blocked: 0,
+            high_edge_non_total_blocked: 0,
+            driver_load_failures: 0,
+            exact_wager_mismatch: 0,
+            market_price_missing: 0,
           },
           outcome: {
             fire_to_watch: 0,
@@ -526,6 +542,12 @@ export default function CardsPageClient() {
         };
       }
       const bucket = breakdownBySportMarketBook[key];
+      const reasonCodes = new Set([
+        ...(Array.isArray(play?.reason_codes) ? play.reason_codes : []),
+        ...(Array.isArray(play?.decision_v2?.price_reason_codes)
+          ? play.decision_v2.price_reason_codes
+          : []),
+      ]);
 
       if (edgeTriggered) {
         triggered.edge_sanity_triggered += 1;
@@ -534,6 +556,35 @@ export default function CardsPageClient() {
       if (proxyTriggered) {
         triggered.proxy_cap_triggered += 1;
         bucket.triggered.proxy_cap_triggered += 1;
+      }
+      if (reasonCodes.has('PROXY_EDGE_BLOCKED')) {
+        triggered.proxy_blocked += 1;
+        bucket.triggered.proxy_blocked += 1;
+      }
+      if (
+        reasonCodes.has('EDGE_VERIFICATION_REQUIRED') ||
+        reasonCodes.has('PASS_EDGE_VERIFICATION_REQUIRED')
+      ) {
+        triggered.high_edge_non_total_blocked += 1;
+        bucket.triggered.high_edge_non_total_blocked += 1;
+      }
+      if (
+        reasonCodes.has('PASS_DRIVER_LOAD_FAILED') ||
+        reasonCodes.has('PASS_MISSING_DRIVER_INPUTS')
+      ) {
+        triggered.driver_load_failures += 1;
+        bucket.triggered.driver_load_failures += 1;
+      }
+      if (reasonCodes.has('EXACT_WAGER_MISMATCH')) {
+        triggered.exact_wager_mismatch += 1;
+        bucket.triggered.exact_wager_mismatch += 1;
+      }
+      if (
+        reasonCodes.has('MARKET_PRICE_MISSING') ||
+        reasonCodes.has('PASS_MARKET_PRICE_MISSING')
+      ) {
+        triggered.market_price_missing += 1;
+        bucket.triggered.market_price_missing += 1;
       }
 
       if (tags.includes('OUTCOME_FIRE_TO_WATCH')) {
@@ -1157,6 +1208,23 @@ export default function CardsPageClient() {
     return marketType.toUpperCase();
   };
 
+  const formatReasonCode = (code?: string | null) => {
+    if (!code) return 'UNKNOWN';
+    return code.replace(/_/g, ' ');
+  };
+
+  const formatSharpPriceStatus = (status?: string | null) => {
+    if (status === 'CHEDDAR') return 'Priced edge';
+    if (status === 'COTTAGE') return 'No edge at current price';
+    if (status === 'UNPRICED') return 'Unpriced';
+    return status ?? 'Unpriced';
+  };
+
+  const formatSignedDecimal = (value: number, digits = 1) => {
+    const fixed = value.toFixed(digits);
+    return value >= 0 ? `+${fixed}` : fixed;
+  };
+
   const getMarketTypeBadge = (betMarketType?: string | null, market?: Market | 'NONE') => {
     const t = betMarketType?.toLowerCase() ?? market?.toLowerCase() ?? '';
     if (t === 'moneyline' || t === 'ml') {
@@ -1531,19 +1599,71 @@ export default function CardsPageClient() {
         ? decisionV2.edge_pct
         : typeof displayPlay.decision_data?.edge_pct === 'number'
           ? displayPlay.decision_data.edge_pct
-          : (displayPlay.edge ?? 0);
+          : typeof displayPlay.edge === 'number'
+            ? displayPlay.edge
+            : undefined;
+    const hasMarketSpecificEdge = typeof effectiveEdgePct === 'number';
     const primaryReasonCode =
       decisionV2?.primary_reason_code ??
       displayPlay.pass_reason_code ??
       displayPlay.decision_data?.reason_code ??
       displayPlay.whyCode;
+    const isNoEdgeAtPrice =
+      primaryReasonCode === 'NO_EDGE_AT_PRICE' ||
+      (hasMarketSpecificEdge && Math.abs(effectiveEdgePct) < 0.0005);
+    const hasActionableEdge = hasMarketSpecificEdge && !isNoEdgeAtPrice;
+    const projectedMargin =
+      typeof displayPlay.projectedMargin === 'number'
+        ? displayPlay.projectedMargin
+        : undefined;
+    const projectedSpreadHome =
+      typeof projectedMargin === 'number' ? -1 * projectedMargin : undefined;
+    const projectedTotal =
+      typeof displayPlay.projectedTotal === 'number'
+        ? displayPlay.projectedTotal
+        : undefined;
+    const projectedTeamTotal =
+      typeof displayPlay.projectedTeamTotal === 'number'
+        ? displayPlay.projectedTeamTotal
+        : undefined;
+    const projectedScoreHome =
+      typeof displayPlay.projectedScoreHome === 'number'
+        ? displayPlay.projectedScoreHome
+        : undefined;
+    const projectedScoreAway =
+      typeof displayPlay.projectedScoreAway === 'number'
+        ? displayPlay.projectedScoreAway
+        : undefined;
+    const edgePoints =
+      typeof displayPlay.edgePoints === 'number' ? displayPlay.edgePoints : undefined;
+    const marketLine = typeof displayPlay.line === 'number' ? displayPlay.line : undefined;
+    const marketType = displayPlay.market_type;
+    const isSpreadLikeMarket = marketType === 'SPREAD' || marketType === 'PUCKLINE';
+    const isTotalLikeMarket =
+      marketType === 'TOTAL' || marketType === 'TEAM_TOTAL';
+    const hasSpreadContext =
+      isSpreadLikeMarket &&
+      (typeof projectedMargin === 'number' ||
+        typeof edgePoints === 'number' ||
+        typeof marketLine === 'number');
+    const hasTotalContext =
+      isTotalLikeMarket &&
+      (typeof projectedTotal === 'number' ||
+        typeof projectedTeamTotal === 'number' ||
+        typeof edgePoints === 'number' ||
+        typeof marketLine === 'number');
+    const supportGateReason =
+      primaryReasonCode === 'SUPPORT_BELOW_LEAN_THRESHOLD' ||
+      primaryReasonCode === 'SUPPORT_BELOW_PLAY_THRESHOLD';
     const sharpVerdict = decisionV2?.sharp_price_status;
     const modelLean = decisionV2?.direction;
     const isCoinflip = Boolean(
       canRenderModelSummary && displayPlay.decision_data?.coinflip,
     );
-    const isCoinflipHighEdge = isCoinflip && effectiveEdgePct > 0.05;
-    const isCoinflipLowEdge = isCoinflip && effectiveEdgePct <= 0.05;
+    const isCoinflipHighEdge =
+      isCoinflip && hasActionableEdge && effectiveEdgePct > 0.05;
+    const isCoinflipLowEdge =
+      isCoinflip && (!hasActionableEdge || effectiveEdgePct <= 0.05);
     const isEdgeVerification = hasEdgeVerification(card);
     const isProxyCapped = hasProxyCap(card);
 
@@ -1768,12 +1888,29 @@ export default function CardsPageClient() {
             </div>
             {canRenderModelSummary ? (
               <div className="mt-1 text-xs text-cloud/60">
-                Edge{' '}
-                {effectiveEdgePct * 100 >= 0 ? '+' : ''}
-                {(effectiveEdgePct * 100).toFixed(1)}% • Tier{' '}
-                {decisionV2?.play_tier ??
-                  displayPlay.decision_data?.edge_tier ??
-                  displayPlay.valueStatus}
+                {hasActionableEdge && primaryReasonCode !== 'EXACT_WAGER_MISMATCH' ? (
+                  <>
+                    Edge {effectiveEdgePct * 100 >= 0 ? '+' : ''}
+                    {(effectiveEdgePct * 100).toFixed(1)}% • Tier{' '}
+                    {decisionV2?.play_tier ??
+                      displayPlay.decision_data?.edge_tier ??
+                      displayPlay.valueStatus}
+                  </>
+                ) : isNoEdgeAtPrice ? (
+                  <>
+                    No edge at current price • Tier{' '}
+                    {decisionV2?.play_tier ??
+                      displayPlay.decision_data?.edge_tier ??
+                      displayPlay.valueStatus}
+                  </>
+                ) : (
+                  <>
+                    No market-specific edge available
+                    {primaryReasonCode
+                      ? ` (${formatReasonCode(primaryReasonCode)})`
+                      : ''}
+                  </>
+                )}
               </div>
             ) : (
               <div className="mt-1 text-xs text-amber-200/90">
@@ -1786,7 +1923,8 @@ export default function CardsPageClient() {
           {canRenderModelSummary &&
             typeof displayPlay.modelProb === 'number' &&
             typeof displayPlay.impliedProb === 'number' &&
-            typeof effectiveEdgePct === 'number' && (
+            hasActionableEdge &&
+            primaryReasonCode !== 'EXACT_WAGER_MISMATCH' && (
               <div className="rounded-md border border-white/10 bg-white/5 p-3">
                 <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
                   Edge Math
@@ -1817,7 +1955,11 @@ export default function CardsPageClient() {
                   </span>
                 </div>
                 <p className="text-xs text-cloud/50 mt-1">
-                  Edge = Fair% − Implied%
+                  {decisionV2?.edge_method === 'MARGIN_DELTA'
+                    ? 'Margin Delta vs Spread Line'
+                    : decisionV2?.edge_method === 'TOTAL_DELTA'
+                      ? 'Total Delta vs O/U Line'
+                      : 'Win Prob vs ML Odds'}
                 </p>
                 {isEdgeVerification && (
                   <p className="text-xs text-amber-300/90 mt-1 font-semibold">
@@ -1826,6 +1968,90 @@ export default function CardsPageClient() {
                 )}
               </div>
             )}
+
+          {canRenderModelSummary && (hasSpreadContext || hasTotalContext) && (
+            <div className="rounded-md border border-white/10 bg-white/5 p-3">
+              <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
+                Market Context
+              </p>
+              {hasSpreadContext && (
+                <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+                  <span className="text-cloud/60">
+                    Projected margin{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof projectedMargin === 'number'
+                        ? formatSignedDecimal(projectedMargin)
+                        : 'N/A'}
+                    </span>
+                  </span>
+                  <span className="text-cloud/40">|</span>
+                  <span className="text-cloud/60">
+                    Model spread (home){' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof projectedSpreadHome === 'number'
+                        ? formatSignedDecimal(projectedSpreadHome)
+                        : 'N/A'}
+                    </span>
+                  </span>
+                  <span className="text-cloud/40">|</span>
+                  <span className="text-cloud/60">
+                    Market line{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof marketLine === 'number'
+                        ? formatSignedDecimal(marketLine)
+                        : 'N/A'}
+                    </span>
+                  </span>
+                  <span className="text-cloud/40">|</span>
+                  <span className="text-cloud/60">
+                    Line delta{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof edgePoints === 'number'
+                        ? `${formatSignedDecimal(edgePoints)} pts`
+                        : 'N/A'}
+                    </span>
+                  </span>
+                </div>
+              )}
+              {hasTotalContext && (
+                <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+                  <span className="text-cloud/60">
+                    Projected total{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof projectedTeamTotal === 'number'
+                        ? projectedTeamTotal.toFixed(1)
+                        : typeof projectedTotal === 'number'
+                          ? projectedTotal.toFixed(1)
+                          : 'N/A'}
+                    </span>
+                  </span>
+                  <span className="text-cloud/40">|</span>
+                  <span className="text-cloud/60">
+                    Market line{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof marketLine === 'number' ? marketLine.toFixed(1) : 'N/A'}
+                    </span>
+                  </span>
+                  <span className="text-cloud/40">|</span>
+                  <span className="text-cloud/60">
+                    Line delta{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof edgePoints === 'number'
+                        ? `${formatSignedDecimal(edgePoints)} pts`
+                        : 'N/A'}
+                    </span>
+                  </span>
+                </div>
+              )}
+              {typeof projectedScoreHome === 'number' &&
+                typeof projectedScoreAway === 'number' && (
+                  <p className="text-xs text-cloud/60 mt-2">
+                    Projected score: {card.awayTeam} {projectedScoreAway.toFixed(1)} -{' '}
+                    {card.homeTeam} {projectedScoreHome.toFixed(1)}
+                  </p>
+                )}
+            </div>
+          )}
 
           {/* WI-0332: Coinflip + edge messaging */}
           {isCoinflipHighEdge && (
@@ -1900,12 +2126,19 @@ export default function CardsPageClient() {
             </p>
             <p className="text-sm text-cloud/80">
               {primaryReasonCode
-                ? primaryReasonCode.replace(/_/g, ' ')
+                ? formatReasonCode(primaryReasonCode)
                 : canRenderModelSummary
                   ? displayPlay.whyText ||
-                    displayPlay.whyCode.replace(/_/g, ' ')
+                    formatReasonCode(displayPlay.whyCode)
                   : 'Data issue: drivers unavailable'}
             </p>
+            {displayDecision === 'PASS' &&
+              hasActionableEdge &&
+              supportGateReason && (
+                <p className="text-xs text-cloud/60 mt-1">
+                  Market edge exists, but support/conflict thresholds were not met.
+                </p>
+              )}
           </div>
 
           {displayDecision === 'PASS' && decisionV2 && (
@@ -1921,15 +2154,15 @@ export default function CardsPageClient() {
                   </span>
                 </p>
                 <p>
-                  Sharp Verdict:{' '}
+                  Pricing Status:{' '}
                   <span className="text-cloud/90 font-semibold">
-                    {sharpVerdict ?? 'UNPRICED'}
+                    {formatSharpPriceStatus(sharpVerdict)}
                   </span>
                 </p>
                 <p>
                   Reason:{' '}
                   <span className="text-cloud/90 font-semibold">
-                    {primaryReasonCode}
+                    {formatReasonCode(primaryReasonCode)}
                   </span>
                 </p>
               </div>
@@ -2170,7 +2403,10 @@ export default function CardsPageClient() {
           {!loading && !error && diagnosticsEnabled && viewMode === 'game' && (
             <p className="text-xs text-cloud/60">
               Guardrails: edge verification {guardrailStats.triggered.edge_sanity_triggered} •
-              proxy capped {guardrailStats.triggered.proxy_cap_triggered}
+              proxy capped {guardrailStats.triggered.proxy_cap_triggered} • proxy blocked{' '}
+              {guardrailStats.triggered.proxy_blocked} • exact wager mismatch{' '}
+              {guardrailStats.triggered.exact_wager_mismatch} • market price missing{' '}
+              {guardrailStats.triggered.market_price_missing}
             </p>
           )}
           {!loading && !error && diagnosticsEnabled && (
@@ -2201,7 +2437,12 @@ export default function CardsPageClient() {
               <p>
                 Guardrails (triggered): edge{' '}
                 {guardrailStats.triggered.edge_sanity_triggered} • proxy{' '}
-                {guardrailStats.triggered.proxy_cap_triggered}
+                {guardrailStats.triggered.proxy_cap_triggered} • proxy blocked{' '}
+                {guardrailStats.triggered.proxy_blocked} • high-edge blocked{' '}
+                {guardrailStats.triggered.high_edge_non_total_blocked} • driver load fail{' '}
+                {guardrailStats.triggered.driver_load_failures} • exact wager mismatch{' '}
+                {guardrailStats.triggered.exact_wager_mismatch} • market price missing{' '}
+                {guardrailStats.triggered.market_price_missing}
               </p>
               <p>
                 Guardrails (outcome): FIRE→WATCH {guardrailStats.outcome.fire_to_watch}{' '}
@@ -2406,6 +2647,10 @@ export default function CardsPageClient() {
                 .filter((c) =>
                   c.startsWith('MISSING_DATA') ||
                   c.startsWith('PASS_DATA') ||
+                  c.startsWith('PASS_DRIVER') ||
+                  c.startsWith('PASS_MISSING_DRIVER') ||
+                  c.startsWith('PASS_NO_PRIMARY') ||
+                  c.startsWith('PASS_MARKET_PRICE') ||
                   c.startsWith('PASS_MISSING') ||
                   c === 'PASS_NO_QUALIFIED_PLAYS',
                 )

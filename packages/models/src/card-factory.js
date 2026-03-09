@@ -7,6 +7,7 @@ const {
   buildMarketFromOdds,
 } = require('./card-model');
 const { buildDriverSummary, computeWinProbHome } = require('./card-utilities');
+const edgeCalculator = require('./edge-calculator');
 
 /**
  * Unified card factory for all sports (NBA, NHL, NCAAM)
@@ -251,6 +252,8 @@ function buildBallSportPayload({
     selection: descriptor.selection ?? null,
     line: descriptor.line ?? null,
     price: descriptor.price ?? null,
+    line_source: descriptor.line_source ?? 'odds_snapshot',
+    price_source: descriptor.price_source ?? 'odds_snapshot',
     kind: isPlayableMarket ? 'PLAY' : 'EVIDENCE',
     edge: undefined,
     p_fair: undefined,
@@ -293,6 +296,15 @@ function buildBallSportPayload({
       total_price_over: oddsSnapshot?.total_price_over,
       total_price_under: oddsSnapshot?.total_price_under,
       captured_at: oddsSnapshot?.captured_at,
+    },
+    pricing_trace: {
+      called_market_type: normalizedMarketType ?? null,
+      called_side: descriptor.selection?.side ?? descriptor.prediction ?? null,
+      called_line: descriptor.line ?? null,
+      called_price: descriptor.price ?? null,
+      line_source: descriptor.line_source ?? 'odds_snapshot',
+      price_source: descriptor.price_source ?? 'odds_snapshot',
+      proxy_used: false,
     },
     ev_passed: descriptor.ev_threshold_passed,
     disclaimer:
@@ -338,11 +350,17 @@ function buildNCAAMPayload({
   const winProbHome = computeWinProbHome(projectedMargin, 'NCAAM');
   const isPredictionHome = descriptor.prediction === 'HOME';
   const isPredictionAway = descriptor.prediction === 'AWAY';
+  const proxyUsed =
+    descriptor.driverStatus === 'fallback' ||
+    descriptor.inference_source === 'market_fallback' ||
+    descriptor.driverInputs?.fallback_source === 'market_spread';
 
   let line = null;
   let price = null;
   let reasonCodes = [];
   let isPlayableMarket = false;
+  let pricingMath = null;
+  const sigmaDefaults = edgeCalculator.getSigmaDefaults('NCAAM');
 
   if (marketType === 'moneyline') {
     price = isPredictionHome
@@ -351,6 +369,13 @@ function buildNCAAMPayload({
         ? (oddsSnapshot?.h2h_away ?? null)
         : null;
     isPlayableMarket = (isPredictionHome || isPredictionAway) && price !== null;
+    if (isPlayableMarket && winProbHome !== null && price !== null) {
+      pricingMath = edgeCalculator.computeMoneylineEdge({
+        projectionWinProbHome: winProbHome,
+        americanOdds: price,
+        isPredictionHome,
+      });
+    }
   } else if (marketType === 'spread') {
     line = isPredictionHome
       ? (oddsSnapshot?.spread_home ?? null)
@@ -364,6 +389,30 @@ function buildNCAAMPayload({
         : null;
     isPlayableMarket =
       (isPredictionHome || isPredictionAway) && line !== null && price !== null;
+    const spreadLineHome = Number.isFinite(oddsSnapshot?.spread_home)
+      ? oddsSnapshot.spread_home
+      : Number.isFinite(oddsSnapshot?.spread_away)
+        ? -oddsSnapshot.spread_away
+        : null;
+    if (
+      isPlayableMarket &&
+      Number.isFinite(projectedMargin) &&
+      Number.isFinite(spreadLineHome)
+    ) {
+      pricingMath = edgeCalculator.computeSpreadEdge({
+        projectionMarginHome: projectedMargin,
+        spreadLine: spreadLineHome,
+        spreadPriceHome: oddsSnapshot?.spread_price_home,
+        spreadPriceAway: oddsSnapshot?.spread_price_away,
+        sigmaMargin: sigmaDefaults?.margin ?? 11,
+        isPredictionHome,
+      });
+    }
+  }
+
+  if (isPlayableMarket && pricingMath?.edge == null) {
+    if (price == null) reasonCodes.push('MARKET_PRICE_MISSING');
+    else reasonCodes.push('MODEL_PROB_MISSING');
   }
 
   const payloadData = {
@@ -398,6 +447,33 @@ function buildNCAAMPayload({
       : null,
     line: isPlayableMarket ? line : null,
     price: isPlayableMarket ? price : null,
+    proxy_used: proxyUsed,
+    line_source: 'odds_snapshot',
+    price_source: 'odds_snapshot',
+    p_fair:
+      isPlayableMarket && Number.isFinite(pricingMath?.p_fair)
+        ? pricingMath.p_fair
+        : null,
+    p_implied:
+      isPlayableMarket && Number.isFinite(pricingMath?.p_implied)
+        ? pricingMath.p_implied
+        : null,
+    model_prob:
+      isPlayableMarket && Number.isFinite(pricingMath?.p_fair)
+        ? pricingMath.p_fair
+        : null,
+    edge:
+      isPlayableMarket && Number.isFinite(pricingMath?.edge)
+        ? pricingMath.edge
+        : null,
+    edge_pct:
+      isPlayableMarket && Number.isFinite(pricingMath?.edge)
+        ? pricingMath.edge
+        : null,
+    edge_points:
+      isPlayableMarket && Number.isFinite(pricingMath?.edgePoints)
+        ? pricingMath.edgePoints
+        : null,
     reason_codes: reasonCodes,
     tags: [],
     consistency: {
@@ -416,6 +492,15 @@ function buildNCAAMPayload({
       total_price_over: oddsSnapshot?.total_price_over,
       total_price_under: oddsSnapshot?.total_price_under,
       captured_at: oddsSnapshot?.captured_at,
+    },
+    pricing_trace: {
+      called_market_type: marketType || 'moneyline',
+      called_side: isPredictionHome ? 'HOME' : isPredictionAway ? 'AWAY' : null,
+      called_line: isPlayableMarket ? line : null,
+      called_price: isPlayableMarket ? price : null,
+      line_source: 'odds_snapshot',
+      price_source: 'odds_snapshot',
+      proxy_used: proxyUsed,
     },
     ev_passed: descriptor.ev_threshold_passed,
     disclaimer:

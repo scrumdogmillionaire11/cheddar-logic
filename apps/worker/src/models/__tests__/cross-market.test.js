@@ -168,4 +168,45 @@ describe('cross-market orchestration', () => {
 
     expect(computeTotalBias(totalDecision)).toBe('OK');
   });
+
+  test('market decisions expose market-specific probability edge and trace metadata', () => {
+    const oddsSnapshot = {
+      total: 6.0,
+      total_price_over: -110,
+      total_price_under: -110,
+      spread_home: -1.5,
+      spread_price_home: -110,
+      spread_price_away: -110,
+      h2h_home: -125,
+      h2h_away: 105,
+      raw_data: {
+        espn_metrics: {
+          home: {
+            metrics: { avgGoalsFor: 3.4, avgGoalsAgainst: 2.8, restDays: 2 },
+          },
+          away: {
+            metrics: { avgGoalsFor: 3.0, avgGoalsAgainst: 3.1, restDays: 1 },
+          },
+        },
+        goalie_home_gsax: 0.8,
+        goalie_away_gsax: -0.3,
+      },
+    };
+
+    const decisions = computeNHLMarketDecisions(oddsSnapshot);
+    expect(typeof decisions.TOTAL.edge).toBe('number');
+    expect(typeof decisions.TOTAL.p_fair).toBe('number');
+    expect(typeof decisions.TOTAL.p_implied).toBe('number');
+    expect(typeof decisions.TOTAL.edge_points).toBe('number');
+    expect(decisions.TOTAL.projection).toHaveProperty('projected_total');
+
+    expect(typeof decisions.SPREAD.edge).toBe('number');
+    expect(typeof decisions.SPREAD.p_fair).toBe('number');
+    expect(typeof decisions.SPREAD.p_implied).toBe('number');
+    expect(typeof decisions.SPREAD.edge_points).toBe('number');
+    expect(decisions.SPREAD.projection).toHaveProperty('projected_margin');
+
+    expect(decisions.TOTAL.pricing_trace.line_source).toBe('odds_snapshot');
+    expect(decisions.TOTAL.pricing_trace.price_source).toBe('odds_snapshot');
+  });
 });

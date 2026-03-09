@@ -59,6 +59,34 @@ async function validateApiSmoke(baseUrl, assert) {
   assert.ok(playsCount > 0, 'No plays returned for UI display');
 }
 
+async function validateCardsSourceContract(assert) {
+  const fs = await import('node:fs/promises');
+  const source = await fs.readFile(
+    new URL('../components/cards-page-client.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.ok(
+    !source.includes('displayPlay.edge ?? 0'),
+    'cards page must not synthesize edge from `displayPlay.edge ?? 0`',
+  );
+  assert.ok(
+    source.includes('No market-specific edge available'),
+    'cards page should show explicit unpriced edge messaging',
+  );
+  assert.ok(
+    source.includes('No edge at current price'),
+    'cards page should distinguish true no-edge-at-price from missing edge',
+  );
+  assert.ok(
+    source.includes('Pricing Status:'),
+    'cards page should use user-facing pricing status label',
+  );
+  assert.ok(
+    !source.includes('Sharp Verdict:'),
+    'cards page should not leak internal sharp verdict label',
+  );
+}
+
 async function validateDbFallback(assert) {
   const dbModule = await import('../../../packages/data/src/db.js');
   const db = dbModule.default || dbModule;
@@ -119,6 +147,7 @@ async function run() {
   const assert = assertModule.default || assertModule;
 
   const baseUrl = process.env.CARDS_API_BASE_URL || DEFAULT_BASE_URL;
+  await validateCardsSourceContract(assert);
   try {
     await validateCardsChunkReachable(baseUrl, assert);
     await validateApiSmoke(baseUrl, assert);

@@ -89,7 +89,29 @@ interface ApiPlay {
   driverKey: string;
   projectedTotal?: number | null;
   edge?: number | null;
+  edge_points?: number | null;
+  p_fair?: number | null;
+  p_implied?: number | null;
+  edge_pct?: number | null;
   model_prob?: number | null;
+  proxy_used?: boolean;
+  line_source?: string | null;
+  price_source?: string | null;
+  projection?: {
+    margin_home?: number | null;
+    total?: number | null;
+    team_total?: number | null;
+    goal_diff?: number | null;
+    score_home?: number | null;
+    score_away?: number | null;
+    projected_margin?: number | null;
+    projected_total?: number | null;
+    projected_team_total?: number | null;
+    projected_goal_diff?: number | null;
+    projected_score_home?: number | null;
+    projected_score_away?: number | null;
+    win_prob_home?: number | null;
+  };
   status?: 'FIRE' | 'WATCH' | 'PASS';
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
@@ -281,7 +303,7 @@ function inferMarketFromPlay(play: ApiPlay): {
       market: 'UNKNOWN',
       canonical: 'INFO',
       reasonCodes,
-      tags,
+      tags: Array.from(new Set(tags)),
     };
   }
 
@@ -290,7 +312,7 @@ function inferMarketFromPlay(play: ApiPlay): {
       market: mapCanonicalToLegacyMarket(play.market_type) as Market,
       canonical: play.market_type,
       reasonCodes,
-      tags,
+      tags: Array.from(new Set(tags)),
     };
   }
 
@@ -300,7 +322,7 @@ function inferMarketFromPlay(play: ApiPlay): {
       market: mapCanonicalToLegacyMarket(secondary) as Market,
       canonical: secondary,
       reasonCodes,
-      tags,
+      tags: Array.from(new Set(tags)),
     };
   }
 
@@ -958,6 +980,46 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         : buildWave1PickText(wave1DecisionPlay, game, decisionV2.direction);
     const edgePct =
       typeof decisionV2.edge_pct === 'number' ? decisionV2.edge_pct : null;
+    const projectedMargin =
+      typeof wave1DecisionPlay.projection?.projected_margin === 'number'
+        ? wave1DecisionPlay.projection.projected_margin
+        : typeof wave1DecisionPlay.projection?.margin_home === 'number'
+          ? wave1DecisionPlay.projection.margin_home
+          : null;
+    const projectedTotal =
+      typeof wave1DecisionPlay.projection?.projected_total === 'number'
+        ? wave1DecisionPlay.projection.projected_total
+        : typeof wave1DecisionPlay.projection?.total === 'number'
+          ? wave1DecisionPlay.projection.total
+          : null;
+    const projectedTeamTotal =
+      typeof wave1DecisionPlay.projection?.projected_team_total === 'number'
+        ? wave1DecisionPlay.projection.projected_team_total
+        : typeof wave1DecisionPlay.projection?.team_total === 'number'
+          ? wave1DecisionPlay.projection.team_total
+          : null;
+    const projectedGoalDiff =
+      typeof wave1DecisionPlay.projection?.projected_goal_diff === 'number'
+        ? wave1DecisionPlay.projection.projected_goal_diff
+        : typeof wave1DecisionPlay.projection?.goal_diff === 'number'
+          ? wave1DecisionPlay.projection.goal_diff
+          : null;
+    const projectedScoreHome =
+      typeof wave1DecisionPlay.projection?.projected_score_home === 'number'
+        ? wave1DecisionPlay.projection.projected_score_home
+        : typeof wave1DecisionPlay.projection?.score_home === 'number'
+          ? wave1DecisionPlay.projection.score_home
+          : null;
+    const projectedScoreAway =
+      typeof wave1DecisionPlay.projection?.projected_score_away === 'number'
+        ? wave1DecisionPlay.projection.projected_score_away
+        : typeof wave1DecisionPlay.projection?.score_away === 'number'
+          ? wave1DecisionPlay.projection.score_away
+          : null;
+    const edgePoints =
+      typeof wave1DecisionPlay.edge_points === 'number'
+        ? wave1DecisionPlay.edge_points
+        : null;
     const betMarketType = mapCanonicalToBetMarketType(marketType);
     const betSide = direction ? mapDirectionToBetSide(direction) : null;
     const candidateBet: CanonicalBet | null =
@@ -998,6 +1060,16 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       ]),
     );
     const tags = Array.from(new Set([...(wave1DecisionPlay.tags ?? [])]));
+    if (decisionV2.price_reason_codes.includes('EDGE_VERIFICATION_REQUIRED')) {
+      tags.push('EDGE_VERIFICATION_REQUIRED');
+    }
+    if (
+      decisionV2.proxy_capped === true ||
+      decisionV2.price_reason_codes.includes('PROXY_EDGE_CAPPED') ||
+      decisionV2.price_reason_codes.includes('PROXY_EDGE_BLOCKED')
+    ) {
+      tags.push('PROXY_CARD');
+    }
     const gates: CanonicalGate[] = decisionV2.watchdog_reason_codes.map((code) => ({
       code,
       severity: decisionV2.watchdog_status === 'BLOCKED' ? 'BLOCK' : 'WARN',
@@ -1050,7 +1122,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           }
         : undefined,
       reason_codes: mergedReasonCodes,
-      tags,
+      tags: Array.from(new Set(tags)),
       classification:
         officialStatus === 'PLAY' ? 'BASE' : officialStatus === 'LEAN' ? 'LEAN' : 'PASS',
       action,
@@ -1077,11 +1149,20 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           ? decisionV2.implied_prob
           : undefined,
       edge: edgePct ?? undefined,
+      edgePoints: edgePoints ?? undefined,
+      projectedMargin: projectedMargin ?? undefined,
+      projectedTotal: projectedTotal ?? undefined,
+      projectedTeamTotal: projectedTeamTotal ?? undefined,
+      projectedGoalDiff: projectedGoalDiff ?? undefined,
+      projectedScoreHome: projectedScoreHome ?? undefined,
+      projectedScoreAway: projectedScoreAway ?? undefined,
       valueStatus,
       betAction: officialStatus === 'PLAY' && bet ? 'BET' : 'NO_PLAY',
       priceFlags: [],
       line: wave1DecisionPlay.line,
       price: wave1DecisionPlay.price,
+      lineSource: decisionV2.pricing_trace?.line_source ?? undefined,
+      priceSource: decisionV2.pricing_trace?.price_source ?? undefined,
       updatedAt: game.odds?.capturedAt || game.createdAt,
       whyCode: decisionV2.primary_reason_code,
       whyText: decisionV2.primary_reason_code.replace(/_/g, ' '),
@@ -1102,16 +1183,16 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     const hasNoPlays = game.plays.length === 0;
     const missingDataCode: string =
       hasNoOdds && hasNoPlays
-        ? 'MISSING_DATA_NO_ODDS'
+        ? 'PASS_MARKET_PRICE_MISSING'
         : hasNoPlays
-          ? 'MISSING_DATA_NO_PLAYS'
-          : 'MISSING_DATA_DRIVERS';
+          ? 'PASS_DRIVER_LOAD_FAILED'
+          : 'PASS_MISSING_DRIVER_INPUTS';
     const missingDataText: string =
       hasNoOdds && hasNoPlays
-        ? 'No odds data loaded'
+        ? 'Market price missing'
         : hasNoPlays
-          ? 'No driver plays loaded'
-          : 'Driver load failed — no qualified drivers';
+          ? 'Driver load failed'
+          : 'Missing driver inputs';
     return {
       market_key: 'INFO|NONE',
       decision: 'PASS',
@@ -1119,7 +1200,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       bet: null,
       gates: [
         {
-          code: 'PASS_NO_QUALIFIED_PLAYS',
+          code: missingDataCode,
           severity: 'BLOCK',
           blocks_bet: true,
         },
@@ -1131,7 +1212,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         edge_pct: null,
         edge_tier: 'BAD',
         coinflip: false,
-        reason_code: 'PASS_NO_QUALIFIED_PLAYS',
+        reason_code: missingDataCode,
       },
       transform_meta: {
         quality: 'DEGRADED',
@@ -1157,7 +1238,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       consistency: {
         total_bias: game.consistency?.total_bias ?? 'UNKNOWN',
       },
-      reason_codes: [missingDataCode, 'PASS_NO_QUALIFIED_PLAYS'],
+      reason_codes: [missingDataCode],
       tags: [],
     };
   }
@@ -1659,7 +1740,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   if (requiresModelProbForEdge && modelProb === undefined) {
     reasonCodes.push('PASS_DATA_ERROR');
   }
-  if (canonicalPlayableCount === 0) reasonCodes.push('PASS_NO_QUALIFIED_PLAYS');
+  if (canonicalPlayableCount === 0) reasonCodes.push('PASS_NO_PRIMARY_SUPPORT');
   if (betAction === 'NO_PLAY' && !reasonCodes.includes(whyCode))
     reasonCodes.push(whyCode);
 
