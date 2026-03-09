@@ -605,7 +605,11 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
     current_gw = my_team.get("current_gameweek") or my_team.get("next_gameweek")
     
     # Get free transfers from overrides or my_team data
-    free_transfers = overrides.get("free_transfers") or my_team.get("free_transfers")
+    override_ft = overrides.get("free_transfers") if "free_transfers" in overrides else None
+    team_ft = my_team.get("free_transfers")
+    if team_ft is None:
+        team_ft = team_info.get("free_transfers")
+    free_transfers = override_ft if override_ft is not None else team_ft
     
     # Convert decision dataclass to dict if needed
     if hasattr(decision, "__dict__"):
@@ -619,6 +623,11 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         manager_state = {}
     if not strategy_mode:
         strategy_mode = manager_state.get("strategy_mode") or "BALANCED"
+    if free_transfers is not None:
+        try:
+            manager_state["free_transfers"] = int(free_transfers)
+        except (TypeError, ValueError):
+            pass
     if not manager_state:
         manager_state = {
             "overall_rank": overall_rank,

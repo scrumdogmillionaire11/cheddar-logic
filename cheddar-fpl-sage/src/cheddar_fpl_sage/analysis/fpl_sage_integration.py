@@ -773,6 +773,15 @@ class FPLSageIntegration:
             # Inject manual overrides from config into team_data for decision framework
             team_data['manual_overrides'] = self.config.get('manual_overrides') or {}
             team_data['manual_injury_overrides'] = self.config.get('manual_injury_overrides') or {}
+            override_ft = (team_data['manual_overrides'] or {}).get('free_transfers')
+            if override_ft is not None:
+                try:
+                    override_ft_int = int(override_ft)
+                    team_data.setdefault('team_info', {})['free_transfers'] = override_ft_int
+                    team_data['team_info']['free_transfers_source'] = 'manual'
+                    team_data['free_transfers'] = override_ft_int
+                except (TypeError, ValueError):
+                    logger.warning("Invalid manual free_transfers override: %s", override_ft)
             logger.info(f"DEBUG: Injected manual_overrides into team_data: {list(team_data['manual_overrides'].keys())}")
             planned_xfers = team_data['manual_overrides'].get('planned_transfers', [])
             logger.info(f"DEBUG: planned_transfers count = {len(planned_xfers)}")
@@ -1827,6 +1836,8 @@ class FPLSageIntegration:
             self._ensure_dict(self.config.get('manual_chip_status', {}), "manual_chip_status")
         )
         manual_free_transfers = self.config.get('manual_free_transfers')
+        manual_overrides = self._ensure_dict(self.config.get('manual_overrides', {}), "manual_overrides")
+        override_free_transfers = manual_overrides.get('free_transfers')
         current_gw = 0
         next_gw = 0
         for ev in events or []:
@@ -1914,9 +1925,18 @@ class FPLSageIntegration:
             'lineup_source': 'bundle_team_picks',
             'manual_overrides_applied': False
         }
-        if manual_free_transfers is not None:
-            team_info['team_info']['free_transfers'] = manual_free_transfers
+        effective_manual_ft = manual_free_transfers
+        if effective_manual_ft is None and override_free_transfers is not None:
+            effective_manual_ft = override_free_transfers
+        if effective_manual_ft is not None:
+            try:
+                effective_manual_ft = int(effective_manual_ft)
+            except (TypeError, ValueError):
+                effective_manual_ft = None
+        if effective_manual_ft is not None:
+            team_info['team_info']['free_transfers'] = effective_manual_ft
             team_info['team_info']['free_transfers_source'] = 'manual'
+            team_info['free_transfers'] = effective_manual_ft
         return team_info
 
     def _resolve_chip_authority_source(self, team_data: Dict) -> str:
