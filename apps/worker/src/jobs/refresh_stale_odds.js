@@ -37,6 +37,10 @@ const {
   resolveTeamVariant,
 } = require('@cheddar-logic/data/src/normalize');
 
+const {
+  validateMarketContract,
+} = require('@cheddar-logic/odds/src/normalize');
+
 const { fetchOdds, getActiveSports } = require('@cheddar-logic/odds');
 
 /**
@@ -281,6 +285,15 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
                 console.warn(`[RefreshStaleOdds]   ⚠️  ${msg}`);
                 errors.push(`${sport}/${normalized.gameId}: ${msg}`);
                 continue; // Skip unmapped teams entirely
+              }
+
+              // Validate required market contract before persisting
+              const marketContract = validateMarketContract(normalized, sport);
+              if (!marketContract.marketOk) {
+                const msg = `MARKET_SOURCE_INCOMPLETE: game=${normalized.gameId} sport=${sport} missing=[${marketContract.missing.join(',')}]`;
+                console.warn(`[RefreshStaleOdds]   ⚠️  ${msg}`);
+                errors.push(`${sport}/${normalized.gameId}: ${msg}`);
+                continue; // Skip incomplete markets entirely
               }
 
               const stableGameId = `game-${sport.toLowerCase()}-${normalized.gameId}`;

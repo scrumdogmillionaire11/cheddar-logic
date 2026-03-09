@@ -10,7 +10,82 @@
  * - gameTimeUtc (ISO string, parseable)
  * - capturedAtUtc (ISO string)
  * - market (raw odds data, if available)
+ *
+ * Source Contract:
+ * - Each sport defines required markets in packages/odds/src/config.js
+ * - All required markets must be present and prices non-null (strict mode)
+ * - Missing markets logged as SOURCE_CONTRACT_FAILURE diagnostics
  */
+
+const SPORTS_CONFIG = require('./config');
+
+/**
+ * Get required markets for a sport from config
+ * @param {string} sport - Sport code (NHL, NBA, NCAAM, etc.)
+ * @returns {array} Required market names for the sport
+ */
+function getRequiredMarkets(sport) {
+  const config = SPORTS_CONFIG[sport.toUpperCase()];
+  return config?.markets || [];
+}
+
+/**
+ * Validate that a game has all required market data for its sport
+ * Always returns valid result; missing markets tracked in contract metadata
+ *
+ * @param {object} game - Normalized game object
+ * @param {string} sport - Sport code
+ * @returns {{marketOk: boolean, missing: array, details: object}}
+ */
+function validateMarketContract(game, sport) {
+  if (!game || !game.market) {
+    return {
+      marketOk: false,
+      missing: getRequiredMarkets(sport),
+      details: { reason: 'no_market_data' }
+    };
+  }
+
+  const required = getRequiredMarkets(sport);
+  const missing = [];
+  const prices = {};
+
+  for (const market of required) {
+    const marketData = Array.isArray(game.market[market])
+      ? game.market[market][0]
+      : game.market[market];
+
+    if (!marketData) {
+      missing.push(market);
+      continue;
+    }
+
+    // Check that required price fields are present
+    const hasValidPrices = market === 'h2h'
+      ? (marketData.home !== null && marketData.away !== null)
+      : market === 'totals'
+        ? (marketData.over !== null && marketData.under !== null)
+        : market === 'spreads'
+          ? (marketData.home_price !== null && marketData.away_price !== null)
+          : true;
+
+    if (!hasValidPrices) {
+      missing.push(`${market}_incomplete_prices`);
+    }
+
+    prices[market] = !!hasValidPrices;
+  }
+
+  return {
+    marketOk: missing.length === 0,
+    missing,
+    prices,
+    details: {
+      required,
+      sport: sport.toUpperCase()
+    }
+  };
+}
 
 /**
  * Normalize a single game from shared-data format to cheddar-logic format
@@ -121,4 +196,6 @@ function normalizeGames(rawGames, sport) {
 module.exports = {
   normalizeGame,
   normalizeGames,
+  validateMarketContract,
+  getRequiredMarkets,
 };

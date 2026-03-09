@@ -74,7 +74,21 @@ Risk posture then nudges this mode one step safer (`conservative`) or riskier (`
 | `strategy_paths` | Safe/Balanced/Aggressive alternatives for override decisions |
 | `squad_issues` | Structural diagnostics (lineup weakness, bench risk, availability flags) |
 | `chip_timing_outlook` | Suggested future windows for BB/TC/FH with rationale |
+| `fixture_planner` | 8-GW DGW/BGW timeline plus squad/target windows and deterministic planning notes |
 | `transfer_plans.no_transfer_reason` | Threshold-aware explanation when no move is recommended |
+
+## DGW/BGW Planner Fields
+
+`fixture_planner` is additive and optional on `/analyze/{id}/projections`.
+
+| Field | Meaning |
+|-------|---------|
+| `horizon_gws` | Fixed planning horizon (`8`) |
+| `start_gw` | Start gameweek (`next_gameweek` fallback `current_gw`) |
+| `gw_timeline[]` | Per-GW DGW/BGW team lists and total fixtures |
+| `squad_windows[]` | Current squad 8-GW windows with DGW/BGW summary and weighted fixture score |
+| `target_windows[]` | Prioritized transfer targets with the same window shape |
+| `key_planning_notes[]` | Deterministic trigger notes (blank pressure, DGW clusters, adjacency caution, etc.) |
 
 ## Captain Roles
 

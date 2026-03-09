@@ -2,6 +2,7 @@
 
 import type {
   DetailedAnalysisResponse,
+  FixturePlannerPlayerWindow,
   StrategyPathMove,
   TransferPlan,
   TransferPlans,
@@ -68,6 +69,76 @@ const renderTransferPlan = (label: string, plan: TransferPlan) => (
   </div>
 );
 
+const renderFixtureWindowTable = (
+  title: string,
+  rows: FixturePlannerPlayerWindow[],
+  startGw: number,
+) => (
+  <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
+    <div className="mb-3 text-sm font-semibold uppercase text-cloud/60">
+      {title}
+    </div>
+    {rows.length === 0 ? (
+      <div className="text-xs text-cloud/60">No players in this list.</div>
+    ) : (
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-xs">
+          <thead>
+            <tr className="border-b border-white/10 text-cloud/60">
+              <th className="px-2 py-2 text-left">Player</th>
+              <th className="px-2 py-2 text-left">DGW</th>
+              <th className="px-2 py-2 text-left">BGW</th>
+              <th className="px-2 py-2 text-left">Next DGW</th>
+              <th className="px-2 py-2 text-left">Score</th>
+              {Array.from({ length: 8 }).map((_, idx) => (
+                <th key={`${title}-gw-${idx}`} className="px-2 py-2 text-left">
+                  GW{startGw + idx}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((window, idx) => (
+              <tr
+                key={`${window.player_id || window.name}-${idx}`}
+                className="border-b border-white/5"
+              >
+                <td className="px-2 py-2">
+                  <div className="font-semibold">{window.name}</div>
+                  <div className="text-cloud/60">{window.team}</div>
+                </td>
+                <td className="px-2 py-2">{window.summary.dgw_count}</td>
+                <td className="px-2 py-2">{window.summary.bgw_count}</td>
+                <td className="px-2 py-2">{window.summary.next_dgw_gw ?? '-'}</td>
+                <td className="px-2 py-2">
+                  {window.summary.weighted_fixture_score.toFixed(3)}
+                </td>
+                {window.upcoming.map((upcoming) => (
+                  <td key={`${window.name}-gw-${upcoming.gw}`} className="px-2 py-2">
+                    {upcoming.is_blank ? (
+                      <span className="rounded bg-rose/20 px-2 py-1 text-rose">
+                        BGW
+                      </span>
+                    ) : upcoming.is_double ? (
+                      <span className="rounded bg-teal/20 px-2 py-1 text-teal">
+                        DGW
+                      </span>
+                    ) : (
+                      <span className="rounded bg-white/10 px-2 py-1 text-cloud/70">
+                        1
+                      </span>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+);
+
 export default function FPLDashboard({ data }: FPLDashboardProps) {
   if (!data) {
     return null;
@@ -77,6 +148,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
   const managerState = data.manager_state || {};
   const strategyMode = data.strategy_mode || managerState.strategy_mode;
   const captainDelta = parseNumeric(data.captain_delta?.delta_pts);
+  const fixturePlanner = data.fixture_planner;
 
   return (
     <div className="space-y-8">
@@ -190,6 +262,59 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
           </div>
         </div>
       </div>
+
+      {/* DGW/BGW Planner */}
+      {fixturePlanner ? (
+        <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
+          <h2 className="mb-6 text-2xl font-semibold">
+            DGW/BGW Planner (Next 8 GWs)
+          </h2>
+          <div className="mb-6 grid gap-3 md:grid-cols-4 lg:grid-cols-8">
+            {fixturePlanner.gw_timeline.map((row) => (
+              <div
+                key={`timeline-${row.gw}`}
+                className="rounded-lg border border-white/10 bg-surface/50 p-3"
+              >
+                <div className="text-xs font-semibold uppercase text-cloud/60">
+                  GW{row.gw}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded bg-teal/20 px-2 py-1 text-teal">
+                    DGW {row.dgw_teams.length}
+                  </span>
+                  <span className="rounded bg-rose/20 px-2 py-1 text-rose">
+                    BGW {row.bgw_teams.length}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="space-y-4">
+            {renderFixtureWindowTable(
+              'Your Squad',
+              fixturePlanner.squad_windows,
+              fixturePlanner.start_gw,
+            )}
+            {renderFixtureWindowTable(
+              'Potential Targets',
+              fixturePlanner.target_windows,
+              fixturePlanner.start_gw,
+            )}
+          </div>
+          {fixturePlanner.key_planning_notes.length > 0 ? (
+            <div className="mt-4 rounded-lg border border-white/10 bg-surface/50 p-4">
+              <div className="mb-2 text-xs font-semibold uppercase text-cloud/60">
+                Key Planning Notes
+              </div>
+              <ul className="space-y-1 text-xs text-cloud/70">
+                {fixturePlanner.key_planning_notes.map((note, idx) => (
+                  <li key={`planner-note-${idx}`}>{note}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Transfers */}
       <div className="rounded-xl border border-white/10 bg-surface/80 p-8">

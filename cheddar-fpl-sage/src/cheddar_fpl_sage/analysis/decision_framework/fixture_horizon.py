@@ -69,6 +69,16 @@ class PlayerFixtureWindow:
     summary: Dict[str, Any]
 
 
+@dataclass
+class FixtureHorizonContext:
+    start_gw: int
+    horizon_gws: int
+    team_gw_map: Dict[str, List[Dict[str, Any]]]
+    squad_player_windows: List[Dict[str, Any]]
+    candidate_player_windows: List[Dict[str, Any]]
+    gw_timeline: List[Dict[str, Any]]
+
+
 def _weighted_fixture_score(upcoming: List[Dict[str, Any]]) -> float:
     weighted_sum = 0.0
     weight_sum = 0.0
@@ -95,6 +105,7 @@ def _build_player_window(
     team_short_names: Dict[int, str],
     start_gw: int,
     horizon_gws: int,
+    next6_pts: Optional[float] = None,
 ) -> PlayerFixtureWindow:
     team_id = _to_int(player.get("team_id"), None)
     player_name = str(player.get("name") or "Unknown")
@@ -165,6 +176,7 @@ def _build_player_window(
         "far_dgw": far_dgw,
         "near_bgw": near_bgw,
         "far_bgw": far_bgw,
+        "next6_pts": _to_float(next6_pts, 0.0),
     }
 
     return PlayerFixtureWindow(
@@ -478,16 +490,35 @@ def build_fixture_horizon_context(
     captain_windows: List[Dict[str, Any]] = []
     player_summary_by_id: Dict[int, Dict[str, Any]] = {}
 
+    # Build baseline summaries for all players so solver-side DGW/BGW modifiers can
+    # apply to any candidate in transfer/captain ranking (not only UI-tracked refs).
+    for player in players_by_id.values():
+        player_window = _build_player_window(
+            player=player,
+            team_rows_by_id=team_rows_by_id,
+            team_short_names=team_short_names,
+            start_gw=start_gw,
+            horizon_gws=horizon_gws,
+        )
+        if player_window.player_id is not None:
+            player_summary_by_id[player_window.player_id] = {
+                **player_window.summary,
+                "team_id": player_window.team_id,
+                "team": player_window.team,
+            }
+
     def _build_windows_for_refs(refs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         windows: List[Dict[str, Any]] = []
         for ref in refs:
             resolved = _resolve_player_ref(ref, players_by_id, players_by_name_team, team_short_to_id)
+            next6_pts = _to_float(ref.get("next6_pts"), 0.0)
             player_window = _build_player_window(
                 player=resolved,
                 team_rows_by_id=team_rows_by_id,
                 team_short_names=team_short_names,
                 start_gw=start_gw,
                 horizon_gws=horizon_gws,
+                next6_pts=next6_pts,
             )
             window_dict = {
                 "player_id": player_window.player_id,
@@ -499,6 +530,7 @@ def build_fixture_horizon_context(
                     "next_dgw_gw": player_window.summary["next_dgw_gw"],
                     "next_bgw_gw": player_window.summary["next_bgw_gw"],
                     "weighted_fixture_score": player_window.summary["weighted_fixture_score"],
+                    "next6_pts": player_window.summary["next6_pts"],
                 },
                 "upcoming": [
                     {

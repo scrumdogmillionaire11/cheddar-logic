@@ -182,6 +182,46 @@ export interface ChipTimingOutlook {
   rationale?: string;
 }
 
+export interface FixturePlannerTimelineCell {
+  gw: number;
+  dgw_teams: string[];
+  bgw_teams: string[];
+  fixture_count_total: number;
+}
+
+export interface FixturePlannerUpcomingRow {
+  gw: number;
+  fixture_count: number;
+  is_blank: boolean;
+  is_double: boolean;
+  opponents: string[];
+  avg_difficulty: number;
+}
+
+export interface FixturePlannerPlayerWindow {
+  player_id?: number;
+  name: string;
+  team: string;
+  summary: {
+    dgw_count: number;
+    bgw_count: number;
+    next_dgw_gw?: number;
+    next_bgw_gw?: number;
+    weighted_fixture_score: number;
+    next6_pts?: number;
+  };
+  upcoming: FixturePlannerUpcomingRow[];
+}
+
+export interface FixturePlannerData {
+  horizon_gws: 8;
+  start_gw: number;
+  gw_timeline: FixturePlannerTimelineCell[];
+  squad_windows: FixturePlannerPlayerWindow[];
+  target_windows: FixturePlannerPlayerWindow[];
+  key_planning_notes: string[];
+}
+
 export interface DetailedAnalysisResponse {
   team_name: string;
   manager_name: string;
@@ -209,6 +249,7 @@ export interface DetailedAnalysisResponse {
   risk_scenarios: Array<Record<string, unknown>>;
   chip_recommendation?: Record<string, unknown> | null;
   chip_timing_outlook?: ChipTimingOutlook | null;
+  fixture_planner?: FixturePlannerData | null;
   available_chips: string[];
   squad_health?: SquadHealth | null;
 }

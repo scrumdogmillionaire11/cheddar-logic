@@ -37,6 +37,41 @@ Free transfer multipliers remain active (`1 FT = 1.0x`, `2 FT = 0.75x`, `3 FT = 
 - `squad_issues`: structural problem list (lineup, bench, availability).
 - `no_transfer_reason`: threshold-specific message (not generic).
 
+## March 9, 2026 Update (DGW/BGW Forward Planner)
+
+The solver now consumes an 8-GW fixture horizon from canonical bundle fixtures (`raw_data["fixtures"]`) and applies capped DGW/BGW modifiers in transfer and captain ranking.
+
+### Fixture Horizon Normalization
+
+- Source of truth: `fixtures.json` loaded via `fpl_sage_integration.py`
+- Window: `start_gw = next_gameweek` fallback `current_gw`, horizon `start_gw..start_gw+7`
+- Dedupe key: fixture `id`, fallback `(event, team_h, team_a, kickoff_time)`
+- Inference:
+  - `fixture_count == 0` => blank
+  - `fixture_count >= 2` => double
+- Difficulty: FPL FDR (`team_h_difficulty` / `team_a_difficulty`), fallback `3`
+
+### Weighted Fixture Score
+
+- Per-GW raw:
+  - blank => `-4.0`
+  - otherwise `fixture_count * (3.0 - avg_difficulty)` and `+1.0` extra if double
+- Time decay: `[1.00, 0.92, 0.85, 0.78, 0.72, 0.66, 0.61, 0.56]`
+- Aggregate: weighted average over the 8-GW horizon
+
+### Solver Modifiers (Capped)
+
+- Transfer adjustment:
+  - `adj = clamp((0.55*near_dgw + 0.30*far_dgw) - (1.10*near_bgw + 0.60*far_bgw), -1.20, +0.90)`
+- Captain adjustment:
+  - `adj = clamp((0.40*near_dgw) - (0.95*near_bgw), -1.00, +0.70)`
+- DGW bonus gate:
+  - applied only if `xMins_next >= 60` and player is not injury-risk
+- Dominance cap:
+  - horizon adjustment capped to `20%` of base scorer magnitude per candidate
+
+This keeps DGW/BGW context directional and meaningful while preventing horizon effects from overpowering core projection quality, availability filters, and existing avoid logic.
+
 ## 🔍 Current Issues Identified
 
 ### 1. **Max Free Transfers Cap** ✅ FIXED

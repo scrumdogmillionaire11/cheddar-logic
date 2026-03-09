@@ -445,6 +445,33 @@ class FPLSageIntegration:
             "target_windows": context.get("candidate_player_windows", []),
             "key_planning_notes": context.get("key_planning_notes", []),
         }
+
+    def _inject_pre_analysis_fixture_horizon_context(
+        self,
+        team_data: Dict,
+        raw_data: Dict[str, Any],
+        current_gw: int,
+    ) -> None:
+        """
+        Build fixture horizon context before solver scoring so transfer/captain
+        ranking receives DGW/BGW modifiers during recommendation generation.
+        """
+        start_gw = team_data.get("next_gameweek") or current_gw
+        try:
+            start_gw = int(start_gw)
+        except (TypeError, ValueError):
+            start_gw = int(current_gw or 1)
+
+        team_data["fixture_horizon_context"] = build_fixture_horizon_context(
+            fixtures=raw_data.get("fixtures", []) or [],
+            teams=raw_data.get("teams", []) or [],
+            players=raw_data.get("players", []) or [],
+            start_gw=start_gw,
+            horizon_gws=8,
+            squad_player_refs=self._extract_squad_player_refs(team_data),
+            candidate_player_refs=[],
+            captain_candidate_refs=[],
+        )
     
     async def run_full_analysis(self, save_data: bool = True, overrides: Optional[Dict] = None) -> Dict:
         """
@@ -912,6 +939,11 @@ class FPLSageIntegration:
             
             # Store projections for later retrieval
             team_data['_projections'] = projections
+            self._inject_pre_analysis_fixture_horizon_context(
+                team_data=team_data,
+                raw_data=data,
+                current_gw=current_gw,
+            )
             
             try:
                 decision = self.decision_framework.analyze_chip_decision(
@@ -943,6 +975,16 @@ class FPLSageIntegration:
                     confidence_score=0.0,
                     risk_posture=self.decision_framework.risk_posture,
                 )
+
+            # Build additive planner payload after decision artifacts are available
+            # (strategy paths, near-threshold moves, captain pool).
+            self._attach_fixture_planner_to_decision(
+                decision=decision,
+                team_data=team_data,
+                raw_data=data,
+                current_gw=current_gw,
+                projections=projections,
+            )
             
             # Attach Free Hit context to decision output for downstream consumers
             if is_free_hit_week:

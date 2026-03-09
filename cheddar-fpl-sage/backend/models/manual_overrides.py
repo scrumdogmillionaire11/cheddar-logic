@@ -134,6 +134,7 @@ class DetailedAnalysisResponse(BaseModel):
     # Chip guidance
     chip_recommendation: Optional[Dict]
     chip_timing_outlook: Optional[Dict] = None
+    fixture_planner: Optional[Dict] = None
     available_chips: List[str]
     
     # Squad health metrics

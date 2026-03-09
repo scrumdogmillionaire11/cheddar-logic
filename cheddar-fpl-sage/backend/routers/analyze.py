@@ -554,6 +554,7 @@ async def get_detailed_projections(analysis_id: str):
         risk_scenarios=results.get("risk_scenarios", []),
         chip_recommendation=results.get("chip_recommendation"),
         chip_timing_outlook=results.get("chip_timing_outlook"),
+        fixture_planner=results.get("fixture_planner"),
         available_chips=results.get("available_chips", []),
         squad_health=results.get("squad_health"),
     )

@@ -237,6 +237,7 @@ def build_detailed_analysis_contract(job: Any) -> Dict[str, Any]:
         "strategy_paths": results.get("strategy_paths") or {},
         "squad_issues": results.get("squad_issues") or [],
         "chip_timing_outlook": results.get("chip_timing_outlook"),
+        "fixture_planner": results.get("fixture_planner"),
         "transfer_recommendations": transfer_recommendations,
         "chip_strategy": _build_chip_strategy(results),
         "captain_recommendation": _build_captain_recommendation(results),

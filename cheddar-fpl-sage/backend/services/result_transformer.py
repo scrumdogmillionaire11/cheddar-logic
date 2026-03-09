@@ -647,6 +647,7 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         "strategy_paths": decision_dict.get("strategy_paths") or {},
         "squad_issues": decision_dict.get("squad_issues") or [],
         "chip_timing_outlook": decision_dict.get("chip_timing_outlook") or None,
+        "fixture_planner": decision_dict.get("fixture_planner") or None,
         "no_transfer_reason": decision_dict.get("no_transfer_reason"),
     }
     
