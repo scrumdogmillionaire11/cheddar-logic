@@ -272,13 +272,13 @@ CREATE INDEX idx_card_results_settled_at ON card_results(settled_at);
 
 ### Decision Pipeline v2 (Wave-1 Game Lines)
 
-For wave-1 betting rows, worker-emitted `decision_v2` is canonical:
+For wave-1 betting rows, worker-emitted `decision_v2` is canonical and required:
 
 - Sports: `NBA`, `NHL`, `NCAAM`
 - Markets: `MONEYLINE`, `SPREAD`, `TOTAL`, `PUCKLINE`, `TEAM_TOTAL`
-- Consumer rule: web/API/UI must not recompute or repair verdicts
+- Consumer rule: web/API/UI are pure consumers and must not recompute or repair verdicts
 - Canonical verdict fields:
-  - `decision_v2.official_status` (`PLAY` | `LEAN` | `PASS`)
+  - `decision_v2.official_status` (`PLAY/LEAN/PASS`)
   - `decision_v2.play_tier` (`BEST` | `GOOD` | `OK` | `BAD`)
   - `decision_v2.primary_reason_code` (single top-level reason)
 
@@ -329,7 +329,7 @@ type DecisionV2 = {
 };
 ```
 
-Fixed constants for wave-1:
+Fixed constants for wave-1 (must remain deterministic across worker/API/UI):
 
 - stale caution: `5m..30m`
 - stale block: `>30m`
@@ -337,13 +337,19 @@ Fixed constants for wave-1:
 - PLAY edge/support: `0.06` / `0.60`
 - BEST edge: `0.10`
 
-Reason precedence for `primary_reason_code`:
+Reason precedence for `primary_reason_code` (exact order):
 
 1. blocking watchdog reason
 2. price failure reason
 3. qualification reason
 
 No-play behavior is explicit: if watchdog blocks, price is `UNPRICED`/`COTTAGE`, or support thresholds fail, final status is `PASS`.
+
+**Consumer Contract (Wave-1):**
+
+- `/api/games` and web transforms consume `decision_v2` as-is for verdict/tier/reason.
+- Wave-1 rows must not use repair metadata or legacy status/action/classification fallback.
+- If a wave-1 row has no `decision_v2`, it is not eligible for wave-1 verdict projection.
 
 **FPL Compatibility Rule (Shared Contract):**
 

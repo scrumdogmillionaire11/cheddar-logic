@@ -24,6 +24,15 @@ Adopt **Decision Pipeline v2** with a hard cut for wave-1 game-line markets:
 - `/api/games` and `/cards` are pure consumers of worker `decision_v2`.
 - No legacy repair metadata or downstream verdict recomputation on wave-1 path.
 
+## Normative Contract
+
+For wave-1 rows, the following rules are mandatory:
+
+- Worker is the only decision authority and MUST emit `decision_v2` before publish/insert.
+- Web/API/UI layers are worker-only consumers and MUST NOT recompute verdicts.
+- Wave-1 final verdict vocabulary is fixed to `PLAY/LEAN/PASS`.
+- Downstream layers MUST NOT derive wave-1 verdicts from legacy fields (`action`, `status`, `classification`) or title/repair heuristics.
+
 ## Contract Rules
 
 1. Pipeline order is deterministic:
@@ -57,6 +66,12 @@ Adopt **Decision Pipeline v2** with a hard cut for wave-1 game-line markets:
 3. Qualification reason (`EDGE_CLEAR`, `SUPPORT_BELOW_PLAY_THRESHOLD`, etc.)
 
 Exactly one top-level reason is emitted.
+
+## Hard-Cut Legacy Removal Policy
+
+- Wave-1 path excludes legacy repair metadata and legacy verdict inference.
+- If a wave-1 play is missing `decision_v2`, it is excluded from the wave-1 verdict path.
+- Out-of-scope sports/markets may keep legacy behavior until their own hard-cut ADR.
 
 ## Consequences
 

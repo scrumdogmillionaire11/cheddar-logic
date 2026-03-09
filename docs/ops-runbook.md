@@ -152,6 +152,44 @@ curl -sf http://localhost:3000/api/cards?limit=1 >/dev/null && echo "✅ API res
 sudo systemctl show cheddar-worker -p Environment | grep -q "CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db" && sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" | grep -qx card_payloads && curl -sf http://localhost:3000/api/cards?limit=1 >/dev/null && echo "✅ All checks passed" || echo "❌ Preflight failed"
 ```
 
+### Decision Pipeline v2 Contract Checks (Wave-1)
+
+Wave-1 (`NBA`/`NHL`/`NCAAM`, `MONEYLINE`/`SPREAD`/`TOTAL`/`PUCKLINE`/`TEAM_TOTAL`) is worker-owned.
+Web/API/UI are pure consumers of worker `decision_v2`.
+
+```bash
+# Inspect wave-1 plays for decision_v2 and verdict vocabulary
+curl -s "http://localhost:3000/api/games?limit=200" | jq '
+  .data[]
+  | .sport as $sport
+  | .plays[]
+  | select(
+      ((.kind // "PLAY") == "PLAY") and
+      ($sport == "NBA" or $sport == "NHL" or $sport == "NCAAM") and
+      (.market_type == "MONEYLINE" or .market_type == "SPREAD" or .market_type == "TOTAL" or .market_type == "PUCKLINE" or .market_type == "TEAM_TOTAL")
+    )
+  | {
+      sport: $sport,
+      market_type,
+      official_status: .decision_v2.official_status,
+      primary_reason_code: .decision_v2.primary_reason_code,
+      pipeline_version: .decision_v2.pipeline_version
+    }'
+```
+
+Expected:
+
+- `decision_v2.pipeline_version` is `"v2"`.
+- `decision_v2.official_status` is one of `PLAY/LEAN/PASS`.
+- Missing `decision_v2` on a wave-1 play is an upstream worker contract failure.
+
+Incident rule:
+
+- Do not hotfix wave-1 verdicts by adding API/UI recompute or repair logic.
+- Fix worker decision emission and republish from worker path.
+
+Note: Vercel/Cloudflare static chunk 404 incidents are delivery-layer issues, not decision-contract logic.
+
 ### DB path drop-in precedence (critical)
 
 `CHEDDAR_DB_PATH` for both services must come from exactly one drop-in per unit:
