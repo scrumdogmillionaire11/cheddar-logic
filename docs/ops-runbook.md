@@ -647,3 +647,20 @@ sudo systemctl restart cheddar-web cheddar-worker
 | `.env.production.example` | Template for Pi env setup |
 
 > **Never commit `.env` or `.env.production`** — they contain API keys and auth secrets.
+
+---
+
+## Dependency Security
+
+### packages/odds — axios
+
+Upgraded from axios `^0.27.2` to `^1.7.0` (WI-0342, 2026-03-08).
+
+- Previous version had 3 high-severity CVEs (CSRF, SSRF, DoS via `__proto__`)
+- axios 1.x API is backwards-compatible for the basic `axios.get(url, { params, timeout })` usage in this package
+- Run `npm --prefix packages/odds audit --omit=dev` to confirm clean; should show `found 0 vulnerabilities`
+
+### Next.js Build Warnings
+
+- **Multi-lockfile root warning**: Resolved — `web/next.config.ts` sets `turbopack.root` to the monorepo root
+- **Middleware convention**: Current `web/src/middleware.ts` uses supported `NextResponse.next()` pattern with `config.matcher` — no deprecation warnings expected

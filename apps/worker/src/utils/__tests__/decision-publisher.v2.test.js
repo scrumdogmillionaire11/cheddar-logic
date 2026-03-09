@@ -110,7 +110,10 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2.consistency.vol_env).toBeTruthy();
   });
 
-  test('sets CAUTION when odds are stale between 5 and 30 minutes', () => {
+  test('does not CAUTION or BLOCK when odds_context.captured_at is between 5 and 30 minutes old', () => {
+    // applyUiActionFields strips captured_at before calling buildDecisionV2 to prevent
+    // stale timestamps from being baked into stored decision records. Staleness is an
+    // operational concern for the scheduler/ingest layer, not for stored decisions.
     const payload = buildWave1Payload({
       odds_context: {
         captured_at: minutesAgoIso(10),
@@ -118,28 +121,31 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.watchdog_status).toBe('CAUTION');
-    expect(payload.decision_v2.watchdog_reason_codes).toContain(
+    expect(payload.decision_v2.watchdog_status).toBe('OK');
+    expect(payload.decision_v2.watchdog_reason_codes).not.toContain(
       'WATCHDOG_STALE_SNAPSHOT',
     );
-    expect(payload.decision_v2.missing_data.severity).toBe('WARNING');
+    // Play should still proceed since data quality is good
+    expect(payload.decision_v2.official_status).toBe('PLAY');
   });
 
-  test('blocks when odds are stale beyond 30 minutes', () => {
+  test('does not block when odds are stale beyond 30 minutes (staleness not stored in decision_v2)', () => {
+    // applyUiActionFields strips captured_at before calling buildDecisionV2.
+    // A stale timestamp in odds_context should not permanently block a stored record.
+    // On the Pi's hourly cadence, odds are routinely 31-89 min old at model-run time.
     const payload = buildWave1Payload({
       odds_context: {
-        captured_at: minutesAgoIso(31),
+        captured_at: minutesAgoIso(60),
       },
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.watchdog_status).toBe('BLOCKED');
-    expect(payload.decision_v2.watchdog_reason_codes).toContain(
+    expect(payload.decision_v2.watchdog_status).toBe('OK');
+    expect(payload.decision_v2.watchdog_reason_codes).not.toContain(
       'WATCHDOG_STALE_SNAPSHOT',
     );
-    expect(payload.decision_v2.primary_reason_code).toBe(
-      'WATCHDOG_STALE_SNAPSHOT',
-    );
+    // Play should still be decided based on edge/support alone
+    expect(payload.decision_v2.official_status).toBe('PLAY');
   });
 
   test('classifies unpriced when fair/implied price inputs are missing', () => {

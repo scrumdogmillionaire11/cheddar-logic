@@ -10,7 +10,7 @@
   ],
   "license": "ISC",
   "dependencies": {
-    "axios": "^0.27.2",
+    "axios": "^1.7.0",
     "dotenv": "^16.0.3",
     "luxon": "^3.3.0"
   }

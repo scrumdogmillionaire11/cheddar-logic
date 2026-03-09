@@ -124,7 +124,29 @@ function applyUiActionFields(payload, context = {}) {
 
   if (isWave1EligiblePayload(payload)) {
     ensureDecisionConsistencyEnvelope(payload);
-    const decisionV2 = buildDecisionV2(payload, context);
+
+    // Strip odds snapshot timestamp before calling buildDecisionV2.
+    // The watchdog's STALE_SNAPSHOT check compares captured_at against
+    // the current clock. When this decision is stored to the DB and later
+    // read back (potentially hours later), the stored watchdog_status would
+    // permanently reflect the staleness at write-time, which is incorrect.
+    // On the Pi's hourly odds cadence, odds are routinely 30-60 min old at
+    // model-run time — well within the system's own ODDS_GAP_ALERT_MINUTES=90
+    // tolerance — so the 30-min threshold fires spuriously on every run.
+    // Staleness should be enforced at the scheduler/ingest level (before
+    // the model runs), not baked into a stored decision record.
+    if (payload.odds_context && typeof payload.odds_context === 'object') {
+      const { captured_at: _capturedAt, ...oddsContextWithoutTs } = payload.odds_context;
+      payload.odds_context = oddsContextWithoutTs;
+    }
+    const contextWithoutTs = context.oddsSnapshot
+      ? {
+          ...context,
+          oddsSnapshot: (({ captured_at: _ca, capturedAt: _cA, ...rest }) => rest)(context.oddsSnapshot),
+        }
+      : context;
+
+    const decisionV2 = buildDecisionV2(payload, contextWithoutTs);
     if (decisionV2) {
       payload.decision_v2 = decisionV2;
       const official = decisionV2.official_status;
