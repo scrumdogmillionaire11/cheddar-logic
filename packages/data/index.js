@@ -111,6 +111,11 @@ module.exports = {
   incrementTrackingStat: db.incrementTrackingStat,
   getTrackingStats: db.getTrackingStats,
 
+  // Convenience exports - team_metrics_cache
+  getTeamMetricsCache: db.getTeamMetricsCache,
+  upsertTeamMetricsCache: db.upsertTeamMetricsCache,
+  deleteStaleTeamMetricsCache: db.deleteStaleTeamMetricsCache,
+
   // Validation
   validateCardPayload,
 
