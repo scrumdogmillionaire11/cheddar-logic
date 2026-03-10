@@ -32,21 +32,21 @@ const LEAGUE_AVG_PK_PCT = 0.8;
 const HOME_ICE_ADVANTAGE = 1.03; // CALIBRATED: Was 1.05, reduced to address UNDER bias
 const REST_B2B_PENALTY = 0.95; // goals * 0.95 for B2B team
 const REST_EXTENDED_BOOST = 1.02; // 3+ days rest
-const PACE_DAMPENING = 0.4; // dampened multiplicative: 1 + (raw-1)*0.4
+const PACE_DAMPENING = 0.5; // dampened multiplicative: 1 + (raw-1)*0.5
 const DEFENSE_DAMPENING = 0.5;
 const PP_GOAL_SCALE = 0.02;
-const GOALIE_ADJ_SCALE = 2.0; // Tighter goalie influence to avoid runaway totals
-const GOALIE_ADJ_MIN = 0.88;
-const GOALIE_ADJ_MAX = 1.12;
+const GOALIE_ADJ_SCALE = 2.5; // Balanced: less aggressive than legacy, enough to preserve playable separation
+const GOALIE_ADJ_MIN = 0.85;
+const GOALIE_ADJ_MAX = 1.15;
 const FIRST_PERIOD_FACTOR = 0.3; // 30% of full game goals in 1P
 const GOALS_L5_WEIGHT = 0.3; // 30% recent, 70% season
 const NHL_TOTAL_BASELINE = 6.05;
-const TOTAL_REGRESSION_K = 0.55;
+const TOTAL_REGRESSION_K = 0.7;
 const TOTAL_FLOOR = 5.0;
-const TOTAL_CEILING = 7.3;
+const TOTAL_CEILING = 7.6;
 const MODIFIER_CAP_ABS = 0.7;
 const ONE_P_TOTAL_FLOOR = 1.4;
-const ONE_P_TOTAL_CEILING = 2.3;
+const ONE_P_TOTAL_CEILING = 2.4;
 
 // ============================================================================
 // Helpers

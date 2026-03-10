@@ -30,7 +30,7 @@ function buildBaseOverrides(overrides = {}) {
 }
 
 describe('NHL pace calibration rails', () => {
-  test('regresses and clamps high raw total to <= 7.3', () => {
+  test('regresses and clamps high raw total to <= 7.6', () => {
     const result = predictNHLGame(
       buildBaseOverrides({
         homeGoalsFor: 4.4,
@@ -52,8 +52,8 @@ describe('NHL pace calibration rails', () => {
       }),
     );
 
-    expect(result.rawTotalModel).toBeGreaterThan(7.3);
-    expect(result.expectedTotal).toBeLessThanOrEqual(7.3);
+    expect(result.rawTotalModel).toBeGreaterThan(7.6);
+    expect(result.expectedTotal).toBeLessThanOrEqual(7.6);
     expect(result.totalClampedHigh).toBe(true);
   });
 
@@ -157,8 +157,8 @@ describe('NHL total probability rails', () => {
       isPredictionOver: true,
     });
 
-    expect(result.p_fair).toBeLessThanOrEqual(0.72);
-    expect(Math.abs(result.edge)).toBeLessThanOrEqual(0.15);
+    expect(result.p_fair).toBeLessThanOrEqual(0.75);
+    expect(Math.abs(result.edge)).toBeLessThanOrEqual(0.18);
     expect(Array.isArray(result.rail_flags)).toBe(true);
     expect(result.rail_flags).toContain('UNREALISTIC_TOTAL_PROBABILITY');
     expect(result.rail_flags).toContain('EDGE_SANITY_CLAMP_APPLIED');
@@ -176,6 +176,6 @@ describe('NHL total probability rails', () => {
 
     expect(result.p_fair).toBeGreaterThanOrEqual(0.43);
     expect(result.p_fair).toBeLessThanOrEqual(0.65);
-    expect(Math.abs(result.edge)).toBeLessThanOrEqual(0.15);
+    expect(Math.abs(result.edge)).toBeLessThanOrEqual(0.18);
   });
 });

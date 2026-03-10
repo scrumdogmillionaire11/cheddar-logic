@@ -197,7 +197,7 @@ function computeTotalEdge({
   let p_fair = isPredictionOver ? p_over : 1 - p_over;
   const railFlags = [];
   if (isNhlStyleTotal) {
-    const clampedFair = Math.min(Math.max(p_fair, 0.28), 0.72);
+    const clampedFair = Math.min(Math.max(p_fair, 0.25), 0.75);
     if (clampedFair !== p_fair) {
       railFlags.push('UNREALISTIC_TOTAL_PROBABILITY');
       p_fair = clampedFair;
@@ -218,8 +218,8 @@ function computeTotalEdge({
   }
 
   let edge = p_fair - p_implied;
-  if (isNhlStyleTotal && Math.abs(edge) > 0.15) {
-    edge = Math.sign(edge) * 0.15;
+  if (isNhlStyleTotal && Math.abs(edge) > 0.18) {
+    edge = Math.sign(edge) * 0.18;
     railFlags.push('EDGE_SANITY_CLAMP_APPLIED');
   }
   const edgePoints = mu - L;
