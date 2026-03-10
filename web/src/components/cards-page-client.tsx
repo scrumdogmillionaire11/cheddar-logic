@@ -926,7 +926,12 @@ export default function CardsPageClient() {
             }`;
           if (!cancelled) {
             setError(nonJsonDetail);
-            setGames([]);
+            // On background polls, preserve stale game data so the page does
+            // not flash "No Play" on a transient server error. Only wipe on
+            // the initial load where there is no prior state to fall back to.
+            if (isInitialLoad.current) {
+              setGames([]);
+            }
           }
           return;
         }
@@ -936,7 +941,9 @@ export default function CardsPageClient() {
             setError(
               `Invalid API response format (expected JSON, got ${contentType || 'unknown content-type'})`,
             );
-            setGames([]);
+            if (isInitialLoad.current) {
+              setGames([]);
+            }
           }
           return;
         }
@@ -944,7 +951,9 @@ export default function CardsPageClient() {
         if (!data.success) {
           if (!cancelled) {
             setError(data.error || 'Failed to fetch games');
-            setGames([]);
+            if (isInitialLoad.current) {
+              setGames([]);
+            }
           }
           return;
         }
@@ -954,14 +963,20 @@ export default function CardsPageClient() {
           setError(null);
         }
       } catch (err) {
+        const isAbort =
+          err instanceof Error &&
+          (err.name === 'AbortError' || err.name === 'TimeoutError');
         const message = err instanceof Error ? err.message : 'Unknown error';
         console.error(`[${FETCH_ERROR_LOG_CODE}]`, {
           message,
           error_name: err instanceof Error ? err.name : 'UnknownError',
         });
-        if (!cancelled && message !== 'The operation was aborted') {
+        if (!cancelled && !isAbort) {
           setError(message);
-          setGames([]);
+          // Same stale-data guard: preserve games on background poll errors.
+          if (isInitialLoad.current) {
+            setGames([]);
+          }
         }
       } finally {
         globalGamesFetchInFlight = false;
@@ -1155,6 +1170,18 @@ export default function CardsPageClient() {
       ? -americanOdds / (-americanOdds + 100)
       : 100 / (americanOdds + 100);
     return p >= 0 && p <= 1 ? p : undefined;
+  };
+
+  const fairProbToAmericanOdds = (probability: number): number | undefined => {
+    if (!Number.isFinite(probability) || probability <= 0 || probability >= 1) {
+      return undefined;
+    }
+    const odds =
+      probability >= 0.5
+        ? -((probability * 100) / (1 - probability))
+        : ((1 - probability) * 100) / probability;
+    if (!Number.isFinite(odds)) return undefined;
+    return Math.round(odds);
   };
 
   const getTierBadge = (tier: DriverTier | null) => {
@@ -1703,6 +1730,19 @@ export default function CardsPageClient() {
         : typeof totalFallbackPlay?.projectedTotal === 'number'
           ? totalFallbackPlay.projectedTotal
           : undefined;
+    const onePeriodTotalsPlay = originalGame.plays.find(
+      (p) => p.cardType === 'nhl-pace-1p',
+    );
+    const projectedTotal1p =
+      typeof onePeriodTotalsPlay?.projectedTotal === 'number'
+        ? onePeriodTotalsPlay.projectedTotal
+        : undefined;
+    const edgePoints1p =
+      typeof onePeriodTotalsPlay?.edge === 'number'
+        ? onePeriodTotalsPlay.edge
+        : typeof projectedTotal1p === 'number'
+          ? Number((projectedTotal1p - 1.5).toFixed(2))
+          : undefined;
     const resolvedModelProb =
       typeof displayPlay.modelProb === 'number'
         ? displayPlay.modelProb
@@ -1721,6 +1761,10 @@ export default function CardsPageClient() {
           : livePrice != null
             ? impliedProbFromOdds(livePrice)
             : undefined;
+    const mlBreakEvenPrice =
+      typeof resolvedModelProb === 'number'
+        ? fairProbToAmericanOdds(resolvedModelProb)
+        : undefined;
     const projectedTeamTotal =
       typeof displayPlay.projectedTeamTotal === 'number'
         ? displayPlay.projectedTeamTotal
@@ -1740,6 +1784,12 @@ export default function CardsPageClient() {
     const isSpreadLikeMarket = marketType === 'SPREAD' || marketType === 'PUCKLINE';
     const isTotalLikeMarket =
       marketType === 'TOTAL' || marketType === 'TEAM_TOTAL';
+    const isMoneylineMarket = marketType === 'MONEYLINE';
+    const hasEdgeMathContext =
+      typeof resolvedModelProb === 'number' &&
+      typeof resolvedImpliedProb === 'number' &&
+      hasMarketSpecificEdge &&
+      primaryReasonCode !== 'EXACT_WAGER_MISMATCH';
     const hasSpreadContext =
       isSpreadLikeMarket &&
       (typeof projectedMargin === 'number' ||
@@ -1751,6 +1801,13 @@ export default function CardsPageClient() {
         typeof projectedTeamTotal === 'number' ||
         typeof edgePoints === 'number' ||
         typeof marketLine === 'number');
+    const hasOnePeriodTotalContext =
+      typeof projectedTotal1p === 'number' || typeof edgePoints1p === 'number';
+    const hasMlContext =
+      isMoneylineMarket &&
+      (hasEdgeMathContext ||
+        typeof livePrice === 'number' ||
+        typeof mlBreakEvenPrice === 'number');
     const supportGateReason =
       primaryReasonCode === 'SUPPORT_BELOW_LEAN_THRESHOLD' ||
       primaryReasonCode === 'SUPPORT_BELOW_PLAY_THRESHOLD';
@@ -2018,63 +2075,54 @@ export default function CardsPageClient() {
             )}
           </div>
 
-          {/* WI-0327: Edge Math section */}
           {canRenderModelSummary &&
-            typeof resolvedModelProb === 'number' &&
-            typeof resolvedImpliedProb === 'number' &&
-            hasActionableEdge &&
-            primaryReasonCode !== 'EXACT_WAGER_MISMATCH' && (
-              <div className="rounded-md border border-white/10 bg-white/5 p-3">
-                <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
-                  Edge Math
-                </p>
-                <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
-                  <span className="text-cloud/60">
-                    Fair{' '}
-                    <span className="text-cloud/90 font-bold">
-                      {(resolvedModelProb * 100).toFixed(1)}%
-                    </span>
-                  </span>
-                  <span className="text-cloud/40">→</span>
-                  <span className="text-cloud/60">
-                    Implied{' '}
-                    <span className="text-cloud/90 font-bold">
-                      {(resolvedImpliedProb * 100).toFixed(1)}%
-                    </span>
-                  </span>
-                  <span className="text-cloud/40">→</span>
-                  <span className="text-cloud/60">
-                    Edge{' '}
-                    <span
-                      className={`font-bold ${effectiveEdgePct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
-                    >
-                      {effectiveEdgePct >= 0 ? '+' : ''}
-                      {(effectiveEdgePct * 100).toFixed(1)}%
-                    </span>
-                  </span>
-                </div>
-                <p className="text-xs text-cloud/50 mt-1">
-                  {decisionV2?.edge_method === 'MARGIN_DELTA'
-                    ? 'Margin Delta vs Spread Line'
-                    : decisionV2?.edge_method === 'TOTAL_DELTA'
-                      ? 'Total Delta vs O/U Line'
-                      : 'Win Prob vs ML Odds'}
-                </p>
-                {isEdgeVerification && (
-                  <p className="text-xs text-amber-300/90 mt-1 font-semibold">
-                    Caution: edge above 20% on a non-total market — verification required
-                  </p>
-                )}
-              </div>
-            )}
-
-          {canRenderModelSummary && (hasSpreadContext || hasTotalContext) && (
+            (hasSpreadContext ||
+              hasTotalContext ||
+              hasOnePeriodTotalContext ||
+              hasMlContext ||
+              hasEdgeMathContext) && (
             <div className="rounded-md border border-white/10 bg-white/5 p-3">
               <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
-                Market Context
+                Market Math
               </p>
+              {hasEdgeMathContext && (
+                <>
+                  <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+                    <span className="text-cloud/60">
+                      Fair{' '}
+                      <span className="text-cloud/90 font-bold">
+                        {(resolvedModelProb * 100).toFixed(1)}%
+                      </span>
+                    </span>
+                    <span className="text-cloud/40">→</span>
+                    <span className="text-cloud/60">
+                      Implied{' '}
+                      <span className="text-cloud/90 font-bold">
+                        {(resolvedImpliedProb * 100).toFixed(1)}%
+                      </span>
+                    </span>
+                    <span className="text-cloud/40">→</span>
+                    <span className="text-cloud/60">
+                      Edge{' '}
+                      <span
+                        className={`font-bold ${effectiveEdgePct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+                      >
+                        {effectiveEdgePct >= 0 ? '+' : ''}
+                        {(effectiveEdgePct * 100).toFixed(1)}%
+                      </span>
+                    </span>
+                  </div>
+                  <p className="text-xs text-cloud/50 mt-1">
+                    {resolvedDecisionV2?.edge_method === 'MARGIN_DELTA'
+                      ? 'Margin Delta vs Spread Line'
+                      : resolvedDecisionV2?.edge_method === 'TOTAL_DELTA'
+                        ? 'Total Delta vs O/U Line'
+                        : 'Win Prob vs ML Odds'}
+                  </p>
+                </>
+              )}
               {hasSpreadContext && (
-                <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+                <div className="flex items-center gap-4 text-xs font-mono flex-wrap mt-2">
                   <span className="text-cloud/60">
                     Projected margin{' '}
                     <span className="text-cloud/90 font-bold">
@@ -2113,7 +2161,7 @@ export default function CardsPageClient() {
                 </div>
               )}
               {hasTotalContext && (
-                <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+                <div className="flex items-center gap-4 text-xs font-mono flex-wrap mt-2">
                   <span className="text-cloud/60">
                     Projected total{' '}
                     <span className="text-cloud/90 font-bold">
@@ -2142,6 +2190,53 @@ export default function CardsPageClient() {
                   </span>
                 </div>
               )}
+              {hasMlContext && (
+                <div className="flex items-center gap-4 text-xs font-mono flex-wrap mt-2">
+                  <span className="text-cloud/60">
+                    Current price{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof livePrice === 'number'
+                        ? `${livePrice > 0 ? '+' : ''}${Math.trunc(livePrice)}`
+                        : 'N/A'}
+                    </span>
+                  </span>
+                  <span className="text-cloud/40">|</span>
+                  <span className="text-cloud/60">
+                    Break-even price{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof mlBreakEvenPrice === 'number'
+                        ? `${mlBreakEvenPrice > 0 ? '+' : ''}${mlBreakEvenPrice}`
+                        : 'N/A'}
+                    </span>
+                  </span>
+                </div>
+              )}
+              {hasOnePeriodTotalContext && (
+                <div className="flex items-center gap-4 text-xs font-mono flex-wrap mt-2">
+                  <span className="text-cloud/60">
+                    1P projection{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof projectedTotal1p === 'number'
+                        ? projectedTotal1p.toFixed(2)
+                        : 'N/A'}
+                    </span>
+                  </span>
+                  <span className="text-cloud/40">|</span>
+                  <span className="text-cloud/60">
+                    Ref line{' '}
+                    <span className="text-cloud/90 font-bold">1.5</span>
+                  </span>
+                  <span className="text-cloud/40">|</span>
+                  <span className="text-cloud/60">
+                    Delta{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {typeof edgePoints1p === 'number'
+                        ? `${formatSignedDecimal(edgePoints1p)} pts`
+                        : 'N/A'}
+                    </span>
+                  </span>
+                </div>
+              )}
               {typeof projectedScoreHome === 'number' &&
                 typeof projectedScoreAway === 'number' && (
                   <p className="text-xs text-cloud/60 mt-2">
@@ -2149,6 +2244,11 @@ export default function CardsPageClient() {
                     {card.homeTeam} {projectedScoreHome.toFixed(1)}
                   </p>
                 )}
+              {isEdgeVerification && hasEdgeMathContext && (
+                <p className="text-xs text-amber-300/90 mt-2 font-semibold">
+                  Caution: edge above 20% on a non-total market — verification required
+                </p>
+              )}
             </div>
           )}
 
@@ -2497,7 +2597,7 @@ export default function CardsPageClient() {
           <p className="text-cloud/70">
             {enrichedCards.length} game{enrichedCards.length !== 1 ? 's' : ''}{' '}
             total, showing {filteredCards.length} (updates in background every
-            30s)
+            60s)
           </p>
           {!loading && !error && diagnosticsEnabled && viewMode === 'game' && (
             <p className="text-xs text-cloud/60">

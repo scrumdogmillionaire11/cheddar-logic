@@ -9,6 +9,19 @@ const {
 const { buildDriverSummary, computeWinProbHome } = require('./card-utilities');
 const edgeCalculator = require('./edge-calculator');
 
+function toCanonicalMarketType(rawMarketType) {
+  if (typeof rawMarketType !== 'string') return null;
+  const upper = rawMarketType.trim().toUpperCase();
+  if (upper === 'MONEYLINE' || upper === 'ML') return 'MONEYLINE';
+  if (upper === 'SPREAD' || upper === 'PUCKLINE' || upper === 'PUCK_LINE') {
+    return 'SPREAD';
+  }
+  if (upper === 'TOTAL' || upper === 'TEAM_TOTAL' || upper === 'TEAMTOTAL') {
+    return 'TOTAL';
+  }
+  return null;
+}
+
 /**
  * Unified card factory for all sports (NBA, NHL, NCAAM)
  * Consolidates generateNBACards, generateNHLCards, and generateSingleCard
@@ -248,6 +261,39 @@ function buildBallSportPayload({
       margin_home: projectedMargin,
       win_prob_home: winProbHome,
     },
+    market_context: {
+      version: 'v1',
+      market_type: toCanonicalMarketType(normalizedMarketType),
+      selection_side:
+        descriptor.selection?.side ?? descriptor.prediction ?? null,
+      selection_team: descriptor.selection?.team ?? null,
+      projection: {
+        margin_home: projectedMargin,
+        total: projectedTotal,
+        team_total: Number.isFinite(descriptor.driverInputs?.projected_team_total)
+          ? descriptor.driverInputs.projected_team_total
+          : Number.isFinite(descriptor.driverInputs?.team_total)
+            ? descriptor.driverInputs.team_total
+            : null,
+        win_prob_home: winProbHome,
+        score_home: Number.isFinite(descriptor.driverInputs?.projected_score_home)
+          ? descriptor.driverInputs.projected_score_home
+          : Number.isFinite(descriptor.driverInputs?.score_home)
+            ? descriptor.driverInputs.score_home
+            : null,
+        score_away: Number.isFinite(descriptor.driverInputs?.projected_score_away)
+          ? descriptor.driverInputs.projected_score_away
+          : Number.isFinite(descriptor.driverInputs?.score_away)
+            ? descriptor.driverInputs.score_away
+            : null,
+      },
+      wager: {
+        called_line: descriptor.line ?? null,
+        called_price: descriptor.price ?? null,
+        line_source: descriptor.line_source ?? 'odds_snapshot',
+        price_source: descriptor.price_source ?? 'odds_snapshot',
+      },
+    },
     market,
     // Propagate market fields from descriptor when driver specifies a market call
     market_type: normalizedMarketType ?? null,
@@ -440,6 +486,36 @@ function buildNCAAMPayload({
       total: projectedTotal,
       margin_home: projectedMargin,
       win_prob_home: winProbHome,
+    },
+    market_context: {
+      version: 'v1',
+      market_type: toCanonicalMarketType(marketType || 'moneyline'),
+      selection_side:
+        isPlayableMarket && (isPredictionHome || isPredictionAway)
+          ? isPredictionHome
+            ? 'HOME'
+            : 'AWAY'
+          : null,
+      selection_team:
+        isPlayableMarket && (isPredictionHome || isPredictionAway)
+          ? isPredictionHome
+            ? oddsSnapshot?.home_team ?? null
+            : oddsSnapshot?.away_team ?? null
+          : null,
+      projection: {
+        margin_home: projectedMargin,
+        total: projectedTotal,
+        team_total: null,
+        win_prob_home: winProbHome,
+        score_home: null,
+        score_away: null,
+      },
+      wager: {
+        called_line: isPlayableMarket ? line : null,
+        called_price: isPlayableMarket ? price : null,
+        line_source: 'odds_snapshot',
+        price_source: 'odds_snapshot',
+      },
     },
     market,
     market_type: marketType,

@@ -385,6 +385,26 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
             margin_home: null,
             win_prob_home: null,
           },
+          market_context: {
+            version: 'v1',
+            market_type: 'TOTAL',
+            selection_side: side,
+            selection_team: null,
+            projection: {
+              margin_home: null,
+              total: totalDecision?.projection?.projected_total ?? line ?? null,
+              team_total: null,
+              win_prob_home: null,
+              score_home: null,
+              score_away: null,
+            },
+            wager: {
+              called_line: line ?? null,
+              called_price: totalPrice ?? null,
+              line_source: totalDecision.line_source ?? 'odds_snapshot',
+              price_source: totalDecision.price_source ?? 'odds_snapshot',
+            },
+          },
           market,
           line_source: totalDecision.line_source ?? 'odds_snapshot',
           price_source: totalDecision.price_source ?? 'odds_snapshot',
@@ -517,6 +537,30 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
             margin_home:
               spreadDecision?.projection?.projected_margin ?? null,
             win_prob_home: null,
+          },
+          market_context: {
+            version: 'v1',
+            market_type: 'SPREAD',
+            selection_side: side,
+            selection_team:
+              side === 'HOME'
+                ? (oddsSnapshot?.home_team ?? null)
+                : (oddsSnapshot?.away_team ?? null),
+            projection: {
+              margin_home:
+                spreadDecision?.projection?.projected_margin ?? null,
+              total: null,
+              team_total: null,
+              win_prob_home: null,
+              score_home: null,
+              score_away: null,
+            },
+            wager: {
+              called_line: line ?? null,
+              called_price: spreadPrice ?? null,
+              line_source: spreadDecision.line_source ?? 'odds_snapshot',
+              price_source: spreadDecision.price_source ?? 'odds_snapshot',
+            },
           },
           market,
           line_source: spreadDecision.line_source ?? 'odds_snapshot',

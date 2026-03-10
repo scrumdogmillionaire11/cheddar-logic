@@ -83,4 +83,13 @@ describe('NHL 1P totals fixed reference contract', () => {
     expect(descriptor.line).toBeUndefined();
     expect(descriptor.price).toBeUndefined();
   });
+
+  test('exposes expected_1p_total as numeric projection input', () => {
+    const descriptor = getOnePeriodDescriptor();
+    expect(descriptor).toBeDefined();
+    expect(typeof descriptor.driverInputs.expected_1p_total).toBe('number');
+    expect(Number.isFinite(descriptor.driverInputs.expected_1p_total)).toBe(
+      true,
+    );
+  });
 });
