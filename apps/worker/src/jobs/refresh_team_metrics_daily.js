@@ -26,6 +26,7 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   shouldRunJobKey,
+  withDb,
   getDatabase,
   deleteStaleTeamMetricsCache,
 } = require('@cheddar-logic/data');
@@ -207,7 +208,7 @@ async function run() {
 
 // Run if invoked directly
 if (require.main === module) {
-  run().catch((err) => {
+  withDb(run).catch((err) => {
     console.error('[RefreshTeamMetrics] Uncaught error:', err);
     process.exit(1);
   });
