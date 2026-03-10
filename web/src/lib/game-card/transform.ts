@@ -1217,18 +1217,25 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     // Distinguish: no driver plays loaded vs plays exist but no truth driver qualified
     const hasNoOdds = game.odds === null;
     const hasNoPlays = game.plays.length === 0;
+    const hasPlayItems = game.plays.some(isPlayItem);
+    const hasEvidenceOnly = !hasPlayItems && game.plays.some(isEvidenceItem);
     const missingDataCode: string =
       hasNoOdds && hasNoPlays
         ? 'PASS_MARKET_PRICE_MISSING'
         : hasNoPlays
           ? 'PASS_DRIVER_LOAD_FAILED'
-          : 'PASS_MISSING_DRIVER_INPUTS';
+          : hasEvidenceOnly
+            ? 'PASS_NO_ACTIONABLE_PLAY'
+            : 'PASS_MISSING_DRIVER_INPUTS';
     const missingDataText: string =
       hasNoOdds && hasNoPlays
         ? 'Market price missing'
         : hasNoPlays
           ? 'Driver load failed'
-          : 'Missing driver inputs';
+          : hasEvidenceOnly
+            ? 'No actionable play'
+            : 'Missing driver inputs';
+    const missingInputs = hasEvidenceOnly ? ['play'] : ['drivers'];
     return {
       market_key: 'INFO|NONE',
       decision: 'PASS',
@@ -1252,7 +1259,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       },
       transform_meta: {
         quality: 'DEGRADED',
-        missing_inputs: ['drivers'],
+        missing_inputs: missingInputs,
         placeholders_found: [],
       },
       status: 'PASS',

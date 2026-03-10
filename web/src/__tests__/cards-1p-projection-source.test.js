@@ -13,9 +13,11 @@ import path from 'node:path';
 
 const gamesRoutePath = path.resolve('web/src/app/api/games/route.ts');
 const cardsPagePath = path.resolve('web/src/components/cards-page-client.tsx');
+const transformPath = path.resolve('web/src/lib/game-card/transform.ts');
 
 const gamesRouteSource = fs.readFileSync(gamesRoutePath, 'utf8');
 const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
+const transformSource = fs.readFileSync(transformPath, 'utf8');
 
 console.log('🧪 NHL 1P projection source contract tests');
 
@@ -39,6 +41,11 @@ assert(
     cardsPageSource.includes('Ref line') &&
     cardsPageSource.includes('Delta'),
   'cards UI should render dedicated 1P projection context row',
+);
+
+assert(
+  transformSource.includes('PASS_NO_ACTIONABLE_PLAY'),
+  'transform should label evidence-only/no-play states as no actionable play, not driver-load failure',
 );
 
 console.log('✅ NHL 1P projection source contract tests passed');

@@ -1035,37 +1035,54 @@ export async function GET(request: NextRequest) {
       }
 
       // SQLite doesn't support array binding; build placeholders for ALL IDs (canonical + external)
-      const placeholders = allQueryableIds.map(() => '?').join(', ');
       const runIdPlaceholders =
         activeRunIds.length > 0 ? activeRunIds.map(() => '?').join(', ') : '';
       const runIdClause = activeRunIds.length > 0
         ? `AND run_id IN (${runIdPlaceholders})`
         : '';
-      const buildCardsSql = (runClause: string) => `
+      const buildCardsSql = (queryableIds: string[], runClause: string) => {
+        const queryPlaceholders = queryableIds.map(() => '?').join(', ');
+        return `
         SELECT id, game_id, card_type, card_title, payload_data
         FROM card_payloads
-        WHERE game_id IN (${placeholders})
+        WHERE game_id IN (${queryPlaceholders})
           ${runClause}
           AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
           ${ENABLE_WELCOME_HOME ? '' : "AND card_type != 'welcome-home-v2'"}
         ORDER BY created_at DESC, id DESC
         LIMIT ${API_GAMES_MAX_CARD_ROWS}
       `;
+      };
       let cardRows: CardPayloadRow[] = [];
       try {
         const cardsQueryStartedAt = Date.now();
-        const cardsStmt = db.prepare(buildCardsSql(runIdClause));
+        const cardsStmt = db.prepare(buildCardsSql(allQueryableIds, runIdClause));
         const cardsParams =
           activeRunIds.length > 0
             ? [...allQueryableIds, ...activeRunIds]
             : [...allQueryableIds];
         cardRows = cardsStmt.all(...cardsParams) as CardPayloadRow[];
-        if (
-          activeRunIds.length > 0 &&
-          cardRows.length === 0
-        ) {
-          const fallbackStmt = db.prepare(buildCardsSql(''));
-          cardRows = fallbackStmt.all(...allQueryableIds) as CardPayloadRow[];
+
+        if (activeRunIds.length > 0) {
+          // Fallback per missing game id when scoped runs are partial (e.g., only NHL fresh run exists).
+          // Without this, games outside active runs degrade as "drivers missing" even when valid card payloads exist.
+          const coveredGameIds = new Set(cardRows.map((row) => row.game_id));
+          const missingGameIds = allQueryableIds.filter(
+            (gameId) => !coveredGameIds.has(gameId),
+          );
+          if (missingGameIds.length > 0) {
+            const fallbackStmt = db.prepare(buildCardsSql(missingGameIds, ''));
+            const fallbackRows = fallbackStmt.all(
+              ...missingGameIds,
+            ) as CardPayloadRow[];
+            if (fallbackRows.length > 0) {
+              const deduped = new Map<string, CardPayloadRow>();
+              for (const row of [...cardRows, ...fallbackRows]) {
+                deduped.set(row.id, row);
+              }
+              cardRows = Array.from(deduped.values());
+            }
+          }
         }
         perf.cardsQueryMs += Date.now() - cardsQueryStartedAt;
       } catch {

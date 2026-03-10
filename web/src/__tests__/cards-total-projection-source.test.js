@@ -25,6 +25,16 @@ assert(
 );
 
 assert(
+  gamesRouteSource.includes('const missingGameIds = allQueryableIds.filter('),
+  '/api/games should fallback per missing game_id when active runs are partial',
+);
+
+assert(
+  gamesRouteSource.includes('fallbackRows.length > 0'),
+  '/api/games should merge fallback card rows to prevent driver-loss degradation',
+);
+
+assert(
   cardsPageSource.includes('function resolvePrimaryTotalProjectionPlay('),
   'cards UI should define a total projection source resolver',
 );
