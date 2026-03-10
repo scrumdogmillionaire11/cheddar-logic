@@ -67,6 +67,38 @@ function clampNumber(
   return Math.min(Math.max(parsed, min), max);
 }
 
+function parseBooleanLikeParam(
+  value: string | null,
+  fallback: boolean,
+): boolean {
+  if (value === null) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === '1' ||
+    normalized === 'true' ||
+    normalized === 'yes' ||
+    normalized === 'on'
+  ) {
+    return true;
+  }
+  if (
+    normalized === '0' ||
+    normalized === 'false' ||
+    normalized === 'no' ||
+    normalized === 'off'
+  ) {
+    return false;
+  }
+  return fallback;
+}
+
+function toNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
 function safeJsonParse(payload: string | null) {
   if (!payload) return { data: null, error: false, missing: true };
   try {
@@ -152,9 +184,9 @@ export async function GET(request: NextRequest) {
               wins: 0,
               losses: 0,
               pushes: 0,
-              totalPnlUnits: 0,
+              totalPnlUnits: null,
               winRate: 0,
-              avgPnl: 0,
+              avgPnl: null,
             },
             segments: [],
             ledger: [],
@@ -228,8 +260,11 @@ export async function GET(request: NextRequest) {
       (ALLOWED_MARKETS as readonly string[]).includes(rawMarket.toLowerCase())
         ? rawMarket.toLowerCase()
         : null;
-    const includeOrphaned = false;
-    const dedupe = false;
+    const includeOrphaned = parseBooleanLikeParam(
+      searchParams.get('include_orphaned'),
+      false,
+    );
+    const dedupe = parseBooleanLikeParam(searchParams.get('dedupe'), true);
 
     // Build filter SQL fragments
     const sportFilter = sport ? `AND UPPER(COALESCE(cdl.sport, cr.sport)) = ?` : '';
@@ -275,10 +310,17 @@ export async function GET(request: NextRequest) {
           SELECT
             id,
             ROW_NUMBER() OVER (
-              PARTITION BY COALESCE(market_key, game_id || ':' || recommended_bet_type)
+              PARTITION BY game_id
               ORDER BY
                 CASE WHEN confidence_pct IS NULL THEN 1 ELSE 0 END ASC,
                 confidence_pct DESC,
+                CASE
+                  WHEN market_type = 'TOTAL' AND selection = 'OVER'
+                    THEN -COALESCE(line, -9999)
+                  ELSE COALESCE(line, -9999)
+                END DESC,
+                CASE WHEN locked_price IS NULL THEN 1 ELSE 0 END ASC,
+                locked_price DESC,
                 settled_at DESC,
                 id DESC
             ) AS rn
@@ -375,9 +417,9 @@ export async function GET(request: NextRequest) {
               wins: 0,
               losses: 0,
               pushes: 0,
-              totalPnlUnits: 0,
+              totalPnlUnits: null,
               winRate: 0,
-              avgPnl: 0,
+              avgPnl: null,
             },
             segments: [],
             ledger: [],
@@ -426,7 +468,7 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN cr.result = 'win' THEN 1 ELSE 0 END) AS wins,
         SUM(CASE WHEN cr.result = 'loss' THEN 1 ELSE 0 END) AS losses,
         SUM(CASE WHEN cr.result = 'push' THEN 1 ELSE 0 END) AS pushes,
-        SUM(COALESCE(cr.pnl_units, 0)) AS total_pnl_units
+        SUM(cr.pnl_units) AS total_pnl_units
       FROM card_results cr
       WHERE cr.id IN (${placeholders})
     `,
@@ -453,7 +495,7 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN cr.result = 'win' THEN 1 ELSE 0 END) AS wins,
         SUM(CASE WHEN cr.result = 'loss' THEN 1 ELSE 0 END) AS losses,
         SUM(CASE WHEN cr.result = 'push' THEN 1 ELSE 0 END) AS pushes,
-        SUM(COALESCE(cr.pnl_units, 0)) AS total_pnl_units
+        SUM(cr.pnl_units) AS total_pnl_units
       FROM card_results cr
       WHERE cr.id IN (${placeholders})
       GROUP BY cr.sport, card_category, cr.recommended_bet_type
@@ -687,10 +729,13 @@ export async function GET(request: NextRequest) {
     const pushes = Number(summary.pushes || 0);
     const settledCards = Number(summary.settled_cards || 0);
     const totalCards = Number(summary.total_cards || 0);
-    const totalPnlUnits = Number(summary.total_pnl_units || 0);
+    const totalPnlUnits = toNullableNumber(summary.total_pnl_units);
 
     const winRate = wins + losses > 0 ? wins / (wins + losses) : 0;
-    const avgPnl = settledCards > 0 ? totalPnlUnits / settledCards : 0;
+    const avgPnl =
+      totalPnlUnits !== null && settledCards > 0
+        ? totalPnlUnits / settledCards
+        : null;
 
     const response = NextResponse.json(
       {
@@ -714,7 +759,7 @@ export async function GET(request: NextRequest) {
             wins: Number(row.wins || 0),
             losses: Number(row.losses || 0),
             pushes: Number(row.pushes || 0),
-            totalPnlUnits: Number(row.total_pnl_units || 0),
+            totalPnlUnits: toNullableNumber(row.total_pnl_units),
           })),
           ledger: ledgerRows,
           filters: {
