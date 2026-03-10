@@ -94,6 +94,7 @@ progress:
 | 25 | investigate why NHL totals are not displaying on cards and check unfinished work items | 2026-03-07 | 7492360 | [25-investigate-why-nhl-totals-are-not-displ](./quick/25-investigate-why-nhl-totals-are-not-displ/) |
 | 26 | WI-0336: missing-data taxonomy diagnostic — distinct MISSING_DATA_* reason codes + SportDiagnosticsPanel | 2026-03-07 | 2cb5d11 | [26-wi-0336-missing-data-taxonomy-diagnostic](./quick/26-wi-0336-missing-data-taxonomy-diagnostic/) |
 | 27 | WI-0337: market-specific edge explanation — SpreadCompare on DecisionModel, spread panel UI, model-lean label | 2026-03-07 | caefa13 | [27-market-specific-edge-explanation-spread-](./quick/27-market-specific-edge-explanation-spread-/) |
+| 28 | WI-0378 NHL totals goalie confirmation semantics audit | 2026-03-10 | e51d4bf | [28-wi-0378-nhl-totals-goalie-confirmation-s](./quick/28-wi-0378-nhl-totals-goalie-confirmation-s/) |
 
 ## Session Continuity
 
