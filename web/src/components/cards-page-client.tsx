@@ -1121,6 +1121,42 @@ export default function CardsPageClient() {
     return value > 0 ? `+${value}` : `${value}`;
   };
 
+  /**
+   * Resolve the live market price from the game-level odds snapshot.
+   * Preferred over the stale price embedded in a card_payload at model-run time.
+   * Falls back to undefined so callers can chain to the embedded price.
+   */
+  const resolvePlayLivePrice = (
+    marketType: string | undefined,
+    selectionSide: string | undefined,
+    gameOdds: GameData['odds'],
+  ): number | undefined => {
+    if (!gameOdds) return undefined;
+    const side = selectionSide?.toUpperCase();
+    if (marketType === 'MONEYLINE') {
+      if (side === 'HOME' && gameOdds.h2hHome != null) return gameOdds.h2hHome;
+      if (side === 'AWAY' && gameOdds.h2hAway != null) return gameOdds.h2hAway;
+    }
+    if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+      if (side === 'HOME' && gameOdds.spreadPriceHome != null) return gameOdds.spreadPriceHome;
+      if (side === 'AWAY' && gameOdds.spreadPriceAway != null) return gameOdds.spreadPriceAway;
+    }
+    if (marketType === 'TOTAL') {
+      if (side === 'OVER' && gameOdds.totalPriceOver != null) return gameOdds.totalPriceOver;
+      if (side === 'UNDER' && gameOdds.totalPriceUnder != null) return gameOdds.totalPriceUnder;
+    }
+    return undefined;
+  };
+
+  /** American-odds → implied probability (no vig removed, raw conversion). */
+  const impliedProbFromOdds = (americanOdds: number): number | undefined => {
+    if (!Number.isFinite(americanOdds) || americanOdds === 0) return undefined;
+    const p = americanOdds < 0
+      ? -americanOdds / (-americanOdds + 100)
+      : 100 / (americanOdds + 100);
+    return p >= 0 && p <= 1 ? p : undefined;
+  };
+
   const getTierBadge = (tier: DriverTier | null) => {
     switch (tier) {
       case 'SUPER':
@@ -1263,10 +1299,15 @@ export default function CardsPageClient() {
       | undefined,
     homeTeam: string,
     awayTeam: string,
+    oddsAmericanOverride?: number,
   ) => {
     if (!bet) return 'NO PLAY';
+    const oddsAmerican =
+      typeof oddsAmericanOverride === 'number'
+        ? oddsAmericanOverride
+        : bet.odds_american;
     const oddsText =
-      bet.odds_american > 0 ? `+${bet.odds_american}` : `${bet.odds_american}`;
+      oddsAmerican > 0 ? `+${oddsAmerican}` : `${oddsAmerican}`;
     if (bet.market_type === 'moneyline') {
       const teamLabel =
         bet.side === 'home'
@@ -1604,17 +1645,33 @@ export default function CardsPageClient() {
     );
     const hasActiveTotalBet =
       displayPlay.bet?.market_type === 'total' && isPlayDecision;
+    // Live price from the current game snapshot — keeps play odds in sync with header.
+    const livePrice = resolvePlayLivePrice(
+      displayPlay.market_type,
+      displayPlay.selection?.side ?? displayPlay.bet?.side?.toUpperCase(),
+      originalGame.odds,
+    );
     const displayBetText = displayPlay.bet
-      ? formatCanonicalBetText(displayPlay.bet, card.homeTeam, card.awayTeam)
+      ? formatCanonicalBetText(
+          displayPlay.bet,
+          card.homeTeam,
+          card.awayTeam,
+          livePrice,
+        )
       : displayPlay.pick;
     const displayMarketText =
       formatBetMarketLabel(displayPlay.bet?.market_type) ??
       displayPlay.market_key ??
       formatMarketLabel(displayPlay.market);
     const updatedTime = formatDate(displayPlay.updatedAt);
-    const displayOddsTimestamp = displayPlay.bet?.as_of_iso
-      ? formatDate(displayPlay.bet.as_of_iso)
-      : updatedTime;
+    // Prefer the game-level capturedAt (latest odds snapshot) over the stale
+    // as_of_iso embedded in the card_payload at model-run time.
+    const displayOddsTimestamp =
+      originalGame.odds?.capturedAt
+        ? formatDate(originalGame.odds.capturedAt)
+        : displayPlay.bet?.as_of_iso
+          ? formatDate(displayPlay.bet.as_of_iso)
+          : updatedTime;
     const canRenderModelSummary = !isBroken && card.drivers.length > 0;
     const effectiveEdgePct =
       typeof resolvedDecisionV2?.edge_pct === 'number'
@@ -1659,7 +1716,11 @@ export default function CardsPageClient() {
         ? displayPlay.impliedProb
         : typeof resolvedDecisionV2?.implied_prob === 'number'
           ? resolvedDecisionV2.implied_prob
-          : undefined;
+          // Fall back to converting the live game-level price — keeps Edge Math
+          // in sync with the header odds rather than stale embedded price.
+          : livePrice != null
+            ? impliedProbFromOdds(livePrice)
+            : undefined;
     const projectedTeamTotal =
       typeof displayPlay.projectedTeamTotal === 'number'
         ? displayPlay.projectedTeamTotal
