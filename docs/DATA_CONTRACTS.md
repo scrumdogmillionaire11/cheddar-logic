@@ -286,6 +286,7 @@ Projection input contract (worker-emitted card payload metadata):
 
 - `projection_inputs_complete` (boolean)
 - `missing_inputs` (string[])
+- `pipeline_state` (per-game stage checkpoints attached to emitted wave-1 card payloads)
 
 Worker execution gate:
 
@@ -338,6 +339,40 @@ type DecisionV2 = {
   decided_at: string;
 };
 ```
+
+`pipeline_state` shape:
+
+```ts
+type PipelineState = {
+  ingested: boolean;
+  team_mapping_ok: boolean;
+  odds_ok: boolean;
+  market_lines_ok: boolean;
+  projection_ready: boolean;
+  drivers_ready: boolean;
+  pricing_ready: boolean;
+  card_ready: boolean;
+  blocking_reason_codes: string[];
+};
+```
+
+`pipeline_state` rules:
+
+- Stage keys are fixed for wave-1 and must be emitted exactly as:
+  - `ingested`
+  - `team_mapping_ok`
+  - `odds_ok`
+  - `market_lines_ok`
+  - `projection_ready`
+  - `drivers_ready`
+  - `pricing_ready`
+  - `card_ready`
+- `blocking_reason_codes` must be deterministic, unique, and reuse existing worker reason vocab when applicable (for example `WATCHDOG_CONSISTENCY_MISSING`, `WATCHDOG_MARKET_UNAVAILABLE`, `MARKET_PRICE_MISSING`, `NO_EDGE_AT_PRICE`, `EXACT_WAGER_MISMATCH`).
+- `pipeline_state` is additive metadata only. It must not change `decision_v2`, `action`, `status`, `classification`, or other existing consumer-facing fields.
+- Wave-1 worker jobs emit per-game `pipeline_state` in two places:
+  - attached to emitted per-game card payloads
+  - included in end-of-run job summaries/log output
+- No partial mid-run publish of per-game pipeline summary is allowed.
 
 Fixed constants for wave-1 (must remain deterministic across worker/API/UI):
 

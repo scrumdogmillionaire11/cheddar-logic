@@ -1678,6 +1678,10 @@ function deleteCardPayloadsForGame(gameId, cardType, options = {}) {
  */
 function insertCardResult(result) {
   const db = getDatabase();
+  const canonicalSport = normalizeSportCode(result.sport, 'insertCardResult');
+  const normalizedSport = canonicalSport
+    ? canonicalSport.toLowerCase()
+    : (result.sport ? String(result.sport).toLowerCase() : result.sport);
 
   const stmt = db.prepare(`
     INSERT OR IGNORE INTO card_results (
@@ -1692,7 +1696,7 @@ function insertCardResult(result) {
     result.id,
     result.cardId,
     result.gameId,
-    result.sport,
+    normalizedSport,
     result.cardType,
     result.recommendedBetType,
     result.marketKey || null,
@@ -1706,6 +1710,201 @@ function insertCardResult(result) {
     result.pnlUnits !== undefined ? result.pnlUnits : null,
     result.metadata ? JSON.stringify(result.metadata) : null
   );
+}
+
+function toUpperToken(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().toUpperCase();
+}
+
+function toFiniteNumberOrNull(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
+function resolveOfficialPlayStatus(payloadData) {
+  const officialStatus = toUpperToken(payloadData?.decision_v2?.official_status);
+  if (officialStatus === 'PLAY' || officialStatus === 'LEAN' || officialStatus === 'PASS') {
+    return officialStatus;
+  }
+
+  // Legacy fallback for payloads that predate decision_v2.
+  const legacyStatus = toUpperToken(payloadData?.status);
+  if (legacyStatus === 'FIRE') return 'PLAY';
+  if (legacyStatus === 'WATCH') return 'LEAN';
+  if (legacyStatus === 'PASS') return 'PASS';
+
+  return '';
+}
+
+function shouldTrackDisplayedPlay(payloadData) {
+  const kind = toUpperToken(payloadData?.kind || 'PLAY');
+  if (kind !== 'PLAY') return false;
+
+  const officialStatus = resolveOfficialPlayStatus(payloadData);
+  return officialStatus === 'PLAY' || officialStatus === 'LEAN';
+}
+
+function hasCardDisplayLogTable(db) {
+  const row = db
+    .prepare(
+      `
+      SELECT 1 AS exists_flag
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = 'card_display_log'
+      LIMIT 1
+    `,
+    )
+    .get();
+  return Boolean(row);
+}
+
+function compareLineAdvantage({ marketType, selection, candidateLine, existingLine }) {
+  const candidateHasLine = Number.isFinite(candidateLine);
+  const existingHasLine = Number.isFinite(existingLine);
+
+  if (candidateHasLine && !existingHasLine) return 1;
+  if (!candidateHasLine && existingHasLine) return -1;
+  if (!candidateHasLine && !existingHasLine) return 0;
+  if (candidateLine === existingLine) return 0;
+
+  if (marketType === 'SPREAD') {
+    // More points (or fewer points laid) is better for the bettor.
+    return candidateLine > existingLine ? 1 : -1;
+  }
+
+  if (marketType === 'TOTAL') {
+    if (selection === 'OVER') {
+      // Lower total is better for OVER.
+      return candidateLine < existingLine ? 1 : -1;
+    }
+    if (selection === 'UNDER') {
+      // Higher total is better for UNDER.
+      return candidateLine > existingLine ? 1 : -1;
+    }
+  }
+
+  return 0;
+}
+
+function isDisplayedPlayCandidateBetter(candidate, existing) {
+  const lineComparison = compareLineAdvantage({
+    marketType: toUpperToken(candidate.marketType),
+    selection: toUpperToken(candidate.selection),
+    candidateLine: toFiniteNumberOrNull(candidate.line),
+    existingLine: toFiniteNumberOrNull(existing.line),
+  });
+  if (lineComparison !== 0) return lineComparison > 0;
+
+  const candidateOdds = toFiniteNumberOrNull(candidate.odds);
+  const existingOdds = toFiniteNumberOrNull(existing.odds);
+  if (Number.isFinite(candidateOdds) && !Number.isFinite(existingOdds)) return true;
+  if (!Number.isFinite(candidateOdds) && Number.isFinite(existingOdds)) return false;
+  if (Number.isFinite(candidateOdds) && Number.isFinite(existingOdds)) {
+    // For American odds, higher numeric value is always better (+120 > +110, -105 > -120).
+    return candidateOdds > existingOdds;
+  }
+
+  return false;
+}
+
+function upsertBestDisplayedPlayLog(db, entry) {
+  if (!hasCardDisplayLogTable(db)) return false;
+
+  const existing = db
+    .prepare(
+      `
+      SELECT
+        id,
+        pick_id,
+        line,
+        odds
+      FROM card_display_log
+      WHERE game_id = ?
+        AND UPPER(COALESCE(market_type, '')) = ?
+        AND UPPER(COALESCE(selection, '')) = ?
+        AND ((? IS NULL AND run_id IS NULL) OR run_id = ?)
+      ORDER BY datetime(displayed_at) DESC, id DESC
+      LIMIT 1
+    `,
+    )
+    .get(
+      entry.gameId,
+      toUpperToken(entry.marketType),
+      toUpperToken(entry.selection),
+      entry.runId,
+      entry.runId,
+    );
+
+  if (!existing) {
+    db.prepare(
+      `
+      INSERT OR IGNORE INTO card_display_log (
+        pick_id, run_id, game_id, sport, market_type, selection, line,
+        odds, odds_book, confidence_pct, displayed_at, api_endpoint
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      entry.pickId,
+      entry.runId || null,
+      entry.gameId || null,
+      entry.sport || null,
+      entry.marketType || null,
+      entry.selection || null,
+      entry.line !== undefined ? entry.line : null,
+      entry.odds !== undefined ? entry.odds : null,
+      entry.oddsBook || null,
+      entry.confidencePct !== undefined ? entry.confidencePct : null,
+      entry.displayedAt || new Date().toISOString(),
+      entry.apiEndpoint || '/api/games',
+    );
+    return true;
+  }
+
+  if (existing.pick_id !== entry.pickId && !isDisplayedPlayCandidateBetter(entry, existing)) {
+    return false;
+  }
+
+  db.prepare(
+    `DELETE FROM card_display_log WHERE pick_id = ? AND id != ?`,
+  ).run(entry.pickId, existing.id);
+
+  db.prepare(
+    `
+      UPDATE card_display_log
+      SET
+        pick_id = ?,
+        run_id = ?,
+        game_id = ?,
+        sport = ?,
+        market_type = ?,
+        selection = ?,
+        line = ?,
+        odds = ?,
+        odds_book = ?,
+        confidence_pct = ?,
+        displayed_at = ?,
+        api_endpoint = ?
+      WHERE id = ?
+    `,
+  ).run(
+    entry.pickId,
+    entry.runId || null,
+    entry.gameId || null,
+    entry.sport || null,
+    entry.marketType || null,
+    entry.selection || null,
+    entry.line !== undefined ? entry.line : null,
+    entry.odds !== undefined ? entry.odds : null,
+    entry.oddsBook || null,
+    entry.confidencePct !== undefined ? entry.confidencePct : null,
+    entry.displayedAt || new Date().toISOString(),
+    entry.apiEndpoint || '/api/games',
+    existing.id,
+  );
+  return true;
 }
 
 /**
@@ -1849,6 +2048,32 @@ function insertCardPayload(card) {
       ? { lockedAt: card.createdAt || new Date().toISOString(), marketKey: lockedMarket.marketKey }
       : null
   });
+
+  if (lockedMarket && shouldTrackDisplayedPlay(payloadData)) {
+    const confidencePct = toFiniteNumberOrNull(payloadData?.confidence_pct);
+    const fallbackConfidence = toFiniteNumberOrNull(payloadData?.confidence);
+    const normalizedConfidence =
+      confidencePct !== null
+        ? confidencePct
+        : fallbackConfidence !== null
+          ? fallbackConfidence * 100
+          : null;
+
+    upsertBestDisplayedPlayLog(db, {
+      pickId: card.id,
+      runId: normalizedRunId,
+      gameId: card.gameId,
+      sport: card.sport ? String(card.sport).toUpperCase() : null,
+      marketType: lockedMarket.marketType,
+      selection: lockedMarket.selection,
+      line: lockedMarket.line,
+      odds: lockedMarket.lockedPrice,
+      oddsBook: payloadData?.odds_context?.bookmaker || null,
+      confidencePct: normalizedConfidence,
+      displayedAt: card.createdAt || new Date().toISOString(),
+      apiEndpoint: '/api/games',
+    });
+  }
 }
 
 /**

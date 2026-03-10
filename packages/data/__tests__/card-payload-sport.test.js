@@ -10,7 +10,7 @@ function resetEnv() {
   delete process.env.CHEDDAR_DB_PATH;
 }
 
-describe('card payload sport normalization', () => {
+describe('card payload/card_results sport normalization', () => {
   let tempDir;
   let dbPath;
   let dbModule;
@@ -34,7 +34,7 @@ describe('card payload sport normalization', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test('insertCardPayload uppercases sport before insert', () => {
+  test('insertCardPayload writes lowercase sport and auto-enrolled card_results sport is lowercase', () => {
     const db = dbModule.getDatabase();
     const now = new Date();
     const futureTime = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
@@ -145,6 +145,13 @@ describe('card payload sport normalization', () => {
       .prepare('SELECT sport FROM card_payloads WHERE id = ?')
       .get('card-test-1');
 
-    expect(row.sport).toBe('NBA');
+    expect(row.sport).toBe('nba');
+
+    const resultRow = db
+      .prepare('SELECT sport FROM card_results WHERE card_id = ?')
+      .get('card-test-1');
+
+    expect(resultRow).toBeDefined();
+    expect(resultRow.sport).toBe('nba');
   });
 });

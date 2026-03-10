@@ -143,7 +143,7 @@ describe('run_nhl_model job', () => {
       results.forEach((row) => {
         expect(row.id).toBeTruthy();
         expect(row.game_id).toBeTruthy();
-        expect(row.sport).toBe('NHL');
+        expect(row.sport).toBe('nhl');
         expect(row.card_type).toBeTruthy();
         expect(row.card_title).toBeTruthy();
         expect(row.payload_data).toBeTruthy();
@@ -176,7 +176,7 @@ describe('run_nhl_model job', () => {
 
       const rows = await queryDb((db) => {
         const stmt = db.prepare(`
-          SELECT card_id, status, recommended_bet_type
+          SELECT card_id, sport, status, recommended_bet_type
           FROM card_results
           LIMIT 50
         `);
@@ -185,6 +185,7 @@ describe('run_nhl_model job', () => {
 
       rows.forEach((row) => {
         expect(row.card_id).toBeTruthy();
+        expect(row.sport).toBe('nhl');
         expect(row.status).toBe('pending');
         expect(row.recommended_bet_type).toBeTruthy();
       });

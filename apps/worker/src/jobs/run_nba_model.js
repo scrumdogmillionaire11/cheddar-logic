@@ -52,8 +52,11 @@ const {
   formatStartTimeLocal,
   formatCountdown,
   buildMarketFromOdds,
+  buildPipelineState,
+  collectDecisionReasonCodes,
   edgeCalculator,
   marginToWinProbability,
+  WATCHDOG_REASONS,
 } = require('@cheddar-logic/models');
 const {
   publishDecisionForCard,
@@ -109,6 +112,99 @@ function normalizeRawDataPayload(rawData) {
     }
   }
   return rawData;
+}
+
+function hasFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function hasMoneylineOdds(oddsSnapshot) {
+  const homePrice = oddsSnapshot?.h2h_home ?? oddsSnapshot?.moneyline_home;
+  const awayPrice = oddsSnapshot?.h2h_away ?? oddsSnapshot?.moneyline_away;
+  return hasFiniteNumber(homePrice) && hasFiniteNumber(awayPrice);
+}
+
+function hasSpreadOdds(oddsSnapshot) {
+  return (
+    hasFiniteNumber(oddsSnapshot?.spread_home) &&
+    hasFiniteNumber(oddsSnapshot?.spread_away) &&
+    hasFiniteNumber(oddsSnapshot?.spread_price_home) &&
+    hasFiniteNumber(oddsSnapshot?.spread_price_away)
+  );
+}
+
+function hasTotalOdds(oddsSnapshot) {
+  return (
+    hasFiniteNumber(oddsSnapshot?.total) &&
+    hasFiniteNumber(oddsSnapshot?.total_price_over) &&
+    hasFiniteNumber(oddsSnapshot?.total_price_under)
+  );
+}
+
+function buildGamePipelineState({
+  oddsSnapshot,
+  projectionReady,
+  driversReady,
+  pricingReady,
+  cardReady,
+  blockingReasonCodes = [],
+}) {
+  const teamMappingOk = Boolean(oddsSnapshot?.home_team && oddsSnapshot?.away_team);
+  const marketLinesOk =
+    hasMoneylineOdds(oddsSnapshot) ||
+    hasSpreadOdds(oddsSnapshot) ||
+    hasTotalOdds(oddsSnapshot);
+
+  return buildPipelineState({
+    ingested: Boolean(oddsSnapshot),
+    team_mapping_ok: teamMappingOk,
+    odds_ok: Boolean(oddsSnapshot?.captured_at) && marketLinesOk,
+    market_lines_ok: marketLinesOk,
+    projection_ready: projectionReady === true,
+    drivers_ready: driversReady === true,
+    pricing_ready: pricingReady === true,
+    card_ready: cardReady === true,
+    blocking_reason_codes: blockingReasonCodes,
+  });
+}
+
+function deriveGameBlockingReasonCodes({
+  oddsSnapshot,
+  projectionReady,
+  pricingReady,
+  cards = [],
+}) {
+  const reasonCodes = [];
+  const hasTeamMapping = Boolean(oddsSnapshot?.home_team && oddsSnapshot?.away_team);
+  const hasMarketLines =
+    hasMoneylineOdds(oddsSnapshot) ||
+    hasSpreadOdds(oddsSnapshot) ||
+    hasTotalOdds(oddsSnapshot);
+
+  if (!hasTeamMapping) {
+    reasonCodes.push(WATCHDOG_REASONS.CONSISTENCY_MISSING);
+  }
+
+  if (!hasMarketLines) {
+    reasonCodes.push(WATCHDOG_REASONS.MARKET_UNAVAILABLE);
+  }
+
+  if (projectionReady === false) {
+    reasonCodes.push(WATCHDOG_REASONS.CONSISTENCY_MISSING);
+  }
+
+  if (pricingReady === false) {
+    cards.forEach((card) => {
+      reasonCodes.push(...collectDecisionReasonCodes(card?.payloadData));
+    });
+  }
+
+  return reasonCodes;
+}
+
+function canPriceCard(card) {
+  const sharpPriceStatus = card?.payloadData?.decision_v2?.sharp_price_status;
+  return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
 }
 
 /**
@@ -569,6 +665,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
       let gatedCount = 0;
       let blockedCount = 0;
       let projectionBlockedCount = 0;
+      const gamePipelineStates = {};
       const errors = [];
 
       for (const gameId of gameIds) {
@@ -595,6 +692,18 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           const projectionGate = assessProjectionInputs('NBA', oddsSnapshot);
           if (!projectionGate.projection_inputs_complete) {
             projectionBlockedCount++;
+            gamePipelineStates[gameId] = buildGamePipelineState({
+              oddsSnapshot,
+              projectionReady: false,
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+              blockingReasonCodes: deriveGameBlockingReasonCodes({
+                oddsSnapshot,
+                projectionReady: false,
+                pricingReady: false,
+              }),
+            });
             console.log(
               `  [gate] ${gameId}: PROJECTION_INPUTS_INCOMPLETE (${projectionGate.missing_inputs.join(', ')})`,
             );
@@ -617,6 +726,18 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           });
 
           if (driverCards.length === 0) {
+            gamePipelineStates[gameId] = buildGamePipelineState({
+              oddsSnapshot,
+              projectionReady: true,
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+              blockingReasonCodes: deriveGameBlockingReasonCodes({
+                oddsSnapshot,
+                projectionReady: true,
+                pricingReady: false,
+              }),
+            });
             console.log(`  [skip] ${gameId}: No actionable NBA driver signals`);
             continue;
           }
@@ -666,6 +787,8 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             });
           }
 
+          const pendingCards = [];
+
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
             const validation = validateCardPayload(
@@ -690,14 +813,13 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             }
             applyUiActionFields(card.payloadData, { oddsSnapshot });
             attachRunId(card, jobRunId);
-            insertCardPayload(card);
-            cardsGenerated++;
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';
-            console.log(
-              `  [ok] ${gameId} [${card.cardType}]${tierLabel}: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
-            );
+            pendingCards.push({
+              card,
+              logLine: `  [ok] ${gameId} [${card.cardType}]${tierLabel}: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
+            });
           }
 
           // Generate and insert NBA market call cards (nba-totals-call, nba-spread-call)
@@ -737,25 +859,63 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             }
             applyUiActionFields(card.payloadData, { oddsSnapshot });
             attachRunId(card, jobRunId);
-            insertCardPayload(card);
-            cardsGenerated++;
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';
-            console.log(
-              `  [ok] ${gameId} [${card.cardType}]${tierLabel}: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
-            );
+            pendingCards.push({
+              card,
+              logLine: `  [ok] ${gameId} [${card.cardType}]${tierLabel}: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
+            });
+          }
+
+          const pricingReady = pendingCards.some((entry) => canPriceCard(entry.card));
+          const pipelineState = buildGamePipelineState({
+            oddsSnapshot,
+            projectionReady: true,
+            driversReady: true,
+            pricingReady,
+            cardReady: pendingCards.length > 0,
+            blockingReasonCodes: deriveGameBlockingReasonCodes({
+              oddsSnapshot,
+              projectionReady: true,
+              pricingReady,
+              cards: pendingCards.map((entry) => entry.card),
+            }),
+          });
+          gamePipelineStates[gameId] = pipelineState;
+
+          for (const entry of pendingCards) {
+            entry.card.payloadData.pipeline_state = pipelineState;
+            insertCardPayload(entry.card);
+            cardsGenerated++;
+            console.log(entry.logLine);
           }
         } catch (gameError) {
           if (gameError.message.startsWith('Invalid card payload'))
             throw gameError;
           cardsFailed++;
+          if (!gamePipelineStates[gameId]) {
+            gamePipelineStates[gameId] = buildGamePipelineState({
+              oddsSnapshot: gameOdds[gameId],
+              projectionReady: false,
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+            });
+          }
           errors.push(`${gameId}: ${gameError.message}`);
           console.error(`  [err] ${gameId}: ${gameError.message}`);
         }
       }
 
-      markJobRunSuccess(jobRunId);
+      const summary = {
+        cardsGenerated,
+        cardsFailed,
+        errors,
+        pipeline_states: gamePipelineStates,
+      };
+
+      markJobRunSuccess(jobRunId, summary);
       try {
         setCurrentRunId(jobRunId, 'nba');
       } catch (runStateError) {
@@ -774,10 +934,13 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           `[NBAModel] Projection input gate: ${projectionBlockedCount}/${gameIds.length} games blocked`,
         );
       }
+      console.log(
+        `[NBAModel] Pipeline states: ${JSON.stringify(gamePipelineStates)}`,
+      );
       if (errors.length > 0)
         errors.forEach((err) => console.error(`  - ${err}`));
 
-      return { success: true, jobRunId, cardsGenerated, cardsFailed, errors };
+      return { success: true, jobRunId, ...summary };
     } catch (error) {
       console.error(`[NBAModel] ❌ Job failed:`, error.message);
       console.error(error.stack);

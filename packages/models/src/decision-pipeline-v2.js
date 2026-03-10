@@ -30,6 +30,16 @@ const PRICE_REASONS = {
 };
 
 const PIPELINE_VERSION = 'v2';
+const PIPELINE_STATE_STAGES = Object.freeze([
+  'ingested',
+  'team_mapping_ok',
+  'odds_ok',
+  'market_lines_ok',
+  'projection_ready',
+  'drivers_ready',
+  'pricing_ready',
+  'card_ready',
+]);
 const EDGE_SANITY_NON_TOTAL_THRESHOLD = 0.2;
 const PLAY_EDGE_MIN = 0.06;
 const LEAN_EDGE_MIN = 0.03;
@@ -65,6 +75,48 @@ function asString(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function uniqueReasonCodes(...reasonGroups) {
+  const merged = [];
+  for (const group of reasonGroups) {
+    if (!group) continue;
+    const items = Array.isArray(group) ? group : [group];
+    for (const item of items) {
+      const value = asString(item);
+      if (value && !merged.includes(value)) {
+        merged.push(value);
+      }
+    }
+  }
+  return merged;
+}
+
+function buildPipelineState(input = {}) {
+  return {
+    ingested: input.ingested === true,
+    team_mapping_ok: input.team_mapping_ok === true,
+    odds_ok: input.odds_ok === true,
+    market_lines_ok: input.market_lines_ok === true,
+    projection_ready: input.projection_ready === true,
+    drivers_ready: input.drivers_ready === true,
+    pricing_ready: input.pricing_ready === true,
+    card_ready: input.card_ready === true,
+    blocking_reason_codes: uniqueReasonCodes(input.blocking_reason_codes),
+  };
+}
+
+function collectDecisionReasonCodes(payload) {
+  const decisionV2 = payload?.decision_v2;
+  return uniqueReasonCodes(
+    decisionV2?.primary_reason_code,
+    decisionV2?.watchdog_reason_codes,
+    decisionV2?.price_reason_codes,
+    payload?.pass_reason_code,
+    payload?.gate_reason,
+    payload?.reason_codes,
+    payload?.pipeline_state?.blocking_reason_codes,
+  );
 }
 
 function readPath(obj, path) {
@@ -764,20 +816,6 @@ function buildDecisionV2(payload, context = {}) {
       payload?.market_type ?? payload?.recommended_bet_type,
     );
 
-    // TEMP: projection debug — remove after confirming margin/total routing
-    if (market_type === 'SPREAD' || market_type === 'PUCKLINE' || market_type === 'TOTAL' || market_type === 'TEAM_TOTAL') {
-      console.log('[EDGE_DEBUG]', {
-        gameId: payload?.game_id,
-        marketType: payload?.market_type,
-        sport: payload?.sport,
-        projectionRaw: payload?.projection,
-        margin_home: payload?.projection?.margin_home,
-        total: payload?.projection?.total,
-        model_prob: payload?.model_prob,
-        p_fair: payload?.p_fair,
-      });
-    }
-
     const direction = getDirection(payload);
     const { support_score, conflict_score } = getSupportAndConflict(payload);
     const drivers_used = getDriversUsed(payload);
@@ -1051,10 +1089,14 @@ function buildDecisionV2(payload, context = {}) {
 
 module.exports = {
   PIPELINE_VERSION,
+  PIPELINE_STATE_STAGES,
   WAVE1_MARKETS,
   WAVE1_SPORTS,
   WATCHDOG_REASONS,
   PRICE_REASONS,
+  uniqueReasonCodes,
+  buildPipelineState,
+  collectDecisionReasonCodes,
   isWave1EligiblePayload,
   buildDecisionV2,
 };

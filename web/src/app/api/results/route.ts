@@ -76,6 +76,15 @@ function safeJsonParse(payload: string | null) {
   }
 }
 
+function addSettlementCoverageHeader(
+  response: NextResponse,
+  settled: number,
+  displayed: number,
+) {
+  response.headers.set('X-Settlement-Coverage', `${settled}/${displayed}`);
+  return response;
+}
+
 // card_type patterns for driver vs call categories
 const DRIVER_PATTERNS = [
   '%-projection',
@@ -153,7 +162,10 @@ export async function GET(request: NextRequest) {
         },
         { headers: { 'Content-Type': 'application/json' } },
       );
-      return addRateLimitHeaders(response, request);
+      return addRateLimitHeaders(
+        addSettlementCoverageHeader(response, 0, 0),
+        request,
+      );
     }
 
     const cardResultsColumns = new Set(
@@ -321,11 +333,39 @@ export async function GET(request: NextRequest) {
     const totalSettled = Number(totalSettledRow?.count || 0);
     const withPayloadSettled = Number(displayedSettledRow?.count || 0);
     const orphanedSettled = totalSettled - withPayloadSettled;
+    const displayedFinalRow = db
+      .prepare(
+        `
+        SELECT COUNT(DISTINCT cdl.pick_id) AS count
+        FROM card_display_log cdl
+        INNER JOIN game_results gr ON gr.game_id = cdl.game_id
+        WHERE gr.status = 'final'
+      `,
+      )
+      .get() as { count: number } | null;
+    const settledFinalDisplayedRow = db
+      .prepare(
+        `
+        SELECT COUNT(DISTINCT cdl.pick_id) AS count
+        FROM card_display_log cdl
+        INNER JOIN card_results cr ON cr.card_id = cdl.pick_id
+        INNER JOIN game_results gr ON gr.game_id = cdl.game_id
+        WHERE gr.status = 'final'
+          AND cr.status = 'settled'
+      `,
+      )
+      .get() as { count: number } | null;
+    const displayedFinal = Number(displayedFinalRow?.count || 0);
+    const settledFinalDisplayed = Number(settledFinalDisplayedRow?.count || 0);
+    const missingFinalDisplayed = Math.max(
+      0,
+      displayedFinal - settledFinalDisplayed,
+    );
 
     const placeholders = dedupedIdRows.map(() => '?').join(',');
 
     if (dedupedIdRows.length === 0) {
-      return NextResponse.json(
+      const response = NextResponse.json(
         {
           success: true,
           data: {
@@ -353,6 +393,9 @@ export async function GET(request: NextRequest) {
               totalSettled,
               withPayloadSettled,
               orphanedSettled,
+              displayedFinal,
+              settledFinalDisplayed,
+              missingFinalDisplayed,
               filteredCount,
               returnedCount: 0,
               includeOrphaned,
@@ -361,6 +404,14 @@ export async function GET(request: NextRequest) {
           },
         },
         { headers: { 'Content-Type': 'application/json' } },
+      );
+      return addRateLimitHeaders(
+        addSettlementCoverageHeader(
+          response,
+          settledFinalDisplayed,
+          displayedFinal,
+        ),
+        request,
       );
     }
 
@@ -678,6 +729,9 @@ export async function GET(request: NextRequest) {
             totalSettled,
             withPayloadSettled,
             orphanedSettled,
+            displayedFinal,
+            settledFinalDisplayed,
+            missingFinalDisplayed,
             filteredCount,
             returnedCount: dedupedIdRows.length,
             includeOrphaned,
@@ -687,7 +741,10 @@ export async function GET(request: NextRequest) {
       },
       { headers: { 'Content-Type': 'application/json' } },
     );
-    return addRateLimitHeaders(response, request);
+    return addRateLimitHeaders(
+      addSettlementCoverageHeader(response, settledFinalDisplayed, displayedFinal),
+      request,
+    );
   } catch (error) {
     console.error('[API] Error fetching results:', error);
     let errorMessage = 'Unknown error';
