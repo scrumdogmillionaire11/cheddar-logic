@@ -113,22 +113,22 @@ describe('db-path resolver - Production scenarios', () => {
       expect(resolved.source).toBe('DATABASE_URL');
     });
 
-    test('production with Postgres DATABASE_URL is not supported (SQLite only)', () => {
-      // This system only supports SQLite, not PostgreSQL
-      // PostgreSQL URLs are not parsed by parseSqliteUrl
-      const resolved = resolveDatabasePath({
-        cwd,
-        env: {
-          NODE_ENV: 'production',
-          DATABASE_URL: 'postgresql://user:pass@prod.example.com:5432/cheddar',
-          CHEDDAR_DB_PATH: '',
-          RECORD_DATABASE_PATH: '',
-          DATABASE_PATH: '',
-        },
-      });
-
-      // Non-sqlite DATABASE_URL is ignored, defaults to DEFAULT path
-      expect(resolved.source).toBe('DEFAULT');
+    test('production with Postgres DATABASE_URL throws because no explicit path resolves', () => {
+      // This system only supports SQLite. A PostgreSQL DATABASE_URL is not parsed by
+      // parseSqliteUrl, so no explicit path resolves. In production this must throw loudly
+      // rather than silently falling back to DEFAULT (which would open an empty local DB).
+      expect(() =>
+        resolveDatabasePath({
+          cwd,
+          env: {
+            NODE_ENV: 'production',
+            DATABASE_URL: 'postgresql://user:pass@prod.example.com:5432/cheddar',
+            CHEDDAR_DB_PATH: '',
+            RECORD_DATABASE_PATH: '',
+            DATABASE_PATH: '',
+          },
+        })
+      ).toThrow('Production requires CHEDDAR_DB_PATH to be set explicitly');
     });
 
     test('production rejects conflicting DATABASE_URL + other paths', () => {
@@ -162,42 +162,65 @@ describe('db-path resolver - Production scenarios', () => {
   });
 
   describe('Railway deployment (production platform)', () => {
-    test('railway with PostgreSQL DATABASE_URL is not supported (SQLite only)', () => {
-      // This system only supports SQLite databases
-      // PostgreSQL URLs are ignored and will fall back to DEFAULT
-      const resolved = resolveDatabasePath({
-        cwd,
-        env: {
-          NODE_ENV: 'production',
-          DATABASE_URL: 'postgresql://railway:abc123@localhost:5432/cheddar',
-          CHEDDAR_DB_PATH: '',
-          RECORD_DATABASE_PATH: '',
-          DATABASE_PATH: '',
-        },
-      });
-
-      // Non-sqlite DATABASE_URL is ignored, defaults to DEFAULT path
-      expect(resolved.source).toBe('DEFAULT');
+    test('railway with PostgreSQL DATABASE_URL throws because no explicit path resolves', () => {
+      // This system only supports SQLite databases. A PostgreSQL URL is ignored by
+      // parseSqliteUrl. In production, reaching the fallback path is a misconfiguration
+      // and must throw loudly — not silently open an empty local DB.
+      expect(() =>
+        resolveDatabasePath({
+          cwd,
+          env: {
+            NODE_ENV: 'production',
+            DATABASE_URL: 'postgresql://railway:abc123@localhost:5432/cheddar',
+            CHEDDAR_DB_PATH: '',
+            RECORD_DATABASE_PATH: '',
+            DATABASE_PATH: '',
+          },
+        })
+      ).toThrow('Production requires CHEDDAR_DB_PATH to be set explicitly');
     });
   });
 
   describe('Vercel deployment (web app hosting)', () => {
-    test('vercel with CHEDDAR_DATA_DIR fallback', () => {
+    test('vercel with CHEDDAR_DATA_DIR only (no CHEDDAR_DB_PATH) throws in production', () => {
+      // Vercel has an ephemeral FS; SQLite does not persist between deploys. Previously
+      // CHEDDAR_DATA_DIR would silently resolve to {dir}/cheddar.db — an empty file that
+      // does not match the production DB filename (cheddar-prod.db). In production the
+      // code now throws so the misconfiguration is caught immediately at startup.
+      // Correct fix: set CHEDDAR_DB_PATH explicitly, or migrate Vercel to a persistent store.
+      const vercelCwd = '/var/task';
+      expect(() =>
+        resolveDatabasePath({
+          cwd: vercelCwd,
+          env: {
+            NODE_ENV: 'production',
+            CHEDDAR_DATA_DIR: '/tmp/cheddar-data',
+            CHEDDAR_DB_PATH: '',
+            DATABASE_PATH: '',
+            RECORD_DATABASE_PATH: '',
+            DATABASE_URL: '',
+          },
+        })
+      ).toThrow('Production requires CHEDDAR_DB_PATH to be set explicitly');
+    });
+
+    test('vercel with explicit CHEDDAR_DB_PATH works correctly', () => {
       const vercelCwd = '/var/task';
       const resolved = resolveDatabasePath({
         cwd: vercelCwd,
         env: {
           NODE_ENV: 'production',
-          CHEDDAR_DATA_DIR: '/tmp/cheddar-data',
-          CHEDDAR_DB_PATH: '',
+          CHEDDAR_DB_PATH: '/tmp/cheddar-data/cheddar-prod.db',
+          CHEDDAR_DATA_DIR: '',
           DATABASE_PATH: '',
           RECORD_DATABASE_PATH: '',
           DATABASE_URL: '',
         },
       });
 
-      expect(resolved.dbPath).toBe('/tmp/cheddar-data/cheddar.db');
-      expect(resolved.source).toBe('CHEDDAR_DATA_DIR');
+      expect(resolved.dbPath).toBe('/tmp/cheddar-data/cheddar-prod.db');
+      expect(resolved.source).toBe('CHEDDAR_DB_PATH');
+      expect(resolved.isExplicitFile).toBe(true);
     });
   });
 
