@@ -1678,6 +1678,10 @@ function deleteCardPayloadsForGame(gameId, cardType, options = {}) {
  */
 function insertCardResult(result) {
   const db = getDatabase();
+  const canonicalSport = normalizeSportCode(result.sport, 'insertCardResult');
+  const normalizedSport = canonicalSport
+    ? canonicalSport.toLowerCase()
+    : (result.sport ? String(result.sport).toLowerCase() : result.sport);
 
   const stmt = db.prepare(`
     INSERT OR IGNORE INTO card_results (
@@ -1692,7 +1696,7 @@ function insertCardResult(result) {
     result.id,
     result.cardId,
     result.gameId,
-    result.sport,
+    normalizedSport,
     result.cardType,
     result.recommendedBetType,
     result.marketKey || null,

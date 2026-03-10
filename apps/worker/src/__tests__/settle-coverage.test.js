@@ -295,6 +295,19 @@ function insertSeedData(db) {
     INSERT INTO card_display_log (pick_id, run_id, game_id, sport, displayed_at, api_endpoint)
     VALUES (?, ?, ?, ?, ?, ?)
   `,
+    'card-p4',
+    'run-test',
+    finalNhl,
+    'NHL',
+    now,
+    '/api/games',
+  );
+  runInsert(
+    db,
+    `
+    INSERT INTO card_display_log (pick_id, run_id, game_id, sport, displayed_at, api_endpoint)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `,
     'card-missing',
     'run-test',
     finalNhl,
@@ -380,11 +393,11 @@ describe('settlement coverage parity', () => {
     const diagnostics = __private.getSettlementCoverageDiagnostics(db);
 
     expect(diagnostics.totalPending).toBe(3);
-    expect(diagnostics.eligiblePendingFinalDisplayed).toBe(1);
+    expect(diagnostics.eligiblePendingFinalDisplayed).toBe(2);
     expect(diagnostics.settledDisplayedFinal).toBe(1);
-    expect(diagnostics.displayedFinal).toBe(3);
+    expect(diagnostics.displayedFinal).toBe(4);
     expect(diagnostics.finalDisplayedMissingResults).toBe(1);
-    expect(diagnostics.finalDisplayedUnsettled).toBe(2);
+    expect(diagnostics.finalDisplayedUnsettled).toBe(3);
 
     const nbaDiagnostics = __private.getSettlementCoverageDiagnostics(db, 'NBA');
     expect(nbaDiagnostics.totalPending).toBe(2);
@@ -401,7 +414,7 @@ describe('settlement coverage parity', () => {
     expect(result.cardsErrored).toBe(0);
     expect(result.coverage).toMatchObject({
       pending: 3,
-      eligible: 1,
+      eligible: 2,
     });
 
     const db = getDatabase();
@@ -422,7 +435,8 @@ describe('settlement coverage parity', () => {
     expect(byCard['card-p1'].result).toBe('win');
     expect(byCard['card-p2'].status).toBe('settled');
     expect(byCard['card-p3'].status).toBe('pending');
-    expect(byCard['card-p4'].status).toBe('pending');
+    expect(byCard['card-p4'].status).toBe('settled');
+    expect(byCard['card-p4'].result).toBe('loss');
 
     const diagnosticsAfter = __private.getSettlementCoverageDiagnostics(db);
     expect(diagnosticsAfter.eligiblePendingFinalDisplayed).toBe(0);

@@ -11,6 +11,9 @@
 
 ### P1: Settlement & Results Integrity
 - ~~WI-0368: Frontend Play Settlement Coverage Parity~~ ✅ **COMPLETE** (2026-03-10)
+- **WI-0370: NHL Settlement Enrollment + Sport Casing Fix** 🆕
+  - Fix `card_results` sport casing write-path so NHL PLAY/LEAN rows enroll reliably
+  - Add regression coverage for NHL settlement eligibility when finals are available
 
 ### P2: Decision Pipeline Hardening
 - **WI-0345: Web API + Transform v2 Pass-Through Hard Cut** 🔄 (In Progress - Codex)
@@ -26,6 +29,9 @@
 - **WI-0369: Settlement Telemetry Cleanup (W/L-First)** 🆕
   - Align settlement counters/logs with DB post-state (remove misleading skip reporting)
   - Keep results reporting W/L-first and treat PnL as optional metadata
+- **WI-0371: Backfill Historical card_results Sport Casing + Guardrail** 🆕
+  - Normalize legacy mixed-case `card_results.sport` values to lowercase
+  - Add explicit backfill + regression guardrail follow-through after WI-0370
 - **WI-0366: Extract normalizeRawDataPayload to shared utils**
   - Remove three identical copies from model runners
   - Single shared import
