@@ -65,6 +65,9 @@ const {
   publishDecisionForCard,
   applyUiActionFields,
 } = require('../utils/decision-publisher');
+const {
+  normalizeRawDataPayload,
+} = require('../utils/normalize-raw-data-payload');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -108,18 +111,6 @@ function applyProjectionInputMetadata(card, projectionGate) {
   card.payloadData.missing_inputs = Array.isArray(projectionGate.missing_inputs)
     ? projectionGate.missing_inputs
     : [];
-}
-
-function normalizeRawDataPayload(rawData) {
-  if (!rawData) return {};
-  if (typeof rawData === 'string') {
-    try {
-      return JSON.parse(rawData);
-    } catch {
-      return {};
-    }
-  }
-  return rawData;
 }
 
 function hasFiniteNumber(value) {

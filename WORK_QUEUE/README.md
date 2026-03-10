@@ -36,9 +36,7 @@
 - **WI-0371: Backfill Historical card_results Sport Casing + Guardrail** 🆕
   - Normalize legacy mixed-case `card_results.sport` values to lowercase
   - Add explicit backfill + regression guardrail follow-through after WI-0370
-- **WI-0366: Extract normalizeRawDataPayload to shared utils**
-  - Remove three identical copies from model runners
-  - Single shared import
+- ~~WI-0366: Extract normalizeRawDataPayload to shared utils~~ ✅ **COMPLETE** (2026-03-10)
 
 ### P5: Feature Enhancements
 
