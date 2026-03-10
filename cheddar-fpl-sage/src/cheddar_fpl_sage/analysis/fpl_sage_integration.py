@@ -30,6 +30,9 @@ from cheddar_fpl_sage.models.canonical_projections import (
 from cheddar_fpl_sage.analysis.decision_framework.fixture_horizon import (
     build_fixture_horizon_context,
 )
+from cheddar_fpl_sage.analysis.decision_framework.contract_enforcement import (
+    DecisionContractEnforcer,
+)
 from cheddar_fpl_sage.validation.data_gate import validate_bundle
 from cheddar_fpl_sage.validation.id_integrity import validate_player_identity
 from cheddar_fpl_sage.rules.fpl_rules import load_ruleset
@@ -1077,6 +1080,17 @@ class FPLSageIntegration:
                         "expires_after_gw": self._ensure_dict(self.config.get("chip_policy", {}), "chip_policy").get("expiration", {}).get("chips_expire_after_gw"),
                         "urgency": True
                     })
+
+            contract_payload = decision.__dict__ if hasattr(decision, "__dict__") else {}
+            contract_result = DecisionContractEnforcer.enforce_all_contracts(contract_payload, team_data)
+            if contract_result.violations:
+                logger.info(
+                    "Decision contract validation: %s violations, %s remediations",
+                    len(contract_result.violations),
+                    contract_result.remediated_count,
+                )
+            if not contract_result.valid:
+                logger.warning("Decision contract has hard errors; continuing with remediated payload")
             
             # Enforce authority cap and log restrictions if team_picks_confidence is LOW
             capability_matrix = data.get('capability_matrix', {})

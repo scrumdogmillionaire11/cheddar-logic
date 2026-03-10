@@ -8,12 +8,14 @@ interface DataTransparencyProps {
   projectionWindow?: string;
   updatedAt?: string;
   warnings?: string[];
+  gwTimeline?: string[];
 }
 
 export default function DataTransparency({ 
   projectionWindow, 
   updatedAt, 
-  warnings 
+  warnings,
+  gwTimeline,
 }: DataTransparencyProps) {
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return 'Unknown';
@@ -46,6 +48,13 @@ export default function DataTransparency({
           <div>
             <span className="font-medium">Updated: </span>
             {formatTimestamp(updatedAt)}
+          </div>
+        )}
+
+        {gwTimeline && gwTimeline.length > 0 && (
+          <div>
+            <span className="font-medium">GW Timeline: </span>
+            {gwTimeline.join(' · ')}
           </div>
         )}
 

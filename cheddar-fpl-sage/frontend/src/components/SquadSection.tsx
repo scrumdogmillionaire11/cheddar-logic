@@ -93,7 +93,7 @@ const SquadSection: React.FC<SquadSectionProps> = ({
               </div>
               <div className="text-right">
                 <span className="text-body-sm font-semibold text-sage-white">
-                  {player.expected_pts ? `${player.expected_pts.toFixed(1)} pts` : '-'}
+                  {player.expected_pts !== undefined && player.expected_pts !== null ? `${player.expected_pts.toFixed(1)} pts` : '-'}
                 </span>
               </div>
             </div>

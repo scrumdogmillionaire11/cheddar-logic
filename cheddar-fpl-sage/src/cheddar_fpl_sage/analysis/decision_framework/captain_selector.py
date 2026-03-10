@@ -186,6 +186,8 @@ class CaptainSelector:
         )
         captain = ranked[0]
         vice = ranked[1] if len(ranked) > 1 else ranked[0]
+        captain_score = self._score_captain_candidate(captain, self.strategy_mode)
+        vice_score = self._score_captain_candidate(vice, self.strategy_mode)
         
         # Build candidate list for transparency
         candidate_list = [
@@ -208,7 +210,10 @@ class CaptainSelector:
                 "position": captain.position,
                 "expected_pts": round(float(getattr(captain, 'nextGW_pts', 0) or 0), 2),
                 "ownership_pct": getattr(captain, "ownership_pct", 0),
-                "rationale": f"Top projected points in XI ({getattr(captain, 'nextGW_pts', 0):.1f}pts)"
+                "rationale": (
+                    f"Top captain score in XI for {self.strategy_mode} mode "
+                    f"({captain_score:.2f} score; {getattr(captain, 'nextGW_pts', 0):.1f} projected pts)"
+                )
             },
             "vice_captain": {
                 "name": vice.name,
@@ -216,7 +221,10 @@ class CaptainSelector:
                 "position": vice.position,
                 "expected_pts": round(float(getattr(vice, 'nextGW_pts', 0) or 0), 2),
                 "ownership_pct": getattr(vice, "ownership_pct", 0),
-                "rationale": f"Second-best option ({getattr(vice, 'nextGW_pts', 0):.1f}pts)"
+                "rationale": (
+                    f"Second captain score option "
+                    f"({vice_score:.2f} score; {getattr(vice, 'nextGW_pts', 0):.1f} projected pts)"
+                )
             },
             "candidate_pool": candidate_list
         }

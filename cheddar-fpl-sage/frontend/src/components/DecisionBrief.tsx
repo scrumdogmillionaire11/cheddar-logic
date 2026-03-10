@@ -12,16 +12,32 @@ interface DecisionBriefProps {
   confidence: 'HIGH' | 'MED' | 'LOW';
   justification: string;
   gameweek?: number;
+  /** Backend-derived label: "HIGH" | "MEDIUM" | "LOW" — supersedes local confidence when present */
+  confidenceLabel?: string;
+  /** One-line backend summary — replaces computed confidenceDesc.long when present */
+  confidenceSummary?: string;
 }
 
 export default function DecisionBrief({ 
   primaryAction, 
   confidence, 
   justification,
-  gameweek 
+  gameweek,
+  confidenceLabel,
+  confidenceSummary,
 }: DecisionBriefProps) {
+  // Normalise backend confidence_label ("MEDIUM" → "MED") for local lookup
+  const normaliseLabel = (label?: string): 'HIGH' | 'MED' | 'LOW' => {
+    if (!label) return confidence;
+    const u = label.toUpperCase();
+    if (u === 'HIGH') return 'HIGH';
+    if (u === 'LOW') return 'LOW';
+    return 'MED';
+  };
+  const displayConfidence = normaliseLabel(confidenceLabel);
+
   const getConfidenceColor = () => {
-    switch (confidence) {
+    switch (displayConfidence) {
       case 'HIGH': return 'text-execute';
       case 'MED': return 'text-hold';
       case 'LOW': return 'text-veto';
@@ -32,7 +48,7 @@ export default function DecisionBrief({
   // Get user-friendly descriptions
   const actionKey = primaryAction.toUpperCase() as keyof typeof ACTION_DESCRIPTIONS;
   const actionDesc = ACTION_DESCRIPTIONS[actionKey];
-  const confidenceDesc = CONFIDENCE_DESCRIPTIONS[confidence];
+  const confidenceDesc = CONFIDENCE_DESCRIPTIONS[displayConfidence];
 
   return (
     <section className="bg-surface-elevated border border-surface-elevated p-8">
@@ -59,12 +75,12 @@ export default function DecisionBrief({
           <div className="flex items-baseline gap-2">
             {confidenceDesc && <span className="text-lg">{confidenceDesc.emoji}</span>}
             <div className={`text-section ${getConfidenceColor()} font-medium uppercase tracking-wider`}>
-              {confidenceDesc?.short || `${confidence} Confidence`}
+              {confidenceLabel?.toUpperCase() || confidenceDesc?.short || `${displayConfidence} Confidence`}
             </div>
           </div>
           {confidenceDesc && (
             <p className="text-body-sm text-sage-muted italic">
-              {confidenceDesc.long}
+              {confidenceSummary || confidenceDesc.long}
             </p>
           )}
         </div>

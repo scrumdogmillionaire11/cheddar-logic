@@ -918,11 +918,15 @@ class EnhancedDecisionFramework:
         """Regular gameweek analysis when no chips are active"""
         
         if critical_needs > 0:
-            decision = f"No chip - focus on {critical_needs} urgent transfer(s)"
-            reasoning = f"With {free_transfers} transfer(s) available, prioritize fixing critical issues."
+            transfer_word = "transfer" if free_transfers == 1 else "transfers"
+            decision = f"No chip recommended. Use {free_transfers} available {transfer_word} to improve squad structure."
+            reasoning = (
+                f"{critical_needs} urgent issue(s) detected; prioritize repairs while preserving chip optionality."
+            )
         else:
-            decision = "No chip - optimize transfers and captaincy"
-            reasoning = "Focus on strategic improvements and captain selection."
+            transfer_word = "transfer" if free_transfers == 1 else "transfers"
+            decision = f"No chip recommended. Use available {transfer_word} to improve weak spots."
+            reasoning = "No chip window edge this week; optimize transfers and captaincy instead."
         
         return DecisionOutput(
             primary_decision=decision,

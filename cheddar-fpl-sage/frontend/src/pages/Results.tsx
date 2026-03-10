@@ -43,6 +43,9 @@ interface TransferPlan {
   delta_pts_6gw?: number;
   reason: string;
   confidence?: string;
+  why_now?: string;
+  risk_note?: string;
+  horizon_gws?: number;
 }
 
 interface TransferPlans {
@@ -83,12 +86,19 @@ interface AnalysisResults {
   risk_posture?: string;
   primary_decision?: string;
   confidence?: string;
+  confidence_label?: 'HIGH' | 'MEDIUM' | 'LOW' | string;
+  confidence_summary?: string;
   captain?: Captain;
   vice_captain?: Captain;
   captain_delta?: CaptainDelta;
   squad_health?: SquadHealth;
   transfer_recommendations?: TransferRec[];
   transfer_plans?: TransferPlans;
+  strategy_paths?: {
+    safe?: { out?: string; in?: string; delta_pts_4gw?: number; delta_pts_6gw?: number; rationale?: string };
+    balanced?: { out?: string; in?: string; delta_pts_4gw?: number; delta_pts_6gw?: number; rationale?: string };
+    aggressive?: { out?: string; in?: string; delta_pts_4gw?: number; delta_pts_6gw?: number; rationale?: string };
+  };
   bench_warning?: BenchWarning;
   chip_strategy?: ChipStrategy;
   chip_recommendation?: {
@@ -111,6 +121,10 @@ interface AnalysisResults {
   bench?: Array<{ name: string; expected_pts?: number; position?: string; team?: string }>;
   projected_xi?: Array<{ name: string; expected_pts?: number; position?: string; team?: string }>;
   projected_bench?: Array<{ name: string; expected_pts?: number; position?: string; team?: string }>;
+  fixture_planner?: {
+    gw_timeline?: string[];
+    [key: string]: unknown;
+  };
   free_transfers?: number;
   generated_at?: string;
 }
@@ -142,7 +156,7 @@ export default function Results() {
           setResults(projections);
           setLoading(false);
           return;
-        } catch (projErr) {
+        } catch {
           console.log('Projections endpoint not available, falling back to standard results');
         }
         
@@ -243,7 +257,7 @@ export default function Results() {
     }
     
     // Check for transfers
-    if (results.transfer_recommendations && results.transfer_recommendations.length > 0) {
+    if ((results.transfer_recommendations && results.transfer_recommendations.length > 0) || results.transfer_plans?.primary) {
       return 'TRANSFER';
     }
     
@@ -252,7 +266,7 @@ export default function Results() {
   };
 
   const getConfidence = (): 'HIGH' | 'MED' | 'LOW' => {
-    const conf = results.confidence?.toUpperCase() || 'MED';
+    const conf = (results.confidence_label || results.confidence || 'MED').toUpperCase();
     if (conf.includes('HIGH')) return 'HIGH';
     if (conf.includes('LOW')) return 'LOW';
     return 'MED';
@@ -274,6 +288,10 @@ export default function Results() {
     
     if (action === 'ROLL') {
       const transferCount = results.transfer_recommendations?.length || 0;
+      const health = results.squad_health;
+      if (health && (health.injured > 0 || health.doubtful > 0)) {
+        return `No transfer clears thresholds despite availability concerns (${health.injured} injured, ${health.doubtful} doubtful).`;
+      }
       if (transferCount === 0) {
         return 'No transfer clears hit thresholds; squad structure intact for next 4 GWs.';
       }
@@ -289,7 +307,7 @@ export default function Results() {
     
     // Build rationale from available data
     const parts: string[] = [];
-    if (captain.expected_pts) {
+    if (captain.expected_pts !== undefined && captain.expected_pts !== null) {
       parts.push(`Top projected points (${captain.expected_pts.toFixed(1)}pts)`);
     }
     if (captain.ownership_pct) {
@@ -316,34 +334,20 @@ export default function Results() {
 
   // 4. RISK NOTE
   const getRiskStatement = (): string => {
-    // Use squad health data if available
     const health = results.squad_health;
-    if (health) {
-      if (health.injured > 0 || health.doubtful > 0) {
-        const issues = [];
-        if (health.injured > 0) issues.push(`${health.injured} player${health.injured > 1 ? 's' : ''} injured`);
-        if (health.doubtful > 0) issues.push(`${health.doubtful} doubtful`);
-
-        if (health.health_pct < 75) {
-          return `Squad availability concern: ${issues.join(', ')}. Consider bench strength for auto-subs.`;
-        }
-        return `Minor availability flag: ${issues.join(', ')}. Monitor news before deadline.`;
+    if (!health) {
+      return 'Squad health data unavailable; re-run analysis if this persists.';
+    }
+    if (health.injured > 0 || health.doubtful > 0) {
+      const issues = [];
+      if (health.injured > 0) issues.push(`${health.injured} player${health.injured > 1 ? 's' : ''} injured`);
+      if (health.doubtful > 0) issues.push(`${health.doubtful} doubtful`);
+      if (health.health_pct < 75) {
+        return `Squad availability concern: ${issues.join(', ')}. Consider bench strength for auto-subs.`;
       }
+      return `Minor availability flag: ${issues.join(', ')}. Monitor news before deadline.`;
     }
-
-    // Fall back to risk posture based statement
-    const riskPosture = results.risk_posture?.toLowerCase() || '';
-
-    if (riskPosture.includes('aggressive')) {
-      return 'Aggressive posture: higher variance expected, targeting upside over safety.';
-    }
-
-    if (riskPosture.includes('conservative')) {
-      return 'Conservative posture: prioritizing safe floor over ceiling.';
-    }
-
-    // Default balanced
-    return 'Balanced risk profile; core squad faces manageable upcoming fixtures.';
+    return `Squad health stable (${health.available}/${health.total_players} available).`;
   };
 
   // 5. TRANSFERS (if applicable)
@@ -352,6 +356,30 @@ export default function Results() {
     // Prefer backend-calculated transfer_plans (new format)
     if (results.transfer_plans) {
       const plans = results.transfer_plans;
+      const currentSquadNames = new Set([
+        ...(results.starting_xi || []).map(p => p.name),
+        ...(results.bench || []).map(p => p.name),
+      ]);
+      const seenPairs = new Set<string>();
+
+      const mapPlan = (p: TransferPlan | undefined) => {
+        if (!p) return undefined;
+        const pair = `${p.out}::${p.in}`;
+        if (seenPairs.has(pair)) return undefined;
+        seenPairs.add(pair);
+        return {
+          out: p.out,
+          in: p.in,
+          hitCost: p.hit_cost,
+          netCost: p.net_cost,
+          deltaPoints4GW: p.delta_pts_4gw,
+          deltaPoints6GW: p.delta_pts_6gw,
+          reason: p.reason,
+          confidence: p.confidence,
+          urgency: p.why_now,
+          confidence_context: p.risk_note,
+        };
+      };
 
       if (plans.no_transfer_reason && !plans.primary) {
         return {
@@ -359,36 +387,63 @@ export default function Results() {
         };
       }
 
-      // Map additional plans if present
-      const additionalPlans = plans.additional?.map((p: TransferPlan) => ({
-        out: p.out,
-        in: p.in,
-        hitCost: p.hit_cost,
-        netCost: p.net_cost,
-        deltaPoints4GW: p.delta_pts_4gw,
-        deltaPoints6GW: p.delta_pts_6gw,
-        reason: p.reason
-      }));
+      const primaryPlan = mapPlan(plans.primary);
+      const secondaryPlan = mapPlan(plans.secondary);
+
+      const additionalFromPlans = (plans.additional || [])
+        .map((p: TransferPlan) => mapPlan(p))
+        .filter(Boolean) as Array<{
+          out: string;
+          in: string;
+          hitCost: number;
+          netCost: number;
+          deltaPoints4GW?: number;
+          deltaPoints6GW?: number;
+          reason: string;
+        }>;
+
+      // Defensive UI guard for strategy paths: dedupe (out,in) and block impossible IN targets already in squad.
+      const strategyCandidates = [
+        results.strategy_paths?.safe,
+        results.strategy_paths?.balanced,
+        results.strategy_paths?.aggressive,
+      ].filter(Boolean) as Array<{ out?: string; in?: string; delta_pts_4gw?: number; delta_pts_6gw?: number; rationale?: string }>;
+
+      const seenInTargets = new Set<string>(); // Track transfer-in targets to prevent duplicates across modes
+      const additionalFromStrategy = strategyCandidates
+        .filter(p => {
+          if (!p.out || !p.in) return false;
+          // Skip if target already in squad
+          if (currentSquadNames.has(p.in)) return false;
+          // Skip if this transfer-in target already suggested in another path
+          if (seenInTargets.has(p.in)) return false;
+          seenInTargets.add(p.in);
+          return true;
+        })
+        .map(p => mapPlan({
+          out: p.out!,
+          in: p.in!,
+          hit_cost: 0,
+          net_cost: 0,
+          delta_pts_4gw: p.delta_pts_4gw,
+          delta_pts_6gw: p.delta_pts_6gw,
+          reason: p.rationale || 'Alternative strategy path',
+        } as TransferPlan))
+        .filter(Boolean) as Array<{
+          out: string;
+          in: string;
+          hitCost: number;
+          netCost: number;
+          deltaPoints4GW?: number;
+          deltaPoints6GW?: number;
+          reason: string;
+        }>;
+
+      const additionalPlans = [...additionalFromPlans, ...additionalFromStrategy];
 
       return {
-        primaryPlan: plans.primary ? {
-          out: plans.primary.out,
-          in: plans.primary.in,
-          hitCost: plans.primary.hit_cost,
-          netCost: plans.primary.net_cost,
-          deltaPoints4GW: plans.primary.delta_pts_4gw,
-          deltaPoints6GW: plans.primary.delta_pts_6gw,
-          reason: plans.primary.reason
-        } : undefined,
-        secondaryPlan: plans.secondary ? {
-          out: plans.secondary.out,
-          in: plans.secondary.in,
-          hitCost: plans.secondary.hit_cost,
-          netCost: plans.secondary.net_cost,
-          deltaPoints4GW: plans.secondary.delta_pts_4gw,
-          deltaPoints6GW: plans.secondary.delta_pts_6gw,
-          reason: plans.secondary.reason
-        } : undefined,
+        primaryPlan,
+        secondaryPlan,
         additionalPlans,
         noTransferReason: plans.no_transfer_reason
       };
@@ -443,6 +498,9 @@ export default function Results() {
   const chipExplanation = getChipExplanation();
   const riskStatement = getRiskStatement();
   const transferPlans = getTransferPlans();
+  const hasProjectedTransfers = Boolean(
+    results.projected_xi && results.projected_xi.length > 0 && transferPlans.primaryPlan
+  );
 
   return (
     <div className="min-h-screen bg-surface-primary">
@@ -470,6 +528,8 @@ export default function Results() {
           confidence={confidence}
           justification={justification}
           gameweek={results.current_gw}
+          confidenceLabel={results.confidence_label}
+          confidenceSummary={results.confidence_summary}
         />
 
         {/* B. CAPTAINCY - Always visible */}
@@ -493,7 +553,7 @@ export default function Results() {
             title="Starting XI"
             currentSquad={results.starting_xi}
             projectedSquad={results.projected_xi}
-            hasTransfers={!!(results.transfer_plans?.primary || results.transfer_plans?.secondary)}
+            hasTransfers={hasProjectedTransfers}
           />
         )}
 
@@ -503,7 +563,7 @@ export default function Results() {
             title="Bench Order"
             currentSquad={results.bench}
             projectedSquad={results.projected_bench}
-            hasTransfers={!!(results.transfer_plans?.primary || results.transfer_plans?.secondary)}
+            hasTransfers={hasProjectedTransfers}
           />
         )}
 
@@ -536,6 +596,7 @@ export default function Results() {
           <DataTransparency
             projectionWindow={`GW${results.current_gw || '?'} to GW${(results.current_gw || 0) + 5}`}
             updatedAt={results.generated_at}
+            gwTimeline={results.fixture_planner?.gw_timeline}
             warnings={[]}
           />
         </div>
