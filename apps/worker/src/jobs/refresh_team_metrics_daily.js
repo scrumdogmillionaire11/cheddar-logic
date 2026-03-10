@@ -111,11 +111,7 @@ async function run() {
   
   // Insert job run record
   if (!dryRun) {
-    insertJobRun({
-      runId,
-      jobKey,
-      status: 'running',
-    });
+    insertJobRun('refresh_team_metrics_daily', runId, jobKey);
   }
   
   try {
