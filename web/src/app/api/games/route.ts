@@ -1422,17 +1422,17 @@ export async function GET(request: NextRequest) {
         );
 
         if (wave1Eligible) {
-          // Always apply wave1 decision fields if they exist, but don't skip if missing
-          // (plays without decision_v2 will still be included, just without those fields)
-          if (play.decision_v2) {
-            applyWave1DecisionFields(play);
-            play.reason_codes = Array.from(
-              new Set([
-                ...(play.reason_codes ?? []),
-                play.decision_v2.primary_reason_code,
-              ]),
-            );
+          // Wave-1 rows MUST have decision_v2 from worker - skip if missing
+          if (!play.decision_v2) {
+            continue; // Skip plays without decision_v2 in wave-1
           }
+          applyWave1DecisionFields(play);
+          play.reason_codes = Array.from(
+            new Set([
+              ...(play.reason_codes ?? []),
+              play.decision_v2.primary_reason_code,
+            ]),
+          );
         } else if (!play.consistency?.total_bias) {
           const totalDecision =
             payload.all_markets &&
