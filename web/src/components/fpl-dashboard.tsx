@@ -29,6 +29,55 @@ const parseNumeric = (value: unknown): number | null => {
   return null;
 };
 
+const parsePointsFromRationale = (value: unknown): number | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const match = value.match(/(\d+(?:\.\d+)?)\s*projected\s*pts|\((\d+(?:\.\d+)?)\s*pts\)/i);
+  if (!match) {
+    return null;
+  }
+  const extracted = match[1] ?? match[2];
+  const parsed = Number(extracted);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const extractCaptainExpectedPts = (captain: unknown): number | null => {
+  if (!captain || typeof captain !== 'object') {
+    return null;
+  }
+  const record = captain as Record<string, unknown>;
+  return (
+    parseNumeric(record.expected_pts) ??
+    parseNumeric(record.expected_points) ??
+    parseNumeric(record.nextGW_pts) ??
+    parsePointsFromRationale(record.rationale)
+  );
+};
+
+const formatPtsDisplay = (value: number | null): string => {
+  if (value === null) {
+    return '-';
+  }
+  return `${formatPts(value)} pts`;
+};
+
+const normalizeDecisionText = (value: string | undefined): string => {
+  const raw = String(value || '').trim();
+  if (!raw) return '-';
+  if (raw.includes('urgent transfer(s)') || raw.includes('transfer(s) available')) {
+    const transferCount = Number((raw.match(/(\d+)\s+transfer/i) || [])[1] || 0);
+    if (transferCount === 1) {
+      return 'No chip recommended. Use your free transfer to address a weak spot.';
+    }
+    if (transferCount > 1) {
+      return `No chip recommended. Use ${transferCount} available transfers to improve squad structure.`;
+    }
+    return 'No chip recommended. Use available transfers to improve weak spots.';
+  }
+  return raw;
+};
+
 const getConfidenceTone = (confidence: string) => {
   const normalized = confidence.toUpperCase();
   if (normalized === 'HIGH') return 'text-teal';
@@ -89,7 +138,7 @@ const renderFixtureWindowTable = (
               <th className="px-2 py-2 text-left">DGW</th>
               <th className="px-2 py-2 text-left">BGW</th>
               <th className="px-2 py-2 text-left">Next DGW</th>
-              <th className="px-2 py-2 text-left">Score</th>
+              <th className="px-2 py-2 text-left">Fixture Horizon Score</th>
               {Array.from({ length: 8 }).map((_, idx) => (
                 <th key={`${title}-gw-${idx}`} className="px-2 py-2 text-left">
                   GW{startGw + idx}
@@ -149,6 +198,17 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
   const strategyMode = data.strategy_mode || managerState.strategy_mode;
   const captainDelta = parseNumeric(data.captain_delta?.delta_pts);
   const fixturePlanner = data.fixture_planner;
+  const captainExpectedPts = extractCaptainExpectedPts(data.captain);
+  const viceCaptainExpectedPts = extractCaptainExpectedPts(data.vice_captain);
+  const displayDecision = normalizeDecisionText(data.primary_decision);
+  const squadBlankCountsByGw: Record<number, number> = {};
+  for (const playerWindow of fixturePlanner?.squad_windows || []) {
+    for (const row of playerWindow.upcoming || []) {
+      if (row.is_blank) {
+        squadBlankCountsByGw[row.gw] = (squadBlankCountsByGw[row.gw] || 0) + 1;
+      }
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -205,7 +265,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
       <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
         <h2 className="mb-4 text-2xl font-semibold">Decision Brief</h2>
         <div className="mb-2 text-lg font-semibold">
-          {data.primary_decision}
+          {displayDecision}
         </div>
         <div
           className={`text-sm font-semibold uppercase ${getConfidenceTone(data.confidence)}`}
@@ -269,6 +329,9 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
           <h2 className="mb-6 text-2xl font-semibold">
             DGW/BGW Planner (Next 8 GWs)
           </h2>
+          <p className="mb-4 text-sm text-cloud/60">
+            Fixture Horizon Score: higher is better (more DGW upside, lower BGW risk, stronger medium-term fixture profile).
+          </p>
           <div className="mb-6 grid gap-3 md:grid-cols-4 lg:grid-cols-8">
             {fixturePlanner.gw_timeline.map((row) => (
               <div
@@ -285,6 +348,9 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
                   <span className="rounded bg-rose/20 px-2 py-1 text-rose">
                     BGW {row.bgw_teams.length}
                   </span>
+                </div>
+                <div className="mt-2 text-xs text-cloud/60">
+                  Your squad blanking: {squadBlankCountsByGw[row.gw] || 0}
                 </div>
               </div>
             ))}
@@ -437,7 +503,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
                 {String(data.captain?.name ?? 'TBD')}
               </div>
               <div className="text-sm text-cloud/60">
-                {formatPts(Number(data.captain?.expected_pts) || undefined)} pts
+                {formatPtsDisplay(captainExpectedPts)}
               </div>
               {data.captain?.rationale ? (
                 <p className="mt-2 text-xs text-cloud/60">
@@ -453,10 +519,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
                 {String(data.vice_captain?.name ?? 'TBD')}
               </div>
               <div className="text-sm text-cloud/60">
-                {formatPts(
-                  Number(data.vice_captain?.expected_pts) || undefined,
-                )}{' '}
-                pts
+                {formatPtsDisplay(viceCaptainExpectedPts)}
               </div>
               {data.vice_captain?.rationale ? (
                 <p className="mt-2 text-xs text-cloud/60">

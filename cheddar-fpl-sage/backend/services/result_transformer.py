@@ -65,44 +65,79 @@ def _calculate_captain_delta(captain_data: Optional[Dict], vice_data: Optional[D
 
 def _calculate_squad_health(my_team: Dict, analysis: Dict) -> Dict[str, Any]:
     """
-    Calculate squad health metrics from injury data and squad composition.
+    Calculate squad health metrics from actual squad data.
 
     Returns:
         Dict with injury counts, availability percentage, and critical positions
     """
-    # Note: injury_data and squad are available for future enhancement
-    # when we have more detailed injury reporting
-    _ = my_team.get("injuries", {})  # Reserved for future use
-    _ = my_team.get("picks", [])  # Reserved for future use
+    decision_payload = analysis.get("decision", {}) if isinstance(analysis, dict) else {}
+    if hasattr(decision_payload, "__dict__"):
+        decision_payload = decision_payload.__dict__
+    if isinstance(decision_payload, dict):
+        canonical = decision_payload.get("squad_health")
+        if isinstance(canonical, dict):
+            required = {"total_players", "available", "injured", "doubtful", "health_pct"}
+            if required.issubset(canonical.keys()):
+                return {
+                    "total_players": int(canonical.get("total_players", 15)),
+                    "available": int(canonical.get("available", 15)),
+                    "injured": int(canonical.get("injured", 0)),
+                    "doubtful": int(canonical.get("doubtful", 0)),
+                    "health_pct": float(canonical.get("health_pct", 100.0)),
+                    "critical_positions": list(canonical.get("critical_positions") or []),
+                }
 
-    # Count injuries from risk scenarios if available
-    risk_scenarios = analysis.get("decision", {})
-    if hasattr(risk_scenarios, "__dict__"):
-        risk_scenarios = risk_scenarios.__dict__
-
-    scenarios = risk_scenarios.get("risk_scenarios", []) if isinstance(risk_scenarios, dict) else []
-
+    # Primary source fallback: picks from current squad (actual injury/suspension status)
+    picks = my_team.get("picks", [])
+    
     injured_count = 0
     doubtful_count = 0
     critical_positions = []
-
-    for scenario in scenarios:
-        if hasattr(scenario, "__dict__"):
-            scenario = scenario.__dict__
-
-        condition = scenario.get("scenario", "").lower() if isinstance(scenario, dict) else ""
-        severity = scenario.get("severity", "").upper() if isinstance(scenario, dict) else ""
-
-        if "injur" in condition or "out" in condition:
-            if severity in ("CRITICAL", "HIGH"):
+    
+    if picks:
+        # Count players with injury/suspension status
+        for pick in picks:
+            if not isinstance(pick, dict):
+                continue
+            
+            # FPL SDK provides status flag on each player
+            status = pick.get("status", "a").lower()  # "a" = available, "d" = doubtful, "o"/"s" = out
+            position = pick.get("position", "").upper()
+            
+            if status in ("o", "s", "u"):  # OUT, SUSPENDED, UNAVAILABLE
                 injured_count += 1
-            elif severity in ("MEDIUM", "WARNING"):
+                if position:
+                    critical_positions.append(position)
+            elif status in ("d",):  # DOUBTFUL
                 doubtful_count += 1
+                if position:
+                    critical_positions.append(position)
+    
+    # Fallback to risk scenarios if picks not available
+    if not picks:
+        risk_scenarios = analysis.get("decision", {})
+        if hasattr(risk_scenarios, "__dict__"):
+            risk_scenarios = risk_scenarios.__dict__
 
-            # Extract position if mentioned
-            for pos in ["GK", "DEF", "MID", "FWD"]:
-                if pos in condition.upper():
-                    critical_positions.append(pos)
+        scenarios = risk_scenarios.get("risk_scenarios", []) if isinstance(risk_scenarios, dict) else []
+
+        for scenario in scenarios:
+            if hasattr(scenario, "__dict__"):
+                scenario = scenario.__dict__
+
+            condition = scenario.get("scenario", "").lower() if isinstance(scenario, dict) else ""
+            severity = scenario.get("severity", "").upper() if isinstance(scenario, dict) else ""
+
+            if "injur" in condition or "out" in condition:
+                if severity in ("CRITICAL", "HIGH"):
+                    injured_count += 1
+                elif severity in ("MEDIUM", "WARNING"):
+                    doubtful_count += 1
+
+                # Extract position if mentioned
+                for pos in ["GK", "DEF", "MID", "FWD"]:
+                    if pos in condition.upper():
+                        critical_positions.append(pos)
 
     # Calculate health percentage
     available = 15 - injured_count - doubtful_count
@@ -116,6 +151,85 @@ def _calculate_squad_health(my_team: Dict, analysis: Dict) -> Dict[str, Any]:
         "health_pct": health_pct,
         "critical_positions": list(set(critical_positions))
     }
+
+
+def _reconcile_squad_issues_with_health(
+    squad_issues: List[Dict[str, Any]],
+    squad_health: Dict[str, Any],
+    projected_xi: Optional[List[Dict[str, Any]]] = None,
+    projected_bench: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Keep structural issue players aligned with current projected squad + canonical health."""
+    issues = [dict(issue) for issue in (squad_issues or []) if isinstance(issue, dict)]
+    projected_names = {
+        str(player.get("name") or "").strip()
+        for player in (projected_xi or []) + (projected_bench or [])
+        if isinstance(player, dict) and player.get("name")
+    }
+
+    reconciled: List[Dict[str, Any]] = []
+    for issue in issues:
+        players = issue.get("players") or []
+        if projected_names and isinstance(players, list):
+            issue["players"] = [name for name in players if name in projected_names]
+        if issue.get("category") == "availability":
+            injured = int(squad_health.get("injured", 0) or 0)
+            doubtful = int(squad_health.get("doubtful", 0) or 0)
+            if injured == 0 and doubtful == 0:
+                continue
+        reconciled.append(issue)
+
+    if not any(issue.get("category") == "availability" for issue in reconciled):
+        injured = int(squad_health.get("injured", 0) or 0)
+        doubtful = int(squad_health.get("doubtful", 0) or 0)
+        if injured > 0 or doubtful > 0:
+            reconciled.append({
+                "category": "availability",
+                "severity": "HIGH" if injured > 0 else "MEDIUM",
+                "title": "Availability flags",
+                "detail": "Injury/doubt concerns present in squad.",
+                "players": [],
+            })
+
+    return reconciled
+
+
+def _sanitize_strategy_paths(
+    strategy_paths: Dict[str, Any],
+    owned_player_names: List[str],
+) -> Dict[str, Any]:
+    """Enforce strategy-path validity in transformed payload as a final guardrail."""
+    if not isinstance(strategy_paths, dict):
+        return {}
+
+    owned = {str(name or '').strip().lower() for name in owned_player_names if name}
+    sanitized: Dict[str, Any] = {}
+    seen_pairs = set()
+
+    for mode in ["safe", "balanced", "aggressive"]:
+        path = strategy_paths.get(mode)
+        if not isinstance(path, dict):
+            sanitized[mode] = None
+            continue
+
+        out_name = str(path.get("out") or '').strip()
+        in_name = str(path.get("in") or '').strip()
+        pair = (out_name.lower(), in_name.lower())
+
+        if not out_name or not in_name:
+            sanitized[mode] = None
+            continue
+        if in_name.lower() in owned:
+            sanitized[mode] = None
+            continue
+        if pair in seen_pairs:
+            sanitized[mode] = None
+            continue
+
+        seen_pairs.add(pair)
+        sanitized[mode] = path
+
+    return sanitized
 
 
 def _calculate_transfer_metrics(out_player: Dict, in_player: Dict, free_transfers: int = 1) -> Dict[str, Any]:
@@ -638,6 +752,12 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         }
 
     # Build transformed result
+    starting_names = [
+        player.get("name")
+        for player in (my_team.get("current_squad") or [])
+        if isinstance(player, dict)
+    ]
+
     result = {
         "team_name": team_name,
         "manager_name": manager_name,
@@ -653,7 +773,10 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         "strategy_mode": strategy_mode,
         "manager_state": manager_state,
         "near_threshold_moves": decision_dict.get("near_threshold_moves") or [],
-        "strategy_paths": decision_dict.get("strategy_paths") or {},
+        "strategy_paths": _sanitize_strategy_paths(
+            decision_dict.get("strategy_paths") or {},
+            starting_names,
+        ),
         "squad_issues": decision_dict.get("squad_issues") or [],
         "chip_timing_outlook": decision_dict.get("chip_timing_outlook") or None,
         "fixture_planner": decision_dict.get("fixture_planner") or None,
@@ -687,9 +810,13 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
             else:
                 result["captain"]["rationale"] = f"Highest projected points ({delta_text})"
 
-    # Calculate squad health
+    # Calculate squad health (canonical decision payload preferred)
     squad_health = _calculate_squad_health(my_team, analysis)
     result["squad_health"] = squad_health
+    result["squad_issues"] = _reconcile_squad_issues_with_health(
+        result.get("squad_issues") or [],
+        squad_health,
+    )
     
     # Transfer recommendations - handle both forced and optional
     transfer_recs = decision_dict.get("transfer_recommendations", [])
@@ -882,6 +1009,12 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
             )
             result["projected_xi"] = projected["projected_xi"]
             result["projected_bench"] = projected["projected_bench"]
+            result["squad_issues"] = _reconcile_squad_issues_with_health(
+                result.get("squad_issues") or [],
+                squad_health,
+                projected_xi=result.get("projected_xi") or [],
+                projected_bench=result.get("projected_bench") or [],
+            )
             
             logger.warning("🔍 BENCH DEBUG: About to check bench warning")
             logger.warning(f"🔍 BENCH DEBUG: transfer_plans exists = {bool(result.get('transfer_plans'))}")
@@ -972,11 +1105,29 @@ def _transform_captain(captain_data: Optional[Dict]) -> Optional[Dict[str, Any]]
     # Get ownership insight
     ownership_insight = _calculate_ownership_insight(ownership_pct)
 
+    # Get expected points from canonical fields first.
+    expected_pts = captain_data.get("expected_pts")
+    if expected_pts is None:
+        expected_pts = captain_data.get("expected_points")
+    if expected_pts is None:
+        expected_pts = captain_data.get("nextGW_pts")
+
+    # Last resort: extract from rationale text like "(8.7pts)" to avoid false 0.0 placeholders.
+    if expected_pts is None:
+        rationale_text = str(captain_data.get("rationale") or "")
+        try:
+            import re
+            match = re.search(r"(\d+(?:\.\d+)?)\s*pts", rationale_text)
+            if match:
+                expected_pts = float(match.group(1))
+        except (ValueError, TypeError):
+            expected_pts = None
+
     return {
         "name": captain_data.get("name", "Unknown"),
         "team": captain_data.get("team", ""),
         "position": captain_data.get("position", ""),
-        "expected_pts": captain_data.get("expected_pts") or captain_data.get("nextGW_pts", 0),
+        "expected_pts": float(expected_pts) if expected_pts is not None else None,
         "rationale": captain_data.get("rationale", ""),
         "ownership_pct": ownership_pct,
         "ownership_insight": ownership_insight,

@@ -13,6 +13,7 @@ import DecisionBrief from '@/components/DecisionBrief';
 import CaptaincySection from '@/components/CaptaincySection';
 import ChipDecision from '@/components/ChipDecision';
 import TransferSection from '@/components/TransferSection';
+import RiskNote from '@/components/RiskNote';
 import TeamInfo from '@/components/TeamInfo';
 import CurrentSquad from '@/components/CurrentSquad';
 
@@ -648,8 +649,15 @@ export default function Dashboard() {
             {results.primary_decision && (
               <DecisionBrief
                 primaryAction={results.primary_decision}
-                confidence={(results.confidence as 'HIGH' | 'MED' | 'LOW') || 'MED'}
-                justification={results.primary_decision}
+                confidence={(() => {
+                  const conf = (results.confidence_label || results.confidence || 'MED').toUpperCase();
+                  if (conf.includes('HIGH')) return 'HIGH';
+                  if (conf.includes('LOW')) return 'LOW';
+                  return 'MED';
+                })()}
+                confidenceLabel={results.confidence_label}
+                confidenceSummary={results.confidence_summary}
+                justification={results.confidence_summary || results.primary_decision}
                 gameweek={results.current_gw}
               />
             )}
@@ -670,25 +678,70 @@ export default function Dashboard() {
             )}
 
             {(results.transfer_recommendations || results.transfer_plans) && (() => {
-              // Transfer recommendations come in pairs: [OUT action, IN action]
-              // Find the OUT and IN actions for the primary transfer
+              const plan = results.transfer_plans?.primary;
+              const secondary = results.transfer_plans?.secondary;
+
+              // Legacy fallback for older payloads
               const outAction = results.transfer_recommendations?.find(t => t.action === 'OUT');
               const inAction = results.transfer_recommendations?.find(t => t.action === 'IN');
               
               return (
                 <TransferSection
-                  primaryPlan={outAction && inAction ? {
+                  primaryPlan={plan ? {
+                    out: plan.out,
+                    in: plan.in,
+                    hitCost: plan.hit_cost,
+                    netCost: plan.net_cost,
+                    deltaPoints4GW: plan.delta_pts_4gw,
+                    deltaPoints6GW: plan.delta_pts_6gw,
+                    reason: plan.reason,
+                    confidence: plan.confidence,
+                    urgency: plan.why_now,
+                    confidence_context: plan.risk_note,
+                  } : outAction && inAction ? {
                     out: outAction.player_name || '',
                     in: inAction.player_name || '',
                     hitCost: 0,
                     netCost: 0,
                     reason: outAction.reason || inAction.reason || '',
                   } : undefined}
+                  secondaryPlan={secondary ? {
+                    out: secondary.out,
+                    in: secondary.in,
+                    hitCost: secondary.hit_cost,
+                    netCost: secondary.net_cost,
+                    deltaPoints4GW: secondary.delta_pts_4gw,
+                    deltaPoints6GW: secondary.delta_pts_6gw,
+                    reason: secondary.reason,
+                    confidence: secondary.confidence,
+                    urgency: secondary.why_now,
+                    confidence_context: secondary.risk_note,
+                  } : undefined}
                   freeTransfers={results.free_transfers}
-                  noTransferReason={!results.transfer_recommendations?.length ? 'No transfers needed this week' : undefined}
+                  noTransferReason={results.transfer_plans?.no_transfer_reason || (!results.transfer_recommendations?.length ? 'No transfers needed this week' : undefined)}
                 />
               );
             })()}
+
+            {results.squad_health && (
+              <RiskNote
+                squadHealth={results.squad_health}
+                riskStatement={(() => {
+                  const health = results.squad_health;
+                  if (!health) return 'Squad health data unavailable.';
+                  if (health.injured > 0 || health.doubtful > 0) {
+                    const issues = [];
+                    if (health.injured > 0) issues.push(`${health.injured} injured`);
+                    if (health.doubtful > 0) issues.push(`${health.doubtful} doubtful`);
+                    if (health.health_pct < 75) {
+                      return `Squad availability concern: ${issues.join(', ')}. Monitor lineup risk before deadline.`;
+                    }
+                    return `Minor availability flag: ${issues.join(', ')}. Monitor news before deadline.`;
+                  }
+                  return `Squad health stable (${health.available}/${health.total_players} available).`;
+                })()}
+              />
+            )}
 
             {/* Current Squad - Starting XI and Bench */}
             {(results.starting_xi || results.bench) && (
@@ -700,7 +753,7 @@ export default function Dashboard() {
             )}
 
             {/* Projected Squad after Transfers */}
-            {results.projected_xi && results.transfer_recommendations && results.transfer_recommendations.length > 0 && (
+            {results.projected_xi && results.projected_xi.length > 0 && results.transfer_plans?.primary && (
               <>
                 <div className="text-xs text-slate-500 uppercase tracking-widest mt-8 mb-2">
                   ◆ PROJECTED SQUAD (AFTER TRANSFERS)

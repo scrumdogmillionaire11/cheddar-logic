@@ -33,6 +33,13 @@ class TransferAdvisor:
     def _clamp(value: float, minimum: float, maximum: float) -> float:
         return max(minimum, min(maximum, value))
 
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        if not name:
+            return ""
+        name_no_accents = unicodedata.normalize('NFD', name).encode('ascii', 'ignore').decode('ascii')
+        return name_no_accents.lower().strip()
+
     def _get_horizon_summary(self, candidate: Any) -> Dict[str, Any]:
         ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
         summary_by_id = ctx.get("player_summary_by_id") or {}
@@ -163,10 +170,24 @@ class TransferAdvisor:
         if weakest is None or weakest_proj is None:
             return {}
 
+        # Collect current squad identifiers to exclude from transfer-in targets
+        squad_player_ids = {
+            p.get("player_id") or p.get("id")
+            for p in squad
+            if (p.get("player_id") or p.get("id")) is not None
+        }
+        squad_player_names = {
+            self._normalize_name(p.get("name", ""))
+            for p in squad
+            if p.get("name")
+        }
+
         pos = weakest.get("position")
         alternatives = [
             p for p in projections.get_by_position(pos)
             if p.player_id != weakest_proj.player_id
+            and p.player_id not in squad_player_ids
+            and self._normalize_name(getattr(p, "name", "")) not in squad_player_names
             and p.current_price <= (weakest_proj.current_price + bank_value + 0.5)
             and not p.is_injury_risk
             and p.xMins_next >= 60
@@ -174,9 +195,18 @@ class TransferAdvisor:
         if not alternatives:
             return {}
 
-        def pick_for_mode(mode: str) -> Dict[str, Any]:
+        _MODE_RATIONALE: Dict[str, str] = {
+            "DEFEND": "Reliable upgrade — stronger floor and minutes certainty, lower ceiling.",
+            "BALANCED": "Standard value move — best projected gain within budget.",
+            "RECOVERY": "Differential target — upside and rank-gaining leverage over template.",
+        }
+
+        def pick_for_mode(mode: str, excluded_player_ids: set) -> Dict[str, Any]:
+            pool = [c for c in alternatives if c.player_id not in excluded_player_ids]
+            if not pool:
+                return {}
             ranked = sorted(
-                alternatives,
+                pool,
                 key=lambda c: self._score_candidate_for_strategy(c, mode),
                 reverse=True,
             )
@@ -185,21 +215,88 @@ class TransferAdvisor:
             return {
                 "out": weakest_proj.name,
                 "in": choice.name,
+                "player_id_in": choice.player_id,
                 "hit_cost": 0 if free_transfers > 0 else 4,
                 "delta_pts_4gw": delta_pts_4gw,
                 "delta_pts_6gw": round((choice.next6_pts - weakest_proj.next6_pts), 1),
                 "confidence": "MEDIUM",
-                "rationale": (
-                    f"{mode.title()} path from {weakest_proj.name} to {choice.name} "
-                    f"(Δ4GW {delta_pts_4gw:+.1f})."
-                ),
+                "rationale": _MODE_RATIONALE.get(mode, f"{mode.title()} strategy path."),
             }
 
+        # Build each mode path with deduplication: each mode picks a distinct "in" player.
+        used_ids: set = set()
+        defend_pick = pick_for_mode("DEFEND", used_ids)
+        if defend_pick.get("player_id_in"):
+            used_ids.add(defend_pick["player_id_in"])
+
+        balanced_pick = pick_for_mode("BALANCED", used_ids)
+        if balanced_pick.get("player_id_in"):
+            used_ids.add(balanced_pick["player_id_in"])
+
+        recovery_pick = pick_for_mode("RECOVERY", used_ids)
+
+        # Strip internal dedup key before returning
+        for pick in (defend_pick, balanced_pick, recovery_pick):
+            if isinstance(pick, dict):
+                pick.pop("player_id_in", None)
+
         return {
-            "safe": pick_for_mode("DEFEND"),
-            "balanced": pick_for_mode("BALANCED"),
-            "aggressive": pick_for_mode("RECOVERY"),
+            "safe": defend_pick or None,
+            "balanced": balanced_pick or None,
+            "aggressive": recovery_pick or None,
         }
+
+    def _simulate_primary_transfer_squad(
+        self,
+        squad: List[Dict],
+        enriched_recs: List[Dict],
+        projections,
+    ) -> List[Dict]:
+        """Apply the primary recommended transfer in-memory for downstream diagnostics."""
+        if not squad:
+            return squad
+        if not enriched_recs:
+            return squad
+
+        primary = enriched_recs[0]
+        transfer_out = primary.get("transfer_out") or {}
+        transfer_in = primary.get("transfer_in") or {}
+        out_name = self._normalize_name(transfer_out.get("name", ""))
+        in_name = transfer_in.get("name")
+
+        if not out_name or not in_name:
+            return squad
+
+        simulated = [dict(player) for player in squad]
+        replaced_idx = None
+        replaced_player = None
+        for idx, player in enumerate(simulated):
+            if self._normalize_name(player.get("name", "")) == out_name:
+                replaced_idx = idx
+                replaced_player = player
+                break
+
+        if replaced_idx is None or replaced_player is None:
+            return squad
+
+        player_in_id = transfer_in.get("player_id")
+        player_in_proj = projections.get_by_id(player_in_id) if player_in_id and projections else None
+        new_player = {
+            **replaced_player,
+            "name": in_name,
+            "status_flag": "FIT",
+            "news": "",
+        }
+        if player_in_id:
+            new_player["player_id"] = player_in_id
+            new_player["id"] = player_in_id
+        if player_in_proj is not None:
+            new_player["team"] = getattr(player_in_proj, "team", replaced_player.get("team"))
+            new_player["position"] = getattr(player_in_proj, "position", replaced_player.get("position"))
+            new_player["current_price"] = getattr(player_in_proj, "current_price", replaced_player.get("current_price"))
+
+        simulated[replaced_idx] = new_player
+        return simulated
 
     def _build_near_threshold_moves(
         self,
@@ -846,6 +943,7 @@ class TransferAdvisor:
                     }
                     
                     enriched_rec['transfer_in'] = {
+                        'player_id': player_in.player_id,
                         'name': player_in.name,
                         'team': player_in.team,
                         'position': player_in.position,
@@ -873,6 +971,16 @@ class TransferAdvisor:
                     if hasattr(player_in, 'fixture_difficulty') and player_in.fixture_difficulty:
                         if player_in.fixture_difficulty < 3:
                             reasons.append("Favorable fixtures ahead")
+
+                    horizon_summary = self._get_horizon_summary(player_in)
+                    near_bgw = int(horizon_summary.get("near_bgw") or 0)
+                    near_dgw = int(horizon_summary.get("near_dgw") or 0)
+                    if near_bgw > 0:
+                        reasons.append("Improves projection without increasing near-term blank exposure")
+                    elif near_dgw > 0:
+                        reasons.append("Adds double-gameweek upside in the planning horizon")
+                    else:
+                        reasons.append("Neutral DGW/BGW horizon impact with short-term output gain")
                     
                     if reasons:
                         enriched_rec['in_reason'] = ' | '.join(reasons)
@@ -888,6 +996,12 @@ class TransferAdvisor:
                 "profile": "No immediate unacceptable risks; conserve transfer flexibility"
             })
 
+        post_transfer_squad = self._simulate_primary_transfer_squad(
+            squad=squad,
+            enriched_recs=enriched_recs,
+            projections=projections,
+        )
+
         near_threshold_moves = self._build_near_threshold_moves(
             squad=squad,
             projections=projections,
@@ -896,12 +1010,12 @@ class TransferAdvisor:
             strategy_mode=self.strategy_mode,
         )
         strategy_paths = self._build_strategy_paths(
-            squad=squad,
+            squad=post_transfer_squad,
             projections=projections,
             bank_value=bank_value,
             free_transfers=free_transfers,
         )
-        squad_issues = self._build_squad_issues(squad=squad, projections=projections)
+        squad_issues = self._build_squad_issues(squad=post_transfer_squad, projections=projections)
         no_transfer_reason = None
         if not enriched_recs:
             required = self._required_gain(self.strategy_mode, free_transfers)
@@ -982,6 +1096,24 @@ class TransferAdvisor:
                     'strategy': label
                 })
         
+        # Derive why_now from outgoing player state and gain magnitude
+        if getattr(player_proj, 'is_injury_risk', False):
+            why_now = f"Injury risk on {getattr(player_proj, 'name', 'outgoing player')} — act before deadline."
+        elif gain >= 3:
+            why_now = "Strong projected gain over the horizon; act before price movement."
+        elif gain >= 1.5:
+            why_now = "Positive gain identified; good window to upgrade."
+        else:
+            why_now = "Marginal improvement — valid in context of balanced squad management."
+
+        # Derive risk_note from incoming candidate availability
+        if getattr(best_candidate, 'is_injury_risk', False):
+            risk_note = "Target flagged as a fitness concern — monitor before deadline."
+        elif getattr(best_candidate, 'xMins_next', 90) < 70:
+            risk_note = "Target has minutes uncertainty — rotation risk in play."
+        else:
+            risk_note = "No material availability concerns on incoming player."
+
         return {
             "transfers_out": transfers_out,
             "transfers_in": transfers_in,
@@ -990,7 +1122,10 @@ class TransferAdvisor:
             "budget_after": round(bank_value - (best_candidate.current_price - (player_proj.current_price or 0)), 2),
             "context": context_mode,
             "suggested_alternatives": alternative_details if alternative_details else [],
-            "free_transfers_remaining": free_transfers
+            "free_transfers_remaining": free_transfers,
+            "why_now": why_now,
+            "risk_note": risk_note,
+            "horizon_gws": self.horizon_gws,
         }
 
     def build_general_plan(self, context_mode: str, bank_value: float, message: str) -> Dict:
@@ -1002,7 +1137,10 @@ class TransferAdvisor:
             "horizon": "WAIT",
             "budget_after": round(bank_value, 2),
             "context": context_mode,
-            "notes": message
+            "notes": message,
+            "why_now": message,
+            "risk_note": "No transfer identified — squad management hold advised.",
+            "horizon_gws": self.horizon_gws,
         }
 
     def _get_manager_context_mode(self, team_data: Dict) -> str:

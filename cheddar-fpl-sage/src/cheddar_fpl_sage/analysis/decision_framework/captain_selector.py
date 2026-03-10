@@ -116,6 +116,7 @@ class CaptainSelector:
                 "name": captain.get('name'),
                 "team": captain.get('team'),
                 "position": captain.get('position'),
+                "expected_pts": round(float(captain.get('total_points', 0) or 0), 2),
                 "ownership_pct": float(captain.get('ownership', 0)),
                 "rationale": "Highest total points among available starters; steady minutes profile" + _get_ownership_warning(captain)
             }
@@ -125,6 +126,7 @@ class CaptainSelector:
                 "name": vice.get('name'),
                 "team": vice.get('team'),
                 "position": vice.get('position'),
+                "expected_pts": round(float(vice.get('total_points', 0) or 0), 2),
                 "ownership_pct": float(vice.get('ownership', 0)),
                 "rationale": "Second-best form/points among available players; injury insurance" + _get_ownership_warning(vice)
             }
@@ -184,6 +186,8 @@ class CaptainSelector:
         )
         captain = ranked[0]
         vice = ranked[1] if len(ranked) > 1 else ranked[0]
+        captain_score = self._score_captain_candidate(captain, self.strategy_mode)
+        vice_score = self._score_captain_candidate(vice, self.strategy_mode)
         
         # Build candidate list for transparency
         candidate_list = [
@@ -204,15 +208,23 @@ class CaptainSelector:
                 "name": captain.name,
                 "team": captain.team,
                 "position": captain.position,
+                "expected_pts": round(float(getattr(captain, 'nextGW_pts', 0) or 0), 2),
                 "ownership_pct": getattr(captain, "ownership_pct", 0),
-                "rationale": f"Top projected points in XI ({getattr(captain, 'nextGW_pts', 0):.1f}pts)"
+                "rationale": (
+                    f"Top captain score in XI for {self.strategy_mode} mode "
+                    f"({captain_score:.2f} score; {getattr(captain, 'nextGW_pts', 0):.1f} projected pts)"
+                )
             },
             "vice_captain": {
                 "name": vice.name,
                 "team": vice.team,
                 "position": vice.position,
+                "expected_pts": round(float(getattr(vice, 'nextGW_pts', 0) or 0), 2),
                 "ownership_pct": getattr(vice, "ownership_pct", 0),
-                "rationale": f"Second-best option ({getattr(vice, 'nextGW_pts', 0):.1f}pts)"
+                "rationale": (
+                    f"Second captain score option "
+                    f"({vice_score:.2f} score; {getattr(vice, 'nextGW_pts', 0):.1f} projected pts)"
+                )
             },
             "candidate_pool": candidate_list
         }

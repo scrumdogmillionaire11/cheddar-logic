@@ -30,6 +30,9 @@ from cheddar_fpl_sage.models.canonical_projections import (
 from cheddar_fpl_sage.analysis.decision_framework.fixture_horizon import (
     build_fixture_horizon_context,
 )
+from cheddar_fpl_sage.analysis.decision_framework.contract_enforcement import (
+    DecisionContractEnforcer,
+)
 from cheddar_fpl_sage.validation.data_gate import validate_bundle
 from cheddar_fpl_sage.validation.id_integrity import validate_player_identity
 from cheddar_fpl_sage.rules.fpl_rules import load_ruleset
@@ -1077,6 +1080,17 @@ class FPLSageIntegration:
                         "expires_after_gw": self._ensure_dict(self.config.get("chip_policy", {}), "chip_policy").get("expiration", {}).get("chips_expire_after_gw"),
                         "urgency": True
                     })
+
+            contract_payload = decision.__dict__ if hasattr(decision, "__dict__") else {}
+            contract_result = DecisionContractEnforcer.enforce_all_contracts(contract_payload, team_data)
+            if contract_result.violations:
+                logger.info(
+                    "Decision contract validation: %s violations, %s remediations",
+                    len(contract_result.violations),
+                    contract_result.remediated_count,
+                )
+            if not contract_result.valid:
+                logger.warning("Decision contract has hard errors; continuing with remediated payload")
             
             # Enforce authority cap and log restrictions if team_picks_confidence is LOW
             capability_matrix = data.get('capability_matrix', {})
@@ -1545,6 +1559,8 @@ class FPLSageIntegration:
                     'transfer_recommendations': decision_obj.transfer_recommendations,
                     'decision_status': decision_obj.decision_status,
                     'confidence_score': decision_obj.confidence_score,
+                    'confidence_label': getattr(decision_obj, 'confidence_label', 'MEDIUM'),
+                    'confidence_summary': getattr(decision_obj, 'confidence_summary', ''),
                     'block_reason': decision_obj.block_reason,
                     'risk_posture': decision_obj.risk_posture,  # CRITICAL: Include risk posture!
                     'strategy_mode': getattr(decision_obj, "strategy_mode", "BALANCED"),
