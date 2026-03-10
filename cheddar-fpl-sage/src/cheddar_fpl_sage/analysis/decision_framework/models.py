@@ -20,6 +20,9 @@ class TransferRecommendation(BaseModel):
     net_gain_pts: float = Field(description="Expected point gain over horizon")
     reasoning: str
     confidence: Literal["HIGH", "MEDIUM", "LOW"] = "MEDIUM"
+    why_now: Optional[str] = None
+    risk_note: Optional[str] = None
+    horizon_gws: Optional[int] = None
 
 
 class CaptainPick(BaseModel):

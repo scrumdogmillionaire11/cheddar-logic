@@ -116,6 +116,7 @@ class CaptainSelector:
                 "name": captain.get('name'),
                 "team": captain.get('team'),
                 "position": captain.get('position'),
+                "expected_pts": round(float(captain.get('total_points', 0) or 0), 2),
                 "ownership_pct": float(captain.get('ownership', 0)),
                 "rationale": "Highest total points among available starters; steady minutes profile" + _get_ownership_warning(captain)
             }
@@ -125,6 +126,7 @@ class CaptainSelector:
                 "name": vice.get('name'),
                 "team": vice.get('team'),
                 "position": vice.get('position'),
+                "expected_pts": round(float(vice.get('total_points', 0) or 0), 2),
                 "ownership_pct": float(vice.get('ownership', 0)),
                 "rationale": "Second-best form/points among available players; injury insurance" + _get_ownership_warning(vice)
             }
@@ -204,6 +206,7 @@ class CaptainSelector:
                 "name": captain.name,
                 "team": captain.team,
                 "position": captain.position,
+                "expected_pts": round(float(getattr(captain, 'nextGW_pts', 0) or 0), 2),
                 "ownership_pct": getattr(captain, "ownership_pct", 0),
                 "rationale": f"Top projected points in XI ({getattr(captain, 'nextGW_pts', 0):.1f}pts)"
             },
@@ -211,6 +214,7 @@ class CaptainSelector:
                 "name": vice.name,
                 "team": vice.team,
                 "position": vice.position,
+                "expected_pts": round(float(getattr(vice, 'nextGW_pts', 0) or 0), 2),
                 "ownership_pct": getattr(vice, "ownership_pct", 0),
                 "rationale": f"Second-best option ({getattr(vice, 'nextGW_pts', 0):.1f}pts)"
             },

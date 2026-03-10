@@ -1545,6 +1545,8 @@ class FPLSageIntegration:
                     'transfer_recommendations': decision_obj.transfer_recommendations,
                     'decision_status': decision_obj.decision_status,
                     'confidence_score': decision_obj.confidence_score,
+                    'confidence_label': getattr(decision_obj, 'confidence_label', 'MEDIUM'),
+                    'confidence_summary': getattr(decision_obj, 'confidence_summary', ''),
                     'block_reason': decision_obj.block_reason,
                     'risk_posture': decision_obj.risk_posture,  # CRITICAL: Include risk posture!
                     'strategy_mode': getattr(decision_obj, "strategy_mode", "BALANCED"),

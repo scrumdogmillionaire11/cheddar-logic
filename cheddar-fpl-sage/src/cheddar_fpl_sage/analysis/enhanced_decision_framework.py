@@ -81,6 +81,8 @@ class DecisionOutput:
     # Decision quality metrics
     decision_status: str = "PASS"  # "PASS" | "HOLD" | "BLOCKED" 
     confidence_score: float = 1.0  # 0-1, higher = more confident
+    confidence_label: str = ""    # populated by __post_init__
+    confidence_summary: str = ""  # populated by __post_init__
     block_reason: Optional[str] = None  # When status != "OK"
     
     tilt_armor_threshold: int = 0  # "Decision still correct if X fewer points"
@@ -102,6 +104,25 @@ class DecisionOutput:
     chip_timing_outlook: Optional[Dict] = None
     no_transfer_reason: Optional[str] = None
     fixture_planner: Optional[Dict] = None
+
+    def __post_init__(self):
+        """Derive confidence_label and confidence_summary from confidence_score."""
+        if not self.confidence_label:
+            if self.confidence_score >= 0.75:
+                self.confidence_label = "HIGH"
+            elif self.confidence_score >= 0.45:
+                self.confidence_label = "MEDIUM"
+            else:
+                self.confidence_label = "LOW"
+        if not self.confidence_summary:
+            label = self.confidence_label
+            decision = getattr(self, 'primary_decision', '')
+            if label == "HIGH":
+                self.confidence_summary = f"High confidence in recommended action: {decision}"
+            elif label == "LOW":
+                self.confidence_summary = f"Low confidence — conditions are uncertain; monitor before acting: {decision}"
+            else:
+                self.confidence_summary = f"Moderate confidence in recommended action: {decision}"
 
 
 class EnhancedDecisionFramework:

@@ -163,10 +163,18 @@ class TransferAdvisor:
         if weakest is None or weakest_proj is None:
             return {}
 
+        # Collect current squad player IDs to exclude from transfer-in targets
+        squad_player_ids = {
+            p.get("player_id") or p.get("id")
+            for p in squad
+            if (p.get("player_id") or p.get("id")) is not None
+        }
+
         pos = weakest.get("position")
         alternatives = [
             p for p in projections.get_by_position(pos)
             if p.player_id != weakest_proj.player_id
+            and p.player_id not in squad_player_ids
             and p.current_price <= (weakest_proj.current_price + bank_value + 0.5)
             and not p.is_injury_risk
             and p.xMins_next >= 60
@@ -174,9 +182,18 @@ class TransferAdvisor:
         if not alternatives:
             return {}
 
-        def pick_for_mode(mode: str) -> Dict[str, Any]:
+        _MODE_RATIONALE: Dict[str, str] = {
+            "DEFEND": "Reliable upgrade — stronger floor and minutes certainty, lower ceiling.",
+            "BALANCED": "Standard value move — best projected gain within budget.",
+            "RECOVERY": "Differential target — upside and rank-gaining leverage over template.",
+        }
+
+        def pick_for_mode(mode: str, excluded_player_ids: set) -> Dict[str, Any]:
+            pool = [c for c in alternatives if c.player_id not in excluded_player_ids]
+            if not pool:
+                pool = alternatives  # fall back to full pool if all excluded
             ranked = sorted(
-                alternatives,
+                pool,
                 key=lambda c: self._score_candidate_for_strategy(c, mode),
                 reverse=True,
             )
@@ -185,20 +202,32 @@ class TransferAdvisor:
             return {
                 "out": weakest_proj.name,
                 "in": choice.name,
+                "player_id_in": choice.player_id,
                 "hit_cost": 0 if free_transfers > 0 else 4,
                 "delta_pts_4gw": delta_pts_4gw,
                 "delta_pts_6gw": round((choice.next6_pts - weakest_proj.next6_pts), 1),
                 "confidence": "MEDIUM",
-                "rationale": (
-                    f"{mode.title()} path from {weakest_proj.name} to {choice.name} "
-                    f"(Δ4GW {delta_pts_4gw:+.1f})."
-                ),
+                "rationale": _MODE_RATIONALE.get(mode, f"{mode.title()} strategy path."),
             }
 
+        # Build each mode path with deduplication: each mode picks a distinct "in" player.
+        used_ids: set = set()
+        defend_pick = pick_for_mode("DEFEND", used_ids)
+        used_ids.add(defend_pick["player_id_in"])
+
+        balanced_pick = pick_for_mode("BALANCED", used_ids)
+        used_ids.add(balanced_pick["player_id_in"])
+
+        recovery_pick = pick_for_mode("RECOVERY", used_ids)
+
+        # Strip internal dedup key before returning
+        for pick in (defend_pick, balanced_pick, recovery_pick):
+            pick.pop("player_id_in", None)
+
         return {
-            "safe": pick_for_mode("DEFEND"),
-            "balanced": pick_for_mode("BALANCED"),
-            "aggressive": pick_for_mode("RECOVERY"),
+            "safe": defend_pick,
+            "balanced": balanced_pick,
+            "aggressive": recovery_pick,
         }
 
     def _build_near_threshold_moves(
@@ -982,6 +1011,24 @@ class TransferAdvisor:
                     'strategy': label
                 })
         
+        # Derive why_now from outgoing player state and gain magnitude
+        if getattr(player_proj, 'is_injury_risk', False):
+            why_now = f"Injury risk on {getattr(player_proj, 'name', 'outgoing player')} — act before deadline."
+        elif gain >= 3:
+            why_now = "Strong projected gain over the horizon; act before price movement."
+        elif gain >= 1.5:
+            why_now = "Positive gain identified; good window to upgrade."
+        else:
+            why_now = "Marginal improvement — valid in context of balanced squad management."
+
+        # Derive risk_note from incoming candidate availability
+        if getattr(best_candidate, 'is_injury_risk', False):
+            risk_note = "Target flagged as a fitness concern — monitor before deadline."
+        elif getattr(best_candidate, 'xMins_next', 90) < 70:
+            risk_note = "Target has minutes uncertainty — rotation risk in play."
+        else:
+            risk_note = "No material availability concerns on incoming player."
+
         return {
             "transfers_out": transfers_out,
             "transfers_in": transfers_in,
@@ -990,7 +1037,10 @@ class TransferAdvisor:
             "budget_after": round(bank_value - (best_candidate.current_price - (player_proj.current_price or 0)), 2),
             "context": context_mode,
             "suggested_alternatives": alternative_details if alternative_details else [],
-            "free_transfers_remaining": free_transfers
+            "free_transfers_remaining": free_transfers,
+            "why_now": why_now,
+            "risk_note": risk_note,
+            "horizon_gws": self.horizon_gws,
         }
 
     def build_general_plan(self, context_mode: str, bank_value: float, message: str) -> Dict:
@@ -1002,7 +1052,10 @@ class TransferAdvisor:
             "horizon": "WAIT",
             "budget_after": round(bank_value, 2),
             "context": context_mode,
-            "notes": message
+            "notes": message,
+            "why_now": message,
+            "risk_note": "No transfer identified — squad management hold advised.",
+            "horizon_gws": self.horizon_gws,
         }
 
     def _get_manager_context_mode(self, team_data: Dict) -> str:
