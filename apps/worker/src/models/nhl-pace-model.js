@@ -35,9 +35,9 @@ const REST_EXTENDED_BOOST = 1.02; // 3+ days rest
 const PACE_DAMPENING = 0.5; // dampened multiplicative: 1 + (raw-1)*0.5
 const DEFENSE_DAMPENING = 0.5;
 const PP_GOAL_SCALE = 0.035;
-const GOALIE_ADJ_SCALE = 5.0;
-const GOALIE_ADJ_MIN = 0.75;
-const GOALIE_ADJ_MAX = 1.25;
+const GOALIE_ADJ_SCALE = 3.0;  // Reduced from 5.0 — was producing ±25% swings per goalie
+const GOALIE_ADJ_MIN = 0.82;  // Tighter floor (was 0.75)
+const GOALIE_ADJ_MAX = 1.18;  // Tighter ceiling (was 1.25)
 const FIRST_PERIOD_FACTOR = 0.3; // 30% of full game goals in 1P
 const GOALS_L5_WEIGHT = 0.3; // 30% recent, 70% season
 
@@ -249,12 +249,14 @@ function predictNHLGame(opts) {
   }
 
   // ---- 8. Goalie adjustment (goalie affects OPPONENT's goals) ----
-  if (homeGoalieSavePct !== null) {
+  // Only apply when the goalie is confirmed — prevents math from running on
+  // proxy-inferred or unconfirmed starters (FM-07: HOLD doesn't fix corrupted math).
+  if (homeGoalieSavePct !== null && homeGoalieConfirmed) {
     const factor = goalieAdjFactor(homeGoalieSavePct);
     awayGoals *= factor; // home goalie reduces away scoring
     adjustments.away.opponent_goalie = factor;
   }
-  if (awayGoalieSavePct !== null) {
+  if (awayGoalieSavePct !== null && awayGoalieConfirmed) {
     const factor = goalieAdjFactor(awayGoalieSavePct);
     homeGoals *= factor; // away goalie reduces home scoring
     adjustments.home.opponent_goalie = factor;
