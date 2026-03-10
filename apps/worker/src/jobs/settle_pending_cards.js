@@ -433,10 +433,19 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       insertJobRun('settle_pending_cards', jobRunId, jobKey);
 
       const db = getDatabase();
-      const backfilledDisplayed = backfillDisplayedPlaysFromPayloads(db);
-      if (backfilledDisplayed > 0) {
+      const enableDisplayBackfill =
+        process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL === 'true';
+      let backfilledDisplayed = 0;
+      if (enableDisplayBackfill) {
+        backfilledDisplayed = backfillDisplayedPlaysFromPayloads(db);
+      } else {
         console.log(
-          `[SettleCards] Backfilled ${backfilledDisplayed} display-log play rows from payloads`,
+          '[SettleCards] Strict display-log mode enabled; payload backfill is disabled',
+        );
+      }
+      if (backfilledDisplayed > 0) {
+        console.warn(
+          `[SettleCards] Backfilled ${backfilledDisplayed} display-log play rows from payloads (override active)`,
         );
       }
       const coverageBefore = getSettlementCoverageDiagnostics(db);
@@ -481,6 +490,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
 
       let cardsSettled = 0;
       let cardsErrored = 0;
+      let cardsRaced = 0;
       let cardsSkipped = 0;
       const settledAt = new Date().toISOString();
 
@@ -514,27 +524,49 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           });
           const pnlUnits = computePnlUnits(result, lockedMarket.lockedPrice);
 
-          const updateStmt = db.prepare(`
+          db
+            .prepare(`
             UPDATE card_results
             SET status = 'settled', result = ?, settled_at = ?, pnl_units = ?
             WHERE id = ? AND status = 'pending'
-          `);
-          const updateResult = updateStmt.run(
+          `)
+            .run(
             result,
             settledAt,
             pnlUnits,
             pendingCard.result_id,
           );
-          if (updateResult.changes) {
+          const state = db
+            .prepare(
+              `
+            SELECT status, result, settled_at
+            FROM card_results
+            WHERE id = ?
+          `,
+            )
+            .get(pendingCard.result_id);
+          const didSettleNow =
+            state &&
+            state.status === 'settled' &&
+            state.result === result &&
+            state.settled_at === settledAt;
+          if (didSettleNow) {
             cardsSettled++;
             console.log(
               `[SettleCards] Settled card ${pendingCard.card_id}: ${lockedMarket.marketType}/${lockedMarket.selection} ` +
                 `(${lockedMarket.marketKey}) -> ${result} (pnl: ${pnlUnits})`,
             );
+          } else if (state && (state.status === 'settled' || state.status === 'error')) {
+            cardsRaced++;
+            console.log(
+              `[SettleCards] Race detected for card ${pendingCard.card_id}; row now ${state.status}`,
+            );
           } else {
             cardsSkipped++;
-            console.log(
-              `[SettleCards] Skipping already-settled card ${pendingCard.card_id}`,
+            console.warn(
+              `[SettleCards] Could not classify settlement outcome for card ${pendingCard.card_id}; row state: ${JSON.stringify(
+                state || null,
+              )}`,
             );
           }
         } catch (settlementErr) {
@@ -557,32 +589,66 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
             at: settledAt,
           };
 
-          const errorStmt = db.prepare(`
+          db
+            .prepare(`
             UPDATE card_results
             SET status = 'error', result = 'void', settled_at = ?, metadata = ?
             WHERE id = ? AND status = 'pending'
-          `);
-          const errorResult = errorStmt.run(
+          `)
+            .run(
             settledAt,
             JSON.stringify(metadata),
             pendingCard.result_id,
           );
-          if (errorResult.changes) {
+          const state = db
+            .prepare(
+              `
+            SELECT status, result, settled_at
+            FROM card_results
+            WHERE id = ?
+          `,
+            )
+            .get(pendingCard.result_id);
+          const didErrorNow =
+            state &&
+            state.status === 'error' &&
+            state.result === 'void' &&
+            state.settled_at === settledAt;
+          if (didErrorNow) {
             cardsErrored++;
+          } else if (state && (state.status === 'settled' || state.status === 'error')) {
+            cardsRaced++;
+            console.log(
+              `[SettleCards] Race detected while writing error for card ${pendingCard.card_id}; row now ${state.status}`,
+            );
           } else {
             cardsSkipped++;
-            console.log(
-              `[SettleCards] Skipping error update for already-settled card ${pendingCard.card_id}`,
+            console.warn(
+              `[SettleCards] Could not classify error outcome for card ${pendingCard.card_id}; row state: ${JSON.stringify(
+                state || null,
+              )}`,
             );
           }
         }
       }
 
       const eligibleCount = pendingRows.length;
-      const impliedSkipped = Math.max(0, eligibleCount - cardsSettled - cardsErrored);
-      const totalSkipped = Math.max(cardsSkipped, impliedSkipped);
+      const accountedCount =
+        cardsSettled + cardsErrored + cardsRaced + cardsSkipped;
+      if (accountedCount < eligibleCount) {
+        const residual = eligibleCount - accountedCount;
+        cardsSkipped += residual;
+        console.warn(
+          `[SettleCards] Added ${residual} residual eligible rows to skipped to keep telemetry balanced`,
+        );
+      } else if (accountedCount > eligibleCount) {
+        console.warn(
+          `[SettleCards] Accounted rows exceed eligible rows (${accountedCount}/${eligibleCount}); inspect settlement telemetry`,
+        );
+      }
+      const totalSkipped = cardsSkipped;
       console.log(
-        `[SettleCards] Step 1 complete — pending: ${coverageBefore.totalPending}, eligible: ${eligibleCount}, settled: ${cardsSettled}, errored: ${cardsErrored}, skipped: ${totalSkipped}`,
+        `[SettleCards] Step 1 complete — pending: ${coverageBefore.totalPending}, eligible: ${eligibleCount}, settled: ${cardsSettled}, errored: ${cardsErrored}, raced: ${cardsRaced}, skipped: ${totalSkipped}`,
       );
 
       // --- Step 2: Increment tracking_stats (race-safe) ---
@@ -661,7 +727,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         `[SettleCards] Coverage after — pending: ${coverageAfter.totalPending}, settledFinalDisplayed: ${coverageAfter.settledDisplayedFinal}, missingResults: ${coverageAfter.finalDisplayedMissingResults}, unsettledFinalDisplayed: ${coverageAfter.finalDisplayedUnsettled}`,
       );
       console.log(
-        `[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, cardsArchived: ${cardsArchived}, statsIncremented: ${statsIncremented}`,
+        `[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, cardsRaced: ${cardsRaced}, cardsSkipped: ${totalSkipped}, cardsArchived: ${cardsArchived}, statsIncremented: ${statsIncremented}`,
       );
 
       return {
@@ -670,6 +736,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         jobKey,
         cardsSettled,
         cardsErrored,
+        cardsRaced,
         cardsSkipped: totalSkipped,
         cardsArchived,
         statsIncremented,
@@ -677,6 +744,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           pending: coverageBefore.totalPending,
           eligible: eligibleCount,
           settled: cardsSettled,
+          raced: cardsRaced,
           skipped: totalSkipped,
           displayBackfilled: backfilledDisplayed,
           before: coverageBefore,

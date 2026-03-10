@@ -40,6 +40,27 @@ async function run() {
       `Summary missing ${key}`,
     );
   });
+  ['totalCards', 'settledCards', 'wins', 'losses', 'pushes', 'winRate'].forEach(
+    (key) => {
+      assert.strictEqual(
+        typeof summary[key],
+        'number',
+        `Summary ${key} must be numeric`,
+      );
+    },
+  );
+  assert.ok(
+    summary.totalPnlUnits === null || typeof summary.totalPnlUnits === 'number',
+    'Summary totalPnlUnits must be number|null',
+  );
+  assert.ok(
+    summary.avgPnl === null || typeof summary.avgPnl === 'number',
+    'Summary avgPnl must be number|null',
+  );
+  assert.ok(
+    summary.wins + summary.losses + summary.pushes <= summary.settledCards,
+    'Summary W/L/P counts cannot exceed settledCards',
+  );
 
   assert.ok(Array.isArray(payload.data.segments), 'Segments is not an array');
   assert.ok(Array.isArray(payload.data.ledger), 'Ledger is not an array');

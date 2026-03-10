@@ -438,7 +438,9 @@ After fixing, verify locally on the Pi:
 ```bash
 curl -s http://localhost:3000/api/results | python3 -c "
 import sys,json; d=json.load(sys.stdin); s=d['data']['summary']
-print(f'settled: {s[\"settledCards\"]}, wins: {s[\"wins\"]}')
+p=s.get('totalPnlUnits')
+p_txt=round(p,2) if isinstance(p,(int,float)) else 'N/A'
+print(f'settled: {s[\"settledCards\"]}, record: {s[\"wins\"]}-{s[\"losses\"]}-{s[\"pushes\"]}, pnl(optional): {p_txt}')
 "
 ```
 
@@ -699,7 +701,13 @@ ssh babycheeses11@192.168.200.198 "sudo systemctl restart cheddar-web cheddar-wo
 Settlement runs automatically via the worker scheduler:
 
 - **Hourly sweep**: runs once per hour (during first 5 minutes by default)
-- **Nightly sweep**: runs at **02:00 ET** (includes backfill)
+- **Nightly sweep**: runs at **02:00 ET** (strict display-log mode)
+
+Display-log contract:
+
+- `settle_pending_cards` grades only rows that already exist in `card_display_log`.
+- Automatic payload-to-display backfill is disabled by default.
+- Emergency override only: `CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL=true`.
 
 **Why games may not be settled:**
 
@@ -730,9 +738,16 @@ settlePendingCards({ jobKey: null, dryRun: false })
 ```bash
 curl -s https://cheddarlogic.com/api/results | python3 -c "
 import sys,json; d=json.load(sys.stdin); s=d['data']['summary']
-print(f'settled: {s[\"settledCards\"]}, wins: {s[\"wins\"]}, losses: {s[\"losses\"]}, pnl: {round(s[\"totalPnlUnits\"],2)}')
+p=s.get('totalPnlUnits')
+p_txt=round(p,2) if isinstance(p,(int,float)) else 'N/A'
+print(f'settled: {s[\"settledCards\"]}, record: {s[\"wins\"]}-{s[\"losses\"]}-{s[\"pushes\"]}, pnl(optional): {p_txt}')
 "
 ```
+
+W/L-first interpretation:
+
+- Treat `wins/losses/pushes` and `settledCards` as primary health signals.
+- `totalPnlUnits` may be `null`; this is non-blocking when settlement counts are coherent.
 
 ---
 

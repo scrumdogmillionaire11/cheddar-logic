@@ -10,9 +10,9 @@ type ResultsSummary = {
   wins: number;
   losses: number;
   pushes: number;
-  totalPnlUnits: number;
+  totalPnlUnits: number | null;
   winRate: number;
-  avgPnl: number;
+  avgPnl: number | null;
 };
 
 type SegmentRow = {
@@ -23,7 +23,7 @@ type SegmentRow = {
   wins: number;
   losses: number;
   pushes: number;
-  totalPnlUnits: number;
+  totalPnlUnits: number | null;
 };
 
 type LedgerRow = {
@@ -213,26 +213,30 @@ export default function ResultsPage() {
 
   const summaryCards = useMemo(() => {
     const isValidSummary = summary && typeof summary.totalCards === 'number';
+    const record =
+      summary
+        ? `${summary.wins}-${summary.losses}${summary.pushes > 0 ? `-${summary.pushes}` : ''}`
+        : 'N/A';
     return [
       {
-        label: 'ROI (units)',
-        value: isValidSummary ? formatUnits(summary.totalPnlUnits) : 'N/A',
-        note: 'Logged plays only',
+        label: 'Record (W-L-P)',
+        value: record,
+        note: 'Graded outcomes',
       },
       {
         label: 'Win Rate',
         value: isValidSummary ? formatPercent(summary.winRate) : 'N/A',
-        note: 'Graded outcomes',
+        note: 'Wins vs losses',
       },
       {
-        label: 'Total Settled Plays',
-        value: isValidSummary ? String(summary.totalCards) : 'N/A',
-        note: 'Graded with outcomes',
+        label: 'Settled Plays',
+        value: isValidSummary ? String(summary.settledCards) : 'N/A',
+        note: 'Resolved cards',
       },
       {
-        label: 'Avg Edge',
-        value: 'N/A',
-        note: 'At call time',
+        label: 'ROI (units)',
+        value: isValidSummary ? formatUnits(summary.totalPnlUnits) : 'N/A',
+        note: 'Optional P/L',
       },
     ];
   }, [summary]);
@@ -306,16 +310,14 @@ export default function ResultsPage() {
 
         <section className="sticky top-0 z-10 mb-6 rounded-xl border border-white/10 bg-night/85 px-4 py-3 backdrop-blur md:hidden">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-cloud/70">Today</span>
-            <span
-              className={`font-semibold ${roiTextClass(summary?.totalPnlUnits)}`}
-            >
-              {summary ? formatUnits(summary.totalPnlUnits) : 'N/A'}
-            </span>
+            <span className="text-cloud/70">Record</span>
+            <span className="font-semibold text-cloud">{mobileRecord}</span>
           </div>
           <div className="mt-1 flex items-center justify-between text-xs text-cloud/60">
-            <span>Record</span>
-            <span>{mobileRecord}</span>
+            <span>ROI (optional)</span>
+            <span className={roiTextClass(summary?.totalPnlUnits)}>
+              {summary ? formatUnits(summary.totalPnlUnits) : 'N/A'}
+            </span>
           </div>
         </section>
 
