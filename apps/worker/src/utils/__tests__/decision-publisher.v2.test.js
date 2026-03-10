@@ -103,6 +103,29 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.classification).toBe('BASE');
   });
 
+  test('preserves additive pipeline_state metadata', () => {
+    const pipelineState = {
+      ingested: true,
+      team_mapping_ok: true,
+      odds_ok: true,
+      market_lines_ok: true,
+      projection_ready: true,
+      drivers_ready: true,
+      pricing_ready: true,
+      card_ready: false,
+      blocking_reason_codes: [],
+    };
+    const payload = buildWave1Payload({
+      pipeline_state: pipelineState,
+    });
+
+    applyUiActionFields(payload);
+
+    expect(payload.pipeline_state).toEqual(pipelineState);
+    expect(payload.decision_v2).toBeDefined();
+    expect(payload.decision_v2.official_status).toBe('PLAY');
+  });
+
   test('synthesizes required consistency fields when missing', () => {
     const payload = buildWave1Payload({
       consistency: {

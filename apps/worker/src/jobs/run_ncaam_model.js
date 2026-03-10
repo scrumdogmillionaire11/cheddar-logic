@@ -38,8 +38,11 @@ const {
   formatStartTimeLocal,
   formatCountdown,
   buildMarketFromOdds,
+  buildPipelineState,
+  collectDecisionReasonCodes,
   edgeCalculator,
   marginToWinProbability,
+  WATCHDOG_REASONS,
 } = require('@cheddar-logic/models');
 const {
   publishDecisionForCard,
@@ -88,6 +91,99 @@ function normalizeRawDataPayload(rawData) {
     }
   }
   return rawData;
+}
+
+function hasFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function hasMoneylineOdds(oddsSnapshot) {
+  const homePrice = oddsSnapshot?.h2h_home ?? oddsSnapshot?.moneyline_home;
+  const awayPrice = oddsSnapshot?.h2h_away ?? oddsSnapshot?.moneyline_away;
+  return hasFiniteNumber(homePrice) && hasFiniteNumber(awayPrice);
+}
+
+function hasSpreadOdds(oddsSnapshot) {
+  return (
+    hasFiniteNumber(oddsSnapshot?.spread_home) &&
+    hasFiniteNumber(oddsSnapshot?.spread_away) &&
+    hasFiniteNumber(oddsSnapshot?.spread_price_home) &&
+    hasFiniteNumber(oddsSnapshot?.spread_price_away)
+  );
+}
+
+function hasTotalOdds(oddsSnapshot) {
+  return (
+    hasFiniteNumber(oddsSnapshot?.total) &&
+    hasFiniteNumber(oddsSnapshot?.total_price_over) &&
+    hasFiniteNumber(oddsSnapshot?.total_price_under)
+  );
+}
+
+function buildGamePipelineState({
+  oddsSnapshot,
+  projectionReady,
+  driversReady,
+  pricingReady,
+  cardReady,
+  blockingReasonCodes = [],
+}) {
+  const teamMappingOk = Boolean(oddsSnapshot?.home_team && oddsSnapshot?.away_team);
+  const marketLinesOk =
+    hasMoneylineOdds(oddsSnapshot) ||
+    hasSpreadOdds(oddsSnapshot) ||
+    hasTotalOdds(oddsSnapshot);
+
+  return buildPipelineState({
+    ingested: Boolean(oddsSnapshot),
+    team_mapping_ok: teamMappingOk,
+    odds_ok: Boolean(oddsSnapshot?.captured_at) && marketLinesOk,
+    market_lines_ok: marketLinesOk,
+    projection_ready: projectionReady === true,
+    drivers_ready: driversReady === true,
+    pricing_ready: pricingReady === true,
+    card_ready: cardReady === true,
+    blocking_reason_codes: blockingReasonCodes,
+  });
+}
+
+function deriveGameBlockingReasonCodes({
+  oddsSnapshot,
+  projectionReady,
+  pricingReady,
+  cards = [],
+}) {
+  const reasonCodes = [];
+  const hasTeamMapping = Boolean(oddsSnapshot?.home_team && oddsSnapshot?.away_team);
+  const hasMarketLines =
+    hasMoneylineOdds(oddsSnapshot) ||
+    hasSpreadOdds(oddsSnapshot) ||
+    hasTotalOdds(oddsSnapshot);
+
+  if (!hasTeamMapping) {
+    reasonCodes.push(WATCHDOG_REASONS.CONSISTENCY_MISSING);
+  }
+
+  if (!hasMarketLines) {
+    reasonCodes.push(WATCHDOG_REASONS.MARKET_UNAVAILABLE);
+  }
+
+  if (projectionReady === false) {
+    reasonCodes.push(WATCHDOG_REASONS.CONSISTENCY_MISSING);
+  }
+
+  if (pricingReady === false) {
+    cards.forEach((card) => {
+      reasonCodes.push(...collectDecisionReasonCodes(card?.payloadData));
+    });
+  }
+
+  return reasonCodes;
+}
+
+function canPriceCard(card) {
+  const sharpPriceStatus = card?.payloadData?.decision_v2?.sharp_price_status;
+  return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
 }
 
 /**
@@ -227,10 +323,12 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       let gameErrorCount = 0;
       let skippedRaceCount = 0;
       let projectionBlockedCount = 0;
+      const gamePipelineStates = {};
 
       // Process each game independently. Missing signals for one game should not
       // block card generation for other games.
       for (const gameId of gameIds) {
+        const queuedOddsSnapshot = gameOdds[gameId];
         // Scope the per-game race guard to the current parent run so that each
         // new model invocation can reprocess games. Using jobRunId (unique per run)
         // prevents two concurrent instances of the same run from double-processing a
@@ -239,6 +337,13 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
         const gameJobRunId = `job-ncaam-game-${gameId}-${jobRunId.slice(-8)}`;
         
         if (!shouldRunJobKey(gameJobKey)) {
+          gamePipelineStates[gameId] = buildGamePipelineState({
+            oddsSnapshot: queuedOddsSnapshot,
+            projectionReady: false,
+            driversReady: false,
+            pricingReady: false,
+            cardReady: false,
+          });
           console.log(`  [RaceGuard] Skipping ${gameId} — job key already running or successful`);
           skippedRaceCount++;
           continue;
@@ -248,6 +353,13 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
           insertJobRun('run_ncaam_model_game', gameJobRunId, gameJobKey);
         } catch (claimError) {
           if (claimError.code === 'JOB_RUN_ALREADY_CLAIMED') {
+            gamePipelineStates[gameId] = buildGamePipelineState({
+              oddsSnapshot: queuedOddsSnapshot,
+              projectionReady: false,
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+            });
             console.log(`  [RaceGuard] Skipping ${gameId} — another process claimed model job`);
             skippedRaceCount++;
             continue;
@@ -278,6 +390,18 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
           const projectionGate = assessProjectionInputs('NCAAM', oddsSnapshot);
           if (!projectionGate.projection_inputs_complete) {
             projectionBlockedCount++;
+            gamePipelineStates[gameId] = buildGamePipelineState({
+              oddsSnapshot,
+              projectionReady: false,
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+              blockingReasonCodes: deriveGameBlockingReasonCodes({
+                oddsSnapshot,
+                projectionReady: false,
+                pricingReady: false,
+              }),
+            });
             console.log(
               `  [gate] ${gameId}: PROJECTION_INPUTS_INCOMPLETE (${projectionGate.missing_inputs.join(', ')})`,
             );
@@ -287,6 +411,18 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
           const driverCards = computeNCAAMDriverCards(gameId, oddsSnapshot);
           if (driverCards.length === 0) {
             noSignalCount++;
+            gamePipelineStates[gameId] = buildGamePipelineState({
+              oddsSnapshot,
+              projectionReady: true,
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+              blockingReasonCodes: deriveGameBlockingReasonCodes({
+                oddsSnapshot,
+                projectionReady: true,
+                pricingReady: false,
+              }),
+            });
             console.warn(
               `  [skip] ${gameId}: No actionable NCAAM driver signals`,
             );
@@ -306,6 +442,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
           }
 
           const cards = generateNCAAMCards(gameId, driverCards, oddsSnapshot);
+          const pendingCards = [];
 
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
@@ -333,16 +470,48 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
 
             applyUiActionFields(card.payloadData, { oddsSnapshot });
             attachRunId(card, jobRunId);
-            insertCardPayload(card);
-            cardsGenerated++;
-            console.log(
-              `  [ok] ${gameId} [${card.cardType}/${card.payloadData.market_type}]: ` +
+            pendingCards.push({
+              card,
+              logLine:
+                `  [ok] ${gameId} [${card.cardType}/${card.payloadData.market_type}]: ` +
                 `${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
-            );
+            });
+          }
+
+          const pricingReady = pendingCards.some((entry) => canPriceCard(entry.card));
+          const pipelineState = buildGamePipelineState({
+            oddsSnapshot,
+            projectionReady: true,
+            driversReady: true,
+            pricingReady,
+            cardReady: pendingCards.length > 0,
+            blockingReasonCodes: deriveGameBlockingReasonCodes({
+              oddsSnapshot,
+              projectionReady: true,
+              pricingReady,
+              cards: pendingCards.map((entry) => entry.card),
+            }),
+          });
+          gamePipelineStates[gameId] = pipelineState;
+
+          for (const entry of pendingCards) {
+            entry.card.payloadData.pipeline_state = pipelineState;
+            insertCardPayload(entry.card);
+            cardsGenerated++;
+            console.log(entry.logLine);
           }
           markJobRunSuccess(gameJobRunId);
         } catch (gameError) {
           gameErrorCount++;
+          if (!gamePipelineStates[gameId]) {
+            gamePipelineStates[gameId] = buildGamePipelineState({
+              oddsSnapshot: queuedOddsSnapshot,
+              projectionReady: false,
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+            });
+          }
           console.error(`  [error] ${gameId}: ${gameError.message}`);
           try {
             markJobRunFailure(gameJobRunId, gameError.message);
@@ -388,7 +557,18 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       console.log(
         `[NCAAMModel] Decision gate: ${gatedCount} gated, ${blockedCount} blocked`,
       );
-      markJobRunSuccess(jobRunId);
+      const summary = {
+        cardsGenerated,
+        noSignalCount,
+        gameErrorCount,
+        skippedRaceCount,
+        projectionBlockedCount,
+        pipeline_states: gamePipelineStates,
+      };
+      console.log(
+        `[NCAAMModel] Pipeline states: ${JSON.stringify(gamePipelineStates)}`,
+      );
+      markJobRunSuccess(jobRunId, summary);
       try {
         setCurrentRunId(jobRunId, 'ncaam');
       } catch (runStateError) {
@@ -397,7 +577,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
         );
       }
 
-      return { success: true, jobRunId, cardsGenerated };
+  return { success: true, jobRunId, ...summary };
     } catch (error) {
       if (error.code === 'JOB_RUN_ALREADY_CLAIMED') {
         console.log(
