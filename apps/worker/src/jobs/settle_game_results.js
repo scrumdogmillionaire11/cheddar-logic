@@ -67,6 +67,61 @@ const NCAAM_FUZZY_MATCH_MAX_DELTA_MINUTES = 180;
 const NCAAM_FUZZY_MIN_TEAM_SIMILARITY = 0.75;
 const NCAAM_FUZZY_MIN_AVG_SIMILARITY = 0.86;
 
+function getPendingGameCoverageDiagnostics(db, cutoffUtc) {
+  const totalPendingGamesRow = db
+    .prepare(
+      `
+      SELECT COUNT(DISTINCT g.game_id) AS count
+      FROM games g
+      INNER JOIN card_results cr ON cr.game_id = g.game_id
+      WHERE g.game_time_utc < ?
+        AND cr.status = 'pending'
+        AND g.game_id NOT IN (
+          SELECT game_id FROM game_results WHERE status = 'final'
+        )
+    `,
+    )
+    .get(cutoffUtc);
+
+  const displayedPendingGamesRow = db
+    .prepare(
+      `
+      SELECT COUNT(DISTINCT g.game_id) AS count
+      FROM games g
+      INNER JOIN card_results cr ON cr.game_id = g.game_id
+      INNER JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+      WHERE g.game_time_utc < ?
+        AND cr.status = 'pending'
+        AND g.game_id NOT IN (
+          SELECT game_id FROM game_results WHERE status = 'final'
+        )
+    `,
+    )
+    .get(cutoffUtc);
+
+  const displayedPendingCardsRow = db
+    .prepare(
+      `
+      SELECT COUNT(DISTINCT cr.id) AS count
+      FROM games g
+      INNER JOIN card_results cr ON cr.game_id = g.game_id
+      INNER JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+      WHERE g.game_time_utc < ?
+        AND cr.status = 'pending'
+        AND g.game_id NOT IN (
+          SELECT game_id FROM game_results WHERE status = 'final'
+        )
+    `,
+    )
+    .get(cutoffUtc);
+
+  return {
+    totalPendingGames: Number(totalPendingGamesRow?.count || 0),
+    displayedPendingGames: Number(displayedPendingGamesRow?.count || 0),
+    displayedPendingCards: Number(displayedPendingCardsRow?.count || 0),
+  };
+}
+
 function normalizeTeamName(name) {
   if (!name) return '';
   return String(name)
@@ -448,6 +503,10 @@ async function settleGameResults({
       const cutoffUtc = new Date(
         now.getTime() - safeHoursAfterStart * 60 * 60 * 1000,
       ).toISOString();
+      const coverageBefore = getPendingGameCoverageDiagnostics(db, cutoffUtc);
+      console.log(
+        `[SettleGames] Coverage before — pendingGames: ${coverageBefore.totalPendingGames}, displayedPendingGames: ${coverageBefore.displayedPendingGames}, displayedPendingCards: ${coverageBefore.displayedPendingCards}`,
+      );
 
       // Query only games with pending cards, past cutoff, and not yet final.
       // This narrows blast radius and avoids settling schedule-only rows.
@@ -458,9 +517,10 @@ async function settleGameResults({
           g.home_team,
           g.away_team,
           g.game_time_utc,
-          COUNT(cr.id) AS pending_card_count
+          COUNT(DISTINCT cr.id) AS pending_card_count
         FROM games g
         INNER JOIN card_results cr ON cr.game_id = g.game_id
+        INNER JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
         WHERE g.game_time_utc < ?
           AND cr.status = 'pending'
           AND g.game_id NOT IN (
@@ -817,6 +877,7 @@ if (require.main === module) {
 module.exports = {
   settleGameResults,
   __private: {
+    getPendingGameCoverageDiagnostics,
     normalizeTeamName,
     canonicalizeTeamToken,
     teamTokenSet,

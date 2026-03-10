@@ -190,6 +190,84 @@ Incident rule:
 
 Note: Vercel/Cloudflare static chunk 404 incidents are delivery-layer issues, not decision-contract logic.
 
+### Settlement verification (display -> results parity)
+
+Use this when validating that every displayed play is eligible for settlement and appears on `/api/results`.
+
+```bash
+# 0) Load canonical DB env on Pi
+set -a; source /opt/cheddar-logic/.env.production; set +a
+
+# 1) Displayed plays in the last 2 hours
+sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT COUNT(*) AS displayed_last_2h
+FROM card_display_log
+WHERE displayed_at >= datetime('now', '-2 hours');
+"
+
+# 2) Pending results that are display-backed
+sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT COUNT(*) AS pending_displayed
+FROM card_results
+WHERE status = 'pending'
+  AND card_id IN (SELECT pick_id FROM card_display_log);
+"
+
+# 3) Run settlement jobs
+npm --prefix apps/worker run job:settle-games
+npm --prefix apps/worker run job:settle-cards
+
+# 4) Settled results for recently displayed plays
+sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT COUNT(*) AS settled_displayed_last_2h
+FROM card_results
+WHERE status = 'settled'
+  AND card_id IN (
+    SELECT pick_id
+    FROM card_display_log
+    WHERE displayed_at >= datetime('now', '-2 hours')
+  );
+"
+
+# 5) Reconciliation count (must be 0)
+sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT COUNT(*) AS final_displayed_missing_result
+FROM card_display_log cdl
+LEFT JOIN card_results cr ON cdl.pick_id = cr.card_id
+WHERE cr.id IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM game_results gr
+    WHERE gr.game_id = cdl.game_id
+      AND gr.status = 'final'
+  );
+"
+
+# 6) Detailed orphan listing (must return no rows)
+sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT cdl.pick_id, cdl.game_id, cdl.sport
+FROM card_display_log cdl
+LEFT JOIN card_results cr ON cdl.pick_id = cr.card_id
+WHERE cr.id IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM game_results gr
+    WHERE gr.game_id = cdl.game_id
+      AND gr.status = 'final'
+  );
+"
+
+# 7) API parity smoke
+curl -s http://localhost:3000/api/results | jq '.data.meta'
+curl -sI http://localhost:3000/api/results | grep -i '^x-settlement-coverage:'
+```
+
+Expected relationships:
+
+- `final_displayed_missing_result` is always `0`.
+- For the same recent window, `displayed_last_2h = pending_displayed + settled_displayed_last_2h`.
+- `/api/results` remains display-log scoped (no phantom rows outside `card_display_log`).
+
 ### DB path drop-in precedence (critical)
 
 `CHEDDAR_DB_PATH` for both services must come from exactly one drop-in per unit:
