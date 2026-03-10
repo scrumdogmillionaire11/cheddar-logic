@@ -32,14 +32,21 @@ const LEAGUE_AVG_PK_PCT = 0.8;
 const HOME_ICE_ADVANTAGE = 1.03; // CALIBRATED: Was 1.05, reduced to address UNDER bias
 const REST_B2B_PENALTY = 0.95; // goals * 0.95 for B2B team
 const REST_EXTENDED_BOOST = 1.02; // 3+ days rest
-const PACE_DAMPENING = 0.5; // dampened multiplicative: 1 + (raw-1)*0.5
+const PACE_DAMPENING = 0.4; // dampened multiplicative: 1 + (raw-1)*0.4
 const DEFENSE_DAMPENING = 0.5;
-const PP_GOAL_SCALE = 0.035;
-const GOALIE_ADJ_SCALE = 3.0;  // Reduced from 5.0 — was producing ±25% swings per goalie
-const GOALIE_ADJ_MIN = 0.82;  // Tighter floor (was 0.75)
-const GOALIE_ADJ_MAX = 1.18;  // Tighter ceiling (was 1.25)
+const PP_GOAL_SCALE = 0.02;
+const GOALIE_ADJ_SCALE = 2.0; // Tighter goalie influence to avoid runaway totals
+const GOALIE_ADJ_MIN = 0.88;
+const GOALIE_ADJ_MAX = 1.12;
 const FIRST_PERIOD_FACTOR = 0.3; // 30% of full game goals in 1P
 const GOALS_L5_WEIGHT = 0.3; // 30% recent, 70% season
+const NHL_TOTAL_BASELINE = 6.05;
+const TOTAL_REGRESSION_K = 0.55;
+const TOTAL_FLOOR = 5.0;
+const TOTAL_CEILING = 7.3;
+const MODIFIER_CAP_ABS = 0.7;
+const ONE_P_TOTAL_FLOOR = 1.4;
+const ONE_P_TOTAL_CEILING = 2.3;
 
 // ============================================================================
 // Helpers
@@ -61,6 +68,20 @@ function clamp(value, min, max) {
 function goalieAdjFactor(savePct) {
   const svDiff = savePct - LEAGUE_AVG_SAVE_PCT;
   return clamp(1.0 - svDiff * GOALIE_ADJ_SCALE, GOALIE_ADJ_MIN, GOALIE_ADJ_MAX);
+}
+
+function normalizeGoalieCertainty(certainty, confirmedFallback) {
+  const token = String(certainty || '').toUpperCase();
+  if (token === 'CONFIRMED') return 'CONFIRMED';
+  if (token === 'EXPECTED') return 'EXPECTED';
+  if (token === 'UNKNOWN') return 'UNKNOWN';
+  return confirmedFallback ? 'CONFIRMED' : 'UNKNOWN';
+}
+
+function goalieCertaintyMultiplier(certainty) {
+  if (certainty === 'CONFIRMED') return 1.0;
+  if (certainty === 'EXPECTED') return 0.5;
+  return 0.0;
 }
 
 // ============================================================================
@@ -88,6 +109,8 @@ function goalieAdjFactor(savePct) {
  * @param {number|null} opts.awayGoalieSavePct
  * @param {boolean}     opts.homeGoalieConfirmed
  * @param {boolean}     opts.awayGoalieConfirmed
+ * @param {'CONFIRMED'|'EXPECTED'|'UNKNOWN'|null} opts.homeGoalieCertainty
+ * @param {'CONFIRMED'|'EXPECTED'|'UNKNOWN'|null} opts.awayGoalieCertainty
  * @param {boolean}     opts.homeB2B         - home team on back-to-back
  * @param {boolean}     opts.awayB2B
  * @param {number|null} opts.restDaysHome    - days since last game (3+ = extended rest)
@@ -115,6 +138,8 @@ function predictNHLGame(opts) {
     awayGoalieSavePct = null,
     homeGoalieConfirmed = false,
     awayGoalieConfirmed = false,
+    homeGoalieCertainty = null,
+    awayGoalieCertainty = null,
     homeB2B = false,
     awayB2B = false,
     restDaysHome = null,
@@ -131,6 +156,14 @@ function predictNHLGame(opts) {
   }
 
   const adjustments = { home: {}, away: {} };
+  const homeCertainty = normalizeGoalieCertainty(
+    homeGoalieCertainty,
+    homeGoalieConfirmed,
+  );
+  const awayCertainty = normalizeGoalieCertainty(
+    awayGoalieCertainty,
+    awayGoalieConfirmed,
+  );
 
   // ---- 1. Base offensive ratings — blend L5 with season (if L5 > 0.5) ----
   let homeOffRating = homeGoalsFor;
@@ -200,6 +233,17 @@ function predictNHLGame(opts) {
     }
   }
 
+  // Keep a strict 5v5/base checkpoint before additive modifiers.
+  const baseHomeGoals = homeGoals;
+  const baseAwayGoals = awayGoals;
+  const base5v5Total = baseHomeGoals + baseAwayGoals;
+
+  let specialTeamsDelta = 0;
+  let homeIceDelta = 0;
+  let restDelta = 0;
+  let goalieDeltaRaw = 0;
+  let goalieDeltaApplied = 0;
+
   // ---- 4. PP/PK matchup (only when all 4 values present) ----
   const hasPpPk =
     homePpPct !== null &&
@@ -207,6 +251,7 @@ function predictNHLGame(opts) {
     homePkPct !== null &&
     awayPkPct !== null;
   if (hasPpPk) {
+    const beforePp = homeGoals + awayGoals;
     const homePpEdge =
       homePpPct - LEAGUE_AVG_PP_PCT + (1 - awayPkPct - (1 - LEAGUE_AVG_PK_PCT));
     const awayPpEdge =
@@ -222,13 +267,17 @@ function predictNHLGame(opts) {
       awayGoals *= awayPpBoost;
       adjustments.away.pp_pk_matchup = awayPpBoost;
     }
+    specialTeamsDelta = homeGoals + awayGoals - beforePp;
   }
 
   // ---- 5. Home ice advantage ----
+  const beforeHomeIce = homeGoals + awayGoals;
   homeGoals *= HOME_ICE_ADVANTAGE;
   adjustments.home.home_ice = HOME_ICE_ADVANTAGE;
+  homeIceDelta = homeGoals + awayGoals - beforeHomeIce;
 
   // ---- 6. B2B penalty ----
+  const beforeRest = homeGoals + awayGoals;
   if (homeB2B) {
     homeGoals *= REST_B2B_PENALTY;
     adjustments.home.back_to_back = REST_B2B_PENALTY;
@@ -247,37 +296,88 @@ function predictNHLGame(opts) {
     awayGoals *= REST_EXTENDED_BOOST;
     adjustments.away.extended_rest = REST_EXTENDED_BOOST;
   }
+  restDelta = homeGoals + awayGoals - beforeRest;
 
   // ---- 8. Goalie adjustment (goalie affects OPPONENT's goals) ----
-  // Only apply when the goalie is confirmed — prevents math from running on
-  // proxy-inferred or unconfirmed starters (FM-07: HOLD doesn't fix corrupted math).
-  if (homeGoalieSavePct !== null && homeGoalieConfirmed) {
-    const factor = goalieAdjFactor(homeGoalieSavePct);
-    awayGoals *= factor; // home goalie reduces away scoring
-    adjustments.away.opponent_goalie = factor;
+  // Unknown = no directional effect. Expected = half effect.
+  const homeGoalieMultiplier = goalieCertaintyMultiplier(homeCertainty);
+  if (homeGoalieSavePct !== null && homeGoalieMultiplier > 0) {
+    const rawFactor = goalieAdjFactor(homeGoalieSavePct);
+    const appliedFactor = 1 + (rawFactor - 1) * homeGoalieMultiplier;
+    const beforeAway = awayGoals;
+    goalieDeltaRaw += beforeAway * (rawFactor - 1);
+    goalieDeltaApplied += beforeAway * (appliedFactor - 1);
+    awayGoals *= appliedFactor; // home goalie reduces away scoring
+    adjustments.away.opponent_goalie = appliedFactor;
   }
-  if (awayGoalieSavePct !== null && awayGoalieConfirmed) {
-    const factor = goalieAdjFactor(awayGoalieSavePct);
-    homeGoals *= factor; // away goalie reduces home scoring
-    adjustments.home.opponent_goalie = factor;
+  const awayGoalieMultiplier = goalieCertaintyMultiplier(awayCertainty);
+  if (awayGoalieSavePct !== null && awayGoalieMultiplier > 0) {
+    const rawFactor = goalieAdjFactor(awayGoalieSavePct);
+    const appliedFactor = 1 + (rawFactor - 1) * awayGoalieMultiplier;
+    const beforeHome = homeGoals;
+    goalieDeltaRaw += beforeHome * (rawFactor - 1);
+    goalieDeltaApplied += beforeHome * (appliedFactor - 1);
+    homeGoals *= appliedFactor; // away goalie reduces home scoring
+    adjustments.home.opponent_goalie = appliedFactor;
   }
 
-  // ---- 9. Expected total + 1P ----
+  // ---- 8b. Cap stacked modifier impact to prevent additive runaway ----
+  const rawModifiedTotal = homeGoals + awayGoals;
+  const rawModifierTotal = rawModifiedTotal - base5v5Total;
+  const cappedModifierTotal = clamp(
+    rawModifierTotal,
+    -MODIFIER_CAP_ABS,
+    MODIFIER_CAP_ABS,
+  );
+  const modifierCapApplied = cappedModifierTotal !== rawModifierTotal;
+  if (modifierCapApplied && rawModifiedTotal > 0) {
+    const cappedTotal = base5v5Total + cappedModifierTotal;
+    const scaleToCapped = cappedTotal / rawModifiedTotal;
+    homeGoals *= scaleToCapped;
+    awayGoals *= scaleToCapped;
+  }
+
+  // ---- 9. Regress + clamp full-game total to sane NHL range ----
+  const rawTotalModel = homeGoals + awayGoals;
+  const regressedTotalModel =
+    NHL_TOTAL_BASELINE +
+    TOTAL_REGRESSION_K * (rawTotalModel - NHL_TOTAL_BASELINE);
+  const finalTotalPreMarket = clamp(
+    regressedTotalModel,
+    TOTAL_FLOOR,
+    TOTAL_CEILING,
+  );
+  const totalClampedHigh = finalTotalPreMarket >= TOTAL_CEILING;
+  const totalClampedLow = finalTotalPreMarket <= TOTAL_FLOOR;
+  const scaleToFinalTotal = rawTotalModel > 0 ? finalTotalPreMarket / rawTotalModel : 1;
+  homeGoals *= scaleToFinalTotal;
+  awayGoals *= scaleToFinalTotal;
+
+  // ---- 10. Expected total + 1P ----
   const homeExpected = Math.round(homeGoals * 1000) / 1000;
   const awayExpected = Math.round(awayGoals * 1000) / 1000;
   const expectedTotal = Math.round((homeGoals + awayGoals) * 1000) / 1000;
-  const expected1pTotal =
-    Math.round((homeGoals + awayGoals) * FIRST_PERIOD_FACTOR * 1000) / 1000;
+  const rawExpected1pTotal = (homeGoals + awayGoals) * FIRST_PERIOD_FACTOR;
+  const expected1pTotal = Math.round(
+    clamp(rawExpected1pTotal, ONE_P_TOTAL_FLOOR, ONE_P_TOTAL_CEILING) * 1000,
+  ) / 1000;
 
-  // ---- 10. Confidence (0.55–0.80) ----
+  // ---- 11. Confidence (0.55–0.80) ----
   let confidence = 0.6;
-  if (homeGoalieConfirmed && awayGoalieConfirmed) confidence += 0.05;
+  if (homeCertainty === 'CONFIRMED' && awayCertainty === 'CONFIRMED') {
+    confidence += 0.05;
+  } else if (homeCertainty === 'EXPECTED' || awayCertainty === 'EXPECTED') {
+    confidence += 0.02;
+  }
   if (hasPpPk) confidence += 0.05;
   if (l5Blended) confidence += 0.03;
   confidence = clamp(confidence, 0.55, 0.8);
-  const goalieConfidenceCapped = !(homeGoalieConfirmed && awayGoalieConfirmed);
+  const goalieConfidenceCapped =
+    homeCertainty === 'UNKNOWN' || awayCertainty === 'UNKNOWN';
   if (goalieConfidenceCapped) {
     confidence = Math.min(confidence, 0.35);
+  } else if (homeCertainty !== 'CONFIRMED' || awayCertainty !== 'CONFIRMED') {
+    confidence = Math.min(confidence, 0.5);
   }
 
   return {
@@ -285,9 +385,27 @@ function predictNHLGame(opts) {
     awayExpected,
     expectedTotal,
     expected1pTotal,
-    homeGoalieConfirmed,
-    awayGoalieConfirmed,
+    homeGoalieConfirmed: homeCertainty === 'CONFIRMED',
+    awayGoalieConfirmed: awayCertainty === 'CONFIRMED',
+    homeGoalieCertainty: homeCertainty,
+    awayGoalieCertainty: awayCertainty,
     goalieConfidenceCapped,
+    rawTotalModel: Math.round(rawTotalModel * 1000) / 1000,
+    regressedTotalModel: Math.round(regressedTotalModel * 1000) / 1000,
+    totalClampedHigh,
+    totalClampedLow,
+    modifierCapApplied,
+    modifierBreakdown: {
+      base_5v5_total: Math.round(base5v5Total * 1000) / 1000,
+      special_teams_delta: Math.round(specialTeamsDelta * 1000) / 1000,
+      home_ice_delta: Math.round(homeIceDelta * 1000) / 1000,
+      rest_delta: Math.round(restDelta * 1000) / 1000,
+      goalie_delta_raw: Math.round(goalieDeltaRaw * 1000) / 1000,
+      goalie_delta_applied: Math.round(goalieDeltaApplied * 1000) / 1000,
+      raw_modifier_total: Math.round(rawModifierTotal * 1000) / 1000,
+      capped_modifier_total: Math.round(cappedModifierTotal * 1000) / 1000,
+      modifier_cap_applied: modifierCapApplied,
+    },
     adjustments,
     confidence,
   };

@@ -187,12 +187,22 @@ function computeTotalEdge({
 
   const mu = projectionTotal;
   const L = totalLine;
+  const isNhlStyleTotal = sigmaTotal <= 3;
+  const adjustedLine = isNhlStyleTotal ? L + 0.5 : L;
 
   // Probability over
-  const p_over = 1 - normCdf((L - mu) / sigmaTotal);
+  const p_over = 1 - normCdf((adjustedLine - mu) / sigmaTotal);
 
   // Select based on prediction
-  const p_fair = isPredictionOver ? p_over : 1 - p_over;
+  let p_fair = isPredictionOver ? p_over : 1 - p_over;
+  const railFlags = [];
+  if (isNhlStyleTotal) {
+    const clampedFair = Math.min(Math.max(p_fair, 0.28), 0.72);
+    if (clampedFair !== p_fair) {
+      railFlags.push('UNREALISTIC_TOTAL_PROBABILITY');
+      p_fair = clampedFair;
+    }
+  }
   const oddsToUse = isPredictionOver ? totalPriceOver : totalPriceUnder;
   const p_implied = impliedProbFromAmerican(oddsToUse);
 
@@ -203,10 +213,15 @@ function computeTotalEdge({
       p_fair,
       p_implied: null,
       reason: 'invalid_total_odds',
+      rail_flags: railFlags,
     };
   }
 
-  const edge = p_fair - p_implied;
+  let edge = p_fair - p_implied;
+  if (isNhlStyleTotal && Math.abs(edge) > 0.15) {
+    edge = Math.sign(edge) * 0.15;
+    railFlags.push('EDGE_SANITY_CLAMP_APPLIED');
+  }
   const edgePoints = mu - L;
 
   return {
@@ -216,6 +231,7 @@ function computeTotalEdge({
     p_implied: Number(p_implied.toFixed(4)),
     confidence: 0.88,
     sigma_used: sigmaTotal,
+    rail_flags: railFlags,
   };
 }
 
@@ -226,7 +242,7 @@ function getSigmaDefaults(sport) {
   const sigmaMap = {
     NBA: { margin: 12, total: 14 },
     NCAAM: { margin: 11, total: 13 },
-    NHL: { margin: 1.8, total: 1.8 }, // Hockey uses lower vig
+    NHL: { margin: 2.0, total: 2.0 },
     NFL: { margin: 14, total: 16 },
     MLB: { margin: 4, total: 9.5 },
   };

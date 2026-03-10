@@ -307,6 +307,36 @@ interface GameData {
   };
 }
 
+function hasProjectedTotal(
+  play: GameData['plays'][number] | undefined,
+): play is GameData['plays'][number] {
+  return typeof play?.projectedTotal === 'number';
+}
+
+function resolvePrimaryTotalProjectionPlay(
+  plays: GameData['plays'],
+  sport: string,
+): GameData['plays'][number] | undefined {
+  const sportUpper = String(sport || '').toUpperCase();
+  if (sportUpper === 'NHL') {
+    return (
+      plays.find(
+        (play) =>
+          play.cardType === 'nhl-totals-call' && hasProjectedTotal(play),
+      ) ??
+      plays.find(
+        (play) =>
+          play.cardType === 'nhl-pace-totals' && hasProjectedTotal(play),
+      )
+    );
+  }
+
+  // Preserve existing NBA source behavior.
+  return plays.find(
+    (play) => play.cardType === 'nba-total-projection' && hasProjectedTotal(play),
+  );
+}
+
 interface ApiResponse {
   success: boolean;
   data: GameData[];
@@ -1730,6 +1760,10 @@ export default function CardsPageClient() {
         : typeof totalFallbackPlay?.projectedTotal === 'number'
           ? totalFallbackPlay.projectedTotal
           : undefined;
+    const totalProjectionDisplayPlay = resolvePrimaryTotalProjectionPlay(
+      originalGame.plays || [],
+      card.sport,
+    );
     const onePeriodTotalsPlay = originalGame.plays.find(
       (p) => p.cardType === 'nhl-pace-1p',
     );
@@ -1916,19 +1950,14 @@ export default function CardsPageClient() {
                     : '--'}
                 </p>
                 {(() => {
-                  const totalPlay = originalGame.plays.find(
-                    (p) =>
-                      p.cardType === 'nba-total-projection' ||
-                      p.cardType === 'nhl-pace-totals',
-                  );
-                  if (!totalPlay?.projectedTotal) return null;
-                  const edge = totalPlay.edge ?? 0;
+                  if (!totalProjectionDisplayPlay?.projectedTotal) return null;
+                  const edge = totalProjectionDisplayPlay.edge ?? 0;
                   const sign = edge >= 0 ? '+' : '';
                   const color = edge >= 0 ? 'text-emerald-400' : 'text-red-400';
                   return (
                     <p className={`font-mono text-xs mt-0.5 ${color}`}>
-                      Model: {totalPlay.projectedTotal} ({sign}
-                      {edge} {totalPlay.prediction})
+                      Model: {totalProjectionDisplayPlay.projectedTotal} ({sign}
+                      {edge} {totalProjectionDisplayPlay.prediction})
                     </p>
                   );
                 })()}

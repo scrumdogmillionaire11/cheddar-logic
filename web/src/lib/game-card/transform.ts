@@ -455,6 +455,20 @@ function playValueRank(play: ApiPlay): number {
   return 0;
 }
 
+function playSourcePriority(
+  play: ApiPlay,
+  inference: ReturnType<typeof inferMarketFromPlay>,
+): number {
+  if (
+    inference.canonical === 'TOTAL' ||
+    inference.canonical === 'TEAM_TOTAL'
+  ) {
+    if (play.cardType === 'nhl-totals-call') return 2;
+    if (play.cardType === 'nhl-pace-totals') return 1;
+  }
+  return 0;
+}
+
 function timestampMs(value?: string): number {
   if (!value) return 0;
   const ms = new Date(value).getTime();
@@ -479,6 +493,11 @@ function comparePlayCandidates(a: DedupeCandidate, b: DedupeCandidate): number {
 
   const valueDelta = playValueRank(a.play) - playValueRank(b.play);
   if (valueDelta !== 0) return valueDelta;
+
+  const sourcePriorityDelta =
+    playSourcePriority(a.play, a.inference) -
+    playSourcePriority(b.play, b.inference);
+  if (sourcePriorityDelta !== 0) return sourcePriorityDelta;
 
   const aModelProb =
     resolveSourceModelProb(a.play) ?? a.play.decision_v2?.fair_prob ?? undefined;

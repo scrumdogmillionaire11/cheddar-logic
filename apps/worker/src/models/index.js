@@ -73,6 +73,35 @@ function statusFromNumbers(values) {
   return 'missing';
 }
 
+function normalizeGoalieCertaintyToken(value) {
+  const token = String(value || '').trim().toUpperCase();
+  if (token === 'CONFIRMED' || token === 'STARTING' || token === 'OFFICIAL') {
+    return 'CONFIRMED';
+  }
+  if (token === 'EXPECTED' || token === 'PROJECTED' || token === 'LIKELY') {
+    return 'EXPECTED';
+  }
+  if (token === 'UNKNOWN' || token === 'UNCONFIRMED' || token === 'TBD') {
+    return 'UNKNOWN';
+  }
+  return null;
+}
+
+function resolveGoalieCertainty(raw, side, hasGsax) {
+  const sideKey = side === 'home' ? 'home' : 'away';
+  const nested =
+    normalizeGoalieCertaintyToken(raw?.goalie?.[sideKey]?.status) ??
+    normalizeGoalieCertaintyToken(raw?.goalies?.[sideKey]?.status);
+  if (nested) return nested;
+  const flat =
+    sideKey === 'home'
+      ? normalizeGoalieCertaintyToken(raw?.goalie_home_status)
+      : normalizeGoalieCertaintyToken(raw?.goalie_away_status);
+  if (flat) return flat;
+  // Proxy fallback: GSaX presence implies EXPECTED, not CONFIRMED.
+  return hasGsax ? 'EXPECTED' : 'UNKNOWN';
+}
+
 /**
  * Determine pick tier from calibrated confidence (0-1 scale).
  * Ported from personal-dashboard pick-schema.js.
@@ -310,10 +339,20 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
     goalieHomeGsax !== null && goalieHomeGsax !== undefined;
   const awayGoalieConfirmed =
     goalieAwayGsax !== null && goalieAwayGsax !== undefined;
+  const homeGoalieCertainty = resolveGoalieCertainty(
+    raw,
+    'home',
+    homeGoalieConfirmed,
+  );
+  const awayGoalieCertainty = resolveGoalieCertainty(
+    raw,
+    'away',
+    awayGoalieConfirmed,
+  );
   const goalieCertaintyStatus =
-    homeGoalieConfirmed && awayGoalieConfirmed
+    homeGoalieCertainty === 'CONFIRMED' && awayGoalieCertainty === 'CONFIRMED'
       ? 'ok'
-      : homeGoalieConfirmed || awayGoalieConfirmed
+      : homeGoalieCertainty !== 'UNKNOWN' || awayGoalieCertainty !== 'UNKNOWN'
         ? 'partial'
         : 'missing';
 
@@ -357,6 +396,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           away_goals_against: goalsAgainstAway,
           home_goalie_confirmed: homeGoalieConfirmed,
           away_goalie_confirmed: awayGoalieConfirmed,
+          home_goalie_certainty: homeGoalieCertainty,
+          away_goalie_certainty: awayGoalieCertainty,
           projected_margin: projectedMargin,
         },
         driverScore: clamp((projectedMargin + 2) / 4, 0, 1), // Normalize
@@ -401,7 +442,9 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       driverInputs: {
         home_goalie_confirmed: homeGoalieConfirmed,
         away_goalie_confirmed: awayGoalieConfirmed,
-        confirmation_source: 'gsax',
+        home_goalie_certainty: homeGoalieCertainty,
+        away_goalie_certainty: awayGoalieCertainty,
+        confirmation_source: 'status_or_gsax_proxy',
       },
       driverScore: 0.5,
       driverStatus: goalieCertaintyStatus,
@@ -646,6 +689,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       awayGoalieSavePct,
       homeGoalieConfirmed: goalieHomeGsax !== null, // confirmed = have real GSaX data
       awayGoalieConfirmed: goalieAwayGsax !== null,
+      homeGoalieCertainty,
+      awayGoalieCertainty,
       homeB2B: paceRestDaysHome === 0,
       awayB2B: paceRestDaysAway === 0,
       restDaysHome: paceRestDaysHome,
@@ -654,8 +699,11 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
 
     if (paceResult) {
       if (marketTotal !== null) {
+        const anchoredExpectedTotal = Number(
+          (0.65 * paceResult.expectedTotal + 0.35 * marketTotal).toFixed(3),
+        );
         const edge =
-          Math.round((paceResult.expectedTotal - marketTotal) * 100) / 100;
+          Math.round((anchoredExpectedTotal - marketTotal) * 100) / 100;
         const absEdge = Math.abs(edge);
 
         // Only emit when edge is meaningful (< 0.4 goals is noise in NHL totals)
@@ -675,18 +723,30 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           }
 
           const edgeLabel = `${edge > 0 ? '+' : ''}${edge} goals`;
-          const goalieContext =
-            paceResult.homeGoalieConfirmed && paceResult.awayGoalieConfirmed
-              ? ' [confirmed goalies]'
-              : ' [goalie certainty cap]';
+          const goalieContext = ` [goalie certainty ${homeGoalieCertainty}/${awayGoalieCertainty}]`;
+          const rawContext = ` [raw ${paceResult.rawTotalModel.toFixed(2)} -> regressed ${paceResult.regressedTotalModel.toFixed(2)}]`;
+          const clampContext =
+            paceResult.totalClampedHigh || paceResult.totalClampedLow
+              ? ` [pace clamp ${paceResult.totalClampedLow ? 'low' : 'high'}]`
+              : '';
+          const modifierContext = paceResult.modifierCapApplied
+            ? ' [modifier cap applied]'
+            : '';
+          const reasonCodes = [];
+          if (paceResult.totalClampedHigh)
+            reasonCodes.push('PACE_TOTAL_CLAMPED_HIGH');
+          if (paceResult.totalClampedLow)
+            reasonCodes.push('PACE_TOTAL_CLAMPED_LOW');
+          if (paceResult.modifierCapApplied)
+            reasonCodes.push('PACE_MODIFIER_CAP_APPLIED');
 
           descriptors.push({
             cardType: 'nhl-pace-totals',
-            cardTitle: `NHL Total: ${direction} ${paceResult.expectedTotal.toFixed(2)} vs Line ${marketTotal}`,
+            cardTitle: `NHL Total: ${direction} ${anchoredExpectedTotal.toFixed(2)} vs Line ${marketTotal}`,
             confidence: cardConfidence,
             tier: determineTier(cardConfidence),
             prediction: direction,
-            reasoning: `Pace model projects ${paceResult.expectedTotal.toFixed(2)} total (${paceResult.homeExpected.toFixed(2)} home + ${paceResult.awayExpected.toFixed(2)} away) vs market ${marketTotal} — edge ${edgeLabel}${goalieContext}`,
+            reasoning: `Pace model projects ${anchoredExpectedTotal.toFixed(2)} total (${paceResult.homeExpected.toFixed(2)} home + ${paceResult.awayExpected.toFixed(2)} away) vs market ${marketTotal} — edge ${edgeLabel}${rawContext}${goalieContext}${clampContext}${modifierContext}`,
             ev_threshold_passed: cardConfidence > 0.6,
             driverKey: 'paceTotals',
             driverInputs: {
@@ -696,17 +756,27 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
               away_goals_against: goalsAgainstAway,
               home_expected: paceResult.homeExpected,
               away_expected: paceResult.awayExpected,
-              expected_total: paceResult.expectedTotal,
+              expected_total: anchoredExpectedTotal,
+              model_expected_total: paceResult.expectedTotal,
+              raw_total_model: paceResult.rawTotalModel,
+              regressed_total_model: paceResult.regressedTotalModel,
               market_total: marketTotal,
               edge,
               home_goalie_confirmed: paceResult.homeGoalieConfirmed,
               away_goalie_confirmed: paceResult.awayGoalieConfirmed,
+              home_goalie_certainty: homeGoalieCertainty,
+              away_goalie_certainty: awayGoalieCertainty,
               goalie_confidence_capped: paceResult.goalieConfidenceCapped,
+              total_clamped_high: paceResult.totalClampedHigh,
+              total_clamped_low: paceResult.totalClampedLow,
+              modifier_cap_applied: paceResult.modifierCapApplied,
+              modifier_breakdown: paceResult.modifierBreakdown,
             },
             driverScore: direction === 'OVER' ? 0.75 : 0.25,
             driverStatus: 'ok',
             inference_source: 'driver',
             is_mock: false,
+            reason_codes: reasonCodes,
             market_type: 'TOTAL',
             selection: { side: direction },
             line: marketTotal,
@@ -719,9 +789,15 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       }
 
       if (Number.isFinite(paceResult.expected1pTotal)) {
+        const anchoredExpected1pTotal = Number(
+          (
+            0.65 * paceResult.expected1pTotal +
+            0.35 * NHL_1P_REFERENCE_TOTAL_LINE
+          ).toFixed(3),
+        );
         const edge1p =
           Math.round(
-            (paceResult.expected1pTotal - NHL_1P_REFERENCE_TOTAL_LINE) * 100,
+            (anchoredExpected1pTotal - NHL_1P_REFERENCE_TOTAL_LINE) * 100,
           ) / 100;
         const absEdge1p = Math.abs(edge1p);
 
@@ -741,19 +817,22 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
 
           descriptors.push({
             cardType: 'nhl-pace-1p',
-            cardTitle: `NHL 1P Total: ${direction1p} ${paceResult.expected1pTotal.toFixed(2)} vs Line ${NHL_1P_REFERENCE_TOTAL_LINE}`,
+            cardTitle: `NHL 1P Total: ${direction1p} ${anchoredExpected1pTotal.toFixed(2)} vs Line ${NHL_1P_REFERENCE_TOTAL_LINE}`,
             confidence: confidence1p,
             tier: determineTier(confidence1p),
             prediction: direction1p,
-            reasoning: `Pace model 1P projection: ${paceResult.expected1pTotal.toFixed(2)} vs fixed reference ${NHL_1P_REFERENCE_TOTAL_LINE} — edge ${edge1p > 0 ? '+' : ''}${edge1p} goals${goalieContext1p}`,
+            reasoning: `Pace model 1P projection: ${anchoredExpected1pTotal.toFixed(2)} vs fixed reference ${NHL_1P_REFERENCE_TOTAL_LINE} — edge ${edge1p > 0 ? '+' : ''}${edge1p} goals${goalieContext1p}`,
             ev_threshold_passed: confidence1p > 0.6,
             driverKey: 'paceTotals1p',
             driverInputs: {
-              expected_1p_total: paceResult.expected1pTotal,
+              expected_1p_total: anchoredExpected1pTotal,
+              model_expected_1p_total: paceResult.expected1pTotal,
               market_1p_total: NHL_1P_REFERENCE_TOTAL_LINE,
               edge: edge1p,
               home_goalie_confirmed: paceResult.homeGoalieConfirmed,
               away_goalie_confirmed: paceResult.awayGoalieConfirmed,
+              home_goalie_certainty: homeGoalieCertainty,
+              away_goalie_certainty: awayGoalieCertainty,
               goalie_confidence_capped: paceResult.goalieConfidenceCapped,
             },
             driverScore: direction1p === 'OVER' ? 0.75 : 0.25,

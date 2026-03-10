@@ -1198,6 +1198,7 @@ export async function GET(request: NextRequest) {
           (payload.projection as Record<string, unknown>)?.total,
           driverInputs?.mu,
           driverInputs?.projected_total,
+          driverInputs?.expected_total,
           driverInputs?.expected_1p_total,
         );
         const normalizedSuggestedLine = firstNumber(
@@ -1274,6 +1275,7 @@ export async function GET(request: NextRequest) {
           payloadProjection?.projected_total,
           payloadPlayProjection?.projected_total,
           driverInputs?.projected_total,
+          driverInputs?.expected_total,
           driverInputs?.expected_1p_total,
         );
         const normalizedEdge = firstNumber(
@@ -1429,6 +1431,9 @@ export async function GET(request: NextRequest) {
                 payloadMarketContextProjection?.projected_total,
                 payloadProjection?.projected_total,
                 payloadPlayProjection?.projected_total,
+                driverInputs?.projected_total,
+                driverInputs?.expected_total,
+                driverInputs?.expected_1p_total,
               ) ?? null,
             team_total:
               firstNumber(
@@ -1480,6 +1485,9 @@ export async function GET(request: NextRequest) {
                 payloadMarketContextProjection?.total,
                 payloadProjection?.total,
                 payloadPlayProjection?.total,
+                driverInputs?.projected_total,
+                driverInputs?.expected_total,
+                driverInputs?.expected_1p_total,
               ) ?? null,
             projected_team_total:
               firstNumber(
