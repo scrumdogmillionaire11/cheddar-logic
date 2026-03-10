@@ -111,7 +111,24 @@ interface Play {
   driverKey: string;
   projectedTotal: number | null;
   edge: number | null;
+  edge_points?: number | null;
+  p_fair?: number | null;
+  p_implied?: number | null;
+  edge_pct?: number | null;
   model_prob?: number | null;
+  projection?: {
+    margin_home?: number | null;
+    total?: number | null;
+    team_total?: number | null;
+    win_prob_home?: number | null;
+    score_home?: number | null;
+    score_away?: number | null;
+    projected_margin?: number | null;
+    projected_total?: number | null;
+    projected_team_total?: number | null;
+    projected_score_home?: number | null;
+    projected_score_away?: number | null;
+  };
   status?: 'FIRE' | 'WATCH' | 'PASS';
   kind?: 'PLAY' | 'EVIDENCE';
   market_type?:
@@ -125,6 +142,28 @@ interface Play {
   selection?: { side: string; team?: string };
   line?: number;
   price?: number;
+  line_source?: string | null;
+  price_source?: string | null;
+  market_context?: {
+    version?: string;
+    market_type?: string | null;
+    selection_side?: string | null;
+    selection_team?: string | null;
+    projection?: {
+      margin_home?: number | null;
+      total?: number | null;
+      team_total?: number | null;
+      win_prob_home?: number | null;
+      score_home?: number | null;
+      score_away?: number | null;
+    };
+    wager?: {
+      called_line?: number | null;
+      called_price?: number | null;
+      line_source?: string | null;
+      price_source?: string | null;
+    };
+  };
   reason_codes?: string[];
   tags?: string[];
   consistency?: {
@@ -167,6 +206,20 @@ interface Play {
     fair_prob: number | null;
     implied_prob: number | null;
     edge_pct: number | null;
+    edge_method?: 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA' | null;
+    edge_line_delta?: number | null;
+    edge_lean?: 'OVER' | 'UNDER' | null;
+    proxy_used?: boolean;
+    proxy_capped?: boolean;
+    exact_wager_valid?: boolean;
+    pricing_trace?: {
+      market_type?: string | null;
+      market_side?: string | null;
+      market_line?: number | null;
+      market_price?: number | null;
+      line_source?: string | null;
+      price_source?: string | null;
+    };
     sharp_price_status: 'CHEDDAR' | 'COTTAGE' | 'UNPRICED';
     price_reason_codes: string[];
     official_status: 'PLAY' | 'LEAN' | 'PASS';
@@ -371,13 +424,6 @@ function firstNumber(...values: unknown[]): number | undefined {
   return undefined;
 }
 
-function impliedProbFromAmericanOdds(rawOdds: unknown): number | undefined {
-  if (typeof rawOdds !== 'number' || !Number.isFinite(rawOdds) || rawOdds === 0)
-    return undefined;
-  if (rawOdds < 0) return -rawOdds / (-rawOdds + 100);
-  return 100 / (rawOdds + 100);
-}
-
 function normalizeSport(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const upper = value.trim().toUpperCase();
@@ -531,6 +577,52 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
       typeof input.edge_pct === 'number' && Number.isFinite(input.edge_pct)
         ? input.edge_pct
         : null,
+    edge_method:
+      input.edge_method === 'ML_PROB' ||
+      input.edge_method === 'MARGIN_DELTA' ||
+      input.edge_method === 'TOTAL_DELTA'
+        ? (input.edge_method as 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA')
+        : null,
+    edge_line_delta:
+      typeof input.edge_line_delta === 'number' &&
+      Number.isFinite(input.edge_line_delta)
+        ? input.edge_line_delta
+        : null,
+    edge_lean:
+      input.edge_lean === 'OVER' || input.edge_lean === 'UNDER'
+        ? (input.edge_lean as 'OVER' | 'UNDER')
+        : null,
+    proxy_used:
+      typeof input.proxy_used === 'boolean' ? input.proxy_used : undefined,
+    proxy_capped:
+      typeof input.proxy_capped === 'boolean' ? input.proxy_capped : undefined,
+    exact_wager_valid:
+      typeof input.exact_wager_valid === 'boolean'
+        ? input.exact_wager_valid
+        : undefined,
+    pricing_trace: toObject(input.pricing_trace)
+      ? {
+          market_type:
+            typeof toObject(input.pricing_trace)?.market_type === 'string'
+              ? String(toObject(input.pricing_trace)?.market_type)
+              : null,
+          market_side:
+            typeof toObject(input.pricing_trace)?.market_side === 'string'
+              ? String(toObject(input.pricing_trace)?.market_side)
+              : null,
+          market_line: firstNumber(toObject(input.pricing_trace)?.market_line) ?? null,
+          market_price:
+            firstNumber(toObject(input.pricing_trace)?.market_price) ?? null,
+          line_source:
+            typeof toObject(input.pricing_trace)?.line_source === 'string'
+              ? String(toObject(input.pricing_trace)?.line_source)
+              : null,
+          price_source:
+            typeof toObject(input.pricing_trace)?.price_source === 'string'
+              ? String(toObject(input.pricing_trace)?.price_source)
+              : null,
+        }
+      : undefined,
     sharp_price_status,
     price_reason_codes: Array.isArray(input.price_reason_codes)
       ? input.price_reason_codes.map((item) => String(item))
@@ -1003,11 +1095,22 @@ export async function GET(request: NextRequest) {
             : null;
 
         const payloadPlay = toObject(payload.play);
+        const payloadPlayObj = toObject(payloadPlay);
+        const payloadMarketContext =
+          toObject((payload as Record<string, unknown>).market_context) ??
+          toObject(payloadPlayObj?.market_context);
+        const payloadMarketContextProjection = toObject(
+          payloadMarketContext?.projection,
+        );
+        const payloadMarketContextWager = toObject(payloadMarketContext?.wager);
         const payloadSelection =
           toObject(payload.selection) ?? toObject(payloadPlay?.selection);
         const normalizedSelectionSide =
           normalizeSelectionSide(
-            payloadSelection?.side ?? payloadPlay?.side ?? payload.prediction,
+            payloadSelection?.side ??
+              payloadMarketContext?.selection_side ??
+              payloadPlay?.side ??
+              payload.prediction,
           ) ?? 'NONE';
         const normalizedAction = normalizeAction(
           payload.action ?? payloadPlay?.action,
@@ -1038,7 +1141,9 @@ export async function GET(request: NextRequest) {
           payloadPlay?.confidence,
         );
         const normalizedMarketType = normalizeMarketType(
-          payload.market_type ?? payloadPlay?.market_type,
+          payload.market_type ??
+            payloadPlay?.market_type ??
+            payloadMarketContext?.market_type,
         );
         const normalizedPlayerName = firstString(
           payloadSelection?.player_name,
@@ -1048,16 +1153,19 @@ export async function GET(request: NextRequest) {
         const normalizedSelectionTeam = firstString(
           normalizedPlayerName,
           payloadSelection?.team,
+          payloadMarketContext?.selection_team,
           payloadPlay?.team,
         );
         const normalizedLine = firstNumber(
           payload.line,
+          payloadMarketContextWager?.called_line,
           (payload.market as Record<string, unknown>)?.line,
           payloadPlay?.line,
           payloadSelection?.line,
         );
         const normalizedPrice = firstNumber(
           payload.price,
+          payloadMarketContextWager?.called_price,
           payloadPlay?.price,
           payloadSelection?.price,
         );
@@ -1090,6 +1198,7 @@ export async function GET(request: NextRequest) {
           (payload.projection as Record<string, unknown>)?.total,
           driverInputs?.mu,
           driverInputs?.projected_total,
+          driverInputs?.expected_1p_total,
         );
         const normalizedSuggestedLine = firstNumber(
           (payload as Record<string, unknown>).suggested_line,
@@ -1154,30 +1263,53 @@ export async function GET(request: NextRequest) {
             : undefined,
         );
         const payloadProjection = toObject(payload.projection);
-        const payloadPlayObj = toObject(payloadPlay);
         const payloadPlayProjection = toObject(payloadPlayObj?.projection);
         const normalizedProjectedTotal = firstNumber(
+          payloadMarketContextProjection?.total,
+          payloadMarketContextProjection?.team_total,
           payloadProjection?.total,
           payloadPlayProjection?.total,
+          payloadMarketContextProjection?.projected_total,
+          payloadMarketContextProjection?.projected_team_total,
           payloadProjection?.projected_total,
           payloadPlayProjection?.projected_total,
           driverInputs?.projected_total,
+          driverInputs?.expected_1p_total,
         );
         const normalizedEdge = firstNumber(
           payload.edge,
           payloadPlayObj?.edge,
           driverInputs?.edge,
         );
+        const normalizedEdgePoints = firstNumber(
+          (payload as Record<string, unknown>).edge_points,
+          payloadPlayObj?.edge_points,
+          payloadMarketContextProjection?.edge_points,
+        );
+        const normalizedPFair = firstNumber(
+          (payload as Record<string, unknown>).p_fair,
+          payloadPlayObj?.p_fair,
+          normalizedDecisionV2?.fair_prob,
+        );
+        const normalizedPImplied = firstNumber(
+          (payload as Record<string, unknown>).p_implied,
+          payloadPlayObj?.p_implied,
+          normalizedDecisionV2?.implied_prob,
+        );
+        const normalizedEdgePct = firstNumber(
+          (payload as Record<string, unknown>).edge_pct,
+          payloadPlayObj?.edge_pct,
+          normalizedDecisionV2?.edge_pct,
+        );
         const projectionWinProbHome = firstNumber(
+          payloadMarketContextProjection?.win_prob_home,
           payloadProjection?.win_prob_home,
           payloadPlayProjection?.win_prob_home,
         );
-        let modelProbInferredFromEdge = false;
         let normalizedModelProb = firstNumber(
           (payload as Record<string, unknown>).model_prob,
           payloadPlayObj?.model_prob,
-          (payload as Record<string, unknown>).p_fair,
-          payloadPlayObj?.p_fair,
+          normalizedPFair,
         );
         if (
           normalizedModelProb === undefined &&
@@ -1189,16 +1321,6 @@ export async function GET(request: NextRequest) {
               ? 1 - projectionWinProbHome
               : projectionWinProbHome;
         }
-        if (normalizedModelProb === undefined) {
-          const impliedProb = impliedProbFromAmericanOdds(normalizedPrice);
-          if (
-            typeof impliedProb === 'number' &&
-            typeof normalizedEdge === 'number'
-          ) {
-            normalizedModelProb = impliedProb + normalizedEdge;
-            modelProbInferredFromEdge = true;
-          }
-        }
         if (
           typeof normalizedModelProb === 'number' &&
           (!Number.isFinite(normalizedModelProb) ||
@@ -1206,8 +1328,29 @@ export async function GET(request: NextRequest) {
             normalizedModelProb > 1)
         ) {
           normalizedModelProb = undefined;
-          modelProbInferredFromEdge = false;
         }
+        const normalizedLineSource = firstString(
+          (payload as Record<string, unknown>).line_source,
+          payloadPlayObj?.line_source,
+          payloadMarketContextWager?.line_source,
+          payloadPlayObj?.pricing_trace &&
+            typeof payloadPlayObj.pricing_trace === 'object'
+            ? (payloadPlayObj.pricing_trace as Record<string, unknown>)
+                .line_source
+            : undefined,
+          normalizedDecisionV2?.pricing_trace?.line_source,
+        );
+        const normalizedPriceSource = firstString(
+          (payload as Record<string, unknown>).price_source,
+          payloadPlayObj?.price_source,
+          payloadMarketContextWager?.price_source,
+          payloadPlayObj?.pricing_trace &&
+            typeof payloadPlayObj.pricing_trace === 'object'
+            ? (payloadPlayObj.pricing_trace as Record<string, unknown>)
+                .price_source
+            : undefined,
+          normalizedDecisionV2?.pricing_trace?.price_source,
+        );
         const combinedReasonCodes = [
           ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
           ...(Array.isArray(payloadPlay?.reason_codes)
@@ -1218,10 +1361,6 @@ export async function GET(request: NextRequest) {
           ...(Array.isArray(payload.tags) ? payload.tags : []),
           ...(Array.isArray(payloadPlay?.tags) ? payloadPlay.tags : []),
         ].map((value) => String(value));
-        if (modelProbInferredFromEdge) {
-          combinedTags.push('PROXY_MODEL_PROB_INFERRED');
-          combinedReasonCodes.push('PROXY_MODEL_PROB_INFERRED');
-        }
 
         const resolvedAction: Play['action'] | undefined =
           normalizedAction ??
@@ -1264,7 +1403,112 @@ export async function GET(request: NextRequest) {
               ? normalizedProjectedTotal
               : null,
           edge: typeof normalizedEdge === 'number' ? normalizedEdge : null,
+          edge_points:
+            typeof normalizedEdgePoints === 'number' ? normalizedEdgePoints : null,
+          p_fair: typeof normalizedPFair === 'number' ? normalizedPFair : null,
+          p_implied:
+            typeof normalizedPImplied === 'number' ? normalizedPImplied : null,
+          edge_pct:
+            typeof normalizedEdgePct === 'number' ? normalizedEdgePct : null,
           model_prob: normalizedModelProb,
+          projection: {
+            margin_home:
+              firstNumber(
+                payloadMarketContextProjection?.margin_home,
+                payloadProjection?.margin_home,
+                payloadPlayProjection?.margin_home,
+                payloadMarketContextProjection?.projected_margin,
+                payloadProjection?.projected_margin,
+                payloadPlayProjection?.projected_margin,
+              ) ?? null,
+            total:
+              firstNumber(
+                payloadMarketContextProjection?.total,
+                payloadProjection?.total,
+                payloadPlayProjection?.total,
+                payloadMarketContextProjection?.projected_total,
+                payloadProjection?.projected_total,
+                payloadPlayProjection?.projected_total,
+              ) ?? null,
+            team_total:
+              firstNumber(
+                payloadMarketContextProjection?.team_total,
+                payloadProjection?.team_total,
+                payloadPlayProjection?.team_total,
+                payloadMarketContextProjection?.projected_team_total,
+                payloadProjection?.projected_team_total,
+                payloadPlayProjection?.projected_team_total,
+              ) ?? null,
+            win_prob_home:
+              firstNumber(
+                payloadMarketContextProjection?.win_prob_home,
+                payloadProjection?.win_prob_home,
+                payloadPlayProjection?.win_prob_home,
+              ) ?? null,
+            score_home:
+              firstNumber(
+                payloadMarketContextProjection?.score_home,
+                payloadProjection?.score_home,
+                payloadPlayProjection?.score_home,
+                payloadMarketContextProjection?.projected_score_home,
+                payloadProjection?.projected_score_home,
+                payloadPlayProjection?.projected_score_home,
+              ) ?? null,
+            score_away:
+              firstNumber(
+                payloadMarketContextProjection?.score_away,
+                payloadProjection?.score_away,
+                payloadPlayProjection?.score_away,
+                payloadMarketContextProjection?.projected_score_away,
+                payloadProjection?.projected_score_away,
+                payloadPlayProjection?.projected_score_away,
+              ) ?? null,
+            projected_margin:
+              firstNumber(
+                payloadMarketContextProjection?.projected_margin,
+                payloadProjection?.projected_margin,
+                payloadPlayProjection?.projected_margin,
+                payloadMarketContextProjection?.margin_home,
+                payloadProjection?.margin_home,
+                payloadPlayProjection?.margin_home,
+              ) ?? null,
+            projected_total:
+              firstNumber(
+                payloadMarketContextProjection?.projected_total,
+                payloadProjection?.projected_total,
+                payloadPlayProjection?.projected_total,
+                payloadMarketContextProjection?.total,
+                payloadProjection?.total,
+                payloadPlayProjection?.total,
+              ) ?? null,
+            projected_team_total:
+              firstNumber(
+                payloadMarketContextProjection?.projected_team_total,
+                payloadProjection?.projected_team_total,
+                payloadPlayProjection?.projected_team_total,
+                payloadMarketContextProjection?.team_total,
+                payloadProjection?.team_total,
+                payloadPlayProjection?.team_total,
+              ) ?? null,
+            projected_score_home:
+              firstNumber(
+                payloadMarketContextProjection?.projected_score_home,
+                payloadProjection?.projected_score_home,
+                payloadPlayProjection?.projected_score_home,
+                payloadMarketContextProjection?.score_home,
+                payloadProjection?.score_home,
+                payloadPlayProjection?.score_home,
+              ) ?? null,
+            projected_score_away:
+              firstNumber(
+                payloadMarketContextProjection?.projected_score_away,
+                payloadProjection?.projected_score_away,
+                payloadPlayProjection?.projected_score_away,
+                payloadMarketContextProjection?.score_away,
+                payloadProjection?.score_away,
+                payloadPlayProjection?.score_away,
+              ) ?? null,
+          },
           status: resolvedStatus,
           // Canonical decision fields (preferred over legacy status field)
           classification: resolvedClassification,
@@ -1339,6 +1583,65 @@ export async function GET(request: NextRequest) {
           },
           line: normalizedLine,
           price: normalizedPrice,
+          line_source: normalizedLineSource ?? null,
+          price_source: normalizedPriceSource ?? null,
+          market_context: payloadMarketContext
+            ? {
+                version: firstString(payloadMarketContext.version) ?? 'v1',
+                market_type:
+                  firstString(payloadMarketContext.market_type) ??
+                  normalizedMarketType ??
+                  null,
+                selection_side:
+                  firstString(payloadMarketContext.selection_side) ??
+                  normalizedSelectionSide,
+                selection_team:
+                  firstString(payloadMarketContext.selection_team) ??
+                  normalizedSelectionTeam ??
+                  null,
+                projection: payloadMarketContextProjection
+                  ? {
+                      margin_home:
+                        firstNumber(payloadMarketContextProjection.margin_home) ??
+                        null,
+                      total:
+                        firstNumber(payloadMarketContextProjection.total) ?? null,
+                      team_total:
+                        firstNumber(payloadMarketContextProjection.team_total) ??
+                        null,
+                      win_prob_home:
+                        firstNumber(payloadMarketContextProjection.win_prob_home) ??
+                        null,
+                      score_home:
+                        firstNumber(payloadMarketContextProjection.score_home) ??
+                        null,
+                      score_away:
+                        firstNumber(payloadMarketContextProjection.score_away) ??
+                        null,
+                    }
+                  : undefined,
+                wager: payloadMarketContextWager
+                  ? {
+                      called_line:
+                        firstNumber(payloadMarketContextWager.called_line) ??
+                        normalizedLine ??
+                        null,
+                      called_price:
+                        firstNumber(payloadMarketContextWager.called_price) ??
+                        normalizedPrice ??
+                        null,
+                      line_source:
+                        firstString(payloadMarketContextWager.line_source) ??
+                        normalizedLineSource ??
+                        null,
+                      price_source:
+                        firstString(payloadMarketContextWager.price_source) ??
+                        normalizedPriceSource ??
+                        null,
+                    }
+                  : undefined,
+              }
+            : undefined,
           reason_codes: combinedReasonCodes,
           tags: combinedTags,
           run_id: normalizedRunId,

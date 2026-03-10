@@ -200,6 +200,13 @@ function buildPickText(market, side, line) {
   return side;
 }
 
+function toCanonicalMarketForContext(market) {
+  if (market === 'moneyline') return 'MONEYLINE';
+  if (market === 'spread' || market === 'puckline') return 'SPREAD';
+  if (market === 'total' || market === 'team_total') return 'TOTAL';
+  return null;
+}
+
 function applyPublishedDecisionToPayload(
   card,
   decision,
@@ -257,6 +264,47 @@ function applyPublishedDecisionToPayload(
     if (line !== null) payload.pricing_trace = { ...payload.pricing_trace, called_line: line };
     if (price !== null) payload.pricing_trace = { ...payload.pricing_trace, called_price: price };
   }
+
+  // Keep canonical market_context aligned with held decision rewrites.
+  const existingMarketContext =
+    payload.market_context && typeof payload.market_context === 'object'
+      ? payload.market_context
+      : {};
+  const existingWager =
+    existingMarketContext.wager &&
+    typeof existingMarketContext.wager === 'object'
+      ? existingMarketContext.wager
+      : {};
+  const traceForSources =
+    payload.pricing_trace && typeof payload.pricing_trace === 'object'
+      ? payload.pricing_trace
+      : {};
+
+  payload.market_context = {
+    ...existingMarketContext,
+    version: existingMarketContext.version || 'v1',
+    market_type:
+      toCanonicalMarketForContext(market) ||
+      existingMarketContext.market_type ||
+      null,
+    selection_side: side || existingMarketContext.selection_side || null,
+    selection_team: team || existingMarketContext.selection_team || null,
+    wager: {
+      ...existingWager,
+      called_line: line,
+      called_price: price,
+      line_source:
+        payload.line_source ||
+        existingWager.line_source ||
+        traceForSources.line_source ||
+        'odds_snapshot',
+      price_source:
+        payload.price_source ||
+        existingWager.price_source ||
+        traceForSources.price_source ||
+        'odds_snapshot',
+    },
+  };
 
   card.payloadData = payload;
 }
