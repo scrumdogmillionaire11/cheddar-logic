@@ -790,7 +790,6 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           Math.round(
             (projected1pTotalForCard - NHL_1P_REFERENCE_TOTAL_LINE) * 100,
           ) / 100;
-        const absEdge1p = Math.abs(edge1p);
 
         const direction1p = edge1p >= 0 ? 'OVER' : 'UNDER';
         let confidence1p = clamp(
