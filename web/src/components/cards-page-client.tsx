@@ -288,6 +288,7 @@ interface GameData {
       | 'TOTAL'
       | 'PUCKLINE'
       | 'TEAM_TOTAL'
+      | 'FIRST_PERIOD'
       | 'PROP'
       | 'INFO';
     selection?: { side: string; team?: string };
@@ -313,6 +314,10 @@ interface GameData {
       | 'PASS'
       | null;
     one_p_bet_status?: 'FIRE' | 'HOLD' | 'PASS' | null;
+    goalie_home_name?: string | null;
+    goalie_away_name?: string | null;
+    goalie_home_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
+    goalie_away_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
   }>;
   consistency?: {
     total_bias?:
@@ -1899,10 +1904,13 @@ export default function CardsPageClient() {
     const totalFallbackDecision = (
       totalFallbackPlay as { decision_v2?: typeof decisionV2 }
     )?.decision_v2;
+    // Only substitute totalFallbackDecision when the primary play has no
+    // decision_v2 at all. For wave-1 plays that have decision_v2 but a null
+    // fair_prob (e.g. MODEL_PROB_MISSING), keep that decision intact so Market
+    // Math either renders correctly or is suppressed — not silently replaced
+    // with a different play's canonical edge data.
     const resolvedDecisionV2 =
-      (decisionV2?.primary_reason_code === 'MODEL_PROB_MISSING' ||
-        decisionV2?.fair_prob === null) &&
-      totalFallbackDecision
+      !decisionV2 && totalFallbackDecision
         ? totalFallbackDecision
         : decisionV2;
     const inferredDecision =
@@ -2014,6 +2022,21 @@ export default function CardsPageClient() {
         onePeriodTotalsPlay?.prediction,
       );
     const goalieUncertain1p = reasonCodes1p.includes('NHL_1P_GOALIE_UNCERTAIN');
+    const goalieContextNames = [
+      onePeriodTotalsPlay?.goalie_away_name,
+      onePeriodTotalsPlay?.goalie_home_name,
+    ].filter(
+      (value): value is string => typeof value === 'string' && value.length > 0,
+    );
+    const goalieContextStatuses = [
+      onePeriodTotalsPlay?.goalie_away_status,
+      onePeriodTotalsPlay?.goalie_home_status,
+    ].filter(
+      (
+        value,
+      ): value is NonNullable<GameData['plays'][number]['goalie_home_status']> =>
+        typeof value === 'string' && value.length > 0,
+    );
     const edgePoints1p =
       typeof onePeriodTotalsPlay?.edge === 'number'
         ? onePeriodTotalsPlay.edge
@@ -2031,9 +2054,10 @@ export default function CardsPageClient() {
         ? displayPlay.impliedProb
         : typeof resolvedDecisionV2?.implied_prob === 'number'
           ? resolvedDecisionV2.implied_prob
-          : // Fall back to converting the live game-level price — keeps Edge Math
-            // in sync with the header odds rather than stale embedded price.
-            livePrice != null
+          : // Only infer from live price for non-wave-1 plays (no decision_v2).
+            // For wave-1 plays, decision_v2.implied_prob is the canonical source;
+            // absence means the market math section should not be shown.
+            !decisionV2 && livePrice != null
             ? impliedProbFromOdds(livePrice)
             : undefined;
     const mlBreakEvenPrice =
@@ -2530,11 +2554,24 @@ export default function CardsPageClient() {
                     <span className="text-cloud/60">
                       Goalie context{' '}
                       <span className="text-cloud/90 font-bold">
-                        {goalieUncertain1p
-                          ? 'Uncertain (PASS-capped)'
-                          : 'Stable'}
+                        {goalieContextNames.length > 0
+                          ? goalieContextNames.join(' / ')
+                          : goalieUncertain1p
+                            ? 'Uncertain (PASS-capped)'
+                            : 'Stable'}
                       </span>
                     </span>
+                    {goalieContextStatuses.length > 0 && (
+                      <>
+                        <span className="text-cloud/40">|</span>
+                        <span className="text-cloud/60">
+                          Status{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {goalieContextStatuses.join(' / ')}
+                          </span>
+                        </span>
+                      </>
+                    )}
                   </div>
                 )}
                 {typeof projectedScoreHome === 'number' &&

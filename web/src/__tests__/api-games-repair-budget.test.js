@@ -11,6 +11,7 @@ const WAVE1_MARKETS = new Set([
   'TOTAL',
   'PUCKLINE',
   'TEAM_TOTAL',
+  'FIRST_PERIOD',
 ]);
 
 function isWave1Play(game, play) {

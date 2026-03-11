@@ -9,6 +9,7 @@ const DEFAULTS = {
 
 function normalizeMarketType(marketType, recommendedBetType) {
   const raw = String(marketType || recommendedBetType || '').toLowerCase();
+  if (raw.includes('first_period') || raw.includes('1p')) return 'first_period';
   if (raw.includes('total')) return 'total';
   if (raw.includes('team_total') || raw.includes('team total'))
     return 'team_total';
@@ -91,7 +92,12 @@ function normalizePeriod(payload) {
 }
 
 function getSideFamily(market) {
-  if (market === 'total' || market === 'team_total' || market === 'prop') {
+  if (
+    market === 'total' ||
+    market === 'team_total' ||
+    market === 'first_period' ||
+    market === 'prop'
+  ) {
     return 'over_under';
   }
   if (market === 'spread' || market === 'moneyline' || market === 'puckline') {

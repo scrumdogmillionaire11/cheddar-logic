@@ -173,6 +173,7 @@ interface Play {
     | 'TOTAL'
     | 'PUCKLINE'
     | 'TEAM_TOTAL'
+    | 'FIRST_PERIOD'
     | 'PROP'
     | 'INFO';
   selection?: { side: string; team?: string };
@@ -198,6 +199,7 @@ interface Play {
       called_price?: number | null;
       line_source?: string | null;
       price_source?: string | null;
+      period?: string | null;
     };
   };
   reason_codes?: string[];
@@ -224,6 +226,10 @@ interface Play {
     | 'PASS'
     | null;
   one_p_bet_status?: 'FIRE' | 'HOLD' | 'PASS' | null;
+  goalie_home_name?: string | null;
+  goalie_away_name?: string | null;
+  goalie_home_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
+  goalie_away_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
   decision_v2?: {
     direction: 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NONE';
     support_score: number;
@@ -252,7 +258,12 @@ interface Play {
     fair_prob: number | null;
     implied_prob: number | null;
     edge_pct: number | null;
-    edge_method?: 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA' | null;
+    edge_method?:
+      | 'ML_PROB'
+      | 'MARGIN_DELTA'
+      | 'TOTAL_DELTA'
+      | 'ONE_PERIOD_DELTA'
+      | null;
     edge_line_delta?: number | null;
     edge_lean?: 'OVER' | 'UNDER' | null;
     proxy_used?: boolean;
@@ -311,6 +322,7 @@ const WAVE1_MARKETS = new Set<MarketType>([
   'TOTAL',
   'PUCKLINE',
   'TEAM_TOTAL',
+  'FIRST_PERIOD',
 ]);
 const COUNTER_ALL_MARKET = 'ALL';
 const UNKNOWN_SPORT = 'UNKNOWN';
@@ -346,6 +358,7 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'nhl-spread-call',
       'nhl-moneyline-call',
       'nhl-pace-totals',
+      'nhl-pace-1p',
     ]),
     evidenceOnlyCardTypes: new Set([
       'nhl-base-projection',
@@ -354,13 +367,13 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'nhl-goalie-certainty',
       'nhl-model-output',
       'nhl-shot-environment',
-      'nhl-pace-1p',
       'welcome-home-v2',
     ]),
     expectedPlayableMarkets: new Set<MarketType>([
       'MONEYLINE',
       'SPREAD',
       'TOTAL',
+      'FIRST_PERIOD',
     ]),
   },
   NCAAM: {
@@ -441,6 +454,9 @@ function registerGameWithPlayableMarket(
 
 function inferMarketFromCardType(cardType: string): MarketType | undefined {
   const normalized = cardType.trim().toLowerCase();
+  if (normalized.includes('1p') || normalized.includes('first-period')) {
+    return 'FIRST_PERIOD';
+  }
   if (normalized.includes('moneyline') || normalized.includes('-ml-')) {
     return 'MONEYLINE';
   }
@@ -555,6 +571,7 @@ function normalizeMarketType(value: unknown): Play['market_type'] | undefined {
     upper === 'TOTAL' ||
     upper === 'PUCKLINE' ||
     upper === 'TEAM_TOTAL' ||
+    upper === 'FIRST_PERIOD' ||
     upper === 'PROP' ||
     upper === 'INFO'
   ) {
@@ -563,6 +580,7 @@ function normalizeMarketType(value: unknown): Play['market_type'] | undefined {
 
   if (upper === 'PUCK_LINE') return 'PUCKLINE';
   if (upper === 'TEAMTOTAL') return 'TEAM_TOTAL';
+  if (upper === 'FIRSTPERIOD') return 'FIRST_PERIOD';
   return undefined;
 }
 
@@ -679,6 +697,24 @@ function normalizePrediction(value: unknown): Play['prediction'] | undefined {
   }
   if (upper.includes(' OVER ')) return 'OVER';
   if (upper.includes(' UNDER ')) return 'UNDER';
+  return undefined;
+}
+
+function normalizeGoalieStatus(
+  value: unknown,
+): 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | undefined {
+  // Status semantics:
+  // CONFIRMED = official game-day roster (locked in)
+  // EXPECTED = projected/likely but not yet confirmed (subject to change)
+  // UNKNOWN = uncertain or unconfirmed
+  //
+  // Both CONFIRMED and EXPECTED must reach the UI so it can display
+  // appropriate certainty levels. DO NOT collapse either to UNKNOWN.
+  if (typeof value !== 'string') return undefined;
+  const upper = value.trim().toUpperCase();
+  if (upper === 'CONFIRMED') return 'CONFIRMED';
+  if (upper === 'EXPECTED') return 'EXPECTED';
+  if (upper === 'UNKNOWN') return 'UNKNOWN';
   return undefined;
 }
 
@@ -863,8 +899,9 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
     edge_method:
       input.edge_method === 'ML_PROB' ||
       input.edge_method === 'MARGIN_DELTA' ||
-      input.edge_method === 'TOTAL_DELTA'
-        ? (input.edge_method as 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA')
+      input.edge_method === 'TOTAL_DELTA' ||
+      input.edge_method === 'ONE_PERIOD_DELTA'
+        ? (input.edge_method as 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA' | 'ONE_PERIOD_DELTA')
         : null,
     edge_line_delta:
       typeof input.edge_line_delta === 'number' &&
@@ -1587,6 +1624,22 @@ export async function GET(request: NextRequest) {
           payloadSelection?.team_abbr,
           payloadPlay?.team_abbr,
         );
+        const normalizedGoalieHomeName = firstString(
+          (payload as Record<string, unknown>).goalie_home_name,
+          driverInputs?.home_goalie_name,
+        );
+        const normalizedGoalieAwayName = firstString(
+          (payload as Record<string, unknown>).goalie_away_name,
+          driverInputs?.away_goalie_name,
+        );
+        const normalizedGoalieHomeStatus = normalizeGoalieStatus(
+          (payload as Record<string, unknown>).goalie_home_status ??
+            driverInputs?.home_goalie_certainty,
+        );
+        const normalizedGoalieAwayStatus = normalizeGoalieStatus(
+          (payload as Record<string, unknown>).goalie_away_status ??
+            driverInputs?.away_goalie_certainty,
+        );
         const normalizedGameId = firstString(
           (payload as Record<string, unknown>).game_id,
           payloadPlay?.game_id,
@@ -1693,20 +1746,22 @@ export async function GET(request: NextRequest) {
           payloadPlayObj?.edge_points,
           payloadMarketContextProjection?.edge_points,
         );
+        // Prefer canonical decision_v2 values for wave-1 eligible rows;
+        // legacy payload fields (p_fair, model_prob) may be stale pre-V2 values.
         const normalizedPFair = firstNumber(
+          normalizedDecisionV2?.fair_prob,
           (payload as Record<string, unknown>).p_fair,
           payloadPlayObj?.p_fair,
-          normalizedDecisionV2?.fair_prob,
         );
         const normalizedPImplied = firstNumber(
+          normalizedDecisionV2?.implied_prob,
           (payload as Record<string, unknown>).p_implied,
           payloadPlayObj?.p_implied,
-          normalizedDecisionV2?.implied_prob,
         );
         const normalizedEdgePct = firstNumber(
+          normalizedDecisionV2?.edge_pct,
           (payload as Record<string, unknown>).edge_pct,
           payloadPlayObj?.edge_pct,
-          normalizedDecisionV2?.edge_pct,
         );
         const projectionWinProbHome = firstNumber(
           payloadMarketContextProjection?.win_prob_home,
@@ -1714,6 +1769,7 @@ export async function GET(request: NextRequest) {
           payloadPlayProjection?.win_prob_home,
         );
         let normalizedModelProb = firstNumber(
+          normalizedDecisionV2?.fair_prob,
           (payload as Record<string, unknown>).model_prob,
           payloadPlayObj?.model_prob,
           normalizedPFair,
@@ -1951,6 +2007,10 @@ export async function GET(request: NextRequest) {
                 : null,
           one_p_model_call: onePModelCall,
           one_p_bet_status: onePBetStatus,
+          goalie_home_name: normalizedGoalieHomeName ?? null,
+          goalie_away_name: normalizedGoalieAwayName ?? null,
+          goalie_home_status: normalizedGoalieHomeStatus ?? null,
+          goalie_away_status: normalizedGoalieAwayStatus ?? null,
           decision_v2: normalizedDecisionV2,
           kind:
             payload.kind === 'PLAY' || payload.kind === 'EVIDENCE'

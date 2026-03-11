@@ -44,7 +44,7 @@ assert(
 
 assert(
   cardsPageSource.includes('1P projection') &&
-    cardsPageSource.includes('Classification') &&
+    cardsPageSource.includes('1P Call') &&
     cardsPageSource.includes('Goalie context'),
   'cards UI should render dedicated 1P projection context row with pass-first fields',
 );
@@ -52,6 +52,32 @@ assert(
 assert(
   transformSource.includes('PASS_NO_ACTIONABLE_PLAY'),
   'transform should label evidence-only/no-play states as no actionable play, not driver-load failure',
+);
+
+// WI-0377 additions: wave-1 canonical math sourcing contracts
+
+assert(
+  gamesRouteSource.includes('normalizedDecisionV2?.fair_prob') ||
+    gamesRouteSource.includes('decision_v2?.fair_prob'),
+  '/api/games normalizedPFair cascade must prefer decision_v2.fair_prob for wave-1 plays',
+);
+
+assert(
+  gamesRouteSource.includes("period?: string | null;") ||
+    gamesRouteSource.includes("period?: string"),
+  '/api/games Play interface must include period field on market_context.wager for 1P cards',
+);
+
+assert(
+  cardsPageSource.includes('!decisionV2 && totalFallbackDecision') ||
+    cardsPageSource.includes('!decisionV2 &&\n') ||
+    cardsPageSource.includes('!decisionV2 && livePrice'),
+  'cards UI resolvedDecisionV2 must not substitute another play\'s decision_v2 when primary play already has one',
+);
+
+assert(
+  cardsPageSource.includes("!decisionV2 && livePrice != null"),
+  'cards UI resolvedImpliedProb must guard live-price inference behind !decisionV2 check for wave-1 plays',
 );
 
 console.log('✅ NHL 1P projection source contract tests passed');

@@ -34,7 +34,10 @@ const {
   updateOddsSnapshotRawData,
   getDatabase,
 } = require('@cheddar-logic/data');
-const { enrichOddsSnapshotWithMoneyPuck } = require('../moneypuck');
+const {
+  enrichOddsSnapshotWithMoneyPuck,
+  fetchMoneyPuckSnapshot,
+} = require('../moneypuck');
 
 // Import pluggable inference layer
 const {
@@ -258,22 +261,12 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
   const selection = deriveOnePeriodSelection(payload);
   const modelLine = toFiniteNumber(payload?.driver?.inputs?.market_1p_total);
   const line = modelLine !== null ? modelLine : 1.5;
-  const proxyPrice =
-    selection === 'OVER'
-      ? toFiniteNumber(oddsSnapshot?.total_price_over)
-      : selection === 'UNDER'
-        ? toFiniteNumber(oddsSnapshot?.total_price_under)
-        : null;
-  const defaultOnePeriodPrice = Math.trunc(
-    toFiniteNumber(process.env.NHL_1P_DEFAULT_PRICE) || -110,
-  );
-  const price = proxyPrice !== null ? proxyPrice : defaultOnePeriodPrice;
   const statusToken = String(payload.status || '').toUpperCase();
   const isPlayable =
     (statusToken === 'FIRE' || statusToken === 'WATCH') &&
     (selection === 'OVER' || selection === 'UNDER');
 
-  payload.market_type = 'TOTAL';
+  payload.market_type = 'FIRST_PERIOD';
   payload.recommended_bet_type = 'total';
   payload.period = '1P';
   payload.kind = isPlayable ? 'PLAY' : 'EVIDENCE';
@@ -287,11 +280,18 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
         }
       : null;
   payload.line = line;
-  payload.price = price;
-  payload.line_source = payload.line_source || 'model_reference';
-  payload.price_source =
-    proxyPrice !== null ? 'odds_snapshot_proxy' : 'synthetic_default';
+  payload.price = null;
+  payload.line_source = payload.line_source || 'fixed_reference';
+  payload.price_source = null;
   payload.market_variant = 'NHL_1P_TOTAL';
+  payload.odds_context = {
+    ...(payload.odds_context && typeof payload.odds_context === 'object'
+      ? payload.odds_context
+      : {}),
+    total_1p: line,
+    total_price_over_1p: null,
+    total_price_under_1p: null,
+  };
   payload.market = {
     ...(payload.market && typeof payload.market === 'object'
       ? payload.market
@@ -303,7 +303,7 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
       ? payload.market_context
       : {}),
     version: 'v1',
-    market_type: 'TOTAL',
+    market_type: 'FIRST_PERIOD',
     selection_side: selection,
     period: '1P',
     wager: {
@@ -312,7 +312,7 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
         ? payload.market_context.wager
         : {}),
       called_line: line,
-      called_price: price,
+      called_price: null,
       line_source: payload.line_source,
       price_source: payload.price_source,
       period: '1P',
@@ -322,10 +322,10 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
     ...(payload.pricing_trace && typeof payload.pricing_trace === 'object'
       ? payload.pricing_trace
       : {}),
-    called_market_type: 'TOTAL',
+    called_market_type: 'FIRST_PERIOD',
     called_side: selection,
     called_line: line,
-    called_price: price,
+    called_price: null,
     line_source: payload.line_source,
     price_source: payload.price_source,
     period: '1P',
@@ -995,6 +995,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
       let projectionBlockedCount = 0;
       const gamePipelineStates = {};
       const errors = [];
+      const moneyPuckSnapshot = await fetchMoneyPuckSnapshot({ ttlMs: 0 });
 
       // Process each game
       for (const gameId of gameIds) {
@@ -1003,7 +1004,9 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
 
           // Enrich with ESPN team metrics
           oddsSnapshot = await enrichOddsSnapshotWithEspnMetrics(oddsSnapshot);
-          oddsSnapshot = await enrichOddsSnapshotWithMoneyPuck(oddsSnapshot);
+          oddsSnapshot = await enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, {
+            snapshot: moneyPuckSnapshot,
+          });
 
           // Persist enrichment to database so models have access to ESPN metrics
           const rawData = normalizeRawDataPayload(oddsSnapshot.raw_data);
@@ -1301,4 +1304,8 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runNHLModel, generateNHLMarketCallCards };
+module.exports = {
+  runNHLModel,
+  generateNHLMarketCallCards,
+  applyNhlSettlementMarketContext,
+};

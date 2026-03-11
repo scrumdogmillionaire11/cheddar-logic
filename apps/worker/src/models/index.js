@@ -77,11 +77,22 @@ function normalizeGoalieCertaintyToken(value) {
   const token = String(value || '')
     .trim()
     .toUpperCase();
+  
+  // Status semantics (CRITICAL: preserve throughout pipeline to API):
+  // CONFIRMED = official game-day roster decision (locked, don't downgrade)
+  // EXPECTED = projected/likely but not yet officially confirmed
+  // UNKNOWN = uncertain or unconfirmed
+  // 
+  // !!! DO NOT DOWNGRADE CONFIRMED → EXPECTED !!!
+  // Montreal @ Ottawa with Jacob Fowler CONFIRMED means roster is locked.
+  // EDM @ DAL with Tristan Jarry EXPECTED means still subject to change.
+  // This distinction must reach the API so UI can display appropriate certainty.
+  
   if (token === 'CONFIRMED' || token === 'STARTING' || token === 'OFFICIAL') {
     return 'CONFIRMED';
   }
   if (token === 'EXPECTED' || token === 'PROJECTED' || token === 'LIKELY') {
-    return 'UNKNOWN';
+    return 'EXPECTED';
   }
   if (token === 'UNKNOWN' || token === 'UNCONFIRMED' || token === 'TBD') {
     return 'UNKNOWN';
@@ -338,6 +349,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
   );
   const homeGoalieCertainty = resolveGoalieCertainty(raw, 'home');
   const awayGoalieCertainty = resolveGoalieCertainty(raw, 'away');
+  const homeGoalieName =
+    typeof raw?.goalie?.home?.name === 'string' ? raw.goalie.home.name : null;
+  const awayGoalieName =
+    typeof raw?.goalie?.away?.name === 'string' ? raw.goalie.away.name : null;
   const homeGoalieConfirmed = homeGoalieCertainty === 'CONFIRMED';
   const awayGoalieConfirmed = awayGoalieCertainty === 'CONFIRMED';
   const goalieCertaintyStatus =
@@ -385,6 +400,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           away_goals_for: goalsForAway,
           home_goals_against: goalsAgainstHome,
           away_goals_against: goalsAgainstAway,
+          home_goalie_name: homeGoalieName,
+          away_goalie_name: awayGoalieName,
           home_goalie_confirmed: homeGoalieConfirmed,
           away_goalie_confirmed: awayGoalieConfirmed,
           home_goalie_certainty: homeGoalieCertainty,
@@ -431,6 +448,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       ev_threshold_passed: confidence > 0.6,
       driverKey: 'goalieCertainty',
       driverInputs: {
+        home_goalie_name: homeGoalieName,
+        away_goalie_name: awayGoalieName,
         home_goalie_confirmed: homeGoalieConfirmed,
         away_goalie_confirmed: awayGoalieConfirmed,
         home_goalie_certainty: homeGoalieCertainty,
@@ -561,6 +580,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           home_gsax: goalieHomeGsax,
           away_gsax: goalieAwayGsax,
           delta: goalieDelta,
+          home_goalie_name: homeGoalieName,
+          away_goalie_name: awayGoalieName,
+          home_goalie_certainty: homeGoalieCertainty,
+          away_goalie_certainty: awayGoalieCertainty,
         },
         driverScore: score,
         driverStatus: 'ok',
@@ -741,6 +764,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
             away_goals_for: goalsForAway,
             home_goals_against: goalsAgainstHome,
             away_goals_against: goalsAgainstAway,
+            home_goalie_name: homeGoalieName,
+            away_goalie_name: awayGoalieName,
             home_expected: paceResult.homeExpected,
             away_expected: paceResult.awayExpected,
             expected_total: projectedTotalForCard,
@@ -834,6 +859,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
             projection_final: projected1pTotalForCard,
             projection_delta: projectionDelta1p,
             classification,
+            home_goalie_name: homeGoalieName,
+            away_goalie_name: awayGoalieName,
             environment_tag: firstPeriodModel.environment_tag ?? null,
             goalie_confidence: goalieConfidence,
             pace_1p: firstPeriodModel.pace_1p ?? null,
@@ -858,6 +885,18 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           inference_source: 'driver',
           is_mock: false,
           reason_codes: reasonCodes,
+          market_type: 'FIRST_PERIOD',
+          selection: {
+            side: classification.includes('OVER')
+              ? 'OVER'
+              : classification.includes('UNDER')
+                ? 'UNDER'
+                : 'NONE',
+          },
+          line: NHL_1P_REFERENCE_TOTAL_LINE,
+          line_source: 'fixed_reference',
+          price: null,
+          price_source: null,
         });
       }
     }
@@ -1680,12 +1719,17 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
     freeThrowPctHome !== null &&
     freeThrowPctAway !== null
   ) {
-    let prediction = null;
-    if (freeThrowPctHome > 75 && freeThrowPctAway < 75) {
-      prediction = 'HOME';
-    } else if (freeThrowPctAway > 75 && freeThrowPctHome < 75) {
-      prediction = 'AWAY';
-    }
+    const ftGap = Number((freeThrowPctHome - freeThrowPctAway).toFixed(2));
+    const maxFtPct = Math.max(freeThrowPctHome, freeThrowPctAway);
+    const minFtPct = Math.min(freeThrowPctHome, freeThrowPctAway);
+    const hasThresholdSplit = maxFtPct > 75 && minFtPct < 75;
+    const prediction = hasThresholdSplit
+      ? ftGap > 0
+        ? 'HOME'
+        : ftGap < 0
+          ? 'AWAY'
+          : null
+      : null;
 
     if (prediction) {
       if (
@@ -1704,7 +1748,6 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
         projectedMarginForDrivers = toNumber(projection?.projectedMargin);
       }
 
-      const ftGap = Number((freeThrowPctHome - freeThrowPctAway).toFixed(2));
       const confidence = 0.62;
       descriptors.push({
         cardType: 'ncaam-ft-trend',

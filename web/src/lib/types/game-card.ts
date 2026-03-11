@@ -3,7 +3,7 @@
  * Based on FILTER-FEATURE.md design
  *
  * CANONICAL MARKET TYPES (used throughout system, never guessed)
- * MONEYLINE, SPREAD, TOTAL, PUCKLINE, TEAM_TOTAL, PROP, INFO
+ * MONEYLINE, SPREAD, TOTAL, PUCKLINE, TEAM_TOTAL, FIRST_PERIOD, PROP, INFO
  */
 
 export type Sport =
@@ -22,6 +22,7 @@ export type CanonicalMarketType =
   | 'TOTAL'
   | 'PUCKLINE'
   | 'TEAM_TOTAL'
+  | 'FIRST_PERIOD'
   | 'PROP'
   | 'INFO';
 
@@ -209,7 +210,7 @@ export interface DecisionV2 {
   fair_prob: number | null;
   implied_prob: number | null;
   edge_pct: number | null;
-  edge_method?: 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA' | null;
+  edge_method?: 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA' | 'TEAM_TOTAL_DELTA' | 'ONE_PERIOD_DELTA' | null;
   edge_line_delta?: number | null;
   edge_lean?: 'OVER' | 'UNDER' | null;
   proxy_used?: boolean;
