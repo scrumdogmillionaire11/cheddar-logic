@@ -6,7 +6,11 @@
 
 'use strict';
 
-const { ScoringValidator, SPORT_BOUNDS, TYPICAL_TOTALS } = require('../scoring-validator.js');
+const {
+  ScoringValidator,
+  SPORT_BOUNDS,
+  TYPICAL_TOTALS,
+} = require('../scoring-validator.js');
 
 describe('ScoringValidator', () => {
   let validator;
@@ -50,7 +54,9 @@ describe('ScoringValidator', () => {
       it('should flag score exceeding NHL max', () => {
         const result = validator.validateGameScore('NHL', 20, 3);
         expect(result.valid).toBe(false);
-        expect(result.warnings.some(w => w.includes('exceeds maximum'))).toBe(true);
+        expect(result.warnings.some((w) => w.includes('exceeds maximum'))).toBe(
+          true,
+        );
       });
     });
 
@@ -69,7 +75,9 @@ describe('ScoringValidator', () => {
       it('should flag score exceeding NBA max', () => {
         const result = validator.validateGameScore('NBA', 250, 100);
         expect(result.valid).toBe(false);
-        expect(result.warnings.some(w => w.includes('exceeds maximum'))).toBe(true);
+        expect(result.warnings.some((w) => w.includes('exceeds maximum'))).toBe(
+          true,
+        );
       });
     });
 
@@ -83,7 +91,9 @@ describe('ScoringValidator', () => {
       it('should flag score exceeding NCAAM max', () => {
         const result = validator.validateGameScore('NCAAM', 160, 50);
         expect(result.valid).toBe(false);
-        expect(result.warnings.some(w => w.includes('exceeds maximum'))).toBe(true);
+        expect(result.warnings.some((w) => w.includes('exceeds maximum'))).toBe(
+          true,
+        );
       });
     });
 
@@ -91,7 +101,9 @@ describe('ScoringValidator', () => {
       it('should flag 50+ point spread in NBA', () => {
         const result = validator.validateGameScore('NBA', 150, 95);
         expect(result.valid).toBe(false);
-        expect(result.warnings.some(w => w.includes('Unusually large spread'))).toBe(true);
+        expect(
+          result.warnings.some((w) => w.includes('Unusually large spread')),
+        ).toBe(true);
       });
 
       it('should not flag normal NBA spread (40 points)', () => {
@@ -102,13 +114,17 @@ describe('ScoringValidator', () => {
       it('should flag 40+ point spread in NCAAM', () => {
         const result = validator.validateGameScore('NCAAM', 120, 75);
         expect(result.valid).toBe(false);
-        expect(result.warnings.some(w => w.includes('Unusually large spread'))).toBe(true);
+        expect(
+          result.warnings.some((w) => w.includes('Unusually large spread')),
+        ).toBe(true);
       });
 
       it('should not flag major blowout in NHL (no blowout rule)', () => {
         const result = validator.validateGameScore('NHL', 10, 0);
         // Hockey doesn't have blowout detection
-        expect(result.warnings.some(w => w.includes('Unusually large'))).toBe(false);
+        expect(result.warnings.some((w) => w.includes('Unusually large'))).toBe(
+          false,
+        );
       });
     });
 
@@ -214,7 +230,9 @@ describe('ScoringValidator', () => {
     it('should warn on implausible blowout', () => {
       const result = validator.validateGameScore('NBA', 200, 90);
       expect(result.valid).toBe(false);
-      expect(result.warnings.some(w => w.includes('Unusually large spread'))).toBe(true);
+      expect(
+        result.warnings.some((w) => w.includes('Unusually large spread')),
+      ).toBe(true);
     });
   });
 });

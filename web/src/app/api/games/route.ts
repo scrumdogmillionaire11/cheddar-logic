@@ -42,7 +42,10 @@
  */
 
 import { NextResponse, NextRequest } from 'next/server';
-import { getDatabaseReadOnly, closeReadOnlyInstance } from '@cheddar-logic/data';
+import {
+  getDatabaseReadOnly,
+  closeReadOnlyInstance,
+} from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
@@ -76,7 +79,6 @@ const API_GAMES_HORIZON_HOURS = Number.isFinite(RAW_API_GAMES_HORIZON_HOURS)
   ? RAW_API_GAMES_HORIZON_HOURS
   : 36;
 const HAS_API_GAMES_HORIZON = API_GAMES_HORIZON_HOURS > 0;
-
 
 interface GameRow {
   id: string;
@@ -378,7 +380,8 @@ function incrementStageCounter(
 ): void {
   const normalizedSport = normalizeCounterSport(sport);
   const normalizedMarket =
-    typeof market === 'string' && market.trim().toUpperCase() === COUNTER_ALL_MARKET
+    typeof market === 'string' &&
+    market.trim().toUpperCase() === COUNTER_ALL_MARKET
       ? COUNTER_ALL_MARKET
       : normalizeCounterMarket(market);
   if (!counters[stage][normalizedSport]) {
@@ -388,11 +391,7 @@ function incrementStageCounter(
     (counters[stage][normalizedSport][normalizedMarket] ?? 0) + amount;
 }
 
-function bumpCount(
-  store: Map<string, number>,
-  key: string,
-  amount = 1,
-): void {
+function bumpCount(store: Map<string, number>, key: string, amount = 1): void {
   store.set(key, (store.get(key) ?? 0) + amount);
 }
 
@@ -452,15 +451,16 @@ function applyCardTypeKindContract(
   if (contract.evidenceOnlyCardTypes.has(normalizedCardType)) {
     return { kind: 'EVIDENCE', downgradedOutOfContractPlay: false };
   }
-  if (inferredKind === 'PLAY' && !contract.playProducerCardTypes.has(normalizedCardType)) {
+  if (
+    inferredKind === 'PLAY' &&
+    !contract.playProducerCardTypes.has(normalizedCardType)
+  ) {
     return { kind: 'EVIDENCE', downgradedOutOfContractPlay: true };
   }
   return { kind: inferredKind, downgradedOutOfContractPlay: false };
 }
 
-function buildPlayableMarketFamilyDiagnostics(
-  counters: StageCounters,
-): {
+function buildPlayableMarketFamilyDiagnostics(counters: StageCounters): {
   expected_playable_markets: Record<string, MarketType[]>;
   emitted_playable_markets: Record<string, string[]>;
   missing_playable_markets: Record<string, string[]>;
@@ -476,7 +476,9 @@ function buildPlayableMarketFamilyDiagnostics(
     const emittedMarkets = Object.entries(counters.plays_emitted[sport] ?? {})
       .filter(
         ([market, count]) =>
-          market !== COUNTER_ALL_MARKET && typeof count === 'number' && count > 0,
+          market !== COUNTER_ALL_MARKET &&
+          typeof count === 'number' &&
+          count > 0,
       )
       .map(([market]) => market)
       .sort();
@@ -501,8 +503,7 @@ function hasMinimumViability(play: Play, marketType: MarketType): boolean {
   if (marketType === 'TOTAL') {
     // Price is sourced from odds snapshot at display time — only require side + line.
     return (
-      (side === 'OVER' || side === 'UNDER') &&
-      typeof play.line === 'number'
+      (side === 'OVER' || side === 'UNDER') && typeof play.line === 'number'
     );
   }
   if (marketType === 'SPREAD') {
@@ -781,7 +782,9 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
       source_attempts: Array.isArray(missingDataObject?.source_attempts)
         ? missingDataObject.source_attempts
             .map((attempt) => toObject(attempt))
-            .filter((attempt): attempt is Record<string, unknown> => Boolean(attempt))
+            .filter((attempt): attempt is Record<string, unknown> =>
+              Boolean(attempt),
+            )
             .map((attempt) => {
               const resultRaw =
                 typeof attempt.result === 'string'
@@ -864,7 +867,8 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
             typeof toObject(input.pricing_trace)?.market_side === 'string'
               ? String(toObject(input.pricing_trace)?.market_side)
               : null,
-          market_line: firstNumber(toObject(input.pricing_trace)?.market_line) ?? null,
+          market_line:
+            firstNumber(toObject(input.pricing_trace)?.market_line) ?? null,
           market_price:
             firstNumber(toObject(input.pricing_trace)?.market_price) ?? null,
           line_source:
@@ -964,7 +968,9 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   }
   try {
     const row = db
-      .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
+      .prepare(
+        `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
+      )
       .get() as { current_run_id?: string | null } | undefined;
     return row?.current_run_id ? [row.current_run_id] : [];
   } catch {
@@ -1171,9 +1177,11 @@ export async function GET(request: NextRequest) {
       endUtc: string | null,
     ): GameRow[] => {
       const baseGamesStmt = db.prepare(baseGamesSql);
-      const baseGames = (endUtc
-        ? baseGamesStmt.all(startUtc, endUtc)
-        : baseGamesStmt.all(startUtc)) as Array<
+      const baseGames = (
+        endUtc
+          ? baseGamesStmt.all(startUtc, endUtc)
+          : baseGamesStmt.all(startUtc)
+      ) as Array<
         Omit<
           GameRow,
           | 'h2h_home'
@@ -1260,7 +1268,9 @@ export async function GET(request: NextRequest) {
     let rows = loadGamesWithLatestOdds(gamesStartUtc, gamesEndUtc);
 
     if (isNonProd && rows.length === 0 && !shouldUseDevLookback) {
-      const fallbackLookbackHours = Number(process.env.DEV_GAMES_FALLBACK_HOURS || 72);
+      const fallbackLookbackHours = Number(
+        process.env.DEV_GAMES_FALLBACK_HOURS || 72,
+      );
       if (Number.isFinite(fallbackLookbackHours) && fallbackLookbackHours > 0) {
         const fallbackStartUtc = new Date(
           now.getTime() - fallbackLookbackHours * 60 * 60 * 1000,
@@ -1321,9 +1331,8 @@ export async function GET(request: NextRequest) {
       // SQLite doesn't support array binding; build placeholders for ALL IDs (canonical + external)
       const runIdPlaceholders =
         activeRunIds.length > 0 ? activeRunIds.map(() => '?').join(', ') : '';
-      const runIdClause = activeRunIds.length > 0
-        ? `AND run_id IN (${runIdPlaceholders})`
-        : '';
+      const runIdClause =
+        activeRunIds.length > 0 ? `AND run_id IN (${runIdPlaceholders})` : '';
       const buildCardsSql = (queryableIds: string[], runClause: string) => {
         const queryPlaceholders = queryableIds.map(() => '?').join(', ');
         return `
@@ -1339,7 +1348,9 @@ export async function GET(request: NextRequest) {
       let cardRows: CardPayloadRow[] = [];
       try {
         const cardsQueryStartedAt = Date.now();
-        const cardsStmt = db.prepare(buildCardsSql(allQueryableIds, runIdClause));
+        const cardsStmt = db.prepare(
+          buildCardsSql(allQueryableIds, runIdClause),
+        );
         const cardsParams =
           activeRunIds.length > 0
             ? [...allQueryableIds, ...activeRunIds]
@@ -1379,7 +1390,8 @@ export async function GET(request: NextRequest) {
         const canonicalGameIdForRow =
           externalToCanonicalMap.get(cardRow.game_id) ?? cardRow.game_id;
         const rowSport =
-          normalizeSport(sportByGameId.get(canonicalGameIdForRow)) ?? UNKNOWN_SPORT;
+          normalizeSport(sportByGameId.get(canonicalGameIdForRow)) ??
+          UNKNOWN_SPORT;
         const rowMarket = inferMarketFromCardType(cardRow.card_type);
         incrementStageCounter(stageCounters, 'card_rows', rowSport, rowMarket);
 
@@ -1700,7 +1712,9 @@ export async function GET(request: NextRequest) {
             ? deriveNhl1PModelCall(combinedReasonCodes, normalizedPrediction)
             : undefined;
         const onePBetStatus =
-          cardRow.card_type === 'nhl-pace-1p' ? (resolvedAction ?? null) : undefined;
+          cardRow.card_type === 'nhl-pace-1p'
+            ? (resolvedAction ?? null)
+            : undefined;
 
         const play: Play = {
           source_card_id: cardRow.id,
@@ -1729,7 +1743,9 @@ export async function GET(request: NextRequest) {
               : null,
           edge: typeof normalizedEdge === 'number' ? normalizedEdge : null,
           edge_points:
-            typeof normalizedEdgePoints === 'number' ? normalizedEdgePoints : null,
+            typeof normalizedEdgePoints === 'number'
+              ? normalizedEdgePoints
+              : null,
           p_fair: typeof normalizedPFair === 'number' ? normalizedPFair : null,
           p_implied:
             typeof normalizedPImplied === 'number' ? normalizedPImplied : null,
@@ -1939,22 +1955,28 @@ export async function GET(request: NextRequest) {
                 projection: payloadMarketContextProjection
                   ? {
                       margin_home:
-                        firstNumber(payloadMarketContextProjection.margin_home) ??
-                        null,
+                        firstNumber(
+                          payloadMarketContextProjection.margin_home,
+                        ) ?? null,
                       total:
-                        firstNumber(payloadMarketContextProjection.total) ?? null,
+                        firstNumber(payloadMarketContextProjection.total) ??
+                        null,
                       team_total:
-                        firstNumber(payloadMarketContextProjection.team_total) ??
-                        null,
+                        firstNumber(
+                          payloadMarketContextProjection.team_total,
+                        ) ?? null,
                       win_prob_home:
-                        firstNumber(payloadMarketContextProjection.win_prob_home) ??
-                        null,
+                        firstNumber(
+                          payloadMarketContextProjection.win_prob_home,
+                        ) ?? null,
                       score_home:
-                        firstNumber(payloadMarketContextProjection.score_home) ??
-                        null,
+                        firstNumber(
+                          payloadMarketContextProjection.score_home,
+                        ) ?? null,
                       score_away:
-                        firstNumber(payloadMarketContextProjection.score_away) ??
-                        null,
+                        firstNumber(
+                          payloadMarketContextProjection.score_away,
+                        ) ?? null,
                     }
                   : undefined,
                 wager: payloadMarketContextWager
@@ -2047,12 +2069,21 @@ export async function GET(request: NextRequest) {
         const canonicalGameId = canonicalGameIdForRow;
         const playSport =
           normalizeSport(
-            firstString(payload.sport, payloadPlay?.sport, payloadPlayObj?.sport),
+            firstString(
+              payload.sport,
+              payloadPlay?.sport,
+              payloadPlayObj?.sport,
+            ),
           ) || normalizeSport(sportByGameId.get(canonicalGameId));
         const parsedSport = playSport ?? rowSport;
         const parsedMarket =
           normalizedMarketType ?? inferMarketFromCardType(cardRow.card_type);
-        incrementStageCounter(stageCounters, 'parsed_rows', parsedSport, parsedMarket);
+        incrementStageCounter(
+          stageCounters,
+          'parsed_rows',
+          parsedSport,
+          parsedMarket,
+        );
 
         const fallbackKind =
           play.kind ?? (play.market_type === 'INFO' ? 'EVIDENCE' : 'PLAY');
@@ -2064,7 +2095,10 @@ export async function GET(request: NextRequest) {
         play.kind = kindContractResult.kind;
         if (kindContractResult.downgradedOutOfContractPlay) {
           play.reason_codes = Array.from(
-            new Set([...(play.reason_codes ?? []), 'PASS_CARD_TYPE_OUT_OF_CONTRACT']),
+            new Set([
+              ...(play.reason_codes ?? []),
+              'PASS_CARD_TYPE_OUT_OF_CONTRACT',
+            ]),
           );
           const key = `${normalizeCounterSport(parsedSport)}|${cardRow.card_type}`;
           bumpCount(outOfContractPlayDowngrades, key);
@@ -2261,7 +2295,9 @@ export async function GET(request: NextRequest) {
       .map(([key, count]) => {
         const delimiterIndex = key.indexOf('|');
         const sport =
-          delimiterIndex >= 0 ? key.substring(0, delimiterIndex) : UNKNOWN_SPORT;
+          delimiterIndex >= 0
+            ? key.substring(0, delimiterIndex)
+            : UNKNOWN_SPORT;
         const card_type =
           delimiterIndex >= 0 ? key.substring(delimiterIndex + 1) : key;
         return { sport, card_type, count };
@@ -2273,7 +2309,9 @@ export async function GET(request: NextRequest) {
           query_window: {
             start_utc: gamesStartUtc,
             end_utc: gamesEndUtc,
-            horizon_hours: HAS_API_GAMES_HORIZON ? API_GAMES_HORIZON_HOURS : null,
+            horizon_hours: HAS_API_GAMES_HORIZON
+              ? API_GAMES_HORIZON_HOURS
+              : null,
             dev_lookback_applied: Boolean(lookbackUtc),
           },
           card_type_contract: {

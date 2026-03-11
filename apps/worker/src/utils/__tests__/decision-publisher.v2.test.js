@@ -75,7 +75,10 @@ function buildWave1Payload(overrides = {}) {
     };
   }
   if (overrides.odds_context) {
-    payload.odds_context = { ...payload.odds_context, ...overrides.odds_context };
+    payload.odds_context = {
+      ...payload.odds_context,
+      ...overrides.odds_context,
+    };
   }
 
   return payload;
@@ -205,7 +208,7 @@ describe('decision publisher v2 pipeline', () => {
 
   test('uses price failure reason precedence when not blocked', () => {
     const payload = buildWave1Payload({
-      model_prob: 0.50,
+      model_prob: 0.5,
       price: -110,
     });
     applyUiActionFields(payload);
@@ -282,10 +285,10 @@ describe('decision publisher v2 pipeline', () => {
     applyUiActionFields(payload);
 
     expect(payload.decision_v2.official_status).toBe('LEAN');
-    expect(payload.decision_v2.price_reason_codes).toContain('PROXY_EDGE_CAPPED');
-    expect(payload.decision_v2.primary_reason_code).toBe(
+    expect(payload.decision_v2.price_reason_codes).toContain(
       'PROXY_EDGE_CAPPED',
     );
+    expect(payload.decision_v2.primary_reason_code).toBe('PROXY_EDGE_CAPPED');
   });
 
   test('marks fallback inference payloads as proxy-used and blocks priced promotion', () => {

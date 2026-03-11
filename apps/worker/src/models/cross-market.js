@@ -176,7 +176,9 @@ function buildMarketDecision({
   const fairPrice = fairPriceResolver ? fairPriceResolver(candidateSide) : null;
   const line = lineResolver ? lineResolver(candidateSide) : null;
   const price = priceResolver ? priceResolver(candidateSide) : null;
-  const projection = projectionResolver ? projectionResolver(candidateSide) : null;
+  const projection = projectionResolver
+    ? projectionResolver(candidateSide)
+    : null;
 
   return {
     market,

@@ -74,7 +74,9 @@ function statusFromNumbers(values) {
 }
 
 function normalizeGoalieCertaintyToken(value) {
-  const token = String(value || '').trim().toUpperCase();
+  const token = String(value || '')
+    .trim()
+    .toUpperCase();
   if (token === 'CONFIRMED' || token === 'STARTING' || token === 'OFFICIAL') {
     return 'CONFIRMED';
   }
@@ -599,8 +601,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
   // --- Shot Environment Driver (xGF% / 5v5 profile) ---
   if (shotQualityDelta !== null) {
     const score = clamp((shotQualityDelta + 10) / 20, 0, 1);
-    const direction =
-      score > 0.52 ? 'HOME' : score < 0.48 ? 'AWAY' : 'NEUTRAL';
+    const direction = score > 0.52 ? 'HOME' : score < 0.48 ? 'AWAY' : 'NEUTRAL';
     if (direction !== 'NEUTRAL') {
       const confidence = clamp(0.6 + Math.abs(score - 0.5) * 0.4, 0.6, 0.78);
       descriptors.push({
@@ -688,7 +689,9 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
 
     if (paceResult) {
       if (marketTotal !== null) {
-        const projectedTotalForCard = Number(paceResult.expectedTotal.toFixed(3));
+        const projectedTotalForCard = Number(
+          paceResult.expectedTotal.toFixed(3),
+        );
         const edge =
           Math.round((projectedTotalForCard - marketTotal) * 100) / 100;
         const absEdge = Math.abs(edge);
@@ -776,21 +779,29 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
         typeof paceResult.first_period_model === 'object'
           ? paceResult.first_period_model
           : null;
-      if (firstPeriodModel && Number.isFinite(firstPeriodModel.projection_final)) {
+      if (
+        firstPeriodModel &&
+        Number.isFinite(firstPeriodModel.projection_final)
+      ) {
         const projected1pTotalForCard = Number(
           firstPeriodModel.projection_final.toFixed(3),
         );
         const projectionRaw1p = Number(
-          Number(firstPeriodModel.projection_raw ?? projected1pTotalForCard).toFixed(3),
+          Number(
+            firstPeriodModel.projection_raw ?? projected1pTotalForCard,
+          ).toFixed(3),
         );
         const projectionDelta1p =
           Math.round(
             (projected1pTotalForCard - NHL_1P_REFERENCE_TOTAL_LINE) * 100,
           ) / 100;
-        const classification =
-          String(firstPeriodModel.classification || 'PASS').toUpperCase();
+        const classification = String(
+          firstPeriodModel.classification || 'PASS',
+        ).toUpperCase();
         const reasonCodes = Array.isArray(firstPeriodModel.reason_codes)
-          ? firstPeriodModel.reason_codes.filter((code) => typeof code === 'string')
+          ? firstPeriodModel.reason_codes.filter(
+              (code) => typeof code === 'string',
+            )
           : [];
         const goalieConfidence = String(
           firstPeriodModel.goalie_confidence || 'MEDIUM',
@@ -838,12 +849,11 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
             away_goalie_certainty: awayGoalieCertainty,
             goalie_confidence_capped: paceResult.goalieConfidenceCapped,
           },
-          driverScore:
-            classification.includes('OVER')
-              ? 0.75
-              : classification.includes('UNDER')
-                ? 0.25
-                : 0.5,
+          driverScore: classification.includes('OVER')
+            ? 0.75
+            : classification.includes('UNDER')
+              ? 0.25
+              : 0.5,
           driverStatus: 'ok',
           inference_source: 'driver',
           is_mock: false,

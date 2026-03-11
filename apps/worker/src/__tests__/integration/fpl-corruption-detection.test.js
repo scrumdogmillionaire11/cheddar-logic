@@ -54,7 +54,8 @@ describe('FPL Sage DB Corruption Detection', () => {
     });
 
     test('returns ok for non-existent file (new installation)', () => {
-      const nonExistentPath = '/tmp/cheddar-fpl-nonexistent-' + Date.now() + '.db';
+      const nonExistentPath =
+        '/tmp/cheddar-fpl-nonexistent-' + Date.now() + '.db';
       const result = checkSqliteIntegrity(nonExistentPath);
       expect(result.ok).toBe(true);
       expect(result.error).toBe(null);
@@ -97,18 +98,18 @@ describe('FPL Sage DB Corruption Detection', () => {
       // 1. Integrity check happens before fetching odds
       // 2. Error message includes runbook reference
       // 3. Job exits with failure status
-      
+
       removeIfExists(TEST_CORRUPT_DB);
       createCorruptDb(TEST_CORRUPT_DB);
 
       const result = checkSqliteIntegrity(TEST_CORRUPT_DB);
-      
+
       // Verify error message format matches what job expects
       expect(result.ok).toBe(false);
       expect(result.error).toContain('FPL Sage DB');
       expect(result.error).toContain(TEST_CORRUPT_DB);
       expect(result.error.toLowerCase()).toContain('corrupt');
-      
+
       // Job should throw this error and mark run as failed
       // preventing scheduler tick spam
     });
@@ -120,7 +121,7 @@ describe('FPL Sage DB Corruption Detection', () => {
       createCorruptDb(TEST_CORRUPT_DB);
 
       const result = checkSqliteIntegrity(TEST_CORRUPT_DB);
-      
+
       expect(result.ok).toBe(false);
       expect(result.error).toMatch(/\/tmp\/cheddar-test-fpl-corrupt\.db/);
     });
@@ -130,7 +131,7 @@ describe('FPL Sage DB Corruption Detection', () => {
       createCorruptDb(TEST_CORRUPT_DB);
 
       const result = checkSqliteIntegrity(TEST_CORRUPT_DB);
-      
+
       expect(result.ok).toBe(false);
       expect(result.error.toLowerCase()).toContain('corrupt');
     });

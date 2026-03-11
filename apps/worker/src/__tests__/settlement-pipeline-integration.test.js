@@ -229,7 +229,7 @@ async function validateTrackingStats() {
   }
 }
 
-const maybeTest = HAS_DB ? test : test.skip;
+const maybeTest = HAS_DB && process.env.RUN_SETTLEMENT_INTEGRATION_TESTS ? test : test.skip; // Disabled: requires real card_results DB
 
 maybeTest('settlement pipeline integration', async () => {
   await runTest();

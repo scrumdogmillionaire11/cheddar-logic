@@ -36,7 +36,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabaseReadOnly, closeReadOnlyInstance } from '@cheddar-logic/data';
+import {
+  getDatabaseReadOnly,
+  closeReadOnlyInstance,
+} from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
@@ -133,7 +136,9 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   }
   try {
     const row = db
-      .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
+      .prepare(
+        `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
+      )
       .get() as { current_run_id?: string | null } | undefined;
     return row?.current_run_id ? [row.current_run_id] : [];
   } catch {
@@ -284,7 +289,11 @@ export async function GET(request: NextRequest) {
     const runScopedWhereSql =
       runScopedWhere.length > 0 ? `WHERE ${runScopedWhere.join(' AND ')}` : '';
     const runScopedStmt = db.prepare(buildSql(runScopedWhereSql));
-    let rows = runScopedStmt.all(...runScopedParams, limit, offset) as CardRow[];
+    let rows = runScopedStmt.all(
+      ...runScopedParams,
+      limit,
+      offset,
+    ) as CardRow[];
 
     if (activeRunIds.length > 0 && rows.length === 0) {
       const baseWhereSql =

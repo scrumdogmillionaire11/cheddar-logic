@@ -66,8 +66,12 @@ describe('SettlementMonitor', () => {
       const afterInit = new Date();
 
       const metrics = monitor.getCurrentMetrics();
-      expect(metrics.startTime.getTime()).toBeGreaterThanOrEqual(beforeInit.getTime());
-      expect(metrics.startTime.getTime()).toBeLessThanOrEqual(afterInit.getTime());
+      expect(metrics.startTime.getTime()).toBeGreaterThanOrEqual(
+        beforeInit.getTime(),
+      );
+      expect(metrics.startTime.getTime()).toBeLessThanOrEqual(
+        afterInit.getTime(),
+      );
     });
   });
 
@@ -129,7 +133,9 @@ describe('SettlementMonitor', () => {
       monitor.recordESPNFailure('fetch 3', error, 2);
 
       expect(alerts.length).toBeGreaterThan(0);
-      expect(alerts.some(a => a.includes('CONSECUTIVE_ESPN_FAILURES'))).toBe(true);
+      expect(alerts.some((a) => a.includes('CONSECUTIVE_ESPN_FAILURES'))).toBe(
+        true,
+      );
     });
   });
 
@@ -163,7 +169,10 @@ describe('SettlementMonitor', () => {
     });
 
     it('should track score validation warnings', () => {
-      monitor.recordScoreValidationWarning('game-1', 'Blowout detected', { home: 150, away: 80 });
+      monitor.recordScoreValidationWarning('game-1', 'Blowout detected', {
+        home: 150,
+        away: 80,
+      });
 
       const metrics = monitor.getCurrentMetrics();
       expect(metrics.scoreValidationWarnings).toBe(1);
@@ -172,16 +181,26 @@ describe('SettlementMonitor', () => {
     it('should alert when warnings exceed threshold', () => {
       // Create 10 warnings to hit threshold
       for (let i = 0; i < 10; i++) {
-        monitor.recordScoreValidationWarning(`game-${i}`, 'High score', { home: 120, away: 90 });
+        monitor.recordScoreValidationWarning(`game-${i}`, 'High score', {
+          home: 120,
+          away: 90,
+        });
       }
 
       // Should have generated an alert
       expect(monitor.getCurrentMetrics().alerts.length).toBeGreaterThan(0);
-      expect(monitor.getCurrentMetrics().alerts.some(a => a.type === 'SCORE_VALIDATION_THRESHOLD')).toBe(true);
+      expect(
+        monitor
+          .getCurrentMetrics()
+          .alerts.some((a) => a.type === 'SCORE_VALIDATION_THRESHOLD'),
+      ).toBe(true);
     });
 
     it('should track score validation errors', () => {
-      monitor.recordScoreValidationError('game-1', 'Negative home score', { home: -5, away: 100 });
+      monitor.recordScoreValidationError('game-1', 'Negative home score', {
+        home: -5,
+        away: 100,
+      });
 
       const metrics = monitor.getCurrentMetrics();
       expect(metrics.scoreValidationErrors).toBe(1);
@@ -243,8 +262,12 @@ describe('SettlementMonitor', () => {
       const afterFinalize = new Date();
 
       const metrics = monitor.getCurrentMetrics();
-      expect(metrics.endTime.getTime()).toBeGreaterThanOrEqual(beforeFinalize.getTime());
-      expect(metrics.endTime.getTime()).toBeLessThanOrEqual(afterFinalize.getTime());
+      expect(metrics.endTime.getTime()).toBeGreaterThanOrEqual(
+        beforeFinalize.getTime(),
+      );
+      expect(metrics.endTime.getTime()).toBeLessThanOrEqual(
+        afterFinalize.getTime(),
+      );
     });
   });
 
@@ -269,8 +292,8 @@ describe('SettlementMonitor', () => {
       monitor.recordESPNAttempt('test', false);
 
       expect(metrics.length).toBeGreaterThan(0);
-      expect(metrics.some(m => m.includes('Initialized run'))).toBe(true);
-      expect(metrics.some(m => m.includes('ESPN'))).toBe(true);
+      expect(metrics.some((m) => m.includes('Initialized run'))).toBe(true);
+      expect(metrics.some((m) => m.includes('ESPN'))).toBe(true);
     });
 
     it('should call alert logging callbacks', () => {
@@ -283,7 +306,7 @@ describe('SettlementMonitor', () => {
       }
 
       expect(alerts.length).toBeGreaterThan(0);
-      expect(alerts.some(a => a.includes('ALERT'))).toBe(true);
+      expect(alerts.some((a) => a.includes('ALERT'))).toBe(true);
     });
 
     it('should use console by default', () => {

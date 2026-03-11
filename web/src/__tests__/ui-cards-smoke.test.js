@@ -110,7 +110,9 @@ async function validateDbFallback(assert) {
          ORDER BY datetime(rs.updated_at) DESC, rs.id ASC`,
       )
       .all();
-    const activeRunIds = [...new Set(successRunRows.map((r) => r.current_run_id))];
+    const activeRunIds = [
+      ...new Set(successRunRows.map((r) => r.current_run_id)),
+    ];
 
     const where = [
       "(cp.expires_at IS NULL OR datetime(cp.expires_at) > datetime('now'))",

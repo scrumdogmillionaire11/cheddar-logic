@@ -6,10 +6,7 @@
     "status": "PASS",
     "kind": "EVIDENCE",
     "market_type": "INFO",
-    "reason_codes": [
-      "PASS_UNREPAIRABLE_LEGACY",
-      "PASS_MISSING_MARKET_TYPE"
-    ],
+    "reason_codes": ["PASS_UNREPAIRABLE_LEGACY", "PASS_MISSING_MARKET_TYPE"],
     "repair_applied": false,
     "repair_rule_id": null
   }

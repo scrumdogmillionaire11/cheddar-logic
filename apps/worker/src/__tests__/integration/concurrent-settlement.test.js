@@ -205,7 +205,7 @@ describe('concurrent settlement race mitigation', () => {
     expect(row).toBeDefined();
     expect(row.wins).toBe(2);
     expect(row.losses).toBe(8);
-    expect(Math.abs(row.total_pnl_units - (-3.5))).toBeLessThan(0.01);
+    expect(Math.abs(row.total_pnl_units - -3.5)).toBeLessThan(0.01);
     expect(row.win_rate).toBeCloseTo(0.2, 2); // 2/10
     expect(row.avg_pnl_per_card).toBeCloseTo(-0.35, 2);
   });

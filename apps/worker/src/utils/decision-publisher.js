@@ -136,13 +136,15 @@ function applyUiActionFields(payload, context = {}) {
     // Staleness should be enforced at the scheduler/ingest level (before
     // the model runs), not baked into a stored decision record.
     if (payload.odds_context && typeof payload.odds_context === 'object') {
-      const { captured_at: _capturedAt, ...oddsContextWithoutTs } = payload.odds_context;
+      const { captured_at: _capturedAt, ...oddsContextWithoutTs } =
+        payload.odds_context;
       payload.odds_context = oddsContextWithoutTs;
     }
     const contextWithoutTs = context.oddsSnapshot
       ? {
           ...context,
-          oddsSnapshot: (({ captured_at: _ca, capturedAt: _cA, ...rest }) => rest)(context.oddsSnapshot),
+          oddsSnapshot: (({ captured_at: _ca, capturedAt: _cA, ...rest }) =>
+            rest)(context.oddsSnapshot),
         }
       : context;
 
@@ -260,9 +262,12 @@ function applyPublishedDecisionToPayload(
   // Keep pricing_trace consistent with the held decision so validateExactWager
   // does not flag EXACT_WAGER_MISMATCH when the gate overwrites prediction/price.
   if (payload.pricing_trace && typeof payload.pricing_trace === 'object') {
-    if (side) payload.pricing_trace = { ...payload.pricing_trace, called_side: side };
-    if (line !== null) payload.pricing_trace = { ...payload.pricing_trace, called_line: line };
-    if (price !== null) payload.pricing_trace = { ...payload.pricing_trace, called_price: price };
+    if (side)
+      payload.pricing_trace = { ...payload.pricing_trace, called_side: side };
+    if (line !== null)
+      payload.pricing_trace = { ...payload.pricing_trace, called_line: line };
+    if (price !== null)
+      payload.pricing_trace = { ...payload.pricing_trace, called_price: price };
   }
 
   // Keep canonical market_context aligned with held decision rewrites.

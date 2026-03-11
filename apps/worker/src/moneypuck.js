@@ -76,10 +76,10 @@ let memoryCache = null;
 
 function hasGoalieData(snapshot) {
   return Boolean(
-    snapshot && (
-      (snapshot.goalies && Object.keys(snapshot.goalies).length > 0) ||
-      (snapshot.rotowire_goalies && Object.keys(snapshot.rotowire_goalies).length > 0)
-    ),
+    snapshot &&
+    ((snapshot.goalies && Object.keys(snapshot.goalies).length > 0) ||
+      (snapshot.rotowire_goalies &&
+        Object.keys(snapshot.rotowire_goalies).length > 0)),
   );
 }
 
@@ -372,7 +372,9 @@ function parseGoaliesCsv(csvText) {
 
   if (lines.length < 2) return {};
 
-  const headers = parseCsvLine(lines[0]).map((header) => normalizeHeader(header));
+  const headers = parseCsvLine(lines[0]).map((header) =>
+    normalizeHeader(header),
+  );
   const teamIdx = headers.indexOf('team');
   const situationIdx = headers.indexOf('situation');
   const xGoalsIdx = headers.indexOf('xgoals');
@@ -386,11 +388,16 @@ function parseGoaliesCsv(csvText) {
 
   for (let i = 1; i < lines.length; i += 1) {
     const row = parseCsvLine(lines[i]);
-    const situation = String(row[situationIdx] || '').trim().toLowerCase();
+    const situation = String(row[situationIdx] || '')
+      .trim()
+      .toLowerCase();
     if (situation !== 'all') continue;
 
-    const teamAbbr = String(row[teamIdx] || '').trim().toUpperCase();
-    const canonical = NHL_ABBR_TO_CANONICAL[teamAbbr] || canonicalizeTeamName(teamAbbr);
+    const teamAbbr = String(row[teamIdx] || '')
+      .trim()
+      .toUpperCase();
+    const canonical =
+      NHL_ABBR_TO_CANONICAL[teamAbbr] || canonicalizeTeamName(teamAbbr);
     if (!canonical) continue;
 
     const xGoals = parseNumber(row[xGoalsIdx]);
@@ -454,7 +461,9 @@ function formatDateYYYYMMDDLocal(date = new Date()) {
 }
 
 function normalizeRotowireGoalieStatus(value) {
-  const token = String(value || '').trim().toUpperCase();
+  const token = String(value || '')
+    .trim()
+    .toUpperCase();
   if (!token) return null;
   if (token === 'CONFIRMED') return 'CONFIRMED';
   if (token === 'EXPECTED' || token === 'LIKELY' || token === 'PROJECTED') {
@@ -499,11 +508,17 @@ function parseRotowireGoalies(payload) {
   const goaliesByTeam = {};
 
   for (const row of payload) {
-    const homeAbbr = String(row?.hometeam || '').trim().toUpperCase();
-    const awayAbbr = String(row?.visitteam || '').trim().toUpperCase();
+    const homeAbbr = String(row?.hometeam || '')
+      .trim()
+      .toUpperCase();
+    const awayAbbr = String(row?.visitteam || '')
+      .trim()
+      .toUpperCase();
 
-    const homeTeam = NHL_ABBR_TO_CANONICAL[homeAbbr] || canonicalizeTeamName(homeAbbr);
-    const awayTeam = NHL_ABBR_TO_CANONICAL[awayAbbr] || canonicalizeTeamName(awayAbbr);
+    const homeTeam =
+      NHL_ABBR_TO_CANONICAL[homeAbbr] || canonicalizeTeamName(homeAbbr);
+    const awayTeam =
+      NHL_ABBR_TO_CANONICAL[awayAbbr] || canonicalizeTeamName(awayAbbr);
 
     if (homeTeam) {
       const incoming = {
@@ -603,7 +618,11 @@ async function fetchMoneyPuckSnapshot({
 } = {}) {
   if (memoryCache) {
     const cachedAt = new Date(memoryCache?.fetched_at || 0).getTime();
-    if (cachedAt && Date.now() - cachedAt < ttlMs && hasGoalieData(memoryCache)) {
+    if (
+      cachedAt &&
+      Date.now() - cachedAt < ttlMs &&
+      hasGoalieData(memoryCache)
+    ) {
       return memoryCache;
     }
   }
@@ -613,7 +632,11 @@ async function fetchMoneyPuckSnapshot({
       if (fs.existsSync(cachePath)) {
         const cached = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
         const cachedAt = new Date(cached?.fetched_at || 0).getTime();
-        if (cachedAt && Date.now() - cachedAt < ttlMs && hasGoalieData(cached)) {
+        if (
+          cachedAt &&
+          Date.now() - cachedAt < ttlMs &&
+          hasGoalieData(cached)
+        ) {
           memoryCache = cached;
           return cached;
         }
@@ -640,16 +663,15 @@ async function fetchMoneyPuckSnapshot({
       statsHtml,
       injuriesHtml,
       powerHtml,
-    ] =
-      await Promise.all([
-        fetchUrl(MONEYPUCK_URLS.teams),
-        fetchUrl(MONEYPUCK_URLS.goalies),
-        fetchGoaliesCsv(),
-        fetchRotowireGoaliesSnapshot(),
-        fetchUrl(MONEYPUCK_URLS.stats),
-        fetchUrl(MONEYPUCK_URLS.injuries),
-        fetchUrl(MONEYPUCK_URLS.power),
-      ]);
+    ] = await Promise.all([
+      fetchUrl(MONEYPUCK_URLS.teams),
+      fetchUrl(MONEYPUCK_URLS.goalies),
+      fetchGoaliesCsv(),
+      fetchRotowireGoaliesSnapshot(),
+      fetchUrl(MONEYPUCK_URLS.stats),
+      fetchUrl(MONEYPUCK_URLS.injuries),
+      fetchUrl(MONEYPUCK_URLS.power),
+    ]);
   } catch (err) {
     console.warn(`[MoneyPuck] Fetch failed: ${err.message}`);
     const fallback = {

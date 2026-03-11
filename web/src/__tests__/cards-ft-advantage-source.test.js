@@ -7,7 +7,9 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const cardsPagePath = fs.existsSync(path.resolve('src/components/cards-page-client.tsx'))
+const cardsPagePath = fs.existsSync(
+  path.resolve('src/components/cards-page-client.tsx'),
+)
   ? path.resolve('src/components/cards-page-client.tsx')
   : path.resolve('web/src/components/cards-page-client.tsx');
 

@@ -376,7 +376,8 @@ function predictNHLGame(opts) {
   );
   const totalClampedHigh = finalTotalPreMarket >= TOTAL_CEILING;
   const totalClampedLow = finalTotalPreMarket <= TOTAL_FLOOR;
-  const scaleToFinalTotal = rawTotalModel > 0 ? finalTotalPreMarket / rawTotalModel : 1;
+  const scaleToFinalTotal =
+    rawTotalModel > 0 ? finalTotalPreMarket / rawTotalModel : 1;
   homeGoals *= scaleToFinalTotal;
   awayGoals *= scaleToFinalTotal;
 
@@ -405,15 +406,24 @@ function predictNHLGame(opts) {
     -ONE_P_GOALIE_CAP,
     ONE_P_GOALIE_CAP,
   );
-  const firstPeriodRestDelta = clamp(restDelta * 0.25, -ONE_P_REST_CAP, ONE_P_REST_CAP);
+  const firstPeriodRestDelta = clamp(
+    restDelta * 0.25,
+    -ONE_P_REST_CAP,
+    ONE_P_REST_CAP,
+  );
 
-  const base1p = ONE_P_BASE_INTERCEPT + ONE_P_BASE_MULTIPLIER * finalTotalPreMarket;
+  const base1p =
+    ONE_P_BASE_INTERCEPT + ONE_P_BASE_MULTIPLIER * finalTotalPreMarket;
   const totalAdjRaw =
     firstPeriodPaceScore +
     firstPeriodPenaltyPressureScore +
     firstPeriodGoalieAdj +
     firstPeriodRestDelta;
-  const totalAdj = clamp(totalAdjRaw, -ONE_P_TOTAL_ADJ_CAP, ONE_P_TOTAL_ADJ_CAP);
+  const totalAdj = clamp(
+    totalAdjRaw,
+    -ONE_P_TOTAL_ADJ_CAP,
+    ONE_P_TOTAL_ADJ_CAP,
+  );
 
   const raw1pProjection = base1p + totalAdj;
   const final1pProjection = clamp(
@@ -425,8 +435,16 @@ function predictNHLGame(opts) {
   const clampLow = final1pProjectionRounded <= ONE_P_TOTAL_FLOOR;
   const clampHigh = final1pProjectionRounded >= ONE_P_TOTAL_CEILING;
 
-  let onePClassification = classifyFirstPeriodProjection(final1pProjectionRounded);
-  const goalieUncertain = homeCertainty === 'UNKNOWN' || awayCertainty === 'UNKNOWN';
+  let onePClassification = classifyFirstPeriodProjection(
+    final1pProjectionRounded,
+  );
+  const goalieUncertain =
+    homeCertainty === 'UNKNOWN' || awayCertainty === 'UNKNOWN';
+
+  // Force PASS when goalie certainty is uncertain
+  if (goalieUncertain) {
+    onePClassification = 'PASS';
+  }
 
   const onePReasonCodes = [];
   if (onePClassification === 'PASS') {

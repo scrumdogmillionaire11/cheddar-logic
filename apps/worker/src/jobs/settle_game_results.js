@@ -54,9 +54,18 @@ const ESPN_SCOREBOARD_OPTIONS_BY_SPORT = {
 /**
  * Environment variables for Phase 1 hardening
  */
-const ESPN_API_TIMEOUT_MS = Math.max(5000, Number(process.env.ESPN_API_TIMEOUT_MS) || 30000);
-const SETTLEMENT_MAX_RETRIES = Math.max(0, Number(process.env.SETTLEMENT_MAX_RETRIES) || 3);
-const SETTLEMENT_MIN_HOURS_AFTER_START = Math.max(0, Number(process.env.SETTLEMENT_MIN_HOURS_AFTER_START) || 3);
+const ESPN_API_TIMEOUT_MS = Math.max(
+  5000,
+  Number(process.env.ESPN_API_TIMEOUT_MS) || 30000,
+);
+const SETTLEMENT_MAX_RETRIES = Math.max(
+  0,
+  Number(process.env.SETTLEMENT_MAX_RETRIES) || 3,
+);
+const SETTLEMENT_MIN_HOURS_AFTER_START = Math.max(
+  0,
+  Number(process.env.SETTLEMENT_MIN_HOURS_AFTER_START) || 3,
+);
 
 /**
  * Keep matching strict so one completed ESPN event cannot fan out into unrelated games.
@@ -404,7 +413,9 @@ function findMatchForGame(
 async function fetchComparableEventFromSummary(espnClient, espnPath, eventId) {
   if (!eventId) return null;
 
-  const summary = await espnClient.fetch(`${espnPath}/summary?event=${eventId}`);
+  const summary = await espnClient.fetch(
+    `${espnPath}/summary?event=${eventId}`,
+  );
   const competition = summary?.header?.competitions?.[0];
   if (!competition) return null;
 
@@ -479,7 +490,8 @@ async function settleGameResults({
         baseDelayMs: 1000,
         onLog: (msg, ctx) => console.log(msg, ctx ? JSON.stringify(ctx) : ''),
         onWarn: (msg, ctx) => console.warn(msg, ctx ? JSON.stringify(ctx) : ''),
-        onError: (msg, ctx) => console.error(msg, ctx ? JSON.stringify(ctx) : ''),
+        onError: (msg, ctx) =>
+          console.error(msg, ctx ? JSON.stringify(ctx) : ''),
         monitor, // Integrate monitoring
       });
 
@@ -753,7 +765,7 @@ async function settleGameResults({
               `[SettleGames] Score validation warnings for ${dbGame.game_id}:`,
               scoringCheck.warnings,
             );
-            
+
             // Track warnings in monitor
             scoringCheck.warnings.forEach((warning) => {
               monitor.recordScoreValidationWarning(dbGame.game_id, warning, {
@@ -790,7 +802,7 @@ async function settleGameResults({
               },
             });
             gamesSettled++;
-            
+
             // Track in monitor
             monitor.recordGameSettled(dbGame.game_id, {
               home: match.dbHomeScore,

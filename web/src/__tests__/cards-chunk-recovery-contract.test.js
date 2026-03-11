@@ -25,8 +25,10 @@ assert(
 
 assert(
   source.includes('CHUNK_RELOAD_GUARD_KEY') &&
-    source.includes("window.sessionStorage.getItem(CHUNK_RELOAD_GUARD_KEY)") &&
-    source.includes("window.sessionStorage.setItem(CHUNK_RELOAD_GUARD_KEY, '1')"),
+    source.includes('window.sessionStorage.getItem(CHUNK_RELOAD_GUARD_KEY)') &&
+    source.includes(
+      "window.sessionStorage.setItem(CHUNK_RELOAD_GUARD_KEY, '1')",
+    ),
   'cards page should guard reload to one attempt per session',
 );
 

@@ -399,7 +399,10 @@ describe('settlement coverage parity', () => {
     expect(diagnostics.finalDisplayedMissingResults).toBe(1);
     expect(diagnostics.finalDisplayedUnsettled).toBe(3);
 
-    const nbaDiagnostics = __private.getSettlementCoverageDiagnostics(db, 'NBA');
+    const nbaDiagnostics = __private.getSettlementCoverageDiagnostics(
+      db,
+      'NBA',
+    );
     expect(nbaDiagnostics.totalPending).toBe(2);
     expect(nbaDiagnostics.eligiblePendingFinalDisplayed).toBe(1);
     expect(nbaDiagnostics.settledDisplayedFinal).toBe(1);
@@ -429,7 +432,10 @@ describe('settlement coverage parity', () => {
       .all();
 
     const byCard = Object.fromEntries(
-      statuses.map((row) => [row.card_id, { status: row.status, result: row.result }]),
+      statuses.map((row) => [
+        row.card_id,
+        { status: row.status, result: row.result },
+      ]),
     );
     expect(byCard['card-p1'].status).toBe('settled');
     expect(byCard['card-p1'].result).toBe('win');

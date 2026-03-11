@@ -39,7 +39,7 @@ describe('NHL pace calibration rails', () => {
         awayGoalsAgainst: 3.8,
         homePaceFactor: 1.18,
         awayPaceFactor: 1.14,
-        homePpPct: 0.30,
+        homePpPct: 0.3,
         awayPpPct: 0.29,
         homePkPct: 0.72,
         awayPkPct: 0.71,
@@ -126,9 +126,9 @@ describe('NHL pace calibration rails', () => {
         homePaceFactor: 1.2,
         awayPaceFactor: 1.2,
         homePpPct: 0.31,
-        awayPpPct: 0.30,
+        awayPpPct: 0.3,
         homePkPct: 0.69,
-        awayPkPct: 0.70,
+        awayPkPct: 0.7,
         homeGoalieSavePct: 0.885,
         awayGoalieSavePct: 0.886,
         homeGoalieConfirmed: true,
@@ -139,7 +139,9 @@ describe('NHL pace calibration rails', () => {
     );
 
     expect(result.modifierBreakdown).toBeDefined();
-    expect(Math.abs(result.modifierBreakdown.capped_modifier_total)).toBeLessThanOrEqual(0.7);
+    expect(
+      Math.abs(result.modifierBreakdown.capped_modifier_total),
+    ).toBeLessThanOrEqual(0.7);
     if (Math.abs(result.modifierBreakdown.raw_modifier_total) > 0.7) {
       expect(result.modifierCapApplied).toBe(true);
     }
@@ -169,9 +171,13 @@ describe('NHL 1P calibration rails', () => {
       }),
     );
 
-    expect(result.first_period_model.projection_final).toBeGreaterThanOrEqual(1.2);
+    expect(result.first_period_model.projection_final).toBeGreaterThanOrEqual(
+      1.2,
+    );
     if (result.first_period_model.projection_final === 1.2) {
-      expect(result.first_period_model.reason_codes).toContain('NHL_1P_CLAMP_LOW');
+      expect(result.first_period_model.reason_codes).toContain(
+        'NHL_1P_CLAMP_LOW',
+      );
     }
   });
 
@@ -197,9 +203,13 @@ describe('NHL 1P calibration rails', () => {
       }),
     );
 
-    expect(result.first_period_model.projection_final).toBeLessThanOrEqual(2.25);
+    expect(result.first_period_model.projection_final).toBeLessThanOrEqual(
+      2.25,
+    );
     if (result.first_period_model.projection_final === 2.25) {
-      expect(result.first_period_model.reason_codes).toContain('NHL_1P_CLAMP_HIGH');
+      expect(result.first_period_model.reason_codes).toContain(
+        'NHL_1P_CLAMP_HIGH',
+      );
     }
   });
 

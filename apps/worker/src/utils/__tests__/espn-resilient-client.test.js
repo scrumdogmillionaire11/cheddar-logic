@@ -7,7 +7,10 @@
 
 'use strict';
 
-const { ResilientESPNClient, exponentialBackoffDelay } = require('../espn-resilient-client.js');
+const {
+  ResilientESPNClient,
+  exponentialBackoffDelay,
+} = require('../espn-resilient-client.js');
 
 describe('ResilientESPNClient', () => {
   describe('exponentialBackoffDelay', () => {
@@ -81,7 +84,7 @@ describe('ResilientESPNClient', () => {
 
     it('should have default logging functions', () => {
       const client = new ResilientESPNClient();
-      
+
       expect(typeof client.onLog).toBe('function');
       expect(typeof client.onWarn).toBe('function');
       expect(typeof client.onError).toBe('function');
@@ -113,7 +116,9 @@ describe('ResilientESPNClient', () => {
       const mockData = { events: [] };
       const fetchFn = jest.fn().mockResolvedValue(mockData);
 
-      const result = await client.executeWithRetry('test', fetchFn, { path: '/test' });
+      const result = await client.executeWithRetry('test', fetchFn, {
+        path: '/test',
+      });
 
       expect(result).toEqual(mockData);
       expect(fetchFn).toHaveBeenCalledTimes(1);
@@ -121,23 +126,28 @@ describe('ResilientESPNClient', () => {
 
     it('should retry on null response and succeed', async () => {
       const mockData = { events: [] };
-      const fetchFn = jest.fn()
+      const fetchFn = jest
+        .fn()
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(mockData);
 
-      const result = await client.executeWithRetry('test', fetchFn, { path: '/test' });
+      const result = await client.executeWithRetry('test', fetchFn, {
+        path: '/test',
+      });
 
       expect(result).toEqual(mockData);
       expect(fetchFn).toHaveBeenCalledTimes(3);
       expect(warnMessages.length).toBeGreaterThan(0);
-      expect(warnMessages.some(m => m.includes('Null'))).toBe(true);
+      expect(warnMessages.some((m) => m.includes('Null'))).toBe(true);
     });
 
     it('should return null after max retries with null responses', async () => {
       const fetchFn = jest.fn().mockResolvedValue(null);
 
-      const result = await client.executeWithRetry('test', fetchFn, { path: '/test' });
+      const result = await client.executeWithRetry('test', fetchFn, {
+        path: '/test',
+      });
 
       expect(result).toBeNull();
       expect(fetchFn).toHaveBeenCalledTimes(4); // Initial + 3 retries
@@ -146,11 +156,14 @@ describe('ResilientESPNClient', () => {
     it('should handle thrown errors and retry', async () => {
       const mockData = { events: [] };
       const error = new Error('Network timeout');
-      const fetchFn = jest.fn()
+      const fetchFn = jest
+        .fn()
         .mockRejectedValueOnce(error)
         .mockResolvedValueOnce(mockData);
 
-      const result = await client.executeWithRetry('test', fetchFn, { path: '/test' });
+      const result = await client.executeWithRetry('test', fetchFn, {
+        path: '/test',
+      });
 
       expect(result).toEqual(mockData);
       expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -161,7 +174,9 @@ describe('ResilientESPNClient', () => {
       const error = new Error('Network failure');
       const fetchFn = jest.fn().mockRejectedValue(error);
 
-      const result = await client.executeWithRetry('test', fetchFn, { path: '/test' });
+      const result = await client.executeWithRetry('test', fetchFn, {
+        path: '/test',
+      });
 
       expect(result).toBeNull();
       expect(fetchFn).toHaveBeenCalledTimes(4); // Initial + 3 retries
@@ -194,20 +209,20 @@ describe('ResilientESPNClient', () => {
     });
 
     it('should reject with timeout error if promise exceeds timeout', async () => {
-      const slowPromise = new Promise(resolve => 
-        setTimeout(() => resolve('delayed'), 500)
+      const slowPromise = new Promise((resolve) =>
+        setTimeout(() => resolve('delayed'), 500),
       );
-      
-      await expect(client._withTimeout(slowPromise, 50))
-        .rejects
-        .toThrow('timeout');
+
+      await expect(client._withTimeout(slowPromise, 50)).rejects.toThrow(
+        'timeout',
+      );
     });
 
     it('should preserve timeout message', async () => {
-      const slowPromise = new Promise(resolve => 
-        setTimeout(() => resolve('delayed'), 500)
+      const slowPromise = new Promise((resolve) =>
+        setTimeout(() => resolve('delayed'), 500),
       );
-      
+
       let threw = false;
       try {
         await client._withTimeout(slowPromise, 50);

@@ -31,7 +31,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabaseReadOnly, closeReadOnlyInstance } from '@cheddar-logic/data';
+import {
+  getDatabaseReadOnly,
+  closeReadOnlyInstance,
+} from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 
 const ENABLE_WELCOME_HOME =
@@ -124,7 +127,9 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   }
   try {
     const row = db
-      .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
+      .prepare(
+        `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
+      )
       .get() as { current_run_id?: string | null } | undefined;
     return row?.current_run_id ? [row.current_run_id] : [];
   } catch {

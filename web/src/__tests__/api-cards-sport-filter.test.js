@@ -22,9 +22,7 @@ async function runTests() {
     client
       .prepare(`DELETE FROM card_payloads WHERE id = ? OR game_id = ?`)
       .run(testCardId, testGameId);
-    client
-      .prepare(`DELETE FROM games WHERE game_id = ?`)
-      .run(testGameId);
+    client.prepare(`DELETE FROM games WHERE game_id = ?`).run(testGameId);
     console.log('✓ Test data cleaned\n');
 
     console.log('📋 Inserting test game/card...');
@@ -32,7 +30,7 @@ async function runTests() {
       .prepare(
         `INSERT INTO games
          (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'game-test-1',
@@ -43,14 +41,14 @@ async function runTests() {
         futureTime,
         'scheduled',
         now.toISOString(),
-        now.toISOString()
+        now.toISOString(),
       );
 
     client
       .prepare(
         `INSERT INTO card_payloads
          (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at, run_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         testCardId,
@@ -58,22 +56,27 @@ async function runTests() {
         'NBA',
         'test-card',
         'Test Card',
-        JSON.stringify({ prediction: 'HOME', recommended_bet_type: 'moneyline' }),
+        JSON.stringify({
+          prediction: 'HOME',
+          recommended_bet_type: 'moneyline',
+        }),
         now.toISOString(),
         futureTime,
-        'run-test-1'
+        'run-test-1',
       );
 
     console.log('✓ Inserted test data\n');
 
-    console.log('🧪 Test: lowercase sport param matches uppercase stored sport');
+    console.log(
+      '🧪 Test: lowercase sport param matches uppercase stored sport',
+    );
     const sportParam = 'nba';
     const sport = sportParam ? sportParam.toUpperCase() : null;
 
     const rows = client
       .prepare(
         `SELECT id, sport FROM card_payloads
-         WHERE game_id = ? AND sport = ?`
+         WHERE game_id = ? AND sport = ?`,
       )
       .all(testGameId, sport);
 
@@ -88,9 +91,7 @@ async function runTests() {
     client
       .prepare(`DELETE FROM card_payloads WHERE id = ? OR game_id = ?`)
       .run(testCardId, testGameId);
-    client
-      .prepare(`DELETE FROM games WHERE game_id = ?`)
-      .run(testGameId);
+    client.prepare(`DELETE FROM games WHERE game_id = ?`).run(testGameId);
     console.log('✓ Test data cleaned\n');
 
     console.log('✅ All tests passed!\n');

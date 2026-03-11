@@ -18,9 +18,7 @@ function isWave1Play(game, play) {
   const kind = String(play?.kind ?? 'PLAY').toUpperCase();
   const marketType = String(play?.market_type ?? '').toUpperCase();
   return (
-    kind === 'PLAY' &&
-    WAVE1_SPORTS.has(sport) &&
-    WAVE1_MARKETS.has(marketType)
+    kind === 'PLAY' && WAVE1_SPORTS.has(sport) && WAVE1_MARKETS.has(marketType)
   );
 }
 
@@ -73,7 +71,11 @@ async function run() {
 
   const baseUrl = process.env.CARDS_API_BASE_URL || DEFAULT_BASE_URL;
   const response = await fetch(`${baseUrl}/api/games?limit=200`);
-  assert.strictEqual(response.ok, true, `API response not ok: ${response.status}`);
+  assert.strictEqual(
+    response.ok,
+    true,
+    `API response not ok: ${response.status}`,
+  );
 
   const payload = await response.json();
   assert.strictEqual(payload.success, true, 'API returned success=false');
@@ -82,7 +84,10 @@ async function run() {
     false,
     'API payload must not include repair_stats metadata',
   );
-  assert.ok(payload.meta && typeof payload.meta === 'object', 'API payload must include meta');
+  assert.ok(
+    payload.meta && typeof payload.meta === 'object',
+    'API payload must include meta',
+  );
 
   if (payload.meta?.diagnostics) {
     const diagnostics = payload.meta.diagnostics;

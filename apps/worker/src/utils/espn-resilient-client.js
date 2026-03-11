@@ -19,7 +19,10 @@
 
 'use strict';
 
-const { espnGet, fetchScoreboardEvents } = require('../../../../packages/data/src/espn-client');
+const {
+  espnGet,
+  fetchScoreboardEvents,
+} = require('../../../../packages/data/src/espn-client');
 
 /**
  * Exponential backoff with jitter
@@ -39,7 +42,7 @@ function exponentialBackoffDelay(attempt, baseDelayMs = 1000) {
  * @returns {Promise<void>}
  */
 async function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 class ResilientESPNClient {
@@ -66,8 +69,11 @@ class ResilientESPNClient {
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
-        this.onLog(`[ESPNClient:${label}] Attempt ${attempt + 1}/${this.maxRetries + 1}`, context);
-        
+        this.onLog(
+          `[ESPNClient:${label}] Attempt ${attempt + 1}/${this.maxRetries + 1}`,
+          context,
+        );
+
         // Track in monitor
         if (this.monitor) {
           this.monitor.recordESPNAttempt(label, attempt > 0, attempt - 1);
@@ -81,7 +87,10 @@ class ResilientESPNClient {
           lastResponse = null;
           if (attempt < this.maxRetries) {
             const delayMs = exponentialBackoffDelay(attempt, this.baseDelayMs);
-            this.onWarn(`[ESPNClient:${label}] Null response, retrying in ${delayMs}ms`, context);
+            this.onWarn(
+              `[ESPNClient:${label}] Null response, retrying in ${delayMs}ms`,
+              context,
+            );
             await sleep(delayMs);
             continue;
           }
@@ -89,14 +98,17 @@ class ResilientESPNClient {
         }
 
         // Success
-        this.onLog(`[ESPNClient:${label}] Success on attempt ${attempt + 1}`, { ...context, responseKeys: Object.keys(response) });
-        
+        this.onLog(`[ESPNClient:${label}] Success on attempt ${attempt + 1}`, {
+          ...context,
+          responseKeys: Object.keys(response),
+        });
+
         // Track success in monitor
         if (this.monitor) {
           const resultCount = Array.isArray(response) ? response.length : 1;
           this.monitor.recordESPNSuccess(label, resultCount);
         }
-        
+
         return response;
       } catch (err) {
         lastError = err;
@@ -104,26 +116,37 @@ class ResilientESPNClient {
         // Detect rate limit (429)
         const isRateLimit = err.code === 429 || err.statusCode === 429;
         const delayMs = isRateLimit
-          ? Math.min(60000, exponentialBackoffDelay(attempt + 1, this.baseDelayMs)) // Cap at 60s for rate limit
+          ? Math.min(
+              60000,
+              exponentialBackoffDelay(attempt + 1, this.baseDelayMs),
+            ) // Cap at 60s for rate limit
           : exponentialBackoffDelay(attempt, this.baseDelayMs);
 
         if (attempt < this.maxRetries) {
-          const reason = isRateLimit ? 'rate_limited' : err.code || 'unknown_error';
-          this.onWarn(`[ESPNClient:${label}] Error (${reason}), retrying in ${delayMs}ms`, {
-            ...context,
-            attempt,
-            error: err.message,
-            code: err.code,
-          });
+          const reason = isRateLimit
+            ? 'rate_limited'
+            : err.code || 'unknown_error';
+          this.onWarn(
+            `[ESPNClient:${label}] Error (${reason}), retrying in ${delayMs}ms`,
+            {
+              ...context,
+              attempt,
+              error: err.message,
+              code: err.code,
+            },
+          );
           await sleep(delayMs);
         } else {
-          this.onError(`[ESPNClient:${label}] Failed after ${this.maxRetries + 1} attempts`, {
-            ...context,
-            attempt,
-            error: err.message,
-            code: err.code,
-          });
-          
+          this.onError(
+            `[ESPNClient:${label}] Failed after ${this.maxRetries + 1} attempts`,
+            {
+              ...context,
+              attempt,
+              error: err.message,
+              code: err.code,
+            },
+          );
+
           // Track final failure in monitor
           if (this.monitor) {
             this.monitor.recordESPNFailure(label, err, this.maxRetries);
@@ -155,7 +178,10 @@ class ResilientESPNClient {
     return Promise.race([
       promise,
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`ESPN API timeout after ${timeoutMs}ms`)), timeoutMs)
+        setTimeout(
+          () => reject(new Error(`ESPN API timeout after ${timeoutMs}ms`)),
+          timeoutMs,
+        ),
       ),
     ]);
   }
@@ -169,16 +195,19 @@ class ResilientESPNClient {
    */
   async fetchScoreboardEvents(espnPath, dateStr = null, options = null) {
     const context = { espnPath, dateStr, options };
-    
+
     const result = await this.executeWithRetry(
       'scoreboard',
       () => fetchScoreboardEvents(espnPath, dateStr, options),
-      context
+      context,
     );
 
     // Validate result is an array
     if (!Array.isArray(result)) {
-      this.onWarn('[ESPNClient:scoreboard] Response was not an array', { ...context, result });
+      this.onWarn('[ESPNClient:scoreboard] Response was not an array', {
+        ...context,
+        result,
+      });
       return [];
     }
 
@@ -192,11 +221,11 @@ class ResilientESPNClient {
    */
   async fetch(path) {
     const context = { path };
-    
+
     const result = await this.executeWithRetry(
       'fetch',
       () => espnGet(path),
-      context
+      context,
     );
 
     return result;

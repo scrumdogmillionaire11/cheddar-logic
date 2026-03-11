@@ -47,7 +47,9 @@ const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
 const { backfillCardResults } = require('../jobs/backfill_card_results');
 const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
-const { run: refreshTeamMetricsDaily } = require('../jobs/refresh_team_metrics_daily');
+const {
+  run: refreshTeamMetricsDaily,
+} = require('../jobs/refresh_team_metrics_daily');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -60,8 +62,7 @@ const REQUIRE_FRESH_ODDS_FOR_MODELS =
 const MODEL_ODDS_MAX_AGE_MINUTES = Number(
   process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES,
 );
-const ENABLE_NCAAM_FT_REFRESH =
-  process.env.ENABLE_NCAAM_FT_REFRESH !== 'false';
+const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH !== 'false';
 const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
   process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
 );
@@ -242,7 +243,10 @@ function getPipelineHealthJobs(nowUtc) {
     jobName: 'check_pipeline_health',
     jobKey: `health|watchdog|${nowUtc.toISO().slice(0, 16)}`, // Per 1-min window
     execute: checkPipelineHealth,
-    args: { jobKey: `health|watchdog|${nowUtc.toISO().slice(0, 16)}`, dryRun: false },
+    args: {
+      jobKey: `health|watchdog|${nowUtc.toISO().slice(0, 16)}`,
+      dryRun: false,
+    },
     reason: `pipeline health watchdog (5-min cadence)`,
   });
 
@@ -396,7 +400,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     // Skip overnight hours (2am-5am ET) when no games start
     // Saves 3 fetches/day × 30 days × 8 tokens = 720 tokens/month
     const isOvernightHours = nowEt.hour >= 2 && nowEt.hour <= 5;
-    
+
     if (!isOvernightHours) {
       const jobKey = keyOddsHourly(nowEt);
       jobs.push({
@@ -410,7 +414,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
     // Optional: Add time-aware per-game odds pulls
     if (process.env.ENABLE_TIME_AWARE_ODDS === 'true') {
-      const oddsGames = games.filter((g) => shouldRefreshOddsForGame(nowUtc, g));
+      const oddsGames = games.filter((g) =>
+        shouldRefreshOddsForGame(nowUtc, g),
+      );
 
       for (const g of oddsGames) {
         const sport = String(g.sport).toLowerCase();
@@ -429,7 +435,10 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     }
 
     // Global backstop: every 10 minutes, refresh stale odds for T-6h games
-    if (process.env.ENABLE_ODDS_BACKSTOP !== 'false' && nowUtc.minute % 10 === 0) {
+    if (
+      process.env.ENABLE_ODDS_BACKSTOP !== 'false' &&
+      nowUtc.minute % 10 === 0
+    ) {
       const jobKey = `odds|global-backstop|${nowUtc.toISO().slice(0, 16)}`;
       jobs.push({
         jobName: 'refresh_stale_odds',
@@ -443,7 +452,10 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
   // ========== TEAM METRICS CACHE (2.5) ==========
   // Daily prewarm at 09:00 ET (before first model run)
-  if (process.env.ENABLE_TEAM_METRICS_CACHE !== 'false' && isFixedDue(nowEt, '09:00')) {
+  if (
+    process.env.ENABLE_TEAM_METRICS_CACHE !== 'false' &&
+    isFixedDue(nowEt, '09:00')
+  ) {
     const cacheDate = nowEt.toISODate();
     const jobKey = `refresh_team_metrics|${cacheDate}`;
     jobs.push({
@@ -505,8 +517,12 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     const sweepDate = nowEt.toISODate();
 
     // Enforce singleton settlement across all processes (race mitigation)
-    const settlementGameRunning = hasRunningJobRun('settle|global|game-results');
-    const settlementCardsRunning = hasRunningJobRun('settle|global|pending-cards');
+    const settlementGameRunning = hasRunningJobRun(
+      'settle|global|game-results',
+    );
+    const settlementCardsRunning = hasRunningJobRun(
+      'settle|global|pending-cards',
+    );
 
     // 4A) Hourly settlement sweep (default enabled)
     if (
@@ -514,7 +530,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       isHourlySettlementDue(nowEt)
     ) {
       const hourlyKey = keyHourlySettlementSweep(nowEt);
-      
+
       if (!settlementGameRunning) {
         jobs.push({
           jobName: 'settle_game_results',
@@ -524,9 +540,11 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
           reason: `hourly settlement sweep ${hourlyKey}`,
         });
       } else {
-        console.log(`[Scheduler] Skipping settle_game_results — already running in another process`);
+        console.log(
+          `[Scheduler] Skipping settle_game_results — already running in another process`,
+        );
       }
-      
+
       if (!settlementCardsRunning) {
         jobs.push({
           jobName: 'settle_pending_cards',
@@ -536,7 +554,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
           reason: `hourly card settlement ${hourlyKey}`,
         });
       } else {
-        console.log(`[Scheduler] Skipping settle_pending_cards — already running in another process`);
+        console.log(
+          `[Scheduler] Skipping settle_pending_cards — already running in another process`,
+        );
       }
     }
 
@@ -549,7 +569,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         args: { jobKey: `settle|backfill-card-results|${sweepDate}`, dryRun },
         reason: `nightly card_results backfill ${sweepDate}`,
       });
-      
+
       if (!settlementGameRunning) {
         jobs.push({
           jobName: 'settle_game_results',
@@ -559,9 +579,11 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
           reason: `nightly settlement sweep ${sweepDate}`,
         });
       } else {
-        console.log(`[Scheduler] Skipping settle_game_results — already running in another process`);
+        console.log(
+          `[Scheduler] Skipping settle_game_results — already running in another process`,
+        );
       }
-      
+
       if (!settlementCardsRunning) {
         jobs.push({
           jobName: 'settle_pending_cards',
@@ -571,7 +593,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
           reason: `nightly card settlement ${sweepDate}`,
         });
       } else {
-        console.log(`[Scheduler] Skipping settle_pending_cards — already running in another process`);
+        console.log(
+          `[Scheduler] Skipping settle_pending_cards — already running in another process`,
+        );
       }
     }
   }

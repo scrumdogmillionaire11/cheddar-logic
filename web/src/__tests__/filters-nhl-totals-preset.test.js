@@ -44,7 +44,9 @@ assert(
   'filters.ts must implement total projection predicate',
 );
 assert(
-  filtersSource.includes('.filter((card) => filterByTotalProjection(card, filters))'),
+  filtersSource.includes(
+    '.filter((card) => filterByTotalProjection(card, filters))',
+  ),
   'game filter pipeline must enforce total projection predicate',
 );
 

@@ -22,7 +22,7 @@ class SettlementMonitor {
     this.maxConsecutiveFailures = options.maxConsecutiveFailures || 3;
     this.warningThresholdPerRun = options.warningThresholdPerRun || 10;
     this.failureCheckWindowHours = options.failureCheckWindowHours || 1;
-    
+
     // In-memory metrics for current run
     this.currentRunMetrics = {
       jobId: null,
@@ -114,7 +114,9 @@ class SettlementMonitor {
       retryCount,
     });
 
-    this.onMetric(`[SettlementMonitor] ESPN failure after ${retryCount + 1} attempts: ${context}`);
+    this.onMetric(
+      `[SettlementMonitor] ESPN failure after ${retryCount + 1} attempts: ${context}`,
+    );
     this.onMetric(`  Error: ${error?.message || 'Unknown'}`);
 
     // Check for consecutive failure alert
@@ -131,7 +133,7 @@ class SettlementMonitor {
     this.currentRunMetrics.gamesSettled += 1;
 
     this.onMetric(
-      `[SettlementMonitor] Game settled: ${gameId} (${scores.home}-${scores.away})`
+      `[SettlementMonitor] Game settled: ${gameId} (${scores.home}-${scores.away})`,
     );
   }
 
@@ -156,15 +158,18 @@ class SettlementMonitor {
     this.currentRunMetrics.scoreValidationWarnings += 1;
 
     this.onMetric(
-      `[SettlementMonitor] Score warning: ${gameId} - ${warning} (${scores.home}-${scores.away})`
+      `[SettlementMonitor] Score warning: ${gameId} - ${warning} (${scores.home}-${scores.away})`,
     );
 
     // Alert if warning count exceeds threshold
-    if (this.currentRunMetrics.scoreValidationWarnings >= this.warningThresholdPerRun) {
+    if (
+      this.currentRunMetrics.scoreValidationWarnings >=
+      this.warningThresholdPerRun
+    ) {
       this._raiseAlert(
         'SCORE_VALIDATION_THRESHOLD',
         `Score validation warnings (${this.currentRunMetrics.scoreValidationWarnings}) ` +
-          `exceeded threshold (${this.warningThresholdPerRun})`
+          `exceeded threshold (${this.warningThresholdPerRun})`,
       );
     }
   }
@@ -195,15 +200,17 @@ class SettlementMonitor {
    */
   finalizeRun(success, reason = null) {
     this.currentRunMetrics.endTime = new Date();
-    const durationMs = 
+    const durationMs =
       this.currentRunMetrics.endTime - this.currentRunMetrics.startTime;
 
-    const espnSuccessRate = this.currentRunMetrics.espnAttempts > 0
-      ? (
-        (this.currentRunMetrics.espnSuccesses / this.currentRunMetrics.espnAttempts) *
-        100
-      ).toFixed(1)
-      : 'N/A';
+    const espnSuccessRate =
+      this.currentRunMetrics.espnAttempts > 0
+        ? (
+            (this.currentRunMetrics.espnSuccesses /
+              this.currentRunMetrics.espnAttempts) *
+            100
+          ).toFixed(1)
+        : 'N/A';
 
     const summary = {
       success,
@@ -215,13 +222,14 @@ class SettlementMonitor {
       games: {
         processed: this.currentRunMetrics.gamesProcessed,
         settled: this.currentRunMetrics.gamesSettled,
-        rate: this.currentRunMetrics.gamesProcessed > 0
-          ? (
-            (this.currentRunMetrics.gamesSettled /
-              this.currentRunMetrics.gamesProcessed) *
-            100
-          ).toFixed(1)
-          : 'N/A',
+        rate:
+          this.currentRunMetrics.gamesProcessed > 0
+            ? (
+                (this.currentRunMetrics.gamesSettled /
+                  this.currentRunMetrics.gamesProcessed) *
+                100
+              ).toFixed(1)
+            : 'N/A',
       },
       espn: {
         attempts: this.currentRunMetrics.espnAttempts,
@@ -238,7 +246,9 @@ class SettlementMonitor {
       errors: this.currentRunMetrics.errors,
     };
 
-    this.onMetric(`[SettlementMonitor] Run completed: ${JSON.stringify(summary)}`);
+    this.onMetric(
+      `[SettlementMonitor] Run completed: ${JSON.stringify(summary)}`,
+    );
 
     return summary;
   }
@@ -249,11 +259,13 @@ class SettlementMonitor {
    */
   _checkConsecutiveFailureAlert() {
     // Simple heuristic: if more failures than successes in recent calls
-    const totalAttempts = this.currentRunMetrics.espnFailures + this.currentRunMetrics.espnSuccesses;
+    const totalAttempts =
+      this.currentRunMetrics.espnFailures +
+      this.currentRunMetrics.espnSuccesses;
     if (totalAttempts >= 3 && this.currentRunMetrics.espnFailures >= 3) {
       this._raiseAlert(
         'CONSECUTIVE_ESPN_FAILURES',
-        `${this.currentRunMetrics.espnFailures} consecutive ESPN API failures detected`
+        `${this.currentRunMetrics.espnFailures} consecutive ESPN API failures detected`,
       );
     }
   }
@@ -269,7 +281,7 @@ class SettlementMonitor {
       message,
     };
 
-    if (!this.currentRunMetrics.alerts.find(a => a.type === alertType)) {
+    if (!this.currentRunMetrics.alerts.find((a) => a.type === alertType)) {
       this.currentRunMetrics.alerts.push(alert);
       this.onAlert(`[SettlementMonitor ALERT] ${alertType}: ${message}`);
     }
@@ -322,18 +334,19 @@ class SettlementMonitor {
   async analyzeRecentFailures(hours = 1) {
     try {
       const runs = await this.getRecentJobRuns(hours);
-      
-      const failures = runs.filter(r => r.status === 'failed');
-      const successRate = runs.length > 0
-        ? (((runs.length - failures.length) / runs.length) * 100).toFixed(1)
-        : 'N/A';
+
+      const failures = runs.filter((r) => r.status === 'failed');
+      const successRate =
+        runs.length > 0
+          ? (((runs.length - failures.length) / runs.length) * 100).toFixed(1)
+          : 'N/A';
 
       return {
         period: `Last ${hours} hour(s)`,
         totalRuns: runs.length,
         failedRuns: failures.length,
         successRate,
-        failures: failures.map(f => ({
+        failures: failures.map((f) => ({
           startedAt: f.started_at,
           result: f.result,
         })),

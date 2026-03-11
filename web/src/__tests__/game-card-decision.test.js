@@ -284,14 +284,33 @@ async function run() {
       whyText: 'Spread edge found',
     },
     drivers: [
-      buildDriver({ key: 'spread_driver', market: 'SPREAD', tier: 'BEST', direction: 'HOME', confidence: 0.8, note: 'Strong spread edge', cardTitle: 'Spread Edge' }),
+      buildDriver({
+        key: 'spread_driver',
+        market: 'SPREAD',
+        tier: 'BEST',
+        direction: 'HOME',
+        confidence: 0.8,
+        note: 'Strong spread edge',
+        cardTitle: 'Spread Edge',
+      }),
     ],
   });
 
   const sc1 = getCardDecisionModel(spreadCard1, spreadOdds);
-  assert.ok(sc1.spreadCompare !== null, 'Test 1: spreadCompare should be non-null for SPREAD market');
-  assert.strictEqual(sc1.spreadCompare.direction, 'HOME', 'Test 1: direction should be HOME');
-  assert.strictEqual(sc1.spreadCompare.marketLine, -9.5, 'Test 1: marketLine should be -9.5 (spreadHome)');
+  assert.ok(
+    sc1.spreadCompare !== null,
+    'Test 1: spreadCompare should be non-null for SPREAD market',
+  );
+  assert.strictEqual(
+    sc1.spreadCompare.direction,
+    'HOME',
+    'Test 1: direction should be HOME',
+  );
+  assert.strictEqual(
+    sc1.spreadCompare.marketLine,
+    -9.5,
+    'Test 1: marketLine should be -9.5 (spreadHome)',
+  );
 
   // Test 2: driver note contains "Proj: -8.2" → projectedSpread=-8.2
   const spreadCard2 = buildSpreadCard({
@@ -312,13 +331,28 @@ async function run() {
       whyText: 'Spread edge found',
     },
     drivers: [
-      buildDriver({ key: 'spread_proj', market: 'SPREAD', tier: 'BEST', direction: 'HOME', confidence: 0.8, note: 'Proj: -8.2 vs market -9.5', cardTitle: 'Spread Projection' }),
+      buildDriver({
+        key: 'spread_proj',
+        market: 'SPREAD',
+        tier: 'BEST',
+        direction: 'HOME',
+        confidence: 0.8,
+        note: 'Proj: -8.2 vs market -9.5',
+        cardTitle: 'Spread Projection',
+      }),
     ],
   });
 
   const sc2 = getCardDecisionModel(spreadCard2, spreadOdds);
-  assert.ok(sc2.spreadCompare !== null, 'Test 2: spreadCompare should be non-null');
-  assert.strictEqual(sc2.spreadCompare.projectedSpread, -8.2, 'Test 2: projectedSpread should parse -8.2 from note');
+  assert.ok(
+    sc2.spreadCompare !== null,
+    'Test 2: spreadCompare should be non-null',
+  );
+  assert.strictEqual(
+    sc2.spreadCompare.projectedSpread,
+    -8.2,
+    'Test 2: projectedSpread should parse -8.2 from note',
+  );
 
   // Test 3: market=SPREAD but no parseable projection → projectedSpread=null, marketLine still set
   const spreadCard3 = buildSpreadCard({
@@ -339,14 +373,33 @@ async function run() {
       whyText: 'Spread edge found',
     },
     drivers: [
-      buildDriver({ key: 'spread_no_proj', market: 'SPREAD', tier: 'BEST', direction: 'HOME', confidence: 0.8, note: 'Model edge on spread', cardTitle: 'Spread Edge' }),
+      buildDriver({
+        key: 'spread_no_proj',
+        market: 'SPREAD',
+        tier: 'BEST',
+        direction: 'HOME',
+        confidence: 0.8,
+        note: 'Model edge on spread',
+        cardTitle: 'Spread Edge',
+      }),
     ],
   });
 
   const sc3 = getCardDecisionModel(spreadCard3, spreadOdds);
-  assert.ok(sc3.spreadCompare !== null, 'Test 3: spreadCompare should be non-null');
-  assert.strictEqual(sc3.spreadCompare.projectedSpread, null, 'Test 3: projectedSpread should be null when no pattern match');
-  assert.strictEqual(sc3.spreadCompare.marketLine, -9.5, 'Test 3: marketLine should still be set');
+  assert.ok(
+    sc3.spreadCompare !== null,
+    'Test 3: spreadCompare should be non-null',
+  );
+  assert.strictEqual(
+    sc3.spreadCompare.projectedSpread,
+    null,
+    'Test 3: projectedSpread should be null when no pattern match',
+  );
+  assert.strictEqual(
+    sc3.spreadCompare.marketLine,
+    -9.5,
+    'Test 3: marketLine should still be set',
+  );
 
   // Test 4: market=ML → spreadCompare=null
   const mlCard = buildSpreadCard({
@@ -367,12 +420,24 @@ async function run() {
       whyText: 'ML edge',
     },
     drivers: [
-      buildDriver({ key: 'ml_driver', market: 'ML', tier: 'BEST', direction: 'HOME', confidence: 0.8, note: 'ML edge', cardTitle: 'ML Edge' }),
+      buildDriver({
+        key: 'ml_driver',
+        market: 'ML',
+        tier: 'BEST',
+        direction: 'HOME',
+        confidence: 0.8,
+        note: 'ML edge',
+        cardTitle: 'ML Edge',
+      }),
     ],
   });
 
   const sc4 = getCardDecisionModel(mlCard, spreadOdds);
-  assert.strictEqual(sc4.spreadCompare, null, 'Test 4: spreadCompare should be null for ML market');
+  assert.strictEqual(
+    sc4.spreadCompare,
+    null,
+    'Test 4: spreadCompare should be null for ML market',
+  );
 
   // Test 5: market=SPREAD, direction=AWAY → marketLine = spreadAway (9.5)
   const spreadCard5 = buildSpreadCard({
@@ -393,14 +458,33 @@ async function run() {
       whyText: 'Away spread edge',
     },
     drivers: [
-      buildDriver({ key: 'spread_away', market: 'SPREAD', tier: 'BEST', direction: 'AWAY', confidence: 0.8, note: 'Away spread edge', cardTitle: 'Away Spread' }),
+      buildDriver({
+        key: 'spread_away',
+        market: 'SPREAD',
+        tier: 'BEST',
+        direction: 'AWAY',
+        confidence: 0.8,
+        note: 'Away spread edge',
+        cardTitle: 'Away Spread',
+      }),
     ],
   });
 
   const sc5 = getCardDecisionModel(spreadCard5, spreadOdds);
-  assert.ok(sc5.spreadCompare !== null, 'Test 5: spreadCompare should be non-null for AWAY SPREAD');
-  assert.strictEqual(sc5.spreadCompare.direction, 'AWAY', 'Test 5: direction should be AWAY');
-  assert.strictEqual(sc5.spreadCompare.marketLine, 9.5, 'Test 5: marketLine should be 9.5 (spreadAway)');
+  assert.ok(
+    sc5.spreadCompare !== null,
+    'Test 5: spreadCompare should be non-null for AWAY SPREAD',
+  );
+  assert.strictEqual(
+    sc5.spreadCompare.direction,
+    'AWAY',
+    'Test 5: direction should be AWAY',
+  );
+  assert.strictEqual(
+    sc5.spreadCompare.marketLine,
+    9.5,
+    'Test 5: marketLine should be 9.5 (spreadAway)',
+  );
 
   console.log('✅ SpreadCompare derivation tests passed');
 

@@ -297,7 +297,9 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
     params.push(dateRange.end);
   }
 
-  const whereSql = whereClauses.length ? ` AND ${whereClauses.join(' AND ')}` : '';
+  const whereSql = whereClauses.length
+    ? ` AND ${whereClauses.join(' AND ')}`
+    : '';
 
   const totalPendingRow = db
     .prepare(
@@ -387,7 +389,9 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
     ),
     settledDisplayedFinal: toCount(settledDisplayedFinalRow?.count),
     displayedFinal: toCount(displayedFinalRow?.count),
-    finalDisplayedMissingResults: toCount(finalDisplayedMissingResultsRow?.count),
+    finalDisplayedMissingResults: toCount(
+      finalDisplayedMissingResultsRow?.count,
+    ),
     finalDisplayedUnsettled: toCount(finalDisplayedUnsettledRow?.count),
   };
 }
@@ -514,7 +518,10 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
         const awayScore = Number(pendingCard.final_score_away) || 0;
 
         try {
-          const lockedMarket = assertLockedMarketContext(pendingCard, payloadData);
+          const lockedMarket = assertLockedMarketContext(
+            pendingCard,
+            payloadData,
+          );
           const result = gradeLockedMarket({
             marketType: lockedMarket.marketType,
             selection: lockedMarket.selection,
@@ -524,18 +531,13 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           });
           const pnlUnits = computePnlUnits(result, lockedMarket.lockedPrice);
 
-          db
-            .prepare(`
+          db.prepare(
+            `
             UPDATE card_results
             SET status = 'settled', result = ?, settled_at = ?, pnl_units = ?
             WHERE id = ? AND status = 'pending'
-          `)
-            .run(
-            result,
-            settledAt,
-            pnlUnits,
-            pendingCard.result_id,
-          );
+          `,
+          ).run(result, settledAt, pnlUnits, pendingCard.result_id);
           const state = db
             .prepare(
               `
@@ -556,7 +558,10 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
               `[SettleCards] Settled card ${pendingCard.card_id}: ${lockedMarket.marketType}/${lockedMarket.selection} ` +
                 `(${lockedMarket.marketKey}) -> ${result} (pnl: ${pnlUnits})`,
             );
-          } else if (state && (state.status === 'settled' || state.status === 'error')) {
+          } else if (
+            state &&
+            (state.status === 'settled' || state.status === 'error')
+          ) {
             cardsRaced++;
             console.log(
               `[SettleCards] Race detected for card ${pendingCard.card_id}; row now ${state.status}`,
@@ -576,7 +581,10 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           );
 
           let metadata = {};
-          if (typeof pendingCard.metadata === 'string' && pendingCard.metadata) {
+          if (
+            typeof pendingCard.metadata === 'string' &&
+            pendingCard.metadata
+          ) {
             try {
               metadata = JSON.parse(pendingCard.metadata);
             } catch {
@@ -589,17 +597,13 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
             at: settledAt,
           };
 
-          db
-            .prepare(`
+          db.prepare(
+            `
             UPDATE card_results
             SET status = 'error', result = 'void', settled_at = ?, metadata = ?
             WHERE id = ? AND status = 'pending'
-          `)
-            .run(
-            settledAt,
-            JSON.stringify(metadata),
-            pendingCard.result_id,
-          );
+          `,
+          ).run(settledAt, JSON.stringify(metadata), pendingCard.result_id);
           const state = db
             .prepare(
               `
@@ -616,7 +620,10 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
             state.settled_at === settledAt;
           if (didErrorNow) {
             cardsErrored++;
-          } else if (state && (state.status === 'settled' || state.status === 'error')) {
+          } else if (
+            state &&
+            (state.status === 'settled' || state.status === 'error')
+          ) {
             cardsRaced++;
             console.log(
               `[SettleCards] Race detected while writing error for card ${pendingCard.card_id}; row now ${state.status}`,
@@ -673,7 +680,12 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       for (const row of aggregateRows) {
         const sport = row.sport;
         if (!sportDeltas[sport]) {
-          sportDeltas[sport] = { deltaWins: 0, deltaLosses: 0, deltaPushes: 0, deltaPnl: 0 };
+          sportDeltas[sport] = {
+            deltaWins: 0,
+            deltaLosses: 0,
+            deltaPushes: 0,
+            deltaPnl: 0,
+          };
         }
         const count = Number(row.count) || 0;
         const pnl = Number(row.total_pnl) || 0;

@@ -144,10 +144,19 @@ describe('NHL 1P model output contract', () => {
     });
 
     expect(descriptor).toBeDefined();
-    expect(descriptor.driverInputs.projection_final).toBeGreaterThanOrEqual(2.2);
+    expect(descriptor.driverInputs.projection_final).toBeGreaterThanOrEqual(
+      2.2,
+    );
     expect(['PASS', 'PLAY_OVER', 'BEST_OVER']).toContain(
       descriptor.driverInputs.classification,
     );
-    expect(descriptor.driverInputs.reason_codes.some((code) => code === 'NHL_1P_CLAMP_HIGH' || code === 'NHL_1P_OVER_PLAY' || code === 'NHL_1P_OVER_BEST')).toBe(true);
+    expect(
+      descriptor.driverInputs.reason_codes.some(
+        (code) =>
+          code === 'NHL_1P_CLAMP_HIGH' ||
+          code === 'NHL_1P_OVER_PLAY' ||
+          code === 'NHL_1P_OVER_BEST',
+      ),
+    ).toBe(true);
   });
 });

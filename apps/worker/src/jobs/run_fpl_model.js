@@ -169,10 +169,13 @@ async function runFPLModel() {
       // Pre-flight check: Verify FPL Sage DB integrity if configured
       const fplDbPath = process.env.CHEDDAR_FPL_DB_PATH;
       if (fplDbPath) {
-        console.log(`[FPLSageAdapter] Checking FPL Sage DB integrity at: ${fplDbPath}`);
+        console.log(
+          `[FPLSageAdapter] Checking FPL Sage DB integrity at: ${fplDbPath}`,
+        );
         const integrityCheck = checkSqliteIntegrity(fplDbPath);
         if (!integrityCheck.ok) {
-          const errorMsg = `❌ FATAL: ${integrityCheck.error}\n\n` +
+          const errorMsg =
+            `❌ FATAL: ${integrityCheck.error}\n\n` +
             `Remediation steps:\n` +
             `1. Stop the scheduler: ./scripts/manage-scheduler.sh stop\n` +
             `2. Back up corrupt DB: cp "${fplDbPath}" "${fplDbPath}.corrupt.$(date +%Y%m%d-%H%M%S)"\n` +
