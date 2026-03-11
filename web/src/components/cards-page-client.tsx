@@ -1971,6 +1971,7 @@ export default function CardsPageClient() {
       card.sport === 'NCAAM' && displayPlay.market_type === 'SPREAD'
         ? extractFtTrendInsight(card)
         : null;
+    const isFtTrendSpread = Boolean(ftTrendInsight);
     const effectiveEdgePct =
       typeof resolvedDecisionV2?.edge_pct === 'number'
         ? resolvedDecisionV2.edge_pct
@@ -2098,6 +2099,7 @@ export default function CardsPageClient() {
       (typeof projectedMargin === 'number' ||
         typeof edgePoints === 'number' ||
         typeof marketLine === 'number');
+    const shouldRenderSpreadContext = hasSpreadContext && !isFtTrendSpread;
     const hasTotalContext =
       isTotalLikeMarket &&
       (typeof projectedTotal === 'number' ||
@@ -2396,7 +2398,7 @@ export default function CardsPageClient() {
           </div>
 
           {canRenderModelSummary &&
-            (hasSpreadContext ||
+            (shouldRenderSpreadContext ||
               hasTotalContext ||
               hasOnePeriodTotalContext ||
               hasMlContext ||
@@ -2441,7 +2443,7 @@ export default function CardsPageClient() {
                     </p>
                   </>
                 )}
-                {hasSpreadContext && (
+                {shouldRenderSpreadContext && (
                   <div className="flex items-center gap-4 text-xs font-mono flex-wrap mt-2">
                     <span className="text-cloud/60">
                       Projected margin{' '}
@@ -2675,6 +2677,14 @@ export default function CardsPageClient() {
             </p>
             {ftTrendInsight && (
               <p className="text-xs text-cloud/60 mt-2">
+                FT Trend Play:{' '}
+                <span className="text-cloud/90 font-semibold">
+                  Take {ftTrendInsight.advantagedTeam} spread (better FT%).
+                </span>
+              </p>
+            )}
+            {ftTrendInsight && (
+              <p className="text-xs text-cloud/60 mt-1">
                 FT Advantage:{' '}
                 <span className="text-cloud/90 font-semibold">
                   {formatFtTrendInsight(ftTrendInsight)}
@@ -2700,7 +2710,9 @@ export default function CardsPageClient() {
                 <p>
                   Model Lean:{' '}
                   <span className="text-cloud/90 font-semibold">
-                    {modelLean ?? 'NONE'}
+                    {isFtTrendSpread
+                      ? `Take ${ftTrendInsight?.advantagedTeam ?? 'better FT% team'} spread`
+                      : (modelLean ?? 'NONE')}
                   </span>
                 </p>
                 <p>

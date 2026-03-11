@@ -52,6 +52,31 @@ describe('team-metrics resolution', () => {
     expect(out.metrics.rank).toBe(8);
   });
 
+  test('uses static table for Tulane example game without scoreboard fallback', async () => {
+    const { espnClient, getTeamMetricsWithGames } = loadModules();
+    espnClient.fetchTeamSchedule.mockResolvedValue([
+      { date: '2026-03-04T00:00:00Z', pointsFor: 77, pointsAgainst: 69, result: 'W' }
+    ]);
+    espnClient.fetchTeamInfo.mockResolvedValue({ rank: null, record: '18-13' });
+    espnClient.fetchTeamStatistics.mockResolvedValue({ __ftPct: 75.8 });
+    espnClient.fetchScoreboardEvents.mockResolvedValue([]);
+
+    const out = await getTeamMetricsWithGames('Tulane Green Wave', 'NCAAM', {
+      limit: 4,
+      skipCache: true,
+      strictVariantMatch: false,
+    });
+
+    expect(espnClient.fetchTeamSchedule).toHaveBeenCalledWith(
+      'basketball/mens-college-basketball',
+      2655,
+      4
+    );
+    expect(out.metrics.avgPoints).toBe(77);
+    expect(out.metrics.freeThrowPct).toBe(75.8);
+    expect(out.metrics.freeThrowPctSource).toBe('espn_team_statistics');
+  });
+
   test('resolves unknown NCAAM team via scoreboard fallback', async () => {
     const { espnClient, getTeamMetricsWithGames } = loadModules();
     espnClient.fetchScoreboardEvents.mockResolvedValue([
