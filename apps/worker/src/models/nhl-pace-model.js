@@ -435,9 +435,10 @@ function predictNHLGame(opts) {
   const clampLow = final1pProjectionRounded <= ONE_P_TOTAL_FLOOR;
   const clampHigh = final1pProjectionRounded >= ONE_P_TOTAL_CEILING;
 
-  let onePClassification = classifyFirstPeriodProjection(
+  const projectedBandClassification = classifyFirstPeriodProjection(
     final1pProjectionRounded,
   );
+  let onePClassification = projectedBandClassification;
   const goalieUncertain =
     homeCertainty === 'UNKNOWN' || awayCertainty === 'UNKNOWN';
 
@@ -447,7 +448,11 @@ function predictNHLGame(opts) {
   }
 
   const onePReasonCodes = [];
-  if (onePClassification === 'PASS') {
+  if (
+    onePClassification === 'PASS' &&
+    projectedBandClassification === 'PASS' &&
+    !goalieUncertain
+  ) {
     onePReasonCodes.push('NHL_1P_PASS_DEAD_ZONE');
   } else if (onePClassification === 'LEAN_OVER') {
     onePReasonCodes.push('NHL_1P_OVER_LEAN');
