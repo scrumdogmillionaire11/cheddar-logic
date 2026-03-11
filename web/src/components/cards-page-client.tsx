@@ -573,7 +573,7 @@ export default function CardsPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('game');
   const [lifecycleMode, setLifecycleMode] =
-    useState<LifecycleMode>(() => resolveLifecycleModeFromUrlAndStorage());
+    useState<LifecycleMode>('pregame');
   const [filters, setFilters] = useState<GameFilters>(
     getDefaultFilters('game'),
   );

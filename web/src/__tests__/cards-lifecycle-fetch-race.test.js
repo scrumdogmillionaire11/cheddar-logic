@@ -17,15 +17,17 @@ const source = fs.readFileSync(filePath, 'utf8');
 
 console.log('🧪 Starting WI-0396: Cards Lifecycle Fetch Race Tests...\n');
 
-// Test 1: Lifecycle mode initialized from URL/session (not hardcoded 'pregame')
-console.log('Test 1: Lifecycle mode initialized from URL/session');
+// Test 1: Lifecycle mode defaults to 'pregame' for SSR compatibility
+console.log('Test 1: Lifecycle mode SSR-safe default');
 assert(
-  source.includes(
-    "useState<LifecycleMode>(() => resolveLifecycleModeFromUrlAndStorage())",
-  ),
-  'cards page should initialize lifecycle mode from URL/session on first render',
+  source.includes("useState<LifecycleMode>('pregame')"),
+  'cards page initializes with pregame for SSR + hydration safety',
 );
-console.log('✓ Lifecycle mode initialized from URL/session\n');
+assert(
+  source.includes('const resolvedLifecycleMode = resolveLifecycleModeFromUrlAndStorage()'),
+  'URL/session sync effect resolves lifecycle mode after hydration',
+);
+console.log('✓ Lifecycle mode uses SSR-safe default\n');
 
 // Test 2: Global request lifecycle tracking variable exists
 console.log('Test 2: Global lifecycle tracking variable');
@@ -139,7 +141,8 @@ console.log('✓ Loading state kept active during retry\n');
 
 console.log('✅ All WI-0396 Lifecycle Fetch Race Tests Passed!');
 console.log('\n📋 Summary:');
-console.log('✓ Lifecycle mode initialized from URL/session (not hardcoded)');
+console.log('✓ SSR-safe default (pregame) prevents hydration mismatch');
+console.log('✓ URL/session effect changes mode after mount/hydration');
 console.log('✓ Request lifecycle tracked to detect mid-flight changes');
 console.log('✓ Mismatch during in-flight request triggers automatic retry');
 console.log('✓ Retry uses correct lifecycle parameter immediately');
