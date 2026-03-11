@@ -76,6 +76,56 @@ const WAVE1_MARKETS = new Set<CanonicalMarketType>([
   'PUCKLINE',
   'TEAM_TOTAL',
 ]);
+const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
+  string,
+  { playProducerCardTypes: Set<string>; evidenceOnlyCardTypes: Set<string> }
+> = {
+  NBA: {
+    playProducerCardTypes: new Set([
+      'nba-totals-call',
+      'nba-spread-call',
+      'nba-moneyline-call',
+    ]),
+    evidenceOnlyCardTypes: new Set([
+      'nba-base-projection',
+      'nba-total-projection',
+      'nba-rest-advantage',
+      'nba-matchup-style',
+      'nba-blowout-risk',
+      'nba-travel',
+      'nba-lineup',
+      'welcome-home-v2',
+    ]),
+  },
+  NHL: {
+    playProducerCardTypes: new Set([
+      'nhl-totals-call',
+      'nhl-spread-call',
+      'nhl-moneyline-call',
+      'nhl-pace-totals',
+    ]),
+    evidenceOnlyCardTypes: new Set([
+      'nhl-base-projection',
+      'nhl-rest-advantage',
+      'nhl-goalie',
+      'nhl-goalie-certainty',
+      'nhl-model-output',
+      'nhl-shot-environment',
+      'nhl-pace-1p',
+      'welcome-home-v2',
+    ]),
+  },
+  NCAAM: {
+    playProducerCardTypes: new Set([
+      'ncaam-base-projection',
+      'ncaam-rest-advantage',
+      'ncaam-matchup-style',
+      'ncaam-ft-trend',
+      'ncaam-ft-spread',
+    ]),
+    evidenceOnlyCardTypes: new Set([]),
+  },
+};
 
 // API types from cards page
 interface ApiPlay {
@@ -184,11 +234,41 @@ interface GameData {
   plays: ApiPlay[];
 }
 
-function isPlayItem(play: ApiPlay): boolean {
-  return (play.kind ?? 'PLAY') === 'PLAY';
+function getSportCardTypeContract(
+  sport?: unknown,
+):
+  | { playProducerCardTypes: Set<string>; evidenceOnlyCardTypes: Set<string> }
+  | undefined {
+  if (!sport) return undefined;
+  return ACTIVE_SPORT_CARD_TYPE_CONTRACT[normalizeSport(sport)];
 }
 
-function isEvidenceItem(play: ApiPlay): boolean {
+function normalizeCardType(cardType: string): string {
+  return cardType.trim().toLowerCase();
+}
+
+function isPlayItem(play: ApiPlay, sport?: string): boolean {
+  const contract = getSportCardTypeContract(sport);
+  const cardType = normalizeCardType(play.cardType || '');
+  const kind = play.kind ?? 'PLAY';
+  if (contract) {
+    if (contract.evidenceOnlyCardTypes.has(cardType)) return false;
+    if (kind === 'PLAY' && !contract.playProducerCardTypes.has(cardType)) {
+      return false;
+    }
+  }
+  return kind === 'PLAY';
+}
+
+function isEvidenceItem(play: ApiPlay, sport?: string): boolean {
+  const contract = getSportCardTypeContract(sport);
+  const cardType = normalizeCardType(play.cardType || '');
+  if (contract?.evidenceOnlyCardTypes.has(cardType)) {
+    return true;
+  }
+  if (contract && !contract.playProducerCardTypes.has(cardType)) {
+    return true;
+  }
   return (play.kind ?? 'PLAY') === 'EVIDENCE';
 }
 
@@ -455,6 +535,20 @@ function playValueRank(play: ApiPlay): number {
   return 0;
 }
 
+function playSourcePriority(
+  play: ApiPlay,
+  inference: ReturnType<typeof inferMarketFromPlay>,
+): number {
+  if (
+    inference.canonical === 'TOTAL' ||
+    inference.canonical === 'TEAM_TOTAL'
+  ) {
+    if (play.cardType === 'nhl-totals-call') return 2;
+    if (play.cardType === 'nhl-pace-totals') return 1;
+  }
+  return 0;
+}
+
 function timestampMs(value?: string): number {
   if (!value) return 0;
   const ms = new Date(value).getTime();
@@ -479,6 +573,11 @@ function comparePlayCandidates(a: DedupeCandidate, b: DedupeCandidate): number {
 
   const valueDelta = playValueRank(a.play) - playValueRank(b.play);
   if (valueDelta !== 0) return valueDelta;
+
+  const sourcePriorityDelta =
+    playSourcePriority(a.play, a.inference) -
+    playSourcePriority(b.play, b.inference);
+  if (sourcePriorityDelta !== 0) return sourcePriorityDelta;
 
   const aModelProb =
     resolveSourceModelProb(a.play) ?? a.play.decision_v2?.fair_prob ?? undefined;
@@ -707,7 +806,8 @@ function edgeTierFromPct(edgePct: number): 'BEST' | 'GOOD' | 'OK' | 'BAD' {
 /**
  * Normalize sport string to Sport type
  */
-function normalizeSport(sport: string): Sport {
+function normalizeSport(sport: unknown): Sport {
+  if (typeof sport !== 'string') return 'UNKNOWN';
   const sportUpper = sport.toUpperCase();
   if (
     sportUpper === 'NHL' ||
@@ -968,9 +1068,13 @@ function resolveSourceModelProb(play?: ApiPlay): number | undefined {
  * Build canonical Play object at transform time
  */
 function buildPlay(game: GameData, drivers: DriverRow[]): Play {
-  const playCandidates = game.plays.filter(isPlayItem);
+  const playCandidates = game.plays.filter((play) =>
+    isPlayItem(play, game.sport),
+  );
   const dedupedPlayCandidates = dedupePlayCandidates(game, playCandidates);
-  const evidenceCandidates = game.plays.filter(isEvidenceItem);
+  const evidenceCandidates = game.plays.filter((play) =>
+    isEvidenceItem(play, game.sport),
+  );
   const scopedPlayCandidates = ENABLE_WELCOME_HOME
     ? dedupedPlayCandidates
     : dedupedPlayCandidates.filter((play) => !isWelcomeHomePlay(play));
@@ -1198,18 +1302,25 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     // Distinguish: no driver plays loaded vs plays exist but no truth driver qualified
     const hasNoOdds = game.odds === null;
     const hasNoPlays = game.plays.length === 0;
+    const hasPlayItems = game.plays.some(isPlayItem);
+    const hasEvidenceOnly = !hasPlayItems && game.plays.some(isEvidenceItem);
     const missingDataCode: string =
       hasNoOdds && hasNoPlays
         ? 'PASS_MARKET_PRICE_MISSING'
         : hasNoPlays
           ? 'PASS_DRIVER_LOAD_FAILED'
-          : 'PASS_MISSING_DRIVER_INPUTS';
+          : hasEvidenceOnly
+            ? 'PASS_NO_ACTIONABLE_PLAY'
+            : 'PASS_MISSING_DRIVER_INPUTS';
     const missingDataText: string =
       hasNoOdds && hasNoPlays
         ? 'Market price missing'
         : hasNoPlays
           ? 'Driver load failed'
-          : 'Missing driver inputs';
+          : hasEvidenceOnly
+            ? 'No actionable play'
+            : 'Missing driver inputs';
+    const missingInputs = hasEvidenceOnly ? ['play'] : ['drivers'];
     return {
       market_key: 'INFO|NONE',
       decision: 'PASS',
@@ -1233,7 +1344,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       },
       transform_meta: {
         quality: 'DEGRADED',
-        missing_inputs: ['drivers'],
+        missing_inputs: missingInputs,
         placeholders_found: [],
       },
       status: 'PASS',
@@ -2318,15 +2429,18 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
  */
 export function transformToGameCard(game: GameData): GameCard {
   // Convert plays to drivers and dedupe
-  const rawDrivers = game.plays.filter(isPlayItem).map(playToDriver);
+  const rawDrivers = game.plays
+    .filter((play) => isPlayItem(play, game.sport))
+    .map(playToDriver);
   const scopedRawDrivers = ENABLE_WELCOME_HOME
     ? rawDrivers
     : rawDrivers.filter((driver) => driver.cardType !== 'welcome-home-v2');
   const drivers = deduplicateDrivers(scopedRawDrivers);
   const evidenceSource = ENABLE_WELCOME_HOME
-    ? game.plays.filter(isEvidenceItem)
+    ? game.plays.filter((play) => isEvidenceItem(play, game.sport))
     : game.plays.filter(
-        (play) => !isWelcomeHomePlay(play) && isEvidenceItem(play),
+        (play) =>
+          !isWelcomeHomePlay(play) && isEvidenceItem(play, game.sport),
       );
   const evidence: EvidenceItem[] = evidenceSource.map((play, index) => ({
     id: `${game.gameId}:evidence:${play.driverKey || play.cardType || index}`,

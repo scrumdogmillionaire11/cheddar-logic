@@ -22,6 +22,7 @@ function hasNumericEspnMetrics(metrics) {
     'avgPointsAllowed',
     'avgGoalsFor',
     'avgGoalsAgainst',
+    'freeThrowPct',
   ];
   return keys.some((key) => {
     const value = metrics[key];

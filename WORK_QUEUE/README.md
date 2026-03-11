@@ -4,7 +4,7 @@
 
 ## Active Work Items (Prioritized)
 
-**Updated**: 2026-03-10
+**Updated**: 2026-03-11
 
 ### P0: Production Blockers
 
@@ -16,13 +16,12 @@
 - **WI-0370: NHL Settlement Enrollment + Sport Casing Fix** 🆕
   - Fix `card_results` sport casing write-path so NHL PLAY/LEAN rows enroll reliably
   - Add regression coverage for NHL settlement eligibility when finals are available
+- ~~WI-0386: Daily Settlement for NBA Totals + NHL Full/1P Totals~~ ✅ **COMPLETE** (2026-03-11)
 
 ### P2: Decision Pipeline Hardening
 
 - ~~WI-0345: Web API + Transform v2 Pass-Through Hard Cut~~ ✅ **COMPLETE** (2026-03-10)
-- **WI-0373: Canonical Settlement P/L Calculation (Forward-Only)** 🆕
-  - Canonical forward-only P/L rules for wins/losses/pushes and malformed odds
-  - Keep W/L grading resilient while treating P/L as optional metadata when unavailable
+- ~~WI-0373: Canonical Settlement P/L Calculation (Forward-Only)~~ ✅ **COMPLETE** (2026-03-11)
 
 ### P3: Diagnostics & Observability
 

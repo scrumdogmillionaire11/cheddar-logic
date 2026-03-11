@@ -62,15 +62,7 @@ function generateNFLCard(gameId, modelOutput, oddsSnapshot) {
   const cardId = `card-nfl-${gameId}-${uuidV4().slice(0, 8)}`;
   const now = new Date().toISOString();
 
-  // Card expires 1 hour before the game starts (if game_time_utc is known)
-  let expiresAt = null;
-  if (oddsSnapshot && oddsSnapshot.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    const oneHourBefore = new Date(
-      gameTime.getTime() - 60 * 60 * 1000,
-    ).toISOString();
-    expiresAt = oneHourBefore;
-  }
+  const expiresAt = null;
 
   // Build the card payload
   const recommendation = buildRecommendationFromPrediction({

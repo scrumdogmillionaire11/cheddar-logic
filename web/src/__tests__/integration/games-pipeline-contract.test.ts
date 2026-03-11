@@ -46,14 +46,17 @@ assert.ok(
 );
 
 assert.ok(
-  cardsSource.includes("const getStatusBadge = (status: 'PLAY' | 'LEAN' | 'PASS')") &&
+  cardsSource.includes(
+    "const getStatusBadge = (status: 'PLAY' | 'LEAN' | 'PASS')",
+  ) &&
     cardsSource.includes('PASS Breakdown') &&
     cardsSource.includes('Model Lean Indicators'),
   'cards UI must render PLAY/LEAN/PASS and show PASS diagnostics',
 );
 
 assert.ok(
-  !cardsSource.includes("'HOLD/WATCH'") && !cardsSource.includes('FIRE/HOLD/WATCH rendering paths'),
+  !cardsSource.includes("'HOLD/WATCH'") &&
+    !cardsSource.includes('FIRE/HOLD/WATCH rendering paths'),
   'cards UI should not contain legacy verdict rendering labels',
 );
 

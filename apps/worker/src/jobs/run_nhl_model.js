@@ -1,15 +1,15 @@
 /**
  * NHL Model Runner Job
- * 
+ *
  * Reads latest NHL odds from DB, runs inference model, and stores:
  * - model_outputs (predictions + confidence)
  * - card_payloads (ready-to-render web cards)
- * 
+ *
  * Portable job runner that can be called from:
  * - A cron job (node apps/worker/src/jobs/run_nhl_model.js)
  * - A scheduler daemon (apps/worker/src/schedulers/main.js)
  * - CLI (npm run job:run-nhl-model)
- * 
+ *
  * Exit codes:
  *   0 = success
  *   1 = failure
@@ -148,7 +148,9 @@ function buildGamePipelineState({
   cardReady,
   blockingReasonCodes = [],
 }) {
-  const teamMappingOk = Boolean(oddsSnapshot?.home_team && oddsSnapshot?.away_team);
+  const teamMappingOk = Boolean(
+    oddsSnapshot?.home_team && oddsSnapshot?.away_team,
+  );
   const marketLinesOk =
     hasMoneylineOdds(oddsSnapshot) ||
     hasSpreadOdds(oddsSnapshot) ||
@@ -174,7 +176,9 @@ function deriveGameBlockingReasonCodes({
   cards = [],
 }) {
   const reasonCodes = [];
-  const hasTeamMapping = Boolean(oddsSnapshot?.home_team && oddsSnapshot?.away_team);
+  const hasTeamMapping = Boolean(
+    oddsSnapshot?.home_team && oddsSnapshot?.away_team,
+  );
   const hasMarketLines =
     hasMoneylineOdds(oddsSnapshot) ||
     hasSpreadOdds(oddsSnapshot) ||
@@ -204,6 +208,128 @@ function deriveGameBlockingReasonCodes({
 function canPriceCard(card) {
   const sharpPriceStatus = card?.payloadData?.decision_v2?.sharp_price_status;
   return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
+}
+
+function toFiniteNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function deriveOnePeriodSelection(payloadData) {
+  const classification = String(
+    payloadData?.classification || payloadData?.prediction || '',
+  ).toUpperCase();
+  if (classification.includes('OVER')) return 'OVER';
+  if (classification.includes('UNDER')) return 'UNDER';
+  return null;
+}
+
+function applyNhlSettlementMarketContext(card, oddsSnapshot) {
+  if (!card?.payloadData || typeof card.payloadData !== 'object') return;
+  const payload = card.payloadData;
+  const marketType = String(payload.market_type || '').toUpperCase();
+
+  if (marketType === 'TOTAL') {
+    payload.period = payload.period || 'FULL_GAME';
+    payload.market = {
+      ...(payload.market && typeof payload.market === 'object'
+        ? payload.market
+        : {}),
+      period: payload.period,
+    };
+    if (payload.market_context && typeof payload.market_context === 'object') {
+      payload.market_context = {
+        ...payload.market_context,
+        period: payload.period,
+        wager: {
+          ...(payload.market_context.wager &&
+          typeof payload.market_context.wager === 'object'
+            ? payload.market_context.wager
+            : {}),
+          period: payload.period,
+        },
+      };
+    }
+    return;
+  }
+
+  if (card.cardType !== 'nhl-pace-1p') return;
+
+  const selection = deriveOnePeriodSelection(payload);
+  const modelLine = toFiniteNumber(payload?.driver?.inputs?.market_1p_total);
+  const line = modelLine !== null ? modelLine : 1.5;
+  const proxyPrice =
+    selection === 'OVER'
+      ? toFiniteNumber(oddsSnapshot?.total_price_over)
+      : selection === 'UNDER'
+        ? toFiniteNumber(oddsSnapshot?.total_price_under)
+        : null;
+  const defaultOnePeriodPrice = Math.trunc(
+    toFiniteNumber(process.env.NHL_1P_DEFAULT_PRICE) || -110,
+  );
+  const price = proxyPrice !== null ? proxyPrice : defaultOnePeriodPrice;
+  const statusToken = String(payload.status || '').toUpperCase();
+  const isPlayable =
+    (statusToken === 'FIRE' || statusToken === 'WATCH') &&
+    (selection === 'OVER' || selection === 'UNDER');
+
+  payload.market_type = 'TOTAL';
+  payload.recommended_bet_type = 'total';
+  payload.period = '1P';
+  payload.kind = isPlayable ? 'PLAY' : 'EVIDENCE';
+  payload.selection =
+    selection !== null
+      ? {
+          ...(payload.selection && typeof payload.selection === 'object'
+            ? payload.selection
+            : {}),
+          side: selection,
+        }
+      : null;
+  payload.line = line;
+  payload.price = price;
+  payload.line_source = payload.line_source || 'model_reference';
+  payload.price_source =
+    proxyPrice !== null ? 'odds_snapshot_proxy' : 'synthetic_default';
+  payload.market_variant = 'NHL_1P_TOTAL';
+  payload.market = {
+    ...(payload.market && typeof payload.market === 'object'
+      ? payload.market
+      : {}),
+    period: '1P',
+  };
+  payload.market_context = {
+    ...(payload.market_context && typeof payload.market_context === 'object'
+      ? payload.market_context
+      : {}),
+    version: 'v1',
+    market_type: 'TOTAL',
+    selection_side: selection,
+    period: '1P',
+    wager: {
+      ...(payload.market_context?.wager &&
+      typeof payload.market_context.wager === 'object'
+        ? payload.market_context.wager
+        : {}),
+      called_line: line,
+      called_price: price,
+      line_source: payload.line_source,
+      price_source: payload.price_source,
+      period: '1P',
+    },
+  };
+  payload.pricing_trace = {
+    ...(payload.pricing_trace && typeof payload.pricing_trace === 'object'
+      ? payload.pricing_trace
+      : {}),
+    called_market_type: 'TOTAL',
+    called_side: selection,
+    called_line: line,
+    called_price: price,
+    line_source: payload.line_source,
+    price_source: payload.price_source,
+    period: '1P',
+  };
 }
 
 /**
@@ -294,16 +420,13 @@ function getHomeTeamRecentRoadTrip(
 }
 
 /**
- * Generate standalone market call cards (nhl-totals-call, nhl-spread-call)
+ * Generate standalone market call cards
+ * (nhl-totals-call, nhl-spread-call, nhl-moneyline-call)
  * from cross-market decisions. Only emits for FIRE or WATCH status.
  */
 function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
   const now = new Date().toISOString();
-  let expiresAt = null;
-  if (oddsSnapshot?.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
+  const expiresAt = null;
 
   const matchup = buildMatchup(
     oddsSnapshot?.home_team,
@@ -354,110 +477,110 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         }));
 
       const payloadData = {
-          game_id: gameId,
-          sport: 'NHL',
-          model_version: 'nhl-cross-market-v1',
-          home_team: oddsSnapshot?.home_team ?? null,
-          away_team: oddsSnapshot?.away_team ?? null,
-          matchup,
-          start_time_utc: oddsSnapshot?.game_time_utc ?? null,
-          start_time_local: startTimeLocal,
-          timezone,
-          countdown,
-          prediction: side,
-          confidence,
-          tier,
-          status,
-          recommended_bet_type: 'total',
-          kind: 'PLAY',
+        game_id: gameId,
+        sport: 'NHL',
+        model_version: 'nhl-cross-market-v1',
+        home_team: oddsSnapshot?.home_team ?? null,
+        away_team: oddsSnapshot?.away_team ?? null,
+        matchup,
+        start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+        start_time_local: startTimeLocal,
+        timezone,
+        countdown,
+        prediction: side,
+        confidence,
+        tier,
+        status,
+        recommended_bet_type: 'total',
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: {
+          side,
+        },
+        line,
+        price: totalPrice,
+        reason_codes: reasonCodes,
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
+        reasoning: `${pickText}: ${totalDecision.reasoning}`,
+        edge: totalDecision.edge ?? null,
+        edge_pct: totalDecision.edge ?? null,
+        edge_points: totalDecision.edge_points ?? null,
+        p_fair: totalDecision.p_fair ?? null,
+        p_implied: totalDecision.p_implied ?? null,
+        model_prob: totalDecision.p_fair ?? null,
+        projection: {
+          total: totalDecision?.projection?.projected_total ?? line ?? null,
+          margin_home: null,
+          win_prob_home: null,
+        },
+        market_context: {
+          version: 'v1',
           market_type: 'TOTAL',
-          selection: {
-            side,
-          },
-          line,
-          price: totalPrice,
-          reason_codes: reasonCodes,
-          tags: [],
-          consistency: {
-            total_bias: totalBias,
-          },
-          reasoning: `${pickText}: ${totalDecision.reasoning}`,
-          edge: totalDecision.edge ?? null,
-          edge_pct: totalDecision.edge ?? null,
-          edge_points: totalDecision.edge_points ?? null,
-          p_fair: totalDecision.p_fair ?? null,
-          p_implied: totalDecision.p_implied ?? null,
-          model_prob: totalDecision.p_fair ?? null,
+          selection_side: side,
+          selection_team: null,
           projection: {
-            total: totalDecision?.projection?.projected_total ?? line ?? null,
             margin_home: null,
+            total: totalDecision?.projection?.projected_total ?? line ?? null,
+            team_total: null,
             win_prob_home: null,
+            score_home: null,
+            score_away: null,
           },
-          market_context: {
-            version: 'v1',
-            market_type: 'TOTAL',
-            selection_side: side,
-            selection_team: null,
-            projection: {
-              margin_home: null,
-              total: totalDecision?.projection?.projected_total ?? line ?? null,
-              team_total: null,
-              win_prob_home: null,
-              score_home: null,
-              score_away: null,
-            },
-            wager: {
-              called_line: line ?? null,
-              called_price: totalPrice ?? null,
-              line_source: totalDecision.line_source ?? 'odds_snapshot',
-              price_source: totalDecision.price_source ?? 'odds_snapshot',
-            },
-          },
-          market,
-          line_source: totalDecision.line_source ?? 'odds_snapshot',
-          price_source: totalDecision.price_source ?? 'odds_snapshot',
-          pricing_trace: {
-            called_market_type: 'TOTAL',
-            called_side: side,
+          wager: {
             called_line: line ?? null,
             called_price: totalPrice ?? null,
             line_source: totalDecision.line_source ?? 'odds_snapshot',
             price_source: totalDecision.price_source ?? 'odds_snapshot',
-            proxy_used: totalDecision?.projection?.projected_total == null,
           },
-          drivers_active: activeDrivers,
-          driver_summary: {
-            weights: topDrivers,
-            impact_note: 'Cross-market totals decision.',
+        },
+        market,
+        line_source: totalDecision.line_source ?? 'odds_snapshot',
+        price_source: totalDecision.price_source ?? 'odds_snapshot',
+        pricing_trace: {
+          called_market_type: 'TOTAL',
+          called_side: side,
+          called_line: line ?? null,
+          called_price: totalPrice ?? null,
+          line_source: totalDecision.line_source ?? 'odds_snapshot',
+          price_source: totalDecision.price_source ?? 'odds_snapshot',
+          proxy_used: totalDecision?.projection?.projected_total == null,
+        },
+        drivers_active: activeDrivers,
+        driver_summary: {
+          weights: topDrivers,
+          impact_note: 'Cross-market totals decision.',
+        },
+        ev_passed: totalDecision.status === 'FIRE',
+        odds_context: {
+          h2h_home: oddsSnapshot?.h2h_home,
+          h2h_away: oddsSnapshot?.h2h_away,
+          spread_home: oddsSnapshot?.spread_home,
+          spread_away: oddsSnapshot?.spread_away,
+          total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
+          captured_at: oddsSnapshot?.captured_at,
+        },
+        confidence_pct: Math.round(confidence * 100),
+        driver: {
+          key: 'cross_market_total',
+          score: totalDecision.score,
+          status: totalDecision.status,
+          inputs: {
+            net: totalDecision.net,
+            conflict: totalDecision.conflict,
+            coverage: totalDecision.coverage,
           },
-          ev_passed: totalDecision.status === 'FIRE',
-          odds_context: {
-            h2h_home: oddsSnapshot?.h2h_home,
-            h2h_away: oddsSnapshot?.h2h_away,
-            spread_home: oddsSnapshot?.spread_home,
-            spread_away: oddsSnapshot?.spread_away,
-            total: oddsSnapshot?.total,
-            spread_price_home: oddsSnapshot?.spread_price_home,
-            spread_price_away: oddsSnapshot?.spread_price_away,
-            total_price_over: oddsSnapshot?.total_price_over,
-            total_price_under: oddsSnapshot?.total_price_under,
-            captured_at: oddsSnapshot?.captured_at,
-          },
-          confidence_pct: Math.round(confidence * 100),
-          driver: {
-            key: 'cross_market_total',
-            score: totalDecision.score,
-            status: totalDecision.status,
-            inputs: {
-              net: totalDecision.net,
-              conflict: totalDecision.conflict,
-              coverage: totalDecision.coverage,
-            },
-          },
-          disclaimer:
-            'Analysis provided for educational purposes. Not a recommendation.',
-          generated_at: now,
-        };
+        },
+        disclaimer:
+          'Analysis provided for educational purposes. Not a recommendation.',
+        generated_at: now,
+      };
 
       cards.push(
         buildMarketCallCard({
@@ -506,118 +629,116 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         }));
 
       const payloadData = {
-          game_id: gameId,
-          sport: 'NHL',
-          model_version: 'nhl-cross-market-v1',
-          home_team: oddsSnapshot?.home_team ?? null,
-          away_team: oddsSnapshot?.away_team ?? null,
-          matchup,
-          start_time_utc: oddsSnapshot?.game_time_utc ?? null,
-          start_time_local: startTimeLocal,
-          timezone,
-          countdown,
-          prediction: side,
-          confidence,
-          tier,
-          recommended_bet_type: 'spread',
-          kind: 'PLAY',
+        game_id: gameId,
+        sport: 'NHL',
+        model_version: 'nhl-cross-market-v1',
+        home_team: oddsSnapshot?.home_team ?? null,
+        away_team: oddsSnapshot?.away_team ?? null,
+        matchup,
+        start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+        start_time_local: startTimeLocal,
+        timezone,
+        countdown,
+        prediction: side,
+        confidence,
+        tier,
+        recommended_bet_type: 'spread',
+        kind: 'PLAY',
+        market_type: 'SPREAD',
+        selection: {
+          side,
+          team:
+            side === 'HOME'
+              ? (oddsSnapshot?.home_team ?? undefined)
+              : (oddsSnapshot?.away_team ?? undefined),
+        },
+        line: line ?? null,
+        price: spreadPrice,
+        reason_codes: [],
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
+        reasoning: `${pickText}: ${spreadDecision.reasoning}`,
+        edge: spreadDecision.edge ?? null,
+        edge_pct: spreadDecision.edge ?? null,
+        edge_points: spreadDecision.edge_points ?? null,
+        p_fair: spreadDecision.p_fair ?? null,
+        p_implied: spreadDecision.p_implied ?? null,
+        model_prob: spreadDecision.p_fair ?? null,
+        projection: {
+          total: null,
+          margin_home: spreadDecision?.projection?.projected_margin ?? null,
+          win_prob_home: null,
+        },
+        market_context: {
+          version: 'v1',
           market_type: 'SPREAD',
-          selection: {
-            side,
-            team:
-              side === 'HOME'
-                ? (oddsSnapshot?.home_team ?? undefined)
-                : (oddsSnapshot?.away_team ?? undefined),
-          },
-          line: line ?? null,
-          price: spreadPrice,
-          reason_codes: [],
-          tags: [],
-          consistency: {
-            total_bias: totalBias,
-          },
-          reasoning: `${pickText}: ${spreadDecision.reasoning}`,
-          edge: spreadDecision.edge ?? null,
-          edge_pct: spreadDecision.edge ?? null,
-          edge_points: spreadDecision.edge_points ?? null,
-          p_fair: spreadDecision.p_fair ?? null,
-          p_implied: spreadDecision.p_implied ?? null,
-          model_prob: spreadDecision.p_fair ?? null,
+          selection_side: side,
+          selection_team:
+            side === 'HOME'
+              ? (oddsSnapshot?.home_team ?? null)
+              : (oddsSnapshot?.away_team ?? null),
           projection: {
+            margin_home: spreadDecision?.projection?.projected_margin ?? null,
             total: null,
-            margin_home:
-              spreadDecision?.projection?.projected_margin ?? null,
+            team_total: null,
             win_prob_home: null,
+            score_home: null,
+            score_away: null,
           },
-          market_context: {
-            version: 'v1',
-            market_type: 'SPREAD',
-            selection_side: side,
-            selection_team:
-              side === 'HOME'
-                ? (oddsSnapshot?.home_team ?? null)
-                : (oddsSnapshot?.away_team ?? null),
-            projection: {
-              margin_home:
-                spreadDecision?.projection?.projected_margin ?? null,
-              total: null,
-              team_total: null,
-              win_prob_home: null,
-              score_home: null,
-              score_away: null,
-            },
-            wager: {
-              called_line: line ?? null,
-              called_price: spreadPrice ?? null,
-              line_source: spreadDecision.line_source ?? 'odds_snapshot',
-              price_source: spreadDecision.price_source ?? 'odds_snapshot',
-            },
-          },
-          market,
-          line_source: spreadDecision.line_source ?? 'odds_snapshot',
-          price_source: spreadDecision.price_source ?? 'odds_snapshot',
-          pricing_trace: {
-            called_market_type: 'SPREAD',
-            called_side: side,
+          wager: {
             called_line: line ?? null,
             called_price: spreadPrice ?? null,
             line_source: spreadDecision.line_source ?? 'odds_snapshot',
             price_source: spreadDecision.price_source ?? 'odds_snapshot',
-            proxy_used: false,
           },
-          drivers_active: activeDrivers,
-          driver_summary: {
-            weights: topDrivers,
-            impact_note: 'Cross-market spread decision.',
+        },
+        market,
+        line_source: spreadDecision.line_source ?? 'odds_snapshot',
+        price_source: spreadDecision.price_source ?? 'odds_snapshot',
+        pricing_trace: {
+          called_market_type: 'SPREAD',
+          called_side: side,
+          called_line: line ?? null,
+          called_price: spreadPrice ?? null,
+          line_source: spreadDecision.line_source ?? 'odds_snapshot',
+          price_source: spreadDecision.price_source ?? 'odds_snapshot',
+          proxy_used: false,
+        },
+        drivers_active: activeDrivers,
+        driver_summary: {
+          weights: topDrivers,
+          impact_note: 'Cross-market spread decision.',
+        },
+        ev_passed: spreadDecision.status === 'FIRE',
+        odds_context: {
+          h2h_home: oddsSnapshot?.h2h_home,
+          h2h_away: oddsSnapshot?.h2h_away,
+          spread_home: oddsSnapshot?.spread_home,
+          spread_away: oddsSnapshot?.spread_away,
+          total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
+          captured_at: oddsSnapshot?.captured_at,
+        },
+        confidence_pct: Math.round(confidence * 100),
+        driver: {
+          key: 'cross_market_spread',
+          score: spreadDecision.score,
+          status: spreadDecision.status,
+          inputs: {
+            net: spreadDecision.net,
+            conflict: spreadDecision.conflict,
+            coverage: spreadDecision.coverage,
           },
-          ev_passed: spreadDecision.status === 'FIRE',
-          odds_context: {
-            h2h_home: oddsSnapshot?.h2h_home,
-            h2h_away: oddsSnapshot?.h2h_away,
-            spread_home: oddsSnapshot?.spread_home,
-            spread_away: oddsSnapshot?.spread_away,
-            total: oddsSnapshot?.total,
-            spread_price_home: oddsSnapshot?.spread_price_home,
-            spread_price_away: oddsSnapshot?.spread_price_away,
-            total_price_over: oddsSnapshot?.total_price_over,
-            total_price_under: oddsSnapshot?.total_price_under,
-            captured_at: oddsSnapshot?.captured_at,
-          },
-          confidence_pct: Math.round(confidence * 100),
-          driver: {
-            key: 'cross_market_spread',
-            score: spreadDecision.score,
-            status: spreadDecision.status,
-            inputs: {
-              net: spreadDecision.net,
-              conflict: spreadDecision.conflict,
-              coverage: spreadDecision.coverage,
-            },
-          },
-          disclaimer:
-            'Analysis provided for educational purposes. Not a recommendation.',
-          generated_at: now,
-        };
+        },
+        disclaimer:
+          'Analysis provided for educational purposes. Not a recommendation.',
+        generated_at: now,
+      };
 
       cards.push(
         buildMarketCallCard({
@@ -625,6 +746,162 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           gameId,
           cardType: 'nhl-spread-call',
           cardTitle: `NHL Spread: ${pickText}`,
+          payloadData,
+          now,
+          expiresAt,
+        }),
+      );
+    }
+  }
+
+  // MONEYLINE decision → nhl-moneyline-call
+  const moneylineDecision = marketDecisions?.ML;
+  if (
+    moneylineDecision &&
+    (moneylineDecision.status === 'FIRE' ||
+      moneylineDecision.status === 'WATCH')
+  ) {
+    const confidence = CONFIDENCE_MAP[moneylineDecision.status];
+    const tier = determineTier(confidence);
+    const side = moneylineDecision.best_candidate?.side;
+    const moneylinePrice =
+      side === 'HOME'
+        ? (oddsSnapshot?.h2h_home ?? null)
+        : side === 'AWAY'
+          ? (oddsSnapshot?.h2h_away ?? null)
+          : null;
+
+    if ((side === 'HOME' || side === 'AWAY') && moneylinePrice != null) {
+      const teamName =
+        side === 'HOME'
+          ? (oddsSnapshot?.home_team ?? 'Home')
+          : (oddsSnapshot?.away_team ?? 'Away');
+      const pickText = `${teamName} ML`;
+      const activeDrivers = (moneylineDecision.drivers || [])
+        .filter((d) => d.eligible)
+        .map((d) => d.driverKey);
+      const topDrivers = (moneylineDecision.drivers || [])
+        .filter((d) => d.eligible)
+        .sort((a, b) => Math.abs(b.signal) - Math.abs(a.signal))
+        .slice(0, 3)
+        .map((d) => ({
+          driver: d.driverKey,
+          weight: d.weight,
+          score: Number(((d.signal + 1) / 2).toFixed(3)),
+        }));
+
+      const payloadData = {
+        game_id: gameId,
+        sport: 'NHL',
+        model_version: 'nhl-cross-market-v1',
+        home_team: oddsSnapshot?.home_team ?? null,
+        away_team: oddsSnapshot?.away_team ?? null,
+        matchup,
+        start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+        start_time_local: startTimeLocal,
+        timezone,
+        countdown,
+        prediction: side,
+        confidence,
+        tier,
+        status: moneylineDecision.status,
+        recommended_bet_type: 'moneyline',
+        kind: 'PLAY',
+        market_type: 'MONEYLINE',
+        selection: {
+          side,
+          team: teamName,
+        },
+        price: moneylinePrice,
+        reason_codes: [],
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
+        reasoning: `${pickText}: ${moneylineDecision.reasoning}`,
+        edge: moneylineDecision.edge ?? null,
+        edge_pct: moneylineDecision.edge ?? null,
+        p_fair: moneylineDecision.p_fair ?? null,
+        p_implied: moneylineDecision.p_implied ?? null,
+        model_prob: moneylineDecision.p_fair ?? null,
+        projection: {
+          total: null,
+          margin_home: moneylineDecision?.projection?.projected_margin ?? null,
+          win_prob_home: moneylineDecision?.projection?.win_prob_home ?? null,
+        },
+        market_context: {
+          version: 'v1',
+          market_type: 'MONEYLINE',
+          selection_side: side,
+          selection_team: teamName,
+          projection: {
+            margin_home:
+              moneylineDecision?.projection?.projected_margin ?? null,
+            total: null,
+            team_total: null,
+            win_prob_home: moneylineDecision?.projection?.win_prob_home ?? null,
+            score_home: null,
+            score_away: null,
+          },
+          wager: {
+            called_line: null,
+            called_price: moneylinePrice ?? null,
+            line_source: null,
+            price_source: moneylineDecision.price_source ?? 'odds_snapshot',
+          },
+        },
+        market,
+        line_source: null,
+        price_source: moneylineDecision.price_source ?? 'odds_snapshot',
+        pricing_trace: {
+          called_market_type: 'ML',
+          called_side: side,
+          called_line: null,
+          called_price: moneylinePrice ?? null,
+          line_source: null,
+          price_source: moneylineDecision.price_source ?? 'odds_snapshot',
+          proxy_used: false,
+        },
+        drivers_active: activeDrivers,
+        driver_summary: {
+          weights: topDrivers,
+          impact_note: 'Cross-market moneyline decision.',
+        },
+        ev_passed: moneylineDecision.status === 'FIRE',
+        odds_context: {
+          h2h_home: oddsSnapshot?.h2h_home,
+          h2h_away: oddsSnapshot?.h2h_away,
+          spread_home: oddsSnapshot?.spread_home,
+          spread_away: oddsSnapshot?.spread_away,
+          total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
+          captured_at: oddsSnapshot?.captured_at,
+        },
+        confidence_pct: Math.round(confidence * 100),
+        driver: {
+          key: 'cross_market_ml',
+          score: moneylineDecision.score,
+          status: moneylineDecision.status,
+          inputs: {
+            net: moneylineDecision.net,
+            conflict: moneylineDecision.conflict,
+            coverage: moneylineDecision.coverage,
+          },
+        },
+        disclaimer:
+          'Analysis provided for educational purposes. Not a recommendation.',
+        generated_at: now,
+      };
+
+      cards.push(
+        buildMarketCallCard({
+          sport: 'NHL',
+          gameId,
+          cardType: 'nhl-moneyline-call',
+          cardTitle: `NHL ML: ${pickText}`,
           payloadData,
           now,
           expiresAt,
@@ -828,20 +1105,11 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             }),
           );
 
-          if (oddsSnapshot?.game_time_utc) {
-            const gameTime = new Date(oddsSnapshot.game_time_utc);
-            const expiresAt = new Date(
-              gameTime.getTime() - 60 * 60 * 1000,
-            ).toISOString();
-            cards.forEach((card) => {
-              card.expiresAt = expiresAt;
-            });
-          }
-
           const pendingCards = [];
 
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
+            applyNhlSettlementMarketContext(card, oddsSnapshot);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -870,14 +1138,19 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             });
           }
 
-          // Generate and insert market call cards (nhl-totals-call, nhl-spread-call)
+          // Generate and insert market call cards
+          // (nhl-totals-call, nhl-spread-call, nhl-moneyline-call)
           const marketCallCards = generateNHLMarketCallCards(
             gameId,
             marketDecisions,
             oddsSnapshot,
           );
           if (marketCallCards.length > 0) {
-            for (const ct of ['nhl-totals-call', 'nhl-spread-call']) {
+            for (const ct of [
+              'nhl-totals-call',
+              'nhl-spread-call',
+              'nhl-moneyline-call',
+            ]) {
               prepareModelAndCardWrite(gameId, 'nhl-cross-market-v1', ct, {
                 runId: jobRunId,
               });
@@ -885,6 +1158,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           }
           for (const card of marketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
+            applyNhlSettlementMarketContext(card, oddsSnapshot);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -913,7 +1187,9 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             });
           }
 
-          const pricingReady = pendingCards.some((entry) => canPriceCard(entry.card));
+          const pricingReady = pendingCards.some((entry) =>
+            canPriceCard(entry.card),
+          );
           const pipelineState = buildGamePipelineState({
             oddsSnapshot,
             projectionReady: true,
@@ -1013,8 +1289,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
 if (require.main === module) {
   const jobKey = process.env.CHEDDAR_JOB_KEY || process.env.JOB_KEY || null;
   const dryRun =
-    process.env.CHEDDAR_DRY_RUN === 'true'
-    || process.env.DRY_RUN === 'true';
+    process.env.CHEDDAR_DRY_RUN === 'true' || process.env.DRY_RUN === 'true';
 
   runNHLModel({ jobKey, dryRun })
     .then((result) => {

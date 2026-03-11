@@ -6,7 +6,7 @@
  * Games with no card_payloads still appear.
  *
  * Query window:
- *   - Production default: datetime(game_time_utc) >= midnight today America/New_York
+ *   - Production default: midnight today America/New_York -> now + API_GAMES_HORIZON_HOURS (default 36h)
  *   - Dev override (optional): include recent past games via lookback window
  * Sort: game_time_utc ASC
  * Limit: 200
@@ -42,7 +42,10 @@
  */
 
 import { NextResponse, NextRequest } from 'next/server';
-import { getDatabaseReadOnly, closeReadOnlyInstance } from '@cheddar-logic/data';
+import {
+  getDatabaseReadOnly,
+  closeReadOnlyInstance,
+} from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
@@ -68,7 +71,14 @@ const API_GAMES_MAX_CARD_ROWS = Math.max(
   100,
   Number.parseInt(process.env.API_GAMES_MAX_CARD_ROWS || '1500', 10) || 1500,
 );
-
+const RAW_API_GAMES_HORIZON_HOURS = Number.parseInt(
+  process.env.API_GAMES_HORIZON_HOURS || '36',
+  10,
+);
+const API_GAMES_HORIZON_HOURS = Number.isFinite(RAW_API_GAMES_HORIZON_HOURS)
+  ? RAW_API_GAMES_HORIZON_HOURS
+  : 36;
+const HAS_API_GAMES_HORIZON = API_GAMES_HORIZON_HOURS > 0;
 
 interface GameRow {
   id: string;
@@ -89,6 +99,32 @@ interface GameRow {
   total_price_over: number | null;
   total_price_under: number | null;
   odds_captured_at: string | null;
+}
+
+type LifecycleMode = 'pregame' | 'active';
+type DisplayStatus = 'SCHEDULED' | 'ACTIVE';
+
+const ACTIVE_EXCLUDED_STATUSES = [
+  'POSTPONED',
+  'CANCELLED',
+  'CANCELED',
+  'FINAL',
+  'CLOSED',
+  'COMPLETE',
+];
+
+function toSqlUtc(date: Date): string {
+  return date.toISOString().substring(0, 19).replace('T', ' ');
+}
+
+function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
+  const lifecycleParam = (searchParams.get('lifecycle') || '').toLowerCase();
+  if (lifecycleParam === 'active') return 'active';
+  return 'pregame';
+}
+
+function deriveDisplayStatus(lifecycleMode: LifecycleMode): DisplayStatus {
+  return lifecycleMode === 'active' ? 'ACTIVE' : 'SCHEDULED';
 }
 
 interface CardPayloadRow {
@@ -178,6 +214,16 @@ interface Play {
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
+  one_p_model_call?:
+    | 'BEST_OVER'
+    | 'PLAY_OVER'
+    | 'LEAN_OVER'
+    | 'BEST_UNDER'
+    | 'PLAY_UNDER'
+    | 'LEAN_UNDER'
+    | 'PASS'
+    | null;
+  one_p_bet_status?: 'FIRE' | 'HOLD' | 'PASS' | null;
   decision_v2?: {
     direction: 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NONE';
     support_score: number;
@@ -247,6 +293,17 @@ interface Play {
 
 type MarketType = NonNullable<Play['market_type']>;
 type DecisionV2 = NonNullable<Play['decision_v2']>;
+type StageCounterStage =
+  | 'base_games'
+  | 'card_rows'
+  | 'parsed_rows'
+  | 'wave1_skipped_no_d2'
+  | 'plays_emitted'
+  | 'games_with_plays';
+type StageCounterBucket = Record<string, number>;
+type StageCounterBySport = Record<string, StageCounterBucket>;
+type StageCounters = Record<StageCounterStage, StageCounterBySport>;
+
 const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
 const WAVE1_MARKETS = new Set<MarketType>([
   'MONEYLINE',
@@ -255,6 +312,215 @@ const WAVE1_MARKETS = new Set<MarketType>([
   'PUCKLINE',
   'TEAM_TOTAL',
 ]);
+const COUNTER_ALL_MARKET = 'ALL';
+const UNKNOWN_SPORT = 'UNKNOWN';
+
+type SportCardTypeContract = {
+  playProducerCardTypes: Set<string>;
+  evidenceOnlyCardTypes: Set<string>;
+  expectedPlayableMarkets: Set<MarketType>;
+};
+
+const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
+  NBA: {
+    playProducerCardTypes: new Set([
+      'nba-totals-call',
+      'nba-spread-call',
+      'nba-moneyline-call',
+    ]),
+    evidenceOnlyCardTypes: new Set([
+      'nba-base-projection',
+      'nba-total-projection',
+      'nba-rest-advantage',
+      'nba-matchup-style',
+      'nba-blowout-risk',
+      'nba-travel',
+      'nba-lineup',
+      'welcome-home-v2',
+    ]),
+    expectedPlayableMarkets: new Set<MarketType>(['SPREAD', 'TOTAL']),
+  },
+  NHL: {
+    playProducerCardTypes: new Set([
+      'nhl-totals-call',
+      'nhl-spread-call',
+      'nhl-moneyline-call',
+      'nhl-pace-totals',
+    ]),
+    evidenceOnlyCardTypes: new Set([
+      'nhl-base-projection',
+      'nhl-rest-advantage',
+      'nhl-goalie',
+      'nhl-goalie-certainty',
+      'nhl-model-output',
+      'nhl-shot-environment',
+      'nhl-pace-1p',
+      'welcome-home-v2',
+    ]),
+    expectedPlayableMarkets: new Set<MarketType>([
+      'MONEYLINE',
+      'SPREAD',
+      'TOTAL',
+    ]),
+  },
+  NCAAM: {
+    playProducerCardTypes: new Set([
+      'ncaam-base-projection',
+      'ncaam-rest-advantage',
+      'ncaam-matchup-style',
+      'ncaam-ft-trend',
+      'ncaam-ft-spread',
+    ]),
+    evidenceOnlyCardTypes: new Set([]),
+    expectedPlayableMarkets: new Set<MarketType>(['MONEYLINE', 'SPREAD']),
+  },
+};
+
+function createStageCounters(): StageCounters {
+  return {
+    base_games: {},
+    card_rows: {},
+    parsed_rows: {},
+    wave1_skipped_no_d2: {},
+    plays_emitted: {},
+    games_with_plays: {},
+  };
+}
+
+function normalizeCounterSport(value: unknown): string {
+  const sport = normalizeSport(value);
+  return sport ?? UNKNOWN_SPORT;
+}
+
+function normalizeCounterMarket(value: unknown): string {
+  const market = normalizeMarketType(value);
+  return market ?? COUNTER_ALL_MARKET;
+}
+
+function incrementStageCounter(
+  counters: StageCounters,
+  stage: StageCounterStage,
+  sport: unknown,
+  market: unknown = COUNTER_ALL_MARKET,
+  amount = 1,
+): void {
+  const normalizedSport = normalizeCounterSport(sport);
+  const normalizedMarket =
+    typeof market === 'string' &&
+    market.trim().toUpperCase() === COUNTER_ALL_MARKET
+      ? COUNTER_ALL_MARKET
+      : normalizeCounterMarket(market);
+  if (!counters[stage][normalizedSport]) {
+    counters[stage][normalizedSport] = {};
+  }
+  counters[stage][normalizedSport][normalizedMarket] =
+    (counters[stage][normalizedSport][normalizedMarket] ?? 0) + amount;
+}
+
+function bumpCount(store: Map<string, number>, key: string, amount = 1): void {
+  store.set(key, (store.get(key) ?? 0) + amount);
+}
+
+function registerGameWithPlayableMarket(
+  store: Map<string, Map<string, Set<string>>>,
+  sport: unknown,
+  market: unknown,
+  gameId: string,
+): void {
+  const normalizedSport = normalizeCounterSport(sport);
+  const normalizedMarket = normalizeCounterMarket(market);
+  if (!store.has(normalizedSport)) {
+    store.set(normalizedSport, new Map());
+  }
+  const marketMap = store.get(normalizedSport)!;
+  if (!marketMap.has(normalizedMarket)) {
+    marketMap.set(normalizedMarket, new Set());
+  }
+  marketMap.get(normalizedMarket)!.add(gameId);
+}
+
+function inferMarketFromCardType(cardType: string): MarketType | undefined {
+  const normalized = cardType.trim().toLowerCase();
+  if (normalized.includes('moneyline') || normalized.includes('-ml-')) {
+    return 'MONEYLINE';
+  }
+  if (
+    normalized.includes('spread') ||
+    normalized.includes('puckline') ||
+    normalized.includes('puck-line')
+  ) {
+    return 'SPREAD';
+  }
+  if (normalized.includes('total')) {
+    return 'TOTAL';
+  }
+  return undefined;
+}
+
+function applyCardTypeKindContract(
+  sport: unknown,
+  cardType: string,
+  fallbackKind: Play['kind'] | undefined,
+): {
+  kind: Play['kind'];
+  downgradedOutOfContractPlay: boolean;
+} {
+  const normalizedSport = normalizeSport(sport);
+  const normalizedCardType = cardType.trim().toLowerCase();
+  const contract = normalizedSport
+    ? ACTIVE_SPORT_CARD_TYPE_CONTRACT[normalizedSport]
+    : undefined;
+  const inferredKind = fallbackKind ?? 'PLAY';
+  if (!contract) {
+    return { kind: inferredKind, downgradedOutOfContractPlay: false };
+  }
+  if (contract.evidenceOnlyCardTypes.has(normalizedCardType)) {
+    return { kind: 'EVIDENCE', downgradedOutOfContractPlay: false };
+  }
+  if (
+    inferredKind === 'PLAY' &&
+    !contract.playProducerCardTypes.has(normalizedCardType)
+  ) {
+    return { kind: 'EVIDENCE', downgradedOutOfContractPlay: true };
+  }
+  return { kind: inferredKind, downgradedOutOfContractPlay: false };
+}
+
+function buildPlayableMarketFamilyDiagnostics(counters: StageCounters): {
+  expected_playable_markets: Record<string, MarketType[]>;
+  emitted_playable_markets: Record<string, string[]>;
+  missing_playable_markets: Record<string, string[]>;
+} {
+  const expected: Record<string, MarketType[]> = {};
+  const emitted: Record<string, string[]> = {};
+  const missing: Record<string, string[]> = {};
+
+  for (const [sport, contract] of Object.entries(
+    ACTIVE_SPORT_CARD_TYPE_CONTRACT,
+  )) {
+    expected[sport] = Array.from(contract.expectedPlayableMarkets).sort();
+    const emittedMarkets = Object.entries(counters.plays_emitted[sport] ?? {})
+      .filter(
+        ([market, count]) =>
+          market !== COUNTER_ALL_MARKET &&
+          typeof count === 'number' &&
+          count > 0,
+      )
+      .map(([market]) => market)
+      .sort();
+    emitted[sport] = emittedMarkets;
+    const emittedSet = new Set(emittedMarkets);
+    missing[sport] = Array.from(contract.expectedPlayableMarkets)
+      .filter((market) => !emittedSet.has(market))
+      .sort();
+  }
+
+  return {
+    expected_playable_markets: expected,
+    emitted_playable_markets: emitted,
+    missing_playable_markets: missing,
+  };
+}
 
 function hasMinimumViability(play: Play, marketType: MarketType): boolean {
   const side = play.selection?.side;
@@ -263,8 +529,7 @@ function hasMinimumViability(play: Play, marketType: MarketType): boolean {
   if (marketType === 'TOTAL') {
     // Price is sourced from odds snapshot at display time — only require side + line.
     return (
-      (side === 'OVER' || side === 'UNDER') &&
-      typeof play.line === 'number'
+      (side === 'OVER' || side === 'UNDER') && typeof play.line === 'number'
     );
   }
   if (marketType === 'SPREAD') {
@@ -357,6 +622,22 @@ function classificationFromAction(
   if (action === 'HOLD') return 'LEAN';
   if (action === 'PASS') return 'PASS';
   return undefined;
+}
+
+function deriveNhl1PModelCall(
+  reasonCodes: string[],
+  prediction?: Play['prediction'],
+): Play['one_p_model_call'] {
+  if (reasonCodes.includes('NHL_1P_OVER_BEST')) return 'BEST_OVER';
+  if (reasonCodes.includes('NHL_1P_OVER_PLAY')) return 'PLAY_OVER';
+  if (reasonCodes.includes('NHL_1P_OVER_LEAN')) return 'LEAN_OVER';
+  if (reasonCodes.includes('NHL_1P_UNDER_BEST')) return 'BEST_UNDER';
+  if (reasonCodes.includes('NHL_1P_UNDER_PLAY')) return 'PLAY_UNDER';
+  if (reasonCodes.includes('NHL_1P_UNDER_LEAN')) return 'LEAN_UNDER';
+  if (reasonCodes.includes('NHL_1P_PASS_DEAD_ZONE')) return 'PASS';
+  if (prediction === 'OVER') return 'LEAN_OVER';
+  if (prediction === 'UNDER') return 'LEAN_UNDER';
+  return null;
 }
 
 function statusFromAction(action?: Play['action']): Play['status'] | undefined {
@@ -527,7 +808,9 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
       source_attempts: Array.isArray(missingDataObject?.source_attempts)
         ? missingDataObject.source_attempts
             .map((attempt) => toObject(attempt))
-            .filter((attempt): attempt is Record<string, unknown> => Boolean(attempt))
+            .filter((attempt): attempt is Record<string, unknown> =>
+              Boolean(attempt),
+            )
             .map((attempt) => {
               const resultRaw =
                 typeof attempt.result === 'string'
@@ -610,7 +893,8 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
             typeof toObject(input.pricing_trace)?.market_side === 'string'
               ? String(toObject(input.pricing_trace)?.market_side)
               : null,
-          market_line: firstNumber(toObject(input.pricing_trace)?.market_line) ?? null,
+          market_line:
+            firstNumber(toObject(input.pricing_trace)?.market_line) ?? null,
           market_price:
             firstNumber(toObject(input.pricing_trace)?.market_price) ?? null,
           line_source:
@@ -710,7 +994,9 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   }
   try {
     const row = db
-      .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
+      .prepare(
+        `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
+      )
       .get() as { current_run_id?: string | null } | undefined;
     return row?.current_run_id ? [row.current_run_id] : [];
   } catch {
@@ -779,6 +1065,9 @@ function extractShotsFromRecentGames(value: unknown): number[] | undefined {
 export async function GET(request: NextRequest) {
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
   const requestStartedAt = Date.now();
+  const stageCounters = createStageCounters();
+  const gamesWithPlayableMarkets = new Map<string, Map<string, Set<string>>>();
+  const outOfContractPlayDowngrades = new Map<string, number>();
   const perf = {
     dbReadyMs: 0,
     loadGamesMs: 0,
@@ -839,9 +1128,13 @@ export async function GET(request: NextRequest) {
       return addRateLimitHeaders(response, request);
     }
 
+    const searchParams = request.nextUrl.searchParams;
+    const lifecycleMode = resolveLifecycleMode(searchParams);
+
     // Compute midnight America/New_York as a UTC string for the SQL param.
     // en-CA locale gives YYYY-MM-DD; shortOffset gives "GMT-5" / "GMT-4" (DST-aware).
     const now = new Date();
+    const nowUtc = toSqlUtc(now);
     const etDateStr = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/New_York',
     }).format(now); // e.g. "2026-02-28"
@@ -879,6 +1172,24 @@ export async function GET(request: NextRequest) {
       : null;
 
     const gamesStartUtc = lookbackUtc ?? todayUtc;
+    const gamesEndUtc = HAS_API_GAMES_HORIZON
+      ? new Date(now.getTime() + API_GAMES_HORIZON_HOURS * 60 * 60 * 1000)
+          .toISOString()
+          .substring(0, 19)
+          .replace('T', ' ')
+      : null;
+
+    const lifecycleSql =
+      lifecycleMode === 'active'
+        ? `
+        AND datetime(g.game_time_utc) <= datetime(?)
+        AND UPPER(COALESCE(g.status, '')) NOT IN (${ACTIVE_EXCLUDED_STATUSES.map(
+          (status) => `'${status}'`,
+        ).join(', ')})
+      `
+        : `
+        AND datetime(g.game_time_utc) > datetime(?)
+      `;
 
     const baseGamesSql = `
       SELECT
@@ -892,13 +1203,52 @@ export async function GET(request: NextRequest) {
         g.created_at
       FROM games g
       WHERE datetime(g.game_time_utc) >= ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM card_results cr
+          WHERE cr.game_id = g.game_id
+            AND cr.status = 'settled'
+        )
+        ${lifecycleSql}
+        ${gamesEndUtc ? 'AND datetime(g.game_time_utc) <= ?' : ''}
       ORDER BY g.game_time_utc ASC
       LIMIT 200
     `;
 
-    const loadGamesWithLatestOdds = (startUtc: string): GameRow[] => {
+    const baseWindowCountSql = `
+      SELECT COUNT(*) AS total
+      FROM games g
+      WHERE datetime(g.game_time_utc) >= ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM card_results cr
+          WHERE cr.game_id = g.game_id
+            AND cr.status = 'settled'
+        )
+        ${gamesEndUtc ? 'AND datetime(g.game_time_utc) <= ?' : ''}
+    `;
+
+    let baseWindowCount: number | null = null;
+    if (isNonProd) {
+      const baseWindowCountStmt = db.prepare(baseWindowCountSql);
+      const baseWindowCountRow = (
+        gamesEndUtc
+          ? baseWindowCountStmt.get(gamesStartUtc, gamesEndUtc)
+          : baseWindowCountStmt.get(gamesStartUtc)
+      ) as { total?: number } | undefined;
+      baseWindowCount = Number(baseWindowCountRow?.total ?? 0);
+    }
+
+    const loadGamesWithLatestOdds = (
+      startUtc: string,
+      endUtc: string | null,
+    ): GameRow[] => {
       const baseGamesStmt = db.prepare(baseGamesSql);
-      const baseGames = baseGamesStmt.all(startUtc) as Array<
+      const baseGames = (
+        endUtc
+          ? baseGamesStmt.all(startUtc, nowUtc, endUtc)
+          : baseGamesStmt.all(startUtc, nowUtc)
+      ) as Array<
         Omit<
           GameRow,
           | 'h2h_home'
@@ -982,10 +1332,12 @@ export async function GET(request: NextRequest) {
     };
 
     const loadGamesStartedAt = Date.now();
-    let rows = loadGamesWithLatestOdds(gamesStartUtc);
+    let rows = loadGamesWithLatestOdds(gamesStartUtc, gamesEndUtc);
 
     if (isNonProd && rows.length === 0 && !shouldUseDevLookback) {
-      const fallbackLookbackHours = Number(process.env.DEV_GAMES_FALLBACK_HOURS || 72);
+      const fallbackLookbackHours = Number(
+        process.env.DEV_GAMES_FALLBACK_HOURS || 72,
+      );
       if (Number.isFinite(fallbackLookbackHours) && fallbackLookbackHours > 0) {
         const fallbackStartUtc = new Date(
           now.getTime() - fallbackLookbackHours * 60 * 60 * 1000,
@@ -993,10 +1345,19 @@ export async function GET(request: NextRequest) {
           .toISOString()
           .substring(0, 19)
           .replace('T', ' ');
-        rows = loadGamesWithLatestOdds(fallbackStartUtc);
+        rows = loadGamesWithLatestOdds(fallbackStartUtc, gamesEndUtc);
       }
     }
     perf.loadGamesMs = Date.now() - loadGamesStartedAt;
+
+    for (const row of rows) {
+      incrementStageCounter(
+        stageCounters,
+        'base_games',
+        row.sport,
+        COUNTER_ALL_MARKET,
+      );
+    }
 
     // Collect all game IDs for the card_payloads query
     const gameIds = rows.map((r) => r.game_id);
@@ -1035,37 +1396,54 @@ export async function GET(request: NextRequest) {
       }
 
       // SQLite doesn't support array binding; build placeholders for ALL IDs (canonical + external)
-      const placeholders = allQueryableIds.map(() => '?').join(', ');
       const runIdPlaceholders =
         activeRunIds.length > 0 ? activeRunIds.map(() => '?').join(', ') : '';
-      const runIdClause = activeRunIds.length > 0
-        ? `AND run_id IN (${runIdPlaceholders})`
-        : '';
-      const buildCardsSql = (runClause: string) => `
+      const runIdClause =
+        activeRunIds.length > 0 ? `AND run_id IN (${runIdPlaceholders})` : '';
+      const buildCardsSql = (queryableIds: string[], runClause: string) => {
+        const queryPlaceholders = queryableIds.map(() => '?').join(', ');
+        return `
         SELECT id, game_id, card_type, card_title, payload_data
         FROM card_payloads
-        WHERE game_id IN (${placeholders})
+        WHERE game_id IN (${queryPlaceholders})
           ${runClause}
-          AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
           ${ENABLE_WELCOME_HOME ? '' : "AND card_type != 'welcome-home-v2'"}
         ORDER BY created_at DESC, id DESC
         LIMIT ${API_GAMES_MAX_CARD_ROWS}
       `;
+      };
       let cardRows: CardPayloadRow[] = [];
       try {
         const cardsQueryStartedAt = Date.now();
-        const cardsStmt = db.prepare(buildCardsSql(runIdClause));
+        const cardsStmt = db.prepare(
+          buildCardsSql(allQueryableIds, runIdClause),
+        );
         const cardsParams =
           activeRunIds.length > 0
             ? [...allQueryableIds, ...activeRunIds]
             : [...allQueryableIds];
         cardRows = cardsStmt.all(...cardsParams) as CardPayloadRow[];
-        if (
-          activeRunIds.length > 0 &&
-          cardRows.length === 0
-        ) {
-          const fallbackStmt = db.prepare(buildCardsSql(''));
-          cardRows = fallbackStmt.all(...allQueryableIds) as CardPayloadRow[];
+
+        if (activeRunIds.length > 0) {
+          // Fallback per missing game id when scoped runs are partial (e.g., only NHL fresh run exists).
+          // Without this, games outside active runs degrade as "drivers missing" even when valid card payloads exist.
+          const coveredGameIds = new Set(cardRows.map((row) => row.game_id));
+          const missingGameIds = allQueryableIds.filter(
+            (gameId) => !coveredGameIds.has(gameId),
+          );
+          if (missingGameIds.length > 0) {
+            const fallbackStmt = db.prepare(buildCardsSql(missingGameIds, ''));
+            const fallbackRows = fallbackStmt.all(
+              ...missingGameIds,
+            ) as CardPayloadRow[];
+            if (fallbackRows.length > 0) {
+              const deduped = new Map<string, CardPayloadRow>();
+              for (const row of [...cardRows, ...fallbackRows]) {
+                deduped.set(row.id, row);
+              }
+              cardRows = Array.from(deduped.values());
+            }
+          }
         }
         perf.cardsQueryMs += Date.now() - cardsQueryStartedAt;
       } catch {
@@ -1076,6 +1454,14 @@ export async function GET(request: NextRequest) {
       const cardsParseStartedAt = Date.now();
 
       for (const cardRow of cardRows) {
+        const canonicalGameIdForRow =
+          externalToCanonicalMap.get(cardRow.game_id) ?? cardRow.game_id;
+        const rowSport =
+          normalizeSport(sportByGameId.get(canonicalGameIdForRow)) ??
+          UNKNOWN_SPORT;
+        const rowMarket = inferMarketFromCardType(cardRow.card_type);
+        incrementStageCounter(stageCounters, 'card_rows', rowSport, rowMarket);
+
         let payload: Record<string, unknown> | null = null;
         try {
           payload = JSON.parse(cardRow.payload_data) as Record<string, unknown>;
@@ -1119,7 +1505,9 @@ export async function GET(request: NextRequest) {
           payload.status ?? payloadPlay?.status,
         );
         const normalizedClassification = normalizeClassification(
-          payload.classification ?? payloadPlay?.classification,
+          payload.classification ??
+            payloadPlay?.classification ??
+            driverInputs?.classification,
         );
         const normalizedDecisionV2 = normalizeDecisionV2(
           (payload as Record<string, unknown>).decision_v2 ??
@@ -1197,7 +1585,10 @@ export async function GET(request: NextRequest) {
           (payload.projection as Record<string, unknown>)?.mu,
           (payload.projection as Record<string, unknown>)?.total,
           driverInputs?.mu,
+          driverInputs?.projection_final,
+          driverInputs?.projection_raw,
           driverInputs?.projected_total,
+          driverInputs?.expected_total,
           driverInputs?.expected_1p_total,
         );
         const normalizedSuggestedLine = firstNumber(
@@ -1273,12 +1664,16 @@ export async function GET(request: NextRequest) {
           payloadMarketContextProjection?.projected_team_total,
           payloadProjection?.projected_total,
           payloadPlayProjection?.projected_total,
+          driverInputs?.projection_final,
+          driverInputs?.projection_raw,
           driverInputs?.projected_total,
+          driverInputs?.expected_total,
           driverInputs?.expected_1p_total,
         );
         const normalizedEdge = firstNumber(
           payload.edge,
           payloadPlayObj?.edge,
+          driverInputs?.projection_delta,
           driverInputs?.edge,
         );
         const normalizedEdgePoints = firstNumber(
@@ -1356,6 +1751,9 @@ export async function GET(request: NextRequest) {
           ...(Array.isArray(payloadPlay?.reason_codes)
             ? payloadPlay.reason_codes
             : []),
+          ...(Array.isArray(driverInputs?.reason_codes)
+            ? driverInputs.reason_codes
+            : []),
         ].map((value) => String(value));
         const combinedTags = [
           ...(Array.isArray(payload.tags) ? payload.tags : []),
@@ -1376,6 +1774,14 @@ export async function GET(request: NextRequest) {
           normalizedClassification ?? classificationFromAction(resolvedAction);
         const resolvedStatus: Play['status'] | undefined =
           statusFromAction(resolvedAction) ?? normalizedStatus;
+        const onePModelCall =
+          cardRow.card_type === 'nhl-pace-1p'
+            ? deriveNhl1PModelCall(combinedReasonCodes, normalizedPrediction)
+            : undefined;
+        const onePBetStatus =
+          cardRow.card_type === 'nhl-pace-1p'
+            ? (resolvedAction ?? null)
+            : undefined;
 
         const play: Play = {
           source_card_id: cardRow.id,
@@ -1404,7 +1810,9 @@ export async function GET(request: NextRequest) {
               : null,
           edge: typeof normalizedEdge === 'number' ? normalizedEdge : null,
           edge_points:
-            typeof normalizedEdgePoints === 'number' ? normalizedEdgePoints : null,
+            typeof normalizedEdgePoints === 'number'
+              ? normalizedEdgePoints
+              : null,
           p_fair: typeof normalizedPFair === 'number' ? normalizedPFair : null,
           p_implied:
             typeof normalizedPImplied === 'number' ? normalizedPImplied : null,
@@ -1429,6 +1837,11 @@ export async function GET(request: NextRequest) {
                 payloadMarketContextProjection?.projected_total,
                 payloadProjection?.projected_total,
                 payloadPlayProjection?.projected_total,
+                driverInputs?.projection_final,
+                driverInputs?.projection_raw,
+                driverInputs?.projected_total,
+                driverInputs?.expected_total,
+                driverInputs?.expected_1p_total,
               ) ?? null,
             team_total:
               firstNumber(
@@ -1480,6 +1893,11 @@ export async function GET(request: NextRequest) {
                 payloadMarketContextProjection?.total,
                 payloadProjection?.total,
                 payloadPlayProjection?.total,
+                driverInputs?.projection_final,
+                driverInputs?.projection_raw,
+                driverInputs?.projected_total,
+                driverInputs?.expected_total,
+                driverInputs?.expected_1p_total,
               ) ?? null,
             projected_team_total:
               firstNumber(
@@ -1519,6 +1937,8 @@ export async function GET(request: NextRequest) {
               : typeof payloadPlay?.pass_reason_code === 'string'
                 ? payloadPlay.pass_reason_code
                 : null,
+          one_p_model_call: onePModelCall,
+          one_p_bet_status: onePBetStatus,
           decision_v2: normalizedDecisionV2,
           kind:
             payload.kind === 'PLAY' || payload.kind === 'EVIDENCE'
@@ -1602,22 +2022,28 @@ export async function GET(request: NextRequest) {
                 projection: payloadMarketContextProjection
                   ? {
                       margin_home:
-                        firstNumber(payloadMarketContextProjection.margin_home) ??
-                        null,
+                        firstNumber(
+                          payloadMarketContextProjection.margin_home,
+                        ) ?? null,
                       total:
-                        firstNumber(payloadMarketContextProjection.total) ?? null,
+                        firstNumber(payloadMarketContextProjection.total) ??
+                        null,
                       team_total:
-                        firstNumber(payloadMarketContextProjection.team_total) ??
-                        null,
+                        firstNumber(
+                          payloadMarketContextProjection.team_total,
+                        ) ?? null,
                       win_prob_home:
-                        firstNumber(payloadMarketContextProjection.win_prob_home) ??
-                        null,
+                        firstNumber(
+                          payloadMarketContextProjection.win_prob_home,
+                        ) ?? null,
                       score_home:
-                        firstNumber(payloadMarketContextProjection.score_home) ??
-                        null,
+                        firstNumber(
+                          payloadMarketContextProjection.score_home,
+                        ) ?? null,
                       score_away:
-                        firstNumber(payloadMarketContextProjection.score_away) ??
-                        null,
+                        firstNumber(
+                          payloadMarketContextProjection.score_away,
+                        ) ?? null,
                     }
                   : undefined,
                 wager: payloadMarketContextWager
@@ -1707,15 +2133,42 @@ export async function GET(request: NextRequest) {
                 : undefined,
         };
 
-        const canonicalGameId =
-          externalToCanonicalMap.get(cardRow.game_id) ?? cardRow.game_id;
+        const canonicalGameId = canonicalGameIdForRow;
         const playSport =
           normalizeSport(
-            firstString(payload.sport, payloadPlay?.sport, payloadPlayObj?.sport),
+            firstString(
+              payload.sport,
+              payloadPlay?.sport,
+              payloadPlayObj?.sport,
+            ),
           ) || normalizeSport(sportByGameId.get(canonicalGameId));
+        const parsedSport = playSport ?? rowSport;
+        const parsedMarket =
+          normalizedMarketType ?? inferMarketFromCardType(cardRow.card_type);
+        incrementStageCounter(
+          stageCounters,
+          'parsed_rows',
+          parsedSport,
+          parsedMarket,
+        );
 
-        if (!play.kind) {
-          play.kind = play.market_type === 'INFO' ? 'EVIDENCE' : 'PLAY';
+        const fallbackKind =
+          play.kind ?? (play.market_type === 'INFO' ? 'EVIDENCE' : 'PLAY');
+        const kindContractResult = applyCardTypeKindContract(
+          parsedSport,
+          cardRow.card_type,
+          fallbackKind,
+        );
+        play.kind = kindContractResult.kind;
+        if (kindContractResult.downgradedOutOfContractPlay) {
+          play.reason_codes = Array.from(
+            new Set([
+              ...(play.reason_codes ?? []),
+              'PASS_CARD_TYPE_OUT_OF_CONTRACT',
+            ]),
+          );
+          const key = `${normalizeCounterSport(parsedSport)}|${cardRow.card_type}`;
+          bumpCount(outOfContractPlayDowngrades, key);
         }
 
         const wave1Eligible = isWave1EligibleRow(
@@ -1727,6 +2180,12 @@ export async function GET(request: NextRequest) {
         if (wave1Eligible) {
           // Wave-1 rows MUST have decision_v2 from worker - skip if missing
           if (!play.decision_v2) {
+            incrementStageCounter(
+              stageCounters,
+              'wave1_skipped_no_d2',
+              parsedSport,
+              parsedMarket,
+            );
             continue; // Skip plays without decision_v2 in wave-1
           }
           applyWave1DecisionFields(play);
@@ -1800,8 +2259,46 @@ export async function GET(request: NextRequest) {
         } else {
           playsMap.set(canonicalGameId, [play]);
         }
+
+        if (play.kind === 'PLAY') {
+          incrementStageCounter(
+            stageCounters,
+            'plays_emitted',
+            parsedSport,
+            play.market_type,
+          );
+          registerGameWithPlayableMarket(
+            gamesWithPlayableMarkets,
+            parsedSport,
+            play.market_type,
+            canonicalGameId,
+          );
+        }
       }
       perf.cardsParseMs = Date.now() - cardsParseStartedAt;
+    }
+
+    for (const [sport, marketMap] of gamesWithPlayableMarkets.entries()) {
+      const allGames = new Set<string>();
+      for (const [market, gameIdsForMarket] of marketMap.entries()) {
+        incrementStageCounter(
+          stageCounters,
+          'games_with_plays',
+          sport,
+          market,
+          gameIdsForMarket.size,
+        );
+        for (const gameId of gameIdsForMarket) {
+          allGames.add(gameId);
+        }
+      }
+      incrementStageCounter(
+        stageCounters,
+        'games_with_plays',
+        sport,
+        COUNTER_ALL_MARKET,
+        allGames.size,
+      );
     }
 
     const data = rows.map((row) => {
@@ -1812,6 +2309,8 @@ export async function GET(request: NextRequest) {
         row.spread_home !== null ||
         row.spread_away !== null;
 
+      const displayStatus = deriveDisplayStatus(lifecycleMode);
+
       return {
         id: row.id,
         gameId: row.game_id,
@@ -1820,6 +2319,8 @@ export async function GET(request: NextRequest) {
         awayTeam: row.away_team,
         gameTimeUtc: row.game_time_utc,
         status: row.status,
+        lifecycle_mode: lifecycleMode,
+        display_status: displayStatus,
         createdAt: row.created_at,
         odds: hasOdds
           ? {
@@ -1859,8 +2360,55 @@ export async function GET(request: NextRequest) {
           games_with_plays: playsMap.size,
         }
       : undefined;
+    const playableMarketDiagnostics =
+      buildPlayableMarketFamilyDiagnostics(stageCounters);
+    const outOfContractRows = Array.from(outOfContractPlayDowngrades.entries())
+      .map(([key, count]) => {
+        const delimiterIndex = key.indexOf('|');
+        const sport =
+          delimiterIndex >= 0
+            ? key.substring(0, delimiterIndex)
+            : UNKNOWN_SPORT;
+        const card_type =
+          delimiterIndex >= 0 ? key.substring(delimiterIndex + 1) : key;
+        return { sport, card_type, count };
+      })
+      .sort((a, b) => b.count - a.count);
+    const flowDiagnostics = isDev
+      ? {
+          stage_counters: stageCounters,
+          query_window: {
+            start_utc: gamesStartUtc,
+            end_utc: gamesEndUtc,
+            now_utc: nowUtc,
+            horizon_hours: HAS_API_GAMES_HORIZON
+              ? API_GAMES_HORIZON_HOURS
+              : null,
+            dev_lookback_applied: Boolean(lookbackUtc),
+            lifecycle_mode: lifecycleMode,
+            base_window_count: baseWindowCount,
+            returned_count: rows.length,
+            active_excluded_statuses:
+              lifecycleMode === 'active' ? ACTIVE_EXCLUDED_STATUSES : [],
+          },
+          card_type_contract: {
+            active_sports: Object.keys(ACTIVE_SPORT_CARD_TYPE_CONTRACT),
+            ...playableMarketDiagnostics,
+            out_of_contract_play_rows: outOfContractRows,
+          },
+        }
+      : undefined;
 
     perf.totalMs = Date.now() - requestStartedAt;
+    if (isDev) {
+      console.info('[API] /api/games flow diagnostics', {
+        run_status: runStatus,
+        active_run_ids: activeRunIds.length,
+        stage_counters: stageCounters,
+        missing_playable_markets:
+          playableMarketDiagnostics.missing_playable_markets,
+      });
+    }
     if (perf.totalMs > 1500) {
       console.warn('[API] /api/games slow request', {
         total_ms: perf.totalMs,
@@ -1893,6 +2441,7 @@ export async function GET(request: NextRequest) {
                   card_rows: perf.cardRows,
                 }
               : undefined,
+          diagnostics: flowDiagnostics,
         },
         ...(joinDebug ? { join_debug: joinDebug } : {}),
       },

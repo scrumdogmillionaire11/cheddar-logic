@@ -176,7 +176,9 @@ function buildMarketDecision({
   const fairPrice = fairPriceResolver ? fairPriceResolver(candidateSide) : null;
   const line = lineResolver ? lineResolver(candidateSide) : null;
   const price = priceResolver ? priceResolver(candidateSide) : null;
-  const projection = projectionResolver ? projectionResolver(candidateSide) : null;
+  const projection = projectionResolver
+    ? projectionResolver(candidateSide)
+    : null;
 
   return {
     market,
@@ -325,6 +327,12 @@ function computeNHLMarketDecisions(oddsSnapshot) {
       ? projection.homeProjected - projection.awayProjected
       : null;
   const projectedTotal = projection.totalProjected ?? null;
+  // Market anchor: blend model projection 60% with market line 40%.
+  // Prevents pure model drift from inflating edge when projection runs hot.
+  const anchoredProjectedTotal =
+    projectedTotal !== null && totalLine !== null
+      ? 0.6 * projectedTotal + 0.4 * totalLine
+      : projectedTotal;
 
   const restGap =
     restDaysHome !== null && restDaysAway !== null
@@ -453,9 +461,9 @@ function computeNHLMarketDecisions(oddsSnapshot) {
       min_coverage_watch: 0.5,
     },
     edgeResolver: (side) => {
-      if (totalLine === null || projectedTotal === null) return null;
+      if (totalLine === null || anchoredProjectedTotal === null) return null;
       const totalEdge = edgeCalculator.computeTotalEdge({
-        projectionTotal: projectedTotal,
+        projectionTotal: anchoredProjectedTotal,
         totalLine,
         totalPriceOver: toNumber(oddsSnapshot?.total_price_over),
         totalPriceUnder: toNumber(oddsSnapshot?.total_price_under),
@@ -476,7 +484,8 @@ function computeNHLMarketDecisions(oddsSnapshot) {
         ? toNumber(oddsSnapshot?.total_price_over)
         : toNumber(oddsSnapshot?.total_price_under),
     projectionResolver: () => ({
-      projected_total: projectedTotal,
+      projected_total: anchoredProjectedTotal,
+      model_projected_total: projectedTotal,
       total_line: totalLine,
     }),
     riskFlags: totalFragilityPenalty > 0 ? ['KEY_NUMBER'] : [],

@@ -140,7 +140,9 @@ function buildGamePipelineState({
   cardReady,
   blockingReasonCodes = [],
 }) {
-  const teamMappingOk = Boolean(oddsSnapshot?.home_team && oddsSnapshot?.away_team);
+  const teamMappingOk = Boolean(
+    oddsSnapshot?.home_team && oddsSnapshot?.away_team,
+  );
   const marketLinesOk =
     hasMoneylineOdds(oddsSnapshot) ||
     hasSpreadOdds(oddsSnapshot) ||
@@ -166,7 +168,9 @@ function deriveGameBlockingReasonCodes({
   cards = [],
 }) {
   const reasonCodes = [];
-  const hasTeamMapping = Boolean(oddsSnapshot?.home_team && oddsSnapshot?.away_team);
+  const hasTeamMapping = Boolean(
+    oddsSnapshot?.home_team && oddsSnapshot?.away_team,
+  );
   const hasMarketLines =
     hasMoneylineOdds(oddsSnapshot) ||
     hasSpreadOdds(oddsSnapshot) ||
@@ -196,6 +200,33 @@ function deriveGameBlockingReasonCodes({
 function canPriceCard(card) {
   const sharpPriceStatus = card?.payloadData?.decision_v2?.sharp_price_status;
   return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
+}
+
+function applyNbaSettlementMarketContext(card) {
+  if (!card?.payloadData || typeof card.payloadData !== 'object') return;
+  const payload = card.payloadData;
+  if (String(payload.market_type || '').toUpperCase() !== 'TOTAL') return;
+
+  payload.period = payload.period || 'FULL_GAME';
+  payload.market = {
+    ...(payload.market && typeof payload.market === 'object'
+      ? payload.market
+      : {}),
+    period: payload.period,
+  };
+  if (payload.market_context && typeof payload.market_context === 'object') {
+    payload.market_context = {
+      ...payload.market_context,
+      period: payload.period,
+      wager: {
+        ...(payload.market_context.wager &&
+        typeof payload.market_context.wager === 'object'
+          ? payload.market_context.wager
+          : {}),
+        period: payload.period,
+      },
+    };
+  }
 }
 
 /**
@@ -291,11 +322,7 @@ function getHomeTeamRecentRoadTrip(
  */
 function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
   const now = new Date().toISOString();
-  let expiresAt = null;
-  if (oddsSnapshot?.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
+  const expiresAt = null;
 
   const matchup = buildMatchup(
     oddsSnapshot?.home_team,
@@ -346,110 +373,110 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         }));
 
       const payloadData = {
-          game_id: gameId,
-          sport: 'NBA',
-          model_version: 'nba-cross-market-v1',
-          home_team: oddsSnapshot?.home_team ?? null,
-          away_team: oddsSnapshot?.away_team ?? null,
-          matchup,
-          start_time_utc: oddsSnapshot?.game_time_utc ?? null,
-          start_time_local: startTimeLocal,
-          timezone,
-          countdown,
-          prediction: side,
-          confidence,
-          tier,
-          status,
-          recommended_bet_type: 'total',
-          kind: 'PLAY',
+        game_id: gameId,
+        sport: 'NBA',
+        model_version: 'nba-cross-market-v1',
+        home_team: oddsSnapshot?.home_team ?? null,
+        away_team: oddsSnapshot?.away_team ?? null,
+        matchup,
+        start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+        start_time_local: startTimeLocal,
+        timezone,
+        countdown,
+        prediction: side,
+        confidence,
+        tier,
+        status,
+        recommended_bet_type: 'total',
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: {
+          side,
+        },
+        line,
+        price: totalPrice,
+        reason_codes: reasonCodes,
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
+        reasoning: `${pickText}: ${totalDecision.reasoning}`,
+        edge: totalDecision.edge ?? null,
+        edge_pct: totalDecision.edge ?? null,
+        edge_points: totalDecision.edge_points ?? null,
+        p_fair: totalDecision.p_fair ?? null,
+        p_implied: totalDecision.p_implied ?? null,
+        model_prob: totalDecision.p_fair ?? null,
+        projection: {
+          total: totalDecision?.projection?.projected_total ?? line ?? null,
+          margin_home: null,
+          win_prob_home: null,
+        },
+        market_context: {
+          version: 'v1',
           market_type: 'TOTAL',
-          selection: {
-            side,
-          },
-          line,
-          price: totalPrice,
-          reason_codes: reasonCodes,
-          tags: [],
-          consistency: {
-            total_bias: totalBias,
-          },
-          reasoning: `${pickText}: ${totalDecision.reasoning}`,
-          edge: totalDecision.edge ?? null,
-          edge_pct: totalDecision.edge ?? null,
-          edge_points: totalDecision.edge_points ?? null,
-          p_fair: totalDecision.p_fair ?? null,
-          p_implied: totalDecision.p_implied ?? null,
-          model_prob: totalDecision.p_fair ?? null,
+          selection_side: side,
+          selection_team: null,
           projection: {
-            total: totalDecision?.projection?.projected_total ?? line ?? null,
             margin_home: null,
+            total: totalDecision?.projection?.projected_total ?? line ?? null,
+            team_total: null,
             win_prob_home: null,
+            score_home: null,
+            score_away: null,
           },
-          market_context: {
-            version: 'v1',
-            market_type: 'TOTAL',
-            selection_side: side,
-            selection_team: null,
-            projection: {
-              margin_home: null,
-              total: totalDecision?.projection?.projected_total ?? line ?? null,
-              team_total: null,
-              win_prob_home: null,
-              score_home: null,
-              score_away: null,
-            },
-            wager: {
-              called_line: line ?? null,
-              called_price: totalPrice ?? null,
-              line_source: totalDecision.line_source ?? 'odds_snapshot',
-              price_source: totalDecision.price_source ?? 'odds_snapshot',
-            },
-          },
-          market,
-          line_source: totalDecision.line_source ?? 'odds_snapshot',
-          price_source: totalDecision.price_source ?? 'odds_snapshot',
-          pricing_trace: {
-            called_market_type: 'TOTAL',
-            called_side: side,
+          wager: {
             called_line: line ?? null,
             called_price: totalPrice ?? null,
             line_source: totalDecision.line_source ?? 'odds_snapshot',
             price_source: totalDecision.price_source ?? 'odds_snapshot',
-            proxy_used: totalDecision?.projection?.projected_total == null,
           },
-          drivers_active: activeDrivers,
-          driver_summary: {
-            weights: topDrivers,
-            impact_note: 'Cross-market totals decision.',
+        },
+        market,
+        line_source: totalDecision.line_source ?? 'odds_snapshot',
+        price_source: totalDecision.price_source ?? 'odds_snapshot',
+        pricing_trace: {
+          called_market_type: 'TOTAL',
+          called_side: side,
+          called_line: line ?? null,
+          called_price: totalPrice ?? null,
+          line_source: totalDecision.line_source ?? 'odds_snapshot',
+          price_source: totalDecision.price_source ?? 'odds_snapshot',
+          proxy_used: totalDecision?.projection?.projected_total == null,
+        },
+        drivers_active: activeDrivers,
+        driver_summary: {
+          weights: topDrivers,
+          impact_note: 'Cross-market totals decision.',
+        },
+        ev_passed: totalDecision.status === 'FIRE',
+        odds_context: {
+          h2h_home: oddsSnapshot?.h2h_home,
+          h2h_away: oddsSnapshot?.h2h_away,
+          spread_home: oddsSnapshot?.spread_home,
+          spread_away: oddsSnapshot?.spread_away,
+          total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
+          captured_at: oddsSnapshot?.captured_at,
+        },
+        confidence_pct: Math.round(confidence * 100),
+        driver: {
+          key: 'cross_market_total',
+          score: totalDecision.score,
+          status: totalDecision.status,
+          inputs: {
+            net: totalDecision.net,
+            conflict: totalDecision.conflict,
+            coverage: totalDecision.coverage,
           },
-          ev_passed: totalDecision.status === 'FIRE',
-          odds_context: {
-            h2h_home: oddsSnapshot?.h2h_home,
-            h2h_away: oddsSnapshot?.h2h_away,
-            spread_home: oddsSnapshot?.spread_home,
-            spread_away: oddsSnapshot?.spread_away,
-            total: oddsSnapshot?.total,
-            spread_price_home: oddsSnapshot?.spread_price_home,
-            spread_price_away: oddsSnapshot?.spread_price_away,
-            total_price_over: oddsSnapshot?.total_price_over,
-            total_price_under: oddsSnapshot?.total_price_under,
-            captured_at: oddsSnapshot?.captured_at,
-          },
-          confidence_pct: Math.round(confidence * 100),
-          driver: {
-            key: 'cross_market_total',
-            score: totalDecision.score,
-            status: totalDecision.status,
-            inputs: {
-              net: totalDecision.net,
-              conflict: totalDecision.conflict,
-              coverage: totalDecision.coverage,
-            },
-          },
-          disclaimer:
-            'Analysis provided for educational purposes. Not a recommendation.',
-          generated_at: now,
-        };
+        },
+        disclaimer:
+          'Analysis provided for educational purposes. Not a recommendation.',
+        generated_at: now,
+      };
 
       cards.push(
         buildMarketCallCard({
@@ -495,118 +522,116 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         }));
 
       const payloadData = {
-          game_id: gameId,
-          sport: 'NBA',
-          model_version: 'nba-cross-market-v1',
-          home_team: oddsSnapshot?.home_team ?? null,
-          away_team: oddsSnapshot?.away_team ?? null,
-          matchup,
-          start_time_utc: oddsSnapshot?.game_time_utc ?? null,
-          start_time_local: startTimeLocal,
-          timezone,
-          countdown,
-          prediction: side,
-          confidence,
-          tier,
-          recommended_bet_type: 'spread',
-          kind: 'PLAY',
+        game_id: gameId,
+        sport: 'NBA',
+        model_version: 'nba-cross-market-v1',
+        home_team: oddsSnapshot?.home_team ?? null,
+        away_team: oddsSnapshot?.away_team ?? null,
+        matchup,
+        start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+        start_time_local: startTimeLocal,
+        timezone,
+        countdown,
+        prediction: side,
+        confidence,
+        tier,
+        recommended_bet_type: 'spread',
+        kind: 'PLAY',
+        market_type: 'SPREAD',
+        selection: {
+          side,
+          team:
+            side === 'HOME'
+              ? (oddsSnapshot?.home_team ?? undefined)
+              : (oddsSnapshot?.away_team ?? undefined),
+        },
+        line: line ?? null,
+        price: spreadPrice,
+        reason_codes: [],
+        tags: [],
+        consistency: {
+          total_bias: totalBias,
+        },
+        reasoning: `${pickText}: ${spreadDecision.reasoning}`,
+        edge: spreadDecision.edge ?? null,
+        edge_pct: spreadDecision.edge ?? null,
+        edge_points: spreadDecision.edge_points ?? null,
+        p_fair: spreadDecision.p_fair ?? null,
+        p_implied: spreadDecision.p_implied ?? null,
+        model_prob: spreadDecision.p_fair ?? null,
+        projection: {
+          total: null,
+          margin_home: spreadDecision?.projection?.projected_margin ?? null,
+          win_prob_home: null,
+        },
+        market_context: {
+          version: 'v1',
           market_type: 'SPREAD',
-          selection: {
-            side,
-            team:
-              side === 'HOME'
-                ? (oddsSnapshot?.home_team ?? undefined)
-                : (oddsSnapshot?.away_team ?? undefined),
-          },
-          line: line ?? null,
-          price: spreadPrice,
-          reason_codes: [],
-          tags: [],
-          consistency: {
-            total_bias: totalBias,
-          },
-          reasoning: `${pickText}: ${spreadDecision.reasoning}`,
-          edge: spreadDecision.edge ?? null,
-          edge_pct: spreadDecision.edge ?? null,
-          edge_points: spreadDecision.edge_points ?? null,
-          p_fair: spreadDecision.p_fair ?? null,
-          p_implied: spreadDecision.p_implied ?? null,
-          model_prob: spreadDecision.p_fair ?? null,
+          selection_side: side,
+          selection_team:
+            side === 'HOME'
+              ? (oddsSnapshot?.home_team ?? null)
+              : (oddsSnapshot?.away_team ?? null),
           projection: {
+            margin_home: spreadDecision?.projection?.projected_margin ?? null,
             total: null,
-            margin_home:
-              spreadDecision?.projection?.projected_margin ?? null,
+            team_total: null,
             win_prob_home: null,
+            score_home: null,
+            score_away: null,
           },
-          market_context: {
-            version: 'v1',
-            market_type: 'SPREAD',
-            selection_side: side,
-            selection_team:
-              side === 'HOME'
-                ? (oddsSnapshot?.home_team ?? null)
-                : (oddsSnapshot?.away_team ?? null),
-            projection: {
-              margin_home:
-                spreadDecision?.projection?.projected_margin ?? null,
-              total: null,
-              team_total: null,
-              win_prob_home: null,
-              score_home: null,
-              score_away: null,
-            },
-            wager: {
-              called_line: line ?? null,
-              called_price: spreadPrice ?? null,
-              line_source: spreadDecision.line_source ?? 'odds_snapshot',
-              price_source: spreadDecision.price_source ?? 'odds_snapshot',
-            },
-          },
-          market,
-          line_source: spreadDecision.line_source ?? 'odds_snapshot',
-          price_source: spreadDecision.price_source ?? 'odds_snapshot',
-          pricing_trace: {
-            called_market_type: 'SPREAD',
-            called_side: side,
+          wager: {
             called_line: line ?? null,
             called_price: spreadPrice ?? null,
             line_source: spreadDecision.line_source ?? 'odds_snapshot',
             price_source: spreadDecision.price_source ?? 'odds_snapshot',
-            proxy_used: false,
           },
-          drivers_active: activeDrivers,
-          driver_summary: {
-            weights: topDrivers,
-            impact_note: 'Cross-market spread decision.',
+        },
+        market,
+        line_source: spreadDecision.line_source ?? 'odds_snapshot',
+        price_source: spreadDecision.price_source ?? 'odds_snapshot',
+        pricing_trace: {
+          called_market_type: 'SPREAD',
+          called_side: side,
+          called_line: line ?? null,
+          called_price: spreadPrice ?? null,
+          line_source: spreadDecision.line_source ?? 'odds_snapshot',
+          price_source: spreadDecision.price_source ?? 'odds_snapshot',
+          proxy_used: false,
+        },
+        drivers_active: activeDrivers,
+        driver_summary: {
+          weights: topDrivers,
+          impact_note: 'Cross-market spread decision.',
+        },
+        ev_passed: spreadDecision.status === 'FIRE',
+        odds_context: {
+          h2h_home: oddsSnapshot?.h2h_home,
+          h2h_away: oddsSnapshot?.h2h_away,
+          spread_home: oddsSnapshot?.spread_home,
+          spread_away: oddsSnapshot?.spread_away,
+          total: oddsSnapshot?.total,
+          spread_price_home: oddsSnapshot?.spread_price_home,
+          spread_price_away: oddsSnapshot?.spread_price_away,
+          total_price_over: oddsSnapshot?.total_price_over,
+          total_price_under: oddsSnapshot?.total_price_under,
+          captured_at: oddsSnapshot?.captured_at,
+        },
+        confidence_pct: Math.round(confidence * 100),
+        driver: {
+          key: 'cross_market_spread',
+          score: spreadDecision.score,
+          status: spreadDecision.status,
+          inputs: {
+            net: spreadDecision.net,
+            conflict: spreadDecision.conflict,
+            coverage: spreadDecision.coverage,
           },
-          ev_passed: spreadDecision.status === 'FIRE',
-          odds_context: {
-            h2h_home: oddsSnapshot?.h2h_home,
-            h2h_away: oddsSnapshot?.h2h_away,
-            spread_home: oddsSnapshot?.spread_home,
-            spread_away: oddsSnapshot?.spread_away,
-            total: oddsSnapshot?.total,
-            spread_price_home: oddsSnapshot?.spread_price_home,
-            spread_price_away: oddsSnapshot?.spread_price_away,
-            total_price_over: oddsSnapshot?.total_price_over,
-            total_price_under: oddsSnapshot?.total_price_under,
-            captured_at: oddsSnapshot?.captured_at,
-          },
-          confidence_pct: Math.round(confidence * 100),
-          driver: {
-            key: 'cross_market_spread',
-            score: spreadDecision.score,
-            status: spreadDecision.status,
-            inputs: {
-              net: spreadDecision.net,
-              conflict: spreadDecision.conflict,
-              coverage: spreadDecision.coverage,
-            },
-          },
-          disclaimer:
-            'Analysis provided for educational purposes. Not a recommendation.',
-          generated_at: now,
-        };
+        },
+        disclaimer:
+          'Analysis provided for educational purposes. Not a recommendation.',
+        generated_at: now,
+      };
 
       cards.push(
         buildMarketCallCard({
@@ -714,7 +739,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             oddsSnapshot.raw_data,
           );
           oddsSnapshot.raw_data = normalizedRawData;
-          
+
           // Persist enrichment to database so models have access to ESPN metrics
           try {
             updateOddsSnapshotRawData(oddsSnapshot.id, normalizedRawData);
@@ -811,21 +836,11 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             }),
           );
 
-          // Set expiresAt for all cards
-          if (oddsSnapshot?.game_time_utc) {
-            const gameTime = new Date(oddsSnapshot.game_time_utc);
-            const expiresAt = new Date(
-              gameTime.getTime() - 60 * 60 * 1000,
-            ).toISOString();
-            cards.forEach((card) => {
-              card.expiresAt = expiresAt;
-            });
-          }
-
           const pendingCards = [];
 
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
+            applyNbaSettlementMarketContext(card);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -872,6 +887,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           }
           for (const card of nbaMarketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
+            applyNbaSettlementMarketContext(card);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -903,7 +919,9 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             });
           }
 
-          const pricingReady = pendingCards.some((entry) => canPriceCard(entry.card));
+          const pricingReady = pendingCards.some((entry) =>
+            canPriceCard(entry.card),
+          );
           const pipelineState = buildGamePipelineState({
             oddsSnapshot,
             projectionReady: true,

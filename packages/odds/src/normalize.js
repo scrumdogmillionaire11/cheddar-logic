@@ -42,7 +42,7 @@ function validateMarketContract(game, sport) {
     return {
       marketOk: false,
       missing: getRequiredMarkets(sport),
-      details: { reason: 'no_market_data' }
+      details: { reason: 'no_market_data' },
     };
   }
 
@@ -61,13 +61,14 @@ function validateMarketContract(game, sport) {
     }
 
     // Check that required price fields are present
-    const hasValidPrices = market === 'h2h'
-      ? (marketData.home !== null && marketData.away !== null)
-      : market === 'totals'
-        ? (marketData.over !== null && marketData.under !== null)
-        : market === 'spreads'
-          ? (marketData.home_price !== null && marketData.away_price !== null)
-          : true;
+    const hasValidPrices =
+      market === 'h2h'
+        ? marketData.home !== null && marketData.away !== null
+        : market === 'totals'
+          ? marketData.over !== null && marketData.under !== null
+          : market === 'spreads'
+            ? marketData.home_price !== null && marketData.away_price !== null
+            : true;
 
     if (!hasValidPrices) {
       missing.push(`${market}_incomplete_prices`);
@@ -82,8 +83,8 @@ function validateMarketContract(game, sport) {
     prices,
     details: {
       required,
-      sport: sport.toUpperCase()
-    }
+      sport: sport.toUpperCase(),
+    },
   };
 }
 

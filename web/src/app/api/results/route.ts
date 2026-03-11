@@ -267,7 +267,9 @@ export async function GET(request: NextRequest) {
     const dedupe = parseBooleanLikeParam(searchParams.get('dedupe'), true);
 
     // Build filter SQL fragments
-    const sportFilter = sport ? `AND UPPER(COALESCE(cdl.sport, cr.sport)) = ?` : '';
+    const sportFilter = sport
+      ? `AND UPPER(COALESCE(cdl.sport, cr.sport)) = ?`
+      : '';
     const sportParams = sport ? [sport] : [];
 
     const categoryFilter = buildCardCategoryFilter(cardCategory, 'cr');
@@ -787,7 +789,11 @@ export async function GET(request: NextRequest) {
       { headers: { 'Content-Type': 'application/json' } },
     );
     return addRateLimitHeaders(
-      addSettlementCoverageHeader(response, settledFinalDisplayed, displayedFinal),
+      addSettlementCoverageHeader(
+        response,
+        settledFinalDisplayed,
+        displayedFinal,
+      ),
       request,
     );
   } catch (error) {

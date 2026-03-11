@@ -44,4 +44,99 @@ describe('computeNCAAMDriverCards', () => {
     expect(restCard).toBeDefined();
     expect(restCard.prediction).toBe('HOME');
   });
+
+  test('emits ncaam-ft-trend when FT thresholds match and total is under 160', () => {
+    const cards = computeNCAAMDriverCards('game-ft-1', {
+      total: 158.5,
+      spread_home: -2.5,
+      raw_data: {
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgPoints: 79,
+              avgPointsAllowed: 70,
+              restDays: 2,
+              freeThrowPct: 77.2,
+            },
+          },
+          away: {
+            metrics: {
+              avgPoints: 73,
+              avgPointsAllowed: 71,
+              restDays: 1,
+              freeThrowPct: 71.4,
+            },
+          },
+        },
+      },
+    });
+
+    const ftCard = cards.find((card) => card.cardType === 'ncaam-ft-trend');
+    expect(ftCard).toBeDefined();
+    expect(ftCard.prediction).toBe('HOME');
+    expect(ftCard.confidence).toBe(0.62);
+    expect(ftCard.marketTypes).toEqual(['spread']);
+    expect(ftCard.driverKey).toBe('freeThrowTrend');
+    expect(ftCard.driverInputs.total_line).toBe(158.5);
+    expect(ftCard.driverInputs.home_ft_pct).toBe(77.2);
+    expect(ftCard.driverInputs.away_ft_pct).toBe(71.4);
+  });
+
+  test('does not emit ncaam-ft-trend when total is 160 or higher', () => {
+    const cards = computeNCAAMDriverCards('game-ft-2', {
+      total: 160.0,
+      spread_home: 1.5,
+      raw_data: {
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgPoints: 76,
+              avgPointsAllowed: 69,
+              freeThrowPct: 76.0,
+            },
+          },
+          away: {
+            metrics: {
+              avgPoints: 74,
+              avgPointsAllowed: 71,
+              freeThrowPct: 72.0,
+            },
+          },
+        },
+      },
+    });
+
+    expect(cards.some((card) => card.cardType === 'ncaam-ft-trend')).toBe(
+      false,
+    );
+  });
+
+  test('does not emit ncaam-ft-trend when both teams are on same side of threshold', () => {
+    const cards = computeNCAAMDriverCards('game-ft-3', {
+      total: 149.5,
+      spread_home: -3.0,
+      raw_data: {
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgPoints: 80,
+              avgPointsAllowed: 72,
+              freeThrowPct: 76.2,
+            },
+          },
+          away: {
+            metrics: {
+              avgPoints: 77,
+              avgPointsAllowed: 70,
+              freeThrowPct: 75.8,
+            },
+          },
+        },
+      },
+    });
+
+    expect(cards.some((card) => card.cardType === 'ncaam-ft-trend')).toBe(
+      false,
+    );
+  });
 });

@@ -13,9 +13,16 @@
 'use strict';
 
 const { DateTime } = require('luxon');
-const { fetchTeamSchedule, fetchTeamInfo, fetchScoreboardEvents } = require('./espn-client');
+const {
+  fetchTeamSchedule,
+  fetchTeamInfo,
+  fetchTeamStatistics,
+  fetchScoreboardEvents,
+  extractFreeThrowPctFromStatisticsPayload,
+} = require('./espn-client');
 const { normalizeSportCode, resolveTeamVariant } = require('./normalize');
 const { getTeamMetricsCache, upsertTeamMetricsCache } = require('./db');
+const { lookupTeamRankingsFreeThrowPct } = require('./teamrankings-ft');
 
 // ---------------------------------------------------------------------------
 // Team ID Mapping Tables
@@ -553,6 +560,47 @@ function hasSufficientNumericMetricsForSport(metrics, sport) {
   return true;
 }
 
+function toFreeThrowPct(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed >= 0 && parsed <= 1) return Number((parsed * 100).toFixed(2));
+  if (parsed < 0 || parsed > 100) return null;
+  return parsed;
+}
+
+function withNcaamFreeThrowPct(metrics, options = {}) {
+  const base = metrics && typeof metrics === 'object' ? { ...metrics } : neutral();
+  const teamName = String(options.teamName || '').trim();
+  const preferExisting = options.preferExisting === true;
+  const statisticsPayload = options.statisticsPayload || null;
+
+  const existingPct = toFreeThrowPct(base.freeThrowPct);
+  if (preferExisting && existingPct !== null) {
+    base.freeThrowPct = existingPct;
+    if (!base.freeThrowPctSource) base.freeThrowPctSource = 'cached';
+    return base;
+  }
+
+  const espnExtract = extractFreeThrowPctFromStatisticsPayload(statisticsPayload);
+  if (espnExtract && Number.isFinite(espnExtract.freeThrowPct)) {
+    base.freeThrowPct = espnExtract.freeThrowPct;
+    base.freeThrowPctSource = 'espn_team_statistics';
+    return base;
+  }
+
+  const fallback = lookupTeamRankingsFreeThrowPct(teamName);
+  if (fallback && Number.isFinite(fallback.freeThrowPct)) {
+    base.freeThrowPct = fallback.freeThrowPct;
+    base.freeThrowPctSource = fallback.source;
+    return base;
+  }
+
+  base.freeThrowPct = existingPct;
+  base.freeThrowPctSource = existingPct !== null ? (base.freeThrowPctSource || 'cached') : null;
+  return base;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -566,6 +614,8 @@ function neutral() {
     restDays: null,
     form: 'Unknown',
     pace: null,
+    freeThrowPct: null,
+    freeThrowPctSource: null,
     rank: null,
     record: null
   };
@@ -610,6 +660,8 @@ function computeMetricsFromGames(games, sport) {
     restDays: daysSince,
     form,
     pace,
+    freeThrowPct: null,
+    freeThrowPctSource: null,
     rank: null,
     record: null
   };
@@ -963,8 +1015,15 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
           ? ensureNhlMetricAliases(cached.metrics || neutral())
           : (cached.metrics || neutral());
         if (hasSufficientNumericMetricsForSport(cachedMetrics, normalizedSport)) {
+          const metricsWithFt =
+            normalizedSport === 'NCAAM'
+              ? withNcaamFreeThrowPct(cachedMetrics, {
+                  teamName,
+                  preferExisting: true,
+                })
+              : cachedMetrics;
           return {
-            metrics: cachedMetrics,
+            metrics: metricsWithFt,
             teamInfo: cached.teamInfo || null,
             games: includeGames && cached.recentGames ? cached.recentGames : [],
             resolution: {
@@ -1029,9 +1088,12 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
     // Small delay to avoid ESPN rate limiting
     await new Promise(r => setTimeout(r, 200));
 
-    let [games, teamInfo] = await Promise.all([
+    let [games, teamInfo, teamStats] = await Promise.all([
       fetchTeamSchedule(league, teamEntry.id, limit),
-      fetchTeamInfo(league, teamEntry.id)
+      fetchTeamInfo(league, teamEntry.id),
+      normalizedSport === 'NCAAM'
+        ? fetchTeamStatistics(league, teamEntry.id)
+        : Promise.resolve(null),
     ]);
 
     // Existing static map entries can drift. If ESPN returns nothing, retry with scoreboard ID.
@@ -1040,9 +1102,12 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
       const fallbackId = fallbackEntry?.id != null ? String(fallbackEntry.id) : null;
       const currentId = teamEntry?.id != null ? String(teamEntry.id) : null;
       if (fallbackEntry && fallbackId && fallbackId !== currentId) {
-        [games, teamInfo] = await Promise.all([
+        [games, teamInfo, teamStats] = await Promise.all([
           fetchTeamSchedule(league, fallbackEntry.id, limit),
-          fetchTeamInfo(league, fallbackEntry.id)
+          fetchTeamInfo(league, fallbackEntry.id),
+          normalizedSport === 'NCAAM'
+            ? fetchTeamStatistics(league, fallbackEntry.id)
+            : Promise.resolve(null),
         ]);
         if ((games && games.length > 0) || teamInfo) {
           const cacheKey = `${normalizedSport}:${normalizeTeamKey(teamName)}`;
@@ -1093,7 +1158,14 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
       normalizedMetrics.record = teamInfo.record;
     }
 
-    if (!hasSufficientNumericMetricsForSport(normalizedMetrics, normalizedSport)) {
+    const finalizedMetrics = normalizedSport === 'NCAAM'
+      ? withNcaamFreeThrowPct(normalizedMetrics, {
+          teamName,
+          statisticsPayload: teamStats,
+        })
+      : normalizedMetrics;
+
+    if (!hasSufficientNumericMetricsForSport(finalizedMetrics, normalizedSport)) {
       logTeamMetricsEvent('TEAM_METRICS_INSUFFICIENT_NUMERIC', {
         sport: normalizedSport,
         inputTeamName: teamName,
@@ -1101,7 +1173,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
         resolution,
       });
       return {
-        metrics: normalizedMetrics,
+        metrics: finalizedMetrics,
         teamInfo: teamInfo || null,
         games: includeGames ? (games || []) : [],
         resolution: {
@@ -1130,7 +1202,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
           teamName: teamName,
           cacheDate: cacheDate,
           status: 'ok',
-          metrics: normalizedMetrics,
+          metrics: finalizedMetrics,
           teamInfo: teamInfo,
           recentGames: games || [],
           resolution: finalResolution
@@ -1141,7 +1213,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
     }
 
     return {
-      metrics: normalizedMetrics,
+      metrics: finalizedMetrics,
       teamInfo: teamInfo || null,
       games: includeGames ? (games || []) : [],
       resolution: finalResolution

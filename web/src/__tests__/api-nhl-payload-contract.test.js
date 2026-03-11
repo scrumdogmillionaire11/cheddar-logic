@@ -12,9 +12,9 @@
 // Canonical NHL card types (source: packages/data/src/validators/card-payload.js)
 const VALID_NHL_CARD_TYPES = [
   // Driver cards
-  'nhl-model-output',        // backward compat
+  'nhl-model-output', // backward compat
   'nhl-goalie',
-  'nhl-goalie-certainty',    // WI-0338
+  'nhl-goalie-certainty', // WI-0338
   'nhl-special-teams',
   'nhl-shot-environment',
   'nhl-empty-net',
@@ -23,8 +23,8 @@ const VALID_NHL_CARD_TYPES = [
   'nhl-welcome-home',
   'nhl-base-projection',
   'nhl-rest-advantage',
-  'nhl-pace-totals',         // WI-0338
-  'nhl-pace-1p',             // WI-0338
+  'nhl-pace-totals', // WI-0338
+  'nhl-pace-1p', // WI-0338
   // Market call cards
   'nhl-totals-call',
   'nhl-spread-call',
@@ -145,7 +145,8 @@ function validateNhlCardShape(card) {
   );
   assert(
     payload.meta.model_endpoint === null ||
-      (typeof payload.meta.model_endpoint === 'string' && payload.meta.model_endpoint.length > 0),
+      (typeof payload.meta.model_endpoint === 'string' &&
+        payload.meta.model_endpoint.length > 0),
     `payload.meta.model_endpoint must be null or non-empty string, got: ${payload.meta.model_endpoint}`,
   );
 
@@ -173,7 +174,8 @@ function validateNhlCardShape(card) {
       'remote source must set meta.is_mock=false',
     );
     assert(
-      typeof payload.meta.model_endpoint === 'string' && payload.meta.model_endpoint.length > 0,
+      typeof payload.meta.model_endpoint === 'string' &&
+        payload.meta.model_endpoint.length > 0,
       'remote source must provide non-empty meta.model_endpoint',
     );
   }
@@ -194,7 +196,9 @@ function validateNhlCardShape(card) {
         `payload.drivers.${driverKey} must be object`,
       );
       assert(
-        typeof driver.score === 'number' && driver.score >= 0 && driver.score <= 1,
+        typeof driver.score === 'number' &&
+          driver.score >= 0 &&
+          driver.score <= 1,
         `payload.drivers.${driverKey}.score must be number 0-1`,
       );
       assert(
@@ -218,7 +222,9 @@ function validateNhlCardShape(card) {
       'payload.driver.key must be non-empty string',
     );
     assert(
-      typeof driver.score === 'number' && driver.score >= 0 && driver.score <= 1,
+      typeof driver.score === 'number' &&
+        driver.score >= 0 &&
+        driver.score <= 1,
       'payload.driver.score must be number 0-1',
     );
     assert(

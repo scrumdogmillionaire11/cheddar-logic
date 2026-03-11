@@ -109,6 +109,115 @@ async function fetchTeamInfo(espnLeague, teamId) {
 }
 
 /**
+ * Fetch team statistics payload.
+ * @param {string} espnLeague
+ * @param {string|number} teamId
+ * @returns {Promise<object|null>}
+ */
+async function fetchTeamStatistics(espnLeague, teamId) {
+  return espnGet(`${espnLeague}/teams/${teamId}/statistics`);
+}
+
+function normalizeStatLabel(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function parsePercentageNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    if (value >= 0 && value <= 1) return Number((value * 100).toFixed(2));
+    return value >= 0 && value <= 100 ? value : null;
+  }
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/%/g, '').trim();
+  if (!cleaned) return null;
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed >= 0 && parsed <= 1) return Number((parsed * 100).toFixed(2));
+  return parsed >= 0 && parsed <= 100 ? parsed : null;
+}
+
+function collectStatisticEntries(node, out = []) {
+  if (!node) return out;
+  if (Array.isArray(node)) {
+    node.forEach((item) => collectStatisticEntries(item, out));
+    return out;
+  }
+  if (typeof node !== 'object') return out;
+
+  const labelCandidates = [
+    node.name,
+    node.displayName,
+    node.shortDisplayName,
+    node.abbreviation,
+    node.key,
+    node.stat,
+  ];
+  const valueCandidates = [
+    node.value,
+    node.displayValue,
+    node.percentage,
+    node.percent,
+    node.summary,
+  ];
+
+  const label = labelCandidates.find((candidate) => {
+    return typeof candidate === 'string' && candidate.trim().length > 0;
+  });
+  const value = valueCandidates.find((candidate) => {
+    if (candidate === null || candidate === undefined) return false;
+    if (typeof candidate === 'string') return candidate.trim().length > 0;
+    return true;
+  });
+
+  if (label !== undefined && value !== undefined) {
+    out.push({ label: String(label), value });
+  }
+
+  Object.values(node).forEach((child) => {
+    if (typeof child === 'object' && child !== null) {
+      collectStatisticEntries(child, out);
+    }
+  });
+  return out;
+}
+
+/**
+ * Extract FT% from ESPN team statistics payload.
+ * @param {object|null} statisticsPayload
+ * @returns {{ freeThrowPct: number, field: string }|null}
+ */
+function extractFreeThrowPctFromStatisticsPayload(statisticsPayload) {
+  if (!statisticsPayload || typeof statisticsPayload !== 'object') return null;
+
+  const entries = collectStatisticEntries(statisticsPayload, []);
+  const accepted = new Set([
+    'freethrowpercentage',
+    'freethrowpct',
+    'ftpercentage',
+    'ftpct',
+    'ft',
+  ]);
+
+  for (const entry of entries) {
+    const normalizedLabel = normalizeStatLabel(entry.label);
+    if (!accepted.has(normalizedLabel)) continue;
+    const freeThrowPct = parsePercentageNumber(entry.value);
+    if (freeThrowPct === null) continue;
+    return {
+      freeThrowPct,
+      field: entry.label,
+    };
+  }
+
+  return null;
+}
+
+/**
  * Fetch scoreboard events for a league and optional date.
  * @param {string} espnLeague
  * @param {string|null} dateStr - YYYYMMDD or null for today
@@ -133,4 +242,11 @@ async function fetchScoreboardEvents(espnLeague, dateStr = null, options = null)
   return data.events;
 }
 
-module.exports = { espnGet, fetchTeamSchedule, fetchTeamInfo, fetchScoreboardEvents };
+module.exports = {
+  espnGet,
+  fetchTeamSchedule,
+  fetchTeamInfo,
+  fetchTeamStatistics,
+  fetchScoreboardEvents,
+  extractFreeThrowPctFromStatisticsPayload,
+};

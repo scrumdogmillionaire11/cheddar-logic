@@ -171,7 +171,10 @@ function getDirection(payload) {
 }
 
 function detectProxyUsed(payload) {
-  if (payload?.proxy_used === true || payload?.pricing_trace?.proxy_used === true) {
+  if (
+    payload?.proxy_used === true ||
+    payload?.pricing_trace?.proxy_used === true
+  ) {
     return true;
   }
 
@@ -182,7 +185,9 @@ function detectProxyUsed(payload) {
     return true;
   }
 
-  const inferenceSource = asString(payload?.meta?.inference_source) || asString(payload?.inference_source);
+  const inferenceSource =
+    asString(payload?.meta?.inference_source) ||
+    asString(payload?.inference_source);
   if (inferenceSource === 'market_fallback') {
     return true;
   }
@@ -230,9 +235,7 @@ function getDriversUsed(payload) {
   if (Array.isArray(payload?.drivers_active)) {
     return Array.from(
       new Set(
-        payload.drivers_active
-          .map((item) => asString(item))
-          .filter(Boolean),
+        payload.drivers_active.map((item) => asString(item)).filter(Boolean),
       ),
     );
   }
@@ -241,9 +244,7 @@ function getDriversUsed(payload) {
   if (Array.isArray(weights)) {
     return Array.from(
       new Set(
-        weights
-          .map((weight) => asString(weight?.driver))
-          .filter(Boolean),
+        weights.map((weight) => asString(weight?.driver)).filter(Boolean),
       ),
     );
   }
@@ -421,10 +422,7 @@ function classifyPrice({
     };
   }
 
-  if (
-    marketType !== 'TOTAL' &&
-    edgePct > EDGE_SANITY_NON_TOTAL_THRESHOLD
-  ) {
+  if (marketType !== 'TOTAL' && edgePct > EDGE_SANITY_NON_TOTAL_THRESHOLD) {
     return {
       sharp_price_status: 'UNPRICED',
       price_reason_codes: [PRICE_REASONS.EDGE_VERIFICATION_REQUIRED],
@@ -436,13 +434,19 @@ function classifyPrice({
     if (edgePct < LEAN_EDGE_MIN) {
       return {
         sharp_price_status: 'COTTAGE',
-        price_reason_codes: [PRICE_REASONS.PROXY_EDGE_CAPPED, PRICE_REASONS.NO_EDGE_AT_PRICE],
+        price_reason_codes: [
+          PRICE_REASONS.PROXY_EDGE_CAPPED,
+          PRICE_REASONS.NO_EDGE_AT_PRICE,
+        ],
         proxy_capped: true,
       };
     }
     return {
       sharp_price_status: 'CHEDDAR',
-      price_reason_codes: [PRICE_REASONS.PROXY_EDGE_CAPPED, PRICE_REASONS.EDGE_CLEAR],
+      price_reason_codes: [
+        PRICE_REASONS.PROXY_EDGE_CAPPED,
+        PRICE_REASONS.EDGE_CLEAR,
+      ],
       proxy_capped: true,
     };
   }
@@ -490,7 +494,11 @@ function marketRequiresPrice(marketType) {
 }
 
 function sideValidForMarket(marketType, direction) {
-  if (marketType === 'MONEYLINE' || marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+  if (
+    marketType === 'MONEYLINE' ||
+    marketType === 'SPREAD' ||
+    marketType === 'PUCKLINE'
+  ) {
     return isHomeAwayDirection(direction);
   }
   if (marketType === 'TOTAL' || marketType === 'TEAM_TOTAL') {
@@ -553,13 +561,7 @@ function getExpectedWagerFromOddsContext(payload, marketType, direction) {
   return { expectedLine: null, expectedPrice: null };
 }
 
-function validateExactWager({
-  payload,
-  marketType,
-  direction,
-  line,
-  price,
-}) {
+function validateExactWager({ payload, marketType, direction, line, price }) {
   const trace =
     payload?.pricing_trace && typeof payload.pricing_trace === 'object'
       ? payload.pricing_trace
@@ -585,7 +587,11 @@ function validateExactWager({
   }
 
   const calledPrice = asNumber(trace?.called_price);
-  if (calledPrice !== null && price !== null && !nearlyEqual(calledPrice, price)) {
+  if (
+    calledPrice !== null &&
+    price !== null &&
+    !nearlyEqual(calledPrice, price)
+  ) {
     return false;
   }
 
@@ -701,14 +707,18 @@ function resolvePrimaryReason({
 
 function computeWatchdog(payload, context = {}) {
   const watchdogReasonCodes = [];
-  const { consistency, sourceAttempts, missingFields } = resolveConsistency(payload);
+  const { consistency, sourceAttempts, missingFields } =
+    resolveConsistency(payload);
 
   const projectionInputsComplete = payload?.projection_inputs_complete;
   const projectionMissingInputs = Array.isArray(payload?.missing_inputs)
     ? payload.missing_inputs.filter((field) => asString(field))
     : [];
 
-  if (projectionInputsComplete === false || projectionMissingInputs.length > 0) {
+  if (
+    projectionInputsComplete === false ||
+    projectionMissingInputs.length > 0
+  ) {
     watchdogReasonCodes.push(WATCHDOG_REASONS.CONSISTENCY_MISSING);
     for (const field of projectionMissingInputs) {
       const normalizedField = `projection.${field}`;
@@ -771,7 +781,9 @@ function computeWatchdog(payload, context = {}) {
       code === WATCHDOG_REASONS.CONSISTENCY_MISSING ||
       code === WATCHDOG_REASONS.PARSE_FAILURE ||
       code === WATCHDOG_REASONS.MARKET_UNAVAILABLE ||
-      (code === WATCHDOG_REASONS.STALE_SNAPSHOT && staleMinutes !== null && staleMinutes > 30),
+      (code === WATCHDOG_REASONS.STALE_SNAPSHOT &&
+        staleMinutes !== null &&
+        staleMinutes > 30),
   );
 
   if (hasBlockingReason) {
@@ -832,7 +844,8 @@ function buildDecisionV2(payload, context = {}) {
 
     const validSide = sideValidForMarket(market_type, direction);
     const hasRequiredLine = !marketRequiresLine(market_type) || line !== null;
-    const hasRequiredPrice = !marketRequiresPrice(market_type) || price !== null;
+    const hasRequiredPrice =
+      !marketRequiresPrice(market_type) || price !== null;
     const exact_wager_valid =
       validSide &&
       validateExactWager({
@@ -922,7 +935,12 @@ function buildDecisionV2(payload, context = {}) {
             fair_prob = clamp(result.p_fair, 0, 1);
             edge_method = 'TOTAL_DELTA';
             edge_line_delta = result.edgePoints ?? null;
-            edge_lean = result.edgePoints > 0 ? 'OVER' : result.edgePoints < 0 ? 'UNDER' : null;
+            edge_lean =
+              result.edgePoints > 0
+                ? 'OVER'
+                : result.edgePoints < 0
+                  ? 'UNDER'
+                  : null;
           }
         } else {
           proxy_used = true;
@@ -942,13 +960,16 @@ function buildDecisionV2(payload, context = {}) {
         edge_method = 'TOTAL_DELTA';
         edge_line_delta = asNumber(payload?.edge_points);
         if (edge_line_delta !== null) {
-          edge_lean = edge_line_delta > 0 ? 'OVER' : edge_line_delta < 0 ? 'UNDER' : null;
+          edge_lean =
+            edge_line_delta > 0 ? 'OVER' : edge_line_delta < 0 ? 'UNDER' : null;
         }
       }
     }
 
     const edge_pct =
-      fair_prob !== null && implied_prob !== null ? fair_prob - implied_prob : null;
+      fair_prob !== null && implied_prob !== null
+        ? fair_prob - implied_prob
+        : null;
 
     const hasPrimarySupport =
       drivers_used.length > 0 || asString(payload?.driver?.key) !== null;
@@ -1056,7 +1077,8 @@ function buildDecisionV2(payload, context = {}) {
             field: 'payload',
             source: 'buildDecisionV2',
             result: 'ERROR',
-            note: error instanceof Error ? error.message : 'unknown parse failure',
+            note:
+              error instanceof Error ? error.message : 'unknown parse failure',
           },
         ],
         severity: 'BLOCKING',

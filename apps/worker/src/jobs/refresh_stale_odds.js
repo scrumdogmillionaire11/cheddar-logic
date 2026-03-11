@@ -33,13 +33,9 @@ const {
   withDb,
 } = require('@cheddar-logic/data');
 
-const {
-  resolveTeamVariant,
-} = require('@cheddar-logic/data/src/normalize');
+const { resolveTeamVariant } = require('@cheddar-logic/data/src/normalize');
 
-const {
-  validateMarketContract,
-} = require('@cheddar-logic/odds/src/normalize');
+const { validateMarketContract } = require('@cheddar-logic/odds/src/normalize');
 
 const { fetchOdds, getActiveSports } = require('@cheddar-logic/odds');
 
@@ -94,7 +90,9 @@ function findGamesWithStaleOdds() {
 
   for (const game of upcomingGames) {
     const gameTimeUtc = DateTime.fromISO(game.game_time_utc, { zone: 'utc' });
-    const minsUntilStart = Math.round(gameTimeUtc.diff(nowUtc, 'minutes').minutes);
+    const minsUntilStart = Math.round(
+      gameTimeUtc.diff(nowUtc, 'minutes').minutes,
+    );
     const targetInterval = getOddsIntervalMinutes(minsUntilStart);
 
     if (!targetInterval) {
@@ -129,7 +127,9 @@ function findGamesWithStaleOdds() {
     }
 
     // Check if latest snapshot is older than target interval
-    const capturedAt = DateTime.fromISO(latestOdds.captured_at, { zone: 'utc' });
+    const capturedAt = DateTime.fromISO(latestOdds.captured_at, {
+      zone: 'utc',
+    });
     const ageMinutes = Math.round(nowUtc.diff(capturedAt, 'minutes').minutes);
 
     if (ageMinutes > targetInterval) {
@@ -204,7 +204,9 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
         };
       }
 
-      console.log(`[RefreshStaleOdds] Found ${staleGames.length} games with stale odds:`);
+      console.log(
+        `[RefreshStaleOdds] Found ${staleGames.length} games with stale odds:`,
+      );
       for (const g of staleGames.slice(0, 5)) {
         console.log(
           `  - ${g.game_id} (T-${g.minsUntilStart}m, last: ${g.lastOddsAge || 'never'}m, target: ${g.targetInterval}m)`,
@@ -241,13 +243,11 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
         );
 
         try {
-          const {
-            games: normalizedGames,
-            errors: fetchErrors,
-          } = await fetchOdds({
-            sport,
-            hoursAhead: 6, // Only fetch T-6h window
-          });
+          const { games: normalizedGames, errors: fetchErrors } =
+            await fetchOdds({
+              sport,
+              hoursAhead: 6, // Only fetch T-6h window
+            });
 
           if (fetchErrors && fetchErrors.length > 0) {
             fetchErrors.forEach((errorMessage) => {
@@ -277,8 +277,14 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
 
             try {
               // Validate team variant mapping before persisting
-              const homeVariant = resolveTeamVariant(normalized.homeTeam, `refresh-stale-odds:${sport}`);
-              const awayVariant = resolveTeamVariant(normalized.awayTeam, `refresh-stale-odds:${sport}`);
+              const homeVariant = resolveTeamVariant(
+                normalized.homeTeam,
+                `refresh-stale-odds:${sport}`,
+              );
+              const awayVariant = resolveTeamVariant(
+                normalized.awayTeam,
+                `refresh-stale-odds:${sport}`,
+              );
 
               if (!homeVariant.matched || !awayVariant.matched) {
                 const msg = `TEAM_MAPPING_UNMAPPED: game=${normalized.gameId} sport=${sport} home="${normalized.homeTeam}"(matched=${homeVariant.matched}) away="${normalized.awayTeam}"(matched=${awayVariant.matched})`;

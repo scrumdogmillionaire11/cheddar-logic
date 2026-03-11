@@ -24,7 +24,6 @@ const dbBackup = require('../utils/db-backup.js');
 const {
   buildMarketKey,
   createMarketError,
-  upsertTrackingStat,
   incrementTrackingStat,
   getDatabase,
   insertJobRun,
@@ -44,7 +43,128 @@ function parseLockedPrice(value) {
   return Math.trunc(parsed);
 }
 
-function assertLockedMarketContext(row, payloadData) {
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizePeriodToken(value) {
+  const token = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+  if (!token) return null;
+  if (
+    token === '1P' ||
+    token === 'P1' ||
+    token === 'FIRST_PERIOD' ||
+    token === '1ST_PERIOD'
+  ) {
+    return '1P';
+  }
+  if (
+    token === 'FULL_GAME' ||
+    token === 'FULL' ||
+    token === 'GAME' ||
+    token === 'REGULATION'
+  ) {
+    return 'FULL_GAME';
+  }
+  return null;
+}
+
+function normalizeSettlementPeriod(value, cardType = null) {
+  const normalized = normalizePeriodToken(value);
+  if (normalized) return normalized;
+
+  const cardTypeToken = String(cardType || '').toUpperCase();
+  if (cardTypeToken.includes('1P') || cardTypeToken.includes('FIRST_PERIOD')) {
+    return '1P';
+  }
+
+  return 'FULL_GAME';
+}
+
+function extractSettlementPeriod({
+  row,
+  payloadData,
+  cardResultMetadata,
+}) {
+  return normalizeSettlementPeriod(
+    payloadData?.period ??
+      payloadData?.time_period ??
+      payloadData?.market?.period ??
+      payloadData?.market_context?.period ??
+      payloadData?.market_context?.wager?.period ??
+      cardResultMetadata?.lockedMarket?.period ??
+      cardResultMetadata?.period ??
+      null,
+    row?.card_type,
+  );
+}
+
+function readFirstPeriodScores(gameResultMetadata) {
+  if (!gameResultMetadata || typeof gameResultMetadata !== 'object') {
+    return { home: null, away: null };
+  }
+
+  const fromFirstPeriodScores = gameResultMetadata.firstPeriodScores;
+  if (fromFirstPeriodScores && typeof fromFirstPeriodScores === 'object') {
+    const home = Number(fromFirstPeriodScores.home);
+    const away = Number(fromFirstPeriodScores.away);
+    if (Number.isFinite(home) && Number.isFinite(away)) {
+      return { home, away };
+    }
+  }
+
+  const fromSnakeCase = gameResultMetadata.first_period_scores;
+  if (fromSnakeCase && typeof fromSnakeCase === 'object') {
+    const home = Number(fromSnakeCase.home);
+    const away = Number(fromSnakeCase.away);
+    if (Number.isFinite(home) && Number.isFinite(away)) {
+      return { home, away };
+    }
+  }
+
+  return { home: null, away: null };
+}
+
+function resolveSettlementMarketBucket({
+  sport,
+  marketType,
+  period,
+}) {
+  const normalizedSport = String(sport || '').toUpperCase();
+  const normalizedMarketType = String(marketType || '').toUpperCase();
+  const normalizedPeriod = normalizeSettlementPeriod(period);
+  if (normalizedMarketType !== 'TOTAL') return null;
+
+  if (normalizedSport === 'NBA' && normalizedPeriod !== '1P') {
+    return 'NBA_TOTAL';
+  }
+  if (normalizedSport === 'NHL' && normalizedPeriod === '1P') {
+    return 'NHL_1P_TOTAL';
+  }
+  if (normalizedSport === 'NHL' && normalizedPeriod !== '1P') {
+    return 'NHL_TOTAL';
+  }
+  return null;
+}
+
+function assertLockedMarketContext(
+  row,
+  payloadData,
+  {
+    period = 'FULL_GAME',
+  } = {},
+) {
   if (!row.market_key) {
     throw createMarketError(
       'SETTLEMENT_REQUIRES_MARKET_KEY',
@@ -79,19 +199,13 @@ function assertLockedMarketContext(row, payloadData) {
   }
 
   const lockedPrice = parseLockedPrice(row.locked_price);
-  if (lockedPrice === null) {
-    throw createMarketError(
-      'MISSING_LOCKED_PRICE',
-      `Card ${row.card_id} missing locked_price at settlement`,
-      { cardId: row.card_id, marketType, selection },
-    );
-  }
 
   const expectedMarketKey = buildMarketKey({
     gameId: row.game_id,
     marketType,
     selection,
     line,
+    period,
   });
 
   if (expectedMarketKey !== row.market_key) {
@@ -112,6 +226,7 @@ function assertLockedMarketContext(row, payloadData) {
     selection,
     line,
     lockedPrice,
+    period,
   };
 }
 
@@ -121,16 +236,49 @@ function gradeLockedMarket({
   line,
   homeScore,
   awayScore,
+  period = 'FULL_GAME',
+  firstPeriodScores = null,
 }) {
+  const toFiniteScore = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const normalizedPeriod = normalizeSettlementPeriod(period);
+  const usingFirstPeriod = normalizedPeriod === '1P';
+  const settledHomeScore = usingFirstPeriod
+    ? toFiniteScore(firstPeriodScores?.home)
+    : toFiniteScore(homeScore);
+  const settledAwayScore = usingFirstPeriod
+    ? toFiniteScore(firstPeriodScores?.away)
+    : toFiniteScore(awayScore);
+
+  if (!Number.isFinite(settledHomeScore) || !Number.isFinite(settledAwayScore)) {
+    throw createMarketError(
+      usingFirstPeriod ? 'MISSING_PERIOD_SCORE' : 'MISSING_FINAL_SCORE',
+      usingFirstPeriod
+        ? 'Missing first-period scores required for 1P settlement'
+        : 'Missing final scores required for settlement',
+      {
+        marketType,
+        period: normalizedPeriod,
+        homeScore,
+        awayScore,
+        firstPeriodScores,
+      },
+    );
+  }
+
   if (marketType === 'MONEYLINE') {
     if (selection === 'HOME') {
-      if (homeScore > awayScore) return 'win';
-      if (homeScore < awayScore) return 'loss';
+      if (settledHomeScore > settledAwayScore) return 'win';
+      if (settledHomeScore < settledAwayScore) return 'loss';
       return 'push';
     }
 
-    if (awayScore > homeScore) return 'win';
-    if (awayScore < homeScore) return 'loss';
+    if (settledAwayScore > settledHomeScore) return 'win';
+    if (settledAwayScore < settledHomeScore) return 'loss';
     return 'push';
   }
 
@@ -145,8 +293,8 @@ function gradeLockedMarket({
 
     const diff =
       selection === 'HOME'
-        ? homeScore + line - awayScore
-        : awayScore + line - homeScore;
+        ? settledHomeScore + line - settledAwayScore
+        : settledAwayScore + line - settledHomeScore;
 
     if (diff > 0) return 'win';
     if (diff < 0) return 'loss';
@@ -161,7 +309,7 @@ function gradeLockedMarket({
     );
   }
 
-  const actualTotal = homeScore + awayScore;
+  const actualTotal = settledHomeScore + settledAwayScore;
   if (actualTotal > line) return selection === 'OVER' ? 'win' : 'loss';
   if (actualTotal < line) return selection === 'UNDER' ? 'win' : 'loss';
   return 'push';
@@ -178,6 +326,24 @@ function computePnlUnits(result, odds) {
   }
 
   return 100 / Math.abs(odds);
+}
+
+function computePnlOutcome(result, odds) {
+  const pnlUnits = computePnlUnits(result, odds);
+  if (result === 'win' && pnlUnits === null) {
+    return {
+      pnlUnits: null,
+      anomalyCode: 'PNL_ODDS_INVALID',
+      anomalyMessage:
+        'Win settlement had null/invalid/zero American odds; pnl_units left NULL',
+    };
+  }
+
+  return {
+    pnlUnits,
+    anomalyCode: null,
+    anomalyMessage: null,
+  };
 }
 
 function backfillDisplayedPlaysFromPayloads(db) {
@@ -297,7 +463,9 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
     params.push(dateRange.end);
   }
 
-  const whereSql = whereClauses.length ? ` AND ${whereClauses.join(' AND ')}` : '';
+  const whereSql = whereClauses.length
+    ? ` AND ${whereClauses.join(' AND ')}`
+    : '';
 
   const totalPendingRow = db
     .prepare(
@@ -380,6 +548,51 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
     )
     .get(...params);
 
+  const pendingWithFinalNoDisplayRow = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM card_results cr
+      INNER JOIN game_results gr ON gr.game_id = cr.game_id
+      LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+      WHERE cr.status = 'pending'
+        AND cr.market_key IS NOT NULL
+        AND gr.status = 'final'
+        AND cdl.pick_id IS NULL
+      ${whereSql}
+    `,
+    )
+    .get(...params);
+
+  const pendingWithFinalMissingMarketKeyRow = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM card_results cr
+      INNER JOIN game_results gr ON gr.game_id = cr.game_id
+      LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+      WHERE cr.status = 'pending'
+        AND cr.market_key IS NULL
+        AND gr.status = 'final'
+      ${whereSql}
+    `,
+    )
+    .get(...params);
+
+  const pendingDisplayedWithoutFinalRow = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM card_results cr
+      INNER JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+      LEFT JOIN game_results gr ON gr.game_id = cr.game_id AND gr.status = 'final'
+      WHERE cr.status = 'pending'
+        AND gr.game_id IS NULL
+      ${whereSql}
+    `,
+    )
+    .get(...params);
+
   return {
     totalPending: toCount(totalPendingRow?.count),
     eligiblePendingFinalDisplayed: toCount(
@@ -387,8 +600,15 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
     ),
     settledDisplayedFinal: toCount(settledDisplayedFinalRow?.count),
     displayedFinal: toCount(displayedFinalRow?.count),
-    finalDisplayedMissingResults: toCount(finalDisplayedMissingResultsRow?.count),
+    finalDisplayedMissingResults: toCount(
+      finalDisplayedMissingResultsRow?.count,
+    ),
     finalDisplayedUnsettled: toCount(finalDisplayedUnsettledRow?.count),
+    pendingWithFinalNoDisplay: toCount(pendingWithFinalNoDisplayRow?.count),
+    pendingWithFinalMissingMarketKey: toCount(
+      pendingWithFinalMissingMarketKeyRow?.count,
+    ),
+    pendingDisplayedWithoutFinal: toCount(pendingDisplayedWithoutFinalRow?.count),
   };
 }
 
@@ -398,7 +618,11 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
  * @param {string|null} options.jobKey - Optional deterministic window key for idempotency
  * @param {boolean} options.dryRun - If true, log only, no DB writes
  */
-async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
+async function settlePendingCards({
+  jobKey = null,
+  dryRun = false,
+  allowDisplayBackfill = null,
+} = {}) {
   const jobRunId = `job-settle-cards-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[SettleCards] Starting job run: ${jobRunId}`);
@@ -433,8 +657,12 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       insertJobRun('settle_pending_cards', jobRunId, jobKey);
 
       const db = getDatabase();
-      const enableDisplayBackfill =
+      const emergencyBackfillEnabled =
         process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL === 'true';
+      const enableDisplayBackfill =
+        allowDisplayBackfill === null
+          ? emergencyBackfillEnabled
+          : Boolean(allowDisplayBackfill);
       let backfilledDisplayed = 0;
       if (enableDisplayBackfill) {
         backfilledDisplayed = backfillDisplayedPlaysFromPayloads(db);
@@ -450,7 +678,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       }
       const coverageBefore = getSettlementCoverageDiagnostics(db);
       console.log(
-        `[SettleCards] Coverage before — pending: ${coverageBefore.totalPending}, eligible: ${coverageBefore.eligiblePendingFinalDisplayed}, settledFinalDisplayed: ${coverageBefore.settledDisplayedFinal}, missingResults: ${coverageBefore.finalDisplayedMissingResults}`,
+        `[SettleCards] Coverage before — pending: ${coverageBefore.totalPending}, eligible: ${coverageBefore.eligiblePendingFinalDisplayed}, settledFinalDisplayed: ${coverageBefore.settledDisplayedFinal}, missingResults: ${coverageBefore.finalDisplayedMissingResults}, blockedNoDisplay: ${coverageBefore.pendingWithFinalNoDisplay}, blockedMissingMarketKey: ${coverageBefore.pendingWithFinalMissingMarketKey}, blockedNoFinal: ${coverageBefore.pendingDisplayedWithoutFinal}`,
       );
 
       // --- Step 1: Settle pending card_results ---
@@ -462,6 +690,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           cr.card_id,
           cr.game_id,
           cr.sport,
+          cr.card_type,
           cr.market_key,
           cr.market_type,
           cr.selection,
@@ -473,7 +702,8 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           cdl.api_endpoint,
           cp.payload_data,
           gr.final_score_home,
-          gr.final_score_away
+          gr.final_score_away,
+          gr.metadata AS game_result_metadata
         FROM card_results cr
         INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
         INNER JOIN game_results gr ON cr.game_id = gr.game_id
@@ -493,6 +723,11 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       let cardsRaced = 0;
       let cardsSkipped = 0;
       const settledAt = new Date().toISOString();
+      const marketDailyCounts = {
+        NBA_TOTAL: { pending: 0, settled: 0, failed: 0 },
+        NHL_TOTAL: { pending: 0, settled: 0, failed: 0 },
+        NHL_1P_TOTAL: { pending: 0, settled: 0, failed: 0 },
+      };
 
       for (const pendingCard of pendingRows) {
         // Parse payload data
@@ -509,33 +744,57 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           cardsSkipped++;
           continue;
         }
+        const cardResultMetadata =
+          parseJsonObject(pendingCard.metadata) || {};
+        const gameResultMetadata =
+          parseJsonObject(pendingCard.game_result_metadata) || {};
+        const period = extractSettlementPeriod({
+          row: pendingCard,
+          payloadData,
+          cardResultMetadata,
+        });
+        const marketBucket = resolveSettlementMarketBucket({
+          sport: pendingCard.sport,
+          marketType: pendingCard.market_type,
+          period,
+        });
+        if (marketBucket) {
+          marketDailyCounts[marketBucket].pending += 1;
+        }
 
-        const homeScore = Number(pendingCard.final_score_home) || 0;
-        const awayScore = Number(pendingCard.final_score_away) || 0;
+        const homeScore = Number(pendingCard.final_score_home);
+        const awayScore = Number(pendingCard.final_score_away);
+        const firstPeriodScores = readFirstPeriodScores(gameResultMetadata);
 
         try {
-          const lockedMarket = assertLockedMarketContext(pendingCard, payloadData);
+          const lockedMarket = assertLockedMarketContext(
+            pendingCard,
+            payloadData,
+            { period },
+          );
           const result = gradeLockedMarket({
             marketType: lockedMarket.marketType,
             selection: lockedMarket.selection,
             line: lockedMarket.line,
             homeScore,
             awayScore,
+            period: lockedMarket.period,
+            firstPeriodScores,
           });
-          const pnlUnits = computePnlUnits(result, lockedMarket.lockedPrice);
+          const pnlOutcome = computePnlOutcome(result, lockedMarket.lockedPrice);
+          if (pnlOutcome.anomalyCode) {
+            console.warn(
+              `[SettleCards] P/L anomaly for card ${pendingCard.card_id}: ${pnlOutcome.anomalyCode} (${pnlOutcome.anomalyMessage})`,
+            );
+          }
 
-          db
-            .prepare(`
+          db.prepare(
+            `
             UPDATE card_results
             SET status = 'settled', result = ?, settled_at = ?, pnl_units = ?
             WHERE id = ? AND status = 'pending'
-          `)
-            .run(
-            result,
-            settledAt,
-            pnlUnits,
-            pendingCard.result_id,
-          );
+          `,
+          ).run(result, settledAt, pnlOutcome.pnlUnits, pendingCard.result_id);
           const state = db
             .prepare(
               `
@@ -552,11 +811,17 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
             state.settled_at === settledAt;
           if (didSettleNow) {
             cardsSettled++;
+            if (marketBucket) {
+              marketDailyCounts[marketBucket].settled += 1;
+            }
             console.log(
               `[SettleCards] Settled card ${pendingCard.card_id}: ${lockedMarket.marketType}/${lockedMarket.selection} ` +
-                `(${lockedMarket.marketKey}) -> ${result} (pnl: ${pnlUnits})`,
+                `(${lockedMarket.marketKey}) -> ${result} (period=${lockedMarket.period}, pnl: ${pnlOutcome.pnlUnits})`,
             );
-          } else if (state && (state.status === 'settled' || state.status === 'error')) {
+          } else if (
+            state &&
+            (state.status === 'settled' || state.status === 'error')
+          ) {
             cardsRaced++;
             console.log(
               `[SettleCards] Race detected for card ${pendingCard.card_id}; row now ${state.status}`,
@@ -576,7 +841,10 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           );
 
           let metadata = {};
-          if (typeof pendingCard.metadata === 'string' && pendingCard.metadata) {
+          if (
+            typeof pendingCard.metadata === 'string' &&
+            pendingCard.metadata
+          ) {
             try {
               metadata = JSON.parse(pendingCard.metadata);
             } catch {
@@ -589,17 +857,13 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
             at: settledAt,
           };
 
-          db
-            .prepare(`
+          db.prepare(
+            `
             UPDATE card_results
             SET status = 'error', result = 'void', settled_at = ?, metadata = ?
             WHERE id = ? AND status = 'pending'
-          `)
-            .run(
-            settledAt,
-            JSON.stringify(metadata),
-            pendingCard.result_id,
-          );
+          `,
+          ).run(settledAt, JSON.stringify(metadata), pendingCard.result_id);
           const state = db
             .prepare(
               `
@@ -616,7 +880,13 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
             state.settled_at === settledAt;
           if (didErrorNow) {
             cardsErrored++;
-          } else if (state && (state.status === 'settled' || state.status === 'error')) {
+            if (marketBucket) {
+              marketDailyCounts[marketBucket].failed += 1;
+            }
+          } else if (
+            state &&
+            (state.status === 'settled' || state.status === 'error')
+          ) {
             cardsRaced++;
             console.log(
               `[SettleCards] Race detected while writing error for card ${pendingCard.card_id}; row now ${state.status}`,
@@ -650,67 +920,99 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       console.log(
         `[SettleCards] Step 1 complete — pending: ${coverageBefore.totalPending}, eligible: ${eligibleCount}, settled: ${cardsSettled}, errored: ${cardsErrored}, raced: ${cardsRaced}, skipped: ${totalSkipped}`,
       );
+      console.log(
+        `[SettleCards] Market daily counts — NBA_TOTAL: ${JSON.stringify(marketDailyCounts.NBA_TOTAL)}, NHL_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_TOTAL)}, NHL_1P_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_1P_TOTAL)}`,
+      );
 
       // --- Step 2: Increment tracking_stats (race-safe) ---
 
-      // Aggregate only cards settled in THIS run (delta-based)
-      const aggregateStmt = db.prepare(`
-        SELECT
-          sport,
-          result,
-          COUNT(*) AS count,
-          SUM(pnl_units) AS total_pnl
+      // Aggregate only cards settled in THIS run (delta-based), split by market.
+      const aggregateRows = db
+        .prepare(
+          `
+        SELECT sport, market_type, card_type, metadata, result, pnl_units
         FROM card_results
         WHERE status = 'settled'
           AND settled_at >= ?
-        GROUP BY sport, result
-      `);
+      `,
+        )
+        .all(jobStartTime);
 
-      const aggregateRows = aggregateStmt.all(jobStartTime);
-
-      // Build per-sport deltas for this run only
-      const sportDeltas = {};
+      const marketDeltas = {};
       for (const row of aggregateRows) {
-        const sport = row.sport;
-        if (!sportDeltas[sport]) {
-          sportDeltas[sport] = { deltaWins: 0, deltaLosses: 0, deltaPushes: 0, deltaPnl: 0 };
+        const sport = String(row.sport || '').toUpperCase();
+        const cardResultMetadata = parseJsonObject(row.metadata) || {};
+        const period = extractSettlementPeriod({
+          row,
+          payloadData: null,
+          cardResultMetadata,
+        });
+        const rawMarketType = String(row.market_type || 'UNKNOWN').toUpperCase();
+        const trackingMarketType =
+          rawMarketType === 'TOTAL' && period === '1P'
+            ? 'total_1p'
+            : rawMarketType.toLowerCase();
+        const key = `${sport}|${trackingMarketType}`;
+
+        if (!marketDeltas[key]) {
+          marketDeltas[key] = {
+            sport,
+            marketType: trackingMarketType,
+            period,
+            deltaWins: 0,
+            deltaLosses: 0,
+            deltaPushes: 0,
+            deltaPnl: 0,
+          };
         }
-        const count = Number(row.count) || 0;
-        const pnl = Number(row.total_pnl) || 0;
+
+        const pnl = Number(row.pnl_units) || 0;
         if (row.result === 'win') {
-          sportDeltas[sport].deltaWins += count;
-          sportDeltas[sport].deltaPnl += pnl;
+          marketDeltas[key].deltaWins += 1;
+          marketDeltas[key].deltaPnl += pnl;
         } else if (row.result === 'loss') {
-          sportDeltas[sport].deltaLosses += count;
-          sportDeltas[sport].deltaPnl += pnl;
+          marketDeltas[key].deltaLosses += 1;
+          marketDeltas[key].deltaPnl += pnl;
         } else if (row.result === 'push') {
-          sportDeltas[sport].deltaPushes += count;
-          sportDeltas[sport].deltaPnl += pnl;
+          marketDeltas[key].deltaPushes += 1;
+          marketDeltas[key].deltaPnl += pnl;
         }
       }
 
       let statsIncremented = 0;
-      for (const [sport, deltas] of Object.entries(sportDeltas)) {
-        const { deltaWins, deltaLosses, deltaPushes, deltaPnl } = deltas;
+      for (const deltas of Object.values(marketDeltas)) {
+        const {
+          sport,
+          marketType,
+          period,
+          deltaWins,
+          deltaLosses,
+          deltaPushes,
+          deltaPnl,
+        } = deltas;
 
         incrementTrackingStat({
-          id: `stat-${sport}-all-alltime`,
-          statKey: `${sport}|moneyline|all|all|all|alltime`,
+          id: `stat-${sport}-${marketType}-alltime`,
+          statKey: `${sport}|${marketType}|all|all|all|alltime`,
           sport,
-          marketType: 'moneyline',
+          marketType,
           direction: 'all',
           confidenceTier: 'all',
-          driverKey: 'all',
+          driverKey: period === '1P' ? 'period_1p' : 'all',
           timePeriod: 'alltime',
           deltaWins,
           deltaLosses,
           deltaPushes,
           deltaPnl,
-          metadata: { lastIncrementAt: new Date().toISOString(), jobRunId },
+          metadata: {
+            lastIncrementAt: new Date().toISOString(),
+            jobRunId,
+            period,
+          },
         });
 
         console.log(
-          `[SettleCards] Incremented tracking_stat for ${sport}: +${deltaWins}W / +${deltaLosses}L / +${deltaPushes}P (pnl: ${deltaPnl >= 0 ? '+' : ''}${deltaPnl.toFixed(3)})`,
+          `[SettleCards] Incremented tracking_stat for ${sport}/${marketType}: +${deltaWins}W / +${deltaLosses}L / +${deltaPushes}P (pnl: ${deltaPnl >= 0 ? '+' : ''}${deltaPnl.toFixed(3)})`,
         );
         statsIncremented++;
       }
@@ -724,7 +1026,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       markJobRunSuccess(jobRunId);
       const coverageAfter = getSettlementCoverageDiagnostics(db);
       console.log(
-        `[SettleCards] Coverage after — pending: ${coverageAfter.totalPending}, settledFinalDisplayed: ${coverageAfter.settledDisplayedFinal}, missingResults: ${coverageAfter.finalDisplayedMissingResults}, unsettledFinalDisplayed: ${coverageAfter.finalDisplayedUnsettled}`,
+        `[SettleCards] Coverage after — pending: ${coverageAfter.totalPending}, settledFinalDisplayed: ${coverageAfter.settledDisplayedFinal}, missingResults: ${coverageAfter.finalDisplayedMissingResults}, unsettledFinalDisplayed: ${coverageAfter.finalDisplayedUnsettled}, blockedNoDisplay: ${coverageAfter.pendingWithFinalNoDisplay}, blockedMissingMarketKey: ${coverageAfter.pendingWithFinalMissingMarketKey}, blockedNoFinal: ${coverageAfter.pendingDisplayedWithoutFinal}`,
       );
       console.log(
         `[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, cardsRaced: ${cardsRaced}, cardsSkipped: ${totalSkipped}, cardsArchived: ${cardsArchived}, statsIncremented: ${statsIncremented}`,
@@ -746,9 +1048,16 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           settled: cardsSettled,
           raced: cardsRaced,
           skipped: totalSkipped,
+          marketDailyCounts,
           displayBackfilled: backfilledDisplayed,
+          displayBackfillEnabled: enableDisplayBackfill,
           before: coverageBefore,
           after: coverageAfter,
+          blockedReasons: {
+            noDisplayLog: coverageBefore.pendingWithFinalNoDisplay,
+            missingMarketKey: coverageBefore.pendingWithFinalMissingMarketKey,
+            noFinalGameResult: coverageBefore.pendingDisplayedWithoutFinal,
+          },
         },
         errors: [],
       };
@@ -793,8 +1102,12 @@ module.exports = {
   __private: {
     assertLockedMarketContext,
     backfillDisplayedPlaysFromPayloads,
+    computePnlOutcome,
     computePnlUnits,
+    extractSettlementPeriod,
     getSettlementCoverageDiagnostics,
     gradeLockedMarket,
+    readFirstPeriodScores,
+    resolveSettlementMarketBucket,
   },
 };

@@ -18,9 +18,7 @@ function isWave1Play(game, play) {
   const kind = String(play?.kind ?? 'PLAY').toUpperCase();
   const marketType = String(play?.market_type ?? '').toUpperCase();
   return (
-    kind === 'PLAY' &&
-    WAVE1_SPORTS.has(sport) &&
-    WAVE1_MARKETS.has(marketType)
+    kind === 'PLAY' && WAVE1_SPORTS.has(sport) && WAVE1_MARKETS.has(marketType)
   );
 }
 
@@ -37,6 +35,24 @@ async function runSourceContractAssertions(assert) {
       source.includes('if (!play.decision_v2) {') &&
       source.includes('applyWave1DecisionFields(play);'),
     'route must hard-require worker decision_v2 and map wave-1 fields from it',
+  );
+  assert.ok(
+    source.includes('API_GAMES_HORIZON_HOURS') &&
+      source.includes('HAS_API_GAMES_HORIZON'),
+    'route must expose configurable API_GAMES_HORIZON_HOURS query window',
+  );
+  assert.ok(
+    source.includes("'base_games'") &&
+      source.includes("'card_rows'") &&
+      source.includes("'parsed_rows'") &&
+      source.includes("'wave1_skipped_no_d2'") &&
+      source.includes("'plays_emitted'") &&
+      source.includes("'games_with_plays'"),
+    'route must define all required stage counters',
+  );
+  assert.ok(
+    source.includes('diagnostics: flowDiagnostics'),
+    'route must attach non-prod diagnostics metadata to response meta',
   );
 
   assert.ok(
@@ -55,7 +71,11 @@ async function run() {
 
   const baseUrl = process.env.CARDS_API_BASE_URL || DEFAULT_BASE_URL;
   const response = await fetch(`${baseUrl}/api/games?limit=200`);
-  assert.strictEqual(response.ok, true, `API response not ok: ${response.status}`);
+  assert.strictEqual(
+    response.ok,
+    true,
+    `API response not ok: ${response.status}`,
+  );
 
   const payload = await response.json();
   assert.strictEqual(payload.success, true, 'API returned success=false');
@@ -64,6 +84,38 @@ async function run() {
     false,
     'API payload must not include repair_stats metadata',
   );
+  assert.ok(
+    payload.meta && typeof payload.meta === 'object',
+    'API payload must include meta',
+  );
+
+  if (payload.meta?.diagnostics) {
+    const diagnostics = payload.meta.diagnostics;
+    assert.ok(
+      diagnostics.stage_counters &&
+        typeof diagnostics.stage_counters === 'object',
+      'diagnostics.stage_counters must be present in non-prod',
+    );
+    const requiredStages = [
+      'base_games',
+      'card_rows',
+      'parsed_rows',
+      'wave1_skipped_no_d2',
+      'plays_emitted',
+      'games_with_plays',
+    ];
+    for (const stage of requiredStages) {
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(diagnostics.stage_counters, stage),
+        `diagnostics.stage_counters missing ${stage}`,
+      );
+    }
+    assert.ok(
+      diagnostics.card_type_contract &&
+        diagnostics.card_type_contract.missing_playable_markets,
+      'diagnostics.card_type_contract missing playable-market report',
+    );
+  }
 
   const games = Array.isArray(payload.data) ? payload.data : [];
   const wave1Plays = games.flatMap((game) =>

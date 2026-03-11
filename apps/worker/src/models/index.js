@@ -73,6 +73,36 @@ function statusFromNumbers(values) {
   return 'missing';
 }
 
+function normalizeGoalieCertaintyToken(value) {
+  const token = String(value || '')
+    .trim()
+    .toUpperCase();
+  if (token === 'CONFIRMED' || token === 'STARTING' || token === 'OFFICIAL') {
+    return 'CONFIRMED';
+  }
+  if (token === 'EXPECTED' || token === 'PROJECTED' || token === 'LIKELY') {
+    return 'UNKNOWN';
+  }
+  if (token === 'UNKNOWN' || token === 'UNCONFIRMED' || token === 'TBD') {
+    return 'UNKNOWN';
+  }
+  return null;
+}
+
+function resolveGoalieCertainty(raw, side) {
+  const sideKey = side === 'home' ? 'home' : 'away';
+  const nested =
+    normalizeGoalieCertaintyToken(raw?.goalie?.[sideKey]?.status) ??
+    normalizeGoalieCertaintyToken(raw?.goalies?.[sideKey]?.status);
+  if (nested) return nested;
+  const flat =
+    sideKey === 'home'
+      ? normalizeGoalieCertaintyToken(raw?.goalie_home_status)
+      : normalizeGoalieCertaintyToken(raw?.goalie_away_status);
+  if (flat) return flat;
+  return 'UNKNOWN';
+}
+
 /**
  * Determine pick tier from calibrated confidence (0-1 scale).
  * Ported from personal-dashboard pick-schema.js.
@@ -306,14 +336,14 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       raw?.goalie?.away?.gsax ??
       raw?.goalies?.away?.gsax,
   );
-  const homeGoalieConfirmed =
-    goalieHomeGsax !== null && goalieHomeGsax !== undefined;
-  const awayGoalieConfirmed =
-    goalieAwayGsax !== null && goalieAwayGsax !== undefined;
+  const homeGoalieCertainty = resolveGoalieCertainty(raw, 'home');
+  const awayGoalieCertainty = resolveGoalieCertainty(raw, 'away');
+  const homeGoalieConfirmed = homeGoalieCertainty === 'CONFIRMED';
+  const awayGoalieConfirmed = awayGoalieCertainty === 'CONFIRMED';
   const goalieCertaintyStatus =
-    homeGoalieConfirmed && awayGoalieConfirmed
+    homeGoalieCertainty === 'CONFIRMED' && awayGoalieCertainty === 'CONFIRMED'
       ? 'ok'
-      : homeGoalieConfirmed || awayGoalieConfirmed
+      : homeGoalieCertainty !== 'UNKNOWN' || awayGoalieCertainty !== 'UNKNOWN'
         ? 'partial'
         : 'missing';
 
@@ -357,6 +387,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           away_goals_against: goalsAgainstAway,
           home_goalie_confirmed: homeGoalieConfirmed,
           away_goalie_confirmed: awayGoalieConfirmed,
+          home_goalie_certainty: homeGoalieCertainty,
+          away_goalie_certainty: awayGoalieCertainty,
           projected_margin: projectedMargin,
         },
         driverScore: clamp((projectedMargin + 2) / 4, 0, 1), // Normalize
@@ -401,7 +433,9 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       driverInputs: {
         home_goalie_confirmed: homeGoalieConfirmed,
         away_goalie_confirmed: awayGoalieConfirmed,
-        confirmation_source: 'gsax',
+        home_goalie_certainty: homeGoalieCertainty,
+        away_goalie_certainty: awayGoalieCertainty,
+        confirmation_source: 'status_or_gsax_proxy',
       },
       driverScore: 0.5,
       driverStatus: goalieCertaintyStatus,
@@ -567,8 +601,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
   // --- Shot Environment Driver (xGF% / 5v5 profile) ---
   if (shotQualityDelta !== null) {
     const score = clamp((shotQualityDelta + 10) / 20, 0, 1);
-    const direction =
-      score > 0.52 ? 'HOME' : score < 0.48 ? 'AWAY' : 'NEUTRAL';
+    const direction = score > 0.52 ? 'HOME' : score < 0.48 ? 'AWAY' : 'NEUTRAL';
     if (direction !== 'NEUTRAL') {
       const confidence = clamp(0.6 + Math.abs(score - 0.5) * 0.4, 0.6, 0.78);
       descriptors.push({
@@ -646,6 +679,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       awayGoalieSavePct,
       homeGoalieConfirmed: goalieHomeGsax !== null, // confirmed = have real GSaX data
       awayGoalieConfirmed: goalieAwayGsax !== null,
+      homeGoalieCertainty,
+      awayGoalieCertainty,
       homeB2B: paceRestDaysHome === 0,
       awayB2B: paceRestDaysAway === 0,
       restDaysHome: paceRestDaysHome,
@@ -654,114 +689,176 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
 
     if (paceResult) {
       if (marketTotal !== null) {
+        const projectedTotalForCard = Number(
+          paceResult.expectedTotal.toFixed(3),
+        );
         const edge =
-          Math.round((paceResult.expectedTotal - marketTotal) * 100) / 100;
+          Math.round((projectedTotalForCard - marketTotal) * 100) / 100;
         const absEdge = Math.abs(edge);
+        const direction = edge >= 0 ? 'OVER' : 'UNDER';
 
-        // Only emit when edge is meaningful (< 0.4 goals is noise in NHL totals)
-        if (absEdge >= 0.4) {
-          const direction = edge > 0 ? 'OVER' : 'UNDER';
-
-          // Confidence scales with edge magnitude + base model confidence
-          let cardConfidence;
-          if (absEdge >= 1.5)
-            cardConfidence = Math.min(paceResult.confidence + 0.1, 0.8);
-          else if (absEdge >= 1.0)
-            cardConfidence = Math.min(paceResult.confidence + 0.05, 0.78);
-          else if (absEdge >= 0.6) cardConfidence = paceResult.confidence;
-          else cardConfidence = Math.max(paceResult.confidence - 0.05, 0.58);
-          if (paceResult.goalieConfidenceCapped) {
-            cardConfidence = Math.min(cardConfidence, 0.35);
-          }
-
-          const edgeLabel = `${edge > 0 ? '+' : ''}${edge} goals`;
-          const goalieContext =
-            paceResult.homeGoalieConfirmed && paceResult.awayGoalieConfirmed
-              ? ' [confirmed goalies]'
-              : ' [goalie certainty cap]';
-
-          descriptors.push({
-            cardType: 'nhl-pace-totals',
-            cardTitle: `NHL Total: ${direction} ${paceResult.expectedTotal.toFixed(2)} vs Line ${marketTotal}`,
-            confidence: cardConfidence,
-            tier: determineTier(cardConfidence),
-            prediction: direction,
-            reasoning: `Pace model projects ${paceResult.expectedTotal.toFixed(2)} total (${paceResult.homeExpected.toFixed(2)} home + ${paceResult.awayExpected.toFixed(2)} away) vs market ${marketTotal} — edge ${edgeLabel}${goalieContext}`,
-            ev_threshold_passed: cardConfidence > 0.6,
-            driverKey: 'paceTotals',
-            driverInputs: {
-              home_goals_for: goalsForHome,
-              away_goals_for: goalsForAway,
-              home_goals_against: goalsAgainstHome,
-              away_goals_against: goalsAgainstAway,
-              home_expected: paceResult.homeExpected,
-              away_expected: paceResult.awayExpected,
-              expected_total: paceResult.expectedTotal,
-              market_total: marketTotal,
-              edge,
-              home_goalie_confirmed: paceResult.homeGoalieConfirmed,
-              away_goalie_confirmed: paceResult.awayGoalieConfirmed,
-              goalie_confidence_capped: paceResult.goalieConfidenceCapped,
-            },
-            driverScore: direction === 'OVER' ? 0.75 : 0.25,
-            driverStatus: 'ok',
-            inference_source: 'driver',
-            is_mock: false,
-            market_type: 'TOTAL',
-            selection: { side: direction },
-            line: marketTotal,
-            price:
-              direction === 'OVER'
-                ? toNumber(oddsSnapshot?.total_price_over ?? null)
-                : toNumber(oddsSnapshot?.total_price_under ?? null),
-          });
+        // Confidence scales with edge magnitude + base model confidence
+        let cardConfidence;
+        if (absEdge >= 1.5)
+          cardConfidence = Math.min(paceResult.confidence + 0.1, 0.8);
+        else if (absEdge >= 1.0)
+          cardConfidence = Math.min(paceResult.confidence + 0.05, 0.78);
+        else if (absEdge >= 0.6) cardConfidence = paceResult.confidence;
+        else cardConfidence = Math.max(paceResult.confidence - 0.05, 0.58);
+        if (paceResult.goalieConfidenceCapped) {
+          cardConfidence = Math.min(cardConfidence, 0.35);
         }
+
+        const edgeLabel = `${edge > 0 ? '+' : ''}${edge} goals`;
+        const goalieContext = ` [goalie certainty ${homeGoalieCertainty}/${awayGoalieCertainty}]`;
+        const rawContext = ` [raw ${paceResult.rawTotalModel.toFixed(2)} -> regressed ${paceResult.regressedTotalModel.toFixed(2)}]`;
+        const clampContext =
+          paceResult.totalClampedHigh || paceResult.totalClampedLow
+            ? ` [pace clamp ${paceResult.totalClampedLow ? 'low' : 'high'}]`
+            : '';
+        const modifierContext = paceResult.modifierCapApplied
+          ? ' [modifier cap applied]'
+          : '';
+        const reasonCodes = [];
+        if (paceResult.totalClampedHigh)
+          reasonCodes.push('PACE_TOTAL_CLAMPED_HIGH');
+        if (paceResult.totalClampedLow)
+          reasonCodes.push('PACE_TOTAL_CLAMPED_LOW');
+        if (paceResult.modifierCapApplied)
+          reasonCodes.push('PACE_MODIFIER_CAP_APPLIED');
+
+        descriptors.push({
+          cardType: 'nhl-pace-totals',
+          cardTitle: `NHL Total: ${direction} ${projectedTotalForCard.toFixed(2)} vs Line ${marketTotal}`,
+          confidence: cardConfidence,
+          tier: determineTier(cardConfidence),
+          prediction: direction,
+          reasoning: `Pace model projects ${projectedTotalForCard.toFixed(2)} total (${paceResult.homeExpected.toFixed(2)} home + ${paceResult.awayExpected.toFixed(2)} away) vs market ${marketTotal} — edge ${edgeLabel}${rawContext}${goalieContext}${clampContext}${modifierContext}`,
+          ev_threshold_passed: cardConfidence > 0.6,
+          driverKey: 'paceTotals',
+          driverInputs: {
+            home_goals_for: goalsForHome,
+            away_goals_for: goalsForAway,
+            home_goals_against: goalsAgainstHome,
+            away_goals_against: goalsAgainstAway,
+            home_expected: paceResult.homeExpected,
+            away_expected: paceResult.awayExpected,
+            expected_total: projectedTotalForCard,
+            model_expected_total: paceResult.expectedTotal,
+            raw_total_model: paceResult.rawTotalModel,
+            regressed_total_model: paceResult.regressedTotalModel,
+            market_total: marketTotal,
+            edge,
+            home_goalie_confirmed: paceResult.homeGoalieConfirmed,
+            away_goalie_confirmed: paceResult.awayGoalieConfirmed,
+            home_goalie_certainty: homeGoalieCertainty,
+            away_goalie_certainty: awayGoalieCertainty,
+            goalie_confidence_capped: paceResult.goalieConfidenceCapped,
+            total_clamped_high: paceResult.totalClampedHigh,
+            total_clamped_low: paceResult.totalClampedLow,
+            modifier_cap_applied: paceResult.modifierCapApplied,
+            modifier_breakdown: paceResult.modifierBreakdown,
+          },
+          driverScore: direction === 'OVER' ? 0.75 : 0.25,
+          driverStatus: 'ok',
+          inference_source: 'driver',
+          is_mock: false,
+          reason_codes: reasonCodes,
+          market_type: 'TOTAL',
+          selection: { side: direction },
+          line: marketTotal,
+          price:
+            direction === 'OVER'
+              ? toNumber(oddsSnapshot?.total_price_over ?? null)
+              : toNumber(oddsSnapshot?.total_price_under ?? null),
+        });
       }
 
-      if (Number.isFinite(paceResult.expected1pTotal)) {
-        const edge1p =
+      const firstPeriodModel =
+        paceResult.first_period_model &&
+        typeof paceResult.first_period_model === 'object'
+          ? paceResult.first_period_model
+          : null;
+      if (
+        firstPeriodModel &&
+        Number.isFinite(firstPeriodModel.projection_final)
+      ) {
+        const projected1pTotalForCard = Number(
+          firstPeriodModel.projection_final.toFixed(3),
+        );
+        const projectionRaw1p = Number(
+          Number(
+            firstPeriodModel.projection_raw ?? projected1pTotalForCard,
+          ).toFixed(3),
+        );
+        const projectionDelta1p =
           Math.round(
-            (paceResult.expected1pTotal - NHL_1P_REFERENCE_TOTAL_LINE) * 100,
+            (projected1pTotalForCard - NHL_1P_REFERENCE_TOTAL_LINE) * 100,
           ) / 100;
-        const absEdge1p = Math.abs(edge1p);
+        const classification = String(
+          firstPeriodModel.classification || 'PASS',
+        ).toUpperCase();
+        const reasonCodes = Array.isArray(firstPeriodModel.reason_codes)
+          ? firstPeriodModel.reason_codes.filter(
+              (code) => typeof code === 'string',
+            )
+          : [];
+        const goalieConfidence = String(
+          firstPeriodModel.goalie_confidence || 'MEDIUM',
+        ).toUpperCase();
+        const confidenceBase =
+          classification === 'PASS'
+            ? 0.56
+            : classification.includes('BEST')
+              ? 0.72
+              : classification.includes('PLAY')
+                ? 0.67
+                : 0.62;
+        const confidence1p = clamp(confidenceBase, 0.55, 0.75);
 
-        if (absEdge1p >= 0.2) {
-          const direction1p = edge1p > 0 ? 'OVER' : 'UNDER';
-          let confidence1p = clamp(
-            paceResult.confidence - 0.02,
-            0.55,
-            0.75,
-          ); // Slight discount for 1P
-          if (paceResult.goalieConfidenceCapped) {
-            confidence1p = Math.min(confidence1p, 0.35);
-          }
-          const goalieContext1p = paceResult.goalieConfidenceCapped
-            ? ' [goalie certainty cap]'
-            : '';
-
-          descriptors.push({
-            cardType: 'nhl-pace-1p',
-            cardTitle: `NHL 1P Total: ${direction1p} ${paceResult.expected1pTotal.toFixed(2)} vs Line ${NHL_1P_REFERENCE_TOTAL_LINE}`,
-            confidence: confidence1p,
-            tier: determineTier(confidence1p),
-            prediction: direction1p,
-            reasoning: `Pace model 1P projection: ${paceResult.expected1pTotal.toFixed(2)} vs fixed reference ${NHL_1P_REFERENCE_TOTAL_LINE} — edge ${edge1p > 0 ? '+' : ''}${edge1p} goals${goalieContext1p}`,
-            ev_threshold_passed: confidence1p > 0.6,
-            driverKey: 'paceTotals1p',
-            driverInputs: {
-              expected_1p_total: paceResult.expected1pTotal,
-              market_1p_total: NHL_1P_REFERENCE_TOTAL_LINE,
-              edge: edge1p,
-              home_goalie_confirmed: paceResult.homeGoalieConfirmed,
-              away_goalie_confirmed: paceResult.awayGoalieConfirmed,
-              goalie_confidence_capped: paceResult.goalieConfidenceCapped,
-            },
-            driverScore: direction1p === 'OVER' ? 0.75 : 0.25,
-            driverStatus: 'ok',
-            inference_source: 'driver',
-            is_mock: false,
-          });
-        }
+        descriptors.push({
+          cardType: 'nhl-pace-1p',
+          cardTitle: `NHL 1P Total: ${classification} @ ${projected1pTotalForCard.toFixed(2)}`,
+          confidence: confidence1p,
+          tier: determineTier(confidence1p),
+          prediction: classification,
+          classification,
+          action: classification === 'PASS' ? 'PASS' : 'HOLD',
+          status: classification === 'PASS' ? 'PASS' : 'WATCH',
+          reasoning: `1P model classification ${classification} from projection ${projected1pTotalForCard.toFixed(2)} (raw ${projectionRaw1p.toFixed(2)}, ref ${NHL_1P_REFERENCE_TOTAL_LINE}, goalie ${goalieConfidence.toLowerCase()}).`,
+          ev_threshold_passed: classification !== 'PASS' && confidence1p > 0.6,
+          driverKey: 'paceTotals1p',
+          driverInputs: {
+            expected_1p_total: projected1pTotalForCard,
+            projection_raw: projectionRaw1p,
+            projection_final: projected1pTotalForCard,
+            projection_delta: projectionDelta1p,
+            classification,
+            environment_tag: firstPeriodModel.environment_tag ?? null,
+            goalie_confidence: goalieConfidence,
+            pace_1p: firstPeriodModel.pace_1p ?? null,
+            suppressor_1p: firstPeriodModel.suppressor_1p ?? null,
+            accelerant_1p: firstPeriodModel.accelerant_1p ?? null,
+            reason_codes: reasonCodes,
+            model_expected_1p_total: paceResult.expected1pTotal,
+            market_1p_total: NHL_1P_REFERENCE_TOTAL_LINE,
+            edge: projectionDelta1p,
+            home_goalie_confirmed: paceResult.homeGoalieConfirmed,
+            away_goalie_confirmed: paceResult.awayGoalieConfirmed,
+            home_goalie_certainty: homeGoalieCertainty,
+            away_goalie_certainty: awayGoalieCertainty,
+            goalie_confidence_capped: paceResult.goalieConfidenceCapped,
+          },
+          driverScore: classification.includes('OVER')
+            ? 0.75
+            : classification.includes('UNDER')
+              ? 0.25
+              : 0.5,
+          driverStatus: 'ok',
+          inference_source: 'driver',
+          is_mock: false,
+          reason_codes: reasonCodes,
+        });
       }
     }
   }
@@ -1393,6 +1490,7 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
   const raw = parseRawData(oddsSnapshot?.raw_data);
 
   const descriptors = [];
+  let projectedMarginForDrivers = null;
 
   // Extract ESPN-enriched metrics
   const avgPtsHome = toNumber(
@@ -1415,6 +1513,17 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
   const restDaysAway = toNumber(
     raw?.espn_metrics?.away?.metrics?.restDays ?? raw?.rest_days_away,
   );
+  const freeThrowPctHome = toNumber(
+    raw?.espn_metrics?.home?.metrics?.freeThrowPct ??
+      raw?.free_throw_pct_home ??
+      raw?.home?.free_throw_pct,
+  );
+  const freeThrowPctAway = toNumber(
+    raw?.espn_metrics?.away?.metrics?.freeThrowPct ??
+      raw?.free_throw_pct_away ??
+      raw?.away?.free_throw_pct,
+  );
+  const totalLine = toNumber(oddsSnapshot?.total);
 
   // --- Base Projection Driver (NCAAM Formula with HCA) ---
   if (avgPtsHome && avgPtsAway && avgPtsAllowedHome && avgPtsAllowedAway) {
@@ -1427,6 +1536,7 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
 
     if (projection.homeProjected && projection.awayProjected) {
       const projectedMargin = projection.projectedMargin;
+      projectedMarginForDrivers = projectedMargin;
 
       // NCAAM confidence slightly different from NBA (college variance higher)
       let confidence = 0.55;
@@ -1559,6 +1669,64 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
         driverStatus: 'ok',
         inference_source: 'driver',
         is_mock: false,
+      });
+    }
+  }
+
+  // --- Free Throw Spread Driver (rule-based) ---
+  if (
+    totalLine !== null &&
+    totalLine < 160 &&
+    freeThrowPctHome !== null &&
+    freeThrowPctAway !== null
+  ) {
+    let prediction = null;
+    if (freeThrowPctHome > 75 && freeThrowPctAway < 75) {
+      prediction = 'HOME';
+    } else if (freeThrowPctAway > 75 && freeThrowPctHome < 75) {
+      prediction = 'AWAY';
+    }
+
+    if (prediction) {
+      if (
+        projectedMarginForDrivers === null &&
+        avgPtsHome &&
+        avgPtsAway &&
+        avgPtsAllowedHome &&
+        avgPtsAllowedAway
+      ) {
+        const projection = projectNCAAM(
+          avgPtsHome,
+          avgPtsAllowedHome,
+          avgPtsAway,
+          avgPtsAllowedAway,
+        );
+        projectedMarginForDrivers = toNumber(projection?.projectedMargin);
+      }
+
+      const ftGap = Number((freeThrowPctHome - freeThrowPctAway).toFixed(2));
+      const confidence = 0.62;
+      descriptors.push({
+        cardType: 'ncaam-ft-trend',
+        cardTitle: `NCAAM FT%-Trend: ${prediction}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction,
+        reasoning: `FT% edge (${freeThrowPctHome.toFixed(1)} vs ${freeThrowPctAway.toFixed(1)}) with total ${totalLine.toFixed(1)} under 160`,
+        ev_threshold_passed: true,
+        driverKey: 'freeThrowTrend',
+        driverInputs: {
+          home_ft_pct: freeThrowPctHome,
+          away_ft_pct: freeThrowPctAway,
+          ft_gap: ftGap,
+          total_line: totalLine,
+          projected_margin: projectedMarginForDrivers,
+        },
+        driverScore: prediction === 'HOME' ? 0.66 : 0.34,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: false,
+        marketTypes: ['spread'],
       });
     }
   }

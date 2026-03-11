@@ -119,7 +119,9 @@ function checkOddsFreshness() {
       continue;
     }
 
-    const capturedAt = DateTime.fromISO(latestOdds.captured_at, { zone: 'utc' });
+    const capturedAt = DateTime.fromISO(latestOdds.captured_at, {
+      zone: 'utc',
+    });
     const ageMinutes = nowUtc.diff(capturedAt, 'minutes').minutes;
 
     if (ageMinutes > ODDS_FRESHNESS_MAX_AGE_MINUTES) {

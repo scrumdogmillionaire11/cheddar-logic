@@ -399,7 +399,10 @@ describe('settlement coverage parity', () => {
     expect(diagnostics.finalDisplayedMissingResults).toBe(1);
     expect(diagnostics.finalDisplayedUnsettled).toBe(3);
 
-    const nbaDiagnostics = __private.getSettlementCoverageDiagnostics(db, 'NBA');
+    const nbaDiagnostics = __private.getSettlementCoverageDiagnostics(
+      db,
+      'NBA',
+    );
     expect(nbaDiagnostics.totalPending).toBe(2);
     expect(nbaDiagnostics.eligiblePendingFinalDisplayed).toBe(1);
     expect(nbaDiagnostics.settledDisplayedFinal).toBe(1);
@@ -429,7 +432,10 @@ describe('settlement coverage parity', () => {
       .all();
 
     const byCard = Object.fromEntries(
-      statuses.map((row) => [row.card_id, { status: row.status, result: row.result }]),
+      statuses.map((row) => [
+        row.card_id,
+        { status: row.status, result: row.result },
+      ]),
     );
     expect(byCard['card-p1'].status).toBe('settled');
     expect(byCard['card-p1'].result).toBe('win');
@@ -442,5 +448,48 @@ describe('settlement coverage parity', () => {
     expect(diagnosticsAfter.eligiblePendingFinalDisplayed).toBe(0);
     expect(diagnosticsAfter.finalDisplayedUnsettled).toBe(1);
     expect(diagnosticsAfter.finalDisplayedMissingResults).toBe(1);
+  });
+
+  test('computePnlUnits follows canonical forward-only formula', () => {
+    expect(__private.computePnlUnits('win', 150)).toBeCloseTo(1.5, 6);
+    expect(__private.computePnlUnits('win', -125)).toBeCloseTo(0.8, 6);
+    expect(__private.computePnlUnits('loss', -110)).toBe(-1);
+    expect(__private.computePnlUnits('push', -110)).toBe(0);
+    expect(__private.computePnlUnits('win', 0)).toBeNull();
+    expect(__private.computePnlUnits('win', null)).toBeNull();
+  });
+
+  test('computePnlOutcome flags malformed-odds anomaly without failing settlement', () => {
+    const outcome = __private.computePnlOutcome('win', 0);
+    expect(outcome).toMatchObject({
+      pnlUnits: null,
+      anomalyCode: 'PNL_ODDS_INVALID',
+    });
+  });
+
+  test('gradeLockedMarket uses first-period scores for 1P totals', () => {
+    expect(
+      __private.gradeLockedMarket({
+        marketType: 'TOTAL',
+        selection: 'OVER',
+        line: 1.5,
+        homeScore: 4,
+        awayScore: 3,
+        period: '1P',
+        firstPeriodScores: { home: 2, away: 0 },
+      }),
+    ).toBe('win');
+
+    expect(
+      __private.gradeLockedMarket({
+        marketType: 'TOTAL',
+        selection: 'UNDER',
+        line: 1.5,
+        homeScore: 4,
+        awayScore: 3,
+        period: '1P',
+        firstPeriodScores: { home: 2, away: 0 },
+      }),
+    ).toBe('loss');
   });
 });

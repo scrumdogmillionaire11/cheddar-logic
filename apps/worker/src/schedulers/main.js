@@ -42,11 +42,14 @@ const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { runSoccerModel } = require('../jobs/run_soccer_model');
 const { runNCAAMModel } = require('../jobs/run_ncaam_model');
+const { runRefreshNcaamFtCsv } = require('../jobs/refresh_ncaam_ft_csv');
 const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
 const { backfillCardResults } = require('../jobs/backfill_card_results');
 const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
-const { run: refreshTeamMetricsDaily } = require('../jobs/refresh_team_metrics_daily');
+const {
+  run: refreshTeamMetricsDaily,
+} = require('../jobs/refresh_team_metrics_daily');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -59,6 +62,12 @@ const REQUIRE_FRESH_ODDS_FOR_MODELS =
 const MODEL_ODDS_MAX_AGE_MINUTES = Number(
   process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES,
 );
+const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH !== 'false';
+const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
+  process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
+);
+const SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL =
+  process.env.SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL !== 'false';
 let lastOddsGapAlertAt = 0;
 
 /**
@@ -138,6 +147,13 @@ function keyTminus(sport, gameId, minutes) {
 
 function keyNightlySweep(nowEt) {
   return `settle|nightly|${nowEt.toISODate()}`;
+}
+
+function keyNcaamFtRefresh(nowEt) {
+  const freshnessWindow = Math.max(15, NCAAM_FT_REFRESH_MAX_AGE_MINUTES);
+  const minutesSinceMidnight = nowEt.hour * 60 + nowEt.minute;
+  const bucket = Math.floor(minutesSinceMidnight / freshnessWindow);
+  return `refresh_ncaam_ft_csv|${nowEt.toISODate()}|b${bucket}`;
 }
 
 function keyHourlySettlementSweep(nowEt) {
@@ -229,7 +245,10 @@ function getPipelineHealthJobs(nowUtc) {
     jobName: 'check_pipeline_health',
     jobKey: `health|watchdog|${nowUtc.toISO().slice(0, 16)}`, // Per 1-min window
     execute: checkPipelineHealth,
-    args: { jobKey: `health|watchdog|${nowUtc.toISO().slice(0, 16)}`, dryRun: false },
+    args: {
+      jobKey: `health|watchdog|${nowUtc.toISO().slice(0, 16)}`,
+      dryRun: false,
+    },
     reason: `pipeline health watchdog (5-min cadence)`,
   });
 
@@ -348,6 +367,30 @@ function dueTminusMinutes(nowUtc, startUtc) {
 function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   const jobs = [];
   const sports = enabledSports();
+  let ncaamFtRefreshQueued = false;
+
+  function maybeQueueNcaamFtRefresh(triggerReason) {
+    if (!ENABLE_NCAAM_FT_REFRESH) return;
+    if (ncaamFtRefreshQueued) return;
+    if (
+      wasJobRecentlySuccessful(
+        'refresh_ncaam_ft_csv',
+        NCAAM_FT_REFRESH_MAX_AGE_MINUTES,
+      )
+    ) {
+      return;
+    }
+
+    const refreshJobKey = keyNcaamFtRefresh(nowEt);
+    jobs.push({
+      jobName: 'refresh_ncaam_ft_csv',
+      jobKey: refreshJobKey,
+      execute: runRefreshNcaamFtCsv,
+      args: { jobKey: refreshJobKey, dryRun },
+      reason: `pre-NCAAM FT CSV refresh (${triggerReason})`,
+    });
+    ncaamFtRefreshQueued = true;
+  }
 
   // ========== SCHEDULES (1) ==========
   // Use new time-aware schedule refresh logic (optional, can keep old hourly for now)
@@ -359,7 +402,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     // Skip overnight hours (2am-5am ET) when no games start
     // Saves 3 fetches/day × 30 days × 8 tokens = 720 tokens/month
     const isOvernightHours = nowEt.hour >= 2 && nowEt.hour <= 5;
-    
+
     if (!isOvernightHours) {
       const jobKey = keyOddsHourly(nowEt);
       jobs.push({
@@ -373,7 +416,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
     // Optional: Add time-aware per-game odds pulls
     if (process.env.ENABLE_TIME_AWARE_ODDS === 'true') {
-      const oddsGames = games.filter((g) => shouldRefreshOddsForGame(nowUtc, g));
+      const oddsGames = games.filter((g) =>
+        shouldRefreshOddsForGame(nowUtc, g),
+      );
 
       for (const g of oddsGames) {
         const sport = String(g.sport).toLowerCase();
@@ -392,7 +437,10 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     }
 
     // Global backstop: every 10 minutes, refresh stale odds for T-6h games
-    if (process.env.ENABLE_ODDS_BACKSTOP !== 'false' && nowUtc.minute % 10 === 0) {
+    if (
+      process.env.ENABLE_ODDS_BACKSTOP !== 'false' &&
+      nowUtc.minute % 10 === 0
+    ) {
       const jobKey = `odds|global-backstop|${nowUtc.toISO().slice(0, 16)}`;
       jobs.push({
         jobName: 'refresh_stale_odds',
@@ -406,7 +454,10 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
   // ========== TEAM METRICS CACHE (2.5) ==========
   // Daily prewarm at 09:00 ET (before first model run)
-  if (process.env.ENABLE_TEAM_METRICS_CACHE !== 'false' && isFixedDue(nowEt, '09:00')) {
+  if (
+    process.env.ENABLE_TEAM_METRICS_CACHE !== 'false' &&
+    isFixedDue(nowEt, '09:00')
+  ) {
     const cacheDate = nowEt.toISODate();
     const jobKey = `refresh_team_metrics|${cacheDate}`;
     jobs.push({
@@ -425,6 +476,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     const { jobName, execute } = SPORT_JOBS[sport];
     for (const t of fixedTimes) {
       if (!isFixedDue(nowEt, t)) continue;
+      if (sport === 'ncaam') {
+        maybeQueueNcaamFtRefresh(`fixed ${t} ET`);
+      }
       const jobKey = keyFixed(sport, nowEt, t);
       jobs.push({
         jobName,
@@ -446,6 +500,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     const minsList = dueTminusMinutes(nowUtc, startUtc);
 
     for (const mins of minsList) {
+      if (sport === 'ncaam') {
+        maybeQueueNcaamFtRefresh(`T-${mins} for ${g.game_id}`);
+      }
       const jobKey = keyTminus(sport, g.game_id, mins);
       jobs.push({
         jobName: SPORT_JOBS[sport].jobName,
@@ -462,8 +519,12 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     const sweepDate = nowEt.toISODate();
 
     // Enforce singleton settlement across all processes (race mitigation)
-    const settlementGameRunning = hasRunningJobRun('settle|global|game-results');
-    const settlementCardsRunning = hasRunningJobRun('settle|global|pending-cards');
+    const settlementGameRunning = hasRunningJobRun(
+      'settle|global|game-results',
+    );
+    const settlementCardsRunning = hasRunningJobRun(
+      'settle|global|pending-cards',
+    );
 
     // 4A) Hourly settlement sweep (default enabled)
     if (
@@ -471,7 +532,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       isHourlySettlementDue(nowEt)
     ) {
       const hourlyKey = keyHourlySettlementSweep(nowEt);
-      
+
       if (!settlementGameRunning) {
         jobs.push({
           jobName: 'settle_game_results',
@@ -481,19 +542,27 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
           reason: `hourly settlement sweep ${hourlyKey}`,
         });
       } else {
-        console.log(`[Scheduler] Skipping settle_game_results — already running in another process`);
+        console.log(
+          `[Scheduler] Skipping settle_game_results — already running in another process`,
+        );
       }
-      
+
       if (!settlementCardsRunning) {
         jobs.push({
           jobName: 'settle_pending_cards',
           jobKey: 'settle|global|pending-cards',
           execute: settlePendingCards,
-          args: { jobKey: 'settle|global|pending-cards', dryRun },
+          args: {
+            jobKey: 'settle|global|pending-cards',
+            dryRun,
+            allowDisplayBackfill: false,
+          },
           reason: `hourly card settlement ${hourlyKey}`,
         });
       } else {
-        console.log(`[Scheduler] Skipping settle_pending_cards — already running in another process`);
+        console.log(
+          `[Scheduler] Skipping settle_pending_cards — already running in another process`,
+        );
       }
     }
 
@@ -506,7 +575,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         args: { jobKey: `settle|backfill-card-results|${sweepDate}`, dryRun },
         reason: `nightly card_results backfill ${sweepDate}`,
       });
-      
+
       if (!settlementGameRunning) {
         jobs.push({
           jobName: 'settle_game_results',
@@ -516,19 +585,27 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
           reason: `nightly settlement sweep ${sweepDate}`,
         });
       } else {
-        console.log(`[Scheduler] Skipping settle_game_results — already running in another process`);
+        console.log(
+          `[Scheduler] Skipping settle_game_results — already running in another process`,
+        );
       }
-      
+
       if (!settlementCardsRunning) {
         jobs.push({
           jobName: 'settle_pending_cards',
           jobKey: 'settle|global|pending-cards',
           execute: settlePendingCards,
-          args: { jobKey: 'settle|global|pending-cards', dryRun },
+          args: {
+            jobKey: 'settle|global|pending-cards',
+            dryRun,
+            allowDisplayBackfill: SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL,
+          },
           reason: `nightly card settlement ${sweepDate}`,
         });
       } else {
-        console.log(`[Scheduler] Skipping settle_pending_cards — already running in another process`);
+        console.log(
+          `[Scheduler] Skipping settle_pending_cards — already running in another process`,
+        );
       }
     }
   }
@@ -638,10 +715,17 @@ async function start() {
   );
   console.log(`  MODEL_ODDS_MAX_AGE_MINUTES: ${MODEL_ODDS_MAX_AGE_MINUTES}`);
   console.log(
+    `  ENABLE_NCAAM_FT_REFRESH: ${ENABLE_NCAAM_FT_REFRESH ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  NCAAM_FT_REFRESH_MAX_AGE_MINUTES: ${NCAAM_FT_REFRESH_MAX_AGE_MINUTES}`,
+  );
+  console.log(
     `  ENABLE_SETTLEMENT: ${process.env.ENABLE_SETTLEMENT !== 'false' ? 'true' : 'false'}`,
   );
   console.log(
     `  ENABLE_HOURLY_SETTLEMENT_SWEEP: ${process.env.ENABLE_HOURLY_SETTLEMENT_SWEEP !== 'false' ? 'true' : 'false'}`,
+    `  SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL: ${SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL ? 'true' : 'false'}`,
   );
   console.log(
     `  SETTLEMENT_HOURLY_BOUNDARY_MINUTES: ${process.env.SETTLEMENT_HOURLY_BOUNDARY_MINUTES || '5'}`,

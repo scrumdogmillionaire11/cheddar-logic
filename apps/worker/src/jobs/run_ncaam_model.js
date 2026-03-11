@@ -1,14 +1,14 @@
 /**
  * NCAAM Model Runner Job
- * 
+ *
  * Reads latest NCAAM (college basketball) odds from DB, runs inference model, and stores:
  * - card_payloads (ready-to-render web cards)
- * 
+ *
  * Portable job runner that can be called from:
  * - A cron job (node apps/worker/src/jobs/run_ncaam_model.js)
  * - A scheduler daemon (apps/worker/src/schedulers/main.js)
  * - CLI (npm run job:run-ncaam-model)
- * 
+ *
  * Exit codes:
  *   0 = success
  *   1 = failure
@@ -57,12 +57,18 @@ const NCAAM_DRIVER_WEIGHTS = {
   baseProjection: 0.4,
   restAdvantage: 0.2,
   matchupStyle: 0.2,
+  freeThrowTrend: 0.2,
+  // Backward compatibility for older persisted payloads.
+  freeThrowEdge: 0.2,
 };
 
 const NCAAM_DRIVER_CARD_TYPES = [
   'ncaam-base-projection',
   'ncaam-rest-advantage',
   'ncaam-matchup-style',
+  'ncaam-ft-trend',
+  // Legacy FT driver card type retained for clear/rewrite compatibility.
+  'ncaam-ft-spread',
 ];
 
 function attachRunId(card, runId) {
@@ -119,7 +125,9 @@ function buildGamePipelineState({
   cardReady,
   blockingReasonCodes = [],
 }) {
-  const teamMappingOk = Boolean(oddsSnapshot?.home_team && oddsSnapshot?.away_team);
+  const teamMappingOk = Boolean(
+    oddsSnapshot?.home_team && oddsSnapshot?.away_team,
+  );
   const marketLinesOk =
     hasMoneylineOdds(oddsSnapshot) ||
     hasSpreadOdds(oddsSnapshot) ||
@@ -145,7 +153,9 @@ function deriveGameBlockingReasonCodes({
   cards = [],
 }) {
   const reasonCodes = [];
-  const hasTeamMapping = Boolean(oddsSnapshot?.home_team && oddsSnapshot?.away_team);
+  const hasTeamMapping = Boolean(
+    oddsSnapshot?.home_team && oddsSnapshot?.away_team,
+  );
   const hasMarketLines =
     hasMoneylineOdds(oddsSnapshot) ||
     hasSpreadOdds(oddsSnapshot) ||
@@ -183,31 +193,35 @@ function canPriceCard(card) {
  */
 function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
   const now = new Date().toISOString();
-  let expiresAt = null;
-  if (oddsSnapshot?.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
+  const expiresAt = null;
 
   const cards = [];
 
   for (const descriptor of driverDescriptors) {
-    // Generate MONEYLINE card
-    cards.push(
-      generateCard({
-        sport: 'NCAAM',
-        gameId,
-        descriptor,
-        oddsSnapshot,
-        now,
-        expiresAt,
-        marketType: 'moneyline',
-        driverWeights: NCAAM_DRIVER_WEIGHTS,
-      }),
-    );
+    const marketTypes = Array.isArray(descriptor?.marketTypes)
+      ? descriptor.marketTypes
+      : null;
+    const allowMoneyline = !marketTypes || marketTypes.includes('moneyline');
+    const allowSpread = !marketTypes || marketTypes.includes('spread');
+
+    if (allowMoneyline) {
+      cards.push(
+        generateCard({
+          sport: 'NCAAM',
+          gameId,
+          descriptor,
+          oddsSnapshot,
+          now,
+          expiresAt,
+          marketType: 'moneyline',
+          driverWeights: NCAAM_DRIVER_WEIGHTS,
+        }),
+      );
+    }
 
     // Generate SPREAD card only when both line and price are available
     if (
+      allowSpread &&
       oddsSnapshot?.spread_home != null &&
       oddsSnapshot?.spread_away != null &&
       oddsSnapshot?.spread_price_home != null &&
@@ -326,7 +340,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
         // game while still allowing the next scheduled run to process it fresh.
         const gameJobKey = `ncaam-model|${gameId}|${jobRunId}`;
         const gameJobRunId = `job-ncaam-game-${gameId}-${jobRunId.slice(-8)}`;
-        
+
         if (!shouldRunJobKey(gameJobKey)) {
           gamePipelineStates[gameId] = buildGamePipelineState({
             oddsSnapshot: queuedOddsSnapshot,
@@ -335,7 +349,9 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
             pricingReady: false,
             cardReady: false,
           });
-          console.log(`  [RaceGuard] Skipping ${gameId} — job key already running or successful`);
+          console.log(
+            `  [RaceGuard] Skipping ${gameId} — job key already running or successful`,
+          );
           skippedRaceCount++;
           continue;
         }
@@ -351,7 +367,9 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
               pricingReady: false,
               cardReady: false,
             });
-            console.log(`  [RaceGuard] Skipping ${gameId} — another process claimed model job`);
+            console.log(
+              `  [RaceGuard] Skipping ${gameId} — another process claimed model job`,
+            );
             skippedRaceCount++;
             continue;
           }
@@ -368,7 +386,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
             oddsSnapshot.raw_data,
           );
           oddsSnapshot.raw_data = normalizedRawData;
-          
+
           // Persist enrichment to database so models have access to ESPN metrics
           try {
             updateOddsSnapshotRawData(oddsSnapshot.id, normalizedRawData);
@@ -469,7 +487,9 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
             });
           }
 
-          const pricingReady = pendingCards.some((entry) => canPriceCard(entry.card));
+          const pricingReady = pendingCards.some((entry) =>
+            canPriceCard(entry.card),
+          );
           const pipelineState = buildGamePipelineState({
             oddsSnapshot,
             projectionReady: true,
@@ -568,7 +588,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
         );
       }
 
-  return { success: true, jobRunId, ...summary };
+      return { success: true, jobRunId, ...summary };
     } catch (error) {
       if (error.code === 'JOB_RUN_ALREADY_CLAIMED') {
         console.log(

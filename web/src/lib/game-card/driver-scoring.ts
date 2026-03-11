@@ -30,6 +30,8 @@ export const DRIVER_ROLES: Record<string, DriverRole> = {
   'nhl-pace-totals':       'PRIMARY',
   'nhl-pace-1p':           'PRIMARY',
   'ncaam-base-projection': 'PRIMARY',
+  'ncaam-ft-trend':        'PRIMARY',
+  'ncaam-ft-spread':       'PRIMARY',
 
   // CONTEXT — boost/reduce only
   'nba-rest-advantage':  'CONTEXT',

@@ -1961,6 +1961,15 @@ function insertCardPayload(card) {
     };
     if (lockedMarket.line !== null) payloadData.line = lockedMarket.line;
     if (lockedMarket.lockedPrice !== null) payloadData.price = lockedMarket.lockedPrice;
+    if (lockedMarket.period) {
+      payloadData.period = lockedMarket.period;
+      payloadData.market = {
+        ...(payloadData.market && typeof payloadData.market === 'object'
+          ? payloadData.market
+          : {}),
+        period: lockedMarket.period,
+      };
+    }
     payloadData.market_key = lockedMarket.marketKey;
   }
 
@@ -2045,7 +2054,17 @@ function insertCardPayload(card) {
     settledAt: null,
     pnlUnits: null,
     metadata: lockedMarket
-      ? { lockedAt: card.createdAt || new Date().toISOString(), marketKey: lockedMarket.marketKey }
+      ? {
+          lockedAt: card.createdAt || new Date().toISOString(),
+          marketKey: lockedMarket.marketKey,
+          lockedMarket: {
+            marketType: lockedMarket.marketType,
+            selection: lockedMarket.selection,
+            line: lockedMarket.line,
+            lockedPrice: lockedMarket.lockedPrice,
+            period: lockedMarket.period || 'FULL_GAME',
+          },
+        }
       : null
   });
 
@@ -2102,7 +2121,7 @@ function getCardPayloads(gameId) {
   
   const stmt = db.prepare(`
     SELECT * FROM card_payloads
-    WHERE game_id = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
+    WHERE game_id = ?
     ORDER BY created_at DESC
   `);
   
@@ -2121,7 +2140,7 @@ function getCardPayloadsByType(cardType, limitDays = 7) {
   
   const stmt = db.prepare(`
     SELECT * FROM card_payloads
-    WHERE card_type = ? AND created_at >= ? AND (expires_at IS NULL OR expires_at > datetime('now'))
+    WHERE card_type = ? AND created_at >= ?
     ORDER BY created_at DESC
   `);
   
@@ -2139,7 +2158,7 @@ function getCardPayloadsBySport(sport, limitCards = 10) {
   
   const stmt = db.prepare(`
     SELECT * FROM card_payloads
-    WHERE sport = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
+    WHERE sport = ?
     ORDER BY game_id, created_at DESC
     LIMIT ?
   `);

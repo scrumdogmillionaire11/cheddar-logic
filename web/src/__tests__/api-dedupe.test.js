@@ -33,7 +33,7 @@ async function runTests() {
     const testSuffix = Date.now().toString(36);
     const testGameId = `test-dedupe-nhl-${testSuffix}`;
     const cardType = 'nhl-model-output';
-    const sport = 'NHL';
+    const sport = 'nhl'; // Use lowercase to match CHECK constraint
     const runId = `test-run-${testSuffix}`;
     const card1Id = `card-${testSuffix}-1`;
     const card2Id = `card-${testSuffix}-2`;
@@ -298,7 +298,10 @@ async function runTests() {
          SELECT id FROM ranked WHERE rn = 1`,
       )
       .all(tieGameId, tieCardType);
-    if (tieDedupeResult.length === 1 && tieDedupeResult[0].id === tieCardHighId) {
+    if (
+      tieDedupeResult.length === 1 &&
+      tieDedupeResult[0].id === tieCardHighId
+    ) {
       console.log(
         `✅ PASS: Tie-break picks lexicographically higher id (${tieCardHighId})`,
       );
@@ -312,7 +315,9 @@ async function runTests() {
     }
 
     // Test 5: Run-scoped fallback behavior mirrors API safety semantics
-    console.log('🧪 Test 5: Run-scoped fallback returns base rows when scoped set is empty');
+    console.log(
+      '🧪 Test 5: Run-scoped fallback returns base rows when scoped set is empty',
+    );
     const activeRunIds = [`active-run-missing-${testSuffix}`];
     client
       .prepare(
@@ -341,7 +346,10 @@ async function runTests() {
     ];
     const baseParams = [runScopeGameId, sport];
     const runIdPlaceholders = activeRunIds.map(() => '?').join(', ');
-    const runScopedWhere = [...baseWhere, `cp.run_id IN (${runIdPlaceholders})`];
+    const runScopedWhere = [
+      ...baseWhere,
+      `cp.run_id IN (${runIdPlaceholders})`,
+    ];
     const sqlForWhere = (whereSql) => `
       SELECT cp.id
       FROM card_payloads cp
@@ -353,7 +361,10 @@ async function runTests() {
       .prepare(sqlForWhere(runScopedWhere.join(' AND ')))
       .all(...baseParams, ...activeRunIds);
     if (runScopedRows.length !== 0) {
-      console.log('❌ FAIL: Expected run-scoped query to return 0 rows, got:', runScopedRows);
+      console.log(
+        '❌ FAIL: Expected run-scoped query to return 0 rows, got:',
+        runScopedRows,
+      );
       process.exit(1);
     }
 

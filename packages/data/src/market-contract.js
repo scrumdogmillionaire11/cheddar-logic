@@ -47,6 +47,31 @@ function parseLine(rawValue) {
   return Number(line.toString());
 }
 
+function normalizeMarketPeriod(rawValue) {
+  const token = normalizeToken(rawValue);
+  if (!token) return null;
+
+  if (
+    token === '1P' ||
+    token === 'P1' ||
+    token === 'FIRST_PERIOD' ||
+    token === '1ST_PERIOD'
+  ) {
+    return '1P';
+  }
+
+  if (
+    token === 'FULL_GAME' ||
+    token === 'FULL' ||
+    token === 'GAME' ||
+    token === 'REGULATION'
+  ) {
+    return 'FULL_GAME';
+  }
+
+  return null;
+}
+
 function parseAmericanOdds(rawValue) {
   if (rawValue === null || rawValue === undefined) return null;
   if (typeof rawValue === 'number' && Number.isFinite(rawValue)) return Math.trunc(rawValue);
@@ -146,6 +171,24 @@ function resolveMarketType(payload) {
   return null;
 }
 
+function resolveMarketPeriod(payload) {
+  const candidates = [
+    payload?.period,
+    payload?.time_period,
+    payload?.market?.period,
+    payload?.market_context?.period,
+    payload?.market_context?.wager?.period,
+    payload?.pricing_trace?.period,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeMarketPeriod(candidate);
+    if (normalized) return normalized;
+  }
+
+  return null;
+}
+
 function resolveSelectionRaw(payload) {
   if (payload?.selection && typeof payload.selection === 'object' && payload.selection !== null) {
     const side = payload.selection.side;
@@ -201,7 +244,7 @@ function formatLineForMarketKey(marketType, line) {
   return parsed.toString();
 }
 
-function buildMarketKey({ gameId, marketType, selection, line }) {
+function buildMarketKey({ gameId, marketType, selection, line, period = null }) {
   if (!gameId) {
     throw createMarketError('MISSING_GAME_ID', 'Cannot build market key without gameId');
   }
@@ -216,6 +259,10 @@ function buildMarketKey({ gameId, marketType, selection, line }) {
   }
 
   const lineToken = formatLineForMarketKey(canonicalMarketType, line);
+  const canonicalPeriod = normalizeMarketPeriod(period);
+  if (canonicalPeriod === '1P') {
+    return `${gameId}:${canonicalMarketType}:1P:${selection}:${lineToken}`;
+  }
   return `${gameId}:${canonicalMarketType}:${selection}:${lineToken}`;
 }
 
@@ -235,6 +282,7 @@ function deriveLockedMarketContext(payload, options = {}) {
   const kind = normalizeToken(payload?.kind || 'PLAY');
   const recType = normalizeRecommendationType(payload?.recommendation?.type);
   const marketType = resolveMarketType(payload);
+  const period = resolveMarketPeriod(payload);
 
   if (kind === 'EVIDENCE') return null;
   if (recType === 'PASS') return null;
@@ -266,14 +314,21 @@ function deriveLockedMarketContext(payload, options = {}) {
     );
   }
 
-  const marketKey = buildMarketKey({ gameId, marketType, selection, line });
+  const marketKey = buildMarketKey({
+    gameId,
+    marketType,
+    selection,
+    line,
+    period,
+  });
 
   return {
     marketType,
     selection,
     line,
     lockedPrice,
-    marketKey
+    marketKey,
+    period,
   };
 }
 
@@ -305,9 +360,11 @@ module.exports = {
   deriveLockedMarketContext,
   formatMarketSelectionLabel,
   normalizeMarketType,
+  normalizeMarketPeriod,
   normalizeSelectionForMarket,
   parseAmericanOdds,
   parseLine,
+  resolveMarketPeriod,
   resolveLockedPrice,
   toRecommendedBetType,
 };

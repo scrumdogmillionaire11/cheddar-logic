@@ -10,7 +10,6 @@
  * - sport: optional sport filter (case-insensitive)
  * - card_type: optional card type filter
  * - game_id: optional game ID filter
- * - include_expired: optional (true/false), default false
  * - dedupe: optional (default latest_per_game_type, use none for raw history)
  * - limit: optional (default 20, max 100)
  * - offset: optional (default 0, max 1000)
@@ -37,7 +36,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabaseReadOnly, closeReadOnlyInstance } from '@cheddar-logic/data';
+import {
+  getDatabaseReadOnly,
+  closeReadOnlyInstance,
+} from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
@@ -69,11 +71,6 @@ function clampNumber(
   const parsed = value ? Number.parseInt(value, 10) : NaN;
   if (Number.isNaN(parsed)) return fallback;
   return Math.min(Math.max(parsed, min), max);
-}
-
-function parseBoolean(value: string | null) {
-  if (!value) return false;
-  return ['true', '1', 'yes'].includes(value.toLowerCase());
 }
 
 function safeJsonParse(payload: string | null) {
@@ -139,7 +136,9 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   }
   try {
     const row = db
-      .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
+      .prepare(
+        `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
+      )
       .get() as { current_run_id?: string | null } | undefined;
     return row?.current_run_id ? [row.current_run_id] : [];
   } catch {
@@ -188,7 +187,6 @@ export async function GET(request: NextRequest) {
     const sport = sportParam ? sportParam.toUpperCase() : null;
     const cardType = searchParams.get('card_type');
     const gameId = searchParams.get('game_id');
-    const includeExpired = parseBoolean(searchParams.get('include_expired'));
     const dedupe = searchParams.get('dedupe');
     const limit = clampNumber(searchParams.get('limit'), 20, 1, 100);
     const offset = clampNumber(searchParams.get('offset'), 0, 0, 1000);
@@ -240,14 +238,14 @@ export async function GET(request: NextRequest) {
       baseParams.push(gameId);
     }
 
-    if (!includeExpired) {
-      baseWhere.push(
-        "(cp.expires_at IS NULL OR datetime(cp.expires_at) > datetime('now'))",
-      );
-    }
-
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
     baseWhere.push("cp.sport != 'FPL'");
+    baseWhere.push(`NOT EXISTS (
+      SELECT 1
+      FROM card_results cr
+      WHERE cr.game_id = cp.game_id
+        AND cr.status = 'settled'
+    )`);
     if (!ENABLE_WELCOME_HOME) {
       baseWhere.push("cp.card_type != 'welcome-home-v2'");
     }
@@ -291,7 +289,11 @@ export async function GET(request: NextRequest) {
     const runScopedWhereSql =
       runScopedWhere.length > 0 ? `WHERE ${runScopedWhere.join(' AND ')}` : '';
     const runScopedStmt = db.prepare(buildSql(runScopedWhereSql));
-    let rows = runScopedStmt.all(...runScopedParams, limit, offset) as CardRow[];
+    let rows = runScopedStmt.all(
+      ...runScopedParams,
+      limit,
+      offset,
+    ) as CardRow[];
 
     if (activeRunIds.length > 0 && rows.length === 0) {
       const baseWhereSql =

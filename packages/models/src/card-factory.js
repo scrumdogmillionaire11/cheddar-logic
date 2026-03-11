@@ -53,23 +53,14 @@ function generateCard({
     throw new Error('Missing required card generation parameters');
   }
 
-  const normalizedSport = typeof sport === 'string' ? sport.toUpperCase() : sport;
+  const normalizedSport =
+    typeof sport === 'string' ? sport.toUpperCase() : sport;
 
-  // Calculate expiresAt if not provided (1 hour before game time)
-  let finalExpiresAt = expiresAt;
-  if (!finalExpiresAt && oddsSnapshot?.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    finalExpiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
+  let finalExpiresAt = expiresAt || null;
 
   // Generate unique card ID
   const cardIdSuffix = `${descriptor.driverKey}${marketType ? `-${marketType}` : ''}-${gameId}-${uuidV4().slice(0, 8)}`;
   const cardId = `card-${normalizedSport.toLowerCase()}-${cardIdSuffix}`;
-
-  // Validate that expiresAt was calculated or provided
-  if (!finalExpiresAt) {
-    throw new Error('Missing expiresAt and cannot calculate from game_time_utc');
-  }
 
   // Build common card metadata
   const recommendation = buildRecommendationFromPrediction({
@@ -162,13 +153,10 @@ function buildMarketCallCard({
     throw new Error('Missing required market call card parameters');
   }
 
-  const normalizedSport = typeof sport === 'string' ? sport.toUpperCase() : sport;
+  const normalizedSport =
+    typeof sport === 'string' ? sport.toUpperCase() : sport;
 
-  let finalExpiresAt = expiresAt;
-  if (!finalExpiresAt && payloadData?.start_time_utc) {
-    const gameTime = new Date(payloadData.start_time_utc);
-    finalExpiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
+  const finalExpiresAt = expiresAt || null;
 
   const cardId = `card-${cardType}-${gameId}-${uuidV4().slice(0, 8)}`;
 
@@ -227,18 +215,27 @@ function buildBallSportPayload({
     (normalizedMarketType === 'MONEYLINE' &&
       (selectionSide === 'HOME' || selectionSide === 'AWAY') &&
       hasPrice) ||
-    ((normalizedMarketType === 'SPREAD' || normalizedMarketType === 'PUCKLINE') &&
+    ((normalizedMarketType === 'SPREAD' ||
+      normalizedMarketType === 'PUCKLINE') &&
       (selectionSide === 'HOME' || selectionSide === 'AWAY') &&
       hasLine &&
       hasPrice) ||
-    ((normalizedMarketType === 'TOTAL' || normalizedMarketType === 'TEAM_TOTAL') &&
+    ((normalizedMarketType === 'TOTAL' ||
+      normalizedMarketType === 'TEAM_TOTAL') &&
       (selectionSide === 'OVER' || selectionSide === 'UNDER') &&
       hasLine);
 
   // Derive status from expression_choice if available (prioritize cross-market decision)
   const crossMarketStatus = marketPayload?.expression_choice?.status;
   const derivedStatus = crossMarketStatus || undefined;
-  const derivedAction = derivedStatus === 'FIRE' ? 'FIRE' : derivedStatus === 'WATCH' ? 'HOLD' : derivedStatus === 'PASS' ? 'PASS' : undefined;
+  const derivedAction =
+    derivedStatus === 'FIRE'
+      ? 'FIRE'
+      : derivedStatus === 'WATCH'
+        ? 'HOLD'
+        : derivedStatus === 'PASS'
+          ? 'PASS'
+          : undefined;
 
   const payloadData = {
     game_id: oddsSnapshot?.game_id ?? null,
@@ -270,18 +267,24 @@ function buildBallSportPayload({
       projection: {
         margin_home: projectedMargin,
         total: projectedTotal,
-        team_total: Number.isFinite(descriptor.driverInputs?.projected_team_total)
+        team_total: Number.isFinite(
+          descriptor.driverInputs?.projected_team_total,
+        )
           ? descriptor.driverInputs.projected_team_total
           : Number.isFinite(descriptor.driverInputs?.team_total)
             ? descriptor.driverInputs.team_total
             : null,
         win_prob_home: winProbHome,
-        score_home: Number.isFinite(descriptor.driverInputs?.projected_score_home)
+        score_home: Number.isFinite(
+          descriptor.driverInputs?.projected_score_home,
+        )
           ? descriptor.driverInputs.projected_score_home
           : Number.isFinite(descriptor.driverInputs?.score_home)
             ? descriptor.driverInputs.score_home
             : null,
-        score_away: Number.isFinite(descriptor.driverInputs?.projected_score_away)
+        score_away: Number.isFinite(
+          descriptor.driverInputs?.projected_score_away,
+        )
           ? descriptor.driverInputs.projected_score_away
           : Number.isFinite(descriptor.driverInputs?.score_away)
             ? descriptor.driverInputs.score_away
@@ -317,7 +320,7 @@ function buildBallSportPayload({
           ? 'puck_line'
           : normalizedMarketType === 'SPREAD'
             ? 'spread'
-          : 'moneyline',
+            : 'moneyline',
     consistency: marketPayload?.consistency || {},
     expression_choice: marketPayload?.expression_choice || {},
     market_narrative: marketPayload?.market_narrative || {},
@@ -499,8 +502,8 @@ function buildNCAAMPayload({
       selection_team:
         isPlayableMarket && (isPredictionHome || isPredictionAway)
           ? isPredictionHome
-            ? oddsSnapshot?.home_team ?? null
-            : oddsSnapshot?.away_team ?? null
+            ? (oddsSnapshot?.home_team ?? null)
+            : (oddsSnapshot?.away_team ?? null)
           : null,
       projection: {
         margin_home: projectedMargin,

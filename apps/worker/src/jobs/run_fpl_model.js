@@ -70,15 +70,7 @@ function generateFPLCard(gameId, modelOutput, oddsSnapshot) {
   const cardId = `card-fpl-${gameId}-${uuidV4().slice(0, 8)}`;
   const now = new Date().toISOString();
 
-  // Card expires 1 hour before the game starts (if game_time_utc is known)
-  let expiresAt = null;
-  if (oddsSnapshot && oddsSnapshot.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    const oneHourBefore = new Date(
-      gameTime.getTime() - 60 * 60 * 1000,
-    ).toISOString();
-    expiresAt = oneHourBefore;
-  }
+  const expiresAt = null;
 
   const recommendedBetType = modelOutput.recommended_bet_type || 'unknown';
   const recommendation = buildRecommendationFromPrediction({
@@ -177,10 +169,13 @@ async function runFPLModel() {
       // Pre-flight check: Verify FPL Sage DB integrity if configured
       const fplDbPath = process.env.CHEDDAR_FPL_DB_PATH;
       if (fplDbPath) {
-        console.log(`[FPLSageAdapter] Checking FPL Sage DB integrity at: ${fplDbPath}`);
+        console.log(
+          `[FPLSageAdapter] Checking FPL Sage DB integrity at: ${fplDbPath}`,
+        );
         const integrityCheck = checkSqliteIntegrity(fplDbPath);
         if (!integrityCheck.ok) {
-          const errorMsg = `❌ FATAL: ${integrityCheck.error}\n\n` +
+          const errorMsg =
+            `❌ FATAL: ${integrityCheck.error}\n\n` +
             `Remediation steps:\n` +
             `1. Stop the scheduler: ./scripts/manage-scheduler.sh stop\n` +
             `2. Back up corrupt DB: cp "${fplDbPath}" "${fplDbPath}.corrupt.$(date +%Y%m%d-%H%M%S)"\n` +

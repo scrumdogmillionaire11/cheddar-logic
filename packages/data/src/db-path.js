@@ -118,6 +118,21 @@ function resolveDatabasePath({ env = process.env, cwd = process.cwd() } = {}) {
   if (legacyPath) return { dbPath: legacyPath, source: 'DATABASE_PATH', isExplicitFile: true };
   if (fromUrl) return { dbPath: fromUrl, source: 'DATABASE_URL', isExplicitFile: true };
 
+  // In production, CHEDDAR_DB_PATH must be set explicitly as the single source of truth.
+  // Reaching this point in production means the env is misconfigured — fail loudly rather
+  // than silently resolving to a guessed filename (e.g. "cheddar.db" when the production
+  // file is named "cheddar-prod.db").
+  if ((env.NODE_ENV || '').toLowerCase() === 'production') {
+    const error = new Error(
+      '[DB] Production requires CHEDDAR_DB_PATH to be set explicitly. ' +
+      'Do not rely on CHEDDAR_DATA_DIR or DEFAULT fallback in production — ' +
+      'the guessed filename "cheddar.db" will not match your production DB file. ' +
+      'Set CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db (or your canonical path) in .env.production.'
+    );
+    error.code = 'DB_PATH_MISSING_IN_PRODUCTION';
+    throw error;
+  }
+
   const dataDir = normalizePath(env.CHEDDAR_DATA_DIR, cwd);
   if (dataDir) {
     // Try to find the best database with card_payloads, preferring -prod

@@ -90,13 +90,15 @@ const GAME_PRESETS: FilterPreset[] = [
   {
     id: 'nhl_totals',
     name: 'NHL Totals Only',
-    description: 'All NHL total picks',
+    description: 'All NHL totals with model projection context',
     icon: '🏒',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
       sports: ['NHL'],
       markets: ['TOTAL'],
-      onlyGamesWithPicks: true,
+      statuses: FIRE_WATCH_PASS,
+      onlyGamesWithPicks: false,
+      requireTotalProjection: true,
       sortMode: 'signal_strength',
     },
   },
@@ -131,6 +133,20 @@ const GAME_PRESETS: FilterPreset[] = [
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
       cardTypes: ['nhl-pace-1p'],
+      sortMode: 'signal_strength',
+    },
+  },
+  {
+    id: 'ncaam_ft_trend',
+    name: 'NCAAM FT% Trend',
+    description: 'Spread calls for FT% edge (>75 vs <75) with total < 160',
+    icon: '🎯',
+    filters: {
+      ...DEFAULT_FILTERS_BY_MODE.game,
+      sports: ['NCAAM'],
+      markets: ['SPREAD'],
+      statuses: FIRE_WATCH,
+      cardTypes: ['ncaam-ft-trend', 'ncaam-ft-spread'],
       sortMode: 'signal_strength',
     },
   },

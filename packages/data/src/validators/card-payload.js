@@ -63,6 +63,8 @@ const schemaByCardType = {
   'ncaam-base-projection': driverPayloadSchema,
   'ncaam-rest-advantage': driverPayloadSchema,
   'ncaam-matchup-style': driverPayloadSchema,
+  'ncaam-ft-trend': driverPayloadSchema,
+  'ncaam-ft-spread': driverPayloadSchema,
 };
 
 /**

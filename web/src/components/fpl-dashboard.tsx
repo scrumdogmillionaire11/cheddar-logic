@@ -33,7 +33,9 @@ const parsePointsFromRationale = (value: unknown): number | null => {
   if (typeof value !== 'string') {
     return null;
   }
-  const match = value.match(/(\d+(?:\.\d+)?)\s*projected\s*pts|\((\d+(?:\.\d+)?)\s*pts\)/i);
+  const match = value.match(
+    /(\d+(?:\.\d+)?)\s*projected\s*pts|\((\d+(?:\.\d+)?)\s*pts\)/i,
+  );
   if (!match) {
     return null;
   }
@@ -65,8 +67,13 @@ const formatPtsDisplay = (value: number | null): string => {
 const normalizeDecisionText = (value: string | undefined): string => {
   const raw = String(value || '').trim();
   if (!raw) return '-';
-  if (raw.includes('urgent transfer(s)') || raw.includes('transfer(s) available')) {
-    const transferCount = Number((raw.match(/(\d+)\s+transfer/i) || [])[1] || 0);
+  if (
+    raw.includes('urgent transfer(s)') ||
+    raw.includes('transfer(s) available')
+  ) {
+    const transferCount = Number(
+      (raw.match(/(\d+)\s+transfer/i) || [])[1] || 0,
+    );
     if (transferCount === 1) {
       return 'No chip recommended. Use your free transfer to address a weak spot.';
     }
@@ -158,12 +165,17 @@ const renderFixtureWindowTable = (
                 </td>
                 <td className="px-2 py-2">{window.summary.dgw_count}</td>
                 <td className="px-2 py-2">{window.summary.bgw_count}</td>
-                <td className="px-2 py-2">{window.summary.next_dgw_gw ?? '-'}</td>
+                <td className="px-2 py-2">
+                  {window.summary.next_dgw_gw ?? '-'}
+                </td>
                 <td className="px-2 py-2">
                   {window.summary.weighted_fixture_score.toFixed(3)}
                 </td>
                 {window.upcoming.map((upcoming) => (
-                  <td key={`${window.name}-gw-${upcoming.gw}`} className="px-2 py-2">
+                  <td
+                    key={`${window.name}-gw-${upcoming.gw}`}
+                    className="px-2 py-2"
+                  >
                     {upcoming.is_blank ? (
                       <span className="rounded bg-rose/20 px-2 py-1 text-rose">
                         BGW
@@ -264,9 +276,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
       {/* Decision Brief */}
       <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
         <h2 className="mb-4 text-2xl font-semibold">Decision Brief</h2>
-        <div className="mb-2 text-lg font-semibold">
-          {displayDecision}
-        </div>
+        <div className="mb-2 text-lg font-semibold">{displayDecision}</div>
         <div
           className={`text-sm font-semibold uppercase ${getConfidenceTone(data.confidence)}`}
         >
@@ -308,9 +318,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
             <div className="text-xs font-semibold uppercase text-cloud/60">
               Strategy Mode
             </div>
-            <div className="text-lg font-semibold">
-              {strategyMode || '-'}
-            </div>
+            <div className="text-lg font-semibold">{strategyMode || '-'}</div>
           </div>
           <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
             <div className="text-xs font-semibold uppercase text-cloud/60">
@@ -330,7 +338,8 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
             DGW/BGW Planner (Next 8 GWs)
           </h2>
           <p className="mb-4 text-sm text-cloud/60">
-            Fixture Horizon Score: higher is better (more DGW upside, lower BGW risk, stronger medium-term fixture profile).
+            Fixture Horizon Score: higher is better (more DGW upside, lower BGW
+            risk, stronger medium-term fixture profile).
           </p>
           <div className="mb-6 grid gap-3 md:grid-cols-4 lg:grid-cols-8">
             {fixturePlanner.gw_timeline.map((row) => (
@@ -530,8 +539,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
           </div>
           {captainDelta !== null && (
             <div className="mt-4 text-xs text-cloud/60">
-              Captain delta vs vice: {captainDelta.toFixed(1)}{' '}
-              pts
+              Captain delta vs vice: {captainDelta.toFixed(1)} pts
             </div>
           )}
         </div>
@@ -584,7 +592,8 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
                   {data.chip_timing_outlook.triple_captain_window || '-'}
                 </div>
                 <div>
-                  Free Hit window: {data.chip_timing_outlook.free_hit_window || '-'}
+                  Free Hit window:{' '}
+                  {data.chip_timing_outlook.free_hit_window || '-'}
                 </div>
               </div>
               {data.chip_timing_outlook.rationale ? (
@@ -614,7 +623,9 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
                   {issue.category || 'general'} · {issue.severity || 'MEDIUM'}
                 </div>
                 {issue.detail ? (
-                  <div className="mt-1 text-xs text-cloud/70">{issue.detail}</div>
+                  <div className="mt-1 text-xs text-cloud/70">
+                    {issue.detail}
+                  </div>
                 ) : null}
                 {issue.players && issue.players.length > 0 ? (
                   <div className="mt-1 text-xs text-cloud/60">
@@ -625,9 +636,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-cloud/60">
-            No structural issues flagged.
-          </p>
+          <p className="text-sm text-cloud/60">No structural issues flagged.</p>
         )}
       </div>
 

@@ -125,7 +125,11 @@ function assessProjectionInputs(sport, oddsSnapshot) {
   };
 }
 
-function buildProjectionNullDiagnostic(sport, oddsSnapshot, projectionGate = null) {
+function buildProjectionNullDiagnostic(
+  sport,
+  oddsSnapshot,
+  projectionGate = null,
+) {
   const gate = projectionGate || assessProjectionInputs(sport, oddsSnapshot);
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const espnMetrics = raw?.espn_metrics || {};
@@ -136,7 +140,9 @@ function buildProjectionNullDiagnostic(sport, oddsSnapshot, projectionGate = nul
     gameId: oddsSnapshot?.game_id || null,
     homeTeam: oddsSnapshot?.home_team || null,
     awayTeam: oddsSnapshot?.away_team || null,
-    missingInputs: Array.isArray(gate.missing_inputs) ? gate.missing_inputs : [],
+    missingInputs: Array.isArray(gate.missing_inputs)
+      ? gate.missing_inputs
+      : [],
     projectionInputsComplete: Boolean(gate.projection_inputs_complete),
     hasHomeMetrics: hasNumericMetricSet(espnMetrics?.home?.metrics),
     hasAwayMetrics: hasNumericMetricSet(espnMetrics?.away?.metrics),

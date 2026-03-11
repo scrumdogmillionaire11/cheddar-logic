@@ -213,10 +213,9 @@ export default function ResultsPage() {
 
   const summaryCards = useMemo(() => {
     const isValidSummary = summary && typeof summary.totalCards === 'number';
-    const record =
-      summary
-        ? `${summary.wins}-${summary.losses}${summary.pushes > 0 ? `-${summary.pushes}` : ''}`
-        : 'N/A';
+    const record = summary
+      ? `${summary.wins}-${summary.losses}${summary.pushes > 0 ? `-${summary.pushes}` : ''}`
+      : 'N/A';
     return [
       {
         label: 'Record (W-L-P)',

@@ -67,7 +67,6 @@ async function seedCards() {
       SELECT COUNT(*) as count
       FROM card_payloads
       WHERE game_id = ?
-        AND (expires_at IS NULL OR expires_at > datetime('now'))
     `).get(game.game_id);
 
     if (existingCards.count > 0) {

@@ -71,17 +71,17 @@ describe('job run claim guard', () => {
 
   test('singleton settlement keys prevent concurrent execution', () => {
     const settlementKey = 'settle|global|game-results';
-    
+
     // Process A claims settlement
     const jobIdA = `settlement-a-${Date.now()}`;
     insertJobRun('settle_game_results', jobIdA, settlementKey);
-    
+
     // Process B tries to claim same settlement
     const jobIdB = `settlement-b-${Date.now()}`;
     expect(() => {
       insertJobRun('settle_game_results', jobIdB, settlementKey);
     }).toThrow(/already claimed/i);
-    
+
     // Verify Process A is still running
     expect(hasRunningJobRun(settlementKey)).toBe(true);
   });
@@ -90,14 +90,14 @@ describe('job run claim guard', () => {
     const gameId = 'abc123';
     const runId = 'run-xyz';
     const modelJobKey = `ncaam-model|${gameId}|${runId}`;
-    
+
     // Process A starts model for game
     const jobIdA = `model-a-${Date.now()}`;
     insertJobRun('run_ncaam_model', jobIdA, modelJobKey);
-    
+
     // Process B detects running job and should skip
     expect(hasRunningJobRun(modelJobKey)).toBe(true);
-    
+
     // Process B tries to claim (should fail)
     const jobIdB = `model-b-${Date.now()}`;
     expect(() => {

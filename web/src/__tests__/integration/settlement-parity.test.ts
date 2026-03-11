@@ -14,7 +14,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '../../../..');
 
-const resultsRoutePath = path.join(repoRoot, 'web/src/app/api/results/route.ts');
+const resultsRoutePath = path.join(
+  repoRoot,
+  'web/src/app/api/results/route.ts',
+);
 const resultsRouteSource = fs.readFileSync(resultsRoutePath, 'utf8');
 
 console.log('🧪 Settlement parity source contract tests');

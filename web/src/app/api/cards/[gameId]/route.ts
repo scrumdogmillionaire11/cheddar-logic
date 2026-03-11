@@ -1,7 +1,7 @@
 /**
  * GET /api/cards/[gameId]
  *
- * Fetch all non-expired card payloads for a specific game (betting dashboard only).
+ * Fetch all card payloads for a specific game (betting dashboard only).
  * FPL projections are served from cheddar-fpl-sage backend.
  *
  * Query params:
@@ -31,7 +31,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabaseReadOnly, closeReadOnlyInstance } from '@cheddar-logic/data';
+import {
+  getDatabaseReadOnly,
+  closeReadOnlyInstance,
+} from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 
 const ENABLE_WELCOME_HOME =
@@ -59,11 +62,6 @@ function clampNumber(
   const parsed = value ? Number.parseInt(value, 10) : NaN;
   if (Number.isNaN(parsed)) return fallback;
   return Math.min(Math.max(parsed, min), max);
-}
-
-function parseBoolean(value: string | null) {
-  if (!value) return false;
-  return ['true', '1', 'yes'].includes(value.toLowerCase());
 }
 
 function safeJsonParse(payload: string | null) {
@@ -129,7 +127,9 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   }
   try {
     const row = db
-      .prepare(`SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`)
+      .prepare(
+        `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
+      )
       .get() as { current_run_id?: string | null } | undefined;
     return row?.current_run_id ? [row.current_run_id] : [];
   } catch {
@@ -174,7 +174,6 @@ export async function GET(
     const { searchParams } = request.nextUrl;
     const cardType =
       searchParams.get('cardType') || searchParams.get('card_type');
-    const includeExpired = parseBoolean(searchParams.get('include_expired'));
     const dedupe = searchParams.get('dedupe');
     const limit = clampNumber(searchParams.get('limit'), 10, 1, 100);
     const offset = clampNumber(searchParams.get('offset'), 0, 0, 1000);
@@ -200,14 +199,14 @@ export async function GET(
       baseParams.push(cardType);
     }
 
-    if (!includeExpired) {
-      baseWhere.push(
-        "(expires_at IS NULL OR datetime(expires_at) > datetime('now'))",
-      );
-    }
-
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
     baseWhere.push("sport != 'FPL'");
+    baseWhere.push(`NOT EXISTS (
+      SELECT 1
+      FROM card_results cr
+      WHERE cr.game_id = card_payloads.game_id
+        AND cr.status = 'settled'
+    )`);
     if (!ENABLE_WELCOME_HOME) {
       baseWhere.push("card_type != 'welcome-home-v2'");
     }

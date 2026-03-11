@@ -40,6 +40,7 @@ export type FilterDebugFlags = {
   welcomeHome: boolean;
   hasPicks: boolean;
   clearPlay: boolean;
+  totalProjection: boolean;
 };
 
 /**
@@ -91,6 +92,7 @@ export interface GameModeFilters extends CommonFilters {
   markets: Market[];
   onlyGamesWithPicks: boolean;
   hasClearPlay: boolean; // play.market != 'NONE'
+  requireTotalProjection: boolean;
   onlyWelcomeHome?: boolean;
 
   // Card types
@@ -127,6 +129,7 @@ export const DEFAULT_GAME_FILTERS: GameModeFilters = {
   markets: ['ML', 'SPREAD', 'TOTAL'],
   onlyGamesWithPicks: false,
   hasClearPlay: false,
+  requireTotalProjection: false,
   onlyWelcomeHome: false,
   cardTypes: [],
   hideFragility: false,
@@ -471,6 +474,27 @@ function filterByClearPlay(card: GameCard, filters: GameModeFilters): boolean {
   );
 }
 
+function filterByTotalProjection(
+  card: GameCard,
+  filters: GameModeFilters,
+): boolean {
+  if (!filters.requireTotalProjection) return true;
+  if (!card.play) return false;
+
+  const canonicalMarket = canonicalToLegacyMarket(card.play.market_type);
+  const isTotalMarket =
+    canonicalMarket === 'TOTAL' || card.play.market === 'TOTAL';
+  if (!isTotalMarket) return false;
+
+  const projectedTotal =
+    typeof card.play.projectedTotal === 'number'
+      ? card.play.projectedTotal
+      : typeof card.play.projectedTeamTotal === 'number'
+        ? card.play.projectedTeamTotal
+        : null;
+  return typeof projectedTotal === 'number' && Number.isFinite(projectedTotal);
+}
+
 function filterByCardType(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.cardTypes || filters.cardTypes.length === 0) return true;
 
@@ -497,6 +521,7 @@ export function getFilterDebugFlags(
       welcomeHome: true,
       hasPicks: true,
       clearPlay: true,
+      totalProjection: true,
     };
   }
 
@@ -513,6 +538,7 @@ export function getFilterDebugFlags(
     welcomeHome: filterByWelcomeHome(card, gameFilters),
     hasPicks: filterByHasPicks(card, gameFilters),
     clearPlay: filterByClearPlay(card, gameFilters),
+    totalProjection: filterByTotalProjection(card, gameFilters),
   };
 }
 
@@ -597,7 +623,8 @@ function applyGameFilters(
     .filter((card) => filterBySearch(card, filters))
     .filter((card) => filterByWelcomeHome(card, filters))
     .filter((card) => filterByHasPicks(card, filters))
-    .filter((card) => filterByClearPlay(card, filters));
+    .filter((card) => filterByClearPlay(card, filters))
+    .filter((card) => filterByTotalProjection(card, filters));
 
   return sortCards(filtered, filters.sortMode);
 }
@@ -653,6 +680,7 @@ export function getActiveFilterCount(
   if (gameFilters.markets.length !== defaults.markets.length) count++;
   if (gameFilters.onlyGamesWithPicks) count++;
   if (gameFilters.hasClearPlay) count++;
+  if (gameFilters.requireTotalProjection) count++;
   if (ENABLE_WELCOME_HOME && gameFilters.onlyWelcomeHome) count++;
   if (gameFilters.minTier) count++;
   if (gameFilters.minConfidence) count++;

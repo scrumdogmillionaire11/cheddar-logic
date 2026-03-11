@@ -130,49 +130,55 @@ describe('Job Key Audit', () => {
     expect(violations).toHaveLength(0);
   });
 
-  maybeTest('odds ingest job keys include hour bucket (YYYY-MM-DD|HH) for production-format keys', () => {
-    const rows = db
-      .prepare(
-        `
+  maybeTest(
+    'odds ingest job keys include hour bucket (YYYY-MM-DD|HH) for production-format keys',
+    () => {
+      const rows = db
+        .prepare(
+          `
       SELECT job_key FROM job_runs
       WHERE job_name = 'pull_odds_hourly'
         AND job_key IS NOT NULL
       ORDER BY started_at DESC
       LIMIT 20
     `,
-      )
-      .all();
+        )
+        .all();
 
-    // Filter to only keys with the 4-segment production format (odds|hourly|YYYY-MM-DD|HH)
-    // Dev/test keys (odds|hourly|test, odds|hourly|test2) are expected legacy entries
-    const productionKeys = rows.filter(({ job_key }) =>
-      /^odds\|hourly\|\d{4}-\d{2}-\d{2}\|/.test(job_key),
-    );
+      // Filter to only keys with the 4-segment production format (odds|hourly|YYYY-MM-DD|HH)
+      // Dev/test keys (odds|hourly|test, odds|hourly|test2) are expected legacy entries
+      const productionKeys = rows.filter(({ job_key }) =>
+        /^odds\|hourly\|\d{4}-\d{2}-\d{2}\|/.test(job_key),
+      );
 
-    productionKeys.forEach(({ job_key }) => {
-      expect(job_key).toMatch(/^odds\|hourly\|\d{4}-\d{2}-\d{2}\|\d{2}$/);
-    });
-  });
+      productionKeys.forEach(({ job_key }) => {
+        expect(job_key).toMatch(/^odds\|hourly\|\d{4}-\d{2}-\d{2}\|\d{2}$/);
+      });
+    },
+  );
 
-  maybeTest('sport model job keys include date+window for fixed or game_id+minutes for tminus', () => {
-    const rows = db
-      .prepare(
-        `
+  maybeTest(
+    'sport model job keys include date+window for fixed or game_id+minutes for tminus',
+    () => {
+      const rows = db
+        .prepare(
+          `
       SELECT job_name, job_key FROM job_runs
       WHERE job_name IN ('run_nhl_model', 'run_nba_model', 'run_mlb_model', 'run_nfl_model')
         AND job_key IS NOT NULL
       ORDER BY started_at DESC
       LIMIT 30
     `,
-      )
-      .all();
+        )
+        .all();
 
-    rows.forEach(({ job_name, job_key }) => {
-      const valid = isValidJobKey(job_key);
-      if (!valid) {
-        console.error(`  INVALID: job_name=${job_name} job_key=${job_key}`);
-      }
-      expect(valid).toBe(true);
-    });
-  });
+      rows.forEach(({ job_name, job_key }) => {
+        const valid = isValidJobKey(job_key);
+        if (!valid) {
+          console.error(`  INVALID: job_name=${job_name} job_key=${job_key}`);
+        }
+        expect(valid).toBe(true);
+      });
+    },
+  );
 });
