@@ -450,4 +450,99 @@ describe('decision publisher v2 pipeline', () => {
       'EXACT_WAGER_MISMATCH',
     );
   });
+
+  test('allows held decisions when only live odds_context drifts but trace still matches wager', () => {
+    const payload = buildWave1Payload({
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 221.5,
+      price: -108,
+      model_prob: 0.59,
+      edge: null,
+      p_fair: null,
+      published_from_gate: true,
+      published_decision_key: 'NCAAM|game-1|TOTAL|FULL_GAME|TOTAL',
+      pricing_trace: {
+        called_market_type: 'TOTAL',
+        called_side: 'OVER',
+        called_line: 221.5,
+        called_price: -108,
+      },
+      odds_context: {
+        total: 220.5,
+        total_price_over: -110,
+      },
+    });
+
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
+      'EXACT_WAGER_MISMATCH',
+    );
+  });
+
+  test('still fails held decisions when pricing_trace mismatches payload wager fields', () => {
+    const payload = buildWave1Payload({
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 221.5,
+      price: -108,
+      model_prob: 0.59,
+      edge: null,
+      p_fair: null,
+      published_from_gate: true,
+      published_decision_key: 'NCAAM|game-1|TOTAL|FULL_GAME|TOTAL',
+      pricing_trace: {
+        called_market_type: 'TOTAL',
+        called_side: 'OVER',
+        called_line: 220.5,
+        called_price: -108,
+      },
+      odds_context: {
+        total: 221.5,
+        total_price_over: -108,
+      },
+    });
+
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'EXACT_WAGER_MISMATCH',
+    );
+    expect(payload.decision_v2.official_status).toBe('PASS');
+  });
+
+  test('uses 1P odds context fields for NHL period-scoped totals exact-wager checks', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      period: '1P',
+      line: 1.5,
+      price: -125,
+      model_prob: 0.59,
+      edge: null,
+      p_fair: null,
+      odds_context: {
+        total: 6.5,
+        total_price_over: -110,
+        total_price_under: -110,
+        total_1p: 1.5,
+        total_price_over_1p: -125,
+        total_price_under_1p: 105,
+      },
+    });
+
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
+      'EXACT_WAGER_MISMATCH',
+    );
+  });
 });

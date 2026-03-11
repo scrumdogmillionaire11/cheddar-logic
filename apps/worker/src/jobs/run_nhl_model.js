@@ -257,12 +257,21 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
 
   const selection = deriveOnePeriodSelection(payload);
   const modelLine = toFiniteNumber(payload?.driver?.inputs?.market_1p_total);
-  const line = modelLine !== null ? modelLine : 1.5;
+  const onePeriodTotal = toFiniteNumber(oddsSnapshot?.total_1p);
+  const line = modelLine !== null ? modelLine : onePeriodTotal !== null ? onePeriodTotal : 1.5;
+  const onePeriodOverPrice = toFiniteNumber(
+    oddsSnapshot?.total_price_over_1p,
+  );
+  const onePeriodUnderPrice = toFiniteNumber(
+    oddsSnapshot?.total_price_under_1p,
+  );
+  const fullGameOverPrice = toFiniteNumber(oddsSnapshot?.total_price_over);
+  const fullGameUnderPrice = toFiniteNumber(oddsSnapshot?.total_price_under);
   const proxyPrice =
     selection === 'OVER'
-      ? toFiniteNumber(oddsSnapshot?.total_price_over)
+      ? (onePeriodOverPrice !== null ? onePeriodOverPrice : fullGameOverPrice)
       : selection === 'UNDER'
-        ? toFiniteNumber(oddsSnapshot?.total_price_under)
+        ? (onePeriodUnderPrice !== null ? onePeriodUnderPrice : fullGameUnderPrice)
         : null;
   const defaultOnePeriodPrice = Math.trunc(
     toFiniteNumber(process.env.NHL_1P_DEFAULT_PRICE) || -110,
@@ -292,6 +301,24 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
   payload.price_source =
     proxyPrice !== null ? 'odds_snapshot_proxy' : 'synthetic_default';
   payload.market_variant = 'NHL_1P_TOTAL';
+  payload.odds_context = {
+    ...(payload.odds_context && typeof payload.odds_context === 'object'
+      ? payload.odds_context
+      : {}),
+    total_1p: onePeriodTotal !== null ? onePeriodTotal : line,
+    total_price_over_1p:
+      onePeriodOverPrice !== null
+        ? onePeriodOverPrice
+        : fullGameOverPrice !== null
+          ? fullGameOverPrice
+          : null,
+    total_price_under_1p:
+      onePeriodUnderPrice !== null
+        ? onePeriodUnderPrice
+        : fullGameUnderPrice !== null
+          ? fullGameUnderPrice
+          : null,
+  };
   payload.market = {
     ...(payload.market && typeof payload.market === 'object'
       ? payload.market
@@ -1301,4 +1328,8 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runNHLModel, generateNHLMarketCallCards };
+module.exports = {
+  runNHLModel,
+  generateNHLMarketCallCards,
+  applyNhlSettlementMarketContext,
+};

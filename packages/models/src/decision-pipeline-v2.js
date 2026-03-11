@@ -511,11 +511,23 @@ function nearlyEqual(a, b, epsilon = 1e-6) {
   return Math.abs(a - b) <= epsilon;
 }
 
+function resolveWagerPeriod(payload) {
+  const period =
+    asString(payload?.period) ||
+    asString(payload?.market?.period) ||
+    asString(payload?.market_context?.period) ||
+    asString(payload?.market_context?.wager?.period) ||
+    asString(payload?.pricing_trace?.period);
+  return period ? period.toUpperCase() : null;
+}
+
 function getExpectedWagerFromOddsContext(payload, marketType, direction) {
   const odds = payload?.odds_context;
   if (!odds || typeof odds !== 'object') {
     return { expectedLine: null, expectedPrice: null };
   }
+
+  const period = resolveWagerPeriod(payload);
 
   if (marketType === 'MONEYLINE') {
     return {
@@ -547,13 +559,24 @@ function getExpectedWagerFromOddsContext(payload, marketType, direction) {
   }
 
   if (marketType === 'TOTAL' || marketType === 'TEAM_TOTAL') {
+    const expectedTotal =
+      period === '1P' ? asNumber(odds.total_1p ?? odds.total) : asNumber(odds.total);
+    const expectedOverPrice =
+      period === '1P'
+        ? asNumber(odds.total_price_over_1p ?? odds.total_price_over)
+        : asNumber(odds.total_price_over);
+    const expectedUnderPrice =
+      period === '1P'
+        ? asNumber(odds.total_price_under_1p ?? odds.total_price_under)
+        : asNumber(odds.total_price_under);
+
     return {
-      expectedLine: asNumber(odds.total),
+      expectedLine: expectedTotal,
       expectedPrice:
         direction === 'OVER'
-          ? asNumber(odds.total_price_over)
+          ? expectedOverPrice
           : direction === 'UNDER'
-            ? asNumber(odds.total_price_under)
+            ? expectedUnderPrice
             : null,
     };
   }
@@ -562,14 +585,6 @@ function getExpectedWagerFromOddsContext(payload, marketType, direction) {
 }
 
 function validateExactWager({ payload, marketType, direction, line, price }) {
-  const gatePublished =
-    payload?.published_from_gate === true ||
-    asString(payload?.published_decision_key) !== null;
-
-  if (gatePublished) {
-    return true;
-  }
-
   const trace =
     payload?.pricing_trace && typeof payload.pricing_trace === 'object'
       ? payload.pricing_trace
