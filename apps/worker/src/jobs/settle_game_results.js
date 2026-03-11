@@ -416,6 +416,8 @@ function getPendingGameCoverageDiagnostics(db, cutoffUtc) {
 function applyTeamAliases(text) {
   if (!text) return '';
   return String(text)
+    .replace(/\bLONG\s+ISLAND\s+UNIVERSITY\b/gi, 'LIU')
+    .replace(/\bGRAMBLING\s+ST\b/gi, 'GRAMBLING')
     .replace(/\bGRAMBLING\s+STATE\b/gi, 'GRAMBLING ST')
     .replace(/\bUT\s+RIO\s+GRANDE\s+VALLEY\b/gi, 'UTRGV')
     .replace(/\bN\s+COLORADO\b/gi, 'NORTHERN COLORADO')
@@ -998,6 +1000,9 @@ async function settleGameResults({
       let gamesSettled = 0;
       const sportsProcessed = [];
       const errors = [];
+      let sportsRefFallbackAttempts = 0;
+      let sportsRefFallbackMatches = 0;
+      let sportsRefFallbackMisses = 0;
 
       for (const [sport, sportGames] of Object.entries(bySport)) {
         const espnPath = ESPN_SPORT_MAP[sport];
@@ -1009,13 +1014,15 @@ async function settleGameResults({
         }
 
         // Collect unique UTC dates from pending game times.
-        // Include the next calendar day too — games starting late ET (e.g. 11 PM)
-        // cross into the next UTC date, and overtime can push completion further.
+        // Include previous/next calendar day windows to tolerate timezone/date-boundary
+        // drift between scheduled start times and scoreboard index dates.
         const dateSet = new Set();
         for (const g of sportGames) {
           const d = new Date(g.game_time_utc);
           const utcDate = d.toISOString().slice(0, 10).replace(/-/g, '');
+          const prevDay = new Date(d.getTime() - 24 * 60 * 60 * 1000);
           dateSet.add(utcDate);
+          dateSet.add(prevDay.toISOString().slice(0, 10).replace(/-/g, ''));
           const nextDay = new Date(d.getTime() + 24 * 60 * 60 * 1000);
           dateSet.add(nextDay.toISOString().slice(0, 10).replace(/-/g, ''));
         }
@@ -1159,6 +1166,11 @@ async function settleGameResults({
             sport === 'NCAAM' &&
             SETTLEMENT_ENABLE_SPORTSREF_FALLBACK
           ) {
+            sportsRefFallbackAttempts++;
+            console.log(
+              `[SettleGames] SportsRef fallback attempt for ${dbGame.game_id}` +
+                ` (${dbGame.home_team} vs ${dbGame.away_team}) espnReason=${reason || 'none'}`,
+            );
             const sportsRefSummaries = await getSportsRefSummariesForGame(
               dbGame,
               sportsRefSummaryCache,
@@ -1169,12 +1181,20 @@ async function settleGameResults({
             );
             if (sportsRefResult.match) {
               selectedMatch = sportsRefResult.match;
+              sportsRefFallbackMatches++;
               console.log(
                 `[SettleGames] SportsRef fallback matched ${dbGame.game_id}` +
                   ` (${dbGame.home_team} vs ${dbGame.away_team}) method=${sportsRefResult.match.method}`,
               );
             } else {
-              missReason = `${reason};${sportsRefResult.reason}`;
+              sportsRefFallbackMisses++;
+              missReason = [reason, sportsRefResult.reason]
+                .filter(Boolean)
+                .join(';');
+              console.warn(
+                `[SettleGames] SportsRef fallback no-match for ${dbGame.game_id}` +
+                  ` (${dbGame.home_team} vs ${dbGame.away_team}) reason=${sportsRefResult.reason}`,
+              );
             }
           }
 
@@ -1286,6 +1306,11 @@ async function settleGameResults({
       console.log(
         `[SettleGames] Job complete — ${gamesSettled} games settled across ${sportsProcessed.join(', ') || 'no sports'}`,
       );
+      if (SETTLEMENT_ENABLE_SPORTSREF_FALLBACK) {
+        console.log(
+          `[SettleGames] SportsRef fallback summary — attempts=${sportsRefFallbackAttempts}, matches=${sportsRefFallbackMatches}, misses=${sportsRefFallbackMisses}`,
+        );
+      }
 
       if (errors.length > 0) {
         console.log(`[SettleGames] ${errors.length} errors:`);
