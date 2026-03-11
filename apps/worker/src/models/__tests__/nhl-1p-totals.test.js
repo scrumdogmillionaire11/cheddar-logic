@@ -93,7 +93,30 @@ describe('NHL 1P model output contract', () => {
   });
 
   test('returns PASS in dead-zone environments', () => {
-    const descriptor = getOnePeriodDescriptor();
+    const descriptor = getOnePeriodDescriptor({
+      raw_data: JSON.stringify({
+        goalie: {
+          home: { name: 'Andrei Vasilevskiy', status: 'CONFIRMED' },
+          away: { name: 'Ilya Sorokin', status: 'CONFIRMED' },
+        },
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgGoalsFor: 3.1,
+              avgGoalsAgainst: 2.9,
+              restDays: 1,
+            },
+          },
+          away: {
+            metrics: {
+              avgGoalsFor: 3.0,
+              avgGoalsAgainst: 2.9,
+              restDays: 1,
+            },
+          },
+        },
+      }),
+    });
     expect(descriptor).toBeDefined();
     const classification = descriptor.driverInputs.classification;
     const projection = descriptor.driverInputs.projection_final;

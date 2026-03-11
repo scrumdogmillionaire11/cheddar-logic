@@ -2038,10 +2038,17 @@ export default function CardsPageClient() {
       ): value is NonNullable<GameData['plays'][number]['goalie_home_status']> =>
         typeof value === 'string' && value.length > 0,
     );
+    const onePeriodMarketLine =
+      typeof onePeriodTotalsPlay?.line === 'number'
+        ? onePeriodTotalsPlay.line
+        : 1.5;
     const edgePoints1p =
       typeof onePeriodTotalsPlay?.edge === 'number'
         ? onePeriodTotalsPlay.edge
-        : undefined;
+        : typeof projectedTotal1p === 'number' &&
+            typeof onePeriodMarketLine === 'number'
+          ? Number((projectedTotal1p - onePeriodMarketLine).toFixed(2))
+          : undefined;
     const resolvedModelProb =
       typeof displayPlay.modelProb === 'number'
         ? displayPlay.modelProb
@@ -2077,12 +2084,20 @@ export default function CardsPageClient() {
       typeof displayPlay.projectedScoreAway === 'number'
         ? displayPlay.projectedScoreAway
         : undefined;
+    const marketLine =
+      typeof displayPlay.line === 'number' ? displayPlay.line : undefined;
+    const projectedLineValue =
+      typeof projectedTeamTotal === 'number'
+        ? projectedTeamTotal
+        : typeof projectedTotal === 'number'
+          ? projectedTotal
+          : undefined;
     const edgePoints =
       typeof displayPlay.edgePoints === 'number'
         ? displayPlay.edgePoints
-        : undefined;
-    const marketLine =
-      typeof displayPlay.line === 'number' ? displayPlay.line : undefined;
+        : typeof projectedLineValue === 'number' && typeof marketLine === 'number'
+          ? Number((projectedLineValue - marketLine).toFixed(2))
+          : undefined;
     const marketType = displayPlay.market_type;
     const isSpreadLikeMarket =
       marketType === 'SPREAD' || marketType === 'PUCKLINE';
@@ -2231,13 +2246,37 @@ export default function CardsPageClient() {
                 </p>
                 {(() => {
                   if (!totalProjectionDisplayPlay?.projectedTotal) return null;
-                  const edge = totalProjectionDisplayPlay.edge ?? 0;
-                  const sign = edge >= 0 ? '+' : '';
+                  const marketTotalLine =
+                    typeof originalGame.odds?.total === 'number'
+                      ? originalGame.odds.total
+                      : undefined;
+                  const computedEdge =
+                    typeof marketTotalLine === 'number'
+                      ? Number(
+                          (
+                            totalProjectionDisplayPlay.projectedTotal -
+                            marketTotalLine
+                          ).toFixed(2),
+                        )
+                      : undefined;
+                  const edge =
+                    typeof totalProjectionDisplayPlay.edge === 'number'
+                      ? totalProjectionDisplayPlay.edge
+                      : computedEdge;
+                  if (typeof edge !== 'number') return null;
+                  const sign = edge >= 0 ? '+' : '-';
                   const color = edge >= 0 ? 'text-emerald-400' : 'text-red-400';
+                  const prediction =
+                    typeof totalProjectionDisplayPlay.prediction === 'string' &&
+                    totalProjectionDisplayPlay.prediction.length > 0
+                      ? totalProjectionDisplayPlay.prediction
+                      : edge >= 0
+                        ? 'OVER'
+                        : 'UNDER';
                   return (
                     <p className={`font-mono text-xs mt-0.5 ${color}`}>
-                      Model: {totalProjectionDisplayPlay.projectedTotal} ({sign}
-                      {edge} {totalProjectionDisplayPlay.prediction})
+                      Model: {totalProjectionDisplayPlay.projectedTotal.toFixed(2)} ({sign}
+                      {Math.abs(edge).toFixed(2)} {prediction})
                     </p>
                   );
                 })()}
@@ -2264,7 +2303,7 @@ export default function CardsPageClient() {
                     <p
                       className={`font-mono text-xs mt-0.5 opacity-75 ${color1p}`}
                     >
-                      1P: {total1pPlay.projectedTotal} ({modelCall})
+                      1P: {total1pPlay.projectedTotal.toFixed(2)} ({modelCall})
                     </p>
                   );
                 })()}

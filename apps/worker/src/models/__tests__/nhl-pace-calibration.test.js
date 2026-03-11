@@ -235,6 +235,9 @@ describe('NHL 1P calibration rails', () => {
     expect(result.first_period_model.reason_codes).toContain(
       'NHL_1P_GOALIE_UNCERTAIN',
     );
+    expect(result.first_period_model.reason_codes).not.toContain(
+      'NHL_1P_PASS_DEAD_ZONE',
+    );
   });
 
   test('zeros out goalie 1P directional effect when certainty is UNKNOWN', () => {
