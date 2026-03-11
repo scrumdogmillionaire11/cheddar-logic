@@ -1,255 +1,406 @@
-/**
- * Settlement Pipeline Integration Test
- *
- * Validates the complete settlement flow:
- * 1. Backfill card_results where missing
- * 2. Settle game_results from ESPN
- * 3. Settle pending_cards with win/loss logic
- * 4. Verify tracking_stats are accurate
- *
- * Uses real test data to ensure settlement logic is sound.
- */
-
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
-const sqlite3 = require('sqlite3');
+const {
+  buildMarketKey,
+  closeDatabase,
+  getDatabase,
+  runMigrations,
+} = require('@cheddar-logic/data');
+const {
+  settlePendingCards,
+} = require('../jobs/settle_pending_cards.js');
 
-const DEFAULT_DB_PATH = path.resolve(
-  __dirname,
-  '../../packages/data/cheddar.db',
-);
-const DB_PATH = process.env.SETTLEMENT_DB_PATH || DEFAULT_DB_PATH;
-const HAS_DB = fs.existsSync(DB_PATH);
+const TEST_DB_PATH = '/tmp/cheddar-test-settlement-pipeline.db';
+const LOCK_PATH = `${TEST_DB_PATH}.lock`;
 
-const RED = '\x1b[31m';
-const GREEN = '\x1b[32m';
-const YELLOW = '\x1b[33m';
-const RESET = '\x1b[0m';
-
-let db;
-let testsPassed = 0;
-let testsFailed = 0;
-
-function log(msg) {
-  console.log(`[Settlement Pipeline] ${msg}`);
-}
-
-function ok(msg) {
-  console.log(`${GREEN}✓${RESET} ${msg}`);
-  testsPassed++;
-}
-
-function fail(msg) {
-  console.error(`${RED}✗${RESET} ${msg}`);
-  testsFailed++;
-}
-
-async function runQuery(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows || []);
-    });
-  });
-}
-
-async function runTest() {
-  log(`\nStarting settlement pipeline integration test\n`);
-
-  // Connect to DB
-  db = new sqlite3.Database(DB_PATH, (err) => {
-    if (err) {
-      fail(`Failed to open database: ${err.message}`);
-      throw new Error(`Failed to open database: ${err.message}`);
-    }
-  });
-
+function removeIfExists(filePath) {
   try {
-    // Test 1: Check backfill works
-    log('Test 1: Backfill card_results');
-    await runBackfill();
-
-    // Test 2: Validate card_results structure
-    log('\nTest 2: Card results structure');
-    await validateCardResults();
-
-    // Test 3: Validate settlement pipeline executable
-    log('\nTest 3: Settlement jobs are executable');
-    await validateJobsPaths();
-
-    // Test 4: Database integrity
-    log('\nTest 4: Database integrity');
-    await validateDatabaseIntegrity();
-
-    // Test 5: Tracking stats calculation
-    log('\nTest 5: Tracking stats aggregation');
-    await validateTrackingStats();
-  } catch (err) {
-    fail(`Test error: ${err.message}`);
-  }
-
-  db.close();
-
-  // Summary
-  console.log(`\n${YELLOW}─── Test Summary ───${RESET}`);
-  console.log(`${GREEN}Passed: ${testsPassed}${RESET}`);
-  if (testsFailed > 0) {
-    console.error(`${RED}Failed: ${testsFailed}${RESET}`);
-  }
-
-  if (testsFailed > 0) {
-    throw new Error(`Settlement pipeline failed (${testsFailed} failures)`);
-  }
-  return { testsPassed, testsFailed };
-}
-
-async function runBackfill() {
-  try {
-    execSync('npm run job:backfill-card-results', {
-      cwd: path.join(__dirname, '..'),
-      stdio: 'pipe',
-    });
-    ok('Backfill job executed');
-  } catch (e) {
-    fail(`Backfill job failed: ${e.message}`);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch {
+    // best effort
   }
 }
 
-async function validateCardResults() {
-  const results = await runQuery('SELECT COUNT(*) as cnt FROM card_results');
-  const count = results[0]?.cnt || 0;
-
-  if (count > 0) {
-    ok(`Found ${count} card_results rows`);
-  } else {
-    fail('No card_results rows found');
-  }
-
-  // Check card_results schema
-  const rows = await runQuery(`
-    SELECT id, card_id, sport, status, settled_at
-    FROM card_results
-    LIMIT 1
-  `);
-
-  if (rows.length > 0) {
-    const row = rows[0];
-    if (row.id && row.card_id && row.sport && row.status) {
-      ok('card_results has required columns');
-    } else {
-      fail('card_results missing required columns');
+function removeBackupsForDb() {
+  const backupsDir = path.join(path.dirname(TEST_DB_PATH), 'backups');
+  if (!fs.existsSync(backupsDir)) return;
+  for (const entry of fs.readdirSync(backupsDir)) {
+    if (
+      entry.startsWith('cheddar-before-settle-cards-') &&
+      entry.endsWith('.db')
+    ) {
+      removeIfExists(path.join(backupsDir, entry));
     }
   }
 }
 
-async function validateJobsPaths() {
-  const jobs = [
-    'job:backfill-card-results',
-    'job:settle-games',
-    'job:settle-cards',
-  ];
-
-  for (const job of jobs) {
-    try {
-      execSync(
-        `npm run ${job} --help 2>/dev/null || npm run ${job} 2>&1 | head -1`,
-        { cwd: path.join(__dirname, '..'), stdio: 'pipe' },
-      );
-      ok(`Job executable: ${job}`);
-    } catch (e) {
-      fail(`Job missing or broken: ${job}`);
-    }
-  }
+function runInsert(db, sql, ...params) {
+  db.prepare(sql).run(...params);
 }
 
-async function validateDatabaseIntegrity() {
-  try {
-    // Check foreign keys constraint
-    const result = await runQuery('PRAGMA foreign_keys');
-    const enabled =
-      result[0]?.foreign_keys === 1 || result[0]?.foreign_keys === '1';
+function insertScenario({
+  db,
+  now,
+  gameId,
+  sport,
+  homeTeam,
+  awayTeam,
+  finalHome,
+  finalAway,
+  firstPeriodHome = null,
+  firstPeriodAway = null,
+  cardId,
+  resultId,
+  cardType,
+  selection,
+  line,
+  lockedPrice,
+  period = 'FULL_GAME',
+}) {
+  runInsert(
+    db,
+    `
+    INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    `g-${gameId}`,
+    sport,
+    gameId,
+    homeTeam,
+    awayTeam,
+    now,
+    'completed',
+  );
 
-    if (enabled) {
-      ok('Foreign key constraints enabled');
-    } else {
-      fail('Foreign key constraints disabled');
-    }
+  runInsert(
+    db,
+    `
+    INSERT INTO game_results (
+      id, game_id, sport, final_score_home, final_score_away, status, result_source, settled_at, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    `gr-${gameId}`,
+    gameId,
+    sport,
+    finalHome,
+    finalAway,
+    'final',
+    'manual',
+    now,
+    JSON.stringify({
+      firstPeriodScores:
+        Number.isFinite(firstPeriodHome) && Number.isFinite(firstPeriodAway)
+          ? { home: firstPeriodHome, away: firstPeriodAway }
+          : null,
+    }),
+  );
 
-    // Check tables exist
-    const tables = await runQuery(
-      `SELECT name FROM sqlite_master WHERE type='table'`,
-    );
-    const tableNames = tables.map((t) => t.name);
+  const payloadData = {
+    game_id: gameId,
+    sport,
+    kind: 'PLAY',
+    status: 'FIRE',
+    home_team: homeTeam,
+    away_team: awayTeam,
+    market_type: 'TOTAL',
+    selection: { side: selection },
+    line,
+    price: lockedPrice,
+    period,
+  };
 
-    const required = [
-      'games',
-      'odds_snapshots',
-      'card_results',
-      'card_payloads',
-      'tracking_stats',
-    ];
-    for (const table of required) {
-      if (tableNames.includes(table)) {
-        ok(`Table exists: ${table}`);
-      } else {
-        fail(`Table missing: ${table}`);
-      }
-    }
-  } catch (e) {
-    fail(`Database integrity check failed: ${e.message}`);
-  }
-}
+  runInsert(
+    db,
+    `
+    INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    cardId,
+    gameId,
+    String(sport).toLowerCase(),
+    cardType,
+    `Card ${cardId}`,
+    now,
+    JSON.stringify(payloadData),
+  );
 
-async function validateTrackingStats() {
-  try {
-    const stats = await runQuery(`
-      SELECT sport, wins, losses, pushes, pnl
-      FROM tracking_stats
-      WHERE sport IN ('NHL', 'NBA', 'NCAAM')
-    `);
+  runInsert(
+    db,
+    `
+    INSERT INTO card_display_log (
+      pick_id, run_id, game_id, sport, market_type, selection, line, odds, displayed_at, api_endpoint
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    cardId,
+    'run-test',
+    gameId,
+    sport,
+    'TOTAL',
+    selection,
+    line,
+    lockedPrice,
+    now,
+    '/api/games',
+  );
 
-    if (stats.length > 0) {
-      ok(`Found ${stats.length} tracking_stats records`);
-
-      stats.forEach((stat) => {
-        const total =
-          (stat.wins || 0) + (stat.losses || 0) + (stat.pushes || 0);
-        if (total > 0) {
-          ok(
-            `${stat.sport}: ${stat.wins}W / ${stat.losses}L / ${stat.pushes}P (pnl: ${stat.pnl?.toFixed(2) || 'N/A'})`,
-          );
-        }
-      });
-    } else {
-      fail('No tracking_stats found');
-    }
-  } catch (e) {
-    fail(`Tracking stats validation failed: ${e.message}`);
-  }
-}
-
-const maybeTest = HAS_DB && process.env.RUN_SETTLEMENT_INTEGRATION_TESTS ? test : test.skip; // Disabled: requires real card_results DB
-
-maybeTest('settlement pipeline integration', async () => {
-  await runTest();
-});
-
-if (!HAS_DB) {
-  console.warn(
-    `[Settlement Pipeline] Skipping integration test; DB not found at ${DB_PATH}`,
+  runInsert(
+    db,
+    `
+    INSERT INTO card_results (
+      id, card_id, game_id, sport, card_type, recommended_bet_type,
+      status, market_key, market_type, selection, line, locked_price
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    resultId,
+    cardId,
+    gameId,
+    String(sport).toLowerCase(),
+    cardType,
+    'total',
+    'pending',
+    buildMarketKey({
+      gameId,
+      marketType: 'TOTAL',
+      selection,
+      line,
+      period,
+    }),
+    'TOTAL',
+    selection,
+    line,
+    lockedPrice,
   );
 }
 
-if (require.main === module) {
-  if (!HAS_DB) {
-    console.error(`[Settlement Pipeline] DB not found at ${DB_PATH}`);
-    process.exit(1);
-  }
-  runTest()
-    .then(() => process.exit(0))
-    .catch((err) => {
-      console.error('Unhandled error:', err);
-      process.exit(1);
+describe('settlement pipeline integration (totals + 1P)', () => {
+  beforeAll(async () => {
+    process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+
+    removeIfExists(TEST_DB_PATH);
+    removeIfExists(LOCK_PATH);
+    removeBackupsForDb();
+
+    await runMigrations();
+    const db = getDatabase();
+    const now = new Date().toISOString();
+
+    insertScenario({
+      db,
+      now,
+      gameId: 'nba-over-win',
+      sport: 'NBA',
+      homeTeam: 'Home NBA A',
+      awayTeam: 'Away NBA A',
+      finalHome: 112,
+      finalAway: 103,
+      cardId: 'card-nba-over-win',
+      resultId: 'result-nba-over-win',
+      cardType: 'nba-totals-call',
+      selection: 'OVER',
+      line: 214.5,
+      lockedPrice: -110,
     });
-}
+
+    insertScenario({
+      db,
+      now,
+      gameId: 'nba-under-loss',
+      sport: 'NBA',
+      homeTeam: 'Home NBA B',
+      awayTeam: 'Away NBA B',
+      finalHome: 120,
+      finalAway: 110,
+      cardId: 'card-nba-under-loss',
+      resultId: 'result-nba-under-loss',
+      cardType: 'nba-totals-call',
+      selection: 'UNDER',
+      line: 220.5,
+      lockedPrice: -110,
+    });
+
+    insertScenario({
+      db,
+      now,
+      gameId: 'nba-over-null-pnl',
+      sport: 'NBA',
+      homeTeam: 'Home NBA C',
+      awayTeam: 'Away NBA C',
+      finalHome: 109,
+      finalAway: 101,
+      cardId: 'card-nba-over-null-pnl',
+      resultId: 'result-nba-over-null-pnl',
+      cardType: 'nba-totals-call',
+      selection: 'OVER',
+      line: 205.5,
+      lockedPrice: 0,
+    });
+
+    insertScenario({
+      db,
+      now,
+      gameId: 'nhl-total-under-win',
+      sport: 'NHL',
+      homeTeam: 'Home NHL A',
+      awayTeam: 'Away NHL A',
+      finalHome: 2,
+      finalAway: 1,
+      firstPeriodHome: 1,
+      firstPeriodAway: 0,
+      cardId: 'card-nhl-total-under-win',
+      resultId: 'result-nhl-total-under-win',
+      cardType: 'nhl-totals-call',
+      selection: 'UNDER',
+      line: 5.5,
+      lockedPrice: 105,
+    });
+
+    insertScenario({
+      db,
+      now,
+      gameId: 'nhl-total-push',
+      sport: 'NHL',
+      homeTeam: 'Home NHL B',
+      awayTeam: 'Away NHL B',
+      finalHome: 3,
+      finalAway: 3,
+      firstPeriodHome: 1,
+      firstPeriodAway: 1,
+      cardId: 'card-nhl-total-push',
+      resultId: 'result-nhl-total-push',
+      cardType: 'nhl-totals-call',
+      selection: 'OVER',
+      line: 6.0,
+      lockedPrice: -110,
+    });
+
+    insertScenario({
+      db,
+      now,
+      gameId: 'nhl-1p-over-win',
+      sport: 'NHL',
+      homeTeam: 'Home NHL C',
+      awayTeam: 'Away NHL C',
+      finalHome: 4,
+      finalAway: 2,
+      firstPeriodHome: 2,
+      firstPeriodAway: 0,
+      cardId: 'card-nhl-1p-over-win',
+      resultId: 'result-nhl-1p-over-win',
+      cardType: 'nhl-pace-1p',
+      selection: 'OVER',
+      line: 1.5,
+      lockedPrice: -110,
+      period: '1P',
+    });
+
+    insertScenario({
+      db,
+      now,
+      gameId: 'nhl-1p-under-loss',
+      sport: 'NHL',
+      homeTeam: 'Home NHL D',
+      awayTeam: 'Away NHL D',
+      finalHome: 4,
+      finalAway: 3,
+      firstPeriodHome: 2,
+      firstPeriodAway: 1,
+      cardId: 'card-nhl-1p-under-loss',
+      resultId: 'result-nhl-1p-under-loss',
+      cardType: 'nhl-pace-1p',
+      selection: 'UNDER',
+      line: 1.5,
+      lockedPrice: -110,
+      period: '1P',
+    });
+
+    insertScenario({
+      db,
+      now,
+      gameId: 'nhl-1p-missing-period-score',
+      sport: 'NHL',
+      homeTeam: 'Home NHL E',
+      awayTeam: 'Away NHL E',
+      finalHome: 3,
+      finalAway: 2,
+      cardId: 'card-nhl-1p-missing-period-score',
+      resultId: 'result-nhl-1p-missing-period-score',
+      cardType: 'nhl-pace-1p',
+      selection: 'OVER',
+      line: 1.5,
+      lockedPrice: -110,
+      period: '1P',
+    });
+  });
+
+  afterAll(() => {
+    closeDatabase();
+    removeIfExists(TEST_DB_PATH);
+    removeIfExists(LOCK_PATH);
+    removeBackupsForDb();
+  });
+
+  test('settles NBA/NHL totals and NHL 1P totals with market-specific grading', async () => {
+    const result = await settlePendingCards();
+    expect(result.success).toBe(true);
+
+    const db = getDatabase();
+    const rows = db
+      .prepare(
+        `
+        SELECT card_id, status, result, pnl_units
+        FROM card_results
+        ORDER BY card_id
+      `,
+      )
+      .all();
+
+    const byCardId = Object.fromEntries(rows.map((row) => [row.card_id, row]));
+
+    expect(byCardId['card-nba-over-win']).toMatchObject({
+      status: 'settled',
+      result: 'win',
+    });
+    expect(byCardId['card-nba-under-loss']).toMatchObject({
+      status: 'settled',
+      result: 'loss',
+    });
+    expect(byCardId['card-nba-over-null-pnl']).toMatchObject({
+      status: 'settled',
+      result: 'win',
+      pnl_units: null,
+    });
+
+    expect(byCardId['card-nhl-total-under-win']).toMatchObject({
+      status: 'settled',
+      result: 'win',
+    });
+    expect(byCardId['card-nhl-total-push']).toMatchObject({
+      status: 'settled',
+      result: 'push',
+      pnl_units: 0,
+    });
+
+    expect(byCardId['card-nhl-1p-over-win']).toMatchObject({
+      status: 'settled',
+      result: 'win',
+    });
+    expect(byCardId['card-nhl-1p-under-loss']).toMatchObject({
+      status: 'settled',
+      result: 'loss',
+    });
+    expect(byCardId['card-nhl-1p-missing-period-score']).toMatchObject({
+      status: 'error',
+      result: 'void',
+    });
+
+    expect(result.coverage.marketDailyCounts).toEqual({
+      NBA_TOTAL: { pending: 3, settled: 3, failed: 0 },
+      NHL_TOTAL: { pending: 2, settled: 2, failed: 0 },
+      NHL_1P_TOTAL: { pending: 3, settled: 2, failed: 1 },
+    });
+  });
+});

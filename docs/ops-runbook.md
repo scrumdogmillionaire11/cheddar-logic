@@ -268,6 +268,23 @@ Expected relationships:
 - For the same recent window, `displayed_last_2h = pending_displayed + settled_displayed_last_2h`.
 - `/api/results` remains display-log scoped (no phantom rows outside `card_display_log`).
 
+### Settlement contract details (totals + P/L)
+
+- Canonical P/L formula:
+  - `win`: `odds > 0 ? odds/100 : 100/abs(odds)`
+  - `loss`: `-1`
+  - `push`: `0`
+- Malformed odds (`null`, non-numeric, or `0`) do not block W/L grading.
+  - Settlements still write `status='settled'` and `result`.
+  - `pnl_units` is set to `NULL` when a win cannot compute units from bad odds.
+  - Worker log emits `PNL_ODDS_INVALID` anomaly lines.
+- NHL 1P totals settlement requires first-period scores in `game_results.metadata.firstPeriodScores` (`home`, `away`).
+  - If missing, card settles to `status='error'` + `result='void'` with `settlement_error.code='MISSING_PERIOD_SCORE'`.
+- `job:settle-cards` logs market-bucket daily counters for:
+  - `NBA_TOTAL`
+  - `NHL_TOTAL`
+  - `NHL_1P_TOTAL`
+
 ### DB path drop-in precedence (critical)
 
 `CHEDDAR_DB_PATH` for both services must come from exactly one drop-in per unit:

@@ -210,6 +210,128 @@ function canPriceCard(card) {
   return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
 }
 
+function toFiniteNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function deriveOnePeriodSelection(payloadData) {
+  const classification = String(
+    payloadData?.classification || payloadData?.prediction || '',
+  ).toUpperCase();
+  if (classification.includes('OVER')) return 'OVER';
+  if (classification.includes('UNDER')) return 'UNDER';
+  return null;
+}
+
+function applyNhlSettlementMarketContext(card, oddsSnapshot) {
+  if (!card?.payloadData || typeof card.payloadData !== 'object') return;
+  const payload = card.payloadData;
+  const marketType = String(payload.market_type || '').toUpperCase();
+
+  if (marketType === 'TOTAL') {
+    payload.period = payload.period || 'FULL_GAME';
+    payload.market = {
+      ...(payload.market && typeof payload.market === 'object'
+        ? payload.market
+        : {}),
+      period: payload.period,
+    };
+    if (payload.market_context && typeof payload.market_context === 'object') {
+      payload.market_context = {
+        ...payload.market_context,
+        period: payload.period,
+        wager: {
+          ...(payload.market_context.wager &&
+          typeof payload.market_context.wager === 'object'
+            ? payload.market_context.wager
+            : {}),
+          period: payload.period,
+        },
+      };
+    }
+    return;
+  }
+
+  if (card.cardType !== 'nhl-pace-1p') return;
+
+  const selection = deriveOnePeriodSelection(payload);
+  const modelLine = toFiniteNumber(payload?.driver?.inputs?.market_1p_total);
+  const line = modelLine !== null ? modelLine : 1.5;
+  const proxyPrice =
+    selection === 'OVER'
+      ? toFiniteNumber(oddsSnapshot?.total_price_over)
+      : selection === 'UNDER'
+        ? toFiniteNumber(oddsSnapshot?.total_price_under)
+        : null;
+  const defaultOnePeriodPrice = Math.trunc(
+    toFiniteNumber(process.env.NHL_1P_DEFAULT_PRICE) || -110,
+  );
+  const price = proxyPrice !== null ? proxyPrice : defaultOnePeriodPrice;
+  const statusToken = String(payload.status || '').toUpperCase();
+  const isPlayable =
+    (statusToken === 'FIRE' || statusToken === 'WATCH') &&
+    (selection === 'OVER' || selection === 'UNDER');
+
+  payload.market_type = 'TOTAL';
+  payload.recommended_bet_type = 'total';
+  payload.period = '1P';
+  payload.kind = isPlayable ? 'PLAY' : 'EVIDENCE';
+  payload.selection =
+    selection !== null
+      ? {
+          ...(payload.selection && typeof payload.selection === 'object'
+            ? payload.selection
+            : {}),
+          side: selection,
+        }
+      : null;
+  payload.line = line;
+  payload.price = price;
+  payload.line_source = payload.line_source || 'model_reference';
+  payload.price_source =
+    proxyPrice !== null ? 'odds_snapshot_proxy' : 'synthetic_default';
+  payload.market_variant = 'NHL_1P_TOTAL';
+  payload.market = {
+    ...(payload.market && typeof payload.market === 'object'
+      ? payload.market
+      : {}),
+    period: '1P',
+  };
+  payload.market_context = {
+    ...(payload.market_context && typeof payload.market_context === 'object'
+      ? payload.market_context
+      : {}),
+    version: 'v1',
+    market_type: 'TOTAL',
+    selection_side: selection,
+    period: '1P',
+    wager: {
+      ...(payload.market_context?.wager &&
+      typeof payload.market_context.wager === 'object'
+        ? payload.market_context.wager
+        : {}),
+      called_line: line,
+      called_price: price,
+      line_source: payload.line_source,
+      price_source: payload.price_source,
+      period: '1P',
+    },
+  };
+  payload.pricing_trace = {
+    ...(payload.pricing_trace && typeof payload.pricing_trace === 'object'
+      ? payload.pricing_trace
+      : {}),
+    called_market_type: 'TOTAL',
+    called_side: selection,
+    called_line: line,
+    called_price: price,
+    line_source: payload.line_source,
+    price_source: payload.price_source,
+    period: '1P',
+  };
+}
+
 /**
  * Get home team's recent road trip (consecutive away games)
  * Returns if the team JUST COMPLETED a road trip and is now playing at home
@@ -987,6 +1109,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
 
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
+            applyNhlSettlementMarketContext(card, oddsSnapshot);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -1035,6 +1158,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           }
           for (const card of marketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
+            applyNhlSettlementMarketContext(card, oddsSnapshot);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,

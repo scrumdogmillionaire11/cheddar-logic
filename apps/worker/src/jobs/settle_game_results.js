@@ -199,6 +199,41 @@ function scoreMatchConfidence(deltaMinutes) {
   return 0;
 }
 
+function parseLineScoreValue(linescore) {
+  if (!linescore || typeof linescore !== 'object') return null;
+
+  const candidates = [
+    linescore.value,
+    linescore.score,
+    linescore.displayValue,
+    linescore.display_value,
+  ];
+  for (const candidate of candidates) {
+    const parsed = Number.parseFloat(candidate);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function extractFirstPeriodScores(competition) {
+  const competitors = competition?.competitors || [];
+  const homeComp = competitors.find((c) => c.homeAway === 'home');
+  const awayComp = competitors.find((c) => c.homeAway === 'away');
+  if (!homeComp || !awayComp) return { home: null, away: null };
+
+  const homeLineScores = Array.isArray(homeComp.linescores)
+    ? homeComp.linescores
+    : [];
+  const awayLineScores = Array.isArray(awayComp.linescores)
+    ? awayComp.linescores
+    : [];
+
+  return {
+    home: parseLineScoreValue(homeLineScores[0]),
+    away: parseLineScoreValue(awayLineScores[0]),
+  };
+}
+
 function eventToComparable(event) {
   const comp = event.competitions?.[0];
   if (!comp || comp.status?.type?.completed !== true) return null;
@@ -212,6 +247,7 @@ function eventToComparable(event) {
   const homeScore = Number.parseFloat(homeComp.score);
   const awayScore = Number.parseFloat(awayComp.score);
   const eventTimeMs = toEpochMs(event.date || comp.date);
+  const firstPeriodScores = extractFirstPeriodScores(comp);
 
   if (
     !homeName ||
@@ -231,6 +267,8 @@ function eventToComparable(event) {
     awayNorm: normalizeTeamName(awayName),
     homeScore,
     awayScore,
+    homeFirstPeriodScore: firstPeriodScores.home,
+    awayFirstPeriodScore: firstPeriodScores.away,
     eventTimeMs,
   };
 }
@@ -258,6 +296,12 @@ function findStrictNameTimeMatch(dbGame, completedEvents) {
 
       const dbHomeScore = swappedOrientation ? evt.awayScore : evt.homeScore;
       const dbAwayScore = swappedOrientation ? evt.homeScore : evt.awayScore;
+      const dbHomeFirstPeriodScore = swappedOrientation
+        ? evt.awayFirstPeriodScore
+        : evt.homeFirstPeriodScore;
+      const dbAwayFirstPeriodScore = swappedOrientation
+        ? evt.homeFirstPeriodScore
+        : evt.awayFirstPeriodScore;
 
       return {
         event: evt,
@@ -268,6 +312,8 @@ function findStrictNameTimeMatch(dbGame, completedEvents) {
         swappedTeams: swappedOrientation,
         dbHomeScore,
         dbAwayScore,
+        dbHomeFirstPeriodScore,
+        dbAwayFirstPeriodScore,
       };
     })
     .filter(Boolean)
@@ -319,6 +365,8 @@ function findNcaamFuzzyNameTimeMatch(dbGame, completedEvents) {
         swappedTeams: false,
         dbHomeScore: evt.homeScore,
         dbAwayScore: evt.awayScore,
+        dbHomeFirstPeriodScore: evt.homeFirstPeriodScore,
+        dbAwayFirstPeriodScore: evt.awayFirstPeriodScore,
         homeSimilarity,
         awaySimilarity,
         avgSimilarity,
@@ -392,6 +440,12 @@ function findMatchForGame(
         dbAwayScore: swappedOrientation
           ? mappedEvent.homeScore
           : mappedEvent.awayScore,
+        dbHomeFirstPeriodScore: swappedOrientation
+          ? mappedEvent.awayFirstPeriodScore
+          : mappedEvent.homeFirstPeriodScore,
+        dbAwayFirstPeriodScore: swappedOrientation
+          ? mappedEvent.homeFirstPeriodScore
+          : mappedEvent.awayFirstPeriodScore,
         method: swappedOrientation
           ? 'mapped_event_id_swapped'
           : 'mapped_event_id',
@@ -799,6 +853,14 @@ async function settleGameResults({
                 matchConfidence: match.confidence,
                 expectedEspnEventId: mappedEspnEventId,
                 timeDeltaMinutes: Number(match.deltaMinutes.toFixed(2)),
+                firstPeriodScores:
+                  Number.isFinite(match.dbHomeFirstPeriodScore) &&
+                  Number.isFinite(match.dbAwayFirstPeriodScore)
+                    ? {
+                        home: match.dbHomeFirstPeriodScore,
+                        away: match.dbAwayFirstPeriodScore,
+                      }
+                    : null,
               },
             });
             gamesSettled++;

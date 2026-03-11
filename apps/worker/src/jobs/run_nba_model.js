@@ -202,6 +202,33 @@ function canPriceCard(card) {
   return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
 }
 
+function applyNbaSettlementMarketContext(card) {
+  if (!card?.payloadData || typeof card.payloadData !== 'object') return;
+  const payload = card.payloadData;
+  if (String(payload.market_type || '').toUpperCase() !== 'TOTAL') return;
+
+  payload.period = payload.period || 'FULL_GAME';
+  payload.market = {
+    ...(payload.market && typeof payload.market === 'object'
+      ? payload.market
+      : {}),
+    period: payload.period,
+  };
+  if (payload.market_context && typeof payload.market_context === 'object') {
+    payload.market_context = {
+      ...payload.market_context,
+      period: payload.period,
+      wager: {
+        ...(payload.market_context.wager &&
+        typeof payload.market_context.wager === 'object'
+          ? payload.market_context.wager
+          : {}),
+        period: payload.period,
+      },
+    };
+  }
+}
+
 /**
  * Get home team's recent road trip (consecutive away games)
  * Returns if the team JUST COMPLETED a road trip and is now playing at home
@@ -813,6 +840,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
 
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
+            applyNbaSettlementMarketContext(card);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -859,6 +887,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
           }
           for (const card of nbaMarketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
+            applyNbaSettlementMarketContext(card);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,

@@ -1961,6 +1961,15 @@ function insertCardPayload(card) {
     };
     if (lockedMarket.line !== null) payloadData.line = lockedMarket.line;
     if (lockedMarket.lockedPrice !== null) payloadData.price = lockedMarket.lockedPrice;
+    if (lockedMarket.period) {
+      payloadData.period = lockedMarket.period;
+      payloadData.market = {
+        ...(payloadData.market && typeof payloadData.market === 'object'
+          ? payloadData.market
+          : {}),
+        period: lockedMarket.period,
+      };
+    }
     payloadData.market_key = lockedMarket.marketKey;
   }
 
@@ -2045,7 +2054,17 @@ function insertCardPayload(card) {
     settledAt: null,
     pnlUnits: null,
     metadata: lockedMarket
-      ? { lockedAt: card.createdAt || new Date().toISOString(), marketKey: lockedMarket.marketKey }
+      ? {
+          lockedAt: card.createdAt || new Date().toISOString(),
+          marketKey: lockedMarket.marketKey,
+          lockedMarket: {
+            marketType: lockedMarket.marketType,
+            selection: lockedMarket.selection,
+            line: lockedMarket.line,
+            lockedPrice: lockedMarket.lockedPrice,
+            period: lockedMarket.period || 'FULL_GAME',
+          },
+        }
       : null
   });
 
