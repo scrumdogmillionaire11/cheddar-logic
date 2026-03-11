@@ -101,6 +101,32 @@ interface GameRow {
   odds_captured_at: string | null;
 }
 
+type LifecycleMode = 'pregame' | 'active';
+type DisplayStatus = 'SCHEDULED' | 'ACTIVE';
+
+const ACTIVE_EXCLUDED_STATUSES = [
+  'POSTPONED',
+  'CANCELLED',
+  'CANCELED',
+  'FINAL',
+  'CLOSED',
+  'COMPLETE',
+];
+
+function toSqlUtc(date: Date): string {
+  return date.toISOString().substring(0, 19).replace('T', ' ');
+}
+
+function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
+  const lifecycleParam = (searchParams.get('lifecycle') || '').toLowerCase();
+  if (lifecycleParam === 'active') return 'active';
+  return 'pregame';
+}
+
+function deriveDisplayStatus(lifecycleMode: LifecycleMode): DisplayStatus {
+  return lifecycleMode === 'active' ? 'ACTIVE' : 'SCHEDULED';
+}
+
 interface CardPayloadRow {
   id: string;
   game_id: string;
@@ -1102,9 +1128,13 @@ export async function GET(request: NextRequest) {
       return addRateLimitHeaders(response, request);
     }
 
+    const searchParams = request.nextUrl.searchParams;
+    const lifecycleMode = resolveLifecycleMode(searchParams);
+
     // Compute midnight America/New_York as a UTC string for the SQL param.
     // en-CA locale gives YYYY-MM-DD; shortOffset gives "GMT-5" / "GMT-4" (DST-aware).
     const now = new Date();
+    const nowUtc = toSqlUtc(now);
     const etDateStr = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/New_York',
     }).format(now); // e.g. "2026-02-28"
@@ -1149,6 +1179,18 @@ export async function GET(request: NextRequest) {
           .replace('T', ' ')
       : null;
 
+    const lifecycleSql =
+      lifecycleMode === 'active'
+        ? `
+        AND datetime(g.game_time_utc) <= datetime(?)
+        AND UPPER(COALESCE(g.status, '')) NOT IN (${ACTIVE_EXCLUDED_STATUSES.map(
+          (status) => `'${status}'`,
+        ).join(', ')})
+      `
+        : `
+        AND datetime(g.game_time_utc) > datetime(?)
+      `;
+
     const baseGamesSql = `
       SELECT
         g.id,
@@ -1167,10 +1209,35 @@ export async function GET(request: NextRequest) {
           WHERE cr.game_id = g.game_id
             AND cr.status = 'settled'
         )
+        ${lifecycleSql}
         ${gamesEndUtc ? 'AND datetime(g.game_time_utc) <= ?' : ''}
       ORDER BY g.game_time_utc ASC
       LIMIT 200
     `;
+
+    const baseWindowCountSql = `
+      SELECT COUNT(*) AS total
+      FROM games g
+      WHERE datetime(g.game_time_utc) >= ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM card_results cr
+          WHERE cr.game_id = g.game_id
+            AND cr.status = 'settled'
+        )
+        ${gamesEndUtc ? 'AND datetime(g.game_time_utc) <= ?' : ''}
+    `;
+
+    let baseWindowCount: number | null = null;
+    if (isNonProd) {
+      const baseWindowCountStmt = db.prepare(baseWindowCountSql);
+      const baseWindowCountRow = (
+        gamesEndUtc
+          ? baseWindowCountStmt.get(gamesStartUtc, gamesEndUtc)
+          : baseWindowCountStmt.get(gamesStartUtc)
+      ) as { total?: number } | undefined;
+      baseWindowCount = Number(baseWindowCountRow?.total ?? 0);
+    }
 
     const loadGamesWithLatestOdds = (
       startUtc: string,
@@ -1179,8 +1246,8 @@ export async function GET(request: NextRequest) {
       const baseGamesStmt = db.prepare(baseGamesSql);
       const baseGames = (
         endUtc
-          ? baseGamesStmt.all(startUtc, endUtc)
-          : baseGamesStmt.all(startUtc)
+          ? baseGamesStmt.all(startUtc, nowUtc, endUtc)
+          : baseGamesStmt.all(startUtc, nowUtc)
       ) as Array<
         Omit<
           GameRow,
@@ -2242,6 +2309,8 @@ export async function GET(request: NextRequest) {
         row.spread_home !== null ||
         row.spread_away !== null;
 
+      const displayStatus = deriveDisplayStatus(lifecycleMode);
+
       return {
         id: row.id,
         gameId: row.game_id,
@@ -2250,6 +2319,8 @@ export async function GET(request: NextRequest) {
         awayTeam: row.away_team,
         gameTimeUtc: row.game_time_utc,
         status: row.status,
+        lifecycle_mode: lifecycleMode,
+        display_status: displayStatus,
         createdAt: row.created_at,
         odds: hasOdds
           ? {
@@ -2309,10 +2380,16 @@ export async function GET(request: NextRequest) {
           query_window: {
             start_utc: gamesStartUtc,
             end_utc: gamesEndUtc,
+            now_utc: nowUtc,
             horizon_hours: HAS_API_GAMES_HORIZON
               ? API_GAMES_HORIZON_HOURS
               : null,
             dev_lookback_applied: Boolean(lookbackUtc),
+            lifecycle_mode: lifecycleMode,
+            base_window_count: baseWindowCount,
+            returned_count: rows.length,
+            active_excluded_statuses:
+              lifecycleMode === 'active' ? ACTIVE_EXCLUDED_STATUSES : [],
           },
           card_type_contract: {
             active_sports: Object.keys(ACTIVE_SPORT_CARD_TYPE_CONTRACT),

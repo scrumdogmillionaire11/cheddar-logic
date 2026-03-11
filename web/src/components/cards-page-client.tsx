@@ -251,6 +251,8 @@ interface GameData {
   awayTeam: string;
   gameTimeUtc: string;
   status: string;
+  lifecycle_mode?: 'pregame' | 'active';
+  display_status?: 'SCHEDULED' | 'ACTIVE';
   createdAt: string;
   odds: {
     h2hHome: number | null;
@@ -374,6 +376,8 @@ interface ApiResponse {
   error?: string;
 }
 
+type LifecycleMode = 'pregame' | 'active';
+
 type DecisionPolarity = 'pro' | 'contra' | 'neutral';
 
 type DecisionContributor = {
@@ -406,6 +410,7 @@ const CLIENT_MIN_FETCH_INTERVAL_MS = 5_000;
 const CLIENT_FETCH_TIMEOUT_MS = 10_000;
 const CLIENT_DEFAULT_BACKOFF_MS = 30_000;
 const CHUNK_RELOAD_GUARD_KEY = 'cards_chunk_reload_once';
+const LIFECYCLE_SESSION_KEY = 'cheddar_cards_lifecycle_mode';
 const CHUNK_ERROR_LOG_CODE = 'CARDS_CHUNK_LOAD_FAILED';
 const FETCH_ERROR_LOG_CODE = 'CARDS_FETCH_FAILED';
 
@@ -460,6 +465,52 @@ function stringifyUnknownError(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+function parseLifecycleMode(value: string | null): LifecycleMode | null {
+  if (value === 'active' || value === 'pregame') return value;
+  return null;
+}
+
+function resolveLifecycleModeFromUrlAndStorage(): LifecycleMode {
+  if (typeof window === 'undefined') return 'pregame';
+  const params = new URLSearchParams(window.location.search);
+  const urlMode = parseLifecycleMode(params.get('lifecycle'));
+  if (urlMode) {
+    window.sessionStorage.setItem(LIFECYCLE_SESSION_KEY, urlMode);
+    return urlMode;
+  }
+
+  const storedMode = parseLifecycleMode(
+    window.sessionStorage.getItem(LIFECYCLE_SESSION_KEY),
+  );
+  return storedMode ?? 'pregame';
+}
+
+function getLifecycleAwareFilters(
+  filters: GameFilters,
+  viewMode: ViewMode,
+  lifecycleMode: LifecycleMode,
+): GameFilters {
+  if (
+    viewMode !== 'game' ||
+    lifecycleMode !== 'active' ||
+    'propStatGroups' in filters
+  ) {
+    return filters;
+  }
+
+  const statuses = filters.statuses.includes('PASS')
+    ? filters.statuses
+    : [...filters.statuses, 'PASS'];
+
+  return {
+    ...filters,
+    statuses,
+    markets: [],
+    onlyGamesWithPicks: false,
+    hasClearPlay: false,
+  };
 }
 
 type FtTrendInsight = {
@@ -519,6 +570,8 @@ export default function CardsPageClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('game');
+  const [lifecycleMode, setLifecycleMode] =
+    useState<LifecycleMode>('pregame');
   const [filters, setFilters] = useState<GameFilters>(
     getDefaultFilters('game'),
   );
@@ -532,6 +585,10 @@ export default function CardsPageClient() {
     process.env.NEXT_PUBLIC_ENABLE_CARDS_DIAGNOSTICS === 'true';
   // Player props feature flag - explicit opt-in only (hidden by default)
   const propsEnabled = process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true';
+  const effectiveFilters = useMemo(
+    () => getLifecycleAwareFilters(filters, viewMode, lifecycleMode),
+    [filters, viewMode, lifecycleMode],
+  );
 
   // Compute cards based on view mode
   const { enrichedCards, filteredCards, propCards } = useMemo(() => {
@@ -566,12 +623,12 @@ export default function CardsPageClient() {
     // Game mode: existing pipeline
     const transformed = transformGames(games);
     const enriched = enrichCards(transformed);
-    const filtered = applyFilters(enriched, filters, viewMode);
+    const filtered = applyFilters(enriched, effectiveFilters, viewMode);
 
     return { enrichedCards: enriched, filteredCards: filtered, propCards: [] };
-  }, [games, filters, viewMode]);
+  }, [games, effectiveFilters, viewMode]);
 
-  const activeFilterCount = getActiveFilterCount(filters, viewMode);
+  const activeFilterCount = getActiveFilterCount(effectiveFilters, viewMode);
   const todayEtKey = useMemo(() => getEtDayKey(new Date()), []);
 
   const traceStats = useMemo(() => {
@@ -727,7 +784,7 @@ export default function CardsPageClient() {
     const droppedMetaBySport: Record<string, DroppedMeta> = {};
 
     for (const card of enrichedCards) {
-      const flags = getFilterDebugFlags(card, filters, viewMode);
+      const flags = getFilterDebugFlags(card, effectiveFilters, viewMode);
       const passesAll = Object.values(flags).every(Boolean);
       if (passesAll) continue;
 
@@ -767,7 +824,7 @@ export default function CardsPageClient() {
       droppedByReasonBySport,
       droppedMetaBySport,
     };
-  }, [enrichedCards, filters, viewMode]);
+  }, [enrichedCards, effectiveFilters, viewMode]);
   type SportBuckets = {
     missingMapping: number;
     driverLoadFailed: number;
@@ -897,6 +954,13 @@ export default function CardsPageClient() {
     });
   };
 
+  const handleLifecycleModeChange = (nextMode: LifecycleMode) => {
+    if (nextMode === lifecycleMode) return;
+    globalGamesLastFetchAt = 0;
+    setLifecycleMode(nextMode);
+    setLoading(true);
+  };
+
   useEffect(() => {
     const handleChunkFailure = (
       message: string,
@@ -966,6 +1030,9 @@ export default function CardsPageClient() {
         console.debug(
           '[cards] Skipping fetch - global request already in flight',
         );
+        if (!cancelled) {
+          setLoading(false);
+        }
         return;
       }
 
@@ -978,6 +1045,7 @@ export default function CardsPageClient() {
           setError(
             `Server rate limited. Retrying in ${retryAfterSec} seconds...`,
           );
+          setLoading(false);
         }
         return;
       }
@@ -987,6 +1055,9 @@ export default function CardsPageClient() {
         now - globalGamesLastFetchAt < CLIENT_MIN_FETCH_INTERVAL_MS
       ) {
         console.debug('[cards] Skipping fetch - throttled');
+        if (!cancelled) {
+          setLoading(false);
+        }
         return;
       }
 
@@ -999,7 +1070,9 @@ export default function CardsPageClient() {
         }
 
         const timeoutHandle = createTimeoutSignal(CLIENT_FETCH_TIMEOUT_MS);
-        const response = await fetch('/api/games', {
+        const lifecycleQuery =
+          lifecycleMode === 'active' ? '?lifecycle=active' : '';
+        const response = await fetch(`/api/games${lifecycleQuery}`, {
           ...(timeoutHandle.signal ? { signal: timeoutHandle.signal } : {}),
           cache: 'no-store',
         }).finally(() => {
@@ -1122,11 +1195,13 @@ export default function CardsPageClient() {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, []);
+  }, [lifecycleMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
+    setLifecycleMode(resolveLifecycleModeFromUrlAndStorage());
+
     const modeParam = params.get('mode');
     if (modeParam === 'props' && propsEnabled) {
       setViewMode('props');
@@ -1156,8 +1231,14 @@ export default function CardsPageClient() {
     } else {
       url.searchParams.set('mode', viewMode);
     }
+    if (lifecycleMode === 'pregame') {
+      url.searchParams.delete('lifecycle');
+    } else {
+      url.searchParams.set('lifecycle', lifecycleMode);
+    }
+    window.sessionStorage.setItem(LIFECYCLE_SESSION_KEY, lifecycleMode);
     window.history.replaceState({}, '', url.toString());
-  }, [viewMode]);
+  }, [viewMode, lifecycleMode]);
 
   useEffect(() => {
     const isVerboseCardsTrace =
@@ -2007,7 +2088,10 @@ export default function CardsPageClient() {
     };
 
     const gameTime = formatDate(card.startTime);
-    const isNotScheduled = card.status && card.status !== 'scheduled';
+    const displayStatus =
+      originalGame.display_status ??
+      (originalGame.lifecycle_mode === 'active' ? 'ACTIVE' : 'SCHEDULED');
+    const showActiveBadge = displayStatus === 'ACTIVE';
 
     return (
       <div
@@ -2023,9 +2107,9 @@ export default function CardsPageClient() {
               <span className="px-2 py-1 text-xs font-semibold bg-white/10 text-cloud/80 rounded border border-white/20">
                 {card.sport}
               </span>
-              {isNotScheduled && (
+              {showActiveBadge && (
                 <span className="px-2 py-1 text-xs font-semibold bg-blue-600/40 text-blue-200 rounded border border-blue-600/60">
-                  {card.status}
+                  {displayStatus}
                 </span>
               )}
               {getStatusBadge(
@@ -2698,9 +2782,9 @@ export default function CardsPageClient() {
                 Totals (Blocked)
               </summary>
               <div className="mt-2 space-y-2">
-                {blockedTotals.map((totalPlay) => (
+                {blockedTotals.map((totalPlay, index) => (
                   <div
-                    key={`${totalPlay.cardType}-${totalPlay.cardTitle}`}
+                    key={`${totalPlay.cardType}-${totalPlay.cardTitle}-${index}`}
                     className="bg-white/5 rounded-md px-3 py-2"
                   >
                     <p className="text-sm text-cloud/80 font-medium">
@@ -2896,6 +2980,27 @@ export default function CardsPageClient() {
         </div>
 
         <div className="mb-6 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => handleLifecycleModeChange('pregame')}
+            className={`px-4 py-2 rounded-md border text-sm font-semibold transition ${
+              lifecycleMode === 'pregame'
+                ? 'bg-blue-700/40 text-blue-100 border-blue-600/60'
+                : 'bg-white/5 text-cloud/70 border-white/10 hover:border-white/20'
+            }`}
+          >
+            Pre-Game
+          </button>
+          <button
+            onClick={() => handleLifecycleModeChange('active')}
+            className={`px-4 py-2 rounded-md border text-sm font-semibold transition ${
+              lifecycleMode === 'active'
+                ? 'bg-blue-700/40 text-blue-100 border-blue-600/60'
+                : 'bg-white/5 text-cloud/70 border-white/10 hover:border-white/20'
+            }`}
+          >
+            Active
+          </button>
+          <span className="mx-1 h-6 w-px bg-white/15" aria-hidden="true" />
           <button
             onClick={() => handleModeChange('game')}
             className={`px-4 py-2 rounded-md border text-sm font-semibold transition ${
