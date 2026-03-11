@@ -50,6 +50,27 @@ const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
+const ENABLE_CARDS_LIFECYCLE_PARITY =
+  process.env.ENABLE_CARDS_LIFECYCLE_PARITY === 'true' ||
+  process.env.NEXT_PUBLIC_ENABLE_CARDS_LIFECYCLE_PARITY === 'true';
+
+type LifecycleMode = 'pregame' | 'active';
+
+const ACTIVE_EXCLUDED_STATUSES = [
+  'POSTPONED',
+  'CANCELLED',
+  'CANCELED',
+  'FINAL',
+  'CLOSED',
+  'COMPLETE',
+];
+
+function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
+  const lifecycleParam = (searchParams.get('lifecycle') || '').toLowerCase();
+  if (lifecycleParam === 'active') return 'active';
+  return 'pregame';
+}
+
 interface CardRow {
   id: string;
   game_id: string;
@@ -190,6 +211,9 @@ export async function GET(request: NextRequest) {
     const dedupe = searchParams.get('dedupe');
     const limit = clampNumber(searchParams.get('limit'), 20, 1, 100);
     const offset = clampNumber(searchParams.get('offset'), 0, 0, 1000);
+    const lifecycleMode = ENABLE_CARDS_LIFECYCLE_PARITY
+      ? resolveLifecycleMode(searchParams)
+      : 'pregame';
 
     db = getDatabaseReadOnly();
     const activeRunIds = getActiveRunIds(db);
@@ -248,6 +272,23 @@ export async function GET(request: NextRequest) {
     )`);
     if (!ENABLE_WELCOME_HOME) {
       baseWhere.push("cp.card_type != 'welcome-home-v2'");
+    }
+
+    // Apply lifecycle filtering if enabled and lifecycle=active is requested
+    if (
+      ENABLE_CARDS_LIFECYCLE_PARITY &&
+      lifecycleMode === 'active'
+    ) {
+      const now = new Date();
+      const nowSql = now
+        .toISOString()
+        .substring(0, 19)
+        .replace('T', ' ');
+      baseWhere.push(`UPPER(COALESCE(g.status, '')) NOT IN (${ACTIVE_EXCLUDED_STATUSES.map(
+        (status) => `'${status}'`,
+      ).join(', ')})`);
+      baseWhere.push(`datetime(g.game_time_utc) <= datetime(?)`);
+      baseParams.push(nowSql);
     }
 
     const runScopedWhere = [...baseWhere];
