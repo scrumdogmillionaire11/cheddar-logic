@@ -469,6 +469,13 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
+  // ========== NCAAM FT BOOTSTRAP (2.5) ==========
+  // Early-morning (06:00 ET) pre-refresh ensures CSv is fresh before 09:00 model runs
+  // Prevents race conditions if a scheduled refresh fails overnight
+  if (ENABLE_NCAAM_FT_REFRESH && isFixedDue(nowEt, '06:00')) {
+    maybeQueueNcaamFtRefresh('early-morning bootstrap (06:00 ET)');
+  }
+
   // ========== MODELS (3) ==========
   // Fixed-time model runs (per sport) - UNCHANGED
   const fixedTimes = ['09:00', '12:00'];

@@ -1332,6 +1332,7 @@ export async function GET(request: NextRequest) {
     };
 
     const loadGamesStartedAt = Date.now();
+    let activeLifecycleFallbackApplied = false;
     let rows = loadGamesWithLatestOdds(gamesStartUtc, gamesEndUtc);
 
     if (isNonProd && rows.length === 0 && !shouldUseDevLookback) {
@@ -1347,6 +1348,17 @@ export async function GET(request: NextRequest) {
           .replace('T', ' ');
         rows = loadGamesWithLatestOdds(fallbackStartUtc, gamesEndUtc);
       }
+    }
+
+    if (rows.length === 0 && lifecycleMode === 'active') {
+      const activeFallbackStartUtc = new Date(
+        now.getTime() - 36 * 60 * 60 * 1000,
+      )
+        .toISOString()
+        .substring(0, 19)
+        .replace('T', ' ');
+      rows = loadGamesWithLatestOdds(activeFallbackStartUtc, gamesEndUtc);
+      activeLifecycleFallbackApplied = rows.length > 0;
     }
     perf.loadGamesMs = Date.now() - loadGamesStartedAt;
 
@@ -2385,6 +2397,7 @@ export async function GET(request: NextRequest) {
               ? API_GAMES_HORIZON_HOURS
               : null,
             dev_lookback_applied: Boolean(lookbackUtc),
+            active_fallback_applied: activeLifecycleFallbackApplied,
             lifecycle_mode: lifecycleMode,
             base_window_count: baseWindowCount,
             returned_count: rows.length,

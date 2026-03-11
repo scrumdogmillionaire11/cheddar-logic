@@ -33,5 +33,9 @@ assert(
   cardsPageSource.includes('formatFtTrendInsight('),
   'cards-page-client must format FT trend insight text',
 );
+assert(
+  cardsPageSource.includes("card.sport === 'NCAAM' && displayPlay.market_type === 'SPREAD'"),
+  'cards-page-client must only render FT advantage on NCAAM spread plays',
+);
 
 console.log('NCAAM FT advantage source-contract checks passed');
