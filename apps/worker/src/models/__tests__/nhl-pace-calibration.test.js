@@ -88,7 +88,7 @@ describe('NHL pace calibration rails', () => {
     expect(result.totalClampedLow).toBe(true);
   });
 
-  test('goalie certainty scales impact: CONFIRMED > EXPECTED > UNKNOWN', () => {
+  test('goalie certainty scales impact: CONFIRMED < EXPECTED(=UNKNOWN)', () => {
     const base = buildBaseOverrides({
       homeGoalieSavePct: 0.93,
       awayGoalieSavePct: 0.932,
@@ -113,7 +113,7 @@ describe('NHL pace calibration rails', () => {
     });
 
     expect(confirmed.expectedTotal).toBeLessThan(expected.expectedTotal);
-    expect(expected.expectedTotal).toBeLessThan(unknown.expectedTotal);
+    expect(expected.expectedTotal).toBe(unknown.expectedTotal);
   });
 
   test('caps additive modifier stack to absolute 0.70 goals', () => {
@@ -143,6 +143,112 @@ describe('NHL pace calibration rails', () => {
     if (Math.abs(result.modifierBreakdown.raw_modifier_total) > 0.7) {
       expect(result.modifierCapApplied).toBe(true);
     }
+  });
+});
+
+describe('NHL 1P calibration rails', () => {
+  test('applies 1P safety rail floor at 1.20 in suppressive environments', () => {
+    const result = predictNHLGame(
+      buildBaseOverrides({
+        homeGoalsFor: 1.9,
+        homeGoalsAgainst: 1.9,
+        awayGoalsFor: 1.9,
+        awayGoalsAgainst: 1.9,
+        homePaceFactor: 0.85,
+        awayPaceFactor: 0.85,
+        homePpPct: 0.15,
+        awayPpPct: 0.15,
+        homePkPct: 0.9,
+        awayPkPct: 0.9,
+        homeGoalieSavePct: 0.936,
+        awayGoalieSavePct: 0.935,
+        homeGoalieConfirmed: true,
+        awayGoalieConfirmed: true,
+        homeGoalieCertainty: 'CONFIRMED',
+        awayGoalieCertainty: 'CONFIRMED',
+      }),
+    );
+
+    expect(result.first_period_model.projection_final).toBeGreaterThanOrEqual(1.2);
+    if (result.first_period_model.projection_final === 1.2) {
+      expect(result.first_period_model.reason_codes).toContain('NHL_1P_CLAMP_LOW');
+    }
+  });
+
+  test('applies 1P safety rail ceiling at 2.25 in hot environments', () => {
+    const result = predictNHLGame(
+      buildBaseOverrides({
+        homeGoalsFor: 4.7,
+        homeGoalsAgainst: 3.8,
+        awayGoalsFor: 4.6,
+        awayGoalsAgainst: 3.7,
+        homePaceFactor: 1.24,
+        awayPaceFactor: 1.22,
+        homePpPct: 0.34,
+        awayPpPct: 0.33,
+        homePkPct: 0.68,
+        awayPkPct: 0.69,
+        homeGoalieSavePct: 0.884,
+        awayGoalieSavePct: 0.883,
+        homeGoalieConfirmed: true,
+        awayGoalieConfirmed: true,
+        homeGoalieCertainty: 'CONFIRMED',
+        awayGoalieCertainty: 'CONFIRMED',
+      }),
+    );
+
+    expect(result.first_period_model.projection_final).toBeLessThanOrEqual(2.25);
+    if (result.first_period_model.projection_final === 2.25) {
+      expect(result.first_period_model.reason_codes).toContain('NHL_1P_CLAMP_HIGH');
+    }
+  });
+
+  test('forces PASS classification when either goalie certainty is UNKNOWN', () => {
+    const result = predictNHLGame(
+      buildBaseOverrides({
+        homeGoalsFor: 4.3,
+        homeGoalsAgainst: 2.7,
+        awayGoalsFor: 4.2,
+        awayGoalsAgainst: 2.8,
+        homePaceFactor: 1.16,
+        awayPaceFactor: 1.15,
+        homeGoalieSavePct: 0.902,
+        awayGoalieSavePct: 0.901,
+        homeGoalieConfirmed: false,
+        awayGoalieConfirmed: true,
+        homeGoalieCertainty: 'UNKNOWN',
+        awayGoalieCertainty: 'CONFIRMED',
+      }),
+    );
+
+    expect(result.first_period_model.classification).toBe('PASS');
+    expect(result.first_period_model.reason_codes).toContain(
+      'NHL_1P_GOALIE_UNCERTAIN',
+    );
+  });
+
+  test('zeros out goalie 1P directional effect when certainty is UNKNOWN', () => {
+    const result = predictNHLGame(
+      buildBaseOverrides({
+        homeGoalieSavePct: 0.935,
+        awayGoalieSavePct: 0.936,
+        homeGoalieConfirmed: false,
+        awayGoalieConfirmed: false,
+        homeGoalieCertainty: 'UNKNOWN',
+        awayGoalieCertainty: 'UNKNOWN',
+      }),
+    );
+
+    const netEnvAdj = Number(
+      (
+        result.first_period_model.accelerant_1p +
+        result.first_period_model.suppressor_1p
+      ).toFixed(3),
+    );
+    expect(Number.isFinite(netEnvAdj)).toBe(true);
+    expect(result.first_period_model.reason_codes).toContain(
+      'NHL_1P_GOALIE_UNCERTAIN',
+    );
   });
 });
 

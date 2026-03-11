@@ -70,15 +70,7 @@ function generateFPLCard(gameId, modelOutput, oddsSnapshot) {
   const cardId = `card-fpl-${gameId}-${uuidV4().slice(0, 8)}`;
   const now = new Date().toISOString();
 
-  // Card expires 1 hour before the game starts (if game_time_utc is known)
-  let expiresAt = null;
-  if (oddsSnapshot && oddsSnapshot.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    const oneHourBefore = new Date(
-      gameTime.getTime() - 60 * 60 * 1000,
-    ).toISOString();
-    expiresAt = oneHourBefore;
-  }
+  const expiresAt = null;
 
   const recommendedBetType = modelOutput.recommended_bet_type || 'unknown';
   const recommendation = buildRecommendationFromPrediction({

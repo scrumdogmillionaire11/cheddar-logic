@@ -65,7 +65,6 @@ const QUERIES_TO_AUDIT = [
         payload_data
       FROM card_payloads
       WHERE game_id IN (?, ?, ?)
-        AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
       ORDER BY created_at DESC
     `,
     endpoint: '/api/games',
@@ -89,7 +88,6 @@ const QUERIES_TO_AUDIT = [
           ) AS rn
         FROM card_payloads
         WHERE sport = ? AND card_type = ? AND game_id = ?
-          AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
       )
       SELECT * FROM ranked
       WHERE rn = 1

@@ -206,7 +206,15 @@ describe('cross-market orchestration', () => {
     expect(typeof decisions.SPREAD.edge_points).toBe('number');
     expect(decisions.SPREAD.projection).toHaveProperty('projected_margin');
 
+    expect(decisions.ML.best_candidate.side).toMatch(/HOME|AWAY/);
+    expect(typeof decisions.ML.best_candidate.price).toBe('number');
+    expect(typeof decisions.ML.edge).toBe('number');
+    expect(typeof decisions.ML.p_fair).toBe('number');
+    expect(typeof decisions.ML.p_implied).toBe('number');
+    expect(decisions.ML.projection).toHaveProperty('win_prob_home');
+
     expect(decisions.TOTAL.pricing_trace.line_source).toBe('odds_snapshot');
     expect(decisions.TOTAL.pricing_trace.price_source).toBe('odds_snapshot');
+    expect(decisions.ML.pricing_trace.price_source).toBe('odds_snapshot');
   });
 });

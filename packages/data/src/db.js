@@ -2102,7 +2102,7 @@ function getCardPayloads(gameId) {
   
   const stmt = db.prepare(`
     SELECT * FROM card_payloads
-    WHERE game_id = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
+    WHERE game_id = ?
     ORDER BY created_at DESC
   `);
   
@@ -2121,7 +2121,7 @@ function getCardPayloadsByType(cardType, limitDays = 7) {
   
   const stmt = db.prepare(`
     SELECT * FROM card_payloads
-    WHERE card_type = ? AND created_at >= ? AND (expires_at IS NULL OR expires_at > datetime('now'))
+    WHERE card_type = ? AND created_at >= ?
     ORDER BY created_at DESC
   `);
   
@@ -2139,7 +2139,7 @@ function getCardPayloadsBySport(sport, limitCards = 10) {
   
   const stmt = db.prepare(`
     SELECT * FROM card_payloads
-    WHERE sport = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
+    WHERE sport = ?
     ORDER BY game_id, created_at DESC
     LIMIT ?
   `);

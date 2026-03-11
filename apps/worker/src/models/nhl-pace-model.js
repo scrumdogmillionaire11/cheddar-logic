@@ -16,7 +16,7 @@
  *   - Home ice advantage
  *   - B2B penalty and extended rest boost
  *   - Goalie save-pct adjustment (opponent goals)
- *   - 1P total factoring (30% of game)
+ *   - 1P projection model (pass-first classification)
  *
  * All constants match cheddar-nhl ModelConfig (2024-25 season benchmarks).
  */
@@ -38,15 +38,21 @@ const PP_GOAL_SCALE = 0.02;
 const GOALIE_ADJ_SCALE = 2.5; // Balanced to preserve playable separation without runaway inflation
 const GOALIE_ADJ_MIN = 0.85;
 const GOALIE_ADJ_MAX = 1.15;
-const FIRST_PERIOD_FACTOR = 0.3; // 30% of full game goals in 1P
 const GOALS_L5_WEIGHT = 0.3; // 30% recent, 70% season
 const NHL_TOTAL_BASELINE = 6.05;
 const TOTAL_REGRESSION_K = 0.7;
 const TOTAL_FLOOR = 5.0;
 const TOTAL_CEILING = 7.6;
 const MODIFIER_CAP_ABS = 0.7;
-const ONE_P_TOTAL_FLOOR = 1.4;
-const ONE_P_TOTAL_CEILING = 2.4;
+const ONE_P_TOTAL_FLOOR = 1.2;
+const ONE_P_TOTAL_CEILING = 2.25;
+const ONE_P_BASE_INTERCEPT = 0.18;
+const ONE_P_BASE_MULTIPLIER = 0.275;
+const ONE_P_PACE_CAP = 0.12;
+const ONE_P_SPECIAL_TEAMS_CAP = 0.08;
+const ONE_P_GOALIE_CAP = 0.1;
+const ONE_P_REST_CAP = 0.05;
+const ONE_P_TOTAL_ADJ_CAP = 0.18;
 
 // ============================================================================
 // Helpers
@@ -73,15 +79,36 @@ function goalieAdjFactor(savePct) {
 function normalizeGoalieCertainty(certainty, confirmedFallback) {
   const token = String(certainty || '').toUpperCase();
   if (token === 'CONFIRMED') return 'CONFIRMED';
-  if (token === 'EXPECTED') return 'EXPECTED';
+  if (token === 'EXPECTED' || token === 'PROJECTED' || token === 'LIKELY') {
+    return 'UNKNOWN';
+  }
   if (token === 'UNKNOWN') return 'UNKNOWN';
   return confirmedFallback ? 'CONFIRMED' : 'UNKNOWN';
 }
 
 function goalieCertaintyMultiplier(certainty) {
   if (certainty === 'CONFIRMED') return 1.0;
-  if (certainty === 'EXPECTED') return 0.5;
   return 0.0;
+}
+
+function classifyFirstPeriodProjection(projection) {
+  if (projection <= 1.42) return 'BEST_UNDER';
+  if (projection <= 1.5) return 'PLAY_UNDER';
+  if (projection <= 1.58) return 'LEAN_UNDER';
+  if (projection < 2.0) return 'PASS';
+  if (projection < 2.15) return 'LEAN_OVER';
+  if (projection < 2.25) return 'PLAY_OVER';
+  return 'BEST_OVER';
+}
+
+function resolveEnvironmentTag(totalAdj) {
+  if (totalAdj <= -0.08) return 'UNDER_1P';
+  if (totalAdj >= 0.08) return 'OVER_1P';
+  return 'NEUTRAL_1P';
+}
+
+function round3(value) {
+  return Math.round(value * 1000) / 1000;
 }
 
 // ============================================================================
@@ -109,8 +136,8 @@ function goalieCertaintyMultiplier(certainty) {
  * @param {number|null} opts.awayGoalieSavePct
  * @param {boolean}     opts.homeGoalieConfirmed
  * @param {boolean}     opts.awayGoalieConfirmed
- * @param {'CONFIRMED'|'EXPECTED'|'UNKNOWN'|null} opts.homeGoalieCertainty
- * @param {'CONFIRMED'|'EXPECTED'|'UNKNOWN'|null} opts.awayGoalieCertainty
+ * @param {'CONFIRMED'|'UNKNOWN'|null} opts.homeGoalieCertainty
+ * @param {'CONFIRMED'|'UNKNOWN'|null} opts.awayGoalieCertainty
  * @param {boolean}     opts.homeB2B         - home team on back-to-back
  * @param {boolean}     opts.awayB2B
  * @param {number|null} opts.restDaysHome    - days since last game (3+ = extended rest)
@@ -119,7 +146,7 @@ function goalieCertaintyMultiplier(certainty) {
  * @param {number|null} opts.awayGoalsForL5
  * @param {number|null} opts.homeGoalsAgainstL5
  * @param {number|null} opts.awayGoalsAgainstL5
- * @returns {object|null} { homeExpected, awayExpected, expectedTotal, expected1pTotal, adjustments, confidence }
+ * @returns {object|null} { homeExpected, awayExpected, expectedTotal, expected1pTotal, first_period_model, adjustments, confidence }
  *                         Returns null if base offensive data is unavailable.
  */
 function predictNHLGame(opts) {
@@ -299,7 +326,7 @@ function predictNHLGame(opts) {
   restDelta = homeGoals + awayGoals - beforeRest;
 
   // ---- 8. Goalie adjustment (goalie affects OPPONENT's goals) ----
-  // Unknown = no directional effect. Expected = half effect.
+  // Unknown = no directional effect. Only CONFIRMED contributes.
   const homeGoalieMultiplier = goalieCertaintyMultiplier(homeCertainty);
   if (homeGoalieSavePct !== null && homeGoalieMultiplier > 0) {
     const rawFactor = goalieAdjFactor(homeGoalieSavePct);
@@ -357,10 +384,104 @@ function predictNHLGame(opts) {
   const homeExpected = Math.round(homeGoals * 1000) / 1000;
   const awayExpected = Math.round(awayGoals * 1000) / 1000;
   const expectedTotal = Math.round((homeGoals + awayGoals) * 1000) / 1000;
-  const rawExpected1pTotal = (homeGoals + awayGoals) * FIRST_PERIOD_FACTOR;
-  const expected1pTotal = Math.round(
-    clamp(rawExpected1pTotal, ONE_P_TOTAL_FLOOR, ONE_P_TOTAL_CEILING) * 1000,
-  ) / 1000;
+
+  const firstPeriodPaceScore = clamp(
+    (base5v5Total - NHL_TOTAL_BASELINE) * 0.08,
+    -ONE_P_PACE_CAP,
+    ONE_P_PACE_CAP,
+  );
+  const firstPeriodPenaltyPressureScore = clamp(
+    specialTeamsDelta * 2.0,
+    -ONE_P_SPECIAL_TEAMS_CAP,
+    ONE_P_SPECIAL_TEAMS_CAP,
+  );
+  const rawGoalie1pDelta = goalieDeltaApplied * 0.35;
+  const goalieCertaintyScale = Math.min(
+    goalieCertaintyMultiplier(homeCertainty),
+    goalieCertaintyMultiplier(awayCertainty),
+  );
+  const firstPeriodGoalieAdj = clamp(
+    rawGoalie1pDelta * goalieCertaintyScale,
+    -ONE_P_GOALIE_CAP,
+    ONE_P_GOALIE_CAP,
+  );
+  const firstPeriodRestDelta = clamp(restDelta * 0.25, -ONE_P_REST_CAP, ONE_P_REST_CAP);
+
+  const base1p = ONE_P_BASE_INTERCEPT + ONE_P_BASE_MULTIPLIER * finalTotalPreMarket;
+  const totalAdjRaw =
+    firstPeriodPaceScore +
+    firstPeriodPenaltyPressureScore +
+    firstPeriodGoalieAdj +
+    firstPeriodRestDelta;
+  const totalAdj = clamp(totalAdjRaw, -ONE_P_TOTAL_ADJ_CAP, ONE_P_TOTAL_ADJ_CAP);
+
+  const raw1pProjection = base1p + totalAdj;
+  const final1pProjection = clamp(
+    raw1pProjection,
+    ONE_P_TOTAL_FLOOR,
+    ONE_P_TOTAL_CEILING,
+  );
+  const final1pProjectionRounded = round3(final1pProjection);
+  const clampLow = final1pProjectionRounded <= ONE_P_TOTAL_FLOOR;
+  const clampHigh = final1pProjectionRounded >= ONE_P_TOTAL_CEILING;
+
+  let onePClassification = classifyFirstPeriodProjection(final1pProjectionRounded);
+  const goalieUncertain = homeCertainty === 'UNKNOWN' || awayCertainty === 'UNKNOWN';
+
+  const onePReasonCodes = [];
+  if (onePClassification === 'PASS') {
+    onePReasonCodes.push('NHL_1P_PASS_DEAD_ZONE');
+  } else if (onePClassification === 'LEAN_OVER') {
+    onePReasonCodes.push('NHL_1P_OVER_LEAN');
+  } else if (onePClassification === 'PLAY_OVER') {
+    onePReasonCodes.push('NHL_1P_OVER_PLAY');
+  } else if (onePClassification === 'BEST_OVER') {
+    onePReasonCodes.push('NHL_1P_OVER_BEST');
+  } else if (onePClassification === 'LEAN_UNDER') {
+    onePReasonCodes.push('NHL_1P_UNDER_LEAN');
+  } else if (onePClassification === 'PLAY_UNDER') {
+    onePReasonCodes.push('NHL_1P_UNDER_PLAY');
+  } else if (onePClassification === 'BEST_UNDER') {
+    onePReasonCodes.push('NHL_1P_UNDER_BEST');
+  }
+
+  if (goalieUncertain) {
+    onePReasonCodes.push('NHL_1P_GOALIE_UNCERTAIN');
+  }
+  if (clampLow) {
+    onePReasonCodes.push('NHL_1P_CLAMP_LOW');
+  }
+  if (clampHigh) {
+    onePReasonCodes.push('NHL_1P_CLAMP_HIGH');
+  }
+  if (totalClampedHigh) {
+    onePReasonCodes.push('NHL_1P_MODEL_HOT_CAP');
+  }
+
+  const first_period_model = {
+    projection_raw: round3(raw1pProjection),
+    projection_final: final1pProjectionRounded,
+    pace_1p: round3(firstPeriodPaceScore),
+    suppressor_1p: round3(Math.min(0, totalAdj)),
+    accelerant_1p: round3(Math.max(0, totalAdj)),
+    goalie_confidence:
+      homeCertainty === 'CONFIRMED' && awayCertainty === 'CONFIRMED'
+        ? 'HIGH'
+        : homeCertainty === 'UNKNOWN' || awayCertainty === 'UNKNOWN'
+          ? 'LOW'
+          : 'MEDIUM',
+    environment_tag: resolveEnvironmentTag(totalAdj),
+    fair_over_1_5_prob: null,
+    fair_under_1_5_prob: null,
+    market_line_ref: 1.5,
+    market_price_over: null,
+    market_price_under: null,
+    classification: onePClassification,
+    reason_codes: onePReasonCodes,
+    clamp_low: clampLow,
+    clamp_high: clampHigh,
+  };
+  const expected1pTotal = first_period_model.projection_final;
 
   // ---- 11. Confidence (0.55–0.80) ----
   let confidence = 0.6;
@@ -385,6 +506,7 @@ function predictNHLGame(opts) {
     awayExpected,
     expectedTotal,
     expected1pTotal,
+    first_period_model,
     homeGoalieConfirmed: homeCertainty === 'CONFIRMED',
     awayGoalieConfirmed: awayCertainty === 'CONFIRMED',
     homeGoalieCertainty: homeCertainty,

@@ -55,21 +55,11 @@ function generateCard({
 
   const normalizedSport = typeof sport === 'string' ? sport.toUpperCase() : sport;
 
-  // Calculate expiresAt if not provided (1 hour before game time)
-  let finalExpiresAt = expiresAt;
-  if (!finalExpiresAt && oddsSnapshot?.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    finalExpiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
+  let finalExpiresAt = expiresAt || null;
 
   // Generate unique card ID
   const cardIdSuffix = `${descriptor.driverKey}${marketType ? `-${marketType}` : ''}-${gameId}-${uuidV4().slice(0, 8)}`;
   const cardId = `card-${normalizedSport.toLowerCase()}-${cardIdSuffix}`;
-
-  // Validate that expiresAt was calculated or provided
-  if (!finalExpiresAt) {
-    throw new Error('Missing expiresAt and cannot calculate from game_time_utc');
-  }
 
   // Build common card metadata
   const recommendation = buildRecommendationFromPrediction({
@@ -164,11 +154,7 @@ function buildMarketCallCard({
 
   const normalizedSport = typeof sport === 'string' ? sport.toUpperCase() : sport;
 
-  let finalExpiresAt = expiresAt;
-  if (!finalExpiresAt && payloadData?.start_time_utc) {
-    const gameTime = new Date(payloadData.start_time_utc);
-    finalExpiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
+  const finalExpiresAt = expiresAt || null;
 
   const cardId = `card-${cardType}-${gameId}-${uuidV4().slice(0, 8)}`;
 

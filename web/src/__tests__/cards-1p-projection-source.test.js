@@ -27,6 +27,12 @@ assert(
 );
 
 assert(
+  gamesRouteSource.includes('driverInputs?.projection_final') &&
+    gamesRouteSource.includes('driverInputs?.classification'),
+  '/api/games should map projection_final and classification from 1P driver inputs',
+);
+
+assert(
   cardsPageSource.includes("cardType === 'nhl-pace-1p'"),
   'cards UI should reference nhl-pace-1p cards',
 );
@@ -38,9 +44,9 @@ assert(
 
 assert(
   cardsPageSource.includes('1P projection') &&
-    cardsPageSource.includes('Ref line') &&
-    cardsPageSource.includes('Delta'),
-  'cards UI should render dedicated 1P projection context row',
+    cardsPageSource.includes('Classification') &&
+    cardsPageSource.includes('Goalie context'),
+  'cards UI should render dedicated 1P projection context row with pass-first fields',
 );
 
 assert(

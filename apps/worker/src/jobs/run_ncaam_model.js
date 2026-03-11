@@ -57,12 +57,18 @@ const NCAAM_DRIVER_WEIGHTS = {
   baseProjection: 0.4,
   restAdvantage: 0.2,
   matchupStyle: 0.2,
+  freeThrowTrend: 0.2,
+  // Backward compatibility for older persisted payloads.
+  freeThrowEdge: 0.2,
 };
 
 const NCAAM_DRIVER_CARD_TYPES = [
   'ncaam-base-projection',
   'ncaam-rest-advantage',
   'ncaam-matchup-style',
+  'ncaam-ft-trend',
+  // Legacy FT driver card type retained for clear/rewrite compatibility.
+  'ncaam-ft-spread',
 ];
 
 function attachRunId(card, runId) {
@@ -183,31 +189,35 @@ function canPriceCard(card) {
  */
 function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
   const now = new Date().toISOString();
-  let expiresAt = null;
-  if (oddsSnapshot?.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
+  const expiresAt = null;
 
   const cards = [];
 
   for (const descriptor of driverDescriptors) {
-    // Generate MONEYLINE card
-    cards.push(
-      generateCard({
-        sport: 'NCAAM',
-        gameId,
-        descriptor,
-        oddsSnapshot,
-        now,
-        expiresAt,
-        marketType: 'moneyline',
-        driverWeights: NCAAM_DRIVER_WEIGHTS,
-      }),
-    );
+    const marketTypes = Array.isArray(descriptor?.marketTypes)
+      ? descriptor.marketTypes
+      : null;
+    const allowMoneyline = !marketTypes || marketTypes.includes('moneyline');
+    const allowSpread = !marketTypes || marketTypes.includes('spread');
+
+    if (allowMoneyline) {
+      cards.push(
+        generateCard({
+          sport: 'NCAAM',
+          gameId,
+          descriptor,
+          oddsSnapshot,
+          now,
+          expiresAt,
+          marketType: 'moneyline',
+          driverWeights: NCAAM_DRIVER_WEIGHTS,
+        }),
+      );
+    }
 
     // Generate SPREAD card only when both line and price are available
     if (
+      allowSpread &&
       oddsSnapshot?.spread_home != null &&
       oddsSnapshot?.spread_away != null &&
       oddsSnapshot?.spread_price_home != null &&

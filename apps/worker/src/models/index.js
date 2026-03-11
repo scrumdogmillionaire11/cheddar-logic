@@ -79,7 +79,7 @@ function normalizeGoalieCertaintyToken(value) {
     return 'CONFIRMED';
   }
   if (token === 'EXPECTED' || token === 'PROJECTED' || token === 'LIKELY') {
-    return 'EXPECTED';
+    return 'UNKNOWN';
   }
   if (token === 'UNKNOWN' || token === 'UNCONFIRMED' || token === 'TBD') {
     return 'UNKNOWN';
@@ -87,7 +87,7 @@ function normalizeGoalieCertaintyToken(value) {
   return null;
 }
 
-function resolveGoalieCertainty(raw, side, hasGsax) {
+function resolveGoalieCertainty(raw, side) {
   const sideKey = side === 'home' ? 'home' : 'away';
   const nested =
     normalizeGoalieCertaintyToken(raw?.goalie?.[sideKey]?.status) ??
@@ -98,8 +98,7 @@ function resolveGoalieCertainty(raw, side, hasGsax) {
       ? normalizeGoalieCertaintyToken(raw?.goalie_home_status)
       : normalizeGoalieCertaintyToken(raw?.goalie_away_status);
   if (flat) return flat;
-  // Proxy fallback: GSaX presence implies EXPECTED, not CONFIRMED.
-  return hasGsax ? 'EXPECTED' : 'UNKNOWN';
+  return 'UNKNOWN';
 }
 
 /**
@@ -335,20 +334,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       raw?.goalie?.away?.gsax ??
       raw?.goalies?.away?.gsax,
   );
-  const homeGoalieConfirmed =
-    goalieHomeGsax !== null && goalieHomeGsax !== undefined;
-  const awayGoalieConfirmed =
-    goalieAwayGsax !== null && goalieAwayGsax !== undefined;
-  const homeGoalieCertainty = resolveGoalieCertainty(
-    raw,
-    'home',
-    homeGoalieConfirmed,
-  );
-  const awayGoalieCertainty = resolveGoalieCertainty(
-    raw,
-    'away',
-    awayGoalieConfirmed,
-  );
+  const homeGoalieCertainty = resolveGoalieCertainty(raw, 'home');
+  const awayGoalieCertainty = resolveGoalieCertainty(raw, 'away');
+  const homeGoalieConfirmed = homeGoalieCertainty === 'CONFIRMED';
+  const awayGoalieConfirmed = awayGoalieCertainty === 'CONFIRMED';
   const goalieCertaintyStatus =
     homeGoalieCertainty === 'CONFIRMED' && awayGoalieCertainty === 'CONFIRMED'
       ? 'ok'
@@ -782,52 +771,83 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
         });
       }
 
-      if (Number.isFinite(paceResult.expected1pTotal)) {
+      const firstPeriodModel =
+        paceResult.first_period_model &&
+        typeof paceResult.first_period_model === 'object'
+          ? paceResult.first_period_model
+          : null;
+      if (firstPeriodModel && Number.isFinite(firstPeriodModel.projection_final)) {
         const projected1pTotalForCard = Number(
-          paceResult.expected1pTotal.toFixed(3),
+          firstPeriodModel.projection_final.toFixed(3),
         );
-        const edge1p =
+        const projectionRaw1p = Number(
+          Number(firstPeriodModel.projection_raw ?? projected1pTotalForCard).toFixed(3),
+        );
+        const projectionDelta1p =
           Math.round(
             (projected1pTotalForCard - NHL_1P_REFERENCE_TOTAL_LINE) * 100,
           ) / 100;
-
-        const direction1p = edge1p >= 0 ? 'OVER' : 'UNDER';
-        let confidence1p = clamp(
-          paceResult.confidence - 0.02,
-          0.55,
-          0.75,
-        ); // Slight discount for 1P
-        if (paceResult.goalieConfidenceCapped) {
-          confidence1p = Math.min(confidence1p, 0.35);
-        }
-        const goalieContext1p = paceResult.goalieConfidenceCapped
-          ? ' [goalie certainty cap]'
-          : '';
+        const classification =
+          String(firstPeriodModel.classification || 'PASS').toUpperCase();
+        const reasonCodes = Array.isArray(firstPeriodModel.reason_codes)
+          ? firstPeriodModel.reason_codes.filter((code) => typeof code === 'string')
+          : [];
+        const goalieConfidence = String(
+          firstPeriodModel.goalie_confidence || 'MEDIUM',
+        ).toUpperCase();
+        const confidenceBase =
+          classification === 'PASS'
+            ? 0.56
+            : classification.includes('BEST')
+              ? 0.72
+              : classification.includes('PLAY')
+                ? 0.67
+                : 0.62;
+        const confidence1p = clamp(confidenceBase, 0.55, 0.75);
 
         descriptors.push({
           cardType: 'nhl-pace-1p',
-          cardTitle: `NHL 1P Total: ${direction1p} ${projected1pTotalForCard.toFixed(2)} vs Line ${NHL_1P_REFERENCE_TOTAL_LINE}`,
+          cardTitle: `NHL 1P Total: ${classification} @ ${projected1pTotalForCard.toFixed(2)}`,
           confidence: confidence1p,
           tier: determineTier(confidence1p),
-          prediction: direction1p,
-          reasoning: `Pace model 1P projection: ${projected1pTotalForCard.toFixed(2)} vs fixed reference ${NHL_1P_REFERENCE_TOTAL_LINE} — edge ${edge1p > 0 ? '+' : ''}${edge1p} goals${goalieContext1p}`,
-          ev_threshold_passed: confidence1p > 0.6,
+          prediction: classification,
+          classification,
+          action: classification === 'PASS' ? 'PASS' : 'HOLD',
+          status: classification === 'PASS' ? 'PASS' : 'WATCH',
+          reasoning: `1P model classification ${classification} from projection ${projected1pTotalForCard.toFixed(2)} (raw ${projectionRaw1p.toFixed(2)}, ref ${NHL_1P_REFERENCE_TOTAL_LINE}, goalie ${goalieConfidence.toLowerCase()}).`,
+          ev_threshold_passed: classification !== 'PASS' && confidence1p > 0.6,
           driverKey: 'paceTotals1p',
           driverInputs: {
             expected_1p_total: projected1pTotalForCard,
+            projection_raw: projectionRaw1p,
+            projection_final: projected1pTotalForCard,
+            projection_delta: projectionDelta1p,
+            classification,
+            environment_tag: firstPeriodModel.environment_tag ?? null,
+            goalie_confidence: goalieConfidence,
+            pace_1p: firstPeriodModel.pace_1p ?? null,
+            suppressor_1p: firstPeriodModel.suppressor_1p ?? null,
+            accelerant_1p: firstPeriodModel.accelerant_1p ?? null,
+            reason_codes: reasonCodes,
             model_expected_1p_total: paceResult.expected1pTotal,
             market_1p_total: NHL_1P_REFERENCE_TOTAL_LINE,
-            edge: edge1p,
+            edge: projectionDelta1p,
             home_goalie_confirmed: paceResult.homeGoalieConfirmed,
             away_goalie_confirmed: paceResult.awayGoalieConfirmed,
             home_goalie_certainty: homeGoalieCertainty,
             away_goalie_certainty: awayGoalieCertainty,
             goalie_confidence_capped: paceResult.goalieConfidenceCapped,
           },
-          driverScore: direction1p === 'OVER' ? 0.75 : 0.25,
+          driverScore:
+            classification.includes('OVER')
+              ? 0.75
+              : classification.includes('UNDER')
+                ? 0.25
+                : 0.5,
           driverStatus: 'ok',
           inference_source: 'driver',
           is_mock: false,
+          reason_codes: reasonCodes,
         });
       }
     }
@@ -1460,6 +1480,7 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
   const raw = parseRawData(oddsSnapshot?.raw_data);
 
   const descriptors = [];
+  let projectedMarginForDrivers = null;
 
   // Extract ESPN-enriched metrics
   const avgPtsHome = toNumber(
@@ -1482,6 +1503,17 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
   const restDaysAway = toNumber(
     raw?.espn_metrics?.away?.metrics?.restDays ?? raw?.rest_days_away,
   );
+  const freeThrowPctHome = toNumber(
+    raw?.espn_metrics?.home?.metrics?.freeThrowPct ??
+      raw?.free_throw_pct_home ??
+      raw?.home?.free_throw_pct,
+  );
+  const freeThrowPctAway = toNumber(
+    raw?.espn_metrics?.away?.metrics?.freeThrowPct ??
+      raw?.free_throw_pct_away ??
+      raw?.away?.free_throw_pct,
+  );
+  const totalLine = toNumber(oddsSnapshot?.total);
 
   // --- Base Projection Driver (NCAAM Formula with HCA) ---
   if (avgPtsHome && avgPtsAway && avgPtsAllowedHome && avgPtsAllowedAway) {
@@ -1494,6 +1526,7 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
 
     if (projection.homeProjected && projection.awayProjected) {
       const projectedMargin = projection.projectedMargin;
+      projectedMarginForDrivers = projectedMargin;
 
       // NCAAM confidence slightly different from NBA (college variance higher)
       let confidence = 0.55;
@@ -1626,6 +1659,64 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
         driverStatus: 'ok',
         inference_source: 'driver',
         is_mock: false,
+      });
+    }
+  }
+
+  // --- Free Throw Spread Driver (rule-based) ---
+  if (
+    totalLine !== null &&
+    totalLine < 160 &&
+    freeThrowPctHome !== null &&
+    freeThrowPctAway !== null
+  ) {
+    let prediction = null;
+    if (freeThrowPctHome > 75 && freeThrowPctAway < 75) {
+      prediction = 'HOME';
+    } else if (freeThrowPctAway > 75 && freeThrowPctHome < 75) {
+      prediction = 'AWAY';
+    }
+
+    if (prediction) {
+      if (
+        projectedMarginForDrivers === null &&
+        avgPtsHome &&
+        avgPtsAway &&
+        avgPtsAllowedHome &&
+        avgPtsAllowedAway
+      ) {
+        const projection = projectNCAAM(
+          avgPtsHome,
+          avgPtsAllowedHome,
+          avgPtsAway,
+          avgPtsAllowedAway,
+        );
+        projectedMarginForDrivers = toNumber(projection?.projectedMargin);
+      }
+
+      const ftGap = Number((freeThrowPctHome - freeThrowPctAway).toFixed(2));
+      const confidence = 0.62;
+      descriptors.push({
+        cardType: 'ncaam-ft-trend',
+        cardTitle: `NCAAM FT%-Trend: ${prediction}`,
+        confidence,
+        tier: determineTier(confidence),
+        prediction,
+        reasoning: `FT% edge (${freeThrowPctHome.toFixed(1)} vs ${freeThrowPctAway.toFixed(1)}) with total ${totalLine.toFixed(1)} under 160`,
+        ev_threshold_passed: true,
+        driverKey: 'freeThrowTrend',
+        driverInputs: {
+          home_ft_pct: freeThrowPctHome,
+          away_ft_pct: freeThrowPctAway,
+          ft_gap: ftGap,
+          total_line: totalLine,
+          projected_margin: projectedMarginForDrivers,
+        },
+        driverScore: prediction === 'HOME' ? 0.66 : 0.34,
+        driverStatus: 'ok',
+        inference_source: 'driver',
+        is_mock: false,
+        marketTypes: ['spread'],
       });
     }
   }

@@ -42,6 +42,7 @@ const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { runSoccerModel } = require('../jobs/run_soccer_model');
 const { runNCAAMModel } = require('../jobs/run_ncaam_model');
+const { runRefreshNcaamFtCsv } = require('../jobs/refresh_ncaam_ft_csv');
 const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
 const { backfillCardResults } = require('../jobs/backfill_card_results');
@@ -58,6 +59,11 @@ const REQUIRE_FRESH_ODDS_FOR_MODELS =
   process.env.REQUIRE_FRESH_ODDS_FOR_MODELS !== 'false';
 const MODEL_ODDS_MAX_AGE_MINUTES = Number(
   process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES,
+);
+const ENABLE_NCAAM_FT_REFRESH =
+  process.env.ENABLE_NCAAM_FT_REFRESH !== 'false';
+const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
+  process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
 );
 let lastOddsGapAlertAt = 0;
 
@@ -138,6 +144,13 @@ function keyTminus(sport, gameId, minutes) {
 
 function keyNightlySweep(nowEt) {
   return `settle|nightly|${nowEt.toISODate()}`;
+}
+
+function keyNcaamFtRefresh(nowEt) {
+  const freshnessWindow = Math.max(15, NCAAM_FT_REFRESH_MAX_AGE_MINUTES);
+  const minutesSinceMidnight = nowEt.hour * 60 + nowEt.minute;
+  const bucket = Math.floor(minutesSinceMidnight / freshnessWindow);
+  return `refresh_ncaam_ft_csv|${nowEt.toISODate()}|b${bucket}`;
 }
 
 function keyHourlySettlementSweep(nowEt) {
@@ -348,6 +361,30 @@ function dueTminusMinutes(nowUtc, startUtc) {
 function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   const jobs = [];
   const sports = enabledSports();
+  let ncaamFtRefreshQueued = false;
+
+  function maybeQueueNcaamFtRefresh(triggerReason) {
+    if (!ENABLE_NCAAM_FT_REFRESH) return;
+    if (ncaamFtRefreshQueued) return;
+    if (
+      wasJobRecentlySuccessful(
+        'refresh_ncaam_ft_csv',
+        NCAAM_FT_REFRESH_MAX_AGE_MINUTES,
+      )
+    ) {
+      return;
+    }
+
+    const refreshJobKey = keyNcaamFtRefresh(nowEt);
+    jobs.push({
+      jobName: 'refresh_ncaam_ft_csv',
+      jobKey: refreshJobKey,
+      execute: runRefreshNcaamFtCsv,
+      args: { jobKey: refreshJobKey, dryRun },
+      reason: `pre-NCAAM FT CSV refresh (${triggerReason})`,
+    });
+    ncaamFtRefreshQueued = true;
+  }
 
   // ========== SCHEDULES (1) ==========
   // Use new time-aware schedule refresh logic (optional, can keep old hourly for now)
@@ -425,6 +462,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     const { jobName, execute } = SPORT_JOBS[sport];
     for (const t of fixedTimes) {
       if (!isFixedDue(nowEt, t)) continue;
+      if (sport === 'ncaam') {
+        maybeQueueNcaamFtRefresh(`fixed ${t} ET`);
+      }
       const jobKey = keyFixed(sport, nowEt, t);
       jobs.push({
         jobName,
@@ -446,6 +486,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     const minsList = dueTminusMinutes(nowUtc, startUtc);
 
     for (const mins of minsList) {
+      if (sport === 'ncaam') {
+        maybeQueueNcaamFtRefresh(`T-${mins} for ${g.game_id}`);
+      }
       const jobKey = keyTminus(sport, g.game_id, mins);
       jobs.push({
         jobName: SPORT_JOBS[sport].jobName,
@@ -637,6 +680,12 @@ async function start() {
     `  REQUIRE_FRESH_ODDS_FOR_MODELS: ${REQUIRE_FRESH_ODDS_FOR_MODELS ? 'true' : 'false'}`,
   );
   console.log(`  MODEL_ODDS_MAX_AGE_MINUTES: ${MODEL_ODDS_MAX_AGE_MINUTES}`);
+  console.log(
+    `  ENABLE_NCAAM_FT_REFRESH: ${ENABLE_NCAAM_FT_REFRESH ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  NCAAM_FT_REFRESH_MAX_AGE_MINUTES: ${NCAAM_FT_REFRESH_MAX_AGE_MINUTES}`,
+  );
   console.log(
     `  ENABLE_SETTLEMENT: ${process.env.ENABLE_SETTLEMENT !== 'false' ? 'true' : 'false'}`,
   );

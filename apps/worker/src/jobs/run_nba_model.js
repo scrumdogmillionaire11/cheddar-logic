@@ -291,11 +291,7 @@ function getHomeTeamRecentRoadTrip(
  */
 function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
   const now = new Date().toISOString();
-  let expiresAt = null;
-  if (oddsSnapshot?.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
+  const expiresAt = null;
 
   const matchup = buildMatchup(
     oddsSnapshot?.home_team,
@@ -810,17 +806,6 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
               driverWeights: NBA_DRIVER_WEIGHTS,
             }),
           );
-
-          // Set expiresAt for all cards
-          if (oddsSnapshot?.game_time_utc) {
-            const gameTime = new Date(oddsSnapshot.game_time_utc);
-            const expiresAt = new Date(
-              gameTime.getTime() - 60 * 60 * 1000,
-            ).toISOString();
-            cards.forEach((card) => {
-              card.expiresAt = expiresAt;
-            });
-          }
 
           const pendingCards = [];
 

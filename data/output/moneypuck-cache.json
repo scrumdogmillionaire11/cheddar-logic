@@ -1,6 +1,287 @@
 {
-  "fetched_at": "2026-03-10T13:02:31.197Z",
+  "fetched_at": "2026-03-11T00:52:01.735Z",
   "teams": {},
-  "goalies": {},
+  "goalies": {
+    "New York Rangers": {
+      "gsax": 16.92,
+      "source": "moneypuck-csv"
+    },
+    "Utah Hockey Club": {
+      "gsax": 10.949999999999989,
+      "source": "moneypuck-csv"
+    },
+    "Dallas Stars": {
+      "gsax": 13.150000000000006,
+      "source": "moneypuck-csv"
+    },
+    "Ottawa Senators": {
+      "gsax": -0.4400000000000013,
+      "source": "moneypuck-csv"
+    },
+    "San Jose Sharks": {
+      "gsax": 0.5,
+      "source": "moneypuck-csv"
+    },
+    "Vancouver Canucks": {
+      "gsax": 2.3800000000000026,
+      "source": "moneypuck-csv"
+    },
+    "New York Islanders": {
+      "gsax": 28.129999999999995,
+      "source": "moneypuck-csv"
+    },
+    "Boston Bruins": {
+      "gsax": 20.5,
+      "source": "moneypuck-csv"
+    },
+    "Winnipeg Jets": {
+      "gsax": 12.25,
+      "source": "moneypuck-csv"
+    },
+    "Colorado Avalanche": {
+      "gsax": 12.730000000000004,
+      "source": "moneypuck-csv"
+    },
+    "St. Louis Blues": {
+      "gsax": 4.030000000000001,
+      "source": "moneypuck-csv"
+    },
+    "Montreal Canadiens": {
+      "gsax": 1.8099999999999987,
+      "source": "moneypuck-csv"
+    },
+    "Columbus Blue Jackets": {
+      "gsax": 13.239999999999995,
+      "source": "moneypuck-csv"
+    },
+    "Florida Panthers": {
+      "gsax": -0.5200000000000031,
+      "source": "moneypuck-csv"
+    },
+    "Pittsburgh Penguins": {
+      "gsax": 6.739999999999995,
+      "source": "moneypuck-csv"
+    },
+    "Washington Capitals": {
+      "gsax": 24.75,
+      "source": "moneypuck-csv"
+    },
+    "Toronto Maple Leafs": {
+      "gsax": 8.909999999999997,
+      "source": "moneypuck-csv"
+    },
+    "Tampa Bay Lightning": {
+      "gsax": 17.840000000000003,
+      "source": "moneypuck-csv"
+    },
+    "Seattle Kraken": {
+      "gsax": 8.670000000000002,
+      "source": "moneypuck-csv"
+    },
+    "Calgary Flames": {
+      "gsax": 16.930000000000007,
+      "source": "moneypuck-csv"
+    },
+    "Philadelphia Flyers": {
+      "gsax": 9.049999999999997,
+      "source": "moneypuck-csv"
+    },
+    "Nashville Predators": {
+      "gsax": -4.840000000000003,
+      "source": "moneypuck-csv"
+    },
+    "Buffalo Sabres": {
+      "gsax": 14.519999999999996,
+      "source": "moneypuck-csv"
+    },
+    "Carolina Hurricanes": {
+      "gsax": 6.6200000000000045,
+      "source": "moneypuck-csv"
+    },
+    "Vegas Golden Knights": {
+      "gsax": -0.8799999999999955,
+      "source": "moneypuck-csv"
+    },
+    "Minnesota Wild": {
+      "gsax": 6.810000000000002,
+      "source": "moneypuck-csv"
+    },
+    "Los Angeles Kings": {
+      "gsax": 6.219999999999999,
+      "source": "moneypuck-csv"
+    },
+    "Edmonton Oilers": {
+      "gsax": -0.3400000000000034,
+      "source": "moneypuck-csv"
+    },
+    "Anaheim Ducks": {
+      "gsax": -0.18999999999999773,
+      "source": "moneypuck-csv"
+    },
+    "Chicago Blackhawks": {
+      "gsax": 10.569999999999993,
+      "source": "moneypuck-csv"
+    },
+    "Detroit Red Wings": {
+      "gsax": 12,
+      "source": "moneypuck-csv"
+    },
+    "New Jersey Devils": {
+      "gsax": 6.650000000000006,
+      "source": "moneypuck-csv"
+    }
+  },
+  "rotowire_goalies": {
+    "Philadelphia Flyers": {
+      "name": "Dan Vladar",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Washington Capitals": {
+      "name": "Logan Thompson",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Ottawa Senators": {
+      "name": "Linus Ullmark",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Montreal Canadiens": {
+      "name": "Sam Montembeault",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Boston Bruins": {
+      "name": "Jeremy Swayman",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "San Jose Sharks": {
+      "name": "Yaroslav Askarov",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Buffalo Sabres": {
+      "name": "Ukko-Pekka Luukkonen",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Carolina Hurricanes": {
+      "name": "Brandon Bussi",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "St. Louis Blues": {
+      "name": "Joel Hofer",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Florida Panthers": {
+      "name": "Sergei Bobrovsky",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Columbus Blue Jackets": {
+      "name": "Jet Greaves",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "New Jersey Devils": {
+      "name": "Jacob Markstrom",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Calgary Flames": {
+      "name": "Dustin Wolf",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Toronto Maple Leafs": {
+      "name": "Joseph Woll",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Anaheim Ducks": {
+      "name": "Lukas Dostal",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Tampa Bay Lightning": {
+      "name": "Andrei Vasilevskiy",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Detroit Red Wings": {
+      "name": "John Gibson",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Dallas Stars": {
+      "name": "Jake Oettinger",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Edmonton Oilers": {
+      "name": "Tristan Jarry",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Minnesota Wild": {
+      "name": "Filip Gustavsson",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Winnipeg Jets": {
+      "name": "Connor Hellebuyck",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "New York Rangers": {
+      "name": "Igor Shesterkin",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Utah Hockey Club": {
+      "name": "Karel Vejmelka",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Chicago Blackhawks": {
+      "name": "Spencer Knight",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Seattle Kraken": {
+      "name": "Philipp Grubauer",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Colorado Avalanche": {
+      "name": "Mackenzie Blackwood",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Vancouver Canucks": {
+      "name": "Kevin Lankinen",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Nashville Predators": {
+      "name": "Juuse Saros",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Vegas Golden Knights": {
+      "name": "Adin Hill",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    },
+    "Pittsburgh Penguins": {
+      "name": "Arturs Silovs",
+      "status": "EXPECTED",
+      "source": "rotowire"
+    }
+  },
   "injuries": {}
 }

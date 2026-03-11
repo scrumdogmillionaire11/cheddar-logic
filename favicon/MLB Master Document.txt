@@ -1,0 +1,848 @@
+## 🧀 Sharp Cheddar MLB Master Document (v1.2 – June 2025 Integration)
+
+---
+
+### ⚾ Dynamic Master Template for MLB Props (K Props, F5, Walks, Flex Mode)
+
+---
+
+### 📅 Slate Filtering
+
+* Remove Games with: Rain risk, extreme winds, adverse park overlays.
+* Mark Slate: Final list of eligible games for watchlist consideration.
+
+Cheddar Edge Hierarchy:
+Props ranked by stability and modeling edge:
+1. Ks (highest edge)
+2. BBs (volume-dependent)
+3. F5 Totals (volatility-prone)
+- Apply stricter validation as you descend the list.
+
+---
+
+### 🏗️ Integrated Watchlist + Quick View Layer (Interactive-ready for Excel/Google Sheets)
+
+| Matchup         | Prop         | Line    | Odds    | Tier                | Boosts             | Scoring Notes    | 🚨/🚀 Trigger Thresholds                 | Status             |
+| --------------- | ------------ | ------- | ------- | ------------------- | ------------------ | ---------------- | ---------------------------------------- | ------------------ |
+| \[Team vs Team] | \[Prop Type] | \[Line] | \[Odds] | \[Provisional Tier] | \[Ump, Park, Form] | \[Scoring Notes] | \[Trigger flags: e.g., 🚨 Opp Bot 10 K%] | \[Watch/Hold/Lock] |
+
+🔎 **Quick View Filters (NO VIBES Enforcement Integrated):**
+
+* Opponent K% Top 10: ✅ K prop boost.
+* Umpire Tier: 1 = boost, 3 = fade.
+* Park Factors: Hot/Wind Out = HR/TB up, Cold/In = fade.
+* Pitcher Trends: Leash, pitch count, CSW%, BB%. "No play on SPs without 3+ IP leash"
+* 🚨/🚀 Explicit Trigger Thresholds: Highlight hard triggers pre-scoring.
+
+---
+🧀 Cheddar Cheatsheet – Quick Reference Flow
+🎯 Edge Priority Ladder
+Ks = Highest EV
+
+BBs = Volume-dependent, matchup volatile
+
+F5 Totals = Trigger-reliant, lineup/weather-sensitive
+- F5 play must score ≥4 points in Sim Score to be considered. 
+- Full LOCK requires 6+.
+- Combine SP delta, volatility triggers, and park/ump overlays.
+
+✅ Apply +1 Tier only if both SwStr% and 2-strike finish confirmed (≥12% / ≥65%).
+
+HR / NRFI/YRFI = Capped-volatility edge plays only
+
+---
+
+🧀 Cheddar Cheatsheet – Quick Reference Flow
+🎯 Edge Priority Ladder
+1. Ks = Highest EV
+2. BBs = Volume-dependent, matchup volatile
+3. F5 Totals = Trigger-reliant, lineup/weather-sensitive
+4. HR / NRFI/YRFI = Capped-volatility edge plays only
+
+---
+### 🧀 Tier Key
+
+📊 Trigger Score → Tier Conversion
+Score	Tier
+6+	🧀🧀🧀🧀🧀
+4–5	🧀🧀🧀🧀
+2–3	🧀🧀🧀
+1	🧀🧀
+≤0	❌ No Play
+
+Leash-Based Tier Cap:
+Pitchers projected for fewer than 85 pitches receive an automatic Tier -1 downgrade, unless SwStr% ≥ 14% and form trend confirms upside.
+
+| Tier       | Ks (Primary Edge) | BBs (Volatility) | F5 Totals (Risk-Tiered) | HR Props (High Volatility) | NRFI/YRFI (High Volatility) |
+| ---------- | ----------------- | ---------------- | ----------------------- | -------------------------- | --------------------------- |
+| 🧀🧀🧀🧀🧀 | 1.25–1.5u         | 1u max           | 1u (Score >+4 only)     | 0.5u Max (Score ≥6.0)      | 0.75u Max (Full dual lock)  |
+| 🧀🧀🧀🧀   | 1u                | 0.75u            | 1u (3+ hard triggers)   | 0.5u                       | 0.5u                        |
+| 🧀🧀🧀     | 0.5–0.75u         | 0.5u             | Avoid unless stacked    | 0.5u                       | 0.25u                       |
+| 🧀🧀       | 0.25–0.5u         | 0.25u            | Avoid                   | Fringe only                | Edge tag only               |
+| 🧀         | ❌ No Play         | ❌ No Play        | ❌ No Play               | ❌ No Play                  | ❌ No Play                   |
+
+📉 Trend-Based Override Guardrail
+L3 trend supports a Tier 🧀🧀🧀 or 🧀🧀🧀🧀 only if SwStr% and 2K Finish metrics are not yet available.
+❌ Never valid as a substitute for confirmed SwStr%/2K Finish when targeting Tier 5.
+
+Treat trend-only plays as “provisional Tier 3–4” pending metric confirmation.
+
+✅ Key Implementation Notes
+HR Props: Cap exposure at 0.5u regardless of score—high volatility acknowledged.
+
+NRFI/YRFI: Tier 5 = max 0.75u, only under ideal conditions (dual SP suppression, clean top 3).
+
+Ks remain your anchor edge—fully backed for 1u+ exposure scaling.
+
+🌤️ Environment Factor Codes
+| Factor         | Code | Impact                     |
+| -------------- | ---- | -------------------------- |
+| Ump Tier 1     | 🚀   | Ks/BBs up                  |
+| Ump Tier 3     | 🚨   | Ks/BBs down                |
+| Park HR Tier 1 | 🚀   | HR/YRFI value up           |
+| Wind Out 10+   | 🚀   | HR/F5 over boost           |
+| Wind In / Cold | 🚨   | Unders preferred           |
+| Rain Risk      | ⚠️   | Auto-filter/monitor status |
+
+
+
+
+---
+
+### 🧠 Trigger Table (With Safeguards)
+
+| Factor                   | Condition                                       | Trigger               | Impact                      |
+| ------------------------ | ----------------------------------------------- | --------------------- | --------------------------- |
+| Opponent K%              | Top 10% / Bottom 10% (season or L3)             | 🚀/🚨 Auto-adjust     | ±2 Tier                     |
+| Opponent Ks/Game         | <7.5                                            | 🚨 Contact Fade       | -1 Tier                     |
+| Opponent L3 K% Context   | If L3 K% is inflated by weak SP matchups | 🧪 Trend Tag  | Do not boost Tier |
+| Opponent L3 K% Validated | If L3 K% > 26% **vs top-15 SPs faced**   | 🚀 Real Spike | +1 Tier           |
+| Opponent Hits/Game       | >8.5                                            | 🚨 Contact Fade       | -1 Tier                     |
+| Opponent Singles/Game    | >5.5                                            | 🚨 Ceiling Cap        | Max 🧀🧀🧀 Tier             |
+| SwStr% (override)     | ≥14%      | 🚀 Whiff Override | Lift cap by +1 Tier if capped |
+| Opponent Doubles/Game    | >1.6                                            | 🚀 BB/F5 Volatility   | +1 Tier                     |
+| Opponent ABs/Game        | >34.5                                           | 🚀 Volume Boost       | +1 Tier                     |
+| Opponent BB%            | Top 5% / Bottom 5%               | 🚀/🚨           | ±1 Tier         |
+| Pitcher BB/9            | >3.5                             | ⚠️ Wild Arm     | Tier cap 🧀🧀🧀 |
+| BvP History | Hitter AVG ≥.350 or OPS ≥.900 vs SP | ✅ BvP Edge | +1 Tier (hit props only) |
+| Umpire Zone             | Confirmed tight / high-walk zone | 🚀 Ump Bias     | +1 Tier         |
+| Park Walk Overlay       | Park has high BB factor          | 🚀 BB Favorable | +1 Tier         |
+| Lineup Patience Cluster | ≥3 hitters with BB% >12%         | 🚀 Selective    | +1 Tier         |
+| Pitcher Form             | Trending up/down                                | 🚀/🚨 Form Adjust     | ±1 Tier                     |
+| SwStr% / 2-Strike Finish | ≥12% / ≥65%                                     | 🚀 Whiff/Closer Boost | +1 Tier (each if confirmed) |
+| Trend Confirmation | SwStr% ≥12% **AND** 2K Finish ≥65% | ✅ Confirmed | +1 Tier |
+| Ump/Park Factors         | Suppressive / Friendly                          | 🚨/🚀 Zone Adjust     | ±1 Tier                     |
+| BB% Tier Opponent        | Top 5% / Bottom 5%                              | 🚀/🚨 Walk Volatility | ±1 Tier                     |
+| Lineup Suppression       | ≥3 high-contact hitters in top-6                | 🚨 Auto-fade          | -2 Tier                     |
+| Lineup Heat Cluster      | ≥3 top-5 hitters SLG ≥.500 or OPS ≥.850 (L5)    | 🚨 Hot Cluster        | -2 Tier (no F5 Unders)      |
+| Short Leash              | <85 pitches                                     | ⚠️ Tier Cap           | -1 Tier                     |
+| 2-Strike Conversion Risk | SP with ≥2 prior games <65% 2K finish rate                | ⚠️ 2K Risk   | Max 🧀🧀🧀 Tier |
+| Score-Based Hook Risk    | Game within 1–2 runs AND SP leash <85p AND bullpen rested | ⚠️ Hook Risk | Tier -1         |
+| Bullpen Fatigue          | ≥3 RPs with 25+ pitches last 2 days             | 🚀 Leash Boost        | Remove leash cap / F5 bump  |
+| SP Role                  | Opener/Bulk / <3 IP tag                         | ❌ Role Filter         | No Play                     |
+| Weather                  | Favorable / Adverse                             | 🚀/🚨 Env Adjust      | ±1 Tier                     |
+| Score-Based Hook Risk     | Game projected within 1–2 runs **AND** SP leash <85p **AND** rested pen | ⚠️ Hook Risk       | -1 Tier            |           
+| Opponent BB Volatility    | Opp SP BB/9 > 3.5                                                       | 🚀 BB Volatility   | +1 Tier (F5 only)             |
+| Whiff Profile Boost       | SwStr% ≥12% and/or 2K Finish ≥65%                                       | 🚀 Whiff Boost     | +1 Tier per stat confirmed    |
+| Lineup Hot Cluster        | 3+ top-5 hitters with SLG ≥.500 or OPS ≥.850 (L5)                       | 🚨 Hot Cluster     | -2 Tier (F5 Under = ❌)        |
+| Execution Fail Risk       | SP with ≥2 prior 2-strike collapse games (<65% 2K conv rate)            | ⚠️ 2K Risk         | Max 🧀🧀🧀 Tier               |
+| Steam Confirmation        | Line movement +1 K or >25 point odds shift                              | 📈 Steam Confirmed | No Tier Change (confirm only) |
+| Tier Saturation Guardrail | 3+ props in same slate share 2+ trigger types                           | 🚫 Cap Flag        | Limit to 2 Tier 4–5 props     |
+| Composite Risk Cap        | Risk Index ≥ 4 (leash + park + opp + ump)                               | ⚠️ Composite Risk  | Max 🧀🧀 Tier                 |
+| BB Sim Score Trigger     | Opp BB% Top 5% **AND** SP BB/9 > 3.5                      | 🚀 BB Sim Trigger | +1 Tier                       |
+| HR Sim Score Matchup     | SP HR/9 ≥1.5 **OR** Park HR Top 10 **OR** Wind Out        | 🚀 HR Matchup     | +1 Tier                       |
+| HR Trend Tier            | L5/L10/L20 HR totals meet 3+ on HR Heat Index             | 🚀 HR Trend Tier  | +1 Tier                       |
+| Bare Min Parlay Anchor   | Hitter odds -220 to -270 + contact form + lineup spot 1–4 | 🧷 Anchor Leg     | Use in low-volatility parlays |
+| Execution Density Flag   | >3 Tier 4–5 plays in slate with shared SP/opponent trends | ⚠️ Density Flag   | Limit exposure / reduce size  |
+| Failure Mode: Wild BB SP | SP with BB/9 > 4.0 **and** <60% Zone% in 2+ starts        | ⚠️ BB Wild Arm    | Max 🧀🧀 Tier for BBs         |
+
+
+Auto-Tier SwStr% + 2K Finish
+Upgrade:
+- If both SwStr% ≥12% and 2-strike ≥65% confirmed, auto-add ✅ tag for Tier Boost +1.
+
+---
+
+### 🧮 Trigger Weighting Table
+
+| Trigger                     | Symbol | Weight                     |
+| --------------------------- | ------ | -------------------------- |
+| Opponent K% (Top/Bottom 10) | 🚀/🚨  | ±2                         |
+| Opponent Ks/Game            | 🚨     | -1                         |
+| Hits/Game / Singles/Game    | 🚨     | -1 (Singles = Tier Cap)    |
+| Doubles/Game                | 🚀     | +1                         |
+| ABs/Game                    | 🚀     | +1                         |
+| K Trend (L3/L1)             | 🚀/🚨  | ±1                         |
+| SwStr% (≥12%)               | 🚀     | +1                         |
+| 2-Strike Finish (≥65%)      | 🚀     | +1                         |
+| SwStr% + 2K Close Combo | ✅      | +1     |
+| Pitcher Form                | 🚀/🚨  | ±1                         |
+| BvP Edge | ✅      | +1     |
+| Ump/Park                    | 🚀/🚨  | ±1                         |
+| Opponent BB%                | 🚀/🚨  | ±1                         |
+| Lineup Suppression          | 🚨     | -2                         |
+| Lineup Heat Cluster         | 🚨     | -2 (and disqualifies F5 U) |
+| Short Leash (<85 pitches)   | ⚠️     | -1                         |
+| Score-Based Hook Risk       | ⚠️     | -1                         |
+| Bullpen Fatigue Index ≥3    | 🚀     | +1                         |
+| SP Role: Opener/Bulk        | ❌      | Auto-Filter                |
+| Weather Boost/Fade          | 🚀/🚨  | ±1                         |
+| Score-Based Hook Risk        | ⚠️     | -1                        |
+| Opponent BB Volatility       | 🚀     | +1 (F5 only)              |
+| Whiff Profile Boost (SwStr%) | 🚀     | +1                        |
+| Whiff Profile Boost (2K%)    | 🚀     | +1                        |
+| Lineup Hot Cluster           | 🚨     | -2                        |
+| Execution Fail Risk (2K%)    | ⚠️     | Tier cap (🧀🧀🧀)         |
+| Steam Confirmation           | 📈     | 0 (confirmation only)     |
+| Tier Saturation Guardrail    | 🚫     | Tier cap (Max 2 Tier 4–5) |
+| Composite Risk Cap           | ⚠️     | Tier cap (🧀🧀)           |
+| BB Sim Score Trigger     | 🚀     | +1                          |
+| HR Matchup Score         | 🚀     | +1                          |
+| HR Trend Tier            | 🚀     | +1                          |
+| Bare Min Parlay Anchor   | 🧷     | 0 (parlay structuring only) |
+| Execution Density Flag   | ⚠️     | Exposure cap only           |
+| Failure Mode: Wild BB SP | ⚠️     | Max 🧀🧀 Tier (BBs only)    |
+
+
+🔲 Tier 5 Gate – Whiff Confirmation Table
+| Metric                  | Threshold | Action                                         |
+| ----------------------- | --------- | ---------------------------------------------- |
+| **SwStr%**              | ≥ 12%     | Required for Tier 5                            |
+| **2-Strike Finish %**   | ≥ 65%     | Required for Tier 5                            |
+| One or Both < Threshold | –         | Max Tier 🧀🧀🧀🧀, not eligible for 🧀🧀🧀🧀🧀 |
+| Unconfirmed Values      | –         | Hold at 🧀🧀🧀🧀 until confirmed               |
+
+🔲 Leash-Based Tier Cap Table
+| Condition                         | Tier Adjustment    | Notes                                            |
+| --------------------------------- | ------------------ | ------------------------------------------------ |
+| **Projected Pitches < 85**        | 🧀 Tier -1         | Standard downgrade unless override confirmed     |
+| **SwStr% ≥ 14% + Trend Support**  | No cap             | Override allowed if elite swing metrics and form |
+| **No leash projection available** | Hold at 🧀🧀🧀 max | Until leash data confirmed                       |
+
+
+---
+🏟️ Park Impact Matrix – Coded Layer for All Prop Types
+
+| Prop Type | Park Factor                | Code  | Impact             |
+| --------- | -------------------------- | ----- | ------------------ |
+| Ks        | Foul Territory + Elevation | 🚀/🚨 | +1 or -1 Tier      |
+| F5 Totals | HR/Run Factor Top 10       | 🚀    | +1 Tier for Overs  |
+| BBs       | Zone Size / Walk History   | 🚀    | +1 Tier            |
+| HR Props  | HR Park Rank + Wind        | 🚀/🚨 | ±1 Tier or No Play |
+
+
+
+**Score → Tier Mapping:**
+6+ = 🧀🧀🧀🧀🧀 | 4–5 = 🧀🧀🧀🧀 | 2–3 = 🧀🧀🧀 | 1 = 🧀🧀 | 0 or neg. = ❌
+
+---
+
+### 🧾 Write-Up Template
+
+* 🔎 NO VIBES CONFIRMATION: This prop is fully data-backed, no gut or external trends.
+
+🧀🧀🧀🧀 — Strong Single
+**\[Player/Prop] Over/Under \[Line] (\[Odds])**
+
+* **Form:** \[Pitcher/hitter trends incl. SwStr%/2-strike close if relevant]
+* **Matchup:** \[K%, park, opponent trends]
+* **Odds Movement:** \[Line movement if applicable]
+* **Overall:** \[Final analysis]
+* **🚨/🚀 Trigger Summary:** \[Explicit triggers: e.g., 🚀 Opp Top 10 K%, 🚨 Opp Bot 10 K%]
+* **Unit Recommendation:** \[Based on cheddar tier]
+
+Post-Game Log:
+Execution Fail Tag: ________
+
+---
+
+### 📚 Expanded Rules for F5 Totals (Over/Under)
+
+| Entry Conditions | Requirements                                  |
+| ---------------- | --------------------------------------------- |
+| Pitcher Form     | Confirmed SP edge vs opp SP with ≥3 red flags |
+| Weather & Umpire | Favorable, zone confirmed                     |
+| Park Factors     | Tier 1–3 only                                 |
+| Hot Hitters      | Avoid if ≥3 in top 5 hot                      |
+| Odds             | ≤-135 for F5 Unders; Over = cluster support   |
+| Final Checks     | Lineups, umps locked                          |
+| Unit Sizing      | Flat 1u unless score >+4                      |
+
+---
+
+### 🔒 Operational Controls (v1.2 Final)
+
+* Lock tiers post-confirmations: lineup, ump, leash, role.
+* Pre-Lineup Hold: All Tier 4–5 plays must remain 🔍 MONITOR until:
+
+  * SP confirmed with ≥85 pitch leash
+  * Lineup shows <3 high-contact bats
+  * Contact overlays cleared (singles ≤5.5)
+* SP relievers/openers = ❌ No Play on Ks/BBs
+* Market steam = validation only, never adjust tier post-facto.
+* Full data lock required before ✅ LOCK tag.
+* ❌ Avoid F5 Unders if opposing top-5 features 3+ hot hitters (SLG ≥ .500 or OPS ≥ .850 L5)
+* Log all Tier 4–5 losses with Execution Failure Code:
+ - 2K Collapse: SP failed to convert ≥3 2-strike counts
+ - Early Hook: SP pulled <85p despite normal leash
+ - Lineup Shift: 2+ unexpected hot bats in opp top 5
+ - If SP has multiple recent games with <65% 2-strike conversion → Apply ⚠️ 2K Risk → Max Tier 🧀🧀🧀
+ - If game is projected within 2 runs AND SP leash <85 pitches AND bullpen is fresh → Apply ⚠️ Hook Risk → Tier -1
+* All props (Ks, BBs, F5s) must have:
+ - Confirmed Umpire Tier (boost or suppress)
+ - Park overlay effects (e.g., elevation, foul ground for Ks; HR factor for F5)
+* Include zone impact in Tiering (+1 for Tier 1, -1 for Tier 3)
+
+
+
+---
+
+### 🧠 Edge Priority Scoring
+
+* Ks > BBs > F5
+
+---
+
+### 📦 Tracker Tags (New EOD Integration)
+
+* SwStr%
+* 2-strike finish rate
+* SP pitch count trend
+* Pre-lineup Tier (vs. post-confirmation Tier)
+* Execution Fail Tag (e.g., 2-strike collapse, short leash pull)
+
+## 🧨 Cheddar HR Value System (v1.0 – June 2025)
+
+---
+
+### 1⃣ HR Heat Index – Player Trend Score (PTS)
+
+Track momentum with a 5-point scale:
+
+| Factor            | Condition                  | PTS |
+| ----------------- | -------------------------- | --- |
+| L3 Games HRs      | ≥2 HRs                     | +1  |
+| L5 Games HRs      | ≥3 HRs                     | +1  |
+| L10 Games HRs     | ≥5 HRs                     | +1  |
+| L20 Games HR Rate | ≥20% (4+ HRs in 20 games)  | +1  |
+| HR/FB% Trend      | L10 HR/FB% > Season HR/FB% | +1  |
+
+**Trend Tier Classifications**:
+
+* 5 = Red-Hot
+* 3–4 = Warm
+* 1–2 = Fringe
+* 0 = Cold (auto-fade)
+
+---
+
+### 2⃣ Market Mismatch Detector (MMD)
+
+Compare HR rate to market odds:
+
+* HR Rate = Recent HRs / Games Played
+* Convert to fair odds: `1 / HR Rate`
+* Calculate implied probability from actual odds
+
+**Trigger Criteria:**
+
+* HR Rate > Implied Probability by ≥5%
+* AND Trend Tier ≥3
+
+---
+
+### 3⃣ Matchup Context Layer (0–3 Pts)
+
+| Context Factor          | Condition                           | Pts |
+| ----------------------- | ----------------------------------- | --- |
+| SP HR/9 ≥1.5            | Pitcher is HR-prone                 | +1  |
+| Park Factor (HR Top 10) | HR-friendly stadium                 | +1  |
+| Weather Boost           | Wind out or warm/humid              | +1  |
+| Reverse Splits          | Hitter vs SP with HR split weakness | +1  |
+
+**Cap: 3 points max**
+
+---
+
+### 4⃣ Auto-Fade Filters
+
+Auto-remove if:
+
+* Not in starting lineup
+* Hitting 6th or lower + low OBP cluster ahead
+* Park/weather suppressive
+* Opposing SP = elite GB/control with HR/9 < 0.8
+
+---
+
+### 🧀 Final HR Value Board Format
+
+| Hitter    | Trend Tier | HR Rate | Implied % | Rate Gap | Matchup Score | Final Score | Tier     | Action  |
+| --------- | ---------- | ------- | --------- | -------- | ------------- | ----------- | -------- | ------- |
+| \[Player] | Warm/Hot   | 0.25    | 18%       | +7%      | +2            | 6.0         | 🧀🧀🧀🧀 | MONITOR |
+
+---
+
+### ✅ Use Case Priority
+
+* Flag HR overs with value vs market
+* Score-based confirmation before LOCK
+* Package into Excel or script for automation
+
+---
+
+🧠 Sharp Cheddar NRFI/YRFI Decision Framework
+✅ NRFI Logic: Bet on Suppression
+📌 Entry Conditions:
+Both SPs have:
+
+ERA < 3.75
+
+WHIP < 1.25
+
+Low BB/HR rates (BB/9 < 2.5, HR/9 < 1.0)
+
+First-inning stats show suppression:
+
+ERA < 3.00
+
+WHIP < 1.20
+
+Few baserunners or high K/BB
+
+No Top-3 OPS Spikes:
+
+Leadoff/2-spot hitters not slugging > .500 or hot L5
+
+Favorable Ump/Park/Weather:
+
+Pitcher-friendly ump/park or neutral weather
+
+🚫 Auto-Fade NRFI:
+Either SP with 1st inning ERA > 5.00 or WHIP > 1.40
+
+3+ hot bats (OPS > .850 L5) in top 3 hitters
+
+Openers, relievers, or pitchers under 85 pitch leash
+
+✅ YRFI Logic: Bet on Chaos
+📌 Entry Conditions:
+At least one SP has:
+
+1st-inning ERA > 5.00 or WHIP > 1.50
+
+Career volatility or 2025 blow-up tendencies
+
+Opposing Top-3 Hitters:
+
+OPS > .800 or SLG clusters in 1–3 slots
+
+Power-speed mix (e.g., HR + SB guys early)
+
+Pitcher lacks whiff/strikeout depth:
+
+K/9 < 7.5, SwStr% < 10%
+
+Vulnerable Command + Sequencing Risk:
+
+BB issues + high contact rate (HardHit% > 40%)
+
+🚫 Auto-Fade YRFI:
+Two elite SPs with consistent 1–2–3 innings
+
+Opposing teams with low OBP/leadoff production
+
+Weather/park/ump suppressive
+
+🧀 Scoring Overlay:
+Risk Profile	Tier	Use Case
+✅ Dual lock (NRFI)	🧀🧀🧀🧀	Full entry, 1u
+⚠️ Mixed (split)	🧀🧀🧀	Edge play, 0.5u
+🚨 Blowup (YRFI)	🧀🧀🧀🧀🧀	Max YRFI target
+
+
+
+---
+
+## 🔥 Sharp Cheddar HR Prop Scoring System – **“OAR Protocol”**
+
+*(Olson–Adell–Raleigh Framework – June 2025 Integration)*
+
+---
+
+### 🎯 Purpose:
+
+Codifies the success logic behind HR hits like Matt Olson, Cal Raleigh, and Jo Adell. Designed to consistently identify Tier 3–5 HR prop value through a unified, data-driven lens.
+
+---
+
+### 🧠 Core Evaluation Pillars
+
+| Component             | Threshold  | Rule                                          |
+| --------------------- | ---------- | --------------------------------------------- |
+| **Trend Score (PTS)** | ≥ 3        | Must show HR momentum in L3/L5/L10/L20        |
+| **Matchup Score**     | ≥ +1       | Favorable SP, park, and lineup slot (1–5)     |
+| **Rate Gap**          | ≥ –3%      | Avoid overvalued props (–3% or worse = fade)  |
+| **Lineup Spot**       | Top 5 only | Auto-fade 6th or lower unless elite PTS + gap |
+
+---
+
+### ✅ Tier Triggers:
+
+| Tier       | Requirements                                               |
+| ---------- | ---------------------------------------------------------- |
+| 🧀🧀🧀🧀🧀 | PTS = 5 + Rate Gap ≥ +5% + Matchup Score ≥ +2              |
+| 🧀🧀🧀🧀   | PTS ≥ 3 + Rate Gap ≥ 0% + Matchup Score ≥ +1               |
+| 🧀🧀🧀     | Any 2 of 3 components hit; lineup slot confirmed (1st–5th) |
+| ❌ No Play  | Rate Gap worse than –5% OR lineup slot 6th+ AND PTS ≤ 2    |
+
+---
+
+### 🚨 Fade Filters:
+
+* ❌ Not in starting lineup
+* ❌ Hitting 6th or lower + no elite PTS
+* ❌ Rate Gap worse than –5%
+* ❌ Park/weather suppression AND no matchup support
+
+---
+
+### 🧪 Rate Gap Formula (Quick Ref):
+
+```python
+rate_gap = (recent_HRs / games_played) - (100 / (odds + 100))
+```
+
+---
+
+### 📌 Usage Priority:
+
+* Use alongside daily slate + odds to filter to best 3–6 HR targets
+* Prioritize **Rate Gap + Trend Combo** when choosing between similar plays
+* Validate all Tier 4–5 plays against **lineup slot + matchup**
+
+---
+
+
+## 🧮 **Line vs. Projection Gap Protocol – Implementation Rules**
+
+Use this to guide cheddar validation and prevent over-triggering on misleading projection edges.
+
+---
+
+### 🧠 Rule #1: Gap Threshold Triggers a Double Check
+
+**Trigger**:
+If `|Projection - Line| ≥ 1.5 Ks` **AND** line is **≤ 5.5**
+
+**Action**:
+Tag with `🔁 DC` (Double-Check Required)
+Require verification of leash, opp K%, SwStr%, lineup, ump
+No tiering until all data is in
+
+
+
+---
+
+### 🧠 Rule #2: Diminished Weight on High Lines
+
+**If** the prop line is **≥ 6.5** and projection gap is **< +1.5 Ks**
+→ Do **not** overvalue slight edges
+→ Max tier = 🧀🧀🧀 unless strong SwStr%, opp K%, and leash
+
+---
+
+### 🧠 Rule #3: Trust But Verify on Big Deltas
+
+**If** gap is **≥ 2.0 Ks**
+→ Must verify all of the following:
+
+| Must Verify           | Tag if Missing   |
+| --------------------- | ---------------- |
+| Leash ≥ 85p/IP trend  | ⚠️ Leash         |
+| Opponent K% Confirmed | 🚨 Opp K%        |
+| SwStr% + 2K ≥ Trigger | 🚀 Boost Only If |
+| Lineup Confirmed      | 🔍 Status        |
+| Ump Confirmed         | 🔍 Status        |
+
+---
+
+### 🔖 Add to Engine:
+
+```yaml
+GapValidation:
+  KS:
+    - If abs(Projection - Line) >= 1.5 and Line <= 5.5:
+        tag: "🔁 DC"
+        require: ["leash", "oppK%", "SwStr%", "ump", "lineup"]
+        approve_only_if_all_confirmed: true
+```
+
+🧠 Final Integration Protocol (New Logic Layer)
+if score_based_hook_risk == True:
+    tier -= 1
+    tag = "⚠️ Hook Risk"
+
+if bullpen_fatigue_index >= 3:
+    leash_cap = False
+    tag += " 🚀 Bullpen Fatigue Boost"
+
+
+🔥 Lineup Heat Logic – Tier Suppression System
+🎯 Goal:
+Prevent overconfidence in Ks or F5 Unders when facing clusters of hot bats in the opposing top-5.
+
+🧠 Trigger Logic: “Hot Cluster Suppression”
+Definition: 3+ hitters in top-5 batting order with:
+
+SLG ≥ .500 OR OPS ≥ .850 over last 5 games
+
+OR ≥5 total hits in last 3 games (for broader use when L5 stats aren't logged)
+
+🔧 Impact on Props
+Prop Type	If Triggered	Effect
+Ks	Apply 🚨 “Hot Cluster” → Tier -2	Floor risk
+F5 Unders	❌ Disqualify if 3+ hot bats	Blow-up potential
+F5 Overs	✅ Boost context if opp SP also weak	Valid stacking
+
+---
+🧠 F5 Sim Score System – “Delta Framework”
+🎯 Purpose:
+Quantify starter edge vs volatility risk to create a numerical F5 Score for play validation and tiering.
+
+🏗️ F5 Sim Score Formula
+python
+Copy
+Edit
+F5_Score = SP_Edge_Score + Volatility_Triggers_Score + Park/Ump Score
+🧪 Component Breakdown
+1. SP Edge Score (0–3 pts)
++1 → SP has better ERA + WHIP than opp SP
+
++1 → SP has ≥2 more triggers (K%, leash, form)
+
++1 → SP trending up last 3 starts (≤3 ER, ≥5 IP in 2+)
+
+2. Volatility Triggers (0–3 pts)
++1 → Opp SP has BB/9 > 3.5 or HR/9 > 1.3
+
++1 → Opp has ≥3 hot hitters (SLG > .500 or OPS > .850 L5)
+
++1 → Park Factor or Weather = favorable (wind out, HR boost)
+
+3. Umpire/Park Score (0–2 pts)
++1 → Ump Tier 1 or hitters zone
+
++1 → Park Factor = Top 10 run/hit park
+Use Sim Score to qualify F5 Totals:
+📊 F5 Score → Tier Mapping
+| F5 Score | Tier       | Play Action    |
+| -------- | ---------- | -------------- |
+| 6–8      | 🧀🧀🧀🧀🧀 | LOCK           |
+| 4–5      | 🧀🧀🧀🧀   | Monitor/LOCK   |
+| 2–3      | 🧀🧀🧀     | Watchlist Only |
+| ≤1       | ❌          | No Play        |
+
+
+📦 Add to Section: Bare Min Parlay Logic
+Purpose: Identify low-volatility legs (often H+R+RBI or H+TB) to stabilize multi-leg parlays.
+
+| Factor               | Condition                                    | Tag       |
+| -------------------- | -------------------------------------------- | --------- |
+| H+R+RBI or H+TB Line | Odds between **-290 and -500**               | 🧷 Anchor |
+| Contact Stability    | ≥5 total hits in last 5 games OR .300 AVG L7 | 🧷 Anchor |
+| Matchup Edge         | Facing SP with WHIP > 1.40 or H/9 > 9.0      | 🧷 Anchor |
+| Lineup Spot          | 1–4 in batting order                         | 🧷 Anchor |
+
+
+🧠 Bare Min Parlay Logic™
+"One hit. One run. One RBI. That’s all we ask, kings."
+
+✅ Entry Criteria for Legs:
+To qualify, each hitter must check at least 2 of 5:
+
+Top-5 Lineup Slot
+More ABs = more chances to do something minimal.
+
+Hot Form or Volume Streak
+Multi-hit games, multiple R+RBI in last 3–5, or trending up in slug.
+
+Facing a Low-K / High-WHIP SP
+We’re targeting pitchers who let guys do one thing comfortably.
+
+Positive Park or Platoon Edge
+Park factor boost or favorable L/R matchup enhances 1+ hit potential.
+
+Team Stackability / Run Environment
+Extra credit if the hitter is part of a projected 5+ run team or strong cluster.
+
+🚫 Fade Filters:
+Batting 7th or lower (unless scorching hot)
+
+Opposing SP with elite SwStr%, CSW%, or hard contact suppression
+
+Cold bats with no R/RBI in last 5 games
+
+Poor team run outlook (<3.5 implied)
+
+📦 Build Profile:
+Legs: 3 to 5 hitters
+
+Prop: H+R+RBI o0.5 (or H+TB o0.5 alt if needed)
+
+Goal: Low-input, high-comedy juice with daily core exposure
+
+Ideal Use: Flex Mode, multi-game slate
+
+🔑 Mentality:
+“You’re an MLB starter. Just touch the bag. Slap a bloop. Get walked in. I don’t care — just do one thing.”
+
+---
+
+## Line vs. Projection Gap Protocol – Implementation Rules
+- If Projection – Line ≥ 1.5 Ks and line is ≤ 5.5:
+ - Apply the tag 🔁 DC
+ - Validate the following before assigning Tier:
+  - SP leash ≥ 85 pitches
+  - Confirmed opponent K%
+  - SwStr% ≥ 12%
+  - 2-strike finish rate ≥ 65%
+  - Umpire assignment confirmed
+  - Opponent lineup confirmed
+- Do not assign Tier until all elements are verified
+
+---
+Before building or locking a prop:
+- Confirm SP is not an opener or reliever
+- SP leash ≥ 85 pitches or recent trend supports
+- Confirm opponent K%, BB%, Hits/Game, Singles/Game
+- Lock in lineup (check top-5 heat, HC bats)
+- Validate Umpire and Park overlays
+- Check weather for delay risk
+ - 50% delay chance = ❌ Auto-pull
+ - 25–50% = 🔍 Monitor
+ - <25% = ✅ Clear
+
+
+---
+
+Refined BB Prop Entry Rules
+Mandate: 
+- SP BB/9 >3.5 and
+- Opponent BB% Top 5% or
+- 3+ lineup bats with BB% >12%
+Add BB Sim Score if all 3 align. If not, fade.
+
+---
+F5 Overhaul: Sim Score > Narrative
+Why: F5 overs failed when relying on vibes.
+Fix:
+- Require F5 Sim Score ≥4 and confirm 3 triggers (volatility + SP edge + favorable zone/park). Avoid if hot bats in opp top 5.
+----
+
+Practical Rule for Cheddar Engine
+If Game Total ≤8.0 AND Line is within ±150, mark as “Close Game Risk”.
+Then layer:
+- SP leash <85 pitches
+- Bullpen is rested
+If all are true: ⚠️ Hook Risk → Tier -1
+
+---
+
+## ⚠️ **2K Collapse Risk – Execution Tag Rule**
+
+### 🎯 Purpose:
+
+To flag pitchers who struggle to convert 2-strike counts into strikeouts, which suppresses their K ceiling even with good stuff or matchups.
+
+### ✅ Trigger:
+
+Apply **⚠️ 2K Risk** if:
+
+* The pitcher has **2+ recent starts** (within last 5 outings) where:
+
+  * **2-strike finish rate < 65%**
+
+### 🚫 Impact:
+
+* **Max Tier = 🧀🧀🧀**, regardless of other triggers
+* Do **not apply SwStr%/2K Tier boosts**, even if those stats are otherwise solid
+
+### 📓 Tracker Note:
+
+Tag in post-EOD if a Tier 4/5 play misses due to multiple 2-strike fails → log under Execution Miss: *“2K Collapse”*
+
+---
+
+## 🚨 **Hot Cluster Rule – Opponent Lineup Filter**
+
+### 🎯 Purpose:
+
+To reduce risk when facing stacked, in-form lineups that can derail K or F5 under props.
+
+### ✅ Trigger:
+
+Apply **🚨 Hot Cluster** if:
+
+* **3+ hitters** in the **top 5** batting order have:
+
+  * **SLG ≥ .500** or **OPS ≥ .850** over the **last 5 games**
+  * **OR** 5+ total hits in their last 3 games
+
+### ❌ Impact:
+
+* **Ks Props**: Tier -2 (ceiling fade)
+* **F5 Unders**: ❌ *Disqualified* (blow-up risk too high)
+* **F5 Overs**: ✅ Boost if opp SP is weak (stacking environment)
+
+### 📓 Notes:
+
+* Use only **confirmed lineups**
+* If only **2 hot bats**, apply as 🚩Watchlist tag only (not full suppression)
+
+---
+
+### 🧠 **Umpires Do Not Create Tier 5s – They Only Unlock Them**
+
+#### ✅ What This Means:
+
+1. **A Tier 5 K prop must already qualify on its own**:
+
+   * 🚀 Top 10 K% Opponent
+   * ABs/Game >34.5
+   * SwStr% ≥12% AND 2K Finish ≥65%
+   * Leash ≥85p
+   * No contact cap (or override condition met)
+
+2. **The Umpire, like Estabrook, does *not* replace a missing trigger**:
+
+   * If you only have 3 valid triggers, Estabrook doesn’t "add a 4th"
+   * Instead, if the play is *already a Tier 5 on paper*, Estabrook confirms it's safe to unlock as ✅
+
+#### 🔍 Why This Matters:
+
+* Without this rule, you'd risk *tier inflation* by letting ump zones artificially upgrade borderline props.
+* Umpires are **confirmation filters**, not **trigger creators**.
+
+---
+
+### ✅ Use Case Example:
+
+**Shane Baz vs. TEX**
+
+* Top 10 K%
+* ABs >35
+* SwStr%: 13.1%
+* 2K Finish: 68%
+* Full leash = ✅ Tier 5 on paper
+
+If Estabrook is the ump? ✅ Confirmed, unlock.
+
+**But if Baz had only 3 of the 4 core triggers** (say no 2K finish)?
+
+* ❌ Estabrook cannot make it a Tier 5
+* Would remain 🧀🧀🧀🧀 (Tier 4) even with great zone
+
+---
+
+

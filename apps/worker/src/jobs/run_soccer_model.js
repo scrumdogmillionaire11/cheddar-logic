@@ -66,11 +66,7 @@ function generateSoccerCard(gameId, oddsSnapshot) {
   const oddsGap = Math.abs(oddsSnapshot.h2h_home - oddsSnapshot.h2h_away);
   const confidence = Math.min(0.65 + oddsGap * 0.1, 0.85);
 
-  let expiresAt = null;
-  if (oddsSnapshot?.game_time_utc) {
-    const gameTime = new Date(oddsSnapshot.game_time_utc);
-    expiresAt = new Date(gameTime.getTime() - 60 * 60 * 1000).toISOString();
-  }
+  const expiresAt = null;
 
   const payloadData = {
     game_id: gameId,

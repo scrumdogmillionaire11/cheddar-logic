@@ -296,6 +296,16 @@ interface GameData {
         | 'VOLATILE_ENV'
         | 'UNKNOWN';
     };
+    one_p_model_call?:
+      | 'BEST_OVER'
+      | 'PLAY_OVER'
+      | 'LEAN_OVER'
+      | 'BEST_UNDER'
+      | 'PLAY_UNDER'
+      | 'LEAN_UNDER'
+      | 'PASS'
+      | null;
+    one_p_bet_status?: 'FIRE' | 'HOLD' | 'PASS' | null;
   }>;
   consistency?: {
     total_bias?:
@@ -311,6 +321,22 @@ function hasProjectedTotal(
   play: GameData['plays'][number] | undefined,
 ): play is GameData['plays'][number] {
   return typeof play?.projectedTotal === 'number';
+}
+
+function deriveOnePModelCallFromReasons(
+  reasonCodes: string[],
+  prediction?: GameData['plays'][number]['prediction'],
+): GameData['plays'][number]['one_p_model_call'] {
+  if (reasonCodes.includes('NHL_1P_OVER_BEST')) return 'BEST_OVER';
+  if (reasonCodes.includes('NHL_1P_OVER_PLAY')) return 'PLAY_OVER';
+  if (reasonCodes.includes('NHL_1P_OVER_LEAN')) return 'LEAN_OVER';
+  if (reasonCodes.includes('NHL_1P_UNDER_BEST')) return 'BEST_UNDER';
+  if (reasonCodes.includes('NHL_1P_UNDER_PLAY')) return 'PLAY_UNDER';
+  if (reasonCodes.includes('NHL_1P_UNDER_LEAN')) return 'LEAN_UNDER';
+  if (reasonCodes.includes('NHL_1P_PASS_DEAD_ZONE')) return 'PASS';
+  if (prediction === 'OVER') return 'LEAN_OVER';
+  if (prediction === 'UNDER') return 'LEAN_UNDER';
+  return null;
 }
 
 function resolvePrimaryTotalProjectionPlay(
@@ -430,6 +456,55 @@ function stringifyUnknownError(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+type FtTrendInsight = {
+  advantagedTeam: string;
+  disadvantagedTeam: string;
+  advantagedPct: number | null;
+  disadvantagedPct: number | null;
+  totalLine: number | null;
+};
+
+function extractFtTrendInsight(card: GameCard): FtTrendInsight | null {
+  const ftDriver = card.drivers.find(
+    (driver) =>
+      driver.cardType === 'ncaam-ft-trend' || driver.cardType === 'ncaam-ft-spread',
+  );
+  if (!ftDriver) return null;
+
+  const homeSide = ftDriver.direction === 'HOME';
+  const awaySide = ftDriver.direction === 'AWAY';
+  if (!homeSide && !awaySide) return null;
+
+  const match = ftDriver.note.match(
+    /FT% edge \(([\d.]+)\s+vs\s+([\d.]+)\) with total ([\d.]+)/i,
+  );
+  const homePct = match ? Number(match[1]) : null;
+  const awayPct = match ? Number(match[2]) : null;
+  const totalLine = match ? Number(match[3]) : null;
+
+  const safeHomePct = Number.isFinite(homePct) ? homePct : null;
+  const safeAwayPct = Number.isFinite(awayPct) ? awayPct : null;
+  const safeTotalLine = Number.isFinite(totalLine) ? totalLine : null;
+
+  return {
+    advantagedTeam: homeSide ? card.homeTeam : card.awayTeam,
+    disadvantagedTeam: homeSide ? card.awayTeam : card.homeTeam,
+    advantagedPct: homeSide ? safeHomePct : safeAwayPct,
+    disadvantagedPct: homeSide ? safeAwayPct : safeHomePct,
+    totalLine: safeTotalLine,
+  };
+}
+
+function formatFtTrendInsight(insight: FtTrendInsight): string {
+  const ftPart =
+    insight.advantagedPct !== null && insight.disadvantagedPct !== null
+      ? `${insight.advantagedTeam} ${insight.advantagedPct.toFixed(1)}% vs ${insight.disadvantagedTeam} ${insight.disadvantagedPct.toFixed(1)}%`
+      : `${insight.advantagedTeam} over ${insight.disadvantagedTeam}`;
+  const totalPart =
+    insight.totalLine !== null ? ` (total ${insight.totalLine.toFixed(1)})` : '';
+  return `${ftPart}${totalPart}`;
 }
 
 export default function CardsPageClient() {
@@ -1730,6 +1805,8 @@ export default function CardsPageClient() {
           ? formatDate(displayPlay.bet.as_of_iso)
           : updatedTime;
     const canRenderModelSummary = !isBroken && card.drivers.length > 0;
+    const ftTrendInsight =
+      card.sport === 'NCAAM' ? extractFtTrendInsight(card) : null;
     const effectiveEdgePct =
       typeof resolvedDecisionV2?.edge_pct === 'number'
         ? resolvedDecisionV2.edge_pct
@@ -1771,12 +1848,20 @@ export default function CardsPageClient() {
       typeof onePeriodTotalsPlay?.projectedTotal === 'number'
         ? onePeriodTotalsPlay.projectedTotal
         : undefined;
+    const reasonCodes1p = Array.isArray(onePeriodTotalsPlay?.reason_codes)
+      ? onePeriodTotalsPlay.reason_codes
+      : [];
+    const onePModelCall =
+      onePeriodTotalsPlay?.one_p_model_call ??
+      deriveOnePModelCallFromReasons(
+        reasonCodes1p,
+        onePeriodTotalsPlay?.prediction,
+      );
+    const goalieUncertain1p = reasonCodes1p.includes('NHL_1P_GOALIE_UNCERTAIN');
     const edgePoints1p =
       typeof onePeriodTotalsPlay?.edge === 'number'
         ? onePeriodTotalsPlay.edge
-        : typeof projectedTotal1p === 'number'
-          ? Number((projectedTotal1p - 1.5).toFixed(2))
-          : undefined;
+        : undefined;
     const resolvedModelProb =
       typeof displayPlay.modelProb === 'number'
         ? displayPlay.modelProb
@@ -1836,7 +1921,9 @@ export default function CardsPageClient() {
         typeof edgePoints === 'number' ||
         typeof marketLine === 'number');
     const hasOnePeriodTotalContext =
-      typeof projectedTotal1p === 'number' || typeof edgePoints1p === 'number';
+      typeof projectedTotal1p === 'number' ||
+      typeof edgePoints1p === 'number' ||
+      typeof onePModelCall === 'string';
     const hasMlContext =
       isMoneylineMarket &&
       (hasEdgeMathContext ||
@@ -1966,16 +2053,25 @@ export default function CardsPageClient() {
                     (p) => p.cardType === 'nhl-pace-1p',
                   );
                   if (!total1pPlay?.projectedTotal) return null;
-                  const edge1p = total1pPlay.edge ?? 0;
-                  const sign1p = edge1p >= 0 ? '+' : '';
-                  const color1p =
-                    edge1p >= 0 ? 'text-emerald-400' : 'text-red-400';
+                  const modelCall =
+                    total1pPlay.one_p_model_call ??
+                    deriveOnePModelCallFromReasons(
+                      Array.isArray(total1pPlay.reason_codes)
+                        ? total1pPlay.reason_codes
+                        : [],
+                      total1pPlay.prediction,
+                    ) ??
+                    'PASS';
+                  const color1p = modelCall.includes('OVER')
+                    ? 'text-emerald-400'
+                    : modelCall.includes('UNDER')
+                      ? 'text-red-400'
+                      : 'text-cloud/70';
                   return (
                     <p
                       className={`font-mono text-xs mt-0.5 opacity-75 ${color1p}`}
                     >
-                      1P: {total1pPlay.projectedTotal} ({sign1p}
-                      {edge1p} {total1pPlay.prediction})
+                      1P: {total1pPlay.projectedTotal} ({modelCall})
                     </p>
                   );
                 })()}
@@ -2252,16 +2348,16 @@ export default function CardsPageClient() {
                   </span>
                   <span className="text-cloud/40">|</span>
                   <span className="text-cloud/60">
-                    Ref line{' '}
-                    <span className="text-cloud/90 font-bold">1.5</span>
+                    1P Call{' '}
+                    <span className="text-cloud/90 font-bold">
+                      {onePModelCall ?? 'PASS'}
+                    </span>
                   </span>
                   <span className="text-cloud/40">|</span>
                   <span className="text-cloud/60">
-                    Delta{' '}
+                    Goalie context{' '}
                     <span className="text-cloud/90 font-bold">
-                      {typeof edgePoints1p === 'number'
-                        ? `${formatSignedDecimal(edgePoints1p)} pts`
-                        : 'N/A'}
+                      {goalieUncertain1p ? 'Uncertain (PASS-capped)' : 'Stable'}
                     </span>
                   </span>
                 </div>
@@ -2360,6 +2456,14 @@ export default function CardsPageClient() {
                     formatReasonCode(displayPlay.whyCode)
                   : 'Data issue: drivers unavailable'}
             </p>
+            {ftTrendInsight && (
+              <p className="text-xs text-cloud/60 mt-2">
+                FT Advantage:{' '}
+                <span className="text-cloud/90 font-semibold">
+                  {formatFtTrendInsight(ftTrendInsight)}
+                </span>
+              </p>
+            )}
             {displayDecision === 'PASS' &&
               hasActionableEdge &&
               supportGateReason && (
