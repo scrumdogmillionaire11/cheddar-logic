@@ -605,6 +605,9 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
     ),
     finalDisplayedUnsettled: toCount(finalDisplayedUnsettledRow?.count),
     pendingWithFinalNoDisplay: toCount(pendingWithFinalNoDisplayRow?.count),
+    pendingWithFinalButNotDisplayed: toCount(
+      pendingWithFinalNoDisplayRow?.count,
+    ),
     pendingWithFinalMissingMarketKey: toCount(
       pendingWithFinalMissingMarketKeyRow?.count,
     ),
@@ -678,7 +681,7 @@ async function settlePendingCards({
       }
       const coverageBefore = getSettlementCoverageDiagnostics(db);
       console.log(
-        `[SettleCards] Coverage before — pending: ${coverageBefore.totalPending}, eligible: ${coverageBefore.eligiblePendingFinalDisplayed}, settledFinalDisplayed: ${coverageBefore.settledDisplayedFinal}, missingResults: ${coverageBefore.finalDisplayedMissingResults}, blockedNoDisplay: ${coverageBefore.pendingWithFinalNoDisplay}, blockedMissingMarketKey: ${coverageBefore.pendingWithFinalMissingMarketKey}, blockedNoFinal: ${coverageBefore.pendingDisplayedWithoutFinal}`,
+        `[SettleCards] Coverage before — pending: ${coverageBefore.totalPending}, eligible: ${coverageBefore.eligiblePendingFinalDisplayed}, settledFinalDisplayed: ${coverageBefore.settledDisplayedFinal}, missingResults: ${coverageBefore.finalDisplayedMissingResults}, blockedNoDisplay: ${coverageBefore.pendingWithFinalButNotDisplayed}, blockedMissingMarketKey: ${coverageBefore.pendingWithFinalMissingMarketKey}, blockedNoFinal: ${coverageBefore.pendingDisplayedWithoutFinal}`,
       );
 
       // --- Step 1: Settle pending card_results ---

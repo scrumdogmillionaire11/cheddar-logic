@@ -146,6 +146,29 @@ function insertSeedData(db) {
     now,
     JSON.stringify({ home_team: 'Home B', away_team: 'Away B' }),
   );
+  runInsert(
+    db,
+    `
+    INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    'card-p5',
+    finalNhl,
+    'nhl',
+    'nhl-model-output',
+    'P5',
+    now,
+    JSON.stringify({
+      kind: 'PLAY',
+      status: 'FIRE',
+      market_type: 'MONEYLINE',
+      selection: { side: 'HOME' },
+      line: null,
+      price: -120,
+      home_team: 'Home B',
+      away_team: 'Away B',
+    }),
+  );
 
   const nbaHomeKey = buildMarketKey({
     gameId: finalNba,
@@ -248,6 +271,32 @@ function insertSeedData(db) {
     'AWAY',
     null,
     -115,
+  );
+  runInsert(
+    db,
+    `
+    INSERT INTO card_results (
+      id, card_id, game_id, sport, card_type, recommended_bet_type,
+      status, market_key, market_type, selection, line, locked_price
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    'result-p5',
+    'card-p5',
+    finalNhl,
+    'nhl',
+    'nhl-model-output',
+    'moneyline',
+    'pending',
+    buildMarketKey({
+      gameId: finalNhl,
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      line: null,
+    }),
+    'MONEYLINE',
+    'HOME',
+    null,
+    -120,
   );
 
   runInsert(
@@ -392,12 +441,14 @@ describe('settlement coverage parity', () => {
     const db = getDatabase();
     const diagnostics = __private.getSettlementCoverageDiagnostics(db);
 
-    expect(diagnostics.totalPending).toBe(3);
+    expect(diagnostics.totalPending).toBe(4);
     expect(diagnostics.eligiblePendingFinalDisplayed).toBe(2);
     expect(diagnostics.settledDisplayedFinal).toBe(1);
     expect(diagnostics.displayedFinal).toBe(4);
     expect(diagnostics.finalDisplayedMissingResults).toBe(1);
     expect(diagnostics.finalDisplayedUnsettled).toBe(3);
+    expect(diagnostics.pendingWithFinalNoDisplay).toBe(1);
+    expect(diagnostics.pendingWithFinalButNotDisplayed).toBe(1);
 
     const nbaDiagnostics = __private.getSettlementCoverageDiagnostics(
       db,
@@ -416,7 +467,7 @@ describe('settlement coverage parity', () => {
     expect(result.success).toBe(true);
     expect(result.cardsErrored).toBe(0);
     expect(result.coverage).toMatchObject({
-      pending: 3,
+      pending: 4,
       eligible: 2,
     });
 
@@ -443,11 +494,35 @@ describe('settlement coverage parity', () => {
     expect(byCard['card-p3'].status).toBe('pending');
     expect(byCard['card-p4'].status).toBe('settled');
     expect(byCard['card-p4'].result).toBe('loss');
+    expect(byCard['card-p5'].status).toBe('pending');
 
     const diagnosticsAfter = __private.getSettlementCoverageDiagnostics(db);
     expect(diagnosticsAfter.eligiblePendingFinalDisplayed).toBe(0);
     expect(diagnosticsAfter.finalDisplayedUnsettled).toBe(1);
     expect(diagnosticsAfter.finalDisplayedMissingResults).toBe(1);
+    expect(diagnosticsAfter.pendingWithFinalButNotDisplayed).toBe(1);
+  });
+
+  test('allowDisplayBackfill settles pending final cards missing display-log', async () => {
+    const result = await settlePendingCards({ allowDisplayBackfill: true });
+    expect(result.success).toBe(true);
+    expect(result.cardsErrored).toBe(0);
+
+    const db = getDatabase();
+    const cardP5 = db
+      .prepare(
+        `
+        SELECT status, result
+        FROM card_results
+        WHERE card_id = ?
+      `,
+      )
+      .get('card-p5');
+    expect(cardP5?.status).toBe('settled');
+    expect(cardP5?.result).toBe('win');
+
+    const diagnosticsAfterBackfill = __private.getSettlementCoverageDiagnostics(db);
+    expect(diagnosticsAfterBackfill.pendingWithFinalButNotDisplayed).toBe(0);
   });
 
   test('computePnlUnits follows canonical forward-only formula', () => {

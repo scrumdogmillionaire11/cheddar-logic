@@ -377,12 +377,38 @@ function getPendingGameCoverageDiagnostics(db, cutoffUtc) {
     )
     .get(cutoffUtc);
 
+  const pendingGamesWithoutDisplayedCardsRow = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM (
+        SELECT
+          g.game_id,
+          COUNT(DISTINCT CASE WHEN cdl.pick_id IS NOT NULL THEN cr.id END) AS displayed_pending_cards
+        FROM games g
+        INNER JOIN card_results cr ON cr.game_id = g.game_id
+        LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+        WHERE g.game_time_utc < ?
+          AND cr.status = 'pending'
+          AND g.game_id NOT IN (
+            SELECT game_id FROM game_results WHERE status = 'final'
+          )
+        GROUP BY g.game_id
+      ) coverage
+      WHERE coverage.displayed_pending_cards = 0
+    `,
+    )
+    .get(cutoffUtc);
+
   return {
     totalPendingGames: Number(totalPendingGamesRow?.count || 0),
     displayedPendingGames: Number(displayedPendingGamesRow?.count || 0),
     displayedPendingCards: Number(displayedPendingCardsRow?.count || 0),
     pendingCardsMissingDisplay: Number(
       pendingCardsMissingDisplayRow?.count || 0,
+    ),
+    pendingGamesWithoutDisplayedCards: Number(
+      pendingGamesWithoutDisplayedCardsRow?.count || 0,
     ),
   };
 }
@@ -915,7 +941,7 @@ async function settleGameResults({
       ).toISOString();
       const coverageBefore = getPendingGameCoverageDiagnostics(db, cutoffUtc);
       console.log(
-        `[SettleGames] Coverage before — pendingGames: ${coverageBefore.totalPendingGames}, displayedPendingGames: ${coverageBefore.displayedPendingGames}, displayedPendingCards: ${coverageBefore.displayedPendingCards}, pendingCardsMissingDisplay: ${coverageBefore.pendingCardsMissingDisplay}`,
+        `[SettleGames] Coverage before — pendingGames: ${coverageBefore.totalPendingGames}, displayedPendingGames: ${coverageBefore.displayedPendingGames}, displayedPendingCards: ${coverageBefore.displayedPendingCards}, pendingCardsMissingDisplay: ${coverageBefore.pendingCardsMissingDisplay}, pendingGamesWithoutDisplayedCards: ${coverageBefore.pendingGamesWithoutDisplayedCards}`,
       );
 
       // Query only games with pending cards, past cutoff, and not yet final.
