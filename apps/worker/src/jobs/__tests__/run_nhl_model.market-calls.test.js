@@ -171,7 +171,7 @@ describe('run_nhl_model market call generation', () => {
 
     expect(card.payloadData.period).toBe('1P');
     expect(card.payloadData.market_context).toMatchObject({
-      market_type: 'TOTAL',
+      market_type: 'FIRST_PERIOD',
       period: '1P',
       wager: {
         period: '1P',
@@ -179,14 +179,14 @@ describe('run_nhl_model market call generation', () => {
     });
     expect(card.payloadData.odds_context).toMatchObject({
       total_1p: 1.5,
-      total_price_over_1p: -124,
-      total_price_under_1p: 102,
+      total_price_over_1p: null,
+      total_price_under_1p: null,
     });
     expect(card.payloadData.pricing_trace).toMatchObject({
-      called_market_type: 'TOTAL',
+      called_market_type: 'FIRST_PERIOD',
       called_side: 'OVER',
       called_line: 1.5,
-      called_price: -124,
+      called_price: null,
       period: '1P',
     });
   });

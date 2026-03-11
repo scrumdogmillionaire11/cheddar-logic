@@ -3,7 +3,7 @@
  * Based on FILTER-FEATURE.md design
  *
  * CANONICAL MARKET TYPES (used throughout system, never guessed)
- * MONEYLINE, SPREAD, TOTAL, PUCKLINE, TEAM_TOTAL, PROP, INFO
+ * MONEYLINE, SPREAD, TOTAL, PUCKLINE, TEAM_TOTAL, FIRST_PERIOD, PROP, INFO
  */
 
 export type Sport =
@@ -22,6 +22,7 @@ export type CanonicalMarketType =
   | 'TOTAL'
   | 'PUCKLINE'
   | 'TEAM_TOTAL'
+  | 'FIRST_PERIOD'
   | 'PROP'
   | 'INFO';
 

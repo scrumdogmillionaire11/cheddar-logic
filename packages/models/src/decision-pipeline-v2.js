@@ -7,6 +7,7 @@ const WAVE1_MARKETS = new Set([
   'TOTAL',
   'PUCKLINE',
   'TEAM_TOTAL',
+  'FIRST_PERIOD',
 ]);
 
 const WATCHDOG_REASONS = {
@@ -141,6 +142,7 @@ function normalizeMarketType(value) {
   if (!raw) return null;
   const upper = raw.toUpperCase();
   if (WAVE1_MARKETS.has(upper)) return upper;
+  if (upper === 'FIRSTPERIOD') return 'FIRST_PERIOD';
   if (upper === 'ML') return 'MONEYLINE';
   if (upper === 'PUCK_LINE') return 'PUCKLINE';
   if (upper === 'TEAMTOTAL') return 'TEAM_TOTAL';
@@ -353,7 +355,11 @@ function getSupportThresholds(marketType) {
   if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
     return { play: 0.65, lean: 0.5 };
   }
-  if (marketType === 'TOTAL' || marketType === 'TEAM_TOTAL') {
+  if (
+    marketType === 'TOTAL' ||
+    marketType === 'TEAM_TOTAL' ||
+    marketType === 'FIRST_PERIOD'
+  ) {
     return { play: 0.55, lean: 0.45 };
   }
   return { play: 0.6, lean: 0.45 };
@@ -479,7 +485,8 @@ function marketRequiresLine(marketType) {
     marketType === 'SPREAD' ||
     marketType === 'PUCKLINE' ||
     marketType === 'TOTAL' ||
-    marketType === 'TEAM_TOTAL'
+    marketType === 'TEAM_TOTAL' ||
+    marketType === 'FIRST_PERIOD'
   );
 }
 
@@ -502,6 +509,9 @@ function sideValidForMarket(marketType, direction) {
     return isHomeAwayDirection(direction);
   }
   if (marketType === 'TOTAL' || marketType === 'TEAM_TOTAL') {
+    return isOverUnderDirection(direction);
+  }
+  if (marketType === 'FIRST_PERIOD') {
     return isOverUnderDirection(direction);
   }
   return false;
@@ -558,15 +568,27 @@ function getExpectedWagerFromOddsContext(payload, marketType, direction) {
     };
   }
 
-  if (marketType === 'TOTAL' || marketType === 'TEAM_TOTAL') {
+  if (
+    marketType === 'TOTAL' ||
+    marketType === 'TEAM_TOTAL' ||
+    marketType === 'FIRST_PERIOD'
+  ) {
     const expectedTotal =
-      period === '1P' ? asNumber(odds.total_1p ?? odds.total) : asNumber(odds.total);
+      marketType === 'FIRST_PERIOD'
+        ? asNumber(payload?.line) ?? asNumber(odds.total_1p) ?? 1.5
+        : period === '1P'
+          ? asNumber(odds.total_1p ?? odds.total)
+          : asNumber(odds.total);
     const expectedOverPrice =
-      period === '1P'
+      marketType === 'FIRST_PERIOD'
+        ? null
+        : period === '1P'
         ? asNumber(odds.total_price_over_1p ?? odds.total_price_over)
         : asNumber(odds.total_price_over);
     const expectedUnderPrice =
-      period === '1P'
+      marketType === 'FIRST_PERIOD'
+        ? null
+        : period === '1P'
         ? asNumber(odds.total_price_under_1p ?? odds.total_price_under)
         : asNumber(odds.total_price_under);
 
@@ -952,21 +974,37 @@ function buildDecisionV2(payload, context = {}) {
         } else {
           proxy_used = true;
         }
-      } else if (market_type === 'TOTAL' || market_type === 'TEAM_TOTAL') {
+      } else if (
+        market_type === 'TOTAL' ||
+        market_type === 'TEAM_TOTAL' ||
+        market_type === 'FIRST_PERIOD'
+      ) {
         const projectedTotal = asNumber(payload?.projection?.total);
-        const totalLine = asNumber(oddsCtx?.total);
+        const totalLine =
+          market_type === 'FIRST_PERIOD'
+            ? asNumber(payload?.line) ?? 1.5
+            : asNumber(oddsCtx?.total);
         if (projectedTotal !== null && totalLine !== null) {
           const result = edgeCalculator.computeTotalEdge({
             projectionTotal: projectedTotal,
             totalLine,
-            totalPriceOver: asNumber(oddsCtx?.total_price_over),
-            totalPriceUnder: asNumber(oddsCtx?.total_price_under),
+            totalPriceOver:
+              market_type === 'FIRST_PERIOD'
+                ? null
+                : asNumber(oddsCtx?.total_price_over),
+            totalPriceUnder:
+              market_type === 'FIRST_PERIOD'
+                ? null
+                : asNumber(oddsCtx?.total_price_under),
             sigmaTotal: sigmaDefaults.total,
             isPredictionOver: direction === 'OVER',
           });
           if (result.p_fair !== null) {
             fair_prob = clamp(result.p_fair, 0, 1);
-            edge_method = 'TOTAL_DELTA';
+            edge_method =
+              market_type === 'FIRST_PERIOD'
+                ? 'ONE_PERIOD_DELTA'
+                : 'TOTAL_DELTA';
             edge_line_delta = result.edgePoints ?? null;
             edge_lean =
               result.edgePoints > 0
@@ -991,6 +1029,13 @@ function buildDecisionV2(payload, context = {}) {
         edge_line_delta = asNumber(payload?.edge_points);
       } else if (market_type === 'TOTAL' || market_type === 'TEAM_TOTAL') {
         edge_method = 'TOTAL_DELTA';
+        edge_line_delta = asNumber(payload?.edge_points);
+        if (edge_line_delta !== null) {
+          edge_lean =
+            edge_line_delta > 0 ? 'OVER' : edge_line_delta < 0 ? 'UNDER' : null;
+        }
+      } else if (market_type === 'FIRST_PERIOD') {
+        edge_method = 'ONE_PERIOD_DELTA';
         edge_line_delta = asNumber(payload?.edge_points);
         if (edge_line_delta !== null) {
           edge_lean =

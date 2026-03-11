@@ -104,6 +104,13 @@ function validateNhlCardShape(card) {
     ),
     `payload.recommended_bet_type invalid: ${payload.recommended_bet_type}`,
   );
+
+  if (payload.cardType === 'nhl-pace-1p' || card.cardType === 'nhl-pace-1p') {
+    assert(
+      payload.market_type === 'FIRST_PERIOD' || payload.market_type === null,
+      `nhl-pace-1p market_type must be FIRST_PERIOD/null, got ${payload.market_type}`,
+    );
+  }
   assert(
     typeof payload.reasoning === 'string' && payload.reasoning.length > 0,
     'payload.reasoning is required',

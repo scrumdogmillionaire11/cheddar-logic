@@ -288,6 +288,7 @@ interface GameData {
       | 'TOTAL'
       | 'PUCKLINE'
       | 'TEAM_TOTAL'
+      | 'FIRST_PERIOD'
       | 'PROP'
       | 'INFO';
     selection?: { side: string; team?: string };
@@ -313,6 +314,10 @@ interface GameData {
       | 'PASS'
       | null;
     one_p_bet_status?: 'FIRE' | 'HOLD' | 'PASS' | null;
+    goalie_home_name?: string | null;
+    goalie_away_name?: string | null;
+    goalie_home_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
+    goalie_away_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
   }>;
   consistency?: {
     total_bias?:
@@ -2017,6 +2022,21 @@ export default function CardsPageClient() {
         onePeriodTotalsPlay?.prediction,
       );
     const goalieUncertain1p = reasonCodes1p.includes('NHL_1P_GOALIE_UNCERTAIN');
+    const goalieContextNames = [
+      onePeriodTotalsPlay?.goalie_away_name,
+      onePeriodTotalsPlay?.goalie_home_name,
+    ].filter(
+      (value): value is string => typeof value === 'string' && value.length > 0,
+    );
+    const goalieContextStatuses = [
+      onePeriodTotalsPlay?.goalie_away_status,
+      onePeriodTotalsPlay?.goalie_home_status,
+    ].filter(
+      (
+        value,
+      ): value is NonNullable<GameData['plays'][number]['goalie_home_status']> =>
+        typeof value === 'string' && value.length > 0,
+    );
     const edgePoints1p =
       typeof onePeriodTotalsPlay?.edge === 'number'
         ? onePeriodTotalsPlay.edge
@@ -2534,11 +2554,24 @@ export default function CardsPageClient() {
                     <span className="text-cloud/60">
                       Goalie context{' '}
                       <span className="text-cloud/90 font-bold">
-                        {goalieUncertain1p
-                          ? 'Uncertain (PASS-capped)'
-                          : 'Stable'}
+                        {goalieContextNames.length > 0
+                          ? goalieContextNames.join(' / ')
+                          : goalieUncertain1p
+                            ? 'Uncertain (PASS-capped)'
+                            : 'Stable'}
                       </span>
                     </span>
+                    {goalieContextStatuses.length > 0 && (
+                      <>
+                        <span className="text-cloud/40">|</span>
+                        <span className="text-cloud/60">
+                          Status{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {goalieContextStatuses.join(' / ')}
+                          </span>
+                        </span>
+                      </>
+                    )}
                   </div>
                 )}
                 {typeof projectedScoreHome === 'number' &&

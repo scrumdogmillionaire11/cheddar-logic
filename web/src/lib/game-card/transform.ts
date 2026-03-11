@@ -75,6 +75,7 @@ const WAVE1_MARKETS = new Set<CanonicalMarketType>([
   'TOTAL',
   'PUCKLINE',
   'TEAM_TOTAL',
+  'FIRST_PERIOD',
 ]);
 const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
   string,
@@ -103,6 +104,7 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
       'nhl-spread-call',
       'nhl-moneyline-call',
       'nhl-pace-totals',
+      'nhl-pace-1p',
     ]),
     evidenceOnlyCardTypes: new Set([
       'nhl-base-projection',
@@ -111,7 +113,6 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
       'nhl-goalie-certainty',
       'nhl-model-output',
       'nhl-shot-environment',
-      'nhl-pace-1p',
       'welcome-home-v2',
     ]),
   },
@@ -191,6 +192,10 @@ interface ApiPlay {
   kind?: 'PLAY' | 'EVIDENCE';
   evidence_for_play_id?: string;
   aggregation_key?: string;
+  goalie_home_name?: string | null;
+  goalie_away_name?: string | null;
+  goalie_home_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
+  goalie_away_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
   consistency?: {
     total_bias?:
       | 'OK'
@@ -280,7 +285,12 @@ function mapCanonicalToLegacyMarket(
   canonical?: CanonicalMarketType,
 ): Market | 'NONE' {
   if (!canonical) return 'NONE';
-  if (canonical === 'TOTAL' || canonical === 'TEAM_TOTAL') return 'TOTAL';
+  if (
+    canonical === 'TOTAL' ||
+    canonical === 'TEAM_TOTAL' ||
+    canonical === 'FIRST_PERIOD'
+  )
+    return 'TOTAL';
   if (canonical === 'SPREAD' || canonical === 'PUCKLINE') return 'SPREAD';
   if (canonical === 'MONEYLINE') return 'ML';
   return 'UNKNOWN';
@@ -349,6 +359,7 @@ function inferCanonicalFromSecondary(
 ): CanonicalMarketType | undefined {
   const recommendationType = play.recommendation?.type?.toLowerCase();
   if (recommendationType) {
+    if (recommendationType.includes('first_period')) return 'FIRST_PERIOD';
     if (recommendationType.includes('total')) return 'TOTAL';
     if (recommendationType.includes('spread')) return 'SPREAD';
     if (
@@ -360,6 +371,7 @@ function inferCanonicalFromSecondary(
 
   const recommendedBetType = play.recommended_bet_type?.toLowerCase();
   if (recommendedBetType) {
+    if (recommendedBetType === 'first_period') return 'FIRST_PERIOD';
     if (recommendedBetType === 'total') return 'TOTAL';
     if (recommendedBetType === 'spread') return 'SPREAD';
     if (recommendedBetType === 'moneyline' || recommendedBetType === 'ml')
@@ -466,6 +478,7 @@ function normalizeSideForCanonicalMarket(
   if (
     canonical === 'TOTAL' ||
     canonical === 'TEAM_TOTAL' ||
+    canonical === 'FIRST_PERIOD' ||
     canonical === 'PROP'
   ) {
     return side === 'OVER' || side === 'UNDER' ? side : 'NONE';
@@ -478,7 +491,12 @@ function marketPrefix(
 ): 'ML' | 'SPREAD' | 'TOTAL' | 'PROP' | 'INFO' {
   if (canonical === 'MONEYLINE') return 'ML';
   if (canonical === 'SPREAD' || canonical === 'PUCKLINE') return 'SPREAD';
-  if (canonical === 'TOTAL' || canonical === 'TEAM_TOTAL') return 'TOTAL';
+  if (
+    canonical === 'TOTAL' ||
+    canonical === 'TEAM_TOTAL' ||
+    canonical === 'FIRST_PERIOD'
+  )
+    return 'TOTAL';
   if (canonical === 'PROP') return 'PROP';
   return 'INFO';
 }
@@ -507,7 +525,11 @@ function hasPlayableBet(
       typeof play.price === 'number'
     );
   }
-  if (canonical === 'TOTAL' || canonical === 'TEAM_TOTAL') {
+  if (
+    canonical === 'TOTAL' ||
+    canonical === 'TEAM_TOTAL' ||
+    canonical === 'FIRST_PERIOD'
+  ) {
     return (
       (side === 'OVER' || side === 'UNDER') &&
       typeof play.line === 'number'
@@ -643,7 +665,7 @@ function mapCanonicalToBetMarketType(
 ): BetMarketType | null {
   if (marketType === 'MONEYLINE') return 'moneyline';
   if (marketType === 'SPREAD' || marketType === 'PUCKLINE') return 'spread';
-  if (marketType === 'TOTAL') return 'total';
+  if (marketType === 'TOTAL' || marketType === 'FIRST_PERIOD') return 'total';
   if (marketType === 'TEAM_TOTAL') return 'team_total';
   if (marketType === 'PROP') return 'player_prop';
   return null;
@@ -746,7 +768,11 @@ function buildWave1PickText(
     }
     return `${team} Spread`;
   }
-  if (play.market_type === 'TOTAL' || play.market_type === 'TEAM_TOTAL') {
+  if (
+    play.market_type === 'TOTAL' ||
+    play.market_type === 'TEAM_TOTAL' ||
+    play.market_type === 'FIRST_PERIOD'
+  ) {
     if (typeof play.line === 'number') {
       return `${direction === 'OVER' ? 'Over' : 'Under'} ${play.line}`;
     }

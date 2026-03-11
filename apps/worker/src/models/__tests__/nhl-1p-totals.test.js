@@ -45,7 +45,30 @@ function getOnePeriodDescriptor(snapshotOverrides = {}) {
 
 describe('NHL 1P model output contract', () => {
   test('emits projection + classification contract fields', () => {
-    const descriptor = getOnePeriodDescriptor();
+    const descriptor = getOnePeriodDescriptor({
+      raw_data: JSON.stringify({
+        goalie: {
+          home: { name: 'Igor Shesterkin', status: 'CONFIRMED' },
+          away: { name: 'Samuel Ersson', status: 'UNKNOWN' },
+        },
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgGoalsFor: 3.4,
+              avgGoalsAgainst: 2.8,
+              restDays: 1,
+            },
+          },
+          away: {
+            metrics: {
+              avgGoalsFor: 3.2,
+              avgGoalsAgainst: 2.9,
+              restDays: 1,
+            },
+          },
+        },
+      }),
+    });
     expect(descriptor).toBeDefined();
     expect(descriptor.driverInputs.market_1p_total).toBe(1.5);
     expect(typeof descriptor.driverInputs.expected_1p_total).toBe('number');
@@ -56,15 +79,17 @@ describe('NHL 1P model output contract', () => {
     expect(descriptor.driverInputs.edge).toBe(
       Number((descriptor.driverInputs.expected_1p_total - 1.5).toFixed(2)),
     );
+    expect(descriptor.driverInputs.home_goalie_name).toBe('Igor Shesterkin');
+    expect(descriptor.driverInputs.away_goalie_name).toBe('Samuel Ersson');
   });
 
-  test('remains projection-only (no playable market fields)', () => {
+  test('emits canonical first-period fields without odds pricing', () => {
     const descriptor = getOnePeriodDescriptor();
     expect(descriptor).toBeDefined();
-    expect(descriptor.market_type).toBeUndefined();
-    expect(descriptor.selection).toBeUndefined();
-    expect(descriptor.line).toBeUndefined();
-    expect(descriptor.price).toBeUndefined();
+    expect(descriptor.market_type).toBe('FIRST_PERIOD');
+    expect(descriptor.selection).toEqual({ side: expect.any(String) });
+    expect(descriptor.line).toBe(1.5);
+    expect(descriptor.price).toBeNull();
   });
 
   test('returns PASS in dead-zone environments', () => {
@@ -171,8 +196,7 @@ describe('applyNhlSettlementMarketContext — 1P market_context contract', () =>
       payloadData: {
         kind: 'PLAY',
         status: 'FIRE',
-        // Do NOT set market_type here — nhl-pace-1p has no market_type until
-        // applyNhlSettlementMarketContext assigns it.
+        market_type: 'FIRST_PERIOD',
         classification: 'PLAY_OVER',
         driver: { inputs: { market_1p_total: 1.5 } },
       },
@@ -188,6 +212,7 @@ describe('applyNhlSettlementMarketContext — 1P market_context contract', () =>
 
     expect(card.payloadData.market_context?.period).toBe('1P');
     expect(card.payloadData.market_context?.wager?.period).toBe('1P');
+    expect(card.payloadData.market_type).toBe('FIRST_PERIOD');
   });
 
   test('does not set model_prob or p_fair on the 1P payload (wave-1 decision_v2 is the canonicaln source)', () => {
@@ -213,5 +238,6 @@ describe('applyNhlSettlementMarketContext — 1P market_context contract', () =>
     // those are the responsibility of applyUiActionFields after decision_v2 is built.
     expect(card.payloadData.model_prob).toBeUndefined();
     expect(card.payloadData.p_fair).toBeUndefined();
+    expect(card.payloadData.price).toBeNull();
   });
 });

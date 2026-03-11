@@ -79,7 +79,9 @@ function hasGoalieData(snapshot) {
     snapshot &&
     ((snapshot.goalies && Object.keys(snapshot.goalies).length > 0) ||
       (snapshot.rotowire_goalies &&
-        Object.keys(snapshot.rotowire_goalies).length > 0)),
+        Object.keys(snapshot.rotowire_goalies).length > 0) ||
+      (snapshot.rotowire_goalies_by_date &&
+        Object.keys(snapshot.rotowire_goalies_by_date).length > 0)),
   );
 }
 
@@ -460,14 +462,30 @@ function formatDateYYYYMMDDLocal(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function formatDateYYYYMMDDEastern(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(date);
+}
+
 function normalizeRotowireGoalieStatus(value) {
   const token = String(value || '')
     .trim()
     .toUpperCase();
   if (!token) return null;
+  
+  // Goalie status semantics (must be preserved throughout pipeline):
+  // CONFIRMED = officially announced on game-day rosters (lock in status, don't downgrade)
+  // EXPECTED = projected/likely but not yet officially confirmed (subject to change)
+  // UNKNOWN = uncertain or undecided (no confirmation from sources)
+  
   if (token === 'CONFIRMED') return 'CONFIRMED';
   if (token === 'EXPECTED' || token === 'LIKELY' || token === 'PROJECTED') {
-    return 'UNKNOWN';
+    return 'EXPECTED';
   }
   if (token === 'UNKNOWN' || token === 'UNCONFIRMED' || token === 'TBD') {
     return 'UNKNOWN';
@@ -561,12 +579,14 @@ async function fetchRotowireGoaliesSnapshot(now = new Date()) {
   ];
 
   const merged = {};
+  const byDate = {};
 
   for (const date of dates) {
     try {
       const body = await fetchUrl(`${ROTOWIRE_URLS.projectedGoalies}${date}`);
       const parsed = JSON.parse(body);
       const mapped = parseRotowireGoalies(parsed);
+      byDate[date] = mapped;
       for (const [team, goalie] of Object.entries(mapped)) {
         merged[team] = mergeRotowireGoalieEntry(merged[team], goalie);
       }
@@ -575,7 +595,22 @@ async function fetchRotowireGoaliesSnapshot(now = new Date()) {
     }
   }
 
-  return merged;
+  return {
+    teams: merged,
+    byDate,
+  };
+}
+
+function resolveRotowireGoalieForGame(snapshot, teamName, gameTimeUtc) {
+  if (!snapshot || !teamName) return {};
+  const gameDate = gameTimeUtc
+    ? formatDateYYYYMMDDEastern(new Date(gameTimeUtc))
+    : formatDateYYYYMMDDEastern(new Date());
+  return (
+    snapshot.rotowire_goalies_by_date?.[gameDate]?.[teamName] ||
+    snapshot.rotowire_goalies?.[teamName] ||
+    {}
+  );
 }
 
 function parseInjuries(html) {
@@ -704,7 +739,8 @@ async function fetchMoneyPuckSnapshot({
     fetched_at: new Date().toISOString(),
     teams,
     goalies,
-    rotowire_goalies: rotowireGoalies || {},
+    rotowire_goalies: rotowireGoalies?.teams || {},
+    rotowire_goalies_by_date: rotowireGoalies?.byDate || {},
     injuries,
   };
 
@@ -748,7 +784,8 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
     }
   }
 
-  const snapshot = await fetchMoneyPuckSnapshot(options);
+  const snapshot =
+    options.snapshot || (await fetchMoneyPuckSnapshot(options));
   const homeTeam = canonicalizeTeamName(oddsSnapshot.home_team);
   const awayTeam = canonicalizeTeamName(oddsSnapshot.away_team);
 
@@ -756,18 +793,26 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
   const awayStats = snapshot.teams?.[awayTeam] || {};
   const homeGoalie = snapshot.goalies?.[homeTeam] || {};
   const awayGoalie = snapshot.goalies?.[awayTeam] || {};
-  const homeRotowireGoalie = snapshot.rotowire_goalies?.[homeTeam] || {};
-  const awayRotowireGoalie = snapshot.rotowire_goalies?.[awayTeam] || {};
+  const homeRotowireGoalie = resolveRotowireGoalieForGame(
+    snapshot,
+    homeTeam,
+    oddsSnapshot.game_time_utc,
+  );
+  const awayRotowireGoalie = resolveRotowireGoalieForGame(
+    snapshot,
+    awayTeam,
+    oddsSnapshot.game_time_utc,
+  );
   const homeInjuries = snapshot.injuries?.[homeTeam] || [];
   const awayInjuries = snapshot.injuries?.[awayTeam] || [];
 
   const homeGoalieStatus =
-    homeRotowireGoalie.status ??
+    normalizeRotowireGoalieStatus(homeRotowireGoalie.status) ??
     normalizeRotowireGoalieStatus(rawData.goalie?.home?.status) ??
     normalizeRotowireGoalieStatus(rawData.goalie_home_status) ??
     null;
   const awayGoalieStatus =
-    awayRotowireGoalie.status ??
+    normalizeRotowireGoalieStatus(awayRotowireGoalie.status) ??
     normalizeRotowireGoalieStatus(rawData.goalie?.away?.status) ??
     normalizeRotowireGoalieStatus(rawData.goalie_away_status) ??
     null;
@@ -861,4 +906,6 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
 module.exports = {
   fetchMoneyPuckSnapshot,
   enrichOddsSnapshotWithMoneyPuck,
+  normalizeRotowireGoalieStatus,
+  resolveRotowireGoalieForGame,
 };

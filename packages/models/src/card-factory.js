@@ -13,6 +13,7 @@ function toCanonicalMarketType(rawMarketType) {
   if (typeof rawMarketType !== 'string') return null;
   const upper = rawMarketType.trim().toUpperCase();
   if (upper === 'MONEYLINE' || upper === 'ML') return 'MONEYLINE';
+  if (upper === 'FIRST_PERIOD') return 'FIRST_PERIOD';
   if (upper === 'SPREAD' || upper === 'PUCKLINE' || upper === 'PUCK_LINE') {
     return 'SPREAD';
   }
@@ -201,6 +202,10 @@ function buildBallSportPayload({
     ? descriptor.driverInputs.projected_total
     : Number.isFinite(descriptor.driverInputs?.expected_total)
       ? descriptor.driverInputs.expected_total
+      : Number.isFinite(descriptor.driverInputs?.projection_final)
+        ? descriptor.driverInputs.projection_final
+        : Number.isFinite(descriptor.driverInputs?.expected_1p_total)
+          ? descriptor.driverInputs.expected_1p_total
       : null;
 
   const winProbHome = computeWinProbHome(projectedMargin, sport);
@@ -221,7 +226,8 @@ function buildBallSportPayload({
       hasLine &&
       hasPrice) ||
     ((normalizedMarketType === 'TOTAL' ||
-      normalizedMarketType === 'TEAM_TOTAL') &&
+      normalizedMarketType === 'TEAM_TOTAL' ||
+      normalizedMarketType === 'FIRST_PERIOD') &&
       (selectionSide === 'OVER' || selectionSide === 'UNDER') &&
       hasLine);
 
@@ -298,6 +304,22 @@ function buildBallSportPayload({
       },
     },
     market,
+    goalie_home_name:
+      typeof descriptor.driverInputs?.home_goalie_name === 'string'
+        ? descriptor.driverInputs.home_goalie_name
+        : null,
+    goalie_away_name:
+      typeof descriptor.driverInputs?.away_goalie_name === 'string'
+        ? descriptor.driverInputs.away_goalie_name
+        : null,
+    goalie_home_status:
+      typeof descriptor.driverInputs?.home_goalie_certainty === 'string'
+        ? descriptor.driverInputs.home_goalie_certainty
+        : null,
+    goalie_away_status:
+      typeof descriptor.driverInputs?.away_goalie_certainty === 'string'
+        ? descriptor.driverInputs.away_goalie_certainty
+        : null,
     // Propagate market fields from descriptor when driver specifies a market call
     market_type: normalizedMarketType ?? null,
     selection: descriptor.selection ?? null,
@@ -316,6 +338,8 @@ function buildBallSportPayload({
     recommended_bet_type:
       normalizedMarketType === 'TOTAL' || normalizedMarketType === 'TEAM_TOTAL'
         ? 'total'
+        : normalizedMarketType === 'FIRST_PERIOD'
+          ? 'total'
         : normalizedMarketType === 'PUCKLINE'
           ? 'puck_line'
           : normalizedMarketType === 'SPREAD'
