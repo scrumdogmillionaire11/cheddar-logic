@@ -22,6 +22,7 @@ import type {
   Direction,
   DriverRow,
   DriverTier,
+  ExpressionStatus,
   GameCard,
   Market,
   SupportGrade,
@@ -500,7 +501,7 @@ function getLifecycleAwareFilters(
     return filters;
   }
 
-  const statuses = filters.statuses.includes('PASS')
+  const statuses: ExpressionStatus[] = filters.statuses.includes('PASS')
     ? filters.statuses
     : [...filters.statuses, 'PASS'];
 
