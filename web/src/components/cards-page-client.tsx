@@ -418,6 +418,7 @@ const FETCH_ERROR_LOG_CODE = 'CARDS_FETCH_FAILED';
 let globalGamesFetchInFlight = false;
 let globalGamesLastFetchAt = 0;
 let globalGamesBlockedUntil = 0;
+let globalGamesRequestLifecycle: LifecycleMode | null = null;
 
 function parseRetryAfterMs(retryAfterHeader: string | null): number | null {
   if (!retryAfterHeader) return null;
@@ -577,6 +578,10 @@ export default function CardsPageClient() {
     getDefaultFilters('game'),
   );
   const isInitialLoad = useRef(true);
+  const latestLifecycleModeRef = useRef<LifecycleMode>(lifecycleMode);
+  const lifecycleRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const [diagnosticFilter, setDiagnosticFilter] = useState<{
     sport: string;
     bucket: 'missingMapping' | 'driverLoadFailed' | 'noOdds' | 'noProjection';
@@ -958,9 +963,17 @@ export default function CardsPageClient() {
   const handleLifecycleModeChange = (nextMode: LifecycleMode) => {
     if (nextMode === lifecycleMode) return;
     globalGamesLastFetchAt = 0;
+    if (lifecycleRetryTimeoutRef.current) {
+      clearTimeout(lifecycleRetryTimeoutRef.current);
+      lifecycleRetryTimeoutRef.current = null;
+    }
     setLifecycleMode(nextMode);
     setLoading(true);
   };
+
+  useEffect(() => {
+    latestLifecycleModeRef.current = lifecycleMode;
+  }, [lifecycleMode]);
 
   useEffect(() => {
     const handleChunkFailure = (
@@ -1022,17 +1035,38 @@ export default function CardsPageClient() {
   }, []);
 
   useEffect(() => {
+    latestLifecycleModeRef.current = lifecycleMode;
+  }, [lifecycleMode]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const fetchGames = async () => {
       const now = Date.now();
+      const requestedLifecycleMode = latestLifecycleModeRef.current;
 
       if (globalGamesFetchInFlight) {
         console.debug(
           '[cards] Skipping fetch - global request already in flight',
+          {
+            requestedLifecycleMode,
+            inflightLifecycleMode: globalGamesRequestLifecycle,
+          },
         );
+        const shouldRetryForLifecycleChange =
+          globalGamesRequestLifecycle !== requestedLifecycleMode;
+        if (
+          shouldRetryForLifecycleChange &&
+          lifecycleRetryTimeoutRef.current === null
+        ) {
+          lifecycleRetryTimeoutRef.current = setTimeout(() => {
+            lifecycleRetryTimeoutRef.current = null;
+            globalGamesLastFetchAt = 0;
+            void fetchGames();
+          }, 150);
+        }
         if (!cancelled) {
-          setLoading(false);
+          setLoading(shouldRetryForLifecycleChange);
         }
         return;
       }
@@ -1064,6 +1098,7 @@ export default function CardsPageClient() {
 
       try {
         globalGamesFetchInFlight = true;
+        globalGamesRequestLifecycle = requestedLifecycleMode;
         globalGamesLastFetchAt = now;
 
         if (isInitialLoad.current) {
@@ -1072,7 +1107,7 @@ export default function CardsPageClient() {
 
         const timeoutHandle = createTimeoutSignal(CLIENT_FETCH_TIMEOUT_MS);
         const lifecycleQuery =
-          lifecycleMode === 'active' ? '?lifecycle=active' : '';
+          requestedLifecycleMode === 'active' ? '?lifecycle=active' : '';
         const response = await fetch(`/api/games${lifecycleQuery}`, {
           ...(timeoutHandle.signal ? { signal: timeoutHandle.signal } : {}),
           cache: 'no-store',
@@ -1171,6 +1206,7 @@ export default function CardsPageClient() {
         }
       } finally {
         globalGamesFetchInFlight = false;
+        globalGamesRequestLifecycle = null;
         if (!cancelled) {
           setLoading(false);
           isInitialLoad.current = false;
@@ -1193,6 +1229,10 @@ export default function CardsPageClient() {
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       cancelled = true;
+      if (lifecycleRetryTimeoutRef.current) {
+        clearTimeout(lifecycleRetryTimeoutRef.current);
+        lifecycleRetryTimeoutRef.current = null;
+      }
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
@@ -1201,7 +1241,14 @@ export default function CardsPageClient() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
-    setLifecycleMode(resolveLifecycleModeFromUrlAndStorage());
+    const resolvedLifecycleMode = resolveLifecycleModeFromUrlAndStorage();
+    setLifecycleMode((currentMode) => {
+      if (currentMode === resolvedLifecycleMode) return currentMode;
+      globalGamesLastFetchAt = 0;
+      latestLifecycleModeRef.current = resolvedLifecycleMode;
+      setLoading(true);
+      return resolvedLifecycleMode;
+    });
 
     const modeParam = params.get('mode');
     if (modeParam === 'props' && propsEnabled) {
@@ -1913,7 +1960,9 @@ export default function CardsPageClient() {
         : updatedTime;
     const canRenderModelSummary = !isBroken && card.drivers.length > 0;
     const ftTrendInsight =
-      card.sport === 'NCAAM' ? extractFtTrendInsight(card) : null;
+      card.sport === 'NCAAM' && displayPlay.market_type === 'SPREAD'
+        ? extractFtTrendInsight(card)
+        : null;
     const effectiveEdgePct =
       typeof resolvedDecisionV2?.edge_pct === 'number'
         ? resolvedDecisionV2.edge_pct
