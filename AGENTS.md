@@ -55,6 +55,7 @@ When files conflict, apply this precedence in order:
 - If a change is not in scope, it does not happen.
 - Production DB path must be set via `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db` (validated: contains card_payloads); avoid legacy DB path vars and keep docs/workflows aligned.
 - **Single-writer DB contract:** The worker is the only process that writes to, migrates, or saves snapshots of the sql.js database. Web server routes must never call `closeDatabase()`, `runMigrations()`, `db.exec()`, or `stmt.run()`. Use `closeDatabaseReadOnly()` for all web-side DB teardown. See ADR-0002.
+- **Production DB lock is intentional:** `/opt/data/cheddar-prod.db.lock` indicates the active writer (normally worker). If lock errors occur during manual maintenance/backfills, stop worker first, run the maintenance command, then restart worker. Do **not** bypass with `CHEDDAR_DB_ALLOW_MULTI_PROCESS=true` in production.
 
 ## Branch/Commit Protocol
 - Branch: `agent/<agent-name>/WI-####-short-slug`
