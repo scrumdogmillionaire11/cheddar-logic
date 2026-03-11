@@ -154,4 +154,291 @@ describe('card payload/card_results sport normalization', () => {
     expect(resultRow).toBeDefined();
     expect(resultRow.sport).toBe('nba');
   });
+
+  test('backfillCardResultsSportCasing normalizes mixed-case sport values', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+
+    // Create minimal schema
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS card_results (
+        id TEXT PRIMARY KEY,
+        card_id TEXT NOT NULL UNIQUE,
+        game_id TEXT NOT NULL,
+        sport TEXT NOT NULL,
+        card_type TEXT NOT NULL,
+        recommended_bet_type TEXT NOT NULL,
+        market_key TEXT,
+        market_type TEXT,
+        selection TEXT,
+        line REAL,
+        locked_price INTEGER,
+        status TEXT NOT NULL,
+        result TEXT,
+        settled_at TEXT,
+        pnl_units REAL,
+        metadata TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Insert card_results with mixed-case sports (simulating historical data)
+    db.prepare(`
+      INSERT INTO card_results (
+        id, card_id, game_id, sport, card_type, recommended_bet_type, status, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'result-1',
+      'card-1',
+      'game-1',
+      'NBA',
+      'test-card',
+      'moneyline',
+      'pending',
+      now.toISOString(),
+      now.toISOString()
+    );
+
+    db.prepare(`
+      INSERT INTO card_results (
+        id, card_id, game_id, sport, card_type, recommended_bet_type, status, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'result-2',
+      'card-2',
+      'game-2',
+      'Nhl',
+      'test-card',
+      'moneyline',
+      'pending',
+      now.toISOString(),
+      now.toISOString()
+    );
+
+    db.prepare(`
+      INSERT INTO card_results (
+        id, card_id, game_id, sport, card_type, recommended_bet_type, status, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'result-3',
+      'card-3',
+      'game-3',
+      'ncaam',
+      'test-card',
+      'moneyline',
+      'pending',
+      now.toISOString(),
+      now.toISOString()
+    );
+
+    // Verify mixed-case before backfill
+    const beforeBackfill = db.prepare('SELECT sport FROM card_results ORDER BY id').all();
+    expect(beforeBackfill[0].sport).toBe('NBA');
+    expect(beforeBackfill[1].sport).toBe('Nhl');
+    expect(beforeBackfill[2].sport).toBe('ncaam');
+
+    // Run backfill
+    const result = dbModule.backfillCardResultsSportCasing();
+    expect(result.errors).toBeNull();
+    // Affected should be 2 (NBA and Nhl need normalization)
+    expect(result.affected).toBeGreaterThanOrEqual(2);
+
+    // Verify all lowercase after backfill
+    const afterBackfill = db.prepare('SELECT sport FROM card_results ORDER BY id').all();
+    expect(afterBackfill[0].sport).toBe('nba');
+    expect(afterBackfill[1].sport).toBe('nhl');
+    expect(afterBackfill[2].sport).toBe('ncaam');
+  });
+
+  test('insertCardResult always writes lowercase sport regardless of input case (guardrail)', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const futureTime = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-game-guardrail';
+
+    // Create minimal schema
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS games (
+        id TEXT PRIMARY KEY,
+        sport TEXT NOT NULL,
+        game_id TEXT NOT NULL UNIQUE,
+        home_team TEXT NOT NULL,
+        away_team TEXT NOT NULL,
+        game_time_utc TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'scheduled',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS card_payloads (
+        id TEXT PRIMARY KEY,
+        game_id TEXT NOT NULL,
+        sport TEXT NOT NULL,
+        card_type TEXT NOT NULL,
+        card_title TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        payload_data TEXT NOT NULL,
+        model_output_ids TEXT,
+        metadata TEXT,
+        run_id TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (game_id) REFERENCES games(game_id)
+      );
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS card_results (
+        id TEXT PRIMARY KEY,
+        card_id TEXT NOT NULL UNIQUE,
+        game_id TEXT NOT NULL,
+        sport TEXT NOT NULL,
+        card_type TEXT NOT NULL,
+        recommended_bet_type TEXT NOT NULL,
+        market_key TEXT,
+        market_type TEXT,
+        selection TEXT,
+        line REAL,
+        locked_price INTEGER,
+        status TEXT NOT NULL,
+        result TEXT,
+        settled_at TEXT,
+        pnl_units REAL,
+        metadata TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (card_id) REFERENCES card_payloads(id)
+      );
+    `);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-guardrail',
+      'nba',
+      gameId,
+      'Home Team',
+      'Away Team',
+      futureTime,
+      'scheduled',
+      now.toISOString(),
+      now.toISOString()
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-guardrail',
+      gameId,
+      'nba',
+      'test-card',
+      'Test Card',
+      now.toISOString(),
+      futureTime,
+      '{}',
+      null,
+      null,
+      'run-guardrail',
+      now.toISOString()
+    );
+
+    // Insert card result with mixed-case sport (guardrail test)
+    dbModule.insertCardResult({
+      id: 'result-guardrail',
+      cardId: 'card-guardrail',
+      gameId,
+      sport: 'NBA',  // Mixed case input
+      cardType: 'test-card',
+      recommendedBetType: 'moneyline',
+      status: 'pending',
+    });
+
+    // Verify sport is normalized to lowercase in the database
+    const resultRow = db
+      .prepare('SELECT sport FROM card_results WHERE id = ?')
+      .get('result-guardrail');
+
+    expect(resultRow).toBeDefined();
+    expect(resultRow.sport).toBe('nba');
+    expect(resultRow.sport).not.toBe('NBA');
+  });
+
+  test('all card_results rows have lowercase sport (regression check)', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+
+    // Create schema
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS card_results (
+        id TEXT PRIMARY KEY,
+        card_id TEXT NOT NULL UNIQUE,
+        game_id TEXT NOT NULL,
+        sport TEXT NOT NULL,
+        card_type TEXT NOT NULL,
+        recommended_bet_type TEXT NOT NULL,
+        market_key TEXT,
+        market_type TEXT,
+        selection TEXT,
+        line REAL,
+        locked_price INTEGER,
+        status TEXT NOT NULL,
+        result TEXT,
+        settled_at TEXT,
+        pnl_units REAL,
+        metadata TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Insert several test records with various casing
+    const testCases = [
+      { id: 'r1', card: 'c1', game: 'g1', sport: 'nba' },
+      { id: 'r2', card: 'c2', game: 'g2', sport: 'NHL' },
+      { id: 'r3', card: 'c3', game: 'g3', sport: 'NcAam' },
+    ];
+
+    testCases.forEach(tc => {
+      db.prepare(`
+        INSERT INTO card_results (
+          id, card_id, game_id, sport, card_type, recommended_bet_type, status, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        tc.id,
+        tc.card,
+        tc.game,
+        tc.sport,
+        'test-card',
+        'moneyline',
+        'pending',
+        now.toISOString(),
+        now.toISOString()
+      );
+    });
+
+    // Verify all rows have lowercase sport (after backfill)
+    dbModule.backfillCardResultsSportCasing();
+
+    const allRows = db.prepare('SELECT sport FROM card_results ORDER BY id').all();
+    const allLowercase = allRows.every(row => row.sport === row.sport.toLowerCase());
+    expect(allLowercase).toBe(true);
+
+    // Verify specific normalized values
+    expect(allRows[0].sport).toBe('nba');
+    expect(allRows[1].sport).toBe('nhl');
+    expect(allRows[2].sport).toBe('ncaam');
+  });
 });

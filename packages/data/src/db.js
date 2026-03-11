@@ -2837,6 +2837,44 @@ function deleteStaleTeamMetricsCache(beforeDate) {
   return info.changes;
 }
 
+/**
+ * Backfill: Normalize historical card_results.sport values to lowercase
+ * Ensures all sport codes in card_results table are lowercase for consistency
+ * @returns {object} {affected: number of rows updated, errors: any errors encountered}
+ */
+function backfillCardResultsSportCasing() {
+  try {
+    const db = getDatabase();
+
+    // Count rows that need normalization (mixed-case sport values)
+    const countBeforeStmt = db.prepare(`
+      SELECT COUNT(*) as count FROM card_results
+      WHERE sport IS NOT NULL AND sport != LOWER(sport)
+    `);
+    const countBefore = countBeforeStmt.get();
+    const affectedCount = countBefore?.count || 0;
+
+    // Update any mixed-case sport values to lowercase
+    const stmt = db.prepare(`
+      UPDATE card_results
+      SET sport = LOWER(sport)
+      WHERE sport IS NOT NULL AND sport != LOWER(sport)
+    `);
+
+    stmt.run();
+
+    return {
+      affected: affectedCount,
+      errors: null,
+    };
+  } catch (e) {
+    return {
+      affected: 0,
+      errors: e.message,
+    };
+  }
+}
+
 module.exports = {
   initDb,
   getDatabase,
@@ -2899,5 +2937,6 @@ module.exports = {
   getTrackingStats,
   getTeamMetricsCache,
   upsertTeamMetricsCache,
-  deleteStaleTeamMetricsCache
+  deleteStaleTeamMetricsCache,
+  backfillCardResultsSportCasing,
 };
