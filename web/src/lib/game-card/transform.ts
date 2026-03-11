@@ -1302,8 +1302,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     // Distinguish: no driver plays loaded vs plays exist but no truth driver qualified
     const hasNoOdds = game.odds === null;
     const hasNoPlays = game.plays.length === 0;
-    const hasPlayItems = game.plays.some(isPlayItem);
-    const hasEvidenceOnly = !hasPlayItems && game.plays.some(isEvidenceItem);
+    const hasPlayItems = game.plays.some((play) =>
+      isPlayItem(play, game.sport),
+    );
+    const hasEvidenceOnly =
+      !hasPlayItems &&
+      game.plays.some((play) => isEvidenceItem(play, game.sport));
     const missingDataCode: string =
       hasNoOdds && hasNoPlays
         ? 'PASS_MARKET_PRICE_MISSING'
