@@ -5,8 +5,8 @@
 // List of allowed keys for query parameters per endpoint
 const ALLOWED_QUERY_PARAMS: Record<string, Set<string>> = {
   '/api/games': new Set(['limit', 'offset', 'sport', 'filter', 'lifecycle']),
-  '/api/cards': new Set(['gameId', 'sport', 'card_type', 'game_id', 'include_expired', 'dedupe', 'limit', 'offset']),
-  '/api/cards/[gameId]': new Set([]),
+  '/api/cards': new Set(['gameId', 'sport', 'card_type', 'game_id', 'include_expired', 'dedupe', 'limit', 'offset', 'lifecycle']),
+  '/api/cards/[gameId]': new Set(['lifecycle']),
   '/api/props': new Set(['gameId', 'limit', 'offset']),
   '/api/results': new Set([
     'limit',
