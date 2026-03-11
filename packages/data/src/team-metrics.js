@@ -203,6 +203,8 @@ const NCAAM_TEAMS = {
   'Miami (FL)':            { id: 2390, abbr: 'MIA' },
   'Memphis':               { id: 235,  abbr: 'MEM' },
   'Memphis Tigers':        { id: 235,  abbr: 'MEM' },
+  'Tulane':                { id: 2655, abbr: 'TULN' },
+  'Tulane Green Wave':     { id: 2655, abbr: 'TULN' },
   'Rutgers':               { id: 164,  abbr: 'RUTG' },
   'Rutgers Scarlet Knights': { id: 164, abbr: 'RUTG' },
   'Florida State':         { id: 52,   abbr: 'FSU' },

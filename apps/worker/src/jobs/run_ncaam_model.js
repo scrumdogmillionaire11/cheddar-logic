@@ -465,9 +465,15 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
               );
             }
 
+            const allowFtTrendOverride =
+              card.cardType === 'ncaam-ft-trend' &&
+              card.payloadData?.market_type === 'spread';
             const decisionOutcome = publishDecisionForCard({
               card,
               oddsSnapshot,
+              options: allowFtTrendOverride
+                ? { criticalOverride: true }
+                : undefined,
             });
             if (decisionOutcome.gated) gatedCount++;
             if (decisionOutcome.gated && !decisionOutcome.allow) {
