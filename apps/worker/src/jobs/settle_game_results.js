@@ -66,15 +66,251 @@ const SETTLEMENT_MIN_HOURS_AFTER_START = Math.max(
   0,
   Number(process.env.SETTLEMENT_MIN_HOURS_AFTER_START) || 3,
 );
+const SETTLEMENT_ENABLE_SPORTSREF_FALLBACK =
+  String(process.env.SETTLEMENT_ENABLE_SPORTSREF_FALLBACK || '').toLowerCase() ===
+  'true';
+const SPORTSREF_REQUEST_TIMEOUT_MS = Math.max(
+  3000,
+  Number(process.env.SPORTSREF_REQUEST_TIMEOUT_MS) || 15000,
+);
+
+const SPORTSREF_BASE_URL = 'https://www.sports-reference.com';
 
 /**
  * Keep matching strict so one completed ESPN event cannot fan out into unrelated games.
  */
 const STRICT_MATCH_MAX_DELTA_MINUTES = 120;
+const RELAXED_EXACT_MATCH_MAX_DELTA_MINUTES = 24 * 60;
 const MAPPED_ID_MATCH_MAX_DELTA_MINUTES = 180;
 const NCAAM_FUZZY_MATCH_MAX_DELTA_MINUTES = 180;
 const NCAAM_FUZZY_MIN_TEAM_SIMILARITY = 0.75;
 const NCAAM_FUZZY_MIN_AVG_SIMILARITY = 0.86;
+const SPORTSREF_FUZZY_MIN_TEAM_SIMILARITY = 0.75;
+const SPORTSREF_FUZZY_MIN_AVG_SIMILARITY = 0.86;
+
+function addUtcDays(isoLike, dayDelta) {
+  const ms = toEpochMs(isoLike);
+  if (ms === null) return null;
+  return new Date(ms + dayDelta * 24 * 60 * 60 * 1000);
+}
+
+function normalizeWhitespace(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function decodeHtmlEntities(text) {
+  return String(text || '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+function stripHtmlTags(text) {
+  return normalizeWhitespace(decodeHtmlEntities(String(text || '').replace(/<[^>]+>/g, ' ')));
+}
+
+async function fetchTextWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'text/html,application/xhtml+xml',
+        'User-Agent': 'cheddar-logic-settlement/1.0 (+sportsref-fallback)',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return await response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseSportsRefMenGameSummaries(html) {
+  const source = String(html || '');
+  if (!source) return [];
+
+  const summaries = [];
+  const summaryRe = /<div class="game_summary[^\"]*gender-m[^\"]*"[\s\S]*?<\/div>/gi;
+  let summaryMatch;
+
+  while ((summaryMatch = summaryRe.exec(source)) !== null) {
+    const block = summaryMatch[0];
+    const rowRe = /<tr class="(winner|loser)">([\s\S]*?)<\/tr>/gi;
+    const teams = [];
+    let rowMatch;
+
+    while ((rowMatch = rowRe.exec(block)) !== null) {
+      const rowHtml = rowMatch[2] || '';
+      const teamNameMatch = rowHtml.match(/<a href="\/cbb\/schools\/[^"]+\/men\/\d+\.html">([\s\S]*?)<\/a>/i);
+      const scoreMatch = rowHtml.match(/<td class="right">\s*(\d+)\s*<\/td>/i);
+      if (!teamNameMatch || !scoreMatch) continue;
+
+      teams.push({
+        name: stripHtmlTags(teamNameMatch[1]),
+        score: Number.parseInt(scoreMatch[1], 10),
+      });
+    }
+
+    if (teams.length !== 2) continue;
+
+    const gameLinkMatch = block.match(/<a href="(\/cbb\/boxscores\/[^"]+\.html)">\s*F(?:<span[^>]*>inal<\/span>)?\s*<\/a>/i);
+
+    summaries.push({
+      teamAName: teams[0].name,
+      teamAScore: teams[0].score,
+      teamBName: teams[1].name,
+      teamBScore: teams[1].score,
+      boxscorePath: gameLinkMatch ? gameLinkMatch[1] : null,
+    });
+  }
+
+  return summaries;
+}
+
+function toSportsRefDateKey(dateObj) {
+  const year = dateObj.getUTCFullYear();
+  const month = dateObj.getUTCMonth() + 1;
+  const day = dateObj.getUTCDate();
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+async function fetchSportsRefMenSummariesForUtcDate(dateObj) {
+  const year = dateObj.getUTCFullYear();
+  const month = dateObj.getUTCMonth() + 1;
+  const day = dateObj.getUTCDate();
+  const url = `${SPORTSREF_BASE_URL}/cbb/boxscores/index.cgi?month=${month}&day=${day}&year=${year}`;
+  const html = await fetchTextWithTimeout(url, SPORTSREF_REQUEST_TIMEOUT_MS);
+  return parseSportsRefMenGameSummaries(html);
+}
+
+function candidateSportsRefDatesForGame(dbGame) {
+  const base = addUtcDays(dbGame.game_time_utc, 0);
+  if (!base) return [];
+  const prev = addUtcDays(dbGame.game_time_utc, -1);
+  const next = addUtcDays(dbGame.game_time_utc, 1);
+  return [prev, base, next].filter(Boolean);
+}
+
+async function getSportsRefSummariesForGame(dbGame, cache) {
+  const dateCandidates = candidateSportsRefDatesForGame(dbGame);
+  const allSummaries = [];
+
+  for (const dateObj of dateCandidates) {
+    const key = toSportsRefDateKey(dateObj);
+    if (!cache.has(key)) {
+      try {
+        const summaries = await fetchSportsRefMenSummariesForUtcDate(dateObj);
+        cache.set(key, summaries);
+      } catch (error) {
+        cache.set(key, []);
+        console.warn(
+          `[SettleGames] SportsRef fetch failed for ${key}: ${error.message}`,
+        );
+      }
+    }
+
+    const cached = cache.get(key) || [];
+    allSummaries.push(...cached);
+  }
+
+  return allSummaries;
+}
+
+function findSportsRefNcaamFuzzyMatch(dbGame, summaries) {
+  const dbHome = dbGame.home_team;
+  const dbAway = dbGame.away_team;
+
+  const candidates = summaries
+    .map((summary) => {
+      const directHomeSimilarity = tokenSimilarity(dbHome, summary.teamAName);
+      const directAwaySimilarity = tokenSimilarity(dbAway, summary.teamBName);
+      const directAvg = (directHomeSimilarity + directAwaySimilarity) / 2;
+
+      const swappedHomeSimilarity = tokenSimilarity(dbHome, summary.teamBName);
+      const swappedAwaySimilarity = tokenSimilarity(dbAway, summary.teamAName);
+      const swappedAvg = (swappedHomeSimilarity + swappedAwaySimilarity) / 2;
+
+      const useSwapped = swappedAvg > directAvg;
+      const homeSimilarity = useSwapped
+        ? swappedHomeSimilarity
+        : directHomeSimilarity;
+      const awaySimilarity = useSwapped
+        ? swappedAwaySimilarity
+        : directAwaySimilarity;
+      const avgSimilarity = useSwapped ? swappedAvg : directAvg;
+
+      if (homeSimilarity < SPORTSREF_FUZZY_MIN_TEAM_SIMILARITY) return null;
+      if (awaySimilarity < SPORTSREF_FUZZY_MIN_TEAM_SIMILARITY) return null;
+      if (avgSimilarity < SPORTSREF_FUZZY_MIN_AVG_SIMILARITY) return null;
+
+      const dbHomeScore = useSwapped ? summary.teamBScore : summary.teamAScore;
+      const dbAwayScore = useSwapped ? summary.teamAScore : summary.teamBScore;
+
+      return {
+        summary,
+        avgSimilarity,
+        homeSimilarity,
+        awaySimilarity,
+        dbHomeScore,
+        dbAwayScore,
+        confidence: Math.min(0.84, avgSimilarity),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.avgSimilarity - a.avgSimilarity);
+
+  if (candidates.length === 0) {
+    return { match: null, reason: 'no_sportsref_fuzzy_candidate' };
+  }
+
+  if (
+    candidates.length > 1 &&
+    Math.abs(candidates[0].avgSimilarity - candidates[1].avgSimilarity) < 0.01
+  ) {
+    return { match: null, reason: 'ambiguous_sportsref_fuzzy' };
+  }
+
+  const winner = candidates[0];
+  const eventId = winner.summary.boxscorePath
+    ? `sportsref:${winner.summary.boxscorePath}`
+    : `sportsref:${normalizeTeamName(winner.summary.teamAName)}-${normalizeTeamName(winner.summary.teamBName)}`;
+
+  return {
+    match: {
+      event: {
+        id: eventId,
+      },
+      deltaMinutes: 0,
+      confidence: winner.confidence,
+      swappedTeams: false,
+      dbHomeScore: winner.dbHomeScore,
+      dbAwayScore: winner.dbAwayScore,
+      dbHomeFirstPeriodScore: null,
+      dbAwayFirstPeriodScore: null,
+      method: 'sportsref_ncaam_fuzzy_name_date',
+      sportsRef: {
+        teamAName: winner.summary.teamAName,
+        teamBName: winner.summary.teamBName,
+        boxscorePath: winner.summary.boxscorePath,
+        homeSimilarity: Number(winner.homeSimilarity.toFixed(4)),
+        awaySimilarity: Number(winner.awaySimilarity.toFixed(4)),
+        avgSimilarity: Number(winner.avgSimilarity.toFixed(4)),
+      },
+    },
+    reason: null,
+  };
+}
 
 function getPendingGameCoverageDiagnostics(db, cutoffUtc) {
   const totalPendingGamesRow = db
@@ -124,16 +360,52 @@ function getPendingGameCoverageDiagnostics(db, cutoffUtc) {
     )
     .get(cutoffUtc);
 
+  const pendingCardsMissingDisplayRow = db
+    .prepare(
+      `
+      SELECT COUNT(DISTINCT cr.id) AS count
+      FROM games g
+      INNER JOIN card_results cr ON cr.game_id = g.game_id
+      LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+      WHERE g.game_time_utc < ?
+        AND cr.status = 'pending'
+        AND g.game_id NOT IN (
+          SELECT game_id FROM game_results WHERE status = 'final'
+        )
+        AND cdl.pick_id IS NULL
+    `,
+    )
+    .get(cutoffUtc);
+
   return {
     totalPendingGames: Number(totalPendingGamesRow?.count || 0),
     displayedPendingGames: Number(displayedPendingGamesRow?.count || 0),
     displayedPendingCards: Number(displayedPendingCardsRow?.count || 0),
+    pendingCardsMissingDisplay: Number(
+      pendingCardsMissingDisplayRow?.count || 0,
+    ),
   };
+}
+
+function applyTeamAliases(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/\bGRAMBLING\s+STATE\b/gi, 'GRAMBLING ST')
+    .replace(/\bUT\s+RIO\s+GRANDE\s+VALLEY\b/gi, 'UTRGV')
+    .replace(/\bN\s+COLORADO\b/gi, 'NORTHERN COLORADO')
+    .replace(/\bMISS\s+VALLEY\s+STATE\b/gi, 'MISSISSIPPI VALLEY STATE')
+    .replace(/\bMISS\s+VALLEY\s+ST\b/gi, 'MISSISSIPPI VALLEY STATE')
+    .replace(/\bNICHOLLS\s+ST\b/gi, 'NICHOLLS')
+    .replace(/\bA\s*&\s*M\s*-?\s*CC\b/gi, 'A&M CORPUS CHRISTI')
+    .replace(/\bA\s+M\s+CC\b/gi, 'A&M CORPUS CHRISTI')
+    .replace(/\bLA\s+SALLE\b/gi, 'LASALLE')
+    .replace(/\bST\.?\s+BONAVENTURE\b/gi, 'ST BONAVENTURE')
+    .replace(/\bMERCYHURST\b/gi, 'MERCYHURST LAKERS');
 }
 
 function normalizeTeamName(name) {
   if (!name) return '';
-  return String(name)
+  return applyTeamAliases(String(name))
     .replace(/[^a-z0-9\s]/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -153,10 +425,11 @@ function canonicalizeTeamToken(token) {
   if (['UNIV', 'UNIVERSITY'].includes(t)) return 'UNIVERSITY';
   if (['FT', 'FORT'].includes(t)) return 'FORT';
   if (['MOUNT', 'MT'].includes(t)) return 'MOUNT';
-  if (['N', 'NORTH'].includes(t)) return 'NORTH';
-  if (['S', 'SOUTH'].includes(t)) return 'SOUTH';
-  if (['E', 'EAST'].includes(t)) return 'EAST';
-  if (['W', 'WEST'].includes(t)) return 'WEST';
+  if (['N', 'NORTH', 'NORTHERN'].includes(t)) return 'NORTH';
+  if (['S', 'SOUTH', 'SOUTHERN'].includes(t)) return 'SOUTH';
+  if (['E', 'EAST', 'EASTERN'].includes(t)) return 'EAST';
+  if (['W', 'WEST', 'WESTERN'].includes(t)) return 'WEST';
+  if (['MISS', 'MISS.'].includes(t)) return 'MISSISSIPPI';
   if (t.length > 4 && t.endsWith('S')) {
     t = t.slice(0, -1);
   }
@@ -338,6 +611,67 @@ function findStrictNameTimeMatch(dbGame, completedEvents) {
   };
 }
 
+function findExactNameRelaxedTimeMatch(dbGame, completedEvents) {
+  const gameTimeMs = toEpochMs(dbGame.game_time_utc);
+  if (gameTimeMs === null) return { match: null, reason: 'invalid_game_time' };
+
+  const homeNorm = normalizeTeamName(dbGame.home_team);
+  const awayNorm = normalizeTeamName(dbGame.away_team);
+
+  const matches = completedEvents
+    .map((evt) => {
+      const exactOrientation =
+        evt.homeNorm === homeNorm && evt.awayNorm === awayNorm;
+      const swappedOrientation =
+        evt.homeNorm === awayNorm && evt.awayNorm === homeNorm;
+      if (!exactOrientation && !swappedOrientation) return null;
+
+      const deltaMinutes = Math.abs(evt.eventTimeMs - gameTimeMs) / 60000;
+      if (deltaMinutes > RELAXED_EXACT_MATCH_MAX_DELTA_MINUTES) return null;
+
+      const dbHomeScore = swappedOrientation ? evt.awayScore : evt.homeScore;
+      const dbAwayScore = swappedOrientation ? evt.homeScore : evt.awayScore;
+      const dbHomeFirstPeriodScore = swappedOrientation
+        ? evt.awayFirstPeriodScore
+        : evt.homeFirstPeriodScore;
+      const dbAwayFirstPeriodScore = swappedOrientation
+        ? evt.homeFirstPeriodScore
+        : evt.awayFirstPeriodScore;
+
+      return {
+        event: evt,
+        deltaMinutes,
+        confidence: Math.max(0.72, scoreMatchConfidence(Math.min(deltaMinutes, 120)) - 0.08),
+        swappedTeams: swappedOrientation,
+        dbHomeScore,
+        dbAwayScore,
+        dbHomeFirstPeriodScore,
+        dbAwayFirstPeriodScore,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.deltaMinutes - b.deltaMinutes);
+
+  if (matches.length === 0)
+    return { match: null, reason: 'no_relaxed_exact_candidate' };
+  if (
+    matches.length > 1 &&
+    Math.abs(matches[0].deltaMinutes - matches[1].deltaMinutes) < 5
+  ) {
+    return { match: null, reason: 'ambiguous_relaxed_exact_tie' };
+  }
+
+  return {
+    match: {
+      ...matches[0],
+      method: matches[0].swappedTeams
+        ? 'relaxed_exact_name_time_swapped'
+        : 'relaxed_exact_name_time',
+    },
+    reason: null,
+  };
+}
+
 function findNcaamFuzzyNameTimeMatch(dbGame, completedEvents) {
   const gameTimeMs = toEpochMs(dbGame.game_time_utc);
   if (gameTimeMs === null) return { match: null, reason: 'invalid_game_time' };
@@ -457,11 +791,21 @@ function findMatchForGame(
   const strict = findStrictNameTimeMatch(dbGame, completedEvents);
   if (strict.match) return strict;
 
+  const relaxedExact = findExactNameRelaxedTimeMatch(dbGame, completedEvents);
+  if (relaxedExact.match) return relaxedExact;
+
   if (String(dbGame.sport || '').toUpperCase() === 'NCAAM') {
-    return findNcaamFuzzyNameTimeMatch(dbGame, completedEvents);
+    const fuzzy = findNcaamFuzzyNameTimeMatch(dbGame, completedEvents);
+    if (fuzzy.match) return fuzzy;
+
+    const reason = [strict.reason, relaxedExact.reason, fuzzy.reason]
+      .filter(Boolean)
+      .join(';');
+    return { match: null, reason: reason || 'no_ncaam_match' };
   }
 
-  return strict;
+  const reason = [strict.reason, relaxedExact.reason].filter(Boolean).join(';');
+  return { match: null, reason: reason || 'no_match' };
 }
 
 async function fetchComparableEventFromSummary(espnClient, espnPath, eventId) {
@@ -571,7 +915,7 @@ async function settleGameResults({
       ).toISOString();
       const coverageBefore = getPendingGameCoverageDiagnostics(db, cutoffUtc);
       console.log(
-        `[SettleGames] Coverage before — pendingGames: ${coverageBefore.totalPendingGames}, displayedPendingGames: ${coverageBefore.displayedPendingGames}, displayedPendingCards: ${coverageBefore.displayedPendingCards}`,
+        `[SettleGames] Coverage before — pendingGames: ${coverageBefore.totalPendingGames}, displayedPendingGames: ${coverageBefore.displayedPendingGames}, displayedPendingCards: ${coverageBefore.displayedPendingCards}, pendingCardsMissingDisplay: ${coverageBefore.pendingCardsMissingDisplay}`,
       );
 
       // Query only games with pending cards, past cutoff, and not yet final.
@@ -583,10 +927,11 @@ async function settleGameResults({
           g.home_team,
           g.away_team,
           g.game_time_utc,
-          COUNT(DISTINCT cr.id) AS pending_card_count
+          COUNT(DISTINCT cr.id) AS pending_card_count,
+          COUNT(DISTINCT CASE WHEN cdl.pick_id IS NOT NULL THEN cr.id END) AS displayed_pending_card_count
         FROM games g
         INNER JOIN card_results cr ON cr.game_id = g.game_id
-        INNER JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+        LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
         WHERE g.game_time_utc < ?
           AND cr.status = 'pending'
           AND g.game_id NOT IN (
@@ -761,6 +1106,8 @@ async function settleGameResults({
           );
         }
 
+        const sportsRefSummaryCache = new Map();
+
         console.log(
           `[SettleGames] ${sport}: ${completedEvents.length} completed events on ESPN`,
         );
@@ -778,39 +1125,66 @@ async function settleGameResults({
             mappedEspnEventId,
           );
 
-          if (!match) {
+          let selectedMatch = match;
+          let missReason = reason;
+
+          if (
+            !selectedMatch &&
+            sport === 'NCAAM' &&
+            SETTLEMENT_ENABLE_SPORTSREF_FALLBACK
+          ) {
+            const sportsRefSummaries = await getSportsRefSummariesForGame(
+              dbGame,
+              sportsRefSummaryCache,
+            );
+            const sportsRefResult = findSportsRefNcaamFuzzyMatch(
+              dbGame,
+              sportsRefSummaries,
+            );
+            if (sportsRefResult.match) {
+              selectedMatch = sportsRefResult.match;
+              console.log(
+                `[SettleGames] SportsRef fallback matched ${dbGame.game_id}` +
+                  ` (${dbGame.home_team} vs ${dbGame.away_team}) method=${sportsRefResult.match.method}`,
+              );
+            } else {
+              missReason = `${reason};${sportsRefResult.reason}`;
+            }
+          }
+
+          if (!selectedMatch) {
             console.warn(
               `[SettleGames] No safe ESPN match for ${dbGame.game_id} (${dbGame.home_team} vs ${dbGame.away_team})` +
-                ` reason=${reason} mappedEspnEventId=${mappedEspnEventId || 'none'}`,
+                ` reason=${missReason} mappedEspnEventId=${mappedEspnEventId || 'none'}`,
             );
             continue;
           }
 
           const gameSignature = getGameSignature(dbGame);
-          const existingSignature = eventUseById.get(match.event.id);
+          const existingSignature = eventUseById.get(selectedMatch.event.id);
           if (existingSignature && existingSignature !== gameSignature) {
-            const msg = `[SettleGames] Collision: ESPN event ${match.event.id} already used for ${existingSignature}; refusing to reuse for ${gameSignature}`;
+            const msg = `[SettleGames] Collision: event ${selectedMatch.event.id} already used for ${existingSignature}; refusing to reuse for ${gameSignature}`;
             console.warn(msg);
             errors.push(msg);
             continue;
           }
-          eventUseById.set(match.event.id, gameSignature);
+          eventUseById.set(selectedMatch.event.id, gameSignature);
 
           // Validate scores before settlement
           const scoringCheck = scoringValidator.validateGameScore(
             sport,
-            match.dbHomeScore,
-            match.dbAwayScore,
+            selectedMatch.dbHomeScore,
+            selectedMatch.dbAwayScore,
           );
           const typicalCheck = scoringValidator.isTypicalScoreRange(
             sport,
-            match.dbHomeScore,
-            match.dbAwayScore,
+            selectedMatch.dbHomeScore,
+            selectedMatch.dbAwayScore,
           );
 
           console.log(
-            `[SettleGames] Settling ${dbGame.game_id}: ${dbGame.home_team} ${match.dbHomeScore} - ${match.dbAwayScore} ${dbGame.away_team}` +
-              ` (event=${match.event.id}, method=${match.method}, delta=${match.deltaMinutes.toFixed(1)}m)` +
+            `[SettleGames] Settling ${dbGame.game_id}: ${dbGame.home_team} ${selectedMatch.dbHomeScore} - ${selectedMatch.dbAwayScore} ${dbGame.away_team}` +
+              ` (event=${selectedMatch.event.id}, method=${selectedMatch.method}, delta=${selectedMatch.deltaMinutes.toFixed(1)}m)` +
               ` [scoreValid=${scoringCheck.valid}, typical=${typicalCheck.isTypical}]`,
           );
 
@@ -823,8 +1197,8 @@ async function settleGameResults({
             // Track warnings in monitor
             scoringCheck.warnings.forEach((warning) => {
               monitor.recordScoreValidationWarning(dbGame.game_id, warning, {
-                home: match.dbHomeScore,
-                away: match.dbAwayScore,
+                home: selectedMatch.dbHomeScore,
+                away: selectedMatch.dbAwayScore,
               });
             });
           }
@@ -842,33 +1216,36 @@ async function settleGameResults({
               id: `result-${dbGame.game_id}-${Date.now()}`,
               gameId: dbGame.game_id,
               sport: dbGame.sport,
-              finalScoreHome: match.dbHomeScore,
-              finalScoreAway: match.dbAwayScore,
+              finalScoreHome: selectedMatch.dbHomeScore,
+              finalScoreAway: selectedMatch.dbAwayScore,
               status: 'final',
-              resultSource: 'primary_api',
+              resultSource: selectedMatch.method.startsWith('sportsref_')
+                ? 'backup_scraper'
+                : 'primary_api',
               settledAt: new Date().toISOString(),
               metadata: {
-                espnEventId: match.event.id,
-                matchMethod: match.method,
-                matchConfidence: match.confidence,
+                espnEventId: selectedMatch.event.id,
+                matchMethod: selectedMatch.method,
+                matchConfidence: selectedMatch.confidence,
                 expectedEspnEventId: mappedEspnEventId,
-                timeDeltaMinutes: Number(match.deltaMinutes.toFixed(2)),
+                timeDeltaMinutes: Number(selectedMatch.deltaMinutes.toFixed(2)),
                 firstPeriodScores:
-                  Number.isFinite(match.dbHomeFirstPeriodScore) &&
-                  Number.isFinite(match.dbAwayFirstPeriodScore)
+                  Number.isFinite(selectedMatch.dbHomeFirstPeriodScore) &&
+                  Number.isFinite(selectedMatch.dbAwayFirstPeriodScore)
                     ? {
-                        home: match.dbHomeFirstPeriodScore,
-                        away: match.dbAwayFirstPeriodScore,
+                        home: selectedMatch.dbHomeFirstPeriodScore,
+                        away: selectedMatch.dbAwayFirstPeriodScore,
                       }
                     : null,
+                sportsRef: selectedMatch.sportsRef || null,
               },
             });
             gamesSettled++;
 
             // Track in monitor
             monitor.recordGameSettled(dbGame.game_id, {
-              home: match.dbHomeScore,
-              away: match.dbAwayScore,
+              home: selectedMatch.dbHomeScore,
+              away: selectedMatch.dbAwayScore,
             });
           } catch (gameErr) {
             console.error(

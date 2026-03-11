@@ -548,6 +548,51 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
     )
     .get(...params);
 
+  const pendingWithFinalNoDisplayRow = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM card_results cr
+      INNER JOIN game_results gr ON gr.game_id = cr.game_id
+      LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+      WHERE cr.status = 'pending'
+        AND cr.market_key IS NOT NULL
+        AND gr.status = 'final'
+        AND cdl.pick_id IS NULL
+      ${whereSql}
+    `,
+    )
+    .get(...params);
+
+  const pendingWithFinalMissingMarketKeyRow = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM card_results cr
+      INNER JOIN game_results gr ON gr.game_id = cr.game_id
+      LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+      WHERE cr.status = 'pending'
+        AND cr.market_key IS NULL
+        AND gr.status = 'final'
+      ${whereSql}
+    `,
+    )
+    .get(...params);
+
+  const pendingDisplayedWithoutFinalRow = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM card_results cr
+      INNER JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+      LEFT JOIN game_results gr ON gr.game_id = cr.game_id AND gr.status = 'final'
+      WHERE cr.status = 'pending'
+        AND gr.game_id IS NULL
+      ${whereSql}
+    `,
+    )
+    .get(...params);
+
   return {
     totalPending: toCount(totalPendingRow?.count),
     eligiblePendingFinalDisplayed: toCount(
@@ -559,6 +604,11 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
       finalDisplayedMissingResultsRow?.count,
     ),
     finalDisplayedUnsettled: toCount(finalDisplayedUnsettledRow?.count),
+    pendingWithFinalNoDisplay: toCount(pendingWithFinalNoDisplayRow?.count),
+    pendingWithFinalMissingMarketKey: toCount(
+      pendingWithFinalMissingMarketKeyRow?.count,
+    ),
+    pendingDisplayedWithoutFinal: toCount(pendingDisplayedWithoutFinalRow?.count),
   };
 }
 
@@ -568,7 +618,11 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
  * @param {string|null} options.jobKey - Optional deterministic window key for idempotency
  * @param {boolean} options.dryRun - If true, log only, no DB writes
  */
-async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
+async function settlePendingCards({
+  jobKey = null,
+  dryRun = false,
+  allowDisplayBackfill = null,
+} = {}) {
   const jobRunId = `job-settle-cards-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[SettleCards] Starting job run: ${jobRunId}`);
@@ -603,8 +657,12 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       insertJobRun('settle_pending_cards', jobRunId, jobKey);
 
       const db = getDatabase();
-      const enableDisplayBackfill =
+      const emergencyBackfillEnabled =
         process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL === 'true';
+      const enableDisplayBackfill =
+        allowDisplayBackfill === null
+          ? emergencyBackfillEnabled
+          : Boolean(allowDisplayBackfill);
       let backfilledDisplayed = 0;
       if (enableDisplayBackfill) {
         backfilledDisplayed = backfillDisplayedPlaysFromPayloads(db);
@@ -620,7 +678,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       }
       const coverageBefore = getSettlementCoverageDiagnostics(db);
       console.log(
-        `[SettleCards] Coverage before — pending: ${coverageBefore.totalPending}, eligible: ${coverageBefore.eligiblePendingFinalDisplayed}, settledFinalDisplayed: ${coverageBefore.settledDisplayedFinal}, missingResults: ${coverageBefore.finalDisplayedMissingResults}`,
+        `[SettleCards] Coverage before — pending: ${coverageBefore.totalPending}, eligible: ${coverageBefore.eligiblePendingFinalDisplayed}, settledFinalDisplayed: ${coverageBefore.settledDisplayedFinal}, missingResults: ${coverageBefore.finalDisplayedMissingResults}, blockedNoDisplay: ${coverageBefore.pendingWithFinalNoDisplay}, blockedMissingMarketKey: ${coverageBefore.pendingWithFinalMissingMarketKey}, blockedNoFinal: ${coverageBefore.pendingDisplayedWithoutFinal}`,
       );
 
       // --- Step 1: Settle pending card_results ---
@@ -968,7 +1026,7 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
       markJobRunSuccess(jobRunId);
       const coverageAfter = getSettlementCoverageDiagnostics(db);
       console.log(
-        `[SettleCards] Coverage after — pending: ${coverageAfter.totalPending}, settledFinalDisplayed: ${coverageAfter.settledDisplayedFinal}, missingResults: ${coverageAfter.finalDisplayedMissingResults}, unsettledFinalDisplayed: ${coverageAfter.finalDisplayedUnsettled}`,
+        `[SettleCards] Coverage after — pending: ${coverageAfter.totalPending}, settledFinalDisplayed: ${coverageAfter.settledDisplayedFinal}, missingResults: ${coverageAfter.finalDisplayedMissingResults}, unsettledFinalDisplayed: ${coverageAfter.finalDisplayedUnsettled}, blockedNoDisplay: ${coverageAfter.pendingWithFinalNoDisplay}, blockedMissingMarketKey: ${coverageAfter.pendingWithFinalMissingMarketKey}, blockedNoFinal: ${coverageAfter.pendingDisplayedWithoutFinal}`,
       );
       console.log(
         `[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, cardsRaced: ${cardsRaced}, cardsSkipped: ${totalSkipped}, cardsArchived: ${cardsArchived}, statsIncremented: ${statsIncremented}`,
@@ -992,8 +1050,14 @@ async function settlePendingCards({ jobKey = null, dryRun = false } = {}) {
           skipped: totalSkipped,
           marketDailyCounts,
           displayBackfilled: backfilledDisplayed,
+          displayBackfillEnabled: enableDisplayBackfill,
           before: coverageBefore,
           after: coverageAfter,
+          blockedReasons: {
+            noDisplayLog: coverageBefore.pendingWithFinalNoDisplay,
+            missingMarketKey: coverageBefore.pendingWithFinalMissingMarketKey,
+            noFinalGameResult: coverageBefore.pendingDisplayedWithoutFinal,
+          },
         },
         errors: [],
       };
