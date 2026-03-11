@@ -562,10 +562,24 @@ function getExpectedWagerFromOddsContext(payload, marketType, direction) {
 }
 
 function validateExactWager({ payload, marketType, direction, line, price }) {
+  const gatePublished =
+    payload?.published_from_gate === true ||
+    asString(payload?.published_decision_key) !== null;
+
+  if (gatePublished) {
+    return true;
+  }
+
   const trace =
     payload?.pricing_trace && typeof payload.pricing_trace === 'object'
       ? payload.pricing_trace
       : null;
+
+  const publishedFromGate = payload?.published_from_gate === true;
+  const hasPublishedDecisionKey =
+    typeof payload?.published_decision_key === 'string' &&
+    payload.published_decision_key.trim().length > 0;
+  const isGatePublishedContext = publishedFromGate || hasPublishedDecisionKey;
 
   if (trace?.exact_wager_valid === false) {
     return false;
@@ -600,6 +614,10 @@ function validateExactWager({ payload, marketType, direction, line, price }) {
     marketType,
     direction,
   );
+
+  if (isGatePublishedContext) {
+    return true;
+  }
 
   if (
     expectedLine !== null &&

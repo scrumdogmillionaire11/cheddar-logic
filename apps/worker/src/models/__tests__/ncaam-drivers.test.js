@@ -139,4 +139,36 @@ describe('computeNCAAMDriverCards', () => {
       false,
     );
   });
+
+  test('emits ncaam-ft-trend with AWAY prediction when away FT% clears threshold and home does not', () => {
+    const cards = computeNCAAMDriverCards('game-ft-away-1', {
+      total: 146.5,
+      spread_home: 5.5,
+      raw_data: {
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgPoints: 70,
+              avgPointsAllowed: 68,
+              freeThrowPct: 72.1,
+            },
+          },
+          away: {
+            metrics: {
+              avgPoints: 74,
+              avgPointsAllowed: 70,
+              freeThrowPct: 75.1,
+            },
+          },
+        },
+      },
+    });
+
+    const ftCard = cards.find((card) => card.cardType === 'ncaam-ft-trend');
+    expect(ftCard).toBeDefined();
+    expect(ftCard.prediction).toBe('AWAY');
+    expect(ftCard.driverInputs.home_ft_pct).toBe(72.1);
+    expect(ftCard.driverInputs.away_ft_pct).toBe(75.1);
+    expect(ftCard.driverInputs.ft_gap).toBe(-3);
+  });
 });

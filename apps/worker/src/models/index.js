@@ -1680,12 +1680,17 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
     freeThrowPctHome !== null &&
     freeThrowPctAway !== null
   ) {
-    let prediction = null;
-    if (freeThrowPctHome > 75 && freeThrowPctAway < 75) {
-      prediction = 'HOME';
-    } else if (freeThrowPctAway > 75 && freeThrowPctHome < 75) {
-      prediction = 'AWAY';
-    }
+    const ftGap = Number((freeThrowPctHome - freeThrowPctAway).toFixed(2));
+    const maxFtPct = Math.max(freeThrowPctHome, freeThrowPctAway);
+    const minFtPct = Math.min(freeThrowPctHome, freeThrowPctAway);
+    const hasThresholdSplit = maxFtPct > 75 && minFtPct < 75;
+    const prediction = hasThresholdSplit
+      ? ftGap > 0
+        ? 'HOME'
+        : ftGap < 0
+          ? 'AWAY'
+          : null
+      : null;
 
     if (prediction) {
       if (
@@ -1704,7 +1709,6 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
         projectedMarginForDrivers = toNumber(projection?.projectedMargin);
       }
 
-      const ftGap = Number((freeThrowPctHome - freeThrowPctAway).toFixed(2));
       const confidence = 0.62;
       descriptors.push({
         cardType: 'ncaam-ft-trend',

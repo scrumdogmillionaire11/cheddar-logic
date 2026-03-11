@@ -425,4 +425,29 @@ describe('decision publisher v2 pipeline', () => {
       'EXACT_WAGER_MISMATCH',
     );
   });
+
+  test('does not flag exact wager mismatch for gate-published decisions', () => {
+    const payload = buildWave1Payload({
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 221.5,
+      price: -110,
+      model_prob: 0.59,
+      edge: null,
+      p_fair: null,
+      published_from_gate: true,
+      published_decision_key: 'NCAAM|game-1|TOTAL|FULL_GAME|TOTAL',
+      odds_context: {
+        total: 220.5,
+        total_price_over: -110,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
+      'EXACT_WAGER_MISMATCH',
+    );
+  });
 });

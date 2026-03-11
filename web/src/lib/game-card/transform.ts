@@ -772,9 +772,21 @@ function selectWave1DecisionCandidate(
     return 1;
   };
 
+  const normalizedSport = normalizeSport(sport);
+  const ftTrendCardTypes = new Set(['ncaam-ft-trend', 'ncaam-ft-spread']);
+
+  const cardTypePriority = (play: ApiPlay): number => {
+    if (normalizedSport !== 'NCAAM') return 0;
+    const normalizedCardType = normalizeCardType(play.cardType || '');
+    return ftTrendCardTypes.has(normalizedCardType) ? 1 : 0;
+  };
+
   const sorted = [...candidates].sort((a, b) => {
     const aDecision = a.decision_v2!;
     const bDecision = b.decision_v2!;
+    const cardTypeDiff = cardTypePriority(b) - cardTypePriority(a);
+    if (cardTypeDiff !== 0) return cardTypeDiff;
+
     const statusDiff =
       officialRank(bDecision.official_status) -
       officialRank(aDecision.official_status);
