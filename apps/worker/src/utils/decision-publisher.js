@@ -151,6 +151,12 @@ function applyUiActionFields(payload, context = {}) {
     const decisionV2 = buildDecisionV2(payload, contextWithoutTs);
     if (decisionV2) {
       payload.decision_v2 = decisionV2;
+      // Backfill legacy prob/edge fields from canonical decision_v2 so that
+      // all downstream consumers (route.ts cascade, transform, UI) share the
+      // same authoritative values without diverging from what decision_v2 says.
+      payload.model_prob = decisionV2.fair_prob ?? null;
+      payload.p_fair = decisionV2.fair_prob ?? null;
+      payload.p_implied = decisionV2.implied_prob ?? null;
       const official = decisionV2.official_status;
       payload.classification =
         official === 'PLAY' ? 'BASE' : official === 'LEAN' ? 'LEAN' : 'PASS';

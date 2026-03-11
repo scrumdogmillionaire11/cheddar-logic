@@ -209,7 +209,7 @@ export interface DecisionV2 {
   fair_prob: number | null;
   implied_prob: number | null;
   edge_pct: number | null;
-  edge_method?: 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA' | null;
+  edge_method?: 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA' | 'TEAM_TOTAL_DELTA' | 'ONE_PERIOD_DELTA' | null;
   edge_line_delta?: number | null;
   edge_lean?: 'OVER' | 'UNDER' | null;
   proxy_used?: boolean;

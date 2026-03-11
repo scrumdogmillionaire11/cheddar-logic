@@ -198,6 +198,7 @@ interface Play {
       called_price?: number | null;
       line_source?: string | null;
       price_source?: string | null;
+      period?: string | null;
     };
   };
   reason_codes?: string[];
@@ -1693,20 +1694,22 @@ export async function GET(request: NextRequest) {
           payloadPlayObj?.edge_points,
           payloadMarketContextProjection?.edge_points,
         );
+        // Prefer canonical decision_v2 values for wave-1 eligible rows;
+        // legacy payload fields (p_fair, model_prob) may be stale pre-V2 values.
         const normalizedPFair = firstNumber(
+          normalizedDecisionV2?.fair_prob,
           (payload as Record<string, unknown>).p_fair,
           payloadPlayObj?.p_fair,
-          normalizedDecisionV2?.fair_prob,
         );
         const normalizedPImplied = firstNumber(
+          normalizedDecisionV2?.implied_prob,
           (payload as Record<string, unknown>).p_implied,
           payloadPlayObj?.p_implied,
-          normalizedDecisionV2?.implied_prob,
         );
         const normalizedEdgePct = firstNumber(
+          normalizedDecisionV2?.edge_pct,
           (payload as Record<string, unknown>).edge_pct,
           payloadPlayObj?.edge_pct,
-          normalizedDecisionV2?.edge_pct,
         );
         const projectionWinProbHome = firstNumber(
           payloadMarketContextProjection?.win_prob_home,
@@ -1714,6 +1717,7 @@ export async function GET(request: NextRequest) {
           payloadPlayProjection?.win_prob_home,
         );
         let normalizedModelProb = firstNumber(
+          normalizedDecisionV2?.fair_prob,
           (payload as Record<string, unknown>).model_prob,
           payloadPlayObj?.model_prob,
           normalizedPFair,

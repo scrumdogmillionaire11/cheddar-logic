@@ -13,29 +13,27 @@ const source = fs.readFileSync(filePath, 'utf8');
 console.log('🧪 Transform evidence contract source tests');
 
 assert(
-  source.includes('function isPlayItem(play: ApiPlay): boolean') &&
-    source.includes("(play.kind ?? 'PLAY') === 'PLAY'"),
+  source.includes('function isPlayItem(play: ApiPlay, sport?: string): boolean') &&
+    source.includes("return kind === 'PLAY'"),
   'transform should explicitly identify PLAY items',
 );
 
 assert(
-  source.includes('function isEvidenceItem(play: ApiPlay): boolean') &&
+  source.includes('function isEvidenceItem(play: ApiPlay, sport?: string): boolean') &&
     source.includes("(play.kind ?? 'PLAY') === 'EVIDENCE'"),
   'transform should explicitly identify EVIDENCE items',
 );
 
 assert(
-  source.includes('const playCandidates = game.plays.filter(isPlayItem);') &&
-    source.includes(
-      'const evidenceCandidates = game.plays.filter(isEvidenceItem);',
-    ),
-  'transform should separate play candidates from evidence',
+  source.includes('isPlayItem(play, game.sport)') &&
+    source.includes('isEvidenceItem(play, game.sport)'),
+  'transform should separate play candidates from evidence using sport-aware helpers',
 );
 
 assert(
-  source.includes(
-    'const rawDrivers = game.plays.filter(isPlayItem).map(playToDriver);',
-  ),
+  source.includes('const rawDrivers = game.plays') &&
+    source.includes('.filter((play) => isPlayItem(play, game.sport))') &&
+    source.includes('.map(playToDriver)'),
   'transform should only convert PLAY items into drivers',
 );
 

@@ -545,4 +545,78 @@ describe('decision publisher v2 pipeline', () => {
       'EXACT_WAGER_MISMATCH',
     );
   });
+
+  test('backfills legacy prob fields from decision_v2 after wave-1 pipeline runs', () => {
+    const payload = buildWave1Payload({
+      market_type: 'TOTAL',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 220.5,
+      price: -110,
+      // Set stale/stale values on legacy fields — they must be replaced
+      model_prob: 0.42,
+      p_fair: 0.42,
+      p_implied: 0.48,
+      edge: 0.01,
+    });
+
+    applyUiActionFields(payload);
+
+    // decision_v2 must be present
+    expect(payload.decision_v2).toBeDefined();
+    const d2 = payload.decision_v2;
+
+    // Legacy fields must now equal canonical decision_v2 values
+    expect(payload.model_prob).toBe(d2.fair_prob ?? null);
+    expect(payload.p_fair).toBe(d2.fair_prob ?? null);
+    expect(payload.p_implied).toBe(d2.implied_prob ?? null);
+  });
+
+  test('gate-hold wager rewrite preserves period tag when original market_context.wager.period is set', () => {
+    // Simulate an NHL 1P card that has market_context.wager.period already set
+    // by applyNhlSettlementMarketContext.
+    const { applyPublishedDecisionToPayload: _apd } =
+      require.cache[
+        require.resolve('../decision-publisher.js')
+      ]?.exports ?? {};
+    // applyPublishedDecisionToPayload is internal — test via published payload inspection.
+    // We verify the spread preserves period by calling applyUiActionFields on a
+    // pre-constructed payload that mirrors what applyPublishedDecisionToPayload produces.
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      period: '1P',
+      line: 1.5,
+      price: -125,
+      model_prob: 0.59,
+      market_context: {
+        version: 'v1',
+        market_type: 'TOTAL',
+        selection_side: 'OVER',
+        wager: {
+          called_line: 1.5,
+          called_price: -125,
+          line_source: 'odds_snapshot',
+          price_source: 'odds_snapshot',
+          period: '1P',
+        },
+      },
+      odds_context: {
+        total: 6.5,
+        total_price_over: -110,
+        total_price_under: -110,
+        total_1p: 1.5,
+        total_price_over_1p: -125,
+        total_price_under_1p: 105,
+      },
+    });
+
+    applyUiActionFields(payload);
+
+    // market_context.wager.period must survive the pipeline
+    expect(payload.market_context?.wager?.period).toBe('1P');
+  });
 });

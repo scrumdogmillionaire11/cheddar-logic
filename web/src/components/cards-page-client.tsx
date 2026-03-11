@@ -1899,10 +1899,13 @@ export default function CardsPageClient() {
     const totalFallbackDecision = (
       totalFallbackPlay as { decision_v2?: typeof decisionV2 }
     )?.decision_v2;
+    // Only substitute totalFallbackDecision when the primary play has no
+    // decision_v2 at all. For wave-1 plays that have decision_v2 but a null
+    // fair_prob (e.g. MODEL_PROB_MISSING), keep that decision intact so Market
+    // Math either renders correctly or is suppressed — not silently replaced
+    // with a different play's canonical edge data.
     const resolvedDecisionV2 =
-      (decisionV2?.primary_reason_code === 'MODEL_PROB_MISSING' ||
-        decisionV2?.fair_prob === null) &&
-      totalFallbackDecision
+      !decisionV2 && totalFallbackDecision
         ? totalFallbackDecision
         : decisionV2;
     const inferredDecision =
@@ -2031,9 +2034,10 @@ export default function CardsPageClient() {
         ? displayPlay.impliedProb
         : typeof resolvedDecisionV2?.implied_prob === 'number'
           ? resolvedDecisionV2.implied_prob
-          : // Fall back to converting the live game-level price — keeps Edge Math
-            // in sync with the header odds rather than stale embedded price.
-            livePrice != null
+          : // Only infer from live price for non-wave-1 plays (no decision_v2).
+            // For wave-1 plays, decision_v2.implied_prob is the canonical source;
+            // absence means the market math section should not be shown.
+            !decisionV2 && livePrice != null
             ? impliedProbFromOdds(livePrice)
             : undefined;
     const mlBreakEvenPrice =

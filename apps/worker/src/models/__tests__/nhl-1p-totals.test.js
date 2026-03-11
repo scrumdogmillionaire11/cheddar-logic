@@ -1,6 +1,9 @@
 'use strict';
 
 const { computeNHLDriverCards } = require('../index');
+const {
+  applyNhlSettlementMarketContext,
+} = require('../../jobs/run_nhl_model.js');
 
 function buildNhlSnapshot(overrides = {}) {
   const raw = {
@@ -158,5 +161,57 @@ describe('NHL 1P model output contract', () => {
           code === 'NHL_1P_OVER_BEST',
       ),
     ).toBe(true);
+  });
+});
+
+describe('applyNhlSettlementMarketContext — 1P market_context contract', () => {
+  test('sets period = 1P on both market_context.period and market_context.wager.period', () => {
+    const card = {
+      cardType: 'nhl-pace-1p',
+      payloadData: {
+        kind: 'PLAY',
+        status: 'FIRE',
+        // Do NOT set market_type here — nhl-pace-1p has no market_type until
+        // applyNhlSettlementMarketContext assigns it.
+        classification: 'PLAY_OVER',
+        driver: { inputs: { market_1p_total: 1.5 } },
+      },
+    };
+    const oddsSnapshot = {
+      total: 6.0,
+      total_1p: 1.5,
+      total_price_over_1p: -125,
+      total_price_under_1p: 105,
+    };
+
+    applyNhlSettlementMarketContext(card, oddsSnapshot);
+
+    expect(card.payloadData.market_context?.period).toBe('1P');
+    expect(card.payloadData.market_context?.wager?.period).toBe('1P');
+  });
+
+  test('does not set model_prob or p_fair on the 1P payload (wave-1 decision_v2 is the canonicaln source)', () => {
+    const card = {
+      cardType: 'nhl-pace-1p',
+      payloadData: {
+        kind: 'PLAY',
+        status: 'FIRE',
+        classification: 'PLAY_OVER',
+        driver: { inputs: { market_1p_total: 1.5 } },
+      },
+    };
+    const oddsSnapshot = {
+      total: 6.0,
+      total_1p: 1.5,
+      total_price_over_1p: -125,
+      total_price_under_1p: 105,
+    };
+
+    applyNhlSettlementMarketContext(card, oddsSnapshot);
+
+    // applyNhlSettlementMarketContext must not inject model_prob / p_fair;
+    // those are the responsibility of applyUiActionFields after decision_v2 is built.
+    expect(card.payloadData.model_prob).toBeUndefined();
+    expect(card.payloadData.p_fair).toBeUndefined();
   });
 });
