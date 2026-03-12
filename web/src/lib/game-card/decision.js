@@ -42,10 +42,10 @@ function expressionStatusFromAction(action) {
 
 export function resolvePlayDisplayDecision(play) {
   const explicitAction = isValidAction(play?.action) ? play.action : undefined;
-  const legacyAction = actionFromLegacyStatus(play?.status);
   const classificationAction = actionFromClassification(play?.classification);
+  const legacyAction = actionFromLegacyStatus(play?.status);
   const action =
-    explicitAction ?? legacyAction ?? classificationAction ?? 'PASS';
+    explicitAction ?? classificationAction ?? legacyAction ?? 'PASS';
 
   return {
     action,
