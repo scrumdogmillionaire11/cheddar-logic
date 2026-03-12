@@ -56,7 +56,7 @@ export default function CaptaincySection({ captain, viceCaptain, delta }: Captai
                 {captain.team} · {captain.position}
               </span>
             )}
-            {captain.expected_pts !== undefined && captain.expected_pts !== null && (
+            {captain.expected_pts !== undefined && captain.expected_pts !== null && captain.expected_pts > 0 && (
               <span className="text-body-sm text-execute font-medium">
                 {captain.expected_pts.toFixed(1)} pts
               </span>
@@ -128,7 +128,7 @@ export default function CaptaincySection({ captain, viceCaptain, delta }: Captai
                 {viceCaptain.team} · {viceCaptain.position}
               </span>
             )}
-            {viceCaptain.expected_pts !== undefined && viceCaptain.expected_pts !== null && (
+            {viceCaptain.expected_pts !== undefined && viceCaptain.expected_pts !== null && viceCaptain.expected_pts > 0 && (
               <span className="text-body-sm text-sage-muted">
                 {viceCaptain.expected_pts.toFixed(1)} pts
               </span>

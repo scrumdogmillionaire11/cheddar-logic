@@ -1,8 +1,9 @@
 /*
- * Verifies NHL total projection source wiring:
+ * Verifies total projection source wiring and redundant-model suppression:
  * 1) /api/games maps driverInputs.expected_total into projected-total recovery
- * 2) Cards UI resolves NHL totals from nhl-totals-call first
- * 3) Cards UI keeps nhl-pace-totals as fallback
+ * 2) Cards UI prefers full-game totals-call cards before evidence projections
+ * 3) Cards UI keeps NHL pace totals + NBA total-projection fallbacks
+ * 4) Cards UI suppresses redundant "Model:" line when canonical projection matches
  *
  * Run: node web/src/__tests__/cards-total-projection-source.test.js
  */
@@ -17,7 +18,7 @@ const cardsPagePath = path.resolve('web/src/components/cards-page-client.tsx');
 const gamesRouteSource = fs.readFileSync(gamesRoutePath, 'utf8');
 const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
 
-console.log('🧪 NHL total projection source contract tests');
+console.log('🧪 total projection source contract tests');
 
 assert(
   gamesRouteSource.includes('driverInputs?.expected_total'),
@@ -35,13 +36,19 @@ assert(
 );
 
 assert(
+  gamesRouteSource.includes('TOTAL_PROJECTION_DRIFT_WARN_THRESHOLD') &&
+    gamesRouteSource.includes('emitTotalProjectionDriftWarnings'),
+  '/api/games should include non-blocking total projection drift warnings for canonical vs fallback plays',
+);
+
+assert(
   cardsPageSource.includes('function resolvePrimaryTotalProjectionPlay('),
   'cards UI should define a total projection source resolver',
 );
 
 assert(
-  cardsPageSource.includes("play.cardType === 'nhl-totals-call'"),
-  'cards UI should prioritize nhl-totals-call for NHL total projection display',
+  cardsPageSource.includes("cardType.includes('totals-call')"),
+  'cards UI should prioritize full-game totals-call card types for total projection display',
 );
 
 assert(
@@ -50,8 +57,27 @@ assert(
 );
 
 assert(
+  cardsPageSource.includes("play.cardType === 'nba-total-projection'"),
+  'cards UI should keep nba-total-projection as NBA fallback when totals-call is unavailable',
+);
+
+assert(
+  cardsPageSource.includes('isRedundantModelLine') &&
+    cardsPageSource.includes('if (isRedundantModelLine) return null;'),
+  'cards UI should suppress redundant Model line when it matches canonical total projection',
+);
+
+assert(
+  cardsPageSource.includes('resolveProjectedValueForMarketContext') &&
+    cardsPageSource.includes(
+      "selectionSide === 'AWAY' ? projectedMargin : -1 * projectedMargin",
+    ),
+  'cards UI should map spread projections into the selected market side context before percent math',
+);
+
+assert(
   cardsPageSource.includes('totalProjectionDisplayPlay'),
   'cards UI should use resolved totalProjectionDisplayPlay in header rendering',
 );
 
-console.log('✅ NHL total projection source contract tests passed');
+console.log('✅ total projection source contract tests passed');

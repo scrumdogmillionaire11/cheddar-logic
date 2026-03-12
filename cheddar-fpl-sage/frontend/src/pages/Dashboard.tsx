@@ -15,7 +15,9 @@ import ChipDecision from '@/components/ChipDecision';
 import TransferSection from '@/components/TransferSection';
 import RiskNote from '@/components/RiskNote';
 import TeamInfo from '@/components/TeamInfo';
-import CurrentSquad from '@/components/CurrentSquad';
+import SquadSection from '@/components/SquadSection';
+import DataTransparency from '@/components/DataTransparency';
+import { buildDecisionViewModel } from '@/lib/decisionViewModel';
 
 const RISK_POSTURE_CONFIG = {
   conservative: {
@@ -632,6 +634,10 @@ export default function Dashboard() {
         {/* Results Display */}
         {showResults && results && (
           <div className="space-y-6">
+            {(() => {
+              const decision = buildDecisionViewModel(results);
+              return (
+                <>
             <div className="text-xs text-slate-500 uppercase tracking-widest mb-2">
               ◆ ANALYSIS RESULTS
             </div>
@@ -646,125 +652,73 @@ export default function Dashboard() {
               overallPoints={results.overall_points}
             />
 
-            {results.primary_decision && (
-              <DecisionBrief
-                primaryAction={results.primary_decision}
-                confidence={(() => {
-                  const conf = (results.confidence_label || results.confidence || 'MED').toUpperCase();
-                  if (conf.includes('HIGH')) return 'HIGH';
-                  if (conf.includes('LOW')) return 'LOW';
-                  return 'MED';
-                })()}
-                confidenceLabel={results.confidence_label}
-                confidenceSummary={results.confidence_summary}
-                justification={results.confidence_summary || results.primary_decision}
-                gameweek={results.current_gw}
-              />
-            )}
+            <DecisionBrief
+              primaryAction={decision.primaryAction}
+              confidence={decision.confidence}
+              confidenceLabel={decision.confidenceLabel}
+              confidenceSummary={decision.confidenceSummary}
+              justification={decision.justification}
+              gameweek={decision.gameweek}
+            />
 
-            {results.captain && (
+            {decision.captain && decision.viceCaptain && (
               <CaptaincySection
-                captain={results.captain}
-                viceCaptain={results.vice_captain || { name: 'TBD' }}
+                captain={decision.captain}
+                viceCaptain={decision.viceCaptain}
+                delta={decision.captainDelta}
               />
             )}
 
             {(results.chip_strategy || results.chip_recommendation) && (
               <ChipDecision
-                chipVerdict={results.chip_verdict || 'NONE'}
-                explanation={results.chip_explanation || 'No chip recommendation available'}
-                availableChips={results.available_chips}
+                chipVerdict={decision.chipVerdict}
+                explanation={decision.chipExplanation}
+                availableChips={decision.availableChips}
+                opportunityCost={results.chip_recommendation?.opportunity_cost || null}
+                bestGw={results.chip_recommendation?.best_gw}
+                currentWindowName={results.chip_recommendation?.current_window_name}
+                bestFutureWindowName={results.chip_recommendation?.best_future_window_name}
               />
             )}
 
-            {(results.transfer_recommendations || results.transfer_plans) && (() => {
-              const plan = results.transfer_plans?.primary;
-              const secondary = results.transfer_plans?.secondary;
+            <TransferSection
+              {...decision.transfer}
+              freeTransfers={decision.freeTransfers}
+              benchWarning={decision.benchWarning}
+            />
 
-              // Legacy fallback for older payloads
-              const outAction = results.transfer_recommendations?.find(t => t.action === 'OUT');
-              const inAction = results.transfer_recommendations?.find(t => t.action === 'IN');
-              
-              return (
-                <TransferSection
-                  primaryPlan={plan ? {
-                    out: plan.out,
-                    in: plan.in,
-                    hitCost: plan.hit_cost,
-                    netCost: plan.net_cost,
-                    deltaPoints4GW: plan.delta_pts_4gw,
-                    deltaPoints6GW: plan.delta_pts_6gw,
-                    reason: plan.reason,
-                    confidence: plan.confidence,
-                    urgency: plan.why_now,
-                    confidence_context: plan.risk_note,
-                  } : outAction && inAction ? {
-                    out: outAction.player_name || '',
-                    in: inAction.player_name || '',
-                    hitCost: 0,
-                    netCost: 0,
-                    reason: outAction.reason || inAction.reason || '',
-                  } : undefined}
-                  secondaryPlan={secondary ? {
-                    out: secondary.out,
-                    in: secondary.in,
-                    hitCost: secondary.hit_cost,
-                    netCost: secondary.net_cost,
-                    deltaPoints4GW: secondary.delta_pts_4gw,
-                    deltaPoints6GW: secondary.delta_pts_6gw,
-                    reason: secondary.reason,
-                    confidence: secondary.confidence,
-                    urgency: secondary.why_now,
-                    confidence_context: secondary.risk_note,
-                  } : undefined}
-                  freeTransfers={results.free_transfers}
-                  noTransferReason={results.transfer_plans?.no_transfer_reason || (!results.transfer_recommendations?.length ? 'No transfers needed this week' : undefined)}
-                />
+            <RiskNote
+              squadHealth={decision.squadHealth}
+              riskStatement={decision.riskStatement}
+            />
+
+            {decision.startingXI.length > 0 && (
+              <SquadSection
+                title="Starting XI"
+                currentSquad={decision.startingXI}
+                projectedSquad={decision.projectedXI}
+                hasTransfers={decision.hasProjectedTransfers}
+              />
+            )}
+
+            {decision.bench.length > 0 && (
+              <SquadSection
+                title="Bench Order"
+                currentSquad={decision.bench}
+                projectedSquad={decision.projectedBench}
+                hasTransfers={decision.hasProjectedTransfers}
+              />
+            )}
+
+            <DataTransparency
+              projectionWindow={decision.projectionWindow}
+              updatedAt={decision.generatedAt}
+              gwTimeline={decision.gwTimeline}
+              warnings={[]}
+            />
+                </>
               );
             })()}
-
-            {results.squad_health && (
-              <RiskNote
-                squadHealth={results.squad_health}
-                riskStatement={(() => {
-                  const health = results.squad_health;
-                  if (!health) return 'Squad health data unavailable.';
-                  if (health.injured > 0 || health.doubtful > 0) {
-                    const issues = [];
-                    if (health.injured > 0) issues.push(`${health.injured} injured`);
-                    if (health.doubtful > 0) issues.push(`${health.doubtful} doubtful`);
-                    if (health.health_pct < 75) {
-                      return `Squad availability concern: ${issues.join(', ')}. Monitor lineup risk before deadline.`;
-                    }
-                    return `Minor availability flag: ${issues.join(', ')}. Monitor news before deadline.`;
-                  }
-                  return `Squad health stable (${health.available}/${health.total_players} available).`;
-                })()}
-              />
-            )}
-
-            {/* Current Squad - Starting XI and Bench */}
-            {(results.starting_xi || results.bench) && (
-              <CurrentSquad
-                startingXI={results.starting_xi}
-                bench={results.bench}
-                title="Current Squad"
-              />
-            )}
-
-            {/* Projected Squad after Transfers */}
-            {results.projected_xi && results.projected_xi.length > 0 && results.transfer_plans?.primary && (
-              <>
-                <div className="text-xs text-slate-500 uppercase tracking-widest mt-8 mb-2">
-                  ◆ PROJECTED SQUAD (AFTER TRANSFERS)
-                </div>
-                <CurrentSquad
-                  startingXI={results.projected_xi}
-                  bench={results.projected_bench}
-                  title="Projected Starting XI"
-                />
-              </>
-            )}
           </div>
         )}
       </div>
