@@ -2,46 +2,31 @@
 
 `WORK_QUEUE/` is the single source of truth for active and upcoming work.
 
-## Active Work Items (Prioritized)
+## Active Work Items
 
-**Updated**: 2026-03-11
+**Updated**: 2026-03-12
 
-### P0: Production Blockers
-
-- ~~WI-0367: Deploy branch fixes to Pi~~ ✅ **COMPLETE** (2026-03-09)
-
-### P1: Settlement & Results Integrity
-
-- ~~WI-0368: Frontend Play Settlement Coverage Parity~~ ✅ **COMPLETE** (2026-03-10)
-- **WI-0370: NHL Settlement Enrollment + Sport Casing Fix** 🆕
-  - Fix `card_results` sport casing write-path so NHL PLAY/LEAN rows enroll reliably
-  - Add regression coverage for NHL settlement eligibility when finals are available
-- ~~WI-0386: Daily Settlement for NBA Totals + NHL Full/1P Totals~~ ✅ **COMPLETE** (2026-03-11)
-
-### P2: Decision Pipeline Hardening
-
-- ~~WI-0345: Web API + Transform v2 Pass-Through Hard Cut~~ ✅ **COMPLETE** (2026-03-10)
-- ~~WI-0373: Canonical Settlement P/L Calculation (Forward-Only)~~ ✅ **COMPLETE** (2026-03-11)
-
-### P3: Diagnostics & Observability
-
-- **WI-0349: Per-Game Pipeline State Contract**
-  - Canonical pipeline state with stage checkpoints
-  - Explicit blocking reason codes for missing-data diagnosis
-
-### P4: Code Quality & Maintenance
-
-- ~~WI-0369: Settlement Telemetry Cleanup (W/L-First)~~ ✅ **COMPLETE** (2026-03-10)
-- **WI-0371: Backfill Historical card_results Sport Casing + Guardrail** 🆕
-  - Normalize legacy mixed-case `card_results.sport` values to lowercase
-  - Add explicit backfill + regression guardrail follow-through after WI-0370
-- ~~WI-0366: Extract normalizeRawDataPayload to shared utils~~ ✅ **COMPLETE** (2026-03-10)
-
-### P5: Feature Enhancements
-
-- **WI-0354: Rank-Aware Strategy Kernel (FPL)** 🔄 (In Progress - Codex)
-  - Auto strategy mode for FPL solver
-  - Transfer/captain/chip behavior based on rank bucket
+- `WI-0379`: Canonical Goalie State Object
+- `WI-0380`: Goalie Source Arbitration Layer
+- `WI-0381`: Pace Model Trust Gating
+- `WI-0382`: Consistency Check Goalie Uncertainty Escalation
+- `WI-0383`: Watchdog/Wrapper Semantic Alignment
+- `WI-0384`: NHL Totals Fault Harness
+- `WI-0385`: NHL 1P Model Rebuild (Pass-First, De-biased)
+- `WI-0389`: MLB Pitcher Ks Research Spec Freeze
+- `WI-0398`: Consolidate Game-Card Decision Helper Sources
+- `WI-0399`: Migrate Legacy play.status Branching to Canonical Decision Accessors
+- `WI-0401`: Investigate NCAAM FT-Trend Market-Type Drift (Spread -> Moneyline)
+- `WI-0403`: Automated PENDING_VERIFICATION Resolution via Retrospective Edge Validation
+- `WI-0405`: Retire Legacy NCAAM FT Card Alias
+- `WI-0406`: Centralize FT Trend Context Contract
+- `WI-0407`: Replace Brittle FT Source Test with Behavior Coverage
+- `WI-0408`: Unify Decision Status Enum Across Web Contracts
+- `WI-0409`: Remove FT Note Regex Fallback After Structured Context Hardening
+- `WI-0413`: NHL Totals + Goalie Confirmation Semantics Audit (Scoping)
+- `WI-0414`: NCAAM FT-Trend Decision Semantics (PLAY/LEAN vs PASS)
+- `WI-0415`: Standardize Web WI Test Command Template
+- `WI-0417`: Starting XI Logic Requirements for FPL Sage (draft)
 
 ## Rules
 

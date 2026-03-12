@@ -1293,11 +1293,17 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         : null;
     const betMarketType = mapCanonicalToBetMarketType(marketType);
     const betSide = direction ? mapDirectionToBetSide(direction) : null;
+    const requiresLineForBet =
+      betMarketType === 'spread' ||
+      betMarketType === 'total' ||
+      betMarketType === 'team_total';
+    const hasRequiredLine =
+      !requiresLineForBet || typeof wave1DecisionPlay.line === 'number';
     const candidateBet: CanonicalBet | null =
       officialStatus === 'PLAY' &&
       betMarketType &&
       betSide &&
-      typeof wave1DecisionPlay.price === 'number'
+      hasRequiredLine
         ? {
             market_type: betMarketType,
             side: betSide,
@@ -1311,7 +1317,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
               typeof wave1DecisionPlay.line === 'number'
                 ? wave1DecisionPlay.line
                 : undefined,
-            odds_american: wave1DecisionPlay.price,
+            odds_american:
+              typeof wave1DecisionPlay.price === 'number'
+                ? wave1DecisionPlay.price
+                : undefined,
             as_of_iso: game.odds?.capturedAt || game.createdAt,
           }
         : null;

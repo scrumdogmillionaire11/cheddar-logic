@@ -202,7 +202,7 @@ function resolveSelectionRaw(payload) {
   return null;
 }
 
-function resolveLockedPrice(payload, marketType, selection) {
+function resolveLockedPrice(payload, marketType, selection, period = null) {
   const directPrice = parseAmericanOdds(payload?.price);
   if (directPrice !== null) return directPrice;
 
@@ -230,6 +230,26 @@ function resolveLockedPrice(payload, marketType, selection) {
   }
 
   if (marketType === 'TOTAL') {
+    const canonicalPeriod = normalizeMarketPeriod(period);
+    if (canonicalPeriod === '1P') {
+      if (selection === 'OVER') {
+        return parseAmericanOdds(
+          oddsContext.total_price_over_1p ??
+            oddsContext.total_1p_price_over ??
+            oddsContext.total_price_over ??
+            null
+        );
+      }
+      if (selection === 'UNDER') {
+        return parseAmericanOdds(
+          oddsContext.total_price_under_1p ??
+            oddsContext.total_1p_price_under ??
+            oddsContext.total_price_under ??
+            null
+        );
+      }
+      return null;
+    }
     if (selection === 'OVER') return parseAmericanOdds(oddsContext.total_price_over ?? null);
     if (selection === 'UNDER') return parseAmericanOdds(oddsContext.total_price_under ?? null);
   }
@@ -283,9 +303,10 @@ function deriveLockedMarketContext(payload, options = {}) {
   const recType = normalizeRecommendationType(payload?.recommendation?.type);
   const marketType = resolveMarketType(payload);
   const period = resolveMarketPeriod(payload);
+  const hasExplicitPlayableMarket = kind === 'PLAY' && Boolean(marketType);
 
   if (kind === 'EVIDENCE') return null;
-  if (recType === 'PASS') return null;
+  if (recType === 'PASS' && !hasExplicitPlayableMarket) return null;
   if (!marketType) return null;
 
   const rawSelection = resolveSelectionRaw(payload);
@@ -305,7 +326,7 @@ function deriveLockedMarketContext(payload, options = {}) {
     );
   }
 
-  const lockedPrice = resolveLockedPrice(payload, marketType, selection);
+  const lockedPrice = resolveLockedPrice(payload, marketType, selection, period);
   if (requirePrice && lockedPrice === null) {
     throw createMarketError(
       'MISSING_LOCKED_PRICE',

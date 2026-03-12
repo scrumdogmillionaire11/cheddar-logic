@@ -214,6 +214,7 @@ function canPriceCard(card) {
 }
 
 function toFiniteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -261,10 +262,24 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
   const selection = deriveOnePeriodSelection(payload);
   const modelLine = toFiniteNumber(payload?.driver?.inputs?.market_1p_total);
   const line = modelLine !== null ? modelLine : 1.5;
+  const overPrice1P = toFiniteNumber(oddsSnapshot?.total_price_over_1p);
+  const underPrice1P = toFiniteNumber(oddsSnapshot?.total_price_under_1p);
+  const sidePrice =
+    selection === 'OVER'
+      ? overPrice1P
+      : selection === 'UNDER'
+        ? underPrice1P
+        : null;
+  const lineSource =
+    toFiniteNumber(oddsSnapshot?.total_1p) !== null
+      ? 'odds_snapshot'
+      : 'fixed_reference';
+  const priceSource = sidePrice !== null ? 'odds_snapshot' : null;
   const statusToken = String(payload.status || '').toUpperCase();
   const isPlayable =
     (statusToken === 'FIRE' || statusToken === 'WATCH') &&
-    (selection === 'OVER' || selection === 'UNDER');
+    (selection === 'OVER' || selection === 'UNDER') &&
+    sidePrice !== null;
 
   payload.market_type = 'FIRST_PERIOD';
   payload.recommended_bet_type = 'total';
@@ -280,17 +295,17 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
         }
       : null;
   payload.line = line;
-  payload.price = null;
-  payload.line_source = payload.line_source || 'fixed_reference';
-  payload.price_source = null;
+  payload.price = sidePrice;
+  payload.line_source = lineSource;
+  payload.price_source = priceSource;
   payload.market_variant = 'NHL_1P_TOTAL';
   payload.odds_context = {
     ...(payload.odds_context && typeof payload.odds_context === 'object'
       ? payload.odds_context
       : {}),
     total_1p: line,
-    total_price_over_1p: null,
-    total_price_under_1p: null,
+    total_price_over_1p: overPrice1P,
+    total_price_under_1p: underPrice1P,
   };
   payload.market = {
     ...(payload.market && typeof payload.market === 'object'
@@ -312,7 +327,7 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
         ? payload.market_context.wager
         : {}),
       called_line: line,
-      called_price: null,
+      called_price: sidePrice,
       line_source: payload.line_source,
       price_source: payload.price_source,
       period: '1P',
@@ -325,7 +340,7 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
     called_market_type: 'FIRST_PERIOD',
     called_side: selection,
     called_line: line,
-    called_price: null,
+    called_price: sidePrice,
     line_source: payload.line_source,
     price_source: payload.price_source,
     period: '1P',

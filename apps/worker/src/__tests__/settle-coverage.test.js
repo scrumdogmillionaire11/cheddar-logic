@@ -470,6 +470,11 @@ describe('settlement coverage parity', () => {
       pending: 4,
       eligible: 2,
     });
+    expect(result.coverage.marketDailyCounts?.NHL_MONEYLINE).toMatchObject({
+      pending: 1,
+      settled: 1,
+      failed: 0,
+    });
 
     const db = getDatabase();
     const statuses = db
@@ -507,6 +512,11 @@ describe('settlement coverage parity', () => {
     const result = await settlePendingCards({ allowDisplayBackfill: true });
     expect(result.success).toBe(true);
     expect(result.cardsErrored).toBe(0);
+    expect(result.coverage.marketDailyCounts?.NHL_MONEYLINE).toMatchObject({
+      pending: 1,
+      settled: 1,
+      failed: 0,
+    });
 
     const db = getDatabase();
     const cardP5 = db

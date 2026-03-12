@@ -169,6 +169,8 @@ describe('run_nhl_model market call generation', () => {
 
     applyNhlSettlementMarketContext(card, oddsSnapshot);
 
+    expect(card.payloadData.kind).toBe('PLAY');
+    expect(card.payloadData.selection).toEqual({ side: 'OVER' });
     expect(card.payloadData.period).toBe('1P');
     expect(card.payloadData.market_context).toMatchObject({
       market_type: 'FIRST_PERIOD',
@@ -179,15 +181,53 @@ describe('run_nhl_model market call generation', () => {
     });
     expect(card.payloadData.odds_context).toMatchObject({
       total_1p: 1.5,
-      total_price_over_1p: null,
-      total_price_under_1p: null,
+      total_price_over_1p: -124,
+      total_price_under_1p: 102,
     });
+    expect(card.payloadData.price).toBe(-124);
+    expect(card.payloadData.price_source).toBe('odds_snapshot');
     expect(card.payloadData.pricing_trace).toMatchObject({
       called_market_type: 'FIRST_PERIOD',
       called_side: 'OVER',
       called_line: 1.5,
-      called_price: null,
+      called_price: -124,
       period: '1P',
     });
+    expect(card.payloadData.market_context?.wager?.called_price).toBe(-124);
+  });
+
+  test('forces nhl-pace-1p to EVIDENCE when 1P side price is unavailable', () => {
+    const oddsSnapshot = {
+      ...buildBaseOddsSnapshot(),
+      total_1p: 1.5,
+      total_price_over_1p: null,
+      total_price_under_1p: null,
+    };
+
+    const card = {
+      cardType: 'nhl-pace-1p',
+      payloadData: {
+        status: 'WATCH',
+        classification: 'OVER',
+        odds_context: {
+          total: 6.5,
+          total_price_over: -112,
+          total_price_under: -108,
+        },
+        driver: {
+          inputs: {
+            market_1p_total: 1.5,
+          },
+        },
+      },
+    };
+
+    applyNhlSettlementMarketContext(card, oddsSnapshot);
+
+    expect(card.payloadData.market_type).toBe('FIRST_PERIOD');
+    expect(card.payloadData.period).toBe('1P');
+    expect(card.payloadData.selection).toEqual({ side: 'OVER' });
+    expect(card.payloadData.price).toBeNull();
+    expect(card.payloadData.kind).toBe('EVIDENCE');
   });
 });

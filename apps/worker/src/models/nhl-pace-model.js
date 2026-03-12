@@ -78,9 +78,11 @@ function goalieAdjFactor(savePct) {
 
 function normalizeGoalieCertainty(certainty, confirmedFallback) {
   const token = String(certainty || '').toUpperCase();
-  if (token === 'CONFIRMED') return 'CONFIRMED';
+  if (token === 'CONFIRMED' || token === 'STARTING' || token === 'OFFICIAL') {
+    return 'CONFIRMED';
+  }
   if (token === 'EXPECTED' || token === 'PROJECTED' || token === 'LIKELY') {
-    return 'UNKNOWN';
+    return 'EXPECTED';
   }
   if (token === 'UNKNOWN') return 'UNKNOWN';
   return confirmedFallback ? 'CONFIRMED' : 'UNKNOWN';

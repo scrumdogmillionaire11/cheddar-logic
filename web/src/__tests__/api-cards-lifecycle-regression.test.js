@@ -5,7 +5,7 @@
  * ?lifecycle=active query param with same semantics as /api/games.
  *
  * Validates:
- * - lifecycle=active filters out FINAL, CANCELLED, POSTPONED, CLOSED, COMPLETE games
+ * - lifecycle=active filters out FINAL, COMPLETED/COMPLETE, FT, CANCELLED, POSTPONED, CLOSED games
  * - Only includes games where game_time_utc <= now
  * - Default (no param) returns all cards regardless of game status
  */
@@ -116,7 +116,7 @@ async function runTests() {
 
     // Test 2: lifecycle=active excludes settled games
     console.log('Test 2: lifecycle=active excludes cards from FINAL games');
-    const ACTIVE_EXCLUDED_STATUSES = ['POSTPONED', 'CANCELLED', 'CANCELED', 'FINAL', 'CLOSED', 'COMPLETE'];
+    const ACTIVE_EXCLUDED_STATUSES = ['POSTPONED', 'CANCELLED', 'CANCELED', 'FINAL', 'CLOSED', 'COMPLETE', 'COMPLETED', 'FT'];
     const statusList = ACTIVE_EXCLUDED_STATUSES.map((s) => `'${s}'`).join(', ');
     const nowForQuery = now.toISOString().substring(0, 19).replace('T', ' ');
 

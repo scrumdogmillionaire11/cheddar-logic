@@ -39,6 +39,36 @@ const { validateMarketContract } = require('@cheddar-logic/odds/src/normalize');
 
 const { fetchOdds, getActiveSports } = require('@cheddar-logic/odds');
 
+const PREGAME_STATUSES = new Set(['scheduled', 'not_started', 'pre']);
+
+function chooseStatusForUpsert(existingStatus, incomingStatus) {
+  const existing =
+    typeof existingStatus === 'string' && existingStatus.trim().length > 0
+      ? existingStatus.trim()
+      : null;
+  const incoming =
+    typeof incomingStatus === 'string' && incomingStatus.trim().length > 0
+      ? incomingStatus.trim()
+      : null;
+
+  if (!incoming) {
+    return existing || 'scheduled';
+  }
+
+  const incomingLower = incoming.toLowerCase();
+  const existingLower = existing ? existing.toLowerCase() : null;
+
+  if (
+    existingLower &&
+    !PREGAME_STATUSES.has(existingLower) &&
+    PREGAME_STATUSES.has(incomingLower)
+  ) {
+    return existing;
+  }
+
+  return incoming;
+}
+
 /**
  * Get odds interval minutes based on time-to-start
  * (Copied from scheduler helper)
@@ -303,6 +333,13 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
               }
 
               const stableGameId = `game-${sport.toLowerCase()}-${normalized.gameId}`;
+              const existingGame = getDatabase()
+                .prepare('SELECT status FROM games WHERE game_id = ? LIMIT 1')
+                .get(normalized.gameId);
+              const resolvedStatus = chooseStatusForUpsert(
+                existingGame?.status,
+                normalized.status,
+              );
 
               // Update game record (may have status changes)
               upsertGame({
@@ -312,7 +349,7 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
                 homeTeam: normalized.homeTeam,
                 awayTeam: normalized.awayTeam,
                 gameTimeUtc: normalized.gameTimeUtc,
-                status: normalized.status || 'scheduled',
+                status: resolvedStatus,
               });
 
               // Insert fresh odds snapshot

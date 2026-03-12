@@ -54,6 +54,8 @@ const ACTIVE_EXCLUDED_STATUSES = [
   'FINAL',
   'CLOSED',
   'COMPLETE',
+  'COMPLETED',
+  'FT',
 ];
 
 function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {

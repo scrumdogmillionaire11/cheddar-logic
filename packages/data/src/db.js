@@ -16,6 +16,7 @@ const { execSync } = require('child_process');
 const {
   createMarketError,
   deriveLockedMarketContext,
+  normalizeMarketPeriod,
   toRecommendedBetType,
 } = require('./market-contract');
 const { resolveDatabasePath } = require('./db-path');
@@ -1952,12 +1953,81 @@ function resolveOfficialPlayStatus(payloadData) {
   return '';
 }
 
-function shouldTrackDisplayedPlay(payloadData) {
+function normalizeMarketTypeForTracking(rawValue) {
+  const token = toUpperToken(rawValue).replace(/[\s-]+/g, '_');
+  if (!token) return '';
+
+  if (token === 'MONEYLINE' || token === 'ML' || token === 'H2H') return 'MONEYLINE';
+  if (token === 'SPREAD' || token === 'PUCKLINE' || token === 'PUCK_LINE') return 'SPREAD';
+  if (
+    token === 'TOTAL' ||
+    token === 'TOTALS' ||
+    token === 'OVER_UNDER' ||
+    token === 'OU' ||
+    token === 'FIRST_PERIOD' ||
+    token === '1P' ||
+    token === 'P1'
+  ) {
+    return 'TOTAL';
+  }
+
+  return token;
+}
+
+function resolveTrackingPeriod(payloadData, context = {}) {
+  const explicitPeriod = normalizeMarketPeriod(
+    context.period ??
+      payloadData?.period ??
+      payloadData?.time_period ??
+      payloadData?.market?.period ??
+      payloadData?.market_context?.period ??
+      payloadData?.market_context?.wager?.period ??
+      payloadData?.pricing_trace?.period ??
+      null
+  );
+  if (explicitPeriod) return explicitPeriod;
+
+  const marketToken = toUpperToken(
+    context.marketType ??
+      payloadData?.market_type ??
+      payloadData?.market_context?.market_type ??
+      payloadData?.recommended_bet_type
+  ).replace(/[\s-]+/g, '_');
+
+  if (marketToken === 'FIRST_PERIOD' || marketToken === '1P' || marketToken === 'P1') {
+    return '1P';
+  }
+
+  return 'FULL_GAME';
+}
+
+function shouldTrackDisplayedPlay(payloadData, context = {}) {
   const kind = toUpperToken(payloadData?.kind || 'PLAY');
   if (kind !== 'PLAY') return false;
 
+  const sport = toUpperToken(context.sport ?? payloadData?.sport);
+  const marketType = normalizeMarketTypeForTracking(
+    context.marketType ??
+      payloadData?.market_type ??
+      payloadData?.market_context?.market_type ??
+      payloadData?.recommended_bet_type
+  );
+  const period = resolveTrackingPeriod(payloadData, context);
   const officialStatus = resolveOfficialPlayStatus(payloadData);
-  return officialStatus === 'PLAY' || officialStatus === 'LEAN';
+  const isActionable = officialStatus === 'PLAY' || officialStatus === 'LEAN';
+
+  // NHL policy:
+  // - Full-game TOTAL rows track whenever they are logged as kind=PLAY.
+  // - 1P TOTAL and MONEYLINE remain actionable-only (PLAY/LEAN).
+  if (sport === 'NHL' && marketType === 'TOTAL' && period !== '1P') {
+    return true;
+  }
+  if (sport === 'NHL' && (marketType === 'TOTAL' || marketType === 'MONEYLINE')) {
+    return isActionable;
+  }
+
+  // Non-NHL behavior remains actionable-only.
+  return isActionable;
 }
 
 function hasCardDisplayLogTable(db) {
@@ -2282,7 +2352,14 @@ function insertCardPayload(card) {
       : null
   });
 
-  if (lockedMarket && shouldTrackDisplayedPlay(payloadData)) {
+  if (
+    lockedMarket &&
+    shouldTrackDisplayedPlay(payloadData, {
+      sport: card.sport,
+      marketType: lockedMarket.marketType,
+      period: lockedMarket.period,
+    })
+  ) {
     const confidencePct = toFiniteNumberOrNull(payloadData?.confidence_pct);
     const fallbackConfidence = toFiniteNumberOrNull(payloadData?.confidence);
     const normalizedConfidence =

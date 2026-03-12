@@ -116,6 +116,38 @@ describe('NHL pace calibration rails', () => {
     expect(expected.expectedTotal).toBe(unknown.expectedTotal);
   });
 
+  test('treats OFFICIAL certainty token as confirmed even if legacy boolean is false', () => {
+    const result = predictNHLGame(
+      buildBaseOverrides({
+        homeGoalieSavePct: 0.914,
+        awayGoalieSavePct: 0.913,
+        homeGoalieConfirmed: false,
+        awayGoalieConfirmed: false,
+        homeGoalieCertainty: 'OFFICIAL',
+        awayGoalieCertainty: 'CONFIRMED',
+      }),
+    );
+
+    expect(result.homeGoalieCertainty).toBe('CONFIRMED');
+    expect(result.homeGoalieConfirmed).toBe(true);
+  });
+
+  test('does not allow legacy boolean to upgrade explicit EXPECTED certainty', () => {
+    const result = predictNHLGame(
+      buildBaseOverrides({
+        homeGoalieSavePct: 0.914,
+        awayGoalieSavePct: 0.913,
+        homeGoalieConfirmed: true,
+        awayGoalieConfirmed: true,
+        homeGoalieCertainty: 'EXPECTED',
+        awayGoalieCertainty: 'EXPECTED',
+      }),
+    );
+
+    expect(result.homeGoalieCertainty).toBe('EXPECTED');
+    expect(result.homeGoalieConfirmed).toBe(false);
+  });
+
   test('caps additive modifier stack to absolute 0.70 goals', () => {
     const result = predictNHLGame(
       buildBaseOverrides({

@@ -549,6 +549,71 @@ describe('decision publisher v2 pipeline', () => {
     );
   });
 
+  test('promotes FIRST_PERIOD LEAN_OVER projection to PLAY even when payload price is missing', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'FIRST_PERIOD',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      classification: 'LEAN_OVER',
+      period: '1P',
+      line: 1.5,
+      price: null,
+      model_prob: 0.59,
+      edge: null,
+      p_fair: null,
+      odds_context: {
+        total: 6.5,
+        total_price_over: -110,
+        total_price_under: -110,
+        total_1p: 1.5,
+        total_price_over_1p: -125,
+        total_price_under_1p: 105,
+      },
+    });
+
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.market_price).toBe(-125);
+    expect(payload.decision_v2.sharp_price_status).toBe('CHEDDAR');
+    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
+      'MARKET_PRICE_MISSING',
+    );
+  });
+
+  test('keeps FIRST_PERIOD PASS when projection classification is PASS', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'FIRST_PERIOD',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'PASS',
+      classification: 'PASS',
+      period: '1P',
+      line: 1.5,
+      price: null,
+      model_prob: null,
+      edge: null,
+      p_fair: null,
+      odds_context: {
+        total: 6.5,
+        total_price_over: -110,
+        total_price_under: -110,
+        total_1p: 1.5,
+        total_price_over_1p: -125,
+        total_price_under_1p: 105,
+      },
+    });
+
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.sharp_price_status).toBe('COTTAGE');
+    expect(payload.decision_v2.official_status).toBe('PASS');
+    expect(payload.decision_v2.price_reason_codes).toContain('NO_EDGE_AT_PRICE');
+  });
+
   test('does not backfill legacy prob fields from decision_v2 after wave-1 pipeline runs', () => {
     const payload = buildWave1Payload({
       market_type: 'TOTAL',

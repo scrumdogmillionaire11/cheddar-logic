@@ -10,6 +10,82 @@ function resetEnv() {
   delete process.env.CHEDDAR_DB_PATH;
 }
 
+function ensureSettlementTables(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS games (
+      id TEXT PRIMARY KEY,
+      sport TEXT NOT NULL,
+      game_id TEXT NOT NULL UNIQUE,
+      home_team TEXT NOT NULL,
+      away_team TEXT NOT NULL,
+      game_time_utc TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'scheduled',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS card_payloads (
+      id TEXT PRIMARY KEY,
+      game_id TEXT NOT NULL,
+      sport TEXT NOT NULL,
+      card_type TEXT NOT NULL,
+      card_title TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT,
+      payload_data TEXT NOT NULL,
+      model_output_ids TEXT,
+      metadata TEXT,
+      run_id TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (game_id) REFERENCES games(game_id)
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS card_results (
+      id TEXT PRIMARY KEY,
+      card_id TEXT NOT NULL UNIQUE,
+      game_id TEXT NOT NULL,
+      sport TEXT NOT NULL,
+      card_type TEXT NOT NULL,
+      recommended_bet_type TEXT NOT NULL,
+      market_key TEXT,
+      market_type TEXT,
+      selection TEXT,
+      line REAL,
+      locked_price INTEGER,
+      status TEXT NOT NULL,
+      result TEXT,
+      settled_at TEXT,
+      pnl_units REAL,
+      metadata TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (card_id) REFERENCES card_payloads(id)
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS card_display_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pick_id TEXT UNIQUE NOT NULL,
+      run_id TEXT,
+      game_id TEXT,
+      sport TEXT,
+      market_type TEXT,
+      selection TEXT,
+      line REAL,
+      odds REAL,
+      odds_book TEXT,
+      confidence_pct REAL,
+      displayed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      api_endpoint TEXT
+    );
+  `);
+}
+
 describe('card payload/card_results sport normalization', () => {
   let tempDir;
   let dbPath;
@@ -440,5 +516,258 @@ describe('card payload/card_results sport normalization', () => {
     expect(allRows[0].sport).toBe('nba');
     expect(allRows[1].sport).toBe('nhl');
     expect(allRows[2].sport).toBe('ncaam');
+  });
+
+  test('NHL full-game totals enroll in card_display_log when kind=PLAY even if official_status=PASS', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-full-total-pass';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-full-total-pass',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    dbModule.insertCardPayload({
+      id: 'card-nhl-full-total-pass',
+      gameId,
+      sport: 'nhl',
+      cardType: 'nhl-totals-call',
+      cardTitle: 'NHL Totals: OVER 6.5',
+      createdAt: now.toISOString(),
+      payloadData: {
+        game_id: gameId,
+        sport: 'NHL',
+        kind: 'PLAY',
+        status: 'PASS',
+        decision_v2: { official_status: 'PASS' },
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        line: 6.5,
+        odds_context: {
+          total: 6.5,
+          total_price_over: -110,
+          total_price_under: -110,
+        },
+      },
+      runId: 'run-nhl-full-total-pass',
+    });
+
+    const resultRow = db
+      .prepare(
+        `SELECT market_type, selection, line, locked_price, market_key
+         FROM card_results
+         WHERE card_id = ?`
+      )
+      .get('card-nhl-full-total-pass');
+    expect(resultRow).toMatchObject({
+      market_type: 'TOTAL',
+      selection: 'OVER',
+      line: 6.5,
+      locked_price: -110,
+      market_key: `${gameId}:TOTAL:OVER:6.5`,
+    });
+
+    const displayRow = db
+      .prepare(
+        `SELECT pick_id, market_type, selection
+         FROM card_display_log
+         WHERE pick_id = ?`
+      )
+      .get('card-nhl-full-total-pass');
+    expect(displayRow).toMatchObject({
+      pick_id: 'card-nhl-full-total-pass',
+      market_type: 'TOTAL',
+      selection: 'OVER',
+    });
+  });
+
+  test('NHL 1P totals lock from *_1p prices and only enroll actionable statuses', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-1p-actionable';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-1p-actionable',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    dbModule.insertCardPayload({
+      id: 'card-nhl-1p-lean',
+      gameId,
+      sport: 'nhl',
+      cardType: 'nhl-pace-1p',
+      cardTitle: 'NHL 1P Total: LEAN_OVER @ 1.50',
+      createdAt: now.toISOString(),
+      payloadData: {
+        game_id: gameId,
+        sport: 'NHL',
+        kind: 'PLAY',
+        status: 'WATCH',
+        decision_v2: { official_status: 'LEAN' },
+        market_type: 'FIRST_PERIOD',
+        period: '1P',
+        recommended_bet_type: 'total',
+        selection: { side: 'OVER' },
+        line: 1.5,
+        odds_context: {
+          total_1p: 1.5,
+          total_price_over_1p: -124,
+          total_price_under_1p: 102,
+        },
+      },
+      runId: 'run-nhl-1p-actionable',
+    });
+
+    dbModule.insertCardPayload({
+      id: 'card-nhl-1p-pass',
+      gameId,
+      sport: 'nhl',
+      cardType: 'nhl-pace-1p',
+      cardTitle: 'NHL 1P Total: PASS @ 1.50',
+      createdAt: new Date(now.getTime() + 1000).toISOString(),
+      payloadData: {
+        game_id: gameId,
+        sport: 'NHL',
+        kind: 'PLAY',
+        status: 'PASS',
+        decision_v2: { official_status: 'PASS' },
+        market_type: 'FIRST_PERIOD',
+        period: '1P',
+        recommended_bet_type: 'total',
+        selection: { side: 'OVER' },
+        line: 1.5,
+        odds_context: {
+          total_1p: 1.5,
+          total_price_over_1p: -124,
+          total_price_under_1p: 102,
+        },
+      },
+      runId: 'run-nhl-1p-actionable',
+    });
+
+    const leanResult = db
+      .prepare(
+        `SELECT market_key, market_type, selection, locked_price
+         FROM card_results
+         WHERE card_id = ?`
+      )
+      .get('card-nhl-1p-lean');
+    expect(leanResult).toMatchObject({
+      market_key: `${gameId}:TOTAL:1P:OVER:1.5`,
+      market_type: 'TOTAL',
+      selection: 'OVER',
+      locked_price: -124,
+    });
+
+    const displayRows = db
+      .prepare(
+        `SELECT pick_id
+         FROM card_display_log
+         WHERE pick_id IN (?, ?)
+         ORDER BY pick_id`
+      )
+      .all('card-nhl-1p-lean', 'card-nhl-1p-pass');
+    expect(displayRows.map((row) => row.pick_id)).toEqual(['card-nhl-1p-lean']);
+  });
+
+  test('NHL moneyline enrolls for actionable PLAY/LEAN and excludes PASS', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-ml-actionable';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-ml-actionable',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    dbModule.insertCardPayload({
+      id: 'card-nhl-ml-lean',
+      gameId,
+      sport: 'nhl',
+      cardType: 'nhl-moneyline-call',
+      cardTitle: 'NHL ML: Away',
+      createdAt: now.toISOString(),
+      payloadData: {
+        game_id: gameId,
+        sport: 'NHL',
+        kind: 'PLAY',
+        status: 'WATCH',
+        decision_v2: { official_status: 'LEAN' },
+        market_type: 'MONEYLINE',
+        selection: { side: 'AWAY' },
+        odds_context: {
+          h2h_home: -130,
+          h2h_away: 115,
+        },
+      },
+      runId: 'run-nhl-ml-actionable',
+    });
+
+    dbModule.insertCardPayload({
+      id: 'card-nhl-ml-pass',
+      gameId,
+      sport: 'nhl',
+      cardType: 'nhl-moneyline-call',
+      cardTitle: 'NHL ML: Home',
+      createdAt: new Date(now.getTime() + 1000).toISOString(),
+      payloadData: {
+        game_id: gameId,
+        sport: 'NHL',
+        kind: 'PLAY',
+        status: 'PASS',
+        decision_v2: { official_status: 'PASS' },
+        market_type: 'MONEYLINE',
+        selection: { side: 'HOME' },
+        odds_context: {
+          h2h_home: -130,
+          h2h_away: 115,
+        },
+      },
+      runId: 'run-nhl-ml-actionable',
+    });
+
+    const displayRows = db
+      .prepare(
+        `SELECT pick_id
+         FROM card_display_log
+         WHERE pick_id IN (?, ?)
+         ORDER BY pick_id`
+      )
+      .all('card-nhl-ml-lean', 'card-nhl-ml-pass');
+    expect(displayRows.map((row) => row.pick_id)).toEqual(['card-nhl-ml-lean']);
   });
 });

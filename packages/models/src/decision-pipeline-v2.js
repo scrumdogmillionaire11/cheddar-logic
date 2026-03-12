@@ -366,6 +366,16 @@ function getSupportThresholds(marketType) {
   return { play: 0.6, lean: 0.45 };
 }
 
+function deriveFirstPeriodProjectionSignal(payload) {
+  const classification = asString(payload?.classification) || asString(payload?.prediction);
+  const token = classification ? classification.toUpperCase() : 'PASS';
+  if (token === 'PASS') return 'PASS';
+  if (token.includes('OVER')) return 'PLAY';
+  if (token.includes('BEST') || token.includes('PLAY')) return 'PLAY';
+  if (token.includes('LEAN')) return 'LEAN';
+  return 'PASS';
+}
+
 function classifyPrice({
   marketType,
   edgePct,
@@ -376,6 +386,7 @@ function classifyPrice({
   hasPrimarySupport = true,
   proxyUsed = false,
   proxyAllowed = false,
+  projectionSignal = 'PASS',
 }) {
   if (missingReason) {
     return {
@@ -397,6 +408,21 @@ function classifyPrice({
     return {
       sharp_price_status: 'UNPRICED',
       price_reason_codes: [PRICE_REASONS.NO_PRIMARY_SUPPORT],
+      proxy_capped: false,
+    };
+  }
+
+  if (marketType === 'FIRST_PERIOD') {
+    if (projectionSignal === 'PLAY' || projectionSignal === 'LEAN') {
+      return {
+        sharp_price_status: 'CHEDDAR',
+        price_reason_codes: [PRICE_REASONS.EDGE_CLEAR],
+        proxy_capped: false,
+      };
+    }
+    return {
+      sharp_price_status: 'COTTAGE',
+      price_reason_codes: [PRICE_REASONS.NO_EDGE_AT_PRICE],
       proxy_capped: false,
     };
   }
@@ -535,6 +561,14 @@ function resolveWagerPeriod(payload) {
   return period ? period.toUpperCase() : null;
 }
 
+function getFirstPeriodPriceFromOddsContext(payload, direction) {
+  const odds = payload?.odds_context;
+  if (!odds || typeof odds !== 'object') return null;
+  if (direction === 'OVER') return asNumber(odds.total_price_over_1p);
+  if (direction === 'UNDER') return asNumber(odds.total_price_under_1p);
+  return null;
+}
+
 function getExpectedWagerFromOddsContext(payload, marketType, direction) {
   const odds = payload?.odds_context;
   if (!odds || typeof odds !== 'object') {
@@ -585,13 +619,13 @@ function getExpectedWagerFromOddsContext(payload, marketType, direction) {
           : asNumber(odds.total);
     const expectedOverPrice =
       marketType === 'FIRST_PERIOD'
-        ? null
+        ? asNumber(odds.total_price_over_1p)
         : period === '1P'
         ? asNumber(odds.total_price_over_1p ?? odds.total_price_over)
         : asNumber(odds.total_price_over);
     const expectedUnderPrice =
       marketType === 'FIRST_PERIOD'
-        ? null
+        ? asNumber(odds.total_price_under_1p)
         : period === '1P'
         ? asNumber(odds.total_price_under_1p ?? odds.total_price_under)
         : asNumber(odds.total_price_under);
@@ -696,6 +730,7 @@ function computeOfficialStatus({
   edgePct,
   marketType,
   proxyCapped = false,
+  projectionSignal = 'PASS',
 }) {
   const thresholds = getSupportThresholds(marketType);
 
@@ -704,6 +739,13 @@ function computeOfficialStatus({
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
     return 'PASS';
   }
+
+  if (marketType === 'FIRST_PERIOD') {
+    if (projectionSignal === 'PLAY') return 'PLAY';
+    if (projectionSignal === 'LEAN') return 'LEAN';
+    return 'PASS';
+  }
+
   if (edgePct === null) return 'PASS';
 
   if (
@@ -891,6 +933,10 @@ function buildDecisionV2(payload, context = {}) {
     const market_type = normalizeMarketType(
       payload?.market_type ?? payload?.recommended_bet_type,
     );
+    const firstPeriodProjectionSignal =
+      market_type === 'FIRST_PERIOD'
+        ? deriveFirstPeriodProjectionSignal(payload)
+        : 'PASS';
 
     const direction = getDirection(payload);
     const { support_score, conflict_score } = getSupportAndConflict(payload);
@@ -900,7 +946,12 @@ function buildDecisionV2(payload, context = {}) {
     const watchdog = computeWatchdog(payload, context);
 
     const line = asNumber(payload?.line);
-    const price = asNumber(payload?.price);
+    const payloadPrice = asNumber(payload?.price);
+    const priceFromOddsContext =
+      market_type === 'FIRST_PERIOD'
+        ? getFirstPeriodPriceFromOddsContext(payload, direction)
+        : null;
+    const price = payloadPrice ?? priceFromOddsContext;
     const implied_prob = impliedProbFromAmerican(price);
     const winProbHome = asNumber(payload?.projection?.win_prob_home);
     let proxy_used = detectProxyUsed(payload);
@@ -1071,6 +1122,7 @@ function buildDecisionV2(payload, context = {}) {
       hasPrimarySupport,
       proxyUsed: proxy_used,
       proxyAllowed: proxy_allowed,
+      projectionSignal: firstPeriodProjectionSignal,
     });
     const proxy_capped = priceDecision.proxy_capped === true;
 
@@ -1081,9 +1133,17 @@ function buildDecisionV2(payload, context = {}) {
       edgePct: edge_pct,
       marketType: market_type,
       proxyCapped: proxy_capped,
+      projectionSignal: firstPeriodProjectionSignal,
     });
 
-    const play_tier = derivePlayTier(edge_pct);
+    const play_tier =
+      market_type === 'FIRST_PERIOD'
+        ? firstPeriodProjectionSignal === 'PLAY'
+          ? 'GOOD'
+          : firstPeriodProjectionSignal === 'LEAN'
+            ? 'OK'
+            : 'BAD'
+        : derivePlayTier(edge_pct);
 
     const primary_reason_code = resolvePrimaryReason({
       watchdogReasonCodes: watchdog.watchdog_reason_codes,

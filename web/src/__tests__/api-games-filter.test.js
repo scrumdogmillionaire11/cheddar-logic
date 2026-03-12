@@ -46,7 +46,7 @@ function queryActive(client, startUtc, nowUtc, endUtc = null) {
              AND cr.status = 'settled'
          )
          AND datetime(g.game_time_utc) <= datetime(?)
-         AND UPPER(COALESCE(g.status, '')) NOT IN ('POSTPONED', 'CANCELLED', 'CANCELED', 'FINAL', 'CLOSED', 'COMPLETE')
+         AND UPPER(COALESCE(g.status, '')) NOT IN ('POSTPONED', 'CANCELLED', 'CANCELED', 'FINAL', 'CLOSED', 'COMPLETE', 'COMPLETED', 'FT')
          ${endUtc ? 'AND datetime(g.game_time_utc) <= ?' : ''}
        ORDER BY g.game_time_utc ASC`,
     )
@@ -169,6 +169,22 @@ async function runTests() {
       expectPreGame: false,
       expectActive: false,
       label: 'Started final game is excluded from active mode',
+    },
+    {
+      id: `${TEST_PREFIX}past-completed`,
+      offsetMs: -64 * 60 * 1000,
+      status: 'completed',
+      expectPreGame: false,
+      expectActive: false,
+      label: 'Started completed game is excluded from active mode',
+    },
+    {
+      id: `${TEST_PREFIX}past-ft`,
+      offsetMs: -63 * 60 * 1000,
+      status: 'ft',
+      expectPreGame: false,
+      expectActive: false,
+      label: 'Started FT game is excluded from active mode',
     },
   ];
 

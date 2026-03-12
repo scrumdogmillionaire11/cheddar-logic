@@ -483,7 +483,9 @@ function normalizeRotowireGoalieStatus(value) {
   // EXPECTED = projected/likely but not yet officially confirmed (subject to change)
   // UNKNOWN = uncertain or undecided (no confirmation from sources)
   
-  if (token === 'CONFIRMED') return 'CONFIRMED';
+  if (token === 'CONFIRMED' || token === 'STARTING' || token === 'OFFICIAL') {
+    return 'CONFIRMED';
+  }
   if (token === 'EXPECTED' || token === 'LIKELY' || token === 'PROJECTED') {
     return 'EXPECTED';
   }
@@ -567,9 +569,18 @@ function parseRotowireGoalies(payload) {
 }
 
 async function fetchRotowireGoaliesSnapshot(now = new Date()) {
-  const yesterday = new Date(now);
-  const today = new Date(now);
-  const tomorrow = new Date(now);
+  const includeRawRecords =
+    now && typeof now === 'object' && !Array.isArray(now) && 'includeRawRecords' in now
+      ? now.includeRawRecords === true
+      : false;
+  const nowDate =
+    now && typeof now === 'object' && !Array.isArray(now) && 'now' in now
+      ? new Date(now.now)
+      : now;
+
+  const yesterday = new Date(nowDate);
+  const today = new Date(nowDate);
+  const tomorrow = new Date(nowDate);
   yesterday.setDate(yesterday.getDate() - 1);
   tomorrow.setDate(tomorrow.getDate() + 1);
   const dates = [
@@ -580,11 +591,15 @@ async function fetchRotowireGoaliesSnapshot(now = new Date()) {
 
   const merged = {};
   const byDate = {};
+  const rawByDate = {};
 
   for (const date of dates) {
     try {
       const body = await fetchUrl(`${ROTOWIRE_URLS.projectedGoalies}${date}`);
       const parsed = JSON.parse(body);
+      if (includeRawRecords) {
+        rawByDate[date] = Array.isArray(parsed) ? parsed : [];
+      }
       const mapped = parseRotowireGoalies(parsed);
       byDate[date] = mapped;
       for (const [team, goalie] of Object.entries(mapped)) {
@@ -598,19 +613,99 @@ async function fetchRotowireGoaliesSnapshot(now = new Date()) {
   return {
     teams: merged,
     byDate,
+    ...(includeRawRecords ? { rawByDate } : {}),
+  };
+}
+
+function shiftUtcDays(date, days) {
+  const shifted = new Date(date);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted;
+}
+
+function buildRotowireDateWindowKeys(gameTimeUtc) {
+  const baseTime = gameTimeUtc ? new Date(gameTimeUtc) : new Date();
+  const resolvedBase = Number.isNaN(baseTime.getTime()) ? new Date() : baseTime;
+  const keys = [
+    formatDateYYYYMMDDEastern(resolvedBase),
+    formatDateYYYYMMDDEastern(shiftUtcDays(resolvedBase, -1)),
+    formatDateYYYYMMDDEastern(shiftUtcDays(resolvedBase, 1)),
+  ];
+  return Array.from(new Set(keys));
+}
+
+function resolveRotowireGoalieForGameDetailed(snapshot, teamName, gameTimeUtc) {
+  if (!snapshot || !teamName) return {};
+  const dateWindowKeys = buildRotowireDateWindowKeys(gameTimeUtc);
+  const primaryDateKey = dateWindowKeys[0] || null;
+  const diagnostics = {
+    team: teamName,
+    game_time_utc: gameTimeUtc || null,
+    primary_date_key: primaryDateKey,
+    alternate_date_keys_checked: dateWindowKeys.slice(1),
+    raw_source_date_key_used: null,
+    checked_date_keys: [...dateWindowKeys],
+    resolution_path: null,
+    fallback_reason_codes: [],
+  };
+
+  let resolvedByDate = null;
+  let resolvedDateKey = null;
+  for (const key of dateWindowKeys) {
+    const byDateEntry = snapshot.rotowire_goalies_by_date?.[key]?.[teamName];
+    if (byDateEntry) {
+      resolvedByDate = byDateEntry;
+      resolvedDateKey = key;
+      break;
+    }
+  }
+
+  if (resolvedByDate) {
+    diagnostics.raw_source_date_key_used = resolvedDateKey;
+    diagnostics.resolution_path =
+      resolvedDateKey === primaryDateKey
+        ? 'DATE_EXACT'
+        : 'DATE_ADJACENT_FALLBACK';
+    return {
+      goalie: resolvedByDate,
+      diagnostics,
+    };
+  }
+
+  const teamFallback = snapshot.rotowire_goalies?.[teamName] || null;
+  if (teamFallback) {
+    diagnostics.resolution_path = 'TEAM_FALLBACK';
+    diagnostics.fallback_reason_codes.push('ROTOWIRE_DATE_WINDOW_MISS');
+    return {
+      goalie: teamFallback,
+      diagnostics,
+    };
+  }
+
+  diagnostics.resolution_path = 'SOURCE_MISS';
+  diagnostics.fallback_reason_codes.push('ROTOWIRE_DATE_WINDOW_MISS');
+  diagnostics.fallback_reason_codes.push('ROTOWIRE_SOURCE_MISS');
+  return {
+    goalie: {},
+    diagnostics,
   };
 }
 
 function resolveRotowireGoalieForGame(snapshot, teamName, gameTimeUtc) {
-  if (!snapshot || !teamName) return {};
-  const gameDate = gameTimeUtc
-    ? formatDateYYYYMMDDEastern(new Date(gameTimeUtc))
-    : formatDateYYYYMMDDEastern(new Date());
-  return (
-    snapshot.rotowire_goalies_by_date?.[gameDate]?.[teamName] ||
-    snapshot.rotowire_goalies?.[teamName] ||
-    {}
+  const resolved = resolveRotowireGoalieForGameDetailed(
+    snapshot,
+    teamName,
+    gameTimeUtc,
   );
+  return resolved.goalie || {};
+}
+
+function mergeMarkerList(existingMarkers, newMarkers) {
+  const merged = new Set([
+    ...(Array.isArray(existingMarkers) ? existingMarkers : []),
+    ...(Array.isArray(newMarkers) ? newMarkers : []),
+  ]);
+  return Array.from(merged);
 }
 
 function parseInjuries(html) {
@@ -793,16 +888,18 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
   const awayStats = snapshot.teams?.[awayTeam] || {};
   const homeGoalie = snapshot.goalies?.[homeTeam] || {};
   const awayGoalie = snapshot.goalies?.[awayTeam] || {};
-  const homeRotowireGoalie = resolveRotowireGoalieForGame(
+  const homeRotowireResolution = resolveRotowireGoalieForGameDetailed(
     snapshot,
     homeTeam,
     oddsSnapshot.game_time_utc,
   );
-  const awayRotowireGoalie = resolveRotowireGoalieForGame(
+  const awayRotowireResolution = resolveRotowireGoalieForGameDetailed(
     snapshot,
     awayTeam,
     oddsSnapshot.game_time_utc,
   );
+  const homeRotowireGoalie = homeRotowireResolution.goalie || {};
+  const awayRotowireGoalie = awayRotowireResolution.goalie || {};
   const homeInjuries = snapshot.injuries?.[homeTeam] || [];
   const awayInjuries = snapshot.injuries?.[awayTeam] || [];
 
@@ -821,6 +918,14 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
     homeRotowireGoalie.name ?? rawData.goalie?.home?.name ?? null;
   const awayGoalieName =
     awayRotowireGoalie.name ?? rawData.goalie?.away?.name ?? null;
+  const homeSourceMarkers = mergeMarkerList(
+    rawData.goalie?.home?.source_markers,
+    homeRotowireResolution.diagnostics?.fallback_reason_codes,
+  );
+  const awaySourceMarkers = mergeMarkerList(
+    rawData.goalie?.away?.source_markers,
+    awayRotowireResolution.diagnostics?.fallback_reason_codes,
+  );
 
   const enrichedRaw = {
     ...rawData,
@@ -857,18 +962,27 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
         gsax: homeGoalie.gsax ?? rawData.goalie?.home?.gsax ?? null,
         name: homeGoalieName,
         status: homeGoalieStatus,
+        source_markers: homeSourceMarkers,
       },
       away: {
         ...(rawData.goalie?.away || {}),
         gsax: awayGoalie.gsax ?? rawData.goalie?.away?.gsax ?? null,
         name: awayGoalieName,
         status: awayGoalieStatus,
+        source_markers: awaySourceMarkers,
       },
     },
     goalie_home_gsax: homeGoalie.gsax ?? rawData.goalie_home_gsax ?? null,
     goalie_away_gsax: awayGoalie.gsax ?? rawData.goalie_away_gsax ?? null,
     goalie_home_status: homeGoalieStatus,
     goalie_away_status: awayGoalieStatus,
+    goalie_home_source_markers: homeSourceMarkers,
+    goalie_away_source_markers: awaySourceMarkers,
+    rotowire_resolution: {
+      ...(rawData.rotowire_resolution || {}),
+      home: homeRotowireResolution.diagnostics,
+      away: awayRotowireResolution.diagnostics,
+    },
     xgf_home_pct: homeStats.xgf_pct ?? rawData.xgf_home_pct ?? null,
     xgf_away_pct: awayStats.xgf_pct ?? rawData.xgf_away_pct ?? null,
     pdo_home: homeStats.pdo ?? rawData.pdo_home ?? null,
@@ -905,7 +1019,9 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
 
 module.exports = {
   fetchMoneyPuckSnapshot,
+  fetchRotowireGoaliesSnapshot,
   enrichOddsSnapshotWithMoneyPuck,
   normalizeRotowireGoalieStatus,
+  resolveRotowireGoalieForGameDetailed,
   resolveRotowireGoalieForGame,
 };

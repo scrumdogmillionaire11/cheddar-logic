@@ -144,6 +144,9 @@ function resolveSettlementMarketBucket({
   const normalizedSport = String(sport || '').toUpperCase();
   const normalizedMarketType = String(marketType || '').toUpperCase();
   const normalizedPeriod = normalizeSettlementPeriod(period);
+  if (normalizedSport === 'NHL' && normalizedMarketType === 'MONEYLINE') {
+    return 'NHL_MONEYLINE';
+  }
   if (normalizedMarketType !== 'TOTAL') return null;
 
   if (normalizedSport === 'NBA' && normalizedPeriod !== '1P') {
@@ -348,16 +351,39 @@ function computePnlOutcome(result, odds) {
 
 function backfillDisplayedPlaysFromPayloads(db) {
   const insertStmt = db.prepare(`
-    WITH normalized AS (
+    WITH candidates AS (
       SELECT
         cp.id AS pick_id,
         cp.run_id AS run_id,
         cp.game_id AS game_id,
         UPPER(COALESCE(cdl.sport, cp.sport, cr.sport)) AS sport,
-        UPPER(COALESCE(cr.market_type, json_extract(cp.payload_data, '$.market_type'))) AS market_type,
+        UPPER(COALESCE(cr.market_type, json_extract(cp.payload_data, '$.market_type'))) AS market_type_token,
         UPPER(COALESCE(cr.selection, json_extract(cp.payload_data, '$.selection.side'), json_extract(cp.payload_data, '$.selection'))) AS selection,
         COALESCE(cr.line, CAST(json_extract(cp.payload_data, '$.line') AS REAL)) AS line,
         COALESCE(cr.locked_price, CAST(json_extract(cp.payload_data, '$.price') AS REAL)) AS odds,
+        UPPER(COALESCE(json_extract(cp.payload_data, '$.kind'), 'PLAY')) AS payload_kind,
+        UPPER(
+          COALESCE(
+            json_extract(cp.payload_data, '$.decision_v2.official_status'),
+            CASE UPPER(COALESCE(json_extract(cp.payload_data, '$.status'), ''))
+              WHEN 'FIRE' THEN 'PLAY'
+              WHEN 'WATCH' THEN 'LEAN'
+              WHEN 'PASS' THEN 'PASS'
+              ELSE ''
+            END
+          )
+        ) AS official_status,
+        UPPER(
+          COALESCE(
+            json_extract(cp.payload_data, '$.period'),
+            json_extract(cp.payload_data, '$.time_period'),
+            json_extract(cp.payload_data, '$.market.period'),
+            json_extract(cp.payload_data, '$.market_context.period'),
+            json_extract(cp.payload_data, '$.market_context.wager.period'),
+            json_extract(cp.payload_data, '$.pricing_trace.period'),
+            'FULL_GAME'
+          )
+        ) AS period_token,
         COALESCE(
           CAST(json_extract(cp.payload_data, '$.confidence_pct') AS REAL),
           CAST(json_extract(cp.payload_data, '$.confidence') AS REAL) * 100.0
@@ -366,18 +392,56 @@ function backfillDisplayedPlaysFromPayloads(db) {
       FROM card_payloads cp
       INNER JOIN card_results cr ON cr.card_id = cp.id
       LEFT JOIN card_display_log cdl ON cdl.pick_id = cp.id
-      WHERE UPPER(COALESCE(json_extract(cp.payload_data, '$.kind'), 'PLAY')) = 'PLAY'
-        AND UPPER(
-          COALESCE(
-            json_extract(cp.payload_data, '$.decision_v2.official_status'),
-            CASE UPPER(COALESCE(json_extract(cp.payload_data, '$.status'), ''))
-              WHEN 'FIRE' THEN 'PLAY'
-              WHEN 'WATCH' THEN 'LEAN'
-              ELSE ''
-            END
+      WHERE COALESCE(cr.market_key, json_extract(cp.payload_data, '$.market_key')) IS NOT NULL
+    ),
+    normalized AS (
+      SELECT
+        pick_id,
+        run_id,
+        game_id,
+        sport,
+        CASE
+          WHEN market_type_token IN ('FIRST_PERIOD', '1P', 'P1') THEN 'TOTAL'
+          WHEN market_type_token IN ('TOTAL', 'TOTALS', 'OVER_UNDER', 'OU') THEN 'TOTAL'
+          WHEN market_type_token IN ('MONEYLINE', 'ML', 'H2H') THEN 'MONEYLINE'
+          WHEN market_type_token IN ('SPREAD', 'PUCKLINE', 'PUCK_LINE') THEN 'SPREAD'
+          ELSE market_type_token
+        END AS market_type,
+        selection,
+        line,
+        odds,
+        CASE
+          WHEN market_type_token IN ('FIRST_PERIOD', '1P', 'P1') THEN '1P'
+          WHEN period_token IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD') THEN '1P'
+          ELSE 'FULL_GAME'
+        END AS settlement_period,
+        payload_kind,
+        official_status,
+        confidence_pct,
+        displayed_at
+      FROM candidates
+    ),
+    enrolled AS (
+      SELECT
+        pick_id,
+        run_id,
+        game_id,
+        sport,
+        market_type,
+        selection,
+        line,
+        odds,
+        confidence_pct,
+        displayed_at
+      FROM normalized
+      WHERE payload_kind = 'PLAY'
+        AND (
+          (sport = 'NHL' AND market_type = 'TOTAL' AND settlement_period = 'FULL_GAME')
+          OR (
+            official_status IN ('PLAY', 'LEAN')
+            AND NOT (sport = 'NHL' AND market_type = 'TOTAL' AND settlement_period = 'FULL_GAME')
           )
-        ) IN ('PLAY', 'LEAN')
-        AND COALESCE(cr.market_key, json_extract(cp.payload_data, '$.market_key')) IS NOT NULL
+        )
     ),
     ranked AS (
       SELECT
@@ -403,7 +467,7 @@ function backfillDisplayedPlaysFromPayloads(db) {
             datetime(displayed_at) DESC,
             pick_id DESC
         ) AS rn
-      FROM normalized
+      FROM enrolled
     )
     INSERT OR IGNORE INTO card_display_log (
       pick_id,
@@ -730,6 +794,7 @@ async function settlePendingCards({
         NBA_TOTAL: { pending: 0, settled: 0, failed: 0 },
         NHL_TOTAL: { pending: 0, settled: 0, failed: 0 },
         NHL_1P_TOTAL: { pending: 0, settled: 0, failed: 0 },
+        NHL_MONEYLINE: { pending: 0, settled: 0, failed: 0 },
       };
 
       for (const pendingCard of pendingRows) {
@@ -924,7 +989,7 @@ async function settlePendingCards({
         `[SettleCards] Step 1 complete — pending: ${coverageBefore.totalPending}, eligible: ${eligibleCount}, settled: ${cardsSettled}, errored: ${cardsErrored}, raced: ${cardsRaced}, skipped: ${totalSkipped}`,
       );
       console.log(
-        `[SettleCards] Market daily counts — NBA_TOTAL: ${JSON.stringify(marketDailyCounts.NBA_TOTAL)}, NHL_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_TOTAL)}, NHL_1P_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_1P_TOTAL)}`,
+        `[SettleCards] Market daily counts — NBA_TOTAL: ${JSON.stringify(marketDailyCounts.NBA_TOTAL)}, NHL_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_TOTAL)}, NHL_1P_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_1P_TOTAL)}, NHL_MONEYLINE: ${JSON.stringify(marketDailyCounts.NHL_MONEYLINE)}`,
       );
 
       // --- Step 2: Increment tracking_stats (race-safe) ---

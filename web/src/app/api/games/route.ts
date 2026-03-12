@@ -112,6 +112,8 @@ const ACTIVE_EXCLUDED_STATUSES = [
   'FINAL',
   'CLOSED',
   'COMPLETE',
+  'COMPLETED',
+  'FT',
 ];
 
 function toSqlUtc(date: Date): string {
