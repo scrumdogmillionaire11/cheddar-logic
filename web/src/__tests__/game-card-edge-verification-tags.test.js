@@ -13,6 +13,12 @@ const tagsSource = fs.readFileSync(tagsPath, 'utf8');
 const transformPath = path.resolve('web/src/lib/game-card/transform.ts');
 const transformSource = fs.readFileSync(transformPath, 'utf8');
 
+const routePath = path.resolve('web/src/app/api/games/route.ts');
+const routeSource = fs.readFileSync(routePath, 'utf8');
+
+const cardsPageClientPath = path.resolve('web/src/components/cards-page-client.tsx');
+const cardsPageClientSource = fs.readFileSync(cardsPageClientPath, 'utf8');
+
 console.log('🧪 Game card edge-verification tags source tests');
 
 assert(
@@ -36,8 +42,43 @@ assert(
 );
 
 assert(
+  transformSource.includes('const edgeVerificationBlocked = hasEdgeVerificationSignals({'),
+  'transform should detect wave-1 verification state via shared helper',
+);
+
+assert(
+  transformSource.includes("'BLOCKED_BET_VERIFICATION_REQUIRED'"),
+  'transform should preserve blocked-bet verification reason in wave-1 mapping',
+);
+
+assert(
+  transformSource.includes('code: EDGE_SANITY_GATE_CODE,'),
+  'transform should add edge-verification blocking gate for wave-1 cards',
+);
+
+assert(
   transformSource.includes("pick = `${pickWithContext} (Verification Required)`;"),
   'transform should preserve side/market pick context when verification blocks bet',
+);
+
+assert(
+  transformSource.includes('`$\{wave1PickText\} (Verification Required)`'),
+  'transform should preserve side/market pick context for wave-1 verification cards',
+);
+
+assert(
+  routeSource.includes("sharpStatusRaw === 'PENDING_VERIFICATION'"),
+  'games route should preserve PENDING_VERIFICATION sharp price status',
+);
+
+assert(
+  cardsPageClientSource.includes("if (status === 'PENDING_VERIFICATION')"),
+  'cards page should format PENDING_VERIFICATION explicitly',
+);
+
+assert(
+  cardsPageClientSource.includes("return 'Priced, pending verification';"),
+  'cards page should describe verification pricing as trusted with caution, not unpriced',
 );
 
 console.log('✅ Game card edge-verification tags source tests passed');

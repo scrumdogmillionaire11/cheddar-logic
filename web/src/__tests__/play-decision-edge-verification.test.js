@@ -28,6 +28,11 @@ assert(
 );
 
 assert(
+  source.includes('EDGE_SANITY_GATE_CODE,'),
+  'decision-logic should treat raw edge-sanity reason codes as edge-verification signals',
+);
+
+assert(
   source.includes('gate.code === EDGE_SANITY_GATE_CODE'),
   'decision-logic should treat EDGE_SANITY gate code as edge-verification signal',
 );

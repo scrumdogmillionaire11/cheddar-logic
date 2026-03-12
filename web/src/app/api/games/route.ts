@@ -870,6 +870,7 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
   const sharp_price_status =
     sharpStatusRaw === 'CHEDDAR' ||
     sharpStatusRaw === 'COTTAGE' ||
+    sharpStatusRaw === 'PENDING_VERIFICATION' ||
     sharpStatusRaw === 'UNPRICED'
       ? (sharpStatusRaw as DecisionV2['sharp_price_status'])
       : 'UNPRICED';
@@ -2560,7 +2561,35 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const data = rows.map((row) => {
+    const pregameRowsDroppedNoOddsNoPlays =
+      lifecycleMode === 'pregame'
+        ? rows.reduce((count, row) => {
+            const hasOdds =
+              row.h2h_home !== null ||
+              row.h2h_away !== null ||
+              row.total !== null ||
+              row.spread_home !== null ||
+              row.spread_away !== null;
+            const hasPlays = (playsMap.get(row.game_id)?.length ?? 0) > 0;
+            return !hasOdds && !hasPlays ? count + 1 : count;
+          }, 0)
+        : 0;
+
+    const responseRows =
+      lifecycleMode === 'pregame'
+        ? rows.filter((row) => {
+            const hasOdds =
+              row.h2h_home !== null ||
+              row.h2h_away !== null ||
+              row.total !== null ||
+              row.spread_home !== null ||
+              row.spread_away !== null;
+            const hasPlays = (playsMap.get(row.game_id)?.length ?? 0) > 0;
+            return hasOdds || hasPlays;
+          })
+        : rows;
+
+    const data = responseRows.map((row) => {
       const hasOdds =
         row.h2h_home !== null ||
         row.h2h_away !== null ||
@@ -2649,7 +2678,8 @@ export async function GET(request: NextRequest) {
             active_fallback_applied: activeLifecycleFallbackApplied,
             lifecycle_mode: lifecycleMode,
             base_window_count: baseWindowCount,
-            returned_count: rows.length,
+            returned_count: responseRows.length,
+            dropped_no_odds_no_plays: pregameRowsDroppedNoOddsNoPlays,
             active_excluded_statuses:
               lifecycleMode === 'active' ? ACTIVE_EXCLUDED_STATUSES : [],
           },

@@ -34,6 +34,8 @@ const SPORT = 'ncaam';
 const ESPN_LEAGUE = 'basketball/mens-college-basketball';
 const BACKFILL_DAYS = Number(process.env.NCAAM_SCHEDULE_BACKFILL_DAYS || 60);
 const FORWARD_DAYS = Number(process.env.NCAAM_SCHEDULE_FORWARD_DAYS || 30);
+const FUZZY_MATCH_MAX_DELTA_MINUTES = 90;
+const LARGE_DELTA_REPAIR_CONFIDENCE = 0.6;
 
 function toDateKeyUtc(date) {
   return date.toISOString().slice(0, 10).replace(/-/g, '');
@@ -87,7 +89,7 @@ function normalizeTeamName(name) {
 function scoreMatchConfidence(deltaMinutes) {
   if (deltaMinutes <= 15) return 1.0;
   if (deltaMinutes <= 30) return 0.9;
-  if (deltaMinutes <= 90) return 0.75;
+  if (deltaMinutes <= FUZZY_MATCH_MAX_DELTA_MINUTES) return 0.75;
   return 0;
 }
 
@@ -96,7 +98,7 @@ function selectBestCandidate(candidates, target) {
   const targetAway = normalizeTeamName(target.awayTeam);
   const targetTime = new Date(target.gameTimeUtc).getTime();
 
-  const matches = candidates
+  const exactTeamMatches = candidates
     .map((candidate) => {
       const home = normalizeTeamName(candidate.home_team);
       const away = normalizeTeamName(candidate.away_team);
@@ -104,8 +106,6 @@ function selectBestCandidate(candidates, target) {
 
       const candidateTime = new Date(candidate.game_time_utc).getTime();
       const deltaMinutes = Math.abs(candidateTime - targetTime) / 60000;
-      if (deltaMinutes > 90) return null;
-
       return {
         candidate,
         deltaMinutes,
@@ -115,15 +115,44 @@ function selectBestCandidate(candidates, target) {
     .filter(Boolean)
     .sort((a, b) => a.deltaMinutes - b.deltaMinutes);
 
-  if (matches.length === 0) return { status: 'no_candidate' };
-  if (
-    matches.length > 1 &&
-    matches[0].deltaMinutes === matches[1].deltaMinutes
-  ) {
-    return { status: 'ambiguous', matches };
+  const fuzzyMatches = exactTeamMatches.filter(
+    (match) => match.deltaMinutes <= FUZZY_MATCH_MAX_DELTA_MINUTES,
+  );
+
+  if (fuzzyMatches.length > 0) {
+    if (
+      fuzzyMatches.length > 1 &&
+      fuzzyMatches[0].deltaMinutes === fuzzyMatches[1].deltaMinutes
+    ) {
+      return { status: 'ambiguous', matches: fuzzyMatches };
+    }
+
+    return {
+      status: 'matched',
+      match: fuzzyMatches[0],
+      matchMethod: 'teams_time_fuzzy',
+      shouldSyncCanonicalTime: true,
+    };
   }
 
-  return { status: 'matched', match: matches[0] };
+  if (exactTeamMatches.length === 0) return { status: 'no_candidate' };
+
+  if (
+    exactTeamMatches.length > 1 &&
+    exactTeamMatches[0].deltaMinutes === exactTeamMatches[1].deltaMinutes
+  ) {
+    return { status: 'ambiguous', matches: exactTeamMatches };
+  }
+
+  return {
+    status: 'matched',
+    match: {
+      ...exactTeamMatches[0],
+      confidence: LARGE_DELTA_REPAIR_CONFIDENCE,
+    },
+    matchMethod: 'teams_exact_time_repair',
+    shouldSyncCanonicalTime: true,
+  };
 }
 
 async function pullScheduleNcaam({ jobKey = null, dryRun = false } = {}) {
@@ -252,12 +281,31 @@ async function pullScheduleNcaam({ jobKey = null, dryRun = false } = {}) {
           }
 
           const match = selection.match;
+          if (selection.shouldSyncCanonicalTime) {
+            if (match.candidate.game_time_utc !== normalized.gameTimeUtc) {
+              console.log(
+                `[Schedule:NCAAM] Syncing canonical game time for ${match.candidate.game_id}: ` +
+                  `${match.candidate.game_time_utc} -> ${normalized.gameTimeUtc}`,
+              );
+            }
+
+            upsertGame({
+              id: `game-${SPORT}-${match.candidate.game_id}`,
+              gameId: match.candidate.game_id,
+              sport: SPORT,
+              homeTeam: normalized.homeTeam,
+              awayTeam: normalized.awayTeam,
+              gameTimeUtc: normalized.gameTimeUtc,
+              status: normalized.status,
+            });
+          }
+
           upsertGameIdMap({
             sport: SPORT,
             provider: 'espn',
             externalGameId: normalized.gameId,
             gameId: match.candidate.game_id,
-            matchMethod: 'teams_time_fuzzy',
+            matchMethod: selection.matchMethod || 'teams_time_fuzzy',
             matchConfidence: match.confidence,
             matchedAt: new Date().toISOString(),
             extGameTimeUtc: normalized.gameTimeUtc,
@@ -317,4 +365,11 @@ if (require.main === module) {
     });
 }
 
-module.exports = { pullScheduleNcaam };
+module.exports = {
+  pullScheduleNcaam,
+  __private: {
+    normalizeTeamName,
+    scoreMatchConfidence,
+    selectBestCandidate,
+  },
+};

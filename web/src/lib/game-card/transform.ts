@@ -46,6 +46,7 @@ import {
   EDGE_SANITY_GATE_CODE,
   PROXY_CAP_GATE_CODE,
   EDGE_VERIFICATION_TAG,
+  hasEdgeVerificationSignals,
 } from '../play-decision/decision-logic';
 
 const ENABLE_WELCOME_HOME =
@@ -1228,10 +1229,22 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     const market = mapCanonicalToLegacyMarket(marketType);
     const direction =
       effectiveDecisionV2.direction === 'NONE' ? null : effectiveDecisionV2.direction;
+    const wave1PickText = buildWave1PickText(
+      wave1DecisionPlay,
+      game,
+      effectiveDecisionV2.direction,
+    );
+    const edgeVerificationBlocked = hasEdgeVerificationSignals({
+      tags: wave1DecisionPlay.tags,
+      reason_codes: wave1DecisionPlay.reason_codes,
+      decision_v2: effectiveDecisionV2,
+    });
     const pick =
       officialStatus === 'PASS'
-        ? 'NO PLAY'
-        : buildWave1PickText(wave1DecisionPlay, game, effectiveDecisionV2.direction);
+        ? edgeVerificationBlocked && wave1PickText !== 'NO PLAY'
+          ? `${wave1PickText} (Verification Required)`
+          : 'NO PLAY'
+        : wave1PickText;
     const edgePct =
       typeof effectiveDecisionV2.edge_pct === 'number'
         ? effectiveDecisionV2.edge_pct
@@ -1315,10 +1328,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ...effectiveDecisionV2.watchdog_reason_codes,
         ...effectiveDecisionV2.price_reason_codes,
         effectiveDecisionV2.primary_reason_code,
+        ...(edgeVerificationBlocked
+          ? ['BLOCKED_BET_VERIFICATION_REQUIRED']
+          : []),
       ]),
     );
     const tags = Array.from(new Set([...(wave1DecisionPlay.tags ?? [])]));
-    if (effectiveDecisionV2.price_reason_codes.includes('EDGE_VERIFICATION_REQUIRED')) {
+    if (edgeVerificationBlocked) {
       tags.push('EDGE_VERIFICATION_REQUIRED');
     }
     if (
@@ -1333,6 +1349,16 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       severity: effectiveDecisionV2.watchdog_status === 'BLOCKED' ? 'BLOCK' : 'WARN',
       blocks_bet: effectiveDecisionV2.watchdog_status === 'BLOCKED',
     }));
+    if (
+      edgeVerificationBlocked &&
+      !gates.some((gate) => gate.code === EDGE_SANITY_GATE_CODE)
+    ) {
+      gates.push({
+        code: EDGE_SANITY_GATE_CODE,
+        severity: 'BLOCK',
+        blocks_bet: true,
+      });
+    }
 
     return {
       market_key: `${marketType}|${effectiveDecisionV2.direction}`,
@@ -1449,17 +1475,17 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       game.plays.some((play) => isEvidenceItem(play, game.sport));
     const missingDataCode: string =
       hasNoOdds && hasNoPlays
-        ? 'PASS_MARKET_PRICE_MISSING'
+        ? 'MISSING_DATA_NO_ODDS'
         : hasNoPlays
-          ? 'PASS_DRIVER_LOAD_FAILED'
+          ? 'MISSING_DATA_NO_PLAYS'
           : hasEvidenceOnly
             ? 'PASS_NO_ACTIONABLE_PLAY'
             : 'PASS_MISSING_DRIVER_INPUTS';
     const missingDataText: string =
       hasNoOdds && hasNoPlays
-        ? 'Market price missing'
+        ? 'No odds available'
         : hasNoPlays
-          ? 'Driver load failed'
+          ? 'No playable cards found'
           : hasEvidenceOnly
             ? 'No actionable play'
             : 'Missing driver inputs';

@@ -28,6 +28,7 @@ const {
   shouldRunJobKey,
   upsertGame,
   insertOddsSnapshot,
+  recordOddsIngestFailure,
   withDb,
 } = require('@cheddar-logic/data');
 
@@ -104,8 +105,51 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       let snapshotsInserted = 0;
       let skippedMissingFields = 0;
       const errors = [];
+      const kpis = {
+        sportsProcessed: 0,
+        rawGamesSeen: 0,
+        normalizedGamesSeen: 0,
+        fetchErrors: 0,
+        fetchExceptions: 0,
+        contractViolationSports: 0,
+        teamMappingUnmapped: 0,
+        marketSourceIncomplete: 0,
+        gameWriteErrors: 0,
+        gamesUpserted: 0,
+        snapshotsInserted: 0,
+      };
+
+      const recordFailure = ({
+        reasonCode,
+        reasonDetail,
+        sport,
+        gameId,
+        homeTeam,
+        awayTeam,
+        sourceContext,
+      }) => {
+        try {
+          recordOddsIngestFailure({
+            jobRunId,
+            jobName: 'pull_odds_hourly',
+            provider: 'odds_api',
+            reasonCode,
+            reasonDetail,
+            sport,
+            gameId,
+            homeTeam,
+            awayTeam,
+            sourceContext,
+          });
+        } catch (failureErr) {
+          console.warn(
+            `[PullOdds] Failed to persist ingest failure ${reasonCode}: ${failureErr.message}`,
+          );
+        }
+      };
 
       for (const sport of activeSports) {
+        kpis.sportsProcessed += 1;
         try {
           console.log(`[PullOdds] Processing ${sport}...`);
 
@@ -118,10 +162,23 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
             hoursAhead: 36,
           });
 
+          kpis.rawGamesSeen += Number(rawCount || 0);
+          kpis.normalizedGamesSeen += Number(normalizedGames?.length || 0);
+
           if (fetchErrors && fetchErrors.length > 0) {
             fetchErrors.forEach((errorMessage) => {
               console.error(`[PullOdds]   ❌ ${errorMessage}`);
               errors.push(`${sport}: ${errorMessage}`);
+              kpis.fetchErrors += 1;
+              recordFailure({
+                reasonCode: 'FETCH_ODDS_ERROR',
+                reasonDetail: String(errorMessage),
+                sport,
+                sourceContext: {
+                  rawCount,
+                  normalizedCount: normalizedGames?.length || 0,
+                },
+              });
             });
           }
 
@@ -135,6 +192,16 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
             const msg = `CONTRACT VIOLATION: ${sport} normalized ${normalizedGames.length}/${rawCount} games (threshold 60%) — skipping sport`;
             console.error(`[PullOdds] ${msg}`);
             errors.push(`${sport}: ${msg}`);
+            kpis.contractViolationSports += 1;
+            recordFailure({
+              reasonCode: 'SOURCE_CONTRACT_VIOLATION',
+              reasonDetail: msg,
+              sport,
+              sourceContext: {
+                rawCount,
+                normalizedCount: normalizedGames.length,
+              },
+            });
             continue;
           }
 
@@ -161,6 +228,19 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 const msg = `TEAM_MAPPING_UNMAPPED: game=${normalized.gameId} sport=${sport} home="${normalized.homeTeam}"(matched=${homeVariant.matched}) away="${normalized.awayTeam}"(matched=${awayVariant.matched})`;
                 console.warn(`[PullOdds]   ⚠️  ${msg}`);
                 errors.push(`${sport}/${normalized.gameId}: ${msg}`);
+                kpis.teamMappingUnmapped += 1;
+                recordFailure({
+                  reasonCode: 'TEAM_MAPPING_UNMAPPED',
+                  reasonDetail: msg,
+                  sport,
+                  gameId: normalized.gameId,
+                  homeTeam: normalized.homeTeam,
+                  awayTeam: normalized.awayTeam,
+                  sourceContext: {
+                    homeMatched: homeVariant.matched,
+                    awayMatched: awayVariant.matched,
+                  },
+                });
                 continue; // Skip unmapped teams entirely
               }
 
@@ -170,6 +250,18 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 const msg = `MARKET_SOURCE_INCOMPLETE: game=${normalized.gameId} sport=${sport} missing=[${marketContract.missing.join(',')}]`;
                 console.warn(`[PullOdds]   ⚠️  ${msg}`);
                 errors.push(`${sport}/${normalized.gameId}: ${msg}`);
+                kpis.marketSourceIncomplete += 1;
+                recordFailure({
+                  reasonCode: 'MARKET_SOURCE_INCOMPLETE',
+                  reasonDetail: msg,
+                  sport,
+                  gameId: normalized.gameId,
+                  homeTeam: normalized.homeTeam,
+                  awayTeam: normalized.awayTeam,
+                  sourceContext: {
+                    missingMarkets: marketContract.missing,
+                  },
+                });
                 continue; // Skip incomplete markets entirely
               }
 
@@ -185,6 +277,7 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 status: 'scheduled',
               });
               gamesUpserted++;
+              kpis.gamesUpserted += 1;
 
               // Insert odds snapshot
               insertOddsSnapshot({
@@ -207,10 +300,20 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 jobRunId,
               });
               snapshotsInserted++;
+              kpis.snapshotsInserted += 1;
             } catch (gameErr) {
               errors.push(
                 `${sport}/${normalized?.gameId || 'unknown'}: ${gameErr.message}`,
               );
+              kpis.gameWriteErrors += 1;
+              recordFailure({
+                reasonCode: 'ODDS_WRITE_ERROR',
+                reasonDetail: gameErr.message,
+                sport,
+                gameId: normalized?.gameId,
+                homeTeam: normalized?.homeTeam,
+                awayTeam: normalized?.awayTeam,
+              });
             }
           }
         } catch (sportErr) {
@@ -218,6 +321,12 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
             `[PullOdds]   ❌ Error fetching ${sport}: ${sportErr.message}`,
           );
           errors.push(`${sport}: ${sportErr.message}`);
+          kpis.fetchExceptions += 1;
+          recordFailure({
+            reasonCode: 'FETCH_ODDS_EXCEPTION',
+            reasonDetail: sportErr.message,
+            sport,
+          });
         }
       }
 
@@ -226,6 +335,7 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       console.log(
         `[PullOdds] ✅ Job complete: ${gamesUpserted} games upserted, ${snapshotsInserted} snapshots inserted`,
       );
+      console.log('[PullOdds] KPI summary:', kpis);
 
       if (errors.length > 0) {
         console.log(`[PullOdds] ⚠️  ${errors.length} errors:`);
@@ -265,6 +375,7 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
         gamesUpserted,
         snapshotsInserted,
         skippedMissingFields,
+        kpis,
         errors,
       };
     } catch (error) {

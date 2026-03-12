@@ -68,6 +68,8 @@ module.exports = {
   getLatestOdds: db.getLatestOdds,
   getOddsSnapshots: db.getOddsSnapshots,
   getOddsWithUpcomingGames: db.getOddsWithUpcomingGames,
+  recordOddsIngestFailure: db.recordOddsIngestFailure,
+  getOddsIngestFailureSummary: db.getOddsIngestFailureSummary,
   upsertPlayerShotLog: db.upsertPlayerShotLog,
   getPlayerShotLogs: db.getPlayerShotLogs,
   
