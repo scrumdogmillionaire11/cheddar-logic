@@ -350,20 +350,23 @@ function getSourcePlayAction(
     play.classification === 'BASE' ||
     play.classification === 'LEAN' ||
     play.classification === 'PASS';
-  const hasLegacyStatus =
-    legacyStatus === 'FIRE' ||
-    legacyStatus === 'WATCH' ||
-    legacyStatus === 'HOLD' ||
-    legacyStatus === 'PASS';
+  const normalizedLegacyStatus: ExpressionStatus | undefined =
+    legacyStatus === 'FIRE'
+      ? 'FIRE'
+      : legacyStatus === 'PASS'
+        ? 'PASS'
+        : legacyStatus === 'WATCH' || legacyStatus === 'HOLD'
+          ? 'WATCH'
+          : undefined;
 
-  if (!hasExplicitAction && !hasClassification && !hasLegacyStatus) {
+  if (!hasExplicitAction && !hasClassification && !normalizedLegacyStatus) {
     return undefined;
   }
 
   return resolvePlayDisplayDecision({
     action: hasExplicitAction ? play.action : undefined,
     classification: hasClassification ? play.classification : undefined,
-    status: hasLegacyStatus ? legacyStatus : undefined,
+    status: normalizedLegacyStatus,
   }).action;
 }
 
@@ -1301,7 +1304,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       officialStatus === 'PLAY' &&
       betMarketType &&
       betSide &&
-      hasRequiredLine
+      hasRequiredLine &&
+      typeof wave1DecisionPlay.price === 'number'
         ? {
             market_type: betMarketType,
             side: betSide,
@@ -1315,10 +1319,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
               typeof wave1DecisionPlay.line === 'number'
                 ? wave1DecisionPlay.line
                 : undefined,
-            odds_american:
-              typeof wave1DecisionPlay.price === 'number'
-                ? wave1DecisionPlay.price
-                : undefined,
+            odds_american: wave1DecisionPlay.price,
             as_of_iso: game.odds?.capturedAt || game.createdAt,
           }
         : null;

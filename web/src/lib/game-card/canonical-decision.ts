@@ -6,6 +6,7 @@
  */
 
 import { resolvePlayDisplayDecision } from './decision';
+import type { ExpressionStatus } from '@/lib/types/game-card';
 
 export type Decision = 'FIRE' | 'WATCH' | 'HOLD' | 'PASS';
 export type Signal = 'STRONG' | 'MEDIUM' | 'WEAK';
@@ -51,7 +52,7 @@ export function computeCanonicalDecision(play: {
   line?: number;
   price?: number;
   pick?: string;
-  status?: string;
+  status?: ExpressionStatus;
   market?: string;
   tier?: string;
   confidence?: number;
