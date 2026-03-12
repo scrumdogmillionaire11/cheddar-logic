@@ -546,7 +546,7 @@ describe('decision publisher v2 pipeline', () => {
     );
   });
 
-  test('backfills legacy prob fields from decision_v2 after wave-1 pipeline runs', () => {
+  test('does not backfill legacy prob fields from decision_v2 after wave-1 pipeline runs', () => {
     const payload = buildWave1Payload({
       market_type: 'TOTAL',
       selection: { side: 'OVER' },
@@ -566,10 +566,10 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2).toBeDefined();
     const d2 = payload.decision_v2;
 
-    // Legacy fields must now equal canonical decision_v2 values
-    expect(payload.model_prob).toBe(d2.fair_prob ?? null);
-    expect(payload.p_fair).toBe(d2.fair_prob ?? null);
-    expect(payload.p_implied).toBe(d2.implied_prob ?? null);
+    // Legacy fields remain unchanged (canonical consumers should read decision_v2)
+    expect(payload.model_prob).toBe(0.42);
+    expect(payload.p_fair).toBe(0.42);
+    expect(payload.p_implied).toBe(0.48);
   });
 
   test('gate-hold wager rewrite preserves period tag when original market_context.wager.period is set', () => {

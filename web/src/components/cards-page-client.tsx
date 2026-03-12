@@ -34,6 +34,7 @@ import {
   getPlayDisplayAction,
   getCardDecisionModel,
 } from '@/lib/game-card/decision';
+import { DISPLAY_VERDICT, getDisplayVerdict } from '@/lib/game-card/display-verdict';
 import { StickyBackButton } from '@/components/sticky-back-button';
 import { createTimeoutSignal } from '@/lib/network/timeout-signal';
 
@@ -1544,6 +1545,56 @@ export default function CardsPageClient() {
     return value >= 0 ? `+${fixed}` : fixed;
   };
 
+  /**
+   * Format the simplified projected sentence for default card edge display.
+   * 
+   * Rules:
+   * - IF projection AND market line exist: show with percent beyond line
+   * - ELSE IF projection exists: show projection only
+   * - ELSE: return null (use fallback messaging)
+   * 
+   * Percent calculation: abs(projection - line) / abs(line) * 100
+   * Percent is suppressed if NO_EDGE_AT_PRICE applies or if edge_pct is null/invalid.
+   */
+  const formatProjectedSentence = (
+    projection: number | undefined,
+    line: number | undefined,
+    reasonCode: string | undefined,
+    edgePctValue: number | undefined,
+  ): string | null => {
+    // Must have projection to show anything
+    if (typeof projection !== 'number') {
+      return null;
+    }
+
+    // If we have both projection and line, compute percent and show full sentence
+    if (typeof line === 'number' && Math.abs(line) > 0.001) {
+      // Calculate percent: abs(projection - line) / abs(line) * 100
+      const projectedPercent = Math.abs(projection - line) / Math.abs(line) * 100;
+      
+      // Suppress percent if NO_EDGE_AT_PRICE or edge_pct is null/invalid
+      const shouldShowPercent =
+        reasonCode !== 'NO_EDGE_AT_PRICE' &&
+        typeof edgePctValue === 'number' &&
+        edgePctValue !== 0;
+
+      if (shouldShowPercent) {
+        const wholePercent = Math.round(projectedPercent);
+        return `Projected: ${projection.toFixed(1)} (${wholePercent}% beyond line)`;
+      } else {
+        // Fallback without percent
+        return `Projected: ${projection.toFixed(1)}`;
+      }
+    }
+
+    // Only projection, no line (edge case, but graceful)
+    if (typeof projection === 'number') {
+      return `Projected: ${projection.toFixed(1)}`;
+    }
+
+    return null;
+  };
+
   const getMarketTypeBadge = (
     betMarketType?: string | null,
     market?: Market | 'NONE',
@@ -1640,12 +1691,39 @@ export default function CardsPageClient() {
       LEAN: 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60',
       PASS: 'bg-slate-700/50 text-slate-200 border-slate-600/60',
     };
+    const displayVerdict = getDisplayVerdict(status);
     return (
       <span
         className={`px-2 py-1 text-xs font-bold rounded border ${colorMap[status]}`}
       >
-        {status}
+        {displayVerdict ? displayVerdict.label : status}
       </span>
+    );
+  };
+
+  /**
+   * Render verdict badge with display label and brand sublabel.
+   * Label is bold/dominant, brand is smaller/muted underneath.
+   */
+  const getVerdictBadgeWithBrand = (status: 'PLAY' | 'LEAN' | 'PASS') => {
+    const colorMap = {
+      PLAY: 'bg-green-700/50 text-green-200 border-green-600/60',
+      LEAN: 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60',
+      PASS: 'bg-slate-700/50 text-slate-200 border-slate-600/60',
+    };
+    const displayVerdict = getDisplayVerdict(status);
+    if (!displayVerdict) {
+      return getStatusBadge(status);
+    }
+    return (
+      <div className="flex flex-col items-start gap-0.5">
+        <span className={`px-2 py-1 text-xs font-bold rounded border ${colorMap[status]}`}>
+          {displayVerdict.label}
+        </span>
+        <span className="text-xs text-cloud/50 px-2">
+          {displayVerdict.brand}
+        </span>
+      </div>
     );
   };
 
@@ -2333,21 +2411,26 @@ export default function CardsPageClient() {
                   displayPlay.market,
                 )}
                 {/* Decision badge — muted when coinflip + low edge */}
-                {displayDecision && (
-                  <span
-                    className={`px-2 py-1 text-xs font-bold rounded border ${
-                      isCoinflipLowEdge
-                        ? 'bg-slate-700/50 text-slate-300 border-slate-600/60'
-                        : displayDecision === 'PLAY'
-                          ? 'bg-green-700/50 text-green-200 border-green-600/60'
-                          : displayDecision === 'LEAN'
-                            ? 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60'
-                            : 'bg-slate-700/50 text-slate-200 border-slate-600/60'
-                    }`}
-                  >
-                    {displayDecision}
-                  </span>
-                )}
+                {displayDecision && (() => {
+                  const displayVerdict = getDisplayVerdict(displayDecision);
+                  const colorMap = {
+                    PLAY: 'bg-green-700/50 text-green-200 border-green-600/60',
+                    LEAN: 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60',
+                    PASS: 'bg-slate-700/50 text-slate-200 border-slate-600/60',
+                  };
+                  const baseColor = colorMap[displayDecision as keyof typeof colorMap] || colorMap.PASS;
+                  return (
+                    <span
+                      className={`px-2 py-1 text-xs font-bold rounded border ${
+                        isCoinflipLowEdge
+                          ? 'bg-slate-700/50 text-slate-300 border-slate-600/60'
+                          : baseColor
+                      }`}
+                    >
+                      {displayVerdict ? displayVerdict.label : displayDecision}
+                    </span>
+                  );
+                })()}
                 {/* Quality badges */}
                 {isDegraded && (
                   <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-amber-700/30 text-amber-200 border-amber-600/50">
@@ -2404,30 +2487,60 @@ export default function CardsPageClient() {
             </div>
             {canRenderModelSummary ? (
               <div className="mt-1 text-xs text-cloud/60">
-                {hasActionableEdge &&
-                primaryReasonCode !== 'EXACT_WAGER_MISMATCH' ? (
-                  <>
-                    Edge {effectiveEdgePct * 100 >= 0 ? '+' : ''}
-                    {(effectiveEdgePct * 100).toFixed(1)}% • Tier{' '}
-                    {decisionV2?.play_tier ??
-                      displayPlay.decision_data?.edge_tier ??
-                      displayPlay.valueStatus}
-                  </>
-                ) : isNoEdgeAtPrice ? (
-                  <>
-                    No edge at current price • Tier{' '}
-                    {decisionV2?.play_tier ??
-                      displayPlay.decision_data?.edge_tier ??
-                      displayPlay.valueStatus}
-                  </>
-                ) : (
-                  <>
-                    No market-specific edge available
-                    {primaryReasonCode
-                      ? ` (${formatReasonCode(primaryReasonCode)})`
-                      : ''}
-                  </>
-                )}
+                {(() => {
+                  // For totals and spreads, show simplified projected sentence by default
+                  if (isSpreadLikeMarket || isTotalLikeMarket) {
+                    const projectedValue =
+                      isSpreadLikeMarket ? projectedMargin : projectedLineValue;
+                    const marketLineValue = marketLine;
+                    const projectedSentence = formatProjectedSentence(
+                      projectedValue,
+                      marketLineValue,
+                      primaryReasonCode,
+                      effectiveEdgePct,
+                    );
+
+                    if (projectedSentence) {
+                      return <>{projectedSentence}</>;
+                    }
+                  }
+
+                  // Fallback edge/tier summary for non-spread/total or when projection unavailable
+                  if (
+                    hasActionableEdge &&
+                    primaryReasonCode !== 'EXACT_WAGER_MISMATCH'
+                  ) {
+                    return (
+                      <>
+                        Edge {effectiveEdgePct * 100 >= 0 ? '+' : ''}
+                        {(effectiveEdgePct * 100).toFixed(1)}% • Tier{' '}
+                        {decisionV2?.play_tier ??
+                          displayPlay.decision_data?.edge_tier ??
+                          displayPlay.valueStatus}
+                      </>
+                    );
+                  }
+
+                  if (isNoEdgeAtPrice) {
+                    return (
+                      <>
+                        No edge at current price • Tier{' '}
+                        {decisionV2?.play_tier ??
+                          displayPlay.decision_data?.edge_tier ??
+                          displayPlay.valueStatus}
+                      </>
+                    );
+                  }
+
+                  return (
+                    <>
+                      No market-specific edge available
+                      {primaryReasonCode
+                        ? ` (${formatReasonCode(primaryReasonCode)})`
+                        : ''}
+                    </>
+                  );
+                })()}
               </div>
             ) : (
               <div className="mt-1 text-xs text-amber-200/90">
@@ -2442,13 +2555,14 @@ export default function CardsPageClient() {
               hasOnePeriodTotalContext ||
               hasMlContext ||
               hasEdgeMathContext) && (
-              <div className="rounded-md border border-white/10 bg-white/5 p-3">
-                <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
+              <details className="rounded-md border border-white/10 bg-white/5 p-3">
+                <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2 select-none">
                   Market Math
-                </p>
-                {hasEdgeMathContext && (
-                  <>
-                    <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+                </summary>
+                <div className="mt-2">
+                  {hasEdgeMathContext && (
+                    <>
+                      <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
                       <span className="text-cloud/60">
                         Fair{' '}
                         <span className="text-cloud/90 font-bold">
@@ -2629,7 +2743,8 @@ export default function CardsPageClient() {
                     required
                   </p>
                 )}
-              </div>
+                </div>
+              </details>
             )}
 
           {/* WI-0332: Coinflip + edge messaging */}
@@ -2747,7 +2862,7 @@ export default function CardsPageClient() {
               </p>
               <div className="space-y-1 text-xs text-cloud/70">
                 <p>
-                  Model Lean:{' '}
+                  Model Direction:{' '}
                   <span className="text-cloud/90 font-semibold">
                     {isFtTrendSpread
                       ? `Take ${ftTrendInsight?.advantagedTeam ?? 'better FT% team'} spread`

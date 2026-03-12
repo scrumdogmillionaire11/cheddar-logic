@@ -79,6 +79,32 @@ async function run() {
     'FIRE action should map back to BASE classification',
   );
 
+  const actionWinsLegacyStatus = resolvePlayDisplayDecision({
+    action: 'HOLD',
+    status: 'FIRE',
+    classification: 'BASE',
+  });
+  assert.strictEqual(
+    actionWinsLegacyStatus.action,
+    'HOLD',
+    'canonical action should win over conflicting legacy status/classification',
+  );
+  assert.strictEqual(
+    actionWinsLegacyStatus.status,
+    'WATCH',
+    'canonical HOLD action should map to WATCH display status',
+  );
+
+  const classificationWinsLegacyStatus = resolvePlayDisplayDecision({
+    classification: 'LEAN',
+    status: 'FIRE',
+  });
+  assert.strictEqual(
+    classificationWinsLegacyStatus.action,
+    'HOLD',
+    'canonical classification should win over conflicting legacy status',
+  );
+
   const card = {
     id: 'card-1',
     gameId: 'game-1',
