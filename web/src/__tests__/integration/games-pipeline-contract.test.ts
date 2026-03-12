@@ -17,10 +17,15 @@ const cardsPath = path.join(
   repoRoot,
   'web/src/components/cards-page-client.tsx',
 );
+const displayVerdictPath = path.join(
+  repoRoot,
+  'web/src/lib/game-card/display-verdict.ts',
+);
 
 const routeSource = fs.readFileSync(routePath, 'utf8');
 const transformSource = fs.readFileSync(transformPath, 'utf8');
 const cardsSource = fs.readFileSync(cardsPath, 'utf8');
+const displayVerdictSource = fs.readFileSync(displayVerdictPath, 'utf8');
 
 console.log('🧪 Games pipeline v2 source contract tests');
 
@@ -50,8 +55,18 @@ assert.ok(
     "const getStatusBadge = (status: 'PLAY' | 'LEAN' | 'PASS')",
   ) &&
     cardsSource.includes('PASS Breakdown') &&
-    cardsSource.includes('Model Lean Indicators'),
-  'cards UI must render PLAY/LEAN/PASS and show PASS diagnostics',
+    cardsSource.includes('Model Lean Indicators') &&
+    cardsSource.includes('getDisplayVerdict') &&
+    cardsSource.includes('formatProjectedSentence'),
+  'cards UI must preserve canonical PLAY/LEAN/PASS statuses internally',
+);
+
+assert.ok(
+  displayVerdictSource.includes("label: 'SLIGHT EDGE'") &&
+    displayVerdictSource.includes('Fresh Cheddar') &&
+    displayVerdictSource.includes('Mild Cheddar') &&
+    displayVerdictSource.includes('Cottage Cheese'),
+  'display verdict mapping must provide human-friendly labels and brand sublabels',
 );
 
 assert.ok(
