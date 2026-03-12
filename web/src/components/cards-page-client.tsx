@@ -1590,6 +1590,9 @@ export default function CardsPageClient() {
   const formatSharpPriceStatus = (status?: string | null) => {
     if (status === 'CHEDDAR') return 'Priced edge';
     if (status === 'COTTAGE') return 'No edge at current price';
+    if (status === 'PENDING_VERIFICATION') {
+      return 'Priced, pending verification';
+    }
     if (status === 'UNPRICED') return 'Unpriced';
     return status ?? 'Unpriced';
   };

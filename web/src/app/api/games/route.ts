@@ -870,6 +870,7 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
   const sharp_price_status =
     sharpStatusRaw === 'CHEDDAR' ||
     sharpStatusRaw === 'COTTAGE' ||
+    sharpStatusRaw === 'PENDING_VERIFICATION' ||
     sharpStatusRaw === 'UNPRICED'
       ? (sharpStatusRaw as DecisionV2['sharp_price_status'])
       : 'UNPRICED';

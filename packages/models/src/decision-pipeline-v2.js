@@ -700,6 +700,7 @@ function computeOfficialStatus({
   const thresholds = getSupportThresholds(marketType);
 
   if (watchdogStatus === 'BLOCKED') return 'PASS';
+  if (sharpPriceStatus === 'PENDING_VERIFICATION') return 'PASS';
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
     return 'PASS';
   }
@@ -739,6 +740,10 @@ function resolvePrimaryReason({
 
   if (watchdogStatus === 'BLOCKED' && watchdogReasonCodes.length > 0) {
     return watchdogReasonCodes[0];
+  }
+
+  if (sharpPriceStatus === 'PENDING_VERIFICATION') {
+    return priceReasonCodes[0] || PRICE_REASONS.EDGE_VERIFICATION_REQUIRED;
   }
 
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
