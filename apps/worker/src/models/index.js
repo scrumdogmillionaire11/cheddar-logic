@@ -26,7 +26,6 @@ const http = require('http');
 const https = require('https');
 const {
   projectNBA,
-  projectNBACanonical,
   projectNCAAM,
   projectNHL,
 } = require('./projections');
@@ -38,7 +37,6 @@ const {
   computeTotalBias,
   buildMarketPayload,
 } = require('./cross-market');
-const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { predictNHLGame } = require('./nhl-pace-model');
 const { generateCard, buildMarketCallCard } = require('@cheddar-logic/models');
 
@@ -1213,20 +1211,8 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
 
   // --- NBA Total Projection Driver ---
   //
-  // Projects game total and compares to market O/U line → OVER / UNDER edge.
-  // Pace synergy (FAST×FAST, SLOW×SLOW, etc.) is applied as a point delta
-  // on top of the base projection using league-average PPP (1.15 pts/possession).
-  //
-  // NOTE: We use simple averaging rather than the canonical PPP×pace formula
-  // because our pace stat is derived from scoring (avgPoints * 0.92), not real
-  // possessions. Multiplying PPP × derived-pace inflates totals by ~10-15 pts.
-  // When real possession data is available, switch to projectNBACanonical().
-  //
-  //   homeProjected = (homeAvgPts + awayAvgPtsAllowed) / 2
-  //   awayProjected = (awayAvgPts + homeAvgPtsAllowed) / 2
-  //   synergyPts    = synergy.paceAdjustment × 1.15 (pts/possession)
-  //   projectedTotal = homeProjected + awayProjected + synergyPts
-  //   edge = projectedTotal - market_line → OVER / UNDER
+  // Keep projected total aligned with cross-market totals decisions:
+  // use the same projectNBA() path + rounded projected_total output.
   {
     const homePace = toNumber(raw?.espn_metrics?.home?.metrics?.pace ?? null);
     const awayPace = toNumber(raw?.espn_metrics?.away?.metrics?.pace ?? null);
@@ -1244,18 +1230,6 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
     );
     const marketTotal = toNumber(oddsSnapshot?.total);
 
-    // Pace synergy — run for all games to get possession adjustment
-    const synergy =
-      homePace && awayPace && homeAvgPts && awayAvgPts
-        ? analyzePaceSynergy(homePace, awayPace, homeAvgPts, awayAvgPts)
-        : null;
-
-    // Convert possession delta → points (NBA 2025-26 avg PPP ≈ 1.15)
-    const LEAGUE_AVG_PPP = 1.15;
-    const synergyPts = synergy
-      ? Math.round(synergy.paceAdjustment * LEAGUE_AVG_PPP * 10) / 10
-      : 0;
-
     if (
       homeAvgPts &&
       homeAvgAllowed &&
@@ -1263,56 +1237,62 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
       awayAvgAllowed &&
       marketTotal
     ) {
-      const homeProjected = (homeAvgPts + awayAvgAllowed) / 2;
-      const awayProjected = (awayAvgPts + homeAvgAllowed) / 2;
-      const projectedTotal =
-        Math.round((homeProjected + awayProjected + synergyPts) * 10) / 10;
+      const projection = projectNBA(
+        homeAvgPts,
+        homeAvgAllowed,
+        awayAvgPts,
+        awayAvgAllowed,
+        homePace,
+        awayPace,
+        restDaysHome,
+        restDaysAway,
+      );
+      if (
+        projection &&
+        projection.homeProjected != null &&
+        projection.awayProjected != null
+      ) {
+        const homeProjected = projection.homeProjected;
+        const awayProjected = projection.awayProjected;
+        const projectedTotal =
+          Math.round((homeProjected + awayProjected) * 10) / 10;
 
-      const edge = Math.round((projectedTotal - marketTotal) * 10) / 10;
-      const absEdge = Math.abs(edge);
+        const edge = Math.round((projectedTotal - marketTotal) * 10) / 10;
+        const absEdge = Math.abs(edge);
 
-      // Only emit when edge is meaningful (< 1.0 pt is noise)
-      if (absEdge >= 1.0) {
-        const direction = edge > 0 ? 'OVER' : 'UNDER';
+        // Only emit when edge is meaningful (< 1.0 pt is noise)
+        if (absEdge >= 1.0) {
+          const direction = edge > 0 ? 'OVER' : 'UNDER';
 
-        // Confidence scales with edge magnitude
-        let confidence;
-        if (absEdge >= 5.0) confidence = 0.75;
-        else if (absEdge >= 3.0) confidence = 0.7;
-        else if (absEdge >= 2.0) confidence = 0.65;
-        else confidence = 0.61;
+          // Confidence scales with edge magnitude
+          let confidence;
+          if (absEdge >= 5.0) confidence = 0.75;
+          else if (absEdge >= 3.0) confidence = 0.7;
+          else if (absEdge >= 2.0) confidence = 0.65;
+          else confidence = 0.61;
 
-        const synergyLabel =
-          synergy &&
-          synergy.synergyType !== 'NONE' &&
-          synergy.synergyType !== 'PACE_CLASH'
-            ? ` [${synergy.synergyType}, ${synergyPts > 0 ? '+' : ''}${synergyPts} pts]`
-            : '';
-
-        descriptors.push({
-          cardType: 'nba-total-projection',
-          cardTitle: `NBA Total: ${direction} ${projectedTotal} vs Line ${marketTotal}`,
-          confidence,
-          tier: determineTier(confidence),
-          prediction: direction,
-          reasoning: `Model projects ${projectedTotal} total (${Math.round(homeProjected * 10) / 10} + ${Math.round(awayProjected * 10) / 10}) vs line ${marketTotal} — edge ${edge > 0 ? '+' : ''}${edge} pts${synergyLabel}`,
-          ev_threshold_passed: confidence > 0.6,
-          driverKey: 'totalProjection',
-          driverInputs: {
-            projected_total: projectedTotal,
-            market_total: marketTotal,
-            edge,
-            synergy_pts: synergyPts,
-            synergy_type: synergy?.synergyType ?? 'NONE',
-            synergy_signal: synergy?.bettingSignal ?? 'NO_EDGE',
-            home_projected: Math.round(homeProjected * 10) / 10,
-            away_projected: Math.round(awayProjected * 10) / 10,
-          },
-          driverScore: direction === 'OVER' ? 0.75 : 0.25,
-          driverStatus: 'ok',
-          inference_source: 'driver',
-          is_mock: false,
-        });
+          descriptors.push({
+            cardType: 'nba-total-projection',
+            cardTitle: `NBA Total: ${direction} ${projectedTotal} vs Line ${marketTotal}`,
+            confidence,
+            tier: determineTier(confidence),
+            prediction: direction,
+            reasoning: `Model projects ${projectedTotal} total (${homeProjected.toFixed(1)} + ${awayProjected.toFixed(1)}) vs line ${marketTotal} — edge ${edge > 0 ? '+' : ''}${edge} pts`,
+            ev_threshold_passed: confidence > 0.6,
+            driverKey: 'totalProjection',
+            driverInputs: {
+              projected_total: projectedTotal,
+              market_total: marketTotal,
+              edge,
+              home_projected: homeProjected,
+              away_projected: awayProjected,
+            },
+            driverScore: direction === 'OVER' ? 0.75 : 0.25,
+            driverStatus: 'ok',
+            inference_source: 'driver',
+            is_mock: false,
+          });
+        }
       }
     }
   }

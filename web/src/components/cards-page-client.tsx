@@ -357,12 +357,22 @@ function resolvePrimaryTotalProjectionPlay(
   sport: string,
 ): GameData['plays'][number] | undefined {
   const sportUpper = String(sport || '').toUpperCase();
+  const isFullGameTotalsCall = (play: GameData['plays'][number]) => {
+    const cardType = String(play.cardType || '').toLowerCase();
+    return (
+      !cardType.includes('1p') &&
+      !cardType.includes('first-period') &&
+      cardType.includes('totals-call')
+    );
+  };
+
+  const totalsCallPlay = plays.find(
+    (play) => isFullGameTotalsCall(play) && hasProjectedTotal(play),
+  );
+  if (totalsCallPlay) return totalsCallPlay;
+
   if (sportUpper === 'NHL') {
     return (
-      plays.find(
-        (play) =>
-          play.cardType === 'nhl-totals-call' && hasProjectedTotal(play),
-      ) ??
       plays.find(
         (play) =>
           play.cardType === 'nhl-pace-totals' && hasProjectedTotal(play),
@@ -370,11 +380,23 @@ function resolvePrimaryTotalProjectionPlay(
     );
   }
 
-  // Preserve existing NBA source behavior.
-  return plays.find(
-    (play) =>
-      play.cardType === 'nba-total-projection' && hasProjectedTotal(play),
-  );
+  if (sportUpper === 'NBA') {
+    return plays.find(
+      (play) =>
+        play.cardType === 'nba-total-projection' && hasProjectedTotal(play),
+    );
+  }
+
+  // Generic fallback for historical/incomplete rows.
+  return plays.find((play) => {
+    if (!hasProjectedTotal(play)) return false;
+    const cardType = String(play.cardType || '').toLowerCase();
+    return (
+      !cardType.includes('1p') &&
+      !cardType.includes('first-period') &&
+      cardType.includes('total-projection')
+    );
+  });
 }
 
 interface ApiResponse {
@@ -1545,6 +1567,52 @@ export default function CardsPageClient() {
     return value >= 0 ? `+${fixed}` : fixed;
   };
 
+  const normalizeSelectionSide = (
+    side: string | null | undefined,
+  ): 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | undefined => {
+    if (!side) return undefined;
+    const normalized = side.toUpperCase();
+    if (
+      normalized === 'HOME' ||
+      normalized === 'AWAY' ||
+      normalized === 'OVER' ||
+      normalized === 'UNDER'
+    ) {
+      return normalized;
+    }
+    return undefined;
+  };
+
+  const resolveProjectedValueForMarketContext = ({
+    marketType,
+    selectionSide,
+    projectedMargin,
+    projectedTotal,
+    projectedTeamTotal,
+  }: {
+    marketType: string | undefined;
+    selectionSide: 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | undefined;
+    projectedMargin: number | undefined;
+    projectedTotal: number | undefined;
+    projectedTeamTotal: number | undefined;
+  }): number | undefined => {
+    if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+      if (typeof projectedMargin !== 'number') return undefined;
+      // projectedMargin is home-margin space; convert into selected spread side space.
+      return selectionSide === 'AWAY' ? projectedMargin : -1 * projectedMargin;
+    }
+    if (
+      marketType === 'TOTAL' ||
+      marketType === 'TEAM_TOTAL' ||
+      marketType === 'FIRST_PERIOD'
+    ) {
+      if (typeof projectedTeamTotal === 'number') return projectedTeamTotal;
+      if (typeof projectedTotal === 'number') return projectedTotal;
+      return undefined;
+    }
+    return undefined;
+  };
+
   /**
    * Format the simplified projected sentence for default card edge display.
    * 
@@ -2181,6 +2249,9 @@ export default function CardsPageClient() {
       marketType === 'SPREAD' || marketType === 'PUCKLINE';
     const isTotalLikeMarket =
       marketType === 'TOTAL' || marketType === 'TEAM_TOTAL';
+    const displaySelectionSide = normalizeSelectionSide(
+      displayPlay.selection?.side ?? displayPlay.bet?.side ?? displayPlay.side,
+    );
     const isMoneylineMarket = marketType === 'MONEYLINE';
     const hasEdgeMathContext =
       typeof resolvedModelProb === 'number' &&
@@ -2324,6 +2395,14 @@ export default function CardsPageClient() {
                 </p>
                 {(() => {
                   if (!totalProjectionDisplayPlay?.projectedTotal) return null;
+                  const isRedundantModelLine =
+                    isTotalLikeMarket &&
+                    typeof projectedLineValue === 'number' &&
+                    Math.abs(
+                      totalProjectionDisplayPlay.projectedTotal -
+                        projectedLineValue,
+                    ) <= 0.05;
+                  if (isRedundantModelLine) return null;
                   const marketTotalLine =
                     typeof originalGame.odds?.total === 'number'
                       ? originalGame.odds.total
@@ -2490,8 +2569,13 @@ export default function CardsPageClient() {
                 {(() => {
                   // For totals and spreads, show simplified projected sentence by default
                   if (isSpreadLikeMarket || isTotalLikeMarket) {
-                    const projectedValue =
-                      isSpreadLikeMarket ? projectedMargin : projectedLineValue;
+                    const projectedValue = resolveProjectedValueForMarketContext({
+                      marketType,
+                      selectionSide: displaySelectionSide,
+                      projectedMargin,
+                      projectedTotal,
+                      projectedTeamTotal,
+                    });
                     const marketLineValue = marketLine;
                     const projectedSentence = formatProjectedSentence(
                       projectedValue,

@@ -10,7 +10,7 @@ interface SquadHealth {
   injured: number;
   doubtful: number;
   health_pct: number;
-  critical_positions: string[];
+  critical_positions?: string[];
 }
 
 interface RiskNoteProps {
@@ -48,7 +48,7 @@ export default function RiskNote({ riskStatement, squadHealth }: RiskNoteProps) 
               {squadHealth.injured > 0 && `, ${squadHealth.injured} out`}
               {squadHealth.doubtful > 0 && `, ${squadHealth.doubtful} doubt`})
             </div>
-            {squadHealth.critical_positions.length > 0 && (
+            {squadHealth.critical_positions && squadHealth.critical_positions.length > 0 && (
               <div className="text-body-sm text-veto">
                 Watch: {squadHealth.critical_positions.join(', ')}
               </div>

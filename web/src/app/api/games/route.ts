@@ -79,6 +79,7 @@ const API_GAMES_HORIZON_HOURS = Number.isFinite(RAW_API_GAMES_HORIZON_HOURS)
   ? RAW_API_GAMES_HORIZON_HOURS
   : 36;
 const HAS_API_GAMES_HORIZON = API_GAMES_HORIZON_HOURS > 0;
+const TOTAL_PROJECTION_DRIFT_WARN_THRESHOLD = 0.5;
 
 interface GameRow {
   id: string;
@@ -500,6 +501,59 @@ function applyCardTypeKindContract(
     return { kind: 'EVIDENCE', downgradedOutOfContractPlay: true };
   }
   return { kind: inferredKind, downgradedOutOfContractPlay: false };
+}
+
+function isFirstPeriodCardType(cardType: string): boolean {
+  const normalized = cardType.trim().toLowerCase();
+  return normalized.includes('1p') || normalized.includes('first-period');
+}
+
+function isCanonicalTotalsCallPlay(play: Play): boolean {
+  if (play.kind !== 'PLAY') return false;
+  if (play.market_type !== 'TOTAL') return false;
+  if (typeof play.projectedTotal !== 'number') return false;
+  const normalizedCardType = String(play.cardType || '').toLowerCase();
+  if (isFirstPeriodCardType(normalizedCardType)) return false;
+  return normalizedCardType.includes('totals-call');
+}
+
+function isFallbackEvidenceTotalProjectionPlay(play: Play): boolean {
+  if (play.kind !== 'EVIDENCE') return false;
+  if (typeof play.projectedTotal !== 'number') return false;
+  const normalizedCardType = String(play.cardType || '').toLowerCase();
+  if (isFirstPeriodCardType(normalizedCardType)) return false;
+  return normalizedCardType.includes('total-projection');
+}
+
+function emitTotalProjectionDriftWarnings(
+  games: Array<{ gameId: string; sport: string; plays: Play[] }>,
+): void {
+  if (process.env.NODE_ENV === 'test') return;
+  for (const game of games) {
+    const canonicalPlay = game.plays.find(isCanonicalTotalsCallPlay);
+    const fallbackPlay = game.plays.find(isFallbackEvidenceTotalProjectionPlay);
+    if (!canonicalPlay || !fallbackPlay) continue;
+
+    const canonicalProjectedTotal = canonicalPlay.projectedTotal as number;
+    const fallbackProjectedTotal = fallbackPlay.projectedTotal as number;
+    const delta = Math.abs(canonicalProjectedTotal - fallbackProjectedTotal);
+    if (delta <= TOTAL_PROJECTION_DRIFT_WARN_THRESHOLD) continue;
+
+    console.warn('[API] /api/games total projection drift warning', {
+      game_id: game.gameId,
+      sport: game.sport,
+      threshold: TOTAL_PROJECTION_DRIFT_WARN_THRESHOLD,
+      delta: Number(delta.toFixed(2)),
+      canonical: {
+        card_type: canonicalPlay.cardType,
+        projected_total: canonicalProjectedTotal,
+      },
+      fallback: {
+        card_type: fallbackPlay.cardType,
+        projected_total: fallbackProjectedTotal,
+      },
+    });
+  }
 }
 
 function buildPlayableMarketFamilyDiagnostics(counters: StageCounters): {
@@ -2414,6 +2468,8 @@ export async function GET(request: NextRequest) {
         plays: playsMap.get(row.game_id) ?? [],
       };
     });
+
+    emitTotalProjectionDriftWarnings(data);
 
     // NOTE: card_display_log writes intentionally removed.
     // Worker owns all DB writes (single-writer architecture).
