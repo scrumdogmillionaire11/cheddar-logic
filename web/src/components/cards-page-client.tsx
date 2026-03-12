@@ -817,7 +817,8 @@ export default function CardsPageClient() {
       }
       if (
         reasonCodes.has('MARKET_PRICE_MISSING') ||
-        reasonCodes.has('PASS_MARKET_PRICE_MISSING')
+        reasonCodes.has('PASS_MARKET_PRICE_MISSING') ||
+        reasonCodes.has('MISSING_DATA_NO_ODDS')
       ) {
         triggered.market_price_missing += 1;
         bucket.triggered.market_price_missing += 1;

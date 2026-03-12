@@ -1475,17 +1475,17 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       game.plays.some((play) => isEvidenceItem(play, game.sport));
     const missingDataCode: string =
       hasNoOdds && hasNoPlays
-        ? 'PASS_MARKET_PRICE_MISSING'
+        ? 'MISSING_DATA_NO_ODDS'
         : hasNoPlays
-          ? 'PASS_DRIVER_LOAD_FAILED'
+          ? 'MISSING_DATA_NO_PLAYS'
           : hasEvidenceOnly
             ? 'PASS_NO_ACTIONABLE_PLAY'
             : 'PASS_MISSING_DRIVER_INPUTS';
     const missingDataText: string =
       hasNoOdds && hasNoPlays
-        ? 'Market price missing'
+        ? 'No odds available'
         : hasNoPlays
-          ? 'Driver load failed'
+          ? 'No playable cards found'
           : hasEvidenceOnly
             ? 'No actionable play'
             : 'Missing driver inputs';

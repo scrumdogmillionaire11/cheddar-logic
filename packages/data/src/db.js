@@ -794,6 +794,220 @@ function ensureCardPayloadRunIdColumn(db) {
   );
 }
 
+function ensureOddsIngestFailuresSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS odds_ingest_failures (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      failure_key TEXT NOT NULL UNIQUE,
+      job_run_id TEXT,
+      job_name TEXT,
+      sport TEXT,
+      provider TEXT,
+      game_id TEXT,
+      reason_code TEXT NOT NULL,
+      reason_detail TEXT,
+      home_team TEXT,
+      away_team TEXT,
+      payload_hash TEXT,
+      source_context TEXT,
+      first_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      occurrence_count INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_odds_ingest_failures_last_seen
+      ON odds_ingest_failures(last_seen DESC)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_odds_ingest_failures_reason
+      ON odds_ingest_failures(reason_code, last_seen DESC)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_odds_ingest_failures_sport
+      ON odds_ingest_failures(sport, last_seen DESC)`,
+  );
+}
+
+function buildOddsIngestFailureKey(event) {
+  const sport = normalizeSportValue(event.sport, 'buildOddsIngestFailureKey');
+  return [
+    event.jobName || 'pull_odds_hourly',
+    sport || 'unknown',
+    event.provider || 'unknown',
+    event.gameId || 'no-game',
+    event.reasonCode || 'UNKNOWN',
+    event.homeTeam || '',
+    event.awayTeam || '',
+  ].join('|');
+}
+
+function recordOddsIngestFailure(event) {
+  if (!event || !event.reasonCode) return;
+  const db = getDatabase();
+  ensureOddsIngestFailuresSchema(db);
+
+  const nowIso = new Date().toISOString();
+  const failureKey = event.failureKey || buildOddsIngestFailureKey(event);
+  const sport = normalizeSportValue(event.sport, 'recordOddsIngestFailure');
+  const sourceContext =
+    event.sourceContext && typeof event.sourceContext === 'object'
+      ? JSON.stringify(event.sourceContext)
+      : null;
+
+  const stmt = db.prepare(`
+    INSERT INTO odds_ingest_failures (
+      failure_key,
+      job_run_id,
+      job_name,
+      sport,
+      provider,
+      game_id,
+      reason_code,
+      reason_detail,
+      home_team,
+      away_team,
+      payload_hash,
+      source_context,
+      first_seen,
+      last_seen,
+      occurrence_count,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+    ON CONFLICT(failure_key) DO UPDATE SET
+      job_run_id = excluded.job_run_id,
+      job_name = excluded.job_name,
+      reason_detail = excluded.reason_detail,
+      payload_hash = COALESCE(excluded.payload_hash, odds_ingest_failures.payload_hash),
+      source_context = COALESCE(excluded.source_context, odds_ingest_failures.source_context),
+      last_seen = excluded.last_seen,
+      occurrence_count = odds_ingest_failures.occurrence_count + 1,
+      updated_at = excluded.updated_at
+  `);
+
+  stmt.run(
+    failureKey,
+    event.jobRunId || null,
+    event.jobName || null,
+    sport,
+    event.provider || null,
+    event.gameId || null,
+    event.reasonCode,
+    event.reasonDetail || null,
+    event.homeTeam || null,
+    event.awayTeam || null,
+    event.payloadHash || null,
+    sourceContext,
+    nowIso,
+    nowIso,
+    nowIso,
+  );
+}
+
+function getOddsIngestFailureSummary({
+  sinceHours = 24,
+  limit = 50,
+  reasonLimit = 20,
+  readOnly = false,
+} = {}) {
+  const db = readOnly ? getDatabaseReadOnly() : getDatabase();
+  if (!readOnly) {
+    ensureOddsIngestFailuresSchema(db);
+  }
+
+  const safeSinceHours =
+    Number.isFinite(Number(sinceHours)) && Number(sinceHours) > 0
+      ? Math.min(Number(sinceHours), 24 * 30)
+      : 24;
+  const safeLimit =
+    Number.isFinite(Number(limit)) && Number(limit) > 0
+      ? Math.min(Number(limit), 500)
+      : 50;
+  const safeReasonLimit =
+    Number.isFinite(Number(reasonLimit)) && Number(reasonLimit) > 0
+      ? Math.min(Number(reasonLimit), 100)
+      : 20;
+  const sinceExpr = `-${safeSinceHours} hours`;
+
+  try {
+    const totalsStmt = db.prepare(`
+      SELECT
+        COUNT(*) AS row_count,
+        COALESCE(SUM(occurrence_count), 0) AS occurrence_count
+      FROM odds_ingest_failures
+      WHERE datetime(last_seen) >= datetime('now', ?)
+    `);
+    const totals = totalsStmt.get(sinceExpr) || {
+      row_count: 0,
+      occurrence_count: 0,
+    };
+
+    const topReasonsStmt = db.prepare(`
+      SELECT
+        reason_code,
+        sport,
+        COUNT(*) AS row_count,
+        COALESCE(SUM(occurrence_count), 0) AS occurrence_count,
+        MAX(last_seen) AS last_seen
+      FROM odds_ingest_failures
+      WHERE datetime(last_seen) >= datetime('now', ?)
+      GROUP BY reason_code, sport
+      ORDER BY occurrence_count DESC, row_count DESC, last_seen DESC
+      LIMIT ?
+    `);
+    const topReasons = topReasonsStmt.all(sinceExpr, safeReasonLimit);
+
+    const recentStmt = db.prepare(`
+      SELECT
+        id,
+        job_run_id,
+        job_name,
+        sport,
+        provider,
+        game_id,
+        reason_code,
+        reason_detail,
+        home_team,
+        away_team,
+        payload_hash,
+        source_context,
+        first_seen,
+        last_seen,
+        occurrence_count
+      FROM odds_ingest_failures
+      WHERE datetime(last_seen) >= datetime('now', ?)
+      ORDER BY datetime(last_seen) DESC
+      LIMIT ?
+    `);
+    const recentRows = recentStmt.all(sinceExpr, safeLimit);
+
+    return {
+      window_hours: safeSinceHours,
+      totals,
+      top_reasons: topReasons,
+      recent_failures: recentRows,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('no such table: odds_ingest_failures')) {
+      return {
+        window_hours: safeSinceHours,
+        totals: { row_count: 0, occurrence_count: 0 },
+        top_reasons: [],
+        recent_failures: [],
+      };
+    }
+    throw error;
+  } finally {
+    if (readOnly) {
+      closeReadOnlyInstance(db);
+    }
+  }
+}
+
 function getCurrentRunId(sport = null) {
   const db = getDatabase();
   ensureRunStateSchema(db);
@@ -2900,6 +3114,8 @@ module.exports = {
   getLatestOdds,
   getOddsSnapshots,
   getOddsWithUpcomingGames,
+  recordOddsIngestFailure,
+  getOddsIngestFailureSummary,
   upsertPlayerShotLog,
   getPlayerShotLogs,
   getJobRunHistory,
