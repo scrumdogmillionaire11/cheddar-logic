@@ -7,6 +7,7 @@ import type { GameCard, GameTag, ExpressionStatus, Direction } from '../types/ga
 import { GAME_TAGS } from '../types/game-card';
 import { getPlayDisplayAction } from './decision';
 import { computeSupportScores } from './driver-scoring';
+import { hasEdgeVerificationSignals } from '../play-decision/decision-logic';
 
 /**
  * Derive expression status from drivers if not explicitly provided
@@ -244,15 +245,7 @@ export function deriveTags(card: GameCard): GameTag[] {
 }
 
 export function hasEdgeVerification(card: GameCard): boolean {
-  const play = card.play;
-  if (!play) return false;
-  return Boolean(
-    play.tags?.includes('EDGE_VERIFICATION_REQUIRED') ||
-      play.decision_v2?.price_reason_codes?.includes('EDGE_VERIFICATION_REQUIRED') ||
-      play.reason_codes?.includes('DOWNGRADED_EDGE_SANITY_NON_TOTAL') ||
-      play.reason_codes?.includes('PASS_EDGE_SANITY_NON_TOTAL') ||
-      play.gates?.some((gate) => gate.code === 'EDGE_SANITY_NON_TOTAL'),
-  );
+  return hasEdgeVerificationSignals(card.play);
 }
 
 export function hasProxyCap(card: GameCard): boolean {

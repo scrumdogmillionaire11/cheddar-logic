@@ -559,20 +559,52 @@ function extractFtTrendInsight(card: GameCard): FtTrendInsight | null {
   );
   if (!ftDriver) return null;
 
-  const homeSide = ftDriver.direction === 'HOME';
-  const awaySide = ftDriver.direction === 'AWAY';
-  if (!homeSide && !awaySide) return null;
+  const context = ftDriver.ftTrendContext;
 
   const match = ftDriver.note.match(
     /FT% edge \(([\d.]+)\s+vs\s+([\d.]+)\) with total ([\d.]+)/i,
   );
-  const homePct = match ? Number(match[1]) : null;
-  const awayPct = match ? Number(match[2]) : null;
-  const totalLine = match ? Number(match[3]) : null;
+  const parsedHomePct = match ? Number(match[1]) : null;
+  const parsedAwayPct = match ? Number(match[2]) : null;
+  const parsedTotalLine = match ? Number(match[3]) : null;
 
-  const safeHomePct = Number.isFinite(homePct) ? homePct : null;
-  const safeAwayPct = Number.isFinite(awayPct) ? awayPct : null;
-  const safeTotalLine = Number.isFinite(totalLine) ? totalLine : null;
+  const safeHomePct =
+    typeof context?.homeFtPct === 'number'
+      ? context.homeFtPct
+      : Number.isFinite(parsedHomePct)
+        ? parsedHomePct
+        : null;
+  const safeAwayPct =
+    typeof context?.awayFtPct === 'number'
+      ? context.awayFtPct
+      : Number.isFinite(parsedAwayPct)
+        ? parsedAwayPct
+        : null;
+  const safeTotalLine =
+    typeof context?.totalLine === 'number'
+      ? context.totalLine
+      : Number.isFinite(parsedTotalLine)
+        ? parsedTotalLine
+        : null;
+
+  const sideFromPct =
+    safeHomePct !== null && safeAwayPct !== null
+      ? safeHomePct > safeAwayPct
+        ? 'HOME'
+        : safeAwayPct > safeHomePct
+          ? 'AWAY'
+          : null
+      : null;
+  const resolvedSide =
+    sideFromPct ??
+    context?.advantagedSide ??
+    (ftDriver.direction === 'HOME' || ftDriver.direction === 'AWAY'
+      ? ftDriver.direction
+      : null);
+
+  if (!resolvedSide) return null;
+
+  const homeSide = resolvedSide === 'HOME';
 
   return {
     advantagedTeam: homeSide ? card.homeTeam : card.awayTeam,

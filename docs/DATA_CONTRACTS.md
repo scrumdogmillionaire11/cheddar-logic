@@ -328,7 +328,7 @@ type DecisionV2 = {
   implied_prob: number | null;
   edge_pct: number | null;
 
-  sharp_price_status: 'CHEDDAR'|'COTTAGE'|'UNPRICED';
+  sharp_price_status: 'CHEDDAR'|'COTTAGE'|'UNPRICED'|'PENDING_VERIFICATION';
   price_reason_codes: string[];
 
   official_status: 'PLAY'|'LEAN'|'PASS';
