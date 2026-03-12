@@ -744,6 +744,23 @@ function actionFromOfficial(
   return 'PASS';
 }
 
+function actionFromWave1SourcePlay(
+  play: ApiPlay,
+): 'FIRE' | 'HOLD' | 'PASS' {
+  if (play.action === 'FIRE' || play.action === 'HOLD' || play.action === 'PASS') {
+    return play.action;
+  }
+  if (play.status === 'FIRE') return 'FIRE';
+  if (play.status === 'WATCH') return 'HOLD';
+  if (play.status === 'PASS') return 'PASS';
+  if (play.classification === 'BASE') return 'FIRE';
+  if (play.classification === 'LEAN') return 'HOLD';
+  if (play.classification === 'PASS') return 'PASS';
+  if (play.tier === 'BEST' || play.tier === 'SUPER') return 'FIRE';
+  if (play.tier === 'WATCH') return 'HOLD';
+  return 'PASS';
+}
+
 function directionToLean(
   direction: DecisionV2['direction'],
   game: GameData,
@@ -1153,18 +1170,72 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   );
   if (wave1DecisionPlay?.decision_v2) {
     const decisionV2 = wave1DecisionPlay.decision_v2;
-    const officialStatus = decisionV2.official_status;
+    const ftTrendOverrideDirection =
+      (wave1DecisionPlay.cardType === 'ncaam-ft-trend' ||
+        wave1DecisionPlay.cardType === 'ncaam-ft-spread') &&
+      wave1DecisionPlay.market_type === 'SPREAD' &&
+      (wave1DecisionPlay.ft_trend_context?.advantaged_side === 'HOME' ||
+        wave1DecisionPlay.ft_trend_context?.advantaged_side === 'AWAY')
+        ? wave1DecisionPlay.ft_trend_context.advantaged_side
+        : null;
+    const ftTrendSourceActionBase = actionFromWave1SourcePlay(wave1DecisionPlay);
+    const ftTrendSourceAction =
+      ftTrendOverrideDirection &&
+      ftTrendSourceActionBase === 'PASS' &&
+      (wave1DecisionPlay.tier === 'WATCH' ||
+        wave1DecisionPlay.tier === 'SUPER' ||
+        wave1DecisionPlay.tier === 'BEST')
+        ? wave1DecisionPlay.tier === 'WATCH'
+          ? 'HOLD'
+          : 'FIRE'
+        : ftTrendSourceActionBase;
+    const effectiveOfficialStatus: DecisionV2['official_status'] =
+      ftTrendOverrideDirection && decisionV2.official_status === 'PASS'
+        ? ftTrendSourceAction === 'FIRE'
+          ? 'PLAY'
+          : ftTrendSourceAction === 'HOLD'
+            ? 'LEAN'
+            : 'PASS'
+        : decisionV2.official_status;
+    const effectiveDirection: DecisionV2['direction'] =
+      ftTrendOverrideDirection ?? decisionV2.direction;
+    const effectiveDecisionV2: DecisionV2 =
+      ftTrendOverrideDirection &&
+      (effectiveDirection !== decisionV2.direction ||
+        effectiveOfficialStatus !== decisionV2.official_status)
+        ? {
+            ...decisionV2,
+            direction: effectiveDirection,
+            official_status: effectiveOfficialStatus,
+            pricing_trace: {
+              ...decisionV2.pricing_trace,
+              market_side: effectiveDirection,
+              market_line:
+                typeof wave1DecisionPlay.line === 'number'
+                  ? wave1DecisionPlay.line
+                  : decisionV2.pricing_trace?.market_line ?? null,
+              market_price:
+                typeof wave1DecisionPlay.price === 'number'
+                  ? wave1DecisionPlay.price
+                  : decisionV2.pricing_trace?.market_price ?? null,
+            },
+          }
+        : decisionV2;
+    const officialStatus = effectiveDecisionV2.official_status;
     const status = statusFromOfficial(officialStatus);
     const action = actionFromOfficial(officialStatus);
     const marketType = wave1DecisionPlay.market_type ?? 'INFO';
     const market = mapCanonicalToLegacyMarket(marketType);
-    const direction = decisionV2.direction === 'NONE' ? null : decisionV2.direction;
+    const direction =
+      effectiveDecisionV2.direction === 'NONE' ? null : effectiveDecisionV2.direction;
     const pick =
       officialStatus === 'PASS'
         ? 'NO PLAY'
-        : buildWave1PickText(wave1DecisionPlay, game, decisionV2.direction);
+        : buildWave1PickText(wave1DecisionPlay, game, effectiveDecisionV2.direction);
     const edgePct =
-      typeof decisionV2.edge_pct === 'number' ? decisionV2.edge_pct : null;
+      typeof effectiveDecisionV2.edge_pct === 'number'
+        ? effectiveDecisionV2.edge_pct
+        : null;
     const projectedMargin =
       typeof wave1DecisionPlay.projection?.projected_margin === 'number'
         ? wave1DecisionPlay.projection.projected_margin
@@ -1241,30 +1312,30 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     const mergedReasonCodes = Array.from(
       new Set([
         ...(wave1DecisionPlay.reason_codes ?? []),
-        ...decisionV2.watchdog_reason_codes,
-        ...decisionV2.price_reason_codes,
-        decisionV2.primary_reason_code,
+        ...effectiveDecisionV2.watchdog_reason_codes,
+        ...effectiveDecisionV2.price_reason_codes,
+        effectiveDecisionV2.primary_reason_code,
       ]),
     );
     const tags = Array.from(new Set([...(wave1DecisionPlay.tags ?? [])]));
-    if (decisionV2.price_reason_codes.includes('EDGE_VERIFICATION_REQUIRED')) {
+    if (effectiveDecisionV2.price_reason_codes.includes('EDGE_VERIFICATION_REQUIRED')) {
       tags.push('EDGE_VERIFICATION_REQUIRED');
     }
     if (
-      decisionV2.proxy_capped === true ||
-      decisionV2.price_reason_codes.includes('PROXY_EDGE_CAPPED') ||
-      decisionV2.price_reason_codes.includes('PROXY_EDGE_BLOCKED')
+      effectiveDecisionV2.proxy_capped === true ||
+      effectiveDecisionV2.price_reason_codes.includes('PROXY_EDGE_CAPPED') ||
+      effectiveDecisionV2.price_reason_codes.includes('PROXY_EDGE_BLOCKED')
     ) {
       tags.push('PROXY_CARD');
     }
-    const gates: CanonicalGate[] = decisionV2.watchdog_reason_codes.map((code) => ({
+    const gates: CanonicalGate[] = effectiveDecisionV2.watchdog_reason_codes.map((code) => ({
       code,
-      severity: decisionV2.watchdog_status === 'BLOCKED' ? 'BLOCK' : 'WARN',
-      blocks_bet: decisionV2.watchdog_status === 'BLOCKED',
+      severity: effectiveDecisionV2.watchdog_status === 'BLOCKED' ? 'BLOCK' : 'WARN',
+      blocks_bet: effectiveDecisionV2.watchdog_status === 'BLOCKED',
     }));
 
     return {
-      market_key: `${marketType}|${decisionV2.direction}`,
+      market_key: `${marketType}|${effectiveDecisionV2.direction}`,
       decision: status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'WATCH' : 'PASS',
       classificationLabel:
         officialStatus === 'PLAY' ? 'PLAY' : officialStatus === 'LEAN' ? 'LEAN' : 'NONE',
@@ -1273,20 +1344,20 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       decision_data: {
         status: status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'WATCH' : 'PASS',
         truth:
-          decisionV2.support_score >= 0.6
+          effectiveDecisionV2.support_score >= 0.6
             ? 'STRONG'
-            : decisionV2.support_score >= 0.45
+            : effectiveDecisionV2.support_score >= 0.45
               ? 'MEDIUM'
               : 'WEAK',
         value_tier: valueStatus,
         edge_pct: edgePct,
-        edge_tier: decisionV2.play_tier,
+        edge_tier: effectiveDecisionV2.play_tier,
         coinflip: false,
-        reason_code: decisionV2.primary_reason_code,
+        reason_code: effectiveDecisionV2.primary_reason_code,
       },
       transform_meta: {
-        quality: decisionV2.watchdog_status === 'BLOCKED' ? 'DEGRADED' : 'OK',
-        missing_inputs: decisionV2.missing_data.missing_fields,
+        quality: effectiveDecisionV2.watchdog_status === 'BLOCKED' ? 'DEGRADED' : 'OK',
+        missing_inputs: effectiveDecisionV2.missing_data.missing_fields,
         placeholders_found: [],
       },
       market_type: marketType,
@@ -1314,26 +1385,28 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         officialStatus === 'PLAY' ? 'BASE' : officialStatus === 'LEAN' ? 'LEAN' : 'PASS',
       action,
       pass_reason_code:
-        officialStatus === 'PASS' ? decisionV2.primary_reason_code : null,
-      decision_v2: decisionV2,
+        officialStatus === 'PASS' ? effectiveDecisionV2.primary_reason_code : null,
+      decision_v2: effectiveDecisionV2,
       status,
       market,
       pick,
-      lean: directionToLean(decisionV2.direction, game),
+      lean: directionToLean(effectiveDecisionV2.direction, game),
       side: direction as Direction | null,
       truthStatus:
-        decisionV2.support_score >= 0.6
+        effectiveDecisionV2.support_score >= 0.6
           ? 'STRONG'
-          : decisionV2.support_score >= 0.45
+          : effectiveDecisionV2.support_score >= 0.45
             ? 'MEDIUM'
             : 'WEAK',
-      truthStrength: clamp(decisionV2.support_score, 0.5, 0.95),
-      conflict: decisionV2.conflict_score,
+      truthStrength: clamp(effectiveDecisionV2.support_score, 0.5, 0.95),
+      conflict: effectiveDecisionV2.conflict_score,
       modelProb:
-        typeof decisionV2.fair_prob === 'number' ? decisionV2.fair_prob : undefined,
+        typeof effectiveDecisionV2.fair_prob === 'number'
+          ? effectiveDecisionV2.fair_prob
+          : undefined,
       impliedProb:
-        typeof decisionV2.implied_prob === 'number'
-          ? decisionV2.implied_prob
+        typeof effectiveDecisionV2.implied_prob === 'number'
+          ? effectiveDecisionV2.implied_prob
           : undefined,
       edge: edgePct ?? undefined,
       edgePoints: edgePoints ?? undefined,
@@ -1348,11 +1421,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       priceFlags: [],
       line: wave1DecisionPlay.line,
       price: wave1DecisionPlay.price,
-      lineSource: decisionV2.pricing_trace?.line_source ?? undefined,
-      priceSource: decisionV2.pricing_trace?.price_source ?? undefined,
+      lineSource: effectiveDecisionV2.pricing_trace?.line_source ?? undefined,
+      priceSource: effectiveDecisionV2.pricing_trace?.price_source ?? undefined,
       updatedAt: game.odds?.capturedAt || game.createdAt,
-      whyCode: decisionV2.primary_reason_code,
-      whyText: decisionV2.primary_reason_code.replace(/_/g, ' '),
+      whyCode: effectiveDecisionV2.primary_reason_code,
+      whyText: effectiveDecisionV2.primary_reason_code.replace(/_/g, ' '),
     };
   }
   const inferredPlays = scopedPlayCandidates.map((sourcePlay) => ({

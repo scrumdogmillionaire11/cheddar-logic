@@ -725,6 +725,12 @@ function statusFromAction(action?: Play['action']): Play['status'] | undefined {
   return undefined;
 }
 
+function actionFromTier(tier?: Play['tier']): Play['action'] | undefined {
+  if (tier === 'BEST' || tier === 'SUPER') return 'FIRE';
+  if (tier === 'WATCH') return 'HOLD';
+  return undefined;
+}
+
 function normalizeSelectionSide(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const upper = value.trim().toUpperCase();
@@ -1470,6 +1476,7 @@ export async function GET(request: NextRequest) {
 
     // Collect all game IDs for the card_payloads query
     const gameIds = rows.map((r) => r.game_id);
+    const gameRowById = new Map(rows.map((r) => [r.game_id, r]));
     const sportByGameId = new Map(rows.map((r) => [r.game_id, r.sport]));
 
     // Build a plays map keyed by canonical game_id
@@ -1565,6 +1572,7 @@ export async function GET(request: NextRequest) {
       for (const cardRow of cardRows) {
         const canonicalGameIdForRow =
           externalToCanonicalMap.get(cardRow.game_id) ?? cardRow.game_id;
+        const gameRow = gameRowById.get(canonicalGameIdForRow);
         const rowSport =
           normalizeSport(sportByGameId.get(canonicalGameIdForRow)) ??
           UNKNOWN_SPORT;
@@ -1626,7 +1634,7 @@ export async function GET(request: NextRequest) {
             payloadPlay?.decision_v2,
         );
         const normalizedTier = normalizeTier(payload.tier ?? payloadPlay?.tier);
-        const normalizedPrediction =
+        const baseNormalizedPrediction =
           normalizePrediction(payload.prediction) ??
           normalizePrediction(payloadPlay?.prediction) ??
           (normalizedSelectionSide === 'HOME' ||
@@ -1704,30 +1712,67 @@ export async function GET(request: NextRequest) {
               };
             })()
           : undefined;
+        const normalizedDisplaySelectionSide =
+          isFtTrendCard &&
+          (normalizedFtTrendContext?.advantaged_side === 'HOME' ||
+            normalizedFtTrendContext?.advantaged_side === 'AWAY')
+            ? normalizedFtTrendContext.advantaged_side
+            : normalizedSelectionSide;
+        const normalizedPrediction =
+          normalizedDisplaySelectionSide === 'HOME' ||
+          normalizedDisplaySelectionSide === 'AWAY' ||
+          normalizedDisplaySelectionSide === 'OVER' ||
+          normalizedDisplaySelectionSide === 'UNDER'
+            ? normalizedDisplaySelectionSide
+            : baseNormalizedPrediction;
         const normalizedPlayerName = firstString(
           payloadSelection?.player_name,
           payloadPlay?.player_name,
           (payload as Record<string, unknown>).player_name,
         );
-        const normalizedSelectionTeam = firstString(
+        const normalizedSelectionTeamBase = firstString(
           normalizedPlayerName,
           payloadSelection?.team,
           payloadMarketContext?.selection_team,
           payloadPlay?.team,
         );
-        const normalizedLine = firstNumber(
+        const normalizedSelectionTeam =
+          isFtTrendCard
+            ? normalizedDisplaySelectionSide === 'HOME'
+              ? gameRow?.home_team ?? normalizedSelectionTeamBase
+              : normalizedDisplaySelectionSide === 'AWAY'
+                ? gameRow?.away_team ?? normalizedSelectionTeamBase
+                : normalizedSelectionTeamBase
+            : normalizedSelectionTeamBase;
+        const normalizedLineBase = firstNumber(
           payload.line,
           payloadMarketContextWager?.called_line,
           (payload.market as Record<string, unknown>)?.line,
           payloadPlay?.line,
           payloadSelection?.line,
         );
-        const normalizedPrice = firstNumber(
+        const normalizedLine =
+          isFtTrendCard
+            ? normalizedDisplaySelectionSide === 'HOME'
+              ? gameRow?.spread_home ?? normalizedLineBase
+              : normalizedDisplaySelectionSide === 'AWAY'
+                ? gameRow?.spread_away ?? normalizedLineBase
+                : normalizedLineBase
+            : normalizedLineBase;
+        const normalizedPriceBase = firstNumber(
           payload.price,
           payloadMarketContextWager?.called_price,
           payloadPlay?.price,
           payloadSelection?.price,
         );
+        const normalizedPrice =
+          isFtTrendCard
+            ? normalizedDisplaySelectionSide === 'HOME'
+              ? gameRow?.spread_price_home ?? normalizedPriceBase
+              : normalizedDisplaySelectionSide === 'AWAY'
+                ? gameRow?.spread_price_away ?? normalizedPriceBase
+                : normalizedPriceBase
+            : normalizedPriceBase;
         const normalizedRunId = firstString(
           (payload as Record<string, unknown>).run_id,
           payloadPlay?.run_id,
@@ -1950,7 +1995,22 @@ export async function GET(request: NextRequest) {
           ...(Array.isArray(payloadPlay?.tags) ? payloadPlay.tags : []),
         ].map((value) => String(value));
 
-        const resolvedAction: Play['action'] | undefined =
+        const ftSpreadDisplayOverrideActive =
+          isFtTrendCard &&
+          (normalizedDisplaySelectionSide === 'HOME' ||
+            normalizedDisplaySelectionSide === 'AWAY') &&
+          normalizedDisplaySelectionSide !== normalizedSelectionSide;
+
+        const resolvedActionBase: Play['action'] | undefined =
+          (ftSpreadDisplayOverrideActive &&
+          normalizedAction !== 'FIRE' &&
+          normalizedAction !== 'HOLD' &&
+          normalizedClassification !== 'BASE' &&
+          normalizedClassification !== 'LEAN' &&
+          normalizedStatus !== 'FIRE' &&
+          normalizedStatus !== 'WATCH'
+            ? actionFromTier(normalizedTier)
+            : undefined) ??
           normalizedAction ??
           actionFromClassification(normalizedClassification) ??
           (normalizedStatus === 'FIRE'
@@ -1960,6 +2020,10 @@ export async function GET(request: NextRequest) {
               : normalizedStatus === 'PASS'
                 ? 'PASS'
                 : undefined);
+        const resolvedAction: Play['action'] | undefined =
+          ftSpreadDisplayOverrideActive && resolvedActionBase === 'PASS'
+            ? actionFromTier(normalizedTier) ?? resolvedActionBase
+            : resolvedActionBase;
         const resolvedClassification: Play['classification'] | undefined =
           normalizedClassification ?? classificationFromAction(resolvedAction);
         const resolvedStatus: Play['status'] | undefined =
@@ -2192,7 +2256,7 @@ export async function GET(request: NextRequest) {
                             ? 'SPREAD'
                             : undefined,
           selection: {
-            side: normalizedSelectionSide,
+            side: normalizedDisplaySelectionSide,
             team: normalizedSelectionTeam,
           },
           line: normalizedLine,
@@ -2209,7 +2273,7 @@ export async function GET(request: NextRequest) {
                   null,
                 selection_side:
                   firstString(payloadMarketContext.selection_side) ??
-                  normalizedSelectionSide,
+                  normalizedDisplaySelectionSide,
                 selection_team:
                   firstString(payloadMarketContext.selection_team) ??
                   normalizedSelectionTeam ??
