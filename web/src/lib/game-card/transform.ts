@@ -186,6 +186,12 @@ interface ApiPlay {
   selection?: { side?: string; team?: string };
   line?: number;
   price?: number;
+  ft_trend_context?: {
+    home_ft_pct?: number | null;
+    away_ft_pct?: number | null;
+    total_line?: number | null;
+    advantaged_side?: 'HOME' | 'AWAY' | null;
+  };
   reason_codes?: string[];
   tags?: string[];
   recommendation?: { type?: string };
@@ -880,6 +886,27 @@ function playToDriver(play: ApiPlay): DriverRow {
     note: play.reasoning,
     cardType: play.cardType,
     cardTitle: play.cardTitle,
+    ftTrendContext: play.ft_trend_context
+      ? {
+          homeFtPct:
+            typeof play.ft_trend_context.home_ft_pct === 'number'
+              ? play.ft_trend_context.home_ft_pct
+              : null,
+          awayFtPct:
+            typeof play.ft_trend_context.away_ft_pct === 'number'
+              ? play.ft_trend_context.away_ft_pct
+              : null,
+          totalLine:
+            typeof play.ft_trend_context.total_line === 'number'
+              ? play.ft_trend_context.total_line
+              : null,
+          advantagedSide:
+            play.ft_trend_context.advantaged_side === 'HOME' ||
+            play.ft_trend_context.advantaged_side === 'AWAY'
+              ? play.ft_trend_context.advantaged_side
+              : null,
+        }
+      : undefined,
     role: DRIVER_ROLES[play.cardType] ?? 'CONTEXT',
   };
 }

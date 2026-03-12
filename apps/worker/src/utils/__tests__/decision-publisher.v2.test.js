@@ -364,7 +364,7 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.sharp_price_status).toBe('UNPRICED');
+    expect(payload.decision_v2.sharp_price_status).toBe('PENDING_VERIFICATION');
     expect(payload.decision_v2.official_status).toBe('PASS');
     expect(payload.decision_v2.price_reason_codes).toContain(
       'EDGE_VERIFICATION_REQUIRED',

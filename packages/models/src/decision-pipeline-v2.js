@@ -431,7 +431,7 @@ function classifyPrice({
 
   if (marketType !== 'TOTAL' && edgePct > EDGE_SANITY_NON_TOTAL_THRESHOLD) {
     return {
-      sharp_price_status: 'UNPRICED',
+      sharp_price_status: 'PENDING_VERIFICATION',
       price_reason_codes: [
         PRICE_REASONS.EDGE_VERIFICATION_REQUIRED,
         PRICE_REASONS.EDGE_SANITY_NON_TOTAL,

@@ -180,6 +180,12 @@ interface Play {
   selection?: { side: string; team?: string };
   line?: number;
   price?: number;
+  ft_trend_context?: {
+    home_ft_pct: number | null;
+    away_ft_pct: number | null;
+    total_line: number | null;
+    advantaged_side: 'HOME' | 'AWAY' | null;
+  };
   line_source?: string | null;
   price_source?: string | null;
   market_context?: {
@@ -278,7 +284,7 @@ interface Play {
       line_source?: string | null;
       price_source?: string | null;
     };
-    sharp_price_status: 'CHEDDAR' | 'COTTAGE' | 'UNPRICED';
+    sharp_price_status: 'CHEDDAR' | 'COTTAGE' | 'UNPRICED' | 'PENDING_VERIFICATION';
     price_reason_codes: string[];
     official_status: 'PLAY' | 'LEAN' | 'PASS';
     play_tier: 'BEST' | 'GOOD' | 'OK' | 'BAD';
@@ -1585,6 +1591,9 @@ export async function GET(request: NextRequest) {
 
         const payloadPlay = toObject(payload.play);
         const payloadPlayObj = toObject(payloadPlay);
+        const payloadFtTrendContext = toObject(
+          (payload as Record<string, unknown>).ft_trend_context,
+        );
         const payloadMarketContext =
           toObject((payload as Record<string, unknown>).market_context) ??
           toObject(payloadPlayObj?.market_context);
@@ -1636,6 +1645,65 @@ export async function GET(request: NextRequest) {
             payloadPlay?.market_type ??
             payloadMarketContext?.market_type,
         );
+        const isFtTrendCard =
+          cardRow.card_type === 'ncaam-ft-trend' ||
+          cardRow.card_type === 'ncaam-ft-spread';
+        const normalizedFtTrendContext = isFtTrendCard
+          ? (() => {
+              const homeFtPct = firstNumber(
+                payloadFtTrendContext?.home_ft_pct,
+                driverInputs?.home_ft_pct,
+              );
+              const awayFtPct = firstNumber(
+                payloadFtTrendContext?.away_ft_pct,
+                driverInputs?.away_ft_pct,
+              );
+              const totalLine = firstNumber(
+                payloadFtTrendContext?.total_line,
+                driverInputs?.total_line,
+                payload.odds_context &&
+                  typeof payload.odds_context === 'object' &&
+                  'total' in (payload.odds_context as object)
+                  ? (payload.odds_context as Record<string, unknown>).total
+                  : null,
+              );
+
+              const explicitSideRaw = firstString(
+                payloadFtTrendContext?.advantaged_side,
+              );
+              const explicitSide =
+                explicitSideRaw === 'HOME' || explicitSideRaw === 'AWAY'
+                  ? explicitSideRaw
+                  : explicitSideRaw === 'home' || explicitSideRaw === 'away'
+                    ? (explicitSideRaw.toUpperCase() as 'HOME' | 'AWAY')
+                    : null;
+              const inferredSide =
+                typeof homeFtPct === 'number' && typeof awayFtPct === 'number'
+                  ? homeFtPct > awayFtPct
+                    ? 'HOME'
+                    : awayFtPct > homeFtPct
+                      ? 'AWAY'
+                      : null
+                  : null;
+              const advantagedSide = explicitSide ?? inferredSide;
+
+              if (
+                homeFtPct === null &&
+                awayFtPct === null &&
+                totalLine === null &&
+                advantagedSide === null
+              ) {
+                return undefined;
+              }
+
+              return {
+                home_ft_pct: homeFtPct ?? null,
+                away_ft_pct: awayFtPct ?? null,
+                total_line: totalLine ?? null,
+                advantaged_side: advantagedSide,
+              };
+            })()
+          : undefined;
         const normalizedPlayerName = firstString(
           payloadSelection?.player_name,
           payloadPlay?.player_name,
@@ -2129,6 +2197,7 @@ export async function GET(request: NextRequest) {
           },
           line: normalizedLine,
           price: normalizedPrice,
+          ft_trend_context: normalizedFtTrendContext,
           line_source: normalizedLineSource ?? null,
           price_source: normalizedPriceSource ?? null,
           market_context: payloadMarketContext

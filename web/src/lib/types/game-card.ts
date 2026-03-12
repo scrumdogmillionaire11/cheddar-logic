@@ -225,7 +225,7 @@ export interface DecisionV2 {
     price_source?: string | null;
   };
 
-  sharp_price_status: 'CHEDDAR' | 'COTTAGE' | 'UNPRICED';
+  sharp_price_status: 'CHEDDAR' | 'COTTAGE' | 'UNPRICED' | 'PENDING_VERIFICATION';
   price_reason_codes: string[];
 
   official_status: 'PLAY' | 'LEAN' | 'PASS';
@@ -294,6 +294,12 @@ export interface DriverRow {
   note: string;
   cardType: string;
   cardTitle: string;
+  ftTrendContext?: {
+    homeFtPct: number | null;
+    awayFtPct: number | null;
+    totalLine: number | null;
+    advantagedSide: 'HOME' | 'AWAY' | null;
+  };
   /** Driver role assigned at transform time from DRIVER_ROLES registry */
   role?: DriverRole;
 }
