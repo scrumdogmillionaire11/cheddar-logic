@@ -45,6 +45,7 @@ import {
   EDGE_SANITY_NON_TOTAL_THRESHOLD,
   EDGE_SANITY_GATE_CODE,
   PROXY_CAP_GATE_CODE,
+  EDGE_VERIFICATION_TAG,
 } from '../play-decision/decision-logic';
 
 const ENABLE_WELCOME_HOME =
@@ -2273,7 +2274,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const proxyTriggered = tags.some((tag) => PROXY_SIGNAL_TAGS.has(tag));
 
   if (edgeSanityTriggered) {
-    tags.push('EDGE_VERIFICATION_REQUIRED');
+    tags.push(EDGE_VERIFICATION_TAG);
     gateCodes.add(EDGE_SANITY_GATE_CODE);
   }
   if (proxyTriggered) {
@@ -2292,9 +2293,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       reasonCodesUnique.push('PASS_PROXY_EDGE_SANITY_COMBO');
       finalBet = null;
     } else {
-      // Both triggered but edge is good: add gate that blocks bet
-      reasonCodesUnique.push('EDGE_SANITY_COMBO_BLOCKED_BET');
-      finalBet = null; // Gate blocks it
+      // Both triggered but edge is good: degrade to WATCH and block bet for verification
+      finalDecision = 'WATCH';
+      reasonCodesUnique.push('DOWNGRADED_PROXY_EDGE_SANITY_COMBO');
+      reasonCodesUnique.push('BLOCKED_BET_VERIFICATION_REQUIRED');
+      finalBet = null;
     }
   } else if (edgeSanityTriggered) {
     // Edge sanity always removes bet (the gate blocks execution)
@@ -2302,12 +2305,14 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     if (finalDecision === 'PASS') {
       reasonCodesUnique.push('PASS_EDGE_SANITY_NON_TOTAL');
     } else if (finalDecision === 'WATCH') {
-      // WATCH with edge sanity - downgrade to PASS since weak signal
-      finalDecision = 'PASS';
-      reasonCodesUnique.push('PASS_WATCH_EDGE_SANITY');
+      // WATCH with edge sanity remains WATCH, but bet is blocked pending verification
+      reasonCodesUnique.push('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
+      reasonCodesUnique.push('BLOCKED_BET_VERIFICATION_REQUIRED');
     } else if (finalDecision === 'FIRE') {
-      // FIRE with edge sanity - keep FIRE but remove bet (gate blocks it)
-      reasonCodesUnique.push('FIRE_EDGE_SANITY_GATE');
+      // FIRE with edge sanity downgrades to WATCH and blocks bet pending verification
+      finalDecision = 'WATCH';
+      reasonCodesUnique.push('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
+      reasonCodesUnique.push('BLOCKED_BET_VERIFICATION_REQUIRED');
     }
   } else if (proxyTriggered) {
     // WI-DECISION-FIX: Proxy cap downgrades tier (FIRE→WATCH) but keeps bet recommendation
@@ -2359,10 +2364,19 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           : 'PASS',
   });
 
+  const pickWithContext = pick;
   if (!finalBet) {
     pick = 'NO PLAY';
   }
   const finalBetAction: 'BET' | 'NO_PLAY' = finalBet ? 'BET' : 'NO_PLAY';
+  if (
+    finalBetAction === 'NO_PLAY' &&
+    edgeSanityTriggered &&
+    pickWithContext &&
+    pickWithContext !== 'NO PLAY'
+  ) {
+    pick = `${pickWithContext} (Verification Required)`;
+  }
   reasonCodesUnique = Array.from(new Set(reasonCodesUnique));
   const dedupedTags = Array.from(new Set(tags));
   const passReasonCode =

@@ -28,6 +28,7 @@ const PRICE_REASONS = {
   PROXY_EDGE_CAPPED: 'PROXY_EDGE_CAPPED',
   NO_PRIMARY_SUPPORT: 'NO_PRIMARY_SUPPORT',
   EDGE_VERIFICATION_REQUIRED: 'EDGE_VERIFICATION_REQUIRED',
+  EDGE_SANITY_NON_TOTAL: 'EDGE_SANITY_NON_TOTAL',
 };
 
 const PIPELINE_VERSION = 'v2';
@@ -431,7 +432,10 @@ function classifyPrice({
   if (marketType !== 'TOTAL' && edgePct > EDGE_SANITY_NON_TOTAL_THRESHOLD) {
     return {
       sharp_price_status: 'UNPRICED',
-      price_reason_codes: [PRICE_REASONS.EDGE_VERIFICATION_REQUIRED],
+      price_reason_codes: [
+        PRICE_REASONS.EDGE_VERIFICATION_REQUIRED,
+        PRICE_REASONS.EDGE_SANITY_NON_TOTAL,
+      ],
       proxy_capped: false,
     };
   }

@@ -369,6 +369,9 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2.price_reason_codes).toContain(
       'EDGE_VERIFICATION_REQUIRED',
     );
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'EDGE_SANITY_NON_TOTAL',
+    );
     expect(payload.decision_v2.primary_reason_code).toBe(
       'EDGE_VERIFICATION_REQUIRED',
     );

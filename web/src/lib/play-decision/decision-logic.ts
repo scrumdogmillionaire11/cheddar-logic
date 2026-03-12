@@ -22,6 +22,55 @@ import { THRESHOLDS } from '../types/canonical-play';
 export const EDGE_SANITY_NON_TOTAL_THRESHOLD = 0.2;
 export const EDGE_SANITY_GATE_CODE = 'EDGE_SANITY_NON_TOTAL';
 export const PROXY_CAP_GATE_CODE = 'PROXY_CAP';
+export const EDGE_VERIFICATION_TAG = 'EDGE_VERIFICATION_REQUIRED';
+
+const EDGE_VERIFICATION_REASON_CODES = new Set([
+  EDGE_VERIFICATION_TAG,
+  'PASS_EDGE_SANITY_NON_TOTAL',
+  'DOWNGRADED_EDGE_SANITY_NON_TOTAL',
+  'PASS_WATCH_EDGE_SANITY',
+  'FIRE_EDGE_SANITY_GATE',
+  'PASS_PROXY_EDGE_SANITY_COMBO',
+  'DOWNGRADED_PROXY_EDGE_SANITY_COMBO',
+  'BLOCKED_BET_VERIFICATION_REQUIRED',
+]);
+
+export function isEdgeVerificationCode(code: unknown): boolean {
+  return typeof code === 'string' && EDGE_VERIFICATION_REASON_CODES.has(code);
+}
+
+export function hasEdgeVerificationSignals(play: {
+  tags?: string[];
+  reason_codes?: string[];
+  gates?: Array<{ code?: string }>;
+  decision_v2?: { price_reason_codes?: string[] };
+} | null | undefined): boolean {
+  if (!play) return false;
+  if (Array.isArray(play.tags) && play.tags.includes(EDGE_VERIFICATION_TAG)) {
+    return true;
+  }
+  if (
+    Array.isArray(play.decision_v2?.price_reason_codes) &&
+    play.decision_v2.price_reason_codes.some((code) =>
+      isEdgeVerificationCode(code),
+    )
+  ) {
+    return true;
+  }
+  if (
+    Array.isArray(play.reason_codes) &&
+    play.reason_codes.some((code) => isEdgeVerificationCode(code))
+  ) {
+    return true;
+  }
+  if (
+    Array.isArray(play.gates) &&
+    play.gates.some((gate) => gate.code === EDGE_SANITY_GATE_CODE)
+  ) {
+    return true;
+  }
+  return false;
+}
 
 // ============================================================================
 // LAYER 1: CLASSIFICATION (Model Truth)
