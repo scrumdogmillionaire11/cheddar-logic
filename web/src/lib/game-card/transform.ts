@@ -343,23 +343,28 @@ function getSourcePlayAction(
   play?: ApiPlay,
 ): 'FIRE' | 'HOLD' | 'PASS' | undefined {
   if (!play) return undefined;
-  if (
-    play.action === 'FIRE' ||
-    play.action === 'HOLD' ||
-    play.action === 'PASS'
-  ) {
-    return play.action;
+  const legacyStatus = String(play.status ?? '').toUpperCase();
+  const hasExplicitAction =
+    play.action === 'FIRE' || play.action === 'HOLD' || play.action === 'PASS';
+  const hasClassification =
+    play.classification === 'BASE' ||
+    play.classification === 'LEAN' ||
+    play.classification === 'PASS';
+  const hasLegacyStatus =
+    legacyStatus === 'FIRE' ||
+    legacyStatus === 'WATCH' ||
+    legacyStatus === 'HOLD' ||
+    legacyStatus === 'PASS';
+
+  if (!hasExplicitAction && !hasClassification && !hasLegacyStatus) {
+    return undefined;
   }
 
-  if (play.classification === 'BASE') return 'FIRE';
-  if (play.classification === 'LEAN') return 'HOLD';
-  if (play.classification === 'PASS') return 'PASS';
-
-  const legacyStatus = String(play.status ?? '').toUpperCase();
-  if (legacyStatus === 'FIRE') return 'FIRE';
-  if (legacyStatus === 'WATCH' || legacyStatus === 'HOLD') return 'HOLD';
-  if (legacyStatus === 'PASS') return 'PASS';
-  return undefined;
+  return resolvePlayDisplayDecision({
+    action: hasExplicitAction ? play.action : undefined,
+    classification: hasClassification ? play.classification : undefined,
+    status: hasLegacyStatus ? legacyStatus : undefined,
+  }).action;
 }
 
 function inferCanonicalFromSecondary(
@@ -748,15 +753,8 @@ function actionFromOfficial(
 function actionFromWave1SourcePlay(
   play: ApiPlay,
 ): 'FIRE' | 'HOLD' | 'PASS' {
-  if (play.action === 'FIRE' || play.action === 'HOLD' || play.action === 'PASS') {
-    return play.action;
-  }
-  if (play.status === 'FIRE') return 'FIRE';
-  if (play.status === 'WATCH') return 'HOLD';
-  if (play.status === 'PASS') return 'PASS';
-  if (play.classification === 'BASE') return 'FIRE';
-  if (play.classification === 'LEAN') return 'HOLD';
-  if (play.classification === 'PASS') return 'PASS';
+  const resolvedAction = getSourcePlayAction(play);
+  if (resolvedAction) return resolvedAction;
   if (play.tier === 'BEST' || play.tier === 'SUPER') return 'FIRE';
   if (play.tier === 'WATCH') return 'HOLD';
   return 'PASS';
@@ -3020,20 +3018,20 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         propType = 'Rebounds';
       }
 
-      // Determine status from action or legacy status field
+      // Determine status from canonical action resolution
       let status: PropPlayRow['status'] = 'NO_PLAY';
-      if (play.action === 'FIRE') {
+      const resolvedAction = resolvePlayDisplayDecision({
+        action: play.action,
+        status: play.status,
+      }).action;
+      if (resolvedAction === 'FIRE') {
         status = 'FIRE';
-      } else if (play.action === 'HOLD') {
-        status = 'HOLD';
-      } else if (play.action === 'PASS') {
+      } else if (resolvedAction === 'HOLD') {
+        status = play.action === 'HOLD' ? 'HOLD' : 'WATCH';
+      } else if (resolvedAction === 'PASS') {
         status = 'NO_PLAY';
-      } else if (play.status === 'FIRE') {
-        status = 'FIRE';
       } else if (play.status === 'WATCH') {
         status = 'WATCH';
-      } else if (play.status === 'PASS') {
-        status = 'NO_PLAY';
       }
 
       const mu = play.mu ?? play.projectedTotal ?? null;

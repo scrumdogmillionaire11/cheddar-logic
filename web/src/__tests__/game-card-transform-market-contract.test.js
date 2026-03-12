@@ -40,4 +40,14 @@ assert(
   'risk should be modeled as tags, not as a market bucket',
 );
 
+assert(
+  source.includes('const resolvedAction = getSourcePlayAction(play);'),
+  'transform wave-1 action selection should resolve through shared play action helper',
+);
+
+assert(
+  source.includes("play.market_type === 'FIRST_PERIOD'"),
+  'transform should preserve FIRST_PERIOD market handling for 1P totals cards',
+);
+
 console.log('✅ Transform market contract source tests passed');

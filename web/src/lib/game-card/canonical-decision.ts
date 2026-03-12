@@ -5,6 +5,8 @@
  * Everything else is derived from this object.
  */
 
+import { resolvePlayDisplayDecision } from './decision';
+
 export type Decision = 'FIRE' | 'WATCH' | 'HOLD' | 'PASS';
 export type Signal = 'STRONG' | 'MEDIUM' | 'WEAK';
 export type Value = 'GOOD' | 'OK' | 'BAD';
@@ -57,20 +59,16 @@ export function computeCanonicalDecision(play: {
 }): CardDecision {
   const violations: string[] = [];
 
-  // 1. DECISION: Resolve from action (preferred) or status/tier (legacy)
+  // 1. DECISION: Resolve from canonical action precedence (action -> legacy status)
+  const resolvedAction = resolvePlayDisplayDecision({
+    action: play.action,
+    status: play.status,
+  }).action;
   let decision: Decision = 'PASS';
-  if (play.action === 'FIRE') {
+  if (resolvedAction === 'FIRE') {
     decision = 'FIRE';
-  } else if (play.action === 'HOLD') {
+  } else if (resolvedAction === 'HOLD') {
     decision = 'HOLD';
-  } else if (play.action === 'PASS') {
-    decision = 'PASS';
-  } else if (play.status === 'FIRE') {
-    decision = 'FIRE';
-  } else if (play.status === 'WATCH') {
-    decision = 'HOLD';
-  } else if (play.status === 'PASS' || !play.status) {
-    decision = 'PASS';
   }
 
   // 2. MARKET & BET: Canonical market from market_type, fallback to market

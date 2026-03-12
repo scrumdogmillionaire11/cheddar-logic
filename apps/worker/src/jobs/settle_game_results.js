@@ -141,7 +141,7 @@ function parseSportsRefMenGameSummaries(html) {
   if (!source) return [];
 
   const summaries = [];
-  const summaryRe = /<div class="game_summary[^\"]*gender-m[^\"]*"[\s\S]*?<\/div>/gi;
+  const summaryRe = /<div class="game_summary[^"]*gender-m[^"]*"[\s\S]*?<\/div>/gi;
   let summaryMatch;
 
   while ((summaryMatch = summaryRe.exec(source)) !== null) {

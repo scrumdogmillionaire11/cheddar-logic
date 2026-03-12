@@ -34,7 +34,7 @@ import {
   getPlayDisplayAction,
   getCardDecisionModel,
 } from '@/lib/game-card/decision';
-import { DISPLAY_VERDICT, getDisplayVerdict } from '@/lib/game-card/display-verdict';
+import { getDisplayVerdict } from '@/lib/game-card/display-verdict';
 import { StickyBackButton } from '@/components/sticky-back-button';
 import { createTimeoutSignal } from '@/lib/network/timeout-signal';
 
@@ -1802,32 +1802,6 @@ export default function CardsPageClient() {
       >
         {displayVerdict ? displayVerdict.label : status}
       </span>
-    );
-  };
-
-  /**
-   * Render verdict badge with display label and brand sublabel.
-   * Label is bold/dominant, brand is smaller/muted underneath.
-   */
-  const getVerdictBadgeWithBrand = (status: 'PLAY' | 'LEAN' | 'PASS') => {
-    const colorMap = {
-      PLAY: 'bg-green-700/50 text-green-200 border-green-600/60',
-      LEAN: 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60',
-      PASS: 'bg-slate-700/50 text-slate-200 border-slate-600/60',
-    };
-    const displayVerdict = getDisplayVerdict(status);
-    if (!displayVerdict) {
-      return getStatusBadge(status);
-    }
-    return (
-      <div className="flex flex-col items-start gap-0.5">
-        <span className={`px-2 py-1 text-xs font-bold rounded border ${colorMap[status]}`}>
-          {displayVerdict.label}
-        </span>
-        <span className="text-xs text-cloud/50 px-2">
-          {displayVerdict.brand}
-        </span>
-      </div>
     );
   };
 
