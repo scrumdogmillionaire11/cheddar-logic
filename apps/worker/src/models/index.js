@@ -38,6 +38,7 @@ const {
   buildMarketPayload,
 } = require('./cross-market');
 const { predictNHLGame } = require('./nhl-pace-model');
+const { resolveGoalieState } = require('./nhl-goalie-state');
 const { generateCard, buildMarketCallCard } = require('@cheddar-logic/models');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
@@ -51,6 +52,10 @@ function toNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function parseRawData(rawData) {
@@ -110,6 +115,41 @@ function resolveGoalieCertainty(raw, side) {
       : normalizeGoalieCertaintyToken(raw?.goalie_away_status);
   if (flat) return flat;
   return 'UNKNOWN';
+}
+
+function starterStateToGoalieCertainty(starterState) {
+  if (starterState === 'CONFIRMED') return 'CONFIRMED';
+  if (starterState === 'EXPECTED') return 'EXPECTED';
+  return 'UNKNOWN';
+}
+
+function buildScraperGoalieInputFromRaw(raw, side) {
+  const sideKey = side === 'home' ? 'home' : 'away';
+  const goalieName = isNonEmptyString(raw?.goalie?.[sideKey]?.name)
+    ? raw.goalie[sideKey].name.trim()
+    : null;
+  const status =
+    raw?.goalie?.[sideKey]?.status ??
+    (sideKey === 'home' ? raw?.goalie_home_status : raw?.goalie_away_status) ??
+    null;
+  const gsax = toNumber(
+    sideKey === 'home'
+      ? raw?.goalie_home_gsax ?? raw?.goalie?.home?.gsax ?? raw?.goalies?.home?.gsax
+      : raw?.goalie_away_gsax ?? raw?.goalie?.away?.gsax ?? raw?.goalies?.away?.gsax,
+  );
+  const savePct = toNumber(
+    sideKey === 'home'
+      ? raw?.goalie_home_save_pct ?? raw?.goalie?.home?.save_pct ?? raw?.goalies?.home?.save_pct
+      : raw?.goalie_away_save_pct ?? raw?.goalie?.away?.save_pct ?? raw?.goalies?.away?.save_pct,
+  );
+
+  return {
+    goalie_name: goalieName,
+    status,
+    gsax,
+    save_pct: savePct,
+    source_type: goalieName ? 'SCRAPER_NAME_MATCH' : 'SEASON_TABLE_INFERENCE',
+  };
 }
 
 /**
@@ -298,10 +338,11 @@ function computeNHLDrivers(gameId, oddsSnapshot) {
  *
  * @param {string} gameId
  * @param {object} oddsSnapshot
+ * @param {{ recentRoadGames?: Array<object>|null, canonicalGoalieState?: {home?: object, away?: object}|null }} context
  * @returns {Array<object>} Array of card descriptor objects
  */
 function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
-  const { recentRoadGames = null } = context;
+  const { recentRoadGames = null, canonicalGoalieState = null } = context;
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const total = toNumber(oddsSnapshot?.total);
 
@@ -345,12 +386,32 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       raw?.goalie?.away?.gsax ??
       raw?.goalies?.away?.gsax,
   );
-  const homeGoalieCertainty = resolveGoalieCertainty(raw, 'home');
-  const awayGoalieCertainty = resolveGoalieCertainty(raw, 'away');
-  const homeGoalieName =
-    typeof raw?.goalie?.home?.name === 'string' ? raw.goalie.home.name : null;
-  const awayGoalieName =
-    typeof raw?.goalie?.away?.name === 'string' ? raw.goalie.away.name : null;
+  const homeGoalieState =
+    canonicalGoalieState?.home ??
+    resolveGoalieState(
+      buildScraperGoalieInputFromRaw(raw, 'home'),
+      null,
+      gameId,
+      'home',
+      { gameTimeUtc: oddsSnapshot?.game_time_utc },
+    );
+  const awayGoalieState =
+    canonicalGoalieState?.away ??
+    resolveGoalieState(
+      buildScraperGoalieInputFromRaw(raw, 'away'),
+      null,
+      gameId,
+      'away',
+      { gameTimeUtc: oddsSnapshot?.game_time_utc },
+    );
+  const homeGoalieCertainty = starterStateToGoalieCertainty(
+    homeGoalieState.starter_state,
+  );
+  const awayGoalieCertainty = starterStateToGoalieCertainty(
+    awayGoalieState.starter_state,
+  );
+  const homeGoalieName = homeGoalieState.goalie_name;
+  const awayGoalieName = awayGoalieState.goalie_name;
   const homeGoalieConfirmed = homeGoalieCertainty === 'CONFIRMED';
   const awayGoalieConfirmed = awayGoalieCertainty === 'CONFIRMED';
   const goalieCertaintyStatus =
@@ -442,7 +503,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       confidence,
       tier: determineTier(confidence),
       prediction: 'NEUTRAL',
-      reasoning: `Goalie confirmation from GSaX availability: ${reasoningParts.join(', ')}`,
+      reasoning: `Goalie confirmation from canonical starter state: ${reasoningParts.join(', ')}`,
       ev_threshold_passed: confidence > 0.6,
       driverKey: 'goalieCertainty',
       driverInputs: {
@@ -698,10 +759,12 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       awayGoalsAgainst: goalsAgainstAway,
       homeGoalieSavePct,
       awayGoalieSavePct,
-      homeGoalieConfirmed: goalieHomeGsax !== null, // confirmed = have real GSaX data
-      awayGoalieConfirmed: goalieAwayGsax !== null,
+      homeGoalieConfirmed,
+      awayGoalieConfirmed,
       homeGoalieCertainty,
       awayGoalieCertainty,
+      homeGoalieState,
+      awayGoalieState,
       homeB2B: paceRestDaysHome === 0,
       awayB2B: paceRestDaysAway === 0,
       restDaysHome: paceRestDaysHome,

@@ -49,6 +49,7 @@ type LedgerRow = {
   result: string | null;
   pnl_units: number | null;
   settled_at: string | null;
+  game_time_utc: string | null;
   created_at: string | null;
   payload_data: string | null;
   payload_id: string | null;
@@ -286,6 +287,9 @@ export async function GET(request: NextRequest) {
         SELECT
           cr.id,
           cr.game_id,
+          cdl.id AS display_log_id,
+          cdl.pick_id AS pick_id,
+          cdl.displayed_at AS displayed_at,
           cr.recommended_bet_type,
           ${marketKeySelect},
           ${marketTypeSelect},
@@ -314,16 +318,9 @@ export async function GET(request: NextRequest) {
             ROW_NUMBER() OVER (
               PARTITION BY game_id
               ORDER BY
-                CASE WHEN confidence_pct IS NULL THEN 1 ELSE 0 END ASC,
-                confidence_pct DESC,
-                CASE
-                  WHEN market_type = 'TOTAL' AND selection = 'OVER'
-                    THEN -COALESCE(line, -9999)
-                  ELSE COALESCE(line, -9999)
-                END DESC,
-                CASE WHEN locked_price IS NULL THEN 1 ELSE 0 END ASC,
-                locked_price DESC,
-                settled_at DESC,
+                datetime(COALESCE(displayed_at, settled_at, '1970-01-01T00:00:00Z')) DESC,
+                COALESCE(display_log_id, 0) DESC,
+                pick_id DESC,
                 id DESC
             ) AS rn
           FROM filtered
@@ -523,6 +520,7 @@ export async function GET(request: NextRequest) {
         cr.result,
         cr.pnl_units,
         cr.settled_at,
+        g.game_time_utc,
         cdl.displayed_at,
         cdl.api_endpoint,
         cp.id AS payload_id,
@@ -708,6 +706,7 @@ export async function GET(request: NextRequest) {
         result: row.result,
         pnlUnits: row.pnl_units,
         settledAt: row.settled_at,
+        gameTimeUtc: row.game_time_utc,
         createdAt: row.created_at,
         prediction,
         tier,

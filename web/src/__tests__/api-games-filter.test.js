@@ -47,6 +47,12 @@ function queryActive(client, startUtc, nowUtc, endUtc = null) {
          )
          AND datetime(g.game_time_utc) <= datetime(?)
          AND UPPER(COALESCE(g.status, '')) NOT IN ('POSTPONED', 'CANCELLED', 'CANCELED', 'FINAL', 'CLOSED', 'COMPLETE', 'COMPLETED', 'FT')
+         AND NOT EXISTS (
+           SELECT 1
+           FROM game_results gr
+           WHERE gr.game_id = g.game_id
+             AND UPPER(COALESCE(gr.status, '')) IN ('FINAL', 'FT', 'COMPLETE', 'COMPLETED', 'CLOSED')
+         )
          ${endUtc ? 'AND datetime(g.game_time_utc) <= ?' : ''}
        ORDER BY g.game_time_utc ASC`,
     )
@@ -97,6 +103,11 @@ async function runTests() {
     'route defines active-mode non-live status exclusions',
   );
   assert(
+    routeSource.includes('FINAL_GAME_RESULT_STATUSES') &&
+      routeSource.includes('FROM game_results gr'),
+    'route excludes games already finalized in game_results during active mode',
+  );
+  assert(
     !routeSource.includes('include_started') &&
       !routeSource.includes('active_plays'),
     'route uses canonical lifecycle query param only (legacy aliases removed)',
@@ -114,6 +125,9 @@ async function runTests() {
   // Clean up any leftover test data
   client
     .prepare(`DELETE FROM games WHERE game_id LIKE '${TEST_PREFIX}%'`)
+    .run();
+  client
+    .prepare(`DELETE FROM game_results WHERE game_id LIKE '${TEST_PREFIX}%'`)
     .run();
 
   const now = new Date();
@@ -145,6 +159,15 @@ async function runTests() {
       expectPreGame: false,
       expectActive: true,
       label: 'Started scheduled game is treated as active by time rule',
+    },
+    {
+      id: `${TEST_PREFIX}past-scheduled-final-result`,
+      offsetMs: -59 * 60 * 1000,
+      status: 'scheduled',
+      expectPreGame: false,
+      expectActive: false,
+      hasFinalGameResult: true,
+      label: 'Started scheduled game with final game_results row is excluded from active mode',
     },
     {
       id: `${TEST_PREFIX}past-postponed`,
@@ -197,6 +220,16 @@ async function runTests() {
          VALUES (?, 'TEST', ?, 'Home', 'Away', ?, ?, datetime('now'), datetime('now'))`,
       )
       .run(`id-${g.id}`, g.id, gameTime, g.status);
+
+    if (g.hasFinalGameResult) {
+      client
+        .prepare(
+          `INSERT OR REPLACE INTO game_results
+             (id, game_id, sport, final_score_home, final_score_away, status, result_source, settled_at, created_at, updated_at)
+           VALUES (?, ?, 'TEST', 77, 70, 'final', 'manual', datetime('now'), datetime('now'), datetime('now'))`,
+        )
+        .run(`gr-${g.id}`, g.id);
+    }
   }
 
   const pregameResults = queryPreGame(client, startUtc, nowUtc, endUtc);
@@ -226,6 +259,9 @@ async function runTests() {
 
   client
     .prepare(`DELETE FROM games WHERE game_id LIKE '${TEST_PREFIX}%'`)
+    .run();
+  client
+    .prepare(`DELETE FROM game_results WHERE game_id LIKE '${TEST_PREFIX}%'`)
     .run();
   console.log();
 

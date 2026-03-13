@@ -222,12 +222,51 @@ export interface FixturePlannerData {
   key_planning_notes: string[];
 }
 
+export interface LineupDecisionStarter {
+  player_id?: number | string;
+  name: string;
+  team?: string;
+  position: 'GK' | 'DEF' | 'MID' | 'FWD' | string;
+  projected_points?: number;
+  expected_minutes?: number;
+  flags?: string[];
+  badges?: string[];
+  start_reason?: string;
+}
+
+export interface LineupDecisionBench {
+  player_id?: number | string;
+  name: string;
+  team?: string;
+  position: 'GK' | 'DEF' | 'MID' | 'FWD' | string;
+  projected_points?: number;
+  expected_minutes?: number;
+  flags?: string[];
+  bench_order?: number;
+  bench_reason?: string;
+}
+
+export interface LineupDecisionPayload {
+  formation: string;
+  risk_profile: 'CONSERVATIVE' | 'BALANCED' | 'AGGRESSIVE' | string;
+  lineup_confidence: 'HIGH' | 'MEDIUM' | 'LOW' | string;
+  formation_reason: string;
+  risk_profile_effect?: string;
+  notes: string[];
+  starters: LineupDecisionStarter[];
+  bench: LineupDecisionBench[];
+  captain_player_id?: number | string;
+  vice_captain_player_id?: number | string;
+}
+
 export interface DetailedAnalysisResponse {
   team_name: string;
   manager_name: string;
   current_gw?: number | null;
   overall_rank?: number | null;
   overall_points?: number | null;
+  free_transfers?: number | null;
+  risk_posture?: string | null;
   primary_decision: string;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW' | string;
   reasoning: string;
@@ -236,13 +275,16 @@ export interface DetailedAnalysisResponse {
   transfer_recommendations: Array<Record<string, unknown>>;
   transfer_plans?: TransferPlans | null;
   near_threshold_moves?: NearThresholdMove[] | null;
+  near_threshold_reason?: string | null;
   strategy_paths?: StrategyPaths | null;
+  strategy_paths_reason?: string | null;
   squad_issues?: SquadIssue[] | null;
   captain?: Record<string, unknown> | null;
   vice_captain?: Record<string, unknown> | null;
   captain_delta?: { delta_pts?: number; delta_pts_4gw?: number } | null;
   starting_xi_projections: PlayerProjection[];
   bench_projections: PlayerProjection[];
+  lineup_decision?: LineupDecisionPayload | null;
   projected_xi?: PlayerProjection[] | null;
   projected_bench?: PlayerProjection[] | null;
   transfer_targets?: PlayerProjection[] | null;
@@ -250,6 +292,7 @@ export interface DetailedAnalysisResponse {
   chip_recommendation?: Record<string, unknown> | null;
   chip_timing_outlook?: ChipTimingOutlook | null;
   fixture_planner?: FixturePlannerData | null;
+  fixture_planner_reason?: string | null;
   available_chips: string[];
   squad_health?: SquadHealth | null;
 }

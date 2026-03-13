@@ -55,6 +55,10 @@ async function runSourceContractAssertions(assert) {
     source.includes('diagnostics: flowDiagnostics'),
     'route must attach non-prod diagnostics metadata to response meta',
   );
+  assert.ok(
+    source.includes('true_play: truePlayMap.get(row.game_id) ?? null'),
+    'route must expose canonical true_play per game',
+  );
 
   assert.ok(
     !source.includes('repair_applied') &&
@@ -124,6 +128,29 @@ async function run() {
       isWave1Play(game, play),
     ),
   );
+
+  for (const game of games) {
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(game, 'true_play'),
+      true,
+      'each game must include true_play',
+    );
+    const truePlay = game.true_play;
+    if (truePlay === null || truePlay === undefined) continue;
+    assert.strictEqual(
+      String(truePlay.kind ?? 'PLAY').toUpperCase(),
+      'PLAY',
+      'true_play must be a PLAY row',
+    );
+    if (truePlay?.decision_v2?.official_status) {
+      assert.ok(
+        ['PLAY', 'LEAN'].includes(
+          String(truePlay.decision_v2.official_status),
+        ),
+        'true_play decision_v2 status must be actionable PLAY/LEAN',
+      );
+    }
+  }
 
   for (const play of wave1Plays) {
     assert.ok(play.decision_v2, 'wave-1 play must include decision_v2');

@@ -39,6 +39,62 @@ async function run() {
     dashboardSource.includes('Captain delta vs vice:'),
     'Captain delta label missing from dashboard',
   );
+  assert.ok(
+    dashboardSource.includes('const nearThresholdEmptyText ='),
+    'Dashboard should define section-specific near-threshold empty copy',
+  );
+  assert.ok(
+    dashboardSource.includes('data.near_threshold_reason?.trim()'),
+    'Near-threshold empty state should prioritize backend near_threshold_reason',
+  );
+  assert.ok(
+    dashboardSource.includes('const strategyPathsEmptyText ='),
+    'Dashboard should define section-specific strategy-path empty copy',
+  );
+  assert.ok(
+    dashboardSource.includes('data.strategy_paths_reason?.trim()'),
+    'Strategy-path empty state should prioritize backend strategy_paths_reason',
+  );
+  assert.ok(
+    dashboardSource.includes('const normalizeReasoningText ='),
+    'Dashboard should normalize contradictory reasoning text',
+  );
+  assert.ok(
+    dashboardSource.includes("normalizedCode === 'NO_CHIP_ACTION'"),
+    'Dashboard should normalize raw NO_CHIP_ACTION decision codes',
+  );
+  assert.ok(
+    dashboardSource.includes("raw.toLowerCase().includes('no free transfers')"),
+    'Dashboard should guard against contradictory no-free-transfer reasoning copy',
+  );
+  assert.ok(
+    dashboardSource.includes(
+      'normalizeDecisionText(\n    data.primary_decision,\n    normalizedFreeTransferCount,\n  )',
+    ),
+    'Dashboard should normalize decision text with effective free-transfer context',
+  );
+  assert.ok(
+    !dashboardSource.includes('{transferDiagnostic}'),
+    'Near-threshold/strategy empty states should not reuse transfer diagnostic text',
+  );
+  assert.ok(
+    dashboardSource.includes(
+      'No near-threshold moves this gameweek. Candidate swaps were either clearly above threshold or well below required gain.',
+    ),
+    'Near-threshold empty state should use section-specific copy',
+  );
+  assert.ok(
+    dashboardSource.includes('No distinct strategy-path alternatives this gameweek.'),
+    'Strategy-path empty state should use section-specific copy',
+  );
+  assert.ok(
+    !dashboardSource.includes('No near-threshold alternatives available this gameweek.'),
+    'Near-threshold empty state should use diagnostic reasoning instead of static generic copy',
+  );
+  assert.ok(
+    !dashboardSource.includes('No path generated'),
+    'Strategy path empty state should not use repeated generic placeholder copy',
+  );
 
   const apiSource = await fs.readFile(
     new URL('../lib/fpl-api.ts', import.meta.url),
@@ -49,7 +105,9 @@ async function run() {
     'manager_state?: ManagerState | null;',
     'strategy_mode?: string | null;',
     'near_threshold_moves?: NearThresholdMove[] | null;',
+    'near_threshold_reason?: string | null;',
     'strategy_paths?: StrategyPaths | null;',
+    'strategy_paths_reason?: string | null;',
     'squad_issues?: SquadIssue[] | null;',
     'chip_timing_outlook?: ChipTimingOutlook | null;',
   ].forEach((contractLine) => {

@@ -55,6 +55,43 @@ class OptimizedXI(BaseModel):
     total_expected_pts: float
 
 
+class LineupPlayer(BaseModel):
+    player_id: int | str
+    name: str
+    team: str
+    position: Literal["GK", "DEF", "MID", "FWD"]
+    projected_points: float
+    expected_minutes: Optional[float] = None
+    flags: list[str] = Field(default_factory=list)
+    badges: list[str] = Field(default_factory=list)
+    start_reason: Optional[str] = None
+
+
+class BenchPlayer(BaseModel):
+    player_id: int | str
+    name: str
+    team: Optional[str] = None
+    position: Literal["GK", "DEF", "MID", "FWD"]
+    bench_order: int
+    projected_points: float
+    expected_minutes: Optional[float] = None
+    flags: list[str] = Field(default_factory=list)
+    bench_reason: Optional[str] = None
+
+
+class OptimizedLineupResponse(BaseModel):
+    formation: str
+    risk_profile: Literal["CONSERVATIVE", "BALANCED", "AGGRESSIVE"]
+    lineup_confidence: Literal["HIGH", "MEDIUM", "LOW"]
+    formation_reason: str
+    risk_profile_effect: Optional[str] = None
+    notes: list[str] = Field(default_factory=list)
+    starters: list[LineupPlayer] = Field(default_factory=list)
+    bench: list[BenchPlayer] = Field(default_factory=list)
+    captain_player_id: Optional[int | str] = None
+    vice_captain_player_id: Optional[int | str] = None
+
+
 class DecisionSummary(BaseModel):
     """Complete decision output for a gameweek"""
     manager_id: int

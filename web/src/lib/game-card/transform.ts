@@ -132,6 +132,7 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
 
 // API types from cards page
 interface ApiPlay {
+  source_card_id?: string;
   cardType: string;
   cardTitle: string;
   prediction: 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';
@@ -244,6 +245,7 @@ interface GameData {
       | 'VOLATILE_ENV'
       | 'UNKNOWN';
   };
+  true_play?: ApiPlay | null;
   plays: ApiPlay[];
 }
 
@@ -1153,9 +1155,30 @@ function resolveSourceModelProb(play?: ApiPlay): number | undefined {
  * Build canonical Play object at transform time
  */
 function buildPlay(game: GameData, drivers: DriverRow[]): Play {
-  const playCandidates = game.plays.filter((play) =>
+  const canonicalTruePlay =
+    game.true_play &&
+    isPlayItem(game.true_play, game.sport) &&
+    (ENABLE_WELCOME_HOME || !isWelcomeHomePlay(game.true_play))
+      ? game.true_play
+      : null;
+  const basePlayCandidates = game.plays.filter((play) =>
     isPlayItem(play, game.sport),
   );
+  const hasCanonicalInCandidates = canonicalTruePlay
+    ? basePlayCandidates.some((play) => {
+        if (play.source_card_id && canonicalTruePlay.source_card_id) {
+          return play.source_card_id === canonicalTruePlay.source_card_id;
+        }
+        return (
+          play.cardType === canonicalTruePlay.cardType &&
+          play.created_at === canonicalTruePlay.created_at
+        );
+      })
+    : false;
+  const playCandidates =
+    canonicalTruePlay && !hasCanonicalInCandidates
+      ? [canonicalTruePlay, ...basePlayCandidates]
+      : basePlayCandidates;
   const dedupedPlayCandidates = dedupePlayCandidates(game, playCandidates);
   const evidenceCandidates = game.plays.filter((play) =>
     isEvidenceItem(play, game.sport),
@@ -1166,10 +1189,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const scopedEvidenceCandidates = ENABLE_WELCOME_HOME
     ? evidenceCandidates
     : evidenceCandidates.filter((play) => !isWelcomeHomePlay(play));
-  const wave1DecisionPlay = selectWave1DecisionCandidate(
-    scopedPlayCandidates,
-    game.sport,
-  );
+  const wave1DecisionPlay =
+    canonicalTruePlay &&
+    isWave1EligibleDecisionPlay(canonicalTruePlay, game.sport) &&
+    canonicalTruePlay.decision_v2
+      ? canonicalTruePlay
+      : selectWave1DecisionCandidate(scopedPlayCandidates, game.sport);
   if (wave1DecisionPlay?.decision_v2) {
     const decisionV2 = wave1DecisionPlay.decision_v2;
     const ftTrendOverrideDirection =

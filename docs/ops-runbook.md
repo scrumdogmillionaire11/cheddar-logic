@@ -213,6 +213,9 @@ WHERE status = 'pending'
   AND card_id IN (SELECT pick_id FROM card_display_log);
 "
 
+# 2.5) Read-only settlement health report
+npm --prefix apps/worker run job:settlement-report -- --json --limit=10
+
 # 3) Run settlement jobs
 npm --prefix apps/worker run job:settle-games
 npm --prefix apps/worker run job:settle-cards
@@ -261,6 +264,56 @@ WHERE cr.id IS NULL
 curl -s http://localhost:3000/api/results | jq '.data.meta'
 curl -sI http://localhost:3000/api/results | grep -i '^x-settlement-coverage:'
 ```
+
+### Read-only settlement health report
+
+Use this before any rerun if the question is:
+
+- do we still have unsettled plays?
+- are unsettled rows actionable or blocked?
+- which settlement failures happened in prod, and why?
+
+Command:
+
+```bash
+# Human-readable summary
+npm --prefix apps/worker run job:settlement-report
+
+# Machine-readable JSON for incident notes / jq
+npm --prefix apps/worker run job:settlement-report -- --json --limit=10
+
+# Restrict to one sport and recent window
+npm --prefix apps/worker run job:settlement-report -- --sport=NHL --days=7 --json
+
+# Optional: override saved log file path
+npm --prefix apps/worker run job:settlement-report -- --log-file /tmp/settlement-health.json --json
+```
+
+Default log artifact:
+
+- Every CLI run saves the full report JSON to `logs/settlement-health-<timestamp>.json`.
+- Use `--log-file <PATH>` to override the saved path.
+- Use `--no-log` if you only want terminal output.
+
+What it reports:
+
+- `summary.hasUnsettledPlays`: whether any `card_results.status='pending'` rows remain
+- `summary.hasActionableUnsettledFinalDisplayed`: pending rows that already have both display-log evidence and `game_results.status='final'`
+- `coverage.pendingWithFinalNoDisplay`: pending rows blocked only because `card_display_log` is missing
+- `coverage.pendingWithFinalMissingMarketKey`: pending rows blocked because settlement contract fields are incomplete
+- `coverage.pendingDisplayedWithoutFinal`: displayed pending rows still waiting on a final game result
+- `failures.byCode`: grouped `metadata.settlement_error.code` counts for `card_results.status='error'`
+- `jobRuns`: latest success/failure snapshots for `settle_game_results` and `settle_pending_cards`
+
+Suggested incident flow:
+
+1. Run `job:settlement-report -- --json` and save the output.
+2. If `hasActionableUnsettledFinalDisplayed=true`, rerun `job:settle-games` then `job:settle-cards`.
+3. Compare the new report to the saved one:
+
+- actionable pending should decrease
+- failure-code buckets should stabilize to known contract issues
+- recent job failures should explain any non-zero blocked counts
 
 Expected relationships:
 

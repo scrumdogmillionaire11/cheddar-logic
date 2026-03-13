@@ -463,76 +463,183 @@ describe('settlement coverage parity', () => {
   });
 
   test('settlePendingCards settles only displayed + final eligible rows', async () => {
-    const result = await settlePendingCards();
-    expect(result.success).toBe(true);
-    expect(result.cardsErrored).toBe(0);
-    expect(result.coverage).toMatchObject({
-      pending: 4,
-      eligible: 2,
-    });
-    expect(result.coverage.marketDailyCounts?.NHL_MONEYLINE).toMatchObject({
-      pending: 1,
-      settled: 1,
-      failed: 0,
-    });
+    const originalGate = process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL;
+    delete process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL;
+    try {
+      const result = await settlePendingCards({ allowDisplayBackfill: true });
+      expect(result.success).toBe(true);
+      expect(result.cardsErrored).toBe(0);
+      expect(result.coverage).toMatchObject({
+        pending: 4,
+        eligible: 2,
+      });
+      expect(result.coverage.marketDailyCounts?.NHL_MONEYLINE).toMatchObject({
+        pending: 1,
+        settled: 1,
+        failed: 0,
+      });
 
-    const db = getDatabase();
-    const statuses = db
-      .prepare(
-        `
-        SELECT card_id, status, result
-        FROM card_results
-        ORDER BY card_id
-      `,
-      )
-      .all();
+      const db = getDatabase();
+      const statuses = db
+        .prepare(
+          `
+          SELECT card_id, status, result
+          FROM card_results
+          ORDER BY card_id
+        `,
+        )
+        .all();
 
-    const byCard = Object.fromEntries(
-      statuses.map((row) => [
-        row.card_id,
-        { status: row.status, result: row.result },
-      ]),
-    );
-    expect(byCard['card-p1'].status).toBe('settled');
-    expect(byCard['card-p1'].result).toBe('win');
-    expect(byCard['card-p2'].status).toBe('settled');
-    expect(byCard['card-p3'].status).toBe('pending');
-    expect(byCard['card-p4'].status).toBe('settled');
-    expect(byCard['card-p4'].result).toBe('loss');
-    expect(byCard['card-p5'].status).toBe('pending');
+      const byCard = Object.fromEntries(
+        statuses.map((row) => [
+          row.card_id,
+          { status: row.status, result: row.result },
+        ]),
+      );
+      expect(byCard['card-p1'].status).toBe('settled');
+      expect(byCard['card-p1'].result).toBe('win');
+      expect(byCard['card-p2'].status).toBe('settled');
+      expect(byCard['card-p3'].status).toBe('pending');
+      expect(byCard['card-p4'].status).toBe('settled');
+      expect(byCard['card-p4'].result).toBe('loss');
+      expect(byCard['card-p5'].status).toBe('pending');
 
-    const diagnosticsAfter = __private.getSettlementCoverageDiagnostics(db);
-    expect(diagnosticsAfter.eligiblePendingFinalDisplayed).toBe(0);
-    expect(diagnosticsAfter.finalDisplayedUnsettled).toBe(1);
-    expect(diagnosticsAfter.finalDisplayedMissingResults).toBe(1);
-    expect(diagnosticsAfter.pendingWithFinalButNotDisplayed).toBe(1);
+      const diagnosticsAfter = __private.getSettlementCoverageDiagnostics(db);
+      expect(diagnosticsAfter.eligiblePendingFinalDisplayed).toBe(0);
+      expect(diagnosticsAfter.finalDisplayedUnsettled).toBe(1);
+      expect(diagnosticsAfter.finalDisplayedMissingResults).toBe(1);
+      expect(diagnosticsAfter.pendingWithFinalButNotDisplayed).toBe(1);
+    } finally {
+      if (originalGate === undefined) {
+        delete process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL;
+      } else {
+        process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL = originalGate;
+      }
+    }
   });
 
   test('allowDisplayBackfill settles pending final cards missing display-log', async () => {
-    const result = await settlePendingCards({ allowDisplayBackfill: true });
-    expect(result.success).toBe(true);
-    expect(result.cardsErrored).toBe(0);
-    expect(result.coverage.marketDailyCounts?.NHL_MONEYLINE).toMatchObject({
-      pending: 1,
-      settled: 1,
-      failed: 0,
-    });
+    const originalGate = process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL;
+    process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL = 'true';
+    try {
+      const result = await settlePendingCards({ allowDisplayBackfill: true });
+      expect(result.success).toBe(true);
+      expect(result.cardsErrored).toBe(0);
+      expect(result.coverage.marketDailyCounts?.NHL_MONEYLINE).toMatchObject({
+        pending: 1,
+        settled: 1,
+        failed: 0,
+      });
 
+      const db = getDatabase();
+      const cardP5 = db
+        .prepare(
+          `
+          SELECT status, result
+          FROM card_results
+          WHERE card_id = ?
+        `,
+        )
+        .get('card-p5');
+      expect(cardP5?.status).toBe('settled');
+      expect(cardP5?.result).toBe('win');
+
+      const diagnosticsAfterBackfill = __private.getSettlementCoverageDiagnostics(db);
+      expect(diagnosticsAfterBackfill.pendingWithFinalButNotDisplayed).toBe(0);
+    } finally {
+      if (originalGate === undefined) {
+        delete process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL;
+      } else {
+        process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL = originalGate;
+      }
+    }
+  });
+
+  test('settlePendingCards auto-closes final PASS rows as void errors', async () => {
     const db = getDatabase();
-    const cardP5 = db
+    const now = new Date().toISOString();
+    const finalNhl = 'game-final-nhl';
+
+    runInsert(
+      db,
+      `
+      INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+      'card-p6-pass',
+      finalNhl,
+      'nhl',
+      'nhl-model-output',
+      'P6',
+      now,
+      JSON.stringify({
+        kind: 'PLAY',
+        status: 'PASS',
+        decision_v2: { official_status: 'PASS' },
+        market_type: 'MONEYLINE',
+        selection: { side: 'HOME' },
+        price: -125,
+        home_team: 'Home B',
+        away_team: 'Away B',
+      }),
+    );
+
+    runInsert(
+      db,
+      `
+      INSERT INTO card_results (
+        id, card_id, game_id, sport, card_type, recommended_bet_type,
+        status, market_key, market_type, selection, line, locked_price
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      'result-p6-pass',
+      'card-p6-pass',
+      finalNhl,
+      'nhl',
+      'nhl-model-output',
+      'moneyline',
+      'pending',
+      buildMarketKey({
+        gameId: finalNhl,
+        marketType: 'MONEYLINE',
+        selection: 'HOME',
+        line: null,
+      }),
+      'MONEYLINE',
+      'HOME',
+      null,
+      -125,
+    );
+
+    const settledAt = new Date().toISOString();
+    const closeResult = __private.autoCloseNonActionableFinalPendingRows(
+      db,
+      settledAt,
+    );
+    expect(closeResult.closed).toBeGreaterThanOrEqual(1);
+    expect(
+      closeResult.reasonCounts.NON_ACTIONABLE_FINAL_PASS,
+    ).toBeGreaterThanOrEqual(1);
+
+    const row = db
       .prepare(
         `
-        SELECT status, result
+        SELECT status, result, settled_at, metadata
         FROM card_results
-        WHERE card_id = ?
+        WHERE id = ?
       `,
       )
-      .get('card-p5');
-    expect(cardP5?.status).toBe('settled');
-    expect(cardP5?.result).toBe('win');
+      .get('result-p6-pass');
 
-    const diagnosticsAfterBackfill = __private.getSettlementCoverageDiagnostics(db);
-    expect(diagnosticsAfterBackfill.pendingWithFinalButNotDisplayed).toBe(0);
+    expect(row?.status).toBe('error');
+    expect(row?.result).toBe('void');
+    expect(row?.settled_at).toBeTruthy();
+    const metadata = row?.metadata ? JSON.parse(row.metadata) : {};
+    expect(metadata?.settlement_error?.code).toBe('NON_ACTIONABLE_FINAL_PASS');
+    expect(metadata?.settlement_error?.classification).toBe(
+      'NON_ACTIONABLE_AUTO_CLOSE',
+    );
+    expect(metadata?.settlement_error?.at).toBe(settledAt);
   });
 
   test('computePnlUnits follows canonical forward-only formula', () => {

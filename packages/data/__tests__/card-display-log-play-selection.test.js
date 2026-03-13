@@ -22,6 +22,9 @@ function buildPlayPayload({
   line,
   price,
   kind = 'PLAY',
+  confidencePct = 63.5,
+  edgePct = 0.01,
+  supportScore = 50,
 }) {
   return {
     game_id: gameId,
@@ -36,9 +39,117 @@ function buildPlayPayload({
     price,
     decision_v2: {
       official_status: officialStatus,
+      edge_pct: edgePct,
+      support_score: supportScore,
     },
-    confidence_pct: 63.5,
+    confidence_pct: confidencePct,
   };
+}
+
+function seedSettledPerformanceRows(
+  db,
+  { sport, marketType, wins, losses, prefix },
+) {
+  const gameId = `${prefix}-perf-game`;
+  const now = Date.now();
+  db.prepare(
+    `
+    INSERT OR IGNORE INTO games (
+      id, sport, game_id, home_team, away_team, game_time_utc, status
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+  ).run(
+    `${gameId}-id`,
+    String(sport).toLowerCase(),
+    gameId,
+    'Perf Home',
+    'Perf Away',
+    new Date(now + 60 * 60 * 1000).toISOString(),
+    'scheduled',
+  );
+
+  const totalRows = wins + losses;
+  for (let i = 0; i < totalRows; i += 1) {
+    const isWin = i < wins;
+    const settledAt = new Date(now - (i + 1) * 60 * 60 * 1000).toISOString();
+    const cardId = `${prefix}-perf-card-${i}`;
+    const resultId = `${prefix}-perf-result-${i}`;
+    const isMoneyline = String(marketType).toUpperCase() === 'MONEYLINE';
+    const isSpread = String(marketType).toUpperCase() === 'SPREAD';
+    const selection = isMoneyline || isSpread ? 'HOME' : 'OVER';
+    const line = isMoneyline ? null : 1.5;
+    const recommendedBetType = isMoneyline
+      ? 'moneyline'
+      : isSpread
+        ? 'spread'
+        : 'total';
+
+    db.prepare(
+      `
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, payload_data, run_id
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      cardId,
+      gameId,
+      String(sport).toLowerCase(),
+      'perf-card',
+      'Performance seed',
+      settledAt,
+      JSON.stringify({
+        game_id: gameId,
+        sport,
+        kind: 'EVIDENCE',
+        market_type: marketType,
+        selection: { side: selection },
+        line,
+        price: -110,
+      }),
+      `${prefix}-perf-run`,
+    );
+
+    db.prepare(
+      `
+      INSERT INTO card_results (
+        id,
+        card_id,
+        game_id,
+        sport,
+        card_type,
+        recommended_bet_type,
+        market_key,
+        market_type,
+        selection,
+        line,
+        locked_price,
+        status,
+        result,
+        settled_at,
+        pnl_units,
+        metadata
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'settled', ?, ?, ?, '{}')
+    `,
+    ).run(
+      resultId,
+      cardId,
+      gameId,
+      String(sport).toUpperCase(),
+      'perf-card',
+      recommendedBetType,
+      `${gameId}:${marketType}:${selection}:${line ?? 'NA'}`,
+      String(marketType).toUpperCase(),
+      selection,
+      line,
+      -110,
+      isWin ? 'win' : 'loss',
+      settledAt,
+      isWin ? 0.909 : -1,
+    );
+  }
 }
 
 function ensureCoreTables(db) {
@@ -231,11 +342,11 @@ describe('card_display_log capture for playable rows', () => {
     expect(rows[0].odds).toBe(-108);
   });
 
-  test('keeps best line then best odds for duplicate game market picks', () => {
+  test('enforces one row per run_id + game_id across mixed markets/sides', () => {
     const db = dbModule.getDatabase();
     ensureCoreTables(db);
     const now = new Date().toISOString();
-    const gameId = 'game-best-line-1';
+    const gameId = 'game-one-true-play-1';
 
     db.prepare(
       `
@@ -245,11 +356,11 @@ describe('card_display_log capture for playable rows', () => {
     ).run('g-2', 'nba', gameId, 'Home', 'Away', now, 'scheduled');
 
     dbModule.insertCardPayload({
-      id: 'card-spread-a',
+      id: 'card-spread-play',
       gameId,
       sport: 'nba',
       cardType: 'nba-test-play',
-      cardTitle: 'Spread A',
+      cardTitle: 'Spread Play',
       createdAt: now,
       payloadData: buildPlayPayload({
         gameId,
@@ -259,18 +370,21 @@ describe('card_display_log capture for playable rows', () => {
         officialStatus: 'PLAY',
         marketType: 'SPREAD',
         selection: 'HOME',
-        line: -10.5,
+        line: -4.5,
         price: -110,
+        confidencePct: 61,
+        edgePct: 0.07,
+        supportScore: 74,
       }),
       runId: 'run-b',
     });
 
     dbModule.insertCardPayload({
-      id: 'card-spread-b',
+      id: 'card-moneyline-play',
       gameId,
       sport: 'nba',
       cardType: 'nba-test-play',
-      cardTitle: 'Spread B',
+      cardTitle: 'Moneyline Play',
       createdAt: now,
       payloadData: buildPlayPayload({
         gameId,
@@ -278,31 +392,13 @@ describe('card_display_log capture for playable rows', () => {
         homeTeam: 'Home',
         awayTeam: 'Away',
         officialStatus: 'PLAY',
-        marketType: 'SPREAD',
-        selection: 'HOME',
-        line: -9.5, // better than -10.5
-        price: -120,
-      }),
-      runId: 'run-b',
-    });
-
-    dbModule.insertCardPayload({
-      id: 'card-spread-c',
-      gameId,
-      sport: 'nba',
-      cardType: 'nba-test-play',
-      cardTitle: 'Spread C',
-      createdAt: now,
-      payloadData: buildPlayPayload({
-        gameId,
-        sport: 'NBA',
-        homeTeam: 'Home',
-        awayTeam: 'Away',
-        officialStatus: 'PLAY',
-        marketType: 'SPREAD',
-        selection: 'HOME',
-        line: -9.5, // same best line, better odds
-        price: -105,
+        marketType: 'MONEYLINE',
+        selection: 'AWAY',
+        line: undefined,
+        price: 110,
+        confidencePct: 67,
+        edgePct: 0.01,
+        supportScore: 20,
       }),
       runId: 'run-b',
     });
@@ -318,16 +414,108 @@ describe('card_display_log capture for playable rows', () => {
       .get(gameId);
 
     expect(row).toBeDefined();
-    expect(row.pick_id).toBe('card-spread-c');
-    expect(row.line).toBe(-9.5);
-    expect(row.odds).toBe(-105);
+    expect(row.pick_id).toBe('card-moneyline-play');
+    expect(row.line).toBeNull();
+    expect(row.odds).toBe(110);
     expect(row.run_id).toBe('run-b');
-    expect(String(row.market_type).toUpperCase()).toBe('SPREAD');
-    expect(String(row.selection).toUpperCase()).toBe('HOME');
+    expect(String(row.market_type).toUpperCase()).toBe('MONEYLINE');
+    expect(String(row.selection).toUpperCase()).toBe('AWAY');
 
     const totalRows = db
       .prepare(`SELECT COUNT(*) AS count FROM card_display_log WHERE game_id = ?`)
       .get(gameId);
     expect(totalRows.count).toBe(1);
+  });
+
+  test('ranks by confidence x 30-day market performance before edge/support', () => {
+    const db = dbModule.getDatabase();
+    ensureCoreTables(db);
+    const now = new Date().toISOString();
+    const gameId = 'game-rank-perf-1';
+
+    db.prepare(
+      `
+      INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run('g-rank-1', 'nba', gameId, 'Home', 'Away', now, 'scheduled');
+
+    seedSettledPerformanceRows(db, {
+      sport: 'NBA',
+      marketType: 'SPREAD',
+      wins: 20,
+      losses: 5,
+      prefix: 'spread-high-perf',
+    });
+    seedSettledPerformanceRows(db, {
+      sport: 'NBA',
+      marketType: 'MONEYLINE',
+      wins: 10,
+      losses: 15,
+      prefix: 'moneyline-low-perf',
+    });
+
+    dbModule.insertCardPayload({
+      id: 'card-spread-perf',
+      gameId,
+      sport: 'nba',
+      cardType: 'nba-test-play',
+      cardTitle: 'Spread higher weighted confidence',
+      createdAt: now,
+      payloadData: buildPlayPayload({
+        gameId,
+        sport: 'NBA',
+        homeTeam: 'Home',
+        awayTeam: 'Away',
+        officialStatus: 'PLAY',
+        marketType: 'SPREAD',
+        selection: 'HOME',
+        line: -3.5,
+        price: -110,
+        confidencePct: 60,
+        edgePct: 0.02,
+        supportScore: 40,
+      }),
+      runId: 'run-perf-rank',
+    });
+
+    dbModule.insertCardPayload({
+      id: 'card-moneyline-perf',
+      gameId,
+      sport: 'nba',
+      cardType: 'nba-test-play',
+      cardTitle: 'Moneyline lower weighted confidence',
+      createdAt: now,
+      payloadData: buildPlayPayload({
+        gameId,
+        sport: 'NBA',
+        homeTeam: 'Home',
+        awayTeam: 'Away',
+        officialStatus: 'PLAY',
+        marketType: 'MONEYLINE',
+        selection: 'AWAY',
+        line: undefined,
+        price: 115,
+        confidencePct: 70,
+        edgePct: 0.15,
+        supportScore: 95,
+      }),
+      runId: 'run-perf-rank',
+    });
+
+    const row = db
+      .prepare(
+        `
+        SELECT pick_id, market_type, selection
+        FROM card_display_log
+        WHERE game_id = ? AND run_id = ?
+      `,
+      )
+      .get(gameId, 'run-perf-rank');
+
+    expect(row).toBeDefined();
+    expect(row.pick_id).toBe('card-spread-perf');
+    expect(String(row.market_type).toUpperCase()).toBe('SPREAD');
+    expect(String(row.selection).toUpperCase()).toBe('HOME');
   });
 });

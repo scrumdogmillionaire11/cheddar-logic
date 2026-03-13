@@ -518,7 +518,7 @@ describe('card payload/card_results sport normalization', () => {
     expect(allRows[2].sport).toBe('ncaam');
   });
 
-  test('NHL full-game totals enroll in card_display_log when kind=PLAY even if official_status=PASS', () => {
+  test('NHL full-game totals with PASS status do not enroll in card_display_log', () => {
     const db = dbModule.getDatabase();
     const now = new Date();
     const gameTimeUtc = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString();
@@ -586,11 +586,7 @@ describe('card payload/card_results sport normalization', () => {
          WHERE pick_id = ?`
       )
       .get('card-nhl-full-total-pass');
-    expect(displayRow).toMatchObject({
-      pick_id: 'card-nhl-full-total-pass',
-      market_type: 'TOTAL',
-      selection: 'OVER',
-    });
+    expect(displayRow).toBeNull();
   });
 
   test('NHL 1P totals lock from *_1p prices and only enroll actionable statuses', () => {

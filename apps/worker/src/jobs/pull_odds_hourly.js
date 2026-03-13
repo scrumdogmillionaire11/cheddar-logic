@@ -188,10 +188,15 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
             games: normalizedGames,
             errors: fetchErrors,
             rawCount,
+            windowRawCount,
           } = await fetchOdds({
             sport,
             hoursAhead: 36,
           });
+
+          const contractRawCount = Number.isFinite(windowRawCount)
+            ? windowRawCount
+            : rawCount;
 
           kpis.rawGamesSeen += Number(rawCount || 0);
           kpis.normalizedGamesSeen += Number(normalizedGames?.length || 0);
@@ -207,6 +212,7 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 sport,
                 sourceContext: {
                   rawCount,
+                  windowRawCount: contractRawCount,
                   normalizedCount: normalizedGames?.length || 0,
                 },
               });
@@ -215,12 +221,15 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
 
           // Accumulate skipped game count
           skippedMissingFields +=
-            rawCount - (normalizedGames ? normalizedGames.length : 0);
+            contractRawCount - (normalizedGames ? normalizedGames.length : 0);
 
           // Contract check: skip this sport if normalization drops >40% of games
           // Use continue (not return) so other sports are not aborted
-          if (rawCount > 0 && normalizedGames.length < rawCount * 0.6) {
-            const msg = `CONTRACT VIOLATION: ${sport} normalized ${normalizedGames.length}/${rawCount} games (threshold 60%) — skipping sport`;
+          if (
+            contractRawCount > 0 &&
+            normalizedGames.length < contractRawCount * 0.6
+          ) {
+            const msg = `CONTRACT VIOLATION: ${sport} normalized ${normalizedGames.length}/${contractRawCount} in-window games (threshold 60%) — skipping sport`;
             console.error(`[PullOdds] ${msg}`);
             errors.push(`${sport}: ${msg}`);
             kpis.contractViolationSports += 1;
@@ -230,6 +239,7 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
               sport,
               sourceContext: {
                 rawCount,
+                windowRawCount: contractRawCount,
                 normalizedCount: normalizedGames.length,
               },
             });

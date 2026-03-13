@@ -10,6 +10,8 @@ interface TeamInfoProps {
   bank?: number;
   overallRank?: number;
   overallPoints?: number;
+  riskPosture?: string;
+  strategyMode?: string;
 }
 
 export default function TeamInfo({
@@ -19,6 +21,8 @@ export default function TeamInfo({
   bank,
   overallRank,
   overallPoints,
+  riskPosture,
+  strategyMode,
 }: TeamInfoProps) {
   return (
     <section className="bg-surface-card border border-surface-elevated p-6">
@@ -77,6 +81,31 @@ export default function TeamInfo({
                 </div>
                 <div className="text-lg font-medium text-sage-light">
                   {overallPoints.toLocaleString()}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {(riskPosture || strategyMode) && (
+          <div className="flex gap-6 pt-2 border-t border-surface-elevated">
+            {riskPosture && (
+              <div className="pt-3">
+                <div className="text-meta text-sage-muted uppercase tracking-wider mb-1">
+                  Risk Posture
+                </div>
+                <div className="text-sm font-medium text-sage-white uppercase">
+                  {riskPosture}
+                </div>
+              </div>
+            )}
+            {strategyMode && (
+              <div className="pt-3">
+                <div className="text-meta text-sage-muted uppercase tracking-wider mb-1">
+                  Strategy Mode
+                </div>
+                <div className="text-sm font-medium text-sage-light uppercase">
+                  {strategyMode}
                 </div>
               </div>
             )}

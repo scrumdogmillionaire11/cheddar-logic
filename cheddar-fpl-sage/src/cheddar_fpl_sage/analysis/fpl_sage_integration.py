@@ -220,6 +220,120 @@ class FPLSageIntegration:
                 self.config['analysis_preferences'] = {}
             self.config['analysis_preferences']['thresholds'] = overrides['thresholds']
             logger.info("Stored risk posture thresholds in analysis_preferences")
+
+    def _resolve_effective_decision_context(
+        self,
+        team_data: Dict[str, Any],
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Resolve final decision context right before analysis execution.
+
+        Precedence:
+        - free_transfers: API override > manual override > bundle value
+        - risk_posture: API override > framework state > config
+        """
+        from cheddar_fpl_sage.analysis.decision_framework.constants import (
+            DEFAULT_RISK_POSTURE,
+            derive_strategy_mode,
+            normalize_risk_posture,
+        )
+
+        override_map = overrides if isinstance(overrides, dict) else {}
+        team_info = team_data.setdefault("team_info", {})
+        if not isinstance(team_info, dict):
+            team_info = {}
+            team_data["team_info"] = team_info
+
+        manual_overrides = self._ensure_dict(
+            self.config.get("manual_overrides", {}),
+            "manual_overrides",
+        )
+        manual_free_transfers = self.config.get("manual_free_transfers")
+        bundle_free_transfers = team_info.get("free_transfers", team_data.get("free_transfers", 0))
+
+        api_free_transfers = (
+            override_map.get("free_transfers") if "free_transfers" in override_map else None
+        )
+        manual_override_free_transfers = manual_overrides.get("free_transfers")
+
+        free_transfers_source = "bundle"
+        effective_free_transfers = bundle_free_transfers
+        if manual_free_transfers is not None:
+            effective_free_transfers = manual_free_transfers
+            free_transfers_source = "manual"
+        if manual_override_free_transfers is not None:
+            effective_free_transfers = manual_override_free_transfers
+            free_transfers_source = "manual"
+        if api_free_transfers is not None:
+            effective_free_transfers = api_free_transfers
+            free_transfers_source = "api_override"
+
+        try:
+            effective_free_transfers = int(effective_free_transfers)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid effective free_transfers value %s; defaulting to 0",
+                effective_free_transfers,
+            )
+            effective_free_transfers = 0
+        effective_free_transfers = max(0, effective_free_transfers)
+
+        api_risk_posture = override_map.get("risk_posture") if "risk_posture" in override_map else None
+        framework_risk_posture = getattr(self.decision_framework, "risk_posture", None)
+        analysis_preferences = self._ensure_dict(
+            self.config.get("analysis_preferences", {}),
+            "analysis_preferences",
+        )
+        config_risk_posture = (
+            self.config.get("risk_posture")
+            or analysis_preferences.get("risk_posture")
+            or (self.config_manager.get_risk_posture() if self.config_manager else None)
+        )
+
+        raw_effective_risk_posture = (
+            api_risk_posture or framework_risk_posture or config_risk_posture or DEFAULT_RISK_POSTURE
+        )
+        try:
+            effective_risk_posture = normalize_risk_posture(str(raw_effective_risk_posture))
+        except ValueError:
+            logger.warning(
+                "Invalid effective risk_posture '%s'; defaulting to %s",
+                raw_effective_risk_posture,
+                DEFAULT_RISK_POSTURE,
+            )
+            effective_risk_posture = DEFAULT_RISK_POSTURE
+
+        # Keep framework and delegates aligned with the final effective context.
+        self.decision_framework.risk_posture = effective_risk_posture
+        self.decision_framework._transfer_advisor.risk_posture = effective_risk_posture
+        self.decision_framework._captain_selector.risk_posture = effective_risk_posture
+        self.decision_framework._chip_analyzer.risk_posture = effective_risk_posture
+
+        team_info["free_transfers"] = effective_free_transfers
+        team_info["free_transfers_source"] = free_transfers_source
+        team_info["risk_posture"] = effective_risk_posture
+        team_data["free_transfers"] = effective_free_transfers
+        team_data["risk_posture"] = effective_risk_posture
+
+        overall_rank = team_info.get("overall_rank")
+        strategy_mode_hint = derive_strategy_mode(overall_rank, effective_risk_posture)
+        logger.info(
+            "Effective decision context: risk_posture=%s free_transfers=%s source=%s overall_rank=%s strategy_mode_hint=%s",
+            effective_risk_posture,
+            effective_free_transfers,
+            free_transfers_source,
+            overall_rank,
+            strategy_mode_hint,
+        )
+
+        return {
+            "risk_posture": effective_risk_posture,
+            "free_transfers": effective_free_transfers,
+            "free_transfers_source": free_transfers_source,
+            "overall_rank": overall_rank,
+            "strategy_mode_hint": strategy_mode_hint,
+        }
     
     def _normalize_chip_status_map(self, chip_status: Dict) -> Dict:
         """Ensure each chip entry is a dict; replace bad entries with {}."""
@@ -408,6 +522,45 @@ class FPLSageIntegration:
         current_gw: int,
         projections: CanonicalProjectionSet,
     ) -> None:
+        def planner_from_context(context_payload: Any, fallback_start_gw: int) -> Dict[str, Any]:
+            if not isinstance(context_payload, dict):
+                return {
+                    "horizon_gws": 8,
+                    "start_gw": fallback_start_gw,
+                    "gw_timeline": [],
+                    "squad_windows": [],
+                    "target_windows": [],
+                    "key_planning_notes": [],
+                }
+            return {
+                "horizon_gws": context_payload.get("horizon_gws", 8),
+                "start_gw": context_payload.get("start_gw", fallback_start_gw),
+                "gw_timeline": context_payload.get("gw_timeline", []),
+                "squad_windows": context_payload.get("squad_player_windows", []),
+                "target_windows": context_payload.get("candidate_player_windows", []),
+                "key_planning_notes": context_payload.get("key_planning_notes", []),
+            }
+
+        def planner_has_content(planner_payload: Dict[str, Any]) -> bool:
+            return bool(
+                planner_payload.get("gw_timeline")
+                or planner_payload.get("squad_windows")
+                or planner_payload.get("target_windows")
+                or planner_payload.get("key_planning_notes")
+            )
+
+        def build_context(candidate_refs_payload: List[Dict[str, Any]]) -> Dict[str, Any]:
+            return build_fixture_horizon_context(
+                fixtures=raw_data.get("fixtures", []) or [],
+                teams=raw_data.get("teams", []) or [],
+                players=raw_data.get("players", []) or [],
+                start_gw=start_gw,
+                horizon_gws=8,
+                squad_player_refs=squad_refs,
+                candidate_player_refs=candidate_refs_payload,
+                captain_candidate_refs=captain_refs,
+            )
+
         start_gw = team_data.get("next_gameweek") or current_gw
         try:
             start_gw = int(start_gw)
@@ -429,25 +582,71 @@ class FPLSageIntegration:
                 }
             )
 
-        context = build_fixture_horizon_context(
-            fixtures=raw_data.get("fixtures", []) or [],
-            teams=raw_data.get("teams", []) or [],
-            players=raw_data.get("players", []) or [],
-            start_gw=start_gw,
-            horizon_gws=8,
-            squad_player_refs=squad_refs,
-            candidate_player_refs=candidate_refs,
-            captain_candidate_refs=captain_refs,
-        )
+        context = build_context(candidate_refs)
+        planner_payload = planner_from_context(context, start_gw)
+
+        squad_count = len([player for player in (team_data.get("current_squad") or []) if isinstance(player, dict)])
+        if squad_count > 0 and not planner_has_content(planner_payload):
+            logger.warning(
+                "Fixture planner generation defect detected (empty planner with %s squad players); recomputing context.",
+                squad_count,
+            )
+            candidate_refs_retry = list(candidate_refs)
+            if not candidate_refs_retry:
+                squad_ids = {
+                    int(pid)
+                    for pid in [
+                        player.get("player_id") or player.get("id") or player.get("element")
+                        for player in (team_data.get("current_squad") or [])
+                    ]
+                    if isinstance(pid, int) or (isinstance(pid, str) and pid.isdigit())
+                }
+                for projection in sorted(
+                    projections.projections,
+                    key=lambda item: getattr(item, "next6_pts", 0),
+                    reverse=True,
+                ):
+                    if projection.player_id in squad_ids:
+                        continue
+                    if projection.is_injury_risk or getattr(projection, "xMins_next", 0) < 60:
+                        continue
+                    candidate_refs_retry.append(
+                        {
+                            "player_id": projection.player_id,
+                            "name": projection.name,
+                            "team": projection.team,
+                            "next6_pts": getattr(projection, "next6_pts", 0),
+                        }
+                    )
+                    if len(candidate_refs_retry) >= 12:
+                        break
+            context_retry = build_context(candidate_refs_retry)
+            planner_retry = planner_from_context(context_retry, start_gw)
+            if planner_has_content(planner_retry):
+                context = context_retry
+                planner_payload = planner_retry
+            else:
+                logger.warning("Fixture planner recompute still returned empty payload.")
+
+        missing_inputs: List[str] = []
+        if not raw_data.get("fixtures"):
+            missing_inputs.append("fixtures")
+        if not raw_data.get("teams"):
+            missing_inputs.append("teams")
+        if not raw_data.get("players"):
+            missing_inputs.append("players")
+        if not squad_refs:
+            missing_inputs.append("squad_picks")
+        decision.fixture_planner_reason = None
+        if not planner_has_content(planner_payload) and missing_inputs:
+            decision.fixture_planner_reason = (
+                "Fixture planner limited: missing "
+                + ", ".join(missing_inputs)
+                + "."
+            )
+
         team_data["fixture_horizon_context"] = context
-        decision.fixture_planner = {
-            "horizon_gws": context.get("horizon_gws", 8),
-            "start_gw": context.get("start_gw", start_gw),
-            "gw_timeline": context.get("gw_timeline", []),
-            "squad_windows": context.get("squad_player_windows", []),
-            "target_windows": context.get("candidate_player_windows", []),
-            "key_planning_notes": context.get("key_planning_notes", []),
-        }
+        decision.fixture_planner = planner_payload
 
     def _inject_pre_analysis_fixture_horizon_context(
         self,
@@ -776,21 +975,19 @@ class FPLSageIntegration:
             # Inject manual overrides from config into team_data for decision framework
             team_data['manual_overrides'] = self.config.get('manual_overrides') or {}
             team_data['manual_injury_overrides'] = self.config.get('manual_injury_overrides') or {}
-            override_ft = (team_data['manual_overrides'] or {}).get('free_transfers')
-            if override_ft is not None:
-                try:
-                    override_ft_int = int(override_ft)
-                    team_data.setdefault('team_info', {})['free_transfers'] = override_ft_int
-                    team_data['team_info']['free_transfers_source'] = 'manual'
-                    team_data['free_transfers'] = override_ft_int
-                except (TypeError, ValueError):
-                    logger.warning("Invalid manual free_transfers override: %s", override_ft)
+            effective_context = self._resolve_effective_decision_context(team_data, overrides=overrides)
             logger.info(f"DEBUG: Injected manual_overrides into team_data: {list(team_data['manual_overrides'].keys())}")
             planned_xfers = team_data['manual_overrides'].get('planned_transfers', [])
             logger.info(f"DEBUG: planned_transfers count = {len(planned_xfers)}")
             if planned_xfers:
                 logger.info(f"DEBUG: First transfer keys: {list(planned_xfers[0].keys())}")
             logger.debug(f"DEBUG: Injected manual_injury_overrides into team_data: {list(team_data['manual_injury_overrides'].keys())}")
+            logger.info(
+                "DEBUG: Effective strategy context -> risk_posture=%s free_transfers=%s strategy_mode_hint=%s",
+                effective_context.get("risk_posture"),
+                effective_context.get("free_transfers"),
+                effective_context.get("strategy_mode_hint"),
+            )
             # Attach ruleset metadata for summary/output context
             if ruleset:
                 team_data['ruleset_meta'] = {
@@ -816,8 +1013,8 @@ class FPLSageIntegration:
                 team_data['injury_resolution_traces'] = resolution_traces
                 team_data['injury_summary'] = injury_artifacts.get('summary', {})
                 team_data['injury_data_source'] = "resolved"
-            free_transfers = team_info.get('free_transfers', 0)
-            ft_source = team_info.get('free_transfers_source', 'api')
+            free_transfers = effective_context.get("free_transfers", team_info.get('free_transfers', 0))
+            ft_source = effective_context.get("free_transfers_source", team_info.get('free_transfers_source', 'api'))
             print("\n🔄 TRANSFER SITUATION:")
             print("\n" + "🔄" + " TRANSFER SITUATION ".center(56, "="))
             
@@ -1570,7 +1767,11 @@ class FPLSageIntegration:
                     'strategy_paths': getattr(decision_obj, "strategy_paths", None),
                     'squad_issues': getattr(decision_obj, "squad_issues", None),
                     'chip_timing_outlook': getattr(decision_obj, "chip_timing_outlook", None),
+                    'fixture_planner': getattr(decision_obj, "fixture_planner", None),
+                    'fixture_planner_reason': getattr(decision_obj, "fixture_planner_reason", None),
                     'no_transfer_reason': getattr(decision_obj, "no_transfer_reason", None),
+                    'near_threshold_reason': getattr(decision_obj, "near_threshold_reason", None),
+                    'strategy_paths_reason': getattr(decision_obj, "strategy_paths_reason", None),
                     'chip_guidance': (
                         decision_obj.chip_guidance.__dict__
                         if getattr(decision_obj, "chip_guidance", None) else None

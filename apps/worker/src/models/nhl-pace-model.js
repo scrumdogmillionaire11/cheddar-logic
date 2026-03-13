@@ -1,5 +1,7 @@
 'use strict';
 
+const { validateCanonicalGoalieState } = require('./nhl-goalie-state');
+
 /**
  * NHL Pace / Totals Model
  *
@@ -76,6 +78,21 @@ function goalieAdjFactor(savePct) {
   return clamp(1.0 - svDiff * GOALIE_ADJ_SCALE, GOALIE_ADJ_MIN, GOALIE_ADJ_MAX);
 }
 
+function certaintyFromStarterState(starterState) {
+  if (starterState === 'CONFIRMED') return 'CONFIRMED';
+  if (starterState === 'EXPECTED') return 'EXPECTED';
+  return 'UNKNOWN';
+}
+
+function normalizeCanonicalGoalieState(goalieState, label) {
+  if (goalieState === null || goalieState === undefined) return null;
+  const validation = validateCanonicalGoalieState(goalieState);
+  if (!validation.valid) {
+    throw new Error(`predictNHLGame: invalid ${label}: ${validation.errors.join('; ')}`);
+  }
+  return goalieState;
+}
+
 function normalizeGoalieCertainty(certainty, confirmedFallback) {
   const token = String(certainty || '').toUpperCase();
   if (token === 'CONFIRMED' || token === 'STARTING' || token === 'OFFICIAL') {
@@ -86,6 +103,32 @@ function normalizeGoalieCertainty(certainty, confirmedFallback) {
   }
   if (token === 'UNKNOWN') return 'UNKNOWN';
   return confirmedFallback ? 'CONFIRMED' : 'UNKNOWN';
+}
+
+function adjustmentTrustFromCertainty(certainty) {
+  if (certainty === 'CONFIRMED') return 'FULL';
+  if (certainty === 'EXPECTED') return 'DEGRADED';
+  return 'NEUTRALIZED';
+}
+
+function applyGoalieAdj(savePct, adjustmentTrust) {
+  if (adjustmentTrust === 'BLOCKED' || adjustmentTrust === 'NEUTRALIZED') {
+    return {
+      rawFactor: 1.0,
+      appliedFactor: 1.0,
+    };
+  }
+  const rawFactor = goalieAdjFactor(savePct);
+  if (adjustmentTrust === 'DEGRADED') {
+    return {
+      rawFactor,
+      appliedFactor: 1.0 + (rawFactor - 1.0) * 0.5,
+    };
+  }
+  return {
+    rawFactor,
+    appliedFactor: rawFactor,
+  };
 }
 
 function goalieCertaintyMultiplier(certainty) {
@@ -136,10 +179,12 @@ function round3(value) {
  * @param {number|null} opts.awayPkPct
  * @param {number|null} opts.homeGoalieSavePct - home goalie save % (e.g. 0.912)
  * @param {number|null} opts.awayGoalieSavePct
- * @param {boolean}     opts.homeGoalieConfirmed
- * @param {boolean}     opts.awayGoalieConfirmed
- * @param {'CONFIRMED'|'UNKNOWN'|null} opts.homeGoalieCertainty
- * @param {'CONFIRMED'|'UNKNOWN'|null} opts.awayGoalieCertainty
+ * @param {boolean}     opts.homeGoalieConfirmed - @deprecated use homeGoalieState
+ * @param {boolean}     opts.awayGoalieConfirmed - @deprecated use awayGoalieState
+ * @param {'CONFIRMED'|'EXPECTED'|'UNKNOWN'|null} opts.homeGoalieCertainty
+ * @param {'CONFIRMED'|'EXPECTED'|'UNKNOWN'|null} opts.awayGoalieCertainty
+ * @param {object|null} opts.homeGoalieState
+ * @param {object|null} opts.awayGoalieState
  * @param {boolean}     opts.homeB2B         - home team on back-to-back
  * @param {boolean}     opts.awayB2B
  * @param {number|null} opts.restDaysHome    - days since last game (3+ = extended rest)
@@ -165,10 +210,14 @@ function predictNHLGame(opts) {
     awayPkPct = null,
     homeGoalieSavePct = null,
     awayGoalieSavePct = null,
+    // Legacy (deprecated — do not read in NHL totals path after WI-0383)
+    // @deprecated use homeGoalieState instead
     homeGoalieConfirmed = false,
     awayGoalieConfirmed = false,
     homeGoalieCertainty = null,
     awayGoalieCertainty = null,
+    homeGoalieState = null,
+    awayGoalieState = null,
     homeB2B = false,
     awayB2B = false,
     restDaysHome = null,
@@ -184,15 +233,30 @@ function predictNHLGame(opts) {
     return null;
   }
 
+  const resolvedHomeGoalieState = normalizeCanonicalGoalieState(
+    homeGoalieState,
+    'homeGoalieState',
+  );
+  const resolvedAwayGoalieState = normalizeCanonicalGoalieState(
+    awayGoalieState,
+    'awayGoalieState',
+  );
+
   const adjustments = { home: {}, away: {} };
-  const homeCertainty = normalizeGoalieCertainty(
-    homeGoalieCertainty,
-    homeGoalieConfirmed,
-  );
-  const awayCertainty = normalizeGoalieCertainty(
-    awayGoalieCertainty,
-    awayGoalieConfirmed,
-  );
+  const homeCertainty = resolvedHomeGoalieState
+    ? certaintyFromStarterState(resolvedHomeGoalieState.starter_state)
+    : normalizeGoalieCertainty(homeGoalieCertainty, homeGoalieConfirmed);
+  const awayCertainty = resolvedAwayGoalieState
+    ? certaintyFromStarterState(resolvedAwayGoalieState.starter_state)
+    : normalizeGoalieCertainty(awayGoalieCertainty, awayGoalieConfirmed);
+  const homeAdjustmentTrust = resolvedHomeGoalieState
+    ? resolvedHomeGoalieState.adjustment_trust
+    : adjustmentTrustFromCertainty(homeCertainty);
+  const awayAdjustmentTrust = resolvedAwayGoalieState
+    ? resolvedAwayGoalieState.adjustment_trust
+    : adjustmentTrustFromCertainty(awayCertainty);
+  const officialEligible =
+    homeAdjustmentTrust !== 'BLOCKED' && awayAdjustmentTrust !== 'BLOCKED';
 
   // ---- 1. Base offensive ratings — blend L5 with season (if L5 > 0.5) ----
   let homeOffRating = homeGoalsFor;
@@ -328,21 +392,22 @@ function predictNHLGame(opts) {
   restDelta = homeGoals + awayGoals - beforeRest;
 
   // ---- 8. Goalie adjustment (goalie affects OPPONENT's goals) ----
-  // Unknown = no directional effect. Only CONFIRMED contributes.
-  const homeGoalieMultiplier = goalieCertaintyMultiplier(homeCertainty);
-  if (homeGoalieSavePct !== null && homeGoalieMultiplier > 0) {
-    const rawFactor = goalieAdjFactor(homeGoalieSavePct);
-    const appliedFactor = 1 + (rawFactor - 1) * homeGoalieMultiplier;
+  if (homeGoalieSavePct !== null) {
+    const { rawFactor, appliedFactor } = applyGoalieAdj(
+      homeGoalieSavePct,
+      homeAdjustmentTrust,
+    );
     const beforeAway = awayGoals;
     goalieDeltaRaw += beforeAway * (rawFactor - 1);
     goalieDeltaApplied += beforeAway * (appliedFactor - 1);
     awayGoals *= appliedFactor; // home goalie reduces away scoring
     adjustments.away.opponent_goalie = appliedFactor;
   }
-  const awayGoalieMultiplier = goalieCertaintyMultiplier(awayCertainty);
-  if (awayGoalieSavePct !== null && awayGoalieMultiplier > 0) {
-    const rawFactor = goalieAdjFactor(awayGoalieSavePct);
-    const appliedFactor = 1 + (rawFactor - 1) * awayGoalieMultiplier;
+  if (awayGoalieSavePct !== null) {
+    const { rawFactor, appliedFactor } = applyGoalieAdj(
+      awayGoalieSavePct,
+      awayAdjustmentTrust,
+    );
     const beforeHome = homeGoals;
     goalieDeltaRaw += beforeHome * (rawFactor - 1);
     goalieDeltaApplied += beforeHome * (appliedFactor - 1);
@@ -536,6 +601,11 @@ function predictNHLGame(opts) {
     awayGoalieConfirmed: awayCertainty === 'CONFIRMED',
     homeGoalieCertainty: homeCertainty,
     awayGoalieCertainty: awayCertainty,
+    homeAdjustmentTrust,
+    awayAdjustmentTrust,
+    official_eligible: officialEligible,
+    homeGoalieState: resolvedHomeGoalieState,
+    awayGoalieState: resolvedAwayGoalieState,
     goalieConfidenceCapped,
     rawTotalModel: Math.round(rawTotalModel * 1000) / 1000,
     regressedTotalModel: Math.round(regressedTotalModel * 1000) / 1000,

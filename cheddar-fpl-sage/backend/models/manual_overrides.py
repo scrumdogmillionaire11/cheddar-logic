@@ -89,6 +89,20 @@ class PlayerProjection(BaseModel):
     reasoning: Optional[str] = None
 
 
+class LineupDecisionPayload(BaseModel):
+    """Canonical lineup decision payload surfaced to API consumers."""
+    formation: str
+    risk_profile: str
+    lineup_confidence: str
+    formation_reason: str
+    risk_profile_effect: Optional[str] = None
+    notes: List[str] = Field(default_factory=list)
+    starters: List[Dict] = Field(default_factory=list)
+    bench: List[Dict] = Field(default_factory=list)
+    captain_player_id: Optional[int | str] = None
+    vice_captain_player_id: Optional[int | str] = None
+
+
 class DetailedAnalysisResponse(BaseModel):
     """Detailed analysis with player projections"""
     # Basic info
@@ -109,7 +123,9 @@ class DetailedAnalysisResponse(BaseModel):
     transfer_recommendations: List[Dict]
     transfer_plans: Optional[Dict] = None
     near_threshold_moves: Optional[List[Dict]] = None
+    near_threshold_reason: Optional[str] = None
     strategy_paths: Optional[Dict] = None
+    strategy_paths_reason: Optional[str] = None
     squad_issues: Optional[List[Dict]] = None
     
     # Captaincy
@@ -120,6 +136,7 @@ class DetailedAnalysisResponse(BaseModel):
     # Detailed player projections - current squad
     starting_xi_projections: List[PlayerProjection]
     bench_projections: List[PlayerProjection]
+    lineup_decision: Optional[LineupDecisionPayload] = None
     
     # Projected squad after recommended transfers
     projected_xi: Optional[List[PlayerProjection]] = None
@@ -135,6 +152,7 @@ class DetailedAnalysisResponse(BaseModel):
     chip_recommendation: Optional[Dict]
     chip_timing_outlook: Optional[Dict] = None
     fixture_planner: Optional[Dict] = None
+    fixture_planner_reason: Optional[str] = None
     available_chips: List[str]
     
     # Squad health metrics

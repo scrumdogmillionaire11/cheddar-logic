@@ -71,6 +71,7 @@ const {
 const {
   normalizeRawDataPayload,
 } = require('../utils/normalize-raw-data-payload');
+const { resolveGoalieState } = require('../models/nhl-goalie-state');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -217,6 +218,39 @@ function toFiniteNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function buildScraperGoalieInput(rawData, side) {
+  const sideKey = side === 'home' ? 'home' : 'away';
+  const goalieName = isNonEmptyString(rawData?.goalie?.[sideKey]?.name)
+    ? rawData.goalie[sideKey].name.trim()
+    : null;
+  const status =
+    rawData?.goalie?.[sideKey]?.status ??
+    (sideKey === 'home' ? rawData?.goalie_home_status : rawData?.goalie_away_status) ??
+    null;
+  const gsax = toFiniteNumber(
+    sideKey === 'home'
+      ? rawData?.goalie_home_gsax ?? rawData?.goalie?.home?.gsax
+      : rawData?.goalie_away_gsax ?? rawData?.goalie?.away?.gsax,
+  );
+  const savePct = toFiniteNumber(
+    sideKey === 'home'
+      ? rawData?.goalie_home_save_pct ?? rawData?.goalie?.home?.save_pct
+      : rawData?.goalie_away_save_pct ?? rawData?.goalie?.away?.save_pct,
+  );
+
+  return {
+    goalie_name: goalieName,
+    status,
+    gsax,
+    save_pct: savePct,
+    source_type: goalieName ? 'SCRAPER_NAME_MATCH' : 'SEASON_TABLE_INFERENCE',
+  };
 }
 
 function deriveOnePeriodSelection(payloadData) {
@@ -1066,9 +1100,27 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
               )
             : [];
 
+          const canonicalGoalieState = {
+            home: resolveGoalieState(
+              buildScraperGoalieInput(rawData, 'home'),
+              null,
+              gameId,
+              'home',
+              { gameTimeUtc: oddsSnapshot.game_time_utc },
+            ),
+            away: resolveGoalieState(
+              buildScraperGoalieInput(rawData, 'away'),
+              null,
+              gameId,
+              'away',
+              { gameTimeUtc: oddsSnapshot.game_time_utc },
+            ),
+          };
+
           // Compute per-driver card descriptors
           const driverCards = computeNHLDriverCards(gameId, oddsSnapshot, {
             recentRoadGames: homeTeamRoadTrip,
+            canonicalGoalieState,
           });
 
           const marketDecisions = computeNHLMarketDecisions(oddsSnapshot);

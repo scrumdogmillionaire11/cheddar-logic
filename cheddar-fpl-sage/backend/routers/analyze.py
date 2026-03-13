@@ -537,7 +537,9 @@ async def get_detailed_projections(analysis_id: str):
         transfer_recommendations=results.get("transfer_recommendations", []),
         transfer_plans=results.get("transfer_plans"),
         near_threshold_moves=results.get("near_threshold_moves"),
+        near_threshold_reason=results.get("near_threshold_reason"),
         strategy_paths=results.get("strategy_paths"),
+        strategy_paths_reason=results.get("strategy_paths_reason"),
         squad_issues=results.get("squad_issues"),
         captain=results.get("captain"),
         vice_captain=results.get("vice_captain"),
@@ -546,6 +548,7 @@ async def get_detailed_projections(analysis_id: str):
         # Player projections - current and projected
         starting_xi_projections=results.get("starting_xi", []),
         bench_projections=results.get("bench", []),
+        lineup_decision=results.get("lineup_decision"),
         projected_xi=results.get("projected_xi", []),
         projected_bench=results.get("projected_bench", []),
         transfer_targets=results.get("transfer_targets"),
@@ -555,6 +558,7 @@ async def get_detailed_projections(analysis_id: str):
         chip_recommendation=results.get("chip_recommendation"),
         chip_timing_outlook=results.get("chip_timing_outlook"),
         fixture_planner=results.get("fixture_planner"),
+        fixture_planner_reason=results.get("fixture_planner_reason"),
         available_chips=results.get("available_chips", []),
         squad_health=results.get("squad_health"),
     )

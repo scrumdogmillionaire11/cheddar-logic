@@ -97,16 +97,26 @@ class OptimizedXI:
         assert len(self.bench) == 4, f"Bench must have 4 players, got {len(self.bench)}"
         assert all(p in self.starting_xi for p in self.captain_pool), "Captain pool must be subset of XI"
         
-        # Validate formation constraints
+        # Validate formation against allowed FPL shapes.
+        allowed_shapes = {
+            (3, 4, 3),
+            (3, 5, 2),
+            (4, 4, 2),
+            (4, 3, 3),
+            (4, 5, 1),
+            (5, 4, 1),
+            (5, 3, 2),
+            (5, 2, 3),
+        }
         pos_counts = {'GK': 0, 'DEF': 0, 'MID': 0, 'FWD': 0}
         for player in self.starting_xi:
             pos_counts[player.position] += 1
+
+        shape = (pos_counts['DEF'], pos_counts['MID'], pos_counts['FWD'])
             
         self.formation_valid = (
             pos_counts['GK'] == 1 and
-            3 <= pos_counts['DEF'] <= 5 and
-            3 <= pos_counts['MID'] <= 5 and
-            1 <= pos_counts['FWD'] <= 3
+            shape in allowed_shapes
         )
         
         if not self.formation_valid:

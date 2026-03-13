@@ -88,7 +88,7 @@ describe('NHL pace calibration rails', () => {
     expect(result.totalClampedLow).toBe(true);
   });
 
-  test('goalie certainty scales impact: CONFIRMED < EXPECTED(=UNKNOWN)', () => {
+  test('goalie certainty scales impact: CONFIRMED < EXPECTED < UNKNOWN', () => {
     const base = buildBaseOverrides({
       homeGoalieSavePct: 0.93,
       awayGoalieSavePct: 0.932,
@@ -113,7 +113,7 @@ describe('NHL pace calibration rails', () => {
     });
 
     expect(confirmed.expectedTotal).toBeLessThan(expected.expectedTotal);
-    expect(expected.expectedTotal).toBe(unknown.expectedTotal);
+    expect(expected.expectedTotal).toBeLessThan(unknown.expectedTotal);
   });
 
   test('treats OFFICIAL certainty token as confirmed even if legacy boolean is false', () => {

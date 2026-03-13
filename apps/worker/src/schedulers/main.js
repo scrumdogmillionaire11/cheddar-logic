@@ -66,8 +66,10 @@ const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH !== 'false';
 const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
   process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
 );
+const SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL =
+  process.env.SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL === 'true';
 const SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL =
-  process.env.SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL !== 'false';
+  process.env.SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL === 'true';
 let lastOddsGapAlertAt = 0;
 
 /**
@@ -562,7 +564,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
           args: {
             jobKey: 'settle|global|pending-cards',
             dryRun,
-            allowDisplayBackfill: false,
+            allowDisplayBackfill: SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL,
           },
           reason: `hourly card settlement ${hourlyKey}`,
         });
@@ -732,6 +734,7 @@ async function start() {
   );
   console.log(
     `  ENABLE_HOURLY_SETTLEMENT_SWEEP: ${process.env.ENABLE_HOURLY_SETTLEMENT_SWEEP !== 'false' ? 'true' : 'false'}`,
+    `  SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL: ${SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL ? 'true' : 'false'}`,
     `  SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL: ${SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL ? 'true' : 'false'}`,
   );
   console.log(
