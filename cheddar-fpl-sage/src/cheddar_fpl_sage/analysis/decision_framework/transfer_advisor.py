@@ -145,30 +145,35 @@ class TransferAdvisor:
         projections,
         bank_value: float,
         free_transfers: int,
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
         """
         Build strategy alternatives (safe/balanced/aggressive) for user override UX.
         """
+        diagnostics: Dict[str, Any] = {
+            "strategy_paths_reason": None,
+            "strategy_starters_checked": 0,
+            "strategy_alternatives_considered": 0,
+        }
         if not projections or not squad:
-            return {}
+            diagnostics["strategy_paths_reason"] = "Strategy paths unavailable: missing projections or squad data."
+            return {}, diagnostics
 
         starters = [p for p in squad if p.get("is_starter")]
         if not starters:
-            return {}
+            diagnostics["strategy_paths_reason"] = "Strategy paths unavailable: no starters identified."
+            return {}, diagnostics
 
-        # Choose weakest starter as the swap-out reference.
-        weakest = None
-        weakest_proj = None
+        # Try starters from weakest to strongest; pick the first starter with viable alternatives.
+        starters_with_proj = []
         for player in starters:
             proj = projections.get_by_id(player.get("player_id") or player.get("id", 0))
-            if not proj:
-                continue
-            if weakest_proj is None or proj.nextGW_pts < weakest_proj.nextGW_pts:
-                weakest = player
-                weakest_proj = proj
+            if proj:
+                starters_with_proj.append((player, proj))
+        starters_with_proj.sort(key=lambda item: item[1].nextGW_pts)
 
-        if weakest is None or weakest_proj is None:
-            return {}
+        if not starters_with_proj:
+            diagnostics["strategy_paths_reason"] = "Strategy paths unavailable: starter projections missing."
+            return {}, diagnostics
 
         # Collect current squad identifiers to exclude from transfer-in targets
         squad_player_ids = {
@@ -182,18 +187,34 @@ class TransferAdvisor:
             if p.get("name")
         }
 
-        pos = weakest.get("position")
-        alternatives = [
-            p for p in projections.get_by_position(pos)
-            if p.player_id != weakest_proj.player_id
-            and p.player_id not in squad_player_ids
-            and self._normalize_name(getattr(p, "name", "")) not in squad_player_names
-            and p.current_price <= (weakest_proj.current_price + bank_value + 0.5)
-            and not p.is_injury_risk
-            and p.xMins_next >= 60
-        ]
+        weakest = None
+        weakest_proj = None
+        alternatives = []
+        for starter, starter_proj in starters_with_proj:
+            diagnostics["strategy_starters_checked"] += 1
+            pos = starter.get("position")
+            position_pool = projections.get_by_position(pos)
+            viable = [
+                p for p in position_pool
+                if p.player_id != starter_proj.player_id
+                and p.player_id not in squad_player_ids
+                and self._normalize_name(getattr(p, "name", "")) not in squad_player_names
+                and p.current_price <= (starter_proj.current_price + bank_value + 0.5)
+                and not p.is_injury_risk
+                and p.xMins_next >= 60
+            ]
+            diagnostics["strategy_alternatives_considered"] += len(viable)
+            if viable:
+                weakest = starter
+                weakest_proj = starter_proj
+                alternatives = viable
+                break
+
         if not alternatives:
-            return {}
+            diagnostics["strategy_paths_reason"] = (
+                "Strategy paths unavailable: no viable transfer alternatives across starting XI."
+            )
+            return {}, diagnostics
 
         _MODE_RATIONALE: Dict[str, str] = {
             "DEFEND": "Reliable upgrade — stronger floor and minutes certainty, lower ceiling.",
@@ -240,11 +261,20 @@ class TransferAdvisor:
             if isinstance(pick, dict):
                 pick.pop("player_id_in", None)
 
-        return {
+        strategy_paths = {
             "safe": defend_pick or None,
             "balanced": balanced_pick or None,
             "aggressive": recovery_pick or None,
         }
+        if not any(
+            isinstance(path, dict) and path.get("out") and path.get("in")
+            for path in strategy_paths.values()
+        ):
+            diagnostics["strategy_paths_reason"] = (
+                "Strategy paths unavailable: viable pool exhausted after mode deduplication."
+            )
+
+        return strategy_paths, diagnostics
 
     def _simulate_primary_transfer_squad(
         self,
@@ -305,12 +335,18 @@ class TransferAdvisor:
         bank_value: float,
         free_transfers: int,
         strategy_mode: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         Provide transparency for moves that almost met thresholds.
         """
+        diagnostics: Dict[str, Any] = {
+            "near_threshold_reason": None,
+            "near_threshold_starters_checked": 0,
+            "near_threshold_alternatives_considered": 0,
+        }
         if not projections:
-            return []
+            diagnostics["near_threshold_reason"] = "Near-threshold analysis unavailable: missing projections."
+            return [], diagnostics
 
         required = self._required_gain(strategy_mode, free_transfers)
         candidates: List[Dict[str, Any]] = []
@@ -322,14 +358,27 @@ class TransferAdvisor:
             if starter_proj:
                 starters_with_proj.append((starter, starter_proj))
 
+        diagnostics["near_threshold_starters_checked"] = len(starters_with_proj)
+        if not starters_with_proj:
+            diagnostics["near_threshold_reason"] = "Near-threshold analysis unavailable: starter projections missing."
+            return [], diagnostics
+
         starters_with_proj.sort(key=lambda item: item[1].nextGW_pts)
-        for starter, starter_proj in starters_with_proj[:3]:
+        squad_player_ids = {
+            p.get("player_id") or p.get("id")
+            for p in squad
+            if (p.get("player_id") or p.get("id")) is not None
+        }
+        for starter, starter_proj in starters_with_proj:
             alternatives = [
                 p for p in projections.get_by_position(starter.get("position"))
                 if p.player_id != starter_proj.player_id
+                and p.player_id not in squad_player_ids
                 and p.current_price <= (starter_proj.current_price + bank_value + 0.5)
+                and not p.is_injury_risk
                 and p.xMins_next >= 60
             ]
+            diagnostics["near_threshold_alternatives_considered"] += len(alternatives)
             if not alternatives:
                 continue
 
@@ -358,7 +407,17 @@ class TransferAdvisor:
                 ),
             })
 
-        return candidates[:3]
+        if not candidates:
+            if diagnostics["near_threshold_alternatives_considered"] == 0:
+                diagnostics["near_threshold_reason"] = (
+                    "No near-threshold moves: no viable alternatives after ownership/price/minutes filters."
+                )
+            else:
+                diagnostics["near_threshold_reason"] = (
+                    "No near-threshold moves: candidates were either clearly above threshold or well below required gain."
+                )
+
+        return candidates[:3], diagnostics
 
     def _build_squad_issues(self, squad: List[Dict], projections) -> List[Dict[str, Any]]:
         """Surface structural issues for dashboard diagnostics."""
@@ -1002,14 +1061,14 @@ class TransferAdvisor:
             projections=projections,
         )
 
-        near_threshold_moves = self._build_near_threshold_moves(
+        near_threshold_moves, near_threshold_diag = self._build_near_threshold_moves(
             squad=squad,
             projections=projections,
             bank_value=bank_value,
             free_transfers=free_transfers,
             strategy_mode=self.strategy_mode,
         )
-        strategy_paths = self._build_strategy_paths(
+        strategy_paths, strategy_diag = self._build_strategy_paths(
             squad=post_transfer_squad,
             projections=projections,
             bank_value=bank_value,
@@ -1031,6 +1090,16 @@ class TransferAdvisor:
             "strategy_paths": strategy_paths,
             "squad_issues": squad_issues,
             "no_transfer_reason": no_transfer_reason,
+            "near_threshold_reason": near_threshold_diag.get("near_threshold_reason"),
+            "strategy_paths_reason": strategy_diag.get("strategy_paths_reason"),
+            "starters_checked": max(
+                near_threshold_diag.get("near_threshold_starters_checked", 0),
+                strategy_diag.get("strategy_starters_checked", 0),
+            ),
+            "alternatives_considered": (
+                near_threshold_diag.get("near_threshold_alternatives_considered", 0)
+                + strategy_diag.get("strategy_alternatives_considered", 0)
+            ),
         }
 
         return enriched_recs

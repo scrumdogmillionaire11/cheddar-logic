@@ -31,6 +31,7 @@
     "job:backfill-card-results:dry-run": "node src/jobs/backfill_card_results.js --dry-run",
     "job:settle-games": "node src/jobs/settle_game_results.js",
     "job:settle-cards": "node src/jobs/settle_pending_cards.js",
+    "job:settlement-report": "node src/jobs/report_settlement_health.js",
     "db:backup": "node -e \"require('./src/utils/db-backup.js').backupDatabase('manual')\"",
     "db:backups": "node src/utils/list-backups.js",
     "db:restore": "node src/utils/restore-backup.js",

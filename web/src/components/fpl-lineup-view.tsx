@@ -110,22 +110,24 @@ const renderPitchPlayerCard = (
 ) => (
   <div
     key={`${player.name}-${index}`}
-    className={`w-[130px] rounded border p-2 text-center sm:w-[145px] sm:p-3 ${
+    className={`w-[132px] rounded-lg border px-3 py-2 text-center shadow-sm sm:w-[168px] sm:px-4 sm:py-3 ${
       player.is_new
-        ? 'border-teal/30 bg-teal/5'
+        ? 'border-teal/35 bg-teal/10'
         : isTransferOut
-          ? 'border-rose/30 bg-rose/5'
-          : 'border-white/10 bg-surface/60'
+          ? 'border-rose/35 bg-rose/10'
+          : 'border-white/15 bg-surface/65'
     }`}
   >
-    <div className="text-xs font-semibold sm:text-sm">{player.name}</div>
-    <div className="mt-1 text-[10px] text-cloud/60 sm:text-xs">
+    <div className="truncate text-sm font-semibold sm:text-[1.05rem]">
+      {player.name}
+    </div>
+    <div className="mt-1 text-[11px] uppercase tracking-wide text-cloud/60 sm:text-xs">
       {player.team} · {player.position}
     </div>
-    <div className="mt-1 text-xs font-semibold text-cloud/70 sm:text-sm">
+    <div className="mt-1 text-sm font-semibold text-cloud/75 sm:text-[1.05rem]">
       {formatPts(player.expected_pts)} pts
     </div>
-    <div className="mt-1 text-[10px] text-cloud/50 sm:text-xs">
+    <div className="mt-1 text-[11px] text-cloud/55 sm:text-xs">
       {player.price !== undefined ? `£${player.price}m` : '-'} |{' '}
       {player.ownership !== undefined ? `${player.ownership.toFixed(1)}% own` : '-'}
     </div>
@@ -265,10 +267,13 @@ export default function FPLLineupView({
               Recommended formation: {lineupDecision.formation}
             </div>
           ) : null}
-          <div className="relative overflow-hidden rounded-xl border border-white/10 bg-surface/50 p-3 sm:p-4">
+          <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-night/40 p-3 sm:p-4">
             <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-              <div className="absolute left-3 right-3 top-3 bottom-3 rounded-lg border border-cloud/20" />
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(70,130,180,0.08),rgba(5,10,24,0)_65%)]" />
+              <div className="absolute left-3 right-3 top-3 bottom-3 rounded-xl border border-cloud/20" />
               <div className="absolute left-3 right-3 top-1/2 h-px -translate-y-1/2 bg-cloud/20" />
+              <div className="absolute left-3 right-3 top-[34%] h-px -translate-y-1/2 bg-cloud/15" />
+              <div className="absolute left-3 right-3 top-[68%] h-px -translate-y-1/2 bg-cloud/15" />
               <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cloud/20 sm:h-24 sm:w-24" />
               <div className="absolute left-1/2 top-3 h-14 w-40 -translate-x-1/2 border border-cloud/15 border-t-0 sm:h-16 sm:w-48" />
               <div className="absolute left-1/2 top-3 h-8 w-20 -translate-x-1/2 border border-cloud/10 border-t-0 sm:w-24" />
@@ -276,34 +281,48 @@ export default function FPLLineupView({
               <div className="absolute left-1/2 bottom-3 h-8 w-20 -translate-x-1/2 border border-cloud/10 border-b-0 sm:w-24" />
             </div>
 
-            <div className="relative z-10 min-h-[370px] space-y-3 py-2 sm:min-h-[430px] sm:space-y-4 sm:py-3">
-            {displayStarting.length > 0 ? (
-              POSITION_ORDER.map((position) => {
-                const rowPlayers = groupedStarting[position];
-                if (rowPlayers.length === 0) {
-                  return null;
-                }
-                return (
-                  <div key={position} className="space-y-2">
-                    <div className="text-[11px] font-semibold uppercase text-cloud/50">
-                      {position} ({rowPlayers.length})
-                    </div>
-                    <div className="flex flex-wrap justify-center gap-2 sm:gap-3">
-                    {rowPlayers.map((player, idx) => {
-                      const isOut =
-                        showingRecommended &&
-                        transfersOut.some((p) => p.name === player.name);
-                      return renderPitchPlayerCard(player, idx, isOut);
-                    })}
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3 text-center text-sm text-cloud/60">
-                No starting XI data available
-              </div>
-            )}
+            <div className="relative z-10 min-h-[440px] py-2 sm:min-h-[560px] sm:py-3">
+              {displayStarting.length > 0 ? (
+                <div className="grid min-h-[420px] grid-rows-[1.05fr_1.2fr_1.2fr_1.05fr] gap-1 px-1 sm:min-h-[530px] sm:px-3">
+                  {POSITION_ORDER.map((position) => {
+                    const rowPlayers = groupedStarting[position];
+                    if (rowPlayers.length === 0) {
+                      return (
+                        <div
+                          key={position}
+                          className="relative flex items-center justify-center rounded-lg border border-transparent"
+                        >
+                          <div className="absolute left-0 top-2 text-[11px] font-semibold uppercase tracking-wide text-cloud/45 sm:left-1 sm:top-3">
+                            {position} (0)
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div
+                        key={position}
+                        className="relative flex items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] px-8 py-2 sm:px-10 sm:py-3"
+                      >
+                        <div className="absolute left-0 top-2 text-[11px] font-semibold uppercase tracking-wide text-cloud/50 sm:left-1 sm:top-3">
+                          {position} ({rowPlayers.length})
+                        </div>
+                        <div className="flex w-full flex-wrap items-center justify-center gap-2 sm:gap-3">
+                          {rowPlayers.map((player, idx) => {
+                            const isOut =
+                              showingRecommended &&
+                              transfersOut.some((p) => p.name === player.name);
+                            return renderPitchPlayerCard(player, idx, isOut);
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3 text-center text-sm text-cloud/60">
+                  No starting XI data available
+                </div>
+              )}
             </div>
           </div>
         </div>

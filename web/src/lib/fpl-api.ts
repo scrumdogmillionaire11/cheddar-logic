@@ -265,6 +265,8 @@ export interface DetailedAnalysisResponse {
   current_gw?: number | null;
   overall_rank?: number | null;
   overall_points?: number | null;
+  free_transfers?: number | null;
+  risk_posture?: string | null;
   primary_decision: string;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW' | string;
   reasoning: string;
@@ -273,7 +275,9 @@ export interface DetailedAnalysisResponse {
   transfer_recommendations: Array<Record<string, unknown>>;
   transfer_plans?: TransferPlans | null;
   near_threshold_moves?: NearThresholdMove[] | null;
+  near_threshold_reason?: string | null;
   strategy_paths?: StrategyPaths | null;
+  strategy_paths_reason?: string | null;
   squad_issues?: SquadIssue[] | null;
   captain?: Record<string, unknown> | null;
   vice_captain?: Record<string, unknown> | null;
@@ -288,6 +292,7 @@ export interface DetailedAnalysisResponse {
   chip_recommendation?: Record<string, unknown> | null;
   chip_timing_outlook?: ChipTimingOutlook | null;
   fixture_planner?: FixturePlannerData | null;
+  fixture_planner_reason?: string | null;
   available_chips: string[];
   squad_health?: SquadHealth | null;
 }

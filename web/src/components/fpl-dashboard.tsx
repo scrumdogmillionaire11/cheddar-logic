@@ -64,9 +64,26 @@ const formatPtsDisplay = (value: number | null): string => {
   return `${formatPts(value)} pts`;
 };
 
-const normalizeDecisionText = (value: string | undefined): string => {
+const normalizeDecisionText = (
+  value: string | undefined,
+  freeTransfers: number,
+): string => {
   const raw = String(value || '').trim();
   if (!raw) return '-';
+  const normalizedCode = raw.toUpperCase();
+  if (
+    normalizedCode === 'NO_CHIP_ACTION' ||
+    normalizedCode === 'HOLD_TRANSFERS' ||
+    normalizedCode === 'ROLL'
+  ) {
+    if (freeTransfers <= 0) {
+      return 'No chip recommended this gameweek.';
+    }
+    if (freeTransfers === 1) {
+      return 'No chip recommended. Use your free transfer to address a weak spot.';
+    }
+    return `No chip recommended. Use ${freeTransfers} available transfers to improve squad structure.`;
+  }
   if (
     raw.includes('urgent transfer(s)') ||
     raw.includes('transfer(s) available')
@@ -81,6 +98,21 @@ const normalizeDecisionText = (value: string | undefined): string => {
       return `No chip recommended. Use ${transferCount} available transfers to improve squad structure.`;
     }
     return 'No chip recommended. Use available transfers to improve weak spots.';
+  }
+  return raw;
+};
+
+const normalizeReasoningText = (
+  value: string | undefined,
+  freeTransfers: number,
+): string | null => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (freeTransfers > 0 && raw.toLowerCase().includes('no free transfers')) {
+    if (freeTransfers === 1) {
+      return 'No chip passes the strategic windows/risk gates. You have 1 free transfer available.';
+    }
+    return `No chip passes the strategic windows/risk gates. You have ${freeTransfers} free transfers available.`;
   }
   return raw;
 };
@@ -208,11 +240,37 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
   const plans: TransferPlans | null | undefined = data.transfer_plans;
   const managerState = data.manager_state || {};
   const strategyMode = data.strategy_mode || managerState.strategy_mode;
+  const normalizedFreeTransferCount = Math.max(
+    0,
+    Math.trunc(
+      parseNumeric(managerState.free_transfers) ??
+        parseNumeric(data.free_transfers) ??
+        0,
+    ),
+  );
   const captainDelta = parseNumeric(data.captain_delta?.delta_pts);
-  const fixturePlanner = data.fixture_planner;
+  const plannerStartGw = Math.max(
+    1,
+    Math.trunc(parseNumeric(data.current_gw) ?? 1),
+  );
+  const fixturePlanner = data.fixture_planner ?? {
+    horizon_gws: 8 as const,
+    start_gw: plannerStartGw,
+    gw_timeline: [],
+    squad_windows: [],
+    target_windows: [],
+    key_planning_notes: [],
+  };
   const captainExpectedPts = extractCaptainExpectedPts(data.captain);
   const viceCaptainExpectedPts = extractCaptainExpectedPts(data.vice_captain);
-  const displayDecision = normalizeDecisionText(data.primary_decision);
+  const displayDecision = normalizeDecisionText(
+    data.primary_decision,
+    normalizedFreeTransferCount,
+  );
+  const displayReasoning = normalizeReasoningText(
+    data.reasoning,
+    normalizedFreeTransferCount,
+  );
   const squadBlankCountsByGw: Record<number, number> = {};
   for (const playerWindow of fixturePlanner?.squad_windows || []) {
     for (const row of playerWindow.upcoming || []) {
@@ -221,6 +279,29 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
       }
     }
   }
+  const plannerStructurallyEmpty =
+    fixturePlanner.gw_timeline.length === 0 &&
+    fixturePlanner.squad_windows.length === 0 &&
+    fixturePlanner.target_windows.length === 0 &&
+    fixturePlanner.key_planning_notes.length === 0;
+  const plannerEmptyText =
+    plannerStructurallyEmpty && data.fixture_planner_reason?.trim()
+      ? data.fixture_planner_reason.trim()
+      : 'No DGW/BGW events flagged in the current 8-GW horizon.';
+  const nearThresholdEmptyText =
+    data.near_threshold_reason?.trim() ||
+    'No near-threshold moves this gameweek. Candidate swaps were either clearly above threshold or well below required gain.';
+  const strategyPathsEmptyText =
+    data.strategy_paths_reason?.trim() ||
+    'No distinct strategy-path alternatives this gameweek.';
+  const strategyPathEntries = [
+    { label: 'Safe', move: data.strategy_paths?.safe },
+    { label: 'Balanced', move: data.strategy_paths?.balanced },
+    { label: 'Aggressive', move: data.strategy_paths?.aggressive },
+  ] as Array<{ label: string; move: StrategyPathMove | undefined }>;
+  const hasAnyStrategyPath = strategyPathEntries.some(
+    ({ move }) => !!move?.out && !!move?.in,
+  );
 
   return (
     <div className="space-y-8">
@@ -282,8 +363,8 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
         >
           {data.confidence} confidence
         </div>
-        {data.reasoning && (
-          <p className="mt-3 text-sm text-cloud/70">{data.reasoning}</p>
+        {displayReasoning && (
+          <p className="mt-3 text-sm text-cloud/70">{displayReasoning}</p>
         )}
         {strategyMode ? (
           <div className="mt-4 inline-flex rounded-md border border-white/10 bg-surface/50 px-3 py-1 text-xs font-semibold uppercase text-teal">
@@ -332,15 +413,15 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
       </div>
 
       {/* DGW/BGW Planner */}
-      {fixturePlanner ? (
-        <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-          <h2 className="mb-6 text-2xl font-semibold">
-            DGW/BGW Planner (Next 8 GWs)
-          </h2>
-          <p className="mb-4 text-sm text-cloud/60">
-            Fixture Horizon Score: higher is better (more DGW upside, lower BGW
-            risk, stronger medium-term fixture profile).
-          </p>
+      <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
+        <h2 className="mb-6 text-2xl font-semibold">
+          DGW/BGW Planner (Next 8 GWs)
+        </h2>
+        <p className="mb-4 text-sm text-cloud/60">
+          Fixture Horizon Score: higher is better (more DGW upside, lower BGW
+          risk, stronger medium-term fixture profile).
+        </p>
+        {fixturePlanner.gw_timeline.length > 0 ? (
           <div className="mb-6 grid gap-3 md:grid-cols-4 lg:grid-cols-8">
             {fixturePlanner.gw_timeline.map((row) => (
               <div
@@ -364,32 +445,36 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
               </div>
             ))}
           </div>
-          <div className="space-y-4">
-            {renderFixtureWindowTable(
-              'Your Squad',
-              fixturePlanner.squad_windows,
-              fixturePlanner.start_gw,
-            )}
-            {renderFixtureWindowTable(
-              'Potential Targets',
-              fixturePlanner.target_windows,
-              fixturePlanner.start_gw,
-            )}
+        ) : (
+          <div className="mb-6 rounded-lg border border-white/10 bg-surface/50 p-3 text-xs text-cloud/60">
+            {plannerEmptyText}
           </div>
-          {fixturePlanner.key_planning_notes.length > 0 ? (
-            <div className="mt-4 rounded-lg border border-white/10 bg-surface/50 p-4">
-              <div className="mb-2 text-xs font-semibold uppercase text-cloud/60">
-                Key Planning Notes
-              </div>
-              <ul className="space-y-1 text-xs text-cloud/70">
-                {fixturePlanner.key_planning_notes.map((note, idx) => (
-                  <li key={`planner-note-${idx}`}>{note}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+        )}
+        <div className="space-y-4">
+          {renderFixtureWindowTable(
+            'Your Squad',
+            fixturePlanner.squad_windows,
+            fixturePlanner.start_gw,
+          )}
+          {renderFixtureWindowTable(
+            'Potential Targets',
+            fixturePlanner.target_windows,
+            fixturePlanner.start_gw,
+          )}
         </div>
-      ) : null}
+        {fixturePlanner.key_planning_notes.length > 0 ? (
+          <div className="mt-4 rounded-lg border border-white/10 bg-surface/50 p-4">
+            <div className="mb-2 text-xs font-semibold uppercase text-cloud/60">
+              Key Planning Notes
+            </div>
+            <ul className="space-y-1 text-xs text-cloud/70">
+              {fixturePlanner.key_planning_notes.map((note, idx) => (
+                <li key={`planner-note-${idx}`}>{note}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
 
       {/* Transfers */}
       <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
@@ -445,24 +530,16 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-cloud/60">
-            No near-threshold alternatives available this gameweek.
-          </p>
+          <p className="text-sm text-cloud/60">{nearThresholdEmptyText}</p>
         )}
       </div>
 
       {/* Strategy Paths */}
       <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
         <h2 className="mb-6 text-2xl font-semibold">Strategy Paths</h2>
-        {data.strategy_paths ? (
+        {data.strategy_paths && hasAnyStrategyPath ? (
           <div className="grid gap-4 md:grid-cols-3">
-            {(
-              [
-                { label: 'Safe', move: data.strategy_paths.safe },
-                { label: 'Balanced', move: data.strategy_paths.balanced },
-                { label: 'Aggressive', move: data.strategy_paths.aggressive },
-              ] as Array<{ label: string; move: StrategyPathMove | undefined }>
-            ).map(({ label, move }) => (
+            {strategyPathEntries.map(({ label, move }) => (
               <div
                 key={label}
                 className="rounded-lg border border-white/10 bg-surface/50 p-4"
@@ -486,16 +563,14 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
                   </>
                 ) : (
                   <div className="mt-2 text-sm text-cloud/60">
-                    No path generated
+                    No distinct alternative this gameweek.
                   </div>
                 )}
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-sm text-cloud/60">
-            Strategy alternatives unavailable for this dataset.
-          </p>
+          <p className="text-sm text-cloud/60">{strategyPathsEmptyText}</p>
         )}
       </div>
 

@@ -123,7 +123,9 @@ class DetailedAnalysisResponse(BaseModel):
     transfer_recommendations: List[Dict]
     transfer_plans: Optional[Dict] = None
     near_threshold_moves: Optional[List[Dict]] = None
+    near_threshold_reason: Optional[str] = None
     strategy_paths: Optional[Dict] = None
+    strategy_paths_reason: Optional[str] = None
     squad_issues: Optional[List[Dict]] = None
     
     # Captaincy
@@ -150,6 +152,7 @@ class DetailedAnalysisResponse(BaseModel):
     chip_recommendation: Optional[Dict]
     chip_timing_outlook: Optional[Dict] = None
     fixture_planner: Optional[Dict] = None
+    fixture_planner_reason: Optional[str] = None
     available_chips: List[str]
     
     # Squad health metrics

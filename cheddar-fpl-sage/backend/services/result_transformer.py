@@ -26,6 +26,211 @@ def _to_float(value: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
 
+
+def _to_int(value: Any, default: int = 0) -> int:
+    """Best-effort int coercion with fallback."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_risk_posture(value: Any) -> str:
+    """Normalize risk posture to canonical uppercase enum."""
+    normalized = str(value or "").strip().upper()
+    if normalized in {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}:
+        return normalized
+    return "BALANCED"
+
+
+def _derive_rank_bucket(overall_rank: Any) -> str:
+    """Map rank to manager strategy bucket."""
+    rank = _to_int(overall_rank, default=0)
+    if rank <= 0:
+        return "unknown"
+    if rank <= 50_000:
+        return "elite"
+    if rank <= 500_000:
+        return "strong"
+    if rank <= 3_000_000:
+        return "mid"
+    return "recovery"
+
+
+def _derive_strategy_mode(overall_rank: Any, risk_posture: str) -> str:
+    """Derive rank-aware strategy mode with posture nudge."""
+    bucket = _derive_rank_bucket(overall_rank)
+    posture = _normalize_risk_posture(risk_posture)
+    base_by_bucket = {
+        "elite": "DEFEND",
+        "strong": "CONTROLLED",
+        "mid": "BALANCED",
+        "recovery": "RECOVERY",
+        "unknown": "BALANCED",
+    }
+    order = ["DEFEND", "CONTROLLED", "BALANCED", "RECOVERY"]
+    mode = base_by_bucket.get(bucket, "BALANCED")
+    idx = order.index(mode)
+    if posture == "CONSERVATIVE":
+        idx = max(0, idx - 1)
+    elif posture == "AGGRESSIVE":
+        idx = min(len(order) - 1, idx + 1)
+    return order[idx]
+
+
+def _normalize_decision_reasoning(
+    reasoning: Any,
+    primary_decision: Any,
+    free_transfers: int,
+) -> str:
+    """Prevent contradictory no-transfer copy when effective free transfers are positive."""
+    raw_reasoning = str(reasoning or "").strip()
+    decision_code = str(primary_decision or "").strip().upper()
+    if free_transfers > 0 and "no free transfers" in raw_reasoning.lower():
+        if free_transfers == 1:
+            return "No chip passes the strategic windows/risk gates. You have 1 free transfer available."
+        return (
+            "No chip passes the strategic windows/risk gates. "
+            f"You have {free_transfers} free transfers available."
+        )
+    if not raw_reasoning and decision_code == "NO_CHIP_ACTION":
+        if free_transfers == 1:
+            return "No chip passes the strategic windows/risk gates. You have 1 free transfer available."
+        if free_transfers > 1:
+            return (
+                "No chip passes the strategic windows/risk gates. "
+                f"You have {free_transfers} free transfers available."
+            )
+        return "No free transfers and no chip passes the strategic windows/risk gates."
+    return raw_reasoning
+
+
+def _build_empty_fixture_planner(start_gw: Any) -> Dict[str, Any]:
+    """Deterministic fallback planner payload."""
+    normalized_start_gw = max(1, _to_int(start_gw, default=1))
+    return {
+        "horizon_gws": 8,
+        "start_gw": normalized_start_gw,
+        "gw_timeline": [],
+        "squad_windows": [],
+        "target_windows": [],
+        "key_planning_notes": [],
+    }
+
+
+def _normalize_fixture_planner_payload(
+    planner_payload: Any,
+    default_start_gw: Any,
+) -> Dict[str, Any]:
+    """Normalize any planner-like payload to dashboard contract shape."""
+    normalized = _build_empty_fixture_planner(default_start_gw)
+    if not isinstance(planner_payload, dict):
+        return normalized
+
+    normalized["horizon_gws"] = max(1, _to_int(planner_payload.get("horizon_gws"), default=8))
+    normalized["start_gw"] = max(
+        1,
+        _to_int(
+            planner_payload.get("start_gw"),
+            default=normalized["start_gw"],
+        ),
+    )
+
+    gw_timeline = planner_payload.get("gw_timeline")
+    if isinstance(gw_timeline, list):
+        normalized["gw_timeline"] = [row for row in gw_timeline if isinstance(row, dict)]
+
+    squad_windows = planner_payload.get("squad_windows")
+    if isinstance(squad_windows, list):
+        normalized["squad_windows"] = [row for row in squad_windows if isinstance(row, dict)]
+
+    target_windows = planner_payload.get("target_windows")
+    if isinstance(target_windows, list):
+        normalized["target_windows"] = [row for row in target_windows if isinstance(row, dict)]
+
+    key_notes = planner_payload.get("key_planning_notes")
+    if isinstance(key_notes, list):
+        normalized["key_planning_notes"] = [str(note) for note in key_notes if note is not None]
+
+    return normalized
+
+
+def _fixture_planner_has_content(planner_payload: Dict[str, Any]) -> bool:
+    """Treat non-empty timeline/windows/notes as a valid planner surface."""
+    return bool(
+        planner_payload.get("gw_timeline")
+        or planner_payload.get("squad_windows")
+        or planner_payload.get("target_windows")
+        or planner_payload.get("key_planning_notes")
+    )
+
+
+def _normalize_fixture_planner(
+    decision_payload: Any,
+    fixture_horizon_context: Any,
+    current_gw: Any,
+) -> Dict[str, Any]:
+    """Resolve planner with precedence: decision payload > fixture horizon context > deterministic empty."""
+    fallback = _build_empty_fixture_planner(current_gw)
+
+    decision_normalized = _normalize_fixture_planner_payload(decision_payload, fallback["start_gw"])
+    if _fixture_planner_has_content(decision_normalized):
+        return decision_normalized
+
+    context_payload = None
+    if isinstance(fixture_horizon_context, dict):
+        context_payload = {
+            "horizon_gws": fixture_horizon_context.get("horizon_gws"),
+            "start_gw": fixture_horizon_context.get("start_gw"),
+            "gw_timeline": fixture_horizon_context.get("gw_timeline"),
+            "squad_windows": fixture_horizon_context.get("squad_player_windows"),
+            "target_windows": fixture_horizon_context.get("candidate_player_windows"),
+            "key_planning_notes": fixture_horizon_context.get("key_planning_notes"),
+        }
+
+    context_normalized = _normalize_fixture_planner_payload(context_payload, fallback["start_gw"])
+    if _fixture_planner_has_content(context_normalized):
+        return context_normalized
+
+    if isinstance(fixture_horizon_context, dict):
+        # Keep deterministic structure even when context is sparse.
+        return context_normalized
+
+    if isinstance(decision_payload, dict):
+        return decision_normalized
+
+    return fallback
+
+
+def _derive_fixture_planner_reason(
+    decision_reason: Any,
+    normalized_planner: Dict[str, Any],
+    raw_data: Dict[str, Any],
+    my_team: Dict[str, Any],
+) -> Optional[str]:
+    """Emit planner reason only when planner is empty due to true data absence."""
+    if _fixture_planner_has_content(normalized_planner):
+        return None
+
+    existing_reason = str(decision_reason or "").strip()
+    if existing_reason:
+        return existing_reason
+
+    missing_inputs: List[str] = []
+    if not raw_data.get("fixtures"):
+        missing_inputs.append("fixtures")
+    if not raw_data.get("teams"):
+        missing_inputs.append("teams")
+    if not raw_data.get("players"):
+        missing_inputs.append("players")
+    if not (my_team.get("current_squad") or []):
+        missing_inputs.append("squad_picks")
+
+    if missing_inputs:
+        return "Fixture planner limited: missing " + ", ".join(missing_inputs) + "."
+    return None
+
+
 def _calculate_captain_delta(captain_data: Optional[Dict], vice_data: Optional[Dict]) -> Dict[str, Any]:
     """
     Calculate the points delta between captain and vice captain.
@@ -731,55 +936,114 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
     else:
         decision_dict = decision if isinstance(decision, dict) else {}
     
-    strategy_mode = decision_dict.get("strategy_mode")
     manager_state = decision_dict.get("manager_state")
     if not isinstance(manager_state, dict):
         manager_state = {}
-    if not strategy_mode:
-        strategy_mode = manager_state.get("strategy_mode") or "BALANCED"
-    if free_transfers is not None:
-        try:
-            manager_state["free_transfers"] = int(free_transfers)
-        except (TypeError, ValueError):
-            pass
-    if not manager_state:
-        manager_state = {
-            "overall_rank": overall_rank,
-            "risk_posture": decision_dict.get("risk_posture", "BALANCED"),
-            "strategy_mode": strategy_mode,
-            "rank_bucket": "unknown",
-            "free_transfers": free_transfers or 0,
-        }
 
-    # Build transformed result
+    # Resolve posture with explicit override precedence first.
+    override_risk_posture = overrides.get("risk_posture") if "risk_posture" in overrides else None
+    resolved_risk_posture = _normalize_risk_posture(
+        override_risk_posture
+        or decision_dict.get("risk_posture")
+        or manager_state.get("risk_posture")
+    )
+
+    if free_transfers is None and manager_state.get("free_transfers") is not None:
+        free_transfers = manager_state.get("free_transfers")
+    effective_free_transfers = max(0, _to_int(free_transfers, default=0))
+
+    effective_overall_rank = (
+        manager_state.get("overall_rank")
+        if manager_state.get("overall_rank") is not None
+        else overall_rank
+    )
+    rank_bucket = _derive_rank_bucket(effective_overall_rank)
+    derived_strategy_mode = _derive_strategy_mode(effective_overall_rank, resolved_risk_posture)
+
+    strategy_mode = (
+        decision_dict.get("strategy_mode")
+        or manager_state.get("strategy_mode")
+        or derived_strategy_mode
+    )
+    strategy_mode = str(strategy_mode or derived_strategy_mode).upper()
+    if strategy_mode not in {"DEFEND", "CONTROLLED", "BALANCED", "RECOVERY"}:
+        strategy_mode = derived_strategy_mode
+
+    manager_state = {
+        **manager_state,
+        "overall_rank": effective_overall_rank,
+        "risk_posture": resolved_risk_posture,
+        "strategy_mode": strategy_mode,
+        "rank_bucket": rank_bucket,
+        "free_transfers": effective_free_transfers,
+    }
+
+    primary_decision = decision_dict.get("primary_decision", "Hold")
+    normalized_reasoning = _normalize_decision_reasoning(
+        decision_dict.get("reasoning", ""),
+        primary_decision,
+        effective_free_transfers,
+    )
+    normalized_fixture_planner = _normalize_fixture_planner(
+        decision_dict.get("fixture_planner"),
+        my_team.get("fixture_horizon_context"),
+        current_gw,
+    )
+    fixture_planner_reason = _derive_fixture_planner_reason(
+        decision_dict.get("fixture_planner_reason"),
+        normalized_fixture_planner,
+        raw_data,
+        my_team,
+    )
+    near_threshold_moves = decision_dict.get("near_threshold_moves") or []
+    near_threshold_reason = decision_dict.get("near_threshold_reason")
+    if near_threshold_moves:
+        near_threshold_reason = None
+    elif near_threshold_reason is not None:
+        near_threshold_reason = str(near_threshold_reason)
+
     starting_names = [
         player.get("name")
         for player in (my_team.get("current_squad") or [])
         if isinstance(player, dict)
     ]
+    strategy_paths = _sanitize_strategy_paths(
+        decision_dict.get("strategy_paths") or {},
+        starting_names,
+    )
+    strategy_paths_reason = decision_dict.get("strategy_paths_reason")
+    has_strategy_paths = any(
+        isinstance(path, dict) and path.get("out") and path.get("in")
+        for path in strategy_paths.values()
+    )
+    if has_strategy_paths:
+        strategy_paths_reason = None
+    elif strategy_paths_reason is not None:
+        strategy_paths_reason = str(strategy_paths_reason)
 
+    # Build transformed result
     result = {
         "team_name": team_name,
         "manager_name": manager_name,
         "current_gw": current_gw,
         "overall_rank": overall_rank,
         "overall_points": overall_points,
-        "free_transfers": free_transfers,
-        "risk_posture": decision_dict.get("risk_posture", "BALANCED"),
-        "primary_decision": decision_dict.get("primary_decision", "Hold"),
+        "free_transfers": effective_free_transfers,
+        "risk_posture": resolved_risk_posture,
+        "primary_decision": primary_decision,
         "decision_status": decision_dict.get("decision_status"),
         "confidence": _map_confidence(decision_dict.get("decision_status")),
-        "reasoning": decision_dict.get("reasoning", ""),
+        "reasoning": normalized_reasoning,
         "strategy_mode": strategy_mode,
         "manager_state": manager_state,
-        "near_threshold_moves": decision_dict.get("near_threshold_moves") or [],
-        "strategy_paths": _sanitize_strategy_paths(
-            decision_dict.get("strategy_paths") or {},
-            starting_names,
-        ),
+        "near_threshold_moves": near_threshold_moves,
+        "near_threshold_reason": near_threshold_reason,
+        "strategy_paths": strategy_paths,
+        "strategy_paths_reason": strategy_paths_reason,
         "squad_issues": decision_dict.get("squad_issues") or [],
         "chip_timing_outlook": decision_dict.get("chip_timing_outlook") or None,
-        "fixture_planner": decision_dict.get("fixture_planner") or None,
+        "fixture_planner": normalized_fixture_planner,
+        "fixture_planner_reason": fixture_planner_reason,
         "no_transfer_reason": decision_dict.get("no_transfer_reason"),
     }
     
@@ -871,7 +1135,7 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         transfer_recs = filtered_recs
     
     # CRITICAL: Apply risk-aware filtering based on user's risk posture
-    risk_posture = decision_dict.get("risk_posture", "BALANCED")
+    risk_posture = resolved_risk_posture
     logger.warning(f"🔍 DEBUG: decision_dict keys: {list(decision_dict.keys())}")
     logger.warning(f"🔍 DEBUG: risk_posture from decision_dict: {risk_posture}")
     logger.warning(f"🔍 DEBUG: overrides passed to transformer: {overrides}")
@@ -887,14 +1151,14 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         result["optional_transfers"] = [t for t in result["transfer_recommendations"] if t.get("priority") != "URGENT"]
 
         # Build transfer plans with calculated metrics for frontend consumption
-        transfer_plans = _build_transfer_plans(transfer_recs, free_transfers or 1)
+        transfer_plans = _build_transfer_plans(transfer_recs, effective_free_transfers)
         result["transfer_plans"] = transfer_plans
     else:
         logger.warning("NO transfer_recommendations found in decision_dict!")
         result["transfer_recommendations"] = []
         result["forced_transfers"] = []
         result["optional_transfers"] = []
-        transfer_audit_reason = decision_dict.get("no_transfer_reason") or decision_dict.get("reasoning")
+        transfer_audit_reason = decision_dict.get("no_transfer_reason") or normalized_reasoning
         if not transfer_audit_reason:
             transfer_audit_reason = (
                 "No transfer met threshold requirements this gameweek."
@@ -906,7 +1170,7 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         }
 
     if result.get("transfer_plans"):
-        audit_reason = decision_dict.get("no_transfer_reason") or decision_dict.get("reasoning")
+        audit_reason = decision_dict.get("no_transfer_reason") or normalized_reasoning
         current_reason = result["transfer_plans"].get("no_transfer_reason")
         if (
             audit_reason

@@ -104,6 +104,9 @@ class DecisionOutput:
     chip_timing_outlook: Optional[Dict] = None
     no_transfer_reason: Optional[str] = None
     fixture_planner: Optional[Dict] = None
+    near_threshold_reason: Optional[str] = None
+    strategy_paths_reason: Optional[str] = None
+    fixture_planner_reason: Optional[str] = None
     lineup_decision: Optional[Dict] = None
 
     def __post_init__(self):
@@ -995,6 +998,8 @@ class EnhancedDecisionFramework:
         decision.strategy_paths = transfer_audit.get("strategy_paths", {})
         decision.squad_issues = transfer_audit.get("squad_issues", [])
         decision.no_transfer_reason = transfer_audit.get("no_transfer_reason")
+        decision.near_threshold_reason = transfer_audit.get("near_threshold_reason")
+        decision.strategy_paths_reason = transfer_audit.get("strategy_paths_reason")
         decision.chip_timing_outlook = self._derive_chip_timing_outlook(manager_state, window_context)
         if not decision.reasoning and transfer_audit.get("no_transfer_reason"):
             decision.reasoning = transfer_audit["no_transfer_reason"]
