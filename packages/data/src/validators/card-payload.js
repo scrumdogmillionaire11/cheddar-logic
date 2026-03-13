@@ -30,24 +30,28 @@ const driverPayloadSchema = basePayloadSchema.extend({
 });
 
 const schemaByCardType = {
-  // NHL driver cards
-  'nhl-model-output': basePayloadSchema,        // keep for backward compat
+  // Active NHL driver + evidence cards
   'nhl-goalie': driverPayloadSchema,
+  'nhl-goalie-certainty': driverPayloadSchema,
   'nhl-special-teams': driverPayloadSchema,
   'nhl-shot-environment': driverPayloadSchema,
   'nhl-empty-net': driverPayloadSchema,
   'nhl-total-fragility': driverPayloadSchema,
   'nhl-pdo-regression': driverPayloadSchema,
-  'nhl-welcome-home': driverPayloadSchema,
   'nhl-base-projection': driverPayloadSchema,
   'nhl-rest-advantage': driverPayloadSchema,
   'nhl-pace-totals': driverPayloadSchema,
   'nhl-pace-1p': driverPayloadSchema,
-  // NHL market call cards
+  'nhl-player-shots': driverPayloadSchema,
+  'nhl-player-shots-1p': driverPayloadSchema,
+  'welcome-home-v2': driverPayloadSchema,
+
+  // Active NHL market call cards
   'nhl-totals-call': driverPayloadSchema,
   'nhl-spread-call': driverPayloadSchema,
-  // NBA driver cards
-  'nba-model-output': basePayloadSchema,        // keep for backward compat
+  'nhl-moneyline-call': driverPayloadSchema,
+
+  // Active NBA driver + evidence cards
   'nba-rest-advantage': driverPayloadSchema,
   'nba-travel': driverPayloadSchema,
   'nba-lineup': driverPayloadSchema,
@@ -56,15 +60,30 @@ const schemaByCardType = {
   'nba-base-projection': driverPayloadSchema,
   'nba-total-projection': driverPayloadSchema,
   'nba-pace-matchup': driverPayloadSchema,
-  // NBA market call cards
+
+  // Active NBA market call cards
   'nba-totals-call': driverPayloadSchema,
   'nba-spread-call': driverPayloadSchema,
-  // NCAAM driver cards
+  'nba-moneyline-call': driverPayloadSchema,
+
+  // Active NCAAM cards (includes legacy type still emitted in current runs)
   'ncaam-base-projection': driverPayloadSchema,
   'ncaam-rest-advantage': driverPayloadSchema,
   'ncaam-matchup-style': driverPayloadSchema,
   'ncaam-ft-trend': driverPayloadSchema,
   'ncaam-ft-spread': driverPayloadSchema,
+
+  // Active single-card model output jobs that still validate against base schema
+  'soccer-model-output': basePayloadSchema,
+  'mlb-model-output': basePayloadSchema,
+  'nfl-model-output': basePayloadSchema,
+  'fpl-model-output': basePayloadSchema,
+
+  // Legacy aliases retained for backward compatibility.
+  // Keep accepted so historical rows remain valid, but no new writes should target deprecated aliases.
+  'nhl-model-output': basePayloadSchema, // keep (historical + currently read as NHL evidence card)
+  'nba-model-output': basePayloadSchema, // deprecated write alias; kept for historical payloads
+  'nhl-welcome-home': driverPayloadSchema, // deprecated alias; canonical replacement is welcome-home-v2
 };
 
 /**

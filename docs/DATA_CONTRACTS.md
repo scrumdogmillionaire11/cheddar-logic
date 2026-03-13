@@ -66,7 +66,7 @@ CREATE TABLE card_payloads (
   id TEXT PRIMARY KEY,
   game_id TEXT NOT NULL,
   sport TEXT NOT NULL,                    -- 'NBA' | 'NHL' | 'MLB' | 'SOCCER' | 'FPL'
-  card_type TEXT NOT NULL,                -- 'nba-model-output' | 'fpl-sage-transfers'
+  card_type TEXT NOT NULL,                -- 'nhl-totals-call' | 'nba-base-projection' | 'welcome-home-v2'
   card_title TEXT NOT NULL,
   payload_data TEXT NOT NULL,             -- JSON string (validated before insert)
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -81,9 +81,11 @@ CREATE INDEX idx_card_payloads_expires_at ON card_payloads(expires_at);
 CREATE INDEX idx_card_payloads_created_at ON card_payloads(created_at);
 ```
 
-**Card Type Naming Convention:**
-- Betting: `<sport>-model-output` (e.g., `nhl-model-output`, `soccer-epl-model-output`)
-- FPL-SAGE: `fpl-sage-<feature>` (e.g., `fpl-sage-transfers`, `fpl-sage-chips`, `fpl-sage-squad-plan`)
+**Card Type Naming Convention (Current Runtime):**
+- Betting play producers: `*-totals-call`, `*-spread-call`, `*-moneyline-call`, plus `nhl-pace-1p`
+- Betting evidence/driver cards: `*-base-projection`, `*-rest-advantage`, `*-total-projection`, `welcome-home-v2`, etc.
+- Legacy aliases kept for compatibility: `nhl-model-output`, `nba-model-output`, `nhl-welcome-home`, `ncaam-ft-spread`
+- FPL uses dedicated backend surfaces and should not be served from betting routes
 
 ---
 
@@ -230,45 +232,34 @@ CREATE INDEX idx_card_results_settled_at ON card_results(settled_at);
 
 ### Betting Card Payload Structure
 
-**Card Type:** `<sport>-model-output` (e.g., `nhl-model-output`)
+**Applies to:** all worker-written betting cards in `card_payloads` (play + evidence rows).
 
-**Payload JSON:**
+**Baseline payload JSON (validator-required fields):**
 
 ```json
 {
-  "game_id": "nhl-2026-02-27-van-sea",
-  "sport": "NHL",
-  "model_version": "nhl-model-v1",
   "prediction": "AWAY",
   "confidence": 0.68,
   "recommended_bet_type": "moneyline",
-  "reasoning": "Vancouver strong on road...",
+  "generated_at": "2026-02-27T16:00:00Z",
   "odds_context": {
     "h2h_home": -150,
-    "h2h_away": 130,
-    "spread_home": -1.5,
-    "spread_away": 1.5,
-    "total": 6.0,
-    "captured_at": "2026-02-27T15:30:00Z"
-  },
-  "ev_passed": true,
-  "disclaimer": "Analysis provided for educational purposes. Not a recommendation.",
-  "generated_at": "2026-02-27T16:00:00Z",
-  "meta": {
-    "inference_source": "mock",
-    "model_endpoint": null,
-    "is_mock": true
+    "h2h_away": 130
   }
 }
 ```
 
 **Required Fields:**
 
-- `meta.is_mock` (boolean) — MUST be true if inference came from mock fallback
-- `meta.inference_source` (string) — "remote" | "mock"
-- `confidence` (number) — Must be between 0 and 1
-- `prediction` (string) — Enum depends on sport/market
-- `recommended_bet_type` (string) — "moneyline" | "spread" | "puck_line" | "total" | "unknown"
+- `prediction` (string, non-empty)
+- `confidence` (number between `0` and `1`)
+- `recommended_bet_type` (`moneyline` | `spread` | `puck_line` | `total` | `unknown`)
+- `generated_at` (ISO-parseable date string)
+- `odds_context` (object; additional keys allowed)
+
+**Compatibility notes:**
+- `meta.model_endpoint` may appear in payload metadata for legacy client compatibility.
+- Web routes keep read compatibility for older rows but active read surfaces are `/api/games` and `/api/cards`.
 
 ### Decision Pipeline v2 (Wave-1 Game Lines)
 
@@ -549,74 +540,35 @@ FPL cards expire at gameweek deadline (not 1 hour before like betting cards).
 
 ```typescript
 interface BettingCardPayload {
-  game_id: string;
-  sport: 'NBA' | 'NHL' | 'MLB' | 'SOCCER';
-  model_version: string;
-  prediction: 'HOME' | 'AWAY' | string;  // Enum varies by market
+  prediction: string;                     // non-empty
   confidence: number;                     // [0, 1]
   recommended_bet_type: 'moneyline' | 'spread' | 'puck_line' | 'total' | 'unknown';
-  reasoning: string;
+  generated_at: string;                   // ISO-parsable datetime
   odds_context: {
     h2h_home?: number;
     h2h_away?: number;
     spread_home?: number;
     spread_away?: number;
     total?: number;
-    captured_at: string;                  // ISO 8601 UTC
+    captured_at?: string | null;
   };
-  ev_passed: boolean;
-  disclaimer: string;
-  generated_at: string;                   // ISO 8601 UTC
-  meta: {
-    inference_source: 'remote' | 'mock';
-    model_endpoint: string | null;
-    is_mock: boolean;                     // MUST be true if mock
-  };
-  drivers?: Record<string, unknown>;      // Sport-specific + global drivers
-  driver_summary?: {
-    game_id: string;
-    weighted_confidence: number;
-    top_drivers: string[];
-  } | null;
+  // Additional fields are intentionally allowed and consumed by specific cards/routes.
+  [key: string]: unknown;
 }
 ```
 
 **Validation:**
-- `meta.is_mock` must match `meta.inference_source === 'mock'`
-- `confidence` must be in [0, 1] range
-- `expires_at` (table column) must be set to 1 hour before game start
+- `prediction` must be non-empty string
+- `confidence` must be in `[0, 1]`
+- `recommended_bet_type` must be one of the supported enum values
+- `generated_at` must parse as date
+- `odds_context` must be an object
+- Market/selection contract is validated through `deriveLockedMarketContext(...)` (parser boundary guard)
 
-### NHL Driver Payload (Strict)
+### NHL Legacy Model-Output Payload (Historical Compatibility)
 
-For `sport='NHL'` and `card_type='nhl-model-output'`, `payload.drivers` must contain exactly:
-
-- `goalie`
-- `specialTeams`
-- `shotEnvironment`
-- `emptyNet`
-- `totalFragility`
-- `pdoRegression`
-
-Each NHL driver object must match:
-
-```typescript
-interface DriverNode {
-  score: number;                          // [0, 1]
-  weight: number;                         // [0, 1], weights sum approx 1
-  status: 'ok' | 'partial' | 'missing';
-  inputs: Record<string, number | string | null>;
-  note: string;
-}
-
-interface NHLDrivers {
-  goalie: DriverNode;
-  specialTeams: DriverNode;
-  shotEnvironment: DriverNode;
-  emptyNet: DriverNode;
-  totalFragility: DriverNode;
-  pdoRegression: DriverNode;
-}
-```
+`card_type='nhl-model-output'` is retained for compatibility with existing/historical rows and evidence rendering.
+New writes should prefer current NHL card families (`nhl-*-call`, `nhl-base-projection`, `nhl-pace-*`, etc.).
 
 ### Global Driver: `welcomeHome` (All Sports)
 
@@ -739,16 +691,26 @@ interface FPLChipPayload {
 
 ## API Read-Path Contracts
 
+Active public betting read-paths:
+- `GET /api/games`
+- `GET /api/cards`
+- `GET /api/cards/[gameId]`
+
+Deprecated historical references (documentation-only, not active runtime contracts):
+- `/api/models/*`
+- `/api/betting/projections`
+- `/api/soccer/slate`
+
 ### GET /api/cards (List Endpoint)
 
 **Query Params:**
-- `sport?` (NBA|NHL|MLB|SOCCER|FPL)
-- `card_type?` (e.g., nhl-model-output, fpl-sage-transfers)
+- `sport?` (case-insensitive betting sports; FPL rows are excluded here)
+- `card_type?` (e.g., `nhl-totals-call`, `nba-total-projection`, `welcome-home-v2`)
 - `game_id?` (filter by specific game)
-- `include_expired?` (default: false)
 - `dedupe?` (default: latest_per_game_type | none)
 - `limit?` (default: 20, max: 100)
 - `offset?` (default: 0, max: 1000)
+- `lifecycle?` (`pregame` default, optional `active` when lifecycle parity flag is enabled)
 
 **Response:**
 
@@ -760,13 +722,13 @@ interface FPLChipPayload {
       "id": "card-123",
       "gameId": "nhl-2026-02-27-van-sea",
       "sport": "NHL",
-      "cardType": "nhl-model-output",
-      "cardTitle": "NHL Model: AWAY",
+      "cardType": "nhl-totals-call",
+      "cardTitle": "NHL Totals Call: OVER",
       "createdAt": "2026-02-27T16:00:00Z",
       "expiresAt": "2026-02-27T19:00:00Z",
       "payloadData": { /* full payload */ },
       "payloadParseError": false,
-      "modelOutputIds": "model-123"
+      "modelOutputIds": null
     }
   ]
 }
@@ -789,6 +751,30 @@ SELECT * FROM ranked WHERE rn = 1
 2. `dedupe=none` returns full history
 3. `payloadParseError` flag set if JSON parse fails (never throw 500)
 4. Mock inference must be visible: `payloadData.meta.is_mock` exposed
+5. For backward compatibility, routes ensure `payloadData.meta.model_endpoint` exists (defaults to `null` when absent)
+
+### GET /api/cards/[gameId] (Per-Game Cards)
+
+**Query Params:**
+- `cardType?` or `card_type?`
+- `dedupe?` (default `latest_per_game_type`, optional `none`)
+- `limit?` (default: 10, max: 100)
+- `offset?` (default: 0, max: 1000)
+- `lifecycle?` (`pregame` default, optional `active` when lifecycle parity flag is enabled)
+
+**Contract notes:**
+- Returns only betting cards for the requested game id.
+- Same payload parsing + compatibility behavior as `/api/cards`.
+
+### GET /api/games (Game + Play Aggregation)
+
+**Query Params:**
+- `lifecycle?` (`pregame` default, optional `active`)
+
+**Contract notes:**
+- Canonical game/plays aggregation route for current runtime.
+- Returns games even when no card payload rows exist for a game.
+- Play-vs-evidence enforcement is driven by explicit per-sport card-type contracts in route code.
 
 ---
 
@@ -800,9 +786,22 @@ Location: `packages/data/src/validators/card-payload.js`
 
 **Rules:**
 - `confidence` must be number in [0, 1]
-- `meta.is_mock` must be boolean
-- `meta.inference_source` must be 'remote' or 'mock'
-- If `meta.is_mock === true`, then `meta.model_endpoint` must be null
+- `prediction` must be non-empty
+- `recommended_bet_type` must be one of: `moneyline`, `spread`, `puck_line`, `total`, `unknown`
+- `generated_at` must parse as date
+- `odds_context` must be an object
+- Card types are explicitly mapped by runtime family (NBA/NHL/NCAAM + soccer/base jobs)
+- Unknown card types fall back to baseline payload schema
+- Actionable play payloads are checked against market/selection contract via `deriveLockedMarketContext(...)`
+
+### Legacy Alias Policy (Keep vs Deprecate)
+
+| Card Type / Alias | Status | Policy |
+| --- | --- | --- |
+| `nhl-model-output` | keep | Continue to validate and read for compatibility/evidence rendering |
+| `ncaam-ft-spread` | keep | Continue to validate; current pipeline still includes it for compatibility |
+| `nba-model-output` | deprecated alias | Continue to validate/read historical rows; do not emit new writes |
+| `nhl-welcome-home` | deprecated alias | Continue to validate/read historical rows; canonical replacement is `welcome-home-v2` |
 
 ### FPL Payload Validation (Future)
 
@@ -844,7 +843,7 @@ Location: `packages/data/src/validators/fpl-payload.js`
 | **Scheduling** | Fixed (09:00, 12:00 ET) + T-minus (120/90/60/30) | Deadline-relative (T-48h, T-24h, T-6h) |
 | **Job Keys** | `nhl\|fixed\|date\|time`, `nhl\|tminus\|game_id\|mins` | `fpl\|daily\|date`, `fpl\|deadline\|GW\|window` |
 | **Output Tables** | `model_outputs`, `card_payloads`, `card_results` | `fpl_recommendations`, `card_payloads` |
-| **Card Types** | `nhl-model-output` | `fpl-sage-transfers` |
+| **Card Types** | `nhl-totals-call`, `nhl-spread-call`, `nba-totals-call`, `nba-base-projection`, `welcome-home-v2`, etc. | FPL cards are served from the dedicated FPL backend |
 | **Expiry** | 1 hour before game start | Gameweek deadline |
 | **Timezone** | ET for fixed, UTC for T-minus | UTC (FPL deadlines are UTC) |
 

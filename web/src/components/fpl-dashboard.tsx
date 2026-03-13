@@ -195,62 +195,54 @@ const renderFixtureWindowTable = (
             </tr>
           </thead>
           <tbody>
-            {rows.map((window, idx) => (
-              <tr
-                key={`${window.player_id || window.name}-${idx}`}
-                className="border-b border-white/5"
-              >
-                <td className="px-2 py-2">
-                  <div className="font-semibold">{window.name}</div>
-                  <div className="text-cloud/60">{window.team}</div>
-                </td>
-                <td className="px-2 py-2">{window.summary.dgw_count}</td>
-                <td className="px-2 py-2">{window.summary.bgw_count}</td>
-                <td className="px-2 py-2">
-                  {window.summary.next_dgw_gw ?? '-'}
-                </td>
-                <td className="px-2 py-2">
-                  {formatFixed(window.summary.weighted_fixture_score, 3)}
-                </td>
-                {window.upcoming.map((upcoming) => (
-                  <td
-                    key={`${window.name}-gw-${upcoming.gw}`}
-                    className="px-2 py-2"
-                  >
-                    <td className="px-2 py-2">
-                      <div className="font-semibold">{window.name}</div>
-                      <div className="text-cloud/60">{window.team}</div>
+            {rows.map((window, idx) => {
+              const summary = window?.summary ?? {
+                dgw_count: 0,
+                bgw_count: 0,
+                next_dgw_gw: null,
+                weighted_fixture_score: 0,
+              };
+              const upcomingRows = Array.isArray(window?.upcoming)
+                ? window.upcoming
+                : [];
+              return (
+                <tr
+                  key={`${window.player_id || window.name}-${idx}`}
+                  className="border-b border-white/5"
+                >
+                  <td className="px-2 py-2">
+                    <div className="font-semibold">{window.name}</div>
+                    <div className="text-cloud/60">{window.team}</div>
+                  </td>
+                  <td className="px-2 py-2">{summary.dgw_count}</td>
+                  <td className="px-2 py-2">{summary.bgw_count}</td>
+                  <td className="px-2 py-2">{summary.next_dgw_gw ?? '-'}</td>
+                  <td className="px-2 py-2">
+                    {formatFixed(summary.weighted_fixture_score, 3)}
+                  </td>
+                  {upcomingRows.map((upcoming) => (
+                    <td
+                      key={`${window.name}-gw-${upcoming.gw}`}
+                      className="px-2 py-2"
+                    >
+                      {upcoming.is_blank ? (
+                        <span className="rounded bg-rose/20 px-2 py-1 text-rose">
+                          BGW
+                        </span>
+                      ) : upcoming.is_double ? (
+                        <span className="rounded bg-teal/20 px-2 py-1 text-teal">
+                          DGW
+                        </span>
+                      ) : (
+                        <span className="rounded bg-white/10 px-2 py-1 text-cloud/70">
+                          1
+                        </span>
+                      )}
                     </td>
-                    <td className="px-2 py-2">{summary.dgw_count}</td>
-                    <td className="px-2 py-2">{summary.bgw_count}</td>
-                    <td className="px-2 py-2">{summary.next_dgw_gw ?? '-'}</td>
-                    <td className="px-2 py-2">
-                      {weightedFixtureScore.toFixed(3)}
-                    </td>
-                    {upcomingRows.map((upcoming) => (
-                      <td
-                        key={`${window.name}-gw-${upcoming.gw}`}
-                        className="px-2 py-2"
-                      >
-                        {upcoming.is_blank ? (
-                          <span className="rounded bg-rose/20 px-2 py-1 text-rose">
-                            BGW
-                          </span>
-                        ) : upcoming.is_double ? (
-                          <span className="rounded bg-teal/20 px-2 py-1 text-teal">
-                            DGW
-                          </span>
-                        ) : (
-                          <span className="rounded bg-white/10 px-2 py-1 text-cloud/70">
-                            1
-                          </span>
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })()
-            ))}
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

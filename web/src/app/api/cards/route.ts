@@ -1,8 +1,12 @@
 /**
  * GET /api/cards
  *
+ * Canonical card read surface in the current worker+DB runtime.
  * Returns betting dashboard cards (NBA, NHL, SOCCER, NCAAM).
  * FPL projections are served from cheddar-fpl-sage backend.
+ *
+ * Historical endpoint families (`/api/models/*`, `/api/betting/projections`,
+ * `/api/soccer/slate`) are deprecated references only.
  *
  * Cards are automatically sorted by game start time (soonest first).
  *
@@ -112,6 +116,8 @@ function normalizePayloadMeta(payload: Record<string, unknown> | null) {
       ? (payload.meta as Record<string, unknown>)
       : null;
   if (!meta) return payload;
+  // Backward compatibility: older clients may still expect this field to exist.
+  // Current worker pipeline writes cards via DB, not legacy model endpoint routes.
   if (!Object.prototype.hasOwnProperty.call(meta, 'model_endpoint')) {
     meta.model_endpoint = null;
   }
