@@ -144,7 +144,7 @@ DUAL_DATABASE_MODE=true
 #### Update these files:
 - `README.md` — Remove single-DB setup instructions
 - `docs/DEPLOYMENT.md` — Use only dual-DB setup
-- `QUICKSTART.md` — Update database initialization
+- `docs/QUICKSTART.md` — Update database initialization
 
 ### Phase 5: Testing Infrastructure
 

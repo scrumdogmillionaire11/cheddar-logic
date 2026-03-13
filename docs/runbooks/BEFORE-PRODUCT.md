@@ -492,7 +492,7 @@ Implemented:
 
 New one-off import job: import_historical_settled_results.js (line 1)
 New npm scripts: apps/worker/package.json (line 37)
-Production runbook section: BEFORE-PRODUCT.md (line 17)
+Production runbook section: docs/runbooks/BEFORE-PRODUCT.md (line 17)
 How to run in production:
 
 Dry-run first:

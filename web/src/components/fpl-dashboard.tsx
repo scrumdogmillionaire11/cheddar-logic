@@ -664,6 +664,14 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
         lineupDecision={data.lineup_decision}
         projectedStarting={data.projected_xi}
         projectedBench={data.projected_bench}
+        captainName={
+          typeof data.captain?.name === 'string' ? data.captain.name : null
+        }
+        viceCaptainName={
+          typeof data.vice_captain?.name === 'string'
+            ? data.vice_captain.name
+            : null
+        }
       />
 
       {/* Chip Strategy */}

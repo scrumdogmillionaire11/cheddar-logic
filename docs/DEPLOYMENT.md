@@ -118,7 +118,7 @@ Deploy the scheduler to a VPS using systemd:
 
 ```bash
 # On server
-sudo cp cheddar-worker.service /etc/systemd/system/
+sudo cp deploy/systemd/cheddar-worker.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable cheddar-worker
 sudo systemctl restart cheddar-worker
