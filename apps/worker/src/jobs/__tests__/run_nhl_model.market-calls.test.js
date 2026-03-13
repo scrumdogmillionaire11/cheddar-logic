@@ -1,6 +1,8 @@
 const {
   generateNHLMarketCallCards,
   applyNhlSettlementMarketContext,
+  applyNhlDriverContextMetadata,
+  attachNhlDriverContextToRawData,
 } = require('../run_nhl_model');
 
 function buildBaseOddsSnapshot() {
@@ -229,5 +231,74 @@ describe('run_nhl_model market call generation', () => {
     expect(card.payloadData.selection).toEqual({ side: 'OVER' });
     expect(card.payloadData.price).toBeNull();
     expect(card.payloadData.kind).toBe('EVIDENCE');
+  });
+
+  test('adds NHL driver context metadata with sourced special-teams and shot fields', () => {
+    const oddsSnapshot = {
+      ...buildBaseOddsSnapshot(),
+      raw_data: {
+        pp_home_pct: 24.1,
+        pk_home_pct: 82.4,
+        pp_away_pct: 18.7,
+        pk_away_pct: 79.9,
+        xgf_home_pct: 54.2,
+        xgf_away_pct: 48.1,
+      },
+    };
+    oddsSnapshot.raw_data = attachNhlDriverContextToRawData(oddsSnapshot.raw_data);
+
+    const card = { payloadData: {} };
+    applyNhlDriverContextMetadata(card, oddsSnapshot);
+
+    expect(card.payloadData.nhl_driver_context).toMatchObject({
+      enrichment_version: 'nhl-driver-context-v1',
+      special_teams: {
+        status: 'ok',
+        available: true,
+        pp_pk_delta: expect.any(Number),
+        missing_inputs: [],
+      },
+      shot_environment: {
+        status: 'ok',
+        available: true,
+        delta: 6.1,
+        missing_inputs: [],
+        proxy_metric: 'goals_share_pct',
+      },
+    });
+  });
+
+  test('flags missing xGF and exposes proxy availability in NHL driver context metadata', () => {
+    const oddsSnapshot = {
+      ...buildBaseOddsSnapshot(),
+      raw_data: {
+        espn_metrics: {
+          home: { metrics: { avgGoalsFor: 3.3, avgGoalsAgainst: 2.8 } },
+          away: { metrics: { avgGoalsFor: 2.9, avgGoalsAgainst: 3.1 } },
+        },
+      },
+    };
+    oddsSnapshot.raw_data = attachNhlDriverContextToRawData(oddsSnapshot.raw_data);
+
+    const card = { payloadData: {} };
+    applyNhlDriverContextMetadata(card, oddsSnapshot);
+
+    expect(card.payloadData.nhl_driver_context).toMatchObject({
+      shot_environment: {
+        status: 'missing',
+        available: false,
+        delta: null,
+        missing_inputs: ['xgf_home_pct', 'xgf_away_pct'],
+        proxy_available: true,
+        proxy_metric: 'goals_share_pct',
+      },
+      special_teams: {
+        status: 'missing',
+        available: false,
+      },
+    });
+    expect(card.payloadData.nhl_driver_context.shot_environment.proxy_delta).toEqual(
+      expect.any(Number),
+    );
   });
 });

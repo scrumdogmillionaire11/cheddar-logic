@@ -195,45 +195,54 @@ const renderFixtureWindowTable = (
             </tr>
           </thead>
           <tbody>
-            {rows.map((window, idx) => (
-              <tr
-                key={`${window.player_id || window.name}-${idx}`}
-                className="border-b border-white/5"
-              >
-                <td className="px-2 py-2">
-                  <div className="font-semibold">{window.name}</div>
-                  <div className="text-cloud/60">{window.team}</div>
-                </td>
-                <td className="px-2 py-2">{window.summary.dgw_count}</td>
-                <td className="px-2 py-2">{window.summary.bgw_count}</td>
-                <td className="px-2 py-2">
-                  {window.summary.next_dgw_gw ?? '-'}
-                </td>
-                <td className="px-2 py-2">
-                  {formatFixed(window.summary.weighted_fixture_score, 3)}
-                </td>
-                {window.upcoming.map((upcoming) => (
-                  <td
-                    key={`${window.name}-gw-${upcoming.gw}`}
-                    className="px-2 py-2"
-                  >
-                    {upcoming.is_blank ? (
-                      <span className="rounded bg-rose/20 px-2 py-1 text-rose">
-                        BGW
-                      </span>
-                    ) : upcoming.is_double ? (
-                      <span className="rounded bg-teal/20 px-2 py-1 text-teal">
-                        DGW
-                      </span>
-                    ) : (
-                      <span className="rounded bg-white/10 px-2 py-1 text-cloud/70">
-                        1
-                      </span>
-                    )}
+            {rows.map((window, idx) => {
+              const summary = window?.summary ?? {
+                dgw_count: 0,
+                bgw_count: 0,
+                next_dgw_gw: null,
+                weighted_fixture_score: 0,
+              };
+              const upcomingRows = Array.isArray(window?.upcoming)
+                ? window.upcoming
+                : [];
+              return (
+                <tr
+                  key={`${window.player_id || window.name}-${idx}`}
+                  className="border-b border-white/5"
+                >
+                  <td className="px-2 py-2">
+                    <div className="font-semibold">{window.name}</div>
+                    <div className="text-cloud/60">{window.team}</div>
                   </td>
-                ))}
-              </tr>
-            ))}
+                  <td className="px-2 py-2">{summary.dgw_count}</td>
+                  <td className="px-2 py-2">{summary.bgw_count}</td>
+                  <td className="px-2 py-2">{summary.next_dgw_gw ?? '-'}</td>
+                  <td className="px-2 py-2">
+                    {formatFixed(summary.weighted_fixture_score, 3)}
+                  </td>
+                  {upcomingRows.map((upcoming) => (
+                    <td
+                      key={`${window.name}-gw-${upcoming.gw}`}
+                      className="px-2 py-2"
+                    >
+                      {upcoming.is_blank ? (
+                        <span className="rounded bg-rose/20 px-2 py-1 text-rose">
+                          BGW
+                        </span>
+                      ) : upcoming.is_double ? (
+                        <span className="rounded bg-teal/20 px-2 py-1 text-teal">
+                          DGW
+                        </span>
+                      ) : (
+                        <span className="rounded bg-white/10 px-2 py-1 text-cloud/70">
+                          1
+                        </span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -270,6 +279,22 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
     target_windows: [],
     key_planning_notes: [],
   };
+  const plannerTimeline = Array.isArray(fixturePlanner.gw_timeline)
+    ? fixturePlanner.gw_timeline
+    : [];
+  const plannerSquadWindows = Array.isArray(fixturePlanner.squad_windows)
+    ? fixturePlanner.squad_windows
+    : [];
+  const plannerTargetWindows = Array.isArray(fixturePlanner.target_windows)
+    ? fixturePlanner.target_windows
+    : [];
+  const plannerNotes = Array.isArray(fixturePlanner.key_planning_notes)
+    ? fixturePlanner.key_planning_notes
+    : [];
+  const plannerStartGwValue = Math.max(
+    1,
+    Math.trunc(parseNumeric(fixturePlanner.start_gw) ?? plannerStartGw),
+  );
   const captainExpectedPts = extractCaptainExpectedPts(data.captain);
   const viceCaptainExpectedPts = extractCaptainExpectedPts(data.vice_captain);
   const displayDecision = normalizeDecisionText(
@@ -281,18 +306,21 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
     normalizedFreeTransferCount,
   );
   const squadBlankCountsByGw: Record<number, number> = {};
-  for (const playerWindow of fixturePlanner?.squad_windows || []) {
-    for (const row of playerWindow.upcoming || []) {
+  for (const playerWindow of plannerSquadWindows) {
+    const upcomingRows = Array.isArray(playerWindow?.upcoming)
+      ? playerWindow.upcoming
+      : [];
+    for (const row of upcomingRows) {
       if (row.is_blank) {
         squadBlankCountsByGw[row.gw] = (squadBlankCountsByGw[row.gw] || 0) + 1;
       }
     }
   }
   const plannerStructurallyEmpty =
-    fixturePlanner.gw_timeline.length === 0 &&
-    fixturePlanner.squad_windows.length === 0 &&
-    fixturePlanner.target_windows.length === 0 &&
-    fixturePlanner.key_planning_notes.length === 0;
+    plannerTimeline.length === 0 &&
+    plannerSquadWindows.length === 0 &&
+    plannerTargetWindows.length === 0 &&
+    plannerNotes.length === 0;
   const plannerEmptyText =
     plannerStructurallyEmpty && data.fixture_planner_reason?.trim()
       ? data.fixture_planner_reason.trim()
@@ -430,9 +458,9 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
           Fixture Horizon Score: higher is better (more DGW upside, lower BGW
           risk, stronger medium-term fixture profile).
         </p>
-        {fixturePlanner.gw_timeline.length > 0 ? (
+        {plannerTimeline.length > 0 ? (
           <div className="mb-6 grid gap-3 md:grid-cols-4 lg:grid-cols-8">
-            {fixturePlanner.gw_timeline.map((row) => (
+            {plannerTimeline.map((row) => (
               <div
                 key={`timeline-${row.gw}`}
                 className="rounded-lg border border-white/10 bg-surface/50 p-3"
@@ -462,22 +490,22 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
         <div className="space-y-4">
           {renderFixtureWindowTable(
             'Your Squad',
-            fixturePlanner.squad_windows,
-            fixturePlanner.start_gw,
+            plannerSquadWindows,
+            plannerStartGwValue,
           )}
           {renderFixtureWindowTable(
             'Potential Targets',
-            fixturePlanner.target_windows,
-            fixturePlanner.start_gw,
+            plannerTargetWindows,
+            plannerStartGwValue,
           )}
         </div>
-        {fixturePlanner.key_planning_notes.length > 0 ? (
+        {plannerNotes.length > 0 ? (
           <div className="mt-4 rounded-lg border border-white/10 bg-surface/50 p-4">
             <div className="mb-2 text-xs font-semibold uppercase text-cloud/60">
               Key Planning Notes
             </div>
             <ul className="space-y-1 text-xs text-cloud/70">
-              {fixturePlanner.key_planning_notes.map((note, idx) => (
+              {plannerNotes.map((note, idx) => (
                 <li key={`planner-note-${idx}`}>{note}</li>
               ))}
             </ul>
@@ -519,7 +547,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
           <div className="space-y-3">
             {data.near_threshold_moves.map((move, idx) => (
               <div
-                key={`${move.out}-${move.in}-${idx}`}
+                key={`${move.out_player_id ?? move.out}-${move.in_player_id ?? move.in}-${idx}`}
                 className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3"
               >
                 <div className="text-sm font-semibold">

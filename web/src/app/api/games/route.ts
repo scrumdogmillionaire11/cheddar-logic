@@ -1,9 +1,13 @@
 /**
  * GET /api/games
  *
+ * Canonical pregame/active read surface for game cards in the current worker+DB architecture.
  * Returns all upcoming games from the odds API, joined with the latest
  * odds snapshot per game, plus any active driver play calls from card_payloads.
  * Games with no card_payloads still appear.
+ *
+ * Historical route families (`/api/models/*`, `/api/betting/projections`, `/api/soccer/slate`)
+ * are deprecated references only and are not active runtime contracts.
  *
  * Query window:
  *   - Production default: midnight today America/New_York -> now + API_GAMES_HORIZON_HOURS (default 36h)
@@ -367,6 +371,8 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'nba-travel',
       'nba-lineup',
       'welcome-home-v2',
+      // Legacy evidence alias retained for compatibility with historical rows.
+      'nba-model-output',
     ]),
     expectedPlayableMarkets: new Set<MarketType>(['SPREAD', 'TOTAL']),
   },
@@ -386,6 +392,8 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'nhl-model-output',
       'nhl-shot-environment',
       'welcome-home-v2',
+      // Legacy welcome-home alias retained for compatibility with historical rows.
+      'nhl-welcome-home',
     ]),
     expectedPlayableMarkets: new Set<MarketType>([
       'MONEYLINE',

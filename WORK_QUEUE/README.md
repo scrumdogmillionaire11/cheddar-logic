@@ -4,7 +4,7 @@
 
 ## Active Work Items
 
-**Updated**: 2026-03-12
+**Updated**: 2026-03-13
 
 - `WI-0379`: Canonical Goalie State Object
 - `WI-0380`: Goalie Source Arbitration Layer
@@ -27,6 +27,10 @@
 - `WI-0414`: NCAAM FT-Trend Decision Semantics (PLAY/LEAN vs PASS)
 - `WI-0415`: Standardize Web WI Test Command Template
 - `WI-0417`: Starting XI Logic Requirements for FPL Sage (draft)
+- `WI-0434`: Audit Sports Models Against Canonical Logic (Current Repo Layout, No Rebuild)
+- `WI-0435`: Projection Contract Alignment (Current API Surfaces, No Rebuild)
+- `WI-0436`: NHL Data Enrichment (Targeted, No Rebuild)
+- `WI-0437`: Soccer Data Hardening (Environment Projector Incremental, No Rebuild)
 
 ## Rules
 

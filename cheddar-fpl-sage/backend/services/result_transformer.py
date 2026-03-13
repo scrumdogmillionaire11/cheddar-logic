@@ -6,6 +6,7 @@ Frontend components should consume these values directly without recalculation.
 """
 from typing import Dict, Any, Optional, List
 import logging
+import math
 from backend.services.risk_aware_filter import filter_transfers_by_risk
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,46 @@ def _to_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _to_optional_int(value: Any) -> Optional[int]:
+    """Best-effort optional int coercion."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_finite_float(value: Any, default: float = 0.0) -> float:
+    """Best-effort finite float coercion with fallback."""
+    parsed = _to_float(value)
+    if parsed is None or not math.isfinite(parsed):
+        return default
+    return parsed
+
+
+def _to_price_millions(value: Any) -> Optional[float]:
+    """Normalize mixed FPL price encodings to £m scale."""
+    parsed = _to_float(value)
+    if parsed is None or not math.isfinite(parsed):
+        return None
+    normalized = parsed / 10.0 if parsed > 20 else parsed
+    return round(normalized, 1)
+
+
+def _to_bool(value: Any, default: bool = False) -> bool:
+    """Best-effort boolean coercion for mixed API payloads."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y"}:
+            return True
+        if normalized in {"false", "0", "no", "n", ""}:
+            return False
+    return default
 
 
 def _normalize_risk_posture(value: Any) -> str:
@@ -118,6 +159,79 @@ def _build_empty_fixture_planner(start_gw: Any) -> Dict[str, Any]:
     }
 
 
+def _normalize_fixture_timeline_row(row: Any, fallback_gw: int) -> Dict[str, Any]:
+    if not isinstance(row, dict):
+        row = {}
+    dgw_teams = row.get("dgw_teams")
+    if not isinstance(dgw_teams, list):
+        dgw_teams = []
+    bgw_teams = row.get("bgw_teams")
+    if not isinstance(bgw_teams, list):
+        bgw_teams = []
+    return {
+        "gw": max(1, _to_int(row.get("gw"), default=fallback_gw)),
+        "dgw_teams": [str(team) for team in dgw_teams if team is not None],
+        "bgw_teams": [str(team) for team in bgw_teams if team is not None],
+        "fixture_count_total": max(0, _to_int(row.get("fixture_count_total"), default=0)),
+    }
+
+
+def _normalize_fixture_upcoming_row(row: Any, fallback_gw: int) -> Dict[str, Any]:
+    if not isinstance(row, dict):
+        row = {}
+    opponents = row.get("opponents")
+    if not isinstance(opponents, list):
+        opponents = []
+    return {
+        "gw": max(1, _to_int(row.get("gw"), default=fallback_gw)),
+        "fixture_count": max(0, _to_int(row.get("fixture_count"), default=0)),
+        "is_blank": _to_bool(row.get("is_blank"), default=False),
+        "is_double": _to_bool(row.get("is_double"), default=False),
+        "opponents": [str(opponent) for opponent in opponents if opponent is not None],
+        "avg_difficulty": _to_finite_float(row.get("avg_difficulty"), default=0.0),
+    }
+
+
+def _normalize_fixture_window_summary(summary_payload: Any) -> Dict[str, Any]:
+    if not isinstance(summary_payload, dict):
+        summary_payload = {}
+    next_dgw = _to_optional_int(summary_payload.get("next_dgw_gw"))
+    next_bgw = _to_optional_int(summary_payload.get("next_bgw_gw"))
+    next6_pts = _to_float(summary_payload.get("next6_pts"))
+    if next6_pts is not None and not math.isfinite(next6_pts):
+        next6_pts = None
+    return {
+        "dgw_count": max(0, _to_int(summary_payload.get("dgw_count"), default=0)),
+        "bgw_count": max(0, _to_int(summary_payload.get("bgw_count"), default=0)),
+        "next_dgw_gw": next_dgw if (next_dgw is not None and next_dgw > 0) else None,
+        "next_bgw_gw": next_bgw if (next_bgw is not None and next_bgw > 0) else None,
+        "weighted_fixture_score": _to_finite_float(
+            summary_payload.get("weighted_fixture_score"),
+            default=0.0,
+        ),
+        "next6_pts": next6_pts,
+    }
+
+
+def _normalize_fixture_player_window(row: Any, start_gw: int) -> Dict[str, Any]:
+    if not isinstance(row, dict):
+        row = {}
+    player_id = _to_optional_int(row.get("player_id"))
+    normalized_upcoming = []
+    upcoming_rows = row.get("upcoming")
+    if not isinstance(upcoming_rows, list):
+        upcoming_rows = []
+    for offset, upcoming_row in enumerate(upcoming_rows):
+        normalized_upcoming.append(_normalize_fixture_upcoming_row(upcoming_row, start_gw + offset))
+    return {
+        "player_id": player_id,
+        "name": str(row.get("name") or "Unknown"),
+        "team": str(row.get("team") or "-"),
+        "summary": _normalize_fixture_window_summary(row.get("summary")),
+        "upcoming": normalized_upcoming,
+    }
+
+
 def _normalize_fixture_planner_payload(
     planner_payload: Any,
     default_start_gw: Any,
@@ -138,15 +252,24 @@ def _normalize_fixture_planner_payload(
 
     gw_timeline = planner_payload.get("gw_timeline")
     if isinstance(gw_timeline, list):
-        normalized["gw_timeline"] = [row for row in gw_timeline if isinstance(row, dict)]
+        normalized["gw_timeline"] = [
+            _normalize_fixture_timeline_row(row, normalized["start_gw"] + idx)
+            for idx, row in enumerate(gw_timeline)
+        ]
 
     squad_windows = planner_payload.get("squad_windows")
     if isinstance(squad_windows, list):
-        normalized["squad_windows"] = [row for row in squad_windows if isinstance(row, dict)]
+        normalized["squad_windows"] = [
+            _normalize_fixture_player_window(row, normalized["start_gw"])
+            for row in squad_windows
+        ]
 
     target_windows = planner_payload.get("target_windows")
     if isinstance(target_windows, list):
-        normalized["target_windows"] = [row for row in target_windows if isinstance(row, dict)]
+        normalized["target_windows"] = [
+            _normalize_fixture_player_window(row, normalized["start_gw"])
+            for row in target_windows
+        ]
 
     key_notes = planner_payload.get("key_planning_notes")
     if isinstance(key_notes, list):
@@ -401,12 +524,18 @@ def _reconcile_squad_issues_with_health(
 
 def _sanitize_strategy_paths(
     strategy_paths: Dict[str, Any],
+    owned_player_ids: List[Any],
     owned_player_names: List[str],
 ) -> Dict[str, Any]:
     """Enforce strategy-path validity in transformed payload as a final guardrail."""
     if not isinstance(strategy_paths, dict):
         return {}
 
+    owned_ids = {
+        parsed_id
+        for parsed_id in (_to_optional_int(player_id) for player_id in owned_player_ids)
+        if parsed_id is not None
+    }
     owned = {str(name or '').strip().lower() for name in owned_player_names if name}
     sanitized: Dict[str, Any] = {}
     seen_pairs = set()
@@ -419,12 +548,18 @@ def _sanitize_strategy_paths(
 
         out_name = str(path.get("out") or '').strip()
         in_name = str(path.get("in") or '').strip()
-        pair = (out_name.lower(), in_name.lower())
+        out_id = _to_optional_int(path.get("out_player_id"))
+        in_id = _to_optional_int(path.get("in_player_id"))
+        pair = (
+            out_id if out_id is not None else out_name.lower(),
+            in_id if in_id is not None else in_name.lower(),
+        )
 
         if not out_name or not in_name:
             sanitized[mode] = None
             continue
-        if in_name.lower() in owned:
+        in_player_owned = in_id in owned_ids if in_id is not None else in_name.lower() in owned
+        if in_player_owned:
             sanitized[mode] = None
             continue
         if pair in seen_pairs:
@@ -1007,8 +1142,14 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         for player in (my_team.get("current_squad") or [])
         if isinstance(player, dict)
     ]
+    starting_ids = [
+        player.get("player_id") or player.get("id") or player.get("element")
+        for player in (my_team.get("current_squad") or [])
+        if isinstance(player, dict)
+    ]
     strategy_paths = _sanitize_strategy_paths(
         decision_dict.get("strategy_paths") or {},
+        starting_ids,
         starting_names,
     )
     strategy_paths_reason = decision_dict.get("strategy_paths_reason")
@@ -1046,7 +1187,7 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         "fixture_planner_reason": fixture_planner_reason,
         "no_transfer_reason": decision_dict.get("no_transfer_reason"),
     }
-    
+
     # Captain and vice captain with delta calculation
     captaincy = decision_dict.get("captaincy", {})
     if captaincy:
@@ -1256,18 +1397,77 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         result["lineup_decision"] = lineup_decision
         result["lineup_confidence"] = lineup_decision.get("lineup_confidence")
 
+        projection_set = analysis.get("projections")
+        squad_meta_by_id: Dict[int, Dict[str, Any]] = {}
+        squad_meta_by_name: Dict[str, Dict[str, Any]] = {}
+        for squad_player in my_team.get("current_squad") or []:
+            if not isinstance(squad_player, dict):
+                continue
+            player_id = _to_optional_int(
+                squad_player.get("player_id")
+                or squad_player.get("id")
+                or squad_player.get("element")
+            )
+            normalized_name = str(squad_player.get("name") or "").strip().lower()
+            player_meta = {
+                "price": (
+                    _to_price_millions(squad_player.get("price"))
+                    or _to_price_millions(squad_player.get("current_price"))
+                    or _to_price_millions(squad_player.get("now_cost"))
+                    or _to_price_millions(squad_player.get("buy_price"))
+                    or _to_price_millions(squad_player.get("sell_price"))
+                    or _to_price_millions(squad_player.get("selling_price"))
+                ),
+                "ownership": (
+                    _to_float(squad_player.get("ownership"))
+                    or _to_float(squad_player.get("ownership_pct"))
+                ),
+                "team": squad_player.get("team"),
+            }
+            if player_id is not None:
+                squad_meta_by_id[player_id] = player_meta
+            if normalized_name:
+                squad_meta_by_name[normalized_name] = player_meta
+
+        def _resolve_lineup_player_meta(player_payload: Dict[str, Any]) -> Dict[str, Any]:
+            player_id = _to_optional_int(player_payload.get("player_id"))
+            normalized_name = str(player_payload.get("name") or "").strip().lower()
+
+            resolved = {}
+            if player_id is not None and player_id in squad_meta_by_id:
+                resolved = squad_meta_by_id[player_id]
+            elif normalized_name in squad_meta_by_name:
+                resolved = squad_meta_by_name[normalized_name]
+
+            if (
+                projection_set
+                and player_id is not None
+                and hasattr(projection_set, "get_by_id")
+            ):
+                projection = projection_set.get_by_id(player_id)
+                if projection is not None:
+                    resolved = {
+                        "price": resolved.get("price") or _to_price_millions(getattr(projection, "current_price", None)),
+                        "ownership": resolved.get("ownership") or _to_float(getattr(projection, "ownership_pct", None)),
+                        "team": resolved.get("team") or getattr(projection, "team", None),
+                    }
+            return resolved
+
         starters_payload = []
         for player in lineup_decision.get("starters", []) or []:
             if not isinstance(player, dict):
                 continue
+            resolved_meta = _resolve_lineup_player_meta(player)
             starters_payload.append(
                 {
                     "player_id": player.get("player_id"),
                     "name": player.get("name"),
-                    "team": player.get("team"),
+                    "team": player.get("team") or resolved_meta.get("team"),
                     "position": player.get("position"),
                     "expected_pts": player.get("projected_points"),
                     "expected_minutes": player.get("expected_minutes"),
+                    "price": resolved_meta.get("price"),
+                    "ownership": resolved_meta.get("ownership"),
                     "flags": player.get("flags") or [],
                     "badges": player.get("badges") or [],
                     "start_reason": player.get("start_reason"),
@@ -1279,14 +1479,17 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
             [p for p in (lineup_decision.get("bench", []) or []) if isinstance(p, dict)],
             key=lambda p: p.get("bench_order", 99),
         ):
+            resolved_meta = _resolve_lineup_player_meta(player)
             bench_payload.append(
                 {
                     "player_id": player.get("player_id"),
                     "name": player.get("name"),
-                    "team": player.get("team"),
+                    "team": player.get("team") or resolved_meta.get("team"),
                     "position": player.get("position"),
                     "expected_pts": player.get("projected_points"),
                     "expected_minutes": player.get("expected_minutes"),
+                    "price": resolved_meta.get("price"),
+                    "ownership": resolved_meta.get("ownership"),
                     "flags": player.get("flags") or [],
                     "bench_order": player.get("bench_order"),
                     "bench_reason": player.get("bench_reason"),

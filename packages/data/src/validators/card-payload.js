@@ -29,25 +29,116 @@ const driverPayloadSchema = basePayloadSchema.extend({
   })
 });
 
+const nullableNumber = z.number().nullable();
+
+const soccerPayloadSchema = basePayloadSchema.extend({
+  kind: z.literal('PLAY'),
+  market_type: z.literal('MONEYLINE'),
+  period: z.enum(['FULL_GAME', 'REGULATION']).optional(),
+  recommended_bet_type: z.literal('moneyline'),
+  selection: z.object({
+    side: z.enum(['HOME', 'AWAY']),
+    team: z.string().min(1),
+  }),
+  price: z.number().int(),
+  line: z.null().optional(),
+  recommendation: z.object({
+    type: z.enum(['ML_HOME', 'ML_AWAY']),
+    text: z.string().min(1),
+    pass_reason: z.null().optional(),
+  }),
+  drivers_active: z.array(z.string().min(1)).min(1),
+  projection: z.object({
+    total: nullableNumber.optional(),
+    margin_home: nullableNumber.optional(),
+    win_prob_home: nullableNumber.optional(),
+  }),
+  projection_context: z.object({
+    source: z.string().min(1),
+    available: z.boolean(),
+    unsupported_projection_fields: z.array(z.string()).optional(),
+    missing_fields: z.array(z.string()),
+    fallback_mode: z.string().nullable().optional(),
+  }),
+  market_context: z
+    .object({
+      version: z.string().optional(),
+      market_type: z.literal('MONEYLINE'),
+      period: z.string().optional(),
+      selection_side: z.enum(['HOME', 'AWAY']).optional(),
+      selection_team: z.string().min(1).nullable().optional(),
+      projection: z
+        .object({
+          total: nullableNumber.optional(),
+          margin_home: nullableNumber.optional(),
+          win_prob_home: nullableNumber.optional(),
+        })
+        .partial()
+        .optional(),
+      wager: z
+        .object({
+          called_line: z.null().optional(),
+          called_price: z.number().int().nullable().optional(),
+          line_source: z.string().nullable().optional(),
+          price_source: z.string().nullable().optional(),
+          period: z.string().optional(),
+        })
+        .partial()
+        .optional(),
+    })
+    .partial()
+    .optional(),
+  odds_context: z.object({
+    h2h_home: z.number(),
+    h2h_away: z.number(),
+    captured_at: z.string().optional(),
+  }).passthrough(),
+  meta: z.object({
+    inference_source: z.string().min(1),
+    model_endpoint: z.string().nullable().optional(),
+    is_mock: z.boolean(),
+    hardening_version: z.string().optional(),
+    league_context: z.string().optional(),
+    missing_context_fields: z.array(z.string()),
+  }).passthrough(),
+}).superRefine((payload, ctx) => {
+  if (
+    payload.recommended_bet_type === 'unknown' ||
+    payload.recommended_bet_type === 'spread' ||
+    payload.recommended_bet_type === 'total' ||
+    payload.recommended_bet_type === 'puck_line'
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['recommended_bet_type'],
+      message: 'soccer-model-output must not use placeholder/non-moneyline bet types',
+    });
+  }
+});
+
 const schemaByCardType = {
-  // NHL driver cards
-  'nhl-model-output': basePayloadSchema,        // keep for backward compat
+  // Active NHL driver + evidence cards
   'nhl-goalie': driverPayloadSchema,
+  'nhl-goalie-certainty': driverPayloadSchema,
   'nhl-special-teams': driverPayloadSchema,
   'nhl-shot-environment': driverPayloadSchema,
   'nhl-empty-net': driverPayloadSchema,
   'nhl-total-fragility': driverPayloadSchema,
   'nhl-pdo-regression': driverPayloadSchema,
-  'nhl-welcome-home': driverPayloadSchema,
   'nhl-base-projection': driverPayloadSchema,
   'nhl-rest-advantage': driverPayloadSchema,
   'nhl-pace-totals': driverPayloadSchema,
   'nhl-pace-1p': driverPayloadSchema,
-  // NHL market call cards
+  'nhl-player-shots': driverPayloadSchema,
+  'nhl-player-shots-1p': driverPayloadSchema,
+  'welcome-home-v2': driverPayloadSchema,
+
+  // Active NHL market call cards
   'nhl-totals-call': driverPayloadSchema,
   'nhl-spread-call': driverPayloadSchema,
-  // NBA driver cards
-  'nba-model-output': basePayloadSchema,        // keep for backward compat
+  'nhl-moneyline-call': driverPayloadSchema,
+
+  // Active NBA driver + evidence cards
   'nba-rest-advantage': driverPayloadSchema,
   'nba-travel': driverPayloadSchema,
   'nba-lineup': driverPayloadSchema,
@@ -56,15 +147,30 @@ const schemaByCardType = {
   'nba-base-projection': driverPayloadSchema,
   'nba-total-projection': driverPayloadSchema,
   'nba-pace-matchup': driverPayloadSchema,
-  // NBA market call cards
+
+  // Active NBA market call cards
   'nba-totals-call': driverPayloadSchema,
   'nba-spread-call': driverPayloadSchema,
-  // NCAAM driver cards
+  'nba-moneyline-call': driverPayloadSchema,
+
+  // Active NCAAM cards (includes legacy type still emitted in current runs)
   'ncaam-base-projection': driverPayloadSchema,
   'ncaam-rest-advantage': driverPayloadSchema,
   'ncaam-matchup-style': driverPayloadSchema,
   'ncaam-ft-trend': driverPayloadSchema,
   'ncaam-ft-spread': driverPayloadSchema,
+
+  // Active single-card model output jobs
+  'soccer-model-output': soccerPayloadSchema,
+  'mlb-model-output': basePayloadSchema,
+  'nfl-model-output': basePayloadSchema,
+  'fpl-model-output': basePayloadSchema,
+
+  // Legacy aliases retained for backward compatibility.
+  // Keep accepted so historical rows remain valid, but no new writes should target deprecated aliases.
+  'nhl-model-output': basePayloadSchema, // keep (historical + currently read as NHL evidence card)
+  'nba-model-output': basePayloadSchema, // deprecated write alias; kept for historical payloads
+  'nhl-welcome-home': driverPayloadSchema, // deprecated alias; canonical replacement is welcome-home-v2
 };
 
 /**

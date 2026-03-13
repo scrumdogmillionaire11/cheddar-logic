@@ -42,6 +42,19 @@ assert(
 );
 
 assert(
+  gamesRouteSource.includes('/api/models/*') &&
+    gamesRouteSource.includes('/api/betting/projections') &&
+    gamesRouteSource.includes('/api/soccer/slate'),
+  '/api/games contract comments should keep legacy endpoint families marked as deprecated references',
+);
+
+assert(
+  gamesRouteSource.includes("'nba-model-output'") &&
+    gamesRouteSource.includes("'nhl-welcome-home'"),
+  '/api/games card-type contract should keep legacy evidence aliases for compatibility rows',
+);
+
+assert(
   cardsPageSource.includes('function resolvePrimaryTotalProjectionPlay('),
   'cards UI should define a total projection source resolver',
 );

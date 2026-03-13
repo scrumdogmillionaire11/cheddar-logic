@@ -29,6 +29,19 @@ const parseNumeric = (value: unknown): number | null => {
 
 const POSITION_ORDER = ['GK', 'DEF', 'MID', 'FWD'] as const;
 
+const parsePlayerId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.trunc(parsed);
+    }
+  }
+  return null;
+};
+
 const groupByPosition = (players: PlayerProjection[]) => {
   const grouped = {
     GK: [] as PlayerProjection[],
@@ -49,22 +62,28 @@ const groupByPosition = (players: PlayerProjection[]) => {
 
 const mapLineupStarterToProjection = (
   starter: NonNullable<LineupDecisionPayload['starters']>[number],
+  reference?: PlayerProjection,
 ): PlayerProjection => ({
   name: starter.name,
-  team: starter.team || '-',
+  team: starter.team || reference?.team || '-',
   position: starter.position,
-  expected_pts: starter.projected_points,
+  price: reference?.price,
+  ownership: reference?.ownership,
+  expected_pts: starter.projected_points ?? reference?.expected_pts,
   injury_status: starter.flags?.join(', '),
   reasoning: starter.start_reason,
 });
 
 const mapLineupBenchToProjection = (
   benchPlayer: NonNullable<LineupDecisionPayload['bench']>[number],
+  reference?: PlayerProjection,
 ): PlayerProjection => ({
   name: benchPlayer.name,
-  team: benchPlayer.team || '-',
+  team: benchPlayer.team || reference?.team || '-',
   position: benchPlayer.position,
-  expected_pts: benchPlayer.projected_points,
+  price: reference?.price,
+  ownership: reference?.ownership,
+  expected_pts: benchPlayer.projected_points ?? reference?.expected_pts,
   injury_status: benchPlayer.flags?.join(', '),
   reasoning: benchPlayer.bench_reason,
 });
@@ -164,12 +183,74 @@ export default function FPLLineupView({
 }: FPLLineupViewProps) {
   const [view, setView] = useState<'current' | 'recommended'>('current');
 
-  const recommendedFromLineup = (lineupDecision?.starters || []).map(
-    mapLineupStarterToProjection,
+  const referencePlayers = [
+    ...(projectedStarting || []),
+    ...(projectedBench || []),
+    ...currentStarting,
+    ...currentBench,
+  ];
+  const resolveLineupReference = (
+    playerId: number | string | undefined,
+    name: string,
+    team?: string,
+    position?: string,
+  ): PlayerProjection | undefined => {
+    const normalizedName = String(name || '').trim().toLowerCase();
+    const normalizedTeam = String(team || '').trim().toLowerCase();
+    const normalizedPosition = String(position || '').trim().toUpperCase();
+    const normalizedId = parsePlayerId(playerId);
+    if (normalizedId !== null) {
+      const byId = referencePlayers.find(
+        (player) => parsePlayerId(player.player_id) === normalizedId,
+      );
+      if (byId) {
+        return byId;
+      }
+    }
+    return referencePlayers.find((player) => {
+      if (String(player.name || '').trim().toLowerCase() !== normalizedName) {
+        return false;
+      }
+      if (
+        normalizedTeam &&
+        String(player.team || '').trim().toLowerCase() !== normalizedTeam
+      ) {
+        return false;
+      }
+      if (
+        normalizedPosition &&
+        String(player.position || '').trim().toUpperCase() !== normalizedPosition
+      ) {
+        return false;
+      }
+      return true;
+    });
+  };
+
+  const recommendedFromLineup = (lineupDecision?.starters || []).map((starter) =>
+    mapLineupStarterToProjection(
+      starter,
+      resolveLineupReference(
+        starter.player_id,
+        starter.name,
+        starter.team,
+        starter.position,
+      ),
+    ),
   );
   const recommendedBenchFromLineup = [...(lineupDecision?.bench || [])]
     .sort((a, b) => (a.bench_order || 99) - (b.bench_order || 99))
-    .map(mapLineupBenchToProjection);
+    .map((benchPlayer) =>
+      mapLineupBenchToProjection(
+        benchPlayer,
+        resolveLineupReference(
+          benchPlayer.player_id,
+          benchPlayer.name,
+          benchPlayer.team,
+          benchPlayer.position,
+        ),
+      ),
+    );
 
   const hasProjected =
     (projectedStarting?.length || 0) +
@@ -196,8 +277,11 @@ export default function FPLLineupView({
 
   const groupedStarting = groupByPosition(displayStarting);
 
+  const hasProjectedTransferSwaps =
+    (projectedStarting?.length || 0) + (projectedBench?.length || 0) > 0;
+
   // Calculate transfer changes
-  const transfersOut = showingRecommended
+  const transfersOut = showingRecommended && hasProjectedTransferSwaps
     ? currentStarting
         .filter((p) => !projectedStarting?.some((proj) => proj.name === p.name))
         .concat(
@@ -207,7 +291,7 @@ export default function FPLLineupView({
         )
     : [];
 
-  const transfersIn = showingRecommended
+  const transfersIn = showingRecommended && hasProjectedTransferSwaps
     ? (projectedStarting || [])
         .filter((p) => p.is_new)
         .concat((projectedBench || []).filter((p) => p.is_new))

@@ -477,6 +477,17 @@ async function runTests() {
       const result = deriveClassification(play);
       expect(result.classification).toBe('BASE');
     });
+
+    it('should support SOCCER MONEYLINE market for hardened payload plays', () => {
+      const play = basePlayFactory({
+        sport: 'SOCCER',
+        market_type: 'MONEYLINE',
+        selection_key: 'HOME_WIN',
+        model: { edge: 0.035, confidence: 0.69 },
+      });
+      const result = deriveClassification(play);
+      expect(result.classification).toBe('BASE');
+    });
   });
 
   // ====== ACTION TESTS ======
@@ -656,6 +667,25 @@ async function runTests() {
         wrapperCtx,
       );
       expect(action).toBe('HOLD');
+    });
+
+    it('Scenario 5: SOCCER MONEYLINE hardened play with clear edge', () => {
+      const play = basePlayFactory({
+        sport: 'SOCCER',
+        market_type: 'MONEYLINE',
+        selection_key: 'AWAY_WIN',
+        side: 'AWAY',
+        model: { edge: 0.033, confidence: 0.71 },
+      });
+
+      const { classification } = deriveClassification(play);
+      const { action } = deriveAction(classification, {
+        market_available: true,
+        time_window_ok: true,
+      });
+
+      expect(classification).toBe('BASE');
+      expect(action).toBe('FIRE');
     });
   });
 

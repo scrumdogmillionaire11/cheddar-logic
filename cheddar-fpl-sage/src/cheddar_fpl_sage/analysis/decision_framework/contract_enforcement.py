@@ -220,35 +220,57 @@ class DecisionContractEnforcer:
             else:
                 mode_paths[mode] = None
 
+        def _coerce_id(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        squad_ids = set()
         squad_names = set()
         if isinstance(team_data, dict):
             for player in team_data.get("current_squad", []) or []:
+                player_id = _coerce_id(player.get("player_id") or player.get("id") or player.get("element"))
+                if player_id is not None:
+                    squad_ids.add(player_id)
                 name = str(player.get("name") or "").lower().strip()
                 if name:
                     squad_names.add(name)
 
-        seen_pairs: Dict[Tuple[str, str], str] = {}
+        seen_pairs: Dict[Tuple[Any, Any], str] = {}
         duplicates: List[str] = []
         for mode, path in mode_paths.items():
             if not isinstance(path, dict):
                 continue
             out_player = (path.get("out") or path.get("out_name") or "").lower().strip()
             in_player = (path.get("in") or path.get("in_name") or "").lower().strip()
+            out_player_id = _coerce_id(path.get("out_player_id"))
+            in_player_id = _coerce_id(path.get("in_player_id"))
             if not out_player or not in_player:
                 continue
 
-            pair = (out_player, in_player)
+            pair = (
+                out_player_id if out_player_id is not None else out_player,
+                in_player_id if in_player_id is not None else in_player,
+            )
             if pair in seen_pairs:
                 duplicates.append(mode)
             else:
                 seen_pairs[pair] = mode
 
-            if in_player in squad_names:
+            in_player_is_owned = (
+                in_player_id in squad_ids
+                if in_player_id is not None
+                else in_player in squad_names
+            )
+            if in_player_is_owned:
                 result.add_violation(ContractViolation(
                     field_path=f"decision.strategy_paths.{mode}.in",
                     violation_type="in_player_already_in_squad",
                     expected="transfer-in target not currently owned",
-                    actual=in_player,
+                    actual=str(in_player_id if in_player_id is not None else in_player),
                     severity="WARNING",
                     remediation="Drop invalid path for this mode"
                 ))

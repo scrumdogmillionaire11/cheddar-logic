@@ -43,6 +43,40 @@ def test_analyze_queues_without_usage_gate(client, monkeypatch) -> None:
     assert "USAGE_LIMIT_REACHED" not in response.text
 
 
+def test_analyze_skips_legacy_cached_payload_and_runs_fresh(client, monkeypatch) -> None:
+    stale_cached_payload = {
+        "team_name": "FPL XI",
+        "manager_name": "Unknown Manager",
+        "primary_decision": "HOLD",
+        "starting_xi": [{"name": "A", "price": None}],
+        # Missing manager_state + fixture_planner contract fields.
+    }
+    captured = {}
+
+    def _create_analysis(team_id, gameweek=None, overrides=None):
+        captured["team_id"] = team_id
+        captured["gameweek"] = gameweek
+        captured["overrides"] = overrides or {}
+        return _job(status="queued")
+
+    async def _noop_task(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        analyze_router.cache_service,
+        "get_cached_analysis",
+        lambda *_args, **_kwargs: stale_cached_payload,
+    )
+    monkeypatch.setattr(analyze_router.engine_service, "create_analysis", _create_analysis)
+    monkeypatch.setattr(analyze_router, "run_analysis_task", _noop_task)
+
+    response = client.post("/api/v1/analyze", json={"team_id": 711511})
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+    assert captured["team_id"] == 711511
+
+
 def test_usage_endpoint_removed(client) -> None:
     response = client.get("/api/v1/usage/711511")
     assert response.status_code == 404
@@ -619,3 +653,303 @@ def test_transformer_clears_reason_fields_when_section_has_content() -> None:
     assert transformed["near_threshold_reason"] is None
     assert transformed["strategy_paths_reason"] is None
     assert transformed["fixture_planner_reason"] is None
+
+
+def test_transformer_strategy_sanitizer_is_id_first_for_duplicate_names() -> None:
+    raw_results = {
+        "analysis": {
+            "decision": {
+                "risk_posture": "BALANCED",
+                "primary_decision": "NO_CHIP_ACTION",
+                "decision_status": "PASS",
+                "reasoning": "No chip passes strategic windows this gameweek.",
+                "transfer_recommendations": [],
+                "captaincy": {
+                    "captain": {"name": "Player A", "expected_pts": 6.0},
+                    "vice_captain": {"name": "Player B", "expected_pts": 5.6},
+                },
+                "risk_scenarios": [],
+                "strategy_paths": {
+                    "safe": {
+                        "out": "Starter One",
+                        "in": "Alex",
+                        "out_player_id": 201,
+                        "in_player_id": 900,
+                        "delta_pts_4gw": 5.2,
+                    }
+                },
+            }
+        },
+        "raw_data": {
+            "my_team": {
+                "team_info": {
+                    "team_name": "FPL XI",
+                    "player_first_name": "AJ",
+                    "player_last_name": "Manager",
+                    "overall_rank": 6_448_179,
+                    "total_points": 1234,
+                    "free_transfers": 2,
+                },
+                "manager_context": {"manager_name": "AJ", "team_name": "FPL XI"},
+                "current_gameweek": 31,
+                "current_squad": [
+                    {"player_id": 201, "name": "Starter One"},
+                    {"player_id": 101, "name": "Alex"},
+                ],
+                "chip_status": {
+                    "bench_boost": False,
+                    "triple_captain": False,
+                    "free_hit": False,
+                    "wildcard": True,
+                },
+            }
+        },
+    }
+
+    module = importlib.reload(result_transformer)
+    transformed = module.transform_analysis_results(raw_results, overrides={"free_transfers": 2})
+    safe_path = transformed["strategy_paths"]["safe"]
+
+    assert safe_path is not None
+    assert safe_path["in"] == "Alex"
+    assert safe_path["in_player_id"] == 900
+
+
+def test_transformer_normalizes_malformed_planner_payload_to_numeric_safe_shape() -> None:
+    raw_results = {
+        "analysis": {
+            "decision": {
+                "risk_posture": "BALANCED",
+                "primary_decision": "NO_CHIP_ACTION",
+                "decision_status": "PASS",
+                "reasoning": "No chip passes strategic windows this gameweek.",
+                "transfer_recommendations": [],
+                "captaincy": {
+                    "captain": {"name": "Player A", "expected_pts": 6.0},
+                    "vice_captain": {"name": "Player B", "expected_pts": 5.6},
+                },
+                "risk_scenarios": [],
+                "fixture_planner": {
+                    "horizon_gws": "8",
+                    "start_gw": "31",
+                    "gw_timeline": [
+                        {
+                            "gw": "31",
+                            "dgw_teams": "MCI",
+                            "bgw_teams": None,
+                            "fixture_count_total": "bad",
+                        }
+                    ],
+                    "squad_windows": [
+                        {
+                            "player_id": "oops",
+                            "name": "Salah",
+                            "team": "LIV",
+                            "summary": {
+                                "dgw_count": "x",
+                                "bgw_count": None,
+                                "next_dgw_gw": "NaN",
+                                "next_bgw_gw": "",
+                                "weighted_fixture_score": "nan",
+                            },
+                            "upcoming": [
+                                {
+                                    "gw": "32",
+                                    "fixture_count": "two",
+                                    "is_blank": "yes",
+                                    "is_double": "no",
+                                    "opponents": "ARS",
+                                    "avg_difficulty": "nan",
+                                }
+                            ],
+                        }
+                    ],
+                    "target_windows": [
+                        {
+                            "name": "Haaland",
+                            "team": "MCI",
+                            "summary": None,
+                            "upcoming": None,
+                        }
+                    ],
+                    "key_planning_notes": [None, 123],
+                },
+            }
+        },
+        "raw_data": {
+            "my_team": {
+                "team_info": {
+                    "team_name": "FPL XI",
+                    "player_first_name": "AJ",
+                    "player_last_name": "Manager",
+                    "overall_rank": 6_448_179,
+                    "total_points": 1234,
+                    "free_transfers": 2,
+                },
+                "manager_context": {"manager_name": "AJ", "team_name": "FPL XI"},
+                "current_gameweek": 31,
+                "chip_status": {
+                    "bench_boost": False,
+                    "triple_captain": False,
+                    "free_hit": False,
+                    "wildcard": True,
+                },
+            }
+        },
+    }
+
+    module = importlib.reload(result_transformer)
+    transformed = module.transform_analysis_results(raw_results, overrides={"free_transfers": 2})
+    planner = transformed["fixture_planner"]
+
+    assert planner["start_gw"] == 31
+    assert planner["horizon_gws"] == 8
+    assert isinstance(planner["gw_timeline"], list) and len(planner["gw_timeline"]) == 1
+    assert planner["gw_timeline"][0]["dgw_teams"] == []
+    assert planner["gw_timeline"][0]["bgw_teams"] == []
+    assert planner["gw_timeline"][0]["fixture_count_total"] == 0
+
+    assert isinstance(planner["squad_windows"], list) and len(planner["squad_windows"]) == 1
+    squad_window = planner["squad_windows"][0]
+    assert squad_window["player_id"] is None
+    assert squad_window["summary"]["dgw_count"] == 0
+    assert squad_window["summary"]["bgw_count"] == 0
+    assert squad_window["summary"]["next_dgw_gw"] is None
+    assert squad_window["summary"]["weighted_fixture_score"] == 0.0
+    assert isinstance(squad_window["upcoming"], list) and len(squad_window["upcoming"]) == 1
+    assert squad_window["upcoming"][0]["fixture_count"] == 0
+    assert squad_window["upcoming"][0]["is_blank"] is True
+    assert squad_window["upcoming"][0]["is_double"] is False
+    assert squad_window["upcoming"][0]["opponents"] == []
+    assert squad_window["upcoming"][0]["avg_difficulty"] == 0.0
+
+    assert isinstance(planner["target_windows"], list) and len(planner["target_windows"]) == 1
+    target_window = planner["target_windows"][0]
+    assert target_window["summary"]["weighted_fixture_score"] == 0.0
+    assert target_window["upcoming"] == []
+
+
+def test_projections_accepts_null_expected_points_and_lineup_contract_fields(client, monkeypatch) -> None:
+    results = {
+        "team_name": "FPL XI",
+        "manager_name": "AJ",
+        "current_gw": 29,
+        "overall_rank": 6448179,
+        "overall_points": 1440,
+        "primary_decision": "HOLD",
+        "confidence": "MEDIUM",
+        "reasoning": "Test payload",
+        "starting_xi": [
+            {
+                "player_id": 628,
+                "name": "Jose Sa",
+                "team": "WOL",
+                "position": "GK",
+                "expected_pts": None,
+            }
+        ],
+        "bench": [
+            {
+                "player_id": 32,
+                "name": "Martinez",
+                "team": "AVL",
+                "position": "GK",
+                "expected_pts": None,
+            }
+        ],
+        "lineup_decision": {
+            "formation": "3-4-3",
+            "risk_profile": "BALANCED",
+            "lineup_confidence": "MEDIUM",
+            "formation_reason": "Best expected points aggregate.",
+            "notes": [],
+            "starters": [],
+            "bench": [],
+            "captain_player_id": None,
+            "vice_captain_player_id": None,
+        },
+        "projected_xi": [],
+        "projected_bench": [],
+        "transfer_recommendations": [],
+        "risk_scenarios": [],
+        "available_chips": [],
+    }
+    monkeypatch.setattr(
+        analyze_router.engine_service,
+        "get_job",
+        lambda _analysis_id: _job(status="complete", results=results),
+    )
+
+    response = client.get("/api/v1/analyze/job12345/projections")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["starting_xi_projections"][0]["expected_pts"] is None
+    assert body["lineup_decision"]["captain_player_id"] is None
+
+
+def test_transformer_lineup_decision_preserves_price_and_ownership_from_squad_meta() -> None:
+    raw_results = {
+        "analysis": {
+            "decision": {
+                "risk_posture": "BALANCED",
+                "primary_decision": "HOLD",
+                "decision_status": "HOLD",
+                "reasoning": "Hold for now.",
+                "transfer_recommendations": [],
+                "captaincy": {},
+                "risk_scenarios": [],
+                "lineup_decision": {
+                    "formation": "3-4-3",
+                    "risk_profile": "BALANCED",
+                    "lineup_confidence": "MEDIUM",
+                    "formation_reason": "Best projected points.",
+                    "starters": [
+                        {
+                            "player_id": 2001,
+                            "name": "Trevoh Chalobah",
+                            "team": "CHE",
+                            "position": "DEF",
+                            "projected_points": 4.8,
+                        }
+                    ],
+                    "bench": [],
+                },
+            }
+        },
+        "raw_data": {
+            "my_team": {
+                "team_info": {
+                    "team_name": "FPL XI",
+                    "player_first_name": "AJ",
+                    "player_last_name": "Manager",
+                    "overall_rank": 6_448_179,
+                    "total_points": 1234,
+                    "free_transfers": 2,
+                },
+                "current_gameweek": 29,
+                "current_squad": [
+                    {
+                        "player_id": 2001,
+                        "name": "Trevoh Chalobah",
+                        "team": "CHE",
+                        "current_price": 4.6,
+                        "ownership_pct": 8.7,
+                    }
+                ],
+                "chip_status": {
+                    "bench_boost": False,
+                    "triple_captain": False,
+                    "free_hit": False,
+                    "wildcard": True,
+                },
+            }
+        },
+    }
+
+    module = importlib.reload(result_transformer)
+    transformed = module.transform_analysis_results(raw_results, overrides={"free_transfers": 2})
+    starter = transformed["starting_xi"][0]
+
+    assert starter["name"] == "Trevoh Chalobah"
+    assert starter["price"] == 4.6
+    assert starter["ownership"] == 8.7

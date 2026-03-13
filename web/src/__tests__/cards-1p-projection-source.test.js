@@ -12,10 +12,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const gamesRoutePath = path.resolve('web/src/app/api/games/route.ts');
+const cardsRoutePath = path.resolve('web/src/app/api/cards/route.ts');
+const cardsByGameRoutePath = path.resolve('web/src/app/api/cards/[gameId]/route.ts');
 const cardsPagePath = path.resolve('web/src/components/cards-page-client.tsx');
 const transformPath = path.resolve('web/src/lib/game-card/transform.ts');
 
 const gamesRouteSource = fs.readFileSync(gamesRoutePath, 'utf8');
+const cardsRouteSource = fs.readFileSync(cardsRoutePath, 'utf8');
+const cardsByGameRouteSource = fs.readFileSync(cardsByGameRoutePath, 'utf8');
 const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
 const transformSource = fs.readFileSync(transformPath, 'utf8');
 
@@ -30,6 +34,18 @@ assert(
   gamesRouteSource.includes('driverInputs?.projection_final') &&
     gamesRouteSource.includes('driverInputs?.classification'),
   '/api/games should map projection_final and classification from 1P driver inputs',
+);
+
+assert(
+  cardsRouteSource.includes('meta.model_endpoint = null;') &&
+    cardsByGameRouteSource.includes('meta.model_endpoint = null;'),
+  '/api/cards routes should preserve legacy model_endpoint metadata compatibility when absent',
+);
+
+assert(
+  cardsRouteSource.includes('/api/models/*') &&
+    cardsByGameRouteSource.includes('/api/models/*'),
+  '/api/cards route comments should keep legacy endpoint families marked as deprecated references',
 );
 
 assert(

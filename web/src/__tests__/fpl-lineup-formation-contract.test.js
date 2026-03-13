@@ -23,6 +23,8 @@ async function run() {
     'bench_order',
     'const ownership = parseNumeric(player.ownership);',
     'ownership !== null',
+    'const hasProjectedTransferSwaps =',
+    'resolveLineupReference(',
   ].forEach((requiredText) => {
     assert.ok(
       lineupSource.includes(requiredText),
