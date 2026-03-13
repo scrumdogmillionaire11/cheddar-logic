@@ -76,6 +76,172 @@ function statusFromNumbers(values) {
   return 'missing';
 }
 
+function pickNumberWithSource(candidates = []) {
+  for (const candidate of candidates) {
+    const value = toNumber(candidate?.value);
+    if (value !== null) {
+      return { value, source: candidate?.source || null };
+    }
+  }
+  return { value: null, source: null };
+}
+
+function computeGoalsSharePct(goalsFor, goalsAgainst) {
+  if (goalsFor === null || goalsAgainst === null) return null;
+  const total = goalsFor + goalsAgainst;
+  if (!Number.isFinite(total) || total <= 0) return null;
+  return Number((goalsFor / total * 100).toFixed(3));
+}
+
+function extractNhlDriverDataQualityContext(rawDataInput) {
+  const raw = parseRawData(rawDataInput);
+
+  const ppHome = pickNumberWithSource([
+    { value: raw?.pp_home_pct, source: 'raw.pp_home_pct' },
+    { value: raw?.special_teams?.home?.pp_pct, source: 'raw.special_teams.home.pp_pct' },
+  ]);
+  const pkHome = pickNumberWithSource([
+    { value: raw?.pk_home_pct, source: 'raw.pk_home_pct' },
+    { value: raw?.special_teams?.home?.pk_pct, source: 'raw.special_teams.home.pk_pct' },
+  ]);
+  const ppAway = pickNumberWithSource([
+    { value: raw?.pp_away_pct, source: 'raw.pp_away_pct' },
+    { value: raw?.special_teams?.away?.pp_pct, source: 'raw.special_teams.away.pp_pct' },
+  ]);
+  const pkAway = pickNumberWithSource([
+    { value: raw?.pk_away_pct, source: 'raw.pk_away_pct' },
+    { value: raw?.special_teams?.away?.pk_pct, source: 'raw.special_teams.away.pk_pct' },
+  ]);
+  const ppDelta =
+    ppHome.value !== null && ppAway.value !== null
+      ? Number((ppHome.value - ppAway.value).toFixed(3))
+      : null;
+  const pkDelta =
+    pkHome.value !== null && pkAway.value !== null
+      ? Number((pkHome.value - pkAway.value).toFixed(3))
+      : null;
+  const specialTeamsDelta =
+    ppDelta !== null && pkDelta !== null
+      ? Number((ppDelta + pkDelta).toFixed(3))
+      : null;
+
+  const xgfHome = pickNumberWithSource([
+    { value: raw?.xgf_home_pct, source: 'raw.xgf_home_pct' },
+    { value: raw?.teams?.home?.xgf_pct, source: 'raw.teams.home.xgf_pct' },
+    { value: raw?.xgf?.home_pct, source: 'raw.xgf.home_pct' },
+  ]);
+  const xgfAway = pickNumberWithSource([
+    { value: raw?.xgf_away_pct, source: 'raw.xgf_away_pct' },
+    { value: raw?.teams?.away?.xgf_pct, source: 'raw.teams.away.xgf_pct' },
+    { value: raw?.xgf?.away_pct, source: 'raw.xgf.away_pct' },
+  ]);
+  const xgfDelta =
+    xgfHome.value !== null && xgfAway.value !== null
+      ? Number((xgfHome.value - xgfAway.value).toFixed(3))
+      : null;
+
+  const goalsForHome = pickNumberWithSource([
+    {
+      value: raw?.espn_metrics?.home?.metrics?.avgGoalsFor,
+      source: 'raw.espn_metrics.home.metrics.avgGoalsFor',
+    },
+    { value: raw?.goals_for_home, source: 'raw.goals_for_home' },
+  ]);
+  const goalsAgainstHome = pickNumberWithSource([
+    {
+      value: raw?.espn_metrics?.home?.metrics?.avgGoalsAgainst,
+      source: 'raw.espn_metrics.home.metrics.avgGoalsAgainst',
+    },
+    { value: raw?.goals_against_home, source: 'raw.goals_against_home' },
+  ]);
+  const goalsForAway = pickNumberWithSource([
+    {
+      value: raw?.espn_metrics?.away?.metrics?.avgGoalsFor,
+      source: 'raw.espn_metrics.away.metrics.avgGoalsFor',
+    },
+    { value: raw?.goals_for_away, source: 'raw.goals_for_away' },
+  ]);
+  const goalsAgainstAway = pickNumberWithSource([
+    {
+      value: raw?.espn_metrics?.away?.metrics?.avgGoalsAgainst,
+      source: 'raw.espn_metrics.away.metrics.avgGoalsAgainst',
+    },
+    { value: raw?.goals_against_away, source: 'raw.goals_against_away' },
+  ]);
+  const goalsShareHome = computeGoalsSharePct(
+    goalsForHome.value,
+    goalsAgainstHome.value,
+  );
+  const goalsShareAway = computeGoalsSharePct(
+    goalsForAway.value,
+    goalsAgainstAway.value,
+  );
+  const goalsShareProxyDelta =
+    goalsShareHome !== null && goalsShareAway !== null
+      ? Number((goalsShareHome - goalsShareAway).toFixed(3))
+      : null;
+
+  return {
+    enrichment_version: 'nhl-driver-context-v1',
+    special_teams: {
+      pp_home_pct: ppHome.value,
+      pk_home_pct: pkHome.value,
+      pp_away_pct: ppAway.value,
+      pk_away_pct: pkAway.value,
+      pp_delta: ppDelta,
+      pk_delta: pkDelta,
+      pp_pk_delta: specialTeamsDelta,
+      available: specialTeamsDelta !== null,
+      status: statusFromNumbers([
+        ppHome.value,
+        pkHome.value,
+        ppAway.value,
+        pkAway.value,
+      ]),
+      missing_inputs: [
+        ppHome.value === null ? 'pp_home_pct' : null,
+        pkHome.value === null ? 'pk_home_pct' : null,
+        ppAway.value === null ? 'pp_away_pct' : null,
+        pkAway.value === null ? 'pk_away_pct' : null,
+      ].filter(Boolean),
+      sources: {
+        pp_home_pct: ppHome.source,
+        pk_home_pct: pkHome.source,
+        pp_away_pct: ppAway.source,
+        pk_away_pct: pkAway.source,
+      },
+    },
+    shot_environment: {
+      xgf_home_pct: xgfHome.value,
+      xgf_away_pct: xgfAway.value,
+      delta: xgfDelta,
+      available: xgfDelta !== null,
+      status: statusFromNumbers([xgfHome.value, xgfAway.value]),
+      missing_inputs: [
+        xgfHome.value === null ? 'xgf_home_pct' : null,
+        xgfAway.value === null ? 'xgf_away_pct' : null,
+      ].filter(Boolean),
+      sources: {
+        xgf_home_pct: xgfHome.source,
+        xgf_away_pct: xgfAway.source,
+      },
+      proxy: {
+        metric: 'goals_share_pct',
+        delta: goalsShareProxyDelta,
+        available: goalsShareProxyDelta !== null,
+        home_share_pct: goalsShareHome,
+        away_share_pct: goalsShareAway,
+        sources: {
+          goals_for_home: goalsForHome.source,
+          goals_against_home: goalsAgainstHome.source,
+          goals_for_away: goalsForAway.source,
+          goals_against_away: goalsAgainstAway.source,
+        },
+      },
+    },
+  };
+}
+
 function normalizeGoalieCertaintyToken(value) {
   const token = String(value || '')
     .trim()
@@ -169,6 +335,7 @@ function determineTier(confidence) {
 function computeNHLDrivers(gameId, oddsSnapshot) {
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const total = toNumber(oddsSnapshot?.total);
+  const nhlDataQuality = extractNhlDriverDataQualityContext(raw);
 
   const goalieHomeGsax = toNumber(
     raw?.goalie_home_gsax ??
@@ -187,28 +354,19 @@ function computeNHLDrivers(gameId, oddsSnapshot) {
   const goalieScore =
     goalieDelta === null ? 0.5 : clamp((goalieDelta + 3) / 6, 0, 1);
 
-  const ppHome = toNumber(raw?.pp_home_pct ?? raw?.special_teams?.home?.pp_pct);
-  const pkHome = toNumber(raw?.pk_home_pct ?? raw?.special_teams?.home?.pk_pct);
-  const ppAway = toNumber(raw?.pp_away_pct ?? raw?.special_teams?.away?.pp_pct);
-  const pkAway = toNumber(raw?.pk_away_pct ?? raw?.special_teams?.away?.pk_pct);
-  const specialTeamsDelta = [ppHome, pkHome, ppAway, pkAway].every(
-    (v) => v !== null,
-  )
-    ? ppHome + pkHome - (ppAway + pkAway)
-    : null;
+  const ppHome = nhlDataQuality.special_teams.pp_home_pct;
+  const pkHome = nhlDataQuality.special_teams.pk_home_pct;
+  const ppAway = nhlDataQuality.special_teams.pp_away_pct;
+  const pkAway = nhlDataQuality.special_teams.pk_away_pct;
+  const specialTeamsDelta = nhlDataQuality.special_teams.pp_pk_delta;
   const specialTeamsScore =
     specialTeamsDelta === null
       ? 0.5
       : clamp((specialTeamsDelta + 25) / 50, 0, 1);
 
-  const xgfHome = toNumber(
-    raw?.xgf_home_pct ?? raw?.teams?.home?.xgf_pct ?? raw?.xgf?.home_pct,
-  );
-  const xgfAway = toNumber(
-    raw?.xgf_away_pct ?? raw?.teams?.away?.xgf_pct ?? raw?.xgf?.away_pct,
-  );
-  const shotQualityDelta =
-    xgfHome !== null && xgfAway !== null ? xgfHome - xgfAway : null;
+  const xgfHome = nhlDataQuality.shot_environment.xgf_home_pct;
+  const xgfAway = nhlDataQuality.shot_environment.xgf_away_pct;
+  const shotQualityDelta = nhlDataQuality.shot_environment.delta;
   const shotEnvironmentScore =
     shotQualityDelta === null ? 0.5 : clamp((shotQualityDelta + 10) / 20, 0, 1);
 
@@ -260,7 +418,12 @@ function computeNHLDrivers(gameId, oddsSnapshot) {
         pk_home_pct: pkHome,
         pp_away_pct: ppAway,
         pk_away_pct: pkAway,
+        pp_delta: nhlDataQuality.special_teams.pp_delta,
+        pk_delta: nhlDataQuality.special_teams.pk_delta,
+        pp_pk_delta: specialTeamsDelta,
         delta: specialTeamsDelta,
+        missing_inputs: nhlDataQuality.special_teams.missing_inputs,
+        sources: nhlDataQuality.special_teams.sources,
       },
       note: 'Power-play + penalty-kill mismatch.',
     },
@@ -272,6 +435,9 @@ function computeNHLDrivers(gameId, oddsSnapshot) {
         xgf_home_pct: xgfHome,
         xgf_away_pct: xgfAway,
         delta: shotQualityDelta,
+        missing_inputs: nhlDataQuality.shot_environment.missing_inputs,
+        sources: nhlDataQuality.shot_environment.sources,
+        proxy: nhlDataQuality.shot_environment.proxy,
       },
       note: 'Uses xGF% shot-quality profile (5v5) when available.',
     },
@@ -345,6 +511,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
   const { recentRoadGames = null, canonicalGoalieState = null } = context;
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const total = toNumber(oddsSnapshot?.total);
+  const nhlDataQuality = extractNhlDriverDataQualityContext(raw);
 
   const descriptors = [];
 
@@ -421,14 +588,9 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
         ? 'partial'
         : 'missing';
 
-  const xgfHome = toNumber(
-    raw?.xgf_home_pct ?? raw?.teams?.home?.xgf_pct ?? raw?.xgf?.home_pct,
-  );
-  const xgfAway = toNumber(
-    raw?.xgf_away_pct ?? raw?.teams?.away?.xgf_pct ?? raw?.xgf?.away_pct,
-  );
-  const shotQualityDelta =
-    xgfHome !== null && xgfAway !== null ? xgfHome - xgfAway : null;
+  const xgfHome = nhlDataQuality.shot_environment.xgf_home_pct;
+  const xgfAway = nhlDataQuality.shot_environment.xgf_away_pct;
+  const shotQualityDelta = nhlDataQuality.shot_environment.delta;
 
   // --- Base Projection Driver (Real Formula with Goalie Adjustment) ---
   if (goalsForHome && goalsForAway && goalsAgainstHome && goalsAgainstAway) {
@@ -699,6 +861,9 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           xgf_home_pct: xgfHome,
           xgf_away_pct: xgfAway,
           delta: shotQualityDelta,
+          missing_inputs: nhlDataQuality.shot_environment.missing_inputs,
+          sources: nhlDataQuality.shot_environment.sources,
+          proxy: nhlDataQuality.shot_environment.proxy,
         },
         driverScore: score,
         driverStatus: 'ok',
@@ -1885,4 +2050,5 @@ module.exports = {
   buildMarketPayload,
   generateCard,
   buildMarketCallCard,
+  extractNhlDriverDataQualityContext,
 };

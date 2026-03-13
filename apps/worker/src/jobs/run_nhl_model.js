@@ -50,6 +50,7 @@ const {
   buildMarketPayload,
   determineTier,
   buildMarketCallCard,
+  extractNhlDriverDataQualityContext,
 } = require('../models');
 const { assessProjectionInputs } = require('../models/projections');
 const {
@@ -250,6 +251,60 @@ function buildScraperGoalieInput(rawData, side) {
     gsax,
     save_pct: savePct,
     source_type: goalieName ? 'SCRAPER_NAME_MATCH' : 'SEASON_TABLE_INFERENCE',
+  };
+}
+
+function attachNhlDriverContextToRawData(rawData) {
+  const normalized = normalizeRawDataPayload(rawData);
+  const context = extractNhlDriverDataQualityContext(normalized);
+  return {
+    ...normalized,
+    nhl_driver_context: context,
+  };
+}
+
+function applyNhlDriverContextMetadata(card, oddsSnapshot) {
+  if (!card?.payloadData || typeof card.payloadData !== 'object') return;
+
+  const rawData = normalizeRawDataPayload(oddsSnapshot?.raw_data);
+  const context = rawData?.nhl_driver_context;
+  if (!context || typeof context !== 'object') return;
+
+  const specialTeams =
+    context.special_teams && typeof context.special_teams === 'object'
+      ? context.special_teams
+      : {};
+  const shotEnvironment =
+    context.shot_environment && typeof context.shot_environment === 'object'
+      ? context.shot_environment
+      : {};
+  const shotProxy =
+    shotEnvironment.proxy && typeof shotEnvironment.proxy === 'object'
+      ? shotEnvironment.proxy
+      : {};
+
+  card.payloadData.nhl_driver_context = {
+    enrichment_version: context.enrichment_version || 'nhl-driver-context-v1',
+    special_teams: {
+      status: String(specialTeams.status || 'missing'),
+      available: specialTeams.available === true,
+      pp_pk_delta: toFiniteNumber(specialTeams.pp_pk_delta),
+      missing_inputs: Array.isArray(specialTeams.missing_inputs)
+        ? specialTeams.missing_inputs
+        : [],
+    },
+    shot_environment: {
+      status: String(shotEnvironment.status || 'missing'),
+      available: shotEnvironment.available === true,
+      delta: toFiniteNumber(shotEnvironment.delta),
+      missing_inputs: Array.isArray(shotEnvironment.missing_inputs)
+        ? shotEnvironment.missing_inputs
+        : [],
+      proxy_metric:
+        typeof shotProxy.metric === 'string' ? shotProxy.metric : null,
+      proxy_available: shotProxy.available === true,
+      proxy_delta: toFiniteNumber(shotProxy.delta),
+    },
   };
 }
 
@@ -1058,7 +1113,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           });
 
           // Persist enrichment to database so models have access to ESPN metrics
-          const rawData = normalizeRawDataPayload(oddsSnapshot.raw_data);
+          const rawData = attachNhlDriverContextToRawData(oddsSnapshot.raw_data);
           oddsSnapshot.raw_data = rawData;
           try {
             updateOddsSnapshotRawData(oddsSnapshot.id, rawData);
@@ -1179,6 +1234,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
 
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
+            applyNhlDriverContextMetadata(card, oddsSnapshot);
             applyNhlSettlementMarketContext(card, oddsSnapshot);
             const validation = validateCardPayload(
               card.cardType,
@@ -1228,6 +1284,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           }
           for (const card of marketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
+            applyNhlDriverContextMetadata(card, oddsSnapshot);
             applyNhlSettlementMarketContext(card, oddsSnapshot);
             const validation = validateCardPayload(
               card.cardType,
@@ -1375,4 +1432,6 @@ module.exports = {
   runNHLModel,
   generateNHLMarketCallCards,
   applyNhlSettlementMarketContext,
+  applyNhlDriverContextMetadata,
+  attachNhlDriverContextToRawData,
 };
