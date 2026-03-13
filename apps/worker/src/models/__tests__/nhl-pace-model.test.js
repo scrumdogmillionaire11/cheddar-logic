@@ -43,6 +43,48 @@ function makeState(teamSide, starterState, tierConfidence = 'HIGH') {
 }
 
 describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
+  test('FULL trust canonical path is math-identical to legacy confirmed fallback', () => {
+    const canonical = predictNHLGame(
+      buildBase({
+        homeGoalieState: makeState('home', 'CONFIRMED', 'HIGH'),
+        awayGoalieState: makeState('away', 'CONFIRMED', 'HIGH'),
+        homeGoalieConfirmed: false,
+        awayGoalieConfirmed: false,
+        homeGoalieCertainty: null,
+        awayGoalieCertainty: null,
+      }),
+    );
+    const legacy = predictNHLGame(
+      buildBase({
+        homeGoalieState: null,
+        awayGoalieState: null,
+        homeGoalieConfirmed: true,
+        awayGoalieConfirmed: true,
+        homeGoalieCertainty: null,
+        awayGoalieCertainty: null,
+      }),
+    );
+
+    expect(canonical.homeAdjustmentTrust).toBe('FULL');
+    expect(canonical.awayAdjustmentTrust).toBe('FULL');
+    expect(legacy.homeAdjustmentTrust).toBe('FULL');
+    expect(legacy.awayAdjustmentTrust).toBe('FULL');
+
+    expect(canonical.homeExpected).toBeCloseTo(legacy.homeExpected, 6);
+    expect(canonical.awayExpected).toBeCloseTo(legacy.awayExpected, 6);
+    expect(canonical.expectedTotal).toBeCloseTo(legacy.expectedTotal, 6);
+    expect(canonical.rawTotalModel).toBeCloseTo(legacy.rawTotalModel, 6);
+    expect(canonical.regressedTotalModel).toBeCloseTo(legacy.regressedTotalModel, 6);
+    expect(canonical.adjustments.away.opponent_goalie).toBeCloseTo(
+      legacy.adjustments.away.opponent_goalie,
+      6,
+    );
+    expect(canonical.adjustments.home.opponent_goalie).toBeCloseTo(
+      legacy.adjustments.home.opponent_goalie,
+      6,
+    );
+  });
+
   test('FULL trust applies full goalie factor and remains official-eligible', () => {
     const result = predictNHLGame(
       buildBase({
@@ -76,6 +118,41 @@ describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
       expectedDegradedFactor,
       6,
     );
+  });
+
+  test('DEGRADED only changes goalie application; non-goalie modifier components stay fixed', () => {
+    const full = predictNHLGame(
+      buildBase({
+        homeGoalieState: makeState('home', 'CONFIRMED', 'HIGH'),
+        awayGoalieState: makeState('away', 'CONFIRMED', 'HIGH'),
+      }),
+    );
+    const degraded = predictNHLGame(
+      buildBase({
+        homeGoalieState: makeState('home', 'EXPECTED', 'MEDIUM'),
+        awayGoalieState: makeState('away', 'CONFIRMED', 'HIGH'),
+      }),
+    );
+
+    expect(degraded.homeAdjustmentTrust).toBe('DEGRADED');
+    expect(full.modifierBreakdown.base_5v5_total).toBe(
+      degraded.modifierBreakdown.base_5v5_total,
+    );
+    expect(full.modifierBreakdown.special_teams_delta).toBe(
+      degraded.modifierBreakdown.special_teams_delta,
+    );
+    expect(full.modifierBreakdown.home_ice_delta).toBe(
+      degraded.modifierBreakdown.home_ice_delta,
+    );
+    expect(full.modifierBreakdown.rest_delta).toBe(
+      degraded.modifierBreakdown.rest_delta,
+    );
+    expect(degraded.modifierBreakdown.goalie_delta_raw).toBe(
+      full.modifierBreakdown.goalie_delta_raw,
+    );
+    expect(
+      degraded.adjustments.away.opponent_goalie,
+    ).toBeCloseTo(1 + (full.adjustments.away.opponent_goalie - 1) * 0.5, 6);
   });
 
   test('NEUTRALIZED trust removes directional goalie effect and stays official-eligible', () => {
