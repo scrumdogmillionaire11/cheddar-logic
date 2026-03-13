@@ -56,6 +56,8 @@ import {
   performSecurityChecks,
   addRateLimitHeaders,
 } from '../../../lib/api-security';
+import type { ExpressionStatus, CanonicalMarketType } from '@/lib/types/game-card';
+import type { PlayDisplayAction } from '@/lib/game-card/decision';
 
 const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
@@ -181,17 +183,9 @@ interface Play {
     projected_score_home?: number | null;
     projected_score_away?: number | null;
   };
-  status?: 'FIRE' | 'WATCH' | 'PASS';
+  status?: ExpressionStatus;
   kind?: 'PLAY' | 'EVIDENCE';
-  market_type?:
-    | 'MONEYLINE'
-    | 'SPREAD'
-    | 'TOTAL'
-    | 'PUCKLINE'
-    | 'TEAM_TOTAL'
-    | 'FIRST_PERIOD'
-    | 'PROP'
-    | 'INFO';
+  market_type?: CanonicalMarketType;
   selection?: { side: string; team?: string };
   line?: number;
   price?: number;
@@ -235,8 +229,11 @@ interface Play {
       | 'UNKNOWN';
   };
   // Canonical decision fields
+  // NOTE: 'BASE' | 'LEAN' | 'PASS' is the API-wire classification shape.
+  // game-card.ts DecisionClassification uses 'PLAY' | 'LEAN' | 'NONE' (different).
+  // Intentionally kept as local literal until contracts are reconciled (WI-0408 follow-up).
   classification?: 'BASE' | 'LEAN' | 'PASS';
-  action?: 'FIRE' | 'HOLD' | 'PASS';
+  action?: PlayDisplayAction;
   pass_reason_code?: string | null;
   one_p_model_call?:
     | 'BEST_OVER'
@@ -247,7 +244,7 @@ interface Play {
     | 'LEAN_UNDER'
     | 'PASS'
     | null;
-  one_p_bet_status?: 'FIRE' | 'HOLD' | 'PASS' | null;
+  one_p_bet_status?: PlayDisplayAction | null;
   goalie_home_name?: string | null;
   goalie_away_name?: string | null;
   goalie_home_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
