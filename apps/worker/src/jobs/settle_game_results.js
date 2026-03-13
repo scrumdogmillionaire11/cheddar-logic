@@ -458,6 +458,7 @@ function canonicalizeTeamToken(token) {
   if (['E', 'EAST', 'EASTERN'].includes(t)) return 'EAST';
   if (['W', 'WEST', 'WESTERN'].includes(t)) return 'WEST';
   if (['MISS', 'MISS.'].includes(t)) return 'MISSISSIPPI';
+  if (['CHI', 'CHGO', 'CHICAGO'].includes(t)) return 'CHICAGO';
   if (t.length > 4 && t.endsWith('S')) {
     t = t.slice(0, -1);
   }

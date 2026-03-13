@@ -535,6 +535,87 @@ describe('settlement coverage parity', () => {
     expect(diagnosticsAfterBackfill.pendingWithFinalButNotDisplayed).toBe(0);
   });
 
+  test('settlePendingCards auto-closes final PASS rows as void errors', async () => {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+    const finalNhl = 'game-final-nhl';
+
+    runInsert(
+      db,
+      `
+      INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+      'card-p6-pass',
+      finalNhl,
+      'nhl',
+      'nhl-model-output',
+      'P6',
+      now,
+      JSON.stringify({
+        kind: 'PLAY',
+        status: 'PASS',
+        decision_v2: { official_status: 'PASS' },
+        market_type: 'MONEYLINE',
+        selection: { side: 'HOME' },
+        price: -125,
+        home_team: 'Home B',
+        away_team: 'Away B',
+      }),
+    );
+
+    runInsert(
+      db,
+      `
+      INSERT INTO card_results (
+        id, card_id, game_id, sport, card_type, recommended_bet_type,
+        status, market_key, market_type, selection, line, locked_price
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      'result-p6-pass',
+      'card-p6-pass',
+      finalNhl,
+      'nhl',
+      'nhl-model-output',
+      'moneyline',
+      'pending',
+      buildMarketKey({
+        gameId: finalNhl,
+        marketType: 'MONEYLINE',
+        selection: 'HOME',
+        line: null,
+      }),
+      'MONEYLINE',
+      'HOME',
+      null,
+      -125,
+    );
+
+    const settledAt = new Date().toISOString();
+    const closeResult = __private.autoCloseNonActionableFinalPendingRows(
+      db,
+      settledAt,
+    );
+    expect(closeResult.closed).toBeGreaterThanOrEqual(1);
+    expect(
+      closeResult.reasonCounts.NON_ACTIONABLE_FINAL_PASS,
+    ).toBeGreaterThanOrEqual(1);
+
+    const row = db
+      .prepare(
+        `
+        SELECT status, result, settled_at, metadata
+        FROM card_results
+        WHERE id = ?
+      `,
+      )
+      .get('result-p6-pass');
+
+    expect(row?.status).toBe('error');
+    expect(row?.result).toBe('void');
+    expect(row?.settled_at).toBeTruthy();
+  });
+
   test('computePnlUnits follows canonical forward-only formula', () => {
     expect(__private.computePnlUnits('win', 150)).toBeCloseTo(1.5, 6);
     expect(__private.computePnlUnits('win', -125)).toBeCloseTo(0.8, 6);

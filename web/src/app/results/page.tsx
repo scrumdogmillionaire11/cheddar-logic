@@ -34,6 +34,7 @@ type LedgerRow = {
   result: string | null;
   pnlUnits: number | null;
   settledAt: string | null;
+  gameTimeUtc: string | null;
   createdAt: string | null;
   prediction: string | null;
   tier: string | null;
@@ -641,7 +642,11 @@ export default function ResultsPage() {
                       key={row.id}
                       className="grid grid-cols-8 gap-4 px-4 py-3 text-sm text-cloud/70"
                     >
-                      <span>{formatLedgerDate(row.settledAt)}</span>
+                      <span>
+                        {formatLedgerDate(
+                          row.gameTimeUtc || row.createdAt || row.settledAt,
+                        )}
+                      </span>
                       <span>{row.sport}</span>
                       <span>
                         {row.homeTeam && row.awayTeam
@@ -695,7 +700,10 @@ export default function ResultsPage() {
                     <summary className="cursor-pointer list-none px-4 py-4">
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-xs text-cloud/55">
-                          {formatLedgerDate(row.settledAt || row.createdAt)} ·{' '}
+                          {formatLedgerDate(
+                            row.gameTimeUtc || row.createdAt || row.settledAt,
+                          )}{' '}
+                          ·{' '}
                           {row.sport}
                         </p>
                         <span

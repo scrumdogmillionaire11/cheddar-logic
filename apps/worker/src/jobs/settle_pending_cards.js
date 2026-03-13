@@ -250,6 +250,137 @@ function parseJsonObject(value) {
   }
 }
 
+function resolveNonActionableFinalReason(payloadData) {
+  const kind = toBackfillUpperToken(payloadData?.kind);
+  if (kind && kind !== 'PLAY') {
+    return {
+      code: 'NON_ACTIONABLE_FINAL_KIND',
+      message: `Card payload kind ${kind} is non-actionable`,
+      details: { kind },
+    };
+  }
+
+  const officialStatus = toBackfillUpperToken(
+    payloadData?.decision_v2?.official_status,
+  );
+  if (officialStatus === 'PASS') {
+    return {
+      code: 'NON_ACTIONABLE_FINAL_PASS',
+      message: 'Card decision_v2 official_status=PASS is non-actionable',
+      details: { officialStatus },
+    };
+  }
+
+  const legacyStatus = toBackfillUpperToken(payloadData?.status);
+  if (!officialStatus && legacyStatus === 'PASS') {
+    return {
+      code: 'NON_ACTIONABLE_FINAL_PASS',
+      message: 'Card status=PASS is non-actionable',
+      details: { legacyStatus },
+    };
+  }
+
+  return null;
+}
+
+function autoCloseNonActionableFinalPendingRows(db, settledAt) {
+  const candidateRows = db
+    .prepare(
+      `
+      SELECT
+        cr.id AS result_id,
+        cr.card_id,
+        cr.game_id,
+        cr.metadata,
+        cp.payload_data
+      FROM card_results cr
+      INNER JOIN game_results gr ON gr.game_id = cr.game_id
+      LEFT JOIN card_payloads cp ON cp.id = cr.card_id
+      WHERE cr.status = 'pending'
+        AND gr.status = 'final'
+    `,
+    )
+    .all();
+
+  const candidates = [];
+  const reasonCounts = {};
+
+  for (const row of candidateRows) {
+    const resultId =
+      row.result_id === null || row.result_id === undefined
+        ? ''
+        : String(row.result_id).trim();
+    if (!resultId) continue;
+
+    const payloadData = parseJsonObject(row.payload_data) || {};
+    const reason = resolveNonActionableFinalReason(payloadData);
+    if (!reason) continue;
+    candidates.push({ resultId, cardId: row.card_id, reasonCode: reason.code });
+    reasonCounts[reason.code] = (reasonCounts[reason.code] || 0) + 1;
+  }
+
+  if (candidates.length === 0) {
+    return { closed: 0, failures: 0, fallbackCloses: 0, reasonCounts };
+  }
+
+  const ids = candidates.map((entry) => entry.resultId);
+  const placeholders = ids.map(() => '?').join(', ');
+  const countClosedSql = `
+      SELECT COUNT(*) AS count
+      FROM card_results
+      WHERE status = 'error'
+        AND result = 'void'
+        AND settled_at = ?
+        AND id IN (${placeholders})
+    `;
+  const countClosed = () =>
+    Number(
+      db
+        .prepare(countClosedSql)
+        .get(settledAt, ...ids)?.count || 0,
+    );
+  const updateSql = `
+      UPDATE card_results
+      SET status = 'error', result = 'void', settled_at = ?
+      WHERE status = 'pending'
+        AND id IN (${placeholders})
+    `;
+
+  try {
+    db.prepare(updateSql).run(settledAt, ...ids);
+    const closed = countClosed();
+    const failures = Math.max(0, candidates.length - closed);
+    return { closed, failures, fallbackCloses: 0, reasonCounts };
+  } catch (error) {
+    console.warn(
+      `[SettleCards] Batch auto-close failed for non-actionable final rows: ${error.message}; falling back to per-row updates`,
+    );
+  }
+
+  const fallbackUpdateSql = `
+      UPDATE card_results
+      SET status = 'error', result = 'void', settled_at = ?
+      WHERE id = ? AND status = 'pending'
+    `;
+  let fallbackUpdateStmt = db.prepare(fallbackUpdateSql);
+
+  for (const entry of candidates) {
+    try {
+      fallbackUpdateStmt.run(settledAt, entry.resultId);
+    } catch (fallbackError) {
+      console.warn(
+        `[SettleCards] Failed to auto-close non-actionable card ${entry.cardId} (${entry.reasonCode}): ${fallbackError.message}`,
+      );
+      fallbackUpdateStmt = db.prepare(fallbackUpdateSql);
+    }
+  }
+
+  const closed = countClosed();
+  const failures = Math.max(0, candidates.length - closed);
+  const fallbackCloses = closed;
+  return { closed, failures, fallbackCloses, reasonCounts };
+}
+
 function normalizePeriodToken(value) {
   const token = String(value || '')
     .trim()
@@ -1057,6 +1188,29 @@ async function settlePendingCards({
       let cardsRaced = 0;
       let cardsSkipped = 0;
       const settledAt = new Date().toISOString();
+      let nonActionableAutoClosed = 0;
+      let nonActionableAutoClosedReasons = {};
+      const nonActionableClose = autoCloseNonActionableFinalPendingRows(
+        db,
+        settledAt,
+      );
+      nonActionableAutoClosed = nonActionableClose.closed;
+      nonActionableAutoClosedReasons = nonActionableClose.reasonCounts;
+      if (nonActionableAutoClosed > 0) {
+        console.log(
+          `[SettleCards] Auto-closed ${nonActionableAutoClosed} non-actionable final pending card_results as void (${JSON.stringify(nonActionableAutoClosedReasons)})`,
+        );
+      }
+      if (nonActionableClose.failures > 0) {
+        console.warn(
+          `[SettleCards] Failed to auto-close ${nonActionableClose.failures} non-actionable final rows`,
+        );
+      }
+      if (nonActionableClose.fallbackCloses > 0) {
+        console.warn(
+          `[SettleCards] Auto-closed ${nonActionableClose.fallbackCloses} non-actionable final rows using fallback update`,
+        );
+      }
       const marketDailyCounts = {
         NBA_TOTAL: { pending: 0, settled: 0, failed: 0 },
         NHL_TOTAL: { pending: 0, settled: 0, failed: 0 },
@@ -1253,7 +1407,7 @@ async function settlePendingCards({
       }
       const totalSkipped = cardsSkipped;
       console.log(
-        `[SettleCards] Step 1 complete — pending: ${coverageBefore.totalPending}, eligible: ${eligibleCount}, settled: ${cardsSettled}, errored: ${cardsErrored}, raced: ${cardsRaced}, skipped: ${totalSkipped}`,
+        `[SettleCards] Step 1 complete — pending: ${coverageBefore.totalPending}, eligible: ${eligibleCount}, settled: ${cardsSettled}, errored: ${cardsErrored}, raced: ${cardsRaced}, skipped: ${totalSkipped}, autoClosedNonActionable: ${nonActionableAutoClosed}`,
       );
       console.log(
         `[SettleCards] Market daily counts — NBA_TOTAL: ${JSON.stringify(marketDailyCounts.NBA_TOTAL)}, NHL_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_TOTAL)}, NHL_1P_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_1P_TOTAL)}, NHL_MONEYLINE: ${JSON.stringify(marketDailyCounts.NHL_MONEYLINE)}`,
@@ -1383,6 +1537,12 @@ async function settlePendingCards({
           settled: cardsSettled,
           raced: cardsRaced,
           skipped: totalSkipped,
+          nonActionableAutoClosedFinal: nonActionableAutoClosed,
+          nonActionableAutoCloseFailures: Number(nonActionableClose.failures || 0),
+          nonActionableAutoCloseFallbacks: Number(
+            nonActionableClose.fallbackCloses || 0,
+          ),
+          nonActionableAutoClosedReasons,
           marketDailyCounts,
           displayBackfilled: backfilledDisplayed,
           displayBackfillEnabled: enableDisplayBackfill,
@@ -1435,6 +1595,7 @@ if (require.main === module) {
 module.exports = {
   settlePendingCards,
   __private: {
+    autoCloseNonActionableFinalPendingRows,
     assertLockedMarketContext,
     backfillDisplayedPlaysFromPayloads,
     computePnlOutcome,

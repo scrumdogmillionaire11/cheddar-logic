@@ -49,6 +49,7 @@ type LedgerRow = {
   result: string | null;
   pnl_units: number | null;
   settled_at: string | null;
+  game_time_utc: string | null;
   created_at: string | null;
   payload_data: string | null;
   payload_id: string | null;
@@ -519,6 +520,7 @@ export async function GET(request: NextRequest) {
         cr.result,
         cr.pnl_units,
         cr.settled_at,
+        g.game_time_utc,
         cdl.displayed_at,
         cdl.api_endpoint,
         cp.id AS payload_id,
@@ -704,6 +706,7 @@ export async function GET(request: NextRequest) {
         result: row.result,
         pnlUnits: row.pnl_units,
         settledAt: row.settled_at,
+        gameTimeUtc: row.game_time_utc,
         createdAt: row.created_at,
         prediction,
         tier,
