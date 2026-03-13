@@ -79,8 +79,8 @@ class PlayerProjection(BaseModel):
     name: str
     team: str
     position: str
-    price: float
-    expected_pts: float
+    price: Optional[float] = None
+    expected_pts: Optional[float] = None
     ownership: Optional[float] = None
     form: Optional[float] = None
     fixture_difficulty: Optional[int] = None
