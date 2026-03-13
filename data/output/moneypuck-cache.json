@@ -1,5 +1,5 @@
 {
-  "fetched_at": "2026-03-13T10:42:26.284Z",
+  "fetched_at": "2026-03-13T18:18:23.452Z",
   "teams": {},
   "goalies": {
     "New York Rangers": {
@@ -10,56 +10,28 @@
       "gsax": -4.840000000000003,
       "source": "moneypuck-csv"
     },
-    "Edmonton Oilers": {
-      "gsax": -1.9699999999999989,
-      "source": "moneypuck-csv"
-    },
     "Utah Hockey Club": {
-      "gsax": 9.490000000000009,
-      "source": "moneypuck-csv"
-    },
-    "Los Angeles Kings": {
-      "gsax": 6.219999999999999,
-      "source": "moneypuck-csv"
-    },
-    "Florida Panthers": {
-      "gsax": 0.1700000000000017,
-      "source": "moneypuck-csv"
-    },
-    "Vancouver Canucks": {
-      "gsax": 2.3800000000000026,
-      "source": "moneypuck-csv"
-    },
-    "Ottawa Senators": {
-      "gsax": -0.4400000000000013,
-      "source": "moneypuck-csv"
-    },
-    "San Jose Sharks": {
-      "gsax": 2.030000000000001,
-      "source": "moneypuck-csv"
-    },
-    "Toronto Maple Leafs": {
-      "gsax": 8.909999999999997,
-      "source": "moneypuck-csv"
-    },
-    "Columbus Blue Jackets": {
-      "gsax": 13.25,
-      "source": "moneypuck-csv"
-    },
-    "New York Islanders": {
-      "gsax": 27.33,
-      "source": "moneypuck-csv"
-    },
-    "Buffalo Sabres": {
-      "gsax": 15.700000000000003,
+      "gsax": 8.77000000000001,
       "source": "moneypuck-csv"
     },
     "Dallas Stars": {
       "gsax": 13.170000000000002,
       "source": "moneypuck-csv"
     },
-    "Seattle Kraken": {
-      "gsax": 8.670000000000002,
+    "San Jose Sharks": {
+      "gsax": 2.1200000000000045,
+      "source": "moneypuck-csv"
+    },
+    "Vancouver Canucks": {
+      "gsax": 1.9799999999999969,
+      "source": "moneypuck-csv"
+    },
+    "Ottawa Senators": {
+      "gsax": -0.4400000000000013,
+      "source": "moneypuck-csv"
+    },
+    "New York Islanders": {
+      "gsax": 27.33,
       "source": "moneypuck-csv"
     },
     "Boston Bruins": {
@@ -70,64 +42,92 @@
       "gsax": 8.699999999999989,
       "source": "moneypuck-csv"
     },
-    "Montreal Canadiens": {
-      "gsax": 3.16,
-      "source": "moneypuck-csv"
-    },
-    "Colorado Avalanche": {
-      "gsax": 12.730000000000004,
-      "source": "moneypuck-csv"
-    },
-    "Detroit Red Wings": {
-      "gsax": 9.439999999999998,
-      "source": "moneypuck-csv"
-    },
-    "Tampa Bay Lightning": {
-      "gsax": 19.599999999999994,
+    "Pittsburgh Penguins": {
+      "gsax": 8.480000000000004,
       "source": "moneypuck-csv"
     },
     "Philadelphia Flyers": {
       "gsax": 9.430000000000007,
       "source": "moneypuck-csv"
     },
-    "Anaheim Ducks": {
-      "gsax": -0.18999999999999773,
+    "Toronto Maple Leafs": {
+      "gsax": 8.909999999999997,
       "source": "moneypuck-csv"
     },
     "New Jersey Devils": {
       "gsax": 6.650000000000006,
       "source": "moneypuck-csv"
     },
-    "Pittsburgh Penguins": {
-      "gsax": 8.480000000000004,
+    "Vegas Golden Knights": {
+      "gsax": -0.8799999999999955,
       "source": "moneypuck-csv"
     },
-    "Chicago Blackhawks": {
-      "gsax": 10.569999999999993,
+    "Columbus Blue Jackets": {
+      "gsax": 13.25,
       "source": "moneypuck-csv"
     },
-    "Calgary Flames": {
-      "gsax": 16.900000000000006,
+    "Carolina Hurricanes": {
+      "gsax": 6.200000000000003,
       "source": "moneypuck-csv"
     },
     "St. Louis Blues": {
       "gsax": 6.269999999999996,
       "source": "moneypuck-csv"
     },
+    "Colorado Avalanche": {
+      "gsax": 14.560000000000002,
+      "source": "moneypuck-csv"
+    },
+    "Anaheim Ducks": {
+      "gsax": -0.18999999999999773,
+      "source": "moneypuck-csv"
+    },
+    "Chicago Blackhawks": {
+      "gsax": 13.150000000000006,
+      "source": "moneypuck-csv"
+    },
+    "Montreal Canadiens": {
+      "gsax": 3.16,
+      "source": "moneypuck-csv"
+    },
+    "Tampa Bay Lightning": {
+      "gsax": 19.599999999999994,
+      "source": "moneypuck-csv"
+    },
+    "Los Angeles Kings": {
+      "gsax": 6.219999999999999,
+      "source": "moneypuck-csv"
+    },
     "Minnesota Wild": {
       "gsax": 8.939999999999998,
       "source": "moneypuck-csv"
     },
-    "Carolina Hurricanes": {
-      "gsax": 6.140000000000001,
-      "source": "moneypuck-csv"
-    },
-    "Vegas Golden Knights": {
-      "gsax": -0.8799999999999955,
-      "source": "moneypuck-csv"
-    },
     "Washington Capitals": {
       "gsax": 24.19999999999999,
+      "source": "moneypuck-csv"
+    },
+    "Florida Panthers": {
+      "gsax": 0.1700000000000017,
+      "source": "moneypuck-csv"
+    },
+    "Seattle Kraken": {
+      "gsax": 7.700000000000003,
+      "source": "moneypuck-csv"
+    },
+    "Calgary Flames": {
+      "gsax": 16.900000000000006,
+      "source": "moneypuck-csv"
+    },
+    "Buffalo Sabres": {
+      "gsax": 15.700000000000003,
+      "source": "moneypuck-csv"
+    },
+    "Detroit Red Wings": {
+      "gsax": 10.430000000000007,
+      "source": "moneypuck-csv"
+    },
+    "Edmonton Oilers": {
+      "gsax": -1.9699999999999989,
       "source": "moneypuck-csv"
     }
   },
@@ -289,7 +289,7 @@
     },
     "Montreal Canadiens": {
       "name": "Jakub Dobes",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     }
   },
@@ -491,7 +491,7 @@
       },
       "Minnesota Wild": {
         "name": "Filip Gustavsson",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "New York Rangers": {
@@ -511,11 +511,11 @@
       },
       "Montreal Canadiens": {
         "name": "Jakub Dobes",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "San Jose Sharks": {
-        "name": "Yaroslav Askarov",
+        "name": "Alex Nedeljkovic",
         "status": "EXPECTED",
         "source": "rotowire"
       },
