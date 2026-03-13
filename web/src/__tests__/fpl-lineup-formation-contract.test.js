@@ -21,6 +21,10 @@ async function run() {
     'POSITION_ORDER.map((position) => {',
     'rowPlayers.length',
     'bench_order',
+    'const ownership = parseNumeric(player.ownership);',
+    'ownership !== null',
+    'const hasProjectedTransferSwaps =',
+    'resolveLineupReference(',
   ].forEach((requiredText) => {
     assert.ok(
       lineupSource.includes(requiredText),

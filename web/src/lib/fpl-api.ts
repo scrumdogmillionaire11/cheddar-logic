@@ -83,6 +83,7 @@ export interface ChipAdvice {
 }
 
 export interface PlayerProjection {
+  player_id?: number | string;
   name: string;
   team: string;
   position: string;
@@ -144,6 +145,8 @@ export interface ManagerState {
 export interface NearThresholdMove {
   out: string;
   in: string;
+  out_player_id?: number;
+  in_player_id?: number;
   hit_cost?: number;
   delta_pts_4gw?: number;
   delta_pts_6gw?: number;
@@ -154,6 +157,8 @@ export interface NearThresholdMove {
 export interface StrategyPathMove {
   out: string;
   in: string;
+  out_player_id?: number;
+  in_player_id?: number;
   hit_cost?: number;
   delta_pts_4gw?: number;
   delta_pts_6gw?: number;

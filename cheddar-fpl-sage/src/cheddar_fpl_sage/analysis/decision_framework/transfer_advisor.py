@@ -40,6 +40,15 @@ class TransferAdvisor:
         name_no_accents = unicodedata.normalize('NFD', name).encode('ascii', 'ignore').decode('ascii')
         return name_no_accents.lower().strip()
 
+    @staticmethod
+    def _coerce_player_id(player_id: Any) -> int | None:
+        if player_id is None:
+            return None
+        try:
+            return int(player_id)
+        except (TypeError, ValueError):
+            return None
+
     def _get_horizon_summary(self, candidate: Any) -> Dict[str, Any]:
         ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
         summary_by_id = ctx.get("player_summary_by_id") or {}
@@ -153,6 +162,8 @@ class TransferAdvisor:
             "strategy_paths_reason": None,
             "strategy_starters_checked": 0,
             "strategy_alternatives_considered": 0,
+            "starters_checked": 0,
+            "alternatives_considered": 0,
         }
         if not projections or not squad:
             diagnostics["strategy_paths_reason"] = "Strategy paths unavailable: missing projections or squad data."
@@ -176,41 +187,86 @@ class TransferAdvisor:
             return {}, diagnostics
 
         # Collect current squad identifiers to exclude from transfer-in targets
-        squad_player_ids = {
-            p.get("player_id") or p.get("id")
-            for p in squad
-            if (p.get("player_id") or p.get("id")) is not None
-        }
+        squad_player_ids = set()
+        unknown_id_squad_names = set()
+        for player in squad:
+            player_id = self._coerce_player_id(player.get("player_id") or player.get("id"))
+            if player_id is not None:
+                squad_player_ids.add(player_id)
+                continue
+            if player.get("name"):
+                unknown_id_squad_names.add(self._normalize_name(player.get("name", "")))
         squad_player_names = {
             self._normalize_name(p.get("name", ""))
             for p in squad
             if p.get("name")
         }
 
-        weakest = None
-        weakest_proj = None
-        alternatives = []
+        move_pool: List[Dict[str, Any]] = []
+        max_alternatives_per_starter = 6
         for starter, starter_proj in starters_with_proj:
             diagnostics["strategy_starters_checked"] += 1
+            diagnostics["starters_checked"] = diagnostics["strategy_starters_checked"]
             pos = starter.get("position")
             position_pool = projections.get_by_position(pos)
-            viable = [
-                p for p in position_pool
-                if p.player_id != starter_proj.player_id
-                and p.player_id not in squad_player_ids
-                and self._normalize_name(getattr(p, "name", "")) not in squad_player_names
-                and p.current_price <= (starter_proj.current_price + bank_value + 0.5)
-                and not p.is_injury_risk
-                and p.xMins_next >= 60
-            ]
-            diagnostics["strategy_alternatives_considered"] += len(viable)
-            if viable:
-                weakest = starter
-                weakest_proj = starter_proj
-                alternatives = viable
-                break
+            viable = []
+            for candidate in position_pool:
+                candidate_id = self._coerce_player_id(getattr(candidate, "player_id", None))
+                candidate_name = self._normalize_name(getattr(candidate, "name", ""))
 
-        if not alternatives:
+                if candidate_id == self._coerce_player_id(getattr(starter_proj, "player_id", None)):
+                    continue
+                if candidate_id is not None and candidate_id in squad_player_ids:
+                    continue
+                if candidate_id is None and candidate_name and candidate_name in unknown_id_squad_names:
+                    continue
+                if (
+                    candidate_id is None
+                    and candidate_name
+                    and candidate_name in squad_player_names
+                    and candidate_name == self._normalize_name(starter.get("name", ""))
+                ):
+                    continue
+                if candidate.current_price > (starter_proj.current_price + bank_value + 0.5):
+                    continue
+                if candidate.is_injury_risk or candidate.xMins_next < 60:
+                    continue
+                viable.append(candidate)
+            diagnostics["strategy_alternatives_considered"] += len(viable)
+            diagnostics["alternatives_considered"] = diagnostics["strategy_alternatives_considered"]
+
+            if not viable:
+                continue
+
+            # Rank starter-local alternatives by best cross-mode score, then cap.
+            scored_viable = sorted(
+                viable,
+                key=lambda candidate: max(
+                    self._score_candidate_for_strategy(candidate, "DEFEND"),
+                    self._score_candidate_for_strategy(candidate, "BALANCED"),
+                    self._score_candidate_for_strategy(candidate, "RECOVERY"),
+                ),
+                reverse=True,
+            )[:max_alternatives_per_starter]
+
+            starter_id = starter.get("player_id") or starter.get("id")
+            starter_name = starter_proj.name or starter.get("name")
+            for candidate in scored_viable:
+                move_pool.append(
+                    {
+                        "out_player_id": self._coerce_player_id(starter_id),
+                        "out_name": starter_name,
+                        "out_proj": starter_proj,
+                        "in_player_id": self._coerce_player_id(candidate.player_id),
+                        "in_name": candidate.name,
+                        "in_proj": candidate,
+                        "score_defend": self._score_candidate_for_strategy(candidate, "DEFEND"),
+                        "score_balanced": self._score_candidate_for_strategy(candidate, "BALANCED"),
+                        "score_recovery": self._score_candidate_for_strategy(candidate, "RECOVERY"),
+                    }
+                )
+
+        if not move_pool:
             diagnostics["strategy_paths_reason"] = (
                 "Strategy paths unavailable: no viable transfer alternatives across starting XI."
             )
@@ -222,44 +278,65 @@ class TransferAdvisor:
             "RECOVERY": "Differential target — upside and rank-gaining leverage over template.",
         }
 
-        def pick_for_mode(mode: str, excluded_player_ids: set) -> Dict[str, Any]:
-            pool = [c for c in alternatives if c.player_id not in excluded_player_ids]
-            if not pool:
+        def pick_for_mode(mode: str, used_in_ids: set, used_out_ids: set) -> Dict[str, Any]:
+            mode_key = {
+                "DEFEND": "score_defend",
+                "BALANCED": "score_balanced",
+                "RECOVERY": "score_recovery",
+            }.get(mode, "score_balanced")
+            ranked = sorted(move_pool, key=lambda move: move.get(mode_key, 0), reverse=True)
+            if not ranked:
                 return {}
-            ranked = sorted(
-                pool,
-                key=lambda c: self._score_candidate_for_strategy(c, mode),
-                reverse=True,
+
+            diversity_filters = (
+                lambda move: move["in_player_id"] not in used_in_ids and move["out_player_id"] not in used_out_ids,
+                lambda move: move["in_player_id"] not in used_in_ids,
+                lambda move: move["out_player_id"] not in used_out_ids,
+                lambda _move: True,
             )
-            choice = ranked[0]
-            delta_pts_4gw = round((choice.nextGW_pts - weakest_proj.nextGW_pts) * 4.0, 1)
+            chosen = None
+            for selector in diversity_filters:
+                for move in ranked:
+                    if selector(move):
+                        chosen = move
+                        break
+                if chosen is not None:
+                    break
+            if chosen is None:
+                return {}
+
+            starter_proj = chosen["out_proj"]
+            candidate_proj = chosen["in_proj"]
+            delta_pts_4gw = round((candidate_proj.nextGW_pts - starter_proj.nextGW_pts) * 4.0, 1)
             return {
-                "out": weakest_proj.name,
-                "in": choice.name,
-                "player_id_in": choice.player_id,
+                "out": chosen["out_name"],
+                "in": chosen["in_name"],
+                "out_player_id": chosen["out_player_id"],
+                "in_player_id": chosen["in_player_id"],
                 "hit_cost": 0 if free_transfers > 0 else 4,
                 "delta_pts_4gw": delta_pts_4gw,
-                "delta_pts_6gw": round((choice.next6_pts - weakest_proj.next6_pts), 1),
+                "delta_pts_6gw": round((candidate_proj.next6_pts - starter_proj.next6_pts), 1),
                 "confidence": "MEDIUM",
                 "rationale": _MODE_RATIONALE.get(mode, f"{mode.title()} strategy path."),
             }
 
-        # Build each mode path with deduplication: each mode picks a distinct "in" player.
-        used_ids: set = set()
-        defend_pick = pick_for_mode("DEFEND", used_ids)
-        if defend_pick.get("player_id_in"):
-            used_ids.add(defend_pick["player_id_in"])
+        # Build each mode path with diversity preference:
+        # distinct transfer-ins and transfer-outs where market depth allows.
+        used_in_ids: set = set()
+        used_out_ids: set = set()
+        defend_pick = pick_for_mode("DEFEND", used_in_ids, used_out_ids)
+        if defend_pick.get("in_player_id") is not None:
+            used_in_ids.add(defend_pick["in_player_id"])
+        if defend_pick.get("out_player_id") is not None:
+            used_out_ids.add(defend_pick["out_player_id"])
 
-        balanced_pick = pick_for_mode("BALANCED", used_ids)
-        if balanced_pick.get("player_id_in"):
-            used_ids.add(balanced_pick["player_id_in"])
+        balanced_pick = pick_for_mode("BALANCED", used_in_ids, used_out_ids)
+        if balanced_pick.get("in_player_id") is not None:
+            used_in_ids.add(balanced_pick["in_player_id"])
+        if balanced_pick.get("out_player_id") is not None:
+            used_out_ids.add(balanced_pick["out_player_id"])
 
-        recovery_pick = pick_for_mode("RECOVERY", used_ids)
-
-        # Strip internal dedup key before returning
-        for pick in (defend_pick, balanced_pick, recovery_pick):
-            if isinstance(pick, dict):
-                pick.pop("player_id_in", None)
+        recovery_pick = pick_for_mode("RECOVERY", used_in_ids, used_out_ids)
 
         strategy_paths = {
             "safe": defend_pick or None,
@@ -343,6 +420,8 @@ class TransferAdvisor:
             "near_threshold_reason": None,
             "near_threshold_starters_checked": 0,
             "near_threshold_alternatives_considered": 0,
+            "starters_checked": 0,
+            "alternatives_considered": 0,
         }
         if not projections:
             diagnostics["near_threshold_reason"] = "Near-threshold analysis unavailable: missing projections."
@@ -359,6 +438,7 @@ class TransferAdvisor:
                 starters_with_proj.append((starter, starter_proj))
 
         diagnostics["near_threshold_starters_checked"] = len(starters_with_proj)
+        diagnostics["starters_checked"] = diagnostics["near_threshold_starters_checked"]
         if not starters_with_proj:
             diagnostics["near_threshold_reason"] = "Near-threshold analysis unavailable: starter projections missing."
             return [], diagnostics
@@ -369,6 +449,9 @@ class TransferAdvisor:
             for p in squad
             if (p.get("player_id") or p.get("id")) is not None
         }
+        max_alternatives_per_starter = 5
+        alternatives_above_threshold = 0
+        alternatives_far_below = 0
         for starter, starter_proj in starters_with_proj:
             alternatives = [
                 p for p in projections.get_by_position(starter.get("position"))
@@ -378,39 +461,78 @@ class TransferAdvisor:
                 and not p.is_injury_risk
                 and p.xMins_next >= 60
             ]
-            diagnostics["near_threshold_alternatives_considered"] += len(alternatives)
             if not alternatives:
                 continue
 
-            best = sorted(
+            ranked_alternatives = sorted(
                 alternatives,
                 key=lambda c: self._score_candidate_for_strategy(c, strategy_mode),
                 reverse=True,
-            )[0]
-            gain = round(best.nextGW_pts - starter_proj.nextGW_pts, 2)
-            if gain >= required:
-                continue
-            if (required - gain) > 1.25:
-                continue
+            )[:max_alternatives_per_starter]
+            diagnostics["near_threshold_alternatives_considered"] += len(ranked_alternatives)
+            diagnostics["alternatives_considered"] = diagnostics["near_threshold_alternatives_considered"]
+            best_near_miss = None
+            for alternative in ranked_alternatives:
+                gain = round(alternative.nextGW_pts - starter_proj.nextGW_pts, 2)
+                if gain >= required:
+                    alternatives_above_threshold += 1
+                    continue
+                gap_to_threshold = round(required - gain, 2)
+                if gap_to_threshold > 1.25:
+                    alternatives_far_below += 1
+                    continue
 
-            hit_cost = 0 if free_transfers > 0 else 4
-            candidates.append({
-                "out": starter_proj.name,
-                "in": best.name,
-                "hit_cost": hit_cost,
-                "delta_pts_4gw": round(gain * 4.0, 1),
-                "delta_pts_6gw": round(best.next6_pts - starter_proj.next6_pts, 1),
-                "threshold_required": required,
-                "rejection_reason": (
-                    f"Projected gain {gain:.2f} below required {required:.2f} "
-                    f"for {strategy_mode.upper()} mode."
-                ),
-            })
+                hit_cost = 0 if free_transfers > 0 else 4
+                candidate_payload = {
+                    "out": starter_proj.name,
+                    "in": alternative.name,
+                    "out_player_id": self._coerce_player_id(starter.get("player_id") or starter.get("id")),
+                    "in_player_id": self._coerce_player_id(alternative.player_id),
+                    "hit_cost": hit_cost,
+                    "delta_pts_4gw": round(gain * 4.0, 1),
+                    "delta_pts_6gw": round(alternative.next6_pts - starter_proj.next6_pts, 1),
+                    "threshold_required": required,
+                    "_gap_to_threshold": gap_to_threshold,
+                    "_mode_score": self._score_candidate_for_strategy(alternative, strategy_mode),
+                    "rejection_reason": (
+                        f"Projected gain {gain:.2f} below required {required:.2f} "
+                        f"for {strategy_mode.upper()} mode."
+                    ),
+                }
+                if (
+                    best_near_miss is None
+                    or candidate_payload["_gap_to_threshold"] < best_near_miss["_gap_to_threshold"]
+                    or (
+                        candidate_payload["_gap_to_threshold"] == best_near_miss["_gap_to_threshold"]
+                        and candidate_payload["_mode_score"] > best_near_miss["_mode_score"]
+                    )
+                ):
+                    best_near_miss = candidate_payload
+            if best_near_miss is not None:
+                candidates.append(best_near_miss)
+
+        candidates.sort(
+            key=lambda candidate: (
+                candidate.get("_gap_to_threshold", 99.0),
+                -candidate.get("_mode_score", 0.0),
+            )
+        )
+        for candidate in candidates:
+            candidate.pop("_gap_to_threshold", None)
+            candidate.pop("_mode_score", None)
 
         if not candidates:
             if diagnostics["near_threshold_alternatives_considered"] == 0:
                 diagnostics["near_threshold_reason"] = (
                     "No near-threshold moves: no viable alternatives after ownership/price/minutes filters."
+                )
+            elif alternatives_above_threshold > 0 and alternatives_far_below == 0:
+                diagnostics["near_threshold_reason"] = (
+                    "No near-threshold moves: viable alternatives mostly cleared threshold outright."
+                )
+            elif alternatives_far_below > 0 and alternatives_above_threshold == 0:
+                diagnostics["near_threshold_reason"] = (
+                    "No near-threshold moves: viable alternatives were well below required gain."
                 )
             else:
                 diagnostics["near_threshold_reason"] = (

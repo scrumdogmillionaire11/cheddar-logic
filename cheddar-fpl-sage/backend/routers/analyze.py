@@ -60,6 +60,40 @@ def _is_complete_status(job_status: Optional[str]) -> bool:
     return str(job_status).lower() in {"complete", "completed"}
 
 
+def _cached_result_meets_fpl_contract(payload: Optional[Dict]) -> bool:
+    """Guard against serving stale/legacy cached payloads missing FPL dashboard contract fields."""
+    if not isinstance(payload, dict):
+        return False
+
+    manager_state = payload.get("manager_state")
+    if not isinstance(manager_state, dict):
+        return False
+    if manager_state.get("risk_posture") is None:
+        return False
+    if manager_state.get("strategy_mode") is None:
+        return False
+    if manager_state.get("free_transfers") is None:
+        return False
+
+    fixture_planner = payload.get("fixture_planner")
+    if not isinstance(fixture_planner, dict):
+        return False
+    for key in ["gw_timeline", "squad_windows", "target_windows", "key_planning_notes"]:
+        if not isinstance(fixture_planner.get(key), list):
+            return False
+
+    starting_xi = payload.get("starting_xi")
+    if isinstance(starting_xi, list) and starting_xi:
+        has_any_price = any(
+            isinstance(player, dict) and player.get("price") is not None
+            for player in starting_xi
+        )
+        if not has_any_price:
+            return False
+
+    return True
+
+
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
@@ -117,7 +151,7 @@ async def trigger_analysis(
     
     if not has_overrides:
         cached_result = cache_service.get_cached_analysis(request.team_id, request.gameweek)
-        if cached_result:
+        if cached_result and _cached_result_meets_fpl_contract(cached_result):
             logger.info("Returning cached analysis result")
             analysis_id = str(uuid.uuid4())
             
@@ -134,6 +168,11 @@ async def trigger_analysis(
                     "cached": True,
                 },
                 headers={"X-Cache": "HIT"},
+            )
+        if cached_result:
+            logger.info(
+                "Skipping cached analysis for team_id=%s due to contract mismatch; running fresh analysis.",
+                request.team_id,
             )
 
     # Prepare overrides if any manual inputs specified

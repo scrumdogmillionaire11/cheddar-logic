@@ -105,6 +105,8 @@ async function run() {
     'manager_state?: ManagerState | null;',
     'strategy_mode?: string | null;',
     'near_threshold_moves?: NearThresholdMove[] | null;',
+    'out_player_id?: number;',
+    'in_player_id?: number;',
     'near_threshold_reason?: string | null;',
     'strategy_paths?: StrategyPaths | null;',
     'strategy_paths_reason?: string | null;',

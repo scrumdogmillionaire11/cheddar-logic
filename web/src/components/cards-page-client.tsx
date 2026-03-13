@@ -1728,6 +1728,20 @@ export default function CardsPageClient() {
         </span>
       );
     }
+    if (t === 'team_total') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-bold rounded border bg-cyan-700/40 text-cyan-200 border-cyan-600/60">
+          TT
+        </span>
+      );
+    }
+    if (t === 'player_prop') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-bold rounded border bg-amber-700/40 text-amber-200 border-amber-600/60">
+          PROP
+        </span>
+      );
+    }
     return null;
   };
 
@@ -2103,7 +2117,7 @@ export default function CardsPageClient() {
       displayPlay.bet?.market_type === 'total' && isPlayDecision;
     // Live price from the current game snapshot — keeps play odds in sync with header.
     const livePrice = resolvePlayLivePrice(
-      displayPlay.market_type,
+      displayPlay.market_type ?? displayPlay.bet?.market_type?.toUpperCase(),
       displayPlay.selection?.side ?? displayPlay.bet?.side?.toUpperCase(),
       originalGame.odds,
     );
