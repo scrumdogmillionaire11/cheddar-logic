@@ -222,6 +222,43 @@ export interface FixturePlannerData {
   key_planning_notes: string[];
 }
 
+export interface LineupDecisionStarter {
+  player_id?: number | string;
+  name: string;
+  team?: string;
+  position: 'GK' | 'DEF' | 'MID' | 'FWD' | string;
+  projected_points?: number;
+  expected_minutes?: number;
+  flags?: string[];
+  badges?: string[];
+  start_reason?: string;
+}
+
+export interface LineupDecisionBench {
+  player_id?: number | string;
+  name: string;
+  team?: string;
+  position: 'GK' | 'DEF' | 'MID' | 'FWD' | string;
+  projected_points?: number;
+  expected_minutes?: number;
+  flags?: string[];
+  bench_order?: number;
+  bench_reason?: string;
+}
+
+export interface LineupDecisionPayload {
+  formation: string;
+  risk_profile: 'CONSERVATIVE' | 'BALANCED' | 'AGGRESSIVE' | string;
+  lineup_confidence: 'HIGH' | 'MEDIUM' | 'LOW' | string;
+  formation_reason: string;
+  risk_profile_effect?: string;
+  notes: string[];
+  starters: LineupDecisionStarter[];
+  bench: LineupDecisionBench[];
+  captain_player_id?: number | string;
+  vice_captain_player_id?: number | string;
+}
+
 export interface DetailedAnalysisResponse {
   team_name: string;
   manager_name: string;
@@ -243,6 +280,7 @@ export interface DetailedAnalysisResponse {
   captain_delta?: { delta_pts?: number; delta_pts_4gw?: number } | null;
   starting_xi_projections: PlayerProjection[];
   bench_projections: PlayerProjection[];
+  lineup_decision?: LineupDecisionPayload | null;
   projected_xi?: PlayerProjection[] | null;
   projected_bench?: PlayerProjection[] | null;
   transfer_targets?: PlayerProjection[] | null;

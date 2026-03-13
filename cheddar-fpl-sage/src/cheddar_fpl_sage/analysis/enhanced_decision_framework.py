@@ -609,6 +609,86 @@ class EnhancedDecisionFramework:
 
         remaining_pool = [proj for proj in squad_projections if proj.player_id not in selected_ids]
         remaining_playable = [proj for proj in remaining_pool if proj.player_id not in hard_excluded_ids]
+
+        def _blocking_swap_reason(proj, player_status: str) -> Optional[str]:
+            if player_status in {"DOUBT", "OUT", "BANNED"}:
+                return f"status flag {player_status}"
+
+            expected_minutes = _expected_minutes_of(proj)
+            if expected_minutes < 45:
+                return f"expected minutes {expected_minutes:.0f} (<45)"
+
+            tags = [str(tag).upper() for tag in (getattr(proj, "tags", []) or [])]
+            blocking_tags = {"INJURY_SHADOW", "ROTATION_RISK", "DOUBT"}
+            hit_tags = [tag for tag in tags if tag in blocking_tags]
+            if hit_tags:
+                return f"risk tag(s): {', '.join(hit_tags)}"
+
+            return None
+
+        def _apply_projection_sanity_swap(
+            starters: List[Any],
+            playable_non_starters: List[Any],
+            threshold: float = 1.5,
+        ) -> tuple[List[Any], List[str]]:
+            swap_notes: List[str] = []
+            starters_by_pos: Dict[str, List[Any]] = {
+                "DEF": [p for p in starters if p.position == "DEF"],
+                "MID": [p for p in starters if p.position == "MID"],
+                "FWD": [p for p in starters if p.position == "FWD"],
+            }
+            bench_by_pos: Dict[str, List[Any]] = {
+                "DEF": [p for p in playable_non_starters if p.position == "DEF"],
+                "MID": [p for p in playable_non_starters if p.position == "MID"],
+                "FWD": [p for p in playable_non_starters if p.position == "FWD"],
+            }
+
+            for position in ["DEF", "MID", "FWD"]:
+                position_starters = starters_by_pos[position]
+                position_bench = bench_by_pos[position]
+                if not position_starters or not position_bench:
+                    continue
+
+                highest_bench = max(position_bench, key=_projected_points_of)
+                lowest_starter = min(position_starters, key=_projected_points_of)
+
+                if _projected_points_of(highest_bench) <= _projected_points_of(lowest_starter) + threshold:
+                    continue
+
+                bench_status = player_status_by_id.get(highest_bench.player_id, "FIT")
+                blocking_reason = _blocking_swap_reason(highest_bench, bench_status)
+                if blocking_reason:
+                    swap_notes.append(
+                        f"Projection sanity hold ({position}): kept {highest_bench.name} on bench "
+                        f"despite {_projected_points_of(highest_bench):.1f} vs starter {_projected_points_of(lowest_starter):.1f} "
+                        f"because {blocking_reason}."
+                    )
+                    continue
+
+                starters.remove(lowest_starter)
+                starters.append(highest_bench)
+
+                playable_non_starters.remove(highest_bench)
+                playable_non_starters.append(lowest_starter)
+
+                swap_notes.append(
+                    f"Projection sanity swap ({position}): {highest_bench.name} "
+                    f"({_projected_points_of(highest_bench):.1f}) replaced {lowest_starter.name} "
+                    f"({_projected_points_of(lowest_starter):.1f})."
+                )
+
+            return starters, swap_notes
+
+        selected_xi, sanity_swap_notes = _apply_projection_sanity_swap(
+            selected_xi,
+            remaining_playable,
+            threshold=1.5,
+        )
+        data_notes.extend(sanity_swap_notes)
+        selected_ids = {player.player_id for player in selected_xi}
+        remaining_pool = [proj for proj in squad_projections if proj.player_id not in selected_ids]
+        remaining_playable = [proj for proj in remaining_pool if proj.player_id not in hard_excluded_ids]
+
         outfield_candidates = [proj for proj in remaining_playable if proj.position in {"DEF", "MID", "FWD"}]
         outfield_sorted = sorted(
             outfield_candidates,

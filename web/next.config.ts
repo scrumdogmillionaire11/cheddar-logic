@@ -7,7 +7,7 @@ const overrideApiBase = isProduction
   : process.env.FPL_API_BASE_URL || process.env.NEXT_PUBLIC_FPL_API_URL;
 const defaultApiBase = isProduction
   ? "https://api.cheddarlogic.com/api/v1"
-  : "http://localhost:8000/api/v1";
+  : "http://localhost:8001/api/v1";
 const apiBase = (overrideApiBase || defaultApiBase).replace(/\/+$/, "");
 
 const nextConfig: NextConfig = {

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { 
   createAnalysis, 
   getDetailedProjections, 
@@ -132,6 +132,17 @@ export default function Dashboard() {
   const [expandedBehaviors, setExpandedBehaviors] = useState(false);
 
   const postureConfig = RISK_POSTURE_CONFIG[fplCtx.riskPosture];
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem('fpl-risk-posture');
+    if (saved === 'conservative' || saved === 'balanced' || saved === 'aggressive') {
+      setFplCtx((prev) => ({ ...prev, riskPosture: saved }));
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem('fpl-risk-posture', fplCtx.riskPosture);
+  }, [fplCtx.riskPosture]);
 
   const chipStatusFromArray = (chips: string[]): ChipStatus => ({
     wildcard: chips.includes('wildcard'),
@@ -673,6 +684,8 @@ export default function Dashboard() {
               bank={results.bank}
               overallRank={results.overall_rank}
               overallPoints={results.overall_points}
+              riskPosture={decision.riskPosture}
+              strategyMode={decision.strategyMode}
             />
 
             <DecisionBrief

@@ -116,6 +116,7 @@ const ACTIVE_EXCLUDED_STATUSES = [
   'COMPLETED',
   'FT',
 ];
+const FINAL_GAME_RESULT_STATUSES = ['FINAL', 'FT', 'COMPLETE', 'COMPLETED', 'CLOSED'];
 
 function toSqlUtc(date: Date): string {
   return date.toISOString().substring(0, 19).replace('T', ' ');
@@ -1300,6 +1301,14 @@ export async function GET(request: NextRequest) {
         AND UPPER(COALESCE(g.status, '')) NOT IN (${ACTIVE_EXCLUDED_STATUSES.map(
           (status) => `'${status}'`,
         ).join(', ')})
+        AND NOT EXISTS (
+          SELECT 1
+          FROM game_results gr
+          WHERE gr.game_id = g.game_id
+            AND UPPER(COALESCE(gr.status, '')) IN (${FINAL_GAME_RESULT_STATUSES.map(
+              (status) => `'${status}'`,
+            ).join(', ')})
+        )
       `
         : `
         AND datetime(g.game_time_utc) > datetime(?)

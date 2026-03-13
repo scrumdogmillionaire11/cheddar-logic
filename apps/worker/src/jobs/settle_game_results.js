@@ -51,6 +51,12 @@ const ESPN_SCOREBOARD_OPTIONS_BY_SPORT = {
   NCAAM: { groups: '50', limit: '1000' },
 };
 
+const ODDS_API_SPORT_KEY_MAP = {
+  NHL: 'icehockey_nhl',
+  NBA: 'basketball_nba',
+  NCAAM: 'basketball_ncaab',
+};
+
 /**
  * Environment variables for Phase 1 hardening
  */
@@ -66,15 +72,30 @@ const SETTLEMENT_MIN_HOURS_AFTER_START = Math.max(
   0,
   Number(process.env.SETTLEMENT_MIN_HOURS_AFTER_START) || 3,
 );
+const SETTLEMENT_INCLUDE_DISPLAYED_PENDING_IGNORE_CUTOFF =
+  String(process.env.SETTLEMENT_INCLUDE_DISPLAYED_PENDING_IGNORE_CUTOFF || '')
+    .toLowerCase() === 'true';
 const SETTLEMENT_ENABLE_SPORTSREF_FALLBACK =
   String(process.env.SETTLEMENT_ENABLE_SPORTSREF_FALLBACK || '').toLowerCase() ===
   'true';
+const SETTLEMENT_ENABLE_ODDSAPI_SCORES_FALLBACK =
+  String(process.env.SETTLEMENT_ENABLE_ODDSAPI_SCORES_FALLBACK || 'true')
+    .toLowerCase() !== 'false';
+const ODDS_API_TIMEOUT_MS = Math.max(
+  3000,
+  Number(process.env.ODDS_API_TIMEOUT_MS) || 15000,
+);
+const ODDS_API_SCORES_DAYS_FROM = Math.max(
+  1,
+  Math.min(3, Number(process.env.ODDS_API_SCORES_DAYS_FROM) || 3),
+);
 const SPORTSREF_REQUEST_TIMEOUT_MS = Math.max(
   3000,
   Number(process.env.SPORTSREF_REQUEST_TIMEOUT_MS) || 15000,
 );
 
 const SPORTSREF_BASE_URL = 'https://www.sports-reference.com';
+const ODDS_API_BASE_URL = 'https://api.the-odds-api.com/v4/sports';
 
 /**
  * Keep matching strict so one completed ESPN event cannot fan out into unrelated games.
@@ -133,6 +154,115 @@ async function fetchTextWithTimeout(url, timeoutMs) {
     return await response.text();
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs, headers = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        ...headers,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseOddsApiScoreValue(value) {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
+function oddsApiScoreEventToComparable(rawEvent) {
+  if (!rawEvent || rawEvent.completed !== true) return null;
+  const homeName = String(rawEvent.home_team || '').trim();
+  const awayName = String(rawEvent.away_team || '').trim();
+  if (!homeName || !awayName) return null;
+
+  const eventTimeMs = toEpochMs(rawEvent.commence_time || rawEvent.last_update);
+  if (eventTimeMs === null) return null;
+
+  const scores = Array.isArray(rawEvent.scores) ? rawEvent.scores : [];
+  const homeNorm = normalizeTeamName(homeName);
+  const awayNorm = normalizeTeamName(awayName);
+
+  let homeScore = null;
+  let awayScore = null;
+  for (const scoreRow of scores) {
+    const scoreTeamNorm = normalizeTeamName(scoreRow?.name);
+    const parsedScore = parseOddsApiScoreValue(scoreRow?.score);
+    if (parsedScore === null) continue;
+    if (scoreTeamNorm === homeNorm) homeScore = parsedScore;
+    if (scoreTeamNorm === awayNorm) awayScore = parsedScore;
+  }
+
+  if ((homeScore === null || awayScore === null) && scores.length >= 2) {
+    if (homeScore === null) homeScore = parseOddsApiScoreValue(scores[0]?.score);
+    if (awayScore === null) awayScore = parseOddsApiScoreValue(scores[1]?.score);
+  }
+
+  if (homeScore === null || awayScore === null) return null;
+
+  return {
+    id: `oddsapi:${String(rawEvent.id || `${homeNorm}-${awayNorm}-${rawEvent.commence_time || 'unknown'}`)}`,
+    homeName,
+    awayName,
+    homeNorm,
+    awayNorm,
+    homeScore,
+    awayScore,
+    homeFirstPeriodScore: null,
+    awayFirstPeriodScore: null,
+    eventTimeMs,
+  };
+}
+
+async function fetchOddsApiCompletedEventsForSport(sport) {
+  const apiKey = process.env.ODDS_API_KEY;
+  const sportKey = ODDS_API_SPORT_KEY_MAP[String(sport || '').toUpperCase()];
+  if (!sportKey) return [];
+  if (!apiKey) {
+    console.warn(
+      `[SettleGames] Odds API fallback enabled but ODDS_API_KEY is missing; skipping ${sport}`,
+    );
+    return [];
+  }
+
+  const params = new URLSearchParams({
+    apiKey,
+    daysFrom: String(ODDS_API_SCORES_DAYS_FROM),
+  });
+  const url = `${ODDS_API_BASE_URL}/${sportKey}/scores/?${params.toString()}`;
+
+  try {
+    const payload = await fetchJsonWithTimeout(url, ODDS_API_TIMEOUT_MS, {
+      'User-Agent': 'cheddar-logic-settlement/1.0 (+oddsapi-fallback)',
+    });
+    if (!Array.isArray(payload)) {
+      console.warn(
+        `[SettleGames] Odds API fallback returned non-array payload for ${sport}; skipping`,
+      );
+      return [];
+    }
+    return payload.map(oddsApiScoreEventToComparable).filter(Boolean);
+  } catch (error) {
+    console.warn(
+      `[SettleGames] Odds API fallback fetch failed for ${sport}: ${error.message}`,
+    );
+    return [];
   }
 }
 
@@ -929,7 +1059,7 @@ async function settleGameResults({
       });
 
       console.log(
-        `[SettleGames] Initialized with ESPN_API_TIMEOUT_MS=${ESPN_API_TIMEOUT_MS}ms, SETTLEMENT_MAX_RETRIES=${SETTLEMENT_MAX_RETRIES}`,
+        `[SettleGames] Initialized with ESPN_API_TIMEOUT_MS=${ESPN_API_TIMEOUT_MS}ms, SETTLEMENT_MAX_RETRIES=${SETTLEMENT_MAX_RETRIES}, IGNORE_CUTOFF_FOR_DISPLAYED=${SETTLEMENT_INCLUDE_DISPLAYED_PENDING_IGNORE_CUTOFF ? 'true' : 'false'}`,
       );
 
       const db = getDatabase();
@@ -947,8 +1077,10 @@ async function settleGameResults({
         `[SettleGames] Coverage before — pendingGames: ${coverageBefore.totalPendingGames}, displayedPendingGames: ${coverageBefore.displayedPendingGames}, displayedPendingCards: ${coverageBefore.displayedPendingCards}, pendingCardsMissingDisplay: ${coverageBefore.pendingCardsMissingDisplay}, pendingGamesWithoutDisplayedCards: ${coverageBefore.pendingGamesWithoutDisplayedCards}`,
       );
 
-      // Query only games with pending cards, past cutoff, and not yet final.
-      // This narrows blast radius and avoids settling schedule-only rows.
+      // Query games with pending cards that are either:
+      // 1) past cutoff, or
+      // 2) explicitly marked final/completed upstream.
+      // This allows settlement to proceed even when scheduled start timestamps drift.
       const pendingGamesStmt = db.prepare(`
         SELECT
           g.game_id,
@@ -961,7 +1093,11 @@ async function settleGameResults({
         FROM games g
         INNER JOIN card_results cr ON cr.game_id = g.game_id
         LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
-        WHERE g.game_time_utc < ?
+        WHERE (
+          g.game_time_utc < ?
+          OR LOWER(g.status) IN ('final', 'ft', 'completed')
+          OR (? = 1 AND cdl.pick_id IS NOT NULL)
+        )
           AND cr.status = 'pending'
           AND g.game_id NOT IN (
             SELECT game_id FROM game_results WHERE status = 'final'
@@ -970,7 +1106,10 @@ async function settleGameResults({
         ORDER BY g.game_time_utc ASC
       `);
 
-      const pendingGames = pendingGamesStmt.all(cutoffUtc);
+      const pendingGames = pendingGamesStmt.all(
+        cutoffUtc,
+        SETTLEMENT_INCLUDE_DISPLAYED_PENDING_IGNORE_CUTOFF ? 1 : 0,
+      );
       console.log(
         `[SettleGames] Found ${pendingGames.length} unsettled past games`,
       );
@@ -1004,6 +1143,9 @@ async function settleGameResults({
       let sportsRefFallbackAttempts = 0;
       let sportsRefFallbackMatches = 0;
       let sportsRefFallbackMisses = 0;
+      let oddsApiFallbackAttempts = 0;
+      let oddsApiFallbackMatches = 0;
+      let oddsApiFallbackMisses = 0;
 
       for (const [sport, sportGames] of Object.entries(bySport)) {
         const espnPath = ESPN_SPORT_MAP[sport];
@@ -1059,19 +1201,21 @@ async function settleGameResults({
           }
         }
 
-        if (eventMap.size === 0 && fetchErrors === dateSet.size) {
+        const espnUnavailableForSport =
+          eventMap.size === 0 && fetchErrors === dateSet.size;
+        if (espnUnavailableForSport) {
           console.warn(
-            `[SettleGames] All scoreboard fetches failed for ${sport}`,
+            `[SettleGames] All scoreboard fetches failed for ${sport}; continuing with fallback sources`,
           );
           errors.push(
-            `${sport}: ESPN scoreboard returned no data for any date`,
+            `${sport}: ESPN scoreboard returned no data for any date (fallback-only mode)`,
           );
-          continue;
         }
 
         const events = [...eventMap.values()];
         console.log(
-          `[SettleGames] ${sport}: ${events.length} ESPN events across ${dateSet.size} date(s), ${sportGames.length} DB games to match`,
+          `[SettleGames] ${sport}: ${events.length} ESPN events across ${dateSet.size} date(s), ${sportGames.length} DB games to match` +
+            (espnUnavailableForSport ? ' (fallback-only mode)' : ''),
         );
         sportsProcessed.push(sport);
 
@@ -1141,6 +1285,8 @@ async function settleGameResults({
         }
 
         const sportsRefSummaryCache = new Map();
+        let oddsApiCompletedEvents = null;
+        let oddsApiCompletedById = new Map();
 
         console.log(
           `[SettleGames] ${sport}: ${completedEvents.length} completed events on ESPN`,
@@ -1161,6 +1307,54 @@ async function settleGameResults({
 
           let selectedMatch = match;
           let missReason = reason;
+
+          if (
+            !selectedMatch &&
+            SETTLEMENT_ENABLE_ODDSAPI_SCORES_FALLBACK
+          ) {
+            oddsApiFallbackAttempts++;
+            if (oddsApiCompletedEvents === null) {
+              oddsApiCompletedEvents = await fetchOddsApiCompletedEventsForSport(
+                sport,
+              );
+              oddsApiCompletedById = new Map(
+                oddsApiCompletedEvents.map((event) => [event.id, event]),
+              );
+              console.log(
+                `[SettleGames] ${sport}: loaded ${oddsApiCompletedEvents.length} completed event(s) from Odds API fallback`,
+              );
+            }
+
+            if (oddsApiCompletedEvents.length > 0) {
+              const oddsApiResult = findMatchForGame(
+                dbGame,
+                oddsApiCompletedEvents,
+                oddsApiCompletedById,
+                null,
+              );
+              if (oddsApiResult.match) {
+                selectedMatch = {
+                  ...oddsApiResult.match,
+                  method: `oddsapi_${oddsApiResult.match.method}`,
+                };
+                oddsApiFallbackMatches++;
+                console.log(
+                  `[SettleGames] Odds API fallback matched ${dbGame.game_id}` +
+                    ` (${dbGame.home_team} vs ${dbGame.away_team}) method=${selectedMatch.method}`,
+                );
+              } else {
+                oddsApiFallbackMisses++;
+                missReason = [missReason, oddsApiResult.reason]
+                  .filter(Boolean)
+                  .join(';');
+              }
+            } else {
+              oddsApiFallbackMisses++;
+              missReason = [missReason, 'oddsapi_no_completed_events']
+                .filter(Boolean)
+                .join(';');
+            }
+          }
 
           if (
             !selectedMatch &&
@@ -1268,10 +1462,17 @@ async function settleGameResults({
               status: 'final',
               resultSource: selectedMatch.method.startsWith('sportsref_')
                 ? 'backup_scraper'
-                : 'primary_api',
+                : selectedMatch.method.startsWith('oddsapi_')
+                  ? 'backup_api'
+                  : 'primary_api',
               settledAt: new Date().toISOString(),
               metadata: {
-                espnEventId: selectedMatch.event.id,
+                espnEventId: selectedMatch.method.startsWith('oddsapi_')
+                  ? null
+                  : selectedMatch.event.id,
+                oddsApiEventId: selectedMatch.method.startsWith('oddsapi_')
+                  ? selectedMatch.event.id
+                  : null,
                 matchMethod: selectedMatch.method,
                 matchConfidence: selectedMatch.confidence,
                 expectedEspnEventId: mappedEspnEventId,
@@ -1310,6 +1511,11 @@ async function settleGameResults({
       if (SETTLEMENT_ENABLE_SPORTSREF_FALLBACK) {
         console.log(
           `[SettleGames] SportsRef fallback summary — attempts=${sportsRefFallbackAttempts}, matches=${sportsRefFallbackMatches}, misses=${sportsRefFallbackMisses}`,
+        );
+      }
+      if (SETTLEMENT_ENABLE_ODDSAPI_SCORES_FALLBACK) {
+        console.log(
+          `[SettleGames] Odds API fallback summary — attempts=${oddsApiFallbackAttempts}, matches=${oddsApiFallbackMatches}, misses=${oddsApiFallbackMisses}`,
         );
       }
 
@@ -1387,6 +1593,7 @@ module.exports = {
     tokenSimilarity,
     toEpochMs,
     eventToComparable,
+    oddsApiScoreEventToComparable,
     findStrictNameTimeMatch,
     findNcaamFuzzyNameTimeMatch,
     findMatchForGame,

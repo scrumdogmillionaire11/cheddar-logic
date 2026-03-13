@@ -327,4 +327,60 @@ describe('settle_game_results matching hardening', () => {
     expect(outcome.match).toBeNull();
     expect(outcome.reason).toContain('no_ncaam_fuzzy_candidate');
   });
+
+  test('Odds API score parser emits comparable event for completed game', () => {
+    const comparable = __private.oddsApiScoreEventToComparable({
+      id: 'odds-1',
+      completed: true,
+      commence_time: '2026-03-03T02:00:00Z',
+      home_team: 'Detroit Pistons',
+      away_team: 'Cleveland Cavaliers',
+      scores: [
+        { name: 'Cleveland Cavaliers', score: '99' },
+        { name: 'Detroit Pistons', score: '101' },
+      ],
+    });
+
+    expect(comparable).toBeTruthy();
+    expect(comparable.id).toBe('oddsapi:odds-1');
+    expect(comparable.homeName).toBe('Detroit Pistons');
+    expect(comparable.awayName).toBe('Cleveland Cavaliers');
+    expect(comparable.homeScore).toBe(101);
+    expect(comparable.awayScore).toBe(99);
+  });
+
+  test('Odds API comparable event matches strict name/time when ESPN is absent', () => {
+    const dbGame = {
+      game_id: 'canonical-odds-fallback',
+      sport: 'NBA',
+      home_team: 'Detroit Pistons',
+      away_team: 'Cleveland Cavaliers',
+      game_time_utc: '2026-03-03T02:00:00Z',
+    };
+
+    const comparable = __private.oddsApiScoreEventToComparable({
+      id: 'odds-2',
+      completed: true,
+      commence_time: '2026-03-03T02:03:00Z',
+      home_team: 'Detroit Pistons',
+      away_team: 'Cleveland Cavaliers',
+      scores: [
+        { name: 'Detroit Pistons', score: '112' },
+        { name: 'Cleveland Cavaliers', score: '109' },
+      ],
+    });
+
+    const outcome = __private.findMatchForGame(
+      dbGame,
+      [comparable],
+      new Map([[comparable.id, comparable]]),
+      null,
+    );
+
+    expect(outcome.reason).toBeNull();
+    expect(outcome.match).toBeTruthy();
+    expect(outcome.match.method).toBe('strict_name_time');
+    expect(outcome.match.dbHomeScore).toBe(112);
+    expect(outcome.match.dbAwayScore).toBe(109);
+  });
 });

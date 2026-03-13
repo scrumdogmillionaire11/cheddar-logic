@@ -9,6 +9,8 @@ interface Player {
   position?: string;
   team?: string;
   expected_pts?: number;
+  price?: number;
+  ownership?: number;
   expected_minutes?: number;
   flags?: string[];
   badges?: string[];
@@ -59,6 +61,8 @@ export default function CurrentSquad({
     return 'text-sage-muted';
   };
 
+  const positionRows: Array<'FWD' | 'MID' | 'DEF' | 'GK'> = ['FWD', 'MID', 'DEF', 'GK'];
+
   // Group by position
   const byPosition = (players: Player[]) => {
     const groups: Record<string, Player[]> = {
@@ -94,6 +98,40 @@ export default function CurrentSquad({
     return badges;
   };
 
+  const renderPlayerCard = (player: Player, key: string, compact = false) => (
+    <div
+      key={key}
+      className={`rounded border ${player.is_new ? 'border-execute/40 bg-execute/10' : 'border-surface-elevated bg-surface-elevated/50'} ${compact ? 'w-[120px] p-2' : 'w-[150px] p-3'} text-center`}
+    >
+      <div className={`font-medium text-sage-white ${compact ? 'text-xs' : 'text-sm'}`}>
+        {player.name}
+      </div>
+      <div className={`mt-1 ${compact ? 'text-[10px]' : 'text-xs'} text-sage-muted uppercase`}>
+        {player.team || '-'} · {formatPosition(player.position)}
+      </div>
+      {player.expected_pts !== undefined && (
+        <div className={`mt-1 ${compact ? 'text-xs' : 'text-sm'} text-sage-light`}>
+          {player.expected_pts.toFixed(1)} pts
+        </div>
+      )}
+      <div className={`mt-1 ${compact ? 'text-[10px]' : 'text-xs'} text-sage-muted`}>
+        {player.price !== undefined ? `£${player.price.toFixed(1)}m` : '-'}
+        {' | '}
+        {player.ownership !== undefined ? `${player.ownership.toFixed(1)}% own` : '-'}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-center gap-1">
+        {badgeForPlayer(player).map((badge) => (
+          <span key={`${player.name}-${badge}`} className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-sage-light">
+            {badge}
+          </span>
+        ))}
+        {player.flags && player.flags.length > 0 && (
+          <span className="text-[10px] text-hold">{player.flags[0]}</span>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <section className="bg-surface-card border border-surface-elevated p-6">
       <div className="mb-6">
@@ -115,62 +153,49 @@ export default function CurrentSquad({
         )}
       </div>
 
-      {/* Starting XI by Position */}
+      {/* Starting XI as pitch layout */}
       {startingXI.length > 0 && (
-        <div className="space-y-4 mb-6">
+        <div className="mb-6 space-y-4">
           <div className="text-sm font-medium text-sage-light mb-3">Starting XI</div>
-          
-          {(['GK', 'DEF', 'MID', 'FWD'] as const).map((pos) => {
-            const players = startingGroups[pos];
-            if (players.length === 0) return null;
-            
-            return (
-              <div key={pos} className="space-y-2">
-                <div className={`text-xs font-semibold uppercase tracking-wider ${getPositionColor(pos)}`}>
-                  {pos} ({players.length})
-                </div>
-                <div className="space-y-1">
-                  {players.map((player, idx) => (
-                    <div
-                      key={idx}
-                      className="flex flex-col gap-1 py-2 px-3 bg-surface-elevated/50 rounded"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className={`text-body text-sage-white ${player.is_new ? 'font-semibold' : ''}`}>
-                          {player.name}
-                          {player.is_new && <span className="ml-2 text-xs text-execute">NEW</span>}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          {badgeForPlayer(player).map((badge) => (
-                            <span key={`${player.name}-${badge}`} className="text-xs px-2 py-0.5 bg-surface-elevated text-sage-light rounded">
-                              {badge}
-                            </span>
-                          ))}
-                          {player.team && (
-                            <span className="text-xs text-sage-muted uppercase">{player.team}</span>
-                          )}
-                        </div>
+
+          <div className="relative overflow-hidden rounded-xl border border-surface-elevated bg-surface-primary/40 p-3 sm:p-4">
+            <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+              <div className="absolute left-3 right-3 top-3 bottom-3 rounded-lg border border-sage-muted/35" />
+              <div className="absolute left-3 right-3 top-1/2 h-px -translate-y-1/2 bg-sage-muted/35" />
+              <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-sage-muted/35 sm:h-24 sm:w-24" />
+
+              <div className="absolute left-1/2 top-3 h-14 w-40 -translate-x-1/2 border border-sage-muted/30 border-t-0 sm:h-16 sm:w-48" />
+              <div className="absolute left-1/2 top-3 h-8 w-20 -translate-x-1/2 border border-sage-muted/25 border-t-0 sm:w-24" />
+
+              <div className="absolute left-1/2 bottom-3 h-14 w-40 -translate-x-1/2 border border-sage-muted/30 border-b-0 sm:h-16 sm:w-48" />
+              <div className="absolute left-1/2 bottom-3 h-8 w-20 -translate-x-1/2 border border-sage-muted/25 border-b-0 sm:w-24" />
+            </div>
+
+            <div className="relative z-10">
+              <div className="mb-2 text-center text-[11px] uppercase tracking-widest text-sage-muted/80">
+                Aerial pitch view
+              </div>
+              <div className="min-h-[370px] sm:min-h-[430px] flex flex-col justify-between py-2 sm:py-3">
+                {positionRows.map((pos) => {
+                  const players = startingGroups[pos];
+                  if (players.length === 0) return null;
+
+                  return (
+                    <div key={pos} className="space-y-2">
+                      <div className={`text-center text-xs font-semibold uppercase tracking-wider ${getPositionColor(pos)}`}>
+                        {pos} ({players.length})
                       </div>
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-sage-muted">
-                          {player.expected_minutes !== undefined ? `${player.expected_minutes.toFixed(0)} mins` : ''}
-                        </div>
-                        {player.expected_pts !== undefined && (
-                          <div className="text-sm text-sage-light font-medium">
-                            {player.expected_pts.toFixed(1)} pts
-                          </div>
+                      <div className="flex flex-wrap justify-center gap-2 sm:gap-3">
+                        {players.map((player, idx) =>
+                          renderPlayerCard(player, `${pos}-${player.name}-${idx}`, true),
                         )}
                       </div>
-                      {player.flags && player.flags.length > 0 && (
-                        <div className="text-xs text-hold">{player.flags.join(' • ')}</div>
-                      )}
-                      {player.start_reason && <div className="text-xs text-sage-muted">{player.start_reason}</div>}
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          </div>
         </div>
       )}
 
@@ -197,11 +222,11 @@ export default function CurrentSquad({
                     <span className="text-xs text-sage-muted/70 uppercase">{player.team}</span>
                   )}
                 </div>
-                {player.expected_pts !== undefined && (
-                  <div className="text-sm text-sage-muted">
-                    {player.expected_pts.toFixed(1)} pts
-                  </div>
-                )}
+                <div className="flex items-center gap-3 text-xs text-sage-muted">
+                  {player.expected_pts !== undefined && <span>{player.expected_pts.toFixed(1)} pts</span>}
+                  <span>{player.price !== undefined ? `£${player.price.toFixed(1)}m` : '-'}</span>
+                  <span>{player.ownership !== undefined ? `${player.ownership.toFixed(1)}% own` : '-'}</span>
+                </div>
               </div>
             ))}
           </div>

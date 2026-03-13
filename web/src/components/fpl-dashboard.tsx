@@ -549,6 +549,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
       <FPLLineupView
         currentStarting={data.starting_xi_projections}
         currentBench={data.bench_projections}
+        lineupDecision={data.lineup_decision}
         projectedStarting={data.projected_xi}
         projectedBench={data.projected_bench}
       />

@@ -283,6 +283,18 @@ function resolveNonActionableFinalReason(payloadData) {
   return null;
 }
 
+function buildNonActionableAutoCloseMetadata(existingMetadata, reason, settledAt) {
+  const metadata = parseJsonObject(existingMetadata) || {};
+  metadata.settlement_error = {
+    code: reason.code,
+    message: reason.message,
+    at: settledAt,
+    classification: 'NON_ACTIONABLE_AUTO_CLOSE',
+    details: reason.details || {},
+  };
+  return JSON.stringify(metadata);
+}
+
 function autoCloseNonActionableFinalPendingRows(db, settledAt) {
   const candidateRows = db
     .prepare(
@@ -315,7 +327,16 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
     const payloadData = parseJsonObject(row.payload_data) || {};
     const reason = resolveNonActionableFinalReason(payloadData);
     if (!reason) continue;
-    candidates.push({ resultId, cardId: row.card_id, reasonCode: reason.code });
+    candidates.push({
+      resultId,
+      cardId: row.card_id,
+      reasonCode: reason.code,
+      metadataJson: buildNonActionableAutoCloseMetadata(
+        row.metadata,
+        reason,
+        settledAt,
+      ),
+    });
     reasonCounts[reason.code] = (reasonCounts[reason.code] || 0) + 1;
   }
 
@@ -341,43 +362,25 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
     );
   const updateSql = `
       UPDATE card_results
-      SET status = 'error', result = 'void', settled_at = ?
-      WHERE status = 'pending'
-        AND id IN (${placeholders})
-    `;
-
-  try {
-    db.prepare(updateSql).run(settledAt, ...ids);
-    const closed = countClosed();
-    const failures = Math.max(0, candidates.length - closed);
-    return { closed, failures, fallbackCloses: 0, reasonCounts };
-  } catch (error) {
-    console.warn(
-      `[SettleCards] Batch auto-close failed for non-actionable final rows: ${error.message}; falling back to per-row updates`,
-    );
-  }
-
-  const fallbackUpdateSql = `
-      UPDATE card_results
-      SET status = 'error', result = 'void', settled_at = ?
+      SET status = 'error', result = 'void', settled_at = ?, metadata = ?
       WHERE id = ? AND status = 'pending'
     `;
-  let fallbackUpdateStmt = db.prepare(fallbackUpdateSql);
+  let updateStmt = db.prepare(updateSql);
 
   for (const entry of candidates) {
     try {
-      fallbackUpdateStmt.run(settledAt, entry.resultId);
-    } catch (fallbackError) {
+      updateStmt.run(settledAt, entry.metadataJson, entry.resultId);
+    } catch (updateError) {
       console.warn(
-        `[SettleCards] Failed to auto-close non-actionable card ${entry.cardId} (${entry.reasonCode}): ${fallbackError.message}`,
+        `[SettleCards] Failed to auto-close non-actionable card ${entry.cardId} (${entry.reasonCode}): ${updateError.message}`,
       );
-      fallbackUpdateStmt = db.prepare(fallbackUpdateSql);
+      updateStmt = db.prepare(updateSql);
     }
   }
 
   const closed = countClosed();
   const failures = Math.max(0, candidates.length - closed);
-  const fallbackCloses = closed;
+  const fallbackCloses = 0;
   return { closed, failures, fallbackCloses, reasonCounts };
 }
 
@@ -1122,13 +1125,17 @@ async function settlePendingCards({
       insertJobRun('settle_pending_cards', jobRunId, jobKey);
 
       const db = getDatabase();
-      const emergencyBackfillEnabled =
+      const globalBackfillEnabled =
         process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL === 'true';
+      const requestedDisplayBackfill = Boolean(allowDisplayBackfill);
       const enableDisplayBackfill =
-        allowDisplayBackfill === null
-          ? emergencyBackfillEnabled
-          : Boolean(allowDisplayBackfill);
+        requestedDisplayBackfill && globalBackfillEnabled;
       let backfilledDisplayed = 0;
+      if (requestedDisplayBackfill && !globalBackfillEnabled) {
+        console.warn(
+          '[SettleCards] Display backfill was requested but CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL is not true; staying strict',
+        );
+      }
       if (enableDisplayBackfill) {
         backfilledDisplayed = backfillDisplayedPlaysFromPayloads(db);
       } else {
