@@ -337,6 +337,15 @@ function hasProjectedTotal(
   return typeof play?.projectedTotal === 'number';
 }
 
+function isFullGameTotalsCallPlay(play: GameData['plays'][number]): boolean {
+  const cardType = String(play.cardType || '').toLowerCase();
+  return (
+    !cardType.includes('1p') &&
+    !cardType.includes('first-period') &&
+    cardType.includes('totals-call')
+  );
+}
+
 function deriveOnePModelCallFromReasons(
   reasonCodes: string[],
   prediction?: GameData['plays'][number]['prediction'],
@@ -358,17 +367,9 @@ function resolvePrimaryTotalProjectionPlay(
   sport: string,
 ): GameData['plays'][number] | undefined {
   const sportUpper = String(sport || '').toUpperCase();
-  const isFullGameTotalsCall = (play: GameData['plays'][number]) => {
-    const cardType = String(play.cardType || '').toLowerCase();
-    return (
-      !cardType.includes('1p') &&
-      !cardType.includes('first-period') &&
-      cardType.includes('totals-call')
-    );
-  };
 
   const totalsCallPlay = plays.find(
-    (play) => isFullGameTotalsCall(play) && hasProjectedTotal(play),
+    (play) => isFullGameTotalsCallPlay(play) && hasProjectedTotal(play),
   );
   if (totalsCallPlay) return totalsCallPlay;
 
@@ -2165,22 +2166,49 @@ export default function CardsPageClient() {
       primaryReasonCode === 'NO_EDGE_AT_PRICE' ||
       (hasMarketSpecificEdge && Math.abs(effectiveEdgePct) < 0.0005);
     const hasActionableEdge = hasMarketSpecificEdge && !isNoEdgeAtPrice;
+    const marketType = displayPlay.market_type;
+    const isSpreadLikeMarket =
+      marketType === 'SPREAD' || marketType === 'PUCKLINE';
+    const isTotalLikeMarket =
+      marketType === 'TOTAL' || marketType === 'TEAM_TOTAL';
     const projectedMargin =
       typeof displayPlay.projectedMargin === 'number'
         ? displayPlay.projectedMargin
         : undefined;
     const projectedSpreadHome =
       typeof projectedMargin === 'number' ? -1 * projectedMargin : undefined;
-    const projectedTotal =
-      typeof displayPlay.projectedTotal === 'number'
-        ? displayPlay.projectedTotal
-        : typeof totalFallbackPlay?.projectedTotal === 'number'
-          ? totalFallbackPlay.projectedTotal
-          : undefined;
     const totalProjectionDisplayPlay = resolvePrimaryTotalProjectionPlay(
       originalGame.plays || [],
       card.sport,
     );
+    const nhlRawPaceProjectionPlay =
+      card.sport === 'NHL'
+        ? originalGame.plays.find(
+            (play) =>
+              play.cardType === 'nhl-pace-totals' && hasProjectedTotal(play),
+          )
+        : undefined;
+    const nhlDecisionProjectionPlay =
+      card.sport === 'NHL'
+        ? originalGame.plays.find(
+            (play) => isFullGameTotalsCallPlay(play) && hasProjectedTotal(play),
+          )
+        : undefined;
+    const primaryModelProjectionPlay =
+      card.sport === 'NHL'
+        ? nhlDecisionProjectionPlay ??
+          nhlRawPaceProjectionPlay ??
+          totalProjectionDisplayPlay
+        : totalProjectionDisplayPlay;
+    const projectedTotal =
+      card.sport === 'NHL' &&
+      typeof nhlDecisionProjectionPlay?.projectedTotal === 'number'
+        ? nhlDecisionProjectionPlay.projectedTotal
+        : typeof displayPlay.projectedTotal === 'number'
+          ? displayPlay.projectedTotal
+          : typeof totalFallbackPlay?.projectedTotal === 'number'
+            ? totalFallbackPlay.projectedTotal
+            : undefined;
     const onePeriodTotalsPlay = originalGame.plays.find(
       (p) => p.cardType === 'nhl-pace-1p',
     );
@@ -2268,16 +2296,15 @@ export default function CardsPageClient() {
           ? projectedTotal
           : undefined;
     const edgePoints =
-      typeof displayPlay.edgePoints === 'number'
-        ? displayPlay.edgePoints
-        : typeof projectedLineValue === 'number' && typeof marketLine === 'number'
+      card.sport === 'NHL' && isTotalLikeMarket
+        ? typeof projectedLineValue === 'number' && typeof marketLine === 'number'
           ? Number((projectedLineValue - marketLine).toFixed(2))
-          : undefined;
-    const marketType = displayPlay.market_type;
-    const isSpreadLikeMarket =
-      marketType === 'SPREAD' || marketType === 'PUCKLINE';
-    const isTotalLikeMarket =
-      marketType === 'TOTAL' || marketType === 'TEAM_TOTAL';
+          : undefined
+        : typeof displayPlay.edgePoints === 'number'
+          ? displayPlay.edgePoints
+          : typeof projectedLineValue === 'number' && typeof marketLine === 'number'
+            ? Number((projectedLineValue - marketLine).toFixed(2))
+            : undefined;
     const displaySelectionSide = normalizeSelectionSide(
       displayPlay.selection?.side ?? displayPlay.bet?.side ?? displayPlay.side,
     );
@@ -2423,73 +2450,54 @@ export default function CardsPageClient() {
                     : '--'}
                 </p>
                 {(() => {
-                  if (!totalProjectionDisplayPlay?.projectedTotal) return null;
+                  if (!primaryModelProjectionPlay?.projectedTotal) return null;
                   const isRedundantModelLine =
                     isTotalLikeMarket &&
                     typeof projectedLineValue === 'number' &&
                     Math.abs(
-                      totalProjectionDisplayPlay.projectedTotal -
-                        projectedLineValue,
+                      primaryModelProjectionPlay.projectedTotal - projectedLineValue,
                     ) <= 0.05;
-                  if (isRedundantModelLine) return null;
                   const marketTotalLine =
                     typeof originalGame.odds?.total === 'number'
                       ? originalGame.odds.total
                       : undefined;
-                  const computedEdge =
-                    typeof marketTotalLine === 'number'
-                      ? Number(
-                          (
-                            totalProjectionDisplayPlay.projectedTotal -
-                            marketTotalLine
-                          ).toFixed(2),
-                        )
-                      : undefined;
-                  const edge =
-                    typeof totalProjectionDisplayPlay.edge === 'number'
-                      ? totalProjectionDisplayPlay.edge
-                      : computedEdge;
-                  if (typeof edge !== 'number') return null;
-                  const sign = edge >= 0 ? '+' : '-';
-                  const color = edge >= 0 ? 'text-emerald-400' : 'text-red-400';
-                  const prediction =
-                    typeof totalProjectionDisplayPlay.prediction === 'string' &&
-                    totalProjectionDisplayPlay.prediction.length > 0
-                      ? totalProjectionDisplayPlay.prediction
-                      : edge >= 0
+
+                  const computeLineEdge = (
+                    projected: number,
+                    fallbackEdge: number | null | undefined,
+                  ) => {
+                    const computed =
+                      typeof marketTotalLine === 'number'
+                        ? Number((projected - marketTotalLine).toFixed(2))
+                        : undefined;
+                    return typeof computed === 'number'
+                      ? computed
+                      : typeof fallbackEdge === 'number'
+                        ? fallbackEdge
+                        : undefined;
+                  };
+
+                  const primaryEdge = computeLineEdge(
+                    primaryModelProjectionPlay.projectedTotal,
+                    primaryModelProjectionPlay.edge,
+                  );
+                  if (isRedundantModelLine) return null;
+
+                  const primarySign = (primaryEdge ?? 0) >= 0 ? '+' : '-';
+                  const primaryColor =
+                    (primaryEdge ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400';
+                  const primaryPrediction =
+                    typeof primaryModelProjectionPlay.prediction === 'string' &&
+                    primaryModelProjectionPlay.prediction.length > 0
+                      ? primaryModelProjectionPlay.prediction
+                      : (primaryEdge ?? 0) >= 0
                         ? 'OVER'
                         : 'UNDER';
+                  if (typeof primaryEdge !== 'number') return null;
                   return (
-                    <p className={`font-mono text-xs mt-0.5 ${color}`}>
-                      Model: {totalProjectionDisplayPlay.projectedTotal.toFixed(2)} ({sign}
-                      {Math.abs(edge).toFixed(2)} {prediction})
-                    </p>
-                  );
-                })()}
-                {(() => {
-                  const total1pPlay = originalGame.plays.find(
-                    (p) => p.cardType === 'nhl-pace-1p',
-                  );
-                  if (!total1pPlay?.projectedTotal) return null;
-                  const modelCall =
-                    total1pPlay.one_p_model_call ??
-                    deriveOnePModelCallFromReasons(
-                      Array.isArray(total1pPlay.reason_codes)
-                        ? total1pPlay.reason_codes
-                        : [],
-                      total1pPlay.prediction,
-                    ) ??
-                    'PASS';
-                  const color1p = modelCall.includes('OVER')
-                    ? 'text-emerald-400'
-                    : modelCall.includes('UNDER')
-                      ? 'text-red-400'
-                      : 'text-cloud/70';
-                  return (
-                    <p
-                      className={`font-mono text-xs mt-0.5 opacity-75 ${color1p}`}
-                    >
-                      1P: {total1pPlay.projectedTotal.toFixed(2)} ({modelCall})
+                    <p className={`font-mono text-xs mt-0.5 ${primaryColor}`}>
+                      Model: {primaryModelProjectionPlay.projectedTotal.toFixed(2)} ({primarySign}
+                      {Math.abs(primaryEdge).toFixed(2)} {primaryPrediction})
                     </p>
                   );
                 })()}
@@ -2749,35 +2757,37 @@ export default function CardsPageClient() {
                   </div>
                 )}
                 {hasTotalContext && (
-                  <div className="flex items-center gap-4 text-xs font-mono flex-wrap mt-2">
-                    <span className="text-cloud/60">
-                      Projected total{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {typeof projectedTeamTotal === 'number'
-                          ? projectedTeamTotal.toFixed(1)
-                          : typeof projectedTotal === 'number'
-                            ? projectedTotal.toFixed(1)
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+                      <span className="text-cloud/60">
+                        Projected total{' '}
+                        <span className="text-cloud/90 font-bold">
+                          {typeof projectedTeamTotal === 'number'
+                            ? projectedTeamTotal.toFixed(1)
+                            : typeof projectedTotal === 'number'
+                              ? projectedTotal.toFixed(1)
+                              : 'N/A'}
+                        </span>
+                      </span>
+                      <span className="text-cloud/40">|</span>
+                      <span className="text-cloud/60">
+                        Market line{' '}
+                        <span className="text-cloud/90 font-bold">
+                          {typeof marketLine === 'number'
+                            ? marketLine.toFixed(1)
                             : 'N/A'}
+                        </span>
                       </span>
-                    </span>
-                    <span className="text-cloud/40">|</span>
-                    <span className="text-cloud/60">
-                      Market line{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {typeof marketLine === 'number'
-                          ? marketLine.toFixed(1)
-                          : 'N/A'}
+                      <span className="text-cloud/40">|</span>
+                      <span className="text-cloud/60">
+                        Line delta{' '}
+                        <span className="text-cloud/90 font-bold">
+                          {typeof edgePoints === 'number'
+                            ? `${formatSignedDecimal(edgePoints)} pts`
+                            : 'N/A'}
+                        </span>
                       </span>
-                    </span>
-                    <span className="text-cloud/40">|</span>
-                    <span className="text-cloud/60">
-                      Line delta{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {typeof edgePoints === 'number'
-                          ? `${formatSignedDecimal(edgePoints)} pts`
-                          : 'N/A'}
-                      </span>
-                    </span>
+                    </div>
                   </div>
                 )}
                 {hasMlContext && (
@@ -2998,62 +3008,68 @@ export default function CardsPageClient() {
             </div>
           )}
 
-          <div className="rounded-md border border-white/10 bg-white/5 p-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">
-                Model Lean Indicators
-              </p>
-              {!decisionV2 &&
-                canRenderModelSummary &&
-                fallbackDecision.supportGrade === 'STRONG' && (
-                  <span className="text-xs font-semibold text-emerald-400">
-                    Strong
-                  </span>
-                )}
-              {!decisionV2 &&
-                canRenderModelSummary &&
-                fallbackDecision.supportGrade === 'MIXED' && (
-                  <span className="text-xs font-semibold text-amber-400">
-                    Mixed signals
-                    {fallbackDecision.topContributors.length > 0 && (
-                      <span className="font-normal text-cloud/50 ml-1">
-                        (
-                        {
-                          fallbackDecision.topContributors.filter(
-                            (c) => c.polarity === 'pro',
-                          ).length
-                        }{' '}
-                        aligned
-                        {fallbackDecision.topContributors.some(
-                          (c) => c.polarity === 'contra',
-                        )
-                          ? `, ${fallbackDecision.topContributors.filter((c) => c.polarity === 'contra').length} opposing`
-                          : ''}
-                        )
-                      </span>
-                    )}
-                  </span>
-                )}
-              {!decisionV2 &&
-                canRenderModelSummary &&
-                fallbackDecision.supportGrade === 'WEAK' && (
-                  <span className="text-xs font-semibold text-cloud/40">
-                    {displayDecision === 'PASS' &&
-                    fallbackDecision.topContributors.length > 0 &&
-                    (fallbackDecision.passReasonCode ===
-                      'PASS_DRIVER_SUPPORT_WEAK' ||
-                      fallbackDecision.passReasonCode === 'PASS_NO_EDGE')
-                      ? 'Model lean only — no betting edge'
-                      : fallbackDecision.passReasonCode ===
-                          'PASS_MISSING_PRIMARY_DRIVER'
-                        ? 'No primary driver'
+          <details className="group rounded-md border border-white/10 bg-white/5 p-3">
+            <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold select-none flex items-center justify-between">
+              <span className="flex items-center">
+                <span className="mr-2 inline-block text-2xl leading-none text-cloud/50 transition-transform group-open:rotate-90">
+                  ▸
+                </span>
+                <span>Model Lean Indicators</span>
+              </span>
+              <span className="ml-3">
+                {!decisionV2 &&
+                  canRenderModelSummary &&
+                  fallbackDecision.supportGrade === 'STRONG' && (
+                    <span className="text-xs font-semibold text-emerald-400">
+                      Strong
+                    </span>
+                  )}
+                {!decisionV2 &&
+                  canRenderModelSummary &&
+                  fallbackDecision.supportGrade === 'MIXED' && (
+                    <span className="text-xs font-semibold text-amber-400">
+                      Mixed signals
+                      {fallbackDecision.topContributors.length > 0 && (
+                        <span className="font-normal text-cloud/50 ml-1">
+                          (
+                          {
+                            fallbackDecision.topContributors.filter(
+                              (c) => c.polarity === 'pro',
+                            ).length
+                          }{' '}
+                          aligned
+                          {fallbackDecision.topContributors.some(
+                            (c) => c.polarity === 'contra',
+                          )
+                            ? `, ${fallbackDecision.topContributors.filter((c) => c.polarity === 'contra').length} opposing`
+                            : ''}
+                          )
+                        </span>
+                      )}
+                    </span>
+                  )}
+                {!decisionV2 &&
+                  canRenderModelSummary &&
+                  fallbackDecision.supportGrade === 'WEAK' && (
+                    <span className="text-xs font-semibold text-cloud/40">
+                      {displayDecision === 'PASS' &&
+                      fallbackDecision.topContributors.length > 0 &&
+                      (fallbackDecision.passReasonCode ===
+                        'PASS_DRIVER_SUPPORT_WEAK' ||
+                        fallbackDecision.passReasonCode === 'PASS_NO_EDGE')
+                        ? 'Model lean only — no betting edge'
                         : fallbackDecision.passReasonCode ===
-                            'PASS_CONFLICT_HIGH'
-                          ? 'High conflict'
-                          : 'Weak support'}
-                  </span>
-                )}
-            </div>
+                            'PASS_MISSING_PRIMARY_DRIVER'
+                          ? 'No primary driver'
+                          : fallbackDecision.passReasonCode ===
+                              'PASS_CONFLICT_HIGH'
+                            ? 'High conflict'
+                            : 'Weak support'}
+                    </span>
+                  )}
+              </span>
+            </summary>
+            <div className="mt-2">
             {decisionV2 ? (
               decisionV2.driver_reasons.length === 0 ? (
                 <p className="text-xs text-cloud/50">
@@ -3140,7 +3156,8 @@ export default function CardsPageClient() {
                   {decisionV2.missing_data.missing_fields.join(', ')}
                 </p>
               )}
-          </div>
+            </div>
+          </details>
 
           {blockedTotals.length > 0 && (
             <details className="rounded-md border border-white/10 bg-white/5 p-3">

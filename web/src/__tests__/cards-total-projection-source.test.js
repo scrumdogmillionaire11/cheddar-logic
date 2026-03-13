@@ -4,6 +4,8 @@
  * 2) Cards UI prefers full-game totals-call cards before evidence projections
  * 3) Cards UI keeps NHL pace totals + NBA total-projection fallbacks
  * 4) Cards UI suppresses redundant "Model:" line when canonical projection matches
+ * 5) NHL cards use one normalized total projection in visible UI copy
+ * 6) Model lean indicators are collapsible
  *
  * Run: node web/src/__tests__/cards-total-projection-source.test.js
  */
@@ -91,6 +93,18 @@ assert(
 assert(
   cardsPageSource.includes('totalProjectionDisplayPlay'),
   'cards UI should use resolved totalProjectionDisplayPlay in header rendering',
+);
+
+assert(
+  !cardsPageSource.includes('Decision (Anchored)') &&
+    !cardsPageSource.includes('Projected total (raw pace)'),
+  'cards UI should avoid raw/anchored jargon in visible projection labels',
+);
+
+assert(
+  cardsPageSource.includes('<details') &&
+    cardsPageSource.includes('Model Lean Indicators'),
+  'Model Lean Indicators section should be rendered as a collapsible details panel',
 );
 
 console.log('✅ total projection source contract tests passed');
