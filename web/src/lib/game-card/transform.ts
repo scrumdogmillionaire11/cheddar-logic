@@ -3054,10 +3054,8 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         status = 'FIRE';
       } else if (resolvedAction === 'HOLD') {
         status = play.action === 'HOLD' ? 'HOLD' : 'WATCH';
-      } else if (resolvedAction === 'PASS') {
+      } else {
         status = 'NO_PLAY';
-      } else if (play.status === 'WATCH') {
-        status = 'WATCH';
       }
 
       const mu = play.mu ?? play.projectedTotal ?? null;
