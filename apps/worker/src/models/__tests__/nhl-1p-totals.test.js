@@ -1,6 +1,7 @@
 'use strict';
 
 const { computeNHLDriverCards } = require('../index');
+const { makeCanonicalGoalieState } = require('../nhl-goalie-state');
 const {
   applyNhlSettlementMarketContext,
 } = require('../../jobs/run_nhl_model.js');
@@ -35,10 +36,11 @@ function buildNhlSnapshot(overrides = {}) {
   };
 }
 
-function getOnePeriodDescriptor(snapshotOverrides = {}) {
+function getOnePeriodDescriptor(snapshotOverrides = {}, context = {}) {
   const descriptors = computeNHLDriverCards(
     'nhl-test-game',
     buildNhlSnapshot(snapshotOverrides),
+    context,
   );
   return descriptors.find((d) => d.cardType === 'nhl-pace-1p');
 }
@@ -164,6 +166,70 @@ describe('NHL 1P model output contract', () => {
     expect(Array.isArray(descriptor.driverInputs.reason_codes)).toBe(true);
   });
 
+  test('uses canonical goalie state context for certainty + confirmed flags', () => {
+    const homeGoalieState = makeCanonicalGoalieState({
+      game_id: 'nhl-test-game',
+      team_side: 'home',
+      starter_state: 'CONFIRMED',
+      starter_source: 'USER_INPUT',
+      goalie_name: 'Canonical Home',
+      goalie_tier: 'STRONG',
+      tier_confidence: 'HIGH',
+      evidence_flags: [],
+    });
+    const awayGoalieState = makeCanonicalGoalieState({
+      game_id: 'nhl-test-game',
+      team_side: 'away',
+      starter_state: 'CONFIRMED',
+      starter_source: 'USER_INPUT',
+      goalie_name: 'Canonical Away',
+      goalie_tier: 'STRONG',
+      tier_confidence: 'HIGH',
+      evidence_flags: [],
+    });
+
+    const descriptor = getOnePeriodDescriptor(
+      {
+        raw_data: JSON.stringify({
+          goalie: {
+            home: { name: 'Raw Home', status: 'UNKNOWN' },
+            away: { name: 'Raw Away', status: 'UNKNOWN' },
+          },
+          espn_metrics: {
+            home: {
+              metrics: {
+                avgGoalsFor: 3.4,
+                avgGoalsAgainst: 2.8,
+                restDays: 1,
+              },
+            },
+            away: {
+              metrics: {
+                avgGoalsFor: 3.2,
+                avgGoalsAgainst: 2.9,
+                restDays: 1,
+              },
+            },
+          },
+        }),
+      },
+      {
+        canonicalGoalieState: {
+          home: homeGoalieState,
+          away: awayGoalieState,
+        },
+      },
+    );
+
+    expect(descriptor).toBeDefined();
+    expect(descriptor.driverInputs.home_goalie_name).toBe('Canonical Home');
+    expect(descriptor.driverInputs.away_goalie_name).toBe('Canonical Away');
+    expect(descriptor.driverInputs.home_goalie_certainty).toBe('CONFIRMED');
+    expect(descriptor.driverInputs.away_goalie_certainty).toBe('CONFIRMED');
+    expect(descriptor.driverInputs.home_goalie_confirmed).toBe(true);
+    expect(descriptor.driverInputs.away_goalie_confirmed).toBe(true);
+  });
+
   test('emits clamp flags and top over band under hot conditions', () => {
     const descriptor = getOnePeriodDescriptor({
       raw_data: JSON.stringify({
@@ -261,6 +327,6 @@ describe('applyNhlSettlementMarketContext — 1P market_context contract', () =>
     // those are the responsibility of applyUiActionFields after decision_v2 is built.
     expect(card.payloadData.model_prob).toBeUndefined();
     expect(card.payloadData.p_fair).toBeUndefined();
-    expect(card.payloadData.price).toBeNull();
+    expect(card.payloadData.price).toBe(-125);
   });
 });

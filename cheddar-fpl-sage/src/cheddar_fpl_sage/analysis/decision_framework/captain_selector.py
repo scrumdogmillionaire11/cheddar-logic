@@ -164,6 +164,7 @@ class CaptainSelector:
         if not eligible:
             return {
                 "captain": {
+                    "player_id": None,
                     "name": "No valid captain in XI",
                     "team": "N/A",
                     "position": "N/A",
@@ -171,6 +172,7 @@ class CaptainSelector:
                     "rationale": "No players available in XI for captaincy"
                 },
                 "vice_captain": {
+                    "player_id": None,
                     "name": "N/A",
                     "team": "N/A",
                     "position": "N/A",
@@ -205,6 +207,7 @@ class CaptainSelector:
         
         return {
             "captain": {
+                "player_id": captain.player_id,
                 "name": captain.name,
                 "team": captain.team,
                 "position": captain.position,
@@ -216,6 +219,7 @@ class CaptainSelector:
                 )
             },
             "vice_captain": {
+                "player_id": vice.player_id,
                 "name": vice.name,
                 "team": vice.team,
                 "position": vice.position,

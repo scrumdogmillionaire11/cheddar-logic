@@ -104,6 +104,7 @@ class DecisionOutput:
     chip_timing_outlook: Optional[Dict] = None
     no_transfer_reason: Optional[str] = None
     fixture_planner: Optional[Dict] = None
+    lineup_decision: Optional[Dict] = None
 
     def __post_init__(self):
         """Derive confidence_label and confidence_summary from confidence_score."""
@@ -257,8 +258,152 @@ class EnhancedDecisionFramework:
     
     def _optimize_starting_xi(self, team_data: Dict, projections: CanonicalProjectionSet, 
                              injury_reports: Optional[Dict[int, InjuryReport]] = None) -> OptimizedXI:
-        """MANDATORY XI optimization with formation validation and injury status filtering"""
+        """Risk-aware legal XI optimizer with deterministic bench ordering."""
         squad = team_data.get('current_squad', [])
+        risk_profile = (self.risk_posture or "BALANCED").upper()
+        allowed_formations = [
+            (3, 4, 3),
+            (3, 5, 2),
+            (4, 4, 2),
+            (4, 3, 3),
+            (4, 5, 1),
+            (5, 4, 1),
+            (5, 3, 2),
+            (5, 2, 3),
+        ]
+
+        posture_weights = {
+            "CONSERVATIVE": {
+                "minutes_weight": 2.4,
+                "volatility_penalty": 2.0,
+                "doubt_penalty": 1.2,
+                "minutes_risk_penalty": 1.8,
+                "ceiling_weight": 0.1,
+                "floor_weight": 0.25,
+                "fixture_weight": 0.20,
+            },
+            "AGGRESSIVE": {
+                "minutes_weight": 1.2,
+                "volatility_penalty": 0.6,
+                "doubt_penalty": 0.4,
+                "minutes_risk_penalty": 0.6,
+                "ceiling_weight": 0.35,
+                "floor_weight": 0.05,
+                "fixture_weight": 0.10,
+            },
+            "BALANCED": {
+                "minutes_weight": 1.6,
+                "volatility_penalty": 1.2,
+                "doubt_penalty": 0.8,
+                "minutes_risk_penalty": 1.2,
+                "ceiling_weight": 0.2,
+                "floor_weight": 0.15,
+                "fixture_weight": 0.15,
+            },
+        }
+        weights = posture_weights.get(risk_profile, posture_weights["BALANCED"])
+
+        def _normalize_status(value: Any) -> str:
+            if value is None:
+                return "FIT"
+            normalized = str(value).upper()
+            if normalized in {"DOUBT", "DOUBTFUL", "QUESTIONABLE"}:
+                return "DOUBT"
+            if normalized in {"BANNED", "SUSPENDED"}:
+                return "BANNED"
+            if normalized in {"OUT", "INJURED", "UNAVAILABLE"}:
+                return "OUT"
+            return "FIT"
+
+        def _volatility_of(proj) -> float:
+            return float(getattr(proj, "volatility_score", 0.0) or 0.0)
+
+        def _expected_minutes_of(proj) -> float:
+            return float(getattr(proj, "xMins_next", 0.0) or 0.0)
+
+        def _projected_points_of(proj) -> float:
+            return float(getattr(proj, "nextGW_pts", 0.0) or 0.0)
+
+        def _safe_int(value: Any) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+
+        def _player_flags(proj, player_status: str) -> List[str]:
+            flags: List[str] = []
+            if player_status in {"DOUBT", "OUT", "BANNED"}:
+                flags.append(player_status)
+            if _expected_minutes_of(proj) < 60:
+                flags.append("MINUTES_RISK")
+            if _volatility_of(proj) >= 0.5:
+                flags.append("VOLATILE")
+            return flags
+
+        def _fixture_adjustment(proj) -> float:
+            difficulty = getattr(proj, "fixture_difficulty", None)
+            if difficulty is None:
+                return 0.0
+            return (3.0 - float(difficulty)) * weights["fixture_weight"]
+
+        def _start_score(proj, player_status: str) -> float:
+            projected_points = _projected_points_of(proj)
+            expected_minutes = _expected_minutes_of(proj)
+            volatility = _volatility_of(proj)
+            ceiling = float(getattr(proj, "ceiling", projected_points) or projected_points)
+            floor = float(getattr(proj, "floor", projected_points * 0.6) or projected_points * 0.6)
+
+            minutes_component = (expected_minutes / 90.0) * weights["minutes_weight"]
+            volatility_penalty = volatility * weights["volatility_penalty"]
+            doubt_penalty = weights["doubt_penalty"] if player_status == "DOUBT" else 0.0
+            minutes_risk_penalty = 0.0
+            if expected_minutes < 60:
+                minutes_risk_penalty = ((60.0 - expected_minutes) / 60.0) * weights["minutes_risk_penalty"]
+
+            upside = max(0.0, ceiling - projected_points)
+            floor_support = max(0.0, floor - (projected_points * 0.7))
+            ceiling_bonus = upside * weights["ceiling_weight"]
+            floor_bonus = floor_support * weights["floor_weight"]
+
+            position = getattr(proj, "position", "")
+            if position in {"GK", "DEF"}:
+                floor_bonus += floor_support * 0.1
+            elif position in {"MID", "FWD"}:
+                ceiling_bonus += upside * (0.05 if risk_profile == "CONSERVATIVE" else 0.12)
+
+            score = (
+                projected_points
+                + minutes_component
+                + ceiling_bonus
+                + floor_bonus
+                + _fixture_adjustment(proj)
+                - volatility_penalty
+                - doubt_penalty
+                - minutes_risk_penalty
+            )
+            return round(score, 4)
+
+        def _score_sort_key(proj, player_status: str):
+            return (
+                _start_score(proj, player_status),
+                _expected_minutes_of(proj),
+                -_volatility_of(proj),
+                _safe_int(getattr(proj, "player_id", 0)),
+            )
+
+        def _lineup_confidence(starters: List) -> str:
+            nailed = len([p for p in starters if _expected_minutes_of(p) >= 70])
+            if nailed >= 9:
+                return "HIGH"
+            if nailed >= 6:
+                return "MEDIUM"
+            return "LOW"
+
+        risk_effect_text = {
+            "CONSERVATIVE": "Conservative mode favored minutes certainty and floor over volatility.",
+            "AGGRESSIVE": "Aggressive mode leaned into ceiling and upside in close calls.",
+            "BALANCED": "Balanced mode prioritized projection with moderate risk penalties.",
+        }.get(risk_profile, "Balanced mode prioritized projection with moderate risk penalties.")
 
         def _pos_counts_from_collection(collection):
             counts = {'GK': 0, 'DEF': 0, 'MID': 0, 'FWD': 0, 'UNK': 0}
@@ -281,9 +426,10 @@ class EnhancedDecisionFramework:
 
         squad_projections = []
         missing_proj = []
-        injury_status_by_id = {}
+        player_status_by_id = {}
         name_by_id = {}
-        out_players = []
+        data_notes: List[str] = []
+        hard_excluded_ids = set()
         
         for player in squad:
             player_id = _resolve_player_id(player)
@@ -291,22 +437,35 @@ class EnhancedDecisionFramework:
                 continue
             name_by_id[player_id] = player.get('name') or player.get('web_name') or f"Player {player_id}"
 
+            raw_status = _normalize_status(player.get('status_flag'))
+            if raw_status in {"OUT", "BANNED"}:
+                hard_excluded_ids.add(player_id)
+
             # Use injury resolution data if available, otherwise fall back to squad status
             injury_status = InjuryStatus.FIT  # Default
             if injury_reports and player_id in injury_reports:
                 injury_status = injury_reports[player_id].status
             else:
                 # Fall back to legacy status_flag from squad data
-                legacy_status = (player.get('status_flag') or 'FIT').upper()
+                legacy_status = _normalize_status(player.get('status_flag'))
                 if legacy_status == 'OUT':
                     injury_status = InjuryStatus.OUT
                 elif legacy_status in ['DOUBT', 'DOUBTFUL']:
                     injury_status = InjuryStatus.DOUBT
+                elif legacy_status == 'BANNED':
+                    injury_status = InjuryStatus.OUT
                     
-            injury_status_by_id[player_id] = injury_status
-            
+            normalized_status = "FIT"
             if injury_status == InjuryStatus.OUT:
-                out_players.append(name_by_id[player_id])
+                normalized_status = _normalize_status(player.get('status_flag'))
+                if normalized_status not in {"OUT", "BANNED"}:
+                    normalized_status = "OUT"
+            elif injury_status == InjuryStatus.DOUBT:
+                normalized_status = "DOUBT"
+
+            player_status_by_id[player_id] = normalized_status
+            if normalized_status in {"OUT", "BANNED"}:
+                hard_excluded_ids.add(player_id)
             
             proj = projections.get_by_id(player_id)
             if proj:
@@ -335,8 +494,11 @@ class EnhancedDecisionFramework:
                 logger.info(f"Created fallback projection for manual player: {fallback_proj.name} ({fallback_proj.nextGW_pts} pts)")
             else:
                 missing_proj.append(player_id)
-                
-        if len(squad_projections) < 15:
+        
+        if missing_proj:
+            data_notes.append(f"Missing projections for {len(missing_proj)} squad players")
+
+        if len(squad_projections) < 11:
             logger.warning(
                 "XI feasibility: missing projections",
                 extra={
@@ -345,98 +507,246 @@ class EnhancedDecisionFramework:
                     "missing_proj_ids": missing_proj,
                 },
             )
-            raise ValueError(f"Insufficient squad projections: {len(squad_projections)}/15")
+            raise ValueError(f"Insufficient squad projections: {len(squad_projections)}/11")
             
-        # Filter OUT players from XI optimization
-        healthy_projections = [
+        # Hard exclusions: OUT / BANNED never start.
+        playable_projections = [
             proj for proj in squad_projections
-            if injury_status_by_id.get(proj.player_id, InjuryStatus.FIT) != InjuryStatus.OUT
+            if proj.player_id not in hard_excluded_ids
         ]
-        if len(healthy_projections) < 11:
-            logger.warning("Not enough healthy players to fill XI: %s", ", ".join(out_players) or "unknown")
-            raise ValueError("XI infeasible due to OUT players")
+        if len(playable_projections) < 11:
+            raise ValueError("XI infeasible: fewer than 11 playable players after OUT/BANNED exclusions")
 
-        sorted_by_points = sorted(healthy_projections, key=lambda x: x.nextGW_pts, reverse=True)
-        
-        # Try to form valid XI with best 11 players
-        attempts = []
-        for i in range(4):  # Try different GK combinations
-            try:
-                # Take GK with highest points from available
-                gks = [p for p in sorted_by_points if p.position == 'GK']
-                if len(gks) <= i:
-                    continue
-                    
-                selected_gk = gks[i]
-                remaining = [p for p in sorted_by_points if p != selected_gk]
-                
-                # Greedy selection maintaining formation constraints
-                xi = [selected_gk]
-                positions_needed = {'DEF': 3, 'MID': 3, 'FWD': 1}  # Start with 3-3-1, expand as needed
-                
-                for player in remaining:
-                    pos = player.position
-                    if pos in positions_needed and positions_needed[pos] > 0:
-                        xi.append(player)
-                        positions_needed[pos] -= 1
-                        
-                # Fill remaining slots optimally
-                while len(xi) < 11 and remaining:
-                    best_remaining = None
-                    for player in remaining:
-                        if player not in xi:
-                            pos = player.position
-                            current_pos_count = len([p for p in xi if p.position == pos])
-                            
-                            # Check if we can add this position
-                            max_limits = {'GK': 1, 'DEF': 5, 'MID': 5, 'FWD': 3}
-                            min_limits = {'GK': 1, 'DEF': 3, 'MID': 3, 'FWD': 1}
-                            
-                            if current_pos_count < max_limits[pos]:
-                                if not best_remaining or player.nextGW_pts > best_remaining.nextGW_pts:
-                                    best_remaining = player
-                                    
-                    if best_remaining:
-                        xi.append(best_remaining)
-                        remaining.remove(best_remaining)
-                    else:
-                        break
-                        
-                if len(xi) == 11:
-                    bench = [p for p in squad_projections if p not in xi]
-                    captain_pool = sorted(xi, key=lambda x: x.nextGW_pts, reverse=True)[:5]
-                    
-                    # Calculate formation string
-                    pos_counts = {'DEF': 0, 'MID': 0, 'FWD': 0}
-                    for player in xi:
-                        if player.position in pos_counts:
-                            pos_counts[player.position] += 1
-                    formation = f"{pos_counts['DEF']}-{pos_counts['MID']}-{pos_counts['FWD']}"
-                    
-                    total_pts = sum(p.nextGW_pts for p in xi)
-                    attempts.append({"formation": formation, "status": "PASS"})
-                    return OptimizedXI(
-                        starting_xi=xi,
-                        bench=bench[:4],
-                        formation=formation,
-                        captain_pool=captain_pool,
-                        total_expected_pts=total_pts,
-                        formation_valid=True
-                    )
+        playable_by_pos = {
+            "GK": [p for p in playable_projections if p.position == "GK"],
+            "DEF": [p for p in playable_projections if p.position == "DEF"],
+            "MID": [p for p in playable_projections if p.position == "MID"],
+            "FWD": [p for p in playable_projections if p.position == "FWD"],
+        }
 
-            except (ValueError, IndexError, KeyError, AttributeError) as exc:
-                attempts.append({"attempt": i, "status": "FAIL", "reason": str(exc)})
+        for position, players in playable_by_pos.items():
+            playable_by_pos[position] = sorted(
+                players,
+                key=lambda proj: _score_sort_key(proj, player_status_by_id.get(proj.player_id, "FIT")),
+                reverse=True,
+            )
+
+        candidate_lineups: List[Dict[str, Any]] = []
+        for def_count, mid_count, fwd_count in allowed_formations:
+            if (
+                len(playable_by_pos["GK"]) < 1
+                or len(playable_by_pos["DEF"]) < def_count
+                or len(playable_by_pos["MID"]) < mid_count
+                or len(playable_by_pos["FWD"]) < fwd_count
+            ):
                 continue
-                
-        logger.error(
-            "XI feasibility failed",
-            extra={
-                "squad_pos_counts": _pos_counts_from_collection(squad),
-                "projection_pos_counts": _pos_counts_from_collection(squad_projections),
-                "attempts": attempts,
-            },
+
+            starters = (
+                playable_by_pos["GK"][:1]
+                + playable_by_pos["DEF"][:def_count]
+                + playable_by_pos["MID"][:mid_count]
+                + playable_by_pos["FWD"][:fwd_count]
+            )
+
+            if len(starters) != 11:
+                continue
+
+            score_sum = sum(_start_score(p, player_status_by_id.get(p.player_id, "FIT")) for p in starters)
+            minutes_sum = sum(_expected_minutes_of(p) for p in starters)
+            has_low_minutes = any(_expected_minutes_of(p) < 20 for p in starters)
+
+            candidate_lineups.append(
+                {
+                    "formation": f"{def_count}-{mid_count}-{fwd_count}",
+                    "starters": starters,
+                    "score_sum": score_sum,
+                    "minutes_sum": minutes_sum,
+                    "has_low_minutes": has_low_minutes,
+                }
+            )
+
+        if not candidate_lineups:
+            logger.error(
+                "XI feasibility failed",
+                extra={
+                    "squad_pos_counts": _pos_counts_from_collection(squad),
+                    "playable_pos_counts": _pos_counts_from_collection(playable_projections),
+                },
+            )
+            raise ValueError("Cannot form valid XI from allowed formations")
+
+        if all(candidate["has_low_minutes"] for candidate in candidate_lineups):
+            best_candidate = max(
+                candidate_lineups,
+                key=lambda candidate: (candidate["minutes_sum"], candidate["score_sum"], candidate["formation"]),
+            )
+            data_notes.append("Fallback applied: selected formation by highest expected minutes due to low-minute risk")
+        else:
+            viable_candidates = [candidate for candidate in candidate_lineups if not candidate["has_low_minutes"]]
+            best_candidate = max(
+                viable_candidates,
+                key=lambda candidate: (candidate["score_sum"], candidate["minutes_sum"], candidate["formation"]),
+            )
+
+        selected_xi = best_candidate["starters"]
+        selected_xi = [player for player in selected_xi if player.player_id not in hard_excluded_ids]
+        if len(selected_xi) < 11:
+            refill_pool = [
+                proj
+                for proj in playable_projections
+                if proj.player_id not in {player.player_id for player in selected_xi}
+            ]
+            for refill_player in sorted(
+                refill_pool,
+                key=lambda proj: _score_sort_key(proj, player_status_by_id.get(proj.player_id, "FIT")),
+                reverse=True,
+            ):
+                if len(selected_xi) >= 11:
+                    break
+                selected_xi.append(refill_player)
+
+        selected_ids = {player.player_id for player in selected_xi}
+
+        remaining_pool = [proj for proj in squad_projections if proj.player_id not in selected_ids]
+        remaining_playable = [proj for proj in remaining_pool if proj.player_id not in hard_excluded_ids]
+        outfield_candidates = [proj for proj in remaining_playable if proj.position in {"DEF", "MID", "FWD"}]
+        outfield_sorted = sorted(
+            outfield_candidates,
+            key=lambda proj: (
+                _projected_points_of(proj),
+                _expected_minutes_of(proj),
+                -_volatility_of(proj),
+                str(getattr(proj, "player_id", "")),
+            ),
+            reverse=True,
         )
-        raise ValueError("Cannot form valid XI from current squad")
+        bench_gk_candidates = [proj for proj in remaining_pool if proj.position == "GK"]
+        bench_gk = sorted(
+            bench_gk_candidates,
+            key=lambda proj: (
+                _projected_points_of(proj),
+                _expected_minutes_of(proj),
+                -_volatility_of(proj),
+                str(getattr(proj, "player_id", "")),
+            ),
+            reverse=True,
+        )
+        bench_gk_player = bench_gk[0] if bench_gk else None
+
+        ordered_outfield: List[Any] = []
+        if len(outfield_sorted) >= 3:
+            ordered_outfield = [outfield_sorted[0], outfield_sorted[1], outfield_sorted[-1]]
+        else:
+            ordered_outfield = outfield_sorted[:]
+
+        used_outfield_ids = {proj.player_id for proj in ordered_outfield}
+        for candidate in outfield_sorted:
+            if len(ordered_outfield) >= 3:
+                break
+            if candidate.player_id in used_outfield_ids:
+                continue
+            ordered_outfield.append(candidate)
+            used_outfield_ids.add(candidate.player_id)
+
+        bench_players: List[Any] = ordered_outfield[:3]
+
+        remaining_fallback = [
+            proj
+            for proj in remaining_pool
+            if proj.player_id not in {player.player_id for player in bench_players}
+            and proj.position != "GK"
+        ]
+        for fallback_player in sorted(
+            remaining_fallback,
+            key=lambda proj: (
+                _projected_points_of(proj),
+                _expected_minutes_of(proj),
+                -_volatility_of(proj),
+                str(getattr(proj, "player_id", "")),
+            ),
+            reverse=True,
+        ):
+            if len(bench_players) >= 3:
+                break
+            bench_players.append(fallback_player)
+
+        if bench_gk_player and bench_gk_player.player_id not in {player.player_id for player in bench_players}:
+            bench_players.append(bench_gk_player)
+
+        if len(bench_players) != 4:
+            raise ValueError(f"Bench construction failed: expected 4, got {len(bench_players)}")
+
+        captain_pool = sorted(selected_xi, key=lambda proj: _projected_points_of(proj), reverse=True)[:5]
+        formation = best_candidate["formation"]
+        total_pts = round(sum(_projected_points_of(p) for p in selected_xi), 2)
+
+        formation_reason = (
+            f"{formation} selected as highest adjusted lineup score "
+            f"({best_candidate['score_sum']:.2f}) among legal formations."
+        )
+
+        starters_payload: List[Dict[str, Any]] = []
+        for proj in selected_xi:
+            status_value = player_status_by_id.get(proj.player_id, "FIT")
+            starters_payload.append(
+                {
+                    "player_id": proj.player_id,
+                    "name": proj.name,
+                    "team": proj.team,
+                    "position": proj.position,
+                    "projected_points": round(_projected_points_of(proj), 2),
+                    "expected_minutes": round(_expected_minutes_of(proj), 1),
+                    "flags": _player_flags(proj, status_value),
+                    "start_reason": (
+                        f"Started in {formation}: {_projected_points_of(proj):.1f} projected pts, "
+                        f"{_expected_minutes_of(proj):.0f} expected minutes."
+                    ),
+                }
+            )
+
+        bench_payload: List[Dict[str, Any]] = []
+        for index, proj in enumerate(bench_players, start=1):
+            status_value = player_status_by_id.get(proj.player_id, "FIT")
+            bench_payload.append(
+                {
+                    "player_id": proj.player_id,
+                    "name": proj.name,
+                    "team": proj.team,
+                    "position": proj.position,
+                    "bench_order": index,
+                    "projected_points": round(_projected_points_of(proj), 2),
+                    "expected_minutes": round(_expected_minutes_of(proj), 1),
+                    "flags": _player_flags(proj, status_value),
+                    "bench_reason": (
+                        "Bench goalkeeper slot" if index == 4 and proj.position == "GK"
+                        else f"Bench slot {index} by substitute utility ordering."
+                    ),
+                }
+            )
+
+        lineup_decision_payload = {
+            "formation": formation,
+            "risk_profile": risk_profile,
+            "lineup_confidence": _lineup_confidence(selected_xi),
+            "formation_reason": formation_reason,
+            "risk_profile_effect": risk_effect_text,
+            "notes": data_notes,
+            "starters": starters_payload,
+            "bench": bench_payload,
+            "captain_player_id": None,
+            "vice_captain_player_id": None,
+        }
+
+        optimized_xi = OptimizedXI(
+            starting_xi=selected_xi,
+            bench=bench_players,
+            formation=formation,
+            captain_pool=captain_pool,
+            total_expected_pts=total_pts,
+            formation_valid=True,
+        )
+        setattr(optimized_xi, "lineup_decision", lineup_decision_payload)
+        return optimized_xi
     
     def _recommend_captaincy_from_xi(self, optimized_xi: OptimizedXI, fixture_data: Dict, 
                                    projections: CanonicalProjectionSet = None,
@@ -588,6 +898,13 @@ class EnhancedDecisionFramework:
 
         # Add captaincy using optimized XI captain pool only, excluding OUT players
         decision.captaincy = self._recommend_captaincy_from_xi(optimized_xi, fixture_data, projections, injury_reports)
+        lineup_decision = getattr(optimized_xi, "lineup_decision", None)
+        if isinstance(lineup_decision, dict):
+            captain = decision.captaincy.get("captain", {}) if isinstance(decision.captaincy, dict) else {}
+            vice = decision.captaincy.get("vice_captain", {}) if isinstance(decision.captaincy, dict) else {}
+            lineup_decision["captain_player_id"] = captain.get("player_id")
+            lineup_decision["vice_captain_player_id"] = vice.get("player_id")
+            decision.lineup_decision = lineup_decision
         decision.transfer_recommendations = self._recommend_transfers(team_data, free_transfers, projections)
         decision.optimized_xi = optimized_xi
         transfer_audit = getattr(self._transfer_advisor, "last_transfer_audit", {}) or {}

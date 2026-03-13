@@ -2012,22 +2012,44 @@ function shouldTrackDisplayedPlay(payloadData, context = {}) {
       payloadData?.market_context?.market_type ??
       payloadData?.recommended_bet_type
   );
-  const period = resolveTrackingPeriod(payloadData, context);
+  const selection = toUpperToken(
+    context.selection ??
+      payloadData?.selection?.side ??
+      payloadData?.selection
+  );
+  const line =
+    context.line !== undefined
+      ? toFiniteNumberOrNull(context.line)
+      : toFiniteNumberOrNull(payloadData?.line);
+  const price =
+    context.price !== undefined
+      ? toFiniteNumberOrNull(context.price)
+      : toFiniteNumberOrNull(payloadData?.price);
   const officialStatus = resolveOfficialPlayStatus(payloadData);
   const isActionable = officialStatus === 'PLAY' || officialStatus === 'LEAN';
+  if (!isActionable) return false;
 
-  // NHL policy:
-  // - Full-game TOTAL rows track whenever they are logged as kind=PLAY.
-  // - 1P TOTAL and MONEYLINE remain actionable-only (PLAY/LEAN).
-  if (sport === 'NHL' && marketType === 'TOTAL' && period !== '1P') {
-    return true;
+  if (!sport || !marketType) return false;
+
+  if (marketType === 'MONEYLINE') {
+    return (selection === 'HOME' || selection === 'AWAY') && price !== null;
   }
-  if (sport === 'NHL' && (marketType === 'TOTAL' || marketType === 'MONEYLINE')) {
-    return isActionable;
+  if (marketType === 'SPREAD') {
+    return (
+      (selection === 'HOME' || selection === 'AWAY') &&
+      line !== null &&
+      price !== null
+    );
+  }
+  if (marketType === 'TOTAL') {
+    return (
+      (selection === 'OVER' || selection === 'UNDER') &&
+      line !== null &&
+      price !== null
+    );
   }
 
-  // Non-NHL behavior remains actionable-only.
-  return isActionable;
+  return false;
 }
 
 function hasCardDisplayLogTable(db) {
@@ -2045,53 +2067,115 @@ function hasCardDisplayLogTable(db) {
   return Boolean(row);
 }
 
-function compareLineAdvantage({ marketType, selection, candidateLine, existingLine }) {
-  const candidateHasLine = Number.isFinite(candidateLine);
-  const existingHasLine = Number.isFinite(existingLine);
-
-  if (candidateHasLine && !existingHasLine) return 1;
-  if (!candidateHasLine && existingHasLine) return -1;
-  if (!candidateHasLine && !existingHasLine) return 0;
-  if (candidateLine === existingLine) return 0;
-
-  if (marketType === 'SPREAD') {
-    // More points (or fewer points laid) is better for the bettor.
-    return candidateLine > existingLine ? 1 : -1;
-  }
-
-  if (marketType === 'TOTAL') {
-    if (selection === 'OVER') {
-      // Lower total is better for OVER.
-      return candidateLine < existingLine ? 1 : -1;
-    }
-    if (selection === 'UNDER') {
-      // Higher total is better for UNDER.
-      return candidateLine > existingLine ? 1 : -1;
-    }
-  }
-
+function rankOfficialStatus(statusToken) {
+  if (statusToken === 'PLAY') return 2;
+  if (statusToken === 'LEAN') return 1;
   return 0;
 }
 
-function isDisplayedPlayCandidateBetter(candidate, existing) {
-  const lineComparison = compareLineAdvantage({
-    marketType: toUpperToken(candidate.marketType),
-    selection: toUpperToken(candidate.selection),
-    candidateLine: toFiniteNumberOrNull(candidate.line),
-    existingLine: toFiniteNumberOrNull(existing.line),
-  });
-  if (lineComparison !== 0) return lineComparison > 0;
+function safeTimestampMs(value) {
+  if (!value) return 0;
+  const ms = Date.parse(String(value));
+  return Number.isFinite(ms) ? ms : 0;
+}
 
-  const candidateOdds = toFiniteNumberOrNull(candidate.odds);
-  const existingOdds = toFiniteNumberOrNull(existing.odds);
-  if (Number.isFinite(candidateOdds) && !Number.isFinite(existingOdds)) return true;
-  if (!Number.isFinite(candidateOdds) && Number.isFinite(existingOdds)) return false;
-  if (Number.isFinite(candidateOdds) && Number.isFinite(existingOdds)) {
-    // For American odds, higher numeric value is always better (+120 > +110, -105 > -120).
-    return candidateOdds > existingOdds;
+function toSortableNumber(value, fallback = -Infinity) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed;
+}
+
+function toConfidencePct(payloadData, fallbackValue = null) {
+  const confidencePct = toFiniteNumberOrNull(payloadData?.confidence_pct);
+  if (confidencePct !== null) return confidencePct;
+  const confidence = toFiniteNumberOrNull(payloadData?.confidence);
+  if (confidence !== null) return confidence * 100;
+  return toFiniteNumberOrNull(fallbackValue) ?? 0;
+}
+
+function get30DayPerformanceFactor(db, params, cache) {
+  const sport = toUpperToken(params?.sport);
+  const marketType = toUpperToken(params?.marketType);
+  const anchorIso = params?.anchorIso || new Date().toISOString();
+  const cacheKey = `${sport}|${marketType}|${String(anchorIso).slice(0, 10)}`;
+
+  if (cache?.has(cacheKey)) {
+    return cache.get(cacheKey);
   }
 
-  return false;
+  if (!sport || !marketType) {
+    const fallback = { factor: 1, sampleSize: 0 };
+    if (cache) cache.set(cacheKey, fallback);
+    return fallback;
+  }
+
+  const row = db
+    .prepare(
+      `
+      SELECT
+        SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses
+      FROM card_results
+      WHERE status = 'settled'
+        AND UPPER(COALESCE(sport, '')) = ?
+        AND UPPER(COALESCE(market_type, '')) = ?
+        AND datetime(COALESCE(settled_at, CURRENT_TIMESTAMP)) >= datetime(?, '-30 days')
+    `,
+    )
+    .get(sport, marketType, anchorIso);
+
+  const wins = Number(row?.wins || 0);
+  const losses = Number(row?.losses || 0);
+  const sampleSize = wins + losses;
+  const factor = sampleSize >= 25 && sampleSize > 0 ? wins / sampleSize : 1;
+  const result = { factor, sampleSize };
+  if (cache) cache.set(cacheKey, result);
+  return result;
+}
+
+function buildDisplayedPlayRankContext(db, candidate, cache) {
+  const payloadData =
+    candidate?.payloadData && typeof candidate.payloadData === 'object'
+      ? candidate.payloadData
+      : {};
+  const officialStatus = resolveOfficialPlayStatus(payloadData);
+  const statusRank = rankOfficialStatus(officialStatus);
+  const confidencePct = toConfidencePct(payloadData, candidate?.confidencePct);
+  const perf = get30DayPerformanceFactor(
+    db,
+    {
+      sport: candidate?.sport,
+      marketType: candidate?.marketType,
+      anchorIso: candidate?.displayedAt || new Date().toISOString(),
+    },
+    cache,
+  );
+  const weightedConfidence = confidencePct * perf.factor;
+  const edgePct = toSortableNumber(payloadData?.decision_v2?.edge_pct);
+  const supportScore = toSortableNumber(payloadData?.decision_v2?.support_score);
+  const displayedAtMs = safeTimestampMs(candidate?.displayedAt);
+  const pickId = String(candidate?.pickId || '');
+
+  return {
+    statusRank,
+    weightedConfidence,
+    edgePct,
+    supportScore,
+    displayedAtMs,
+    pickId,
+  };
+}
+
+function compareDisplayedPlayRank(a, b) {
+  if (a.statusRank !== b.statusRank) return a.statusRank - b.statusRank;
+  if (a.weightedConfidence !== b.weightedConfidence) {
+    return a.weightedConfidence - b.weightedConfidence;
+  }
+  if (a.edgePct !== b.edgePct) return a.edgePct - b.edgePct;
+  if (a.supportScore !== b.supportScore) return a.supportScore - b.supportScore;
+  if (a.displayedAtMs !== b.displayedAtMs) return a.displayedAtMs - b.displayedAtMs;
+  if (a.pickId === b.pickId) return 0;
+  return a.pickId > b.pickId ? 1 : -1;
 }
 
 function upsertBestDisplayedPlayLog(db, entry) {
@@ -2103,12 +2187,14 @@ function upsertBestDisplayedPlayLog(db, entry) {
       SELECT
         id,
         pick_id,
+        sport,
+        market_type,
         line,
-        odds
+        odds,
+        confidence_pct,
+        displayed_at
       FROM card_display_log
       WHERE game_id = ?
-        AND UPPER(COALESCE(market_type, '')) = ?
-        AND UPPER(COALESCE(selection, '')) = ?
         AND ((? IS NULL AND run_id IS NULL) OR run_id = ?)
       ORDER BY datetime(displayed_at) DESC, id DESC
       LIMIT 1
@@ -2116,8 +2202,6 @@ function upsertBestDisplayedPlayLog(db, entry) {
     )
     .get(
       entry.gameId,
-      toUpperToken(entry.marketType),
-      toUpperToken(entry.selection),
       entry.runId,
       entry.runId,
     );
@@ -2147,8 +2231,56 @@ function upsertBestDisplayedPlayLog(db, entry) {
     return true;
   }
 
-  if (existing.pick_id !== entry.pickId && !isDisplayedPlayCandidateBetter(entry, existing)) {
-    return false;
+  if (existing.pick_id !== entry.pickId) {
+    const cache = new Map();
+    const existingPayloadRow = db
+      .prepare(
+        `
+        SELECT payload_data
+        FROM card_payloads
+        WHERE id = ?
+        LIMIT 1
+      `,
+      )
+      .get(existing.pick_id);
+
+    let existingPayloadData = {};
+    if (existingPayloadRow?.payload_data) {
+      try {
+        existingPayloadData = JSON.parse(existingPayloadRow.payload_data);
+      } catch {
+        existingPayloadData = {};
+      }
+    }
+
+    const candidateRank = buildDisplayedPlayRankContext(
+      db,
+      {
+        pickId: entry.pickId,
+        sport: entry.sport,
+        marketType: entry.marketType,
+        confidencePct: entry.confidencePct,
+        displayedAt: entry.displayedAt,
+        payloadData: entry.payloadData,
+      },
+      cache,
+    );
+    const existingRank = buildDisplayedPlayRankContext(
+      db,
+      {
+        pickId: existing.pick_id,
+        sport: existing.sport,
+        marketType: existing.market_type,
+        confidencePct: existing.confidence_pct,
+        displayedAt: existing.displayed_at,
+        payloadData: existingPayloadData,
+      },
+      cache,
+    );
+
+    if (compareDisplayedPlayRank(candidateRank, existingRank) <= 0) {
+      return false;
+    }
   }
 
   db.prepare(
@@ -2358,6 +2490,9 @@ function insertCardPayload(card) {
       sport: card.sport,
       marketType: lockedMarket.marketType,
       period: lockedMarket.period,
+      selection: lockedMarket.selection,
+      line: lockedMarket.line,
+      price: lockedMarket.lockedPrice,
     })
   ) {
     const confidencePct = toFiniteNumberOrNull(payloadData?.confidence_pct);
@@ -2382,6 +2517,7 @@ function insertCardPayload(card) {
       confidencePct: normalizedConfidence,
       displayedAt: card.createdAt || new Date().toISOString(),
       apiEndpoint: '/api/games',
+      payloadData,
     });
   }
 }

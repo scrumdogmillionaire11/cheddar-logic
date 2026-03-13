@@ -43,6 +43,201 @@ function parseLockedPrice(value) {
   return Math.trunc(parsed);
 }
 
+function toBackfillUpperToken(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().toUpperCase();
+}
+
+function toBackfillFiniteNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeBackfillMarketType(value) {
+  const token = toBackfillUpperToken(value);
+  if (!token) return '';
+  if (token === 'FIRST_PERIOD' || token === '1P' || token === 'P1') {
+    return 'TOTAL';
+  }
+  if (token === 'TOTAL' || token === 'TOTALS' || token === 'OVER_UNDER' || token === 'OU') {
+    return 'TOTAL';
+  }
+  if (token === 'MONEYLINE' || token === 'ML' || token === 'H2H') {
+    return 'MONEYLINE';
+  }
+  if (token === 'SPREAD' || token === 'PUCKLINE' || token === 'PUCK_LINE') {
+    return 'SPREAD';
+  }
+  return token;
+}
+
+function resolveBackfillOfficialStatus(payloadData) {
+  const explicit = toBackfillUpperToken(payloadData?.decision_v2?.official_status);
+  if (explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS') {
+    return explicit;
+  }
+  const fallbackStatus = toBackfillUpperToken(payloadData?.status);
+  if (fallbackStatus === 'FIRE') return 'PLAY';
+  if (fallbackStatus === 'WATCH') return 'LEAN';
+  if (fallbackStatus === 'PASS') return 'PASS';
+  return '';
+}
+
+function resolveBackfillSelection(payloadData, fallbackSelection) {
+  return toBackfillUpperToken(
+    fallbackSelection ??
+      payloadData?.selection?.side ??
+      payloadData?.selection ??
+      null,
+  );
+}
+
+function resolveBackfillKind(payloadData) {
+  return toBackfillUpperToken(payloadData?.kind || 'PLAY');
+}
+
+function toBackfillConfidencePct(payloadData, fallbackValue = null) {
+  const confidencePct = toBackfillFiniteNumberOrNull(payloadData?.confidence_pct);
+  if (confidencePct !== null) return confidencePct;
+  const confidence = toBackfillFiniteNumberOrNull(payloadData?.confidence);
+  if (confidence !== null) return confidence * 100;
+  return toBackfillFiniteNumberOrNull(fallbackValue) ?? 0;
+}
+
+function rankBackfillOfficialStatus(officialStatus) {
+  if (officialStatus === 'PLAY') return 2;
+  if (officialStatus === 'LEAN') return 1;
+  return 0;
+}
+
+function toBackfillSortableNumber(value, fallback = -Infinity) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed;
+}
+
+function safeBackfillTimestampMs(value) {
+  if (!value) return 0;
+  const ms = Date.parse(String(value));
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function getBackfillPerformanceFactor(db, params, cache) {
+  const sport = toBackfillUpperToken(params?.sport);
+  const marketType = toBackfillUpperToken(params?.marketType);
+  const anchorIso = params?.anchorIso || new Date().toISOString();
+  const cacheKey = `${sport}|${marketType}|${String(anchorIso).slice(0, 10)}`;
+
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+
+  if (!sport || !marketType) {
+    const fallback = { factor: 1, sampleSize: 0 };
+    cache.set(cacheKey, fallback);
+    return fallback;
+  }
+
+  const row = db
+    .prepare(
+      `
+      SELECT
+        SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses
+      FROM card_results
+      WHERE status = 'settled'
+        AND UPPER(COALESCE(sport, '')) = ?
+        AND UPPER(COALESCE(market_type, '')) = ?
+        AND datetime(COALESCE(settled_at, CURRENT_TIMESTAMP)) >= datetime(?, '-30 days')
+    `,
+    )
+    .get(sport, marketType, anchorIso);
+
+  const wins = Number(row?.wins || 0);
+  const losses = Number(row?.losses || 0);
+  const sampleSize = wins + losses;
+  const factor = sampleSize >= 25 && sampleSize > 0 ? wins / sampleSize : 1;
+  const result = { factor, sampleSize };
+  cache.set(cacheKey, result);
+  return result;
+}
+
+function buildBackfillRankContext(db, candidate, cache) {
+  const payloadData =
+    candidate?.payloadData && typeof candidate.payloadData === 'object'
+      ? candidate.payloadData
+      : {};
+  const officialStatus = resolveBackfillOfficialStatus(payloadData);
+  const statusRank = rankBackfillOfficialStatus(officialStatus);
+  const confidencePct = toBackfillConfidencePct(
+    payloadData,
+    candidate?.confidencePct,
+  );
+  const perf = getBackfillPerformanceFactor(
+    db,
+    {
+      sport: candidate?.sport,
+      marketType: candidate?.marketType,
+      anchorIso: candidate?.displayedAt || new Date().toISOString(),
+    },
+    cache,
+  );
+
+  return {
+    statusRank,
+    weightedConfidence: confidencePct * perf.factor,
+    edgePct: toBackfillSortableNumber(payloadData?.decision_v2?.edge_pct),
+    supportScore: toBackfillSortableNumber(payloadData?.decision_v2?.support_score),
+    displayedAtMs: safeBackfillTimestampMs(candidate?.displayedAt),
+    pickId: String(candidate?.pickId || ''),
+  };
+}
+
+function compareBackfillRank(a, b) {
+  if (a.statusRank !== b.statusRank) return a.statusRank - b.statusRank;
+  if (a.weightedConfidence !== b.weightedConfidence) {
+    return a.weightedConfidence - b.weightedConfidence;
+  }
+  if (a.edgePct !== b.edgePct) return a.edgePct - b.edgePct;
+  if (a.supportScore !== b.supportScore) return a.supportScore - b.supportScore;
+  if (a.displayedAtMs !== b.displayedAtMs) return a.displayedAtMs - b.displayedAtMs;
+  if (a.pickId === b.pickId) return 0;
+  return a.pickId > b.pickId ? 1 : -1;
+}
+
+function isBackfillCandidateEligible(candidate) {
+  if (toBackfillUpperToken(candidate?.kind) !== 'PLAY') return false;
+  const officialStatus = toBackfillUpperToken(candidate?.officialStatus);
+  if (officialStatus !== 'PLAY' && officialStatus !== 'LEAN') return false;
+
+  const sport = toBackfillUpperToken(candidate?.sport);
+  const marketType = toBackfillUpperToken(candidate?.marketType);
+  const selection = toBackfillUpperToken(candidate?.selection);
+  const line = toBackfillFiniteNumberOrNull(candidate?.line);
+  const odds = toBackfillFiniteNumberOrNull(candidate?.odds);
+  if (!sport || !marketType) return false;
+
+  if (marketType === 'MONEYLINE') {
+    return (selection === 'HOME' || selection === 'AWAY') && odds !== null;
+  }
+  if (marketType === 'SPREAD') {
+    return (
+      (selection === 'HOME' || selection === 'AWAY') &&
+      line !== null &&
+      odds !== null
+    );
+  }
+  if (marketType === 'TOTAL') {
+    return (
+      (selection === 'OVER' || selection === 'UNDER') &&
+      line !== null &&
+      odds !== null
+    );
+  }
+  return false;
+}
+
 function parseJsonObject(value) {
   if (!value) return null;
   if (typeof value === 'object') return value;
@@ -350,8 +545,9 @@ function computePnlOutcome(result, odds) {
 }
 
 function backfillDisplayedPlaysFromPayloads(db) {
-  const insertStmt = db.prepare(`
-    WITH candidates AS (
+  const candidateRows = db
+    .prepare(
+      `
       SELECT
         cp.id AS pick_id,
         cp.run_id AS run_id,
@@ -361,115 +557,55 @@ function backfillDisplayedPlaysFromPayloads(db) {
         UPPER(COALESCE(cr.selection, json_extract(cp.payload_data, '$.selection.side'), json_extract(cp.payload_data, '$.selection'))) AS selection,
         COALESCE(cr.line, CAST(json_extract(cp.payload_data, '$.line') AS REAL)) AS line,
         COALESCE(cr.locked_price, CAST(json_extract(cp.payload_data, '$.price') AS REAL)) AS odds,
-        UPPER(COALESCE(json_extract(cp.payload_data, '$.kind'), 'PLAY')) AS payload_kind,
-        UPPER(
-          COALESCE(
-            json_extract(cp.payload_data, '$.decision_v2.official_status'),
-            CASE UPPER(COALESCE(json_extract(cp.payload_data, '$.status'), ''))
-              WHEN 'FIRE' THEN 'PLAY'
-              WHEN 'WATCH' THEN 'LEAN'
-              WHEN 'PASS' THEN 'PASS'
-              ELSE ''
-            END
-          )
-        ) AS official_status,
-        UPPER(
-          COALESCE(
-            json_extract(cp.payload_data, '$.period'),
-            json_extract(cp.payload_data, '$.time_period'),
-            json_extract(cp.payload_data, '$.market.period'),
-            json_extract(cp.payload_data, '$.market_context.period'),
-            json_extract(cp.payload_data, '$.market_context.wager.period'),
-            json_extract(cp.payload_data, '$.pricing_trace.period'),
-            'FULL_GAME'
-          )
-        ) AS period_token,
         COALESCE(
           CAST(json_extract(cp.payload_data, '$.confidence_pct') AS REAL),
           CAST(json_extract(cp.payload_data, '$.confidence') AS REAL) * 100.0
         ) AS confidence_pct,
+        cp.payload_data AS payload_data,
         COALESCE(cdl.displayed_at, cp.created_at, CURRENT_TIMESTAMP) AS displayed_at
       FROM card_payloads cp
       INNER JOIN card_results cr ON cr.card_id = cp.id
       LEFT JOIN card_display_log cdl ON cdl.pick_id = cp.id
       WHERE COALESCE(cr.market_key, json_extract(cp.payload_data, '$.market_key')) IS NOT NULL
-    ),
-    normalized AS (
-      SELECT
-        pick_id,
-        run_id,
-        game_id,
-        sport,
-        CASE
-          WHEN market_type_token IN ('FIRST_PERIOD', '1P', 'P1') THEN 'TOTAL'
-          WHEN market_type_token IN ('TOTAL', 'TOTALS', 'OVER_UNDER', 'OU') THEN 'TOTAL'
-          WHEN market_type_token IN ('MONEYLINE', 'ML', 'H2H') THEN 'MONEYLINE'
-          WHEN market_type_token IN ('SPREAD', 'PUCKLINE', 'PUCK_LINE') THEN 'SPREAD'
-          ELSE market_type_token
-        END AS market_type,
-        selection,
-        line,
-        odds,
-        CASE
-          WHEN market_type_token IN ('FIRST_PERIOD', '1P', 'P1') THEN '1P'
-          WHEN period_token IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD') THEN '1P'
-          ELSE 'FULL_GAME'
-        END AS settlement_period,
-        payload_kind,
-        official_status,
-        confidence_pct,
-        displayed_at
-      FROM candidates
-    ),
-    enrolled AS (
-      SELECT
-        pick_id,
-        run_id,
-        game_id,
-        sport,
-        market_type,
-        selection,
-        line,
-        odds,
-        confidence_pct,
-        displayed_at
-      FROM normalized
-      WHERE payload_kind = 'PLAY'
-        AND (
-          (sport = 'NHL' AND market_type = 'TOTAL' AND settlement_period = 'FULL_GAME')
-          OR (
-            official_status IN ('PLAY', 'LEAN')
-            AND NOT (sport = 'NHL' AND market_type = 'TOTAL' AND settlement_period = 'FULL_GAME')
-          )
-        )
-    ),
-    ranked AS (
-      SELECT
-        pick_id,
-        run_id,
-        game_id,
-        sport,
-        market_type,
-        selection,
-        line,
-        odds,
-        confidence_pct,
-        displayed_at,
-        ROW_NUMBER() OVER (
-          PARTITION BY COALESCE(run_id, ''), game_id, market_type, selection
-          ORDER BY
-            CASE
-              WHEN market_type = 'TOTAL' AND selection = 'OVER'
-                THEN -COALESCE(line, -9999)
-              ELSE COALESCE(line, -9999)
-            END DESC,
-            COALESCE(odds, -100000) DESC,
-            datetime(displayed_at) DESC,
-            pick_id DESC
-        ) AS rn
-      FROM enrolled
+    `,
     )
-    INSERT OR IGNORE INTO card_display_log (
+    .all();
+
+  const rankCache = new Map();
+  const bestByPartition = new Map();
+
+  for (const row of candidateRows) {
+    const payloadData = parseJsonObject(row.payload_data) || {};
+    const marketType = normalizeBackfillMarketType(
+      row.market_type_token || payloadData?.market_type,
+    );
+    const candidate = {
+      pickId: String(row.pick_id),
+      runId: row.run_id == null || row.run_id === '' ? null : String(row.run_id),
+      gameId: String(row.game_id),
+      sport: toBackfillUpperToken(row.sport),
+      marketType,
+      selection: resolveBackfillSelection(payloadData, row.selection),
+      line: toBackfillFiniteNumberOrNull(row.line),
+      odds: toBackfillFiniteNumberOrNull(row.odds),
+      confidencePct: toBackfillFiniteNumberOrNull(row.confidence_pct),
+      displayedAt: row.displayed_at || new Date().toISOString(),
+      payloadData,
+      kind: resolveBackfillKind(payloadData),
+      officialStatus: resolveBackfillOfficialStatus(payloadData),
+    };
+
+    if (!isBackfillCandidateEligible(candidate)) continue;
+    const rankContext = buildBackfillRankContext(db, candidate, rankCache);
+    const partitionKey = `${candidate.runId || ''}|${candidate.gameId}`;
+    const existing = bestByPartition.get(partitionKey);
+    if (!existing || compareBackfillRank(rankContext, existing.rankContext) > 0) {
+      bestByPartition.set(partitionKey, { candidate, rankContext });
+    }
+  }
+
+  const insertStmt = db.prepare(`
+    INSERT INTO card_display_log (
       pick_id,
       run_id,
       game_id,
@@ -483,25 +619,111 @@ function backfillDisplayedPlaysFromPayloads(db) {
       displayed_at,
       api_endpoint
     )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, '/api/games')
+  `);
+  const updateStmt = db.prepare(`
+    UPDATE card_display_log
+    SET
+      pick_id = ?,
+      sport = ?,
+      market_type = ?,
+      selection = ?,
+      line = ?,
+      odds = ?,
+      confidence_pct = ?,
+      displayed_at = ?,
+      api_endpoint = '/api/games'
+    WHERE id = ?
+  `);
+  const existingByPartitionStmt = db.prepare(`
     SELECT
+      id,
       pick_id,
-      NULLIF(run_id, ''),
-      game_id,
       sport,
       market_type,
       selection,
       line,
       odds,
-      NULL,
       confidence_pct,
-      displayed_at,
-      '/api/games'
-    FROM ranked
-    WHERE rn = 1
+      displayed_at
+    FROM card_display_log
+    WHERE game_id = ?
+      AND ((? IS NULL AND run_id IS NULL) OR run_id = ?)
+    ORDER BY datetime(displayed_at) DESC, id DESC
+    LIMIT 1
+  `);
+  const payloadByPickStmt = db.prepare(`
+    SELECT payload_data
+    FROM card_payloads
+    WHERE id = ?
+    LIMIT 1
   `);
 
-  const result = insertStmt.run();
-  return Number(result?.changes || 0);
+  let changes = 0;
+  for (const { candidate, rankContext } of bestByPartition.values()) {
+    const incumbent = existingByPartitionStmt.get(
+      candidate.gameId,
+      candidate.runId,
+      candidate.runId,
+    );
+
+    if (!incumbent) {
+      const inserted = insertStmt.run(
+        candidate.pickId,
+        candidate.runId,
+        candidate.gameId,
+        candidate.sport,
+        candidate.marketType,
+        candidate.selection,
+        candidate.line,
+        candidate.odds,
+        toBackfillConfidencePct(candidate.payloadData, candidate.confidencePct),
+        candidate.displayedAt,
+      );
+      changes += Number(inserted?.changes || 0);
+      continue;
+    }
+
+    if (String(incumbent.pick_id) === candidate.pickId) {
+      continue;
+    }
+
+    const incumbentPayloadRow = payloadByPickStmt.get(String(incumbent.pick_id));
+    const incumbentPayloadData = parseJsonObject(incumbentPayloadRow?.payload_data) || {};
+    const incumbentRankContext = buildBackfillRankContext(
+      db,
+      {
+        pickId: String(incumbent.pick_id),
+        sport: toBackfillUpperToken(incumbent.sport),
+        marketType: normalizeBackfillMarketType(
+          incumbent.market_type || incumbentPayloadData?.market_type,
+        ),
+        confidencePct: toBackfillFiniteNumberOrNull(incumbent.confidence_pct),
+        displayedAt: incumbent.displayed_at,
+        payloadData: incumbentPayloadData,
+      },
+      rankCache,
+    );
+
+    if (compareBackfillRank(rankContext, incumbentRankContext) <= 0) {
+      continue;
+    }
+
+    const updated = updateStmt.run(
+      candidate.pickId,
+      candidate.sport,
+      candidate.marketType,
+      candidate.selection,
+      candidate.line,
+      candidate.odds,
+      toBackfillConfidencePct(candidate.payloadData, candidate.confidencePct),
+      candidate.displayedAt,
+      incumbent.id,
+    );
+    changes += Number(updated?.changes || 0);
+  }
+
+  return changes;
 }
 
 function toCount(value) {

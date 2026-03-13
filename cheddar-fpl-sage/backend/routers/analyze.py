@@ -546,6 +546,7 @@ async def get_detailed_projections(analysis_id: str):
         # Player projections - current and projected
         starting_xi_projections=results.get("starting_xi", []),
         bench_projections=results.get("bench", []),
+        lineup_decision=results.get("lineup_decision"),
         projected_xi=results.get("projected_xi", []),
         projected_bench=results.get("projected_bench", []),
         transfer_targets=results.get("transfer_targets"),

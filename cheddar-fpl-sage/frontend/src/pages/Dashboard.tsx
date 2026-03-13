@@ -15,7 +15,7 @@ import ChipDecision from '@/components/ChipDecision';
 import TransferSection from '@/components/TransferSection';
 import RiskNote from '@/components/RiskNote';
 import TeamInfo from '@/components/TeamInfo';
-import SquadSection from '@/components/SquadSection';
+import CurrentSquad from '@/components/CurrentSquad';
 import DataTransparency from '@/components/DataTransparency';
 import { buildDecisionViewModel } from '@/lib/decisionViewModel';
 
@@ -636,6 +636,29 @@ export default function Dashboard() {
           <div className="space-y-6">
             {(() => {
               const decision = buildDecisionViewModel(results);
+                const lineupDecision = results.lineup_decision;
+                const lineupStarters = lineupDecision?.starters?.map((player) => ({
+                  player_id: player.player_id,
+                  name: player.name,
+                  team: player.team,
+                  position: player.position,
+                  expected_pts: player.projected_points,
+                  expected_minutes: player.expected_minutes,
+                  flags: player.flags,
+                  badges: player.badges,
+                  start_reason: player.start_reason,
+                })) || decision.startingXI;
+                const lineupBench = lineupDecision?.bench?.map((player) => ({
+                  player_id: player.player_id,
+                  name: player.name,
+                  team: player.team,
+                  position: player.position,
+                  expected_pts: player.projected_points,
+                  expected_minutes: player.expected_minutes,
+                  flags: player.flags,
+                  bench_order: player.bench_order,
+                  bench_reason: player.bench_reason,
+                })) || decision.bench;
               return (
                 <>
             <div className="text-xs text-slate-500 uppercase tracking-widest mb-2">
@@ -692,21 +715,18 @@ export default function Dashboard() {
               riskStatement={decision.riskStatement}
             />
 
-            {decision.startingXI.length > 0 && (
-              <SquadSection
+            {(lineupStarters.length > 0 || lineupBench.length > 0) && (
+              <CurrentSquad
                 title="Starting XI"
-                currentSquad={decision.startingXI}
-                projectedSquad={decision.projectedXI}
-                hasTransfers={decision.hasProjectedTransfers}
-              />
-            )}
-
-            {decision.bench.length > 0 && (
-              <SquadSection
-                title="Bench Order"
-                currentSquad={decision.bench}
-                projectedSquad={decision.projectedBench}
-                hasTransfers={decision.hasProjectedTransfers}
+                startingXI={lineupStarters}
+                bench={lineupBench}
+                formation={lineupDecision?.formation}
+                lineupConfidence={lineupDecision?.lineup_confidence}
+                formationReason={lineupDecision?.formation_reason}
+                riskProfileEffect={lineupDecision?.risk_profile_effect}
+                notes={lineupDecision?.notes || []}
+                captainPlayerId={lineupDecision?.captain_player_id}
+                viceCaptainPlayerId={lineupDecision?.vice_captain_player_id}
               />
             )}
 

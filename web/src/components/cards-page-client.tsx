@@ -320,6 +320,7 @@ interface GameData {
     goalie_home_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
     goalie_away_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
   }>;
+  true_play?: (GameData['plays'][number] & { source_card_id?: string }) | null;
   consistency?: {
     total_bias?:
       | 'OK'
@@ -2044,9 +2045,11 @@ export default function CardsPageClient() {
     const isBroken = quality === 'BROKEN';
     const isDegraded = quality === 'DEGRADED';
     const decisionV2 = displayPlay.decision_v2;
+    const canonicalTruePlay = originalGame?.true_play;
     const totalFallbackPlay =
-      displayPlay.market_type === 'TOTAL' ||
-      displayPlay.market_type === 'TEAM_TOTAL'
+      !canonicalTruePlay &&
+      (displayPlay.market_type === 'TOTAL' ||
+        displayPlay.market_type === 'TEAM_TOTAL')
         ? (originalGame?.plays || []).find(
             (play) =>
               (play.market_type === 'TOTAL' ||

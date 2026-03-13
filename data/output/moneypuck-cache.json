@@ -1,5 +1,5 @@
 {
-  "fetched_at": "2026-03-12T14:16:06.657Z",
+  "fetched_at": "2026-03-13T01:27:14.930Z",
   "teams": {},
   "goalies": {
     "New York Rangers": {
@@ -154,102 +154,102 @@
     },
     "Boston Bruins": {
       "name": "Jeremy Swayman",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "San Jose Sharks": {
-      "name": "Yaroslav Askarov",
-      "status": "EXPECTED",
+      "name": "Alex Nedeljkovic",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Buffalo Sabres": {
       "name": "Ukko-Pekka Luukkonen",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Carolina Hurricanes": {
       "name": "Brandon Bussi",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "St. Louis Blues": {
-      "name": "Joel Hofer",
-      "status": "EXPECTED",
+      "name": "Jordan Binnington",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Florida Panthers": {
       "name": "Sergei Bobrovsky",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Columbus Blue Jackets": {
-      "name": "Jet Greaves",
-      "status": "EXPECTED",
+      "name": "Elvis Merzlikins",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "New Jersey Devils": {
       "name": "Jacob Markstrom",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Calgary Flames": {
       "name": "Dustin Wolf",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Toronto Maple Leafs": {
       "name": "Joseph Woll",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Anaheim Ducks": {
       "name": "Lukas Dostal",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Tampa Bay Lightning": {
       "name": "Andrei Vasilevskiy",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Detroit Red Wings": {
       "name": "John Gibson",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Dallas Stars": {
       "name": "Jake Oettinger",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Edmonton Oilers": {
       "name": "Tristan Jarry",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Minnesota Wild": {
-      "name": "Filip Gustavsson",
-      "status": "EXPECTED",
+      "name": "Jesper Wallstedt",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Winnipeg Jets": {
       "name": "Connor Hellebuyck",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "New York Rangers": {
       "name": "Igor Shesterkin",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Utah Hockey Club": {
       "name": "Karel Vejmelka",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Chicago Blackhawks": {
       "name": "Spencer Knight",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Seattle Kraken": {
@@ -258,13 +258,13 @@
       "source": "rotowire"
     },
     "Colorado Avalanche": {
-      "name": "Mackenzie Blackwood",
-      "status": "EXPECTED",
+      "name": "Scott Wedgewood",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Vancouver Canucks": {
-      "name": "Kevin Lankinen",
-      "status": "EXPECTED",
+      "name": "Nikita Tolopilo",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Nashville Predators": {
@@ -274,17 +274,17 @@
     },
     "Vegas Golden Knights": {
       "name": "Adin Hill",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Pittsburgh Penguins": {
       "name": "Arturs Silovs",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "New York Islanders": {
       "name": "Ilya Sorokin",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Los Angeles Kings": {
@@ -319,112 +319,112 @@
     "2026-03-12": {
       "Boston Bruins": {
         "name": "Jeremy Swayman",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "San Jose Sharks": {
-        "name": "Yaroslav Askarov",
-        "status": "EXPECTED",
+        "name": "Alex Nedeljkovic",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Buffalo Sabres": {
         "name": "Ukko-Pekka Luukkonen",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Washington Capitals": {
         "name": "Charlie Lindgren",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Carolina Hurricanes": {
         "name": "Brandon Bussi",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "St. Louis Blues": {
-        "name": "Joel Hofer",
-        "status": "EXPECTED",
+        "name": "Jordan Binnington",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Florida Panthers": {
         "name": "Sergei Bobrovsky",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Columbus Blue Jackets": {
-        "name": "Jet Greaves",
-        "status": "EXPECTED",
+        "name": "Elvis Merzlikins",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "New Jersey Devils": {
         "name": "Jacob Markstrom",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Calgary Flames": {
         "name": "Dustin Wolf",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Toronto Maple Leafs": {
         "name": "Joseph Woll",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Anaheim Ducks": {
         "name": "Lukas Dostal",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Tampa Bay Lightning": {
         "name": "Andrei Vasilevskiy",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Detroit Red Wings": {
         "name": "John Gibson",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Dallas Stars": {
         "name": "Jake Oettinger",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Edmonton Oilers": {
         "name": "Tristan Jarry",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Minnesota Wild": {
-        "name": "Filip Gustavsson",
-        "status": "EXPECTED",
+        "name": "Jesper Wallstedt",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Philadelphia Flyers": {
         "name": "Dan Vladar",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Winnipeg Jets": {
         "name": "Connor Hellebuyck",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "New York Rangers": {
         "name": "Igor Shesterkin",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Utah Hockey Club": {
         "name": "Karel Vejmelka",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Chicago Blackhawks": {
         "name": "Spencer Knight",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Seattle Kraken": {
@@ -433,13 +433,13 @@
         "source": "rotowire"
       },
       "Colorado Avalanche": {
-        "name": "Mackenzie Blackwood",
-        "status": "EXPECTED",
+        "name": "Scott Wedgewood",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Vancouver Canucks": {
-        "name": "Kevin Lankinen",
-        "status": "EXPECTED",
+        "name": "Nikita Tolopilo",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Nashville Predators": {
@@ -449,19 +449,19 @@
       },
       "Vegas Golden Knights": {
         "name": "Adin Hill",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Pittsburgh Penguins": {
         "name": "Arturs Silovs",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       }
     },
     "2026-03-13": {
       "New York Islanders": {
         "name": "Ilya Sorokin",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Los Angeles Kings": {
@@ -470,7 +470,7 @@
         "source": "rotowire"
       },
       "St. Louis Blues": {
-        "name": "Jordan Binnington",
+        "name": "Joel Hofer",
         "status": "EXPECTED",
         "source": "rotowire"
       },

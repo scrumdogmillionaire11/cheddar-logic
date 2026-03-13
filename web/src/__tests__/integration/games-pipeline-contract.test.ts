@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '../../../..');
 
 const routePath = path.join(repoRoot, 'web/src/app/api/games/route.ts');
+const resultsRoutePath = path.join(repoRoot, 'web/src/app/api/results/route.ts');
 const transformPath = path.join(repoRoot, 'web/src/lib/game-card/transform.ts');
 const cardsPath = path.join(
   repoRoot,
@@ -23,6 +24,7 @@ const displayVerdictPath = path.join(
 );
 
 const routeSource = fs.readFileSync(routePath, 'utf8');
+const resultsRouteSource = fs.readFileSync(resultsRoutePath, 'utf8');
 const transformSource = fs.readFileSync(transformPath, 'utf8');
 const cardsSource = fs.readFileSync(cardsPath, 'utf8');
 const displayVerdictSource = fs.readFileSync(displayVerdictPath, 'utf8');
@@ -32,7 +34,8 @@ console.log('🧪 Games pipeline v2 source contract tests');
 assert.ok(
   routeSource.includes('if (wave1Eligible) {') &&
     routeSource.includes('if (!play.decision_v2) {') &&
-    routeSource.includes('applyWave1DecisionFields(play);'),
+    routeSource.includes('applyWave1DecisionFields(play);') &&
+    routeSource.includes('true_play: truePlayMap.get(row.game_id) ?? null'),
   'API route must require decision_v2 for wave-1 and map verdict fields from worker output',
 );
 
@@ -44,9 +47,19 @@ assert.ok(
 );
 
 assert.ok(
+  resultsRouteSource.includes('cdl.id AS display_log_id') &&
+    resultsRouteSource.includes('cdl.displayed_at AS displayed_at') &&
+    resultsRouteSource.includes(
+      "datetime(COALESCE(displayed_at, settled_at, '1970-01-01T00:00:00Z')) DESC",
+    ),
+  'results route dedupe must rank by canonical display-log lineage timestamp',
+);
+
+assert.ok(
   transformSource.includes('selectWave1DecisionCandidate(') &&
+    transformSource.includes('game.true_play') &&
     transformSource.includes('decisionV2.official_status') &&
-    transformSource.includes('decision_v2: decisionV2'),
+    transformSource.includes('decision_v2: effectiveDecisionV2'),
   'transform must use worker decision_v2 as wave-1 decision source of truth',
 );
 
@@ -54,6 +67,7 @@ assert.ok(
   cardsSource.includes(
     "const getStatusBadge = (status: 'PLAY' | 'LEAN' | 'PASS')",
   ) &&
+    cardsSource.includes('const canonicalTruePlay = originalGame?.true_play;') &&
     cardsSource.includes('PASS Breakdown') &&
     cardsSource.includes('Model Lean Indicators') &&
     cardsSource.includes('getDisplayVerdict') &&

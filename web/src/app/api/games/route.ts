@@ -35,6 +35,7 @@
  *       totalPriceUnder: number | null,
  *       capturedAt: string | null,
  *     } | null,
+ *     true_play: Play | null,
  *     plays: Play[],
  *   }>,
  *   error?: string,
@@ -136,6 +137,13 @@ interface CardPayloadRow {
   card_type: string;
   card_title: string;
   payload_data: string;
+}
+
+interface DisplayLogRow {
+  id: number;
+  pick_id: string;
+  game_id: string;
+  displayed_at: string;
 }
 
 interface Play {
@@ -1484,6 +1492,8 @@ export async function GET(request: NextRequest) {
 
     // Build a plays map keyed by canonical game_id
     const playsMap = new Map<string, Play[]>();
+    const playByCardId = new Map<string, Play>();
+    const truePlayMap = new Map<string, Play>();
     const gameConsistencyMap = new Map<string, Play['consistency']>();
 
     // STEP 1 FIX: Resolve external game IDs (ESPN, etc.) that map to our canonical game_ids
@@ -1567,6 +1577,54 @@ export async function GET(request: NextRequest) {
         perf.cardsQueryMs += Date.now() - cardsQueryStartedAt;
       } catch {
         // card_payloads table not yet created; plays will be empty
+      }
+
+      let displayLogRows: DisplayLogRow[] = [];
+      try {
+        if (allQueryableIds.length > 0) {
+          const displayLogPlaceholders = allQueryableIds.map(() => '?').join(', ');
+          const displayLogStmt = db.prepare(`
+            SELECT id, pick_id, game_id, displayed_at
+            FROM card_display_log
+            WHERE game_id IN (${displayLogPlaceholders})
+            ORDER BY datetime(displayed_at) DESC, id DESC
+          `);
+          displayLogRows = displayLogStmt.all(...allQueryableIds) as DisplayLogRow[];
+
+          if (displayLogRows.length > 0) {
+            const dedupedCardRows = new Map<string, CardPayloadRow>();
+            for (const row of cardRows) {
+              dedupedCardRows.set(row.id, row);
+            }
+            const missingPickIds = Array.from(
+              new Set(
+                displayLogRows
+                  .map((row) => String(row.pick_id || ''))
+                  .filter((pickId) => pickId && !dedupedCardRows.has(pickId)),
+              ),
+            );
+            if (missingPickIds.length > 0) {
+              const missingPayloadPlaceholders = missingPickIds
+                .map(() => '?')
+                .join(', ');
+              const missingPayloadRows = db
+                .prepare(
+                  `
+                  SELECT id, game_id, card_type, card_title, payload_data
+                  FROM card_payloads
+                  WHERE id IN (${missingPayloadPlaceholders})
+                `,
+                )
+                .all(...missingPickIds) as CardPayloadRow[];
+              for (const row of missingPayloadRows) {
+                dedupedCardRows.set(row.id, row);
+              }
+            }
+            cardRows = Array.from(dedupedCardRows.values());
+          }
+        }
+      } catch {
+        displayLogRows = [];
       }
 
       perf.cardRows = cardRows.length;
@@ -2521,6 +2579,7 @@ export async function GET(request: NextRequest) {
         } else {
           playsMap.set(canonicalGameId, [play]);
         }
+        playByCardId.set(cardRow.id, play);
 
         if (play.kind === 'PLAY') {
           incrementStageCounter(
@@ -2538,6 +2597,28 @@ export async function GET(request: NextRequest) {
         }
       }
       perf.cardsParseMs = Date.now() - cardsParseStartedAt;
+
+      for (const displayLogRow of displayLogRows) {
+        const canonicalGameId =
+          externalToCanonicalMap.get(displayLogRow.game_id) ?? displayLogRow.game_id;
+        if (truePlayMap.has(canonicalGameId)) continue;
+        const candidate = playByCardId.get(displayLogRow.pick_id);
+        if (!candidate) continue;
+        if ((candidate.kind ?? 'PLAY') !== 'PLAY') continue;
+        const officialStatus =
+          candidate.decision_v2?.official_status ??
+          (candidate.action === 'FIRE'
+            ? 'PLAY'
+            : candidate.action === 'HOLD'
+              ? 'LEAN'
+              : candidate.status === 'FIRE'
+                ? 'PLAY'
+                : candidate.status === 'WATCH'
+                  ? 'LEAN'
+                  : 'PASS');
+        if (officialStatus !== 'PLAY' && officialStatus !== 'LEAN') continue;
+        truePlayMap.set(canonicalGameId, candidate);
+      }
     }
 
     for (const [sport, marketMap] of gamesWithPlayableMarkets.entries()) {
@@ -2629,6 +2710,7 @@ export async function GET(request: NextRequest) {
         consistency: gameConsistencyMap.get(row.game_id) ?? {
           total_bias: 'UNKNOWN',
         },
+        true_play: truePlayMap.get(row.game_id) ?? null,
         plays: playsMap.get(row.game_id) ?? [],
       };
     });

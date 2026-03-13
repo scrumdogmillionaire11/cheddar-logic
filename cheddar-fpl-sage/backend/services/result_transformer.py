@@ -986,14 +986,62 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
     else:
         logger.warning("No projections found in analysis results")
     
+    # Add canonical lineup decision payload if available
+    lineup_decision = decision_dict.get("lineup_decision")
+    if isinstance(lineup_decision, dict):
+        result["lineup_decision"] = lineup_decision
+        result["lineup_confidence"] = lineup_decision.get("lineup_confidence")
+
+        starters_payload = []
+        for player in lineup_decision.get("starters", []) or []:
+            if not isinstance(player, dict):
+                continue
+            starters_payload.append(
+                {
+                    "player_id": player.get("player_id"),
+                    "name": player.get("name"),
+                    "team": player.get("team"),
+                    "position": player.get("position"),
+                    "expected_pts": player.get("projected_points"),
+                    "expected_minutes": player.get("expected_minutes"),
+                    "flags": player.get("flags") or [],
+                    "badges": player.get("badges") or [],
+                    "start_reason": player.get("start_reason"),
+                }
+            )
+
+        bench_payload = []
+        for player in sorted(
+            [p for p in (lineup_decision.get("bench", []) or []) if isinstance(p, dict)],
+            key=lambda p: p.get("bench_order", 99),
+        ):
+            bench_payload.append(
+                {
+                    "player_id": player.get("player_id"),
+                    "name": player.get("name"),
+                    "team": player.get("team"),
+                    "position": player.get("position"),
+                    "expected_pts": player.get("projected_points"),
+                    "expected_minutes": player.get("expected_minutes"),
+                    "flags": player.get("flags") or [],
+                    "bench_order": player.get("bench_order"),
+                    "bench_reason": player.get("bench_reason"),
+                }
+            )
+
+        if starters_payload:
+            result["starting_xi"] = starters_payload
+        if bench_payload:
+            result["bench"] = bench_payload
+
     # Add optimized XI if available
     optimized_xi = analysis.get("optimized_xi")
     if optimized_xi:
         logger.info("Found optimized XI")
         # Convert optimized XI to projection lists
-        if hasattr(optimized_xi, 'starting_xi'):
+        if hasattr(optimized_xi, 'starting_xi') and not result.get("starting_xi"):
             result["starting_xi"] = [_transform_projection(p) for p in optimized_xi.starting_xi]
-        if hasattr(optimized_xi, 'bench'):
+        if hasattr(optimized_xi, 'bench') and not result.get("bench"):
             result["bench"] = [_transform_projection(p) for p in optimized_xi.bench]
         
         # Build projected squad after transfers (manual + recommended)
@@ -1043,11 +1091,14 @@ def _transform_projection(proj) -> Dict[str, Any]:
     """Transform a CanonicalPlayerProjection to dict."""
     if hasattr(proj, "__dict__"):
         return {
+            "player_id": getattr(proj, "player_id", None),
             "name": proj.name,
             "team": proj.team,
             "position": proj.position,
             "price": proj.current_price,
             "expected_pts": proj.nextGW_pts,
+            "expected_minutes": getattr(proj, "xMins_next", None),
+            "flags": list(getattr(proj, "tags", []) or []),
             "ownership": proj.ownership_pct,
             "form": proj.next6_pts / 6,  # Approximate form from 6-week projection
             "fixture_difficulty": proj.fixture_difficulty if hasattr(proj, 'fixture_difficulty') else None,
@@ -1124,6 +1175,7 @@ def _transform_captain(captain_data: Optional[Dict]) -> Optional[Dict[str, Any]]
             expected_pts = None
 
     return {
+        "player_id": captain_data.get("player_id"),
         "name": captain_data.get("name", "Unknown"),
         "team": captain_data.get("team", ""),
         "position": captain_data.get("position", ""),

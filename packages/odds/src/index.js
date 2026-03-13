@@ -36,7 +36,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
  * @param {object} params
  * @param {string} params.sport - Sport code (NHL, NBA, MLB, NFL)
  * @param {number} params.hoursAhead - Fetch games within this many hours (default 36)
- * @returns {object} { games: [...], errors: [...], rawCount: number }
+ * @returns {object} { games: [...], errors: [...], rawCount: number, windowRawCount: number }
  */
 async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
   const apiKey = process.env.ODDS_API_KEY;
@@ -46,6 +46,7 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
       games: [],
       errors: ['ODDS_API_KEY not found in environment variables'],
       rawCount: 0,
+      windowRawCount: 0,
     };
   }
 
@@ -55,6 +56,7 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
       games: [],
       errors: [`Unknown sport: ${sport}`],
       rawCount: 0,
+      windowRawCount: 0,
     };
   }
 
@@ -94,13 +96,19 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
       console.log(`[Odds] No valid games for ${sport} after normalization`);
     }
 
-    return { games, errors, rawCount: rawGames.length };
+    return {
+      games,
+      errors,
+      rawCount: rawGames.length,
+      windowRawCount: filteredGames.length,
+    };
   } catch (err) {
     console.error(`[Odds] Error fetching ${sport}:`, err.message);
     return {
       games: [],
       errors: [`${sport}: ${err.message}`],
       rawCount: 0,
+      windowRawCount: 0,
     };
   }
 }
