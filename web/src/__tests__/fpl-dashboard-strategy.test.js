@@ -74,6 +74,14 @@ async function run() {
     'Dashboard should normalize decision text with effective free-transfer context',
   );
   assert.ok(
+    dashboardSource.includes('{parseNumeric(plan.delta_pts_4gw) !== null && ('),
+    'Transfer plan delta display should guard against null numeric values',
+  );
+  assert.ok(
+    !dashboardSource.includes('{plan.delta_pts_4gw !== undefined && ('),
+    'Transfer plan delta display should not use undefined-only guards',
+  );
+  assert.ok(
     !dashboardSource.includes('{transferDiagnostic}'),
     'Near-threshold/strategy empty states should not reuse transfer diagnostic text',
   );

@@ -96,6 +96,69 @@ def test_projections_not_ready(client, monkeypatch) -> None:
     assert response.json()["code"] == "ANALYSIS_NOT_READY"
 
 
+def test_projections_accepts_player_rows_without_price(client, monkeypatch) -> None:
+    results = {
+        "team_name": "FPL XI",
+        "manager_name": "AJ",
+        "current_gw": 29,
+        "overall_rank": 6448179,
+        "overall_points": 1440,
+        "primary_decision": "HOLD",
+        "confidence": "MEDIUM",
+        "reasoning": "Test payload",
+        "starting_xi": [
+            {
+                "player_id": 628,
+                "name": "Jose Sa",
+                "team": "WOL",
+                "position": "GK",
+                "expected_pts": 4.5,
+            }
+        ],
+        "bench": [
+            {
+                "player_id": 32,
+                "name": "Martinez",
+                "team": "AVL",
+                "position": "GK",
+                "expected_pts": 3.9,
+            }
+        ],
+        "projected_xi": [
+            {
+                "player_id": 628,
+                "name": "Jose Sa",
+                "team": "WOL",
+                "position": "GK",
+                "expected_pts": 4.5,
+            }
+        ],
+        "projected_bench": [
+            {
+                "player_id": 32,
+                "name": "Martinez",
+                "team": "AVL",
+                "position": "GK",
+                "expected_pts": 3.9,
+            }
+        ],
+        "transfer_recommendations": [],
+        "risk_scenarios": [],
+        "available_chips": [],
+    }
+    monkeypatch.setattr(
+        analyze_router.engine_service,
+        "get_job",
+        lambda _analysis_id: _job(status="complete", results=results),
+    )
+
+    response = client.get("/api/v1/analyze/job12345/projections")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["starting_xi_projections"][0]["name"] == "Jose Sa"
+    assert body["starting_xi_projections"][0]["price"] is None
+
+
 def test_auth_validate_token_contract_removed_by_design(client) -> None:
     response = client.post(
         "/api/v1/auth/validate-token",
