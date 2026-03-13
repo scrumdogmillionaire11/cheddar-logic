@@ -427,19 +427,26 @@ function filterBySearch(card: GameCard, filters: CommonFilters): boolean {
   return homeTeam.includes(query) || awayTeam.includes(query);
 }
 
+function hasActionablePlayCall(card: GameCard): boolean {
+  const play = card.play;
+  if (!play) return false;
+  if (play.market === 'NONE' || play.pick === 'NO PLAY') return false;
+
+  const officialStatus = play.decision_v2?.official_status;
+  if (officialStatus) {
+    return officialStatus === 'PLAY' || officialStatus === 'LEAN';
+  }
+
+  const displayAction = getPlayDisplayAction(play);
+  return displayAction === 'FIRE' || displayAction === 'HOLD';
+}
+
 /**
  * Filter games with picks only
  */
 function filterByHasPicks(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.onlyGamesWithPicks) return true;
-
-  const displayAction = getPlayDisplayAction(card.play);
-  return (
-    displayAction !== 'PASS' &&
-    card.play !== undefined &&
-    card.play.market !== 'NONE' &&
-    card.play.pick !== 'NO PLAY'
-  );
+  return hasActionablePlayCall(card);
 }
 
 /**
@@ -464,14 +471,7 @@ function filterByWelcomeHome(
  */
 function filterByClearPlay(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.hasClearPlay) return true;
-
-  const displayAction = getPlayDisplayAction(card.play);
-  return (
-    displayAction !== 'PASS' &&
-    card.play !== undefined &&
-    card.play.market !== 'NONE' &&
-    card.play.pick !== 'NO PLAY'
-  );
+  return hasActionablePlayCall(card);
 }
 
 function filterByTotalProjection(

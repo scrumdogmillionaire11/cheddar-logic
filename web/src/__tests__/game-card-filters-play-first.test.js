@@ -18,22 +18,23 @@ assert(
 );
 
 assert(
-  source.includes("if (playMarket && playMarket !== 'NONE')"),
+  /if\s*\(\s*playMarket\s*&&\s*playMarket\s*!==\s*'NONE'\s*&&\s*filters\.markets\.includes\(playMarket\)\s*\)/.test(
+    source,
+  ),
   'filters.ts should short-circuit market filtering on play.market',
 );
 
 assert(
-  source.includes(
-    'return card.drivers.some(d => filters.markets.includes(d.market));',
+  /return\s+card\.drivers\.some\(\(d\)\s*=>\s*filters\.markets\.includes\(d\.market\)\);/.test(
+    source,
   ),
   'filters.ts should keep driver-market fallback when play is missing',
 );
 
 assert(
-  source.includes(
-    "let status: ExpressionStatus = card.play?.status || card.expressionChoice?.status || 'PASS';",
-  ),
-  'filters.ts should use play.status before expressionChoice/driver-derived status',
+  source.includes('const displayAction = getPlayDisplayAction(card.play);') &&
+    source.includes("if (!displayAction || displayAction === 'PASS')"),
+  'filters.ts should derive status from play display action before legacy fallbacks',
 );
 
 console.log('✅ Play-first filter source tests passed');

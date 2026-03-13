@@ -531,16 +531,18 @@ function getLifecycleAwareFilters(
     return filters;
   }
 
-  const statuses: ExpressionStatus[] = filters.statuses.includes('PASS')
-    ? filters.statuses
-    : [...filters.statuses, 'PASS'];
+  const statusesWithoutPass = filters.statuses.filter(
+    (status) => status !== 'PASS',
+  );
+  const statuses: ExpressionStatus[] =
+    statusesWithoutPass.length > 0 ? statusesWithoutPass : ['FIRE', 'WATCH'];
 
   return {
     ...filters,
     statuses,
     markets: [],
     onlyGamesWithPicks: false,
-    hasClearPlay: false,
+    hasClearPlay: true,
   };
 }
 

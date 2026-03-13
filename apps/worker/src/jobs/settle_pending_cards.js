@@ -576,13 +576,16 @@ function backfillDisplayedPlaysFromPayloads(db) {
 
   for (const row of candidateRows) {
     const payloadData = parseJsonObject(row.payload_data) || {};
+    const pickId = row.pick_id == null ? '' : String(row.pick_id).trim();
+    const gameId = row.game_id == null ? '' : String(row.game_id).trim();
+    if (!pickId || !gameId) continue;
     const marketType = normalizeBackfillMarketType(
       row.market_type_token || payloadData?.market_type,
     );
     const candidate = {
-      pickId: String(row.pick_id),
+      pickId,
       runId: row.run_id == null || row.run_id === '' ? null : String(row.run_id),
-      gameId: String(row.game_id),
+      gameId,
       sport: toBackfillUpperToken(row.sport),
       marketType,
       selection: resolveBackfillSelection(payloadData, row.selection),
@@ -605,7 +608,7 @@ function backfillDisplayedPlaysFromPayloads(db) {
   }
 
   const insertStmt = db.prepare(`
-    INSERT INTO card_display_log (
+    INSERT OR IGNORE INTO card_display_log (
       pick_id,
       run_id,
       game_id,
@@ -635,7 +638,7 @@ function backfillDisplayedPlaysFromPayloads(db) {
       api_endpoint = '/api/games'
     WHERE id = ?
   `);
-  const existingByPartitionStmt = db.prepare(`
+  const existingByPartitionWithRunStmt = db.prepare(`
     SELECT
       id,
       pick_id,
@@ -648,7 +651,24 @@ function backfillDisplayedPlaysFromPayloads(db) {
       displayed_at
     FROM card_display_log
     WHERE game_id = ?
-      AND ((? IS NULL AND run_id IS NULL) OR run_id = ?)
+      AND run_id = ?
+    ORDER BY datetime(displayed_at) DESC, id DESC
+    LIMIT 1
+  `);
+  const existingByPartitionNoRunStmt = db.prepare(`
+    SELECT
+      id,
+      pick_id,
+      sport,
+      market_type,
+      selection,
+      line,
+      odds,
+      confidence_pct,
+      displayed_at
+    FROM card_display_log
+    WHERE game_id = ?
+      AND run_id IS NULL
     ORDER BY datetime(displayed_at) DESC, id DESC
     LIMIT 1
   `);
@@ -661,25 +681,46 @@ function backfillDisplayedPlaysFromPayloads(db) {
 
   let changes = 0;
   for (const { candidate, rankContext } of bestByPartition.values()) {
-    const incumbent = existingByPartitionStmt.get(
-      candidate.gameId,
-      candidate.runId,
-      candidate.runId,
-    );
+    const partitionRunId =
+      candidate.runId == null ? null : String(candidate.runId);
+    const lookupArgs =
+      partitionRunId === null
+        ? [candidate.gameId]
+        : [candidate.gameId, partitionRunId];
+    if (lookupArgs.some((value) => value === undefined)) {
+      continue;
+    }
+
+    let incumbent = null;
+    try {
+      incumbent =
+        partitionRunId === null
+          ? existingByPartitionNoRunStmt.get(candidate.gameId)
+          : existingByPartitionWithRunStmt.get(candidate.gameId, partitionRunId);
+    } catch (lookupError) {
+      console.warn(
+        `[SettleCards] Display backfill partition lookup failed for ${candidate.pickId}; proceeding without incumbent comparison (${lookupError.message})`,
+      );
+      incumbent = null;
+    }
 
     if (!incumbent) {
-      const inserted = insertStmt.run(
+      const insertArgs = [
         candidate.pickId,
-        candidate.runId,
+        candidate.runId ?? null,
         candidate.gameId,
         candidate.sport,
         candidate.marketType,
         candidate.selection,
-        candidate.line,
-        candidate.odds,
+        candidate.line ?? null,
+        candidate.odds ?? null,
         toBackfillConfidencePct(candidate.payloadData, candidate.confidencePct),
-        candidate.displayedAt,
-      );
+        candidate.displayedAt ?? new Date().toISOString(),
+      ];
+      if (insertArgs.some((value) => value === undefined)) {
+        continue;
+      }
+      const inserted = insertStmt.run(...insertArgs);
       changes += Number(inserted?.changes || 0);
       continue;
     }
@@ -709,17 +750,21 @@ function backfillDisplayedPlaysFromPayloads(db) {
       continue;
     }
 
-    const updated = updateStmt.run(
+    const updateArgs = [
       candidate.pickId,
       candidate.sport,
       candidate.marketType,
       candidate.selection,
-      candidate.line,
-      candidate.odds,
+      candidate.line ?? null,
+      candidate.odds ?? null,
       toBackfillConfidencePct(candidate.payloadData, candidate.confidencePct),
-      candidate.displayedAt,
+      candidate.displayedAt ?? new Date().toISOString(),
       incumbent.id,
-    );
+    ];
+    if (updateArgs.some((value) => value === undefined)) {
+      continue;
+    }
+    const updated = updateStmt.run(...updateArgs);
     changes += Number(updated?.changes || 0);
   }
 
