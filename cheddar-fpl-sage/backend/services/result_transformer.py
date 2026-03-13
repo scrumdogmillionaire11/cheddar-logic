@@ -1187,7 +1187,7 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         "fixture_planner_reason": fixture_planner_reason,
         "no_transfer_reason": decision_dict.get("no_transfer_reason"),
     }
-    
+
     # Captain and vice captain with delta calculation
     captaincy = decision_dict.get("captaincy", {})
     if captaincy:

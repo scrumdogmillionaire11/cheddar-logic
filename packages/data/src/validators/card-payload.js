@@ -29,6 +29,93 @@ const driverPayloadSchema = basePayloadSchema.extend({
   })
 });
 
+const nullableNumber = z.number().nullable();
+
+const soccerPayloadSchema = basePayloadSchema.extend({
+  kind: z.literal('PLAY'),
+  market_type: z.literal('MONEYLINE'),
+  period: z.enum(['FULL_GAME', 'REGULATION']).optional(),
+  recommended_bet_type: z.literal('moneyline'),
+  selection: z.object({
+    side: z.enum(['HOME', 'AWAY']),
+    team: z.string().min(1),
+  }),
+  price: z.number().int(),
+  line: z.null().optional(),
+  recommendation: z.object({
+    type: z.enum(['ML_HOME', 'ML_AWAY']),
+    text: z.string().min(1),
+    pass_reason: z.null().optional(),
+  }),
+  drivers_active: z.array(z.string().min(1)).min(1),
+  projection: z.object({
+    total: nullableNumber.optional(),
+    margin_home: nullableNumber.optional(),
+    win_prob_home: nullableNumber.optional(),
+  }),
+  projection_context: z.object({
+    source: z.string().min(1),
+    available: z.boolean(),
+    unsupported_projection_fields: z.array(z.string()).optional(),
+    missing_fields: z.array(z.string()),
+    fallback_mode: z.string().nullable().optional(),
+  }),
+  market_context: z
+    .object({
+      version: z.string().optional(),
+      market_type: z.literal('MONEYLINE'),
+      period: z.string().optional(),
+      selection_side: z.enum(['HOME', 'AWAY']).optional(),
+      selection_team: z.string().min(1).nullable().optional(),
+      projection: z
+        .object({
+          total: nullableNumber.optional(),
+          margin_home: nullableNumber.optional(),
+          win_prob_home: nullableNumber.optional(),
+        })
+        .partial()
+        .optional(),
+      wager: z
+        .object({
+          called_line: z.null().optional(),
+          called_price: z.number().int().nullable().optional(),
+          line_source: z.string().nullable().optional(),
+          price_source: z.string().nullable().optional(),
+          period: z.string().optional(),
+        })
+        .partial()
+        .optional(),
+    })
+    .partial()
+    .optional(),
+  odds_context: z.object({
+    h2h_home: z.number(),
+    h2h_away: z.number(),
+    captured_at: z.string().optional(),
+  }).passthrough(),
+  meta: z.object({
+    inference_source: z.string().min(1),
+    model_endpoint: z.string().nullable().optional(),
+    is_mock: z.boolean(),
+    hardening_version: z.string().optional(),
+    league_context: z.string().optional(),
+    missing_context_fields: z.array(z.string()),
+  }).passthrough(),
+}).superRefine((payload, ctx) => {
+  if (
+    payload.recommended_bet_type === 'unknown' ||
+    payload.recommended_bet_type === 'spread' ||
+    payload.recommended_bet_type === 'total' ||
+    payload.recommended_bet_type === 'puck_line'
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['recommended_bet_type'],
+      message: 'soccer-model-output must not use placeholder/non-moneyline bet types',
+    });
+  }
+});
+
 const schemaByCardType = {
   // Active NHL driver + evidence cards
   'nhl-goalie': driverPayloadSchema,
@@ -73,8 +160,8 @@ const schemaByCardType = {
   'ncaam-ft-trend': driverPayloadSchema,
   'ncaam-ft-spread': driverPayloadSchema,
 
-  // Active single-card model output jobs that still validate against base schema
-  'soccer-model-output': basePayloadSchema,
+  // Active single-card model output jobs
+  'soccer-model-output': soccerPayloadSchema,
   'mlb-model-output': basePayloadSchema,
   'nfl-model-output': basePayloadSchema,
   'fpl-model-output': basePayloadSchema,
