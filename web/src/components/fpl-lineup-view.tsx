@@ -14,6 +14,19 @@ interface FPLLineupViewProps {
 const formatPts = (value?: number) =>
   value === undefined || value === null ? '-' : value.toFixed(1);
 
+const parseNumeric = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
 const POSITION_ORDER = ['GK', 'DEF', 'MID', 'FWD'] as const;
 
 const groupByPosition = (players: PlayerProjection[]) => {
@@ -60,8 +73,11 @@ const renderPlayerRow = (
   player: PlayerProjection,
   index: number,
   isTransferOut?: boolean,
-) => (
-  <div
+) => {
+  const ownership = parseNumeric(player.ownership);
+  const price = parseNumeric(player.price);
+  return (
+    <div
     key={`${player.name}-${index}`}
     className={`flex items-center justify-between rounded-lg border px-4 py-2 ${
       player.is_new
@@ -87,28 +103,32 @@ const renderPlayerRow = (
       </div>
       <div className="text-xs text-cloud/60">
         {player.team} · {player.position}
-        {player.price && <span className="ml-2">£{player.price}m</span>}
+        {price !== null && <span className="ml-2">£{price}m</span>}
       </div>
     </div>
     <div className="text-right">
       <div className="text-sm font-semibold text-cloud/70">
         {formatPts(player.expected_pts)} pts
       </div>
-      {player.ownership !== undefined && (
+      {ownership !== null && (
         <div className="text-xs text-cloud/50">
-          {player.ownership.toFixed(1)}% own
+          {ownership.toFixed(1)}% own
         </div>
       )}
     </div>
   </div>
-);
+  );
+};
 
 const renderPitchPlayerCard = (
   player: PlayerProjection,
   index: number,
   isTransferOut?: boolean,
-) => (
-  <div
+) => {
+  const ownership = parseNumeric(player.ownership);
+  const price = parseNumeric(player.price);
+  return (
+    <div
     key={`${player.name}-${index}`}
     className={`w-[132px] rounded-lg border px-3 py-2 text-center shadow-sm sm:w-[168px] sm:px-4 sm:py-3 ${
       player.is_new
@@ -128,11 +148,12 @@ const renderPitchPlayerCard = (
       {formatPts(player.expected_pts)} pts
     </div>
     <div className="mt-1 text-[11px] text-cloud/55 sm:text-xs">
-      {player.price !== undefined ? `£${player.price}m` : '-'} |{' '}
-      {player.ownership !== undefined ? `${player.ownership.toFixed(1)}% own` : '-'}
+      {price !== null ? `£${price}m` : '-'} |{' '}
+      {ownership !== null ? `${ownership.toFixed(1)}% own` : '-'}
     </div>
   </div>
-);
+  );
+};
 
 export default function FPLLineupView({
   currentStarting,
@@ -257,7 +278,7 @@ export default function FPLLineupView({
             </div>
             <div className="text-xs text-cloud/50">
               {displayStarting
-                .reduce((sum, p) => sum + (p.expected_pts || 0), 0)
+                .reduce((sum, p) => sum + (parseNumeric(p.expected_pts) ?? 0), 0)
                 .toFixed(1)}{' '}
               pts
             </div>
@@ -335,7 +356,7 @@ export default function FPLLineupView({
             </div>
             <div className="text-xs text-cloud/50">
               {displayBench
-                .reduce((sum, p) => sum + (p.expected_pts || 0), 0)
+                .reduce((sum, p) => sum + (parseNumeric(p.expected_pts) ?? 0), 0)
                 .toFixed(1)}{' '}
               pts
             </div>

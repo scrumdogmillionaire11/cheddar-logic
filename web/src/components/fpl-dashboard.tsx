@@ -29,6 +29,15 @@ const parseNumeric = (value: unknown): number | null => {
   return null;
 };
 
+const formatFixed = (
+  value: unknown,
+  digits: number,
+  fallback = '-',
+): string => {
+  const parsed = parseNumeric(value);
+  return parsed === null ? fallback : parsed.toFixed(digits);
+};
+
 const parsePointsFromRationale = (value: unknown): number | null => {
   if (typeof value !== 'string') {
     return null;
@@ -146,10 +155,10 @@ const renderTransferPlan = (label: string, plan: TransferPlan) => (
       <span>
         Net: {plan.net_cost > 0 ? `+£${plan.net_cost}m` : `${plan.net_cost}m`}
       </span>
-      {plan.delta_pts_4gw !== undefined && (
+      {parseNumeric(plan.delta_pts_4gw) !== null && (
         <span>
-          Δ 4GW: {plan.delta_pts_4gw > 0 ? '+' : ''}
-          {plan.delta_pts_4gw.toFixed(1)} pts
+          Δ 4GW: {(parseNumeric(plan.delta_pts_4gw) ?? 0) > 0 ? '+' : ''}
+          {formatFixed(plan.delta_pts_4gw, 1)} pts
         </span>
       )}
     </div>
@@ -201,7 +210,7 @@ const renderFixtureWindowTable = (
                   {window.summary.next_dgw_gw ?? '-'}
                 </td>
                 <td className="px-2 py-2">
-                  {window.summary.weighted_fixture_score.toFixed(3)}
+                  {formatFixed(window.summary.weighted_fixture_score, 3)}
                 </td>
                 {window.upcoming.map((upcoming) => (
                   <td
@@ -347,7 +356,7 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
                 Squad Health
               </div>
               <div className="text-lg font-semibold text-cloud">
-                {data.squad_health.health_pct.toFixed(0)}%
+                {formatFixed(data.squad_health.health_pct, 0)}%
               </div>
             </div>
           )}
