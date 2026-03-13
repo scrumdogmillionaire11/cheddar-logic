@@ -65,9 +65,9 @@
       "Bash(grep -n \"recommended_bet_type\" packages/data/db/migrations/*.sql)",
       "Bash(git add apps/worker/src/jobs/resettle_historical_cards.js apps/worker/package.json web/src/app/api/results/route.ts)",
       "Bash(git push)",
-      "Bash(git add cheddar-web.service .github/workflows/deploy-production.yml)",
+      "Bash(git add deploy/systemd/cheddar-web.service .github/workflows/deploy-production.yml)",
       "Bash(git add .github/workflows/deploy-production.yml)",
-      "Bash(git add .github/workflows/deploy-production.yml cheddar-web.service)",
+      "Bash(git add .github/workflows/deploy-production.yml deploy/systemd/cheddar-web.service)",
       "Write(//Users/ajcolubiale/projects/cheddar-logic/**)",
       "Bash(cd /Users/ajcolubiale/projects/cheddar-logic && :*)",
       "Read(//Users/ajcolubiale/projects/cheddar-logic/**)" 

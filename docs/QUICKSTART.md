@@ -1,4 +1,4 @@
-# QUICKSTART.md
+# docs/QUICKSTART.md
 
 ## Automated Setup (Recommended)
 

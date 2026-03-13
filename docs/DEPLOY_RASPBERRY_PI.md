@@ -18,7 +18,7 @@ Self-host the entire stack on your Pi using PM2, nginx, and systemd.
 All services run on the Pi:
 - **Web (Next.js)**: Port 3000, managed by PM2
 - **FPL Backend (FastAPI)**: Port 8000, managed by PM2
-- **Worker**: Managed by systemd (`cheddar-worker.service`)
+- **Worker**: Managed by systemd (`deploy/systemd/cheddar-worker.service`)
 - **Nginx**: Reverse proxy + SSL (ports 80/443)
 - **SQLite**: Local database at `/opt/cheddar-logic/packages/data/cheddar.db`
 
@@ -230,7 +230,7 @@ pm2 logs cheddar-fpl-api --lines 50
 
 ```bash
 # Copy service file
-sudo cp /opt/cheddar-logic/cheddar-worker.service /etc/systemd/system/
+sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker.service /etc/systemd/system/
 
 # Edit paths if needed
 sudo nano /etc/systemd/system/cheddar-worker.service
