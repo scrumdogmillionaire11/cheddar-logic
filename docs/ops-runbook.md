@@ -669,6 +669,144 @@ sqlite3 "$CHEDDAR_DB_PATH" "SELECT status, COUNT(*) FROM card_results GROUP BY s
 sqlite3 "$CHEDDAR_DB_PATH" "SELECT status, COUNT(*) FROM game_results GROUP BY status;"
 ```
 
+### Main DB Corruption Recovery
+
+Covers `database disk image is malformed` on the production main SQLite DB (`CHEDDAR_DB_PATH`). This incident workflow is containment-first: stop writes, preserve evidence, repair, verify, then restart.
+
+**Symptoms:**
+
+- Worker or web logs show: `database disk image is malformed`
+- `bash scripts/db-context.sh` reports the DB path but sqlite3 table counts fail or return errors
+- `./scripts/manage-scheduler.sh db` may show path drift or unexpected scheduler DB
+- `sqlite3 "$CHEDDAR_DB_PATH" "PRAGMA integrity_check;"` returns anything other than `ok`
+
+**Recovery Procedure:**
+
+**Step 1 — Stop the worker** (single-writer contract: no writes during repair):
+
+```bash
+sudo systemctl stop cheddar-worker
+sudo systemctl status cheddar-worker   # confirm stopped
+```
+
+**Step 2 — Load production env** so `$CHEDDAR_DB_PATH` is set:
+
+```bash
+set -a; source /opt/cheddar-logic/.env.production; set +a
+echo "DB path: $CHEDDAR_DB_PATH"
+```
+
+**Step 3 — Run diagnostics** to confirm corruption and identify owner:
+
+```bash
+# Identify process currently holding the DB open (should be empty after stop)
+lsof "$CHEDDAR_DB_PATH" 2>/dev/null || echo "No open handles"
+
+# Run integrity check
+sqlite3 "$CHEDDAR_DB_PATH" "PRAGMA integrity_check;"
+# Output other than "ok" confirms corruption
+
+# Full diagnostic snapshot
+bash scripts/db-context.sh
+./scripts/manage-scheduler.sh db
+```
+
+**Step 4 — Preserve the corrupt DB** with a timestamped backup BEFORE any repair:
+
+```bash
+cp "$CHEDDAR_DB_PATH" "${CHEDDAR_DB_PATH}.corrupt.$(date +%Y%m%d-%H%M%S)"
+echo "Backed up corrupt DB"
+```
+
+**Step 5 — Choose recovery path:**
+
+*Option A: Restore from daily backup* (preferred if a recent clean backup exists):
+
+```bash
+BACKUP_DIR="$(dirname "$CHEDDAR_DB_PATH")/backups"
+ls -lt "$BACKUP_DIR"/cheddar-*.db | head -5   # find latest backup
+# Pick the newest backup that pre-dates the corruption
+LATEST_BACKUP="$BACKUP_DIR/cheddar-YYYYMMDD.db"   # substitute actual filename
+sqlite3 "$LATEST_BACKUP" "PRAGMA integrity_check;"   # verify backup is healthy
+cp "$LATEST_BACKUP" "$CHEDDAR_DB_PATH"
+echo "Restored from: $LATEST_BACKUP"
+```
+
+*Option B: Attempt SQLite dump-and-restore* (partial recovery if no clean backup):
+
+```bash
+# Dump recoverable rows to SQL (corrupt pages produce errors but may yield partial data)
+sqlite3 "$CHEDDAR_DB_PATH" ".recover" > /tmp/cheddar-recover.sql 2>/tmp/cheddar-recover.err
+# Review errors
+cat /tmp/cheddar-recover.err
+
+# Rebuild from dump
+sqlite3 /tmp/cheddar-recovered.db < /tmp/cheddar-recover.sql
+sqlite3 /tmp/cheddar-recovered.db "PRAGMA integrity_check;"
+cp /tmp/cheddar-recovered.db "$CHEDDAR_DB_PATH"
+```
+
+*Option C: Controlled rebuild* (last resort — loses historical data):
+
+```bash
+# Run migrations to create a fresh schema
+set -a; source /opt/cheddar-logic/.env.production; set +a
+npm --prefix /opt/cheddar-logic/packages/data run migrate
+# Data will be empty; worker will repopulate via scheduled jobs
+```
+
+**Step 6 — Verify integrity** of the restored/rebuilt DB:
+
+```bash
+sqlite3 "$CHEDDAR_DB_PATH" "PRAGMA integrity_check;"
+# Must output: ok
+
+# Confirm expected tables and minimum row counts
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT COUNT(*) AS card_payloads  FROM card_payloads;"
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT COUNT(*) AS odds_snapshots FROM odds_snapshots;"
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT COUNT(*) AS game_results   FROM game_results;"
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT COUNT(*) AS card_results   FROM card_results;"
+```
+
+**Step 7 — Restart services** in single-writer order (worker first, then web):
+
+```bash
+sudo systemctl start cheddar-worker
+sleep 5
+sudo systemctl status cheddar-worker
+
+sudo systemctl restart cheddar-web
+sleep 5
+sudo systemctl status cheddar-web
+```
+
+**Step 8 — Post-recovery smoke checks:**
+
+```bash
+# Confirm both services use canonical DB path
+sudo systemctl show cheddar-worker -p Environment | grep CHEDDAR_DB_PATH
+sudo systemctl show cheddar-web -p Environment | grep CHEDDAR_DB_PATH
+
+# DB reads healthy from web side
+curl -s http://localhost:3000/api/games?limit=1 | head -20
+
+# Worker is writing (check recent job_runs after a few minutes)
+sqlite3 "$CHEDDAR_DB_PATH" "SELECT job_name, started_at, status FROM job_runs ORDER BY started_at DESC LIMIT 5;"
+```
+
+**Key Guardrails:**
+
+> **NEVER** skip the timestamped corrupt backup (Step 4). It is required for post-incident forensics.
+>
+> **NEVER** start `cheddar-web` before `cheddar-worker` completes its first clean write cycle — web is read-only and must not race against an empty DB.
+>
+> **Do NOT** enable `CHEDDAR_DB_ALLOW_MULTI_PROCESS=true` in production as a workaround — this bypasses the single-writer contract (ADR-0002).
+>
+> If corruption recurs, check disk space on `/opt/data` and review `journalctl` for I/O errors suggesting hardware or power-loss events.
+
+---
+
 ### FPL Sage Database Corruption Recovery
 
 The FPL Sage service uses a **separate SQLite database** from the main Cheddar Logic DB. If corruption is detected, the worker job will fail with a detailed error message.
