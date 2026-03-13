@@ -1607,6 +1607,14 @@ export default function CardsPageClient() {
     return value >= 0 ? `+${fixed}` : fixed;
   };
 
+  const formatProjectedMarginDirectional = (
+    projectedMargin: number | undefined,
+  ) => {
+    if (typeof projectedMargin !== 'number') return 'N/A';
+    const favoredSide = projectedMargin >= 0 ? 'HOME' : 'AWAY';
+    return `${favoredSide} by ${Math.abs(projectedMargin).toFixed(1)}`;
+  };
+
   const normalizeSelectionSide = (
     side: string | null | undefined,
   ): 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | undefined => {
@@ -1669,11 +1677,20 @@ export default function CardsPageClient() {
     line: number | undefined,
     reasonCode: string | undefined,
     edgePctValue: number | undefined,
+    marketType: string | undefined,
+    projectedMargin: number | undefined,
   ): string | null => {
     // Must have projection to show anything
     if (typeof projection !== 'number') {
       return null;
     }
+
+    const isSpreadLikeMarket =
+      marketType === 'SPREAD' || marketType === 'PUCKLINE';
+    const spreadProjectedLabel =
+      isSpreadLikeMarket && typeof projectedMargin === 'number'
+        ? `Projected: ${formatProjectedMarginDirectional(projectedMargin)}`
+        : `Projected: ${projection.toFixed(1)}`;
 
     // If we have both projection and line, compute percent and show full sentence
     if (typeof line === 'number' && Math.abs(line) > 0.001) {
@@ -1688,16 +1705,16 @@ export default function CardsPageClient() {
 
       if (shouldShowPercent) {
         const wholePercent = Math.round(projectedPercent);
-        return `Projected: ${projection.toFixed(1)} (${wholePercent}% beyond line)`;
+        return `${spreadProjectedLabel} (${wholePercent}% beyond line)`;
       } else {
         // Fallback without percent
-        return `Projected: ${projection.toFixed(1)}`;
+        return spreadProjectedLabel;
       }
     }
 
     // Only projection, no line (edge case, but graceful)
     if (typeof projection === 'number') {
-      return `Projected: ${projection.toFixed(1)}`;
+      return spreadProjectedLabel;
     }
 
     return null;
@@ -2619,6 +2636,8 @@ export default function CardsPageClient() {
                       marketLineValue,
                       primaryReasonCode,
                       effectiveEdgePct,
+                      marketType,
+                      projectedMargin,
                     );
 
                     if (projectedSentence) {
@@ -2681,46 +2700,17 @@ export default function CardsPageClient() {
                   Market Math
                 </summary>
                 <div className="mt-2">
-                  {hasEdgeMathContext && (
-                    <>
-                      <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
-                      <span className="text-cloud/60">
-                        Fair{' '}
-                        <span className="text-cloud/90 font-bold">
-                          {(resolvedModelProb * 100).toFixed(1)}%
-                        </span>
-                      </span>
-                      <span className="text-cloud/40">→</span>
-                      <span className="text-cloud/60">
-                        Implied{' '}
-                        <span className="text-cloud/90 font-bold">
-                          {(resolvedImpliedProb * 100).toFixed(1)}%
-                        </span>
-                      </span>
-                      <span className="text-cloud/40">→</span>
-                      <span className="text-cloud/60">
-                        Edge{' '}
-                        <span
-                          className={`font-bold ${effectiveEdgePct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
-                        >
-                          {effectiveEdgePct >= 0 ? '+' : ''}
-                          {(effectiveEdgePct * 100).toFixed(1)}%
-                        </span>
-                      </span>
-                    </div>
-                    <p className="text-xs text-cloud/50 mt-1">
-                      {resolvedDecisionV2?.edge_method === 'MARGIN_DELTA'
-                        ? 'Margin Delta vs Spread Line'
-                        : resolvedDecisionV2?.edge_method === 'TOTAL_DELTA'
-                          ? 'Total Delta vs O/U Line'
-                          : 'Win Prob vs ML Odds'}
-                    </p>
-                  </>
-                )}
                 {shouldRenderSpreadContext && (
                   <div className="flex items-center gap-4 text-xs font-mono flex-wrap mt-2">
                     <span className="text-cloud/60">
                       Projected margin{' '}
+                      <span className="text-cloud/90 font-bold">
+                        {formatProjectedMarginDirectional(projectedMargin)}
+                      </span>
+                    </span>
+                    <span className="text-cloud/40">|</span>
+                    <span className="text-cloud/60">
+                      Margin math (HOME - AWAY){' '}
                       <span className="text-cloud/90 font-bold">
                         {typeof projectedMargin === 'number'
                           ? formatSignedDecimal(projectedMargin)
@@ -2812,24 +2802,25 @@ export default function CardsPageClient() {
                   </div>
                 )}
                 {hasOnePeriodTotalContext && (
-                  <div className="flex items-center gap-4 text-xs font-mono flex-wrap mt-2">
-                    <span className="text-cloud/60">
-                      1P projection{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {typeof projectedTotal1p === 'number'
-                          ? projectedTotal1p.toFixed(2)
-                          : 'N/A'}
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+                      <span className="text-cloud/60">
+                        1P projection{' '}
+                        <span className="text-cloud/90 font-bold">
+                          {typeof projectedTotal1p === 'number'
+                            ? projectedTotal1p.toFixed(2)
+                            : 'N/A'}
+                        </span>
                       </span>
-                    </span>
-                    <span className="text-cloud/40">|</span>
-                    <span className="text-cloud/60">
-                      1P Call{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {onePModelCall ?? 'PASS'}
+                      <span className="text-cloud/40">|</span>
+                      <span className="text-cloud/60">
+                        1P Call{' '}
+                        <span className="text-cloud/90 font-bold">
+                          {onePModelCall ?? 'PASS'}
+                        </span>
                       </span>
-                    </span>
-                    <span className="text-cloud/40">|</span>
-                    <span className="text-cloud/60">
+                    </div>
+                    <div className="text-xs font-mono text-cloud/60">
                       Goalie context{' '}
                       <span className="text-cloud/90 font-bold">
                         {goalieContextNames.length > 0
@@ -2838,18 +2829,16 @@ export default function CardsPageClient() {
                             ? 'Uncertain (PASS-capped)'
                             : 'Stable'}
                       </span>
-                    </span>
-                    {goalieContextStatuses.length > 0 && (
-                      <>
-                        <span className="text-cloud/40">|</span>
-                        <span className="text-cloud/60">
+                      {goalieContextStatuses.length > 0 && (
+                        <>
+                          <span className="text-cloud/40"> | </span>
                           Status{' '}
                           <span className="text-cloud/90 font-bold">
                             {goalieContextStatuses.join(' / ')}
                           </span>
-                        </span>
-                      </>
-                    )}
+                        </>
+                      )}
+                    </div>
                   </div>
                 )}
                 {typeof projectedScoreHome === 'number' &&
