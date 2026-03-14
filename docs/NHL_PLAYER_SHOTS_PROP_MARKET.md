@@ -32,12 +32,35 @@ Run in this order before each NHL card cycle:
 3. `npm --prefix apps/worker run job:pull-nhl-player-shots-props` — fetch real prop lines
 4. `npm --prefix apps/worker run job:run-nhl-player-shots-model` — generate cards
 
+## Injury Check
+
+`pull_nhl_player_shots` checks each player's availability status from the NHL API landing payload before fetching shot logs. Players with a status field containing any of `"injur"`, `"IR"`, `"LTIR"`, `"scratch"`, `"suspend"`, or `"inactive"` (case-insensitive) are skipped and logged by name and reason:
+
+```
+[NHLPlayerShots] Skipping Connor McDavid (8478402): status=injured
+```
+
+Two payload fields are inspected (in priority order):
+
+1. `payload.status` — direct status string on the player object
+2. `payload.currentTeamRoster.statusCode` — roster-level status code
+
+`NHL_SOG_EXCLUDE_PLAYER_IDS` provides a manual override that skips players before the status check. If neither status field is present in the API response the player proceeds normally (fail-open behavior — the pull job never silently skips players due to missing fields).
+
+## 1P Cards
+
+First-period SOG cards are disabled by default. The Odds API does not consistently offer `player_shots_on_goal_1p` lines, so 1P cards almost always use the synthetic fallback line. Enable 1P card generation only when 1P lines are confirmed available via `NHL_SOG_1P_CARDS_ENABLED=true`.
+
+When enabled, a card is created for HOT or WATCH first-period edges (same thresholds as full-game). When disabled, the 1P classifyEdge call is still made internally but no card is inserted.
+
 ## Environment Variables
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `ODDS_API_KEY` | Yes | — | The Odds API key |
 | `NHL_SOG_PLAYER_IDS` | Yes | — | Comma-separated player IDs to track |
+| `NHL_SOG_EXCLUDE_PLAYER_IDS` | No | — | Comma-separated player IDs to skip (manual override — takes precedence over injury check) |
+| `NHL_SOG_1P_CARDS_ENABLED` | No | `false` | Set to `'true'` to enable 1P card generation (default: false — 1P Odds API market is unreliable) |
 | `NHL_SOG_PROP_EVENTS_ENABLED` | No | `false` | Must be `true` to enable prop line fetching |
 | `NHL_SOG_SLEEP_MS` | No | `500` | Sleep between player log fetches (rate limit guard) |
 | `NHL_SOG_PROP_SLEEP_MS` | No | `1000` | Sleep between event prop fetches (rate limit guard) |
