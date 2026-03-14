@@ -71,6 +71,19 @@ const ACTIVE_EXCLUDED_STATUSES = [
   'FT',
 ];
 
+const CORE_RUN_STATE_SPORTS = [
+  'nba',
+  'nhl',
+  'ncaam',
+  'soccer',
+  'mlb',
+  'nfl',
+  'fpl',
+] as const;
+const CORE_RUN_STATE_SPORT_SQL = CORE_RUN_STATE_SPORTS.map(
+  (sport) => `'${sport}'`,
+).join(', ');
+
 function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
   const lifecycleParam = (searchParams.get('lifecycle') || '').toLowerCase();
   if (lifecycleParam === 'active') return 'active';
@@ -132,6 +145,7 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
         `SELECT rs.current_run_id
          FROM run_state rs
          WHERE id != 'singleton'
+           AND LOWER(COALESCE(rs.sport, rs.id, '')) IN (${CORE_RUN_STATE_SPORT_SQL})
            AND rs.current_run_id IS NOT NULL
            AND TRIM(rs.current_run_id) != ''
            AND EXISTS (
@@ -149,12 +163,13 @@ function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
 
     const sportRows = db
       .prepare(
-        `SELECT current_run_id
-         FROM run_state
-         WHERE id != 'singleton'
-           AND current_run_id IS NOT NULL
-           AND TRIM(current_run_id) != ''
-         ORDER BY datetime(updated_at) DESC, id ASC`,
+        `SELECT rs.current_run_id
+         FROM run_state rs
+         WHERE rs.id != 'singleton'
+           AND LOWER(COALESCE(rs.sport, rs.id, '')) IN (${CORE_RUN_STATE_SPORT_SQL})
+           AND rs.current_run_id IS NOT NULL
+           AND TRIM(rs.current_run_id) != ''
+         ORDER BY datetime(rs.updated_at) DESC, rs.id ASC`,
       )
       .all() as Array<{ current_run_id: string }>;
     if (sportRows.length > 0) {

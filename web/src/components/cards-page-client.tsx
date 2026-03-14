@@ -23,6 +23,7 @@ import type {
   DriverRow,
   DriverTier,
   ExpressionStatus,
+  FtTrendContextDisplay,
   GameCard,
   Market,
   SupportGrade,
@@ -409,6 +410,17 @@ interface ApiResponse {
 
 type LifecycleMode = 'pregame' | 'active';
 
+function hasActionablePlay(game: GameData): boolean {
+  if (!Array.isArray(game.plays) || game.plays.length === 0) return false;
+  return game.plays.some((play) => {
+    const kind = (play.kind ?? 'PLAY') === 'PLAY';
+    const side = play.selection?.side?.toUpperCase() ?? '';
+    const hasSelection = side !== '' && side !== 'NONE';
+    const hasNonNeutralPrediction = play.prediction !== 'NEUTRAL';
+    return kind && hasSelection && hasNonNeutralPrediction;
+  });
+}
+
 type DecisionPolarity = 'pro' | 'contra' | 'neutral';
 
 type DecisionContributor = {
@@ -512,11 +524,7 @@ function resolveLifecycleModeFromUrlAndStorage(): LifecycleMode {
     window.sessionStorage.setItem(LIFECYCLE_SESSION_KEY, urlMode);
     return urlMode;
   }
-
-  const storedMode = parseLifecycleMode(
-    window.sessionStorage.getItem(LIFECYCLE_SESSION_KEY),
-  );
-  return storedMode ?? 'pregame';
+  return 'pregame';
 }
 
 function getLifecycleAwareFilters(
@@ -557,39 +565,18 @@ type FtTrendInsight = {
 
 function extractFtTrendInsight(card: GameCard): FtTrendInsight | null {
   const ftDriver = card.drivers.find(
-    (driver) =>
-      driver.cardType === 'ncaam-ft-trend' ||
-      driver.cardType === 'ncaam-ft-spread',
+    (driver) => driver.cardType === 'ncaam-ft-trend',
   );
   if (!ftDriver) return null;
 
   const context = ftDriver.ftTrendContext;
 
-  const match = ftDriver.note.match(
-    /FT% edge \(([\d.]+)\s+vs\s+([\d.]+)\) with total ([\d.]+)/i,
-  );
-  const parsedHomePct = match ? Number(match[1]) : null;
-  const parsedAwayPct = match ? Number(match[2]) : null;
-  const parsedTotalLine = match ? Number(match[3]) : null;
-
   const safeHomePct =
-    typeof context?.homeFtPct === 'number'
-      ? context.homeFtPct
-      : Number.isFinite(parsedHomePct)
-        ? parsedHomePct
-        : null;
+    typeof context?.homeFtPct === 'number' ? context.homeFtPct : null;
   const safeAwayPct =
-    typeof context?.awayFtPct === 'number'
-      ? context.awayFtPct
-      : Number.isFinite(parsedAwayPct)
-        ? parsedAwayPct
-        : null;
+    typeof context?.awayFtPct === 'number' ? context.awayFtPct : null;
   const safeTotalLine =
-    typeof context?.totalLine === 'number'
-      ? context.totalLine
-      : Number.isFinite(parsedTotalLine)
-        ? parsedTotalLine
-        : null;
+    typeof context?.totalLine === 'number' ? context.totalLine : null;
 
   const sideFromPct =
     safeHomePct !== null && safeAwayPct !== null
@@ -1249,8 +1236,26 @@ export default function CardsPageClient() {
           return;
         }
 
+        const nextGames = Array.isArray(data.data) ? data.data : [];
+        const hasAnyActionableInRequestedMode = nextGames.some(hasActionablePlay);
+        // Failsafe: if cards boot into active lifecycle with no actionable plays,
+        // automatically fall back to pregame so /cards never appears empty-by-default.
+        if (
+          requestedLifecycleMode === 'active' &&
+          isInitialLoad.current &&
+          !hasAnyActionableInRequestedMode
+        ) {
+          if (!cancelled) {
+            globalGamesLastFetchAt = 0;
+            latestLifecycleModeRef.current = 'pregame';
+            setLifecycleMode('pregame');
+            setLoading(true);
+          }
+          return;
+        }
+
         if (!cancelled) {
-          setGames(data.data || []);
+          setGames(nextGames);
           setError(null);
         }
       } catch (err) {

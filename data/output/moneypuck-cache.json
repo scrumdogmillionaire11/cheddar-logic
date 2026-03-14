@@ -1,5 +1,5 @@
 {
-  "fetched_at": "2026-03-13T18:18:23.452Z",
+  "fetched_at": "2026-03-14T01:33:19.980Z",
   "teams": {},
   "goalies": {
     "New York Rangers": {
@@ -279,7 +279,7 @@
     },
     "Los Angeles Kings": {
       "name": "Darcy Kuemper",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Ottawa Senators": {
@@ -444,17 +444,17 @@
       },
       "Los Angeles Kings": {
         "name": "Darcy Kuemper",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "St. Louis Blues": {
         "name": "Joel Hofer",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Edmonton Oilers": {
         "name": "Connor Ingram",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       }
     },

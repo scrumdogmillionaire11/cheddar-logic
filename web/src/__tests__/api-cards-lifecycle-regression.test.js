@@ -11,6 +11,13 @@
  */
 
 import db from '../../../packages/data/src/db.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const REPO_ROOT = path.resolve(__dirname, '../../..');
 
 async function runTests() {
   console.log('🧪 Starting WI-0392: API Cards Lifecycle Parity Tests...\n');
@@ -300,6 +307,42 @@ async function runTests() {
     } else {
       console.log(
         `✗ Expected 2 cards from included game, got ${multiCards.length}; cards: ${multiCards.map((c) => c.id).join(', ')}\n`,
+      );
+      process.exit(1);
+    }
+
+    // Test 5: Core run-state guards ignore non-canonical sports (e.g., nhl_props)
+    console.log(
+      'Test 5: Source contract enforces canonical run-state sport filtering',
+    );
+    const cardsRouteSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'web/src/app/api/cards/route.ts'),
+      'utf8',
+    );
+    const perGameCardsRouteSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'web/src/app/api/cards/[gameId]/route.ts'),
+      'utf8',
+    );
+    const gamesRouteSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'web/src/app/api/games/route.ts'),
+      'utf8',
+    );
+    const filterSignature = "LOWER(COALESCE(rs.sport, rs.id, '')) IN";
+    const hasCoreRunStateGuards = [
+      cardsRouteSource,
+      perGameCardsRouteSource,
+      gamesRouteSource,
+    ].every(
+      (source) =>
+        source.includes('CORE_RUN_STATE_SPORTS') &&
+        source.includes(filterSignature),
+    );
+
+    if (hasCoreRunStateGuards) {
+      console.log('✓ Canonical run-state guards present in cards/games routes\n');
+    } else {
+      console.log(
+        '✗ Missing canonical run-state guard in one or more cards/games routes\n',
       );
       process.exit(1);
     }

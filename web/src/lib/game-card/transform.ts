@@ -31,6 +31,7 @@ import type {
   CardQuality,
   DecisionV2,
   ExpressionStatus,
+  FtTrendContext,
 } from '../types/game-card';
 import type {
   CanonicalPlay,
@@ -124,7 +125,6 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
       'ncaam-rest-advantage',
       'ncaam-matchup-style',
       'ncaam-ft-trend',
-      'ncaam-ft-spread',
     ]),
     evidenceOnlyCardTypes: new Set([]),
   },
@@ -188,12 +188,7 @@ interface ApiPlay {
   selection?: { side?: string; team?: string };
   line?: number;
   price?: number;
-  ft_trend_context?: {
-    home_ft_pct?: number | null;
-    away_ft_pct?: number | null;
-    total_line?: number | null;
-    advantaged_side?: 'HOME' | 'AWAY' | null;
-  };
+  ft_trend_context?: Partial<FtTrendContext>;
   reason_codes?: string[];
   tags?: string[];
   recommendation?: { type?: string };
@@ -827,7 +822,7 @@ function selectWave1DecisionCandidate(
   };
 
   const normalizedSport = normalizeSport(sport);
-  const ftTrendCardTypes = new Set(['ncaam-ft-trend', 'ncaam-ft-spread']);
+  const ftTrendCardTypes = new Set(['ncaam-ft-trend']);
 
   const cardTypePriority = (play: ApiPlay): number => {
     if (normalizedSport !== 'NCAAM') return 0;
@@ -1198,8 +1193,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   if (wave1DecisionPlay?.decision_v2) {
     const decisionV2 = wave1DecisionPlay.decision_v2;
     const ftTrendOverrideDirection =
-      (wave1DecisionPlay.cardType === 'ncaam-ft-trend' ||
-        wave1DecisionPlay.cardType === 'ncaam-ft-spread') &&
+      wave1DecisionPlay.cardType === 'ncaam-ft-trend' &&
       wave1DecisionPlay.market_type === 'SPREAD' &&
       (wave1DecisionPlay.ft_trend_context?.advantaged_side === 'HOME' ||
         wave1DecisionPlay.ft_trend_context?.advantaged_side === 'AWAY')
@@ -3054,10 +3048,8 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         status = 'FIRE';
       } else if (resolvedAction === 'HOLD') {
         status = play.action === 'HOLD' ? 'HOLD' : 'WATCH';
-      } else if (resolvedAction === 'PASS') {
+      } else {
         status = 'NO_PLAY';
-      } else if (play.status === 'WATCH') {
-        status = 'WATCH';
       }
 
       const mu = play.mu ?? play.projectedTotal ?? null;

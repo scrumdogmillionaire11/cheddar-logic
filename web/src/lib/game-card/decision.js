@@ -40,6 +40,9 @@ function expressionStatusFromAction(action) {
   return action;
 }
 
+// Canonical precedence: action > classification > status > 'PASS'
+// This JS file is kept for CommonJS consumers. Maintained in sync with decision.ts.
+// Do not change precedence here without updating decision.ts and running test:card-decision.
 export function resolvePlayDisplayDecision(play) {
   const explicitAction = isValidAction(play?.action) ? play.action : undefined;
   const classificationAction = actionFromClassification(play?.classification);

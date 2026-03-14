@@ -30,10 +30,6 @@ assert(
   'cards-page-client must scan for ncaam-ft-trend driver',
 );
 assert(
-  cardsPageSource.includes("driver.cardType === 'ncaam-ft-spread'"),
-  'cards-page-client must keep legacy ncaam-ft-spread support',
-);
-assert(
   cardsPageSource.includes('FT Advantage:'),
   'cards-page-client must render FT Advantage label in Why section',
 );

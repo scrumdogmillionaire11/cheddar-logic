@@ -179,6 +179,8 @@ function deriveGameBlockingReasonCodes({
   projectionReady,
   pricingReady,
   cards = [],
+  homeGoalieState,
+  awayGoalieState,
 }) {
   const reasonCodes = [];
   const hasTeamMapping = Boolean(
@@ -205,6 +207,19 @@ function deriveGameBlockingReasonCodes({
     cards.forEach((card) => {
       reasonCodes.push(...collectDecisionReasonCodes(card?.payloadData));
     });
+  }
+
+  // WI-0383: Goalie state watchdog checks
+  const homeStarterState = homeGoalieState?.starter_state;
+  const awayStarterState = awayGoalieState?.starter_state;
+
+  if (homeStarterState === 'CONFLICTING' || awayStarterState === 'CONFLICTING') {
+    reasonCodes.push(WATCHDOG_REASONS.GOALIE_CONFLICTING);
+  }
+
+  if (homeStarterState === 'UNKNOWN' || awayStarterState === 'UNKNOWN') {
+    reasonCodes.push(WATCHDOG_REASONS.GOALIE_UNCONFIRMED);
+    // Does not force PASS alone; confidence-cap path handles demotion
   }
 
   return reasonCodes;
@@ -1328,6 +1343,8 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
               projectionReady: true,
               pricingReady,
               cards: pendingCards.map((entry) => entry.card),
+              homeGoalieState: canonicalGoalieState?.home,
+              awayGoalieState: canonicalGoalieState?.away,
             }),
           });
           gamePipelineStates[gameId] = pipelineState;

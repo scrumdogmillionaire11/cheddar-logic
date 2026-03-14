@@ -11,6 +11,8 @@ const {
   shouldFlip,
 } = require('@cheddar-logic/models');
 
+const { goalieUncertaintyBlocks } = require('../models/cross-market');
+
 const {
   getDecisionRecord,
   insertDecisionEvent,
@@ -77,7 +79,10 @@ function deriveEventDirectionTag(payload) {
   return 'UNKNOWN';
 }
 
-function deriveVolEnv(payload) {
+function deriveVolEnv(payload, homeGoalieState, awayGoalieState) {
+  // WI-0382: Force VOLATILE when goalie identity is UNKNOWN or CONFLICTING
+  if (goalieUncertaintyBlocks(homeGoalieState, awayGoalieState)) return 'VOLATILE';
+
   const conflict =
     typeof payload?.driver?.inputs?.conflict === 'number'
       ? payload.driver.inputs.conflict
@@ -107,7 +112,9 @@ function ensureDecisionConsistencyEnvelope(payload) {
     event_direction_tag:
       asNonEmptyString(existing.event_direction_tag) ||
       deriveEventDirectionTag(payload),
-    vol_env: asNonEmptyString(existing.vol_env) || deriveVolEnv(payload),
+    vol_env:
+      asNonEmptyString(existing.vol_env) ||
+      deriveVolEnv(payload, payload.homeGoalieState, payload.awayGoalieState),
     total_bias: totalBias,
   };
 }
@@ -120,6 +127,17 @@ function ensureDecisionConsistencyEnvelope(payload) {
 function applyUiActionFields(payload, context = {}) {
   if (!payload || payload.kind !== 'PLAY') {
     return payload; // Only apply to PLAY payloads
+  }
+
+  // WI-0383: Hard-gate — if model has marked this card ineligible for official
+  // action (official_eligible=false), force PASS regardless of tier or pipeline.
+  // Reads from canonical official_eligible field, NOT from legacy homeGoalieConfirmed
+  // (DEPRECATED: not authoritative for NHL totals after WI-0383 — use homeGoalieState.starter_state instead)
+  if (payload.official_eligible === false) {
+    payload.action = 'PASS';
+    payload.status = 'PASS';
+    payload.classification = 'PASS';
+    return payload;
   }
 
   if (isWave1EligiblePayload(payload)) {
@@ -484,4 +502,5 @@ module.exports = {
   publishDecisionForCard,
   applyUiActionFields,
   deriveAction,
+  deriveVolEnv,
 };
