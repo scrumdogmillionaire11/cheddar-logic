@@ -848,3 +848,76 @@ Location: `packages/data/src/validators/fpl-payload.js`
 | **Timezone** | ET for fixed, UTC for T-minus | UTC (FPL deadlines are UTC) |
 
 **Non-Negotiable:** These are separate domains. Soccer betting belongs to Betting domain. FPL belongs to FPL-SAGE domain. No mixing.
+
+---
+
+## Record Lineage Map
+
+Every canonical play record must be traceable from ingest through projection, card generation, and settlement/result. This section documents the full lifecycle, per-stage lineage fields, segmentation bucket sources, and all known gaps.
+
+### Canonical Lifecycle Diagram
+
+```text
+ingest (odds_snapshots + games)
+  -> projection (model_outputs, written by run_nhl/nba/ncaam_model.js, keyed by job_run_id)
+  -> card generation (card_payloads, written by worker jobs, payload_data includes decision_v2)
+     -> auto-enrollment: insertCardPayload() creates card_results row with status='pending'
+  -> settlement Phase 1: settle_game_results.js -> game_results (final scores from ESPN)
+  -> settlement Phase 2: settle_pending_cards.js -> card_results (win/loss/push + pnl_units)
+  -> aggregation: incrementTrackingStat() -> tracking_stats (segmented analytics)
+```
+
+### Per-Stage Lineage Fields Table
+
+| Stage | Table | Lineage Fields Written | Carried Forward As |
+|-------|-------|----------------------|-------------------|
+| Ingest | odds_snapshots | sport, game_id, job_run_id | odds_snapshot_id in model_outputs |
+| Projection | model_outputs | sport, prediction_type, confidence, output_data (decision_v2), job_run_id | model_output_ids in card_payloads |
+| Card Gen | card_payloads | sport, card_type, payload_data (decision_v2, meta, projection_inputs_complete) | card_id in card_results |
+| Settlement | card_results | sport, card_type, recommended_bet_type, result, pnl_units, metadata | stat_key in tracking_stats |
+| Analytics | tracking_stats | sport, market_type, direction, confidence_tier, driver_key, time_period | stat_key |
+
+### Segmentation Bucket Enumeration
+
+All segmentation dimensions from `TRACKING_DIMENSIONS.md`, with source-of-truth DB column and current coverage status:
+
+| Dimension | Source-of-Truth Column | Status |
+|-----------|----------------------|--------|
+| sport | card_results.sport | PRESENT — 100% coverage |
+| market_type | card_results.recommended_bet_type (normalized via normalizeMarketType) | PRESENT — 100% on wave-1 call cards |
+| direction | payload_data.decision_v2.direction (read from card_payloads at query time) | WRITE-PATH GAP — not persisted to card_results.metadata |
+| confidence_tier | derived from payload_data.confidence at read time | WRITE-PATH GAP — not pre-bucketed |
+| driver | payload_data.decision_v2.drivers_used[0] (read from card_payloads) | WRITE-PATH GAP — not persisted to card_results.metadata |
+| inference_source | payload_data.meta.inference_source (read from card_payloads) | READ-PATH GAP — not exposed in /api/results response |
+| time_period | derived from card_results.settled_at at query time | PRESENT — computable from existing column |
+| ev_threshold | payload_data.decision_v2.edge_pct vs threshold | WRITE-PATH GAP — not pre-computed into card_results.metadata |
+
+**Implicit segmentation note:** The `/api/results` route uses `card_type LIKE` pattern matching to derive `card_category` (`call` vs `driver`) at read time. This is not a stored field. Fix: persist `card_category` to `card_results.metadata` at settlement time.
+
+### Gap Classification Table
+
+Gaps identified from `node scripts/audit-lineage.js` run against production data (2026-03-14). Baseline at audit: `call_action` 33%, `driver_context` 33%, `projection_source` 91%, `sport` 100%, `market_type` 100%.
+
+| Gap ID | Field | Stage | Classification | Fix Recommendation |
+|--------|-------|-------|---------------|-------------------|
+| GAP-01 | direction | card_results | write-path gap | Write decision_v2.direction to card_results.metadata at settlement time in settle_pending_cards.js |
+| GAP-02 | confidence_tier | card_results | write-path gap | Bucket confidence at settlement time and persist to card_results.metadata |
+| GAP-03 | driver_key | card_results | write-path gap | Write drivers_used[0] to card_results.metadata during settlement in settle_pending_cards.js |
+| GAP-04 | inference_source | card_results | read-path gap | Expose meta.inference_source from card_payloads.payload_data in /api/results ledger response |
+| GAP-05 | call_action (decision_v2.official_status) | card_results | write-path gap | 67% of records lack decision_v2 (evidence/driver cards pre-dating wave-1); write official_status to card_results.metadata for call-type cards at settlement |
+| GAP-06 | driver_context (decision_v2.drivers_used) | card_results | write-path gap | Same root cause as GAP-05; write to card_results.metadata at settlement for call-type cards |
+| GAP-07 | projection_source (model_output_ids / meta.inference_source) | card_payloads | write-path gap | 9% of cards have null model_output_ids and no meta.inference_source; ensure insertCardPayload() callers always pass model_output_ids |
+| GAP-08 | card_type vs recommended_bet_type vs prediction_type | all stages | naming drift | Three names for market across stages: card_type (card_payloads, e.g. nhl-totals-call), recommended_bet_type (card_results, e.g. total), prediction_type (model_outputs, e.g. total). normalizeMarketType() bridges card_type to recommended_bet_type. Mapping is intentional but must remain explicit. |
+| GAP-09 | ev_threshold | card_results | write-path gap | edge_pct from decision_v2 not pre-bucketed into card_results.metadata; persist as boolean ev_passed at settlement |
+
+### Reproducible Audit Command
+
+```bash
+# From repo root
+node scripts/audit-lineage.js
+
+# Redirect to file for evidence:
+node scripts/audit-lineage.js > /tmp/lineage-audit-$(date +%Y%m%d).txt
+```
+
+See `docs/ops-runbook.md` — **Lineage Audit Procedure** section for triage guidance.

@@ -1003,3 +1003,82 @@ Upgraded from axios `^0.27.2` to `^1.7.0` (WI-0342, 2026-03-08).
 
 - **Multi-lockfile root warning**: Resolved — `web/next.config.ts` sets `turbopack.root` to the monorepo root
 - **Middleware convention**: Current `web/src/middleware.ts` uses supported `NextResponse.next()` pattern with `config.matcher` — no deprecation warnings expected
+
+---
+
+## Lineage Audit Procedure
+
+Use this procedure to verify end-to-end record traceability from ingest through settlement. Run after any settlement job failure, before/after schema migrations, or as a monthly health check.
+
+### When to Run
+
+- After any `settle_pending_cards` or `settle_game_results` job failure
+- Before and after any schema migration touching `card_payloads`, `card_results`, or `model_outputs`
+- Monthly as a standing health check (first Monday of each month)
+- Before any incident post-mortem that involves settlement counts or P&L accuracy
+
+### How to Run
+
+```bash
+# From repo root (CHEDDAR_DB_PATH must be set)
+node scripts/audit-lineage.js
+
+# Load env from production file first (on Pi):
+set -a; source /opt/cheddar-logic/.env.production; set +a
+node /opt/cheddar-logic/scripts/audit-lineage.js
+
+# Redirect to file for evidence (include in incident notes):
+node scripts/audit-lineage.js > /tmp/lineage-audit-$(date +%Y%m%d).txt
+```
+
+### Triage Decision Table (Full Lineage %)
+
+| Coverage % | Action |
+|-----------|--------|
+| 95-100% | No action needed |
+| 80-94% | Investigate write-path gaps in settle_pending_cards.js; check metadata field population for direction, driver_key, and confidence_tier |
+| 50-79% | Settlement pipeline likely not running; check job_runs for recent settle_pending_cards entries; verify game_results has final rows |
+| <50% | Critical — card_payloads may be missing decision_v2; check worker model job output and insertCardPayload() call sites |
+
+**Note on expected baseline:** Evidence/driver cards (e.g. `nhl-base-projection`, `nhl-goalie`) do not carry `decision_v2` by design. The 33% `call_action` / `driver_context` baseline is expected until GAP-05 and GAP-06 in `DATA_CONTRACTS.md` are resolved.
+
+### Per-Field Triage
+
+- **market_type missing or 'unknown'**: Check `normalizeMarketType()` in `packages/data/src/normalize.js` and the card_type to recommended_bet_type mapping in `settle_pending_cards.js`.
+
+- **call_action (decision_v2.official_status) missing**: Card pre-dates wave-1 `decision_v2` pipeline (legacy evidence/driver row) OR worker failed to emit `decision_v2`. Check model job logs for the relevant game_id. Wave-1 call cards (`*-totals-call`, `*-spread-call`) must always have `decision_v2`; evidence cards do not.
+
+- **projection_source missing**: `model_output_ids` not set on `card_payloads` AND `meta.inference_source` absent. Check the `insertCardPayload()` call site in the relevant model job. See GAP-07 in `DATA_CONTRACTS.md`.
+
+- **driver_context missing**: `decision_v2.drivers_used` is empty or absent. For call-type cards, check the driver evaluation step in the model job. For evidence/driver cards, absence is expected.
+
+### Record Linkage Manual Check Command
+
+```bash
+# Check 10 recent settled records for full lineage (requires sqlite3 CLI on Pi)
+set -a; source /opt/cheddar-logic/.env.production; set +a
+
+sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+  cr.id,
+  cr.sport,
+  cr.card_type,
+  cr.recommended_bet_type,
+  cr.result,
+  json_extract(cp.payload_data, '$.decision_v2.official_status') AS call_action,
+  json_extract(cp.payload_data, '$.decision_v2.drivers_used') AS drivers,
+  json_extract(cp.payload_data, '$.meta.inference_source') AS infer_source,
+  cp.model_output_ids
+FROM card_results cr
+JOIN card_payloads cp ON cp.id = cr.card_id
+WHERE cr.status = 'settled'
+ORDER BY cr.settled_at DESC
+LIMIT 10;
+"
+```
+
+Note: `CHEDDAR_DB_PATH` is resolved by `packages/data/src/db-path.js`. Check that file for current env resolution order (`CHEDDAR_DB_PATH` takes precedence over `CHEDDAR_DATA_DIR` auto-discovery).
+
+### Gap Reference
+
+See `docs/DATA_CONTRACTS.md` — **Record Lineage Map** section for the full gap classification table (GAP-01 through GAP-09) with fix recommendations for each missing lineage field.
