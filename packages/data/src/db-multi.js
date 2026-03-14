@@ -258,12 +258,17 @@ class Statement {
       this.stmt.bind(params);
       this.stmt.step();
       this.stmt.reset();
+      // Capture changes before saveDbFile(): sql.js export() frees all active
+      // prepared statements and recreates the internal db pointer.
+      const changes = this.db.getRowsModified();
 
       if (this.source === 'local') {
         saveDbFile(this.db, localPath);
+        // Re-prepare on the rebuilt db so this statement remains reusable.
+        this.stmt = this.db.prepare(this.query);
       }
 
-      return { changes: this.db.getRowsModified() };
+      return { changes };
     } catch (e) {
       throw new Error(`Statement run error: ${e?.message ?? String(e)}`);
     }

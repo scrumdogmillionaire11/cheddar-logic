@@ -596,8 +596,14 @@ class Statement {
       this.stmt.bind(params);
       this.stmt.step();
       this.stmt.reset();
+      // Capture changes before saveDatabase(): sql.js export() frees all active
+      // prepared statements and recreates the internal db pointer, so any attempt
+      // to reuse this.stmt after export() throws "Statement closed".
+      const changes = this.db.getRowsModified();
       saveDatabase();
-      return { changes: this.db.getRowsModified() };
+      // Re-prepare on the rebuilt db so this statement remains reusable.
+      this.stmt = this.db.prepare(this.query);
+      return { changes };
     } catch (e) {
       throw new Error(`Statement run error: ${e?.message ?? String(e)}`);
     }
