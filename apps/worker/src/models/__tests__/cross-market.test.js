@@ -7,6 +7,7 @@ const {
   computeNHLMarketDecisions,
   selectExpressionChoice,
   computeTotalBias,
+  goalieUncertaintyBlocks,
 } = require('../cross-market');
 
 describe('cross-market orchestration', () => {
@@ -216,5 +217,145 @@ describe('cross-market orchestration', () => {
     expect(decisions.TOTAL.pricing_trace.line_source).toBe('odds_snapshot');
     expect(decisions.TOTAL.pricing_trace.price_source).toBe('odds_snapshot');
     expect(decisions.ML.pricing_trace.price_source).toBe('odds_snapshot');
+  });
+});
+
+describe('goalieUncertaintyBlocks (WI-0382)', () => {
+  test('returns false for null/null inputs', () => {
+    expect(goalieUncertaintyBlocks(null, null)).toBe(false);
+  });
+
+  test('returns false for undefined/undefined inputs', () => {
+    expect(goalieUncertaintyBlocks(undefined, undefined)).toBe(false);
+  });
+
+  test('returns false when both goalies are CONFIRMED', () => {
+    expect(
+      goalieUncertaintyBlocks(
+        { starter_state: 'CONFIRMED' },
+        { starter_state: 'CONFIRMED' },
+      ),
+    ).toBe(false);
+  });
+
+  test('returns false when both goalies are EXPECTED', () => {
+    expect(
+      goalieUncertaintyBlocks(
+        { starter_state: 'EXPECTED' },
+        { starter_state: 'EXPECTED' },
+      ),
+    ).toBe(false);
+  });
+
+  test('returns false for CONFIRMED + EXPECTED mix', () => {
+    expect(
+      goalieUncertaintyBlocks(
+        { starter_state: 'CONFIRMED' },
+        { starter_state: 'EXPECTED' },
+      ),
+    ).toBe(false);
+  });
+
+  test('returns true when home goalie is UNKNOWN', () => {
+    expect(
+      goalieUncertaintyBlocks(
+        { starter_state: 'UNKNOWN' },
+        { starter_state: 'CONFIRMED' },
+      ),
+    ).toBe(true);
+  });
+
+  test('returns true when away goalie is UNKNOWN', () => {
+    expect(
+      goalieUncertaintyBlocks(
+        { starter_state: 'CONFIRMED' },
+        { starter_state: 'UNKNOWN' },
+      ),
+    ).toBe(true);
+  });
+
+  test('returns true when home goalie is CONFLICTING', () => {
+    expect(
+      goalieUncertaintyBlocks(
+        { starter_state: 'CONFLICTING' },
+        { starter_state: 'CONFIRMED' },
+      ),
+    ).toBe(true);
+  });
+
+  test('returns true when away goalie is CONFLICTING', () => {
+    expect(
+      goalieUncertaintyBlocks(
+        { starter_state: 'CONFIRMED' },
+        { starter_state: 'CONFLICTING' },
+      ),
+    ).toBe(true);
+  });
+
+  test('returns true when both goalies are UNKNOWN', () => {
+    expect(
+      goalieUncertaintyBlocks(
+        { starter_state: 'UNKNOWN' },
+        { starter_state: 'UNKNOWN' },
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('computeTotalBias with goalie states (WI-0382)', () => {
+  const goodTotalDecision = {
+    status: DecisionStatus.WATCH,
+    edge: 1.8,
+    best_candidate: { side: 'OVER', line: 6.5 },
+  };
+
+  test('returns INSUFFICIENT_DATA when home goalie is UNKNOWN (overrides driver signal)', () => {
+    expect(
+      computeTotalBias(goodTotalDecision, { starter_state: 'UNKNOWN' }, null),
+    ).toBe('INSUFFICIENT_DATA');
+  });
+
+  test('returns INSUFFICIENT_DATA when away goalie is CONFLICTING', () => {
+    expect(
+      computeTotalBias(
+        goodTotalDecision,
+        { starter_state: 'CONFIRMED' },
+        { starter_state: 'CONFLICTING' },
+      ),
+    ).toBe('INSUFFICIENT_DATA');
+  });
+
+  test('returns INSUFFICIENT_DATA when either goalie is UNKNOWN', () => {
+    expect(
+      computeTotalBias(
+        goodTotalDecision,
+        null,
+        { starter_state: 'UNKNOWN' },
+      ),
+    ).toBe('INSUFFICIENT_DATA');
+  });
+
+  test('runs normal computation when goalies are EXPECTED', () => {
+    expect(
+      computeTotalBias(
+        goodTotalDecision,
+        { starter_state: 'EXPECTED' },
+        { starter_state: 'EXPECTED' },
+      ),
+    ).toBe('OK');
+  });
+
+  test('preserves existing behavior for CONFIRMED both sides', () => {
+    expect(
+      computeTotalBias(
+        goodTotalDecision,
+        { starter_state: 'CONFIRMED' },
+        { starter_state: 'CONFIRMED' },
+      ),
+    ).toBe('OK');
+  });
+
+  test('backward-compatible: no goalie args still works', () => {
+    expect(computeTotalBias(goodTotalDecision)).toBe('OK');
   });
 });

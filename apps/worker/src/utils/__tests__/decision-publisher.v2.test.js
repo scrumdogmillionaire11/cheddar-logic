@@ -10,6 +10,7 @@ jest.mock('@cheddar-logic/data', () => ({
 const {
   applyUiActionFields,
   deriveAction,
+  deriveVolEnv,
 } = require('../decision-publisher.js');
 
 function minutesAgoIso(minutes) {
@@ -638,6 +639,111 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.model_prob).toBe(0.42);
     expect(payload.p_fair).toBe(0.42);
     expect(payload.p_implied).toBe(0.48);
+  });
+
+  // WI-0382: deriveVolEnv escalation tests
+  test('deriveVolEnv returns VOLATILE when home goalie is UNKNOWN', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      homeGoalieState: { starter_state: 'UNKNOWN' },
+      awayGoalieState: { starter_state: 'CONFIRMED' },
+    });
+    const result = deriveVolEnv(payload, payload.homeGoalieState, payload.awayGoalieState);
+    expect(result).toBe('VOLATILE');
+  });
+
+  test('deriveVolEnv returns VOLATILE when away goalie is CONFLICTING', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      homeGoalieState: { starter_state: 'CONFIRMED' },
+      awayGoalieState: { starter_state: 'CONFLICTING' },
+    });
+    const result = deriveVolEnv(payload, payload.homeGoalieState, payload.awayGoalieState);
+    expect(result).toBe('VOLATILE');
+  });
+
+  test('deriveVolEnv returns STABLE for CONFIRMED both + low conflict (existing behavior preserved)', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      homeGoalieState: { starter_state: 'CONFIRMED' },
+      awayGoalieState: { starter_state: 'CONFIRMED' },
+      driver: { key: 'pace_signal', score: 0.72, inputs: { conflict: 0.18 } },
+    });
+    const result = deriveVolEnv(payload, payload.homeGoalieState, payload.awayGoalieState);
+    expect(result).toBe('STABLE');
+  });
+
+  test('deriveVolEnv backward-compatible: no goalie args still uses conflict', () => {
+    const payload = buildWave1Payload({
+      driver: { key: 'pace_signal', score: 0.72, inputs: { conflict: 0.18 } },
+    });
+    const result = deriveVolEnv(payload);
+    expect(result).toBe('STABLE');
+  });
+
+  // WI-0383: NHL wrapper official_eligible gate tests
+  test('NHL TOTAL payload with official_eligible=false returns PASS (never FIRE or HOLD)', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 6.5,
+      price: -110,
+      model_prob: 0.62,
+      edge: 0.12,
+      tier: 'SUPER',
+      official_eligible: false,
+    });
+    applyUiActionFields(payload);
+    expect(payload.action).toBe('PASS');
+  });
+
+  test('FC-7: canonical CONFLICTING goalie wins over legacy homeGoalieConfirmed=true', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 6.5,
+      price: -110,
+      model_prob: 0.62,
+      edge: 0.12,
+      tier: 'SUPER',
+      official_eligible: false,
+      homeGoalieConfirmed: true, // DEPRECATED legacy field — must not override
+      homeGoalieState: { starter_state: 'CONFLICTING' },
+      awayGoalieState: { starter_state: 'CONFIRMED' },
+    });
+    applyUiActionFields(payload);
+    // canonical official_eligible=false wins — legacy boolean is irrelevant
+    expect(payload.action).toBe('PASS');
+  });
+
+  test('NHL TOTAL payload with official_eligible=true + strong tier can FIRE', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 6.5,
+      price: -110,
+      model_prob: 0.62,
+      edge: 0.12,
+      tier: 'SUPER',
+      official_eligible: true,
+      homeGoalieState: { starter_state: 'CONFIRMED' },
+      awayGoalieState: { starter_state: 'CONFIRMED' },
+    });
+    applyUiActionFields(payload);
+    // official_eligible=true + strong edge — should be able to FIRE or HOLD (not PASS)
+    expect(payload.action).not.toBe('PASS');
   });
 
   test('gate-hold wager rewrite preserves period tag when original market_context.wager.period is set', () => {
