@@ -1216,6 +1216,7 @@ async function settlePendingCards({
       );
       nonActionableAutoClosed = nonActionableClose.closed;
       nonActionableAutoClosedReasons = nonActionableClose.reasonCounts;
+      const autoClosedResultIdSet = nonActionableClose.closedResultIds ?? new Set();
       if (nonActionableAutoClosed > 0) {
         console.log(
           `[SettleCards] Auto-closed ${nonActionableAutoClosed} non-actionable final pending card_results as void (${JSON.stringify(nonActionableAutoClosedReasons)})`,
@@ -1239,6 +1240,12 @@ async function settlePendingCards({
       };
 
       for (const pendingCard of pendingRows) {
+        // Skip rows already auto-closed this run — prevents double-counting in cardsRaced/cardsErrored
+        const rowResultId = String(pendingCard.result_id ?? '').trim();
+        if (rowResultId && autoClosedResultIdSet.has(rowResultId)) {
+          continue;
+        }
+
         // Parse payload data
         let payloadData;
         try {
