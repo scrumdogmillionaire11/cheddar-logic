@@ -32,5 +32,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 35 | WI-0448 Settlement Segmentation Record Traceability — lineage audit script + docs | 2026-03-14 | afeb71c | [35-wi-0448-settlement-segmentation-record-t](./quick/35-wi-0448-settlement-segmentation-record-t/) |
 | 36 | WI-0449 SettleCards Run-Log Failure Remediation — safe error serialization + counter isolation | 2026-03-14 | af58e8b | [36-wi-0449-settlecards-run-log-failure-reme](./quick/36-wi-0449-settlecards-run-log-failure-reme/) |
 | 37 | NHL player SOG prop market: real O/U lines from Odds API into player_prop_lines table + model runner integration | 2026-03-14 | bc63cc3 | [37-nhl-player-shots-prop-market-with-proces](./quick/37-nhl-player-shots-prop-market-with-proces/) |
+| 38 | FPL Sage mobile decision-first layout: sticky header, collapsible advanced sections, scaled pitch cards | 2026-03-14 | 1f4fe86 | [38-fpl-sage-mobile-decision-first-layout](./quick/38-fpl-sage-mobile-decision-first-layout/) |
 
-Last activity: 2026-03-14 - Completed quick task 37: added player_prop_lines DB table + upsert/get functions, pull_nhl_player_shots_props.js job (env-gated), wired real line lookup into model runner with synthetic fallback, process docs
+Last activity: 2026-03-14 - Completed quick task 38: decision-first mobile layout for fpl-dashboard.tsx (sticky header, six collapsible advanced sections, CSS order reorder) and fpl-lineup-view.tsx (72px base card width, scaled text, 44px touch targets)
