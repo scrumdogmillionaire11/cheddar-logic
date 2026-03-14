@@ -410,6 +410,17 @@ interface ApiResponse {
 
 type LifecycleMode = 'pregame' | 'active';
 
+function hasActionablePlay(game: GameData): boolean {
+  if (!Array.isArray(game.plays) || game.plays.length === 0) return false;
+  return game.plays.some((play) => {
+    const kind = (play.kind ?? 'PLAY') === 'PLAY';
+    const side = play.selection?.side?.toUpperCase() ?? '';
+    const hasSelection = side !== '' && side !== 'NONE';
+    const hasNonNeutralPrediction = play.prediction !== 'NEUTRAL';
+    return kind && hasSelection && hasNonNeutralPrediction;
+  });
+}
+
 type DecisionPolarity = 'pro' | 'contra' | 'neutral';
 
 type DecisionContributor = {
@@ -513,11 +524,7 @@ function resolveLifecycleModeFromUrlAndStorage(): LifecycleMode {
     window.sessionStorage.setItem(LIFECYCLE_SESSION_KEY, urlMode);
     return urlMode;
   }
-
-  const storedMode = parseLifecycleMode(
-    window.sessionStorage.getItem(LIFECYCLE_SESSION_KEY),
-  );
-  return storedMode ?? 'pregame';
+  return 'pregame';
 }
 
 function getLifecycleAwareFilters(
@@ -1229,8 +1236,26 @@ export default function CardsPageClient() {
           return;
         }
 
+        const nextGames = Array.isArray(data.data) ? data.data : [];
+        const hasAnyActionableInRequestedMode = nextGames.some(hasActionablePlay);
+        // Failsafe: if cards boot into active lifecycle with no actionable plays,
+        // automatically fall back to pregame so /cards never appears empty-by-default.
+        if (
+          requestedLifecycleMode === 'active' &&
+          isInitialLoad.current &&
+          !hasAnyActionableInRequestedMode
+        ) {
+          if (!cancelled) {
+            globalGamesLastFetchAt = 0;
+            latestLifecycleModeRef.current = 'pregame';
+            setLifecycleMode('pregame');
+            setLoading(true);
+          }
+          return;
+        }
+
         if (!cancelled) {
-          setGames(data.data || []);
+          setGames(nextGames);
           setError(null);
         }
       } catch (err) {
