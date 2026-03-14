@@ -946,6 +946,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
         const absEdge = Math.abs(edge);
         const direction = edge >= 0 ? 'OVER' : 'UNDER';
 
+        if (absEdge < 0.4) {
+          // Insufficient edge — skip card emission per driver spec
+        } else {
+
         // Confidence scales with edge magnitude + base model confidence
         let cardConfidence;
         if (absEdge >= 1.5)
@@ -1010,7 +1014,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
             modifier_cap_applied: paceResult.modifierCapApplied,
             modifier_breakdown: paceResult.modifierBreakdown,
           },
-          driverScore: direction === 'OVER' ? 0.75 : 0.25,
+          driverScore: 0.5,
           driverStatus: 'ok',
           inference_source: 'driver',
           is_mock: false,
@@ -1023,6 +1027,7 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
               ? toNumber(oddsSnapshot?.total_price_over ?? null)
               : toNumber(oddsSnapshot?.total_price_under ?? null),
         });
+        } // end absEdge >= 0.4
       }
 
       const firstPeriodModel =
