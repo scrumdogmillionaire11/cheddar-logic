@@ -350,7 +350,7 @@ async function main() {
     }
   }
 
-  db.closeDatabase();
+  closeDatabase();
 }
 
 main().catch((err) => {
