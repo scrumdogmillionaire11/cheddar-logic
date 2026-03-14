@@ -698,6 +698,22 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // WI-0383: Extract 1P and full-game projection totals for NHL cards
+      let projection1p: number | null = null;
+      let projectionTotal: number | null = null;
+      if (row.sport === 'NHL' && payload) {
+        const model = payload.model as Record<string, unknown> | null | undefined;
+        const fp = payload.first_period_model as Record<string, unknown> | null | undefined;
+        projectionTotal =
+          typeof model?.expectedTotal === 'number' ? (model.expectedTotal as number) : null;
+        projection1p =
+          typeof model?.expected1pTotal === 'number'
+            ? (model.expected1pTotal as number)
+            : typeof fp?.projection_final === 'number'
+              ? (fp.projection_final as number)
+              : null;
+      }
+
       return {
         id: row.id,
         gameId: row.game_id,
@@ -722,6 +738,8 @@ export async function GET(request: NextRequest) {
         confidencePct,
         payloadParseError: parsed.error,
         payloadMissing: parsed.missing || row.payload_id === null,
+        projection1p,
+        projectionTotal,
       };
     });
 

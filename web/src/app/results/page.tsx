@@ -50,6 +50,9 @@ type LedgerRow = {
   confidencePct: number | null;
   payloadParseError: boolean;
   payloadMissing?: boolean;
+  // WI-0383: 1P and full-game projection totals for NHL cards
+  projection1p?: number | null;
+  projectionTotal?: number | null;
 };
 
 type ResultsResponse = {
@@ -654,7 +657,21 @@ export default function ResultsPage() {
                           : '--'}
                       </span>
                       <span>{formatMarketSelectionLabel(row)}</span>
-                      <span>{row.prediction || '--'}</span>
+                      <span>
+                        {row.prediction || '--'}
+                        {row.sport === 'NHL' &&
+                        (row.projection1p != null ||
+                          row.projectionTotal != null) ? (
+                          <span className="block text-xs text-cloud/50 mt-0.5">
+                            {row.projectionTotal != null
+                              ? `Tot: ${row.projectionTotal.toFixed(2)}`
+                              : ''}
+                            {row.projection1p != null
+                              ? ` · 1P: ${row.projection1p.toFixed(2)}`
+                              : ''}
+                          </span>
+                        ) : null}
+                      </span>
                       <span>{formatPrice(row.price)}</span>
                       <span className="font-semibold">
                         {row.confidencePct !== null
@@ -751,6 +768,21 @@ export default function ResultsPage() {
                           {formatLabel(row.cardType)}
                         </p>
                       </div>
+                      {row.sport === 'NHL' &&
+                      (row.projection1p != null ||
+                        row.projectionTotal != null) ? (
+                        <div>
+                          <p className="text-cloud/50">Projection</p>
+                          <p className="mt-0.5 text-cloud/80 text-xs">
+                            {row.projectionTotal != null
+                              ? `Total: ${row.projectionTotal.toFixed(2)}`
+                              : '--'}
+                            {row.projection1p != null
+                              ? ` | 1P: ${row.projection1p.toFixed(2)}`
+                              : ''}
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
                   </details>
                 );
