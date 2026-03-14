@@ -599,7 +599,7 @@ class Statement {
       saveDatabase();
       return { changes: this.db.getRowsModified() };
     } catch (e) {
-      throw new Error(`Statement run error: ${e.message}`);
+      throw new Error(`Statement run error: ${e?.message ?? String(e)}`);
     }
   }
 
@@ -613,7 +613,7 @@ class Statement {
       this.stmt.reset();
       return result;
     } catch (e) {
-      throw new Error(`Statement get error: ${e.message}`);
+      throw new Error(`Statement get error: ${e?.message ?? String(e)}`);
     }
   }
 

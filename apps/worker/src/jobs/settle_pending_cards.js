@@ -341,7 +341,7 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
   }
 
   if (candidates.length === 0) {
-    return { closed: 0, failures: 0, fallbackCloses: 0, reasonCounts };
+    return { closed: 0, failures: 0, fallbackCloses: 0, reasonCounts, closedResultIds: new Set() };
   }
 
   const ids = candidates.map((entry) => entry.resultId);
@@ -371,8 +371,9 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
     try {
       updateStmt.run(settledAt, entry.metadataJson, entry.resultId);
     } catch (updateError) {
+      const errMsg = updateError?.message ?? String(updateError);
       console.warn(
-        `[SettleCards] Failed to auto-close non-actionable card ${entry.cardId} (${entry.reasonCode}): ${updateError.message}`,
+        `[SettleCards] Failed to auto-close non-actionable card ${entry.cardId} (resultId=${entry.resultId}, reason=${entry.reasonCode}): ${errMsg}`,
       );
       updateStmt = db.prepare(updateSql);
     }
@@ -381,7 +382,19 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
   const closed = countClosed();
   const failures = Math.max(0, candidates.length - closed);
   const fallbackCloses = 0;
-  return { closed, failures, fallbackCloses, reasonCounts };
+
+  // Build closedResultIds by querying which candidate IDs ended up as error+void+settledAt
+  const closedResultIds = new Set();
+  const closedRows = db
+    .prepare(
+      `SELECT id FROM card_results WHERE status = 'error' AND result = 'void' AND settled_at = ? AND id IN (${placeholders})`,
+    )
+    .all(settledAt, ...ids);
+  for (const r of closedRows) {
+    closedResultIds.add(String(r.id));
+  }
+
+  return { closed, failures, fallbackCloses, reasonCounts, closedResultIds };
 }
 
 function normalizePeriodToken(value) {
