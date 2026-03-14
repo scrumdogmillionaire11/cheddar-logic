@@ -3308,6 +3308,68 @@ function backfillCardResultsSportCasing() {
   }
 }
 
+/**
+ * Upsert a player prop line (fetched from odds provider).
+ */
+function upsertPlayerPropLine(row) {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    INSERT INTO player_prop_lines (
+      id, sport, game_id, odds_event_id, player_name, prop_type, period,
+      line, over_price, under_price, bookmaker, fetched_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(sport, game_id, player_name, prop_type, period, bookmaker) DO UPDATE SET
+      odds_event_id = excluded.odds_event_id,
+      line = excluded.line,
+      over_price = excluded.over_price,
+      under_price = excluded.under_price,
+      fetched_at = excluded.fetched_at
+  `);
+  stmt.run(
+    row.id,
+    row.sport,
+    row.gameId,
+    row.oddsEventId || null,
+    row.playerName,
+    row.propType,
+    row.period || 'full_game',
+    row.line,
+    row.overPrice || null,
+    row.underPrice || null,
+    row.bookmaker || null,
+    row.fetchedAt,
+  );
+}
+
+/**
+ * Get consensus prop line for a player+game+propType combo.
+ * Prefers draftkings, then fanduel, then betmgm, then any available.
+ * Returns null if no line found.
+ */
+function getPlayerPropLine(sport, gameId, playerName, propType, period) {
+  const db = getDatabase();
+  const resolvedPeriod = period || 'full_game';
+  const stmt = db.prepare(`
+    SELECT line, over_price, under_price, bookmaker
+    FROM player_prop_lines
+    WHERE sport = ?
+      AND game_id = ?
+      AND LOWER(player_name) = LOWER(?)
+      AND prop_type = ?
+      AND period = ?
+    ORDER BY
+      CASE bookmaker
+        WHEN 'draftkings' THEN 1
+        WHEN 'fanduel' THEN 2
+        WHEN 'betmgm' THEN 3
+        ELSE 4
+      END ASC
+    LIMIT 1
+  `);
+  return stmt.get(sport, gameId, playerName, propType, resolvedPeriod) || null;
+}
+
 module.exports = {
   initDb,
   getDatabase,
@@ -3337,6 +3399,8 @@ module.exports = {
   getOddsIngestFailureSummary,
   upsertPlayerShotLog,
   getPlayerShotLogs,
+  upsertPlayerPropLine,
+  getPlayerPropLine,
   getJobRunHistory,
   wasJobRecentlySuccessful,
   insertModelOutput,
