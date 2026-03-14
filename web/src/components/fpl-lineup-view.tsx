@@ -164,7 +164,7 @@ const renderPitchPlayerCard = (
   return (
     <div
       key={`${player.name}-${index}`}
-      className={`relative w-[132px] rounded-xl border px-3 pb-2 pt-3 text-center shadow-sm sm:w-[168px] sm:px-4 sm:pb-3 sm:pt-4 ${
+      className={`relative w-[72px] min-[380px]:w-[96px] sm:w-[132px] md:w-[168px] rounded-xl border px-2 pb-2 pt-3 text-center shadow-sm sm:px-3 sm:pb-3 sm:pt-4 md:px-4 ${
         player.is_new
           ? 'border-teal/35 bg-teal/10'
           : isTransferOut
@@ -183,13 +183,13 @@ const renderPitchPlayerCard = (
           {role}
         </span>
       ) : null}
-      <div className="truncate pr-9 text-sm font-semibold sm:text-[1.05rem]">
+      <div className="truncate pr-7 text-[10px] font-semibold sm:pr-9 sm:text-sm md:text-[1.05rem]">
         {player.name}
       </div>
-      <div className="mt-1 text-[11px] uppercase tracking-wide text-cloud/65 sm:text-xs">
+      <div className="mt-1 text-[9px] uppercase tracking-wide text-cloud/65 sm:text-[11px] sm:text-xs">
         {player.team} · {player.position}
       </div>
-      <div className="mt-1 text-sm font-semibold text-cloud/80 sm:text-[1.05rem]">
+      <div className="mt-1 text-[10px] font-semibold text-cloud/80 sm:text-sm md:text-[1.05rem]">
         {formatPts(player.expected_pts)} pts
       </div>
       <div className="mt-1 text-[11px] text-cloud/60 sm:text-xs">
@@ -408,7 +408,7 @@ export default function FPLLineupView({
           <div className="flex rounded-lg border border-white/20 bg-surface/50 p-1">
             <button
               onClick={() => setView('current')}
-              className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+              className={`rounded-md px-3 py-2 min-h-[44px] text-sm font-semibold transition sm:px-4 ${
                 showingCurrent
                   ? 'bg-cloud text-night'
                   : 'text-cloud/60 hover:text-cloud/80'
@@ -418,7 +418,7 @@ export default function FPLLineupView({
             </button>
             <button
               onClick={() => setView('recommended')}
-              className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+              className={`rounded-md px-3 py-2 min-h-[44px] text-sm font-semibold transition sm:px-4 ${
                 showingRecommended
                   ? 'bg-teal text-night'
                   : 'text-cloud/60 hover:text-cloud/80'
@@ -534,7 +534,7 @@ export default function FPLLineupView({
                         <div className="absolute left-0 top-2 text-[11px] font-semibold uppercase tracking-wide text-cloud/50 sm:left-1 sm:top-3">
                           {position} ({rowPlayers.length})
                         </div>
-                        <div className="flex w-full flex-wrap items-center justify-center gap-2 sm:gap-3">
+                        <div className="flex w-full flex-wrap items-center justify-center gap-1 sm:gap-2">
                           {rowPlayers.map((player, idx) => {
                             const isOut =
                               showingRecommended &&
