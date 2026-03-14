@@ -336,6 +336,61 @@ export interface AnalysisStatusResponse {
   results?: Record<string, unknown>;
 }
 
+const toRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+
+const extractErrorMessage = (value: unknown, fallback: string): string => {
+  const payload = toRecord(value);
+  if (!payload) {
+    return fallback;
+  }
+
+  const detail = payload.detail;
+  if (typeof detail === 'string' && detail.trim().length > 0) {
+    return detail.trim();
+  }
+
+  const nestedDetail = toRecord(detail)?.detail;
+  if (typeof nestedDetail === 'string' && nestedDetail.trim().length > 0) {
+    return nestedDetail.trim();
+  }
+
+  const message = payload.message;
+  if (typeof message === 'string' && message.trim().length > 0) {
+    return message.trim();
+  }
+
+  return fallback;
+};
+
+const isFailedAnalysisNotReady = (value: unknown): boolean => {
+  const payload = toRecord(value);
+  if (!payload) {
+    return false;
+  }
+
+  const parts: string[] = [];
+  const directFields = [
+    payload.error,
+    payload.message,
+    payload.detail,
+    payload.code,
+    payload.error_code,
+  ];
+  for (const field of directFields) {
+    if (typeof field === 'string' && field.trim().length > 0) {
+      parts.push(field.trim().toLowerCase());
+    }
+  }
+
+  const nestedDetail = toRecord(payload.detail)?.detail;
+  if (typeof nestedDetail === 'string' && nestedDetail.trim().length > 0) {
+    parts.push(nestedDetail.trim().toLowerCase());
+  }
+
+  return parts.join(' ').includes('failed');
+};
+
 /**
  * Trigger a new FPL analysis
  */
@@ -442,17 +497,29 @@ export async function getDetailedProjections(
   );
 
   if (!response.ok) {
-    if (response.status === 425 || response.status === 202) {
-      throw new Error('STILL_RUNNING');
-    }
-    let errorMessage = 'Failed to fetch detailed projections';
+    const fallbackError = `HTTP ${response.status}: ${response.statusText}`;
+    let parsedError: unknown = null;
     try {
-      const error = await response.json();
-      errorMessage = error.detail || errorMessage;
+      parsedError = await response.json();
     } catch {
-      // Response isn't JSON, use status text
-      errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      // Response isn't JSON; fallbackError handles this path.
     }
+    const errorMessage = extractErrorMessage(
+      parsedError,
+      'Failed to fetch detailed projections',
+    );
+
+    if (response.status === 425 || response.status === 202) {
+      if (!isFailedAnalysisNotReady(parsedError)) {
+        throw new Error('STILL_RUNNING');
+      }
+      throw new Error(
+        errorMessage === 'Failed to fetch detailed projections'
+          ? fallbackError
+          : errorMessage,
+      );
+    }
+
     throw new Error(errorMessage);
   }
 

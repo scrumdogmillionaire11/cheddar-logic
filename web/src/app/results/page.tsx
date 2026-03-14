@@ -17,6 +17,7 @@ type ResultsSummary = {
 
 type SegmentRow = {
   sport: string;
+  cardType: string;
   cardCategory: string;
   recommendedBetType: string;
   settledCards: number;
@@ -505,12 +506,12 @@ export default function ResultsPage() {
                   const isHighWinRate = winRate >= 0.6;
                   return (
                     <div
-                      key={`${row.sport}-${row.cardCategory}-${row.recommendedBetType}`}
+                      key={`${row.sport}-${row.cardType}-${row.recommendedBetType}`}
                       className={`grid grid-cols-7 gap-4 px-4 py-3 text-sm ${isHighWinRate ? 'bg-emerald-500/10' : ''}`}
                     >
                       <span className="text-cloud/70">{row.sport}</span>
-                      <span className="text-cloud/70 capitalize">
-                        {row.cardCategory}
+                      <span className="text-cloud/70">
+                        {row.cardType}
                       </span>
                       <span className="text-cloud/70 capitalize">
                         {row.recommendedBetType || '--'}
@@ -549,15 +550,15 @@ export default function ResultsPage() {
                     : 0;
                 return (
                   <article
-                    key={`${row.sport}-${row.cardCategory}-${row.recommendedBetType}-mobile`}
+                    key={`${row.sport}-${row.cardType}-${row.recommendedBetType}-mobile`}
                     className="rounded-xl border border-white/10 bg-night/40 px-4 py-4"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-cloud">
                           {row.sport} -{' '}
-                          <span className="capitalize text-cloud/75">
-                            {row.cardCategory}
+                          <span className="text-cloud/75">
+                            {row.cardType}
                           </span>
                         </p>
                         <p className="mt-1 text-xs text-cloud/60 capitalize">

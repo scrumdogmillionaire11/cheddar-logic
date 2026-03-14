@@ -49,6 +49,31 @@ async function run() {
     !dashboardSource.includes('Planner Status'),
     'Planner status fallback header should be retired',
   );
+  assert.ok(
+    dashboardSource.includes('const plannerGwRange = Array.from(') &&
+      dashboardSource.includes('plannerGwRange.map((gw) => ('),
+    'Planner should render a fixed 8-GW horizon range for each row',
+  );
+  assert.ok(
+    dashboardSource.includes(
+      'const upcomingByGw = new Map<number, (typeof upcomingRows)[number]>();',
+    ),
+    'Planner rows should normalize sparse upcoming rows through a GW lookup map',
+  );
+  assert.ok(
+    dashboardSource.includes('opponents.map((opponent, opponentIdx) => (') &&
+      dashboardSource.includes('{opponent}') &&
+      dashboardSource.includes('upcoming?.is_blank ? ('),
+    'Planner cells should render opponent acronyms directly (stacked when multiple), with BGW handling for blanks',
+  );
+  assert.ok(
+    !dashboardSource.includes("opponents.join('/')"),
+    'Planner should not collapse multiple opponents into a single slash-joined label',
+  );
+  assert.ok(
+    !dashboardSource.includes('{upcomingRows.map((upcoming) => ('),
+    'Planner row cells should not depend on variable-length upcoming arrays',
+  );
 
   const apiSource = await fs.readFile(
     new URL('../lib/fpl-api.ts', import.meta.url),

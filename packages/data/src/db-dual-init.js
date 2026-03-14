@@ -210,7 +210,7 @@ class Statement {
       }
       return { changes: this.db.getRowsModified() };
     } catch (e) {
-      throw new Error(`Statement run error: ${e.message}`);
+      throw new Error(`Statement run error: ${e?.message ?? String(e)}`);
     }
   }
 
@@ -224,7 +224,7 @@ class Statement {
       this.stmt.reset();
       return result;
     } catch (e) {
-      throw new Error(`Statement get error: ${e.message}`);
+      throw new Error(`Statement get error: ${e?.message ?? String(e)}`);
     }
   }
 
@@ -238,7 +238,7 @@ class Statement {
       this.stmt.reset();
       return results;
     } catch (e) {
-      throw new Error(`Statement all error: ${e.message}`);
+      throw new Error(`Statement all error: ${e?.message ?? String(e)}`);
     }
   }
 }

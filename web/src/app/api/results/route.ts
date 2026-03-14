@@ -26,6 +26,7 @@ type SummaryRow = {
 
 type SegmentRow = {
   sport: string;
+  card_type: string;
   card_category: string;
   recommended_bet_type: string;
   settled_cards: number;
@@ -488,6 +489,7 @@ export async function GET(request: NextRequest) {
         `
       SELECT
         cr.sport,
+        cr.card_type,
         ${cardCaseSql},
         cr.recommended_bet_type,
         COUNT(*) AS settled_cards,
@@ -497,8 +499,8 @@ export async function GET(request: NextRequest) {
         SUM(cr.pnl_units) AS total_pnl_units
       FROM card_results cr
       WHERE cr.id IN (${placeholders})
-      GROUP BY cr.sport, card_category, cr.recommended_bet_type
-      ORDER BY cr.sport ASC, card_category ASC, cr.recommended_bet_type ASC
+      GROUP BY cr.sport, cr.card_type, card_category, cr.recommended_bet_type
+      ORDER BY cr.sport ASC, cr.card_type ASC, card_category ASC, cr.recommended_bet_type ASC
     `,
       )
       .all(...ids) as SegmentRow[];
@@ -772,6 +774,7 @@ export async function GET(request: NextRequest) {
           },
           segments: segments.map((row) => ({
             sport: row.sport,
+            cardType: row.card_type,
             cardCategory: row.card_category,
             recommendedBetType: row.recommended_bet_type || 'unknown',
             settledCards: Number(row.settled_cards || 0),

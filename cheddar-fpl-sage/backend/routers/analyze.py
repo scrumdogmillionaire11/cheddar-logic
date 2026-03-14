@@ -517,6 +517,7 @@ async def trigger_interactive_analysis(
     responses={
         404: {"model": ErrorResponse, "description": "Analysis not found"},
         425: {"model": ErrorResponse, "description": "Analysis not ready"},
+        500: {"model": ErrorResponse, "description": "Analysis failed"},
     },
 )
 async def get_detailed_projections(analysis_id: str):
@@ -543,7 +544,18 @@ async def get_detailed_projections(analysis_id: str):
                 "code": "ANALYSIS_NOT_FOUND",
             },
         )
-    
+
+    if str(job.status).lower() == "failed":
+        failure_detail = f"Analysis failed: {job.error or 'Unknown analysis error'}"
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "Analysis failed",
+                "detail": failure_detail,
+                "code": "ANALYSIS_FAILED",
+            },
+        )
+
     if not _is_complete_status(job.status):
         raise HTTPException(
             status_code=status.HTTP_425_TOO_EARLY,

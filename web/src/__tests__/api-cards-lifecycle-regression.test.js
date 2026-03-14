@@ -347,6 +347,73 @@ async function runTests() {
       process.exit(1);
     }
 
+    // Test 6: Non-canonical run_state rows (e.g., nhl_props) do not contaminate canonical run_id selection
+    console.log('Test 6: Non-canonical run_state rows (nhl_props) are excluded from core run_id selection');
+
+    const CANONICAL_SPORTS_SQL = "'nba', 'nhl', 'ncaam', 'soccer', 'mlb', 'nfl', 'fpl'";
+    const TEST_RUN_CANONICAL = 'run-test-canonical-nhl-wi0447';
+    const TEST_RUN_NONCANONICAL = 'run-test-noncanonical-props-wi0447';
+
+    // Setup: ensure no leftover rows
+    client.prepare(`DELETE FROM run_state WHERE id IN ('test-nhl-wi0447', 'test-nhl-props-wi0447')`).run();
+    client.prepare(`DELETE FROM job_runs WHERE id IN (?, ?)`).run(TEST_RUN_CANONICAL, TEST_RUN_NONCANONICAL);
+
+    // Insert canonical job_run (success)
+    client.prepare(
+      `INSERT INTO job_runs (id, job_name, status, started_at) VALUES (?, 'test-wi0447-canonical', 'success', datetime('now'))`
+    ).run(TEST_RUN_CANONICAL);
+
+    // Insert non-canonical job_run (also success — test that sport filter, not status, is the guard)
+    client.prepare(
+      `INSERT INTO job_runs (id, job_name, status, started_at) VALUES (?, 'test-wi0447-noncanonical', 'success', datetime('now'))`
+    ).run(TEST_RUN_NONCANONICAL);
+
+    // Insert canonical run_state row (nhl)
+    client.prepare(
+      `INSERT OR REPLACE INTO run_state (id, sport, current_run_id, updated_at) VALUES ('test-nhl-wi0447', 'nhl', ?, datetime('now'))`
+    ).run(TEST_RUN_CANONICAL);
+
+    // Insert non-canonical run_state row (nhl_props — not in CORE_RUN_STATE_SPORTS)
+    client.prepare(
+      `INSERT OR REPLACE INTO run_state (id, sport, current_run_id, updated_at) VALUES ('test-nhl-props-wi0447', 'nhl_props', ?, datetime('now'))`
+    ).run(TEST_RUN_NONCANONICAL);
+
+    // Execute the exact canonical getActiveRunIds SQL (success tier) used by cards/games routes
+    const canonicalRunIds = client.prepare(
+      `SELECT rs.current_run_id
+       FROM run_state rs
+       WHERE id != 'singleton'
+         AND LOWER(COALESCE(rs.sport, rs.id, '')) IN (${CANONICAL_SPORTS_SQL})
+         AND rs.current_run_id IS NOT NULL
+         AND TRIM(rs.current_run_id) != ''
+         AND EXISTS (
+           SELECT 1
+           FROM job_runs jr
+           WHERE jr.id = rs.current_run_id
+             AND LOWER(jr.status) = 'success'
+         )
+       ORDER BY datetime(rs.updated_at) DESC, rs.id ASC`
+    ).all().map((r) => r.current_run_id);
+
+    const includesCanonical = canonicalRunIds.includes(TEST_RUN_CANONICAL);
+    const includesNonCanonical = canonicalRunIds.includes(TEST_RUN_NONCANONICAL);
+
+    if (includesCanonical && !includesNonCanonical) {
+      console.log('✓ Non-canonical nhl_props run_state row correctly excluded from core run_id selection\n');
+    } else {
+      console.log(
+        `✗ Canonical filter failed: includesCanonical=${includesCanonical}, includesNonCanonical=${includesNonCanonical}\n`
+      );
+      // Cleanup before exit
+      client.prepare(`DELETE FROM run_state WHERE id IN ('test-nhl-wi0447', 'test-nhl-props-wi0447')`).run();
+      client.prepare(`DELETE FROM job_runs WHERE id IN (?, ?)`).run(TEST_RUN_CANONICAL, TEST_RUN_NONCANONICAL);
+      process.exit(1);
+    }
+
+    // Cleanup test rows
+    client.prepare(`DELETE FROM run_state WHERE id IN ('test-nhl-wi0447', 'test-nhl-props-wi0447')`).run();
+    client.prepare(`DELETE FROM job_runs WHERE id IN (?, ?)`).run(TEST_RUN_CANONICAL, TEST_RUN_NONCANONICAL);
+
     // Clean up
     console.log('📝 Cleaning up test data...');
     client
@@ -355,7 +422,7 @@ async function runTests() {
     client.prepare(`DELETE FROM games WHERE game_id LIKE 'test-lifecycle-%'`).run();
     console.log('✓ Test data cleaned\n');
 
-    console.log('✅ All WI-0392 Lifecycle Parity Tests Passed!');
+    console.log('✅ All WI-0392/WI-0447 Lifecycle Parity + Run-State Shield Tests Passed!');
     process.exit(0);
   } catch (error) {
     console.error('❌ Test Error:', error.message);
