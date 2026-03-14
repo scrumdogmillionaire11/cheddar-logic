@@ -282,6 +282,27 @@ export interface CanonicalApiPlay {
 }
 
 /**
+ * FT trend context as it appears in API play payloads (snake_case)
+ * Single canonical definition — imported by route.ts, transform.ts, cards-page-client.tsx
+ */
+export interface FtTrendContext {
+  home_ft_pct: number | null;
+  away_ft_pct: number | null;
+  total_line: number | null;
+  advantaged_side: 'HOME' | 'AWAY' | null;
+}
+
+/**
+ * FT trend context as used in DriverRow (camelCase display form)
+ */
+export interface FtTrendContextDisplay {
+  homeFtPct: number | null;
+  awayFtPct: number | null;
+  totalLine: number | null;
+  advantagedSide: 'HOME' | 'AWAY' | null;
+}
+
+/**
  * Normalized driver row with stable key and deduped data
  */
 export interface DriverRow {
@@ -294,12 +315,7 @@ export interface DriverRow {
   note: string;
   cardType: string;
   cardTitle: string;
-  ftTrendContext?: {
-    homeFtPct: number | null;
-    awayFtPct: number | null;
-    totalLine: number | null;
-    advantagedSide: 'HOME' | 'AWAY' | null;
-  };
+  ftTrendContext?: FtTrendContextDisplay;
   /** Driver role assigned at transform time from DRIVER_ROLES registry */
   role?: DriverRole;
 }

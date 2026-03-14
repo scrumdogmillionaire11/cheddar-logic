@@ -56,7 +56,7 @@ import {
   performSecurityChecks,
   addRateLimitHeaders,
 } from '../../../lib/api-security';
-import type { ExpressionStatus, CanonicalMarketType } from '@/lib/types/game-card';
+import type { ExpressionStatus, CanonicalMarketType, FtTrendContext } from '@/lib/types/game-card';
 import type { PlayDisplayAction } from '@/lib/game-card/decision';
 
 const ENABLE_WELCOME_HOME =
@@ -189,12 +189,7 @@ interface Play {
   selection?: { side: string; team?: string };
   line?: number;
   price?: number;
-  ft_trend_context?: {
-    home_ft_pct: number | null;
-    away_ft_pct: number | null;
-    total_line: number | null;
-    advantaged_side: 'HOME' | 'AWAY' | null;
-  };
+  ft_trend_context?: FtTrendContext;
   line_source?: string | null;
   price_source?: string | null;
   market_context?: {

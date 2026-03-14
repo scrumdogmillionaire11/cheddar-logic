@@ -31,6 +31,7 @@ import type {
   CardQuality,
   DecisionV2,
   ExpressionStatus,
+  FtTrendContext,
 } from '../types/game-card';
 import type {
   CanonicalPlay,
@@ -188,12 +189,7 @@ interface ApiPlay {
   selection?: { side?: string; team?: string };
   line?: number;
   price?: number;
-  ft_trend_context?: {
-    home_ft_pct?: number | null;
-    away_ft_pct?: number | null;
-    total_line?: number | null;
-    advantaged_side?: 'HOME' | 'AWAY' | null;
-  };
+  ft_trend_context?: Partial<FtTrendContext>;
   reason_codes?: string[];
   tags?: string[];
   recommendation?: { type?: string };
