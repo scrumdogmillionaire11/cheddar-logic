@@ -31,5 +31,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 34 | P0 Shield core cards/games surfaces — nhl_props run_state isolation (WI-0447) | 2026-03-14 | f268a6e | [34-p0-wi-0447-shield-core-cards-games-surfa](./quick/34-p0-wi-0447-shield-core-cards-games-surfa/) |
 | 35 | WI-0448 Settlement Segmentation Record Traceability — lineage audit script + docs | 2026-03-14 | afeb71c | [35-wi-0448-settlement-segmentation-record-t](./quick/35-wi-0448-settlement-segmentation-record-t/) |
 | 36 | WI-0449 SettleCards Run-Log Failure Remediation — safe error serialization + counter isolation | 2026-03-14 | af58e8b | [36-wi-0449-settlecards-run-log-failure-reme](./quick/36-wi-0449-settlecards-run-log-failure-reme/) |
+| 37 | NHL player SOG prop market: real O/U lines from Odds API into player_prop_lines table + model runner integration | 2026-03-14 | bc63cc3 | [37-nhl-player-shots-prop-market-with-proces](./quick/37-nhl-player-shots-prop-market-with-proces/) |
 
-Last activity: 2026-03-14 - Completed quick task 36: WI-0449 fixed Statement run error: undefined in db.js/db-multi.js/db-dual-init.js; added closedResultIds Set to prevent auto-closed rows from double-counting in settlement loop counters
+Last activity: 2026-03-14 - Completed quick task 37: added player_prop_lines DB table + upsert/get functions, pull_nhl_player_shots_props.js job (env-gated), wired real line lookup into model runner with synthetic fallback, process docs
