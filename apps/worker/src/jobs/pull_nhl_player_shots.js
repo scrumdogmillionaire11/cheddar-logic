@@ -154,8 +154,8 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
       return { success: true, jobRunId: null, dryRun: true, jobKey };
     }
 
-    const playerIds = parsePlayerIds(process.env.NHL_SOG_PLAYER_IDS);
-    if (playerIds.length === 0) {
+    const allPlayerIds = parsePlayerIds(process.env.NHL_SOG_PLAYER_IDS);
+    if (allPlayerIds.length === 0) {
       console.log(
         '[NHLPlayerShots] No player IDs configured. Set NHL_SOG_PLAYER_IDS.',
       );
@@ -165,6 +165,11 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
         skipped: true,
         reason: 'no_player_ids',
       };
+    }
+    const excludeIds = new Set(parsePlayerIds(process.env.NHL_SOG_EXCLUDE_PLAYER_IDS));
+    const playerIds = allPlayerIds.filter((id) => !excludeIds.has(id));
+    if (excludeIds.size > 0) {
+      console.log(`[NHLPlayerShots] Excluding ${excludeIds.size} player(s) via NHL_SOG_EXCLUDE_PLAYER_IDS`);
     }
 
     try {
