@@ -105,6 +105,57 @@ function resolvePlayerName(payload) {
   return joined || null;
 }
 
+/**
+ * Inspect the NHL API landing payload for injury/unavailability signals.
+ *
+ * Fields checked (in priority order):
+ *   1. payload.status       — direct status string
+ *   2. payload.currentTeamRoster.statusCode — roster-level status code
+ *
+ * Injury keywords (case-insensitive substring match):
+ *   "injur", "ir", "ltir", "scratch", "suspend", "inactive"
+ *
+ * Fail-open: if neither field exists, returns { skip: false }.
+ *
+ * @param {object} payload — NHL API /player/{id}/landing response
+ * @returns {{ skip: boolean, reason?: string }}
+ */
+function checkInjuryStatus(payload) {
+  const INJURY_KEYWORDS = ['injur', 'ltir', 'scratch', 'suspend', 'inactive'];
+  // "ir" must be a whole-word-like check to avoid false positives (e.g. "first")
+  // We check after lowercasing: "ir" as an exact value OR preceded/followed by non-alpha.
+  function isInjuryStatus(raw) {
+    if (!raw || typeof raw !== 'string') return false;
+    const lower = raw.toLowerCase().trim();
+    // Exact match for common short codes
+    if (lower === 'ir' || lower === 'ltir') return true;
+    // Substring match for longer keywords
+    return INJURY_KEYWORDS.some((kw) => lower.includes(kw));
+  }
+
+  // Check payload.status first (most direct)
+  const directStatus = payload?.status;
+  if (directStatus !== undefined && directStatus !== null) {
+    if (isInjuryStatus(String(directStatus))) {
+      return { skip: true, reason: String(directStatus) };
+    }
+    // Status field was present but not an injury → player is active
+    return { skip: false };
+  }
+
+  // Fall back to currentTeamRoster.statusCode
+  const rosterStatusCode = payload?.currentTeamRoster?.statusCode;
+  if (rosterStatusCode !== undefined && rosterStatusCode !== null) {
+    if (isInjuryStatus(String(rosterStatusCode))) {
+      return { skip: true, reason: String(rosterStatusCode) };
+    }
+    return { skip: false };
+  }
+
+  // Neither field present — fail open
+  return { skip: false };
+}
+
 function buildLogRows(playerId, payload, fetchedAt) {
   const last5 = Array.isArray(payload?.last5Games) ? payload.last5Games : [];
   const playerName = resolvePlayerName(payload);
@@ -182,6 +233,20 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
         try {
           const fetchedAt = new Date().toISOString();
           const payload = await fetchPlayerLanding(playerId);
+
+          // Check injury/availability status before processing shot logs
+          const injuryCheck = checkInjuryStatus(payload);
+          if (injuryCheck.skip) {
+            const playerName = resolvePlayerName(payload) || String(playerId);
+            console.log(
+              `[NHLPlayerShots] Skipping ${playerName} (${playerId}): status=${injuryCheck.reason}`,
+            );
+            if (DEFAULT_SLEEP_MS > 0) {
+              await sleep(DEFAULT_SLEEP_MS);
+            }
+            continue;
+          }
+
           const rows = buildLogRows(playerId, payload, fetchedAt);
 
           rows.forEach((row) => {
