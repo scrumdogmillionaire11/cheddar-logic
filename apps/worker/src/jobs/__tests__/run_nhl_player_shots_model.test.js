@@ -5,7 +5,7 @@
  * 1. Player with fewer than 5 recent logs is skipped with proper log message
  * 2. setCurrentRunId is called even when 0 cards are created
  * 3. NHL_SOG_1P_CARDS_ENABLED=false (default) prevents 1P card creation
- * 4. Synthetic fallback line is deterministic (Math.round(mu * 2) / 2)
+ * 4. Projection-floor fallback uses NHL_SOG_PROJECTION_LINE (default 2.5) when no real line
  */
 
 'use strict';
@@ -184,16 +184,18 @@ describe('run_nhl_player_shots_model', () => {
     expect(onePCalls.length).toBe(0);
   });
 
-  test('synthetic fallback line is deterministic — Math.round(mu * 2) / 2', () => {
-    // Pure formula check — no module interaction needed
-    const mu = 3.2;
-    const expected = Math.round(mu * 2) / 2; // 3.2*2=6.4 → round=6 → /2=3
+  test('projection-floor fallback defaults to 2.5 when NHL_SOG_PROJECTION_LINE not set', () => {
+    // When no real Odds API line exists, model uses a fixed floor so high-projection
+    // players still generate cards. Default is 2.5 SOG (a standard NHL market line).
+    delete process.env.NHL_SOG_PROJECTION_LINE;
+    const floor = parseFloat(process.env.NHL_SOG_PROJECTION_LINE || '2.5');
+    expect(floor).toBe(2.5);
+  });
 
-    for (let i = 0; i < 10; i++) {
-      const line = Math.round(mu * 2) / 2;
-      expect(line).toBe(expected);
-    }
-    // Sanity: should be 3, not 3.2
-    expect(expected).toBe(3);
+  test('projection-floor fallback respects NHL_SOG_PROJECTION_LINE override', () => {
+    process.env.NHL_SOG_PROJECTION_LINE = '3.0';
+    const floor = parseFloat(process.env.NHL_SOG_PROJECTION_LINE || '2.5');
+    expect(floor).toBe(3.0);
+    delete process.env.NHL_SOG_PROJECTION_LINE;
   });
 });

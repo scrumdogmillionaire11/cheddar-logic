@@ -340,28 +340,31 @@ async function runNHLPlayerShotsModel() {
             });
 
             // Fetch real market lines from DB (populated by pull_nhl_player_shots_props job).
-            // Gap 3: Fall back to deterministic synthetic line (Math.round(mu * 2) / 2) — no random offset.
+            // When no real line exists, use a configurable projection floor (default 2.5 SOG) so
+            // projection-mode cards are still generated for the best shooters. A player at 3.3 mu
+            // vs a 2.5 floor = 0.8 edge = HOT. Set NHL_SOG_PROJECTION_LINE to adjust the threshold.
             const realPropLine = getPlayerPropLine('NHL', resolvedGameId, playerName, 'shots_on_goal', 'full_game');
             let marketLine;
             if (realPropLine) {
               marketLine = realPropLine.line;
             } else {
-              marketLine = Math.round(mu * 2) / 2;
-              console.log(`[synthetic-fallback] line=${marketLine} is deterministic (no real line available)`);
+              marketLine = parseFloat(process.env.NHL_SOG_PROJECTION_LINE || '2.5');
+              console.log(`[projection-mode] line=${marketLine} (no real Odds API line — using projection floor)`);
             }
             const usingRealLine = !!realPropLine;
 
             const syntheticLine = marketLine; // kept for card payload references below
 
-            // Gap 3: 1P fallback also deterministic
+            // 1P: also use projection floor when no real line (scaled from full-game floor by 1P share)
             const realPropLine1p = getPlayerPropLine('NHL', resolvedGameId, playerName, 'shots_on_goal', 'first_period');
             let syntheticLine1p;
             if (realPropLine1p) {
               syntheticLine1p = realPropLine1p.line;
             } else {
-              syntheticLine1p = Math.round(mu1p * 2) / 2;
+              const floorFull = parseFloat(process.env.NHL_SOG_PROJECTION_LINE || '2.5');
+              syntheticLine1p = Math.round(floorFull * 0.32 * 2) / 2;
               if (sog1pEnabled) {
-                console.log(`[synthetic-fallback] line=${syntheticLine1p} is deterministic (no real line available)`);
+                console.log(`[projection-mode] 1P line=${syntheticLine1p} (no real Odds API line — using projection floor)`);
               }
             }
 
@@ -427,7 +430,7 @@ async function runNHLPlayerShotsModel() {
                   market_line: syntheticLine,
                   direction: fullGameEdge.direction,
                   confidence: confidence,
-                  market_line_source: usingRealLine ? 'odds_api' : 'synthetic_fallback',
+                  market_line_source: usingRealLine ? 'odds_api' : 'projection_floor',
                 },
                 drivers: {
                   l5_avg: l5Sog.reduce((a, b) => a + b, 0) / 5,
@@ -515,7 +518,7 @@ async function runNHLPlayerShotsModel() {
                     market_line: syntheticLine1p,
                     direction: firstPeriodEdge.direction,
                     confidence: confidence,
-                    market_line_source: realPropLine1p ? 'odds_api' : 'synthetic_fallback',
+                    market_line_source: realPropLine1p ? 'odds_api' : 'projection_floor',
                   },
                   drivers: {
                     l5_avg_1p: (l5Sog.reduce((a, b) => a + b, 0) / 5) * 0.32,
