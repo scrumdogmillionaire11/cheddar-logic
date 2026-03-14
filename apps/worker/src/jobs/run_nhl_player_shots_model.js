@@ -63,13 +63,14 @@ async function runNHLPlayerShotsModel() {
     try {
       insertJobRun(JOB_NAME, jobRunId, null);
 
-      // Step 1: Get active NHL games
+      // Step 1: Get active NHL games within the display window (36h from now)
       const gamesStmt = db.prepare(`
         SELECT game_id, home_team, away_team, game_time_utc, sport
         FROM games
         WHERE LOWER(sport) = 'nhl'
           AND status = 'scheduled'
           AND game_time_utc > datetime('now')
+          AND game_time_utc < datetime('now', '+36 hours')
         ORDER BY game_time_utc ASC
       `);
       const games = gamesStmt.all();
