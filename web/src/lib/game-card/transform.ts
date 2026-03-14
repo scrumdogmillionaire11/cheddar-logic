@@ -125,7 +125,6 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
       'ncaam-rest-advantage',
       'ncaam-matchup-style',
       'ncaam-ft-trend',
-      'ncaam-ft-spread',
     ]),
     evidenceOnlyCardTypes: new Set([]),
   },
@@ -823,7 +822,7 @@ function selectWave1DecisionCandidate(
   };
 
   const normalizedSport = normalizeSport(sport);
-  const ftTrendCardTypes = new Set(['ncaam-ft-trend', 'ncaam-ft-spread']);
+  const ftTrendCardTypes = new Set(['ncaam-ft-trend']);
 
   const cardTypePriority = (play: ApiPlay): number => {
     if (normalizedSport !== 'NCAAM') return 0;
@@ -1194,8 +1193,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   if (wave1DecisionPlay?.decision_v2) {
     const decisionV2 = wave1DecisionPlay.decision_v2;
     const ftTrendOverrideDirection =
-      (wave1DecisionPlay.cardType === 'ncaam-ft-trend' ||
-        wave1DecisionPlay.cardType === 'ncaam-ft-spread') &&
+      wave1DecisionPlay.cardType === 'ncaam-ft-trend' &&
       wave1DecisionPlay.market_type === 'SPREAD' &&
       (wave1DecisionPlay.ft_trend_context?.advantaged_side === 'HOME' ||
         wave1DecisionPlay.ft_trend_context?.advantaged_side === 'AWAY')

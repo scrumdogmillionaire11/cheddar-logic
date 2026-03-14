@@ -400,7 +400,6 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'ncaam-rest-advantage',
       'ncaam-matchup-style',
       'ncaam-ft-trend',
-      'ncaam-ft-spread',
     ]),
     evidenceOnlyCardTypes: new Set([]),
     expectedPlayableMarkets: new Set<MarketType>(['MONEYLINE', 'SPREAD']),
@@ -1724,8 +1723,7 @@ export async function GET(request: NextRequest) {
             payloadMarketContext?.market_type,
         );
         const isFtTrendCard =
-          cardRow.card_type === 'ncaam-ft-trend' ||
-          cardRow.card_type === 'ncaam-ft-spread';
+          cardRow.card_type === 'ncaam-ft-trend';
         const normalizedFtTrendContext = isFtTrendCard
           ? (() => {
               const homeFtPct = firstNumber(

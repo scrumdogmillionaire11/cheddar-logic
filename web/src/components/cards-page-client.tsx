@@ -558,39 +558,18 @@ type FtTrendInsight = {
 
 function extractFtTrendInsight(card: GameCard): FtTrendInsight | null {
   const ftDriver = card.drivers.find(
-    (driver) =>
-      driver.cardType === 'ncaam-ft-trend' ||
-      driver.cardType === 'ncaam-ft-spread',
+    (driver) => driver.cardType === 'ncaam-ft-trend',
   );
   if (!ftDriver) return null;
 
   const context = ftDriver.ftTrendContext;
 
-  const match = ftDriver.note.match(
-    /FT% edge \(([\d.]+)\s+vs\s+([\d.]+)\) with total ([\d.]+)/i,
-  );
-  const parsedHomePct = match ? Number(match[1]) : null;
-  const parsedAwayPct = match ? Number(match[2]) : null;
-  const parsedTotalLine = match ? Number(match[3]) : null;
-
   const safeHomePct =
-    typeof context?.homeFtPct === 'number'
-      ? context.homeFtPct
-      : Number.isFinite(parsedHomePct)
-        ? parsedHomePct
-        : null;
+    typeof context?.homeFtPct === 'number' ? context.homeFtPct : null;
   const safeAwayPct =
-    typeof context?.awayFtPct === 'number'
-      ? context.awayFtPct
-      : Number.isFinite(parsedAwayPct)
-        ? parsedAwayPct
-        : null;
+    typeof context?.awayFtPct === 'number' ? context.awayFtPct : null;
   const safeTotalLine =
-    typeof context?.totalLine === 'number'
-      ? context.totalLine
-      : Number.isFinite(parsedTotalLine)
-        ? parsedTotalLine
-        : null;
+    typeof context?.totalLine === 'number' ? context.totalLine : null;
 
   const sideFromPct =
     safeHomePct !== null && safeAwayPct !== null
