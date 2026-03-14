@@ -29,5 +29,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 32 | P2 NHL Decision Integrity Chain (WI-0382/0383) | 2026-03-13 | 444389e | [32-p2-nhl-decision-integrity-chain-wi-0384-](./quick/32-p2-nhl-decision-integrity-chain-wi-0384-/) |
 | 33 | P3 NCAAM FT cleanup/investigation (WI-0405/0406/0407/0409) | 2026-03-13 | 97e6570 | [33-p3-ncaam-ft-cleanup-investigation-wi-040](./quick/33-p3-ncaam-ft-cleanup-investigation-wi-040/) |
 | 34 | P0 Shield core cards/games surfaces — nhl_props run_state isolation (WI-0447) | 2026-03-14 | f268a6e | [34-p0-wi-0447-shield-core-cards-games-surfa](./quick/34-p0-wi-0447-shield-core-cards-games-surfa/) |
+| 35 | WI-0448 Settlement Segmentation Record Traceability — lineage audit script + docs | 2026-03-14 | afeb71c | [35-wi-0448-settlement-segmentation-record-t](./quick/35-wi-0448-settlement-segmentation-record-t/) |
 
-Last activity: 2026-03-14 - Completed quick task 34: P0 WI-0447 behavioral DB-level regression test for nhl_props run_state isolation
+Last activity: 2026-03-14 - Completed quick task 35: WI-0448 lineage audit script (scripts/audit-lineage.js) + DATA_CONTRACTS.md Record Lineage Map + ops-runbook.md Lineage Audit Procedure
