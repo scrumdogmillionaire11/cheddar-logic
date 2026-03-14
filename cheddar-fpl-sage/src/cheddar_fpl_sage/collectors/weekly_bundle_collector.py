@@ -176,7 +176,6 @@ async def collect_weekly_bundle(team_id: Optional[int], target_gw: Optional[int]
                 # - Jan-Jul deadline -> season started previous year
                 # - Aug-Dec deadline -> season started current year
                 try:
-                    from datetime import datetime
                     deadline_iso = ev.get("deadline_time", "")
                     dt = datetime.fromisoformat(deadline_iso.replace('Z', '+00:00'))
                     year = dt.year

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import importlib
 import os
 import sys
+from pathlib import Path
 
 import backend.routers.analyze as analyze_router
 import backend.routers.user as user_router
@@ -94,6 +95,15 @@ def test_projections_not_ready(client, monkeypatch) -> None:
     response = client.get("/api/v1/analyze/job12345/projections")
     assert response.status_code == 425
     assert response.json()["code"] == "ANALYSIS_NOT_READY"
+
+
+def test_projections_failed_analysis_returns_explicit_failed_error() -> None:
+    analyze_source_path = Path(__file__).resolve().parents[1] / "backend" / "routers" / "analyze.py"
+    analyze_source = analyze_source_path.read_text()
+    assert 'if str(job.status).lower() == "failed":' in analyze_source
+    assert "status_code=status.HTTP_500_INTERNAL_SERVER_ERROR" in analyze_source
+    assert '"code": "ANALYSIS_FAILED"' in analyze_source
+    assert '"error": "Analysis failed"' in analyze_source
 
 
 def test_projections_accepts_player_rows_without_price(client, monkeypatch) -> None:

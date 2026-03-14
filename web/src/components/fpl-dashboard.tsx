@@ -170,85 +170,122 @@ const renderFixtureWindowTable = (
   title: string,
   rows: FixturePlannerPlayerWindow[],
   startGw: number,
-) => (
-  <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
-    <div className="mb-3 text-sm font-semibold uppercase text-cloud/60">
-      {title}
-    </div>
-    {rows.length === 0 ? (
-      <div className="text-xs text-cloud/60">No players in this list.</div>
-    ) : (
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-xs">
-          <thead>
-            <tr className="border-b border-white/10 text-cloud/60">
-              <th className="px-2 py-2 text-left">Player</th>
-              <th className="px-2 py-2 text-left">DGW</th>
-              <th className="px-2 py-2 text-left">BGW</th>
-              <th className="px-2 py-2 text-left">Next DGW</th>
-              <th className="px-2 py-2 text-left">Fixture Horizon Score</th>
-              {Array.from({ length: 8 }).map((_, idx) => (
-                <th key={`${title}-gw-${idx}`} className="px-2 py-2 text-left">
-                  GW{startGw + idx}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((window, idx) => {
-              const summary = window?.summary ?? {
-                dgw_count: 0,
-                bgw_count: 0,
-                next_dgw_gw: null,
-                weighted_fixture_score: 0,
-              };
-              const upcomingRows = Array.isArray(window?.upcoming)
-                ? window.upcoming
-                : [];
-              return (
-                <tr
-                  key={`${window.player_id || window.name}-${idx}`}
-                  className="border-b border-white/5"
-                >
-                  <td className="px-2 py-2">
-                    <div className="font-semibold">{window.name}</div>
-                    <div className="text-cloud/60">{window.team}</div>
-                  </td>
-                  <td className="px-2 py-2">{summary.dgw_count}</td>
-                  <td className="px-2 py-2">{summary.bgw_count}</td>
-                  <td className="px-2 py-2">{summary.next_dgw_gw ?? '-'}</td>
-                  <td className="px-2 py-2">
-                    {formatFixed(summary.weighted_fixture_score, 3)}
-                  </td>
-                  {upcomingRows.map((upcoming) => (
-                    <td
-                      key={`${window.name}-gw-${upcoming.gw}`}
-                      className="px-2 py-2"
-                    >
-                      {upcoming.is_blank ? (
-                        <span className="rounded bg-rose/20 px-2 py-1 text-rose">
-                          BGW
-                        </span>
-                      ) : upcoming.is_double ? (
-                        <span className="rounded bg-teal/20 px-2 py-1 text-teal">
-                          DGW
-                        </span>
-                      ) : (
-                        <span className="rounded bg-white/10 px-2 py-1 text-cloud/70">
-                          1
-                        </span>
-                      )}
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+) => {
+  const plannerGwRange = Array.from(
+    { length: 8 },
+    (_, gwOffset) => startGw + gwOffset,
+  );
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
+      <div className="mb-3 text-sm font-semibold uppercase text-cloud/60">
+        {title}
       </div>
-    )}
-  </div>
-);
+      {rows.length === 0 ? (
+        <div className="text-xs text-cloud/60">No players in this list.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-xs">
+            <thead>
+              <tr className="border-b border-white/10 text-cloud/60">
+                <th className="px-2 py-2 text-left">Player</th>
+                <th className="px-2 py-2 text-left">DGW</th>
+                <th className="px-2 py-2 text-left">BGW</th>
+                <th className="px-2 py-2 text-left">Next DGW</th>
+                <th className="px-2 py-2 text-left">Fixture Horizon Score</th>
+                {plannerGwRange.map((gw) => (
+                  <th key={`${title}-gw-${gw}`} className="px-2 py-2 text-left">
+                    GW{gw}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((window, idx) => {
+                const summary = window?.summary ?? {
+                  dgw_count: 0,
+                  bgw_count: 0,
+                  next_dgw_gw: null,
+                  weighted_fixture_score: 0,
+                };
+                const upcomingRows = Array.isArray(window?.upcoming)
+                  ? window.upcoming
+                  : [];
+                const upcomingByGw = new Map<number, (typeof upcomingRows)[number]>();
+                for (const upcoming of upcomingRows) {
+                  const rawGw = parseNumeric(upcoming?.gw);
+                  if (rawGw !== null) {
+                    const normalizedGw = Math.max(1, Math.trunc(rawGw));
+                    upcomingByGw.set(normalizedGw, upcoming);
+                  }
+                }
+
+                return (
+                  <tr
+                    key={`${window.player_id || window.name}-${idx}`}
+                    className="border-b border-white/5"
+                  >
+                    <td className="px-2 py-2">
+                      <div className="font-semibold">{window.name}</div>
+                      <div className="text-cloud/60">{window.team}</div>
+                    </td>
+                    <td className="px-2 py-2">{summary.dgw_count}</td>
+                    <td className="px-2 py-2">{summary.bgw_count}</td>
+                    <td className="px-2 py-2">{summary.next_dgw_gw ?? '-'}</td>
+                    <td className="px-2 py-2">
+                      {formatFixed(summary.weighted_fixture_score, 3)}
+                    </td>
+                    {plannerGwRange.map((gw) => {
+                      const upcoming = upcomingByGw.get(gw);
+                      const opponents = Array.isArray(upcoming?.opponents)
+                        ? upcoming.opponents
+                            .map((opponent) => String(opponent || '').trim())
+                            .filter((opponent) => opponent.length > 0)
+                        : [];
+
+                      return (
+                        <td key={`${window.name}-gw-${gw}`} className="px-2 py-2">
+                          <div className="flex min-w-14 flex-col gap-1">
+                            {upcoming?.is_blank ? (
+                              <span className="rounded bg-rose/20 px-2 py-1 text-center text-rose">
+                                BGW
+                              </span>
+                            ) : (
+                              <>
+                                {opponents.length > 0 ? (
+                                  opponents.map((opponent, opponentIdx) => (
+                                    <span
+                                      key={`${window.name}-gw-${gw}-opp-${opponentIdx}`}
+                                      className={`rounded px-2 py-1 text-center ${
+                                        opponents.length > 1
+                                          ? 'bg-teal/20 text-teal'
+                                          : 'bg-white/10 text-cloud/70'
+                                      }`}
+                                    >
+                                      {opponent}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="rounded bg-white/10 px-2 py-1 text-center text-cloud/60">
+                                    -
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function FPLDashboard({ data }: FPLDashboardProps) {
   if (!data) {
