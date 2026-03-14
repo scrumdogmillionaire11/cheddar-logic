@@ -20,6 +20,7 @@ const {
   insertCardPayload,
   validateCardPayload,
   withDb,
+  getPlayerPropLine,
 } = require('@cheddar-logic/data');
 const {
   calcMu,
@@ -207,12 +208,25 @@ async function runNHLPlayerShotsModel() {
               isHome,
             });
 
-            // For dev/testing, use synthetic market lines (model projection ± random offset)
-            // In production, these would come from odds API
-            const syntheticLine =
-              Math.round((mu + (Math.random() - 0.5) * 1.0) * 2) / 2; // Round to nearest 0.5
-            const syntheticLine1p =
-              Math.round((mu1p + (Math.random() - 0.5) * 0.5) * 2) / 2;
+            // Fetch real market lines from DB (populated by pull_nhl_player_shots_props job).
+            // Fall back to synthetic line only when no real line available (dev/offline mode).
+            const realPropLine = getPlayerPropLine('NHL', gameId, playerName, 'shots_on_goal', 'full_game');
+            const marketLine = realPropLine
+              ? realPropLine.line
+              : Math.round((mu + (Math.random() - 0.5) * 1.0) * 2) / 2;
+            const usingRealLine = !!realPropLine;
+
+            const syntheticLine = marketLine; // kept for card payload references below
+
+            // 1P: try real line, fall back to synthetic scaled from full-game fallback
+            const realPropLine1p = getPlayerPropLine('NHL', gameId, playerName, 'shots_on_goal', 'first_period');
+            const syntheticLine1p = realPropLine1p
+              ? realPropLine1p.line
+              : Math.round((mu1p + (Math.random() - 0.5) * 0.5) * 2) / 2;
+
+            if (!usingRealLine) {
+              console.warn(`[${JOB_NAME}] No real prop line for ${playerName} game ${gameId} — using synthetic fallback`);
+            }
 
             // Confidence based on data recency (could be enhanced)
             const confidence = 0.75;
@@ -272,6 +286,7 @@ async function runNHLPlayerShotsModel() {
                   market_line: syntheticLine,
                   direction: fullGameEdge.direction,
                   confidence: confidence,
+                  market_line_source: usingRealLine ? 'odds_api' : 'synthetic_fallback',
                 },
                 drivers: {
                   l5_avg: l5Sog.reduce((a, b) => a + b, 0) / 5,
@@ -355,6 +370,7 @@ async function runNHLPlayerShotsModel() {
                   market_line: syntheticLine1p,
                   direction: firstPeriodEdge.direction,
                   confidence: confidence,
+                  market_line_source: realPropLine1p ? 'odds_api' : 'synthetic_fallback',
                 },
                 drivers: {
                   l5_avg_1p: (l5Sog.reduce((a, b) => a + b, 0) / 5) * 0.32,

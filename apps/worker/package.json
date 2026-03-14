@@ -10,6 +10,8 @@
     "job:pull-schedule-ncaam": "node src/jobs/pull_schedule_ncaam.js",
     "job:pull-schedule-nhl": "node src/jobs/pull_schedule_nhl.js",
     "job:pull-nhl-player-shots": "node src/jobs/pull_nhl_player_shots.js",
+    "job:pull-nhl-player-shots-props": "node src/jobs/pull_nhl_player_shots_props.js",
+    "job:pull-nhl-player-shots-props:dry": "node src/jobs/pull_nhl_player_shots_props.js --dry-run",
     "job:run-nhl-player-shots-model": "node src/jobs/run_nhl_player_shots_model.js",
     "job:pull-schedule-nba": "node src/jobs/pull_schedule_nba.js",
     "job:run-nhl-model": "node src/jobs/run_nhl_model.js",
