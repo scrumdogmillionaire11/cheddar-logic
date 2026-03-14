@@ -698,6 +698,11 @@ describe('decision publisher v2 pipeline', () => {
       edge: 0.12,
       tier: 'SUPER',
       official_eligible: false,
+      odds_context: {
+        total: 6.5,
+        total_price_over: -110,
+        total_price_under: -110,
+      },
     });
     applyUiActionFields(payload);
     expect(payload.action).toBe('PASS');
@@ -719,6 +724,11 @@ describe('decision publisher v2 pipeline', () => {
       homeGoalieConfirmed: true, // DEPRECATED legacy field — must not override
       homeGoalieState: { starter_state: 'CONFLICTING' },
       awayGoalieState: { starter_state: 'CONFIRMED' },
+      odds_context: {
+        total: 6.5,
+        total_price_over: -110,
+        total_price_under: -110,
+      },
     });
     applyUiActionFields(payload);
     // canonical official_eligible=false wins — legacy boolean is irrelevant
@@ -740,6 +750,11 @@ describe('decision publisher v2 pipeline', () => {
       official_eligible: true,
       homeGoalieState: { starter_state: 'CONFIRMED' },
       awayGoalieState: { starter_state: 'CONFIRMED' },
+      odds_context: {
+        total: 6.5,
+        total_price_over: -110,
+        total_price_under: -110,
+      },
     });
     applyUiActionFields(payload);
     // official_eligible=true + strong edge — should be able to FIRE or HOLD (not PASS)

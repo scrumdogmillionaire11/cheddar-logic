@@ -1091,7 +1091,25 @@ function selectExpressionChoice(decisions) {
   };
 }
 
-function computeTotalBias(totalDecision) {
+/**
+ * WI-0382: Returns true if either goalie state is UNKNOWN or CONFLICTING,
+ * blocking totals computation. EXPECTED does NOT trigger escalation.
+ * Null-safe: null/undefined inputs return false.
+ */
+function goalieUncertaintyBlocks(homeGoalieState, awayGoalieState) {
+  const blocking = ['UNKNOWN', 'CONFLICTING'];
+  return (
+    blocking.includes(homeGoalieState?.starter_state) ||
+    blocking.includes(awayGoalieState?.starter_state)
+  );
+}
+
+function computeTotalBias(totalDecision, homeGoalieState, awayGoalieState) {
+  // WI-0382: Force INSUFFICIENT_DATA when goalie identity is UNKNOWN or CONFLICTING
+  if (goalieUncertaintyBlocks(homeGoalieState, awayGoalieState)) {
+    return 'INSUFFICIENT_DATA';
+  }
+
   const hasTotalLine = totalDecision?.best_candidate?.line != null;
   const hasTotalEdge = typeof totalDecision?.edge === 'number';
   const isPlayableTotalStatus =
@@ -1102,9 +1120,9 @@ function computeTotalBias(totalDecision) {
     : 'INSUFFICIENT_DATA';
 }
 
-function buildMarketPayload({ decisions, expressionChoice }) {
+function buildMarketPayload({ decisions, expressionChoice, homeGoalieState, awayGoalieState }) {
   const totalDecision = decisions?.TOTAL;
-  const totalBias = computeTotalBias(totalDecision);
+  const totalBias = computeTotalBias(totalDecision, homeGoalieState, awayGoalieState);
 
   if (!expressionChoice) {
     return {
@@ -1139,6 +1157,7 @@ module.exports = {
   computeNHLMarketDecisions,
   computeNBAMarketDecisions,
   selectExpressionChoice,
+  goalieUncertaintyBlocks,
   computeTotalBias,
   buildMarketPayload,
 };
