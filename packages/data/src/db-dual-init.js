@@ -88,7 +88,11 @@ function loadDbFile(filePath) {
 }
 
 /**
- * Save a database file
+ * Save a database file atomically.
+ *
+ * Write to a sibling .tmp file first, then rename() into place.
+ * rename() is atomic on Linux/POSIX so concurrent readers always see a
+ * complete (old or new) file, never a torn partial write.
  */
 function saveDbFile(db, filePath) {
   if (!db || !filePath) return;
@@ -101,7 +105,9 @@ function saveDbFile(db, filePath) {
 
     const data = db.export();
     const buffer = Buffer.from(data);
-    fs.writeFileSync(filePath, buffer);
+    const tmpPath = filePath + '.tmp';
+    fs.writeFileSync(tmpPath, buffer);
+    fs.renameSync(tmpPath, filePath);
   } catch (e) {
     console.error(`[DB-Dual] Failed to save ${filePath}: ${e.message}`);
     throw e;
