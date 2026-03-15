@@ -2437,13 +2437,6 @@ export default function CardsPageClient() {
                   {displayStatus}
                 </span>
               )}
-              {getStatusBadge(
-                displayDecision === 'PLAY' ||
-                  displayDecision === 'LEAN' ||
-                  displayDecision === 'PASS'
-                  ? displayDecision
-                  : 'PASS',
-              )}
             </div>
             <div className="text-sm text-cloud/70">
               <span>{gameTime}</span>
