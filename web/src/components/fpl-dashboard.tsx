@@ -403,9 +403,9 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
             <span className="rounded bg-teal/20 px-2 py-1 text-xs font-semibold text-teal min-h-[28px] flex items-center">
               {normalizedFreeTransferCount} FT
             </span>
-            {data.captain?.name && (
+            {Boolean(data.captain?.name) && (
               <span className="text-xs text-cloud/70 truncate max-w-[100px]">
-                C: {String(data.captain.name)}
+                C: {String(data.captain?.name)}
               </span>
             )}
           </div>
