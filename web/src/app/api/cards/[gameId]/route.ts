@@ -40,6 +40,10 @@ import {
   closeReadOnlyInstance,
 } from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
+import {
+  requireEntitlementForRequest,
+  RESOURCE,
+} from '../../../../lib/api-security';
 
 const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
@@ -205,14 +209,13 @@ export async function GET(
   try {
     await ensureDbReady();
 
-    // AUTH DISABLED: Commenting out auth walls to allow public access
-    // const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
-    // if (!access.ok) {
-    //   return NextResponse.json(
-    //     { success: false, error: access.error },
-    //     { status: access.status }
-    //   );
-    // }
+    const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
+    if (!access.ok) {
+      return NextResponse.json(
+        { success: false, error: access.error },
+        { status: access.status }
+      );
+    }
 
     const { gameId } = await params;
     const { searchParams } = request.nextUrl;
