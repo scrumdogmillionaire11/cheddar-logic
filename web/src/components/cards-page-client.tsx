@@ -1828,22 +1828,6 @@ export default function CardsPageClient() {
     return formatMarketLabel(driverMarket);
   };
 
-  const getStatusBadge = (status: 'PLAY' | 'LEAN' | 'PASS') => {
-    const colorMap = {
-      PLAY: 'bg-green-700/50 text-green-200 border-green-600/60',
-      LEAN: 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60',
-      PASS: 'bg-slate-700/50 text-slate-200 border-slate-600/60',
-    };
-    const displayVerdict = getDisplayVerdict(status);
-    return (
-      <span
-        className={`px-2 py-1 text-xs font-bold rounded border ${colorMap[status]}`}
-      >
-        {displayVerdict ? displayVerdict.label : status}
-      </span>
-    );
-  };
-
   const formatPriceFlagLabel = (flag: string) => {
     const labels: Record<string, string> = {
       PRICE_TOO_STEEP: 'Price Too Steep',
