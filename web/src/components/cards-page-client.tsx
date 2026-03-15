@@ -2424,17 +2424,22 @@ export default function CardsPageClient() {
               <span className="px-2 py-1 text-xs font-semibold bg-white/10 text-cloud/80 rounded border border-white/20">
                 {card.sport}
               </span>
+              {(() => {
+                const playMarket = displayPlay.market_type ?? displayPlay.market;
+                const primaryCardType =
+                  card.drivers.find(d => d.role === 'PRIMARY' && d.market === playMarket)?.cardType ??
+                  card.drivers.find(d => d.role === 'PRIMARY')?.cardType ??
+                  card.drivers[0]?.cardType;
+                return primaryCardType ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono text-slate-400 bg-slate-800/60 border border-slate-700/50 truncate max-w-[180px]">
+                    {primaryCardType}
+                  </span>
+                ) : null;
+              })()}
               {showActiveBadge && (
                 <span className="px-2 py-1 text-xs font-semibold bg-blue-600/40 text-blue-200 rounded border border-blue-600/60">
                   {displayStatus}
                 </span>
-              )}
-              {getStatusBadge(
-                displayDecision === 'PLAY' ||
-                  displayDecision === 'LEAN' ||
-                  displayDecision === 'PASS'
-                  ? displayDecision
-                  : 'PASS',
               )}
             </div>
             <div className="text-sm text-cloud/70">
