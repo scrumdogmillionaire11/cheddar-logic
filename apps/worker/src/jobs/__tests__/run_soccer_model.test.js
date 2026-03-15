@@ -4,6 +4,7 @@ const {
   deriveWinProbHome,
   normalizeToCanonicalSoccerMarket,
   buildSoccerTier1Payload,
+  buildSoccerOddsBackedCard,
 } = require('../run_soccer_model');
 
 function buildOddsSnapshot(overrides = {}) {
@@ -370,5 +371,121 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
       const validation = validateCardPayload('soccer-ohio-scope', payload);
       expect(validation.success).toBe(false);
     });
+  });
+});
+
+// ============================================================================
+// New: normalizeToCanonicalSoccerMarket — odds API market keys
+// ============================================================================
+
+describe('normalizeToCanonicalSoccerMarket — odds API market keys', () => {
+  test("'h2h' -> 'soccer_ml'", () => {
+    expect(normalizeToCanonicalSoccerMarket('h2h')).toBe('soccer_ml');
+  });
+  test("'moneyline' -> 'soccer_ml'", () => {
+    expect(normalizeToCanonicalSoccerMarket('moneyline')).toBe('soccer_ml');
+  });
+  test("'totals' -> 'soccer_game_total'", () => {
+    expect(normalizeToCanonicalSoccerMarket('totals')).toBe('soccer_game_total');
+  });
+  test("'game_total' -> 'soccer_game_total'", () => {
+    expect(normalizeToCanonicalSoccerMarket('game_total')).toBe('soccer_game_total');
+  });
+  test("'double_chance' -> 'soccer_double_chance' (no longer banned)", () => {
+    expect(normalizeToCanonicalSoccerMarket('double_chance')).toBe('soccer_double_chance');
+  });
+  test("'doubleChance' -> 'soccer_double_chance' (camelCase normalizes via replace)", () => {
+    expect(normalizeToCanonicalSoccerMarket('doubleChance')).toBe('soccer_double_chance');
+  });
+  test("'asian_handicap' -> null (banned)", () => {
+    expect(normalizeToCanonicalSoccerMarket('asian_handicap')).toBeNull();
+  });
+  test("'1x2' -> null (banned)", () => {
+    expect(normalizeToCanonicalSoccerMarket('1x2')).toBeNull();
+  });
+});
+
+// ============================================================================
+// New: buildSoccerOddsBackedCard — soccer_ml
+// ============================================================================
+
+describe('buildSoccerOddsBackedCard — soccer_ml', () => {
+  test('produces valid soccer_ml payload from h2h odds snapshot', () => {
+    const snap = buildOddsSnapshot({ h2h_home: -120, h2h_away: 105 });
+    const card = buildSoccerOddsBackedCard(snap.game_id, snap, 'soccer_ml');
+    expect(card.cardType).toBe('soccer_ml');
+    expect(card.payloadData.market_type).toBe('MONEYLINE');
+    expect(card.payloadData.missing_context_flags).toEqual([]);
+    const v = validateCardPayload('soccer_ml', card.payloadData);
+    expect(v.success).toBe(true);
+  });
+});
+
+// ============================================================================
+// New: buildSoccerOddsBackedCard — soccer_game_total
+// ============================================================================
+
+describe('buildSoccerOddsBackedCard — soccer_game_total', () => {
+  test('produces valid soccer_game_total payload when line provided in raw_data', () => {
+    const snap = buildOddsSnapshot({
+      raw_data: JSON.stringify({ league: 'EPL', market: 'totals', total_line: 2.5, over_price: -115, under_price: -105, selection: 'OVER' }),
+    });
+    const card = buildSoccerOddsBackedCard(snap.game_id, snap, 'soccer_game_total');
+    expect(card.cardType).toBe('soccer_game_total');
+    expect(card.payloadData.market_type).toBe('GAME_TOTAL');
+    expect(card.payloadData.line).toBe(2.5);
+    expect(card.payloadData.pass_reason).toBeNull();
+    const v = validateCardPayload('soccer_game_total', card.payloadData);
+    expect(v.success).toBe(true);
+  });
+
+  test('sets pass_reason=MISSING_LINE when total_line absent', () => {
+    const snap = buildOddsSnapshot({ raw_data: JSON.stringify({ league: 'EPL', market: 'totals' }) });
+    const card = buildSoccerOddsBackedCard(snap.game_id, snap, 'soccer_game_total');
+    expect(card.payloadData.pass_reason).toBe('MISSING_LINE');
+  });
+});
+
+// ============================================================================
+// New: buildSoccerOddsBackedCard — soccer_double_chance
+// ============================================================================
+
+describe('buildSoccerOddsBackedCard — soccer_double_chance', () => {
+  test('produces valid soccer_double_chance payload', () => {
+    const snap = buildOddsSnapshot({
+      raw_data: JSON.stringify({ league: 'EPL', market: 'doubleChance', dc_outcome: 'home_or_draw', dc_price: -145, edge_basis: 'vig_gap_0.04' }),
+    });
+    const card = buildSoccerOddsBackedCard(snap.game_id, snap, 'soccer_double_chance');
+    expect(card.cardType).toBe('soccer_double_chance');
+    expect(card.payloadData.market_type).toBe('DOUBLE_CHANCE');
+    expect(card.payloadData.outcome).toBe('home_or_draw');
+    const v = validateCardPayload('soccer_double_chance', card.payloadData);
+    expect(v.success).toBe(true);
+  });
+});
+
+// ============================================================================
+// New: Track 2 projection-only cards
+// ============================================================================
+
+describe('Track 2 projection-only cards', () => {
+  test('soccer-ohio-scope card with projection_only:true passes validator without price', () => {
+    const payload = {
+      canonical_market_key: 'to_score_or_assist',
+      market_family: 'tier1',
+      sport: 'SOCCER',
+      game_id: 'game-proj-001',
+      home_team: 'Arsenal',
+      away_team: 'Chelsea',
+      generated_at: new Date().toISOString(),
+      missing_context_flags: ['price'],
+      pass_reason: null,
+      projection_basis: 'xg_xa_combined_0.55',
+      edge_ev: 0.04,
+      price: null,
+      projection_only: true,
+    };
+    const v = validateCardPayload('soccer-ohio-scope', payload);
+    expect(v.success).toBe(true);
   });
 });
