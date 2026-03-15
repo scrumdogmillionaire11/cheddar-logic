@@ -687,6 +687,47 @@ async function runTests() {
       expect(classification).toBe('BASE');
       expect(action).toBe('FIRE');
     });
+
+    it('Scenario 6: SOCCER player_shots payload with insufficient context cannot become actionable', () => {
+      const play = basePlayFactory({
+        sport: 'SOCCER',
+        market_type: 'PROP',
+        selection_key: 'HOME_PLAYER_SHOTS',
+        model: { edge: null, confidence: 0.52 },
+      });
+
+      const result = deriveClassification(play);
+      expect(result.classification).toBe('PASS');
+      expect(result.pass_reason).toBe('NO_EDGE');
+    });
+
+    it('Scenario 7: SOCCER TSOA PASS with explicit reason is acceptable output', () => {
+      const play = basePlayFactory({
+        sport: 'SOCCER',
+        market_type: 'TSOA',
+        selection_key: 'HOME_TSOA',
+        model: { edge: null, confidence: 0.60 },
+      });
+
+      const result = derivePlayDecision(play, { market_available: true });
+      expect(result.action).toBe('PASS');
+      expect(result.why_code).toBe('CLASSIFICATION_PASS');
+    });
+
+    it('Scenario 8: SOCCER team_totals with real projection edge fires', () => {
+      const play = basePlayFactory({
+        sport: 'SOCCER',
+        market_type: 'TOTAL',
+        selection_key: 'OVER',
+        model: { edge: 0.03, confidence: 0.68 },
+      });
+
+      const { classification } = deriveClassification(play);
+      expect(classification).toBe('BASE');
+
+      const { action } = deriveAction('BASE', { market_available: true });
+      expect(action).toBe('FIRE');
+    });
   });
 
   // ====== SUMMARY ======
