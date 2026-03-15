@@ -824,7 +824,7 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
       try {
         const dataExports = require('@cheddar-logic/data');
         if (typeof dataExports.getUpcomingGames === 'function') {
-          upcomingGames = dataExports.getUpcomingGames('SOCCER', nowUtc.toISO(), horizonUtc);
+          upcomingGames = dataExports.getUpcomingGames({ startUtcIso: nowUtc.toISO(), endUtcIso: horizonUtc, sports: ['SOCCER'] });
         } else {
           // Fallback: use game IDs already seen in Track 1
           upcomingGames = Object.values(gameOdds);
