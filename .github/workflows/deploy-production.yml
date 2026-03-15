@@ -147,7 +147,14 @@ jobs:
               chmod 664 "$CANONICAL_DB_PATH"
             fi
             # Stop worker before migrations to prevent concurrent writes to DB file
+            # Stop PM2-managed processes first (Pi may still be using PM2 before systemd takeover)
+            PM2_BIN=$(find /home -name pm2 -path "*/bin/pm2" 2>/dev/null | head -1 || true)
+            if [ -n "$PM2_BIN" ]; then
+              "$PM2_BIN" stop all || true
+            fi
             sudo systemctl stop cheddar-worker || true
+            # Remove stale lock file in case worker didn't exit cleanly
+            rm -f "${CANONICAL_DB_PATH}.lock"
             # Run database migrations (will create DB if it doesn't exist)
             echo "Running migrations against: $CANONICAL_DB_PATH"
             CHEDDAR_DB_PATH="$CANONICAL_DB_PATH" NODE_ENV=production timeout 10m node scripts/run-migrations.js || { echo "ERROR: Migrations failed or timed out"; exit 1; }
