@@ -72,6 +72,8 @@ module.exports = {
   getOddsIngestFailureSummary: db.getOddsIngestFailureSummary,
   upsertPlayerShotLog: db.upsertPlayerShotLog,
   getPlayerShotLogs: db.getPlayerShotLogs,
+  upsertPlayerPropLine: db.upsertPlayerPropLine,
+  getPlayerPropLine: db.getPlayerPropLine,
   
   // Convenience exports - model_outputs
   insertModelOutput: db.insertModelOutput,

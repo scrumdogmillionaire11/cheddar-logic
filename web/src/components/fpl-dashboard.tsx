@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import type {
   DetailedAnalysisResponse,
   FixturePlannerPlayerWindow,
@@ -292,6 +293,14 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
     return null;
   }
 
+  // Collapsible section state (collapsed by default on mobile)
+  const [strategyNotesOpen, setStrategyNotesOpen] = useState(false);
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [nearThresholdOpen, setNearThresholdOpen] = useState(false);
+  const [strategyPathsOpen, setStrategyPathsOpen] = useState(false);
+  const [structuralIssuesOpen, setStructuralIssuesOpen] = useState(false);
+  const [riskNotesOpen, setRiskNotesOpen] = useState(false);
+
   const plans: TransferPlans | null | undefined = data.transfer_plans;
   const managerState = data.manager_state || {};
   const strategyMode = data.strategy_mode || managerState.strategy_mode;
@@ -378,455 +387,576 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
   );
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-        <div className="grid gap-6 md:grid-cols-2">
-          <div>
-            <div className="mb-2 text-sm font-semibold uppercase text-cloud/60">
-              Gameweek
-            </div>
-            <div className="text-4xl font-semibold">
-              {data.current_gw ?? '-'}
-            </div>
+    <div>
+      {/* Sticky mobile header */}
+      <div className="sticky top-0 z-10 mb-4 block min-h-[56px] border-b border-white/10 bg-night/95 px-4 py-3 backdrop-blur-sm md:hidden">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-semibold text-cloud/60 shrink-0">
+              GW {data.current_gw ?? '-'}
+            </span>
+            <span className="text-sm font-semibold truncate">
+              {data.team_name}
+            </span>
           </div>
-          <div>
-            <div className="mb-2 text-sm font-semibold uppercase text-cloud/60">
-              Team
-            </div>
-            <div className="text-xl font-semibold">{data.team_name}</div>
-            <div className="text-sm text-cloud/60">{data.manager_name}</div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="rounded bg-teal/20 px-2 py-1 text-xs font-semibold text-teal min-h-[28px] flex items-center">
+              {normalizedFreeTransferCount} FT
+            </span>
+            {data.captain?.name && (
+              <span className="text-xs text-cloud/70 truncate max-w-[100px]">
+                C: {String(data.captain.name)}
+              </span>
+            )}
           </div>
         </div>
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
-          <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
-            <div className="text-xs font-semibold uppercase text-cloud/60">
-              Overall Rank
-            </div>
-            <div className="text-lg font-semibold">
-              {data.overall_rank?.toLocaleString() ?? '-'}
-            </div>
-          </div>
-          <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
-            <div className="text-xs font-semibold uppercase text-cloud/60">
-              Overall Points
-            </div>
-            <div className="text-lg font-semibold">
-              {data.overall_points?.toLocaleString() ?? '-'}
-            </div>
-          </div>
-          {data.squad_health && (
-            <div className="rounded-lg border border-white/10 bg-teal/10 px-4 py-3">
-              <div className="text-xs font-semibold uppercase text-teal">
-                Squad Health
+      </div>
+
+      {/* Main layout — mobile: flex-col, tablet: 2-col grid, desktop: block space-y-8 */}
+      <div className="flex flex-col gap-6 xl:block xl:space-y-8">
+
+        {/* Header */}
+        <div className="order-4 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8 xl:col-span-2">
+          <div className="grid gap-6 md:grid-cols-2">
+            <div>
+              <div className="mb-2 text-sm font-semibold uppercase text-cloud/60">
+                Gameweek
               </div>
-              <div className="text-lg font-semibold text-cloud">
-                {formatFixed(data.squad_health.health_pct, 0)}%
+              <div className="text-4xl font-semibold">
+                {data.current_gw ?? '-'}
               </div>
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* Decision Brief */}
-      <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-        <h2 className="mb-4 text-2xl font-semibold">Decision Brief</h2>
-        <div className="mb-2 text-lg font-semibold">{displayDecision}</div>
-        <div
-          className={`text-sm font-semibold uppercase ${getConfidenceTone(data.confidence)}`}
-        >
-          {data.confidence} confidence
-        </div>
-        {displayReasoning && (
-          <p className="mt-3 text-sm text-cloud/70">{displayReasoning}</p>
-        )}
-        {strategyMode ? (
-          <div className="mt-4 inline-flex rounded-md border border-white/10 bg-surface/50 px-3 py-1 text-xs font-semibold uppercase text-teal">
-            Strategy Mode: {String(strategyMode)}
-          </div>
-        ) : null}
-      </div>
-
-      {/* Manager State */}
-      <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-        <h2 className="mb-6 text-2xl font-semibold">Manager State</h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
-            <div className="text-xs font-semibold uppercase text-cloud/60">
-              Overall Rank
-            </div>
-            <div className="text-lg font-semibold">
-              {managerState.overall_rank?.toLocaleString() ??
-                data.overall_rank?.toLocaleString() ??
-                '-'}
-            </div>
-          </div>
-          <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
-            <div className="text-xs font-semibold uppercase text-cloud/60">
-              Risk Posture
-            </div>
-            <div className="text-lg font-semibold">
-              {managerState.risk_posture || '-'}
-            </div>
-          </div>
-          <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
-            <div className="text-xs font-semibold uppercase text-cloud/60">
-              Strategy Mode
-            </div>
-            <div className="text-lg font-semibold">{strategyMode || '-'}</div>
-          </div>
-          <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
-            <div className="text-xs font-semibold uppercase text-cloud/60">
-              Free Transfers
-            </div>
-            <div className="text-lg font-semibold">
-              {managerState.free_transfers ?? '-'}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* DGW/BGW Planner */}
-      <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-        <h2 className="mb-6 text-2xl font-semibold">
-          DGW/BGW Planner (Next 8 GWs)
-        </h2>
-        <p className="mb-4 text-sm text-cloud/60">
-          Fixture Horizon Score: higher is better (more DGW upside, lower BGW
-          risk, stronger medium-term fixture profile).
-        </p>
-        {plannerTimeline.length > 0 ? (
-          <div className="mb-6 grid gap-3 md:grid-cols-4 lg:grid-cols-8">
-            {plannerTimeline.map((row) => (
-              <div
-                key={`timeline-${row.gw}`}
-                className="rounded-lg border border-white/10 bg-surface/50 p-3"
-              >
-                <div className="text-xs font-semibold uppercase text-cloud/60">
-                  GW{row.gw}
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                  <span className="rounded bg-teal/20 px-2 py-1 text-teal">
-                    DGW {row.dgw_teams.length}
-                  </span>
-                  <span className="rounded bg-rose/20 px-2 py-1 text-rose">
-                    BGW {row.bgw_teams.length}
-                  </span>
-                </div>
-                <div className="mt-2 text-xs text-cloud/60">
-                  Your squad blanking: {squadBlankCountsByGw[row.gw] || 0}
-                </div>
+            <div>
+              <div className="mb-2 text-sm font-semibold uppercase text-cloud/60">
+                Team
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="mb-6 rounded-lg border border-white/10 bg-surface/50 p-3 text-xs text-cloud/60">
-            {plannerEmptyText}
-          </div>
-        )}
-        <div className="space-y-4">
-          {renderFixtureWindowTable(
-            'Your Squad',
-            plannerSquadWindows,
-            plannerStartGwValue,
-          )}
-          {renderFixtureWindowTable(
-            'Potential Targets',
-            plannerTargetWindows,
-            plannerStartGwValue,
-          )}
-        </div>
-        {plannerNotes.length > 0 ? (
-          <div className="mt-4 rounded-lg border border-white/10 bg-surface/50 p-4">
-            <div className="mb-2 text-xs font-semibold uppercase text-cloud/60">
-              Key Planning Notes
+              <div className="text-xl font-semibold">{data.team_name}</div>
+              <div className="text-sm text-cloud/60">{data.manager_name}</div>
             </div>
-            <ul className="space-y-1 text-xs text-cloud/70">
-              {plannerNotes.map((note, idx) => (
-                <li key={`planner-note-${idx}`}>{note}</li>
-              ))}
-            </ul>
           </div>
-        ) : null}
-      </div>
-
-      {/* Transfers */}
-      <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-        <h2 className="mb-6 text-2xl font-semibold">🔄 Transfers</h2>
-        {plans?.primary ? (
-          <div className="space-y-4">
-            {renderTransferPlan('Primary', plans.primary)}
-            {plans.secondary &&
-              renderTransferPlan('Secondary', plans.secondary)}
-            {plans.additional && plans.additional.length > 0 && (
-              <div className="space-y-3">
-                <div className="text-xs font-semibold uppercase text-cloud/60">
-                  Additional Options ({plans.additional.length})
+          <div className="mt-6 grid gap-4 md:grid-cols-3">
+            <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase text-cloud/60">
+                Overall Rank
+              </div>
+              <div className="text-lg font-semibold">
+                {data.overall_rank?.toLocaleString() ?? '-'}
+              </div>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase text-cloud/60">
+                Overall Points
+              </div>
+              <div className="text-lg font-semibold">
+                {data.overall_points?.toLocaleString() ?? '-'}
+              </div>
+            </div>
+            {data.squad_health && (
+              <div className="rounded-lg border border-white/10 bg-teal/10 px-4 py-3">
+                <div className="text-xs font-semibold uppercase text-teal">
+                  Squad Health
                 </div>
-                {plans.additional.map((plan, idx) =>
-                  renderTransferPlan(`Option ${idx + 1}`, plan),
-                )}
+                <div className="text-lg font-semibold text-cloud">
+                  {formatFixed(data.squad_health.health_pct, 0)}%
+                </div>
               </div>
             )}
           </div>
-        ) : (
-          <p className="text-sm text-cloud/60">
-            {plans?.no_transfer_reason ||
-              'No transfer recommendations available.'}
-          </p>
-        )}
-      </div>
+        </div>
 
-      {/* Near Threshold Moves */}
-      <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-        <h2 className="mb-6 text-2xl font-semibold">Near Threshold Moves</h2>
-        {data.near_threshold_moves && data.near_threshold_moves.length > 0 ? (
-          <div className="space-y-3">
-            {data.near_threshold_moves.map((move, idx) => (
-              <div
-                key={`${move.out_player_id ?? move.out}-${move.in_player_id ?? move.in}-${idx}`}
-                className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3"
-              >
-                <div className="text-sm font-semibold">
-                  {move.out} → {move.in}
-                </div>
-                <div className="mt-1 text-xs text-cloud/60">
-                  Δ4GW: {move.delta_pts_4gw ?? '-'} pts · Δ6GW:{' '}
-                  {move.delta_pts_6gw ?? '-'} pts · Required:{' '}
-                  {move.threshold_required ?? '-'}
-                </div>
-                {move.rejection_reason ? (
-                  <div className="mt-1 text-xs text-amber">
-                    {move.rejection_reason}
+        {/* Transfers */}
+        <div className="order-1 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
+          <h2 className="mb-6 text-2xl font-semibold">🔄 Transfers</h2>
+          {plans?.primary ? (
+            <div className="space-y-4">
+              {renderTransferPlan('Primary', plans.primary)}
+              {plans.secondary &&
+                renderTransferPlan('Secondary', plans.secondary)}
+              {plans.additional && plans.additional.length > 0 && (
+                <div className="space-y-3">
+                  <div className="text-xs font-semibold uppercase text-cloud/60">
+                    Additional Options ({plans.additional.length})
                   </div>
+                  {plans.additional.map((plan, idx) =>
+                    renderTransferPlan(`Option ${idx + 1}`, plan),
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-cloud/60">
+              {plans?.no_transfer_reason ||
+                'No transfer recommendations available.'}
+            </p>
+          )}
+        </div>
+
+        {/* Captaincy */}
+        {(data.captain || data.vice_captain) && (
+          <div className="order-2 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
+            <h2 className="mb-6 text-2xl font-semibold">👑 Captaincy</h2>
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
+                <div className="text-xs font-semibold uppercase text-teal">
+                  Captain
+                </div>
+                <div className="mt-2 text-lg font-semibold">
+                  {String(data.captain?.name ?? 'TBD')}
+                </div>
+                <div className="text-sm text-cloud/60">
+                  {formatPtsDisplay(captainExpectedPts)}
+                </div>
+                {data.captain?.rationale ? (
+                  <p className="mt-2 text-xs text-cloud/60">
+                    {String(data.captain.rationale)}
+                  </p>
                 ) : null}
               </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-cloud/60">{nearThresholdEmptyText}</p>
-        )}
-      </div>
-
-      {/* Strategy Paths */}
-      <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-        <h2 className="mb-6 text-2xl font-semibold">Strategy Paths</h2>
-        {data.strategy_paths && hasAnyStrategyPath ? (
-          <div className="grid gap-4 md:grid-cols-3">
-            {strategyPathEntries.map(({ label, move }) => (
-              <div
-                key={label}
-                className="rounded-lg border border-white/10 bg-surface/50 p-4"
-              >
+              <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
                 <div className="text-xs font-semibold uppercase text-cloud/60">
-                  {label}
+                  Vice Captain
                 </div>
-                {move ? (
-                  <>
-                    <div className="mt-2 text-sm font-semibold">
+                <div className="mt-2 text-lg font-semibold">
+                  {String(data.vice_captain?.name ?? 'TBD')}
+                </div>
+                <div className="text-sm text-cloud/60">
+                  {formatPtsDisplay(viceCaptainExpectedPts)}
+                </div>
+                {data.vice_captain?.rationale ? (
+                  <p className="mt-2 text-xs text-cloud/60">
+                    {String(data.vice_captain.rationale)}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            {captainDelta !== null && (
+              <div className="mt-4 text-xs text-cloud/60">
+                Captain delta vs vice: {captainDelta.toFixed(1)} pts
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Squad Lineup with Toggle */}
+        <div className="order-3 md:order-none">
+          <FPLLineupView
+            currentStarting={data.starting_xi_projections}
+            currentBench={data.bench_projections}
+            lineupDecision={data.lineup_decision}
+            projectedStarting={data.projected_xi}
+            projectedBench={data.projected_bench}
+            captainName={
+              typeof data.captain?.name === 'string' ? data.captain.name : null
+            }
+            viceCaptainName={
+              typeof data.vice_captain?.name === 'string'
+                ? data.vice_captain.name
+                : null
+            }
+          />
+        </div>
+
+        {/* Decision Brief */}
+        <div className="order-4 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
+          <h2 className="mb-4 text-2xl font-semibold">Decision Brief</h2>
+          <div className="mb-2 text-lg font-semibold">{displayDecision}</div>
+          <div
+            className={`text-sm font-semibold uppercase ${getConfidenceTone(data.confidence)}`}
+          >
+            {data.confidence} confidence
+          </div>
+          {displayReasoning && (
+            <p className="mt-3 text-sm text-cloud/70">{displayReasoning}</p>
+          )}
+          {strategyMode ? (
+            <div className="mt-4 inline-flex rounded-md border border-white/10 bg-surface/50 px-3 py-1 text-xs font-semibold uppercase text-teal">
+              Strategy Mode: {String(strategyMode)}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Manager State */}
+        <div className="order-4 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
+          <h2 className="mb-6 text-2xl font-semibold">Manager State</h2>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase text-cloud/60">
+                Overall Rank
+              </div>
+              <div className="text-lg font-semibold">
+                {managerState.overall_rank?.toLocaleString() ??
+                  data.overall_rank?.toLocaleString() ??
+                  '-'}
+              </div>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase text-cloud/60">
+                Risk Posture
+              </div>
+              <div className="text-lg font-semibold">
+                {managerState.risk_posture || '-'}
+              </div>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase text-cloud/60">
+                Strategy Mode
+              </div>
+              <div className="text-lg font-semibold">{strategyMode || '-'}</div>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase text-cloud/60">
+                Free Transfers
+              </div>
+              <div className="text-lg font-semibold">
+                {managerState.free_transfers ?? '-'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Chip Strategy */}
+        {(data.chip_recommendation || data.chip_timing_outlook) && (
+          <div className="order-4 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
+            <h2 className="mb-6 text-2xl font-semibold">💎 Chip Strategy</h2>
+            {data.chip_recommendation ? (
+              <div className="text-lg font-semibold">
+                {String(data.chip_recommendation?.recommendation ?? 'Hold')}
+              </div>
+            ) : null}
+            {data.chip_recommendation?.rationale ? (
+              <p className="mt-2 text-sm text-cloud/70">
+                {String(data.chip_recommendation.rationale)}
+              </p>
+            ) : null}
+            {data.chip_recommendation?.timing ? (
+              <p className="mt-2 text-xs text-cloud/60">
+                Timing: {String(data.chip_recommendation.timing)}
+              </p>
+            ) : null}
+            {data.available_chips.length > 0 ? (
+              <p className="mt-3 text-xs text-cloud/60">
+                Available chips: {data.available_chips.join(' · ')}
+              </p>
+            ) : null}
+            {data.chip_timing_outlook ? (
+              <div className="mt-4 rounded-lg border border-white/10 bg-surface/50 p-4">
+                <div className="mb-2 text-xs font-semibold uppercase text-cloud/60">
+                  Chip Timing Outlook
+                </div>
+                <div className="space-y-1 text-sm text-cloud/70">
+                  <div>
+                    Bench Boost window:{' '}
+                    {data.chip_timing_outlook.bench_boost_window || '-'}
+                  </div>
+                  <div>
+                    Triple Captain window:{' '}
+                    {data.chip_timing_outlook.triple_captain_window || '-'}
+                  </div>
+                  <div>
+                    Free Hit window:{' '}
+                    {data.chip_timing_outlook.free_hit_window || '-'}
+                  </div>
+                </div>
+                {data.chip_timing_outlook.rationale ? (
+                  <p className="mt-2 text-xs text-cloud/60">
+                    {data.chip_timing_outlook.rationale}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {/* Strategy Notes (collapsible on mobile) */}
+        <div className="order-5 rounded-xl border border-white/10 bg-surface/80 md:order-none">
+          <button
+            className="flex w-full items-center justify-between px-4 py-3 min-h-[44px] md:hidden cursor-pointer"
+            onClick={() => setStrategyNotesOpen((v) => !v)}
+            aria-expanded={strategyNotesOpen}
+          >
+            <h2 className="text-xl font-semibold">Strategy Notes</h2>
+            <span className="text-cloud/60 text-lg">{strategyNotesOpen ? '▾' : '▸'}</span>
+          </button>
+          <div className="hidden md:block px-8 pt-8 pb-2">
+            <h2 className="text-2xl font-semibold">Strategy Notes</h2>
+          </div>
+          <div className={strategyNotesOpen ? 'px-4 pb-4' : 'hidden md:block px-8 pb-8'}>
+            <div className="mt-4 mb-2 text-lg font-semibold">{displayDecision}</div>
+            <div
+              className={`text-sm font-semibold uppercase ${getConfidenceTone(data.confidence)}`}
+            >
+              {data.confidence} confidence
+            </div>
+            {displayReasoning && (
+              <p className="mt-3 text-sm text-cloud/70">{displayReasoning}</p>
+            )}
+            {strategyMode ? (
+              <div className="mt-4 inline-flex rounded-md border border-white/10 bg-surface/50 px-3 py-1 text-xs font-semibold uppercase text-teal">
+                Strategy Mode: {String(strategyMode)}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        {/* DGW/BGW Planner (collapsible on mobile) */}
+        <div className="order-6 rounded-xl border border-white/10 bg-surface/80 md:order-none">
+          <button
+            className="flex w-full items-center justify-between px-4 py-3 min-h-[44px] md:hidden cursor-pointer"
+            onClick={() => setPlannerOpen((v) => !v)}
+            aria-expanded={plannerOpen}
+          >
+            <h2 className="text-xl font-semibold">DGW/BGW Planner (Next 8 GWs)</h2>
+            <span className="text-cloud/60 text-lg">{plannerOpen ? '▾' : '▸'}</span>
+          </button>
+          <div className="hidden md:block px-8 pt-8 pb-2">
+            <h2 className="mb-6 text-2xl font-semibold">
+              DGW/BGW Planner (Next 8 GWs)
+            </h2>
+          </div>
+          <div className={plannerOpen ? 'px-4 pb-4' : 'hidden md:block px-8 pb-8'}>
+            <p className="mb-4 text-sm text-cloud/60">
+              Fixture Horizon Score: higher is better (more DGW upside, lower BGW
+              risk, stronger medium-term fixture profile).
+            </p>
+            {plannerTimeline.length > 0 ? (
+              <div className="mb-6 grid gap-3 md:grid-cols-4 lg:grid-cols-8">
+                {plannerTimeline.map((row) => (
+                  <div
+                    key={`timeline-${row.gw}`}
+                    className="rounded-lg border border-white/10 bg-surface/50 p-3"
+                  >
+                    <div className="text-xs font-semibold uppercase text-cloud/60">
+                      GW{row.gw}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                      <span className="rounded bg-teal/20 px-2 py-1 text-teal">
+                        DGW {row.dgw_teams.length}
+                      </span>
+                      <span className="rounded bg-rose/20 px-2 py-1 text-rose">
+                        BGW {row.bgw_teams.length}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-xs text-cloud/60">
+                      Your squad blanking: {squadBlankCountsByGw[row.gw] || 0}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mb-6 rounded-lg border border-white/10 bg-surface/50 p-3 text-xs text-cloud/60">
+                {plannerEmptyText}
+              </div>
+            )}
+            <div className="space-y-4">
+              {renderFixtureWindowTable(
+                'Your Squad',
+                plannerSquadWindows,
+                plannerStartGwValue,
+              )}
+              {renderFixtureWindowTable(
+                'Potential Targets',
+                plannerTargetWindows,
+                plannerStartGwValue,
+              )}
+            </div>
+            {plannerNotes.length > 0 ? (
+              <div className="mt-4 rounded-lg border border-white/10 bg-surface/50 p-4">
+                <div className="mb-2 text-xs font-semibold uppercase text-cloud/60">
+                  Key Planning Notes
+                </div>
+                <ul className="space-y-1 text-xs text-cloud/70">
+                  {plannerNotes.map((note, idx) => (
+                    <li key={`planner-note-${idx}`}>{note}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Near Threshold Moves (collapsible on mobile) */}
+        <div className="order-6 rounded-xl border border-white/10 bg-surface/80 md:order-none">
+          <button
+            className="flex w-full items-center justify-between px-4 py-3 min-h-[44px] md:hidden cursor-pointer"
+            onClick={() => setNearThresholdOpen((v) => !v)}
+            aria-expanded={nearThresholdOpen}
+          >
+            <h2 className="text-xl font-semibold">Near Threshold Moves</h2>
+            <span className="text-cloud/60 text-lg">{nearThresholdOpen ? '▾' : '▸'}</span>
+          </button>
+          <div className="hidden md:block px-8 pt-8 pb-2">
+            <h2 className="mb-6 text-2xl font-semibold">Near Threshold Moves</h2>
+          </div>
+          <div className={nearThresholdOpen ? 'px-4 pb-4' : 'hidden md:block px-8 pb-8'}>
+            {data.near_threshold_moves && data.near_threshold_moves.length > 0 ? (
+              <div className="space-y-3">
+                {data.near_threshold_moves.map((move, idx) => (
+                  <div
+                    key={`${move.out_player_id ?? move.out}-${move.in_player_id ?? move.in}-${idx}`}
+                    className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3"
+                  >
+                    <div className="text-sm font-semibold">
                       {move.out} → {move.in}
                     </div>
                     <div className="mt-1 text-xs text-cloud/60">
-                      Δ4GW: {move.delta_pts_4gw ?? '-'} pts
+                      Δ4GW: {move.delta_pts_4gw ?? '-'} pts · Δ6GW:{' '}
+                      {move.delta_pts_6gw ?? '-'} pts · Required:{' '}
+                      {move.threshold_required ?? '-'}
                     </div>
-                    {move.rationale ? (
-                      <div className="mt-1 text-xs text-cloud/60">
-                        {move.rationale}
+                    {move.rejection_reason ? (
+                      <div className="mt-1 text-xs text-amber">
+                        {move.rejection_reason}
                       </div>
                     ) : null}
-                  </>
-                ) : (
-                  <div className="mt-2 text-sm text-cloud/60">
-                    No distinct alternative this gameweek.
                   </div>
-                )}
+                ))}
               </div>
-            ))}
+            ) : (
+              <p className="text-sm text-cloud/60">{nearThresholdEmptyText}</p>
+            )}
           </div>
-        ) : (
-          <p className="text-sm text-cloud/60">{strategyPathsEmptyText}</p>
+        </div>
+
+        {/* Strategy Paths (collapsible on mobile) */}
+        <div className="order-6 rounded-xl border border-white/10 bg-surface/80 md:order-none">
+          <button
+            className="flex w-full items-center justify-between px-4 py-3 min-h-[44px] md:hidden cursor-pointer"
+            onClick={() => setStrategyPathsOpen((v) => !v)}
+            aria-expanded={strategyPathsOpen}
+          >
+            <h2 className="text-xl font-semibold">Strategy Paths</h2>
+            <span className="text-cloud/60 text-lg">{strategyPathsOpen ? '▾' : '▸'}</span>
+          </button>
+          <div className="hidden md:block px-8 pt-8 pb-2">
+            <h2 className="mb-6 text-2xl font-semibold">Strategy Paths</h2>
+          </div>
+          <div className={strategyPathsOpen ? 'px-4 pb-4' : 'hidden md:block px-8 pb-8'}>
+            {data.strategy_paths && hasAnyStrategyPath ? (
+              <div className="grid gap-4 md:grid-cols-3">
+                {strategyPathEntries.map(({ label, move }) => (
+                  <div
+                    key={label}
+                    className="rounded-lg border border-white/10 bg-surface/50 p-4"
+                  >
+                    <div className="text-xs font-semibold uppercase text-cloud/60">
+                      {label}
+                    </div>
+                    {move ? (
+                      <>
+                        <div className="mt-2 text-sm font-semibold">
+                          {move.out} → {move.in}
+                        </div>
+                        <div className="mt-1 text-xs text-cloud/60">
+                          Δ4GW: {move.delta_pts_4gw ?? '-'} pts
+                        </div>
+                        {move.rationale ? (
+                          <div className="mt-1 text-xs text-cloud/60">
+                            {move.rationale}
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <div className="mt-2 text-sm text-cloud/60">
+                        No distinct alternative this gameweek.
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-cloud/60">{strategyPathsEmptyText}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Structural Issues (collapsible on mobile) */}
+        <div className="order-6 rounded-xl border border-white/10 bg-surface/80 md:order-none">
+          <button
+            className="flex w-full items-center justify-between px-4 py-3 min-h-[44px] md:hidden cursor-pointer"
+            onClick={() => setStructuralIssuesOpen((v) => !v)}
+            aria-expanded={structuralIssuesOpen}
+          >
+            <h2 className="text-xl font-semibold">Structural Issues</h2>
+            <span className="text-cloud/60 text-lg">{structuralIssuesOpen ? '▾' : '▸'}</span>
+          </button>
+          <div className="hidden md:block px-8 pt-8 pb-2">
+            <h2 className="mb-6 text-2xl font-semibold">Structural Issues</h2>
+          </div>
+          <div className={structuralIssuesOpen ? 'px-4 pb-4' : 'hidden md:block px-8 pb-8'}>
+            {data.squad_issues && data.squad_issues.length > 0 ? (
+              <div className="space-y-3">
+                {data.squad_issues.map((issue, idx) => (
+                  <div
+                    key={`${issue.category}-${issue.title}-${idx}`}
+                    className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3"
+                  >
+                    <div className="text-sm font-semibold">
+                      {issue.title || 'Issue'}
+                    </div>
+                    <div className="mt-1 text-xs uppercase text-cloud/60">
+                      {issue.category || 'general'} · {issue.severity || 'MEDIUM'}
+                    </div>
+                    {issue.detail ? (
+                      <div className="mt-1 text-xs text-cloud/70">
+                        {issue.detail}
+                      </div>
+                    ) : null}
+                    {issue.players && issue.players.length > 0 ? (
+                      <div className="mt-1 text-xs text-cloud/60">
+                        Players: {issue.players.join(', ')}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-cloud/60">No structural issues flagged.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Risk Notes (collapsible on mobile) */}
+        {(data.risk_scenarios.length > 0 || data.squad_health) && (
+          <div className="order-6 rounded-xl border border-white/10 bg-surface/80 md:order-none">
+            <button
+              className="flex w-full items-center justify-between px-4 py-3 min-h-[44px] md:hidden cursor-pointer"
+              onClick={() => setRiskNotesOpen((v) => !v)}
+              aria-expanded={riskNotesOpen}
+            >
+              <h2 className="text-xl font-semibold">⚠️ Risk Notes</h2>
+              <span className="text-cloud/60 text-lg">{riskNotesOpen ? '▾' : '▸'}</span>
+            </button>
+            <div className="hidden md:block px-8 pt-8 pb-2">
+              <h2 className="mb-6 text-2xl font-semibold">⚠️ Risk Notes</h2>
+            </div>
+            <div className={riskNotesOpen ? 'px-4 pb-4' : 'hidden md:block px-8 pb-8'}>
+              {data.squad_health && (
+                <div className="mb-4 text-sm text-cloud/70">
+                  {data.squad_health.available}/{data.squad_health.total_players}{' '}
+                  available · {data.squad_health.injured} out ·{' '}
+                  {data.squad_health.doubtful} doubtful
+                </div>
+              )}
+              {data.risk_scenarios.length > 0 ? (
+                <ul className="space-y-2 text-sm text-cloud/70">
+                  {data.risk_scenarios.map((risk, idx) => (
+                    <li
+                      key={idx}
+                      className="rounded-lg border border-white/10 bg-surface/50 px-3 py-2"
+                    >
+                      {String(risk.scenario || risk.condition || 'Risk scenario')}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-cloud/60">
+                  No major risk scenarios flagged.
+                </p>
+              )}
+            </div>
+          </div>
         )}
       </div>
-
-      {/* Captaincy */}
-      {(data.captain || data.vice_captain) && (
-        <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-          <h2 className="mb-6 text-2xl font-semibold">👑 Captaincy</h2>
-          <div className="grid gap-6 md:grid-cols-2">
-            <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
-              <div className="text-xs font-semibold uppercase text-teal">
-                Captain
-              </div>
-              <div className="mt-2 text-lg font-semibold">
-                {String(data.captain?.name ?? 'TBD')}
-              </div>
-              <div className="text-sm text-cloud/60">
-                {formatPtsDisplay(captainExpectedPts)}
-              </div>
-              {data.captain?.rationale ? (
-                <p className="mt-2 text-xs text-cloud/60">
-                  {String(data.captain.rationale)}
-                </p>
-              ) : null}
-            </div>
-            <div className="rounded-lg border border-white/10 bg-surface/50 p-4">
-              <div className="text-xs font-semibold uppercase text-cloud/60">
-                Vice Captain
-              </div>
-              <div className="mt-2 text-lg font-semibold">
-                {String(data.vice_captain?.name ?? 'TBD')}
-              </div>
-              <div className="text-sm text-cloud/60">
-                {formatPtsDisplay(viceCaptainExpectedPts)}
-              </div>
-              {data.vice_captain?.rationale ? (
-                <p className="mt-2 text-xs text-cloud/60">
-                  {String(data.vice_captain.rationale)}
-                </p>
-              ) : null}
-            </div>
-          </div>
-          {captainDelta !== null && (
-            <div className="mt-4 text-xs text-cloud/60">
-              Captain delta vs vice: {captainDelta.toFixed(1)} pts
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Squad Lineup with Toggle */}
-      <FPLLineupView
-        currentStarting={data.starting_xi_projections}
-        currentBench={data.bench_projections}
-        lineupDecision={data.lineup_decision}
-        projectedStarting={data.projected_xi}
-        projectedBench={data.projected_bench}
-        captainName={
-          typeof data.captain?.name === 'string' ? data.captain.name : null
-        }
-        viceCaptainName={
-          typeof data.vice_captain?.name === 'string'
-            ? data.vice_captain.name
-            : null
-        }
-      />
-
-      {/* Chip Strategy */}
-      {(data.chip_recommendation || data.chip_timing_outlook) && (
-        <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-          <h2 className="mb-6 text-2xl font-semibold">💎 Chip Strategy</h2>
-          {data.chip_recommendation ? (
-            <div className="text-lg font-semibold">
-              {String(data.chip_recommendation?.recommendation ?? 'Hold')}
-            </div>
-          ) : null}
-          {data.chip_recommendation?.rationale ? (
-            <p className="mt-2 text-sm text-cloud/70">
-              {String(data.chip_recommendation.rationale)}
-            </p>
-          ) : null}
-          {data.chip_recommendation?.timing ? (
-            <p className="mt-2 text-xs text-cloud/60">
-              Timing: {String(data.chip_recommendation.timing)}
-            </p>
-          ) : null}
-          {data.available_chips.length > 0 ? (
-            <p className="mt-3 text-xs text-cloud/60">
-              Available chips: {data.available_chips.join(' · ')}
-            </p>
-          ) : null}
-          {data.chip_timing_outlook ? (
-            <div className="mt-4 rounded-lg border border-white/10 bg-surface/50 p-4">
-              <div className="mb-2 text-xs font-semibold uppercase text-cloud/60">
-                Chip Timing Outlook
-              </div>
-              <div className="space-y-1 text-sm text-cloud/70">
-                <div>
-                  Bench Boost window:{' '}
-                  {data.chip_timing_outlook.bench_boost_window || '-'}
-                </div>
-                <div>
-                  Triple Captain window:{' '}
-                  {data.chip_timing_outlook.triple_captain_window || '-'}
-                </div>
-                <div>
-                  Free Hit window:{' '}
-                  {data.chip_timing_outlook.free_hit_window || '-'}
-                </div>
-              </div>
-              {data.chip_timing_outlook.rationale ? (
-                <p className="mt-2 text-xs text-cloud/60">
-                  {data.chip_timing_outlook.rationale}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      )}
-
-      {/* Structural Issues */}
-      <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-        <h2 className="mb-6 text-2xl font-semibold">Structural Issues</h2>
-        {data.squad_issues && data.squad_issues.length > 0 ? (
-          <div className="space-y-3">
-            {data.squad_issues.map((issue, idx) => (
-              <div
-                key={`${issue.category}-${issue.title}-${idx}`}
-                className="rounded-lg border border-white/10 bg-surface/50 px-4 py-3"
-              >
-                <div className="text-sm font-semibold">
-                  {issue.title || 'Issue'}
-                </div>
-                <div className="mt-1 text-xs uppercase text-cloud/60">
-                  {issue.category || 'general'} · {issue.severity || 'MEDIUM'}
-                </div>
-                {issue.detail ? (
-                  <div className="mt-1 text-xs text-cloud/70">
-                    {issue.detail}
-                  </div>
-                ) : null}
-                {issue.players && issue.players.length > 0 ? (
-                  <div className="mt-1 text-xs text-cloud/60">
-                    Players: {issue.players.join(', ')}
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-cloud/60">No structural issues flagged.</p>
-        )}
-      </div>
-
-      {/* Risk Notes */}
-      {(data.risk_scenarios.length > 0 || data.squad_health) && (
-        <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-          <h2 className="mb-6 text-2xl font-semibold">⚠️ Risk Notes</h2>
-          {data.squad_health && (
-            <div className="mb-4 text-sm text-cloud/70">
-              {data.squad_health.available}/{data.squad_health.total_players}{' '}
-              available · {data.squad_health.injured} out ·{' '}
-              {data.squad_health.doubtful} doubtful
-            </div>
-          )}
-          {data.risk_scenarios.length > 0 ? (
-            <ul className="space-y-2 text-sm text-cloud/70">
-              {data.risk_scenarios.map((risk, idx) => (
-                <li
-                  key={idx}
-                  className="rounded-lg border border-white/10 bg-surface/50 px-3 py-2"
-                >
-                  {String(risk.scenario || risk.condition || 'Risk scenario')}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-cloud/60">
-              No major risk scenarios flagged.
-            </p>
-          )}
-        </div>
-      )}
     </div>
   );
 }

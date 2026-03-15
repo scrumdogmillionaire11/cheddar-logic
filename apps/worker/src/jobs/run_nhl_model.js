@@ -1170,6 +1170,11 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
               )
             : [];
 
+          // Goalie state degradation path:
+          // UNKNOWN starter_state → adjustment_trust='NEUTRALIZED' → goalie driver weight
+          // zeroed, NOT total confidence. This is the sound path for unconfirmed or injured
+          // goalies — the model proceeds without goalie influence rather than crashing.
+          // See nhl-goalie-state.js line 163 for the NEUTRALIZED assignment.
           const canonicalGoalieState = {
             home: resolveGoalieState(
               buildScraperGoalieInput(rawData, 'home'),

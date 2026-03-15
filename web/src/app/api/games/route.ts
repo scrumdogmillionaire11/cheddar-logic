@@ -130,6 +130,7 @@ const CORE_RUN_STATE_SPORTS = [
   'mlb',
   'nfl',
   'fpl',
+  'nhl_props',
 ] as const;
 const CORE_RUN_STATE_SPORT_SQL = CORE_RUN_STATE_SPORTS.map(
   (sport) => `'${sport}'`,
@@ -387,6 +388,8 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'nhl-moneyline-call',
       'nhl-pace-totals',
       'nhl-pace-1p',
+      'nhl-player-shots',
+      'nhl-player-shots-1p',
     ]),
     evidenceOnlyCardTypes: new Set([
       'nhl-base-projection',
@@ -404,6 +407,7 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'SPREAD',
       'TOTAL',
       'FIRST_PERIOD',
+      'PROP',
     ]),
   },
   NCAAM: {

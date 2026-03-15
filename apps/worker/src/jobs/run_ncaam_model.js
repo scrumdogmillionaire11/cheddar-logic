@@ -220,8 +220,24 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
     }
 
     // Generate SPREAD card only when both line and price are available
+    // and the projected margin actually beats the spread line.
+    // Without the spread-line comparison, direction-only projections
+    // (e.g. ncaam-base-projection) produce HOME picks on the wrong side
+    // of spread markets — they win on moneyline but lose on spread.
+    // Only gate when projected_margin is present; other drivers (rest-advantage,
+    // matchup-style) are direction-signal based and pass through unchanged.
+    const projectedMargin = descriptor?.driverInputs?.projected_margin;
+    const spreadHome = oddsSnapshot?.spread_home;
+    const projectionBeatsSpread =
+      projectedMargin == null ||
+      spreadHome == null ||
+      (descriptor.prediction === 'HOME'
+        ? projectedMargin > -spreadHome
+        : projectedMargin < -spreadHome);
+
     if (
       allowSpread &&
+      projectionBeatsSpread &&
       oddsSnapshot?.spread_home != null &&
       oddsSnapshot?.spread_away != null &&
       oddsSnapshot?.spread_price_home != null &&
