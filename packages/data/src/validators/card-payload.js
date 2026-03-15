@@ -116,6 +116,183 @@ const soccerPayloadSchema = basePayloadSchema.extend({
   }
 });
 
+// ============================================================================
+// Ohio soccer scope validator (soccer-ohio-scope cardType)
+// ============================================================================
+
+const OHIO_CANONICAL_KEYS = [
+  'player_shots',
+  'team_totals',
+  'to_score_or_assist',
+  'player_shots_on_target',
+  'anytime_goalscorer',
+  'team_corners',
+];
+
+const PLACEHOLDER_STRINGS = new Set(['unknown', 'tbd', 'n/a', '']);
+
+const soccerOhioScopeSchema = z
+  .object({
+    canonical_market_key: z.enum(OHIO_CANONICAL_KEYS),
+    market_family: z.enum(['tier1', 'tier2']),
+    sport: z.literal('SOCCER'),
+    game_id: z.string().min(1),
+    home_team: z.string().min(1).nullable(),
+    away_team: z.string().min(1).nullable(),
+    generated_at: isoDateString,
+    missing_context_flags: z.array(z.string()),
+    pass_reason: z.string().nullable(),
+    projection_basis: z.string().nullable(),
+    edge_ev: z.number().nullable(),
+    price: z.number().int().nullable(),
+    projection_only: z.boolean().optional(),
+    eligibility: z
+      .object({
+        starter_signal: z.boolean().optional(),
+        proj_minutes: z.number().nullable().optional(),
+        role_tags: z.array(z.string()).optional(),
+        per90_hints: z.record(z.unknown()).optional(),
+      })
+      .optional(),
+  })
+  .passthrough()
+  .superRefine((payload, ctx) => {
+    const { canonical_market_key, price, projection_basis, edge_ev, missing_context_flags } =
+      payload;
+
+    // 1. Price caps per market key (skip when projection_only flag is set)
+    if (!payload.projection_only) {
+      if (
+        canonical_market_key === 'player_shots' &&
+        price !== null &&
+        price !== undefined &&
+        price < -150
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['price'],
+          message: 'price_cap: player_shots price must be >= -150',
+        });
+      }
+
+      if (
+        canonical_market_key === 'to_score_or_assist' &&
+        price !== null &&
+        price !== undefined &&
+        price < -140
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['price'],
+          message: 'price_cap: tsoa price must be >= -140',
+        });
+      }
+
+      if (
+        canonical_market_key === 'player_shots_on_target' &&
+        price !== null &&
+        price !== undefined &&
+        price < -130
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['price'],
+          message: 'price_cap: sot price must be >= -130',
+        });
+      }
+
+      if (
+        canonical_market_key === 'anytime_goalscorer' &&
+        price !== null &&
+        price !== undefined &&
+        price <= 180
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['price'],
+          message: 'price_cap: anytime_goalscorer must be priced > +180',
+        });
+      }
+    }
+
+    // 2. Placeholder rejection for projection_basis
+    if (
+      projection_basis !== null &&
+      projection_basis !== undefined &&
+      typeof projection_basis === 'string' &&
+      PLACEHOLDER_STRINGS.has(projection_basis.toLowerCase())
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['projection_basis'],
+        message:
+          'placeholder: projection_basis cannot be a placeholder string',
+      });
+    }
+
+    // 3. Fake projection rejection: edge_ev=0 without missing_context_flags acknowledgement
+    if (
+      edge_ev === 0 &&
+      Array.isArray(missing_context_flags) &&
+      !missing_context_flags.includes('edge_ev')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['edge_ev'],
+        message:
+          'fake_projection: edge_ev=0 without missing_context_flags acknowledgement',
+      });
+    }
+  });
+
+// ============================================================================
+// New odds-backed soccer card schemas
+// ============================================================================
+
+const soccerMlSchema = z.object({
+  sport: z.literal('SOCCER'),
+  game_id: z.string().min(1),
+  home_team: z.string().min(1).nullable(),
+  away_team: z.string().min(1).nullable(),
+  generated_at: isoDateString,
+  market_type: z.literal('MONEYLINE'),
+  selection: z.object({ side: z.enum(['HOME', 'AWAY']), team: z.string().min(1).nullable() }),
+  price: z.number().int().nullable(),
+  edge_basis: z.string().nullable(),
+  missing_context_flags: z.array(z.string()),
+  pass_reason: z.string().nullable(),
+}).passthrough();
+
+const soccerGameTotalSchema = z.object({
+  sport: z.literal('SOCCER'),
+  game_id: z.string().min(1),
+  home_team: z.string().min(1).nullable(),
+  away_team: z.string().min(1).nullable(),
+  generated_at: isoDateString,
+  market_type: z.literal('GAME_TOTAL'),
+  line: z.number().nullable(),
+  over_price: z.number().int().nullable(),
+  under_price: z.number().int().nullable(),
+  selection: z.enum(['OVER', 'UNDER']).nullable(),
+  edge_basis: z.string().nullable(),
+  missing_context_flags: z.array(z.string()),
+  pass_reason: z.string().nullable(),
+}).passthrough();
+
+const soccerDoubleChanceSchema = z.object({
+  sport: z.literal('SOCCER'),
+  game_id: z.string().min(1),
+  home_team: z.string().min(1).nullable(),
+  away_team: z.string().min(1).nullable(),
+  generated_at: isoDateString,
+  market_type: z.literal('DOUBLE_CHANCE'),
+  outcome: z.enum(['home_or_draw', 'away_or_draw', 'either_to_win']).nullable(),
+  price: z.number().int().nullable(),
+  edge_basis: z.string().nullable(),
+  missing_context_flags: z.array(z.string()),
+  pass_reason: z.string().nullable(),
+}).passthrough();
+
 const schemaByCardType = {
   // Active NHL driver + evidence cards
   'nhl-goalie': driverPayloadSchema,
@@ -162,6 +339,10 @@ const schemaByCardType = {
 
   // Active single-card model output jobs
   'soccer-model-output': soccerPayloadSchema,
+  'soccer-ohio-scope': soccerOhioScopeSchema,
+  'soccer_ml': soccerMlSchema,
+  'soccer_game_total': soccerGameTotalSchema,
+  'soccer_double_chance': soccerDoubleChanceSchema,
   'mlb-model-output': basePayloadSchema,
   'nfl-model-output': basePayloadSchema,
   'fpl-model-output': basePayloadSchema,
@@ -172,6 +353,16 @@ const schemaByCardType = {
   'nba-model-output': basePayloadSchema, // deprecated write alias; kept for historical payloads
   'nhl-welcome-home': driverPayloadSchema, // deprecated alias; canonical replacement is welcome-home-v2
 };
+
+// Soccer card types that use self-contained schemas and should skip
+// deriveLockedMarketContext (which only handles SPREAD/TOTAL/MONEYLINE contracts
+// and does not understand soccer-specific payload shapes).
+const SOCCER_SELF_CONTAINED_TYPES = new Set([
+  'soccer-ohio-scope',
+  'soccer_ml',
+  'soccer_game_total',
+  'soccer_double_chance',
+]);
 
 /**
  * Validate card payload data by card type.
@@ -184,20 +375,24 @@ function validateCardPayload(cardType, payloadData) {
   const result = schema.safeParse(payloadData);
 
   if (result.success) {
-    try {
-      // Parser boundary guard: actionable plays must satisfy strict market/selection contract.
-      // Note: requirePrice=false allows cards to be generated even if odds prices aren't fully populated.
-      // Prices will be fetched at betting time if needed.
-      deriveLockedMarketContext(payloadData, {
-        gameId: payloadData?.game_id,
-        homeTeam: payloadData?.home_team,
-        awayTeam: payloadData?.away_team,
-        requirePrice: false,
-        requireLineForMarket: true,
-      });
-    } catch (error) {
-      const errorCode = error?.code || 'INVALID_MARKET_CONTRACT';
-      return { success: false, errors: [`market_contract: ${errorCode} ${error.message}`] };
+    // Soccer self-contained card types use their own validators; skip the
+    // deriveLockedMarketContext check which only handles SPREAD/TOTAL/MONEYLINE.
+    if (!SOCCER_SELF_CONTAINED_TYPES.has(cardType)) {
+      try {
+        // Parser boundary guard: actionable plays must satisfy strict market/selection contract.
+        // Note: requirePrice=false allows cards to be generated even if odds prices aren't fully populated.
+        // Prices will be fetched at betting time if needed.
+        deriveLockedMarketContext(payloadData, {
+          gameId: payloadData?.game_id,
+          homeTeam: payloadData?.home_team,
+          awayTeam: payloadData?.away_team,
+          requirePrice: false,
+          requireLineForMarket: true,
+        });
+      } catch (error) {
+        const errorCode = error?.code || 'INVALID_MARKET_CONTRACT';
+        return { success: false, errors: [`market_contract: ${errorCode} ${error.message}`] };
+      }
     }
 
     return { success: true, errors: [] };

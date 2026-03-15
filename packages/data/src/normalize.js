@@ -446,11 +446,17 @@ const LOGGED_TEAM_VARIANTS = [
   'Furman Paladins',
   'Georgia Southern Eagles',
   'Mercyhurst Lakers',
+  'Michigan Wolverines',
   'Missouri St Bears',
   'Nicholls St Colonels',
+  'South Florida Bulls',
   'Towson Tigers',
   'Vermont Catamounts',
   'Weber State Wildcats',
+  'Wichita St Shockers',
+  // SOCCER (EPL) — discovered from live odds pull
+  'Brentford',
+  'Wolverhampton Wanderers',
 ];
 
 for (const teamName of LOGGED_TEAM_VARIANTS) {

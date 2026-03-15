@@ -48,6 +48,8 @@ import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
   addRateLimitHeaders,
+  requireEntitlementForRequest,
+  RESOURCE,
 } from '../../../lib/api-security';
 
 const ENABLE_WELCOME_HOME =
@@ -218,14 +220,15 @@ export async function GET(request: NextRequest) {
 
     await ensureDbReady();
 
-    // AUTH DISABLED: Commenting out auth walls to allow public access
-    // const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
-    // if (!access.ok) {
-    //   return NextResponse.json(
-    //     { success: false, error: access.error },
-    //     { status: access.status }
-    //   );
-    // }
+    if (process.env.ENABLE_AUTH_WALLS === 'true') {
+      const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
+      if (!access.ok) {
+        return NextResponse.json(
+          { success: false, error: access.error },
+          { status: access.status }
+        );
+      }
+    }
 
     const { searchParams } = request.nextUrl;
     const sportParam = searchParams.get('sport');

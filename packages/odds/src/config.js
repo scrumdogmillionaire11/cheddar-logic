@@ -8,6 +8,7 @@
  * - NBA: h2h + totals + spreads = 3 tokens
  * - MLB: h2h + totals = 2 tokens
  * - NFL: h2h + totals + spreads = 3 tokens
+ * - SOCCER: h2h + totals + doubleChance × 3 leagues (EPL, MLS, UCL) = 9 tokens
  * - Multiple bookmakers doesn't increase token cost
  *
  * US Bookmakers:
@@ -116,12 +117,12 @@ const SPORTS_CONFIG = {
   SOCCER: {
     active: true,
     season: { start: '08-01', end: '06-30' }, // EPL/European football season
-    markets: ['h2h'],
-    tokensPerFetch: 1,
+    markets: ['h2h', 'totals', 'doubleChance'],
+    tokensPerFetch: 9,
     defaultTTL: 240,
     pregameTTL: 30,
     sharpWindowTTL: 0,
-    apiKey: 'soccer_epl',
+    apiKeys: ['soccer_epl', 'soccer_usa_mls', 'soccer_uefa_champs_league'],
     bookmakers: [
       'betmgm',
       'draftkings',

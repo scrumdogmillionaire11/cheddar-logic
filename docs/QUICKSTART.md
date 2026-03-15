@@ -118,10 +118,14 @@ export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 # Pull live odds (requires ODDS_API_KEY from https://theoddsapi.com)
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
 
+# Pull NHL player shots props
+set -a; source .env; set +a; npm --prefix apps/worker run job:pull-nhl-player-shots-props
+
 # Run models
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model
 ```
 
 ### Standard Runbook
@@ -140,6 +144,9 @@ npm --prefix packages/data run migrate
 # Pull live odds from The Odds API
 # Get your free key from: https://theoddsapi.com
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
+
+# Pull NHL player shots props (separate pull — required before running NHL model for player prop cards)
+set -a; source .env; set +a; npm --prefix apps/worker run job:pull-nhl-player-shots-props
 ```
 
 #### 3) Run Jobs
@@ -150,6 +157,7 @@ export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model
 ```
 
 #### 4) Verify Output
@@ -225,6 +233,7 @@ npm --prefix apps/worker run scheduler
 CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:run-nba-model
 CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:run-nhl-model
 CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:run-ncaam-model
+CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:run-soccer-model
 
 # Restart scheduler
 ./scripts/manage-scheduler.sh start
@@ -245,6 +254,7 @@ set -a; source .env.production; set +a
 npm --prefix apps/worker run job:run-nba-model
 npm --prefix apps/worker run job:run-nhl-model
 npm --prefix apps/worker run job:run-ncaam-model
+npm --prefix apps/worker run job:run-soccer-model
 
 # Restart scheduler
 ./scripts/manage-scheduler.sh start

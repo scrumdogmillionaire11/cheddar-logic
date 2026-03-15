@@ -35,6 +35,18 @@ import {
 } from '../../../../lib/api-security/event-types';
 
 export async function GET(request: NextRequest) {
+  // Admin secret gate (behind ENABLE_AUTH_WALLS — not yet active)
+  if (process.env.ENABLE_AUTH_WALLS === 'true') {
+    const adminSecret = process.env.ADMIN_API_SECRET;
+    const providedSecret = request.headers.get('x-admin-secret');
+    if (!adminSecret || providedSecret !== adminSecret) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden' },
+        { status: 403 },
+      );
+    }
+  }
+
   // Development-only endpoint
   if (process.env.NODE_ENV !== 'development') {
     return NextResponse.json(

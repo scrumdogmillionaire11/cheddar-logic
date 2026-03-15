@@ -93,6 +93,12 @@ export function verifyRequestToken(request: NextRequest): AuthContext {
 
 export type ResourceType = 'CHEDDAR_BOARD' | 'FPL_SAGE' | 'ADMIN_PANEL';
 
+export const RESOURCE: Record<ResourceType, ResourceType> = {
+  CHEDDAR_BOARD: 'CHEDDAR_BOARD',
+  FPL_SAGE: 'FPL_SAGE',
+  ADMIN_PANEL: 'ADMIN_PANEL',
+};
+
 const RESOURCE_ROLES: Record<ResourceType, Set<string>> = {
   CHEDDAR_BOARD: new Set(['ADMIN', 'PAID', 'FREE_ACCOUNT']),
   FPL_SAGE: new Set(['ADMIN', 'PAID']),
@@ -242,6 +248,53 @@ export function requireRole(
   }
 
   return { context };
+}
+
+/**
+ * Require entitlement for a resource — simplified gate for API route handlers.
+ * Returns { ok, error, status } instead of a NextResponse so callers can
+ * construct their own response shape.
+ */
+export function requireEntitlementForRequest(
+  request: NextRequest,
+  resource: ResourceType,
+): { ok: boolean; error: string; status: number } {
+  if (!SECURITY_CONFIG.rbacEnforcement) {
+    return { ok: true, error: '', status: 200 };
+  }
+
+  const context = verifyRequestToken(request);
+
+  if (!context.authenticated || !context.user) {
+    return {
+      ok: false,
+      error: context.error || 'Authentication required',
+      status: 401,
+    };
+  }
+
+  if (!hasRequiredRole(context.user, resource)) {
+    const clientIp = getClientIp(request);
+    auditLogger.logEvent(AuditEventType.AUTH_ROLE_DENIED, clientIp, {
+      userId: context.user.userId,
+      email: context.user.email,
+      endpoint: request.nextUrl.pathname,
+      method: request.method,
+      userAgent: request.headers.get('user-agent') || undefined,
+      details: {
+        resource,
+        userRole: context.user.role,
+        requiredRoles: Array.from(RESOURCE_ROLES[resource] || []),
+      },
+    });
+    return {
+      ok: false,
+      error: `This endpoint requires ${resource} access. Your role: ${context.user.role || 'unknown'}`,
+      status: 403,
+    };
+  }
+
+  return { ok: true, error: '', status: 200 };
 }
 
 /**
