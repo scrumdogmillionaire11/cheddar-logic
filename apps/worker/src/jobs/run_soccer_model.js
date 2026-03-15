@@ -26,6 +26,9 @@ const OHIO_TIER1_MARKETS = new Set([
   'player_shots',
   'team_totals',
   'to_score_or_assist',
+  'soccer_ml',
+  'soccer_game_total',
+  'soccer_double_chance',
 ]);
 const OHIO_TIER2_MARKETS = new Set([
   'player_shots_on_target',
@@ -40,8 +43,21 @@ const OHIO_BANNED_MARKETS = new Set([
   'cards',
   'fouls',
   '1x2',
-  'double_chance',
 ]);
+
+// Mapping from Odds API market keys → canonical soccer card type keys
+// These are checked FIRST, before Tier1/Tier2/banned set lookups
+const ODDS_API_MARKET_MAP = {
+  'h2h': 'soccer_ml',
+  'moneyline': 'soccer_ml',
+  'soccer_ml': 'soccer_ml',
+  'totals': 'soccer_game_total',
+  'game_total': 'soccer_game_total',
+  'soccer_game_total': 'soccer_game_total',
+  'double_chance': 'soccer_double_chance',
+  'doublechance': 'soccer_double_chance',
+  'soccer_double_chance': 'soccer_double_chance',
+};
 const TIER1_PLAYER_MARKETS = new Set(['player_shots', 'to_score_or_assist']);
 const ALLOWED_TEAM_TOTAL_LINES = new Set(['o0.5', 'o1.5', 'u2.5']);
 const TSOA_QUALIFYING_ROLE_TAGS = new Set([
@@ -62,6 +78,11 @@ function normalizeToCanonicalSoccerMarket(rawKey) {
     .toLowerCase()
     .trim()
     .replace(/[\s-]+/g, '_');
+
+  // Check Odds API market key mapping first (h2h, totals, doubleChance, double_chance)
+  if (ODDS_API_MARKET_MAP[normalized]) {
+    return ODDS_API_MARKET_MAP[normalized];
+  }
 
   if (OHIO_TIER1_MARKETS.has(normalized) || OHIO_TIER2_MARKETS.has(normalized)) {
     return normalized;
@@ -288,6 +309,123 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
     cardType: 'soccer-ohio-scope',
     payloadData,
     pass_reason,
+  };
+}
+
+/**
+ * Build an odds-backed soccer card for one of the three new card types:
+ * soccer_ml, soccer_game_total, or soccer_double_chance.
+ *
+ * @param {string} gameId
+ * @param {object} oddsSnapshot
+ * @param {string} canonicalCardType - 'soccer_ml' | 'soccer_game_total' | 'soccer_double_chance'
+ * @returns {{ id, gameId, sport, cardType, cardTitle, createdAt, expiresAt, payloadData, modelOutputIds }}
+ */
+function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
+  const cardId = `card-soccer-odds-${gameId}-${uuidV4().slice(0, 8)}`;
+  const now = new Date().toISOString();
+  const rawData = parseRawData(oddsSnapshot?.raw_data) || {};
+  const missing_context_flags = [];
+
+  const homeTeam = oddsSnapshot?.home_team ?? null;
+  const awayTeam = oddsSnapshot?.away_team ?? null;
+
+  let payloadData;
+
+  if (canonicalCardType === 'soccer_ml') {
+    const { prediction, price: derivedPrice } = derivePredictionFromMoneyline(
+      oddsSnapshot?.h2h_home,
+      oddsSnapshot?.h2h_away,
+    );
+    const selectionTeam = prediction === 'HOME' ? homeTeam : awayTeam;
+    const price = typeof derivedPrice === 'number' && Number.isFinite(derivedPrice)
+      ? Math.trunc(derivedPrice)
+      : null;
+
+    if (!Number.isFinite(oddsSnapshot?.h2h_home)) missing_context_flags.push('h2h_home');
+    if (!Number.isFinite(oddsSnapshot?.h2h_away)) missing_context_flags.push('h2h_away');
+
+    payloadData = {
+      sport: 'SOCCER',
+      game_id: gameId,
+      market_type: 'MONEYLINE',
+      home_team: homeTeam,
+      away_team: awayTeam,
+      matchup: buildMatchup(homeTeam, awayTeam),
+      start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+      generated_at: now,
+      selection: { side: prediction, team: selectionTeam },
+      price,
+      edge_basis: 'vig_normalized_moneyline',
+      missing_context_flags,
+      pass_reason: null,
+    };
+  } else if (canonicalCardType === 'soccer_game_total') {
+    const totalLine = rawData.total_line ?? null;
+    const overPrice = rawData.over_price ?? null;
+    const underPrice = rawData.under_price ?? null;
+    const selection = rawData.selection ?? null;
+
+    let pass_reason = null;
+    if (totalLine === null) {
+      missing_context_flags.push('total_line');
+      pass_reason = 'MISSING_LINE';
+    }
+
+    payloadData = {
+      sport: 'SOCCER',
+      game_id: gameId,
+      market_type: 'GAME_TOTAL',
+      home_team: homeTeam,
+      away_team: awayTeam,
+      matchup: buildMatchup(homeTeam, awayTeam),
+      start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+      generated_at: now,
+      line: totalLine,
+      over_price: typeof overPrice === 'number' ? Math.trunc(overPrice) : null,
+      under_price: typeof underPrice === 'number' ? Math.trunc(underPrice) : null,
+      selection,
+      edge_basis: rawData.edge_basis ?? null,
+      missing_context_flags,
+      pass_reason,
+    };
+  } else if (canonicalCardType === 'soccer_double_chance') {
+    const outcome = rawData.dc_outcome ?? null;
+    const dcPrice = rawData.dc_price ?? null;
+    const edgeBasis = rawData.edge_basis ?? null;
+
+    if (outcome === null) missing_context_flags.push('dc_outcome');
+    if (dcPrice === null) missing_context_flags.push('dc_price');
+
+    payloadData = {
+      sport: 'SOCCER',
+      game_id: gameId,
+      market_type: 'DOUBLE_CHANCE',
+      home_team: homeTeam,
+      away_team: awayTeam,
+      matchup: buildMatchup(homeTeam, awayTeam),
+      start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+      generated_at: now,
+      outcome,
+      price: typeof dcPrice === 'number' ? Math.trunc(dcPrice) : null,
+      edge_basis: edgeBasis,
+      missing_context_flags,
+      pass_reason: null,
+    };
+  } else {
+    throw new Error(`buildSoccerOddsBackedCard: unknown canonicalCardType "${canonicalCardType}"`);
+  }
+
+  return {
+    id: cardId,
+    gameId,
+    sport: 'SOCCER',
+    cardType: canonicalCardType,
+    cardTitle: `Soccer: ${canonicalCardType}`,
+    createdAt: now,
+    expiresAt: null,
+    payloadData,
+    modelOutputIds: null,
   };
 }
 
@@ -596,13 +734,7 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
         horizonUtc,
       );
 
-      if (oddsSnapshots.length === 0) {
-        console.log('[SoccerModel] No recent SOCCER odds found, exiting.');
-        markJobRunSuccess(jobRunId);
-        return { success: true, jobRunId, cardsGenerated: 0 };
-      }
-
-      console.log(`[SoccerModel] Found ${oddsSnapshots.length} odds snapshots`);
+      console.log(`[SoccerModel] Track 1 (odds-backed): ${oddsSnapshots.length} odds snapshots found`);
 
       // Group by game_id and get latest for each
       const gameOdds = {};
@@ -617,29 +749,36 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
 
       const gameIds = Object.keys(gameOdds);
       console.log(
-        `[SoccerModel] Running inference on ${gameIds.length} games...`,
+        `[SoccerModel] Track 1: running inference on ${gameIds.length} games...`,
       );
 
       let cardsGenerated = 0;
+      let track1Cards = 0;
 
-      // Process each game
+      // TRACK 1: Process each odds-backed game (may be 0 iterations — no bail-out)
+      const ODDS_BACKED_CARD_TYPES = new Set(['soccer_ml', 'soccer_game_total', 'soccer_double_chance']);
+      const PROJECTION_MARKET_TYPES = new Set([
+        'player_shots', 'team_totals', 'to_score_or_assist',
+        'player_shots_on_target', 'anytime_goalscorer', 'team_corners',
+      ]);
+
       for (const gameId of gameIds) {
         try {
           const oddsSnapshot = gameOdds[gameId];
-          // Route to Tier 1 builder if raw_data declares a canonical soccer market
           const rawData = parseRawData(oddsSnapshot?.raw_data) || {};
-          const rawSoccerMarket = rawData.soccer_market ?? null;
-          const canonicalMarket = rawSoccerMarket
-            ? normalizeToCanonicalSoccerMarket(rawSoccerMarket)
+          // Check both raw_data.market (odds API market key) and raw_data.soccer_market (projection key)
+          const rawMarket = rawData.market ?? rawData.soccer_market ?? null;
+          const canonicalMarket = rawMarket
+            ? normalizeToCanonicalSoccerMarket(rawMarket)
             : null;
 
           let card;
-          if (canonicalMarket) {
-            const tier1Result = buildSoccerTier1Payload(
-              gameId,
-              oddsSnapshot,
-              canonicalMarket,
-            );
+          if (canonicalMarket && ODDS_BACKED_CARD_TYPES.has(canonicalMarket)) {
+            // New odds-backed card types
+            card = buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalMarket);
+          } else if (canonicalMarket && PROJECTION_MARKET_TYPES.has(canonicalMarket)) {
+            // Projection-only player markets found in odds snapshot raw_data
+            const tier1Result = buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket);
             const cardId = `card-soccer-ohio-${gameId}-${uuidV4().slice(0, 8)}`;
             card = {
               id: cardId,
@@ -653,13 +792,11 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
               modelOutputIds: null,
             };
           } else {
+            // Fallback to legacy soccer-model-output moneyline card
             card = generateSoccerCard(gameId, oddsSnapshot);
           }
 
-          const validation = validateCardPayload(
-            card.cardType,
-            card.payloadData,
-          );
+          const validation = validateCardPayload(card.cardType, card.payloadData);
           if (!validation.success) {
             throw new Error(
               `Invalid card payload for ${card.cardType}: ${validation.errors.join('; ')}`,
@@ -671,17 +808,79 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
           attachRunId(card, jobRunId);
           insertCardPayload(card);
           cardsGenerated++;
-          console.log(
-            `  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
-          );
+          track1Cards++;
+          const logDetail = card.payloadData.prediction
+            ? `${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`
+            : card.cardType;
+          console.log(`  [ok] Track1 ${gameId} [${card.cardType}]: ${logDetail}`);
         } catch (gameError) {
-          console.error(`  [error] ${gameId}: ${gameError.message}`);
+          console.error(`  [error] Track1 ${gameId}: ${gameError.message}`);
+        }
+      }
+
+      // TRACK 2: Projection-only — runs unconditionally regardless of odds availability
+      console.log('[SoccerModel] Track 2 (projection-only): fetching upcoming games...');
+      let upcomingGames = [];
+      try {
+        const dataExports = require('@cheddar-logic/data');
+        if (typeof dataExports.getUpcomingGames === 'function') {
+          upcomingGames = dataExports.getUpcomingGames('SOCCER', nowUtc.toISO(), horizonUtc);
+        } else {
+          // Fallback: use game IDs already seen in Track 1
+          upcomingGames = Object.values(gameOdds);
+          console.log('[SoccerModel] Track 2: getUpcomingGames not available, using Track 1 game IDs');
+        }
+      } catch (e) {
+        console.warn('[SoccerModel] Track 2: could not fetch upcoming games:', e.message);
+      }
+
+      let track2Cards = 0;
+      const TRACK2_PROJECTION_MARKETS = ['to_score_or_assist', 'player_shots', 'team_totals'];
+
+      for (const gameOrSnap of upcomingGames) {
+        const gameId = gameOrSnap.game_id || gameOrSnap.id;
+        if (!gameId) continue;
+
+        for (const market of TRACK2_PROJECTION_MARKETS) {
+          try {
+            const tier1Result = buildSoccerTier1Payload(gameId, gameOrSnap, market);
+            // Mark as projection-only
+            tier1Result.payloadData.projection_only = true;
+
+            const cardId = `card-soccer-proj-${gameId}-${market}-${uuidV4().slice(0, 8)}`;
+            const card = {
+              id: cardId,
+              gameId,
+              sport: 'SOCCER',
+              cardType: tier1Result.cardType,
+              cardTitle: `Soccer Projection: ${market}`,
+              createdAt: tier1Result.payloadData.generated_at,
+              expiresAt: null,
+              payloadData: tier1Result.payloadData,
+              modelOutputIds: null,
+            };
+
+            const validation = validateCardPayload(card.cardType, card.payloadData);
+            if (!validation.success) {
+              throw new Error(
+                `Invalid Track 2 card payload for ${market}: ${validation.errors.join('; ')}`,
+              );
+            }
+
+            attachRunId(card, jobRunId);
+            insertCardPayload(card);
+            cardsGenerated++;
+            track2Cards++;
+            console.log(`  [ok] Track2 ${gameId} [${market}]: projection_only`);
+          } catch (projError) {
+            console.error(`  [error] Track2 ${gameId} [${market}]: ${projError.message}`);
+          }
         }
       }
 
       // Mark job as success
       console.log(
-        `[SoccerModel] ✅ Complete: ${cardsGenerated} cards generated`,
+        `[SoccerModel] Complete: ${cardsGenerated} cards generated (track1=${track1Cards}, track2=${track2Cards})`,
       );
       markJobRunSuccess(jobRunId);
       try {
@@ -692,7 +891,7 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
         );
       }
 
-      return { success: true, jobRunId, cardsGenerated };
+      return { success: true, jobRunId, cardsGenerated, track1Cards, track2Cards };
     } catch (error) {
       console.error(`[SoccerModel] ❌ Job failed:`, error.message);
       console.error(error.stack);
@@ -721,4 +920,5 @@ module.exports = {
   derivePredictionFromMoneyline,
   normalizeToCanonicalSoccerMarket,
   buildSoccerTier1Payload,
+  buildSoccerOddsBackedCard,
 };
