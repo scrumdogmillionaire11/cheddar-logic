@@ -289,10 +289,6 @@ const renderFixtureWindowTable = (
 };
 
 export default function FPLDashboard({ data }: FPLDashboardProps) {
-  if (!data) {
-    return null;
-  }
-
   // Collapsible section state (collapsed by default on mobile)
   const [strategyNotesOpen, setStrategyNotesOpen] = useState(false);
   const [plannerOpen, setPlannerOpen] = useState(false);
@@ -300,6 +296,10 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
   const [strategyPathsOpen, setStrategyPathsOpen] = useState(false);
   const [structuralIssuesOpen, setStructuralIssuesOpen] = useState(false);
   const [riskNotesOpen, setRiskNotesOpen] = useState(false);
+
+  if (!data) {
+    return null;
+  }
 
   const plans: TransferPlans | null | undefined = data.transfer_plans;
   const managerState = data.manager_state || {};

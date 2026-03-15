@@ -23,7 +23,6 @@ import type {
   DriverRow,
   DriverTier,
   ExpressionStatus,
-  FtTrendContextDisplay,
   GameCard,
   Market,
   SupportGrade,
