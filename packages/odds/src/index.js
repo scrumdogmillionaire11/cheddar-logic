@@ -118,6 +118,35 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
  * @private
  */
 async function fetchFromOddsAPI(sport, config, apiKey) {
+  // Multi-league path: used when config.apiKeys is an array (currently only SOCCER)
+  if (Array.isArray(config.apiKeys)) {
+    const allGames = [];
+    for (const leagueKey of config.apiKeys) {
+      const url = `https://api.the-odds-api.com/v4/sports/${leagueKey}/odds`;
+      const params = {
+        apiKey,
+        regions: 'us',
+        markets: config.markets.join(','),
+        bookmakers: config.bookmakers.join(','),
+        oddsFormat: 'american',
+      };
+      console.log(`[Odds] API call: ${url}?markets=${config.markets.join(',')}`);
+      const response = await axios.get(url, { params, timeout: 10000 });
+      const remaining = response.headers['x-requests-remaining'];
+      if (remaining) {
+        const remainingInt = parseInt(remaining);
+        console.log(`[Odds] API quota remaining: ${remainingInt}`);
+        if (remainingInt < 200) {
+          console.warn(`[Odds] ⚠️  LOW API QUOTA: ${remaining} requests remaining`);
+        }
+      }
+      const leagueGames = transformAPIResponse(response.data, sport);
+      allGames.push(...leagueGames);
+    }
+    return allGames;
+  }
+
+  // Single-league path: all other sports use config.apiKey (singular)
   const url = `https://api.the-odds-api.com/v4/sports/${config.apiKey}/odds`;
   const params = {
     apiKey,
