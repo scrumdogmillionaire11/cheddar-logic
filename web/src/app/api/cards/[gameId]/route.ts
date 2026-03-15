@@ -209,12 +209,14 @@ export async function GET(
   try {
     await ensureDbReady();
 
-    const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
-    if (!access.ok) {
-      return NextResponse.json(
-        { success: false, error: access.error },
-        { status: access.status }
-      );
+    if (process.env.ENABLE_AUTH_WALLS === 'true') {
+      const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
+      if (!access.ok) {
+        return NextResponse.json(
+          { success: false, error: access.error },
+          { status: access.status }
+        );
+      }
     }
 
     const { gameId } = await params;

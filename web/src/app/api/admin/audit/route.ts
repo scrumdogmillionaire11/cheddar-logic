@@ -35,14 +35,16 @@ import {
 } from '../../../../lib/api-security/event-types';
 
 export async function GET(request: NextRequest) {
-  // Admin secret gate (defense-in-depth — do not rely on NODE_ENV alone)
-  const adminSecret = process.env.ADMIN_API_SECRET;
-  const providedSecret = request.headers.get('x-admin-secret');
-  if (!adminSecret || providedSecret !== adminSecret) {
-    return NextResponse.json(
-      { success: false, error: 'Forbidden' },
-      { status: 403 },
-    );
+  // Admin secret gate (behind ENABLE_AUTH_WALLS — not yet active)
+  if (process.env.ENABLE_AUTH_WALLS === 'true') {
+    const adminSecret = process.env.ADMIN_API_SECRET;
+    const providedSecret = request.headers.get('x-admin-secret');
+    if (!adminSecret || providedSecret !== adminSecret) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden' },
+        { status: 403 },
+      );
+    }
   }
 
   // Development-only endpoint

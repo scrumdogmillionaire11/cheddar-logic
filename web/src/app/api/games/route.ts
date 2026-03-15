@@ -1221,12 +1221,14 @@ export async function GET(request: NextRequest) {
     await ensureDbReady();
     perf.dbReadyMs = Date.now() - dbReadyStartedAt;
 
-    const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
-    if (!access.ok) {
-      return NextResponse.json(
-        { success: false, error: access.error },
-        { status: access.status }
-      );
+    if (process.env.ENABLE_AUTH_WALLS === 'true') {
+      const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
+      if (!access.ok) {
+        return NextResponse.json(
+          { success: false, error: access.error },
+          { status: access.status }
+        );
+      }
     }
 
     db = getDatabaseReadOnly();
