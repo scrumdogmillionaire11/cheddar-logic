@@ -566,15 +566,27 @@ function loadDatabase() {
 }
 
 /**
- * Save database to disk
+ * Save database to disk atomically.
+ *
+ * sql.js is in-memory: every write must be flushed by overwriting the DB file.
+ * A plain writeFileSync overwrites the file byte-by-byte, so a concurrent
+ * readFileSync (from the web server's getDatabaseReadOnly()) can read a torn
+ * file — partial old bytes followed by partial new bytes — causing sql.js to
+ * throw "database disk image is malformed".
+ *
+ * Fix: write to a sibling temp file first, then rename() into place.
+ * rename() is atomic on Linux/POSIX: any concurrent reader sees either the
+ * complete old file or the complete new file, never a mix.
  */
 function saveDatabase() {
   if (!dbInstance || !dbPath) return;
-  
+
   try {
     const data = dbInstance.export();
     const buffer = Buffer.from(data);
-    fs.writeFileSync(dbPath, buffer);
+    const tmpPath = dbPath + '.tmp';
+    fs.writeFileSync(tmpPath, buffer);
+    fs.renameSync(tmpPath, dbPath);
   } catch (e) {
     console.error(`Failed to save database: ${e.message}`);
     throw e;
