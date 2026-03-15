@@ -37,5 +37,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 40 | Investigate failing prediction models: nhl-pace-totals (0% win rate) + ncaam-base-projection spread (27.8%) | 2026-03-14 | — (no code changes) | [40-investigate-failing-prediction-models-nh](./quick/40-investigate-failing-prediction-models-nh/) |
 | 41 | Display play-type label on cards: cardType pill + recommended_bet_type chip in Signal Header Bar | 2026-03-14 | 74383e8 | [41-display-play-type-label-on-cards](./quick/41-display-play-type-label-on-cards/) |
 | 42 | Rewrite WI-0437 top section for Tier 1 soccer hardening — Goal/Scope/Out-of-scope/Acceptance now unambiguous | 2026-03-14 | 5d7c02e | [42-update-wi-0437-plan-header-to-match-bott](./quick/42-update-wi-0437-plan-header-to-match-bott/) |
+| 43 | new work item 0458 to audit the site for vulnerabilities and secure them | 2026-03-15 | 8f71ae2 | [43-new-work-item-0458-to-audit-the-site-for](./quick/43-new-work-item-0458-to-audit-the-site-for/) |
 
-Last activity: 2026-03-14 - Completed quick task 42: rewrote WI-0437 top section to make Tier 1 soccer hardening (Player Shots, Team Totals, TSOA) the explicit spec; removed 438 lines of verbose design-notes appendix and replaced with condensed 8-stage Implementation Plan.
+Last activity: 2026-03-15 - Completed quick task 43: new work item 0458 to audit the site for vulnerabilities and secure them
