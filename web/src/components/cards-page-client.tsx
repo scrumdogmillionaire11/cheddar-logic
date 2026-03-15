@@ -2425,7 +2425,11 @@ export default function CardsPageClient() {
                 {card.sport}
               </span>
               {(() => {
-                const primaryCardType = card.drivers.find(d => d.role === 'PRIMARY')?.cardType ?? card.drivers[0]?.cardType;
+                const playMarket = displayPlay.market_type ?? displayPlay.market;
+                const primaryCardType =
+                  card.drivers.find(d => d.role === 'PRIMARY' && d.market === playMarket)?.cardType ??
+                  card.drivers.find(d => d.role === 'PRIMARY')?.cardType ??
+                  card.drivers[0]?.cardType;
                 return primaryCardType ? (
                   <span className="px-2 py-0.5 rounded text-[10px] font-mono text-slate-400 bg-slate-800/60 border border-slate-700/50 truncate max-w-[180px]">
                     {primaryCardType}
