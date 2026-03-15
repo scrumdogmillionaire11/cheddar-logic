@@ -181,6 +181,7 @@ export default function Card({
   id,
   gameId,
   sport,
+  cardType,
   cardTitle,
   createdAt,
   expiresAt,
@@ -226,6 +227,16 @@ export default function Card({
           >
             {sport}
           </div>
+          {cardType && (
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono text-slate-400 bg-slate-800/60 border border-slate-700/50 truncate max-w-[160px]">
+              {cardType}
+            </span>
+          )}
+          {payloadData.recommended_bet_type && (
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono text-slate-500 bg-slate-800/40 border border-slate-700/30 uppercase">
+              {payloadData.recommended_bet_type}
+            </span>
+          )}
           <div className="flex-1">
             <h3 className="text-sm font-semibold text-cloud">{cardTitle}</h3>
           </div>
