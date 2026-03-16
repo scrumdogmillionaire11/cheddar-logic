@@ -17,6 +17,9 @@ const apiBase = (overrideApiBase || defaultApiBase).replace(/\/+$/, "");
 const nextConfig: NextConfig = {
   // Silence "multiple lockfiles" workspace root warning for monorepo setup.
   outputFileTracingRoot: path.join(__dirname, ".."),
+  // Prevent webpack from bundling native/CJS packages used in server components.
+  // sql.js unconditionally assigns to module.exports, which fails when bundled.
+  serverExternalPackages: ["sql.js", "@cheddar-logic/data"],
   async rewrites() {
     return [
       {
