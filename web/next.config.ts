@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 
 const isProduction = process.env.NODE_ENV === "production";
 const overrideApiBase = isProduction
@@ -14,6 +15,8 @@ const apiBase = (overrideApiBase || defaultApiBase).replace(/\/+$/, "");
 // globals.css ([app-client] context) producing a broken 70-byte CSS bundle.
 // Turbopack is opted-in explicitly for local dev via `next dev --turbo`.
 const nextConfig: NextConfig = {
+  // Silence "multiple lockfiles" workspace root warning for monorepo setup.
+  outputFileTracingRoot: path.join(__dirname, ".."),
   async rewrites() {
     return [
       {
