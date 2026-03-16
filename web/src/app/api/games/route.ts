@@ -1536,6 +1536,7 @@ export async function GET(request: NextRequest) {
     const playByCardId = new Map<string, Play>();
     const truePlayMap = new Map<string, Play>();
     const gameConsistencyMap = new Map<string, Play['consistency']>();
+    const seenNhlShotsPlayKeys = new Set<string>();
     const injuredNhlPlayerIds = new Set<string>();
     const injuredNhlPlayerNames = new Set<string>();
 
@@ -2567,6 +2568,36 @@ export async function GET(request: NextRequest) {
           if (isInjured) {
             continue;
           }
+
+          const dedupeIdentity =
+            playerId || playerName || firstString(play.player) || 'unknown';
+          const dedupePropType =
+            firstString(play.prop_type, play.market, play.market_type) || 'prop';
+          const dedupePeriod = firstString(play.period) || 'full_game';
+          const dedupeSide =
+            normalizeSelectionSide(
+              play.selection?.side ?? play.direction ?? play.prediction,
+            ) || 'NONE';
+          const dedupeLine = firstNumber(
+            play.line,
+            play.selection?.line,
+            play.suggested_line,
+            play.threshold,
+          );
+          const dedupeKey = [
+            canonicalGameId,
+            cardRow.card_type,
+            dedupeIdentity,
+            dedupePropType,
+            dedupePeriod,
+            dedupeSide,
+            dedupeLine != null ? dedupeLine.toFixed(3) : '',
+          ].join('|');
+
+          if (seenNhlShotsPlayKeys.has(dedupeKey)) {
+            continue;
+          }
+          seenNhlShotsPlayKeys.add(dedupeKey);
         }
 
         incrementStageCounter(
