@@ -287,14 +287,6 @@ class AutoRoutingDb {
 }
 
 /**
- * No-op: preserved for back-compat.
- * better-sqlite3 does not require async initialization.
- */
-async function initSqlJs() {
-  // No-op.
-}
-
-/**
  * Graceful shutdown.
  */
 function closeDualDb() {
@@ -324,7 +316,6 @@ function closeDualDb() {
 
 module.exports = {
   // Initialization
-  initSqlJs,
   initDualDb,
   closeDualDb,
   isDualModeActive,

@@ -8,7 +8,7 @@
  * - Default mode is dry-run (no writes)
  * - Apply mode creates a DB backup before writing
  * - Idempotent by card_results.id (existing settled rows are skipped)
- * - Writes happen in-memory and flush once at the end (no partial on-disk writes on failure)
+ * - Writes persist directly to disk via better-sqlite3 (WAL mode)
  *
  * Usage:
  *   node src/jobs/import_historical_settled_results.js --dry-run --source /abs/path/source.db
@@ -31,8 +31,8 @@ const {
 const dataPackageRoot = path.dirname(
   require.resolve('@cheddar-logic/data/package.json'),
 );
-const initSqlJs = require(
-  path.join(dataPackageRoot, 'node_modules/sql.js/dist/sql-asm.js'),
+const Database = require(
+  path.join(dataPackageRoot, 'node_modules/better-sqlite3'),
 );
 
 function parseArgs(argv) {
@@ -85,21 +85,11 @@ function stableId(prefix, input) {
 }
 
 function queryAll(db, sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  const rows = [];
-  while (stmt.step()) rows.push(stmt.getAsObject());
-  stmt.free();
-  return rows;
+  return db.prepare(sql).all(params);
 }
 
 function queryOne(db, sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  const hasRow = stmt.step();
-  const row = hasRow ? stmt.getAsObject() : null;
-  stmt.free();
-  return row;
+  return db.prepare(sql).get(params) ?? null;
 }
 
 function normalizeText(value, fallback = null) {
@@ -158,16 +148,18 @@ async function importHistoricalSettledResults({
     console.log('[ImportHistory] Limit:', limit);
   }
 
-  // Ensure migrations are applied before direct SQL.js reads/writes.
+  // Ensure migrations are applied before direct reads/writes.
   await withDb(async () => {});
 
   if (!dryRun) {
     dbBackup.backupDatabase('before-import-historical-settled');
   }
 
-  const SQL = await initSqlJs();
-  const activeDb = new SQL.Database(fs.readFileSync(activePath));
-  const sourceDb = new SQL.Database(fs.readFileSync(resolvedSource));
+  const activeDb = new Database(activePath);
+  activeDb.pragma('journal_mode = WAL');
+  activeDb.pragma('foreign_keys = ON');
+  const sourceDb = new Database(resolvedSource, { readonly: true });
+  sourceDb.pragma('foreign_keys = ON');
 
   const settledRows = queryAll(
     sourceDb,
@@ -582,10 +574,10 @@ async function importHistoricalSettledResults({
     `,
   );
 
-  if (!dryRun) {
-    const serialized = Buffer.from(activeDb.export());
-    fs.writeFileSync(activePath, serialized);
-  }
+  // better-sqlite3 writes directly to disk on every statement.run() — no flush needed.
+  // Close both databases before returning.
+  try { sourceDb.close(); } catch {}
+  try { activeDb.close(); } catch {}
 
   console.log('[ImportHistory] Stats:', stats);
   console.log('[ImportHistory] Summary:', summary);

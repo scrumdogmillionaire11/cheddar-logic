@@ -1,25 +1,23 @@
 /**
  * Multi-Database Client (Dual-Database Mode)
- * 
+ *
  * Separates "record" (reference) data from "local" (state) data:
- * 
+ *
  * RECORD DATABASE (Read-only reference):
  *   - games
  *   - odds_snapshots
  *   - card_payloads (plays)
  *   - tracking_stats (canonical)
- * 
+ *
  * LOCAL DATABASE (Environment-specific state):
  *   - card_results (settlement per environment)
  *   - game_results (settlement per environment)
  *   - job_runs (environment logs)
  */
 
-const initSqlJs = require('sql.js/dist/sql-asm.js');
+const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
-
-let SQL = null;
 
 // Dual database mode state
 let recordDb = null;
@@ -173,138 +171,59 @@ function markRunFailure(db, runId, errorMessage) {
 }
 
 /**
- * Initialize SQL.js
+ * Load a database file with better-sqlite3.
+ * @param {string} filePath
+ * @param {boolean} [readonly=false]
  */
-async function initSqlJs() {
-  if (SQL) return;
-  SQL = await initSqlJs();
-}
+function loadDbFile(filePath, readonly = false) {
+  if (!filePath) {
+    throw new Error('[DB-Multi] Missing file path.');
+  }
 
-/**
- * Load a database file
- */
-function loadDbFile(filePath) {
-  if (!filePath || !fs.existsSync(filePath)) {
-    return new SQL.Database();
+  const dir = path.dirname(filePath);
+  if (!readonly && !fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 
   try {
-    const buffer = fs.readFileSync(filePath);
-    return new SQL.Database(buffer);
+    const db = new Database(filePath, { readonly });
+    if (!readonly) {
+      db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+    } else {
+      db.pragma('foreign_keys = ON');
+    }
+    return db;
   } catch (e) {
     console.warn(`[DB-Multi] Could not load ${filePath}: ${e.message}`);
-    return new SQL.Database();
-  }
-}
-
-/**
- * Save a database file
- */
-function saveDbFile(db, filePath) {
-  if (!db || !filePath) return;
-
-  try {
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    const data = db.export();
-    const buffer = Buffer.from(data);
-    fs.writeFileSync(filePath, buffer);
-  } catch (e) {
-    console.error(`[DB-Multi] Failed to save ${filePath}: ${e.message}`);
     throw e;
   }
 }
 
 /**
- * Initialize dual-database mode
+ * Initialize dual-database mode.
+ * Both databases are opened synchronously.
  */
 function initDualMode(recordDatabasePath, localDatabasePath) {
   recordPath = recordDatabasePath;
   localPath = localDatabasePath;
 
-  // Load both databases
-  recordDb = loadDbFile(recordPath);
-  localDb = loadDbFile(localPath);
+  // Open record DB as read-only, local DB as writable
+  recordDb = loadDbFile(recordPath, true);
+  localDb = loadDbFile(localPath, false);
 
   console.log(`[DB-Multi] Record DB: ${recordPath}`);
   console.log(`[DB-Multi] Local DB: ${localPath}`);
 
   return {
-    record: new DatabaseWrapper(recordDb, 'record'),
-    local: new DatabaseWrapper(localDb, 'local')
+    record: recordDb,
+    local: localDb,
   };
 }
 
 /**
- * Statement wrapper
- */
-class Statement {
-  constructor(db, query, source) {
-    this.db = db;
-    this.query = query;
-    this.source = source;
-    this.stmt = db.prepare(query);
-  }
-
-  run(...params) {
-    if (this.source === 'record') {
-      throw new Error(`Cannot write to record database. Query: ${this.query}`);
-    }
-
-    try {
-      this.stmt.bind(params);
-      this.stmt.step();
-      this.stmt.reset();
-      // Capture changes before saveDbFile(): sql.js export() frees all active
-      // prepared statements and recreates the internal db pointer.
-      const changes = this.db.getRowsModified();
-
-      if (this.source === 'local') {
-        saveDbFile(this.db, localPath);
-        // Re-prepare on the rebuilt db so this statement remains reusable.
-        this.stmt = this.db.prepare(this.query);
-      }
-
-      return { changes };
-    } catch (e) {
-      throw new Error(`Statement run error: ${e?.message ?? String(e)}`);
-    }
-  }
-
-  get(...params) {
-    try {
-      this.stmt.bind(params);
-      let result = null;
-      if (this.stmt.step()) {
-        result = this.stmt.getAsObject();
-      }
-      this.stmt.reset();
-      return result;
-    } catch (e) {
-      throw new Error(`Statement get error: ${e?.message ?? String(e)}`);
-    }
-  }
-
-  all(...params) {
-    try {
-      this.stmt.bind(params);
-      const results = [];
-      while (this.stmt.step()) {
-        results.push(this.stmt.getAsObject());
-      }
-      this.stmt.reset();
-      return results;
-    } catch (e) {
-      throw new Error(`Statement all error: ${e?.message ?? String(e)}`);
-    }
-  }
-}
-
-/**
- * Database wrapper with automatic routing
+ * Database wrapper with write-guard for the record (read-only) database.
+ * Preserved so existing callers of initDualMode() that use .prepare() work unchanged.
  */
 class DatabaseWrapper {
   constructor(db, source) {
@@ -313,22 +232,18 @@ class DatabaseWrapper {
   }
 
   prepare(query) {
-    return new Statement(this._db, query, this._source);
+    if (this._source === 'record') {
+      // Return a read-only-guarded statement wrapper
+      return new RecordStatement(this._db, query);
+    }
+    return this._db.prepare(query);
   }
 
   exec(sql) {
     if (this._source === 'record') {
       throw new Error('Cannot execute on record database');
     }
-
-    try {
-      this._db.run(sql);
-      if (this._source === 'local') {
-        saveDbFile(this._db, localPath);
-      }
-    } catch (e) {
-      throw new Error(`Exec error: ${e.message}`);
-    }
+    this._db.exec(sql);
   }
 
   getForWrite(tableName) {
@@ -343,7 +258,29 @@ class DatabaseWrapper {
 }
 
 /**
- * Auto-routing database that selects based on table name
+ * Statement shim that blocks writes on the record database.
+ */
+class RecordStatement {
+  constructor(db, query) {
+    this._stmt = db.prepare(query);
+    this._query = query;
+  }
+
+  run() {
+    throw new Error(`[DB-Multi] Cannot write to record database. Query: ${this._query}`);
+  }
+
+  get(...params) {
+    return this._stmt.get(...params);
+  }
+
+  all(...params) {
+    return this._stmt.all(...params);
+  }
+}
+
+/**
+ * Auto-routing database that selects record or local DB based on table name.
  */
 class AutoRoutingDb {
   constructor(databases) {
@@ -351,13 +288,12 @@ class AutoRoutingDb {
   }
 
   prepare(query) {
-    // Try to detect table from query
     const recordMatch = this._extractTableName(query);
-    
+
     if (RECORD_TABLES.has(recordMatch)) {
-      return this.databases.record.prepare(query);
+      return new RecordStatement(this.databases.record, query);
     }
-    
+
     if (LOCAL_TABLES.has(recordMatch)) {
       return this.databases.local.prepare(query);
     }
@@ -367,35 +303,33 @@ class AutoRoutingDb {
       return this.databases.local.prepare(query);
     }
 
-    return this.databases.record.prepare(query);
+    return new RecordStatement(this.databases.record, query);
   }
 
   exec(sql) {
     // Writes go to local
-    return this.databases.local.exec(sql);
+    this.databases.local.exec(sql);
   }
 
   _extractTableName(query) {
     const fromMatch = query.match(/FROM\s+(\w+)/i);
     const intoMatch = query.match(/INTO\s+(\w+)/i);
     const updateMatch = query.match(/UPDATE\s+(\w+)/i);
-    
+
     return (fromMatch?.[1] || intoMatch?.[1] || updateMatch?.[1] || '').toLowerCase();
   }
 
   saveAll() {
-    saveDbFile(recordDb, recordPath);
-    saveDbFile(localDb, localPath);
+    // No-op: better-sqlite3 writes directly to disk.
   }
 
   closeAll() {
-    if (recordDb) recordDb.close();
-    if (localDb) localDb.close();
+    if (recordDb) { try { recordDb.close(); } catch {} recordDb = null; }
+    if (localDb) { try { localDb.close(); } catch {} localDb = null; }
   }
 }
 
 module.exports = {
-  initSqlJs,
   initDualMode,
   AutoRoutingDb,
   DatabaseWrapper,

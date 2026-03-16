@@ -1,33 +1,28 @@
 /**
- * Database Client — sql.js wrapper
- * Provides synchronous-like interface to sql.js (pure JS SQLite)
- * 
- * Note: sql.js is in-memory, data is persisted via saveDatabase()
- * Call getDatabase() once, then use the same instance
+ * Database Client — better-sqlite3 wrapper
+ * Provides the same exported interface as the former sql.js wrapper.
+ *
+ * Note: better-sqlite3 writes directly to disk — no manual saveDatabase() flush needed.
  */
 
-const initSqlJs = require('sql.js/dist/sql-asm.js');
+const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
 const { resolveDatabasePath } = require('./db-path');
 
 let dbInstance = null;
-let SQL = null;
 let dbPath = null;
 
 /**
- * Initialize the database
- * Must be called once before use
+ * Initialize the database.
+ * Preserved as an async function for caller back-compat.
  */
 async function initDatabase() {
-  if (SQL) return SQL;
-  
-  SQL = await initSqlJs();
-  return SQL;
+  // better-sqlite3 opens synchronously — nothing to await.
 }
 
 /**
- * Load database from disk or create new
+ * Load database from disk or create new.
  */
 function loadDatabase() {
   const resolved = resolveDatabasePath();
@@ -36,163 +31,51 @@ function loadDatabase() {
   if (resolved.isExplicitFile && !fs.existsSync(dbFile)) {
     console.warn(`[DB] ${resolved.source} points to missing DB file. Creating new DB at: ${dbFile}`);
   }
-  
+
   dbPath = dbFile;
   const dir = path.dirname(dbFile);
-  
+
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  try {
-    if (fs.existsSync(dbFile)) {
-      const buffer = fs.readFileSync(dbFile);
-      return new SQL.Database(buffer);
-    }
-  } catch (e) {
-    console.warn(`Failed to load existing database: ${e.message}`);
-  }
-
-  // Create new database
-  return new SQL.Database();
+  const db = new Database(dbFile);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  return db;
 }
 
 /**
- * Save database to disk
+ * No-op: better-sqlite3 writes directly to disk on every statement.run().
+ * Preserved so existing callers compile without error.
  */
 function saveDatabase() {
-  if (!dbInstance || !dbPath) return;
-  
-  try {
-    const data = dbInstance.export();
-    const buffer = Buffer.from(data);
-    fs.writeFileSync(dbPath, buffer);
-  } catch (e) {
-    console.error(`Failed to save database: ${e.message}`);
-  }
+  // No-op.
 }
 
 /**
- * Get database instance
- * Initializes synchronously (sql.js must be pre-initialized)
+ * Get database instance.
+ * Opens synchronously on first call; returns the same singleton thereafter.
  */
 function getDatabase() {
   if (dbInstance) return dbInstance;
-
-  if (!SQL) {
-    throw new Error('Database not initialized. Call initDatabase() first.');
-  }
-
   dbInstance = loadDatabase();
-  
-  // Enable foreign keys
-  dbInstance.run('PRAGMA foreign_keys = ON');
-  
   return dbInstance;
 }
 
 /**
- * Close and save database
+ * Close and save database.
  */
 function closeDatabase() {
   if (dbInstance) {
-    saveDatabase();
     dbInstance.close();
     dbInstance = null;
   }
 }
 
-/**
- * Wrapper for prepared statements
- */
-class Statement {
-  constructor(db, query) {
-    this.db = db;
-    this.query = query;
-    this.stmt = db.prepare(query);
-  }
-
-  run(...params) {
-    try {
-      this.stmt.bind(params);
-      this.stmt.step();
-      this.stmt.reset();
-      saveDatabase();
-      return { changes: this.db.getRowsModified() };
-    } catch (e) {
-      throw new Error(`Statement error: ${e.message}`);
-    }
-  }
-
-  get(...params) {
-    try {
-      this.stmt.bind(params);
-      if (this.stmt.step()) {
-        const row = this.stmt.getAsObject();
-        this.stmt.reset();
-        return row;
-      }
-      this.stmt.reset();
-      return null;
-    } catch (e) {
-      throw new Error(`Statement error: ${e.message}`);
-    }
-  }
-
-  all(...params) {
-    try {
-      this.stmt.bind(params);
-      const results = [];
-      while (this.stmt.step()) {
-        results.push(this.stmt.getAsObject());
-      }
-      this.stmt.reset();
-      return results;
-    } catch (e) {
-      throw new Error(`Statement error: ${e.message}`);
-    }
-  }
-}
-
-/**
- * Database wrapper object
- */
-class DatabaseWrapper {
-  constructor(sqlDb) {
-    this._db = sqlDb;
-  }
-
-  prepare(query) {
-    return new Statement(this._db, query);
-  }
-
-  exec(sql) {
-    try {
-      this._db.run(sql);
-      saveDatabase();
-    } catch (e) {
-      throw new Error(`Exec error: ${e.message}`);
-    }
-  }
-
-  pragma(pragma) {
-    // Most pragmas can be ignored in sql.js
-    if (pragma === 'foreign_keys = ON') {
-      this._db.run('PRAGMA foreign_keys = ON');
-    }
-  }
-
-  close() {
-    closeDatabase();
-  }
-}
-
 module.exports = {
   initDatabase,
-  getDatabase: () => {
-    const db = getDatabase();
-    return new DatabaseWrapper(db);
-  },
+  getDatabase,
   closeDatabase,
-  saveDatabase
+  saveDatabase,
 };

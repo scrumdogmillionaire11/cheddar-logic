@@ -1,21 +1,37 @@
 {
-  "fetched_at": "2026-03-15T18:37:24.372Z",
+  "fetched_at": "2026-03-16T01:15:02.662Z",
   "teams": {},
   "goalies": {
     "New York Rangers": {
       "gsax": 20.200000000000003,
       "source": "moneypuck-csv"
     },
+    "Nashville Predators": {
+      "gsax": -4.840000000000003,
+      "source": "moneypuck-csv"
+    },
+    "Pittsburgh Penguins": {
+      "gsax": 8.719999999999999,
+      "source": "moneypuck-csv"
+    },
     "Utah Hockey Club": {
       "gsax": 7.699999999999989,
+      "source": "moneypuck-csv"
+    },
+    "Edmonton Oilers": {
+      "gsax": -2.3299999999999983,
+      "source": "moneypuck-csv"
+    },
+    "Florida Panthers": {
+      "gsax": 0.1700000000000017,
       "source": "moneypuck-csv"
     },
     "Dallas Stars": {
       "gsax": 13.170000000000002,
       "source": "moneypuck-csv"
     },
-    "New York Islanders": {
-      "gsax": 26.19999999999999,
+    "Tampa Bay Lightning": {
+      "gsax": 20.870000000000005,
       "source": "moneypuck-csv"
     },
     "San Jose Sharks": {
@@ -30,104 +46,88 @@
       "gsax": -0.4400000000000013,
       "source": "moneypuck-csv"
     },
+    "New York Islanders": {
+      "gsax": 26.19999999999999,
+      "source": "moneypuck-csv"
+    },
     "Boston Bruins": {
       "gsax": 21.819999999999993,
-      "source": "moneypuck-csv"
-    },
-    "Winnipeg Jets": {
-      "gsax": 12.25,
-      "source": "moneypuck-csv"
-    },
-    "Los Angeles Kings": {
-      "gsax": 4.1299999999999955,
-      "source": "moneypuck-csv"
-    },
-    "Colorado Avalanche": {
-      "gsax": 14.560000000000002,
-      "source": "moneypuck-csv"
-    },
-    "Edmonton Oilers": {
-      "gsax": -2.3299999999999983,
-      "source": "moneypuck-csv"
-    },
-    "Anaheim Ducks": {
-      "gsax": 2.530000000000001,
-      "source": "moneypuck-csv"
-    },
-    "Seattle Kraken": {
-      "gsax": 8.5,
-      "source": "moneypuck-csv"
-    },
-    "Columbus Blue Jackets": {
-      "gsax": 14.719999999999999,
-      "source": "moneypuck-csv"
-    },
-    "Montreal Canadiens": {
-      "gsax": 3.16,
       "source": "moneypuck-csv"
     },
     "Toronto Maple Leafs": {
       "gsax": 8.909999999999997,
       "source": "moneypuck-csv"
     },
+    "Winnipeg Jets": {
+      "gsax": 12.25,
+      "source": "moneypuck-csv"
+    },
+    "Seattle Kraken": {
+      "gsax": 8.5,
+      "source": "moneypuck-csv"
+    },
     "Carolina Hurricanes": {
       "gsax": 6.200000000000003,
-      "source": "moneypuck-csv"
-    },
-    "Detroit Red Wings": {
-      "gsax": 10.120000000000005,
-      "source": "moneypuck-csv"
-    },
-    "Minnesota Wild": {
-      "gsax": 7.579999999999998,
-      "source": "moneypuck-csv"
-    },
-    "Chicago Blackhawks": {
-      "gsax": 12.819999999999993,
-      "source": "moneypuck-csv"
-    },
-    "Tampa Bay Lightning": {
-      "gsax": 20.870000000000005,
-      "source": "moneypuck-csv"
-    },
-    "New Jersey Devils": {
-      "gsax": 6.209999999999994,
-      "source": "moneypuck-csv"
-    },
-    "Buffalo Sabres": {
-      "gsax": 15.540000000000006,
-      "source": "moneypuck-csv"
-    },
-    "Calgary Flames": {
-      "gsax": 15.459999999999994,
-      "source": "moneypuck-csv"
-    },
-    "Nashville Predators": {
-      "gsax": -4.840000000000003,
-      "source": "moneypuck-csv"
-    },
-    "Florida Panthers": {
-      "gsax": 0.1700000000000017,
-      "source": "moneypuck-csv"
-    },
-    "Philadelphia Flyers": {
-      "gsax": 11.299999999999997,
       "source": "moneypuck-csv"
     },
     "Vegas Golden Knights": {
       "gsax": -0.8799999999999955,
       "source": "moneypuck-csv"
     },
-    "Pittsburgh Penguins": {
-      "gsax": 8.719999999999999,
+    "New Jersey Devils": {
+      "gsax": 6.209999999999994,
       "source": "moneypuck-csv"
     },
-    "Washington Capitals": {
-      "gsax": 24.840000000000003,
+    "Chicago Blackhawks": {
+      "gsax": 12.819999999999993,
+      "source": "moneypuck-csv"
+    },
+    "Colorado Avalanche": {
+      "gsax": 14.560000000000002,
+      "source": "moneypuck-csv"
+    },
+    "Buffalo Sabres": {
+      "gsax": 15.540000000000006,
+      "source": "moneypuck-csv"
+    },
+    "Anaheim Ducks": {
+      "gsax": 2.530000000000001,
+      "source": "moneypuck-csv"
+    },
+    "Columbus Blue Jackets": {
+      "gsax": 14.719999999999999,
+      "source": "moneypuck-csv"
+    },
+    "Detroit Red Wings": {
+      "gsax": 10.120000000000005,
+      "source": "moneypuck-csv"
+    },
+    "Montreal Canadiens": {
+      "gsax": 3.16,
+      "source": "moneypuck-csv"
+    },
+    "Minnesota Wild": {
+      "gsax": 7.579999999999998,
+      "source": "moneypuck-csv"
+    },
+    "Los Angeles Kings": {
+      "gsax": 4.1299999999999955,
+      "source": "moneypuck-csv"
+    },
+    "Philadelphia Flyers": {
+      "gsax": 11.299999999999997,
+      "source": "moneypuck-csv"
+    },
+    "Calgary Flames": {
+      "gsax": 15.459999999999994,
       "source": "moneypuck-csv"
     },
     "St. Louis Blues": {
       "gsax": 7.280000000000001,
+      "source": "moneypuck-csv"
+    },
+    "Washington Capitals": {
+      "gsax": 24.840000000000003,
       "source": "moneypuck-csv"
     }
   },
@@ -283,13 +283,13 @@
       "source": "rotowire"
     },
     "Nashville Predators": {
-      "name": "Juuse Saros",
-      "status": "EXPECTED",
+      "name": "Justus Annunen",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Florida Panthers": {
-      "name": "Sergei Bobrovsky",
-      "status": "EXPECTED",
+      "name": "Daniil Tarasov",
+      "status": "CONFIRMED",
       "source": "rotowire"
     }
   },
@@ -448,13 +448,13 @@
         "source": "rotowire"
       },
       "Ottawa Senators": {
-        "name": "James Reimer",
-        "status": "EXPECTED",
+        "name": "Linus Ullmark",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "San Jose Sharks": {
         "name": "Laurent Brossoit",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Montreal Canadiens": {
@@ -464,7 +464,7 @@
       },
       "Anaheim Ducks": {
         "name": "Lukas Dostal",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Minnesota Wild": {
@@ -483,18 +483,18 @@
         "source": "rotowire"
       },
       "Nashville Predators": {
-        "name": "Juuse Saros",
-        "status": "EXPECTED",
+        "name": "Justus Annunen",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Seattle Kraken": {
         "name": "Joey Daccord",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Florida Panthers": {
-        "name": "Sergei Bobrovsky",
-        "status": "EXPECTED",
+        "name": "Daniil Tarasov",
+        "status": "CONFIRMED",
         "source": "rotowire"
       }
     },

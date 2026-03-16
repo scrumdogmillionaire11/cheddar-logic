@@ -1,15 +1,15 @@
 /**
  * Database Client
- * Singleton connection to the SQLite database (via sql.js)
- * 
+ * Singleton connection to the SQLite database (via better-sqlite3)
+ *
  * Usage:
- *   await require('./db.js').init()
+ *   await require('./db.js').initDb()  // no-op, preserved for back-compat
  *   const db = require('./db.js').getDatabase()
- *   
+ *
  * All timestamps stored in ISO 8601 UTC format
  */
 
-const initSqlJs = require('sql.js/dist/sql-asm.js');
+const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
@@ -26,7 +26,6 @@ const {
   normalizeSportCode,
 } = require('./normalize');
 
-let SQL = null;
 let dbInstance = null;
 let dbPath = null;
 let warnedDbPathContract = false;
@@ -70,21 +69,14 @@ function inspectDatabaseStats(dbFile) {
       };
     }
     const stats = fs.statSync(dbFile);
-    const buffer = fs.readFileSync(dbFile);
-    const db = new SQL.Database(buffer);
+    const db = new Database(dbFile, { readonly: true });
     const tablePlaceholders = EXPECTED_TABLE_NAMES.map(() => '?').join(', ');
-    const tableStmt = db.prepare(
+    const tableRow = db.prepare(
       `SELECT COUNT(*) AS c
        FROM sqlite_master
        WHERE type='table' AND name IN (${tablePlaceholders})`
-    );
-    tableStmt.bind(EXPECTED_TABLE_NAMES);
-    let tableCount = 0;
-    if (tableStmt.step()) {
-      const row = tableStmt.getAsObject();
-      tableCount = Number(row.c || 0);
-    }
-    tableStmt.free();
+    ).get(EXPECTED_TABLE_NAMES);
+    let tableCount = Number(tableRow?.c || 0);
 
     let rowCount = 0;
     let cardPayloadCount = 0;
@@ -92,31 +84,22 @@ function inspectDatabaseStats(dbFile) {
     if (tableCount > 0) {
       for (const tableName of EXPECTED_TABLE_NAMES) {
         try {
-          const countStmt = db.prepare(`SELECT COUNT(*) AS c FROM ${tableName}`);
-          if (countStmt.step()) {
-            const row = countStmt.getAsObject();
-            const count = Number(row.c || 0);
-            rowCount += count;
-            if (tableName === 'card_payloads') {
-              cardPayloadCount = count;
-            }
+          const row = db.prepare(`SELECT COUNT(*) AS c FROM ${tableName}`).get();
+          const count = Number(row?.c || 0);
+          rowCount += count;
+          if (tableName === 'card_payloads') {
+            cardPayloadCount = count;
           }
-          countStmt.free();
         } catch {
           // Ignore missing/incompatible tables.
         }
       }
 
       try {
-        const columnStmt = db.prepare(`PRAGMA table_info(card_results)`);
-        const columnNames = new Set();
-        while (columnStmt.step()) {
-          const row = columnStmt.getAsObject();
-          if (typeof row.name === 'string') {
-            columnNames.add(row.name);
-          }
-        }
-        columnStmt.free();
+        const columns = db.prepare(`PRAGMA table_info(card_results)`).all();
+        const columnNames = new Set(
+          columns.map((row) => (typeof row.name === 'string' ? row.name : ''))
+        );
         hasMarketContractColumns = REQUIRED_CARD_RESULTS_MARKET_COLUMNS.every((name) =>
           columnNames.has(name)
         );
@@ -201,7 +184,7 @@ function isProcessAlive(pid) {
 /**
  * Check native SQLite database integrity using sqlite3 CLI.
  * This is for detecting corruption in native SQLite files (e.g., FPL Sage DB),
- * not the in-memory sql.js database used by Cheddar main DB.
+ * not the better-sqlite3 database used by Cheddar main DB.
  *
  * @param {string} dbPath - Absolute path to SQLite database file
  * @returns {{ ok: boolean, error: string | null }} - Integrity check result
@@ -317,7 +300,7 @@ function acquireDbFileLock(dbFile) {
   if (!dbFile) return;
   if (process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS === 'true') {
     console.warn(
-      `[DB] CHEDDAR_DB_ALLOW_MULTI_PROCESS=true — skipping DB lock for ${dbFile} (unsafe for sql.js file writes).`,
+      `[DB] CHEDDAR_DB_ALLOW_MULTI_PROCESS=true — skipping DB lock for ${dbFile} (WAL mode handles concurrent access).`,
     );
     return;
   }
@@ -391,7 +374,7 @@ function acquireDbFileLock(dbFile) {
   const ownerPid = lockInfo && Number.isFinite(Number(lockInfo.pid)) ? lockInfo.pid : 'unknown';
   const message =
     `[DB] Refusing to open ${dbFile} because another process holds the lock (${lockPath}, pid=${ownerPid}). ` +
-    'Set CHEDDAR_DB_ALLOW_MULTI_PROCESS=true to bypass (unsafe for sql.js file writes).';
+    'Set CHEDDAR_DB_ALLOW_MULTI_PROCESS=true to bypass.';
   if (process.env.NODE_ENV === 'production') {
     throw new Error(message);
   }
@@ -480,12 +463,12 @@ function normalizeSportValue(sport, context) {
 }
 
 /**
- * Initialize SQL.js (must be called once at startup)
+ * Initialize database (preserved as async no-op for caller back-compat).
+ * better-sqlite3 opens synchronously on first getDatabase() call.
  */
 async function initDb() {
-  if (SQL) return;
-  SQL = await initSqlJs();
-  // Ensure registry is fresh on init
+  // better-sqlite3 opens synchronously on first getDatabase() call.
+  // Preserved as an async no-op so existing callers need no changes.
   oddsContextReferenceRegistry = new WeakMap();
 }
 
@@ -552,283 +535,124 @@ function loadDatabase() {
     }
   }
 
-  try {
-    if (fs.existsSync(dbFile)) {
-      const buffer = fs.readFileSync(dbFile);
-      const db = new SQL.Database(buffer);
-      return db;
-    }
-  } catch (e) {
-    console.warn(`Failed to load existing database: ${e.message}`);
-  }
-
-  return new SQL.Database();
+  const db = new Database(dbFile);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  return db;
 }
 
 /**
- * Save database to disk atomically.
- *
- * sql.js is in-memory: every write must be flushed by overwriting the DB file.
- * A plain writeFileSync overwrites the file byte-by-byte, so a concurrent
- * readFileSync (from the web server's getDatabaseReadOnly()) can read a torn
- * file — partial old bytes followed by partial new bytes — causing sql.js to
- * throw "database disk image is malformed".
- *
- * Fix: write to a sibling temp file first, then rename() into place.
- * rename() is atomic on Linux/POSIX: any concurrent reader sees either the
- * complete old file or the complete new file, never a mix.
+ * No-op: better-sqlite3 writes directly to disk on every statement.run().
+ * Preserved so any remaining callers compile without error.
  */
 function saveDatabase() {
-  if (!dbInstance || !dbPath) return;
-
-  try {
-    const data = dbInstance.export();
-    const buffer = Buffer.from(data);
-    const tmpPath = dbPath + '.tmp';
-    fs.writeFileSync(tmpPath, buffer);
-    fs.renameSync(tmpPath, dbPath);
-  } catch (e) {
-    console.error(`Failed to save database: ${e.message}`);
-    throw e;
-  }
+  // No-op: better-sqlite3 writes directly to disk on every statement.run().
 }
 
 /**
- * Statement wrapper that mimics better-sqlite3
+ * Wraps a better-sqlite3 prepared statement so that .get() returns null
+ * instead of undefined when no row is found.  This matches the original
+ * sql.js shim behaviour and avoids widespread `?? null` changes in callers.
  */
-class Statement {
-  constructor(db, query) {
-    this.db = db;
-    this.query = query;
-    this.stmt = db.prepare(query);
-  }
-
-  run(...params) {
-    try {
-      this.stmt.bind(params);
-      this.stmt.step();
-      this.stmt.reset();
-      // Capture changes before saveDatabase(): sql.js export() frees all active
-      // prepared statements and recreates the internal db pointer, so any attempt
-      // to reuse this.stmt after export() throws "Statement closed".
-      const changes = this.db.getRowsModified();
-      saveDatabase();
-      // Re-prepare on the rebuilt db so this statement remains reusable.
-      this.stmt = this.db.prepare(this.query);
-      return { changes };
-    } catch (e) {
-      throw new Error(`Statement run error: ${e?.message ?? String(e)}`);
-    }
+class NullOnEmptyStatement {
+  constructor(stmt) {
+    this._stmt = stmt;
+    this.reader = stmt.reader;
   }
 
   get(...params) {
-    try {
-      this.stmt.bind(params);
-      let result = null;
-      if (this.stmt.step()) {
-        result = this.stmt.getAsObject();
-      }
-      this.stmt.reset();
-      return result;
-    } catch (e) {
-      throw new Error(`Statement get error: ${e?.message ?? String(e)}`);
-    }
+    const result = this._stmt.get(...params);
+    return result === undefined ? null : result;
   }
 
-  all(...params) {
-    try {
-      this.stmt.bind(params);
-      const results = [];
-      while (this.stmt.step()) {
-        results.push(this.stmt.getAsObject());
-      }
-      this.stmt.reset();
-      return results;
-    } catch (e) {
-      const errorMsg = e?.message || e?.toString() || JSON.stringify(e) || 'unknown error';
-      throw new Error(`Statement all error: ${errorMsg} | Query: ${this.query} | Params: ${JSON.stringify(params)}`);
-    }
-  }
+  all(...params) { return this._stmt.all(...params); }
+  run(...params) { return this._stmt.run(...params); }
+  iterate(...params) { return this._stmt.iterate(...params); }
+  bind(...params) { return this._stmt.bind(...params); }
+  columns() { return this._stmt.columns(); }
+  safeIntegers(val) { return this._stmt.safeIntegers(val); }
+  raw(val) { return this._stmt.raw(val); }
+  expand(val) { return this._stmt.expand(val); }
+  pluck(val) { return this._stmt.pluck(val); }
 }
 
 /**
- * Database wrapper object
+ * Thin proxy around the native better-sqlite3 Database instance.
+ * Delegates all methods to the underlying db but:
+ * - Wraps prepare() to return NullOnEmptyStatement (null vs undefined back-compat)
+ * - Overrides close() so that callers (e.g. migrate.js) properly clear the module singleton.
  */
-class DatabaseWrapper {
-  constructor(sqlDb) {
-    this._db = sqlDb;
-  }
-
-  prepare(query) {
-    return new Statement(this._db, query);
-  }
-
-  exec(sql) {
-    try {
-      this._db.run(sql);
-      saveDatabase();
-    } catch (e) {
-      throw new Error(`Exec error: ${e.message}`);
-    }
-  }
-
-  pragma(pragma) {
-    /* Most pragmas ignored in sql.js */
-    if (pragma === 'foreign_keys = ON') {
-      try {
-        this._db.run('PRAGMA foreign_keys = ON');
-      } catch (e) {
-        // sql.js doesn't support all pragmas
-      }
-    }
-  }
-
-  close() {
-    if (dbInstance) {
-      saveDatabase();
-      dbInstance.close();
-      dbInstance = null;
-    }
-    releaseDbFileLock();
-  }
-
-  getRowsModified() {
-    return this._db.getRowsModified();
-  }
-}
-
-/**
- * Statement wrapper for read-only database instances.
- * Allows reads (get/all) but throws immediately on any write attempt (run).
- * Surfaces programmer errors early instead of silently executing mutations
- * against an in-memory copy that will never be persisted.
- */
-class ReadOnlyStatement {
-  constructor(db, query) {
+class DatabaseProxy {
+  constructor(db) {
     this._db = db;
-    this.query = query;
-    this._stmt = db.prepare(query);
+    // Expose native properties tests may rely on
+    this.open = db.open;
+    this.inTransaction = db.inTransaction;
+    this.name = db.name;
+    this.readonly = db.readonly;
+    this.memory = db.memory;
   }
 
-  run() {
-    throw new Error(
-      '[DB] Write rejected on read-only instance. ' +
-      'Only the worker process may write to the database. ' +
-      `Query: ${this.query}`
-    );
-  }
+  prepare(sql) { return new NullOnEmptyStatement(this._db.prepare(sql)); }
+  exec(sql) { return this._db.exec(sql); }
+  pragma(pragma, options) { return this._db.pragma(pragma, options); }
+  transaction(fn) { return this._db.transaction(fn); }
+  backup(dest, options) { return this._db.backup(dest, options); }
+  serialize(options) { return this._db.serialize(options); }
+  function(name, options, fn) { return this._db.function(name, options, fn); }
+  aggregate(name, options) { return this._db.aggregate(name, options); }
+  table(name, definition) { return this._db.table(name, definition); }
+  loadExtension(path) { return this._db.loadExtension(path); }
+  defaultSafeIntegers(val) { return this._db.defaultSafeIntegers(val); }
+  unsafeMode(unsafe) { return this._db.unsafeMode(unsafe); }
 
-  get(...params) {
-    try {
-      this._stmt.bind(params);
-      let result = null;
-      if (this._stmt.step()) {
-        result = this._stmt.getAsObject();
-      }
-      this._stmt.reset();
-      return result;
-    } catch (e) {
-      throw new Error(`ReadOnlyStatement get error: ${e?.message ?? String(e)}`);
-    }
-  }
-
-  all(...params) {
-    try {
-      this._stmt.bind(params);
-      const results = [];
-      while (this._stmt.step()) {
-        results.push(this._stmt.getAsObject());
-      }
-      this._stmt.reset();
-      return results;
-    } catch (e) {
-      const errorMsg = e?.message || e?.toString() || 'unknown error';
-      throw new Error(`ReadOnlyStatement all error: ${errorMsg} | Query: ${this.query} | Params: ${JSON.stringify(params)}`);
-    }
-  }
-}
-
-/**
- * Database wrapper for read-only consumers (web server).
- * exec() and prepare().run() both throw — no writes permitted.
- * Backed by a fresh per-request sql.js instance loaded from disk.
- */
-class ReadOnlyDatabaseWrapper {
-  constructor(sqlDb) {
-    this._db = sqlDb;
-    this._readOnly = true;
-  }
-
-  prepare(query) {
-    return new ReadOnlyStatement(this._db, query);
-  }
-
-  exec() {
-    throw new Error(
-      '[DB] exec() rejected on read-only instance. ' +
-      'Only the worker process may write to the database.'
-    );
-  }
-
-  pragma(pragma) {
-    if (pragma === 'foreign_keys = ON') {
-      try { this._db.run('PRAGMA foreign_keys = ON'); } catch { /* ignore */ }
-    }
-  }
-
+  /**
+   * Close the database AND clear the module-level singleton so subsequent
+   * callers can re-open a fresh connection.
+   */
   close() {
-    try { this._db.close(); } catch { /* ignore */ }
-  }
-
-  getRowsModified() {
-    return this._db.getRowsModified();
+    closeDatabase();
   }
 }
 
 /**
- * Get database instance
- * Ensures SQL.js is initialized first
+ * Get database instance.
+ * Opens synchronously on first call; returns the same singleton thereafter.
+ * Returns a DatabaseProxy so that db.close() correctly updates module state.
  */
 function getDatabase() {
-  if (!SQL) {
-    throw new Error('Database not initialized. Call initDb() first from require("./db.js").initDb()');
-  }
-
   if (!dbInstance) {
     dbInstance = loadDatabase();
-    try {
-      dbInstance.run('PRAGMA foreign_keys = ON');
-    } catch (e) {
-      /* Pragma may not be supported */
-    }
   }
-
-  return new DatabaseWrapper(dbInstance);
+  return new DatabaseProxy(dbInstance);
 }
 
 /**
- * Close database and save to disk
+ * Close database.
+ * better-sqlite3 writes to disk on every statement.run() so no flush needed.
  */
 function closeDatabase() {
   if (dbInstance) {
-    saveDatabase();
     dbInstance.close();
     dbInstance = null;
   }
+  dbPath = null;
   releaseDbFileLock();
   // Reset odds context registry on close
   oddsContextReferenceRegistry = new WeakMap();
 }
 
 /**
- * Close database without saving to disk (read-only consumers).
- * Use this in the web server — it must never write or acquire write locks.
+ * Close database without releasing write lock (read-only consumers).
+ * Preserved for caller back-compat — better-sqlite3 readers open their own
+ * connection so this is now a no-op for the singleton.
  */
 function closeDatabaseReadOnly() {
   if (dbInstance) {
     dbInstance.close();
     dbInstance = null;
   }
+  dbPath = null;
   releaseDbFileLock();
   oddsContextReferenceRegistry = new WeakMap();
 }
@@ -837,15 +661,12 @@ function closeDatabaseReadOnly() {
  * Open the database for reading WITHOUT acquiring the write lock.
  * Safe for read-only consumers (web server) that must coexist with the worker.
  *
- * Returns a fresh DatabaseWrapper per call — no module-level singleton.
- * Always reads the latest bytes from disk, so it sees worker writes immediately.
+ * Returns a fresh native better-sqlite3 read-only instance per call.
+ * WAL mode ensures concurrent readers and the single writer coexist safely.
  *
  * MUST be paired with closeReadOnlyInstance(db) — never closeDatabase().
  */
 function getDatabaseReadOnly() {
-  if (!SQL) {
-    throw new Error('Database not initialized. Call initDb() first.');
-  }
   const resolved = resolveDatabasePath();
   const filePath = dbPath || resolved.dbPath;
 
@@ -856,18 +677,10 @@ function getDatabaseReadOnly() {
     );
   }
 
-  let buffer;
-  try {
-    buffer = fs.readFileSync(filePath);
-  } catch (e) {
-    throw new Error(
-      `[DB] getDatabaseReadOnly: failed to read database file at ${filePath}: ${e.message}`
-    );
-  }
-
   let instance;
   try {
-    instance = new SQL.Database(buffer);
+    instance = new Database(filePath, { readonly: true });
+    instance.pragma('foreign_keys = ON');
   } catch (e) {
     throw new Error(
       `[DB] getDatabaseReadOnly: database file at ${filePath} is malformed and cannot be opened: ${e.message}. ` +
@@ -875,19 +688,81 @@ function getDatabaseReadOnly() {
     );
   }
 
-  try {
-    instance.run('PRAGMA foreign_keys = ON');
-  } catch { /* ignore */ }
-  return new ReadOnlyDatabaseWrapper(instance);
+  // Wrap in a ReadOnlyProxy that:
+  // - Returns null (not undefined) from .get() for consistency with former sql.js behaviour
+  // - Throws on any write attempt
+  return new ReadOnlyDatabaseProxy(instance);
+}
+
+/**
+ * Proxy around a native better-sqlite3 read-only instance.
+ * - .prepare().get() returns null (not undefined) for no-row results
+ * - .prepare().run() throws a descriptive error (write rejected)
+ */
+class ReadOnlyDatabaseProxy {
+  constructor(db) {
+    this._db = db;
+  }
+
+  prepare(query) {
+    const stmt = this._db.prepare(query);
+    return new ReadOnlyStatement(stmt, query);
+  }
+
+  exec() {
+    throw new Error(
+      '[DB] exec() rejected on read-only instance. ' +
+      'Only the worker process may write to the database.'
+    );
+  }
+
+  pragma(pragma, options) { return this._db.pragma(pragma, options); }
+
+  close() {
+    try { this._db.close(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Statement wrapper for read-only database instances.
+ * .get() returns null (not undefined) for no-row results.
+ * .run() throws immediately.
+ */
+class ReadOnlyStatement {
+  constructor(stmt, query) {
+    this._stmt = stmt;
+    this._query = query;
+  }
+
+  run() {
+    throw new Error(
+      '[DB] Write rejected on read-only instance. ' +
+      'Only the worker process may write to the database. ' +
+      `Query: ${this._query}`
+    );
+  }
+
+  get(...params) {
+    const result = this._stmt.get(...params);
+    return result === undefined ? null : result;
+  }
+
+  all(...params) { return this._stmt.all(...params); }
+  iterate(...params) { return this._stmt.iterate(...params); }
+  columns() { return this._stmt.columns(); }
+  pluck(val) { return this._stmt.pluck(val); }
+  raw(val) { return this._stmt.raw(val); }
+  expand(val) { return this._stmt.expand(val); }
+  safeIntegers(val) { return this._stmt.safeIntegers(val); }
 }
 
 /**
  * Close a per-request read-only database instance returned by getDatabaseReadOnly().
- * Closes the sql.js in-memory database without touching the lock or saving to disk.
+ * Works with both ReadOnlyDatabaseProxy and native better-sqlite3 instances.
  */
 function closeReadOnlyInstance(db) {
-  if (db && db._db) {
-    try { db._db.close(); } catch { /* ignore */ }
+  if (db) {
+    try { db.close(); } catch { /* ignore */ }
   }
 }
 
