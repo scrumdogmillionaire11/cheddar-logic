@@ -72,8 +72,14 @@ module.exports = {
   getOddsIngestFailureSummary: db.getOddsIngestFailureSummary,
   upsertPlayerShotLog: db.upsertPlayerShotLog,
   getPlayerShotLogs: db.getPlayerShotLogs,
+  upsertTrackedPlayer: db.upsertTrackedPlayer,
+  listTrackedPlayers: db.listTrackedPlayers,
+  deactivateTrackedPlayersNotInSet: db.deactivateTrackedPlayersNotInSet,
+  upsertPlayerAvailability: db.upsertPlayerAvailability,
+  getPlayerAvailability: db.getPlayerAvailability,
   upsertPlayerPropLine: db.upsertPlayerPropLine,
   getPlayerPropLine: db.getPlayerPropLine,
+  getPlayerPropLinesForGame: db.getPlayerPropLinesForGame,
   
   // Convenience exports - model_outputs
   insertModelOutput: db.insertModelOutput,

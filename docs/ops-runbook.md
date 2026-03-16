@@ -648,6 +648,87 @@ curl -I "https://cheddarlogic.com$REF" | grep -iE 'http/|cache-control|cf-cache-
    - Confirm `/api/games` appears in Network on first load
    - Confirm card list populates
 
+### Cloudflare Tunnel outage: split traffic, `1016`, or `530`
+
+**Observed production failure pattern (March 2026):**
+
+- Public `/cards` served a mix of webpack production chunks and stale Turbopack/dev chunks.
+- Cloudflare Tunnel cutover temporarily produced `1016 Origin DNS error`.
+- Follow-up requests returned `530` while Pi origin stayed healthy (`127.0.0.1:3000 -> 200`).
+- Root cause was tunnel control-plane drift: multiple tunnels/connectors, hostname routes attached to the wrong tunnel, and conflicting/manual DNS records.
+
+**Non-negotiable production rules:**
+
+- Maintain **exactly one** production website tunnel.
+- Manage `cheddarlogic.com`, `www.cheddarlogic.com`, and `api.cheddarlogic.com` only from **Published application routes** on that one tunnel.
+- Do **not** use **Zero Trust → Networks → Routes** for the public website. That screen is for private hostname/Gateway routing.
+- Do **not** leave old production tunnels alive after cutover.
+- Prefer `127.0.0.1` instead of `localhost` in tunnel route origins.
+
+**Canonical production route mapping:**
+
+- `cheddarlogic.com` → `http://127.0.0.1:3000`
+- `www.cheddarlogic.com` → `http://127.0.0.1:3000`
+- `api.cheddarlogic.com` → `http://127.0.0.1:8000`
+
+**Fast diagnosis:**
+
+```bash
+# 1) Public symptom
+curl -sS -o /dev/null -w "%{http_code}\n" https://cheddarlogic.com/cards
+
+# 2) Local origin health on Pi
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/cards
+
+# 3) Connector health on Pi
+sudo systemctl status cloudflared --no-pager
+sudo journalctl -u cloudflared -n 30 --no-pager
+
+# 4) Confirm the Pi token's tunnel UUID
+sudo cat /etc/systemd/system/cloudflared.service | grep -o 'eyJ[A-Za-z0-9._-]*' | \
+  cut -d'.' -f2 | base64 -d 2>/dev/null
+```
+
+Interpretation:
+
+- **`1016`**: DNS points at a missing/deleted tunnel target.
+- **`530` + local origin `200`**: Cloudflare is not routing traffic to the active connector/tunnel route.
+- **Mixed prod/dev chunks**: multiple active connectors or tunnels are serving the same hostname.
+
+**Recovery sequence:**
+
+1. In **Zero Trust → Networks → Connectors**, identify the single tunnel whose **Tunnel ID** matches the Pi's installed `cloudflared` token.
+2. On that tunnel only, configure **Published application routes** for root/www/api using the canonical mappings above.
+3. In the public DNS zone, remove conflicting `A`, `AAAA`, or `CNAME` records for `cheddarlogic.com`, `www`, and `api` if Cloudflare refuses to auto-create managed records.
+4. Re-save the Published application routes so Cloudflare recreates the correct DNS records.
+5. Restart `cloudflared` once on the Pi to force re-registration after route changes:
+
+   ```bash
+   sudo systemctl restart cloudflared
+   ```
+
+6. Re-test both public URL and local origin. Do not close the incident until public `/cards` is stable at `200`.
+
+**Post-change smoke test:**
+
+```bash
+# Public site
+for i in $(seq 1 5); do
+  curl -sS -o /dev/null -w "%{http_code}\n" "https://cheddarlogic.com/cards?cb=$(date +%s%N)"
+done
+
+# Tunnel metrics on Pi should show requests after recovery
+curl -s http://127.0.0.1:20241/metrics | \
+  egrep 'cloudflared_tunnel_request_errors|cloudflared_proxy_connect_latency_count|cloudflared_tunnel_request' | head -20
+```
+
+Expected end state:
+
+- Public `/cards` returns `200`
+- Pi origin returns `200`
+- Only one production tunnel is active
+- Published application routes own the public website DNS records
+
 ---
 
 ## Database Operations
@@ -1002,7 +1083,7 @@ Upgraded from axios `^0.27.2` to `^1.7.0` (WI-0342, 2026-03-08).
 ### Next.js Build Warnings
 
 - **Multi-lockfile root warning**: Resolved — `web/next.config.ts` sets `turbopack.root` to the monorepo root
-- **Middleware convention**: Current `web/src/middleware.ts` uses supported `NextResponse.next()` pattern with `config.matcher` — no deprecation warnings expected
+- **Proxy convention**: Current `web/src/proxy.ts` uses supported `proxy()` + `config.matcher` pattern with `NextResponse.next()` — middleware deprecation warning removed
 
 ---
 

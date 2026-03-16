@@ -343,45 +343,40 @@ Point your domain to the Pi's public IP:
 
 **Alternative: Cloudflare Tunnel (if behind NAT)**
 
-If you can't open ports 80/443:
+If you can't open ports 80/443, use a **single production tunnel** in token mode and manage hostnames from **Published application routes** on that tunnel. Do **not** mix manual DNS edits, multiple production tunnels, or the Zero Trust **Networks → Routes** private-hostname/Gateway feature.
 
 ```bash
 # Install cloudflared
 curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb
 sudo dpkg -i cloudflared.deb
 
-# Authenticate
-cloudflared tunnel login
-
-# Create tunnel
-cloudflared tunnel create cheddar-logic
-
-# Configure tunnel
-nano ~/.cloudflared/config.yml
-```
-
-```yaml
-tunnel: <your-tunnel-id>
-credentials-file: /home/pi/.cloudflared/<tunnel-id>.json
-
-ingress:
-  - hostname: cheddarlogic.com
-    service: http://localhost:80
-  - hostname: www.cheddarlogic.com
-    service: http://localhost:80
-  - service: http_status:404
+# In Cloudflare Zero Trust:
+# 1) Create exactly one tunnel for production
+# 2) Open that tunnel and add Published application routes:
+#    - cheddarlogic.com     -> HTTP 127.0.0.1:3000
+#    - www.cheddarlogic.com -> HTTP 127.0.0.1:3000
+#    - api.cheddarlogic.com -> HTTP 127.0.0.1:8000
+# 3) Copy the tunnel token for that tunnel
 ```
 
 ```bash
-# Route DNS
-cloudflared tunnel route dns cheddar-logic cheddarlogic.com
-cloudflared tunnel route dns cheddar-logic www.cheddarlogic.com
-
-# Run as service
-sudo cloudflared service install
+# Install the token-based service from the Pi
+sudo cloudflared service install <TUNNEL_TOKEN>
 sudo systemctl start cloudflared
 sudo systemctl enable cloudflared
+
+# Verify the local origin before testing the public URL
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/cards
+sudo systemctl status cloudflared --no-pager
 ```
+
+Production notes:
+
+- Prefer `127.0.0.1` in Published application routes instead of `localhost` to avoid IPv4/IPv6 ambiguity.
+- Let **Published application routes** create/manage the public DNS records. If `A`, `AAAA`, or `CNAME` records already exist for `cheddarlogic.com`, `www`, or `api`, delete those conflicting records first and then re-save the tunnel routes.
+- The correct UI is **Zero Trust → Networks → Connectors → your production tunnel → Published application routes**.
+- The **Zero Trust → Networks → Routes** page is for private hostname/Gateway routing and is **not** the right place to publish the public website.
+- After any tunnel change, smoke-test both the Pi origin and the public site before ending the maintenance window.
 
 ---
 

@@ -8,6 +8,8 @@ const {
   shouldRunJobKey,
   withDb,
   upsertPlayerShotLog,
+  upsertPlayerAvailability,
+  listTrackedPlayers,
 } = require('@cheddar-logic/data');
 
 const NHL_API_BASE = 'https://api-web.nhle.com/v1/player';
@@ -112,16 +114,21 @@ function resolvePlayerName(payload) {
  *   1. payload.status       — direct status string
  *   2. payload.currentTeamRoster.statusCode — roster-level status code
  *
- * Injury keywords (case-insensitive substring match):
+ * Confirmed-out keywords (skip=true, tier='INJURED'):
  *   "injur", "ir", "ltir", "scratch", "suspend", "inactive"
  *
- * Fail-open: if neither field exists, returns { skip: false }.
+ * Day-to-day keywords (skip=false, tier='DTD'):
+ *   "day-to-day", "dtd", "questionable", "doubtful"
+ *
+ * Fail-open: if neither field exists, returns { skip: false, tier: 'ACTIVE' }.
  *
  * @param {object} payload — NHL API /player/{id}/landing response
- * @returns {{ skip: boolean, reason?: string }}
+ * @returns {{ skip: boolean, tier: 'INJURED' | 'DTD' | 'ACTIVE', reason?: string }}
  */
 function checkInjuryStatus(payload) {
   const INJURY_KEYWORDS = ['injur', 'ltir', 'scratch', 'suspend', 'inactive'];
+  const DTD_KEYWORDS = ['day-to-day', 'dtd', 'questionable', 'doubtful'];
+
   // "ir" must be a whole-word-like check to avoid false positives (e.g. "first")
   // We check after lowercasing: "ir" as an exact value OR preceded/followed by non-alpha.
   function isInjuryStatus(raw) {
@@ -133,27 +140,41 @@ function checkInjuryStatus(payload) {
     return INJURY_KEYWORDS.some((kw) => lower.includes(kw));
   }
 
+  function isDtdStatus(raw) {
+    if (!raw || typeof raw !== 'string') return false;
+    const lower = raw.toLowerCase().trim();
+    return DTD_KEYWORDS.some((kw) => lower.includes(kw));
+  }
+
   // Check payload.status first (most direct)
   const directStatus = payload?.status;
   if (directStatus !== undefined && directStatus !== null) {
-    if (isInjuryStatus(String(directStatus))) {
-      return { skip: true, reason: String(directStatus) };
+    const raw = String(directStatus);
+    if (isInjuryStatus(raw)) {
+      return { skip: true, tier: 'INJURED', reason: raw };
     }
-    // Status field was present but not an injury → player is active
-    return { skip: false };
+    if (isDtdStatus(raw)) {
+      return { skip: false, tier: 'DTD', reason: raw };
+    }
+    // Status field was present but not an injury or DTD → player is active
+    return { skip: false, tier: 'ACTIVE' };
   }
 
   // Fall back to currentTeamRoster.statusCode
   const rosterStatusCode = payload?.currentTeamRoster?.statusCode;
   if (rosterStatusCode !== undefined && rosterStatusCode !== null) {
-    if (isInjuryStatus(String(rosterStatusCode))) {
-      return { skip: true, reason: String(rosterStatusCode) };
+    const raw = String(rosterStatusCode);
+    if (isInjuryStatus(raw)) {
+      return { skip: true, tier: 'INJURED', reason: raw };
     }
-    return { skip: false };
+    if (isDtdStatus(raw)) {
+      return { skip: false, tier: 'DTD', reason: raw };
+    }
+    return { skip: false, tier: 'ACTIVE' };
   }
 
   // Neither field present — fail open
-  return { skip: false };
+  return { skip: false, tier: 'ACTIVE' };
 }
 
 function buildLogRows(playerId, payload, fetchedAt) {
@@ -205,10 +226,39 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
       return { success: true, jobRunId: null, dryRun: true, jobKey };
     }
 
-    const allPlayerIds = parsePlayerIds(process.env.NHL_SOG_PLAYER_IDS);
+    let allPlayerIds = [];
+    try {
+      const trackedPlayers = listTrackedPlayers({
+        sport: 'NHL',
+        market: 'shots_on_goal',
+        activeOnly: true,
+      });
+      if (Array.isArray(trackedPlayers) && trackedPlayers.length > 0) {
+        allPlayerIds = trackedPlayers
+          .map((row) => Number(row.player_id))
+          .filter(Number.isFinite);
+        console.log(
+          `[NHLPlayerShots] Using ${allPlayerIds.length} player IDs from tracked_players`,
+        );
+      }
+    } catch (error) {
+      console.log(
+        `[NHLPlayerShots] WARN: tracked_players unavailable (${error.message}); falling back to NHL_SOG_PLAYER_IDS`,
+      );
+    }
+
+    if (allPlayerIds.length === 0) {
+      allPlayerIds = parsePlayerIds(process.env.NHL_SOG_PLAYER_IDS);
+      if (allPlayerIds.length > 0) {
+        console.log(
+          `[NHLPlayerShots] Using ${allPlayerIds.length} player IDs from NHL_SOG_PLAYER_IDS fallback`,
+        );
+      }
+    }
+
     if (allPlayerIds.length === 0) {
       console.log(
-        '[NHLPlayerShots] No player IDs configured. Set NHL_SOG_PLAYER_IDS.',
+        '[NHLPlayerShots] No player IDs configured. Run sync_nhl_sog_player_ids or set NHL_SOG_PLAYER_IDS.',
       );
       return {
         success: true,
@@ -241,11 +291,30 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
             console.log(
               `[NHLPlayerShots] Skipping ${playerName} (${playerId}): status=${injuryCheck.reason}`,
             );
+            upsertPlayerAvailability({
+              playerId,
+              sport: 'NHL',
+              status: 'INJURED',
+              statusReason: injuryCheck.reason,
+              checkedAt: fetchedAt,
+            });
             if (DEFAULT_SLEEP_MS > 0) {
               await sleep(DEFAULT_SLEEP_MS);
             }
             continue;
           }
+
+          // DTD players proceed through shot log processing (fail-open)
+          // but are recorded with 'DTD' status so downstream consumers can
+          // surface a "key player questionable" flag.
+          const availabilityStatus = injuryCheck.tier === 'DTD' ? 'DTD' : 'ACTIVE';
+          upsertPlayerAvailability({
+            playerId,
+            sport: 'NHL',
+            status: availabilityStatus,
+            statusReason: injuryCheck.reason || null,
+            checkedAt: fetchedAt,
+          });
 
           const rows = buildLogRows(playerId, payload, fetchedAt);
 
@@ -298,4 +367,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { pullNhlPlayerShots };
+module.exports = { pullNhlPlayerShots, checkInjuryStatus };

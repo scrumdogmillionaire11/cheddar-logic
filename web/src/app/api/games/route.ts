@@ -1085,6 +1085,18 @@ function normalizeNumberArray(value: unknown): number[] | undefined {
   return numbers.length > 0 ? numbers : undefined;
 }
 
+function normalizePlayerNameKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const cleaned = value
+    .trim()
+    .toLowerCase()
+    .replace(/[.'\u2019-]/g, ' ')
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
 function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
   // Prefer per-sport rows (added by migration 021); fall back to singleton
   try {
@@ -1524,6 +1536,48 @@ export async function GET(request: NextRequest) {
     const playByCardId = new Map<string, Play>();
     const truePlayMap = new Map<string, Play>();
     const gameConsistencyMap = new Map<string, Play['consistency']>();
+    const seenNhlShotsPlayKeys = new Set<string>();
+    const injuredNhlPlayerIds = new Set<string>();
+    const injuredNhlPlayerNames = new Set<string>();
+
+    try {
+      const availabilityRows = db
+        .prepare(
+          `SELECT CAST(pa.player_id AS TEXT) AS player_id,
+                  LOWER(TRIM(COALESCE(tp.player_name, ''))) AS player_name
+           FROM player_availability pa
+           LEFT JOIN tracked_players tp
+             ON tp.player_id = pa.player_id
+            AND UPPER(tp.sport) = UPPER(pa.sport)
+           WHERE UPPER(pa.sport) = 'NHL'
+             AND UPPER(pa.status) = 'INJURED'`,
+        )
+        .all() as Array<{ player_id?: string | null; player_name?: string | null }>;
+
+      for (const row of availabilityRows) {
+        const playerId = firstString(row.player_id);
+        const playerName = normalizePlayerNameKey(row.player_name);
+        if (playerId) injuredNhlPlayerIds.add(playerId);
+        if (playerName) injuredNhlPlayerNames.add(playerName);
+      }
+    } catch {
+      try {
+        const fallbackRows = db
+          .prepare(
+            `SELECT CAST(player_id AS TEXT) AS player_id
+             FROM player_availability
+             WHERE UPPER(sport) = 'NHL'
+               AND UPPER(status) = 'INJURED'`,
+          )
+          .all() as Array<{ player_id?: string | null }>;
+        for (const row of fallbackRows) {
+          const playerId = firstString(row.player_id);
+          if (playerId) injuredNhlPlayerIds.add(playerId);
+        }
+      } catch {
+        // fail-open if availability table is unavailable
+      }
+    }
 
     // STEP 1 FIX: Resolve external game IDs (ESPN, etc.) that map to our canonical game_ids
     // This allows props stored with external IDs to be joined to games with canonical IDs
@@ -1900,11 +1954,14 @@ export async function GET(request: NextRequest) {
           (payload as Record<string, unknown>).game_id,
           payloadPlay?.game_id,
         );
+        const payloadDecision = toObject((payload as Record<string, unknown>).decision);
         const normalizedMu = firstNumber(
           (payload as Record<string, unknown>).mu,
           payloadPlay?.mu,
           (payload.projection as Record<string, unknown>)?.mu,
           (payload.projection as Record<string, unknown>)?.total,
+          payloadDecision?.model_projection,
+          payloadDecision?.projection,
           driverInputs?.mu,
           driverInputs?.projection_final,
           driverInputs?.projection_raw,
@@ -1985,6 +2042,8 @@ export async function GET(request: NextRequest) {
           payloadMarketContextProjection?.projected_team_total,
           payloadProjection?.projected_total,
           payloadPlayProjection?.projected_total,
+          payloadDecision?.model_projection,
+          payloadDecision?.projection,
           driverInputs?.projection_final,
           driverInputs?.projection_raw,
           driverInputs?.projected_total,
@@ -2493,6 +2552,54 @@ export async function GET(request: NextRequest) {
         const parsedSport = playSport ?? rowSport;
         const parsedMarket =
           normalizedMarketType ?? inferMarketFromCardType(cardRow.card_type);
+
+        const isNhlPropPlay =
+          parsedSport === 'NHL' &&
+          parsedMarket === 'PROP' &&
+          (cardRow.card_type === 'nhl-player-shots' ||
+            cardRow.card_type === 'nhl-player-shots-1p' ||
+            play.market_type === 'PROP');
+        if (isNhlPropPlay) {
+          const playerId = firstString(play.player_id);
+          const playerName = normalizePlayerNameKey(play.player_name);
+          const isInjured =
+            (playerId ? injuredNhlPlayerIds.has(playerId) : false) ||
+            (playerName ? injuredNhlPlayerNames.has(playerName) : false);
+          if (isInjured) {
+            continue;
+          }
+
+          const dedupeIdentity =
+            playerId || playerName || firstString(play.player) || 'unknown';
+          const dedupePropType =
+            firstString(play.prop_type, play.market, play.market_type) || 'prop';
+          const dedupePeriod = firstString(play.period) || 'full_game';
+          const dedupeSide =
+            normalizeSelectionSide(
+              play.selection?.side ?? play.direction ?? play.prediction,
+            ) || 'NONE';
+          const dedupeLine = firstNumber(
+            play.line,
+            play.selection?.line,
+            play.suggested_line,
+            play.threshold,
+          );
+          const dedupeKey = [
+            canonicalGameId,
+            cardRow.card_type,
+            dedupeIdentity,
+            dedupePropType,
+            dedupePeriod,
+            dedupeSide,
+            dedupeLine != null ? dedupeLine.toFixed(3) : '',
+          ].join('|');
+
+          if (seenNhlShotsPlayKeys.has(dedupeKey)) {
+            continue;
+          }
+          seenNhlShotsPlayKeys.add(dedupeKey);
+        }
+
         incrementStageCounter(
           stageCounters,
           'parsed_rows',

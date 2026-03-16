@@ -193,6 +193,14 @@ function round3(value) {
  * @param {number|null} opts.awayGoalsForL5
  * @param {number|null} opts.homeGoalsAgainstL5
  * @param {number|null} opts.awayGoalsAgainstL5
+ * @param {number|null} opts.homeSkaterInjuryFactor - multiplier [0.88–1.0] for confirmed-out home skaters (null = no adjustment)
+ * @param {number|null} opts.awaySkaterInjuryFactor - multiplier [0.88–1.0] for confirmed-out away skaters (null = no adjustment)
+ * @param {number|null} opts.homeSkaterDefInjuryFactor - multiplier for confirmed-out home defenders (null = no adjustment)
+ *   Semantics: missing defense → opponent scores more → reduce homeDefRating.
+ *   NOTE: positional data (D vs F) is not yet available in injury_status; this factor is applied
+ *   to the full confirmed-out pool with a conservative weight (SKATER_DEF_INJURY_FACTOR_WEIGHT=0.4)
+ *   to approximate the defense-side impact until positional data is surfaced. See WI-0465 Item C.
+ * @param {number|null} opts.awaySkaterDefInjuryFactor - multiplier for confirmed-out away defenders (null = no adjustment)
  * @returns {object|null} { homeExpected, awayExpected, expectedTotal, expected1pTotal, first_period_model, adjustments, confidence }
  *                         Returns null if base offensive data is unavailable.
  */
@@ -226,6 +234,10 @@ function predictNHLGame(opts) {
     awayGoalsForL5 = null,
     homeGoalsAgainstL5 = null,
     awayGoalsAgainstL5 = null,
+    homeSkaterInjuryFactor = null,
+    awaySkaterInjuryFactor = null,
+    homeSkaterDefInjuryFactor = null,
+    awaySkaterDefInjuryFactor = null,
   } = opts || {};
 
   // Cannot compute without base offensive/defensive stats
@@ -298,6 +310,35 @@ function predictNHLGame(opts) {
   const l5Blended =
     (homeGoalsForL5 !== null && homeGoalsForL5 > 0.5) ||
     (awayGoalsForL5 !== null && awayGoalsForL5 > 0.5);
+
+  // ---- 1b. Skater offense injury adjustment (applied after L5 blend, before pace) ----
+  if (homeSkaterInjuryFactor !== null && homeSkaterInjuryFactor < 1.0) {
+    homeOffRating *= homeSkaterInjuryFactor;
+    adjustments.home.skater_injury = homeSkaterInjuryFactor;
+  }
+  if (awaySkaterInjuryFactor !== null && awaySkaterInjuryFactor < 1.0) {
+    awayOffRating *= awaySkaterInjuryFactor;
+    adjustments.away.skater_injury = awaySkaterInjuryFactor;
+  }
+
+  // ---- 1c. Skater defense injury adjustment ----
+  // Missing home defenders → team defends less effectively → opponent scores more.
+  // defRating = goals ALLOWED per game (lower = better defense).
+  // To increase goals allowed when defenders are out, we DIVIDE defRating by the factor:
+  //   homeDefRating /= homeSkaterDefInjuryFactor
+  // e.g. factor=0.95 → homeDefRating increases by ~5.3% → awayGoals increase (via crossover).
+  // The defensive crossover step: awayGoals *= (homeDefRating / LEAGUE_AVG) * dampening.
+  // NOTE: positional data (D vs F) is not yet available; a conservative
+  // weight of 0.4 is pre-applied when computing this factor (see
+  // computeSkaterDefInjuryFactor in models/index.js). See WI-0465 Item C.
+  if (homeSkaterDefInjuryFactor !== null && homeSkaterDefInjuryFactor < 1.0) {
+    homeDefRating /= homeSkaterDefInjuryFactor;
+    adjustments.home.skater_def_injury = homeSkaterDefInjuryFactor;
+  }
+  if (awaySkaterDefInjuryFactor !== null && awaySkaterDefInjuryFactor < 1.0) {
+    awayDefRating /= awaySkaterDefInjuryFactor;
+    adjustments.away.skater_def_injury = awaySkaterDefInjuryFactor;
+  }
 
   // ---- 2. Combined pace (dampened multiplicative) ----
   const hPace = homePaceFactor !== null ? homePaceFactor : 1.0;

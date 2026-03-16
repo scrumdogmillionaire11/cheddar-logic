@@ -43,6 +43,20 @@ const { generateCard, buildMarketCallCard } = require('@cheddar-logic/models');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const NHL_1P_REFERENCE_TOTAL_LINE = 1.5;
+const SKATER_INJURY_FACTOR_PER_OUT = 0.035;
+const SKATER_INJURY_FACTOR_PER_IMPACT_UNIT = SKATER_INJURY_FACTOR_PER_OUT;
+const SKATER_INJURY_FACTOR_MIN = 0.88;
+const SKATER_CONFIRMED_OUT_KEYWORDS = ['out', 'ir', 'ltir', 'suspended'];
+const SKATER_IMPACT_MIN = 0.5;
+const SKATER_IMPACT_MAX = 2.5;
+// Defense-side injury constants.
+// Conservative weight (0.4) applied because positional data (D vs F) is not
+// yet available in injury_status — we can't distinguish defenders from
+// forwards. The factor is therefore applied to the full confirmed-out pool,
+// dampened to approximate only the defense-side share. See WI-0465 Item C.
+const SKATER_DEF_INJURY_FACTOR_WEIGHT = 0.4;
+const SKATER_DEF_INJURY_FACTOR_PER_OUT = SKATER_INJURY_FACTOR_PER_OUT * SKATER_DEF_INJURY_FACTOR_WEIGHT;
+const SKATER_DEF_INJURY_FACTOR_MIN = 0.93; // Less aggressive floor than offensive factor
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -56,6 +70,48 @@ function toNumber(value) {
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function removeDiacritics(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function normalizePlayerNameForLookup(name) {
+  if (!name || typeof name !== 'string') return '';
+  return removeDiacritics(name)
+    .toLowerCase()
+    .replace(/[.'\u2019-]/g, ' ')
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function resolveSkaterImpactForInjury(playerName, playerImpactsByName) {
+  if (!playerName || !playerImpactsByName || typeof playerImpactsByName !== 'object') {
+    return null;
+  }
+
+  const normalized = normalizePlayerNameForLookup(playerName);
+  if (!normalized) return null;
+  const compact = normalized.replace(/\s+/g, '');
+  const direct = playerImpactsByName[normalized] || playerImpactsByName[compact] || null;
+  if (direct && Number.isFinite(Number(direct.impact))) {
+    return clamp(Number(direct.impact), SKATER_IMPACT_MIN, SKATER_IMPACT_MAX);
+  }
+
+  const tokens = normalized.split(' ').filter(Boolean);
+  if (tokens.length < 2) return null;
+  const firstInitial = tokens[0].charAt(0);
+  const lastName = tokens[tokens.length - 1];
+  const initialLast = `${firstInitial} ${lastName}`;
+  const initialCompact = `${firstInitial}${lastName}`;
+  const fromInitial = playerImpactsByName[initialLast] || playerImpactsByName[initialCompact] || null;
+  if (fromInitial && Number.isFinite(Number(fromInitial.impact))) {
+    return clamp(Number(fromInitial.impact), SKATER_IMPACT_MIN, SKATER_IMPACT_MAX);
+  }
+
+  return null;
 }
 
 function parseRawData(rawData) {
@@ -330,6 +386,65 @@ function determineTier(confidence) {
   if (confidence >= 0.7) return 'BEST';
   if (confidence >= 0.6) return 'WATCH';
   return null;
+}
+
+/**
+ * Compute a multiplicative injury dampening factor for a team's offensive rating.
+ *
+ * @param {Array<{player: string, status: string|null, detail: string|null}>|null} injuries
+ * @param {{playerImpactsByName?: Object<string, {impact?: number}>}|null} options
+ * @returns {number|null} factor in [SKATER_INJURY_FACTOR_MIN, 1.0), or null if no confirmed-out players
+ */
+function computeSkaterInjuryFactor(injuries, options = null) {
+  if (!Array.isArray(injuries) || injuries.length === 0) return null;
+  const playerImpactsByName =
+    options && typeof options === 'object' ? options.playerImpactsByName : null;
+  const outSkaters = injuries.filter((inj) => {
+    const status = String(inj?.status || '').toLowerCase().trim();
+    return SKATER_CONFIRMED_OUT_KEYWORDS.some((kw) => status.includes(kw));
+  });
+  if (outSkaters.length === 0) return null;
+
+  const weightedImpactUnits = outSkaters.reduce((sum, injury) => {
+    const resolvedImpact = resolveSkaterImpactForInjury(
+      injury?.player,
+      playerImpactsByName,
+    );
+    if (resolvedImpact === null) {
+      return sum + 1;
+    }
+    return sum + resolvedImpact;
+  }, 0);
+
+  return Math.max(
+    SKATER_INJURY_FACTOR_MIN,
+    1.0 - weightedImpactUnits * SKATER_INJURY_FACTOR_PER_IMPACT_UNIT,
+  );
+}
+
+/**
+ * Compute a multiplicative injury dampening factor for a team's defensive rating.
+ *
+ * Semantics: missing defenders → the team defends less effectively → opponent
+ * scores more → homeDefRating is reduced (which increases awayGoals via the
+ * defensive crossover step in predictNHLGame).
+ *
+ * Positional gap: injury_status does not carry a position field, so this factor
+ * is applied to the full confirmed-out pool with SKATER_DEF_INJURY_FACTOR_WEIGHT
+ * (0.4) to approximate only the defensive share. Once positional data is
+ * available, this function should filter for 'D' position only. See WI-0465 Item C.
+ *
+ * @param {Array<{player: string, status: string|null, detail: string|null}>|null} injuries
+ * @returns {number|null} factor in [SKATER_DEF_INJURY_FACTOR_MIN, 1.0), or null if no confirmed-out players
+ */
+function computeSkaterDefInjuryFactor(injuries) {
+  if (!Array.isArray(injuries) || injuries.length === 0) return null;
+  const outCount = injuries.filter((inj) => {
+    const status = String(inj?.status || '').toLowerCase().trim();
+    return SKATER_CONFIRMED_OUT_KEYWORDS.some((kw) => status.includes(kw));
+  }).length;
+  if (outCount === 0) return null;
+  return Math.max(SKATER_DEF_INJURY_FACTOR_MIN, 1.0 - outCount * SKATER_DEF_INJURY_FACTOR_PER_OUT);
 }
 
 function computeNHLDrivers(gameId, oddsSnapshot) {
@@ -873,6 +988,21 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
     }
   }
 
+  // --- Skater injury factors (used by pace model and lineup card) ---
+  // Computed outside the pace block so they're accessible for lineup card emission.
+  const homeSkaterInjuryFactorGlobal = computeSkaterInjuryFactor(
+    raw?.injury_status?.home,
+    {
+      playerImpactsByName: raw?.injury_impact?.home?.players,
+    },
+  );
+  const awaySkaterInjuryFactorGlobal = computeSkaterInjuryFactor(
+    raw?.injury_status?.away,
+    {
+      playerImpactsByName: raw?.injury_impact?.away?.players,
+    },
+  );
+
   // --- Pace Model Totals Driver (Full Game O/U) ---
   // JS port of TotalsPredictor.predict_game() from cheddar-nhl.
   // Emits OVER/UNDER signal when expected_total diverges >= 0.4 goals from market line.
@@ -917,6 +1047,13 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
     );
     const marketTotal = toNumber(oddsSnapshot?.total);
 
+    const homeSkaterInjuryFactor = homeSkaterInjuryFactorGlobal;
+    const awaySkaterInjuryFactor = awaySkaterInjuryFactorGlobal;
+    // Defense-side: conservative factor applied to full out-count (no positional data yet).
+    // See computeSkaterDefInjuryFactor JSDoc for the positional gap caveat.
+    const homeSkaterDefInjuryFactor = computeSkaterDefInjuryFactor(raw?.injury_status?.home);
+    const awaySkaterDefInjuryFactor = computeSkaterDefInjuryFactor(raw?.injury_status?.away);
+
     const paceResult = predictNHLGame({
       homeGoalsFor: goalsForHome,
       homeGoalsAgainst: goalsAgainstHome,
@@ -934,6 +1071,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       awayB2B: paceRestDaysAway === 0,
       restDaysHome: paceRestDaysHome,
       restDaysAway: paceRestDaysAway,
+      homeSkaterInjuryFactor,
+      awaySkaterInjuryFactor,
+      homeSkaterDefInjuryFactor,
+      awaySkaterDefInjuryFactor,
     });
 
     if (paceResult) {
@@ -1131,6 +1272,88 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
         });
       }
     }
+  }
+
+  // ---- Injury lineup card (WI-0465-D) ----
+  // Emit when home or away skater injury factor drops below 0.95 (meaningful
+  // goal suppression). Direction is always UNDER — missing key players reduce
+  // total expected goals. Includes confirmed-out player names and estimated
+  // goal suppression percentage derived from the injury factor.
+  const LINEUP_THRESHOLD = 0.95;
+  const emitHome =
+    homeSkaterInjuryFactorGlobal !== null && homeSkaterInjuryFactorGlobal < LINEUP_THRESHOLD;
+  const emitAway =
+    awaySkaterInjuryFactorGlobal !== null && awaySkaterInjuryFactorGlobal < LINEUP_THRESHOLD;
+
+  if (emitHome || emitAway) {
+    const CONFIRMED_OUT_KEYWORDS_LOWER = ['out', 'ir', 'ltir', 'suspended'];
+    function confirmedOutPlayers(injuryList) {
+      if (!Array.isArray(injuryList)) return [];
+      return injuryList
+        .filter((inj) => {
+          const s = String(inj?.status || '').toLowerCase().trim();
+          return CONFIRMED_OUT_KEYWORDS_LOWER.some((kw) => s.includes(kw));
+        })
+        .map((inj) => inj?.player || 'Unknown')
+        .filter(Boolean);
+    }
+
+    const homeOutPlayers = emitHome
+      ? confirmedOutPlayers(raw?.injury_status?.home)
+      : [];
+    const awayOutPlayers = emitAway
+      ? confirmedOutPlayers(raw?.injury_status?.away)
+      : [];
+
+    // Goal suppression estimate: each factor < 1.0 contributes to total reduction.
+    // We express it as (1 - factor) * 100% for each affected side.
+    const homeSuppressionPct =
+      emitHome ? Math.round((1 - homeSkaterInjuryFactorGlobal) * 100) : 0;
+    const awaySuppressionPct =
+      emitAway ? Math.round((1 - awaySkaterInjuryFactorGlobal) * 100) : 0;
+    const totalSuppressionPct = homeSuppressionPct + awaySuppressionPct;
+
+    const outSummaryParts = [];
+    if (homeOutPlayers.length > 0) {
+      outSummaryParts.push(`Home out: ${homeOutPlayers.join(', ')} (${homeSuppressionPct}% suppression)`);
+    }
+    if (awayOutPlayers.length > 0) {
+      outSummaryParts.push(`Away out: ${awayOutPlayers.join(', ')} (${awaySuppressionPct}% suppression)`);
+    }
+
+    // Confidence: fixed base 0.62 — injury signal is directional but not model-derived.
+    const lineupConfidence = 0.62;
+
+    descriptors.push({
+      cardType: 'nhl-lineup',
+      cardTitle: `NHL Lineup Alert: Key players out — UNDER signal`,
+      confidence: lineupConfidence,
+      tier: determineTier(lineupConfidence),
+      prediction: 'UNDER',
+      action: 'HOLD',
+      status: 'WATCH',
+      reasoning: `Injury-driven goal suppression: ${outSummaryParts.join('; ')}. Estimated total suppression ~${totalSuppressionPct}%.`,
+      ev_threshold_passed: lineupConfidence > 0.6,
+      driverKey: 'lineupInjury',
+      driverInputs: {
+        home_injury_factor: homeSkaterInjuryFactorGlobal,
+        away_injury_factor: awaySkaterInjuryFactorGlobal,
+        home_out_players: homeOutPlayers,
+        away_out_players: awayOutPlayers,
+        home_suppression_pct: homeSuppressionPct,
+        away_suppression_pct: awaySuppressionPct,
+        total_suppression_pct: totalSuppressionPct,
+      },
+      driverScore: 0.25, // UNDER signal
+      driverStatus: 'ok',
+      inference_source: 'driver',
+      is_mock: false,
+      reason_codes: ['LINEUP_INJURY_SIGNAL'],
+      market_type: 'TOTAL',
+      selection: { side: 'UNDER' },
+      line: null,
+      price: null,
+    });
   }
 
   return descriptors;
@@ -2056,4 +2279,6 @@ module.exports = {
   generateCard,
   buildMarketCallCard,
   extractNhlDriverDataQualityContext,
+  computeSkaterInjuryFactor,
+  computeSkaterDefInjuryFactor,
 };

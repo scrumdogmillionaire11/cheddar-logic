@@ -26,7 +26,10 @@ const {
   calcMu,
   calcMu1p,
   classifyEdge,
+  calcFairLine,
+  calcFairLine1p,
 } = require('../models/nhl-player-shots');
+const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 
 const JOB_NAME = 'run-nhl-player-shots-model';
 
@@ -70,12 +73,258 @@ const TEAM_ABBREV_TO_NAME = {
   STL: 'St. Louis Blues',
   TBL: 'Tampa Bay Lightning',
   TOR: 'Toronto Maple Leafs',
-  UTA: 'Utah Hockey Club',
+  UTA: 'Utah Mammoth',
   VAN: 'Vancouver Canucks',
   VGK: 'Vegas Golden Knights',
   WSH: 'Washington Capitals',
   WPG: 'Winnipeg Jets',
 };
+const TEAM_NAME_TO_ABBREV = Object.fromEntries(
+  Object.entries(TEAM_ABBREV_TO_NAME).map(([abbrev, teamName]) => [
+    teamName.toUpperCase(),
+    abbrev,
+  ]),
+);
+TEAM_NAME_TO_ABBREV['UTAH HOCKEY CLUB'] = 'UTA';
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function computeL5Mean(l5Sog) {
+  if (!Array.isArray(l5Sog) || l5Sog.length === 0) return 0;
+  return l5Sog.reduce((sum, value) => sum + value, 0) / l5Sog.length;
+}
+
+function computeL5StdDev(l5Sog, mean) {
+  if (!Array.isArray(l5Sog) || l5Sog.length === 0) return 0;
+  const variance =
+    l5Sog.reduce((sum, value) => sum + (value - mean) ** 2, 0) / l5Sog.length;
+  return Math.sqrt(variance);
+}
+
+function computeConsistencyScore(l5Sog, marketLine, direction) {
+  if (!Array.isArray(l5Sog) || l5Sog.length === 0) return 0.5;
+
+  const mean = computeL5Mean(l5Sog);
+  const stdDev = computeL5StdDev(l5Sog, mean);
+  const variation = mean > 0 ? stdDev / mean : 1;
+  const stabilityScore = 1 - clamp(variation / 1.25, 0, 1);
+
+  let hitRate = 0.5;
+  if (typeof marketLine === 'number' && marketLine > 0) {
+    const hits = l5Sog.filter((shots) =>
+      direction === 'UNDER' ? shots <= marketLine : shots >= marketLine,
+    ).length;
+    hitRate = hits / l5Sog.length;
+  }
+
+  return clamp(hitRate * 0.7 + stabilityScore * 0.3, 0, 1);
+}
+
+function computeMatchupScore(opponentFactor, direction) {
+  if (typeof opponentFactor !== 'number' || !Number.isFinite(opponentFactor)) {
+    return 0.5;
+  }
+
+  const boundedOpponentFactor = clamp(opponentFactor, 0.75, 1.25);
+  if (direction === 'UNDER') {
+    return clamp((1.15 - boundedOpponentFactor) / 0.4, 0, 1);
+  }
+  return clamp((boundedOpponentFactor - 0.85) / 0.4, 0, 1);
+}
+
+function computeDecisionSupport(consistencyScore, matchupScore) {
+  return clamp(consistencyScore * 0.7 + matchupScore * 0.3, 0, 1);
+}
+
+function computeConfidence(consistencyScore, matchupScore, absEdge) {
+  const edgeScore = clamp(absEdge / 1.4, 0, 1);
+  return clamp(
+    0.45 + consistencyScore * 0.3 + matchupScore * 0.15 + edgeScore * 0.1,
+    0.5,
+    0.92,
+  );
+}
+
+function derivePlayDecision({ edgeTier, supportScore, confidence }) {
+  if (
+    edgeTier === 'HOT' &&
+    supportScore >= 0.62 &&
+    confidence >= 0.65
+  ) {
+    return {
+      action: 'FIRE',
+      status: 'FIRE',
+      classification: 'BASE',
+      officialStatus: 'PLAY',
+    };
+  }
+
+  if (
+    (edgeTier === 'HOT' || edgeTier === 'WATCH') &&
+    supportScore >= 0.5 &&
+    confidence >= 0.58
+  ) {
+    return {
+      action: 'HOLD',
+      status: 'WATCH',
+      classification: 'LEAN',
+      officialStatus: 'LEAN',
+    };
+  }
+
+  return {
+    action: 'PASS',
+    status: 'PASS',
+    classification: 'PASS',
+    officialStatus: 'PASS',
+  };
+}
+
+function roundToHalfLine(value) {
+  if (!Number.isFinite(value)) return null;
+  return Math.round(value * 2) / 2;
+}
+
+function computeEdgePct(projection, line) {
+  if (!Number.isFinite(projection) || !Number.isFinite(line) || line <= 0) {
+    return null;
+  }
+  return Math.round(((projection - line) / line) * 1000) / 10;
+}
+
+function formatSignedEdge(edge) {
+  const rounded = Math.round(edge * 10) / 10;
+  return (rounded >= 0 ? '+' : '') + rounded.toFixed(1);
+}
+
+function parsePlayerIds(raw) {
+  if (!raw) return [];
+  const trimmed = String(raw).trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map((value) => Number(value)).filter(Number.isFinite);
+      }
+    } catch {
+      return [];
+    }
+  }
+  return trimmed
+    .split(',')
+    .map((value) => Number(value.trim()))
+    .filter(Number.isFinite);
+}
+
+function removeDiacritics(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function normalizePlayerNameForLookup(name) {
+  if (!name || typeof name !== 'string') return '';
+  return removeDiacritics(name)
+    .toLowerCase()
+    .replace(/[.'\u2019-]/g, ' ')
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function classifyMoneyPuckInjuryEntry(entry = {}) {
+  const status =
+    typeof entry?.status === 'string' ? entry.status.trim().toLowerCase() : '';
+  const detail =
+    typeof entry?.detail === 'string' ? entry.detail.trim().toLowerCase() : '';
+  const combined = `${status} ${detail}`.trim();
+
+  if (
+    combined.includes('day-to-day') ||
+    combined.includes('dtd') ||
+    combined.includes('questionable') ||
+    combined.includes('doubtful')
+  ) {
+    return 'DTD';
+  }
+
+  // MoneyPuck injuries list presence is treated as unavailable by default.
+  return 'INJURED';
+}
+
+function buildMoneyPuckInjuryMap(rawData = {}) {
+  const map = new Map();
+  const injuryStatus = rawData?.injury_status || {};
+  const entries = [
+    ...(Array.isArray(injuryStatus.home) ? injuryStatus.home : []),
+    ...(Array.isArray(injuryStatus.away) ? injuryStatus.away : []),
+  ];
+
+  for (const entry of entries) {
+    const playerName =
+      typeof entry?.player === 'string' ? entry.player.trim() : null;
+    if (!playerName) continue;
+    const lookupKey = normalizePlayerNameForLookup(playerName);
+    if (!lookupKey) continue;
+    map.set(lookupKey, {
+      status: classifyMoneyPuckInjuryEntry(entry),
+      reason: entry?.status || entry?.detail || 'moneypuck-injury-list',
+    });
+  }
+
+  return map;
+}
+
+function resolveMoneyPuckInjuriesForTeam(snapshot, teamName) {
+  const injuriesByTeam = snapshot?.injuries || {};
+  const direct = injuriesByTeam?.[teamName];
+  if (Array.isArray(direct)) return direct;
+
+  const normalizedTeamName =
+    typeof teamName === 'string' ? teamName.trim().toLowerCase() : '';
+  if (normalizedTeamName) {
+    const caseInsensitiveKey = Object.keys(injuriesByTeam).find(
+      (key) =>
+        typeof key === 'string' && key.trim().toLowerCase() === normalizedTeamName,
+    );
+    if (caseInsensitiveKey && Array.isArray(injuriesByTeam[caseInsensitiveKey])) {
+      return injuriesByTeam[caseInsensitiveKey];
+    }
+  }
+
+  if (teamName === 'Utah Mammoth' && Array.isArray(injuriesByTeam['Utah Hockey Club'])) {
+    return injuriesByTeam['Utah Hockey Club'];
+  }
+  if (teamName === 'Utah Hockey Club' && Array.isArray(injuriesByTeam['Utah Mammoth'])) {
+    return injuriesByTeam['Utah Mammoth'];
+  }
+
+  return [];
+}
+
+function buildMoneyPuckInjuryMapForGame(snapshot, homeTeam, awayTeam) {
+  return buildMoneyPuckInjuryMap({
+    injury_status: {
+      home: resolveMoneyPuckInjuriesForTeam(snapshot, homeTeam),
+      away: resolveMoneyPuckInjuriesForTeam(snapshot, awayTeam),
+    },
+  });
+}
+
+function resolveTeamAbbrev(teamValue) {
+  if (typeof teamValue !== 'string' || teamValue.trim().length === 0) {
+    return null;
+  }
+
+  const normalized = teamValue.trim().toUpperCase();
+  if (TEAM_ABBREV_TO_NAME[normalized]) {
+    return normalized;
+  }
+
+  return TEAM_NAME_TO_ABBREV[normalized] || null;
+}
 
 /**
  * Gap 6: Resolve a canonical game ID by consulting the game_id_map table first,
@@ -123,6 +372,76 @@ function resolveCanonicalGameId(gameId, homeTeam, awayTeam, gameTime, db) {
   return gameId;
 }
 
+function purgePlayerCardsForGame({ db, gameIds, playerId, playerName }) {
+  const normalizedGameIds = Array.from(
+    new Set(
+      (Array.isArray(gameIds) ? gameIds : [gameIds]).filter(
+        (value) => typeof value === 'string' && value.trim().length > 0,
+      ),
+    ),
+  );
+
+  const gamePlaceholders = normalizedGameIds.map(() => '?').join(', ');
+  const gameFilterClause =
+    normalizedGameIds.length > 0 ? `AND game_id IN (${gamePlaceholders})` : '';
+
+  const matchSql = `
+    SELECT id
+    FROM card_payloads
+    WHERE LOWER(sport) = 'nhl'
+      ${gameFilterClause}
+      AND card_type IN ('nhl-player-shots', 'nhl-player-shots-1p')
+      AND (
+        CAST(json_extract(payload_data, '$.play.player_id') AS TEXT) = CAST(? AS TEXT)
+        OR LOWER(COALESCE(json_extract(payload_data, '$.play.player_name'), '')) = LOWER(COALESCE(?, ''))
+      )
+  `;
+
+  const matchRows = db
+    .prepare(matchSql)
+    .all(...normalizedGameIds, String(playerId), playerName || null);
+  const cardIds = matchRows
+    .map((row) => (row && typeof row.id === 'string' ? row.id : null))
+    .filter((value) => Boolean(value));
+
+  if (cardIds.length === 0) {
+    return { changes: 0 };
+  }
+
+  const idPlaceholders = cardIds.map(() => '?').join(', ');
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    DELETE FROM card_results
+    WHERE status = 'pending'
+      AND card_id IN (${idPlaceholders})
+  `).run(...cardIds);
+
+  const deleted = db
+    .prepare(`
+      DELETE FROM card_payloads
+      WHERE id IN (${idPlaceholders})
+        AND id NOT IN (
+          SELECT card_id
+          FROM card_results
+        )
+    `)
+    .run(...cardIds).changes;
+
+  db.prepare(`
+    UPDATE card_payloads
+    SET expires_at = COALESCE(expires_at, ?), updated_at = ?
+    WHERE id IN (${idPlaceholders})
+      AND id IN (
+        SELECT card_id
+        FROM card_results
+      )
+      AND expires_at IS NULL
+  `).run(now, now, ...cardIds);
+
+  return { changes: deleted };
+}
+
 /**
  * Main entry point
  */
@@ -142,8 +461,8 @@ async function runNHLPlayerShotsModel() {
         FROM games
         WHERE LOWER(sport) = 'nhl'
           AND status = 'scheduled'
-          AND game_time_utc > datetime('now')
-          AND game_time_utc < datetime('now', '+36 hours')
+          AND datetime(game_time_utc) > datetime('now')
+          AND datetime(game_time_utc) < datetime('now', '+36 hours')
         ORDER BY game_time_utc ASC
       `);
       const games = gamesStmt.all();
@@ -174,9 +493,9 @@ async function runNHLPlayerShotsModel() {
       WHERE fetched_at > datetime('now', '-7 days')
       ORDER BY player_id ASC
     `);
-      const uniquePlayers = uniquePlayersStmt.all();
+      const uniquePlayersRaw = uniquePlayersStmt.all();
 
-      if (!uniquePlayers || uniquePlayers.length === 0) {
+      if (!uniquePlayersRaw || uniquePlayersRaw.length === 0) {
         console.log(
           `[${JOB_NAME}] No player shot logs found. Run 'npm run job:pull-nhl-player-shots' first.`,
         );
@@ -184,17 +503,47 @@ async function runNHLPlayerShotsModel() {
         return { success: false, error: 'No player shot logs available' };
       }
 
+      const uniquePlayerMap = new Map();
+      for (const row of uniquePlayersRaw) {
+        const existing = uniquePlayerMap.get(row.player_id);
+        const existingName =
+          typeof existing?.player_name === 'string' ? existing.player_name : '';
+        const nextName =
+          typeof row?.player_name === 'string' ? row.player_name : '';
+
+        if (!existing || nextName.length > existingName.length) {
+          uniquePlayerMap.set(row.player_id, row);
+        }
+      }
+      const uniquePlayers = Array.from(uniquePlayerMap.values());
+
       console.log(
-        `[${JOB_NAME}] Found ${uniquePlayers.length} players with recent data`,
+        `[${JOB_NAME}] Found ${uniquePlayers.length} deduped players with recent data`,
       );
+
+      let moneyPuckSnapshot = null;
+      try {
+        moneyPuckSnapshot = await fetchMoneyPuckSnapshot({ ttlMs: 0 });
+      } catch (err) {
+        console.warn(`[${JOB_NAME}] MoneyPuck snapshot unavailable: ${err.message}`);
+      }
 
       // Gap 5: 1P card generation is gated behind NHL_SOG_1P_CARDS_ENABLED env flag (default off).
       // The 1P Odds API market is unreliable — enable only when lines are consistently available.
       const sog1pEnabled = process.env.NHL_SOG_1P_CARDS_ENABLED === 'true';
+      const excludedPlayerIds = new Set(
+        parsePlayerIds(process.env.NHL_SOG_EXCLUDE_PLAYER_IDS),
+      );
+      if (excludedPlayerIds.size > 0) {
+        console.log(
+          `[${JOB_NAME}] Applying NHL_SOG_EXCLUDE_PLAYER_IDS (${excludedPlayerIds.size} players)`,
+        );
+      }
 
       // Step 4: Generate cards for each player in upcoming games
       let cardsCreated = 0;
       const timestamp = new Date().toISOString();
+      const processedGamePlayers = new Set();
 
       for (const game of games) {
         const gameId = game.game_id;
@@ -203,26 +552,53 @@ async function runNHLPlayerShotsModel() {
 
         // Gap 6: Resolve canonical game ID via game_id_map / proximity match
         const resolvedGameId = resolveCanonicalGameId(gameId, homeTeam, awayTeam, game.game_time_utc, db);
+        const moneyPuckInjuryMap = buildMoneyPuckInjuryMapForGame(
+          moneyPuckSnapshot,
+          homeTeam,
+          awayTeam,
+        );
 
         // Find players for this game (case-insensitive match against abbreviations)
-        const gamePlayers = uniquePlayers.filter((p) => {
-          const playerTeamAbbrev = p.team_abbrev?.toUpperCase();
+        const homeTeamUpper =
+          typeof homeTeam === 'string' ? homeTeam.trim().toUpperCase() : '';
+        const awayTeamUpper =
+          typeof awayTeam === 'string' ? awayTeam.trim().toUpperCase() : '';
+        const homeTeamAbbrev = resolveTeamAbbrev(homeTeam);
+        const awayTeamAbbrev = resolveTeamAbbrev(awayTeam);
+
+        const gamePlayersMatched = uniquePlayers.filter((p) => {
+          const playerTeamAbbrev =
+            typeof p.team_abbrev === 'string'
+              ? p.team_abbrev.toUpperCase()
+              : null;
+          if (!playerTeamAbbrev) {
+            return false;
+          }
           // Gap 2: Warn if team_abbrev is not in the map
           if (playerTeamAbbrev && !(playerTeamAbbrev in TEAM_ABBREV_TO_NAME)) {
             console.log(
               `[${JOB_NAME}] WARN: team_abbrev '${playerTeamAbbrev}' not found in TEAM_ABBREV_TO_NAME map — player ${p.player_name} may not match any game`,
             );
           }
-          // Match against both the full team names AND abbreviations
+          const playerTeamFullName = TEAM_ABBREV_TO_NAME[playerTeamAbbrev];
+          const playerTeamUpper =
+            typeof playerTeamFullName === 'string'
+              ? playerTeamFullName.toUpperCase()
+              : null;
+
+          // Match by exact team identity only (abbreviation or canonical full name).
+          // Do not use substring checks (e.g., TOR incorrectly matching "PREDATORS").
           return (
-            homeTeam.toUpperCase().includes(playerTeamAbbrev) ||
-            awayTeam.toUpperCase().includes(playerTeamAbbrev) ||
-            TEAM_ABBREV_TO_NAME[playerTeamAbbrev]?.toUpperCase() ===
-              homeTeam.toUpperCase() ||
-            TEAM_ABBREV_TO_NAME[playerTeamAbbrev]?.toUpperCase() ===
-              awayTeam.toUpperCase()
+            (homeTeamAbbrev && homeTeamAbbrev === playerTeamAbbrev) ||
+            (awayTeamAbbrev && awayTeamAbbrev === playerTeamAbbrev) ||
+            (playerTeamUpper && playerTeamUpper === homeTeamUpper) ||
+            (playerTeamUpper && playerTeamUpper === awayTeamUpper)
           );
         });
+
+        const gamePlayers = Array.from(
+          new Map(gamePlayersMatched.map((player) => [player.player_id, player])).values(),
+        );
 
         if (gamePlayers.length === 0) {
           continue;
@@ -234,6 +610,127 @@ async function runNHLPlayerShotsModel() {
 
         for (const player of gamePlayers) {
           try {
+            if (excludedPlayerIds.has(Number(player.player_id))) {
+              console.log(
+                `[${JOB_NAME}] Skipping ${player.player_name} (${player.player_id}): excluded by NHL_SOG_EXCLUDE_PLAYER_IDS`,
+              );
+              continue;
+            }
+
+            const playerRunKey = `${resolvedGameId}:${player.player_id}`;
+            if (processedGamePlayers.has(playerRunKey)) {
+              console.log(
+                `[${JOB_NAME}] Skipping duplicate player for game ${resolvedGameId}: ${player.player_name} (${player.player_id})`,
+              );
+              continue;
+            }
+            processedGamePlayers.add(playerRunKey);
+
+            // Availability check: skip players recorded as INJURED/unavailable.
+            // DTD (day-to-day/questionable) players proceed but carry a 'DTD' tier
+            // flag in the card payload so downstream consumers can surface it.
+            // Fail-open: if NO row exists at all (table missing or player never fetched),
+            // proceed normally so new players are not permanently blocked.
+            let playerAvailabilityTier = 'ACTIVE';
+            const displayName =
+              typeof player?.player_name === 'string' &&
+              player.player_name.trim().length > 0
+                ? player.player_name.trim()
+                : `Player #${player.player_id}`;
+
+            const moneyPuckInjury = moneyPuckInjuryMap.get(
+              normalizePlayerNameForLookup(displayName),
+            );
+
+            try {
+              const purgeGameIds = Array.from(
+                new Set(
+                  [resolvedGameId, gameId].filter(
+                    (value) => typeof value === 'string' && value.length > 0,
+                  ),
+                ),
+              );
+              const purgeResult = purgePlayerCardsForGame({
+                db,
+                gameIds: purgeGameIds,
+                playerId: player.player_id,
+                playerName: displayName,
+              });
+              const purgedCount = Number(purgeResult?.changes || 0);
+              if (purgedCount > 0) {
+                console.log(
+                  `[${JOB_NAME}] Purged ${purgedCount} existing card(s) for ${displayName} (${player.player_id}) in game ${resolvedGameId} before recalculation`,
+                );
+              }
+            } catch (purgeErr) {
+              console.warn(
+                `[${JOB_NAME}] Could not purge existing cards for ${displayName} (${player.player_id}) before recalculation: ${purgeErr.message}`,
+              );
+            }
+
+            try {
+              const availRow = db.prepare(`
+                SELECT status, status_reason, checked_at
+                FROM player_availability
+                WHERE player_id = ? AND sport = 'NHL'
+                LIMIT 1
+              `).get(player.player_id);
+              if (availRow) {
+                if (availRow.status === 'INJURED') {
+                  try {
+                    purgePlayerCardsForGame({
+                      db,
+                      gameIds: [],
+                      playerId: player.player_id,
+                      playerName: displayName,
+                    });
+                  } catch (purgeErr) {
+                    console.warn(
+                      `[${JOB_NAME}] Could not purge injured-player cards for ${displayName} (${player.player_id}): ${purgeErr.message}`,
+                    );
+                  }
+                  console.log(
+                    `[${JOB_NAME}] Skipping ${player.player_name} (${player.player_id}): availability status=INJURED${availRow.status_reason ? ` reason=${availRow.status_reason}` : ''}`,
+                  );
+                  continue;
+                }
+                if (availRow.status === 'DTD') {
+                  playerAvailabilityTier = 'DTD';
+                  console.log(
+                    `[${JOB_NAME}] Note: ${player.player_name} (${player.player_id}) is DTD${availRow.status_reason ? ` reason=${availRow.status_reason}` : ''} — generating card with DTD tier`,
+                  );
+                }
+              }
+            } catch {
+              // player_availability table may not exist in older DBs — proceed normally
+            }
+
+            if (moneyPuckInjury?.status === 'INJURED') {
+              try {
+                purgePlayerCardsForGame({
+                  db,
+                  gameIds: [],
+                  playerId: player.player_id,
+                  playerName: displayName,
+                });
+              } catch (purgeErr) {
+                console.warn(
+                  `[${JOB_NAME}] Could not purge MoneyPuck-injured cards for ${displayName} (${player.player_id}): ${purgeErr.message}`,
+                );
+              }
+              console.log(
+                `[${JOB_NAME}] Skipping ${displayName} (${player.player_id}): MoneyPuck injury status=${moneyPuckInjury.reason || 'listed-injured'}`,
+              );
+              continue;
+            }
+
+            if (moneyPuckInjury?.status === 'DTD' && playerAvailabilityTier !== 'DTD') {
+              playerAvailabilityTier = 'DTD';
+              console.log(
+                `[${JOB_NAME}] Note: ${displayName} (${player.player_id}) is MoneyPuck DTD${moneyPuckInjury.reason ? ` reason=${moneyPuckInjury.reason}` : ''} — generating card with DTD tier`,
+              );
+            }
+
             // Get L5 games for this player (prepare fresh to avoid statement closure issues)
             const getPlayerL5Stmt = db.prepare(`
             SELECT
@@ -293,23 +790,46 @@ async function runNHLPlayerShotsModel() {
             // paceFactor: 1.0 — TODO: source from team pace stats when available (e.g. corsi_for_pct from team_metrics_cache)
             let opponentFactor = 1.0;
             try {
-              const opponentAbbrev = isHome ? awayTeam : homeTeam;
-              const metricsRow = db.prepare(`
-                SELECT shots_against_pg, league_avg_shots_against_pg
-                FROM team_metrics_cache
-                WHERE LOWER(team_abbrev) = LOWER(?) AND LOWER(sport) = 'nhl'
+              const opponentTeam = isHome ? awayTeam : homeTeam;
+              const opponentAbbrev = resolveTeamAbbrev(opponentTeam);
+              if (!opponentAbbrev) {
+                console.debug(
+                  `[${JOB_NAME}] Could not resolve opponent abbreviation for '${opponentTeam}' — opponentFactor defaulting to 1.0`,
+                );
+              }
+              const opponentTeamName =
+                (opponentAbbrev && TEAM_ABBREV_TO_NAME[opponentAbbrev]) ||
+                opponentTeam;
+              const goalsAgainstRow = db.prepare(`
+                SELECT
+                  CAST(json_extract(t.metrics, '$.avgGoalsAgainst') AS REAL) AS opponent_goals_against,
+                  (
+                    SELECT AVG(CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL))
+                    FROM team_metrics_cache
+                    WHERE UPPER(sport) = 'NHL'
+                      AND status = 'ok'
+                      AND cache_date = t.cache_date
+                      AND json_extract(metrics, '$.avgGoalsAgainst') IS NOT NULL
+                  ) AS league_avg_goals_against
+                FROM team_metrics_cache t
+                WHERE UPPER(t.sport) = 'NHL'
+                  AND t.status = 'ok'
+                  AND UPPER(t.team_name) = UPPER(?)
+                ORDER BY t.cache_date DESC
                 LIMIT 1
-              `).get(opponentAbbrev);
+              `).get(opponentTeamName);
+
               if (
-                metricsRow &&
-                metricsRow.league_avg_shots_against_pg > 0
+                goalsAgainstRow &&
+                goalsAgainstRow.opponent_goals_against > 0 &&
+                goalsAgainstRow.league_avg_goals_against > 0
               ) {
                 opponentFactor =
-                  metricsRow.shots_against_pg /
-                  metricsRow.league_avg_shots_against_pg;
+                  goalsAgainstRow.opponent_goals_against /
+                  goalsAgainstRow.league_avg_goals_against;
               } else {
                 console.debug(
-                  `[${JOB_NAME}] No team_metrics_cache data for opponent '${opponentAbbrev}' — opponentFactor defaulting to 1.0`,
+                  `[${JOB_NAME}] No usable team_metrics_cache matchup data for '${opponentTeamName}' — opponentFactor defaulting to 1.0`,
                 );
               }
             } catch {
@@ -372,19 +892,56 @@ async function runNHLPlayerShotsModel() {
               console.warn(`[${JOB_NAME}] No real prop line for ${playerName} game ${resolvedGameId} — using synthetic fallback`);
             }
 
-            // Confidence based on data recency (could be enhanced)
-            const confidence = 0.75;
+            // Fair line: L5 consistency baseline (no matchup adjustments).
+            // This is what the market typically prices the player at.
+            const l5FairValue = calcFairLine({ l5Sog, shotsPer60, projToi });
+            const fairLine = roundToHalfLine(l5FairValue) ?? syntheticLine;
 
-            // Classify edges
-            const fullGameEdge = classifyEdge(mu, syntheticLine, confidence);
-            const firstPeriodEdge = classifyEdge(
-              mu1p,
-              syntheticLine1p,
-              confidence,
+            // Matchup edge: how much the projection departs from the L5 baseline.
+            // Positive = matchup-positive (tough defense hurt opponents, home ice, etc.).
+            const matchupEdge = Math.round((mu - l5FairValue) * 10) / 10;
+
+            const fullDirectionSeed = classifyEdge(mu, syntheticLine, 0.75);
+            const fullConsistencyScore = computeConsistencyScore(
+              l5Sog,
+              syntheticLine,
+              fullDirectionSeed.direction,
+            );
+            const fullMatchupScore = computeMatchupScore(
+              opponentFactor,
+              fullDirectionSeed.direction,
+            );
+            const fullSupportScore = computeDecisionSupport(
+              fullConsistencyScore,
+              fullMatchupScore,
+            );
+            const confidence = computeConfidence(
+              fullConsistencyScore,
+              fullMatchupScore,
+              Math.abs(mu - syntheticLine),
             );
 
-            // Only create cards for HOT or WATCH tiers
-            if (fullGameEdge.tier === 'HOT' || fullGameEdge.tier === 'WATCH') {
+            // Classify edges after confidence is derived from consistency + matchup.
+            const fullGameEdge = classifyEdge(mu, syntheticLine, confidence);
+            const fullDecision = derivePlayDecision({
+              edgeTier: fullGameEdge.tier,
+              supportScore: fullSupportScore,
+              confidence,
+            });
+            const fullDirectionLabel =
+              fullGameEdge.direction === 'OVER' ? 'Over' : 'Under';
+            const fullRecommendationPrefix =
+              fullDecision.action === 'FIRE'
+                ? 'Play'
+                : fullDecision.action === 'HOLD'
+                  ? 'Lean'
+                  : 'Pass';
+
+            // Only create cards for actionable signals.
+            if (
+              (fullGameEdge.tier === 'HOT' || fullGameEdge.tier === 'WATCH') &&
+              fullDecision.action !== 'PASS'
+            ) {
               const cardId = `nhl-player-sog-${player.player_id}-${resolvedGameId}-full-${uuidV4().slice(0, 8)}`;
 
               // For PROP cards, don't set market_type to 'PROP' in the root; keep it implied
@@ -396,17 +953,38 @@ async function runNHLPlayerShotsModel() {
                 game_time_utc: game.game_time_utc,
                 card_type: 'nhl-player-shots',
                 tier: fullGameEdge.tier,
+                availability_tier: playerAvailabilityTier,
                 card_status: 'active',
                 model_name: 'nhl-player-shots-v1',
                 model_version: '1.0.0',
+                action: fullDecision.action,
+                status: fullDecision.status,
+                classification: fullDecision.classification,
                 // Required by basePayloadSchema
-                prediction: `${playerName} ${fullGameEdge.direction === 'OVER' ? 'Over' : 'Under'} ${syntheticLine} SOG`,
+                prediction: `${fullRecommendationPrefix} ${playerName} ${fullDirectionLabel} ${syntheticLine} SOG | Proj ${mu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
                 confidence: confidence,
                 recommended_bet_type: 'unknown',
                 generated_at: timestamp,
+                suggested_line: fairLine,
+                threshold: fairLine,
+                decision_v2: {
+                  official_status: fullDecision.officialStatus,
+                  direction: fullGameEdge.direction,
+                  edge_pct: computeEdgePct(mu, syntheticLine),
+                  fair_line: fairLine,
+                },
                 // PROP-specific
                 play: {
-                  pick_string: `${playerName} ${fullGameEdge.direction === 'OVER' ? 'Over' : 'Under'} ${syntheticLine} SOG`,
+                  action: fullDecision.action,
+                  status: fullDecision.status,
+                  classification: fullDecision.classification,
+                  decision_v2: {
+                    official_status: fullDecision.officialStatus,
+                    direction: fullGameEdge.direction,
+                    edge_pct: computeEdgePct(mu, syntheticLine),
+                    fair_line: fairLine,
+                  },
+                  pick_string: `${fullRecommendationPrefix} ${playerName} ${fullDirectionLabel} ${syntheticLine} SOG | Proj ${mu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
                   market_type: 'PROP',
                   player_name: playerName,
                   player_id: player.player_id.toString(),
@@ -422,22 +1000,31 @@ async function runNHLPlayerShotsModel() {
                   },
                 },
                 decision: {
-                  edge_pct:
-                    Math.round(
-                      ((mu - syntheticLine) / syntheticLine) * 100 * 10,
-                    ) / 10,
+                  edge_pct: computeEdgePct(mu, syntheticLine),
+                  projection: Math.round(mu * 100) / 100,
+                  fair_line: fairLine,
+                  matchup_edge: matchupEdge,
                   model_projection: mu,
                   market_line: syntheticLine,
                   direction: fullGameEdge.direction,
                   confidence: confidence,
                   market_line_source: usingRealLine ? 'odds_api' : 'projection_floor',
+                  consistency_score:
+                    Math.round(fullConsistencyScore * 1000) / 1000,
+                  matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
+                  support_score: Math.round(fullSupportScore * 1000) / 1000,
                 },
                 drivers: {
                   l5_avg: l5Sog.reduce((a, b) => a + b, 0) / 5,
+                  l5_fair_value: Math.round(l5FairValue * 100) / 100,
                   l5_sog: l5Sog,
                   shots_per_60: shotsPer60,
                   proj_toi: projToi,
                   is_home: isHome,
+                  opponent_factor: opponentFactor,
+                  consistency_score:
+                    Math.round(fullConsistencyScore * 1000) / 1000,
+                  matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
                 },
               };
 
@@ -456,13 +1043,17 @@ async function runNHLPlayerShotsModel() {
                 insertCardPayload(card);
                 cardsCreated++;
                 console.log(
-                  `[${JOB_NAME}] ✓ Created ${fullGameEdge.tier} card: ${playerName} ${fullGameEdge.direction} ${syntheticLine}`,
+                  `[${JOB_NAME}] ✓ Created ${fullGameEdge.tier} card: ${playerName} ${fullGameEdge.direction} ${syntheticLine} (fair ${fairLine}, conf ${Math.round(confidence * 100)}%)`,
                 );
               } catch (insertErr) {
                 console.error(
                   `[${JOB_NAME}] Failed to insert card: ${insertErr.message}`,
                 );
               }
+            } else if (fullDecision.action === 'PASS') {
+              console.log(
+                `[${JOB_NAME}] Skipping ${playerName} ${fullGameEdge.direction} ${syntheticLine}: PASS (consistency=${fullConsistencyScore.toFixed(2)}, matchup=${fullMatchupScore.toFixed(2)})`,
+              );
             }
 
             // Gap 5: 1P card block gated by NHL_SOG_1P_CARDS_ENABLED flag (default off).
@@ -470,9 +1061,58 @@ async function runNHLPlayerShotsModel() {
             // are rarely available, so 1P cards almost always use synthetic fallback.
             // Enable via NHL_SOG_1P_CARDS_ENABLED=true only after confirming line availability.
             if (sog1pEnabled) {
+              const l5Sog1p = l5Sog.map((shots) =>
+                Math.round(shots * 0.32 * 10) / 10,
+              );
+              const firstPeriodDirectionSeed = classifyEdge(
+                mu1p,
+                syntheticLine1p,
+                0.75,
+              );
+              const firstPeriodConsistencyScore = computeConsistencyScore(
+                l5Sog1p,
+                syntheticLine1p,
+                firstPeriodDirectionSeed.direction,
+              );
+              const firstPeriodMatchupScore = computeMatchupScore(
+                opponentFactor,
+                firstPeriodDirectionSeed.direction,
+              );
+              const firstPeriodSupportScore = computeDecisionSupport(
+                firstPeriodConsistencyScore,
+                firstPeriodMatchupScore,
+              );
+              const firstPeriodConfidence = computeConfidence(
+                firstPeriodConsistencyScore,
+                firstPeriodMatchupScore,
+                Math.abs(mu1p - syntheticLine1p),
+              );
+              const firstPeriodEdge = classifyEdge(
+                mu1p,
+                syntheticLine1p,
+                firstPeriodConfidence,
+              );
+              const firstPeriodDecision = derivePlayDecision({
+                edgeTier: firstPeriodEdge.tier,
+                supportScore: firstPeriodSupportScore,
+                confidence: firstPeriodConfidence,
+              });
+              const l5FairValue1p = calcFairLine1p({ l5Sog, shotsPer60, projToi });
+              const fairLine1p = roundToHalfLine(l5FairValue1p) ?? syntheticLine1p;
+              const matchupEdge1p = Math.round((mu1p - l5FairValue1p) * 10) / 10;
+              const firstPeriodDirectionLabel =
+                firstPeriodEdge.direction === 'OVER' ? 'Over' : 'Under';
+              const firstPeriodRecommendationPrefix =
+                firstPeriodDecision.action === 'FIRE'
+                  ? 'Play'
+                  : firstPeriodDecision.action === 'HOLD'
+                    ? 'Lean'
+                    : 'Pass';
+
               if (
-                firstPeriodEdge.tier === 'HOT' ||
-                firstPeriodEdge.tier === 'WATCH'
+                (firstPeriodEdge.tier === 'HOT' ||
+                  firstPeriodEdge.tier === 'WATCH') &&
+                firstPeriodDecision.action !== 'PASS'
               ) {
                 const cardId1p = `nhl-player-sog-${player.player_id}-${resolvedGameId}-1p-${uuidV4().slice(0, 8)}`;
 
@@ -483,17 +1123,38 @@ async function runNHLPlayerShotsModel() {
                   game_time_utc: game.game_time_utc,
                   card_type: 'nhl-player-shots-1p',
                   tier: firstPeriodEdge.tier,
+                  availability_tier: playerAvailabilityTier,
                   card_status: 'active',
                   model_name: 'nhl-player-shots-v1',
                   model_version: '1.0.0',
+                  action: firstPeriodDecision.action,
+                  status: firstPeriodDecision.status,
+                  classification: firstPeriodDecision.classification,
                   // Required by basePayloadSchema
-                  prediction: `${playerName} ${firstPeriodEdge.direction === 'OVER' ? 'Over' : 'Under'} ${syntheticLine1p} SOG (1P)`,
-                  confidence: confidence,
+                  prediction: `${firstPeriodRecommendationPrefix} ${playerName} ${firstPeriodDirectionLabel} ${syntheticLine1p} SOG (1P) | Proj ${mu1p.toFixed(1)} · Fair ${fairLine1p} · Edge ${formatSignedEdge(matchupEdge1p)}`,
+                  confidence: firstPeriodConfidence,
                   recommended_bet_type: 'unknown',
                   generated_at: timestamp,
+                  suggested_line: fairLine1p,
+                  threshold: fairLine1p,
+                  decision_v2: {
+                    official_status: firstPeriodDecision.officialStatus,
+                    direction: firstPeriodEdge.direction,
+                    edge_pct: computeEdgePct(mu1p, syntheticLine1p),
+                    fair_line: fairLine1p,
+                  },
                   // PROP-specific
                   play: {
-                    pick_string: `${playerName} ${firstPeriodEdge.direction === 'OVER' ? 'Over' : 'Under'} ${syntheticLine1p} SOG (1P)`,
+                    action: firstPeriodDecision.action,
+                    status: firstPeriodDecision.status,
+                    classification: firstPeriodDecision.classification,
+                    decision_v2: {
+                      official_status: firstPeriodDecision.officialStatus,
+                      direction: firstPeriodEdge.direction,
+                      edge_pct: computeEdgePct(mu1p, syntheticLine1p),
+                      fair_line: fairLine1p,
+                    },
+                    pick_string: `${firstPeriodRecommendationPrefix} ${playerName} ${firstPeriodDirectionLabel} ${syntheticLine1p} SOG (1P) | Proj ${mu1p.toFixed(1)} · Fair ${fairLine1p} · Edge ${formatSignedEdge(matchupEdge1p)}`,
                     market_type: 'PROP',
                     player_name: playerName,
                     player_id: player.player_id.toString(),
@@ -510,22 +1171,34 @@ async function runNHLPlayerShotsModel() {
                     },
                   },
                   decision: {
-                    edge_pct:
-                      Math.round(
-                        ((mu1p - syntheticLine1p) / syntheticLine1p) * 100 * 10,
-                      ) / 10,
+                    projection: Math.round(mu1p * 100) / 100,
+                    fair_line: fairLine1p,
+                    matchup_edge: matchupEdge1p,
+                    edge_pct: computeEdgePct(mu1p, syntheticLine1p),
                     model_projection: mu1p,
                     market_line: syntheticLine1p,
                     direction: firstPeriodEdge.direction,
-                    confidence: confidence,
+                    confidence: firstPeriodConfidence,
                     market_line_source: realPropLine1p ? 'odds_api' : 'projection_floor',
+                    consistency_score:
+                      Math.round(firstPeriodConsistencyScore * 1000) / 1000,
+                    matchup_score:
+                      Math.round(firstPeriodMatchupScore * 1000) / 1000,
+                    support_score:
+                      Math.round(firstPeriodSupportScore * 1000) / 1000,
                   },
                   drivers: {
                     l5_avg_1p: (l5Sog.reduce((a, b) => a + b, 0) / 5) * 0.32,
+                    l5_fair_value_1p: Math.round(l5FairValue1p * 100) / 100,
                     l5_sog: l5Sog,
                     shots_per_60: shotsPer60,
                     proj_toi: projToi,
                     is_home: isHome,
+                    opponent_factor: opponentFactor,
+                    consistency_score:
+                      Math.round(firstPeriodConsistencyScore * 1000) / 1000,
+                    matchup_score:
+                      Math.round(firstPeriodMatchupScore * 1000) / 1000,
                   },
                 };
 
@@ -544,13 +1217,17 @@ async function runNHLPlayerShotsModel() {
                   insertCardPayload(card1p);
                   cardsCreated++;
                   console.log(
-                    `[${JOB_NAME}] ✓ Created ${firstPeriodEdge.tier} 1P card: ${playerName} ${firstPeriodEdge.direction} ${syntheticLine1p}`,
+                    `[${JOB_NAME}] ✓ Created ${firstPeriodEdge.tier} 1P card: ${playerName} ${firstPeriodEdge.direction} ${syntheticLine1p} (fair ${fairLine1p}, conf ${Math.round(firstPeriodConfidence * 100)}%)`,
                   );
                 } catch (insertErr) {
                   console.error(
                     `[${JOB_NAME}] Failed to insert 1P card: ${insertErr.message}`,
                   );
                 }
+              } else if (firstPeriodDecision.action === 'PASS') {
+                console.log(
+                  `[${JOB_NAME}] Skipping 1P ${playerName} ${firstPeriodEdge.direction} ${syntheticLine1p}: PASS (consistency=${firstPeriodConsistencyScore.toFixed(2)}, matchup=${firstPeriodMatchupScore.toFixed(2)})`,
+                );
               }
             }
           } catch (err) {

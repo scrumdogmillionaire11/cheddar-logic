@@ -1297,7 +1297,8 @@ async function settlePendingCards({
             period: lockedMarket.period,
             firstPeriodScores,
           });
-          const pnlOutcome = computePnlOutcome(result, lockedMarket.lockedPrice);
+          const effectivePrice = lockedMarket.lockedPrice ?? -110;
+          const pnlOutcome = computePnlOutcome(result, effectivePrice);
           if (pnlOutcome.anomalyCode) {
             console.warn(
               `[SettleCards] P/L anomaly for card ${pendingCard.card_id}: ${pnlOutcome.anomalyCode} (${pnlOutcome.anomalyMessage})`,

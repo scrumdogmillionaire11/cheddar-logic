@@ -50,6 +50,8 @@ const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
 const {
   run: refreshTeamMetricsDaily,
 } = require('../jobs/refresh_team_metrics_daily');
+const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
+const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availability');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -63,6 +65,10 @@ const MODEL_ODDS_MAX_AGE_MINUTES = Number(
   process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES,
 );
 const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH !== 'false';
+const ENABLE_NHL_SOG_PLAYER_SYNC =
+  process.env.ENABLE_NHL_SOG_PLAYER_SYNC !== 'false';
+const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC =
+  process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC !== 'false';
 const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
   process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
 );
@@ -71,6 +77,21 @@ const SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL =
 const SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL =
   process.env.SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL === 'true';
 let lastOddsGapAlertAt = 0;
+
+const SOCCER_LINEUP_T45_MINUTES = 45;
+
+function isSoccerLineupT45Enabled() {
+  return process.env.ENABLE_SOCCER_T45_LINEUP_CHECK !== 'false';
+}
+
+function getSoccerLineupT45Bounds() {
+  const min = Number(process.env.SOCCER_LINEUP_T45_MIN || 40);
+  const max = Number(process.env.SOCCER_LINEUP_T45_MAX || 45);
+  return {
+    min: Number.isFinite(min) ? min : 40,
+    max: Number.isFinite(max) ? max : 45,
+  };
+}
 
 /**
  * Sport-to-job mapping
@@ -156,6 +177,14 @@ function keyNcaamFtRefresh(nowEt) {
   const minutesSinceMidnight = nowEt.hour * 60 + nowEt.minute;
   const bucket = Math.floor(minutesSinceMidnight / freshnessWindow);
   return `refresh_ncaam_ft_csv|${nowEt.toISODate()}|b${bucket}`;
+}
+
+function keyNhlSogPlayerSync(nowEt) {
+  return `sync_nhl_sog_player_ids|${nowEt.toISODate()}|0400`;
+}
+
+function keyNhlPlayerAvailabilitySync(nowEt) {
+  return `sync_nhl_player_availability|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
 }
 
 function keyHourlySettlementSweep(nowEt) {
@@ -355,6 +384,13 @@ function dueTminusMinutes(nowUtc, startUtc) {
   );
 }
 
+function isSoccerLineupT45Due(nowUtc, startUtc) {
+  if (!isSoccerLineupT45Enabled()) return false;
+  const delta = Math.floor(startUtc.diff(nowUtc, 'minutes').minutes);
+  const { min, max } = getSoccerLineupT45Bounds();
+  return delta >= min && delta <= max;
+}
+
 /**
  * Compute due jobs (pure function, no side effects)
  * OPTIMIZED VERSION: Time-aware odds pulls, gated model runs, status-triggered settlement
@@ -478,6 +514,33 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     maybeQueueNcaamFtRefresh('early-morning bootstrap (06:00 ET)');
   }
 
+  // ========== NHL SOG PLAYER SYNC (2.75) ==========
+  // Daily refresh of tracked NHL SOG player IDs before regular morning jobs.
+  if (ENABLE_NHL_SOG_PLAYER_SYNC && isFixedDue(nowEt, '04:00')) {
+    const jobKey = keyNhlSogPlayerSync(nowEt);
+    jobs.push({
+      jobName: 'sync_nhl_sog_player_ids',
+      jobKey,
+      execute: syncNhlSogPlayerIds,
+      args: { jobKey, dryRun },
+      reason: 'daily NHL SOG tracked-player sync (04:00 ET)',
+    });
+  }
+
+  // ========== NHL PLAYER AVAILABILITY SYNC (2.8) ==========
+  // Hourly injury/availability poll to keep player_availability fresh between
+  // pull_nhl_player_shots runs (which may run infrequently).
+  if (ENABLE_NHL_PLAYER_AVAILABILITY_SYNC) {
+    const jobKey = keyNhlPlayerAvailabilitySync(nowEt);
+    jobs.push({
+      jobName: 'sync_nhl_player_availability',
+      jobKey,
+      execute: syncNhlPlayerAvailability,
+      args: { jobKey, dryRun },
+      reason: `hourly NHL player availability sync (${nowEt.toISODate()} ${nowEt.hour}h)`,
+    });
+  }
+
   // ========== MODELS (3) ==========
   // Fixed-time model runs (per sport) - UNCHANGED
   const fixedTimes = ['09:00', '12:00'];
@@ -488,6 +551,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       if (sport === 'ncaam') {
         maybeQueueNcaamFtRefresh(`fixed ${t} ET`);
       }
+
       const jobKey = keyFixed(sport, nowEt, t);
       jobs.push({
         jobName,
@@ -512,6 +576,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       if (sport === 'ncaam') {
         maybeQueueNcaamFtRefresh(`T-${mins} for ${g.game_id}`);
       }
+
       const jobKey = keyTminus(sport, g.game_id, mins);
       jobs.push({
         jobName: SPORT_JOBS[sport].jobName,
@@ -519,6 +584,17 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         execute: SPORT_JOBS[sport].execute,
         args: { jobKey, dryRun },
         reason: `T-${mins} for ${g.game_id}`,
+      });
+    }
+
+    if (sport === 'soccer' && isSoccerLineupT45Due(nowUtc, startUtc)) {
+      const jobKey = keyTminus(sport, g.game_id, SOCCER_LINEUP_T45_MINUTES);
+      jobs.push({
+        jobName: SPORT_JOBS[sport].jobName,
+        jobKey,
+        execute: SPORT_JOBS[sport].execute,
+        args: { jobKey, dryRun },
+        reason: `soccer lineup checkpoint T-${SOCCER_LINEUP_T45_MINUTES} for ${g.game_id}`,
       });
     }
   }
@@ -724,7 +800,16 @@ async function start() {
   );
   console.log(`  MODEL_ODDS_MAX_AGE_MINUTES: ${MODEL_ODDS_MAX_AGE_MINUTES}`);
   console.log(
+    `  ENABLE_SOCCER_T45_LINEUP_CHECK: ${isSoccerLineupT45Enabled() ? 'true' : 'false'} (window ${getSoccerLineupT45Bounds().min}-${getSoccerLineupT45Bounds().max}m)`,
+  );
+  console.log(
     `  ENABLE_NCAAM_FT_REFRESH: ${ENABLE_NCAAM_FT_REFRESH ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  ENABLE_NHL_SOG_PLAYER_SYNC: ${ENABLE_NHL_SOG_PLAYER_SYNC ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  ENABLE_NHL_PLAYER_AVAILABILITY_SYNC: ${ENABLE_NHL_PLAYER_AVAILABILITY_SYNC ? 'true' : 'false'}`,
   );
   console.log(
     `  NCAAM_FT_REFRESH_MAX_AGE_MINUTES: ${NCAAM_FT_REFRESH_MAX_AGE_MINUTES}`,
@@ -797,10 +882,14 @@ module.exports = {
   keyFixed,
   keyTminus,
   keyNightlySweep,
+  keyNhlSogPlayerSync,
+  keyNhlPlayerAvailabilitySync,
   keyHourlySettlementSweep,
   isHourlySettlementDue,
   isFixedDue,
   dueTminusMinutes,
+  isSoccerLineupT45Due,
+  SOCCER_LINEUP_T45_MINUTES,
   TMINUS_BANDS,
   // New helper functions
   getOddsIntervalMinutes,

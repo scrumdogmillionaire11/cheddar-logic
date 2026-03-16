@@ -1373,6 +1373,191 @@ function getPlayerShotLogs(playerId, limit = 5) {
 }
 
 /**
+ * Upsert a tracked player row for a sport+market.
+ * Used by automated ID sync jobs (e.g., NHL SOG top-shooter sync).
+ *
+ * @param {object} row
+ * @param {number} row.playerId
+ * @param {string} row.sport
+ * @param {string} row.market
+ * @param {string} [row.playerName]
+ * @param {string} [row.teamAbbrev]
+ * @param {number} [row.shots]
+ * @param {number} [row.gamesPlayed]
+ * @param {number} [row.shotsPerGame]
+ * @param {number} [row.seasonId]
+ * @param {string} [row.source]
+ * @param {boolean|number} [row.isActive]
+ * @param {string} [row.lastSyncedAt]
+ */
+function upsertTrackedPlayer(row) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(row.sport, 'upsertTrackedPlayer');
+  const normalizedMarket = String(row.market || '').trim().toLowerCase();
+  const playerId = Number(row.playerId);
+  if (!Number.isFinite(playerId)) {
+    throw new Error('upsertTrackedPlayer requires numeric playerId');
+  }
+
+  const stmt = db.prepare(`
+    INSERT INTO tracked_players (
+      player_id, sport, market, player_name, team_abbrev, shots,
+      games_played, shots_per_game, season_id, source, is_active, last_synced_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(player_id, sport, market) DO UPDATE SET
+      player_name = excluded.player_name,
+      team_abbrev = excluded.team_abbrev,
+      shots = excluded.shots,
+      games_played = excluded.games_played,
+      shots_per_game = excluded.shots_per_game,
+      season_id = excluded.season_id,
+      source = excluded.source,
+      is_active = excluded.is_active,
+      last_synced_at = excluded.last_synced_at,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+
+  const shots = Number(row.shots);
+  const gamesPlayed = Number(row.gamesPlayed);
+  const shotsPerGame = Number(row.shotsPerGame);
+  const seasonId = Number(row.seasonId);
+
+  stmt.run(
+    playerId,
+    normalizedSport,
+    normalizedMarket,
+    row.playerName || null,
+    row.teamAbbrev || null,
+    Number.isFinite(shots) ? shots : null,
+    Number.isFinite(gamesPlayed) ? gamesPlayed : null,
+    Number.isFinite(shotsPerGame) ? shotsPerGame : null,
+    Number.isFinite(seasonId) ? seasonId : null,
+    row.source || 'unknown',
+    row.isActive === undefined ? 1 : row.isActive ? 1 : 0,
+    row.lastSyncedAt || new Date().toISOString(),
+  );
+}
+
+/**
+ * List tracked players for a sport+market.
+ *
+ * @param {object} params
+ * @param {string} [params.sport='NHL']
+ * @param {string} [params.market='shots_on_goal']
+ * @param {boolean} [params.activeOnly=true]
+ * @param {number|null} [params.limit=null]
+ * @returns {array}
+ */
+function listTrackedPlayers({
+  sport = 'NHL',
+  market = 'shots_on_goal',
+  activeOnly = true,
+  limit = null,
+} = {}) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'listTrackedPlayers');
+  const normalizedMarket = String(market || '').trim().toLowerCase();
+  const params = [normalizedSport, normalizedMarket];
+
+  let sql = `
+    SELECT
+      player_id,
+      sport,
+      market,
+      player_name,
+      team_abbrev,
+      shots,
+      games_played,
+      shots_per_game,
+      season_id,
+      source,
+      is_active,
+      last_synced_at
+    FROM tracked_players
+    WHERE sport = ?
+      AND market = ?
+  `;
+
+  if (activeOnly) {
+    sql += ' AND is_active = 1';
+  }
+
+  sql += `
+    ORDER BY
+      shots_per_game DESC,
+      shots DESC,
+      games_played DESC,
+      player_id ASC
+  `;
+
+  if (Number.isFinite(limit) && Number(limit) > 0) {
+    sql += ' LIMIT ?';
+    params.push(Math.floor(Number(limit)));
+  }
+
+  return db.prepare(sql).all(...params);
+}
+
+/**
+ * Deactivate tracked players for sport+market that are not in the active set.
+ *
+ * @param {object} params
+ * @param {string} [params.sport='NHL']
+ * @param {string} [params.market='shots_on_goal']
+ * @param {number[]} [params.activePlayerIds=[]]
+ * @param {string} [params.lastSyncedAt]
+ * @returns {number} count of rows changed
+ */
+function deactivateTrackedPlayersNotInSet({
+  sport = 'NHL',
+  market = 'shots_on_goal',
+  activePlayerIds = [],
+  lastSyncedAt = null,
+} = {}) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(
+    sport,
+    'deactivateTrackedPlayersNotInSet',
+  );
+  const normalizedMarket = String(market || '').trim().toLowerCase();
+  const safeIds = Array.isArray(activePlayerIds)
+    ? activePlayerIds.map((id) => Number(id)).filter(Number.isFinite)
+    : [];
+  const syncedAt = lastSyncedAt || new Date().toISOString();
+
+  if (safeIds.length === 0) {
+    const stmt = db.prepare(`
+      UPDATE tracked_players
+      SET
+        is_active = 0,
+        last_synced_at = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE sport = ?
+        AND market = ?
+        AND is_active = 1
+    `);
+    const info = stmt.run(syncedAt, normalizedSport, normalizedMarket);
+    return info.changes || 0;
+  }
+
+  const placeholders = safeIds.map(() => '?').join(', ');
+  const stmt = db.prepare(`
+    UPDATE tracked_players
+    SET
+      is_active = 0,
+      last_synced_at = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE sport = ?
+      AND market = ?
+      AND is_active = 1
+      AND player_id NOT IN (${placeholders})
+  `);
+  const info = stmt.run(syncedAt, normalizedSport, normalizedMarket, ...safeIds);
+  return info.changes || 0;
+}
+
+/**
  * Upsert a game record (insert or update if exists)
  * @param {object} game - Game data
  * @param {string} game.id - UUID for the game record
@@ -2038,10 +2223,11 @@ function shouldTrackDisplayedPlay(payloadData, context = {}) {
     );
   }
   if (marketType === 'TOTAL') {
+    const period = resolveTrackingPeriod(payloadData, context);
     return (
       (selection === 'OVER' || selection === 'UNDER') &&
       line !== null &&
-      price !== null
+      (price !== null || period === '1P')
     );
   }
 
@@ -2346,22 +2532,29 @@ function insertCardPayload(card) {
     payloadData.run_id = normalizedRunId;
   }
 
+  // 1P driver projections (nhl-pace-1p) have no priced odds — PASS calls (selection.side=NONE)
+  // are not actionable and skip market locking entirely; OVER/UNDER calls lock without a price.
+  const is1pDriver = String(card.cardType || '').includes('-pace-1p');
+  const is1pPassCall = is1pDriver && toUpperToken(payloadData?.selection?.side) === 'NONE';
+
   let lockedMarket = null;
-  try {
-    lockedMarket = deriveLockedMarketContext(payloadData, {
-      gameId: card.gameId,
-      homeTeam: payloadData.home_team ?? null,
-      awayTeam: payloadData.away_team ?? null,
-      requirePrice: true,
-      requireLineForMarket: true,
-    });
-  } catch (error) {
-    const code = error?.code || 'INVALID_MARKET_CONTRACT';
-    throw createMarketError(
-      code,
-      `[DB] Refusing to lock invalid market payload for card ${card.id}: ${error.message}`,
-      { cardId: card.id, gameId: card.gameId, cause: error?.details || null }
-    );
+  if (!is1pPassCall) {
+    try {
+      lockedMarket = deriveLockedMarketContext(payloadData, {
+        gameId: card.gameId,
+        homeTeam: payloadData.home_team ?? null,
+        awayTeam: payloadData.away_team ?? null,
+        requirePrice: !is1pDriver,
+        requireLineForMarket: true,
+      });
+    } catch (error) {
+      const code = error?.code || 'INVALID_MARKET_CONTRACT';
+      throw createMarketError(
+        code,
+        `[DB] Refusing to lock invalid market payload for card ${card.id}: ${error.message}`,
+        { cardId: card.id, gameId: card.gameId, cause: error?.details || null }
+      );
+    }
   }
 
   if (lockedMarket) {
@@ -3333,6 +3526,50 @@ function upsertPlayerPropLine(row) {
 }
 
 /**
+ * Upsert a player's availability/injury status.
+ * Called by pull jobs after checking injury signals from the source API.
+ *
+ * @param {{ playerId: number, sport: string, status: string, statusReason?: string, checkedAt: string }} row
+ */
+function upsertPlayerAvailability(row) {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    INSERT INTO player_availability (player_id, sport, status, status_reason, checked_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(player_id, sport) DO UPDATE SET
+      status = excluded.status,
+      status_reason = excluded.status_reason,
+      checked_at = excluded.checked_at
+  `);
+  stmt.run(
+    row.playerId,
+    row.sport || 'NHL',
+    row.status,
+    row.statusReason || null,
+    row.checkedAt,
+  );
+}
+
+/**
+ * Get the latest availability record for a player.
+ * Returns null if no record exists (fail-open: caller should proceed normally).
+ *
+ * @param {number} playerId
+ * @param {string} sport
+ * @returns {{ player_id: number, sport: string, status: string, status_reason: string|null, checked_at: string }|null}
+ */
+function getPlayerAvailability(playerId, sport) {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT player_id, sport, status, status_reason, checked_at
+    FROM player_availability
+    WHERE player_id = ? AND sport = ?
+    LIMIT 1
+  `);
+  return stmt.get(playerId, sport || 'NHL') || null;
+}
+
+/**
  * Get consensus prop line for a player+game+propType combo.
  * Prefers draftkings, then fanduel, then betmgm, then any available.
  * Returns null if no line found.
@@ -3358,6 +3595,49 @@ function getPlayerPropLine(sport, gameId, playerName, propType, period) {
     LIMIT 1
   `);
   return stmt.get(sport, gameId, playerName, propType, resolvedPeriod) || null;
+}
+
+/**
+ * Get de-duplicated player prop lines for a game.
+ * For each player+prop_type+period, bookmaker priority is applied:
+ * draftkings -> fanduel -> betmgm -> any.
+ */
+function getPlayerPropLinesForGame(sport, gameId, propTypes = null) {
+  const db = getDatabase();
+  const hasPropTypes = Array.isArray(propTypes) && propTypes.length > 0;
+  const placeholders = hasPropTypes ? propTypes.map(() => '?').join(', ') : '';
+  const stmt = db.prepare(`
+    SELECT player_name, prop_type, period, line, over_price, under_price, bookmaker, fetched_at
+    FROM player_prop_lines
+    WHERE sport = ?
+      AND game_id = ?
+      ${hasPropTypes ? `AND prop_type IN (${placeholders})` : ''}
+    ORDER BY
+      LOWER(player_name) ASC,
+      prop_type ASC,
+      period ASC,
+      CASE bookmaker
+        WHEN 'draftkings' THEN 1
+        WHEN 'fanduel' THEN 2
+        WHEN 'betmgm' THEN 3
+        ELSE 4
+      END ASC
+  `);
+
+  const rows = hasPropTypes
+    ? stmt.all(sport, gameId, ...propTypes)
+    : stmt.all(sport, gameId);
+
+  const uniqueRows = [];
+  const seenKeys = new Set();
+  for (const row of rows) {
+    const dedupeKey = `${String(row.player_name || '').toLowerCase()}|${row.prop_type}|${row.period}`;
+    if (seenKeys.has(dedupeKey)) continue;
+    seenKeys.add(dedupeKey);
+    uniqueRows.push(row);
+  }
+
+  return uniqueRows;
 }
 
 module.exports = {
@@ -3389,8 +3669,14 @@ module.exports = {
   getOddsIngestFailureSummary,
   upsertPlayerShotLog,
   getPlayerShotLogs,
+  upsertTrackedPlayer,
+  listTrackedPlayers,
+  deactivateTrackedPlayersNotInSet,
+  upsertPlayerAvailability,
+  getPlayerAvailability,
   upsertPlayerPropLine,
   getPlayerPropLine,
+  getPlayerPropLinesForGame,
   getJobRunHistory,
   wasJobRecentlySuccessful,
   insertModelOutput,

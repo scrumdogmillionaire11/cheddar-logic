@@ -118,8 +118,20 @@ export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 # Pull live odds (requires ODDS_API_KEY from https://theoddsapi.com)
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
 
+# Pull Player Shots data 
+npm --prefix apps/worker run job:pull-nhl-player-shots
+
+# Sync NHL player availability (refreshes INJURED/DTD/ACTIVE status)
+npm --prefix apps/worker run job:sync-nhl-player-availability
+
 # Pull NHL player shots props
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-nhl-player-shots-props
+
+# Run NHL player shots prop model (applies availability filter + purge)
+npm --prefix apps/worker run job:run-nhl-player-shots-model
+
+# Pull Soccer Tier-1 player props (manual for now; not scheduled)
+set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/worker run job:pull-soccer-player-props
 
 # Run models
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
@@ -138,7 +150,7 @@ npm --prefix apps/worker install
 npm --prefix packages/data run migrate
 ```
 
-#### 2) Ingest Odds
+#### 2) Ingest Odds / Player Data
 
 ```bash
 # Pull live odds from The Odds API
@@ -147,6 +159,15 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
 
 # Pull NHL player shots props (separate pull — required before running NHL model for player prop cards)
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-nhl-player-shots-props
+
+# Sync NHL player availability before prop model run (ensures injured players are filtered)
+npm --prefix apps/worker run job:sync-nhl-player-availability
+
+# Run NHL player shots prop model after lines + availability refresh
+npm --prefix apps/worker run job:run-nhl-player-shots-model
+
+# Pull Soccer Tier-1 player props (manual for now; scheduler omits this pull)
+set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/worker run job:pull-soccer-player-props
 ```
 
 #### 3) Run Jobs
@@ -156,6 +177,7 @@ export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
+npm --prefix apps/worker run job:run-nhl-player-shots-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model
 ```

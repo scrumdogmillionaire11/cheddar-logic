@@ -7,8 +7,12 @@ The NHL player shots on goal (SOG) prop market pipeline produces PROP cards for 
 ## Data Flow
 
 ```
+NHL Stats API (api.nhle.com)
+  └── sync_nhl_sog_player_ids.js      — Fetches top SOG shooters (daily)
+        └── tracked_players table      — Active player IDs for shots_on_goal market
+
 NHL API (api-web.nhle.com)
-  └── pull_nhl_player_shots.js        — Fetches L5 game logs per player
+  └── pull_nhl_player_shots.js        — Fetches L5 game logs per tracked player
         └── player_shot_logs table     — Stores shots, TOI, opponent per game
 
 The Odds API (api.the-odds-api.com)
@@ -27,10 +31,11 @@ run_nhl_player_shots_model.js
 
 Run in this order before each NHL card cycle:
 
-1. `npm --prefix apps/worker run job:pull-schedule-nhl` — refresh game schedule
-2. `npm --prefix apps/worker run job:pull-nhl-player-shots` — fetch L5 player logs
-3. `npm --prefix apps/worker run job:pull-nhl-player-shots-props` — fetch real prop lines
-4. `npm --prefix apps/worker run job:run-nhl-player-shots-model` — generate cards
+1. `npm --prefix apps/worker run job:sync-nhl-sog-player-ids` — refresh tracked NHL SOG player IDs (scheduled daily at 04:00 ET)
+2. `npm --prefix apps/worker run job:pull-schedule-nhl` — refresh game schedule
+3. `npm --prefix apps/worker run job:pull-nhl-player-shots` — fetch L5 player logs
+4. `npm --prefix apps/worker run job:pull-nhl-player-shots-props` — fetch real prop lines
+5. `npm --prefix apps/worker run job:run-nhl-player-shots-model` — generate cards
 
 ## Injury Check
 
@@ -58,7 +63,11 @@ When enabled, a card is created for HOT or WATCH first-period edges (same thresh
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `ODDS_API_KEY` | Yes | — | The Odds API key |
-| `NHL_SOG_PLAYER_IDS` | Yes | — | Comma-separated player IDs to track |
+| `ENABLE_NHL_SOG_PLAYER_SYNC` | No | `true` | Enables daily 04:00 ET tracked-player sync job in scheduler |
+| `NHL_SOG_TOP_SHOOTERS_COUNT` | No | `50` | Number of shooters to track from NHL stats API sync |
+| `NHL_SOG_MIN_GAMES_PLAYED` | No | `20` | Minimum games played required for tracked-player sync eligibility |
+| `NHL_SOG_SEASON_ID` | No | Auto-derived | Optional override for NHL season ID (e.g., `20252026`) |
+| `NHL_SOG_PLAYER_IDS` | No | — | Fallback comma-separated IDs if `tracked_players` has no active entries |
 | `NHL_SOG_EXCLUDE_PLAYER_IDS` | No | — | Comma-separated player IDs to skip (manual override — takes precedence over injury check) |
 | `NHL_SOG_1P_CARDS_ENABLED` | No | `false` | Set to `'true'` to enable 1P card generation (default: false — 1P Odds API market is unreliable) |
 | `NHL_SOG_PROP_EVENTS_ENABLED` | No | `false` | Must be `true` to enable prop line fetching |
@@ -132,6 +141,6 @@ player_prop_lines (
 ## Known Limitations / Future Work
 
 - **1P prop lines:** The Odds API does not consistently offer `player_shots_on_goal_1p` lines. First-period cards use synthetic fallback by default.
+- **Tracked-player sync dependency:** `pull_nhl_player_shots` prefers DB-backed tracked IDs from `tracked_players` (`sport=nhl`, `market=shots_on_goal`). If the sync job has not run or returns no active rows, the job falls back to `NHL_SOG_PLAYER_IDS`.
 - **Player name matching:** Real line lookup is case-insensitive by `player_name`. If The Odds API uses a different name format than the NHL API pull, lines may not match — monitor `market_line_source: "synthetic_fallback"` in card payloads as a signal.
-- **Team abbrev expansion:** `TEAM_ABBREV_TO_NAME` in the model runner is incomplete. Add NHL team abbreviations as needed.
 - **opponentFactor / paceFactor:** Both hardcoded to 1.0. Future enrichment should source these from team metrics.

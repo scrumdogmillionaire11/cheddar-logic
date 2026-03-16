@@ -5,7 +5,7 @@
 
 import type { GameFilters, ViewMode } from './filters';
 import type { ExpressionStatus } from '@/lib/types/game-card';
-import { DEFAULT_FILTERS_BY_MODE } from './filters';
+import { DEFAULT_FILTERS_BY_MODE, DEFAULT_PROJECTIONS_FILTERS } from './filters';
 
 export interface FilterPreset {
   id: string;
@@ -166,23 +166,52 @@ const PROPS_PRESETS: FilterPreset[] = [
     },
   },
   {
-    id: 'props_plus_money',
-    name: 'Plus Money',
-    description: 'Props with plus odds',
-    icon: '💸',
+    id: 'props_shots',
+    name: 'Shots Focus',
+    description: 'Player shot-based props only',
+    icon: '🎯',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.props,
-      priceBands: ['plus'],
+      propStatGroups: ['SOG'],
+      sortMode: 'signal_strength',
     },
   },
   {
-    id: 'props_low_variance',
-    name: 'Low Variance',
-    description: 'Lower volatility props',
-    icon: '🧊',
+    id: 'props_points',
+    name: 'Points Focus',
+    description: 'Points/PRA style props',
+    icon: '📈',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.props,
-      varianceBands: ['LOW'],
+      propStatGroups: ['PTS', 'PRA'],
+      sortMode: 'signal_strength',
+    },
+  },
+];
+
+const PROJECTIONS_PRESETS: FilterPreset[] = [
+  {
+    id: 'proj_all',
+    name: 'All 1P',
+    description: 'All NHL first-period pace projections',
+    icon: '📊',
+    filters: { ...DEFAULT_PROJECTIONS_FILTERS },
+  },
+  {
+    id: 'proj_today',
+    name: 'Tonight',
+    description: 'First-period projections for tonight',
+    icon: '📅',
+    filters: { ...DEFAULT_PROJECTIONS_FILTERS, timeWindow: 'today' as const },
+  },
+  {
+    id: 'proj_active',
+    name: 'OVER/UNDER only',
+    description: 'Only games with a directional 1P call',
+    icon: '🎯',
+    filters: {
+      ...DEFAULT_PROJECTIONS_FILTERS,
+      statuses: ['FIRE', 'WATCH'] as ExpressionStatus[],
     },
   },
 ];
@@ -190,6 +219,7 @@ const PROPS_PRESETS: FilterPreset[] = [
 export const PRESETS_BY_MODE: Record<ViewMode, FilterPreset[]> = {
   game: GAME_PRESETS,
   props: PROPS_PRESETS,
+  projections: PROJECTIONS_PRESETS,
 };
 
 /**
