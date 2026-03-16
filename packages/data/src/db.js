@@ -3589,6 +3589,49 @@ function getPlayerPropLine(sport, gameId, playerName, propType, period) {
   return stmt.get(sport, gameId, playerName, propType, resolvedPeriod) || null;
 }
 
+/**
+ * Get de-duplicated player prop lines for a game.
+ * For each player+prop_type+period, bookmaker priority is applied:
+ * draftkings -> fanduel -> betmgm -> any.
+ */
+function getPlayerPropLinesForGame(sport, gameId, propTypes = null) {
+  const db = getDatabase();
+  const hasPropTypes = Array.isArray(propTypes) && propTypes.length > 0;
+  const placeholders = hasPropTypes ? propTypes.map(() => '?').join(', ') : '';
+  const stmt = db.prepare(`
+    SELECT player_name, prop_type, period, line, over_price, under_price, bookmaker, fetched_at
+    FROM player_prop_lines
+    WHERE sport = ?
+      AND game_id = ?
+      ${hasPropTypes ? `AND prop_type IN (${placeholders})` : ''}
+    ORDER BY
+      LOWER(player_name) ASC,
+      prop_type ASC,
+      period ASC,
+      CASE bookmaker
+        WHEN 'draftkings' THEN 1
+        WHEN 'fanduel' THEN 2
+        WHEN 'betmgm' THEN 3
+        ELSE 4
+      END ASC
+  `);
+
+  const rows = hasPropTypes
+    ? stmt.all(sport, gameId, ...propTypes)
+    : stmt.all(sport, gameId);
+
+  const uniqueRows = [];
+  const seenKeys = new Set();
+  for (const row of rows) {
+    const dedupeKey = `${String(row.player_name || '').toLowerCase()}|${row.prop_type}|${row.period}`;
+    if (seenKeys.has(dedupeKey)) continue;
+    seenKeys.add(dedupeKey);
+    uniqueRows.push(row);
+  }
+
+  return uniqueRows;
+}
+
 module.exports = {
   initDb,
   getDatabase,
@@ -3625,6 +3668,7 @@ module.exports = {
   getPlayerAvailability,
   upsertPlayerPropLine,
   getPlayerPropLine,
+  getPlayerPropLinesForGame,
   getJobRunHistory,
   wasJobRecentlySuccessful,
   insertModelOutput,

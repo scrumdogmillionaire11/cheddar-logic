@@ -119,7 +119,7 @@ function recordClvEntry(entry) {
   }
 
   // Late import to avoid circular dependency with db.js
-  const { getDatabase } = require('../packages/data/src/db');
+  const { getDatabase } = require('../../packages/data/src/db');
   const db = getDatabase();
   ensureClvLedgerSchema(db);
 
@@ -157,7 +157,7 @@ function recordClvEntry(entry) {
 function settleClvEntry(cardId, closingOdds, clvPct, closedAt) {
   if (!FLAGS.ENABLE_CLV_LEDGER) return;
 
-  const { getDatabase } = require('../packages/data/src/db');
+  const { getDatabase } = require('../../packages/data/src/db');
   const db = getDatabase();
 
   const stmt = db.prepare(`
@@ -207,7 +207,7 @@ function recordProjectionEntry(entry) {
     return;
   }
 
-  const { getDatabase } = require('../packages/data/src/db');
+  const { getDatabase } = require('../../packages/data/src/db');
   const db = getDatabase();
   ensureProjectionPerfLedgerSchema(db);
 
@@ -246,7 +246,7 @@ function recordProjectionEntry(entry) {
 function settleProjectionEntry(cardId, actualResult, settledAt) {
   if (!FLAGS.ENABLE_PROJECTION_PERF_LEDGER) return;
 
-  const { getDatabase } = require('../packages/data/src/db');
+  const { getDatabase } = require('../../packages/data/src/db');
   const db = getDatabase();
 
   // Look up pick_side and prop_line to determine win/loss
@@ -293,7 +293,7 @@ function settleProjectionEntry(cardId, actualResult, settledAt) {
  * @returns {object[]} Win rate rows per sport/prop_type
  */
 function getProjectionWinRates({ sport, propType, lastNDays = 30 } = {}) {
-  const { getDatabase } = require('../packages/data/src/db');
+  const { getDatabase } = require('../../packages/data/src/db');
   const db = getDatabase();
 
   const clauses = [

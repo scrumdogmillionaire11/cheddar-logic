@@ -17,7 +17,8 @@ import {
   resetFilters,
 } from '@/lib/game-card/filters';
 import PropGameCard from './prop-game-card';
-import type { GameFilters, ViewMode } from '@/lib/game-card/filters';
+import ProjectionCard from './projection-card';
+import type { GameFilters, GameModeFilters, ViewMode } from '@/lib/game-card/filters';
 import type {
   Direction,
   DriverRow,
@@ -25,6 +26,9 @@ import type {
   ExpressionStatus,
   GameCard,
   Market,
+  PropGameCard,
+  PropPlayRow,
+  Sport,
   SupportGrade,
   PassReasonCode,
   SpreadCompare,
@@ -554,6 +558,120 @@ function getLifecycleAwareFilters(
   };
 }
 
+function mapPropStatusToExpression(
+  status: PropPlayRow['status'],
+): ExpressionStatus {
+  if (status === 'FIRE') return 'FIRE';
+  if (status === 'WATCH' || status === 'HOLD') return 'WATCH';
+  return 'PASS';
+}
+
+function mapPropTypeToGroup(propType: string): 'SOG' | 'PTS' | 'AST' | 'REB' | 'PRA' | 'OTHER' {
+  const normalized = String(propType || '').toUpperCase();
+
+  if (
+    normalized.includes('SHOT') ||
+    normalized === 'SOG' ||
+    normalized.includes('GOAL')
+  ) {
+    return 'SOG';
+  }
+  if (normalized.includes('POINT')) return 'PTS';
+  if (normalized.includes('ASSIST')) return 'AST';
+  if (normalized.includes('REBOUND')) return 'REB';
+  if (normalized.includes('PRA')) return 'PRA';
+
+  return 'OTHER';
+}
+
+function filterPropCards(cards: PropGameCard[], filters: GameFilters): PropGameCard[] {
+  if (!('propStatGroups' in filters)) return cards;
+
+  const now = Date.now();
+
+  const filteredByGame = cards
+    .filter((card) => filters.sports.includes(card.sport))
+    .filter((card) => {
+      if (!filters.timeWindow) return true;
+
+      const startTime = new Date(card.gameTimeUtc).getTime();
+
+      if (filters.timeWindow === 'next_2h') {
+        const twoHours = 2 * 60 * 60 * 1000;
+        return startTime <= now + twoHours && startTime > now;
+      }
+
+      if (filters.timeWindow === 'today') {
+        return getEtDayKey(card.gameTimeUtc) === getEtDayKey(new Date());
+      }
+
+      if (filters.timeWindow === 'custom' && filters.customTimeRange) {
+        const rangeStart = new Date(filters.customTimeRange.start).getTime();
+        const rangeEnd = new Date(filters.customTimeRange.end).getTime();
+        return startTime >= rangeStart && startTime <= rangeEnd;
+      }
+
+      return true;
+    });
+
+  const filteredRows = filteredByGame
+    .map((card) => {
+      const query = filters.searchQuery.trim().toLowerCase();
+
+      const propPlays = card.propPlays.filter((row) => {
+        if (
+          filters.statuses.length > 0 &&
+          !filters.statuses.includes(mapPropStatusToExpression(row.status))
+        ) {
+          return false;
+        }
+
+        if (
+          filters.propStatGroups.length > 0 &&
+          !filters.propStatGroups.includes(mapPropTypeToGroup(row.propType))
+        ) {
+          return false;
+        }
+
+        if (!query) return true;
+
+        const playerName = row.playerName.toLowerCase();
+        const team = (row.teamAbbr || '').toLowerCase();
+        const opponent = `${card.homeTeam} ${card.awayTeam}`.toLowerCase();
+
+        if (filters.searchTarget === 'player') return playerName.includes(query);
+        if (filters.searchTarget === 'team') return team.includes(query);
+        return opponent.includes(query);
+      });
+
+      if (propPlays.length === 0) return null;
+
+      const maxConfidence = Math.max(...propPlays.map((row) => row.confidence ?? 0));
+
+      return {
+        ...card,
+        propPlays,
+        maxConfidence,
+      };
+    })
+    .filter((card): card is PropGameCard => card !== null);
+
+  return [...filteredRows].sort((a, b) => {
+    if (filters.sortMode === 'start_time') {
+      return new Date(a.gameTimeUtc).getTime() - new Date(b.gameTimeUtc).getTime();
+    }
+
+    if (filters.sortMode === 'odds_updated') {
+      return (
+        new Date(a.oddsUpdatedUtc || a.gameTimeUtc).getTime() -
+        new Date(b.oddsUpdatedUtc || b.gameTimeUtc).getTime()
+      );
+    }
+
+    return b.maxConfidence - a.maxConfidence;
+  });
+}
+
 type FtTrendInsight = {
   advantagedTeam: string;
   disadvantagedTeam: string;
@@ -647,16 +765,21 @@ export default function CardsPageClient() {
   );
 
   // Compute cards based on view mode
-  const { enrichedCards, filteredCards, propCards } = useMemo(() => {
+  const { enrichedCards, filteredCards, propCards, totalCardsInView } = useMemo(() => {
     if (viewMode === 'props') {
-      // Props mode: use transformPropGames, no enrichment/filters yet
       const propGameCards = transformPropGames(games);
+      const filteredPropCards = filterPropCards(propGameCards, effectiveFilters);
 
       // Props mode debugging
       if (process.env.NODE_ENV !== 'production') {
         console.info('[props-debug]', {
           total_prop_games: propGameCards.length,
+          filtered_prop_games: filteredPropCards.length,
           total_prop_plays: propGameCards.reduce(
+            (sum, g) => sum + g.propPlays.length,
+            0,
+          ),
+          filtered_prop_plays: filteredPropCards.reduce(
             (sum, g) => sum + g.propPlays.length,
             0,
           ),
@@ -673,7 +796,12 @@ export default function CardsPageClient() {
         });
       }
 
-      return { enrichedCards: [], filteredCards: [], propCards: propGameCards };
+      return {
+        enrichedCards: [],
+        filteredCards: [],
+        propCards: filteredPropCards,
+        totalCardsInView: propGameCards.length,
+      };
     }
 
     // Game mode: existing pipeline
@@ -681,8 +809,56 @@ export default function CardsPageClient() {
     const enriched = enrichCards(transformed);
     const filtered = applyFilters(enriched, effectiveFilters, viewMode);
 
-    return { enrichedCards: enriched, filteredCards: filtered, propCards: [] };
+    return {
+      enrichedCards: enriched,
+      filteredCards: filtered,
+      propCards: [],
+      totalCardsInView: enriched.length,
+    };
   }, [games, effectiveFilters, viewMode]);
+
+  // Projections mode: extract nhl-pace-1p plays directly from raw games,
+  // bypassing the game-card pipeline which doesn't handle FIRST_PERIOD market_type.
+  const projectionItems = useMemo(() => {
+    if (viewMode !== 'projections') return [];
+    const f = effectiveFilters as GameModeFilters;
+    const todayKey = getEtDayKey(new Date());
+
+    return games.flatMap((game) => {
+      const play1p = game.plays.find((p) => p.cardType === 'nhl-pace-1p');
+      if (!play1p) return [];
+
+      // Sport filter (game.sport from API is lowercase, filter values are uppercase)
+      if (f.sports.length > 0 && !f.sports.includes(game.sport.toUpperCase() as Sport)) return [];
+
+      // Status filter (FIRE/WATCH/PASS)
+      const playStatus = play1p.status as ExpressionStatus | undefined;
+      if (f.statuses.length > 0 && playStatus && !f.statuses.includes(playStatus)) return [];
+
+      // Time window filter
+      if (f.timeWindow === 'today') {
+        if (getEtDayKey(game.gameTimeUtc) !== todayKey) return [];
+      } else if (f.timeWindow === 'next_2h') {
+        const startMs = new Date(game.gameTimeUtc).getTime();
+        const now = Date.now();
+        if (startMs <= now || startMs > now + 2 * 60 * 60 * 1000) return [];
+      } else if (f.timeWindow === 'custom' && f.customTimeRange) {
+        const startMs = new Date(game.gameTimeUtc).getTime();
+        const rangeStart = new Date(f.customTimeRange.start).getTime();
+        const rangeEnd = new Date(f.customTimeRange.end).getTime();
+        if (startMs < rangeStart || startMs > rangeEnd) return [];
+      }
+
+      return [{ game, play: play1p }];
+    });
+  }, [games, effectiveFilters, viewMode]);
+
+  const displayedCardsInView =
+    viewMode === 'props'
+      ? propCards.length
+      : viewMode === 'projections'
+        ? projectionItems.length
+        : filteredCards.length;
 
   const activeFilterCount = getActiveFilterCount(effectiveFilters, viewMode);
   const todayEtKey = useMemo(() => getEtDayKey(new Date()), []);
@@ -1324,6 +1500,17 @@ export default function CardsPageClient() {
       setViewMode('props');
       setFilters((current) => {
         const defaults = getDefaultFilters('props');
+        return {
+          ...defaults,
+          sports: current.sports,
+          timeWindow: current.timeWindow,
+          customTimeRange: current.customTimeRange,
+        };
+      });
+    } else if (modeParam === 'projections') {
+      setViewMode('projections');
+      setFilters((current) => {
+        const defaults = getDefaultFilters('projections');
         return {
           ...defaults,
           sports: current.sports,
@@ -3275,8 +3462,8 @@ export default function CardsPageClient() {
         <div className="mb-8 space-y-2">
           <h1 className="text-4xl font-bold">🧀 The Cheddar Board 🧀</h1>
           <p className="text-cloud/70">
-            {enrichedCards.length} game{enrichedCards.length !== 1 ? 's' : ''}{' '}
-            total, showing {filteredCards.length} (updates in background every
+            {totalCardsInView} game{totalCardsInView !== 1 ? 's' : ''}{' '}
+            total, showing {displayedCardsInView} (updates in background every
             60s)
           </p>
           {!loading && !error && diagnosticsEnabled && viewMode === 'game' && (
@@ -3413,6 +3600,16 @@ export default function CardsPageClient() {
               Player Props
             </button>
           )}
+          <button
+            onClick={() => handleModeChange('projections')}
+            className={`px-4 py-2 rounded-md border text-sm font-semibold transition ${
+              viewMode === 'projections'
+                ? 'bg-emerald-700/50 text-emerald-100 border-emerald-600/60'
+                : 'bg-white/5 text-cloud/70 border-white/10 hover:border-white/20'
+            }`}
+          >
+            1P Projections
+          </button>
         </div>
 
         {/* Filter Panel */}
@@ -3474,13 +3671,16 @@ export default function CardsPageClient() {
 
         {!loading &&
           ((viewMode === 'props' && propCards.length === 0) ||
+            (viewMode === 'projections' && projectionItems.length === 0) ||
             (viewMode === 'game' && filteredCards.length === 0)) &&
           !error && (
             <div className="text-center py-8 space-y-4">
               <div className="text-cloud/60">
                 {viewMode === 'props'
                   ? 'No qualified props match your filters'
-                  : 'No games match your filters'}
+                  : viewMode === 'projections'
+                    ? 'No 1P projections match your filters'
+                    : 'No games match your filters'}
               </div>
               {diagnosticsEnabled &&
                 viewMode === 'game' &&
@@ -3532,6 +3732,20 @@ export default function CardsPageClient() {
           <div className="space-y-4">
             {propCards.map((card) => (
               <PropGameCard key={card.gameId} card={card} />
+            ))}
+          </div>
+        )}
+
+        {!loading && viewMode === 'projections' && projectionItems.length > 0 && (
+          <div className="space-y-4">
+            {projectionItems.map(({ game, play }) => (
+              <ProjectionCard
+                key={`${game.gameId}-1p`}
+                homeTeam={game.homeTeam}
+                awayTeam={game.awayTeam}
+                startTime={game.gameTimeUtc}
+                play={play}
+              />
             ))}
           </div>
         )}

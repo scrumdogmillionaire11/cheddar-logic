@@ -69,7 +69,13 @@ function buildGamesFromShots(shotsByGame = []) {
 
 // Build a mock DB whose prepare() dispatches by SQL keyword
 // availabilityRow: if set, returned for player_availability queries (null = no record = fail-open)
-function buildMockDb({ games = [], players = [], playerLogs = [], availabilityRow = null } = {}) {
+function buildMockDb({
+  games = [],
+  players = [],
+  playerLogs = [],
+  availabilityRow = null,
+  oddsSnapshotRawData = null,
+} = {}) {
   return {
     prepare: jest.fn((sql) => {
       const s = sql.trim().toLowerCase();
@@ -84,6 +90,20 @@ function buildMockDb({ games = [], players = [], playerLogs = [], availabilityRo
       }
       if (s.includes('from player_availability')) {
         return { get: jest.fn(() => availabilityRow) };
+      }
+      if (s.includes('from odds_snapshots')) {
+        if (!oddsSnapshotRawData) return { get: jest.fn(() => null) };
+        return {
+          get: jest.fn(() => ({
+            raw_data:
+              typeof oddsSnapshotRawData === 'string'
+                ? oddsSnapshotRawData
+                : JSON.stringify(oddsSnapshotRawData),
+          })),
+        };
+      }
+      if (s.includes('delete from card_payloads')) {
+        return { run: jest.fn(() => ({ changes: 1 })) };
       }
       // team_metrics_cache, game_id_map, etc.
       return { all: jest.fn(() => []), get: jest.fn(() => null), run: jest.fn() };
@@ -111,14 +131,21 @@ function loadFreshModule() {
   jest.mock('../../models/nhl-player-shots', () => ({
     calcMu: jest.fn(() => 3.2),
     calcMu1p: jest.fn(() => 1.0),
+    calcFairLine: jest.fn(() => 3.0),
+    calcFairLine1p: jest.fn(() => 0.96),
     classifyEdge: jest.fn(() => ({ tier: 'COLD', direction: 'OVER', edge: 0.1 })),
+  }));
+
+  jest.mock('../../moneypuck', () => ({
+    fetchMoneyPuckSnapshot: jest.fn(async () => ({ injuries: {} })),
   }));
 
   const mod = require('../run_nhl_player_shots_model');
   const data = require('@cheddar-logic/data');
   const shots = require('../../models/nhl-player-shots');
+  const moneyPuck = require('../../moneypuck');
 
-  return { mod, data, shots };
+  return { mod, data, shots, moneyPuck };
 }
 
 describe('run_nhl_player_shots_model', () => {
@@ -259,6 +286,112 @@ describe('run_nhl_player_shots_model', () => {
     logSpy.mockRestore();
   });
 
+  test('player with INJURED availability purges existing player cards for the same game', async () => {
+    const { mod, data } = loadFreshModule();
+    const mockDb = buildMockDb({
+      games: [buildFutureGame({ game_id: 'game-inj-purge-01' })],
+      players: [buildPlayer({ player_id: 6123, player_name: 'Purge Injured Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'INJURED', checked_at: new Date().toISOString() },
+    });
+    data.getDatabase.mockReturnValue(mockDb);
+
+    await mod.runNHLPlayerShotsModel();
+
+    const deleteCall = mockDb.prepare.mock.calls.find(([sql]) =>
+      String(sql).toLowerCase().includes('delete from card_payloads'),
+    );
+    expect(deleteCall).toBeTruthy();
+    expect(data.insertCardPayload).not.toHaveBeenCalled();
+  });
+
+  test('active player purges existing cards for same game before creating a new card', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+
+    const mockDb = buildMockDb({
+      games: [buildFutureGame({ game_id: 'game-dedupe-01' })],
+      players: [buildPlayer({ player_id: 7771, player_name: 'Dedupe Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    });
+    data.getDatabase.mockReturnValue(mockDb);
+
+    await mod.runNHLPlayerShotsModel();
+
+    const deleteCall = mockDb.prepare.mock.calls.find(([sql]) =>
+      String(sql).toLowerCase().includes('delete from card_payloads'),
+    );
+    expect(deleteCall).toBeTruthy();
+    expect(data.insertCardPayload).toHaveBeenCalledTimes(1);
+  });
+
+  test('MoneyPuck injury_status overrides ACTIVE availability and skips player card generation', async () => {
+    const { mod, data, moneyPuck } = loadFreshModule();
+
+    moneyPuck.fetchMoneyPuckSnapshot.mockResolvedValue({
+      injuries: {
+        'Detroit Red Wings': [{ player: 'Dylan Larkin', status: 'Out' }],
+      },
+    });
+
+    const mockDb = buildMockDb({
+      games: [
+        buildFutureGame({
+          game_id: 'game-mp-inj-01',
+          home_team: 'Detroit Red Wings',
+          away_team: 'Florida Panthers',
+        }),
+      ],
+      players: [
+        buildPlayer({
+          player_id: 8477946,
+          player_name: 'Dylan Larkin',
+          team_abbrev: 'DET',
+        }),
+      ],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    });
+    data.getDatabase.mockReturnValue(mockDb);
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).not.toHaveBeenCalled();
+
+    const deleteCall = mockDb.prepare.mock.calls.find(([sql]) =>
+      String(sql).toLowerCase().includes('delete from card_payloads'),
+    );
+    expect(deleteCall).toBeTruthy();
+  });
+
+  test('player with stale INJURED availability row is still skipped', async () => {
+    // Regression guard: the old query used AND checked_at > datetime('now', '-24 hours'),
+    // which silently dropped stale injury records and caused fail-open for injured players
+    // when pull_nhl_player_shots had not run recently. The fix removes the staleness
+    // window so any recorded INJURED status blocks card generation.
+    const { mod, data } = loadFreshModule();
+
+    const staleCheckedAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(); // 48h ago
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'game-inj-stale-01' })],
+      players: [buildPlayer({ player_id: 6667, player_name: 'Stale Injured Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'INJURED', status_reason: 'ltir', checked_at: staleCheckedAt },
+    }));
+
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).not.toHaveBeenCalled();
+
+    const allLogs = logSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(allLogs).toMatch(/availability status=INJURED/i);
+
+    logSpy.mockRestore();
+  });
+
   test('player with no availability record proceeds normally (fail-open)', async () => {
     const { mod, data, shots } = loadFreshModule();
 
@@ -353,7 +486,7 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.play.classification).toBe('BASE');
     expect(card.payloadData.play.status).toBe('FIRE');
     expect(card.payloadData.suggested_line).toBe(3);
-    expect(card.payloadData.play.pick_string).toMatch(/play to fair line/i);
+    expect(card.payloadData.play.pick_string).toMatch(/Proj \d+\.\d+ · Fair \d+(\.\d+)? · Edge [+-]\d+\.\d+/i);
     expect(card.payloadData.confidence).toBeGreaterThan(0.75);
   });
 

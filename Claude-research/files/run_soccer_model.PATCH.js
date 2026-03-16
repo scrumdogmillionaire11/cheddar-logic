@@ -18,11 +18,11 @@
 
 'use strict';
 
-const { FLAGS } = require('../Claude-research/files/flags');
+const { FLAGS } = require('./flags');
 const {
   buildDecisionBasisMeta,
   MARKET_LINE_SOURCE,
-} = require('../Claude-research/files/decision-basis.types');
+} = require('./decision-basis.types');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: build basis meta for a soccer card

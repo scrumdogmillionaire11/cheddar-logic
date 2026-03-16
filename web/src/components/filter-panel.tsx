@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import type {
   GameFilters,
+  PropStatGroup,
   PropSearchTarget,
   SortMode,
   ViewMode,
@@ -37,6 +38,12 @@ export default function FilterPanel({
   activeCount,
 }: FilterPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const now = new Date();
+
+  const getWatchNext4hRange = () => ({
+    start: now.toISOString(),
+    end: new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),
+  });
 
   const updateFilters = (updates: Partial<GameFilters>) => {
     onFiltersChange({ ...filters, ...updates });
@@ -64,9 +71,31 @@ export default function FilterPanel({
     updateFilters({ markets });
   };
 
+  const togglePropStatGroup = (group: PropStatGroup) => {
+    if (!('propStatGroups' in filters)) return;
+    const propStatGroups = filters.propStatGroups.includes(group)
+      ? filters.propStatGroups.filter((item) => item !== group)
+      : [...filters.propStatGroups, group];
+    updateFilters({ propStatGroups });
+  };
+
   const doesPresetMatchCurrentFilters = (
     presetFilters: Partial<GameFilters>,
+    presetId?: string,
   ) => {
+    if (presetId === 'watch_next_4h') {
+      if (filters.timeWindow !== 'custom' || !filters.customTimeRange) {
+        return false;
+      }
+
+      const startMs = new Date(filters.customTimeRange.start).getTime();
+      const endMs = new Date(filters.customTimeRange.end).getTime();
+      const durationMs = endMs - startMs;
+      const fourHoursMs = 4 * 60 * 60 * 1000;
+
+      return Math.abs(durationMs - fourHoursMs) <= 60 * 1000;
+    }
+
     return (Object.keys(presetFilters) as (keyof GameFilters)[]).every(
       (key) => {
         if (key === 'customTimeRange') {
@@ -86,15 +115,13 @@ export default function FilterPanel({
         const currentValue = filters[key];
 
         if (Array.isArray(presetValue)) {
-          if (
-            !Array.isArray(currentValue) ||
-            currentValue.length !== presetValue.length
-          ) {
+          if (!Array.isArray(currentValue) || currentValue.length !== presetValue.length) {
             return false;
           }
-          return presetValue.every(
-            (value, index) => value === currentValue[index],
-          );
+
+          const presetSorted = [...presetValue].sort();
+          const currentSorted = [...currentValue].sort();
+          return presetSorted.every((value, index) => value === currentSorted[index]);
         }
 
         return presetValue === currentValue;
@@ -105,8 +132,18 @@ export default function FilterPanel({
   const applyPreset = (presetId: string) => {
     const preset = getPresetsForMode(viewMode).find((p) => p.id === presetId);
     if (preset) {
-      if (doesPresetMatchCurrentFilters(preset.filters)) {
+      if (doesPresetMatchCurrentFilters(preset.filters, preset.id)) {
         onFiltersChange(resetFilters(viewMode));
+        return;
+      }
+
+      if (preset.id === 'watch_next_4h') {
+        onFiltersChange({
+          ...resetFilters(viewMode),
+          ...preset.filters,
+          timeWindow: 'custom',
+          customTimeRange: getWatchNext4hRange(),
+        });
         return;
       }
 
@@ -121,6 +158,14 @@ export default function FilterPanel({
     { value: 'PASS', label: 'PASS' },
   ];
   const marketOptions: Market[] = ['ML', 'SPREAD', 'TOTAL'];
+  const propMarketOptions: Array<{ value: PropStatGroup; label: string }> = [
+    { value: 'SOG', label: 'Shots' },
+    { value: 'PTS', label: 'Points' },
+    { value: 'AST', label: 'Assists' },
+    { value: 'REB', label: 'Rebounds' },
+    { value: 'PRA', label: 'PRA' },
+    { value: 'OTHER', label: 'Other' },
+  ];
   const tierOptions: { value: DriverTier | undefined; label: string }[] = [
     { value: undefined, label: 'Any' },
     { value: 'BEST', label: 'BEST only' },
@@ -160,47 +205,67 @@ export default function FilterPanel({
         </button>
       </div>
 
-      {/* Presets (always visible) */}
-      <div className="p-4 border-b border-white/10">
-        <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
-          Quick Presets
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {getPresetsForMode(viewMode).map((preset) => {
-            const isActive = doesPresetMatchCurrentFilters(preset.filters);
-
-            return (
-              <button
-                key={preset.id}
-                onClick={() => applyPreset(preset.id)}
-                className={`px-3 py-1.5 text-sm rounded border transition ${
-                  isActive
-                    ? 'bg-blue-700/50 text-blue-200 border-blue-600/60'
-                    : 'bg-white/5 hover:bg-white/10 border-white/10 hover:border-white/20'
-                }`}
-                title={preset.description}
-                aria-pressed={isActive}
-              >
-                <span className="mr-1.5">{preset.icon}</span>
-                {preset.name}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       {/* Expanded filter controls */}
       {isExpanded && (
         <div className="p-4 space-y-4">
-          {/* Sport Selection */}
           <div>
             <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
-              Sports
+              Quick Presets
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {getPresetsForMode(viewMode).map((preset) => {
+                const isActive = doesPresetMatchCurrentFilters(
+                  preset.filters,
+                  preset.id,
+                );
+
+                return (
+                  <button
+                    key={preset.id}
+                    onClick={() => applyPreset(preset.id)}
+                    className={`px-3 py-1.5 text-sm rounded border transition ${
+                      isActive
+                        ? 'bg-blue-700/50 text-blue-200 border-blue-600/60'
+                        : 'bg-white/5 hover:bg-white/10 border-white/10 hover:border-white/20'
+                    }`}
+                    title={preset.description}
+                    aria-pressed={isActive}
+                  >
+                    <span className="mr-1.5">{preset.icon}</span>
+                    {preset.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
+              Quick Sort
+            </p>
+            <select
+              value={filters.sortMode}
+              onChange={(e) =>
+                updateFilters({ sortMode: e.target.value as SortMode })
+              }
+              className="px-3 py-2 rounded bg-surface border border-white/10 hover:border-white/20"
+            >
+              {sortOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
+              Quick Sports
             </p>
             <div className="flex flex-wrap gap-2">
               {sportOptions.map((sport) => (
                 <button
-                  key={sport}
+                  key={`quick-sport-${sport}`}
                   onClick={() => toggleSport(sport)}
                   className={`px-3 py-1.5 text-sm rounded border transition ${
                     filters.sports.includes(sport)
@@ -214,7 +279,49 @@ export default function FilterPanel({
             </div>
           </div>
 
-          {/* Status Selection */}
+          {viewMode !== 'projections' && (
+          <div>
+            <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
+              {viewMode === 'props' ? 'Quick Prop Markets' : 'Quick Markets'}
+            </p>
+            {viewMode === 'props' && 'propStatGroups' in filters ? (
+              <div className="flex flex-wrap gap-2">
+                {propMarketOptions.map((option) => (
+                  <button
+                    key={`quick-prop-market-${option.value}`}
+                    onClick={() => togglePropStatGroup(option.value)}
+                    className={`px-3 py-1.5 text-sm rounded border transition ${
+                      filters.propStatGroups.includes(option.value)
+                        ? 'bg-orange-700/50 text-orange-200 border-orange-600/60'
+                        : 'bg-white/5 border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {marketOptions.map((market) => (
+                  <button
+                    key={`quick-market-${market}`}
+                    onClick={() => toggleMarket(market)}
+                    className={`px-3 py-1.5 text-sm rounded border transition ${
+                      'markets' in filters && filters.markets.includes(market)
+                        ? 'bg-orange-700/50 text-orange-200 border-orange-600/60'
+                        : 'bg-white/5 border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    {market}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          )}
+
+          {/* Status Selection — hidden in projections mode (informational, all statuses always shown) */}
+          {viewMode !== 'projections' && (
           <div>
             <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
               Actionability
@@ -239,91 +346,7 @@ export default function FilterPanel({
               ))}
             </div>
           </div>
-
-          {/* Market Selection (Game mode only) */}
-          {viewMode === 'game' && 'markets' in filters && (
-            <div>
-              <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
-                Markets
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {marketOptions.map((market) => (
-                  <button
-                    key={market}
-                    onClick={() => toggleMarket(market)}
-                    className={`px-3 py-1.5 text-sm rounded border transition ${
-                      filters.markets.includes(market)
-                        ? 'bg-orange-700/50 text-orange-200 border-orange-600/60'
-                        : 'bg-white/5 border-white/10 hover:border-white/20'
-                    }`}
-                  >
-                    {market}
-                  </button>
-                ))}
-              </div>
-              <label className="flex items-center gap-2 mt-2 text-sm text-cloud/70">
-                <input
-                  type="checkbox"
-                  checked={filters.onlyGamesWithPicks}
-                  onChange={(e) =>
-                    updateFilters({ onlyGamesWithPicks: e.target.checked })
-                  }
-                  className="rounded"
-                />
-                Only games with picks
-              </label>
-              <label className="flex items-center gap-2 mt-2 text-sm text-cloud/70">
-                <input
-                  type="checkbox"
-                  checked={filters.hasClearPlay}
-                  onChange={(e) =>
-                    updateFilters({ hasClearPlay: e.target.checked })
-                  }
-                  className="rounded"
-                />
-                Has clear play
-              </label>
-            </div>
           )}
-
-          {/* Time Window */}
-          <div>
-            <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
-              Time Window
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => updateFilters({ timeWindow: undefined })}
-                className={`px-3 py-1.5 text-sm rounded border transition ${
-                  !filters.timeWindow
-                    ? 'bg-blue-700/50 text-blue-200 border-blue-600/60'
-                    : 'bg-white/5 border-white/10 hover:border-white/20'
-                }`}
-              >
-                All
-              </button>
-              <button
-                onClick={() => updateFilters({ timeWindow: 'next_2h' })}
-                className={`px-3 py-1.5 text-sm rounded border transition ${
-                  filters.timeWindow === 'next_2h'
-                    ? 'bg-blue-700/50 text-blue-200 border-blue-600/60'
-                    : 'bg-white/5 border-white/10 hover:border-white/20'
-                }`}
-              >
-                Next 2 Hours
-              </button>
-              <button
-                onClick={() => updateFilters({ timeWindow: 'today' })}
-                className={`px-3 py-1.5 text-sm rounded border transition ${
-                  filters.timeWindow === 'today'
-                    ? 'bg-blue-700/50 text-blue-200 border-blue-600/60'
-                    : 'bg-white/5 border-white/10 hover:border-white/20'
-                }`}
-              >
-                Today
-              </button>
-            </div>
-          </div>
 
           {/* Driver Strength (Game mode only) */}
           {viewMode === 'game' && 'minTier' in filters && (
@@ -350,81 +373,6 @@ export default function FilterPanel({
               </select>
             </div>
           )}
-
-          {/* Risk Flags (Game mode only) */}
-          {viewMode === 'game' && 'hideFragility' in filters && (
-            <div>
-              <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
-                Hide Risk Flags
-              </p>
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm text-cloud/70">
-                  <input
-                    type="checkbox"
-                    checked={filters.hideFragility}
-                    onChange={(e) =>
-                      updateFilters({ hideFragility: e.target.checked })
-                    }
-                    className="rounded"
-                  />
-                  Fragility / Key Numbers
-                </label>
-                <label className="flex items-center gap-2 text-sm text-cloud/70">
-                  <input
-                    type="checkbox"
-                    checked={filters.hideBlowout}
-                    onChange={(e) =>
-                      updateFilters({ hideBlowout: e.target.checked })
-                    }
-                    className="rounded"
-                  />
-                  Blowout Risk
-                </label>
-                <label className="flex items-center gap-2 text-sm text-cloud/70">
-                  <input
-                    type="checkbox"
-                    checked={filters.hideLowCoverage}
-                    onChange={(e) =>
-                      updateFilters({ hideLowCoverage: e.target.checked })
-                    }
-                    className="rounded"
-                  />
-                  Low Coverage
-                </label>
-                <label className="flex items-center gap-2 text-sm text-cloud/70">
-                  <input
-                    type="checkbox"
-                    checked={filters.hideStaleOdds}
-                    onChange={(e) =>
-                      updateFilters({ hideStaleOdds: e.target.checked })
-                    }
-                    className="rounded"
-                  />
-                  Stale Odds (5+ min)
-                </label>
-              </div>
-            </div>
-          )}
-
-          {/* Sort */}
-          <div>
-            <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
-              Sort By
-            </p>
-            <select
-              value={filters.sortMode}
-              onChange={(e) =>
-                updateFilters({ sortMode: e.target.value as SortMode })
-              }
-              className="px-3 py-2 rounded bg-surface border border-white/10 hover:border-white/20"
-            >
-              {sortOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
 
           {/* Search */}
           <div>

@@ -238,6 +238,9 @@ const TEAM_VARIANTS = {
   'DALLAS MAVERICKS': ['dallas mavericks', 'mavs', 'mavericks'],
   'CHICAGO BULLS': ['chicago bulls', 'bulls'],
   'CLEVELAND CAVALIERS': ['cleveland cavaliers', 'cavs', 'cavaliers'],
+  'SPORTING CP': ['sporting cp', 'sporting lisbon', 'sporting clube de portugal'],
+  'BODO/GLIMT': ['bodo/glimt', 'bodo glimt', 'bodø/glimt', 'fk bodo/glimt'],
+  'PARIS SAINT-GERMAIN': ['paris saint-germain', 'paris saint germain', 'psg'],
 };
 
 const LOGGED_TEAM_VARIANTS = [
@@ -457,6 +460,14 @@ const LOGGED_TEAM_VARIANTS = [
   // SOCCER (EPL) — discovered from live odds pull
   'Brentford',
   'Wolverhampton Wanderers',
+  'Arsenal',
+  'Bayer Leverkusen',
+  'Chelsea',
+  'Manchester City',
+  'Real Madrid',
+  'Sporting CP',
+  'Bodo/Glimt',
+  'Paris Saint-Germain',
 ];
 
 for (const teamName of LOGGED_TEAM_VARIANTS) {

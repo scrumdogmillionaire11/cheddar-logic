@@ -26,7 +26,7 @@ export type SortMode =
   | 'signal_strength'
   | 'pick_score';
 
-export type ViewMode = 'game' | 'props';
+export type ViewMode = 'game' | 'props' | 'projections';
 
 export type FilterDebugFlags = {
   sport: boolean;
@@ -153,9 +153,27 @@ export const DEFAULT_PROPS_FILTERS: PropsModeFilters = {
   searchTarget: 'player',
 };
 
+export const DEFAULT_PROJECTIONS_FILTERS: GameModeFilters = {
+  sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER', 'MLB', 'NFL'],
+  statuses: ['FIRE', 'WATCH', 'PASS'],
+  markets: ['ML', 'SPREAD', 'TOTAL'],
+  onlyGamesWithPicks: false,
+  hasClearPlay: false,
+  requireTotalProjection: false,
+  onlyWelcomeHome: false,
+  cardTypes: ['nhl-pace-1p'],
+  hideFragility: false,
+  hideBlowout: false,
+  hideLowCoverage: false,
+  hideStaleOdds: false,
+  searchQuery: '',
+  sortMode: 'start_time',
+};
+
 export const DEFAULT_FILTERS_BY_MODE: Record<ViewMode, GameFilters> = {
   game: DEFAULT_GAME_FILTERS,
   props: DEFAULT_PROPS_FILTERS,
+  projections: DEFAULT_PROJECTIONS_FILTERS,
 };
 
 export function getDefaultFilters(mode: ViewMode): GameFilters {
@@ -664,17 +682,13 @@ export function getActiveFilterCount(
     if (filters.searchQuery) count++;
     if (filters.timeWindow) count++;
     if (filters.propStatGroups.length) count++;
-    if (filters.propTypes.length) count++;
-    if (filters.lineBands.length) count++;
-    if (filters.priceBands.length) count++;
-    if (filters.varianceBands.length) count++;
     if (filters.searchTarget !== defaults.searchTarget) count++;
     if (filters.sortMode !== defaults.sortMode) count++;
     return count;
   }
 
   const gameFilters = filters as GameModeFilters;
-  const defaults = DEFAULT_GAME_FILTERS;
+  const defaults = mode === 'projections' ? DEFAULT_PROJECTIONS_FILTERS : DEFAULT_GAME_FILTERS;
   if (gameFilters.sports.length !== defaults.sports.length) count++;
   if (gameFilters.statuses.length !== defaults.statuses.length) count++;
   if (gameFilters.markets.length !== defaults.markets.length) count++;

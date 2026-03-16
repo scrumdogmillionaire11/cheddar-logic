@@ -29,6 +29,7 @@ const {
   calcFairLine,
   calcFairLine1p,
 } = require('../models/nhl-player-shots');
+const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 
 const JOB_NAME = 'run-nhl-player-shots-model';
 
@@ -218,6 +219,100 @@ function parsePlayerIds(raw) {
     .filter(Number.isFinite);
 }
 
+function removeDiacritics(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function normalizePlayerNameForLookup(name) {
+  if (!name || typeof name !== 'string') return '';
+  return removeDiacritics(name)
+    .toLowerCase()
+    .replace(/[.'\u2019-]/g, ' ')
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function classifyMoneyPuckInjuryEntry(entry = {}) {
+  const status =
+    typeof entry?.status === 'string' ? entry.status.trim().toLowerCase() : '';
+  const detail =
+    typeof entry?.detail === 'string' ? entry.detail.trim().toLowerCase() : '';
+  const combined = `${status} ${detail}`.trim();
+
+  if (
+    combined.includes('day-to-day') ||
+    combined.includes('dtd') ||
+    combined.includes('questionable') ||
+    combined.includes('doubtful')
+  ) {
+    return 'DTD';
+  }
+
+  // MoneyPuck injuries list presence is treated as unavailable by default.
+  return 'INJURED';
+}
+
+function buildMoneyPuckInjuryMap(rawData = {}) {
+  const map = new Map();
+  const injuryStatus = rawData?.injury_status || {};
+  const entries = [
+    ...(Array.isArray(injuryStatus.home) ? injuryStatus.home : []),
+    ...(Array.isArray(injuryStatus.away) ? injuryStatus.away : []),
+  ];
+
+  for (const entry of entries) {
+    const playerName =
+      typeof entry?.player === 'string' ? entry.player.trim() : null;
+    if (!playerName) continue;
+    const lookupKey = normalizePlayerNameForLookup(playerName);
+    if (!lookupKey) continue;
+    map.set(lookupKey, {
+      status: classifyMoneyPuckInjuryEntry(entry),
+      reason: entry?.status || entry?.detail || 'moneypuck-injury-list',
+    });
+  }
+
+  return map;
+}
+
+function resolveMoneyPuckInjuriesForTeam(snapshot, teamName) {
+  const injuriesByTeam = snapshot?.injuries || {};
+  const direct = injuriesByTeam?.[teamName];
+  if (Array.isArray(direct)) return direct;
+
+  const normalizedTeamName =
+    typeof teamName === 'string' ? teamName.trim().toLowerCase() : '';
+  if (normalizedTeamName) {
+    const caseInsensitiveKey = Object.keys(injuriesByTeam).find(
+      (key) =>
+        typeof key === 'string' && key.trim().toLowerCase() === normalizedTeamName,
+    );
+    if (caseInsensitiveKey && Array.isArray(injuriesByTeam[caseInsensitiveKey])) {
+      return injuriesByTeam[caseInsensitiveKey];
+    }
+  }
+
+  if (teamName === 'Utah Mammoth' && Array.isArray(injuriesByTeam['Utah Hockey Club'])) {
+    return injuriesByTeam['Utah Hockey Club'];
+  }
+  if (teamName === 'Utah Hockey Club' && Array.isArray(injuriesByTeam['Utah Mammoth'])) {
+    return injuriesByTeam['Utah Mammoth'];
+  }
+
+  return [];
+}
+
+function buildMoneyPuckInjuryMapForGame(snapshot, homeTeam, awayTeam) {
+  return buildMoneyPuckInjuryMap({
+    injury_status: {
+      home: resolveMoneyPuckInjuriesForTeam(snapshot, homeTeam),
+      away: resolveMoneyPuckInjuriesForTeam(snapshot, awayTeam),
+    },
+  });
+}
+
 function resolveTeamAbbrev(teamValue) {
   if (typeof teamValue !== 'string' || teamValue.trim().length === 0) {
     return null;
@@ -275,6 +370,20 @@ function resolveCanonicalGameId(gameId, homeTeam, awayTeam, gameTime, db) {
   }
 
   return gameId;
+}
+
+function purgePlayerCardsForGame({ db, gameId, playerId, playerName }) {
+  const deleteStmt = db.prepare(`
+    DELETE FROM card_payloads
+    WHERE game_id = ?
+      AND sport = 'NHL'
+      AND card_type IN ('nhl-player-shots', 'nhl-player-shots-1p')
+      AND (
+        CAST(json_extract(payload_data, '$.play.player_id') AS TEXT) = CAST(? AS TEXT)
+        OR LOWER(COALESCE(json_extract(payload_data, '$.play.player_name'), '')) = LOWER(COALESCE(?, ''))
+      )
+  `);
+  return deleteStmt.run(gameId, String(playerId), playerName || null);
 }
 
 /**
@@ -356,6 +465,13 @@ async function runNHLPlayerShotsModel() {
         `[${JOB_NAME}] Found ${uniquePlayers.length} deduped players with recent data`,
       );
 
+      let moneyPuckSnapshot = null;
+      try {
+        moneyPuckSnapshot = await fetchMoneyPuckSnapshot({ ttlMs: 0 });
+      } catch (err) {
+        console.warn(`[${JOB_NAME}] MoneyPuck snapshot unavailable: ${err.message}`);
+      }
+
       // Gap 5: 1P card generation is gated behind NHL_SOG_1P_CARDS_ENABLED env flag (default off).
       // The 1P Odds API market is unreliable — enable only when lines are consistently available.
       const sog1pEnabled = process.env.NHL_SOG_1P_CARDS_ENABLED === 'true';
@@ -380,6 +496,11 @@ async function runNHLPlayerShotsModel() {
 
         // Gap 6: Resolve canonical game ID via game_id_map / proximity match
         const resolvedGameId = resolveCanonicalGameId(gameId, homeTeam, awayTeam, game.game_time_utc, db);
+        const moneyPuckInjuryMap = buildMoneyPuckInjuryMapForGame(
+          moneyPuckSnapshot,
+          homeTeam,
+          awayTeam,
+        );
 
         // Find players for this game (case-insensitive match against abbreviations)
         const gamePlayersMatched = uniquePlayers.filter((p) => {
@@ -443,6 +564,35 @@ async function runNHLPlayerShotsModel() {
             // Fail-open: if NO row exists at all (table missing or player never fetched),
             // proceed normally so new players are not permanently blocked.
             let playerAvailabilityTier = 'ACTIVE';
+            const displayName =
+              typeof player?.player_name === 'string' &&
+              player.player_name.trim().length > 0
+                ? player.player_name.trim()
+                : `Player #${player.player_id}`;
+
+            const moneyPuckInjury = moneyPuckInjuryMap.get(
+              normalizePlayerNameForLookup(displayName),
+            );
+
+            try {
+              const purgeResult = purgePlayerCardsForGame({
+                db,
+                gameId: resolvedGameId,
+                playerId: player.player_id,
+                playerName: displayName,
+              });
+              const purgedCount = Number(purgeResult?.changes || 0);
+              if (purgedCount > 0) {
+                console.log(
+                  `[${JOB_NAME}] Purged ${purgedCount} existing card(s) for ${displayName} (${player.player_id}) in game ${resolvedGameId} before recalculation`,
+                );
+              }
+            } catch (purgeErr) {
+              console.warn(
+                `[${JOB_NAME}] Could not purge existing cards for ${displayName} (${player.player_id}) before recalculation: ${purgeErr.message}`,
+              );
+            }
+
             try {
               const availRow = db.prepare(`
                 SELECT status, status_reason, checked_at
@@ -466,6 +616,20 @@ async function runNHLPlayerShotsModel() {
               }
             } catch {
               // player_availability table may not exist in older DBs — proceed normally
+            }
+
+            if (moneyPuckInjury?.status === 'INJURED') {
+              console.log(
+                `[${JOB_NAME}] Skipping ${displayName} (${player.player_id}): MoneyPuck injury status=${moneyPuckInjury.reason || 'listed-injured'}`,
+              );
+              continue;
+            }
+
+            if (moneyPuckInjury?.status === 'DTD' && playerAvailabilityTier !== 'DTD') {
+              playerAvailabilityTier = 'DTD';
+              console.log(
+                `[${JOB_NAME}] Note: ${displayName} (${player.player_id}) is MoneyPuck DTD${moneyPuckInjury.reason ? ` reason=${moneyPuckInjury.reason}` : ''} — generating card with DTD tier`,
+              );
             }
 
             // Get L5 games for this player (prepare fresh to avoid statement closure issues)

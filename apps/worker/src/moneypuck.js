@@ -18,6 +18,8 @@ const MONEYPUCK_URLS = {
   goalies: 'https://moneypuck.com/goalies.htm',
   stats: 'https://moneypuck.com/stats.htm',
   injuries: 'https://moneypuck.com/injuries.htm',
+  injuriesCsv:
+    'https://moneypuck.com/moneypuck/playerData/playerNews/current_injuries.csv',
   power: 'https://moneypuck.com/power.htm',
 };
 
@@ -73,6 +75,8 @@ const DEFAULT_CACHE_PATH = path.join(
 );
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
 let memoryCache = null;
+const SKATER_IMPACT_MIN = 0.5;
+const SKATER_IMPACT_MAX = 2.5;
 
 function hasGoalieData(snapshot) {
   return Boolean(
@@ -135,11 +139,14 @@ function fetchUrl(url) {
   return new Promise((resolve, reject) => {
     const options = {
       headers: {
-        'User-Agent': 'cheddar-logic/1.0 (+https://github.com/cheddar-logic)',
-        Accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'text/csv,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+        Referer: 'https://moneypuck.com/injuries.htm',
+        Origin: 'https://moneypuck.com',
       },
     };
     https
@@ -162,6 +169,50 @@ function fetchUrl(url) {
       })
       .on('error', reject);
   });
+}
+
+function isCloudflareChallengeBody(body) {
+  if (!body || typeof body !== 'string') return false;
+  const sample = body.slice(0, 2000).toLowerCase();
+  return (
+    sample.includes('just a moment') ||
+    sample.includes('cf_chl') ||
+    sample.includes('enable javascript and cookies')
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchUrlWithRetries(
+  url,
+  { attempts = 3, retryMs = 1200, requireNonChallenge = false } = {},
+) {
+  let lastBody = '';
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const body = await fetchUrl(url);
+      lastBody = body;
+      if (!requireNonChallenge || !isCloudflareChallengeBody(body)) {
+        return body;
+      }
+      lastErr = new Error(`Cloudflare challenge content for ${url}`);
+    } catch (err) {
+      lastErr = err;
+    }
+
+    if (attempt < attempts) {
+      await sleep(retryMs * attempt);
+    }
+  }
+
+  if (requireNonChallenge && lastBody) {
+    return lastBody;
+  }
+  throw lastErr || new Error(`Failed to fetch ${url}`);
 }
 
 function removeDiacritics(text) {
@@ -190,6 +241,30 @@ function canonicalizeTeamName(name) {
   if (TEAM_ALIASES[key]) return TEAM_ALIASES[key];
   if (TEAM_KEY_TO_CANONICAL[key]) return TEAM_KEY_TO_CANONICAL[key];
   return name.trim();
+}
+
+function normalizePlayerNameForLookup(name) {
+  if (!name || typeof name !== 'string') return '';
+  return removeDiacritics(name)
+    .toLowerCase()
+    .replace(/[.'\u2019-]/g, ' ')
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildPlayerLookupKeys(name) {
+  const normalized = normalizePlayerNameForLookup(name);
+  if (!normalized) return [];
+  const keys = new Set([normalized, normalized.replace(/\s+/g, '')]);
+  const tokens = normalized.split(' ').filter(Boolean);
+  if (tokens.length >= 2) {
+    const first = tokens[0];
+    const last = tokens[tokens.length - 1];
+    keys.add(`${first.charAt(0)} ${last}`);
+    keys.add(`${first.charAt(0)}${last}`);
+  }
+  return Array.from(keys);
 }
 
 function normalizeHeader(text) {
@@ -419,6 +494,127 @@ function parseGoaliesCsv(csvText) {
   return goaliesByTeam;
 }
 
+function parseSkatersCsv(csvText) {
+  if (!csvText || typeof csvText !== 'string') {
+    return { league_avg_toi_per_game: null, by_team: {} };
+  }
+
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    return { league_avg_toi_per_game: null, by_team: {} };
+  }
+
+  const headers = parseCsvLine(lines[0]).map((header) =>
+    normalizeHeader(header),
+  );
+  const playerIdx = headers.indexOf('name');
+  const teamIdx = headers.indexOf('team');
+  const situationIdx = headers.indexOf('situation');
+  const gamesPlayedIdx = headers.indexOf('games_played');
+  const icetimeIdx = headers.indexOf('icetime');
+  const pointsIdx = headers.indexOf('i_f_points');
+  const xGoalsForIdx =
+    headers.indexOf('onice_xgoalsfor') >= 0
+      ? headers.indexOf('onice_xgoalsfor')
+      : headers.indexOf('onice_f_xgoals');
+
+  if (
+    playerIdx < 0 ||
+    teamIdx < 0 ||
+    situationIdx < 0 ||
+    gamesPlayedIdx < 0 ||
+    icetimeIdx < 0
+  ) {
+    return { league_avg_toi_per_game: null, by_team: {} };
+  }
+
+  const playerRows = [];
+  for (let i = 1; i < lines.length; i += 1) {
+    const row = parseCsvLine(lines[i]);
+    const situation = String(row[situationIdx] || '')
+      .trim()
+      .toLowerCase();
+    if (situation !== 'all') continue;
+
+    const player = String(row[playerIdx] || '').trim();
+    const teamAbbr = String(row[teamIdx] || '')
+      .trim()
+      .toUpperCase();
+    const canonicalTeam =
+      NHL_ABBR_TO_CANONICAL[teamAbbr] || canonicalizeTeamName(teamAbbr);
+    const gamesPlayed = parseNumber(row[gamesPlayedIdx]);
+    const iceTime = parseNumber(row[icetimeIdx]);
+    if (!player || !canonicalTeam || gamesPlayed === null || gamesPlayed <= 0) {
+      continue;
+    }
+    if (iceTime === null || iceTime <= 0) continue;
+
+    const points = pointsIdx >= 0 ? parseNumber(row[pointsIdx]) : null;
+    const onIceXGoalsFor = xGoalsForIdx >= 0 ? parseNumber(row[xGoalsForIdx]) : null;
+
+    const toiPerGame = iceTime / gamesPlayed;
+    if (!Number.isFinite(toiPerGame) || toiPerGame <= 0) continue;
+
+    playerRows.push({
+      player,
+      team: canonicalTeam,
+      toi_per_game: toiPerGame,
+      points_per_game:
+        points !== null && Number.isFinite(points / gamesPlayed)
+          ? points / gamesPlayed
+          : null,
+      onice_xgf_for_per_game:
+        onIceXGoalsFor !== null && Number.isFinite(onIceXGoalsFor / gamesPlayed)
+          ? onIceXGoalsFor / gamesPlayed
+          : null,
+    });
+  }
+
+  const validToi = playerRows.map((row) => row.toi_per_game).filter(Number.isFinite);
+  const leagueAvgToiPerGame =
+    validToi.length > 0
+      ? validToi.reduce((sum, toi) => sum + toi, 0) / validToi.length
+      : null;
+
+  const byTeam = {};
+  for (const playerRow of playerRows) {
+    const impact =
+      leagueAvgToiPerGame && leagueAvgToiPerGame > 0
+        ? Math.min(
+            SKATER_IMPACT_MAX,
+            Math.max(SKATER_IMPACT_MIN, playerRow.toi_per_game / leagueAvgToiPerGame),
+          )
+        : 1;
+    const teamBucket = byTeam[playerRow.team] || {};
+    for (const key of buildPlayerLookupKeys(playerRow.player)) {
+      teamBucket[key] = {
+        player: playerRow.player,
+        toi_per_game: Number(playerRow.toi_per_game.toFixed(3)),
+        points_per_game:
+          playerRow.points_per_game === null
+            ? null
+            : Number(playerRow.points_per_game.toFixed(3)),
+        onice_xgf_for_per_game:
+          playerRow.onice_xgf_for_per_game === null
+            ? null
+            : Number(playerRow.onice_xgf_for_per_game.toFixed(3)),
+        impact: Number(impact.toFixed(3)),
+      };
+    }
+    byTeam[playerRow.team] = teamBucket;
+  }
+
+  return {
+    league_avg_toi_per_game:
+      leagueAvgToiPerGame === null ? null : Number(leagueAvgToiPerGame.toFixed(3)),
+    by_team: byTeam,
+  };
+}
+
 function buildGoalieCsvCandidates(now = new Date()) {
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth();
@@ -431,6 +627,18 @@ function buildGoalieCsvCandidates(now = new Date()) {
   );
 }
 
+function buildSkaterCsvCandidates(now = new Date()) {
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  const seasonStartYear = month >= 6 ? year : year - 1;
+  const seasons = [...new Set([seasonStartYear, seasonStartYear - 1, year])];
+
+  return seasons.map(
+    (season) =>
+      `https://moneypuck.com/moneypuck/playerData/seasonSummary/${season}/regular/skaters.csv`,
+  );
+}
+
 async function fetchGoaliesCsv() {
   const candidates = buildGoalieCsvCandidates();
 
@@ -438,6 +646,23 @@ async function fetchGoaliesCsv() {
     try {
       const csv = await fetchUrl(url);
       if (csv && csv.includes('team') && csv.includes('xGoals')) {
+        return csv;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+async function fetchSkatersCsv() {
+  const candidates = buildSkaterCsvCandidates();
+
+  for (const url of candidates) {
+    try {
+      const csv = await fetchUrl(url);
+      if (csv && csv.includes('team') && csv.includes('games_played')) {
         return csv;
       }
     } catch {
@@ -731,6 +956,58 @@ function parseInjuries(html) {
   return injuries;
 }
 
+function parseInjuriesCsv(csvText) {
+  if (!csvText || typeof csvText !== 'string') return {};
+
+  const trimmed = csvText.trim();
+  if (!trimmed || /just a moment|cf_chl|enable javascript and cookies/i.test(trimmed)) {
+    return {};
+  }
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return {};
+
+  const headers = parseCsvLine(lines[0]).map((header) => normalizeHeader(header));
+  const playerNameIdx = headers.indexOf('playername');
+  const teamCodeIdx = headers.indexOf('teamcode');
+  const injuryDescriptionIdx = headers.indexOf('yahooinjurydescription');
+  const injuryStatusIdx = headers.indexOf('playerinjurystatus');
+
+  if (playerNameIdx < 0 || teamCodeIdx < 0) return {};
+
+  const injuries = {};
+  for (let i = 1; i < lines.length; i += 1) {
+    const row = parseCsvLine(lines[i]);
+    const player = row[playerNameIdx] ? String(row[playerNameIdx]).trim() : '';
+    const teamCode = row[teamCodeIdx] ? String(row[teamCodeIdx]).trim().toUpperCase() : '';
+    if (!player || !teamCode) continue;
+
+    const canonical = NHL_ABBR_TO_CANONICAL[teamCode] || canonicalizeTeamName(teamCode);
+    if (!canonical) continue;
+
+    const statusCodeRaw = injuryStatusIdx >= 0 ? String(row[injuryStatusIdx] || '').trim() : '';
+    const detailRaw = injuryDescriptionIdx >= 0 ? String(row[injuryDescriptionIdx] || '').trim() : '';
+    const mappedStatus =
+      statusCodeRaw === 'IR-NR'
+        ? 'IR'
+        : statusCodeRaw === 'IR-LT'
+          ? 'IR -LT'
+          : statusCodeRaw;
+
+    if (!injuries[canonical]) injuries[canonical] = [];
+    injuries[canonical].push({
+      player,
+      status: mappedStatus || null,
+      detail: detailRaw || null,
+    });
+  }
+
+  return injuries;
+}
+
 function mergeTeamStats(base, updates) {
   const merged = { ...base };
   for (const [team, data] of Object.entries(updates || {})) {
@@ -779,6 +1056,7 @@ async function fetchMoneyPuckSnapshot({
   let teamsHtml;
   let goaliesHtml;
   let goaliesCsv;
+  let skatersCsv;
   let rotowireGoalies;
   let statsHtml;
   let injuriesHtml;
@@ -789,6 +1067,7 @@ async function fetchMoneyPuckSnapshot({
       teamsHtml,
       goaliesHtml,
       goaliesCsv,
+      skatersCsv,
       rotowireGoalies,
       statsHtml,
       injuriesHtml,
@@ -797,6 +1076,7 @@ async function fetchMoneyPuckSnapshot({
       fetchUrl(MONEYPUCK_URLS.teams),
       fetchUrl(MONEYPUCK_URLS.goalies),
       fetchGoaliesCsv(),
+      fetchSkatersCsv(),
       fetchRotowireGoaliesSnapshot(),
       fetchUrl(MONEYPUCK_URLS.stats),
       fetchUrl(MONEYPUCK_URLS.injuries),
@@ -828,12 +1108,28 @@ async function fetchMoneyPuckSnapshot({
     Object.keys(parsedGoaliesFromHtml).length > 0
       ? parsedGoaliesFromHtml
       : parseGoaliesCsv(goaliesCsv);
-  const injuries = parseInjuries(injuriesHtml);
+  const skaters = parseSkatersCsv(skatersCsv);
+  let injuriesCsv = '';
+  try {
+    injuriesCsv = await fetchUrlWithRetries(MONEYPUCK_URLS.injuriesCsv, {
+      attempts: 4,
+      retryMs: 1500,
+      requireNonChallenge: true,
+    });
+  } catch (err) {
+    console.warn(`[MoneyPuck] Injuries CSV fetch failed: ${err.message}`);
+  }
+  const injuriesFromCsv = parseInjuriesCsv(injuriesCsv);
+  const injuries =
+    Object.keys(injuriesFromCsv).length > 0
+      ? injuriesFromCsv
+      : parseInjuries(injuriesHtml);
 
   const snapshot = {
     fetched_at: new Date().toISOString(),
     teams,
     goalies,
+    skaters,
     rotowire_goalies: rotowireGoalies?.teams || {},
     rotowire_goalies_by_date: rotowireGoalies?.byDate || {},
     injuries,
@@ -902,6 +1198,9 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
   const awayRotowireGoalie = awayRotowireResolution.goalie || {};
   const homeInjuries = snapshot.injuries?.[homeTeam] || [];
   const awayInjuries = snapshot.injuries?.[awayTeam] || [];
+  const homeSkaterImpacts = snapshot.skaters?.by_team?.[homeTeam] || {};
+  const awaySkaterImpacts = snapshot.skaters?.by_team?.[awayTeam] || {};
+  const leagueAvgToiPerGame = snapshot.skaters?.league_avg_toi_per_game ?? null;
 
   const homeGoalieStatus =
     normalizeRotowireGoalieStatus(homeRotowireGoalie.status) ??
@@ -995,6 +1294,19 @@ async function enrichOddsSnapshotWithMoneyPuck(oddsSnapshot, options = {}) {
       ...(rawData.injury_status || {}),
       home: homeInjuries,
       away: awayInjuries,
+    },
+    injury_impact: {
+      ...(rawData.injury_impact || {}),
+      home: {
+        ...((rawData.injury_impact && rawData.injury_impact.home) || {}),
+        league_avg_toi_per_game: leagueAvgToiPerGame,
+        players: homeSkaterImpacts,
+      },
+      away: {
+        ...((rawData.injury_impact && rawData.injury_impact.away) || {}),
+        league_avg_toi_per_game: leagueAvgToiPerGame,
+        players: awaySkaterImpacts,
+      },
     },
   };
 

@@ -79,6 +79,7 @@ module.exports = {
   getPlayerAvailability: db.getPlayerAvailability,
   upsertPlayerPropLine: db.upsertPlayerPropLine,
   getPlayerPropLine: db.getPlayerPropLine,
+  getPlayerPropLinesForGame: db.getPlayerPropLinesForGame,
   
   // Convenience exports - model_outputs
   insertModelOutput: db.insertModelOutput,

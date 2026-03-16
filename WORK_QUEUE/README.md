@@ -4,7 +4,7 @@
 
 ## Active Work Items
 
-**Updated**: 2026-03-13
+**Updated**: 2026-03-16
 
 - `WI-0379`: Canonical Goalie State Object
 - `WI-0380`: Goalie Source Arbitration Layer
@@ -31,6 +31,12 @@
 - `WI-0435`: Projection Contract Alignment (Current API Surfaces, No Rebuild)
 - `WI-0436`: NHL Data Enrichment (Targeted, No Rebuild)
 - `WI-0437`: Soccer Data Hardening (Environment Projector Incremental, No Rebuild)
+- `WI-0471`: Non-Breaking Rollout Foundation (Flags + Basis Contract + Projection Telemetry)
+- `WI-0472`: Phase 1 Low-Volatility Integration (NHL Shots + Soccer Projection Basis)
+- `WI-0473`: Phase 2 Sport+Market Thresholds V2 (Efficiency-Aware Decisioning)
+- `WI-0474`: Phase 3 CLV Ledger Integration for Odds-Backed Markets
+- `WI-0475`: Inefficient Model Replacement Policy + Ops Runbook
+- `WI-0476`: Soccer Team Mapping Alias Coverage for Odds Intake
 
 ## Rules
 

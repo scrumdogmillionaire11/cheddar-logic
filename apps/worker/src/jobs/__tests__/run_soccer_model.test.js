@@ -5,6 +5,9 @@ const {
   normalizeToCanonicalSoccerMarket,
   buildSoccerTier1Payload,
   buildSoccerOddsBackedCard,
+  buildDeterministicSoccerPlayerId,
+  buildSoccerTier1CardFromPropLine,
+  isBlockedSoccerPropPlayer,
 } = require('../run_soccer_model');
 
 function buildOddsSnapshot(overrides = {}) {
@@ -196,6 +199,9 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
         raw_data: {
           league: 'EPL',
           soccer_market: 'player_shots',
+          player_name: 'Erling Haaland',
+          selection_side: 'OVER',
+          line: 2.5,
           price: -130,
           projection_basis: 'shots_per90_3.1_vs_league_avg',
           fair_prob: 0.60,
@@ -214,6 +220,10 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
         'player_shots',
       );
       expect(pass_reason).toBeNull();
+      expect(payloadData.kind).toBe('PLAY');
+      expect(payloadData.market_type).toBe('PROP');
+      expect(payloadData.selection).toEqual({ side: 'OVER', team: 'Erling Haaland' });
+      expect(payloadData.player_name).toBe('Erling Haaland');
       expect(payloadData.eligibility.starter_signal).toBe(true);
       expect(payloadData.eligibility.role_tags).toContain('PRIMARY_VOLUME_SHOOTER');
       const validation = validateCardPayload('soccer-ohio-scope', payloadData);
@@ -227,6 +237,7 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
         raw_data: {
           league: 'EPL',
           soccer_market: 'player_shots',
+          player_name: 'Hwang Hee-chan',
           price: -130,
           projection_basis: 'shots_per90_2.8',
           player_context: { is_starter: false },
@@ -239,6 +250,34 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
       );
       expect(pass_reason).toBe('NO_STARTER_SIGNAL');
       expect(payloadData.missing_context_flags).toContain('starter_signal');
+    });
+  });
+
+  describe('buildSoccerTier1Payload — missing player identity downgrade', () => {
+    test('downgrades player market to INFO when player identity is missing', () => {
+      const snap = buildSoccerOddsSnapshot({
+        raw_data: {
+          league: 'EPL',
+          soccer_market: 'player_shots',
+          price: -120,
+          projection_basis: 'shots_per90_2.7',
+          player_context: {
+            is_starter: true,
+            projected_minutes: 74,
+            role_tags: ['PRIMARY_VOLUME_SHOOTER'],
+          },
+        },
+      });
+
+      const { pass_reason, payloadData } = buildSoccerTier1Payload(
+        snap.game_id,
+        snap,
+        'player_shots',
+      );
+
+      expect(pass_reason).toBe('MISSING_PLAYER_IDENTITY');
+      expect(payloadData.market_type).toBe('INFO');
+      expect(payloadData.missing_context_flags).toContain('player_identity');
     });
   });
 
@@ -278,6 +317,9 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
         raw_data: {
           league: 'EPL',
           soccer_market: 'to_score_or_assist',
+          player_name: 'Bukayo Saka',
+          selection_side: 'OVER',
+          line: 0.5,
           price: -135,
           projection_basis: 'xg_xa_combined_0.60',
           fair_prob: 0.58,
@@ -297,7 +339,39 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
         'to_score_or_assist',
       );
       expect(pass_reason).toBeNull();
+      expect(payloadData.market_type).toBe('PROP');
+      expect(payloadData.selection).toEqual({ side: 'OVER', team: 'Bukayo Saka' });
+      expect(payloadData.player_name).toBe('Bukayo Saka');
       expect(payloadData.eligibility.role_tags).toContain('TERMINAL_NODE');
+      const validation = validateCardPayload('soccer-ohio-scope', payloadData);
+      expect(validation.success).toBe(true);
+    });
+  });
+
+  describe('buildSoccerTier1Payload — team_totals mapping for games contract', () => {
+    test('emits TEAM_TOTAL market_type with OVER/UNDER selection', () => {
+      const snap = buildSoccerOddsSnapshot({
+        raw_data: {
+          league: 'EPL',
+          soccer_market: 'team_totals',
+          team: 'Chelsea FC',
+          selection_side: 'UNDER',
+          line: 'u2.5',
+          price: -105,
+          projection_basis: 'implied_team_lambda_1.21',
+          fair_prob: 0.56,
+          implied_prob: 0.512,
+        },
+      });
+
+      const { payloadData } = buildSoccerTier1Payload(
+        snap.game_id,
+        snap,
+        'team_totals',
+      );
+
+      expect(payloadData.market_type).toBe('TEAM_TOTAL');
+      expect(payloadData.selection).toEqual({ side: 'UNDER', team: 'Chelsea FC' });
       const validation = validateCardPayload('soccer-ohio-scope', payloadData);
       expect(validation.success).toBe(true);
     });
@@ -487,5 +561,105 @@ describe('Track 2 projection-only cards', () => {
     };
     const v = validateCardPayload('soccer-ohio-scope', payload);
     expect(v.success).toBe(true);
+  });
+});
+
+describe('soccer tier-1 prop line identity mapping', () => {
+  test('buildDeterministicSoccerPlayerId is stable for same game + player', () => {
+    const first = buildDeterministicSoccerPlayerId({
+      gameId: 'soccer-game-identity-001',
+      playerName: 'Bryan Mbeumo',
+    });
+    const second = buildDeterministicSoccerPlayerId({
+      gameId: 'soccer-game-identity-001',
+      playerName: 'Bryan Mbeumo',
+    });
+
+    expect(first).toBe(second);
+    expect(first.startsWith('soccer-')).toBe(true);
+  });
+
+  test('buildSoccerTier1CardFromPropLine emits PROP payload with player identity', () => {
+    const snap = buildOddsSnapshot({
+      game_id: 'soccer-game-identity-002',
+      home_team: 'Brentford',
+      away_team: 'Wolverhampton Wanderers',
+      game_time_utc: '2026-03-16T20:00:00.000Z',
+    });
+
+    const card = buildSoccerTier1CardFromPropLine(
+      'soccer-game-identity-002',
+      snap,
+      {
+        player_name: 'Bryan Mbeumo',
+        prop_type: 'player_shots',
+        period: 'full_game',
+        line: 1.5,
+        over_price: -110,
+        under_price: -120,
+      },
+    );
+
+    expect(card).toBeTruthy();
+    expect(card.payloadData.market_type).toBe('PROP');
+    expect(card.payloadData.player_name).toBe('Bryan Mbeumo');
+    expect(card.payloadData.player_id).toBeTruthy();
+    expect(card.payloadData.selection).toEqual({
+      side: 'OVER',
+      team: 'Bryan Mbeumo',
+    });
+
+    const validation = validateCardPayload('soccer-ohio-scope', card.payloadData);
+    expect(validation.success).toBe(true);
+  });
+
+  test('blocks known stale-team player props by default', () => {
+    expect(isBlockedSoccerPropPlayer('Matheus Cunha')).toBe(true);
+
+    const snap = buildOddsSnapshot({
+      game_id: 'soccer-game-identity-003',
+      home_team: 'Brentford',
+      away_team: 'Wolverhampton Wanderers',
+      game_time_utc: '2026-03-16T20:00:00.000Z',
+    });
+
+    const card = buildSoccerTier1CardFromPropLine(
+      'soccer-game-identity-003',
+      snap,
+      {
+        player_name: 'Matheus Cunha',
+        prop_type: 'player_shots',
+        period: 'full_game',
+        line: 1.5,
+        over_price: -110,
+        under_price: -120,
+      },
+    );
+
+    expect(card).toBeNull();
+  });
+
+  test('skips unrealistic high player_shots lines', () => {
+    const snap = buildOddsSnapshot({
+      game_id: 'soccer-game-identity-004',
+      home_team: 'Brentford',
+      away_team: 'Wolverhampton Wanderers',
+      game_time_utc: '2026-03-16T20:00:00.000Z',
+    });
+
+    const card = buildSoccerTier1CardFromPropLine(
+      'soccer-game-identity-004',
+      snap,
+      {
+        player_name: 'Bryan Mbeumo',
+        prop_type: 'player_shots',
+        period: 'full_game',
+        line: 6.0,
+        over_price: -110,
+        under_price: -120,
+      },
+    );
+
+    expect(card).toBeNull();
   });
 });

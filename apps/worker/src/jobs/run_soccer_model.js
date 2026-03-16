@@ -18,6 +18,7 @@
 
 require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
+const crypto = require('crypto');
 
 // ============================================================================
 // Ohio soccer market scope constants
@@ -26,6 +27,8 @@ const OHIO_TIER1_MARKETS = new Set([
   'player_shots',
   'team_totals',
   'to_score_or_assist',
+]);
+const OHIO_ODDS_BACKED_MARKETS = new Set([
   'soccer_ml',
   'soccer_game_total',
   'soccer_double_chance',
@@ -65,6 +68,39 @@ const TSOA_QUALIFYING_ROLE_TAGS = new Set([
   'PRIMARY_CREATOR',
   'SET_PIECE_ROLE',
 ]);
+const SOCCER_TIER1_PROP_TYPES = ['player_shots', 'to_score_or_assist'];
+const DEFAULT_SOCCER_PROP_PLAYER_BLOCKLIST = ['matheus cunha'];
+const SOCCER_PLAYER_SHOTS_MIN_LINE = Number(
+  process.env.SOCCER_PLAYER_SHOTS_MIN_LINE || 0.5,
+);
+const SOCCER_PLAYER_SHOTS_MAX_LINE = Number(
+  process.env.SOCCER_PLAYER_SHOTS_MAX_LINE || 3.5,
+);
+const SOCCER_TIER1_PROP_MAX_CARDS_PER_GAME = Number(
+  process.env.SOCCER_TIER1_PROP_MAX_CARDS_PER_GAME || 12,
+);
+
+function normalizePlayerToken(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function getSoccerPropPlayerBlocklist() {
+  const raw = process.env.SOCCER_PROP_PLAYER_BLOCKLIST;
+  const source =
+    typeof raw === 'string' && raw.trim().length > 0
+      ? raw.split(',')
+      : DEFAULT_SOCCER_PROP_PLAYER_BLOCKLIST;
+  return new Set(source.map((entry) => normalizePlayerToken(entry)).filter(Boolean));
+}
+
+function isBlockedSoccerPropPlayer(playerName) {
+  const normalized = normalizePlayerToken(playerName);
+  if (!normalized) return false;
+  return getSoccerPropPlayerBlocklist().has(normalized);
+}
 
 /**
  * Normalize a raw market key string to its canonical Ohio soccer market key.
@@ -84,7 +120,11 @@ function normalizeToCanonicalSoccerMarket(rawKey) {
     return ODDS_API_MARKET_MAP[normalized];
   }
 
-  if (OHIO_TIER1_MARKETS.has(normalized) || OHIO_TIER2_MARKETS.has(normalized)) {
+  if (
+    OHIO_TIER1_MARKETS.has(normalized) ||
+    OHIO_ODDS_BACKED_MARKETS.has(normalized) ||
+    OHIO_TIER2_MARKETS.has(normalized)
+  ) {
     return normalized;
   }
 
@@ -175,6 +215,17 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
   // ------------------------------------------------------------------
   let line = null;
   let eligibility = undefined;
+  let market_type = 'INFO';
+  let selection = null;
+  let player_name = null;
+  let team_abbr = null;
+
+  const normalizeSelectionSide = (value) => {
+    if (!value) return null;
+    const upper = String(value).trim().toUpperCase();
+    if (upper === 'OVER' || upper === 'UNDER') return upper;
+    return null;
+  };
 
   if (canonicalMarket === 'team_totals') {
     // Line validation
@@ -188,6 +239,13 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
       missing_context_flags.push('line');
     }
 
+    market_type = 'TEAM_TOTAL';
+    selection = {
+      side: normalizeSelectionSide(rawData.selection_side ?? rawData.selection ?? 'OVER') || 'OVER',
+      team: rawData.team ?? homeTeam ?? null,
+    };
+    team_abbr = typeof rawData.team_abbr === 'string' ? rawData.team_abbr : null;
+
     if (missing_context_flags.includes('line')) {
       pass_reason = 'MISSING_LINE';
     } else if (missing_context_flags.includes('price')) {
@@ -196,6 +254,14 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
   } else if (TIER1_PLAYER_MARKETS.has(canonicalMarket)) {
     // Player context
     const playerCtx = rawData.player_context || {};
+    player_name =
+      (typeof rawData.player_name === 'string' && rawData.player_name.trim()) ||
+      (typeof playerCtx.player_name === 'string' && playerCtx.player_name.trim()) ||
+      null;
+    team_abbr =
+      (typeof rawData.team_abbr === 'string' && rawData.team_abbr.trim()) ||
+      (typeof playerCtx.team_abbr === 'string' && playerCtx.team_abbr.trim()) ||
+      null;
     const starterSignal = playerCtx.is_starter === true;
     const projMinutes =
       typeof playerCtx.projected_minutes === 'number'
@@ -218,6 +284,12 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
       proj_minutes: projMinutes,
       role_tags: roleTags,
       per90_hints: per90Hints,
+    };
+
+    market_type = 'PROP';
+    selection = {
+      side: normalizeSelectionSide(rawData.selection_side ?? rawData.selection ?? 'OVER') || 'OVER',
+      team: player_name,
     };
 
     if (!starterSignal) {
@@ -249,6 +321,13 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
     }
   } else if (canonicalMarket === 'player_shots_on_target') {
     // Tier 2: only emit when shots unavailable or poor-priced and price cap passes
+    market_type = 'PROP';
+    selection = {
+      side: normalizeSelectionSide(rawData.selection_side ?? rawData.selection ?? 'OVER') || 'OVER',
+      team:
+        (rawData.player_name && String(rawData.player_name).trim()) ||
+        null,
+    };
     if (price === null || price < -130) {
       if (!pass_reason) pass_reason = 'TIER2_NOT_QUALIFIED';
     }
@@ -256,6 +335,19 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
     const playerCtx = rawData.player_context || {};
     const roleTags = Array.isArray(playerCtx.role_tags) ? playerCtx.role_tags : [];
     const isTerminalNode = roleTags.includes('TERMINAL_NODE');
+    market_type = 'PROP';
+    player_name =
+      (typeof rawData.player_name === 'string' && rawData.player_name.trim()) ||
+      (typeof playerCtx.player_name === 'string' && playerCtx.player_name.trim()) ||
+      null;
+    team_abbr =
+      (typeof rawData.team_abbr === 'string' && rawData.team_abbr.trim()) ||
+      (typeof playerCtx.team_abbr === 'string' && playerCtx.team_abbr.trim()) ||
+      null;
+    selection = {
+      side: normalizeSelectionSide(rawData.selection_side ?? rawData.selection ?? 'OVER') || 'OVER',
+      team: player_name,
+    };
     if (!isTerminalNode || price === null || price <= 180) {
       if (!pass_reason) pass_reason = 'TIER2_NOT_QUALIFIED';
     }
@@ -266,10 +358,30 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
       per90_hints: {},
     };
   } else if (canonicalMarket === 'team_corners') {
+    market_type = 'TEAM_TOTAL';
+    selection = {
+      side: normalizeSelectionSide(rawData.selection_side ?? rawData.selection ?? 'OVER') || 'OVER',
+      team: rawData.team ?? homeTeam ?? null,
+    };
+    team_abbr = typeof rawData.team_abbr === 'string' ? rawData.team_abbr : null;
     const extremeMismatch = rawData.extreme_mismatch === true;
     const cornersDataAvailable = rawData.corners_data_available === true;
     if (!extremeMismatch || !cornersDataAvailable) {
       if (!pass_reason) pass_reason = 'TIER2_NOT_QUALIFIED';
+    }
+  }
+
+  const isPlayerMarket =
+    canonicalMarket === 'player_shots' ||
+    canonicalMarket === 'to_score_or_assist' ||
+    canonicalMarket === 'player_shots_on_target' ||
+    canonicalMarket === 'anytime_goalscorer';
+
+  if (isPlayerMarket && !player_name) {
+    missing_context_flags.push('player_identity');
+    market_type = 'INFO';
+    if (!pass_reason) {
+      pass_reason = 'MISSING_PLAYER_IDENTITY';
     }
   }
 
@@ -284,6 +396,8 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
   const payloadData = {
     canonical_market_key: canonicalMarket,
     market_family: marketFamily,
+    kind: 'PLAY',
+    market_type,
     sport: 'SOCCER',
     game_id: gameId,
     home_team: homeTeam,
@@ -297,6 +411,9 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
     edge_ev,
     price,
     line: line || null,
+    selection,
+    player_name,
+    team_abbr,
     ...(eligibility !== undefined ? { eligibility } : {}),
     projection_context: {
       source: rawData.projection_source || 'odds_snapshot',
@@ -435,7 +552,9 @@ const {
   markJobRunFailure,
   setCurrentRunId,
   getOddsWithUpcomingGames,
+  getPlayerPropLinesForGame,
   insertCardPayload,
+  deleteCardPayloadsForGame,
   validateCardPayload,
   shouldRunJobKey,
   withDb,
@@ -532,6 +651,148 @@ function deriveConfidence({ h2hHome, h2hAway, winProbHome }) {
   }
 
   return 0.55;
+}
+
+function buildDeterministicSoccerPlayerId({ gameId, playerName }) {
+  const normalizedName = String(playerName || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  const digest = crypto
+    .createHash('sha256')
+    .update(`SOCCER|${String(gameId || '').trim()}|${normalizedName}`)
+    .digest('hex');
+  return `soccer-${digest.slice(0, 16)}`;
+}
+
+function getPreferredPriceAndSelection(propLineRow) {
+  const overPrice = Number.isFinite(propLineRow?.over_price)
+    ? Math.trunc(propLineRow.over_price)
+    : null;
+  const underPrice = Number.isFinite(propLineRow?.under_price)
+    ? Math.trunc(propLineRow.under_price)
+    : null;
+
+  if (overPrice !== null) {
+    return { price: overPrice, selectionSide: 'OVER' };
+  }
+  if (underPrice !== null) {
+    return { price: underPrice, selectionSide: 'UNDER' };
+  }
+  return { price: null, selectionSide: null };
+}
+
+function isTier1PriceCapValid(canonicalMarket, price) {
+  if (!Number.isFinite(price)) return false;
+  if (canonicalMarket === 'player_shots') return price >= -150;
+  if (canonicalMarket === 'to_score_or_assist') return price >= -140;
+  return true;
+}
+
+function isReasonableSoccerTier1Line(canonicalMarket, line) {
+  if (!Number.isFinite(line)) return false;
+  if (canonicalMarket === 'player_shots') {
+    return line >= SOCCER_PLAYER_SHOTS_MIN_LINE && line <= SOCCER_PLAYER_SHOTS_MAX_LINE;
+  }
+  if (canonicalMarket === 'to_score_or_assist') {
+    return line === 0.5;
+  }
+  return true;
+}
+
+function estimateSoccerPropPriorityScore(card) {
+  const price = Number.isFinite(card?.payloadData?.price) ? card.payloadData.price : null;
+  const line = Number.isFinite(card?.payloadData?.line) ? card.payloadData.line : null;
+  const impliedProb = price !== null ? toImpliedProbability(price) : 0;
+  const linePenalty = line !== null ? line * 0.01 : 0;
+  return impliedProb - linePenalty;
+}
+
+function buildSoccerTier1CardFromPropLine(gameId, oddsSnapshot, propLineRow) {
+  const canonicalMarket = String(propLineRow?.prop_type || '').trim();
+  if (!SOCCER_TIER1_PROP_TYPES.includes(canonicalMarket)) {
+    return null;
+  }
+
+  const playerName = String(propLineRow?.player_name || '').trim();
+  if (!playerName) {
+    return null;
+  }
+
+  if (isBlockedSoccerPropPlayer(playerName)) {
+    return null;
+  }
+
+  const line = Number.isFinite(propLineRow?.line) ? propLineRow.line : null;
+  if (line === null) {
+    return null;
+  }
+
+  if (!isReasonableSoccerTier1Line(canonicalMarket, line)) {
+    return null;
+  }
+
+  const { price, selectionSide } = getPreferredPriceAndSelection(propLineRow);
+  if (price === null || !selectionSide) {
+    return null;
+  }
+
+  if (!isTier1PriceCapValid(canonicalMarket, price)) {
+    return null;
+  }
+
+  const impliedProbability = toImpliedProbability(price);
+  const nowIso = new Date().toISOString();
+  const cardId = `card-soccer-tier1-prop-${gameId}-${canonicalMarket}-${buildDeterministicSoccerPlayerId({ gameId, playerName }).slice(-8)}-${uuidV4().slice(0, 6)}`;
+  const payloadData = {
+    canonical_market_key: canonicalMarket,
+    market_family: 'tier1',
+    kind: 'PLAY',
+    market_type: 'PROP',
+    sport: 'SOCCER',
+    game_id: gameId,
+    home_team: oddsSnapshot?.home_team || null,
+    away_team: oddsSnapshot?.away_team || null,
+    matchup:
+      oddsSnapshot?.home_team && oddsSnapshot?.away_team
+        ? `${oddsSnapshot.home_team} vs ${oddsSnapshot.away_team}`
+        : null,
+    start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+    generated_at: nowIso,
+    missing_context_flags: [],
+    pass_reason: null,
+    projection_basis: 'market_line_observed',
+    edge_ev:
+      impliedProbability !== null
+        ? 0.0001
+        : null,
+    price,
+    line,
+    selection: {
+      side: selectionSide,
+      team: playerName,
+    },
+    player_name: playerName,
+    player_id: buildDeterministicSoccerPlayerId({ gameId, playerName }),
+    team_abbr: null,
+    projection_context: {
+      source: 'player_prop_lines',
+      available: true,
+      missing_fields: [],
+    },
+  };
+
+  return {
+    id: cardId,
+    gameId,
+    sport: 'SOCCER',
+    cardType: 'soccer-ohio-scope',
+    cardTitle: `Soccer Tier1: ${canonicalMarket}`,
+    createdAt: nowIso,
+    expiresAt: null,
+    payloadData,
+    modelOutputIds: null,
+  };
 }
 
 /**
@@ -765,6 +1026,67 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
       for (const gameId of gameIds) {
         try {
           const oddsSnapshot = gameOdds[gameId];
+
+          // Ensure stale projection/prop cards from prior runs do not linger.
+          // This keeps player-prop output aligned to current ingest snapshot.
+          deleteCardPayloadsForGame(gameId, 'soccer-ohio-scope');
+
+          const propRows = getPlayerPropLinesForGame(
+            'SOCCER',
+            gameId,
+            SOCCER_TIER1_PROP_TYPES,
+          );
+
+          const propCards = [];
+          for (const propRow of propRows) {
+            try {
+              const propCard = buildSoccerTier1CardFromPropLine(
+                gameId,
+                oddsSnapshot,
+                propRow,
+              );
+              if (!propCard) continue;
+
+              const propValidation = validateCardPayload(
+                propCard.cardType,
+                propCard.payloadData,
+              );
+              if (!propValidation.success) {
+                continue;
+              }
+
+              propCards.push(propCard);
+            } catch (propCardError) {
+              console.error(
+                `  [error] Track1 ${gameId} [prop-line]: ${propCardError.message}`,
+              );
+            }
+          }
+
+          const prioritizedPropCards = propCards
+            .sort((left, right) => {
+              return estimateSoccerPropPriorityScore(right) - estimateSoccerPropPriorityScore(left);
+            })
+            .slice(0, SOCCER_TIER1_PROP_MAX_CARDS_PER_GAME);
+
+          if (propCards.length > prioritizedPropCards.length) {
+            console.log(
+              `  [info] Track1 ${gameId} trimmed soccer tier1 props ${propCards.length} -> ${prioritizedPropCards.length}`,
+            );
+          }
+
+          for (const propCard of prioritizedPropCards) {
+            publishDecisionForCard({ card: propCard, oddsSnapshot });
+            applyUiActionFields(propCard.payloadData);
+            attachRunId(propCard, jobRunId);
+            insertCardPayload(propCard);
+            cardsGenerated++;
+            track1Cards++;
+            console.log(
+              `  [ok] Track1 ${gameId} [${propCard.payloadData.canonical_market_key}] ${propCard.payloadData.player_name}`,
+            );
+          }
+
           const rawData = parseRawData(oddsSnapshot?.raw_data) || {};
           // Check both raw_data.market (odds API market key) and raw_data.soccer_market (projection key)
           const rawMarket = rawData.market ?? rawData.soccer_market ?? null;
@@ -777,6 +1099,9 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
             // New odds-backed card types
             card = buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalMarket);
           } else if (canonicalMarket && PROJECTION_MARKET_TYPES.has(canonicalMarket)) {
+            if (TIER1_PLAYER_MARKETS.has(canonicalMarket)) {
+              card = generateSoccerCard(gameId, oddsSnapshot);
+            } else {
             // Projection-only player markets found in odds snapshot raw_data
             const tier1Result = buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket);
             const cardId = `card-soccer-ohio-${gameId}-${uuidV4().slice(0, 8)}`;
@@ -791,6 +1116,7 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
               payloadData: tier1Result.payloadData,
               modelOutputIds: null,
             };
+            }
           } else {
             // Fallback to legacy soccer-model-output moneyline card
             card = generateSoccerCard(gameId, oddsSnapshot);
@@ -921,4 +1247,7 @@ module.exports = {
   normalizeToCanonicalSoccerMarket,
   buildSoccerTier1Payload,
   buildSoccerOddsBackedCard,
+  buildDeterministicSoccerPlayerId,
+  buildSoccerTier1CardFromPropLine,
+  isBlockedSoccerPropPlayer,
 };
