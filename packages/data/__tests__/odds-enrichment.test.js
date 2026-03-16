@@ -48,10 +48,17 @@ describe('Odds Enrichment Persistence', () => {
     // Insert a test odds snapshot
     const db = dbModule.getDatabase();
     
-    // Clean up any existing test data
+    // Clean up any existing test data (child tables first to satisfy FK constraints)
     db.prepare('DELETE FROM odds_snapshots WHERE game_id = ?').run(TEST_GAME_ID);
     db.prepare('DELETE FROM games WHERE game_id = ?').run(TEST_GAME_ID);
-    
+    db.prepare('DELETE FROM job_runs WHERE id = ?').run('test-job');
+
+    // Insert prerequisite job_run record (required by odds_snapshots FK constraint)
+    db.prepare(`
+      INSERT OR IGNORE INTO job_runs (id, job_name, status, started_at)
+      VALUES ('test-job', 'test', 'success', CURRENT_TIMESTAMP)
+    `).run();
+
     // Insert test game
     db.prepare(`
       INSERT INTO games (game_id, sport, home_team, away_team, game_time_utc, status)
@@ -61,7 +68,7 @@ describe('Odds Enrichment Persistence', () => {
     // Insert test odds snapshot directly with SQL to ensure it works
     const snapshotId = `${TEST_GAME_ID}-snapshot-${Date.now()}`;
     const capturedAt = new Date().toISOString();
-    
+
     const insertResult = db.prepare(`
       INSERT INTO odds_snapshots (
         id, game_id, sport, captured_at, h2h_home, h2h_away, total,
