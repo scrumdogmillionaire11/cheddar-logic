@@ -1,19 +1,19 @@
 /**
  * Dual-Database Initialization Module
- * 
+ *
  * Separates "record" (reference) database from "local" (state) database.
- * 
+ *
  * RECORD DATABASE (Read-only reference - shared across environments):
  *   - games
- *   - odds_snapshots  
+ *   - odds_snapshots
  *   - card_payloads (plays)
  *   - tracking_stats (canonical)
- * 
+ *
  * LOCAL DATABASE (Environment-specific state - per-instance):
  *   - card_results (settlement per environment)
  *   - game_results (settlement per environment)
  *   - job_runs (environment logs)
- * 
+ *
  * Usage:
  *   const { initDualDb, getDb } = require('./db-dual-init');
  *   await initDualDb({
@@ -23,11 +23,10 @@
  *   const db = getDb('record'); // or 'local' or 'auto' (routes based on table)
  */
 
-const initSqlJsLib = require('sql.js/dist/sql-asm.js');
+const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
 
-let SQL = null;
 let recordDb = null;
 let localDb = null;
 let recordPath = null;
@@ -52,85 +51,59 @@ const LOCAL_TABLES = new Set([
 ]);
 
 /**
- * Initialize SQL.js
+ * Load a database file with better-sqlite3.
+ * @param {string} filePath
+ * @param {boolean} [readonly=false]
  */
-async function initSqlJs() {
-  if (SQL) return SQL;
-  SQL = await initSqlJsLib();
-  return SQL;
-}
-
-/**
- * Load a database file
- */
-function loadDbFile(filePath) {
+function loadDbFile(filePath, readonly) {
   if (!filePath) {
-    console.warn(`[DB-Dual] Missing file path. Creating empty in-memory database.`);
-    if (!SQL) throw new Error('SQL.js not initialized. Call initSqlJs() first.');
-    return new SQL.Database();
+    throw new Error('[DB-Dual] Missing file path.');
   }
 
-  if (!fs.existsSync(filePath)) {
+  if (readonly === undefined) {
+    readonly = false;
+  }
+
+  const dir = path.dirname(filePath);
+  if (!readonly && !fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  if (!fs.existsSync(filePath) && readonly) {
     console.warn(`[DB-Dual] File does not exist: ${filePath}. Creating empty database.`);
-    if (!SQL) throw new Error('SQL.js not initialized. Call initSqlJs() first.');
-    return new SQL.Database();
+    // Create the file first so better-sqlite3 can open it read-only after
+    const tmpDb = new Database(filePath);
+    tmpDb.close();
   }
 
   try {
-    const buffer = fs.readFileSync(filePath);
-    if (!SQL) throw new Error('SQL.js not initialized. Call initSqlJs() first.');
-    return new SQL.Database(buffer);
+    const db = new Database(filePath, { readonly });
+    if (!readonly) {
+      db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+    } else {
+      db.pragma('foreign_keys = ON');
+    }
+    return db;
   } catch (e) {
     console.error(`[DB-Dual] Could not load ${filePath}: ${e.message}`);
-    if (!SQL) throw new Error('SQL.js not initialized. Call initSqlJs() first.');
-    return new SQL.Database();
-  }
-}
-
-/**
- * Save a database file atomically.
- *
- * Write to a sibling .tmp file first, then rename() into place.
- * rename() is atomic on Linux/POSIX so concurrent readers always see a
- * complete (old or new) file, never a torn partial write.
- */
-function saveDbFile(db, filePath) {
-  if (!db || !filePath) return;
-
-  try {
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    const data = db.export();
-    const buffer = Buffer.from(data);
-    const tmpPath = filePath + '.tmp';
-    fs.writeFileSync(tmpPath, buffer);
-    fs.renameSync(tmpPath, filePath);
-  } catch (e) {
-    console.error(`[DB-Dual] Failed to save ${filePath}: ${e.message}`);
     throw e;
   }
 }
 
 /**
- * Initialize dual-database mode
- * 
+ * Initialize dual-database mode.
+ * Preserved as async for caller back-compat; opens both DBs synchronously internally.
+ *
  * @param {object} options
  * @param {string} options.recordDbPath - Path to shared record database (read-only)
  * @param {string} options.localDbPath - Path to local state database (writable)
  * @returns {Promise<void>}
  */
-async function initDualDb(options = {}) {
+async function initDualDb(options) {
+  if (options === undefined) options = {};
   console.log(`[DB-Dual] Initializing dual-database mode...`);
-  
-  // Initialize SQL.js
-  if (!SQL) {
-    await initSqlJs();
-  }
 
-  // Validate paths
   if (!options.recordDbPath) {
     throw new Error('[DB-Dual] recordDbPath is required');
   }
@@ -141,33 +114,33 @@ async function initDualDb(options = {}) {
   recordPath = options.recordDbPath;
   localPath = options.localDbPath;
 
-  // Load databases
   console.log(`[DB-Dual] Loading record database from ${recordPath}...`);
-  recordDb = loadDbFile(recordPath);
+  recordDb = loadDbFile(recordPath, true);
 
   console.log(`[DB-Dual] Loading local database from ${localPath}...`);
-  localDb = loadDbFile(localPath);
+  localDb = loadDbFile(localPath, false);
 
   dualModeActive = true;
-  console.log(`[DB-Dual] ✅ Dual-database mode active`);
+  console.log(`[DB-Dual] Dual-database mode active`);
   console.log(`[DB-Dual]   Record (read-only): ${recordPath}`);
   console.log(`[DB-Dual]   Local (writable): ${localPath}`);
 }
 
 /**
- * Check if dual-mode is active
+ * Check if dual-mode is active.
  */
 function isDualModeActive() {
   return dualModeActive;
 }
 
 /**
- * Get a database instance
- * 
+ * Get a database instance.
+ *
  * @param {string} mode - 'record' | 'local' | 'auto' (default: 'auto')
- * @returns {DatabaseWrapper} Wrapper around SQL.js database
+ * @returns {DatabaseWrapper|AutoRoutingDb}
  */
-function getDb(mode = 'auto') {
+function getDb(mode) {
+  if (mode === undefined) mode = 'auto';
   if (!dualModeActive) {
     throw new Error('[DB-Dual] Dual-database mode not initialized. Call initDualDb() first.');
   }
@@ -190,67 +163,8 @@ function getDb(mode = 'auto') {
 }
 
 /**
- * Statement wrapper (mimics better-sqlite3)
- */
-class Statement {
-  constructor(db, query, mode, filePath) {
-    this.db = db;
-    this.query = query;
-    this.mode = mode;
-    this._filePath = filePath;
-    this.stmt = db.prepare(query);
-  }
-
-  run(...params) {
-    if (this.mode === 'record') {
-      throw new Error(`[DB-Dual] Cannot write to record database. Query: ${this.query}`);
-    }
-
-    try {
-      this.stmt.bind(params);
-      this.stmt.step();
-      this.stmt.reset();
-      // Persist to disk after every write (sql.js is in-memory; must flush explicitly)
-      if (this._filePath) {
-        saveDbFile(this.db, this._filePath);
-      }
-      return { changes: this.db.getRowsModified() };
-    } catch (e) {
-      throw new Error(`Statement run error: ${e?.message ?? String(e)}`);
-    }
-  }
-
-  get(...params) {
-    try {
-      this.stmt.bind(params);
-      let result = null;
-      if (this.stmt.step()) {
-        result = this.stmt.getAsObject();
-      }
-      this.stmt.reset();
-      return result;
-    } catch (e) {
-      throw new Error(`Statement get error: ${e?.message ?? String(e)}`);
-    }
-  }
-
-  all(...params) {
-    try {
-      this.stmt.bind(params);
-      const results = [];
-      while (this.stmt.step()) {
-        results.push(this.stmt.getAsObject());
-      }
-      this.stmt.reset();
-      return results;
-    } catch (e) {
-      throw new Error(`Statement all error: ${e?.message ?? String(e)}`);
-    }
-  }
-}
-
-/**
- * Database wrapper
+ * Database wrapper.
+ * Provides write-guard on the record (read-only) database.
  */
 class DatabaseWrapper {
   constructor(db, mode, filePath) {
@@ -260,50 +174,64 @@ class DatabaseWrapper {
   }
 
   prepare(query) {
-    return new Statement(this._db, query, this._mode, this._filePath);
+    if (this._mode === 'record') {
+      return new RecordStatement(this._db, query);
+    }
+    return this._db.prepare(query);
   }
 
   exec(sql) {
     if (this._mode === 'record') {
       throw new Error('[DB-Dual] Cannot execute on record database');
     }
-
-    try {
-      this._db.run(sql);
-      this._save();
-    } catch (e) {
-      throw new Error(`Exec error: ${e.message}`);
-    }
-  }
-
-  _save() {
-    if (this._filePath && this._mode !== 'record') {
-      saveDbFile(this._db, this._filePath);
-    }
+    this._db.exec(sql);
   }
 
   getRowsModified() {
-    return this._db.getRowsModified();
+    // Legacy shim. Callers should use stmt.run().changes from better-sqlite3.
+    return 0;
   }
 
   save() {
-    this._save();
+    // No-op: better-sqlite3 writes directly to disk.
   }
 }
 
 /**
- * Auto-routing database
- * Automatically selects record or local DB based on table name
+ * Statement shim that blocks writes on the record database.
+ */
+class RecordStatement {
+  constructor(db, query) {
+    this._stmt = db.prepare(query);
+    this._query = query;
+  }
+
+  run() {
+    throw new Error(`[DB-Dual] Cannot write to record database. Query: ${this._query}`);
+  }
+
+  get(...params) {
+    return this._stmt.get(...params);
+  }
+
+  all(...params) {
+    return this._stmt.all(...params);
+  }
+}
+
+/**
+ * Auto-routing database.
+ * Automatically selects record or local DB based on table name.
  */
 class AutoRoutingDb {
-  constructor(recordDb, localDb, recordPath, localPath) {
-    this.recordDb = new DatabaseWrapper(recordDb, 'record', recordPath);
-    this.localDb = new DatabaseWrapper(localDb, 'local', localPath);
+  constructor(recordDbInstance, localDbInstance, recPath, locPath) {
+    this.recordDb = new DatabaseWrapper(recordDbInstance, 'record', recPath);
+    this.localDb = new DatabaseWrapper(localDbInstance, 'local', locPath);
   }
 
   prepare(query) {
     const tableName = this._extractTableName(query);
-    
+
     if (RECORD_TABLES.has(tableName)) {
       return this.recordDb.prepare(query);
     }
@@ -324,11 +252,10 @@ class AutoRoutingDb {
     if (pragmaMatch) return pragmaMatch[1].toLowerCase();
 
     // sqlite_master queries checking for a specific table name in WHERE clause
-    // e.g. SELECT name FROM sqlite_master WHERE type='table' AND name='games'
     if (/sqlite_master/i.test(q)) {
       const nameMatch = q.match(/name\s*=\s*['"](\w+)['"]/i);
       if (nameMatch) return nameMatch[1].toLowerCase();
-      // Generic sqlite_master query (e.g. listing all tables) — use record DB
+      // Generic sqlite_master query — use record DB
       return 'games';
     }
 
@@ -347,8 +274,7 @@ class AutoRoutingDb {
   }
 
   saveAll() {
-    this.recordDb.save();
-    this.localDb.save();
+    // No-op: better-sqlite3 writes directly to disk.
   }
 
   getRecordDb() {
@@ -361,14 +287,21 @@ class AutoRoutingDb {
 }
 
 /**
- * Graceful shutdown
+ * No-op: preserved for back-compat.
+ * better-sqlite3 does not require async initialization.
+ */
+async function initSqlJs() {
+  // No-op.
+}
+
+/**
+ * Graceful shutdown.
  */
 function closeDualDb() {
   console.log('[DB-Dual] Closing databases...');
-  
+
   try {
     if (recordDb) {
-      // Do NOT save record DB — it is read-only and must never be written back
       recordDb.close();
       recordDb = null;
     }
@@ -378,7 +311,6 @@ function closeDualDb() {
 
   try {
     if (localDb) {
-      saveDbFile(localDb, localPath);
       localDb.close();
       localDb = null;
     }
@@ -387,7 +319,7 @@ function closeDualDb() {
   }
 
   dualModeActive = false;
-  console.log('[DB-Dual] ✅ Databases closed');
+  console.log('[DB-Dual] Databases closed');
 }
 
 module.exports = {
