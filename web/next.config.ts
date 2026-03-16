@@ -19,7 +19,25 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(__dirname, ".."),
   // Prevent webpack from bundling native/CJS packages used in server components.
   // sql.js unconditionally assigns to module.exports, which fails when bundled.
+  // serverExternalPackages only works for packages resolved via node_modules by
+  // name; @cheddar-logic/data is a local workspace package resolved to a file
+  // path, so we also need a webpack externals function to catch sql.js directly.
   serverExternalPackages: ["sql.js", "@cheddar-logic/data"],
+  webpack(config, { isServer }) {
+    if (isServer) {
+      const existing = Array.isArray(config.externals) ? config.externals : [];
+      config.externals = [
+        ...existing,
+        ({ request }: { request?: string }, callback: (err?: Error | null, result?: string) => void) => {
+          if (request && /^sql\.js(\/|$)/.test(request)) {
+            return callback(null, `commonjs ${request}`);
+          }
+          callback();
+        },
+      ];
+    }
+    return config;
+  },
   async rewrites() {
     return [
       {
