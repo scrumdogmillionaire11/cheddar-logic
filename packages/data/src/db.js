@@ -698,6 +698,94 @@ class DatabaseWrapper {
 }
 
 /**
+ * Statement wrapper for read-only database instances.
+ * Allows reads (get/all) but throws immediately on any write attempt (run).
+ * Surfaces programmer errors early instead of silently executing mutations
+ * against an in-memory copy that will never be persisted.
+ */
+class ReadOnlyStatement {
+  constructor(db, query) {
+    this._db = db;
+    this.query = query;
+    this._stmt = db.prepare(query);
+  }
+
+  run() {
+    throw new Error(
+      '[DB] Write rejected on read-only instance. ' +
+      'Only the worker process may write to the database. ' +
+      `Query: ${this.query}`
+    );
+  }
+
+  get(...params) {
+    try {
+      this._stmt.bind(params);
+      let result = null;
+      if (this._stmt.step()) {
+        result = this._stmt.getAsObject();
+      }
+      this._stmt.reset();
+      return result;
+    } catch (e) {
+      throw new Error(`ReadOnlyStatement get error: ${e?.message ?? String(e)}`);
+    }
+  }
+
+  all(...params) {
+    try {
+      this._stmt.bind(params);
+      const results = [];
+      while (this._stmt.step()) {
+        results.push(this._stmt.getAsObject());
+      }
+      this._stmt.reset();
+      return results;
+    } catch (e) {
+      const errorMsg = e?.message || e?.toString() || 'unknown error';
+      throw new Error(`ReadOnlyStatement all error: ${errorMsg} | Query: ${this.query} | Params: ${JSON.stringify(params)}`);
+    }
+  }
+}
+
+/**
+ * Database wrapper for read-only consumers (web server).
+ * exec() and prepare().run() both throw — no writes permitted.
+ * Backed by a fresh per-request sql.js instance loaded from disk.
+ */
+class ReadOnlyDatabaseWrapper {
+  constructor(sqlDb) {
+    this._db = sqlDb;
+    this._readOnly = true;
+  }
+
+  prepare(query) {
+    return new ReadOnlyStatement(this._db, query);
+  }
+
+  exec() {
+    throw new Error(
+      '[DB] exec() rejected on read-only instance. ' +
+      'Only the worker process may write to the database.'
+    );
+  }
+
+  pragma(pragma) {
+    if (pragma === 'foreign_keys = ON') {
+      try { this._db.run('PRAGMA foreign_keys = ON'); } catch { /* ignore */ }
+    }
+  }
+
+  close() {
+    try { this._db.close(); } catch { /* ignore */ }
+  }
+
+  getRowsModified() {
+    return this._db.getRowsModified();
+  }
+}
+
+/**
  * Get database instance
  * Ensures SQL.js is initialized first
  */
@@ -760,22 +848,37 @@ function getDatabaseReadOnly() {
   }
   const resolved = resolveDatabasePath();
   const filePath = dbPath || resolved.dbPath;
+
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error(
+      `[DB] getDatabaseReadOnly: database file not found at ${filePath}. ` +
+      'Ensure CHEDDAR_DB_PATH is set and the worker has initialized the database.'
+    );
+  }
+
+  let buffer;
+  try {
+    buffer = fs.readFileSync(filePath);
+  } catch (e) {
+    throw new Error(
+      `[DB] getDatabaseReadOnly: failed to read database file at ${filePath}: ${e.message}`
+    );
+  }
+
   let instance;
   try {
-    if (filePath && fs.existsSync(filePath)) {
-      const buffer = fs.readFileSync(filePath);
-      instance = new SQL.Database(buffer);
-    } else {
-      instance = new SQL.Database();
-    }
+    instance = new SQL.Database(buffer);
   } catch (e) {
-    console.warn(`[DB] getDatabaseReadOnly: failed to load ${filePath}: ${e.message}`);
-    instance = new SQL.Database();
+    throw new Error(
+      `[DB] getDatabaseReadOnly: database file at ${filePath} is malformed and cannot be opened: ${e.message}. ` +
+      'Do not serve stale or empty data — fail the request and investigate the DB file.'
+    );
   }
+
   try {
     instance.run('PRAGMA foreign_keys = ON');
   } catch { /* ignore */ }
-  return new DatabaseWrapper(instance);
+  return new ReadOnlyDatabaseWrapper(instance);
 }
 
 /**
