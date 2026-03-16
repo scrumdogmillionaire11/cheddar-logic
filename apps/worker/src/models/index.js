@@ -46,6 +46,14 @@ const NHL_1P_REFERENCE_TOTAL_LINE = 1.5;
 const SKATER_INJURY_FACTOR_PER_OUT = 0.035;
 const SKATER_INJURY_FACTOR_MIN = 0.88;
 const SKATER_CONFIRMED_OUT_KEYWORDS = ['out', 'ir', 'ltir', 'suspended'];
+// Defense-side injury constants.
+// Conservative weight (0.4) applied because positional data (D vs F) is not
+// yet available in injury_status — we can't distinguish defenders from
+// forwards. The factor is therefore applied to the full confirmed-out pool,
+// dampened to approximate only the defense-side share. See WI-0465 Item C.
+const SKATER_DEF_INJURY_FACTOR_WEIGHT = 0.4;
+const SKATER_DEF_INJURY_FACTOR_PER_OUT = SKATER_INJURY_FACTOR_PER_OUT * SKATER_DEF_INJURY_FACTOR_WEIGHT;
+const SKATER_DEF_INJURY_FACTOR_MIN = 0.93; // Less aggressive floor than offensive factor
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -349,6 +357,31 @@ function computeSkaterInjuryFactor(injuries) {
   }).length;
   if (outCount === 0) return null;
   return Math.max(SKATER_INJURY_FACTOR_MIN, 1.0 - outCount * SKATER_INJURY_FACTOR_PER_OUT);
+}
+
+/**
+ * Compute a multiplicative injury dampening factor for a team's defensive rating.
+ *
+ * Semantics: missing defenders → the team defends less effectively → opponent
+ * scores more → homeDefRating is reduced (which increases awayGoals via the
+ * defensive crossover step in predictNHLGame).
+ *
+ * Positional gap: injury_status does not carry a position field, so this factor
+ * is applied to the full confirmed-out pool with SKATER_DEF_INJURY_FACTOR_WEIGHT
+ * (0.4) to approximate only the defensive share. Once positional data is
+ * available, this function should filter for 'D' position only. See WI-0465 Item C.
+ *
+ * @param {Array<{player: string, status: string|null, detail: string|null}>|null} injuries
+ * @returns {number|null} factor in [SKATER_DEF_INJURY_FACTOR_MIN, 1.0), or null if no confirmed-out players
+ */
+function computeSkaterDefInjuryFactor(injuries) {
+  if (!Array.isArray(injuries) || injuries.length === 0) return null;
+  const outCount = injuries.filter((inj) => {
+    const status = String(inj?.status || '').toLowerCase().trim();
+    return SKATER_CONFIRMED_OUT_KEYWORDS.some((kw) => status.includes(kw));
+  }).length;
+  if (outCount === 0) return null;
+  return Math.max(SKATER_DEF_INJURY_FACTOR_MIN, 1.0 - outCount * SKATER_DEF_INJURY_FACTOR_PER_OUT);
 }
 
 function computeNHLDrivers(gameId, oddsSnapshot) {
@@ -938,6 +971,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
 
     const homeSkaterInjuryFactor = computeSkaterInjuryFactor(raw?.injury_status?.home);
     const awaySkaterInjuryFactor = computeSkaterInjuryFactor(raw?.injury_status?.away);
+    // Defense-side: conservative factor applied to full out-count (no positional data yet).
+    // See computeSkaterDefInjuryFactor JSDoc for the positional gap caveat.
+    const homeSkaterDefInjuryFactor = computeSkaterDefInjuryFactor(raw?.injury_status?.home);
+    const awaySkaterDefInjuryFactor = computeSkaterDefInjuryFactor(raw?.injury_status?.away);
 
     const paceResult = predictNHLGame({
       homeGoalsFor: goalsForHome,
@@ -958,6 +995,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       restDaysAway: paceRestDaysAway,
       homeSkaterInjuryFactor,
       awaySkaterInjuryFactor,
+      homeSkaterDefInjuryFactor,
+      awaySkaterDefInjuryFactor,
     });
 
     if (paceResult) {
@@ -2080,4 +2119,6 @@ module.exports = {
   generateCard,
   buildMarketCallCard,
   extractNhlDriverDataQualityContext,
+  computeSkaterInjuryFactor,
+  computeSkaterDefInjuryFactor,
 };
