@@ -41,6 +41,7 @@ const { runFPLModel } = require('../jobs/run_fpl_model');
 const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { runSoccerModel } = require('../jobs/run_soccer_model');
+const { pullSoccerPlayerProps } = require('../jobs/pull_soccer_player_props');
 const { runNCAAMModel } = require('../jobs/run_ncaam_model');
 const { runRefreshNcaamFtCsv } = require('../jobs/refresh_ncaam_ft_csv');
 const { settleGameResults } = require('../jobs/settle_game_results');
@@ -407,6 +408,17 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   const sports = enabledSports();
   let ncaamFtRefreshQueued = false;
 
+  function queueSoccerPropIngestBeforeModel(modelJobKey, reason) {
+    const propJobKey = `soccer_props|${modelJobKey}`;
+    jobs.push({
+      jobName: 'pull_soccer_player_props',
+      jobKey: propJobKey,
+      execute: pullSoccerPlayerProps,
+      args: { jobKey: propJobKey, dryRun },
+      reason: `pre-model soccer Tier-1 prop ingest (${reason})`,
+    });
+  }
+
   function maybeQueueNcaamFtRefresh(triggerReason) {
     if (!ENABLE_NCAAM_FT_REFRESH) return;
     if (ncaamFtRefreshQueued) return;
@@ -553,6 +565,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       }
 
       const jobKey = keyFixed(sport, nowEt, t);
+      if (sport === 'soccer') {
+        queueSoccerPropIngestBeforeModel(jobKey, `fixed ${t} ET`);
+      }
       jobs.push({
         jobName,
         jobKey,
@@ -578,6 +593,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       }
 
       const jobKey = keyTminus(sport, g.game_id, mins);
+      if (sport === 'soccer') {
+        queueSoccerPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
+      }
       jobs.push({
         jobName: SPORT_JOBS[sport].jobName,
         jobKey,
@@ -589,6 +607,10 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
     if (sport === 'soccer' && isSoccerLineupT45Due(nowUtc, startUtc)) {
       const jobKey = keyTminus(sport, g.game_id, SOCCER_LINEUP_T45_MINUTES);
+      queueSoccerPropIngestBeforeModel(
+        jobKey,
+        `soccer lineup checkpoint T-${SOCCER_LINEUP_T45_MINUTES} for ${g.game_id}`,
+      );
       jobs.push({
         jobName: SPORT_JOBS[sport].jobName,
         jobKey,

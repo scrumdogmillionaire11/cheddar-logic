@@ -130,7 +130,7 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:pull-nhl-player-sh
 # Run NHL player shots prop model (applies availability filter + purge)
 npm --prefix apps/worker run job:run-nhl-player-shots-model
 
-# Pull Soccer Tier-1 player props (manual for now; not scheduled)
+# Pull Soccer Tier-1 player props (optional manual run; scheduler now queues this before soccer model windows)
 set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/worker run job:pull-soccer-player-props
 
 # Run models
@@ -166,7 +166,7 @@ npm --prefix apps/worker run job:sync-nhl-player-availability
 # Run NHL player shots prop model after lines + availability refresh
 npm --prefix apps/worker run job:run-nhl-player-shots-model
 
-# Pull Soccer Tier-1 player props (manual for now; scheduler omits this pull)
+# Pull Soccer Tier-1 player props (optional manual run; scheduler queues this before soccer model windows)
 set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/worker run job:pull-soccer-player-props
 ```
 
