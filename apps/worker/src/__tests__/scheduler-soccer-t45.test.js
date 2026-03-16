@@ -46,7 +46,8 @@ describe('scheduler soccer T-45 lineup checkpoint', () => {
           `soccer_props|soccer|tminus|soccer-game-001|${scheduler.SOCCER_LINEUP_T45_MINUTES}` &&
         job.jobName === 'pull_soccer_player_props',
     );
-    expect(t45PropPullJob).toBeUndefined();
+    expect(t45PropPullJob).toBeDefined();
+    expect(dueJobs.indexOf(t45PropPullJob)).toBeLessThan(dueJobs.indexOf(t45Job));
     expect(t45Job.reason).toContain('soccer lineup checkpoint T-45');
   });
 
@@ -78,5 +79,33 @@ describe('scheduler soccer T-45 lineup checkpoint', () => {
     );
 
     expect(t45Job).toBeUndefined();
+  });
+
+  test('queues soccer fixed-window prop ingest before fixed soccer model run', () => {
+    jest.resetModules();
+    const scheduler = require('../schedulers/main');
+
+    const nowEt = DateTime.fromISO('2026-03-16T09:02:00', { zone: 'America/New_York' });
+    const nowUtc = nowEt.setZone('utc');
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: [],
+      dryRun: true,
+    });
+
+    const fixedModelJob = dueJobs.find(
+      (job) => job.jobName === 'run_soccer_model' && job.jobKey === 'soccer|fixed|2026-03-16|0900',
+    );
+    const fixedPropPullJob = dueJobs.find(
+      (job) =>
+        job.jobName === 'pull_soccer_player_props' &&
+        job.jobKey === 'soccer_props|soccer|fixed|2026-03-16|0900',
+    );
+
+    expect(fixedModelJob).toBeDefined();
+    expect(fixedPropPullJob).toBeDefined();
+    expect(dueJobs.indexOf(fixedPropPullJob)).toBeLessThan(dueJobs.indexOf(fixedModelJob));
   });
 });

@@ -1649,11 +1649,18 @@ export async function GET(request: NextRequest) {
               ...missingGameIds,
             ) as CardPayloadRow[];
             if (fallbackRows.length > 0) {
-              const deduped = new Map<string, CardPayloadRow>();
+              const dedupedBySemanticKey = new Map<string, CardPayloadRow>();
               for (const row of [...cardRows, ...fallbackRows]) {
-                deduped.set(row.id, row);
+                const semanticKey = `${row.game_id}|${row.card_type}|${row.card_title}`;
+                if (!dedupedBySemanticKey.has(semanticKey)) {
+                  dedupedBySemanticKey.set(semanticKey, row);
+                }
               }
-              cardRows = Array.from(deduped.values());
+              const dedupedById = new Map<string, CardPayloadRow>();
+              for (const row of dedupedBySemanticKey.values()) {
+                dedupedById.set(row.id, row);
+              }
+              cardRows = Array.from(dedupedById.values());
             }
           }
         }
