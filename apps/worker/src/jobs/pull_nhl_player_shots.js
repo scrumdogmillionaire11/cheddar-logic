@@ -344,4 +344,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { pullNhlPlayerShots };
+module.exports = { pullNhlPlayerShots, checkInjuryStatus };
