@@ -24,6 +24,7 @@ const { getTeamMetrics, getTeamMetricsWithGames, computeMetricsFromGames } = req
 const { enrichOddsSnapshotWithEspnMetrics, enrichOddsSnapshotsWithEspnMetrics } = require('./src/odds-enrichment');
 const marketContract = require('./src/market-contract');
 const dbPath = require('./src/db-path');
+const dbTelemetry = require('./src/db-telemetry');
 
 // Ensure migrations are run on first import (optional but recommended)
 // Uncomment to auto-run migrations:
@@ -171,6 +172,12 @@ module.exports = {
   DEFAULT_DATABASE_PATH: dbPath.DEFAULT_DATABASE_PATH,
   parseSqliteUrl: dbPath.parseSqliteUrl,
   resolveDatabasePath: dbPath.resolveDatabasePath,
+
+  // Additive telemetry (flag-gated, default-off)
+  recordClvEntry: dbTelemetry.recordClvEntry,
+  settleClvEntry: dbTelemetry.settleClvEntry,
+  recordProjectionEntry: dbTelemetry.recordProjectionEntry,
+  settleProjectionEntry: dbTelemetry.settleProjectionEntry,
 
   // Dual-database mode (recommended for production)
   initDualDb: dbDualInit.initDualDb,
