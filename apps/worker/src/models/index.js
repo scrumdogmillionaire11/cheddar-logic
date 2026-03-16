@@ -43,6 +43,9 @@ const { generateCard, buildMarketCallCard } = require('@cheddar-logic/models');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const NHL_1P_REFERENCE_TOTAL_LINE = 1.5;
+const SKATER_INJURY_FACTOR_PER_OUT = 0.035;
+const SKATER_INJURY_FACTOR_MIN = 0.88;
+const SKATER_CONFIRMED_OUT_KEYWORDS = ['out', 'ir', 'ltir', 'suspended'];
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -330,6 +333,22 @@ function determineTier(confidence) {
   if (confidence >= 0.7) return 'BEST';
   if (confidence >= 0.6) return 'WATCH';
   return null;
+}
+
+/**
+ * Compute a multiplicative injury dampening factor for a team's offensive rating.
+ *
+ * @param {Array<{player: string, status: string|null, detail: string|null}>|null} injuries
+ * @returns {number|null} factor in [SKATER_INJURY_FACTOR_MIN, 1.0), or null if no confirmed-out players
+ */
+function computeSkaterInjuryFactor(injuries) {
+  if (!Array.isArray(injuries) || injuries.length === 0) return null;
+  const outCount = injuries.filter((inj) => {
+    const status = String(inj?.status || '').toLowerCase().trim();
+    return SKATER_CONFIRMED_OUT_KEYWORDS.some((kw) => status.includes(kw));
+  }).length;
+  if (outCount === 0) return null;
+  return Math.max(SKATER_INJURY_FACTOR_MIN, 1.0 - outCount * SKATER_INJURY_FACTOR_PER_OUT);
 }
 
 function computeNHLDrivers(gameId, oddsSnapshot) {
@@ -917,6 +936,9 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
     );
     const marketTotal = toNumber(oddsSnapshot?.total);
 
+    const homeSkaterInjuryFactor = computeSkaterInjuryFactor(raw?.injury_status?.home);
+    const awaySkaterInjuryFactor = computeSkaterInjuryFactor(raw?.injury_status?.away);
+
     const paceResult = predictNHLGame({
       homeGoalsFor: goalsForHome,
       homeGoalsAgainst: goalsAgainstHome,
@@ -934,6 +956,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       awayB2B: paceRestDaysAway === 0,
       restDaysHome: paceRestDaysHome,
       restDaysAway: paceRestDaysAway,
+      homeSkaterInjuryFactor,
+      awaySkaterInjuryFactor,
     });
 
     if (paceResult) {

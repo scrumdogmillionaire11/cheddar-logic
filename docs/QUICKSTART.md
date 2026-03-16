@@ -118,6 +118,9 @@ export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 # Pull live odds (requires ODDS_API_KEY from https://theoddsapi.com)
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-odds
 
+# Pull Player Shots data 
+npm --prefix apps/worker run job:pull-nhl-player-shots
+
 # Pull NHL player shots props
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-nhl-player-shots-props
 

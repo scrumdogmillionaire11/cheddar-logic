@@ -193,6 +193,8 @@ function round3(value) {
  * @param {number|null} opts.awayGoalsForL5
  * @param {number|null} opts.homeGoalsAgainstL5
  * @param {number|null} opts.awayGoalsAgainstL5
+ * @param {number|null} opts.homeSkaterInjuryFactor - multiplier [0.88–1.0] for confirmed-out home skaters (null = no adjustment)
+ * @param {number|null} opts.awaySkaterInjuryFactor - multiplier [0.88–1.0] for confirmed-out away skaters (null = no adjustment)
  * @returns {object|null} { homeExpected, awayExpected, expectedTotal, expected1pTotal, first_period_model, adjustments, confidence }
  *                         Returns null if base offensive data is unavailable.
  */
@@ -226,6 +228,8 @@ function predictNHLGame(opts) {
     awayGoalsForL5 = null,
     homeGoalsAgainstL5 = null,
     awayGoalsAgainstL5 = null,
+    homeSkaterInjuryFactor = null,
+    awaySkaterInjuryFactor = null,
   } = opts || {};
 
   // Cannot compute without base offensive/defensive stats
@@ -298,6 +302,16 @@ function predictNHLGame(opts) {
   const l5Blended =
     (homeGoalsForL5 !== null && homeGoalsForL5 > 0.5) ||
     (awayGoalsForL5 !== null && awayGoalsForL5 > 0.5);
+
+  // ---- 1b. Skater injury adjustment (applied after L5 blend, before pace) ----
+  if (homeSkaterInjuryFactor !== null && homeSkaterInjuryFactor < 1.0) {
+    homeOffRating *= homeSkaterInjuryFactor;
+    adjustments.home.skater_injury = homeSkaterInjuryFactor;
+  }
+  if (awaySkaterInjuryFactor !== null && awaySkaterInjuryFactor < 1.0) {
+    awayOffRating *= awaySkaterInjuryFactor;
+    adjustments.away.skater_injury = awaySkaterInjuryFactor;
+  }
 
   // ---- 2. Combined pace (dampened multiplicative) ----
   const hPace = homePaceFactor !== null ? homePaceFactor : 1.0;

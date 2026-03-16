@@ -251,3 +251,65 @@ describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
     expect(neutralized).toHaveProperty('official_eligible');
   });
 });
+
+describe('predictNHLGame — skater injury factor (WI-0463)', () => {
+  test('null factor leaves homeExpected unchanged', () => {
+    const base = predictNHLGame(buildBase());
+    const withNull = predictNHLGame(buildBase({ homeSkaterInjuryFactor: null }));
+    expect(withNull.homeExpected).toBeCloseTo(base.homeExpected, 6);
+    expect(withNull.adjustments.home.skater_injury).toBeUndefined();
+  });
+
+  test('factor = 1.0 leaves homeExpected unchanged', () => {
+    const base = predictNHLGame(buildBase());
+    const with1 = predictNHLGame(buildBase({ homeSkaterInjuryFactor: 1.0 }));
+    // factor >= 1.0 is not applied (condition: factor < 1.0)
+    expect(with1.homeExpected).toBeCloseTo(base.homeExpected, 6);
+    expect(with1.adjustments.home.skater_injury).toBeUndefined();
+  });
+
+  test('1 confirmed-out home skater reduces homeExpected by ~3.5%', () => {
+    const base = predictNHLGame(buildBase());
+    const injured = predictNHLGame(buildBase({ homeSkaterInjuryFactor: 0.965 }));
+    expect(injured.homeExpected).toBeLessThan(base.homeExpected);
+    expect(injured.adjustments.home.skater_injury).toBe(0.965);
+  });
+
+  test('3 confirmed-out home skaters (factor 0.895) reduces homeExpected ~10.5%', () => {
+    const base = predictNHLGame(buildBase());
+    const injured = predictNHLGame(buildBase({ homeSkaterInjuryFactor: 0.895 }));
+    // homeExpected should be ~10.5% lower than base
+    expect(injured.homeExpected).toBeCloseTo(base.homeExpected * 0.895, 1);
+    expect(injured.adjustments.home.skater_injury).toBe(0.895);
+  });
+
+  test('capped factor (0.88) applies correctly', () => {
+    const base = predictNHLGame(buildBase());
+    const maxInjured = predictNHLGame(buildBase({ homeSkaterInjuryFactor: 0.88 }));
+    // homeExpected is reduced roughly proportional to 0.88; regression/clamp prevent exact linear scaling
+    expect(maxInjured.homeExpected).toBeLessThan(base.homeExpected);
+    expect(maxInjured.homeExpected / base.homeExpected).toBeGreaterThan(0.85);
+    expect(maxInjured.homeExpected / base.homeExpected).toBeLessThan(0.95);
+    expect(maxInjured.adjustments.home.skater_injury).toBe(0.88);
+  });
+
+  test('away skater injury factor reduces awayExpected, not homeExpected', () => {
+    const base = predictNHLGame(buildBase());
+    const injured = predictNHLGame(buildBase({ awaySkaterInjuryFactor: 0.93 }));
+    expect(injured.awayExpected).toBeLessThan(base.awayExpected);
+    // homeExpected may shift slightly due to shared regression/scaling steps, but not by much
+    expect(Math.abs(injured.homeExpected - base.homeExpected)).toBeLessThan(0.1);
+    expect(injured.adjustments.away.skater_injury).toBe(0.93);
+    expect(injured.adjustments.home.skater_injury).toBeUndefined();
+  });
+
+  test('both teams injured reduces both expected goals', () => {
+    const base = predictNHLGame(buildBase());
+    const bothInjured = predictNHLGame(
+      buildBase({ homeSkaterInjuryFactor: 0.93, awaySkaterInjuryFactor: 0.965 }),
+    );
+    expect(bothInjured.homeExpected).toBeLessThan(base.homeExpected);
+    expect(bothInjured.awayExpected).toBeLessThan(base.awayExpected);
+    expect(bothInjured.expectedTotal).toBeLessThan(base.expectedTotal);
+  });
+});

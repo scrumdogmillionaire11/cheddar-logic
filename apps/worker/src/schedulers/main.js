@@ -50,6 +50,7 @@ const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
 const {
   run: refreshTeamMetricsDaily,
 } = require('../jobs/refresh_team_metrics_daily');
+const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -63,6 +64,8 @@ const MODEL_ODDS_MAX_AGE_MINUTES = Number(
   process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES,
 );
 const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH !== 'false';
+const ENABLE_NHL_SOG_PLAYER_SYNC =
+  process.env.ENABLE_NHL_SOG_PLAYER_SYNC !== 'false';
 const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
   process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
 );
@@ -156,6 +159,10 @@ function keyNcaamFtRefresh(nowEt) {
   const minutesSinceMidnight = nowEt.hour * 60 + nowEt.minute;
   const bucket = Math.floor(minutesSinceMidnight / freshnessWindow);
   return `refresh_ncaam_ft_csv|${nowEt.toISODate()}|b${bucket}`;
+}
+
+function keyNhlSogPlayerSync(nowEt) {
+  return `sync_nhl_sog_player_ids|${nowEt.toISODate()}|0400`;
 }
 
 function keyHourlySettlementSweep(nowEt) {
@@ -478,6 +485,19 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     maybeQueueNcaamFtRefresh('early-morning bootstrap (06:00 ET)');
   }
 
+  // ========== NHL SOG PLAYER SYNC (2.75) ==========
+  // Daily refresh of tracked NHL SOG player IDs before regular morning jobs.
+  if (ENABLE_NHL_SOG_PLAYER_SYNC && isFixedDue(nowEt, '04:00')) {
+    const jobKey = keyNhlSogPlayerSync(nowEt);
+    jobs.push({
+      jobName: 'sync_nhl_sog_player_ids',
+      jobKey,
+      execute: syncNhlSogPlayerIds,
+      args: { jobKey, dryRun },
+      reason: 'daily NHL SOG tracked-player sync (04:00 ET)',
+    });
+  }
+
   // ========== MODELS (3) ==========
   // Fixed-time model runs (per sport) - UNCHANGED
   const fixedTimes = ['09:00', '12:00'];
@@ -727,6 +747,9 @@ async function start() {
     `  ENABLE_NCAAM_FT_REFRESH: ${ENABLE_NCAAM_FT_REFRESH ? 'true' : 'false'}`,
   );
   console.log(
+    `  ENABLE_NHL_SOG_PLAYER_SYNC: ${ENABLE_NHL_SOG_PLAYER_SYNC ? 'true' : 'false'}`,
+  );
+  console.log(
     `  NCAAM_FT_REFRESH_MAX_AGE_MINUTES: ${NCAAM_FT_REFRESH_MAX_AGE_MINUTES}`,
   );
   console.log(
@@ -797,6 +820,7 @@ module.exports = {
   keyFixed,
   keyTminus,
   keyNightlySweep,
+  keyNhlSogPlayerSync,
   keyHourlySettlementSweep,
   isHourlySettlementDue,
   isFixedDue,

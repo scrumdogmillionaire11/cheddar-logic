@@ -5,6 +5,8 @@
  * 1. Injury status check — injured player is skipped
  * 2. Fail-open — player with no status field proceeds normally
  * 3. NHL_SOG_EXCLUDE_PLAYER_IDS — manual override fires before status check
+ * 4. upsertPlayerAvailability called with INJURED for injured players
+ * 5. upsertPlayerAvailability called with ACTIVE for healthy players
  */
 
 'use strict';
@@ -12,6 +14,7 @@
 // ---- Shared state for injectable mocks ----
 let mockFetchPlayerLandingImpl = null;
 let mockUpsertPlayerShotLogCalls = [];
+let mockUpsertPlayerAvailabilityCalls = [];
 
 // ---- Mock @cheddar-logic/data ----
 jest.mock('@cheddar-logic/data', () => ({
@@ -20,8 +23,12 @@ jest.mock('@cheddar-logic/data', () => ({
   markJobRunFailure: jest.fn(),
   shouldRunJobKey: jest.fn(() => true),
   withDb: jest.fn((fn) => fn()),
+  listTrackedPlayers: jest.fn(() => []),
   upsertPlayerShotLog: jest.fn((...args) => {
     mockUpsertPlayerShotLogCalls.push(args);
+  }),
+  upsertPlayerAvailability: jest.fn((...args) => {
+    mockUpsertPlayerAvailabilityCalls.push(args);
   }),
 }));
 
@@ -50,8 +57,12 @@ function loadModule() {
     markJobRunFailure: jest.fn(),
     shouldRunJobKey: jest.fn(() => true),
     withDb: jest.fn((fn) => fn()),
+    listTrackedPlayers: jest.fn(() => []),
     upsertPlayerShotLog: jest.fn((...args) => {
       mockUpsertPlayerShotLogCalls.push(args);
+    }),
+    upsertPlayerAvailability: jest.fn((...args) => {
+      mockUpsertPlayerAvailabilityCalls.push(args);
     }),
   }));
   return require('../pull_nhl_player_shots');
@@ -60,6 +71,7 @@ function loadModule() {
 describe('pull_nhl_player_shots — injury status filtering', () => {
   beforeEach(() => {
     mockUpsertPlayerShotLogCalls = [];
+    mockUpsertPlayerAvailabilityCalls = [];
     jest.clearAllMocks();
     // Default: fake successful fetch response
     global.fetch = jest.fn();
@@ -136,6 +148,50 @@ describe('pull_nhl_player_shots — injury status filtering', () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(upsertPlayerShotLog).not.toHaveBeenCalled();
   });
+
+  test('uses tracked_players IDs before NHL_SOG_PLAYER_IDS fallback', async () => {
+    const payload = buildPayload({ status: 'active' });
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(payload),
+    });
+
+    process.env.NHL_SOG_PLAYER_IDS = '1111111'; // should not be used
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { listTrackedPlayers } = require('@cheddar-logic/data');
+    listTrackedPlayers.mockReturnValueOnce([
+      { player_id: 8478402, sport: 'nhl', market: 'shots_on_goal', is_active: 1 },
+    ]);
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    expect(listTrackedPlayers).toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toContain('/8478402/landing');
+  });
+
+  test('falls back to NHL_SOG_PLAYER_IDS when tracked_players is empty', async () => {
+    const payload = buildPayload({ status: 'active' });
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(payload),
+    });
+
+    process.env.NHL_SOG_PLAYER_IDS = '8477492';
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { listTrackedPlayers } = require('@cheddar-logic/data');
+    listTrackedPlayers.mockReturnValueOnce([]);
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    expect(listTrackedPlayers).toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toContain('/8477492/landing');
+  });
 });
 
 describe('pull_nhl_player_shots — checkInjuryStatus edge cases', () => {
@@ -195,5 +251,83 @@ describe('pull_nhl_player_shots — checkInjuryStatus edge cases', () => {
 
     expect(upsertPlayerShotLog).not.toHaveBeenCalled();
     logSpy.mockRestore();
+  });
+});
+
+describe('pull_nhl_player_shots — player_availability writes', () => {
+  beforeEach(() => {
+    mockUpsertPlayerShotLogCalls = [];
+    mockUpsertPlayerAvailabilityCalls = [];
+    jest.clearAllMocks();
+    global.fetch = jest.fn();
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+  });
+
+  test('injured player writes INJURED to player_availability', async () => {
+    const payload = buildPayload({ status: 'injured' });
+
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(payload),
+    });
+
+    process.env.NHL_SOG_PLAYER_IDS = '8478402';
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerAvailability } = require('@cheddar-logic/data');
+
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    await pullNhlPlayerShots({ dryRun: false });
+    jest.restoreAllMocks();
+
+    expect(upsertPlayerAvailability).toHaveBeenCalledTimes(1);
+    const call = upsertPlayerAvailability.mock.calls[0][0];
+    expect(call.status).toBe('INJURED');
+    expect(call.statusReason).toBe('injured');
+    expect(call.sport).toBe('NHL');
+    expect(call.playerId).toBe(8478402);
+  });
+
+  test('healthy player writes ACTIVE to player_availability', async () => {
+    const payload = buildPayload({ status: 'active' });
+
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(payload),
+    });
+
+    process.env.NHL_SOG_PLAYER_IDS = '8478402';
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerAvailability } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    expect(upsertPlayerAvailability).toHaveBeenCalledTimes(1);
+    const call = upsertPlayerAvailability.mock.calls[0][0];
+    expect(call.status).toBe('ACTIVE');
+    expect(call.statusReason).toBeNull();
+  });
+
+  test('fail-open player (no status field) writes ACTIVE to player_availability', async () => {
+    const payload = buildPayload();
+    delete payload.status;
+    delete payload.currentTeamRoster;
+
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(payload),
+    });
+
+    process.env.NHL_SOG_PLAYER_IDS = '8478402';
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerAvailability } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    expect(upsertPlayerAvailability).toHaveBeenCalledTimes(1);
+    const call = upsertPlayerAvailability.mock.calls[0][0];
+    expect(call.status).toBe('ACTIVE');
   });
 });

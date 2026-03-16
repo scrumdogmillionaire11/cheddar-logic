@@ -8,6 +8,8 @@ const {
   shouldRunJobKey,
   withDb,
   upsertPlayerShotLog,
+  upsertPlayerAvailability,
+  listTrackedPlayers,
 } = require('@cheddar-logic/data');
 
 const NHL_API_BASE = 'https://api-web.nhle.com/v1/player';
@@ -205,10 +207,39 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
       return { success: true, jobRunId: null, dryRun: true, jobKey };
     }
 
-    const allPlayerIds = parsePlayerIds(process.env.NHL_SOG_PLAYER_IDS);
+    let allPlayerIds = [];
+    try {
+      const trackedPlayers = listTrackedPlayers({
+        sport: 'NHL',
+        market: 'shots_on_goal',
+        activeOnly: true,
+      });
+      if (Array.isArray(trackedPlayers) && trackedPlayers.length > 0) {
+        allPlayerIds = trackedPlayers
+          .map((row) => Number(row.player_id))
+          .filter(Number.isFinite);
+        console.log(
+          `[NHLPlayerShots] Using ${allPlayerIds.length} player IDs from tracked_players`,
+        );
+      }
+    } catch (error) {
+      console.log(
+        `[NHLPlayerShots] WARN: tracked_players unavailable (${error.message}); falling back to NHL_SOG_PLAYER_IDS`,
+      );
+    }
+
+    if (allPlayerIds.length === 0) {
+      allPlayerIds = parsePlayerIds(process.env.NHL_SOG_PLAYER_IDS);
+      if (allPlayerIds.length > 0) {
+        console.log(
+          `[NHLPlayerShots] Using ${allPlayerIds.length} player IDs from NHL_SOG_PLAYER_IDS fallback`,
+        );
+      }
+    }
+
     if (allPlayerIds.length === 0) {
       console.log(
-        '[NHLPlayerShots] No player IDs configured. Set NHL_SOG_PLAYER_IDS.',
+        '[NHLPlayerShots] No player IDs configured. Run sync_nhl_sog_player_ids or set NHL_SOG_PLAYER_IDS.',
       );
       return {
         success: true,
@@ -241,11 +272,26 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
             console.log(
               `[NHLPlayerShots] Skipping ${playerName} (${playerId}): status=${injuryCheck.reason}`,
             );
+            upsertPlayerAvailability({
+              playerId,
+              sport: 'NHL',
+              status: 'INJURED',
+              statusReason: injuryCheck.reason,
+              checkedAt: fetchedAt,
+            });
             if (DEFAULT_SLEEP_MS > 0) {
               await sleep(DEFAULT_SLEEP_MS);
             }
             continue;
           }
+
+          upsertPlayerAvailability({
+            playerId,
+            sport: 'NHL',
+            status: 'ACTIVE',
+            statusReason: null,
+            checkedAt: fetchedAt,
+          });
 
           const rows = buildLogRows(playerId, payload, fetchedAt);
 
