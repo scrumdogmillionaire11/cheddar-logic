@@ -2569,21 +2569,16 @@ export async function GET(request: NextRequest) {
             continue;
           }
 
-          const dedupeIdentity =
-            playerId || playerName || firstString(play.player) || 'unknown';
+          const dedupeIdentity = playerId || playerName || 'unknown';
           const dedupePropType =
-            firstString(play.prop_type, play.market, play.market_type) || 'prop';
-          const dedupePeriod = firstString(play.period) || 'full_game';
+            firstString(payloadPlayObj?.prop_type, payloadPlayObj?.market, play.market_type) ||
+            'prop';
+          const dedupePeriod = firstString(payloadPlayObj?.period) || 'full_game';
           const dedupeSide =
             normalizeSelectionSide(
-              play.selection?.side ?? play.direction ?? play.prediction,
+              play.selection?.side ?? play.prediction,
             ) || 'NONE';
-          const dedupeLine = firstNumber(
-            play.line,
-            play.selection?.line,
-            play.suggested_line,
-            play.threshold,
-          );
+          const dedupeLine = firstNumber(play.line, play.suggested_line, play.threshold);
           const dedupeKey = [
             canonicalGameId,
             cardRow.card_type,

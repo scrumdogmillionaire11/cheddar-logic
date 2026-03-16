@@ -26,7 +26,7 @@ import type {
   ExpressionStatus,
   GameCard,
   Market,
-  PropGameCard,
+  PropGameCard as PropGameCardType,
   PropPlayRow,
   Sport,
   SupportGrade,
@@ -584,7 +584,7 @@ function mapPropTypeToGroup(propType: string): 'SOG' | 'PTS' | 'AST' | 'REB' | '
   return 'OTHER';
 }
 
-function filterPropCards(cards: PropGameCard[], filters: GameFilters): PropGameCard[] {
+function filterPropCards(cards: PropGameCardType[], filters: GameFilters): PropGameCardType[] {
   if (!('propStatGroups' in filters)) return cards;
 
   const now = Date.now();
@@ -654,7 +654,7 @@ function filterPropCards(cards: PropGameCard[], filters: GameFilters): PropGameC
         maxConfidence,
       };
     })
-    .filter((card): card is PropGameCard => card !== null);
+    .filter((card): card is PropGameCardType => card !== null);
 
   return [...filteredRows].sort((a, b) => {
     if (filters.sortMode === 'start_time') {
