@@ -1693,7 +1693,7 @@ export async function GET(request: NextRequest) {
                   .filter((pickId) => pickId && !dedupedCardRows.has(pickId)),
               ),
             );
-            if (missingPickIds.length > 0) {
+            if (activeRunIds.length === 0 && missingPickIds.length > 0) {
               const missingPayloadPlaceholders = missingPickIds
                 .map(() => '?')
                 .join(', ');
