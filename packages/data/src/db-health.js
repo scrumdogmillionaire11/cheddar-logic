@@ -1,0 +1,173 @@
+#!/usr/bin/env node
+/**
+ * DB Health Check
+ *
+ * Verifies the production database is in a known-good state.
+ * Run before and after deployments, and as part of the release runbook.
+ *
+ * Exit codes:
+ *   0 — all checks passed
+ *   1 — one or more checks failed
+ *
+ * Usage:
+ *   node src/db-health.js [--path /opt/data/cheddar-prod.db]
+ */
+
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const { resolveDatabasePath } = require('./db-path');
+
+// Allow CLI override: node db-health.js --path /some/other.db
+const args = process.argv.slice(2);
+const pathArgIdx = args.indexOf('--path');
+if (pathArgIdx !== -1 && args[pathArgIdx + 1]) {
+  process.env.CHEDDAR_DB_PATH = args[pathArgIdx + 1];
+}
+
+const CHECKS = [];
+let failed = false;
+
+function pass(name, detail = '') {
+  console.log(`  ✓  ${name}${detail ? ': ' + detail : ''}`);
+}
+
+function fail(name, detail = '') {
+  console.error(`  ✗  ${name}${detail ? ': ' + detail : ''}`);
+  failed = true;
+}
+
+async function runChecks(dbPath) {
+  console.log(`\nDB Health Check — ${dbPath}\n`);
+
+  // ── 1. File existence ─────────────────────────────────────────────────────
+  if (!fs.existsSync(dbPath)) {
+    fail('File exists', `not found at ${dbPath}`);
+    return; // remaining checks require the file
+  }
+  pass('File exists');
+
+  // ── 2. Non-zero size ──────────────────────────────────────────────────────
+  const { size } = fs.statSync(dbPath);
+  if (size === 0) {
+    fail('File size', 'file is 0 bytes — DB was never written');
+    return;
+  }
+  pass('File size', `${(size / 1024).toFixed(1)} KB`);
+
+  // ── 3. Stale lock file ────────────────────────────────────────────────────
+  const lockPath = dbPath + '.lock';
+  if (fs.existsSync(lockPath)) {
+    fail('Lock file', `stale lock found at ${lockPath} — a previous process may have crashed. Remove it before starting the worker.`);
+  } else {
+    pass('Lock file', 'no stale lock present');
+  }
+
+  // ── 4. SQLite magic bytes ─────────────────────────────────────────────────
+  const fd = fs.openSync(dbPath, 'r');
+  const magic = Buffer.alloc(16);
+  fs.readSync(fd, magic, 0, 16, 0);
+  fs.closeSync(fd);
+  const SQLITE_MAGIC = 'SQLite format 3\0';
+  if (magic.toString('utf8') !== SQLITE_MAGIC) {
+    fail('SQLite magic bytes', 'file header does not match SQLite format — file may be corrupted or truncated');
+    return;
+  }
+  pass('SQLite magic bytes');
+
+  // ── 5. sql.js integrity check ─────────────────────────────────────────────
+  let integrityResult = 'skipped';
+  try {
+    const initSqlJs = require('sql.js/dist/sql-asm.js');
+    const SQL = await initSqlJs();
+    const buffer = fs.readFileSync(dbPath);
+    const db = new SQL.Database(buffer);
+
+    try {
+      const rows = db.exec('PRAGMA integrity_check');
+      const value = rows?.[0]?.values?.[0]?.[0];
+      if (value === 'ok') {
+        pass('Integrity check (PRAGMA integrity_check)');
+      } else {
+        fail('Integrity check', `unexpected result: ${value}`);
+      }
+      integrityResult = value;
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    fail('Integrity check', `could not open database with sql.js: ${e.message}`);
+    return;
+  }
+
+  // ── 6. Expected tables present ────────────────────────────────────────────
+  const REQUIRED_TABLES = ['games', 'card_payloads', 'card_results', 'game_results'];
+  try {
+    const initSqlJs = require('sql.js/dist/sql-asm.js');
+    const SQL = await initSqlJs();
+    const buffer = fs.readFileSync(dbPath);
+    const db = new SQL.Database(buffer);
+
+    try {
+      const rows = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+      const tables = (rows?.[0]?.values || []).map(r => r[0]);
+      const missing = REQUIRED_TABLES.filter(t => !tables.includes(t));
+      if (missing.length > 0) {
+        fail('Required tables', `missing: ${missing.join(', ')}`);
+      } else {
+        pass('Required tables', REQUIRED_TABLES.join(', '));
+      }
+
+      // ── 7. Migration state ──────────────────────────────────────────────
+      const migRows = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'");
+      if (migRows.length > 0) {
+        const latest = db.exec('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1');
+        const version = latest?.[0]?.values?.[0]?.[0];
+        pass('Migration state', `latest version: ${version ?? 'none'}`);
+      } else {
+        pass('Migration state', 'no schema_migrations table — migrations managed externally');
+      }
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    fail('Table check', e.message);
+  }
+
+  // ── 8. Tmp file from previous interrupted write ───────────────────────────
+  const tmpPath = dbPath + '.tmp';
+  if (fs.existsSync(tmpPath)) {
+    fail('Stale .tmp file', `${tmpPath} exists — a previous atomic save was interrupted. Remove it.`);
+  } else {
+    pass('No stale .tmp file');
+  }
+}
+
+async function main() {
+  let dbPath;
+  try {
+    const resolved = resolveDatabasePath();
+    dbPath = resolved.dbPath;
+    console.log(`[DB] Path resolved via ${resolved.source}`);
+  } catch (e) {
+    console.error(`[DB] Path resolution failed: ${e.message}`);
+    process.exit(1);
+  }
+
+  await runChecks(dbPath);
+
+  console.log('');
+  if (failed) {
+    console.error('DB health check FAILED — see details above.\n');
+    process.exit(1);
+  } else {
+    console.log('DB health check passed.\n');
+    process.exit(0);
+  }
+}
+
+main().catch(e => {
+  console.error('Unexpected error:', e);
+  process.exit(1);
+});

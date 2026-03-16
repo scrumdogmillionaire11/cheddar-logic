@@ -25,8 +25,6 @@
     "test:api:games:market": "node src/__tests__/api-games-market-smoke.test.js",
     "test:api:games:repair-budget": "node src/__tests__/api-games-repair-budget.test.js",
     "test:api:results:flags": "node src/__tests__/api-results-flags.test.js",
-    "test:auth:refresh": "node src/__tests__/auth-refresh-flow.test.js",
-    "test:auth": "node src/__tests__/auth-refresh-flow.test.js",
     "test:decision:canonical": "node src/__tests__/canonical-play-decision.test.js"
   },
   "dependencies": {
