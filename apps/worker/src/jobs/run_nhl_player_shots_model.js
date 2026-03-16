@@ -26,6 +26,8 @@ const {
   calcMu,
   calcMu1p,
   classifyEdge,
+  calcFairLine,
+  calcFairLine1p,
 } = require('../models/nhl-player-shots');
 
 const JOB_NAME = 'run-nhl-player-shots-model';
@@ -189,6 +191,11 @@ function computeEdgePct(projection, line) {
     return null;
   }
   return Math.round(((projection - line) / line) * 1000) / 10;
+}
+
+function formatSignedEdge(edge) {
+  const rounded = Math.round(edge * 10) / 10;
+  return (rounded >= 0 ? '+' : '') + rounded.toFixed(1);
 }
 
 function parsePlayerIds(raw) {
@@ -430,37 +437,32 @@ async function runNHLPlayerShotsModel() {
             }
             processedGamePlayers.add(playerRunKey);
 
-            // Availability check: skip players flagged as injured in the last 24 hours.
-            // Fail-open: if no row exists (pull job hasn't run yet), proceed normally.
+            // Availability check: skip players recorded as INJURED/unavailable.
+            // DTD (day-to-day/questionable) players proceed but carry a 'DTD' tier
+            // flag in the card payload so downstream consumers can surface it.
+            // Fail-open: if NO row exists at all (table missing or player never fetched),
+            // proceed normally so new players are not permanently blocked.
+            let playerAvailabilityTier = 'ACTIVE';
             try {
               const availRow = db.prepare(`
                 SELECT status, status_reason, checked_at
                 FROM player_availability
                 WHERE player_id = ? AND sport = 'NHL'
-                  AND checked_at > datetime('now', '-24 hours')
                 LIMIT 1
               `).get(player.player_id);
-              const statusReason =
-                typeof availRow?.status_reason === 'string'
-                  ? availRow.status_reason.toLowerCase()
-                  : '';
-              const statusReasonSuggestsInjury =
-                statusReason.includes('injur') ||
-                statusReason.includes('ltir') ||
-                statusReason.includes('ir') ||
-                statusReason.includes('out') ||
-                statusReason.includes('inactive') ||
-                statusReason.includes('scratch') ||
-                statusReason.includes('questionable') ||
-                statusReason.includes('doubtful');
-              if (
-                availRow &&
-                (availRow.status !== 'ACTIVE' || statusReasonSuggestsInjury)
-              ) {
-                console.log(
-                  `[${JOB_NAME}] Skipping ${player.player_name} (${player.player_id}): availability status=${availRow.status}${availRow.status_reason ? ` reason=${availRow.status_reason}` : ''}`,
-                );
-                continue;
+              if (availRow) {
+                if (availRow.status === 'INJURED') {
+                  console.log(
+                    `[${JOB_NAME}] Skipping ${player.player_name} (${player.player_id}): availability status=INJURED${availRow.status_reason ? ` reason=${availRow.status_reason}` : ''}`,
+                  );
+                  continue;
+                }
+                if (availRow.status === 'DTD') {
+                  playerAvailabilityTier = 'DTD';
+                  console.log(
+                    `[${JOB_NAME}] Note: ${player.player_name} (${player.player_id}) is DTD${availRow.status_reason ? ` reason=${availRow.status_reason}` : ''} — generating card with DTD tier`,
+                  );
+                }
               }
             } catch {
               // player_availability table may not exist in older DBs — proceed normally
@@ -627,6 +629,15 @@ async function runNHLPlayerShotsModel() {
               console.warn(`[${JOB_NAME}] No real prop line for ${playerName} game ${resolvedGameId} — using synthetic fallback`);
             }
 
+            // Fair line: L5 consistency baseline (no matchup adjustments).
+            // This is what the market typically prices the player at.
+            const l5FairValue = calcFairLine({ l5Sog, shotsPer60, projToi });
+            const fairLine = roundToHalfLine(l5FairValue) ?? syntheticLine;
+
+            // Matchup edge: how much the projection departs from the L5 baseline.
+            // Positive = matchup-positive (tough defense hurt opponents, home ice, etc.).
+            const matchupEdge = Math.round((mu - l5FairValue) * 10) / 10;
+
             const fullDirectionSeed = classifyEdge(mu, syntheticLine, 0.75);
             const fullConsistencyScore = computeConsistencyScore(
               l5Sog,
@@ -654,7 +665,6 @@ async function runNHLPlayerShotsModel() {
               supportScore: fullSupportScore,
               confidence,
             });
-            const fairLine = roundToHalfLine(mu) ?? syntheticLine;
             const fullDirectionLabel =
               fullGameEdge.direction === 'OVER' ? 'Over' : 'Under';
             const fullRecommendationPrefix =
@@ -680,6 +690,7 @@ async function runNHLPlayerShotsModel() {
                 game_time_utc: game.game_time_utc,
                 card_type: 'nhl-player-shots',
                 tier: fullGameEdge.tier,
+                availability_tier: playerAvailabilityTier,
                 card_status: 'active',
                 model_name: 'nhl-player-shots-v1',
                 model_version: '1.0.0',
@@ -687,7 +698,7 @@ async function runNHLPlayerShotsModel() {
                 status: fullDecision.status,
                 classification: fullDecision.classification,
                 // Required by basePayloadSchema
-                prediction: `${fullRecommendationPrefix} ${playerName} ${fullDirectionLabel} ${syntheticLine} SOG (fair line ${fairLine})`,
+                prediction: `${fullRecommendationPrefix} ${playerName} ${fullDirectionLabel} ${syntheticLine} SOG | Proj ${mu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
                 confidence: confidence,
                 recommended_bet_type: 'unknown',
                 generated_at: timestamp,
@@ -710,7 +721,7 @@ async function runNHLPlayerShotsModel() {
                     edge_pct: computeEdgePct(mu, syntheticLine),
                     fair_line: fairLine,
                   },
-                  pick_string: `${fullRecommendationPrefix} ${playerName} ${fullDirectionLabel} ${syntheticLine} SOG (play to fair line ${fairLine})`,
+                  pick_string: `${fullRecommendationPrefix} ${playerName} ${fullDirectionLabel} ${syntheticLine} SOG | Proj ${mu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
                   market_type: 'PROP',
                   player_name: playerName,
                   player_id: player.player_id.toString(),
@@ -727,9 +738,11 @@ async function runNHLPlayerShotsModel() {
                 },
                 decision: {
                   edge_pct: computeEdgePct(mu, syntheticLine),
+                  projection: Math.round(mu * 100) / 100,
+                  fair_line: fairLine,
+                  matchup_edge: matchupEdge,
                   model_projection: mu,
                   market_line: syntheticLine,
-                  fair_line: fairLine,
                   direction: fullGameEdge.direction,
                   confidence: confidence,
                   market_line_source: usingRealLine ? 'odds_api' : 'projection_floor',
@@ -740,6 +753,7 @@ async function runNHLPlayerShotsModel() {
                 },
                 drivers: {
                   l5_avg: l5Sog.reduce((a, b) => a + b, 0) / 5,
+                  l5_fair_value: Math.round(l5FairValue * 100) / 100,
                   l5_sog: l5Sog,
                   shots_per_60: shotsPer60,
                   proj_toi: projToi,
@@ -820,7 +834,9 @@ async function runNHLPlayerShotsModel() {
                 supportScore: firstPeriodSupportScore,
                 confidence: firstPeriodConfidence,
               });
-              const fairLine1p = roundToHalfLine(mu1p) ?? syntheticLine1p;
+              const l5FairValue1p = calcFairLine1p({ l5Sog, shotsPer60, projToi });
+              const fairLine1p = roundToHalfLine(l5FairValue1p) ?? syntheticLine1p;
+              const matchupEdge1p = Math.round((mu1p - l5FairValue1p) * 10) / 10;
               const firstPeriodDirectionLabel =
                 firstPeriodEdge.direction === 'OVER' ? 'Over' : 'Under';
               const firstPeriodRecommendationPrefix =
@@ -844,6 +860,7 @@ async function runNHLPlayerShotsModel() {
                   game_time_utc: game.game_time_utc,
                   card_type: 'nhl-player-shots-1p',
                   tier: firstPeriodEdge.tier,
+                  availability_tier: playerAvailabilityTier,
                   card_status: 'active',
                   model_name: 'nhl-player-shots-v1',
                   model_version: '1.0.0',
@@ -851,7 +868,7 @@ async function runNHLPlayerShotsModel() {
                   status: firstPeriodDecision.status,
                   classification: firstPeriodDecision.classification,
                   // Required by basePayloadSchema
-                  prediction: `${firstPeriodRecommendationPrefix} ${playerName} ${firstPeriodDirectionLabel} ${syntheticLine1p} SOG (1P, fair line ${fairLine1p})`,
+                  prediction: `${firstPeriodRecommendationPrefix} ${playerName} ${firstPeriodDirectionLabel} ${syntheticLine1p} SOG (1P) | Proj ${mu1p.toFixed(1)} · Fair ${fairLine1p} · Edge ${formatSignedEdge(matchupEdge1p)}`,
                   confidence: firstPeriodConfidence,
                   recommended_bet_type: 'unknown',
                   generated_at: timestamp,
@@ -874,7 +891,7 @@ async function runNHLPlayerShotsModel() {
                       edge_pct: computeEdgePct(mu1p, syntheticLine1p),
                       fair_line: fairLine1p,
                     },
-                    pick_string: `${firstPeriodRecommendationPrefix} ${playerName} ${firstPeriodDirectionLabel} ${syntheticLine1p} SOG (1P, play to fair line ${fairLine1p})`,
+                    pick_string: `${firstPeriodRecommendationPrefix} ${playerName} ${firstPeriodDirectionLabel} ${syntheticLine1p} SOG (1P) | Proj ${mu1p.toFixed(1)} · Fair ${fairLine1p} · Edge ${formatSignedEdge(matchupEdge1p)}`,
                     market_type: 'PROP',
                     player_name: playerName,
                     player_id: player.player_id.toString(),
@@ -891,10 +908,12 @@ async function runNHLPlayerShotsModel() {
                     },
                   },
                   decision: {
+                    projection: Math.round(mu1p * 100) / 100,
+                    fair_line: fairLine1p,
+                    matchup_edge: matchupEdge1p,
                     edge_pct: computeEdgePct(mu1p, syntheticLine1p),
                     model_projection: mu1p,
                     market_line: syntheticLine1p,
-                    fair_line: fairLine1p,
                     direction: firstPeriodEdge.direction,
                     confidence: firstPeriodConfidence,
                     market_line_source: realPropLine1p ? 'odds_api' : 'projection_floor',
@@ -907,6 +926,7 @@ async function runNHLPlayerShotsModel() {
                   },
                   drivers: {
                     l5_avg_1p: (l5Sog.reduce((a, b) => a + b, 0) / 5) * 0.32,
+                    l5_fair_value_1p: Math.round(l5FairValue1p * 100) / 100,
                     l5_sog: l5Sog,
                     shots_per_60: shotsPer60,
                     proj_toi: projToi,

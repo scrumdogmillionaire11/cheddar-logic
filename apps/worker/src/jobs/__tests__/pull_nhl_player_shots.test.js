@@ -330,4 +330,95 @@ describe('pull_nhl_player_shots — player_availability writes', () => {
     const call = upsertPlayerAvailability.mock.calls[0][0];
     expect(call.status).toBe('ACTIVE');
   });
+
+  test('DTD player writes DTD to player_availability but still processes shot logs', async () => {
+    const payload = buildPayload({ status: 'day-to-day' });
+
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(payload),
+    });
+
+    process.env.NHL_SOG_PLAYER_IDS = '8478402';
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerAvailability } = require('@cheddar-logic/data');
+
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    await pullNhlPlayerShots({ dryRun: false });
+    jest.restoreAllMocks();
+
+    expect(upsertPlayerAvailability).toHaveBeenCalledTimes(1);
+    const call = upsertPlayerAvailability.mock.calls[0][0];
+    expect(call.status).toBe('DTD');
+    expect(call.statusReason).toBe('day-to-day');
+  });
+
+  test('questionable player writes DTD to player_availability', async () => {
+    const payload = buildPayload({ status: 'questionable' });
+
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(payload),
+    });
+
+    process.env.NHL_SOG_PLAYER_IDS = '8478402';
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerAvailability } = require('@cheddar-logic/data');
+
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    await pullNhlPlayerShots({ dryRun: false });
+    jest.restoreAllMocks();
+
+    expect(upsertPlayerAvailability).toHaveBeenCalledTimes(1);
+    const call = upsertPlayerAvailability.mock.calls[0][0];
+    expect(call.status).toBe('DTD');
+  });
+});
+
+describe('pull_nhl_player_shots — checkInjuryStatus tier', () => {
+  let checkInjuryStatus;
+
+  beforeEach(() => {
+    jest.resetModules();
+    ({ checkInjuryStatus } = require('../pull_nhl_player_shots'));
+  });
+
+  test('returns tier=ACTIVE when no status field', () => {
+    const result = checkInjuryStatus({});
+    expect(result.skip).toBe(false);
+    expect(result.tier).toBe('ACTIVE');
+  });
+
+  test('returns tier=INJURED for confirmed-out status', () => {
+    const result = checkInjuryStatus({ status: 'injured' });
+    expect(result.skip).toBe(true);
+    expect(result.tier).toBe('INJURED');
+  });
+
+  test('returns tier=DTD for day-to-day status', () => {
+    const result = checkInjuryStatus({ status: 'day-to-day' });
+    expect(result.skip).toBe(false);
+    expect(result.tier).toBe('DTD');
+    expect(result.reason).toBe('day-to-day');
+  });
+
+  test('returns tier=DTD for questionable status', () => {
+    const result = checkInjuryStatus({ status: 'questionable' });
+    expect(result.skip).toBe(false);
+    expect(result.tier).toBe('DTD');
+  });
+
+  test('returns tier=DTD for doubtful status', () => {
+    const result = checkInjuryStatus({ status: 'doubtful' });
+    expect(result.skip).toBe(false);
+    expect(result.tier).toBe('DTD');
+  });
+
+  test('returns tier=ACTIVE for healthy active status', () => {
+    const result = checkInjuryStatus({ status: 'active' });
+    expect(result.skip).toBe(false);
+    expect(result.tier).toBe('ACTIVE');
+  });
 });
