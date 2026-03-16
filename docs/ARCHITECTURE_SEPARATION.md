@@ -10,6 +10,17 @@
 
 **Two separate applications. One unified data store for Cheddar. Complete isolation for FPL Sage.**
 
+### Rollout Safety Contract (Phase-Gated, Additive-Only)
+
+- New rollout primitives are additive and default-off by environment flag.
+- Baseline behavior remains unchanged until a flag is explicitly enabled.
+- Rollout sequence:
+  1. `ENABLE_DECISION_BASIS_TAGS` + `ENABLE_PROJECTION_PERF_LEDGER` (projection-basis metadata + projection telemetry)
+  2. `ENABLE_MARKET_THRESHOLDS_V2` (sport+market threshold routing)
+  3. `ENABLE_CLV_LEDGER` (odds-backed CLV telemetry)
+- While all flags are false/unset, payload shape and decision outcomes must remain baseline-equivalent.
+- Telemetry ledgers are operational metrics only and do not alter settlement or card display pipelines.
+
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                     CHEDDAR BOARD (Node.js)                     │
