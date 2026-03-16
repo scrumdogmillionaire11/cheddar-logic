@@ -18,7 +18,7 @@
 
 require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
-const crypto = require('crypto');
+const nodeCrypto = require('crypto');
 
 // ============================================================================
 // Ohio soccer market scope constants
@@ -658,7 +658,7 @@ function buildDeterministicSoccerPlayerId({ gameId, playerName }) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
-  const digest = crypto
+  const digest = nodeCrypto
     .createHash('sha256')
     .update(`SOCCER|${String(gameId || '').trim()}|${normalizedName}`)
     .digest('hex');
