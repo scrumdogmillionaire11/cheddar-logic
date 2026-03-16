@@ -102,8 +102,17 @@ function buildMockDb({
           })),
         };
       }
+      if (s.includes('select id') && s.includes('from card_payloads')) {
+        return { all: jest.fn(() => [{ id: 'existing-card-1' }]) };
+      }
+      if (s.includes('delete from card_results')) {
+        return { run: jest.fn(() => ({ changes: 1 })) };
+      }
       if (s.includes('delete from card_payloads')) {
         return { run: jest.fn(() => ({ changes: 1 })) };
+      }
+      if (s.includes('update card_payloads') && s.includes('set expires_at')) {
+        return { run: jest.fn(() => ({ changes: 0 })) };
       }
       // team_metrics_cache, game_id_map, etc.
       return { all: jest.fn(() => []), get: jest.fn(() => null), run: jest.fn() };
@@ -363,6 +372,35 @@ describe('run_nhl_player_shots_model', () => {
       String(sql).toLowerCase().includes('delete from card_payloads'),
     );
     expect(deleteCall).toBeTruthy();
+  });
+
+  test('team abbreviation matching does not use substrings (TOR must not match PREDATORS)', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.2 });
+
+    const mockDb = buildMockDb({
+      games: [
+        buildFutureGame({
+          game_id: 'game-no-substring-match-01',
+          home_team: 'Nashville Predators',
+          away_team: 'Winnipeg Jets',
+        }),
+      ],
+      players: [
+        buildPlayer({
+          player_id: 8479318,
+          player_name: 'Auston Matthews',
+          team_abbrev: 'TOR',
+        }),
+      ],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    });
+    data.getDatabase.mockReturnValue(mockDb);
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).not.toHaveBeenCalled();
   });
 
   test('player with stale INJURED availability row is still skipped', async () => {

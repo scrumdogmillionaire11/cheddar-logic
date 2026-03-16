@@ -372,18 +372,74 @@ function resolveCanonicalGameId(gameId, homeTeam, awayTeam, gameTime, db) {
   return gameId;
 }
 
-function purgePlayerCardsForGame({ db, gameId, playerId, playerName }) {
-  const deleteStmt = db.prepare(`
-    DELETE FROM card_payloads
-    WHERE game_id = ?
-      AND sport = 'NHL'
+function purgePlayerCardsForGame({ db, gameIds, playerId, playerName }) {
+  const normalizedGameIds = Array.from(
+    new Set(
+      (Array.isArray(gameIds) ? gameIds : [gameIds]).filter(
+        (value) => typeof value === 'string' && value.trim().length > 0,
+      ),
+    ),
+  );
+
+  const gamePlaceholders = normalizedGameIds.map(() => '?').join(', ');
+  const gameFilterClause =
+    normalizedGameIds.length > 0 ? `AND game_id IN (${gamePlaceholders})` : '';
+
+  const matchSql = `
+    SELECT id
+    FROM card_payloads
+    WHERE LOWER(sport) = 'nhl'
+      ${gameFilterClause}
       AND card_type IN ('nhl-player-shots', 'nhl-player-shots-1p')
       AND (
         CAST(json_extract(payload_data, '$.play.player_id') AS TEXT) = CAST(? AS TEXT)
         OR LOWER(COALESCE(json_extract(payload_data, '$.play.player_name'), '')) = LOWER(COALESCE(?, ''))
       )
-  `);
-  return deleteStmt.run(gameId, String(playerId), playerName || null);
+  `;
+
+  const matchRows = db
+    .prepare(matchSql)
+    .all(...normalizedGameIds, String(playerId), playerName || null);
+  const cardIds = matchRows
+    .map((row) => (row && typeof row.id === 'string' ? row.id : null))
+    .filter((value) => Boolean(value));
+
+  if (cardIds.length === 0) {
+    return { changes: 0 };
+  }
+
+  const idPlaceholders = cardIds.map(() => '?').join(', ');
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    DELETE FROM card_results
+    WHERE status = 'pending'
+      AND card_id IN (${idPlaceholders})
+  `).run(...cardIds);
+
+  const deleted = db
+    .prepare(`
+      DELETE FROM card_payloads
+      WHERE id IN (${idPlaceholders})
+        AND id NOT IN (
+          SELECT card_id
+          FROM card_results
+        )
+    `)
+    .run(...cardIds).changes;
+
+  db.prepare(`
+    UPDATE card_payloads
+    SET expires_at = COALESCE(expires_at, ?), updated_at = ?
+    WHERE id IN (${idPlaceholders})
+      AND id IN (
+        SELECT card_id
+        FROM card_results
+      )
+      AND expires_at IS NULL
+  `).run(now, now, ...cardIds);
+
+  return { changes: deleted };
 }
 
 /**
@@ -503,6 +559,13 @@ async function runNHLPlayerShotsModel() {
         );
 
         // Find players for this game (case-insensitive match against abbreviations)
+        const homeTeamUpper =
+          typeof homeTeam === 'string' ? homeTeam.trim().toUpperCase() : '';
+        const awayTeamUpper =
+          typeof awayTeam === 'string' ? awayTeam.trim().toUpperCase() : '';
+        const homeTeamAbbrev = resolveTeamAbbrev(homeTeam);
+        const awayTeamAbbrev = resolveTeamAbbrev(awayTeam);
+
         const gamePlayersMatched = uniquePlayers.filter((p) => {
           const playerTeamAbbrev =
             typeof p.team_abbrev === 'string'
@@ -517,14 +580,19 @@ async function runNHLPlayerShotsModel() {
               `[${JOB_NAME}] WARN: team_abbrev '${playerTeamAbbrev}' not found in TEAM_ABBREV_TO_NAME map — player ${p.player_name} may not match any game`,
             );
           }
-          // Match against both the full team names AND abbreviations
+          const playerTeamFullName = TEAM_ABBREV_TO_NAME[playerTeamAbbrev];
+          const playerTeamUpper =
+            typeof playerTeamFullName === 'string'
+              ? playerTeamFullName.toUpperCase()
+              : null;
+
+          // Match by exact team identity only (abbreviation or canonical full name).
+          // Do not use substring checks (e.g., TOR incorrectly matching "PREDATORS").
           return (
-            homeTeam.toUpperCase().includes(playerTeamAbbrev) ||
-            awayTeam.toUpperCase().includes(playerTeamAbbrev) ||
-            TEAM_ABBREV_TO_NAME[playerTeamAbbrev]?.toUpperCase() ===
-              homeTeam.toUpperCase() ||
-            TEAM_ABBREV_TO_NAME[playerTeamAbbrev]?.toUpperCase() ===
-              awayTeam.toUpperCase()
+            (homeTeamAbbrev && homeTeamAbbrev === playerTeamAbbrev) ||
+            (awayTeamAbbrev && awayTeamAbbrev === playerTeamAbbrev) ||
+            (playerTeamUpper && playerTeamUpper === homeTeamUpper) ||
+            (playerTeamUpper && playerTeamUpper === awayTeamUpper)
           );
         });
 
@@ -575,9 +643,16 @@ async function runNHLPlayerShotsModel() {
             );
 
             try {
+              const purgeGameIds = Array.from(
+                new Set(
+                  [resolvedGameId, gameId].filter(
+                    (value) => typeof value === 'string' && value.length > 0,
+                  ),
+                ),
+              );
               const purgeResult = purgePlayerCardsForGame({
                 db,
-                gameId: resolvedGameId,
+                gameIds: purgeGameIds,
                 playerId: player.player_id,
                 playerName: displayName,
               });
@@ -602,6 +677,18 @@ async function runNHLPlayerShotsModel() {
               `).get(player.player_id);
               if (availRow) {
                 if (availRow.status === 'INJURED') {
+                  try {
+                    purgePlayerCardsForGame({
+                      db,
+                      gameIds: [],
+                      playerId: player.player_id,
+                      playerName: displayName,
+                    });
+                  } catch (purgeErr) {
+                    console.warn(
+                      `[${JOB_NAME}] Could not purge injured-player cards for ${displayName} (${player.player_id}): ${purgeErr.message}`,
+                    );
+                  }
                   console.log(
                     `[${JOB_NAME}] Skipping ${player.player_name} (${player.player_id}): availability status=INJURED${availRow.status_reason ? ` reason=${availRow.status_reason}` : ''}`,
                   );
@@ -619,6 +706,18 @@ async function runNHLPlayerShotsModel() {
             }
 
             if (moneyPuckInjury?.status === 'INJURED') {
+              try {
+                purgePlayerCardsForGame({
+                  db,
+                  gameIds: [],
+                  playerId: player.player_id,
+                  playerName: displayName,
+                });
+              } catch (purgeErr) {
+                console.warn(
+                  `[${JOB_NAME}] Could not purge MoneyPuck-injured cards for ${displayName} (${player.player_id}): ${purgeErr.message}`,
+                );
+              }
               console.log(
                 `[${JOB_NAME}] Skipping ${displayName} (${player.player_id}): MoneyPuck injury status=${moneyPuckInjury.reason || 'listed-injured'}`,
               );
