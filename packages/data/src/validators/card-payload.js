@@ -1,7 +1,24 @@
 /**
  * Card Payload Validation
- * 
- * Minimal schema guard to prevent invalid payloads from being persisted.
+ *
+ * CONTRACT — Write path:
+ *   Worker jobs (run_nhl_model, run_soccer_model, run_nhl_player_shots_model, etc.)
+ *   → packages/data (saveCardPayload / upsertCardPayload)
+ *   → card_payloads table
+ *
+ * CONTRACT — Read surfaces (active):
+ *   GET /api/games        — joined with card_payloads for play-call data
+ *   GET /api/cards        — primary betting dashboard card feed
+ *   GET /api/cards/[gameId] — per-game card detail
+ *
+ * Backward compatibility:
+ *   Legacy aliases in schemaByCardType are retained per the "Legacy Alias Policy" table
+ *   in docs/DATA_CONTRACTS.md. Accepted for historical rows; no new writes should target
+ *   deprecated aliases.
+ *
+ * Historical-only (not active runtime contracts):
+ *   server/model-outputs, /api/models/*, /api/betting/projections, /api/soccer/slate
+ *   These references appear in older commits only and do not exist in the current architecture.
  */
 
 const { z } = require('zod');
