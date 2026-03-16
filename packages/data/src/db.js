@@ -2223,10 +2223,11 @@ function shouldTrackDisplayedPlay(payloadData, context = {}) {
     );
   }
   if (marketType === 'TOTAL') {
+    const period = resolveTrackingPeriod(payloadData, context);
     return (
       (selection === 'OVER' || selection === 'UNDER') &&
       line !== null &&
-      price !== null
+      (price !== null || period === '1P')
     );
   }
 
@@ -2531,22 +2532,29 @@ function insertCardPayload(card) {
     payloadData.run_id = normalizedRunId;
   }
 
+  // 1P driver projections (nhl-pace-1p) have no priced odds — PASS calls (selection.side=NONE)
+  // are not actionable and skip market locking entirely; OVER/UNDER calls lock without a price.
+  const is1pDriver = String(card.cardType || '').includes('-pace-1p');
+  const is1pPassCall = is1pDriver && toUpperToken(payloadData?.selection?.side) === 'NONE';
+
   let lockedMarket = null;
-  try {
-    lockedMarket = deriveLockedMarketContext(payloadData, {
-      gameId: card.gameId,
-      homeTeam: payloadData.home_team ?? null,
-      awayTeam: payloadData.away_team ?? null,
-      requirePrice: true,
-      requireLineForMarket: true,
-    });
-  } catch (error) {
-    const code = error?.code || 'INVALID_MARKET_CONTRACT';
-    throw createMarketError(
-      code,
-      `[DB] Refusing to lock invalid market payload for card ${card.id}: ${error.message}`,
-      { cardId: card.id, gameId: card.gameId, cause: error?.details || null }
-    );
+  if (!is1pPassCall) {
+    try {
+      lockedMarket = deriveLockedMarketContext(payloadData, {
+        gameId: card.gameId,
+        homeTeam: payloadData.home_team ?? null,
+        awayTeam: payloadData.away_team ?? null,
+        requirePrice: !is1pDriver,
+        requireLineForMarket: true,
+      });
+    } catch (error) {
+      const code = error?.code || 'INVALID_MARKET_CONTRACT';
+      throw createMarketError(
+        code,
+        `[DB] Refusing to lock invalid market payload for card ${card.id}: ${error.message}`,
+        { cardId: card.id, gameId: card.gameId, cause: error?.details || null }
+      );
+    }
   }
 
   if (lockedMarket) {
