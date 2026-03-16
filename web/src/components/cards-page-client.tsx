@@ -2127,9 +2127,18 @@ export default function CardsPageClient() {
       displayPlay.selection?.side ?? displayPlay.bet?.side?.toUpperCase(),
       originalGame.odds,
     );
+    // For total-market bets, prefer the live odds line over the baked card line
+    // so "BET: Over X" reflects what's actually available to bet.
+    const liveTotalLine =
+      displayPlay.bet?.market_type === 'total' &&
+      typeof originalGame.odds?.total === 'number'
+        ? originalGame.odds.total
+        : undefined;
     const displayBetText = displayPlay.bet
       ? formatCanonicalBetText(
-          displayPlay.bet,
+          liveTotalLine !== undefined
+            ? { ...displayPlay.bet, line: liveTotalLine }
+            : displayPlay.bet,
           card.homeTeam,
           card.awayTeam,
           livePrice,
@@ -2292,8 +2301,19 @@ export default function CardsPageClient() {
       typeof displayPlay.projectedScoreAway === 'number'
         ? displayPlay.projectedScoreAway
         : undefined;
-    const marketLine =
+    const bakedLine =
       typeof displayPlay.line === 'number' ? displayPlay.line : undefined;
+    // For total-market cards, prefer the live odds line so edge % and delta
+    // reflect the current market, not the stale value baked at model-run time.
+    const marketLine =
+      isTotalLikeMarket && typeof originalGame.odds?.total === 'number'
+        ? originalGame.odds.total
+        : bakedLine;
+    const lineMoved =
+      isTotalLikeMarket &&
+      typeof bakedLine === 'number' &&
+      typeof originalGame.odds?.total === 'number' &&
+      Math.abs(originalGame.odds.total - bakedLine) >= 0.5;
     const projectedLineValue =
       typeof projectedTeamTotal === 'number'
         ? projectedTeamTotal
@@ -2771,6 +2791,11 @@ export default function CardsPageClient() {
                         </span>
                       </span>
                     </div>
+                    {lineMoved && typeof bakedLine === 'number' && (
+                      <div className="mt-1 text-xs text-amber-400/80 font-mono">
+                        Line moved since model ran (was {bakedLine.toFixed(1)})
+                      </div>
+                    )}
                   </div>
                 )}
                 {hasMlContext && (
