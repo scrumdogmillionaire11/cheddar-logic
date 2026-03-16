@@ -793,6 +793,7 @@ Location: `packages/data/src/validators/card-payload.js`
 - Card types are explicitly mapped by runtime family (NBA/NHL/NCAAM + soccer/base jobs)
 - Unknown card types fall back to baseline payload schema
 - Actionable play payloads are checked against market/selection contract via `deriveLockedMarketContext(...)`
+- **Validator-to-route alignment:** `card-payload.js` is the single write-path validation boundary. Active read surfaces (`/api/games`, `/api/cards`, `/api/cards/[gameId]`) consume `card_payloads` rows validated by this boundary. No other validation path exists for card writes.
 
 ### Legacy Alias Policy (Keep vs Deprecate)
 
