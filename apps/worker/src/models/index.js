@@ -925,6 +925,11 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
     }
   }
 
+  // --- Skater injury factors (used by pace model and lineup card) ---
+  // Computed outside the pace block so they're accessible for lineup card emission.
+  const homeSkaterInjuryFactorGlobal = computeSkaterInjuryFactor(raw?.injury_status?.home);
+  const awaySkaterInjuryFactorGlobal = computeSkaterInjuryFactor(raw?.injury_status?.away);
+
   // --- Pace Model Totals Driver (Full Game O/U) ---
   // JS port of TotalsPredictor.predict_game() from cheddar-nhl.
   // Emits OVER/UNDER signal when expected_total diverges >= 0.4 goals from market line.
@@ -969,8 +974,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
     );
     const marketTotal = toNumber(oddsSnapshot?.total);
 
-    const homeSkaterInjuryFactor = computeSkaterInjuryFactor(raw?.injury_status?.home);
-    const awaySkaterInjuryFactor = computeSkaterInjuryFactor(raw?.injury_status?.away);
+    const homeSkaterInjuryFactor = homeSkaterInjuryFactorGlobal;
+    const awaySkaterInjuryFactor = awaySkaterInjuryFactorGlobal;
     // Defense-side: conservative factor applied to full out-count (no positional data yet).
     // See computeSkaterDefInjuryFactor JSDoc for the positional gap caveat.
     const homeSkaterDefInjuryFactor = computeSkaterDefInjuryFactor(raw?.injury_status?.home);
@@ -1194,6 +1199,88 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
         });
       }
     }
+  }
+
+  // ---- Injury lineup card (WI-0465-D) ----
+  // Emit when home or away skater injury factor drops below 0.95 (meaningful
+  // goal suppression). Direction is always UNDER — missing key players reduce
+  // total expected goals. Includes confirmed-out player names and estimated
+  // goal suppression percentage derived from the injury factor.
+  const LINEUP_THRESHOLD = 0.95;
+  const emitHome =
+    homeSkaterInjuryFactorGlobal !== null && homeSkaterInjuryFactorGlobal < LINEUP_THRESHOLD;
+  const emitAway =
+    awaySkaterInjuryFactorGlobal !== null && awaySkaterInjuryFactorGlobal < LINEUP_THRESHOLD;
+
+  if (emitHome || emitAway) {
+    const CONFIRMED_OUT_KEYWORDS_LOWER = ['out', 'ir', 'ltir', 'suspended'];
+    function confirmedOutPlayers(injuryList) {
+      if (!Array.isArray(injuryList)) return [];
+      return injuryList
+        .filter((inj) => {
+          const s = String(inj?.status || '').toLowerCase().trim();
+          return CONFIRMED_OUT_KEYWORDS_LOWER.some((kw) => s.includes(kw));
+        })
+        .map((inj) => inj?.player || 'Unknown')
+        .filter(Boolean);
+    }
+
+    const homeOutPlayers = emitHome
+      ? confirmedOutPlayers(raw?.injury_status?.home)
+      : [];
+    const awayOutPlayers = emitAway
+      ? confirmedOutPlayers(raw?.injury_status?.away)
+      : [];
+
+    // Goal suppression estimate: each factor < 1.0 contributes to total reduction.
+    // We express it as (1 - factor) * 100% for each affected side.
+    const homeSuppressionPct =
+      emitHome ? Math.round((1 - homeSkaterInjuryFactorGlobal) * 100) : 0;
+    const awaySuppressionPct =
+      emitAway ? Math.round((1 - awaySkaterInjuryFactorGlobal) * 100) : 0;
+    const totalSuppressionPct = homeSuppressionPct + awaySuppressionPct;
+
+    const outSummaryParts = [];
+    if (homeOutPlayers.length > 0) {
+      outSummaryParts.push(`Home out: ${homeOutPlayers.join(', ')} (${homeSuppressionPct}% suppression)`);
+    }
+    if (awayOutPlayers.length > 0) {
+      outSummaryParts.push(`Away out: ${awayOutPlayers.join(', ')} (${awaySuppressionPct}% suppression)`);
+    }
+
+    // Confidence: fixed base 0.62 — injury signal is directional but not model-derived.
+    const lineupConfidence = 0.62;
+
+    descriptors.push({
+      cardType: 'nhl-lineup',
+      cardTitle: `NHL Lineup Alert: Key players out — UNDER signal`,
+      confidence: lineupConfidence,
+      tier: determineTier(lineupConfidence),
+      prediction: 'UNDER',
+      action: 'HOLD',
+      status: 'WATCH',
+      reasoning: `Injury-driven goal suppression: ${outSummaryParts.join('; ')}. Estimated total suppression ~${totalSuppressionPct}%.`,
+      ev_threshold_passed: lineupConfidence > 0.6,
+      driverKey: 'lineupInjury',
+      driverInputs: {
+        home_injury_factor: homeSkaterInjuryFactorGlobal,
+        away_injury_factor: awaySkaterInjuryFactorGlobal,
+        home_out_players: homeOutPlayers,
+        away_out_players: awayOutPlayers,
+        home_suppression_pct: homeSuppressionPct,
+        away_suppression_pct: awaySuppressionPct,
+        total_suppression_pct: totalSuppressionPct,
+      },
+      driverScore: 0.25, // UNDER signal
+      driverStatus: 'ok',
+      inference_source: 'driver',
+      is_mock: false,
+      reason_codes: ['LINEUP_INJURY_SIGNAL'],
+      market_type: 'TOTAL',
+      selection: { side: 'UNDER' },
+      line: null,
+      price: null,
+    });
   }
 
   return descriptors;
