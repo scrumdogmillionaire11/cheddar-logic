@@ -3028,7 +3028,9 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       // Infer prop type from card title or type
       let propType = 'Unknown';
       const titleLower = (play.cardTitle || '').toLowerCase();
-      const canonicalMarketKey = String(play.canonical_market_key || '').toLowerCase();
+      const canonicalMarketKey = String(
+        (play as unknown as Record<string, unknown>).canonical_market_key || '',
+      ).toLowerCase();
       if (canonicalMarketKey === 'player_shots') {
         propType = 'Shots';
       } else if (canonicalMarketKey === 'player_shots_on_target') {
