@@ -1,7 +1,7 @@
 /**
- * Next.js Middleware - Security Headers
+ * Next.js Proxy - Security Headers
  *
- * This middleware applies security headers to all HTTP responses.
+ * This proxy applies security headers to all HTTP responses.
  * Runs on every request before route handlers.
  *
  * Security headers included:
@@ -17,11 +17,9 @@
 import { NextResponse } from 'next/server';
 import { createSecurityHeaders } from './lib/api-security/security-headers';
 
-export function middleware() {
-  // Create response with security headers
+export function proxy() {
   const response = NextResponse.next();
 
-  // Add all security headers
   const securityHeaders = createSecurityHeaders();
   Object.entries(securityHeaders).forEach(([key, value]: [string, string]) => {
     response.headers.set(key, value);
@@ -30,17 +28,8 @@ export function middleware() {
   return response;
 }
 
-// Configure which routes should have middleware applied
-// We apply it to all routes except static assets and Next.js internals
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public folder files
-     */
     '/((?!_next/static|_next/image|favicon.ico|public).*)',
   ],
 };

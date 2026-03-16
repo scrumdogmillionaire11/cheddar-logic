@@ -237,7 +237,7 @@ getProjectionWinRates,
 # Phase 1: NHL props + soccer (lowest risk — projection models you already have)
 ENABLE_DECISION_BASIS_TAGS=true \
 ENABLE_PROJECTION_PERF_LEDGER=true \
-npm run worker
+npm --prefix apps/worker run scheduler
 
 # Verify:
 #   - NHL shots cards: decision.decision_basis present in payloadData
@@ -247,10 +247,10 @@ npm run worker
 #   - /api/games returns same shape (new fields are optional additions)
 
 # Phase 2: Enable sport+market thresholds
-ENABLE_MARKET_THRESHOLDS_V2=true npm run worker
+ENABLE_MARKET_THRESHOLDS_V2=true npm --prefix apps/worker run scheduler
 
 # Phase 3: CLV ledger (after confirming odds-backed plays are working cleanly)
-ENABLE_CLV_LEDGER=true npm run worker
+ENABLE_CLV_LEDGER=true npm --prefix apps/worker run scheduler
 ```
 
 ---

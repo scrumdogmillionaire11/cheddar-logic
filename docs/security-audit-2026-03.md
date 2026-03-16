@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-15
 **Auditor:** Claude (automated review, WI-0458)
-**Scope:** `web/src/app/api/**`, `web/src/lib/api-security/**`, `web/src/middleware.ts`
+**Scope:** `web/src/app/api/**`, `web/src/lib/api-security/**`, `web/src/proxy.ts`
 **Out of scope:** FPL Sage backend (separate service), worker/scheduler processes, database-level permissions
 
 ---
@@ -27,8 +27,9 @@
 
 The following security mechanisms are implemented and functional:
 
-**Security Headers (middleware.ts)**
-- Applied to all routes via Next.js middleware
+### Security Headers (`proxy.ts`)
+
+- Applied to all routes via Next.js proxy
 - Content-Security-Policy (CSP): prevents XSS
 - Strict-Transport-Security (HSTS): enforces HTTPS
 - X-Frame-Options: prevents clickjacking

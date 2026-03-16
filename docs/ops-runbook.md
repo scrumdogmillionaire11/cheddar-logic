@@ -1083,7 +1083,7 @@ Upgraded from axios `^0.27.2` to `^1.7.0` (WI-0342, 2026-03-08).
 ### Next.js Build Warnings
 
 - **Multi-lockfile root warning**: Resolved — `web/next.config.ts` sets `turbopack.root` to the monorepo root
-- **Middleware convention**: Current `web/src/middleware.ts` uses supported `NextResponse.next()` pattern with `config.matcher` — no deprecation warnings expected
+- **Proxy convention**: Current `web/src/proxy.ts` uses supported `proxy()` + `config.matcher` pattern with `NextResponse.next()` — middleware deprecation warning removed
 
 ---
 

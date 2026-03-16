@@ -1,5 +1,5 @@
 {
-  "fetched_at": "2026-03-16T14:36:39.664Z",
+  "fetched_at": "2026-03-16T15:57:23.529Z",
   "teams": {},
   "goalies": {
     "New York Rangers": {
@@ -199,12 +199,12 @@
     },
     "Calgary Flames": {
       "name": "Dustin Wolf",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "New Jersey Devils": {
       "name": "Jacob Markstrom",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Boston Bruins": {
@@ -214,7 +214,7 @@
     },
     "New York Rangers": {
       "name": "Igor Shesterkin",
-      "status": "EXPECTED",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Los Angeles Kings": {
@@ -223,8 +223,8 @@
       "source": "rotowire"
     },
     "Dallas Stars": {
-      "name": "Jake Oettinger",
-      "status": "EXPECTED",
+      "name": "Casey DeSmith",
+      "status": "CONFIRMED",
       "source": "rotowire"
     },
     "Utah Hockey Club": {
@@ -354,12 +354,12 @@
       },
       "Calgary Flames": {
         "name": "Dustin Wolf",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "New Jersey Devils": {
         "name": "Jacob Markstrom",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Boston Bruins": {
@@ -369,7 +369,7 @@
       },
       "New York Rangers": {
         "name": "Igor Shesterkin",
-        "status": "EXPECTED",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Los Angeles Kings": {
@@ -378,8 +378,8 @@
         "source": "rotowire"
       },
       "Dallas Stars": {
-        "name": "Jake Oettinger",
-        "status": "EXPECTED",
+        "name": "Casey DeSmith",
+        "status": "CONFIRMED",
         "source": "rotowire"
       },
       "Utah Hockey Club": {

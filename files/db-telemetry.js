@@ -10,7 +10,7 @@
  * Rules enforced in code:
  *   - Synthetic-line props are EXCLUDED from both ledgers by assertion
  *   - No joins or dependencies on card_results, card_display_log, settlement flow
- *   - Both tables are append-only; no UPDATE to existing rows
+ *   - Rows are append-first; settlement fields may be updated in-place post-game
  *   - getDatabase() used for all access — same singleton, same lock
  *
  * Integration into db.js:

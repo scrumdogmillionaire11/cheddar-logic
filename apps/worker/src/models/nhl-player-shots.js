@@ -176,4 +176,40 @@ function classifyEdge(mu, marketLine, confidence) {
   return { tier, direction, edge, mu };
 }
 
-module.exports = { calcMu, calcMu1p, classifyEdge };
+/**
+ * Calculate the L5-based fair line for a player — no matchup adjustments.
+ * This is the consistency baseline: what the player "should" be priced at
+ * based solely on recent history. The market typically anchors here.
+ *
+ * opponentFactor, paceFactor, and isHome are intentionally excluded so that
+ * calcMu(fairLine inputs) vs calcMu(full inputs) = pure matchup edge.
+ *
+ * @param {object} inputs - l5Sog, shotsPer60, projToi (matchup fields ignored)
+ * @returns {number} L5 fair value (un-rounded)
+ */
+function calcFairLine(inputs) {
+  return calcMu({
+    l5Sog: inputs.l5Sog,
+    shotsPer60: inputs.shotsPer60 ?? null,
+    projToi: inputs.projToi ?? null,
+    opponentFactor: 1.0,
+    paceFactor: 1.0,
+    isHome: null,
+  });
+}
+
+/**
+ * Calculate the L5-based fair line for the first period.
+ * Applies the same 1P share/pace as calcMu1p, but without matchup adjustments.
+ *
+ * @param {object} inputs - l5Sog, shotsPer60, projToi (matchup fields ignored)
+ * @returns {number} L5 fair value for 1P (un-rounded)
+ */
+function calcFairLine1p(inputs) {
+  return Math.max(
+    0.0,
+    calcFairLine(inputs) * FIRST_PERIOD_SOG_SHARE * FIRST_PERIOD_PACE_FACTOR,
+  );
+}
+
+module.exports = { calcMu, calcMu1p, classifyEdge, calcFairLine, calcFairLine1p };
