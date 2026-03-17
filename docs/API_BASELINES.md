@@ -120,3 +120,55 @@ Expected:
 
 - `decision_basis` should be `ODDS_BACKED` only.
 - `PROJECTION_ONLY` count should remain zero by design.
+
+## Phase 2 Rollout Baseline (Market Thresholds V2)
+
+Captured with `ENABLE_MARKET_THRESHOLDS_V2=false`.
+
+### Preflight Checklist (Flag Off)
+
+1. Confirm flag is explicitly disabled for baseline capture run:
+
+```bash
+ENABLE_MARKET_THRESHOLDS_V2=false npm --prefix apps/worker run job:run-nba-model:test
+ENABLE_MARKET_THRESHOLDS_V2=false npm --prefix apps/worker run job:run-ncaam-model:test
+```
+
+1. Confirm decision API behavior is stable and query contracts still match baseline expectations:
+
+```bash
+npm --prefix web run test:card-decision
+npm --prefix web run test:api:games:market
+```
+
+1. Persist representative baseline artifacts for both sports (NBA and NCAAM) before any activation work starts.
+
+### Baseline Capture Procedure
+
+1. Run the NBA and NCAAM model test jobs with `ENABLE_MARKET_THRESHOLDS_V2=false`.
+1. Capture one representative decision sample per sport from API output (payload snapshot or query transcript).
+1. For each sample, record:
+
+- `sport`
+- `game_id`
+- `recommendedBetType`
+- `decision_basis`
+- confidence/edge fields used by current contract
+
+1. Save references in the active WI notes so activation work can compare before/after behavior.
+
+### Required Evidence Samples
+
+- **NBA sample (flag off):** at least one decision payload/transcript reference.
+- **NCAAM sample (flag off):** at least one decision payload/transcript reference.
+- Samples must reflect current expected semantics and include enough fields to evaluate parity during activation.
+
+### Go/No-Go Gate for Activation (WI-0480)
+
+Proceed to WI-0480 only if all conditions below are true:
+
+1. All four preflight commands are runnable from repo root.
+1. Baseline evidence exists for both NBA and NCAAM with `ENABLE_MARKET_THRESHOLDS_V2=false`.
+1. No unexplained contract drift is observed in decision semantics compared to expected baseline behavior.
+
+If any condition fails, activation is **NO-GO** and Phase 2 remains in preflight.
