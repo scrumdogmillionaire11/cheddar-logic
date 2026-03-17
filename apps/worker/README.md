@@ -11,7 +11,7 @@ Use this run order when tracking missing ESPN/projection inputs in the main Ched
 set -a; source .env; set +a
 
 # 2) Pre-warm team metrics cache (all sports)
-node src/jobs/refresh_team_metrics_daily.js
+npm run job:refresh-team-metrics
 
 # 3) Pull latest odds snapshots
 npm run job:pull-odds
