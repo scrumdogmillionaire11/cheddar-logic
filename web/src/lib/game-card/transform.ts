@@ -469,11 +469,15 @@ function normalizeSideToken(value: unknown): CanonicalSide {
   const token = String(value ?? '').toUpperCase();
   if (
     token === 'HOME' ||
+    token === 'HOME_OR_DRAW' ||
+    token === 'HOME_DNB' ||
     token === 'AWAY' ||
+    token === 'AWAY_OR_DRAW' ||
+    token === 'AWAY_DNB' ||
     token === 'OVER' ||
     token === 'UNDER'
   )
-    return token;
+    return token.startsWith('HOME') ? 'HOME' : token.startsWith('AWAY') ? 'AWAY' : token;
   return 'NONE';
 }
 
@@ -526,9 +530,18 @@ function hasPlayableBet(
   canonical: CanonicalMarketType | undefined,
   side: CanonicalSide,
 ): boolean {
+  const rawSelectionSide = String(play.selection?.side ?? '').toUpperCase();
   if (canonical === 'MONEYLINE') {
     return (
-      (side === 'HOME' || side === 'AWAY') && typeof play.price === 'number'
+      (
+        side === 'HOME' ||
+        side === 'AWAY' ||
+        rawSelectionSide === 'HOME_OR_DRAW' ||
+        rawSelectionSide === 'AWAY_OR_DRAW' ||
+        rawSelectionSide === 'HOME_OR_AWAY' ||
+        rawSelectionSide === 'HOME_DNB' ||
+        rawSelectionSide === 'AWAY_DNB'
+      ) && typeof play.price === 'number'
     );
   }
   if (canonical === 'SPREAD' || canonical === 'PUCKLINE') {
