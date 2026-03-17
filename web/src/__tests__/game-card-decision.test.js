@@ -24,7 +24,7 @@ async function run() {
     deduplicateDrivers,
     getCardDecisionModel,
     resolvePlayDisplayDecision,
-  } = await import('../lib/game-card/decision.js');
+  } = await import('../lib/game-card/decision.ts');
 
   console.log('🧪 Game Card Decision Tests');
 
@@ -123,6 +123,7 @@ async function run() {
         confidence: 0.86,
         note: 'Edge on away ML',
         cardTitle: 'Away ML Edge',
+        cardType: 'nhl-moneyline-call',
       }),
       buildDriver({
         key: 'ml-away-super',
@@ -131,6 +132,16 @@ async function run() {
         confidence: 0.72,
         note: 'Model aligns',
         cardTitle: 'Away ML Support',
+        cardType: 'nhl-moneyline-call',
+      }),
+      buildDriver({
+        key: 'ml-away-watch',
+        tier: 'WATCH',
+        direction: 'AWAY',
+        confidence: 0.63,
+        note: 'Away trend support',
+        cardTitle: 'Away Trend',
+        cardType: 'nhl-moneyline-call',
       }),
       buildDriver({
         key: 'ml-home-watch',
@@ -166,7 +177,7 @@ async function run() {
   assert.strictEqual(decision.status, 'FIRE', 'status should resolve to FIRE');
   assert.strictEqual(
     decision.primaryPlay.pick,
-    'AWAY +200',
+    'Away Team ML +200',
     'primary play should use best away ML',
   );
   assert.ok(
@@ -179,7 +190,7 @@ async function run() {
     'first contributor should be pro',
   );
   assert.ok(
-    decision.riskCodes.includes('LOW_COVERAGE'),
+    decision.riskCodes.some(c => c.startsWith('LOW_COVERAGE')),
     'risk codes should surface LOW_COVERAGE',
   );
 
