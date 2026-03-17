@@ -1,4 +1,5 @@
 const edgeCalculator = require('./edge-calculator');
+const { resolveThresholdProfile } = require('./decision-pipeline-v2.patch');
 
 const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
 const WAVE1_MARKETS = new Set([
@@ -355,18 +356,11 @@ function impliedProbFromAmerican(price) {
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
-function getSupportThresholds(marketType) {
-  if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
-    return { play: 0.65, lean: 0.5 };
-  }
-  if (
-    marketType === 'TOTAL' ||
-    marketType === 'TEAM_TOTAL' ||
-    marketType === 'FIRST_PERIOD'
-  ) {
-    return { play: 0.55, lean: 0.45 };
-  }
-  return { play: 0.6, lean: 0.45 };
+function getThresholdProfile(marketType, sport) {
+  return resolveThresholdProfile({
+    sport,
+    marketType,
+  });
 }
 
 function deriveFirstPeriodProjectionSignal(payload) {
@@ -380,6 +374,7 @@ function deriveFirstPeriodProjectionSignal(payload) {
 }
 
 function classifyPrice({
+  sport,
   marketType,
   edgePct,
   fairProb,
@@ -391,6 +386,8 @@ function classifyPrice({
   proxyAllowed = false,
   projectionSignal = 'PASS',
 }) {
+  const thresholds = getThresholdProfile(marketType, sport);
+
   if (missingReason) {
     return {
       sharp_price_status: 'UNPRICED',
@@ -470,7 +467,7 @@ function classifyPrice({
   }
 
   if (proxyUsed && !proxyAllowed) {
-    if (edgePct < LEAN_EDGE_MIN) {
+    if (edgePct < thresholds.edge.lean_edge_min) {
       return {
         sharp_price_status: 'COTTAGE',
         price_reason_codes: [
@@ -490,7 +487,7 @@ function classifyPrice({
     };
   }
 
-  if (edgePct < LEAN_EDGE_MIN) {
+  if (edgePct < thresholds.edge.lean_edge_min) {
     return {
       sharp_price_status: 'COTTAGE',
       price_reason_codes: [PRICE_REASONS.NO_EDGE_AT_PRICE],
@@ -718,11 +715,15 @@ function validateExactWager({ payload, marketType, direction, line, price }) {
   return true;
 }
 
-function derivePlayTier(edgePct) {
+function derivePlayTierWithThresholds(edgePct, thresholdProfile) {
   if (edgePct === null) return 'BAD';
-  if (edgePct >= 0.1) return 'BEST';
-  if (edgePct >= 0.06) return 'GOOD';
-  if (edgePct >= 0.03) return 'OK';
+  const thresholds = thresholdProfile?.edge || {
+    play_edge_min: PLAY_EDGE_MIN,
+    lean_edge_min: LEAN_EDGE_MIN,
+  };
+  if (edgePct >= thresholds.play_edge_min + 0.04) return 'BEST';
+  if (edgePct >= thresholds.play_edge_min) return 'GOOD';
+  if (edgePct >= thresholds.lean_edge_min) return 'OK';
   return 'BAD';
 }
 
@@ -731,11 +732,12 @@ function computeOfficialStatus({
   sharpPriceStatus,
   supportScore,
   edgePct,
+  sport,
   marketType,
   proxyCapped = false,
   projectionSignal = 'PASS',
 }) {
-  const thresholds = getSupportThresholds(marketType);
+  const thresholds = getThresholdProfile(marketType, sport);
 
   if (watchdogStatus === 'BLOCKED') return 'PASS';
   if (sharpPriceStatus === 'PENDING_VERIFICATION') return 'PASS';
@@ -753,16 +755,16 @@ function computeOfficialStatus({
 
   if (
     sharpPriceStatus === 'CHEDDAR' &&
-    supportScore >= thresholds.play &&
-    edgePct >= PLAY_EDGE_MIN
+    supportScore >= thresholds.support.play &&
+    edgePct >= thresholds.edge.play_edge_min
   ) {
     return proxyCapped ? 'LEAN' : 'PLAY';
   }
 
   if (
     sharpPriceStatus === 'CHEDDAR' &&
-    supportScore >= thresholds.lean &&
-    edgePct >= LEAN_EDGE_MIN
+    supportScore >= thresholds.support.lean &&
+    edgePct >= thresholds.edge.lean_edge_min
   ) {
     return 'LEAN';
   }
@@ -778,10 +780,11 @@ function resolvePrimaryReason({
   officialStatus,
   supportScore,
   edgePct,
+  sport,
   marketType,
   proxyCapped = false,
 }) {
-  const thresholds = getSupportThresholds(marketType);
+  const thresholds = getThresholdProfile(marketType, sport);
 
   if (watchdogStatus === 'BLOCKED' && watchdogReasonCodes.length > 0) {
     return watchdogReasonCodes[0];
@@ -803,11 +806,11 @@ function resolvePrimaryReason({
     return PRICE_REASONS.EDGE_CLEAR;
   }
 
-  if (supportScore < thresholds.lean) {
+  if (supportScore < thresholds.support.lean) {
     return 'SUPPORT_BELOW_LEAN_THRESHOLD';
   }
 
-  if (edgePct !== null && edgePct < PLAY_EDGE_MIN) {
+  if (edgePct !== null && edgePct < thresholds.edge.play_edge_min) {
     return 'SUPPORT_BELOW_PLAY_THRESHOLD';
   }
 
@@ -933,6 +936,7 @@ function buildDecisionV2(payload, context = {}) {
   if (!isWave1EligiblePayload(payload)) return null;
 
   try {
+    const sport = normalizeSport(payload?.sport);
     const market_type = normalizeMarketType(
       payload?.market_type ?? payload?.recommended_bet_type,
     );
@@ -1116,6 +1120,7 @@ function buildDecisionV2(payload, context = {}) {
       drivers_used.length > 0 || asString(payload?.driver?.key) !== null;
 
     const priceDecision = classifyPrice({
+      sport,
       marketType: market_type,
       edgePct: edge_pct,
       fairProb: fair_prob,
@@ -1134,10 +1139,13 @@ function buildDecisionV2(payload, context = {}) {
       sharpPriceStatus: priceDecision.sharp_price_status,
       supportScore: support_score,
       edgePct: edge_pct,
+      sport,
       marketType: market_type,
       proxyCapped: proxy_capped,
       projectionSignal: firstPeriodProjectionSignal,
     });
+
+    const thresholdProfile = getThresholdProfile(market_type, sport);
 
     const play_tier =
       market_type === 'FIRST_PERIOD'
@@ -1146,7 +1154,7 @@ function buildDecisionV2(payload, context = {}) {
           : firstPeriodProjectionSignal === 'LEAN'
             ? 'OK'
             : 'BAD'
-        : derivePlayTier(edge_pct);
+        : derivePlayTierWithThresholds(edge_pct, thresholdProfile);
 
     const primary_reason_code = resolvePrimaryReason({
       watchdogReasonCodes: watchdog.watchdog_reason_codes,
@@ -1156,6 +1164,7 @@ function buildDecisionV2(payload, context = {}) {
       officialStatus: official_status,
       supportScore: support_score,
       edgePct: edge_pct,
+      sport,
       marketType: market_type,
       proxyCapped: proxy_capped,
     });
@@ -1179,6 +1188,13 @@ function buildDecisionV2(payload, context = {}) {
       fair_prob,
       implied_prob,
       edge_pct,
+      threshold_profile: {
+        source: thresholdProfile.source,
+        support_play_min: thresholdProfile.support.play,
+        support_lean_min: thresholdProfile.support.lean,
+        play_edge_min: thresholdProfile.edge.play_edge_min,
+        lean_edge_min: thresholdProfile.edge.lean_edge_min,
+      },
       edge_method,
       edge_line_delta,
       edge_lean,
