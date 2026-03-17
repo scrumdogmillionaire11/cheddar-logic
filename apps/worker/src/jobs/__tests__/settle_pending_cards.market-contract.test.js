@@ -127,4 +127,52 @@ describe('settle_pending_cards market contract', () => {
       /market_key/,
     );
   });
+
+  test('buildClvEntryFromPendingCard builds deterministic odds-backed ledger payload', () => {
+    const pendingCard = {
+      card_id: 'card-clv-001',
+      game_id: 'game-clv-001',
+      sport: 'NBA',
+    };
+    const payloadData = {
+      decision_basis_meta: {
+        decision_basis: 'ODDS_BACKED',
+        volatility_band: 'LOW',
+      },
+      recommended_bet_type: 'moneyline',
+    };
+    const lockedMarket = {
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      line: null,
+      lockedPrice: -125,
+    };
+
+    const entry = __private.buildClvEntryFromPendingCard({
+      pendingCard,
+      payloadData,
+      lockedMarket,
+    });
+
+    expect(entry).toMatchObject({
+      id: 'clv-card-clv-001',
+      cardId: 'card-clv-001',
+      gameId: 'game-clv-001',
+      sport: 'NBA',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      oddsAtPick: -125,
+      volatilityBand: 'LOW',
+      decisionBasis: 'ODDS_BACKED',
+    });
+
+    const projectionOnly = __private.buildClvEntryFromPendingCard({
+      pendingCard,
+      payloadData: {
+        decision_basis_meta: { decision_basis: 'PROJECTION_ONLY' },
+      },
+      lockedMarket,
+    });
+    expect(projectionOnly).toBeNull();
+  });
 });
