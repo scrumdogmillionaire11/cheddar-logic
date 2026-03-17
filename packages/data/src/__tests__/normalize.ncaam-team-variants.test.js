@@ -12,7 +12,10 @@ describe('ncaam team variant mapping', () => {
     ['NC State Wolfpack', 'NC STATE WOLFPACK'],
     ['South Alabama Jaguars', 'SOUTH ALABAMA JAGUARS'],
     ['Seattle Redhawks', 'SEATTLE REDHAWKS'],
+    ['Seattle U Redhawks', 'SEATTLE REDHAWKS'],
     ['St. Thomas (MN) Tommies', 'ST. THOMAS (MN) TOMMIES'],
+    ['St. Thomas-Minnesota Tommies', 'ST. THOMAS (MN) TOMMIES'],
+    ['Saint Thomas Minnesota Tommies', 'ST. THOMAS (MN) TOMMIES'],
     ['UC Irvine Anteaters', 'UC IRVINE ANTEATERS'],
   ];
 

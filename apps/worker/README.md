@@ -32,6 +32,11 @@ grep -E "\[NBAModel\]\[PROJECTION_INPUTS_INCOMPLETE\]|\[NHLModel\]\[PROJECTION_I
 grep -E "\[TeamMetrics\]\[TEAM_METRICS_NULL\]|\[TeamMetrics\]\[TEAM_METRICS_ERROR\]|\[OddsEnrichment\]\[NULL_TEAM_METRICS\]|\[OddsEnrichment\]\[SOURCE_CONTRACT_FAILURE_TEAM_MAPPING\]" logs/worker-*.log
 ```
 
+Known NCAAM live-odds aliases that previously caused prod `MISSING_DATA_NO_PLAYS` despite valid odds:
+
+- `Seattle Redhawks` ↔ `Seattle U Redhawks`
+- `St. Thomas (MN) Tommies` ↔ `St. Thomas-Minnesota Tommies`
+
 ## Jobs
 
 ### pull_odds_hourly
