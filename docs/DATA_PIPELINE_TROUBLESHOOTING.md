@@ -187,3 +187,133 @@ For future external DB support (not currently used):
 2. Run health checks above
 3. Check this troubleshooting guide
 4. Review integration test failures for specific issues
+
+## Inefficient Model Replacement Runbook (WI-0475)
+
+Use this runbook when model quality degrades and you need an operational response without code changes.
+
+### Preconditions
+
+- Run from repo root.
+- Ensure the worker is the only DB writer (single-writer contract).
+- Confirm the active DB path before any action:
+
+```bash
+bash scripts/db-context.sh
+```
+
+### Objective Triggers
+
+Treat trigger thresholds as hard gates for intervention.
+
+| Signal | Minimum sample | Trigger threshold | Window |
+| --- | --- | --- | --- |
+| Projection win-rate (`projection_perf_ledger`) | 100 settled rows | `< 48%` win rate | Last 14 days |
+| Projection confidence drift | 100 settled rows | `win_rate(confidence=HIGH) < win_rate(confidence=MEDIUM)` by ≥ 3pp | Last 14 days |
+| CLV degradation (`clv_ledger`) | 150 settled rows | Mean `clv_pct <= -0.020` | Last 14 days |
+| CLV tail risk | 150 settled rows | P25 `clv_pct <= -0.050` | Last 14 days |
+
+### Trigger Queries (Copy/Paste)
+
+```bash
+# Projection performance trigger check
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+   sport,
+   COUNT(*) AS sample_size,
+   ROUND(AVG(CASE WHEN won = 1 THEN 1.0 ELSE 0.0 END), 4) AS win_rate
+FROM projection_perf_ledger
+WHERE settled_at IS NOT NULL
+   AND datetime(settled_at) >= datetime('now', '-14 days')
+GROUP BY sport
+ORDER BY sample_size DESC;
+"
+
+# CLV trigger check
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+   sport,
+   market_type,
+   COUNT(*) AS sample_size,
+   ROUND(AVG(clv_pct), 4) AS mean_clv
+FROM clv_ledger
+WHERE closed_at IS NOT NULL
+   AND datetime(closed_at) >= datetime('now', '-14 days')
+GROUP BY sport, market_type
+ORDER BY sample_size DESC;
+"
+```
+
+### Action Matrix
+
+| Trigger hit | Allowed action | Owner | Verification |
+| --- | --- | --- | --- |
+| Projection win-rate floor breach | Demote decision strictness using threshold routing (`ENABLE_MARKET_THRESHOLDS_V2=true`) | Model ops on-call | Re-run model job and confirm lower PLAY volume + stable PASS rationale |
+| Projection confidence drift | Disable decision-basis tags for affected run while investigating (`ENABLE_DECISION_BASIS_TAGS=false`) | Model ops on-call | Confirm payloads stop emitting `decision_basis_meta` |
+| CLV mean degradation | Disable CLV ledger writes (`ENABLE_CLV_LEDGER=false`) and keep settlement normal | Settlement ops | Confirm `clv_ledger` row count stops increasing; `card_results` still settles |
+| CLV tail-risk breach | Roll back to baseline rollout flags (all four disabled) | Incident commander | Confirm web/worker outputs match baseline expectations |
+
+### Enable → Verify → Rollback Commands
+
+#### 1) Enable one phase flag in staging
+
+```bash
+export ENABLE_MARKET_THRESHOLDS_V2=true
+export ENABLE_DECISION_BASIS_TAGS=true
+export ENABLE_PROJECTION_PERF_LEDGER=true
+export ENABLE_CLV_LEDGER=true
+```
+
+#### 2) Verify telemetry and card settlement contracts
+
+```bash
+# Run one model and settlement pass
+npm --prefix apps/worker run job:run-nba-model:test
+ENABLE_CLV_LEDGER=true npm --prefix apps/worker run job:settle-cards
+
+# Verify projection ledger rows
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT decision_basis, COUNT(*)
+FROM projection_perf_ledger
+GROUP BY decision_basis;
+"
+
+# Verify CLV ledger guardrails (no projection-only rows)
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+   COUNT(*) AS total_rows,
+   SUM(CASE WHEN decision_basis = 'PROJECTION_ONLY' THEN 1 ELSE 0 END) AS projection_only_rows
+FROM clv_ledger;
+"
+```
+
+#### 3) Production-safe rollback (kill-switch sequence)
+
+```bash
+# Stop scheduler before env changes to avoid mixed writer state
+./scripts/manage-scheduler.sh stop
+
+# Disable rollout flags
+export ENABLE_DECISION_BASIS_TAGS=false
+export ENABLE_MARKET_THRESHOLDS_V2=false
+export ENABLE_PROJECTION_PERF_LEDGER=false
+export ENABLE_CLV_LEDGER=false
+
+# Optional: if using .env.production on host
+# sed -i '' 's/ENABLE_DECISION_BASIS_TAGS=true/ENABLE_DECISION_BASIS_TAGS=false/' .env.production
+# sed -i '' 's/ENABLE_MARKET_THRESHOLDS_V2=true/ENABLE_MARKET_THRESHOLDS_V2=false/' .env.production
+# sed -i '' 's/ENABLE_PROJECTION_PERF_LEDGER=true/ENABLE_PROJECTION_PERF_LEDGER=false/' .env.production
+# sed -i '' 's/ENABLE_CLV_LEDGER=true/ENABLE_CLV_LEDGER=false/' .env.production
+
+# Restart scheduler and verify DB context
+./scripts/manage-scheduler.sh start
+./scripts/manage-scheduler.sh db
+```
+
+### End-to-End Dry Run Checklist
+
+1. Enable exactly one rollout flag in staging.
+2. Run one model job and one settlement job.
+3. Execute both telemetry SQL checks above.
+4. Execute rollback commands.
+5. Confirm post-rollback flags are all false and jobs still run.

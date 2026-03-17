@@ -179,6 +179,9 @@ Copy `.env.example` to `.env` and set required values.
 - `docs/IDENTITY.md` — naming contract (repo/domain/namespace)
 - `docs/ARCHITECTURE.md` — data flow + job model + storage model
 - `docs/WORKING_AGREEMENTS.md` — guardrails for agents + contributors
+- `docs/DATA_PIPELINE_TROUBLESHOOTING.md` — inefficient-model replacement runbook (triggers/action matrix/rollback)
+- `docs/ARCHITECTURE_SEPARATION.md` — phased rollout flags and production-safe rollback sequence
+- `docs/API_BASELINES.md` — telemetry SQL baselines for projection and CLV ledgers
 
 ---LEGACY---
 # Cheddar Logic LLC

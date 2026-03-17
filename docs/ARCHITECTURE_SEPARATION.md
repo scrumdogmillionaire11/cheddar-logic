@@ -21,6 +21,47 @@
 - While all flags are false/unset, payload shape and decision outcomes must remain baseline-equivalent.
 - Telemetry ledgers are operational metrics only and do not alter settlement or card display pipelines.
 
+### Inefficient Model Replacement Policy (Operational, No-Code)
+
+- Purpose: degrade safely when telemetry indicates model inefficiency, without changing contracts or deploying code.
+- Data sources:
+  - `projection_perf_ledger` for projection-only quality trend.
+  - `clv_ledger` for odds-backed market efficiency trend.
+- Decision owners:
+  - Model Ops On-Call: threshold demotion / market-level feature flag actions.
+  - Settlement Ops: CLV telemetry suspension while preserving settlement.
+  - Incident Commander: full rollback to baseline (all rollout flags off).
+
+#### Trigger Thresholds
+
+| Metric | Minimum sample | Trigger |
+| --- | --- | --- |
+| Projection win rate | 100 settled rows in 14d | `< 48%` |
+| CLV mean | 150 closed rows in 14d | `<= -0.020` |
+| CLV lower tail | 150 closed rows in 14d | P25 `<= -0.050` |
+
+#### Allowed Actions
+
+1. Demote thresholds: enable/adjust threshold routing via `ENABLE_MARKET_THRESHOLDS_V2`.
+2. Disable market telemetry path: set `ENABLE_CLV_LEDGER=false`.
+3. Full rollback: set all rollout flags false (`ENABLE_DECISION_BASIS_TAGS`, `ENABLE_MARKET_THRESHOLDS_V2`, `ENABLE_PROJECTION_PERF_LEDGER`, `ENABLE_CLV_LEDGER`).
+
+#### Production-Safe Rollback Sequence
+
+```bash
+./scripts/manage-scheduler.sh stop
+
+export ENABLE_DECISION_BASIS_TAGS=false
+export ENABLE_MARKET_THRESHOLDS_V2=false
+export ENABLE_PROJECTION_PERF_LEDGER=false
+export ENABLE_CLV_LEDGER=false
+
+./scripts/manage-scheduler.sh start
+./scripts/manage-scheduler.sh db
+```
+
+The rollback sequence is additive-safe: settlement, display, and API contracts remain active with baseline behavior.
+
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                     CHEDDAR BOARD (Node.js)                     │
