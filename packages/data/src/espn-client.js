@@ -64,8 +64,28 @@ function parseScore(score) {
 }
 
 async function fetchTeamSchedule(espnLeague, teamId, limit = 5) {
-  const data = await espnGet(`${espnLeague}/teams/${teamId}/schedule`);
+  const basePath = `${espnLeague}/teams/${teamId}/schedule`;
+  let data = await espnGet(basePath);
   if (!data || !data.events) return [];
+
+  // ESPN's NCAAM default schedule endpoint can return only upcoming games,
+  // which leaves no completed events for metric computation. Fall back to
+  // regular-season schedule if needed.
+  const needsNcaamFallback =
+    String(espnLeague || '').includes('mens-college-basketball');
+  const hasCompletedGames = Array.isArray(data.events)
+    ? data.events.some((event) =>
+        Boolean(event?.competitions?.[0]?.status?.type?.completed),
+      )
+    : false;
+
+  if (needsNcaamFallback && !hasCompletedGames) {
+    const fallbackData = await espnGet(`${basePath}?seasontype=2`);
+    if (fallbackData && Array.isArray(fallbackData.events)) {
+      data = fallbackData;
+    }
+  }
+
   const now = new Date();
   return data.events
     .filter(e => new Date(e.date) < now && e.competitions?.[0]?.status?.type?.completed)
