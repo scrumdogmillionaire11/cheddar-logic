@@ -32,6 +32,8 @@ const {
   normalizeMarketType,
   normalizeSelectionForMarket,
   parseLine,
+  recordClvEntry,
+  settleClvEntry,
   shouldRunJobKey,
   withDb,
 } = require('@cheddar-logic/data');
@@ -41,6 +43,63 @@ function parseLockedPrice(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return null;
   return Math.trunc(parsed);
+}
+
+function toUpperToken(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().toUpperCase();
+}
+
+function resolveDecisionBasisForSettlement(payloadData) {
+  const explicit = toUpperToken(payloadData?.decision_basis_meta?.decision_basis);
+  if (explicit === 'PROJECTION_ONLY' || explicit === 'ODDS_BACKED') {
+    return explicit;
+  }
+
+  const lineSource = toUpperToken(
+    payloadData?.decision_basis_meta?.market_line_source ||
+      payloadData?.market_context?.wager?.line_source ||
+      payloadData?.line_source,
+  );
+  if (lineSource === 'PROJECTION_FLOOR' || lineSource === 'SYNTHETIC') {
+    return 'PROJECTION_ONLY';
+  }
+
+  return 'ODDS_BACKED';
+}
+
+function isClvEligiblePayload(payloadData) {
+  return resolveDecisionBasisForSettlement(payloadData) === 'ODDS_BACKED';
+}
+
+function buildClvEntryFromPendingCard({ pendingCard, payloadData, lockedMarket }) {
+  if (!pendingCard || !lockedMarket) return null;
+  if (!isClvEligiblePayload(payloadData)) return null;
+
+  const oddsAtPick = Number(lockedMarket.lockedPrice);
+  if (!Number.isFinite(oddsAtPick)) return null;
+
+  const cardId = pendingCard.card_id ? String(pendingCard.card_id).trim() : '';
+  const gameId = pendingCard.game_id ? String(pendingCard.game_id).trim() : '';
+  if (!cardId || !gameId) return null;
+
+  const decisionBasis = resolveDecisionBasisForSettlement(payloadData);
+  if (decisionBasis !== 'ODDS_BACKED') return null;
+
+  return {
+    id: `clv-${cardId}`,
+    cardId,
+    gameId,
+    sport: pendingCard.sport || null,
+    marketType: lockedMarket.marketType || null,
+    propType:
+      payloadData?.prop_type || payloadData?.recommended_bet_type || null,
+    selection: lockedMarket.selection || null,
+    line: Number.isFinite(lockedMarket.line) ? lockedMarket.line : null,
+    oddsAtPick,
+    volatilityBand: payloadData?.decision_basis_meta?.volatility_band || null,
+    decisionBasis,
+  };
 }
 
 function toBackfillUpperToken(value) {
@@ -1281,6 +1340,7 @@ async function settlePendingCards({
         const homeScore = Number(pendingCard.final_score_home);
         const awayScore = Number(pendingCard.final_score_away);
         const firstPeriodScores = readFirstPeriodScores(gameResultMetadata);
+        let clvTracked = false;
 
         try {
           const lockedMarket = assertLockedMarketContext(
@@ -1288,6 +1348,15 @@ async function settlePendingCards({
             payloadData,
             { period },
           );
+          const clvEntry = buildClvEntryFromPendingCard({
+            pendingCard,
+            payloadData,
+            lockedMarket,
+          });
+          if (clvEntry) {
+            recordClvEntry(clvEntry);
+            clvTracked = true;
+          }
           const result = gradeLockedMarket({
             marketType: lockedMarket.marketType,
             selection: lockedMarket.selection,
@@ -1328,6 +1397,9 @@ async function settlePendingCards({
             state.settled_at === settledAt;
           if (didSettleNow) {
             cardsSettled++;
+            if (clvTracked) {
+              settleClvEntry(pendingCard.card_id, null, null, settledAt);
+            }
             if (marketBucket) {
               marketDailyCounts[marketBucket].settled += 1;
             }
@@ -1397,6 +1469,9 @@ async function settlePendingCards({
             state.settled_at === settledAt;
           if (didErrorNow) {
             cardsErrored++;
+            if (clvTracked) {
+              settleClvEntry(pendingCard.card_id, null, null, settledAt);
+            }
             if (marketBucket) {
               marketDailyCounts[marketBucket].failed += 1;
             }
@@ -1631,7 +1706,10 @@ module.exports = {
     extractSettlementPeriod,
     getSettlementCoverageDiagnostics,
     gradeLockedMarket,
+    buildClvEntryFromPendingCard,
+    isClvEligiblePayload,
     readFirstPeriodScores,
+    resolveDecisionBasisForSettlement,
     resolveSettlementMarketBucket,
   },
 };
