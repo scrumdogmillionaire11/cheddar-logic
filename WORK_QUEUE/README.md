@@ -37,6 +37,12 @@
 - `WI-0474`: Phase 3 CLV Ledger Integration for Odds-Backed Markets
 - `WI-0475`: Inefficient Model Replacement Policy + Ops Runbook
 - `WI-0476`: Soccer Team Mapping Alias Coverage for Odds Intake
+- `WI-0477`: Phase 2 Rollout Coordinator (Market Thresholds V2)
+- `WI-0478`: Phase 3 Rollout Coordinator (CLV Ledger)
+- `WI-0479`: Phase 2 Preflight + Baseline Evidence (Thresholds V2)
+- `WI-0480`: Phase 2 Activation + Rollback Procedure (Thresholds V2)
+- `WI-0481`: Phase 3 Preflight Eligibility + SQL Verification (CLV)
+- `WI-0482`: Phase 3 Activation + Settlement-Safe Rollback (CLV)
 
 ## Rules
 
