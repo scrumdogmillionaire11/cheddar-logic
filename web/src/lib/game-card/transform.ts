@@ -486,11 +486,8 @@ function normalizeSideToken(value: unknown): CanonicalSide {
     token === 'AWAY_DNB' ||
     token === 'OVER' ||
     token === 'UNDER'
-  ) {
-    if (token.startsWith('HOME')) return 'HOME';
-    if (token.startsWith('AWAY')) return 'AWAY';
-    return token === 'OVER' ? 'OVER' : 'UNDER';
-  }
+  )
+    return token.startsWith('HOME') ? 'HOME' : token.startsWith('AWAY') ? 'AWAY' : token;
   return 'NONE';
 }
 
