@@ -5,9 +5,21 @@
 COMMAND="${1:-status}"
 LOG_FILE="./apps/worker/logs/scheduler.log"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CANONICAL_PROD_DB_PATH="/opt/data/cheddar-prod.db"
+
+IS_PRODUCTION_HOST=false
+if [[ "$ROOT_DIR" == "/opt/cheddar-logic" ]] || [[ "${NODE_ENV:-}" == "production" ]]; then
+    IS_PRODUCTION_HOST=true
+fi
+if [[ "${CHEDDAR_ENV_FILE:-}" == *".env.production" ]]; then
+    IS_PRODUCTION_HOST=true
+fi
 
 # Load environment from repo .env (dev) or .env.production (prod)
 ENV_FILE="${CHEDDAR_ENV_FILE:-$ROOT_DIR/.env}"
+if [ -z "${CHEDDAR_ENV_FILE:-}" ] && [ "$IS_PRODUCTION_HOST" = true ] && [ -f "$ROOT_DIR/.env.production" ]; then
+    ENV_FILE="$ROOT_DIR/.env.production"
+fi
 if [ ! -f "$ENV_FILE" ] && [ -f "$ROOT_DIR/.env.production" ]; then
     ENV_FILE="$ROOT_DIR/.env.production"
 fi
@@ -18,7 +30,19 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
-EXPECTED_DB_PATH="${CHEDDAR_DB_PATH:-/tmp/cheddar-logic/cheddar.db}"
+if [ "$IS_PRODUCTION_HOST" = true ]; then
+    if [ -z "${CHEDDAR_DB_PATH:-}" ]; then
+        echo "[ERROR] CHEDDAR_DB_PATH is unset on production host. Set CHEDDAR_DB_PATH=$CANONICAL_PROD_DB_PATH in .env.production." >&2
+        exit 1
+    fi
+    if [ "$CHEDDAR_DB_PATH" != "$CANONICAL_PROD_DB_PATH" ]; then
+        echo "[ERROR] Non-canonical CHEDDAR_DB_PATH on production host: $CHEDDAR_DB_PATH (expected $CANONICAL_PROD_DB_PATH)." >&2
+        exit 1
+    fi
+    EXPECTED_DB_PATH="$CHEDDAR_DB_PATH"
+else
+    EXPECTED_DB_PATH="${CHEDDAR_DB_PATH:-/tmp/cheddar-logic/cheddar.db}"
+fi
 
 EXPECTED_MODE="local"
 if [[ "$EXPECTED_DB_PATH" == *"snapshot"* ]] || [[ "$EXPECTED_DB_PATH" == *"/.cheddar/"* ]]; then
