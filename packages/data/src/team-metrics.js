@@ -822,10 +822,42 @@ async function lookupTeamFromScoreboard(teamName, sport, league) {
   if (!normalized) return null;
 
   const index = await getScoreboardTeamIndex(sport, league);
-  if (!index || index.size === 0) return null;
+  return lookupTeamFromScoreboardIndex(index, teamName, sport);
+}
+
+function lookupTeamFromScoreboardIndex(index, teamName, sport) {
+  const normalized = normalizeTeamKey(teamName);
+  if (!normalized || !index || index.size === 0) return null;
 
   const direct = index.get(normalized);
   if (direct) return direct;
+
+  const variantResolution = resolveTeamVariant(
+    teamName,
+    `lookupTeamFromScoreboardIndex:${sport}`,
+  );
+  if (variantResolution.matched) {
+    const canonicalNormalized = normalizeTeamKey(variantResolution.canonical);
+    const variantMatches = [];
+
+    for (const [key, value] of index.entries()) {
+      const indexResolution = resolveTeamVariant(
+        key,
+        `lookupTeamFromScoreboardIndex:${sport}:candidate`,
+      );
+      if (!indexResolution.matched) continue;
+      if (normalizeTeamKey(indexResolution.canonical) === canonicalNormalized) {
+        variantMatches.push(value);
+      }
+    }
+
+    const uniqueMatches = new Map(
+      variantMatches.map((match) => [String(match.id), match]),
+    );
+    if (uniqueMatches.size === 1) {
+      return Array.from(uniqueMatches.values())[0];
+    }
+  }
 
   if (sport === 'NHL') {
     const firstToken = normalized.split(' ')[0];
@@ -1244,5 +1276,9 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
 module.exports = {
   getTeamMetrics,
   getTeamMetricsWithGames,
-  computeMetricsFromGames
+  computeMetricsFromGames,
+  __testables: {
+    lookupTeamFromScoreboardIndex,
+    normalizeTeamKey,
+  },
 };
