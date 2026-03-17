@@ -10,6 +10,17 @@ function isFlagEnabled(flagName) {
   return isTruthy(process.env[flagName]);
 }
 
+function toUpperToken(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().toUpperCase();
+}
+
+function normalizeDecisionBasis(value, fallback = 'ODDS_BACKED') {
+  const token = toUpperToken(value);
+  if (token === 'PROJECTION_ONLY' || token === 'ODDS_BACKED') return token;
+  return fallback;
+}
+
 function getDb() {
   const { getDatabase } = require('./db');
   return getDatabase();
@@ -66,7 +77,11 @@ function ensureProjectionPerfLedgerSchema(db) {
 
 function recordClvEntry(entry = {}) {
   if (!isFlagEnabled('ENABLE_CLV_LEDGER')) return;
-  if (entry.decisionBasis === 'PROJECTION_ONLY') return;
+  if (normalizeDecisionBasis(entry.decisionBasis) === 'PROJECTION_ONLY') return;
+
+  const cardId = entry.cardId ? String(entry.cardId).trim() : '';
+  const gameId = entry.gameId ? String(entry.gameId).trim() : '';
+  if (!cardId || !gameId) return;
 
   const db = getDb();
   ensureClvLedgerSchema(db);
@@ -78,9 +93,9 @@ function recordClvEntry(entry = {}) {
   `);
 
   stmt.run(
-    entry.id,
-    entry.cardId,
-    entry.gameId,
+    entry.id || `clv-${cardId}`,
+    cardId,
+    gameId,
     entry.sport || null,
     entry.marketType || null,
     entry.propType || null,
@@ -93,16 +108,23 @@ function recordClvEntry(entry = {}) {
 
 function settleClvEntry(cardId, closingOdds, clvPct, closedAt) {
   if (!isFlagEnabled('ENABLE_CLV_LEDGER')) return;
-  if (!cardId) return;
+  const normalizedCardId = cardId ? String(cardId).trim() : '';
+  if (!normalizedCardId) return;
 
   const db = getDb();
+  ensureClvLedgerSchema(db);
   const stmt = db.prepare(`
     UPDATE clv_ledger
     SET closing_odds = ?, clv_pct = ?, closed_at = ?
     WHERE card_id = ? AND closed_at IS NULL
   `);
 
-  stmt.run(closingOdds ?? null, clvPct ?? null, closedAt || new Date().toISOString(), cardId);
+  stmt.run(
+    closingOdds ?? null,
+    clvPct ?? null,
+    closedAt || new Date().toISOString(),
+    normalizedCardId,
+  );
 }
 
 function recordProjectionEntry(entry = {}) {
