@@ -12,6 +12,7 @@ from .constants import (
     FALLBACK_PROJECTION_PTS,
     FALLBACK_NEXT_3GW_PTS,
     FALLBACK_NEXT_5GW_PTS,
+    MAX_PLAYERS_PER_TEAM,
     get_transfer_threshold_base,
     get_volatility_multiplier,
 )
@@ -28,6 +29,7 @@ class TransferAdvisor:
         self.strategy_mode = "BALANCED"
         self.last_transfer_audit: Dict[str, Any] = {}
         self.fixture_horizon_context: Dict[str, Any] = {}
+        self._team_aliases: Dict[str, str] = {}
 
     @staticmethod
     def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -48,6 +50,67 @@ class TransferAdvisor:
             return int(player_id)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _normalize_team_key(team: Any) -> str:
+        if team is None:
+            return ""
+        return str(team).strip().upper()
+
+    def _normalize_team_name(self, team: Any) -> str:
+        raw = self._normalize_team_key(team)
+        if not raw:
+            return ""
+        return self._team_aliases.get(raw, raw)
+
+    def _build_team_aliases(self, teams_data: List[Dict]) -> Dict[str, str]:
+        aliases: Dict[str, str] = {}
+        for team in teams_data or []:
+            if not isinstance(team, dict):
+                continue
+            short_name = self._normalize_team_key(team.get("short_name"))
+            canonical = short_name or self._normalize_team_key(team.get("name"))
+            if not canonical:
+                continue
+
+            name = self._normalize_team_key(team.get("name"))
+            team_id = self._normalize_team_key(team.get("id"))
+
+            aliases[canonical] = canonical
+            if short_name:
+                aliases[short_name] = canonical
+            if name:
+                aliases[name] = canonical
+            if team_id:
+                aliases[team_id] = canonical
+        return aliases
+
+    def _build_team_counts(self, squad: List[Dict]) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for player in squad:
+            team_key = self._normalize_team_name(player.get("team"))
+            if not team_key:
+                continue
+            counts[team_key] = counts.get(team_key, 0) + 1
+        return counts
+
+    def _is_team_limit_legal(
+        self,
+        team_counts: Dict[str, int],
+        outgoing_team: Any,
+        incoming_team: Any,
+    ) -> bool:
+        incoming_key = self._normalize_team_name(incoming_team)
+        if not incoming_key:
+            return True
+
+        outgoing_key = self._normalize_team_name(outgoing_team)
+        incoming_count = team_counts.get(incoming_key, 0)
+
+        if outgoing_key == incoming_key:
+            return incoming_count <= MAX_PLAYERS_PER_TEAM
+
+        return incoming_count < MAX_PLAYERS_PER_TEAM
 
     def _get_horizon_summary(self, candidate: Any) -> Dict[str, Any]:
         ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
@@ -81,6 +144,62 @@ class TransferAdvisor:
 
         raw_adj = (0.55 * near_dgw + 0.30 * far_dgw) - (1.10 * near_bgw + 0.60 * far_bgw)
         return self._clamp(raw_adj, -1.20, 0.90)
+
+    def _is_blank_next_gw(self, candidate: Any) -> bool:
+        """Return True when candidate is projected to blank in the immediate next GW."""
+        candidate_id = getattr(candidate, "player_id", None)
+        if candidate_id is None:
+            return False
+
+        tags = getattr(candidate, "tags", None) or []
+        if isinstance(tags, list) and any(str(tag).lower() == "blank" for tag in tags):
+            return True
+
+        ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
+        start_gw = ctx.get("start_gw")
+        try:
+            start_gw = int(start_gw) if start_gw is not None else None
+        except (TypeError, ValueError):
+            start_gw = None
+
+        summary = self._get_horizon_summary(candidate)
+        next_bgw_gw = summary.get("next_bgw_gw")
+        try:
+            next_bgw_gw = int(next_bgw_gw) if next_bgw_gw is not None else None
+        except (TypeError, ValueError):
+            next_bgw_gw = None
+        if start_gw is not None and next_bgw_gw == start_gw:
+            return True
+
+        candidate_windows = ctx.get("candidate_player_windows") or []
+        for window in candidate_windows:
+            if not isinstance(window, dict):
+                continue
+            pid = self._coerce_player_id(window.get("player_id"))
+            if pid != self._coerce_player_id(candidate_id):
+                continue
+            for row in window.get("upcoming") or []:
+                if not isinstance(row, dict):
+                    continue
+                row_gw = row.get("gw")
+                try:
+                    row_gw = int(row_gw) if row_gw is not None else None
+                except (TypeError, ValueError):
+                    row_gw = None
+                if start_gw is not None and row_gw is not None and row_gw != start_gw:
+                    continue
+                if bool(row.get("is_blank")):
+                    return True
+                fixture_count = row.get("fixture_count")
+                try:
+                    fixture_count = int(fixture_count) if fixture_count is not None else None
+                except (TypeError, ValueError):
+                    fixture_count = None
+                if fixture_count == 0:
+                    return True
+            break
+
+        return False
 
     def _required_gain(self, context_mode: str, free_transfers: int = 1) -> float:
         """Calculate required gain threshold with FT multiplier."""
@@ -162,6 +281,7 @@ class TransferAdvisor:
             "strategy_paths_reason": None,
             "strategy_starters_checked": 0,
             "strategy_alternatives_considered": 0,
+            "strategy_team_limit_filtered": 0,
             "starters_checked": 0,
             "alternatives_considered": 0,
         }
@@ -201,6 +321,7 @@ class TransferAdvisor:
             for p in squad
             if p.get("name")
         }
+        team_counts = self._build_team_counts(squad)
 
         move_pool: List[Dict[str, Any]] = []
         max_alternatives_per_starter = 6
@@ -226,6 +347,11 @@ class TransferAdvisor:
                     and candidate_name in squad_player_names
                     and candidate_name == self._normalize_name(starter.get("name", ""))
                 ):
+                    continue
+                if not self._is_team_limit_legal(team_counts, starter.get("team"), candidate.team):
+                    diagnostics["strategy_team_limit_filtered"] += 1
+                    continue
+                if self._is_blank_next_gw(candidate):
                     continue
                 if candidate.current_price > (starter_proj.current_price + bank_value + 0.5):
                     continue
@@ -420,6 +546,7 @@ class TransferAdvisor:
             "near_threshold_reason": None,
             "near_threshold_starters_checked": 0,
             "near_threshold_alternatives_considered": 0,
+            "near_threshold_team_limit_filtered": 0,
             "starters_checked": 0,
             "alternatives_considered": 0,
         }
@@ -449,6 +576,7 @@ class TransferAdvisor:
             for p in squad
             if (p.get("player_id") or p.get("id")) is not None
         }
+        team_counts = self._build_team_counts(squad)
         max_alternatives_per_starter = 5
         alternatives_above_threshold = 0
         alternatives_far_below = 0
@@ -457,10 +585,21 @@ class TransferAdvisor:
                 p for p in projections.get_by_position(starter.get("position"))
                 if p.player_id != starter_proj.player_id
                 and p.player_id not in squad_player_ids
+                and self._is_team_limit_legal(team_counts, starter.get("team"), p.team)
+                and not self._is_blank_next_gw(p)
                 and p.current_price <= (starter_proj.current_price + bank_value + 0.5)
                 and not p.is_injury_risk
                 and p.xMins_next >= 60
             ]
+            total_position_pool = [
+                p for p in projections.get_by_position(starter.get("position"))
+                if p.player_id != starter_proj.player_id
+                and p.player_id not in squad_player_ids
+                and p.current_price <= (starter_proj.current_price + bank_value + 0.5)
+                and not p.is_injury_risk
+                and p.xMins_next >= 60
+            ]
+            diagnostics["near_threshold_team_limit_filtered"] += max(0, len(total_position_pool) - len(alternatives))
             if not alternatives:
                 continue
 
@@ -829,6 +968,7 @@ class TransferAdvisor:
         # Use the potentially updated squad
         if 'squad' not in locals():
             squad = team_data.get('current_squad', [])
+        self._team_aliases = self._build_team_aliases(team_data.get("teams", []))
         manager_context = self._get_manager_context_mode(team_data)
         strategy_mode = (
             (team_data.get("manager_state") or {}).get("strategy_mode")
@@ -852,7 +992,9 @@ class TransferAdvisor:
             pid = p.get('player_id') or p.get('id')
             if pid:
                 squad_player_ids.add(pid)
+        team_counts = self._build_team_counts(squad)
         logger.info(f"Squad has {len(squad_player_ids)} players - will exclude from transfer targets")
+        team_limit_filtered_recommendations = 0
 
         # Track players already recommended as "in" transfers to avoid duplicates
         recommended_in_ids = set()
@@ -895,15 +1037,24 @@ class TransferAdvisor:
             price_limit = player_proj.current_price + 0.5
             
             # Filter viable alternatives (exclude squad, already-recommended, and injured players)
-            viable_replacements = [
-                p for p in position_alternatives
-                if (p.current_price <= price_limit and
-                    p.nextGW_pts > player_proj.nextGW_pts and
-                    p.player_id not in squad_player_ids and
-                    p.player_id not in recommended_in_ids and
-                    not p.is_injury_risk and
-                    p.xMins_next >= 60)  # Only recommend available players (60+ expected mins)
-            ]
+            viable_replacements = []
+            for candidate in position_alternatives:
+                if candidate.current_price > price_limit:
+                    continue
+                if candidate.nextGW_pts <= player_proj.nextGW_pts:
+                    continue
+                if candidate.player_id in squad_player_ids:
+                    continue
+                if candidate.player_id in recommended_in_ids:
+                    continue
+                if candidate.is_injury_risk or candidate.xMins_next < 60:
+                    continue
+                if self._is_blank_next_gw(candidate):
+                    continue
+                if not self._is_team_limit_legal(team_counts, player.get('team'), candidate.team):
+                    team_limit_filtered_recommendations += 1
+                    continue
+                viable_replacements.append(candidate)
 
             if viable_replacements:
                 # Provide strategic alternatives while choosing primary by strategy profile.
@@ -996,15 +1147,24 @@ class TransferAdvisor:
             price_limit = player_proj.current_price + 0.4
 
             # Filter viable alternatives (exclude squad, already-recommended, and injured players)
-            viable_replacements = [
-                p for p in position_alternatives
-                if (p.current_price <= price_limit and
-                    p.player_id not in squad_player_ids and
-                    p.player_id not in recommended_in_ids and
-                    p.nextGW_pts >= player_proj.nextGW_pts - 0.5 and
-                    not p.is_injury_risk and
-                    p.xMins_next >= 60)  # Only recommend available players (60+ expected mins)
-            ]
+            viable_replacements = []
+            for candidate in position_alternatives:
+                if candidate.current_price > price_limit:
+                    continue
+                if candidate.player_id in squad_player_ids:
+                    continue
+                if candidate.player_id in recommended_in_ids:
+                    continue
+                if candidate.nextGW_pts < player_proj.nextGW_pts - 0.5:
+                    continue
+                if candidate.is_injury_risk or candidate.xMins_next < 60:
+                    continue
+                if self._is_blank_next_gw(candidate):
+                    continue
+                if not self._is_team_limit_legal(team_counts, player.get('team'), candidate.team):
+                    team_limit_filtered_recommendations += 1
+                    continue
+                viable_replacements.append(candidate)
 
             if viable_replacements:
                 viable_replacements.sort(
@@ -1076,7 +1236,7 @@ class TransferAdvisor:
         if remaining_fts > 0:
             bench_upgrades = self._identify_bench_upgrades(
                 squad, projections, remaining_fts, bank_value,
-                squad_player_ids, recommended_in_ids, self.strategy_mode
+                squad_player_ids, recommended_in_ids, self.strategy_mode, team_counts
             )
             for upgrade in bench_upgrades:
                 recommendations.append(upgrade)
@@ -1214,6 +1374,11 @@ class TransferAdvisor:
             "no_transfer_reason": no_transfer_reason,
             "near_threshold_reason": near_threshold_diag.get("near_threshold_reason"),
             "strategy_paths_reason": strategy_diag.get("strategy_paths_reason"),
+            "team_limit_filtered_candidates": (
+                team_limit_filtered_recommendations
+                + near_threshold_diag.get("near_threshold_team_limit_filtered", 0)
+                + strategy_diag.get("strategy_team_limit_filtered", 0)
+            ),
             "starters_checked": max(
                 near_threshold_diag.get("near_threshold_starters_checked", 0),
                 strategy_diag.get("strategy_starters_checked", 0),
@@ -1387,6 +1552,7 @@ class TransferAdvisor:
         squad_player_ids: set = None,
         recommended_in_ids: set = None,
         strategy_mode: str = "BALANCED",
+        team_counts: Dict[str, int] = None,
     ) -> List[Dict]:
         """
         Identify bench players that could be upgraded with available free transfers.
@@ -1411,6 +1577,8 @@ class TransferAdvisor:
                     squad_player_ids.add(pid)
         if recommended_in_ids is None:
             recommended_in_ids = set()
+        if team_counts is None:
+            team_counts = self._build_team_counts(squad)
         if remaining_fts <= 0:
             return []
 
@@ -1470,15 +1638,23 @@ class TransferAdvisor:
             price_limit = player_proj.current_price + bank_value + 0.5  # Allow slight overspend
 
             # Filter viable upgrades (exclude squad, already-recommended, and injured players)
-            viable_upgrades = [
-                p for p in position_alternatives
-                if (p.current_price <= price_limit and
-                    p.player_id not in squad_player_ids and
-                    p.player_id not in recommended_in_ids and
-                    p.nextGW_pts >= player_proj.nextGW_pts + MIN_UPGRADE_GAIN and
-                    not p.is_injury_risk and
-                    p.xMins_next >= 60)  # Only recommend available players (60+ expected mins)
-            ]
+            viable_upgrades = []
+            for candidate in position_alternatives:
+                if candidate.current_price > price_limit:
+                    continue
+                if candidate.player_id in squad_player_ids:
+                    continue
+                if candidate.player_id in recommended_in_ids:
+                    continue
+                if candidate.nextGW_pts < player_proj.nextGW_pts + MIN_UPGRADE_GAIN:
+                    continue
+                if candidate.is_injury_risk or candidate.xMins_next < 60:
+                    continue
+                if self._is_blank_next_gw(candidate):
+                    continue
+                if not self._is_team_limit_legal(team_counts, player.get('team'), candidate.team):
+                    continue
+                viable_upgrades.append(candidate)
 
             if not viable_upgrades:
                 continue
