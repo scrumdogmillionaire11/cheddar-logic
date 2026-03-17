@@ -492,6 +492,12 @@ function inferMarketFromCardType(cardType: string): MarketType | undefined {
   if (normalized.includes('1p') || normalized.includes('first-period')) {
     return 'FIRST_PERIOD';
   }
+  if (
+    normalized.includes('double_chance') ||
+    normalized.includes('double-chance')
+  ) {
+    return 'MONEYLINE';
+  }
   if (normalized.includes('moneyline') || normalized.includes('-ml-')) {
     return 'MONEYLINE';
   }
@@ -630,6 +636,14 @@ function hasMinimumViability(play: Play, marketType: MarketType): boolean {
   const side = play.selection?.side;
   const hasPrice =
     typeof play.price === 'number' && Number.isFinite(play.price);
+  const isMoneylineFamilySide =
+    side === 'HOME' ||
+    side === 'AWAY' ||
+    side === 'HOME_OR_DRAW' ||
+    side === 'AWAY_OR_DRAW' ||
+    side === 'HOME_OR_AWAY' ||
+    side === 'HOME_DNB' ||
+    side === 'AWAY_DNB';
   if (marketType === 'TOTAL') {
     // Price is sourced from odds snapshot at display time — only require side + line.
     return (
@@ -644,7 +658,7 @@ function hasMinimumViability(play: Play, marketType: MarketType): boolean {
     );
   }
   if (marketType === 'MONEYLINE') {
-    return (side === 'HOME' || side === 'AWAY') && hasPrice;
+    return isMoneylineFamilySide && hasPrice;
   }
   return true;
 }
@@ -667,8 +681,15 @@ function normalizeMarketType(value: unknown): Play['market_type'] | undefined {
   }
 
   if (upper === 'PUCK_LINE') return 'PUCKLINE';
+  if (upper === 'GAME_TOTAL') return 'TOTAL';
   if (upper === 'TEAMTOTAL') return 'TEAM_TOTAL';
   if (upper === 'FIRSTPERIOD') return 'FIRST_PERIOD';
+  if (upper === 'DOUBLE_CHANCE' || upper === 'DOUBLECHANCE') {
+    return 'MONEYLINE';
+  }
+  if (upper === 'DRAW_NO_BET' || upper === 'DRAWNOBET') {
+    return 'MONEYLINE';
+  }
   return undefined;
 }
 
@@ -770,7 +791,12 @@ function normalizeSelectionSide(value: unknown): string | undefined {
     upper === 'FAV' ||
     upper === 'DOG' ||
     upper === 'NONE' ||
-    upper === 'NEUTRAL'
+    upper === 'NEUTRAL' ||
+    upper === 'HOME_OR_DRAW' ||
+    upper === 'AWAY_OR_DRAW' ||
+    upper === 'HOME_OR_AWAY' ||
+    upper === 'HOME_DNB' ||
+    upper === 'AWAY_DNB'
   ) {
     return upper;
   }
@@ -1762,11 +1788,16 @@ export async function GET(request: NextRequest) {
         const payloadMarketContextWager = toObject(payloadMarketContext?.wager);
         const payloadSelection =
           toObject(payload.selection) ?? toObject(payloadPlay?.selection);
+        const payloadSelectionRaw = firstString(
+          (payload as Record<string, unknown>).selection,
+          (payload as Record<string, unknown>).outcome,
+        );
         const normalizedSelectionSide =
           normalizeSelectionSide(
             payloadSelection?.side ??
               payloadMarketContext?.selection_side ??
               payloadPlay?.side ??
+              payloadSelectionRaw ??
               payload.prediction,
           ) ?? 'NONE';
         const normalizedAction = normalizeAction(
@@ -1914,6 +1945,12 @@ export async function GET(request: NextRequest) {
           payloadMarketContextWager?.called_price,
           payloadPlay?.price,
           payloadSelection?.price,
+          normalizedSelectionSide === 'OVER'
+            ? firstNumber((payload as Record<string, unknown>).over_price)
+            : undefined,
+          normalizedSelectionSide === 'UNDER'
+            ? firstNumber((payload as Record<string, unknown>).under_price)
+            : undefined,
         );
         const normalizedPrice =
           isFtTrendCard

@@ -50,4 +50,19 @@ assert(
   'transform should preserve FIRST_PERIOD market handling for 1P totals cards',
 );
 
+assert(
+  source.includes("token === 'HOME_OR_DRAW'") &&
+    source.includes("token === 'AWAY_OR_DRAW'") &&
+    source.includes("token === 'HOME_DNB'") &&
+    source.includes("token === 'AWAY_DNB'"),
+  'transform should normalize soccer moneyline-family selection sides for display and ranking',
+);
+
+assert(
+  source.includes("rawSelectionSide === 'HOME_OR_DRAW'") &&
+    source.includes("rawSelectionSide === 'AWAY_OR_DRAW'") &&
+    source.includes("rawSelectionSide === 'HOME_OR_AWAY'"),
+  'transform should treat soccer double-chance and DNB selections as playable moneyline-family bets',
+);
+
 console.log('✅ Transform market contract source tests passed');
