@@ -554,6 +554,7 @@ const {
   getOddsWithUpcomingGames,
   getPlayerPropLinesForGame,
   insertCardPayload,
+  recordProjectionEntry,
   deleteCardPayloadsForGame,
   validateCardPayload,
   shouldRunJobKey,
@@ -570,6 +571,10 @@ const {
   publishDecisionForCard,
   applyUiActionFields,
 } = require('../utils/decision-publisher');
+const {
+  applySoccerDecisionBasisMeta,
+  recordSoccerProjectionTelemetry,
+} = require('../utils/soccer-patch');
 
 function attachRunId(card, runId) {
   if (!card) return;
@@ -1076,6 +1081,10 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
           }
 
           for (const propCard of prioritizedPropCards) {
+            applySoccerDecisionBasisMeta(propCard.payloadData, {
+              isProjectionOnly: false,
+              marketLineSource: 'odds_api',
+            });
             publishDecisionForCard({ card: propCard, oddsSnapshot });
             applyUiActionFields(propCard.payloadData);
             attachRunId(propCard, jobRunId);
@@ -1129,6 +1138,12 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
             );
           }
 
+          applySoccerDecisionBasisMeta(card.payloadData, {
+            isProjectionOnly: false,
+            canonicalMarketKey: card.payloadData.canonical_market_key,
+            marketLineSource: 'odds_api',
+          });
+
           publishDecisionForCard({ card, oddsSnapshot });
           applyUiActionFields(card.payloadData);
           attachRunId(card, jobRunId);
@@ -1172,6 +1187,11 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
             const tier1Result = buildSoccerTier1Payload(gameId, gameOrSnap, market);
             // Mark as projection-only
             tier1Result.payloadData.projection_only = true;
+            applySoccerDecisionBasisMeta(tier1Result.payloadData, {
+              isProjectionOnly: true,
+              canonicalMarketKey: market,
+              marketLineSource: 'synthetic',
+            });
 
             const cardId = `card-soccer-proj-${gameId}-${market}-${uuidV4().slice(0, 8)}`;
             const card = {
@@ -1195,6 +1215,17 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
 
             attachRunId(card, jobRunId);
             insertCardPayload(card);
+            try {
+              recordSoccerProjectionTelemetry(
+                recordProjectionEntry,
+                card,
+                tier1Result.payloadData,
+              );
+            } catch (telemetryErr) {
+              console.warn(
+                `  [warn] Track2 ${gameId} [${market}] telemetry skipped: ${telemetryErr.message}`,
+              );
+            }
             cardsGenerated++;
             track2Cards++;
             console.log(`  [ok] Track2 ${gameId} [${market}]: projection_only`);
