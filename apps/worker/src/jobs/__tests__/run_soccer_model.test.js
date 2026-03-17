@@ -9,6 +9,10 @@ const {
   buildSoccerTier1CardFromPropLine,
   isBlockedSoccerPropPlayer,
 } = require('../run_soccer_model');
+const {
+  applySoccerDecisionBasisMeta,
+  recordSoccerProjectionTelemetry,
+} = require('../../utils/soccer-patch');
 
 function buildOddsSnapshot(overrides = {}) {
   return {
@@ -661,5 +665,78 @@ describe('soccer tier-1 prop line identity mapping', () => {
     );
 
     expect(card).toBeNull();
+  });
+});
+
+describe('WI-0472 soccer rollout patch helpers', () => {
+  afterEach(() => {
+    delete process.env.ENABLE_DECISION_BASIS_TAGS;
+    delete process.env.ENABLE_PROJECTION_PERF_LEDGER;
+  });
+
+  test('applySoccerDecisionBasisMeta is additive and flag-gated', () => {
+    const payload = {
+      canonical_market_key: 'to_score_or_assist',
+      edge_ev: 0.03,
+    };
+
+    const noFlag = applySoccerDecisionBasisMeta(payload, {
+      isProjectionOnly: true,
+      marketLineSource: 'synthetic',
+    });
+    expect(noFlag).toBeNull();
+    expect(payload.decision_basis_meta).toBeUndefined();
+
+    process.env.ENABLE_DECISION_BASIS_TAGS = 'true';
+    const withFlag = applySoccerDecisionBasisMeta(payload, {
+      isProjectionOnly: true,
+      marketLineSource: 'synthetic',
+    });
+
+    expect(withFlag).toEqual(
+      expect.objectContaining({
+        decision_basis: 'PROJECTION_ONLY',
+        execution_eligible: false,
+        market_line_source: 'synthetic',
+      }),
+    );
+  });
+
+  test('recordSoccerProjectionTelemetry writes only projection-only entries when enabled', () => {
+    process.env.ENABLE_PROJECTION_PERF_LEDGER = 'true';
+
+    const recordProjectionEntry = jest.fn();
+    const card = {
+      id: 'card-soccer-proj-001',
+      gameId: 'game-soccer-proj-001',
+      cardType: 'soccer-ohio-scope',
+    };
+    const payloadData = {
+      canonical_market_key: 'to_score_or_assist',
+      player_name: 'Bukayo Saka',
+      selection: { side: 'OVER' },
+      confidence: 0.78,
+      line: 0.5,
+      decision: { projection: 0.64 },
+      decision_basis_meta: {
+        decision_basis: 'PROJECTION_ONLY',
+        volatility_band: 'HIGH',
+      },
+    };
+
+    recordSoccerProjectionTelemetry(recordProjectionEntry, card, payloadData);
+    expect(recordProjectionEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cardId: 'card-soccer-proj-001',
+        gameId: 'game-soccer-proj-001',
+        sport: 'SOCCER',
+        decisionBasis: 'PROJECTION_ONLY',
+      }),
+    );
+
+    recordProjectionEntry.mockClear();
+    payloadData.decision_basis_meta.decision_basis = 'ODDS_BACKED';
+    recordSoccerProjectionTelemetry(recordProjectionEntry, card, payloadData);
+    expect(recordProjectionEntry).not.toHaveBeenCalled();
   });
 });
