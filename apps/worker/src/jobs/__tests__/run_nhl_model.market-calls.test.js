@@ -5,6 +5,11 @@ const {
   attachNhlDriverContextToRawData,
 } = require('../run_nhl_model');
 
+function loadResolveThresholdProfile() {
+  jest.resetModules();
+  return require('@cheddar-logic/models').resolveThresholdProfile;
+}
+
 function buildBaseOddsSnapshot() {
   return {
     game_time_utc: '2026-03-11T00:00:00.000Z',
@@ -87,6 +92,48 @@ function buildBaseDecisions() {
 }
 
 describe('run_nhl_model market call generation', () => {
+  afterEach(() => {
+    delete process.env.ENABLE_MARKET_THRESHOLDS_V2;
+  });
+
+  test('threshold profile defaults stay baseline-equivalent when flag is off', () => {
+    delete process.env.ENABLE_MARKET_THRESHOLDS_V2;
+
+    const resolveThresholdProfile = loadResolveThresholdProfile();
+
+    const profile = resolveThresholdProfile({
+      sport: 'NBA',
+      marketType: 'SPREAD',
+    });
+
+    expect(profile.source).toBe('default');
+    expect(profile.support).toEqual({ play: 0.65, lean: 0.5 });
+    expect(profile.edge).toEqual({ play_edge_min: 0.06, lean_edge_min: 0.03 });
+  });
+
+  test('threshold profile routes by sport+market only when flag is on', () => {
+    process.env.ENABLE_MARKET_THRESHOLDS_V2 = 'true';
+
+    const resolveThresholdProfile = loadResolveThresholdProfile();
+
+    const mapped = resolveThresholdProfile({
+      sport: 'NBA',
+      marketType: 'SPREAD',
+    });
+    const fallback = resolveThresholdProfile({
+      sport: 'SOCCER',
+      marketType: 'DOUBLE_CHANCE',
+    });
+
+    expect(mapped.source).toBe('sport_market_v2');
+    expect(mapped.support.play).toBe(0.68);
+    expect(mapped.edge.play_edge_min).toBe(0.07);
+
+    expect(fallback.source).toBe('default');
+    expect(fallback.support).toEqual({ play: 0.6, lean: 0.45 });
+    expect(fallback.edge).toEqual({ play_edge_min: 0.06, lean_edge_min: 0.03 });
+  });
+
   test('emits nhl-moneyline-call with canonical payload fields', () => {
     const oddsSnapshot = buildBaseOddsSnapshot();
     const marketDecisions = buildBaseDecisions();
