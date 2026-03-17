@@ -65,6 +65,11 @@ const REQUIRE_FRESH_ODDS_FOR_MODELS =
 const MODEL_ODDS_MAX_AGE_MINUTES = Number(
   process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES,
 );
+const REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS =
+  process.env.REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS !== 'false';
+const TEAM_METRICS_MAX_AGE_MINUTES = Number(
+  process.env.TEAM_METRICS_MAX_AGE_MINUTES || 20 * 60,
+);
 const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH !== 'false';
 const ENABLE_NHL_SOG_PLAYER_SYNC =
   process.env.ENABLE_NHL_SOG_PLAYER_SYNC !== 'false';
@@ -331,6 +336,18 @@ function hasFreshOddsForModels() {
   );
 }
 
+function isProjectionModelSport(sport) {
+  return ['nba', 'nhl', 'ncaam'].includes(String(sport || '').toLowerCase());
+}
+
+function hasFreshTeamMetricsCache() {
+  if (!REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS) return true;
+  return wasJobRecentlySuccessful(
+    'refresh_team_metrics_daily',
+    TEAM_METRICS_MAX_AGE_MINUTES,
+  );
+}
+
 /**
  * Check if fixed time window is due
  * Only returns true if:
@@ -407,6 +424,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   const jobs = [];
   const sports = enabledSports();
   let ncaamFtRefreshQueued = false;
+  let teamMetricsRefreshQueued = false;
 
   function queueSoccerPropIngestBeforeModel(modelJobKey, reason) {
     const propJobKey = `soccer_props|${modelJobKey}`;
@@ -440,6 +458,24 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       reason: `pre-NCAAM FT CSV refresh (${triggerReason})`,
     });
     ncaamFtRefreshQueued = true;
+  }
+
+  function maybeQueueTeamMetricsRefresh(triggerReason, sport) {
+    if (!isProjectionModelSport(sport)) return;
+    if (!REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS) return;
+    if (teamMetricsRefreshQueued) return;
+    if (hasFreshTeamMetricsCache()) return;
+
+    const cacheDate = nowEt.toISODate();
+    const jobKey = `refresh_team_metrics|${cacheDate}`;
+    jobs.push({
+      jobName: 'refresh_team_metrics_daily',
+      jobKey,
+      execute: refreshTeamMetricsDaily,
+      args: { jobKey, dryRun },
+      reason: `pre-model team metrics refresh (${triggerReason})`,
+    });
+    teamMetricsRefreshQueued = true;
   }
 
   // ========== SCHEDULES (1) ==========
@@ -560,6 +596,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     const { jobName, execute } = SPORT_JOBS[sport];
     for (const t of fixedTimes) {
       if (!isFixedDue(nowEt, t)) continue;
+      maybeQueueTeamMetricsRefresh(`fixed ${t} ET`, sport);
       if (sport === 'ncaam') {
         maybeQueueNcaamFtRefresh(`fixed ${t} ET`);
       }
@@ -588,6 +625,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     const minsList = dueTminusMinutes(nowUtc, startUtc);
 
     for (const mins of minsList) {
+      maybeQueueTeamMetricsRefresh(`T-${mins} for ${g.game_id}`, sport);
       if (sport === 'ncaam') {
         maybeQueueNcaamFtRefresh(`T-${mins} for ${g.game_id}`);
       }
@@ -821,6 +859,10 @@ async function start() {
     `  REQUIRE_FRESH_ODDS_FOR_MODELS: ${REQUIRE_FRESH_ODDS_FOR_MODELS ? 'true' : 'false'}`,
   );
   console.log(`  MODEL_ODDS_MAX_AGE_MINUTES: ${MODEL_ODDS_MAX_AGE_MINUTES}`);
+  console.log(
+    `  REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS: ${REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS ? 'true' : 'false'}`,
+  );
+  console.log(`  TEAM_METRICS_MAX_AGE_MINUTES: ${TEAM_METRICS_MAX_AGE_MINUTES}`);
   console.log(
     `  ENABLE_SOCCER_T45_LINEUP_CHECK: ${isSoccerLineupT45Enabled() ? 'true' : 'false'} (window ${getSoccerLineupT45Bounds().min}-${getSoccerLineupT45Bounds().max}m)`,
   );

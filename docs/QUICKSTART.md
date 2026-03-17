@@ -133,6 +133,9 @@ npm --prefix apps/worker run job:run-nhl-player-shots-model
 # Pull Soccer Tier-1 player props (optional manual run; scheduler now queues this before soccer model windows)
 set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/worker run job:pull-soccer-player-props
 
+# Prewarm team metrics cache (recommended before early model windows)
+set -a; source .env; set +a; npm --prefix apps/worker run job:refresh-team-metrics
+
 # Run models
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
@@ -168,6 +171,9 @@ npm --prefix apps/worker run job:run-nhl-player-shots-model
 
 # Pull Soccer Tier-1 player props (optional manual run; scheduler queues this before soccer model windows)
 set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/worker run job:pull-soccer-player-props
+
+# Prewarm team metrics cache (recommended before early model windows)
+set -a; source .env; set +a; npm --prefix apps/worker run job:refresh-team-metrics
 ```
 
 #### 3) Run Jobs
@@ -175,6 +181,7 @@ set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/w
 ```bash
 export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 
+set -a; source .env; set +a; npm --prefix apps/worker run job:refresh-team-metrics
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
 npm --prefix apps/worker run job:run-nhl-player-shots-model
@@ -251,6 +258,9 @@ npm --prefix apps/worker run scheduler
 # Verify scheduler is stopped before manual writes
 ./scripts/manage-scheduler.sh status
 
+# Prewarm team metrics cache on production DB (recommended before early model windows)
+CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:refresh-team-metrics
+
 # Run models with production DB
 CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:run-nba-model
 CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:run-nhl-model
@@ -273,6 +283,7 @@ CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:run-s
 # Load production env and run models
 cd /opt/cheddar-logic
 set -a; source .env.production; set +a
+npm --prefix apps/worker run job:refresh-team-metrics
 npm --prefix apps/worker run job:run-nba-model
 npm --prefix apps/worker run job:run-nhl-model
 npm --prefix apps/worker run job:run-ncaam-model

@@ -8,9 +8,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 WORKER_DIR="$ROOT_DIR/apps/worker"
 LOG_DIR="$WORKER_DIR/logs"
+CANONICAL_PROD_DB_PATH="/opt/data/cheddar-prod.db"
+
+IS_PRODUCTION_HOST=false
+if [[ "$ROOT_DIR" == "/opt/cheddar-logic" ]] || [[ "${NODE_ENV:-}" == "production" ]]; then
+    IS_PRODUCTION_HOST=true
+fi
+if [[ "${CHEDDAR_ENV_FILE:-}" == *".env.production" ]]; then
+    IS_PRODUCTION_HOST=true
+fi
 
 # Load environment from repo .env (dev) or .env.production (prod)
 ENV_FILE="${CHEDDAR_ENV_FILE:-$ROOT_DIR/.env}"
+if [ -z "${CHEDDAR_ENV_FILE:-}" ] && [ "$IS_PRODUCTION_HOST" = true ] && [ -f "$ROOT_DIR/.env.production" ]; then
+    ENV_FILE="$ROOT_DIR/.env.production"
+fi
 if [ ! -f "$ENV_FILE" ] && [ -f "$ROOT_DIR/.env.production" ]; then
     ENV_FILE="$ROOT_DIR/.env.production"
 fi
@@ -30,7 +42,18 @@ unset DATABASE_URL
 # CRITICAL: Only set CHEDDAR_DB_PATH to avoid path conflicts
 # Production should set CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db in .env.production.
 DEFAULT_DB_PATH="/tmp/cheddar-logic/cheddar.db"
-export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-$DEFAULT_DB_PATH}"
+if [ "$IS_PRODUCTION_HOST" = true ]; then
+    if [ -z "${CHEDDAR_DB_PATH:-}" ]; then
+        echo "[ERROR] CHEDDAR_DB_PATH is unset on production host. Set CHEDDAR_DB_PATH=$CANONICAL_PROD_DB_PATH in .env.production." >&2
+        exit 1
+    fi
+    if [ "$CHEDDAR_DB_PATH" != "$CANONICAL_PROD_DB_PATH" ]; then
+        echo "[ERROR] Non-canonical CHEDDAR_DB_PATH on production host: $CHEDDAR_DB_PATH (expected $CANONICAL_PROD_DB_PATH)." >&2
+        exit 1
+    fi
+else
+    export CHEDDAR_DB_PATH="${CHEDDAR_DB_PATH:-$DEFAULT_DB_PATH}"
+fi
 export CHEDDAR_DATA_DIR="${CHEDDAR_DATA_DIR:-$(dirname "$CHEDDAR_DB_PATH")}"
 
 MODE="local"
