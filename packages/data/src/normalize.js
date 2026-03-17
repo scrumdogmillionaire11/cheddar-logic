@@ -238,6 +238,17 @@ const TEAM_VARIANTS = {
   'DALLAS MAVERICKS': ['dallas mavericks', 'mavs', 'mavericks'],
   'CHICAGO BULLS': ['chicago bulls', 'bulls'],
   'CLEVELAND CAVALIERS': ['cleveland cavaliers', 'cavs', 'cavaliers'],
+  'SEATTLE REDHAWKS': [
+    'seattle redhawks',
+    'seattle u redhawks',
+    'seattle university redhawks',
+  ],
+  'ST. THOMAS (MN) TOMMIES': [
+    'st thomas mn tommies',
+    'st thomas minnesota tommies',
+    'saint thomas minnesota tommies',
+    'st thomas tommies',
+  ],
   'SPORTING CP': ['sporting cp', 'sporting lisbon', 'sporting clube de portugal'],
   'BODO/GLIMT': ['bodo/glimt', 'bodo glimt', 'bodø/glimt', 'fk bodo/glimt'],
   'PARIS SAINT-GERMAIN': ['paris saint-germain', 'paris saint germain', 'psg'],

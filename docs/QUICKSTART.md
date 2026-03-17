@@ -223,6 +223,8 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
 - ESPN enrichment missing:
   - Jobs degrade gracefully; games with missing required projection fields are gated with `PROJECTION_INPUTS_INCOMPLETE`.
   - Check worker logs for missing fields and refresh odds/enrichment before rerunning.
+  - For NCAAM specifically, check for unresolved live-odds team variants such as `Seattle Redhawks` / `Seattle U Redhawks` or `St. Thomas (MN) Tommies` / `St. Thomas-Minnesota Tommies`; these leave games with odds but no emitted plays.
+  - Quick log check: `grep -E "Unknown team: \"Seattle Redhawks\"|Unknown team: \"St\. Thomas \(MN\) Tommies\"" apps/worker/logs/scheduler.log`
 - Enrichment persistence warning:
   - If you see `Failed to persist enrichment payload`, the run continues in-memory for that game, but you should rerun ingestion to restore DB persistence consistency.
 - Validation failure:
