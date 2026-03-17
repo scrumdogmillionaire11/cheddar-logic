@@ -18,6 +18,7 @@ const {
   markJobRunFailure,
   setCurrentRunId,
   insertCardPayload,
+  recordProjectionEntry,
   validateCardPayload,
   withDb,
   getPlayerPropLine,
@@ -30,6 +31,10 @@ const {
   calcFairLine1p,
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
+const {
+  applyNhlDecisionBasisMeta,
+  recordNhlProjectionTelemetry,
+} = require('../utils/nhl-shots-patch');
 
 const JOB_NAME = 'run-nhl-player-shots-model';
 
@@ -1028,6 +1033,12 @@ async function runNHLPlayerShotsModel() {
                 },
               };
 
+              const edgePct = computeEdgePct(mu, syntheticLine);
+              applyNhlDecisionBasisMeta(payloadData, {
+                usingRealLine,
+                edgePct,
+              });
+
               const card = {
                 id: cardId,
                 gameId: resolvedGameId,
@@ -1041,6 +1052,13 @@ async function runNHLPlayerShotsModel() {
 
               try {
                 insertCardPayload(card);
+                try {
+                  recordNhlProjectionTelemetry(recordProjectionEntry, card);
+                } catch (telemetryErr) {
+                  console.warn(
+                    `[${JOB_NAME}] Projection telemetry skipped for ${card.id}: ${telemetryErr.message}`,
+                  );
+                }
                 cardsCreated++;
                 console.log(
                   `[${JOB_NAME}] ✓ Created ${fullGameEdge.tier} card: ${playerName} ${fullGameEdge.direction} ${syntheticLine} (fair ${fairLine}, conf ${Math.round(confidence * 100)}%)`,
@@ -1202,6 +1220,12 @@ async function runNHLPlayerShotsModel() {
                   },
                 };
 
+                const edgePct1p = computeEdgePct(mu1p, syntheticLine1p);
+                applyNhlDecisionBasisMeta(payloadData1p, {
+                  usingRealLine: !!realPropLine1p,
+                  edgePct: edgePct1p,
+                });
+
                 const card1p = {
                   id: cardId1p,
                   gameId: resolvedGameId,
@@ -1215,6 +1239,13 @@ async function runNHLPlayerShotsModel() {
 
                 try {
                   insertCardPayload(card1p);
+                  try {
+                    recordNhlProjectionTelemetry(recordProjectionEntry, card1p);
+                  } catch (telemetryErr) {
+                    console.warn(
+                      `[${JOB_NAME}] Projection telemetry skipped for ${card1p.id}: ${telemetryErr.message}`,
+                    );
+                  }
                   cardsCreated++;
                   console.log(
                     `[${JOB_NAME}] ✓ Created ${firstPeriodEdge.tier} 1P card: ${playerName} ${firstPeriodEdge.direction} ${syntheticLine1p} (fair ${fairLine1p}, conf ${Math.round(firstPeriodConfidence * 100)}%)`,
