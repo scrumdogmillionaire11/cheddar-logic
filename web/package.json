@@ -13,6 +13,7 @@
     "test:games-filter": "node src/__tests__/api-games-filter.test.js",
     "test:filters": "node src/__tests__/game-card-filters.test.js",
     "test:card-decision": "tsx src/__tests__/game-card-decision.test.js",
+    "test:driver-roles": "tsx src/__tests__/driver-roles-completeness.test.js",
     "test:filters:play-first": "node src/__tests__/game-card-filters-play-first.test.js",
     "test:transform:sport": "node src/__tests__/game-card-transform-sport.test.js",
     "test:transform:truth-price": "node src/__tests__/game-card-transform-truth-price.test.js",
