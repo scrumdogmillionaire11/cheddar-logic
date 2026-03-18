@@ -4,7 +4,15 @@
 
 ## Active Work Items
 
-**Updated**: 2026-03-16
+**Updated**: 2026-03-17
+
+### Recently Completed
+
+- `WI-0480`: Phase 2 Activation + Rollback Procedure (Thresholds V2)
+- `WI-0481`: Phase 3 Preflight Eligibility + SQL Verification (CLV)
+- `WI-0482`: Phase 3 Activation + Settlement-Safe Rollback (CLV)
+- `WI-0483`: Fix nba-blowout-risk role and document unclassified NHL cardTypes in DRIVER_ROLES
+- `WI-0484`: DRIVER_ROLES registry completeness guard
 
 - `WI-0379`: Canonical Goalie State Object
 - `WI-0380`: Goalie Source Arbitration Layer
@@ -40,9 +48,6 @@
 - `WI-0477`: Phase 2 Rollout Coordinator (Market Thresholds V2)
 - `WI-0478`: Phase 3 Rollout Coordinator (CLV Ledger)
 - `WI-0479`: Phase 2 Preflight + Baseline Evidence (Thresholds V2)
-- `WI-0480`: Phase 2 Activation + Rollback Procedure (Thresholds V2)
-- `WI-0481`: Phase 3 Preflight Eligibility + SQL Verification (CLV)
-- `WI-0482`: Phase 3 Activation + Settlement-Safe Rollback (CLV)
 
 ## Rules
 
