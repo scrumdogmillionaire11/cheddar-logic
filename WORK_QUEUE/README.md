@@ -6,8 +6,12 @@
 
 **Updated**: 2026-03-17
 
-- None currently active (`WORK_QUEUE/` contains no `WI-####.md` files).
-- Start new work by creating a new item from `WORK_QUEUE/WI-TEMPLATE.md`.
+- `WI-0485`: Phase 4 telemetry calibration report + enforcement gate
+- `WI-0486`: Phase 4 soak-window runbook + weekly go/no-go cadence (depends on `WI-0485`)
+- `WI-0487`: Cross-sport expansion tranche A (MLB/NFL odds-backed markets; depends on `WI-0485`)
+- `WI-0488`: Cross-sport expansion tranche B (projection props + rollup separation audit; depends on `WI-0485`, `WI-0487`)
+
+Recommended execution order: `WI-0485` -> (`WI-0486` + `WI-0487` in parallel if staffing allows) -> `WI-0488`.
 
 ## Recently Completed
 
