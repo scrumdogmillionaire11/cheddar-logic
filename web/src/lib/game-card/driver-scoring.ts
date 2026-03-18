@@ -33,14 +33,25 @@ export const DRIVER_ROLES: Record<string, DriverRole> = {
   'ncaam-base-projection': 'PRIMARY',
   'ncaam-ft-trend':        'PRIMARY',
   'ncaam-ft-spread':       'PRIMARY',
+  'nhl-player-shots':      'PRIMARY',
+  'nhl-player-shots-1p':   'PRIMARY',
 
   // CONTEXT — boost/reduce only
   'nba-rest-advantage':  'CONTEXT',
   'nba-matchup-style':   'CONTEXT',
+  'nhl-base-projection': 'CONTEXT',
+  'nhl-goalie':          'CONTEXT',
+  'nhl-goalie-certainty':'CONTEXT',
+  'nhl-lineup':          'CONTEXT',
+  'nhl-shot-environment':'CONTEXT',
+  'nhl-model-output':    'CONTEXT',
   'nhl-rest-advantage':  'CONTEXT',
   'welcome-home-v2':     'CONTEXT',
   'ncaam-rest-advantage': 'CONTEXT',
   'ncaam-matchup-style': 'CONTEXT',
+
+  // RISK — never contributes positive score
+  'nba-blowout-risk': 'RISK',
 };
 
 // ---------------------------------------------------------------------------
