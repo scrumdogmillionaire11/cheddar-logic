@@ -21,6 +21,70 @@
 - While all flags are false/unset, payload shape and decision outcomes must remain baseline-equivalent.
 - Telemetry ledgers are operational metrics only and do not alter settlement or card display pipelines.
 
+#### Phase 3 CLV Preflight (Must Pass Before `ENABLE_CLV_LEDGER=true`)
+
+CLV telemetry is restricted to odds-backed cards only.
+
+- Include when all are true:
+  - `card_results.status = 'settled'`
+  - `card_payloads.payload_data.decision_basis = 'ODDS_ONLY'` or `ODDS_AND_PROJECTION`
+  - Card contains an odds-backed market (`ML`, `SPREAD`, or `TOTAL`) with valid captured odds context.
+- Exclude when any are true:
+  - `decision_basis = 'PROJECTION_ONLY'`
+  - synthetic or non-odds drivers without tradable line context
+  - unsettled cards (`status != 'settled'`)
+
+Preflight SQL checks (run before any Phase 3 activation):
+
+```bash
+# 1) Population split: confirm odds-backed vs projection-only populations
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+  COALESCE(json_extract(cp.payload_data, '$.decision_basis'), 'UNKNOWN') AS decision_basis,
+  COUNT(*) AS rows
+FROM card_results cr
+JOIN card_payloads cp ON cp.id = cr.card_id
+WHERE cr.status = 'settled'
+GROUP BY 1
+ORDER BY rows DESC;
+"
+
+# 2) Contract guard: projection-only cards must not be CLV-eligible
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT COUNT(*) AS projection_only_settled
+FROM card_results cr
+JOIN card_payloads cp ON cp.id = cr.card_id
+WHERE cr.status = 'settled'
+  AND COALESCE(json_extract(cp.payload_data, '$.decision_basis'), 'UNKNOWN') = 'PROJECTION_ONLY';
+"
+
+# 3) Dry eligibility sample for odds-backed settled cards
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+  cr.id,
+  cr.card_id,
+  COALESCE(json_extract(cp.payload_data, '$.decision_basis'), 'UNKNOWN') AS decision_basis,
+  COALESCE(json_extract(cp.payload_data, '$.play.market'), 'UNKNOWN') AS market
+FROM card_results cr
+JOIN card_payloads cp ON cp.id = cr.card_id
+WHERE cr.status = 'settled'
+  AND COALESCE(json_extract(cp.payload_data, '$.decision_basis'), 'UNKNOWN') IN ('ODDS_ONLY', 'ODDS_AND_PROJECTION')
+LIMIT 25;
+"
+```
+
+Go / no-go criteria for Phase 3 activation:
+
+- Go when all are true:
+  - Preflight queries execute without SQL/runtime errors.
+  - Odds-backed settled population is non-zero for target sports/markets.
+  - Projection-only population is measurable and separable via `decision_basis`.
+  - `ENABLE_CLV_LEDGER` remains default-off until controlled run window starts.
+- No-go when any are true:
+  - Missing/ambiguous `decision_basis` population in settled cards.
+  - Any preflight query fails or returns contract-inconsistent shape.
+  - Operators cannot prove projection-only exclusion before activation.
+
 ### Inefficient Model Replacement Policy (Operational, No-Code)
 
 - Purpose: degrade safely when telemetry indicates model inefficiency, without changing contracts or deploying code.
