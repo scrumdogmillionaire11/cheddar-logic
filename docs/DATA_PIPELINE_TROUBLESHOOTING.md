@@ -253,6 +253,84 @@ ORDER BY sample_size DESC;
 | CLV mean degradation | Disable CLV ledger writes (`ENABLE_CLV_LEDGER=false`) and keep settlement normal | Settlement ops | Confirm `clv_ledger` row count stops increasing; `card_results` still settles |
 | CLV tail-risk breach | Roll back to baseline rollout flags (all four disabled) | Incident commander | Confirm web/worker outputs match baseline expectations |
 
+### Phase 2 Runbook (`ENABLE_MARKET_THRESHOLDS_V2`)
+
+#### Activation (controlled window)
+
+```bash
+set -a; source .env; set +a
+export ENABLE_MARKET_THRESHOLDS_V2=true
+
+ENABLE_MARKET_THRESHOLDS_V2=true npm --prefix apps/worker run job:run-nba-model:test
+ENABLE_MARKET_THRESHOLDS_V2=true npm --prefix apps/worker run job:run-ncaam-model:test
+```
+
+#### Verification (Phase 2 only)
+
+```bash
+npm --prefix web run test:api:games:market
+
+# Optional parity sanity check: verify threshold routing is active without breaking payload contract
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+   COUNT(*) AS total_cards,
+   SUM(CASE WHEN json_extract(payload_data, '$.decision_basis_meta.market_thresholds_v2') IS NOT NULL THEN 1 ELSE 0 END) AS threshold_v2_marked
+FROM card_payloads
+WHERE datetime(created_at) >= datetime('now', '-6 hours');
+"
+```
+
+#### Incident triggers + immediate rollback criteria (Phase 2)
+
+- Trigger rollback immediately when any are observed:
+   - `test:api:games:market` fails after Phase 2 activation.
+   - Worker model test command fails under `ENABLE_MARKET_THRESHOLDS_V2=true`.
+   - Unexpected payload contract drift or unsupported decision status output appears in recent cards.
+- Rollback command sequence:
+
+```bash
+./scripts/manage-scheduler.sh stop
+export ENABLE_MARKET_THRESHOLDS_V2=false
+./scripts/manage-scheduler.sh start
+./scripts/manage-scheduler.sh db
+```
+
+### Phase 3 Runbook (`ENABLE_CLV_LEDGER`)
+
+#### Activation (settlement-safe controlled run)
+
+```bash
+set -a; source .env; set +a
+export ENABLE_CLV_LEDGER=true
+
+ENABLE_CLV_LEDGER=true npm --prefix apps/worker run job:settle-cards
+```
+
+#### Post-settlement verification
+
+```bash
+npm --prefix apps/worker test -- src/jobs/__tests__/settle_pending_cards.phase2.test.js
+npm --prefix apps/worker test -- src/jobs/__tests__/settle_pending_cards.market-contract.test.js
+npm --prefix web run test:api:games:market
+
+# CLV rows must be additive and exclude projection-only basis
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+   COUNT(*) AS total_rows,
+   SUM(CASE WHEN decision_basis = 'PROJECTION_ONLY' THEN 1 ELSE 0 END) AS projection_only_rows
+FROM clv_ledger;
+"
+```
+
+#### Rollback (Phase 3 telemetry off, settlement preserved)
+
+```bash
+./scripts/manage-scheduler.sh stop
+export ENABLE_CLV_LEDGER=false
+./scripts/manage-scheduler.sh start
+./scripts/manage-scheduler.sh db
+```
+
 ### Enable → Verify → Rollback Commands
 
 #### 1) Enable one phase flag in staging
