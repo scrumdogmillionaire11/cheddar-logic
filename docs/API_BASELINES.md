@@ -121,6 +121,78 @@ Expected:
 - `decision_basis` should be `ODDS_BACKED` only.
 - `PROJECTION_ONLY` count should remain zero by design.
 
+## Telemetry Calibration Report Parity (`job:report-telemetry-calibration`)
+
+Run command:
+
+```bash
+npm --prefix apps/worker run job:report-telemetry-calibration
+```
+
+Optional enforcement mode (non-zero exit only on threshold breach):
+
+```bash
+npm --prefix apps/worker run job:report-telemetry-calibration -- --enforce
+```
+
+### Projection ledger parity checks (`projection_perf_ledger`)
+
+```bash
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+  COUNT(*) AS sample_size,
+  ROUND(AVG(CASE WHEN won = 1 THEN 1.0 ELSE 0.0 END), 4) AS win_rate,
+  ROUND(AVG(CASE WHEN UPPER(COALESCE(confidence, '')) = 'HIGH' THEN CASE WHEN won = 1 THEN 1.0 ELSE 0.0 END END), 4) AS high_win_rate,
+  ROUND(AVG(CASE WHEN UPPER(COALESCE(confidence, '')) = 'MEDIUM' THEN CASE WHEN won = 1 THEN 1.0 ELSE 0.0 END END), 4) AS medium_win_rate,
+  ROUND(
+    AVG(CASE WHEN UPPER(COALESCE(confidence, '')) = 'MEDIUM' THEN CASE WHEN won = 1 THEN 1.0 ELSE 0.0 END END)
+    - AVG(CASE WHEN UPPER(COALESCE(confidence, '')) = 'HIGH' THEN CASE WHEN won = 1 THEN 1.0 ELSE 0.0 END END),
+    4
+  ) AS confidence_drift
+FROM projection_perf_ledger
+WHERE settled_at IS NOT NULL
+  AND datetime(settled_at) >= datetime('now', '-14 days');
+"
+```
+
+Threshold interpretation:
+
+- Minimum sample gate: `sample_size >= 100`
+- Win-rate floor: breach when `win_rate < 0.4800`
+- Confidence drift: breach when `confidence_drift >= 0.0300`
+- If sample gate is not met, report status is `INSUFFICIENT_DATA` (not an enforcement failure by itself).
+
+### CLV ledger parity checks (`clv_ledger`)
+
+```bash
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+WITH windowed AS (
+  SELECT clv_pct
+  FROM clv_ledger
+  WHERE closed_at IS NOT NULL
+    AND clv_pct IS NOT NULL
+    AND datetime(closed_at) >= datetime('now', '-14 days')
+), ranked AS (
+  SELECT
+    clv_pct,
+    ROW_NUMBER() OVER (ORDER BY clv_pct ASC) AS rn,
+    COUNT(*) OVER () AS total
+  FROM windowed
+)
+SELECT
+  (SELECT COUNT(*) FROM windowed) AS sample_size,
+  ROUND((SELECT AVG(clv_pct) FROM windowed), 4) AS mean_clv,
+  ROUND((SELECT clv_pct FROM ranked WHERE rn = ((total + 3) / 4) LIMIT 1), 4) AS p25_clv;
+"
+```
+
+Threshold interpretation:
+
+- Minimum sample gate: `sample_size >= 150`
+- Mean CLV: breach when `mean_clv <= -0.0200`
+- Tail-risk P25: breach when `p25_clv <= -0.0500`
+- If sample gate is not met, report status is `INSUFFICIENT_DATA` (the command emits diagnostics for fetch/closure coverage improvement and exits zero even with `--enforce`).
+
 ## Phase 2 Rollout Baseline (Market Thresholds V2)
 
 Captured with `ENABLE_MARKET_THRESHOLDS_V2=false`.
