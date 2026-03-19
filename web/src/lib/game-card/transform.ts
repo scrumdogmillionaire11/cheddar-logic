@@ -469,6 +469,53 @@ function inferMarketFromPlay(play: ApiPlay): {
   };
 }
 
+function toDiagnosticToken(prefix: string, value: unknown): string | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!normalized) return null;
+  return `${prefix}:${normalized}`;
+}
+
+function collectNoActionablePlayInputs(game: GameData): string[] {
+  const diagnostics: string[] = [];
+  const seen = new Set<string>();
+  const push = (token: string | null) => {
+    if (!token || seen.has(token)) return;
+    seen.add(token);
+    diagnostics.push(token);
+  };
+
+  const evidenceOnlyPlays = game.plays.filter((play) => isEvidenceItem(play, game.sport));
+
+  if (evidenceOnlyPlays.length === 0) {
+    return ['play_candidates:evidence_only'];
+  }
+
+  for (const play of evidenceOnlyPlays) {
+    push(toDiagnosticToken('card_type', play.cardType));
+    push(toDiagnosticToken('pass_reason', play.pass_reason_code));
+    for (const reasonCode of play.reason_codes ?? []) {
+      push(toDiagnosticToken('reason_code', reasonCode));
+    }
+    for (const missingInput of play.missing_inputs ?? []) {
+      push(toDiagnosticToken('play_missing', missingInput));
+    }
+    for (const mappingFailure of play.source_mapping_failures ?? []) {
+      push(toDiagnosticToken('mapping_failure', mappingFailure));
+    }
+  }
+
+  if (diagnostics.length === 0) {
+    return ['play_candidates:evidence_only'];
+  }
+
+  return diagnostics.slice(0, 8);
+}
+
 type CanonicalSide = 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NONE';
 type DedupeCandidate = {
   play: ApiPlay;
@@ -1555,6 +1602,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       game.projection_inputs_complete === false ||
       game.plays.some((play) => play.projection_inputs_complete === false) ||
       projectionMissingInputs.length > 0;
+    const noActionablePlayInputs = hasEvidenceOnly
+      ? collectNoActionablePlayInputs(game)
+      : [];
     const missingDataCode: string =
       hasNoOdds && hasNoPlays
         ? 'MISSING_DATA_NO_ODDS'
@@ -1576,8 +1626,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             ? `Missing projection inputs${projectionMissingInputs.length ? `: ${projectionMissingInputs.join(', ')}` : ''}`
             : hasNoPlays
               ? 'Driver output unavailable'
-          : hasEvidenceOnly
-            ? 'No actionable play'
+            : hasEvidenceOnly
+              ? `No actionable play${noActionablePlayInputs.length ? `: ${noActionablePlayInputs.join(', ')}` : ''}`
             : 'Missing driver inputs';
     const missingInputs = hasMappingFailure
       ? sourceMappingFailures.length > 0
@@ -1588,7 +1638,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           ? projectionMissingInputs
           : ['projection_inputs']
         : hasEvidenceOnly
-          ? ['play']
+          ? noActionablePlayInputs
           : ['drivers'];
     return {
       market_key: 'INFO|NONE',
