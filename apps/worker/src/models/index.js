@@ -623,7 +623,13 @@ function computeNHLDrivers(gameId, oddsSnapshot) {
  * @returns {Array<object>} Array of card descriptor objects
  */
 function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
-  const { recentRoadGames = null, canonicalGoalieState = null } = context;
+  const {
+    recentRoadGames = null,
+    canonicalGoalieState = null,
+    // WI-0505: Phase-2 fair probability gate — thread from caller
+    phase2FairProbEnabled = false,
+    sigma1p = 1.26,
+  } = context;
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const total = toNumber(oddsSnapshot?.total);
   const nhlDataQuality = extractNhlDriverDataQualityContext(raw);
@@ -1075,6 +1081,9 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       awaySkaterInjuryFactor,
       homeSkaterDefInjuryFactor,
       awaySkaterDefInjuryFactor,
+      // WI-0505
+      phase2FairProbEnabled,
+      sigma1p,
     });
 
     if (paceResult) {
@@ -1247,6 +1256,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
             home_goalie_certainty: homeGoalieCertainty,
             away_goalie_certainty: awayGoalieCertainty,
             goalie_confidence_capped: paceResult.goalieConfidenceCapped,
+            fair_over_1_5_prob: firstPeriodModel.fair_over_1_5_prob ?? null,
+            fair_under_1_5_prob: firstPeriodModel.fair_under_1_5_prob ?? null,
           },
           driverScore: classification.includes('OVER')
             ? 0.75
