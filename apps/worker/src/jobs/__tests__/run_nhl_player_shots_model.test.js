@@ -535,8 +535,10 @@ describe('run_nhl_player_shots_model', () => {
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
 
     const teamMetricsGet = jest.fn(() => ({
-      opponent_goals_against: 3.6,
-      league_avg_goals_against: 2.9,
+      opponent_shots_against_pg: 31.8,
+      league_avg_shots_against_pg: 28.5,
+      team_pace_proxy: 1.06,
+      opponent_pace_proxy: 1.04,
     }));
     const mockDb = {
       prepare: jest.fn((sql) => {
@@ -557,9 +559,21 @@ describe('run_nhl_player_shots_model', () => {
 
     await mod.runNHLPlayerShotsModel();
 
-    expect(teamMetricsGet).toHaveBeenCalledWith('Toronto Maple Leafs');
+    expect(teamMetricsGet).toHaveBeenCalledWith(
+      'Toronto Maple Leafs',
+      'Edmonton Oilers',
+      'Toronto Maple Leafs',
+    );
+    expect(shots.calcMu).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opponentFactor: expect.any(Number),
+        paceFactor: expect.any(Number),
+      }),
+    );
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.decision.matchup_score).toBeGreaterThan(0.8);
+    expect(card.payloadData.decision.matchup_score).toBeGreaterThan(0.6);
+    expect(card.payloadData.drivers.opponent_factor).toBeGreaterThan(1.0);
+    expect(card.payloadData.drivers.pace_factor).toBeGreaterThan(1.0);
   });
 
   test('suppresses PASS cards when consistency support is weak', async () => {
@@ -601,8 +615,11 @@ describe('run_nhl_player_shots_model', () => {
       expect.objectContaining({
         decision_basis: 'PROJECTION_ONLY',
         execution_eligible: false,
-        market_line_source: 'projection_floor',
+        market_line_source: 'synthetic_fallback',
       }),
+    );
+    expect(insertedCard.payloadData.decision.market_line_source).toBe(
+      'synthetic_fallback',
     );
 
     expect(data.recordProjectionEntry).toHaveBeenCalledWith(

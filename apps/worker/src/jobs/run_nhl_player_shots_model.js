@@ -331,6 +331,57 @@ function resolveTeamAbbrev(teamValue) {
   return TEAM_NAME_TO_ABBREV[normalized] || null;
 }
 
+function buildPlayerNameCandidates(playerName) {
+  if (typeof playerName !== 'string') return [];
+  const base = playerName.trim();
+  if (!base) return [];
+
+  const noPeriods = base.replace(/\./g, '');
+  const normalizedSpacing = noPeriods.replace(/\s+/g, ' ').trim();
+  const noSuffix = normalizedSpacing
+    .replace(/\b(JR|SR|II|III|IV)\b$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return [...new Set([base, normalizedSpacing, noSuffix].filter(Boolean))];
+}
+
+function resolvePlayerPropLineWithFallback({
+  sport,
+  gameId,
+  playerName,
+  propType,
+  period,
+}) {
+  const candidates = buildPlayerNameCandidates(playerName);
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidateName = candidates[index];
+    const resolved = getPlayerPropLine(
+      sport,
+      gameId,
+      candidateName,
+      propType,
+      period,
+    );
+    if (resolved) {
+      if (index > 0) {
+        console.warn(
+          `[${JOB_NAME}] Name-match fallback resolved ${period} line for '${playerName}' via '${candidateName}'`,
+        );
+      }
+      return resolved;
+    }
+  }
+
+  if (candidates.length > 1) {
+    console.debug(
+      `[${JOB_NAME}] No ${period} line for '${playerName}' after ${candidates.length} name candidates`,
+    );
+  }
+
+  return null;
+}
+
 /**
  * Gap 6: Resolve a canonical game ID by consulting the game_id_map table first,
  * then falling back to a time+team proximity match in the games table.
@@ -790,11 +841,13 @@ async function runNHLPlayerShotsModel() {
               player.team_abbrev?.toUpperCase() === homeTeam.toUpperCase() ||
               TEAM_ABBREV_TO_NAME[player.team_abbrev?.toUpperCase()]?.toUpperCase() === homeTeam.toUpperCase();
 
-            // Gap 4: Derive opponentFactor from team_metrics_cache.
-            // Opponent is whichever team this player is NOT on.
-            // paceFactor: 1.0 — TODO: source from team pace stats when available (e.g. corsi_for_pct from team_metrics_cache)
             let opponentFactor = 1.0;
+            let paceFactor = 1.0;
             try {
+              const playerTeamAbbrev = resolveTeamAbbrev(player.team_abbrev);
+              const playerTeamName =
+                (playerTeamAbbrev && TEAM_ABBREV_TO_NAME[playerTeamAbbrev]) ||
+                player.team_abbrev;
               const opponentTeam = isHome ? awayTeam : homeTeam;
               const opponentAbbrev = resolveTeamAbbrev(opponentTeam);
               if (!opponentAbbrev) {
@@ -805,42 +858,116 @@ async function runNHLPlayerShotsModel() {
               const opponentTeamName =
                 (opponentAbbrev && TEAM_ABBREV_TO_NAME[opponentAbbrev]) ||
                 opponentTeam;
-              const goalsAgainstRow = db.prepare(`
+              const factorRow = db.prepare(`
                 SELECT
-                  CAST(json_extract(t.metrics, '$.avgGoalsAgainst') AS REAL) AS opponent_goals_against,
                   (
-                    SELECT AVG(CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL))
+                    SELECT COALESCE(
+                      CAST(json_extract(metrics, '$.shots_against_pg') AS REAL),
+                      CAST(json_extract(metrics, '$.avgShotsAgainst') AS REAL),
+                      CAST(json_extract(metrics, '$.shotsAgainstPerGame') AS REAL),
+                      CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL)
+                    )
                     FROM team_metrics_cache
                     WHERE UPPER(sport) = 'NHL'
                       AND status = 'ok'
-                      AND cache_date = t.cache_date
-                      AND json_extract(metrics, '$.avgGoalsAgainst') IS NOT NULL
-                  ) AS league_avg_goals_against
-                FROM team_metrics_cache t
-                WHERE UPPER(t.sport) = 'NHL'
-                  AND t.status = 'ok'
-                  AND UPPER(t.team_name) = UPPER(?)
-                ORDER BY t.cache_date DESC
-                LIMIT 1
-              `).get(opponentTeamName);
+                      AND UPPER(team_name) = UPPER(?)
+                    ORDER BY cache_date DESC
+                    LIMIT 1
+                  ) AS opponent_shots_against_pg,
+                  (
+                    SELECT AVG(COALESCE(
+                      CAST(json_extract(metrics, '$.shots_against_pg') AS REAL),
+                      CAST(json_extract(metrics, '$.avgShotsAgainst') AS REAL),
+                      CAST(json_extract(metrics, '$.shotsAgainstPerGame') AS REAL),
+                      CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL)
+                    ))
+                    FROM team_metrics_cache
+                    WHERE UPPER(sport) = 'NHL'
+                      AND status = 'ok'
+                      AND COALESCE(
+                        CAST(json_extract(metrics, '$.shots_against_pg') AS REAL),
+                        CAST(json_extract(metrics, '$.avgShotsAgainst') AS REAL),
+                        CAST(json_extract(metrics, '$.shotsAgainstPerGame') AS REAL),
+                        CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL)
+                      ) IS NOT NULL
+                  ) AS league_avg_shots_against_pg,
+                  (
+                    SELECT COALESCE(
+                      CAST(json_extract(metrics, '$.pace_proxy') AS REAL),
+                      CAST(json_extract(metrics, '$.paceFactor') AS REAL),
+                      CAST(json_extract(metrics, '$.pace') AS REAL),
+                      CAST(json_extract(metrics, '$.corsi_for_pct') AS REAL) / 50.0,
+                      CAST(json_extract(metrics, '$.shots_for_pg') AS REAL) /
+                        NULLIF((
+                          SELECT AVG(CAST(json_extract(metrics, '$.shots_for_pg') AS REAL))
+                          FROM team_metrics_cache
+                          WHERE UPPER(sport) = 'NHL'
+                            AND status = 'ok'
+                            AND json_extract(metrics, '$.shots_for_pg') IS NOT NULL
+                        ), 0)
+                    )
+                    FROM team_metrics_cache
+                    WHERE UPPER(sport) = 'NHL'
+                      AND status = 'ok'
+                      AND UPPER(team_name) = UPPER(?)
+                    ORDER BY cache_date DESC
+                    LIMIT 1
+                  ) AS team_pace_proxy,
+                  (
+                    SELECT COALESCE(
+                      CAST(json_extract(metrics, '$.pace_proxy') AS REAL),
+                      CAST(json_extract(metrics, '$.paceFactor') AS REAL),
+                      CAST(json_extract(metrics, '$.pace') AS REAL),
+                      CAST(json_extract(metrics, '$.corsi_for_pct') AS REAL) / 50.0,
+                      CAST(json_extract(metrics, '$.shots_for_pg') AS REAL) /
+                        NULLIF((
+                          SELECT AVG(CAST(json_extract(metrics, '$.shots_for_pg') AS REAL))
+                          FROM team_metrics_cache
+                          WHERE UPPER(sport) = 'NHL'
+                            AND status = 'ok'
+                            AND json_extract(metrics, '$.shots_for_pg') IS NOT NULL
+                        ), 0)
+                    )
+                    FROM team_metrics_cache
+                    WHERE UPPER(sport) = 'NHL'
+                      AND status = 'ok'
+                      AND UPPER(team_name) = UPPER(?)
+                    ORDER BY cache_date DESC
+                    LIMIT 1
+                  ) AS opponent_pace_proxy
+              `).get(opponentTeamName, playerTeamName, opponentTeamName);
 
               if (
-                goalsAgainstRow &&
-                goalsAgainstRow.opponent_goals_against > 0 &&
-                goalsAgainstRow.league_avg_goals_against > 0
+                factorRow &&
+                factorRow.opponent_shots_against_pg > 0 &&
+                factorRow.league_avg_shots_against_pg > 0
               ) {
                 opponentFactor =
-                  goalsAgainstRow.opponent_goals_against /
-                  goalsAgainstRow.league_avg_goals_against;
+                  factorRow.opponent_shots_against_pg /
+                  factorRow.league_avg_shots_against_pg;
               } else {
                 console.debug(
                   `[${JOB_NAME}] No usable team_metrics_cache matchup data for '${opponentTeamName}' — opponentFactor defaulting to 1.0`,
                 );
               }
+
+              const teamPaceProxy = Number(factorRow?.team_pace_proxy);
+              const opponentPaceProxy = Number(factorRow?.opponent_pace_proxy);
+              if (
+                Number.isFinite(teamPaceProxy) &&
+                teamPaceProxy > 0 &&
+                Number.isFinite(opponentPaceProxy) &&
+                opponentPaceProxy > 0
+              ) {
+                paceFactor = clamp((teamPaceProxy + opponentPaceProxy) / 2, 0.85, 1.2);
+              } else {
+                console.debug(
+                  `[${JOB_NAME}] No usable NHL pace proxy for '${playerTeamName}' vs '${opponentTeamName}' — paceFactor defaulting to 1.0`,
+                );
+              }
             } catch {
-              // team_metrics_cache may not exist or have different schema
               console.debug(
-                `[${JOB_NAME}] Could not query team_metrics_cache for opponentFactor — defaulting to 1.0`,
+                `[${JOB_NAME}] Could not query team_metrics_cache for matchup factors — defaulting to opponentFactor=1.0 paceFactor=1.0`,
               );
             }
 
@@ -850,7 +977,7 @@ async function runNHLPlayerShotsModel() {
               shotsPer60: shotsPer60,
               projToi: projToi,
               opponentFactor,
-              paceFactor: 1.0, // TODO: source from team pace stats when available
+              paceFactor,
               isHome,
             });
 
@@ -860,7 +987,7 @@ async function runNHLPlayerShotsModel() {
               shotsPer60: shotsPer60,
               projToi: projToi,
               opponentFactor,
-              paceFactor: 1.0,
+              paceFactor,
               isHome,
             });
 
@@ -868,7 +995,13 @@ async function runNHLPlayerShotsModel() {
             // When no real line exists, use a configurable projection floor (default 2.5 SOG) so
             // projection-mode cards are still generated for the best shooters. A player at 3.3 mu
             // vs a 2.5 floor = 0.8 edge = HOT. Set NHL_SOG_PROJECTION_LINE to adjust the threshold.
-            const realPropLine = getPlayerPropLine('NHL', resolvedGameId, playerName, 'shots_on_goal', 'full_game');
+            const realPropLine = resolvePlayerPropLineWithFallback({
+              sport: 'NHL',
+              gameId: resolvedGameId,
+              playerName,
+              propType: 'shots_on_goal',
+              period: 'full_game',
+            });
             let marketLine;
             if (realPropLine) {
               marketLine = realPropLine.line;
@@ -881,7 +1014,13 @@ async function runNHLPlayerShotsModel() {
             const syntheticLine = marketLine; // kept for card payload references below
 
             // 1P: also use projection floor when no real line (scaled from full-game floor by 1P share)
-            const realPropLine1p = getPlayerPropLine('NHL', resolvedGameId, playerName, 'shots_on_goal', 'first_period');
+            const realPropLine1p = resolvePlayerPropLineWithFallback({
+              sport: 'NHL',
+              gameId: resolvedGameId,
+              playerName,
+              propType: 'shots_on_goal',
+              period: 'first_period',
+            });
             let syntheticLine1p;
             if (realPropLine1p) {
               syntheticLine1p = realPropLine1p.line;
@@ -1013,7 +1152,7 @@ async function runNHLPlayerShotsModel() {
                   market_line: syntheticLine,
                   direction: fullGameEdge.direction,
                   confidence: confidence,
-                  market_line_source: usingRealLine ? 'odds_api' : 'projection_floor',
+                  market_line_source: usingRealLine ? 'odds_api' : 'synthetic_fallback',
                   consistency_score:
                     Math.round(fullConsistencyScore * 1000) / 1000,
                   matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
@@ -1027,6 +1166,7 @@ async function runNHLPlayerShotsModel() {
                   proj_toi: projToi,
                   is_home: isHome,
                   opponent_factor: opponentFactor,
+                  pace_factor: paceFactor,
                   consistency_score:
                     Math.round(fullConsistencyScore * 1000) / 1000,
                   matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
@@ -1038,6 +1178,9 @@ async function runNHLPlayerShotsModel() {
                 usingRealLine,
                 edgePct,
               });
+              if (!usingRealLine && payloadData.decision_basis_meta) {
+                payloadData.decision_basis_meta.market_line_source = 'synthetic_fallback';
+              }
 
               const card = {
                 id: cardId,
@@ -1197,7 +1340,7 @@ async function runNHLPlayerShotsModel() {
                     market_line: syntheticLine1p,
                     direction: firstPeriodEdge.direction,
                     confidence: firstPeriodConfidence,
-                    market_line_source: realPropLine1p ? 'odds_api' : 'projection_floor',
+                    market_line_source: realPropLine1p ? 'odds_api' : 'synthetic_fallback',
                     consistency_score:
                       Math.round(firstPeriodConsistencyScore * 1000) / 1000,
                     matchup_score:
@@ -1213,6 +1356,7 @@ async function runNHLPlayerShotsModel() {
                     proj_toi: projToi,
                     is_home: isHome,
                     opponent_factor: opponentFactor,
+                    pace_factor: paceFactor,
                     consistency_score:
                       Math.round(firstPeriodConsistencyScore * 1000) / 1000,
                     matchup_score:
@@ -1225,6 +1369,9 @@ async function runNHLPlayerShotsModel() {
                   usingRealLine: !!realPropLine1p,
                   edgePct: edgePct1p,
                 });
+                if (!realPropLine1p && payloadData1p.decision_basis_meta) {
+                  payloadData1p.decision_basis_meta.market_line_source = 'synthetic_fallback';
+                }
 
                 const card1p = {
                   id: cardId1p,
