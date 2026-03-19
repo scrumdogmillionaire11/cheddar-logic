@@ -853,6 +853,51 @@ function ensureSoccerXgCacheSchema(db) {
   );
 }
 
+/**
+ * Ensure CLV ledger exists for odds-backed cards.
+ * Added here as a blocking dependency for WI-0492 because the prior CLV work
+ * had not landed on `main`.
+ */
+function ensureClvLedgerSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS clv_ledger (
+      id TEXT PRIMARY KEY,
+      card_id TEXT NOT NULL UNIQUE,
+      game_id TEXT NOT NULL,
+      sport TEXT NOT NULL,
+      league TEXT,
+      market_key TEXT NOT NULL,
+      market_type TEXT,
+      pick_side TEXT,
+      line REAL,
+      odds_at_pick REAL,
+      displayed_implied_prob REAL,
+      closing_odds REAL,
+      closing_implied_prob REAL,
+      clv_pct REAL,
+      edge_pct REAL,
+      card_created_at TEXT NOT NULL,
+      settled_at TEXT,
+      metadata TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_clv_ledger_game_id
+      ON clv_ledger(game_id, created_at DESC)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_clv_ledger_unsettled
+      ON clv_ledger(settled_at)
+      WHERE settled_at IS NULL`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_clv_ledger_sport_market
+      ON clv_ledger(sport, market_key, created_at DESC)`,
+  );
+}
+
 function buildOddsIngestFailureKey(event) {
   const sport = normalizeSportValue(event.sport, 'buildOddsIngestFailureKey');
   return [
@@ -3568,6 +3613,189 @@ function getSoccerTeamXgBatch({ league, cacheDate }) {
 }
 
 /**
+ * Record a CLV ledger row for an odds-backed card.
+ * Idempotent per card_id.
+ *
+ * @param {object} entry
+ * @param {string} entry.id
+ * @param {string} entry.cardId
+ * @param {string} entry.gameId
+ * @param {string} entry.sport
+ * @param {string} [entry.league]
+ * @param {string} entry.marketKey
+ * @param {string} [entry.marketType]
+ * @param {string} [entry.pickSide]
+ * @param {number|null} [entry.line]
+ * @param {number|null} [entry.oddsAtPick]
+ * @param {number|null} [entry.displayedImpliedProb]
+ * @param {number|null} [entry.edgePct]
+ * @param {string} entry.cardCreatedAt
+ * @param {object|null} [entry.metadata]
+ */
+function recordClvEntry(entry) {
+  if (process.env.ENABLE_CLV_LEDGER !== 'true') return;
+
+  const db = getDatabase();
+  ensureClvLedgerSchema(db);
+
+  const stmt = db.prepare(`
+    INSERT INTO clv_ledger (
+      id,
+      card_id,
+      game_id,
+      sport,
+      league,
+      market_key,
+      market_type,
+      pick_side,
+      line,
+      odds_at_pick,
+      displayed_implied_prob,
+      edge_pct,
+      card_created_at,
+      metadata,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(card_id) DO UPDATE SET
+      league = excluded.league,
+      market_key = excluded.market_key,
+      market_type = excluded.market_type,
+      pick_side = excluded.pick_side,
+      line = excluded.line,
+      odds_at_pick = excluded.odds_at_pick,
+      displayed_implied_prob = excluded.displayed_implied_prob,
+      edge_pct = excluded.edge_pct,
+      metadata = excluded.metadata,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+
+  stmt.run(
+    entry.id,
+    entry.cardId,
+    entry.gameId,
+    String(entry.sport || '').toLowerCase(),
+    entry.league ? String(entry.league).toUpperCase() : null,
+    entry.marketKey,
+    entry.marketType || null,
+    entry.pickSide || null,
+    Number.isFinite(entry.line) ? entry.line : null,
+    Number.isFinite(entry.oddsAtPick) ? entry.oddsAtPick : null,
+    Number.isFinite(entry.displayedImpliedProb) ? entry.displayedImpliedProb : null,
+    Number.isFinite(entry.edgePct) ? entry.edgePct : null,
+    entry.cardCreatedAt,
+    entry.metadata ? JSON.stringify(entry.metadata) : null,
+  );
+}
+
+/**
+ * List unsettled soccer CLV rows eligible for settlement.
+ * Requires a final game_result and a minimum age from card creation.
+ *
+ * @param {object} [options]
+ * @param {number} [options.minAgeHours=24]
+ * @param {number} [options.limit=200]
+ * @returns {array}
+ */
+function listPendingSoccerClvEntries({ minAgeHours = 24, limit = 200 } = {}) {
+  const db = getDatabase();
+  ensureClvLedgerSchema(db);
+
+  const safeMinAgeHours =
+    Number.isFinite(Number(minAgeHours)) && Number(minAgeHours) >= 0
+      ? Number(minAgeHours)
+      : 24;
+  const safeLimit =
+    Number.isFinite(Number(limit)) && Number(limit) > 0
+      ? Math.min(Number(limit), 1000)
+      : 200;
+
+  const stmt = db.prepare(`
+    SELECT
+      clv.*,
+      gr.settled_at AS game_result_settled_at,
+      cp.payload_data AS payload_data
+    FROM clv_ledger clv
+    INNER JOIN game_results gr
+      ON gr.game_id = clv.game_id
+     AND gr.status = 'final'
+    LEFT JOIN card_payloads cp
+      ON cp.id = clv.card_id
+    WHERE clv.sport = 'soccer'
+      AND clv.settled_at IS NULL
+      AND datetime(clv.card_created_at) <= datetime('now', '-' || ? || ' hours')
+    ORDER BY datetime(clv.card_created_at) ASC
+    LIMIT ?
+  `);
+
+  return stmt.all(String(safeMinAgeHours), safeLimit);
+}
+
+/**
+ * Settle a CLV row with closing odds and implied-probability delta.
+ * Idempotent: rerunning with the same values leaves DB state unchanged.
+ *
+ * @param {object} entry
+ * @param {string} entry.cardId
+ * @param {number|null} entry.closingOdds
+ * @param {number|null} entry.closingImpliedProb
+ * @param {number|null} entry.clvPct
+ * @param {string} [entry.settledAt]
+ * @param {object|null} [entry.metadata]
+ * @returns {number} changed row count
+ */
+function settleClvEntry({
+  cardId,
+  closingOdds,
+  closingImpliedProb,
+  clvPct,
+  settledAt,
+  metadata,
+}) {
+  if (process.env.ENABLE_CLV_LEDGER !== 'true') return 0;
+
+  const db = getDatabase();
+  ensureClvLedgerSchema(db);
+
+  const existing = db
+    .prepare(`SELECT metadata FROM clv_ledger WHERE card_id = ? LIMIT 1`)
+    .get(cardId);
+  let mergedMetadata = null;
+  if (metadata || existing?.metadata) {
+    let prior = null;
+    try {
+      prior = existing?.metadata ? JSON.parse(existing.metadata) : null;
+    } catch {
+      prior = null;
+    }
+    mergedMetadata = { ...(prior || {}), ...(metadata || {}) };
+  }
+
+  const stmt = db.prepare(`
+    UPDATE clv_ledger
+    SET closing_odds = ?,
+        closing_implied_prob = ?,
+        clv_pct = ?,
+        settled_at = ?,
+        metadata = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE card_id = ?
+  `);
+
+  const result = stmt.run(
+    Number.isFinite(closingOdds) ? closingOdds : null,
+    Number.isFinite(closingImpliedProb) ? closingImpliedProb : null,
+    Number.isFinite(clvPct) ? clvPct : null,
+    settledAt || new Date().toISOString(),
+    mergedMetadata ? JSON.stringify(mergedMetadata) : null,
+    cardId,
+  );
+
+  return result.changes;
+}
+
+/**
  * Backfill: Normalize historical card_results.sport values to lowercase
  * Ensures all sport codes in card_results table are lowercase for consistency
  * @returns {object} {affected: number of rows updated, errors: any errors encountered}
@@ -3831,4 +4059,7 @@ module.exports = {
   upsertSoccerTeamXg,
   getSoccerTeamXg,
   getSoccerTeamXgBatch,
+  recordClvEntry,
+  listPendingSoccerClvEntries,
+  settleClvEntry,
 };

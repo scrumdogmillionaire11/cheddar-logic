@@ -79,6 +79,19 @@ const SOCCER_PLAYER_SHOTS_MAX_LINE = Number(
 const SOCCER_TIER1_PROP_MAX_CARDS_PER_GAME = Number(
   process.env.SOCCER_TIER1_PROP_MAX_CARDS_PER_GAME || 12,
 );
+const ODDS_BACKED_CARD_TYPES = new Set([
+  'soccer_ml',
+  'soccer_game_total',
+  'soccer_double_chance',
+]);
+const PROJECTION_MARKET_TYPES = new Set([
+  'player_shots',
+  'team_totals',
+  'to_score_or_assist',
+  'player_shots_on_target',
+  'anytime_goalscorer',
+  'team_corners',
+]);
 
 function normalizePlayerToken(name) {
   return String(name || '')
@@ -447,6 +460,21 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
 
   const homeTeam = oddsSnapshot?.home_team ?? null;
   const awayTeam = oddsSnapshot?.away_team ?? null;
+  const league = normalizeSoccerLeague(rawData.league || deriveLeagueTag(oddsSnapshot));
+  const cacheDate = new Date().toISOString().split('T')[0];
+  const xgContext = getSoccerXgContext({
+    league,
+    homeTeam,
+    awayTeam,
+    cacheDate,
+  });
+  const xgWinProbs = xgContext.modelConfidence === 'LOW'
+    ? null
+    : computeXgWinProbs({
+      homeXg: xgContext.homeXg,
+      awayXg: xgContext.awayXg,
+      league: xgContext.league,
+    });
 
   let payloadData;
 
@@ -459,9 +487,29 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
     const price = typeof derivedPrice === 'number' && Number.isFinite(derivedPrice)
       ? Math.trunc(derivedPrice)
       : null;
+    const implied = deriveMoneylineImpliedProbs(
+      oddsSnapshot?.h2h_home,
+      oddsSnapshot?.h2h_away,
+    );
+    const impliedProb = prediction === 'AWAY' ? implied.away : implied.home;
+    let modelProb = prediction === 'AWAY' ? xgWinProbs?.awayWin : xgWinProbs?.homeWin;
+
+    if (!Number.isFinite(modelProb) && Number.isFinite(impliedProb)) {
+      modelProb = impliedProb;
+    }
+
+    const edgeEv =
+      Number.isFinite(modelProb) && Number.isFinite(impliedProb)
+        ? Number((modelProb - impliedProb).toFixed(4))
+        : null;
 
     if (!Number.isFinite(oddsSnapshot?.h2h_home)) missing_context_flags.push('h2h_home');
     if (!Number.isFinite(oddsSnapshot?.h2h_away)) missing_context_flags.push('h2h_away');
+    if (xgContext.modelConfidence === 'LOW') {
+      console.warn(
+        `[SoccerModel] xG cache miss for ${league} ${awayTeam} @ ${homeTeam}; falling back to implied probability for MONEYLINE`,
+      );
+    }
 
     payloadData = {
       sport: 'SOCCER',
@@ -474,21 +522,49 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       generated_at: now,
       selection: { side: prediction, team: selectionTeam },
       price,
+      edge_ev: edgeEv,
       edge_basis: 'vig_normalized_moneyline',
       missing_context_flags,
       pass_reason: null,
-      model_confidence: null, // populated in Phase 2 (WI-0492): FULL | PARTIAL | LOW
+      model_confidence: xgContext.modelConfidence,
     };
   } else if (canonicalCardType === 'soccer_game_total') {
     const totalLine = rawData.total_line ?? null;
     const overPrice = rawData.over_price ?? null;
     const underPrice = rawData.under_price ?? null;
     const selection = rawData.selection ?? null;
+    const impliedProb = deriveTotalImpliedProb({
+      overPrice,
+      underPrice,
+      selection,
+    });
+    let modelProb = null;
+    if (xgContext.modelConfidence !== 'LOW') {
+      modelProb = computeXgTotalProb({
+        homeXg: xgContext.homeXg,
+        awayXg: xgContext.awayXg,
+        totalLine,
+        direction: String(selection || '').toLowerCase(),
+        league: xgContext.league,
+      });
+    }
+    if (!Number.isFinite(modelProb) && Number.isFinite(impliedProb)) {
+      modelProb = impliedProb;
+    }
+    const edgeEv =
+      Number.isFinite(modelProb) && Number.isFinite(impliedProb)
+        ? Number((modelProb - impliedProb).toFixed(4))
+        : null;
 
     let pass_reason = null;
     if (totalLine === null) {
       missing_context_flags.push('total_line');
       pass_reason = 'MISSING_LINE';
+    }
+    if (xgContext.modelConfidence === 'LOW') {
+      console.warn(
+        `[SoccerModel] xG cache miss for ${league} ${awayTeam} @ ${homeTeam}; falling back to implied probability for GAME_TOTAL`,
+      );
     }
 
     payloadData = {
@@ -504,18 +580,37 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       over_price: typeof overPrice === 'number' ? Math.trunc(overPrice) : null,
       under_price: typeof underPrice === 'number' ? Math.trunc(underPrice) : null,
       selection,
+      edge_ev: edgeEv,
       edge_basis: rawData.edge_basis ?? null,
       missing_context_flags,
       pass_reason,
-      model_confidence: null, // populated in Phase 2 (WI-0492): FULL | PARTIAL | LOW
+      model_confidence: xgContext.modelConfidence,
     };
   } else if (canonicalCardType === 'soccer_double_chance') {
     const outcome = rawData.dc_outcome ?? null;
     const dcPrice = rawData.dc_price ?? null;
     const edgeBasis = rawData.edge_basis ?? null;
+    const impliedProb = Number.isFinite(rawData.implied_prob)
+      ? Number(rawData.implied_prob.toFixed(4))
+      : (Number.isFinite(dcPrice) ? Number(toImpliedProbability(dcPrice).toFixed(4)) : null);
+    let modelProb = xgContext.modelConfidence === 'LOW'
+      ? null
+      : deriveDoubleChanceModelProb(outcome, xgWinProbs);
+    if (!Number.isFinite(modelProb) && Number.isFinite(impliedProb)) {
+      modelProb = impliedProb;
+    }
+    const edgeEv =
+      Number.isFinite(modelProb) && Number.isFinite(impliedProb)
+        ? Number((modelProb - impliedProb).toFixed(4))
+        : null;
 
     if (outcome === null) missing_context_flags.push('dc_outcome');
     if (dcPrice === null) missing_context_flags.push('dc_price');
+    if (xgContext.modelConfidence === 'LOW') {
+      console.warn(
+        `[SoccerModel] xG cache miss for ${league} ${awayTeam} @ ${homeTeam}; falling back to implied probability for DOUBLE_CHANCE`,
+      );
+    }
 
     payloadData = {
       sport: 'SOCCER',
@@ -528,10 +623,11 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       generated_at: now,
       outcome,
       price: typeof dcPrice === 'number' ? Math.trunc(dcPrice) : null,
+      edge_ev: edgeEv,
       edge_basis: edgeBasis,
       missing_context_flags,
       pass_reason: null,
-      model_confidence: null, // populated in Phase 2 (WI-0492): FULL | PARTIAL | LOW
+      model_confidence: xgContext.modelConfidence,
     };
   } else {
     throw new Error(`buildSoccerOddsBackedCard: unknown canonicalCardType "${canonicalCardType}"`);
@@ -557,7 +653,9 @@ const {
   setCurrentRunId,
   getOddsWithUpcomingGames,
   getPlayerPropLinesForGame,
+  getSoccerTeamXgBatch,
   insertCardPayload,
+  recordClvEntry,
   deleteCardPayloadsForGame,
   validateCardPayload,
   shouldRunJobKey,
@@ -569,11 +667,19 @@ const {
   formatStartTimeLocal,
   formatCountdown,
   buildMarketFromOdds,
+  xgModel,
 } = require('@cheddar-logic/models');
 const {
   publishDecisionForCard,
   applyUiActionFields,
 } = require('../utils/decision-publisher');
+
+const {
+  computeXgWinProbs,
+  computeXgTotalProb,
+} = xgModel;
+
+const soccerLeagueXgCache = new Map();
 
 function attachRunId(card, runId) {
   if (!card) return;
@@ -623,6 +729,234 @@ function deriveLeagueTag(oddsSnapshot) {
     return 'unknown';
   }
   return league.trim().toUpperCase();
+}
+
+function normalizeSoccerLeague(value) {
+  const upper = String(value || '').trim().toUpperCase();
+  if (upper === 'EPL' || upper.includes('PREMIER')) return 'EPL';
+  if (upper === 'MLS' || upper.includes('MAJOR LEAGUE SOCCER')) return 'MLS';
+  if (upper === 'UCL' || upper.includes('CHAMPIONS')) return 'UCL';
+  return upper || 'UNKNOWN';
+}
+
+function normalizeSoccerTeamKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function getLeagueXgLookup(league, cacheDate) {
+  const normalizedLeague = normalizeSoccerLeague(league);
+  const key = `${normalizedLeague}|${cacheDate}`;
+  if (soccerLeagueXgCache.has(key)) {
+    return soccerLeagueXgCache.get(key);
+  }
+
+  const rows = typeof getSoccerTeamXgBatch === 'function'
+    ? (getSoccerTeamXgBatch({ league: normalizedLeague, cacheDate }) || [])
+    : [];
+  const teamMap = new Map();
+  let homeSum = 0;
+  let homeCount = 0;
+  let awaySum = 0;
+  let awayCount = 0;
+
+  for (const row of rows) {
+    teamMap.set(normalizeSoccerTeamKey(row.team_name), row);
+    if (Number.isFinite(row.home_xg_l6) && row.home_xg_l6 >= 0.5) {
+      homeSum += row.home_xg_l6;
+      homeCount += 1;
+    }
+    if (Number.isFinite(row.away_xg_l6) && row.away_xg_l6 >= 0.5) {
+      awaySum += row.away_xg_l6;
+      awayCount += 1;
+    }
+  }
+
+  const result = {
+    teamMap,
+    avgHomeXg: homeCount > 0 ? homeSum / homeCount : null,
+    avgAwayXg: awayCount > 0 ? awaySum / awayCount : null,
+  };
+  soccerLeagueXgCache.set(key, result);
+  return result;
+}
+
+function getSoccerXgContext({ league, homeTeam, awayTeam, cacheDate }) {
+  const normalizedLeague = normalizeSoccerLeague(league);
+  const lookup = getLeagueXgLookup(normalizedLeague, cacheDate);
+  const homeRow = lookup.teamMap.get(normalizeSoccerTeamKey(homeTeam));
+  const awayRow = lookup.teamMap.get(normalizeSoccerTeamKey(awayTeam));
+
+  const hasHomeXg = Number.isFinite(homeRow?.home_xg_l6) && homeRow.home_xg_l6 >= 0.5;
+  const hasAwayXg = Number.isFinite(awayRow?.away_xg_l6) && awayRow.away_xg_l6 >= 0.5;
+
+  if (hasHomeXg && hasAwayXg) {
+    return {
+      league: normalizedLeague,
+      homeXg: homeRow.home_xg_l6,
+      awayXg: awayRow.away_xg_l6,
+      modelConfidence: 'FULL',
+      fallbackUsed: false,
+    };
+  }
+
+  const fallbackHome = hasHomeXg ? homeRow.home_xg_l6 : lookup.avgHomeXg;
+  const fallbackAway = hasAwayXg ? awayRow.away_xg_l6 : lookup.avgAwayXg;
+
+  if (
+    Number.isFinite(fallbackHome) &&
+    fallbackHome >= 0.5 &&
+    Number.isFinite(fallbackAway) &&
+    fallbackAway >= 0.5
+  ) {
+    return {
+      league: normalizedLeague,
+      homeXg: fallbackHome,
+      awayXg: fallbackAway,
+      modelConfidence: 'PARTIAL',
+      fallbackUsed: true,
+    };
+  }
+
+  return {
+    league: normalizedLeague,
+    homeXg: null,
+    awayXg: null,
+    modelConfidence: 'LOW',
+    fallbackUsed: true,
+  };
+}
+
+function deriveMoneylineImpliedProbs(h2hHome, h2hAway) {
+  const pHome = toImpliedProbability(h2hHome);
+  const pAway = toImpliedProbability(h2hAway);
+  if (Number.isFinite(pHome) && Number.isFinite(pAway) && pHome + pAway > 0) {
+    const total = pHome + pAway;
+    return {
+      home: Number((pHome / total).toFixed(4)),
+      away: Number((pAway / total).toFixed(4)),
+    };
+  }
+  return {
+    home: Number.isFinite(pHome) ? Number(pHome.toFixed(4)) : null,
+    away: Number.isFinite(pAway) ? Number(pAway.toFixed(4)) : null,
+  };
+}
+
+function deriveTotalImpliedProb({ overPrice, underPrice, selection }) {
+  const over = toImpliedProbability(overPrice);
+  const under = toImpliedProbability(underPrice);
+  const side = String(selection || '').trim().toUpperCase();
+  if (Number.isFinite(over) && Number.isFinite(under) && over + under > 0) {
+    const total = over + under;
+    const normalizedOver = over / total;
+    const normalizedUnder = under / total;
+    if (side === 'OVER') return Number(normalizedOver.toFixed(4));
+    if (side === 'UNDER') return Number(normalizedUnder.toFixed(4));
+  }
+  if (side === 'OVER' && Number.isFinite(over)) return Number(over.toFixed(4));
+  if (side === 'UNDER' && Number.isFinite(under)) return Number(under.toFixed(4));
+  return null;
+}
+
+function deriveDoubleChanceModelProb(outcome, xgWinProbs) {
+  if (!xgWinProbs) return null;
+  const token = String(outcome || '').trim().toLowerCase();
+  if (token === 'home_or_draw') {
+    return Number((xgWinProbs.homeWin + xgWinProbs.draw).toFixed(4));
+  }
+  if (token === 'away_or_draw') {
+    return Number((xgWinProbs.awayWin + xgWinProbs.draw).toFixed(4));
+  }
+  if (token === 'either_to_win') {
+    return Number((xgWinProbs.homeWin + xgWinProbs.awayWin).toFixed(4));
+  }
+  return null;
+}
+
+function deriveSoccerClosingPriceFromSnapshot(entry, oddsSnapshot) {
+  if (!entry || !oddsSnapshot) return null;
+  if (entry.market_key === 'soccer_ml') {
+    return entry.pick_side === 'AWAY'
+      ? (Number.isFinite(oddsSnapshot.h2h_away) ? Math.trunc(oddsSnapshot.h2h_away) : null)
+      : (Number.isFinite(oddsSnapshot.h2h_home) ? Math.trunc(oddsSnapshot.h2h_home) : null);
+  }
+  if (entry.market_key === 'soccer_game_total') {
+    const selection = String(entry.pick_side || '').toUpperCase();
+    if (selection === 'UNDER') {
+      return Number.isFinite(oddsSnapshot.total_price_under)
+        ? Math.trunc(oddsSnapshot.total_price_under)
+        : null;
+    }
+    return Number.isFinite(oddsSnapshot.total_price_over)
+      ? Math.trunc(oddsSnapshot.total_price_over)
+      : null;
+  }
+  if (entry.market_key === 'soccer_double_chance') {
+    const rawData = parseRawData(oddsSnapshot.raw_data) || {};
+    return Number.isFinite(rawData.dc_price) ? Math.trunc(rawData.dc_price) : null;
+  }
+  return null;
+}
+
+function maybeRecordSoccerClv(card, oddsSnapshot) {
+  if (process.env.ENABLE_CLV_LEDGER !== 'true') return;
+  if (!card || !ODDS_BACKED_CARD_TYPES.has(card.cardType)) return;
+
+  const payload = card.payloadData || {};
+  const rawData = parseRawData(oddsSnapshot?.raw_data) || {};
+  const league = normalizeSoccerLeague(rawData.league || deriveLeagueTag(oddsSnapshot));
+
+  let oddsAtPick = null;
+  let displayedImpliedProb = null;
+  let pickSide = null;
+  let line = null;
+
+  if (card.cardType === 'soccer_ml') {
+    oddsAtPick = Number.isFinite(payload.price) ? payload.price : null;
+    pickSide = payload?.selection?.side || null;
+    const implied = deriveMoneylineImpliedProbs(oddsSnapshot?.h2h_home, oddsSnapshot?.h2h_away);
+    displayedImpliedProb = pickSide === 'AWAY' ? implied.away : implied.home;
+  } else if (card.cardType === 'soccer_game_total') {
+    pickSide = String(payload.selection || '').toUpperCase() || null;
+    line = Number.isFinite(payload.line) ? payload.line : null;
+    oddsAtPick = pickSide === 'UNDER'
+      ? (Number.isFinite(payload.under_price) ? payload.under_price : null)
+      : (Number.isFinite(payload.over_price) ? payload.over_price : null);
+    displayedImpliedProb = deriveTotalImpliedProb({
+      overPrice: payload.over_price,
+      underPrice: payload.under_price,
+      selection: pickSide,
+    });
+  } else if (card.cardType === 'soccer_double_chance') {
+    pickSide = payload.outcome || null;
+    oddsAtPick = Number.isFinite(payload.price) ? payload.price : null;
+    displayedImpliedProb = Number.isFinite(rawData.implied_prob)
+      ? Number(rawData.implied_prob.toFixed(4))
+      : (Number.isFinite(oddsAtPick) ? Number(toImpliedProbability(oddsAtPick).toFixed(4)) : null);
+  }
+
+  recordClvEntry({
+    id: `clv-${card.id}`,
+    cardId: card.id,
+    gameId: card.gameId,
+    sport: 'soccer',
+    league,
+    marketKey: card.cardType,
+    marketType: payload.market_type || null,
+    pickSide,
+    line,
+    oddsAtPick,
+    displayedImpliedProb,
+    edgePct: Number.isFinite(payload.edge_ev) ? payload.edge_ev : null,
+    cardCreatedAt: card.createdAt || payload.generated_at || new Date().toISOString(),
+    metadata: {
+      home_team: payload.home_team || null,
+      away_team: payload.away_team || null,
+      start_time_utc: payload.start_time_utc || null,
+    },
+  });
 }
 
 function derivePredictionFromMoneyline(h2hHome, h2hAway) {
@@ -1023,11 +1357,6 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
       let track1Cards = 0;
 
       // TRACK 1: Process each odds-backed game (may be 0 iterations — no bail-out)
-      const ODDS_BACKED_CARD_TYPES = new Set(['soccer_ml', 'soccer_game_total', 'soccer_double_chance']);
-      const PROJECTION_MARKET_TYPES = new Set([
-        'player_shots', 'team_totals', 'to_score_or_assist',
-        'player_shots_on_target', 'anytime_goalscorer', 'team_corners',
-      ]);
 
       for (const gameId of gameIds) {
         try {
@@ -1139,6 +1468,7 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
           applyUiActionFields(card.payloadData);
           attachRunId(card, jobRunId);
           insertCardPayload(card);
+          maybeRecordSoccerClv(card, oddsSnapshot);
           cardsGenerated++;
           track1Cards++;
           const logDetail = card.payloadData.prediction

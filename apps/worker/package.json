@@ -32,6 +32,8 @@
     "job:run-mlb-model:test": "node -e \"require('./src/jobs/run_mlb_model.js').runMLBModel().then(console.log).catch(console.error)\"",
     "job:run-soccer-model": "node src/jobs/run_soccer_model.js",
     "job:run-soccer-model:test": "node -e \"require('./src/jobs/run_soccer_model.js').runSoccerModel().then(console.log).catch(console.error)\"",
+    "job:settle-soccer-clv": "node src/jobs/settle_soccer_clv.js",
+    "job:settle-soccer-clv:dry": "node src/jobs/settle_soccer_clv.js --dry-run",
     "job:run-ncaam-model": "node src/jobs/run_ncaam_model.js",
     "job:run-ncaam-model:test": "node -e \"require('./src/jobs/run_ncaam_model.js').runNCAAMModel().then(console.log).catch(console.error)\"",
     "job:refresh-team-metrics": "node src/jobs/refresh_team_metrics_daily.js",

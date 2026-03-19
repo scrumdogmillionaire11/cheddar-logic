@@ -47,6 +47,7 @@ const { runNCAAMModel } = require('../jobs/run_ncaam_model');
 const { runRefreshNcaamFtCsv } = require('../jobs/refresh_ncaam_ft_csv');
 const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
+const { settleSoccerClv } = require('../jobs/settle_soccer_clv');
 const { backfillCardResults } = require('../jobs/backfill_card_results');
 const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
 const {
@@ -196,6 +197,10 @@ function keyNhlPlayerAvailabilitySync(nowEt) {
 
 function keyHourlySettlementSweep(nowEt) {
   return `settle|hourly|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+}
+
+function keySoccerClvSettlement(nowEt) {
+  return `settle|soccer-clv|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
 }
 
 function isHourlySettlementDue(nowEt) {
@@ -726,6 +731,17 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         console.log(
           `[Scheduler] Skipping settle_pending_cards — already running in another process`,
         );
+      }
+
+      if (process.env.ENABLE_SOCCER_CLV_SETTLEMENT === 'true') {
+        const soccerClvKey = keySoccerClvSettlement(nowEt);
+        jobs.push({
+          jobName: 'settle_soccer_clv',
+          jobKey: soccerClvKey,
+          execute: settleSoccerClv,
+          args: { jobKey: soccerClvKey, dryRun },
+          reason: `hourly soccer CLV settlement ${soccerClvKey}`,
+        });
       }
     }
 
