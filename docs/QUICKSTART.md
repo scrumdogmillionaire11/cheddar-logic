@@ -204,6 +204,8 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
 
 - Jobs are idempotent when run with a jobKey. The CLI scripts use time-based job keys internally.
 - Cards expire 1 hour before game start; stale odds will not emit cards.
+- NHL 1P settling is the active focus and should continue recording/segmenting under results now.
+- NHL player shots settling is gated behind `ENABLE_PLAYER_SHOTS_SETTLING=true` and remains off by default until that flow is verified.
 - NCAAM cards are driver-based; if no cards appear, there may be no actionable signals.
 - Projection completeness gate: NBA/NHL/NCAAM jobs now block per-game driver/pricing output when required projection inputs are missing. Logs show `PROJECTION_INPUTS_INCOMPLETE (...)` with explicit missing fields.
 
