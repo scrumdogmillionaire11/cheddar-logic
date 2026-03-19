@@ -15,6 +15,14 @@ describe('soccer team variant mapping', () => {
     ['Paris Saint Germain', 'PARIS SAINT-GERMAIN'],
     ['Paris Saint-Germain', 'PARIS SAINT-GERMAIN'],
     ['PSG', 'PARIS SAINT-GERMAIN'],
+    ['Bournemouth', 'BOURNEMOUTH'],
+    ['Newcastle United', 'NEWCASTLE UNITED'],
+    ['Manchester United', 'MANCHESTER UNITED'],
+    ['Tottenham Hotspur', 'TOTTENHAM HOTSPUR'],
+    ['Liverpool', 'LIVERPOOL'],
+    ['West Ham United', 'WEST HAM UNITED'],
+    ['Brighton and Hove Albion', 'BRIGHTON AND HOVE ALBION'],
+    ['Atletico Madrid', 'ATLETICO MADRID'],
   ];
 
   test.each(cases)('%s resolves to %s', (input, canonical) => {
