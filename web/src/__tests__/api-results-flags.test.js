@@ -63,6 +63,7 @@ async function run() {
   const defaultMeta = payloadDefault.data?.meta;
   const includeMeta = payloadIncludeOrphaned.data?.meta;
   const noDedupeMeta = payloadNoDedupe.data?.meta;
+  const defaultSegmentFamilies = payloadDefault.data?.segmentFamilies;
 
   assert.ok(defaultMeta, 'default response missing meta');
   assert.ok(includeMeta, 'include_orphaned response missing meta');
@@ -92,6 +93,22 @@ async function run() {
     noDedupeMeta.dedupe,
     false,
     'no-dedupe meta should be false',
+  );
+
+  assert.ok(
+    Array.isArray(defaultSegmentFamilies),
+    'default response missing segmentFamilies metadata',
+  );
+  const familyIds = new Set(
+    defaultSegmentFamilies.map((family) => family.segmentId),
+  );
+  ['nhl_game_sides_totals', 'nhl_first_period_totals', 'nhl_player_shots_props'].forEach(
+    (segmentId) => {
+      assert.ok(
+        familyIds.has(segmentId),
+        `segmentFamilies missing expected segment: ${segmentId}`,
+      );
+    },
   );
 
   console.log('✅ API results flags regression test passed');

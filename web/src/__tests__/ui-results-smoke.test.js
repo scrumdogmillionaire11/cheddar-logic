@@ -63,6 +63,19 @@ async function run() {
   );
 
   assert.ok(Array.isArray(payload.data.segments), 'Segments is not an array');
+  assert.ok(
+    Array.isArray(payload.data.segmentFamilies),
+    'segmentFamilies is not an array',
+  );
+  const segmentFamilies = payload.data.segmentFamilies;
+  ['nhl_game_sides_totals', 'nhl_first_period_totals', 'nhl_player_shots_props'].forEach(
+    (segmentId) => {
+      assert.ok(
+        segmentFamilies.some((segment) => segment.segmentId === segmentId),
+        `segmentFamilies missing ${segmentId}`,
+      );
+    },
+  );
   assert.ok(Array.isArray(payload.data.ledger), 'Ledger is not an array');
 
   console.log('✅ UI results smoke test passed');

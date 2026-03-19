@@ -36,6 +36,16 @@ type SegmentRow = {
   total_pnl_units: number | null;
 };
 
+type SettlementSegmentId =
+  | 'nhl_game_sides_totals'
+  | 'nhl_first_period_totals'
+  | 'nhl_player_shots_props';
+
+type SettlementSegmentMeta = {
+  id: SettlementSegmentId;
+  label: string;
+};
+
 type LedgerRow = {
   id: string;
   game_id: string;
@@ -134,6 +144,52 @@ const DRIVER_PATTERNS = [
 
 const CALL_PATTERNS = ['%-totals-call', '%-spread-call'];
 
+const SETTLEMENT_SEGMENTS: SettlementSegmentMeta[] = [
+  { id: 'nhl_game_sides_totals', label: 'Game Sides & Totals' },
+  { id: 'nhl_first_period_totals', label: '1P Totals' },
+  { id: 'nhl_player_shots_props', label: 'Player Shots Props' },
+];
+
+function deriveSettlementSegment(
+  sport: string | null | undefined,
+  cardType: string | null | undefined,
+  recommendedBetType: string | null | undefined,
+  marketType: string | null | undefined,
+  marketKey: string | null | undefined,
+): SettlementSegmentMeta {
+  const normalizedSport = String(sport || '').toUpperCase();
+  const normalizedCardType = String(cardType || '').toLowerCase();
+  const normalizedBetType = String(recommendedBetType || '').toLowerCase();
+  const normalizedMarketType = String(marketType || '').toLowerCase();
+  const normalizedMarketKey = String(marketKey || '').toLowerCase();
+  const isFirstPeriod =
+    normalizedCardType.includes('-1p') ||
+    normalizedCardType.includes('first-period') ||
+    normalizedMarketType.includes('first_period') ||
+    normalizedMarketType.includes('first period') ||
+    normalizedMarketKey.includes('first_period') ||
+    normalizedMarketKey.includes(':1p');
+  const isPlayerShots =
+    normalizedCardType.includes('player-shots') ||
+    normalizedCardType.includes('player_shots') ||
+    normalizedMarketKey.includes('player_shots') ||
+    normalizedMarketKey.includes('player-shots');
+
+  if (normalizedSport === 'NHL' && isPlayerShots && !isFirstPeriod) {
+    return SETTLEMENT_SEGMENTS[2];
+  }
+
+  if (
+    normalizedSport === 'NHL' &&
+    normalizedBetType === 'total' &&
+    isFirstPeriod
+  ) {
+    return SETTLEMENT_SEGMENTS[1];
+  }
+
+  return SETTLEMENT_SEGMENTS[0];
+}
+
 function buildCardCategoryFilter(
   category: string | null,
   alias: string,
@@ -191,6 +247,11 @@ export async function GET(request: NextRequest) {
               avgPnl: null,
             },
             segments: [],
+            segmentFamilies: SETTLEMENT_SEGMENTS.map((segment) => ({
+              segmentId: segment.id,
+              segmentLabel: segment.label,
+              settledCards: 0,
+            })),
             ledger: [],
           },
         },
@@ -262,10 +323,7 @@ export async function GET(request: NextRequest) {
       (ALLOWED_MARKETS as readonly string[]).includes(rawMarket.toLowerCase())
         ? rawMarket.toLowerCase()
         : null;
-    const includeOrphaned = parseBooleanLikeParam(
-      searchParams.get('include_orphaned'),
-      false,
-    );
+    const includeOrphaned = false;
     const dedupe = parseBooleanLikeParam(searchParams.get('dedupe'), true);
 
     // Build filter SQL fragments
@@ -317,7 +375,7 @@ export async function GET(request: NextRequest) {
           SELECT
             id,
             ROW_NUMBER() OVER (
-              PARTITION BY game_id
+              PARTITION BY pick_id
               ORDER BY
                 datetime(COALESCE(displayed_at, settled_at, '1970-01-01T00:00:00Z')) DESC,
                 COALESCE(display_log_id, 0) DESC,
@@ -422,6 +480,11 @@ export async function GET(request: NextRequest) {
               avgPnl: null,
             },
             segments: [],
+            segmentFamilies: SETTLEMENT_SEGMENTS.map((segment) => ({
+              segmentId: segment.id,
+              segmentLabel: segment.label,
+              settledCards: 0,
+            })),
             ledger: [],
             filters: {
               sport,
@@ -716,6 +779,14 @@ export async function GET(request: NextRequest) {
               : null;
       }
 
+      const settlementSegment = deriveSettlementSegment(
+        row.sport,
+        row.card_type,
+        market,
+        marketType,
+        marketKey,
+      );
+
       return {
         id: row.id,
         gameId: row.game_id,
@@ -742,8 +813,41 @@ export async function GET(request: NextRequest) {
         payloadMissing: parsed.missing || row.payload_id === null,
         projection1p,
         projectionTotal,
+        segmentId: settlementSegment.id,
+        segmentLabel: settlementSegment.label,
       };
     });
+
+    const segmentRows = segments.map((row) => {
+      const settlementSegment = deriveSettlementSegment(
+        row.sport,
+        row.card_type,
+        row.recommended_bet_type,
+        null,
+        null,
+      );
+      return {
+        sport: row.sport,
+        cardType: row.card_type,
+        cardCategory: row.card_category,
+        recommendedBetType: row.recommended_bet_type || 'unknown',
+        settledCards: Number(row.settled_cards || 0),
+        wins: Number(row.wins || 0),
+        losses: Number(row.losses || 0),
+        pushes: Number(row.pushes || 0),
+        totalPnlUnits: toNullableNumber(row.total_pnl_units),
+        segmentId: settlementSegment.id,
+        segmentLabel: settlementSegment.label,
+      };
+    });
+
+    const segmentFamilies = SETTLEMENT_SEGMENTS.map((segment) => ({
+      segmentId: segment.id,
+      segmentLabel: segment.label,
+      settledCards: segmentRows
+        .filter((row) => row.segmentId === segment.id)
+        .reduce((sum, row) => sum + row.settledCards, 0),
+    }));
 
     const wins = Number(summary.wins || 0);
     const losses = Number(summary.losses || 0);
@@ -772,17 +876,8 @@ export async function GET(request: NextRequest) {
             winRate,
             avgPnl,
           },
-          segments: segments.map((row) => ({
-            sport: row.sport,
-            cardType: row.card_type,
-            cardCategory: row.card_category,
-            recommendedBetType: row.recommended_bet_type || 'unknown',
-            settledCards: Number(row.settled_cards || 0),
-            wins: Number(row.wins || 0),
-            losses: Number(row.losses || 0),
-            pushes: Number(row.pushes || 0),
-            totalPnlUnits: toNullableNumber(row.total_pnl_units),
-          })),
+          segments: segmentRows,
+          segmentFamilies,
           ledger: ledgerRows,
           filters: {
             sport,
