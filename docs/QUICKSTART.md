@@ -207,6 +207,29 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
 - NCAAM cards are driver-based; if no cards appear, there may be no actionable signals.
 - Projection completeness gate: NBA/NHL/NCAAM jobs now block per-game driver/pricing output when required projection inputs are missing. Logs show `PROJECTION_INPUTS_INCOMPLETE (...)` with explicit missing fields.
 
+### Weekly Telemetry Go/No-Go (Soak Period)
+
+During the 14–30 day telemetry soak window, run these three commands every 7 days starting at Day 7. All commands are copy/paste runnable from repo root.
+
+```bash
+# 1. Standard calibration report — review all signal values
+npm --prefix apps/worker run job:report-telemetry-calibration
+
+# 2. Enforce mode — exits non-zero only if sample gate is met AND threshold breached
+npm --prefix apps/worker run job:report-telemetry-calibration -- --enforce
+
+# 3. Capture JSON evidence for ops notes (timestamped)
+npm --prefix apps/worker run job:report-telemetry-calibration -- --json > /tmp/soak-$(date +%Y%m%d).json
+```
+
+**Pass:** `--enforce` exits 0, OR all signals return `INSUFFICIENT_DATA` (sample gates not yet met).
+
+**Fail:** `--enforce` exits non-zero AND at least one ledger has met its sample gate. Consult the Breach-to-Owner Table in [docs/DATA_PIPELINE_TROUBLESHOOTING.md](./DATA_PIPELINE_TROUBLESHOOTING.md#breach-to-owner-table) for the single owner and default rollback action for each breach type.
+
+**Evidence capture:** After each weekly check, paste the checkpoint block (exit code, `win_rate`, `clv_mean`, `p25_clv`, `sample_size` for both ledgers, any breach messages verbatim) into ops notes using the evidence format in [docs/DATA_PIPELINE_TROUBLESHOOTING.md](./DATA_PIPELINE_TROUBLESHOOTING.md#weekly-evidence-capture-format).
+
+> **Sample-size gate:** `INSUFFICIENT_DATA` means the ledger has fewer rows than the minimum sample gate (100 for projection, 150 for CLV). This is always a pass — do not treat it as a breach.
+
 ### Troubleshooting
 
 - Confirm active mode/path before running jobs:
