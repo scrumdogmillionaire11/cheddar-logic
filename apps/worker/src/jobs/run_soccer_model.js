@@ -408,6 +408,7 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
     missing_context_flags,
     pass_reason,
     projection_basis,
+    model_confidence: null,
     edge_ev,
     price,
     line: line || null,
@@ -471,6 +472,7 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       matchup: buildMatchup(homeTeam, awayTeam),
       start_time_utc: oddsSnapshot?.game_time_utc ?? null,
       generated_at: now,
+      model_confidence: null,
       selection: { side: prediction, team: selectionTeam },
       price,
       edge_basis: 'vig_normalized_moneyline',
@@ -498,6 +500,7 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       matchup: buildMatchup(homeTeam, awayTeam),
       start_time_utc: oddsSnapshot?.game_time_utc ?? null,
       generated_at: now,
+      model_confidence: null,
       line: totalLine,
       over_price: typeof overPrice === 'number' ? Math.trunc(overPrice) : null,
       under_price: typeof underPrice === 'number' ? Math.trunc(underPrice) : null,
@@ -523,6 +526,7 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       matchup: buildMatchup(homeTeam, awayTeam),
       start_time_utc: oddsSnapshot?.game_time_utc ?? null,
       generated_at: now,
+      model_confidence: null,
       outcome,
       price: typeof dcPrice === 'number' ? Math.trunc(dcPrice) : null,
       edge_basis: edgeBasis,
@@ -767,6 +771,7 @@ function buildSoccerTier1CardFromPropLine(gameId, oddsSnapshot, propLineRow) {
     missing_context_flags: [],
     pass_reason: null,
     projection_basis: 'market_line_observed',
+    model_confidence: null,
     edge_ev:
       impliedProbability !== null
         ? 0.0001
@@ -893,6 +898,7 @@ function generateSoccerCard(gameId, oddsSnapshot) {
     drivers_active: driversActive,
     prediction,
     confidence,
+    model_confidence: null,
     recommended_bet_type: 'moneyline',
     reasoning: `Model prefers ${prediction} team at ${(confidence * 100).toFixed(0)}% confidence`,
     market_context: {
