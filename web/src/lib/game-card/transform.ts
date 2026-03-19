@@ -560,11 +560,11 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
   }
 
   if (hasModelOnlySignals) {
-    return ['model_signal:no_actionable_edge'];
+    return [];
   }
 
   if (diagnostics.length === 0) {
-    return ['model_signal:evidence_only_no_fetch_failure'];
+    return [];
   }
 
   return diagnostics.slice(0, 8);
@@ -1659,6 +1659,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     const noActionablePlayInputs = hasEvidenceOnly
       ? collectNoActionablePlayInputs(game)
       : [];
+    const hasFetchFailureInputs =
+      hasEvidenceOnly && noActionablePlayInputs.length > 0;
     const missingDataCode: string =
       hasNoOdds && hasNoPlays
         ? 'MISSING_DATA_NO_ODDS'
@@ -1681,7 +1683,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             : hasNoPlays
               ? 'Driver output unavailable'
             : hasEvidenceOnly
-              ? `No actionable play${noActionablePlayInputs.length ? `: ${noActionablePlayInputs.join(', ')}` : ''}`
+              ? hasFetchFailureInputs
+                ? `No actionable play${noActionablePlayInputs.length ? `: ${noActionablePlayInputs.join(', ')}` : ''}`
+                : 'No edge'
             : 'Missing driver inputs';
     const missingInputs = hasMappingFailure
       ? sourceMappingFailures.length > 0
@@ -1692,7 +1696,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           ? projectionMissingInputs
           : ['projection_inputs']
         : hasEvidenceOnly
-          ? noActionablePlayInputs
+          ? hasFetchFailureInputs
+            ? noActionablePlayInputs
+            : []
           : ['drivers'];
     return {
       market_key: 'INFO|NONE',
