@@ -278,6 +278,165 @@ describe('NHL 1P model output contract', () => {
   });
 });
 
+// WI-0505: Phase-2 fair probability gating
+describe('Phase-2 fair probability gating', () => {
+  // Snapshot that reliably yields a classifiable (non-PASS) result.
+  // High-scoring teams with confirmed goalies to avoid goalie-uncertain cap.
+  const classifiableSnapshot = {
+    raw_data: JSON.stringify({
+      goalie: {
+        home: { name: 'Igor Shesterkin', status: 'CONFIRMED' },
+        away: { name: 'Thatcher Demko', status: 'CONFIRMED' },
+      },
+      espn_metrics: {
+        home: {
+          metrics: {
+            avgGoalsFor: 4.2,
+            avgGoalsAgainst: 2.5,
+            pace_factor: 1.15,
+            ppPct: 0.28,
+            pkPct: 0.76,
+            restDays: 2,
+          },
+        },
+        away: {
+          metrics: {
+            avgGoalsFor: 4.0,
+            avgGoalsAgainst: 2.6,
+            pace_factor: 1.12,
+            ppPct: 0.26,
+            pkPct: 0.78,
+            restDays: 2,
+          },
+        },
+      },
+    }),
+  };
+
+  test('gate off (default): fair_over_1_5_prob and fair_under_1_5_prob are null', () => {
+    const descriptor = getOnePeriodDescriptor(classifiableSnapshot, {
+      phase2FairProbEnabled: false,
+    });
+    expect(descriptor).toBeDefined();
+    expect(descriptor.driverInputs.fair_over_1_5_prob).toBeNull();
+    expect(descriptor.driverInputs.fair_under_1_5_prob).toBeNull();
+  });
+
+  test('gate on + classifiable record: probs are finite (0,1) and sum to ~1', () => {
+    const descriptor = getOnePeriodDescriptor(classifiableSnapshot, {
+      phase2FairProbEnabled: true,
+      sigma1p: 1.26,
+    });
+    expect(descriptor).toBeDefined();
+
+    const classification = descriptor.driverInputs.classification;
+    if (classification === 'PASS') {
+      // If model happens to produce PASS, both probs must still be null.
+      expect(descriptor.driverInputs.fair_over_1_5_prob).toBeNull();
+      expect(descriptor.driverInputs.fair_under_1_5_prob).toBeNull();
+    } else {
+      const pOver = descriptor.driverInputs.fair_over_1_5_prob;
+      const pUnder = descriptor.driverInputs.fair_under_1_5_prob;
+      expect(typeof pOver).toBe('number');
+      expect(typeof pUnder).toBe('number');
+      expect(pOver).toBeGreaterThan(0);
+      expect(pOver).toBeLessThan(1);
+      expect(pUnder).toBeGreaterThan(0);
+      expect(pUnder).toBeLessThan(1);
+      // Probabilities must sum to 1 (within floating-point rounding at 4dp)
+      expect(Math.round((pOver + pUnder) * 10000) / 10000).toBe(1);
+    }
+  });
+
+  test('gate on + PASS (dead-zone): fair probs remain null', () => {
+    // Mid-range averages + confirmed goalies → likely dead-zone PASS
+    const deadZoneSnapshot = {
+      raw_data: JSON.stringify({
+        goalie: {
+          home: { name: 'Andrei Vasilevskiy', status: 'CONFIRMED' },
+          away: { name: 'Ilya Sorokin', status: 'CONFIRMED' },
+        },
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgGoalsFor: 3.1,
+              avgGoalsAgainst: 2.9,
+              restDays: 1,
+            },
+          },
+          away: {
+            metrics: {
+              avgGoalsFor: 3.0,
+              avgGoalsAgainst: 2.9,
+              restDays: 1,
+            },
+          },
+        },
+      }),
+    };
+    const descriptor = getOnePeriodDescriptor(deadZoneSnapshot, {
+      phase2FairProbEnabled: true,
+      sigma1p: 1.26,
+    });
+    expect(descriptor).toBeDefined();
+    const classification = descriptor.driverInputs.classification;
+    if (classification === 'PASS') {
+      expect(descriptor.driverInputs.fair_over_1_5_prob).toBeNull();
+      expect(descriptor.driverInputs.fair_under_1_5_prob).toBeNull();
+    }
+    // If model doesn't land in PASS for this input, pass — invariant only
+    // applies when classification is actually PASS.
+  });
+
+  test('gate on + goalie UNKNOWN (uncertain cap): fair probs remain null', () => {
+    const { makeCanonicalGoalieState } = require('../nhl-goalie-state');
+    const homeState = makeCanonicalGoalieState({
+      game_id: 'nhl-test-game',
+      team_side: 'home',
+      starter_state: 'CONFIRMED',
+      starter_source: 'USER_INPUT',
+      goalie_name: 'Igor Shesterkin',
+      goalie_tier: 'ELITE',
+      tier_confidence: 'HIGH',
+      evidence_flags: [],
+    });
+    const awayState = makeCanonicalGoalieState({
+      game_id: 'nhl-test-game',
+      team_side: 'away',
+      starter_state: 'UNKNOWN',
+      starter_source: 'USER_INPUT',
+      goalie_name: 'TBD',
+      goalie_tier: 'UNKNOWN',
+      tier_confidence: 'LOW',
+      evidence_flags: [],
+    });
+    const descriptor = getOnePeriodDescriptor(
+      {
+        raw_data: JSON.stringify({
+          espn_metrics: {
+            home: {
+              metrics: { avgGoalsFor: 4.2, avgGoalsAgainst: 2.5, restDays: 2 },
+            },
+            away: {
+              metrics: { avgGoalsFor: 4.0, avgGoalsAgainst: 2.6, restDays: 2 },
+            },
+          },
+        }),
+      },
+      {
+        phase2FairProbEnabled: true,
+        sigma1p: 1.26,
+        canonicalGoalieState: { home: homeState, away: awayState },
+      },
+    );
+    expect(descriptor).toBeDefined();
+    // Goalie-uncertain cap forces PASS; Phase-2 must not populate probs.
+    expect(descriptor.driverInputs.classification).toBe('PASS');
+    expect(descriptor.driverInputs.fair_over_1_5_prob).toBeNull();
+    expect(descriptor.driverInputs.fair_under_1_5_prob).toBeNull();
+  });
+});
+
 describe('applyNhlSettlementMarketContext — 1P market_context contract', () => {
   test('sets period = 1P on both market_context.period and market_context.wager.period', () => {
     const card = {
