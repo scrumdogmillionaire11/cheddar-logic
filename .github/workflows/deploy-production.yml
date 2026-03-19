@@ -162,7 +162,33 @@ jobs:
             sudo apt-get install -y sqlite3
             # Fail deploy if expected schema is missing from production DB
             test -s "$CANONICAL_DB_PATH" || { echo "ERROR: missing or empty canonical DB after migrations: $CANONICAL_DB_PATH"; exit 1; }
-            sqlite3 "$CANONICAL_DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" | grep -qx "card_payloads" || { echo "ERROR: required table card_payloads missing after migrations"; exit 1; }
+            TABLE_CHECK_OK=0
+            TABLE_CHECK_OUTPUT=""
+            for attempt in $(seq 1 10); do
+              TABLE_CHECK_OUTPUT=$(sqlite3 "$CANONICAL_DB_PATH" "PRAGMA busy_timeout=5000; SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" 2>&1 || true)
+              if printf '%s\n' "$TABLE_CHECK_OUTPUT" | grep -qx "card_payloads"; then
+                TABLE_CHECK_OK=1
+                break
+              fi
+              if printf '%s' "$TABLE_CHECK_OUTPUT" | grep -qi "database is locked"; then
+                echo "Schema check waiting for DB lock to clear (attempt $attempt/10)..."
+                sleep 2
+                continue
+              fi
+              if [ -n "$TABLE_CHECK_OUTPUT" ]; then
+                echo "ERROR: sqlite schema check failed: $TABLE_CHECK_OUTPUT"
+                exit 1
+              fi
+              break
+            done
+            if [ "$TABLE_CHECK_OK" -ne 1 ]; then
+              if printf '%s' "$TABLE_CHECK_OUTPUT" | grep -qi "database is locked"; then
+                echo "ERROR: database remained locked while verifying schema after migrations"
+              else
+                echo "ERROR: required table card_payloads missing after migrations"
+              fi
+              exit 1
+            fi
             PREV_NEXT_STATIC_BACKUP="/tmp/cheddar-prev-next-static"
             rm -rf "$PREV_NEXT_STATIC_BACKUP"
             if [ -d web/.next/static ]; then
