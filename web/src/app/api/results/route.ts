@@ -277,6 +277,7 @@ export async function GET(request: NextRequest) {
     const hasSelectionColumn = cardResultsColumns.has('selection');
     const hasLineColumn = cardResultsColumns.has('line');
     const hasLockedPriceColumn = cardResultsColumns.has('locked_price');
+    const marketKeyValueExpr = hasMarketKeyColumn ? 'cr.market_key' : 'NULL';
     const marketKeySelect = hasMarketKeyColumn
       ? 'cr.market_key AS market_key'
       : 'NULL AS market_key';
@@ -342,7 +343,34 @@ export async function GET(request: NextRequest) {
     const marketParams = market ? [market] : [];
 
     const filteredCteSql = `
-      WITH filtered AS (
+      WITH display_log_ranked AS (
+        SELECT
+          cdl.id,
+          cdl.pick_id,
+          cdl.game_id,
+          cdl.sport,
+          cdl.displayed_at,
+          cdl.api_endpoint,
+          ROW_NUMBER() OVER (
+            PARTITION BY cdl.pick_id
+            ORDER BY
+              datetime(COALESCE(cdl.displayed_at, '1970-01-01T00:00:00Z')) DESC,
+              cdl.id DESC
+          ) AS rn
+        FROM card_display_log cdl
+      ),
+      display_log_latest AS (
+        SELECT
+          id,
+          pick_id,
+          game_id,
+          sport,
+          displayed_at,
+          api_endpoint
+        FROM display_log_ranked
+        WHERE rn = 1
+      ),
+      filtered AS (
         SELECT
           cr.id,
           cr.game_id,
@@ -356,10 +384,24 @@ export async function GET(request: NextRequest) {
           ${selectionSelect},
           ${lineSelect},
           ${lockedPriceSelect},
+          CASE
+            WHEN COALESCE(${marketKeyValueExpr}, '') LIKE '%:1P:%'
+              OR UPPER(COALESCE(json_extract(cp.payload_data, '$.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
+              OR UPPER(COALESCE(json_extract(cp.payload_data, '$.play.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
+              OR UPPER(COALESCE(cr.card_type, '')) LIKE '%1P%'
+            THEN '1P'
+            ELSE 'FULL_GAME'
+          END AS market_period_token,
+          LOWER(COALESCE(json_extract(cp.payload_data, '$.play.prop_type'), json_extract(cp.payload_data, '$.prop_type'), '')) AS prop_type_token,
+          COALESCE(
+            CAST(json_extract(cp.payload_data, '$.play.player_id') AS TEXT),
+            LOWER(COALESCE(json_extract(cp.payload_data, '$.play.player_name'), json_extract(cp.payload_data, '$.player_name'), '')),
+            ''
+          ) AS prop_player_token,
           cr.settled_at,
           ${confidenceExpr} AS confidence_pct
         FROM card_results cr
-        INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
+        INNER JOIN display_log_latest cdl ON cr.card_id = cdl.pick_id
         LEFT JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'settled'
           ${sportFilter}
@@ -380,10 +422,11 @@ export async function GET(request: NextRequest) {
                 game_id,
                 card_type,
                 COALESCE(recommended_bet_type, ''),
-                COALESCE(market_key, ''),
                 COALESCE(market_type, ''),
                 COALESCE(selection, ''),
-                COALESCE(line, -999999.0)
+                COALESCE(market_period_token, 'FULL_GAME'),
+                COALESCE(prop_type_token, ''),
+                COALESCE(prop_player_token, '')
               ORDER BY
                 datetime(COALESCE(displayed_at, settled_at, '1970-01-01T00:00:00Z')) DESC,
                 COALESCE(display_log_id, 0) DESC,
@@ -602,7 +645,24 @@ export async function GET(request: NextRequest) {
         g.home_team AS game_home_team,
         g.away_team AS game_away_team
       FROM card_results cr
-      INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
+      INNER JOIN (
+        SELECT id, pick_id, displayed_at, api_endpoint
+        FROM (
+          SELECT
+            id,
+            pick_id,
+            displayed_at,
+            api_endpoint,
+            ROW_NUMBER() OVER (
+              PARTITION BY pick_id
+              ORDER BY
+                datetime(COALESCE(displayed_at, '1970-01-01T00:00:00Z')) DESC,
+                id DESC
+            ) AS rn
+          FROM card_display_log
+        ) ranked_display
+        WHERE rn = 1
+      ) cdl ON cr.card_id = cdl.pick_id
       LEFT JOIN card_payloads cp ON cr.card_id = cp.id
       LEFT JOIN games g ON g.game_id = cr.game_id
       WHERE cr.id IN (${placeholders})
