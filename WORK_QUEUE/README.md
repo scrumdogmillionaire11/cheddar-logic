@@ -31,6 +31,7 @@ See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decision
 - `WI-0503`: NHL cross-market orchestration dual-run (market-stratified engines + expression choice log)
 - `WI-0504`: NHL orchestration cutover (single best market expression per game, legacy blend retired)
 - `WI-0505`: NHL 1P Phase-2 gated fair-probability activation (only with stable real 1P lines)
+- `WI-0509`: NHL free-data settlement hardening (NHL API first, ESPN fallback) for 1P + player shots
 
 Recommended execution order: `WI-0485` -> (`WI-0486` + `WI-0487` in parallel if staffing allows) -> `WI-0488` -> `WI-0489`.
 
