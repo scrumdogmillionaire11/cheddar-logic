@@ -74,10 +74,10 @@ assert.ok(
 );
 
 assert.ok(
-  cardsSource.includes(
-    "const getStatusBadge = (status: 'PLAY' | 'LEAN' | 'PASS')",
-  ) &&
-    cardsSource.includes('const canonicalTruePlay = originalGame?.true_play;') &&
+  cardsSource.includes('const canonicalTruePlay = originalGame?.true_play;') &&
+    cardsSource.includes('const inferredDecision =') &&
+    cardsSource.includes('resolvedDecisionV2?.official_status') &&
+    cardsSource.includes('const displayDecision = isBroken ? \'PASS\' : inferredDecision;') &&
     cardsSource.includes('PASS Breakdown') &&
     cardsSource.includes('Model Lean Indicators') &&
     cardsSource.includes('getDisplayVerdict') &&
