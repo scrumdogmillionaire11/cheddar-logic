@@ -51,11 +51,18 @@ assert.ok(
 assert.ok(
   resultsRouteSource.includes('cdl.id AS display_log_id') &&
     resultsRouteSource.includes('cdl.displayed_at AS displayed_at') &&
-    resultsRouteSource.includes('PARTITION BY pick_id') &&
+    resultsRouteSource.includes('PARTITION BY') &&
+    resultsRouteSource.includes('game_id') &&
+    resultsRouteSource.includes('card_type') &&
+    resultsRouteSource.includes('COALESCE(recommended_bet_type, \'\')') &&
+    resultsRouteSource.includes('COALESCE(market_key, \'\')') &&
+    resultsRouteSource.includes('COALESCE(market_type, \'\')') &&
+    resultsRouteSource.includes('COALESCE(selection, \'\')') &&
+    resultsRouteSource.includes('COALESCE(line, -999999.0)') &&
     resultsRouteSource.includes(
       "datetime(COALESCE(displayed_at, settled_at, '1970-01-01T00:00:00Z')) DESC",
     ),
-  'results route dedupe must partition by pick_id and rank by canonical display-log lineage timestamp',
+  'results route dedupe must partition by stable market signature and rank by canonical display-log lineage timestamp',
 );
 
 assert.ok(

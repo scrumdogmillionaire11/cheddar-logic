@@ -346,6 +346,7 @@ export async function GET(request: NextRequest) {
         SELECT
           cr.id,
           cr.game_id,
+          cr.card_type,
           cdl.id AS display_log_id,
           cdl.pick_id AS pick_id,
           cdl.displayed_at AS displayed_at,
@@ -375,7 +376,14 @@ export async function GET(request: NextRequest) {
           SELECT
             id,
             ROW_NUMBER() OVER (
-              PARTITION BY pick_id
+              PARTITION BY
+                game_id,
+                card_type,
+                COALESCE(recommended_bet_type, ''),
+                COALESCE(market_key, ''),
+                COALESCE(market_type, ''),
+                COALESCE(selection, ''),
+                COALESCE(line, -999999.0)
               ORDER BY
                 datetime(COALESCE(displayed_at, settled_at, '1970-01-01T00:00:00Z')) DESC,
                 COALESCE(display_log_id, 0) DESC,
