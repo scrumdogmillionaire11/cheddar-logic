@@ -12,8 +12,83 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const { initDb, getDatabase, closeDatabase } = require('@cheddar-logic/data');
+const { generateNHLMarketCallCards } = require('../run_nhl_model');
 
 const TEST_DB_PATH = '/tmp/cheddar-nhl-test.db';
+
+function buildBaseOddsSnapshot() {
+  return {
+    game_time_utc: '2026-03-11T00:00:00.000Z',
+    home_team: 'Home Team',
+    away_team: 'Away Team',
+    h2h_home: -130,
+    h2h_away: 115,
+    spread_home: -1.5,
+    spread_away: 1.5,
+    spread_price_home: -110,
+    spread_price_away: -110,
+    total: 6.5,
+    total_price_over: -112,
+    total_price_under: -108,
+    captured_at: '2026-03-10T18:00:00.000Z',
+  };
+}
+
+function buildBaseDecisions() {
+  return {
+    TOTAL: {
+      status: 'WATCH',
+      best_candidate: { side: 'OVER', line: 6.5 },
+      edge: 0.02,
+      edge_points: 0.4,
+      p_fair: 0.53,
+      p_implied: 0.5,
+      line_source: 'odds_snapshot',
+      price_source: 'odds_snapshot',
+      drivers: [],
+      score: 0.25,
+      net: 0.25,
+      conflict: 0.1,
+      coverage: 0.75,
+      reasoning: 'Totals edge',
+      projection: {
+        projected_total: 6.9,
+      },
+    },
+    SPREAD: {
+      status: 'PASS',
+      best_candidate: { side: 'HOME', line: -1.5 },
+      drivers: [],
+      score: 0.1,
+      net: 0.1,
+      conflict: 0.1,
+      coverage: 0.5,
+      reasoning: 'No spread edge',
+      projection: {
+        projected_margin: 0.8,
+      },
+    },
+    ML: {
+      status: 'FIRE',
+      best_candidate: { side: 'AWAY', price: 115 },
+      edge: 0.034,
+      p_fair: 0.499,
+      p_implied: 0.465,
+      line_source: 'odds_snapshot',
+      price_source: 'odds_snapshot',
+      drivers: [],
+      score: 0.52,
+      net: 0.61,
+      conflict: 0.07,
+      coverage: 0.79,
+      reasoning: 'Away side carries the strongest edge.',
+      projection: {
+        projected_margin: -0.9,
+        win_prob_home: 0.501,
+      },
+    },
+  };
+}
 
 async function queryDb(fn) {
   await initDb();
@@ -70,6 +145,36 @@ describe('run_nhl_model job', () => {
         `Job failed with exit code ${error.status}: ${error.stdout || error.message}`,
       );
     }
+  });
+
+  test('orchestrated market routing reduces legacy actionable cards to one canonical card', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+
+    const legacyCards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+      { useOrchestratedMarket: false },
+    );
+    const orchestratedCards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+      { useOrchestratedMarket: true },
+    );
+
+    expect(legacyCards.map((card) => card.cardType).sort()).toEqual([
+      'nhl-moneyline-call',
+      'nhl-totals-call',
+    ]);
+    expect(orchestratedCards.map((card) => card.cardType)).toEqual([
+      'nhl-moneyline-call',
+    ]);
+    expect(orchestratedCards[0].payloadData.expression_choice).toMatchObject({
+      chosen_market: 'ML',
+      status: 'FIRE',
+    });
   });
 
   test('job_runs table records job execution as success', async () => {

@@ -5,6 +5,7 @@ const {
   attachNhlDriverContextToRawData,
   buildDualRunRecord,
 } = require('../run_nhl_model');
+const { validateCardPayload } = require('@cheddar-logic/data');
 
 function loadResolveThresholdProfile() {
   jest.resetModules();
@@ -189,6 +190,72 @@ describe('run_nhl_model market call generation', () => {
     const mlCard = cards.find((card) => card.cardType === 'nhl-moneyline-call');
 
     expect(mlCard).toBeUndefined();
+  });
+
+  test('legacy mode emits all actionable market cards while preserving orchestration metadata', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+      { useOrchestratedMarket: false },
+    );
+
+    expect(cards.map((card) => card.cardType).sort()).toEqual([
+      'nhl-moneyline-call',
+      'nhl-totals-call',
+    ]);
+
+    cards.forEach((card) => {
+      expect(card.payloadData.expression_choice).toMatchObject({
+        chosen_market: 'ML',
+        status: 'FIRE',
+      });
+      expect(card.payloadData.market_narrative).toMatchObject({
+        orchestration: 'Rule 1: status',
+      });
+      expect(validateCardPayload(card.cardType, card.payloadData).success).toBe(
+        true,
+      );
+    });
+  });
+
+  test('orchestrated mode emits exactly one chosen market card per game', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+      { useOrchestratedMarket: true },
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].cardType).toBe('nhl-moneyline-call');
+    expect(cards[0].payloadData.expression_choice).toMatchObject({
+      chosen_market: 'ML',
+      pick: 'Away 115',
+      status: 'FIRE',
+      chosen: {
+        market: 'ML',
+        side: 'AWAY',
+        status: 'FIRE',
+        score: 0.52,
+        net: 0.61,
+        conflict: 0.07,
+        edge: 0.034,
+      },
+    });
+    expect(cards[0].payloadData.market_narrative).toMatchObject({
+      chosen_story: 'ML leads on rule 1: status.',
+      orchestration: 'Rule 1: status',
+    });
+    expect(validateCardPayload(cards[0].cardType, cards[0].payloadData)).toEqual(
+      { success: true, errors: [] },
+    );
   });
 
   test('emits 1P period odds context fields for nhl-pace-1p cards', () => {
