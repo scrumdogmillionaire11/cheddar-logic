@@ -485,6 +485,13 @@ const NO_ACTIONABLE_IGNORE_REASON_CODES = new Set([
   'PASS_UNREPAIRABLE_LEGACY',
 ]);
 
+const NO_ACTIONABLE_EXPLICIT_NO_EDGE_REASON_CODES = new Set([
+  'NO_EDGE_AT_PRICE',
+  'PASS_NO_EDGE',
+  'PASS_DRIVER_SUPPORT_WEAK',
+  'PASS_CONFLICT_HIGH',
+]);
+
 const NO_ACTIONABLE_FETCH_REASON_FRAGMENTS = [
   'TEAM_MAPPING',
   'PROJECTION_INPUT',
@@ -499,6 +506,10 @@ function isFetchFailureReasonCode(code: string): boolean {
   return NO_ACTIONABLE_FETCH_REASON_FRAGMENTS.some((fragment) =>
     code.includes(fragment),
   );
+}
+
+function isExplicitNoEdgeReasonCode(code: string): boolean {
+  return NO_ACTIONABLE_EXPLICIT_NO_EDGE_REASON_CODES.has(code);
 }
 
 function collectNoActionablePlayInputs(game: GameData): string[] {
@@ -532,15 +543,18 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
     push('fetch_failure:projection_inputs_incomplete');
   }
 
-  let hasModelOnlySignals = false;
+  let hasExplicitNoEdgeSignals = false;
+  let hasUnknownNonFetchSignals = false;
   for (const play of evidenceOnlyPlays) {
     if (typeof play.pass_reason_code === 'string') {
       const code = play.pass_reason_code.toUpperCase();
       if (!NO_ACTIONABLE_IGNORE_REASON_CODES.has(code)) {
         if (isFetchFailureReasonCode(code)) {
           push(toDiagnosticToken('fetch_reason', code));
+        } else if (isExplicitNoEdgeReasonCode(code)) {
+          hasExplicitNoEdgeSignals = true;
         } else {
-          hasModelOnlySignals = true;
+          hasUnknownNonFetchSignals = true;
         }
       }
     }
@@ -549,8 +563,10 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
       if (NO_ACTIONABLE_IGNORE_REASON_CODES.has(code)) continue;
       if (isFetchFailureReasonCode(code)) {
         push(toDiagnosticToken('fetch_reason', code));
+      } else if (isExplicitNoEdgeReasonCode(code)) {
+        hasExplicitNoEdgeSignals = true;
       } else {
-        hasModelOnlySignals = true;
+        hasUnknownNonFetchSignals = true;
       }
     }
     for (const missingInput of play.missing_inputs ?? []) {
@@ -565,7 +581,11 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
     return diagnostics.slice(0, 8);
   }
 
-  if (hasModelOnlySignals) {
+  if (hasUnknownNonFetchSignals) {
+    return ['fetch_failure:unclassified_no_play_pipeline'];
+  }
+
+  if (hasExplicitNoEdgeSignals) {
     return [];
   }
 
@@ -1706,6 +1726,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             ? noActionablePlayInputs
             : []
           : ['drivers'];
+    const isHealthyNoEdge =
+      hasEvidenceOnly &&
+      !hasNoOdds &&
+      !hasMappingFailure &&
+      !hasProjectionInputsFailure &&
+      !hasFetchFailureInputs;
     return {
       market_key: 'INFO|NONE',
       decision: 'PASS',
@@ -1714,8 +1740,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       gates: [
         {
           code: missingDataCode,
-          severity: 'BLOCK',
-          blocks_bet: true,
+          severity: isHealthyNoEdge ? 'WARN' : 'BLOCK',
+          blocks_bet: !isHealthyNoEdge,
         },
       ],
       decision_data: {
@@ -1728,7 +1754,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         reason_code: missingDataCode,
       },
       transform_meta: {
-        quality: 'DEGRADED',
+        quality: isHealthyNoEdge ? 'OK' : 'DEGRADED',
         missing_inputs: missingInputs,
         placeholders_found: [],
       },
