@@ -1200,6 +1200,20 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
 
           const marketDecisions = computeNHLMarketDecisions(oddsSnapshot);
           const expressionChoice = selectExpressionChoice(marketDecisions);
+
+          // WI-0503: Dual-run observation log — records selector decisions per game
+          // without changing served card output. Parse with:
+          //   grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log | jq .
+          const dualRunRecord = buildDualRunRecord(
+            gameId,
+            oddsSnapshot,
+            marketDecisions,
+            expressionChoice,
+          );
+          if (dualRunRecord) {
+            console.log(`[DUAL_RUN] ${JSON.stringify(dualRunRecord)}`);
+          }
+
           const marketPayload = buildMarketPayload({
             decisions: marketDecisions,
             expressionChoice,
@@ -1450,10 +1464,51 @@ if (require.main === module) {
     });
 }
 
+/**
+ * WI-0503: Builds a structured dual-run record for expression choice comparison.
+ * Emitted as a [DUAL_RUN] tagged JSON log line per game run during dual-run mode.
+ * Does NOT affect production card output — observation only.
+ *
+ * @param {string} gameId
+ * @param {object} oddsSnapshot
+ * @param {object} marketDecisions - { TOTAL, SPREAD, ML } MarketDecision objects
+ * @param {object|null} expressionChoice - result of selectExpressionChoice()
+ * @returns {object|null} record suitable for JSON.stringify, or null if no choice
+ */
+function buildDualRunRecord(gameId, oddsSnapshot, marketDecisions, expressionChoice) {
+  if (!expressionChoice) return null;
+  return {
+    game_id: gameId,
+    matchup: `${oddsSnapshot.away_team ?? 'unknown'} @ ${oddsSnapshot.home_team ?? 'unknown'}`,
+    run_at: new Date().toISOString(),
+    chosen_market: expressionChoice.chosen_market,
+    why_this_market: expressionChoice.why_this_market,
+    markets: ['TOTAL', 'SPREAD', 'ML']
+      .map((m) => {
+        const d = marketDecisions[m];
+        if (!d) return null;
+        return {
+          market: m,
+          status: d.status,
+          score: typeof d.score === 'number' ? Math.round(d.score * 1000) / 1000 : null,
+          net: typeof d.net === 'number' ? Math.round(d.net * 1000) / 1000 : null,
+          conflict: typeof d.conflict === 'number' ? Math.round(d.conflict * 1000) / 1000 : null,
+          edge: d.edge ?? null,
+        };
+      })
+      .filter(Boolean),
+    rejected: (expressionChoice.rejected ?? []).reduce((acc, r) => {
+      acc[r.market] = r.rejection_reason;
+      return acc;
+    }, {}),
+  };
+}
+
 module.exports = {
   runNHLModel,
   generateNHLMarketCallCards,
   applyNhlSettlementMarketContext,
   applyNhlDriverContextMetadata,
   attachNhlDriverContextToRawData,
+  buildDualRunRecord,
 };
