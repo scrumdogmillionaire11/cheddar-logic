@@ -469,6 +469,133 @@ function inferMarketFromPlay(play: ApiPlay): {
   };
 }
 
+function toDiagnosticToken(prefix: string, value: unknown): string | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!normalized) return null;
+  return `${prefix}:${normalized}`;
+}
+
+const NO_ACTIONABLE_IGNORE_REASON_CODES = new Set([
+  'PASS_MISSING_MARKET_TYPE',
+  'PASS_UNREPAIRABLE_LEGACY',
+]);
+
+const NO_ACTIONABLE_EXPLICIT_NO_EDGE_REASON_CODES = new Set([
+  'NO_EDGE_AT_PRICE',
+  'PASS_NO_EDGE',
+  'PASS_DRIVER_SUPPORT_WEAK',
+  'PASS_CONFLICT_HIGH',
+]);
+
+const NO_ACTIONABLE_FETCH_REASON_FRAGMENTS = [
+  'TEAM_MAPPING',
+  'PROJECTION_INPUT',
+  'NO_ODDS',
+  'DRIVER',
+  'INGEST',
+  'SOURCE',
+  'MISSING_',
+];
+
+function isFetchFailureReasonCode(code: string): boolean {
+  return NO_ACTIONABLE_FETCH_REASON_FRAGMENTS.some((fragment) =>
+    code.includes(fragment),
+  );
+}
+
+function isExplicitNoEdgeReasonCode(code: string): boolean {
+  return NO_ACTIONABLE_EXPLICIT_NO_EDGE_REASON_CODES.has(code);
+}
+
+function collectNoActionablePlayInputs(game: GameData): string[] {
+  const diagnostics: string[] = [];
+  const seen = new Set<string>();
+  const push = (token: string | null) => {
+    if (!token || seen.has(token)) return;
+    seen.add(token);
+    diagnostics.push(token);
+  };
+
+  const evidenceOnlyPlays = game.plays.filter((play) => isEvidenceItem(play, game.sport));
+  const contract = getSportCardTypeContract(game.sport);
+  const hasPlayProducerSignals = contract
+    ? game.plays.some((play) =>
+        contract.playProducerCardTypes.has(normalizeCardType(play.cardType || '')),
+      )
+    : game.plays.some((play) => (play.kind ?? 'PLAY') === 'PLAY');
+
+  if (evidenceOnlyPlays.length === 0) {
+    return ['play_candidates:evidence_only'];
+  }
+
+  if (game.ingest_failure_reason_code === 'TEAM_MAPPING_UNMAPPED') {
+    push('fetch_failure:team_mapping_unmapped');
+  }
+  if (game.source_mapping_ok === false) {
+    push('fetch_failure:source_mapping_failed');
+  }
+  if (game.projection_inputs_complete === false) {
+    push('fetch_failure:projection_inputs_incomplete');
+  }
+
+  let hasExplicitNoEdgeSignals = false;
+  let hasUnknownNonFetchSignals = false;
+  for (const play of evidenceOnlyPlays) {
+    if (typeof play.pass_reason_code === 'string') {
+      const code = play.pass_reason_code.toUpperCase();
+      if (!NO_ACTIONABLE_IGNORE_REASON_CODES.has(code)) {
+        if (isFetchFailureReasonCode(code)) {
+          push(toDiagnosticToken('fetch_reason', code));
+        } else if (isExplicitNoEdgeReasonCode(code)) {
+          hasExplicitNoEdgeSignals = true;
+        } else {
+          hasUnknownNonFetchSignals = true;
+        }
+      }
+    }
+    for (const reasonCode of play.reason_codes ?? []) {
+      const code = String(reasonCode).toUpperCase();
+      if (NO_ACTIONABLE_IGNORE_REASON_CODES.has(code)) continue;
+      if (isFetchFailureReasonCode(code)) {
+        push(toDiagnosticToken('fetch_reason', code));
+      } else if (isExplicitNoEdgeReasonCode(code)) {
+        hasExplicitNoEdgeSignals = true;
+      } else {
+        hasUnknownNonFetchSignals = true;
+      }
+    }
+    for (const missingInput of play.missing_inputs ?? []) {
+      push(toDiagnosticToken('fetch_missing', missingInput));
+    }
+    for (const mappingFailure of play.source_mapping_failures ?? []) {
+      push(toDiagnosticToken('fetch_mapping_failure', mappingFailure));
+    }
+  }
+
+  if (diagnostics.length > 0) {
+    return diagnostics.slice(0, 8);
+  }
+
+  if (hasUnknownNonFetchSignals) {
+    return ['fetch_failure:unclassified_no_play_pipeline'];
+  }
+
+  if (hasExplicitNoEdgeSignals) {
+    return [];
+  }
+
+  if (!hasPlayProducerSignals) {
+    return ['fetch_failure:no_play_producer_signals'];
+  }
+
+  return ['fetch_failure:unclassified_no_play_pipeline'];
+}
+
 type CanonicalSide = 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NONE';
 type DedupeCandidate = {
   play: ApiPlay;
@@ -1555,6 +1682,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       game.projection_inputs_complete === false ||
       game.plays.some((play) => play.projection_inputs_complete === false) ||
       projectionMissingInputs.length > 0;
+    const noActionablePlayInputs = hasEvidenceOnly
+      ? collectNoActionablePlayInputs(game)
+      : [];
+    const hasFetchFailureInputs =
+      hasEvidenceOnly && noActionablePlayInputs.length > 0;
     const missingDataCode: string =
       hasNoOdds && hasNoPlays
         ? 'MISSING_DATA_NO_ODDS'
@@ -1576,8 +1708,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             ? `Missing projection inputs${projectionMissingInputs.length ? `: ${projectionMissingInputs.join(', ')}` : ''}`
             : hasNoPlays
               ? 'Driver output unavailable'
-          : hasEvidenceOnly
-            ? 'No actionable play'
+            : hasEvidenceOnly
+              ? hasFetchFailureInputs
+                ? `No actionable play${noActionablePlayInputs.length ? `: ${noActionablePlayInputs.join(', ')}` : ''}`
+                : 'No edge'
             : 'Missing driver inputs';
     const missingInputs = hasMappingFailure
       ? sourceMappingFailures.length > 0
@@ -1588,8 +1722,16 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           ? projectionMissingInputs
           : ['projection_inputs']
         : hasEvidenceOnly
-          ? ['play']
+          ? hasFetchFailureInputs
+            ? noActionablePlayInputs
+            : []
           : ['drivers'];
+    const isHealthyNoEdge =
+      hasEvidenceOnly &&
+      !hasNoOdds &&
+      !hasMappingFailure &&
+      !hasProjectionInputsFailure &&
+      !hasFetchFailureInputs;
     return {
       market_key: 'INFO|NONE',
       decision: 'PASS',
@@ -1598,8 +1740,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       gates: [
         {
           code: missingDataCode,
-          severity: 'BLOCK',
-          blocks_bet: true,
+          severity: isHealthyNoEdge ? 'WARN' : 'BLOCK',
+          blocks_bet: !isHealthyNoEdge,
         },
       ],
       decision_data: {
@@ -1612,7 +1754,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         reason_code: missingDataCode,
       },
       transform_meta: {
-        quality: 'DEGRADED',
+        quality: isHealthyNoEdge ? 'OK' : 'DEGRADED',
         missing_inputs: missingInputs,
         placeholders_found: [],
       },

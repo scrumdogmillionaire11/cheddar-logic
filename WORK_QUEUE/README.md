@@ -2,6 +2,16 @@
 
 `WORK_QUEUE/` is the single source of truth for active and upcoming work.
 
+## Architecture Decision: Python Research as Reference-Only
+
+**Status:** Decided (WI-0507)
+
+Python research artifacts (`Claude-research/files/`) remain as documentation and prototyping reference but are **NOT adopted for production sidecar**. All active sport expansion (Soccer, MLB, NHL, NFL) proceeds in Node/JS runtime.
+
+See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decisions/ADR-0005-python-research-reference-only.md) for full rationale.
+
+---
+
 ## Active Work Items
 
 **Updated**: 2026-03-17
@@ -21,6 +31,7 @@
 - `WI-0503`: NHL cross-market orchestration dual-run (market-stratified engines + expression choice log)
 - `WI-0504`: NHL orchestration cutover (single best market expression per game, legacy blend retired)
 - `WI-0505`: NHL 1P Phase-2 gated fair-probability activation (only with stable real 1P lines)
+- `WI-0509`: NHL free-data settlement hardening (NHL API first, ESPN fallback) for 1P + player shots
 
 Recommended execution order: `WI-0485` -> (`WI-0486` + `WI-0487` in parallel if staffing allows) -> `WI-0488` -> `WI-0489`.
 

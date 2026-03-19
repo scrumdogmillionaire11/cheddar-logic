@@ -684,4 +684,186 @@ describe('settlement coverage parity', () => {
       }),
     ).toBe('loss');
   });
+
+  test('auto-voids superseded duplicate pending markets before settlement', async () => {
+    const db = getDatabase();
+    const now = new Date();
+    const gameId = 'game-dup-settle';
+
+    runInsert(
+      db,
+      `
+      INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+      'g-dup-settle',
+      'NBA',
+      gameId,
+      'Dup Home',
+      'Dup Away',
+      now.toISOString(),
+      'completed',
+    );
+
+    runInsert(
+      db,
+      `
+      INSERT INTO game_results (
+        id, game_id, sport, final_score_home, final_score_away, status, result_source, settled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      'gr-dup-settle',
+      gameId,
+      'NBA',
+      110,
+      101,
+      'final',
+      'manual',
+      now.toISOString(),
+    );
+
+    runInsert(
+      db,
+      `
+      INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+      'card-dup-old',
+      gameId,
+      'nba',
+      'nba-model-output',
+      'Dup Old',
+      new Date(now.getTime() - 60_000).toISOString(),
+      JSON.stringify({
+        sport: 'NBA',
+        home_team: 'Dup Home',
+        away_team: 'Dup Away',
+        confidence_pct: 62,
+      }),
+    );
+
+    runInsert(
+      db,
+      `
+      INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+      'card-dup-new',
+      gameId,
+      'nba',
+      'nba-model-output',
+      'Dup New',
+      now.toISOString(),
+      JSON.stringify({
+        sport: 'NBA',
+        home_team: 'Dup Home',
+        away_team: 'Dup Away',
+        confidence_pct: 74,
+      }),
+    );
+
+    const duplicateMarketKey = buildMarketKey({
+      gameId,
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      line: null,
+    });
+
+    runInsert(
+      db,
+      `
+      INSERT INTO card_results (
+        id, card_id, game_id, sport, card_type, recommended_bet_type,
+        status, market_key, market_type, selection, line, locked_price
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      'result-dup-old',
+      'card-dup-old',
+      gameId,
+      'nba',
+      'nba-model-output',
+      'moneyline',
+      'pending',
+      duplicateMarketKey,
+      'MONEYLINE',
+      'HOME',
+      null,
+      -110,
+    );
+
+    runInsert(
+      db,
+      `
+      INSERT INTO card_results (
+        id, card_id, game_id, sport, card_type, recommended_bet_type,
+        status, market_key, market_type, selection, line, locked_price
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      'result-dup-new',
+      'card-dup-new',
+      gameId,
+      'nba',
+      'nba-model-output',
+      'moneyline',
+      'pending',
+      duplicateMarketKey,
+      'MONEYLINE',
+      'HOME',
+      null,
+      -110,
+    );
+
+    runInsert(
+      db,
+      `
+      INSERT INTO card_display_log (pick_id, run_id, game_id, sport, displayed_at, api_endpoint)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+      'card-dup-old',
+      'run-dup',
+      gameId,
+      'NBA',
+      new Date(now.getTime() - 30_000).toISOString(),
+      '/api/games',
+    );
+
+    runInsert(
+      db,
+      `
+      INSERT INTO card_display_log (pick_id, run_id, game_id, sport, displayed_at, api_endpoint)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+      'card-dup-new',
+      'run-dup',
+      gameId,
+      'NBA',
+      now.toISOString(),
+      '/api/games',
+    );
+
+    const result = await settlePendingCards({ allowDisplayBackfill: true });
+    expect(result.success).toBe(true);
+    expect(result.coverage.duplicateAutoClosedFinal).toBeGreaterThanOrEqual(1);
+
+    const dbAfter = getDatabase();
+    const rows = dbAfter
+      .prepare(
+        `
+        SELECT card_id, status, result, metadata
+        FROM card_results
+        WHERE card_id IN ('card-dup-old', 'card-dup-new')
+        ORDER BY card_id ASC
+      `,
+      )
+      .all();
+    const byCard = Object.fromEntries(rows.map((row) => [row.card_id, row]));
+
+    const statuses = [byCard['card-dup-old']?.status, byCard['card-dup-new']?.status];
+    expect(statuses.filter((status) => status === 'settled')).toHaveLength(1);
+    expect(statuses.filter((status) => status === 'error')).toHaveLength(1);
+
+    const voidRow = rows.find((row) => row.status === 'error');
+    const metadata = voidRow?.metadata ? JSON.parse(voidRow.metadata) : {};
+    expect(metadata?.settlement_error?.code).toBe('DUPLICATE_MARKET_SUPERSEDED');
+  });
 });

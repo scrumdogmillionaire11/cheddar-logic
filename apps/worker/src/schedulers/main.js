@@ -42,6 +42,7 @@ const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { runSoccerModel } = require('../jobs/run_soccer_model');
 const { pullSoccerPlayerProps } = require('../jobs/pull_soccer_player_props');
+const { pullSoccerXgStats } = require('../jobs/pull_soccer_xg_stats');
 const { runNCAAMModel } = require('../jobs/run_ncaam_model');
 const { runRefreshNcaamFtCsv } = require('../jobs/refresh_ncaam_ft_csv');
 const { settleGameResults } = require('../jobs/settle_game_results');
@@ -427,6 +428,15 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   let teamMetricsRefreshQueued = false;
 
   function queueSoccerPropIngestBeforeModel(modelJobKey, reason) {
+    const xgJobKey = `soccer_xg|${modelJobKey}`;
+    jobs.push({
+      jobName: 'pull_soccer_xg_stats',
+      jobKey: xgJobKey,
+      execute: pullSoccerXgStats,
+      args: { jobKey: xgJobKey, dryRun },
+      reason: `pre-model soccer xG ingest (${reason})`,
+    });
+
     const propJobKey = `soccer_props|${modelJobKey}`;
     jobs.push({
       jobName: 'pull_soccer_player_props',
