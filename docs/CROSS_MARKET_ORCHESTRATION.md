@@ -400,6 +400,17 @@ payloadData: {
     score: number;                               // Dimensionless scalar, not probability
     net: number;                                 // Pre-penalty for transparency
     edge: number;                                // Market-specific points or EV%
+    chosen?: {
+      market: "TOTAL" | "SPREAD" | "ML";
+      side: "OVER" | "UNDER" | "HOME" | "AWAY";
+      line?: number | null;
+      price?: number | null;
+      status: "FIRE" | "WATCH" | "PASS";
+      score: number;
+      net: number;
+      conflict: number;
+      edge: number | null;
+    };
   };
 
   // NEW: Why this market
@@ -513,6 +524,77 @@ payloadData: {
 3. **Full cutover:**
    - One card per market per game (not per-driver)
    - Old logic deleted
+
+## NHL Production Cutover (WI-0504)
+
+- Runtime gate: `USE_ORCHESTRATED_MARKET`
+  - `false` or unset: legacy NHL market-call behavior emits every FIRE/WATCH market call.
+  - `true`: NHL market-call output emits only the selector winner (`TOTAL`, `SPREAD`, or `ML`) for the game.
+- Observability contract is preserved in both modes:
+  - every emitted NHL market-call card carries `expression_choice`
+  - every emitted NHL market-call card carries `market_narrative`
+  - `[DUAL_RUN]` logs remain available for before/after comparison
+- Risk-only behavior is unchanged post-cutover:
+  - `pace` and `pdoRegression` remain `eligible=false` for `SPREAD` and `ML`
+  - selector output does not introduce side leakage from totals-only drivers
+
+### Rollback
+
+1. Set `USE_ORCHESTRATED_MARKET=false`
+2. Restart the worker
+3. Run NHL model job and confirm multiple FIRE/WATCH market-call cards can emit for a game window
+
+Historical multi-card rows remain as archive data; rollback only affects new runtime output.
+
+---
+
+## Dual-Run Mode (WI-0503)
+
+Dual-run mode emits one structured `[DUAL_RUN]` log line **per game** during every NHL model run. It records the selector decision without altering production card output or adding a DB migration.
+
+### What is logged
+
+```text
+[DUAL_RUN] {"game_id":"...","matchup":"CHI @ BOS","run_at":"2026-03-19T...","chosen_market":"ML","why_this_market":"Rule 1: status","markets":[...],"rejected":{...}}
+```
+
+### Record schema
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `game_id` | string | Internal game identifier |
+| `matchup` | string | `"Away @ Home"` format |
+| `run_at` | ISO string | UTC timestamp of the run |
+| `chosen_market` | `"TOTAL"\|"SPREAD"\|"ML"` | Selector winner |
+| `why_this_market` | string | Rule label: `Rule 1: status`, `Rule 2: score gap`, `Rule 3: market preference`, `Rule 4: ML value realism` |
+| `markets` | array | One entry per market with `{market, status, score, net, conflict, edge}` |
+| `rejected` | object | Map of `market → rejection_reason` for non-chosen markets |
+
+### Extraction commands
+
+```bash
+# All dual-run lines from current scheduler log
+grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log | jq .
+
+# Summary: chosen market + rule per game
+grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log \
+  | jq -r '[.matchup, .chosen_market, .why_this_market] | @tsv'
+
+# Games where selector chose Rule 4 (ML value realism)
+grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log \
+  | jq 'select(.why_this_market == "Rule 4: ML value realism")'
+
+# All three market scores side by side
+grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log \
+  | jq '{matchup, chosen_market, scores: ([.markets[] | {(.market): .score}] | add)}'
+```
+
+### Design notes
+
+- No `expression_choice_log` DB table was added; log lines are sufficient for comparison evidence.
+- Lines are written to the same console output as all other job logs (`apps/worker/logs/scheduler.log` when run via scheduler).
+- When manual job runs capture stdout, pipe through `grep '\[DUAL_RUN\]'` to isolate.
+- Implementation: `buildDualRunRecord()` in `apps/worker/src/jobs/run_nhl_model.js`.
 
 ---
 

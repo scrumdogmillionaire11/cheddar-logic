@@ -33,4 +33,29 @@ describe('Settlement contract (post-legacy)', () => {
     expect(__private.computePnlUnits('loss', -110)).toBe(-1);
     expect(__private.computePnlUnits('push', -110)).toBe(0);
   });
+
+  test('CLV guard rejects projection-only payloads', () => {
+    expect(
+      __private.resolveDecisionBasisForSettlement({
+        decision_basis_meta: {
+          decision_basis: 'PROJECTION_ONLY',
+        },
+      }),
+    ).toBe('PROJECTION_ONLY');
+
+    expect(
+      __private.isClvEligiblePayload({
+        decision_basis_meta: {
+          market_line_source: 'synthetic',
+        },
+      }),
+    ).toBe(false);
+  });
+
+  test('CLV guard treats legacy payloads as odds-backed', () => {
+    expect(__private.resolveDecisionBasisForSettlement({})).toBe('ODDS_BACKED');
+    expect(__private.isClvEligiblePayload({ market_type: 'MONEYLINE' })).toBe(
+      true,
+    );
+  });
 });

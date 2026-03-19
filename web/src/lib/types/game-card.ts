@@ -103,7 +103,9 @@ export type PassReasonCode =
   // Missing-data taxonomy (distinct from no-edge outcomes)
   | 'MISSING_DATA_NO_PLAYS'
   | 'MISSING_DATA_DRIVERS'
-  | 'MISSING_DATA_NO_ODDS';
+  | 'MISSING_DATA_NO_ODDS'
+  | 'MISSING_DATA_TEAM_MAPPING'
+  | 'MISSING_DATA_PROJECTION_INPUTS';
 
 /**
  * Spread line comparison — projected vs market line for spread cards

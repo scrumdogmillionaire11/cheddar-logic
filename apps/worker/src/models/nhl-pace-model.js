@@ -65,6 +65,27 @@ function clamp(value, min, max) {
 }
 
 /**
+ * Normal CDF via erf approximation (Abramowitz & Stegun 7.1.26).
+ * Max absolute error < 1.5e-7.
+ * @param {number} x   - value to evaluate
+ * @param {number} mu  - mean
+ * @param {number} sigma - standard deviation (must be > 0)
+ * @returns {number} P(X <= x)
+ */
+function normalCDF(x, mu, sigma) {
+  const z = (x - mu) / (sigma * Math.SQRT2);
+  const t = 1 / (1 + 0.3275911 * Math.abs(z));
+  const poly =
+    t *
+    (0.254829592 +
+      t *
+        (-0.284496736 +
+          t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+  const erf = 1 - poly * Math.exp(-(z * z));
+  return 0.5 * (1 + (z >= 0 ? erf : -erf));
+}
+
+/**
  * Compute goalie adjustment factor from save percentage.
  * A better goalie reduces the opponent's scoring:
  *   adjustment < 1.0 → fewer goals allowed
@@ -133,6 +154,7 @@ function applyGoalieAdj(savePct, adjustmentTrust) {
 
 function goalieCertaintyMultiplier(certainty) {
   if (certainty === 'CONFIRMED') return 1.0;
+  if (certainty === 'EXPECTED') return 0.6;
   return 0.0;
 }
 
@@ -238,6 +260,9 @@ function predictNHLGame(opts) {
     awaySkaterInjuryFactor = null,
     homeSkaterDefInjuryFactor = null,
     awaySkaterDefInjuryFactor = null,
+    // WI-0505 Phase-2 gate: enable NHL 1P fair probability math
+    phase2FairProbEnabled = false,
+    sigma1p = 1.26,
   } = opts || {};
 
   // Cannot compute without base offensive/defensive stats
@@ -602,8 +627,20 @@ function predictNHLGame(opts) {
           ? 'LOW'
           : 'MEDIUM',
     environment_tag: resolveEnvironmentTag(totalAdj),
-    fair_over_1_5_prob: null,
-    fair_under_1_5_prob: null,
+    // WI-0505: fair probs are null unless Phase-2 gate is enabled, line supply
+    // is confirmed real, and classification is not PASS (dead-zone or goalie-uncertain).
+    fair_over_1_5_prob:
+      phase2FairProbEnabled && !goalieUncertain && onePClassification !== 'PASS'
+        ? Math.round(
+            (1 - normalCDF(1.5, final1pProjectionRounded, sigma1p)) * 10000,
+          ) / 10000
+        : null,
+    fair_under_1_5_prob:
+      phase2FairProbEnabled && !goalieUncertain && onePClassification !== 'PASS'
+        ? Math.round(
+            normalCDF(1.5, final1pProjectionRounded, sigma1p) * 10000,
+          ) / 10000
+        : null,
     market_line_ref: 1.5,
     market_price_over: null,
     market_price_under: null,

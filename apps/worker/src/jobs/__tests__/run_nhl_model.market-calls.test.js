@@ -3,7 +3,14 @@ const {
   applyNhlSettlementMarketContext,
   applyNhlDriverContextMetadata,
   attachNhlDriverContextToRawData,
+  buildDualRunRecord,
 } = require('../run_nhl_model');
+const { validateCardPayload } = require('@cheddar-logic/data');
+
+function loadResolveThresholdProfile() {
+  jest.resetModules();
+  return require('@cheddar-logic/models').resolveThresholdProfile;
+}
 
 function buildBaseOddsSnapshot() {
   return {
@@ -87,6 +94,48 @@ function buildBaseDecisions() {
 }
 
 describe('run_nhl_model market call generation', () => {
+  afterEach(() => {
+    delete process.env.ENABLE_MARKET_THRESHOLDS_V2;
+  });
+
+  test('threshold profile defaults stay baseline-equivalent when flag is off', () => {
+    delete process.env.ENABLE_MARKET_THRESHOLDS_V2;
+
+    const resolveThresholdProfile = loadResolveThresholdProfile();
+
+    const profile = resolveThresholdProfile({
+      sport: 'NBA',
+      marketType: 'SPREAD',
+    });
+
+    expect(profile.source).toBe('default');
+    expect(profile.support).toEqual({ play: 0.65, lean: 0.5 });
+    expect(profile.edge).toEqual({ play_edge_min: 0.06, lean_edge_min: 0.03 });
+  });
+
+  test('threshold profile routes by sport+market only when flag is on', () => {
+    process.env.ENABLE_MARKET_THRESHOLDS_V2 = 'true';
+
+    const resolveThresholdProfile = loadResolveThresholdProfile();
+
+    const mapped = resolveThresholdProfile({
+      sport: 'NBA',
+      marketType: 'SPREAD',
+    });
+    const fallback = resolveThresholdProfile({
+      sport: 'SOCCER',
+      marketType: 'DOUBLE_CHANCE',
+    });
+
+    expect(mapped.source).toBe('sport_market_v2');
+    expect(mapped.support.play).toBe(0.68);
+    expect(mapped.edge.play_edge_min).toBe(0.07);
+
+    expect(fallback.source).toBe('default');
+    expect(fallback.support).toEqual({ play: 0.6, lean: 0.45 });
+    expect(fallback.edge).toEqual({ play_edge_min: 0.06, lean_edge_min: 0.03 });
+  });
+
   test('emits nhl-moneyline-call with canonical payload fields', () => {
     const oddsSnapshot = buildBaseOddsSnapshot();
     const marketDecisions = buildBaseDecisions();
@@ -141,6 +190,72 @@ describe('run_nhl_model market call generation', () => {
     const mlCard = cards.find((card) => card.cardType === 'nhl-moneyline-call');
 
     expect(mlCard).toBeUndefined();
+  });
+
+  test('legacy mode emits all actionable market cards while preserving orchestration metadata', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+      { useOrchestratedMarket: false },
+    );
+
+    expect(cards.map((card) => card.cardType).sort()).toEqual([
+      'nhl-moneyline-call',
+      'nhl-totals-call',
+    ]);
+
+    cards.forEach((card) => {
+      expect(card.payloadData.expression_choice).toMatchObject({
+        chosen_market: 'ML',
+        status: 'FIRE',
+      });
+      expect(card.payloadData.market_narrative).toMatchObject({
+        orchestration: 'Rule 1: status',
+      });
+      expect(validateCardPayload(card.cardType, card.payloadData).success).toBe(
+        true,
+      );
+    });
+  });
+
+  test('orchestrated mode emits exactly one chosen market card per game', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+      { useOrchestratedMarket: true },
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].cardType).toBe('nhl-moneyline-call');
+    expect(cards[0].payloadData.expression_choice).toMatchObject({
+      chosen_market: 'ML',
+      pick: 'Away 115',
+      status: 'FIRE',
+      chosen: {
+        market: 'ML',
+        side: 'AWAY',
+        status: 'FIRE',
+        score: 0.52,
+        net: 0.61,
+        conflict: 0.07,
+        edge: 0.034,
+      },
+    });
+    expect(cards[0].payloadData.market_narrative).toMatchObject({
+      chosen_story: 'ML leads on rule 1: status.',
+      orchestration: 'Rule 1: status',
+    });
+    expect(validateCardPayload(cards[0].cardType, cards[0].payloadData)).toEqual(
+      { success: true, errors: [] },
+    );
   });
 
   test('emits 1P period odds context fields for nhl-pace-1p cards', () => {
@@ -265,6 +380,86 @@ describe('run_nhl_model market call generation', () => {
         missing_inputs: [],
         proxy_metric: 'goals_share_pct',
       },
+    });
+  });
+
+  // WI-0503: dual-run record shape
+  describe('buildDualRunRecord (WI-0503 dual-run log)', () => {
+    test('emits [DUAL_RUN] JSON line with required fields for all three markets', () => {
+      const oddsSnapshot = buildBaseOddsSnapshot();
+      const marketDecisions = buildBaseDecisions();
+      const expressionChoice = {
+        chosen_market: 'ML',
+        why_this_market: 'Rule 1: status',
+        rejected: [
+          { market: 'TOTAL', rejection_reason: 'LOWER_STATUS' },
+          { market: 'SPREAD', rejection_reason: 'PASS' },
+        ],
+      };
+
+      const record = buildDualRunRecord(
+        'nhl-test-game-001',
+        oddsSnapshot,
+        marketDecisions,
+        expressionChoice,
+      );
+
+      expect(record).not.toBeNull();
+      expect(record.game_id).toBe('nhl-test-game-001');
+      expect(record.matchup).toBe('Away Team @ Home Team');
+      expect(record.chosen_market).toBe('ML');
+      expect(record.why_this_market).toBe('Rule 1: status');
+      expect(record.markets).toHaveLength(3);
+      expect(record.markets.map((m) => m.market)).toEqual(['TOTAL', 'SPREAD', 'ML']);
+      record.markets.forEach((m) => {
+        expect(m).toMatchObject({
+          market: expect.stringMatching(/^(TOTAL|SPREAD|ML)$/),
+          status: expect.any(String),
+          score: expect.any(Number),
+        });
+      });
+      expect(record.rejected).toMatchObject({
+        TOTAL: 'LOWER_STATUS',
+        SPREAD: 'PASS',
+      });
+    });
+
+    test('returns null when expressionChoice is null', () => {
+      const record = buildDualRunRecord(
+        'nhl-test-game-002',
+        buildBaseOddsSnapshot(),
+        buildBaseDecisions(),
+        null,
+      );
+      expect(record).toBeNull();
+    });
+
+    test('[DUAL_RUN] log line is valid parseable JSON', () => {
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      const record = buildDualRunRecord(
+        'nhl-test-game-003',
+        buildBaseOddsSnapshot(),
+        buildBaseDecisions(),
+        {
+          chosen_market: 'TOTAL',
+          why_this_market: 'Rule 2: score gap',
+          rejected: [],
+        },
+      );
+      const logLine = `[DUAL_RUN] ${JSON.stringify(record)}`;
+      console.log(logLine);
+
+      const calls = logSpy.mock.calls.map((c) => c[0]);
+      const dualRunLine = calls.find((c) => c.startsWith('[DUAL_RUN] '));
+      expect(dualRunLine).toBeDefined();
+      const parsed = JSON.parse(dualRunLine.replace('[DUAL_RUN] ', ''));
+      expect(parsed).toMatchObject({
+        game_id: 'nhl-test-game-003',
+        chosen_market: 'TOTAL',
+        why_this_market: 'Rule 2: score gap',
+        markets: expect.any(Array),
+      });
+      logSpy.mockRestore();
     });
   });
 

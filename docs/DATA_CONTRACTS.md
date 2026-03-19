@@ -358,6 +358,16 @@ type PipelineState = {
   - `drivers_ready`
   - `pricing_ready`
   - `card_ready`
+
+### NHL Orchestrated Market-Call Contract
+
+For worker-written NHL market-call rows (`nhl-totals-call`, `nhl-spread-call`, `nhl-moneyline-call`):
+
+- `expression_choice` is required on new writes
+- `market_narrative` is required on new writes
+- `expression_choice.chosen_market` is the canonical selector winner for the game
+- when `USE_ORCHESTRATED_MARKET=true`, worker output must emit at most one NHL market-call row per `game_id`
+- when `USE_ORCHESTRATED_MARKET=false`, legacy multi-card behavior may emit multiple FIRE/WATCH market-call rows, but every emitted row must still carry orchestration metadata for audit and read-surface consistency
 - `blocking_reason_codes` must be deterministic, unique, and reuse existing worker reason vocab when applicable (for example `WATCHDOG_CONSISTENCY_MISSING`, `WATCHDOG_MARKET_UNAVAILABLE`, `MARKET_PRICE_MISSING`, `NO_EDGE_AT_PRICE`, `EXACT_WAGER_MISMATCH`).
 - `pipeline_state` is additive metadata only. It must not change `decision_v2`, `action`, `status`, `classification`, or other existing consumer-facing fields.
 - Wave-1 worker jobs emit per-game `pipeline_state` in two places:

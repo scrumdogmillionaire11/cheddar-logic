@@ -4,39 +4,35 @@
 
 ## Active Work Items
 
-**Updated**: 2026-03-16
+**Updated**: 2026-03-17
 
-- `WI-0379`: Canonical Goalie State Object
-- `WI-0380`: Goalie Source Arbitration Layer
-- `WI-0381`: Pace Model Trust Gating
-- `WI-0382`: Consistency Check Goalie Uncertainty Escalation
-- `WI-0383`: Watchdog/Wrapper Semantic Alignment
-- `WI-0384`: NHL Totals Fault Harness
-- `WI-0385`: NHL 1P Model Rebuild (Pass-First, De-biased)
-- `WI-0389`: MLB Pitcher Ks Research Spec Freeze
-- `WI-0398`: Consolidate Game-Card Decision Helper Sources
-- `WI-0399`: Migrate Legacy play.status Branching to Canonical Decision Accessors
-- `WI-0401`: Investigate NCAAM FT-Trend Market-Type Drift (Spread -> Moneyline)
-- `WI-0403`: Automated PENDING_VERIFICATION Resolution via Retrospective Edge Validation
-- `WI-0405`: Retire Legacy NCAAM FT Card Alias
-- `WI-0406`: Centralize FT Trend Context Contract
-- `WI-0407`: Replace Brittle FT Source Test with Behavior Coverage
-- `WI-0408`: Unify Decision Status Enum Across Web Contracts
-- `WI-0409`: Remove FT Note Regex Fallback After Structured Context Hardening
-- `WI-0413`: NHL Totals + Goalie Confirmation Semantics Audit (Scoping)
-- `WI-0414`: NCAAM FT-Trend Decision Semantics (PLAY/LEAN vs PASS)
-- `WI-0415`: Standardize Web WI Test Command Template
-- `WI-0417`: Starting XI Logic Requirements for FPL Sage (draft)
-- `WI-0434`: Audit Sports Models Against Canonical Logic (Current Repo Layout, No Rebuild)
-- `WI-0435`: Projection Contract Alignment (Current API Surfaces, No Rebuild)
-- `WI-0436`: NHL Data Enrichment (Targeted, No Rebuild)
-- `WI-0437`: Soccer Data Hardening (Environment Projector Incremental, No Rebuild)
-- `WI-0471`: Non-Breaking Rollout Foundation (Flags + Basis Contract + Projection Telemetry)
-- `WI-0472`: Phase 1 Low-Volatility Integration (NHL Shots + Soccer Projection Basis)
-- `WI-0473`: Phase 2 Sport+Market Thresholds V2 (Efficiency-Aware Decisioning)
-- `WI-0474`: Phase 3 CLV Ledger Integration for Odds-Backed Markets
-- `WI-0475`: Inefficient Model Replacement Policy + Ops Runbook
-- `WI-0476`: Soccer Team Mapping Alias Coverage for Odds Intake
+- `WI-0485`: Phase 4 telemetry calibration report + enforcement gate
+- `WI-0486`: Phase 4 soak-window runbook + weekly go/no-go cadence (depends on `WI-0485`)
+- `WI-0487`: MLB expansion tranche A (odds-backed markets; depends on `WI-0485`)
+- `WI-0488`: MLB expansion tranche B (projection props + rollup separation audit; depends on `WI-0485`, `WI-0487`)
+- `WI-0489`: NFL expansion pack (deferred after MLB; depends on `WI-0485`, `WI-0488`)
+
+### NHL alignment pack (queued)
+
+- `WI-0500`: NHL 1P model hard alignment to WI-0385 target (formula, dead-zone, goalie certainty, reason codes)
+- `WI-0501`: NHL SOG matchup factor wiring (opponentFactor + paceFactor) + synthetic fallback observability
+- `WI-0502`: NHL calibration ledger wiring (CLV + projection) + settlement jobs
+- `WI-0506`: NHL results segmentation on `/results` (game vs 1P vs player shots props)
+- `WI-0503`: NHL cross-market orchestration dual-run (market-stratified engines + expression choice log)
+- `WI-0504`: NHL orchestration cutover (single best market expression per game, legacy blend retired)
+- `WI-0505`: NHL 1P Phase-2 gated fair-probability activation (only with stable real 1P lines)
+
+Recommended execution order: `WI-0485` -> (`WI-0486` + `WI-0487` in parallel if staffing allows) -> `WI-0488` -> `WI-0489`.
+
+NHL alignment execution order: `WI-0500` -> `WI-0501` -> `WI-0502` -> `WI-0506` -> `WI-0503` -> `WI-0504` -> `WI-0505`.
+
+## Recently Completed
+
+- `WI-0480`: Phase 2 Activation + Rollback Procedure (Thresholds V2)
+- `WI-0481`: Phase 3 Preflight Eligibility + SQL Verification (CLV)
+- `WI-0482`: Phase 3 Activation + Settlement-Safe Rollback (CLV)
+- `WI-0483`: Fix nba-blowout-risk role and document unclassified NHL cardTypes in DRIVER_ROLES
+- `WI-0484`: DRIVER_ROLES registry completeness guard
 
 ## Rules
 

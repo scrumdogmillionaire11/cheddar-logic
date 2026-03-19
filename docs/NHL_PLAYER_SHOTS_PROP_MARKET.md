@@ -93,7 +93,7 @@ Lines are resolved from `player_prop_lines` with bookmaker priority:
 3. BetMGM
 4. Any available
 
-If no real line exists (job not run, player not listed, API no-data), the model runner falls back to a **synthetic line** (mu ± random offset, rounded to nearest 0.5). Cards created with synthetic lines include `market_line_source: "synthetic_fallback"` in the `decision` payload block.
+If no real line exists (job not run, player not listed, API no-data), the model runner falls back to a **synthetic line** using the configured projection floor (`NHL_SOG_PROJECTION_LINE`, default `2.5`; 1P scales from the full-game floor). Cards created with synthetic lines include `market_line_source: "synthetic_fallback"` in the `decision` payload block.
 
 ## Model
 
@@ -143,4 +143,4 @@ player_prop_lines (
 - **1P prop lines:** The Odds API does not consistently offer `player_shots_on_goal_1p` lines. First-period cards use synthetic fallback by default.
 - **Tracked-player sync dependency:** `pull_nhl_player_shots` prefers DB-backed tracked IDs from `tracked_players` (`sport=nhl`, `market=shots_on_goal`). If the sync job has not run or returns no active rows, the job falls back to `NHL_SOG_PLAYER_IDS`.
 - **Player name matching:** Real line lookup is case-insensitive by `player_name`. If The Odds API uses a different name format than the NHL API pull, lines may not match — monitor `market_line_source: "synthetic_fallback"` in card payloads as a signal.
-- **opponentFactor / paceFactor:** Both hardcoded to 1.0. Future enrichment should source these from team metrics.
+- **opponentFactor / paceFactor:** Sourced from `team_metrics_cache` when available. `opponentFactor` uses `shots_against_pg / league_avg_shots_against_pg`; `paceFactor` uses the average of team+opponent pace proxies (`pace_proxy`, `paceFactor`, `pace`, `corsi_for_pct/50`, or `shots_for_pg / league_avg_shots_for_pg`). Missing cache data fails open to `1.0`.

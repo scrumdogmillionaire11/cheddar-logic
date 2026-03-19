@@ -46,6 +46,43 @@ const driverPayloadSchema = basePayloadSchema.extend({
   })
 });
 
+const marketEnum = z.enum(['TOTAL', 'SPREAD', 'ML']);
+const sideEnum = z.enum(['OVER', 'UNDER', 'HOME', 'AWAY']);
+
+const expressionChoiceSchema = z.object({
+  chosen_market: marketEnum,
+  pick: z.string().min(1),
+  status: z.enum(['FIRE', 'WATCH', 'PASS']),
+  score: z.number(),
+  net: z.number(),
+  edge: z.number().nullable(),
+  chosen: z
+    .object({
+      market: marketEnum,
+      side: sideEnum.nullable(),
+      line: z.number().nullable().optional(),
+      price: z.number().nullable().optional(),
+      status: z.enum(['FIRE', 'WATCH', 'PASS']),
+      score: z.number(),
+      net: z.number(),
+      conflict: z.number(),
+      edge: z.number().nullable(),
+    })
+    .nullable()
+    .optional(),
+});
+
+const marketNarrativeSchema = z.object({
+  chosen_story: z.string().min(1),
+  alternatives: z.record(z.string()).default({}),
+  orchestration: z.string().min(1),
+});
+
+const nhlMarketCallPayloadSchema = driverPayloadSchema.extend({
+  expression_choice: expressionChoiceSchema,
+  market_narrative: marketNarrativeSchema,
+});
+
 const nullableNumber = z.number().nullable();
 
 const soccerPayloadSchema = basePayloadSchema.extend({
@@ -328,9 +365,9 @@ const schemaByCardType = {
   'welcome-home-v2': driverPayloadSchema,
 
   // Active NHL market call cards
-  'nhl-totals-call': driverPayloadSchema,
-  'nhl-spread-call': driverPayloadSchema,
-  'nhl-moneyline-call': driverPayloadSchema,
+  'nhl-totals-call': nhlMarketCallPayloadSchema,
+  'nhl-spread-call': nhlMarketCallPayloadSchema,
+  'nhl-moneyline-call': nhlMarketCallPayloadSchema,
 
   // Active NBA driver + evidence cards
   'nba-rest-advantage': driverPayloadSchema,

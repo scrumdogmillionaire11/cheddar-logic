@@ -132,6 +132,7 @@ function loadFreshModule() {
     markJobRunFailure: jest.fn(),
     setCurrentRunId: jest.fn(),
     insertCardPayload: jest.fn(),
+    recordProjectionEntry: jest.fn(),
     validateCardPayload: jest.fn(),
     withDb: jest.fn((fn) => fn()),
     getPlayerPropLine: jest.fn(() => null),
@@ -534,8 +535,10 @@ describe('run_nhl_player_shots_model', () => {
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
 
     const teamMetricsGet = jest.fn(() => ({
-      opponent_goals_against: 3.6,
-      league_avg_goals_against: 2.9,
+      opponent_shots_against_pg: 31.8,
+      league_avg_shots_against_pg: 28.5,
+      team_pace_proxy: 1.06,
+      opponent_pace_proxy: 1.04,
     }));
     const mockDb = {
       prepare: jest.fn((sql) => {
@@ -556,9 +559,21 @@ describe('run_nhl_player_shots_model', () => {
 
     await mod.runNHLPlayerShotsModel();
 
-    expect(teamMetricsGet).toHaveBeenCalledWith('Toronto Maple Leafs');
+    expect(teamMetricsGet).toHaveBeenCalledWith(
+      'Toronto Maple Leafs',
+      'Edmonton Oilers',
+      'Toronto Maple Leafs',
+    );
+    expect(shots.calcMu).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opponentFactor: expect.any(Number),
+        paceFactor: expect.any(Number),
+      }),
+    );
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.decision.matchup_score).toBeGreaterThan(0.8);
+    expect(card.payloadData.decision.matchup_score).toBeGreaterThan(0.6);
+    expect(card.payloadData.drivers.opponent_factor).toBeGreaterThan(1.0);
+    expect(card.payloadData.drivers.pace_factor).toBeGreaterThan(1.0);
   });
 
   test('suppresses PASS cards when consistency support is weak', async () => {
@@ -576,5 +591,47 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     expect(data.insertCardPayload).not.toHaveBeenCalled();
+  });
+
+  test('adds decision_basis_meta and records projection telemetry when flagged and no real line', async () => {
+    process.env.ENABLE_DECISION_BASIS_TAGS = 'true';
+    process.env.ENABLE_PROJECTION_PERF_LEDGER = 'true';
+
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'projection-ledger-01' })],
+      players: [buildPlayer({ player_id: 9191, player_name: 'Projection Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const insertedCard = data.insertCardPayload.mock.calls[0][0];
+    expect(insertedCard.payloadData.decision_basis_meta).toEqual(
+      expect.objectContaining({
+        decision_basis: 'PROJECTION_ONLY',
+        execution_eligible: false,
+        market_line_source: 'synthetic_fallback',
+      }),
+    );
+    expect(insertedCard.payloadData.decision.market_line_source).toBe(
+      'synthetic_fallback',
+    );
+
+    expect(data.recordProjectionEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cardId: insertedCard.id,
+        gameId: insertedCard.gameId,
+        sport: 'NHL',
+        decisionBasis: 'PROJECTION_ONLY',
+      }),
+    );
+
+    delete process.env.ENABLE_DECISION_BASIS_TAGS;
+    delete process.env.ENABLE_PROJECTION_PERF_LEDGER;
   });
 });

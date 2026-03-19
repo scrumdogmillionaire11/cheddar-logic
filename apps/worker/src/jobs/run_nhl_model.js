@@ -46,7 +46,6 @@ const {
   generateCard,
   computeNHLMarketDecisions,
   selectExpressionChoice,
-  computeTotalBias,
   buildMarketPayload,
   determineTier,
   buildMarketCallCard,
@@ -75,6 +74,16 @@ const {
 const { resolveGoalieState } = require('../models/nhl-goalie-state');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
+const USE_ORCHESTRATED_MARKET =
+  process.env.USE_ORCHESTRATED_MARKET === 'true';
+// WI-0505: Phase-2 gate for NHL 1P fair probability math.
+// Requires stable real 1P line supply in odds snapshot (total_1p must be a number).
+// Rollback: set NHL_1P_FAIR_PROB_PHASE2=false and redeploy; no migration needed.
+const NHL_1P_FAIR_PROB_PHASE2 =
+  process.env.NHL_1P_FAIR_PROB_PHASE2 === 'true';
+const NHL_1P_SIGMA = Number.isFinite(parseFloat(process.env.NHL_1P_SIGMA))
+  ? parseFloat(process.env.NHL_1P_SIGMA)
+  : 1.26;
 
 const NHL_DRIVER_WEIGHTS = {
   baseProjection: 0.3,
@@ -538,12 +547,35 @@ function getHomeTeamRecentRoadTrip(
   }
 }
 
+function getCardTypeForChosenMarket(market) {
+  switch (market) {
+    case 'TOTAL':
+      return 'nhl-totals-call';
+    case 'SPREAD':
+      return 'nhl-spread-call';
+    case 'ML':
+      return 'nhl-moneyline-call';
+    default:
+      return null;
+  }
+}
+
 /**
  * Generate standalone market call cards
  * (nhl-totals-call, nhl-spread-call, nhl-moneyline-call)
  * from cross-market decisions. Only emits for FIRE or WATCH status.
  */
-function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
+function generateNHLMarketCallCards(
+  gameId,
+  marketDecisions,
+  oddsSnapshot,
+  {
+    expressionChoice = null,
+    homeGoalieState = null,
+    awayGoalieState = null,
+    useOrchestratedMarket = USE_ORCHESTRATED_MARKET,
+  } = {},
+) {
   const now = new Date().toISOString();
   const expiresAt = null;
 
@@ -556,15 +588,27 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
   );
   const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
   const market = buildMarketFromOdds(oddsSnapshot);
+  const resolvedExpressionChoice =
+    expressionChoice || selectExpressionChoice(marketDecisions);
+  const marketPayload = buildMarketPayload({
+    decisions: marketDecisions,
+    expressionChoice: resolvedExpressionChoice,
+    homeGoalieState,
+    awayGoalieState,
+  });
+  const chosenCardType =
+    useOrchestratedMarket && resolvedExpressionChoice
+      ? getCardTypeForChosenMarket(resolvedExpressionChoice.chosen_market)
+      : null;
 
   const cards = [];
   const CONFIDENCE_MAP = { FIRE: 0.74, WATCH: 0.61 };
 
   // TOTAL decision → nhl-totals-call
   const totalDecision = marketDecisions?.TOTAL;
-  const totalBias = computeTotalBias(totalDecision);
   if (
     totalDecision &&
+    (!chosenCardType || chosenCardType === 'nhl-totals-call') &&
     (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')
   ) {
     const status = totalDecision.status || 'PASS';
@@ -581,7 +625,9 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
       const lineText = line != null ? ` ${line}` : '';
       const pickText = `${side === 'OVER' ? 'OVER' : 'UNDER'}${lineText}`;
       const reasonCodes = [];
-      if (totalBias !== 'OK') reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
+      if (marketPayload?.consistency?.total_bias !== 'OK') {
+        reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
+      }
       const activeDrivers = (totalDecision.drivers || [])
         .filter((d) => d.eligible)
         .map((d) => d.driverKey);
@@ -620,9 +666,10 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         price: totalPrice,
         reason_codes: reasonCodes,
         tags: [],
-        consistency: {
-          total_bias: totalBias,
-        },
+        consistency: marketPayload.consistency,
+        expression_choice: marketPayload.expression_choice,
+        market_narrative: marketPayload.market_narrative,
+        all_markets: marketPayload.all_markets,
         reasoning: `${pickText}: ${totalDecision.reasoning}`,
         edge: totalDecision.edge ?? null,
         edge_pct: totalDecision.edge ?? null,
@@ -719,6 +766,7 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
   const spreadDecision = marketDecisions?.SPREAD;
   if (
     spreadDecision &&
+    (!chosenCardType || chosenCardType === 'nhl-spread-call') &&
     (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH')
   ) {
     const confidence = CONFIDENCE_MAP[spreadDecision.status];
@@ -775,9 +823,10 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         price: spreadPrice,
         reason_codes: [],
         tags: [],
-        consistency: {
-          total_bias: totalBias,
-        },
+        consistency: marketPayload.consistency,
+        expression_choice: marketPayload.expression_choice,
+        market_narrative: marketPayload.market_narrative,
+        all_markets: marketPayload.all_markets,
         reasoning: `${pickText}: ${spreadDecision.reasoning}`,
         edge: spreadDecision.edge ?? null,
         edge_pct: spreadDecision.edge ?? null,
@@ -877,6 +926,7 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
   const moneylineDecision = marketDecisions?.ML;
   if (
     moneylineDecision &&
+    (!chosenCardType || chosenCardType === 'nhl-moneyline-call') &&
     (moneylineDecision.status === 'FIRE' ||
       moneylineDecision.status === 'WATCH')
   ) {
@@ -934,9 +984,10 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         price: moneylinePrice,
         reason_codes: [],
         tags: [],
-        consistency: {
-          total_bias: totalBias,
-        },
+        consistency: marketPayload.consistency,
+        expression_choice: marketPayload.expression_choice,
+        market_narrative: marketPayload.market_narrative,
+        all_markets: marketPayload.all_markets,
         reasoning: `${pickText}: ${moneylineDecision.reasoning}`,
         edge: moneylineDecision.edge ?? null,
         edge_pct: moneylineDecision.edge ?? null,
@@ -1193,16 +1244,36 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           };
 
           // Compute per-driver card descriptors
+          // WI-0505: Phase-2 fair prob requires a confirmed real 1P market line
+          const hasReal1pLine = typeof oddsSnapshot.total_1p === 'number';
           const driverCards = computeNHLDriverCards(gameId, oddsSnapshot, {
             recentRoadGames: homeTeamRoadTrip,
             canonicalGoalieState,
+            phase2FairProbEnabled: NHL_1P_FAIR_PROB_PHASE2 && hasReal1pLine,
+            sigma1p: NHL_1P_SIGMA,
           });
 
           const marketDecisions = computeNHLMarketDecisions(oddsSnapshot);
           const expressionChoice = selectExpressionChoice(marketDecisions);
+
+          // WI-0503: Dual-run observation log — records selector decisions per game
+          // without changing served card output. Parse with:
+          //   grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log | jq .
+          const dualRunRecord = buildDualRunRecord(
+            gameId,
+            oddsSnapshot,
+            marketDecisions,
+            expressionChoice,
+          );
+          if (dualRunRecord) {
+            console.log(`[DUAL_RUN] ${JSON.stringify(dualRunRecord)}`);
+          }
+
           const marketPayload = buildMarketPayload({
             decisions: marketDecisions,
             expressionChoice,
+            homeGoalieState: canonicalGoalieState?.home,
+            awayGoalieState: canonicalGoalieState?.away,
           });
 
           if (driverCards.length === 0) {
@@ -1290,6 +1361,11 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             gameId,
             marketDecisions,
             oddsSnapshot,
+            {
+              expressionChoice,
+              homeGoalieState: canonicalGoalieState?.home,
+              awayGoalieState: canonicalGoalieState?.away,
+            },
           );
           if (marketCallCards.length > 0) {
             for (const ct of [
@@ -1450,10 +1526,51 @@ if (require.main === module) {
     });
 }
 
+/**
+ * WI-0503: Builds a structured dual-run record for expression choice comparison.
+ * Emitted as a [DUAL_RUN] tagged JSON log line per game run during dual-run mode.
+ * Does NOT affect production card output — observation only.
+ *
+ * @param {string} gameId
+ * @param {object} oddsSnapshot
+ * @param {object} marketDecisions - { TOTAL, SPREAD, ML } MarketDecision objects
+ * @param {object|null} expressionChoice - result of selectExpressionChoice()
+ * @returns {object|null} record suitable for JSON.stringify, or null if no choice
+ */
+function buildDualRunRecord(gameId, oddsSnapshot, marketDecisions, expressionChoice) {
+  if (!expressionChoice) return null;
+  return {
+    game_id: gameId,
+    matchup: `${oddsSnapshot.away_team ?? 'unknown'} @ ${oddsSnapshot.home_team ?? 'unknown'}`,
+    run_at: new Date().toISOString(),
+    chosen_market: expressionChoice.chosen_market,
+    why_this_market: expressionChoice.why_this_market,
+    markets: ['TOTAL', 'SPREAD', 'ML']
+      .map((m) => {
+        const d = marketDecisions[m];
+        if (!d) return null;
+        return {
+          market: m,
+          status: d.status,
+          score: typeof d.score === 'number' ? Math.round(d.score * 1000) / 1000 : null,
+          net: typeof d.net === 'number' ? Math.round(d.net * 1000) / 1000 : null,
+          conflict: typeof d.conflict === 'number' ? Math.round(d.conflict * 1000) / 1000 : null,
+          edge: d.edge ?? null,
+        };
+      })
+      .filter(Boolean),
+    rejected: (expressionChoice.rejected ?? []).reduce((acc, r) => {
+      acc[r.market] = r.rejection_reason;
+      return acc;
+    }, {}),
+  };
+}
+
 module.exports = {
   runNHLModel,
   generateNHLMarketCallCards,
   applyNhlSettlementMarketContext,
   applyNhlDriverContextMetadata,
   attachNhlDriverContextToRawData,
+  buildDualRunRecord,
 };

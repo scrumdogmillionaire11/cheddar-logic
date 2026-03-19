@@ -42,6 +42,13 @@ assert.ok(
 );
 
 assert.ok(
+  resultsRouteSource.includes('segmentFamilies') &&
+    resultsRouteSource.includes('segmentId') &&
+    resultsRouteSource.includes('segmentLabel'),
+  '/api/results must include segment metadata for settlement family grouping',
+);
+
+assert.ok(
   resultsRouteSource.includes('finalDisplayedMissingResults') === false,
   'worker-only diagnostics must not leak into /api/results payload names',
 );

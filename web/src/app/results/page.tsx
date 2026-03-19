@@ -25,6 +25,19 @@ type SegmentRow = {
   losses: number;
   pushes: number;
   totalPnlUnits: number | null;
+  segmentId: SettlementSegmentId;
+  segmentLabel: string;
+};
+
+type SettlementSegmentId =
+  | 'nhl_game_sides_totals'
+  | 'nhl_first_period_totals'
+  | 'nhl_player_shots_props';
+
+type SegmentFamily = {
+  segmentId: SettlementSegmentId;
+  segmentLabel: string;
+  settledCards: number;
 };
 
 type LedgerRow = {
@@ -54,6 +67,8 @@ type LedgerRow = {
   // WI-0383: 1P and full-game projection totals for NHL cards
   projection1p?: number | null;
   projectionTotal?: number | null;
+  segmentId?: SettlementSegmentId;
+  segmentLabel?: string;
 };
 
 type ResultsResponse = {
@@ -61,6 +76,7 @@ type ResultsResponse = {
   data?: {
     summary: ResultsSummary;
     segments: SegmentRow[];
+    segmentFamilies?: SegmentFamily[];
     ledger: LedgerRow[];
     filters?: {
       sport: string | null;
@@ -144,6 +160,24 @@ function roiTextClass(value: number | null | undefined) {
   if (value < 0) return 'text-rose-300';
   return 'text-cloud/70';
 }
+
+const SEGMENT_DEFINITIONS: SegmentFamily[] = [
+  {
+    segmentId: 'nhl_game_sides_totals',
+    segmentLabel: 'Game Sides & Totals',
+    settledCards: 0,
+  },
+  {
+    segmentId: 'nhl_first_period_totals',
+    segmentLabel: '1P Totals',
+    settledCards: 0,
+  },
+  {
+    segmentId: 'nhl_player_shots_props',
+    segmentLabel: 'Player Shots Props',
+    settledCards: 0,
+  },
+];
 
 export default function ResultsPage() {
   const [summary, setSummary] = useState<ResultsSummary | null>(null);
@@ -262,6 +296,30 @@ export default function ResultsPage() {
     ? `${summary.wins}-${summary.losses}${summary.pushes > 0 ? `-${summary.pushes}` : ''}`
     : '--';
   const visibleLedger = ledger.filter((row) => !row.payloadMissing);
+  const segmentFamilies = useMemo(() => {
+    if (!summary) return SEGMENT_DEFINITIONS;
+    const counts = new Map<SettlementSegmentId, number>();
+    for (const row of segments) {
+      const id = row.segmentId || 'nhl_game_sides_totals';
+      counts.set(id, (counts.get(id) || 0) + row.settledCards);
+    }
+    return SEGMENT_DEFINITIONS.map((segment) => ({
+      ...segment,
+      settledCards: counts.get(segment.segmentId) || 0,
+    }));
+  }, [summary, segments]);
+  const segmentsByFamily = useMemo(() => {
+    const grouped: Record<SettlementSegmentId, SegmentRow[]> = {
+      nhl_game_sides_totals: [],
+      nhl_first_period_totals: [],
+      nhl_player_shots_props: [],
+    };
+    for (const row of segments) {
+      const id = row.segmentId || 'nhl_game_sides_totals';
+      grouped[id].push(row);
+    }
+    return grouped;
+  }, [segments]);
 
   return (
     <div className="min-h-screen bg-night text-cloud">
@@ -347,8 +405,8 @@ export default function ResultsPage() {
             <div>
               <h2 className="text-2xl font-semibold">Segments</h2>
               <p className="mt-2 text-sm text-cloud/70">
-                Slice results by market, tier, and edge band to validate pricing
-                logic.
+                Segment NHL results on the same page by game sides/totals, 1P
+                totals, and player shots props.
               </p>
             </div>
 
@@ -479,128 +537,137 @@ export default function ResultsPage() {
             </div>
           ) : null}
 
-          <div className="mt-6 hidden overflow-hidden rounded-xl border border-white/10 md:block">
-            {/* 7-column header: Segment | Type | Market | Plays | Win Rate | ROI | Avg Edge */}
-            <div className="grid grid-cols-7 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
-              <span>Segment</span>
-              <span>Type</span>
-              <span>Market</span>
-              <span>Plays</span>
-              <span>Win Rate</span>
-              <span>ROI</span>
-              <span>Avg Edge</span>
-            </div>
-            {segments.length === 0 ? (
-              <div className="px-4 py-6 text-sm text-cloud/60">
-                No graded segments yet. This table populates automatically once
-                plays are graded.
-              </div>
-            ) : (
-              <div className="divide-y divide-white/10">
-                {segments.map((row) => {
-                  const total = row.wins + row.losses + row.pushes;
-                  const winRate =
-                    row.wins + row.losses > 0
-                      ? row.wins / (row.wins + row.losses)
-                      : 0;
-                  const isHighWinRate = winRate >= 0.6;
-                  return (
-                    <div
-                      key={`${row.sport}-${row.cardType}-${row.recommendedBetType}`}
-                      className={`grid grid-cols-7 gap-4 px-4 py-3 text-sm ${isHighWinRate ? 'bg-emerald-500/10' : ''}`}
-                    >
-                      <span className="text-cloud/70">{row.sport}</span>
-                      <span className="text-cloud/70">
-                        {row.cardType}
-                      </span>
-                      <span className="text-cloud/70 capitalize">
-                        {row.recommendedBetType || '--'}
-                      </span>
-                      <span className="text-cloud/70">{total}</span>
-                      <span
-                        className={
-                          isHighWinRate ? 'text-emerald-300' : 'text-cloud/70'
-                        }
-                      >
-                        {formatPercent(winRate)}
-                      </span>
-                      <span className={roiTextClass(row.totalPnlUnits)}>
-                        {formatUnits(row.totalPnlUnits)}
-                      </span>
-                      <span className="text-cloud/70">N/A</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <div className="mt-6 space-y-8">
+            {segmentFamilies.map((family) => {
+              const familyRows = segmentsByFamily[family.segmentId] || [];
+              return (
+                <div key={family.segmentId}>
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h3 className="text-lg font-semibold text-cloud">
+                      {family.segmentLabel}
+                    </h3>
+                    <span className="text-xs uppercase tracking-[0.2em] text-cloud/50">
+                      {family.settledCards} settled
+                    </span>
+                  </div>
 
-          <div className="mt-6 space-y-3 md:hidden">
-            {segments.length === 0 ? (
-              <div className="rounded-xl border border-white/10 bg-night/30 px-4 py-6 text-sm text-cloud/60">
-                No graded segments yet. This list populates automatically once
-                plays are graded.
-              </div>
-            ) : (
-              segments.map((row) => {
-                const total = row.wins + row.losses + row.pushes;
-                const winRate =
-                  row.wins + row.losses > 0
-                    ? row.wins / (row.wins + row.losses)
-                    : 0;
-                return (
-                  <article
-                    key={`${row.sport}-${row.cardType}-${row.recommendedBetType}-mobile`}
-                    className="rounded-xl border border-white/10 bg-night/40 px-4 py-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-cloud">
-                          {row.sport} -{' '}
-                          <span className="text-cloud/75">
-                            {row.cardType}
-                          </span>
-                        </p>
-                        <p className="mt-1 text-xs text-cloud/60 capitalize">
-                          {row.recommendedBetType || '--'}
-                        </p>
-                      </div>
-                      <span
-                        className={`text-sm font-semibold ${roiTextClass(row.totalPnlUnits)}`}
-                      >
-                        {formatUnits(row.totalPnlUnits)}
-                      </span>
+                  <div className="hidden overflow-hidden rounded-xl border border-white/10 md:block">
+                    <div className="grid grid-cols-6 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+                      <span>Sport</span>
+                      <span>Type</span>
+                      <span>Market</span>
+                      <span>Plays</span>
+                      <span>Win Rate</span>
+                      <span>ROI</span>
                     </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2">
-                      <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-2 text-center">
-                        <p className="text-base font-semibold text-cloud">
-                          {total}
-                        </p>
-                        <p className="text-[11px] text-cloud/50">Plays</p>
+                    {familyRows.length === 0 ? (
+                      <div className="px-4 py-6 text-sm text-cloud/60">
+                        No graded rows yet for this segment.
                       </div>
-                      <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-2 text-center">
-                        <p className="text-base font-semibold text-cloud">
-                          {formatPercent(winRate)}
-                        </p>
-                        <p className="text-[11px] text-cloud/50">Win Rate</p>
+                    ) : (
+                      <div className="divide-y divide-white/10">
+                        {familyRows.map((row) => {
+                          const total = row.wins + row.losses + row.pushes;
+                          const winRate =
+                            row.wins + row.losses > 0
+                              ? row.wins / (row.wins + row.losses)
+                              : 0;
+                          const isHighWinRate = winRate >= 0.6;
+                          return (
+                            <div
+                              key={`${family.segmentId}-${row.sport}-${row.cardType}-${row.recommendedBetType}`}
+                              className={`grid grid-cols-6 gap-4 px-4 py-3 text-sm ${isHighWinRate ? 'bg-emerald-500/10' : ''}`}
+                            >
+                              <span className="text-cloud/70">{row.sport}</span>
+                              <span className="text-cloud/70">{row.cardType}</span>
+                              <span className="text-cloud/70 capitalize">
+                                {row.recommendedBetType || '--'}
+                              </span>
+                              <span className="text-cloud/70">{total}</span>
+                              <span
+                                className={
+                                  isHighWinRate
+                                    ? 'text-emerald-300'
+                                    : 'text-cloud/70'
+                                }
+                              >
+                                {formatPercent(winRate)}
+                              </span>
+                              <span className={roiTextClass(row.totalPnlUnits)}>
+                                {formatUnits(row.totalPnlUnits)}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-2 text-center">
-                        <p
-                          className={`text-base font-semibold ${roiTextClass(row.totalPnlUnits)}`}
-                        >
-                          {formatUnits(row.totalPnlUnits)}
-                        </p>
-                        <p className="text-[11px] text-cloud/50">ROI</p>
+                    )}
+                  </div>
+
+                  <div className="mt-3 space-y-3 md:hidden">
+                    {familyRows.length === 0 ? (
+                      <div className="rounded-xl border border-white/10 bg-night/30 px-4 py-6 text-sm text-cloud/60">
+                        No graded rows yet for this segment.
                       </div>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between text-xs text-cloud/55">
-                      <span>Avg Edge</span>
-                      <span>--</span>
-                    </div>
-                  </article>
-                );
-              })
-            )}
+                    ) : (
+                      familyRows.map((row) => {
+                        const total = row.wins + row.losses + row.pushes;
+                        const winRate =
+                          row.wins + row.losses > 0
+                            ? row.wins / (row.wins + row.losses)
+                            : 0;
+                        return (
+                          <article
+                            key={`${family.segmentId}-${row.sport}-${row.cardType}-${row.recommendedBetType}-mobile`}
+                            className="rounded-xl border border-white/10 bg-night/40 px-4 py-4"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-cloud">
+                                  {row.sport} -{' '}
+                                  <span className="text-cloud/75">
+                                    {row.cardType}
+                                  </span>
+                                </p>
+                                <p className="mt-1 text-xs text-cloud/60 capitalize">
+                                  {row.recommendedBetType || '--'}
+                                </p>
+                              </div>
+                              <span
+                                className={`text-sm font-semibold ${roiTextClass(row.totalPnlUnits)}`}
+                              >
+                                {formatUnits(row.totalPnlUnits)}
+                              </span>
+                            </div>
+                            <div className="mt-3 grid grid-cols-3 gap-2">
+                              <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-2 text-center">
+                                <p className="text-base font-semibold text-cloud">
+                                  {total}
+                                </p>
+                                <p className="text-[11px] text-cloud/50">Plays</p>
+                              </div>
+                              <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-2 text-center">
+                                <p className="text-base font-semibold text-cloud">
+                                  {formatPercent(winRate)}
+                                </p>
+                                <p className="text-[11px] text-cloud/50">Win Rate</p>
+                              </div>
+                              <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-2 text-center">
+                                <p
+                                  className={`text-base font-semibold ${roiTextClass(row.totalPnlUnits)}`}
+                                >
+                                  {formatUnits(row.totalPnlUnits)}
+                                </p>
+                                <p className="text-[11px] text-cloud/50">ROI</p>
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
 

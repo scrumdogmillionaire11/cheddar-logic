@@ -10,6 +10,122 @@
 
 **Two separate applications. One unified data store for Cheddar. Complete isolation for FPL Sage.**
 
+### Rollout Safety Contract (Phase-Gated, Additive-Only)
+
+- New rollout primitives are additive and default-off by environment flag.
+- Baseline behavior remains unchanged until a flag is explicitly enabled.
+- Rollout sequence:
+  1. `ENABLE_DECISION_BASIS_TAGS` + `ENABLE_PROJECTION_PERF_LEDGER` (projection-basis metadata + projection telemetry)
+  2. `ENABLE_MARKET_THRESHOLDS_V2` (sport+market threshold routing)
+  3. `ENABLE_CLV_LEDGER` (odds-backed CLV telemetry)
+- While all flags are false/unset, payload shape and decision outcomes must remain baseline-equivalent.
+- Telemetry ledgers are operational metrics only and do not alter settlement or card display pipelines.
+
+#### Phase 3 CLV Preflight (Must Pass Before `ENABLE_CLV_LEDGER=true`)
+
+CLV telemetry is restricted to odds-backed cards only.
+
+- Include when all are true:
+  - `card_results.status = 'settled'`
+  - `card_payloads.payload_data.decision_basis = 'ODDS_ONLY'` or `ODDS_AND_PROJECTION`
+  - Card contains an odds-backed market (`ML`, `SPREAD`, or `TOTAL`) with valid captured odds context.
+- Exclude when any are true:
+  - `decision_basis = 'PROJECTION_ONLY'`
+  - synthetic or non-odds drivers without tradable line context
+  - unsettled cards (`status != 'settled'`)
+
+Preflight SQL checks (run before any Phase 3 activation):
+
+```bash
+# 1) Population split: confirm odds-backed vs projection-only populations
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+  COALESCE(json_extract(cp.payload_data, '$.decision_basis'), 'UNKNOWN') AS decision_basis,
+  COUNT(*) AS rows
+FROM card_results cr
+JOIN card_payloads cp ON cp.id = cr.card_id
+WHERE cr.status = 'settled'
+GROUP BY 1
+ORDER BY rows DESC;
+"
+
+# 2) Contract guard: projection-only cards must not be CLV-eligible
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT COUNT(*) AS projection_only_settled
+FROM card_results cr
+JOIN card_payloads cp ON cp.id = cr.card_id
+WHERE cr.status = 'settled'
+  AND COALESCE(json_extract(cp.payload_data, '$.decision_basis'), 'UNKNOWN') = 'PROJECTION_ONLY';
+"
+
+# 3) Dry eligibility sample for odds-backed settled cards
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT
+  cr.id,
+  cr.card_id,
+  COALESCE(json_extract(cp.payload_data, '$.decision_basis'), 'UNKNOWN') AS decision_basis,
+  COALESCE(json_extract(cp.payload_data, '$.play.market'), 'UNKNOWN') AS market
+FROM card_results cr
+JOIN card_payloads cp ON cp.id = cr.card_id
+WHERE cr.status = 'settled'
+  AND COALESCE(json_extract(cp.payload_data, '$.decision_basis'), 'UNKNOWN') IN ('ODDS_ONLY', 'ODDS_AND_PROJECTION')
+LIMIT 25;
+"
+```
+
+Go / no-go criteria for Phase 3 activation:
+
+- Go when all are true:
+  - Preflight queries execute without SQL/runtime errors.
+  - Odds-backed settled population is non-zero for target sports/markets.
+  - Projection-only population is measurable and separable via `decision_basis`.
+  - `ENABLE_CLV_LEDGER` remains default-off until controlled run window starts.
+- No-go when any are true:
+  - Missing/ambiguous `decision_basis` population in settled cards.
+  - Any preflight query fails or returns contract-inconsistent shape.
+  - Operators cannot prove projection-only exclusion before activation.
+
+### Inefficient Model Replacement Policy (Operational, No-Code)
+
+- Purpose: degrade safely when telemetry indicates model inefficiency, without changing contracts or deploying code.
+- Data sources:
+  - `projection_perf_ledger` for projection-only quality trend.
+  - `clv_ledger` for odds-backed market efficiency trend.
+- Decision owners:
+  - Model Ops On-Call: threshold demotion / market-level feature flag actions.
+  - Settlement Ops: CLV telemetry suspension while preserving settlement.
+  - Incident Commander: full rollback to baseline (all rollout flags off).
+
+#### Trigger Thresholds
+
+| Metric | Minimum sample | Trigger |
+| --- | --- | --- |
+| Projection win rate | 100 settled rows in 14d | `< 48%` |
+| CLV mean | 150 closed rows in 14d | `<= -0.020` |
+| CLV lower tail | 150 closed rows in 14d | P25 `<= -0.050` |
+
+#### Allowed Actions
+
+1. Demote thresholds: enable/adjust threshold routing via `ENABLE_MARKET_THRESHOLDS_V2`.
+2. Disable market telemetry path: set `ENABLE_CLV_LEDGER=false`.
+3. Full rollback: set all rollout flags false (`ENABLE_DECISION_BASIS_TAGS`, `ENABLE_MARKET_THRESHOLDS_V2`, `ENABLE_PROJECTION_PERF_LEDGER`, `ENABLE_CLV_LEDGER`).
+
+#### Production-Safe Rollback Sequence
+
+```bash
+./scripts/manage-scheduler.sh stop
+
+export ENABLE_DECISION_BASIS_TAGS=false
+export ENABLE_MARKET_THRESHOLDS_V2=false
+export ENABLE_PROJECTION_PERF_LEDGER=false
+export ENABLE_CLV_LEDGER=false
+
+./scripts/manage-scheduler.sh start
+./scripts/manage-scheduler.sh db
+```
+
+The rollback sequence is additive-safe: settlement, display, and API contracts remain active with baseline behavior.
+
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                     CHEDDAR BOARD (Node.js)                     │

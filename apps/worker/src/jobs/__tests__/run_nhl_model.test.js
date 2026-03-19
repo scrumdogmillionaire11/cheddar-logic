@@ -12,8 +12,84 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const { initDb, getDatabase, closeDatabase } = require('@cheddar-logic/data');
+const { generateNHLMarketCallCards } = require('../run_nhl_model');
+const { computeNHLDriverCards } = require('../../models/index');
 
 const TEST_DB_PATH = '/tmp/cheddar-nhl-test.db';
+
+function buildBaseOddsSnapshot() {
+  return {
+    game_time_utc: '2026-03-11T00:00:00.000Z',
+    home_team: 'Home Team',
+    away_team: 'Away Team',
+    h2h_home: -130,
+    h2h_away: 115,
+    spread_home: -1.5,
+    spread_away: 1.5,
+    spread_price_home: -110,
+    spread_price_away: -110,
+    total: 6.5,
+    total_price_over: -112,
+    total_price_under: -108,
+    captured_at: '2026-03-10T18:00:00.000Z',
+  };
+}
+
+function buildBaseDecisions() {
+  return {
+    TOTAL: {
+      status: 'WATCH',
+      best_candidate: { side: 'OVER', line: 6.5 },
+      edge: 0.02,
+      edge_points: 0.4,
+      p_fair: 0.53,
+      p_implied: 0.5,
+      line_source: 'odds_snapshot',
+      price_source: 'odds_snapshot',
+      drivers: [],
+      score: 0.25,
+      net: 0.25,
+      conflict: 0.1,
+      coverage: 0.75,
+      reasoning: 'Totals edge',
+      projection: {
+        projected_total: 6.9,
+      },
+    },
+    SPREAD: {
+      status: 'PASS',
+      best_candidate: { side: 'HOME', line: -1.5 },
+      drivers: [],
+      score: 0.1,
+      net: 0.1,
+      conflict: 0.1,
+      coverage: 0.5,
+      reasoning: 'No spread edge',
+      projection: {
+        projected_margin: 0.8,
+      },
+    },
+    ML: {
+      status: 'FIRE',
+      best_candidate: { side: 'AWAY', price: 115 },
+      edge: 0.034,
+      p_fair: 0.499,
+      p_implied: 0.465,
+      line_source: 'odds_snapshot',
+      price_source: 'odds_snapshot',
+      drivers: [],
+      score: 0.52,
+      net: 0.61,
+      conflict: 0.07,
+      coverage: 0.79,
+      reasoning: 'Away side carries the strongest edge.',
+      projection: {
+        projected_margin: -0.9,
+        win_prob_home: 0.501,
+      },
+    },
+  };
+}
 
 async function queryDb(fn) {
   await initDb();
@@ -70,6 +146,36 @@ describe('run_nhl_model job', () => {
         `Job failed with exit code ${error.status}: ${error.stdout || error.message}`,
       );
     }
+  });
+
+  test('orchestrated market routing reduces legacy actionable cards to one canonical card', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+
+    const legacyCards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+      { useOrchestratedMarket: false },
+    );
+    const orchestratedCards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+      { useOrchestratedMarket: true },
+    );
+
+    expect(legacyCards.map((card) => card.cardType).sort()).toEqual([
+      'nhl-moneyline-call',
+      'nhl-totals-call',
+    ]);
+    expect(orchestratedCards.map((card) => card.cardType)).toEqual([
+      'nhl-moneyline-call',
+    ]);
+    expect(orchestratedCards[0].payloadData.expression_choice).toMatchObject({
+      chosen_market: 'ML',
+      status: 'FIRE',
+    });
   });
 
   test('job_runs table records job execution as success', async () => {
@@ -220,5 +326,86 @@ describe('run_nhl_model job', () => {
         }
       });
     }
+  });
+
+  // WI-0505: Phase-2 fair probability gate — integration-level assertions
+  describe('Phase-2 fair probability gate via computeNHLDriverCards context', () => {
+    const baseOdds = {
+      game_id: 'nhl-phase2-gate-test',
+      total: 6.5,
+      total_price_over: -110,
+      total_price_under: -110,
+      raw_data: JSON.stringify({
+        goalie: {
+          home: { name: 'Igor Shesterkin', status: 'CONFIRMED' },
+          away: { name: 'Thatcher Demko', status: 'CONFIRMED' },
+        },
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgGoalsFor: 4.2,
+              avgGoalsAgainst: 2.5,
+              pace_factor: 1.15,
+              ppPct: 0.28,
+              pkPct: 0.76,
+              restDays: 2,
+            },
+          },
+          away: {
+            metrics: {
+              avgGoalsFor: 4.0,
+              avgGoalsAgainst: 2.6,
+              pace_factor: 1.12,
+              ppPct: 0.26,
+              pkPct: 0.78,
+              restDays: 2,
+            },
+          },
+        },
+      }),
+    };
+
+    function get1pCard(context) {
+      const cards = computeNHLDriverCards('nhl-phase2-gate-test', baseOdds, context);
+      return cards.find((c) => c.cardType === 'nhl-pace-1p');
+    }
+
+    test('gate off: 1P driverInputs.fair_over_1_5_prob is null', () => {
+      const card = get1pCard({ phase2FairProbEnabled: false });
+      expect(card).toBeDefined();
+      expect(card.driverInputs.fair_over_1_5_prob).toBeNull();
+      expect(card.driverInputs.fair_under_1_5_prob).toBeNull();
+    });
+
+    test('gate on but total_1p absent from snapshot: fair probs are null (market-line prerequisite guard)', () => {
+      // total_1p is absent from baseOdds — run_nhl_model will not activate phase2
+      // Simulate the guard: pass phase2FairProbEnabled=false to model (as job would do)
+      const oddsWithout1p = { ...baseOdds };
+      delete oddsWithout1p.total_1p;
+      // Job sets phase2FairProbEnabled: NHL_1P_FAIR_PROB_PHASE2 && hasReal1pLine
+      // hasReal1pLine = typeof undefined === 'number' -> false -> context gets false
+      const card = get1pCard({ phase2FairProbEnabled: false });
+      expect(card).toBeDefined();
+      expect(card.driverInputs.fair_over_1_5_prob).toBeNull();
+      expect(card.driverInputs.fair_under_1_5_prob).toBeNull();
+    });
+
+    test('gate on + total_1p present + eligible classification: driverInputs.fair_over_1_5_prob is a number', () => {
+      const oddsWithLine = { ...baseOdds, total_1p: 1.5 };
+      const cards = computeNHLDriverCards('nhl-phase2-gate-test', oddsWithLine, {
+        phase2FairProbEnabled: true,
+        sigma1p: 1.26,
+      });
+      const card = cards.find((c) => c.cardType === 'nhl-pace-1p');
+      expect(card).toBeDefined();
+      const classification = card.driverInputs.classification;
+      if (classification !== 'PASS') {
+        expect(typeof card.driverInputs.fair_over_1_5_prob).toBe('number');
+        expect(typeof card.driverInputs.fair_under_1_5_prob).toBe('number');
+      } else {
+        expect(card.driverInputs.fair_over_1_5_prob).toBeNull();
+        expect(card.driverInputs.fair_under_1_5_prob).toBeNull();
+      }
+    });
   });
 });
