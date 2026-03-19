@@ -238,6 +238,23 @@ function formatPick(decision) {
   return side;
 }
 
+function buildExpressionChoiceSnapshot(expressionChoice) {
+  const chosen = expressionChoice?.chosen;
+  if (!chosen) return null;
+
+  return {
+    market: chosen.market,
+    side: chosen?.best_candidate?.side ?? null,
+    line: chosen?.best_candidate?.line ?? null,
+    price: chosen?.best_candidate?.price ?? null,
+    status: chosen.status,
+    score: chosen.score,
+    net: chosen.net,
+    conflict: chosen.conflict,
+    edge: chosen.edge ?? null,
+  };
+}
+
 function computeNHLMarketDecisions(oddsSnapshot) {
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const totalLine = toNumber(oddsSnapshot?.total);
@@ -1002,7 +1019,14 @@ function computeNBAMarketDecisions(oddsSnapshot) {
 function selectExpressionChoice(decisions) {
   const orderedMarkets = [Market.TOTAL, Market.SPREAD, Market.ML];
   const available = orderedMarkets
-    .map((market) => decisions[market])
+    .map((market) => {
+      const decision = decisions[market];
+      if (!decision) return null;
+      return {
+        ...decision,
+        market: decision.market ?? market,
+      };
+    })
     .filter(Boolean);
 
   if (available.length === 0) {
@@ -1143,6 +1167,7 @@ function buildMarketPayload({ decisions, expressionChoice, homeGoalieState, away
       score: chosen.score,
       net: chosen.net,
       edge: chosen.edge ?? null,
+      chosen: buildExpressionChoiceSnapshot(expressionChoice),
     },
     market_narrative: {
       chosen_story: expressionChoice.story.chosen_narrative,
