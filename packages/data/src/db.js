@@ -829,6 +829,30 @@ function ensureOddsIngestFailuresSchema(db) {
   );
 }
 
+/**
+ * Ensure soccer_team_xg_cache table exists.
+ * Called lazily from CRUD functions — safe to call multiple times.
+ */
+function ensureSoccerXgCacheSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS soccer_team_xg_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sport TEXT NOT NULL DEFAULT 'soccer',
+      league TEXT NOT NULL,
+      team_name TEXT NOT NULL,
+      home_xg_l6 REAL,
+      away_xg_l6 REAL,
+      fetched_at TEXT NOT NULL,
+      cache_date TEXT NOT NULL,
+      UNIQUE(league, team_name, cache_date)
+    )
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_soccer_xg_cache_league_date
+      ON soccer_team_xg_cache(league, cache_date DESC)`,
+  );
+}
+
 function buildOddsIngestFailureKey(event) {
   const sport = normalizeSportValue(event.sport, 'buildOddsIngestFailureKey');
   return [
@@ -3453,6 +3477,96 @@ function deleteStaleTeamMetricsCache(beforeDate) {
   return info.changes;
 }
 
+// =============================================================================
+// Soccer xG Cache CRUD (WI-0491)
+// =============================================================================
+
+/**
+ * Upsert a team's rolling xG values into the soccer_team_xg_cache table.
+ * Idempotent: two runs on the same cache_date produce identical DB state.
+ *
+ * @param {object} row
+ * @param {string} row.league     - 'EPL' | 'MLS' | 'UCL'
+ * @param {string} row.teamName   - Team display name
+ * @param {number|null} row.homeXgL6 - Rolling home xG (last 6 games), weighted
+ * @param {number|null} row.awayXgL6 - Rolling away xG (last 6 games), weighted
+ * @param {string} row.fetchedAt  - ISO timestamp of fetch
+ * @param {string} row.cacheDate  - ISO date key (YYYY-MM-DD)
+ */
+function upsertSoccerTeamXg(row) {
+  const db = getDatabase();
+  ensureSoccerXgCacheSchema(db);
+
+  const stmt = db.prepare(`
+    INSERT INTO soccer_team_xg_cache
+      (sport, league, team_name, home_xg_l6, away_xg_l6, fetched_at, cache_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(league, team_name, cache_date) DO UPDATE SET
+      home_xg_l6 = excluded.home_xg_l6,
+      away_xg_l6 = excluded.away_xg_l6,
+      fetched_at = excluded.fetched_at
+  `);
+
+  stmt.run(
+    'soccer',
+    String(row.league || '').toUpperCase(),
+    String(row.teamName || ''),
+    Number.isFinite(row.homeXgL6) ? row.homeXgL6 : null,
+    Number.isFinite(row.awayXgL6) ? row.awayXgL6 : null,
+    row.fetchedAt,
+    row.cacheDate,
+  );
+}
+
+/**
+ * Get a single team's xG cache row for a given league and date.
+ *
+ * @param {object} params
+ * @param {string} params.league   - 'EPL' | 'MLS' | 'UCL'
+ * @param {string} params.teamName - Team display name
+ * @param {string} params.cacheDate - ISO date (YYYY-MM-DD)
+ * @returns {object|null}
+ */
+function getSoccerTeamXg({ league, teamName, cacheDate }) {
+  const db = getDatabase();
+  ensureSoccerXgCacheSchema(db);
+
+  const stmt = db.prepare(`
+    SELECT * FROM soccer_team_xg_cache
+    WHERE UPPER(league) = ? AND team_name = ? AND cache_date = ?
+    LIMIT 1
+  `);
+  return stmt.get(
+    String(league || '').toUpperCase(),
+    String(teamName || ''),
+    cacheDate,
+  ) ?? null;
+}
+
+/**
+ * Get all cached xG rows for a league on a given cache date.
+ * Used by the soccer model to bulk-load xG before processing games.
+ *
+ * @param {object} params
+ * @param {string} params.league    - 'EPL' | 'MLS' | 'UCL'
+ * @param {string} params.cacheDate - ISO date (YYYY-MM-DD)
+ * @returns {Array<object>}
+ */
+function getSoccerTeamXgBatch({ league, cacheDate }) {
+  const db = getDatabase();
+  ensureSoccerXgCacheSchema(db);
+
+  const stmt = db.prepare(`
+    SELECT * FROM soccer_team_xg_cache
+    WHERE UPPER(league) = ? AND cache_date = ?
+    ORDER BY team_name ASC
+  `);
+  return stmt.all(
+    String(league || '').toUpperCase(),
+    cacheDate,
+  );
+}
+
 /**
  * Backfill: Normalize historical card_results.sport values to lowercase
  * Ensures all sport codes in card_results table are lowercase for consistency
@@ -3714,4 +3828,7 @@ module.exports = {
   upsertTeamMetricsCache,
   deleteStaleTeamMetricsCache,
   backfillCardResultsSportCasing,
+  upsertSoccerTeamXg,
+  getSoccerTeamXg,
+  getSoccerTeamXgBatch,
 };

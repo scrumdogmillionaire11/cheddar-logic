@@ -21,3 +21,7 @@ module.exports = {
 const { computeWinProbHome, buildDriverSummary } = require('./card-utilities');
 module.exports.computeWinProbHome = computeWinProbHome;
 module.exports.buildDriverSummary = buildDriverSummary;
+
+// xG Poisson model — Phase 1 (WI-0491)
+const xgModel = require('./xg-model');
+module.exports.xgModel = xgModel;

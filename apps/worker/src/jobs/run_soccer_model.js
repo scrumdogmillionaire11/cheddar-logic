@@ -420,6 +420,7 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
       available: projection_basis !== null,
       missing_fields: [...missing_context_flags],
     },
+    model_confidence: null, // populated in Phase 2 (WI-0492): FULL | PARTIAL | LOW
   };
 
   return {
@@ -476,6 +477,7 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       edge_basis: 'vig_normalized_moneyline',
       missing_context_flags,
       pass_reason: null,
+      model_confidence: null, // populated in Phase 2 (WI-0492): FULL | PARTIAL | LOW
     };
   } else if (canonicalCardType === 'soccer_game_total') {
     const totalLine = rawData.total_line ?? null;
@@ -505,6 +507,7 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       edge_basis: rawData.edge_basis ?? null,
       missing_context_flags,
       pass_reason,
+      model_confidence: null, // populated in Phase 2 (WI-0492): FULL | PARTIAL | LOW
     };
   } else if (canonicalCardType === 'soccer_double_chance') {
     const outcome = rawData.dc_outcome ?? null;
@@ -528,6 +531,7 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       edge_basis: edgeBasis,
       missing_context_flags,
       pass_reason: null,
+      model_confidence: null, // populated in Phase 2 (WI-0492): FULL | PARTIAL | LOW
     };
   } else {
     throw new Error(`buildSoccerOddsBackedCard: unknown canonicalCardType "${canonicalCardType}"`);
@@ -780,6 +784,7 @@ function buildSoccerTier1CardFromPropLine(gameId, oddsSnapshot, propLineRow) {
       available: true,
       missing_fields: [],
     },
+    model_confidence: null, // populated in Phase 2 (WI-0492): FULL | PARTIAL | LOW
   };
 
   return {
@@ -932,6 +937,7 @@ function generateSoccerCard(gameId, oddsSnapshot) {
       missing_context_fields:
         missingContextFields.length > 0 ? [...missingContextFields] : [],
     },
+    model_confidence: null, // populated in Phase 2 (WI-0492): FULL | PARTIAL | LOW
   };
 
   return {

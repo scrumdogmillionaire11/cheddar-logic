@@ -42,6 +42,7 @@ const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { runSoccerModel } = require('../jobs/run_soccer_model');
 const { pullSoccerPlayerProps } = require('../jobs/pull_soccer_player_props');
+const { pullSoccerXgStats } = require('../jobs/pull_soccer_xg_stats');
 const { runNCAAMModel } = require('../jobs/run_ncaam_model');
 const { runRefreshNcaamFtCsv } = require('../jobs/refresh_ncaam_ft_csv');
 const { settleGameResults } = require('../jobs/settle_game_results');
@@ -437,6 +438,17 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
+  function queueSoccerXgIngestBeforeModel(modelJobKey, reason) {
+    const xgJobKey = `soccer_xg|${modelJobKey}`;
+    jobs.push({
+      jobName: 'pull_soccer_xg_stats',
+      jobKey: xgJobKey,
+      execute: pullSoccerXgStats,
+      args: { jobKey: xgJobKey, dryRun },
+      reason: `pre-model soccer xG cache refresh (${reason})`,
+    });
+  }
+
   function maybeQueueNcaamFtRefresh(triggerReason) {
     if (!ENABLE_NCAAM_FT_REFRESH) return;
     if (ncaamFtRefreshQueued) return;
@@ -603,6 +615,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
       const jobKey = keyFixed(sport, nowEt, t);
       if (sport === 'soccer') {
+        queueSoccerXgIngestBeforeModel(jobKey, `fixed ${t} ET`);
         queueSoccerPropIngestBeforeModel(jobKey, `fixed ${t} ET`);
       }
       jobs.push({
@@ -632,6 +645,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
       const jobKey = keyTminus(sport, g.game_id, mins);
       if (sport === 'soccer') {
+        queueSoccerXgIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
         queueSoccerPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
       }
       jobs.push({
@@ -645,6 +659,10 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
     if (sport === 'soccer' && isSoccerLineupT45Due(nowUtc, startUtc)) {
       const jobKey = keyTminus(sport, g.game_id, SOCCER_LINEUP_T45_MINUTES);
+      queueSoccerXgIngestBeforeModel(
+        jobKey,
+        `soccer lineup checkpoint T-${SOCCER_LINEUP_T45_MINUTES} for ${g.game_id}`,
+      );
       queueSoccerPropIngestBeforeModel(
         jobKey,
         `soccer lineup checkpoint T-${SOCCER_LINEUP_T45_MINUTES} for ${g.game_id}`,
