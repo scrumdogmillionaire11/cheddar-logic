@@ -511,6 +511,12 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
   };
 
   const evidenceOnlyPlays = game.plays.filter((play) => isEvidenceItem(play, game.sport));
+  const contract = getSportCardTypeContract(game.sport);
+  const hasPlayProducerSignals = contract
+    ? game.plays.some((play) =>
+        contract.playProducerCardTypes.has(normalizeCardType(play.cardType || '')),
+      )
+    : game.plays.some((play) => (play.kind ?? 'PLAY') === 'PLAY');
 
   if (evidenceOnlyPlays.length === 0) {
     return ['play_candidates:evidence_only'];
@@ -563,11 +569,11 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
     return [];
   }
 
-  if (diagnostics.length === 0) {
-    return [];
+  if (!hasPlayProducerSignals) {
+    return ['fetch_failure:no_play_producer_signals'];
   }
 
-  return diagnostics.slice(0, 8);
+  return ['fetch_failure:unclassified_no_play_pipeline'];
 }
 
 type CanonicalSide = 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NONE';
