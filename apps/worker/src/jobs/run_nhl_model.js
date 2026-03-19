@@ -76,6 +76,14 @@ const { resolveGoalieState } = require('../models/nhl-goalie-state');
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const USE_ORCHESTRATED_MARKET =
   process.env.USE_ORCHESTRATED_MARKET === 'true';
+// WI-0505: Phase-2 gate for NHL 1P fair probability math.
+// Requires stable real 1P line supply in odds snapshot (total_1p must be a number).
+// Rollback: set NHL_1P_FAIR_PROB_PHASE2=false and redeploy; no migration needed.
+const NHL_1P_FAIR_PROB_PHASE2 =
+  process.env.NHL_1P_FAIR_PROB_PHASE2 === 'true';
+const NHL_1P_SIGMA = Number.isFinite(parseFloat(process.env.NHL_1P_SIGMA))
+  ? parseFloat(process.env.NHL_1P_SIGMA)
+  : 1.26;
 
 const NHL_DRIVER_WEIGHTS = {
   baseProjection: 0.3,
@@ -1236,9 +1244,13 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           };
 
           // Compute per-driver card descriptors
+          // WI-0505: Phase-2 fair prob requires a confirmed real 1P market line
+          const hasReal1pLine = typeof oddsSnapshot.total_1p === 'number';
           const driverCards = computeNHLDriverCards(gameId, oddsSnapshot, {
             recentRoadGames: homeTeamRoadTrip,
             canonicalGoalieState,
+            phase2FairProbEnabled: NHL_1P_FAIR_PROB_PHASE2 && hasReal1pLine,
+            sigma1p: NHL_1P_SIGMA,
           });
 
           const marketDecisions = computeNHLMarketDecisions(oddsSnapshot);
