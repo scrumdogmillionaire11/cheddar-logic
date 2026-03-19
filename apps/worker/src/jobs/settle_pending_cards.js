@@ -456,6 +456,186 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
   return { closed, failures, fallbackCloses, reasonCounts, closedResultIds };
 }
 
+function parsePayloadJsonSafely(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function toConfidenceScore(payloadData) {
+  const confidencePct = Number(payloadData?.confidence_pct);
+  if (Number.isFinite(confidencePct)) return confidencePct;
+  const confidence = Number(payloadData?.confidence);
+  if (Number.isFinite(confidence)) return confidence * 100;
+  return -1;
+}
+
+function resolveDuplicateGroupKey(row) {
+  if (row.market_key) {
+    return `market_key:${row.market_key}`;
+  }
+
+  const payloadData = parsePayloadJsonSafely(row.payload_data);
+  const sport = String(row.sport || payloadData.sport || '').toUpperCase();
+  const propType = String(
+    payloadData?.play?.prop_type || payloadData?.prop_type || '',
+  )
+    .trim()
+    .toLowerCase();
+
+  if (sport === 'NHL' && propType === 'shots_on_goal') {
+    const period = normalizeSettlementPeriod(
+      payloadData?.play?.period ?? payloadData?.period ?? null,
+      row.card_type,
+    );
+    const playerId = String(
+      payloadData?.play?.player_id || payloadData?.player_id || '',
+    ).trim();
+    const playerName = normalizePlayerName(
+      payloadData?.play?.player_name || payloadData?.player_name || '',
+    );
+    const selection = String(
+      payloadData?.play?.selection?.side ?? payloadData?.selection?.side ?? '',
+    )
+      .trim()
+      .toUpperCase();
+    const line = parseLine(
+      payloadData?.play?.selection?.line ??
+        payloadData?.line ??
+        payloadData?.threshold ??
+        null,
+    );
+
+    if ((playerId || playerName) && (selection === 'OVER' || selection === 'UNDER')) {
+      return `nhl_shots:${row.game_id}:${period}:${playerId || playerName}:${selection}:${line}`;
+    }
+  }
+
+  return null;
+}
+
+function closeSupersededDuplicatePendingRows(db, settledAt) {
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        cr.id AS result_id,
+        cr.card_id,
+        cr.game_id,
+        cr.sport,
+        cr.card_type,
+        cr.metadata,
+        cr.market_key,
+        cp.payload_data,
+        cdl.displayed_at,
+        cp.created_at
+      FROM card_results cr
+      INNER JOIN game_results gr ON gr.game_id = cr.game_id AND gr.status = 'final'
+      INNER JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+      LEFT JOIN card_payloads cp ON cp.id = cr.card_id
+      WHERE cr.status = 'pending'
+      ORDER BY cdl.displayed_at DESC, cp.created_at DESC, cr.card_id DESC
+    `,
+    )
+    .all();
+
+  const grouped = new Map();
+  for (const row of rows) {
+    const groupKey = resolveDuplicateGroupKey(row);
+    if (!groupKey) continue;
+    if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+    grouped.get(groupKey).push(row);
+  }
+
+  const superseded = [];
+  for (const [, groupRows] of grouped.entries()) {
+    if (groupRows.length <= 1) continue;
+
+    const ranked = groupRows
+      .map((row) => {
+        const payloadData = parsePayloadJsonSafely(row.payload_data);
+        return {
+          ...row,
+          confidenceScore: toConfidenceScore(payloadData),
+          displayedAtMs: safeBackfillTimestampMs(row.displayed_at),
+          createdAtMs: safeBackfillTimestampMs(row.created_at),
+        };
+      })
+      .sort((a, b) => {
+        if (a.displayedAtMs !== b.displayedAtMs) {
+          return b.displayedAtMs - a.displayedAtMs;
+        }
+        if (a.createdAtMs !== b.createdAtMs) {
+          return b.createdAtMs - a.createdAtMs;
+        }
+        if (a.confidenceScore !== b.confidenceScore) {
+          return b.confidenceScore - a.confidenceScore;
+        }
+        if (a.card_id === b.card_id) return 0;
+        return a.card_id > b.card_id ? -1 : 1;
+      });
+
+    const winner = ranked[0];
+    for (const loser of ranked.slice(1)) {
+      superseded.push({
+        ...loser,
+        winnerCardId: winner.card_id,
+      });
+    }
+  }
+
+  if (superseded.length === 0) {
+    return {
+      closed: 0,
+      reasonCounts: {},
+      closedResultIds: new Set(),
+    };
+  }
+
+  const updateStmt = db.prepare(
+    `
+      UPDATE card_results
+      SET status = 'error', result = 'void', settled_at = ?, metadata = ?
+      WHERE id = ? AND status = 'pending'
+    `,
+  );
+
+  const closedResultIds = new Set();
+  const reasonCounts = { DUPLICATE_MARKET_SUPERSEDED: 0 };
+  for (const row of superseded) {
+    const metadata = parseJsonObject(row.metadata) || {};
+    metadata.settlement_error = {
+      code: 'DUPLICATE_MARKET_SUPERSEDED',
+      message:
+        'Duplicate pending market superseded by newer displayed pick; auto-voided before settlement',
+      at: settledAt,
+      classification: 'DEDUPE_AUTO_CLOSE',
+      details: {
+        supersededByCardId: row.winnerCardId,
+        duplicateGroup: resolveDuplicateGroupKey(row),
+      },
+    };
+
+    const result = updateStmt.run(settledAt, JSON.stringify(metadata), row.result_id);
+    if (Number(result?.changes || 0) > 0) {
+      reasonCounts.DUPLICATE_MARKET_SUPERSEDED += 1;
+      closedResultIds.add(String(row.result_id));
+    }
+  }
+
+  return {
+    closed: closedResultIds.size,
+    reasonCounts,
+    closedResultIds,
+  };
+}
+
 function normalizePeriodToken(value) {
   const token = String(value || '')
     .trim()
@@ -516,6 +696,15 @@ function readFirstPeriodScores(gameResultMetadata) {
     return { home: null, away: null };
   }
 
+  const verification =
+    gameResultMetadata.firstPeriodVerification &&
+    typeof gameResultMetadata.firstPeriodVerification === 'object'
+      ? gameResultMetadata.firstPeriodVerification
+      : null;
+  if (verification && verification.isComplete === false) {
+    return { home: null, away: null };
+  }
+
   const fromFirstPeriodScores = gameResultMetadata.firstPeriodScores;
   if (fromFirstPeriodScores && typeof fromFirstPeriodScores === 'object') {
     const home = Number(fromFirstPeriodScores.home);
@@ -535,6 +724,187 @@ function readFirstPeriodScores(gameResultMetadata) {
   }
 
   return { home: null, away: null };
+}
+
+function normalizePlayerName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[.'\u2019-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isNhlShotsOnGoalCard(row, payloadData) {
+  const sport = String(row?.sport || payloadData?.sport || '').toUpperCase();
+  if (sport !== 'NHL') return false;
+
+  const propType = String(
+    payloadData?.play?.prop_type || payloadData?.prop_type || '',
+  )
+    .trim()
+    .toLowerCase();
+  return propType === 'shots_on_goal';
+}
+
+function resolveNhlShotsSettlementContext(row, payloadData, cardResultMetadata) {
+  const period = normalizeSettlementPeriod(
+    payloadData?.play?.period ??
+      payloadData?.period ??
+      cardResultMetadata?.lockedMarket?.period ??
+      'FULL_GAME',
+    row?.card_type,
+  );
+
+  const rawSelection =
+    payloadData?.play?.selection?.side ??
+    payloadData?.selection?.side ??
+    payloadData?.selection ??
+    null;
+  const selection = String(rawSelection || '').trim().toUpperCase();
+  if (selection !== 'OVER' && selection !== 'UNDER') {
+    throw createMarketError(
+      'INVALID_PROP_SELECTION',
+      `Card ${row.card_id} missing valid player-prop selection`,
+      { cardId: row.card_id, selection: rawSelection },
+    );
+  }
+
+  const lineRaw =
+    payloadData?.play?.selection?.line ??
+    payloadData?.line ??
+    payloadData?.threshold ??
+    null;
+  const line = parseLine(lineRaw);
+  if (!Number.isFinite(line)) {
+    throw createMarketError(
+      'MISSING_MARKET_LINE',
+      `Card ${row.card_id} missing player-prop line`,
+      { cardId: row.card_id, line: lineRaw },
+    );
+  }
+
+  const playerId = String(
+    payloadData?.play?.player_id || payloadData?.player_id || '',
+  ).trim();
+  const playerName = String(
+    payloadData?.play?.player_name || payloadData?.player_name || '',
+  ).trim();
+  if (!playerId && !playerName) {
+    throw createMarketError(
+      'MISSING_PLAYER_IDENTITY',
+      `Card ${row.card_id} missing player id/name for shots settlement`,
+      { cardId: row.card_id },
+    );
+  }
+
+  const lockedPrice = parseLockedPrice(
+    row?.locked_price ?? payloadData?.play?.selection?.price ?? payloadData?.price,
+  );
+
+  return {
+    marketKey:
+      row?.market_key ||
+      `${row?.game_id || 'unknown'}:PROP_SHOTS_ON_GOAL:${period}:${selection}:${line}`,
+    marketType: 'TOTAL',
+    period,
+    selection,
+    line,
+    playerId,
+    playerName,
+    lockedPrice,
+  };
+}
+
+function resolvePlayerShotsActualValue({ gameResultMetadata, playerId, playerName, period }) {
+  const playerShots =
+    gameResultMetadata?.playerShots && typeof gameResultMetadata.playerShots === 'object'
+      ? gameResultMetadata.playerShots
+      : null;
+
+  if (!playerShots) {
+    throw createMarketError(
+      'MISSING_PLAYER_SHOTS_DATA',
+      'Missing player-shots metadata required for NHL prop settlement',
+      { period },
+    );
+  }
+
+  const normalizedPeriod = normalizeSettlementPeriod(period);
+  const usingFirstPeriod = normalizedPeriod === '1P';
+  const byPlayerId = usingFirstPeriod
+    ? playerShots.firstPeriodByPlayerId
+    : playerShots.fullGameByPlayerId;
+  if (!byPlayerId || typeof byPlayerId !== 'object') {
+    throw createMarketError(
+      usingFirstPeriod
+        ? 'MISSING_PERIOD_PLAYER_SHOTS_DATA'
+        : 'MISSING_PLAYER_SHOTS_DATA',
+      usingFirstPeriod
+        ? 'Missing first-period player shots required for NHL 1P prop settlement'
+        : 'Missing full-game player shots required for NHL prop settlement',
+      { period: normalizedPeriod },
+    );
+  }
+
+  const directById = playerId ? Number(byPlayerId[String(playerId)]) : null;
+  if (Number.isFinite(directById)) {
+    return directById;
+  }
+
+  const normalizedName = normalizePlayerName(playerName);
+  if (!normalizedName) {
+    throw createMarketError(
+      'MISSING_PLAYER_IDENTITY',
+      'Unable to resolve player identity for NHL shots settlement',
+      { playerId, playerName },
+    );
+  }
+
+  const playerIdByNormalizedName =
+    playerShots.playerIdByNormalizedName &&
+    typeof playerShots.playerIdByNormalizedName === 'object'
+      ? playerShots.playerIdByNormalizedName
+      : {};
+  const mappedPlayerId = playerIdByNormalizedName[normalizedName];
+  if (mappedPlayerId && Number.isFinite(Number(byPlayerId[String(mappedPlayerId)]))) {
+    return Number(byPlayerId[String(mappedPlayerId)]);
+  }
+
+  throw createMarketError(
+    usingFirstPeriod
+      ? 'MISSING_PERIOD_PLAYER_SHOTS_VALUE'
+      : 'MISSING_PLAYER_SHOTS_VALUE',
+    usingFirstPeriod
+      ? 'Missing first-period shots value for player'
+      : 'Missing full-game shots value for player',
+    {
+      playerId,
+      playerName,
+      period: normalizedPeriod,
+    },
+  );
+}
+
+function gradeNhlPlayerShotsMarket({ selection, line, actualShots }) {
+  if (!Number.isFinite(actualShots)) {
+    throw createMarketError(
+      'MISSING_PLAYER_SHOTS_VALUE',
+      'Missing player shots value required for settlement',
+      { actualShots },
+    );
+  }
+  if (!Number.isFinite(line)) {
+    throw createMarketError(
+      'MISSING_MARKET_LINE',
+      'Player shots settlement requires a finite line',
+      { line },
+    );
+  }
+
+  if (actualShots > line) return selection === 'OVER' ? 'win' : 'loss';
+  if (actualShots < line) return selection === 'UNDER' ? 'win' : 'loss';
+  return 'push';
 }
 
 function resolveSettlementMarketBucket({
@@ -1253,7 +1623,19 @@ async function settlePendingCards({
         INNER JOIN game_results gr ON cr.game_id = gr.game_id
         LEFT JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'pending'
-          AND cr.market_key IS NOT NULL
+          AND (
+            cr.market_key IS NOT NULL
+            OR (
+              UPPER(COALESCE(cr.sport, cp.sport, '')) = 'NHL'
+              AND LOWER(
+                COALESCE(
+                  json_extract(cp.payload_data, '$.play.prop_type'),
+                  json_extract(cp.payload_data, '$.prop_type'),
+                  ''
+                )
+              ) = 'shots_on_goal'
+            )
+          )
           AND gr.status = 'final'
       `);
 
@@ -1269,6 +1651,8 @@ async function settlePendingCards({
       const settledAt = new Date().toISOString();
       let nonActionableAutoClosed = 0;
       let nonActionableAutoClosedReasons = {};
+      let duplicateAutoClosed = 0;
+      let duplicateAutoClosedReasons = {};
       const nonActionableClose = autoCloseNonActionableFinalPendingRows(
         db,
         settledAt,
@@ -1291,6 +1675,22 @@ async function settlePendingCards({
           `[SettleCards] Auto-closed ${nonActionableClose.fallbackCloses} non-actionable final rows using fallback update`,
         );
       }
+      const duplicateClose = closeSupersededDuplicatePendingRows(db, settledAt);
+      duplicateAutoClosed = duplicateClose.closed;
+      duplicateAutoClosedReasons = duplicateClose.reasonCounts;
+      if (duplicateAutoClosed > 0) {
+        console.log(
+          `[SettleCards] Auto-closed ${duplicateAutoClosed} superseded duplicate pending rows (${JSON.stringify(duplicateAutoClosedReasons)})`,
+        );
+      }
+      const autoClosedResultIdUnion = new Set([
+        ...autoClosedResultIdSet,
+        ...(duplicateClose.closedResultIds || new Set()),
+      ]);
+      const eligibleCount = pendingRows.filter((row) => {
+        const resultId = String(row.result_id ?? '').trim();
+        return resultId ? !autoClosedResultIdUnion.has(resultId) : true;
+      }).length;
       const marketDailyCounts = {
         NBA_TOTAL: { pending: 0, settled: 0, failed: 0 },
         NHL_TOTAL: { pending: 0, settled: 0, failed: 0 },
@@ -1301,7 +1701,10 @@ async function settlePendingCards({
       for (const pendingCard of pendingRows) {
         // Skip rows already auto-closed this run — prevents double-counting in cardsRaced/cardsErrored
         const rowResultId = String(pendingCard.result_id ?? '').trim();
-        if (rowResultId && autoClosedResultIdSet.has(rowResultId)) {
+        if (
+          rowResultId &&
+          autoClosedResultIdUnion.has(rowResultId)
+        ) {
           continue;
         }
 
@@ -1340,32 +1743,56 @@ async function settlePendingCards({
         const homeScore = Number(pendingCard.final_score_home);
         const awayScore = Number(pendingCard.final_score_away);
         const firstPeriodScores = readFirstPeriodScores(gameResultMetadata);
+        const isNhlShotsCard = isNhlShotsOnGoalCard(pendingCard, payloadData);
         let clvTracked = false;
 
         try {
-          const lockedMarket = assertLockedMarketContext(
-            pendingCard,
-            payloadData,
-            { period },
-          );
-          const clvEntry = buildClvEntryFromPendingCard({
-            pendingCard,
-            payloadData,
-            lockedMarket,
-          });
-          if (clvEntry) {
-            recordClvEntry(clvEntry);
-            clvTracked = true;
+          let lockedMarket;
+          let result;
+
+          if (isNhlShotsCard) {
+            lockedMarket = resolveNhlShotsSettlementContext(
+              pendingCard,
+              payloadData,
+              cardResultMetadata,
+            );
+            const actualShots = resolvePlayerShotsActualValue({
+              gameResultMetadata,
+              playerId: lockedMarket.playerId,
+              playerName: lockedMarket.playerName,
+              period: lockedMarket.period,
+            });
+            result = gradeNhlPlayerShotsMarket({
+              selection: lockedMarket.selection,
+              line: lockedMarket.line,
+              actualShots,
+            });
+          } else {
+            lockedMarket = assertLockedMarketContext(
+              pendingCard,
+              payloadData,
+              { period },
+            );
+            const clvEntry = buildClvEntryFromPendingCard({
+              pendingCard,
+              payloadData,
+              lockedMarket,
+            });
+            if (clvEntry) {
+              recordClvEntry(clvEntry);
+              clvTracked = true;
+            }
+            result = gradeLockedMarket({
+              marketType: lockedMarket.marketType,
+              selection: lockedMarket.selection,
+              line: lockedMarket.line,
+              homeScore,
+              awayScore,
+              period: lockedMarket.period,
+              firstPeriodScores,
+            });
           }
-          const result = gradeLockedMarket({
-            marketType: lockedMarket.marketType,
-            selection: lockedMarket.selection,
-            line: lockedMarket.line,
-            homeScore,
-            awayScore,
-            period: lockedMarket.period,
-            firstPeriodScores,
-          });
+
           const effectivePrice = lockedMarket.lockedPrice ?? -110;
           const pnlOutcome = computePnlOutcome(result, effectivePrice);
           if (pnlOutcome.anomalyCode) {
@@ -1404,7 +1831,7 @@ async function settlePendingCards({
               marketDailyCounts[marketBucket].settled += 1;
             }
             console.log(
-              `[SettleCards] Settled card ${pendingCard.card_id}: ${lockedMarket.marketType}/${lockedMarket.selection} ` +
+              `[SettleCards] Settled card ${pendingCard.card_id}: ${isNhlShotsCard ? 'PROP_SHOTS_ON_GOAL' : lockedMarket.marketType}/${lockedMarket.selection} ` +
                 `(${lockedMarket.marketKey}) -> ${result} (period=${lockedMarket.period}, pnl: ${pnlOutcome.pnlUnits})`,
             );
           } else if (
@@ -1494,7 +1921,6 @@ async function settlePendingCards({
         }
       }
 
-      const eligibleCount = pendingRows.length;
       const accountedCount =
         cardsSettled + cardsErrored + cardsRaced + cardsSkipped;
       if (accountedCount < eligibleCount) {
@@ -1510,7 +1936,7 @@ async function settlePendingCards({
       }
       const totalSkipped = cardsSkipped;
       console.log(
-        `[SettleCards] Step 1 complete — pending: ${coverageBefore.totalPending}, eligible: ${eligibleCount}, settled: ${cardsSettled}, errored: ${cardsErrored}, raced: ${cardsRaced}, skipped: ${totalSkipped}, autoClosedNonActionable: ${nonActionableAutoClosed}`,
+        `[SettleCards] Step 1 complete — pending: ${coverageBefore.totalPending}, eligible: ${eligibleCount}, settled: ${cardsSettled}, errored: ${cardsErrored}, raced: ${cardsRaced}, skipped: ${totalSkipped}, autoClosedNonActionable: ${nonActionableAutoClosed}, autoClosedDuplicates: ${duplicateAutoClosed}`,
       );
       console.log(
         `[SettleCards] Market daily counts — NBA_TOTAL: ${JSON.stringify(marketDailyCounts.NBA_TOTAL)}, NHL_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_TOTAL)}, NHL_1P_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_1P_TOTAL)}, NHL_MONEYLINE: ${JSON.stringify(marketDailyCounts.NHL_MONEYLINE)}`,
@@ -1646,6 +2072,8 @@ async function settlePendingCards({
             nonActionableClose.fallbackCloses || 0,
           ),
           nonActionableAutoClosedReasons,
+          duplicateAutoClosedFinal: duplicateAutoClosed,
+          duplicateAutoClosedReasons,
           marketDailyCounts,
           displayBackfilled: backfilledDisplayed,
           displayBackfillEnabled: enableDisplayBackfill,
@@ -1699,16 +2127,21 @@ module.exports = {
   settlePendingCards,
   __private: {
     autoCloseNonActionableFinalPendingRows,
+    closeSupersededDuplicatePendingRows,
     assertLockedMarketContext,
     backfillDisplayedPlaysFromPayloads,
     computePnlOutcome,
     computePnlUnits,
     extractSettlementPeriod,
     getSettlementCoverageDiagnostics,
+    gradeNhlPlayerShotsMarket,
     gradeLockedMarket,
     buildClvEntryFromPendingCard,
     isClvEligiblePayload,
+    isNhlShotsOnGoalCard,
     readFirstPeriodScores,
+    resolveNhlShotsSettlementContext,
+    resolvePlayerShotsActualValue,
     resolveDecisionBasisForSettlement,
     resolveSettlementMarketBucket,
   },

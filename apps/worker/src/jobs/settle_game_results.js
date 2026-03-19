@@ -22,6 +22,11 @@ const dbBackup = require('../utils/db-backup.js');
 const { ResilientESPNClient } = require('../utils/espn-resilient-client.js');
 const { ScoringValidator } = require('../utils/scoring-validator.js');
 const { SettlementMonitor } = require('../utils/settlement-monitor.js');
+const {
+  DEFAULT_NHL_API_TIMEOUT_MS,
+  areNhlSnapshotsEquivalent,
+  fetchNhlSettlementSnapshot,
+} = require('./nhl-settlement-source.js');
 
 const {
   upsertGameResult,
@@ -92,6 +97,10 @@ const ODDS_API_SCORES_DAYS_FROM = Math.max(
 const SPORTSREF_REQUEST_TIMEOUT_MS = Math.max(
   3000,
   Number(process.env.SPORTSREF_REQUEST_TIMEOUT_MS) || 15000,
+);
+const NHL_API_TIMEOUT_MS = Math.max(
+  3000,
+  Number(process.env.NHL_API_TIMEOUT_MS) || DEFAULT_NHL_API_TIMEOUT_MS,
 );
 
 const SPORTSREF_BASE_URL = 'https://www.sports-reference.com';
@@ -709,6 +718,13 @@ function getGameSignature(game) {
   return `${normalizeTeamName(game.home_team)}|${normalizeTeamName(game.away_team)}|${game.game_time_utc}`;
 }
 
+function resolveNhlGamecenterId(dbGameId, mappedNhlGameId) {
+  if (mappedNhlGameId) return String(mappedNhlGameId);
+  const raw = String(dbGameId || '').trim();
+  if (/^\d{6,}$/.test(raw)) return raw;
+  return null;
+}
+
 function findStrictNameTimeMatch(dbGame, completedEvents) {
   const gameTimeMs = toEpochMs(dbGame.game_time_utc);
   if (gameTimeMs === null) return { match: null, reason: 'invalid_game_time' };
@@ -1146,6 +1162,11 @@ async function settleGameResults({
       let oddsApiFallbackAttempts = 0;
       let oddsApiFallbackMatches = 0;
       let oddsApiFallbackMisses = 0;
+      let nhlApiAttempts = 0;
+      let nhlApiMatches = 0;
+      let nhlApiDivergenceSkips = 0;
+      let nhlEspnFallbackAttempts = 0;
+      let nhlEspnFallbackMatches = 0;
 
       for (const [sport, sportGames] of Object.entries(bySport)) {
         const espnPath = ESPN_SPORT_MAP[sport];
@@ -1243,6 +1264,22 @@ async function settleGameResults({
             String(row.external_game_id),
           ]),
         );
+        const mappedNhlGameIdByGameId =
+          sport === 'NHL'
+            ? new Map(
+                db
+                  .prepare(
+                    `
+                  SELECT game_id, external_game_id
+                  FROM game_id_map
+                  WHERE sport = ?
+                    AND provider IN ('nhl', 'nhl_api', 'nhl_gamecenter')
+                `,
+                  )
+                  .all('nhl')
+                  .map((row) => [String(row.game_id), String(row.external_game_id)]),
+              )
+            : new Map();
 
         const mappedIdsToHydrate = [
           ...new Set(
@@ -1298,19 +1335,105 @@ async function settleGameResults({
             (/^\d+$/.test(String(dbGame.game_id))
               ? String(dbGame.game_id)
               : null);
-          const { match, reason } = findMatchForGame(
-            dbGame,
-            completedEvents,
-            completedEventById,
-            mappedEspnEventId,
-          );
+          let selectedMatch = null;
+          let missReason = null;
 
-          let selectedMatch = match;
-          let missReason = reason;
+          if (sport === 'NHL') {
+            nhlApiAttempts++;
+            const mappedNhlGameId = mappedNhlGameIdByGameId.get(String(dbGame.game_id));
+            const nhlGamecenterId = resolveNhlGamecenterId(
+              dbGame.game_id,
+              mappedNhlGameId,
+            );
+
+            if (nhlGamecenterId) {
+              const passOne = await fetchNhlSettlementSnapshot({
+                nhlGameId: nhlGamecenterId,
+                timeoutMs: NHL_API_TIMEOUT_MS,
+              });
+              if (passOne.available) {
+                const passTwo = await fetchNhlSettlementSnapshot({
+                  nhlGameId: nhlGamecenterId,
+                  timeoutMs: NHL_API_TIMEOUT_MS,
+                });
+
+                if (passTwo.available && areNhlSnapshotsEquivalent(passOne, passTwo)) {
+                  selectedMatch = {
+                    event: {
+                      id: `nhl:${nhlGamecenterId}`,
+                      homeName: dbGame.home_team,
+                      awayName: dbGame.away_team,
+                    },
+                    method: 'nhl_api_gamecenter_confirmed',
+                    confidence: 1.0,
+                    deltaMinutes: 0,
+                    swappedTeams: false,
+                    dbHomeScore: passOne.homeScore,
+                    dbAwayScore: passOne.awayScore,
+                    dbHomeFirstPeriodScore: passOne.homeFirstPeriodScore,
+                    dbAwayFirstPeriodScore: passOne.awayFirstPeriodScore,
+                    nhlGamecenterId,
+                    nhlSnapshot: passOne,
+                  };
+                  nhlApiMatches++;
+                } else if (!passTwo.available) {
+                  missReason = [
+                    missReason,
+                    `nhl_pass2_unavailable:${passTwo.reason || 'unknown'}`,
+                  ]
+                    .filter(Boolean)
+                    .join(';');
+                } else {
+                  nhlApiDivergenceSkips++;
+                  missReason = [missReason, 'nhl_confirmation_divergence']
+                    .filter(Boolean)
+                    .join(';');
+                }
+              } else {
+                missReason = [
+                  missReason,
+                  `nhl_unavailable:${passOne.reason || passOne.error || 'unknown'}`,
+                ]
+                  .filter(Boolean)
+                  .join(';');
+              }
+            } else {
+              missReason = [missReason, 'nhl_gamecenter_id_missing']
+                .filter(Boolean)
+                .join(';');
+            }
+
+            if (!selectedMatch) {
+              nhlEspnFallbackAttempts++;
+              const espnFallbackResult = findMatchForGame(
+                dbGame,
+                completedEvents,
+                completedEventById,
+                mappedEspnEventId,
+              );
+              selectedMatch = espnFallbackResult.match;
+              missReason = [missReason, espnFallbackResult.reason]
+                .filter(Boolean)
+                .join(';');
+              if (selectedMatch) {
+                nhlEspnFallbackMatches++;
+              }
+            }
+          } else {
+            const { match, reason } = findMatchForGame(
+              dbGame,
+              completedEvents,
+              completedEventById,
+              mappedEspnEventId,
+            );
+            selectedMatch = match;
+            missReason = reason;
+          }
 
           if (
             !selectedMatch &&
-            SETTLEMENT_ENABLE_ODDSAPI_SCORES_FALLBACK
+            SETTLEMENT_ENABLE_ODDSAPI_SCORES_FALLBACK &&
+            sport !== 'NHL'
           ) {
             oddsApiFallbackAttempts++;
             if (oddsApiCompletedEvents === null) {
@@ -1469,10 +1592,13 @@ async function settleGameResults({
               metadata: {
                 espnEventId: selectedMatch.method.startsWith('oddsapi_')
                   ? null
+                  : selectedMatch.method.startsWith('nhl_api_')
+                    ? null
                   : selectedMatch.event.id,
                 oddsApiEventId: selectedMatch.method.startsWith('oddsapi_')
                   ? selectedMatch.event.id
                   : null,
+                nhlGamecenterId: selectedMatch.nhlGamecenterId || null,
                 matchMethod: selectedMatch.method,
                 matchConfidence: selectedMatch.confidence,
                 expectedEspnEventId: mappedEspnEventId,
@@ -1483,6 +1609,33 @@ async function settleGameResults({
                     ? {
                         home: selectedMatch.dbHomeFirstPeriodScore,
                         away: selectedMatch.dbAwayFirstPeriodScore,
+                      }
+                    : null,
+                firstPeriodVerification:
+                  selectedMatch.method.startsWith('nhl_api_')
+                    ? {
+                        isComplete:
+                          selectedMatch.nhlSnapshot?.isFirstPeriodComplete === true,
+                        gameState: selectedMatch.nhlSnapshot?.gameState || null,
+                        periodNumber: selectedMatch.nhlSnapshot?.periodNumber || null,
+                      }
+                    : null,
+                playerShots:
+                  selectedMatch.method.startsWith('nhl_api_')
+                    ? {
+                        fullGameByPlayerId:
+                          selectedMatch.nhlSnapshot?.playerShots?.fullGameByPlayerId ||
+                          {},
+                        firstPeriodByPlayerId:
+                          selectedMatch.nhlSnapshot?.playerShots
+                            ?.firstPeriodByPlayerId || {},
+                        playerNamesById:
+                          selectedMatch.nhlSnapshot?.playerShots?.playerNamesById || {},
+                        playerIdByNormalizedName:
+                          selectedMatch.nhlSnapshot?.playerShots
+                            ?.playerIdByNormalizedName || {},
+                        sources:
+                          selectedMatch.nhlSnapshot?.playerShots?.sources || null,
                       }
                     : null,
                 sportsRef: selectedMatch.sportsRef || null,
@@ -1518,6 +1671,9 @@ async function settleGameResults({
           `[SettleGames] Odds API fallback summary — attempts=${oddsApiFallbackAttempts}, matches=${oddsApiFallbackMatches}, misses=${oddsApiFallbackMisses}`,
         );
       }
+      console.log(
+        `[SettleGames] NHL API summary — attempts=${nhlApiAttempts}, matches=${nhlApiMatches}, confirmationDivergenceSkips=${nhlApiDivergenceSkips}, espnFallbackAttempts=${nhlEspnFallbackAttempts}, espnFallbackMatches=${nhlEspnFallbackMatches}`,
+      );
 
       if (errors.length > 0) {
         console.log(`[SettleGames] ${errors.length} errors:`);
