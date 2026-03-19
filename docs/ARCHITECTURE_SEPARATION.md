@@ -394,7 +394,27 @@ LIMIT 50;
 
 ---
 
-## 📋 Checklist: New Feature / Deployment
+## � Python Research Artifacts (Reference Material)
+
+**Status:** Retained as reference-only (not adopted for production)
+
+Research prototypes exist under `Claude-research/files/` (edge_engine.py, play_schema.py, projection_engine.py, kelly.py, etc.) but are **NOT wired into production**.
+
+- ✅ **Rationale:** Full decision documented in [docs/decisions/ADR-0005-python-research-reference-only.md](decisions/ADR-0005-python-research-reference-only.md)
+- ✅ **Use case:** Algorithm documentation, prototyping reference, future optimization research
+- ❌ **NOT:** Production runtime, deployment target, architectural requirement
+
+Production uses **Node/JS worker for all sports models** (NBA, NHL, NCAAM, Soccer, FPL, NFL, MLB). This separation maintains:
+
+- Proven track record (JavaScript betting pipeline runs successfully)
+- Operational simplicity (single runtime, unified deployment)
+- Clear ownership (Python = FPL Sage standalone; Node/JS = Cheddar core)
+
+**Future reversibility:** If high-confidence evidence emerges (e.g., 10x performance gain only in Python), a new ADR can reverse this decision. See ADR-0005 "Future Reversibility" section for process.
+
+---
+
+## �📋 Checklist: New Feature / Deployment
 
 ### Adding FPL Support to a New Cheddar Feature
 

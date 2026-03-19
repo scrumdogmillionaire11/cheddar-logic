@@ -2,6 +2,16 @@
 
 `WORK_QUEUE/` is the single source of truth for active and upcoming work.
 
+## Architecture Decision: Python Research as Reference-Only
+
+**Status:** Decided (WI-0507)
+
+Python research artifacts (`Claude-research/files/`) remain as documentation and prototyping reference but are **NOT adopted for production sidecar**. All active sport expansion (Soccer, MLB, NHL, NFL) proceeds in Node/JS runtime.
+
+See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decisions/ADR-0005-python-research-reference-only.md) for full rationale.
+
+---
+
 ## Active Work Items
 
 **Updated**: 2026-03-17
