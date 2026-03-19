@@ -480,6 +480,27 @@ function toDiagnosticToken(prefix: string, value: unknown): string | null {
   return `${prefix}:${normalized}`;
 }
 
+const NO_ACTIONABLE_IGNORE_REASON_CODES = new Set([
+  'PASS_MISSING_MARKET_TYPE',
+  'PASS_UNREPAIRABLE_LEGACY',
+]);
+
+const NO_ACTIONABLE_FETCH_REASON_FRAGMENTS = [
+  'TEAM_MAPPING',
+  'PROJECTION_INPUT',
+  'NO_ODDS',
+  'DRIVER',
+  'INGEST',
+  'SOURCE',
+  'MISSING_',
+];
+
+function isFetchFailureReasonCode(code: string): boolean {
+  return NO_ACTIONABLE_FETCH_REASON_FRAGMENTS.some((fragment) =>
+    code.includes(fragment),
+  );
+}
+
 function collectNoActionablePlayInputs(game: GameData): string[] {
   const diagnostics: string[] = [];
   const seen = new Set<string>();
@@ -495,22 +516,55 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
     return ['play_candidates:evidence_only'];
   }
 
+  if (game.ingest_failure_reason_code === 'TEAM_MAPPING_UNMAPPED') {
+    push('fetch_failure:team_mapping_unmapped');
+  }
+  if (game.source_mapping_ok === false) {
+    push('fetch_failure:source_mapping_failed');
+  }
+  if (game.projection_inputs_complete === false) {
+    push('fetch_failure:projection_inputs_incomplete');
+  }
+
+  let hasModelOnlySignals = false;
   for (const play of evidenceOnlyPlays) {
-    push(toDiagnosticToken('card_type', play.cardType));
-    push(toDiagnosticToken('pass_reason', play.pass_reason_code));
+    if (typeof play.pass_reason_code === 'string') {
+      const code = play.pass_reason_code.toUpperCase();
+      if (!NO_ACTIONABLE_IGNORE_REASON_CODES.has(code)) {
+        if (isFetchFailureReasonCode(code)) {
+          push(toDiagnosticToken('fetch_reason', code));
+        } else {
+          hasModelOnlySignals = true;
+        }
+      }
+    }
     for (const reasonCode of play.reason_codes ?? []) {
-      push(toDiagnosticToken('reason_code', reasonCode));
+      const code = String(reasonCode).toUpperCase();
+      if (NO_ACTIONABLE_IGNORE_REASON_CODES.has(code)) continue;
+      if (isFetchFailureReasonCode(code)) {
+        push(toDiagnosticToken('fetch_reason', code));
+      } else {
+        hasModelOnlySignals = true;
+      }
     }
     for (const missingInput of play.missing_inputs ?? []) {
-      push(toDiagnosticToken('play_missing', missingInput));
+      push(toDiagnosticToken('fetch_missing', missingInput));
     }
     for (const mappingFailure of play.source_mapping_failures ?? []) {
-      push(toDiagnosticToken('mapping_failure', mappingFailure));
+      push(toDiagnosticToken('fetch_mapping_failure', mappingFailure));
     }
   }
 
+  if (diagnostics.length > 0) {
+    return diagnostics.slice(0, 8);
+  }
+
+  if (hasModelOnlySignals) {
+    return ['model_signal:no_actionable_edge'];
+  }
+
   if (diagnostics.length === 0) {
-    return ['play_candidates:evidence_only'];
+    return ['model_signal:evidence_only_no_fetch_failure'];
   }
 
   return diagnostics.slice(0, 8);
