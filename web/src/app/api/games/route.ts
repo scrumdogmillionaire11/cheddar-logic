@@ -88,6 +88,7 @@ const API_GAMES_HORIZON_HOURS = Number.isFinite(RAW_API_GAMES_HORIZON_HOURS)
   ? RAW_API_GAMES_HORIZON_HOURS
   : 36;
 const HAS_API_GAMES_HORIZON = API_GAMES_HORIZON_HOURS > 0;
+const API_GAMES_INGEST_FAILURE_LOOKBACK_HOURS = 12;
 const TOTAL_PROJECTION_DRIFT_WARN_THRESHOLD = 0.5;
 
 interface GameRow {
@@ -109,6 +110,12 @@ interface GameRow {
   total_price_over: number | null;
   total_price_under: number | null;
   odds_captured_at: string | null;
+  projection_inputs_complete: boolean | null;
+  projection_missing_inputs: string[];
+  source_mapping_ok: boolean | null;
+  source_mapping_failures: string[];
+  ingest_failure_reason_code: string | null;
+  ingest_failure_reason_detail: string | null;
 }
 
 type LifecycleMode = 'pregame' | 'active';
@@ -238,6 +245,12 @@ interface Play {
       | 'VOLATILE_ENV'
       | 'UNKNOWN';
   };
+  projection_inputs_complete?: boolean | null;
+  missing_inputs?: string[];
+  source_mapping_ok?: boolean | null;
+  source_mapping_failures?: string[];
+  ingest_failure_reason_code?: string | null;
+  ingest_failure_reason_detail?: string | null;
   // Canonical decision fields
   // NOTE: 'BASE' | 'LEAN' | 'PASS' is the API-wire classification shape.
   // game-card.ts DecisionClassification uses 'PLAY' | 'LEAN' | 'NONE' (different).
@@ -329,6 +342,141 @@ interface Play {
   data_quality?: string | null;
   l5_sog?: number[] | null;
   l5_mean?: number | null;
+}
+
+interface IngestFailureRow {
+  game_id: string;
+  reason_code: string;
+  reason_detail: string | null;
+  last_seen: string;
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function assessProjectionInputsFromRawData(
+  sport: string,
+  rawData: unknown,
+): { projection_inputs_complete: boolean | null; projection_missing_inputs: string[] } {
+  const raw = parseJsonObject(rawData);
+  if (!raw) {
+    return {
+      projection_inputs_complete: null,
+      projection_missing_inputs: [],
+    };
+  }
+
+  const normalizedSport = String(sport || '').toUpperCase();
+  const missingInputs: string[] = [];
+  const espnMetrics = parseJsonObject(raw.espn_metrics);
+  const homeEspnMetrics = parseJsonObject(espnMetrics?.home)?.metrics;
+  const awayEspnMetrics = parseJsonObject(espnMetrics?.away)?.metrics;
+  const homeMetrics = parseJsonObject(homeEspnMetrics);
+  const awayMetrics = parseJsonObject(awayEspnMetrics);
+  const homeRaw = parseJsonObject(raw.home);
+  const awayRaw = parseJsonObject(raw.away);
+
+  if (normalizedSport === 'NBA' || normalizedSport === 'NCAAM') {
+    const homeAvgPoints =
+      homeMetrics?.avgPoints ??
+      raw.avg_points_home ??
+      homeRaw?.avg_points;
+    const awayAvgPoints =
+      awayMetrics?.avgPoints ??
+      raw.avg_points_away ??
+      awayRaw?.avg_points;
+    const homeAvgPointsAllowed =
+      homeMetrics?.avgPointsAllowed ??
+      raw.avg_points_allowed_home ??
+      homeRaw?.avg_points_allowed;
+    const awayAvgPointsAllowed =
+      awayMetrics?.avgPointsAllowed ??
+      raw.avg_points_allowed_away ??
+      awayRaw?.avg_points_allowed;
+
+    if (toFiniteNumber(homeAvgPoints) === null) missingInputs.push('home_avg_points');
+    if (toFiniteNumber(awayAvgPoints) === null) missingInputs.push('away_avg_points');
+    if (toFiniteNumber(homeAvgPointsAllowed) === null) {
+      missingInputs.push('home_avg_points_allowed');
+    }
+    if (toFiniteNumber(awayAvgPointsAllowed) === null) {
+      missingInputs.push('away_avg_points_allowed');
+    }
+  } else if (normalizedSport === 'NHL') {
+    const homeGoalsFor =
+      homeMetrics?.avgGoalsFor ??
+      raw.avg_goals_for_home ??
+      homeRaw?.avg_goals_for;
+    const awayGoalsFor =
+      awayMetrics?.avgGoalsFor ??
+      raw.avg_goals_for_away ??
+      awayRaw?.avg_goals_for;
+    const homeGoalsAgainst =
+      homeMetrics?.avgGoalsAgainst ??
+      raw.avg_goals_against_home ??
+      homeRaw?.avg_goals_against;
+    const awayGoalsAgainst =
+      awayMetrics?.avgGoalsAgainst ??
+      raw.avg_goals_against_away ??
+      awayRaw?.avg_goals_against;
+
+    if (toFiniteNumber(homeGoalsFor) === null) missingInputs.push('home_avg_goals_for');
+    if (toFiniteNumber(awayGoalsFor) === null) missingInputs.push('away_avg_goals_for');
+    if (toFiniteNumber(homeGoalsAgainst) === null) {
+      missingInputs.push('home_avg_goals_against');
+    }
+    if (toFiniteNumber(awayGoalsAgainst) === null) {
+      missingInputs.push('away_avg_goals_against');
+    }
+  }
+
+  return {
+    projection_inputs_complete: missingInputs.length === 0,
+    projection_missing_inputs: missingInputs,
+  };
+}
+
+function deriveSourceMappingHealth(rawData: unknown): {
+  source_mapping_ok: boolean | null;
+  source_mapping_failures: string[];
+} {
+  const raw = parseJsonObject(rawData);
+  const sourceContract = raw?.espn_metrics &&
+    typeof raw.espn_metrics === 'object' &&
+    (raw.espn_metrics as Record<string, unknown>).source_contract &&
+    typeof (raw.espn_metrics as Record<string, unknown>).source_contract === 'object'
+      ? ((raw.espn_metrics as Record<string, unknown>).source_contract as Record<string, unknown>)
+      : null;
+
+  return {
+    source_mapping_ok:
+      typeof sourceContract?.mapping_ok === 'boolean'
+        ? (sourceContract.mapping_ok as boolean)
+        : null,
+    source_mapping_failures: Array.isArray(sourceContract?.mapping_failures)
+      ? sourceContract.mapping_failures.map((item) => String(item))
+      : [],
+  };
 }
 
 type MarketType = NonNullable<Play['market_type']>;
@@ -1463,7 +1611,8 @@ export async function GET(request: NextRequest) {
           o.spread_price_away,
           o.total_price_over,
           o.total_price_under,
-          o.captured_at AS odds_captured_at
+          o.captured_at AS odds_captured_at,
+          o.raw_data
         FROM odds_snapshots o
         INNER JOIN (
           SELECT game_id, MAX(captured_at) AS max_captured_at
@@ -1488,14 +1637,39 @@ export async function GET(request: NextRequest) {
         total_price_over: number | null;
         total_price_under: number | null;
         odds_captured_at: string | null;
+        raw_data: string | null;
       }>;
 
       const latestOddsByGameId = new Map(
         latestOddsRows.map((row) => [row.game_id, row]),
       );
 
+      const ingestFailureSql = `
+        SELECT game_id, reason_code, reason_detail, last_seen
+        FROM odds_ingest_failures
+        WHERE game_id IN (${oddsPlaceholders})
+          AND datetime(last_seen) >= datetime('now', '-${API_GAMES_INGEST_FAILURE_LOOKBACK_HOURS} hours')
+        ORDER BY last_seen DESC
+      `;
+      const ingestFailureRows = db.prepare(ingestFailureSql).all(
+        ...gameIdsForOdds,
+      ) as IngestFailureRow[];
+      const latestIngestFailureByGameId = new Map<string, IngestFailureRow>();
+      for (const row of ingestFailureRows) {
+        if (!row.game_id || latestIngestFailureByGameId.has(row.game_id)) {
+          continue;
+        }
+        latestIngestFailureByGameId.set(row.game_id, row);
+      }
+
       return baseGames.map((game) => {
         const odds = latestOddsByGameId.get(game.game_id);
+        const ingestFailure = latestIngestFailureByGameId.get(game.game_id);
+        const projectionHealth = assessProjectionInputsFromRawData(
+          game.sport,
+          odds?.raw_data,
+        );
+        const sourceMappingHealth = deriveSourceMappingHealth(odds?.raw_data);
         return {
           ...game,
           h2h_home: odds?.h2h_home ?? null,
@@ -1508,6 +1682,14 @@ export async function GET(request: NextRequest) {
           total_price_over: odds?.total_price_over ?? null,
           total_price_under: odds?.total_price_under ?? null,
           odds_captured_at: odds?.odds_captured_at ?? null,
+          projection_inputs_complete:
+            projectionHealth.projection_inputs_complete,
+          projection_missing_inputs:
+            projectionHealth.projection_missing_inputs,
+          source_mapping_ok: sourceMappingHealth.source_mapping_ok,
+          source_mapping_failures: sourceMappingHealth.source_mapping_failures,
+          ingest_failure_reason_code: ingestFailure?.reason_code ?? null,
+          ingest_failure_reason_detail: ingestFailure?.reason_detail ?? null,
         };
       });
     };
@@ -2520,6 +2702,38 @@ export async function GET(request: NextRequest) {
               }
             : undefined,
           reason_codes: combinedReasonCodes,
+          projection_inputs_complete:
+            typeof payload.projection_inputs_complete === 'boolean'
+              ? payload.projection_inputs_complete
+              : typeof payloadPlay?.projection_inputs_complete === 'boolean'
+                ? payloadPlay.projection_inputs_complete
+                : null,
+          missing_inputs: Array.from(
+            new Set([
+              ...(Array.isArray(payload.missing_inputs)
+                ? payload.missing_inputs
+                : []),
+              ...(Array.isArray(payloadPlay?.missing_inputs)
+                ? payloadPlay.missing_inputs
+                : []),
+            ].map((value) => String(value))),
+          ),
+          source_mapping_ok:
+            typeof payload.source_mapping_ok === 'boolean'
+              ? payload.source_mapping_ok
+              : typeof payloadPlay?.source_mapping_ok === 'boolean'
+                ? payloadPlay.source_mapping_ok
+                : null,
+          source_mapping_failures: Array.from(
+            new Set([
+              ...(Array.isArray(payload.source_mapping_failures)
+                ? payload.source_mapping_failures
+                : []),
+              ...(Array.isArray(payloadPlay?.source_mapping_failures)
+                ? payloadPlay.source_mapping_failures
+                : []),
+            ].map((value) => String(value))),
+          ),
           tags: combinedTags,
           run_id: normalizedRunId,
           created_at: normalizedCreatedAt,
@@ -2828,7 +3042,8 @@ export async function GET(request: NextRequest) {
               row.spread_home !== null ||
               row.spread_away !== null;
             const hasPlays = (playsMap.get(row.game_id)?.length ?? 0) > 0;
-            return !hasOdds && !hasPlays ? count + 1 : count;
+            const hasIngestFailure = Boolean(row.ingest_failure_reason_code);
+            return !hasOdds && !hasPlays && !hasIngestFailure ? count + 1 : count;
           }, 0)
         : 0;
 
@@ -2842,11 +3057,62 @@ export async function GET(request: NextRequest) {
               row.spread_home !== null ||
               row.spread_away !== null;
             const hasPlays = (playsMap.get(row.game_id)?.length ?? 0) > 0;
-            return hasOdds || hasPlays;
+            const hasIngestFailure = Boolean(row.ingest_failure_reason_code);
+            return hasOdds || hasPlays || hasIngestFailure;
           })
         : rows;
 
-    const data = responseRows.map((row) => {
+    // Deduplicate: when the schedule ingest seeds games with one game_id and the
+    // odds ingest later creates a second game_id for the same real-world matchup
+    // (same sport + teams + calendar date), both rows survive the filter above —
+    // the stale seed via old card_payloads, the new row via fresh odds.
+    // Resolution: keep the row with the most recent odds_captured_at; merge the
+    // loser's playsMap entries onto the winner so its card decisions are preserved.
+    const deduplicatedRows = (() => {
+      const byMatchup = new Map<string, GameRow[]>();
+      for (const row of responseRows) {
+        const key = `${row.sport}|${row.away_team.toUpperCase()}|${row.home_team.toUpperCase()}|${row.game_time_utc.substring(0, 10)}`;
+        const bucket = byMatchup.get(key);
+        if (bucket) {
+          bucket.push(row);
+        } else {
+          byMatchup.set(key, [row]);
+        }
+      }
+
+      const result: GameRow[] = [];
+      for (const group of byMatchup.values()) {
+        if (group.length === 1) {
+          result.push(group[0]);
+          continue;
+        }
+        // Sort: row with most recent odds first; fall back to created_at
+        group.sort((a, b) => {
+          const aKey = a.odds_captured_at ?? a.created_at;
+          const bKey = b.odds_captured_at ?? b.created_at;
+          return bKey < aKey ? -1 : bKey > aKey ? 1 : 0;
+        });
+        const winner = group[0];
+        // Merge playsMap entries from each loser onto the winner
+        for (let i = 1; i < group.length; i++) {
+          const loserId = group[i].game_id;
+          const loserPlays = playsMap.get(loserId);
+          if (loserPlays && loserPlays.length > 0) {
+            const winnerPlays = playsMap.get(winner.game_id);
+            if (winnerPlays) {
+              winnerPlays.push(...loserPlays);
+            } else {
+              playsMap.set(winner.game_id, [...loserPlays]);
+            }
+            playsMap.delete(loserId);
+          }
+        }
+        result.push(winner);
+      }
+      return result;
+    })();
+
+    const data = deduplicatedRows.map((row) => {
       const hasOdds =
         row.h2h_home !== null ||
         row.h2h_away !== null ||
@@ -2867,6 +3133,12 @@ export async function GET(request: NextRequest) {
         lifecycle_mode: lifecycleMode,
         display_status: displayStatus,
         createdAt: row.created_at,
+        projection_inputs_complete: row.projection_inputs_complete,
+        projection_missing_inputs: row.projection_missing_inputs,
+        source_mapping_ok: row.source_mapping_ok,
+        source_mapping_failures: row.source_mapping_failures,
+        ingest_failure_reason_code: row.ingest_failure_reason_code,
+        ingest_failure_reason_detail: row.ingest_failure_reason_detail,
         odds: hasOdds
           ? {
               h2hHome: row.h2h_home,
@@ -2936,7 +3208,8 @@ export async function GET(request: NextRequest) {
             active_fallback_applied: activeLifecycleFallbackApplied,
             lifecycle_mode: lifecycleMode,
             base_window_count: baseWindowCount,
-            returned_count: responseRows.length,
+            returned_count: deduplicatedRows.length,
+            deduped_count: responseRows.length - deduplicatedRows.length,
             dropped_no_odds_no_plays: pregameRowsDroppedNoOddsNoPlays,
             active_excluded_statuses:
               lifecycleMode === 'active' ? ACTIVE_EXCLUDED_STATUSES : [],
