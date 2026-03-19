@@ -12,7 +12,19 @@
 - `WI-0488`: MLB expansion tranche B (projection props + rollup separation audit; depends on `WI-0485`, `WI-0487`)
 - `WI-0489`: NFL expansion pack (deferred after MLB; depends on `WI-0485`, `WI-0488`)
 
+### NHL alignment pack (queued)
+
+- `WI-0500`: NHL 1P model hard alignment to WI-0385 target (formula, dead-zone, goalie certainty, reason codes)
+- `WI-0501`: NHL SOG matchup factor wiring (opponentFactor + paceFactor) + synthetic fallback observability
+- `WI-0502`: NHL calibration ledger wiring (CLV + projection) + settlement jobs
+- `WI-0506`: NHL results segmentation on `/results` (game vs 1P vs player shots props)
+- `WI-0503`: NHL cross-market orchestration dual-run (market-stratified engines + expression choice log)
+- `WI-0504`: NHL orchestration cutover (single best market expression per game, legacy blend retired)
+- `WI-0505`: NHL 1P Phase-2 gated fair-probability activation (only with stable real 1P lines)
+
 Recommended execution order: `WI-0485` -> (`WI-0486` + `WI-0487` in parallel if staffing allows) -> `WI-0488` -> `WI-0489`.
+
+NHL alignment execution order: `WI-0500` -> `WI-0501` -> `WI-0502` -> `WI-0506` -> `WI-0503` -> `WI-0504` -> `WI-0505`.
 
 ## Recently Completed
 
