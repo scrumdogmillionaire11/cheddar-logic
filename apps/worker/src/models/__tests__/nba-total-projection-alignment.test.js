@@ -2,6 +2,7 @@ const {
   computeNBADriverCards,
   computeNBAMarketDecisions,
 } = require('../index');
+const { assessProjectionInputs } = require('../projections');
 
 describe('nba total projection alignment', () => {
   test('nba-total-projection projected_total matches cross-market TOTAL projection', () => {
@@ -47,5 +48,23 @@ describe('nba total projection alignment', () => {
     expect(typeof projectedFromCrossMarket).toBe('number');
 
     expect(Math.abs(projectedFromDriver - projectedFromCrossMarket)).toBeLessThanOrEqual(0.1);
+  });
+
+  test('ncaam projection gate accepts raw home/away fallback metrics', () => {
+    const gate = assessProjectionInputs('NCAAM', {
+      raw_data: {
+        home: {
+          avg_points: 77.2,
+          avg_points_allowed: 69.1,
+        },
+        away: {
+          avg_points: 73.8,
+          avg_points_allowed: 68.4,
+        },
+      },
+    });
+
+    expect(gate.projection_inputs_complete).toBe(true);
+    expect(gate.missing_inputs).toEqual([]);
   });
 });

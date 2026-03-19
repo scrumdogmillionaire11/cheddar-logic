@@ -17,6 +17,22 @@ describe('ncaam team variant mapping', () => {
     ['St. Thomas-Minnesota Tommies', 'ST. THOMAS (MN) TOMMIES'],
     ['Saint Thomas Minnesota Tommies', 'ST. THOMAS (MN) TOMMIES'],
     ['UC Irvine Anteaters', 'UC IRVINE ANTEATERS'],
+    ['Kennesaw St Owls', 'KENNESAW ST OWLS'],
+    ['Dayton Flyers', 'DAYTON FLYERS'],
+    ['North Carolina Tar Heels', 'NORTH CAROLINA TAR HEELS'],
+    ['Duke Blue Devils', 'DUKE BLUE DEVILS'],
+    ['St. John\'s Red Storm', 'ST. JOHN\'S RED STORM'],
+    ['Michigan St Spartans', 'MICHIGAN ST SPARTANS'],
+    ['North Dakota St Bison', 'NORTH DAKOTA ST BISON'],
+    ['Murray St Racers', 'MURRAY ST RACERS'],
+    ['Sam Houston St Bearkats', 'SAM HOUSTON ST BEARKATS'],
+    ['UCF Knights', 'UCF KNIGHTS'],
+    ['Queens University Royals', 'QUEENS UNIVERSITY ROYALS'],
+    ['Missouri Tigers', 'MISSOURI TIGERS'],
+    ['Long Island University Sharks', 'LIU SHARKS'],
+    ['Prairie View A&M Panthers', 'PRAIRIE VIEW A&M PANTHERS'],
+    ['California Baptist Lancers', 'CAL BAPTIST LANCERS'],
+    ['Miami Ohio RedHawks', 'MIAMI (OH) REDHAWKS'],
   ];
 
   test.each(cases)('%s resolves to %s', (input, canonical) => {

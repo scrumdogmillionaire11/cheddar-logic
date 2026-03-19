@@ -99,15 +99,21 @@ function assessProjectionInputs(sport, oddsSnapshot) {
     }
   } else if (normalizedSport === 'NCAAM') {
     const homeAvgPoints =
-      raw?.espn_metrics?.home?.metrics?.avgPoints ?? raw?.avg_points_home;
+      raw?.espn_metrics?.home?.metrics?.avgPoints ??
+      raw?.avg_points_home ??
+      raw?.home?.avg_points;
     const awayAvgPoints =
-      raw?.espn_metrics?.away?.metrics?.avgPoints ?? raw?.avg_points_away;
+      raw?.espn_metrics?.away?.metrics?.avgPoints ??
+      raw?.avg_points_away ??
+      raw?.away?.avg_points;
     const homeAvgPointsAllowed =
       raw?.espn_metrics?.home?.metrics?.avgPointsAllowed ??
-      raw?.avg_points_allowed_home;
+      raw?.avg_points_allowed_home ??
+      raw?.home?.avg_points_allowed;
     const awayAvgPointsAllowed =
       raw?.espn_metrics?.away?.metrics?.avgPointsAllowed ??
-      raw?.avg_points_allowed_away;
+      raw?.avg_points_allowed_away ??
+      raw?.away?.avg_points_allowed;
 
     if (!hasNumeric(homeAvgPoints)) missingInputs.push('home_avg_points');
     if (!hasNumeric(awayAvgPoints)) missingInputs.push('away_avg_points');
