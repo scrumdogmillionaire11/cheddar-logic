@@ -76,13 +76,44 @@ UNKNOWN   = 0.0
 - 1P output remains projection-only in Phase 1
 
 ## Phase 2 Boundary
-Phase 2 may add market-aware fair probability output:
+Phase 2 adds market-aware fair probability output behind an explicit env gate.
+
+### Phase 2 Env vars
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NHL_1P_FAIR_PROB_PHASE2` | `false` | Enable fair probability math. Requires stable real 1P line supply. |
+| `NHL_1P_SIGMA` | `1.26` | Normal CDF sigma parameter (spec range: 1.22–1.30). |
+
+### Phase 2 Math
 
 ```text
-mu = projection_final
-sigma_1p = 1.22 to 1.30
+mu = final_1p_projection
 P(over 1.5)  = 1 - CDF(1.5, mu, sigma_1p)
 P(under 1.5) = CDF(1.5, mu, sigma_1p)
 ```
 
-This is intentionally not active in Phase 1.
+### Market-line prerequisite
+
+Fair probabilities are computed **only** when `oddsSnapshot.total_1p` is a real number
+(i.e. the odds snapshot carries a confirmed real 1P market line, not just the fixed `1.5`
+reference). If `total_1p` is absent or not a number, gate output falls back to Phase-1
+null behavior regardless of `NHL_1P_FAIR_PROB_PHASE2`.
+
+### Protected invariants
+
+| Condition | Output |
+| --- | --- |
+| Gate disabled (`NHL_1P_FAIR_PROB_PHASE2=false`) | `fair_over_1_5_prob: null`, `fair_under_1_5_prob: null` |
+| Gate enabled but `total_1p` absent | null (market-line prerequisite guard) |
+| Gate enabled, `total_1p` present, classification is `PASS` (dead-zone) | null |
+| Gate enabled, `total_1p` present, either goalie is `UNKNOWN` (goalie-uncertain cap) | null |
+| Gate enabled, `total_1p` present, eligible classification | finite probabilities in (0, 1) |
+
+**PASS records always stay null regardless of gate.** The `NHL_1P_PASS_DEAD_ZONE` and
+`NHL_1P_GOALIE_UNCERTAIN` protections from Phase-1 remain fully active.
+
+### Rollback
+
+Set `NHL_1P_FAIR_PROB_PHASE2=false` and redeploy. No DB migration or schema change
+is needed — the fields default to null and existing records are unaffected.
