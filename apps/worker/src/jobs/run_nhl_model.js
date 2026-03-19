@@ -46,7 +46,6 @@ const {
   generateCard,
   computeNHLMarketDecisions,
   selectExpressionChoice,
-  computeTotalBias,
   buildMarketPayload,
   determineTier,
   buildMarketCallCard,
@@ -75,6 +74,8 @@ const {
 const { resolveGoalieState } = require('../models/nhl-goalie-state');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
+const USE_ORCHESTRATED_MARKET =
+  process.env.USE_ORCHESTRATED_MARKET === 'true';
 
 const NHL_DRIVER_WEIGHTS = {
   baseProjection: 0.3,
@@ -538,12 +539,35 @@ function getHomeTeamRecentRoadTrip(
   }
 }
 
+function getCardTypeForChosenMarket(market) {
+  switch (market) {
+    case 'TOTAL':
+      return 'nhl-totals-call';
+    case 'SPREAD':
+      return 'nhl-spread-call';
+    case 'ML':
+      return 'nhl-moneyline-call';
+    default:
+      return null;
+  }
+}
+
 /**
  * Generate standalone market call cards
  * (nhl-totals-call, nhl-spread-call, nhl-moneyline-call)
  * from cross-market decisions. Only emits for FIRE or WATCH status.
  */
-function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
+function generateNHLMarketCallCards(
+  gameId,
+  marketDecisions,
+  oddsSnapshot,
+  {
+    expressionChoice = null,
+    homeGoalieState = null,
+    awayGoalieState = null,
+    useOrchestratedMarket = USE_ORCHESTRATED_MARKET,
+  } = {},
+) {
   const now = new Date().toISOString();
   const expiresAt = null;
 
@@ -556,15 +580,27 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
   );
   const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
   const market = buildMarketFromOdds(oddsSnapshot);
+  const resolvedExpressionChoice =
+    expressionChoice || selectExpressionChoice(marketDecisions);
+  const marketPayload = buildMarketPayload({
+    decisions: marketDecisions,
+    expressionChoice: resolvedExpressionChoice,
+    homeGoalieState,
+    awayGoalieState,
+  });
+  const chosenCardType =
+    useOrchestratedMarket && resolvedExpressionChoice
+      ? getCardTypeForChosenMarket(resolvedExpressionChoice.chosen_market)
+      : null;
 
   const cards = [];
   const CONFIDENCE_MAP = { FIRE: 0.74, WATCH: 0.61 };
 
   // TOTAL decision → nhl-totals-call
   const totalDecision = marketDecisions?.TOTAL;
-  const totalBias = computeTotalBias(totalDecision);
   if (
     totalDecision &&
+    (!chosenCardType || chosenCardType === 'nhl-totals-call') &&
     (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')
   ) {
     const status = totalDecision.status || 'PASS';
@@ -581,7 +617,9 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
       const lineText = line != null ? ` ${line}` : '';
       const pickText = `${side === 'OVER' ? 'OVER' : 'UNDER'}${lineText}`;
       const reasonCodes = [];
-      if (totalBias !== 'OK') reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
+      if (marketPayload?.consistency?.total_bias !== 'OK') {
+        reasonCodes.push('PASS_TOTAL_INSUFFICIENT_DATA');
+      }
       const activeDrivers = (totalDecision.drivers || [])
         .filter((d) => d.eligible)
         .map((d) => d.driverKey);
@@ -620,9 +658,10 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         price: totalPrice,
         reason_codes: reasonCodes,
         tags: [],
-        consistency: {
-          total_bias: totalBias,
-        },
+        consistency: marketPayload.consistency,
+        expression_choice: marketPayload.expression_choice,
+        market_narrative: marketPayload.market_narrative,
+        all_markets: marketPayload.all_markets,
         reasoning: `${pickText}: ${totalDecision.reasoning}`,
         edge: totalDecision.edge ?? null,
         edge_pct: totalDecision.edge ?? null,
@@ -719,6 +758,7 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
   const spreadDecision = marketDecisions?.SPREAD;
   if (
     spreadDecision &&
+    (!chosenCardType || chosenCardType === 'nhl-spread-call') &&
     (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH')
   ) {
     const confidence = CONFIDENCE_MAP[spreadDecision.status];
@@ -775,9 +815,10 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         price: spreadPrice,
         reason_codes: [],
         tags: [],
-        consistency: {
-          total_bias: totalBias,
-        },
+        consistency: marketPayload.consistency,
+        expression_choice: marketPayload.expression_choice,
+        market_narrative: marketPayload.market_narrative,
+        all_markets: marketPayload.all_markets,
         reasoning: `${pickText}: ${spreadDecision.reasoning}`,
         edge: spreadDecision.edge ?? null,
         edge_pct: spreadDecision.edge ?? null,
@@ -877,6 +918,7 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
   const moneylineDecision = marketDecisions?.ML;
   if (
     moneylineDecision &&
+    (!chosenCardType || chosenCardType === 'nhl-moneyline-call') &&
     (moneylineDecision.status === 'FIRE' ||
       moneylineDecision.status === 'WATCH')
   ) {
@@ -934,9 +976,10 @@ function generateNHLMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         price: moneylinePrice,
         reason_codes: [],
         tags: [],
-        consistency: {
-          total_bias: totalBias,
-        },
+        consistency: marketPayload.consistency,
+        expression_choice: marketPayload.expression_choice,
+        market_narrative: marketPayload.market_narrative,
+        all_markets: marketPayload.all_markets,
         reasoning: `${pickText}: ${moneylineDecision.reasoning}`,
         edge: moneylineDecision.edge ?? null,
         edge_pct: moneylineDecision.edge ?? null,
@@ -1217,6 +1260,8 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
           const marketPayload = buildMarketPayload({
             decisions: marketDecisions,
             expressionChoice,
+            homeGoalieState: canonicalGoalieState?.home,
+            awayGoalieState: canonicalGoalieState?.away,
           });
 
           if (driverCards.length === 0) {
@@ -1304,6 +1349,11 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
             gameId,
             marketDecisions,
             oddsSnapshot,
+            {
+              expressionChoice,
+              homeGoalieState: canonicalGoalieState?.home,
+              awayGoalieState: canonicalGoalieState?.away,
+            },
           );
           if (marketCallCards.length > 0) {
             for (const ct of [
