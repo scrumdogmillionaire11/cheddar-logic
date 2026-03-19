@@ -648,6 +648,56 @@ grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log \
 
 ---
 
+## Dual-Run Mode (WI-0503)
+
+Dual-run mode emits one structured `[DUAL_RUN]` log line **per game** during every NHL model run. It records the selector decision without altering production card output or adding a DB migration.
+
+### What is logged
+
+```text
+[DUAL_RUN] {"game_id":"...","matchup":"CHI @ BOS","run_at":"2026-03-19T...","chosen_market":"ML","why_this_market":"Rule 1: status","markets":[...],"rejected":{...}}
+```
+
+### Record schema
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `game_id` | string | Internal game identifier |
+| `matchup` | string | `"Away @ Home"` format |
+| `run_at` | ISO string | UTC timestamp of the run |
+| `chosen_market` | `"TOTAL"\|"SPREAD"\|"ML"` | Selector winner |
+| `why_this_market` | string | Rule label: `Rule 1: status`, `Rule 2: score gap`, `Rule 3: market preference`, `Rule 4: ML value realism` |
+| `markets` | array | One entry per market with `{market, status, score, net, conflict, edge}` |
+| `rejected` | object | Map of `market → rejection_reason` for non-chosen markets |
+
+### Extraction commands
+
+```bash
+# All dual-run lines from current scheduler log
+grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log | jq .
+
+# Summary: chosen market + rule per game
+grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log \
+  | jq -r '[.matchup, .chosen_market, .why_this_market] | @tsv'
+
+# Games where selector chose Rule 4 (ML value realism)
+grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log \
+  | jq 'select(.why_this_market == "Rule 4: ML value realism")'
+
+# All three market scores side by side
+grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log \
+  | jq '{matchup, chosen_market, scores: ([.markets[] | {(.market): .score}] | add)}'
+```
+
+### Design notes
+
+- No `expression_choice_log` DB table was added; log lines are sufficient for comparison evidence.
+- Lines are written to the same console output as all other job logs (`apps/worker/logs/scheduler.log` when run via scheduler).
+- When manual job runs capture stdout, pipe through `grep '\[DUAL_RUN\]'` to isolate.
+- Implementation: `buildDualRunRecord()` in `apps/worker/src/jobs/run_nhl_model.js`.
+
+---
+
 ## References
 
 - Original [CROSS_MARKET_ORCHESTRATION.md](CROSS_MARKET_ORCHESTRATION.md) (pre-correction version)
