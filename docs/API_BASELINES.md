@@ -244,3 +244,45 @@ Proceed to WI-0480 only if all conditions below are true:
 1. No unexplained contract drift is observed in decision semantics compared to expected baseline behavior.
 
 If any condition fails, activation is **NO-GO** and Phase 2 remains in preflight.
+
+---
+
+### Phase 4 Soak-Window Go/No-Go Gates (WI-0486)
+
+This is a **separate, ongoing gate** from the one-time activation gate above. It applies during the 14–30 day soak period after both Phase 2 and Phase 3 are live.
+
+Threshold values referenced below are defined in the table above (see [Telemetry Calibration Report Parity](#telemetry-calibration-report-parity-jobreport-telemetry-calibration)). No threshold numbers are duplicated here — consult that table for authoritative values.
+
+> **Sample-size gate rule (critical):** A signal is only interpretable as a breach when its ledger meets the minimum row count for its ledger. Until the gate is met, `INSUFFICIENT_DATA` is returned by `--enforce` mode — this is a **pass**, not a failure. Never declare a breach on sub-gate signal data.
+
+#### Soak Checkpoint Gates
+
+| Checkpoint | Sample gate status | `--enforce` exit 0? | Decision |
+| --- | --- | --- | --- |
+| **Day 7** | Gate not yet met | `INSUFFICIENT_DATA` | **PASS** — continue soak |
+| **Day 7** | Gate met | Yes | **PASS** — continue soak |
+| **Day 7** | Gate met | No (breach) | **WATCH** — log breach, escalate to breach owner; do not roll back on Day 7 alone unless CLV tail-risk |
+| **Day 14** | Gate not yet met | Any | **EXTEND** — move enforcement checkpoint to Day 21; log row count |
+| **Day 14** | Gate met | Yes | **PASS** — continue soak |
+| **Day 14** | Gate met | No (breach) | **NO-GO** — take rollback action per Breach-to-Owner Table in [DATA_PIPELINE_TROUBLESHOOTING.md](./DATA_PIPELINE_TROUBLESHOOTING.md#breach-to-owner-table) |
+| **Day 30** | Gate met | Yes | **GO** — declare soak complete |
+| **Day 30** | Gate met | No (breach) | **NO-GO** — full rollback; soak failed |
+
+#### Soak Completion Criteria (GO)
+
+Declare soak complete only when **all** of the following hold:
+
+1. `npm --prefix apps/worker run job:report-telemetry-calibration -- --enforce` exits 0 on both Day 14/21 and Day 30.
+1. No unresolved breach was logged at any prior checkpoint.
+1. `npm --prefix web run test:api:games:market` passes.
+1. `npm --prefix web run test:decision:canonical` passes.
+
+#### Soak Failure Criteria (NO-GO)
+
+Declare soak failed (execute rollback) when **any** of the following hold:
+
+1. `--enforce` exits non-zero on Day 30 with the relevant ledger's sample gate met.
+1. A CLV tail-risk breach (`p25_clv ≤ breach threshold`) is confirmed at any checkpoint with sample gate met.
+1. Sample gate is still not met at Day 21 (data pipeline gap — escalate to Incident Commander).
+
+For rollback commands and breach-specific owner assignments, see [docs/DATA_PIPELINE_TROUBLESHOOTING.md — Phase 4 Soak Runbook](./DATA_PIPELINE_TROUBLESHOOTING.md#phase-4-1430-day-telemetry-soak-runbook-wi-0486).

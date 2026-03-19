@@ -21,6 +21,32 @@ cd packages/data && npm run db:test-query
 cd packages/data && npm run test:integration
 ```
 
+### Missing `MISSING_DATA_NO_PLAYS` Diagnostic
+
+When `/cards` shows games as degraded with `MISSING_DATA_NO_PLAYS`, run this read-only diagnostic from repo root:
+
+```bash
+scripts/diagnose-missing-data-no-plays.sh
+```
+
+Useful focused variants:
+
+```bash
+# Sport-specific (e.g., NCAAM alias/mapping issues)
+scripts/diagnose-missing-data-no-plays.sh --sport NCAAM --since-hours 48
+
+# Investigate exact game IDs from the board/API response
+scripts/diagnose-missing-data-no-plays.sh --game-id <game_id_1> --game-id <game_id_2>
+```
+
+What it checks:
+
+- Games with odds present but zero card rows (`MISSING_DATA_NO_PLAYS` risk)
+- Games with cards but zero PLAY rows (usually actionable-pass/evidence-only path)
+- `odds_ingest_failures` reasons (`TEAM_MAPPING_UNMAPPED`, `MARKET_SOURCE_INCOMPLETE`, etc.)
+- Projection input completeness signals in latest odds enrichment payload
+- Recent `pull_odds_hourly` and model job health/freshness
+
 ## Common Issues
 
 ### Issue: No games or cards showing on /cards page
@@ -387,6 +413,156 @@ export ENABLE_CLV_LEDGER=false
 ./scripts/manage-scheduler.sh start
 ./scripts/manage-scheduler.sh db
 ```
+
+---
+
+## Phase 4: 14–30 Day Telemetry Soak Runbook (WI-0486)
+
+This runbook governs the sustained soak period **after** both Phase 2 (`ENABLE_MARKET_THRESHOLDS_V2=true`) and Phase 3 (`ENABLE_CLV_LEDGER=true`) are live in production. The soak window is 14–30 days. Weekly go/no-go checkpoints are mandatory.
+
+> **Sample-size gate rule:** A threshold signal is only an actionable breach when its ledger row count meets its minimum sample gate. Before the gate is reached, the calibration report emits `INSUFFICIENT_DATA` — this is a pass, not a failure. Never interpret a signal as a breach when sample count is below the gate.
+
+### Soak Checklist
+
+#### Day 0 — Activation Baseline
+
+Complete _before_ declaring the soak window open:
+
+```bash
+# Confirm both rollout flags are live
+echo $ENABLE_MARKET_THRESHOLDS_V2   # must be: true
+echo $ENABLE_CLV_LEDGER              # must be: true
+
+# Baseline calibration report (expect INSUFFICIENT_DATA on both ledgers)
+npm --prefix apps/worker run job:report-telemetry-calibration
+
+# Parity check: confirm projection ledger is accumulating rows
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT sport, COUNT(*) AS rows FROM projection_perf_ledger GROUP BY sport;"
+
+# Parity check: confirm CLV ledger is accumulating rows
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT sport, market_type, COUNT(*) AS rows FROM clv_ledger GROUP BY sport, market_type;"
+```
+
+Pass criteria:
+
+- Both flags confirmed `true`.
+- `job:report-telemetry-calibration` exits 0 (signals returned as `INSUFFICIENT_DATA` are acceptable).
+- At least one row exists in each ledger (confirms telemetry pipeline is writing).
+
+---
+
+#### Day 7 — First Checkpoint
+
+```bash
+# Standard calibration report
+npm --prefix apps/worker run job:report-telemetry-calibration
+
+# Enforce mode — exit non-zero only if sample gate is met AND threshold breached
+npm --prefix apps/worker run job:report-telemetry-calibration -- --enforce
+
+# Capture JSON evidence for ops notes
+npm --prefix apps/worker run job:report-telemetry-calibration -- --json > /tmp/soak-day07-$(date +%Y%m%d).json
+```
+
+Pass criteria: `--enforce` exits 0, OR all signals return `INSUFFICIENT_DATA`.
+Fail criteria: `--enforce` exits non-zero AND at least one ledger has met its sample gate.
+
+If fail: consult the [Breach-to-Owner Table](#breach-to-owner-table) below. Do **not** roll back on Day 7 alone — log the breach and continue to Day 14 unless a CLV tail-risk breach is observed (immediate action required).
+
+---
+
+#### Day 14 — Enforcement Threshold
+
+Same three commands as Day 7. By Day 14, both ledgers should have met their sample gates under normal volume.
+
+If sample gates are **still** not met at Day 14:
+
+- Log the gap with a row-count SQL check.
+- Extend the checkpoint to Day 21 before treating signals as enforceable.
+- Note in ops log: `sample gate not yet met at Day 14 — extending to Day 21`.
+
+If sample gates **are** met:
+
+- Any breach is now actionable.
+- Consult the [Breach-to-Owner Table](#breach-to-owner-table) and take the mapped action immediately.
+- Do not wait for Day 21 if a CLV tail-risk or win-rate floor breach is confirmed.
+
+---
+
+#### Day 21 — Extended Checkpoint (if needed)
+
+Only required when Day 14 sample gates were not met. Same three commands as Day 7/14.
+
+If sample gates now met: treat identically to Day 14 enforcement.
+If sample gates still not met at Day 21: escalate to Incident Commander — data pipeline may have a gap.
+
+---
+
+#### Day 30 — Final Soak Decision
+
+```bash
+# Final enforce check
+npm --prefix apps/worker run job:report-telemetry-calibration -- --enforce
+npm --prefix apps/worker run job:report-telemetry-calibration -- --json > /tmp/soak-day30-$(date +%Y%m%d).json
+
+# Contract regression guard
+npm --prefix web run test:api:games:market
+npm --prefix web run test:decision:canonical
+```
+
+**GO** (declare soak complete): `--enforce` exits 0 on both Day 14/21 and Day 30, no unresolved breach, both contract tests pass.
+
+**NO-GO** (rollback): `--enforce` exits non-zero on Day 30 with sample gate met, OR any prior breach was not resolved. Execute the applicable rollback:
+
+- Phase 2 rollback: see [Phase 2 Runbook → Rollback command sequence](#incident-triggers--immediate-rollback-criteria-phase-2)
+- Phase 3 rollback: see [Phase 3 Runbook → Rollback](#rollback-phase-3-telemetry-off-settlement-preserved)
+- Full kill-switch: see [Enable → Verify → Rollback Commands → Production-safe rollback](#3-production-safe-rollback-kill-switch-sequence)
+
+> **Flag note:** Standard soak rollback uses only `ENABLE_MARKET_THRESHOLDS_V2` and `ENABLE_CLV_LEDGER` (both in `env.example`). The kill-switch flags `ENABLE_PROJECTION_PERF_LEDGER` and `ENABLE_DECISION_BASIS_TAGS` are only required for the full kill-switch sequence — they are not needed for targeted Phase 2 or Phase 3 rollback.
+
+---
+
+### Breach-to-Owner Table
+
+A signal is an **actionable breach** only when its ledger row count meets the minimum sample gate for that ledger.
+
+| Breach signal | Threshold | Minimum sample gate | Owner | Default rollback action |
+| --- | --- | --- | --- | --- |
+| Projection win-rate floor | `win_rate < 0.48` | ≥ 100 rows in `projection_perf_ledger` (last 14 days) | **Model Ops on-call** | `ENABLE_MARKET_THRESHOLDS_V2=false` (Phase 2 rollback) |
+| Projection confidence drift | `confidence_drift ≥ 0.03` | ≥ 100 rows in `projection_perf_ledger` (last 14 days) | **Model Ops on-call** | `ENABLE_DECISION_BASIS_TAGS=false` (disable tags, keep thresholds) |
+| CLV mean degradation | `mean_clv ≤ -0.02` | ≥ 150 rows in `clv_ledger` (last 14 days) | **Settlement Ops** | `ENABLE_CLV_LEDGER=false` (Phase 3 rollback) |
+| CLV tail risk | `p25_clv ≤ -0.05` | ≥ 150 rows in `clv_ledger` (last 14 days) | **Incident Commander** | Full kill-switch (all four flags disabled) |
+
+Threshold values match constants in `apps/worker/src/jobs/report_telemetry_calibration.js` and are documented with SQL parity checks in [docs/API_BASELINES.md](./API_BASELINES.md).
+
+### Weekly Evidence Capture Format
+
+Paste the following block into ops notes after each weekly checkpoint:
+
+```text
+Soak checkpoint: Day [N] — [YYYY-MM-DD]
+Command: npm --prefix apps/worker run job:report-telemetry-calibration -- --enforce
+Exit code: [0 or non-zero]
+
+-- Projection ledger --
+  sample_size:       [N rows]
+  win_rate:          [0.XXXX]   breach threshold: < 0.48
+  confidence_drift:  [0.XXXX]   breach threshold: >= 0.03
+  status:            [OK | INSUFFICIENT_DATA | BREACH: <signal>]
+
+-- CLV ledger --
+  sample_size:       [N rows]
+  mean_clv:          [+/-0.XXXX]  breach threshold: <= -0.02
+  p25_clv:           [+/-0.XXXX]  breach threshold: <= -0.05
+  status:            [OK | INSUFFICIENT_DATA | BREACH: <signal>]
+
+JSON evidence: /tmp/soak-day[N]-YYYYMMDD.json
+Action taken: [none | escalated to <owner> | rollback initiated]
+```
+
+---
 
 ### End-to-End Dry Run Checklist
 
