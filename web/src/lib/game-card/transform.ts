@@ -190,6 +190,10 @@ interface ApiPlay {
   price?: number;
   ft_trend_context?: Partial<FtTrendContext>;
   reason_codes?: string[];
+  projection_inputs_complete?: boolean | null;
+  missing_inputs?: string[];
+  source_mapping_ok?: boolean | null;
+  source_mapping_failures?: string[];
   tags?: string[];
   recommendation?: { type?: string };
   recommended_bet_type?: string;
@@ -232,6 +236,12 @@ interface GameData {
     totalPriceUnder: number | null;
     capturedAt: string | null;
   } | null;
+  projection_inputs_complete?: boolean | null;
+  projection_missing_inputs?: string[];
+  source_mapping_ok?: boolean | null;
+  source_mapping_failures?: string[];
+  ingest_failure_reason_code?: string | null;
+  ingest_failure_reason_detail?: string | null;
   consistency?: {
     total_bias?:
       | 'OK'
@@ -1516,23 +1526,70 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     const hasEvidenceOnly =
       !hasPlayItems &&
       game.plays.some((play) => isEvidenceItem(play, game.sport));
+    const sourceMappingFailures = Array.from(
+      new Set([
+        ...(Array.isArray(game.source_mapping_failures)
+          ? game.source_mapping_failures
+          : []),
+        ...game.plays.flatMap((play) =>
+          Array.isArray(play.source_mapping_failures)
+            ? play.source_mapping_failures
+            : [],
+        ),
+      ]),
+    );
+    const projectionMissingInputs = Array.from(
+      new Set([
+        ...(Array.isArray(game.projection_missing_inputs)
+          ? game.projection_missing_inputs
+          : []),
+        ...game.plays.flatMap((play) =>
+          Array.isArray(play.missing_inputs) ? play.missing_inputs : [],
+        ),
+      ]),
+    );
+    const hasMappingFailure =
+      game.ingest_failure_reason_code === 'TEAM_MAPPING_UNMAPPED' ||
+      game.source_mapping_ok === false || sourceMappingFailures.length > 0;
+    const hasProjectionInputsFailure =
+      game.projection_inputs_complete === false ||
+      game.plays.some((play) => play.projection_inputs_complete === false) ||
+      projectionMissingInputs.length > 0;
     const missingDataCode: string =
       hasNoOdds && hasNoPlays
         ? 'MISSING_DATA_NO_ODDS'
-        : hasNoPlays
-          ? 'MISSING_DATA_NO_PLAYS'
+        : hasMappingFailure
+          ? 'MISSING_DATA_TEAM_MAPPING'
+          : hasProjectionInputsFailure
+            ? 'MISSING_DATA_PROJECTION_INPUTS'
+            : hasNoPlays
+              ? 'MISSING_DATA_DRIVERS'
           : hasEvidenceOnly
             ? 'PASS_NO_ACTIONABLE_PLAY'
             : 'PASS_MISSING_DRIVER_INPUTS';
     const missingDataText: string =
       hasNoOdds && hasNoPlays
         ? 'No odds available'
-        : hasNoPlays
-          ? 'No playable cards found'
+        : hasMappingFailure
+          ? `Team mapping unresolved${game.ingest_failure_reason_detail ? `: ${game.ingest_failure_reason_detail}` : sourceMappingFailures.length ? `: ${sourceMappingFailures.join(', ')}` : ''}`
+          : hasProjectionInputsFailure
+            ? `Missing projection inputs${projectionMissingInputs.length ? `: ${projectionMissingInputs.join(', ')}` : ''}`
+            : hasNoPlays
+              ? 'Driver output unavailable'
           : hasEvidenceOnly
             ? 'No actionable play'
             : 'Missing driver inputs';
-    const missingInputs = hasEvidenceOnly ? ['play'] : ['drivers'];
+    const missingInputs = hasMappingFailure
+      ? sourceMappingFailures.length > 0
+        ? sourceMappingFailures
+        : ['team_mapping']
+      : hasProjectionInputsFailure
+        ? projectionMissingInputs.length > 0
+          ? projectionMissingInputs
+          : ['projection_inputs']
+        : hasEvidenceOnly
+          ? ['play']
+          : ['drivers'];
     return {
       market_key: 'INFO|NONE',
       decision: 'PASS',

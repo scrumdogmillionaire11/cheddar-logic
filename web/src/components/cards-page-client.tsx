@@ -1090,6 +1090,7 @@ export default function CardsPageClient() {
       ) {
         buckets.noOdds += 1;
       } else if (
+        codes.includes('MISSING_DATA_TEAM_MAPPING') ||
         codes.includes('MISSING_DATA_NO_PLAYS') ||
         codes.includes('PASS_MISSING_MARKET_TYPE')
       ) {
@@ -1099,6 +1100,8 @@ export default function CardsPageClient() {
         codes.includes('PASS_DATA_ERROR')
       ) {
         buckets.driverLoadFailed += 1;
+      } else if (codes.includes('MISSING_DATA_PROJECTION_INPUTS')) {
+        buckets.noProjection += 1;
       } else {
         buckets.noProjection += 1;
       }
@@ -1123,6 +1126,7 @@ export default function CardsPageClient() {
           );
         case 'missingMapping':
           return (
+            codes.includes('MISSING_DATA_TEAM_MAPPING') ||
             codes.includes('MISSING_DATA_NO_PLAYS') ||
             codes.includes('PASS_MISSING_MARKET_TYPE')
           );
@@ -1133,8 +1137,10 @@ export default function CardsPageClient() {
           );
         case 'noProjection':
           return (
+            codes.includes('MISSING_DATA_PROJECTION_INPUTS') ||
             !codes.includes('MISSING_DATA_NO_ODDS') &&
             !missingInputs.includes('odds_timestamp') &&
+            !codes.includes('MISSING_DATA_TEAM_MAPPING') &&
             !codes.includes('MISSING_DATA_NO_PLAYS') &&
             !codes.includes('PASS_MISSING_MARKET_TYPE') &&
             !codes.includes('MISSING_DATA_DRIVERS') &&

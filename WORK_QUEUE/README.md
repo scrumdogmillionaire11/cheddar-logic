@@ -8,10 +8,11 @@
 
 - `WI-0485`: Phase 4 telemetry calibration report + enforcement gate
 - `WI-0486`: Phase 4 soak-window runbook + weekly go/no-go cadence (depends on `WI-0485`)
-- `WI-0487`: Cross-sport expansion tranche A (MLB/NFL odds-backed markets; depends on `WI-0485`)
-- `WI-0488`: Cross-sport expansion tranche B (projection props + rollup separation audit; depends on `WI-0485`, `WI-0487`)
+- `WI-0487`: MLB expansion tranche A (odds-backed markets; depends on `WI-0485`)
+- `WI-0488`: MLB expansion tranche B (projection props + rollup separation audit; depends on `WI-0485`, `WI-0487`)
+- `WI-0489`: NFL expansion pack (deferred after MLB; depends on `WI-0485`, `WI-0488`)
 
-Recommended execution order: `WI-0485` -> (`WI-0486` + `WI-0487` in parallel if staffing allows) -> `WI-0488`.
+Recommended execution order: `WI-0485` -> (`WI-0486` + `WI-0487` in parallel if staffing allows) -> `WI-0488` -> `WI-0489`.
 
 ## Recently Completed
 
