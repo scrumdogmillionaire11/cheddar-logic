@@ -400,6 +400,17 @@ payloadData: {
     score: number;                               // Dimensionless scalar, not probability
     net: number;                                 // Pre-penalty for transparency
     edge: number;                                // Market-specific points or EV%
+    chosen?: {
+      market: "TOTAL" | "SPREAD" | "ML";
+      side: "OVER" | "UNDER" | "HOME" | "AWAY";
+      line?: number | null;
+      price?: number | null;
+      status: "FIRE" | "WATCH" | "PASS";
+      score: number;
+      net: number;
+      conflict: number;
+      edge: number | null;
+    };
   };
 
   // NEW: Why this market
@@ -513,6 +524,27 @@ payloadData: {
 3. **Full cutover:**
    - One card per market per game (not per-driver)
    - Old logic deleted
+
+## NHL Production Cutover (WI-0504)
+
+- Runtime gate: `USE_ORCHESTRATED_MARKET`
+  - `false` or unset: legacy NHL market-call behavior emits every FIRE/WATCH market call.
+  - `true`: NHL market-call output emits only the selector winner (`TOTAL`, `SPREAD`, or `ML`) for the game.
+- Observability contract is preserved in both modes:
+  - every emitted NHL market-call card carries `expression_choice`
+  - every emitted NHL market-call card carries `market_narrative`
+  - `[DUAL_RUN]` logs remain available for before/after comparison
+- Risk-only behavior is unchanged post-cutover:
+  - `pace` and `pdoRegression` remain `eligible=false` for `SPREAD` and `ML`
+  - selector output does not introduce side leakage from totals-only drivers
+
+### Rollback
+
+1. Set `USE_ORCHESTRATED_MARKET=false`
+2. Restart the worker
+3. Run NHL model job and confirm multiple FIRE/WATCH market-call cards can emit for a game window
+
+Historical multi-card rows remain as archive data; rollback only affects new runtime output.
 
 ---
 
