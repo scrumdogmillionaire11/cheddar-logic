@@ -420,7 +420,6 @@ export async function GET(request: NextRequest) {
             ROW_NUMBER() OVER (
               PARTITION BY
                 game_id,
-                card_type,
                 COALESCE(recommended_bet_type, ''),
                 COALESCE(market_type, ''),
                 COALESCE(selection, ''),
@@ -428,6 +427,7 @@ export async function GET(request: NextRequest) {
                 COALESCE(prop_type_token, ''),
                 COALESCE(prop_player_token, '')
               ORDER BY
+                COALESCE(confidence_pct, -1.0) DESC,
                 datetime(COALESCE(displayed_at, settled_at, '1970-01-01T00:00:00Z')) DESC,
                 COALESCE(display_log_id, 0) DESC,
                 pick_id DESC,

@@ -53,9 +53,9 @@ assert.ok(
     resultsRouteSource.includes('cdl.displayed_at AS displayed_at') &&
     resultsRouteSource.includes('PARTITION BY') &&
     resultsRouteSource.includes('game_id,') &&
-    resultsRouteSource.includes('card_type,') &&
     resultsRouteSource.includes("COALESCE(market_type, '')") &&
     resultsRouteSource.includes("COALESCE(selection, '')") &&
+    resultsRouteSource.includes('COALESCE(confidence_pct, -1.0) DESC') &&
     resultsRouteSource.includes(
       "datetime(COALESCE(displayed_at, settled_at, '1970-01-01T00:00:00Z')) DESC",
     ),
