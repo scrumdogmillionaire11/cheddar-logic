@@ -110,6 +110,11 @@ npm run db:inspect
    - Check the filters on the /results page UI
    - Try clicking "Clear" button to reset filters
 
+3. **NHL rows appear in the wrong segment block:**
+   - `/results` now groups NHL rows into same-page sections: **Game Sides & Totals**, **1P Totals**, and **Player Shots Props**.
+   - Confirm API segment metadata directly: `curl -s "http://localhost:3000/api/results?sport=NHL&limit=50" | jq '.data.segmentFamilies'`
+   - If one segment remains empty, verify settled rows exist for that market family in `card_results` and that `card_type`/`recommended_bet_type` values match expected NHL families.
+
 ### Issue: Stale data (old games from previous tests)
 
 **Symptoms:**

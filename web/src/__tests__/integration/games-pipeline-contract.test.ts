@@ -18,6 +18,7 @@ const cardsPath = path.join(
   repoRoot,
   'web/src/components/cards-page-client.tsx',
 );
+const resultsPagePath = path.join(repoRoot, 'web/src/app/results/page.tsx');
 const displayVerdictPath = path.join(
   repoRoot,
   'web/src/lib/game-card/display-verdict.ts',
@@ -27,6 +28,7 @@ const routeSource = fs.readFileSync(routePath, 'utf8');
 const resultsRouteSource = fs.readFileSync(resultsRoutePath, 'utf8');
 const transformSource = fs.readFileSync(transformPath, 'utf8');
 const cardsSource = fs.readFileSync(cardsPath, 'utf8');
+const resultsPageSource = fs.readFileSync(resultsPagePath, 'utf8');
 const displayVerdictSource = fs.readFileSync(displayVerdictPath, 'utf8');
 
 console.log('🧪 Games pipeline v2 source contract tests');
@@ -49,10 +51,18 @@ assert.ok(
 assert.ok(
   resultsRouteSource.includes('cdl.id AS display_log_id') &&
     resultsRouteSource.includes('cdl.displayed_at AS displayed_at') &&
+    resultsRouteSource.includes('PARTITION BY pick_id') &&
     resultsRouteSource.includes(
       "datetime(COALESCE(displayed_at, settled_at, '1970-01-01T00:00:00Z')) DESC",
     ),
-  'results route dedupe must rank by canonical display-log lineage timestamp',
+  'results route dedupe must partition by pick_id and rank by canonical display-log lineage timestamp',
+);
+
+assert.ok(
+  resultsPageSource.includes('Game Sides & Totals') &&
+    resultsPageSource.includes('1P Totals') &&
+    resultsPageSource.includes('Player Shots Props'),
+  'results page must render same-page segment sections for game, 1P total, and player shots props',
 );
 
 assert.ok(
