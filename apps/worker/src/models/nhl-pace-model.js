@@ -133,6 +133,7 @@ function applyGoalieAdj(savePct, adjustmentTrust) {
 
 function goalieCertaintyMultiplier(certainty) {
   if (certainty === 'CONFIRMED') return 1.0;
+  if (certainty === 'EXPECTED') return 0.6;
   return 0.0;
 }
 

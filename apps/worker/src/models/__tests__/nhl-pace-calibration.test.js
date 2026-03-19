@@ -295,6 +295,45 @@ describe('NHL 1P calibration rails', () => {
       'NHL_1P_GOALIE_UNCERTAIN',
     );
   });
+
+  test('scales 1P goalie adjustment per certainty: CONFIRMED > EXPECTED > UNKNOWN', () => {
+    const base = buildBaseOverrides({
+      homeGoalsFor: 3.5,
+      homeGoalsAgainst: 2.9,
+      awayGoalsFor: 3.4,
+      awayGoalsAgainst: 3.0,
+      homePaceFactor: 1.08,
+      awayPaceFactor: 1.07,
+      homeGoalieSavePct: 0.92,
+      awayGoalieSavePct: 0.918,
+      homeGoalieConfirmed: true,
+      awayGoalieConfirmed: true,
+    });
+
+    const confirmed = predictNHLGame({
+      ...base,
+      homeGoalieCertainty: 'CONFIRMED',
+      awayGoalieCertainty: 'CONFIRMED',
+    });
+    const expected = predictNHLGame({
+      ...base,
+      homeGoalieCertainty: 'EXPECTED',
+      awayGoalieCertainty: 'EXPECTED',
+    });
+    const unknown = predictNHLGame({
+      ...base,
+      homeGoalieCertainty: 'UNKNOWN',
+      awayGoalieCertainty: 'UNKNOWN',
+    });
+
+    // EXPECTED multiplier should be 0.6, placing it between CONFIRMED (1.0) and UNKNOWN (0.0)
+    expect(confirmed.first_period_model.projection_final).toBeLessThan(
+      expected.first_period_model.projection_final,
+    );
+    expect(expected.first_period_model.projection_final).toBeLessThan(
+      unknown.first_period_model.projection_final,
+    );
+  });
 });
 
 describe('NHL total probability rails', () => {
