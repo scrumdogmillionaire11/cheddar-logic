@@ -115,6 +115,12 @@ npm run db:inspect
    - Confirm API segment metadata directly: `curl -s "http://localhost:3000/api/results?sport=NHL&limit=50" | jq '.data.segmentFamilies'`
    - If one segment remains empty, verify settled rows exist for that market family in `card_results` and that `card_type`/`recommended_bet_type` values match expected NHL families.
 
+4. **Duplicate settled rows for the same displayed market:**
+   - Settlement now auto-voids superseded duplicates before grading with `settlement_error.code = DUPLICATE_MARKET_SUPERSEDED`.
+   - The most recent displayed row (by `displayed_at`, then `created_at`) is kept; older pending duplicates are set to `status='error', result='void'`.
+   - Verify duplicate auto-close telemetry from a job run with `npm --prefix apps/worker run job:settle-cards -- --json | jq '.coverage.duplicateAutoClosedFinal, .coverage.duplicateAutoClosedReasons'`.
+   - Inspect recent superseded rows directly with `sqlite3 "${CHEDDAR_DB_PATH:-packages/data/cheddar.db}" "SELECT cr.card_id, cr.game_id, cr.status, cr.result, json_extract(cr.metadata,'$.settlement_error.code') AS error_code, json_extract(cr.metadata,'$.settlement_error.details.supersededByCardId') AS superseded_by FROM card_results cr WHERE json_extract(cr.metadata,'$.settlement_error.code')='DUPLICATE_MARKET_SUPERSEDED' ORDER BY cr.settled_at DESC LIMIT 25;"`.
+
 ### Issue: Stale data (old games from previous tests)
 
 **Symptoms:**
