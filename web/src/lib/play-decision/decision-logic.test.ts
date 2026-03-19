@@ -16,6 +16,14 @@ import {
 } from './decision-logic';
 import type { CanonicalPlay, WrapperContext } from '../types/canonical-play';
 
+declare const describe: (name: string, fn: () => void) => void;
+declare const it: (name: string, fn: () => void) => void;
+type MatcherChain = {
+  [key: string]: MatcherChain;
+  (...args: unknown[]): unknown;
+};
+declare const expect: (value: unknown) => MatcherChain;
+
 // ============================================================================
 // TEST FIXTURES
 // ============================================================================
