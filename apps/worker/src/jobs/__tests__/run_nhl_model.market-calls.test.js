@@ -3,6 +3,7 @@ const {
   applyNhlSettlementMarketContext,
   applyNhlDriverContextMetadata,
   attachNhlDriverContextToRawData,
+  buildDualRunRecord,
 } = require('../run_nhl_model');
 
 function loadResolveThresholdProfile() {
@@ -312,6 +313,86 @@ describe('run_nhl_model market call generation', () => {
         missing_inputs: [],
         proxy_metric: 'goals_share_pct',
       },
+    });
+  });
+
+  // WI-0503: dual-run record shape
+  describe('buildDualRunRecord (WI-0503 dual-run log)', () => {
+    test('emits [DUAL_RUN] JSON line with required fields for all three markets', () => {
+      const oddsSnapshot = buildBaseOddsSnapshot();
+      const marketDecisions = buildBaseDecisions();
+      const expressionChoice = {
+        chosen_market: 'ML',
+        why_this_market: 'Rule 1: status',
+        rejected: [
+          { market: 'TOTAL', rejection_reason: 'LOWER_STATUS' },
+          { market: 'SPREAD', rejection_reason: 'PASS' },
+        ],
+      };
+
+      const record = buildDualRunRecord(
+        'nhl-test-game-001',
+        oddsSnapshot,
+        marketDecisions,
+        expressionChoice,
+      );
+
+      expect(record).not.toBeNull();
+      expect(record.game_id).toBe('nhl-test-game-001');
+      expect(record.matchup).toBe('Away Team @ Home Team');
+      expect(record.chosen_market).toBe('ML');
+      expect(record.why_this_market).toBe('Rule 1: status');
+      expect(record.markets).toHaveLength(3);
+      expect(record.markets.map((m) => m.market)).toEqual(['TOTAL', 'SPREAD', 'ML']);
+      record.markets.forEach((m) => {
+        expect(m).toMatchObject({
+          market: expect.stringMatching(/^(TOTAL|SPREAD|ML)$/),
+          status: expect.any(String),
+          score: expect.any(Number),
+        });
+      });
+      expect(record.rejected).toMatchObject({
+        TOTAL: 'LOWER_STATUS',
+        SPREAD: 'PASS',
+      });
+    });
+
+    test('returns null when expressionChoice is null', () => {
+      const record = buildDualRunRecord(
+        'nhl-test-game-002',
+        buildBaseOddsSnapshot(),
+        buildBaseDecisions(),
+        null,
+      );
+      expect(record).toBeNull();
+    });
+
+    test('[DUAL_RUN] log line is valid parseable JSON', () => {
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      const record = buildDualRunRecord(
+        'nhl-test-game-003',
+        buildBaseOddsSnapshot(),
+        buildBaseDecisions(),
+        {
+          chosen_market: 'TOTAL',
+          why_this_market: 'Rule 2: score gap',
+          rejected: [],
+        },
+      );
+      const logLine = `[DUAL_RUN] ${JSON.stringify(record)}`;
+      console.log(logLine);
+
+      const calls = logSpy.mock.calls.map((c) => c[0]);
+      const dualRunLine = calls.find((c) => c.startsWith('[DUAL_RUN] '));
+      expect(dualRunLine).toBeDefined();
+      const parsed = JSON.parse(dualRunLine.replace('[DUAL_RUN] ', ''));
+      expect(parsed).toMatchObject({
+        game_id: 'nhl-test-game-003',
+        chosen_market: 'TOTAL',
+        why_this_market: 'Rule 2: score gap',
+        markets: expect.any(Array),
+      });
+      logSpy.mockRestore();
     });
   });
 
