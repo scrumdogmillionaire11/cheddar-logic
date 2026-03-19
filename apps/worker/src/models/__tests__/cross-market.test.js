@@ -42,7 +42,7 @@ describe('cross-market orchestration', () => {
     expect(computeConflict(drivers)).toBeCloseTo(0.2, 3);
   });
 
-  test('NHL scoping keeps rest in totals and pace/PDO risk-only in sides', () => {
+  test('no leakage: pace and pdoRegression have eligible=false in SPREAD/ML (directional only in TOTAL)', () => {
     const oddsSnapshot = {
       total: 6.5,
       spread_home: -1.5,
