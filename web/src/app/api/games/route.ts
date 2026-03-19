@@ -2936,9 +2936,11 @@ export async function GET(request: NextRequest) {
         }
 
         if (!play.market_type) {
-          play.reason_codes = Array.from(
-            new Set([...(play.reason_codes ?? []), 'PASS_MISSING_MARKET_TYPE']),
-          );
+          if (play.kind === 'PLAY') {
+            play.reason_codes = Array.from(
+              new Set([...(play.reason_codes ?? []), 'PASS_MISSING_MARKET_TYPE']),
+            );
+          }
           play.market_type = 'INFO';
           play.kind = 'EVIDENCE';
           play.reason_codes = Array.from(
