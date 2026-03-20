@@ -16,6 +16,12 @@ from .shared import (
     normalise_force_escalation,
     validate_decision,
 )
+from .wildcard_free_hit import (
+    FreeHitInputs,
+    WildcardInputs,
+    evaluate_free_hit,
+    evaluate_wildcard,
+)
 
 __all__ = [
     # types
@@ -29,4 +35,9 @@ __all__ = [
     "suppress_or_fire",
     "normalise_force_escalation",
     "validate_decision",
+    # wildcard + free hit
+    "WildcardInputs",
+    "FreeHitInputs",
+    "evaluate_wildcard",
+    "evaluate_free_hit",
 ]
