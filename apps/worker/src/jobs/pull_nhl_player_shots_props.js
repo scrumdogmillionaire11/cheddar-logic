@@ -1,16 +1,21 @@
 'use strict';
 /**
- * Pull NHL Player Shots On Goal Prop Lines
+ * Pull NHL Player Shots On Goal + Blocked Shots Prop Lines
  *
- * Fetches player_shots_on_goal O/U market lines from The Odds API event
- * player props endpoint for upcoming NHL games, stores in player_prop_lines.
+ * Fetches player_shots_on_goal and/or player_blocked_shots O/U market lines
+ * from The Odds API event player props endpoint for upcoming NHL games,
+ * stores in player_prop_lines.
  *
  * Endpoint: GET /v4/sports/icehockey_nhl/events/{eventId}/odds
- *   ?markets=player_shots_on_goal&regions=us&bookmakers=draftkings,fanduel,betmgm
+ *   ?markets=player_shots_on_goal,player_blocked_shots&regions=us&bookmakers=...
  *
- * Token cost: 1 token per event per market (only runs for games within 36h).
- * Guard: reads NHL_SOG_PROP_EVENTS_ENABLED env flag (default: false) to
- * prevent accidental quota burn until manually enabled.
+ * Token cost: 1 token per event per **market** (only runs for games within 36h).
+ * Guard flags (both default false — set to enable):
+ *   NHL_SOG_PROP_EVENTS_ENABLED   — enables player_shots_on_goal pull
+ *   NHL_BLK_PROP_EVENTS_ENABLED   — enables player_blocked_shots pull
+ *
+ * Both markets are requested in a single API call per event when both flags
+ * are set, to minimise token spend.
  *
  * Exit codes: 0 = success, 1 = failure
  */
@@ -27,7 +32,15 @@ const {
 
 const ODDS_API_BASE = 'https://api.the-odds-api.com/v4';
 const SPORT_KEY = 'icehockey_nhl';
-const PROP_MARKET = 'player_shots_on_goal';
+const SOG_MARKET = 'player_shots_on_goal';
+const BLK_MARKET = 'player_blocked_shots';
+
+/** Map Odds API market key → propType stored in player_prop_lines */
+const MARKET_TO_PROP_TYPE = {
+  [SOG_MARKET]: 'shots_on_goal',
+  [BLK_MARKET]: 'blocked_shots',
+};
+
 const BOOKMAKERS = 'draftkings,fanduel,betmgm';
 const HOURS_AHEAD = 36;
 const DEFAULT_SLEEP_MS = Number(process.env.NHL_SOG_PROP_SLEEP_MS || 1000);
@@ -61,55 +74,64 @@ async function fetchNhlEvents(apiKey) {
 }
 
 /**
- * Fetch player SOG prop lines for a single event.
+ * Fetch player prop lines for a single event.
+ * @param {string} apiKey
+ * @param {string} eventId
+ * @param {string[]} marketKeys  - e.g. ['player_shots_on_goal', 'player_blocked_shots']
  */
-async function fetchEventPropLines(apiKey, eventId) {
+async function fetchEventPropLines(apiKey, eventId, marketKeys) {
+  const marketsParam = marketKeys.join(',');
   const url =
     `${ODDS_API_BASE}/sports/${SPORT_KEY}/events/${eventId}/odds` +
-    `?apiKey=${apiKey}&regions=us&markets=${PROP_MARKET}&bookmakers=${BOOKMAKERS}`;
+    `?apiKey=${apiKey}&regions=us&markets=${marketsParam}&bookmakers=${BOOKMAKERS}`;
   return fetchJson(url);
 }
 
 /**
  * Parse player prop lines from Odds API event odds response.
- * Returns array of upsert rows.
+ * Supports multiple market keys in one response.
+ * Returns array of upsert rows, one per (market, player, bookmaker).
  */
 function parseEventPropLines(eventOdds, gameId, fetchedAt) {
   const rows = [];
   if (!eventOdds?.bookmakers) return rows;
   for (const bm of eventOdds.bookmakers) {
-    const market = (bm.markets || []).find((m) => m.key === PROP_MARKET);
-    if (!market?.outcomes) continue;
-    // Group outcomes by player name
-    const byPlayer = {};
-    for (const outcome of market.outcomes) {
-      const playerName = outcome.description;
-      if (!playerName) continue;
-      if (!byPlayer[playerName]) byPlayer[playerName] = {};
-      if (outcome.name === 'Over') {
-        byPlayer[playerName].line = outcome.point;
-        byPlayer[playerName].overPrice = outcome.price;
-      } else if (outcome.name === 'Under') {
-        byPlayer[playerName].line = outcome.point;
-        byPlayer[playerName].underPrice = outcome.price;
+    for (const market of bm.markets || []) {
+      const marketKey = market.key;
+      const propType = MARKET_TO_PROP_TYPE[marketKey];
+      if (!propType || !market.outcomes) continue;
+
+      // Group outcomes by player name
+      const byPlayer = {};
+      for (const outcome of market.outcomes) {
+        const playerName = outcome.description;
+        if (!playerName) continue;
+        if (!byPlayer[playerName]) byPlayer[playerName] = {};
+        if (outcome.name === 'Over') {
+          byPlayer[playerName].line = outcome.point;
+          byPlayer[playerName].overPrice = outcome.price;
+        } else if (outcome.name === 'Under') {
+          byPlayer[playerName].line = outcome.point;
+          byPlayer[playerName].underPrice = outcome.price;
+        }
       }
-    }
-    for (const [playerName, data] of Object.entries(byPlayer)) {
-      if (data.line == null) continue;
-      rows.push({
-        id: `nhl-sog-prop-${gameId}-${playerName.replace(/\s+/g, '-').toLowerCase()}-${bm.key}-${uuidV4().slice(0, 6)}`,
-        sport: 'NHL',
-        gameId,
-        oddsEventId: eventOdds.id,
-        playerName,
-        propType: 'shots_on_goal',
-        period: 'full_game',
-        line: data.line,
-        overPrice: data.overPrice || null,
-        underPrice: data.underPrice || null,
-        bookmaker: bm.key,
-        fetchedAt,
-      });
+      for (const [playerName, data] of Object.entries(byPlayer)) {
+        if (data.line == null) continue;
+        rows.push({
+          id: `nhl-${propType}-${gameId}-${playerName.replace(/\s+/g, '-').toLowerCase()}-${bm.key}-${uuidV4().slice(0, 6)}`,
+          sport: 'NHL',
+          gameId,
+          oddsEventId: eventOdds.id,
+          playerName,
+          propType,
+          period: 'full_game',
+          line: data.line,
+          overPrice: data.overPrice || null,
+          underPrice: data.underPrice || null,
+          bookmaker: bm.key,
+          fetchedAt,
+        });
+      }
     }
   }
   return rows;
@@ -150,12 +172,22 @@ function resolveGameId(db, event) {
 async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
-  // Guard: must explicitly enable via env flag to prevent accidental quota burn
-  const enabled = process.env.NHL_SOG_PROP_EVENTS_ENABLED === 'true';
-  if (!enabled && !dryRun) {
-    console.log(`[${JOB_NAME}] Skipped — set NHL_SOG_PROP_EVENTS_ENABLED=true to enable`);
+  // Guard: at least one market must be explicitly enabled
+  const sogEnabled = process.env.NHL_SOG_PROP_EVENTS_ENABLED === 'true';
+  const blkEnabled = process.env.NHL_BLK_PROP_EVENTS_ENABLED === 'true';
+
+  if (!sogEnabled && !blkEnabled && !dryRun) {
+    console.log(
+      `[${JOB_NAME}] Skipped — set NHL_SOG_PROP_EVENTS_ENABLED=true and/or NHL_BLK_PROP_EVENTS_ENABLED=true to enable`,
+    );
     return { success: true, skipped: true, reason: 'not_enabled' };
   }
+
+  // Build active market list from enabled flags
+  const activeMarkets = [
+    ...(sogEnabled ? [SOG_MARKET] : []),
+    ...(blkEnabled ? [BLK_MARKET] : []),
+  ];
 
   const apiKey = process.env.ODDS_API_KEY;
   if (!apiKey) {
@@ -164,7 +196,7 @@ async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
   }
 
   if (dryRun) {
-    console.log(`[${JOB_NAME}] DRY_RUN — would fetch NHL event props`);
+    console.log(`[${JOB_NAME}] DRY_RUN — would fetch NHL event props for markets: ${activeMarkets.join(', ') || '(none enabled)'}`);
     return { success: true, dryRun: true };
   }
 
@@ -179,7 +211,7 @@ async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
         markJobRunSuccess(jobRunId, { eventsProcessed: 0, linesInserted: 0 });
         return { success: true, eventsProcessed: 0, linesInserted: 0 };
       }
-      console.log(`[${JOB_NAME}] ${events.length} NHL events in window`);
+      console.log(`[${JOB_NAME}] ${events.length} NHL events in window, markets: [${activeMarkets.join(', ')}]`);
 
       let linesInserted = 0;
       let eventsProcessed = 0;
@@ -192,14 +224,19 @@ async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
         }
 
         try {
-          const eventOdds = await fetchEventPropLines(apiKey, event.id);
+          const eventOdds = await fetchEventPropLines(apiKey, event.id, activeMarkets);
           const rows = parseEventPropLines(eventOdds, gameId, new Date().toISOString());
           rows.forEach((row) => {
             upsertPlayerPropLine(row);
             linesInserted += 1;
           });
+          const sogRows = rows.filter((r) => r.propType === 'shots_on_goal').length;
+          const blkRows = rows.filter((r) => r.propType === 'blocked_shots').length;
           eventsProcessed += 1;
-          console.log(`[${JOB_NAME}] ${event.away_team} @ ${event.home_team}: ${rows.length} prop lines`);
+          console.log(
+            `[${JOB_NAME}] ${event.away_team} @ ${event.home_team}: ` +
+            `${sogRows} SOG lines, ${blkRows} BLK lines`,
+          );
         } catch (err) {
           console.error(`[${JOB_NAME}] Event ${event.id} failed: ${err.message}`);
         }

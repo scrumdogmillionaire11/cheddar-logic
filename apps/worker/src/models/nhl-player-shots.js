@@ -498,4 +498,216 @@ function projectSogV2(inputs) {
   };
 }
 
-module.exports = { calcMu, calcMu1p, classifyEdge, calcFairLine, calcFairLine1p, projectSogV2 };
+// ============================================================================
+// Two-Stage BLK Model — projectBlkV1
+// ============================================================================
+
+/**
+ * Compute trend_factor for blocked shots.
+ * Capped narrower than SOG (0.94–1.06) and weight 0.30 (not 0.35).
+ * BLK is a role/burden market — hot-hand bias is weaker signal here.
+ *
+ * @param {string} roleStability  'HIGH' | 'MEDIUM' | 'LOW'
+ * @param {number|null} l5EvBlkRate
+ * @param {number|null} seasonEvBlkRate
+ * @returns {number}
+ */
+function computeBlkTrendFactor(roleStability, l5EvBlkRate, seasonEvBlkRate) {
+  if (roleStability === 'LOW') return 1.0;
+  if (!seasonEvBlkRate || seasonEvBlkRate === 0 || l5EvBlkRate === null || l5EvBlkRate === undefined) return 1.0;
+  const weight = roleStability === 'HIGH' ? 1.0 : 0.5;
+  const raw = 1 + ((l5EvBlkRate / seasonEvBlkRate - 1) * 0.30 * weight);
+  return clamp(raw, 0.94, 1.06);
+}
+
+/**
+ * Two-stage NHL Blocked Shots projection model.
+ *
+ * Stage 1: Compute blk_mu from EV+PK rate blends, TOI projections, and a
+ *          chain of five bounded multipliers specific to the block market.
+ * Stage 2: Convert blk_mu to fair Poisson probabilities for each market line
+ *          and compute edge/EV when prices are present.
+ *
+ * Multiplier ranges (different from SOG — block market is role/burden driven):
+ *   opponent_attempt_factor    [0.90 – 1.12]
+ *   defensive_zone_factor      [0.95 – 1.08]
+ *   underdog_script_factor     [0.95 – 1.10]
+ *   playoff_tightening_factor  [1.00 – 1.08]
+ *   trend_factor               [0.94 – 1.06]  (computed internally)
+ *
+ * @param {object} inputs
+ * @returns {NhlBlockedShotsProjection}
+ */
+function projectBlkV1(inputs) {
+  const {
+    player_id,
+    game_id,
+    ev_blocks_season_per60,
+    ev_blocks_l10_per60,
+    ev_blocks_l5_per60,
+    pk_blocks_season_per60,
+    pk_blocks_l10_per60,
+    pk_blocks_l5_per60,
+    toi_proj_ev = 0,
+    toi_proj_pk = 0,
+    opponent_attempt_factor: rawOppAttempt = 1.0,
+    defensive_zone_factor: rawDzFactor = 1.0,
+    underdog_script_factor: rawUnderdogScript = 1.0,
+    playoff_tightening_factor: rawPlayoffTightening = 1.0,
+    role_stability = 'HIGH',
+    market_line = null,
+    market_price_over = null,
+    market_price_under = null,
+    lines_to_price = [],
+  } = inputs || {};
+
+  // ---- Flags ----
+  const flags = [];
+
+  if (
+    ev_blocks_season_per60 === null || ev_blocks_season_per60 === undefined ||
+    ev_blocks_l10_per60 === null || ev_blocks_l10_per60 === undefined ||
+    ev_blocks_l5_per60 === null || ev_blocks_l5_per60 === undefined
+  ) {
+    flags.push('LOW_SAMPLE');
+  }
+
+  if (role_stability === 'LOW') {
+    flags.push('ROLE_IN_FLUX');
+  }
+
+  if (market_line !== null && market_line !== undefined &&
+      (market_price_over === null || market_price_over === undefined ||
+       market_price_under === null || market_price_under === undefined)) {
+    flags.push('MISSING_PRICE');
+  }
+
+  // ---- Stage 1: BLK_mu ----
+  const ev_rate = weightedRateBlend(ev_blocks_season_per60, ev_blocks_l10_per60, ev_blocks_l5_per60);
+  const pk_rate = weightedRateBlend(pk_blocks_season_per60, pk_blocks_l10_per60, pk_blocks_l5_per60);
+
+  const opp_attempt_factor = clamp(rawOppAttempt ?? 1.0, 0.90, 1.12);
+  const dz_factor = clamp(rawDzFactor ?? 1.0, 0.95, 1.08);
+  const underdog_script_factor = clamp(rawUnderdogScript ?? 1.0, 0.95, 1.10);
+  const playoff_tightening_factor = clamp(rawPlayoffTightening ?? 1.0, 1.00, 1.08);
+  const trend_factor = computeBlkTrendFactor(role_stability, ev_blocks_l5_per60, ev_blocks_season_per60);
+
+  const raw_blk_mu =
+    (ev_rate * toi_proj_ev / 60) +
+    (pk_rate * toi_proj_pk / 60);
+
+  const blk_mu = Math.max(
+    0.0,
+    raw_blk_mu *
+      opp_attempt_factor *
+      dz_factor *
+      underdog_script_factor *
+      playoff_tightening_factor *
+      trend_factor,
+  );
+
+  const blk_sigma = Math.sqrt(blk_mu);
+
+  const trend_score = (ev_blocks_season_per60 && ev_blocks_season_per60 !== 0 &&
+    ev_blocks_l5_per60 !== null && ev_blocks_l5_per60 !== undefined)
+    ? (ev_blocks_l5_per60 / ev_blocks_season_per60 - 1)
+    : 0;
+
+  // ---- Stage 2: Fair probabilities per line ----
+  const allLines = [...new Set([
+    ...lines_to_price,
+    ...(market_line !== null && market_line !== undefined ? [market_line] : []),
+  ])];
+
+  const fair_over_prob_by_line = {};
+  const fair_under_prob_by_line = {};
+  const fair_price_over_by_line = {};
+  const fair_price_under_by_line = {};
+
+  for (const line of allLines) {
+    const overProb = poissonOverProb(blk_mu, line);
+    const underProb = poissonUnderProb(blk_mu, line);
+    const key = String(line);
+    fair_over_prob_by_line[key] = overProb;
+    fair_under_prob_by_line[key] = underProb;
+    fair_price_over_by_line[key] = probToAmerican(overProb);
+    fair_price_under_by_line[key] = probToAmerican(underProb);
+  }
+
+  // ---- Edge and EV ----
+  let edge_over_pp = null;
+  let edge_under_pp = null;
+  let ev_over = null;
+  let ev_under = null;
+
+  if (market_price_over !== null && market_price_over !== undefined &&
+      market_line !== null && market_line !== undefined) {
+    const fairOverProb = fair_over_prob_by_line[String(market_line)];
+    const impliedOverProb = americanToImplied(market_price_over);
+    edge_over_pp = fairOverProb - impliedOverProb;
+    const payoutDm1 = market_price_over >= 0
+      ? market_price_over / 100
+      : 100 / Math.abs(market_price_over);
+    ev_over = fairOverProb * payoutDm1 - (1 - fairOverProb);
+  }
+
+  if (market_price_under !== null && market_price_under !== undefined &&
+      market_line !== null && market_line !== undefined) {
+    const fairUnderProb = fair_under_prob_by_line[String(market_line)];
+    const impliedUnderProb = americanToImplied(market_price_under);
+    edge_under_pp = fairUnderProb - impliedUnderProb;
+    const payoutDm1 = market_price_under >= 0
+      ? market_price_under / 100
+      : 100 / Math.abs(market_price_under);
+    ev_under = fairUnderProb * payoutDm1 - (1 - fairUnderProb);
+  }
+
+  // ---- OpportunityScore ----
+  // Weights reflect that blocked shots is a role/environment market.
+  // opponent_attempt_factor and playoff_tightening replace trend/env from SOG.
+  let opportunity_score = null;
+  if (
+    market_line !== null && market_line !== undefined &&
+    market_price_over !== null && market_price_over !== undefined &&
+    edge_over_pp !== null && ev_over !== null
+  ) {
+    opportunity_score =
+      0.40 * edge_over_pp +
+      0.20 * ev_over +
+      0.20 * (blk_mu - market_line) +
+      0.10 * (opp_attempt_factor - 1.0) +
+      0.10 * (playoff_tightening_factor - 1.0);
+  }
+
+  return {
+    player_id,
+    game_id,
+    blk_mu,
+    blk_sigma,
+    toi_proj_ev,
+    toi_proj_pk,
+    block_rate_ev_per60: ev_rate,
+    block_rate_pk_per60: pk_rate,
+    opponent_attempt_factor: opp_attempt_factor,
+    defensive_zone_factor: dz_factor,
+    underdog_script_factor,
+    playoff_tightening_factor,
+    role_stability,
+    trend_score,
+    fair_over_prob_by_line,
+    fair_under_prob_by_line,
+    fair_price_over_by_line,
+    fair_price_under_by_line,
+    market_line: market_line ?? null,
+    market_price_over: market_price_over ?? null,
+    market_price_under: market_price_under ?? null,
+    edge_over_pp,
+    edge_under_pp,
+    ev_over,
+    ev_under,
+    opportunity_score,
+    flags,
+  };
+}
+
+module.exports = { calcMu, calcMu1p, classifyEdge, calcFairLine, calcFairLine1p, projectSogV2, projectBlkV1 };
