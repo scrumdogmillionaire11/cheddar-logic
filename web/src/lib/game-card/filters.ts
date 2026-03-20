@@ -144,7 +144,7 @@ export const DEFAULT_PROPS_FILTERS: PropsModeFilters = {
   sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER', 'MLB', 'NFL'],
   statuses: ['FIRE', 'WATCH'],
   searchQuery: '',
-  sortMode: 'signal_strength',
+  sortMode: 'start_time',
   propStatGroups: [],
   propTypes: [],
   lineBands: [],
