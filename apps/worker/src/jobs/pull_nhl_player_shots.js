@@ -213,6 +213,16 @@ function computeSeasonShotsPer60(payload) {
   return Math.round((totalShots / gamesPlayed / avgToiMinutes) * 60 * 100) / 100;
 }
 
+function computeSeasonPpToi(payload) {
+  const sub = payload?.featuredStats?.regularSeason?.subSeason;
+  if (!sub) return null;
+  if (!sub.avgPpToi || typeof sub.avgPpToi !== 'string' || !sub.avgPpToi.includes(':')) {
+    return null;
+  }
+  const parsed = parseToiMinutes(sub.avgPpToi);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function buildLogRows(playerId, payload, fetchedAt) {
   const last5 = Array.isArray(payload?.last5Games) ? payload.last5Games : [];
   const playerName = resolvePlayerName(payload);
@@ -240,6 +250,7 @@ function buildLogRows(playerId, payload, fetchedAt) {
         }
         return Number.isFinite(toiMinutes) ? toiMinutes : null;
       })(),
+      ppToi: computeSeasonPpToi(payload),  // WI-0528: real PP TOI from featuredStats.subSeason.avgPpToi
     };
 
     return {

@@ -524,4 +524,129 @@ describe('pull_nhl_player_shots — enriched raw_data (shotsPer60 + projToi)', (
     expect('shotsPer60' in stored).toBe(true);
     expect('projToi' in stored).toBe(true);
   });
+
+  // --- WI-0528: computeSeasonPpToi + ppToi enrichment ---
+
+  test('computeSeasonPpToi: raw_data.ppToi is 2.5 when avgPpToi is "2:30"', async () => {
+    const payload = {
+      fullName: 'PP Heavy Player',
+      last5Games: [
+        { gameId: 'pp1', gameDate: '2026-03-10', homeRoadFlag: 'H', toi: '20:00', shots: 3, opponentAbbrev: 'TOR' },
+      ],
+      featuredStats: {
+        regularSeason: {
+          subSeason: {
+            shots: 100,
+            gamesPlayed: 50,
+            avgToi: '18:00',
+            avgPpToi: '2:30',
+          },
+        },
+      },
+    };
+
+    global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(payload) });
+    process.env.NHL_SOG_PLAYER_IDS = '9010';
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerShotLog } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    const storedRow = upsertPlayerShotLog.mock.calls[0][0];
+    const stored = JSON.parse(storedRow.rawData ? JSON.stringify(storedRow.rawData) : '{}');
+
+    expect(stored.ppToi).toBeCloseTo(2.5, 5);
+  });
+
+  test('computeSeasonPpToi: raw_data.ppToi is 0.0 when avgPpToi is "0:00"', async () => {
+    const payload = {
+      fullName: 'No PP Player',
+      last5Games: [
+        { gameId: 'pp2', gameDate: '2026-03-10', homeRoadFlag: 'H', toi: '18:00', shots: 2, opponentAbbrev: 'MTL' },
+      ],
+      featuredStats: {
+        regularSeason: {
+          subSeason: {
+            shots: 80,
+            gamesPlayed: 40,
+            avgToi: '18:00',
+            avgPpToi: '0:00',
+          },
+        },
+      },
+    };
+
+    global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(payload) });
+    process.env.NHL_SOG_PLAYER_IDS = '9011';
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerShotLog } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    const storedRow = upsertPlayerShotLog.mock.calls[0][0];
+    const stored = JSON.parse(storedRow.rawData ? JSON.stringify(storedRow.rawData) : '{}');
+
+    expect(stored.ppToi).toBeCloseTo(0.0, 5);
+  });
+
+  test('computeSeasonPpToi: raw_data.ppToi is null when avgPpToi is absent', async () => {
+    const payload = {
+      fullName: 'No PP Toi Player',
+      last5Games: [
+        { gameId: 'pp3', gameDate: '2026-03-10', homeRoadFlag: 'H', toi: '18:00', shots: 2, opponentAbbrev: 'BOS' },
+      ],
+      featuredStats: {
+        regularSeason: {
+          subSeason: {
+            shots: 80,
+            gamesPlayed: 40,
+            avgToi: '18:00',
+            // no avgPpToi
+          },
+        },
+      },
+    };
+
+    global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(payload) });
+    process.env.NHL_SOG_PLAYER_IDS = '9012';
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerShotLog } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    const storedRow = upsertPlayerShotLog.mock.calls[0][0];
+    const stored = JSON.parse(storedRow.rawData ? JSON.stringify(storedRow.rawData) : '{}');
+
+    expect(stored.ppToi).toBeNull();
+  });
+
+  test('computeSeasonPpToi: raw_data.ppToi is null when subSeason is missing', async () => {
+    const payload = {
+      fullName: 'No SubSeason Player',
+      last5Games: [
+        { gameId: 'pp4', gameDate: '2026-03-10', homeRoadFlag: 'H', toi: '18:00', shots: 2, opponentAbbrev: 'VAN' },
+      ],
+      // No featuredStats at all
+    };
+
+    global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(payload) });
+    process.env.NHL_SOG_PLAYER_IDS = '9013';
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerShotLog } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    const storedRow = upsertPlayerShotLog.mock.calls[0][0];
+    const stored = JSON.parse(storedRow.rawData ? JSON.stringify(storedRow.rawData) : '{}');
+
+    expect(stored.ppToi).toBeNull();
+  });
 });
