@@ -494,6 +494,10 @@ const NO_ACTIONABLE_EXPLICIT_NO_EDGE_REASON_CODES = new Set([
   'NHL_1P_OVER_LEAN',
   'NHL_1P_UNDER_LEAN',
   'NHL_ML_LEAN',
+  // NHL model signals: play likelihood (healthy no-play)
+  'NHL_1P_OVER_PLAY',
+  'NHL_1P_UNDER_PLAY',
+  'NHL_ML_PLAY',
 ]);
 
 const NO_ACTIONABLE_FETCH_REASON_FRAGMENTS = [

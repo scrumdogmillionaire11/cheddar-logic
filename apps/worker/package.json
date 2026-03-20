@@ -9,6 +9,8 @@
     "job:pull-odds:test": "node -e \"require('./src/jobs/pull_odds_hourly.js').pullOddsHourly().then(console.log).catch(console.error)\"",
     "job:pull-schedule-ncaam": "node src/jobs/pull_schedule_ncaam.js",
     "job:pull-schedule-nhl": "node src/jobs/pull_schedule_nhl.js",
+    "job:sync-game-statuses": "node src/jobs/sync_game_statuses.js",
+    "job:sync-game-statuses:dry": "node src/jobs/sync_game_statuses.js --dry-run",
     "job:sync-nhl-sog-player-ids": "node src/jobs/sync_nhl_sog_player_ids.js",
     "job:sync-nhl-player-availability": "node src/jobs/sync_nhl_player_availability.js",
     "job:pull-nhl-player-shots": "node src/jobs/pull_nhl_player_shots.js",

@@ -44,4 +44,14 @@ assert(
   'transform should bubble linked evidence into deterministic evidence_count',
 );
 
+assert(
+  source.includes('NHL_1P_OVER_LEAN') &&
+    source.includes('NHL_1P_UNDER_LEAN') &&
+    source.includes('NHL_ML_LEAN') &&
+    source.includes('NHL_1P_OVER_PLAY') &&
+    source.includes('NHL_1P_UNDER_PLAY') &&
+    source.includes('NHL_ML_PLAY'),
+  'transform should classify NHL LEAN/PLAY model no-actionable signals as explicit no-edge reason codes',
+);
+
 console.log('✅ Transform evidence contract source tests passed');

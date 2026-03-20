@@ -498,9 +498,50 @@ function getHomeTeamRecentRoadTrip(
       currentGameTime,
       limit,
     );
-    const completedGames = results
-      .filter((g) => g.status === 'final' || g.status === 'STATUS_FINAL')
-      .reverse(); // Chronological order (oldest to newest)
+    // Include games that have already started/completed by time, even if status
+    // hasn't been updated yet. This prevents stale 'scheduled' home games from
+    // being skipped, which would incorrectly merge non-consecutive road trips.
+    const now = new Date().toISOString();
+    const playedGames = results.filter(
+      (g) =>
+        g.status === 'final' ||
+        g.status === 'STATUS_FINAL' ||
+        g.game_time_utc < now,
+    );
+
+    // Deduplicate: ESPN and odds pipelines can create two records for the same
+    // physical game (slightly different timestamps). Collapse by same matchup
+    // within a 2-hour window, preferring 'final' status.
+    const seen = new Map();
+    for (const g of playedGames) {
+      const key = `${g.home_team.toUpperCase()}|${g.away_team.toUpperCase()}`;
+      const existing = seen.get(key);
+      if (!existing) {
+        seen.set(key, g);
+      } else {
+        const deltaMs = Math.abs(
+          new Date(g.game_time_utc).getTime() -
+            new Date(existing.game_time_utc).getTime(),
+        );
+        if (deltaMs <= 2 * 60 * 60 * 1000) {
+          // Same game — keep the final one, or the earlier timestamp if both equal
+          if (
+            g.status === 'final' ||
+            g.status === 'STATUS_FINAL'
+          ) {
+            seen.set(key, g);
+          }
+        } else {
+          // Different dates — different game, use a time-qualified key
+          seen.set(`${key}|${g.game_time_utc}`, g);
+        }
+      }
+    }
+    const completedGames = Array.from(seen.values()).sort(
+      (a, b) =>
+        new Date(a.game_time_utc).getTime() -
+        new Date(b.game_time_utc).getTime(),
+    ); // Chronological order (oldest to newest)
 
     if (!completedGames.length) return [];
 

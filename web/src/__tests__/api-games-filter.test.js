@@ -113,6 +113,11 @@ async function runTests() {
     'route uses canonical lifecycle query param only (legacy aliases removed)',
   );
   assert(
+    routeSource.includes("searchParams.get('sport')") &&
+      routeSource.includes('AND UPPER(g.sport) = ?'),
+    'route applies sport query param as SQL filter in both base window and game rows query',
+  );
+  assert(
     !routeSource.includes('raw_status:'),
     'route no longer emits raw_status field',
   );
