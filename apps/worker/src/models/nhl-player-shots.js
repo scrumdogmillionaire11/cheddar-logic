@@ -394,7 +394,20 @@ function projectSogV2(inputs) {
   const trailing_factor = clamp(rawTrailingScript ?? 1.0, 0.95, 1.08);
   const trend_factor = computeTrendFactor(role_stability, ev_shots_l5_per60, ev_shots_season_per60);
 
-  const raw_sog_mu = (ev_rate * toi_proj_ev / 60) + (pp_rate * toi_proj_pp / 60);
+  const ev_component = ev_rate * toi_proj_ev / 60;
+  const pp_component = pp_rate * toi_proj_pp / 60;
+  let raw_sog_mu = ev_component + pp_component;
+
+  // WI-0530: PP sanity cap — PP contribution must not exceed 45% of total projection.
+  // Prevents NST outlier rates from dominating projections for elite PP players.
+  const PP_CAP_FRACTION = 0.45;
+  if (pp_component > PP_CAP_FRACTION * raw_sog_mu && raw_sog_mu > 0) {
+    flags.push('PP_CONTRIBUTION_CAPPED');
+    // Solve: pp_capped = PP_CAP_FRACTION * (ev_component + pp_capped)
+    // → pp_capped = PP_CAP_FRACTION * ev_component / (1 - PP_CAP_FRACTION)
+    const pp_capped = (PP_CAP_FRACTION * ev_component) / (1 - PP_CAP_FRACTION);
+    raw_sog_mu = ev_component + pp_capped;
+  }
   const sog_mu = Math.max(
     0.0,
     raw_sog_mu * shot_env_factor * opp_sup_factor * goalie_factor * trailing_factor * trend_factor,
