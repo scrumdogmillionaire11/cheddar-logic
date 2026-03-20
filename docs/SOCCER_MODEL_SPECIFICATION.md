@@ -126,7 +126,7 @@ The single most important improvement over current state. EPL and MLS are differ
 | Goalkeeper saves | Not built | Tier 1 (new) | Opp xG → save vol | Low variance — opponent xG driven |
 | Away ML | Track 1 ✓ | Tier 2 only | xG Poisson | Systematically loss-making — informational only |
 | BTTS (both teams score) | Policy-gated (disabled) | Track 1 ✓ | N/A | Disabled in current market scope |
-| Asian handicap | Policy-gated (disabled) | Track 1 ✓ | N/A | Disabled in current market scope |
+| Asian handicap (home/away) | Track 1 planned (decision accepted) | Tier 1 | AH grader + de-vig + goal-diff distribution | Separate main-market path under `FOOTIE_MAIN_MARKETS` |
 | To score or assist | Track 2 synthetic | Tier 2 (tracked) | Role-tag model | High variance — track before promoting |
 | Anytime goalscorer | Track 2 synthetic | Tier 2 (tracked) | xG per player | High variance — track only |
 
@@ -149,7 +149,17 @@ The single most important improvement over current state. EPL and MLS are differ
 | EPL | Home ML | >5.5% | >3.0% | >8.0% only |
 | EPL | Game total | >4.5% | >2.5% | N/A |
 | MLS | Home ML | >5.0% | >2.5% | >6.0% only |
-| UCL | Asian-handicap equiv | >5.5% | >3.0% | >7.0% only |
+| UCL | Asian handicap | >5.5% | >3.0% | >7.0% only |
+
+### 2.5.1 Asian Handicap policy contract (ADR-0006)
+
+Asian Handicap is approved for reintroduction as a dedicated Tier-1 **main-market** pipeline.
+
+- Canonical market keys: `asian_handicap_home`, `asian_handicap_away`
+- Routing boundary: AH stays in `FOOTIE_MAIN_MARKETS` and must not use props ingestion/routing paths
+- Supported line families: whole (`-1.0`, `+1.0`), half (`-0.5`, `+0.5`), quarter (`-0.25`, `+0.25`, `-0.75`, `+0.75`), zero/DNB (`0`)
+- Outcome taxonomy: `win|push|loss` for whole/zero, `win|loss` for half, and `full_win|half_win|half_loss|full_loss` for quarter lines
+- Non-goals for this phase: no legacy market backfill, no props-path fallback, no UI-specific expansion outside existing card contracts
 
 ### 2.6 Performance Tracking — The Calibration Loop
 
