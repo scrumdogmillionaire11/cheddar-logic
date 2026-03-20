@@ -50,5 +50,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 54 | WI-0529 Decision layer for props: computePropDisplayState (PLAY/WATCH/PROJECTION_ONLY) in model job + transform.ts status override | 2026-03-20 | 4fea1d8 | [54-wi-0529-decision-layer-for-props-enforce](./quick/54-wi-0529-decision-layer-for-props-enforce/) |
 
 | 55 | WI-0530 NST PP rate ingestion: player_pp_rates table + ingest_nst_pp_rates.js + ppRatePer60 enrichment + projectSogV2 wiring + 45% PP cap | 2026-03-20 | 398aa08 | [55-wi-0530-nst-ingestion-season-pp-rate-per](./quick/55-wi-0530-nst-ingestion-season-pp-rate-per/) |
+| 56 | Sort player props view by day and start time, soonest first | 2026-03-20 | f20a6aa | [56-sort-player-props-view-by-day-and-start-](./quick/56-sort-player-props-view-by-day-and-start-/) |
 
-Last activity: 2026-03-20 - Completed quick task 55: WI-0530 NST PP rate ingestion — player_pp_rates migration + ingest_nst_pp_rates.js + ppRatePer60 enrichment in pull job + projectSogV2 wiring + 45% PP contribution cap, 21 new tests (128 total passing)
+Last activity: 2026-03-20 - Completed quick task 56: Sort player props view by day and start time — DEFAULT_PROPS_FILTERS.sortMode changed to start_time + propGroupedByDate useMemo + day-section-header grouped render in props view
