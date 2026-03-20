@@ -159,9 +159,9 @@ function resolveGameId(db, event) {
     FROM games
     WHERE LOWER(sport) = 'nhl'
       AND ABS(strftime('%s', game_time_utc) - strftime('%s', ?)) < 3600
-    ORDER BY ABS(strftime('%s', game_time_utc) - strftime('%s', ?)) ASC
+    ORDER BY game_time_utc ASC
     LIMIT 20
-  `).all(event.commence_time, event.commence_time);
+  `).all(event.commence_time);
 
   for (const g of exactCandidates) {
     if (norm(g.home_team) === eventHome && norm(g.away_team) === eventAway) {
@@ -178,9 +178,9 @@ function resolveGameId(db, event) {
     WHERE LOWER(sport) = 'nhl'
       AND status = 'scheduled'
       AND ABS(strftime('%s', game_time_utc) - strftime('%s', ?)) < 14400
-    ORDER BY ABS(strftime('%s', game_time_utc) - strftime('%s', ?)) ASC
+    ORDER BY game_time_utc ASC
     LIMIT 10
-  `).all(event.commence_time, event.commence_time);
+  `).all(event.commence_time);
 
   for (const g of prefixCandidates) {
     const dbHome = norm(g.home_team);
