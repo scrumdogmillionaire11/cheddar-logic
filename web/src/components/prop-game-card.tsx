@@ -154,6 +154,9 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                     </div>
                     {(prop.priceOver != null || prop.priceUnder != null) && (
                       <div className="mt-1 text-xs font-semibold text-cloud/80">
+                        {prop.marketLine != null && (
+                          <span className="mr-1 text-cloud/50">O/U {prop.marketLine}</span>
+                        )}
                         {prop.priceOver != null ? `OVER ${formatOdds(prop.priceOver)}` : 'OVER —'}
                         {' / '}
                         {prop.priceUnder != null ? `UNDER ${formatOdds(prop.priceUnder)}` : 'UNDER —'}
