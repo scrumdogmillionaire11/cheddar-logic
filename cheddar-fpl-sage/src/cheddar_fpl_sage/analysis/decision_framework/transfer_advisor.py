@@ -81,11 +81,9 @@ class TransferAdvisor:
         if status_norm in {"OUT", "DOUBT", "D", "SUSPENDED", "INJURED"}:
             return True
 
-        chance_next = self._coerce_float(getattr(candidate, "chance_of_playing_next_round", None))
-        if chance_next is None:
-            chance_next = self._coerce_float(getattr(candidate, "chance_of_playing_this_round", None))
-        if chance_next is not None and chance_next < 85:
-            return True
+        # chance_of_playing_next_round is a *soft* signal — low probability is handled as a
+        # scoring penalty in _score_candidate_for_strategy, not a hard gate here.
+        # Hard exclusion applies only to explicitly unavailable status codes above.
 
         return False
 
@@ -296,6 +294,12 @@ class TransferAdvisor:
         volatility = float(getattr(candidate, "volatility_score", 0.5) or 0.5)
         ppm = float(getattr(candidate, "points_per_million", 0.0) or 0.0)
 
+        # Soft penalty for reduced start probability (spec §4.2).  Scales linearly from
+        # 0 pts at 85 % down to 1.5 pts deduction at 0 %.  This keeps low-start candidates
+        # in the pool but pushes them below fully-fit equivalents.
+        chance_next = float(getattr(candidate, "chance_of_playing_next_round", 100) or 100)
+        low_start_penalty = max(0.0, (85.0 - chance_next) / 85.0 * 1.5)
+
         if strategy == "RECOVERY":
             # Rank-chasing mode: allow volatility and reward leverage + upside.
             base_score = (
@@ -303,6 +307,7 @@ class TransferAdvisor:
                 + ((100.0 - ownership) * 0.04)
                 + ((ceiling - next_pts) * 0.60)
                 - (volatility * (0.20 * get_volatility_multiplier(self.risk_posture)))
+                - low_start_penalty
             )
         elif strategy == "DEFEND":
             # Protect rank: stronger floor/template bias.
@@ -311,6 +316,7 @@ class TransferAdvisor:
                 + (floor * 0.30)
                 + (ownership * 0.02)
                 - (volatility * (1.20 * get_volatility_multiplier(self.risk_posture)))
+                - low_start_penalty
             )
         elif strategy == "CONTROLLED":
             base_score = (
@@ -318,6 +324,7 @@ class TransferAdvisor:
                 + (ppm * 0.80)
                 + (floor * 0.20)
                 - (volatility * (0.80 * get_volatility_multiplier(self.risk_posture)))
+                - low_start_penalty
             )
         else:
             # BALANCED default
@@ -326,6 +333,7 @@ class TransferAdvisor:
                 + (ppm * 0.90)
                 + ((ceiling - floor) * 0.10)
                 - (volatility * (0.60 * get_volatility_multiplier(self.risk_posture)))
+                - low_start_penalty
             )
 
         horizon_adj = self._horizon_transfer_adjustment(candidate)
@@ -1540,6 +1548,45 @@ class TransferAdvisor:
         else:
             risk_note = "No material availability concerns on incoming player."
 
+        # ── Explainability & fallback-metadata fields (spec §5 + §6) ────────────────────
+        has_horizon_pts = bool(getattr(best_candidate, "next6_pts", None))
+        is_manual_in = bool(getattr(best_candidate, "is_manual", False))
+        data_confidence: str = "HIGH" if has_horizon_pts else "MEDIUM"
+        fallback_tier_used: str = "manual" if is_manual_in else "canonical"
+        missing_inputs: List[str] = [] if has_horizon_pts else ["next6_pts"]
+
+        why_codes: List[str] = []
+        if bool(getattr(player_proj, "is_injury_risk", False)):
+            why_codes.append("INJURY_RISK_OUT")
+        status_out = str(getattr(player_proj, "status_flag", "") or "").upper()
+        if status_out in {"OUT", "DOUBT"}:
+            why_codes.append("UNAVAILABLE_OUT")
+        if gain >= 3.0:
+            why_codes.append("STRONG_GAIN")
+        elif gain >= 1.5:
+            why_codes.append("POSITIVE_GAIN")
+        else:
+            why_codes.append("MARGINAL_GAIN")
+        if float(getattr(best_candidate, "ownership_pct", 25) or 25) < 15:
+            why_codes.append("DIFFERENTIAL_TARGET")
+
+        risk_badges: List[str] = []
+        if bool(getattr(best_candidate, "is_injury_risk", False)):
+            risk_badges.append("injury_risk")
+        if float(getattr(best_candidate, "xMins_next", 90) or 90) < 70:
+            risk_badges.append("rotation_risk")
+        chance_in = float(getattr(best_candidate, "chance_of_playing_next_round", 100) or 100)
+        if chance_in < 85:
+            risk_badges.append("low_start_probability")
+
+        candidate_name = getattr(best_candidate, "name", "Target")
+        out_name = getattr(player_proj, "name", "outgoing player")
+        why_text = (
+            f"{candidate_name} replaces {out_name}. "
+            + ("Reasons: " + ", ".join(why_codes) + "." if why_codes else "")
+        ).strip()
+        # ─────────────────────────────────────────────────────────────────────────────────
+
         return {
             "transfers_out": transfers_out,
             "transfers_in": transfers_in,
@@ -1552,6 +1599,14 @@ class TransferAdvisor:
             "why_now": why_now,
             "risk_note": risk_note,
             "horizon_gws": self.horizon_gws,
+            # spec §5 fallback metadata
+            "data_confidence": data_confidence,
+            "fallback_tier_used": fallback_tier_used,
+            "missing_inputs": missing_inputs,
+            # spec §6 explainability
+            "why_text": why_text,
+            "why_codes": why_codes,
+            "risk_badges": risk_badges,
         }
 
     def build_general_plan(self, context_mode: str, bank_value: float, message: str) -> Dict:
@@ -1567,6 +1622,14 @@ class TransferAdvisor:
             "why_now": message,
             "risk_note": "No transfer identified — squad management hold advised.",
             "horizon_gws": self.horizon_gws,
+            # spec §5 fallback metadata
+            "data_confidence": "NONE",
+            "fallback_tier_used": "hold",
+            "missing_inputs": [],
+            # spec §6 explainability
+            "why_text": message,
+            "why_codes": ["HOLD_NO_TRANSFER"],
+            "risk_badges": [],
         }
 
     def _get_manager_context_mode(self, team_data: Dict) -> str:
