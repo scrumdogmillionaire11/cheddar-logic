@@ -1348,20 +1348,110 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
                 "delta": round(best_score - current_score, 1)
             }
 
+        chip_type_raw = chip_guidance_dict.get("selected_chip") or chip_guidance_dict.get("chip_type")
+        chip_type_token = str(getattr(chip_type_raw, "value", chip_type_raw or "NONE")).upper()
+        chip_code_map = {
+            "BENCH BOOST": "BB",
+            "BB": "BB",
+            "TRIPLE CAPTAIN": "TC",
+            "TC": "TC",
+            "FREE HIT": "FH",
+            "FH": "FH",
+            "WILDCARD": "WC",
+            "WC": "WC",
+            "NONE": "NONE",
+        }
+        chip_code = chip_code_map.get(chip_type_token, "NONE")
+
+        reason_codes_payload = chip_guidance_dict.get("reason_codes") or []
+        reason_codes = [str(code) for code in reason_codes_payload if code is not None]
+        reason_code = chip_guidance_dict.get("reason_code") or (reason_codes[0] if reason_codes else None)
+        status = str(chip_guidance_dict.get("status") or "PASS").upper()
+        score_value = _to_float(chip_guidance_dict.get("score"))
+        if score_value is None:
+            score_value = _to_float(current_score)
+        watch_until = _to_optional_int(chip_guidance_dict.get("watch_until") or chip_guidance_dict.get("watchUntil") or best_gw)
+        forced_by = chip_guidance_dict.get("forced_by") or chip_guidance_dict.get("forcedBy")
+        narrative = (
+            chip_guidance_dict.get("narrative")
+            or chip_guidance_dict.get("rationale")
+            or normalized_reasoning
+            or "No chip narrative available."
+        )
+
+        recommendation = chip_guidance_dict.get("recommendation")
+        if not recommendation:
+            recommendation = chip_code if status == "FIRE" else "SAVE"
+
         result["chip_recommendation"] = {
-            "recommendation": chip_guidance_dict.get("recommendation", "SAVE"),
+            "recommendation": recommendation,
             "rationale": chip_guidance_dict.get("rationale", ""),
             "timing": chip_guidance_dict.get("timing"),
             "opportunity_cost": opportunity_cost,
             "best_gw": best_gw,
             "current_window_name": chip_guidance_dict.get("current_window_name"),
             "best_future_window_name": chip_guidance_dict.get("best_future_window_name"),
+            "chip": chip_code,
+            "status": status,
+            "score": round(score_value, 1) if score_value is not None else None,
+            "reasonCode": reason_code,
+            "reasonCodes": reason_codes,
+            "forcedBy": forced_by,
+            "watchUntil": watch_until,
+            "narrative": narrative,
         }
+
+        result["chip_verdict"] = chip_code
+        result["chip_explanation"] = narrative
     
     # Chip status from my_team
     chip_status = my_team.get("chip_status", {})
     result["available_chips"] = [name for name, used in chip_status.items() if not used] if chip_status else []
     result["active_chip"] = my_team.get("active_chip")
+
+    # Normalize chip recommendation contract so frontend/tests always receive
+    # the deterministic chip fields even when upstream payload is legacy/minimal.
+    chip_rec = result.get("chip_recommendation")
+    if isinstance(chip_rec, dict):
+        reason_codes_payload = chip_rec.get("reasonCodes")
+        if reason_codes_payload is None:
+            reason_codes_payload = chip_rec.get("reason_codes")
+        reason_codes = [str(code) for code in (reason_codes_payload or []) if code is not None]
+
+        reason_code = chip_rec.get("reasonCode")
+        if reason_code is None:
+            reason_code = chip_rec.get("reason_code")
+        if reason_code is None and reason_codes:
+            reason_code = reason_codes[0]
+
+        if chip_rec.get("status") is None:
+            rec_token = str(chip_rec.get("recommendation") or "").upper()
+            chip_rec["status"] = "FIRE" if rec_token in {"USE", "FIRE", "BB", "FH", "WC", "TC"} else "PASS"
+
+        if chip_rec.get("score") is None:
+            chip_rec["score"] = _to_float(chip_rec.get("current_window_score"))
+
+        if chip_rec.get("watchUntil") is None:
+            chip_rec["watchUntil"] = _to_optional_int(
+                chip_rec.get("watch_until")
+                or chip_rec.get("best_gw")
+                or chip_rec.get("best_future_window_gw")
+            )
+
+        if chip_rec.get("forcedBy") is None:
+            chip_rec["forcedBy"] = chip_rec.get("forced_by")
+
+        if chip_rec.get("narrative") is None:
+            chip_rec["narrative"] = (
+                chip_rec.get("rationale")
+                or result.get("chip_explanation")
+                or normalized_reasoning
+                or "No chip narrative available."
+            )
+
+        chip_rec["reasonCodes"] = reason_codes
+        chip_rec["reasonCode"] = reason_code
+        result["chip_recommendation"] = chip_rec
     
     # Risk scenarios
     risk_scenarios = decision_dict.get("risk_scenarios", [])
