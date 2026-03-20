@@ -49,4 +49,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 53 | WI-0528 Fix PP TOI gap — replace hardcoded toi_proj_pp:0 with real avgPpToi from NHL API subSeason | 2026-03-20 | 20ee178 | [53-wi-0528-fix-pp-toi-gap-replace-hardcoded](./quick/53-wi-0528-fix-pp-toi-gap-replace-hardcoded/) |
 | 54 | WI-0529 Decision layer for props: computePropDisplayState (PLAY/WATCH/PROJECTION_ONLY) in model job + transform.ts status override | 2026-03-20 | 4fea1d8 | [54-wi-0529-decision-layer-for-props-enforce](./quick/54-wi-0529-decision-layer-for-props-enforce/) |
 
-Last activity: 2026-03-20 - Completed quick task 54: WI-0529 prop_display_state decision layer — computePropDisplayState helper + payloadData field + PropPlayRow type + transform wiring, 5 new tests (35 total passing)
+| 55 | WI-0530 NST PP rate ingestion: player_pp_rates table + ingest_nst_pp_rates.js + ppRatePer60 enrichment + projectSogV2 wiring + 45% PP cap | 2026-03-20 | 398aa08 | [55-wi-0530-nst-ingestion-season-pp-rate-per](./quick/55-wi-0530-nst-ingestion-season-pp-rate-per/) |
+
+Last activity: 2026-03-20 - Completed quick task 55: WI-0530 NST PP rate ingestion — player_pp_rates migration + ingest_nst_pp_rates.js + ppRatePer60 enrichment in pull job + projectSogV2 wiring + 45% PP contribution cap, 21 new tests (128 total passing)
