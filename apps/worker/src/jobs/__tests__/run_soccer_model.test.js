@@ -139,6 +139,12 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
     test("'asian_handicap' -> null (banned)", () => {
       expect(normalizeToCanonicalSoccerMarket('asian_handicap')).toBeNull();
     });
+    test("'asian_handicap_home' -> 'asian_handicap_home'", () => {
+      expect(normalizeToCanonicalSoccerMarket('asian_handicap_home')).toBe('asian_handicap_home');
+    });
+    test("'asian_handicap_away' -> 'asian_handicap_away'", () => {
+      expect(normalizeToCanonicalSoccerMarket('asian_handicap_away')).toBe('asian_handicap_away');
+    });
     test("'1x2' -> null (banned)", () => {
       expect(normalizeToCanonicalSoccerMarket('1x2')).toBeNull();
     });
@@ -475,6 +481,12 @@ describe('normalizeToCanonicalSoccerMarket — odds API market keys', () => {
   test("'doubleChance' -> 'soccer_double_chance' (camelCase normalizes via replace)", () => {
     expect(normalizeToCanonicalSoccerMarket('doubleChance')).toBe('soccer_double_chance');
   });
+  test("'asian_handicap_home' -> 'asian_handicap_home'", () => {
+    expect(normalizeToCanonicalSoccerMarket('asian_handicap_home')).toBe('asian_handicap_home');
+  });
+  test("'asian_handicap_away' -> 'asian_handicap_away'", () => {
+    expect(normalizeToCanonicalSoccerMarket('asian_handicap_away')).toBe('asian_handicap_away');
+  });
   test("'asian_handicap' -> null (banned)", () => {
     expect(normalizeToCanonicalSoccerMarket('asian_handicap')).toBeNull();
   });
@@ -539,6 +551,59 @@ describe('buildSoccerOddsBackedCard — soccer_double_chance', () => {
     expect(card.payloadData.outcome).toBe('home_or_draw');
     const v = validateCardPayload('soccer_double_chance', card.payloadData);
     expect(v.success).toBe(true);
+  });
+});
+
+describe('buildSoccerOddsBackedCard — asian handicap', () => {
+  test('produces valid asian_handicap_home payload with required AH fields', () => {
+    const snap = buildOddsSnapshot({
+      raw_data: JSON.stringify({
+        league: 'EPL',
+        market: 'asian_handicap_home',
+        ah_line: -0.75,
+        ah_price: 102,
+        ah_opposite_price: -122,
+        lambda_home: 1.6,
+        lambda_away: 1.1,
+      }),
+    });
+
+    const card = buildSoccerOddsBackedCard(snap.game_id, snap, 'asian_handicap_home');
+    expect(card.cardType).toBe('asian_handicap_home');
+    expect(card.payloadData.market_type).toBe('ASIAN_HANDICAP');
+    expect(card.payloadData.side).toBe('HOME');
+    expect(card.payloadData.line).toBe(-0.75);
+    expect(card.payloadData.price).toBe(102);
+    expect(card.payloadData.split_flag).toBe(true);
+    expect(card.payloadData.probabilities).toEqual(
+      expect.objectContaining({
+        P_win: expect.any(Number),
+        P_push: expect.any(Number),
+        P_loss: expect.any(Number),
+      }),
+    );
+    expect(card.payloadData.edge_ev).toEqual(expect.any(Number));
+    expect(card.payloadData.expected_value).toEqual(expect.any(Number));
+
+    const v = validateCardPayload('asian_handicap_home', card.payloadData);
+    expect(v.success).toBe(true);
+  });
+
+  test('flags missing AH inputs with pass_reason and missing_context_flags', () => {
+    const snap = buildOddsSnapshot({
+      raw_data: JSON.stringify({
+        league: 'EPL',
+        market: 'asian_handicap_away',
+        ah_line: 0.25,
+        ah_price: -108,
+      }),
+    });
+
+    const card = buildSoccerOddsBackedCard(snap.game_id, snap, 'asian_handicap_away');
+    expect(card.payloadData.pass_reason).toBe('MISSING_AH_INPUTS');
+    expect(card.payloadData.missing_context_flags).toContain('opposite_price');
+    expect(card.payloadData.missing_context_flags).toContain('lambda_home');
+    expect(card.payloadData.missing_context_flags).toContain('lambda_away');
   });
 });
 

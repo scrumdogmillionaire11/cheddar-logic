@@ -32,7 +32,10 @@ const OHIO_ODDS_BACKED_MARKETS = new Set([
   'soccer_ml',
   'soccer_game_total',
   'soccer_double_chance',
+  'asian_handicap_home',
+  'asian_handicap_away',
 ]);
+const FOOTIE_MAIN_MARKETS = new Set([...OHIO_ODDS_BACKED_MARKETS]);
 const OHIO_TIER2_MARKETS = new Set([
   'player_shots_on_target',
   'anytime_goalscorer',
@@ -60,6 +63,10 @@ const ODDS_API_MARKET_MAP = {
   'double_chance': 'soccer_double_chance',
   'doublechance': 'soccer_double_chance',
   'soccer_double_chance': 'soccer_double_chance',
+  'asian_handicap_home': 'asian_handicap_home',
+  'asian_handicap_away': 'asian_handicap_away',
+  'ah_home': 'asian_handicap_home',
+  'ah_away': 'asian_handicap_away',
 };
 const TIER1_PLAYER_MARKETS = new Set(['player_shots', 'to_score_or_assist']);
 const ALLOWED_TEAM_TOTAL_LINES = new Set(['o0.5', 'o1.5', 'u2.5']);
@@ -431,12 +438,11 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
 }
 
 /**
- * Build an odds-backed soccer card for one of the three new card types:
- * soccer_ml, soccer_game_total, or soccer_double_chance.
+ * Build an odds-backed soccer card for Tier-1 main-market card types.
  *
  * @param {string} gameId
  * @param {object} oddsSnapshot
- * @param {string} canonicalCardType - 'soccer_ml' | 'soccer_game_total' | 'soccer_double_chance'
+ * @param {string} canonicalCardType - Tier-1 canonical market key
  * @returns {{ id, gameId, sport, cardType, cardTitle, createdAt, expiresAt, payloadData, modelOutputIds }}
  */
 function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
@@ -532,6 +538,88 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       edge_basis: edgeBasis,
       missing_context_flags,
       pass_reason: null,
+    };
+  } else if (
+    canonicalCardType === 'asian_handicap_home' ||
+    canonicalCardType === 'asian_handicap_away'
+  ) {
+    const side = canonicalCardType === 'asian_handicap_home' ? 'HOME' : 'AWAY';
+    const lineRaw = rawData.ah_line ?? rawData.line ?? null;
+    const offeredPriceRaw = rawData.ah_price ?? rawData.price ?? null;
+    const oppositePriceRaw = rawData.ah_opposite_price ?? rawData.opposite_price ?? null;
+    const lambdaHome =
+      typeof rawData.lambda_home === 'number'
+        ? rawData.lambda_home
+        : Number(rawData.lambda_home ?? NaN);
+    const lambdaAway =
+      typeof rawData.lambda_away === 'number'
+        ? rawData.lambda_away
+        : Number(rawData.lambda_away ?? NaN);
+
+    const line =
+      typeof lineRaw === 'number'
+        ? lineRaw
+        : (typeof lineRaw === 'string' ? Number(lineRaw) : null);
+    const offeredPrice =
+      typeof offeredPriceRaw === 'number'
+        ? Math.trunc(offeredPriceRaw)
+        : (typeof offeredPriceRaw === 'string' ? Math.trunc(Number(offeredPriceRaw)) : null);
+    const oppositePrice =
+      typeof oppositePriceRaw === 'number'
+        ? Math.trunc(oppositePriceRaw)
+        : (typeof oppositePriceRaw === 'string' ? Math.trunc(Number(oppositePriceRaw)) : null);
+
+    if (!Number.isFinite(line)) missing_context_flags.push('line');
+    if (!Number.isFinite(offeredPrice)) missing_context_flags.push('price');
+    if (!Number.isFinite(oppositePrice)) missing_context_flags.push('opposite_price');
+    if (!Number.isFinite(lambdaHome)) missing_context_flags.push('lambda_home');
+    if (!Number.isFinite(lambdaAway)) missing_context_flags.push('lambda_away');
+
+    const pricing =
+      missing_context_flags.length === 0
+        ? priceAsianHandicap({
+            lambda_home: lambdaHome,
+            lambda_away: lambdaAway,
+            line,
+            side,
+            offered_price: offeredPrice,
+            opposite_price: oppositePrice,
+          })
+        : null;
+
+    const splitFlag =
+      Number.isFinite(line) &&
+      (Math.abs(Math.abs(line) % 1 - 0.25) < 1e-9 || Math.abs(Math.abs(line) % 1 - 0.75) < 1e-9);
+
+    const pass_reason =
+      missing_context_flags.length > 0
+        ? 'MISSING_AH_INPUTS'
+        : (pricing && pricing.success ? null : (pricing?.reason_code || 'AH_PRICING_FAILED'));
+
+    payloadData = {
+      sport: 'SOCCER',
+      game_id: gameId,
+      canonical_market_key: canonicalCardType,
+      market_type: 'ASIAN_HANDICAP',
+      home_team: homeTeam,
+      away_team: awayTeam,
+      matchup: buildMatchup(homeTeam, awayTeam),
+      start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+      generated_at: now,
+      side,
+      line: Number.isFinite(line) ? Number(line) : null,
+      split_flag: splitFlag,
+      price: Number.isFinite(offeredPrice) ? offeredPrice : null,
+      opposite_price: Number.isFinite(oppositePrice) ? oppositePrice : null,
+      probabilities: pricing?.success ? pricing.probabilities : null,
+      model_prob_no_push: pricing?.success ? pricing.model_prob_no_push : null,
+      edge_ev: pricing?.success ? pricing.edge_no_push : null,
+      expected_value: pricing?.success ? pricing.expected_value : null,
+      fair_line: pricing?.success ? pricing.fair_line : null,
+      fair_price_american: pricing?.success ? pricing.fair_price_american : null,
+      edge_basis: 'ah_de_vig_poisson_goal_diff',
+      missing_context_flags,
+      pass_reason,
     };
   } else {
     throw new Error(`buildSoccerOddsBackedCard: unknown canonicalCardType "${canonicalCardType}"`);
@@ -1034,7 +1122,7 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
       let track1Cards = 0;
 
       // TRACK 1: Process each odds-backed game (may be 0 iterations — no bail-out)
-      const ODDS_BACKED_CARD_TYPES = new Set(['soccer_ml', 'soccer_game_total', 'soccer_double_chance']);
+      const ODDS_BACKED_CARD_TYPES = new Set([...FOOTIE_MAIN_MARKETS]);
       const PROJECTION_MARKET_TYPES = new Set([
         'player_shots', 'team_totals', 'to_score_or_assist',
         'player_shots_on_target', 'anytime_goalscorer', 'team_corners',

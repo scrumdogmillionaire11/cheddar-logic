@@ -143,6 +143,9 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model
+
+# Soccer Tier-1 main markets now include Asian Handicap (`asian_handicap_home`, `asian_handicap_away`)
+# as part of FOOTIE_MAIN_MARKETS (separate from prop ingestion path).
 ```
 
 ### Standard Runbook
@@ -197,6 +200,10 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model
 # Spot-check most recent cards in SQLite (requires sqlite3 CLI)
 set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" \
   "SELECT sport, card_type, prediction, confidence, created_at FROM card_payloads ORDER BY created_at DESC LIMIT 10;"
+
+# Spot-check AH output contract fields (line/price/side/split + EV)
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" \
+  "SELECT card_type, json_extract(payload_data,'$.line') AS line, json_extract(payload_data,'$.price') AS price, json_extract(payload_data,'$.side') AS side, json_extract(payload_data,'$.split_flag') AS split_flag, json_extract(payload_data,'$.expected_value') AS expected_value FROM card_payloads WHERE card_type IN ('asian_handicap_home','asian_handicap_away') ORDER BY created_at DESC LIMIT 10;"
 
 # Verify odds pipeline freshness against the same DB path
 set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
