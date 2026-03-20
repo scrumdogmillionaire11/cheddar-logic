@@ -484,6 +484,8 @@ export interface PropPlayRow {
   sourceCardTitle: string;
   updatedAtUtc: string;
   reasoning?: string;
+  /** WI-0529: Three-state display decision from model job. Absent on legacy rows. */
+  propDisplayState?: 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
 }
 
 export interface PropGameCard {

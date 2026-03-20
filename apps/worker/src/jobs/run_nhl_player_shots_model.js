@@ -39,6 +39,18 @@ const {
 
 const JOB_NAME = 'run-nhl-player-shots-model';
 
+/**
+ * WI-0529: Compute three-state display decision for prop cards.
+ * PROJECTION_ONLY: anomaly flagged or no odds price (no actionable signal).
+ * PLAY:           clean projection + positive opportunity score.
+ * WATCH:          clean projection + zero or negative opportunity score.
+ */
+function computePropDisplayState(v2AnomalyDetected, v2OpportunityScore) {
+  if (v2AnomalyDetected || v2OpportunityScore == null) return 'PROJECTION_ONLY';
+  if (v2OpportunityScore > 0) return 'PLAY';
+  return 'WATCH';
+}
+
 function attachRunId(card, runId) {
   if (!card) return;
   card.runId = runId;
@@ -1250,6 +1262,7 @@ async function runNHLPlayerShotsModel() {
                 over_price: isOddsBacked ? overPrice : null,
                 under_price: isOddsBacked ? underPrice : null,
                 opportunity_score: v2OpportunityScore,
+                prop_display_state: computePropDisplayState(v2AnomalyDetected, v2OpportunityScore),
                 decision: {
                   edge_pct: computeEdgePct(mu, syntheticLine),
                   projection: Math.round(mu * 100) / 100,
