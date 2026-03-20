@@ -86,6 +86,23 @@ function isNonPassCard(card) {
 
 function isDisplayableWebhookCard(card) {
   const payload = card?.payloadData || {};
+
+  // Player prop cards (e.g. nhl-player-shots) don't carry kind='PLAY' at the
+  // root and store their selection under payload.play.selection — handle them
+  // separately before the generic gate logic runs.
+  if (isPlayerPropCard(card)) {
+    const propAction = normalizeToken(payload?.play?.action || payload?.action || payload?.status);
+    const propClassification = normalizeToken(
+      payload?.play?.classification || payload?.classification,
+    );
+    const propSelection = payload?.play?.selection ?? payload?.selection;
+    const propHasExplicitPass =
+      propAction.includes('PASS') || propClassification.includes('PASS');
+    if (propHasExplicitPass) return true; // show in PASS/blocked section
+    const propActionable = ['FIRE', 'WATCH', 'LEAN', 'HOLD'].includes(propAction);
+    return propActionable && propSelection != null;
+  }
+
   const isOnePeriod = isFirstPeriodCard(card);
   const kind = normalizeToken(payload?.kind);
   const action = normalizeToken(payload?.action || payload?.status);
@@ -308,6 +325,22 @@ function metricSummary(card) {
 }
 
 function renderDecisionLine(card, bucket) {
+  const payload = card?.payloadData || {};
+
+  // Player prop cards carry their full pick string in payload.prediction (same as
+  // play.pick_string). Use that directly — the nested play.selection structure
+  // doesn't surface through the generic selection/line/price helpers.
+  if (isPlayerPropCard(card)) {
+    const pickStr = compactToken(payload?.prediction || payload?.play?.pick_string || '');
+    if (bucket === 'pass_blocked') {
+      return `PROP | ${pickStr || 'No official play'}\nReason: ${decisionReason(card)}`;
+    }
+    const why = summarizeReasoning(card);
+    const lines = [`PROP | ${pickStr || 'No official play'}`];
+    if (why) lines.push(`Why: ${why}`);
+    return lines.join('\n');
+  }
+
   const market = normalizeMarketTag(card);
   const selection = selectionSummary(card);
   const line = lineSummary(card);
