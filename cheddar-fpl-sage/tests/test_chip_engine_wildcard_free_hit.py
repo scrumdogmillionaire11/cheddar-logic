@@ -64,11 +64,17 @@ def _state(
 
 
 def _good_wc_inputs(**overrides) -> WildcardInputs:
-    """WildcardInputs that should produce a FIRE decision."""
+    """WildcardInputs that produce a FIRE decision.
+
+    Calibrated so that the horizon-adjusted score at GW 22/38 (~40 % penalty)
+    still clears the 55.0 fire threshold:
+      raw = 0.5*75 + 0.3*80 + 0.2*60 = 73.5
+      adj @ GW22 ≈ 73.5 * 0.928 ≈ 68.2  >  55.0
+    """
     defaults = dict(
-        team_ev_delta=6.0,        # well above 2.0 minimum
-        fixture_run_score=70.0,   # well above 50.0 minimum
-        hit_cost_avoided=8.0,
+        team_ev_delta=15.0,       # 75 / 100 component
+        fixture_run_score=80.0,   # 80 / 100 component
+        hit_cost_avoided=12.0,    # 60 / 100 component
         dgw_imminent_gw=None,
     )
     defaults.update(overrides)
@@ -551,7 +557,7 @@ class TestRequiredFields:
         (22, 1.0, 70.0, None),    # below min ev → PASS
         (22, 6.0, 40.0, None),    # below fixture → PASS
         (22, 6.0, 70.0, 24),      # DGW imminent → WATCH
-        (22, 6.0, 70.0, None),    # normal → FIRE
+        (22, 6.0, 70.0, None),    # below min ev → PASS (reason_codes still set)
         (36, 1.0, 30.0, None),    # escalated → FIRE
     ])
     def test_wildcard_reason_codes_always_populated(self, gw, ev_delta, fixture, dgw):
