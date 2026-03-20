@@ -844,6 +844,7 @@ function normalizeMarketType(value: unknown): Play['market_type'] | undefined {
   if (upper === 'DRAW_NO_BET' || upper === 'DRAWNOBET') {
     return 'MONEYLINE';
   }
+  if (upper === 'ASIAN_HANDICAP') return 'SPREAD';
   return undefined;
 }
 

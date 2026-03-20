@@ -478,7 +478,7 @@ const schemaByCardType = {
 
   // Active single-card model output jobs
   'soccer-model-output': soccerPayloadSchema,
-  'soccer-ohio-scope': soccerOhioScopeSchema,
+  'soccer': soccerOhioScopeSchema,
   'soccer_ml': soccerMlSchema,
   'soccer_game_total': soccerGameTotalSchema,
   'soccer_double_chance': soccerDoubleChanceSchema,
@@ -499,7 +499,7 @@ const schemaByCardType = {
 // deriveLockedMarketContext (which only handles SPREAD/TOTAL/MONEYLINE contracts
 // and does not understand soccer-specific payload shapes).
 const SOCCER_SELF_CONTAINED_TYPES = new Set([
-  'soccer-ohio-scope',
+  'soccer',
   'soccer_ml',
   'soccer_game_total',
   'soccer_double_chance',
