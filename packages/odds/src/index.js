@@ -219,10 +219,11 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
           apiKey,
           regions: 'us',
           markets: 'spreads',
+          bookmakers: 'pinnacle',
           oddsFormat: 'american',
         };
         console.log(
-          `[Odds] Soccer spreads fallback: ${leagueKey} had no spreads for configured books; retrying spreads with default bookmakers`,
+          `[Odds] Soccer spreads fallback: ${leagueKey} had no spreads for configured books; retrying spreads with pinnacle`,
         );
         const spreadResponse = await axios.get(url, {
           params: spreadParams,

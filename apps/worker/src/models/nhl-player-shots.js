@@ -212,4 +212,290 @@ function calcFairLine1p(inputs) {
   );
 }
 
-module.exports = { calcMu, calcMu1p, classifyEdge, calcFairLine, calcFairLine1p };
+// ============================================================================
+// Two-Stage SOG Model — projectSogV2
+// ============================================================================
+
+/**
+ * Clamp a value between min and max.
+ * @param {number} val
+ * @param {number} min
+ * @param {number} max
+ * @returns {number}
+ */
+function clamp(val, min, max) {
+  return Math.min(Math.max(val, min), max);
+}
+
+/**
+ * Weighted rate blend from season, L10, L5 values.
+ * Weights: 0.35 season + 0.35 L10 + 0.30 L5
+ * If any value is null, redistribute weight equally among present values.
+ * If all null, return 0.
+ *
+ * @param {number|null} season
+ * @param {number|null} l10
+ * @param {number|null} l5
+ * @returns {number}
+ */
+function weightedRateBlend(season, l10, l5) {
+  const values = [season, l10, l5];
+  const weights = [0.35, 0.35, 0.30];
+  const present = values.map((v, i) => (v !== null && v !== undefined ? { v, w: weights[i] } : null)).filter(Boolean);
+  if (present.length === 0) return 0;
+  const totalW = present.reduce((s, x) => s + x.w, 0);
+  return present.reduce((s, x) => s + (x.v * x.w) / totalW, 0);
+}
+
+/**
+ * Convert American odds to implied probability (raw, no vig removal).
+ * @param {number} americanOdds
+ * @returns {number}
+ */
+function americanToImplied(americanOdds) {
+  if (americanOdds >= 0) {
+    return 100 / (americanOdds + 100);
+  }
+  return Math.abs(americanOdds) / (Math.abs(americanOdds) + 100);
+}
+
+/**
+ * Convert fair probability to American odds (rounded to nearest integer).
+ * @param {number} prob
+ * @returns {number}
+ */
+function probToAmerican(prob) {
+  if (prob <= 0) return 99999;
+  if (prob >= 1) return -99999;
+  if (prob >= 0.5) {
+    return Math.round(-(prob / (1 - prob)) * 100);
+  }
+  return Math.round(((1 - prob) / prob) * 100);
+}
+
+/**
+ * Compute Poisson CDF: P(X <= k) for given lambda.
+ * @param {number} lambda
+ * @param {number} k  (integer)
+ * @returns {number}
+ */
+function poissonCDF(lambda, k) {
+  if (lambda <= 0) return k >= 0 ? 1 : 0;
+  let cdf = 0;
+  let term = Math.exp(-lambda);
+  for (let i = 0; i <= k; i++) {
+    cdf += term;
+    term *= lambda / (i + 1);
+  }
+  return cdf;
+}
+
+/**
+ * P(X > line) where line is a half-integer (e.g. 2.5 → floor = 2).
+ * @param {number} lambda
+ * @param {number} line
+ * @returns {number}
+ */
+function poissonOverProb(lambda, line) {
+  const k = Math.floor(line);
+  return 1 - poissonCDF(lambda, k);
+}
+
+/**
+ * P(X < line) where line is a half-integer (e.g. 2.5 → floor = 2, P(X<=1)).
+ * @param {number} lambda
+ * @param {number} line
+ * @returns {number}
+ */
+function poissonUnderProb(lambda, line) {
+  const k = Math.floor(line);
+  return poissonCDF(lambda, k - 1);
+}
+
+/**
+ * Compute trend_factor from role_stability and EV shot rates.
+ *
+ * @param {string} roleStability  'HIGH' | 'MEDIUM' | 'LOW'
+ * @param {number|null} l5EvRate
+ * @param {number|null} seasonEvRate
+ * @returns {number}
+ */
+function computeTrendFactor(roleStability, l5EvRate, seasonEvRate) {
+  if (roleStability === 'LOW') return 1.0;
+  if (!seasonEvRate || seasonEvRate === 0 || l5EvRate === null || l5EvRate === undefined) return 1.0;
+  const weight = roleStability === 'HIGH' ? 1.0 : 0.5;
+  const raw = 1 + ((l5EvRate / seasonEvRate - 1) * 0.35 * weight);
+  return clamp(raw, 0.93, 1.07);
+}
+
+/**
+ * Two-stage NHL SOG projection model.
+ *
+ * Stage 1: Compute sog_mu from EV+PP rate blends, TOI projections, and a
+ *          chain of bounded multipliers.
+ * Stage 2: Convert sog_mu to fair Poisson probabilities for each market line
+ *          and compute edge/EV when prices are present.
+ *
+ * @param {object} inputs
+ * @returns {NhlShotsProjection}
+ */
+function projectSogV2(inputs) {
+  const {
+    player_id,
+    game_id,
+    ev_shots_season_per60,
+    ev_shots_l10_per60,
+    ev_shots_l5_per60,
+    pp_shots_season_per60,
+    pp_shots_l10_per60,
+    pp_shots_l5_per60,
+    toi_proj_ev = 0,
+    toi_proj_pp = 0,
+    shot_env_factor: rawShotEnvFactor = 1.0,
+    opponent_suppression_factor: rawOppSuppression = 1.0,
+    goalie_rebound_factor: rawGoalieRebound = 1.0,
+    trailing_script_factor: rawTrailingScript = 1.0,
+    role_stability = 'HIGH',
+    market_line = null,
+    market_price_over = null,
+    market_price_under = null,
+    lines_to_price = [],
+  } = inputs || {};
+
+  // ---- Flags ----
+  const flags = [];
+
+  // LOW_SAMPLE: any EV shot rate null
+  if (
+    ev_shots_season_per60 === null || ev_shots_season_per60 === undefined ||
+    ev_shots_l10_per60 === null || ev_shots_l10_per60 === undefined ||
+    ev_shots_l5_per60 === null || ev_shots_l5_per60 === undefined
+  ) {
+    flags.push('LOW_SAMPLE');
+  }
+
+  if (role_stability === 'LOW') {
+    flags.push('ROLE_IN_FLUX');
+  }
+
+  if (market_line !== null && market_line !== undefined &&
+      (market_price_over === null || market_price_over === undefined ||
+       market_price_under === null || market_price_under === undefined)) {
+    flags.push('MISSING_PRICE');
+  }
+
+  // ---- Stage 1: SOG_mu ----
+  const ev_rate = weightedRateBlend(ev_shots_season_per60, ev_shots_l10_per60, ev_shots_l5_per60);
+  const pp_rate = weightedRateBlend(pp_shots_season_per60, pp_shots_l10_per60, pp_shots_l5_per60);
+
+  const shot_env_factor = clamp(rawShotEnvFactor ?? 1.0, 0.92, 1.08);
+  const opp_sup_factor = clamp(rawOppSuppression ?? 1.0, 0.90, 1.10);
+  const goalie_factor = clamp(rawGoalieRebound ?? 1.0, 0.97, 1.03);
+  const trailing_factor = clamp(rawTrailingScript ?? 1.0, 0.95, 1.08);
+  const trend_factor = computeTrendFactor(role_stability, ev_shots_l5_per60, ev_shots_season_per60);
+
+  const raw_sog_mu = (ev_rate * toi_proj_ev / 60) + (pp_rate * toi_proj_pp / 60);
+  const sog_mu = Math.max(
+    0.0,
+    raw_sog_mu * shot_env_factor * opp_sup_factor * goalie_factor * trailing_factor * trend_factor,
+  );
+
+  const sog_sigma = Math.sqrt(sog_mu);
+
+  // trend_score: l5/season_rate - 1 (raw, before weight)
+  const trend_score = (ev_shots_season_per60 && ev_shots_season_per60 !== 0 && ev_shots_l5_per60 !== null && ev_shots_l5_per60 !== undefined)
+    ? (ev_shots_l5_per60 / ev_shots_season_per60 - 1)
+    : 0;
+
+  // ---- Stage 2: Fair probabilities per line ----
+  // Combine lines_to_price with market_line (deduplicated)
+  const allLines = [...new Set([
+    ...lines_to_price,
+    ...(market_line !== null && market_line !== undefined ? [market_line] : []),
+  ])];
+
+  const fair_over_prob_by_line = {};
+  const fair_under_prob_by_line = {};
+  const fair_price_over_by_line = {};
+  const fair_price_under_by_line = {};
+
+  for (const line of allLines) {
+    const overProb = poissonOverProb(sog_mu, line);
+    const underProb = poissonUnderProb(sog_mu, line);
+    const key = String(line);
+    fair_over_prob_by_line[key] = overProb;
+    fair_under_prob_by_line[key] = underProb;
+    fair_price_over_by_line[key] = probToAmerican(overProb);
+    fair_price_under_by_line[key] = probToAmerican(underProb);
+  }
+
+  // ---- Edge and EV (only when prices present) ----
+  let edge_over_pp = null;
+  let edge_under_pp = null;
+  let ev_over = null;
+  let ev_under = null;
+
+  if (market_price_over !== null && market_price_over !== undefined && market_line !== null && market_line !== undefined) {
+    const fairOverProb = fair_over_prob_by_line[String(market_line)];
+    const impliedOverProb = americanToImplied(market_price_over);
+    edge_over_pp = fairOverProb - impliedOverProb;
+    const payoutDm1Over = market_price_over >= 0
+      ? market_price_over / 100
+      : 100 / Math.abs(market_price_over);
+    ev_over = fairOverProb * payoutDm1Over - (1 - fairOverProb);
+  }
+
+  if (market_price_under !== null && market_price_under !== undefined && market_line !== null && market_line !== undefined) {
+    const fairUnderProb = fair_under_prob_by_line[String(market_line)];
+    const impliedUnderProb = americanToImplied(market_price_under);
+    edge_under_pp = fairUnderProb - impliedUnderProb;
+    const payoutDm1Under = market_price_under >= 0
+      ? market_price_under / 100
+      : 100 / Math.abs(market_price_under);
+    ev_under = fairUnderProb * payoutDm1Under - (1 - fairUnderProb);
+  }
+
+  // ---- OpportunityScore ----
+  let opportunity_score = null;
+  if (
+    market_line !== null && market_line !== undefined &&
+    market_price_over !== null && market_price_over !== undefined &&
+    edge_over_pp !== null && ev_over !== null
+  ) {
+    const shot_env_adj = (rawShotEnvFactor ?? 1.0) - 1.0;
+    opportunity_score =
+      0.45 * edge_over_pp +
+      0.20 * ev_over +
+      0.20 * (sog_mu - market_line) +
+      0.10 * trend_score +
+      0.05 * shot_env_adj;
+  }
+
+  return {
+    player_id,
+    game_id,
+    sog_mu,
+    sog_sigma,
+    toi_proj: toi_proj_ev + toi_proj_pp,
+    shot_rate_ev_per60: ev_rate,
+    shot_rate_pp_per60: pp_rate,
+    shot_env_factor,
+    role_stability,
+    trend_score,
+    fair_over_prob_by_line,
+    fair_under_prob_by_line,
+    fair_price_over_by_line,
+    fair_price_under_by_line,
+    market_line: market_line ?? null,
+    market_price_over: market_price_over ?? null,
+    market_price_under: market_price_under ?? null,
+    edge_over_pp,
+    edge_under_pp,
+    ev_over,
+    ev_under,
+    opportunity_score,
+    flags,
+  };
+}
+
+module.exports = { calcMu, calcMu1p, classifyEdge, calcFairLine, calcFairLine1p, projectSogV2 };

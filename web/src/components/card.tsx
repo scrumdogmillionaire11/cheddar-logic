@@ -54,6 +54,8 @@ export interface CardPayloadData {
     h2h_away?: number;
     spread_home?: number;
     spread_away?: number;
+    spread_price_home?: number | null;
+    spread_price_away?: number | null;
     total?: number;
     draw_odds?: number;
     captured_at: string;
@@ -398,23 +400,35 @@ export default function Card({
               )}
               {hasSpread && (
                 <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700/50">
-                  <p className="text-xs text-slate-500 mb-1">Spread</p>
+                  <p className="text-xs text-slate-500 mb-1">Asian Handicap</p>
                   <div className="space-y-1 text-sm">
-                    {payloadData.odds_context.spread_home !== undefined && (
+                    {payloadData.odds_context.spread_home !== undefined && payloadData.odds_context.spread_home !== null && (
                       <div className="flex justify-between">
                         <span className="text-slate-400">Home</span>
                         <span className="text-cloud font-mono">
                           {payloadData.odds_context.spread_home > 0 ? '+' : ''}
                           {payloadData.odds_context.spread_home}
+                          {payloadData.odds_context.spread_price_home != null && (
+                            <span className="text-slate-400 ml-1">
+                              ({payloadData.odds_context.spread_price_home > 0 ? '+' : ''}
+                              {payloadData.odds_context.spread_price_home})
+                            </span>
+                          )}
                         </span>
                       </div>
                     )}
-                    {payloadData.odds_context.spread_away !== undefined && (
+                    {payloadData.odds_context.spread_away !== undefined && payloadData.odds_context.spread_away !== null && (
                       <div className="flex justify-between">
                         <span className="text-slate-400">Away</span>
                         <span className="text-cloud font-mono">
                           {payloadData.odds_context.spread_away > 0 ? '+' : ''}
                           {payloadData.odds_context.spread_away}
+                          {payloadData.odds_context.spread_price_away != null && (
+                            <span className="text-slate-400 ml-1">
+                              ({payloadData.odds_context.spread_price_away > 0 ? '+' : ''}
+                              {payloadData.odds_context.spread_price_away})
+                            </span>
+                          )}
                         </span>
                       </div>
                     )}

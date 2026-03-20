@@ -38,7 +38,7 @@ async function run() {
     'nhl-spread-call',
     'nhl-totals-call',
     'soccer-model-output',
-    'soccer-ohio-scope',
+    'soccer',
     'welcome-home-v2',
   ];
 
@@ -47,7 +47,7 @@ async function run() {
     'mlb-model-output',
     'nfl-model-output',
     'soccer-model-output',
-    'soccer-ohio-scope',
+    'soccer',
   ]);
 
   const requiredCardTypes = workerCardTypes.filter(

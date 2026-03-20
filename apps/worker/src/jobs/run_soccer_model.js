@@ -431,7 +431,7 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
   };
 
   return {
-    cardType: 'soccer-ohio-scope',
+    cardType: 'soccer',
     payloadData,
     pass_reason,
   };
@@ -633,6 +633,13 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       edge_basis: 'ah_de_vig_poisson_goal_diff',
       missing_context_flags,
       pass_reason,
+      odds_context: {
+        spread_home: Number.isFinite(line) ? (side === 'HOME' ? line : -line) : null,
+        spread_away: Number.isFinite(line) ? (side === 'AWAY' ? line : -line) : null,
+        spread_price_home: side === 'HOME' ? offeredPrice : oppositePrice,
+        spread_price_away: side === 'AWAY' ? offeredPrice : oppositePrice,
+        captured_at: oddsSnapshot?.captured_at ?? null,
+      },
     };
   } else {
     throw new Error(`buildSoccerOddsBackedCard: unknown canonicalCardType "${canonicalCardType}"`);
@@ -903,7 +910,7 @@ function buildSoccerTier1CardFromPropLine(gameId, oddsSnapshot, propLineRow) {
     id: cardId,
     gameId,
     sport: 'SOCCER',
-    cardType: 'soccer-ohio-scope',
+    cardType: 'soccer',
     cardTitle: `Soccer Tier1: ${canonicalMarket}`,
     createdAt: nowIso,
     expiresAt: null,
@@ -1147,7 +1154,7 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
 
           // Ensure stale projection/prop cards from prior runs do not linger.
           // This keeps player-prop output aligned to current ingest snapshot.
-          deleteCardPayloadsForGame(gameId, 'soccer-ohio-scope');
+          deleteCardPayloadsForGame(gameId, 'soccer');
 
           const propRows = getPlayerPropLinesForGame(
             'SOCCER',
