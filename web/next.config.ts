@@ -4,7 +4,7 @@ import path from "node:path";
 const isProduction = process.env.NODE_ENV === "production";
 const overrideApiBase = isProduction
   ? undefined
-  : process.env.FPL_API_BASE_URL || process.env.NEXT_PUBLIC_FPL_API_URL;
+  : process.env.FPL_API_BASE_URL;
 const defaultApiBase = isProduction
   ? "https://api.cheddarlogic.com/api/v1"
   : "http://localhost:8001/api/v1";
