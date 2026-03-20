@@ -348,6 +348,8 @@ interface Play {
   data_quality?: string | null;
   l5_sog?: number[] | null;
   l5_mean?: number | null;
+  market_price_over?: number | null;
+  market_price_under?: number | null;
 }
 
 interface IngestFailureRow {
@@ -2296,6 +2298,16 @@ export async function GET(request: NextRequest) {
                 normalizedL5Sog.length
             : undefined,
         );
+        const normalizedPriceOver =
+          firstNumber(
+            (payload as Record<string, unknown>).market_price_over,
+            payloadPlay?.market_price_over,
+          ) ?? null;
+        const normalizedPriceUnder =
+          firstNumber(
+            (payload as Record<string, unknown>).market_price_under,
+            payloadPlay?.market_price_under,
+          ) ?? null;
         const payloadProjection = toObject(payload.projection);
         const payloadPlayProjection = toObject(payloadPlayObj?.projection);
         const normalizedProjectedTotal = firstNumber(
@@ -2799,6 +2811,8 @@ export async function GET(request: NextRequest) {
           data_quality: normalizedDataQuality ?? null,
           l5_sog: normalizedL5Sog ?? null,
           l5_mean: normalizedL5Mean ?? null,
+          market_price_over: normalizedPriceOver,
+          market_price_under: normalizedPriceUnder,
           consistency:
             payload.consistency && typeof payload.consistency === 'object'
               ? {
