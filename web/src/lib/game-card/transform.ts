@@ -3359,6 +3359,8 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         reasonCodes: play.reason_codes,
         l5Sog: play.l5_sog ?? undefined,
         l5Mean: play.l5_mean ?? null,
+        priceOver: ((play as unknown as Record<string, unknown>).market_price_over as number | null | undefined) ?? null,
+        priceUnder: ((play as unknown as Record<string, unknown>).market_price_under as number | null | undefined) ?? null,
         sourceCardType: play.cardType,
         sourceCardTitle: play.cardTitle,
         updatedAtUtc: game.odds?.capturedAt || game.createdAt,
