@@ -152,6 +152,13 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                     <div className="mt-1 text-xs text-cloud/70">
                       Conf {formatPercent(prop.confidence)}
                     </div>
+                    {(prop.priceOver != null || prop.priceUnder != null) && (
+                      <div className="mt-1 text-xs font-semibold text-cloud/80">
+                        {prop.priceOver != null ? `OVER ${formatOdds(prop.priceOver)}` : 'OVER —'}
+                        {' / '}
+                        {prop.priceUnder != null ? `UNDER ${formatOdds(prop.priceUnder)}` : 'UNDER —'}
+                      </div>
+                    )}
                     <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
                       <div
                         className="h-1.5 rounded-full bg-teal"
