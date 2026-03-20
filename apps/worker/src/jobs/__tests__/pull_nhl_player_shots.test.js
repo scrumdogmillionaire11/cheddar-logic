@@ -422,3 +422,106 @@ describe('pull_nhl_player_shots — checkInjuryStatus tier', () => {
     expect(result.tier).toBe('ACTIVE');
   });
 });
+
+describe('pull_nhl_player_shots — enriched raw_data (shotsPer60 + projToi)', () => {
+  beforeEach(() => {
+    mockUpsertPlayerShotLogCalls = [];
+    mockUpsertPlayerAvailabilityCalls = [];
+    jest.clearAllMocks();
+    global.fetch = jest.fn();
+  });
+
+  test('raw_data stored per game includes shotsPer60 derived from featuredStats', async () => {
+    // NHL API has featuredStats.regularSeason.subSeason.shots = 200, gamesPlayed = 50
+    // Expected shotsPer60 proxy: shots/gamesPlayed = 200/50 = 4.0 shots/game
+    const payload = {
+      fullName: 'Season Stats Player',
+      last5Games: [
+        { gameId: 'g1', gameDate: '2026-03-10', homeRoadFlag: 'H', toi: '18:30', shots: 3, opponentAbbrev: 'TOR' },
+        { gameId: 'g2', gameDate: '2026-03-08', homeRoadFlag: 'R', toi: '19:00', shots: 4, opponentAbbrev: 'BOS' },
+      ],
+      featuredStats: {
+        regularSeason: {
+          subSeason: {
+            shots: 200,
+            gamesPlayed: 50,
+          },
+        },
+      },
+    };
+
+    global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(payload) });
+    process.env.NHL_SOG_PLAYER_IDS = '9001';
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerShotLog } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    expect(upsertPlayerShotLog).toHaveBeenCalled();
+    const storedRow = upsertPlayerShotLog.mock.calls[0][0];
+    const stored = JSON.parse(storedRow.rawData ? JSON.stringify(storedRow.rawData) : '{}');
+
+    // shotsPer60 must be populated (200 shots / 50 games = 4.0)
+    expect(stored.shotsPer60).toBe(4.0);
+    // projToi must be populated (from game toi since avgToi not in subSeason above)
+    expect(typeof stored.projToi).toBe('number');
+    expect(stored.projToi).toBeGreaterThan(0);
+  });
+
+  test('raw_data.shotsPer60 is null when featuredStats is missing', async () => {
+    const payload = {
+      fullName: 'No Stats Player',
+      last5Games: [
+        { gameId: 'g3', gameDate: '2026-03-10', homeRoadFlag: 'H', toi: '15:00', shots: 2, opponentAbbrev: 'MTL' },
+      ],
+      // No featuredStats
+    };
+
+    global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(payload) });
+    process.env.NHL_SOG_PLAYER_IDS = '9002';
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerShotLog } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    const storedRow = upsertPlayerShotLog.mock.calls[0][0];
+    const stored = JSON.parse(storedRow.rawData ? JSON.stringify(storedRow.rawData) : '{}');
+
+    expect(stored.shotsPer60).toBeNull();
+    // projToi falls back to the game's own toi_minutes (15.0)
+    expect(stored.projToi).toBeCloseTo(15.0, 1);
+  });
+
+  test('raw_data retains original game fields alongside enriched fields', async () => {
+    const payload = {
+      fullName: 'Field Retention Player',
+      last5Games: [
+        { gameId: 'g4', gameDate: '2026-03-12', homeRoadFlag: 'R', toi: '20:00', shots: 5, opponentAbbrev: 'EDM', goals: 1 },
+      ],
+    };
+
+    global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(payload) });
+    process.env.NHL_SOG_PLAYER_IDS = '9003';
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerShotLog } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    const storedRow = upsertPlayerShotLog.mock.calls[0][0];
+    const stored = JSON.parse(storedRow.rawData ? JSON.stringify(storedRow.rawData) : '{}');
+
+    // Original game fields must still be present
+    expect(stored.shots).toBe(5);
+    expect(stored.goals).toBe(1);
+    expect(stored.opponentAbbrev).toBe('EDM');
+    // Enriched fields added
+    expect('shotsPer60' in stored).toBe(true);
+    expect('projToi' in stored).toBe(true);
+  });
+});
