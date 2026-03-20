@@ -45,6 +45,7 @@ const { pullSoccerPlayerProps } = require('../jobs/pull_soccer_player_props');
 const { pullSoccerXgStats } = require('../jobs/pull_soccer_xg_stats');
 const { runNCAAMModel } = require('../jobs/run_ncaam_model');
 const { runRefreshNcaamFtCsv } = require('../jobs/refresh_ncaam_ft_csv');
+const { syncGameStatuses } = require('../jobs/sync_game_statuses');
 const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
 const { backfillCardResults } = require('../jobs/backfill_card_results');
@@ -687,6 +688,16 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       isHourlySettlementDue(nowEt)
     ) {
       const hourlyKey = keyHourlySettlementSweep(nowEt);
+
+      // Sync game statuses first so road-trip sequence logic (e.g. Welcome Home)
+      // has accurate 'final' status before models and settlement run.
+      jobs.push({
+        jobName: 'sync_game_statuses',
+        jobKey: `sync|game-statuses|${hourlyKey}`,
+        execute: syncGameStatuses,
+        args: { jobKey: `sync|game-statuses|${hourlyKey}`, dryRun },
+        reason: `hourly game status sync ${hourlyKey}`,
+      });
 
       if (!settlementGameRunning) {
         jobs.push({

@@ -156,6 +156,12 @@ function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
   return 'pregame';
 }
 
+function resolveSportFilter(searchParams: URLSearchParams): string | null {
+  const normalized = normalizeSport(searchParams.get('sport'));
+  if (!normalized || normalized === 'ALL') return null;
+  return normalized;
+}
+
 function deriveDisplayStatus(lifecycleMode: LifecycleMode): DisplayStatus {
   return lifecycleMode === 'active' ? 'ACTIVE' : 'SCHEDULED';
 }
@@ -1451,6 +1457,7 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams;
     const lifecycleMode = resolveLifecycleMode(searchParams);
+    const sportFilter = resolveSportFilter(searchParams);
 
     // Compute midnight America/New_York as a UTC string for the SQL param.
     // en-CA locale gives YYYY-MM-DD; shortOffset gives "GMT-5" / "GMT-4" (DST-aware).
@@ -1532,6 +1539,7 @@ export async function GET(request: NextRequest) {
         g.created_at
       FROM games g
       WHERE datetime(g.game_time_utc) >= ?
+        ${sportFilter ? 'AND UPPER(g.sport) = ?' : ''}
         AND NOT EXISTS (
           SELECT 1
           FROM card_results cr
@@ -1548,6 +1556,7 @@ export async function GET(request: NextRequest) {
       SELECT COUNT(*) AS total
       FROM games g
       WHERE datetime(g.game_time_utc) >= ?
+        ${sportFilter ? 'AND UPPER(g.sport) = ?' : ''}
         AND NOT EXISTS (
           SELECT 1
           FROM card_results cr
@@ -1560,10 +1569,15 @@ export async function GET(request: NextRequest) {
     let baseWindowCount: number | null = null;
     if (isNonProd) {
       const baseWindowCountStmt = db.prepare(baseWindowCountSql);
+      const countParams: string[] = [gamesStartUtc];
+      if (sportFilter) {
+        countParams.push(sportFilter);
+      }
+      if (gamesEndUtc) {
+        countParams.push(gamesEndUtc);
+      }
       const baseWindowCountRow = (
-        gamesEndUtc
-          ? baseWindowCountStmt.get(gamesStartUtc, gamesEndUtc)
-          : baseWindowCountStmt.get(gamesStartUtc)
+        baseWindowCountStmt.get(...countParams)
       ) as { total?: number } | undefined;
       baseWindowCount = Number(baseWindowCountRow?.total ?? 0);
     }
@@ -1573,10 +1587,16 @@ export async function GET(request: NextRequest) {
       endUtc: string | null,
     ): GameRow[] => {
       const baseGamesStmt = db.prepare(baseGamesSql);
+      const gamesParams: string[] = [startUtc];
+      if (sportFilter) {
+        gamesParams.push(sportFilter);
+      }
+      gamesParams.push(nowUtc);
+      if (endUtc) {
+        gamesParams.push(endUtc);
+      }
       const baseGames = (
-        endUtc
-          ? baseGamesStmt.all(startUtc, nowUtc, endUtc)
-          : baseGamesStmt.all(startUtc, nowUtc)
+        baseGamesStmt.all(...gamesParams)
       ) as Array<
         Omit<
           GameRow,

@@ -245,8 +245,104 @@ npm --prefix apps/worker run job:report-telemetry-calibration -- --json > /tmp/s
 - No cards generated:
   - Ensure odds exist in the DB for the sport and time window.
   - Run seed data and try again.
+
+---
+
+## Production Pre-Push: Soccer Regression Check
+
+**REQUIRED before merging to main.** Soccer model changes have a history of silent degradation. Run this before any production deployment:
+
+### Quick Check (5 min)
+
+```bash
+# 1. Verify dev has playable Soccer cards
+DB_PATH=$(bash scripts/db-context.sh | awk -F': ' '/resolver path/ {print $2}') \
+sqlite3 "$DB_PATH" \
+  "SELECT 'soccer_playable_non_projection' as metric, COUNT(*) as count FROM card_payloads WHERE sport='soccer' AND json_extract(payload_data, '$.kind')='PLAY' AND COALESCE(CAST(json_extract(payload_data, '$.projection_only') AS INTEGER),0)=0 \
+   UNION ALL \
+   SELECT 'soccer_all_cards', COUNT(*) FROM card_payloads WHERE sport='soccer' \
+   UNION ALL \
+   SELECT 'soccer_model_outputs', COUNT(*) FROM model_outputs WHERE lower(sport)='soccer';"
+
+# 2. Compare distribution to production baseline (should be within ±15% of current prod)
+# Prod baseline (as of 2026-03-20):
+#   - 23 playable SOCCER plays
+#   - 4 market types (ML, GT, DC, PROP)
+#   - CLV ledger: active entries
+#   - NO PROJECTION_ONLY cards (Tier-1 props not running)
+
+# 3. Check for blockers
+DB_PATH=$(bash scripts/db-context.sh | awk -F': ' '/resolver path/ {print $2}') \
+sqlite3 "$DB_PATH" << SQL
+SELECT 'evidence_only_pass' as blocker, COUNT(*) as cnt
+FROM card_payloads WHERE sport='soccer' AND json_extract(payload_data, '$.pass_reason_code') LIKE 'PASS_%'
+UNION ALL
+SELECT 'missing_data', COUNT(*) FROM card_payloads WHERE sport='soccer' AND json_extract(payload_data, '$.ingest_failure_reason_code') IS NOT NULL
+UNION ALL
+SELECT 'projection_incomplete', COUNT(*) FROM card_payloads WHERE sport='soccer' AND CAST(json_extract(payload_data, '$.projection_inputs_complete') AS INTEGER) = 0;
+SQL
+```
+
+### Full Verification (if play count < 15)
+
+```bash
+# Run Soccer model with diagnostics
+ENABLE_CLV_LEDGER=true \
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model 2>&1 | tee /tmp/soccer-model.log
+
+# Check logs for errors
+grep -E "ERROR|FAIL|exception|PROJECTION_INPUTS_INCOMPLETE" /tmp/soccer-model.log || echo "✓ No errors"
+
+# Check CLV ledger was written
+DB_PATH=$(bash scripts/db-context.sh | awk -F': ' '/resolver path/ {print $2}') \
+sqlite3 "$DB_PATH" \
+  "SELECT COUNT(*) as clv_entries_created FROM clv_ledger WHERE lower(sport)='soccer' AND created_at > datetime('now', '-2 hours');"
+
+# Sample card quality
+DB_PATH=$(bash scripts/db-context.sh | awk -F': ' '/resolver path/ {print $2}') \
+sqlite3 "$DB_PATH" << SQL
+SELECT 
+  market_type,
+  confidence,
+  edge,
+  card_type
+FROM (
+  SELECT 
+    json_extract(payload_data, '$.market_type') as market_type,
+    CAST(json_extract(payload_data, '$.confidence') AS REAL) as confidence,
+    CAST(json_extract(payload_data, '$.edge') AS REAL) as edge,
+    card_type,
+    ROW_NUMBER() OVER (PARTITION BY json_extract(payload_data, '$.market_type') ORDER BY created_at DESC) as rn
+  FROM card_payloads
+  WHERE sport='soccer' AND json_extract(payload_data, '$.kind')='PLAY' AND COALESCE(CAST(json_extract(payload_data, '$.projection_only') AS INTEGER),0)=0
+)
+WHERE rn <= 3
+ORDER BY market_type, created_at DESC;
+SQL
+```
+
+### Root Cause Checklist (if plays missing)
+
+| Check | Command | Expected | Action if fails |
+| --- | --- | --- | --- |
+| Odds fresh | `DB_PATH=... sqlite3 "$DB_PATH" "SELECT MAX(captured_at) FROM odds_snapshots WHERE sport='soccer';"` | Last 2 hours | Run `job:pull-odds` + `job:pull-soccer-player-props` |
+| Model runs | `grep "=== runSoccerModel" /tmp/soccer-model.log \| tail -1` | Present + timestamp recent | Check scheduler logs |
+| Projection gate | `grep "PROJECTION_INPUTS_INCOMPLETE" /tmp/soccer-model.log \| wc -l` | ~0 or <5% | Check ESPN enrichment; run `job:refresh-team-metrics` |
+| Team mapping | `grep "Unknown team\|TEAM_MAPPING" /tmp/soccer-model.log` | None | Check `pull_soccer_xg_stats.js` team normalization |
+| CLV ledger | `DB_PATH=... sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM clv_ledger WHERE lower(sport)='soccer';"` | >5 entries | Check `recordSoccerProjectionTelemetry()` is called |
+
+### Pre-Production Acceptance
+
+- ✅ Soccer playable card count: ≥15 (within ±20% of prod baseline of 23)
+- ✅ No unresolved `PROJECTION_INPUTS_INCOMPLETE` logs
+- ✅ All market types present: `soccer_ml`, `soccer_game_total`, `soccer_double_chance`
+- ✅ CLV ledger active: ≥5 entries written in last 2 hours
+- ✅ Zero `.log` errors containing "FAIL" or "exception"
+- ✅ Edge distribution: mean >0.5%, no outliers >50%
+
+**If any check fails: DO NOT MERGE.** Investigate with `/pax:debug soccer-regression` for root cause.
+
 - ESPN enrichment missing:
-  - Jobs degrade gracefully; games with missing required projection fields are gated with `PROJECTION_INPUTS_INCOMPLETE`.
   - Check worker logs for missing fields and refresh odds/enrichment before rerunning.
   - For NCAAM specifically, check for unresolved live-odds team variants such as `Seattle Redhawks` / `Seattle U Redhawks` or `St. Thomas (MN) Tommies` / `St. Thomas-Minnesota Tommies`; these leave games with odds but no emitted plays.
   - Quick log check: `grep -E "Unknown team: \"Seattle Redhawks\"|Unknown team: \"St\. Thomas \(MN\) Tommies\"" apps/worker/logs/scheduler.log`

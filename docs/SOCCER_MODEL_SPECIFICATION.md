@@ -125,8 +125,8 @@ The single most important improvement over current state. EPL and MLS are differ
 | Player shots on target | Track 2 synthetic | Tier 1 (w/ line) | xG → shot volume | Volume stat — least volatile prop |
 | Goalkeeper saves | Not built | Tier 1 (new) | Opp xG → save vol | Low variance — opponent xG driven |
 | Away ML | Track 1 ✓ | Tier 2 only | xG Poisson | Systematically loss-making — informational only |
-| BTTS (both teams score) | Banned (Ohio) | Track 1 ✓ | N/A | Ohio scope restriction maintained |
-| Asian handicap | Banned (Ohio) | Track 1 ✓ | N/A | Ohio scope restriction maintained |
+| BTTS (both teams score) | Policy-gated (disabled) | Track 1 ✓ | N/A | Disabled in current market scope |
+| Asian handicap | Policy-gated (disabled) | Track 1 ✓ | N/A | Disabled in current market scope |
 | To score or assist | Track 2 synthetic | Tier 2 (tracked) | Role-tag model | High variance — track before promoting |
 | Anytime goalscorer | Track 2 synthetic | Tier 2 (tracked) | xG per player | High variance — track only |
 
