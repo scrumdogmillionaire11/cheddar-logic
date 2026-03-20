@@ -828,11 +828,13 @@ async function runNHLPlayerShotsModel() {
             // Extract season stats from most recent game's raw_data if available
             let shotsPer60 = null;
             let projToi = null;
+            let ppToi = 0; // WI-0528: default 0 for safe fallback on legacy log rows
             if (l5Games[0]?.raw_data) {
               try {
                 const rawData = JSON.parse(l5Games[0].raw_data);
                 shotsPer60 = rawData.shotsPer60 || null;
                 projToi = rawData.projToi || l5Games[0].toi_minutes || null;
+                ppToi = Number.isFinite(rawData.ppToi) && rawData.ppToi > 0 ? rawData.ppToi : 0; // WI-0528: real PP TOI
               } catch {
                 // Ignore parse errors
               }
@@ -1041,7 +1043,7 @@ async function runNHLPlayerShotsModel() {
               pp_shots_l10_per60: 0,
               pp_shots_l5_per60: 0,
               toi_proj_ev: projToi ?? 0,
-              toi_proj_pp: 0, // TODO(WI-NEXT): PP TOI not yet tracked — needs pp_toi from game logs
+              toi_proj_pp: ppToi, // WI-0528: real PP TOI from featuredStats.subSeason.avgPpToi (0 fallback for non-PP players)
               shot_env_factor: paceFactor,
               opponent_suppression_factor: opponentFactor,
               role_stability: playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH',
