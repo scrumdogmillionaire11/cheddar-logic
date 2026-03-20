@@ -512,13 +512,35 @@ class EnhancedDecisionFramework:
             )
             raise ValueError(f"Insufficient squad projections: {len(squad_projections)}/11")
             
+        # Blank GW exclusions: players with no fixture next GW must not start.
+        blank_gw_ids: set = set()
+        for proj in squad_projections:
+            tags = [str(t).lower() for t in (getattr(proj, "tags", []) or [])]
+            if "blank" in tags:
+                blank_gw_ids.add(proj.player_id)
+        if blank_gw_ids:
+            blank_names = [
+                name_by_id.get(pid, str(pid)) for pid in blank_gw_ids
+                if pid not in hard_excluded_ids
+            ]
+            if blank_names:
+                data_notes.append(
+                    f"Blank GW exclusion: {', '.join(blank_names)} benched — no fixture next GW."
+                )
+                logger.info(
+                    "XI optimizer: blank GW players removed from starting pool",
+                    extra={"blank_gw_names": blank_names},
+                )
+
         # Hard exclusions: OUT / BANNED never start.
+        # Blank GW players are also excluded from the starting XI.
+        xi_excluded_ids = hard_excluded_ids | blank_gw_ids
         playable_projections = [
             proj for proj in squad_projections
-            if proj.player_id not in hard_excluded_ids
+            if proj.player_id not in xi_excluded_ids
         ]
         if len(playable_projections) < 11:
-            raise ValueError("XI infeasible: fewer than 11 playable players after OUT/BANNED exclusions")
+            raise ValueError("XI infeasible: fewer than 11 playable players after OUT/BANNED/blank-GW exclusions")
 
         playable_by_pos = {
             "GK": [p for p in playable_projections if p.position == "GK"],
@@ -592,7 +614,7 @@ class EnhancedDecisionFramework:
             )
 
         selected_xi = best_candidate["starters"]
-        selected_xi = [player for player in selected_xi if player.player_id not in hard_excluded_ids]
+        selected_xi = [player for player in selected_xi if player.player_id not in xi_excluded_ids]
         if len(selected_xi) < 11:
             refill_pool = [
                 proj
@@ -611,7 +633,7 @@ class EnhancedDecisionFramework:
         selected_ids = {player.player_id for player in selected_xi}
 
         remaining_pool = [proj for proj in squad_projections if proj.player_id not in selected_ids]
-        remaining_playable = [proj for proj in remaining_pool if proj.player_id not in hard_excluded_ids]
+        remaining_playable = [proj for proj in remaining_pool if proj.player_id not in xi_excluded_ids]
 
         def _blocking_swap_reason(proj, player_status: str) -> Optional[str]:
             if player_status in {"DOUBT", "OUT", "BANNED"}:
@@ -690,7 +712,7 @@ class EnhancedDecisionFramework:
         data_notes.extend(sanity_swap_notes)
         selected_ids = {player.player_id for player in selected_xi}
         remaining_pool = [proj for proj in squad_projections if proj.player_id not in selected_ids]
-        remaining_playable = [proj for proj in remaining_pool if proj.player_id not in hard_excluded_ids]
+        remaining_playable = [proj for proj in remaining_pool if proj.player_id not in xi_excluded_ids]
 
         outfield_candidates = [proj for proj in remaining_playable if proj.position in {"DEF", "MID", "FWD"}]
         outfield_sorted = sorted(
