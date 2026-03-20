@@ -554,6 +554,9 @@ export const GAME_TAGS = {
   SUPPORT_STRONG: 'support_strong',
   SUPPORT_MIXED:  'support_mixed',
   SUPPORT_WEAK:   'support_weak',
+
+  // Situational signals
+  WELCOME_HOME_FADE: 'welcome_home_fade',
 } as const;
 
 export type GameTag = (typeof GAME_TAGS)[keyof typeof GAME_TAGS];

@@ -232,7 +232,7 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = request.nextUrl;
     const sportParam = searchParams.get('sport');
-    const sport = sportParam ? sportParam.toUpperCase() : null;
+    const sport = sportParam ? sportParam.toLowerCase() : null;
     const cardType = searchParams.get('card_type');
     const gameId = searchParams.get('game_id');
     const dedupe = searchParams.get('dedupe');
@@ -275,7 +275,7 @@ export async function GET(request: NextRequest) {
     const baseParams: Array<string | number> = [];
 
     if (sport) {
-      baseWhere.push('cp.sport = ?');
+      baseWhere.push('LOWER(cp.sport) = ?');
       baseParams.push(sport);
     }
 
@@ -290,7 +290,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
-    baseWhere.push("cp.sport != 'FPL'");
+    baseWhere.push("LOWER(cp.sport) != 'fpl'");
     baseWhere.push(`NOT EXISTS (
       SELECT 1
       FROM card_results cr
