@@ -891,4 +891,149 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.decision.v2.edge_over_pp).not.toBeNull();
     expect(card.payloadData.decision.v2.flags).not.toContain('PROJECTION_ANOMALY');
   });
+
+  // --- WI-0527 Task 2: extended drivers block ---
+
+  test('Test D: drivers block contains all projection inputs as numeric values when no anomaly', async () => {
+    // sog_mu=3.2, l5=[3,3,3,3,3] → no anomaly. All driver fields must be defined numbers.
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.2);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.2,
+      sog_sigma: 1.79,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.08,
+      edge_under_pp: -0.08,
+      ev_over: 0.06,
+      ev_under: -0.06,
+      opportunity_score: 0.72,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'drivers-test-d-01' })],
+      players: [buildPlayer({ player_id: 6001, player_name: 'Drivers Player D' })],
+      playerLogs: buildGamesFromShots([3, 3, 3, 3, 3]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    const drivers = card.payloadData.drivers;
+    // All new projection debug fields must be defined numbers
+    expect(typeof drivers.sog_mu).toBe('number');
+    expect(typeof drivers.ev_rate).toBe('number');
+    expect(typeof drivers.pp_rate).toBe('number');
+    expect(typeof drivers.shot_env_factor).toBe('number');
+    expect(typeof drivers.trend_factor).toBe('number');
+    expect(drivers.v2_anomaly).toBe(false);
+    // toi_proj_ev must be defined (number or non-null)
+    expect(drivers.toi_proj_ev).not.toBeUndefined();
+  });
+
+  test('Test E: PROJECTION_ANOMALY in decision.v2.flags when projectSogV2 returns sog_mu=1.4 and l5_avg=3.0', async () => {
+    // Directly tests the v2AnomalyDetected path through the flag array
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 1.4,
+      sog_sigma: 1.0,
+      toi_proj: 20,
+      shot_rate_ev_per60: 4.2,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 0.9,
+      role_stability: 'HIGH',
+      trend_score: -0.1,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: null,
+      edge_under_pp: null,
+      ev_over: null,
+      ev_under: null,
+      opportunity_score: null,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'drivers-test-e-01' })],
+      players: [buildPlayer({ player_id: 6002, player_name: 'Drivers Player E' })],
+      playerLogs: buildGamesFromShots([3, 3, 3, 3, 3]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.decision.v2.flags).toContain('PROJECTION_ANOMALY');
+    // drivers.v2_anomaly must also reflect the anomaly
+    expect(card.payloadData.drivers.v2_anomaly).toBe(true);
+  });
+
+  test('Test F: decision.v2.edge_over_pp is null when anomaly detected even if projectSogV2 returns non-null', async () => {
+    // Confirms nullification guard: mock returns edge_over_pp=0.12 but anomaly forces null
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 1.4,
+      sog_sigma: 1.0,
+      toi_proj: 20,
+      shot_rate_ev_per60: 4.2,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 0.9,
+      role_stability: 'HIGH',
+      trend_score: -0.1,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.12,  // non-null — must be forced to null by guard
+      edge_under_pp: -0.12,
+      ev_over: 0.09,
+      ev_under: -0.09,
+      opportunity_score: 0.85,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'drivers-test-f-01' })],
+      players: [buildPlayer({ player_id: 6003, player_name: 'Drivers Player F' })],
+      playerLogs: buildGamesFromShots([3, 3, 3, 3, 3]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.decision.v2.edge_over_pp).toBeNull();
+  });
 });
