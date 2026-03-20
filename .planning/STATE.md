@@ -54,5 +54,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 57 | WI-0531 Rolling PP splits (L10/L5) + recency-weighted blend: 033 migration, NST ingestion, weightedRateBlendPP (0.40/0.35/0.25), PP_SMALL_SAMPLE flag, four PP driver fields | 2026-03-20 | f6689d7 | [57-wi-0531-rolling-splits-l10-l5-recency-we](./quick/57-wi-0531-rolling-splits-l10-l5-recency-we/) |
 
 | 58 | Display odds on player prop cards: market_price_over/under plumbed through route.ts → transform → PropPlayRow → conditional "OVER X / UNDER Y" odds line in Model Snapshot block | 2026-03-20 | ead47cb | [58-display-odds-on-player-prop-cards-over-u](./quick/58-display-odds-on-player-prop-cards-over-u/) |
+| 59 | Clean-up repo lint and TS errors (WI-0532): fixed 2 ESLint no-undef errors in settle_game_results.js SportsRef fallback — `reason` → `missReason` on lines 1490 and 1509; npm run lint + tsc --noEmit both exit 0 | 2026-03-20 | a9db360 | [59-clean-up-repo-lint-and-ts-errors-wi-0532](./quick/59-clean-up-repo-lint-and-ts-errors-wi-0532/) |
 
-Last activity: 2026-03-20 - Completed quick task 58: Display odds on player prop cards — wired market_price_over/under from payload through route.ts Play type, transform PropPlayRow mapping, and conditional odds line in prop-game-card Model Snapshot block; TypeScript clean, contract test passing
+Last activity: 2026-03-20 - Completed quick task 59: Clean-up repo lint and TS errors — fixed out-of-scope `reason` references in settle_game_results.js SportsRef fallback, npm run lint and tsc --noEmit both exit 0
