@@ -486,6 +486,8 @@ export interface PropPlayRow {
   reasoning?: string;
   /** WI-0529: Three-state display decision from model job. Absent on legacy rows. */
   propDisplayState?: 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
+  /** The sportsbook O/U line being priced (e.g. 2.5). Null if projection-only. */
+  marketLine?: number | null;
   /** American odds for the OVER side from sportsbook. Null if no real line. */
   priceOver?: number | null;
   /** American odds for the UNDER side from sportsbook. Null if no real line. */
