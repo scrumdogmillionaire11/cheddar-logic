@@ -18,3 +18,4 @@ package-dir = {"cheddar_fpl_sage" = "src/cheddar_fpl_sage", "bmad_gsd" = "bmad_g
 testpaths = ["tests"]
 addopts = "-q"
 python_files = ["test_*.py", "*_test.py", "*_suite.py"]
+pythonpath = ["src"]
