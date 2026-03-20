@@ -582,6 +582,9 @@ const {
 const {
   gradeAsianHandicap,
 } = require('../models/soccer/asian-handicap-grader');
+const {
+  priceAsianHandicap,
+} = require('../models/soccer/asian-handicap-pricing');
 
 function attachRunId(card, runId) {
   if (!card) return;
@@ -1285,6 +1288,7 @@ module.exports = {
   deriveWinProbHome,
   derivePredictionFromMoneyline,
   gradeAsianHandicap,
+  priceAsianHandicap,
   normalizeToCanonicalSoccerMarket,
   buildSoccerTier1Payload,
   buildSoccerOddsBackedCard,
