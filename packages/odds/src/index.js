@@ -28,6 +28,72 @@ const { getSportConfig } = require('./config');
 // Load .env from project root (3 levels up from packages/odds/src)
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
 
+function countSpreadMarketsInApiData(apiData) {
+  if (!Array.isArray(apiData)) return 0;
+  let count = 0;
+  for (const game of apiData) {
+    for (const bookmaker of game?.bookmakers || []) {
+      if ((bookmaker?.markets || []).some((market) => market?.key === 'spreads')) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
+function mergeSoccerSpreadMarkets(primaryApiGames, spreadOnlyApiGames) {
+  if (!Array.isArray(primaryApiGames) || !Array.isArray(spreadOnlyApiGames)) {
+    return primaryApiGames;
+  }
+
+  const spreadByGameId = new Map(
+    spreadOnlyApiGames
+      .filter((game) => game && game.id)
+      .map((game) => [game.id, game]),
+  );
+
+  return primaryApiGames.map((game) => {
+    const spreadSource = spreadByGameId.get(game?.id);
+    if (!spreadSource) return game;
+
+    const mergedBookmakers = [...(game.bookmakers || [])];
+    const bookmakerIndex = new Map(
+      mergedBookmakers.map((bookmaker, index) => [bookmaker.key, index]),
+    );
+
+    for (const spreadBookmaker of spreadSource.bookmakers || []) {
+      const spreads = (spreadBookmaker.markets || []).filter(
+        (market) => market?.key === 'spreads',
+      );
+      if (spreads.length === 0) continue;
+
+      const existingIndex = bookmakerIndex.get(spreadBookmaker.key);
+      if (existingIndex === undefined) {
+        mergedBookmakers.push({
+          ...spreadBookmaker,
+          markets: spreads,
+        });
+        bookmakerIndex.set(spreadBookmaker.key, mergedBookmakers.length - 1);
+        continue;
+      }
+
+      const existing = mergedBookmakers[existingIndex] || { key: spreadBookmaker.key, markets: [] };
+      const existingMarkets = (existing.markets || []).filter(
+        (market) => market?.key !== 'spreads',
+      );
+      mergedBookmakers[existingIndex] = {
+        ...existing,
+        markets: [...existingMarkets, ...spreads],
+      };
+    }
+
+    return {
+      ...game,
+      bookmakers: mergedBookmakers,
+    };
+  });
+}
+
 /**
  * Fetch odds for a sport and normalize the output
  *
@@ -140,7 +206,36 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
           console.warn(`[Odds] ⚠️  LOW API QUOTA: ${remaining} requests remaining`);
         }
       }
-      const leagueGames = transformAPIResponse(response.data, sport);
+      let leagueApiGames = response.data;
+      const wantsSpreads = config.markets.includes('spreads');
+      const spreadsSeen = countSpreadMarketsInApiData(leagueApiGames);
+
+      if (
+        sport?.toUpperCase() === 'SOCCER' &&
+        wantsSpreads &&
+        spreadsSeen === 0
+      ) {
+        const spreadParams = {
+          apiKey,
+          regions: 'us',
+          markets: 'spreads',
+          bookmakers: 'pinnacle',
+          oddsFormat: 'american',
+        };
+        console.log(
+          `[Odds] Soccer spreads fallback: ${leagueKey} had no spreads for configured books; retrying spreads with pinnacle`,
+        );
+        const spreadResponse = await axios.get(url, {
+          params: spreadParams,
+          timeout: 10000,
+        });
+        leagueApiGames = mergeSoccerSpreadMarkets(
+          leagueApiGames,
+          spreadResponse.data,
+        );
+      }
+
+      const leagueGames = transformAPIResponse(leagueApiGames, sport);
       allGames.push(...leagueGames);
     }
     return allGames;

@@ -156,6 +156,12 @@ function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
   return 'pregame';
 }
 
+function resolveSportFilter(searchParams: URLSearchParams): string | null {
+  const normalized = normalizeSport(searchParams.get('sport'));
+  if (!normalized || normalized === 'ALL') return null;
+  return normalized;
+}
+
 function deriveDisplayStatus(lifecycleMode: LifecycleMode): DisplayStatus {
   return lifecycleMode === 'active' ? 'ACTIVE' : 'SCHEDULED';
 }
@@ -342,6 +348,8 @@ interface Play {
   data_quality?: string | null;
   l5_sog?: number[] | null;
   l5_mean?: number | null;
+  market_price_over?: number | null;
+  market_price_under?: number | null;
 }
 
 interface IngestFailureRow {
@@ -838,6 +846,7 @@ function normalizeMarketType(value: unknown): Play['market_type'] | undefined {
   if (upper === 'DRAW_NO_BET' || upper === 'DRAWNOBET') {
     return 'MONEYLINE';
   }
+  if (upper === 'ASIAN_HANDICAP') return 'SPREAD';
   return undefined;
 }
 
@@ -1251,6 +1260,24 @@ function applyWave1DecisionFields(play: Play): void {
   play.pass_reason_code = decisionV2.primary_reason_code;
 }
 
+function normalizePassReasonCode(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const code = value.trim().toUpperCase();
+  if (!code) return null;
+  if (code.startsWith('PASS_')) return code;
+
+  const mapped: Record<string, string> = {
+    MISSING_LINE: 'PASS_MISSING_LINE',
+    MISSING_EDGE: 'PASS_MISSING_EDGE',
+    MISSING_SELECTION: 'PASS_MISSING_SELECTION',
+    MISSING_PRICE: 'PASS_MISSING_PRICE',
+    NO_MARKET_PRICE: 'PASS_NO_MARKET_PRICE',
+    NO_STARTER_SIGNAL: 'PASS_MISSING_DRIVER_INPUTS',
+  };
+
+  return mapped[code] ?? code;
+}
+
 function normalizeNumberArray(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const numbers = value.filter(
@@ -1451,6 +1478,7 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams;
     const lifecycleMode = resolveLifecycleMode(searchParams);
+    const sportFilter = resolveSportFilter(searchParams);
 
     // Compute midnight America/New_York as a UTC string for the SQL param.
     // en-CA locale gives YYYY-MM-DD; shortOffset gives "GMT-5" / "GMT-4" (DST-aware).
@@ -1532,6 +1560,7 @@ export async function GET(request: NextRequest) {
         g.created_at
       FROM games g
       WHERE datetime(g.game_time_utc) >= ?
+        ${sportFilter ? 'AND UPPER(g.sport) = ?' : ''}
         AND NOT EXISTS (
           SELECT 1
           FROM card_results cr
@@ -1548,6 +1577,7 @@ export async function GET(request: NextRequest) {
       SELECT COUNT(*) AS total
       FROM games g
       WHERE datetime(g.game_time_utc) >= ?
+        ${sportFilter ? 'AND UPPER(g.sport) = ?' : ''}
         AND NOT EXISTS (
           SELECT 1
           FROM card_results cr
@@ -1560,10 +1590,15 @@ export async function GET(request: NextRequest) {
     let baseWindowCount: number | null = null;
     if (isNonProd) {
       const baseWindowCountStmt = db.prepare(baseWindowCountSql);
+      const countParams: string[] = [gamesStartUtc];
+      if (sportFilter) {
+        countParams.push(sportFilter);
+      }
+      if (gamesEndUtc) {
+        countParams.push(gamesEndUtc);
+      }
       const baseWindowCountRow = (
-        gamesEndUtc
-          ? baseWindowCountStmt.get(gamesStartUtc, gamesEndUtc)
-          : baseWindowCountStmt.get(gamesStartUtc)
+        baseWindowCountStmt.get(...countParams)
       ) as { total?: number } | undefined;
       baseWindowCount = Number(baseWindowCountRow?.total ?? 0);
     }
@@ -1573,10 +1608,16 @@ export async function GET(request: NextRequest) {
       endUtc: string | null,
     ): GameRow[] => {
       const baseGamesStmt = db.prepare(baseGamesSql);
+      const gamesParams: string[] = [startUtc];
+      if (sportFilter) {
+        gamesParams.push(sportFilter);
+      }
+      gamesParams.push(nowUtc);
+      if (endUtc) {
+        gamesParams.push(endUtc);
+      }
       const baseGames = (
-        endUtc
-          ? baseGamesStmt.all(startUtc, nowUtc, endUtc)
-          : baseGamesStmt.all(startUtc, nowUtc)
+        baseGamesStmt.all(...gamesParams)
       ) as Array<
         Omit<
           GameRow,
@@ -2257,6 +2298,29 @@ export async function GET(request: NextRequest) {
                 normalizedL5Sog.length
             : undefined,
         );
+        const decimalToAmerican = (dec: number | null | undefined): number | null => {
+          if (dec == null || dec <= 1) return null;
+          return dec >= 2 ? Math.round((dec - 1) * 100) : Math.round(-100 / (dec - 1));
+        };
+        const rawPriceOver = firstNumber(
+            (payload as Record<string, unknown>).over_price,
+            (payload as Record<string, unknown>).market_price_over,
+            payloadPlay?.over_price,
+            payloadPlay?.market_price_over,
+          ) ?? null;
+        const rawPriceUnder = firstNumber(
+            (payload as Record<string, unknown>).under_price,
+            (payload as Record<string, unknown>).market_price_under,
+            payloadPlay?.under_price,
+            payloadPlay?.market_price_under,
+          ) ?? null;
+        // Prices stored as decimal odds (e.g. 1.83) — convert to American (-122)
+        const normalizedPriceOver = rawPriceOver != null && rawPriceOver > 10
+          ? rawPriceOver  // already American
+          : decimalToAmerican(rawPriceOver);
+        const normalizedPriceUnder = rawPriceUnder != null && rawPriceUnder > 10
+          ? rawPriceUnder  // already American
+          : decimalToAmerican(rawPriceUnder);
         const payloadProjection = toObject(payload.projection);
         const payloadPlayProjection = toObject(payloadPlayObj?.projection);
         const normalizedProjectedTotal = firstNumber(
@@ -2355,6 +2419,15 @@ export async function GET(request: NextRequest) {
             : undefined,
           normalizedDecisionV2?.pricing_trace?.price_source,
         );
+        // Extract NHL model v2 guard flags (SYNTHETIC_LINE, PROJECTION_ANOMALY)
+        // from payload.decision.v2.flags so they surface alongside reason codes.
+        const v2GuardFlags: unknown[] = (() => {
+          const dec = toObject(
+            (payload as Record<string, unknown>).decision,
+          );
+          const v2 = toObject(dec?.v2);
+          return Array.isArray(v2?.flags) ? (v2.flags as unknown[]) : [];
+        })();
         const combinedReasonCodes = [
           ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
           ...(Array.isArray(payloadPlay?.reason_codes)
@@ -2363,6 +2436,7 @@ export async function GET(request: NextRequest) {
           ...(Array.isArray(driverInputs?.reason_codes)
             ? driverInputs.reason_codes
             : []),
+          ...v2GuardFlags,
         ].map((value) => String(value));
         const combinedTags = [
           ...(Array.isArray(payload.tags) ? payload.tags : []),
@@ -2560,11 +2634,12 @@ export async function GET(request: NextRequest) {
           classification: resolvedClassification,
           action: resolvedAction,
           pass_reason_code:
-            typeof payload.pass_reason_code === 'string'
-              ? payload.pass_reason_code
-              : typeof payloadPlay?.pass_reason_code === 'string'
-                ? payloadPlay.pass_reason_code
-                : null,
+            normalizePassReasonCode(
+              payload.pass_reason_code ??
+                payload.pass_reason ??
+                payloadPlay?.pass_reason_code ??
+                payloadPlay?.pass_reason,
+            ),
           one_p_model_call: onePModelCall,
           one_p_bet_status: onePBetStatus,
           goalie_home_name: normalizedGoalieHomeName ?? null,
@@ -2749,6 +2824,8 @@ export async function GET(request: NextRequest) {
           data_quality: normalizedDataQuality ?? null,
           l5_sog: normalizedL5Sog ?? null,
           l5_mean: normalizedL5Mean ?? null,
+          market_price_over: normalizedPriceOver,
+          market_price_under: normalizedPriceUnder,
           consistency:
             payload.consistency && typeof payload.consistency === 'object'
               ? {

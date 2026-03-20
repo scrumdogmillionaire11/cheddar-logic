@@ -171,10 +171,10 @@ const soccerPayloadSchema = basePayloadSchema.extend({
 });
 
 // ============================================================================
-// Ohio soccer scope validator (soccer-ohio-scope cardType)
+// Soccer scope validator (soccer cardType)
 // ============================================================================
 
-const OHIO_CANONICAL_KEYS = [
+const SOCCER_CANONICAL_KEYS = [
   'player_shots',
   'team_totals',
   'to_score_or_assist',
@@ -185,9 +185,9 @@ const OHIO_CANONICAL_KEYS = [
 
 const PLACEHOLDER_STRINGS = new Set(['unknown', 'tbd', 'n/a', '']);
 
-const soccerOhioScopeSchema = z
+const soccerScopeSchema = z
   .object({
-    canonical_market_key: z.enum(OHIO_CANONICAL_KEYS),
+    canonical_market_key: z.enum(SOCCER_CANONICAL_KEYS),
     market_family: z.enum(['tier1', 'tier2']),
     sport: z.literal('SOCCER'),
     game_id: z.string().min(1),
@@ -347,6 +347,113 @@ const soccerDoubleChanceSchema = z.object({
   pass_reason: z.string().nullable(),
 }).passthrough();
 
+const ahProbabilitiesSchema = z.object({
+  P_win: z.number(),
+  P_push: z.number(),
+  P_loss: z.number(),
+  P_full_win: z.number().optional(),
+  P_half_win: z.number().optional(),
+  P_half_loss: z.number().optional(),
+  P_full_loss: z.number().optional(),
+});
+
+function buildSoccerAsianHandicapSchema(expectedSide, expectedCanonicalKey) {
+  return z
+    .object({
+      kind: z.literal('PLAY'),
+      sport: z.literal('SOCCER'),
+      game_id: z.string().min(1),
+      recommended_bet_type: z.literal('spread'),
+      prediction: z.enum(['HOME', 'AWAY']),
+      selection: z.object({
+        side: z.enum(['HOME', 'AWAY']),
+        team: z.string().min(1).nullable(),
+      }),
+      home_team: z.string().min(1).nullable(),
+      away_team: z.string().min(1).nullable(),
+      generated_at: isoDateString,
+      canonical_market_key: z.literal(expectedCanonicalKey),
+      market_type: z.literal('ASIAN_HANDICAP'),
+      side: z.literal(expectedSide),
+      line: z.number().nullable(),
+      split_flag: z.boolean(),
+      price: z.number().int().nullable(),
+      opposite_price: z.number().int().nullable(),
+      probabilities: ahProbabilitiesSchema.nullable(),
+      model_prob_no_push: z.number().nullable(),
+      edge_ev: z.number().nullable(),
+      expected_value: z.number().nullable(),
+      fair_line: z.number().nullable(),
+      fair_price_american: z.number().int().nullable(),
+      edge_basis: z.string().nullable(),
+      missing_context_flags: z.array(z.string()),
+      pass_reason: z.string().nullable(),
+    })
+    .passthrough()
+    .superRefine((payload, ctx) => {
+      if (payload.selection?.side !== payload.side) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['selection', 'side'],
+          message: 'selection.side must match side',
+        });
+      }
+      if (payload.prediction !== payload.side) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['prediction'],
+          message: 'prediction must match side',
+        });
+      }
+
+      if (payload.pass_reason === null) {
+        if (payload.line === null) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['line'],
+            message: 'line is required when pass_reason is null',
+          });
+        }
+        if (payload.price === null) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['price'],
+            message: 'price is required when pass_reason is null',
+          });
+        }
+        if (payload.probabilities === null) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['probabilities'],
+            message: 'probabilities are required when pass_reason is null',
+          });
+        }
+      }
+
+      if (typeof payload.line === 'number' && Number.isFinite(payload.line)) {
+        const fraction = Math.abs(payload.line % 1);
+        const isQuarter = Math.abs(fraction - 0.25) < 1e-9 || Math.abs(fraction - 0.75) < 1e-9;
+        if (isQuarter && payload.split_flag !== true) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['split_flag'],
+            message: 'split_flag must be true for quarter lines',
+          });
+        }
+      }
+    });
+}
+
+const soccerAsianHandicapHomeSchema = buildSoccerAsianHandicapSchema(
+  'HOME',
+  'asian_handicap_home',
+);
+
+const soccerAsianHandicapAwaySchema = buildSoccerAsianHandicapSchema(
+  'AWAY',
+  'asian_handicap_away',
+);
+
 const schemaByCardType = {
   // Active NHL driver + evidence cards
   'nhl-goalie': driverPayloadSchema,
@@ -393,10 +500,12 @@ const schemaByCardType = {
 
   // Active single-card model output jobs
   'soccer-model-output': soccerPayloadSchema,
-  'soccer-ohio-scope': soccerOhioScopeSchema,
+  'soccer': soccerScopeSchema,
   'soccer_ml': soccerMlSchema,
   'soccer_game_total': soccerGameTotalSchema,
   'soccer_double_chance': soccerDoubleChanceSchema,
+  'asian_handicap_home': soccerAsianHandicapHomeSchema,
+  'asian_handicap_away': soccerAsianHandicapAwaySchema,
   'mlb-model-output': basePayloadSchema,
   'nfl-model-output': basePayloadSchema,
   'fpl-model-output': basePayloadSchema,
@@ -412,10 +521,12 @@ const schemaByCardType = {
 // deriveLockedMarketContext (which only handles SPREAD/TOTAL/MONEYLINE contracts
 // and does not understand soccer-specific payload shapes).
 const SOCCER_SELF_CONTAINED_TYPES = new Set([
-  'soccer-ohio-scope',
+  'soccer',
   'soccer_ml',
   'soccer_game_total',
   'soccer_double_chance',
+  'asian_handicap_home',
+  'asian_handicap_away',
 ]);
 
 /**

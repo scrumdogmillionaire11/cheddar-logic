@@ -242,6 +242,43 @@ function getEtDayKey(dateInput: Date | string): string {
   }).format(date);
 }
 
+type DateCardGroup<T> = { dateKey: string; label: string; cards: T[] };
+
+function groupCardsByEtDate<T>(
+  cards: T[],
+  getStartTime: (card: T) => string,
+): DateCardGroup<T>[] {
+  const now = new Date();
+  const todayET = getEtDayKey(now);
+  const tomorrowET = getEtDayKey(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  const labelFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+
+  const groups = new Map<string, DateCardGroup<T>>();
+  for (const card of cards) {
+    const dateKey = getEtDayKey(getStartTime(card));
+    let group = groups.get(dateKey);
+    if (!group) {
+      const date = new Date(`${dateKey}T12:00:00`);
+      let label: string;
+      if (dateKey === todayET) label = `Today · ${labelFormatter.format(date)}`;
+      else if (dateKey === tomorrowET) label = `Tomorrow · ${labelFormatter.format(date)}`;
+      else label = labelFormatter.format(date);
+
+      group = { dateKey, label, cards: [] };
+      groups.set(dateKey, group);
+    }
+
+    group.cards.push(card);
+  }
+
+  return Array.from(groups.values());
+}
+
 function formatSportCounts(counts: SportCountMap): string {
   const base = TRACKED_SPORTS.map(
     (sport) => `${sport} ${counts[sport] || 0}`,
@@ -453,7 +490,7 @@ type DecisionModel = {
 
 const CLIENT_POLL_INTERVAL_MS = 60_000;
 const CLIENT_MIN_FETCH_INTERVAL_MS = 5_000;
-const CLIENT_FETCH_TIMEOUT_MS = 10_000;
+const CLIENT_FETCH_TIMEOUT_MS = 30_000;
 const CLIENT_DEFAULT_BACKOFF_MS = 30_000;
 const CHUNK_RELOAD_GUARD_KEY = 'cards_chunk_reload_once';
 const LIFECYCLE_SESSION_KEY = 'cheddar_cards_lifecycle_mode';
@@ -816,6 +853,18 @@ export default function CardsPageClient() {
       totalCardsInView: enriched.length,
     };
   }, [games, effectiveFilters, viewMode]);
+
+  // Group filtered game cards by ET calendar date for section headers
+  const groupedByDate = useMemo(
+    () => groupCardsByEtDate(filteredCards, (card) => card.startTime),
+    [filteredCards],
+  );
+
+  // Group filtered prop cards by ET calendar date for section headers
+  const propGroupedByDate = useMemo(
+    () => groupCardsByEtDate(propCards, (card) => card.gameTimeUtc),
+    [propCards],
+  );
 
   // Projections mode: extract nhl-pace-1p plays directly from raw games,
   // bypassing the game-card pipeline which doesn't handle FIRST_PERIOD market_type.
@@ -2797,6 +2846,11 @@ export default function CardsPageClient() {
                     Coinflip
                   </span>
                 )}
+                {card.tags.includes(GAME_TAGS.WELCOME_HOME_FADE) && (
+                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-orange-700/30 text-orange-200 border-orange-600/50">
+                    Fade Home
+                  </span>
+                )}
                 {canRenderModelSummary && displayPlay.priceFlags.length > 0 && (
                   <div className="flex items-center gap-2 flex-wrap">
                     {displayPlay.priceFlags.map((flag) => (
@@ -3734,10 +3788,19 @@ export default function CardsPageClient() {
             </div>
           )}
 
-        {!loading && viewMode === 'props' && propCards.length > 0 && (
+        {!loading && viewMode === 'props' && propGroupedByDate.length > 0 && (
           <div className="space-y-4">
-            {propCards.map((card) => (
-              <PropGameCard key={card.gameId} card={card} />
+            {propGroupedByDate.map(({ dateKey, label, cards: groupCards }) => (
+              <div key={dateKey}>
+                <div className="text-xs font-semibold text-cloud/50 uppercase tracking-wider px-1 pb-2 pt-1 border-b border-white/10 mb-3">
+                  {label}
+                </div>
+                <div className="space-y-4">
+                  {groupCards.map((card) => (
+                    <PropGameCard key={card.gameId} card={card} />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         )}
@@ -3756,21 +3819,22 @@ export default function CardsPageClient() {
           </div>
         )}
 
-        {!loading && viewMode === 'game' && filteredCards.length > 0 && (
+        {!loading && viewMode === 'game' && groupedByDate.length > 0 && (
           <div className="space-y-4">
-            {filteredCards.map((card) => {
-              const originalGame = games.find(
-                (game) => game.gameId === card.gameId,
-              );
-              if (!originalGame) return null;
-              return (
-                <GameCardItem
-                  key={card.id}
-                  card={card}
-                  originalGame={originalGame}
-                />
-              );
-            })}
+            {groupedByDate.map(({ dateKey, label, cards: groupCards }) => (
+              <div key={dateKey}>
+                <div className="text-xs font-semibold text-cloud/50 uppercase tracking-wider px-1 pb-2 pt-1 border-b border-white/10 mb-3">
+                  {label}
+                </div>
+                <div className="space-y-4">
+                  {groupCards.map((card) => {
+                    const originalGame = games.find((game) => game.gameId === card.gameId);
+                    if (!originalGame) return null;
+                    return <GameCardItem key={card.id} card={card} originalGame={originalGame} />;
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 

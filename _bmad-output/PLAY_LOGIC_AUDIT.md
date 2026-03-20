@@ -990,7 +990,7 @@ Do not downgrade classification. It stays BASE. Execution is what changes.
 
 # 7) Sport-specific rules (kept consistent)
 
-## SOCCER scope mode (Ohio-style)
+## SOCCER scope mode (single-scope)
 
 If in restricted Soccer mode:
 

@@ -26,7 +26,8 @@
     "test:api:games:market": "node src/__tests__/api-games-market-smoke.test.js",
     "test:api:games:repair-budget": "node src/__tests__/api-games-repair-budget.test.js",
     "test:api:results:flags": "node src/__tests__/api-results-flags.test.js",
-    "test:decision:canonical": "node src/__tests__/canonical-play-decision.test.js"
+    "test:decision:canonical": "node src/__tests__/canonical-play-decision.test.js",
+    "test:filters:presets": "node src/__tests__/filters-presets-contract.test.js"
   },
   "dependencies": {
     "@cheddar-logic/data": "file:../packages/data",

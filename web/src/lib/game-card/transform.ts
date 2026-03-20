@@ -170,6 +170,7 @@ interface ApiPlay {
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
+  pass_reason?: string | null;
   run_id?: string;
   created_at?: string;
   player_id?: string;
@@ -265,6 +266,24 @@ function getSportCardTypeContract(
 
 function normalizeCardType(cardType: string): string {
   return cardType.trim().toLowerCase();
+}
+
+function normalizePassReasonCode(reason?: string | null): string | null {
+  if (typeof reason !== 'string') return null;
+  const code = reason.trim().toUpperCase();
+  if (!code) return null;
+  if (code.startsWith('PASS_')) return code;
+
+  const mapped: Record<string, string> = {
+    MISSING_LINE: 'PASS_MISSING_LINE',
+    MISSING_EDGE: 'PASS_MISSING_EDGE',
+    MISSING_SELECTION: 'PASS_MISSING_SELECTION',
+    MISSING_PRICE: 'PASS_MISSING_PRICE',
+    NO_MARKET_PRICE: 'PASS_NO_MARKET_PRICE',
+    NO_STARTER_SIGNAL: 'PASS_MISSING_DRIVER_INPUTS',
+  };
+
+  return mapped[code] ?? code;
 }
 
 function isPlayItem(play: ApiPlay, sport?: string): boolean {
@@ -490,6 +509,14 @@ const NO_ACTIONABLE_EXPLICIT_NO_EDGE_REASON_CODES = new Set([
   'PASS_NO_EDGE',
   'PASS_DRIVER_SUPPORT_WEAK',
   'PASS_CONFLICT_HIGH',
+  // NHL model signals: no conviction/lean (healthy no-play)
+  'NHL_1P_OVER_LEAN',
+  'NHL_1P_UNDER_LEAN',
+  'NHL_ML_LEAN',
+  // NHL model signals: play likelihood (healthy no-play)
+  'NHL_1P_OVER_PLAY',
+  'NHL_1P_UNDER_PLAY',
+  'NHL_ML_PLAY',
 ]);
 
 const NO_ACTIONABLE_FETCH_REASON_FRAGMENTS = [
@@ -549,10 +576,10 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
     if (typeof play.pass_reason_code === 'string') {
       const code = play.pass_reason_code.toUpperCase();
       if (!NO_ACTIONABLE_IGNORE_REASON_CODES.has(code)) {
-        if (isFetchFailureReasonCode(code)) {
-          push(toDiagnosticToken('fetch_reason', code));
-        } else if (isExplicitNoEdgeReasonCode(code)) {
+        if (isExplicitNoEdgeReasonCode(code)) {
           hasExplicitNoEdgeSignals = true;
+        } else if (isFetchFailureReasonCode(code)) {
+          push(toDiagnosticToken('fetch_reason', code));
         } else {
           hasUnknownNonFetchSignals = true;
         }
@@ -561,10 +588,10 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
     for (const reasonCode of play.reason_codes ?? []) {
       const code = String(reasonCode).toUpperCase();
       if (NO_ACTIONABLE_IGNORE_REASON_CODES.has(code)) continue;
-      if (isFetchFailureReasonCode(code)) {
-        push(toDiagnosticToken('fetch_reason', code));
-      } else if (isExplicitNoEdgeReasonCode(code)) {
+      if (isExplicitNoEdgeReasonCode(code)) {
         hasExplicitNoEdgeSignals = true;
+      } else if (isFetchFailureReasonCode(code)) {
+        push(toDiagnosticToken('fetch_reason', code));
       } else {
         hasUnknownNonFetchSignals = true;
       }
@@ -1305,12 +1332,15 @@ function resolveSourceModelProb(play?: ApiPlay): number | undefined {
 function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const canonicalTruePlay =
     game.true_play &&
+    game.true_play.market_type !== 'PROP' &&
     isPlayItem(game.true_play, game.sport) &&
     (ENABLE_WELCOME_HOME || !isWelcomeHomePlay(game.true_play))
       ? game.true_play
       : null;
-  const basePlayCandidates = game.plays.filter((play) =>
-    isPlayItem(play, game.sport),
+  // Game mode must not promote player props into canonical game-line play slots.
+  // Props are rendered via transformPropGames in cards props mode only.
+  const basePlayCandidates = game.plays.filter(
+    (play) => isPlayItem(play, game.sport) && play.market_type !== 'PROP',
   );
   const hasCanonicalInCandidates = canonicalTruePlay
     ? basePlayCandidates.some((play) => {
@@ -2749,10 +2779,20 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const dedupedTags = Array.from(new Set(tags));
   const passReasonCode =
     reasonCodesUnique.find((code) => code.startsWith('PASS_')) ?? null;
+  const decisionPlayRecord = decision.play as unknown as
+    | (Record<string, unknown> & { pass_reason?: unknown })
+    | undefined;
+  const legacyPassReason =
+    typeof decisionPlayRecord?.pass_reason === 'string'
+      ? String(decisionPlayRecord.pass_reason)
+      : null;
+  const sourcePassReasonCode = normalizePassReasonCode(
+    decision.play?.pass_reason_code ?? legacyPassReason,
+  );
   const resolvedPassReasonCode =
     finalDecision === 'PASS'
-      ? (passReasonCode ??
-        decision.play?.pass_reason_code ??
+      ? (sourcePassReasonCode ??
+        passReasonCode ??
         gates.find((gate) => gate.blocks_bet)?.code ??
         null)
       : null;
@@ -2853,8 +2893,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
  */
 export function transformToGameCard(game: GameData): GameCard {
   // Convert plays to drivers and dedupe
+  // Keep game-mode driver/truth calculations scoped to non-prop markets.
   const rawDrivers = game.plays
-    .filter((play) => isPlayItem(play, game.sport))
+    .filter((play) => isPlayItem(play, game.sport) && play.market_type !== 'PROP')
     .map(playToDriver);
   const scopedRawDrivers = ENABLE_WELCOME_HOME
     ? rawDrivers
@@ -3262,18 +3303,30 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         propType = 'Rebounds';
       }
 
-      // Determine status from canonical action resolution
+      // Determine status: prefer prop_display_state from payload (WI-0529)
+      // so anomaly-flagged props render as PROJECTION_ONLY, not FIRE.
+      // Fall back to resolvePlayDisplayDecision for legacy rows without the field.
       let status: PropPlayRow['status'] = 'NO_PLAY';
-      const resolvedAction = resolvePlayDisplayDecision({
-        action: play.action,
-        status: play.status,
-      }).action;
-      if (resolvedAction === 'FIRE') {
+      const rawPropDisplayState = (play as unknown as Record<string, unknown>).prop_display_state as string | undefined;
+      if (rawPropDisplayState === 'PLAY') {
         status = 'FIRE';
-      } else if (resolvedAction === 'HOLD') {
-        status = play.action === 'HOLD' ? 'HOLD' : 'WATCH';
-      } else {
+      } else if (rawPropDisplayState === 'WATCH') {
+        status = 'WATCH';
+      } else if (rawPropDisplayState === 'PROJECTION_ONLY') {
         status = 'NO_PLAY';
+      } else {
+        // Legacy fallback: no prop_display_state field
+        const resolvedAction = resolvePlayDisplayDecision({
+          action: play.action,
+          status: play.status,
+        }).action;
+        if (resolvedAction === 'FIRE') {
+          status = 'FIRE';
+        } else if (resolvedAction === 'HOLD') {
+          status = play.action === 'HOLD' ? 'HOLD' : 'WATCH';
+        } else {
+          status = 'NO_PLAY';
+        }
       }
 
       const mu = play.mu ?? play.projectedTotal ?? null;
@@ -3306,10 +3359,14 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         reasonCodes: play.reason_codes,
         l5Sog: play.l5_sog ?? undefined,
         l5Mean: play.l5_mean ?? null,
+        marketLine: typeof play.line === 'number' ? play.line : null,
+        priceOver: ((play as unknown as Record<string, unknown>).market_price_over as number | null | undefined) ?? null,
+        priceUnder: ((play as unknown as Record<string, unknown>).market_price_under as number | null | undefined) ?? null,
         sourceCardType: play.cardType,
         sourceCardTitle: play.cardTitle,
         updatedAtUtc: game.odds?.capturedAt || game.createdAt,
         reasoning: play.reasoning,
+        propDisplayState: rawPropDisplayState as PropPlayRow['propDisplayState'] | undefined,
       };
     });
 

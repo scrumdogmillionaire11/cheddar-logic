@@ -71,6 +71,8 @@ CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
 ./scripts/start-scheduler.sh
 ```
 
+Discord snapshot safety gate: scheduler only posts per-game decision snapshots (🟢 official / 🟡 lean / ⚪ pass-blocked) at 09:00 / 12:00 / 18:00 ET when both `ENABLE_DISCORD_CARD_WEBHOOKS=true` and `DISCORD_CARD_WEBHOOK_URL` are set. If either is missing, job is a clean no-op.
+
 **DB consistency note:** keep one canonical DB path in `.env` so scheduler + manual commands hit the same file:
 
 ```bash
@@ -101,6 +103,19 @@ Your cheddar board updates automatically. See [AUTOMATED_SETUP.md](AUTOMATED_SET
 
 ### Worker Model Jobs (NBA/NHL/NCAAM)
 
+Soccer market policy (ADR-0006): Asian Handicap is reintroduced as a Tier-1 **main-market** path (`asian_handicap_home`, `asian_handicap_away`) under `FOOTIE_MAIN_MARKETS`. It is separate from soccer props routing and should not be mixed with `SOCCER_PROP_EVENTS_ENABLED` prop ingestion.
+AH cards must carry the canonical play envelope (`kind`, `recommended_bet_type`, `prediction`, `selection`) in addition to AH pricing fields (`line`, `price`, `side`, `split_flag`, `probabilities`, `expected_value`) so `/api/games` keeps them as playable spread rows.
+
+Soccer runtime mode switch:
+
+- `SOCCER_MODEL_MODE=SIDES_AND_PROPS` (default): emit side markets via `FOOTIE_SIDES_ENGINE` metadata path plus props.
+- `SOCCER_MODEL_MODE=OHIO_PROPS_ONLY`: suppress odds-backed soccer side/main cards (`soccer_ml`, `soccer_game_total`, `soccer_double_chance`, `asian_handicap_home`, `asian_handicap_away`) and keep props/projection-only output only.
+
+Soccer sides model note:
+
+- Side cards (ML/AH) are now lambda-source aware. If only market-derived fallback lambdas are available, payloads are explicitly guarded with reason codes (for example `BLOCKED_MARKET_FALLBACK_ONLY`).
+- To feed stats-primary lambdas, prewarm soccer xG cache before running `job:run-soccer-model`.
+
 ### Quickstart
 
 ```bash
@@ -126,6 +141,7 @@ npm --prefix apps/worker run job:sync-nhl-player-availability
 
 # Pull NHL player shots props
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-nhl-player-shots-props
+# ⚠️  Requires NHL_SOG_PROP_EVENTS_ENABLED=true in .env (default off — add to enable real Odds API lines)
 
 # Run NHL player shots prop model (applies availability filter + purge)
 npm --prefix apps/worker run job:run-nhl-player-shots-model
@@ -133,14 +149,27 @@ npm --prefix apps/worker run job:run-nhl-player-shots-model
 # Pull Soccer Tier-1 player props (optional manual run; scheduler now queues this before soccer model windows)
 set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/worker run job:pull-soccer-player-props
 
+# Pull soccer team xG cache (recommended for stats-primary ML/AH side modeling)
+# Requires ENABLE_SOCCER_XG_MODEL=true
+set -a; source .env; set +a; ENABLE_SOCCER_XG_MODEL=true npm --prefix apps/worker run job:pull-soccer-xg-stats
+
 # Prewarm team metrics cache (recommended before early model windows)
 set -a; source .env; set +a; npm --prefix apps/worker run job:refresh-team-metrics
+
+# Post Discord per-game decision snapshot (manual)
+# Requires: ENABLE_DISCORD_CARD_WEBHOOKS=true and DISCORD_CARD_WEBHOOK_URL set
+set -a; source .env; set +a; npm --prefix apps/worker run job:post-discord-cards
+
+# Post Discord per-game decision snapshot on the Pi (production DB)
+# Run from repo root on the Pi
+set -a; source .env.production; set +a; ENABLE_DISCORD_CARD_WEBHOOKS=true CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:post-discord-cards
 
 # Run models
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
-set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model  
+# Soccer Asian Spread (asian_handicap_home / asian_handicap_away)
 ```
 
 ### Standard Runbook
@@ -174,6 +203,9 @@ set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/w
 
 # Prewarm team metrics cache (recommended before early model windows)
 set -a; source .env; set +a; npm --prefix apps/worker run job:refresh-team-metrics
+
+# Post Discord per-game decision snapshot (manual)
+set -a; source .env; set +a; npm --prefix apps/worker run job:post-discord-cards
 ```
 
 #### 3) Run Jobs
@@ -187,6 +219,9 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
 npm --prefix apps/worker run job:run-nhl-player-shots-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model
+
+# Post Discord per-game decision snapshot (manual)
+set -a; source .env; set +a; npm --prefix apps/worker run job:post-discord-cards
 ```
 
 #### 4) Verify Output
@@ -195,6 +230,10 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model
 # Spot-check most recent cards in SQLite (requires sqlite3 CLI)
 set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" \
   "SELECT sport, card_type, prediction, confidence, created_at FROM card_payloads ORDER BY created_at DESC LIMIT 10;"
+
+# Spot-check AH output contract fields (canonical play envelope + AH pricing fields)
+set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" \
+  "SELECT card_type, json_extract(payload_data,'$.kind') AS kind, json_extract(payload_data,'$.recommended_bet_type') AS recommended_bet_type, json_extract(payload_data,'$.prediction') AS prediction, json_extract(payload_data,'$.selection.side') AS selection_side, json_extract(payload_data,'$.line') AS line, json_extract(payload_data,'$.price') AS price, json_extract(payload_data,'$.side') AS side, json_extract(payload_data,'$.split_flag') AS split_flag, json_extract(payload_data,'$.expected_value') AS expected_value FROM card_payloads WHERE card_type IN ('asian_handicap_home','asian_handicap_away') ORDER BY created_at DESC LIMIT 10;"
 
 # Verify odds pipeline freshness against the same DB path
 set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
@@ -205,7 +244,7 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
 - Jobs are idempotent when run with a jobKey. The CLI scripts use time-based job keys internally.
 - Cards expire 1 hour before game start; stale odds will not emit cards.
 - NHL 1P settling is the active focus and should continue recording/segmenting under results now.
-- NHL player shots settling is gated behind `ENABLE_PLAYER_SHOTS_SETTLING=true` and remains off by default until that flow is verified.
+- NHL player shots settling is active. Player shots cards route to the `nhl_player_shots_props` results segment.
 - NCAAM cards are driver-based; if no cards appear, there may be no actionable signals.
 - Projection completeness gate: NBA/NHL/NCAAM jobs now block per-game driver/pricing output when required projection inputs are missing. Logs show `PROJECTION_INPUTS_INCOMPLETE (...)` with explicit missing fields.
 
@@ -245,8 +284,104 @@ npm --prefix apps/worker run job:report-telemetry-calibration -- --json > /tmp/s
 - No cards generated:
   - Ensure odds exist in the DB for the sport and time window.
   - Run seed data and try again.
+
+---
+
+## Production Pre-Push: Soccer Regression Check
+
+**REQUIRED before merging to main.** Soccer model changes have a history of silent degradation. Run this before any production deployment:
+
+### Quick Check (5 min)
+
+```bash
+# 1. Verify dev has playable Soccer cards
+DB_PATH=$(bash scripts/db-context.sh | awk -F': ' '/resolver path/ {print $2}') \
+sqlite3 "$DB_PATH" \
+  "SELECT 'soccer_playable_non_projection' as metric, COUNT(*) as count FROM card_payloads WHERE sport='soccer' AND json_extract(payload_data, '$.kind')='PLAY' AND COALESCE(CAST(json_extract(payload_data, '$.projection_only') AS INTEGER),0)=0 \
+   UNION ALL \
+   SELECT 'soccer_all_cards', COUNT(*) FROM card_payloads WHERE sport='soccer' \
+   UNION ALL \
+   SELECT 'soccer_model_outputs', COUNT(*) FROM model_outputs WHERE lower(sport)='soccer';"
+
+# 2. Compare distribution to production baseline (should be within ±15% of current prod)
+# Prod baseline (as of 2026-03-20):
+#   - 23 playable SOCCER plays
+#   - 4 market types (ML, GT, DC, PROP)
+#   - CLV ledger: active entries
+#   - NO PROJECTION_ONLY cards (Tier-1 props not running)
+
+# 3. Check for blockers
+DB_PATH=$(bash scripts/db-context.sh | awk -F': ' '/resolver path/ {print $2}') \
+sqlite3 "$DB_PATH" << SQL
+SELECT 'evidence_only_pass' as blocker, COUNT(*) as cnt
+FROM card_payloads WHERE sport='soccer' AND json_extract(payload_data, '$.pass_reason_code') LIKE 'PASS_%'
+UNION ALL
+SELECT 'missing_data', COUNT(*) FROM card_payloads WHERE sport='soccer' AND json_extract(payload_data, '$.ingest_failure_reason_code') IS NOT NULL
+UNION ALL
+SELECT 'projection_incomplete', COUNT(*) FROM card_payloads WHERE sport='soccer' AND CAST(json_extract(payload_data, '$.projection_inputs_complete') AS INTEGER) = 0;
+SQL
+```
+
+### Full Verification (if play count < 15)
+
+```bash
+# Run Soccer model with diagnostics
+ENABLE_CLV_LEDGER=true \
+set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model 2>&1 | tee /tmp/soccer-model.log
+
+# Check logs for errors
+grep -E "ERROR|FAIL|exception|PROJECTION_INPUTS_INCOMPLETE" /tmp/soccer-model.log || echo "✓ No errors"
+
+# Check CLV ledger was written
+DB_PATH=$(bash scripts/db-context.sh | awk -F': ' '/resolver path/ {print $2}') \
+sqlite3 "$DB_PATH" \
+  "SELECT COUNT(*) as clv_entries_created FROM clv_ledger WHERE lower(sport)='soccer' AND created_at > datetime('now', '-2 hours');"
+
+# Sample card quality
+DB_PATH=$(bash scripts/db-context.sh | awk -F': ' '/resolver path/ {print $2}') \
+sqlite3 "$DB_PATH" << SQL
+SELECT 
+  market_type,
+  confidence,
+  edge,
+  card_type
+FROM (
+  SELECT 
+    json_extract(payload_data, '$.market_type') as market_type,
+    CAST(json_extract(payload_data, '$.confidence') AS REAL) as confidence,
+    CAST(json_extract(payload_data, '$.edge') AS REAL) as edge,
+    card_type,
+    ROW_NUMBER() OVER (PARTITION BY json_extract(payload_data, '$.market_type') ORDER BY created_at DESC) as rn
+  FROM card_payloads
+  WHERE sport='soccer' AND json_extract(payload_data, '$.kind')='PLAY' AND COALESCE(CAST(json_extract(payload_data, '$.projection_only') AS INTEGER),0)=0
+)
+WHERE rn <= 3
+ORDER BY market_type, created_at DESC;
+SQL
+```
+
+### Root Cause Checklist (if plays missing)
+
+| Check | Command | Expected | Action if fails |
+| --- | --- | --- | --- |
+| Odds fresh | `DB_PATH=... sqlite3 "$DB_PATH" "SELECT MAX(captured_at) FROM odds_snapshots WHERE sport='soccer';"` | Last 2 hours | Run `job:pull-odds` + `job:pull-soccer-player-props` |
+| Model runs | `grep "=== runSoccerModel" /tmp/soccer-model.log \| tail -1` | Present + timestamp recent | Check scheduler logs |
+| Projection gate | `grep "PROJECTION_INPUTS_INCOMPLETE" /tmp/soccer-model.log \| wc -l` | ~0 or <5% | Check ESPN enrichment; run `job:refresh-team-metrics` |
+| Team mapping | `grep "Unknown team\|TEAM_MAPPING" /tmp/soccer-model.log` | None | Check `pull_soccer_xg_stats.js` team normalization |
+| CLV ledger | `DB_PATH=... sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM clv_ledger WHERE lower(sport)='soccer';"` | >5 entries | Check `recordSoccerProjectionTelemetry()` is called |
+
+### Pre-Production Acceptance
+
+- ✅ Soccer playable card count: ≥15 (within ±20% of prod baseline of 23)
+- ✅ No unresolved `PROJECTION_INPUTS_INCOMPLETE` logs
+- ✅ All market types present: `soccer_ml`, `soccer_game_total`, `soccer_double_chance`
+- ✅ CLV ledger active: ≥5 entries written in last 2 hours
+- ✅ Zero `.log` errors containing "FAIL" or "exception"
+- ✅ Edge distribution: mean >0.5%, no outliers >50%
+
+**If any check fails: DO NOT MERGE.** Investigate with `/pax:debug soccer-regression` for root cause.
+
 - ESPN enrichment missing:
-  - Jobs degrade gracefully; games with missing required projection fields are gated with `PROJECTION_INPUTS_INCOMPLETE`.
   - Check worker logs for missing fields and refresh odds/enrichment before rerunning.
   - For NCAAM specifically, check for unresolved live-odds team variants such as `Seattle Redhawks` / `Seattle U Redhawks` or `St. Thomas (MN) Tommies` / `St. Thomas-Minnesota Tommies`; these leave games with odds but no emitted plays.
   - Quick log check: `grep -E "Unknown team: \"Seattle Redhawks\"|Unknown team: \"St\. Thomas \(MN\) Tommies\"" apps/worker/logs/scheduler.log`

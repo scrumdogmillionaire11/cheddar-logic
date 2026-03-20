@@ -237,3 +237,110 @@ if (require.main === module) {
     .then(() => process.exit(0))
     .catch(() => process.exit(1));
 }
+
+function loadSchedulerModuleForDiscord() {
+  jest.resetModules();
+
+  jest.doMock('@cheddar-logic/data', () => ({
+    initDb: jest.fn(),
+    getUpcomingGames: jest.fn(() => []),
+    shouldRunJobKey: jest.fn(() => true),
+    hasRunningJobRun: jest.fn(() => false),
+    wasJobRecentlySuccessful: jest.fn((jobName) => {
+      if (jobName === 'pull_odds_hourly') return true;
+      return false;
+    }),
+  }));
+
+  jest.doMock('../jobs/pull_odds_hourly', () => ({ pullOddsHourly: jest.fn() }));
+  jest.doMock('../jobs/refresh_stale_odds', () => ({ refreshStaleOdds: jest.fn() }));
+  jest.doMock('../jobs/run_nhl_model', () => ({ runNHLModel: jest.fn() }));
+  jest.doMock('../jobs/run_nba_model', () => ({ runNBAModel: jest.fn() }));
+  jest.doMock('../jobs/run_fpl_model', () => ({ runFPLModel: jest.fn() }));
+  jest.doMock('../jobs/run_nfl_model', () => ({ runNFLModel: jest.fn() }));
+  jest.doMock('../jobs/run_mlb_model', () => ({ runMLBModel: jest.fn() }));
+  jest.doMock('../jobs/run_soccer_model', () => ({ runSoccerModel: jest.fn() }));
+  jest.doMock('../jobs/pull_soccer_player_props', () => ({ pullSoccerPlayerProps: jest.fn() }));
+  jest.doMock('../jobs/pull_soccer_xg_stats', () => ({ pullSoccerXgStats: jest.fn() }));
+  jest.doMock('../jobs/run_ncaam_model', () => ({ runNCAAMModel: jest.fn() }));
+  jest.doMock('../jobs/refresh_ncaam_ft_csv', () => ({ runRefreshNcaamFtCsv: jest.fn() }));
+  jest.doMock('../jobs/sync_game_statuses', () => ({ syncGameStatuses: jest.fn() }));
+  jest.doMock('../jobs/settle_game_results', () => ({ settleGameResults: jest.fn() }));
+  jest.doMock('../jobs/settle_pending_cards', () => ({ settlePendingCards: jest.fn() }));
+  jest.doMock('../jobs/backfill_card_results', () => ({ backfillCardResults: jest.fn() }));
+  jest.doMock('../jobs/check_pipeline_health', () => ({ checkPipelineHealth: jest.fn() }));
+  jest.doMock('../jobs/refresh_team_metrics_daily', () => ({ run: jest.fn() }));
+  jest.doMock('../jobs/sync_nhl_sog_player_ids', () => ({ syncNhlSogPlayerIds: jest.fn() }));
+  jest.doMock('../jobs/sync_nhl_player_availability', () => ({ syncNhlPlayerAvailability: jest.fn() }));
+  jest.doMock('../jobs/post_discord_cards', () => ({ postDiscordCards: jest.fn() }));
+
+  return require('../schedulers/main');
+}
+
+describe('scheduler Discord webhook windows', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env = { ...originalEnv };
+    process.env.ENABLE_ODDS_PULL = 'false';
+    process.env.ENABLE_SETTLEMENT = 'false';
+    process.env.ENABLE_NHL_MODEL = 'false';
+    process.env.ENABLE_NBA_MODEL = 'false';
+    process.env.ENABLE_NCAAM_MODEL = 'false';
+    process.env.ENABLE_SOCCER_MODEL = 'false';
+    process.env.ENABLE_FPL_MODEL = 'false';
+    process.env.ENABLE_NFL_MODEL = 'false';
+    process.env.ENABLE_MLB_MODEL = 'false';
+    process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC = 'false';
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.FIXED_CATCHUP = 'false';
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  test('queues discord snapshot at 18:00 ET fixed window with deterministic key', () => {
+    const scheduler = loadSchedulerModuleForDiscord();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-20T18:02:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: [],
+      dryRun: true,
+    });
+
+    const discordJob = dueJobs.find((job) => job.jobName === 'post_discord_cards');
+    expect(discordJob).toBeDefined();
+    expect(discordJob.jobKey).toBe('discord_cards|fixed|2026-03-20|1800');
+    expect(discordJob.reason).toContain('18:00 ET');
+  });
+
+  test('does not queue discord snapshot outside fixed windows', () => {
+    const scheduler = loadSchedulerModuleForDiscord();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-20T10:15:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: [],
+      dryRun: true,
+    });
+
+    const discordJob = dueJobs.find((job) => job.jobName === 'post_discord_cards');
+    expect(discordJob).toBeUndefined();
+  });
+});

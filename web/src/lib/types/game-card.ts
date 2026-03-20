@@ -484,6 +484,14 @@ export interface PropPlayRow {
   sourceCardTitle: string;
   updatedAtUtc: string;
   reasoning?: string;
+  /** WI-0529: Three-state display decision from model job. Absent on legacy rows. */
+  propDisplayState?: 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
+  /** The sportsbook O/U line being priced (e.g. 2.5). Null if projection-only. */
+  marketLine?: number | null;
+  /** American odds for the OVER side from sportsbook. Null if no real line. */
+  priceOver?: number | null;
+  /** American odds for the UNDER side from sportsbook. Null if no real line. */
+  priceUnder?: number | null;
 }
 
 export interface PropGameCard {
@@ -554,6 +562,9 @@ export const GAME_TAGS = {
   SUPPORT_STRONG: 'support_strong',
   SUPPORT_MIXED:  'support_mixed',
   SUPPORT_WEAK:   'support_weak',
+
+  // Situational signals
+  WELCOME_HOME_FADE: 'welcome_home_fade',
 } as const;
 
 export type GameTag = (typeof GAME_TAGS)[keyof typeof GAME_TAGS];

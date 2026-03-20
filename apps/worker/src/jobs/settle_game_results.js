@@ -1487,7 +1487,7 @@ async function settleGameResults({
             sportsRefFallbackAttempts++;
             console.log(
               `[SettleGames] SportsRef fallback attempt for ${dbGame.game_id}` +
-                ` (${dbGame.home_team} vs ${dbGame.away_team}) espnReason=${reason || 'none'}`,
+                ` (${dbGame.home_team} vs ${dbGame.away_team}) espnReason=${missReason || 'none'}`,
             );
             const sportsRefSummaries = await getSportsRefSummariesForGame(
               dbGame,
@@ -1506,7 +1506,7 @@ async function settleGameResults({
               );
             } else {
               sportsRefFallbackMisses++;
-              missReason = [reason, sportsRefResult.reason]
+              missReason = [missReason, sportsRefResult.reason]
                 .filter(Boolean)
                 .join(';');
               console.warn(

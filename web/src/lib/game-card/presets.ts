@@ -58,32 +58,18 @@ const GAME_PRESETS: FilterPreset[] = [
     },
   },
   {
-    id: 'play_tonight',
-    name: 'PLAY Tonight',
-    description: 'High-confidence plays starting today',
-    icon: '🔥',
-    filters: {
-      ...DEFAULT_FILTERS_BY_MODE.game,
-      statuses: FIRE_ONLY,
-      timeWindow: 'today',
-      minTier: 'BEST',
-      sortMode: 'start_time',
-    },
-  },
-  {
     id: 'watch_next_4h',
     name: 'Watch List (Next 4h)',
-    description: 'LEAN games in next 4 hours',
+    description: 'Slight edges (LEAN only) starting within 4 hours',
     icon: '👀',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
-      statuses: FIRE_WATCH,
+      statuses: ['WATCH'] as ExpressionStatus[],
       timeWindow: 'custom',
       customTimeRange: {
         start: new Date().toISOString(),
         end: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
       },
-      minTier: 'WATCH',
       sortMode: 'start_time',
     },
   },
@@ -105,10 +91,11 @@ const GAME_PRESETS: FilterPreset[] = [
   {
     id: 'next_2h',
     name: 'Starting Soon',
-    description: 'Games starting in next 2 hours',
+    description: 'All games starting in next 2 hours (including no plays)',
     icon: '⏰',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
+      statuses: FIRE_WATCH_PASS,
       timeWindow: 'next_2h',
       sortMode: 'start_time',
     },
@@ -116,24 +103,12 @@ const GAME_PRESETS: FilterPreset[] = [
   {
     id: 'best_only',
     name: 'PLAY Tier Only',
-    description: 'Only highest-tier drivers',
+    description: 'PLAY tier calls only — no slight edges, includes tomorrow',
     icon: '⭐',
     filters: {
       ...DEFAULT_FILTERS_BY_MODE.game,
-      minTier: 'BEST',
-      statuses: FIRE_WATCH,
-      sortMode: 'signal_strength',
-    },
-  },
-  {
-    id: '1p_totals',
-    name: '1P Totals View',
-    description: 'NHL 1P pace projections',
-    icon: '📊',
-    filters: {
-      ...DEFAULT_FILTERS_BY_MODE.game,
-      cardTypes: ['nhl-pace-1p'],
-      sortMode: 'signal_strength',
+      statuses: FIRE_ONLY,
+      sortMode: 'start_time',
     },
   },
   {

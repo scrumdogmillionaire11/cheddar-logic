@@ -2,6 +2,7 @@ require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
 
 const {
+  getDatabase,
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
@@ -177,15 +178,86 @@ function checkInjuryStatus(payload) {
   return { skip: false, tier: 'ACTIVE' };
 }
 
-function buildLogRows(playerId, payload, fetchedAt) {
+/**
+ * Compute shots-per-60 from season totals and average TOI.
+ * Uses featuredStats.regularSeason.subSeason when available.
+ * Fallback: shots / gamesPlayed * 60 / avgToiMinutes (estimating ~18 min if avgToi missing).
+ *
+ * @param {object} payload — NHL API /player/{id}/landing response
+ * @returns {number|null}
+ */
+function computeSeasonShotsPer60(payload) {
+  const sub = payload?.featuredStats?.regularSeason?.subSeason;
+  if (!sub) return null;
+
+  const totalShots = Number(sub.shots);
+  const gamesPlayed = Number(sub.gamesPlayed);
+  if (!Number.isFinite(totalShots) || !Number.isFinite(gamesPlayed) || gamesPlayed === 0) {
+    return null;
+  }
+
+  // Prefer avgToi from payload if present ("MM:SS" format)
+  let avgToiMinutes = null;
+  if (sub.avgToi && typeof sub.avgToi === 'string' && sub.avgToi.includes(':')) {
+    const avgToiParsed = parseToiMinutes(sub.avgToi);
+    if (Number.isFinite(avgToiParsed) && avgToiParsed > 0) {
+      avgToiMinutes = avgToiParsed;
+    }
+  }
+
+  if (avgToiMinutes === null) {
+    // Fall back to shots-per-game (league-average TOI ~18 min for forwards/D)
+    // This gives a coarser but non-null prior for the model
+    return Math.round((totalShots / gamesPlayed) * 10) / 10; // shots/game as proxy
+  }
+
+  return Math.round((totalShots / gamesPlayed / avgToiMinutes) * 60 * 100) / 100;
+}
+
+function computeSeasonPpToi(payload) {
+  const sub = payload?.featuredStats?.regularSeason?.subSeason;
+  if (!sub) return null;
+  if (!sub.avgPpToi || typeof sub.avgPpToi !== 'string' || !sub.avgPpToi.includes(':')) {
+    return null;
+  }
+  const parsed = parseToiMinutes(sub.avgPpToi);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildLogRows(playerId, payload, fetchedAt, ppRatePer60 = null, ppRateL10Per60 = null, ppRateL5Per60 = null) {
   const last5 = Array.isArray(payload?.last5Games) ? payload.last5Games : [];
   const playerName = resolvePlayerName(payload);
+
+  const seasonShotsPer60 = computeSeasonShotsPer60(payload);
 
   return last5.map((game) => {
     const gameId = game?.gameId ? String(game.gameId) : null;
     const gameDate = game?.gameDate || null;
     const isHome = game?.homeRoadFlag === 'H';
     const toiMinutes = parseToiMinutes(game?.toi);
+
+    // Enrich per-game raw_data with season-level stats so the model runner
+    // has access to shotsPer60 and toiMinutes without a second API call.
+    const enrichedRawData = {
+      ...game,
+      shotsPer60: seasonShotsPer60,
+      // projToi: use the season average TOI computed from featuredStats,
+      // or fall back to this specific game's TOI as a proxy.
+      projToi: (() => {
+        const sub = payload?.featuredStats?.regularSeason?.subSeason;
+        if (sub?.avgToi && typeof sub.avgToi === 'string') {
+          const parsed = parseToiMinutes(sub.avgToi);
+          if (Number.isFinite(parsed) && parsed > 0) return parsed;
+        }
+        return Number.isFinite(toiMinutes) ? toiMinutes : null;
+      })(),
+      ppToi: computeSeasonPpToi(payload),  // WI-0528: real PP TOI from featuredStats.subSeason.avgPpToi
+      // WI-0530: season PP shot rate from NST player_pp_rates table (null if player absent)
+      ppRatePer60,
+      // WI-0531: L10/L5 rolling PP shot rates (null if absent from player_pp_rates)
+      ppRateL10Per60,
+      ppRateL5Per60,
+    };
 
     return {
       id: `nhl-sog-${playerId}-${gameId || uuidV4().slice(0, 8)}`,
@@ -200,7 +272,7 @@ function buildLogRows(playerId, payload, fetchedAt) {
         ? game.shots
         : Number(game?.shots) || null,
       toiMinutes,
-      rawData: game,
+      rawData: enrichedRawData,
       fetchedAt,
     };
   });
@@ -316,7 +388,43 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
             checkedAt: fetchedAt,
           });
 
-          const rows = buildLogRows(playerId, payload, fetchedAt);
+          // WI-0530: Look up season PP shot rate from player_pp_rates table.
+          // Null if player is not in the NST table (non-PP or not yet ingested).
+          let ppRatePer60 = null;
+          try {
+            const db = getDatabase();
+            const currentSeason = process.env.NHL_CURRENT_SEASON || '20242025';
+            const ppRateRow = db
+              .prepare(
+                'SELECT pp_shots_per60, pp_l10_shots_per60, pp_l5_shots_per60 FROM player_pp_rates WHERE nhl_player_id = ? AND season = ? LIMIT 1',
+              )
+              .get(String(playerId), currentSeason);
+            ppRatePer60 = ppRateRow ? ppRateRow.pp_shots_per60 : null;
+          } catch {
+            ppRatePer60 = null;
+          }
+
+          // WI-0531: extract L10/L5 rolling rates from the same ppRateRow
+          let ppRateL10Per60 = null;
+          let ppRateL5Per60 = null;
+          try {
+            const db2 = getDatabase();
+            const currentSeason2 = process.env.NHL_CURRENT_SEASON || '20242025';
+            const ppRateRow2 = db2
+              .prepare(
+                'SELECT pp_l10_shots_per60, pp_l5_shots_per60 FROM player_pp_rates WHERE nhl_player_id = ? AND season = ? LIMIT 1',
+              )
+              .get(String(playerId), currentSeason2);
+            ppRateL10Per60 = (ppRateRow2 && ppRateRow2.pp_l10_shots_per60 != null)
+              ? ppRateRow2.pp_l10_shots_per60 : null;
+            ppRateL5Per60 = (ppRateRow2 && ppRateRow2.pp_l5_shots_per60 != null)
+              ? ppRateRow2.pp_l5_shots_per60 : null;
+          } catch {
+            ppRateL10Per60 = null;
+            ppRateL5Per60 = null;
+          }
+
+          const rows = buildLogRows(playerId, payload, fetchedAt, ppRatePer60, ppRateL10Per60, ppRateL5Per60);
 
           rows.forEach((row) => {
             upsertPlayerShotLog(row);

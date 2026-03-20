@@ -29,6 +29,7 @@ const {
   classifyEdge,
   calcFairLine,
   calcFairLine1p,
+  projectSogV2,
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 const {
@@ -37,6 +38,18 @@ const {
 } = require('../utils/nhl-shots-patch');
 
 const JOB_NAME = 'run-nhl-player-shots-model';
+
+/**
+ * WI-0529: Compute three-state display decision for prop cards.
+ * PROJECTION_ONLY: anomaly flagged or no odds price (no actionable signal).
+ * PLAY:           clean projection + positive opportunity score.
+ * WATCH:          clean projection + zero or negative opportunity score.
+ */
+function computePropDisplayState(v2AnomalyDetected, v2OpportunityScore) {
+  if (v2AnomalyDetected || v2OpportunityScore == null) return 'PROJECTION_ONLY';
+  if (v2OpportunityScore > 0) return 'PLAY';
+  return 'WATCH';
+}
 
 function attachRunId(card, runId) {
   if (!card) return;
@@ -94,6 +107,73 @@ TEAM_NAME_TO_ABBREV['UTAH HOCKEY CLUB'] = 'UTA';
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function deriveNhlSeasonId(now = new Date()) {
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth() + 1;
+  const startYear = month >= 9 ? year : year - 1;
+  return Number(`${startYear}${startYear + 1}`);
+}
+
+function resolveNhlSeasonKey() {
+  const raw = String(
+    process.env.NHL_CURRENT_SEASON ||
+    process.env.NHL_SOG_SEASON_ID ||
+    '',
+  ).trim();
+  if (/^\d{8}$/.test(raw)) {
+    return raw;
+  }
+  return String(deriveNhlSeasonId());
+}
+
+function toFinitePositive(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return numeric;
+}
+
+function firstPositive(...values) {
+  for (const value of values) {
+    const numeric = toFinitePositive(value);
+    if (numeric !== null) {
+      return numeric;
+    }
+  }
+  return null;
+}
+
+function computePpMatchupFactor({
+  opponentPenaltiesPer60,
+  opponentPkPct,
+  leagueAvgPenaltiesPer60,
+  leagueAvgPkPct,
+}) {
+  const oppPenalties = toFinitePositive(opponentPenaltiesPer60);
+  const oppPk = toFinitePositive(opponentPkPct);
+  const leaguePenalties = toFinitePositive(leagueAvgPenaltiesPer60);
+  const leaguePk = toFinitePositive(leagueAvgPkPct);
+
+  if (
+    oppPenalties === null ||
+    oppPk === null ||
+    leaguePenalties === null ||
+    leaguePk === null
+  ) {
+    return null;
+  }
+
+  const denom = 1 - leaguePk;
+  const numer = 1 - oppPk;
+  if (denom <= 0 || numer <= 0) return null;
+
+  const raw =
+    (oppPenalties / leaguePenalties) *
+    (numer / denom);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+
+  return clamp(raw, 0.5, 1.8);
 }
 
 function computeL5Mean(l5Sog) {
@@ -590,6 +670,7 @@ async function runNHLPlayerShotsModel() {
       const excludedPlayerIds = new Set(
         parsePlayerIds(process.env.NHL_SOG_EXCLUDE_PLAYER_IDS),
       );
+      const nhlSeasonKey = resolveNhlSeasonKey();
       if (excludedPlayerIds.size > 0) {
         console.log(
           `[${JOB_NAME}] Applying NHL_SOG_EXCLUDE_PLAYER_IDS (${excludedPlayerIds.size} players)`,
@@ -827,11 +908,27 @@ async function runNHLPlayerShotsModel() {
             // Extract season stats from most recent game's raw_data if available
             let shotsPer60 = null;
             let projToi = null;
+            let ppToi = 0; // WI-0528: default 0 for safe fallback on legacy log rows
+            let ppRatePer60 = null; // WI-0530: season PP shot rate from NST player_pp_rates
+            let ppRateL10Per60 = null; // WI-0531: L10 rolling PP shot rate
+            let ppRateL5Per60 = null;  // WI-0531: L5 rolling PP shot rate
             if (l5Games[0]?.raw_data) {
               try {
                 const rawData = JSON.parse(l5Games[0].raw_data);
                 shotsPer60 = rawData.shotsPer60 || null;
                 projToi = rawData.projToi || l5Games[0].toi_minutes || null;
+                ppToi = Number.isFinite(rawData.ppToi) && rawData.ppToi > 0 ? rawData.ppToi : 0; // WI-0528: real PP TOI
+                // WI-0530: treat 0 same as null — only positive rates are meaningful
+                if (Number.isFinite(rawData.ppRatePer60) && rawData.ppRatePer60 > 0) {
+                  ppRatePer60 = rawData.ppRatePer60;
+                }
+                // WI-0531: extract L10/L5 rolling rates (null if absent or non-positive)
+                if (Number.isFinite(rawData.ppRateL10Per60) && rawData.ppRateL10Per60 > 0) {
+                  ppRateL10Per60 = rawData.ppRateL10Per60;
+                }
+                if (Number.isFinite(rawData.ppRateL5Per60) && rawData.ppRateL5Per60 > 0) {
+                  ppRateL5Per60 = rawData.ppRateL5Per60;
+                }
               } catch {
                 // Ignore parse errors
               }
@@ -841,23 +938,24 @@ async function runNHLPlayerShotsModel() {
               player.team_abbrev?.toUpperCase() === homeTeam.toUpperCase() ||
               TEAM_ABBREV_TO_NAME[player.team_abbrev?.toUpperCase()]?.toUpperCase() === homeTeam.toUpperCase();
 
+            const playerTeamAbbrev = resolveTeamAbbrev(player.team_abbrev);
+            const playerTeamName =
+              (playerTeamAbbrev && TEAM_ABBREV_TO_NAME[playerTeamAbbrev]) ||
+              player.team_abbrev;
+            const opponentTeam = isHome ? awayTeam : homeTeam;
+            const opponentAbbrev = resolveTeamAbbrev(opponentTeam);
+            if (!opponentAbbrev) {
+              console.debug(
+                `[${JOB_NAME}] Could not resolve opponent abbreviation for '${opponentTeam}' — opponentFactor defaulting to 1.0`,
+              );
+            }
+            const opponentTeamName =
+              (opponentAbbrev && TEAM_ABBREV_TO_NAME[opponentAbbrev]) ||
+              opponentTeam;
+
             let opponentFactor = 1.0;
             let paceFactor = 1.0;
             try {
-              const playerTeamAbbrev = resolveTeamAbbrev(player.team_abbrev);
-              const playerTeamName =
-                (playerTeamAbbrev && TEAM_ABBREV_TO_NAME[playerTeamAbbrev]) ||
-                player.team_abbrev;
-              const opponentTeam = isHome ? awayTeam : homeTeam;
-              const opponentAbbrev = resolveTeamAbbrev(opponentTeam);
-              if (!opponentAbbrev) {
-                console.debug(
-                  `[${JOB_NAME}] Could not resolve opponent abbreviation for '${opponentTeam}' — opponentFactor defaulting to 1.0`,
-                );
-              }
-              const opponentTeamName =
-                (opponentAbbrev && TEAM_ABBREV_TO_NAME[opponentAbbrev]) ||
-                opponentTeam;
               const factorRow = db.prepare(`
                 SELECT
                   (
@@ -971,6 +1069,140 @@ async function runNHLPlayerShotsModel() {
               );
             }
 
+            // WI-0532: PP matchup layer from opponent PK quality + penalties against/60.
+            let ppMatchupFactor = 1.0;
+            let oppPkPct = null;
+            let oppPenaltiesPer60 = null;
+            let leagueAvgPkPct = null;
+            let leagueAvgPenaltiesPer60 = null;
+            let ppMatchupMissing = false;
+            try {
+              const opponentHomeRoad = isHome ? 'R' : 'H';
+              const ppRow = db.prepare(`
+                SELECT
+                  (
+                    SELECT pk_pct
+                    FROM team_stats
+                    WHERE season = ?
+                      AND UPPER(team_name) = UPPER(?)
+                      AND home_road = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                  ) AS opp_pk_pct_split,
+                  (
+                    SELECT pk_pct
+                    FROM team_stats
+                    WHERE season = ?
+                      AND UPPER(team_name) = UPPER(?)
+                      AND home_road = 'ALL'
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                  ) AS opp_pk_pct_all,
+                  (
+                    SELECT penalties_against_per60
+                    FROM team_stats
+                    WHERE season = ?
+                      AND UPPER(team_name) = UPPER(?)
+                      AND home_road = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                  ) AS opp_penalties_per60_split,
+                  (
+                    SELECT penalties_against_per60
+                    FROM team_stats
+                    WHERE season = ?
+                      AND UPPER(team_name) = UPPER(?)
+                      AND home_road = 'ALL'
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                  ) AS opp_penalties_per60_all,
+                  (
+                    SELECT AVG(pk_pct)
+                    FROM team_stats
+                    WHERE season = ?
+                      AND home_road = ?
+                      AND pk_pct IS NOT NULL
+                  ) AS league_avg_pk_pct_split,
+                  (
+                    SELECT AVG(pk_pct)
+                    FROM team_stats
+                    WHERE season = ?
+                      AND home_road = 'ALL'
+                      AND pk_pct IS NOT NULL
+                  ) AS league_avg_pk_pct_all,
+                  (
+                    SELECT AVG(penalties_against_per60)
+                    FROM team_stats
+                    WHERE season = ?
+                      AND home_road = ?
+                      AND penalties_against_per60 IS NOT NULL
+                  ) AS league_avg_penalties_per60_split,
+                  (
+                    SELECT AVG(penalties_against_per60)
+                    FROM team_stats
+                    WHERE season = ?
+                      AND home_road = 'ALL'
+                      AND penalties_against_per60 IS NOT NULL
+                  ) AS league_avg_penalties_per60_all
+              `).get(
+                nhlSeasonKey,
+                opponentTeamName,
+                opponentHomeRoad,
+                nhlSeasonKey,
+                opponentTeamName,
+                nhlSeasonKey,
+                opponentTeamName,
+                opponentHomeRoad,
+                nhlSeasonKey,
+                opponentTeamName,
+                nhlSeasonKey,
+                opponentHomeRoad,
+                nhlSeasonKey,
+                nhlSeasonKey,
+                opponentHomeRoad,
+                nhlSeasonKey,
+              );
+
+              oppPkPct = firstPositive(
+                ppRow?.opp_pk_pct_split,
+                ppRow?.opp_pk_pct_all,
+              );
+              oppPenaltiesPer60 = firstPositive(
+                ppRow?.opp_penalties_per60_split,
+                ppRow?.opp_penalties_per60_all,
+              );
+              leagueAvgPkPct = firstPositive(
+                ppRow?.league_avg_pk_pct_split,
+                ppRow?.league_avg_pk_pct_all,
+              );
+              leagueAvgPenaltiesPer60 = firstPositive(
+                ppRow?.league_avg_penalties_per60_split,
+                ppRow?.league_avg_penalties_per60_all,
+              );
+
+              const computedPpMatchupFactor = computePpMatchupFactor({
+                opponentPenaltiesPer60: oppPenaltiesPer60,
+                opponentPkPct: oppPkPct,
+                leagueAvgPenaltiesPer60,
+                leagueAvgPkPct,
+              });
+              if (computedPpMatchupFactor !== null) {
+                ppMatchupFactor = computedPpMatchupFactor;
+              } else if (ppToi > 0) {
+                ppMatchupMissing = true;
+                console.debug(
+                  `[${JOB_NAME}] Missing PP matchup inputs for '${opponentTeamName}' season=${nhlSeasonKey} — pp_matchup_factor defaulting to 1.0`,
+                );
+              }
+            } catch {
+              if (ppToi > 0) {
+                ppMatchupMissing = true;
+              }
+              console.debug(
+                `[${JOB_NAME}] Could not query team_stats for PP matchup factor — defaulting to 1.0`,
+              );
+            }
+
             // Run model for full game
             const mu = calcMu({
               l5Sog,
@@ -1010,6 +1242,87 @@ async function runNHLPlayerShotsModel() {
               console.log(`[projection-mode] line=${marketLine} (no real Odds API line — using projection floor)`);
             }
             const usingRealLine = !!realPropLine;
+
+            // --- V2 Price Integration ---
+            // Extract prices already stored by pull_nhl_player_shots_props.
+            // getPlayerPropLine SELECTs over_price/under_price but the caller
+            // previously only read .line — now we read the prices too.
+            const overPrice = realPropLine?.over_price ?? null;
+            const underPrice = realPropLine?.under_price ?? null;
+            const isOddsBacked = overPrice !== null && underPrice !== null;
+
+            // Derive a trending L5 rate for projectSogV2's weighted blend.
+            // l5RatePer60: L5 mean shots / projected TOI * 60 (per-60 normalised).
+            const l5Mean = computeL5Mean(l5Sog);
+            const l5RatePer60 =
+              projToi && projToi > 0
+                ? (l5Mean / projToi) * 60
+                : shotsPer60 ?? null;
+
+            const v2Projection = projectSogV2({
+              player_id: player.player_id,
+              game_id: resolvedGameId,
+              ev_shots_season_per60: shotsPer60 ?? null,
+              // L10 is not stored separately; use L5-derived rate as a proxy
+              // rather than copying shotsPer60 (which is a season average, not L10).
+              // This avoids a false LOW_SAMPLE flag while being directionally correct.
+              ev_shots_l10_per60: l5RatePer60 ?? shotsPer60 ?? null,
+              ev_shots_l5_per60: l5RatePer60,
+              pp_shots_season_per60: ppRatePer60,   // WI-0530: NST season rate (null if missing)
+              pp_shots_l10_per60: ppRateL10Per60,   // WI-0531: real L10 rolling rate (null if absent)
+              pp_shots_l5_per60: ppRateL5Per60,     // WI-0531: real L5 rolling rate (null if absent)
+              toi_proj_ev: projToi ?? 0,
+              toi_proj_pp: ppToi, // WI-0528: real PP TOI from featuredStats.subSeason.avgPpToi (0 fallback for non-PP players)
+              pp_matchup_factor: ppMatchupFactor,
+              shot_env_factor: paceFactor,
+              opponent_suppression_factor: opponentFactor,
+              role_stability: playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH',
+              market_line: marketLine,
+              market_price_over: overPrice,
+              market_price_under: underPrice,
+            });
+
+            if (!isOddsBacked) {
+              console.log(
+                `[${JOB_NAME}] [projection-mode] No prices for ${playerName} — MISSING_PRICE flag, opportunity_score=null`,
+              );
+            }
+
+            // WI-0530: PP_RATE_MISSING flag — player has PP TOI but no NST rate was available.
+            // Non-PP players (ppToi=0) do NOT get flagged — the rate is simply irrelevant for them.
+            if (ppRatePer60 === null && ppToi > 0) {
+              v2Projection.flags.push('PP_RATE_MISSING');
+            }
+
+            // WI-0531: PP_SMALL_SAMPLE — player is on PP (has season rate) but fewer than 5 games
+            // of rolling data (both L10 and L5 null). Single null does NOT trigger the flag.
+            if (ppRatePer60 !== null && ppRateL10Per60 === null && ppRateL5Per60 === null) {
+              v2Projection.flags.push('PP_SMALL_SAMPLE');
+            }
+
+            if (ppMatchupMissing) {
+              v2Projection.flags.push('PP_MATCHUP_MISSING');
+            }
+
+            // WI-0531: Compute the actual PP blend rate for drivers display.
+            // Mirrors weightedRateBlendPP logic (0.40/0.35/0.25) so drivers is consistent with model.
+            const ppBlendRate = (() => {
+              const vals = [ppRatePer60, ppRateL10Per60, ppRateL5Per60];
+              const wts = [0.40, 0.35, 0.25];
+              const present = vals.map((v, i) => (v !== null ? { v, w: wts[i] } : null)).filter(Boolean);
+              if (present.length === 0) return null;
+              const totalW = present.reduce((s, x) => s + x.w, 0);
+              return present.reduce((s, x) => s + (x.v * x.w) / totalW, 0);
+            })();
+
+            // V2 anomaly: sog_mu collapsing far below L5 average signals model breakdown.
+            // This is separate from projectionAnomalyDetected (V1 path) and gates V2 pricing only.
+            const v2AnomalyDetected = v2Projection.sog_mu < 0.6 * l5Mean;
+
+            // Null out pricing fields when V2 anomaly is present — no bet-worthy signal should be emitted.
+            const v2EdgeOverPp = v2AnomalyDetected ? null : (v2Projection.edge_over_pp != null ? Math.round(v2Projection.edge_over_pp * 10000) / 10000 : null);
+            const v2EvOver = v2AnomalyDetected ? null : (v2Projection.ev_over != null ? Math.round(v2Projection.ev_over * 10000) / 10000 : null);
+            const v2OpportunityScore = v2AnomalyDetected ? null : (v2Projection.opportunity_score ?? null);
 
             const syntheticLine = marketLine; // kept for card payload references below
 
@@ -1065,13 +1378,60 @@ async function runNHLPlayerShotsModel() {
               Math.abs(mu - syntheticLine),
             );
 
+            // Projection anomaly guard: when recency-weighted mu is <60% of the
+            // arithmetic L5 mean, the model is collapsing due to recent low-shot
+            // games. In this case we must never emit FIRE — the "huge UNDER edge"
+            // against a synthetic floor line is not a real signal.
+            const projectionAnomalyDetected = mu < 0.6 * l5Mean;
+            if (projectionAnomalyDetected) {
+              console.warn(
+                `[${JOB_NAME}] PROJECTION_ANOMALY: ${playerName} weighted_mu=${mu.toFixed(2)} < 0.6 * l5_arith_mean=${l5Mean.toFixed(2)} — FIRE will be blocked. Check recent shot log; likely had 0–1 shots in last 2 games.`,
+              );
+            }
+
+            // Structured debug log — every player gets one line for diagnostics.
+            console.log(
+              `[${JOB_NAME}] [debug] ${playerName}: l5=${JSON.stringify(l5Sog)} l5_arith=${l5Mean.toFixed(2)} mu=${mu.toFixed(3)} line=${syntheticLine} real_line=${usingRealLine} projToi=${projToi ?? 'null'} shotsPer60=${shotsPer60 ?? 'null'} oppF=${opponentFactor.toFixed(3)} paceF=${paceFactor.toFixed(3)} ppMatch=${ppMatchupFactor.toFixed(3)} isHome=${isHome} anomaly=${projectionAnomalyDetected}`,
+            );
+
             // Classify edges after confidence is derived from consistency + matchup.
             const fullGameEdge = classifyEdge(mu, syntheticLine, confidence);
-            const fullDecision = derivePlayDecision({
+            let fullDecision = derivePlayDecision({
               edgeTier: fullGameEdge.tier,
               supportScore: fullSupportScore,
               confidence,
             });
+
+            // Guard 1: Never FIRE on projection-only cards (no real Odds API line).
+            // A synthetic floor line creates fake edge even when the player projects
+            // legitimately. Real odds are required to validate a bet-worthy signal.
+            if (!usingRealLine && fullDecision.action === 'FIRE') {
+              console.warn(
+                `[${JOB_NAME}] [no-real-line] Downgraded ${playerName} FIRE→WATCH (projection-mode card — no real Odds API line)`,
+              );
+              fullDecision = {
+                action: 'HOLD',
+                status: 'WATCH',
+                classification: 'LEAN',
+                officialStatus: 'LEAN',
+              };
+            }
+
+            // Guard 2: Never FIRE when weighted projection has collapsed below 60%
+            // of the arithmetic L5 mean. This catches the aggressive-recency-decay
+            // scenario where 0-shot games dominate the weighted average.
+            if (projectionAnomalyDetected && fullDecision.action === 'FIRE') {
+              console.warn(
+                `[${JOB_NAME}] [anomaly-guard] Downgraded ${playerName} FIRE→WATCH (PROJECTION_ANOMALY)`,
+              );
+              fullDecision = {
+                action: 'HOLD',
+                status: 'WATCH',
+                classification: 'LEAN',
+                officialStatus: 'LEAN',
+              };
+            }
+
             const fullDirectionLabel =
               fullGameEdge.direction === 'OVER' ? 'Over' : 'Under';
             const fullRecommendationPrefix =
@@ -1143,6 +1503,11 @@ async function runNHLPlayerShotsModel() {
                     player_id: player.player_id.toString(),
                   },
                 },
+                odds_backed: isOddsBacked,
+                over_price: isOddsBacked ? overPrice : null,
+                under_price: isOddsBacked ? underPrice : null,
+                opportunity_score: v2OpportunityScore,
+                prop_display_state: computePropDisplayState(v2AnomalyDetected, v2OpportunityScore),
                 decision: {
                   edge_pct: computeEdgePct(mu, syntheticLine),
                   projection: Math.round(mu * 100) / 100,
@@ -1157,6 +1522,19 @@ async function runNHLPlayerShotsModel() {
                     Math.round(fullConsistencyScore * 1000) / 1000,
                   matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
                   support_score: Math.round(fullSupportScore * 1000) / 1000,
+                  opportunity_score: v2OpportunityScore,
+                  v2: {
+                    sog_mu: v2Projection.sog_mu != null ? Math.round(v2Projection.sog_mu * 1000) / 1000 : null,
+                    edge_over_pp: v2EdgeOverPp,
+                    ev_over: v2EvOver,
+                    opportunity_score: v2OpportunityScore,
+                    flags: [
+                      ...(v2Projection.flags ?? []),
+                      ...(v2AnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
+                      ...(!usingRealLine ? ['SYNTHETIC_LINE'] : []),
+                    ],
+                    odds_backed: isOddsBacked,
+                  },
                 },
                 drivers: {
                   l5_avg: l5Sog.reduce((a, b) => a + b, 0) / 5,
@@ -1167,9 +1545,31 @@ async function runNHLPlayerShotsModel() {
                   is_home: isHome,
                   opponent_factor: opponentFactor,
                   pace_factor: paceFactor,
+                  pp_matchup_factor:
+                    v2Projection.pp_matchup_factor != null
+                      ? Math.round(v2Projection.pp_matchup_factor * 1000) / 1000
+                      : Math.round(ppMatchupFactor * 1000) / 1000,
+                  opp_pk_pct: oppPkPct != null ? Math.round(oppPkPct * 1000) / 1000 : null,
+                  opp_penalties_per60:
+                    oppPenaltiesPer60 != null
+                      ? Math.round(oppPenaltiesPer60 * 1000) / 1000
+                      : null,
                   consistency_score:
                     Math.round(fullConsistencyScore * 1000) / 1000,
                   matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
+                  // Projection model inputs surfaced for debugging and audit
+                  sog_mu: v2Projection.sog_mu != null ? Math.round(v2Projection.sog_mu * 1000) / 1000 : null,
+                  toi_proj_ev: v2Projection.toi_proj != null ? v2Projection.toi_proj : (projToi ?? null),
+                  ev_rate: v2Projection.shot_rate_ev_per60 != null ? Math.round(v2Projection.shot_rate_ev_per60 * 100) / 100 : null,
+                  pp_rate: v2Projection.shot_rate_pp_per60 != null ? Math.round(v2Projection.shot_rate_pp_per60 * 100) / 100 : null,
+                  pp_rate_per60: ppRatePer60,   // WI-0530: raw NST season rate before blend
+                  pp_season_rate: ppRatePer60,  // WI-0531: alias for clarity
+                  pp_l10_rate: ppRateL10Per60,  // WI-0531: L10 rolling rate (null if absent)
+                  pp_l5_rate: ppRateL5Per60,    // WI-0531: L5 rolling rate (null if absent)
+                  pp_blend_rate: ppBlendRate !== null ? Math.round(ppBlendRate * 100) / 100 : null, // WI-0531
+                  shot_env_factor: v2Projection.shot_env_factor != null ? Math.round(v2Projection.shot_env_factor * 1000) / 1000 : null,
+                  trend_factor: v2Projection.trend_score != null ? Math.round(v2Projection.trend_score * 1000) / 1000 : null,
+                  v2_anomaly: v2AnomalyDetected,
                 },
               };
 
@@ -1253,11 +1653,20 @@ async function runNHLPlayerShotsModel() {
                 syntheticLine1p,
                 firstPeriodConfidence,
               );
-              const firstPeriodDecision = derivePlayDecision({
+              let firstPeriodDecision = derivePlayDecision({
                 edgeTier: firstPeriodEdge.tier,
                 supportScore: firstPeriodSupportScore,
                 confidence: firstPeriodConfidence,
               });
+
+              // Apply same guards as full-game path.
+              if (!realPropLine1p && firstPeriodDecision.action === 'FIRE') {
+                firstPeriodDecision = { action: 'HOLD', status: 'WATCH', classification: 'LEAN', officialStatus: 'LEAN' };
+              }
+              if (projectionAnomalyDetected && firstPeriodDecision.action === 'FIRE') {
+                firstPeriodDecision = { action: 'HOLD', status: 'WATCH', classification: 'LEAN', officialStatus: 'LEAN' };
+              }
+
               const l5FairValue1p = calcFairLine1p({ l5Sog, shotsPer60, projToi });
               const fairLine1p = roundToHalfLine(l5FairValue1p) ?? syntheticLine1p;
               const matchupEdge1p = Math.round((mu1p - l5FairValue1p) * 10) / 10;

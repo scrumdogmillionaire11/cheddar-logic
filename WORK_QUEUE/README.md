@@ -37,6 +37,22 @@ Recommended execution order: `WI-0485` -> (`WI-0486` + `WI-0487` in parallel if 
 
 NHL alignment execution order: `WI-0500` -> `WI-0501` -> `WI-0502` -> `WI-0506` -> `WI-0503` -> `WI-0504` -> `WI-0505`.
 
+### Soccer Asian Handicap workstream (queued)
+
+- `WI-0520`: AH decision gate + architecture contract (Option A keep out vs Option B reintroduce)
+- `WI-0521`: Deterministic AH grading engine (whole/half/quarter/zero + split outcomes)
+- `WI-0522`: AH pricing model (de-vig + Poisson margin probabilities + EV)
+- `WI-0523`: AH pipeline integration (canonical markets + validators + runbook)
+
+Recommended execution order: `WI-0520` -> `WI-0521` -> `WI-0522` -> `WI-0523`.
+
+Proposed execution branches (when each WI starts):
+
+- `agent/github-copilot/WI-0520-ah-decision-contract`
+- `agent/github-copilot/WI-0521-ah-grading-engine`
+- `agent/github-copilot/WI-0522-ah-pricing-model`
+- `agent/github-copilot/WI-0523-ah-tier1-integration`
+
 ## Recently Completed
 
 - `WI-0480`: Phase 2 Activation + Rollback Procedure (Thresholds V2)

@@ -314,6 +314,7 @@ function generateWelcomeHomeCard(gameCtx) {
     cardTitle: `[${sport}] Welcome Home Fade: Road Trip Fatigue`,
     confidence,
     tier,
+    market_type: 'MONEYLINE',
     prediction: 'AWAY',
     reasoning: `Fade HOME team after ${recentRoadGames.length}-game road trip (tier: ${analysis.tier}). ${analysis.reasoning}`,
     ev_threshold_passed: confidence > 0.6,

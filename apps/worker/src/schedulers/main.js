@@ -2,7 +2,7 @@
  * Window-Based Scheduler — Tick loop with idempotency
  *
  * Architecture:
- * - Fixed-time windows: 09:00 ET, 12:00 ET (daily model refresh)
+ * - Fixed-time windows: 09:00 ET, 12:00 ET, 18:00 ET
  * - T-minus windows: T-120, T-90, T-60, T-30 (pre-game updates)
  * - Hourly odds bucket: captures odds every hour
  *
@@ -45,6 +45,7 @@ const { pullSoccerPlayerProps } = require('../jobs/pull_soccer_player_props');
 const { pullSoccerXgStats } = require('../jobs/pull_soccer_xg_stats');
 const { runNCAAMModel } = require('../jobs/run_ncaam_model');
 const { runRefreshNcaamFtCsv } = require('../jobs/refresh_ncaam_ft_csv');
+const { syncGameStatuses } = require('../jobs/sync_game_statuses');
 const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
 const { backfillCardResults } = require('../jobs/backfill_card_results');
@@ -54,6 +55,7 @@ const {
 } = require('../jobs/refresh_team_metrics_daily');
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availability');
+const { postDiscordCards } = require('../jobs/post_discord_cards');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -169,6 +171,10 @@ function keyOddsHourly(nowEt) {
 
 function keyFixed(sport, nowEt, hhmm) {
   return `${sport}|fixed|${nowEt.toISODate()}|${hhmm.replace(':', '')}`;
+}
+
+function keyDiscordCardsSnapshot(nowEt, hhmm) {
+  return `discord_cards|fixed|${nowEt.toISODate()}|${hhmm.replace(':', '')}`;
 }
 
 function keyTminus(sport, gameId, minutes) {
@@ -600,6 +606,25 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   }
 
   // ========== MODELS (3) ==========
+  if (
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS === 'true' &&
+    String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim()
+  ) {
+    const discordSnapshotTimes = ['09:00', '12:00', '18:00'];
+    for (const t of discordSnapshotTimes) {
+      if (!isFixedDue(nowEt, t)) continue;
+      const jobKey = keyDiscordCardsSnapshot(nowEt, t);
+      jobs.push({
+        jobName: 'post_discord_cards',
+        jobKey,
+        execute: postDiscordCards,
+        args: { jobKey, dryRun },
+        reason: `discord cards snapshot ${t} ET`,
+      });
+    }
+  }
+
+  // ========== MODELS (3) ==========
   // Fixed-time model runs (per sport) - UNCHANGED
   const fixedTimes = ['09:00', '12:00'];
   for (const sport of sports) {
@@ -687,6 +712,16 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       isHourlySettlementDue(nowEt)
     ) {
       const hourlyKey = keyHourlySettlementSweep(nowEt);
+
+      // Sync game statuses first so road-trip sequence logic (e.g. Welcome Home)
+      // has accurate 'final' status before models and settlement run.
+      jobs.push({
+        jobName: 'sync_game_statuses',
+        jobKey: `sync|game-statuses|${hourlyKey}`,
+        execute: syncGameStatuses,
+        args: { jobKey: `sync|game-statuses|${hourlyKey}`, dryRun },
+        reason: `hourly game status sync ${hourlyKey}`,
+      });
 
       if (!settlementGameRunning) {
         jobs.push({
@@ -954,6 +989,7 @@ module.exports = {
   enabledSports,
   keyOddsHourly,
   keyFixed,
+  keyDiscordCardsSnapshot,
   keyTminus,
   keyNightlySweep,
   keyNhlSogPlayerSync,

@@ -144,3 +144,43 @@ player_prop_lines (
 - **Tracked-player sync dependency:** `pull_nhl_player_shots` prefers DB-backed tracked IDs from `tracked_players` (`sport=nhl`, `market=shots_on_goal`). If the sync job has not run or returns no active rows, the job falls back to `NHL_SOG_PLAYER_IDS`.
 - **Player name matching:** Real line lookup is case-insensitive by `player_name`. If The Odds API uses a different name format than the NHL API pull, lines may not match — monitor `market_line_source: "synthetic_fallback"` in card payloads as a signal.
 - **opponentFactor / paceFactor:** Sourced from `team_metrics_cache` when available. `opponentFactor` uses `shots_against_pg / league_avg_shots_against_pg`; `paceFactor` uses the average of team+opponent pace proxies (`pace_proxy`, `paceFactor`, `pace`, `corsi_for_pct/50`, or `shots_for_pg / league_avg_shots_for_pg`). Missing cache data fails open to `1.0`.
+
+---
+
+## Two-Stage Model — projectSogV2 (added 2026-03-20)
+
+`projectSogV2` separates projection from pricing so trend and value cannot be conflated. Additive export alongside `calcMu`/`classifyEdge` — no existing callers are broken.
+
+### Stage 1 — Project SOG_mu
+
+```
+EV_shot_rate = weightedRateBlend(season/60, l10/60, l5/60)  // 0.35/0.35/0.30
+PP_shot_rate = weightedRateBlend(season/60, l10/60, l5/60)
+
+Raw_SOG_mu = (EV_shot_rate * toi_proj_ev / 60) + (PP_shot_rate * toi_proj_pp / 60)
+
+SOG_mu = Raw_SOG_mu
+       * shot_env_factor         [0.92-1.08]
+       * opponent_suppression    [0.90-1.10]
+       * goalie_rebound_factor   [0.97-1.03]
+       * trailing_script_factor  [0.95-1.08]
+       * trend_factor            [0.93-1.07]
+```
+
+trend_factor = clamp(1 + (l5_ev/season_ev - 1) * 0.35 * role_weight, 0.93, 1.07)
+where role_weight = 1.0 (HIGH) / 0.5 (MEDIUM) / 0.0 (LOW)
+
+### Stage 2 — Market / Pricing Layer
+
+For each line L: fair_over_prob = P(Poisson(SOG_mu) > L), edge_over_pp = fair - implied,
+EV = fair_prob * payout_decimal_minus_1 - (1 - fair_prob)
+
+### Invariants
+
+- trend_factor adjusts SOG_mu only; does not manufacture edge
+- No official play when market_price_over is missing (edge_over_pp = null)
+- No official play when role_stability = LOW (ROLE_IN_FLUX flag)
+
+### Tests
+
+`apps/worker/src/models/__tests__/nhl-player-shots-two-stage.test.js` — 25 unit + smoke tests.
