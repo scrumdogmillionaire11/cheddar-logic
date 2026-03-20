@@ -53,4 +53,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 56 | Sort player props view by day and start time, soonest first | 2026-03-20 | f20a6aa | [56-sort-player-props-view-by-day-and-start-](./quick/56-sort-player-props-view-by-day-and-start-/) |
 | 57 | WI-0531 Rolling PP splits (L10/L5) + recency-weighted blend: 033 migration, NST ingestion, weightedRateBlendPP (0.40/0.35/0.25), PP_SMALL_SAMPLE flag, four PP driver fields | 2026-03-20 | f6689d7 | [57-wi-0531-rolling-splits-l10-l5-recency-we](./quick/57-wi-0531-rolling-splits-l10-l5-recency-we/) |
 
-Last activity: 2026-03-20 - Completed quick task 57: WI-0531 rolling PP rate splits (L10/L5) — DB migration adds pp_l10_shots_per60/pp_l5_shots_per60, NST ingestion extended with column name variants, weightedRateBlendPP (0.40/0.35/0.25) replaces EV blend for PP rate, PP_SMALL_SAMPLE flag, four driver fields; 136 tests green
+| 58 | Display odds on player prop cards: market_price_over/under plumbed through route.ts → transform → PropPlayRow → conditional "OVER X / UNDER Y" odds line in Model Snapshot block | 2026-03-20 | ead47cb | [58-display-odds-on-player-prop-cards-over-u](./quick/58-display-odds-on-player-prop-cards-over-u/) |
+
+Last activity: 2026-03-20 - Completed quick task 58: Display odds on player prop cards — wired market_price_over/under from payload through route.ts Play type, transform PropPlayRow mapping, and conditional odds line in prop-game-card Model Snapshot block; TypeScript clean, contract test passing
