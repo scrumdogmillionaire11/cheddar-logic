@@ -36,6 +36,7 @@
     "job:run-ncaam-model": "node src/jobs/run_ncaam_model.js",
     "job:run-ncaam-model:test": "node -e \"require('./src/jobs/run_ncaam_model.js').runNCAAMModel().then(console.log).catch(console.error)\"",
     "job:refresh-team-metrics": "node src/jobs/refresh_team_metrics_daily.js",
+    "job:post-discord-cards": "node src/jobs/post_discord_cards.js",
     "job:refresh-ncaam-ft-csv": "node src/jobs/refresh_ncaam_ft_csv.js",
     "job:backfill-card-results": "node src/jobs/backfill_card_results.js",
     "job:backfill-card-results:dry-run": "node src/jobs/backfill_card_results.js --dry-run",
