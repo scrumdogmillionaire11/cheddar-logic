@@ -354,6 +354,7 @@ describe('projectSogV2 — two-stage model', () => {
       expect(result).toHaveProperty('toi_proj');
       expect(result).toHaveProperty('shot_rate_ev_per60');
       expect(result).toHaveProperty('shot_rate_pp_per60');
+      expect(result).toHaveProperty('pp_matchup_factor');
       expect(result).toHaveProperty('shot_env_factor');
       expect(result).toHaveProperty('role_stability');
       expect(result).toHaveProperty('trend_score');
@@ -571,6 +572,44 @@ describe('projectSogV2 — two-stage model', () => {
       }));
 
       expect(withPpRate.sog_mu).toBeGreaterThan(zeroPpRate.sog_mu);
+    });
+  });
+
+  describe('WI-0532 — PP matchup factor', () => {
+    test('favorable PP matchup factor increases sog_mu vs tough matchup for PP-active players', () => {
+      const favorable = projectSogV2(buildInputs({
+        pp_matchup_factor: 1.6,
+        toi_proj_pp: 2.5,
+      }));
+      const tough = projectSogV2(buildInputs({
+        pp_matchup_factor: 0.6,
+        toi_proj_pp: 2.5,
+      }));
+
+      expect(favorable.sog_mu).toBeGreaterThan(tough.sog_mu);
+      expect(favorable.pp_matchup_factor).toBeCloseTo(1.6, 5);
+      expect(tough.pp_matchup_factor).toBeCloseTo(0.6, 5);
+    });
+
+    test('non-PP players are unaffected by pp_matchup_factor when toi_proj_pp = 0', () => {
+      const weakPk = projectSogV2(buildInputs({
+        toi_proj_pp: 0,
+        pp_matchup_factor: 1.8,
+      }));
+      const elitePk = projectSogV2(buildInputs({
+        toi_proj_pp: 0,
+        pp_matchup_factor: 0.5,
+      }));
+
+      expect(weakPk.sog_mu).toBeCloseTo(elitePk.sog_mu, 6);
+    });
+
+    test('pp_matchup_factor is clamped to [0.5, 1.8]', () => {
+      const low = projectSogV2(buildInputs({ pp_matchup_factor: 0.1 }));
+      const high = projectSogV2(buildInputs({ pp_matchup_factor: 2.7 }));
+
+      expect(low.pp_matchup_factor).toBe(0.5);
+      expect(high.pp_matchup_factor).toBe(1.8);
     });
   });
 });
