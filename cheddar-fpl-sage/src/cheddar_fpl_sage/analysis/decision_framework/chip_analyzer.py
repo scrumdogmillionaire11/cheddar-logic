@@ -12,6 +12,19 @@ from dataclasses import dataclass
 
 from .models import ChipRecommendation
 from .constants import CHIP_NAMES
+from .chip_engine.types import GameweekState
+from .chip_engine.wildcard_free_hit import (
+    FreeHitInputs,
+    WildcardInputs,
+    evaluate_free_hit,
+    evaluate_wildcard,
+)
+from .chip_engine.bench_boost_triple_captain import (
+    BenchBoostInputs,
+    TripleCaptainInputs,
+    evaluate_bench_boost,
+    evaluate_triple_captain,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +68,19 @@ class ChipDecisionContext:
     reason_codes: List[str] = None
     current_window_score: Optional[float] = None
     best_future_window_score: Optional[float] = None
+    best_future_window_gw: Optional[int] = None
     window_rank: Optional[int] = None
     current_window_name: Optional[str] = None
     best_future_window_name: Optional[str] = None
+    recommendation: Optional[str] = None
+    rationale: Optional[str] = None
+    timing: Optional[str] = None
+    status: Optional[str] = None
+    score: Optional[float] = None
+    reason_code: Optional[str] = None
+    forced_by: Optional[str] = None
+    watch_until: Optional[int] = None
+    narrative: Optional[str] = None
 
 
 @dataclass
@@ -128,86 +151,390 @@ class ChipAnalyzer:
         Returns:
             ChipRecommendation with chip, use_this_gw, reasoning, confidence
         """
-        # Get available chips - filter by availability status
-        available_chips = [
-            chip for chip in CHIP_NAMES
-            if chip_status.get(chip, {}).get('available', True)
-        ]
+        guidance = self.analyze_chip_guidance(
+            squad_data=squad_data,
+            fixture_data=fixture_data,
+            projections=projections,
+            chip_status=chip_status,
+            current_gw=current_gw,
+            chip_policy=chip_policy,
+        )
 
-        # Edge case: No chips available
-        if not available_chips:
-            return ChipRecommendation(
-                chip="None",
-                use_this_gw=False,
-                reasoning="No chips available - all have been used this season.",
-                confidence="HIGH"
+        chip_name = guidance.selected_chip.value if isinstance(guidance.selected_chip, ChipType) else "None"
+        status = (guidance.status or "PASS").upper()
+        use_this_gw = status == "FIRE" and chip_name != "None"
+        confidence = "HIGH" if status == "FIRE" else "MEDIUM" if status == "WATCH" else "LOW"
+
+        return ChipRecommendation(
+            chip=chip_name if use_this_gw else "None",
+            use_this_gw=use_this_gw,
+            optimal_window_gw=guidance.watch_until or guidance.next_optimal_window,
+            reasoning=guidance.narrative or "No chip recommendation available.",
+            confidence=confidence,
+        )
+
+    def analyze_chip_guidance(
+        self,
+        squad_data: Dict[str, Any],
+        fixture_data: Dict[str, Any],
+        projections: Dict[int, Any],
+        chip_status: Dict[str, Any],
+        current_gw: int,
+        chip_policy: Optional[Dict[str, Any]] = None,
+    ) -> ChipDecisionContext:
+        """Build deterministic chip guidance using chip_engine evaluators."""
+        available_chip_names = self._resolve_available_chip_names(chip_status)
+        available_chip_types = [self._chip_name_to_type(name) for name in available_chip_names]
+        available_chip_types = [chip for chip in available_chip_types if chip is not None]
+
+        if not available_chip_names:
+            return ChipDecisionContext(
+                current_gw=current_gw,
+                chip_type=ChipType.NONE,
+                selected_chip=ChipType.NONE,
+                available_chips=[],
+                status="PASS",
+                recommendation="SAVE",
+                reason_codes=["chip_unavailable"],
+                reason_code="chip_unavailable",
+                narrative="PASS: No chips available.",
+                rationale="No chips available.",
             )
 
-        # Get chip windows from policy
-        windows = (chip_policy or {}).get('chip_windows', [])
+        state = self._build_gameweek_state(
+            current_gw=current_gw,
+            chip_policy=chip_policy,
+            available_chip_names=available_chip_names,
+        )
 
-        # Edge case: No chip windows defined
-        if not windows:
-            return ChipRecommendation(
-                chip="None",
-                use_this_gw=False,
-                reasoning="No chip windows defined. Consider defining optimal windows in config.",
-                confidence="LOW"
+        decisions: List[Tuple[str, Any]] = []
+        squad = squad_data.get("current_squad", []) if isinstance(squad_data, dict) else []
+
+        if "Bench Boost" in available_chip_names:
+            decisions.append(("Bench Boost", evaluate_bench_boost(state, self._build_bench_boost_inputs(squad, projections))))
+        if "Triple Captain" in available_chip_names:
+            decisions.append(("Triple Captain", evaluate_triple_captain(state, self._build_triple_captain_inputs(squad, fixture_data, projections, state))))
+        if "Free Hit" in available_chip_names:
+            decisions.append(("Free Hit", evaluate_free_hit(state, self._build_free_hit_inputs(squad, fixture_data))))
+        if "Wildcard" in available_chip_names:
+            decisions.append(("Wildcard", evaluate_wildcard(state, self._build_wildcard_inputs(squad, fixture_data, projections))))
+
+        if not decisions:
+            return ChipDecisionContext(
+                current_gw=current_gw,
+                chip_type=ChipType.NONE,
+                selected_chip=ChipType.NONE,
+                available_chips=available_chip_types,
+                status="PASS",
+                recommendation="SAVE",
+                reason_codes=["chip_unavailable"],
+                reason_code="chip_unavailable",
+                narrative="PASS: No deterministic chip evaluation candidates.",
             )
 
-        # Find windows containing current GW with available chips
-        current_windows = [
-            w for w in windows
-            if w.get('start_gw', 0) <= current_gw <= w.get('end_gw', 0)
-            and w.get('chip') in available_chips
-        ]
+        selected_name, selected_decision = self._select_best_chip_decision(decisions)
+        selected_chip_type = self._chip_name_to_type(selected_name) or ChipType.NONE
+        status = str(selected_decision.action.value).upper()
+        reason_codes = list(selected_decision.reason_codes or [])
+        reason_code = reason_codes[0] if reason_codes else None
+        score = selected_decision.current_window_score
+        watch_until = selected_decision.watch_until
 
-        if not current_windows:
-            # Find next available window for forward guidance
-            future_windows = [
-                w for w in windows
-                if w.get('start_gw', 0) > current_gw
-                and w.get('chip') in available_chips
-            ]
-            if future_windows:
-                next_window = min(future_windows, key=lambda w: w['start_gw'])
-                return ChipRecommendation(
-                    chip="None",
-                    use_this_gw=False,
-                    optimal_window_gw=next_window['start_gw'],
-                    reasoning=f"Save chips. Next optimal window: GW{next_window['start_gw']} for {next_window['chip']}.",
-                    confidence="MEDIUM"
-                )
+        narrative = self._build_chip_narrative(selected_name, status, reason_codes, watch_until, selected_decision.forced_by)
+
+        return ChipDecisionContext(
+            current_gw=current_gw,
+            chip_type=selected_chip_type,
+            selected_chip=selected_chip_type,
+            available_chips=available_chip_types,
+            next_optimal_window=watch_until or selected_decision.best_future_window_gw,
+            reason_codes=reason_codes,
+            current_window_score=score,
+            best_future_window_score=selected_decision.best_future_window_score,
+            best_future_window_gw=selected_decision.best_future_window_gw,
+            recommendation=selected_chip_type.value if status == "FIRE" else "SAVE",
+            rationale=narrative,
+            timing=f"GW{watch_until}" if watch_until else None,
+            status=status,
+            score=score,
+            reason_code=reason_code,
+            forced_by=selected_decision.forced_by,
+            watch_until=watch_until,
+            narrative=narrative,
+        )
+
+    @staticmethod
+    def _resolve_available_chip_names(chip_status: Dict[str, Any]) -> List[str]:
+        names: List[str] = []
+        status_payload = chip_status if isinstance(chip_status, dict) else {}
+        for chip_name in CHIP_NAMES:
+            raw = status_payload.get(chip_name)
+            if isinstance(raw, dict):
+                is_available = bool(raw.get("available", False))
+            elif isinstance(raw, bool):
+                is_available = raw
             else:
-                return ChipRecommendation(
-                    chip="None",
-                    use_this_gw=False,
-                    reasoning="No optimal chip windows for remaining gameweeks.",
-                    confidence="LOW"
-                )
+                is_available = raw is None
+            if is_available:
+                names.append(chip_name)
+        return names
 
-        # Score current windows and select best
+    @staticmethod
+    def _chip_name_to_type(chip_name: str) -> Optional[ChipType]:
+        mapping = {
+            "Bench Boost": ChipType.BENCH_BOOST,
+            "Triple Captain": ChipType.TRIPLE_CAPTAIN,
+            "Free Hit": ChipType.FREE_HIT,
+            "Wildcard": ChipType.WILDCARD,
+        }
+        return mapping.get(chip_name)
+
+    @staticmethod
+    def _chip_engine_priority(chip_name: str) -> int:
+        return {
+            "Bench Boost": 1,
+            "Triple Captain": 2,
+            "Free Hit": 3,
+            "Wildcard": 4,
+        }.get(chip_name, 99)
+
+    def _build_gameweek_state(
+        self,
+        current_gw: int,
+        chip_policy: Optional[Dict[str, Any]],
+        available_chip_names: List[str],
+    ) -> GameweekState:
+        policy = chip_policy if isinstance(chip_policy, dict) else {}
+        total_gws = int(policy.get("total_gws") or 38)
+        if total_gws < 1:
+            total_gws = 38
+
+        window_scores: List[Tuple[int, float]] = [(current_gw, 60.0)]
+        for row in policy.get("chip_windows", []) if isinstance(policy.get("chip_windows", []), list) else []:
+            if not isinstance(row, dict):
+                continue
+            gw = row.get("start_gw") or row.get("gw")
+            score = row.get("score") or row.get("window_score") or row.get("value")
+            try:
+                gw_int = int(gw)
+                score_float = float(score if score is not None else 60.0)
+            except (TypeError, ValueError):
+                continue
+            if gw_int >= current_gw:
+                window_scores.append((gw_int, score_float))
+
+        deduped: Dict[int, float] = {}
+        for gw, score in window_scores:
+            deduped[gw] = max(score, deduped.get(gw, score))
+
+        return GameweekState(
+            current_gw=max(1, current_gw),
+            total_gws=max(current_gw, total_gws),
+            chips_available=frozenset(available_chip_names),
+            chips_used=frozenset([name for name in CHIP_NAMES if name not in available_chip_names]),
+            window_scores=tuple(sorted(deduped.items(), key=lambda item: item[0])),
+            risk_posture=str(self.risk_posture or "BALANCED").upper(),
+        )
+
+    @staticmethod
+    def _projection_points_for_player(player: Dict[str, Any], projections: Dict[int, Any]) -> float:
+        player_id = player.get("player_id") or player.get("id") or player.get("element")
+        projection_set = projections
+        projection = None
+        if projection_set is not None and hasattr(projection_set, "get_by_id") and player_id is not None:
+            projection = projection_set.get_by_id(player_id)
+        elif isinstance(projections, dict) and player_id in projections:
+            projection = projections.get(player_id)
+
+        if projection is not None:
+            value = getattr(projection, "nextGW_pts", None)
+            if value is None and isinstance(projection, dict):
+                value = projection.get("nextGW_pts")
+            try:
+                if value is not None:
+                    return float(value)
+            except (TypeError, ValueError):
+                pass
+
+        fallback = player.get("expected_pts") or player.get("projected_points") or 0.0
         try:
-            best_window = self._score_and_select_window(
-                current_windows, squad_data, fixture_data, projections
-            )
-            chip_name = best_window.get('chip', 'None')
+            return float(fallback)
+        except (TypeError, ValueError):
+            return 0.0
 
-            return ChipRecommendation(
-                chip=chip_name,
-                use_this_gw=True,
-                optimal_window_gw=current_gw,
-                reasoning=f"GW{current_gw} is optimal for {chip_name}. {best_window.get('reason', '')}",
-                confidence="HIGH"
+    def _build_bench_boost_inputs(self, squad: List[Dict[str, Any]], projections: Dict[int, Any]) -> BenchBoostInputs:
+        bench_players = [p for p in squad if isinstance(p, dict) and not p.get("is_starter", True)]
+        starter_players = [p for p in squad if isinstance(p, dict) and p.get("is_starter", True)]
+
+        bench_total = sum(self._projection_points_for_player(player, projections) for player in bench_players)
+        blank_starters = {
+            str(player.get("name") or "Unknown")
+            for player in starter_players
+            if str(player.get("status_flag") or "FIT").upper() in {"OUT", "DOUBT", "SUSP"}
+        }
+        blank_starter_penalty = min(30.0, len(blank_starters) * 8.0)
+
+        dgw_bench_bonus = 0.0
+        for player in bench_players:
+            if player.get("is_double") or player.get("dgw_count", 0) > 1:
+                dgw_bench_bonus += 2.0
+
+        return BenchBoostInputs(
+            bench_projected_total=bench_total,
+            dgw_bench_bonus=dgw_bench_bonus,
+            blank_starter_penalty=blank_starter_penalty,
+            blank_starters=blank_starters,
+        )
+
+    def _build_triple_captain_inputs(
+        self,
+        squad: List[Dict[str, Any]],
+        fixture_data: Dict[str, Any],
+        projections: Dict[int, Any],
+        state: GameweekState,
+    ) -> TripleCaptainInputs:
+        starter_players = [p for p in squad if isinstance(p, dict) and p.get("is_starter", True)]
+        if not starter_players:
+            return TripleCaptainInputs(
+                captain_projection=0.0,
+                dgw_multiplier=1.0,
+                ownership_effect_bps=0.0,
+                fixture_quality_bps=0.0,
+                captain_available=False,
+                better_future_window=0.0,
             )
-        except (KeyError, TypeError, ValueError) as e:
-            logger.warning("Chip window scoring failed: %s, returning conservative recommendation", e)
-            return ChipRecommendation(
-                chip="None",
-                use_this_gw=False,
-                reasoning="Chip analysis incomplete. Consider manual review.",
-                confidence="LOW"
+
+        captain = max(starter_players, key=lambda player: self._projection_points_for_player(player, projections))
+        captain_projection = self._projection_points_for_player(captain, projections)
+        captain_available = str(captain.get("status_flag") or "FIT").upper() not in {"OUT", "DOUBT", "SUSP"}
+
+        dgw_multiplier = 1.25 if captain.get("is_double") or captain.get("dgw_count", 0) > 1 else 1.0
+        ownership = captain.get("ownership") or captain.get("ownership_pct") or 50
+        try:
+            ownership_value = float(ownership)
+        except (TypeError, ValueError):
+            ownership_value = 50.0
+        ownership_effect_bps = 3.0 if ownership_value < 20 else 1.0
+
+        fixture_quality_bps = 0.0
+        fixtures = fixture_data.get("fixtures", []) if isinstance(fixture_data, dict) else []
+        for fixture in fixtures:
+            if not isinstance(fixture, dict):
+                continue
+            if fixture.get("event") != state.current_gw:
+                continue
+            difficulty = fixture.get("difficulty") or fixture.get("team_h_difficulty") or 3
+            try:
+                fixture_quality_bps = max(fixture_quality_bps, max(0.0, 5.0 - float(difficulty)))
+            except (TypeError, ValueError):
+                continue
+
+        better_future_window = max(
+            [score for gw, score in state.window_scores if gw > state.current_gw],
+            default=captain_projection,
+        )
+
+        return TripleCaptainInputs(
+            captain_projection=captain_projection,
+            dgw_multiplier=dgw_multiplier,
+            ownership_effect_bps=ownership_effect_bps,
+            fixture_quality_bps=fixture_quality_bps,
+            captain_available=captain_available,
+            better_future_window=better_future_window,
+        )
+
+    def _build_wildcard_inputs(
+        self,
+        squad: List[Dict[str, Any]],
+        fixture_data: Dict[str, Any],
+        projections: Dict[int, Any],
+    ) -> WildcardInputs:
+        starters = [p for p in squad if isinstance(p, dict) and p.get("is_starter", True)]
+        projected_now = sum(self._projection_points_for_player(player, projections) for player in starters)
+        team_ev_delta = max(0.0, (projected_now / 11.0) - 4.0)
+
+        fixture_score = 60.0
+        fixtures = fixture_data.get("fixtures", []) if isinstance(fixture_data, dict) else []
+        if fixtures:
+            difficulties: List[float] = []
+            for fixture in fixtures:
+                if isinstance(fixture, dict):
+                    raw = fixture.get("difficulty") or fixture.get("team_h_difficulty")
+                    try:
+                        if raw is not None:
+                            difficulties.append(float(raw))
+                    except (TypeError, ValueError):
+                        continue
+            if difficulties:
+                fixture_score = max(0.0, min(100.0, (6.0 - (sum(difficulties) / len(difficulties))) * 20.0))
+
+        return WildcardInputs(
+            team_ev_delta=team_ev_delta,
+            fixture_run_score=fixture_score,
+            hit_cost_avoided=4.0,
+            dgw_imminent_gw=None,
+        )
+
+    @staticmethod
+    def _build_free_hit_inputs(squad: List[Dict[str, Any]], fixture_data: Dict[str, Any]) -> FreeHitInputs:
+        starters = [p for p in squad if isinstance(p, dict) and p.get("is_starter", True)]
+        available_starters = [
+            player for player in starters
+            if str(player.get("status_flag") or "FIT").upper() not in {"OUT", "DOUBT", "SUSP"}
+        ]
+        coverage = len(available_starters) / max(1, len(starters))
+        bgw_saved_points = max(0.0, (1.0 - coverage) * 15.0)
+
+        fixtures = fixture_data.get("fixtures", []) if isinstance(fixture_data, dict) else []
+        has_dgw = any(
+            isinstance(fixture, dict) and (
+                fixture.get("is_double")
+                or fixture.get("is_dgw_leg")
+                or (fixture.get("dgw_count") or 0) > 1
             )
+            for fixture in fixtures
+        )
+
+        return FreeHitInputs(
+            bgw_coverage_fraction=coverage,
+            bgw_saved_points=bgw_saved_points,
+            dgw_stack_ev=8.0 if has_dgw else 2.0,
+            dgw_fixture_quality=70.0 if has_dgw else 45.0,
+            wildcard_available=True,
+            permanent_squad_ev_gain=2.0,
+        )
+
+    def _select_best_chip_decision(self, decisions: List[Tuple[str, Any]]) -> Tuple[str, Any]:
+        order = {"FIRE": 0, "WATCH": 1, "PASS": 2}
+
+        def sort_key(item: Tuple[str, Any]):
+            chip_name, chip_decision = item
+            status = str(chip_decision.action.value).upper()
+            score = chip_decision.current_window_score if chip_decision.current_window_score is not None else -1.0
+            return (
+                order.get(status, 9),
+                -float(score),
+                self._chip_engine_priority(chip_name),
+            )
+
+        return sorted(decisions, key=sort_key)[0]
+
+    @staticmethod
+    def _build_chip_narrative(
+        chip_name: str,
+        status: str,
+        reason_codes: List[str],
+        watch_until: Optional[int],
+        forced_by: Optional[str],
+    ) -> str:
+        reason_text = ", ".join(reason_codes) if reason_codes else "deterministic_engine"
+        if status == "WATCH":
+            hold_text = f" Hold until GW{watch_until}." if watch_until else " Hold for a better future window."
+            return f"WATCH: {chip_name} on hold ({reason_text}).{hold_text}"
+        if status == "FIRE":
+            forced_text = f" Forced by {forced_by}." if forced_by else ""
+            return f"FIRE: Activate {chip_name} this GW ({reason_text}).{forced_text}"
+        return f"PASS: Do not activate {chip_name} now ({reason_text})."
 
     def _score_and_select_window(
         self,
