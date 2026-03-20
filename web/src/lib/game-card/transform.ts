@@ -170,6 +170,7 @@ interface ApiPlay {
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
+  pass_reason?: string | null;
   run_id?: string;
   created_at?: string;
   player_id?: string;
@@ -265,6 +266,24 @@ function getSportCardTypeContract(
 
 function normalizeCardType(cardType: string): string {
   return cardType.trim().toLowerCase();
+}
+
+function normalizePassReasonCode(reason?: string | null): string | null {
+  if (typeof reason !== 'string') return null;
+  const code = reason.trim().toUpperCase();
+  if (!code) return null;
+  if (code.startsWith('PASS_')) return code;
+
+  const mapped: Record<string, string> = {
+    MISSING_LINE: 'PASS_MISSING_LINE',
+    MISSING_EDGE: 'PASS_MISSING_EDGE',
+    MISSING_SELECTION: 'PASS_MISSING_SELECTION',
+    MISSING_PRICE: 'PASS_MISSING_PRICE',
+    NO_MARKET_PRICE: 'PASS_NO_MARKET_PRICE',
+    NO_STARTER_SIGNAL: 'PASS_MISSING_DRIVER_INPUTS',
+  };
+
+  return mapped[code] ?? code;
 }
 
 function isPlayItem(play: ApiPlay, sport?: string): boolean {
@@ -2757,10 +2776,20 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const dedupedTags = Array.from(new Set(tags));
   const passReasonCode =
     reasonCodesUnique.find((code) => code.startsWith('PASS_')) ?? null;
+  const decisionPlayRecord = decision.play as unknown as
+    | (Record<string, unknown> & { pass_reason?: unknown })
+    | undefined;
+  const legacyPassReason =
+    typeof decisionPlayRecord?.pass_reason === 'string'
+      ? String(decisionPlayRecord.pass_reason)
+      : null;
+  const sourcePassReasonCode = normalizePassReasonCode(
+    decision.play?.pass_reason_code ?? legacyPassReason,
+  );
   const resolvedPassReasonCode =
     finalDecision === 'PASS'
-      ? (passReasonCode ??
-        decision.play?.pass_reason_code ??
+      ? (sourcePassReasonCode ??
+        passReasonCode ??
         gates.find((gate) => gate.blocks_bet)?.code ??
         null)
       : null;

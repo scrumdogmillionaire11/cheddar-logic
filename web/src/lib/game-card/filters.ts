@@ -516,9 +516,8 @@ function filterByTotalProjection(
 function filterByCardType(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.cardTypes || filters.cardTypes.length === 0) return true;
 
-  // Get card type from first (primary) driver
-  const cardType = card.drivers[0]?.cardType ?? '';
-  return filters.cardTypes.includes(cardType);
+  // Check if any driver matches the required card types
+  return card.drivers.some((d) => filters.cardTypes!.includes(d.cardType ?? ''));
 }
 
 export function getFilterDebugFlags(
@@ -599,14 +598,6 @@ function getSortValue(card: GameCard, sortMode: SortMode): number {
  */
 function sortCards(cards: GameCard[], sortMode: SortMode): GameCard[] {
   const sorted = [...cards].sort((a, b) => {
-    // Special handling for start_time sort: FIRE first
-    if (sortMode === 'start_time') {
-      const aIsFire = a.tags.includes(GAME_TAGS.HAS_FIRE);
-      const bIsFire = b.tags.includes(GAME_TAGS.HAS_FIRE);
-      if (aIsFire && !bIsFire) return -1;
-      if (!aIsFire && bIsFire) return 1;
-    }
-
     const aVal = getSortValue(a, sortMode);
     const bVal = getSortValue(b, sortMode);
 

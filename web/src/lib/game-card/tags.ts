@@ -218,6 +218,14 @@ export function deriveTags(card: GameCard): GameTag[] {
     else tags.add(GAME_TAGS.SUPPORT_WEAK);
   }
 
+  // Situational signals
+  if (
+    card.drivers.some((d) => d.cardType === 'welcome-home-v2') ||
+    (card.evidence?.some((e) => e.cardType === 'welcome-home-v2') ?? false)
+  ) {
+    tags.add(GAME_TAGS.WELCOME_HOME_FADE);
+  }
+
   // Check for contradictions (HOME and AWAY picks on same market)
   const marketDirections = new Map<string, Set<string>>();
   for (const driver of card.drivers) {

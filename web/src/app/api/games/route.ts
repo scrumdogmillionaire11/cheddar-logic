@@ -1257,6 +1257,24 @@ function applyWave1DecisionFields(play: Play): void {
   play.pass_reason_code = decisionV2.primary_reason_code;
 }
 
+function normalizePassReasonCode(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const code = value.trim().toUpperCase();
+  if (!code) return null;
+  if (code.startsWith('PASS_')) return code;
+
+  const mapped: Record<string, string> = {
+    MISSING_LINE: 'PASS_MISSING_LINE',
+    MISSING_EDGE: 'PASS_MISSING_EDGE',
+    MISSING_SELECTION: 'PASS_MISSING_SELECTION',
+    MISSING_PRICE: 'PASS_MISSING_PRICE',
+    NO_MARKET_PRICE: 'PASS_NO_MARKET_PRICE',
+    NO_STARTER_SIGNAL: 'PASS_MISSING_DRIVER_INPUTS',
+  };
+
+  return mapped[code] ?? code;
+}
+
 function normalizeNumberArray(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const numbers = value.filter(
@@ -2580,11 +2598,12 @@ export async function GET(request: NextRequest) {
           classification: resolvedClassification,
           action: resolvedAction,
           pass_reason_code:
-            typeof payload.pass_reason_code === 'string'
-              ? payload.pass_reason_code
-              : typeof payloadPlay?.pass_reason_code === 'string'
-                ? payloadPlay.pass_reason_code
-                : null,
+            normalizePassReasonCode(
+              payload.pass_reason_code ??
+                payload.pass_reason ??
+                payloadPlay?.pass_reason_code ??
+                payloadPlay?.pass_reason,
+            ),
           one_p_model_call: onePModelCall,
           one_p_bet_status: onePBetStatus,
           goalie_home_name: normalizedGoalieHomeName ?? null,
