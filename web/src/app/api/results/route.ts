@@ -150,14 +150,6 @@ const SETTLEMENT_SEGMENTS: SettlementSegmentMeta[] = [
   { id: 'nhl_player_shots_props', label: 'Player Shots Props' },
 ];
 
-/**
- * Check if player shots settling is enabled via feature flag.
- * Defaults to false (player shots settling disabled until ready).
- */
-function isPlayerShotsSettlingEnabled(): boolean {
-  return process.env.ENABLE_PLAYER_SHOTS_SETTLING === 'true';
-}
-
 function deriveSettlementSegment(
   sport: string | null | undefined,
   cardType: string | null | undefined,
@@ -183,13 +175,9 @@ function deriveSettlementSegment(
     normalizedMarketKey.includes('player_shots') ||
     normalizedMarketKey.includes('player-shots');
 
-  // Gate player shots settling behind feature flag
+  // NHL player shots props always route to their dedicated segment
   if (normalizedSport === 'NHL' && isPlayerShots && !isFirstPeriod) {
-    if (isPlayerShotsSettlingEnabled()) {
-      return SETTLEMENT_SEGMENTS[2];
-    }
-    // Feature disabled: fall back to default segment
-    return SETTLEMENT_SEGMENTS[0];
+    return SETTLEMENT_SEGMENTS[2];
   }
 
   if (
