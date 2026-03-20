@@ -101,6 +101,8 @@ Your cheddar board updates automatically. See [AUTOMATED_SETUP.md](AUTOMATED_SET
 
 ### Worker Model Jobs (NBA/NHL/NCAAM)
 
+Soccer market policy (ADR-0006): Asian Handicap is reintroduced as a Tier-1 **main-market** path (`asian_handicap_home`, `asian_handicap_away`) under `FOOTIE_MAIN_MARKETS`. It is separate from soccer props routing and should not be mixed with `SOCCER_PROP_EVENTS_ENABLED` prop ingestion.
+
 ### Quickstart
 
 ```bash
