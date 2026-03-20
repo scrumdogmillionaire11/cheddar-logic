@@ -3,7 +3,7 @@ Deterministic Bench Boost and Triple Captain evaluators.
 
 March 2026 Chip Engine:
   - Bench Boost: scores projected bench total + DGW bench bonus - blank starter penalty
-    * Hard veto if any bench player is blank (unavailable/unknown)
+        * Hard veto if any starter is blank (unavailable/unknown)
     * WATCH progression with rewatch at current_gw + 2
     * Soft escalation at 80% of season
     * Hard escalation at 92% of season
@@ -54,7 +54,7 @@ class BenchBoostInputs:
     bench_projected_total: float  # Sum of bench player projections
     dgw_bench_bonus: float        # DGW boost % to bench subscore
     blank_starter_penalty: float  # Deduction if starter is blank (unavailable)
-    blanks_on_bench: Set[str]     # Set of bench player identifiers not available (should be empty for FIRE)
+    blank_starters: Set[str]      # Set of starting-XI player identifiers not available (must be empty for FIRE)
 
 
 # ----------------
@@ -90,7 +90,7 @@ def evaluate_bench_boost(
     """
     Determine Bench Boost action (FIRE / WATCH / PASS).
 
-    Hard veto: Any blank on bench → cannot fire.
+    Hard veto: Any blank starter → cannot fire.
     Soft escalation: >= 80% of season → lower threshold by 20%.
     Hard escalation: >= 92% of season → lower threshold by 50%.
     SoN emergency: remaining GWs <= 1 → FIRE if score > 0.
@@ -123,9 +123,9 @@ def evaluate_bench_boost(
         validate_decision(decision, state)
         return decision
 
-    # Hard veto: blank on bench
-    if inputs.blanks_on_bench:
-        reason_codes.append("bench_boost:blank_on_bench")
+    # Hard veto: blank starter
+    if inputs.blank_starters:
+        reason_codes.append("bench_boost:blank_starter")
         decision = ChipDecision(
             action=ChipAction.PASS,
             chip_type=chip_type,
