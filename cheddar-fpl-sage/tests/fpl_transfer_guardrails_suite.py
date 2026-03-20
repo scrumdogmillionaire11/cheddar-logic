@@ -67,3 +67,42 @@ def test_double_next_gw_false_when_blank_tag_present() -> None:
 
     assert advisor._is_blank_next_gw(candidate)
     assert advisor._is_double_next_gw(candidate) is False
+
+
+def test_candidate_availability_concern_for_doubtful_status() -> None:
+    advisor = TransferAdvisor(risk_posture="BALANCED")
+    candidate = SimpleNamespace(
+        player_id=7003,
+        is_injury_risk=False,
+        xMins_next=90,
+        status_flag="DOUBT",
+        chance_of_playing_next_round=75,
+    )
+
+    assert advisor._candidate_has_availability_concern(candidate)
+
+
+def test_candidate_availability_concern_for_low_chance_even_without_doubt_flag() -> None:
+    advisor = TransferAdvisor(risk_posture="BALANCED")
+    candidate = SimpleNamespace(
+        player_id=7004,
+        is_injury_risk=False,
+        xMins_next=90,
+        status_flag="a",
+        chance_of_playing_next_round=75,
+    )
+
+    assert advisor._candidate_has_availability_concern(candidate)
+
+
+def test_candidate_no_availability_concern_for_fit_high_chance_profile() -> None:
+    advisor = TransferAdvisor(risk_posture="BALANCED")
+    candidate = SimpleNamespace(
+        player_id=7005,
+        is_injury_risk=False,
+        xMins_next=90,
+        status_flag="FIT",
+        chance_of_playing_next_round=100,
+    )
+
+    assert advisor._candidate_has_availability_concern(candidate) is False
