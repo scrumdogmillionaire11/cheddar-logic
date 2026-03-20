@@ -294,4 +294,4 @@ if (require.main === module) {
     .catch((err) => { console.error(err); process.exit(1); });
 }
 
-module.exports = { pullNhlPlayerShotsProps };
+module.exports = { pullNhlPlayerShotsProps, parseEventPropLines, resolveGameId };
