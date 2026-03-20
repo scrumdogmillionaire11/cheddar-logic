@@ -248,6 +248,26 @@ function weightedRateBlend(season, l10, l5) {
 }
 
 /**
+ * Weighted blend for PP shot rates with recency emphasis.
+ * Weights: season=0.40, L10=0.35, L5=0.25 (per WI-0531 spec).
+ * Null/undefined slots are excluded and remaining weights renormalized.
+ * @param {number|null} season
+ * @param {number|null} l10
+ * @param {number|null} l5
+ * @returns {number}
+ */
+function weightedRateBlendPP(season, l10, l5) {
+  const values = [season, l10, l5];
+  const weights = [0.40, 0.35, 0.25];
+  const present = values
+    .map((v, i) => (v !== null && v !== undefined ? { v, w: weights[i] } : null))
+    .filter(Boolean);
+  if (present.length === 0) return 0;
+  const totalW = present.reduce((s, x) => s + x.w, 0);
+  return present.reduce((s, x) => s + (x.v * x.w) / totalW, 0);
+}
+
+/**
  * Convert American odds to implied probability (raw, no vig removal).
  * @param {number} americanOdds
  * @returns {number}
@@ -386,7 +406,7 @@ function projectSogV2(inputs) {
 
   // ---- Stage 1: SOG_mu ----
   const ev_rate = weightedRateBlend(ev_shots_season_per60, ev_shots_l10_per60, ev_shots_l5_per60);
-  const pp_rate = weightedRateBlend(pp_shots_season_per60, pp_shots_l10_per60, pp_shots_l5_per60);
+  const pp_rate = weightedRateBlendPP(pp_shots_season_per60, pp_shots_l10_per60, pp_shots_l5_per60);
 
   const shot_env_factor = clamp(rawShotEnvFactor ?? 1.0, 0.92, 1.08);
   const opp_sup_factor = clamp(rawOppSuppression ?? 1.0, 0.90, 1.10);

@@ -842,6 +842,8 @@ async function runNHLPlayerShotsModel() {
             let projToi = null;
             let ppToi = 0; // WI-0528: default 0 for safe fallback on legacy log rows
             let ppRatePer60 = null; // WI-0530: season PP shot rate from NST player_pp_rates
+            let ppRateL10Per60 = null; // WI-0531: L10 rolling PP shot rate
+            let ppRateL5Per60 = null;  // WI-0531: L5 rolling PP shot rate
             if (l5Games[0]?.raw_data) {
               try {
                 const rawData = JSON.parse(l5Games[0].raw_data);
@@ -851,6 +853,13 @@ async function runNHLPlayerShotsModel() {
                 // WI-0530: treat 0 same as null — only positive rates are meaningful
                 if (Number.isFinite(rawData.ppRatePer60) && rawData.ppRatePer60 > 0) {
                   ppRatePer60 = rawData.ppRatePer60;
+                }
+                // WI-0531: extract L10/L5 rolling rates (null if absent or non-positive)
+                if (Number.isFinite(rawData.ppRateL10Per60) && rawData.ppRateL10Per60 > 0) {
+                  ppRateL10Per60 = rawData.ppRateL10Per60;
+                }
+                if (Number.isFinite(rawData.ppRateL5Per60) && rawData.ppRateL5Per60 > 0) {
+                  ppRateL5Per60 = rawData.ppRateL5Per60;
                 }
               } catch {
                 // Ignore parse errors
@@ -1057,8 +1066,8 @@ async function runNHLPlayerShotsModel() {
               ev_shots_l10_per60: l5RatePer60 ?? shotsPer60 ?? null,
               ev_shots_l5_per60: l5RatePer60,
               pp_shots_season_per60: ppRatePer60,   // WI-0530: NST season rate (null if missing)
-              pp_shots_l10_per60: ppRatePer60,      // WI-0531 will replace with rolling L10 rate
-              pp_shots_l5_per60: ppRatePer60,       // WI-0531 will replace with rolling L5 rate
+              pp_shots_l10_per60: ppRateL10Per60,   // WI-0531: real L10 rolling rate (null if absent)
+              pp_shots_l5_per60: ppRateL5Per60,     // WI-0531: real L5 rolling rate (null if absent)
               toi_proj_ev: projToi ?? 0,
               toi_proj_pp: ppToi, // WI-0528: real PP TOI from featuredStats.subSeason.avgPpToi (0 fallback for non-PP players)
               shot_env_factor: paceFactor,
@@ -1080,6 +1089,23 @@ async function runNHLPlayerShotsModel() {
             if (ppRatePer60 === null && ppToi > 0) {
               v2Projection.flags.push('PP_RATE_MISSING');
             }
+
+            // WI-0531: PP_SMALL_SAMPLE — player is on PP (has season rate) but fewer than 5 games
+            // of rolling data (both L10 and L5 null). Single null does NOT trigger the flag.
+            if (ppRatePer60 !== null && ppRateL10Per60 === null && ppRateL5Per60 === null) {
+              v2Projection.flags.push('PP_SMALL_SAMPLE');
+            }
+
+            // WI-0531: Compute the actual PP blend rate for drivers display.
+            // Mirrors weightedRateBlendPP logic (0.40/0.35/0.25) so drivers is consistent with model.
+            const ppBlendRate = (() => {
+              const vals = [ppRatePer60, ppRateL10Per60, ppRateL5Per60];
+              const wts = [0.40, 0.35, 0.25];
+              const present = vals.map((v, i) => (v !== null ? { v, w: wts[i] } : null)).filter(Boolean);
+              if (present.length === 0) return null;
+              const totalW = present.reduce((s, x) => s + x.w, 0);
+              return present.reduce((s, x) => s + (x.v * x.w) / totalW, 0);
+            })();
 
             // V2 anomaly: sog_mu collapsing far below L5 average signals model breakdown.
             // This is separate from projectionAnomalyDetected (V1 path) and gates V2 pricing only.
@@ -1320,6 +1346,10 @@ async function runNHLPlayerShotsModel() {
                   ev_rate: v2Projection.shot_rate_ev_per60 != null ? Math.round(v2Projection.shot_rate_ev_per60 * 100) / 100 : null,
                   pp_rate: v2Projection.shot_rate_pp_per60 != null ? Math.round(v2Projection.shot_rate_pp_per60 * 100) / 100 : null,
                   pp_rate_per60: ppRatePer60,   // WI-0530: raw NST season rate before blend
+                  pp_season_rate: ppRatePer60,  // WI-0531: alias for clarity
+                  pp_l10_rate: ppRateL10Per60,  // WI-0531: L10 rolling rate (null if absent)
+                  pp_l5_rate: ppRateL5Per60,    // WI-0531: L5 rolling rate (null if absent)
+                  pp_blend_rate: ppBlendRate !== null ? Math.round(ppBlendRate * 100) / 100 : null, // WI-0531
                   shot_env_factor: v2Projection.shot_env_factor != null ? Math.round(v2Projection.shot_env_factor * 1000) / 1000 : null,
                   trend_factor: v2Projection.trend_score != null ? Math.round(v2Projection.trend_score * 1000) / 1000 : null,
                   v2_anomaly: v2AnomalyDetected,
