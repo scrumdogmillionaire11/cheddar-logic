@@ -2298,16 +2298,29 @@ export async function GET(request: NextRequest) {
                 normalizedL5Sog.length
             : undefined,
         );
-        const normalizedPriceOver =
-          firstNumber(
+        const decimalToAmerican = (dec: number | null | undefined): number | null => {
+          if (dec == null || dec <= 1) return null;
+          return dec >= 2 ? Math.round((dec - 1) * 100) : Math.round(-100 / (dec - 1));
+        };
+        const rawPriceOver = firstNumber(
+            (payload as Record<string, unknown>).over_price,
             (payload as Record<string, unknown>).market_price_over,
+            payloadPlay?.over_price,
             payloadPlay?.market_price_over,
           ) ?? null;
-        const normalizedPriceUnder =
-          firstNumber(
+        const rawPriceUnder = firstNumber(
+            (payload as Record<string, unknown>).under_price,
             (payload as Record<string, unknown>).market_price_under,
+            payloadPlay?.under_price,
             payloadPlay?.market_price_under,
           ) ?? null;
+        // Prices stored as decimal odds (e.g. 1.83) — convert to American (-122)
+        const normalizedPriceOver = rawPriceOver != null && rawPriceOver > 10
+          ? rawPriceOver  // already American
+          : decimalToAmerican(rawPriceOver);
+        const normalizedPriceUnder = rawPriceUnder != null && rawPriceUnder > 10
+          ? rawPriceUnder  // already American
+          : decimalToAmerican(rawPriceUnder);
         const payloadProjection = toObject(payload.projection);
         const payloadPlayProjection = toObject(payloadPlayObj?.projection);
         const normalizedProjectedTotal = firstNumber(
