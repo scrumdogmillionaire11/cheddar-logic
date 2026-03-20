@@ -224,7 +224,7 @@ function computeSeasonPpToi(payload) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function buildLogRows(playerId, payload, fetchedAt, ppRatePer60 = null) {
+function buildLogRows(playerId, payload, fetchedAt, ppRatePer60 = null, ppRateL10Per60 = null, ppRateL5Per60 = null) {
   const last5 = Array.isArray(payload?.last5Games) ? payload.last5Games : [];
   const playerName = resolvePlayerName(payload);
 
@@ -254,6 +254,9 @@ function buildLogRows(playerId, payload, fetchedAt, ppRatePer60 = null) {
       ppToi: computeSeasonPpToi(payload),  // WI-0528: real PP TOI from featuredStats.subSeason.avgPpToi
       // WI-0530: season PP shot rate from NST player_pp_rates table (null if player absent)
       ppRatePer60,
+      // WI-0531: L10/L5 rolling PP shot rates (null if absent from player_pp_rates)
+      ppRateL10Per60,
+      ppRateL5Per60,
     };
 
     return {
@@ -393,7 +396,7 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
             const currentSeason = process.env.NHL_CURRENT_SEASON || '20242025';
             const ppRateRow = db
               .prepare(
-                'SELECT pp_shots_per60 FROM player_pp_rates WHERE nhl_player_id = ? AND season = ? LIMIT 1',
+                'SELECT pp_shots_per60, pp_l10_shots_per60, pp_l5_shots_per60 FROM player_pp_rates WHERE nhl_player_id = ? AND season = ? LIMIT 1',
               )
               .get(String(playerId), currentSeason);
             ppRatePer60 = ppRateRow ? ppRateRow.pp_shots_per60 : null;
@@ -401,7 +404,27 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
             ppRatePer60 = null;
           }
 
-          const rows = buildLogRows(playerId, payload, fetchedAt, ppRatePer60);
+          // WI-0531: extract L10/L5 rolling rates from the same ppRateRow
+          let ppRateL10Per60 = null;
+          let ppRateL5Per60 = null;
+          try {
+            const db2 = getDatabase();
+            const currentSeason2 = process.env.NHL_CURRENT_SEASON || '20242025';
+            const ppRateRow2 = db2
+              .prepare(
+                'SELECT pp_l10_shots_per60, pp_l5_shots_per60 FROM player_pp_rates WHERE nhl_player_id = ? AND season = ? LIMIT 1',
+              )
+              .get(String(playerId), currentSeason2);
+            ppRateL10Per60 = (ppRateRow2 && ppRateRow2.pp_l10_shots_per60 != null)
+              ? ppRateRow2.pp_l10_shots_per60 : null;
+            ppRateL5Per60 = (ppRateRow2 && ppRateRow2.pp_l5_shots_per60 != null)
+              ? ppRateRow2.pp_l5_shots_per60 : null;
+          } catch {
+            ppRateL10Per60 = null;
+            ppRateL5Per60 = null;
+          }
+
+          const rows = buildLogRows(playerId, payload, fetchedAt, ppRatePer60, ppRateL10Per60, ppRateL5Per60);
 
           rows.forEach((row) => {
             upsertPlayerShotLog(row);

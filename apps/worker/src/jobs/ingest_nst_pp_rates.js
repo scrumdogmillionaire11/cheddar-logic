@@ -93,9 +93,10 @@ function ingestNstPpRates({ filePath, season } = {}) {
 
   const upsert = db.prepare(`
     INSERT OR REPLACE INTO player_pp_rates
-      (nhl_player_id, player_name, team, season, pp_shots_per60, pp_toi_per60, source, updated_at)
+      (nhl_player_id, player_name, team, season, pp_shots_per60, pp_toi_per60,
+       pp_l10_shots_per60, pp_l5_shots_per60, source, updated_at)
     VALUES
-      (?, ?, ?, ?, ?, ?, 'nst', datetime('now'))
+      (?, ?, ?, ?, ?, ?, ?, ?, 'nst', datetime('now'))
   `);
 
   let inserted = 0;
@@ -136,7 +137,26 @@ function ingestNstPpRates({ filePath, season } = {}) {
     const ppShotsPer60 = (sog / ppToi) * 60;
     const ppToiPer60 = ppToi; // stored as raw minutes (per-game avg from NST)
 
-    upsert.run(playerId, playerName, team, resolvedSeason, ppShotsPer60, ppToiPer60);
+    // WI-0531: L10 split — try multiple NST column name variants
+    const l10ToiRaw = row['PPTOI.1'] || row['PP TOI L10'] || row['L10 PPTOI'] || row['PP_TOI_L10'] || '';
+    const l10SogRaw = row['SOG.1'] || row['PP SOG L10'] || row['L10 SOG'] || row['PP_SOG_L10'] || '';
+    const l10Toi = parseFloat(l10ToiRaw);
+    const l10Sog = parseFloat(l10SogRaw);
+    const ppL10ShotsPer60 = (Number.isFinite(l10Toi) && l10Toi > 0 && Number.isFinite(l10Sog))
+      ? (l10Sog / l10Toi) * 60
+      : null;
+
+    // WI-0531: L5 split — try multiple NST column name variants
+    const l5ToiRaw = row['PPTOI.2'] || row['PP TOI L5'] || row['L5 PPTOI'] || row['PP_TOI_L5'] || '';
+    const l5SogRaw = row['SOG.2'] || row['PP SOG L5'] || row['L5 SOG'] || row['PP_SOG_L5'] || '';
+    const l5Toi = parseFloat(l5ToiRaw);
+    const l5Sog = parseFloat(l5SogRaw);
+    const ppL5ShotsPer60 = (Number.isFinite(l5Toi) && l5Toi > 0 && Number.isFinite(l5Sog))
+      ? (l5Sog / l5Toi) * 60
+      : null;
+
+    upsert.run(playerId, playerName, team, resolvedSeason, ppShotsPer60, ppToiPer60,
+               ppL10ShotsPer60, ppL5ShotsPer60);
     inserted += 1;
   }
 

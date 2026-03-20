@@ -182,4 +182,57 @@ describe('ingestNstPpRates', () => {
     delete process.env.NHL_CURRENT_SEASON;
     fs.unlinkSync(filePath);
   });
+
+  // WI-0531: L10/L5 rolling splits tests
+
+  test('WI-0531: CSV with PPTOI.1/SOG.1/PPTOI.2/SOG.2 columns — upsert includes computed L10/L5 rates', () => {
+    // L10: 6 SOG / 1.5 PPTOI * 60 = 240 per60
+    // L5:  3 SOG / 0.8 PPTOI * 60 = 225 per60
+    const csv = [
+      'Player,PlayerID,Team,GP,PPTOI,SOG,PPTOI.1,SOG.1,PPTOI.2,SOG.2',
+      'Nathan MacKinnon,8477492,COL,60,2.5,90,1.5,6,0.8,3',
+    ].join('\n') + '\n';
+    const filePath = writeTempCsv(csv);
+
+    const result = ingestNstPpRates({ filePath, season: '20242025' });
+
+    expect(result.inserted).toBe(1);
+    const callArgs = mockUpsertRun.mock.calls[0];
+    // Index 6 = pp_l10_shots_per60, index 7 = pp_l5_shots_per60
+    expect(callArgs[6]).toBeCloseTo((6 / 1.5) * 60, 1); // 240
+    expect(callArgs[7]).toBeCloseTo((3 / 0.8) * 60, 1); // 225
+
+    fs.unlinkSync(filePath);
+  });
+
+  test('WI-0531: CSV without L10/L5 columns — upsert stores NULL for both rolling rates, season rate preserved', () => {
+    const csv = 'Player,PlayerID,Team,GP,PPTOI,SOG\nAlex Ovechkin,8471214,WSH,50,3.0,12\n';
+    const filePath = writeTempCsv(csv);
+
+    const result = ingestNstPpRates({ filePath, season: '20242025' });
+
+    expect(result.inserted).toBe(1);
+    const callArgs = mockUpsertRun.mock.calls[0];
+    expect(callArgs[4]).toBeCloseTo(240, 1); // pp_shots_per60 = (12/3)*60
+    expect(callArgs[6]).toBeNull();           // pp_l10_shots_per60 = null (column absent)
+    expect(callArgs[7]).toBeNull();           // pp_l5_shots_per60 = null (column absent)
+
+    fs.unlinkSync(filePath);
+  });
+
+  test('WI-0531: CSV with L10 PPTOI=0 — pp_l10_shots_per60 set to NULL (not 0)', () => {
+    const csv = [
+      'Player,PlayerID,Team,GP,PPTOI,SOG,PPTOI.1,SOG.1,PPTOI.2,SOG.2',
+      'David Pastrnak,8778476,BOS,60,2.0,20,0,0,1.0,4',
+    ].join('\n') + '\n';
+    const filePath = writeTempCsv(csv);
+
+    ingestNstPpRates({ filePath, season: '20242025' });
+
+    const callArgs = mockUpsertRun.mock.calls[0];
+    expect(callArgs[6]).toBeNull();           // pp_l10_shots_per60 = null (PPTOI.1=0)
+    expect(callArgs[7]).toBeCloseTo((4 / 1.0) * 60, 1); // pp_l5_shots_per60 = 240
+
+    fs.unlinkSync(filePath);
+  });
 });
