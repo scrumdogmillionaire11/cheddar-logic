@@ -183,23 +183,58 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                         </span>
                       )}
                     </div>
-                    {prop.reasonCodes && prop.reasonCodes.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-cloud/50">
-                        {prop.reasonCodes.slice(0, 3).map((code) => (
-                          <span
-                            key={code}
-                            className="rounded-full border border-cloud/20 px-2 py-0.5"
-                          >
-                            {code}
-                          </span>
-                        ))}
-                        {prop.reasonCodes.length > 3 && (
-                          <span className="rounded-full border border-cloud/20 px-2 py-0.5">
-                            +{prop.reasonCodes.length - 3} more
-                          </span>
-                        )}
-                      </div>
-                    )}
+                    {(() => {
+                      const WARNING_FLAGS = [
+                        'SYNTHETIC_LINE',
+                        'PROJECTION_ANOMALY',
+                      ];
+                      const warningFlags = (
+                        prop.reasonCodes ?? []
+                      ).filter((c) => WARNING_FLAGS.includes(c));
+                      const normalCodes = (
+                        prop.reasonCodes ?? []
+                      ).filter((c) => !WARNING_FLAGS.includes(c));
+                      return (
+                        <>
+                          {warningFlags.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {warningFlags.map((flag) => (
+                                <span
+                                  key={flag}
+                                  className="rounded border border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-400"
+                                  title={
+                                    flag === 'SYNTHETIC_LINE'
+                                      ? 'No real bookmaker line — using model-internal fallback. Action capped at WATCH.'
+                                      : 'Projection anomaly detected — weighted mu diverges from L5 mean by >40%. Action capped at WATCH.'
+                                  }
+                                >
+                                  {flag === 'SYNTHETIC_LINE'
+                                    ? '⚠ No Real Line'
+                                    : '⚠ Proj Anomaly'}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {normalCodes.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-cloud/50">
+                              {normalCodes.slice(0, 3).map((code) => (
+                                <span
+                                  key={code}
+                                  className="rounded-full border border-cloud/20 px-2 py-0.5"
+                                >
+                                  {code}
+                                </span>
+                              ))}
+                              {normalCodes.length > 3 && (
+                                <span className="rounded-full border border-cloud/20 px-2 py-0.5">
+                                  +{normalCodes.length - 3} more
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                     {(prop.l5Sog && prop.l5Sog.length > 0) ||
                     (prop.l5Mean !== null && prop.l5Mean !== undefined) ? (
                       <div className="mt-2 text-xs text-cloud/60">

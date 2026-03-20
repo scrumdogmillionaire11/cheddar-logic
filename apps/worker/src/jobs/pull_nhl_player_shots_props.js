@@ -139,11 +139,40 @@ function parseEventPropLines(eventOdds, gameId, fetchedAt) {
 
 /**
  * Resolve canonical game_id from Odds API event using team name matching against games table.
+ * Two-step strategy to align with the model runner's resolveCanonicalGameId:
+ *   Step 1: exact LOWER() match within a 1-hour window (primary, safe)
+ *   Step 2: 6-char normalized prefix match within 4-hour window (fallback heuristic)
  * Returns matched game_id or null.
  */
 function resolveGameId(db, event) {
-  // Match by game_time_utc proximity (within 4 hours) + team name substring
-  const stmt = db.prepare(`
+  const norm = (s) => (s || '').toLowerCase().replace(/[^a-z]/g, '');
+  const eventHome = norm(event.home_team);
+  const eventAway = norm(event.away_team);
+
+  // Step 1: exact normalized match within 1-hour window
+  // This mirrors the model runner's fallback which uses LOWER() equality.
+  // Uses a wider time window (3600s vs model runner's 900s) to account for
+  // Odds API vs NHL-API scheduling drift, but still tight enough to be
+  // unambiguous for a typical NHL slate.
+  const exactCandidates = db.prepare(`
+    SELECT game_id, home_team, away_team
+    FROM games
+    WHERE LOWER(sport) = 'nhl'
+      AND ABS(strftime('%s', game_time_utc) - strftime('%s', ?)) < 3600
+    ORDER BY ABS(strftime('%s', game_time_utc) - strftime('%s', ?)) ASC
+    LIMIT 20
+  `).all(event.commence_time, event.commence_time);
+
+  for (const g of exactCandidates) {
+    if (norm(g.home_team) === eventHome && norm(g.away_team) === eventAway) {
+      return g.game_id;
+    }
+  }
+
+  // Step 2: prefix heuristic fallback — 6-char normalized prefix, 4-hour window.
+  // Only reached when Odds API uses shortened/different team names (e.g. city only).
+  // Logs a warning so we can track and fix naming mismatches over time.
+  const prefixCandidates = db.prepare(`
     SELECT game_id, home_team, away_team
     FROM games
     WHERE LOWER(sport) = 'nhl'
@@ -151,21 +180,24 @@ function resolveGameId(db, event) {
       AND ABS(strftime('%s', game_time_utc) - strftime('%s', ?)) < 14400
     ORDER BY ABS(strftime('%s', game_time_utc) - strftime('%s', ?)) ASC
     LIMIT 10
-  `);
-  const candidates = stmt.all(event.commence_time, event.commence_time);
+  `).all(event.commence_time, event.commence_time);
 
-  // Normalize for matching
-  const norm = (s) => (s || '').toLowerCase().replace(/[^a-z]/g, '');
-  const eventHome = norm(event.home_team);
-  const eventAway = norm(event.away_team);
-
-  for (const g of candidates) {
+  for (const g of prefixCandidates) {
     const dbHome = norm(g.home_team);
     const dbAway = norm(g.away_team);
-    const homeMatch = dbHome.includes(eventHome.slice(0, 4)) || eventHome.includes(dbHome.slice(0, 4));
-    const awayMatch = dbAway.includes(eventAway.slice(0, 4)) || eventAway.includes(dbAway.slice(0, 4));
-    if (homeMatch && awayMatch) return g.game_id;
+    const homeMatch = dbHome.includes(eventHome.slice(0, 6)) || eventHome.includes(dbHome.slice(0, 6));
+    const awayMatch = dbAway.includes(eventAway.slice(0, 6)) || eventAway.includes(dbAway.slice(0, 6));
+    if (homeMatch && awayMatch) {
+      console.warn(
+        `[${JOB_NAME}] resolveGameId: prefix fallback used for ` +
+        `"${event.away_team} @ ${event.home_team}" → ${g.game_id}. ` +
+        `Odds API name mismatch vs games table ("${g.away_team} @ ${g.home_team}"). ` +
+        `Consider adding an alias mapping.`,
+      );
+      return g.game_id;
+    }
   }
+
   return null;
 }
 
