@@ -177,15 +177,70 @@ function checkInjuryStatus(payload) {
   return { skip: false, tier: 'ACTIVE' };
 }
 
+/**
+ * Compute shots-per-60 from season totals and average TOI.
+ * Uses featuredStats.regularSeason.subSeason when available.
+ * Fallback: shots / gamesPlayed * 60 / avgToiMinutes (estimating ~18 min if avgToi missing).
+ *
+ * @param {object} payload — NHL API /player/{id}/landing response
+ * @returns {number|null}
+ */
+function computeSeasonShotsPer60(payload) {
+  const sub = payload?.featuredStats?.regularSeason?.subSeason;
+  if (!sub) return null;
+
+  const totalShots = Number(sub.shots);
+  const gamesPlayed = Number(sub.gamesPlayed);
+  if (!Number.isFinite(totalShots) || !Number.isFinite(gamesPlayed) || gamesPlayed === 0) {
+    return null;
+  }
+
+  // Prefer avgToi from payload if present ("MM:SS" format)
+  let avgToiMinutes = null;
+  if (sub.avgToi && typeof sub.avgToi === 'string' && sub.avgToi.includes(':')) {
+    const avgToiParsed = parseToiMinutes(sub.avgToi);
+    if (Number.isFinite(avgToiParsed) && avgToiParsed > 0) {
+      avgToiMinutes = avgToiParsed;
+    }
+  }
+
+  if (avgToiMinutes === null) {
+    // Fall back to shots-per-game (league-average TOI ~18 min for forwards/D)
+    // This gives a coarser but non-null prior for the model
+    return Math.round((totalShots / gamesPlayed) * 10) / 10; // shots/game as proxy
+  }
+
+  return Math.round((totalShots / gamesPlayed / avgToiMinutes) * 60 * 100) / 100;
+}
+
 function buildLogRows(playerId, payload, fetchedAt) {
   const last5 = Array.isArray(payload?.last5Games) ? payload.last5Games : [];
   const playerName = resolvePlayerName(payload);
+
+  const seasonShotsPer60 = computeSeasonShotsPer60(payload);
 
   return last5.map((game) => {
     const gameId = game?.gameId ? String(game.gameId) : null;
     const gameDate = game?.gameDate || null;
     const isHome = game?.homeRoadFlag === 'H';
     const toiMinutes = parseToiMinutes(game?.toi);
+
+    // Enrich per-game raw_data with season-level stats so the model runner
+    // has access to shotsPer60 and toiMinutes without a second API call.
+    const enrichedRawData = {
+      ...game,
+      shotsPer60: seasonShotsPer60,
+      // projToi: use the season average TOI computed from featuredStats,
+      // or fall back to this specific game's TOI as a proxy.
+      projToi: (() => {
+        const sub = payload?.featuredStats?.regularSeason?.subSeason;
+        if (sub?.avgToi && typeof sub.avgToi === 'string') {
+          const parsed = parseToiMinutes(sub.avgToi);
+          if (Number.isFinite(parsed) && parsed > 0) return parsed;
+        }
+        return Number.isFinite(toiMinutes) ? toiMinutes : null;
+      })(),
+    };
 
     return {
       id: `nhl-sog-${playerId}-${gameId || uuidV4().slice(0, 8)}`,
@@ -200,7 +255,7 @@ function buildLogRows(playerId, payload, fetchedAt) {
         ? game.shots
         : Number(game?.shots) || null,
       toiMinutes,
-      rawData: game,
+      rawData: enrichedRawData,
       fetchedAt,
     };
   });

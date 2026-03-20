@@ -1032,13 +1032,16 @@ async function runNHLPlayerShotsModel() {
               player_id: player.player_id,
               game_id: resolvedGameId,
               ev_shots_season_per60: shotsPer60 ?? null,
-              ev_shots_l10_per60: shotsPer60 ?? null, // no L10 granularity; season is proxy
+              // L10 is not stored separately; use L5-derived rate as a proxy
+              // rather than copying shotsPer60 (which is a season average, not L10).
+              // This avoids a false LOW_SAMPLE flag while being directionally correct.
+              ev_shots_l10_per60: l5RatePer60 ?? shotsPer60 ?? null,
               ev_shots_l5_per60: l5RatePer60,
               pp_shots_season_per60: 0,
               pp_shots_l10_per60: 0,
               pp_shots_l5_per60: 0,
               toi_proj_ev: projToi ?? 0,
-              toi_proj_pp: 0, // PP TOI not tracked separately in shot logs
+              toi_proj_pp: 0, // TODO(WI-NEXT): PP TOI not yet tracked — needs pp_toi from game logs
               shot_env_factor: paceFactor,
               opponent_suppression_factor: opponentFactor,
               role_stability: playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH',

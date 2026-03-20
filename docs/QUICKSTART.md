@@ -104,6 +104,7 @@ Your cheddar board updates automatically. See [AUTOMATED_SETUP.md](AUTOMATED_SET
 ### Worker Model Jobs (NBA/NHL/NCAAM)
 
 Soccer market policy (ADR-0006): Asian Handicap is reintroduced as a Tier-1 **main-market** path (`asian_handicap_home`, `asian_handicap_away`) under `FOOTIE_MAIN_MARKETS`. It is separate from soccer props routing and should not be mixed with `SOCCER_PROP_EVENTS_ENABLED` prop ingestion.
+AH cards must carry the canonical play envelope (`kind`, `recommended_bet_type`, `prediction`, `selection`) in addition to AH pricing fields (`line`, `price`, `side`, `split_flag`, `probabilities`, `expected_value`) so `/api/games` keeps them as playable spread rows.
 
 ### Quickstart
 
@@ -130,6 +131,7 @@ npm --prefix apps/worker run job:sync-nhl-player-availability
 
 # Pull NHL player shots props
 set -a; source .env; set +a; npm --prefix apps/worker run job:pull-nhl-player-shots-props
+# ⚠️  Requires NHL_SOG_PROP_EVENTS_ENABLED=true in .env (default off — add to enable real Odds API lines)
 
 # Run NHL player shots prop model (applies availability filter + purge)
 npm --prefix apps/worker run job:run-nhl-player-shots-model
@@ -215,9 +217,9 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:post-discord-cards
 set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" \
   "SELECT sport, card_type, prediction, confidence, created_at FROM card_payloads ORDER BY created_at DESC LIMIT 10;"
 
-# Spot-check AH output contract fields (line/price/side/split + EV)
+# Spot-check AH output contract fields (canonical play envelope + AH pricing fields)
 set -a; source .env; set +a; sqlite3 "$CHEDDAR_DB_PATH" \
-  "SELECT card_type, json_extract(payload_data,'$.line') AS line, json_extract(payload_data,'$.price') AS price, json_extract(payload_data,'$.side') AS side, json_extract(payload_data,'$.split_flag') AS split_flag, json_extract(payload_data,'$.expected_value') AS expected_value FROM card_payloads WHERE card_type IN ('asian_handicap_home','asian_handicap_away') ORDER BY created_at DESC LIMIT 10;"
+  "SELECT card_type, json_extract(payload_data,'$.kind') AS kind, json_extract(payload_data,'$.recommended_bet_type') AS recommended_bet_type, json_extract(payload_data,'$.prediction') AS prediction, json_extract(payload_data,'$.selection.side') AS selection_side, json_extract(payload_data,'$.line') AS line, json_extract(payload_data,'$.price') AS price, json_extract(payload_data,'$.side') AS side, json_extract(payload_data,'$.split_flag') AS split_flag, json_extract(payload_data,'$.expected_value') AS expected_value FROM card_payloads WHERE card_type IN ('asian_handicap_home','asian_handicap_away') ORDER BY created_at DESC LIMIT 10;"
 
 # Verify odds pipeline freshness against the same DB path
 set -a; source .env; set +a; npm --prefix apps/worker run job:check-odds-health
