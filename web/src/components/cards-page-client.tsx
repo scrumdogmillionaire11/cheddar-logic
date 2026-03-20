@@ -848,6 +848,37 @@ export default function CardsPageClient() {
     return groups;
   }, [filteredCards]);
 
+  // Group filtered prop cards by ET calendar date for section headers
+  const propGroupedByDate = useMemo(() => {
+    const now = new Date();
+    const etFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' });
+    const labelFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+    const todayET = etFormatter.format(now);
+    const tomorrowET = etFormatter.format(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+
+    const groups: { dateKey: string; label: string; cards: PropGameCardType[] }[] = [];
+    let currentKey = '';
+    for (const card of propCards) {
+      const key = etFormatter.format(new Date(card.gameTimeUtc));
+      if (key !== currentKey) {
+        currentKey = key;
+        const date = new Date(key + 'T12:00:00');
+        let label: string;
+        if (key === todayET) label = `Today · ${labelFormatter.format(date)}`;
+        else if (key === tomorrowET) label = `Tomorrow · ${labelFormatter.format(date)}`;
+        else label = labelFormatter.format(date);
+        groups.push({ dateKey: key, label, cards: [] });
+      }
+      groups[groups.length - 1].cards.push(card);
+    }
+    return groups;
+  }, [propCards]);
+
   // Projections mode: extract nhl-pace-1p plays directly from raw games,
   // bypassing the game-card pipeline which doesn't handle FIRST_PERIOD market_type.
   const projectionItems = useMemo(() => {
@@ -3770,10 +3801,19 @@ export default function CardsPageClient() {
             </div>
           )}
 
-        {!loading && viewMode === 'props' && propCards.length > 0 && (
+        {!loading && viewMode === 'props' && propGroupedByDate.length > 0 && (
           <div className="space-y-4">
-            {propCards.map((card) => (
-              <PropGameCard key={card.gameId} card={card} />
+            {propGroupedByDate.map(({ dateKey, label, cards: groupCards }) => (
+              <div key={dateKey}>
+                <div className="text-xs font-semibold text-cloud/50 uppercase tracking-wider px-1 pb-2 pt-1 border-b border-white/10 mb-3">
+                  {label}
+                </div>
+                <div className="space-y-4">
+                  {groupCards.map((card) => (
+                    <PropGameCard key={card.gameId} card={card} />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         )}
