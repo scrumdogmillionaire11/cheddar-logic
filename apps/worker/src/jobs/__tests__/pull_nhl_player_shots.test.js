@@ -15,9 +15,14 @@
 let mockFetchPlayerLandingImpl = null;
 let mockUpsertPlayerShotLogCalls = [];
 let mockUpsertPlayerAvailabilityCalls = [];
+// WI-0530: configurable pp_rate row returned by the mock DB
+let mockPpRateRow = null;
 
 // ---- Mock @cheddar-logic/data ----
 jest.mock('@cheddar-logic/data', () => ({
+  getDatabase: jest.fn(() => ({
+    prepare: jest.fn(() => ({ get: jest.fn(() => mockPpRateRow) })),
+  })),
   insertJobRun: jest.fn(),
   markJobRunSuccess: jest.fn(),
   markJobRunFailure: jest.fn(),
@@ -48,10 +53,14 @@ function buildPayload(overrides = {}) {
 
 // Pull the module AFTER mocks are set up.
 // We import it inside each test so env vars are applied.
+// Set mockPpRateRow before calling loadModule to control what getDatabase returns.
 function loadModule() {
   jest.resetModules();
   // Re-apply the mock after resetModules
   jest.mock('@cheddar-logic/data', () => ({
+    getDatabase: jest.fn(() => ({
+      prepare: jest.fn(() => ({ get: jest.fn(() => mockPpRateRow) })),
+    })),
     insertJobRun: jest.fn(),
     markJobRunSuccess: jest.fn(),
     markJobRunFailure: jest.fn(),
@@ -648,5 +657,62 @@ describe('pull_nhl_player_shots — enriched raw_data (shotsPer60 + projToi)', (
     const stored = JSON.parse(storedRow.rawData ? JSON.stringify(storedRow.rawData) : '{}');
 
     expect(stored.ppToi).toBeNull();
+  });
+
+  // --- WI-0530: ppRatePer60 enrichment from player_pp_rates ---
+
+  test('WI-0530: raw_data.ppRatePer60 is populated from player_pp_rates when row exists', async () => {
+    const payload = {
+      fullName: 'PP Rate Player',
+      last5Games: [
+        { gameId: 'ppr1', gameDate: '2026-03-10', homeRoadFlag: 'H', toi: '20:00', shots: 3, opponentAbbrev: 'TOR' },
+      ],
+      featuredStats: {
+        regularSeason: {
+          subSeason: { shots: 100, gamesPlayed: 50, avgToi: '18:00', avgPpToi: '2:30' },
+        },
+      },
+    };
+
+    global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(payload) });
+    process.env.NHL_SOG_PLAYER_IDS = '9020';
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    // Simulate player found in player_pp_rates with pp_shots_per60 = 4.8
+    mockPpRateRow = { pp_shots_per60: 4.8 };
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerShotLog } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    expect(upsertPlayerShotLog).toHaveBeenCalled();
+    const storedRow = upsertPlayerShotLog.mock.calls[0][0];
+    const stored = JSON.parse(storedRow.rawData ? JSON.stringify(storedRow.rawData) : '{}');
+    expect(stored.ppRatePer60).toBe(4.8);
+  });
+
+  test('WI-0530: raw_data.ppRatePer60 is null when player absent from player_pp_rates', async () => {
+    const payload = {
+      fullName: 'No PP Rate Player',
+      last5Games: [
+        { gameId: 'ppr2', gameDate: '2026-03-10', homeRoadFlag: 'H', toi: '18:00', shots: 2, opponentAbbrev: 'MTL' },
+      ],
+    };
+
+    global.fetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(payload) });
+    process.env.NHL_SOG_PLAYER_IDS = '9021';
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+
+    // ppRateRow = null → player not in table
+    mockPpRateRow = null;
+    const { pullNhlPlayerShots } = loadModule();
+    const { upsertPlayerShotLog } = require('@cheddar-logic/data');
+
+    await pullNhlPlayerShots({ dryRun: false });
+
+    expect(upsertPlayerShotLog).toHaveBeenCalled();
+    const storedRow = upsertPlayerShotLog.mock.calls[0][0];
+    const stored = JSON.parse(storedRow.rawData ? JSON.stringify(storedRow.rawData) : '{}');
+    expect(stored.ppRatePer60).toBeNull();
   });
 });

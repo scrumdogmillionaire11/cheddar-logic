@@ -2,6 +2,7 @@ require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
 
 const {
+  getDatabase,
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
@@ -223,7 +224,7 @@ function computeSeasonPpToi(payload) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function buildLogRows(playerId, payload, fetchedAt) {
+function buildLogRows(playerId, payload, fetchedAt, ppRatePer60 = null) {
   const last5 = Array.isArray(payload?.last5Games) ? payload.last5Games : [];
   const playerName = resolvePlayerName(payload);
 
@@ -251,6 +252,8 @@ function buildLogRows(playerId, payload, fetchedAt) {
         return Number.isFinite(toiMinutes) ? toiMinutes : null;
       })(),
       ppToi: computeSeasonPpToi(payload),  // WI-0528: real PP TOI from featuredStats.subSeason.avgPpToi
+      // WI-0530: season PP shot rate from NST player_pp_rates table (null if player absent)
+      ppRatePer60,
     };
 
     return {
@@ -382,7 +385,23 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
             checkedAt: fetchedAt,
           });
 
-          const rows = buildLogRows(playerId, payload, fetchedAt);
+          // WI-0530: Look up season PP shot rate from player_pp_rates table.
+          // Null if player is not in the NST table (non-PP or not yet ingested).
+          let ppRatePer60 = null;
+          try {
+            const db = getDatabase();
+            const currentSeason = process.env.NHL_CURRENT_SEASON || '20242025';
+            const ppRateRow = db
+              .prepare(
+                'SELECT pp_shots_per60 FROM player_pp_rates WHERE nhl_player_id = ? AND season = ? LIMIT 1',
+              )
+              .get(String(playerId), currentSeason);
+            ppRatePer60 = ppRateRow ? ppRateRow.pp_shots_per60 : null;
+          } catch {
+            ppRatePer60 = null;
+          }
+
+          const rows = buildLogRows(playerId, payload, fetchedAt, ppRatePer60);
 
           rows.forEach((row) => {
             upsertPlayerShotLog(row);
