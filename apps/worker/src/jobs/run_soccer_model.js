@@ -579,6 +579,9 @@ const {
   applySoccerDecisionBasisMeta,
   recordSoccerProjectionTelemetry,
 } = require('../utils/soccer-patch');
+const {
+  gradeAsianHandicap,
+} = require('../models/soccer/asian-handicap-grader');
 
 function attachRunId(card, runId) {
   if (!card) return;
@@ -1281,6 +1284,7 @@ module.exports = {
   generateSoccerCard,
   deriveWinProbHome,
   derivePredictionFromMoneyline,
+  gradeAsianHandicap,
   normalizeToCanonicalSoccerMarket,
   buildSoccerTier1Payload,
   buildSoccerOddsBackedCard,
