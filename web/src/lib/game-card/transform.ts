@@ -549,10 +549,10 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
     if (typeof play.pass_reason_code === 'string') {
       const code = play.pass_reason_code.toUpperCase();
       if (!NO_ACTIONABLE_IGNORE_REASON_CODES.has(code)) {
-        if (isFetchFailureReasonCode(code)) {
-          push(toDiagnosticToken('fetch_reason', code));
-        } else if (isExplicitNoEdgeReasonCode(code)) {
+        if (isExplicitNoEdgeReasonCode(code)) {
           hasExplicitNoEdgeSignals = true;
+        } else if (isFetchFailureReasonCode(code)) {
+          push(toDiagnosticToken('fetch_reason', code));
         } else {
           hasUnknownNonFetchSignals = true;
         }
@@ -561,10 +561,10 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
     for (const reasonCode of play.reason_codes ?? []) {
       const code = String(reasonCode).toUpperCase();
       if (NO_ACTIONABLE_IGNORE_REASON_CODES.has(code)) continue;
-      if (isFetchFailureReasonCode(code)) {
-        push(toDiagnosticToken('fetch_reason', code));
-      } else if (isExplicitNoEdgeReasonCode(code)) {
+      if (isExplicitNoEdgeReasonCode(code)) {
         hasExplicitNoEdgeSignals = true;
+      } else if (isFetchFailureReasonCode(code)) {
+        push(toDiagnosticToken('fetch_reason', code));
       } else {
         hasUnknownNonFetchSignals = true;
       }
