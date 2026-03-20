@@ -1288,6 +1288,14 @@ async function runNHLPlayerShotsModel() {
                   consistency_score:
                     Math.round(fullConsistencyScore * 1000) / 1000,
                   matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
+                  // Projection model inputs surfaced for debugging and audit
+                  sog_mu: v2Projection.sog_mu != null ? Math.round(v2Projection.sog_mu * 1000) / 1000 : null,
+                  toi_proj_ev: v2Projection.toi_proj != null ? v2Projection.toi_proj : (projToi ?? null),
+                  ev_rate: v2Projection.shot_rate_ev_per60 != null ? Math.round(v2Projection.shot_rate_ev_per60 * 100) / 100 : null,
+                  pp_rate: v2Projection.shot_rate_pp_per60 != null ? Math.round(v2Projection.shot_rate_pp_per60 * 100) / 100 : null,
+                  shot_env_factor: v2Projection.shot_env_factor != null ? Math.round(v2Projection.shot_env_factor * 1000) / 1000 : null,
+                  trend_factor: v2Projection.trend_score != null ? Math.round(v2Projection.trend_score * 1000) / 1000 : null,
+                  v2_anomaly: v2AnomalyDetected,
                 },
               };
 
