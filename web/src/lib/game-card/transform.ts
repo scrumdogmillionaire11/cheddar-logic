@@ -490,6 +490,10 @@ const NO_ACTIONABLE_EXPLICIT_NO_EDGE_REASON_CODES = new Set([
   'PASS_NO_EDGE',
   'PASS_DRIVER_SUPPORT_WEAK',
   'PASS_CONFLICT_HIGH',
+  // NHL model signals: no conviction/lean (healthy no-play)
+  'NHL_1P_OVER_LEAN',
+  'NHL_1P_UNDER_LEAN',
+  'NHL_ML_LEAN',
 ]);
 
 const NO_ACTIONABLE_FETCH_REASON_FRAGMENTS = [
