@@ -463,4 +463,114 @@ describe('projectSogV2 — two-stage model', () => {
       expect(result.ev_over).toBeNull();
     });
   });
+
+  // ---- WI-0530: PP contribution cap (45%) ----
+
+  describe('WI-0530 — PP contribution cap (45%)', () => {
+    test('Test L: PP component = 60% of uncapped sog_mu → PP_CONTRIBUTION_CAPPED flag + sog_mu capped', () => {
+      // Design: make PP contribution dominate EV contribution
+      // ev_rate = 6 shots/60, toi_ev = 10 min → ev_component = 6*10/60 = 1.0
+      // pp_rate = 18 shots/60, toi_pp = 3 min → pp_component = 18*3/60 = 0.9
+      // raw_sog_mu = 1.9, pp_component/raw_sog_mu = 0.9/1.9 ≈ 47.4% > 45% → cap fires
+      const result = projectSogV2(buildInputs({
+        ev_shots_season_per60: 6.0,
+        ev_shots_l10_per60: 6.0,
+        ev_shots_l5_per60: 6.0,
+        pp_shots_season_per60: 18.0,
+        pp_shots_l10_per60: 18.0,
+        pp_shots_l5_per60: 18.0,
+        toi_proj_ev: 10.0,
+        toi_proj_pp: 3.0,
+        shot_env_factor: 1.0,
+        opponent_suppression_factor: 1.0,
+        goalie_rebound_factor: 1.0,
+        trailing_script_factor: 1.0,
+        role_stability: 'HIGH',
+      }));
+
+      expect(result.flags).toContain('PP_CONTRIBUTION_CAPPED');
+      // ev_component = 1.0; pp_capped = 0.45 * 1.0 / 0.55 ≈ 0.818
+      // capped raw_sog_mu = 1.818; sog_mu after factors ≈ 1.818 (all factors 1.0)
+      expect(result.sog_mu).toBeCloseTo(1.818, 2);
+    });
+
+    test('Test M: PP component = 30% of raw_sog_mu → cap does NOT activate', () => {
+      // ev_rate = 8 shots/60, toi_ev = 16 min → ev_component = 8*16/60 ≈ 2.133
+      // pp_rate = 4 shots/60, toi_pp = 2 min → pp_component = 4*2/60 ≈ 0.133
+      // raw_sog_mu ≈ 2.267, pp_component/raw_sog_mu ≈ 5.9% < 45% → no cap
+      const result = projectSogV2(buildInputs({
+        ev_shots_season_per60: 8.0,
+        ev_shots_l10_per60: 8.0,
+        ev_shots_l5_per60: 8.0,
+        pp_shots_season_per60: 4.0,
+        pp_shots_l10_per60: 4.0,
+        pp_shots_l5_per60: 4.0,
+        toi_proj_ev: 16.0,
+        toi_proj_pp: 2.0,
+        shot_env_factor: 1.0,
+        opponent_suppression_factor: 1.0,
+        goalie_rebound_factor: 1.0,
+        trailing_script_factor: 1.0,
+        role_stability: 'HIGH',
+      }));
+
+      expect(result.flags).not.toContain('PP_CONTRIBUTION_CAPPED');
+    });
+
+    test('Test N: toi_proj_pp = 0 → PP contribution = 0 → cap never activates', () => {
+      const result = projectSogV2(buildInputs({
+        ev_shots_season_per60: 8.0,
+        ev_shots_l10_per60: 8.0,
+        ev_shots_l5_per60: 8.0,
+        pp_shots_season_per60: 30.0,  // extreme rate — irrelevant because ppToi=0
+        pp_shots_l10_per60: 30.0,
+        pp_shots_l5_per60: 30.0,
+        toi_proj_ev: 16.0,
+        toi_proj_pp: 0,
+        shot_env_factor: 1.0,
+        opponent_suppression_factor: 1.0,
+        goalie_rebound_factor: 1.0,
+        trailing_script_factor: 1.0,
+        role_stability: 'HIGH',
+      }));
+
+      expect(result.flags).not.toContain('PP_CONTRIBUTION_CAPPED');
+    });
+
+    test('PP-heavy player with pp_rate > 0 and ppToi > 0 has higher sog_mu than same player with pp_rate = 0', () => {
+      const withPpRate = projectSogV2(buildInputs({
+        ev_shots_season_per60: 8.0,
+        ev_shots_l10_per60: 8.0,
+        ev_shots_l5_per60: 8.0,
+        pp_shots_season_per60: 4.8,
+        pp_shots_l10_per60: 4.8,
+        pp_shots_l5_per60: 4.8,
+        toi_proj_ev: 16.0,
+        toi_proj_pp: 2.5,
+        shot_env_factor: 1.0,
+        opponent_suppression_factor: 1.0,
+        goalie_rebound_factor: 1.0,
+        trailing_script_factor: 1.0,
+        role_stability: 'HIGH',
+      }));
+
+      const zeroPpRate = projectSogV2(buildInputs({
+        ev_shots_season_per60: 8.0,
+        ev_shots_l10_per60: 8.0,
+        ev_shots_l5_per60: 8.0,
+        pp_shots_season_per60: null,
+        pp_shots_l10_per60: null,
+        pp_shots_l5_per60: null,
+        toi_proj_ev: 16.0,
+        toi_proj_pp: 2.5,
+        shot_env_factor: 1.0,
+        opponent_suppression_factor: 1.0,
+        goalie_rebound_factor: 1.0,
+        trailing_script_factor: 1.0,
+        role_stability: 'HIGH',
+      }));
+
+      expect(withPpRate.sog_mu).toBeGreaterThan(zeroPpRate.sog_mu);
+    });
+  });
 });

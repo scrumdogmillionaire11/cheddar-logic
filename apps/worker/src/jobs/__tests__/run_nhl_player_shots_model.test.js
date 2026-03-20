@@ -1356,4 +1356,197 @@ describe('run_nhl_player_shots_model', () => {
     const card = data.insertCardPayload.mock.calls[0][0];
     expect(card.payloadData.prop_display_state).toBe('WATCH');
   });
+
+  // ---- WI-0530: ppRatePer60 wiring into projectSogV2 + PP_RATE_MISSING flag ----
+
+  // Helper: build 5 game logs where the first log has specific raw_data
+  function buildGamesWithRawData(rawDataObj) {
+    const gamesFromDefault = buildGamesFromShots([3, 3, 3, 3, 3]);
+    gamesFromDefault[0] = {
+      ...gamesFromDefault[0],
+      raw_data: JSON.stringify(rawDataObj),
+    };
+    return gamesFromDefault;
+  }
+
+  test('WI-0530 Test I: ppRatePer60=4.8 + ppToi=2.5 → projectSogV2 called with pp_shots_season_per60=4.8; sog_mu higher than without rate', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.2,
+      sog_sigma: 1.79,
+      toi_proj: 18.5,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 4.8,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.08,
+      edge_under_pp: -0.08,
+      ev_over: 0.05,
+      ev_under: -0.05,
+      opportunity_score: 0.5,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi0530-test-i-01' })],
+      players: [buildPlayer({ player_id: 9100, player_name: 'PP Heavy Player I' })],
+      playerLogs: buildGamesWithRawData({ shotsPer60: 9.6, projToi: 16, ppToi: 2.5, ppRatePer60: 4.8 }),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(shots.projectSogV2).toHaveBeenCalled();
+    const v2Call = shots.projectSogV2.mock.calls[0][0];
+    expect(v2Call.pp_shots_season_per60).toBe(4.8);
+    expect(v2Call.toi_proj_pp).toBe(2.5);
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    // pp_rate_per60 must appear in drivers
+    expect(card.payloadData.drivers.pp_rate_per60).toBe(4.8);
+  });
+
+  test('WI-0530 Test J: ppRatePer60=null + ppToi > 0 → PP_RATE_MISSING flag in v2 flags', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.0,
+      sog_sigma: 1.73,
+      toi_proj: 18,
+      shot_rate_ev_per60: 9.0,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.05,
+      edge_under_pp: -0.05,
+      ev_over: 0.03,
+      ev_under: -0.03,
+      opportunity_score: 0.3,
+      flags: [],
+    });
+
+    // ppRatePer60=null, ppToi=2.0 → PP_RATE_MISSING should be pushed
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi0530-test-j-01' })],
+      players: [buildPlayer({ player_id: 9101, player_name: 'No Rate Player J' })],
+      playerLogs: buildGamesWithRawData({ shotsPer60: 9.0, projToi: 16, ppToi: 2.0, ppRatePer60: null }),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.decision.v2.flags).toContain('PP_RATE_MISSING');
+  });
+
+  test('WI-0530 Test K: ppRatePer60=0 (explicit zero) → treated as null → PP_RATE_MISSING flag', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.0,
+      sog_sigma: 1.73,
+      toi_proj: 18,
+      shot_rate_ev_per60: 9.0,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.05,
+      edge_under_pp: -0.05,
+      ev_over: 0.03,
+      ev_under: -0.03,
+      opportunity_score: 0.3,
+      flags: [],
+    });
+
+    // ppRatePer60=0 → treated same as null in model runner
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi0530-test-k-01' })],
+      players: [buildPlayer({ player_id: 9102, player_name: 'Zero Rate Player K' })],
+      playerLogs: buildGamesWithRawData({ shotsPer60: 9.0, projToi: 16, ppToi: 2.0, ppRatePer60: 0 }),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.decision.v2.flags).toContain('PP_RATE_MISSING');
+  });
+
+  test('WI-0530 Test O: pp_rate_per60 in drivers reflects the actual NST rate used (not 0 when available)', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.5,
+      sog_sigma: 1.87,
+      toi_proj: 18.5,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 6.2,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.1,
+      edge_under_pp: -0.1,
+      ev_over: 0.07,
+      ev_under: -0.07,
+      opportunity_score: 0.6,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi0530-test-o-01' })],
+      players: [buildPlayer({ player_id: 9103, player_name: 'PP Rate Driver Player O' })],
+      playerLogs: buildGamesWithRawData({ shotsPer60: 9.6, projToi: 16, ppToi: 2.5, ppRatePer60: 6.2 }),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    // pp_rate_per60 in drivers must reflect the actual NST rate (6.2), not 0 or null
+    expect(card.payloadData.drivers.pp_rate_per60).toBe(6.2);
+  });
 });

@@ -841,12 +841,17 @@ async function runNHLPlayerShotsModel() {
             let shotsPer60 = null;
             let projToi = null;
             let ppToi = 0; // WI-0528: default 0 for safe fallback on legacy log rows
+            let ppRatePer60 = null; // WI-0530: season PP shot rate from NST player_pp_rates
             if (l5Games[0]?.raw_data) {
               try {
                 const rawData = JSON.parse(l5Games[0].raw_data);
                 shotsPer60 = rawData.shotsPer60 || null;
                 projToi = rawData.projToi || l5Games[0].toi_minutes || null;
                 ppToi = Number.isFinite(rawData.ppToi) && rawData.ppToi > 0 ? rawData.ppToi : 0; // WI-0528: real PP TOI
+                // WI-0530: treat 0 same as null — only positive rates are meaningful
+                if (Number.isFinite(rawData.ppRatePer60) && rawData.ppRatePer60 > 0) {
+                  ppRatePer60 = rawData.ppRatePer60;
+                }
               } catch {
                 // Ignore parse errors
               }
@@ -1051,9 +1056,9 @@ async function runNHLPlayerShotsModel() {
               // This avoids a false LOW_SAMPLE flag while being directionally correct.
               ev_shots_l10_per60: l5RatePer60 ?? shotsPer60 ?? null,
               ev_shots_l5_per60: l5RatePer60,
-              pp_shots_season_per60: 0,
-              pp_shots_l10_per60: 0,
-              pp_shots_l5_per60: 0,
+              pp_shots_season_per60: ppRatePer60,   // WI-0530: NST season rate (null if missing)
+              pp_shots_l10_per60: ppRatePer60,      // WI-0531 will replace with rolling L10 rate
+              pp_shots_l5_per60: ppRatePer60,       // WI-0531 will replace with rolling L5 rate
               toi_proj_ev: projToi ?? 0,
               toi_proj_pp: ppToi, // WI-0528: real PP TOI from featuredStats.subSeason.avgPpToi (0 fallback for non-PP players)
               shot_env_factor: paceFactor,
@@ -1068,6 +1073,12 @@ async function runNHLPlayerShotsModel() {
               console.log(
                 `[${JOB_NAME}] [projection-mode] No prices for ${playerName} — MISSING_PRICE flag, opportunity_score=null`,
               );
+            }
+
+            // WI-0530: PP_RATE_MISSING flag — player has PP TOI but no NST rate was available.
+            // Non-PP players (ppToi=0) do NOT get flagged — the rate is simply irrelevant for them.
+            if (ppRatePer60 === null && ppToi > 0) {
+              v2Projection.flags.push('PP_RATE_MISSING');
             }
 
             // V2 anomaly: sog_mu collapsing far below L5 average signals model breakdown.
@@ -1308,6 +1319,7 @@ async function runNHLPlayerShotsModel() {
                   toi_proj_ev: v2Projection.toi_proj != null ? v2Projection.toi_proj : (projToi ?? null),
                   ev_rate: v2Projection.shot_rate_ev_per60 != null ? Math.round(v2Projection.shot_rate_ev_per60 * 100) / 100 : null,
                   pp_rate: v2Projection.shot_rate_pp_per60 != null ? Math.round(v2Projection.shot_rate_pp_per60 * 100) / 100 : null,
+                  pp_rate_per60: ppRatePer60,   // WI-0530: raw NST season rate before blend
                   shot_env_factor: v2Projection.shot_env_factor != null ? Math.round(v2Projection.shot_env_factor * 1000) / 1000 : null,
                   trend_factor: v2Projection.trend_score != null ? Math.round(v2Projection.trend_score * 1000) / 1000 : null,
                   v2_anomaly: v2AnomalyDetected,
