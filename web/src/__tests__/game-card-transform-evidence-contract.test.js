@@ -56,4 +56,14 @@ assert(
   'transform should classify NHL LEAN/PLAY model no-actionable signals as explicit no-edge reason codes',
 );
 
+assert(
+  source.includes('priceOver') && source.includes('priceUnder'),
+  'transform should map market_price_over/under into PropPlayRow priceOver/priceUnder',
+);
+
+assert(
+  source.includes('market_price_over') && source.includes('market_price_under'),
+  'transform should read market_price_over/under from raw play via type cast',
+);
+
 console.log('✅ Transform evidence contract source tests passed');
