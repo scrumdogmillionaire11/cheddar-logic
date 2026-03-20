@@ -1056,6 +1056,15 @@ async function runNHLPlayerShotsModel() {
               );
             }
 
+            // V2 anomaly: sog_mu collapsing far below L5 average signals model breakdown.
+            // This is separate from projectionAnomalyDetected (V1 path) and gates V2 pricing only.
+            const v2AnomalyDetected = v2Projection.sog_mu < 0.6 * l5Mean;
+
+            // Null out pricing fields when V2 anomaly is present — no bet-worthy signal should be emitted.
+            const v2EdgeOverPp = v2AnomalyDetected ? null : (v2Projection.edge_over_pp != null ? Math.round(v2Projection.edge_over_pp * 10000) / 10000 : null);
+            const v2EvOver = v2AnomalyDetected ? null : (v2Projection.ev_over != null ? Math.round(v2Projection.ev_over * 10000) / 10000 : null);
+            const v2OpportunityScore = v2AnomalyDetected ? null : (v2Projection.opportunity_score ?? null);
+
             const syntheticLine = marketLine; // kept for card payload references below
 
             // 1P: also use projection floor when no real line (scaled from full-game floor by 1P share)
@@ -1238,7 +1247,7 @@ async function runNHLPlayerShotsModel() {
                 odds_backed: isOddsBacked,
                 over_price: isOddsBacked ? overPrice : null,
                 under_price: isOddsBacked ? underPrice : null,
-                opportunity_score: v2Projection.opportunity_score ?? null,
+                opportunity_score: v2OpportunityScore,
                 decision: {
                   edge_pct: computeEdgePct(mu, syntheticLine),
                   projection: Math.round(mu * 100) / 100,
@@ -1253,15 +1262,15 @@ async function runNHLPlayerShotsModel() {
                     Math.round(fullConsistencyScore * 1000) / 1000,
                   matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
                   support_score: Math.round(fullSupportScore * 1000) / 1000,
-                  opportunity_score: v2Projection.opportunity_score ?? null,
+                  opportunity_score: v2OpportunityScore,
                   v2: {
                     sog_mu: v2Projection.sog_mu != null ? Math.round(v2Projection.sog_mu * 1000) / 1000 : null,
-                    edge_over_pp: v2Projection.edge_over_pp != null ? Math.round(v2Projection.edge_over_pp * 10000) / 10000 : null,
-                    ev_over: v2Projection.ev_over != null ? Math.round(v2Projection.ev_over * 10000) / 10000 : null,
-                    opportunity_score: v2Projection.opportunity_score ?? null,
+                    edge_over_pp: v2EdgeOverPp,
+                    ev_over: v2EvOver,
+                    opportunity_score: v2OpportunityScore,
                     flags: [
                       ...(v2Projection.flags ?? []),
-                      ...(projectionAnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
+                      ...(v2AnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
                       ...(!usingRealLine ? ['SYNTHETIC_LINE'] : []),
                     ],
                     odds_backed: isOddsBacked,

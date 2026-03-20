@@ -696,14 +696,39 @@ describe('run_nhl_player_shots_model', () => {
 
   test('Guard 2: PROJECTION_ANOMALY (weighted mu < 60% of L5 mean) blocks FIRE and flags payload', async () => {
     // l5Sog = [2,2,2,2,2] → arithmetic mean = 2.0
-    // calcMu mocked to return 1.0 → anomaly: 1.0 < 0.6*2.0=1.2 ✓
+    // calcMu mocked to return 1.0 → V1 anomaly: 1.0 < 0.6*2.0=1.2 → FIRE→HOLD downgrade
+    // projectSogV2 also returns sog_mu=1.0 → V2 anomaly: 1.0 < 0.6*2.0=1.2 → PROJECTION_ANOMALY in flags
     // All 5 shots (2) are <= 2.5 line → UNDER hitRate=1.0 → consistency=1.0 → FIRE (before guard)
     // Guard 2 must then downgrade FIRE → HOLD and add PROJECTION_ANOMALY flag.
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'UNDER', edge: -1.5 });
-    // mu=1.0 → anomaly detected (1.0 < 0.6*2.0=1.2)
+    // mu=1.0 → V1 anomaly detected (1.0 < 0.6*2.0=1.2)
     shots.calcMu.mockReturnValue(1.0);
     shots.calcMu1p.mockReturnValue(0.32);
+    // V2 projection also shows sog_mu collapse → V2 anomaly also detected
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 1.0,
+      sog_sigma: 1.2,
+      toi_proj: 20,
+      shot_rate_ev_per60: 3.0,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 0.85,
+      role_stability: 'HIGH',
+      trend_score: -0.2,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: null,
+      edge_under_pp: null,
+      ev_over: null,
+      ev_under: null,
+      opportunity_score: null,
+      flags: [],
+    });
     // Real prop line supplied (usingRealLine=true) so Guard 1 does not interfere.
     data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
 
@@ -730,8 +755,9 @@ describe('run_nhl_player_shots_model', () => {
 
   test('Test A: v2 PROJECTION_ANOMALY flag appears in decision.v2.flags when sog_mu < 0.6 * l5_avg', async () => {
     // sog_mu=1.4, l5Sog=[3,3,3,3,3] → l5_avg=3.0 → 1.4 < 0.6*3.0=1.8 → v2AnomalyDetected=true
+    // Use OVER direction with l5=[3,3,3,3,3] and line=2.5 for high consistency (all 5 games >2.5)
     const { mod, data, shots } = loadFreshModule();
-    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'UNDER', edge: -1.5 });
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.5 });
     shots.calcMu.mockReturnValue(3.0); // V1 mu — no V1 anomaly, only V2 anomaly
     data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
     // V2 projection returns sog_mu well below 60% of l5_avg=3.0
@@ -775,8 +801,9 @@ describe('run_nhl_player_shots_model', () => {
 
   test('Test B: edge_over_pp, ev_over, opportunity_score are null when v2 anomaly detected', async () => {
     // Same anomaly scenario — pricing fields must be null even though v2 mock returns non-null values
+    // OVER direction with l5=[3,3,3,3,3] for high consistency so card is created
     const { mod, data, shots } = loadFreshModule();
-    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'UNDER', edge: -1.5 });
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.5 });
     shots.calcMu.mockReturnValue(3.0);
     data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
     shots.projectSogV2.mockReturnValue({
