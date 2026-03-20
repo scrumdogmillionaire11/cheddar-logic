@@ -24,8 +24,13 @@
  * - form-action 'self': Only allow form submissions to same origin
  * - base-uri 'self': Only allow base tag href to same origin
  */
+const cspConnectSrc =
+  process.env.NODE_ENV === 'development'
+    ? "connect-src 'self' https://cloudflareinsights.com http://localhost:8000 http://localhost:8001"
+    : "connect-src 'self' https://cloudflareinsights.com";
+
 export const CONTENT_SECURITY_POLICY =
-  "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; font-src 'self' data:; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'; form-action 'self'; base-uri 'self'";
+  `default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; font-src 'self' data:; ${cspConnectSrc}; frame-ancestors 'none'; form-action 'self'; base-uri 'self'`;
 
 /**
  * HTTP Strict Transport Security header value

@@ -28,6 +28,85 @@ class CaptainSelector:
             return {}
         return summary_by_id.get(player_id) or summary_by_id.get(str(player_id)) or {}
 
+    @staticmethod
+    def _coerce_int(value):
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _candidate_window_row_for_start_gw(self, player) -> Dict:
+        ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
+        start_gw = self._coerce_int(ctx.get("start_gw"))
+        player_id = getattr(player, "player_id", None)
+        player_id = self._coerce_int(player_id)
+        if player_id is None:
+            return {}
+
+        candidate_windows = ctx.get("captain_candidate_windows") or []
+        for window in candidate_windows:
+            if not isinstance(window, dict):
+                continue
+            if self._coerce_int(window.get("player_id")) != player_id:
+                continue
+            upcoming_rows = window.get("upcoming") or []
+            if not isinstance(upcoming_rows, list):
+                return {}
+
+            if start_gw is not None:
+                for row in upcoming_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    if self._coerce_int(row.get("gw")) == start_gw:
+                        return row
+                return {}
+
+            for row in upcoming_rows:
+                if isinstance(row, dict):
+                    return row
+            return {}
+
+        return {}
+
+    def _is_blank_next_gw(self, player) -> bool:
+        summary = self._get_horizon_summary(player)
+        ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
+        start_gw = self._coerce_int(ctx.get("start_gw"))
+        next_bgw_gw = self._coerce_int(summary.get("next_bgw_gw"))
+        if start_gw is not None and next_bgw_gw == start_gw:
+            return True
+
+        tags = getattr(player, "tags", None) or []
+        if isinstance(tags, list) and any(str(tag).lower() == "blank" for tag in tags):
+            return True
+
+        row = self._candidate_window_row_for_start_gw(player)
+        if not row:
+            return False
+        if bool(row.get("is_blank")):
+            return True
+        fixture_count = self._coerce_int(row.get("fixture_count"))
+        return fixture_count == 0
+
+    def _is_double_next_gw(self, player) -> bool:
+        if self._is_blank_next_gw(player):
+            return False
+
+        summary = self._get_horizon_summary(player)
+        ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
+        start_gw = self._coerce_int(ctx.get("start_gw"))
+        next_dgw_gw = self._coerce_int(summary.get("next_dgw_gw"))
+        if start_gw is not None and next_dgw_gw == start_gw:
+            return True
+
+        row = self._candidate_window_row_for_start_gw(player)
+        if not row:
+            return False
+        if bool(row.get("is_double")):
+            return True
+        fixture_count = self._coerce_int(row.get("fixture_count"))
+        return bool(fixture_count is not None and fixture_count >= 2)
+
     def _horizon_captain_adjustment(self, player) -> float:
         """
         DGW/BGW captain adjustment with deterministic caps.
@@ -68,11 +147,14 @@ class CaptainSelector:
             base_score = next_pts + (floor * 0.10)
 
         horizon_adj = self._horizon_captain_adjustment(player)
+        immediate_dgw_bonus = 0.0
+        if self._is_double_next_gw(player):
+            immediate_dgw_bonus = 0.40
         dominance_cap = 0.2 * abs(base_score)
         if dominance_cap <= 0:
-            return base_score
+            return base_score + immediate_dgw_bonus
         capped_adj = self._clamp(horizon_adj, -dominance_cap, dominance_cap)
-        return base_score + capped_adj
+        return base_score + capped_adj + immediate_dgw_bonus
 
     def recommend_captaincy(
         self,
@@ -155,10 +237,14 @@ class CaptainSelector:
         # Enforce captain/vice eligibility: MID/FWD only, minutes >= 60
         eligible = [
             p for p in pool
-            if p.position in ["MID", "FWD"] and getattr(p, "xMins_next", 90) >= 60
+            if (
+                p.position in ["MID", "FWD"]
+                and getattr(p, "xMins_next", 90) >= 60
+                and not self._is_blank_next_gw(p)
+            )
         ]
         if not eligible:
-            eligible = pool
+            eligible = [p for p in pool if not self._is_blank_next_gw(p)]
         eligible = eligible[:3]
 
         if not eligible:

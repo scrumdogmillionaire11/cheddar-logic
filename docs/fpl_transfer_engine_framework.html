@@ -1,0 +1,538 @@
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --green:#1a7a4a;--green-light:#e8f5ee;--green-mid:#2ea86a;
+  --amber:#b45309;--amber-light:#fef3c7;
+  --red:#c0392b;--red-light:#fdecea;
+  --blue:#1a56a4;--blue-light:#e8f0fb;
+  --purple:#5b21b6;--purple-light:#ede9fe;
+  --gray:#4b5563;--gray-light:#f3f4f6;
+  --border:var(--color-border-tertiary);
+  --text:var(--color-text-primary);
+  --muted:var(--color-text-secondary);
+  --bg:var(--color-background-primary);
+  --bg2:var(--color-background-secondary);
+}
+body{font-family:var(--font-sans);color:var(--text);background:transparent;padding:0 0 2rem}
+h1{font-family:'Syne',var(--font-sans);font-size:20px;font-weight:700;letter-spacing:-.3px;margin-bottom:4px}
+.subtitle{font-size:13px;color:var(--muted);margin-bottom:1.5rem}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:1.5rem;overflow-x:auto;flex-wrap:nowrap}
+.tab{padding:8px 14px;font-size:12px;font-weight:500;border:none;background:none;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s,border-color .15s;font-family:inherit}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--green);border-bottom-color:var(--green)}
+.panel{display:none}.panel.active{display:block}
+.section-label{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:1.5rem 0 .75rem;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.card{background:var(--bg);border:0.5px solid var(--border);border-radius:10px;padding:1rem 1.25rem;margin-bottom:.75rem}
+.card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:.5rem}
+.card-title{font-size:14px;font-weight:500}
+.card-sub{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.5}
+.badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;letter-spacing:.04em;white-space:nowrap;flex-shrink:0}
+.badge-must{background:var(--green-light);color:var(--green)}
+.badge-nice{background:var(--amber-light);color:var(--amber)}
+.badge-guard{background:var(--red-light);color:var(--red)}
+.badge-phase{background:var(--blue-light);color:var(--blue)}
+.badge-phase2{background:var(--purple-light);color:var(--purple)}
+.meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:.75rem}
+.meta-item{background:var(--bg2);border-radius:6px;padding:.5rem .75rem}
+.meta-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:2px}
+.meta-val{font-size:12px;color:var(--text);line-height:1.4}
+.formula-block{background:var(--bg2);border-left:3px solid var(--green);border-radius:0 6px 6px 0;padding:.75rem 1rem;margin:.75rem 0;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);line-height:1.8;white-space:pre-wrap}
+.rule-row{display:flex;gap:10px;align-items:flex-start;padding:.5rem 0;border-bottom:0.5px solid var(--border)}
+.rule-row:last-child{border-bottom:none}
+.rule-icon{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;margin-top:1px}
+.rule-icon.hard{background:var(--red-light);color:var(--red)}
+.rule-icon.soft{background:var(--amber-light);color:var(--amber)}
+.rule-icon.ok{background:var(--green-light);color:var(--green)}
+.rule-text{font-size:13px;line-height:1.5}
+.rule-text strong{font-weight:500}
+.horizon-row{display:grid;grid-template-columns:80px 1fr 1fr;gap:10px;padding:.6rem 0;border-bottom:0.5px solid var(--border);align-items:start;font-size:12px}
+.horizon-row:last-child{border-bottom:none}
+.horizon-label{font-weight:600;color:var(--text)}
+.horizon-desc{color:var(--muted);line-height:1.5}
+.horizon-switch{color:var(--blue);line-height:1.5}
+.phase-step{display:flex;gap:14px;margin-bottom:1.25rem;align-items:flex-start}
+.phase-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;margin-top:1px}
+.phase-num.p1{background:var(--green-light);color:var(--green)}
+.phase-num.p2{background:var(--blue-light);color:var(--blue)}
+.phase-num.p3{background:var(--purple-light);color:var(--purple)}
+.phase-body{flex:1}
+.phase-title{font-size:14px;font-weight:500;margin-bottom:4px}
+.phase-items{font-size:12px;color:var(--muted);line-height:1.8}
+.phase-items li{list-style:none;padding-left:12px;position:relative}
+.phase-items li::before{content:'—';position:absolute;left:0;color:var(--border)}
+.accept{background:var(--green-light);border-radius:6px;padding:.5rem .75rem;font-size:12px;color:var(--green);margin-top:.5rem;line-height:1.6}
+.weight-bar-wrap{margin-top:.5rem}
+.weight-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:12px}
+.weight-name{width:160px;flex-shrink:0;color:var(--muted)}
+.weight-bar-bg{flex:1;height:6px;background:var(--bg2);border-radius:3px;overflow:hidden}
+.weight-bar{height:100%;border-radius:3px;background:var(--green-mid)}
+.weight-pct{width:32px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)}
+.strategy-tabs{display:flex;gap:6px;margin-bottom:1rem}
+.strat-btn{padding:5px 14px;font-size:12px;border-radius:20px;border:0.5px solid var(--border);background:none;cursor:pointer;color:var(--muted);font-family:inherit;transition:all .15s}
+.strat-btn.active{background:var(--green);color:#fff;border-color:var(--green)}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:8px;margin-bottom:1rem}
+.kpi-card{background:var(--bg2);border-radius:8px;padding:.75rem;text-align:center}
+.kpi-val{font-size:22px;font-weight:600;font-family:'DM Mono',monospace;color:var(--green);line-height:1.1;margin-bottom:2px}
+.kpi-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.antipattern-row{display:flex;gap:10px;padding:.6rem 0;border-bottom:0.5px solid var(--border);align-items:flex-start}
+.antipattern-row:last-child{border-bottom:none}
+.ap-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.ap-body{font-size:12px;line-height:1.5}
+.ap-name{font-weight:500;color:var(--red);margin-bottom:1px}
+.ap-desc{color:var(--muted)}
+.explain-card{border-left:3px solid var(--green-mid);background:var(--bg2);border-radius:0 8px 8px 0;padding:.75rem 1rem;margin:.5rem 0;font-size:12px;line-height:1.6;color:var(--text)}
+.explain-template{font-family:'DM Mono',monospace;font-size:11px;background:var(--bg);border:0.5px solid var(--border);border-radius:6px;padding:.5rem .75rem;margin-top:.5rem;color:var(--muted);line-height:1.7}
+.scroll-wrap{max-height:480px;overflow-y:auto;padding-right:4px}
+</style>
+
+<h1>FPL Transfer Recommendation Engine</h1>
+<p class="subtitle">Production-ready decision framework — v1.0 spec</p>
+
+<div class="tabs" id="tabs">
+  <button class="tab active" onclick="switchTab('factors')">A · Decision Factors</button>
+  <button class="tab" onclick="switchTab('scoring')">B · Scoring Model</button>
+  <button class="tab" onclick="switchTab('constraints')">C · Constraints</button>
+  <button class="tab" onclick="switchTab('explain')">D · Explainability</button>
+  <button class="tab" onclick="switchTab('validation')">E · Validation</button>
+  <button class="tab" onclick="switchTab('roadmap')">F · Roadmap</button>
+</div>
+
+<!-- PANEL A: Decision Factors -->
+<div class="panel active" id="panel-factors">
+<div class="scroll-wrap">
+  <div class="section-label">Must-Have Factors</div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><div class="card-title">Expected Points (xPts)</div><div class="card-sub">Probability-weighted mean points over target horizon</div></div>
+      <span class="badge badge-must">MUST-HAVE</span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="meta-label">Formula</div><div class="meta-val">xPts = Σ(P(start) × E[pts|started]) per GW</div></div>
+      <div class="meta-item"><div class="meta-label">Source</div><div class="meta-val">FPL API + Opta/Understat fixture xG/xA</div></div>
+      <div class="meta-item"><div class="meta-label">Data Risk</div><div class="meta-val">FPL API lags; injury news not real-time</div></div>
+      <div class="meta-item"><div class="meta-label">Fallback</div><div class="meta-val">Use 90-day rolling avg pts if current-form blank</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><div class="card-title">Value (xPts per £m)</div><div class="card-sub">Efficiency ratio — core to value-first ranking</div></div>
+      <span class="badge badge-must">MUST-HAVE</span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="meta-label">Formula</div><div class="meta-val">Value = xPts_3GW / price_now</div></div>
+      <div class="meta-item"><div class="meta-label">Source</div><div class="meta-val">FPL API price + computed xPts</div></div>
+      <div class="meta-item"><div class="meta-label">Data Risk</div><div class="meta-val">Price changes mid-GW invalidate ratio</div></div>
+      <div class="meta-item"><div class="meta-label">Fallback</div><div class="meta-val">Recalc at deadline; cache with TTL 1hr</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><div class="card-title">Fixture Difficulty Rating (FDR)</div><div class="card-sub">Opponent strength adjusted for H/A, home record, form</div></div>
+      <span class="badge badge-must">MUST-HAVE</span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="meta-label">Formula</div><div class="meta-val">FDR_adj = base_FDR × H/A_factor × opp_form_decay</div></div>
+      <div class="meta-item"><div class="meta-label">Source</div><div class="meta-val">FPL official FDR + derived H/A split stats</div></div>
+      <div class="meta-item"><div class="meta-label">Data Risk</div><div class="meta-val">FPL FDR is notoriously lagged (seasonal reset)</div></div>
+      <div class="meta-item"><div class="meta-label">Fallback</div><div class="meta-val">Use xG against / xGA last 5 as substitute</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><div class="card-title">Minutes / Start Probability</div><div class="card-sub">Probability of 60+ min start; rotation risk score</div></div>
+      <span class="badge badge-must">MUST-HAVE</span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="meta-label">Formula</div><div class="meta-val">P(start) = sigmoid(minutes_pct × injury_decay × news_score)</div></div>
+      <div class="meta-item"><div class="meta-label">Source</div><div class="meta-val">FPL API minutes + press conf NLP + Twitter</div></div>
+      <div class="meta-item"><div class="meta-label">Data Risk</div><div class="meta-val">Manager news often drops <2hrs before deadline</div></div>
+      <div class="meta-item"><div class="meta-label">Fallback</div><div class="meta-val">Apply continuous risk penalty; hard-exclude only explicit unavailable status</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><div class="card-title">Blank / Double Gameweek Flag</div><div class="card-sub">Boolean + magnitude (0 GW, 1 GW, 2 GW) per player</div></div>
+      <span class="badge badge-must">MUST-HAVE</span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="meta-label">Formula</div><div class="meta-val">DGW multiplier = 1.8×; BGW = hard exclusion</div></div>
+      <div class="meta-item"><div class="meta-label">Source</div><div class="meta-val">FPL fixtures API + manual calendar</div></div>
+      <div class="meta-item"><div class="meta-label">Data Risk</div><div class="meta-val">Fixture reschedules &amp; cup replays cause errors</div></div>
+      <div class="meta-item"><div class="meta-label">Fallback</div><div class="meta-val">Alert + flag for manual review; do not auto-exclude</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><div class="card-title">Transfer Cost / Hit Economics</div><div class="card-sub">Net EV vs. cost of -4pt hit; opportunity cost of FT banking</div></div>
+      <span class="badge badge-must">MUST-HAVE</span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="meta-label">Formula</div><div class="meta-val">Hit ROI = (xPts_in − xPts_out − 4) / risk_sd</div></div>
+      <div class="meta-item"><div class="meta-label">Source</div><div class="meta-val">Manager's current squad state + engine xPts</div></div>
+      <div class="meta-item"><div class="meta-label">Data Risk</div><div class="meta-val">No fallback needed — computed internally</div></div>
+      <div class="meta-item"><div class="meta-label">Fallback</div><div class="meta-val">Recommend hit only if ROI &gt; 1.5σ above threshold</div></div>
+    </div>
+  </div>
+
+  <div class="section-label">Nice-to-Have Factors</div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><div class="card-title">Ownership Dynamics (TSB + ∆ ownership)</div><div class="card-sub">Template ownership %, captaincy %, week-on-week delta</div></div>
+      <span class="badge badge-nice">NICE-TO-HAVE</span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="meta-label">Use case</div><div class="meta-val">Differential picks; captaincy lock detection</div></div>
+      <div class="meta-item"><div class="meta-label">Source</div><div class="meta-val">FPL API TSB% + live captain picks pre-deadline</div></div>
+      <div class="meta-item"><div class="meta-label">Fallback</div><div class="meta-val">Omit ownership bonus; flag as "template pick"</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><div class="card-title">Set-Piece / Role Context</div><div class="card-sub">Pen taker, FK, corner order — bonus ceiling multiplier</div></div>
+      <span class="badge badge-nice">NICE-TO-HAVE</span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="meta-label">Use case</div><div class="meta-val">Lifts floor for low-ownership penalty takers</div></div>
+      <div class="meta-item"><div class="meta-label">Source</div><div class="meta-val">SetPieceOrdering.com + manual tagging</div></div>
+      <div class="meta-item"><div class="meta-label">Fallback</div><div class="meta-val">Treat as no set-piece role (multiplier = 1.0)</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><div class="card-title">Team Attack / Defense Strength</div><div class="card-sub">Season-level xG / xGA per 90, rolling last 8 GW</div></div>
+      <span class="badge badge-nice">NICE-TO-HAVE</span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="meta-label">Use case</div><div class="meta-val">Spot teams in form vs. teams on decline</div></div>
+      <div class="meta-item"><div class="meta-label">Source</div><div class="meta-val">FBref / Understat team stats</div></div>
+      <div class="meta-item"><div class="meta-label">Fallback</div><div class="meta-val">Use FPL goals scored/conceded rank as proxy</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><div class="card-title">Variance / Ceiling Profile</div><div class="card-sub">Std dev of pts distribution; haul probability (%)</div></div>
+      <span class="badge badge-nice">NICE-TO-HAVE</span>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="meta-label">Use case</div><div class="meta-val">Risk-mode selection; captain variance vs. floor picks</div></div>
+      <div class="meta-item"><div class="meta-label">Source</div><div class="meta-val">Computed from historical pts distribution</div></div>
+      <div class="meta-item"><div class="meta-label">Fallback</div><div class="meta-val">Use position-level median SD as default</div></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- PANEL B: Scoring Model -->
+<div class="panel" id="panel-scoring">
+<div class="scroll-wrap">
+  <div class="section-label">Strategy Mode</div>
+  <div class="strategy-tabs">
+    <button class="strat-btn active" onclick="setStrat('balanced',this)">Balanced</button>
+    <button class="strat-btn" onclick="setStrat('conservative',this)">Conservative</button>
+    <button class="strat-btn" onclick="setStrat('aggressive',this)">Aggressive</button>
+  </div>
+
+  <div id="weights-display"></div>
+
+  <div class="section-label">Master Scoring Formula</div>
+  <div class="formula-block">TransferScore(p) =
+  w1 × norm(xPts_horizon(p))        // Expected points
++ w2 × norm(value(p))               // Points per £m
++ w3 × norm(fix_quality(p))         // Fixture score
++ w4 × P(start, p)                  // Minutes security
++ w5 × norm(set_piece_bonus(p))     // Role context
+− w6 × norm(ownership_risk(p))      // Differential penalty
++ w7 × norm(DGW_multiplier(p))      // Double GW premium
+− hit_cost_adjusted(n_hits)         // Transfer hit penalty</div>
+
+  <div class="section-label">Form Decay — Anti-Recency Bias</div>
+  <div class="formula-block">// Exponential decay over last N GWs
+form_score(p) = Σ_{i=1}^{N} pts[i] × λ^(N-i)
+
+λ = 0.75  // decay rate (tune per backtest)
+N = 10    // window (not 5 — avoids noise)
+
+// Blend with season baseline
+xPts_adj(p) = α × form_score(p) + (1−α) × season_avg(p)
+α = 0.45  // season avg still carries 55% weight</div>
+
+  <div class="section-label">Value-First Candidate Ranking</div>
+  <div class="formula-block">// Step 1: Hard filter (see Constraints panel)
+candidates = filter_hard_constraints(all_players)
+
+// Step 2: Compute composite EV score
+EV(p)      = xPts_3GW(p)
+EV_price(p) = EV(p) / price(p)
+Ceiling(p) = xPts_3GW(p) + 1.5 × sd_pts(p)
+Floor(p)   = xPts_3GW(p) − 0.75 × sd_pts(p)
+VAdjEV(p)  = EV(p) − risk_aversion × sd_pts(p)
+
+// Step 3: Rank by strategy
+Conservative → sort by Floor(p) DESC
+Balanced     → sort by VAdjEV(p) DESC
+Aggressive   → sort by Ceiling(p) DESC
+Value-first  → sort by EV_price(p) DESC  (primary ranking)</div>
+
+  <div class="section-label">Avoiding Overweighting Short-Term Form</div>
+  <div class="card">
+    <div class="card-title" style="margin-bottom:8px">Guardrails against recency bias</div>
+    <div class="rule-row"><div class="rule-icon ok">✓</div><div class="rule-text">Use λ-decay over 10 GWs, not raw last-5 avg</div></div>
+    <div class="rule-row"><div class="rule-icon ok">✓</div><div class="rule-text">Season baseline (55% weight) anchors the score</div></div>
+    <div class="rule-row"><div class="rule-icon ok">✓</div><div class="rule-text">Fixture quality caps form: high form + BGW = still excluded</div></div>
+    <div class="rule-row"><div class="rule-icon ok">✓</div><div class="rule-text">Variance penalty discounts "one big haul" hot streaks</div></div>
+    <div class="rule-row"><div class="rule-icon ok">✓</div><div class="rule-text">Cap single-factor contribution at 30% of final score</div></div>
+  </div>
+</div>
+</div>
+
+<!-- PANEL C: Constraints -->
+<div class="panel" id="panel-constraints">
+<div class="scroll-wrap">
+  <div class="section-label">Hard Constraints (fail = exclude candidate)</div>
+
+  <div class="card">
+    <div class="rule-row"><div class="rule-icon hard">✕</div><div class="rule-text"><strong>Blank GW exclusion:</strong> P(playing) = 0 → auto-exclude. Do not recommend into blanks.</div></div>
+    <div class="rule-row"><div class="rule-icon soft">!</div><div class="rule-text"><strong>Start probability risk treatment:</strong> remove hard 75% gate. Use a continuous minutes-risk penalty and confidence badge; only hard-exclude explicit unavailable/out statuses.</div></div>
+    <div class="rule-row"><div class="rule-icon hard">✕</div><div class="rule-text"><strong>Budget constraint:</strong> squad_value + transfer_delta ≤ ITB + selling_price. No breach.</div></div>
+    <div class="rule-row"><div class="rule-icon hard">✕</div><div class="rule-text"><strong>Team limit:</strong> ≤ 3 players per club in squad post-transfer.</div></div>
+    <div class="rule-row"><div class="rule-icon hard">✕</div><div class="rule-text"><strong>Injury/unavailability:</strong> status = "Doubtful" or "Out" → exclude. Decay news confidence by 50% after 48hrs without update.</div></div>
+    <div class="rule-row"><div class="rule-icon hard">✕</div><div class="rule-text"><strong>Hit ROI &lt; 1.0:</strong> Never recommend a hit if xPts_in − xPts_out &lt; 4. Block the recommendation.</div></div>
+  </div>
+
+  <div class="section-label">Soft Constraints (warn, don't block)</div>
+
+  <div class="card">
+    <div class="rule-row"><div class="rule-icon soft">!</div><div class="rule-text"><strong>High ownership (TSB &gt; 40%):</strong> Flag as template pick. Reduce differential bonus. Still recommend if EV warrants it.</div></div>
+    <div class="rule-row"><div class="rule-icon soft">!</div><div class="rule-text"><strong>Price rise risk:</strong> Flag if price rose &gt;0.2 in last 3 days. Warn "may be priced in."</div></div>
+    <div class="rule-row"><div class="rule-icon soft">!</div><div class="rule-text"><strong>3+ GW difficult fixture run:</strong> Degrade FDR score but don't exclude if short-horizon xPts still strong.</div></div>
+    <div class="rule-row"><div class="rule-icon soft">!</div><div class="rule-text"><strong>Team without DGW:</strong> If rival candidates have DGW and target doesn't, surface the trade-off in explainability text.</div></div>
+    <div class="rule-row"><div class="rule-icon soft">!</div><div class="rule-text"><strong>Thin squad depth at position:</strong> Warn if bringing in a 3rd player from a club with upcoming injury risk.</div></div>
+  </div>
+
+  <div class="section-label">Time Horizon Logic</div>
+  <div class="card" style="padding:.75rem 1rem">
+    <div class="horizon-row" style="font-weight:600;color:var(--muted);border-bottom:1px solid var(--border)">
+      <div>Horizon</div><div>When to use</div><div>Switch signal</div>
+    </div>
+    <div class="horizon-row">
+      <div class="horizon-label">1 GW</div>
+      <div class="horizon-desc">DGW coming next; captain leverage matters; falling behind rank</div>
+      <div class="horizon-switch">Use if GW has DGW or chip opportunity (WC/FH/TC/BB)</div>
+    </div>
+    <div class="horizon-row">
+      <div class="horizon-label">3 GW</div>
+      <div class="horizon-desc">Default horizon. Balances form and fixture run adequately</div>
+      <div class="horizon-switch">Default. Switch away if chip or DGW window changes equation</div>
+    </div>
+    <div class="horizon-row">
+      <div class="horizon-label">5 GW</div>
+      <div class="horizon-desc">Pre-international break planning; premium asset coverage; chip strategy prep</div>
+      <div class="horizon-switch">Switch to 5 GW if &gt;2 premiums have blank in next 3 GW</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- PANEL D: Explainability -->
+<div class="panel" id="panel-explain">
+<div class="scroll-wrap">
+  <div class="section-label">Explainability Rules</div>
+  <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Every recommendation must surface 2–4 human-readable rationale sentences. Template engine below maps score components to output text.</p>
+
+  <div class="card">
+    <div class="card-title">Transfer In Rationale Template</div>
+    <div class="explain-card">
+      Show: primary driver (highest weighted factor), fixture context, value anchor, and one risk caveat.
+    </div>
+    <div class="explain-template">"{player} is your strongest {horizon}-GW pick at {position}.
+[IF top driver = value]  → "At £{price}m, they offer {ev_price:.1f} pts/£m — {X}% above position average."
+[IF top driver = fixture] → "They face {opp} ({FDR_adj} FDR) {H/A}, one of their easiest runs in {N} GWs."
+[IF DGW]                 → "A double gameweek in GW{X} adds ~{dgw_bonus:.1f} expected pts to their projection."
+[IF set piece]           → "As confirmed pen taker, their ceiling rises to ~{ceiling:.0f} pts over {horizon} GWs."
+[RISK caveat always]     → "Risk: {injury_note / rotation_note / ownership_note}."</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Transfer Out Rationale Template</div>
+    <div class="explain-card">Always justify why we are selling — not just why the target is better. Avoids "they look good" recommendations without context.
+    </div>
+    <div class="explain-template">"{outgoing} ranks {Nth} in your squad by {horizon}-GW xPts.
+[IF blank]     → "They blank in GW{X}, bringing their {horizon}-GW projection down to {xPts:.1f}."
+[IF form drop] → "xPts has declined {pct:.0f}% over the last {N} GWs vs. season average."
+[IF fixture]   → "A run of {FDR} fixtures makes them a low-value hold right now."
+[IF price]     → "Selling now recovers £{sell_price:.1f}m — {delta:.1f}m above target cost."</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Hit Recommendation Template</div>
+    <div class="explain-card">Hits must clear a higher bar. Rationale must show the net EV math explicitly.</div>
+    <div class="explain-template">"Taking a −4pt hit for {player_in} over {player_out}:
+  xPts gain: +{delta_xpts:.1f} over {horizon} GWs
+  Hit cost: −4 pts
+  Net gain: +{net:.1f} pts ({confidence} confidence)
+  Recommended: {YES if net > 4 and ROI > 1.5 else NO}"</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Anti-Pattern Warning Labels</div>
+    <div class="rule-row"><div class="rule-icon soft">!</div><div class="rule-text"><strong>Recency trap:</strong> "Note: {player}'s last-3-GW form is above their season average — score is partially adjusted for regression."</div></div>
+    <div class="rule-row"><div class="rule-icon soft">!</div><div class="rule-text"><strong>Template herd:</strong> "This is a high-ownership pick ({TSB}%). Consider {alt_player} as a lower-ownership alternative with similar xPts."</div></div>
+    <div class="rule-row"><div class="rule-icon hard">✕</div><div class="rule-text"><strong>BGW trap:</strong> "⚠ {player} blanks in GW{X}. They have been excluded from this horizon's ranking."</div></div>
+  </div>
+</div>
+</div>
+
+<!-- PANEL E: Validation -->
+<div class="panel" id="panel-validation">
+<div class="scroll-wrap">
+  <div class="section-label">Primary KPIs</div>
+  <div class="kpi-grid">
+    <div class="kpi-card"><div class="kpi-val">+pts</div><div class="kpi-label">Net GW gain vs. avg manager</div></div>
+    <div class="kpi-card"><div class="kpi-val">ROI</div><div class="kpi-label">Hit return-on-investment</div></div>
+    <div class="kpi-card"><div class="kpi-val">Regret%</div><div class="kpi-label">Rec'd transfers regretted in 3 GWs</div></div>
+    <div class="kpi-card"><div class="kpi-val">Cap%</div><div class="kpi-label">Captain synergy with rec'd picks</div></div>
+  </div>
+
+  <div class="section-label">Offline Backtest Plan</div>
+  <div class="card">
+    <div class="card-title" style="margin-bottom:8px">Dataset: FPL Seasons 2021–2024</div>
+    <div class="rule-row"><div class="rule-icon ok">1</div><div class="rule-text">Simulate all GW decision points with state frozen at deadline − 30min (no look-ahead).</div></div>
+    <div class="rule-row"><div class="rule-icon ok">2</div><div class="rule-text">Run engine recommendations vs. actual results. Score each on: pts gained / pts foregone.</div></div>
+    <div class="rule-row"><div class="rule-icon ok">3</div><div class="rule-text">Measure hit ROI: did recommended hits deliver &gt;4 net pts? Track false positive rate.</div></div>
+    <div class="rule-row"><div class="rule-icon ok">4</div><div class="rule-text">Track "regret rate": how often did the recommended OUT player outperform the IN player in the subsequent 3 GWs?</div></div>
+    <div class="rule-row"><div class="rule-icon ok">5</div><div class="rule-text">Stratify by strategy mode (conservative / balanced / aggressive). Compare rank deltas at season end.</div></div>
+  </div>
+
+  <div class="section-label">A/B Test Plan (Live)</div>
+  <div class="card">
+    <div class="rule-row"><div class="rule-icon ok">A</div><div class="rule-text"><strong>Control:</strong> Current engine (start prob + last-5 form). <strong>Variant:</strong> New scoring model with value-first ranking.</div></div>
+    <div class="rule-row"><div class="rule-icon ok">B</div><div class="rule-text"><strong>Metric primary:</strong> Mean pts/GW delta between arms over 10 GWs (min sample). Secondary: hit ROI, regret%, captain pts.</div></div>
+    <div class="rule-row"><div class="rule-icon ok">C</div><div class="rule-text"><strong>Guardrail:</strong> If variant arm drops &gt;3 rank percentile vs. control in first 5 GWs → auto-revert to control.</div></div>
+    <div class="rule-row"><div class="rule-icon ok">D</div><div class="rule-text"><strong>Assignment:</strong> Split users by manager_id hash. Hold at GW level — don't re-randomize mid-season.</div></div>
+  </div>
+
+  <div class="section-label">Failure Modes / Anti-Patterns</div>
+  <div class="card">
+    <div class="antipattern-row"><div class="ap-icon">🪤</div><div class="ap-body"><div class="ap-name">Recency bias trap</div><div class="ap-desc">Overweighting last 2–3 GW hauls. Fix: λ-decay + season baseline anchor (55% weight)</div></div></div>
+    <div class="antipattern-row"><div class="ap-icon">🐑</div><div class="ap-body"><div class="ap-name">Template herd</div><div class="ap-desc">Always recommending the most-owned player. Fix: ownership penalty in scoring + surface differentials</div></div></div>
+    <div class="antipattern-row"><div class="ap-icon">📉</div><div class="ap-body"><div class="ap-name">Start-prob over-filter</div><div class="ap-desc">Hard thresholds hide rotating value picks. Fix: replace hard gate with continuous minutes-risk penalty + confidence label</div></div></div>
+    <div class="antipattern-row"><div class="ap-icon">📅</div><div class="ap-body"><div class="ap-name">Blank tunnel vision</div><div class="ap-desc">Excluding blank-week players from 3/5 GW view. Fix: exclude from GW score only; include in horizon total</div></div></div>
+    <div class="antipattern-row"><div class="ap-icon">💸</div><div class="ap-body"><div class="ap-name">Hit-happy engine</div><div class="ap-desc">Recommending hits where xPts delta barely clears 4. Fix: require ROI &gt; 1.5 with confidence interval</div></div></div>
+    <div class="antipattern-row"><div class="ap-icon">🔢</div><div class="ap-body"><div class="ap-name">Overfit to last season</div><div class="ap-desc">Weights tuned on 2023 over-index that season's patterns. Fix: rolling 3-year backtest; retune each August</div></div></div>
+  </div>
+</div>
+</div>
+
+<!-- PANEL F: Roadmap -->
+<div class="panel" id="panel-roadmap">
+<div class="scroll-wrap">
+  <div class="section-label">Phased Implementation</div>
+
+  <div class="phase-step">
+    <div class="phase-num p1">1</div>
+    <div class="phase-body">
+      <div class="phase-title">MVP — Value-First Foundation <span class="badge badge-phase" style="margin-left:8px">GW 1–4</span></div>
+      <ul class="phase-items">
+        <li>Implement xPts_3GW with λ-decay (replace raw last-5 avg)</li>
+        <li>Add EV/price ratio as primary sort key</li>
+        <li>Replace hard 75% start-probability gate with continuous minutes-risk penalty + confidence badge output</li>
+        <li>BGW hard exclusion + DGW 1.8× multiplier (already tracked)</li>
+        <li>Hit ROI gate: block if xPts delta &lt; 4</li>
+        <li>Explainability: 2-sentence rationale per recommendation</li>
+      </ul>
+      <div class="accept">✓ Acceptance: Backtest shows &gt;+2 net pts/GW vs. control; hit ROI &gt; 1.0 on 70%+ of recommended hits; regret rate &lt; 35%</div>
+    </div>
+  </div>
+
+  <div class="phase-step">
+    <div class="phase-num p2">2</div>
+    <div class="phase-body">
+      <div class="phase-title">v2 — Scoring Ensemble + Strategy Modes <span class="badge badge-phase2" style="margin-left:8px">GW 5–12</span></div>
+      <ul class="phase-items">
+        <li>Build full TransferScore weighted model with per-strategy weight profiles</li>
+        <li>Add variance / ceiling / floor metrics per player</li>
+        <li>Integrate set-piece tagging (SetPieceOrdering.com API or manual)</li>
+        <li>Ownership dynamics: TSB% delta, differential bonus, captain herd detection</li>
+        <li>Time horizon selector: 1 / 3 / 5 GW with auto-switch logic</li>
+        <li>Full explainability engine: 4-sentence rationale + risk caveat</li>
+        <li>A/B test framework instrumented; first live experiment launched</li>
+      </ul>
+      <div class="accept">✓ Acceptance: Strategy modes produce statistically distinct recommendations; live A/B shows variant arm ≥ control on net pts after 8 GWs; zero hit recommendations with ROI &lt; 1.0</div>
+    </div>
+  </div>
+
+  <div class="phase-step">
+    <div class="phase-num p3">3</div>
+    <div class="phase-body">
+      <div class="phase-title">v3 — Ensemble ML + Real-Time Signals <span class="badge badge-phase2" style="margin-left:8px">GW 13+</span></div>
+      <ul class="phase-items">
+        <li>Train gradient-boosted ensemble on 3 seasons of backtest data</li>
+        <li>Add real-time injury/news feed (Twitter/official FPL feed NLP)</li>
+        <li>Chip strategy integration: WC/FH/TC/BB timing recommendations</li>
+        <li>Rank trajectory modeling: project OR% impact of each transfer</li>
+        <li>Personalization: manager-specific risk tolerance from historical hit behavior</li>
+        <li>Captain + vice captain synergy scoring with transfer recs</li>
+      </ul>
+      <div class="accept">✓ Acceptance: Model outperforms rule-based v2 on holdout season by &gt;+3 pts/GW avg; regret rate &lt; 25%; live OR% improvement measurable vs. baseline cohort</div>
+    </div>
+  </div>
+
+  <div class="section-label">Engineering Handoff Checklist</div>
+  <div class="card">
+    <div class="rule-row"><div class="rule-icon ok">✓</div><div class="rule-text">All formulas in Panel B are code-ready. Map each to a pure function: <code>compute_xpts(player_id, horizon, gw)</code>, <code>value_score(player_id)</code>, etc.</div></div>
+    <div class="rule-row"><div class="rule-icon ok">✓</div><div class="rule-text">Hard constraints in Panel C map directly to <code>filter_candidates(squad_state)</code> with explicit boolean returns per rule.</div></div>
+    <div class="rule-row"><div class="rule-icon ok">✓</div><div class="rule-text">Explainability templates in Panel D are string-interpolation ready; each token maps to a computed field.</div></div>
+    <div class="rule-row"><div class="rule-icon ok">✓</div><div class="rule-text">KPIs in Panel E map to event logs: <code>transfer_recommended</code>, <code>transfer_taken</code>, <code>gw_pts_delta</code>, <code>hit_taken</code>.</div></div>
+    <div class="rule-row"><div class="rule-icon ok">✓</div><div class="rule-text">Each phase has explicit acceptance criteria suitable for sprint definition-of-done.</div></div>
+  </div>
+</div>
+</div>
+
+<script>
+const weights = {
+  balanced:     [{n:'Expected Points (xPts)',w:28},{n:'Value (xPts/£m)',w:22},{n:'Fixture Quality',w:18},{n:'Start Probability',w:14},{n:'DGW Multiplier',w:10},{n:'Set Piece Role',w:5},{n:'Ownership Diff.',w:3}],
+  conservative: [{n:'Start Probability',w:30},{n:'Expected Points (xPts)',w:25},{n:'Fixture Quality',w:20},{n:'Value (xPts/£m)',w:12},{n:'DGW Multiplier',w:8},{n:'Set Piece Role',w:3},{n:'Ownership Diff.',w:2}],
+  aggressive:   [{n:'Ceiling / Haul Prob.',w:28},{n:'DGW Multiplier',w:20},{n:'Expected Points (xPts)',w:18},{n:'Value (xPts/£m)',w:14},{n:'Fixture Quality',w:10},{n:'Ownership Diff.',w:7},{n:'Set Piece Role',w:3}]
+};
+
+function renderWeights(mode) {
+  const ws = weights[mode];
+  let html = '<div class="weight-bar-wrap">';
+  ws.forEach(w => {
+    html += `<div class="weight-row">
+      <span class="weight-name">${w.n}</span>
+      <div class="weight-bar-bg"><div class="weight-bar" style="width:${w.w*3}px;max-width:100%"></div></div>
+      <span class="weight-pct">${w.w}%</span>
+    </div>`;
+  });
+  html += '</div>';
+  document.getElementById('weights-display').innerHTML = html;
+}
+
+function setStrat(mode, btn) {
+  document.querySelectorAll('.strat-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderWeights(mode);
+}
+
+function switchTab(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-'+id).classList.add('active');
+  event.target.classList.add('active');
+}
+
+renderWeights('balanced');
+</script>

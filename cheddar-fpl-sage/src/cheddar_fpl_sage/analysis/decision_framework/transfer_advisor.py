@@ -57,6 +57,38 @@ class TransferAdvisor:
             return ""
         return str(team).strip().upper()
 
+    @staticmethod
+    def _coerce_float(value: Any) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _candidate_has_availability_concern(self, candidate: Any) -> bool:
+        if bool(getattr(candidate, "is_injury_risk", False)):
+            return True
+
+        xmins = self._coerce_float(getattr(candidate, "xMins_next", None))
+        if xmins is not None and xmins < 60:
+            return True
+
+        status_raw = (
+            getattr(candidate, "status_flag", None)
+            or getattr(candidate, "status", None)
+            or ""
+        )
+        status_norm = str(status_raw).strip().upper()
+        if status_norm in {"OUT", "DOUBT", "D", "SUSPENDED", "INJURED"}:
+            return True
+
+        chance_next = self._coerce_float(getattr(candidate, "chance_of_playing_next_round", None))
+        if chance_next is None:
+            chance_next = self._coerce_float(getattr(candidate, "chance_of_playing_this_round", None))
+        if chance_next is not None and chance_next < 85:
+            return True
+
+        return False
+
     def _normalize_team_name(self, team: Any) -> str:
         raw = self._normalize_team_key(team)
         if not raw:
@@ -120,6 +152,47 @@ class TransferAdvisor:
             return {}
         return summary_by_id.get(candidate_id) or summary_by_id.get(str(candidate_id)) or {}
 
+    @staticmethod
+    def _coerce_int(value: Any) -> int | None:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _candidate_window_row_for_start_gw(self, candidate: Any) -> Dict[str, Any]:
+        ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
+        start_gw = self._coerce_int(ctx.get("start_gw"))
+        candidate_id = self._coerce_player_id(getattr(candidate, "player_id", None))
+        if candidate_id is None:
+            return {}
+
+        candidate_windows = ctx.get("candidate_player_windows") or []
+        for window in candidate_windows:
+            if not isinstance(window, dict):
+                continue
+            pid = self._coerce_player_id(window.get("player_id"))
+            if pid != candidate_id:
+                continue
+            upcoming_rows = window.get("upcoming") or []
+            if not isinstance(upcoming_rows, list):
+                return {}
+
+            if start_gw is not None:
+                for row in upcoming_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    row_gw = self._coerce_int(row.get("gw"))
+                    if row_gw == start_gw:
+                        return row
+                return {}
+
+            for row in upcoming_rows:
+                if isinstance(row, dict):
+                    return row
+            return {}
+
+        return {}
+
     def _horizon_transfer_adjustment(self, candidate: Any) -> float:
         """
         DGW/BGW transfer adjustment with deterministic caps.
@@ -156,50 +229,45 @@ class TransferAdvisor:
             return True
 
         ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
-        start_gw = ctx.get("start_gw")
-        try:
-            start_gw = int(start_gw) if start_gw is not None else None
-        except (TypeError, ValueError):
-            start_gw = None
+        start_gw = self._coerce_int(ctx.get("start_gw"))
 
         summary = self._get_horizon_summary(candidate)
-        next_bgw_gw = summary.get("next_bgw_gw")
-        try:
-            next_bgw_gw = int(next_bgw_gw) if next_bgw_gw is not None else None
-        except (TypeError, ValueError):
-            next_bgw_gw = None
+        next_bgw_gw = self._coerce_int(summary.get("next_bgw_gw"))
         if start_gw is not None and next_bgw_gw == start_gw:
             return True
 
-        candidate_windows = ctx.get("candidate_player_windows") or []
-        for window in candidate_windows:
-            if not isinstance(window, dict):
-                continue
-            pid = self._coerce_player_id(window.get("player_id"))
-            if pid != self._coerce_player_id(candidate_id):
-                continue
-            for row in window.get("upcoming") or []:
-                if not isinstance(row, dict):
-                    continue
-                row_gw = row.get("gw")
-                try:
-                    row_gw = int(row_gw) if row_gw is not None else None
-                except (TypeError, ValueError):
-                    row_gw = None
-                if start_gw is not None and row_gw is not None and row_gw != start_gw:
-                    continue
-                if bool(row.get("is_blank")):
-                    return True
-                fixture_count = row.get("fixture_count")
-                try:
-                    fixture_count = int(fixture_count) if fixture_count is not None else None
-                except (TypeError, ValueError):
-                    fixture_count = None
-                if fixture_count == 0:
-                    return True
-            break
+        row = self._candidate_window_row_for_start_gw(candidate)
+        if row:
+            if bool(row.get("is_blank")):
+                return True
+            fixture_count = self._coerce_int(row.get("fixture_count"))
+            if fixture_count == 0:
+                return True
 
         return False
+
+    def _is_double_next_gw(self, candidate: Any) -> bool:
+        """Return True when candidate has a true immediate next GW double."""
+        if self._is_blank_next_gw(candidate):
+            return False
+
+        ctx = self.fixture_horizon_context if isinstance(self.fixture_horizon_context, dict) else {}
+        start_gw = self._coerce_int(ctx.get("start_gw"))
+
+        summary = self._get_horizon_summary(candidate)
+        next_dgw_gw = self._coerce_int(summary.get("next_dgw_gw"))
+        if start_gw is not None and next_dgw_gw == start_gw:
+            return True
+
+        row = self._candidate_window_row_for_start_gw(candidate)
+        if not row:
+            return False
+
+        if bool(row.get("is_double")):
+            return True
+
+        fixture_count = self._coerce_int(row.get("fixture_count"))
+        return bool(fixture_count is not None and fixture_count >= 2)
 
     def _required_gain(self, context_mode: str, free_transfers: int = 1) -> float:
         """Calculate required gain threshold with FT multiplier."""
@@ -261,11 +329,15 @@ class TransferAdvisor:
             )
 
         horizon_adj = self._horizon_transfer_adjustment(candidate)
+        immediate_dgw_bonus = 0.0
+        if self._is_double_next_gw(candidate):
+            # Prioritize immediate doubles without overwhelming baseline quality.
+            immediate_dgw_bonus = 0.45
         dominance_cap = 0.2 * abs(base_score)
         if dominance_cap <= 0:
-            return base_score
+            return base_score + immediate_dgw_bonus
         capped_adj = self._clamp(horizon_adj, -dominance_cap, dominance_cap)
-        return base_score + capped_adj
+        return base_score + capped_adj + immediate_dgw_bonus
 
     def _build_strategy_paths(
         self,
@@ -355,7 +427,7 @@ class TransferAdvisor:
                     continue
                 if candidate.current_price > (starter_proj.current_price + bank_value + 0.5):
                     continue
-                if candidate.is_injury_risk or candidate.xMins_next < 60:
+                if self._candidate_has_availability_concern(candidate):
                     continue
                 viable.append(candidate)
             diagnostics["strategy_alternatives_considered"] += len(viable)
@@ -588,16 +660,14 @@ class TransferAdvisor:
                 and self._is_team_limit_legal(team_counts, starter.get("team"), p.team)
                 and not self._is_blank_next_gw(p)
                 and p.current_price <= (starter_proj.current_price + bank_value + 0.5)
-                and not p.is_injury_risk
-                and p.xMins_next >= 60
+                and not self._candidate_has_availability_concern(p)
             ]
             total_position_pool = [
                 p for p in projections.get_by_position(starter.get("position"))
                 if p.player_id != starter_proj.player_id
                 and p.player_id not in squad_player_ids
                 and p.current_price <= (starter_proj.current_price + bank_value + 0.5)
-                and not p.is_injury_risk
-                and p.xMins_next >= 60
+                and not self._candidate_has_availability_concern(p)
             ]
             diagnostics["near_threshold_team_limit_filtered"] += max(0, len(total_position_pool) - len(alternatives))
             if not alternatives:
@@ -1047,7 +1117,7 @@ class TransferAdvisor:
                     continue
                 if candidate.player_id in recommended_in_ids:
                     continue
-                if candidate.is_injury_risk or candidate.xMins_next < 60:
+                if self._candidate_has_availability_concern(candidate):
                     continue
                 if self._is_blank_next_gw(candidate):
                     continue
@@ -1157,7 +1227,7 @@ class TransferAdvisor:
                     continue
                 if candidate.nextGW_pts < player_proj.nextGW_pts - 0.5:
                     continue
-                if candidate.is_injury_risk or candidate.xMins_next < 60:
+                if self._candidate_has_availability_concern(candidate):
                     continue
                 if self._is_blank_next_gw(candidate):
                     continue
@@ -1648,7 +1718,7 @@ class TransferAdvisor:
                     continue
                 if candidate.nextGW_pts < player_proj.nextGW_pts + MIN_UPGRADE_GAIN:
                     continue
-                if candidate.is_injury_risk or candidate.xMins_next < 60:
+                if self._candidate_has_availability_concern(candidate):
                     continue
                 if self._is_blank_next_gw(candidate):
                     continue
@@ -1659,28 +1729,32 @@ class TransferAdvisor:
             if not viable_upgrades:
                 continue
 
-            # Provide strategic alternatives: best value AND best premium option
+            # Build strategic alternatives while choosing primary by strategy score
+            ranked_by_strategy = sorted(
+                viable_upgrades,
+                key=lambda x: self._score_candidate_for_strategy(x, strategy_mode),
+                reverse=True,
+            )
+            best_strategy = ranked_by_strategy[0]
+
             viable_upgrades.sort(key=lambda x: x.points_per_million, reverse=True)
             best_value = viable_upgrades[0]
-            
-            # Best premium option (highest raw points)
+
             viable_upgrades.sort(key=lambda x: x.nextGW_pts, reverse=True)
             best_premium = viable_upgrades[0]
-            
-            # If they're the same player, find second-best premium
             if best_premium.player_id == best_value.player_id and len(viable_upgrades) > 1:
                 best_premium = viable_upgrades[1]
-            
-            # Build strategic options list
-            strategic_options = [best_value]
-            if best_premium.player_id != best_value.player_id:
-                strategic_options.append(best_premium)
-            
-            # Add one more balanced option if available
-            if len(viable_upgrades) > 2:
-                for p in viable_upgrades:
-                    if p.player_id not in [best_value.player_id, best_premium.player_id]:
-                        strategic_options.append(p)
+
+            strategic_options = [best_strategy]
+            for option in (best_value, best_premium):
+                if option.player_id not in [p.player_id for p in strategic_options]:
+                    strategic_options.append(option)
+
+            if len(strategic_options) < 3:
+                for candidate in ranked_by_strategy[1:]:
+                    if candidate.player_id not in [p.player_id for p in strategic_options]:
+                        strategic_options.append(candidate)
+                    if len(strategic_options) >= 3:
                         break
 
             gain = strategic_options[0].nextGW_pts - player_proj.nextGW_pts
