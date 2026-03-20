@@ -16,9 +16,27 @@ const JOB_NAME = 'pull_soccer_xg_stats';
 const PYTHON_BIN = process.env.SOCCER_XG_PYTHON_BIN || process.env.PYTHON_BIN || 'python3';
 
 const LEAGUE_CONFIG = [
-  { league: 'EPL', fbrefLeague: 'ENG-Premier League' },
-  { league: 'MLS', fbrefLeague: 'USA-Major League Soccer' },
-  { league: 'UCL', fbrefLeague: 'UEFA Champions League' },
+  {
+    league: 'EPL',
+    fbrefCandidates: ['ENG-Premier League', 'Premier League'],
+  },
+  {
+    league: 'MLS',
+    fbrefCandidates: [
+      'USA-Major League Soccer',
+      'United States Major League Soccer',
+      'Major League Soccer',
+      'MLS',
+    ],
+  },
+  {
+    league: 'UCL',
+    fbrefCandidates: [
+      'UEFA Champions League',
+      'INT-Champions League',
+      'Champions League',
+    ],
+  },
 ];
 
 function normalizeTeamName(name) {
@@ -33,6 +51,89 @@ function getCacheDateEt() {
   return DateTime.now()
     .setZone(process.env.TZ || 'America/New_York')
     .toISODate();
+}
+
+function normalizeLeagueToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function parseValidLeaguesFromErrorMessage(message) {
+  const text = String(message || '');
+  const marker = 'Valid leagues are:';
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex < 0) return [];
+
+  const bracketStart = text.indexOf('[', markerIndex);
+  const bracketEnd = text.indexOf(']', bracketStart);
+  if (bracketStart < 0 || bracketEnd < 0 || bracketEnd <= bracketStart) {
+    return [];
+  }
+
+  const body = text.slice(bracketStart + 1, bracketEnd);
+  return body
+    .split(',')
+    .map((token) => token.trim().replace(/^['"]+|['"]+$/g, ''))
+    .filter(Boolean);
+}
+
+function chooseSupportedFbrefLeague(candidates, validLeagues, previousAttempt = null) {
+  const normalizedPrevious = normalizeLeagueToken(previousAttempt);
+  const candidateList = Array.isArray(candidates)
+    ? candidates.filter((entry) => String(entry || '').trim().length > 0)
+    : [];
+  if (candidateList.length === 0) return null;
+
+  if (!Array.isArray(validLeagues) || validLeagues.length === 0) {
+    const first = candidateList.find(
+      (candidate) => normalizeLeagueToken(candidate) !== normalizedPrevious,
+    );
+    return first || null;
+  }
+
+  const normalizedValid = new Map();
+  for (const valid of validLeagues) {
+    normalizedValid.set(normalizeLeagueToken(valid), valid);
+  }
+
+  for (const candidate of candidateList) {
+    const normalizedCandidate = normalizeLeagueToken(candidate);
+    if (!normalizedCandidate || normalizedCandidate === normalizedPrevious) continue;
+    if (normalizedValid.has(normalizedCandidate)) {
+      return normalizedValid.get(normalizedCandidate);
+    }
+  }
+
+  return null;
+}
+
+function summarizeLeagueFetchError(errorMessage, fbrefLeague) {
+  let message = String(errorMessage || '').replace(/\s+/g, ' ').trim();
+  try {
+    const parsed = JSON.parse(String(errorMessage || ''));
+    if (parsed && typeof parsed.error === 'string') {
+      message = parsed.error;
+    }
+  } catch {
+    // no-op
+  }
+
+  const validLeagues = parseValidLeaguesFromErrorMessage(message);
+  const chosenLeague = String(fbrefLeague || '').trim();
+
+  if (validLeagues.length > 0 && chosenLeague) {
+    return `unsupported league "${chosenLeague}" for installed soccerdata; valid leagues=${validLeagues.join(', ')}`;
+  }
+
+  const importPrefix = 'IMPORT_ERROR:';
+  if (message.includes(importPrefix)) {
+    return `python dependency missing (${message.split(importPrefix)[1] || message})`;
+  }
+
+  return message;
 }
 
 function runSoccerDataFetch({ fbrefLeague, season }) {
@@ -151,7 +252,19 @@ print(json.dumps(rows))
   }
 
   if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || '').trim() || `python exited ${result.status}`);
+    const stdoutText = (result.stdout || '').trim();
+    const stderrText = (result.stderr || '').trim();
+    if (stdoutText) {
+      try {
+        const parsed = JSON.parse(stdoutText);
+        if (parsed && typeof parsed.error === 'string') {
+          throw new Error(parsed.error);
+        }
+      } catch {
+        // stdout was not parseable JSON, fall through to generic handling
+      }
+    }
+    throw new Error((stderrText || stdoutText || '').trim() || `python exited ${result.status}`);
   }
 
   const raw = (result.stdout || '').trim();
@@ -195,6 +308,7 @@ async function pullSoccerXgStats({ jobKey = null, dryRun = false } = {}) {
     const season = Number(process.env.SOCCER_XG_SEASON || getCurrentSeasonYear());
     const fetchedAt = new Date().toISOString();
     const cacheDate = getCacheDateEt();
+    let knownValidLeagues = null;
 
     let rowsUpserted = 0;
     const leagueSummaries = [];
@@ -202,23 +316,101 @@ async function pullSoccerXgStats({ jobKey = null, dryRun = false } = {}) {
     try {
       for (const leagueConfig of LEAGUE_CONFIG) {
         let leagueRows = [];
+        const candidateLeagues = Array.isArray(leagueConfig.fbrefCandidates)
+          ? leagueConfig.fbrefCandidates
+          : [leagueConfig.fbrefLeague].filter(Boolean);
+        let selectedFbrefLeague = chooseSupportedFbrefLeague(
+          candidateLeagues,
+          knownValidLeagues,
+        );
 
-        try {
-          leagueRows = runSoccerDataFetch({
-            fbrefLeague: leagueConfig.fbrefLeague,
-            season,
-          });
-        } catch (error) {
+        if (!selectedFbrefLeague) {
+          const warning = 'unsupported by installed soccerdata adapter';
           console.warn(
-            `[${JOB_NAME}] WARNING: FBref unavailable for ${leagueConfig.league} (${error.message}) — fail-open`,
+            `[${JOB_NAME}] WARNING: FBref unavailable for ${leagueConfig.league} (${warning}) — fail-open`,
           );
           leagueSummaries.push({
             league: leagueConfig.league,
+            fbrefLeague: null,
             fetched: 0,
             upserted: 0,
-            warning: error.message,
+            warning,
           });
           continue;
+        }
+
+        try {
+          leagueRows = runSoccerDataFetch({
+            fbrefLeague: selectedFbrefLeague,
+            season,
+          });
+        } catch (error) {
+          const validLeagues = parseValidLeaguesFromErrorMessage(error.message);
+          if (validLeagues.length > 0) {
+            knownValidLeagues = validLeagues;
+            const retryLeague = chooseSupportedFbrefLeague(
+              candidateLeagues,
+              knownValidLeagues,
+              selectedFbrefLeague,
+            );
+            if (retryLeague) {
+              try {
+                selectedFbrefLeague = retryLeague;
+                leagueRows = runSoccerDataFetch({
+                  fbrefLeague: selectedFbrefLeague,
+                  season,
+                });
+              } catch (retryError) {
+                const warning = summarizeLeagueFetchError(
+                  retryError.message,
+                  selectedFbrefLeague,
+                );
+                console.warn(
+                  `[${JOB_NAME}] WARNING: FBref unavailable for ${leagueConfig.league} (${warning}) — fail-open`,
+                );
+                leagueSummaries.push({
+                  league: leagueConfig.league,
+                  fbrefLeague: selectedFbrefLeague,
+                  fetched: 0,
+                  upserted: 0,
+                  warning,
+                });
+                continue;
+              }
+            } else {
+              const warning = summarizeLeagueFetchError(
+                error.message,
+                selectedFbrefLeague,
+              );
+              console.warn(
+                `[${JOB_NAME}] WARNING: FBref unavailable for ${leagueConfig.league} (${warning}) — fail-open`,
+              );
+              leagueSummaries.push({
+                league: leagueConfig.league,
+                fbrefLeague: selectedFbrefLeague,
+                fetched: 0,
+                upserted: 0,
+                warning,
+              });
+              continue;
+            }
+          } else {
+            const warning = summarizeLeagueFetchError(
+              error.message,
+              selectedFbrefLeague,
+            );
+            console.warn(
+              `[${JOB_NAME}] WARNING: FBref unavailable for ${leagueConfig.league} (${warning}) — fail-open`,
+            );
+            leagueSummaries.push({
+              league: leagueConfig.league,
+              fbrefLeague: selectedFbrefLeague,
+              fetched: 0,
+              upserted: 0,
+              warning,
+            });
+            continue;
+          }
         }
 
         let leagueUpserts = 0;
@@ -241,12 +433,13 @@ async function pullSoccerXgStats({ jobKey = null, dryRun = false } = {}) {
 
         leagueSummaries.push({
           league: leagueConfig.league,
+          fbrefLeague: selectedFbrefLeague,
           fetched: leagueRows.length,
           upserted: leagueUpserts,
         });
 
         console.log(
-          `[${JOB_NAME}] ${leagueConfig.league}: fetched=${leagueRows.length}, upserted=${leagueUpserts}`,
+          `[${JOB_NAME}] ${leagueConfig.league}: fbref="${selectedFbrefLeague}" fetched=${leagueRows.length}, upserted=${leagueUpserts}`,
         );
       }
 
@@ -288,4 +481,7 @@ module.exports = {
   runSoccerDataFetch,
   normalizeTeamName,
   getCacheDateEt,
+  parseValidLeaguesFromErrorMessage,
+  chooseSupportedFbrefLeague,
+  summarizeLeagueFetchError,
 };

@@ -171,10 +171,10 @@ const soccerPayloadSchema = basePayloadSchema.extend({
 });
 
 // ============================================================================
-// Ohio soccer scope validator (soccer-ohio-scope cardType)
+// Soccer scope validator (soccer cardType)
 // ============================================================================
 
-const OHIO_CANONICAL_KEYS = [
+const SOCCER_CANONICAL_KEYS = [
   'player_shots',
   'team_totals',
   'to_score_or_assist',
@@ -185,9 +185,9 @@ const OHIO_CANONICAL_KEYS = [
 
 const PLACEHOLDER_STRINGS = new Set(['unknown', 'tbd', 'n/a', '']);
 
-const soccerOhioScopeSchema = z
+const soccerScopeSchema = z
   .object({
-    canonical_market_key: z.enum(OHIO_CANONICAL_KEYS),
+    canonical_market_key: z.enum(SOCCER_CANONICAL_KEYS),
     market_family: z.enum(['tier1', 'tier2']),
     sport: z.literal('SOCCER'),
     game_id: z.string().min(1),
@@ -360,8 +360,15 @@ const ahProbabilitiesSchema = z.object({
 function buildSoccerAsianHandicapSchema(expectedSide, expectedCanonicalKey) {
   return z
     .object({
+      kind: z.literal('PLAY'),
       sport: z.literal('SOCCER'),
       game_id: z.string().min(1),
+      recommended_bet_type: z.literal('spread'),
+      prediction: z.enum(['HOME', 'AWAY']),
+      selection: z.object({
+        side: z.enum(['HOME', 'AWAY']),
+        team: z.string().min(1).nullable(),
+      }),
       home_team: z.string().min(1).nullable(),
       away_team: z.string().min(1).nullable(),
       generated_at: isoDateString,
@@ -384,6 +391,21 @@ function buildSoccerAsianHandicapSchema(expectedSide, expectedCanonicalKey) {
     })
     .passthrough()
     .superRefine((payload, ctx) => {
+      if (payload.selection?.side !== payload.side) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['selection', 'side'],
+          message: 'selection.side must match side',
+        });
+      }
+      if (payload.prediction !== payload.side) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['prediction'],
+          message: 'prediction must match side',
+        });
+      }
+
       if (payload.pass_reason === null) {
         if (payload.line === null) {
           ctx.addIssue({
@@ -478,7 +500,7 @@ const schemaByCardType = {
 
   // Active single-card model output jobs
   'soccer-model-output': soccerPayloadSchema,
-  'soccer': soccerOhioScopeSchema,
+  'soccer': soccerScopeSchema,
   'soccer_ml': soccerMlSchema,
   'soccer_game_total': soccerGameTotalSchema,
   'soccer_double_chance': soccerDoubleChanceSchema,

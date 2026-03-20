@@ -32,9 +32,11 @@ assert(
 
 assert(
   source.includes('const rawDrivers = game.plays') &&
-    source.includes('.filter((play) => isPlayItem(play, game.sport))') &&
+    source.includes(
+      ".filter((play) => isPlayItem(play, game.sport) && play.market_type !== 'PROP')",
+    ) &&
     source.includes('.map(playToDriver)'),
-  'transform should only convert PLAY items into drivers',
+  'transform should only convert non-PROP PLAY items into game-mode drivers',
 );
 
 assert(
