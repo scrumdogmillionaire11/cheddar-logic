@@ -1133,4 +1133,227 @@ describe('run_nhl_player_shots_model', () => {
       expect.objectContaining({ toi_proj_pp: 0 }),
     );
   });
+
+  // --- WI-0529: prop_display_state decision layer ---
+
+  test('WI-0529 Test A: v2AnomalyDetected=true → payloadData.prop_display_state = PROJECTION_ONLY', async () => {
+    // sog_mu=1.4 < 0.6 * l5_avg(3.0)=1.8 → v2AnomalyDetected=true → PROJECTION_ONLY
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.5 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 1.4,
+      sog_sigma: 1.2,
+      toi_proj: 20,
+      shot_rate_ev_per60: 4.2,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 0.9,
+      role_stability: 'HIGH',
+      trend_score: -0.1,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: null,
+      edge_under_pp: null,
+      ev_over: null,
+      ev_under: null,
+      opportunity_score: null,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'pds-test-a-01' })],
+      players: [buildPlayer({ player_id: 8001, player_name: 'PDS Player A' })],
+      playerLogs: buildGamesFromShots([3, 3, 3, 3, 3]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_display_state).toBe('PROJECTION_ONLY');
+  });
+
+  test('WI-0529 Test B: isOddsBacked=false (v2OpportunityScore=null, no anomaly) → prop_display_state = PROJECTION_ONLY', async () => {
+    // No real line, no odds → isOddsBacked=false → v2OpportunityScore=null → PROJECTION_ONLY
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    // No prop line → isOddsBacked=false
+    data.getPlayerPropLine.mockReturnValue(null);
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.0,
+      sog_sigma: 1.79,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.0,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: null,
+      market_price_under: null,
+      edge_over_pp: null,
+      edge_under_pp: null,
+      ev_over: null,
+      ev_under: null,
+      opportunity_score: null,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'pds-test-b-01' })],
+      players: [buildPlayer({ player_id: 8002, player_name: 'PDS Player B' })],
+      playerLogs: buildGamesFromShots([3, 3, 3, 3, 3]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_display_state).toBe('PROJECTION_ONLY');
+  });
+
+  test('WI-0529 Test C: no anomaly + v2OpportunityScore=0.3 (> 0) → prop_display_state = PLAY', async () => {
+    // sog_mu=3.0 >= 0.6*3.0=1.8, opportunity_score=0.3 > 0 → PLAY
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.5 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.0,
+      sog_sigma: 1.2,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.0,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.08,
+      edge_under_pp: -0.08,
+      ev_over: 0.06,
+      ev_under: -0.06,
+      opportunity_score: 0.3,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'pds-test-c-01' })],
+      players: [buildPlayer({ player_id: 8003, player_name: 'PDS Player C' })],
+      playerLogs: buildGamesFromShots([3, 3, 3, 3, 3]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_display_state).toBe('PLAY');
+  });
+
+  test('WI-0529 Test D: no anomaly + v2OpportunityScore=0 (not > 0) → prop_display_state = WATCH', async () => {
+    // opportunity_score=0 is not > 0 → WATCH
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.0,
+      sog_sigma: 1.2,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.0,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0,
+      edge_under_pp: 0,
+      ev_over: 0,
+      ev_under: 0,
+      opportunity_score: 0,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'pds-test-d-01' })],
+      players: [buildPlayer({ player_id: 8004, player_name: 'PDS Player D' })],
+      playerLogs: buildGamesFromShots([3, 3, 3, 3, 3]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_display_state).toBe('WATCH');
+  });
+
+  test('WI-0529 Test E: no anomaly + v2OpportunityScore=-0.1 (< 0) → prop_display_state = WATCH', async () => {
+    // opportunity_score=-0.1 < 0 → WATCH
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.0,
+      sog_sigma: 1.2,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.0,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: -0.05,
+      edge_under_pp: 0.05,
+      ev_over: -0.03,
+      ev_under: 0.03,
+      opportunity_score: -0.1,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'pds-test-e-01' })],
+      players: [buildPlayer({ player_id: 8005, player_name: 'PDS Player E' })],
+      playerLogs: buildGamesFromShots([3, 3, 3, 3, 3]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_display_state).toBe('WATCH');
+  });
 });
