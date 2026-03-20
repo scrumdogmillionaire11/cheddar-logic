@@ -2235,14 +2235,19 @@ class FPLSageIntegration:
                 team_name = f"Team {team_id}" if team_id is not None else "UNK"
 
             fixture_info = fixture_lookup.get(team_id)
+            fixture_in_target_gw = bool(
+                fixture_info and fixture_info.get("event") == current_gw
+            )
             fixture_modifier = 1.0
-            if fixture_info:
+            if fixture_in_target_gw:
                 diff_delta = 3 - fixture_info["difficulty"]
                 venue_adj = 0.05 if fixture_info["is_home"] else -0.05
                 fixture_modifier = clamp(1 + diff_delta * 0.04 + venue_adj, 0.7, 1.2)
 
             next_gw_pts = max(0, base_points * fixture_modifier * advanced_modifier)
             next6_pts = max(0, next_gw_pts * 5)
+            if not fixture_in_target_gw:
+                next_gw_pts = 0.0
 
             chance_next = player.get("chance_of_playing_next_round")
             if chance_next is None:
@@ -2253,6 +2258,8 @@ class FPLSageIntegration:
                 xmins = clamp(raw_minutes, 45, 90)
             else:
                 xmins = clamp(0.9 * chance_next, 0, 90)
+            if not fixture_in_target_gw:
+                xmins = 0.0
 
             status_flag = str(player.get("status_flag") or player.get("status") or "").upper()
             tags = []
@@ -2266,12 +2273,15 @@ class FPLSageIntegration:
             if chance_next is not None and chance_next < 85:
                 if "injury_risk" not in tags:
                     tags.append("injury_risk")
-            if fixture_info:
+            if fixture_in_target_gw:
                 if fixture_info["difficulty"] >= 4:
                     tags.append("tough_fixture")
                 elif fixture_info["difficulty"] <= 2:
                     tags.append("favorable_fixture")
 
+            # Mark players whose team has no fixture this GW (blank GW for this team)
+            if not fixture_in_target_gw:
+                tags.append("blank")
             consistency = clamp(base_points / 10, 0.0, 1.0)
             volatility = clamp(0.3 + (1 - consistency) * 0.45, 0.2, 0.75)
             ceiling = next_gw_pts * 1.4
@@ -2280,9 +2290,9 @@ class FPLSageIntegration:
             coverage_signals = sum(
                 1 if signal > 0 else 0
                 for signal in (form_score, advanced_signal)
-            ) + (1 if fixture_info else 0)
+            ) + (1 if fixture_in_target_gw else 0)
             confidence = clamp(
-                0.35 + 0.1 * coverage_signals + 0.05 * consistency + (0.05 if fixture_info else 0),
+                0.35 + 0.1 * coverage_signals + 0.05 * consistency + (0.05 if fixture_in_target_gw else 0),
                 0.3,
                 0.95
             )

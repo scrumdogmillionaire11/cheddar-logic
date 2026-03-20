@@ -337,6 +337,9 @@ class EnhancedDecisionFramework:
             flags: List[str] = []
             if player_status in {"DOUBT", "OUT", "BANNED"}:
                 flags.append(player_status)
+            proj_tags = [str(tag).lower() for tag in (getattr(proj, "tags", []) or [])]
+            if "blank" in proj_tags:
+                flags.append("BLANK")
             if _expected_minutes_of(proj) < 60:
                 flags.append("MINUTES_RISK")
             if _volatility_of(proj) >= 0.5:
@@ -513,10 +516,28 @@ class EnhancedDecisionFramework:
             raise ValueError(f"Insufficient squad projections: {len(squad_projections)}/11")
             
         # Blank GW exclusions: players with no fixture next GW must not start.
+        # Use fixture horizon context as authoritative, plus projection fallbacks.
+        blank_teams_from_context: set = set()
+        fixture_context = team_data.get("fixture_horizon_context") if isinstance(team_data, dict) else None
+        if isinstance(fixture_context, dict):
+            gw_timeline = fixture_context.get("gw_timeline") or []
+            if isinstance(gw_timeline, list) and gw_timeline:
+                first_row = gw_timeline[0] if isinstance(gw_timeline[0], dict) else {}
+                bgw_teams = first_row.get("bgw_teams") or []
+                if isinstance(bgw_teams, list):
+                    blank_teams_from_context = {
+                        str(team).strip().upper() for team in bgw_teams if team is not None
+                    }
+
         blank_gw_ids: set = set()
         for proj in squad_projections:
             tags = [str(t).lower() for t in (getattr(proj, "tags", []) or [])]
-            if "blank" in tags:
+            has_blank_tag = "blank" in tags
+            no_fixture_projection = (
+                _expected_minutes_of(proj) <= 0.0 and _projected_points_of(proj) <= 0.0
+            )
+            team_in_blank_list = str(getattr(proj, "team", "") or "").strip().upper() in blank_teams_from_context
+            if has_blank_tag or no_fixture_projection or team_in_blank_list:
                 blank_gw_ids.add(proj.player_id)
         if blank_gw_ids:
             blank_names = [
