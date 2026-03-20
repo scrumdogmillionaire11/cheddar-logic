@@ -51,5 +51,6 @@ This file is intentionally minimal to avoid stale status drift.
 
 | 55 | WI-0530 NST PP rate ingestion: player_pp_rates table + ingest_nst_pp_rates.js + ppRatePer60 enrichment + projectSogV2 wiring + 45% PP cap | 2026-03-20 | 398aa08 | [55-wi-0530-nst-ingestion-season-pp-rate-per](./quick/55-wi-0530-nst-ingestion-season-pp-rate-per/) |
 | 56 | Sort player props view by day and start time, soonest first | 2026-03-20 | f20a6aa | [56-sort-player-props-view-by-day-and-start-](./quick/56-sort-player-props-view-by-day-and-start-/) |
+| 57 | WI-0531 Rolling PP splits (L10/L5) + recency-weighted blend: 033 migration, NST ingestion, weightedRateBlendPP (0.40/0.35/0.25), PP_SMALL_SAMPLE flag, four PP driver fields | 2026-03-20 | f6689d7 | [57-wi-0531-rolling-splits-l10-l5-recency-we](./quick/57-wi-0531-rolling-splits-l10-l5-recency-we/) |
 
-Last activity: 2026-03-20 - Completed quick task 56: Sort player props view by day and start time — DEFAULT_PROPS_FILTERS.sortMode changed to start_time + propGroupedByDate useMemo + day-section-header grouped render in props view
+Last activity: 2026-03-20 - Completed quick task 57: WI-0531 rolling PP rate splits (L10/L5) — DB migration adds pp_l10_shots_per60/pp_l5_shots_per60, NST ingestion extended with column name variants, weightedRateBlendPP (0.40/0.35/0.25) replaces EV blend for PP rate, PP_SMALL_SAMPLE flag, four driver fields; 136 tests green
