@@ -21,27 +21,27 @@ const { v4: uuidV4 } = require('uuid');
 const nodeCrypto = require('crypto');
 
 // ============================================================================
-// Ohio soccer market scope constants
+// Soccer market scope constants
 // ============================================================================
-const OHIO_TIER1_MARKETS = new Set([
+const SOCCER_TIER1_MARKETS = new Set([
   'player_shots',
   'team_totals',
   'to_score_or_assist',
 ]);
-const OHIO_ODDS_BACKED_MARKETS = new Set([
+const SOCCER_ODDS_BACKED_MARKETS = new Set([
   'soccer_ml',
   'soccer_game_total',
   'soccer_double_chance',
   'asian_handicap_home',
   'asian_handicap_away',
 ]);
-const FOOTIE_MAIN_MARKETS = new Set([...OHIO_ODDS_BACKED_MARKETS]);
-const OHIO_TIER2_MARKETS = new Set([
+const FOOTIE_MAIN_MARKETS = new Set([...SOCCER_ODDS_BACKED_MARKETS]);
+const SOCCER_TIER2_MARKETS = new Set([
   'player_shots_on_target',
   'anytime_goalscorer',
   'team_corners',
 ]);
-const OHIO_BANNED_MARKETS = new Set([
+const SOCCER_BANNED_MARKETS = new Set([
   'draw_no_bet',
   'asian_handicap',
   'match_total',
@@ -86,6 +86,45 @@ const SOCCER_PLAYER_SHOTS_MAX_LINE = Number(
 const SOCCER_TIER1_PROP_MAX_CARDS_PER_GAME = Number(
   process.env.SOCCER_TIER1_PROP_MAX_CARDS_PER_GAME || 12,
 );
+const SOCCER_MODEL_MODES = new Set([
+  'OHIO_PROPS_ONLY',
+  'SIDES_AND_PROPS',
+]);
+const DEFAULT_SOCCER_MODEL_MODE = 'SIDES_AND_PROPS';
+const SOCCER_SIDE_MARKETS = new Set([
+  'soccer_ml',
+  'asian_handicap_home',
+  'asian_handicap_away',
+]);
+const FOOTIE_LAMBDA_SOURCE = {
+  STATS_PRIMARY: 'STATS_PRIMARY',
+  STATS_MARKET_BLEND: 'STATS_MARKET_BLEND',
+  MARKET_FALLBACK: 'MARKET_FALLBACK',
+};
+const FOOTIE_LAMBDA_QUALITY = {
+  HIGH: 'HIGH',
+  MEDIUM: 'MEDIUM',
+  LOW: 'LOW',
+};
+const FOOTIE_DEFAULT_TOTAL_GOALS = 2.6;
+const FOOTIE_MARKET_ANCHOR_WEIGHT = 0.25;
+const FOOTIE_STATS_WEIGHT = 1 - FOOTIE_MARKET_ANCHOR_WEIGHT;
+const FOOTIE_LEAGUE_HOME_EDGE = {
+  EPL: 0.12,
+  MLS: 0.09,
+  UCL: 0.1,
+};
+const FOOTIE_MAX_GOALS = 10;
+const FOOTIE_REASON_CODES = {
+  MISSING_EDGE: 'PASS_MISSING_EDGE',
+  MISSING_LAMBDAS: 'BLOCKED_NO_PRIMARY_LAMBDA',
+  MARKET_FALLBACK_ONLY: 'BLOCKED_MARKET_FALLBACK_ONLY',
+  DRAW_RISK_HIGH: 'BLOCKED_ML_DRAW_RISK_HIGH',
+  LINEUP_UNCONFIRMED: 'BLOCKED_UNCONFIRMED_LINEUP',
+  CONTRADICTORY_SIGNAL: 'BLOCKED_CONTRADICTORY_SIDE_SIGNAL',
+  NO_PRIMARY_STATS: 'BLOCKED_NO_PRIMARY_TEAM_STATS',
+};
+const soccerXgCacheMemo = new Map();
 
 function normalizePlayerToken(name) {
   return String(name || '')
@@ -109,8 +148,29 @@ function isBlockedSoccerPropPlayer(playerName) {
   return getSoccerPropPlayerBlocklist().has(normalized);
 }
 
+function resolveSoccerModelMode(rawMode = process.env.SOCCER_MODEL_MODE ?? process.env.soccer_model_mode) {
+  const normalized = String(rawMode || '')
+    .trim()
+    .toUpperCase();
+  if (SOCCER_MODEL_MODES.has(normalized)) {
+    return normalized;
+  }
+  return DEFAULT_SOCCER_MODEL_MODE;
+}
+
+function isSoccerSideMarket(canonicalMarket) {
+  return SOCCER_SIDE_MARKETS.has(String(canonicalMarket || ''));
+}
+
+function shouldEmitOddsBackedCard(modelMode, canonicalMarket) {
+  if (!SOCCER_ODDS_BACKED_MARKETS.has(canonicalMarket)) {
+    return true;
+  }
+  return modelMode !== 'OHIO_PROPS_ONLY';
+}
+
 /**
- * Normalize a raw market key string to its canonical Ohio soccer market key.
+ * Normalize a raw market key string to its canonical soccer market key.
  * Returns null if out-of-scope or banned.
  * @param {string|undefined} rawKey
  * @returns {string|null}
@@ -128,14 +188,14 @@ function normalizeToCanonicalSoccerMarket(rawKey) {
   }
 
   if (
-    OHIO_TIER1_MARKETS.has(normalized) ||
-    OHIO_ODDS_BACKED_MARKETS.has(normalized) ||
-    OHIO_TIER2_MARKETS.has(normalized)
+    SOCCER_TIER1_MARKETS.has(normalized) ||
+    SOCCER_ODDS_BACKED_MARKETS.has(normalized) ||
+    SOCCER_TIER2_MARKETS.has(normalized)
   ) {
     return normalized;
   }
 
-  if (OHIO_BANNED_MARKETS.has(normalized)) {
+  if (SOCCER_BANNED_MARKETS.has(normalized)) {
     console.debug(
       `[SoccerModel] normalizeToCanonicalSoccerMarket: blocked banned market "${normalized}"`,
     );
@@ -143,7 +203,7 @@ function normalizeToCanonicalSoccerMarket(rawKey) {
   }
 
   console.debug(
-    `[SoccerModel] normalizeToCanonicalSoccerMarket: "${normalized}" is out of Ohio scope`,
+    `[SoccerModel] normalizeToCanonicalSoccerMarket: "${normalized}" is out of soccer scope`,
   );
   return null;
 }
@@ -155,7 +215,7 @@ function normalizeToCanonicalSoccerMarket(rawKey) {
  *
  * @param {string} gameId
  * @param {object} oddsSnapshot
- * @param {string} canonicalMarket - canonical Ohio market key
+ * @param {string} canonicalMarket - canonical soccer market key
  * @returns {{ cardType: string, payloadData: object, pass_reason: string|null }}
  */
 function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
@@ -164,7 +224,7 @@ function buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket) {
   const missing_context_flags = [];
   let pass_reason = null;
 
-  const marketFamily = OHIO_TIER1_MARKETS.has(canonicalMarket)
+  const marketFamily = SOCCER_TIER1_MARKETS.has(canonicalMarket)
     ? 'tier1'
     : 'tier2';
 
@@ -457,17 +517,97 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
   let payloadData;
 
   if (canonicalCardType === 'soccer_ml') {
-    const { prediction, price: derivedPrice } = derivePredictionFromMoneyline(
+    const marketSignal = derivePredictionFromMoneyline(
       oddsSnapshot?.h2h_home,
       oddsSnapshot?.h2h_away,
     );
-    const selectionTeam = prediction === 'HOME' ? homeTeam : awayTeam;
-    const price = typeof derivedPrice === 'number' && Number.isFinite(derivedPrice)
-      ? Math.trunc(derivedPrice)
-      : null;
+    const lambdaModel = computeFootieLambdas({
+      oddsSnapshot,
+      rawData,
+      side: 'HOME',
+      offeredLine: null,
+    });
+    const lambdaHome = toFiniteNumber(lambdaModel?.lambda_home);
+    const lambdaAway = toFiniteNumber(lambdaModel?.lambda_away);
+    const leagueTag = deriveLeagueTag(oddsSnapshot);
+    const mlProbabilities = computeFootieMlProbabilities({
+      lambdaHome,
+      lambdaAway,
+      leagueTag,
+    });
 
     if (!Number.isFinite(oddsSnapshot?.h2h_home)) missing_context_flags.push('h2h_home');
     if (!Number.isFinite(oddsSnapshot?.h2h_away)) missing_context_flags.push('h2h_away');
+    if (!Number.isFinite(lambdaHome)) missing_context_flags.push('lambda_home');
+    if (!Number.isFinite(lambdaAway)) missing_context_flags.push('lambda_away');
+    if (!mlProbabilities) missing_context_flags.push('model_probabilities');
+
+    const pHomeWin = mlProbabilities?.p_home_win ?? null;
+    const pDraw = mlProbabilities?.p_draw ?? null;
+    const pAwayWin = mlProbabilities?.p_away_win ?? null;
+    const prediction =
+      Number.isFinite(pHomeWin) && Number.isFinite(pAwayWin)
+        ? pHomeWin >= pAwayWin
+          ? 'HOME'
+          : 'AWAY'
+        : marketSignal.prediction;
+
+    const selectionTeam = prediction === 'HOME' ? homeTeam : awayTeam;
+    const priceRaw = prediction === 'HOME' ? oddsSnapshot?.h2h_home : oddsSnapshot?.h2h_away;
+    const price = Number.isFinite(priceRaw) ? Math.trunc(priceRaw) : null;
+    if (!Number.isFinite(priceRaw)) missing_context_flags.push('price');
+
+    const impliedMlProbabilities = deriveDevigTwoWay(
+      oddsSnapshot?.h2h_home,
+      oddsSnapshot?.h2h_away,
+    );
+    const impliedProb = prediction === 'HOME'
+      ? impliedMlProbabilities.home
+      : impliedMlProbabilities.away;
+    const modelProb = prediction === 'HOME' ? pHomeWin : pAwayWin;
+    const edgeEv =
+      Number.isFinite(modelProb) && Number.isFinite(impliedProb)
+        ? Number((modelProb - impliedProb).toFixed(4))
+        : null;
+    const sideMarketGap =
+      Number.isFinite(modelProb) && Number.isFinite(impliedProb)
+        ? Math.abs(modelProb - impliedProb)
+        : null;
+    const confidence = deriveSideConfidence({
+      modelProb,
+      lambdaSource: lambdaModel?.lambda_source,
+      lambdaSourceQuality: lambdaModel?.lambda_source_quality,
+      statsCompleteness: lambdaModel?.stats_completeness,
+      lineupCertainty: lambdaModel?.lineup?.certainty,
+      sideMarketGap,
+    });
+    const baseTier = deriveTierFromEdge(edgeEv);
+    const sideGuards = applySideRiskGuards({
+      marketType: 'MONEYLINE',
+      edge: edgeEv,
+      tier: baseTier,
+      lambdaSource: lambdaModel?.lambda_source,
+      lineup: lambdaModel?.lineup,
+      drawProbability: pDraw,
+      modelSide: prediction,
+      marketSide: marketSignal.prediction,
+    });
+    const pass_reason =
+      missing_context_flags.length > 0
+        ? (lambdaModel?.lambda_source ? 'MISSING_ML_INPUTS' : FOOTIE_REASON_CODES.MISSING_LAMBDAS)
+        : sideGuards.pass_reason;
+    const reason_codes = Array.from(
+      new Set([
+        ...(Array.isArray(sideGuards.reason_codes) ? sideGuards.reason_codes : []),
+        lambdaModel?.lambda_source === FOOTIE_LAMBDA_SOURCE.MARKET_FALLBACK
+          ? FOOTIE_REASON_CODES.NO_PRIMARY_STATS
+          : null,
+        pass_reason,
+      ].filter(Boolean)),
+    );
+    const fairMlHome = probabilityToAmerican(pHomeWin);
+    const fairMlDraw = probabilityToAmerican(pDraw);
+    const fairMlAway = probabilityToAmerican(pAwayWin);
 
     payloadData = {
       sport: 'SOCCER',
@@ -481,9 +621,48 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       model_confidence: null,
       selection: { side: prediction, team: selectionTeam },
       price,
-      edge_basis: 'vig_normalized_moneyline',
+      model_prob: Number.isFinite(modelProb) ? modelProb : null,
+      p_home_win: Number.isFinite(pHomeWin) ? pHomeWin : null,
+      p_draw: Number.isFinite(pDraw) ? pDraw : null,
+      p_away_win: Number.isFinite(pAwayWin) ? pAwayWin : null,
+      fair_ml_home: Number.isFinite(fairMlHome) ? fairMlHome : null,
+      fair_ml_draw: Number.isFinite(fairMlDraw) ? fairMlDraw : null,
+      fair_ml_away: Number.isFinite(fairMlAway) ? fairMlAway : null,
+      lambda_home: Number.isFinite(lambdaHome) ? safeRound(lambdaHome, 4) : null,
+      lambda_away: Number.isFinite(lambdaAway) ? safeRound(lambdaAway, 4) : null,
+      lambda_source: lambdaModel?.lambda_source ?? null,
+      lambda_source_quality: lambdaModel?.lambda_source_quality ?? null,
+      stats_completeness: Number.isFinite(lambdaModel?.stats_completeness)
+        ? lambdaModel.stats_completeness
+        : null,
+      edge: edgeEv,
+      edge_ev: edgeEv,
+      confidence,
+      tier: sideGuards.tier,
+      edge_basis: 'stats_poisson_vs_devig_moneyline',
       missing_context_flags,
-      pass_reason: null,
+      pass_reason,
+      reason_codes,
+      confidence_components: {
+        lambda_source: lambdaModel?.lambda_source ?? null,
+        lambda_source_quality: lambdaModel?.lambda_source_quality ?? null,
+        lineup_certainty: lambdaModel?.lineup?.certainty ?? null,
+        lineup_unresolved: Boolean(lambdaModel?.lineup?.unresolved),
+        stats_completeness: Number.isFinite(lambdaModel?.stats_completeness)
+          ? lambdaModel.stats_completeness
+          : null,
+      },
+      side_model: {
+        p_home_win: Number.isFinite(pHomeWin) ? pHomeWin : null,
+        p_draw: Number.isFinite(pDraw) ? pDraw : null,
+        p_away_win: Number.isFinite(pAwayWin) ? pAwayWin : null,
+        implied_home_prob: Number.isFinite(impliedMlProbabilities.home)
+          ? safeRound(impliedMlProbabilities.home, 6)
+          : null,
+        implied_away_prob: Number.isFinite(impliedMlProbabilities.away)
+          ? safeRound(impliedMlProbabilities.away, 6)
+          : null,
+      },
     };
   } else if (canonicalCardType === 'soccer_game_total') {
     const totalLine = rawData.total_line ?? null;
@@ -544,6 +723,7 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
     canonicalCardType === 'asian_handicap_away'
   ) {
     const side = canonicalCardType === 'asian_handicap_home' ? 'HOME' : 'AWAY';
+    const selectionTeam = side === 'HOME' ? homeTeam : awayTeam;
     const snapshotLineRaw =
       side === 'HOME' ? oddsSnapshot?.spread_home : oddsSnapshot?.spread_away;
     const snapshotOfferedPriceRaw =
@@ -560,14 +740,6 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       rawData.ah_price ?? rawData.price ?? snapshotOfferedPriceRaw ?? null;
     const oppositePriceRaw =
       rawData.ah_opposite_price ?? rawData.opposite_price ?? snapshotOppositePriceRaw ?? null;
-    const lambdaHome =
-      typeof rawData.lambda_home === 'number'
-        ? rawData.lambda_home
-        : Number(rawData.lambda_home ?? NaN);
-    const lambdaAway =
-      typeof rawData.lambda_away === 'number'
-        ? rawData.lambda_away
-        : Number(rawData.lambda_away ?? NaN);
 
     const line =
       typeof lineRaw === 'number'
@@ -581,6 +753,15 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       typeof oppositePriceRaw === 'number'
         ? Math.trunc(oppositePriceRaw)
         : (typeof oppositePriceRaw === 'string' ? Math.trunc(Number(oppositePriceRaw)) : null);
+    const lambdaModel = computeFootieLambdas({
+      oddsSnapshot,
+      rawData,
+      side,
+      offeredLine: Number.isFinite(line) ? Number(line) : null,
+    });
+    const lambdaHome = toFiniteNumber(lambdaModel?.lambda_home);
+    const lambdaAway = toFiniteNumber(lambdaModel?.lambda_away);
+    const lambdaSource = lambdaModel?.lambda_source ?? null;
 
     if (!Number.isFinite(line)) missing_context_flags.push('line');
     if (!Number.isFinite(offeredPrice)) missing_context_flags.push('price');
@@ -604,14 +785,74 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       Number.isFinite(line) &&
       (Math.abs(Math.abs(line) % 1 - 0.25) < 1e-9 || Math.abs(Math.abs(line) % 1 - 0.75) < 1e-9);
 
+    const modelProb =
+      pricing?.success && Number.isFinite(pricing.model_prob_no_push)
+        ? Number(pricing.model_prob_no_push.toFixed(4))
+        : null;
+    const edgeEv =
+      pricing?.success && Number.isFinite(pricing.edge_no_push)
+        ? Number(pricing.edge_no_push.toFixed(4))
+        : null;
+    const marketSideFromLine = Number.isFinite(oddsSnapshot?.spread_home)
+      ? oddsSnapshot.spread_home <= 0
+        ? 'HOME'
+        : 'AWAY'
+      : null;
+    const confidence = deriveSideConfidence({
+      modelProb,
+      lambdaSource,
+      lambdaSourceQuality: lambdaModel?.lambda_source_quality,
+      statsCompleteness: lambdaModel?.stats_completeness,
+      lineupCertainty: lambdaModel?.lineup?.certainty,
+      sideMarketGap: null,
+    });
+    const baseTier = deriveTierFromEdge(edgeEv);
+    const sideGuards = applySideRiskGuards({
+      marketType: 'ASIAN_HANDICAP',
+      edge: edgeEv,
+      tier: baseTier,
+      lambdaSource,
+      lineup: lambdaModel?.lineup,
+      drawProbability: null,
+      modelSide: side,
+      marketSide: marketSideFromLine,
+    });
     const pass_reason =
       missing_context_flags.length > 0
         ? 'MISSING_AH_INPUTS'
-        : (pricing && pricing.success ? null : (pricing?.reason_code || 'AH_PRICING_FAILED'));
+        : sideGuards.pass_reason ?? (pricing && pricing.success ? null : (pricing?.reason_code || 'AH_PRICING_FAILED'));
+    const reason_codes = Array.from(
+      new Set([
+        ...(Array.isArray(sideGuards.reason_codes) ? sideGuards.reason_codes : []),
+        lambdaSource === FOOTIE_LAMBDA_SOURCE.MARKET_FALLBACK
+          ? FOOTIE_REASON_CODES.NO_PRIMARY_STATS
+          : null,
+        pass_reason,
+      ].filter(Boolean)),
+    );
+    const probabilities = pricing?.success ? pricing.probabilities : null;
+    const pFullWin = toFiniteNumber(probabilities?.P_full_win);
+    const pHalfWin = toFiniteNumber(probabilities?.P_half_win);
+    const pPush = toFiniteNumber(probabilities?.P_push);
+    const pHalfLoss = toFiniteNumber(probabilities?.P_half_loss);
+    const pFullLoss = toFiniteNumber(probabilities?.P_full_loss);
+    const pWin = toFiniteNumber(probabilities?.P_win);
+    const pLoss = toFiniteNumber(probabilities?.P_loss);
+    const fairPrice =
+      Number.isFinite(pricing?.fair_price_american)
+        ? Math.trunc(pricing.fair_price_american)
+        : (Number.isFinite(modelProb) ? probabilityToAmerican(modelProb) : null);
 
     payloadData = {
+      kind: 'PLAY',
       sport: 'SOCCER',
       game_id: gameId,
+      recommended_bet_type: 'spread',
+      prediction: side,
+      selection: {
+        side,
+        team: selectionTeam,
+      },
       canonical_market_key: canonicalCardType,
       market_type: 'ASIAN_HANDICAP',
       home_team: homeTeam,
@@ -624,15 +865,56 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
       split_flag: splitFlag,
       price: Number.isFinite(offeredPrice) ? offeredPrice : null,
       opposite_price: Number.isFinite(oppositePrice) ? oppositePrice : null,
-      probabilities: pricing?.success ? pricing.probabilities : null,
+      lambda_home: Number.isFinite(lambdaHome) ? Number(lambdaHome.toFixed(4)) : null,
+      lambda_away: Number.isFinite(lambdaAway) ? Number(lambdaAway.toFixed(4)) : null,
+      lambda_source: lambdaSource,
+      lambda_source_quality: lambdaModel?.lambda_source_quality ?? null,
+      stats_completeness: Number.isFinite(lambdaModel?.stats_completeness)
+        ? lambdaModel.stats_completeness
+        : null,
+      probabilities,
+      p_full_win: Number.isFinite(pFullWin) ? pFullWin : null,
+      p_half_win: Number.isFinite(pHalfWin) ? pHalfWin : null,
+      p_push: Number.isFinite(pPush) ? pPush : null,
+      p_half_loss: Number.isFinite(pHalfLoss) ? pHalfLoss : null,
+      p_full_loss: Number.isFinite(pFullLoss) ? pFullLoss : null,
+      p_win: Number.isFinite(pWin) ? pWin : null,
+      p_loss: Number.isFinite(pLoss) ? pLoss : null,
       model_prob_no_push: pricing?.success ? pricing.model_prob_no_push : null,
-      edge_ev: pricing?.success ? pricing.edge_no_push : null,
+      model_prob: modelProb,
+      edge: edgeEv,
+      edge_ev: edgeEv,
       expected_value: pricing?.success ? pricing.expected_value : null,
       fair_line: pricing?.success ? pricing.fair_line : null,
-      fair_price_american: pricing?.success ? pricing.fair_price_american : null,
+      fair_price: Number.isFinite(fairPrice) ? fairPrice : null,
+      fair_price_american: Number.isFinite(fairPrice) ? fairPrice : null,
+      confidence,
+      tier: sideGuards.tier,
+      projection_basis: lambdaSource,
       edge_basis: 'ah_de_vig_poisson_goal_diff',
       missing_context_flags,
       pass_reason,
+      reason_codes,
+      confidence_components: {
+        lambda_source: lambdaSource,
+        lambda_source_quality: lambdaModel?.lambda_source_quality ?? null,
+        lineup_certainty: lambdaModel?.lineup?.certainty ?? null,
+        lineup_unresolved: Boolean(lambdaModel?.lineup?.unresolved),
+        stats_completeness: Number.isFinite(lambdaModel?.stats_completeness)
+          ? lambdaModel.stats_completeness
+          : null,
+      },
+      side_watchdog: {
+        blocked_no_primary_lambda:
+          !Number.isFinite(lambdaHome) || !Number.isFinite(lambdaAway),
+        blocked_market_fallback_only:
+          lambdaSource === FOOTIE_LAMBDA_SOURCE.MARKET_FALLBACK,
+        blocked_unconfirmed_lineup: Boolean(lambdaModel?.lineup?.unresolved),
+        blocked_contradictory_side_signal:
+          Number.isFinite(oddsSnapshot?.spread_home)
+            ? (oddsSnapshot.spread_home <= 0 ? 'HOME' : 'AWAY') !== side
+            : false,
+      },
       odds_context: {
         spread_home: Number.isFinite(line) ? (side === 'HOME' ? line : -line) : null,
         spread_away: Number.isFinite(line) ? (side === 'AWAY' ? line : -line) : null,
@@ -658,6 +940,30 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
   };
 }
 
+function buildSoccerSideMarketCard(gameId, oddsSnapshot, canonicalCardType) {
+  if (!isSoccerSideMarket(canonicalCardType)) {
+    throw new Error(
+      `buildSoccerSideMarketCard: "${canonicalCardType}" is not a soccer side market`,
+    );
+  }
+  const card = buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType);
+  const payload = card?.payloadData;
+  if (payload && typeof payload === 'object') {
+    payload.footie_engine = 'FOOTIE_SIDES_ENGINE';
+    payload.model_inputs_source = 'stats_team_strength';
+    payload.fallback_source =
+      payload.lambda_source === FOOTIE_LAMBDA_SOURCE.MARKET_FALLBACK
+        ? 'market_implied_lambda'
+        : null;
+    payload.confidence_source = 'input_quality_components';
+    payload.reason_code = payload.pass_reason ?? null;
+    payload.reason_codes = Array.from(
+      new Set([...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []), payload.reason_code].filter(Boolean)),
+    );
+  }
+  return card;
+}
+
 const {
   insertJobRun,
   markJobRunSuccess,
@@ -671,6 +977,7 @@ const {
   validateCardPayload,
   shouldRunJobKey,
   withDb,
+  db: dataDb,
 } = require('@cheddar-logic/data');
 const {
   buildRecommendationFromPrediction,
@@ -679,6 +986,9 @@ const {
   formatCountdown,
   buildMarketFromOdds,
 } = require('@cheddar-logic/models');
+const {
+  computeXgWinProbs,
+} = require('@cheddar-logic/models/src/xg-model');
 const {
   publishDecisionForCard,
   applyUiActionFields,
@@ -722,6 +1032,677 @@ function deriveWinProbHome(h2hHome, h2hAway) {
     return Number(pHome.toFixed(4));
   }
   return null;
+}
+
+function toFiniteNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function getNestedValue(target, path) {
+  if (!target || typeof target !== 'object') return undefined;
+  return String(path || '')
+    .split('.')
+    .reduce((acc, segment) => {
+      if (acc === null || acc === undefined) return undefined;
+      if (typeof acc !== 'object') return undefined;
+      return acc[segment];
+    }, target);
+}
+
+function pickFiniteFromPaths(target, candidatePaths) {
+  for (const path of candidatePaths) {
+    const value = getNestedValue(target, path);
+    const numeric = toFiniteNumber(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return null;
+}
+
+function weightedAverage(weightedValues, fallback = null) {
+  let weightTotal = 0;
+  let weightedSum = 0;
+  for (const entry of weightedValues) {
+    if (!entry) continue;
+    const value = toFiniteNumber(entry.value);
+    const weight = toFiniteNumber(entry.weight);
+    if (!Number.isFinite(value) || !Number.isFinite(weight) || weight <= 0) {
+      continue;
+    }
+    weightedSum += value * weight;
+    weightTotal += weight;
+  }
+  if (weightTotal <= 0) return fallback;
+  return weightedSum / weightTotal;
+}
+
+function clampProbability(probability) {
+  const numeric = toFiniteNumber(probability);
+  if (!Number.isFinite(numeric)) return null;
+  return clampToRange(numeric, 0, 1);
+}
+
+function safeRound(value, decimals = 4) {
+  if (!Number.isFinite(value)) return null;
+  return Number(value.toFixed(decimals));
+}
+
+function probabilityToAmerican(probability) {
+  const p = clampProbability(probability);
+  if (!Number.isFinite(p) || p <= 0 || p >= 1) return null;
+  if (p >= 0.5) {
+    return Math.round((-100 * p) / (1 - p));
+  }
+  return Math.round((100 * (1 - p)) / p);
+}
+
+function deriveDevigTwoWay(homeOdds, awayOdds) {
+  const impliedHome = toImpliedProbability(homeOdds);
+  const impliedAway = toImpliedProbability(awayOdds);
+  if (
+    Number.isFinite(impliedHome) &&
+    Number.isFinite(impliedAway) &&
+    impliedHome + impliedAway > 0
+  ) {
+    const total = impliedHome + impliedAway;
+    return {
+      home: impliedHome / total,
+      away: impliedAway / total,
+    };
+  }
+  return {
+    home: Number.isFinite(impliedHome) ? impliedHome : null,
+    away: Number.isFinite(impliedAway) ? impliedAway : null,
+  };
+}
+
+function normalizeTeamToken(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function getSoccerXgCacheDateEt() {
+  try {
+    const { DateTime } = require('luxon');
+    return DateTime.now()
+      .setZone(process.env.TZ || 'America/New_York')
+      .toISODate();
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function getSoccerXgCacheRow({ league, teamName }) {
+  const normalizedLeague = String(league || '').trim().toUpperCase();
+  const normalizedTeam = String(teamName || '').trim();
+  const cacheDate = getSoccerXgCacheDateEt();
+  if (!normalizedLeague || !normalizedTeam || normalizedLeague === 'UNKNOWN') {
+    return null;
+  }
+
+  const cacheKey = `${normalizedLeague}|${normalizeTeamToken(normalizedTeam)}|${cacheDate}`;
+  if (soccerXgCacheMemo.has(cacheKey)) {
+    return soccerXgCacheMemo.get(cacheKey);
+  }
+
+  let row = null;
+  try {
+    if (dataDb && typeof dataDb.getSoccerTeamXgCache === 'function') {
+      row = dataDb.getSoccerTeamXgCache({
+        sport: 'SOCCER',
+        league: normalizedLeague,
+        teamName: normalizedTeam,
+        cacheDate,
+      });
+    }
+  } catch {
+    row = null;
+  }
+
+  soccerXgCacheMemo.set(cacheKey, row || null);
+  return row || null;
+}
+
+function getLineupContext(rawData) {
+  const lineupContext =
+    rawData?.lineup_context ||
+    rawData?.lineups ||
+    rawData?.lineup ||
+    {};
+
+  const homeConfirmed = lineupContext?.home_confirmed_xi;
+  const awayConfirmed = lineupContext?.away_confirmed_xi;
+  const anyExplicitFalse = homeConfirmed === false || awayConfirmed === false;
+  const bothConfirmed = homeConfirmed === true && awayConfirmed === true;
+  const partialConfirmed = homeConfirmed === true || awayConfirmed === true;
+
+  const homeAbsences = toFiniteNumber(
+    lineupContext?.home_absences ??
+      lineupContext?.home_starters_out ??
+      rawData?.home_absences,
+  ) || 0;
+  const awayAbsences = toFiniteNumber(
+    lineupContext?.away_absences ??
+      lineupContext?.away_starters_out ??
+      rawData?.away_absences,
+  ) || 0;
+
+  return {
+    home_absences: Math.max(0, homeAbsences),
+    away_absences: Math.max(0, awayAbsences),
+    certainty:
+      bothConfirmed ? 'HIGH' : anyExplicitFalse ? 'LOW' : partialConfirmed ? 'MEDIUM' : 'MEDIUM',
+    unresolved: anyExplicitFalse || partialConfirmed,
+  };
+}
+
+function getStatsBlock(rawData, side) {
+  if (side === 'home') {
+    return (
+      rawData?.stats_home ||
+      rawData?.home_stats ||
+      rawData?.team_stats?.home ||
+      {}
+    );
+  }
+  return (
+    rawData?.stats_away ||
+    rawData?.away_stats ||
+    rawData?.team_stats?.away ||
+    {}
+  );
+}
+
+function deriveStatsLambdas({ oddsSnapshot, rawData }) {
+  const homeStats = getStatsBlock(rawData, 'home');
+  const awayStats = getStatsBlock(rawData, 'away');
+  const leagueTag = deriveLeagueTag(oddsSnapshot);
+  const lineup = getLineupContext(rawData);
+  const homeCache = getSoccerXgCacheRow({
+    league: leagueTag,
+    teamName: oddsSnapshot?.home_team,
+  });
+  const awayCache = getSoccerXgCacheRow({
+    league: leagueTag,
+    teamName: oddsSnapshot?.away_team,
+  });
+
+  const providedHomeLambda = toFiniteNumber(rawData?.lambda_home);
+  const providedAwayLambda = toFiniteNumber(rawData?.lambda_away);
+  const providedLambdaSource = String(rawData?.lambda_source || '').toLowerCase();
+  const providedLambdaLooksMarket =
+    providedLambdaSource.includes('market') ||
+    providedLambdaSource.includes('moneyline') ||
+    providedLambdaSource.includes('spread');
+
+  if (
+    Number.isFinite(providedHomeLambda) &&
+    Number.isFinite(providedAwayLambda) &&
+    !providedLambdaLooksMarket
+  ) {
+    return {
+      lambda_home: clampToRange(providedHomeLambda, 0.25, 4.5),
+      lambda_away: clampToRange(providedAwayLambda, 0.25, 4.5),
+      stats_completeness: 1,
+      lineup,
+      notes: ['provided_lambda_input'],
+    };
+  }
+
+  const homeSeasonXgFor = pickFiniteFromPaths(homeStats, [
+    'season_xg_for',
+    'xg_for',
+    'xg_for_l6',
+  ]);
+  const homeRecentXgFor = pickFiniteFromPaths(homeStats, [
+    'recent_xg_for',
+    'xg_for_recent',
+    'xg_for_l6',
+  ]) ?? toFiniteNumber(homeCache?.home_xg_l6);
+  const awaySeasonXgFor = pickFiniteFromPaths(awayStats, [
+    'season_xg_for',
+    'xg_for',
+    'xg_for_l6',
+  ]);
+  const awayRecentXgFor = pickFiniteFromPaths(awayStats, [
+    'recent_xg_for',
+    'xg_for_recent',
+    'xg_for_l6',
+  ]) ?? toFiniteNumber(awayCache?.away_xg_l6);
+
+  const homeSeasonXgAgainst = pickFiniteFromPaths(homeStats, [
+    'season_xg_against',
+    'xg_against',
+    'xga',
+    'xga_l6',
+  ]);
+  const homeRecentXgAgainst = pickFiniteFromPaths(homeStats, [
+    'recent_xg_against',
+    'xga_recent',
+    'xga_l6',
+  ]);
+  const awaySeasonXgAgainst = pickFiniteFromPaths(awayStats, [
+    'season_xg_against',
+    'xg_against',
+    'xga',
+    'xga_l6',
+  ]);
+  const awayRecentXgAgainst = pickFiniteFromPaths(awayStats, [
+    'recent_xg_against',
+    'xga_recent',
+    'xga_l6',
+  ]);
+
+  const homeDefensiveXga = weightedAverage([
+    { value: homeSeasonXgAgainst, weight: 0.6 },
+    { value: homeRecentXgAgainst, weight: 0.4 },
+  ]);
+  const awayDefensiveXga = weightedAverage([
+    { value: awaySeasonXgAgainst, weight: 0.6 },
+    { value: awayRecentXgAgainst, weight: 0.4 },
+  ]);
+
+  const homeCore = weightedAverage([
+    { value: homeSeasonXgFor, weight: 0.5 },
+    { value: homeRecentXgFor, weight: 0.25 },
+    { value: awayDefensiveXga, weight: 0.25 },
+  ]);
+  const awayCore = weightedAverage([
+    { value: awaySeasonXgFor, weight: 0.5 },
+    { value: awayRecentXgFor, weight: 0.25 },
+    { value: homeDefensiveXga, weight: 0.25 },
+  ]);
+
+  const homeSotFor = pickFiniteFromPaths(homeStats, ['sot_for', 'shots_on_target_for']);
+  const awaySotFor = pickFiniteFromPaths(awayStats, ['sot_for', 'shots_on_target_for']);
+  const homeSotAgainst = pickFiniteFromPaths(homeStats, ['sot_against', 'shots_on_target_against']);
+  const awaySotAgainst = pickFiniteFromPaths(awayStats, ['sot_against', 'shots_on_target_against']);
+  const homeShotNudge =
+    Number.isFinite(homeSotFor) && Number.isFinite(awaySotAgainst)
+      ? clampToRange((homeSotFor - awaySotAgainst) * 0.03, -0.12, 0.12)
+      : 0;
+  const awayShotNudge =
+    Number.isFinite(awaySotFor) && Number.isFinite(homeSotAgainst)
+      ? clampToRange((awaySotFor - homeSotAgainst) * 0.03, -0.12, 0.12)
+      : 0;
+
+  const homeHomeEdge = FOOTIE_LEAGUE_HOME_EDGE[leagueTag] || 0;
+  const homeAbsencePenalty = clampToRange(lineup.home_absences * 0.05, 0, 0.35);
+  const awayAbsencePenalty = clampToRange(lineup.away_absences * 0.05, 0, 0.35);
+  const context = rawData?.context || {};
+  const motivation = rawData?.motivation_context || {};
+  const weather = rawData?.weather_context || {};
+
+  const homeMotivationNudge = clampToRange(
+    toFiniteNumber(motivation?.home_delta ?? context?.home_delta ?? 0) || 0,
+    -0.15,
+    0.15,
+  );
+  const awayMotivationNudge = clampToRange(
+    toFiniteNumber(motivation?.away_delta ?? context?.away_delta ?? 0) || 0,
+    -0.15,
+    0.15,
+  );
+  const weatherTotalPenalty = clampToRange(
+    toFiniteNumber(weather?.goal_suppression ?? weather?.total_delta ?? 0) || 0,
+    -0.25,
+    0.25,
+  );
+
+  const lambdaHome = Number.isFinite(homeCore)
+    ? clampToRange(
+        homeCore + homeHomeEdge - homeAbsencePenalty + homeMotivationNudge + homeShotNudge - weatherTotalPenalty,
+        0.25,
+        4.5,
+      )
+    : null;
+  const lambdaAway = Number.isFinite(awayCore)
+    ? clampToRange(
+        awayCore - awayAbsencePenalty + awayMotivationNudge + awayShotNudge - weatherTotalPenalty,
+        0.25,
+        4.5,
+      )
+    : null;
+
+  const coreSignals = [
+    homeSeasonXgFor,
+    homeRecentXgFor,
+    awayDefensiveXga,
+    awaySeasonXgFor,
+    awayRecentXgFor,
+    homeDefensiveXga,
+  ];
+  const statsCompleteness =
+    coreSignals.filter((value) => Number.isFinite(value)).length / coreSignals.length;
+
+  return {
+    lambda_home: Number.isFinite(lambdaHome) ? lambdaHome : null,
+    lambda_away: Number.isFinite(lambdaAway) ? lambdaAway : null,
+    stats_completeness: statsCompleteness,
+    lineup,
+    notes: [
+      homeCache ? 'xg_cache_home_hit' : 'xg_cache_home_miss',
+      awayCache ? 'xg_cache_away_hit' : 'xg_cache_away_miss',
+    ],
+  };
+}
+
+function computeFootieLambdas({ oddsSnapshot, rawData, side, offeredLine }) {
+  const stats = deriveStatsLambdas({ oddsSnapshot, rawData });
+  const marketFallback = deriveAhLambdaFallback({
+    rawData,
+    oddsSnapshot,
+    side: side || 'HOME',
+    offeredLine,
+  });
+
+  const hasStatsLambdas =
+    Number.isFinite(stats?.lambda_home) && Number.isFinite(stats?.lambda_away);
+  const hasMarketFallback =
+    Number.isFinite(marketFallback?.lambda_home) &&
+    Number.isFinite(marketFallback?.lambda_away);
+
+  const notes = Array.isArray(stats?.notes) ? [...stats.notes] : [];
+  if (hasMarketFallback) notes.push('market_anchor_available');
+
+  if (hasStatsLambdas && hasMarketFallback) {
+    const lambdaHome = clampToRange(
+      stats.lambda_home * FOOTIE_STATS_WEIGHT +
+        marketFallback.lambda_home * FOOTIE_MARKET_ANCHOR_WEIGHT,
+      0.25,
+      4.5,
+    );
+    const lambdaAway = clampToRange(
+      stats.lambda_away * FOOTIE_STATS_WEIGHT +
+        marketFallback.lambda_away * FOOTIE_MARKET_ANCHOR_WEIGHT,
+      0.25,
+      4.5,
+    );
+    return {
+      lambda_home: safeRound(lambdaHome, 4),
+      lambda_away: safeRound(lambdaAway, 4),
+      lambda_source: FOOTIE_LAMBDA_SOURCE.STATS_MARKET_BLEND,
+      lambda_source_quality:
+        stats.stats_completeness >= 0.75
+          ? FOOTIE_LAMBDA_QUALITY.HIGH
+          : FOOTIE_LAMBDA_QUALITY.MEDIUM,
+      stats_completeness: safeRound(stats.stats_completeness, 4),
+      lineup: stats.lineup,
+      notes,
+    };
+  }
+
+  if (hasStatsLambdas) {
+    return {
+      lambda_home: safeRound(stats.lambda_home, 4),
+      lambda_away: safeRound(stats.lambda_away, 4),
+      lambda_source: FOOTIE_LAMBDA_SOURCE.STATS_PRIMARY,
+      lambda_source_quality:
+        stats.stats_completeness >= 0.75
+          ? FOOTIE_LAMBDA_QUALITY.HIGH
+          : stats.stats_completeness >= 0.5
+            ? FOOTIE_LAMBDA_QUALITY.MEDIUM
+            : FOOTIE_LAMBDA_QUALITY.LOW,
+      stats_completeness: safeRound(stats.stats_completeness, 4),
+      lineup: stats.lineup,
+      notes,
+    };
+  }
+
+  if (hasMarketFallback) {
+    notes.push('fallback_only');
+    return {
+      lambda_home: safeRound(marketFallback.lambda_home, 4),
+      lambda_away: safeRound(marketFallback.lambda_away, 4),
+      lambda_source: FOOTIE_LAMBDA_SOURCE.MARKET_FALLBACK,
+      lambda_source_quality: FOOTIE_LAMBDA_QUALITY.LOW,
+      stats_completeness: safeRound(stats?.stats_completeness || 0, 4),
+      lineup: stats?.lineup || getLineupContext(rawData),
+      notes,
+    };
+  }
+
+  notes.push('missing_all_lambda_inputs');
+  return {
+    lambda_home: null,
+    lambda_away: null,
+    lambda_source: null,
+    lambda_source_quality: FOOTIE_LAMBDA_QUALITY.LOW,
+    stats_completeness: safeRound(stats?.stats_completeness || 0, 4),
+    lineup: stats?.lineup || getLineupContext(rawData),
+    notes,
+  };
+}
+
+function computeFootieMlProbabilities({ lambdaHome, lambdaAway }) {
+  if (!Number.isFinite(lambdaHome) || !Number.isFinite(lambdaAway)) {
+    return null;
+  }
+
+  // Lambdas already include league/context adjustments upstream.
+  // Keep xg-model home adjustment neutral here to avoid double-counting home edge.
+  const probabilities = computeXgWinProbs({
+    homeXg: lambdaHome,
+    awayXg: lambdaAway,
+    league: 'UNKNOWN',
+    maxGoals: FOOTIE_MAX_GOALS,
+  });
+
+  const pHome = clampProbability(probabilities?.homeWin);
+  const pDraw = clampProbability(probabilities?.draw);
+  const pAway = clampProbability(probabilities?.awayWin);
+  if (!Number.isFinite(pHome) || !Number.isFinite(pDraw) || !Number.isFinite(pAway)) {
+    return null;
+  }
+
+  const total = pHome + pDraw + pAway;
+  if (total <= 0) return null;
+  return {
+    p_home_win: safeRound(pHome / total, 6),
+    p_draw: safeRound(pDraw / total, 6),
+    p_away_win: safeRound(pAway / total, 6),
+  };
+}
+
+function deriveSideConfidence({
+  modelProb,
+  lambdaSource,
+  lambdaSourceQuality,
+  statsCompleteness,
+  lineupCertainty,
+  sideMarketGap,
+}) {
+  if (!Number.isFinite(modelProb)) return null;
+
+  let confidence = 0.52 + Math.abs(modelProb - 0.5) * 0.65;
+  if (lambdaSourceQuality === FOOTIE_LAMBDA_QUALITY.HIGH) confidence += 0.08;
+  if (lambdaSourceQuality === FOOTIE_LAMBDA_QUALITY.MEDIUM) confidence += 0.04;
+
+  if (Number.isFinite(statsCompleteness)) {
+    confidence += clampToRange((statsCompleteness - 0.5) * 0.14, -0.06, 0.06);
+  }
+
+  if (lineupCertainty === 'HIGH') confidence += 0.03;
+  if (lineupCertainty === 'LOW') confidence -= 0.04;
+
+  if (lambdaSource === FOOTIE_LAMBDA_SOURCE.MARKET_FALLBACK) {
+    confidence -= 0.12;
+  }
+  if (Number.isFinite(sideMarketGap) && sideMarketGap > 0.12) {
+    confidence -= clampToRange((sideMarketGap - 0.12) * 0.4, 0, 0.08);
+  }
+
+  return safeRound(clampToRange(confidence, 0.5, 0.86), 4);
+}
+
+function applySideRiskGuards({
+  marketType,
+  edge,
+  tier,
+  lambdaSource,
+  lineup,
+  drawProbability,
+  modelSide,
+  marketSide,
+}) {
+  const reasonCodes = [];
+  let passReason = null;
+  let guardedTier = tier;
+
+  if (!Number.isFinite(edge) || edge <= 0) {
+    passReason = FOOTIE_REASON_CODES.MISSING_EDGE;
+    reasonCodes.push(FOOTIE_REASON_CODES.MISSING_EDGE);
+  }
+
+  if (lambdaSource === FOOTIE_LAMBDA_SOURCE.MARKET_FALLBACK) {
+    passReason = FOOTIE_REASON_CODES.MARKET_FALLBACK_ONLY;
+    reasonCodes.push(FOOTIE_REASON_CODES.MARKET_FALLBACK_ONLY);
+    guardedTier = null;
+  }
+
+  if (lineup?.unresolved) {
+    reasonCodes.push(FOOTIE_REASON_CODES.LINEUP_UNCONFIRMED);
+    if (!passReason) {
+      guardedTier = guardedTier === 'SUPER' || guardedTier === 'BEST' ? 'WATCH' : guardedTier;
+    }
+  }
+
+  if (marketType === 'MONEYLINE' && Number.isFinite(drawProbability)) {
+    if (drawProbability >= 0.31 && (!Number.isFinite(edge) || edge < 0.05)) {
+      passReason = FOOTIE_REASON_CODES.DRAW_RISK_HIGH;
+      reasonCodes.push(FOOTIE_REASON_CODES.DRAW_RISK_HIGH);
+    }
+  }
+
+  if (modelSide && marketSide && modelSide !== marketSide) {
+    reasonCodes.push(FOOTIE_REASON_CODES.CONTRADICTORY_SIGNAL);
+    if (!passReason) {
+      guardedTier = guardedTier === 'SUPER' || guardedTier === 'BEST' ? 'WATCH' : guardedTier;
+    }
+  }
+
+  return {
+    tier: guardedTier,
+    pass_reason: passReason,
+    reason_codes: Array.from(new Set(reasonCodes)),
+  };
+}
+
+function clampToRange(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function deriveTierFromEdge(edge) {
+  if (!Number.isFinite(edge) || edge <= 0) return null;
+  if (edge >= 0.06) return 'SUPER';
+  if (edge >= 0.03) return 'BEST';
+  return 'WATCH';
+}
+
+function deriveConfidenceFromModelProb(modelProb, options = {}) {
+  if (!Number.isFinite(modelProb)) return null;
+  const centeredDistance = Math.abs(modelProb - 0.5);
+  let confidence = clampToRange(0.55 + centeredDistance * 0.6, 0.55, 0.82);
+  if (options.lambdaSource === FOOTIE_LAMBDA_SOURCE.MARKET_FALLBACK) {
+    confidence = Math.min(confidence, 0.62);
+  }
+  return Number(confidence.toFixed(4));
+}
+
+function resolveHomeHandicapLine({ rawData, oddsSnapshot, side, offeredLine }) {
+  const explicitHomeLine = toFiniteNumber(
+    rawData?.ah_home_line ?? rawData?.spread_home,
+  );
+  if (Number.isFinite(explicitHomeLine)) return explicitHomeLine;
+
+  const snapshotHomeLine = toFiniteNumber(oddsSnapshot?.spread_home);
+  if (Number.isFinite(snapshotHomeLine)) return snapshotHomeLine;
+
+  const snapshotAwayLine = toFiniteNumber(oddsSnapshot?.spread_away);
+  if (Number.isFinite(snapshotAwayLine)) return -snapshotAwayLine;
+
+  if (Number.isFinite(offeredLine)) {
+    return side === 'HOME' ? offeredLine : -offeredLine;
+  }
+
+  return null;
+}
+
+function deriveAhLambdaFallback({ rawData, oddsSnapshot, side, offeredLine }) {
+  const totalLine = toFiniteNumber(
+    rawData?.total_line ?? rawData?.game_total ?? rawData?.expected_total_goals,
+  );
+  const snapshotTotal = toFiniteNumber(oddsSnapshot?.total);
+  const totalGoals = clampToRange(
+    totalLine ?? snapshotTotal ?? FOOTIE_DEFAULT_TOTAL_GOALS,
+    1.4,
+    5.2,
+  );
+
+  const winProbHome = deriveWinProbHome(
+    oddsSnapshot?.h2h_home,
+    oddsSnapshot?.h2h_away,
+  );
+  const hasMoneylineSignal = Number.isFinite(winProbHome);
+  const mlDiff =
+    hasMoneylineSignal && winProbHome > 0 && winProbHome < 1
+      ? clampToRange(Math.log(winProbHome / (1 - winProbHome)) * 0.85, -1.8, 1.8)
+      : null;
+
+  const homeHandicapLine = resolveHomeHandicapLine({
+    rawData,
+    oddsSnapshot,
+    side,
+    offeredLine,
+  });
+  const hasSpreadSignal = Number.isFinite(homeHandicapLine);
+  const spreadDiff = hasSpreadSignal
+    ? clampToRange(-homeHandicapLine * 0.9, -1.8, 1.8)
+    : null;
+  const hasTotalSignal = Number.isFinite(totalLine) || Number.isFinite(snapshotTotal);
+  if (!hasSpreadSignal && !hasMoneylineSignal && !hasTotalSignal) {
+    return null;
+  }
+
+  let expectedDiff = 0;
+  if (Number.isFinite(spreadDiff) && Number.isFinite(mlDiff)) {
+    expectedDiff = spreadDiff * 0.7 + mlDiff * 0.3;
+  } else if (Number.isFinite(spreadDiff)) {
+    expectedDiff = spreadDiff;
+  } else if (Number.isFinite(mlDiff)) {
+    expectedDiff = mlDiff;
+  }
+
+  const maxAbsDiff = Math.max(0.15, totalGoals - 0.15);
+  expectedDiff = clampToRange(expectedDiff, -maxAbsDiff, maxAbsDiff);
+
+  const lambdaHome = Number(((totalGoals + expectedDiff) / 2).toFixed(4));
+  const lambdaAway = Number((totalGoals - lambdaHome).toFixed(4));
+  if (!Number.isFinite(lambdaHome) || !Number.isFinite(lambdaAway)) return null;
+  if (lambdaHome <= 0 || lambdaAway <= 0) return null;
+
+  const sourceParts = [];
+  if (hasSpreadSignal) sourceParts.push('spread_line');
+  if (hasMoneylineSignal) sourceParts.push('moneyline');
+  if (hasTotalSignal) {
+    sourceParts.push('total_line');
+  } else {
+    sourceParts.push('default_total');
+  }
+
+  return {
+    lambda_home: lambdaHome,
+    lambda_away: lambdaAway,
+    source: `derived_${sourceParts.join('_')}`,
+  };
 }
 
 function parseRawData(rawData) {
@@ -1137,6 +2118,8 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
       console.log(
         `[SoccerModel] Track 1: running inference on ${gameIds.length} games...`,
       );
+      const soccerModelMode = resolveSoccerModelMode();
+      console.log(`[SoccerModel] Mode: ${soccerModelMode}`);
 
       let cardsGenerated = 0;
       let track1Cards = 0;
@@ -1230,12 +2213,13 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
             Number.isFinite(oddsSnapshot?.spread_price_away);
 
           if (
+            soccerModelMode === 'SIDES_AND_PROPS' &&
             hasSpreadInputs &&
             canonicalMarket !== 'asian_handicap_home' &&
             canonicalMarket !== 'asian_handicap_away'
           ) {
             for (const ahMarket of ['asian_handicap_home', 'asian_handicap_away']) {
-              const ahCard = buildSoccerOddsBackedCard(gameId, oddsSnapshot, ahMarket);
+              const ahCard = buildSoccerSideMarketCard(gameId, oddsSnapshot, ahMarket);
               const ahValidation = validateCardPayload(ahCard.cardType, ahCard.payloadData);
               if (!ahValidation.success) {
                 throw new Error(
@@ -1261,15 +2245,25 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
 
           let card;
           if (canonicalMarket && ODDS_BACKED_CARD_TYPES.has(canonicalMarket)) {
-            // New odds-backed card types
-            card = buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalMarket);
+            if (!shouldEmitOddsBackedCard(soccerModelMode, canonicalMarket)) {
+              console.log(
+                `  [skip] Track1 ${gameId} [${canonicalMarket}] gated by mode=${soccerModelMode}`,
+              );
+              continue;
+            }
+            card = isSoccerSideMarket(canonicalMarket)
+              ? buildSoccerSideMarketCard(gameId, oddsSnapshot, canonicalMarket)
+              : buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalMarket);
           } else if (canonicalMarket && PROJECTION_MARKET_TYPES.has(canonicalMarket)) {
             if (TIER1_PLAYER_MARKETS.has(canonicalMarket)) {
-              card = generateSoccerCard(gameId, oddsSnapshot);
+              card =
+                soccerModelMode === 'OHIO_PROPS_ONLY'
+                  ? null
+                  : generateSoccerCard(gameId, oddsSnapshot);
             } else {
             // Projection-only player markets found in odds snapshot raw_data
             const tier1Result = buildSoccerTier1Payload(gameId, oddsSnapshot, canonicalMarket);
-            const cardId = `card-soccer-ohio-${gameId}-${uuidV4().slice(0, 8)}`;
+            const cardId = `card-soccer-scope-${gameId}-${uuidV4().slice(0, 8)}`;
             card = {
               id: cardId,
               gameId,
@@ -1283,8 +2277,15 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
             };
             }
           } else {
-            // Fallback to legacy soccer-model-output moneyline card
-            card = generateSoccerCard(gameId, oddsSnapshot);
+            // Fallback moneyline card is only emitted in sides-enabled mode.
+            card =
+              soccerModelMode === 'OHIO_PROPS_ONLY'
+                ? null
+                : generateSoccerCard(gameId, oddsSnapshot);
+          }
+
+          if (!card) {
+            continue;
           }
 
           const validation = validateCardPayload(card.cardType, card.payloadData);
@@ -1433,9 +2434,15 @@ module.exports = {
   derivePredictionFromMoneyline,
   gradeAsianHandicap,
   priceAsianHandicap,
+  resolveSoccerModelMode,
+  shouldEmitOddsBackedCard,
+  isSoccerSideMarket,
   normalizeToCanonicalSoccerMarket,
+  computeFootieLambdas,
+  computeFootieMlProbabilities,
   buildSoccerTier1Payload,
   buildSoccerOddsBackedCard,
+  buildSoccerSideMarketCard,
   buildDeterministicSoccerPlayerId,
   buildSoccerTier1CardFromPropLine,
   isBlockedSoccerPropPlayer,

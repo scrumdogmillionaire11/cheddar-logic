@@ -2,9 +2,15 @@ const { validateCardPayload } = require('@cheddar-logic/data');
 const {
   generateSoccerCard,
   deriveWinProbHome,
+  resolveSoccerModelMode,
+  shouldEmitOddsBackedCard,
+  isSoccerSideMarket,
   normalizeToCanonicalSoccerMarket,
+  computeFootieLambdas,
+  computeFootieMlProbabilities,
   buildSoccerTier1Payload,
   buildSoccerOddsBackedCard,
+  buildSoccerSideMarketCard,
   buildDeterministicSoccerPlayerId,
   buildSoccerTier1CardFromPropLine,
   isBlockedSoccerPropPlayer,
@@ -118,7 +124,127 @@ describe('run_soccer_model payload hardening', () => {
   });
 });
 
-describe('soccer ohio scope — Tier 1 market hardening', () => {
+describe('soccer model mode routing helpers', () => {
+  const originalMode = process.env.SOCCER_MODEL_MODE;
+  const originalModeLegacy = process.env.soccer_model_mode;
+
+  afterEach(() => {
+    if (originalMode === undefined) {
+      delete process.env.SOCCER_MODEL_MODE;
+    } else {
+      process.env.SOCCER_MODEL_MODE = originalMode;
+    }
+    if (originalModeLegacy === undefined) {
+      delete process.env.soccer_model_mode;
+    } else {
+      process.env.soccer_model_mode = originalModeLegacy;
+    }
+  });
+
+  test('defaults to SIDES_AND_PROPS when unset/invalid', () => {
+    delete process.env.SOCCER_MODEL_MODE;
+    delete process.env.soccer_model_mode;
+    expect(resolveSoccerModelMode()).toBe('SIDES_AND_PROPS');
+
+    process.env.SOCCER_MODEL_MODE = 'invalid';
+    expect(resolveSoccerModelMode()).toBe('SIDES_AND_PROPS');
+  });
+
+  test('resolves explicit OHIO_PROPS_ONLY mode', () => {
+    process.env.SOCCER_MODEL_MODE = 'OHIO_PROPS_ONLY';
+    expect(resolveSoccerModelMode()).toBe('OHIO_PROPS_ONLY');
+  });
+
+  test('gates odds-backed card emission in OHIO_PROPS_ONLY', () => {
+    expect(shouldEmitOddsBackedCard('OHIO_PROPS_ONLY', 'soccer_ml')).toBe(false);
+    expect(shouldEmitOddsBackedCard('OHIO_PROPS_ONLY', 'asian_handicap_home')).toBe(false);
+    expect(shouldEmitOddsBackedCard('SIDES_AND_PROPS', 'soccer_ml')).toBe(true);
+  });
+
+  test('identifies side markets', () => {
+    expect(isSoccerSideMarket('soccer_ml')).toBe(true);
+    expect(isSoccerSideMarket('asian_handicap_home')).toBe(true);
+    expect(isSoccerSideMarket('asian_handicap_away')).toBe(true);
+    expect(isSoccerSideMarket('soccer_game_total')).toBe(false);
+  });
+});
+
+describe('footie side lambda/model helpers', () => {
+  test('uses STATS_PRIMARY when explicit non-market lambdas are available', () => {
+    const snap = buildOddsSnapshot({
+      h2h_home: null,
+      h2h_away: null,
+      spread_home: null,
+      spread_away: null,
+      raw_data: JSON.stringify({
+        league: 'EPL',
+        lambda_home: 1.74,
+        lambda_away: 1.09,
+        lambda_source: 'stats_seed',
+      }),
+    });
+    const lambdaModel = computeFootieLambdas({
+      oddsSnapshot: snap,
+      rawData: JSON.parse(snap.raw_data),
+      side: 'HOME',
+      offeredLine: null,
+    });
+
+    expect(lambdaModel.lambda_source).toBe('STATS_PRIMARY');
+    expect(lambdaModel.lambda_home).toBeCloseTo(1.74, 3);
+    expect(lambdaModel.lambda_away).toBeCloseTo(1.09, 3);
+  });
+
+  test('uses MARKET_FALLBACK when stats are missing and market inputs exist', () => {
+    const snap = buildOddsSnapshot({
+      h2h_home: -125,
+      h2h_away: 102,
+      spread_home: -0.5,
+      spread_away: 0.5,
+      raw_data: JSON.stringify({
+        league: 'EPL',
+        market: 'spreads',
+        total_line: 2.5,
+      }),
+    });
+    const lambdaModel = computeFootieLambdas({
+      oddsSnapshot: snap,
+      rawData: JSON.parse(snap.raw_data),
+      side: 'HOME',
+      offeredLine: -0.5,
+    });
+
+    expect(lambdaModel.lambda_source).toBe('MARKET_FALLBACK');
+    expect(lambdaModel.lambda_source_quality).toBe('LOW');
+    expect(lambdaModel.lambda_home).toEqual(expect.any(Number));
+    expect(lambdaModel.lambda_away).toEqual(expect.any(Number));
+  });
+
+  test('ml probabilities sum to ~1 and draw increases when lambdas converge', () => {
+    const separated = computeFootieMlProbabilities({
+      lambdaHome: 1.9,
+      lambdaAway: 1.0,
+      leagueTag: 'EPL',
+    });
+    const balanced = computeFootieMlProbabilities({
+      lambdaHome: 1.4,
+      lambdaAway: 1.3,
+      leagueTag: 'EPL',
+    });
+    const boostedHome = computeFootieMlProbabilities({
+      lambdaHome: 2.1,
+      lambdaAway: 1.0,
+      leagueTag: 'EPL',
+    });
+
+    const separatedTotal = separated.p_home_win + separated.p_draw + separated.p_away_win;
+    expect(separatedTotal).toBeCloseTo(1, 4);
+    expect(boostedHome.p_home_win).toBeGreaterThan(separated.p_home_win);
+    expect(balanced.p_draw).toBeGreaterThan(separated.p_draw);
+  });
+});
+
+describe('soccer scope — Tier 1 market hardening', () => {
   // ---- normalizeToCanonicalSoccerMarket ----
   describe('normalizeToCanonicalSoccerMarket', () => {
     test("'player_shots' -> 'player_shots'", () => {
@@ -175,7 +301,7 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
       expect(pass_reason).toBeNull();
       expect(payloadData.canonical_market_key).toBe('team_totals');
       expect(payloadData.market_family).toBe('tier1');
-      const validation = validateCardPayload('soccer-ohio-scope', payloadData);
+      const validation = validateCardPayload('soccer', payloadData);
       expect(validation.success).toBe(true);
     });
   });
@@ -197,7 +323,7 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
       );
       expect(pass_reason).toBe('MISSING_LINE');
       expect(payloadData.missing_context_flags).toContain('line');
-      const validation = validateCardPayload('soccer-ohio-scope', payloadData);
+      const validation = validateCardPayload('soccer', payloadData);
       expect(validation.success).toBe(true);
     });
   });
@@ -236,7 +362,7 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
       expect(payloadData.player_name).toBe('Erling Haaland');
       expect(payloadData.eligibility.starter_signal).toBe(true);
       expect(payloadData.eligibility.role_tags).toContain('PRIMARY_VOLUME_SHOOTER');
-      const validation = validateCardPayload('soccer-ohio-scope', payloadData);
+      const validation = validateCardPayload('soccer', payloadData);
       expect(validation.success).toBe(true);
     });
   });
@@ -314,7 +440,7 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
         'player_shots',
       );
       expect(pass_reason).toBe('PRICE_CAP_VIOLATION');
-      const validation = validateCardPayload('soccer-ohio-scope', payloadData);
+      const validation = validateCardPayload('soccer', payloadData);
       expect(validation.success).toBe(false);
       expect(validation.errors.join(' ')).toContain('price_cap');
     });
@@ -353,7 +479,7 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
       expect(payloadData.selection).toEqual({ side: 'OVER', team: 'Bukayo Saka' });
       expect(payloadData.player_name).toBe('Bukayo Saka');
       expect(payloadData.eligibility.role_tags).toContain('TERMINAL_NODE');
-      const validation = validateCardPayload('soccer-ohio-scope', payloadData);
+      const validation = validateCardPayload('soccer', payloadData);
       expect(validation.success).toBe(true);
     });
   });
@@ -382,7 +508,7 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
 
       expect(payloadData.market_type).toBe('TEAM_TOTAL');
       expect(payloadData.selection).toEqual({ side: 'UNDER', team: 'Chelsea FC' });
-      const validation = validateCardPayload('soccer-ohio-scope', payloadData);
+      const validation = validateCardPayload('soccer', payloadData);
       expect(validation.success).toBe(true);
     });
   });
@@ -429,7 +555,7 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
         edge_ev: 0.03,
         price: -115,
       };
-      const validation = validateCardPayload('soccer-ohio-scope', payload);
+      const validation = validateCardPayload('soccer', payload);
       expect(validation.success).toBe(false);
       expect(validation.errors.join(' ')).toContain('placeholder');
     });
@@ -437,7 +563,7 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
 
   // ---- Validator: banned market key ----
   describe('Banned market via validator', () => {
-    test("canonical_market_key='match_total' (not in Ohio enum) fails validator", () => {
+    test("canonical_market_key='match_total' (not in soccer enum) fails validator", () => {
       const payload = {
         canonical_market_key: 'match_total',
         market_family: 'tier1',
@@ -452,7 +578,7 @@ describe('soccer ohio scope — Tier 1 market hardening', () => {
         edge_ev: 0.02,
         price: -110,
       };
-      const validation = validateCardPayload('soccer-ohio-scope', payload);
+      const validation = validateCardPayload('soccer', payload);
       expect(validation.success).toBe(false);
     });
   });
@@ -500,14 +626,39 @@ describe('normalizeToCanonicalSoccerMarket — odds API market keys', () => {
 // ============================================================================
 
 describe('buildSoccerOddsBackedCard — soccer_ml', () => {
-  test('produces valid soccer_ml payload from h2h odds snapshot', () => {
+  test('produces lambda-based soccer_ml payload with explicit fallback flags', () => {
     const snap = buildOddsSnapshot({ h2h_home: -120, h2h_away: 105 });
     const card = buildSoccerOddsBackedCard(snap.game_id, snap, 'soccer_ml');
     expect(card.cardType).toBe('soccer_ml');
     expect(card.payloadData.market_type).toBe('MONEYLINE');
+    expect(card.payloadData.model_prob).toEqual(expect.any(Number));
+    expect(card.payloadData.p_home_win).toEqual(expect.any(Number));
+    expect(card.payloadData.p_draw).toEqual(expect.any(Number));
+    expect(card.payloadData.p_away_win).toEqual(expect.any(Number));
+    expect(card.payloadData.edge).toEqual(expect.any(Number));
+    expect(card.payloadData.lambda_source).toBeTruthy();
+    expect(card.payloadData.pass_reason).toBeTruthy();
+    expect(card.payloadData.reason_codes).toContain(card.payloadData.pass_reason);
     expect(card.payloadData.missing_context_flags).toEqual([]);
     const v = validateCardPayload('soccer_ml', card.payloadData);
     expect(v.success).toBe(true);
+  });
+});
+
+describe('buildSoccerSideMarketCard', () => {
+  test('routes soccer_ml through FOOTIE_SIDES_ENGINE metadata', () => {
+    const snap = buildOddsSnapshot({ h2h_home: -120, h2h_away: 105 });
+    const card = buildSoccerSideMarketCard(snap.game_id, snap, 'soccer_ml');
+    expect(card.cardType).toBe('soccer_ml');
+    expect(card.payloadData.footie_engine).toBe('FOOTIE_SIDES_ENGINE');
+    expect(card.payloadData.model_inputs_source).toBe('stats_team_strength');
+  });
+
+  test('throws for non-side market inputs', () => {
+    const snap = buildOddsSnapshot();
+    expect(() =>
+      buildSoccerSideMarketCard(snap.game_id, snap, 'soccer_game_total'),
+    ).toThrow('not a soccer side market');
   });
 });
 
@@ -570,6 +721,13 @@ describe('buildSoccerOddsBackedCard — asian handicap', () => {
 
     const card = buildSoccerOddsBackedCard(snap.game_id, snap, 'asian_handicap_home');
     expect(card.cardType).toBe('asian_handicap_home');
+    expect(card.payloadData.kind).toBe('PLAY');
+    expect(card.payloadData.recommended_bet_type).toBe('spread');
+    expect(card.payloadData.prediction).toBe('HOME');
+    expect(card.payloadData.selection).toEqual({
+      side: 'HOME',
+      team: 'Chelsea FC',
+    });
     expect(card.payloadData.market_type).toBe('ASIAN_HANDICAP');
     expect(card.payloadData.side).toBe('HOME');
     expect(card.payloadData.line).toBe(-0.75);
@@ -600,10 +758,17 @@ describe('buildSoccerOddsBackedCard — asian handicap', () => {
     });
 
     const card = buildSoccerOddsBackedCard(snap.game_id, snap, 'asian_handicap_away');
+    expect(card.payloadData.kind).toBe('PLAY');
+    expect(card.payloadData.recommended_bet_type).toBe('spread');
+    expect(card.payloadData.prediction).toBe('AWAY');
+    expect(card.payloadData.selection).toEqual({
+      side: 'AWAY',
+      team: 'Manchester City',
+    });
     expect(card.payloadData.pass_reason).toBe('MISSING_AH_INPUTS');
     expect(card.payloadData.missing_context_flags).toContain('opposite_price');
-    expect(card.payloadData.missing_context_flags).toContain('lambda_home');
-    expect(card.payloadData.missing_context_flags).toContain('lambda_away');
+    expect(card.payloadData.missing_context_flags).not.toContain('lambda_home');
+    expect(card.payloadData.missing_context_flags).not.toContain('lambda_away');
   });
 
   test('falls back to spread snapshot fields when raw AH fields are absent', () => {
@@ -632,12 +797,51 @@ describe('buildSoccerOddsBackedCard — asian handicap', () => {
     expect(homeCard.payloadData.line).toBe(-0.5);
     expect(homeCard.payloadData.price).toBe(-112);
     expect(homeCard.payloadData.opposite_price).toBe(-108);
-    expect(homeCard.payloadData.pass_reason).toBe('MISSING_AH_INPUTS');
+    expect(homeCard.payloadData.selection).toEqual({
+      side: 'HOME',
+      team: 'Chelsea FC',
+    });
+    expect(homeCard.payloadData.model_prob).toEqual(expect.any(Number));
+    expect(homeCard.payloadData.edge).toEqual(expect.any(Number));
+    expect(homeCard.payloadData.lambda_source).toBe('MARKET_FALLBACK');
+    expect(homeCard.payloadData.pass_reason).toBe('BLOCKED_MARKET_FALLBACK_ONLY');
+    expect(homeCard.payloadData.reason_codes).toContain('BLOCKED_MARKET_FALLBACK_ONLY');
 
     expect(awayCard.payloadData.line).toBe(0.5);
     expect(awayCard.payloadData.price).toBe(-108);
     expect(awayCard.payloadData.opposite_price).toBe(-112);
-    expect(awayCard.payloadData.pass_reason).toBe('MISSING_AH_INPUTS');
+    expect(awayCard.payloadData.selection).toEqual({
+      side: 'AWAY',
+      team: 'Manchester City',
+    });
+    expect(awayCard.payloadData.model_prob).toEqual(expect.any(Number));
+    expect(awayCard.payloadData.edge).toEqual(expect.any(Number));
+    expect(awayCard.payloadData.lambda_source).toBe('MARKET_FALLBACK');
+    expect(awayCard.payloadData.pass_reason).toBe('BLOCKED_MARKET_FALLBACK_ONLY');
+    expect(awayCard.payloadData.reason_codes).toContain('BLOCKED_MARKET_FALLBACK_ONLY');
+  });
+
+  test('fails validator when AH selection side drifts from canonical side', () => {
+    const snap = buildOddsSnapshot({
+      raw_data: JSON.stringify({
+        league: 'EPL',
+        market: 'asian_handicap_home',
+        ah_line: -0.5,
+        ah_price: -110,
+        ah_opposite_price: -110,
+        lambda_home: 1.5,
+        lambda_away: 1.2,
+      }),
+    });
+    const card = buildSoccerOddsBackedCard(snap.game_id, snap, 'asian_handicap_home');
+    const driftedPayload = {
+      ...card.payloadData,
+      selection: { ...card.payloadData.selection, side: 'AWAY' },
+    };
+
+    const result = validateCardPayload('asian_handicap_home', driftedPayload);
+    expect(result.success).toBe(false);
+    expect(result.errors.join(' ')).toContain('selection.side');
   });
 });
 
@@ -646,7 +850,7 @@ describe('buildSoccerOddsBackedCard — asian handicap', () => {
 // ============================================================================
 
 describe('Track 2 projection-only cards', () => {
-  test('soccer-ohio-scope card with projection_only:true passes validator without price', () => {
+  test('soccer card with projection_only:true passes validator without price', () => {
     const payload = {
       canonical_market_key: 'to_score_or_assist',
       market_family: 'tier1',
@@ -662,7 +866,7 @@ describe('Track 2 projection-only cards', () => {
       price: null,
       projection_only: true,
     };
-    const v = validateCardPayload('soccer-ohio-scope', payload);
+    const v = validateCardPayload('soccer', payload);
     expect(v.success).toBe(true);
   });
 });
@@ -712,7 +916,7 @@ describe('soccer tier-1 prop line identity mapping', () => {
       team: 'Bryan Mbeumo',
     });
 
-    const validation = validateCardPayload('soccer-ohio-scope', card.payloadData);
+    const validation = validateCardPayload('soccer', card.payloadData);
     expect(validation.success).toBe(true);
   });
 
@@ -808,7 +1012,7 @@ describe('WI-0472 soccer rollout patch helpers', () => {
     const card = {
       id: 'card-soccer-proj-001',
       gameId: 'game-soccer-proj-001',
-      cardType: 'soccer-ohio-scope',
+      cardType: 'soccer',
     };
     const payloadData = {
       canonical_market_key: 'to_score_or_assist',

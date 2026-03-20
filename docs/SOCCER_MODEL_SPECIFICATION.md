@@ -159,8 +159,35 @@ Asian Handicap is approved for reintroduction as a dedicated Tier-1 **main-marke
 - Routing boundary: AH stays in `FOOTIE_MAIN_MARKETS` and must not use props ingestion/routing paths
 - Supported line families: whole (`-1.0`, `+1.0`), half (`-0.5`, `+0.5`), quarter (`-0.25`, `+0.25`, `-0.75`, `+0.75`), zero/DNB (`0`)
 - Outcome taxonomy: `win|push|loss` for whole/zero, `win|loss` for half, and `full_win|half_win|half_loss|full_loss` for quarter lines
-- Tier-1 output contract includes: `line`, `price`, `side`, `split_flag`, `probabilities`, and `expected_value`
+- Tier-1 output contract includes canonical play-envelope fields (`kind`, `recommended_bet_type`, `prediction`, `selection`) plus AH-specific fields (`line`, `price`, `side`, `split_flag`, `probabilities`, `expected_value`)
 - Non-goals for this phase: no legacy market backfill, no props-path fallback, no UI-specific expansion outside existing card contracts
+
+### 2.5.2 March 2026 Side Engine Update (Step 2 + Step 3)
+
+`FOOTIE_SIDES_ENGINE` now resolves soccer side markets with explicit lambda-source layering and guardrails:
+
+- Primary path: stats-derived lambdas (`STATS_PRIMARY`) from team-stat inputs and context.
+- Stabilized path: stats + market anchor blend (`STATS_MARKET_BLEND`, 75/25 blend).
+- Emergency path: market-only fallback (`MARKET_FALLBACK`) with explicit reason codes and capped outcomes.
+
+Moneyline (`soccer_ml`) now uses lambda-driven Poisson W/D/L probabilities:
+
+- `p_home_win`, `p_draw`, `p_away_win`
+- `fair_ml_home`, `fair_ml_draw`, `fair_ml_away`
+- side selection comes from model probability + edge vs de-vig book probability, not favorite-by-price.
+
+Asian Handicap cards keep existing AH pricing/grading but now expose quarter-line components in payload:
+
+- `p_full_win`, `p_half_win`, `p_push`, `p_half_loss`, `p_full_loss`
+- `lambda_source`, `lambda_source_quality`, `reason_codes`
+
+Side risk guards added in runtime payload contracts:
+
+- `BLOCKED_MARKET_FALLBACK_ONLY`
+- `BLOCKED_NO_PRIMARY_LAMBDA`
+- `BLOCKED_UNCONFIRMED_LINEUP`
+- `BLOCKED_ML_DRAW_RISK_HIGH`
+- `BLOCKED_CONTRADICTORY_SIDE_SIGNAL`
 
 ### 2.6 Performance Tracking — The Calibration Loop
 

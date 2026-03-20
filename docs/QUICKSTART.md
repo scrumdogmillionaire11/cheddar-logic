@@ -106,6 +106,16 @@ Your cheddar board updates automatically. See [AUTOMATED_SETUP.md](AUTOMATED_SET
 Soccer market policy (ADR-0006): Asian Handicap is reintroduced as a Tier-1 **main-market** path (`asian_handicap_home`, `asian_handicap_away`) under `FOOTIE_MAIN_MARKETS`. It is separate from soccer props routing and should not be mixed with `SOCCER_PROP_EVENTS_ENABLED` prop ingestion.
 AH cards must carry the canonical play envelope (`kind`, `recommended_bet_type`, `prediction`, `selection`) in addition to AH pricing fields (`line`, `price`, `side`, `split_flag`, `probabilities`, `expected_value`) so `/api/games` keeps them as playable spread rows.
 
+Soccer runtime mode switch:
+
+- `SOCCER_MODEL_MODE=SIDES_AND_PROPS` (default): emit side markets via `FOOTIE_SIDES_ENGINE` metadata path plus props.
+- `SOCCER_MODEL_MODE=OHIO_PROPS_ONLY`: suppress odds-backed soccer side/main cards (`soccer_ml`, `soccer_game_total`, `soccer_double_chance`, `asian_handicap_home`, `asian_handicap_away`) and keep props/projection-only output only.
+
+Soccer sides model note:
+
+- Side cards (ML/AH) are now lambda-source aware. If only market-derived fallback lambdas are available, payloads are explicitly guarded with reason codes (for example `BLOCKED_MARKET_FALLBACK_ONLY`).
+- To feed stats-primary lambdas, prewarm soccer xG cache before running `job:run-soccer-model`.
+
 ### Quickstart
 
 ```bash
@@ -138,6 +148,10 @@ npm --prefix apps/worker run job:run-nhl-player-shots-model
 
 # Pull Soccer Tier-1 player props (optional manual run; scheduler now queues this before soccer model windows)
 set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/worker run job:pull-soccer-player-props
+
+# Pull soccer team xG cache (recommended for stats-primary ML/AH side modeling)
+# Requires ENABLE_SOCCER_XG_MODEL=true
+set -a; source .env; set +a; ENABLE_SOCCER_XG_MODEL=true npm --prefix apps/worker run job:pull-soccer-xg-stats
 
 # Prewarm team metrics cache (recommended before early model windows)
 set -a; source .env; set +a; npm --prefix apps/worker run job:refresh-team-metrics

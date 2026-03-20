@@ -242,6 +242,43 @@ function getEtDayKey(dateInput: Date | string): string {
   }).format(date);
 }
 
+type DateCardGroup<T> = { dateKey: string; label: string; cards: T[] };
+
+function groupCardsByEtDate<T>(
+  cards: T[],
+  getStartTime: (card: T) => string,
+): DateCardGroup<T>[] {
+  const now = new Date();
+  const todayET = getEtDayKey(now);
+  const tomorrowET = getEtDayKey(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  const labelFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+
+  const groups = new Map<string, DateCardGroup<T>>();
+  for (const card of cards) {
+    const dateKey = getEtDayKey(getStartTime(card));
+    let group = groups.get(dateKey);
+    if (!group) {
+      const date = new Date(`${dateKey}T12:00:00`);
+      let label: string;
+      if (dateKey === todayET) label = `Today · ${labelFormatter.format(date)}`;
+      else if (dateKey === tomorrowET) label = `Tomorrow · ${labelFormatter.format(date)}`;
+      else label = labelFormatter.format(date);
+
+      group = { dateKey, label, cards: [] };
+      groups.set(dateKey, group);
+    }
+
+    group.cards.push(card);
+  }
+
+  return Array.from(groups.values());
+}
+
 function formatSportCounts(counts: SportCountMap): string {
   const base = TRACKED_SPORTS.map(
     (sport) => `${sport} ${counts[sport] || 0}`,
@@ -818,66 +855,16 @@ export default function CardsPageClient() {
   }, [games, effectiveFilters, viewMode]);
 
   // Group filtered game cards by ET calendar date for section headers
-  const groupedByDate = useMemo(() => {
-    const now = new Date();
-    const etFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' });
-    const labelFormatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York',
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    });
-    const todayET = etFormatter.format(now);
-    const tomorrowET = etFormatter.format(new Date(now.getTime() + 24 * 60 * 60 * 1000));
-
-    const groups: { dateKey: string; label: string; cards: GameCard[] }[] = [];
-    let currentKey = '';
-    for (const card of filteredCards) {
-      const key = etFormatter.format(new Date(card.startTime));
-      if (key !== currentKey) {
-        currentKey = key;
-        const date = new Date(key + 'T12:00:00');
-        let label: string;
-        if (key === todayET) label = `Today · ${labelFormatter.format(date)}`;
-        else if (key === tomorrowET) label = `Tomorrow · ${labelFormatter.format(date)}`;
-        else label = labelFormatter.format(date);
-        groups.push({ dateKey: key, label, cards: [] });
-      }
-      groups[groups.length - 1].cards.push(card);
-    }
-    return groups;
-  }, [filteredCards]);
+  const groupedByDate = useMemo(
+    () => groupCardsByEtDate(filteredCards, (card) => card.startTime),
+    [filteredCards],
+  );
 
   // Group filtered prop cards by ET calendar date for section headers
-  const propGroupedByDate = useMemo(() => {
-    const now = new Date();
-    const etFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' });
-    const labelFormatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York',
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    });
-    const todayET = etFormatter.format(now);
-    const tomorrowET = etFormatter.format(new Date(now.getTime() + 24 * 60 * 60 * 1000));
-
-    const groups: { dateKey: string; label: string; cards: PropGameCardType[] }[] = [];
-    let currentKey = '';
-    for (const card of propCards) {
-      const key = etFormatter.format(new Date(card.gameTimeUtc));
-      if (key !== currentKey) {
-        currentKey = key;
-        const date = new Date(key + 'T12:00:00');
-        let label: string;
-        if (key === todayET) label = `Today · ${labelFormatter.format(date)}`;
-        else if (key === tomorrowET) label = `Tomorrow · ${labelFormatter.format(date)}`;
-        else label = labelFormatter.format(date);
-        groups.push({ dateKey: key, label, cards: [] });
-      }
-      groups[groups.length - 1].cards.push(card);
-    }
-    return groups;
-  }, [propCards]);
+  const propGroupedByDate = useMemo(
+    () => groupCardsByEtDate(propCards, (card) => card.gameTimeUtc),
+    [propCards],
+  );
 
   // Projections mode: extract nhl-pace-1p plays directly from raw games,
   // bypassing the game-card pipeline which doesn't handle FIRST_PERIOD market_type.
