@@ -71,7 +71,7 @@ CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix web run dev
 ./scripts/start-scheduler.sh
 ```
 
-Discord snapshot safety gate: scheduler only posts card snapshots at 09:00 / 12:00 / 18:00 ET when both `ENABLE_DISCORD_CARD_WEBHOOKS=true` and `DISCORD_CARD_WEBHOOK_URL` are set. If either is missing, job is a clean no-op.
+Discord snapshot safety gate: scheduler only posts per-game decision snapshots (🟢 official / 🟡 lean / ⚪ pass-blocked) at 09:00 / 12:00 / 18:00 ET when both `ENABLE_DISCORD_CARD_WEBHOOKS=true` and `DISCORD_CARD_WEBHOOK_URL` are set. If either is missing, job is a clean no-op.
 
 **DB consistency note:** keep one canonical DB path in `.env` so scheduler + manual commands hit the same file:
 
@@ -140,9 +140,13 @@ set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/w
 # Prewarm team metrics cache (recommended before early model windows)
 set -a; source .env; set +a; npm --prefix apps/worker run job:refresh-team-metrics
 
-# Post Discord non-PASS card snapshot (manual)
+# Post Discord per-game decision snapshot (manual)
 # Requires: ENABLE_DISCORD_CARD_WEBHOOKS=true and DISCORD_CARD_WEBHOOK_URL set
 set -a; source .env; set +a; npm --prefix apps/worker run job:post-discord-cards
+
+# Post Discord per-game decision snapshot on the Pi (production DB)
+# Run from repo root on the Pi
+set -a; source .env.production; set +a; ENABLE_DISCORD_CARD_WEBHOOKS=true CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:post-discord-cards
 
 # Run models
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
@@ -184,7 +188,7 @@ set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/w
 # Prewarm team metrics cache (recommended before early model windows)
 set -a; source .env; set +a; npm --prefix apps/worker run job:refresh-team-metrics
 
-# Post Discord non-PASS card snapshot (manual)
+# Post Discord per-game decision snapshot (manual)
 set -a; source .env; set +a; npm --prefix apps/worker run job:post-discord-cards
 ```
 
@@ -200,7 +204,7 @@ npm --prefix apps/worker run job:run-nhl-player-shots-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model
 
-# Post Discord non-PASS card snapshot (manual)
+# Post Discord per-game decision snapshot (manual)
 set -a; source .env; set +a; npm --prefix apps/worker run job:post-discord-cards
 ```
 

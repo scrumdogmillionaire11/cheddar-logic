@@ -29,6 +29,7 @@ const {
   classifyEdge,
   calcFairLine,
   calcFairLine1p,
+  projectSogV2,
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 const {
@@ -1011,6 +1012,47 @@ async function runNHLPlayerShotsModel() {
             }
             const usingRealLine = !!realPropLine;
 
+            // --- V2 Price Integration ---
+            // Extract prices already stored by pull_nhl_player_shots_props.
+            // getPlayerPropLine SELECTs over_price/under_price but the caller
+            // previously only read .line — now we read the prices too.
+            const overPrice = realPropLine?.over_price ?? null;
+            const underPrice = realPropLine?.under_price ?? null;
+            const isOddsBacked = overPrice !== null && underPrice !== null;
+
+            // Derive a trending L5 rate for projectSogV2's weighted blend.
+            // l5RatePer60: L5 mean shots / projected TOI * 60 (per-60 normalised).
+            const l5Mean = computeL5Mean(l5Sog);
+            const l5RatePer60 =
+              projToi && projToi > 0
+                ? (l5Mean / projToi) * 60
+                : shotsPer60 ?? null;
+
+            const v2Projection = projectSogV2({
+              player_id: player.player_id,
+              game_id: resolvedGameId,
+              ev_shots_season_per60: shotsPer60 ?? null,
+              ev_shots_l10_per60: shotsPer60 ?? null, // no L10 granularity; season is proxy
+              ev_shots_l5_per60: l5RatePer60,
+              pp_shots_season_per60: 0,
+              pp_shots_l10_per60: 0,
+              pp_shots_l5_per60: 0,
+              toi_proj_ev: projToi ?? 0,
+              toi_proj_pp: 0, // PP TOI not tracked separately in shot logs
+              shot_env_factor: paceFactor,
+              opponent_suppression_factor: opponentFactor,
+              role_stability: playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH',
+              market_line: marketLine,
+              market_price_over: overPrice,
+              market_price_under: underPrice,
+            });
+
+            if (!isOddsBacked) {
+              console.log(
+                `[${JOB_NAME}] [projection-mode] No prices for ${playerName} — MISSING_PRICE flag, opportunity_score=null`,
+              );
+            }
+
             const syntheticLine = marketLine; // kept for card payload references below
 
             // 1P: also use projection floor when no real line (scaled from full-game floor by 1P share)
@@ -1143,6 +1185,10 @@ async function runNHLPlayerShotsModel() {
                     player_id: player.player_id.toString(),
                   },
                 },
+                odds_backed: isOddsBacked,
+                over_price: isOddsBacked ? overPrice : null,
+                under_price: isOddsBacked ? underPrice : null,
+                opportunity_score: v2Projection.opportunity_score ?? null,
                 decision: {
                   edge_pct: computeEdgePct(mu, syntheticLine),
                   projection: Math.round(mu * 100) / 100,
@@ -1157,6 +1203,15 @@ async function runNHLPlayerShotsModel() {
                     Math.round(fullConsistencyScore * 1000) / 1000,
                   matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
                   support_score: Math.round(fullSupportScore * 1000) / 1000,
+                  opportunity_score: v2Projection.opportunity_score ?? null,
+                  v2: {
+                    sog_mu: v2Projection.sog_mu != null ? Math.round(v2Projection.sog_mu * 1000) / 1000 : null,
+                    edge_over_pp: v2Projection.edge_over_pp != null ? Math.round(v2Projection.edge_over_pp * 10000) / 10000 : null,
+                    ev_over: v2Projection.ev_over != null ? Math.round(v2Projection.ev_over * 10000) / 10000 : null,
+                    opportunity_score: v2Projection.opportunity_score ?? null,
+                    flags: v2Projection.flags ?? [],
+                    odds_backed: isOddsBacked,
+                  },
                 },
                 drivers: {
                   l5_avg: l5Sog.reduce((a, b) => a + b, 0) / 5,
