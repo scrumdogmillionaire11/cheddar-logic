@@ -1107,13 +1107,60 @@ async function runNHLPlayerShotsModel() {
               Math.abs(mu - syntheticLine),
             );
 
+            // Projection anomaly guard: when recency-weighted mu is <60% of the
+            // arithmetic L5 mean, the model is collapsing due to recent low-shot
+            // games. In this case we must never emit FIRE — the "huge UNDER edge"
+            // against a synthetic floor line is not a real signal.
+            const projectionAnomalyDetected = mu < 0.6 * l5Mean;
+            if (projectionAnomalyDetected) {
+              console.warn(
+                `[${JOB_NAME}] PROJECTION_ANOMALY: ${playerName} weighted_mu=${mu.toFixed(2)} < 0.6 * l5_arith_mean=${l5Mean.toFixed(2)} — FIRE will be blocked. Check recent shot log; likely had 0–1 shots in last 2 games.`,
+              );
+            }
+
+            // Structured debug log — every player gets one line for diagnostics.
+            console.log(
+              `[${JOB_NAME}] [debug] ${playerName}: l5=${JSON.stringify(l5Sog)} l5_arith=${l5Mean.toFixed(2)} mu=${mu.toFixed(3)} line=${syntheticLine} real_line=${usingRealLine} projToi=${projToi ?? 'null'} shotsPer60=${shotsPer60 ?? 'null'} oppF=${opponentFactor.toFixed(3)} paceF=${paceFactor.toFixed(3)} isHome=${isHome} anomaly=${projectionAnomalyDetected}`,
+            );
+
             // Classify edges after confidence is derived from consistency + matchup.
             const fullGameEdge = classifyEdge(mu, syntheticLine, confidence);
-            const fullDecision = derivePlayDecision({
+            let fullDecision = derivePlayDecision({
               edgeTier: fullGameEdge.tier,
               supportScore: fullSupportScore,
               confidence,
             });
+
+            // Guard 1: Never FIRE on projection-only cards (no real Odds API line).
+            // A synthetic floor line creates fake edge even when the player projects
+            // legitimately. Real odds are required to validate a bet-worthy signal.
+            if (!usingRealLine && fullDecision.action === 'FIRE') {
+              console.warn(
+                `[${JOB_NAME}] [no-real-line] Downgraded ${playerName} FIRE→WATCH (projection-mode card — no real Odds API line)`,
+              );
+              fullDecision = {
+                action: 'HOLD',
+                status: 'WATCH',
+                classification: 'LEAN',
+                officialStatus: 'LEAN',
+              };
+            }
+
+            // Guard 2: Never FIRE when weighted projection has collapsed below 60%
+            // of the arithmetic L5 mean. This catches the aggressive-recency-decay
+            // scenario where 0-shot games dominate the weighted average.
+            if (projectionAnomalyDetected && fullDecision.action === 'FIRE') {
+              console.warn(
+                `[${JOB_NAME}] [anomaly-guard] Downgraded ${playerName} FIRE→WATCH (PROJECTION_ANOMALY)`,
+              );
+              fullDecision = {
+                action: 'HOLD',
+                status: 'WATCH',
+                classification: 'LEAN',
+                officialStatus: 'LEAN',
+              };
+            }
+
             const fullDirectionLabel =
               fullGameEdge.direction === 'OVER' ? 'Over' : 'Under';
             const fullRecommendationPrefix =
@@ -1209,7 +1256,11 @@ async function runNHLPlayerShotsModel() {
                     edge_over_pp: v2Projection.edge_over_pp != null ? Math.round(v2Projection.edge_over_pp * 10000) / 10000 : null,
                     ev_over: v2Projection.ev_over != null ? Math.round(v2Projection.ev_over * 10000) / 10000 : null,
                     opportunity_score: v2Projection.opportunity_score ?? null,
-                    flags: v2Projection.flags ?? [],
+                    flags: [
+                      ...(v2Projection.flags ?? []),
+                      ...(projectionAnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
+                      ...(!usingRealLine ? ['SYNTHETIC_LINE'] : []),
+                    ],
                     odds_backed: isOddsBacked,
                   },
                 },
@@ -1308,11 +1359,20 @@ async function runNHLPlayerShotsModel() {
                 syntheticLine1p,
                 firstPeriodConfidence,
               );
-              const firstPeriodDecision = derivePlayDecision({
+              let firstPeriodDecision = derivePlayDecision({
                 edgeTier: firstPeriodEdge.tier,
                 supportScore: firstPeriodSupportScore,
                 confidence: firstPeriodConfidence,
               });
+
+              // Apply same guards as full-game path.
+              if (!realPropLine1p && firstPeriodDecision.action === 'FIRE') {
+                firstPeriodDecision = { action: 'HOLD', status: 'WATCH', classification: 'LEAN', officialStatus: 'LEAN' };
+              }
+              if (projectionAnomalyDetected && firstPeriodDecision.action === 'FIRE') {
+                firstPeriodDecision = { action: 'HOLD', status: 'WATCH', classification: 'LEAN', officialStatus: 'LEAN' };
+              }
+
               const l5FairValue1p = calcFairLine1p({ l5Sog, shotsPer60, projToi });
               const fairLine1p = roundToHalfLine(l5FairValue1p) ?? syntheticLine1p;
               const matchupEdge1p = Math.round((mu1p - l5FairValue1p) * 10) / 10;

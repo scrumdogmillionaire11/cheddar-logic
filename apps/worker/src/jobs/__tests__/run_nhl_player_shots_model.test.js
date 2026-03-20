@@ -144,6 +144,34 @@ function loadFreshModule() {
     calcFairLine: jest.fn(() => 3.0),
     calcFairLine1p: jest.fn(() => 0.96),
     classifyEdge: jest.fn(() => ({ tier: 'COLD', direction: 'OVER', edge: 0.1 })),
+    projectSogV2: jest.fn(() => ({
+      sog_mu: 3.2,
+      sog_sigma: 1.79,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: null,
+      market_price_under: null,
+      edge_over_pp: null,
+      edge_under_pp: null,
+      ev_over: null,
+      ev_under: null,
+      opportunity_score: null,
+      flags: [],
+    })),
+    projectBlkV1: jest.fn(() => ({
+      blk_mu: 0,
+      blk_sigma: 0,
+      flags: [],
+    })),
   }));
 
   jest.mock('../../moneypuck', () => ({
@@ -506,9 +534,13 @@ describe('run_nhl_player_shots_model', () => {
   });
 
   test('writes canonical play action fields and fair-line recommendation for playable cards', async () => {
+    // Provide a real odds-backed prop line so the no-real-line guard does NOT
+    // fire, giving us a genuine FIRE card we can assert against.
     const { mod, data, shots } = loadFreshModule();
 
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    // Real prop line (over/under prices present → usingRealLine=true → FIRE allowed).
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
 
     data.getDatabase.mockReturnValue(buildMockDb({
       games: [buildFutureGame({ game_id: 'fair-line-01' })],
@@ -527,6 +559,8 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.suggested_line).toBe(3);
     expect(card.payloadData.play.pick_string).toMatch(/Proj \d+\.\d+ · Fair \d+(\.\d+)? · Edge [+-]\d+\.\d+/i);
     expect(card.payloadData.confidence).toBeGreaterThan(0.75);
+    // Odds-backed card must NOT have SYNTHETIC_LINE or anomaly flags.
+    expect(card.payloadData.decision.v2.flags).not.toContain('SYNTHETIC_LINE');
   });
 
   test('uses opponent team profile from team_metrics_cache for matchup scoring', async () => {
@@ -633,5 +667,62 @@ describe('run_nhl_player_shots_model', () => {
 
     delete process.env.ENABLE_DECISION_BASIS_TAGS;
     delete process.env.ENABLE_PROJECTION_PERF_LEDGER;
+  });
+
+  test('Guard 1: HOT projection-only card (no real line) is downgraded FIRE→HOLD, card still emitted', async () => {
+    // No real prop line → usingRealLine=false → FIRE must be blocked.
+    // Card should still be created (HOLD is not PASS), but action must be 'HOLD'.
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    // getPlayerPropLine returns null (default) — no real line.
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'guard1-no-line-01' })],
+      players: [buildPlayer({ player_id: 8811, player_name: 'No Line Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    // Must be HOLD (downgraded), not FIRE.
+    expect(card.payloadData.play.action).toBe('HOLD');
+    expect(card.payloadData.play.status).toBe('WATCH');
+    // SYNTHETIC_LINE flag must be set in v2 flags.
+    expect(card.payloadData.decision.v2.flags).toContain('SYNTHETIC_LINE');
+  });
+
+  test('Guard 2: PROJECTION_ANOMALY (weighted mu < 60% of L5 mean) blocks FIRE and flags payload', async () => {
+    // l5Sog = [2,2,2,2,2] → arithmetic mean = 2.0
+    // calcMu mocked to return 1.0 → anomaly: 1.0 < 0.6*2.0=1.2 ✓
+    // All 5 shots (2) are <= 2.5 line → UNDER hitRate=1.0 → consistency=1.0 → FIRE (before guard)
+    // Guard 2 must then downgrade FIRE → HOLD and add PROJECTION_ANOMALY flag.
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'UNDER', edge: -1.5 });
+    // mu=1.0 → anomaly detected (1.0 < 0.6*2.0=1.2)
+    shots.calcMu.mockReturnValue(1.0);
+    shots.calcMu1p.mockReturnValue(0.32);
+    // Real prop line supplied (usingRealLine=true) so Guard 1 does not interfere.
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'guard2-anomaly-01' })],
+      players: [buildPlayer({ player_id: 7722, player_name: 'Anomaly Player' })],
+      // shots [2,2,2,2,2] → l5_arith_mean=2.0; calcMu=1.0 < 0.6*2.0=1.2 → anomaly
+      playerLogs: buildGamesFromShots([2, 2, 2, 2, 2]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    // Action must be HOLD (anomaly guard blocked FIRE).
+    expect(card.payloadData.play.action).toBe('HOLD');
+    expect(card.payloadData.play.status).toBe('WATCH');
+    // PROJECTION_ANOMALY flag must appear in v2 flags.
+    expect(card.payloadData.decision.v2.flags).toContain('PROJECTION_ANOMALY');
   });
 });
