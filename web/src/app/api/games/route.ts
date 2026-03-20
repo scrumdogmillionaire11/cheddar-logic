@@ -2394,6 +2394,15 @@ export async function GET(request: NextRequest) {
             : undefined,
           normalizedDecisionV2?.pricing_trace?.price_source,
         );
+        // Extract NHL model v2 guard flags (SYNTHETIC_LINE, PROJECTION_ANOMALY)
+        // from payload.decision.v2.flags so they surface alongside reason codes.
+        const v2GuardFlags: unknown[] = (() => {
+          const dec = toObject(
+            (payload as Record<string, unknown>).decision,
+          );
+          const v2 = toObject(dec?.v2);
+          return Array.isArray(v2?.flags) ? (v2.flags as unknown[]) : [];
+        })();
         const combinedReasonCodes = [
           ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
           ...(Array.isArray(payloadPlay?.reason_codes)
@@ -2402,6 +2411,7 @@ export async function GET(request: NextRequest) {
           ...(Array.isArray(driverInputs?.reason_codes)
             ? driverInputs.reason_codes
             : []),
+          ...v2GuardFlags,
         ].map((value) => String(value));
         const combinedTags = [
           ...(Array.isArray(payload.tags) ? payload.tags : []),
