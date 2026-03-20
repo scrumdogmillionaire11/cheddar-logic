@@ -1332,12 +1332,15 @@ function resolveSourceModelProb(play?: ApiPlay): number | undefined {
 function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const canonicalTruePlay =
     game.true_play &&
+    game.true_play.market_type !== 'PROP' &&
     isPlayItem(game.true_play, game.sport) &&
     (ENABLE_WELCOME_HOME || !isWelcomeHomePlay(game.true_play))
       ? game.true_play
       : null;
-  const basePlayCandidates = game.plays.filter((play) =>
-    isPlayItem(play, game.sport),
+  // Game mode must not promote player props into canonical game-line play slots.
+  // Props are rendered via transformPropGames in cards props mode only.
+  const basePlayCandidates = game.plays.filter(
+    (play) => isPlayItem(play, game.sport) && play.market_type !== 'PROP',
   );
   const hasCanonicalInCandidates = canonicalTruePlay
     ? basePlayCandidates.some((play) => {
@@ -2890,8 +2893,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
  */
 export function transformToGameCard(game: GameData): GameCard {
   // Convert plays to drivers and dedupe
+  // Keep game-mode driver/truth calculations scoped to non-prop markets.
   const rawDrivers = game.plays
-    .filter((play) => isPlayItem(play, game.sport))
+    .filter((play) => isPlayItem(play, game.sport) && play.market_type !== 'PROP')
     .map(playToDriver);
   const scopedRawDrivers = ENABLE_WELCOME_HOME
     ? rawDrivers
@@ -3299,18 +3303,30 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         propType = 'Rebounds';
       }
 
-      // Determine status from canonical action resolution
+      // Determine status: prefer prop_display_state from payload (WI-0529)
+      // so anomaly-flagged props render as PROJECTION_ONLY, not FIRE.
+      // Fall back to resolvePlayDisplayDecision for legacy rows without the field.
       let status: PropPlayRow['status'] = 'NO_PLAY';
-      const resolvedAction = resolvePlayDisplayDecision({
-        action: play.action,
-        status: play.status,
-      }).action;
-      if (resolvedAction === 'FIRE') {
+      const rawPropDisplayState = (play as unknown as Record<string, unknown>).prop_display_state as string | undefined;
+      if (rawPropDisplayState === 'PLAY') {
         status = 'FIRE';
-      } else if (resolvedAction === 'HOLD') {
-        status = play.action === 'HOLD' ? 'HOLD' : 'WATCH';
-      } else {
+      } else if (rawPropDisplayState === 'WATCH') {
+        status = 'WATCH';
+      } else if (rawPropDisplayState === 'PROJECTION_ONLY') {
         status = 'NO_PLAY';
+      } else {
+        // Legacy fallback: no prop_display_state field
+        const resolvedAction = resolvePlayDisplayDecision({
+          action: play.action,
+          status: play.status,
+        }).action;
+        if (resolvedAction === 'FIRE') {
+          status = 'FIRE';
+        } else if (resolvedAction === 'HOLD') {
+          status = play.action === 'HOLD' ? 'HOLD' : 'WATCH';
+        } else {
+          status = 'NO_PLAY';
+        }
       }
 
       const mu = play.mu ?? play.projectedTotal ?? null;
@@ -3347,6 +3363,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         sourceCardTitle: play.cardTitle,
         updatedAtUtc: game.odds?.capturedAt || game.createdAt,
         reasoning: play.reasoning,
+        propDisplayState: rawPropDisplayState as PropPlayRow['propDisplayState'] | undefined,
       };
     });
 
