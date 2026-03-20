@@ -1036,4 +1036,101 @@ describe('run_nhl_player_shots_model', () => {
     const card = data.insertCardPayload.mock.calls[0][0];
     expect(card.payloadData.decision.v2.edge_over_pp).toBeNull();
   });
+
+  // --- WI-0528: toi_proj_pp wired from rawData.ppToi ---
+
+  test('Test G: toi_proj_pp uses ppToi from raw_data when present', async () => {
+    // raw_data of most recent game has ppToi: 2.5 — projectSogV2 must receive toi_proj_pp: 2.5
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.0,
+      sog_sigma: 1.79,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.0,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.08,
+      edge_under_pp: -0.08,
+      ev_over: 0.06,
+      ev_under: -0.06,
+      opportunity_score: 0.72,
+      flags: [],
+    });
+
+    const gamesWithPpToi = buildGamesFromShots([3, 3, 3, 3, 3]).map((g, i) =>
+      i === 0
+        ? { ...g, raw_data: JSON.stringify({ shotsPer60: 9.0, projToi: 18.0, ppToi: 2.5 }) }
+        : g,
+    );
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'pptoi-test-g-01' })],
+      players: [buildPlayer({ player_id: 7001, player_name: 'PP Shooter G' })],
+      playerLogs: gamesWithPpToi,
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(shots.projectSogV2).toHaveBeenCalledWith(
+      expect.objectContaining({ toi_proj_pp: 2.5 }),
+    );
+  });
+
+  test('Test H: toi_proj_pp defaults to 0 when ppToi absent from raw_data (legacy rows)', async () => {
+    // raw_data is '{}' (legacy) — projectSogV2 must receive toi_proj_pp: 0 (no regression)
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.0,
+      sog_sigma: 1.79,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.0,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.08,
+      edge_under_pp: -0.08,
+      ev_over: 0.06,
+      ev_under: -0.06,
+      opportunity_score: 0.72,
+      flags: [],
+    });
+
+    // buildGamesFromShots uses raw_data: '{}' by default (legacy format — no ppToi field)
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'pptoi-test-h-01' })],
+      players: [buildPlayer({ player_id: 7002, player_name: 'Legacy Player H' })],
+      playerLogs: buildGamesFromShots([3, 3, 3, 3, 3]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(shots.projectSogV2).toHaveBeenCalledWith(
+      expect.objectContaining({ toi_proj_pp: 0 }),
+    );
+  });
 });
