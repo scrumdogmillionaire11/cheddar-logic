@@ -605,6 +605,40 @@ describe('buildSoccerOddsBackedCard — asian handicap', () => {
     expect(card.payloadData.missing_context_flags).toContain('lambda_home');
     expect(card.payloadData.missing_context_flags).toContain('lambda_away');
   });
+
+  test('falls back to spread snapshot fields when raw AH fields are absent', () => {
+    const snap = buildOddsSnapshot({
+      spread_home: -0.5,
+      spread_away: 0.5,
+      spread_price_home: -112,
+      spread_price_away: -108,
+      raw_data: JSON.stringify({
+        league: 'EPL',
+        market: 'spreads',
+      }),
+    });
+
+    const homeCard = buildSoccerOddsBackedCard(
+      snap.game_id,
+      snap,
+      'asian_handicap_home',
+    );
+    const awayCard = buildSoccerOddsBackedCard(
+      snap.game_id,
+      snap,
+      'asian_handicap_away',
+    );
+
+    expect(homeCard.payloadData.line).toBe(-0.5);
+    expect(homeCard.payloadData.price).toBe(-112);
+    expect(homeCard.payloadData.opposite_price).toBe(-108);
+    expect(homeCard.payloadData.pass_reason).toBe('MISSING_AH_INPUTS');
+
+    expect(awayCard.payloadData.line).toBe(0.5);
+    expect(awayCard.payloadData.price).toBe(-108);
+    expect(awayCard.payloadData.opposite_price).toBe(-112);
+    expect(awayCard.payloadData.pass_reason).toBe('MISSING_AH_INPUTS');
+  });
 });
 
 // ============================================================================

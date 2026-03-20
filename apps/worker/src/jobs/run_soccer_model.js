@@ -544,9 +544,22 @@ function buildSoccerOddsBackedCard(gameId, oddsSnapshot, canonicalCardType) {
     canonicalCardType === 'asian_handicap_away'
   ) {
     const side = canonicalCardType === 'asian_handicap_home' ? 'HOME' : 'AWAY';
-    const lineRaw = rawData.ah_line ?? rawData.line ?? null;
-    const offeredPriceRaw = rawData.ah_price ?? rawData.price ?? null;
-    const oppositePriceRaw = rawData.ah_opposite_price ?? rawData.opposite_price ?? null;
+    const snapshotLineRaw =
+      side === 'HOME' ? oddsSnapshot?.spread_home : oddsSnapshot?.spread_away;
+    const snapshotOfferedPriceRaw =
+      side === 'HOME'
+        ? oddsSnapshot?.spread_price_home
+        : oddsSnapshot?.spread_price_away;
+    const snapshotOppositePriceRaw =
+      side === 'HOME'
+        ? oddsSnapshot?.spread_price_away
+        : oddsSnapshot?.spread_price_home;
+
+    const lineRaw = rawData.ah_line ?? rawData.line ?? snapshotLineRaw ?? null;
+    const offeredPriceRaw =
+      rawData.ah_price ?? rawData.price ?? snapshotOfferedPriceRaw ?? null;
+    const oppositePriceRaw =
+      rawData.ah_opposite_price ?? rawData.opposite_price ?? snapshotOppositePriceRaw ?? null;
     const lambdaHome =
       typeof rawData.lambda_home === 'number'
         ? rawData.lambda_home
@@ -1202,6 +1215,42 @@ async function runSoccerModel({ jobKey = null, dryRun = false } = {}) {
           const canonicalMarket = rawMarket
             ? normalizeToCanonicalSoccerMarket(rawMarket)
             : null;
+
+          const hasSpreadInputs =
+            Number.isFinite(oddsSnapshot?.spread_home) &&
+            Number.isFinite(oddsSnapshot?.spread_away) &&
+            Number.isFinite(oddsSnapshot?.spread_price_home) &&
+            Number.isFinite(oddsSnapshot?.spread_price_away);
+
+          if (
+            hasSpreadInputs &&
+            canonicalMarket !== 'asian_handicap_home' &&
+            canonicalMarket !== 'asian_handicap_away'
+          ) {
+            for (const ahMarket of ['asian_handicap_home', 'asian_handicap_away']) {
+              const ahCard = buildSoccerOddsBackedCard(gameId, oddsSnapshot, ahMarket);
+              const ahValidation = validateCardPayload(ahCard.cardType, ahCard.payloadData);
+              if (!ahValidation.success) {
+                throw new Error(
+                  `Invalid card payload for ${ahCard.cardType}: ${ahValidation.errors.join('; ')}`,
+                );
+              }
+              applySoccerDecisionBasisMeta(ahCard.payloadData, {
+                isProjectionOnly: false,
+                canonicalMarketKey: ahCard.payloadData.canonical_market_key,
+                marketLineSource: 'odds_api',
+              });
+              publishDecisionForCard({ card: ahCard, oddsSnapshot });
+              applyUiActionFields(ahCard.payloadData);
+              attachRunId(ahCard, jobRunId);
+              insertCardPayload(ahCard);
+              cardsGenerated++;
+              track1Cards++;
+              console.log(
+                `  [ok] Track1 ${gameId} [${ahCard.cardType}] ${String(ahCard.payloadData.line)}`,
+              );
+            }
+          }
 
           let card;
           if (canonicalMarket && ODDS_BACKED_CARD_TYPES.has(canonicalMarket)) {
