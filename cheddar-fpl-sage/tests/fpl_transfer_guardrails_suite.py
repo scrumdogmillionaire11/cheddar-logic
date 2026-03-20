@@ -8,6 +8,7 @@ for module_name in list(sys.modules):
         del sys.modules[module_name]
 
 from cheddar_fpl_sage.analysis.decision_framework.transfer_advisor import TransferAdvisor
+from cheddar_fpl_sage.analysis.fpl_sage_integration import FPLSageIntegration
 
 
 def test_team_limit_aliases_cover_id_short_and_full_name() -> None:
@@ -106,3 +107,65 @@ def test_candidate_no_availability_concern_for_fit_high_chance_profile() -> None
     )
 
     assert advisor._candidate_has_availability_concern(candidate) is False
+
+
+def test_basic_projections_tag_doubtful_player_as_injury_risk() -> None:
+    integration = FPLSageIntegration(config_file="missing-test-config.json")
+
+    projections = integration._build_basic_projections(
+        raw_data={
+            "players": [
+                {
+                    "id": 7006,
+                    "web_name": "Ballard",
+                    "team": 1,
+                    "element_type": 2,
+                    "now_cost": 45,
+                    "form": "3.5",
+                    "points_per_game": "3.2",
+                    "chance_of_playing_next_round": 75,
+                    "status": "d",
+                }
+            ],
+            "teams": [{"id": 1, "short_name": "SUN"}],
+            "fixtures": [],
+        },
+        current_gw=30,
+    )
+
+    projection = projections.get_by_id(7006)
+
+    assert projection is not None
+    assert projection.is_injury_risk is True
+    assert "injury_risk" in projection.tags
+
+
+def test_basic_projections_tag_sub_85_percent_player_as_injury_risk() -> None:
+    integration = FPLSageIntegration(config_file="missing-test-config.json")
+
+    projections = integration._build_basic_projections(
+        raw_data={
+            "players": [
+                {
+                    "id": 7007,
+                    "web_name": "Risky",
+                    "team": 1,
+                    "element_type": 2,
+                    "now_cost": 44,
+                    "form": "2.1",
+                    "points_per_game": "2.8",
+                    "chance_of_playing_next_round": 75,
+                    "status": "a",
+                }
+            ],
+            "teams": [{"id": 1, "short_name": "SUN"}],
+            "fixtures": [],
+        },
+        current_gw=30,
+    )
+
+    projection = projections.get_by_id(7007)
+
+    assert projection is not None
+    assert projection.is_injury_risk is True
+    assert "injury_risk" in projection.tags

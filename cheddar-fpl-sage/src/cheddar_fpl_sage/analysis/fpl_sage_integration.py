@@ -2254,14 +2254,16 @@ class FPLSageIntegration:
             else:
                 xmins = clamp(0.9 * chance_next, 0, 90)
 
-            status_flag = player.get("status_flag", "").upper()
+            status_flag = str(player.get("status_flag") or player.get("status") or "").upper()
             tags = []
-            if status_flag == "OUT":
+            if status_flag in {"OUT", "I", "INJURED", "S", "SUSPENDED"}:
                 tags.append("injury_risk")
-            if status_flag == "DOUBT":
+            if status_flag in {"DOUBT", "D"}:
                 tags.append("rotation_risk")
-            # Tag as injury_risk if chance of playing is low (< 50%)
-            if chance_next is not None and chance_next < 50:
+                if "injury_risk" not in tags:
+                    tags.append("injury_risk")
+            # Treat any sub-85% availability as an injury concern for transfer-in filtering.
+            if chance_next is not None and chance_next < 85:
                 if "injury_risk" not in tags:
                     tags.append("injury_risk")
             if fixture_info:
