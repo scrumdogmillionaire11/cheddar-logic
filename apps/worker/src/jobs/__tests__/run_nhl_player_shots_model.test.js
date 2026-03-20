@@ -1742,4 +1742,138 @@ describe('run_nhl_player_shots_model', () => {
     // pp_rate_per60 in drivers must reflect the actual NST rate (6.2), not 0 or null
     expect(card.payloadData.drivers.pp_rate_per60).toBe(6.2);
   });
+
+  test('WI-0532 Test U: team_stats matchup inputs produce pp_matchup_factor > 1 and expose drivers', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.5,
+      sog_sigma: 1.87,
+      toi_proj: 18.5,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 6.2,
+      pp_matchup_factor: 1.761,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.1,
+      edge_under_pp: -0.1,
+      ev_over: 0.07,
+      ev_under: -0.07,
+      opportunity_score: 0.6,
+      flags: [],
+    });
+
+    const teamStatsGet = jest.fn(() => ({
+      opp_pk_pct_split: 0.74,
+      opp_pk_pct_all: 0.76,
+      opp_penalties_per60_split: 4.2,
+      opp_penalties_per60_all: 4.0,
+      league_avg_pk_pct_split: 0.8,
+      league_avg_pk_pct_all: 0.8,
+      league_avg_penalties_per60_split: 3.1,
+      league_avg_penalties_per60_all: 3.0,
+    }));
+    const mockDb = {
+      prepare: jest.fn((sql) => {
+        const s = sql.trim().toLowerCase();
+        if (s.includes('from games')) return { all: jest.fn(() => [buildFutureGame()]) };
+        if (s.includes('from player_shot_logs') && s.includes('distinct')) {
+          return { all: jest.fn(() => [buildPlayer({ player_id: 9301, player_name: 'Matchup Boost Player' })]) };
+        }
+        if (s.includes('from player_shot_logs') && s.includes('player_id = ?')) {
+          return {
+            all: jest.fn(() =>
+              buildGamesWithRawData({
+                shotsPer60: 9.6,
+                projToi: 16,
+                ppToi: 2.5,
+                ppRatePer60: 6.2,
+              })),
+          };
+        }
+        if (s.includes('from player_availability')) return { get: jest.fn(() => null) };
+        if (s.includes('from team_stats')) return { get: teamStatsGet };
+        return { all: jest.fn(() => []), get: jest.fn(() => null), run: jest.fn() };
+      }),
+    };
+    data.getDatabase.mockReturnValue(mockDb);
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(shots.projectSogV2).toHaveBeenCalled();
+    const v2Call = shots.projectSogV2.mock.calls[0][0];
+    expect(v2Call.pp_matchup_factor).toBeGreaterThan(1.0);
+    expect(v2Call.pp_matchup_factor).toBeCloseTo(1.761, 3);
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.drivers.pp_matchup_factor).toBeCloseTo(1.761, 3);
+    expect(card.payloadData.drivers.opp_pk_pct).toBeCloseTo(0.74, 3);
+    expect(card.payloadData.drivers.opp_penalties_per60).toBeCloseTo(4.2, 3);
+    expect(card.payloadData.decision.v2.flags).not.toContain('PP_MATCHUP_MISSING');
+  });
+
+  test('WI-0532 Test V: missing team_stats data defaults pp_matchup_factor=1.0 and adds PP_MATCHUP_MISSING', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.0,
+      sog_sigma: 1.73,
+      toi_proj: 18,
+      shot_rate_ev_per60: 9.0,
+      shot_rate_pp_per60: 4.8,
+      pp_matchup_factor: 1.0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: {},
+      fair_under_prob_by_line: {},
+      fair_price_over_by_line: {},
+      fair_price_under_by_line: {},
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      edge_over_pp: 0.05,
+      edge_under_pp: -0.05,
+      ev_over: 0.03,
+      ev_under: -0.03,
+      opportunity_score: 0.3,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi0532-test-v-01' })],
+      players: [buildPlayer({ player_id: 9302, player_name: 'Missing Matchup Player' })],
+      playerLogs: buildGamesWithRawData({
+        shotsPer60: 9.0,
+        projToi: 16,
+        ppToi: 2.5,
+        ppRatePer60: 4.8,
+      }),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(shots.projectSogV2).toHaveBeenCalled();
+    const v2Call = shots.projectSogV2.mock.calls[0][0];
+    expect(v2Call.pp_matchup_factor).toBe(1.0);
+
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.decision.v2.flags).toContain('PP_MATCHUP_MISSING');
+    expect(card.payloadData.drivers.pp_matchup_factor).toBe(1.0);
+  });
 });

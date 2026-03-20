@@ -371,6 +371,7 @@ function projectSogV2(inputs) {
     pp_shots_l5_per60,
     toi_proj_ev = 0,
     toi_proj_pp = 0,
+    pp_matchup_factor: rawPpMatchupFactor = 1.0,
     shot_env_factor: rawShotEnvFactor = 1.0,
     opponent_suppression_factor: rawOppSuppression = 1.0,
     goalie_rebound_factor: rawGoalieRebound = 1.0,
@@ -413,9 +414,10 @@ function projectSogV2(inputs) {
   const goalie_factor = clamp(rawGoalieRebound ?? 1.0, 0.97, 1.03);
   const trailing_factor = clamp(rawTrailingScript ?? 1.0, 0.95, 1.08);
   const trend_factor = computeTrendFactor(role_stability, ev_shots_l5_per60, ev_shots_season_per60);
+  const pp_matchup_factor = clamp(rawPpMatchupFactor ?? 1.0, 0.5, 1.8);
 
   const ev_component = ev_rate * toi_proj_ev / 60;
-  const pp_component = pp_rate * toi_proj_pp / 60;
+  const pp_component = pp_rate * toi_proj_pp / 60 * pp_matchup_factor;
   let raw_sog_mu = ev_component + pp_component;
 
   // WI-0530: PP sanity cap — PP contribution must not exceed 45% of total projection.
@@ -512,6 +514,7 @@ function projectSogV2(inputs) {
     toi_proj: toi_proj_ev + toi_proj_pp,
     shot_rate_ev_per60: ev_rate,
     shot_rate_pp_per60: pp_rate,
+    pp_matchup_factor,
     shot_env_factor,
     role_stability,
     trend_score,

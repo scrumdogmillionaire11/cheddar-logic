@@ -109,6 +109,73 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function deriveNhlSeasonId(now = new Date()) {
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth() + 1;
+  const startYear = month >= 9 ? year : year - 1;
+  return Number(`${startYear}${startYear + 1}`);
+}
+
+function resolveNhlSeasonKey() {
+  const raw = String(
+    process.env.NHL_CURRENT_SEASON ||
+    process.env.NHL_SOG_SEASON_ID ||
+    '',
+  ).trim();
+  if (/^\d{8}$/.test(raw)) {
+    return raw;
+  }
+  return String(deriveNhlSeasonId());
+}
+
+function toFinitePositive(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return numeric;
+}
+
+function firstPositive(...values) {
+  for (const value of values) {
+    const numeric = toFinitePositive(value);
+    if (numeric !== null) {
+      return numeric;
+    }
+  }
+  return null;
+}
+
+function computePpMatchupFactor({
+  opponentPenaltiesPer60,
+  opponentPkPct,
+  leagueAvgPenaltiesPer60,
+  leagueAvgPkPct,
+}) {
+  const oppPenalties = toFinitePositive(opponentPenaltiesPer60);
+  const oppPk = toFinitePositive(opponentPkPct);
+  const leaguePenalties = toFinitePositive(leagueAvgPenaltiesPer60);
+  const leaguePk = toFinitePositive(leagueAvgPkPct);
+
+  if (
+    oppPenalties === null ||
+    oppPk === null ||
+    leaguePenalties === null ||
+    leaguePk === null
+  ) {
+    return null;
+  }
+
+  const denom = 1 - leaguePk;
+  const numer = 1 - oppPk;
+  if (denom <= 0 || numer <= 0) return null;
+
+  const raw =
+    (oppPenalties / leaguePenalties) *
+    (numer / denom);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+
+  return clamp(raw, 0.5, 1.8);
+}
+
 function computeL5Mean(l5Sog) {
   if (!Array.isArray(l5Sog) || l5Sog.length === 0) return 0;
   return l5Sog.reduce((sum, value) => sum + value, 0) / l5Sog.length;
@@ -603,6 +670,7 @@ async function runNHLPlayerShotsModel() {
       const excludedPlayerIds = new Set(
         parsePlayerIds(process.env.NHL_SOG_EXCLUDE_PLAYER_IDS),
       );
+      const nhlSeasonKey = resolveNhlSeasonKey();
       if (excludedPlayerIds.size > 0) {
         console.log(
           `[${JOB_NAME}] Applying NHL_SOG_EXCLUDE_PLAYER_IDS (${excludedPlayerIds.size} players)`,
@@ -870,23 +938,24 @@ async function runNHLPlayerShotsModel() {
               player.team_abbrev?.toUpperCase() === homeTeam.toUpperCase() ||
               TEAM_ABBREV_TO_NAME[player.team_abbrev?.toUpperCase()]?.toUpperCase() === homeTeam.toUpperCase();
 
+            const playerTeamAbbrev = resolveTeamAbbrev(player.team_abbrev);
+            const playerTeamName =
+              (playerTeamAbbrev && TEAM_ABBREV_TO_NAME[playerTeamAbbrev]) ||
+              player.team_abbrev;
+            const opponentTeam = isHome ? awayTeam : homeTeam;
+            const opponentAbbrev = resolveTeamAbbrev(opponentTeam);
+            if (!opponentAbbrev) {
+              console.debug(
+                `[${JOB_NAME}] Could not resolve opponent abbreviation for '${opponentTeam}' — opponentFactor defaulting to 1.0`,
+              );
+            }
+            const opponentTeamName =
+              (opponentAbbrev && TEAM_ABBREV_TO_NAME[opponentAbbrev]) ||
+              opponentTeam;
+
             let opponentFactor = 1.0;
             let paceFactor = 1.0;
             try {
-              const playerTeamAbbrev = resolveTeamAbbrev(player.team_abbrev);
-              const playerTeamName =
-                (playerTeamAbbrev && TEAM_ABBREV_TO_NAME[playerTeamAbbrev]) ||
-                player.team_abbrev;
-              const opponentTeam = isHome ? awayTeam : homeTeam;
-              const opponentAbbrev = resolveTeamAbbrev(opponentTeam);
-              if (!opponentAbbrev) {
-                console.debug(
-                  `[${JOB_NAME}] Could not resolve opponent abbreviation for '${opponentTeam}' — opponentFactor defaulting to 1.0`,
-                );
-              }
-              const opponentTeamName =
-                (opponentAbbrev && TEAM_ABBREV_TO_NAME[opponentAbbrev]) ||
-                opponentTeam;
               const factorRow = db.prepare(`
                 SELECT
                   (
@@ -1000,6 +1069,140 @@ async function runNHLPlayerShotsModel() {
               );
             }
 
+            // WI-0532: PP matchup layer from opponent PK quality + penalties against/60.
+            let ppMatchupFactor = 1.0;
+            let oppPkPct = null;
+            let oppPenaltiesPer60 = null;
+            let leagueAvgPkPct = null;
+            let leagueAvgPenaltiesPer60 = null;
+            let ppMatchupMissing = false;
+            try {
+              const opponentHomeRoad = isHome ? 'R' : 'H';
+              const ppRow = db.prepare(`
+                SELECT
+                  (
+                    SELECT pk_pct
+                    FROM team_stats
+                    WHERE season = ?
+                      AND UPPER(team_name) = UPPER(?)
+                      AND home_road = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                  ) AS opp_pk_pct_split,
+                  (
+                    SELECT pk_pct
+                    FROM team_stats
+                    WHERE season = ?
+                      AND UPPER(team_name) = UPPER(?)
+                      AND home_road = 'ALL'
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                  ) AS opp_pk_pct_all,
+                  (
+                    SELECT penalties_against_per60
+                    FROM team_stats
+                    WHERE season = ?
+                      AND UPPER(team_name) = UPPER(?)
+                      AND home_road = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                  ) AS opp_penalties_per60_split,
+                  (
+                    SELECT penalties_against_per60
+                    FROM team_stats
+                    WHERE season = ?
+                      AND UPPER(team_name) = UPPER(?)
+                      AND home_road = 'ALL'
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                  ) AS opp_penalties_per60_all,
+                  (
+                    SELECT AVG(pk_pct)
+                    FROM team_stats
+                    WHERE season = ?
+                      AND home_road = ?
+                      AND pk_pct IS NOT NULL
+                  ) AS league_avg_pk_pct_split,
+                  (
+                    SELECT AVG(pk_pct)
+                    FROM team_stats
+                    WHERE season = ?
+                      AND home_road = 'ALL'
+                      AND pk_pct IS NOT NULL
+                  ) AS league_avg_pk_pct_all,
+                  (
+                    SELECT AVG(penalties_against_per60)
+                    FROM team_stats
+                    WHERE season = ?
+                      AND home_road = ?
+                      AND penalties_against_per60 IS NOT NULL
+                  ) AS league_avg_penalties_per60_split,
+                  (
+                    SELECT AVG(penalties_against_per60)
+                    FROM team_stats
+                    WHERE season = ?
+                      AND home_road = 'ALL'
+                      AND penalties_against_per60 IS NOT NULL
+                  ) AS league_avg_penalties_per60_all
+              `).get(
+                nhlSeasonKey,
+                opponentTeamName,
+                opponentHomeRoad,
+                nhlSeasonKey,
+                opponentTeamName,
+                nhlSeasonKey,
+                opponentTeamName,
+                opponentHomeRoad,
+                nhlSeasonKey,
+                opponentTeamName,
+                nhlSeasonKey,
+                opponentHomeRoad,
+                nhlSeasonKey,
+                nhlSeasonKey,
+                opponentHomeRoad,
+                nhlSeasonKey,
+              );
+
+              oppPkPct = firstPositive(
+                ppRow?.opp_pk_pct_split,
+                ppRow?.opp_pk_pct_all,
+              );
+              oppPenaltiesPer60 = firstPositive(
+                ppRow?.opp_penalties_per60_split,
+                ppRow?.opp_penalties_per60_all,
+              );
+              leagueAvgPkPct = firstPositive(
+                ppRow?.league_avg_pk_pct_split,
+                ppRow?.league_avg_pk_pct_all,
+              );
+              leagueAvgPenaltiesPer60 = firstPositive(
+                ppRow?.league_avg_penalties_per60_split,
+                ppRow?.league_avg_penalties_per60_all,
+              );
+
+              const computedPpMatchupFactor = computePpMatchupFactor({
+                opponentPenaltiesPer60: oppPenaltiesPer60,
+                opponentPkPct: oppPkPct,
+                leagueAvgPenaltiesPer60,
+                leagueAvgPkPct,
+              });
+              if (computedPpMatchupFactor !== null) {
+                ppMatchupFactor = computedPpMatchupFactor;
+              } else if (ppToi > 0) {
+                ppMatchupMissing = true;
+                console.debug(
+                  `[${JOB_NAME}] Missing PP matchup inputs for '${opponentTeamName}' season=${nhlSeasonKey} — pp_matchup_factor defaulting to 1.0`,
+                );
+              }
+            } catch {
+              if (ppToi > 0) {
+                ppMatchupMissing = true;
+              }
+              console.debug(
+                `[${JOB_NAME}] Could not query team_stats for PP matchup factor — defaulting to 1.0`,
+              );
+            }
+
             // Run model for full game
             const mu = calcMu({
               l5Sog,
@@ -1070,6 +1273,7 @@ async function runNHLPlayerShotsModel() {
               pp_shots_l5_per60: ppRateL5Per60,     // WI-0531: real L5 rolling rate (null if absent)
               toi_proj_ev: projToi ?? 0,
               toi_proj_pp: ppToi, // WI-0528: real PP TOI from featuredStats.subSeason.avgPpToi (0 fallback for non-PP players)
+              pp_matchup_factor: ppMatchupFactor,
               shot_env_factor: paceFactor,
               opponent_suppression_factor: opponentFactor,
               role_stability: playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH',
@@ -1094,6 +1298,10 @@ async function runNHLPlayerShotsModel() {
             // of rolling data (both L10 and L5 null). Single null does NOT trigger the flag.
             if (ppRatePer60 !== null && ppRateL10Per60 === null && ppRateL5Per60 === null) {
               v2Projection.flags.push('PP_SMALL_SAMPLE');
+            }
+
+            if (ppMatchupMissing) {
+              v2Projection.flags.push('PP_MATCHUP_MISSING');
             }
 
             // WI-0531: Compute the actual PP blend rate for drivers display.
@@ -1183,7 +1391,7 @@ async function runNHLPlayerShotsModel() {
 
             // Structured debug log — every player gets one line for diagnostics.
             console.log(
-              `[${JOB_NAME}] [debug] ${playerName}: l5=${JSON.stringify(l5Sog)} l5_arith=${l5Mean.toFixed(2)} mu=${mu.toFixed(3)} line=${syntheticLine} real_line=${usingRealLine} projToi=${projToi ?? 'null'} shotsPer60=${shotsPer60 ?? 'null'} oppF=${opponentFactor.toFixed(3)} paceF=${paceFactor.toFixed(3)} isHome=${isHome} anomaly=${projectionAnomalyDetected}`,
+              `[${JOB_NAME}] [debug] ${playerName}: l5=${JSON.stringify(l5Sog)} l5_arith=${l5Mean.toFixed(2)} mu=${mu.toFixed(3)} line=${syntheticLine} real_line=${usingRealLine} projToi=${projToi ?? 'null'} shotsPer60=${shotsPer60 ?? 'null'} oppF=${opponentFactor.toFixed(3)} paceF=${paceFactor.toFixed(3)} ppMatch=${ppMatchupFactor.toFixed(3)} isHome=${isHome} anomaly=${projectionAnomalyDetected}`,
             );
 
             // Classify edges after confidence is derived from consistency + matchup.
@@ -1337,6 +1545,15 @@ async function runNHLPlayerShotsModel() {
                   is_home: isHome,
                   opponent_factor: opponentFactor,
                   pace_factor: paceFactor,
+                  pp_matchup_factor:
+                    v2Projection.pp_matchup_factor != null
+                      ? Math.round(v2Projection.pp_matchup_factor * 1000) / 1000
+                      : Math.round(ppMatchupFactor * 1000) / 1000,
+                  opp_pk_pct: oppPkPct != null ? Math.round(oppPkPct * 1000) / 1000 : null,
+                  opp_penalties_per60:
+                    oppPenaltiesPer60 != null
+                      ? Math.round(oppPenaltiesPer60 * 1000) / 1000
+                      : null,
                   consistency_score:
                     Math.round(fullConsistencyScore * 1000) / 1000,
                   matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
