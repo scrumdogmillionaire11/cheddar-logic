@@ -1571,9 +1571,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     const hasRequiredLine =
       !requiresLineForBet || typeof wave1DecisionPlay.line === 'number';
     const candidateBet: CanonicalBet | null =
-      (officialStatus === 'PLAY' ||
-        (officialStatus === 'LEAN' &&
-          effectiveDecisionV2.watchdog_status !== 'BLOCKED')) &&
+      (officialStatus === 'PLAY' || officialStatus === 'LEAN') &&
       betMarketType &&
       betSide &&
       hasRequiredLine &&
@@ -1640,12 +1638,15 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       });
     }
 
+    const hasBlockingGateV2 = gates.some((g) => g.blocks_bet);
+    const finalBet = hasBlockingGateV2 ? null : bet;
+
     return {
       market_key: `${marketType}|${effectiveDecisionV2.direction}`,
       decision: status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'WATCH' : 'PASS',
       classificationLabel:
         officialStatus === 'PLAY' ? 'PLAY' : officialStatus === 'LEAN' ? 'LEAN' : 'NONE',
-      bet,
+      bet: finalBet,
       gates,
       decision_data: {
         status: status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'WATCH' : 'PASS',
@@ -1723,7 +1724,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       projectedScoreHome: projectedScoreHome ?? undefined,
       projectedScoreAway: projectedScoreAway ?? undefined,
       valueStatus,
-      betAction: (officialStatus === 'PLAY' || officialStatus === 'LEAN') && bet ? 'BET' : 'NO_PLAY',
+      betAction: (officialStatus === 'PLAY' || officialStatus === 'LEAN') && finalBet ? 'BET' : 'NO_PLAY',
       priceFlags: [],
       line: wave1DecisionPlay.line,
       price: wave1DecisionPlay.price,
@@ -2678,7 +2679,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   // WI-DECISION-FIX: Don't remove bet for proxy-capped plays with positive edge
   const proxyTriggeredEarly = tags.some((tag) => PROXY_SIGNAL_TAGS.has(tag));
   const hasPositiveEdge = typeof edge === 'number' && edge >= 0.01;
-  const shouldKeepBetDespiteGates = proxyTriggeredEarly && hasPositiveEdge && finalBet;
+  const shouldKeepBetDespiteGates = proxyTriggeredEarly && hasPositiveEdge && finalBet && officialStatus !== 'LEAN';
   
   if (hasBlockingGate && !shouldKeepBetDespiteGates) {
     finalBet = null;
