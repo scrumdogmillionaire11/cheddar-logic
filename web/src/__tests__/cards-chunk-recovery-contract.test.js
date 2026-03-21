@@ -24,17 +24,19 @@ assert(
 );
 
 assert(
-  source.includes('CHUNK_RELOAD_GUARD_KEY') &&
-    source.includes('window.sessionStorage.getItem(CHUNK_RELOAD_GUARD_KEY)') &&
+  source.includes('STALE_ASSET_RELOAD_GUARD_KEY') &&
     source.includes(
-      "window.sessionStorage.setItem(CHUNK_RELOAD_GUARD_KEY, '1')",
+      'window.sessionStorage.getItem(STALE_ASSET_RELOAD_GUARD_KEY)',
+    ) &&
+    source.includes(
+      "window.sessionStorage.setItem(STALE_ASSET_RELOAD_GUARD_KEY, '1')",
     ),
   'cards page should guard reload to one attempt per session',
 );
 
 assert(
   source.includes('window.location.reload()') &&
-    source.includes('Hard refresh required.'),
+    source.includes('formatStaleAssetUserMessage(message)'),
   'cards page should reload once and then show stable hard-refresh guidance',
 );
 
@@ -45,16 +47,14 @@ assert(
 );
 
 assert(
-  source.includes("normalized.includes('/_next/static/')") &&
-    source.includes("normalized.includes('.css')") &&
-    source.includes('nextStaticCssFailure'),
-  'cards stale-asset detector should treat Next static CSS failures as chunk-recovery events',
+  source.includes('isStaleNextStaticAssetFailure(message)') &&
+    source.includes('extractNextStaticAssetPath(message)'),
+  'cards stale-asset detector should use shared Next static failure utilities',
 );
 
 assert(
-  source.includes('target instanceof HTMLLinkElement') &&
-    source.includes('target.href'),
-  'cards global error handler should capture stylesheet href targets for stale asset recovery',
+  source.includes('buildStaleAssetErrorMessage(errorEvent)'),
+  'cards global error handler should use shared static-asset error message extraction',
 );
 
 assert(

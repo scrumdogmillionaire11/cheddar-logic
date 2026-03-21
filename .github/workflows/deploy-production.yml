@@ -189,23 +189,59 @@ jobs:
               fi
               exit 1
             fi
-            PREV_NEXT_STATIC_BACKUP="/tmp/cheddar-prev-next-static"
-            rm -rf "$PREV_NEXT_STATIC_BACKUP"
-            if [ -d web/.next/static ]; then
-              mkdir -p "$PREV_NEXT_STATIC_BACKUP"
-              cp -a web/.next/static/. "$PREV_NEXT_STATIC_BACKUP"/
-              PREV_STATIC_COUNT=$(find "$PREV_NEXT_STATIC_BACKUP" -type f | wc -l)
-              echo "Backed up previous Next static assets (files=$PREV_STATIC_COUNT)"
+            PREV_NEXT_ROLLBACK="/tmp/cheddar-prev-next-full"
+            NEXT_STATIC_ARCHIVE_ROOT="/opt/cheddar-logic/.next-static-archive"
+            NEXT_STATIC_RETENTION_DAYS=14
+            NEXT_STATIC_MAX_SNAPSHOTS=20
+            PREV_ARCHIVED_ASSET_REL=""
+            ROLLBACK_READY=0
+
+            rm -rf "$PREV_NEXT_ROLLBACK"
+            if [ -d web/.next ]; then
+              cp -a web/.next "$PREV_NEXT_ROLLBACK"
+              ROLLBACK_READY=1
+              echo "Captured rollback snapshot for previous .next directory"
             fi
+
+            mkdir -p "$NEXT_STATIC_ARCHIVE_ROOT"
+            SNAPSHOT_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+            SNAPSHOT_DIR="$NEXT_STATIC_ARCHIVE_ROOT/$SNAPSHOT_ID"
+            if [ -d web/.next/static ]; then
+              mkdir -p "$SNAPSHOT_DIR/static"
+              cp -a web/.next/static/. "$SNAPSHOT_DIR/static"/
+              if [ -f web/.next/BUILD_ID ]; then
+                cp web/.next/BUILD_ID "$SNAPSHOT_DIR/BUILD_ID"
+              fi
+              PREV_STATIC_COUNT=$(find "$SNAPSHOT_DIR/static" -type f | wc -l)
+              echo "Archived previous Next static assets at $SNAPSHOT_DIR (files=$PREV_STATIC_COUNT)"
+              PREV_ARCHIVED_ASSET_FILE=$(find "$SNAPSHOT_DIR/static" -type f \( -name "*.js" -o -name "*.css" \) | sort | head -n 1)
+              if [ -n "$PREV_ARCHIVED_ASSET_FILE" ]; then
+                PREV_ARCHIVED_ASSET_REL="${PREV_ARCHIVED_ASSET_FILE#"$SNAPSHOT_DIR/static/"}"
+                echo "Selected previous-release asset for retention check: /_next/static/$PREV_ARCHIVED_ASSET_REL"
+              fi
+            fi
+
+            find "$NEXT_STATIC_ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +"$NEXT_STATIC_RETENTION_DAYS" -exec rm -rf {} + || true
+            SNAPSHOT_TOTAL=$(find "$NEXT_STATIC_ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d | wc -l)
+            if [ "$SNAPSHOT_TOTAL" -gt "$NEXT_STATIC_MAX_SNAPSHOTS" ]; then
+              PRUNE_COUNT=$((SNAPSHOT_TOTAL - NEXT_STATIC_MAX_SNAPSHOTS))
+              find "$NEXT_STATIC_ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d | sort | head -n "$PRUNE_COUNT" | while IFS= read -r stale_dir; do
+                [ -n "$stale_dir" ] || continue
+                rm -rf "$stale_dir"
+              done
+            fi
+
             sudo rm -rf web/.next
             grep -E '^[A-Za-z_][A-Za-z0-9_]*=' /opt/cheddar-logic/.env.production > /tmp/cheddar_build_env
             set -a && . /tmp/cheddar_build_env && set +a && npm --prefix web run build
             rm -f /tmp/cheddar_build_env
-            # Keep previous static assets available to reduce stale-client chunk 404s during rollout.
-            if [ -d "$PREV_NEXT_STATIC_BACKUP" ]; then
+            # Keep recent static assets available to reduce stale-client chunk/css 404s during rollout.
+            if [ -d "$NEXT_STATIC_ARCHIVE_ROOT" ]; then
               mkdir -p web/.next/static
-              cp -an "$PREV_NEXT_STATIC_BACKUP"/. web/.next/static/ || true
-              rm -rf "$PREV_NEXT_STATIC_BACKUP"
+              find "$NEXT_STATIC_ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d | sort | tail -n "$NEXT_STATIC_MAX_SNAPSHOTS" | while IFS= read -r archive_dir; do
+                [ -d "$archive_dir/static" ] || continue
+                cp -an "$archive_dir/static"/. web/.next/static/ || true
+              done
             fi
             test -f web/.next/BUILD_ID || { echo "ERROR: next build did not produce web/.next/BUILD_ID"; exit 1; }
             test -d web/.next/static || { echo "ERROR: next build did not produce web/.next/static directory"; exit 1; }
@@ -226,6 +262,24 @@ jobs:
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage
             sleep 5
+            restore_previous_next() {
+              if [ "$ROLLBACK_READY" != "1" ] || [ ! -d "$PREV_NEXT_ROLLBACK" ]; then
+                echo "Rollback snapshot unavailable; skipping .next restore"
+                return
+              fi
+              echo "Restoring previous .next snapshot and restarting cheddar-web..."
+              rm -rf web/.next
+              cp -a "$PREV_NEXT_ROLLBACK" web/.next
+              sudo systemctl restart cheddar-web || true
+              sleep 5
+            }
+            fail_with_rollback() {
+              message="$1"
+              echo "ERROR: $message"
+              restore_previous_next
+              sudo journalctl -u cheddar-web -n 80 --no-pager || true
+              exit 1
+            }
             retry_url() {
               url="$1"
               label="$2"
@@ -258,8 +312,8 @@ jobs:
               echo "$label failed after $attempts attempts (last status=$status): $url"
               return 1
             }
-            retry_url "http://127.0.0.1:3000/_next/static/chunks/$SAMPLE_CHUNK_REL" "origin sample chunk" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
-            retry_url "http://127.0.0.1:3000/_next/static/$SAMPLE_CSS_REL" "origin sample css" || { sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+            retry_url "http://127.0.0.1:3000/_next/static/chunks/$SAMPLE_CHUNK_REL" "origin sample chunk" || fail_with_rollback "origin sample chunk failed"
+            retry_url "http://127.0.0.1:3000/_next/static/$SAMPLE_CSS_REL" "origin sample css" || fail_with_rollback "origin sample css failed"
             extract_asset_refs() {
               route="$1"
               html="$2"
@@ -294,24 +348,23 @@ jobs:
             for route in "/" "/cards" "/fpl"; do
               ORIGIN_ROUTE_JS_COUNT=$(printf "%s\n" "$ORIGIN_ROUTE_JS_REFS" | awk -F'|' -v route="origin:${route}" '$1 == route { count++ } END { print count + 0 }')
               ORIGIN_ROUTE_CSS_COUNT=$(printf "%s\n" "$ORIGIN_ROUTE_CSS_REFS" | awk -F'|' -v route="origin:${route}" '$1 == route { count++ } END { print count + 0 }')
-              test "$ORIGIN_ROUTE_JS_COUNT" -gt 0 || { echo "ERROR: route ${route} missing JS asset references in origin HTML"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
-              test "$ORIGIN_ROUTE_CSS_COUNT" -gt 0 || { echo "ERROR: route ${route} missing CSS asset references in origin HTML"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+              test "$ORIGIN_ROUTE_JS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing JS asset references in origin HTML"
+              test "$ORIGIN_ROUTE_CSS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing CSS asset references in origin HTML"
             done
             ORIGIN_JS_COUNT=$(printf "%s\n" "$ORIGIN_ROUTE_JS_REFS" | awk -F'|' 'NF >= 2 { print $2 }' | sort -u | grep -c . || true)
             ORIGIN_CSS_COUNT=$(printf "%s\n" "$ORIGIN_ROUTE_CSS_REFS" | awk -F'|' 'NF >= 2 { print $2 }' | sort -u | grep -c . || true)
             printf '%s\n' "$ORIGIN_ROUTE_JS_REFS" | while IFS='|' read -r route ref; do
               [ -n "$route" ] || continue
               [ -n "$ref" ] || continue
-              retry_url "http://127.0.0.1:3000$ref" "origin js [$route] $ref" || { echo "ERROR: origin JS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-http://127.0.0.1:3000$ref}"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+              retry_url "http://127.0.0.1:3000$ref" "origin js [$route] $ref" || fail_with_rollback "origin JS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-http://127.0.0.1:3000$ref}"
             done
             printf '%s\n' "$ORIGIN_ROUTE_CSS_REFS" | while IFS='|' read -r route ref; do
               [ -n "$route" ] || continue
               [ -n "$ref" ] || continue
-              retry_url "http://127.0.0.1:3000$ref" "origin css [$route] $ref" || { echo "ERROR: origin CSS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-http://127.0.0.1:3000$ref}"; sudo journalctl -u cheddar-web -n 80 --no-pager || true; exit 1; }
+              retry_url "http://127.0.0.1:3000$ref" "origin css [$route] $ref" || fail_with_rollback "origin CSS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-http://127.0.0.1:3000$ref}"
             done
             if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
-              echo "ERROR: Cloudflare secrets missing (CF_API_TOKEN and CF_ZONE_ID required for cache purge)";
-              exit 1;
+              fail_with_rollback "Cloudflare secrets missing (CF_API_TOKEN and CF_ZONE_ID required for cache purge)";
             fi
             curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
