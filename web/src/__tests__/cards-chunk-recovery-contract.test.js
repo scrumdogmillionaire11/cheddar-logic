@@ -45,6 +45,19 @@ assert(
 );
 
 assert(
+  source.includes("normalized.includes('/_next/static/')") &&
+    source.includes("normalized.includes('.css')") &&
+    source.includes('nextStaticCssFailure'),
+  'cards stale-asset detector should treat Next static CSS failures as chunk-recovery events',
+);
+
+assert(
+  source.includes('target instanceof HTMLLinkElement') &&
+    source.includes('target.href'),
+  'cards global error handler should capture stylesheet href targets for stale asset recovery',
+);
+
+assert(
   source.includes('createTimeoutSignal(CLIENT_FETCH_TIMEOUT_MS)') &&
     !source.includes('AbortSignal.timeout(CLIENT_FETCH_TIMEOUT_MS)'),
   'cards fetch path should use timeout compatibility helper (no direct AbortSignal.timeout call)',
