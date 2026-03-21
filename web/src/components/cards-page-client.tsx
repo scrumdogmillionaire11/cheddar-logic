@@ -2359,7 +2359,17 @@ export default function CardsPageClient() {
             : displayPlay.action === 'HOLD'
               ? 'LEAN'
               : 'PASS');
-    const displayDecision = isBroken ? 'PASS' : inferredDecision;
+    const isEdgeVerification = hasEdgeVerification(card);
+    const isProxyCapped = hasProxyCap(card);
+    const hasCanonicalBet = Boolean(displayPlay.bet);
+    const shouldPreserveNoBetLean = isEdgeVerification || isProxyCapped;
+    const displayDecision =
+      isBroken ||
+      (!hasCanonicalBet &&
+        inferredDecision !== 'PASS' &&
+        !shouldPreserveNoBetLean)
+        ? 'PASS'
+        : inferredDecision;
     const isPlayDecision = displayDecision === 'PLAY';
     const canonicalGates = (displayPlay.gates ?? []).map((gate) => gate.code);
     const INFORMATIONAL_CODES = new Set([
@@ -2400,7 +2410,9 @@ export default function CardsPageClient() {
           card.awayTeam,
           livePrice,
         )
-      : livePrice != null
+      : displayPlay.pick === 'NO PLAY'
+        ? 'NO PLAY'
+        : livePrice != null
         ? `${displayPlay.pick} (${livePrice > 0 ? '+' : ''}${livePrice})`
         : displayPlay.pick;
     const displayMarketText =
@@ -2631,9 +2643,6 @@ export default function CardsPageClient() {
       isCoinflip && hasActionableEdge && effectiveEdgePct > 0.05;
     const isCoinflipLowEdge =
       isCoinflip && (!hasActionableEdge || effectiveEdgePct <= 0.05);
-    const isEdgeVerification = hasEdgeVerification(card);
-    const isProxyCapped = hasProxyCap(card);
-
     const [showAllDrivers, setShowAllDrivers] = useState(false);
     const blockedTotals = hasActiveTotalBet
       ? []
