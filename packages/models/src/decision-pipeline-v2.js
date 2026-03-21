@@ -1,6 +1,10 @@
 const edgeCalculator = require('./edge-calculator');
 const { resolveThresholdProfile } = require('./decision-pipeline-v2.patch');
 
+// Edge unit: all edge values in this pipeline are decimal fractions.
+// See CANONICAL_EDGE_CONTRACT in decision-gate.js for the authoritative definition.
+const EDGE_UNITS = 'decimal_fraction';
+
 const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
 const WAVE1_MARKETS = new Set([
   'MONEYLINE',
@@ -1191,6 +1195,7 @@ function buildDecisionV2(payload, context = {}) {
       fair_prob,
       implied_prob,
       edge_pct,
+      edge_units: EDGE_UNITS,   // unit per CANONICAL_EDGE_CONTRACT
       threshold_profile: {
         source: thresholdProfile.source,
         support_play_min: thresholdProfile.support.play,

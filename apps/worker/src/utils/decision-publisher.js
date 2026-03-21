@@ -1,6 +1,7 @@
 const {
   buildDecisionKey,
   buildDecisionV2,
+  CANONICAL_EDGE_CONTRACT,
   computeCandidateHash,
   computeInputsHash,
   getSideFamily,
@@ -414,6 +415,7 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
     candLine: line,
     candPrice: price,
     candEdge: edge,
+    edgeUnits: CANONICAL_EDGE_CONTRACT.unit,
     edgeDelta: gateResult.edge_delta ?? null,
     lineDelta,
     priceDelta:
