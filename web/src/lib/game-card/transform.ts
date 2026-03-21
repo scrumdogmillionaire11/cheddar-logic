@@ -546,6 +546,14 @@ const NO_ACTIONABLE_EXPLICIT_NO_EDGE_REASON_CODES = new Set([
   'PASS_NO_EDGE',
   'PASS_DRIVER_SUPPORT_WEAK',
   'PASS_CONFLICT_HIGH',
+  // Decision pipeline: below-threshold healthy no-play
+  'SUPPORT_BELOW_LEAN_THRESHOLD',
+  'SUPPORT_BELOW_PLAY_THRESHOLD',
+  // Decision pipeline: proxy cap signals
+  'PROXY_EDGE_BLOCKED',
+  'PROXY_EDGE_CAPPED',
+  // Decision pipeline: heavy favorite gate
+  'HEAVY_FAVORITE_PRICE_CAP',
   // NHL model signals: no conviction/lean (healthy no-play)
   'NHL_1P_OVER_LEAN',
   'NHL_1P_UNDER_LEAN',
@@ -554,6 +562,10 @@ const NO_ACTIONABLE_EXPLICIT_NO_EDGE_REASON_CODES = new Set([
   'NHL_1P_OVER_PLAY',
   'NHL_1P_UNDER_PLAY',
   'NHL_ML_PLAY',
+  // FIRST_PERIOD canonical policy reason codes (WI-0537 / WI-0511)
+  'FIRST_PERIOD_PROJECTION_PLAY',
+  'FIRST_PERIOD_PROJECTION_LEAN',
+  'FIRST_PERIOD_NO_PROJECTION',
 ]);
 
 const NO_ACTIONABLE_FETCH_REASON_FRAGMENTS = [
@@ -564,6 +576,10 @@ const NO_ACTIONABLE_FETCH_REASON_FRAGMENTS = [
   'INGEST',
   'SOURCE',
   'MISSING_',
+  // Decision pipeline watchdog and goalie uncertainty codes (WI-0511)
+  'WATCHDOG',
+  'GOALIE',
+  'STALE',
 ];
 
 function isFetchFailureReasonCode(code: string): boolean {
@@ -608,7 +624,8 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
   }
 
   let hasExplicitNoEdgeSignals = false;
-  let hasUnknownNonFetchSignals = false;
+  // WI-0511: collect unrecognized codes so we can emit specific tokens instead of generic fallback
+  const unknownSignalCodes: string[] = [];
   for (const play of evidenceOnlyPlays) {
     if (typeof play.pass_reason_code === 'string') {
       const code = play.pass_reason_code.toUpperCase();
@@ -618,7 +635,7 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
         } else if (isFetchFailureReasonCode(code)) {
           push(toDiagnosticToken('fetch_reason', code));
         } else {
-          hasUnknownNonFetchSignals = true;
+          unknownSignalCodes.push(code);
         }
       }
     }
@@ -630,7 +647,7 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
       } else if (isFetchFailureReasonCode(code)) {
         push(toDiagnosticToken('fetch_reason', code));
       } else {
-        hasUnknownNonFetchSignals = true;
+        unknownSignalCodes.push(code);
       }
     }
     for (const missingInput of play.missing_inputs ?? []) {
@@ -645,8 +662,14 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
     return diagnostics.slice(0, 8);
   }
 
-  if (hasUnknownNonFetchSignals) {
-    return ['fetch_failure:unclassified_no_play_pipeline'];
+  if (unknownSignalCodes.length > 0) {
+    // WI-0511: emit specific unclassified_reason tokens instead of generic unclassified fallback
+    for (const code of unknownSignalCodes) {
+      push(toDiagnosticToken('unclassified_reason', code));
+    }
+    return diagnostics.length > 0
+      ? diagnostics.slice(0, 8)
+      : ['fetch_failure:unclassified_signals'];
   }
 
   if (hasExplicitNoEdgeSignals) {
@@ -657,7 +680,8 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
     return ['fetch_failure:no_play_producer_signals'];
   }
 
-  return ['fetch_failure:unclassified_no_play_pipeline'];
+  // WI-0511: play producer signals exist but produced no actionable output
+  return ['fetch_failure:play_producer_no_output'];
 }
 
 type CanonicalSide = 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NONE';
