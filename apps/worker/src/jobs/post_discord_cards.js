@@ -16,6 +16,9 @@ const JOB_NAME = 'post_discord_cards';
 const DEFAULT_CHAR_LIMIT = 1800;
 const DISCORD_HARD_LIMIT = 2000;
 const DEFAULT_MAX_ROWS = 300;
+// Leans with |edge| below this are suppressed — rounding error, not signal
+// Override with env DISCORD_MIN_LEAN_EDGE (e.g. '0.2')
+const MIN_LEAN_EDGE_ABS = Number(process.env.DISCORD_MIN_LEAN_EDGE ?? 0.15);
 const ET_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   hour: 'numeric',
@@ -111,6 +114,10 @@ const TEAM_ABBREVIATIONS = {
   'toronto blue jays': 'TOR',   'utah jazz': 'UTA',          'utah hockey club': 'UTA',
   'vancouver canucks': 'VAN',   'washington capitals': 'WSH', 'washington commanders': 'WAS',
   'washington nationals': 'WSH','washington wizards': 'WSH', 'winnipeg jets': 'WPG',
+  // Additional common abbreviations
+  'calgary flames': 'CGY',     'buffalo sabres': 'BUF',     'anaheim ducks': 'ANA',
+  'arizona coyotes': 'ARI',    'columbus blue jackets': 'CBJ', 'montreal canadiens': 'MTL',
+  'boston bruins': 'BOS',      'carolina hurricanes': 'CAR',
 };
 
 function abbreviateTeam(name) {
@@ -238,6 +245,25 @@ function isDisplayableWebhookCard(card) {
   return true;
 }
 
+// Canonical game key: normalised from teams + game date so two cards for the same
+// real game always land in the same bucket regardless of how game_id was stored.
+function canonicalGameKey(card) {
+  const matchup  = String(card?.matchup  || '').trim().toLowerCase();
+  const gameDate = String(card?.gameTimeUtc || '').slice(0, 10); // YYYY-MM-DD
+
+  // Prefer matchup+date — immune to game_id inconsistencies across card types
+  if (matchup && matchup !== 'unknown') {
+    const safeMatchup = matchup.replace(/\s+/g, '_').replace(/@/g, 'vs');
+    // Include date only when we have it; same-day collision risk is negligible
+    return gameDate ? `${safeMatchup}_${gameDate}` : safeMatchup;
+  }
+
+  const gameId = String(card?.gameId || '').trim().toLowerCase();
+  if (gameId) return gameId;
+
+  return String(card?.id || 'unknown');
+}
+
 function marketConflictKey(card) {
   const payload = card?.payloadData || {};
   const cardType = String(card?.cardType || '').toLowerCase();
@@ -359,7 +385,15 @@ function selectionSummary(card) {
   if (selection && typeof selection === 'object') {
     return compactToken(selection.team || selection.side || selection.player || selection.name || '');
   }
-  return compactToken(selection);
+  if (selection) return compactToken(selection);
+
+  // Fallback for 1P / pace cards: extract direction from one_p_model_call
+  // e.g. "NHL_1P_OVER_1.5" or "NHL_1P_UNDER_PLAY"
+  const onePCall = String(payload?.one_p_model_call || '').toUpperCase();
+  if (onePCall.includes('_OVER') || onePCall.startsWith('OVER')) return 'OVER';
+  if (onePCall.includes('_UNDER') || onePCall.startsWith('UNDER')) return 'UNDER';
+
+  return '';
 }
 
 function lineSummary(card) {
@@ -399,6 +433,14 @@ function summarizeReasoning(card) {
   return compactToken(why);
 }
 
+// Format a numeric edge value as +0.17 / -0.70 (2dp, always signed)
+function formatEdgeValue(raw) {
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return String(raw);
+  const sign = num >= 0 ? '+' : '';
+  return `${sign}${num.toFixed(2)}`;
+}
+
 function metricSummary(card) {
   const payload = card?.payloadData || {};
   const isProp = isPlayerPropCard(card);
@@ -406,12 +448,13 @@ function metricSummary(card) {
   const model = safeScalar(
     payload?.model_projection ?? payload?.model_line ?? payload?.projection ?? payload?.expected_total,
   );
-  const edge = safeScalar(payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp);
-  const proj = safeScalar(payload?.player_projection ?? payload?.projected_value ?? payload?.proj);
-  const line = safeScalar(payload?.line ?? payload?.total ?? payload?.market_line);
+  const edgeRaw = safeScalar(payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp);
+  const edge    = edgeRaw !== null ? formatEdgeValue(edgeRaw) : null;
+  const proj    = safeScalar(payload?.player_projection ?? payload?.projected_value ?? payload?.proj);
+  const line    = safeScalar(payload?.line ?? payload?.total ?? payload?.market_line);
 
   if (isProp) {
-    // Props: Proj: 2.7 | Line: 4.5 | Edge: -1.8
+    // Props: Proj: 2.7 | Line: 4.5 | Edge: -1.80
     const parts = [];
     if (proj)        parts.push(`Proj: ${proj}`);
     else if (model)  parts.push(`Proj: ${model}`);
@@ -420,7 +463,7 @@ function metricSummary(card) {
     return parts.join(' | ');
   }
 
-  // Totals / spreads: Model: 235.8 | Line: 238.5 | Edge: -2.7
+  // Totals / spreads: Model: 235.8 | Line: 238.5 | Edge: -2.70
   const parts = [];
   if (model) parts.push(`Model: ${model}`);
   if (line)  parts.push(`Line: ${line}`);
@@ -435,7 +478,14 @@ function renderDecisionLine(card, bucket) {
   if (bucket === 'pass_blocked') return null;
 
   if (isPlayerPropCard(card)) {
-    const pickStr = compactToken(payload?.prediction || payload?.play?.pick_string || '');
+    // Strip leading action words ('Lean ', 'Fire ', 'Watch ') from prediction strings
+    const rawPick = compactToken(
+      payload?.prediction ||
+      payload?.play?.pick_string ||
+      payload?.play?.selection ||
+      '',
+    );
+    const pickStr = rawPick.replace(/^(lean|fire|watch|hold|play)\s+/i, '').trim();
     const priceVal = priceSummary(card);
     const metrics = metricSummary(card);
     const why = summarizeReasoning(card);
@@ -455,6 +505,15 @@ function renderDecisionLine(card, bucket) {
   const line      = lineSummary(card);
   const price     = priceSummary(card);
 
+  // For TOTAL markets, require a model projection — projection-less totals have no bettor value
+  if (market === 'TOTAL') {
+    const hasModel = safeScalar(
+      payload?.model_projection ?? payload?.model_line ?? payload?.projection ?? payload?.expected_total,
+    );
+    const hasEdge = safeScalar(payload?.edge ?? payload?.edge_pct);
+    if (!hasModel && !hasEdge) return null;  // skip unprojected totals
+  }
+
   const betCore = [selection, line].filter(Boolean).join(' ').trim() || 'TBD';
   const priced  = price ? `${betCore} (${price})` : betCore;
   const metrics = metricSummary(card);
@@ -469,18 +528,20 @@ function renderDecisionLine(card, bucket) {
 function sectionLines(title, cards, bucket) {
   // PASS section is never rendered inline — use collapsedPassSummary instead
   if (bucket === 'pass_blocked') return [];
-  // Skip sections with nothing to show
   if (cards.length === 0) return [];
 
-  const lines = [title];
+  const renderedItems = [];
   for (const card of cards) {
     const rendered = renderDecisionLine(card, bucket);
     if (!rendered) continue;
     rendered.split('\n').forEach((line, index) => {
-      lines.push(index === 0 ? `- ${line}` : `  ${line}`);
+      renderedItems.push(index === 0 ? `- ${line}` : `  ${line}`);
     });
   }
-  return lines;
+
+  // Only return the title if at least one card actually rendered
+  if (renderedItems.length === 0) return [];
+  return [title, ...renderedItems];
 }
 
 // One-line collapsed PASS summary — no market-by-market spam
@@ -604,12 +665,36 @@ function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS } = {}) {
   });
 }
 
+// Returns true when a lean card clears the minimum edge threshold.
+// Cards with NO edge data are allowed through — we don't penalise missing fields.
+// For prop cards the edge is often only in the prediction string (e.g. "Edge -0.1")
+// so we also try to parse it from there.
+function passesLeanThreshold(card) {
+  const payload = card?.payloadData || {};
+  const raw = payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp;
+
+  if (raw !== null && raw !== undefined) {
+    const val = Number(raw);
+    if (Number.isFinite(val)) return Math.abs(val) >= MIN_LEAN_EDGE_ABS;
+  }
+
+  // Fallback: parse edge from prediction string ("... Edge +0.9" or "Edge: -0.4")
+  const prediction = String(payload?.prediction || payload?.play?.pick_string || '');
+  const edgeMatch  = prediction.match(/Edge[:\s]+([+-]?\d+\.?\d*)/i);
+  if (edgeMatch) {
+    const val = Number(edgeMatch[1]);
+    if (Number.isFinite(val)) return Math.abs(val) >= MIN_LEAN_EDGE_ABS;
+  }
+
+  return true; // no parseable edge → allow through (don't drop unknowns)
+}
+
 function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
   const filtered = prioritizeClearPlays(cards.filter(isDisplayableWebhookCard));
   const byGame = new Map();
 
   for (const card of filtered) {
-    const key = `${card.gameId || card.matchup || card.id}`;
+    const key = canonicalGameKey(card);
     if (!byGame.has(key)) byGame.set(key, []);
     byGame.get(key).push(card);
   }
@@ -627,7 +712,10 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
   for (const gameCards of gameEntries) {
     const seed        = gameCards[0] || {};
     const official    = gameCards.filter((c) => classifyDecisionBucket(c) === 'official');
-    const leans       = gameCards.filter((c) => classifyDecisionBucket(c) === 'lean');
+    // Apply LEAN threshold — drop sub-threshold edge leans before rendering
+    const leans       = gameCards
+      .filter((c) => classifyDecisionBucket(c) === 'lean')
+      .filter(passesLeanThreshold);
     const passBlocked = gameCards.filter((c) => classifyDecisionBucket(c) === 'pass_blocked');
 
     sectionCounts.official    += official.length;
@@ -652,11 +740,10 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
     const leanLines = sectionLines('🟡 LEAN', leans, 'lean');
     if (leanLines.length > 0) headerLines.push('', ...leanLines);
 
-    const passLine = collapsedPassSummary(passBlocked);
-    if (passLine) headerLines.push('', passLine);
-
-    if (official.length === 0 && leans.length > 0) {
-      headerLines.push('', '🧠 NOTES', 'No official play — edge too thin');
+    // PASS block only when nothing was rendered — avoids contradicting a lean
+    const hasRenderedContent = officialLines.length > 0 || leanLines.length > 0;
+    if (!hasRenderedContent) {
+      continue; // no plays, no leans rendered — skip entirely (dead game to bettor)
     }
 
     messages.push(headerLines.join('\n'));
