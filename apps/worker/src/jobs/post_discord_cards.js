@@ -15,7 +15,7 @@ const {
 const JOB_NAME = 'post_discord_cards';
 const DEFAULT_CHAR_LIMIT = 1800;
 const DISCORD_HARD_LIMIT = 2000;
-const DEFAULT_MAX_ROWS = 120;
+const DEFAULT_MAX_ROWS = 300;
 const ET_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   hour: 'numeric',
@@ -448,7 +448,11 @@ function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS } = {}) {
           g.away_team,
           g.home_team,
           ROW_NUMBER() OVER (
-            PARTITION BY cp.game_id, cp.card_type
+            PARTITION BY CASE
+              WHEN cp.card_type IN ('nhl-player-shots', 'nhl-player-shots-1p')
+                THEN cp.id
+              ELSE cp.game_id || '|' || cp.card_type
+            END
             ORDER BY cp.created_at DESC, cp.id DESC
           ) AS rn
         FROM card_payloads cp
