@@ -96,6 +96,10 @@ const SOCCER_SIDE_MARKETS = new Set([
   'asian_handicap_home',
   'asian_handicap_away',
 ]);
+const SOCCER_AH_MARKETS = new Set([
+  'asian_handicap_home',
+  'asian_handicap_away',
+]);
 const FOOTIE_LAMBDA_SOURCE = {
   STATS_PRIMARY: 'STATS_PRIMARY',
   STATS_MARKET_BLEND: 'STATS_MARKET_BLEND',
@@ -1562,9 +1566,15 @@ function applySideRiskGuards({
   }
 
   if (lambdaSource === FOOTIE_LAMBDA_SOURCE.MARKET_FALLBACK) {
-    passReason = FOOTIE_REASON_CODES.MARKET_FALLBACK_ONLY;
-    reasonCodes.push(FOOTIE_REASON_CODES.MARKET_FALLBACK_ONLY);
-    guardedTier = null;
+    // Fallback-only lambdas remain a hard block for moneyline,
+    // but side/spread markets can still surface with explicit diagnostics.
+    if (marketType === 'MONEYLINE') {
+      passReason = FOOTIE_REASON_CODES.MARKET_FALLBACK_ONLY;
+      reasonCodes.push(FOOTIE_REASON_CODES.MARKET_FALLBACK_ONLY);
+      guardedTier = null;
+    } else if (!passReason) {
+      guardedTier = guardedTier === 'SUPER' || guardedTier === 'BEST' ? 'WATCH' : guardedTier;
+    }
   }
 
   if (lineup?.unresolved) {
@@ -1813,7 +1823,14 @@ function estimateSoccerPropPriorityScore(card) {
 }
 
 function buildSoccerTier1CardFromPropLine(gameId, oddsSnapshot, propLineRow) {
-  const canonicalMarket = String(propLineRow?.prop_type || '').trim();
+  const canonicalMarket = String(propLineRow?.prop_type || '')
+    .trim()
+    .toLowerCase();
+  // ADR-0006 contract guard: Asian Handicap must remain a FOOTIE_MAIN_MARKETS
+  // side market and can never be emitted through the player-prop path.
+  if (SOCCER_AH_MARKETS.has(canonicalMarket)) {
+    return null;
+  }
   if (!SOCCER_TIER1_PROP_TYPES.includes(canonicalMarket)) {
     return null;
   }

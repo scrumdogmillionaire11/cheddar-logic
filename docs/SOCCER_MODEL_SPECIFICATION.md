@@ -183,7 +183,7 @@ Asian Handicap cards keep existing AH pricing/grading but now expose quarter-lin
 
 Side risk guards added in runtime payload contracts:
 
-- `BLOCKED_MARKET_FALLBACK_ONLY`
+- `BLOCKED_MARKET_FALLBACK_ONLY` (moneyline hard block when only fallback lambdas exist)
 - `BLOCKED_NO_PRIMARY_LAMBDA`
 - `BLOCKED_UNCONFIRMED_LINEUP`
 - `BLOCKED_ML_DRAW_RISK_HIGH`

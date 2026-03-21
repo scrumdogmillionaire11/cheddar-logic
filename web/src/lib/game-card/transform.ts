@@ -71,6 +71,11 @@ const PROXY_SIGNAL_TAGS = new Set<string>([
   'PROXY_LEGACY_MARKET_INFERRED',
   'LEGACY_REPAIR',
 ]);
+const SOCCER_AH_CANONICAL_KEYS = new Set([
+  'asian_handicap_home',
+  'asian_handicap_away',
+]);
+const SOCCER_AH_REMAP_TOKEN = 'MARKET_REMAP_AH_FROM_PROP';
 const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
 const WAVE1_MARKETS = new Set<CanonicalMarketType>([
   'MONEYLINE',
@@ -198,6 +203,7 @@ interface ApiPlay {
   tags?: string[];
   recommendation?: { type?: string };
   recommended_bet_type?: string;
+  canonical_market_key?: string;
   kind?: 'PLAY' | 'EVIDENCE';
   evidence_for_play_id?: string;
   aggregation_key?: string;
@@ -441,6 +447,19 @@ function inferMarketFromPlay(play: ApiPlay): {
     };
   }
 
+  if (isSoccerAsianHandicapPlay(play)) {
+    if (play.market_type === 'PROP') {
+      reasonCodes.push(SOCCER_AH_REMAP_TOKEN);
+      tags.push(SOCCER_AH_REMAP_TOKEN);
+    }
+    return {
+      market: 'SPREAD',
+      canonical: 'SPREAD',
+      reasonCodes: Array.from(new Set(reasonCodes)),
+      tags: Array.from(new Set(tags)),
+    };
+  }
+
   if (play.market_type) {
     return {
       market: mapCanonicalToLegacyMarket(play.market_type) as Market,
@@ -486,6 +505,24 @@ function inferMarketFromPlay(play: ApiPlay): {
     reasonCodes,
     tags,
   };
+}
+
+function normalizeSoccerAhToken(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function isSoccerAsianHandicapPlay(play: ApiPlay): boolean {
+  const canonicalKey = normalizeSoccerAhToken(play.canonical_market_key);
+  if (SOCCER_AH_CANONICAL_KEYS.has(canonicalKey)) return true;
+
+  const cardType = normalizeSoccerAhToken(play.cardType);
+  if (cardType.includes('asian_handicap')) return true;
+
+  const rawMarketType = normalizeSoccerAhToken(
+    (play as unknown as Record<string, unknown>).market_type,
+  );
+  return rawMarketType.includes('asian_handicap');
 }
 
 function toDiagnosticToken(prefix: string, value: unknown): string | null {
@@ -1332,7 +1369,8 @@ function resolveSourceModelProb(play?: ApiPlay): number | undefined {
 function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const canonicalTruePlay =
     game.true_play &&
-    game.true_play.market_type !== 'PROP' &&
+    (game.true_play.market_type !== 'PROP' ||
+      isSoccerAsianHandicapPlay(game.true_play)) &&
     isPlayItem(game.true_play, game.sport) &&
     (ENABLE_WELCOME_HOME || !isWelcomeHomePlay(game.true_play))
       ? game.true_play
@@ -1341,6 +1379,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   // Props are rendered via transformPropGames in cards props mode only.
   const basePlayCandidates = game.plays.filter(
     (play) => isPlayItem(play, game.sport) && play.market_type !== 'PROP',
+  );
+  const ahPropCandidates = game.plays.filter(
+    (play) =>
+      isPlayItem(play, game.sport) &&
+      play.market_type === 'PROP' &&
+      isSoccerAsianHandicapPlay(play),
   );
   const hasCanonicalInCandidates = canonicalTruePlay
     ? basePlayCandidates.some((play) => {
@@ -1355,8 +1399,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     : false;
   const playCandidates =
     canonicalTruePlay && !hasCanonicalInCandidates
-      ? [canonicalTruePlay, ...basePlayCandidates]
-      : basePlayCandidates;
+      ? [canonicalTruePlay, ...basePlayCandidates, ...ahPropCandidates]
+      : [...basePlayCandidates, ...ahPropCandidates];
   const dedupedPlayCandidates = dedupePlayCandidates(game, playCandidates);
   const evidenceCandidates = game.plays.filter((play) =>
     isEvidenceItem(play, game.sport),
@@ -3258,7 +3302,8 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
 
   for (const game of games) {
     for (const play of game.plays) {
-      if (play.market_type !== 'PROP') continue;
+      if (play.market_type !== 'PROP' || isSoccerAsianHandicapPlay(play))
+        continue;
       const playerId = extractPlayerId(play);
       const inferredName = inferPlayerNameFromText(play);
       if (playerId && inferredName) {
@@ -3269,7 +3314,9 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
 
   for (const game of games) {
     // Extract all PROP plays from this game
-    const propPlays = game.plays.filter((p) => p.market_type === 'PROP');
+    const propPlays = game.plays.filter(
+      (p) => p.market_type === 'PROP' && !isSoccerAsianHandicapPlay(p),
+    );
 
     // Skip games with no props
     if (propPlays.length === 0) continue;

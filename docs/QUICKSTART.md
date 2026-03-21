@@ -113,7 +113,7 @@ Soccer runtime mode switch:
 
 Soccer sides model note:
 
-- Side cards (ML/AH) are now lambda-source aware. If only market-derived fallback lambdas are available, payloads are explicitly guarded with reason codes (for example `BLOCKED_MARKET_FALLBACK_ONLY`).
+- Side cards (ML/AH) are now lambda-source aware. If only market-derived fallback lambdas are available, payloads are explicitly guarded with reason codes. Moneyline can be hard-blocked (`BLOCKED_MARKET_FALLBACK_ONLY`), while AH/spreads remain actionable with fallback diagnostics.
 - To feed stats-primary lambdas, prewarm soccer xG cache before running `job:run-soccer-model`.
 
 ### Quickstart

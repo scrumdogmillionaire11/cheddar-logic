@@ -66,7 +66,7 @@ Confidence components use input quality, not market separation:
 
 Side risk guards:
 
-- `BLOCKED_MARKET_FALLBACK_ONLY`
+- `BLOCKED_MARKET_FALLBACK_ONLY` (moneyline hard block when lambda source is fallback-only)
 - `BLOCKED_NO_PRIMARY_LAMBDA`
 - `BLOCKED_UNCONFIRMED_LINEUP`
 - `BLOCKED_ML_DRAW_RISK_HIGH`

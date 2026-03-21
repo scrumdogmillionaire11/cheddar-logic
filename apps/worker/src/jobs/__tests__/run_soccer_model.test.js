@@ -804,8 +804,9 @@ describe('buildSoccerOddsBackedCard — asian handicap', () => {
     expect(homeCard.payloadData.model_prob).toEqual(expect.any(Number));
     expect(homeCard.payloadData.edge).toEqual(expect.any(Number));
     expect(homeCard.payloadData.lambda_source).toBe('MARKET_FALLBACK');
-    expect(homeCard.payloadData.pass_reason).toBe('BLOCKED_MARKET_FALLBACK_ONLY');
-    expect(homeCard.payloadData.reason_codes).toContain('BLOCKED_MARKET_FALLBACK_ONLY');
+    expect(homeCard.payloadData.pass_reason).toBe('PASS_MISSING_EDGE');
+    expect(homeCard.payloadData.reason_codes).toContain('BLOCKED_NO_PRIMARY_TEAM_STATS');
+    expect(homeCard.payloadData.reason_codes).not.toContain('BLOCKED_MARKET_FALLBACK_ONLY');
 
     expect(awayCard.payloadData.line).toBe(0.5);
     expect(awayCard.payloadData.price).toBe(-108);
@@ -817,8 +818,9 @@ describe('buildSoccerOddsBackedCard — asian handicap', () => {
     expect(awayCard.payloadData.model_prob).toEqual(expect.any(Number));
     expect(awayCard.payloadData.edge).toEqual(expect.any(Number));
     expect(awayCard.payloadData.lambda_source).toBe('MARKET_FALLBACK');
-    expect(awayCard.payloadData.pass_reason).toBe('BLOCKED_MARKET_FALLBACK_ONLY');
-    expect(awayCard.payloadData.reason_codes).toContain('BLOCKED_MARKET_FALLBACK_ONLY');
+    expect(awayCard.payloadData.pass_reason).toBeNull();
+    expect(awayCard.payloadData.reason_codes).toContain('BLOCKED_NO_PRIMARY_TEAM_STATS');
+    expect(awayCard.payloadData.reason_codes).not.toContain('BLOCKED_MARKET_FALLBACK_ONLY');
   });
 
   test('fails validator when AH selection side drifts from canonical side', () => {
@@ -918,6 +920,30 @@ describe('soccer tier-1 prop line identity mapping', () => {
 
     const validation = validateCardPayload('soccer', card.payloadData);
     expect(validation.success).toBe(true);
+  });
+
+  test('does not emit asian handicap through tier-1 prop line builder', () => {
+    const snap = buildOddsSnapshot({
+      game_id: 'soccer-game-identity-ah-001',
+      home_team: 'Arsenal',
+      away_team: 'Chelsea',
+      game_time_utc: '2026-03-16T20:00:00.000Z',
+    });
+
+    const card = buildSoccerTier1CardFromPropLine(
+      'soccer-game-identity-ah-001',
+      snap,
+      {
+        player_name: 'Not Used',
+        prop_type: 'asian_handicap_home',
+        period: 'full_game',
+        line: -0.5,
+        over_price: -110,
+        under_price: -110,
+      },
+    );
+
+    expect(card).toBeNull();
   });
 
   test('blocks known stale-team player props by default', () => {
