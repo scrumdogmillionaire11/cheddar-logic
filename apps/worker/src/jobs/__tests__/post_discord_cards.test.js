@@ -158,11 +158,48 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.totalGames).toBe(1);
     expect(snapshot.sectionCounts).toEqual({ official: 2, lean: 0, passBlocked: 1 });
     expect(snapshot.messages[0]).toContain('🟢 PLAY');
-    // PASS section is collapsed, not per-market; lean section omitted when empty
-    expect(snapshot.messages[0]).toContain('⚪ PASS');
-    expect(snapshot.messages[0]).toContain('No edge');
+    // PASS block is suppressed when official plays are rendered — no contradiction
+    expect(snapshot.messages[0]).not.toContain('⚪ PASS');
     // Internal reason codes must never appear in output
     expect(snapshot.messages[0]).not.toContain('PASS_NO_EDGE');
+  });
+
+  test('buildDiscordSnapshot skips games where nothing renders — only posts plays and leans', () => {
+    const cards = [
+      makeCard({
+        id: 'pass-only',
+        cardType: 'nhl-moneyline',
+        payloadData: {
+          action: 'PASS',
+          kind: 'EVIDENCE',
+          market_type: 'MONEYLINE',
+          selection: null,
+          pass_reason_code: 'PASS_NO_EDGE',
+        },
+      }),
+      // Add a LEAN with sufficient edge so the game is posted
+      makeCard({
+        id: 'lean-1',
+        cardType: 'nhl-model-output',
+        payloadData: {
+          action: 'LEAN',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'UNDER' },
+          price: -115,
+          line: 6.5,
+          edge: 0.8,
+          model_projection: 5.8,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+    expect(snapshot.totalGames).toBe(1);
+    // Lean rendered → PASS block suppressed
+    expect(snapshot.messages[0]).toContain('🟡 LEAN');
+    expect(snapshot.messages[0]).not.toContain('⚪ PASS');
   });
 
   test('buildDiscordSnapshot does not print @ null when price is missing', () => {
@@ -174,7 +211,7 @@ describe('post_discord_cards helpers', () => {
         payloadData: {
           action: 'FIRE',
           kind: 'PLAY',
-          market_type: 'TOTAL',
+          market_type: 'MONEYLINE',
           selection: { side: 'OVER' },
           price: null,
           projection_only: false,
