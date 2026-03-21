@@ -460,12 +460,16 @@ function hasActionablePlayCall(card: GameCard): boolean {
   if (!play) return false;
   if (play.market === 'NONE' || play.pick === 'NO PLAY') return false;
 
+  // v2 action takes precedence — if the resolved display action is PASS,
+  // the card is not actionable regardless of what official_status says.
+  const displayAction = getPlayDisplayAction(play);
+  if (displayAction === 'PASS') return false;
+
   const officialStatus = play.decision_v2?.official_status;
   if (officialStatus) {
     return officialStatus === 'PLAY' || officialStatus === 'LEAN';
   }
 
-  const displayAction = getPlayDisplayAction(play);
   return displayAction === 'FIRE' || displayAction === 'HOLD';
 }
 
