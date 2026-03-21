@@ -822,6 +822,7 @@ async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
         jobRunId: runId,
         chunks: sentCount,
         totalCards: snapshot.totalCards,
+        totalGames: snapshot.totalGames,
         sectionCounts: snapshot.sectionCounts,
       };
     } catch (error) {
@@ -854,7 +855,7 @@ if (require.main === module) {
       if (dryRun) {
         console.log(`[${JOB_NAME}] dry-run — games:${result.totalGames} chunks:${result.chunks} cards:${result.totalCards} play:${result.sectionCounts?.official} lean:${result.sectionCounts?.lean} pass:${result.sectionCounts?.passBlocked}`);
       } else {
-        console.log(`[${JOB_NAME}] sent — chunks:${result.chunks} games:${result.totalGames} cards:${result.totalCards} play:${result.sectionCounts?.official} lean:${result.sectionCounts?.lean} pass:${result.sectionCounts?.passBlocked}`);
+        console.log(`[${JOB_NAME}] sent — games:${result.totalGames} chunks:${result.chunks} cards:${result.totalCards} play:${result.sectionCounts?.official} lean:${result.sectionCounts?.lean} pass:${result.sectionCounts?.passBlocked}`);
       }
       process.exit(0);
     })
