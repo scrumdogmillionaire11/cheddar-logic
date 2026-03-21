@@ -749,6 +749,10 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2.market_price).toBe(-125);
     expect(payload.decision_v2.sharp_price_status).toBe('CHEDDAR');
     expect(payload.decision_v2.official_status).toBe('PLAY');
+    // WI-0537: canonical FIRST_PERIOD_POLICY reason code (signal resolves to PLAY via OVER token)
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'FIRST_PERIOD_PROJECTION_PLAY',
+    );
     expect(payload.decision_v2.price_reason_codes).not.toContain(
       'MARKET_PRICE_MISSING',
     );
@@ -782,7 +786,13 @@ describe('decision publisher v2 pipeline', () => {
 
     expect(payload.decision_v2.sharp_price_status).toBe('COTTAGE');
     expect(payload.decision_v2.official_status).toBe('PASS');
-    expect(payload.decision_v2.price_reason_codes).toContain('NO_EDGE_AT_PRICE');
+    // WI-0537: canonical FIRST_PERIOD_POLICY reason code replaces generic NO_EDGE_AT_PRICE
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'FIRST_PERIOD_NO_PROJECTION',
+    );
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
+      'NO_EDGE_AT_PRICE',
+    );
   });
 
   test('does not backfill legacy prob fields from decision_v2 after wave-1 pipeline runs', () => {
