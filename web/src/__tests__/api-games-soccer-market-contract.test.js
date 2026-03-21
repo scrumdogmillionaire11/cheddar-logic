@@ -18,6 +18,20 @@ assert(
 );
 
 assert(
+  source.includes('isSoccerAsianHandicapPayload({') &&
+    source.includes("const normalizedMarketType =") &&
+    source.includes("? 'SPREAD' : normalizedMarketTypeRaw"),
+  '/api/games should force soccer Asian handicap payloads onto SPREAD market_type',
+);
+
+assert(
+  source.includes('const ahRemappedFromProp =') &&
+    source.includes('SOCCER_AH_REMAP_TOKEN') &&
+    source.includes('combinedReasonCodes.push(SOCCER_AH_REMAP_TOKEN);'),
+  '/api/games should emit deterministic AH remap diagnostics when malformed payloads arrive as PROP',
+);
+
+assert(
   source.includes("upper === 'DOUBLE_CHANCE' || upper === 'DOUBLECHANCE'") &&
     source.includes("upper === 'DRAW_NO_BET' || upper === 'DRAWNOBET'"),
   '/api/games should normalize soccer moneyline-family aliases into supported UI markets',

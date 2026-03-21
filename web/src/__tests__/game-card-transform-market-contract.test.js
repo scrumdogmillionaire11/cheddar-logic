@@ -19,6 +19,13 @@ assert(
 );
 
 assert(
+  source.includes('function isSoccerAsianHandicapPlay(play: ApiPlay): boolean') &&
+    source.includes("if (play.market_type === 'PROP')") &&
+    source.includes('SOCCER_AH_REMAP_TOKEN'),
+  'transform should defensively remap soccer asian handicap rows away from prop flow',
+);
+
+assert(
   source.includes('const secondary = inferCanonicalFromSecondary(play);'),
   'transform should use recommended/recommendation fallback before title inference',
 );
@@ -63,6 +70,11 @@ assert(
     source.includes("rawSelectionSide === 'AWAY_OR_DRAW'") &&
     source.includes("rawSelectionSide === 'HOME_OR_AWAY'"),
   'transform should treat soccer double-chance and DNB selections as playable moneyline-family bets',
+);
+
+assert(
+  source.includes("p.market_type === 'PROP' && !isSoccerAsianHandicapPlay(p)"),
+  'transform props mode should exclude soccer asian handicap rows even when malformed as PROP',
 );
 
 console.log('✅ Transform market contract source tests passed');
