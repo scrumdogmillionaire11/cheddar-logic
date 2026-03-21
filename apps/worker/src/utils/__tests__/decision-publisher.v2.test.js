@@ -894,7 +894,88 @@ describe('decision publisher v2 pipeline', () => {
       expect.objectContaining({
         reasonCode: 'EDGE_UNAVAILABLE',
         candEdge: null,
+        edgeUnits: 'decimal_fraction',
       }),
     );
+  });
+
+  test('publishDecisionForCard emits edge_units=decimal_fraction in decision event for null-edge card', () => {
+    const payload = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 220.5,
+      price: -110,
+      edge: null,
+      edge_available: false,
+      confidence: 0.62,
+      model_version: 'nba-drivers-v1',
+      home_team: 'Home',
+      away_team: 'Away',
+      reason_codes: [],
+      tags: [],
+    };
+    const card = {
+      gameId: 'game-units-null-edge',
+      cardType: 'nba-total-call',
+      cardTitle: 'NBA Totals',
+      payloadData: payload,
+    };
+    data.getDecisionRecord.mockReturnValue(null);
+    publishDecisionForCard({ card, oddsSnapshot: { game_time_utc: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString() } });
+
+    expect(data.insertDecisionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        edgeUnits: 'decimal_fraction',
+        candEdge: null,
+      }),
+    );
+  });
+
+  test('publishDecisionForCard emits edge_units=decimal_fraction in decision event for explicit edge', () => {
+    const payload = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'SPREAD',
+      recommended_bet_type: 'spread',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: -5.5,
+      price: -110,
+      edge: 0.07,
+      edge_available: true,
+      confidence: 0.65,
+      model_version: 'nba-drivers-v1',
+      home_team: 'Home',
+      away_team: 'Away',
+      reason_codes: [],
+      tags: [],
+    };
+    const card = {
+      gameId: 'game-units-explicit-edge',
+      cardType: 'nba-spread-call',
+      cardTitle: 'NBA Spread',
+      payloadData: payload,
+    };
+    data.getDecisionRecord.mockReturnValue(null);
+    publishDecisionForCard({ card, oddsSnapshot: { game_time_utc: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString() } });
+
+    expect(data.insertDecisionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        edgeUnits: 'decimal_fraction',
+        candEdge: 0.07,
+      }),
+    );
+  });
+
+  test('applyUiActionFields populates decision_v2.edge_units as decimal_fraction for wave1 payload', () => {
+    const payload = buildWave1Payload();
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2).toBeDefined();
+    expect(payload.decision_v2.edge_units).toBe('decimal_fraction');
   });
 });
