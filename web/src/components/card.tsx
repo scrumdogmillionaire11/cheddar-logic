@@ -199,7 +199,6 @@ export default function Card({
     ? 'PASS'
     : getRecommendationLevel(payloadData.confidence);
   const accentColor = getAccentColor(hasPass ? 0 : payloadData.confidence);
-  const confidencePercent = formatConfidence(payloadData.confidence);
   const generatedTime = formatTimestamp(payloadData.generated_at);
   const edgeValue = payloadData.edge?.value ?? null;
   const edgeUnits = payloadData.edge?.units ?? null;
@@ -229,16 +228,6 @@ export default function Card({
           >
             {sport}
           </div>
-          {cardType && (
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono text-slate-400 bg-slate-800/60 border border-slate-700/50 truncate max-w-[160px]">
-              {cardType}
-            </span>
-          )}
-          {payloadData.recommended_bet_type && (
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono text-slate-500 bg-slate-800/40 border border-slate-700/30 uppercase">
-              {payloadData.recommended_bet_type}
-            </span>
-          )}
           <div className="flex-1">
             <h3 className="text-sm font-semibold text-cloud">{cardTitle}</h3>
           </div>
@@ -258,22 +247,6 @@ export default function Card({
         </div>
       </div>
 
-      {/* === CONFIDENCE BAR === */}
-      <div className="px-6 py-3 bg-slate-900/30 border-b border-slate-700/50">
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-400">Confidence</span>
-            <span className={`${accentColor.label}`}>{confidencePercent}</span>
-          </div>
-          <div className="w-full h-2 bg-slate-700/50 rounded-full overflow-hidden">
-            <div
-              className={`h-full ${accentColor.bar} transition-all duration-300`}
-              style={{ width: `${payloadData.confidence * 100}%` }}
-            />
-          </div>
-        </div>
-      </div>
-
       {/* === PLAY BLOCK === */}
       <div
         className={`px-6 py-4 border-b border-slate-700/50 ${accentColor.bg}`}
@@ -283,11 +256,6 @@ export default function Card({
             <span className="text-3xl font-bold text-cloud">
               {hasPass ? 'PASS' : payloadData.prediction}
             </span>
-            {payloadData.recommended_bet_type && (
-              <span className="text-sm text-slate-400">
-                {payloadData.recommended_bet_type}
-              </span>
-            )}
           </div>
           {payloadData.recommendation?.text && !hasPass && (
             <p className="text-xs text-slate-400">
@@ -305,69 +273,22 @@ export default function Card({
           {hasPass && passReason && (
             <p className="text-xs text-amber-200">Pass reason: {passReason}</p>
           )}
-          <p className="text-xs text-slate-400">
-            Model: {payloadData.model_version}
-          </p>
         </div>
       </div>
 
       {/* === DRIVER PANEL === */}
-      <div className="px-6 py-4 border-b border-slate-700/50 space-y-2">
-        <p className="text-xs text-slate-400 font-mono uppercase tracking-wider">
-          Why
-        </p>
+      <div className="px-6 py-4 border-b border-slate-700/50">
         <p className="text-sm text-slate-200 leading-relaxed">
           {payloadData.reasoning}
         </p>
       </div>
 
-      {/* === ALERT BLOCK === */}
-      <div
-        className={`px-6 py-3 border-b border-slate-700/50 flex items-center gap-3 ${
-          hasPass
-            ? 'bg-slate-900/30'
-            : payloadData.ev_passed
-              ? 'bg-green-900/20'
-              : 'bg-amber-900/20'
-        }`}
-      >
-        <div
-          className={`w-2 h-2 rounded-full ${
-            hasPass
-              ? 'bg-slate-500'
-              : payloadData.ev_passed
-                ? 'bg-green-500'
-                : 'bg-amber-500'
-          }`}
-        />
-        <span
-          className={`text-xs font-medium ${
-            hasPass
-              ? 'text-slate-300'
-              : payloadData.ev_passed
-                ? 'text-green-300'
-                : 'text-amber-300'
-          }`}
-        >
-          {hasPass
-            ? 'PASS — no recommended market'
-            : payloadData.ev_passed
-              ? '✓ EV Threshold Passed'
-              : '⚠ Low Expected Value'}
-        </span>
-      </div>
-
       {/* === ODDS CONTEXT === */}
       {payloadData.odds_context && (
         <div className="px-6 py-4 border-b border-slate-700/50 space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-400 font-mono uppercase tracking-wider">
-              Market Snapshot
-            </p>
-            <p className="text-xs text-slate-500">
-              {formatTimestamp(payloadData.odds_context.captured_at)}
-            </p>
-          </div>
+          <p className="text-xs text-slate-400 font-mono uppercase tracking-wider">
+            Market Snapshot
+          </p>
 
           {(hasMoneyline || hasSpread) && (
             <div
@@ -448,13 +369,6 @@ export default function Card({
           )}
         </div>
       )}
-
-      {/* === DISCLAIMER === */}
-      <div className="px-6 py-3 bg-amber-900/20 border-b border-slate-700/50">
-        <p className="text-xs text-amber-100/80 leading-relaxed">
-          {payloadData.disclaimer}
-        </p>
-      </div>
 
       {/* === EXPANDABLE DETAILS === */}
       <button

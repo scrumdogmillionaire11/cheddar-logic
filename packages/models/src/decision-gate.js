@@ -1,11 +1,39 @@
 const nodeCrypto = require('crypto');
 
+/**
+ * Canonical edge contract for all gate and pipeline consumers.
+ *
+ * unit: 'decimal_fraction'
+ *   edge = p_fair - p_implied
+ *   Example: 0.06 = 6% edge above market implied probability
+ *
+ * Sources of truth (in precedence order):
+ *   1. decision_v2.edge_pct  (computed by buildDecisionV2, most authoritative)
+ *   2. payload.edge          (set explicitly by model runners that compute CDF edge)
+ *   3. null                  (edge unavailable — do not coerce to 0)
+ *
+ * EDGE_UPGRADE_MIN: minimum edge *improvement* (in decimal_fraction units) required
+ * for a side-flip to be permitted. 0.5 = 50 percentage points improvement.
+ * NOTE: This threshold is intentionally conservative and is not to be tuned in this WI.
+ */
+const CANONICAL_EDGE_CONTRACT = Object.freeze({
+  unit: 'decimal_fraction',
+  description: 'edge = p_fair - p_implied; 0.06 = 6% edge',
+  upgrade_min: 0.5,
+  sources: ['decision_v2.edge_pct', 'payload.edge', 'null'],
+});
+
 const DEFAULTS = {
-  EDGE_UPGRADE_MIN: 0.5,
+  EDGE_UPGRADE_MIN: 0.5, // unit: decimal_fraction — 0.5 = 50 percentage points improvement required
   REQUIRE_STABILITY_RUNS: 2,
   HARD_LOCK_MINUTES: 120,
   LINE_MOVE_MIN: 0.5,
 };
+
+/** Returns true only if value is a finite decimal-fraction edge. Never treat null/undefined as 0. */
+function hasFiniteEdge(value) {
+  return Number.isFinite(value);
+}
 
 function normalizeMarketType(marketType, recommendedBetType) {
   const raw = String(marketType || recommendedBetType || '').toLowerCase();
@@ -192,15 +220,31 @@ function computeCandidateHash({
   return nodeCrypto.createHash('sha256').update(raw).digest('hex');
 }
 
+/**
+ * Determines whether a new candidate decision should replace the current one.
+ *
+ * Edge contract: candidate.edge and current.edge MUST be decimal fractions
+ * (unit: 'decimal_fraction' per CANONICAL_EDGE_CONTRACT). Missing edge must be
+ * passed as null — never as 0 or undefined.
+ *
+ * @param {object|null} current - stored decision record
+ * @param {object} candidate - { side, line, price, edge, edge_available }
+ * @param {object} ctx - { candidateSeenCount, lineMoved, lineDelta, criticalOverride }
+ */
 function shouldFlip(current, candidate, ctx = {}) {
   const config = { ...DEFAULTS, ...(ctx || {}) };
+  const candidateEdgeAvailable =
+    candidate?.edge_available === true || hasFiniteEdge(candidate?.edge);
+  const currentEdgeAvailable =
+    current?.edge_available === true || hasFiniteEdge(current?.edge);
+  const edgeComparable = candidateEdgeAvailable && currentEdgeAvailable;
 
   if (!current) {
     return {
       allow: true,
       reason_code: 'INIT',
       reason_detail: 'First published decision for this market',
-      edge_delta: candidate.edge ?? 0,
+      edge_delta: candidateEdgeAvailable ? (candidate.edge ?? null) : null,
     };
   }
 
@@ -210,7 +254,9 @@ function shouldFlip(current, candidate, ctx = {}) {
         allow: true,
         reason_code: 'CRITICAL_OVERRIDE',
         reason_detail: 'Hard lock overridden by critical event',
-        edge_delta: (candidate.edge ?? 0) - (current.edge ?? 0),
+        edge_delta: edgeComparable
+          ? (candidate.edge ?? 0) - (current.edge ?? 0)
+          : null,
       };
     }
     return {
@@ -222,7 +268,9 @@ function shouldFlip(current, candidate, ctx = {}) {
   }
 
   const sideChanged = candidate.side !== current.recommended_side;
-  const edgeDelta = (candidate.edge ?? 0) - (current.edge ?? 0);
+  const edgeDelta = edgeComparable
+    ? (candidate.edge ?? 0) - (current.edge ?? 0)
+    : null;
 
   if (!sideChanged) {
     return {
@@ -242,9 +290,29 @@ function shouldFlip(current, candidate, ctx = {}) {
     };
   }
 
+  if (!candidateEdgeAvailable || !currentEdgeAvailable) {
+    if (ctx.lineMoved && Math.abs(ctx.lineDelta || 0) >= config.LINE_MOVE_MIN) {
+      return {
+        allow: true,
+        reason_code: 'LINE_MOVE_NO_EDGE',
+        reason_detail: `Line moved ${ctx.lineDelta}; accepted without edge comparison`,
+        edge_delta: null,
+      };
+    }
+
+    return {
+      allow: false,
+      reason_code: 'EDGE_UNAVAILABLE',
+      reason_detail:
+        'Edge unavailable for candidate or current decision; side flip requires edge comparison or qualifying line move',
+      edge_delta: null,
+    };
+  }
+
   if (
     ctx.lineMoved &&
     Math.abs(ctx.lineDelta || 0) >= config.LINE_MOVE_MIN &&
+    edgeDelta !== null &&
     edgeDelta >= 0
   ) {
     return {
@@ -255,7 +323,7 @@ function shouldFlip(current, candidate, ctx = {}) {
     };
   }
 
-  if (edgeDelta >= config.EDGE_UPGRADE_MIN) {
+  if (edgeDelta !== null && edgeDelta >= config.EDGE_UPGRADE_MIN) {
     return {
       allow: true,
       reason_code: 'EDGE_UPGRADE',
@@ -273,6 +341,7 @@ function shouldFlip(current, candidate, ctx = {}) {
 }
 
 module.exports = {
+  CANONICAL_EDGE_CONTRACT,
   buildDecisionKey,
   computeCandidateHash,
   computeInputsHash,
