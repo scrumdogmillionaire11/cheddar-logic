@@ -12,6 +12,7 @@
  */
 
 import React, { useState } from 'react';
+import { getDisplayVerdict } from '@/lib/game-card/display-verdict';
 
 export interface CardPayloadData {
   game_id: string;
@@ -242,7 +243,7 @@ export default function Card({
           <span
             className={`px-3 py-1 rounded-lg font-bold text-sm ${accentColor.bg} ${accentColor.label}`}
           >
-            {recommendation}
+            {getDisplayVerdict(recommendation)?.label ?? recommendation}
           </span>
         </div>
       </div>
