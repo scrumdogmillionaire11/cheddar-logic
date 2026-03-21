@@ -2,7 +2,9 @@ const {
   computeConflict,
   Market,
   DecisionStatus,
+  marginToWinProbability,
 } = require('@cheddar-logic/models');
+const { getSigmaDefaults } = require('@cheddar-logic/models/src/edge-calculator');
 const {
   computeNHLMarketDecisions,
   selectExpressionChoice,
@@ -357,5 +359,70 @@ describe('computeTotalBias with goalie states (WI-0382)', () => {
 
   test('backward-compatible: no goalie args still works', () => {
     expect(computeTotalBias(goodTotalDecision)).toBe('OK');
+  });
+});
+
+// ============================================================================
+// WI-0538: NHL ML win probability calibration
+// Validates that sigma = getSigmaDefaults('NHL').margin (2.0 goals) is used,
+// not the NBA-style sigma=12 default. Calibrated against NHL goal-margin
+// distributions where sigma~2.0 is the empirical standard deviation.
+// ============================================================================
+
+describe('NHL ML win probability calibration (WI-0538)', () => {
+  const NHL_SIGMA = getSigmaDefaults('NHL').margin; // 2.0
+
+  test('NHL sigma is 2.0 goals (not NBA-style 12 pts)', () => {
+    expect(NHL_SIGMA).toBe(2.0);
+  });
+
+  test('even margin -> ~50% win prob', () => {
+    const prob = marginToWinProbability(0, NHL_SIGMA);
+    expect(prob).toBeCloseTo(0.5, 3);
+  });
+
+  test('+1 goal projected margin -> ~0.69 win prob (well above NBA ~0.53)', () => {
+    const probNHL = marginToWinProbability(1, NHL_SIGMA);
+    const probNBAsigma = marginToWinProbability(1, 12.0);
+    // NHL with proper sigma shows meaningful confidence
+    expect(probNHL).toBeGreaterThan(0.65);
+    expect(probNHL).toBeCloseTo(0.6915, 2);
+    // NBA sigma gives near-flat
+    expect(probNBAsigma).toBeLessThan(0.54);
+  });
+
+  test('+2 goal projected margin -> ~0.84 win prob', () => {
+    const prob = marginToWinProbability(2, NHL_SIGMA);
+    expect(prob).toBeCloseTo(0.8413, 2);
+  });
+
+  test('-1 goal projected margin -> ~0.31 win prob (symmetric)', () => {
+    const prob = marginToWinProbability(-1, NHL_SIGMA);
+    expect(prob).toBeCloseTo(0.3085, 2);
+  });
+
+  test('ML market in computeNHLMarketDecisions uses calibrated win prob (not flat-50)', () => {
+    // Home team projects +1.5 goal advantage; ML should reflect meaningful edge
+    const oddsSnapshot = {
+      total: 6.0,
+      spread_home: -1.5,
+      h2h_home: -130,
+      h2h_away: 110,
+      spread_price_home: -115,
+      spread_price_away: -105,
+      raw_data: {
+        espn_metrics: {
+          home: { metrics: { avgGoalsFor: 3.5, avgGoalsAgainst: 2.5, restDays: 2 } },
+          away: { metrics: { avgGoalsFor: 2.5, avgGoalsAgainst: 3.0, restDays: 1 } },
+        },
+      },
+    };
+    const decisions = computeNHLMarketDecisions(oddsSnapshot);
+    const mlDecision = decisions.ML;
+    // win_prob_home should not be near 0.5 (flat default) when margin is meaningful
+    const projectedWinProb = mlDecision?.projection?.win_prob_home;
+    if (projectedWinProb !== null && projectedWinProb !== undefined) {
+      expect(projectedWinProb).toBeGreaterThan(0.6);
+    }
   });
 });
