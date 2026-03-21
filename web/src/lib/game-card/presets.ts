@@ -41,7 +41,7 @@ const WELCOME_HOME_PRESET: FilterPreset = {
 const GAME_PRESETS: FilterPreset[] = [
   {
     id: 'all',
-    name: 'Main View (PLAY + LEAN)',
+    name: 'Main View (PLAY + SLIGHT EDGE)',
     description: 'Default actionable board view',
     icon: '🎯',
     filters: DEFAULT_FILTERS_BY_MODE.game,

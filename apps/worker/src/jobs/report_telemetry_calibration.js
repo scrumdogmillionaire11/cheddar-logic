@@ -411,6 +411,38 @@ function buildFetchDiagnostics(db, windowDays, projection, clv) {
   };
 }
 
+function buildEdgeVerificationReport(db) {
+  const exists = tableExists(db, 'tracking_stats');
+  if (!exists) return { tablePresent: false, buckets: [] };
+
+  const rows = db
+    .prepare(
+      `
+      SELECT driver_key, sport, market_type,
+             wins, losses, pushes, total_pnl_units, win_rate, avg_pnl_per_card
+      FROM tracking_stats
+      WHERE driver_key LIKE 'edge_verification:%'
+      ORDER BY driver_key ASC, sport ASC, market_type ASC
+    `,
+    )
+    .all();
+
+  const buckets = rows.map((row) => ({
+    driverKey: row.driver_key,
+    verificationStatus: String(row.driver_key || '').replace('edge_verification:', ''),
+    sport: row.sport,
+    marketType: row.market_type,
+    wins: toNumber(row.wins, 0),
+    losses: toNumber(row.losses, 0),
+    pushes: toNumber(row.pushes, 0),
+    totalPnl: toRounded(toNumber(row.total_pnl_units)),
+    winRate: toRounded(toNumber(row.win_rate)),
+    avgPnlPerCard: toRounded(toNumber(row.avg_pnl_per_card)),
+  }));
+
+  return { tablePresent: true, buckets };
+}
+
 function collectChecks(projection, clv) {
   return [
     {
@@ -464,6 +496,7 @@ async function generateTelemetryCalibrationReport({
     const windowDays = Number.isFinite(days) && days > 0 ? Math.trunc(days) : DEFAULT_WINDOW_DAYS;
     const projection = buildProjectionLedgerReport(reader, windowDays);
     const clv = buildClvLedgerReport(reader, windowDays);
+    const edgeVerification = buildEdgeVerificationReport(reader);
     const checks = collectChecks(projection, clv);
     const diagnostics = buildFetchDiagnostics(reader, windowDays, projection, clv);
     const overallStatus = determineOverallStatus(checks);
@@ -488,6 +521,7 @@ async function generateTelemetryCalibrationReport({
         projection,
         clv,
       },
+      edgeVerification,
       checks,
       overallStatus,
       diagnostics,
@@ -531,6 +565,21 @@ function formatTelemetryCalibrationReport(report, { enforce = false } = {}) {
   lines.push(
     `- p25_clv: ${Number.isFinite(report.ledgers.clv.p25Clv) ? report.ledgers.clv.p25Clv.toFixed(4) : 'n/a'} | threshold ${report.ledgers.clv.checks.tailRisk.threshold} | ${report.ledgers.clv.checks.tailRisk.status}`,
   );
+  lines.push('');
+
+  lines.push('edge_verification_outcomes');
+  if (!report.edgeVerification || !report.edgeVerification.tablePresent) {
+    lines.push('- tracking_stats table missing');
+  } else if (report.edgeVerification.buckets.length === 0) {
+    lines.push('- no settled edge_verification plays yet');
+  } else {
+    for (const bucket of report.edgeVerification.buckets) {
+      const total = bucket.wins + bucket.losses + bucket.pushes;
+      lines.push(
+        `- ${bucket.verificationStatus} | ${bucket.sport}/${bucket.marketType} | ${bucket.wins}W-${bucket.losses}L-${bucket.pushes}P (${total}) | win_rate ${formatPct(bucket.winRate)} | avg_pnl ${Number.isFinite(bucket.avgPnlPerCard) ? bucket.avgPnlPerCard.toFixed(3) : 'n/a'}`,
+      );
+    }
+  }
   lines.push('');
 
   lines.push('learning_diagnostics');
