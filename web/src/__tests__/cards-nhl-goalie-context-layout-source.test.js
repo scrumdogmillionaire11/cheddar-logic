@@ -1,5 +1,5 @@
 /*
- * Verifies NHL 1P Market Math renders goalie context on a separate line.
+ * Verifies NHL 1P details include goalie context and call metadata.
  * Run: node web/src/__tests__/cards-nhl-goalie-context-layout-source.test.js
  */
 
@@ -10,30 +10,32 @@ import path from 'node:path';
 const cardsPagePath = path.resolve('web/src/components/cards-page-client.tsx');
 const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
 
-console.log('NHL goalie context layout source-contract checks');
+console.log('NHL goalie context details source-contract checks');
 
 assert(
   cardsPageSource.includes('hasOnePeriodTotalContext') &&
-    cardsPageSource.includes('1P projection') &&
-    cardsPageSource.includes('1P Call'),
-  'NHL 1P market math block should render projection and call context',
+    cardsPageSource.includes('1P projection:') &&
+    cardsPageSource.includes('1P call:'),
+  'NHL 1P details should render projection and call context',
 );
 
 assert(
-  cardsPageSource.includes('className="mt-2 space-y-1"'),
-  'NHL 1P market math should use stacked rows for goalie context readability',
+  cardsPageSource.includes('Details') &&
+    cardsPageSource.includes('Goalie context:'),
+  'NHL goalie context should live in the consolidated Details drawer',
 );
 
 assert(
-  /1P Call[\s\S]*?<\/div>\s*<div className="text-xs font-mono text-cloud\/60">\s*Goalie context/m.test(
+  /1P call:[\s\S]*?Goalie context:/m.test(
     cardsPageSource,
   ),
-  'Goalie context should render on a new line below projection/call row',
+  'Goalie context should render alongside 1P projection/call context in details',
 );
 
 assert(
-  cardsPageSource.includes('Status') && cardsPageSource.includes('goalieContextStatuses.join'),
-  'Goalie status should remain visible in the goalie context line',
+  cardsPageSource.includes('Status:') &&
+    cardsPageSource.includes('goalieContextStatuses.join'),
+  'Goalie status should remain visible in details context',
 );
 
-console.log('NHL goalie context layout source-contract checks passed');
+console.log('NHL goalie context details source-contract checks passed');

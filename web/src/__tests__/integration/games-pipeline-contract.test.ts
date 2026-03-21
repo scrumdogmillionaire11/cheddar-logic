@@ -81,9 +81,13 @@ assert.ok(
   cardsSource.includes('const canonicalTruePlay = originalGame?.true_play;') &&
     cardsSource.includes('const inferredDecision =') &&
     cardsSource.includes('resolvedDecisionV2?.official_status') &&
-    cardsSource.includes('const displayDecision = isBroken ? \'PASS\' : inferredDecision;') &&
-    cardsSource.includes('PASS Breakdown') &&
-    cardsSource.includes('Model Lean Indicators') &&
+    cardsSource.includes('const displayDecision =') &&
+    cardsSource.includes('const contextLine1 =') &&
+    cardsSource.includes('const contextLine2 =') &&
+    cardsSource.includes('const hasDetails =') &&
+    cardsSource.includes('Details') &&
+    !cardsSource.includes('Model Lean Indicators') &&
+    !cardsSource.includes('Market Math') &&
     cardsSource.includes('getDisplayVerdict') &&
     cardsSource.includes('formatProjectedSentence'),
   'cards UI must preserve canonical PLAY/LEAN/PASS statuses internally',

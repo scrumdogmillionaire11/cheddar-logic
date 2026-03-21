@@ -20,6 +20,25 @@ function impliedProbFromAmerican(odds) {
 }
 
 /**
+ * Inverse normal CDF (probit function) — Abramowitz & Stegun 26.2.17
+ * Max |error| < 4.5e-4 for 0 < p < 1.
+ * Inverse of normCdf: invNormCdf(normCdf(z)) ≈ z
+ * @param {number} p - Probability (0, 1)
+ * @returns {number} - Standard normal variate z such that Φ(z) = p
+ */
+function invNormCdf(p) {
+  if (p <= 0) return -Infinity;
+  if (p >= 1) return Infinity;
+  const a = [2.515517, 0.802853, 0.010328];
+  const b = [1.432788, 0.189269, 0.001308];
+  const q = p < 0.5 ? p : 1 - p;
+  const t = Math.sqrt(-2 * Math.log(q));
+  const z =
+    t - (a[0] + a[1] * t + a[2] * t * t) / (1 + b[0] * t + b[1] * t * t + b[2] * t * t * t);
+  return p < 0.5 ? -z : z;
+}
+
+/**
  * Standard normal CDF approximation (Abramowitz & Stegun)
  * @param {number} z - Standard normal variate
  * @returns {number} - Φ(z), probability
@@ -252,6 +271,7 @@ function getSigmaDefaults(sport) {
 module.exports = {
   impliedProbFromAmerican,
   normCdf,
+  invNormCdf,
   computeMoneylineEdge,
   computeSpreadEdge,
   computeTotalEdge,
