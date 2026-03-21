@@ -60,7 +60,7 @@ assert(
 
 assert(
   cardsPageSource.includes('1P projection') &&
-    cardsPageSource.includes('1P Call') &&
+    cardsPageSource.includes('1P call') &&
     cardsPageSource.includes('Goalie context'),
   'cards UI should render dedicated 1P projection context row with pass-first fields',
 );
@@ -68,6 +68,32 @@ assert(
 assert(
   transformSource.includes('PASS_NO_ACTIONABLE_PLAY'),
   'transform should label evidence-only/no-play states as no actionable play, not driver-load failure',
+);
+
+// WI-0511: verify unclassified_no_play_pipeline fallback is fully replaced
+assert(
+  !transformSource.includes("'fetch_failure:unclassified_no_play_pipeline'"),
+  'WI-0511: transform must not emit generic unclassified_no_play_pipeline fallback token',
+);
+
+assert(
+  transformSource.includes("'fetch_failure:play_producer_no_output'"),
+  'WI-0511: transform must use play_producer_no_output for play-producer-present but no-output case',
+);
+
+assert(
+  transformSource.includes("'FIRST_PERIOD_NO_PROJECTION'"),
+  'WI-0511: FIRST_PERIOD_NO_PROJECTION must be in explicit-no-edge recognition set so 1P PASS cards are not unclassified',
+);
+
+assert(
+  transformSource.includes("'WATCHDOG'"),
+  'WI-0511: WATCHDOG fragment must be in fetch-failure recognition set',
+);
+
+assert(
+  transformSource.includes("'GOALIE'"),
+  'WI-0511: GOALIE fragment must be in fetch-failure recognition set',
 );
 
 // WI-0377 additions: wave-1 canonical math sourcing contracts
