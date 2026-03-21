@@ -6,6 +6,9 @@ set -e
 
 DEPLOY_DIR="/opt/cheddar-logic"
 
+# Ensure npm global bin is in PATH (pm2 lives here)
+export PATH="$PATH:$(npm prefix -g)/bin"
+
 echo "=========================================="
 echo "FPL Sage Pi Deployment Setup"
 echo "=========================================="
