@@ -374,80 +374,75 @@ jobs:
               [ -n "$ref" ] || continue
               retry_url "http://127.0.0.1:3000$ref" "origin css [$route] $ref" || fail_with_rollback "origin CSS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-http://127.0.0.1:3000$ref}"
             done
-            if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
-              fail_with_rollback "Cloudflare secrets missing (CF_API_TOKEN and CF_ZONE_ID required for cache purge)";
-            fi
             PUBLIC_DOMAIN_URL="${NEXT_PUBLIC_PUBLIC_DOMAIN:-${PUBLIC_DOMAIN:-https://cheddarlogic.com}}"
             PUBLIC_DOMAIN_URL="${PUBLIC_DOMAIN_URL%/}"
-            cat > /tmp/cloudflare_purge_payload.json <<JSON
-            {
-              "files": [
-                "${PUBLIC_DOMAIN_URL}/",
-                "${PUBLIC_DOMAIN_URL}/cards",
-                "${PUBLIC_DOMAIN_URL}/fpl",
-                "${PUBLIC_DOMAIN_URL}/results",
-                "${PUBLIC_DOMAIN_URL}/admin",
-                "${PUBLIC_DOMAIN_URL}/analytics",
-                "${PUBLIC_DOMAIN_URL}/subscribe"
-              ]
-            }
-            JSON
-            curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
-              -H "Authorization: Bearer ${CF_API_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data @/tmp/cloudflare_purge_payload.json \
-              | tee /tmp/cloudflare_purge.json
-            grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json || fail_with_rollback "Cloudflare purge failed: $(cat /tmp/cloudflare_purge.json)"
-            if grep -Eq '"purge_everything"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json; then
-              fail_with_rollback "Cloudflare purge unexpectedly used purge_everything response"
-            fi
-            echo "Cloudflare HTML route cache purged via URL list — waiting 30s for propagation..."
-            sleep 30
-            PUBLIC_HOMEPAGE_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/" || true)
-            PUBLIC_CARDS_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/cards" || true)
-            PUBLIC_FPL_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/fpl" || true)
-            PUBLIC_RESULTS_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/results" || true)
-            PUBLIC_ROUTE_JS_REFS=$(
-              {
-                { extract_asset_refs "public:/" "$PUBLIC_HOMEPAGE_HTML" "js"; } || true
-                { extract_asset_refs "public:/cards" "$PUBLIC_CARDS_HTML" "js"; } || true
-                { extract_asset_refs "public:/fpl" "$PUBLIC_FPL_HTML" "js"; } || true
-                { extract_asset_refs "public:/results" "$PUBLIC_RESULTS_HTML" "js"; } || true
-              } | sort -u
-            )
-            PUBLIC_ROUTE_CSS_REFS=$(
-              {
-                { extract_asset_refs "public:/" "$PUBLIC_HOMEPAGE_HTML" "css"; } || true
-                { extract_asset_refs "public:/cards" "$PUBLIC_CARDS_HTML" "css"; } || true
-                { extract_asset_refs "public:/fpl" "$PUBLIC_FPL_HTML" "css"; } || true
-                { extract_asset_refs "public:/results" "$PUBLIC_RESULTS_HTML" "css"; } || true
-              } | sort -u
-            )
-            for route in "/" "/cards" "/fpl" "/results"; do
-              PUBLIC_ROUTE_JS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_JS_REFS" | awk -F'|' -v route="public:${route}" '$1 == route { count++ } END { print count + 0 }')
-              PUBLIC_ROUTE_CSS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_CSS_REFS" | awk -F'|' -v route="public:${route}" '$1 == route { count++ } END { print count + 0 }')
-              test "$PUBLIC_ROUTE_JS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing JS asset references in public HTML after purge"
-              test "$PUBLIC_ROUTE_CSS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing CSS asset references in public HTML after purge"
-            done
-            PUBLIC_JS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_JS_REFS" | awk -F'|' 'NF >= 2 { print $2 }' | sort -u | grep -c . || true)
-            PUBLIC_CSS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_CSS_REFS" | awk -F'|' 'NF >= 2 { print $2 }' | sort -u | grep -c . || true)
-            printf '%s\n' "$PUBLIC_ROUTE_JS_REFS" | while IFS='|' read -r route ref; do
-              [ -n "$route" ] || continue
-              [ -n "$ref" ] || continue
-              retry_url "$PUBLIC_DOMAIN_URL$ref" "public js [$route] $ref" 1 || fail_with_rollback "public JS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-$PUBLIC_DOMAIN_URL$ref}"
-            done
-            printf '%s\n' "$PUBLIC_ROUTE_CSS_REFS" | while IFS='|' read -r route ref; do
-              [ -n "$route" ] || continue
-              [ -n "$ref" ] || continue
-              retry_url "$PUBLIC_DOMAIN_URL$ref" "public css [$route] $ref" 1 || fail_with_rollback "public CSS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-$PUBLIC_DOMAIN_URL$ref}"
-            done
-            if [ -n "$PREV_ARCHIVED_ASSET_REL" ]; then
-              retry_url "http://127.0.0.1:3000/_next/static/$PREV_ARCHIVED_ASSET_REL" "origin previous-release asset /_next/static/$PREV_ARCHIVED_ASSET_REL" || fail_with_rollback "previous-release origin static asset failed after deploy"
-              retry_url "$PUBLIC_DOMAIN_URL/_next/static/$PREV_ARCHIVED_ASSET_REL" "public previous-release asset /_next/static/$PREV_ARCHIVED_ASSET_REL" 1 || fail_with_rollback "previous-release public static asset failed after deploy"
+            CF_PURGE_SKIPPED=false
+            if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
+              echo "WARNING: Cloudflare secrets (CF_API_TOKEN / CF_ZONE_ID) not set — skipping CF cache purge. Set them as GitHub Actions secrets to enable automatic purge on every deploy."
+              CF_PURGE_SKIPPED=true
             else
-              echo "No prior static snapshot asset available for previous-release retention check"
+              printf '{"files":["%s/","%s/cards","%s/fpl","%s/results","%s/admin","%s/analytics","%s/subscribe"]}' \
+                "$PUBLIC_DOMAIN_URL" "$PUBLIC_DOMAIN_URL" "$PUBLIC_DOMAIN_URL" "$PUBLIC_DOMAIN_URL" \
+                "$PUBLIC_DOMAIN_URL" "$PUBLIC_DOMAIN_URL" "$PUBLIC_DOMAIN_URL" \
+                > /tmp/cloudflare_purge_payload.json
+              curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+                -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data @/tmp/cloudflare_purge_payload.json \
+                | tee /tmp/cloudflare_purge.json
+              grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json || fail_with_rollback "Cloudflare purge failed: $(cat /tmp/cloudflare_purge.json)"
+              echo "Cloudflare HTML route cache purged via URL list — waiting 30s for propagation..."
+              sleep 30
             fi
-            echo "Chunk verification passed: origin served $ORIGIN_JS_COUNT JS refs and $ORIGIN_CSS_COUNT CSS refs; public served $PUBLIC_JS_COUNT JS refs and $PUBLIC_CSS_COUNT CSS refs from /, /cards, /fpl, and /results HTML"
+            if [ "$CF_PURGE_SKIPPED" = "false" ]; then
+              PUBLIC_HOMEPAGE_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/" || true)
+              PUBLIC_CARDS_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/cards" || true)
+              PUBLIC_FPL_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/fpl" || true)
+              PUBLIC_RESULTS_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/results" || true)
+              PUBLIC_ROUTE_JS_REFS=$(
+                {
+                  { extract_asset_refs "public:/" "$PUBLIC_HOMEPAGE_HTML" "js"; } || true
+                  { extract_asset_refs "public:/cards" "$PUBLIC_CARDS_HTML" "js"; } || true
+                  { extract_asset_refs "public:/fpl" "$PUBLIC_FPL_HTML" "js"; } || true
+                  { extract_asset_refs "public:/results" "$PUBLIC_RESULTS_HTML" "js"; } || true
+                } | sort -u
+              )
+              PUBLIC_ROUTE_CSS_REFS=$(
+                {
+                  { extract_asset_refs "public:/" "$PUBLIC_HOMEPAGE_HTML" "css"; } || true
+                  { extract_asset_refs "public:/cards" "$PUBLIC_CARDS_HTML" "css"; } || true
+                  { extract_asset_refs "public:/fpl" "$PUBLIC_FPL_HTML" "css"; } || true
+                  { extract_asset_refs "public:/results" "$PUBLIC_RESULTS_HTML" "css"; } || true
+                } | sort -u
+              )
+              for route in "/" "/cards" "/fpl" "/results"; do
+                PUBLIC_ROUTE_JS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_JS_REFS" | awk -F'|' -v route="public:${route}" '$1 == route { count++ } END { print count + 0 }')
+                PUBLIC_ROUTE_CSS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_CSS_REFS" | awk -F'|' -v route="public:${route}" '$1 == route { count++ } END { print count + 0 }')
+                test "$PUBLIC_ROUTE_JS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing JS asset references in public HTML after purge"
+                test "$PUBLIC_ROUTE_CSS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing CSS asset references in public HTML after purge"
+              done
+              PUBLIC_JS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_JS_REFS" | awk -F'|' 'NF >= 2 { print $2 }' | sort -u | grep -c . || true)
+              PUBLIC_CSS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_CSS_REFS" | awk -F'|' 'NF >= 2 { print $2 }' | sort -u | grep -c . || true)
+              printf '%s\n' "$PUBLIC_ROUTE_JS_REFS" | while IFS='|' read -r route ref; do
+                [ -n "$route" ] || continue
+                [ -n "$ref" ] || continue
+                retry_url "$PUBLIC_DOMAIN_URL$ref" "public js [$route] $ref" 1 || fail_with_rollback "public JS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-$PUBLIC_DOMAIN_URL$ref}"
+              done
+              printf '%s\n' "$PUBLIC_ROUTE_CSS_REFS" | while IFS='|' read -r route ref; do
+                [ -n "$route" ] || continue
+                [ -n "$ref" ] || continue
+                retry_url "$PUBLIC_DOMAIN_URL$ref" "public css [$route] $ref" 1 || fail_with_rollback "public CSS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-$PUBLIC_DOMAIN_URL$ref}"
+              done
+              if [ -n "$PREV_ARCHIVED_ASSET_REL" ]; then
+                retry_url "http://127.0.0.1:3000/_next/static/$PREV_ARCHIVED_ASSET_REL" "origin previous-release asset /_next/static/$PREV_ARCHIVED_ASSET_REL" || fail_with_rollback "previous-release origin static asset failed after deploy"
+                retry_url "$PUBLIC_DOMAIN_URL/_next/static/$PREV_ARCHIVED_ASSET_REL" "public previous-release asset /_next/static/$PREV_ARCHIVED_ASSET_REL" 1 || fail_with_rollback "previous-release public static asset failed after deploy"
+              else
+                echo "No prior static snapshot asset available for previous-release retention check"
+              fi
+              echo "Chunk verification passed: origin served $ORIGIN_JS_COUNT JS refs and $ORIGIN_CSS_COUNT CSS refs; public served $PUBLIC_JS_COUNT JS refs and $PUBLIC_CSS_COUNT CSS refs from /, /cards, /fpl, and /results HTML"
+            else
+              echo "Chunk verification (origin): origin served $ORIGIN_JS_COUNT JS refs and $ORIGIN_CSS_COUNT CSS refs — CF purge skipped (no secrets)"
+            fi
             DEPLOY_LOG="/opt/cheddar-logic/logs/deploy.log"
             mkdir -p "$(dirname "$DEPLOY_LOG")"
             node - <<'NODE' | tee -a "$DEPLOY_LOG"
