@@ -41,6 +41,14 @@ import {
 import { getDisplayVerdict } from '@/lib/game-card/display-verdict';
 import { StickyBackButton } from '@/components/sticky-back-button';
 import { createTimeoutSignal } from '@/lib/network/timeout-signal';
+import {
+  buildStaleAssetErrorMessage,
+  extractNextStaticAssetPath,
+  formatStaleAssetUserMessage,
+  isStaleNextStaticAssetFailure,
+  STALE_ASSET_RELOAD_GUARD_KEY,
+  stringifyUnknownError,
+} from '@/lib/stale-asset-recovery';
 
 const TRACKED_SPORTS = ['NCAAM', 'NBA', 'NHL', 'SOCCER', 'MLB', 'NFL'] as const;
 
@@ -489,7 +497,6 @@ const CLIENT_POLL_INTERVAL_MS = 60_000;
 const CLIENT_MIN_FETCH_INTERVAL_MS = 5_000;
 const CLIENT_FETCH_TIMEOUT_MS = 30_000;
 const CLIENT_DEFAULT_BACKOFF_MS = 30_000;
-const CHUNK_RELOAD_GUARD_KEY = 'cards_chunk_reload_once';
 const LIFECYCLE_SESSION_KEY = 'cheddar_cards_lifecycle_mode';
 const CHUNK_ERROR_LOG_CODE = 'CARDS_CHUNK_LOAD_FAILED';
 const FETCH_ERROR_LOG_CODE = 'CARDS_FETCH_FAILED';
@@ -520,41 +527,6 @@ function summarizeNonJsonBody(bodyText: string): string {
   const compact = bodyText.replace(/\s+/g, ' ').trim();
   if (!compact) return 'empty response body';
   return compact.length > 120 ? `${compact.slice(0, 120)}...` : compact;
-}
-
-function extractChunkPath(message: string): string | null {
-  const match = message.match(/\/_next\/static\/[^"'\s)]+/);
-  return match ? match[0] : null;
-}
-
-function isChunkLoadFailure(message: string): boolean {
-  if (!message) return false;
-  const normalized = message.toLowerCase();
-  const nextStaticPathReferenced = normalized.includes('/_next/static/');
-  const nextStaticCssFailure =
-    nextStaticPathReferenced &&
-    normalized.includes('.css') &&
-    (normalized.includes('404') ||
-      normalized.includes('net::err') ||
-      normalized.includes('failed to load'));
-
-  return (
-    normalized.includes('chunkloaderror') ||
-    normalized.includes('loading chunk') ||
-    normalized.includes('failed to fetch dynamically imported module') ||
-    (normalized.includes('/_next/static/chunks/') && normalized.includes('404')) ||
-    nextStaticCssFailure
-  );
-}
-
-function stringifyUnknownError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
 }
 
 function parseLifecycleMode(value: string | null): LifecycleMode | null {
@@ -1268,8 +1240,8 @@ export default function CardsPageClient() {
       message: string,
       source: 'error' | 'unhandledrejection',
     ) => {
-      if (!isChunkLoadFailure(message)) return;
-      const chunkPath = extractChunkPath(message);
+      if (!isStaleNextStaticAssetFailure(message)) return;
+      const chunkPath = extractNextStaticAssetPath(message);
       console.error(`[${CHUNK_ERROR_LOG_CODE}]`, {
         source,
         message,
@@ -1278,35 +1250,21 @@ export default function CardsPageClient() {
 
       if (typeof window === 'undefined') return;
       const alreadyReloaded =
-        window.sessionStorage.getItem(CHUNK_RELOAD_GUARD_KEY) === '1';
+        window.sessionStorage.getItem(STALE_ASSET_RELOAD_GUARD_KEY) === '1';
 
       if (!alreadyReloaded) {
-        window.sessionStorage.setItem(CHUNK_RELOAD_GUARD_KEY, '1');
+        window.sessionStorage.setItem(STALE_ASSET_RELOAD_GUARD_KEY, '1');
         window.location.reload();
         return;
       }
 
-      const assetSuffix = chunkPath ? ` (${chunkPath})` : '';
-      setError(
-        `App assets are out of date${assetSuffix}. Hard refresh required.`,
-      );
+      setError(formatStaleAssetUserMessage(message));
       setGames([]);
     };
 
     const onError = (event: Event) => {
       const errorEvent = event as ErrorEvent;
-      const parts = [
-        errorEvent.message,
-        stringifyUnknownError(errorEvent.error),
-      ];
-      const target = errorEvent.target;
-      if (target instanceof HTMLScriptElement && target.src) {
-        parts.push(target.src);
-      }
-      if (target instanceof HTMLLinkElement && target.href) {
-        parts.push(target.href);
-      }
-      handleChunkFailure(parts.filter(Boolean).join(' | '), 'error');
+      handleChunkFailure(buildStaleAssetErrorMessage(errorEvent), 'error');
     };
 
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
