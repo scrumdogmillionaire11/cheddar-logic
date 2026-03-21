@@ -39,7 +39,69 @@ const PRICE_REASONS = {
   EDGE_VERIFICATION_REQUIRED: 'EDGE_VERIFICATION_REQUIRED',
   EDGE_SANITY_NON_TOTAL: 'EDGE_SANITY_NON_TOTAL',
   HEAVY_FAVORITE_PRICE_CAP: 'HEAVY_FAVORITE_PRICE_CAP',
+  // FIRST_PERIOD canonical reason codes (WI-0537)
+  FIRST_PERIOD_PROJECTION_PLAY: 'FIRST_PERIOD_PROJECTION_PLAY',
+  FIRST_PERIOD_PROJECTION_LEAN: 'FIRST_PERIOD_PROJECTION_LEAN',
+  FIRST_PERIOD_NO_PROJECTION: 'FIRST_PERIOD_NO_PROJECTION',
 };
+
+/**
+ * FIRST_PERIOD_POLICY (WI-0537)
+ *
+ * Single canonical definition of how FIRST_PERIOD market calls are priced and
+ * classified.  Every function that currently contains an inline
+ * `if (marketType === 'FIRST_PERIOD')` branch must delegate through these
+ * methods so that a single change here propagates consistently to
+ * classifyPrice, computeOfficialStatus, and play_tier derivation.
+ *
+ * Contract:
+ *  - FIRST_PERIOD does NOT require a market price to be actionable.
+ *  - Direction must be OVER or UNDER (enforced by sideValidForMarket).
+ *  - Actionability is determined solely by projectionSignal (PLAY/LEAN/PASS).
+ */
+const FIRST_PERIOD_POLICY = Object.freeze({
+  /**
+   * Maps a projectionSignal to the sharp_price_status that classifyPrice
+   * should return for a FIRST_PERIOD payload.
+   */
+  toSharpPriceStatus(projectionSignal) {
+    if (projectionSignal === 'PLAY' || projectionSignal === 'LEAN')
+      return 'CHEDDAR';
+    return 'COTTAGE';
+  },
+
+  /**
+   * Maps a projectionSignal to the single canonical price_reason_code for
+   * the FIRST_PERIOD market type.  Callers should include this as the first
+   * entry in the price_reason_codes array.
+   */
+  toPriceReasonCode(projectionSignal) {
+    if (projectionSignal === 'PLAY')
+      return PRICE_REASONS.FIRST_PERIOD_PROJECTION_PLAY;
+    if (projectionSignal === 'LEAN')
+      return PRICE_REASONS.FIRST_PERIOD_PROJECTION_LEAN;
+    return PRICE_REASONS.FIRST_PERIOD_NO_PROJECTION;
+  },
+
+  /**
+   * Maps a projectionSignal to the official_status returned by
+   * computeOfficialStatus for a FIRST_PERIOD market.
+   */
+  toOfficialStatus(projectionSignal) {
+    if (projectionSignal === 'PLAY') return 'PLAY';
+    if (projectionSignal === 'LEAN') return 'LEAN';
+    return 'PASS';
+  },
+
+  /**
+   * Maps a projectionSignal to the play_tier used in the decision envelope.
+   */
+  toPlayTier(projectionSignal) {
+    if (projectionSignal === 'PLAY') return 'GOOD';
+    if (projectionSignal === 'LEAN') return 'OK';
+    return 'BAD';
+  },
+});
 
 const PIPELINE_VERSION = 'v2';
 const PIPELINE_STATE_STAGES = Object.freeze([
@@ -427,16 +489,10 @@ function classifyPrice({
   }
 
   if (marketType === 'FIRST_PERIOD') {
-    if (projectionSignal === 'PLAY' || projectionSignal === 'LEAN') {
-      return {
-        sharp_price_status: 'CHEDDAR',
-        price_reason_codes: [PRICE_REASONS.EDGE_CLEAR],
-        proxy_capped: false,
-      };
-    }
+    // All FIRST_PERIOD actionability is encoded in FIRST_PERIOD_POLICY (WI-0537).
     return {
-      sharp_price_status: 'COTTAGE',
-      price_reason_codes: [PRICE_REASONS.NO_EDGE_AT_PRICE],
+      sharp_price_status: FIRST_PERIOD_POLICY.toSharpPriceStatus(projectionSignal),
+      price_reason_codes: [FIRST_PERIOD_POLICY.toPriceReasonCode(projectionSignal)],
       proxy_capped: false,
     };
   }
@@ -775,9 +831,8 @@ function computeOfficialStatus({
   }
 
   if (marketType === 'FIRST_PERIOD') {
-    if (projectionSignal === 'PLAY') return 'PLAY';
-    if (projectionSignal === 'LEAN') return 'LEAN';
-    return 'PASS';
+    // Delegate to FIRST_PERIOD_POLICY — single source of truth (WI-0537).
+    return FIRST_PERIOD_POLICY.toOfficialStatus(projectionSignal);
   }
 
   if (edgePct === null) return 'PASS';
@@ -1180,13 +1235,10 @@ function buildDecisionV2(payload, context = {}) {
     let finalOfficialStatus = computedOfficialStatus;
     let finalPriceReasonCodes = [...priceDecision.price_reason_codes];
 
+    // play_tier for FIRST_PERIOD delegates to canonical policy (WI-0537).
     const play_tier =
       market_type === 'FIRST_PERIOD'
-        ? firstPeriodProjectionSignal === 'PLAY'
-          ? 'GOOD'
-          : firstPeriodProjectionSignal === 'LEAN'
-            ? 'OK'
-            : 'BAD'
+        ? FIRST_PERIOD_POLICY.toPlayTier(firstPeriodProjectionSignal)
         : derivePlayTierWithThresholds(edge_pct, thresholdProfile);
 
     const heavyFavoriteMultiplier = getHeavyFavoritePlayEdgeMultiplier(price);

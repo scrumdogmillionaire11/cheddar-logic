@@ -579,11 +579,11 @@ curl -I "http://127.0.0.1:3000$CSS_REF"
 If origin is `200` but public URL is `502`, purge Cloudflare cache and check edge/proxy path:
 
 ```bash
-# Manual Cloudflare cache purge (matches deploy workflow behavior)
+# Manual Cloudflare HTML-route cache purge (matches deploy workflow behavior)
 curl -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/purge_cache" \
   -H "Authorization: Bearer $CF_API_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"purge_everything":true}'
+  --data "{\"files\":[\"https://cheddarlogic.com/\",\"https://cheddarlogic.com/cards\",\"https://cheddarlogic.com/fpl\"]}"
 
 # Wait 30s for propagation, then test
 sleep 30
@@ -640,13 +640,20 @@ curl -I "https://cheddarlogic.com$REF" | grep -iE 'http/|cache-control|cf-cache-
 
 **Recovery:**
 
-1. Purge Cloudflare cache (full purge).
+1. Purge Cloudflare cache for HTML entry URLs (`/`, `/cards`, `/fpl`) using URL-list purge.
 2. Re-deploy on Vercel (clean build) if the origin still returns 404 for the referenced chunk.
 3. Re-run the diagnosis steps to confirm `200` responses and expected cache headers.
 4. Browser validation (post-fix):
    - Open `/cards`
    - Confirm `/api/games` appears in Network on first load
    - Confirm card list populates
+
+**Deploy hardening defaults (Pi/systemd path):**
+
+- Keep archived `_next/static` snapshots at `/opt/cheddar-logic/.next-static-archive`.
+- Retain snapshots for 14 days with max 20 snapshot directories.
+- Deploy verification must confirm at least one previous-release static asset still returns `200` (when available).
+- If post-restart static verification fails, restore previous `.next` snapshot and restart `cheddar-web`.
 
 ### Cloudflare Tunnel outage: split traffic, `1016`, or `530`
 

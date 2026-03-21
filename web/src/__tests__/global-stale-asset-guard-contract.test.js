@@ -15,6 +15,8 @@ const filePath = path.resolve(
   '../components/global-stale-asset-guard.tsx',
 );
 const source = fs.readFileSync(filePath, 'utf8');
+const layoutPath = path.resolve(__dirname, '../app/layout.tsx');
+const layoutSource = fs.readFileSync(layoutPath, 'utf8');
 
 console.log('🧪 Global stale-asset guard source contract tests');
 
@@ -47,6 +49,12 @@ assert(
 assert(
   source.includes("pathname?.startsWith('/cards')"),
   'global guard should defer repeated stale-asset messaging on /cards to local cards UI',
+);
+
+assert(
+  layoutSource.includes("import GlobalStaleAssetGuard from '@/components/global-stale-asset-guard'") &&
+    layoutSource.includes('<GlobalStaleAssetGuard />'),
+  'root layout should mount GlobalStaleAssetGuard so stale-asset recovery is app-wide',
 );
 
 console.log('✅ Global stale-asset guard source contract tests passed');
