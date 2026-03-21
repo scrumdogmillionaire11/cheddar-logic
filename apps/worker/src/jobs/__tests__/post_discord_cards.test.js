@@ -157,10 +157,49 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.totalCards).toBe(3);
     expect(snapshot.totalGames).toBe(1);
     expect(snapshot.sectionCounts).toEqual({ official: 2, lean: 0, passBlocked: 1 });
-    expect(snapshot.messages[0]).toContain('🟢 OFFICIAL');
-    expect(snapshot.messages[0]).toContain('🟡 LEANS');
-    expect(snapshot.messages[0]).toContain('⚪ PASS / BLOCKED');
-    expect(snapshot.messages[0]).toContain('PASS_NO_EDGE');
+    expect(snapshot.messages[0]).toContain('🟢 PLAY');
+    // PASS block is suppressed when official plays are rendered — no contradiction
+    expect(snapshot.messages[0]).not.toContain('⚪ PASS');
+    // Internal reason codes must never appear in output
+    expect(snapshot.messages[0]).not.toContain('PASS_NO_EDGE');
+  });
+
+  test('buildDiscordSnapshot skips games where nothing renders — only posts plays and leans', () => {
+    const cards = [
+      makeCard({
+        id: 'pass-only',
+        cardType: 'nhl-moneyline',
+        payloadData: {
+          action: 'PASS',
+          kind: 'EVIDENCE',
+          market_type: 'MONEYLINE',
+          selection: null,
+          pass_reason_code: 'PASS_NO_EDGE',
+        },
+      }),
+      // Add a LEAN with sufficient edge so the game is posted
+      makeCard({
+        id: 'lean-1',
+        cardType: 'nhl-model-output',
+        payloadData: {
+          action: 'LEAN',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'UNDER' },
+          price: -115,
+          line: 6.5,
+          edge: 0.8,
+          model_projection: 5.8,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+    expect(snapshot.totalGames).toBe(1);
+    // Lean rendered → PASS block suppressed
+    expect(snapshot.messages[0]).toContain('🟡 LEAN');
+    expect(snapshot.messages[0]).not.toContain('⚪ PASS');
   });
 
   test('buildDiscordSnapshot does not print @ null when price is missing', () => {
@@ -172,7 +211,7 @@ describe('post_discord_cards helpers', () => {
         payloadData: {
           action: 'FIRE',
           kind: 'PLAY',
-          market_type: 'TOTAL',
+          market_type: 'MONEYLINE',
           selection: { side: 'OVER' },
           price: null,
           projection_only: false,
@@ -238,7 +277,7 @@ describe('post_discord_cards helpers', () => {
     expect(chunks.join('\n').replace(/\n+/g, '\n')).toContain('x'.repeat(60));
   });
 
-  test('sendDiscordMessages posts chunks in order with numbering prefix', async () => {
+  test('sendDiscordMessages posts chunks in order without numbering prefix', async () => {
     const calls = [];
     const fakeFetch = jest.fn(async (url, init) => {
       calls.push({ url, init });
@@ -253,8 +292,8 @@ describe('post_discord_cards helpers', () => {
 
     expect(sent).toBe(3);
     expect(calls.length).toBe(3);
-    expect(JSON.parse(calls[0].init.body).content).toContain('[1/3] first');
-    expect(JSON.parse(calls[1].init.body).content).toContain('[2/3] second');
-    expect(JSON.parse(calls[2].init.body).content).toContain('[3/3] third');
+    expect(JSON.parse(calls[0].init.body).content).toBe('first');
+    expect(JSON.parse(calls[1].init.body).content).toBe('second');
+    expect(JSON.parse(calls[2].init.body).content).toBe('third');
   });
 });

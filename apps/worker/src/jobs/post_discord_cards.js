@@ -16,6 +16,9 @@ const JOB_NAME = 'post_discord_cards';
 const DEFAULT_CHAR_LIMIT = 1800;
 const DISCORD_HARD_LIMIT = 2000;
 const DEFAULT_MAX_ROWS = 300;
+// Leans with |edge| below this are suppressed — rounding error, not signal
+// Override with env DISCORD_MIN_LEAN_EDGE (e.g. '0.2')
+const MIN_LEAN_EDGE_ABS = Number(process.env.DISCORD_MIN_LEAN_EDGE ?? 0.15);
 const ET_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   hour: 'numeric',
@@ -39,6 +42,98 @@ function normalizeToken(value) {
 
 function compactToken(value) {
   return String(value || '').trim();
+}
+
+// Prevents [object Object] leaking into Discord output
+function safeScalar(val) {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'object') return null;
+  const str = String(val).trim();
+  return str || null;
+}
+
+// Human-readable reason codes — no internal tokens exposed to Discord
+const REASON_CODE_LABELS = {
+  EDGE_VERIFICATION_REQUIRED: 'Line unstable — waiting for confirmation',
+  MODEL_PROB_MISSING:          'Model incomplete — no play',
+  PASS_NO_EDGE:                'No edge',
+  NO_EDGE_AT_PRICE:            'Price too sharp',
+  PASS_LOW_CONFIDENCE:         'Low confidence',
+  PASS_SHARP_MONEY_OPPOSITE:   'Sharp money against — no play',
+  GATE_GOALIE_UNCONFIRMED:     'Goalie not confirmed',
+  GATE_LINE_MOVEMENT:          'Line moved — re-evaluating',
+  BLOCK_INJURY_RISK:           'Injury risk flag',
+  BLOCK_STALE_DATA:            'Data stale — no play',
+};
+
+function humanReason(card) {
+  const payload = card?.payloadData || {};
+  const codes = [
+    normalizeToken(payload?.pass_reason_code),
+    normalizeToken(payload?.pass_reason),
+    ...(Array.isArray(payload?.reason_codes) ? payload.reason_codes.map(normalizeToken) : []),
+    normalizeToken(payload?.blocked_reason_code),
+  ].filter(Boolean);
+
+  for (const code of codes) {
+    if (REASON_CODE_LABELS[code]) return REASON_CODE_LABELS[code];
+  }
+  return 'No edge';
+}
+
+const TEAM_ABBREVIATIONS = {
+  'arizona cardinals': 'ARI',   'atlanta falcons': 'ATL',    'baltimore ravens': 'BAL',
+  'buffalo bills': 'BUF',       'carolina panthers': 'CAR',  'chicago bears': 'CHI',
+  'chicago blackhawks': 'CHI',  'chicago bulls': 'CHI',      'chicago cubs': 'CHC',
+  'chicago white sox': 'CWS',   'cincinnati bengals': 'CIN', 'cleveland browns': 'CLE',
+  'cleveland guardians': 'CLE', 'colorado avalanche': 'COL', 'colorado rockies': 'COL',
+  'dallas cowboys': 'DAL',      'dallas mavericks': 'DAL',   'dallas stars': 'DAL',
+  'denver broncos': 'DEN',      'denver nuggets': 'DEN',     'detroit lions': 'DET',
+  'detroit red wings': 'DET',   'detroit pistons': 'DET',    'edmonton oilers': 'EDM',
+  'florida panthers': 'FLA',    'golden state warriors': 'GSW', 'green bay packers': 'GB',
+  'houston astros': 'HOU',      'houston rockets': 'HOU',    'houston texans': 'HOU',
+  'indianapolis colts': 'IND',  'jacksonville jaguars': 'JAX', 'kansas city chiefs': 'KC',
+  'kansas city royals': 'KC',   'las vegas raiders': 'LV',   'los angeles chargers': 'LAC',
+  'los angeles clippers': 'LAC','los angeles dodgers': 'LAD', 'los angeles kings': 'LAK',
+  'los angeles lakers': 'LAL',  'los angeles rams': 'LAR',   'los angeles angels': 'LAA',
+  'miami dolphins': 'MIA',      'miami heat': 'MIA',         'miami marlins': 'MIA',
+  'minnesota timberwolves': 'MIN','minnesota twins': 'MIN',  'minnesota vikings': 'MIN',
+  'minnesota wild': 'MIN',      'nashville predators': 'NSH', 'new england patriots': 'NE',
+  'new jersey devils': 'NJD',   'new orleans pelicans': 'NOP', 'new orleans saints': 'NO',
+  'new york giants': 'NYG',     'new york islanders': 'NYI', 'new york jets': 'NYJ',
+  'new york knicks': 'NYK',     'new york mets': 'NYM',      'new york rangers': 'NYR',
+  'new york yankees': 'NYY',    'oklahoma city thunder': 'OKC', 'ottawa senators': 'OTT',
+  'philadelphia eagles': 'PHI', 'philadelphia flyers': 'PHI', 'philadelphia phillies': 'PHI',
+  'philadelphia 76ers': 'PHI',  'phoenix coyotes': 'ARI',    'phoenix suns': 'PHX',
+  'pittsburgh penguins': 'PIT', 'pittsburgh pirates': 'PIT', 'pittsburgh steelers': 'PIT',
+  'portland trail blazers': 'POR', 'sacramento kings': 'SAC', 'san antonio spurs': 'SAS',
+  'san jose sharks': 'SJS',     'seattle kraken': 'SEA',     'seattle mariners': 'SEA',
+  'seattle seahawks': 'SEA',    'st. louis blues': 'STL',    'st. louis cardinals': 'STL',
+  'tampa bay buccaneers': 'TB', 'tampa bay lightning': 'TB', 'tampa bay rays': 'TB',
+  'tennessee titans': 'TEN',    'toronto maple leafs': 'TOR', 'toronto raptors': 'TOR',
+  'toronto blue jays': 'TOR',   'utah jazz': 'UTA',          'utah hockey club': 'UTA',
+  'vancouver canucks': 'VAN',   'washington capitals': 'WSH', 'washington commanders': 'WAS',
+  'washington nationals': 'WSH','washington wizards': 'WSH', 'winnipeg jets': 'WPG',
+  // Additional common abbreviations
+  'calgary flames': 'CGY',     'buffalo sabres': 'BUF',     'anaheim ducks': 'ANA',
+  'arizona coyotes': 'ARI',    'columbus blue jackets': 'CBJ', 'montreal canadiens': 'MTL',
+  'boston bruins': 'BOS',      'carolina hurricanes': 'CAR',
+};
+
+function abbreviateTeam(name) {
+  if (!name) return '';
+  const lower = String(name).toLowerCase().trim();
+  if (TEAM_ABBREVIATIONS[lower]) return TEAM_ABBREVIATIONS[lower];
+  // Already short (≤4 chars) — assume it's already an abbreviation
+  if (lower.length <= 4) return String(name).toUpperCase();
+  // Generic fallback: first letter of each word, max 3 chars
+  return lower.split(/\s+/).map((w) => w[0].toUpperCase()).join('').slice(0, 3);
+}
+
+function abbreviateMatchup(matchup) {
+  const parts = String(matchup || '').split(' @ ');
+  if (parts.length !== 2) return matchup;
+  return `${abbreviateTeam(parts[0])} @ ${abbreviateTeam(parts[1])}`;
 }
 
 function formatEtTime(value) {
@@ -148,6 +243,25 @@ function isDisplayableWebhookCard(card) {
   if (!hasSelection) return false;
   if (payload?.projection_only === true) return false;
   return true;
+}
+
+// Canonical game key: normalised from teams + game date so two cards for the same
+// real game always land in the same bucket regardless of how game_id was stored.
+function canonicalGameKey(card) {
+  const matchup  = String(card?.matchup  || '').trim().toLowerCase();
+  const gameDate = String(card?.gameTimeUtc || '').slice(0, 10); // YYYY-MM-DD
+
+  // Prefer matchup+date — immune to game_id inconsistencies across card types
+  if (matchup && matchup !== 'unknown') {
+    const safeMatchup = matchup.replace(/\s+/g, '_').replace(/@/g, 'vs');
+    // Include date only when we have it; same-day collision risk is negligible
+    return gameDate ? `${safeMatchup}_${gameDate}` : safeMatchup;
+  }
+
+  const gameId = String(card?.gameId || '').trim().toLowerCase();
+  if (gameId) return gameId;
+
+  return String(card?.id || 'unknown');
 }
 
 function marketConflictKey(card) {
@@ -271,7 +385,15 @@ function selectionSummary(card) {
   if (selection && typeof selection === 'object') {
     return compactToken(selection.team || selection.side || selection.player || selection.name || '');
   }
-  return compactToken(selection);
+  if (selection) return compactToken(selection);
+
+  // Fallback for 1P / pace cards: extract direction from one_p_model_call
+  // e.g. "NHL_1P_OVER_1.5" or "NHL_1P_UNDER_PLAY"
+  const onePCall = String(payload?.one_p_model_call || '').toUpperCase();
+  if (onePCall.includes('_OVER') || onePCall.startsWith('OVER')) return 'OVER';
+  if (onePCall.includes('_UNDER') || onePCall.startsWith('UNDER')) return 'UNDER';
+
+  return '';
 }
 
 function lineSummary(card) {
@@ -311,70 +433,123 @@ function summarizeReasoning(card) {
   return compactToken(why);
 }
 
+// Format a numeric edge value as +0.17 / -0.70 (2dp, always signed)
+function formatEdgeValue(raw) {
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return String(raw);
+  const sign = num >= 0 ? '+' : '';
+  return `${sign}${num.toFixed(2)}`;
+}
+
 function metricSummary(card) {
   const payload = card?.payloadData || {};
-  const model = payload?.model_projection ?? payload?.model_line ?? payload?.projection ?? payload?.expected_total;
-  const edge = payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp;
-  const ev = payload?.expected_value ?? payload?.ev ?? payload?.ev_over;
+  const isProp = isPlayerPropCard(card);
 
+  const model = safeScalar(
+    payload?.model_projection ?? payload?.model_line ?? payload?.projection ?? payload?.expected_total,
+  );
+  const edgeRaw = safeScalar(payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp);
+  const edge    = edgeRaw !== null ? formatEdgeValue(edgeRaw) : null;
+  const proj    = safeScalar(payload?.player_projection ?? payload?.projected_value ?? payload?.proj);
+  const line    = safeScalar(payload?.line ?? payload?.total ?? payload?.market_line);
+
+  if (isProp) {
+    // Props: Proj: 2.7 | Line: 4.5 | Edge: -1.80
+    const parts = [];
+    if (proj)        parts.push(`Proj: ${proj}`);
+    else if (model)  parts.push(`Proj: ${model}`);
+    if (line)        parts.push(`Line: ${line}`);
+    if (edge)        parts.push(`Edge: ${edge}`);
+    return parts.join(' | ');
+  }
+
+  // Totals / spreads: Model: 235.8 | Line: 238.5 | Edge: -2.70
   const parts = [];
-  if (model !== null && model !== undefined && String(model).trim() !== '') parts.push(`Model: ${model}`);
-  if (edge !== null && edge !== undefined && String(edge).trim() !== '') parts.push(`Edge: ${edge}`);
-  if (ev !== null && ev !== undefined && String(ev).trim() !== '') parts.push(`EV: ${ev}`);
+  if (model) parts.push(`Model: ${model}`);
+  if (line)  parts.push(`Line: ${line}`);
+  if (edge)  parts.push(`Edge: ${edge}`);
   return parts.join(' | ');
 }
 
 function renderDecisionLine(card, bucket) {
   const payload = card?.payloadData || {};
 
-  // Player prop cards carry their full pick string in payload.prediction (same as
-  // play.pick_string). Use that directly — the nested play.selection structure
-  // doesn't surface through the generic selection/line/price helpers.
+  // PASS lines are never rendered individually — collapsed upstream
+  if (bucket === 'pass_blocked') return null;
+
   if (isPlayerPropCard(card)) {
-    const pickStr = compactToken(payload?.prediction || payload?.play?.pick_string || '');
-    if (bucket === 'pass_blocked') {
-      return `PROP | ${pickStr || 'No official play'}\nReason: ${decisionReason(card)}`;
-    }
+    // Strip leading action words ('Lean ', 'Fire ', 'Watch ') from prediction strings
+    const rawPick = compactToken(
+      payload?.prediction ||
+      payload?.play?.pick_string ||
+      payload?.play?.selection ||
+      '',
+    );
+    const pickStr = rawPick.replace(/^(lean|fire|watch|hold|play)\s+/i, '').trim();
+    const priceVal = priceSummary(card);
+    const metrics = metricSummary(card);
     const why = summarizeReasoning(card);
-    const lines = [`PROP | ${pickStr || 'No official play'}`];
-    if (why) lines.push(`Why: ${why}`);
+
+    const priced = pickStr
+      ? (priceVal ? `${pickStr} (${priceVal})` : pickStr)
+      : 'No selection';
+
+    const lines = [`PROP | ${priced}`];
+    if (metrics) lines.push(metrics);
+    if (why)     lines.push(`Why: ${why}`);
     return lines.join('\n');
   }
 
-  const market = normalizeMarketTag(card);
+  const market    = normalizeMarketTag(card);
   const selection = selectionSummary(card);
-  const line = lineSummary(card);
-  const price = priceSummary(card);
+  const line      = lineSummary(card);
+  const price     = priceSummary(card);
 
-  if (bucket === 'pass_blocked') {
-    const target = [selection, line].filter(Boolean).join(' ');
-    return `${market} | ${target || 'No official play'}\nReason: ${decisionReason(card)}`;
+  // For TOTAL markets, require a model projection — projection-less totals have no bettor value
+  if (market === 'TOTAL') {
+    const hasModel = safeScalar(
+      payload?.model_projection ?? payload?.model_line ?? payload?.projection ?? payload?.expected_total,
+    );
+    const hasEdge = safeScalar(payload?.edge ?? payload?.edge_pct);
+    if (!hasModel && !hasEdge) return null;  // skip unprojected totals
   }
 
-  const betCore = [selection, line].filter(Boolean).join(' ').trim() || 'No official play';
-  const priced = price ? `${betCore} (${price})` : betCore;
-  const details = metricSummary(card);
-  const why = summarizeReasoning(card);
+  const betCore = [selection, line].filter(Boolean).join(' ').trim() || 'TBD';
+  const priced  = price ? `${betCore} (${price})` : betCore;
+  const metrics = metricSummary(card);
+  const why     = summarizeReasoning(card);
 
   const lines = [`${market} | ${priced}`];
-  if (details) lines.push(details);
-  if (why) lines.push(`Why: ${why}`);
+  if (metrics) lines.push(metrics);
+  if (why)     lines.push(`Why: ${why}`);
   return lines.join('\n');
 }
 
 function sectionLines(title, cards, bucket) {
-  const lines = [title];
-  if (cards.length === 0) {
-    lines.push('- none');
-    return lines;
+  // PASS section is never rendered inline — use collapsedPassSummary instead
+  if (bucket === 'pass_blocked') return [];
+  if (cards.length === 0) return [];
+
+  const renderedItems = [];
+  for (const card of cards) {
+    const rendered = renderDecisionLine(card, bucket);
+    if (!rendered) continue;
+    rendered.split('\n').forEach((line, index) => {
+      renderedItems.push(index === 0 ? `- ${line}` : `  ${line}`);
+    });
   }
-  cards.forEach((card) => {
-    const rendered = renderDecisionLine(card, bucket)
-      .split('\n')
-      .map((line, index) => (index === 0 ? `- ${line}` : `  ${line}`));
-    lines.push(...rendered);
-  });
-  return lines;
+
+  // Only return the title if at least one card actually rendered
+  if (renderedItems.length === 0) return [];
+  return [title, ...renderedItems];
+}
+
+// One-line collapsed PASS summary — no market-by-market spam
+function collapsedPassSummary(cards) {
+  if (cards.length === 0) return null;
+  const reasons = [...new Set(cards.map((c) => humanReason(c)).filter(Boolean))];
+  const reasonStr = reasons.slice(0, 2).join('; ');
+  return `⚪ PASS\n${reasonStr || 'No playable edges'}`;
 }
 
 function chunkDiscordContent(content, charLimit = DEFAULT_CHAR_LIMIT) {
@@ -413,19 +588,17 @@ function chunkDiscordContent(content, charLimit = DEFAULT_CHAR_LIMIT) {
 
 async function sendDiscordMessages({ webhookUrl, messages, fetchImpl = fetch }) {
   const sent = [];
-  for (let index = 0; index < messages.length; index += 1) {
-    const total = messages.length;
-    const prefix = total > 1 ? `[${index + 1}/${total}] ` : '';
+  for (const message of messages) {
     const response = await fetchImpl(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: `${prefix}${messages[index]}` }),
+      body: JSON.stringify({ content: message }),
     });
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       throw new Error(`Discord webhook failed (${response.status}): ${body}`);
     }
-    sent.push(index + 1);
+    sent.push(true);
   }
   return sent.length;
 }
@@ -492,19 +665,43 @@ function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS } = {}) {
   });
 }
 
+// Returns true when a lean card clears the minimum edge threshold.
+// Cards with NO edge data are allowed through — we don't penalise missing fields.
+// For prop cards the edge is often only in the prediction string (e.g. "Edge -0.1")
+// so we also try to parse it from there.
+function passesLeanThreshold(card) {
+  const payload = card?.payloadData || {};
+  const raw = payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp;
+
+  if (raw !== null && raw !== undefined) {
+    const val = Number(raw);
+    if (Number.isFinite(val)) return Math.abs(val) >= MIN_LEAN_EDGE_ABS;
+  }
+
+  // Fallback: parse edge from prediction string ("... Edge +0.9" or "Edge: -0.4")
+  const prediction = String(payload?.prediction || payload?.play?.pick_string || '');
+  const edgeMatch  = prediction.match(/Edge[:\s]+([+-]?\d+\.?\d*)/i);
+  if (edgeMatch) {
+    const val = Number(edgeMatch[1]);
+    if (Number.isFinite(val)) return Math.abs(val) >= MIN_LEAN_EDGE_ABS;
+  }
+
+  return true; // no parseable edge → allow through (don't drop unknowns)
+}
+
 function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
   const filtered = prioritizeClearPlays(cards.filter(isDisplayableWebhookCard));
   const byGame = new Map();
 
   for (const card of filtered) {
-    const key = `${card.gameId || card.matchup || card.id}`;
+    const key = canonicalGameKey(card);
     if (!byGame.has(key)) byGame.set(key, []);
     byGame.get(key).push(card);
   }
 
   const snapshotEt = formatEtTime(now);
   const gameEntries = Array.from(byGame.values()).sort((left, right) => {
-    const leftTime = Date.parse(left[0]?.gameTimeUtc || '') || 0;
+    const leftTime  = Date.parse(left[0]?.gameTimeUtc  || '') || 0;
     const rightTime = Date.parse(right[0]?.gameTimeUtc || '') || 0;
     return leftTime - rightTime;
   });
@@ -513,39 +710,48 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
   const sectionCounts = { official: 0, lean: 0, passBlocked: 0 };
 
   for (const gameCards of gameEntries) {
-    const seed = gameCards[0] || {};
-    const official = gameCards.filter((card) => classifyDecisionBucket(card) === 'official');
-    const leans = gameCards.filter((card) => classifyDecisionBucket(card) === 'lean');
-    const passBlocked = gameCards.filter((card) => classifyDecisionBucket(card) === 'pass_blocked');
+    const seed        = gameCards[0] || {};
+    const official    = gameCards.filter((c) => classifyDecisionBucket(c) === 'official');
+    // Apply LEAN threshold — drop sub-threshold edge leans before rendering
+    const leans       = gameCards
+      .filter((c) => classifyDecisionBucket(c) === 'lean')
+      .filter(passesLeanThreshold);
+    const passBlocked = gameCards.filter((c) => classifyDecisionBucket(c) === 'pass_blocked');
 
-    sectionCounts.official += official.length;
-    sectionCounts.lean += leans.length;
+    sectionCounts.official    += official.length;
+    sectionCounts.lean        += leans.length;
     sectionCounts.passBlocked += passBlocked.length;
 
-    const league = normalizeToken(seed?.payloadData?.league || seed?.payloadData?.competition || seed?.payloadData?.league_key || seed?.sport || 'LEAGUE');
-    const startEt = formatEtTime(seed?.gameTimeUtc);
-    const header = [
-      `${sportLabel(seed?.sport)} | ${league} | ${startEt}`,
-      `${seed.matchup || 'Unknown matchup'}`,
+    // Hard send filter — skip games with nothing actionable
+    if (official.length === 0 && leans.length === 0) continue;
+
+    const shortMatchup = abbreviateMatchup(seed.matchup || 'Unknown');
+    const startEt      = formatEtTime(seed?.gameTimeUtc);
+
+    const headerLines = [
+      `${sportLabel(seed?.sport)} | ${startEt}`,
+      shortMatchup,
       `Snapshot: ${snapshotEt}`,
-      '',
-      ...sectionLines('🟢 OFFICIAL', official, 'official'),
-      '',
-      ...sectionLines('🟡 LEANS', leans, 'lean'),
-      '',
-      ...sectionLines('⚪ PASS / BLOCKED', passBlocked, 'pass_blocked'),
     ];
 
-    if (official.length === 0 && leans.length > 0) {
-      header.push('', '🧠 NOTES', '- Leans only. No forced official play.');
+    const officialLines = sectionLines('🟢 PLAY', official, 'official');
+    if (officialLines.length > 0) headerLines.push('', ...officialLines);
+
+    const leanLines = sectionLines('🟡 LEAN', leans, 'lean');
+    if (leanLines.length > 0) headerLines.push('', ...leanLines);
+
+    // PASS block only when nothing was rendered — avoids contradicting a lean
+    const hasRenderedContent = officialLines.length > 0 || leanLines.length > 0;
+    if (!hasRenderedContent) {
+      continue; // no plays, no leans rendered — skip entirely (dead game to bettor)
     }
 
-    messages.push(header.join('\n'));
+    messages.push(headerLines.join('\n'));
   }
 
   const lines = [
-    `Cheddar cards snapshot (${now.toISOString()})`,
-    `Games: ${messages.length} | Rows: ${filtered.length} | Official: ${sectionCounts.official} | Lean: ${sectionCounts.lean} | Pass/Blocked: ${sectionCounts.passBlocked}`,
+    `Cheddar snapshot (${now.toISOString()})`,
+    `Games posted: ${messages.length} | Cards: ${filtered.length} | Play: ${sectionCounts.official} | Lean: ${sectionCounts.lean}`,
   ];
 
   return {
@@ -616,6 +822,7 @@ async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
         jobRunId: runId,
         chunks: sentCount,
         totalCards: snapshot.totalCards,
+        totalGames: snapshot.totalGames,
         sectionCounts: snapshot.sectionCounts,
       };
     } catch (error) {
@@ -633,11 +840,27 @@ if (require.main === module) {
   const dryRun = process.argv.includes('--dry-run');
   postDiscordCards({ dryRun })
     .then((result) => {
-      if (result?.success === false) process.exit(1);
+      if (!result) {
+        console.error(`[${JOB_NAME}] No result returned`);
+        process.exit(1);
+      }
+      if (result.skipped) {
+        console.log(`[${JOB_NAME}] skipped — ${result.reason}: ${result.message || ''}`);
+        process.exit(0);
+      }
+      if (result.success === false) {
+        console.error(`[${JOB_NAME}] failed — ${result.error || 'unknown error'}`);
+        process.exit(1);
+      }
+      if (dryRun) {
+        console.log(`[${JOB_NAME}] dry-run — games:${result.totalGames} chunks:${result.chunks} cards:${result.totalCards} play:${result.sectionCounts?.official} lean:${result.sectionCounts?.lean} pass:${result.sectionCounts?.passBlocked}`);
+      } else {
+        console.log(`[${JOB_NAME}] sent — games:${result.totalGames} chunks:${result.chunks} cards:${result.totalCards} play:${result.sectionCounts?.official} lean:${result.sectionCounts?.lean} pass:${result.sectionCounts?.passBlocked}`);
+      }
       process.exit(0);
     })
     .catch((error) => {
-      console.error(`[${JOB_NAME}] Fatal:`, error.message);
+      console.error(`[${JOB_NAME}] fatal:`, error.message);
       process.exit(1);
     });
 }

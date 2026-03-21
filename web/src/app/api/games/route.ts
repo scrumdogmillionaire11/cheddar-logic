@@ -213,6 +213,7 @@ interface Play {
   };
   status?: ExpressionStatus;
   kind?: 'PLAY' | 'EVIDENCE';
+  canonical_market_key?: string;
   market_type?: CanonicalMarketType;
   selection?: { side: string; team?: string };
   line?: number;
@@ -511,6 +512,11 @@ const WAVE1_MARKETS = new Set<MarketType>([
 ]);
 const COUNTER_ALL_MARKET = 'ALL';
 const UNKNOWN_SPORT = 'UNKNOWN';
+const SOCCER_AH_CANONICAL_KEYS = new Set([
+  'asian_handicap_home',
+  'asian_handicap_away',
+]);
+const SOCCER_AH_REMAP_TOKEN = 'MARKET_REMAP_AH_FROM_PROP';
 
 type SportCardTypeContract = {
   playProducerCardTypes: Set<string>;
@@ -848,6 +854,54 @@ function normalizeMarketType(value: unknown): Play['market_type'] | undefined {
   }
   if (upper === 'ASIAN_HANDICAP') return 'SPREAD';
   return undefined;
+}
+
+function normalizeKeyToken(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function isSoccerAsianHandicapPayload(params: {
+  rowSport: unknown;
+  cardType: string;
+  payload: Record<string, unknown>;
+  payloadPlay: Record<string, unknown> | null;
+  payloadMarketContext: Record<string, unknown> | null;
+}): boolean {
+  const {
+    rowSport,
+    cardType,
+    payload,
+    payloadPlay,
+    payloadMarketContext,
+  } = params;
+
+  const normalizedSport = normalizeSport(
+    firstString(payload.sport, payloadPlay?.sport) ?? rowSport,
+  );
+  if (normalizedSport !== 'SOCCER') return false;
+
+  const canonicalMarketKey = normalizeKeyToken(
+    firstString(
+      payload.canonical_market_key,
+      payloadPlay?.canonical_market_key,
+      payloadMarketContext?.canonical_market_key,
+    ),
+  );
+  if (SOCCER_AH_CANONICAL_KEYS.has(canonicalMarketKey)) return true;
+
+  const marketTypeToken = normalizeKeyToken(
+    firstString(payload.market_type, payloadPlay?.market_type),
+  );
+  if (marketTypeToken.includes('asian_handicap')) return true;
+
+  const marketKeyToken = normalizeKeyToken(
+    firstString(payload.market_key, payloadPlay?.market_key),
+  );
+  if (marketKeyToken.includes('asian_handicap')) return true;
+
+  const cardTypeToken = normalizeKeyToken(cardType);
+  return cardTypeToken.includes('asian_handicap');
 }
 
 function normalizeTier(value: unknown): Play['tier'] {
@@ -2053,11 +2107,22 @@ export async function GET(request: NextRequest) {
           payload.confidence,
           payloadPlay?.confidence,
         );
-        const normalizedMarketType = normalizeMarketType(
+        const isSoccerAhPayload = isSoccerAsianHandicapPayload({
+          rowSport,
+          cardType: cardRow.card_type,
+          payload,
+          payloadPlay: payloadPlayObj,
+          payloadMarketContext,
+        });
+        const normalizedMarketTypeRaw = normalizeMarketType(
           payload.market_type ??
             payloadPlay?.market_type ??
             payloadMarketContext?.market_type,
         );
+        const normalizedMarketType =
+          isSoccerAhPayload ? 'SPREAD' : normalizedMarketTypeRaw;
+        const ahRemappedFromProp =
+          isSoccerAhPayload && normalizedMarketTypeRaw === 'PROP';
         const isFtTrendCard =
           cardRow.card_type === 'ncaam-ft-trend';
         const normalizedFtTrendContext = isFtTrendCard
@@ -2442,6 +2507,12 @@ export async function GET(request: NextRequest) {
           ...(Array.isArray(payload.tags) ? payload.tags : []),
           ...(Array.isArray(payloadPlay?.tags) ? payloadPlay.tags : []),
         ].map((value) => String(value));
+        if (ahRemappedFromProp) {
+          combinedReasonCodes.push(SOCCER_AH_REMAP_TOKEN);
+          combinedTags.push(SOCCER_AH_REMAP_TOKEN);
+        }
+        const dedupedReasonCodes = Array.from(new Set(combinedReasonCodes));
+        const dedupedTags = Array.from(new Set(combinedTags));
 
         const ftSpreadDisplayOverrideActive =
           isFtTrendCard &&
@@ -2478,7 +2549,7 @@ export async function GET(request: NextRequest) {
           statusFromAction(resolvedAction) ?? normalizedStatus;
         const onePModelCall =
           cardRow.card_type === 'nhl-pace-1p'
-            ? deriveNhl1PModelCall(combinedReasonCodes, normalizedPrediction)
+            ? deriveNhl1PModelCall(dedupedReasonCodes, normalizedPrediction)
             : undefined;
         const onePBetStatus =
           cardRow.card_type === 'nhl-pace-1p'
@@ -2653,6 +2724,11 @@ export async function GET(request: NextRequest) {
               : payloadPlay?.kind === 'PLAY' || payloadPlay?.kind === 'EVIDENCE'
                 ? (payloadPlay.kind as 'PLAY' | 'EVIDENCE')
                 : undefined,
+          canonical_market_key: firstString(
+            payload.canonical_market_key,
+            payloadPlay?.canonical_market_key,
+            payloadMarketContext?.canonical_market_key,
+          ),
           market_type:
             normalizedMarketType !== undefined
               ? normalizedMarketType
@@ -2717,9 +2793,11 @@ export async function GET(request: NextRequest) {
             ? {
                 version: firstString(payloadMarketContext.version) ?? 'v1',
                 market_type:
-                  firstString(payloadMarketContext.market_type) ??
-                  normalizedMarketType ??
-                  null,
+                  isSoccerAhPayload
+                    ? 'SPREAD'
+                    : firstString(payloadMarketContext.market_type) ??
+                      normalizedMarketType ??
+                      null,
                 selection_side:
                   firstString(payloadMarketContext.selection_side) ??
                   normalizedDisplaySelectionSide,
@@ -2776,7 +2854,7 @@ export async function GET(request: NextRequest) {
                   : undefined,
               }
             : undefined,
-          reason_codes: combinedReasonCodes,
+          reason_codes: dedupedReasonCodes,
           projection_inputs_complete:
             typeof payload.projection_inputs_complete === 'boolean'
               ? payload.projection_inputs_complete
@@ -2809,7 +2887,7 @@ export async function GET(request: NextRequest) {
                 : []),
             ].map((value) => String(value))),
           ),
-          tags: combinedTags,
+          tags: dedupedTags,
           run_id: normalizedRunId,
           created_at: normalizedCreatedAt,
           player_id: normalizedPlayerId,
