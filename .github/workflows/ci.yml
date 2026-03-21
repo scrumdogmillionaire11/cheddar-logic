@@ -10,7 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # WI-0517: v5 uses Node.js 24 runtime (v4/Node.js 20 deprecated June 2026)
+        uses: actions/checkout@v5
 
       - name: Make scripts executable
         run: |

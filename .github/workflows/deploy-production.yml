@@ -14,10 +14,11 @@ jobs:
     name: Lint & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # WI-0517: v5 uses Node.js 24 runtime (v4/Node.js 20 deprecated June 2026)
+      - uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -46,7 +47,7 @@ jobs:
     # This job is optional and can be removed if using Vercel's native integration
     if: false  # Disabled by default - enable if you want manual GitHub Actions deploys
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5  # WI-0517: Node 24 runtime
       - name: Deploy to Vercel
         uses: amondnet/vercel-action@v25
         with:
@@ -63,7 +64,7 @@ jobs:
     # Enable this if using Railway with GitHub integration
     if: false  # Disabled by default
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5  # WI-0517: Node 24 runtime
       - name: Deploy to Railway
         run: |
           echo "Railway deployment via GitHub app"
@@ -74,7 +75,7 @@ jobs:
     needs: lint-and-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5  # WI-0517: Node 24 runtime
 
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
