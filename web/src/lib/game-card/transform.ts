@@ -1571,7 +1571,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     const hasRequiredLine =
       !requiresLineForBet || typeof wave1DecisionPlay.line === 'number';
     const candidateBet: CanonicalBet | null =
-      officialStatus === 'PLAY' &&
+      (officialStatus === 'PLAY' ||
+        (officialStatus === 'LEAN' &&
+          effectiveDecisionV2.watchdog_status !== 'BLOCKED')) &&
       betMarketType &&
       betSide &&
       hasRequiredLine &&
@@ -1721,7 +1723,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       projectedScoreHome: projectedScoreHome ?? undefined,
       projectedScoreAway: projectedScoreAway ?? undefined,
       valueStatus,
-      betAction: officialStatus === 'PLAY' && bet ? 'BET' : 'NO_PLAY',
+      betAction: (officialStatus === 'PLAY' || officialStatus === 'LEAN') && bet ? 'BET' : 'NO_PLAY',
       priceFlags: [],
       line: wave1DecisionPlay.line,
       price: wave1DecisionPlay.price,
