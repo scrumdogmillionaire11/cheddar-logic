@@ -32,7 +32,9 @@ echo "✓ Data directory ready"
 echo "⚙️  Building Next.js web app..."
 cd "$DEPLOY_DIR/web"
 npm install --include=dev --no-save > /dev/null 2>&1
-npm run build > /dev/null 2>&1
+# Remove stale .next artifacts before building to prevent chunk name mismatches
+rm -rf .next
+npm run build
 echo "✓ Web app built"
 
 # 4. Setup FPL backend
