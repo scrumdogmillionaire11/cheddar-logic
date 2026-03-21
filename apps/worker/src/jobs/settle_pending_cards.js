@@ -1801,13 +1801,19 @@ async function settlePendingCards({
             );
           }
 
+          const d2 = payloadData?.decision_v2 ?? {};
+          const sharpPriceStatus = typeof d2.sharp_price_status === 'string' ? d2.sharp_price_status : null;
+          const primaryReasonCode = typeof d2.primary_reason_code === 'string' ? d2.primary_reason_code : null;
+          const edgePct = typeof d2.edge_pct === 'number' && Number.isFinite(d2.edge_pct) ? d2.edge_pct : null;
+
           db.prepare(
             `
             UPDATE card_results
-            SET status = 'settled', result = ?, settled_at = ?, pnl_units = ?
+            SET status = 'settled', result = ?, settled_at = ?, pnl_units = ?,
+                sharp_price_status = ?, primary_reason_code = ?, edge_pct = ?
             WHERE id = ? AND status = 'pending'
           `,
-          ).run(result, settledAt, pnlOutcome.pnlUnits, pendingCard.result_id);
+          ).run(result, settledAt, pnlOutcome.pnlUnits, sharpPriceStatus, primaryReasonCode, edgePct, pendingCard.result_id);
           const state = db
             .prepare(
               `
@@ -1948,7 +1954,7 @@ async function settlePendingCards({
       const aggregateRows = db
         .prepare(
           `
-        SELECT sport, market_type, card_type, metadata, result, pnl_units
+        SELECT sport, market_type, card_type, metadata, result, pnl_units, sharp_price_status
         FROM card_results
         WHERE status = 'settled'
           AND settled_at >= ?
@@ -1957,6 +1963,7 @@ async function settlePendingCards({
         .all(jobStartTime);
 
       const marketDeltas = {};
+      const verificationDeltas = {};
       for (const row of aggregateRows) {
         const sport = String(row.sport || '').toUpperCase();
         const cardResultMetadata = parseJsonObject(row.metadata) || {};
@@ -1995,6 +2002,33 @@ async function settlePendingCards({
           marketDeltas[key].deltaPushes += 1;
           marketDeltas[key].deltaPnl += pnl;
         }
+
+        // Accumulate verification-status dimension
+        const verificationStatus = typeof row.sharp_price_status === 'string' && row.sharp_price_status
+          ? row.sharp_price_status
+          : 'UNTAGGED';
+        const vKey = `${sport}|${trackingMarketType}|${verificationStatus}`;
+        if (!verificationDeltas[vKey]) {
+          verificationDeltas[vKey] = {
+            sport,
+            marketType: trackingMarketType,
+            verificationStatus,
+            deltaWins: 0,
+            deltaLosses: 0,
+            deltaPushes: 0,
+            deltaPnl: 0,
+          };
+        }
+        if (row.result === 'win') {
+          verificationDeltas[vKey].deltaWins += 1;
+          verificationDeltas[vKey].deltaPnl += pnl;
+        } else if (row.result === 'loss') {
+          verificationDeltas[vKey].deltaLosses += 1;
+          verificationDeltas[vKey].deltaPnl += pnl;
+        } else if (row.result === 'push') {
+          verificationDeltas[vKey].deltaPushes += 1;
+          verificationDeltas[vKey].deltaPnl += pnl;
+        }
       }
 
       let statsIncremented = 0;
@@ -2032,6 +2066,31 @@ async function settlePendingCards({
         console.log(
           `[SettleCards] Incremented tracking_stat for ${sport}/${marketType}: +${deltaWins}W / +${deltaLosses}L / +${deltaPushes}P (pnl: ${deltaPnl >= 0 ? '+' : ''}${deltaPnl.toFixed(3)})`,
         );
+        statsIncremented++;
+      }
+
+      // Emit verification-status segmented stats
+      for (const vd of Object.values(verificationDeltas)) {
+        const { sport, marketType, verificationStatus, deltaWins, deltaLosses, deltaPushes, deltaPnl } = vd;
+        const driverKey = `edge_verification:${verificationStatus}`;
+        incrementTrackingStat({
+          id: `stat-${sport}-${marketType}-${verificationStatus}-alltime`,
+          statKey: `${sport}|${marketType}|all|all|${driverKey}|alltime`,
+          sport,
+          marketType,
+          direction: 'all',
+          confidenceTier: 'all',
+          driverKey,
+          timePeriod: 'alltime',
+          deltaWins,
+          deltaLosses,
+          deltaPushes,
+          deltaPnl,
+          metadata: {
+            lastIncrementAt: new Date().toISOString(),
+            jobRunId,
+          },
+        });
         statsIncremented++;
       }
 
