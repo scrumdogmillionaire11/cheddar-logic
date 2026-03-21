@@ -33,12 +33,6 @@ const formatNumber = (value: number | null | undefined, digits = 1) => {
   return value.toFixed(digits);
 };
 
-const formatPercent = (value: number | null | undefined) => {
-  if (value === null || value === undefined || Number.isNaN(value)) return '—';
-  const percent = value <= 1 ? value * 100 : value;
-  return `${percent.toFixed(0)}%`;
-};
-
 const getAverage = (values?: number[]) => {
   if (!values || values.length === 0) return null;
   const sum = values.reduce((acc, val) => acc + val, 0);
@@ -85,11 +79,6 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
               {formatTime(card.gameTimeUtc)}
             </span>
           </div>
-          {card.maxConfidence > 0 && (
-            <span className="text-xs text-teal">
-              Max Confidence: {(card.maxConfidence * 100).toFixed(0)}%
-            </span>
-          )}
         </div>
 
         <div className="text-lg font-bold text-sage-white">
@@ -140,123 +129,54 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                   </span>
                 </div>
 
-                <div className="grid gap-3">
-                  <div className="rounded-md border border-white/5 bg-night/40 px-3 py-2">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-cloud/50">
-                      Model Snapshot
-                    </div>
-                    <div className="mt-1 text-sm font-semibold text-cloud">
-                      Proj {formatNumber(prop.mu ?? prop.projection)} vs Fair
-                      Line {formatNumber(prop.suggestedLine ?? prop.line)}
-                    </div>
-                    <div className="mt-1 text-xs text-cloud/70">
-                      Conf {formatPercent(prop.confidence)}
-                    </div>
-                    {(prop.priceOver != null || prop.priceUnder != null) && (
-                      <div className="mt-1 text-xs font-semibold text-cloud/80">
-                        {prop.marketLine != null && (
-                          <span className="mr-1 text-cloud/50">O/U {prop.marketLine}</span>
-                        )}
-                        {prop.priceOver != null ? `OVER ${formatOdds(prop.priceOver)}` : 'OVER —'}
-                        {' / '}
-                        {prop.priceUnder != null ? `UNDER ${formatOdds(prop.priceUnder)}` : 'UNDER —'}
-                      </div>
-                    )}
-                    <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
-                      <div
-                        className="h-1.5 rounded-full bg-teal"
-                        style={{
-                          width: `${Math.min(Math.max((prop.confidence ?? 0) * 100, 0), 100)}%`,
-                        }}
-                      />
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-cloud/60">
-                      {prop.isTrending !== undefined && (
-                        <span
-                          className={`rounded-full border px-2 py-0.5 ${prop.isTrending ? 'border-teal/40 text-teal' : 'border-cloud/30 text-cloud/60'}`}
-                        >
-                          {prop.isTrending ? 'Trending' : 'Not Trending'}
-                        </span>
-                      )}
-                      {prop.roleGatePass !== undefined && (
-                        <span
-                          className={`rounded-full border px-2 py-0.5 ${prop.roleGatePass ? 'border-teal/40 text-teal' : 'border-rose/40 text-rose'}`}
-                        >
-                          {prop.roleGatePass
-                            ? 'Role Gate Pass'
-                            : 'Role Gate Fail'}
-                        </span>
-                      )}
-                      {prop.dataQuality && (
-                        <span className="rounded-full border border-cloud/30 px-2 py-0.5 text-cloud/60">
-                          {prop.dataQuality}
-                        </span>
-                      )}
-                    </div>
-                    {(() => {
-                      const WARNING_FLAGS = [
-                        'SYNTHETIC_LINE',
-                        'PROJECTION_ANOMALY',
-                      ];
-                      const warningFlags = (
-                        prop.reasonCodes ?? []
-                      ).filter((c) => WARNING_FLAGS.includes(c));
-                      const normalCodes = (
-                        prop.reasonCodes ?? []
-                      ).filter((c) => !WARNING_FLAGS.includes(c));
-                      return (
-                        <>
-                          {warningFlags.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {warningFlags.map((flag) => (
-                                <span
-                                  key={flag}
-                                  className="rounded border border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-400"
-                                  title={
-                                    flag === 'SYNTHETIC_LINE'
-                                      ? 'No real bookmaker line — using model-internal fallback. Action capped at WATCH.'
-                                      : 'Projection anomaly detected — weighted mu diverges from L5 mean by >40%. Action capped at WATCH.'
-                                  }
-                                >
-                                  {flag === 'SYNTHETIC_LINE'
-                                    ? '⚠ No Real Line'
-                                    : '⚠ Proj Anomaly'}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          {normalCodes.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-cloud/50">
-                              {normalCodes.slice(0, 3).map((code) => (
-                                <span
-                                  key={code}
-                                  className="rounded-full border border-cloud/20 px-2 py-0.5"
-                                >
-                                  {code}
-                                </span>
-                              ))}
-                              {normalCodes.length > 3 && (
-                                <span className="rounded-full border border-cloud/20 px-2 py-0.5">
-                                  +{normalCodes.length - 3} more
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </>
-                      );
-                    })()}
-                    {(prop.l5Sog && prop.l5Sog.length > 0) ||
-                    (prop.l5Mean !== null && prop.l5Mean !== undefined) ? (
-                      <div className="mt-2 text-xs text-cloud/60">
-                        L5:{' '}
-                        {prop.l5Sog && prop.l5Sog.length > 0
-                          ? prop.l5Sog.join(', ')
-                          : '—'}
-                        {' • '}L5 Avg {formatNumber(getAverage(prop.l5Sog), 2)}
-                        {' • '}L5 Mean {formatNumber(prop.l5Mean, 2)}
-                      </div>
-                    ) : null}
+                <div className="space-y-1.5">
+                  {/* Proj vs line */}
+                  <div className="text-sm font-semibold text-cloud">
+                    Proj {formatNumber(prop.mu ?? prop.projection)} vs {formatNumber(prop.suggestedLine ?? prop.line)}
                   </div>
+
+                  {/* Odds */}
+                  {(prop.priceOver != null || prop.priceUnder != null) && (
+                    <div className="text-xs text-cloud/70">
+                      {prop.marketLine != null && (
+                        <span className="mr-2 text-cloud/40">O/U {prop.marketLine}</span>
+                      )}
+                      {prop.priceOver != null ? `OVER ${formatOdds(prop.priceOver)}` : 'OVER —'}
+                      {' / '}
+                      {prop.priceUnder != null ? `UNDER ${formatOdds(prop.priceUnder)}` : 'UNDER —'}
+                    </div>
+                  )}
+
+                  {/* L5 context */}
+                  {(prop.l5Sog && prop.l5Sog.length > 0) || (prop.l5Mean !== null && prop.l5Mean !== undefined) ? (
+                    <div className="text-xs text-cloud/40">
+                      L5 Avg {formatNumber(getAverage(prop.l5Sog), 1)}
+                    </div>
+                  ) : null}
+
+                  {/* Warning flags only */}
+                  {(() => {
+                    const WARNING_FLAGS = ['SYNTHETIC_LINE', 'PROJECTION_ANOMALY'];
+                    const warningFlags = (prop.reasonCodes ?? []).filter((c) => WARNING_FLAGS.includes(c));
+                    if (warningFlags.length === 0) return null;
+                    return (
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        {warningFlags.map((flag) => (
+                          <span
+                            key={flag}
+                            className="rounded border border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-400"
+                            title={
+                              flag === 'SYNTHETIC_LINE'
+                                ? 'No real bookmaker line — using model-internal fallback.'
+                                : 'Projection anomaly — weighted mu diverges from L5 mean by >40%.'
+                            }
+                          >
+                            {flag === 'SYNTHETIC_LINE' ? '⚠ No Real Line' : '⚠ Proj Anomaly'}
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>

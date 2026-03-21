@@ -11,7 +11,16 @@ const {
   applyUiActionFields,
   deriveAction,
   deriveVolEnv,
+  publishDecisionForCard,
 } = require('../decision-publisher.js');
+const {
+  computeCandidateHash,
+  computeInputsHash,
+  getSideFamily,
+  normalizeMarketType,
+  normalizePeriod,
+} = require('@cheddar-logic/models');
+const data = require('@cheddar-logic/data');
 
 function minutesAgoIso(minutes) {
   return new Date(Date.now() - minutes * 60 * 1000).toISOString();
@@ -86,6 +95,10 @@ function buildWave1Payload(overrides = {}) {
 }
 
 describe('decision publisher v2 pipeline', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   test('deriveAction legacy fallback still maps tier for non-wave1 payloads', () => {
     expect(deriveAction({ tier: 'SUPER' })).toBe('FIRE');
     expect(deriveAction({ tier: 'BEST' })).toBe('HOLD');
@@ -150,10 +163,7 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2.consistency.vol_env).toBeTruthy();
   });
 
-  test('does not CAUTION or BLOCK when odds_context.captured_at is between 5 and 30 minutes old', () => {
-    // applyUiActionFields strips captured_at before calling buildDecisionV2 to prevent
-    // stale timestamps from being baked into stored decision records. Staleness is an
-    // operational concern for the scheduler/ingest layer, not for stored decisions.
+  test('marks freshness as CAUTION when odds_context.captured_at is between 5 and 30 minutes old', () => {
     const payload = buildWave1Payload({
       odds_context: {
         captured_at: minutesAgoIso(10),
@@ -161,18 +171,15 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.watchdog_status).toBe('OK');
-    expect(payload.decision_v2.watchdog_reason_codes).not.toContain(
+    expect(payload.decision_v2.watchdog_status).toBe('CAUTION');
+    expect(payload.decision_v2.watchdog_reason_codes).toContain(
       'WATCHDOG_STALE_SNAPSHOT',
     );
-    // Play should still proceed since data quality is good
+    // Within the caution window, card may still classify as playable.
     expect(payload.decision_v2.official_status).toBe('PLAY');
   });
 
-  test('does not block when odds are stale beyond 30 minutes (staleness not stored in decision_v2)', () => {
-    // applyUiActionFields strips captured_at before calling buildDecisionV2.
-    // A stale timestamp in odds_context should not permanently block a stored record.
-    // On the Pi's hourly cadence, odds are routinely 31-89 min old at model-run time.
+  test('blocks when odds are stale beyond 30 minutes with explicit stale-input reason code', () => {
     const payload = buildWave1Payload({
       odds_context: {
         captured_at: minutesAgoIso(60),
@@ -180,12 +187,17 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.watchdog_status).toBe('OK');
-    expect(payload.decision_v2.watchdog_reason_codes).not.toContain(
+    expect(payload.decision_v2.watchdog_status).toBe('BLOCKED');
+    expect(payload.decision_v2.watchdog_reason_codes).toContain(
       'WATCHDOG_STALE_SNAPSHOT',
     );
-    // Play should still be decided based on edge/support alone
-    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.watchdog_reason_codes).toContain(
+      'STALE_MARKET_INPUT',
+    );
+    expect(payload.decision_v2.official_status).toBe('PASS');
+    expect(payload.decision_v2.primary_reason_code).toBe(
+      'STALE_MARKET_INPUT',
+    );
   });
 
   test('classifies unpriced when fair/implied price inputs are missing', () => {
@@ -807,5 +819,163 @@ describe('decision publisher v2 pipeline', () => {
 
     // market_context.wager.period must survive the pipeline
     expect(payload.market_context?.wager?.period).toBe('1P');
+  });
+
+  test('publishDecisionForCard treats missing edge as unavailable (not synthetic zero)', () => {
+    const payload = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'SPREAD',
+      recommended_bet_type: 'spread',
+      selection: { side: 'AWAY' },
+      prediction: 'AWAY',
+      line: -4.5,
+      price: -110,
+      // Intentionally omit edge to verify no 0-coercion
+      edge: null,
+      edge_available: false,
+      confidence: 0.62,
+      model_version: 'nba-drivers-v1',
+      home_team: 'Home',
+      away_team: 'Away',
+      reason_codes: [],
+      tags: [],
+    };
+
+    const card = {
+      gameId: 'game-edge-unavailable',
+      cardType: 'nba-spread-call',
+      cardTitle: 'NBA Spread: Away -4.5',
+      payloadData: payload,
+    };
+
+    const market = normalizeMarketType(
+      payload.market_type,
+      payload.recommended_bet_type,
+    );
+    const period = normalizePeriod(payload);
+    const sideFamily = getSideFamily(market);
+    const inputsHash = computeInputsHash(payload);
+    const candidateHash = computeCandidateHash({
+      side: payload.selection.side,
+      line: payload.line,
+      price: payload.price,
+      inputsHash,
+      market,
+      period,
+      sideFamily,
+    });
+
+    data.getDecisionRecord.mockReturnValue({
+      decision_key: 'nba|game-edge-unavailable|spread|full_game|home_away',
+      recommended_side: 'HOME',
+      recommended_line: -4.5,
+      recommended_price: -110,
+      edge: 0.04,
+      confidence: 0.58,
+      locked_status: 'SOFT',
+      locked_at: null,
+      last_candidate_hash: candidateHash,
+      candidate_seen_count: 1,
+    });
+
+    const outcome = publishDecisionForCard({
+      card,
+      oddsSnapshot: {
+        game_time_utc: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
+      },
+    });
+
+    expect(outcome.gated).toBe(true);
+    expect(outcome.allow).toBe(false);
+    expect(outcome.reasonCode).toBe('EDGE_UNAVAILABLE');
+
+    expect(data.insertDecisionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reasonCode: 'EDGE_UNAVAILABLE',
+        candEdge: null,
+        edgeUnits: 'decimal_fraction',
+      }),
+    );
+  });
+
+  test('publishDecisionForCard emits edge_units=decimal_fraction in decision event for null-edge card', () => {
+    const payload = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 220.5,
+      price: -110,
+      edge: null,
+      edge_available: false,
+      confidence: 0.62,
+      model_version: 'nba-drivers-v1',
+      home_team: 'Home',
+      away_team: 'Away',
+      reason_codes: [],
+      tags: [],
+    };
+    const card = {
+      gameId: 'game-units-null-edge',
+      cardType: 'nba-total-call',
+      cardTitle: 'NBA Totals',
+      payloadData: payload,
+    };
+    data.getDecisionRecord.mockReturnValue(null);
+    publishDecisionForCard({ card, oddsSnapshot: { game_time_utc: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString() } });
+
+    expect(data.insertDecisionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        edgeUnits: 'decimal_fraction',
+        candEdge: null,
+      }),
+    );
+  });
+
+  test('publishDecisionForCard emits edge_units=decimal_fraction in decision event for explicit edge', () => {
+    const payload = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'SPREAD',
+      recommended_bet_type: 'spread',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: -5.5,
+      price: -110,
+      edge: 0.07,
+      edge_available: true,
+      confidence: 0.65,
+      model_version: 'nba-drivers-v1',
+      home_team: 'Home',
+      away_team: 'Away',
+      reason_codes: [],
+      tags: [],
+    };
+    const card = {
+      gameId: 'game-units-explicit-edge',
+      cardType: 'nba-spread-call',
+      cardTitle: 'NBA Spread',
+      payloadData: payload,
+    };
+    data.getDecisionRecord.mockReturnValue(null);
+    publishDecisionForCard({ card, oddsSnapshot: { game_time_utc: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString() } });
+
+    expect(data.insertDecisionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        edgeUnits: 'decimal_fraction',
+        candEdge: 0.07,
+      }),
+    );
+  });
+
+  test('applyUiActionFields populates decision_v2.edge_units as decimal_fraction for wave1 payload', () => {
+    const payload = buildWave1Payload();
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2).toBeDefined();
+    expect(payload.decision_v2.edge_units).toBe('decimal_fraction');
   });
 });

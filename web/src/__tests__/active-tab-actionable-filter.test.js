@@ -82,4 +82,10 @@ assert(
   'filterByClearPlay should use shared actionable helper',
 );
 
+assert(
+  filtersSource.includes('(status === \'FIRE\' || status === \'WATCH\')') &&
+    filtersSource.includes('!hasActionablePlayCall(card)'),
+  'status-only FIRE/WATCH rows should be suppressed unless an actionable play call exists',
+);
+
 console.log('✅ WI-0420 active-tab actionable filter source tests passed');

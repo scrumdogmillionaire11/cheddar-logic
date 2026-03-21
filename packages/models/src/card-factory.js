@@ -328,8 +328,9 @@ function buildBallSportPayload({
     line_source: descriptor.line_source ?? 'odds_snapshot',
     price_source: descriptor.price_source ?? 'odds_snapshot',
     kind: isPlayableMarket ? 'PLAY' : 'EVIDENCE',
-    edge: undefined,
-    p_fair: undefined,
+    edge_available: Number.isFinite(descriptor.edge),
+    edge: Number.isFinite(descriptor.edge) ? descriptor.edge : null,
+    p_fair: null,
     p_implied: undefined,
     confidence_pct: Math.round(descriptor.confidence * 100),
     drivers_active: [descriptor.driverKey],
@@ -571,6 +572,8 @@ function buildNCAAMPayload({
       isPlayableMarket && Number.isFinite(pricingMath?.edge)
         ? pricingMath.edge
         : null,
+    edge_available:
+      isPlayableMarket && Number.isFinite(pricingMath?.edge) ? true : false,
     edge_pct:
       isPlayableMarket && Number.isFinite(pricingMath?.edge)
         ? pricingMath.edge

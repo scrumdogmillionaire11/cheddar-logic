@@ -1751,19 +1751,19 @@ export default function CardsPageClient() {
       case 'SUPER':
         return (
           <span className="px-2 py-0.5 text-xs font-bold bg-green-700/50 text-green-300 rounded border border-green-600/60">
-            SUPER
+            Strong
           </span>
         );
       case 'BEST':
         return (
           <span className="px-2 py-0.5 text-xs font-bold bg-blue-700/50 text-blue-300 rounded border border-blue-600/60">
-            BEST
+            Good
           </span>
         );
       case 'WATCH':
         return (
           <span className="px-2 py-0.5 text-xs font-bold bg-yellow-700/50 text-yellow-300 rounded border border-yellow-600/60">
-            WATCH
+            Weak
           </span>
         );
       default:
@@ -1835,7 +1835,22 @@ export default function CardsPageClient() {
 
   const formatReasonCode = (code?: string | null) => {
     if (!code) return 'UNKNOWN';
-    return code.replace(/_/g, ' ');
+    const LABELS: Record<string, string> = {
+      EDGE_VERIFICATION_REQUIRED: 'Line unstable — waiting for confirmation',
+      EDGE_CLEAR: 'Edge clear',
+      EDGE_FOUND_SIDE: 'Edge found',
+      NO_EDGE_AT_PRICE: 'Price too sharp',
+      PASS_NO_EDGE: 'No edge',
+      PASS_LOW_CONFIDENCE: 'Low confidence',
+      PASS_SHARP_MONEY_OPPOSITE: 'Sharp money against',
+      GATE_GOALIE_UNCONFIRMED: 'Goalie not confirmed',
+      GATE_LINE_MOVEMENT: 'Line moved — re-evaluating',
+      BLOCK_INJURY_RISK: 'Injury risk flag',
+      BLOCK_STALE_DATA: 'Data stale',
+      MODEL_PROB_MISSING: 'Model incomplete',
+      EXACT_WAGER_MISMATCH: 'Line mismatch',
+    };
+    return LABELS[code] ?? code.replace(/_/g, ' ').toLowerCase();
   };
 
   const formatSharpPriceStatus = (status?: string | null) => {
@@ -1857,8 +1872,9 @@ export default function CardsPageClient() {
     projectedMargin: number | undefined,
   ) => {
     if (typeof projectedMargin !== 'number') return 'N/A';
-    const favoredSide = projectedMargin >= 0 ? 'HOME' : 'AWAY';
-    return `${favoredSide} by ${Math.abs(projectedMargin).toFixed(1)}`;
+    return projectedMargin >= 0
+      ? `+${projectedMargin.toFixed(1)}`
+      : projectedMargin.toFixed(1);
   };
 
   const normalizeSelectionSide = (
@@ -1935,25 +1951,21 @@ export default function CardsPageClient() {
       marketType === 'SPREAD' || marketType === 'PUCKLINE';
     const spreadProjectedLabel =
       isSpreadLikeMarket && typeof projectedMargin === 'number'
-        ? `Projected: ${formatProjectedMarginDirectional(projectedMargin)}`
-        : `Projected: ${projection.toFixed(1)}`;
+        ? `Model: ${formatProjectedMarginDirectional(projectedMargin)}`
+        : `Model: ${projection.toFixed(1)}`;
 
-    // If we have both projection and line, compute percent and show full sentence
+    // If we have both projection and line, show signed delta vs line
     if (typeof line === 'number' && Math.abs(line) > 0.001) {
-      // Calculate percent: abs(projection - line) / abs(line) * 100
-      const projectedPercent = Math.abs(projection - line) / Math.abs(line) * 100;
-      
-      // Suppress percent if NO_EDGE_AT_PRICE or edge_pct is null/invalid
-      const shouldShowPercent =
+      const shouldShowDelta =
         reasonCode !== 'NO_EDGE_AT_PRICE' &&
         typeof edgePctValue === 'number' &&
         edgePctValue !== 0;
 
-      if (shouldShowPercent) {
-        const wholePercent = Math.round(projectedPercent);
-        return `${spreadProjectedLabel} (${wholePercent}% beyond line)`;
+      if (shouldShowDelta) {
+        const delta = projection - line;
+        const deltaStr = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1);
+        return `${spreadProjectedLabel}  (${deltaStr} vs line)`;
       } else {
-        // Fallback without percent
         return spreadProjectedLabel;
       }
     }
@@ -2347,9 +2359,22 @@ export default function CardsPageClient() {
             : displayPlay.action === 'HOLD'
               ? 'LEAN'
               : 'PASS');
-    const displayDecision = isBroken ? 'PASS' : inferredDecision;
+    const isEdgeVerification = hasEdgeVerification(card);
+    const isProxyCapped = hasProxyCap(card);
+    const hasCanonicalBet = Boolean(displayPlay.bet);
+    const shouldPreserveNoBetLean = isEdgeVerification || isProxyCapped;
+    const displayDecision =
+      isBroken ||
+      (!hasCanonicalBet &&
+        inferredDecision !== 'PASS' &&
+        !shouldPreserveNoBetLean)
+        ? 'PASS'
+        : inferredDecision;
     const isPlayDecision = displayDecision === 'PLAY';
     const canonicalGates = (displayPlay.gates ?? []).map((gate) => gate.code);
+    const INFORMATIONAL_CODES = new Set([
+      'EDGE_CLEAR', 'EDGE_FOUND_SIDE', 'EDGE_FOUND', 'BASE', 'LEAN',
+    ]);
     const activeRiskCodes = Array.from(
       new Set(
         resolvedDecisionV2
@@ -2360,7 +2385,7 @@ export default function CardsPageClient() {
             ]
           : [...canonicalGates, ...fallbackDecision.riskCodes],
       ),
-    );
+    ).filter((code) => !INFORMATIONAL_CODES.has(code));
     const hasActiveTotalBet =
       displayPlay.bet?.market_type === 'total' && isPlayDecision;
     // Live price from the current game snapshot — keeps play odds in sync with header.
@@ -2385,7 +2410,11 @@ export default function CardsPageClient() {
           card.awayTeam,
           livePrice,
         )
-      : displayPlay.pick;
+      : displayPlay.pick === 'NO PLAY'
+        ? 'NO PLAY'
+        : livePrice != null
+        ? `${displayPlay.pick} (${livePrice > 0 ? '+' : ''}${livePrice})`
+        : displayPlay.pick;
     const displayMarketText =
       formatBetMarketLabel(displayPlay.bet?.market_type) ??
       displayPlay.market_key ??
@@ -2614,9 +2643,6 @@ export default function CardsPageClient() {
       isCoinflip && hasActionableEdge && effectiveEdgePct > 0.05;
     const isCoinflipLowEdge =
       isCoinflip && (!hasActionableEdge || effectiveEdgePct <= 0.05);
-    const isEdgeVerification = hasEdgeVerification(card);
-    const isProxyCapped = hasProxyCap(card);
-
     const [showAllDrivers, setShowAllDrivers] = useState(false);
     const blockedTotals = hasActiveTotalBet
       ? []
@@ -2670,18 +2696,6 @@ export default function CardsPageClient() {
               <span className="px-2 py-1 text-xs font-semibold bg-white/10 text-cloud/80 rounded border border-white/20">
                 {card.sport}
               </span>
-              {(() => {
-                const playMarket = displayPlay.market_type ?? displayPlay.market;
-                const primaryCardType =
-                  card.drivers.find(d => d.role === 'PRIMARY' && d.market === playMarket)?.cardType ??
-                  card.drivers.find(d => d.role === 'PRIMARY')?.cardType ??
-                  card.drivers[0]?.cardType;
-                return primaryCardType ? (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono text-slate-400 bg-slate-800/60 border border-slate-700/50 truncate max-w-[180px]">
-                    {primaryCardType}
-                  </span>
-                ) : null;
-              })()}
               {showActiveBadge && (
                 <span className="px-2 py-1 text-xs font-semibold bg-blue-600/40 text-blue-200 rounded border border-blue-600/60">
                   {displayStatus}
@@ -2774,14 +2788,6 @@ export default function CardsPageClient() {
                   );
                 })()}
               </div>
-              <div>
-                <p className="text-cloud/50 text-xs mb-1">Odds Updated</p>
-                <p className="font-mono text-cloud/80">
-                  {originalGame.odds.capturedAt
-                    ? formatDate(originalGame.odds.capturedAt)
-                    : '--'}
-                </p>
-              </div>
             </div>
           ) : (
             <p className="text-sm text-cloud/40 italic">No odds data</p>
@@ -2846,11 +2852,7 @@ export default function CardsPageClient() {
                     Coinflip
                   </span>
                 )}
-                {card.tags.includes(GAME_TAGS.WELCOME_HOME_FADE) && (
-                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-orange-700/30 text-orange-200 border-orange-600/50">
-                    Fade Home
-                  </span>
-                )}
+                {/* Fade Home badge removed — internal model signal, not user-facing */}
                 {canRenderModelSummary && displayPlay.priceFlags.length > 0 && (
                   <div className="flex items-center gap-2 flex-wrap">
                     {displayPlay.priceFlags.map((flag) => (
@@ -2864,16 +2866,8 @@ export default function CardsPageClient() {
                   </div>
                 )}
               </div>
-              <div className="text-right text-xs text-cloud/60 space-y-0.5">
-                <div>
-                  {displayMarketText} | Odds as of {displayOddsTimestamp}
-                </div>
-              </div>
             </div>
-            <div className="mt-2 flex items-center gap-3 flex-wrap">
-              <span className="text-xs uppercase tracking-widest text-cloud/40 font-semibold">
-                BET:
-              </span>
+            <div className="mt-2">
               <span className="text-xl font-bold text-cloud">
                 {displayBetText}
               </span>
@@ -3196,30 +3190,20 @@ export default function CardsPageClient() {
           )}
 
           <div className="rounded-md border border-white/10 bg-white/5 p-3">
-            <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-1">
-              Why
-            </p>
             <p className="text-sm text-cloud/80">
-              {primaryReasonCode
+              {primaryReasonCode && !INFORMATIONAL_CODES.has(primaryReasonCode)
                 ? formatReasonCode(primaryReasonCode)
                 : canRenderModelSummary
-                  ? displayPlay.whyText || formatReasonCode(displayPlay.whyCode)
+                  ? (() => {
+                      const whyCode = displayPlay.whyCode;
+                      if (whyCode && INFORMATIONAL_CODES.has(whyCode)) return null;
+                      return displayPlay.whyText || formatReasonCode(whyCode);
+                    })()
                   : 'Data issue: drivers unavailable'}
             </p>
             {ftTrendInsight && (
-              <p className="text-xs text-cloud/60 mt-2">
-                FT Trend Play:{' '}
-                <span className="text-cloud/90 font-semibold">
-                  Take {ftTrendInsight.advantagedTeam} spread (better FT%).
-                </span>
-              </p>
-            )}
-            {ftTrendInsight && (
-              <p className="text-xs text-cloud/60 mt-1">
-                FT Advantage:{' '}
-                <span className="text-cloud/90 font-semibold">
-                  {formatFtTrendInsight(ftTrendInsight)}
-                </span>
+              <p className="text-xs text-cloud/70 mt-2">
+                FT: {formatFtTrendInsight(ftTrendInsight)}
               </p>
             )}
             {displayDecision === 'PASS' &&
@@ -3413,38 +3397,13 @@ export default function CardsPageClient() {
             </div>
           </details>
 
-          {blockedTotals.length > 0 && (
-            <details className="rounded-md border border-white/10 bg-white/5 p-3">
-              <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold">
-                Totals (Blocked)
-              </summary>
-              <div className="mt-2 space-y-2">
-                {blockedTotals.map((totalPlay, index) => (
-                  <div
-                    key={`${totalPlay.cardType}-${totalPlay.cardTitle}-${index}`}
-                    className="bg-white/5 rounded-md px-3 py-2"
-                  >
-                    <p className="text-sm text-cloud/80 font-medium">
-                      {totalPlay.cardTitle}
-                    </p>
-                    {totalPlay.reason_codes?.length ? (
-                      <p className="text-xs text-cloud/60 mt-1">
-                        {totalPlay.reason_codes.join(', ')}
-                      </p>
-                    ) : (
-                      <p className="text-xs text-cloud/60 mt-1">PASS</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
+          {/* Totals (Blocked) hidden — internal pipeline state, not actionable for users */}
 
           {/* WI-0328: only render Risk/Gates when there are active codes */}
           {activeRiskCodes.length > 0 && (
             <details className="rounded-md border border-white/10 bg-white/5 p-3">
               <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold">
-                Risk / Gates
+                ⚠️ Context
               </summary>
               <div className="mt-2 space-y-2">
                 <div className="flex flex-wrap gap-2">

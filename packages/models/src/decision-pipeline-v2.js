@@ -1,6 +1,10 @@
 const edgeCalculator = require('./edge-calculator');
 const { resolveThresholdProfile } = require('./decision-pipeline-v2.patch');
 
+// Edge unit: all edge values in this pipeline are decimal fractions.
+// See CANONICAL_EDGE_CONTRACT in decision-gate.js for the authoritative definition.
+const EDGE_UNITS = 'decimal_fraction';
+
 const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
 const WAVE1_MARKETS = new Set([
   'MONEYLINE',
@@ -15,6 +19,7 @@ const WATCHDOG_REASONS = {
   CONSISTENCY_MISSING: 'WATCHDOG_CONSISTENCY_MISSING',
   PARSE_FAILURE: 'WATCHDOG_PARSE_FAILURE',
   STALE_SNAPSHOT: 'WATCHDOG_STALE_SNAPSHOT',
+  STALE_MARKET_INPUT: 'STALE_MARKET_INPUT',
   MARKET_UNAVAILABLE: 'WATCHDOG_MARKET_UNAVAILABLE',
   // WI-0383: goalie identity uncertainty reason codes
   GOALIE_UNCONFIRMED: 'GOALIE_UNCONFIRMED',
@@ -885,6 +890,7 @@ function computeWatchdog(payload, context = {}) {
 
   let watchdogStatus = 'OK';
   if (staleMinutes !== null && staleMinutes > 30) {
+    watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_MARKET_INPUT);
     watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_SNAPSHOT);
   }
 
@@ -893,6 +899,7 @@ function computeWatchdog(payload, context = {}) {
       code === WATCHDOG_REASONS.CONSISTENCY_MISSING ||
       code === WATCHDOG_REASONS.PARSE_FAILURE ||
       code === WATCHDOG_REASONS.MARKET_UNAVAILABLE ||
+      code === WATCHDOG_REASONS.STALE_MARKET_INPUT ||
       (code === WATCHDOG_REASONS.STALE_SNAPSHOT &&
         staleMinutes !== null &&
         staleMinutes > 30),
@@ -1188,6 +1195,7 @@ function buildDecisionV2(payload, context = {}) {
       fair_prob,
       implied_prob,
       edge_pct,
+      edge_units: EDGE_UNITS,   // unit per CANONICAL_EDGE_CONTRACT
       threshold_profile: {
         source: thresholdProfile.source,
         support_play_min: thresholdProfile.support.play,
