@@ -289,6 +289,18 @@ function determineBestMarket(
       (odds?.h2hHome !== null && odds?.h2hHome !== undefined) ||
       (odds?.h2hAway !== null && odds?.h2hAway !== undefined);
 
+    // Heavy ML gate: ≤-500 is not a playable market — pivot to SPREAD or drop
+    const directionMLOdds =
+      best.direction === 'HOME' ? odds?.h2hHome : odds?.h2hAway;
+    const isHeavyML =
+      typeof directionMLOdds === 'number' && directionMLOdds <= -500;
+
+    if (isHeavyML) {
+      return hasSpreadOdds
+        ? { market: 'SPREAD', driver: best }
+        : { market: 'NONE', driver: null };
+    }
+
     if (hasMLOdds) {
       return { market: 'ML', driver: best };
     }

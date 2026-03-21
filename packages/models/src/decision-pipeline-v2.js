@@ -1205,7 +1205,8 @@ function buildDecisionV2(payload, context = {}) {
         priceReasonCodes: finalPriceReasonCodes,
       });
     if (heavyFavoriteGateFailed) {
-      finalOfficialStatus = 'LEAN';
+      // ≤-500: non-playable (PASS); ≤-300: slight edge still possible (LEAN)
+      finalOfficialStatus = price !== null && price <= -500 ? 'PASS' : 'LEAN';
       finalPriceReasonCodes = uniqueReasonCodes(
         finalPriceReasonCodes,
         PRICE_REASONS.HEAVY_FAVORITE_PRICE_CAP,

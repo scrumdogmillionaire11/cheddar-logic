@@ -307,7 +307,7 @@ describe('decision publisher v2 pipeline', () => {
     );
   });
 
-  test('downgrades heavy-favorite moneyline PLAY to LEAN at -500 band when edge is below 3x play threshold', () => {
+  test('hard-PASSes heavy-favorite moneyline at -500 band when edge is below 3x play threshold', () => {
     const payload = buildWave1Payload({
       sport: 'NBA',
       market_type: 'MONEYLINE',
@@ -331,13 +331,44 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.official_status).toBe('PASS');
     expect(payload.decision_v2.primary_reason_code).toBe(
       'HEAVY_FAVORITE_PRICE_CAP',
     );
     expect(payload.decision_v2.price_reason_codes).toContain(
       'HEAVY_FAVORITE_PRICE_CAP',
     );
+  });
+
+  test('-300 band (2x multiplier) still resolves to LEAN not PASS when gate triggers', () => {
+    // Confirm the ≤-500 PASS rule does not affect the ≤-300 band
+    // Re-uses same fixture as the -300 test above; this explicitly checks
+    // that price=-300 goes to LEAN, not PASS.
+    const payload = buildWave1Payload({
+      sport: 'NBA',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: null,
+      price: -300,
+      model_prob: 0.83,
+      edge: null,
+      p_fair: null,
+      driver: {
+        score: 0.8,
+        inputs: { conflict: 0.1 },
+      },
+      odds_context: {
+        captured_at: minutesAgoIso(1),
+        h2h_home: -300,
+        h2h_away: 240,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.official_status).not.toBe('PASS');
   });
 
   test('keeps heavy-favorite moneyline as PLAY when edge clears ordered band multiplier', () => {
