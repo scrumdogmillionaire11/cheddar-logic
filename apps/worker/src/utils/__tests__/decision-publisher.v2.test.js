@@ -274,6 +274,133 @@ describe('decision publisher v2 pipeline', () => {
     expect(passPayload.action).toBe('PASS');
   });
 
+  test('downgrades heavy-favorite moneyline PLAY to LEAN at -300 band when edge is below 2x play threshold', () => {
+    const payload = buildWave1Payload({
+      sport: 'NBA',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: null,
+      price: -300,
+      model_prob: 0.83,
+      edge: null,
+      p_fair: null,
+      driver: {
+        score: 0.8,
+        inputs: { conflict: 0.1 },
+      },
+      odds_context: {
+        captured_at: minutesAgoIso(1),
+        h2h_home: -300,
+        h2h_away: 240,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.primary_reason_code).toBe(
+      'HEAVY_FAVORITE_PRICE_CAP',
+    );
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'HEAVY_FAVORITE_PRICE_CAP',
+    );
+  });
+
+  test('downgrades heavy-favorite moneyline PLAY to LEAN at -500 band when edge is below 3x play threshold', () => {
+    const payload = buildWave1Payload({
+      sport: 'NBA',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: null,
+      price: -500,
+      model_prob: 0.95,
+      edge: null,
+      p_fair: null,
+      driver: {
+        score: 0.8,
+        inputs: { conflict: 0.1 },
+      },
+      odds_context: {
+        captured_at: minutesAgoIso(1),
+        h2h_home: -500,
+        h2h_away: 390,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.primary_reason_code).toBe(
+      'HEAVY_FAVORITE_PRICE_CAP',
+    );
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'HEAVY_FAVORITE_PRICE_CAP',
+    );
+  });
+
+  test('keeps heavy-favorite moneyline as PLAY when edge clears ordered band multiplier', () => {
+    const payload = buildWave1Payload({
+      sport: 'NBA',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: null,
+      price: -300,
+      model_prob: 0.9,
+      edge: null,
+      p_fair: null,
+      driver: {
+        score: 0.82,
+        inputs: { conflict: 0.08 },
+      },
+      odds_context: {
+        captured_at: minutesAgoIso(1),
+        h2h_home: -300,
+        h2h_away: 240,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
+      'HEAVY_FAVORITE_PRICE_CAP',
+    );
+  });
+
+  test('hard invalidation reasons take precedence over heavy-favorite downgrade', () => {
+    const payload = buildWave1Payload({
+      sport: 'NBA',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: null,
+      price: null,
+      model_prob: 0.95,
+      edge: null,
+      p_fair: null,
+      driver: {
+        score: 0.8,
+        inputs: { conflict: 0.1 },
+      },
+      odds_context: {
+        captured_at: minutesAgoIso(1),
+        h2h_home: -500,
+        h2h_away: 390,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.official_status).toBe('PASS');
+    expect(payload.decision_v2.primary_reason_code).toBe('MARKET_PRICE_MISSING');
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
+      'HEAVY_FAVORITE_PRICE_CAP',
+    );
+  });
+
   test('falls back to legacy tier mapping for out-of-scope markets', () => {
     const payload = buildWave1Payload({
       sport: 'SOCCER',

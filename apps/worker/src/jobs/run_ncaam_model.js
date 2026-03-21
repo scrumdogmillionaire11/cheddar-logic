@@ -226,14 +226,61 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
     // of spread markets — they win on moneyline but lose on spread.
     // Only gate when projected_margin is present; other drivers (rest-advantage,
     // matchup-style) are direction-signal based and pass through unchanged.
+    //
+    // Steep-ML reinforcement: when the ML is -300 or steeper for the predicted
+    // side and no projected_margin is available, back-calculate an implied margin
+    // from the market's own win probability via invNormCdf. This conservative
+    // estimate (using market prob, not model fair prob) ensures games where the
+    // market itself implies a large enough margin get a spread card with real
+    // edge math rather than being blocked by missing team metrics.
+    const STEEP_ML_THRESHOLD = -300;
+    const NCAAM_SPREAD_SIGMA = 11;
+
     const projectedMargin = descriptor?.driverInputs?.projected_margin;
     const spreadHome = oddsSnapshot?.spread_home;
+
+    // For steep-ML games without a team-metrics margin, derive one from market ML.
+    let effectiveDescriptor = descriptor;
+    if (
+      projectedMargin == null &&
+      spreadHome != null &&
+      oddsSnapshot?.spread_price_home != null &&
+      oddsSnapshot?.spread_price_away != null
+    ) {
+      const predictedML =
+        descriptor.prediction === 'HOME'
+          ? (oddsSnapshot?.h2h_home ?? oddsSnapshot?.moneyline_home)
+          : (oddsSnapshot?.h2h_away ?? oddsSnapshot?.moneyline_away);
+
+      if (Number.isFinite(predictedML) && predictedML <= STEEP_ML_THRESHOLD) {
+        const pMarket = edgeCalculator.impliedProbFromAmerican(predictedML);
+        if (pMarket != null) {
+          const mlImpliedMarginAbs =
+            edgeCalculator.invNormCdf(pMarket) * NCAAM_SPREAD_SIGMA;
+          // Express as signed home margin matching descriptor direction
+          const mlImpliedMargin =
+            descriptor.prediction === 'HOME'
+              ? mlImpliedMarginAbs
+              : -mlImpliedMarginAbs;
+          effectiveDescriptor = {
+            ...descriptor,
+            driverInputs: {
+              ...descriptor.driverInputs,
+              projected_margin: mlImpliedMargin,
+              margin_source: 'ml_implied',
+            },
+          };
+        }
+      }
+    }
+
+    const effectiveMargin = effectiveDescriptor?.driverInputs?.projected_margin;
     const projectionBeatsSpread =
-      projectedMargin == null ||
+      effectiveMargin == null ||
       spreadHome == null ||
       (descriptor.prediction === 'HOME'
-        ? projectedMargin > -spreadHome
-        : projectedMargin < -spreadHome);
+        ? effectiveMargin > -spreadHome
+        : effectiveMargin < -spreadHome);
 
     if (
       allowSpread &&
@@ -247,7 +294,7 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
         generateCard({
           sport: 'NCAAM',
           gameId,
-          descriptor,
+          descriptor: effectiveDescriptor,
           oddsSnapshot,
           now,
           expiresAt,

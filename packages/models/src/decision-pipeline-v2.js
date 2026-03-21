@@ -38,6 +38,7 @@ const PRICE_REASONS = {
   NO_PRIMARY_SUPPORT: 'NO_PRIMARY_SUPPORT',
   EDGE_VERIFICATION_REQUIRED: 'EDGE_VERIFICATION_REQUIRED',
   EDGE_SANITY_NON_TOTAL: 'EDGE_SANITY_NON_TOTAL',
+  HEAVY_FAVORITE_PRICE_CAP: 'HEAVY_FAVORITE_PRICE_CAP',
 };
 
 const PIPELINE_VERSION = 'v2';
@@ -59,6 +60,14 @@ const PROXY_SIGNAL_TAGS = new Set([
   'PROXY_LEGACY_MARKET_INFERRED',
   'LEGACY_REPAIR',
   'PROXY_CARD',
+]);
+const HARD_INVALIDATION_PRICE_REASONS = new Set([
+  PRICE_REASONS.MARKET_PRICE_MISSING,
+  PRICE_REASONS.MODEL_PROB_MISSING,
+  PRICE_REASONS.EXACT_WAGER_MISMATCH,
+  PRICE_REASONS.MARKET_EDGE_UNAVAILABLE,
+  PRICE_REASONS.PROXY_EDGE_BLOCKED,
+  PRICE_REASONS.EDGE_VERIFICATION_REQUIRED,
 ]);
 
 const FIELD_SOURCES = {
@@ -732,6 +741,21 @@ function derivePlayTierWithThresholds(edgePct, thresholdProfile) {
   return 'BAD';
 }
 
+function getHeavyFavoritePlayEdgeMultiplier(price) {
+  if (!Number.isFinite(price) || price >= 0) return null;
+  if (price <= -500) return 3;
+  if (price <= -300) return 2;
+  return null;
+}
+
+function hasHardInvalidationReason({
+  watchdogStatus,
+  priceReasonCodes = [],
+}) {
+  if (watchdogStatus === 'BLOCKED') return true;
+  return priceReasonCodes.some((code) => HARD_INVALIDATION_PRICE_REASONS.has(code));
+}
+
 function computeOfficialStatus({
   watchdogStatus,
   sharpPriceStatus,
@@ -1141,7 +1165,7 @@ function buildDecisionV2(payload, context = {}) {
     });
     const proxy_capped = priceDecision.proxy_capped === true;
 
-    const official_status = computeOfficialStatus({
+    const computedOfficialStatus = computeOfficialStatus({
       watchdogStatus: watchdog.watchdog_status,
       sharpPriceStatus: priceDecision.sharp_price_status,
       supportScore: support_score,
@@ -1153,6 +1177,8 @@ function buildDecisionV2(payload, context = {}) {
     });
 
     const thresholdProfile = getThresholdProfile(market_type, sport);
+    let finalOfficialStatus = computedOfficialStatus;
+    let finalPriceReasonCodes = [...priceDecision.price_reason_codes];
 
     const play_tier =
       market_type === 'FIRST_PERIOD'
@@ -1163,18 +1189,44 @@ function buildDecisionV2(payload, context = {}) {
             : 'BAD'
         : derivePlayTierWithThresholds(edge_pct, thresholdProfile);
 
-    const primary_reason_code = resolvePrimaryReason({
+    const heavyFavoriteMultiplier = getHeavyFavoritePlayEdgeMultiplier(price);
+    const heavyFavoritePlayEdgeMin =
+      heavyFavoriteMultiplier === null
+        ? null
+        : thresholdProfile.edge.play_edge_min * heavyFavoriteMultiplier;
+    const heavyFavoriteGateFailed =
+      market_type === 'MONEYLINE' &&
+      finalOfficialStatus === 'PLAY' &&
+      heavyFavoritePlayEdgeMin !== null &&
+      typeof edge_pct === 'number' &&
+      edge_pct < heavyFavoritePlayEdgeMin &&
+      !hasHardInvalidationReason({
+        watchdogStatus: watchdog.watchdog_status,
+        priceReasonCodes: finalPriceReasonCodes,
+      });
+    if (heavyFavoriteGateFailed) {
+      finalOfficialStatus = 'LEAN';
+      finalPriceReasonCodes = uniqueReasonCodes(
+        finalPriceReasonCodes,
+        PRICE_REASONS.HEAVY_FAVORITE_PRICE_CAP,
+      );
+    }
+
+    let primary_reason_code = resolvePrimaryReason({
       watchdogReasonCodes: watchdog.watchdog_reason_codes,
       watchdogStatus: watchdog.watchdog_status,
       sharpPriceStatus: priceDecision.sharp_price_status,
-      priceReasonCodes: priceDecision.price_reason_codes,
-      officialStatus: official_status,
+      priceReasonCodes: finalPriceReasonCodes,
+      officialStatus: finalOfficialStatus,
       supportScore: support_score,
       edgePct: edge_pct,
       sport,
       marketType: market_type,
       proxyCapped: proxy_capped,
     });
+    if (heavyFavoriteGateFailed) {
+      primary_reason_code = PRICE_REASONS.HEAVY_FAVORITE_PRICE_CAP;
+    }
 
     return {
       direction,
@@ -1225,9 +1277,9 @@ function buildDecisionV2(payload, context = {}) {
       },
 
       sharp_price_status: priceDecision.sharp_price_status,
-      price_reason_codes: priceDecision.price_reason_codes,
+      price_reason_codes: finalPriceReasonCodes,
 
-      official_status,
+      official_status: finalOfficialStatus,
       play_tier,
       primary_reason_code,
 

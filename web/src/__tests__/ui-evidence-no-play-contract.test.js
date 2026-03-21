@@ -26,8 +26,9 @@ assert(
 
 // Semantic guard: canonical internal status union remains unchanged
 assert(
-  source.includes("const getStatusBadge = (status: 'PLAY' | 'LEAN' | 'PASS')"),
-  'cards page badge contract should preserve canonical PLAY/LEAN/PASS internal statuses',
+  source.includes('const inferredDecision =') &&
+    source.includes('resolvedDecisionV2?.official_status'),
+  'cards page should preserve canonical PLAY/LEAN/PASS internal statuses',
 );
 
 // Display labels updated to human-friendly names
@@ -44,36 +45,48 @@ assert(
   'display verdict mapping should include branded verdict sublabels',
 );
 
-// PASS diagnostics section present
-assert(
-  source.includes('PASS Breakdown'),
-  'cards page should show PASS diagnostics section',
-);
-
-// Model Lean terminology replaced with Model Direction
-assert(
-  source.includes('Model Direction:') && !source.includes('Model Lean:'),
-  'cards page should use Model Direction instead of Model Lean in diagnostics',
-);
-
-// Model Lean Indicators section heading stays technical (section label, not branded)
-assert(
-  source.includes('Model Lean Indicators'),
-  'cards page section heading should remain as Model Lean Indicators',
-);
-
 // Projected sentence implementation exists
 assert(
   source.includes('formatProjectedSentence') &&
-    source.includes('Projected: '),
+    source.includes('Model:'),
   'cards page should include simplified projected sentence for default edge display',
 );
 
-// Market Math section collapsed by default
+// Single Details drawer replaces standalone technical sections
 assert(
-  source.includes('<details') && source.includes('Market Math'),
-  'cards page Market Math section should be collapsible (details element)',
+  source.includes('<details') &&
+    source.includes('Details') &&
+    !source.includes('Market Math') &&
+    !source.includes('Model Lean Indicators'),
+  'cards page should use one Details drawer and avoid standalone Market Math / Model Lean sections',
+);
+
+// Context block should stay compact and optional sections should be conditionally rendered
+assert(
+  source.includes('contextLine1') &&
+    source.includes('contextLine2') &&
+    source.includes('{contextLine2 && (') &&
+    source.includes('{hasDetails && ('),
+  'cards page should keep compact context lines and suppress optional sections when empty',
+);
+
+// Visible hierarchy should stay decision-first and compact (header -> bet -> context).
+assert(
+  source.includes('visibleBetText') &&
+    source.includes('contextLine1') &&
+    source.includes('{contextLine2 && (') &&
+    !source.includes('Odds unavailable'),
+  'cards page should keep visible primary blocks compact and avoid extra empty visible sections',
+);
+
+// Bet/action content must render before Details content.
+const betLineIndex = source.indexOf('visibleBetText');
+const detailsSummaryIndex = source.indexOf('Details');
+assert(
+  betLineIndex !== -1 &&
+    detailsSummaryIndex !== -1 &&
+    betLineIndex < detailsSummaryIndex,
+  'cards page should render the bet/action line before Details content',
 );
 
 console.log('✅ UI degraded-data contract source tests passed');
-

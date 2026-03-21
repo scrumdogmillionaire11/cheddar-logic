@@ -19,22 +19,22 @@ assert(
 
 assert(
   cardsPageSource.includes('formatProjectedMarginDirectional') &&
-    cardsPageSource.includes(
-      "return `${favoredSide} by ${Math.abs(projectedMargin).toFixed(1)}`;",
-    ),
-  'spread projected formatter should include HOME/AWAY and absolute margin',
+    cardsPageSource.includes('return projectedMargin >= 0') &&
+    cardsPageSource.includes('projectedMargin.toFixed(1)'),
+  'spread projected formatter should preserve signed directional output',
 );
 
 assert(
-  /formatProjectedSentence\(\s*projectedValue,\s*marketLineValue,\s*primaryReasonCode,\s*effectiveEdgePct,\s*marketType,\s*projectedMargin,\s*\)/m.test(
+  /formatProjectedSentence\(\s*projectedValue,\s*marketLine,\s*primaryReasonCode,\s*effectiveEdgePct,\s*marketType,\s*projectedMargin,\s*\)/m.test(
     cardsPageSource,
   ),
   'projected sentence call should pass marketType and projectedMargin context',
 );
 
 assert(
-  cardsPageSource.includes('Margin math (HOME - AWAY)'),
-  'Market Math spread row should include explicit HOME - AWAY sign math',
+  cardsPageSource.includes('Model spread (home):') &&
+    cardsPageSource.includes('Delta:'),
+  'spread details should include model-vs-market delta context',
 );
 
 console.log('Projected margin labeling source-contract checks passed');

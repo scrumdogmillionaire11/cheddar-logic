@@ -77,9 +77,9 @@ assert(
 );
 
 assert(
-  cardsPageSource.includes('isRedundantModelLine') &&
-    cardsPageSource.includes('if (isRedundantModelLine) return null;'),
-  'cards UI should suppress redundant Model line when it matches canonical total projection',
+  cardsPageSource.includes('const contextLine1 =') &&
+    cardsPageSource.includes('projectedSentence ||'),
+  'cards UI should drive visible context through compact market-aware context line selection',
 );
 
 assert(
@@ -91,8 +91,10 @@ assert(
 );
 
 assert(
-  cardsPageSource.includes('totalProjectionDisplayPlay'),
-  'cards UI should use resolved totalProjectionDisplayPlay in header rendering',
+  cardsPageSource.includes('const projectedTotal =') &&
+    cardsPageSource.includes('typeof nhlDecisionProjectionPlay?.projectedTotal') &&
+    cardsPageSource.includes('typeof displayPlay.projectedTotal === \'number\''),
+  'cards UI should keep deterministic projectedTotal fallback order for visible context',
 );
 
 assert(
@@ -103,8 +105,10 @@ assert(
 
 assert(
   cardsPageSource.includes('<details') &&
-    cardsPageSource.includes('Model Lean Indicators'),
-  'Model Lean Indicators section should be rendered as a collapsible details panel',
+    cardsPageSource.includes('Details') &&
+    !cardsPageSource.includes('Model Lean Indicators') &&
+    !cardsPageSource.includes('Market Math'),
+  'cards UI should consolidate advanced content into a single Details drawer',
 );
 
 console.log('✅ total projection source contract tests passed');

@@ -387,22 +387,6 @@ function isFullGameTotalsCallPlay(play: GameData['plays'][number]): boolean {
   );
 }
 
-function deriveOnePModelCallFromReasons(
-  reasonCodes: string[],
-  prediction?: GameData['plays'][number]['prediction'],
-): GameData['plays'][number]['one_p_model_call'] {
-  if (reasonCodes.includes('NHL_1P_OVER_BEST')) return 'BEST_OVER';
-  if (reasonCodes.includes('NHL_1P_OVER_PLAY')) return 'PLAY_OVER';
-  if (reasonCodes.includes('NHL_1P_OVER_LEAN')) return 'LEAN_OVER';
-  if (reasonCodes.includes('NHL_1P_UNDER_BEST')) return 'BEST_UNDER';
-  if (reasonCodes.includes('NHL_1P_UNDER_PLAY')) return 'PLAY_UNDER';
-  if (reasonCodes.includes('NHL_1P_UNDER_LEAN')) return 'LEAN_UNDER';
-  if (reasonCodes.includes('NHL_1P_PASS_DEAD_ZONE')) return 'PASS';
-  if (prediction === 'OVER') return 'LEAN_OVER';
-  if (prediction === 'UNDER') return 'LEAN_UNDER';
-  return null;
-}
-
 function resolvePrimaryTotalProjectionPlay(
   plays: GameData['plays'],
   sport: string,
@@ -415,11 +399,8 @@ function resolvePrimaryTotalProjectionPlay(
   if (totalsCallPlay) return totalsCallPlay;
 
   if (sportUpper === 'NHL') {
-    return (
-      plays.find(
-        (play) =>
-          play.cardType === 'nhl-pace-totals' && hasProjectedTotal(play),
-      )
+    return plays.find(
+      (play) => play.cardType === 'nhl-pace-totals' && hasProjectedTotal(play),
     );
   }
 
@@ -440,6 +421,22 @@ function resolvePrimaryTotalProjectionPlay(
       cardType.includes('total-projection')
     );
   });
+}
+
+function deriveOnePModelCallFromReasons(
+  reasonCodes: string[],
+  prediction?: GameData['plays'][number]['prediction'],
+): GameData['plays'][number]['one_p_model_call'] {
+  if (reasonCodes.includes('NHL_1P_OVER_BEST')) return 'BEST_OVER';
+  if (reasonCodes.includes('NHL_1P_OVER_PLAY')) return 'PLAY_OVER';
+  if (reasonCodes.includes('NHL_1P_OVER_LEAN')) return 'LEAN_OVER';
+  if (reasonCodes.includes('NHL_1P_UNDER_BEST')) return 'BEST_UNDER';
+  if (reasonCodes.includes('NHL_1P_UNDER_PLAY')) return 'PLAY_UNDER';
+  if (reasonCodes.includes('NHL_1P_UNDER_LEAN')) return 'LEAN_UNDER';
+  if (reasonCodes.includes('NHL_1P_PASS_DEAD_ZONE')) return 'PASS';
+  if (prediction === 'OVER') return 'LEAN_OVER';
+  if (prediction === 'UNDER') return 'LEAN_UNDER';
+  return null;
 }
 
 interface ApiResponse {
@@ -1823,16 +1820,6 @@ export default function CardsPageClient() {
     return market;
   };
 
-  const formatBetMarketLabel = (marketType?: string) => {
-    if (!marketType) return null;
-    if (marketType === 'moneyline') return 'ML';
-    if (marketType === 'spread') return 'SPREAD';
-    if (marketType === 'total') return 'TOTAL';
-    if (marketType === 'team_total') return 'TT';
-    if (marketType === 'player_prop') return 'PROP';
-    return marketType.toUpperCase();
-  };
-
   const formatReasonCode = (code?: string | null) => {
     if (!code) return 'UNKNOWN';
     const LABELS: Record<string, string> = {
@@ -1849,6 +1836,7 @@ export default function CardsPageClient() {
       BLOCK_STALE_DATA: 'Data stale',
       MODEL_PROB_MISSING: 'Model incomplete',
       EXACT_WAGER_MISMATCH: 'Line mismatch',
+      HEAVY_FAVORITE_PRICE_CAP: 'High price cap',
     };
     return LABELS[code] ?? code.replace(/_/g, ' ').toLowerCase();
   };
@@ -2082,24 +2070,6 @@ export default function CardsPageClient() {
     return formatMarketLabel(driverMarket);
   };
 
-  const formatPriceFlagLabel = (flag: string) => {
-    const labels: Record<string, string> = {
-      PRICE_TOO_STEEP: 'Price Too Steep',
-      COINFLIP: 'Coinflip Zone',
-      CHASED_LINE: 'Chased Line',
-      VIG_HEAVY: 'Vig Heavy',
-    };
-    return labels[flag] || flag.replace(/_/g, ' ');
-  };
-
-  const getPriceFlagClass = (flag: string) => {
-    if (flag === 'COINFLIP') {
-      return 'bg-blue-700/30 text-blue-200 border-blue-600/50';
-    }
-
-    return 'bg-amber-700/30 text-amber-200 border-amber-600/50';
-  };
-
   const driverRowKey = (driver: DriverRow) =>
     `${driver.key}-${driver.market}-${driver.direction}-${driver.cardTitle}`;
 
@@ -2322,19 +2292,25 @@ export default function CardsPageClient() {
     const isDegraded = quality === 'DEGRADED';
     const decisionV2 = displayPlay.decision_v2;
     const canonicalTruePlay = originalGame?.true_play;
+    const totalProjectionFallback = resolvePrimaryTotalProjectionPlay(
+      originalGame?.plays || [],
+      card.sport,
+    );
     const totalFallbackPlay =
       !canonicalTruePlay &&
       (displayPlay.market_type === 'TOTAL' ||
         displayPlay.market_type === 'TEAM_TOTAL')
-        ? (originalGame?.plays || []).find(
-            (play) =>
-              (play.market_type === 'TOTAL' ||
-                play.market_type === 'TEAM_TOTAL') &&
-              (typeof play.model_prob === 'number' ||
-                typeof (play as { decision_v2?: { fair_prob?: number } })
-                  .decision_v2?.fair_prob === 'number') &&
-              typeof play.projectedTotal === 'number',
-          )
+        ? totalProjectionFallback &&
+          (totalProjectionFallback.market_type === 'TOTAL' ||
+            totalProjectionFallback.market_type === 'TEAM_TOTAL') &&
+          (typeof totalProjectionFallback.model_prob === 'number' ||
+            typeof (
+              totalProjectionFallback as {
+                decision_v2?: { fair_prob?: number };
+              }
+            ).decision_v2?.fair_prob === 'number')
+          ? totalProjectionFallback
+          : undefined
         : undefined;
     const totalFallbackDecision = (
       totalFallbackPlay as { decision_v2?: typeof decisionV2 }
@@ -2370,7 +2346,6 @@ export default function CardsPageClient() {
         !shouldPreserveNoBetLean)
         ? 'PASS'
         : inferredDecision;
-    const isPlayDecision = displayDecision === 'PLAY';
     const canonicalGates = (displayPlay.gates ?? []).map((gate) => gate.code);
     const INFORMATIONAL_CODES = new Set([
       'EDGE_CLEAR', 'EDGE_FOUND_SIDE', 'EDGE_FOUND', 'BASE', 'LEAN',
@@ -2386,8 +2361,6 @@ export default function CardsPageClient() {
           : [...canonicalGates, ...fallbackDecision.riskCodes],
       ),
     ).filter((code) => !INFORMATIONAL_CODES.has(code));
-    const hasActiveTotalBet =
-      displayPlay.bet?.market_type === 'total' && isPlayDecision;
     // Live price from the current game snapshot — keeps play odds in sync with header.
     const livePrice = resolvePlayLivePrice(
       displayPlay.market_type ?? displayPlay.bet?.market_type?.toUpperCase(),
@@ -2415,10 +2388,6 @@ export default function CardsPageClient() {
         : livePrice != null
         ? `${displayPlay.pick} (${livePrice > 0 ? '+' : ''}${livePrice})`
         : displayPlay.pick;
-    const displayMarketText =
-      formatBetMarketLabel(displayPlay.bet?.market_type) ??
-      displayPlay.market_key ??
-      formatMarketLabel(displayPlay.market);
     const updatedTime = formatDate(displayPlay.updatedAt);
     // Prefer the game-level capturedAt (latest odds snapshot) over the stale
     // as_of_iso embedded in the card_payload at model-run time.
@@ -2462,29 +2431,12 @@ export default function CardsPageClient() {
         : undefined;
     const projectedSpreadHome =
       typeof projectedMargin === 'number' ? -1 * projectedMargin : undefined;
-    const totalProjectionDisplayPlay = resolvePrimaryTotalProjectionPlay(
-      originalGame.plays || [],
-      card.sport,
-    );
-    const nhlRawPaceProjectionPlay =
-      card.sport === 'NHL'
-        ? originalGame.plays.find(
-            (play) =>
-              play.cardType === 'nhl-pace-totals' && hasProjectedTotal(play),
-          )
-        : undefined;
     const nhlDecisionProjectionPlay =
       card.sport === 'NHL'
         ? originalGame.plays.find(
             (play) => isFullGameTotalsCallPlay(play) && hasProjectedTotal(play),
           )
         : undefined;
-    const primaryModelProjectionPlay =
-      card.sport === 'NHL'
-        ? nhlDecisionProjectionPlay ??
-          nhlRawPaceProjectionPlay ??
-          totalProjectionDisplayPlay
-        : totalProjectionDisplayPlay;
     const projectedTotal =
       card.sport === 'NHL' &&
       typeof nhlDecisionProjectionPlay?.projectedTotal === 'number'
@@ -2631,9 +2583,6 @@ export default function CardsPageClient() {
       (hasEdgeMathContext ||
         typeof livePrice === 'number' ||
         typeof mlBreakEvenPrice === 'number');
-    const supportGateReason =
-      primaryReasonCode === 'SUPPORT_BELOW_LEAN_THRESHOLD' ||
-      primaryReasonCode === 'SUPPORT_BELOW_PLAY_THRESHOLD';
     const sharpVerdict = decisionV2?.sharp_price_status;
     const modelLean = decisionV2?.direction;
     const isCoinflip = Boolean(
@@ -2644,18 +2593,6 @@ export default function CardsPageClient() {
     const isCoinflipLowEdge =
       isCoinflip && (!hasActionableEdge || effectiveEdgePct <= 0.05);
     const [showAllDrivers, setShowAllDrivers] = useState(false);
-    const blockedTotals = hasActiveTotalBet
-      ? []
-      : (originalGame.plays || []).filter((play) => {
-          if (play.kind !== 'PLAY') return false;
-          if (play.market_type !== 'TOTAL') return false;
-          const blockedByReason =
-            play.reason_codes?.includes('PASS_TOTAL_INSUFFICIENT_DATA') ||
-            play.tags?.includes('CONSISTENCY_BLOCK_TOTALS');
-          const blockedByStatus =
-            play.action === 'PASS' || play.status === 'PASS';
-          return Boolean(blockedByReason || blockedByStatus);
-        });
     const storageKey = `cheddar-card-show-drivers:${card.id}`;
 
     useEffect(() => {
@@ -2681,6 +2618,104 @@ export default function CardsPageClient() {
       originalGame.display_status ??
       (originalGame.lifecycle_mode === 'active' ? 'ACTIVE' : 'SCHEDULED');
     const showActiveBadge = displayStatus === 'ACTIVE';
+    const hasVisibleBetOdds = Boolean(
+      displayPlay.bet &&
+        Number.isFinite(
+          typeof livePrice === 'number' ? livePrice : displayPlay.bet.odds_american,
+        ),
+    );
+    const isProjectionOnlyCard =
+      displayPlay.market_type === 'FIRST_PERIOD' ||
+      displayPlay.market_type === 'INFO' ||
+      displayPlay.market_type === 'PROP';
+    const isActionableDecision =
+      displayDecision === 'PLAY' || displayDecision === 'LEAN';
+    const shouldDemoteForMissingOdds =
+      isActionableDecision && !hasVisibleBetOdds && !isProjectionOnlyCard;
+    const visibleDecision = shouldDemoteForMissingOdds ? 'PASS' : displayDecision;
+    const visibleVerdict = getDisplayVerdict(visibleDecision);
+    const visibleStatusLabel = visibleVerdict ? visibleVerdict.label : visibleDecision;
+    const visibleBetText = shouldDemoteForMissingOdds ? 'NO PLAY' : displayBetText;
+    const projectedValue = resolveProjectedValueForMarketContext({
+      marketType,
+      selectionSide: displaySelectionSide,
+      projectedMargin,
+      projectedTotal,
+      projectedTeamTotal,
+    });
+    const projectedSentence =
+      isSpreadLikeMarket || isTotalLikeMarket
+        ? formatProjectedSentence(
+            projectedValue,
+            marketLine,
+            primaryReasonCode,
+            effectiveEdgePct,
+            marketType,
+            projectedMargin,
+          )
+        : null;
+    const contextLine1 =
+      projectedSentence ||
+      (hasActionableEdge && primaryReasonCode !== 'EXACT_WAGER_MISMATCH'
+        ? `Edge: ${(effectiveEdgePct * 100).toFixed(1)}% | Tier: ${
+            decisionV2?.play_tier ??
+            displayPlay.decision_data?.edge_tier ??
+            displayPlay.valueStatus
+          }`
+        : isNoEdgeAtPrice
+          ? `No edge at current price | Tier: ${
+              decisionV2?.play_tier ??
+              displayPlay.decision_data?.edge_tier ??
+              displayPlay.valueStatus
+            }`
+          : 'No market-specific edge available');
+    const baseDriverLine =
+      primaryReasonCode && !INFORMATIONAL_CODES.has(primaryReasonCode)
+        ? formatReasonCode(primaryReasonCode)
+        : canRenderModelSummary
+          ? (() => {
+              const whyCode = displayPlay.whyCode;
+              if (whyCode && INFORMATIONAL_CODES.has(whyCode)) {
+                return displayPlay.whyText || null;
+              }
+              return displayPlay.whyText || (whyCode ? formatReasonCode(whyCode) : null);
+            })()
+          : 'Analysis unavailable (drivers missing).';
+    const contextLine2 = baseDriverLine
+      ? `Driver: ${baseDriverLine}`
+      : activeRiskCodes.length > 0
+        ? `Risk: ${formatReasonCode(activeRiskCodes[0])}`
+        : null;
+    const showMathDetails =
+      canRenderModelSummary &&
+      (shouldRenderSpreadContext ||
+        hasTotalContext ||
+        hasOnePeriodTotalContext ||
+        hasMlContext ||
+        hasEdgeMathContext);
+    const hasDriverDetails = decisionV2
+      ? decisionV2.driver_reasons.length > 0
+      : fallbackDecision.topContributors.length > 0;
+    const hasMissingInputDetails =
+      (!decisionV2 &&
+        (isBroken || isDegraded) &&
+        (displayPlay.transform_meta?.missing_inputs?.length ?? 0) > 0) ||
+      Boolean(decisionV2 && decisionV2.missing_data.missing_fields.length > 0);
+    const showPassDetail = visibleDecision === 'PASS' && Boolean(decisionV2);
+    const showAdvancedRisk =
+      activeRiskCodes.length > 0 ||
+      isCoinflipHighEdge ||
+      isCoinflipLowEdge ||
+      fallbackDecision.spreadCompare !== undefined;
+    const hasDetails =
+      showMathDetails ||
+      hasDriverDetails ||
+      hasMissingInputDetails ||
+      showPassDetail ||
+      showAdvancedRisk ||
+      Boolean(displayOddsTimestamp) ||
+      Boolean(updatedTime) ||
+      Boolean(ftTrendInsight);
 
     return (
       <div
@@ -2705,127 +2740,37 @@ export default function CardsPageClient() {
             <div className="text-sm text-cloud/70">
               <span>{gameTime}</span>
             </div>
+            {originalGame.odds && (
+              <p className="mt-1 text-xs text-cloud/55 font-mono">
+                ML: {formatOddsLine(originalGame.odds.h2hHome)} /{' '}
+                {formatOddsLine(originalGame.odds.h2hAway)}{' '}
+                {typeof originalGame.odds.total === 'number'
+                  ? `| O/U ${originalGame.odds.total}`
+                  : ''}
+              </p>
+            )}
           </div>
         </div>
 
-        <div className="border-t border-white/5 pt-3">
-          {originalGame.odds ? (
-            <div className="grid grid-cols-3 gap-4 text-sm">
-              <div>
-                <p className="text-cloud/50 text-xs mb-1">Moneyline</p>
-                <p className="font-mono text-cloud/80">
-                  {(() => {
-                    const homeMascot = card.homeTeam.split(' ').slice(-1)[0];
-                    const awayMascot = card.awayTeam.split(' ').slice(-1)[0];
-                    const useFullNames = homeMascot === awayMascot;
-                    const homeDisplay = useFullNames
-                      ? card.homeTeam
-                      : homeMascot;
-                    const awayDisplay = useFullNames
-                      ? card.awayTeam
-                      : awayMascot;
-                    return `${homeDisplay} ${formatOddsLine(originalGame.odds.h2hHome)} / ${awayDisplay} ${formatOddsLine(originalGame.odds.h2hAway)}`;
-                  })()}
-                </p>
-              </div>
-              <div>
-                <p className="text-cloud/50 text-xs mb-1">Total</p>
-                <p className="font-mono text-cloud/80">
-                  {originalGame.odds.total !== null
-                    ? `O/U ${originalGame.odds.total}`
-                    : '--'}
-                </p>
-                {(() => {
-                  if (!primaryModelProjectionPlay?.projectedTotal) return null;
-                  const isRedundantModelLine =
-                    isTotalLikeMarket &&
-                    typeof projectedLineValue === 'number' &&
-                    Math.abs(
-                      primaryModelProjectionPlay.projectedTotal - projectedLineValue,
-                    ) <= 0.05;
-                  const marketTotalLine =
-                    typeof originalGame.odds?.total === 'number'
-                      ? originalGame.odds.total
-                      : undefined;
-
-                  const computeLineEdge = (
-                    projected: number,
-                    fallbackEdge: number | null | undefined,
-                  ) => {
-                    const computed =
-                      typeof marketTotalLine === 'number'
-                        ? Number((projected - marketTotalLine).toFixed(2))
-                        : undefined;
-                    return typeof computed === 'number'
-                      ? computed
-                      : typeof fallbackEdge === 'number'
-                        ? fallbackEdge
-                        : undefined;
-                  };
-
-                  const primaryEdge = computeLineEdge(
-                    primaryModelProjectionPlay.projectedTotal,
-                    primaryModelProjectionPlay.edge,
-                  );
-                  if (isRedundantModelLine) return null;
-
-                  const primarySign = (primaryEdge ?? 0) >= 0 ? '+' : '-';
-                  const primaryColor =
-                    (primaryEdge ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400';
-                  const primaryPrediction =
-                    typeof primaryModelProjectionPlay.prediction === 'string' &&
-                    primaryModelProjectionPlay.prediction.length > 0
-                      ? primaryModelProjectionPlay.prediction
-                      : (primaryEdge ?? 0) >= 0
-                        ? 'OVER'
-                        : 'UNDER';
-                  if (typeof primaryEdge !== 'number') return null;
-                  return (
-                    <p className={`font-mono text-xs mt-0.5 ${primaryColor}`}>
-                      Model: {primaryModelProjectionPlay.projectedTotal.toFixed(2)} ({primarySign}
-                      {Math.abs(primaryEdge).toFixed(2)} {primaryPrediction})
-                    </p>
-                  );
-                })()}
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-cloud/40 italic">No odds data</p>
-          )}
-        </div>
-
         <div className="border-t border-white/5 mt-3 pt-3 space-y-3">
-          {/* Compact Play Strip */}
           <div className="rounded-md border border-white/10 bg-white/5 p-3">
-            <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2 flex-wrap">
-                {/* WI-0331: Market type badge */}
                 {getMarketTypeBadge(
                   displayPlay.bet?.market_type,
                   displayPlay.market,
                 )}
-                {/* Decision badge — muted when coinflip + low edge */}
-                {displayDecision && (() => {
-                  const displayVerdict = getDisplayVerdict(displayDecision);
-                  const colorMap = {
-                    PLAY: 'bg-green-700/50 text-green-200 border-green-600/60',
-                    LEAN: 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60',
-                    PASS: 'bg-slate-700/50 text-slate-200 border-slate-600/60',
-                  };
-                  const baseColor = colorMap[displayDecision as keyof typeof colorMap] || colorMap.PASS;
-                  return (
-                    <span
-                      className={`px-2 py-1 text-xs font-bold rounded border ${
-                        isCoinflipLowEdge
-                          ? 'bg-slate-700/50 text-slate-300 border-slate-600/60'
-                          : baseColor
-                      }`}
-                    >
-                      {displayVerdict ? displayVerdict.label : displayDecision}
-                    </span>
-                  );
-                })()}
-                {/* Quality badges */}
+                <span
+                  className={`px-2 py-1 text-xs font-bold rounded border ${
+                    visibleDecision === 'PLAY'
+                      ? 'bg-green-700/50 text-green-200 border-green-600/60'
+                      : visibleDecision === 'LEAN'
+                        ? 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60'
+                        : 'bg-slate-700/50 text-slate-200 border-slate-600/60'
+                  }`}
+                >
+                  {visibleStatusLabel}
+                </span>
                 {isDegraded && (
                   <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-amber-700/30 text-amber-200 border-amber-600/50">
                     Degraded
@@ -2836,622 +2781,306 @@ export default function CardsPageClient() {
                     Data issue
                   </span>
                 )}
-                {isEdgeVerification && (
-                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-amber-700/30 text-amber-200 border-amber-600/50">
-                    Verification Required
-                  </span>
-                )}
-                {isProxyCapped && (
-                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-indigo-700/30 text-indigo-200 border-indigo-600/50">
-                    Proxy Capped
-                  </span>
-                )}
-                {/* Flags */}
-                {isCoinflip && (
-                  <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-blue-700/30 text-blue-200 border-blue-600/50">
-                    Coinflip
-                  </span>
-                )}
-                {/* Fade Home badge removed — internal model signal, not user-facing */}
-                {canRenderModelSummary && displayPlay.priceFlags.length > 0 && (
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {displayPlay.priceFlags.map((flag) => (
-                      <span
-                        key={flag}
-                        className={`px-2 py-0.5 text-xs font-semibold rounded border ${getPriceFlagClass(flag)}`}
-                      >
-                        {formatPriceFlagLabel(flag)}
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
             </div>
-            <div className="mt-2">
-              <span className="text-xl font-bold text-cloud">
-                {displayBetText}
-              </span>
-            </div>
-            {canRenderModelSummary ? (
-              <div className="mt-1 text-xs text-cloud/60">
-                {(() => {
-                  // For totals and spreads, show simplified projected sentence by default
-                  if (isSpreadLikeMarket || isTotalLikeMarket) {
-                    const projectedValue = resolveProjectedValueForMarketContext({
-                      marketType,
-                      selectionSide: displaySelectionSide,
-                      projectedMargin,
-                      projectedTotal,
-                      projectedTeamTotal,
-                    });
-                    const marketLineValue = marketLine;
-                    const projectedSentence = formatProjectedSentence(
-                      projectedValue,
-                      marketLineValue,
-                      primaryReasonCode,
-                      effectiveEdgePct,
-                      marketType,
-                      projectedMargin,
-                    );
-
-                    if (projectedSentence) {
-                      return <>{projectedSentence}</>;
-                    }
-                  }
-
-                  // Fallback edge/tier summary for non-spread/total or when projection unavailable
-                  if (
-                    hasActionableEdge &&
-                    primaryReasonCode !== 'EXACT_WAGER_MISMATCH'
-                  ) {
-                    return (
-                      <>
-                        Edge {effectiveEdgePct * 100 >= 0 ? '+' : ''}
-                        {(effectiveEdgePct * 100).toFixed(1)}% • Tier{' '}
-                        {decisionV2?.play_tier ??
-                          displayPlay.decision_data?.edge_tier ??
-                          displayPlay.valueStatus}
-                      </>
-                    );
-                  }
-
-                  if (isNoEdgeAtPrice) {
-                    return (
-                      <>
-                        No edge at current price • Tier{' '}
-                        {decisionV2?.play_tier ??
-                          displayPlay.decision_data?.edge_tier ??
-                          displayPlay.valueStatus}
-                      </>
-                    );
-                  }
-
-                  return (
-                    <>
-                      No market-specific edge available
-                      {primaryReasonCode
-                        ? ` (${formatReasonCode(primaryReasonCode)})`
-                        : ''}
-                    </>
-                  );
-                })()}
-              </div>
-            ) : (
-              <div className="mt-1 text-xs text-amber-200/90">
-                {primaryReasonCode || 'Analysis unavailable (drivers missing).'}
-              </div>
-            )}
+            <p className="mt-2 text-xl font-bold text-cloud">{visibleBetText}</p>
+            <p className="mt-1 text-xs text-cloud/65">{contextLine1}</p>
           </div>
 
-          {canRenderModelSummary &&
-            (shouldRenderSpreadContext ||
-              hasTotalContext ||
-              hasOnePeriodTotalContext ||
-              hasMlContext ||
-              hasEdgeMathContext) && (
-              <details className="rounded-md border border-white/10 bg-white/5 p-3">
-                <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2 select-none">
-                  Market Math
-                </summary>
-                <div className="mt-2">
-                {shouldRenderSpreadContext && (
-                  <div className="flex items-center gap-4 text-xs font-mono flex-wrap mt-2">
-                    <span className="text-cloud/60">
-                      Projected margin{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {formatProjectedMarginDirectional(projectedMargin)}
-                      </span>
-                    </span>
-                    <span className="text-cloud/40">|</span>
-                    <span className="text-cloud/60">
-                      Margin math (HOME - AWAY){' '}
-                      <span className="text-cloud/90 font-bold">
-                        {typeof projectedMargin === 'number'
-                          ? formatSignedDecimal(projectedMargin)
-                          : 'N/A'}
-                      </span>
-                    </span>
-                    <span className="text-cloud/40">|</span>
-                    <span className="text-cloud/60">
-                      Model spread (home){' '}
-                      <span className="text-cloud/90 font-bold">
-                        {typeof projectedSpreadHome === 'number'
-                          ? formatSignedDecimal(projectedSpreadHome)
-                          : 'N/A'}
-                      </span>
-                    </span>
-                    <span className="text-cloud/40">|</span>
-                    <span className="text-cloud/60">
-                      Market line{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {typeof marketLine === 'number'
-                          ? formatSignedDecimal(marketLine)
-                          : 'N/A'}
-                      </span>
-                    </span>
-                    <span className="text-cloud/40">|</span>
-                    <span className="text-cloud/60">
-                      Line delta{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {typeof edgePoints === 'number'
-                          ? `${formatSignedDecimal(edgePoints)} pts`
-                          : 'N/A'}
-                      </span>
-                    </span>
-                  </div>
-                )}
-                {hasTotalContext && (
-                  <div className="mt-2 space-y-1">
-                    <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
-                      <span className="text-cloud/60">
-                        Projected total{' '}
+          {contextLine2 && (
+            <div className="rounded-md border border-white/10 bg-white/5 p-3">
+              <p className="text-sm text-cloud/80">{contextLine2}</p>
+            </div>
+          )}
+
+          {hasDetails && (
+            <details className="rounded-md border border-white/10 bg-white/5 p-3">
+              <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/45 font-semibold select-none">
+                Details
+              </summary>
+              <div className="mt-2 space-y-3">
+                {showMathDetails && (
+                  <div className="space-y-1 text-xs font-mono text-cloud/65">
+                    {shouldRenderSpreadContext && (
+                      <p>
+                        Model spread (home):{' '}
+                        <span className="text-cloud/90 font-bold">
+                          {typeof projectedSpreadHome === 'number'
+                            ? formatSignedDecimal(projectedSpreadHome)
+                            : 'N/A'}
+                        </span>{' '}
+                        | Market line:{' '}
+                        <span className="text-cloud/90 font-bold">
+                          {typeof marketLine === 'number'
+                            ? formatSignedDecimal(marketLine)
+                            : 'N/A'}
+                        </span>{' '}
+                        | Delta:{' '}
+                        <span className="text-cloud/90 font-bold">
+                          {typeof edgePoints === 'number'
+                            ? `${formatSignedDecimal(edgePoints)} pts`
+                            : 'N/A'}
+                        </span>
+                      </p>
+                    )}
+                    {hasTotalContext && (
+                      <p>
+                        Model total:{' '}
                         <span className="text-cloud/90 font-bold">
                           {typeof projectedTeamTotal === 'number'
                             ? projectedTeamTotal.toFixed(1)
                             : typeof projectedTotal === 'number'
                               ? projectedTotal.toFixed(1)
                               : 'N/A'}
-                        </span>
-                      </span>
-                      <span className="text-cloud/40">|</span>
-                      <span className="text-cloud/60">
-                        Market line{' '}
+                        </span>{' '}
+                        | Market line:{' '}
                         <span className="text-cloud/90 font-bold">
                           {typeof marketLine === 'number'
                             ? marketLine.toFixed(1)
                             : 'N/A'}
-                        </span>
-                      </span>
-                      <span className="text-cloud/40">|</span>
-                      <span className="text-cloud/60">
-                        Line delta{' '}
+                        </span>{' '}
+                        | Delta:{' '}
                         <span className="text-cloud/90 font-bold">
                           {typeof edgePoints === 'number'
                             ? `${formatSignedDecimal(edgePoints)} pts`
                             : 'N/A'}
                         </span>
-                      </span>
-                    </div>
-                    {lineMoved && typeof bakedLine === 'number' && (
-                      <div className="mt-1 text-xs text-amber-400/80 font-mono">
-                        Line moved since model ran (was {bakedLine.toFixed(1)})
+                      </p>
+                    )}
+                    {hasMlContext && (
+                      <p>
+                        Fair:{' '}
+                        <span className="text-cloud/90 font-bold">
+                          {typeof mlBreakEvenPrice === 'number'
+                            ? `${mlBreakEvenPrice > 0 ? '+' : ''}${mlBreakEvenPrice}`
+                            : 'N/A'}
+                        </span>{' '}
+                        vs{' '}
+                        <span className="text-cloud/90 font-bold">
+                          {typeof livePrice === 'number'
+                            ? `${livePrice > 0 ? '+' : ''}${Math.trunc(livePrice)}`
+                            : 'N/A'}
+                        </span>
+                      </p>
+                    )}
+                    {hasOnePeriodTotalContext && (
+                      <div className="space-y-1">
+                        <p>
+                          1P projection:{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {typeof projectedTotal1p === 'number'
+                              ? projectedTotal1p.toFixed(2)
+                              : 'N/A'}
+                          </span>{' '}
+                          | 1P call:{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {onePModelCall ?? 'PASS'}
+                          </span>
+                        </p>
+                        <p>
+                          Goalie context:{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {goalieContextNames.length > 0
+                              ? goalieContextNames.join(' / ')
+                              : goalieUncertain1p
+                                ? 'Uncertain (PASS-capped)'
+                                : 'Stable'}
+                          </span>
+                          {goalieContextStatuses.length > 0 && (
+                            <>
+                              {' '}
+                              | Status:{' '}
+                              <span className="text-cloud/90 font-bold">
+                                {goalieContextStatuses.join(' / ')}
+                              </span>
+                            </>
+                          )}
+                        </p>
                       </div>
+                    )}
+                    {typeof projectedScoreHome === 'number' &&
+                      typeof projectedScoreAway === 'number' && (
+                        <p>
+                          Projected score: {card.awayTeam}{' '}
+                          {projectedScoreAway.toFixed(1)} - {card.homeTeam}{' '}
+                          {projectedScoreHome.toFixed(1)}
+                        </p>
+                      )}
+                    {lineMoved && typeof bakedLine === 'number' && (
+                      <p className="text-amber-300">
+                        Line moved since model run (was {bakedLine.toFixed(1)})
+                      </p>
+                    )}
+                    {isEdgeVerification && hasEdgeMathContext && (
+                      <p className="text-amber-300">
+                        Edge verification required on non-total market.
+                      </p>
                     )}
                   </div>
                 )}
-                {hasMlContext && (
-                  <div className="flex items-center gap-4 text-xs font-mono flex-wrap mt-2">
-                    <span className="text-cloud/60">
-                      Current price{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {typeof livePrice === 'number'
-                          ? `${livePrice > 0 ? '+' : ''}${Math.trunc(livePrice)}`
-                          : 'N/A'}
+
+                {showPassDetail && (
+                  <div className="text-xs text-cloud/70 space-y-1">
+                    <p>
+                      Model direction:{' '}
+                      <span className="text-cloud/90 font-semibold">
+                        {isFtTrendSpread
+                          ? `Take ${ftTrendInsight?.advantagedTeam ?? 'better FT% team'} spread`
+                          : (modelLean ?? 'NONE')}
                       </span>
-                    </span>
-                    <span className="text-cloud/40">|</span>
-                    <span className="text-cloud/60">
-                      Break-even price{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {typeof mlBreakEvenPrice === 'number'
-                          ? `${mlBreakEvenPrice > 0 ? '+' : ''}${mlBreakEvenPrice}`
-                          : 'N/A'}
-                      </span>
-                    </span>
-                  </div>
-                )}
-                {hasOnePeriodTotalContext && (
-                  <div className="mt-2 space-y-1">
-                    <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
-                      <span className="text-cloud/60">
-                        1P projection{' '}
-                        <span className="text-cloud/90 font-bold">
-                          {typeof projectedTotal1p === 'number'
-                            ? projectedTotal1p.toFixed(2)
-                            : 'N/A'}
-                        </span>
-                      </span>
-                      <span className="text-cloud/40">|</span>
-                      <span className="text-cloud/60">
-                        1P Call{' '}
-                        <span className="text-cloud/90 font-bold">
-                          {onePModelCall ?? 'PASS'}
-                        </span>
-                      </span>
-                    </div>
-                    <div className="text-xs font-mono text-cloud/60">
-                      Goalie context{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {goalieContextNames.length > 0
-                          ? goalieContextNames.join(' / ')
-                          : goalieUncertain1p
-                            ? 'Uncertain (PASS-capped)'
-                            : 'Stable'}
-                      </span>
-                      {goalieContextStatuses.length > 0 && (
-                        <>
-                          <span className="text-cloud/40"> | </span>
-                          Status{' '}
-                          <span className="text-cloud/90 font-bold">
-                            {goalieContextStatuses.join(' / ')}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {typeof projectedScoreHome === 'number' &&
-                  typeof projectedScoreAway === 'number' && (
-                    <p className="text-xs text-cloud/60 mt-2">
-                      Projected score: {card.awayTeam}{' '}
-                      {projectedScoreAway.toFixed(1)} - {card.homeTeam}{' '}
-                      {projectedScoreHome.toFixed(1)}
                     </p>
-                  )}
-                {isEdgeVerification && hasEdgeMathContext && (
-                  <p className="text-xs text-amber-300/90 mt-2 font-semibold">
-                    Caution: edge above 20% on a non-total market — verification
-                    required
+                    <p>
+                      Pricing Status:{' '}
+                      <span className="text-cloud/90 font-semibold">
+                        {formatSharpPriceStatus(sharpVerdict)}
+                      </span>
+                    </p>
+                    <p>
+                      Reason:{' '}
+                      <span className="text-cloud/90 font-semibold">
+                        {formatReasonCode(primaryReasonCode)}
+                      </span>
+                    </p>
+                  </div>
+                )}
+
+                {hasDriverDetails && (
+                  <div className="space-y-2">
+                    {decisionV2 ? (
+                      decisionV2.driver_reasons.map((reason, index) => (
+                        <div
+                          key={`${card.id}-indicator-${index}`}
+                          className="bg-white/5 rounded-md px-3 py-2"
+                        >
+                          <p className="text-xs text-cloud/55 leading-snug">{reason}</p>
+                        </div>
+                      ))
+                    ) : (
+                      fallbackDecision.topContributors.map(({ driver, polarity }) => (
+                        <div
+                          key={driverRowKey(driver)}
+                          className="bg-white/5 rounded-md px-3 py-2"
+                        >
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            {getPolarityBadge(polarity)}
+                            {getTierBadge(driver.tier)}
+                            {getDirectionBadge(driver.direction)}
+                            <span className="text-xs font-mono text-cloud/60">
+                              {formatConfidence(driver.confidence)}
+                            </span>
+                            <span className="text-xs font-mono text-cloud/60">
+                              {formatContributorMarketLabel(
+                                driver.market,
+                                displayPlay.market,
+                              )}
+                            </span>
+                            <span className="text-xs text-cloud/70 font-medium">
+                              {driver.cardTitle}
+                            </span>
+                          </div>
+                          <p className="text-xs text-cloud/50 leading-snug">{driver.note}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {showAdvancedRisk && (
+                  <div className="space-y-2">
+                    {activeRiskCodes.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {activeRiskCodes.map((code) => (
+                          <span
+                            key={code}
+                            className="px-2 py-0.5 text-xs font-semibold rounded border bg-amber-700/30 text-amber-200 border-amber-600/50"
+                          >
+                            {formatReasonCode(code)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {isCoinflipHighEdge && (
+                      <p className="text-xs text-blue-200/80">
+                        Coinflip inefficiency: model fair probability diverges from current
+                        market pricing.
+                      </p>
+                    )}
+                    {isCoinflipLowEdge && (
+                      <p className="text-xs text-cloud/55">
+                        Near-even matchup with minimal edge; variance can flip outcomes.
+                      </p>
+                    )}
+                    {fallbackDecision.spreadCompare && (
+                      <p className="text-xs font-mono text-cloud/65">
+                        Spread compare: proj{' '}
+                        {fallbackDecision.spreadCompare.projectedSpread !== null
+                          ? formatSignedDecimal(fallbackDecision.spreadCompare.projectedSpread)
+                          : 'N/A'}{' '}
+                        vs market{' '}
+                        {fallbackDecision.spreadCompare.marketLine !== null
+                          ? formatSignedDecimal(fallbackDecision.spreadCompare.marketLine)
+                          : 'N/A'}
+                      </p>
+                    )}
+                    {activeRiskCodes.length > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={toggleDrivers}
+                          className="text-xs text-cloud/60 hover:text-cloud underline underline-offset-4"
+                        >
+                          {showAllDrivers ? 'Hide all drivers' : 'Show all drivers'}
+                        </button>
+                        {showAllDrivers && (
+                          <div className="space-y-2">
+                            {fallbackDecision.allDrivers.map((driver) => (
+                              <div
+                                key={`all-${driverRowKey(driver)}`}
+                                className="bg-white/5 rounded-md px-3 py-2"
+                              >
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  {getTierBadge(driver.tier)}
+                                  {getDirectionBadge(driver.direction)}
+                                  <span className="text-xs font-mono text-cloud/60">
+                                    {formatMarketLabel(driver.market)}
+                                  </span>
+                                  <span className="text-xs font-mono text-cloud/60">
+                                    {formatConfidence(driver.confidence)}
+                                  </span>
+                                  <span className="text-xs text-cloud/70 font-medium">
+                                    {driver.cardTitle}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-cloud/50 leading-snug">
+                                  {driver.note}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {hasMissingInputDetails && (
+                  <p className="text-xs text-amber-200/90">
+                    Missing inputs:{' '}
+                    {decisionV2
+                      ? decisionV2.missing_data.missing_fields.join(', ')
+                      : displayPlay.transform_meta?.missing_inputs.join(', ')}
                   </p>
                 )}
-                </div>
-              </details>
-            )}
 
-          {/* WI-0332: Coinflip + edge messaging */}
-          {isCoinflipHighEdge && (
-            <div className="rounded-md border border-blue-600/40 bg-blue-900/20 p-3">
-              <p className="text-xs font-semibold text-blue-200 mb-1">
-                Pricing Inefficiency Detected
-              </p>
-              <p className="text-xs text-blue-100/80">
-                Model fair probability:{' '}
-                {typeof resolvedModelProb === 'number'
-                  ? `${(resolvedModelProb * 100).toFixed(1)}%`
-                  : '~50%'}
-                , but market pricing is significantly off (edge{' '}
-                {(effectiveEdgePct * 100).toFixed(1)}%). The edge here comes
-                from an exploitable line, not a strong directional signal.
-              </p>
-            </div>
-          )}
-          {isCoinflipLowEdge && (
-            <div className="rounded-md border border-white/5 bg-white/3 p-3">
-              <p className="text-xs text-cloud/50">
-                Near-even matchup with minimal market edge. Treat with caution —
-                small variance swings could flip this outcome.
-              </p>
-            </div>
-          )}
-
-          {/* WI-0337: Spread line compare */}
-          {fallbackDecision.spreadCompare && (
-            <div className="rounded-md border border-white/10 bg-white/5 p-3">
-              <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
-                Spread Compare
-              </p>
-              <div className="flex items-center gap-3 text-xs font-mono flex-wrap">
-                {fallbackDecision.spreadCompare.projectedSpread !== null ? (
-                  <>
-                    <span className="text-cloud/60">
-                      Proj{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {fallbackDecision.spreadCompare.projectedSpread > 0
-                          ? `+${fallbackDecision.spreadCompare.projectedSpread}`
-                          : `${fallbackDecision.spreadCompare.projectedSpread}`}
-                      </span>
-                    </span>
-                    <span className="text-cloud/40">vs</span>
-                    <span className="text-cloud/60">
-                      Market{' '}
-                      <span className="text-cloud/90 font-bold">
-                        {fallbackDecision.spreadCompare.marketLine !== null
-                          ? fallbackDecision.spreadCompare.marketLine > 0
-                            ? `+${fallbackDecision.spreadCompare.marketLine}`
-                            : `${fallbackDecision.spreadCompare.marketLine}`
-                          : 'N/A'}
-                      </span>
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-cloud/60">
-                    Market line{' '}
-                    <span className="text-cloud/90 font-bold">
-                      {fallbackDecision.spreadCompare.marketLine !== null
-                        ? fallbackDecision.spreadCompare.marketLine > 0
-                          ? `+${fallbackDecision.spreadCompare.marketLine}`
-                          : `${fallbackDecision.spreadCompare.marketLine}`
-                        : 'N/A'}
-                    </span>
-                  </span>
+                {ftTrendInsight && (
+                  <p className="text-xs text-cloud/60">
+                    FT context: {formatFtTrendInsight(ftTrendInsight)}
+                  </p>
                 )}
-              </div>
-            </div>
-          )}
 
-          <div className="rounded-md border border-white/10 bg-white/5 p-3">
-            <p className="text-sm text-cloud/80">
-              {primaryReasonCode && !INFORMATIONAL_CODES.has(primaryReasonCode)
-                ? formatReasonCode(primaryReasonCode)
-                : canRenderModelSummary
-                  ? (() => {
-                      const whyCode = displayPlay.whyCode;
-                      if (whyCode && INFORMATIONAL_CODES.has(whyCode)) return null;
-                      return displayPlay.whyText || formatReasonCode(whyCode);
-                    })()
-                  : 'Data issue: drivers unavailable'}
-            </p>
-            {ftTrendInsight && (
-              <p className="text-xs text-cloud/70 mt-2">
-                FT: {formatFtTrendInsight(ftTrendInsight)}
-              </p>
-            )}
-            {displayDecision === 'PASS' &&
-              hasActionableEdge &&
-              supportGateReason && (
-                <p className="text-xs text-cloud/60 mt-1">
-                  Market edge exists, but support/conflict thresholds were not
-                  met.
+                <p className="text-xs text-cloud/45">
+                  Odds updated {displayOddsTimestamp} | Card updated {updatedTime}
                 </p>
-              )}
-          </div>
-
-          {displayDecision === 'PASS' && decisionV2 && (
-            <div className="rounded-md border border-white/10 bg-white/5 p-3">
-              <p className="text-xs uppercase tracking-widest text-cloud/40 font-semibold mb-2">
-                PASS Breakdown
-              </p>
-              <div className="space-y-1 text-xs text-cloud/70">
-                <p>
-                  Model Direction:{' '}
-                  <span className="text-cloud/90 font-semibold">
-                    {isFtTrendSpread
-                      ? `Take ${ftTrendInsight?.advantagedTeam ?? 'better FT% team'} spread`
-                      : (modelLean ?? 'NONE')}
-                  </span>
-                </p>
-                <p>
-                  Pricing Status:{' '}
-                  <span className="text-cloud/90 font-semibold">
-                    {formatSharpPriceStatus(sharpVerdict)}
-                  </span>
-                </p>
-                <p>
-                  Reason:{' '}
-                  <span className="text-cloud/90 font-semibold">
-                    {formatReasonCode(primaryReasonCode)}
-                  </span>
-                </p>
-              </div>
-            </div>
-          )}
-
-          <details className="group rounded-md border border-white/10 bg-white/5 p-3">
-            <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold select-none flex items-center justify-between">
-              <span className="flex items-center">
-                <span className="mr-2 inline-block text-2xl leading-none text-cloud/50 transition-transform group-open:rotate-90">
-                  ▸
-                </span>
-                <span>Model Lean Indicators</span>
-              </span>
-              <span className="ml-3">
-                {!decisionV2 &&
-                  canRenderModelSummary &&
-                  fallbackDecision.supportGrade === 'STRONG' && (
-                    <span className="text-xs font-semibold text-emerald-400">
-                      Strong
-                    </span>
-                  )}
-                {!decisionV2 &&
-                  canRenderModelSummary &&
-                  fallbackDecision.supportGrade === 'MIXED' && (
-                    <span className="text-xs font-semibold text-amber-400">
-                      Mixed signals
-                      {fallbackDecision.topContributors.length > 0 && (
-                        <span className="font-normal text-cloud/50 ml-1">
-                          (
-                          {
-                            fallbackDecision.topContributors.filter(
-                              (c) => c.polarity === 'pro',
-                            ).length
-                          }{' '}
-                          aligned
-                          {fallbackDecision.topContributors.some(
-                            (c) => c.polarity === 'contra',
-                          )
-                            ? `, ${fallbackDecision.topContributors.filter((c) => c.polarity === 'contra').length} opposing`
-                            : ''}
-                          )
-                        </span>
-                      )}
-                    </span>
-                  )}
-                {!decisionV2 &&
-                  canRenderModelSummary &&
-                  fallbackDecision.supportGrade === 'WEAK' && (
-                    <span className="text-xs font-semibold text-cloud/40">
-                      {displayDecision === 'PASS' &&
-                      fallbackDecision.topContributors.length > 0 &&
-                      (fallbackDecision.passReasonCode ===
-                        'PASS_DRIVER_SUPPORT_WEAK' ||
-                        fallbackDecision.passReasonCode === 'PASS_NO_EDGE')
-                        ? 'Model lean only — no betting edge'
-                        : fallbackDecision.passReasonCode ===
-                            'PASS_MISSING_PRIMARY_DRIVER'
-                          ? 'No primary driver'
-                          : fallbackDecision.passReasonCode ===
-                              'PASS_CONFLICT_HIGH'
-                            ? 'High conflict'
-                            : 'Weak support'}
-                    </span>
-                  )}
-              </span>
-            </summary>
-            <div className="mt-2">
-            {decisionV2 ? (
-              decisionV2.driver_reasons.length === 0 ? (
-                <p className="text-xs text-cloud/50">
-                  No model lean indicators were provided by the worker.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {decisionV2.driver_reasons.map((reason, index) => (
-                    <div
-                      key={`${card.id}-indicator-${index}`}
-                      className="bg-white/5 rounded-md px-3 py-2"
-                    >
-                      <p className="text-xs text-cloud/50 leading-snug">
-                        {reason}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )
-            ) : !canRenderModelSummary ||
-              fallbackDecision.topContributors.length === 0 ? (
-              <p className="text-xs text-cloud/50">
-                {canRenderModelSummary
-                  ? 'No strong contributors passed market filters.'
-                  : displayPlay.whyText ||
-                    displayPlay.decision_data?.reason_code
-                      ?.replace(/^PASS_/, '')
-                      .replace(/_/g, ' ')
-                      .toLowerCase() ||
-                    'Analysis unavailable (drivers missing).'}
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {fallbackDecision.topContributors.map(
-                  ({ driver, polarity }) => (
-                    <div
-                      key={driverRowKey(driver)}
-                      className="bg-white/5 rounded-md px-3 py-2"
-                    >
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        {getPolarityBadge(polarity)}
-                        {getTierBadge(driver.tier)}
-                        {getDirectionBadge(driver.direction)}
-                        <span className="text-xs font-mono text-cloud/60">
-                          {formatConfidence(driver.confidence)}
-                        </span>
-                        {diagnosticsEnabled &&
-                          displayPlay.decision === 'PASS' &&
-                          driver.tier === 'BEST' && (
-                            <span className="text-xs text-amber-400">
-                              (Overridden)
-                            </span>
-                          )}
-                        <span className="text-xs font-mono text-cloud/60">
-                          {formatContributorMarketLabel(
-                            driver.market,
-                            displayPlay.market,
-                          )}
-                        </span>
-                        <span className="text-xs text-cloud/70 font-medium">
-                          {driver.cardTitle}
-                        </span>
-                      </div>
-                      <p className="text-xs text-cloud/50 leading-snug">
-                        {driver.note}
-                      </p>
-                    </div>
-                  ),
-                )}
-              </div>
-            )}
-            {!decisionV2 &&
-              (isBroken || isDegraded) &&
-              (displayPlay.transform_meta?.missing_inputs?.length ?? 0) > 0 && (
-                <p className="text-xs text-amber-200/90 mt-2">
-                  Missing inputs:{' '}
-                  {displayPlay.transform_meta?.missing_inputs.join(', ')}
-                </p>
-              )}
-            {decisionV2 &&
-              decisionV2.missing_data.missing_fields.length > 0 && (
-                <p className="text-xs text-amber-200/90 mt-2">
-                  Missing inputs:{' '}
-                  {decisionV2.missing_data.missing_fields.join(', ')}
-                </p>
-              )}
-            </div>
-          </details>
-
-          {/* Totals (Blocked) hidden — internal pipeline state, not actionable for users */}
-
-          {/* WI-0328: only render Risk/Gates when there are active codes */}
-          {activeRiskCodes.length > 0 && (
-            <details className="rounded-md border border-white/10 bg-white/5 p-3">
-              <summary className="cursor-pointer text-xs uppercase tracking-widest text-cloud/40 font-semibold">
-                ⚠️ Context
-              </summary>
-              <div className="mt-2 space-y-2">
-                <div className="flex flex-wrap gap-2">
-                  {activeRiskCodes.map((code) => (
-                    <span
-                      key={code}
-                      className="px-2 py-0.5 text-xs font-semibold rounded border bg-amber-700/30 text-amber-200 border-amber-600/50"
-                    >
-                      {code}
-                    </span>
-                  ))}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={toggleDrivers}
-                  className="text-xs text-cloud/60 hover:text-cloud underline underline-offset-4"
-                >
-                  {showAllDrivers ? 'Hide all drivers' : 'Show all drivers'}
-                </button>
-
-                {showAllDrivers && (
-                  <div className="space-y-2">
-                    {fallbackDecision.allDrivers.map((driver) => (
-                      <div
-                        key={`all-${driverRowKey(driver)}`}
-                        className="bg-white/5 rounded-md px-3 py-2"
-                      >
-                        <div className="flex items-center gap-2 flex-wrap mb-1">
-                          {getTierBadge(driver.tier)}
-                          {getDirectionBadge(driver.direction)}
-                          <span className="text-xs font-mono text-cloud/60">
-                            {formatMarketLabel(driver.market)}
-                          </span>
-                          <span className="text-xs font-mono text-cloud/60">
-                            {formatConfidence(driver.confidence)}
-                          </span>
-                          <span className="text-xs text-cloud/70 font-medium">
-                            {driver.cardTitle}
-                          </span>
-                        </div>
-                        <p className="text-xs text-cloud/50 leading-snug">
-                          {driver.note}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             </details>
           )}
