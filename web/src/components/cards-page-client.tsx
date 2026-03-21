@@ -530,11 +530,20 @@ function extractChunkPath(message: string): string | null {
 function isChunkLoadFailure(message: string): boolean {
   if (!message) return false;
   const normalized = message.toLowerCase();
+  const nextStaticPathReferenced = normalized.includes('/_next/static/');
+  const nextStaticCssFailure =
+    nextStaticPathReferenced &&
+    normalized.includes('.css') &&
+    (normalized.includes('404') ||
+      normalized.includes('net::err') ||
+      normalized.includes('failed to load'));
+
   return (
     normalized.includes('chunkloaderror') ||
     normalized.includes('loading chunk') ||
     normalized.includes('failed to fetch dynamically imported module') ||
-    (normalized.includes('/_next/static/chunks/') && normalized.includes('404'))
+    (normalized.includes('/_next/static/chunks/') && normalized.includes('404')) ||
+    nextStaticCssFailure
   );
 }
 
@@ -1290,9 +1299,12 @@ export default function CardsPageClient() {
         errorEvent.message,
         stringifyUnknownError(errorEvent.error),
       ];
-      const target = errorEvent.target as HTMLScriptElement | null;
-      if (target?.src) {
+      const target = errorEvent.target;
+      if (target instanceof HTMLScriptElement && target.src) {
         parts.push(target.src);
+      }
+      if (target instanceof HTMLLinkElement && target.href) {
+        parts.push(target.href);
       }
       handleChunkFailure(parts.filter(Boolean).join(' | '), 'error');
     };
