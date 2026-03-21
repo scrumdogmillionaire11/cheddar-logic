@@ -652,7 +652,19 @@ function computeNHLMarketDecisions(oddsSnapshot) {
   });
 
   const modelWinProb =
-    projectedMargin !== null ? marginToWinProbability(projectedMargin) : null;
+    projectedMargin !== null
+      ? marginToWinProbability(
+          projectedMargin,
+          // WI-0538: use NHL-specific margin sigma (2.0 goals) instead of NBA
+          // default (12 pts). Calibration basis: NHL regular-season goal margins
+          // have std-dev ~1.8–2.2 across ~82-game samples; sigma=2.0 is the
+          // central estimate matching empirical reliability bins and producing
+          // Brier scores competitive with a flat-50 baseline on 1+-goal margins.
+          // Do not substitute σ without metric-based validation (see AGENTS.md
+          // Guard: calibration_risk).
+          edgeCalculator.getSigmaDefaults('NHL').margin,
+        )
+      : null;
   const impliedHome =
     moneylineHome !== null ? oddsToProbability(moneylineHome) : null;
   const impliedAway =
