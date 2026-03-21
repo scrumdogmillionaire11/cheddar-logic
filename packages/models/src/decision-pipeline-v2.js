@@ -15,6 +15,7 @@ const WATCHDOG_REASONS = {
   CONSISTENCY_MISSING: 'WATCHDOG_CONSISTENCY_MISSING',
   PARSE_FAILURE: 'WATCHDOG_PARSE_FAILURE',
   STALE_SNAPSHOT: 'WATCHDOG_STALE_SNAPSHOT',
+  STALE_MARKET_INPUT: 'STALE_MARKET_INPUT',
   MARKET_UNAVAILABLE: 'WATCHDOG_MARKET_UNAVAILABLE',
   // WI-0383: goalie identity uncertainty reason codes
   GOALIE_UNCONFIRMED: 'GOALIE_UNCONFIRMED',
@@ -885,6 +886,7 @@ function computeWatchdog(payload, context = {}) {
 
   let watchdogStatus = 'OK';
   if (staleMinutes !== null && staleMinutes > 30) {
+    watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_MARKET_INPUT);
     watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_SNAPSHOT);
   }
 
@@ -893,6 +895,7 @@ function computeWatchdog(payload, context = {}) {
       code === WATCHDOG_REASONS.CONSISTENCY_MISSING ||
       code === WATCHDOG_REASONS.PARSE_FAILURE ||
       code === WATCHDOG_REASONS.MARKET_UNAVAILABLE ||
+      code === WATCHDOG_REASONS.STALE_MARKET_INPUT ||
       (code === WATCHDOG_REASONS.STALE_SNAPSHOT &&
         staleMinutes !== null &&
         staleMinutes > 30),

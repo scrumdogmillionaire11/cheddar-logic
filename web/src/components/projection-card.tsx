@@ -93,10 +93,6 @@ export default function ProjectionCard({
   const hasGoalieContext =
     play.goalie_home_name || play.goalie_away_name || isGoalieUncertain;
 
-  const displayReasonCodes = reasonCodes.filter(
-    (c) => c !== 'NHL_1P_GOALIE_UNCERTAIN',
-  );
-
   return (
     <div className="rounded-lg border border-white/10 bg-surface/60 p-4 space-y-3">
       {/* Header row */}
@@ -203,23 +199,9 @@ export default function ProjectionCard({
       {/* Reasoning note */}
       {play.reasoning && (
         <div className="border-t border-white/5 pt-3">
-          <p className="text-xs text-cloud/40 italic leading-relaxed">
+          <p className="text-xs text-cloud/50 leading-relaxed">
             {play.reasoning}
           </p>
-        </div>
-      )}
-
-      {/* Ancillary reason codes */}
-      {displayReasonCodes.length > 0 && (
-        <div className="flex flex-wrap gap-1 pt-1">
-          {displayReasonCodes.map((code) => (
-            <span
-              key={code}
-              className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-white/5 text-cloud/35 border border-white/5"
-            >
-              {code}
-            </span>
-          ))}
         </div>
       )}
     </div>
