@@ -349,14 +349,13 @@ function filterByActionability(
     status = 'WATCH';
   }
 
-  // Also check legacy expression choice if no play
+  // Allow expressionChoice to override a PASS display action, but never driver
+  // tags: HAS_FIRE / HAS_WATCH are derived from the same pipeline that produced
+  // the PASS signal — re-promoting via tags creates a self-contradiction that lets
+  // PASS cards surface in the main FIRE/WATCH view.
   if (!displayAction || displayAction === 'PASS') {
     if (card.expressionChoice?.status) {
       status = card.expressionChoice.status;
-    } else if (card.tags.includes(GAME_TAGS.HAS_FIRE)) {
-      status = 'FIRE';
-    } else if (card.tags.includes(GAME_TAGS.HAS_WATCH)) {
-      status = 'WATCH';
     }
   }
 
@@ -458,6 +457,13 @@ function filterBySearch(card: GameCard, filters: CommonFilters): boolean {
 function hasActionablePlayCall(card: GameCard): boolean {
   const play = card.play;
   if (!play) return false;
+
+  // Explicit PASS signals are never actionable, checked before pick text inspection.
+  // Edge-verification blocked cards can carry non-'NO PLAY' pick text (e.g.
+  // "Team ML -110 (Verification Required)") while still being PASS decisions.
+  if (play.action === 'PASS' || play.classification === 'PASS') return false;
+  if (play.decision_v2?.official_status === 'PASS') return false;
+
   if (play.market === 'NONE' || play.pick === 'NO PLAY') return false;
 
   // v2 action takes precedence — if the resolved display action is PASS,
