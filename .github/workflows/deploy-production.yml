@@ -273,6 +273,13 @@ jobs:
               cp -a "$PREV_NEXT_ROLLBACK" web/.next
               sudo systemctl restart cheddar-web || true
               sleep 5
+              if [ -n "${CF_API_TOKEN:-}" ] && [ -n "${CF_ZONE_ID:-}" ]; then
+                echo "Purging Cloudflare cache after rollback (purge_everything)..."
+                curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+                  -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                  -H "Content-Type: application/json" \
+                  --data '{"purge_everything":true}' || true
+              fi
             }
             fail_with_rollback() {
               message="$1"
@@ -332,11 +339,13 @@ jobs:
             ORIGIN_HOMEPAGE_HTML=$(curl -fsS "http://127.0.0.1:3000/" || true)
             ORIGIN_CARDS_HTML=$(curl -fsS "http://127.0.0.1:3000/cards" || true)
             ORIGIN_FPL_HTML=$(curl -fsS "http://127.0.0.1:3000/fpl" || true)
+            ORIGIN_RESULTS_HTML=$(curl -fsS "http://127.0.0.1:3000/results" || true)
             ORIGIN_ROUTE_JS_REFS=$(
               {
                 { extract_asset_refs "origin:/" "$ORIGIN_HOMEPAGE_HTML" "js"; } || true
                 { extract_asset_refs "origin:/cards" "$ORIGIN_CARDS_HTML" "js"; } || true
                 { extract_asset_refs "origin:/fpl" "$ORIGIN_FPL_HTML" "js"; } || true
+                { extract_asset_refs "origin:/results" "$ORIGIN_RESULTS_HTML" "js"; } || true
               } | sort -u
             )
             ORIGIN_ROUTE_CSS_REFS=$(
@@ -344,9 +353,10 @@ jobs:
                 { extract_asset_refs "origin:/" "$ORIGIN_HOMEPAGE_HTML" "css"; } || true
                 { extract_asset_refs "origin:/cards" "$ORIGIN_CARDS_HTML" "css"; } || true
                 { extract_asset_refs "origin:/fpl" "$ORIGIN_FPL_HTML" "css"; } || true
+                { extract_asset_refs "origin:/results" "$ORIGIN_RESULTS_HTML" "css"; } || true
               } | sort -u
             )
-            for route in "/" "/cards" "/fpl"; do
+            for route in "/" "/cards" "/fpl" "/results"; do
               ORIGIN_ROUTE_JS_COUNT=$(printf "%s\n" "$ORIGIN_ROUTE_JS_REFS" | awk -F'|' -v route="origin:${route}" '$1 == route { count++ } END { print count + 0 }')
               ORIGIN_ROUTE_CSS_COUNT=$(printf "%s\n" "$ORIGIN_ROUTE_CSS_REFS" | awk -F'|' -v route="origin:${route}" '$1 == route { count++ } END { print count + 0 }')
               test "$ORIGIN_ROUTE_JS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing JS asset references in origin HTML"
@@ -374,7 +384,11 @@ jobs:
               "files": [
                 "${PUBLIC_DOMAIN_URL}/",
                 "${PUBLIC_DOMAIN_URL}/cards",
-                "${PUBLIC_DOMAIN_URL}/fpl"
+                "${PUBLIC_DOMAIN_URL}/fpl",
+                "${PUBLIC_DOMAIN_URL}/results",
+                "${PUBLIC_DOMAIN_URL}/admin",
+                "${PUBLIC_DOMAIN_URL}/analytics",
+                "${PUBLIC_DOMAIN_URL}/subscribe"
               ]
             }
             JSON
@@ -392,11 +406,13 @@ jobs:
             PUBLIC_HOMEPAGE_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/" || true)
             PUBLIC_CARDS_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/cards" || true)
             PUBLIC_FPL_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/fpl" || true)
+            PUBLIC_RESULTS_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/results" || true)
             PUBLIC_ROUTE_JS_REFS=$(
               {
                 { extract_asset_refs "public:/" "$PUBLIC_HOMEPAGE_HTML" "js"; } || true
                 { extract_asset_refs "public:/cards" "$PUBLIC_CARDS_HTML" "js"; } || true
                 { extract_asset_refs "public:/fpl" "$PUBLIC_FPL_HTML" "js"; } || true
+                { extract_asset_refs "public:/results" "$PUBLIC_RESULTS_HTML" "js"; } || true
               } | sort -u
             )
             PUBLIC_ROUTE_CSS_REFS=$(
@@ -404,9 +420,10 @@ jobs:
                 { extract_asset_refs "public:/" "$PUBLIC_HOMEPAGE_HTML" "css"; } || true
                 { extract_asset_refs "public:/cards" "$PUBLIC_CARDS_HTML" "css"; } || true
                 { extract_asset_refs "public:/fpl" "$PUBLIC_FPL_HTML" "css"; } || true
+                { extract_asset_refs "public:/results" "$PUBLIC_RESULTS_HTML" "css"; } || true
               } | sort -u
             )
-            for route in "/" "/cards" "/fpl"; do
+            for route in "/" "/cards" "/fpl" "/results"; do
               PUBLIC_ROUTE_JS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_JS_REFS" | awk -F'|' -v route="public:${route}" '$1 == route { count++ } END { print count + 0 }')
               PUBLIC_ROUTE_CSS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_CSS_REFS" | awk -F'|' -v route="public:${route}" '$1 == route { count++ } END { print count + 0 }')
               test "$PUBLIC_ROUTE_JS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing JS asset references in public HTML after purge"
@@ -430,7 +447,7 @@ jobs:
             else
               echo "No prior static snapshot asset available for previous-release retention check"
             fi
-            echo "Chunk verification passed: origin served $ORIGIN_JS_COUNT JS refs and $ORIGIN_CSS_COUNT CSS refs; public served $PUBLIC_JS_COUNT JS refs and $PUBLIC_CSS_COUNT CSS refs from /, /cards, and /fpl HTML"
+            echo "Chunk verification passed: origin served $ORIGIN_JS_COUNT JS refs and $ORIGIN_CSS_COUNT CSS refs; public served $PUBLIC_JS_COUNT JS refs and $PUBLIC_CSS_COUNT CSS refs from /, /cards, /fpl, and /results HTML"
             DEPLOY_LOG="/opt/cheddar-logic/logs/deploy.log"
             mkdir -p "$(dirname "$DEPLOY_LOG")"
             node - <<'NODE' | tee -a "$DEPLOY_LOG"
