@@ -360,6 +360,16 @@ function filterByActionability(
     }
   }
 
+  // In standard mode (FIRE/WATCH-only), status labels are not sufficient:
+  // suppress cards that do not have an actionable canonical play call.
+  if (
+    !includePass &&
+    (status === 'FIRE' || status === 'WATCH') &&
+    !hasActionablePlayCall(card)
+  ) {
+    return false;
+  }
+
   return filters.statuses.includes(status);
 }
 
