@@ -2679,7 +2679,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   // WI-DECISION-FIX: Don't remove bet for proxy-capped plays with positive edge
   const proxyTriggeredEarly = tags.some((tag) => PROXY_SIGNAL_TAGS.has(tag));
   const hasPositiveEdge = typeof edge === 'number' && edge >= 0.01;
-  const shouldKeepBetDespiteGates = proxyTriggeredEarly && hasPositiveEdge && finalBet && officialStatus !== 'LEAN';
+  const shouldKeepBetDespiteGates = proxyTriggeredEarly && hasPositiveEdge && finalBet && decision.classification !== 'LEAN';
   
   if (hasBlockingGate && !shouldKeepBetDespiteGates) {
     finalBet = null;
