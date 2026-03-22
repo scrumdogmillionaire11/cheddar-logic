@@ -582,3 +582,72 @@ Action taken: [none | escalated to <owner> | rollback initiated]
 3. Execute both telemetry SQL checks above.
 4. Execute rollback commands.
 5. Confirm post-rollback flags are all false and jobs still run.
+
+---
+
+## 2026-03-22 Dev Run Reliability Fixes
+
+### Issue: Repeated Collision warnings from settle_game_results
+
+**Before:** Two `card_results` rows for the same game (same matchup + game_time_utc) would both match the same ESPN event ID. The second row would trigger a `console.warn` and push to the `errors[]` array, producing repeated "Collision" warnings for every duplicated row.
+
+**After:** `applyEventUseDedupRule()` distinguishes between:
+
+- **Same signature** (harmless duplicate row): silently skipped with a `console.log` debug message — no warn, no error push.
+- **True collision** (different game matched to same ESPN event): still warns and pushes to `errors[]`.
+
+**Signature format:** `{HOME_TEAM}|{AWAY_TEAM}|{game_time_utc}` — two db rows with the same matchup and tipoff produce identical signatures and are deduplicated.
+
+---
+
+### Issue: TEAM_MAPPING_UNMAPPED for MLS teams
+
+**Before:** MLS team names such as "Vancouver Whitecaps FC", "Inter Miami CF", "LA Galaxy", etc. were not in `TEAM_VARIANTS` and produced `TEAM_MAPPING_UNMAPPED` entries in `odds_ingest_failures`.
+
+**After:** 11 MLS teams added to `LOGGED_TEAM_VARIANTS` (passthrough entries) plus 9 explicit alias arrays in `TEAM_VARIANTS` in `packages/data/src/normalize.js`. Covered teams:
+
+| Canonical | Aliases |
+| --------- | ------- |
+| VANCOUVER WHITECAPS FC | Whitecaps FC, Vancouver Whitecaps |
+| FC CINCINNATI | Cincinnati FC |
+| CF MONTREAL | Montreal FC, Club de Foot Montreal |
+| NEW YORK CITY FC | NYCFC, NYC FC |
+| INTER MIAMI CF | Inter Miami |
+| MINNESOTA UNITED FC | Minnesota United |
+| SEATTLE SOUNDERS FC | Seattle Sounders |
+| LA GALAXY | Los Angeles Galaxy, L.A. Galaxy |
+| REAL SALT LAKE | RSL |
+| PORTLAND TIMBERS | (passthrough only) |
+| SAN DIEGO FC | (passthrough only) |
+
+---
+
+### Issue: Pending backlog — market_key IS NULL rows silently counted but not resolved
+
+**Before:** `card_results` rows with `market_key IS NULL` and `game_results.status = 'final'` were counted in settlement diagnostics (`pendingWithFinalMissingMarketKey`) but never explicitly closed. They accumulated in the pending backlog indefinitely.
+
+**After:** `autoCloseNonActionableFinalPendingRows` now selects `cr.market_key` in its candidate query and passes the row to `resolveNonActionableFinalReason()`. Rows with `market_key IS NULL` are immediately classified as `MISSING_MARKET_KEY` and auto-closed with `status='error', result='void'`. A `console.log` is emitted per row:
+
+```text
+[SettleCards] Auto-closing MISSING_MARKET_KEY: resultId=<id> cardId=<id> gameId=<id>
+```
+
+The `reasonCounts.MISSING_MARKET_KEY` counter in the settlement summary reflects how many were closed this way.
+
+---
+
+### Issue: post-discord-cards silent skip in local/dev — no log output
+
+**Before:** When `ENABLE_DISCORD_CARD_WEBHOOKS` was unset (or not `'true'`) or `DISCORD_CARD_WEBHOOK_URL` was missing, `postDiscordCards()` returned a skip result silently. Operators had no signal in dev logs that Discord posting was inactive.
+
+**After:** Two explicit `console.log` messages are emitted before the early returns:
+
+```text
+[post-discord-cards] Skipping: ENABLE_DISCORD_CARD_WEBHOOKS is not 'true' — set it to enable Discord posts
+[post-discord-cards] Skipping: DISCORD_CARD_WEBHOOK_URL is unset — provide a webhook URL to enable Discord posts
+```
+
+To enable Discord card posting in a local or staging environment:
+
+1. Set `ENABLE_DISCORD_CARD_WEBHOOKS=true` in `.env`
+2. Set `DISCORD_CARD_WEBHOOK_URL=<your_webhook_url>` in `.env`

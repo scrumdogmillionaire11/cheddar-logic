@@ -770,6 +770,9 @@ async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
   const maxRows = Number(process.env.DISCORD_CARD_WEBHOOK_MAX_ROWS || DEFAULT_MAX_ROWS);
 
   if (!enabled) {
+    console.log(
+      `[post-discord-cards] Skipping: ENABLE_DISCORD_CARD_WEBHOOKS is not 'true' — set it to enable Discord posts`,
+    );
     return {
       success: true,
       skipped: true,
@@ -779,6 +782,9 @@ async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
   }
 
   if (!webhookUrl) {
+    console.log(
+      `[post-discord-cards] Skipping: DISCORD_CARD_WEBHOOK_URL is unset — provide a webhook URL to enable Discord posts`,
+    );
     return {
       success: true,
       skipped: true,

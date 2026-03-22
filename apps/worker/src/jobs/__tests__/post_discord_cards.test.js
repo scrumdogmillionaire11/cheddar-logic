@@ -283,19 +283,16 @@ describe('post_discord_cards helpers', () => {
     delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
 
     const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    let result;
-    try {
-      result = await postDiscordCards();
-    } finally {
-      if (origEnv !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnv;
-      logSpy.mockRestore();
-    }
+    const result = await postDiscordCards();
 
     expect(result.success).toBe(true);
     expect(result.skipped).toBe(true);
     expect(result.reason).toBe('disabled');
     // Must emit actionable console.log mentioning the skip
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[post-discord-cards] Skipping'));
+
+    logSpy.mockRestore();
+    if (origEnv !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnv;
   });
 
   test('postDiscordCards skips with missing_webhook_url reason when ENABLE_DISCORD_CARD_WEBHOOKS=true but URL unset', async () => {
@@ -305,21 +302,18 @@ describe('post_discord_cards helpers', () => {
     delete process.env.DISCORD_CARD_WEBHOOK_URL;
 
     const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    let result;
-    try {
-      result = await postDiscordCards();
-    } finally {
-      if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
-      else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
-      if (origUrl !== undefined) process.env.DISCORD_CARD_WEBHOOK_URL = origUrl;
-      logSpy.mockRestore();
-    }
+    const result = await postDiscordCards();
 
     expect(result.success).toBe(true);
     expect(result.skipped).toBe(true);
     expect(result.reason).toBe('missing_webhook_url');
     // Must emit actionable console.log mentioning the skip
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[post-discord-cards] Skipping'));
+
+    logSpy.mockRestore();
+    if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
+    else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    if (origUrl !== undefined) process.env.DISCORD_CARD_WEBHOOK_URL = origUrl;
   });
 
   test('sendDiscordMessages posts chunks in order without numbering prefix', async () => {
