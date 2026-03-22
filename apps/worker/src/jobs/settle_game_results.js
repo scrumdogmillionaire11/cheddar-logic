@@ -718,6 +718,39 @@ function getGameSignature(game) {
   return `${normalizeTeamName(game.home_team)}|${normalizeTeamName(game.away_team)}|${game.game_time_utc}`;
 }
 
+/**
+ * Apply the event-use dedup rule for a given ESPN event ID and game signature.
+ *
+ * Returns 'proceed' when the event is not yet registered (caller should register + settle).
+ * Returns 'skip' when the event is already registered:
+ *   - Same signature (harmless duplicate row): logs at debug level, no warn, no error push.
+ *   - Different signature (true collision: different game mapped to same ESPN event): warns + pushes error.
+ *
+ * @param {string} eventId - ESPN event ID
+ * @param {string} gameSignature - getGameSignature() result for the current db game row
+ * @param {Map<string, string>} eventUseById - mutable registry of eventId → signature
+ * @param {string[]} errors - mutable errors array (push on true collision)
+ * @returns {'proceed' | 'skip'}
+ */
+function applyEventUseDedupRule(eventId, gameSignature, eventUseById, errors) {
+  const existingSignature = eventUseById.get(eventId);
+  if (!existingSignature) {
+    eventUseById.set(eventId, gameSignature);
+    return 'proceed';
+  }
+  if (existingSignature === gameSignature) {
+    console.log(
+      `[SettleGames] Duplicate row skipped: event ${eventId} already settled for ${gameSignature}`,
+    );
+    return 'skip';
+  }
+  // True collision: different game mapped to same ESPN event
+  const msg = `[SettleGames] Collision: event ${eventId} already used for ${existingSignature}; refusing to reuse for ${gameSignature}`;
+  console.warn(msg);
+  errors.push(msg);
+  return 'skip';
+}
+
 function resolveNhlGamecenterId(dbGameId, mappedNhlGameId) {
   if (mappedNhlGameId) return String(mappedNhlGameId);
   const raw = String(dbGameId || '').trim();
@@ -1525,14 +1558,9 @@ async function settleGameResults({
           }
 
           const gameSignature = getGameSignature(dbGame);
-          const existingSignature = eventUseById.get(selectedMatch.event.id);
-          if (existingSignature && existingSignature !== gameSignature) {
-            const msg = `[SettleGames] Collision: event ${selectedMatch.event.id} already used for ${existingSignature}; refusing to reuse for ${gameSignature}`;
-            console.warn(msg);
-            errors.push(msg);
+          if (applyEventUseDedupRule(selectedMatch.event.id, gameSignature, eventUseById, errors) === 'skip') {
             continue;
           }
-          eventUseById.set(selectedMatch.event.id, gameSignature);
 
           // Validate scores before settlement
           const scoringCheck = scoringValidator.validateGameScore(
@@ -1754,6 +1782,7 @@ module.exports = {
     findNcaamFuzzyNameTimeMatch,
     findMatchForGame,
     getGameSignature,
+    applyEventUseDedupRule,
     scoreMatchConfidence,
   },
 };

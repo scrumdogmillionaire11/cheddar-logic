@@ -252,6 +252,16 @@ const TEAM_VARIANTS = {
   'SPORTING CP': ['sporting cp', 'sporting lisbon', 'sporting clube de portugal'],
   'BODO/GLIMT': ['bodo/glimt', 'bodo glimt', 'bodø/glimt', 'fk bodo/glimt'],
   'PARIS SAINT-GERMAIN': ['paris saint-germain', 'paris saint germain', 'psg'],
+  // MLS aliases — discovered from 2026-03-22 dev run TEAM_MAPPING_UNMAPPED
+  'LA GALAXY': ['la galaxy', 'los angeles galaxy', 'l.a. galaxy'],
+  'CF MONTREAL': ['cf montreal', 'montreal fc', 'club de foot montreal'],
+  'FC CINCINNATI': ['fc cincinnati', 'cincinnati fc'],
+  'NEW YORK CITY FC': ['new york city fc', 'nycfc', 'nyc fc'],
+  'INTER MIAMI CF': ['inter miami cf', 'inter miami'],
+  'MINNESOTA UNITED FC': ['minnesota united fc', 'minnesota united'],
+  'SEATTLE SOUNDERS FC': ['seattle sounders fc', 'seattle sounders'],
+  'VANCOUVER WHITECAPS FC': ['vancouver whitecaps fc', 'whitecaps fc', 'vancouver whitecaps'],
+  'REAL SALT LAKE': ['real salt lake', 'rsl'],
   'LIU SHARKS': [
     'liu sharks',
     'long island university sharks',
@@ -589,6 +599,18 @@ const LOGGED_TEAM_VARIANTS = [
   'Barcelona',
   'Bayern Munich',
   'Atalanta BC',
+  // MLS teams — discovered from 2026-03-22 dev run TEAM_MAPPING_UNMAPPED
+  'Vancouver Whitecaps FC',
+  'FC Cincinnati',
+  'CF Montreal',
+  'New York City FC',
+  'Inter Miami CF',
+  'Minnesota United FC',
+  'Seattle Sounders FC',
+  'Portland Timbers',
+  'LA Galaxy',
+  'San Diego FC',
+  'Real Salt Lake',
 ];
 
 for (const teamName of LOGGED_TEAM_VARIANTS) {
