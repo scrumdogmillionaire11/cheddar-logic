@@ -11,8 +11,9 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
-const filePath = path.resolve('web/src/components/cards-page-client.tsx');
+const filePath = path.resolve(__dirname, '../../src/components/cards-page-client.tsx');
 const source = fs.readFileSync(filePath, 'utf8');
 
 console.log('🧪 Starting WI-0396: Cards Lifecycle Fetch Race Tests...\n');

@@ -77,6 +77,8 @@ function ensureTelemetryTables(db) {
 
 function clearTelemetryTables(db) {
   db.exec(`
+    DELETE FROM card_results;
+    DELETE FROM card_payloads;
     DELETE FROM projection_perf_ledger;
     DELETE FROM clv_ledger;
     DELETE FROM odds_snapshots;
@@ -280,6 +282,133 @@ function seedInsufficientFixture(db) {
   }
 }
 
+function insertSettledNhlMoneylineCard(db, {
+  id,
+  gameId,
+  side,
+  marginHome,
+  result,
+  timestamp,
+}) {
+  runInsert(
+    db,
+    `
+    INSERT OR IGNORE INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    `g-${gameId}`,
+    'nhl',
+    gameId,
+    `Home ${gameId}`,
+    `Away ${gameId}`,
+    timestamp,
+    'final',
+  );
+
+  const payloadData = {
+    sport: 'NHL',
+    prediction: side,
+    selection: { side },
+    projection: {
+      margin_home: marginHome,
+      win_prob_home: null,
+    },
+    market_context: {
+      projection: {
+        margin_home: marginHome,
+      },
+    },
+  };
+
+  runInsert(
+    db,
+    `
+    INSERT INTO card_payloads (
+      id, game_id, sport, card_type, card_title, created_at, payload_data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    id,
+    gameId,
+    'nhl',
+    'nhl-moneyline-call',
+    `NHL ML ${id}`,
+    timestamp,
+    JSON.stringify(payloadData),
+  );
+
+  runInsert(
+    db,
+    `
+    INSERT INTO card_results (
+      id, card_id, game_id, sport, card_type, recommended_bet_type,
+      market_key, market_type, selection, line, locked_price,
+      status, result, settled_at, pnl_units, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    `result-${id}`,
+    id,
+    gameId,
+    'nhl',
+    'nhl-moneyline-call',
+    'moneyline',
+    `nhl|moneyline|${gameId}|${side}`,
+    'MONEYLINE',
+    side,
+    null,
+    -110,
+    'settled',
+    result,
+    timestamp,
+    result === 'win' ? 0.91 : -1.0,
+    JSON.stringify({ source: 'test-fixture' }),
+  );
+}
+
+function seedNhlMoneylineCalibrationFixture(db, scenario = 'justified') {
+  const now = '2026-03-18T10:00:00.000Z';
+
+  if (scenario === 'justified') {
+    for (let index = 0; index < 10; index += 1) {
+      insertSettledNhlMoneylineCard(db, {
+        id: `nhl-ml-j-home-${index}`,
+        gameId: `nhl-ml-j-home-game-${index}`,
+        side: 'HOME',
+        marginHome: 2.0,
+        result: 'win',
+        timestamp: now,
+      });
+      insertSettledNhlMoneylineCard(db, {
+        id: `nhl-ml-j-away-${index}`,
+        gameId: `nhl-ml-j-away-game-${index}`,
+        side: 'AWAY',
+        marginHome: -2.0,
+        result: 'win',
+        timestamp: now,
+      });
+    }
+    return;
+  }
+
+  for (let index = 0; index < 10; index += 1) {
+    insertSettledNhlMoneylineCard(db, {
+      id: `nhl-ml-nj-home-${index}`,
+      gameId: `nhl-ml-nj-home-game-${index}`,
+      side: 'HOME',
+      marginHome: 2.0,
+      result: 'loss',
+      timestamp: now,
+    });
+    insertSettledNhlMoneylineCard(db, {
+      id: `nhl-ml-nj-away-${index}`,
+      gameId: `nhl-ml-nj-away-game-${index}`,
+      side: 'AWAY',
+      marginHome: -2.0,
+      result: 'loss',
+      timestamp: now,
+    });
+  }
+}
+
 describe('telemetry calibration report', () => {
   beforeAll(async () => {
     process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
@@ -318,7 +447,54 @@ describe('telemetry calibration report', () => {
     const text = formatTelemetryCalibrationReport(report, { enforce: true });
     expect(text).toContain('projection_perf_ledger');
     expect(text).toContain('clv_ledger');
+    expect(text).toContain('nhl_moneyline_calibration');
     expect(text).toContain('Overall status: NO_GO');
+  });
+
+  test('emits NHL ML calibration schema and JUSTIFIED verdict when selected mapping outperforms baseline', async () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+    seedNhlMoneylineCalibrationFixture(db, 'justified');
+
+    const report = await generateTelemetryCalibrationReport({ db, days: 180 });
+    expect(report).toHaveProperty('nhlMoneylineCalibration');
+    expect(report.nhlMoneylineCalibration).toMatchObject({
+      status: 'OK',
+      selectionRule: 'selected_improves_both_brier_and_log_loss',
+      verdict: 'JUSTIFIED',
+      sampleWindow: {
+        days: 180,
+        anchorField: 'settled_at',
+      },
+    });
+    expect(report.nhlMoneylineCalibration.sampleSize).toBe(20);
+    expect(report.nhlMoneylineCalibration.mappings.baseline.mappingKey).toBe('legacy_sigma_12');
+    expect(report.nhlMoneylineCalibration.mappings.baseline.sigmaMargin).toBe(12);
+    expect(report.nhlMoneylineCalibration.mappings.selected.mappingKey).toBe('nhl_sigma_default');
+    expect(report.nhlMoneylineCalibration.mappings.selected.sigmaMargin).toBe(2);
+    expect(report.nhlMoneylineCalibration.mappings.baseline.reliabilityBins).toHaveLength(5);
+    expect(report.nhlMoneylineCalibration.mappings.selected.reliabilityBins).toHaveLength(5);
+    expect(report.nhlMoneylineCalibration.deltas.brierSelectedMinusBaseline).toBeLessThan(0);
+    expect(report.nhlMoneylineCalibration.deltas.logLossSelectedMinusBaseline).toBeLessThan(0);
+
+    const text = formatTelemetryCalibrationReport(report, { enforce: true });
+    expect(text).toContain('nhl_moneyline_calibration');
+    expect(text).toContain('verdict: JUSTIFIED');
+  });
+
+  test('marks NHL ML calibration as NOT_JUSTIFIED when selected mapping does not improve both metrics', async () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+    seedNhlMoneylineCalibrationFixture(db, 'not_justified');
+
+    const report = await generateTelemetryCalibrationReport({ db, days: 180 });
+    expect(report.nhlMoneylineCalibration.status).toBe('OK');
+    expect(report.nhlMoneylineCalibration.verdict).toBe('NOT_JUSTIFIED');
+    expect(report.nhlMoneylineCalibration.deltas.brierSelectedMinusBaseline).toBeGreaterThan(0);
+    expect(report.nhlMoneylineCalibration.deltas.logLossSelectedMinusBaseline).toBeGreaterThan(0);
+
+    const text = formatTelemetryCalibrationReport(report, { enforce: true });
+    expect(text).toContain('verdict: NOT_JUSTIFIED');
   });
 
   test('returns insufficient-data status with learning diagnostics and zero enforce exit', async () => {
@@ -333,11 +509,18 @@ describe('telemetry calibration report', () => {
     expect(report.diagnostics.projectionUnresolvedTopBuckets.length).toBeGreaterThan(0);
     expect(report.diagnostics.clvUnresolvedTopBuckets.length).toBeGreaterThan(0);
     expect(report.diagnostics.recommendations.length).toBeGreaterThan(0);
+    expect(report.nhlMoneylineCalibration.status).toBe('INSUFFICIENT_DATA');
+    expect(report.nhlMoneylineCalibration.verdict).toBe('INSUFFICIENT_DATA');
+    expect(report.nhlMoneylineCalibration.sampleSize).toBe(0);
+    expect(report.nhlMoneylineCalibration.mappings.baseline.reliabilityBins).toHaveLength(5);
+    expect(report.nhlMoneylineCalibration.mappings.selected.reliabilityBins).toHaveLength(5);
     expect(determineExitCode(report, true)).toBe(0);
 
     const text = formatTelemetryCalibrationReport(report, { enforce: true });
     expect(text).toContain('learning_diagnostics');
     expect(text).toContain('recommendations');
+    expect(text).toContain('nhl_moneyline_calibration');
+    expect(text).toContain('verdict: INSUFFICIENT_DATA');
     expect(text).toContain('INSUFFICIENT_DATA');
   });
 

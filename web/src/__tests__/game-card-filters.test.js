@@ -1,24 +1,132 @@
-/**
- * Tests for game card filtering
- * Based on FILTER-FEATURE.md test requirements
+/*
+ * Runtime behavior checks for game-card filters.
  * Run: npm --prefix web run test:filters
  */
 
-// Mock functions since we can't import TypeScript in Node directly
-// In a real setup, we would transpile these tests
+import assert from 'node:assert/strict';
+import { applyFilters, DEFAULT_GAME_FILTERS } from '../lib/game-card/filters.ts';
 
-console.log('✓ Game Card Filtering Tests');
-console.log('Note: TypeScript filtering tests documented in FILTER-FEATURE.md');
-console.log('Tests cover:');
-console.log('  - Deduplication of duplicate drivers');
-console.log('  - Tag derivation (FIRE, WATCH, PASS status)');
-console.log('  - Sport filtering');
-console.log('  - Tier filtering (BEST, SUPER, WATCH)');
-console.log('  - Risk flag filtering (fragility, blowout, etc.)');
-console.log('  - Search by team name');
-console.log('  - Picks-only filtering');
-console.log('  - Sorting (start time, odds updated, signal strength)');
-console.log('  - Contradiction detection (conflicting picks)');
-console.log('');
-console.log('✓ All filtering logic is type-safe and tested via integration');
-process.exit(0);
+function buildDriver(overrides = {}) {
+  return {
+    key: 'driver-1',
+    market: 'ML',
+    tier: 'WATCH',
+    direction: 'HOME',
+    confidence: 0.61,
+    note: 'Baseline driver',
+    cardType: 'nba-projection',
+    cardTitle: 'NBA Projection',
+    ...overrides,
+  };
+}
+
+function buildPlay(overrides = {}) {
+  return {
+    status: 'FIRE',
+    market: 'ML',
+    pick: 'Home ML -110',
+    lean: 'home',
+    side: 'HOME',
+    truthStatus: 'STRONG',
+    truthStrength: 0.82,
+    conflict: 0.08,
+    valueStatus: 'GOOD',
+    betAction: 'BET',
+    priceFlags: [],
+    updatedAt: '2026-03-22T10:00:00Z',
+    whyCode: 'EDGE_FOUND',
+    whyText: 'Edge found',
+    ...overrides,
+  };
+}
+
+function buildCard(id, overrides = {}) {
+  const base = {
+    id,
+    gameId: `${id}-game`,
+    sport: 'NBA',
+    homeTeam: 'Home',
+    awayTeam: 'Away',
+    startTime: '2026-03-23T00:00:00Z',
+    updatedAt: '2026-03-22T10:00:00Z',
+    status: 'scheduled',
+    markets: {},
+    play: buildPlay(),
+    drivers: [buildDriver()],
+    tags: [],
+  };
+
+  return {
+    ...base,
+    ...overrides,
+    play:
+      overrides.play === undefined
+        ? base.play
+        : { ...base.play, ...overrides.play },
+    drivers: overrides.drivers ?? base.drivers,
+    tags: overrides.tags ?? base.tags,
+  };
+}
+
+function ids(cards) {
+  return cards.map((card) => card.id).sort();
+}
+
+console.log('🧪 Game card filter runtime tests');
+
+assert.deepStrictEqual(
+  DEFAULT_GAME_FILTERS.statuses,
+  ['FIRE', 'WATCH'],
+  'default main-view statuses should stay FIRE/WATCH',
+);
+
+const fireCard = buildCard('fire-card', {
+  play: {
+    action: 'FIRE',
+    classification: 'BASE',
+    status: 'FIRE',
+    pick: 'Home ML -112',
+  },
+});
+
+const passCard = buildCard('pass-card', {
+  play: {
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    pick: 'Home ML -112 (Verification Required)',
+  },
+  tags: ['has_fire', 'has_watch'],
+  drivers: [
+    buildDriver({ tier: 'BEST', confidence: 0.9 }),
+    buildDriver({ key: 'driver-2', tier: 'SUPER', confidence: 0.78 }),
+  ],
+});
+
+const defaultResult = applyFilters(
+  [fireCard, passCard],
+  DEFAULT_GAME_FILTERS,
+  'game',
+);
+assert.deepStrictEqual(
+  ids(defaultResult),
+  ['fire-card'],
+  'default FIRE/WATCH filters should exclude PASS cards even with strong tags/drivers',
+);
+
+const fullSlateFilters = {
+  ...DEFAULT_GAME_FILTERS,
+  statuses: ['FIRE', 'WATCH', 'PASS'],
+};
+const fullSlateResult = applyFilters(
+  [fireCard, passCard],
+  fullSlateFilters,
+  'game',
+);
+assert.deepStrictEqual(
+  ids(fullSlateResult),
+  ['fire-card', 'pass-card'],
+  'including PASS status should include PASS cards',
+);
+
+console.log('✅ Game card filter runtime tests passed');

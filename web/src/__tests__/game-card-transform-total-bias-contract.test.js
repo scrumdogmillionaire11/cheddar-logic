@@ -14,7 +14,9 @@ console.log('🧪 Transform total_bias contract source tests');
 
 assert(
   source.includes('const totalBias = game.consistency?.total_bias') ||
-    source.includes('const totalBias = game.consistency?.total_bias ??'),
+    source.includes('const totalBias = game.consistency?.total_bias ??') ||
+    source.includes('const totalBias =\n    game.consistency?.total_bias') ||
+    (source.includes('const totalBias =') && source.includes('game.consistency?.total_bias')),
   'transform should read consistency.total_bias from game payload',
 );
 

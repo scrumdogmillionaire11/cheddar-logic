@@ -19,6 +19,13 @@ jest.mock('@cheddar-logic/data', () => ({
   upsertGame: jest.fn(),
   insertOddsSnapshot: jest.fn(),
   withDb: jest.fn(async (fn) => fn()),
+  getDatabase: jest.fn(() => ({
+    prepare: jest.fn(() => ({ get: jest.fn(() => null), run: jest.fn(), all: jest.fn(() => []) })),
+  })),
+  resolveDatabasePath: jest.fn(() => '/tmp/test.db'),
+  recordOddsIngestFailure: jest.fn(),
+  recordOddsIngestSuccess: jest.fn(),
+  clearOddsIngestFailures: jest.fn(),
 }));
 
 const { fetchOdds } = require('@cheddar-logic/odds');

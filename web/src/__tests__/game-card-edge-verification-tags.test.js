@@ -6,17 +6,18 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
-const tagsPath = path.resolve('web/src/lib/game-card/tags.ts');
+const tagsPath = path.resolve(__dirname, '../../src/lib/game-card/tags.ts');
 const tagsSource = fs.readFileSync(tagsPath, 'utf8');
 
-const transformPath = path.resolve('web/src/lib/game-card/transform.ts');
+const transformPath = path.resolve(__dirname, '../../src/lib/game-card/transform.ts');
 const transformSource = fs.readFileSync(transformPath, 'utf8');
 
-const routePath = path.resolve('web/src/app/api/games/route.ts');
+const routePath = path.resolve(__dirname, '../../src/app/api/games/route.ts');
 const routeSource = fs.readFileSync(routePath, 'utf8');
 
-const cardsPageClientPath = path.resolve('web/src/components/cards-page-client.tsx');
+const cardsPageClientPath = path.resolve(__dirname, '../../src/components/cards-page-client.tsx');
 const cardsPageClientSource = fs.readFileSync(cardsPageClientPath, 'utf8');
 
 console.log('🧪 Game card edge-verification tags source tests');

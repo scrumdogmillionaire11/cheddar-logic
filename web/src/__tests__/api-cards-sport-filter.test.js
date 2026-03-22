@@ -53,7 +53,7 @@ async function runTests() {
       .run(
         testCardId,
         testGameId,
-        'NBA',
+        'nba',
         'test-card',
         'Test Card',
         JSON.stringify({
@@ -68,10 +68,10 @@ async function runTests() {
     console.log('✓ Inserted test data\n');
 
     console.log(
-      '🧪 Test: lowercase sport param matches uppercase stored sport',
+      '🧪 Test: sport param filter matches stored lowercase sport',
     );
     const sportParam = 'nba';
-    const sport = sportParam ? sportParam.toUpperCase() : null;
+    const sport = sportParam ? sportParam.toLowerCase() : null;
 
     const rows = client
       .prepare(
@@ -80,10 +80,10 @@ async function runTests() {
       )
       .all(testGameId, sport);
 
-    if (rows.length === 1 && rows[0].sport === 'NBA') {
-      console.log('✅ PASS: sport filter matched uppercase data');
+    if (rows.length === 1 && rows[0].sport === 'nba') {
+      console.log('✅ PASS: sport filter matched lowercase data');
     } else {
-      console.log('❌ FAIL: expected 1 NBA row, got:', rows);
+      console.log('❌ FAIL: expected 1 nba row, got:', rows);
       process.exit(1);
     }
 

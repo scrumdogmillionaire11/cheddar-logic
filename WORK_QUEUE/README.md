@@ -14,7 +14,7 @@ See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decision
 
 ## Active Work Items
 
-**Updated**: 2026-03-17
+**Updated**: 2026-03-21
 
 - `WI-0485`: Phase 4 telemetry calibration report + enforcement gate
 - `WI-0486`: Phase 4 soak-window runbook + weekly go/no-go cadence (depends on `WI-0485`)
@@ -55,11 +55,22 @@ Proposed execution branches (when each WI starts):
 
 ## Recently Completed
 
-- `WI-0480`: Phase 2 Activation + Rollback Procedure (Thresholds V2)
-- `WI-0481`: Phase 3 Preflight Eligibility + SQL Verification (CLV)
-- `WI-0482`: Phase 3 Activation + Settlement-Safe Rollback (CLV)
-- `WI-0483`: Fix nba-blowout-risk role and document unclassified NHL cardTypes in DRIVER_ROLES
 - `WI-0484`: DRIVER_ROLES registry completeness guard
+- `WI-0507`: Python research reference-only architecture decision
+- `WI-0516`: Wire deterministic chip engine through FPL Sage backend + frontend
+- `WI-0517`: Migrate GitHub Actions from Node 20 to Node 24-compatible actions
+- `WI-0520`: AH decision gate + architecture contract
+- `WI-0521`: Deterministic AH grading engine
+- `WI-0522`: AH pricing model (completed ahead of schedule — see governance note in COMPLETE/)
+- `WI-0527`: Projection anomaly audit layer
+- `WI-0528`: Fix PP TOI gap (replace hardcoded toi_proj_pp:0)
+- `WI-0529`: Decision layer for props (computePropDisplayState)
+- `WI-0530`: NST PP rate ingestion (player_pp_rates table)
+- `WI-0531`: Rolling PP splits (L10/L5) + recency-weighted blend
+- `WI-0532`: Repo lint and TS error cleanup
+- `WI-0535`: (dependency of WI-0536/0537 — see governance notes)
+- `WI-0536`: Canonical edge contract + unit normalization
+- `WI-0537`: FIRST_PERIOD policy centralization in canonical decision layer
 
 ## Rules
 

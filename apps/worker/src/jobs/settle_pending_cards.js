@@ -309,7 +309,16 @@ function parseJsonObject(value) {
   }
 }
 
-function resolveNonActionableFinalReason(payloadData) {
+function resolveNonActionableFinalReason(payloadData, row) {
+  // Rows with no market_key cannot be settled — auto-close with explicit reason
+  if (!row?.market_key) {
+    return {
+      code: 'MISSING_MARKET_KEY',
+      message: 'Card has no market_key — cannot settle',
+      details: {},
+    };
+  }
+
   const kind = toBackfillUpperToken(payloadData?.kind);
   if (kind && kind !== 'PLAY') {
     return {
@@ -362,6 +371,7 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
         cr.id AS result_id,
         cr.card_id,
         cr.game_id,
+        cr.market_key,
         cr.metadata,
         cp.payload_data
       FROM card_results cr
@@ -384,8 +394,13 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
     if (!resultId) continue;
 
     const payloadData = parseJsonObject(row.payload_data) || {};
-    const reason = resolveNonActionableFinalReason(payloadData);
+    const reason = resolveNonActionableFinalReason(payloadData, row);
     if (!reason) continue;
+    if (reason.code === 'MISSING_MARKET_KEY') {
+      console.log(
+        `[SettleCards] Auto-closing MISSING_MARKET_KEY: resultId=${resultId} cardId=${row.card_id} gameId=${row.game_id}`,
+      );
+    }
     candidates.push({
       resultId,
       cardId: row.card_id,

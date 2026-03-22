@@ -10,12 +10,13 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
-const gamesRoutePath = path.resolve('web/src/app/api/games/route.ts');
-const cardsRoutePath = path.resolve('web/src/app/api/cards/route.ts');
-const cardsByGameRoutePath = path.resolve('web/src/app/api/cards/[gameId]/route.ts');
-const cardsPagePath = path.resolve('web/src/components/cards-page-client.tsx');
-const transformPath = path.resolve('web/src/lib/game-card/transform.ts');
+const gamesRoutePath = path.resolve(__dirname, '../../src/app/api/games/route.ts');
+const cardsRoutePath = path.resolve(__dirname, '../../src/app/api/cards/route.ts');
+const cardsByGameRoutePath = path.resolve(__dirname, '../../src/app/api/cards/[gameId]/route.ts');
+const cardsPagePath = path.resolve(__dirname, '../../src/components/cards-page-client.tsx');
+const transformPath = path.resolve(__dirname, '../../src/lib/game-card/transform.ts');
 
 const gamesRouteSource = fs.readFileSync(gamesRoutePath, 'utf8');
 const cardsRouteSource = fs.readFileSync(cardsRoutePath, 'utf8');

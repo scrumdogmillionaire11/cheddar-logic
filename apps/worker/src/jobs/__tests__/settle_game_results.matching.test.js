@@ -349,6 +349,91 @@ describe('settle_game_results matching hardening', () => {
     expect(comparable.awayScore).toBe(99);
   });
 
+  // ── Collision dedup: same-signature duplicate rows ────────────────────────
+
+  test('getGameSignature returns identical value for two db rows with same matchup and game_time_utc', () => {
+    // This is the pre-condition for same-signature dedup: two db rows for the same
+    // actual game (e.g. double-ingested) will have matching signatures.
+    const game1 = {
+      game_id: 'game-dup-001',
+      home_team: 'Boston Bruins',
+      away_team: 'New York Rangers',
+      game_time_utc: '2026-03-22T20:00:00Z',
+    };
+    const game2 = {
+      game_id: 'game-dup-002',
+      home_team: 'Boston Bruins',
+      away_team: 'New York Rangers',
+      game_time_utc: '2026-03-22T20:00:00Z',
+    };
+    expect(__private.getGameSignature(game1)).toBe(__private.getGameSignature(game2));
+  });
+
+  test('getGameSignature returns different values for games with different matchups', () => {
+    const game1 = {
+      game_id: 'game-col-001',
+      home_team: 'Boston Bruins',
+      away_team: 'New York Rangers',
+      game_time_utc: '2026-03-22T20:00:00Z',
+    };
+    const game2 = {
+      game_id: 'game-col-002',
+      home_team: 'Tampa Bay Lightning',
+      away_team: 'Florida Panthers',
+      game_time_utc: '2026-03-22T20:00:00Z',
+    };
+    expect(__private.getGameSignature(game1)).not.toBe(__private.getGameSignature(game2));
+  });
+
+  test('applyEventUseDedupRule: same-signature duplicate emits debug log, no warn, no error push', () => {
+    // Tests the dedup behavior exported via __private.applyEventUseDedupRule
+    const eventId = 'espn-dup-001';
+    const gameSignature = 'BOSTON BRUINS|NEW YORK RANGERS|2026-03-22T20:00:00Z';
+    const eventUseById = new Map([[eventId, gameSignature]]);
+    const errors = [];
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = __private.applyEventUseDedupRule(eventId, gameSignature, eventUseById, errors);
+
+    expect(result).toBe('skip'); // should skip settlement of duplicate
+    expect(errors).toHaveLength(0);
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[SettleGames] Duplicate row skipped'));
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  test('applyEventUseDedupRule: true collision (different signatures) warns and pushes error', () => {
+    const eventId = 'espn-col-001';
+    const existingSignature = 'BOSTON BRUINS|NEW YORK RANGERS|2026-03-22T20:00:00Z';
+    const newSignature = 'TAMPA BAY LIGHTNING|FLORIDA PANTHERS|2026-03-22T20:00:00Z';
+    const eventUseById = new Map([[eventId, existingSignature]]);
+    const errors = [];
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = __private.applyEventUseDedupRule(eventId, newSignature, eventUseById, errors);
+
+    expect(result).toBe('skip'); // also skips but for collision reason
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('Collision');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  test('applyEventUseDedupRule: no existing entry registers signature and returns proceed', () => {
+    const eventId = 'espn-new-001';
+    const gameSignature = 'BOSTON BRUINS|NEW YORK RANGERS|2026-03-22T20:00:00Z';
+    const eventUseById = new Map();
+    const errors = [];
+
+    const result = __private.applyEventUseDedupRule(eventId, gameSignature, eventUseById, errors);
+
+    expect(result).toBe('proceed');
+    expect(eventUseById.get(eventId)).toBe(gameSignature);
+    expect(errors).toHaveLength(0);
+  });
+
   test('Odds API comparable event matches strict name/time when ESPN is absent', () => {
     const dbGame = {
       game_id: 'canonical-odds-fallback',

@@ -6,8 +6,9 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
-const filePath = path.resolve('web/src/lib/play-decision/decision-logic.ts');
+const filePath = path.resolve(__dirname, '../../src/lib/play-decision/decision-logic.ts');
 const source = fs.readFileSync(filePath, 'utf8');
 
 console.log('🧪 Play decision edge-verification source tests');

@@ -83,3 +83,57 @@ pnl_units calculation (standard -110 vig):
 ## Confidence: Schema Readiness
 
 The schema is production-ready. The foreign keys, indexes, and `stat_key` pipe-delimited format are well designed. The auto-enrollment is a good pattern. Building the settlement worker is the only remaining work.
+
+---
+
+## NHL ML Calibration Evidence (WI-0544)
+
+Use telemetry calibration output to validate NHL moneyline margin-to-probability mapping on settled historical outcomes.
+
+### Reproducible command
+
+```bash
+npm --prefix apps/worker run job:report-telemetry-calibration -- --json --days 180
+```
+
+### Data window and sample
+
+- Source rows are filtered from `card_results` + `card_payloads`:
+  - `sport='nhl'`
+  - `market_type='MONEYLINE'`
+  - `status='settled'`
+  - `result IN ('win','loss')`
+  - `settled_at` within the requested `--days` window
+- The report object is `nhlMoneylineCalibration` and includes `sampleWindow`, `sampleSize`, and data-quality counts.
+
+### Mapping comparison
+
+- `baseline`: `legacy_sigma_12` (`sigma=12`)
+- `selected`: `nhl_sigma_default` (`sigma=getSigmaDefaults('NHL').margin`, currently `2`)
+
+Both mappings are evaluated on the exact same settled sample.
+
+### Metrics emitted
+
+- **Brier score**: mean squared error on pick-win probability.
+- **Log-loss**: binary cross-entropy on pick-win probability, with epsilon clamping for numeric stability.
+- **Reliability bins**: fixed buckets:
+  - `0.5-0.6`
+  - `0.6-0.7`
+  - `0.7-0.8`
+  - `0.8-0.9`
+  - `0.9-1.0`
+
+Each bin reports sample count, average predicted probability, actual win rate, and calibration gap.
+
+### Verdict rule
+
+- `selectionRule`: `selected_improves_both_brier_and_log_loss`
+- `verdict` is:
+  - `JUSTIFIED` only when selected mapping improves both metrics versus baseline.
+  - `NOT_JUSTIFIED` otherwise.
+  - `INSUFFICIENT_DATA` when there are no eligible rows.
+
+### Policy (report-only)
+
+This evidence section is informational and does not mutate model behavior. If verdict is `NOT_JUSTIFIED`, keep the current mapping unchanged in this WI and follow up with a dedicated tuning work item.

@@ -16,6 +16,7 @@ const {
   getDatabase,
   upsertGame,
   insertOddsSnapshot,
+  insertJobRun,
   runMigrations,
   shouldRunJobKey,
 } = require('@cheddar-logic/data');
@@ -51,6 +52,10 @@ async function testPipelineOddsToPipeline() {
     });
     console.log(`  ✅ Game upserted: ${testGameId} @ ${gameTime}`);
 
+    // Insert a job_run record so the FK constraint is satisfied
+    const testJobRunId = `test-${uuidV4().slice(0, 8)}`;
+    insertJobRun('pull_odds_test', testJobRunId);
+
     // Insert odds snapshot
     insertOddsSnapshot({
       id: `odds-test-${uuidV4().slice(0, 8)}`,
@@ -69,7 +74,7 @@ async function testPipelineOddsToPipeline() {
       monelineHome: -118,
       monelineAway: 105,
       rawData: { test: true },
-      jobRunId: `test-${uuidV4().slice(0, 8)}`,
+      jobRunId: testJobRunId,
     });
     console.log(`  ✅ Odds snapshot inserted`);
 

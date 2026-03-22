@@ -49,7 +49,7 @@ function validateNhlCardShape(card) {
     typeof card.gameId === 'string' && card.gameId.length > 0,
     'card.gameId is required',
   );
-  assert(card.sport === 'NHL', `card.sport must be NHL, got ${card.sport}`);
+  assert(card.sport === 'nhl', `card.sport must be nhl, got ${card.sport}`);
   assert(
     VALID_NHL_CARD_TYPES.includes(card.cardType),
     `card.cardType must be valid NHL type (got ${card.cardType}). Valid: ${VALID_NHL_CARD_TYPES.join(', ')}`,

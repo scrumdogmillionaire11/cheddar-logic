@@ -40,6 +40,7 @@ describe('team-metrics resolution', () => {
 
     const out = await getTeamMetricsWithGames('Duke', 'NCAAM', {
       limit: 3,
+      skipCache: true,
       strictVariantMatch: false,
     });
 
@@ -107,6 +108,7 @@ describe('team-metrics resolution', () => {
 
     const out = await getTeamMetricsWithGames('Clemson Tigers', 'NCAAM', {
       limit: 5,
+      skipCache: true,
       strictVariantMatch: false,
     });
 
@@ -149,6 +151,7 @@ describe('team-metrics resolution', () => {
 
     const out = await getTeamMetricsWithGames('San Diego St Aztecs', 'NCAAM', {
       limit: 4,
+      skipCache: true,
       strictVariantMatch: false,
     });
 
