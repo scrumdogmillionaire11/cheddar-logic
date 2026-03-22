@@ -193,6 +193,44 @@ Threshold interpretation:
 - Tail-risk P25: breach when `p25_clv <= -0.0500`
 - If sample gate is not met, report status is `INSUFFICIENT_DATA` (the command emits diagnostics for fetch/closure coverage improvement and exits zero even with `--enforce`).
 
+## Flip Threshold Backtest Baseline (`report_flip_threshold_backtest`, WI-0545)
+
+Run command:
+
+```bash
+node apps/worker/src/jobs/report_flip_threshold_backtest.js --days 120 --json
+```
+
+Captured: 2026-03-22T02:34:27Z
+
+Window dataset:
+
+- `event_count`: `2277`
+- `side_change_event_count`: `106`
+- `final_game_results`: `229`
+
+Output contract (JSON):
+
+- Per profile counters: `flip_count`, `blocked_count`, `converted_from_edge_too_small`
+- Per profile quality proxy: `graded_changed_events`, `candidate.{win,loss,push,units}`, `baseline.{win,loss,push,units}`, `delta_units`, `candidate_win_rate`
+
+Profile comparison (120-day replay):
+
+| Profile | EDGE_UPGRADE_MIN | flip_count | blocked_count | converted_from_edge_too_small | graded_changed_events | delta_units | candidate_win_rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline | 0.50 | 4 | 102 | 0 | 0 | 0.00 | n/a |
+| moderate | 0.25 | 4 | 102 | 0 | 0 | 0.00 | n/a |
+| aggressive | 0.10 | 5 | 101 | 1 | 1 | 3.05 | 1.0000 |
+
+Selection result:
+
+- `selected_profile`: `baseline`
+- `reason_code`: `INSUFFICIENT_SAMPLE`
+- `method`: `delta_units_with_min_graded_changed_events_gate`
+- `rationale`: non-baseline profiles are ineligible until `graded_changed_events >= 3`; aggressive only reached `1`.
+- Sample-gate note: This gate is intentional to avoid profile changes on single-event counterfactual evidence.
+- Gate constant alignment: `packages/models/src/decision-gate.js` remains unchanged at `EDGE_UPGRADE_MIN=0.5` and `CANONICAL_EDGE_CONTRACT.upgrade_min=0.5` (decimal-fraction units).
+
 ## Phase 2 Rollout Baseline (Market Thresholds V2)
 
 Captured with `ENABLE_MARKET_THRESHOLDS_V2=false`.
