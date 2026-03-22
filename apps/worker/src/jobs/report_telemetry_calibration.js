@@ -8,6 +8,7 @@ const {
   initDb,
   resolveDatabasePath,
 } = require('@cheddar-logic/data');
+const { edgeCalculator, marginToWinProbability } = require('@cheddar-logic/models');
 
 const DEFAULT_WINDOW_DAYS = 14;
 const PROJECTION_MIN_SAMPLE = 100;
@@ -17,6 +18,16 @@ const CONFIDENCE_DRIFT_THRESHOLD = 0.03;
 const CLV_MEAN_THRESHOLD = -0.02;
 const CLV_P25_THRESHOLD = -0.05;
 const MAX_DIAGNOSTIC_BUCKETS = 5;
+const NHL_ML_BASELINE_SIGMA = 12;
+const NHL_ML_DEFAULT_SELECTED_SIGMA = 2;
+const NHL_ML_LOGLOSS_EPSILON = 1e-6;
+const NHL_ML_RELIABILITY_BIN_RANGES = Object.freeze([
+  [0.5, 0.6],
+  [0.6, 0.7],
+  [0.7, 0.8],
+  [0.8, 0.9],
+  [0.9, 1.0],
+]);
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -85,6 +96,30 @@ function toNumber(value, fallback = null) {
 function toRounded(value, decimals = 4) {
   if (!Number.isFinite(value)) return null;
   return Number(value.toFixed(decimals));
+}
+
+function toUpperToken(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().toUpperCase();
+}
+
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function clampProbability(value) {
+  if (!Number.isFinite(value)) return null;
+  if (value <= NHL_ML_LOGLOSS_EPSILON) return NHL_ML_LOGLOSS_EPSILON;
+  if (value >= 1 - NHL_ML_LOGLOSS_EPSILON) return 1 - NHL_ML_LOGLOSS_EPSILON;
+  return value;
 }
 
 function formatPct(value, decimals = 2) {
@@ -443,6 +478,317 @@ function buildEdgeVerificationReport(db) {
   return { tablePresent: true, buckets };
 }
 
+function buildReliabilityBinTemplate() {
+  return NHL_ML_RELIABILITY_BIN_RANGES.map(([lower, upper], index) => ({
+    bucket: `${lower.toFixed(1)}-${upper.toFixed(1)}`,
+    lower,
+    upper,
+    inclusiveUpper: index === NHL_ML_RELIABILITY_BIN_RANGES.length - 1,
+    sampleSize: 0,
+    avgPredicted: null,
+    actualWinRate: null,
+    calibrationGap: null,
+  }));
+}
+
+function resolveReliabilityBinIndex(probability) {
+  for (let index = 0; index < NHL_ML_RELIABILITY_BIN_RANGES.length; index += 1) {
+    const [lower, upper] = NHL_ML_RELIABILITY_BIN_RANGES[index];
+    const isLast = index === NHL_ML_RELIABILITY_BIN_RANGES.length - 1;
+    if (probability >= lower && (probability < upper || (isLast && probability <= upper))) {
+      return index;
+    }
+  }
+  return null;
+}
+
+function finalizeReliabilityBins(binTemplate, stateByIndex) {
+  return binTemplate.map((bin, index) => {
+    const state = stateByIndex[index];
+    if (!state || state.count === 0) return bin;
+    const avgPredicted = state.predictedSum / state.count;
+    const actualWinRate = state.outcomeSum / state.count;
+    return {
+      ...bin,
+      sampleSize: state.count,
+      avgPredicted: toRounded(avgPredicted),
+      actualWinRate: toRounded(actualWinRate),
+      calibrationGap: toRounded(actualWinRate - avgPredicted),
+    };
+  });
+}
+
+function computeMappingMetrics(samples, probabilityKey) {
+  const reliabilityBins = buildReliabilityBinTemplate();
+  if (!Array.isArray(samples) || samples.length === 0) {
+    return {
+      brier: null,
+      logLoss: null,
+      reliabilityBins,
+    };
+  }
+
+  let brierSum = 0;
+  let logLossSum = 0;
+  const binState = reliabilityBins.map(() => ({
+    count: 0,
+    predictedSum: 0,
+    outcomeSum: 0,
+  }));
+
+  for (const sample of samples) {
+    const outcome = sample.outcome;
+    const probability = sample[probabilityKey];
+    if (!Number.isFinite(outcome) || !Number.isFinite(probability)) {
+      continue;
+    }
+
+    const clampedProbability = clampProbability(probability);
+    if (!Number.isFinite(clampedProbability)) continue;
+    const error = clampedProbability - outcome;
+    brierSum += error * error;
+    logLossSum += -(
+      outcome * Math.log(clampedProbability) +
+      (1 - outcome) * Math.log(1 - clampedProbability)
+    );
+
+    const binnedProbability = Math.max(0.5, Math.min(1, clampedProbability));
+    const binIndex = resolveReliabilityBinIndex(binnedProbability);
+    if (binIndex === null) continue;
+    const state = binState[binIndex];
+    state.count += 1;
+    state.predictedSum += binnedProbability;
+    state.outcomeSum += outcome;
+  }
+
+  return {
+    brier: toRounded(brierSum / samples.length),
+    logLoss: toRounded(logLossSum / samples.length),
+    reliabilityBins: finalizeReliabilityBins(reliabilityBins, binState),
+  };
+}
+
+function resolveProjectedMarginHome(payloadData) {
+  return toNumber(
+    payloadData?.projection?.margin_home ??
+      payloadData?.market_context?.projection?.margin_home ??
+      payloadData?.projection?.projected_margin ??
+      payloadData?.market_context?.projection?.projected_margin ??
+      payloadData?.all_markets?.ML?.projection?.projected_margin ??
+      payloadData?.all_markets?.SPREAD?.projection?.projected_margin ??
+      null,
+  );
+}
+
+function resolveMoneylineSelection(rowSelection, payloadData) {
+  const fromRow = toUpperToken(rowSelection);
+  if (fromRow === 'HOME' || fromRow === 'AWAY') return fromRow;
+
+  const fromPayload = toUpperToken(
+    payloadData?.selection?.side ?? payloadData?.selection ?? payloadData?.prediction,
+  );
+  if (fromPayload === 'HOME' || fromPayload === 'AWAY') return fromPayload;
+  return null;
+}
+
+function buildEmptyMappingStats(mappingKey, sigmaMargin) {
+  return {
+    mappingKey,
+    sigmaMargin: toRounded(sigmaMargin, 3),
+    brier: null,
+    logLoss: null,
+    reliabilityBins: buildReliabilityBinTemplate(),
+  };
+}
+
+function buildNhlMoneylineCalibrationReport(db, windowDays, generatedAtIso) {
+  const selectedSigmaRaw = toNumber(edgeCalculator.getSigmaDefaults('NHL')?.margin);
+  const selectedSigma =
+    Number.isFinite(selectedSigmaRaw) && selectedSigmaRaw > 0
+      ? selectedSigmaRaw
+      : NHL_ML_DEFAULT_SELECTED_SIGMA;
+  const generatedAtMs = Date.parse(generatedAtIso);
+  const nowMs = Number.isFinite(generatedAtMs) ? generatedAtMs : Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const sampleWindow = {
+    days: windowDays,
+    anchorField: 'settled_at',
+    startUtc: new Date(nowMs - windowDays * dayMs).toISOString(),
+    endUtc: new Date(nowMs).toISOString(),
+  };
+  const selectionRule = 'selected_improves_both_brier_and_log_loss';
+  const baseline = buildEmptyMappingStats('legacy_sigma_12', NHL_ML_BASELINE_SIGMA);
+  const selected = buildEmptyMappingStats('nhl_sigma_default', selectedSigma);
+  const baseReport = {
+    status: 'INSUFFICIENT_DATA',
+    sampleWindow,
+    sampleSize: 0,
+    selectionRule,
+    verdict: 'INSUFFICIENT_DATA',
+    rationale: 'No eligible NHL moneyline settled outcomes found in the requested window.',
+    mappings: {
+      baseline,
+      selected,
+    },
+    deltas: {
+      brierSelectedMinusBaseline: null,
+      logLossSelectedMinusBaseline: null,
+    },
+    dataQuality: {
+      sourceRows: 0,
+      usableRows: 0,
+      droppedRows: 0,
+      droppedReasonCounts: {},
+    },
+  };
+
+  const hasCardResults = tableExists(db, 'card_results');
+  const hasCardPayloads = tableExists(db, 'card_payloads');
+  if (!hasCardResults || !hasCardPayloads) {
+    return {
+      ...baseReport,
+      rationale:
+        'Missing card_results/card_payloads table(s); cannot compute NHL moneyline calibration evidence.',
+    };
+  }
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        cr.selection,
+        cr.result,
+        cp.payload_data
+      FROM card_results cr
+      INNER JOIN card_payloads cp ON cp.id = cr.card_id
+      WHERE LOWER(COALESCE(cr.sport, '')) = 'nhl'
+        AND UPPER(COALESCE(cr.market_type, '')) = 'MONEYLINE'
+        AND LOWER(COALESCE(cr.status, '')) = 'settled'
+        AND LOWER(COALESCE(cr.result, '')) IN ('win', 'loss')
+        AND cr.settled_at IS NOT NULL
+        AND datetime(cr.settled_at) >= datetime('now', ?)
+    `,
+    )
+    .all(`-${windowDays} days`);
+
+  const droppedReasonCounts = {};
+  const samples = [];
+  for (const row of rows) {
+    const payloadData = parseJsonObject(row.payload_data);
+    const marginHome = resolveProjectedMarginHome(payloadData);
+    if (!Number.isFinite(marginHome)) {
+      droppedReasonCounts.missing_margin_home = (droppedReasonCounts.missing_margin_home || 0) + 1;
+      continue;
+    }
+
+    const selection = resolveMoneylineSelection(row.selection, payloadData);
+    if (!selection) {
+      droppedReasonCounts.missing_selection = (droppedReasonCounts.missing_selection || 0) + 1;
+      continue;
+    }
+
+    const outcomeToken = toUpperToken(row.result);
+    const outcome = outcomeToken === 'WIN' ? 1 : outcomeToken === 'LOSS' ? 0 : null;
+    if (!Number.isFinite(outcome)) {
+      droppedReasonCounts.invalid_outcome = (droppedReasonCounts.invalid_outcome || 0) + 1;
+      continue;
+    }
+
+    const selectedHomeProbability = clampProbability(
+      marginToWinProbability(marginHome, selectedSigma),
+    );
+    const baselineHomeProbability = clampProbability(
+      marginToWinProbability(marginHome, NHL_ML_BASELINE_SIGMA),
+    );
+    if (!Number.isFinite(selectedHomeProbability) || !Number.isFinite(baselineHomeProbability)) {
+      droppedReasonCounts.invalid_probability = (droppedReasonCounts.invalid_probability || 0) + 1;
+      continue;
+    }
+
+    const selectedProbability = clampProbability(
+      selection === 'HOME' ? selectedHomeProbability : 1 - selectedHomeProbability,
+    );
+    const baselineProbability = clampProbability(
+      selection === 'HOME' ? baselineHomeProbability : 1 - baselineHomeProbability,
+    );
+    if (!Number.isFinite(selectedProbability) || !Number.isFinite(baselineProbability)) {
+      droppedReasonCounts.invalid_pick_probability =
+        (droppedReasonCounts.invalid_pick_probability || 0) + 1;
+      continue;
+    }
+
+    samples.push({
+      outcome,
+      selectedProbability,
+      baselineProbability,
+    });
+  }
+
+  if (samples.length === 0) {
+    return {
+      ...baseReport,
+      dataQuality: {
+        sourceRows: rows.length,
+        usableRows: 0,
+        droppedRows: rows.length,
+        droppedReasonCounts,
+      },
+    };
+  }
+
+  const baselineMetrics = computeMappingMetrics(samples, 'baselineProbability');
+  const selectedMetrics = computeMappingMetrics(samples, 'selectedProbability');
+  const brierDelta =
+    Number.isFinite(selectedMetrics.brier) && Number.isFinite(baselineMetrics.brier)
+      ? selectedMetrics.brier - baselineMetrics.brier
+      : null;
+  const logLossDelta =
+    Number.isFinite(selectedMetrics.logLoss) && Number.isFinite(baselineMetrics.logLoss)
+      ? selectedMetrics.logLoss - baselineMetrics.logLoss
+      : null;
+  const selectedImprovesBrier = Number.isFinite(brierDelta) ? brierDelta < 0 : false;
+  const selectedImprovesLogLoss = Number.isFinite(logLossDelta) ? logLossDelta < 0 : false;
+  const verdict =
+    selectedImprovesBrier && selectedImprovesLogLoss ? 'JUSTIFIED' : 'NOT_JUSTIFIED';
+  const rationale =
+    verdict === 'JUSTIFIED'
+      ? 'Selected NHL sigma improves both Brier and log-loss versus legacy sigma=12.'
+      : 'Selected NHL sigma does not improve both Brier and log-loss versus legacy sigma=12.';
+
+  return {
+    status: 'OK',
+    sampleWindow,
+    sampleSize: samples.length,
+    selectionRule,
+    verdict,
+    rationale,
+    mappings: {
+      baseline: {
+        ...baseline,
+        brier: baselineMetrics.brier,
+        logLoss: baselineMetrics.logLoss,
+        reliabilityBins: baselineMetrics.reliabilityBins,
+      },
+      selected: {
+        ...selected,
+        brier: selectedMetrics.brier,
+        logLoss: selectedMetrics.logLoss,
+        reliabilityBins: selectedMetrics.reliabilityBins,
+      },
+    },
+    deltas: {
+      brierSelectedMinusBaseline: toRounded(brierDelta),
+      logLossSelectedMinusBaseline: toRounded(logLossDelta),
+    },
+    dataQuality: {
+      sourceRows: rows.length,
+      usableRows: samples.length,
+      droppedRows: rows.length - samples.length,
+      droppedReasonCounts,
+    },
+  };
+}
+
 function collectChecks(projection, clv) {
   return [
     {
@@ -481,6 +827,20 @@ function determineExitCode(report, enforce = false) {
   return report.overallStatus === 'NO_GO' ? 1 : 0;
 }
 
+function formatCalibrationMetric(value) {
+  return Number.isFinite(value) ? value.toFixed(4) : 'n/a';
+}
+
+function formatReliabilityBinsInline(bins = []) {
+  if (!Array.isArray(bins) || bins.length === 0) return 'none';
+  return bins
+    .map(
+      (bin) =>
+        `${bin.bucket}(n=${bin.sampleSize},pred=${formatCalibrationMetric(bin.avgPredicted)},win=${formatCalibrationMetric(bin.actualWinRate)},gap=${formatCalibrationMetric(bin.calibrationGap)})`,
+    )
+    .join(' | ');
+}
+
 async function generateTelemetryCalibrationReport({
   db = null,
   days = DEFAULT_WINDOW_DAYS,
@@ -494,8 +854,14 @@ async function generateTelemetryCalibrationReport({
 
   try {
     const windowDays = Number.isFinite(days) && days > 0 ? Math.trunc(days) : DEFAULT_WINDOW_DAYS;
+    const generatedAt = new Date().toISOString();
     const projection = buildProjectionLedgerReport(reader, windowDays);
     const clv = buildClvLedgerReport(reader, windowDays);
+    const nhlMoneylineCalibration = buildNhlMoneylineCalibrationReport(
+      reader,
+      windowDays,
+      generatedAt,
+    );
     const edgeVerification = buildEdgeVerificationReport(reader);
     const checks = collectChecks(projection, clv);
     const diagnostics = buildFetchDiagnostics(reader, windowDays, projection, clv);
@@ -503,7 +869,7 @@ async function generateTelemetryCalibrationReport({
     const dbResolution = resolveDatabasePath();
 
     return {
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       database: {
         path: dbResolution.dbPath,
         source: dbResolution.source,
@@ -521,6 +887,7 @@ async function generateTelemetryCalibrationReport({
         projection,
         clv,
       },
+      nhlMoneylineCalibration,
       edgeVerification,
       checks,
       overallStatus,
@@ -564,6 +931,31 @@ function formatTelemetryCalibrationReport(report, { enforce = false } = {}) {
   );
   lines.push(
     `- p25_clv: ${Number.isFinite(report.ledgers.clv.p25Clv) ? report.ledgers.clv.p25Clv.toFixed(4) : 'n/a'} | threshold ${report.ledgers.clv.checks.tailRisk.threshold} | ${report.ledgers.clv.checks.tailRisk.status}`,
+  );
+  lines.push('');
+
+  lines.push('nhl_moneyline_calibration');
+  lines.push(
+    `- status: ${report.nhlMoneylineCalibration.status} | sample: ${report.nhlMoneylineCalibration.sampleSize} | window: ${report.nhlMoneylineCalibration.sampleWindow.startUtc} -> ${report.nhlMoneylineCalibration.sampleWindow.endUtc} (${report.nhlMoneylineCalibration.sampleWindow.anchorField})`,
+  );
+  lines.push(
+    `- baseline (${report.nhlMoneylineCalibration.mappings.baseline.mappingKey}, sigma=${report.nhlMoneylineCalibration.mappings.baseline.sigmaMargin}): brier ${formatCalibrationMetric(report.nhlMoneylineCalibration.mappings.baseline.brier)} | log_loss ${formatCalibrationMetric(report.nhlMoneylineCalibration.mappings.baseline.logLoss)}`,
+  );
+  lines.push(
+    `- selected (${report.nhlMoneylineCalibration.mappings.selected.mappingKey}, sigma=${report.nhlMoneylineCalibration.mappings.selected.sigmaMargin}): brier ${formatCalibrationMetric(report.nhlMoneylineCalibration.mappings.selected.brier)} | log_loss ${formatCalibrationMetric(report.nhlMoneylineCalibration.mappings.selected.logLoss)}`,
+  );
+  lines.push(
+    `- deltas (selected-baseline): brier ${formatCalibrationMetric(report.nhlMoneylineCalibration.deltas.brierSelectedMinusBaseline)} | log_loss ${formatCalibrationMetric(report.nhlMoneylineCalibration.deltas.logLossSelectedMinusBaseline)}`,
+  );
+  lines.push(
+    `- verdict: ${report.nhlMoneylineCalibration.verdict} | rule ${report.nhlMoneylineCalibration.selectionRule}`,
+  );
+  lines.push(`- rationale: ${report.nhlMoneylineCalibration.rationale}`);
+  lines.push(
+    `- baseline_reliability_bins: ${formatReliabilityBinsInline(report.nhlMoneylineCalibration.mappings.baseline.reliabilityBins)}`,
+  );
+  lines.push(
+    `- selected_reliability_bins: ${formatReliabilityBinsInline(report.nhlMoneylineCalibration.mappings.selected.reliabilityBins)}`,
   );
   lines.push('');
 
@@ -648,15 +1040,26 @@ module.exports = {
   generateTelemetryCalibrationReport,
   parseArgs,
   __private: {
+    buildEmptyMappingStats,
     buildClvLedgerReport,
     buildFetchDiagnostics,
+    buildNhlMoneylineCalibrationReport,
     buildProjectionLedgerReport,
+    buildReliabilityBinTemplate,
     checkStatus,
     collectChecks,
+    computeMappingMetrics,
+    clampProbability,
     determineOverallStatus,
+    formatCalibrationMetric,
     formatPct,
+    formatReliabilityBinsInline,
     parsePositiveInteger,
+    parseJsonObject,
+    resolveMoneylineSelection,
+    resolveProjectedMarginHome,
     tableExists,
+    toUpperToken,
     toRounded,
   },
 };
