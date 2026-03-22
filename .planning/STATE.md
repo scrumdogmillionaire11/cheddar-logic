@@ -16,8 +16,62 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-21
-- Next action for operators/agents: assess and prioritize directly from `WORK_QUEUE/`
+- Last reviewed: 2026-03-22
+- Next action for operators/agents: see sprint plan below → pick the next unclaimed item in Tier 1
+
+---
+
+## Sprint Plan — 2026-03-22 prioritization
+
+### Dependency Chains (respect order within chains)
+- **Edge math stack (serial):** WI-0551 → WI-0552 → WI-0554 → WI-0556
+- **Auth/JWT (one branch):** WI-0559 → WI-0560 (same `jwt.ts` file, do back-to-back)
+- **Settlement → CLV (serial):** WI-0564 → WI-0566 → WI-0557
+- **All others:** independent, can be parallelized across agents
+
+---
+
+### Tier 1 — Security & Correctness Blockers (do now)
+
+| Order | WI | Summary | Key files |
+|---|---|---|---|
+| 1 | [WI-0560](../WORK_QUEUE/WI-0560.md) | Fail closed when `AUTH_SECRET` is missing/default in prod | `web/src/lib/api-security/jwt.ts`, `token/route.ts` |
+| 2 | [WI-0559](../WORK_QUEUE/WI-0559.md) | Fix JWT HS256 signature to RFC-compliant base64url | `web/src/lib/api-security/jwt.ts` |
+| 3 | [WI-0561](../WORK_QUEUE/WI-0561.md) | Upgrade Next.js 16.1.6 → 16.1.7+ (CVE advisory) | `web/package.json`, `web/package-lock.json` |
+| 4 | [WI-0551](../WORK_QUEUE/WI-0551.md) | Remove vig from implied probability (edge math baseline) | `packages/models/src/edge-calculator.js` |
+| 5 | [WI-0555](../WORK_QUEUE/WI-0555.md) | Unify spread threshold + enable `MARKET_THRESHOLDS_V2` | `run_nba_model.js`, `decision-pipeline-v2.patch.js`, `flags.js` |
+
+---
+
+### Tier 2 — High-Value Model Improvements
+
+| Order | WI | Summary | Depends on |
+|---|---|---|---|
+| 6 | [WI-0552](../WORK_QUEUE/WI-0552.md) | Empirical sigma from game history (replace hardcoded 12/14) | WI-0551 |
+| 7 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function (replace 0.95/0.88/0.85 literals) | WI-0551, WI-0552 |
+| 8 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate mutating web tests to temp DB (prevent CI prod mutation) | — |
+| 9 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI with no local server | — |
+
+---
+
+### Tier 3 — Feature Completions
+
+| Order | WI | Summary | Depends on |
+|---|---|---|---|
+| 10 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | — |
+| 11 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge (not projection signal) | WI-0551–0554 |
+| 12 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0551–0554 |
+| 13 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | — |
+| 14 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
+| 15 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
+
+---
+
+### Tier 4 — Polish / Display
+
+| Order | WI | Summary | Depends on |
+|---|---|---|---|
+| 16 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | — |
 
 ### Quick Tasks Completed
 
