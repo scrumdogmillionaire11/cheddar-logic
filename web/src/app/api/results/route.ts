@@ -15,35 +15,23 @@ const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
 const ALLOWED_CATEGORIES = ['driver', 'call'] as const;
 const ALLOWED_MARKETS = ['moneyline', 'spread', 'total'] as const;
 
-type SummaryRow = {
-  total_cards: number;
-  settled_cards: number;
-  wins: number;
-  losses: number;
-  pushes: number;
-  total_pnl_units: number | null;
-};
-
-type SegmentRow = {
+type ActionableSourceRow = {
+  id: string;
   sport: string;
   card_type: string;
-  card_category: string;
-  recommended_bet_type: string;
-  settled_cards: number;
-  wins: number;
-  losses: number;
-  pushes: number;
-  total_pnl_units: number | null;
+  recommended_bet_type: string | null;
+  result: string | null;
+  pnl_units: number | null;
+  payload_data: string | null;
 };
 
-type SettlementSegmentId =
-  | 'nhl_game_sides_totals'
-  | 'nhl_first_period_totals'
-  | 'nhl_player_shots_props';
+type DecisionSegmentId = 'play' | 'slight_edge';
+type DecisionTierStatus = 'PLAY' | 'LEAN' | 'PASS_OR_OTHER';
 
-type SettlementSegmentMeta = {
-  id: SettlementSegmentId;
+type DecisionSegmentMeta = {
+  id: DecisionSegmentId;
   label: string;
+  canonicalStatus: 'PLAY' | 'LEAN';
 };
 
 type LedgerRow = {
@@ -104,13 +92,6 @@ function parseBooleanLikeParam(
   return fallback;
 }
 
-function toNullableNumber(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return null;
-  return parsed;
-}
-
 function safeJsonParse(payload: string | null) {
   if (!payload) return { data: null, error: false, missing: true };
   try {
@@ -143,52 +124,80 @@ const DRIVER_PATTERNS = [
 ];
 
 const CALL_PATTERNS = ['%-totals-call', '%-spread-call'];
-
-const SETTLEMENT_SEGMENTS: SettlementSegmentMeta[] = [
-  { id: 'nhl_game_sides_totals', label: 'Game Sides & Totals' },
-  { id: 'nhl_first_period_totals', label: '1P Totals' },
-  { id: 'nhl_player_shots_props', label: 'Player Shots Props' },
+const DECISION_SEGMENTS: DecisionSegmentMeta[] = [
+  { id: 'play', label: 'PLAY', canonicalStatus: 'PLAY' },
+  { id: 'slight_edge', label: 'SLIGHT EDGE', canonicalStatus: 'LEAN' },
 ];
 
-function deriveSettlementSegment(
-  sport: string | null | undefined,
-  cardType: string | null | undefined,
-  recommendedBetType: string | null | undefined,
-  marketType: string | null | undefined,
-  marketKey: string | null | undefined,
-): SettlementSegmentMeta {
-  const normalizedSport = String(sport || '').toUpperCase();
-  const normalizedCardType = String(cardType || '').toLowerCase();
-  const normalizedBetType = String(recommendedBetType || '').toLowerCase();
-  const normalizedMarketType = String(marketType || '').toLowerCase();
-  const normalizedMarketKey = String(marketKey || '').toLowerCase();
-  const isFirstPeriod =
-    normalizedCardType.includes('-1p') ||
-    normalizedCardType.includes('first-period') ||
-    normalizedMarketType.includes('first_period') ||
-    normalizedMarketType.includes('first period') ||
-    normalizedMarketKey.includes('first_period') ||
-    normalizedMarketKey.includes(':1p');
-  const isPlayerShots =
-    normalizedCardType.includes('player-shots') ||
-    normalizedCardType.includes('player_shots') ||
-    normalizedMarketKey.includes('player_shots') ||
-    normalizedMarketKey.includes('player-shots');
+const CALL_SUFFIXES = CALL_PATTERNS.map((pattern) =>
+  pattern.replace('%', '').toLowerCase(),
+);
 
-  // NHL player shots props always route to their dedicated segment
-  if (normalizedSport === 'NHL' && isPlayerShots && !isFirstPeriod) {
-    return SETTLEMENT_SEGMENTS[2];
+function getNestedString(
+  payload: Record<string, unknown> | null,
+  path: string[],
+): string | null {
+  let current: unknown = payload;
+  for (const key of path) {
+    if (!current || typeof current !== 'object' || !(key in current)) {
+      return null;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === 'string' ? current : null;
+}
+
+function normalizeStatusToken(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function resolveDecisionTier(
+  payload: Record<string, unknown> | null,
+): DecisionTierStatus {
+  const officialStatus = normalizeStatusToken(
+    getNestedString(payload, ['play', 'decision_v2', 'official_status']) ||
+      getNestedString(payload, ['decision_v2', 'official_status']),
+  );
+  if (officialStatus === 'PLAY') return 'PLAY';
+  if (officialStatus === 'LEAN') return 'LEAN';
+  if (officialStatus === 'PASS') return 'PASS_OR_OTHER';
+
+  const fallbackSignals = [
+    getNestedString(payload, ['decision', 'status']),
+    getNestedString(payload, ['status']),
+    getNestedString(payload, ['play', 'status']),
+    getNestedString(payload, ['action']),
+    getNestedString(payload, ['play', 'action']),
+    getNestedString(payload, ['decision', 'action']),
+  ];
+
+  for (const signal of fallbackSignals) {
+    const normalized = normalizeStatusToken(signal);
+    if (normalized === 'FIRE' || normalized === 'PLAY') return 'PLAY';
+    if (
+      normalized === 'WATCH' ||
+      normalized === 'HOLD' ||
+      normalized === 'LEAN'
+    ) {
+      return 'LEAN';
+    }
+    if (normalized === 'PASS') return 'PASS_OR_OTHER';
   }
 
-  if (
-    normalizedSport === 'NHL' &&
-    normalizedBetType === 'total' &&
-    isFirstPeriod
-  ) {
-    return SETTLEMENT_SEGMENTS[1];
-  }
+  return 'PASS_OR_OTHER';
+}
 
-  return SETTLEMENT_SEGMENTS[0];
+function deriveDecisionSegment(tier: 'PLAY' | 'LEAN'): DecisionSegmentMeta {
+  return tier === 'PLAY' ? DECISION_SEGMENTS[0] : DECISION_SEGMENTS[1];
+}
+
+function deriveCardCategoryFromType(cardType: string | null | undefined) {
+  const normalized = String(cardType || '').toLowerCase();
+  return CALL_SUFFIXES.some((suffix) => normalized.endsWith(suffix))
+    ? 'call'
+    : 'driver';
 }
 
 function buildCardCategoryFilter(
@@ -248,7 +257,7 @@ export async function GET(request: NextRequest) {
               avgPnl: null,
             },
             segments: [],
-            segmentFamilies: SETTLEMENT_SEGMENTS.map((segment) => ({
+            segmentFamilies: DECISION_SEGMENTS.map((segment) => ({
               segmentId: segment.id,
               segmentLabel: segment.label,
               settledCards: 0,
@@ -532,7 +541,7 @@ export async function GET(request: NextRequest) {
               avgPnl: null,
             },
             segments: [],
-            segmentFamilies: SETTLEMENT_SEGMENTS.map((segment) => ({
+            segmentFamilies: DECISION_SEGMENTS.map((segment) => ({
               segmentId: segment.id,
               segmentLabel: segment.label,
               settledCards: 0,
@@ -574,51 +583,163 @@ export async function GET(request: NextRequest) {
 
     const ids = dedupedIdRows.map((r) => r.id);
 
-    const summary = db
+    const actionableSourceRows = db
       .prepare(
         `
       SELECT
-        COUNT(*) AS total_cards,
-        SUM(CASE WHEN cr.status = 'settled' THEN 1 ELSE 0 END) AS settled_cards,
-        SUM(CASE WHEN cr.result = 'win' THEN 1 ELSE 0 END) AS wins,
-        SUM(CASE WHEN cr.result = 'loss' THEN 1 ELSE 0 END) AS losses,
-        SUM(CASE WHEN cr.result = 'push' THEN 1 ELSE 0 END) AS pushes,
-        SUM(cr.pnl_units) AS total_pnl_units
-      FROM card_results cr
-      WHERE cr.id IN (${placeholders})
-    `,
-      )
-      .get(...ids) as SummaryRow;
-
-    // card_category CASE expression for segments
-    const cardCaseSql = `
-      CASE
-        WHEN cr.card_type LIKE '%-totals-call' OR cr.card_type LIKE '%-spread-call'
-          THEN 'call'
-        ELSE 'driver'
-      END AS card_category
-    `;
-
-    const segments = db
-      .prepare(
-        `
-      SELECT
+        cr.id,
         cr.sport,
         cr.card_type,
-        ${cardCaseSql},
         cr.recommended_bet_type,
-        COUNT(*) AS settled_cards,
-        SUM(CASE WHEN cr.result = 'win' THEN 1 ELSE 0 END) AS wins,
-        SUM(CASE WHEN cr.result = 'loss' THEN 1 ELSE 0 END) AS losses,
-        SUM(CASE WHEN cr.result = 'push' THEN 1 ELSE 0 END) AS pushes,
-        SUM(cr.pnl_units) AS total_pnl_units
+        cr.result,
+        cr.pnl_units,
+        cp.payload_data
       FROM card_results cr
+      LEFT JOIN card_payloads cp ON cp.id = cr.card_id
       WHERE cr.id IN (${placeholders})
-      GROUP BY cr.sport, cr.card_type, card_category, cr.recommended_bet_type
-      ORDER BY cr.sport ASC, cr.card_type ASC, card_category ASC, cr.recommended_bet_type ASC
     `,
       )
-      .all(...ids) as SegmentRow[];
+      .all(...ids) as ActionableSourceRow[];
+
+    const actionableRows = actionableSourceRows.flatMap((row) => {
+      const parsed = safeJsonParse(row.payload_data);
+      const payload = parsed.data as Record<string, unknown> | null;
+      const decisionTier = resolveDecisionTier(payload);
+      if (decisionTier !== 'PLAY' && decisionTier !== 'LEAN') {
+        return [];
+      }
+      const decisionSegment = deriveDecisionSegment(decisionTier);
+      return [
+        {
+          ...row,
+          decisionTier,
+          segmentId: decisionSegment.id,
+          segmentLabel: decisionSegment.label,
+        },
+      ];
+    });
+
+    const segmentMap = new Map<
+      string,
+      {
+        sport: string;
+        cardType: string;
+        cardCategory: string;
+        recommendedBetType: string;
+        settledCards: number;
+        wins: number;
+        losses: number;
+        pushes: number;
+        pnlSum: number;
+        hasPnl: boolean;
+        segmentId: DecisionSegmentId;
+        segmentLabel: string;
+        decisionTier: 'PLAY' | 'LEAN';
+      }
+    >();
+
+    let wins = 0;
+    let losses = 0;
+    let pushes = 0;
+    let settledCards = 0;
+    let totalCards = 0;
+    let totalPnlSum = 0;
+    let hasTotalPnl = false;
+
+    for (const row of actionableRows) {
+      totalCards += 1;
+      settledCards += 1;
+      if (row.result === 'win') wins += 1;
+      else if (row.result === 'loss') losses += 1;
+      else if (row.result === 'push') pushes += 1;
+      if (typeof row.pnl_units === 'number' && Number.isFinite(row.pnl_units)) {
+        totalPnlSum += row.pnl_units;
+        hasTotalPnl = true;
+      }
+
+      const cardCategory = deriveCardCategoryFromType(row.card_type);
+      const recommendedBetType = row.recommended_bet_type || 'unknown';
+      const key = [
+        row.segmentId,
+        row.sport,
+        row.card_type,
+        cardCategory,
+        recommendedBetType,
+      ].join('||');
+      const existing = segmentMap.get(key);
+      if (!existing) {
+        segmentMap.set(key, {
+          sport: row.sport,
+          cardType: row.card_type,
+          cardCategory,
+          recommendedBetType,
+          settledCards: 1,
+          wins: row.result === 'win' ? 1 : 0,
+          losses: row.result === 'loss' ? 1 : 0,
+          pushes: row.result === 'push' ? 1 : 0,
+          pnlSum:
+            typeof row.pnl_units === 'number' && Number.isFinite(row.pnl_units)
+              ? row.pnl_units
+              : 0,
+          hasPnl:
+            typeof row.pnl_units === 'number' && Number.isFinite(row.pnl_units),
+          segmentId: row.segmentId,
+          segmentLabel: row.segmentLabel,
+          decisionTier: row.decisionTier,
+        });
+      } else {
+        existing.settledCards += 1;
+        if (row.result === 'win') existing.wins += 1;
+        else if (row.result === 'loss') existing.losses += 1;
+        else if (row.result === 'push') existing.pushes += 1;
+        if (typeof row.pnl_units === 'number' && Number.isFinite(row.pnl_units)) {
+          existing.pnlSum += row.pnl_units;
+          existing.hasPnl = true;
+        }
+      }
+    }
+
+    const segmentRows = Array.from(segmentMap.values())
+      .map((row) => ({
+        sport: row.sport,
+        cardType: row.cardType,
+        cardCategory: row.cardCategory,
+        recommendedBetType: row.recommendedBetType,
+        settledCards: row.settledCards,
+        wins: row.wins,
+        losses: row.losses,
+        pushes: row.pushes,
+        totalPnlUnits: row.hasPnl ? row.pnlSum : null,
+        segmentId: row.segmentId,
+        segmentLabel: row.segmentLabel,
+        decisionTier: row.decisionTier,
+      }))
+      .sort((a, b) => {
+        if (a.segmentId !== b.segmentId) {
+          return a.segmentId.localeCompare(b.segmentId);
+        }
+        if (a.sport !== b.sport) return a.sport.localeCompare(b.sport);
+        if (a.cardType !== b.cardType) return a.cardType.localeCompare(b.cardType);
+        if (a.cardCategory !== b.cardCategory) {
+          return a.cardCategory.localeCompare(b.cardCategory);
+        }
+        return a.recommendedBetType.localeCompare(b.recommendedBetType);
+      });
+
+    const segmentFamilies = DECISION_SEGMENTS.map((segment) => ({
+      segmentId: segment.id,
+      segmentLabel: segment.label,
+      settledCards: segmentRows
+        .filter((row) => row.segmentId === segment.id)
+        .reduce((sum, row) => sum + row.settledCards, 0),
+    }));
+
+    const totalPnlUnits = hasTotalPnl ? totalPnlSum : null;
+    const winRate = wins + losses > 0 ? wins / (wins + losses) : 0;
+    const avgPnl =
+      totalPnlUnits !== null && settledCards > 0
+        ? totalPnlUnits / settledCards
+        : null;
 
     const ledger = db
       .prepare(
@@ -678,6 +799,13 @@ export async function GET(request: NextRequest) {
       const payload = parsed.data as Record<string, unknown> | null;
       const tier =
         payload && typeof payload.tier === 'string' ? payload.tier : null;
+      const decisionTier = resolveDecisionTier(payload);
+      const decisionLabel =
+        decisionTier === 'PLAY'
+          ? 'PLAY'
+          : decisionTier === 'LEAN'
+            ? 'SLIGHT EDGE'
+            : null;
       const market =
         payload && typeof payload.recommended_bet_type === 'string'
           ? payload.recommended_bet_type
@@ -848,14 +976,6 @@ export async function GET(request: NextRequest) {
               : null;
       }
 
-      const settlementSegment = deriveSettlementSegment(
-        row.sport,
-        row.card_type,
-        market,
-        marketType,
-        marketKey,
-      );
-
       return {
         id: row.id,
         gameId: row.game_id,
@@ -868,6 +988,11 @@ export async function GET(request: NextRequest) {
         createdAt: row.created_at,
         prediction,
         tier,
+        decisionTier:
+          decisionTier === 'PLAY' || decisionTier === 'LEAN'
+            ? decisionTier
+            : null,
+        decisionLabel,
         market,
         marketType,
         selection,
@@ -882,54 +1007,8 @@ export async function GET(request: NextRequest) {
         payloadMissing: parsed.missing || row.payload_id === null,
         projection1p,
         projectionTotal,
-        segmentId: settlementSegment.id,
-        segmentLabel: settlementSegment.label,
       };
     });
-
-    const segmentRows = segments.map((row) => {
-      const settlementSegment = deriveSettlementSegment(
-        row.sport,
-        row.card_type,
-        row.recommended_bet_type,
-        null,
-        null,
-      );
-      return {
-        sport: row.sport,
-        cardType: row.card_type,
-        cardCategory: row.card_category,
-        recommendedBetType: row.recommended_bet_type || 'unknown',
-        settledCards: Number(row.settled_cards || 0),
-        wins: Number(row.wins || 0),
-        losses: Number(row.losses || 0),
-        pushes: Number(row.pushes || 0),
-        totalPnlUnits: toNullableNumber(row.total_pnl_units),
-        segmentId: settlementSegment.id,
-        segmentLabel: settlementSegment.label,
-      };
-    });
-
-    const segmentFamilies = SETTLEMENT_SEGMENTS.map((segment) => ({
-      segmentId: segment.id,
-      segmentLabel: segment.label,
-      settledCards: segmentRows
-        .filter((row) => row.segmentId === segment.id)
-        .reduce((sum, row) => sum + row.settledCards, 0),
-    }));
-
-    const wins = Number(summary.wins || 0);
-    const losses = Number(summary.losses || 0);
-    const pushes = Number(summary.pushes || 0);
-    const settledCards = Number(summary.settled_cards || 0);
-    const totalCards = Number(summary.total_cards || 0);
-    const totalPnlUnits = toNullableNumber(summary.total_pnl_units);
-
-    const winRate = wins + losses > 0 ? wins / (wins + losses) : 0;
-    const avgPnl =
-      totalPnlUnits !== null && settledCards > 0
-        ? totalPnlUnits / settledCards
-        : null;
 
     const response = NextResponse.json(
       {

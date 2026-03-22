@@ -102,14 +102,12 @@ async function run() {
   const familyIds = new Set(
     defaultSegmentFamilies.map((family) => family.segmentId),
   );
-  ['nhl_game_sides_totals', 'nhl_first_period_totals', 'nhl_player_shots_props'].forEach(
-    (segmentId) => {
-      assert.ok(
-        familyIds.has(segmentId),
-        `segmentFamilies missing expected segment: ${segmentId}`,
-      );
-    },
-  );
+  ['play', 'slight_edge'].forEach((segmentId) => {
+    assert.ok(
+      familyIds.has(segmentId),
+      `segmentFamilies missing expected segment: ${segmentId}`,
+    );
+  });
 
   console.log('✅ API results flags regression test passed');
   console.log(

@@ -494,9 +494,11 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
 
   // SPREAD decision → nba-spread-call
   const spreadDecision = marketDecisions?.SPREAD;
+  const SPREAD_EDGE_MIN = 0.02;
   if (
     spreadDecision &&
-    (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH')
+    (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH') &&
+    (spreadDecision.edge == null || spreadDecision.edge > SPREAD_EDGE_MIN)
   ) {
     const confidence = CONFIDENCE_MAP[spreadDecision.status];
     const tier = determineTier(confidence);
@@ -1015,4 +1017,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runNBAModel };
+module.exports = { runNBAModel, generateNBAMarketCallCards };

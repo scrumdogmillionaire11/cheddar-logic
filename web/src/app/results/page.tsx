@@ -25,18 +25,16 @@ type SegmentRow = {
   losses: number;
   pushes: number;
   totalPnlUnits: number | null;
-  segmentId: SettlementSegmentId;
-  segmentLabel: string;
+  segmentId: DecisionSegmentId;
+  segmentLabel: 'PLAY' | 'SLIGHT EDGE';
+  decisionTier?: 'PLAY' | 'LEAN';
 };
 
-type SettlementSegmentId =
-  | 'nhl_game_sides_totals'
-  | 'nhl_first_period_totals'
-  | 'nhl_player_shots_props';
+type DecisionSegmentId = 'play' | 'slight_edge';
 
 type SegmentFamily = {
-  segmentId: SettlementSegmentId;
-  segmentLabel: string;
+  segmentId: DecisionSegmentId;
+  segmentLabel: 'PLAY' | 'SLIGHT EDGE';
   settledCards: number;
 };
 
@@ -67,8 +65,8 @@ type LedgerRow = {
   // WI-0383: 1P and full-game projection totals for NHL cards
   projection1p?: number | null;
   projectionTotal?: number | null;
-  segmentId?: SettlementSegmentId;
-  segmentLabel?: string;
+  decisionTier?: 'PLAY' | 'LEAN' | null;
+  decisionLabel?: string | null;
 };
 
 type ResultsResponse = {
@@ -163,18 +161,13 @@ function roiTextClass(value: number | null | undefined) {
 
 const SEGMENT_DEFINITIONS: SegmentFamily[] = [
   {
-    segmentId: 'nhl_game_sides_totals',
-    segmentLabel: 'Game Sides & Totals',
+    segmentId: 'play',
+    segmentLabel: 'PLAY',
     settledCards: 0,
   },
   {
-    segmentId: 'nhl_first_period_totals',
-    segmentLabel: '1P Totals',
-    settledCards: 0,
-  },
-  {
-    segmentId: 'nhl_player_shots_props',
-    segmentLabel: 'Player Shots Props',
+    segmentId: 'slight_edge',
+    segmentLabel: 'SLIGHT EDGE',
     settledCards: 0,
   },
 ];
@@ -298,9 +291,9 @@ export default function ResultsPage() {
   const visibleLedger = ledger.filter((row) => !row.payloadMissing);
   const segmentFamilies = useMemo(() => {
     if (!summary) return SEGMENT_DEFINITIONS;
-    const counts = new Map<SettlementSegmentId, number>();
+    const counts = new Map<DecisionSegmentId, number>();
     for (const row of segments) {
-      const id = row.segmentId || 'nhl_game_sides_totals';
+      const id = row.segmentId || 'play';
       counts.set(id, (counts.get(id) || 0) + row.settledCards);
     }
     return SEGMENT_DEFINITIONS.map((segment) => ({
@@ -309,13 +302,12 @@ export default function ResultsPage() {
     }));
   }, [summary, segments]);
   const segmentsByFamily = useMemo(() => {
-    const grouped: Record<SettlementSegmentId, SegmentRow[]> = {
-      nhl_game_sides_totals: [],
-      nhl_first_period_totals: [],
-      nhl_player_shots_props: [],
+    const grouped: Record<DecisionSegmentId, SegmentRow[]> = {
+      play: [],
+      slight_edge: [],
     };
     for (const row of segments) {
-      const id = row.segmentId || 'nhl_game_sides_totals';
+      const id = row.segmentId || 'play';
       grouped[id].push(row);
     }
     return grouped;
@@ -403,10 +395,10 @@ export default function ResultsPage() {
         <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h2 className="text-2xl font-semibold">Segments</h2>
+              <h2 className="text-2xl font-semibold">Decision Tiers</h2>
               <p className="mt-2 text-sm text-cloud/70">
-                Segment NHL results on the same page by game sides/totals, 1P
-                totals, and player shots props.
+                Track settled performance by decision tier so PLAY and SLIGHT
+                EDGE outcomes reconcile directly to the summary above.
               </p>
             </div>
 
@@ -562,7 +554,7 @@ export default function ResultsPage() {
                     </div>
                     {familyRows.length === 0 ? (
                       <div className="px-4 py-6 text-sm text-cloud/60">
-                        No graded rows yet for this segment.
+                        No graded rows yet for this decision tier.
                       </div>
                     ) : (
                       <div className="divide-y divide-white/10">
@@ -606,7 +598,7 @@ export default function ResultsPage() {
                   <div className="mt-3 space-y-3 md:hidden">
                     {familyRows.length === 0 ? (
                       <div className="rounded-xl border border-white/10 bg-night/30 px-4 py-6 text-sm text-cloud/60">
-                        No graded rows yet for this segment.
+                        No graded rows yet for this decision tier.
                       </div>
                     ) : (
                       familyRows.map((row) => {
