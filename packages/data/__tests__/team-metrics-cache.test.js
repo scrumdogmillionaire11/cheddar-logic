@@ -162,7 +162,7 @@ async function testCache() {
     
   } catch (err) {
     console.error('[Test] ❌ Test failed:', err);
-    process.exit(1);
+    throw err;
   } finally {
     closeDatabase();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -170,4 +170,7 @@ async function testCache() {
   }
 }
 
-testCache();
+// Jest wrapper — runs the integration as a proper test suite
+test('team metrics cache integration', async () => {
+  await testCache();
+}, 15000);

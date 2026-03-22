@@ -49,6 +49,30 @@
       "spread_home": -1.5,
       "spread_away": 1.5
     },
-    "generated_at": "2026-03-05T12:00:00.000Z"
+    "generated_at": "2026-03-05T12:00:00.000Z",
+    "expression_choice": {
+      "chosen_market": "TOTAL",
+      "pick": "OVER",
+      "status": "WATCH",
+      "score": 0.52,
+      "net": 0.018,
+      "edge": 0.018,
+      "chosen": {
+        "market": "TOTAL",
+        "side": "OVER",
+        "line": null,
+        "price": null,
+        "status": "WATCH",
+        "score": 0.52,
+        "net": 0.018,
+        "conflict": 0,
+        "edge": 0.018
+      }
+    },
+    "market_narrative": {
+      "chosen_story": "Total looks slightly over based on pace projection.",
+      "alternatives": {},
+      "orchestration": "total-only"
+    }
   }
 }

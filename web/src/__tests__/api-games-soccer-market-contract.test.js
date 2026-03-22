@@ -6,8 +6,9 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
-const routePath = path.resolve('web/src/app/api/games/route.ts');
+const routePath = path.resolve(__dirname, '../../src/app/api/games/route.ts');
 const source = fs.readFileSync(routePath, 'utf8');
 
 console.log('🧪 /api/games soccer market contract source tests');

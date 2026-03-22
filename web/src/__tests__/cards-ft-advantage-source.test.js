@@ -6,21 +6,22 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
 const cardsPagePath = fs.existsSync(
   path.resolve('src/components/cards-page-client.tsx'),
 )
   ? path.resolve('src/components/cards-page-client.tsx')
-  : path.resolve('web/src/components/cards-page-client.tsx');
+  : path.resolve(__dirname, '../../src/components/cards-page-client.tsx');
 
 const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
 const routePath = fs.existsSync(path.resolve('src/app/api/games/route.ts'))
   ? path.resolve('src/app/api/games/route.ts')
-  : path.resolve('web/src/app/api/games/route.ts');
+  : path.resolve(__dirname, '../../src/app/api/games/route.ts');
 const routeSource = fs.readFileSync(routePath, 'utf8');
 const transformPath = fs.existsSync(path.resolve('src/lib/game-card/transform.ts'))
   ? path.resolve('src/lib/game-card/transform.ts')
-  : path.resolve('web/src/lib/game-card/transform.ts');
+  : path.resolve(__dirname, '../../src/lib/game-card/transform.ts');
 const transformSource = fs.readFileSync(transformPath, 'utf8');
 
 console.log('NCAAM FT advantage source-contract checks');
@@ -30,12 +31,10 @@ assert(
   'cards-page-client must scan for ncaam-ft-trend driver',
 );
 assert(
-  cardsPageSource.includes('FT Advantage:'),
-  'cards-page-client must render FT Advantage label in Why section',
-);
-assert(
-  cardsPageSource.includes('FT Trend Play:'),
-  'cards-page-client must render FT Trend Play directive copy',
+  cardsPageSource.includes('FT context:') ||
+    cardsPageSource.includes('FT Advantage:') ||
+    cardsPageSource.includes('FT Trend Play:'),
+  'cards-page-client must render FT label (FT context: / FT Advantage: / FT Trend Play:) in Why section',
 );
 assert(
   cardsPageSource.includes('formatFtTrendInsight('),

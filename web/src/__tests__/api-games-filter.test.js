@@ -127,12 +127,15 @@ async function runTests() {
   console.log('── Section 2: Lifecycle query behavior ──');
 
   const TEST_PREFIX = 'test-filter-';
-  // Clean up any leftover test data
+  // Clean up any leftover test data (delete child rows first due to FK constraints)
   client
-    .prepare(`DELETE FROM games WHERE game_id LIKE '${TEST_PREFIX}%'`)
+    .prepare(`DELETE FROM card_payloads WHERE game_id LIKE '${TEST_PREFIX}%'`)
     .run();
   client
     .prepare(`DELETE FROM game_results WHERE game_id LIKE '${TEST_PREFIX}%'`)
+    .run();
+  client
+    .prepare(`DELETE FROM games WHERE game_id LIKE '${TEST_PREFIX}%'`)
     .run();
 
   const now = new Date();
@@ -222,7 +225,8 @@ async function runTests() {
       .prepare(
         `INSERT OR REPLACE INTO games
            (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
-         VALUES (?, 'TEST', ?, 'Home', 'Away', ?, ?, datetime('now'), datetime('now'))`,
+         VALUES (?, 'nhl', ?, 'Home', 'Away', ?, ?, datetime('now'), datetime('now'))`,
+
       )
       .run(`id-${g.id}`, g.id, gameTime, g.status);
 
@@ -231,7 +235,8 @@ async function runTests() {
         .prepare(
           `INSERT OR REPLACE INTO game_results
              (id, game_id, sport, final_score_home, final_score_away, status, result_source, settled_at, created_at, updated_at)
-           VALUES (?, ?, 'TEST', 77, 70, 'final', 'manual', datetime('now'), datetime('now'), datetime('now'))`,
+           VALUES (?, ?, 'nhl', 77, 70, 'final', 'manual', datetime('now'), datetime('now'), datetime('now'))`,
+
         )
         .run(`gr-${g.id}`, g.id);
     }
@@ -263,10 +268,13 @@ async function runTests() {
   assert(activeEmpty.length === 0, 'Active mode can return zero results cleanly');
 
   client
-    .prepare(`DELETE FROM games WHERE game_id LIKE '${TEST_PREFIX}%'`)
+    .prepare(`DELETE FROM card_payloads WHERE game_id LIKE '${TEST_PREFIX}%'`)
     .run();
   client
     .prepare(`DELETE FROM game_results WHERE game_id LIKE '${TEST_PREFIX}%'`)
+    .run();
+  client
+    .prepare(`DELETE FROM games WHERE game_id LIKE '${TEST_PREFIX}%'`)
     .run();
   console.log();
 

@@ -9,8 +9,9 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
-const cardsPagePath = path.resolve('web/src/components/cards-page-client.tsx');
+const cardsPagePath = path.resolve(__dirname, '../../src/components/cards-page-client.tsx');
 const source = fs.readFileSync(cardsPagePath, 'utf8');
 
 console.log('cards no-bet display contract tests');

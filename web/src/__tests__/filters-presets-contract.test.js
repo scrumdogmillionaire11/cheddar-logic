@@ -6,10 +6,11 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
 function resolveSrc(rel) {
   const direct = path.resolve('src', rel);
-  const nested = path.resolve('web/src', rel);
+  const nested = path.resolve(__dirname, '../../src', rel);
   return fs.existsSync(direct) ? direct : nested;
 }
 

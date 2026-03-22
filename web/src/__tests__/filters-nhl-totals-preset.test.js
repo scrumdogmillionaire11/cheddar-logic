@@ -6,13 +6,14 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
 const presetsPath = fs.existsSync(path.resolve('src/lib/game-card/presets.ts'))
   ? path.resolve('src/lib/game-card/presets.ts')
-  : path.resolve('web/src/lib/game-card/presets.ts');
+  : path.resolve(__dirname, '../../src/lib/game-card/presets.ts');
 const filtersPath = fs.existsSync(path.resolve('src/lib/game-card/filters.ts'))
   ? path.resolve('src/lib/game-card/filters.ts')
-  : path.resolve('web/src/lib/game-card/filters.ts');
+  : path.resolve(__dirname, '../../src/lib/game-card/filters.ts');
 
 const presetsSource = fs.readFileSync(presetsPath, 'utf8');
 const filtersSource = fs.readFileSync(filtersPath, 'utf8');

@@ -46,8 +46,18 @@ async function runTests() {
     const runScopeGameId = `test-dedupe-runscope-${testSuffix}`;
     const runScopeCardId = `card-${testSuffix}-runscope-1`;
 
-    console.log('📋 Inserting test cards...');
+    // Insert required game rows first (FK constraint on card_payloads)
     const now = new Date();
+    const futureTime = new Date(now.getTime() + 3 * 3600000).toISOString();
+    const insertGame = client.prepare(
+      `INSERT OR REPLACE INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'Home', 'Away', ?, 'scheduled', datetime('now'), datetime('now'))`,
+    );
+    insertGame.run(`game-row-${testGameId}`, sport, testGameId, futureTime);
+    insertGame.run(`game-row-${tieGameId}`, sport, tieGameId, futureTime);
+    insertGame.run(`game-row-${runScopeGameId}`, sport, runScopeGameId, futureTime);
+
+    console.log('📋 Inserting test cards...');
     const card1CreatedAt = new Date(now.getTime() - 60000).toISOString(); // 1 min old
     const card2CreatedAt = new Date(now.getTime() - 30000).toISOString(); // 30 sec old
     const card3CreatedAt = now.toISOString(); // just now (latest)

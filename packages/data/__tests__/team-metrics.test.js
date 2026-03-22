@@ -13,7 +13,9 @@ describe('team-metrics', () => {
       form: 'Unknown',
       pace: null,
       rank: null,
-      record: null
+      record: null,
+      freeThrowPct: null,
+      freeThrowPctSource: null,
     });
   });
 
