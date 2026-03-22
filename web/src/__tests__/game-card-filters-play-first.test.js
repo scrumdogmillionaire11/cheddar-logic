@@ -1,40 +1,130 @@
 /*
- * Verifies play-first filter behavior in filters.ts source.
+ * Runtime checks for play-first market filtering behavior.
  * Run: npm --prefix web run test:filters:play-first
  */
 
-import assert from 'node:assert';
-import fs from 'node:fs';
-import path from 'node:path';
+import assert from 'node:assert/strict';
+import { applyFilters, DEFAULT_GAME_FILTERS } from '../lib/game-card/filters.ts';
 
-const filePath = path.resolve('src/lib/game-card/filters.ts');
-const source = fs.readFileSync(filePath, 'utf8');
+function buildDriver(overrides = {}) {
+  return {
+    key: 'driver-1',
+    market: 'TOTAL',
+    tier: 'WATCH',
+    direction: 'OVER',
+    confidence: 0.55,
+    note: 'Baseline',
+    cardType: 'nba-total',
+    cardTitle: 'NBA Total',
+    ...overrides,
+  };
+}
 
-console.log('🧪 Play-first filter source tests');
+function buildPlay(overrides = {}) {
+  return {
+    status: 'FIRE',
+    action: 'FIRE',
+    classification: 'BASE',
+    market: 'SPREAD',
+    pick: 'Home -3.5',
+    lean: 'home',
+    side: 'HOME',
+    truthStatus: 'STRONG',
+    truthStrength: 0.78,
+    conflict: 0.12,
+    valueStatus: 'GOOD',
+    betAction: 'BET',
+    priceFlags: [],
+    updatedAt: '2026-03-22T10:00:00Z',
+    whyCode: 'EDGE_FOUND',
+    whyText: 'Edge found',
+    ...overrides,
+  };
+}
 
-assert(
-  source.includes('const playMarket = card.play?.market;'),
-  'filters.ts should read market from card.play first',
+function buildCard(id, overrides = {}) {
+  const base = {
+    id,
+    gameId: `${id}-game`,
+    sport: 'NBA',
+    homeTeam: 'Home',
+    awayTeam: 'Away',
+    startTime: '2026-03-23T00:00:00Z',
+    updatedAt: '2026-03-22T10:00:00Z',
+    status: 'scheduled',
+    markets: {},
+    play: buildPlay(),
+    drivers: [buildDriver()],
+    tags: [],
+  };
+
+  return {
+    ...base,
+    ...overrides,
+    play:
+      overrides.play === undefined
+        ? base.play
+        : { ...base.play, ...overrides.play },
+    drivers: overrides.drivers ?? base.drivers,
+    tags: overrides.tags ?? base.tags,
+  };
+}
+
+const spreadOnlyFilters = {
+  ...DEFAULT_GAME_FILTERS,
+  markets: ['SPREAD'],
+  statuses: ['FIRE', 'WATCH'],
+};
+
+console.log('🧪 Play-first filter runtime tests');
+
+const playMarketMatch = buildCard('play-market-match', {
+  play: {
+    market: 'SPREAD',
+    market_type: 'SPREAD',
+    pick: 'Home -4.5',
+  },
+  drivers: [buildDriver({ market: 'TOTAL', direction: 'OVER' })],
+});
+
+const playMarketMatchResult = applyFilters(
+  [playMarketMatch],
+  spreadOnlyFilters,
+  'game',
+);
+assert.deepStrictEqual(
+  playMarketMatchResult.map((card) => card.id),
+  ['play-market-match'],
+  'play.market match should include card even when drivers do not match market',
 );
 
-assert(
-  /if\s*\(\s*playMarket\s*&&\s*playMarket\s*!==\s*'NONE'\s*&&\s*filters\.markets\.includes\(playMarket\)\s*\)/.test(
-    source,
-  ),
-  'filters.ts should short-circuit market filtering on play.market',
+const fallbackNonMatch = buildCard('fallback-non-match', {
+  play: {
+    market: 'TOTAL',
+    market_type: 'TOTAL',
+    pick: 'Over 226.5',
+  },
+  drivers: [buildDriver({ market: 'SPREAD', direction: 'HOME', note: 'Spread edge' })],
+});
+
+const fallbackMissing = buildCard('fallback-missing', {
+  play: {
+    market: undefined,
+    market_type: undefined,
+    pick: 'Home -2.5',
+  },
+  drivers: [buildDriver({ market: 'SPREAD', direction: 'HOME', note: 'Spread edge' })],
+});
+
+const fallbackResult = applyFilters(
+  [fallbackNonMatch, fallbackMissing],
+  spreadOnlyFilters,
+  'game',
+);
+assert.deepStrictEqual(
+  fallbackResult.map((card) => card.id).sort(),
+  ['fallback-missing', 'fallback-non-match'],
+  'when play market is missing or non-match, matching driver market should include card',
 );
 
-assert(
-  /return\s+card\.drivers\.some\(\(d\)\s*=>\s*filters\.markets\.includes\(d\.market\)\);/.test(
-    source,
-  ),
-  'filters.ts should keep driver-market fallback when play is missing',
-);
-
-assert(
-  source.includes('const displayAction = getPlayDisplayAction(card.play);') &&
-    source.includes("if (!displayAction || displayAction === 'PASS')"),
-  'filters.ts should derive status from play display action before legacy fallbacks',
-);
-
-console.log('✅ Play-first filter source tests passed');
+console.log('✅ Play-first filter runtime tests passed');

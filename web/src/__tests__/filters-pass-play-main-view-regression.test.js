@@ -1,105 +1,154 @@
 /*
- * Regression guard: PASS plays must not surface in the main view (FIRE/WATCH filter).
- *
- * Covers two leakage vectors that were fixed:
- *   1. Edge-verification blocked PASS cards with non-'NO PLAY' pick text bypassed the
- *      hasActionablePlayCall pick-text check — now caught by explicit action/classification guard.
- *   2. Driver-tag (HAS_FIRE / HAS_WATCH) re-promotion inside filterByActionability allowed
- *      PASS-decision cards with strong drivers to re-enter the FIRE/WATCH path — removed.
- *
- * Run: node --experimental-vm-modules web/src/__tests__/filters-pass-play-main-view-regression.test.js
- *      OR via: npm --prefix web run test:ui:cards (picks up via jest glob)
+ * Runtime regression guard: PASS cards must not surface in default FIRE/WATCH view.
+ * Run: npm --prefix web run test:filters
  */
 
-import assert from 'node:assert';
-import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import { applyFilters, DEFAULT_GAME_FILTERS } from '../lib/game-card/filters.ts';
 
-const filtersSource = fs.readFileSync(
-  new URL('../lib/game-card/filters.ts', import.meta.url),
-  'utf8',
+function buildDriver(overrides = {}) {
+  return {
+    key: 'driver-1',
+    market: 'ML',
+    tier: 'WATCH',
+    direction: 'HOME',
+    confidence: 0.62,
+    note: 'Baseline',
+    cardType: 'nba-projection',
+    cardTitle: 'NBA Projection',
+    ...overrides,
+  };
+}
+
+function buildPlay(overrides = {}) {
+  return {
+    status: 'PASS',
+    action: 'PASS',
+    classification: 'PASS',
+    market: 'ML',
+    pick: 'NO PLAY',
+    lean: 'none',
+    side: 'HOME',
+    truthStatus: 'WEAK',
+    truthStrength: 0.2,
+    conflict: 0.8,
+    valueStatus: 'BAD',
+    betAction: 'NO_PLAY',
+    priceFlags: [],
+    updatedAt: '2026-03-22T10:00:00Z',
+    whyCode: 'PASS_NO_EDGE',
+    whyText: 'No edge',
+    ...overrides,
+  };
+}
+
+function buildCard(id, overrides = {}) {
+  const base = {
+    id,
+    gameId: `${id}-game`,
+    sport: 'NBA',
+    homeTeam: 'Home',
+    awayTeam: 'Away',
+    startTime: '2026-03-23T00:00:00Z',
+    updatedAt: '2026-03-22T10:00:00Z',
+    status: 'scheduled',
+    markets: {},
+    play: buildPlay(),
+    drivers: [buildDriver()],
+    tags: [],
+  };
+
+  return {
+    ...base,
+    ...overrides,
+    play:
+      overrides.play === undefined
+        ? base.play
+        : { ...base.play, ...overrides.play },
+    drivers: overrides.drivers ?? base.drivers,
+    tags: overrides.tags ?? base.tags,
+  };
+}
+
+function ids(cards) {
+  return cards.map((card) => card.id).sort();
+}
+
+console.log('🧪 PASS main-view runtime regression tests');
+
+const passTagHeavy = buildCard('pass-tag-heavy', {
+  play: {
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    pick: 'Home ML -112 (Verification Required)',
+  },
+  tags: ['has_fire', 'has_watch'],
+  drivers: [
+    buildDriver({ key: 'best-1', tier: 'BEST', confidence: 0.93 }),
+    buildDriver({ key: 'super-1', tier: 'SUPER', confidence: 0.81 }),
+  ],
+});
+
+const passPickText = buildCard('pass-pick-text', {
+  play: {
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    pick: 'Away ML -104 (Verification Required)',
+  },
+});
+
+const passOfficialStatus = buildCard('pass-official-status', {
+  play: {
+    action: 'FIRE',
+    classification: 'BASE',
+    status: 'FIRE',
+    pick: 'Away ML -108',
+    decision_v2: {
+      official_status: 'PASS',
+    },
+  },
+  tags: ['has_fire'],
+  drivers: [buildDriver({ key: 'watch-1', tier: 'WATCH', confidence: 0.67 })],
+});
+
+const fireControl = buildCard('fire-control', {
+  play: {
+    action: 'FIRE',
+    classification: 'BASE',
+    status: 'FIRE',
+    pick: 'Home ML -110',
+    decision_v2: {
+      official_status: 'PLAY',
+    },
+  },
+});
+
+const defaultResult = applyFilters(
+  [passTagHeavy, passPickText, passOfficialStatus, fireControl],
+  DEFAULT_GAME_FILTERS,
+  'game',
+);
+assert.deepStrictEqual(
+  ids(defaultResult),
+  ['fire-control'],
+  'default FIRE/WATCH filters must exclude PASS cards from strong tags, non-NO-PLAY text, and decision_v2 official_status PASS',
 );
 
-console.log('🧪 PASS-play main-view regression source tests');
-
-// ── Fix 1: hasActionablePlayCall must reject explicit PASS action/classification ──
-
-assert(
-  filtersSource.includes("if (play.action === 'PASS' || play.classification === 'PASS') return false;"),
-  'hasActionablePlayCall must reject play.action/classification === PASS before inspecting pick text',
+const includePassFilters = {
+  ...DEFAULT_GAME_FILTERS,
+  statuses: ['FIRE', 'WATCH', 'PASS'],
+};
+const includePassResult = applyFilters(
+  [passTagHeavy, passPickText, passOfficialStatus, fireControl],
+  includePassFilters,
+  'game',
+);
+assert.deepStrictEqual(
+  ids(includePassResult),
+  ['fire-control', 'pass-official-status', 'pass-pick-text', 'pass-tag-heavy'],
+  'including PASS status should include PASS cards in full-slate mode',
 );
 
-assert(
-  filtersSource.includes("if (play.decision_v2?.official_status === 'PASS') return false;"),
-  'hasActionablePlayCall must reject decision_v2.official_status === PASS early',
-);
-
-// Ensure the early PASS guard comes BEFORE the pick-text check (line order matters)
-const actionGuardIdx = filtersSource.indexOf(
-  "if (play.action === 'PASS' || play.classification === 'PASS') return false;",
-);
-const pickTextCheckIdx = filtersSource.indexOf(
-  "if (play.market === 'NONE' || play.pick === 'NO PLAY') return false;",
-);
-assert(
-  actionGuardIdx !== -1 && pickTextCheckIdx !== -1 && actionGuardIdx < pickTextCheckIdx,
-  'PASS action guard must appear before pick-text (NO PLAY) check in hasActionablePlayCall',
-);
-
-// ── Fix 2: filterByActionability must not re-promote PASS via driver tags ──
-
-assert(
-  !filtersSource.includes("card.tags.includes(GAME_TAGS.HAS_FIRE)") ||
-    (() => {
-      // Verify the HAS_FIRE tag reference (if it exists) is NOT inside the
-      // displayAction==='PASS' fallback block of filterByActionability.
-      // The block pattern after the fix only has expressionChoice fallback.
-      const blockStart = filtersSource.indexOf(
-        "// Allow expressionChoice to override a PASS display action, but never driver",
-      );
-      const blockEnd = filtersSource.indexOf('  }', blockStart);
-      const blockContent = blockStart !== -1 ? filtersSource.slice(blockStart, blockEnd) : '';
-      return !blockContent.includes('HAS_FIRE') && !blockContent.includes('HAS_WATCH');
-    })(),
-  'filterByActionability PASS fallback block must not contain HAS_FIRE / HAS_WATCH tag re-promotion',
-);
-
-assert(
-  filtersSource.includes(
-    '// Allow expressionChoice to override a PASS display action, but never driver',
-  ),
-  'filterByActionability should have the guard comment explaining why driver tags are excluded',
-);
-
-// ── Invariant: expressionChoice is still allowed to override PASS ──
-
-assert(
-  /Allow expressionChoice to override[\s\S]*?expressionChoice\?\.status/.test(filtersSource),
-  'filterByActionability must still allow expressionChoice.status to override PASS',
-);
-
-// ── Invariant: hasActionablePlayCall still validates official_status PLAY/LEAN ──
-
-assert(
-  filtersSource.includes(
-    "return officialStatus === 'PLAY' || officialStatus === 'LEAN';",
-  ),
-  'hasActionablePlayCall must still validate decision_v2 official_status PLAY/LEAN',
-);
-
-// ── Invariant: default game filters remain FIRE/WATCH only ──
-
-const defaultFiltersIdx = filtersSource.indexOf('DEFAULT_GAME_FILTERS');
-const defaultBlockEnd = filtersSource.indexOf('};', defaultFiltersIdx);
-const defaultBlock = filtersSource.slice(defaultFiltersIdx, defaultBlockEnd);
-
-assert(
-  defaultBlock.includes("statuses: ['FIRE', 'WATCH']"),
-  'DEFAULT_GAME_FILTERS must keep statuses: [FIRE, WATCH] — no PASS in main view defaults',
-);
-
-assert(
-  !defaultBlock.includes("'PASS'"),
-  'DEFAULT_GAME_FILTERS must not include PASS in statuses',
-);
-
-console.log('✓ All PASS-play main-view regression guards passed');
+console.log('✅ PASS main-view runtime regression tests passed');
