@@ -240,3 +240,83 @@ describe('autoCloseNonActionableFinalPendingRows', () => {
     expect(result.failures).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MISSING_MARKET_KEY handling
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('autoCloseNonActionableFinalPendingRows — MISSING_MARKET_KEY', () => {
+  // Row with market_key = null and a PLAY payload should be auto-closed
+  // with reason_code MISSING_MARKET_KEY (not silently left pending).
+  test('MK1: row with market_key=null and kind=PLAY is auto-closed as MISSING_MARKET_KEY', () => {
+    const marketKeyNullRow = {
+      result_id: 'r-mk-001',
+      card_id: 'c-mk-001',
+      game_id: 'game-mk-001',
+      metadata: null,
+      market_key: null,
+      // kind=PLAY: would NOT be caught by NON_ACTIONABLE_FINAL_KIND without market_key check
+      payload_data: JSON.stringify({ kind: 'PLAY', game_id: 'game-mk-001' }),
+    };
+
+    const db = buildDbStub({ candidateRows: [marketKeyNullRow], runThrows: null, countClosedResult: 1 });
+
+    const result = autoCloseNonActionableFinalPendingRows(db, '2026-03-22T00:00:00.000Z');
+
+    expect(result.closed).toBe(1);
+    expect(result.failures).toBe(0);
+    // The MISSING_MARKET_KEY reason should be counted in reasonCounts
+    expect(result.reasonCounts['MISSING_MARKET_KEY']).toBe(1);
+  });
+
+  test('MK2: row with valid market_key and kind=PLAY is NOT auto-closed by MISSING_MARKET_KEY branch', () => {
+    // Row has market_key set: should NOT be caught by MISSING_MARKET_KEY check
+    // and NOT caught by NON_ACTIONABLE_FINAL_KIND (kind=PLAY) → should not be a candidate
+    const validMarketKeyRow = {
+      result_id: 'r-mk-valid',
+      card_id: 'c-mk-valid',
+      game_id: 'game-mk-valid',
+      metadata: null,
+      market_key: 'h2h',
+      payload_data: JSON.stringify({ kind: 'PLAY', game_id: 'game-mk-valid' }),
+    };
+
+    const db = buildDbStub({ candidateRows: [validMarketKeyRow], runThrows: null, countClosedResult: 0 });
+
+    const result = autoCloseNonActionableFinalPendingRows(db, '2026-03-22T00:00:00.000Z');
+
+    // Should not be closed — no non-actionable reason
+    expect(result.closed).toBe(0);
+    expect(result.reasonCounts['MISSING_MARKET_KEY']).toBeUndefined();
+  });
+
+  test('MK3: MISSING_MARKET_KEY reason is logged at warn level with row identifiers', () => {
+    const marketKeyNullRow = {
+      result_id: 'r-mk-002',
+      card_id: 'c-mk-002',
+      game_id: 'game-mk-002',
+      metadata: null,
+      market_key: null,
+      payload_data: JSON.stringify({ kind: 'PLAY', game_id: 'game-mk-002' }),
+    };
+
+    const db = buildDbStub({ candidateRows: [marketKeyNullRow], runThrows: null, countClosedResult: 1 });
+    const logMessages = [];
+    const origLog = console.log;
+    console.log = (...args) => { logMessages.push(args.join(' ')); };
+
+    let result;
+    try {
+      result = autoCloseNonActionableFinalPendingRows(db, '2026-03-22T00:00:00.000Z');
+    } finally {
+      console.log = origLog;
+    }
+
+    // Should be auto-closed
+    expect(result.closed).toBe(1);
+    // Log should mention MISSING_MARKET_KEY and the card/result identifiers
+    const logText = logMessages.join('\n');
+    expect(logText).toContain('MISSING_MARKET_KEY');
+    expect(logText).toContain('r-mk-002');
+  });
+});

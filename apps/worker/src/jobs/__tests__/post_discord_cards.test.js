@@ -4,6 +4,7 @@ const {
   buildDiscordSnapshot,
   chunkDiscordContent,
   sendDiscordMessages,
+  postDiscordCards,
 } = require('../post_discord_cards');
 
 function makeCard(overrides = {}) {
@@ -275,6 +276,50 @@ describe('post_discord_cards helpers', () => {
     expect(chunks.length).toBeGreaterThan(1);
     expect(chunks.every((chunk) => chunk.length <= 500)).toBe(true);
     expect(chunks.join('\n').replace(/\n+/g, '\n')).toContain('x'.repeat(60));
+  });
+
+  test('postDiscordCards skips with disabled reason when ENABLE_DISCORD_CARD_WEBHOOKS is unset', async () => {
+    const origEnv = process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    let result;
+    try {
+      result = await postDiscordCards();
+    } finally {
+      if (origEnv !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnv;
+      logSpy.mockRestore();
+    }
+
+    expect(result.success).toBe(true);
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('disabled');
+    // Must emit actionable console.log mentioning the skip
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[post-discord-cards] Skipping'));
+  });
+
+  test('postDiscordCards skips with missing_webhook_url reason when ENABLE_DISCORD_CARD_WEBHOOKS=true but URL unset', async () => {
+    const origEnabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    const origUrl = process.env.DISCORD_CARD_WEBHOOK_URL;
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    delete process.env.DISCORD_CARD_WEBHOOK_URL;
+
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    let result;
+    try {
+      result = await postDiscordCards();
+    } finally {
+      if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
+      else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+      if (origUrl !== undefined) process.env.DISCORD_CARD_WEBHOOK_URL = origUrl;
+      logSpy.mockRestore();
+    }
+
+    expect(result.success).toBe(true);
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('missing_webhook_url');
+    // Must emit actionable console.log mentioning the skip
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[post-discord-cards] Skipping'));
   });
 
   test('sendDiscordMessages posts chunks in order without numbering prefix', async () => {
