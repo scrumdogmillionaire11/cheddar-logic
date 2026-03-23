@@ -1340,6 +1340,12 @@ function buildDecisionV2(payload, context = {}) {
       decided_at: new Date().toISOString(),
     };
   } catch (error) {
+    console.error('[buildDecisionV2] PARSE_FAILURE — returning synthetic BLOCKED result', {
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      sport: payload?.sport,
+      market_type: payload?.market_type,
+      game_id: payload?.game_id,
+    });
     return {
       direction: 'NONE',
       support_score: 0,

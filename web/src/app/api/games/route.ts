@@ -3148,7 +3148,6 @@ export async function GET(request: NextRequest) {
       for (const displayLogRow of displayLogRows) {
         const canonicalGameId =
           externalToCanonicalMap.get(displayLogRow.game_id) ?? displayLogRow.game_id;
-        if (truePlayMap.has(canonicalGameId)) continue;
         const candidate = playByCardId.get(displayLogRow.pick_id);
         if (!candidate) continue;
         if ((candidate.kind ?? 'PLAY') !== 'PLAY') continue;
@@ -3164,6 +3163,30 @@ export async function GET(request: NextRequest) {
                   ? 'LEAN'
                   : 'PASS');
         if (officialStatus !== 'PLAY' && officialStatus !== 'LEAN') continue;
+
+        // officialTier: PLAY=2, LEAN=1, other=0
+        const officialTier = officialStatus === 'PLAY' ? 2 : officialStatus === 'LEAN' ? 1 : 0;
+
+        const existing = truePlayMap.get(canonicalGameId);
+        if (existing) {
+          const existingStatus =
+            existing.decision_v2?.official_status ??
+            (existing.action === 'FIRE'
+              ? 'PLAY'
+              : existing.action === 'HOLD'
+                ? 'LEAN'
+                : existing.status === 'FIRE'
+                  ? 'PLAY'
+                  : existing.status === 'WATCH'
+                    ? 'LEAN'
+                    : 'PASS');
+          const existingTier = existingStatus === 'PLAY' ? 2 : existingStatus === 'LEAN' ? 1 : 0;
+          // Only replace if candidate is strictly better tier, or same tier with higher edge
+          const candidateEdge = candidate.decision_v2?.edge_pct ?? candidate.edge ?? -Infinity;
+          const existingEdge = existing.decision_v2?.edge_pct ?? existing.edge ?? -Infinity;
+          if (officialTier < existingTier) continue;
+          if (officialTier === existingTier && candidateEdge <= existingEdge) continue;
+        }
         truePlayMap.set(canonicalGameId, candidate);
       }
     }
