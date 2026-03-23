@@ -27,7 +27,14 @@ const ACCESS_TOKEN_EXPIRES_IN = 15 * 60 * 1000; // 15 minutes
 
 function getAuthSecret(): string {
   const secret = process.env.AUTH_SECRET || process.env.CHEDDAR_AUTH_SECRET;
-  if (!secret || secret === 'dev-auth-secret-change-me') {
+  const isInsecure = !secret || secret === 'dev-auth-secret-change-me';
+  if (isInsecure) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'AUTH_SECRET_MISCONFIGURED: AUTH_SECRET is missing or set to the insecure default. ' +
+          'Set a strong AUTH_SECRET in your production environment variables.',
+      );
+    }
     console.warn(
       '⚠️  WARNING: Using default AUTH_SECRET. This is insecure in production.',
     );
