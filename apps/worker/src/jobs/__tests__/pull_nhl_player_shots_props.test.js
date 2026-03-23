@@ -79,6 +79,72 @@ describe('parseEventPropLines — shots_on_goal', () => {
     const bms = rows.map((r) => r.bookmaker).sort();
     expect(bms).toEqual(['draftkings', 'fanduel']);
   });
+
+  test('normalizes decimal odds to canonical American prices', () => {
+    const eventOdds = {
+      id: 'evt-decimal',
+      bookmakers: [
+        {
+          key: 'draftkings',
+          markets: [
+            {
+              key: 'player_shots_on_goal',
+              outcomes: [
+                { name: 'Over', description: 'Brady Tkachuk', point: 3, price: 1.77 },
+                { name: 'Under', description: 'Brady Tkachuk', point: 3, price: 2.15 },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const rows = parseEventPropLines(eventOdds, GAME_ID, FETCHED_AT);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      line: 3,
+      overPrice: -130,
+      underPrice: 115,
+    });
+  });
+
+  test('preserves multiple threshold ladders for one player at one bookmaker', () => {
+    const eventOdds = {
+      id: 'evt-ladder',
+      bookmakers: [
+        {
+          key: 'draftkings',
+          markets: [
+            {
+              key: 'player_shots_on_goal',
+              outcomes: [
+                { name: 'Over', description: 'Brady Tkachuk', point: 3, price: -330 },
+                { name: 'Under', description: 'Brady Tkachuk', point: 3, price: 240 },
+                { name: 'Over', description: 'Brady Tkachuk', point: 4, price: -135 },
+                { name: 'Under', description: 'Brady Tkachuk', point: 4, price: 105 },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const rows = parseEventPropLines(eventOdds, GAME_ID, FETCHED_AT);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.line).sort((a, b) => a - b)).toEqual([3, 4]);
+    expect(rows.find((row) => row.line === 3)).toMatchObject({
+      playerName: 'Brady Tkachuk',
+      overPrice: -330,
+      underPrice: 240,
+    });
+    expect(rows.find((row) => row.line === 4)).toMatchObject({
+      playerName: 'Brady Tkachuk',
+      overPrice: -135,
+      underPrice: 105,
+    });
+  });
 });
 
 describe('parseEventPropLines — blocked_shots', () => {

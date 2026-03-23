@@ -3393,6 +3393,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         | {
             verdict?: string;
             lean_side?: string | null;
+            line?: number | null;
             display_price?: number | null;
             line_delta?: number | null;
             fair_prob?: number | null;
@@ -3444,10 +3445,18 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       }
 
       const mu = play.mu ?? play.projectedTotal ?? null;
-      const suggestedLine = play.suggested_line ?? play.line ?? null;
+      const canonicalPropLine =
+        typeof rawPropDecision?.line === 'number'
+          ? rawPropDecision.line
+          : typeof play.line === 'number'
+            ? play.line
+            : null;
+      const suggestedLine = play.suggested_line ?? null;
       const edge =
         play.edge ??
-        (mu !== null && suggestedLine !== null ? mu - suggestedLine : null);
+        (mu !== null && canonicalPropLine !== null
+          ? mu - canonicalPropLine
+          : null);
 
       return {
         runId: play.run_id,
@@ -3457,7 +3466,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         teamAbbr: play.team_abbr ?? undefined,
         gameId: play.game_id ?? game.gameId,
         propType,
-        line: play.line ?? play.suggested_line ?? null,
+        line: canonicalPropLine ?? play.suggested_line ?? null,
         projection: play.projectedTotal ?? play.mu ?? null,
         mu,
         suggestedLine,
@@ -3473,7 +3482,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         reasonCodes: play.reason_codes,
         l5Sog: play.l5_sog ?? undefined,
         l5Mean: play.l5_mean ?? null,
-        marketLine: typeof play.line === 'number' ? play.line : null,
+        marketLine: canonicalPropLine,
         priceOver: ((play as unknown as Record<string, unknown>).market_price_over as number | null | undefined) ?? null,
         priceUnder: ((play as unknown as Record<string, unknown>).market_price_under as number | null | undefined) ?? null,
         bookmaker: ((play as unknown as Record<string, unknown>).market_bookmaker as string | null | undefined) ?? null,
@@ -3529,6 +3538,19 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       const verdictRankB = b.propVerdict ? PROP_VERDICT_RANK[b.propVerdict] : 0;
       if (verdictRankA !== verdictRankB) {
         return verdictRankB - verdictRankA;
+      }
+      if (a.propVerdict === 'NO_PLAY' && b.propVerdict === 'NO_PLAY') {
+        const noPlayGapA =
+          typeof a.lineDelta === 'number'
+            ? Math.abs(a.lineDelta)
+            : Number.NEGATIVE_INFINITY;
+        const noPlayGapB =
+          typeof b.lineDelta === 'number'
+            ? Math.abs(b.lineDelta)
+            : Number.NEGATIVE_INFINITY;
+        if (noPlayGapA !== noPlayGapB) {
+          return noPlayGapB - noPlayGapA;
+        }
       }
       if ((a.probEdgePp ?? Number.NEGATIVE_INFINITY) !== (b.probEdgePp ?? Number.NEGATIVE_INFINITY)) {
         return (b.probEdgePp ?? Number.NEGATIVE_INFINITY) - (a.probEdgePp ?? Number.NEGATIVE_INFINITY);

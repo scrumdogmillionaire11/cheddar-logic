@@ -3697,9 +3697,8 @@ function upsertPlayerPropLine(row) {
       line, over_price, under_price, bookmaker, fetched_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(sport, game_id, player_name, prop_type, period, bookmaker) DO UPDATE SET
+    ON CONFLICT(sport, game_id, player_name, prop_type, period, bookmaker, line) DO UPDATE SET
       odds_event_id = excluded.odds_event_id,
-      line = excluded.line,
       over_price = excluded.over_price,
       under_price = excluded.under_price,
       fetched_at = excluded.fetched_at

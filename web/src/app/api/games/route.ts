@@ -355,6 +355,7 @@ interface Play {
   l5_mean?: number | null;
   market_price_over?: number | null;
   market_price_under?: number | null;
+  market_bookmaker?: string | null;
   prop_decision?: {
     verdict: 'PLAY' | 'WATCH' | 'NO_PLAY' | 'PROJECTION';
     lean_side: 'OVER' | 'UNDER' | null;
@@ -2545,6 +2546,11 @@ export async function GET(request: NextRequest) {
         const normalizedPriceUnder = rawPriceUnder != null && Math.abs(rawPriceUnder) > 10
           ? rawPriceUnder  // already American (handles both +110 and -110)
           : decimalToAmerican(rawPriceUnder);
+        const normalizedMarketBookmaker =
+          firstString(
+            (payload as Record<string, unknown>).market_bookmaker,
+            payloadPlay?.market_bookmaker,
+          ) ?? null;
         const payloadProjection = toObject(payload.projection);
         const payloadPlayProjection = toObject(payloadPlayObj?.projection);
         const normalizedProjectedTotal = firstNumber(
@@ -3063,6 +3069,7 @@ export async function GET(request: NextRequest) {
           l5_mean: normalizedL5Mean ?? null,
           market_price_over: normalizedPriceOver,
           market_price_under: normalizedPriceUnder,
+          market_bookmaker: normalizedMarketBookmaker,
           prop_decision: normalizedPropDecision,
           consistency:
             payload.consistency && typeof payload.consistency === 'object'

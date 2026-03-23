@@ -65,6 +65,7 @@ const PROP_WARNING_FLAGS = new Set([
   'PP_MATCHUP_MISSING',
   'PP_CONTRIBUTION_CAPPED',
 ]);
+const PROP_PROJECTION_CONFLICT_FLAG = 'PROJECTION_CONFLICT';
 
 function roundMetric(value, digits = 4) {
   if (!Number.isFinite(value)) return null;
@@ -89,6 +90,33 @@ function computePropTrendLabel(l5Mean, projection) {
   if (delta >= 0.3) return 'uptrend';
   if (delta <= -0.3) return 'downtrend';
   return 'stable';
+}
+
+function getThresholdTarget(line) {
+  if (!Number.isFinite(line)) return null;
+  return Math.ceil(line);
+}
+
+function resolveProjectedLeanSide({
+  projection,
+  marketLine,
+}) {
+  if (Number.isFinite(projection) && Number.isFinite(marketLine)) {
+    return projection >= getThresholdTarget(marketLine) ? 'OVER' : 'UNDER';
+  }
+
+  return null;
+}
+
+function formatThresholdOutcome(leanSide, marketLine) {
+  const target = getThresholdTarget(marketLine);
+  if (!Number.isFinite(target)) {
+    return leanSide === 'UNDER' ? 'under outcome' : 'over outcome';
+  }
+  if (leanSide === 'UNDER') {
+    return `${Math.max(target - 1, 0)} or fewer shots`;
+  }
+  return `${target}+ shots`;
 }
 
 function deriveLegacyActionFromVerdict(verdict) {
@@ -185,11 +213,13 @@ function buildCanonicalPropDecision({
       : null;
   const fallbackCandidate =
     fallbackLeanSide === 'UNDER' ? underCandidate : overCandidate;
+  const projectedCandidate =
+    fallbackLeanSide === 'UNDER' ? underCandidate : overCandidate;
 
   const usePricedLean =
     Number.isFinite(betterPricedCandidate.prob_edge_pp) &&
     betterPricedCandidate.prob_edge_pp >= 0.02;
-  const selected = usePricedLean ? betterPricedCandidate : fallbackCandidate;
+  const pricedSelected = usePricedLean ? betterPricedCandidate : fallbackCandidate;
 
   const hasRealMarket =
     usingRealLine &&
@@ -197,11 +227,23 @@ function buildCanonicalPropDecision({
     Number.isFinite(marketPriceOver) &&
     Number.isFinite(marketPriceUnder);
 
+  const projectionBlocked =
+    !hasRealMarket || Boolean(projectionFlag);
+  const projectedLeanSide = resolveProjectedLeanSide({
+    projection,
+    marketLine,
+  });
+  const projectionConflict =
+    !projectionBlocked &&
+    projectedLeanSide !== null &&
+    pricedSelected.lean_side !== projectedLeanSide;
+  const selected = projectionConflict ? projectedCandidate : pricedSelected;
+  const selectedFlags = projectionConflict
+    ? Array.from(new Set([...normalizedFlags, PROP_PROJECTION_CONFLICT_FLAG]))
+    : normalizedFlags;
   const lineDeltaAbs = Math.abs(selected.line_delta ?? 0);
   const probEdge = selected.prob_edge_pp;
   const ev = selected.ev;
-  const projectionBlocked =
-    !hasRealMarket || Boolean(projectionFlag);
   let verdict = 'NO_PLAY';
 
   if (projectionBlocked) {
@@ -231,18 +273,22 @@ function buildCanonicalPropDecision({
   }
 
   let why = 'Market already efficient at current price';
+  const selectedOutcome = formatThresholdOutcome(selected.lean_side, marketLine);
   if (verdict === 'PROJECTION') {
     why =
       projectionFlag === 'PROJECTION_ANOMALY'
         ? 'Projection anomaly — do not price'
         : 'Projection only — no bettable market';
+  } else if (projectionConflict) {
+    const blockedOutcome = formatThresholdOutcome(pricedSelected.lean_side, marketLine);
+    why = `Projection supports ${selectedOutcome}, so ${blockedOutcome} is ignored as a projection conflict`;
   } else if (verdict === 'PLAY') {
-    why = `Edge ${formatSignedPercent(probEdge)} and EV ${formatSignedEv(ev)} clear play threshold`;
+    why = `Projection supports ${selectedOutcome}, and pricing clears the play threshold`;
   } else if (verdict === 'WATCH') {
     why =
       warningFlags.length > 0
-        ? 'Positive edge, but flagged data keeps this at WATCH'
-        : 'Projection clears the line, but price is not strong enough';
+        ? `Projection supports ${selectedOutcome}, but flagged data keeps this at WATCH`
+        : `Projection supports ${selectedOutcome}, but price is not strong enough`;
   }
 
   return {
@@ -259,7 +305,7 @@ function buildCanonicalPropDecision({
     l5_mean: Number.isFinite(l5Mean) ? roundMetric(l5Mean, 3) : null,
     l5_trend: computePropTrendLabel(l5Mean, projection),
     why,
-    flags: normalizedFlags,
+    flags: selectedFlags,
   };
 }
 
@@ -638,6 +684,132 @@ function buildPlayerNameCandidates(playerName) {
   return [...new Set([base, normalizedSpacing, noSuffix].filter(Boolean))];
 }
 
+function getBookmakerPriority(bookmaker) {
+  switch (String(bookmaker || '').toLowerCase()) {
+    case 'draftkings':
+      return 1;
+    case 'fanduel':
+      return 2;
+    case 'betmgm':
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+function normalizePropOddsPrice(rawPrice) {
+  const numericPrice = Number(rawPrice);
+  if (!Number.isFinite(numericPrice) || numericPrice === 0) return null;
+  if (numericPrice <= -100 || numericPrice >= 100) {
+    return Math.trunc(numericPrice);
+  }
+  if (numericPrice <= 1) return null;
+  if (numericPrice >= 2) {
+    return Math.round((numericPrice - 1) * 100);
+  }
+  return Math.round(-100 / (numericPrice - 1));
+}
+
+function queryPlayerPropLineCandidates(
+  db,
+  {
+    sport,
+    gameId,
+    playerName,
+    propType,
+    period,
+  },
+) {
+  const resolvedPeriod = period || 'full_game';
+  const stmt = db.prepare(`
+    SELECT line, over_price, under_price, bookmaker, fetched_at
+    FROM player_prop_lines
+    WHERE sport = ?
+      AND game_id = ?
+      AND LOWER(player_name) = LOWER(?)
+      AND prop_type = ?
+      AND period = ?
+    ORDER BY
+      CASE bookmaker
+        WHEN 'draftkings' THEN 1
+        WHEN 'fanduel' THEN 2
+        WHEN 'betmgm' THEN 3
+        ELSE 4
+      END ASC,
+      line ASC,
+      datetime(fetched_at) DESC
+  `);
+  return stmt
+    .all(sport, gameId, playerName, propType, resolvedPeriod)
+    .map((row) => ({
+      line: Number(row.line),
+      over_price: normalizePropOddsPrice(row.over_price),
+      under_price: normalizePropOddsPrice(row.under_price),
+      bookmaker: row.bookmaker || null,
+      fetched_at: row.fetched_at || null,
+    }))
+    .filter((row) => Number.isFinite(row.line));
+}
+
+function resolvePlayerPropLineCandidatesWithFallback({
+  db,
+  sport,
+  gameId,
+  playerName,
+  propType,
+  period,
+}) {
+  const candidates = buildPlayerNameCandidates(playerName);
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidateName = candidates[index];
+    const resolvedRows = queryPlayerPropLineCandidates(db, {
+      sport,
+      gameId,
+      playerName: candidateName,
+      propType,
+      period,
+    });
+    if (resolvedRows.length > 0) {
+      if (index > 0) {
+        console.warn(
+          `[${JOB_NAME}] Name-match fallback resolved ${period} line candidates for '${playerName}' via '${candidateName}'`,
+        );
+      }
+      return resolvedRows;
+    }
+
+    const resolved = getPlayerPropLine(
+      sport,
+      gameId,
+      candidateName,
+      propType,
+      period,
+    );
+    if (resolved) {
+      if (index > 0) {
+        console.warn(
+          `[${JOB_NAME}] Name-match fallback resolved ${period} line for '${playerName}' via '${candidateName}'`,
+        );
+      }
+      return [{
+        line: Number(resolved.line),
+        over_price: normalizePropOddsPrice(resolved.over_price),
+        under_price: normalizePropOddsPrice(resolved.under_price),
+        bookmaker: resolved.bookmaker || null,
+        fetched_at: resolved.fetched_at || null,
+      }].filter((row) => Number.isFinite(row.line));
+    }
+  }
+
+  if (candidates.length > 1) {
+    console.debug(
+      `[${JOB_NAME}] No ${period} line for '${playerName}' after ${candidates.length} name candidates`,
+    );
+  }
+
+  return [];
+}
+
 function resolvePlayerPropLineWithFallback({
   sport,
   gameId,
@@ -672,6 +844,162 @@ function resolvePlayerPropLineWithFallback({
   }
 
   return null;
+}
+
+function buildSharedPropFlags({
+  ppRatePer60,
+  ppToi,
+  ppRateL10Per60,
+  ppRateL5Per60,
+  ppMatchupMissing,
+}) {
+  const flags = [];
+  if (ppRatePer60 === null && ppToi > 0) {
+    flags.push('PP_RATE_MISSING');
+  }
+  if (ppRatePer60 !== null && ppRateL10Per60 === null && ppRateL5Per60 === null) {
+    flags.push('PP_SMALL_SAMPLE');
+  }
+  if (ppMatchupMissing) {
+    flags.push('PP_MATCHUP_MISSING');
+  }
+  return flags;
+}
+
+function getPropVerdictRank(verdict) {
+  switch (verdict) {
+    case 'PLAY':
+      return 3;
+    case 'WATCH':
+      return 2;
+    case 'NO_PLAY':
+      return 1;
+    case 'PROJECTION':
+    default:
+      return 0;
+  }
+}
+
+function comparePropMarketEvaluations(a, b) {
+  const verdictDelta =
+    getPropVerdictRank(b.propDecision.verdict) -
+    getPropVerdictRank(a.propDecision.verdict);
+  if (verdictDelta !== 0) return verdictDelta;
+
+  const edgeDelta =
+    (b.propDecision.prob_edge_pp ?? Number.NEGATIVE_INFINITY) -
+    (a.propDecision.prob_edge_pp ?? Number.NEGATIVE_INFINITY);
+  if (edgeDelta !== 0) return edgeDelta;
+
+  const lineDelta =
+    Math.abs(b.propDecision.line_delta ?? 0) -
+    Math.abs(a.propDecision.line_delta ?? 0);
+  if (lineDelta !== 0) return lineDelta;
+
+  const bookDelta =
+    getBookmakerPriority(a.market.bookmaker) -
+    getBookmakerPriority(b.market.bookmaker);
+  if (bookDelta !== 0) return bookDelta;
+
+  return Number(b.market.line ?? 0) - Number(a.market.line ?? 0);
+}
+
+function evaluatePropMarketCandidate({
+  market,
+  mu,
+  l5Sog,
+  l5Mean,
+  opponentFactor,
+  sharedPropFlags,
+  projectionInputs,
+}) {
+  const directionSeed = classifyEdge(mu, market.line, 0.75);
+  const consistencyScore = computeConsistencyScore(
+    l5Sog,
+    market.line,
+    directionSeed.direction,
+  );
+  const matchupScore = computeMatchupScore(
+    opponentFactor,
+    directionSeed.direction,
+  );
+  const supportScore = computeDecisionSupport(
+    consistencyScore,
+    matchupScore,
+  );
+  const confidence = computeConfidence(
+    consistencyScore,
+    matchupScore,
+    Math.abs(mu - market.line),
+  );
+  const v2Projection = projectSogV2({
+    ...projectionInputs,
+    market_line: market.line,
+    market_price_over: market.over_price,
+    market_price_under: market.under_price,
+    play_direction: directionSeed.direction,
+  });
+  const v2AnomalyDetected = v2Projection.sog_mu < 0.6 * l5Mean;
+  const propDecisionFlags = [
+    ...(v2Projection.flags ?? []),
+    ...sharedPropFlags,
+    ...(v2AnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
+  ];
+  const propDecision = buildCanonicalPropDecision({
+    projection: mu,
+    marketLine: market.line,
+    marketPriceOver: market.over_price,
+    marketPriceUnder: market.under_price,
+    fairOverProb:
+      v2Projection.fair_over_prob_by_line?.[String(market.line)] ?? null,
+    fairUnderProb:
+      v2Projection.fair_under_prob_by_line?.[String(market.line)] ?? null,
+    impliedOverProb: v2AnomalyDetected ? null : (v2Projection.implied_over_prob ?? null),
+    impliedUnderProb: v2AnomalyDetected ? null : (v2Projection.implied_under_prob ?? null),
+    edgeOverPp:
+      v2AnomalyDetected
+        ? null
+        : (v2Projection.edge_over_pp != null
+          ? Math.round(v2Projection.edge_over_pp * 10000) / 10000
+          : null),
+    edgeUnderPp:
+      v2AnomalyDetected
+        ? null
+        : (v2Projection.edge_under_pp != null
+          ? Math.round(v2Projection.edge_under_pp * 10000) / 10000
+          : null),
+    evOver:
+      v2AnomalyDetected
+        ? null
+        : (v2Projection.ev_over != null
+          ? Math.round(v2Projection.ev_over * 10000) / 10000
+          : null),
+    evUnder:
+      v2AnomalyDetected
+        ? null
+        : (v2Projection.ev_under != null
+          ? Math.round(v2Projection.ev_under * 10000) / 10000
+          : null),
+    opportunityScore: v2AnomalyDetected ? null : (v2Projection.opportunity_score ?? null),
+    confidence,
+    roleStability: v2Projection.role_stability ?? 'HIGH',
+    l5Mean,
+    flags: propDecisionFlags,
+    usingRealLine: true,
+  });
+
+  return {
+    market,
+    directionSeed,
+    consistencyScore,
+    matchupScore,
+    supportScore,
+    confidence,
+    v2Projection,
+    v2AnomalyDetected,
+    propDecisionFlags,
+    propDecision,
+  };
 }
 
 /**
@@ -1435,35 +1763,6 @@ async function runNHLPlayerShotsModel() {
               isHome,
             });
 
-            // Fetch real market lines from DB (populated by pull_nhl_player_shots_props job).
-            // When no real line exists, use a configurable projection floor (default 2.5 SOG) so
-            // projection-mode cards are still generated for the best shooters. A player at 3.3 mu
-            // vs a 2.5 floor = 0.8 edge = HOT. Set NHL_SOG_PROJECTION_LINE to adjust the threshold.
-            const realPropLine = resolvePlayerPropLineWithFallback({
-              sport: 'NHL',
-              gameId: resolvedGameId,
-              playerName,
-              propType: 'shots_on_goal',
-              period: 'full_game',
-            });
-            let marketLine;
-            if (realPropLine) {
-              marketLine = realPropLine.line;
-            } else {
-              marketLine = parseFloat(process.env.NHL_SOG_PROJECTION_LINE || '2.5');
-              console.log(`[projection-mode] line=${marketLine} (no real Odds API line — using projection floor)`);
-            }
-            const usingRealLine = !!realPropLine;
-
-            // --- V2 Price Integration ---
-            // Extract prices already stored by pull_nhl_player_shots_props.
-            // getPlayerPropLine SELECTs over_price/under_price but the caller
-            // previously only read .line — now we read the prices too.
-            const overPrice = realPropLine?.over_price ?? null;
-            const underPrice = realPropLine?.under_price ?? null;
-            const propBookmaker = realPropLine?.bookmaker ?? null;
-            const isOddsBacked = overPrice !== null && underPrice !== null;
-
             // Derive a trending L5 rate for projectSogV2's weighted blend.
             // l5RatePer60: L5 mean shots / projected TOI * 60 (per-60 normalised).
             const l5Mean = computeL5Mean(l5Sog);
@@ -1471,8 +1770,15 @@ async function runNHLPlayerShotsModel() {
               projToi && projToi > 0
                 ? (l5Mean / projToi) * 60
                 : shotsPer60 ?? null;
-
-            const v2Projection = projectSogV2({
+            const sharedPropFlags = buildSharedPropFlags({
+              ppRatePer60,
+              ppToi,
+              ppRateL10Per60,
+              ppRateL5Per60,
+              ppMatchupMissing,
+            });
+            const roleStability = playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH';
+            const v2ProjectionInputs = {
               player_id: player.player_id,
               game_id: resolvedGameId,
               ev_shots_season_per60: shotsPer60 ?? null,
@@ -1481,43 +1787,95 @@ async function runNHLPlayerShotsModel() {
               // This avoids a false LOW_SAMPLE flag while being directionally correct.
               ev_shots_l10_per60: l5RatePer60 ?? shotsPer60 ?? null,
               ev_shots_l5_per60: l5RatePer60,
-              pp_shots_season_per60: ppRatePer60,   // WI-0530: NST season rate (null if missing)
-              pp_shots_l10_per60: ppRateL10Per60,   // WI-0531: real L10 rolling rate (null if absent)
-              pp_shots_l5_per60: ppRateL5Per60,     // WI-0531: real L5 rolling rate (null if absent)
+              pp_shots_season_per60: ppRatePer60,
+              pp_shots_l10_per60: ppRateL10Per60,
+              pp_shots_l5_per60: ppRateL5Per60,
               toi_proj_ev: projToi ?? 0,
-              toi_proj_pp: ppToi, // WI-0528: real PP TOI from featuredStats.subSeason.avgPpToi (0 fallback for non-PP players)
+              toi_proj_pp: ppToi,
               pp_matchup_factor: ppMatchupFactor,
               shot_env_factor: paceFactor,
               opponent_suppression_factor: opponentFactor,
-              role_stability: playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH',
-              market_line: marketLine,
-              market_price_over: overPrice,
-              market_price_under: underPrice,
-              // WI-0575: derive play direction so opportunity_score uses correct side.
-              // classifyEdge is deterministic; this matches fullGameEdge.direction computed later.
-              play_direction: classifyEdge(mu, marketLine, 0.75).direction,
-            });
+              role_stability: roleStability,
+            };
 
+            // Fetch real market lines from DB (populated by pull_nhl_player_shots_props job).
+            // Same-book threshold ladders are preserved; select the single best-matching
+            // row so the displayed line, price, bookmaker, and edge math all come from
+            // the same market entry.
+            const realPropLineCandidates = resolvePlayerPropLineCandidatesWithFallback({
+              db,
+              sport: 'NHL',
+              gameId: resolvedGameId,
+              playerName,
+              propType: 'shots_on_goal',
+              period: 'full_game',
+            });
+            const selectedPropMarketEvaluation = realPropLineCandidates.length > 0
+              ? [...realPropLineCandidates]
+                .map((market) =>
+                  evaluatePropMarketCandidate({
+                    market,
+                    mu,
+                    l5Sog,
+                    l5Mean,
+                    opponentFactor,
+                    sharedPropFlags,
+                    projectionInputs: v2ProjectionInputs,
+                  }))
+                .sort(comparePropMarketEvaluations)[0]
+              : null;
+
+            let marketLine;
+            let overPrice = null;
+            let underPrice = null;
+            let propBookmaker = null;
+            let v2Projection;
+            let v2AnomalyDetected;
+            let v2EdgeOverPp;
+            let v2EdgeUnderPp;
+            let v2EvOver;
+            let v2EvUnder;
+            let v2OpportunityScore;
+            let v2ImpliedOverProb;
+            let v2ImpliedUnderProb;
+            let preselectedPropDecision = null;
+            let preselectedPropDecisionFlags = null;
+            const usingRealLine = !!selectedPropMarketEvaluation;
+
+            if (selectedPropMarketEvaluation) {
+              marketLine = selectedPropMarketEvaluation.market.line;
+              overPrice = selectedPropMarketEvaluation.market.over_price;
+              underPrice = selectedPropMarketEvaluation.market.under_price;
+              propBookmaker = selectedPropMarketEvaluation.market.bookmaker ?? null;
+              v2Projection = selectedPropMarketEvaluation.v2Projection;
+              v2AnomalyDetected = selectedPropMarketEvaluation.v2AnomalyDetected;
+              preselectedPropDecision = selectedPropMarketEvaluation.propDecision;
+              preselectedPropDecisionFlags =
+                selectedPropMarketEvaluation.propDecisionFlags;
+            } else {
+              marketLine = parseFloat(process.env.NHL_SOG_PROJECTION_LINE || '2.5');
+              console.log(`[projection-mode] line=${marketLine} (no real Odds API line — using projection floor)`);
+              v2Projection = projectSogV2({
+                ...v2ProjectionInputs,
+                market_line: marketLine,
+                market_price_over: null,
+                market_price_under: null,
+                play_direction: classifyEdge(mu, marketLine, 0.75).direction,
+              });
+              v2AnomalyDetected = v2Projection.sog_mu < 0.6 * l5Mean;
+              preselectedPropDecisionFlags = [
+                ...(v2Projection.flags ?? []),
+                ...sharedPropFlags,
+                ...(v2AnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
+                'SYNTHETIC_LINE',
+              ];
+            }
+
+            const isOddsBacked = overPrice !== null && underPrice !== null;
             if (!isOddsBacked) {
               console.log(
                 `[${JOB_NAME}] [projection-mode] No prices for ${playerName} — MISSING_PRICE flag, opportunity_score=null`,
               );
-            }
-
-            // WI-0530: PP_RATE_MISSING flag — player has PP TOI but no NST rate was available.
-            // Non-PP players (ppToi=0) do NOT get flagged — the rate is simply irrelevant for them.
-            if (ppRatePer60 === null && ppToi > 0) {
-              v2Projection.flags.push('PP_RATE_MISSING');
-            }
-
-            // WI-0531: PP_SMALL_SAMPLE — player is on PP (has season rate) but fewer than 5 games
-            // of rolling data (both L10 and L5 null). Single null does NOT trigger the flag.
-            if (ppRatePer60 !== null && ppRateL10Per60 === null && ppRateL5Per60 === null) {
-              v2Projection.flags.push('PP_SMALL_SAMPLE');
-            }
-
-            if (ppMatchupMissing) {
-              v2Projection.flags.push('PP_MATCHUP_MISSING');
             }
 
             // WI-0531: Compute the actual PP blend rate for drivers display.
@@ -1533,16 +1891,14 @@ async function runNHLPlayerShotsModel() {
 
             // V2 anomaly: sog_mu collapsing far below L5 average signals model breakdown.
             // This is separate from projectionAnomalyDetected (V1 path) and gates V2 pricing only.
-            const v2AnomalyDetected = v2Projection.sog_mu < 0.6 * l5Mean;
-
             // Null out pricing fields when V2 anomaly is present — no bet-worthy signal should be emitted.
-            const v2EdgeOverPp = v2AnomalyDetected ? null : (v2Projection.edge_over_pp != null ? Math.round(v2Projection.edge_over_pp * 10000) / 10000 : null);
-            const v2EdgeUnderPp = v2AnomalyDetected ? null : (v2Projection.edge_under_pp != null ? Math.round(v2Projection.edge_under_pp * 10000) / 10000 : null);
-            const v2EvOver = v2AnomalyDetected ? null : (v2Projection.ev_over != null ? Math.round(v2Projection.ev_over * 10000) / 10000 : null);
-            const v2EvUnder = v2AnomalyDetected ? null : (v2Projection.ev_under != null ? Math.round(v2Projection.ev_under * 10000) / 10000 : null);
-            const v2OpportunityScore = v2AnomalyDetected ? null : (v2Projection.opportunity_score ?? null);
-            const v2ImpliedOverProb = v2AnomalyDetected ? null : (v2Projection.implied_over_prob ?? null);
-            const v2ImpliedUnderProb = v2AnomalyDetected ? null : (v2Projection.implied_under_prob ?? null);
+            v2EdgeOverPp = v2AnomalyDetected ? null : (v2Projection.edge_over_pp != null ? Math.round(v2Projection.edge_over_pp * 10000) / 10000 : null);
+            v2EdgeUnderPp = v2AnomalyDetected ? null : (v2Projection.edge_under_pp != null ? Math.round(v2Projection.edge_under_pp * 10000) / 10000 : null);
+            v2EvOver = v2AnomalyDetected ? null : (v2Projection.ev_over != null ? Math.round(v2Projection.ev_over * 10000) / 10000 : null);
+            v2EvUnder = v2AnomalyDetected ? null : (v2Projection.ev_under != null ? Math.round(v2Projection.ev_under * 10000) / 10000 : null);
+            v2OpportunityScore = v2AnomalyDetected ? null : (v2Projection.opportunity_score ?? null);
+            v2ImpliedOverProb = v2AnomalyDetected ? null : (v2Projection.implied_over_prob ?? null);
+            v2ImpliedUnderProb = v2AnomalyDetected ? null : (v2Projection.implied_under_prob ?? null);
 
             const syntheticLine = marketLine; // kept for card payload references below
 
@@ -1554,8 +1910,8 @@ async function runNHLPlayerShotsModel() {
               propType: 'shots_on_goal',
               period: 'first_period',
             });
-            const overPrice1p = realPropLine1p?.over_price ?? null;
-            const underPrice1p = realPropLine1p?.under_price ?? null;
+            const overPrice1p = normalizePropOddsPrice(realPropLine1p?.over_price);
+            const underPrice1p = normalizePropOddsPrice(realPropLine1p?.under_price);
             let syntheticLine1p;
             if (realPropLine1p) {
               syntheticLine1p = realPropLine1p.line;
@@ -1657,33 +2013,36 @@ async function runNHLPlayerShotsModel() {
             const fullDirectionLabel =
               fullGameEdge.direction === 'OVER' ? 'Over' : 'Under';
 
-            const propDecisionFlags = [
-              ...(v2Projection.flags ?? []),
-              ...(v2AnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
-              ...(!usingRealLine ? ['SYNTHETIC_LINE'] : []),
-            ];
-            const fullPropDecision = buildCanonicalPropDecision({
-              projection: mu,
-              marketLine: syntheticLine,
-              marketPriceOver: overPrice,
-              marketPriceUnder: underPrice,
-              fairOverProb:
-                v2Projection.fair_over_prob_by_line?.[String(marketLine)] ?? null,
-              fairUnderProb:
-                v2Projection.fair_under_prob_by_line?.[String(marketLine)] ?? null,
-              impliedOverProb: v2ImpliedOverProb,
-              impliedUnderProb: v2ImpliedUnderProb,
-              edgeOverPp: v2EdgeOverPp,
-              edgeUnderPp: v2EdgeUnderPp,
-              evOver: v2EvOver,
-              evUnder: v2EvUnder,
-              opportunityScore: v2OpportunityScore,
-              confidence,
-              roleStability: v2Projection.role_stability ?? 'HIGH',
-              l5Mean,
-              flags: propDecisionFlags,
-              usingRealLine,
-            });
+            const propDecisionFlags =
+              preselectedPropDecisionFlags ?? [
+                ...(v2Projection.flags ?? []),
+                ...sharedPropFlags,
+                ...(v2AnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
+                ...(!usingRealLine ? ['SYNTHETIC_LINE'] : []),
+              ];
+            const fullPropDecision =
+              preselectedPropDecision ?? buildCanonicalPropDecision({
+                projection: mu,
+                marketLine: syntheticLine,
+                marketPriceOver: overPrice,
+                marketPriceUnder: underPrice,
+                fairOverProb:
+                  v2Projection.fair_over_prob_by_line?.[String(marketLine)] ?? null,
+                fairUnderProb:
+                  v2Projection.fair_under_prob_by_line?.[String(marketLine)] ?? null,
+                impliedOverProb: v2ImpliedOverProb,
+                impliedUnderProb: v2ImpliedUnderProb,
+                edgeOverPp: v2EdgeOverPp,
+                edgeUnderPp: v2EdgeUnderPp,
+                evOver: v2EvOver,
+                evUnder: v2EvUnder,
+                opportunityScore: v2OpportunityScore,
+                confidence,
+                roleStability: v2Projection.role_stability ?? 'HIGH',
+                l5Mean,
+                flags: propDecisionFlags,
+                usingRealLine,
+              });
             const legacyDecisionFromProp = deriveLegacyActionFromVerdict(
               fullPropDecision.verdict,
             );

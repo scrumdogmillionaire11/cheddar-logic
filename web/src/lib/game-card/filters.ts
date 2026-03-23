@@ -142,7 +142,7 @@ export const DEFAULT_GAME_FILTERS: GameModeFilters = {
 
 export const DEFAULT_PROPS_FILTERS: PropsModeFilters = {
   sports: ['NHL', 'NBA', 'NCAAM', 'SOCCER', 'MLB', 'NFL'],
-  statuses: ['FIRE', 'WATCH'],
+  statuses: ['FIRE', 'WATCH', 'PASS'],
   searchQuery: '',
   sortMode: 'start_time',
   propStatGroups: [],

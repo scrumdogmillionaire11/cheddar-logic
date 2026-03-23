@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const filePath = path.resolve('src/lib/game-card/transform.ts');
+const filePath = path.resolve('web/src/lib/game-card/transform.ts');
 const source = fs.readFileSync(filePath, 'utf8');
 
 console.log('🧪 Transform market contract source tests');
@@ -75,6 +75,31 @@ assert(
 assert(
   source.includes("p.market_type === 'PROP' && !isSoccerAsianHandicapPlay(p)"),
   'transform props mode should exclude soccer asian handicap rows even when malformed as PROP',
+);
+
+assert(
+  source.includes('prop_decision') &&
+    source.includes("rawPropDecision?.verdict === 'PLAY'") &&
+    source.includes("rawPropDisplayState === 'PROJECTION_ONLY'") &&
+    source.includes('market_bookmaker'),
+  'transform props mode should prefer canonical prop_decision verdicts and keep prop_display_state as legacy fallback',
+);
+
+assert(
+  source.includes('const canonicalPropLine =') &&
+    source.includes('typeof rawPropDecision?.line === \'number\'') &&
+    source.includes('line: canonicalPropLine') &&
+    source.includes('marketLine: canonicalPropLine'),
+  'transform props mode should prefer prop_decision.line ahead of suggestedLine for canonical threshold display semantics',
+);
+
+assert(
+  source.includes('PROP_VERDICT_RANK') &&
+    source.includes('b.probEdgePp') &&
+    source.includes('b.lineDelta') &&
+    source.includes("a.propVerdict === 'NO_PLAY' && b.propVerdict === 'NO_PLAY'") &&
+    source.includes('Math.abs(a.lineDelta'),
+  'transform props mode should sort by verdict rank, preserve stronger no-play gaps, then probEdgePp and lineDelta',
 );
 
 console.log('✅ Transform market contract source tests passed');

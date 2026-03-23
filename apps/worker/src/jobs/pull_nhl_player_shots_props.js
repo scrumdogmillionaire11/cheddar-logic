@@ -46,6 +46,19 @@ const HOURS_AHEAD = 36;
 const DEFAULT_SLEEP_MS = Number(process.env.NHL_SOG_PROP_SLEEP_MS || 1000);
 const JOB_NAME = 'pull-nhl-player-shots-props';
 
+function normalizePriceToAmerican(rawPrice) {
+  const numericPrice = Number(rawPrice);
+  if (!Number.isFinite(numericPrice) || numericPrice === 0) return null;
+  if (numericPrice <= -100 || numericPrice >= 100) {
+    return Math.trunc(numericPrice);
+  }
+  if (numericPrice <= 1) return null;
+  if (numericPrice >= 2) {
+    return Math.round((numericPrice - 1) * 100);
+  }
+  return Math.round(-100 / (numericPrice - 1));
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -83,7 +96,7 @@ async function fetchEventPropLines(apiKey, eventId, marketKeys) {
   const marketsParam = marketKeys.join(',');
   const url =
     `${ODDS_API_BASE}/sports/${SPORT_KEY}/events/${eventId}/odds` +
-    `?apiKey=${apiKey}&regions=us&markets=${marketsParam}&bookmakers=${BOOKMAKERS}`;
+    `?apiKey=${apiKey}&regions=us&markets=${marketsParam}&bookmakers=${BOOKMAKERS}&oddsFormat=american`;
   return fetchJson(url);
 }
 
@@ -101,28 +114,34 @@ function parseEventPropLines(eventOdds, gameId, fetchedAt) {
       const propType = MARKET_TO_PROP_TYPE[marketKey];
       if (!propType || !market.outcomes) continue;
 
-      // Group outcomes by player name
+      // Group outcomes by player + point so same-book ladders (e.g. 2.5 and 3.5)
+      // remain distinct rows instead of overwriting each other.
       const byPlayer = {};
       for (const outcome of market.outcomes) {
         const playerName = outcome.description;
-        if (!playerName) continue;
-        if (!byPlayer[playerName]) byPlayer[playerName] = {};
+        const line = Number(outcome.point);
+        if (!playerName || !Number.isFinite(line)) continue;
+        const playerKey = `${playerName}::${line}`;
+        if (!byPlayer[playerKey]) {
+          byPlayer[playerKey] = {
+            playerName,
+            line,
+          };
+        }
         if (outcome.name === 'Over') {
-          byPlayer[playerName].line = outcome.point;
-          byPlayer[playerName].overPrice = outcome.price;
+          byPlayer[playerKey].overPrice = normalizePriceToAmerican(outcome.price);
         } else if (outcome.name === 'Under') {
-          byPlayer[playerName].line = outcome.point;
-          byPlayer[playerName].underPrice = outcome.price;
+          byPlayer[playerKey].underPrice = normalizePriceToAmerican(outcome.price);
         }
       }
-      for (const [playerName, data] of Object.entries(byPlayer)) {
+      for (const data of Object.values(byPlayer)) {
         if (data.line == null) continue;
         rows.push({
-          id: `nhl-${propType}-${gameId}-${playerName.replace(/\s+/g, '-').toLowerCase()}-${bm.key}-${uuidV4().slice(0, 6)}`,
+          id: `nhl-${propType}-${gameId}-${data.playerName.replace(/\s+/g, '-').toLowerCase()}-${String(data.line).replace(/\./g, '_')}-${bm.key}-${uuidV4().slice(0, 6)}`,
           sport: 'NHL',
           gameId,
           oddsEventId: eventOdds.id,
-          playerName,
+          playerName: data.playerName,
           propType,
           period: 'full_game',
           line: data.line,
