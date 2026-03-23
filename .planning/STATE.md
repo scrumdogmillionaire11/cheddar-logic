@@ -174,5 +174,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 70 | WI-0574 Wire real over_price/under_price into selection.price for full-game + 1P cards | 2026-03-23 | 69f91eb | [70-wi-0574-wire-real-over-price-under-price](./quick/70-wi-0574-wire-real-over-price-under-price/) |
 | 72 | WI-0576 Default NHL_SOG_PROP_EVENTS_ENABLED to true — prevent silent synthetic-line fallback in production | 2026-03-23 | 5f7f2f1 | [72-wi-0576-default-nhl-sog-prop-events-enab](./quick/72-wi-0576-default-nhl-sog-prop-events-enab/) |
 | 73 | WI-0580 Add PROP to WAVE1_MARKETS gate — V2 official_status can now override V1 for NHL player prop cards | 2026-03-23 | c79acf5 | [73-wi-0580-add-prop-to-wave-1-market-gate-s](./quick/73-wi-0580-add-prop-to-wave-1-market-gate-s/) |
+| 74 | WI-0575 Direction-aware opportunity_score — closure session; fix confirmed live from quick-71 (no code changes) | 2026-03-23 | c516c07 | [74-wi-0575-fix-opportunity-score-direction-](./quick/74-wi-0575-fix-opportunity-score-direction-/) |
 
-Last activity: 2026-03-23 - WI-0580 (PROP wave-1 gate) complete. Next: WI-0581 (edge_delta_pct rename, HIGH) → WI-0582/0583/0584 (MEDIUM).
+Last activity: 2026-03-23 - WI-0575 (direction-aware opportunity_score) closure confirmed via quick-74. Next: WI-0581 (edge_delta_pct rename, HIGH) → WI-0582/0583/0584 (MEDIUM).
