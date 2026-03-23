@@ -190,6 +190,12 @@ function loadFreshModule() {
   return { mod, data, shots, moneyPuck };
 }
 
+function getInsertedCardsByType(data, cardType) {
+  return data.insertCardPayload.mock.calls
+    .map(([card]) => card)
+    .filter((card) => card && card.payloadData && card.payloadData.card_type === cardType);
+}
+
 describe('run_nhl_player_shots_model', () => {
   beforeEach(() => {
     delete process.env.NHL_SOG_1P_CARDS_ENABLED;
@@ -2374,7 +2380,33 @@ describe('run_nhl_player_shots_model', () => {
     shots.calcMu.mockReturnValue(3.2);
     shots.calcMu1p.mockReturnValue(1.0);
 
-    shots.projectSogV2.mockReturnValue({
+    shots.projectSogV2
+      .mockReturnValueOnce({
+        sog_mu: 3.2,
+        sog_sigma: 1.79,
+        toi_proj: 20,
+        shot_rate_ev_per60: 9.6,
+        shot_rate_pp_per60: 0,
+        shot_env_factor: 1.0,
+        role_stability: 'HIGH',
+        trend_score: 0.05,
+        fair_over_prob_by_line: { '2.5': 0.59 },
+        fair_under_prob_by_line: { '2.5': 0.41 },
+        fair_price_over_by_line: { '2.5': -144 },
+        fair_price_under_by_line: { '2.5': 144 },
+        market_line: 2.5,
+        market_price_over: -115,
+        market_price_under: -105,
+        implied_over_prob: 0.535,
+        implied_under_prob: 0.512,
+        edge_over_pp: 0.06,
+        edge_under_pp: -0.05,
+        ev_over: 0.04,
+        ev_under: -0.03,
+        opportunity_score: 0.09,
+        flags: [],
+      })
+      .mockReturnValueOnce({
       sog_mu: 3.2,
       sog_sigma: 1.79,
       toi_proj: 20,
@@ -2399,7 +2431,7 @@ describe('run_nhl_player_shots_model', () => {
       ev_under: 0.04,
       opportunity_score: 0.02,
       flags: [],
-    });
+      });
 
     // Return a real prop line so Guard 1 (no-real-line) does NOT fire
     data.getPlayerPropLine.mockReturnValue({ line: 0.5, over_price: -115, under_price: 105 });
@@ -2417,10 +2449,17 @@ describe('run_nhl_player_shots_model', () => {
     delete process.env.NHL_SOG_1P_CARDS_ENABLED;
 
     // Find the 1P card
-    const allCalls = data.insertCardPayload.mock.calls;
-    const onePCards = allCalls
-      .map((c) => c[0])
-      .filter((c) => c && c.payloadData && c.payloadData.card_type === 'nhl-player-shots-1p');
+    expect(shots.projectSogV2).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        market_line: 0.5,
+        market_price_over: -115,
+        market_price_under: 105,
+        play_direction: 'OVER',
+      }),
+    );
+
+    const onePCards = getInsertedCardsByType(data, 'nhl-player-shots-1p');
 
     expect(onePCards.length).toBe(1);
     const card1p = onePCards[0];
@@ -2431,6 +2470,209 @@ describe('run_nhl_player_shots_model', () => {
     expect(card1p.payloadData.status).toBe('WATCH');
     expect(card1p.payloadData.play.action).toBe('HOLD');
     expect(card1p.payloadData.play.status).toBe('WATCH');
+  });
+
+  test('WI-0579: full-game V2 anomaly does not suppress a clean 1P card', async () => {
+    process.env.NHL_SOG_1P_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.classifyEdge
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 })
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 })
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 })
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 })
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+
+    shots.calcMu.mockReturnValue(3.2);
+    shots.calcMu1p.mockReturnValue(1.0);
+    shots.projectSogV2
+      .mockReturnValueOnce({
+        sog_mu: 1.4,
+        sog_sigma: 1.0,
+        toi_proj: 20,
+        shot_rate_ev_per60: 9.6,
+        shot_rate_pp_per60: 0,
+        shot_env_factor: 1.0,
+        role_stability: 'HIGH',
+        trend_score: 0.05,
+        fair_over_prob_by_line: { '2.5': 0.59 },
+        fair_under_prob_by_line: { '2.5': 0.41 },
+        fair_price_over_by_line: { '2.5': -144 },
+        fair_price_under_by_line: { '2.5': 144 },
+        market_line: 2.5,
+        market_price_over: -115,
+        market_price_under: -105,
+        implied_over_prob: 0.535,
+        implied_under_prob: 0.512,
+        edge_over_pp: 0.08,
+        edge_under_pp: -0.08,
+        ev_over: 0.06,
+        ev_under: -0.06,
+        opportunity_score: 0.3,
+        flags: [],
+      })
+      .mockReturnValueOnce({
+        sog_mu: 1.0,
+        sog_sigma: 1.0,
+        toi_proj: 20,
+        shot_rate_ev_per60: 9.6,
+        shot_rate_pp_per60: 0,
+        shot_env_factor: 1.0,
+        role_stability: 'HIGH',
+        trend_score: 0.05,
+        fair_over_prob_by_line: { '0.5': 0.58 },
+        fair_under_prob_by_line: { '0.5': 0.42 },
+        fair_price_over_by_line: { '0.5': -138 },
+        fair_price_under_by_line: { '0.5': 138 },
+        market_line: 0.5,
+        market_price_over: -115,
+        market_price_under: 105,
+        implied_over_prob: 0.535,
+        implied_under_prob: 0.488,
+        edge_over_pp: 0.05,
+        edge_under_pp: -0.05,
+        ev_over: 0.04,
+        ev_under: -0.03,
+        opportunity_score: 0.12,
+        flags: [],
+      });
+
+    data.getPlayerPropLine.mockImplementation((sport, gameId, playerName, propType, period) => (
+      period === 'first_period'
+        ? { line: 0.5, over_price: -115, under_price: 105 }
+        : { line: 2.5, over_price: -115, under_price: -105 }
+    ));
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi-0579-full-anom-1p-clean-01' })],
+      players: [buildPlayer({ player_id: 9921, player_name: '1P Clean Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    delete process.env.NHL_SOG_1P_CARDS_ENABLED;
+
+    expect(shots.projectSogV2).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        market_line: 0.5,
+        market_price_over: -115,
+        market_price_under: 105,
+      }),
+    );
+
+    const card1p = getInsertedCardsByType(data, 'nhl-player-shots-1p')[0];
+    expect(card1p).toBeTruthy();
+    expect(card1p.payloadData.action).toBe('FIRE');
+    expect(card1p.payloadData.play.action).toBe('FIRE');
+  });
+
+  test('WI-0579: 1P V2 anomaly downgrades the 1P card even when full-game V2 is clean', async () => {
+    process.env.NHL_SOG_1P_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    shots.classifyEdge
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 })
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 })
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 })
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 })
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+
+    shots.calcMu.mockReturnValue(3.2);
+    shots.calcMu1p.mockReturnValue(1.0);
+    shots.projectSogV2
+      .mockReturnValueOnce({
+        sog_mu: 3.2,
+        sog_sigma: 1.79,
+        toi_proj: 20,
+        shot_rate_ev_per60: 9.6,
+        shot_rate_pp_per60: 0,
+        shot_env_factor: 1.0,
+        role_stability: 'HIGH',
+        trend_score: 0.05,
+        fair_over_prob_by_line: { '2.5': 0.59 },
+        fair_under_prob_by_line: { '2.5': 0.41 },
+        fair_price_over_by_line: { '2.5': -144 },
+        fair_price_under_by_line: { '2.5': 144 },
+        market_line: 2.5,
+        market_price_over: -115,
+        market_price_under: -105,
+        implied_over_prob: 0.535,
+        implied_under_prob: 0.512,
+        edge_over_pp: 0.06,
+        edge_under_pp: -0.05,
+        ev_over: 0.04,
+        ev_under: -0.03,
+        opportunity_score: 0.09,
+        flags: [],
+      })
+      .mockReturnValueOnce({
+        sog_mu: 0.4,
+        sog_sigma: 0.63,
+        toi_proj: 20,
+        shot_rate_ev_per60: 9.6,
+        shot_rate_pp_per60: 0,
+        shot_env_factor: 1.0,
+        role_stability: 'HIGH',
+        trend_score: 0.05,
+        fair_over_prob_by_line: { '0.5': 0.41 },
+        fair_under_prob_by_line: { '0.5': 0.59 },
+        fair_price_over_by_line: { '0.5': 144 },
+        fair_price_under_by_line: { '0.5': -144 },
+        market_line: 0.5,
+        market_price_over: -115,
+        market_price_under: 105,
+        implied_over_prob: 0.535,
+        implied_under_prob: 0.488,
+        edge_over_pp: 0.08,
+        edge_under_pp: -0.08,
+        ev_over: 0.06,
+        ev_under: -0.06,
+        opportunity_score: 0.3,
+        flags: [],
+      });
+
+    data.getPlayerPropLine.mockImplementation((sport, gameId, playerName, propType, period) => (
+      period === 'first_period'
+        ? { line: 0.5, over_price: -115, under_price: 105 }
+        : { line: 2.5, over_price: -115, under_price: -105 }
+    ));
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi-0579-full-clean-1p-anom-01' })],
+      players: [buildPlayer({ player_id: 9922, player_name: '1P Anomaly Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    delete process.env.NHL_SOG_1P_CARDS_ENABLED;
+
+    expect(shots.projectSogV2).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        market_line: 0.5,
+        market_price_over: -115,
+        market_price_under: 105,
+      }),
+    );
+
+    const card1p = getInsertedCardsByType(data, 'nhl-player-shots-1p')[0];
+    expect(card1p).toBeTruthy();
+    expect(card1p.payloadData.action).toBe('HOLD');
+    expect(card1p.payloadData.status).toBe('WATCH');
+    expect(card1p.payloadData.play.action).toBe('HOLD');
+    expect(card1p.payloadData.play.status).toBe('WATCH');
+
+    const warnings = warnSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(warnings).toMatch(/\[anomaly-guard-1p\]/);
+    expect(warnings).not.toMatch(/\[v2-veto-1p\]/);
+
+    warnSpy.mockRestore();
   });
 
   test('WI-0578: ppRatePer60=null + ppToi=2.5 → projectSogV2 called with pp_shots_season_per60=3.0 (league-avg fallback, not null)', async () => {

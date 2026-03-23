@@ -315,6 +315,38 @@ function buildCanonicalPropDecision({
   };
 }
 
+function buildV2PricingState(v2Projection, v2AnomalyDetected) {
+  return {
+    edgeOverPp:
+      v2AnomalyDetected
+        ? null
+        : (v2Projection.edge_over_pp != null
+          ? Math.round(v2Projection.edge_over_pp * 10000) / 10000
+          : null),
+    edgeUnderPp:
+      v2AnomalyDetected
+        ? null
+        : (v2Projection.edge_under_pp != null
+          ? Math.round(v2Projection.edge_under_pp * 10000) / 10000
+          : null),
+    evOver:
+      v2AnomalyDetected
+        ? null
+        : (v2Projection.ev_over != null
+          ? Math.round(v2Projection.ev_over * 10000) / 10000
+          : null),
+    evUnder:
+      v2AnomalyDetected
+        ? null
+        : (v2Projection.ev_under != null
+          ? Math.round(v2Projection.ev_under * 10000) / 10000
+          : null),
+    opportunityScore: v2AnomalyDetected ? null : (v2Projection.opportunity_score ?? null),
+    impliedOverProb: v2AnomalyDetected ? null : (v2Projection.implied_over_prob ?? null),
+    impliedUnderProb: v2AnomalyDetected ? null : (v2Projection.implied_under_prob ?? null),
+  };
+}
+
 function attachRunId(card, runId) {
   if (!card) return;
   card.runId = runId;
@@ -1910,13 +1942,15 @@ async function runNHLPlayerShotsModel() {
             // V2 anomaly: sog_mu collapsing far below L5 average signals model breakdown.
             // This is separate from projectionAnomalyDetected (V1 path) and gates V2 pricing only.
             // Null out pricing fields when V2 anomaly is present — no bet-worthy signal should be emitted.
-            v2EdgeOverPp = v2AnomalyDetected ? null : (v2Projection.edge_over_pp != null ? Math.round(v2Projection.edge_over_pp * 10000) / 10000 : null);
-            v2EdgeUnderPp = v2AnomalyDetected ? null : (v2Projection.edge_under_pp != null ? Math.round(v2Projection.edge_under_pp * 10000) / 10000 : null);
-            v2EvOver = v2AnomalyDetected ? null : (v2Projection.ev_over != null ? Math.round(v2Projection.ev_over * 10000) / 10000 : null);
-            v2EvUnder = v2AnomalyDetected ? null : (v2Projection.ev_under != null ? Math.round(v2Projection.ev_under * 10000) / 10000 : null);
-            v2OpportunityScore = v2AnomalyDetected ? null : (v2Projection.opportunity_score ?? null);
-            v2ImpliedOverProb = v2AnomalyDetected ? null : (v2Projection.implied_over_prob ?? null);
-            v2ImpliedUnderProb = v2AnomalyDetected ? null : (v2Projection.implied_under_prob ?? null);
+            ({
+              edgeOverPp: v2EdgeOverPp,
+              edgeUnderPp: v2EdgeUnderPp,
+              evOver: v2EvOver,
+              evUnder: v2EvUnder,
+              opportunityScore: v2OpportunityScore,
+              impliedOverProb: v2ImpliedOverProb,
+              impliedUnderProb: v2ImpliedUnderProb,
+            } = buildV2PricingState(v2Projection, v2AnomalyDetected));
 
             const syntheticLine = marketLine; // kept for card payload references below
 
@@ -2258,10 +2292,27 @@ async function runNHLPlayerShotsModel() {
               const l5Sog1p = l5Sog.map((shots) =>
                 Math.round(shots * 0.32 * 10) / 10,
               );
+              const l5Mean1p = computeL5Mean(l5Sog1p);
               const firstPeriodDirectionSeed = classifyEdge(
                 mu1p,
                 syntheticLine1p,
                 0.75,
+              );
+              const firstPeriodV2Projection = projectSogV2({
+                ...v2ProjectionInputs,
+                market_line: syntheticLine1p,
+                market_price_over: overPrice1p,
+                market_price_under: underPrice1p,
+                play_direction: firstPeriodDirectionSeed.direction,
+              });
+              const firstPeriodV2AnomalyDetected =
+                firstPeriodV2Projection.sog_mu < 0.6 * l5Mean1p;
+              const {
+                edgeOverPp: v2EdgeOverPp1p,
+                edgeUnderPp: v2EdgeUnderPp1p,
+              } = buildV2PricingState(
+                firstPeriodV2Projection,
+                firstPeriodV2AnomalyDetected,
               );
               const firstPeriodConsistencyScore = computeConsistencyScore(
                 l5Sog1p,
@@ -2296,7 +2347,10 @@ async function runNHLPlayerShotsModel() {
               if (!realPropLine1p && firstPeriodDecision.action === 'FIRE') {
                 firstPeriodDecision = { action: 'HOLD', status: 'WATCH', classification: 'LEAN', officialStatus: 'LEAN' };
               }
-              if (projectionAnomalyDetected && firstPeriodDecision.action === 'FIRE') {
+              if (firstPeriodV2AnomalyDetected && firstPeriodDecision.action === 'FIRE') {
+                console.warn(
+                  `[${JOB_NAME}] [anomaly-guard-1p] Downgraded ${playerName} 1P FIRE→WATCH (1P PROJECTION_ANOMALY)`,
+                );
                 firstPeriodDecision = { action: 'HOLD', status: 'WATCH', classification: 'LEAN', officialStatus: 'LEAN' };
               }
 
@@ -2306,7 +2360,9 @@ async function runNHLPlayerShotsModel() {
               // weighting diverges from Poisson fair pricing.
               if (realPropLine1p && firstPeriodDecision.action === 'FIRE') {
                 const v2EdgeForDir1p =
-                  firstPeriodEdge.direction === 'UNDER' ? v2EdgeUnderPp : v2EdgeOverPp;
+                  firstPeriodEdge.direction === 'UNDER'
+                    ? v2EdgeUnderPp1p
+                    : v2EdgeOverPp1p;
                 if (
                   typeof v2EdgeForDir1p === 'number' &&
                   Number.isFinite(v2EdgeForDir1p) &&
