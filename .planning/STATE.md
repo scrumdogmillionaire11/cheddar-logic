@@ -77,7 +77,7 @@ This file is intentionally minimal to avoid stale status drift.
 | 5 | [WI-0577](../WORK_QUEUE/WI-0577.md) | V1 drives bet decision; V2 Poisson edge is computed but never gates FIRE — V1 can emit a PLAY while V2's `edge_over_pp` is negative; add V2 veto gate for FIRE on odds-backed cards | **CRITICAL** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
 | 6 | ~~[WI-0578](../WORK_QUEUE/WI-0578.md)~~ ✓ | `PP_RATE_MISSING` flag set but PP component silently collapses to 0 for top PP players; under-projects by 0.3–0.5 SOG for players with non-zero `ppToi` | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
 | 7 | [WI-0579](../WORK_QUEUE/WI-0579.md) | 1P cards don't run `projectSogV2` independently; full-game `v2AnomalyDetected` reused against 1P mu | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
-| 8 | [WI-0580](../WORK_QUEUE/WI-0580.md) | PROP cards not wave-1 eligible — V1 wins unconditionally; V2 `official_status` never overrides | **HIGH** | `web/src/app/api/games/route.ts` |
+| 8 | ~~[WI-0580](../WORK_QUEUE/COMPLETE/WI-0580.md)~~ ✓ | PROP cards not wave-1 eligible — V1 wins unconditionally; V2 `official_status` never overrides | **HIGH** | `web/src/app/api/games/route.ts` |
 | 9 | [WI-0581](../WORK_QUEUE/WI-0581.md) | Rename `decision_v2.edge_pct` → `edge_delta_pct` — projection-delta % vs probability edge conflation | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
 | 10 | [WI-0582](../WORK_QUEUE/WI-0582.md) | `opponentFactor`/`paceFactor` fallback silent at `console.debug` — upgrade to `warn` + card flag | **MEDIUM** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
 | 11 | [WI-0583](../WORK_QUEUE/WI-0583.md) | V1 vs V2 mu calibration study — no accuracy audit exists; no reconciliation when models disagree | **MEDIUM** | `apps/worker/src/models/nhl-player-shots.js` |
@@ -173,5 +173,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 69 | WI-0573 Fix negative American price display — Math.abs() guard in already-American detection | 2026-03-23 | 307e286 | [69-wi-0573-fix-negative-american-price-disp](./quick/69-wi-0573-fix-negative-american-price-disp/) |
 | 70 | WI-0574 Wire real over_price/under_price into selection.price for full-game + 1P cards | 2026-03-23 | 69f91eb | [70-wi-0574-wire-real-over-price-under-price](./quick/70-wi-0574-wire-real-over-price-under-price/) |
 | 72 | WI-0576 Default NHL_SOG_PROP_EVENTS_ENABLED to true — prevent silent synthetic-line fallback in production | 2026-03-23 | 5f7f2f1 | [72-wi-0576-default-nhl-sog-prop-events-enab](./quick/72-wi-0576-default-nhl-sog-prop-events-enab/) |
+| 73 | WI-0580 Add PROP to WAVE1_MARKETS gate — V2 official_status can now override V1 for NHL player prop cards | 2026-03-23 | c79acf5 | [73-wi-0580-add-prop-to-wave-1-market-gate-s](./quick/73-wi-0580-add-prop-to-wave-1-market-gate-s/) |
 
-Last activity: 2026-03-23 - WI-0578 (PP_RATE_MISSING silent collapse) complete. WI-0579–0584 filed. Next: WI-0579 (1P V2 anomaly reuse, HIGH) → WI-0580 (PROP wave-1 gate, HIGH) → WI-0581 (edge_delta_pct rename, HIGH) → WI-0582/0583/0584 (MEDIUM).
+Last activity: 2026-03-23 - WI-0580 (PROP wave-1 gate) complete. Next: WI-0581 (edge_delta_pct rename, HIGH) → WI-0582/0583/0584 (MEDIUM).

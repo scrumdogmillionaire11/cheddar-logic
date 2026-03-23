@@ -107,4 +107,13 @@ assert.ok(
   'cards UI should not contain legacy verdict rendering labels',
 );
 
+assert.ok(
+  routeSource.includes("'PROP'") &&
+    routeSource.includes('WAVE1_MARKETS') &&
+    routeSource.includes("'MONEYLINE'") &&
+    routeSource.includes("'SPREAD'") &&
+    routeSource.includes("'FIRST_PERIOD'"),
+  'WAVE1_MARKETS must include PROP alongside existing market keys so V2 can override V1 for player prop cards (WI-0580)',
+);
+
 console.log('✅ Games pipeline v2 source contract tests passed');
