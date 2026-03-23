@@ -170,5 +170,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 66 | WI-0561 + WI-0551 + WI-0555: Next.js 16.2.1, noVigImplied vig removal, NBA spread gate via resolveThresholdProfile | 2026-03-23 | eb034c8 | [66-follow-sprint-plan-in-state](./quick/66-follow-sprint-plan-in-state/) |
 | 67 | WI-0552: Empirical sigma from game history — computeSigmaFromHistory, getSigmaDefaults fallback docs, NBA model runner wiring | 2026-03-23 | b55095d | [67-follow-sprint-plan-in-state](./quick/67-follow-sprint-plan-in-state/) |
 | 68 | Tier 0 audit-derived fixes AUDIT-FIX-01 through 05-06 | 2026-03-23 | 26b3d48 | [68-tier-0-audit-derived-fixes-audit-fix-01-](./quick/68-tier-0-audit-derived-fixes-audit-fix-01-/) |
+| 69 | WI-0573 Fix negative American price display — Math.abs() guard in already-American detection | 2026-03-23 | 307e286 | [69-wi-0573-fix-negative-american-price-disp](./quick/69-wi-0573-fix-negative-american-price-disp/) |
 
-Last activity: 2026-03-23 - Completed quick task 68: Tier 0 audit-derived fixes (AUDIT-FIX-01 through 05/06) — all 6 CRITICAL/HIGH defects from WI-0572 hostile audit resolved across 5 files.
+Last activity: 2026-03-23 - Completed quick task 69: WI-0573 — Math.abs() guard fixes negative American price display bug; every NHL prop card now shows correct -110/-115 odds instead of null.
