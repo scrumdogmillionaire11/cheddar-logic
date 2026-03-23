@@ -3303,6 +3303,8 @@ export async function GET(request: NextRequest) {
               total: row.total,
               spreadHome: row.spread_home,
               spreadAway: row.spread_away,
+              spreadHomeBook: row.spread_home_book ?? null,
+              spreadAwayBook: row.spread_away_book ?? null,
               spreadPriceHome: row.spread_price_home,
               spreadPriceAway: row.spread_price_away,
               totalPriceOver: row.total_price_over,

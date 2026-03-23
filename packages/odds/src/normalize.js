@@ -134,7 +134,25 @@ function normalizeGame(rawGame, sport) {
   const market = rawGame.markets || {};
   const h2h = Array.isArray(market.h2h) ? market.h2h[0] : null;
   const totals = Array.isArray(market.totals) ? market.totals[0] : null;
-  const spreads = Array.isArray(market.spreads) ? market.spreads[0] : null;
+
+  // Best-line spread selection: pick the most favorable line per side across all books.
+  // For a home bet, max(home_line) = fewest points to cover; same logic for away.
+  // home_line and away_line are negatives of each other so best home ≠ best away book.
+  let bestSpreadHome = null, bestSpreadHomeBook = null;
+  let bestSpreadAway = null, bestSpreadAwayBook = null;
+  let bestSpreadPriceHome = null, bestSpreadPriceAway = null;
+  for (const entry of (market.spreads || [])) {
+    if (entry.home_line != null && (bestSpreadHome === null || entry.home_line > bestSpreadHome)) {
+      bestSpreadHome = entry.home_line;
+      bestSpreadHomeBook = entry.book ?? null;
+      bestSpreadPriceHome = entry.home_price ?? null;
+    }
+    if (entry.away_line != null && (bestSpreadAway === null || entry.away_line > bestSpreadAway)) {
+      bestSpreadAway = entry.away_line;
+      bestSpreadAwayBook = entry.book ?? null;
+      bestSpreadPriceAway = entry.away_price ?? null;
+    }
+  }
 
   return {
     gameId,
@@ -150,10 +168,12 @@ function normalizeGame(rawGame, sport) {
       total: totals?.line ?? null,
       totalPriceOver: totals?.over ?? null,
       totalPriceUnder: totals?.under ?? null,
-      spreadHome: spreads?.home_line ?? null,
-      spreadAway: spreads?.away_line ?? null,
-      spreadPriceHome: spreads?.home_price ?? null,
-      spreadPriceAway: spreads?.away_price ?? null,
+      spreadHome: bestSpreadHome,
+      spreadHomeBook: bestSpreadHomeBook,
+      spreadAway: bestSpreadAway,
+      spreadAwayBook: bestSpreadAwayBook,
+      spreadPriceHome: bestSpreadPriceHome,
+      spreadPriceAway: bestSpreadPriceAway,
       monelineHome: h2h?.home ?? null,
       monelineAway: h2h?.away ?? null,
     },

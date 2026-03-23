@@ -341,6 +341,8 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 totalPriceUnder: normalized.odds?.totalPriceUnder,
                 spreadHome: normalized.odds?.spreadHome,
                 spreadAway: normalized.odds?.spreadAway,
+                spreadHomeBook: normalized.odds?.spreadHomeBook,
+                spreadAwayBook: normalized.odds?.spreadAwayBook,
                 spreadPriceHome: normalized.odds?.spreadPriceHome,
                 spreadPriceAway: normalized.odds?.spreadPriceAway,
                 monelineHome: normalized.odds?.monelineHome,
