@@ -65,6 +65,9 @@ const {
 const {
   normalizeRawDataPayload,
 } = require('../utils/normalize-raw-data-payload');
+const {
+  resolveThresholdProfile,
+} = require('@cheddar-logic/models');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -494,11 +497,12 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
 
   // SPREAD decision → nba-spread-call
   const spreadDecision = marketDecisions?.SPREAD;
-  const SPREAD_EDGE_MIN = 0.02;
+  const nbaSpreadProfile = resolveThresholdProfile({ sport: 'NBA', marketType: 'SPREAD' });
+  const SPREAD_LEAN_MIN = nbaSpreadProfile.edge.lean_edge_min; // 0.035 via v2 profile
   if (
     spreadDecision &&
     (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH') &&
-    (spreadDecision.edge == null || spreadDecision.edge > SPREAD_EDGE_MIN)
+    (spreadDecision.edge == null || spreadDecision.edge > SPREAD_LEAN_MIN)
   ) {
     const confidence = CONFIDENCE_MAP[spreadDecision.status];
     const tier = determineTier(confidence);
