@@ -172,5 +172,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 68 | Tier 0 audit-derived fixes AUDIT-FIX-01 through 05-06 | 2026-03-23 | 26b3d48 | [68-tier-0-audit-derived-fixes-audit-fix-01-](./quick/68-tier-0-audit-derived-fixes-audit-fix-01-/) |
 | 69 | WI-0573 Fix negative American price display — Math.abs() guard in already-American detection | 2026-03-23 | 307e286 | [69-wi-0573-fix-negative-american-price-disp](./quick/69-wi-0573-fix-negative-american-price-disp/) |
 | 70 | WI-0574 Wire real over_price/under_price into selection.price for full-game + 1P cards | 2026-03-23 | 69f91eb | [70-wi-0574-wire-real-over-price-under-price](./quick/70-wi-0574-wire-real-over-price-under-price/) |
+| 72 | WI-0576 Default NHL_SOG_PROP_EVENTS_ENABLED to true — prevent silent synthetic-line fallback in production | 2026-03-23 | 5f7f2f1 | [72-wi-0576-default-nhl-sog-prop-events-enab](./quick/72-wi-0576-default-nhl-sog-prop-events-enab/) |
 
-Last activity: 2026-03-23 - Completed quick task 70: WI-0574 — real over_price/under_price from Odds API wired into selection.price for both full-game and 1P card payloads; hardcoded -110 replaced with direction-conditional ternaries with ?? -110 fallback.
+Last activity: 2026-03-23 - Completed quick task 72: WI-0576 — NHL_SOG_PROP_EVENTS_ENABLED and NHL_BLK_PROP_EVENTS_ENABLED flipped from opt-in (=== 'true') to opt-out (!== 'false'); real Odds API lines now ingest by default in production.

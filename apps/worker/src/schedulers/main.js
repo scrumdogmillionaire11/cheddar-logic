@@ -166,7 +166,10 @@ function nowET() {
  * Job key builders (deterministic identifiers for idempotency)
  */
 function keyOddsHourly(nowEt) {
-  return `odds|hourly|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+  // Split into 30-min slots (0 = :00–:29, 1 = :30–:59) to halve worst-case stale window.
+  // This doubles hourly fetch count from 21 to 42/day (still well within paid-tier budget).
+  const slot = Math.floor(nowEt.minute / 30);
+  return `odds|hourly|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}|${slot}`;
 }
 
 function keyFixed(sport, nowEt, hhmm) {
@@ -668,6 +671,18 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       const jobKey = keyTminus(sport, g.game_id, mins);
       if (sport === 'soccer') {
         queueSoccerPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
+      }
+      // For projection-model sports, force a fresh odds pull immediately before the model
+      // so T-minus runs always see the current line (not up-to-29-min-stale hourly snapshot).
+      if (isProjectionModelSport(sport) && process.env.ENABLE_ODDS_PULL !== 'false') {
+        const oddsPreKey = `odds|pre-model|${sport}|${g.game_id}|T-${mins}`;
+        jobs.push({
+          jobName: 'pull_odds_hourly',
+          jobKey: oddsPreKey,
+          execute: pullOddsHourly,
+          args: { jobKey: oddsPreKey, dryRun },
+          reason: `pre-model odds refresh (T-${mins} for ${g.game_id})`,
+        });
       }
       jobs.push({
         jobName: SPORT_JOBS[sport].jobName,

@@ -10,7 +10,7 @@
  *   ?markets=player_shots_on_goal,player_blocked_shots&regions=us&bookmakers=...
  *
  * Token cost: 1 token per event per **market** (only runs for games within 36h).
- * Guard flags (both default false — set to enable):
+ * Guard flags (both default ON — set to 'false' to disable):
  *   NHL_SOG_PROP_EVENTS_ENABLED   — enables player_shots_on_goal pull
  *   NHL_BLK_PROP_EVENTS_ENABLED   — enables player_blocked_shots pull
  *
@@ -223,13 +223,13 @@ function resolveGameId(db, event) {
 async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
-  // Guard: at least one market must be explicitly enabled
-  const sogEnabled = process.env.NHL_SOG_PROP_EVENTS_ENABLED === 'true';
-  const blkEnabled = process.env.NHL_BLK_PROP_EVENTS_ENABLED === 'true';
+  // Guard: markets default ON — set to 'false' to disable
+  const sogEnabled = process.env.NHL_SOG_PROP_EVENTS_ENABLED !== 'false';
+  const blkEnabled = process.env.NHL_BLK_PROP_EVENTS_ENABLED !== 'false';
 
   if (!sogEnabled && !blkEnabled && !dryRun) {
     console.log(
-      `[${JOB_NAME}] Skipped — set NHL_SOG_PROP_EVENTS_ENABLED=true and/or NHL_BLK_PROP_EVENTS_ENABLED=true to enable`,
+      `[${JOB_NAME}] Skipped — set NHL_SOG_PROP_EVENTS_ENABLED=false and NHL_BLK_PROP_EVENTS_ENABLED=false to disable both`,
     );
     return { success: true, skipped: true, reason: 'not_enabled' };
   }

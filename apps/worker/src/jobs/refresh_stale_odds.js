@@ -85,13 +85,16 @@ function getOddsIntervalMinutes(minsUntilStart) {
 }
 
 /**
- * Find games within T-6h that have stale odds
+ * Find games within the configurable backstop horizon that have stale odds.
+ * Default: T+24h (covers same-day NBA/NHL line movements).
+ * Override via REFRESH_STALE_ODDS_HORIZON_HOURS env var.
  */
 function findGamesWithStaleOdds() {
   const db = getDatabase();
   const nowUtc = DateTime.utc();
+  const horizonHours = Number(process.env.REFRESH_STALE_ODDS_HORIZON_HOURS || 24);
   const startUtc = nowUtc.minus({ minutes: 30 }); // Include games that just started
-  const endUtc = nowUtc.plus({ hours: 6 }); // T-6h window
+  const endUtc = nowUtc.plus({ hours: horizonHours }); // configurable horizon (default T+24h)
 
   // Find all games within window
   const upcomingGames = db
@@ -107,7 +110,7 @@ function findGamesWithStaleOdds() {
     .all(startUtc.toISO(), endUtc.toISO());
 
   if (upcomingGames.length === 0) {
-    console.log('[RefreshStaleOdds] No games within T-6h window');
+    console.log(`[RefreshStaleOdds] No games within T+${horizonHours}h window`);
     return [];
   }
 
