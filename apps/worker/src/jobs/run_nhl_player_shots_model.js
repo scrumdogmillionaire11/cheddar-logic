@@ -39,6 +39,12 @@ const {
 
 const JOB_NAME = 'run-nhl-player-shots-model';
 
+// WI-0578: Conservative league-average PP shot rate (shots/60) used as fallback
+// when NST PP rate data is missing (PP_RATE_MISSING) but the player has non-zero ppToi.
+// Prevents pp_component silently collapsing to 0 for top PP players.
+// Value ~3.0 is ~25th-percentile among PP-eligible players (conservative, not inflated).
+const PP_RATE_LEAGUE_AVG_PER60 = 3.0;
+
 /**
  * WI-0529: Compute three-state display decision for prop cards.
  * PROJECTION_ONLY: anomaly flagged or no odds price (no actionable signal).
@@ -1787,7 +1793,19 @@ async function runNHLPlayerShotsModel() {
               // This avoids a false LOW_SAMPLE flag while being directionally correct.
               ev_shots_l10_per60: l5RatePer60 ?? shotsPer60 ?? null,
               ev_shots_l5_per60: l5RatePer60,
-              pp_shots_season_per60: ppRatePer60,
+              // WI-0578: When PP_RATE_MISSING (NST rate unavailable but player has real ppToi),
+              // use a conservative league-average fallback instead of null. Passing null silently
+              // collapses pp_component to 0, under-projecting by 0.3–0.5 SOG for top PP players.
+              pp_shots_season_per60: ppRatePer60 ?? (
+                ppToi > 0
+                  ? (() => {
+                      console.warn(
+                        `[${JOB_NAME}] [pp-rate-fallback] ${playerName}: ppRatePer60 missing with ppToi=${ppToi.toFixed(2)} — using league-avg fallback ${PP_RATE_LEAGUE_AVG_PER60}/60`,
+                      );
+                      return PP_RATE_LEAGUE_AVG_PER60;
+                    })()
+                  : null
+              ),
               pp_shots_l10_per60: ppRateL10Per60,
               pp_shots_l5_per60: ppRateL5Per60,
               toi_proj_ev: projToi ?? 0,
@@ -2280,6 +2298,30 @@ async function runNHLPlayerShotsModel() {
               }
               if (projectionAnomalyDetected && firstPeriodDecision.action === 'FIRE') {
                 firstPeriodDecision = { action: 'HOLD', status: 'WATCH', classification: 'LEAN', officialStatus: 'LEAN' };
+              }
+
+              // Guard 3 (WI-0577): V2 Poisson veto — on odds-backed 1P cards,
+              // if V2's probability edge for the selected direction is negative,
+              // downgrade FIRE→WATCH. V1 can overstate edge when its recency
+              // weighting diverges from Poisson fair pricing.
+              if (realPropLine1p && firstPeriodDecision.action === 'FIRE') {
+                const v2EdgeForDir1p =
+                  firstPeriodEdge.direction === 'UNDER' ? v2EdgeUnderPp : v2EdgeOverPp;
+                if (
+                  typeof v2EdgeForDir1p === 'number' &&
+                  Number.isFinite(v2EdgeForDir1p) &&
+                  v2EdgeForDir1p < 0
+                ) {
+                  console.warn(
+                    `[${JOB_NAME}] [v2-veto-1p] Downgraded ${playerName} 1P FIRE→WATCH (V2 edge_${firstPeriodEdge.direction.toLowerCase()}_pp=${v2EdgeForDir1p.toFixed(4)} < 0)`,
+                  );
+                  firstPeriodDecision = {
+                    action: 'HOLD',
+                    status: 'WATCH',
+                    classification: 'LEAN',
+                    officialStatus: 'LEAN',
+                  };
+                }
               }
 
               const l5FairValue1p = calcFairLine1p({ l5Sog, shotsPer60, projToi });
