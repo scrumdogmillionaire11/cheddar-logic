@@ -381,18 +381,17 @@ jobs:
               echo "WARNING: Cloudflare secrets (CF_API_TOKEN / CF_ZONE_ID) not set — skipping CF cache purge. Set them as GitHub Actions secrets to enable automatic purge on every deploy."
               CF_PURGE_SKIPPED=true
             else
-              printf '{"files":["%s/","%s/cards","%s/fpl","%s/results","%s/admin","%s/analytics","%s/subscribe"]}' \
-                "$PUBLIC_DOMAIN_URL" "$PUBLIC_DOMAIN_URL" "$PUBLIC_DOMAIN_URL" "$PUBLIC_DOMAIN_URL" \
-                "$PUBLIC_DOMAIN_URL" "$PUBLIC_DOMAIN_URL" "$PUBLIC_DOMAIN_URL" \
-                > /tmp/cloudflare_purge_payload.json
+              # purge_everything clears HTML routes AND /_next/static/ chunk cache.
+              # Targeted URL-list purge previously left stale CF-cached 404s for new
+              # chunk hashes when a prior failed deploy dirtied the static asset cache.
               curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
                 -H "Authorization: Bearer ${CF_API_TOKEN}" \
                 -H "Content-Type: application/json" \
-                --data @/tmp/cloudflare_purge_payload.json \
+                --data '{"purge_everything":true}' \
                 | tee /tmp/cloudflare_purge.json
               grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json || fail_with_rollback "Cloudflare purge failed: $(cat /tmp/cloudflare_purge.json)"
-              echo "Cloudflare HTML route cache purged via URL list — waiting 30s for propagation..."
-              sleep 30
+              echo "Cloudflare cache purged (purge_everything) — waiting 45s for propagation..."
+              sleep 45
             fi
             if [ "$CF_PURGE_SKIPPED" = "false" ]; then
               PUBLIC_HOMEPAGE_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/" || true)
