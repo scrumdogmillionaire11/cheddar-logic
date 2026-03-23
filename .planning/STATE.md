@@ -16,15 +16,16 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-22
-- Next action for operators/agents: Tier 1 security blockers all done. Pick the next unclaimed item from new Tier 1 — start with **WI-0554** (confidence function, now unblocked)
+- Last reviewed: 2026-03-23
+- Next action for operators/agents: Hostile audit (WI-0572) complete — 2 CRITICAL + 4 HIGH defects found in live decision pipeline. **Create fix WIs from audit before WI-0554.** Start with **AUDIT-FIX-01** (NHL OVER +0.5 edge suppression in `edge-calculator.js`) and **AUDIT-FIX-02** (silent exception swallow in `buildDecisionV2`).
 
 ---
 
-## Sprint Plan — 2026-03-22 prioritization (updated)
+## Sprint Plan — 2026-03-23 re-prioritization
 
 ### Dependency Chains (respect order within chains)
-- **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → WI-0554 → WI-0556
+- **Audit fixes (parallel, independent):** AUDIT-FIX-01, AUDIT-FIX-02, AUDIT-FIX-03, AUDIT-FIX-04, AUDIT-FIX-05, AUDIT-FIX-06
+- **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → WI-0554 → WI-0556 → WI-0553
 - **Auth/JWT:** ~~WI-0559~~✓ → ~~WI-0560~~✓ (both done)
 - **Settlement → CLV (serial):** WI-0564 → WI-0566 → WI-0557
 - **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
@@ -32,7 +33,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 ---
 
-### Tier 1 — All Security & Correctness Blockers DONE ✓
+### Historical Tier 1 — Security & Edge Math (all DONE ✓)
 
 | WI | Summary | Status |
 |---|---|---|
@@ -42,16 +43,33 @@ This file is intentionally minimal to avoid stale status drift.
 | ~~[WI-0551](../WORK_QUEUE/COMPLETE/WI-0551.md)~~ | Remove vig from implied probability (edge math baseline) | ✓ DONE (qt-66) |
 | ~~[WI-0555](../WORK_QUEUE/COMPLETE/WI-0555.md)~~ | Unify spread threshold + enable `MARKET_THRESHOLDS_V2` | ✓ DONE (qt-66) |
 | ~~[WI-0552](../WORK_QUEUE/COMPLETE/WI-0552.md)~~ | Empirical sigma from game history (replace hardcoded 12/14) | ✓ DONE (qt-67) |
+| ~~[WI-0572](../WORK_QUEUE/WI-0572.md)~~ | Hostile audit — betting decision pipeline (10 findings) | ✓ DONE (2026-03-23) |
 
 ---
 
-### Tier 1 (New) — Edge Model & CI Correctness (do now)
+### Tier 0 — Audit-Derived Critical/High Fixes (create WIs first, do before Tier 1)
+
+> Source: [hostile-betting-pipeline-audit-2026-03.md](../docs/runbooks/hostile-betting-pipeline-audit-2026-03.md)
+> Each item needs its own WI file before implementation starts. All are independent (no cross-dependencies).
+
+| Priority | Placeholder | Finding | Severity | Target file |
+|---|---|---|---|---|
+| 1 | AUDIT-FIX-01 | NHL OVER edge suppressed by spurious `+0.5` line adjustment — every NHL OVER total loses ~0.02–0.04 edge silently | **CRITICAL** | `packages/models/src/edge-calculator.js` |
+| 2 | AUDIT-FIX-02 | Silent exception swallow in `buildDecisionV2` — parse failures become `DEGRADED` with no log, masking real errors | **CRITICAL** | `packages/models/src/decision-pipeline-v2.js` |
+| 3 | AUDIT-FIX-03 | `truePlayMap` first-come ordering — stale LEAN shadows a fresh FIRE for the same game | **HIGH** | `packages/models/src/decision-pipeline-v2.js` |
+| 4 | AUDIT-FIX-04 | `shouldFlip` coerces null edge to `0` via `?? 0` — phantom flip when `edge_available=true` but edge is null | **HIGH** | `packages/models/src/decision-gate.js` |
+| 5 | AUDIT-FIX-05 | `reason_codes` accumulates monotonically, never purged — stale codes contradict current card status | **HIGH** | `apps/worker/src/utils/decision-publisher.js` |
+| 6 | AUDIT-FIX-06 | `EVIDENCE` cards carry permanent `PASS_UNREPAIRABLE_LEGACY` in `reason_codes`, never refreshed on re-evaluation | **HIGH** | `apps/worker/src/utils/decision-publisher.js` |
+
+---
+
+### Tier 1 — Edge Model Correctness & CI Integrity
 
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
-| 1 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function (replace 0.95/0.88/0.85 literals) | WI-0551 ✓, WI-0552 ✓ — **unblocked** |
-| 2 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate mutating web tests to temp DB (prevent CI prod mutation) | — |
-| 3 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI with no local server | — |
+| 7 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function (replace 0.95/0.88/0.85 literals) | WI-0551 ✓, WI-0552 ✓ — **unblocked** |
+| 8 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate mutating web tests to temp DB (prevent CI prod mutation) | — |
+| 9 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI with no local server | — |
 
 ---
 
@@ -59,29 +77,31 @@ This file is intentionally minimal to avoid stale status drift.
 
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
-| 4 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | — |
-| 5 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge (not projection signal) | WI-0554 |
-| 6 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 |
-| 7 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | — |
-| 8 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
-| 9 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
+| 10 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | — |
+| 11 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | — |
+| 12 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge (not projection signal) | WI-0554 |
+| 13 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 |
+| 14 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
+| 15 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
 
 ---
 
 ### Tier 3 — Market Evaluator Layer (serial chain)
 
 | Order | WI | Summary | Depends on |
-| --- | --- | --- | --- |
-| 10 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion, confidence) | — |
-| 11 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector for all markets (best-price separate from best-line) | WI-0568 |
-| 12 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
-| 13 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, edge vs best available, execution alpha) | WI-0568, WI-0569 |
+|---|---|---|---|
+| 16 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion, confidence) | — |
+| 17 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector for all markets (best-price separate from best-line) | WI-0568 |
+| 18 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
+| 19 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, edge vs best available, execution alpha) | WI-0568, WI-0569 |
+
+---
 
 ### Tier 4 — Polish / Display
 
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
-| 14 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | — |
+| 20 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | — |
 
 ### Quick Tasks Completed
 
@@ -128,4 +148,4 @@ This file is intentionally minimal to avoid stale status drift.
 | 66 | WI-0561 + WI-0551 + WI-0555: Next.js 16.2.1, noVigImplied vig removal, NBA spread gate via resolveThresholdProfile | 2026-03-23 | eb034c8 | [66-follow-sprint-plan-in-state](./quick/66-follow-sprint-plan-in-state/) |
 | 67 | WI-0552: Empirical sigma from game history — computeSigmaFromHistory, getSigmaDefaults fallback docs, NBA model runner wiring | 2026-03-23 | b55095d | [67-follow-sprint-plan-in-state](./quick/67-follow-sprint-plan-in-state/) |
 
-Last activity: 2026-03-22 - Updated sprint plan: Tier 1 fully cleared (WI-0559/0560/0561/0551/0555/0552 all done). WI-0554 is now top priority (edge math stack unblocked).
+Last activity: 2026-03-23 - Re-prioritized sprint plan: WI-0572 hostile audit complete (10 findings: 2 CRITICAL, 4 HIGH, 3 MEDIUM, 1 LOW). Added Tier 0 with 6 audit-derived fix placeholders (AUDIT-FIX-01 through AUDIT-FIX-06) that must be written as WI files and executed before Tier 1. WI-0554 remains top of Tier 1 once audit fixes are in flight.
