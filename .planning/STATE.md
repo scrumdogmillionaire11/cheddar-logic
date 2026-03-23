@@ -47,7 +47,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
-| 6 | [WI-0552](../WORK_QUEUE/WI-0552.md) | Empirical sigma from game history (replace hardcoded 12/14) | WI-0551 |
+| 6 | ~~[WI-0552](../WORK_QUEUE/COMPLETE/WI-0552.md)~~ DONE | Empirical sigma from game history (replace hardcoded 12/14) | WI-0551 |
 | 7 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function (replace 0.95/0.88/0.85 literals) | WI-0551, WI-0552 |
 | 8 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate mutating web tests to temp DB (prevent CI prod mutation) | — |
 | 9 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI with no local server | — |
@@ -116,5 +116,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 64 | WI-0550 NBA Spread Edge Gate: SPREAD_EDGE_MIN=0.02 guard blocks negative-EV spread cards; settlement 82% void rate diagnosed as legacy null market_key artifact; 4 unit tests | 2026-03-22 | 94868af | [64-wi-0550](./quick/64-wi-0550/) |
 | 65 | WI-0559 + WI-0560 JWT security fixes: RFC-compliant HS256 signatures + fail-closed prod AUTH_SECRET guard | 2026-03-23 | c656a20 | [65-follow-sprint-plan-in-state](./quick/65-follow-sprint-plan-in-state/) |
 | 66 | WI-0561 + WI-0551 + WI-0555: Next.js 16.2.1, noVigImplied vig removal, NBA spread gate via resolveThresholdProfile | 2026-03-23 | eb034c8 | [66-follow-sprint-plan-in-state](./quick/66-follow-sprint-plan-in-state/) |
+| 67 | WI-0552: Empirical sigma from game history — computeSigmaFromHistory, getSigmaDefaults fallback docs, NBA model runner wiring | 2026-03-23 | b55095d | [67-follow-sprint-plan-in-state](./quick/67-follow-sprint-plan-in-state/) |
 
-Last activity: 2026-03-23 - Completed quick task 66: WI-0561 (Next.js 16.2.1 zero CVEs) + WI-0551 (noVigImplied, 18 tests) + WI-0555 (NBA spread gate 0.035, MARKET_THRESHOLDS_V2 on by default)
+Last activity: 2026-03-23 - Completed quick task 67: WI-0552 (computeSigmaFromHistory with fallback, 31 tests, NBA model runner wired)
