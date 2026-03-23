@@ -52,13 +52,7 @@ function base64UrlDecode(data: string): string {
 }
 
 function createSignature(message: string, secret: string): string {
-  return base64UrlEncode(
-    crypto
-      .createHmac('sha256', secret)
-      .update(message)
-      .digest()
-      .toString('binary'),
-  );
+  return crypto.createHmac('sha256', secret).update(message).digest('base64url');
 }
 
 /**
