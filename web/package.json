@@ -32,7 +32,7 @@
   "dependencies": {
     "@cheddar-logic/data": "file:../packages/data",
     "@cheddar-logic/models": "file:../packages/models",
-    "next": "^16.1.6",
+    "next": "16.2.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "resend": "^6.9.3"
