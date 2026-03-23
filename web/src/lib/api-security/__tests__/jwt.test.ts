@@ -4,9 +4,12 @@
  */
 
 import * as crypto from 'crypto';
-import { createAccessToken, verifyToken } from '../jwt.ts';
+import { createAccessToken, verifyToken } from '../jwt';
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+
+// Mutable alias — process.env.NODE_ENV is read-only in TypeScript's ProcessEnv type
+const mutEnv = process.env as Record<string, string | undefined>;
 
 // ---- Task 1: WI-0559 — RFC parity tests ----
 
@@ -16,7 +19,7 @@ describe('WI-0559: createSignature RFC parity', () => {
     const originalEnv = process.env.AUTH_SECRET;
     const originalNode = process.env.NODE_ENV;
     process.env.AUTH_SECRET = 'test-secret-for-parity-check';
-    process.env.NODE_ENV = 'development';
+    mutEnv.NODE_ENV = 'development';
 
     try {
       const token = createAccessToken({
@@ -50,9 +53,9 @@ describe('WI-0559: createSignature RFC parity', () => {
         process.env.AUTH_SECRET = originalEnv;
       }
       if (originalNode === undefined) {
-        delete process.env.NODE_ENV;
+        delete mutEnv.NODE_ENV;
       } else {
-        process.env.NODE_ENV = originalNode;
+        mutEnv.NODE_ENV = originalNode;
       }
     }
   });
@@ -61,7 +64,7 @@ describe('WI-0559: createSignature RFC parity', () => {
     const originalEnv = process.env.AUTH_SECRET;
     const originalNode = process.env.NODE_ENV;
     process.env.AUTH_SECRET = 'test-secret-for-verify';
-    process.env.NODE_ENV = 'development';
+    mutEnv.NODE_ENV = 'development';
 
     try {
       const token = createAccessToken({
@@ -82,9 +85,9 @@ describe('WI-0559: createSignature RFC parity', () => {
         process.env.AUTH_SECRET = originalEnv;
       }
       if (originalNode === undefined) {
-        delete process.env.NODE_ENV;
+        delete mutEnv.NODE_ENV;
       } else {
-        process.env.NODE_ENV = originalNode;
+        mutEnv.NODE_ENV = originalNode;
       }
     }
   });
@@ -93,7 +96,7 @@ describe('WI-0559: createSignature RFC parity', () => {
     const originalEnv = process.env.AUTH_SECRET;
     const originalNode = process.env.NODE_ENV;
     process.env.AUTH_SECRET = 'test-secret-tamper';
-    process.env.NODE_ENV = 'development';
+    mutEnv.NODE_ENV = 'development';
 
     try {
       const token = createAccessToken({
@@ -117,9 +120,9 @@ describe('WI-0559: createSignature RFC parity', () => {
         process.env.AUTH_SECRET = originalEnv;
       }
       if (originalNode === undefined) {
-        delete process.env.NODE_ENV;
+        delete mutEnv.NODE_ENV;
       } else {
-        process.env.NODE_ENV = originalNode;
+        mutEnv.NODE_ENV = originalNode;
       }
     }
   });
@@ -128,7 +131,7 @@ describe('WI-0559: createSignature RFC parity', () => {
     const originalEnv = process.env.AUTH_SECRET;
     const originalNode = process.env.NODE_ENV;
     process.env.AUTH_SECRET = 'test-secret-expiry';
-    process.env.NODE_ENV = 'development';
+    mutEnv.NODE_ENV = 'development';
 
     try {
       // Manually build an expired token
@@ -169,9 +172,9 @@ describe('WI-0559: createSignature RFC parity', () => {
         process.env.AUTH_SECRET = originalEnv;
       }
       if (originalNode === undefined) {
-        delete process.env.NODE_ENV;
+        delete mutEnv.NODE_ENV;
       } else {
-        process.env.NODE_ENV = originalNode;
+        mutEnv.NODE_ENV = originalNode;
       }
     }
   });
@@ -186,7 +189,7 @@ describe('WI-0560: getAuthSecret fail-closed in production', () => {
     const originalNode = process.env.NODE_ENV;
     delete process.env.AUTH_SECRET;
     delete process.env.CHEDDAR_AUTH_SECRET;
-    process.env.NODE_ENV = 'production';
+    mutEnv.NODE_ENV = 'production';
 
     try {
       assert.throws(
@@ -217,9 +220,9 @@ describe('WI-0560: getAuthSecret fail-closed in production', () => {
         process.env.CHEDDAR_AUTH_SECRET = originalCheddar;
       }
       if (originalNode === undefined) {
-        delete process.env.NODE_ENV;
+        delete mutEnv.NODE_ENV;
       } else {
-        process.env.NODE_ENV = originalNode;
+        mutEnv.NODE_ENV = originalNode;
       }
     }
   });
@@ -228,7 +231,7 @@ describe('WI-0560: getAuthSecret fail-closed in production', () => {
     const originalEnv = process.env.AUTH_SECRET;
     const originalNode = process.env.NODE_ENV;
     process.env.AUTH_SECRET = 'dev-auth-secret-change-me';
-    process.env.NODE_ENV = 'production';
+    mutEnv.NODE_ENV = 'production';
 
     try {
       assert.throws(
@@ -254,9 +257,9 @@ describe('WI-0560: getAuthSecret fail-closed in production', () => {
         process.env.AUTH_SECRET = originalEnv;
       }
       if (originalNode === undefined) {
-        delete process.env.NODE_ENV;
+        delete mutEnv.NODE_ENV;
       } else {
-        process.env.NODE_ENV = originalNode;
+        mutEnv.NODE_ENV = originalNode;
       }
     }
   });
@@ -265,7 +268,7 @@ describe('WI-0560: getAuthSecret fail-closed in production', () => {
     const originalEnv = process.env.AUTH_SECRET;
     const originalNode = process.env.NODE_ENV;
     process.env.AUTH_SECRET = 'a-real-strong-secret-value-for-prod';
-    process.env.NODE_ENV = 'production';
+    mutEnv.NODE_ENV = 'production';
 
     try {
       const token = createAccessToken({
@@ -282,9 +285,9 @@ describe('WI-0560: getAuthSecret fail-closed in production', () => {
         process.env.AUTH_SECRET = originalEnv;
       }
       if (originalNode === undefined) {
-        delete process.env.NODE_ENV;
+        delete mutEnv.NODE_ENV;
       } else {
-        process.env.NODE_ENV = originalNode;
+        mutEnv.NODE_ENV = originalNode;
       }
     }
   });
@@ -295,7 +298,7 @@ describe('WI-0560: getAuthSecret fail-closed in production', () => {
     const originalNode = process.env.NODE_ENV;
     delete process.env.AUTH_SECRET;
     delete process.env.CHEDDAR_AUTH_SECRET;
-    process.env.NODE_ENV = 'development';
+    mutEnv.NODE_ENV = 'development';
 
     try {
       // Should not throw — dev mode uses default with warning only
@@ -318,9 +321,9 @@ describe('WI-0560: getAuthSecret fail-closed in production', () => {
         process.env.CHEDDAR_AUTH_SECRET = originalCheddar;
       }
       if (originalNode === undefined) {
-        delete process.env.NODE_ENV;
+        delete mutEnv.NODE_ENV;
       } else {
-        process.env.NODE_ENV = originalNode;
+        mutEnv.NODE_ENV = originalNode;
       }
     }
   });
