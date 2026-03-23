@@ -1334,6 +1334,8 @@ async function runNHLPlayerShotsModel() {
               propType: 'shots_on_goal',
               period: 'first_period',
             });
+            const overPrice1p = realPropLine1p?.over_price ?? null;
+            const underPrice1p = realPropLine1p?.under_price ?? null;
             let syntheticLine1p;
             if (realPropLine1p) {
               syntheticLine1p = realPropLine1p.line;
@@ -1497,7 +1499,7 @@ async function runNHLPlayerShotsModel() {
                   selection: {
                     side: fullGameEdge.direction === 'OVER' ? 'over' : 'under',
                     line: syntheticLine,
-                    price: -110,
+                    price: fullGameEdge.direction === 'OVER' ? (overPrice ?? -110) : (underPrice ?? -110),
                     team: player.team_abbrev,
                     player_name: playerName,
                     player_id: player.player_id.toString(),
@@ -1734,7 +1736,7 @@ async function runNHLPlayerShotsModel() {
                       side:
                         firstPeriodEdge.direction === 'OVER' ? 'over' : 'under',
                       line: syntheticLine1p,
-                      price: -110,
+                      price: firstPeriodEdge.direction === 'OVER' ? (overPrice1p ?? -110) : (underPrice1p ?? -110),
                       team: player.team_abbrev,
                       player_name: playerName,
                       player_id: player.player_id.toString(),
