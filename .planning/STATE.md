@@ -174,4 +174,4 @@ This file is intentionally minimal to avoid stale status drift.
 | 70 | WI-0574 Wire real over_price/under_price into selection.price for full-game + 1P cards | 2026-03-23 | 69f91eb | [70-wi-0574-wire-real-over-price-under-price](./quick/70-wi-0574-wire-real-over-price-under-price/) |
 | 72 | WI-0576 Default NHL_SOG_PROP_EVENTS_ENABLED to true — prevent silent synthetic-line fallback in production | 2026-03-23 | 5f7f2f1 | [72-wi-0576-default-nhl-sog-prop-events-enab](./quick/72-wi-0576-default-nhl-sog-prop-events-enab/) |
 
-Last activity: 2026-03-23 - Completed quick task 72: WI-0576 — NHL_SOG_PROP_EVENTS_ENABLED and NHL_BLK_PROP_EVENTS_ENABLED flipped from opt-in (=== 'true') to opt-out (!== 'false'); real Odds API lines now ingest by default in production.
+Last activity: 2026-03-23 - WI-0575 (direction-aware opportunity_score) + WI-0577 (V2 Poisson veto gate for 1P FIRE) complete. Next: WI-0578 PP_RATE_MISSING silent collapse HIGH.
