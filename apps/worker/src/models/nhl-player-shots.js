@@ -381,6 +381,7 @@ function projectSogV2(inputs) {
     market_price_over = null,
     market_price_under = null,
     lines_to_price = [],
+    play_direction = 'OVER',
   } = inputs || {};
 
   // ---- Flags ----
@@ -490,20 +491,36 @@ function projectSogV2(inputs) {
     ev_under = fairUnderProb * payoutDm1Under - (1 - fairUnderProb);
   }
 
-  // ---- OpportunityScore ----
+  // ---- OpportunityScore (direction-aware, WI-0575) ----
   let opportunity_score = null;
-  if (
-    market_line !== null && market_line !== undefined &&
-    market_price_over !== null && market_price_over !== undefined &&
-    edge_over_pp !== null && ev_over !== null
-  ) {
-    const shot_env_adj = (rawShotEnvFactor ?? 1.0) - 1.0;
-    opportunity_score =
-      0.45 * edge_over_pp +
-      0.20 * ev_over +
-      0.20 * (sog_mu - market_line) +
-      0.10 * trend_score +
-      0.05 * shot_env_adj;
+  const shot_env_adj = (rawShotEnvFactor ?? 1.0) - 1.0;
+  if (play_direction === 'UNDER') {
+    if (
+      market_line !== null && market_line !== undefined &&
+      market_price_under !== null && market_price_under !== undefined &&
+      edge_under_pp !== null && ev_under !== null
+    ) {
+      opportunity_score =
+        0.45 * edge_under_pp +
+        0.20 * ev_under +
+        0.20 * (market_line - sog_mu) +
+        0.10 * trend_score +
+        0.05 * shot_env_adj;
+    }
+  } else {
+    // Default: OVER direction
+    if (
+      market_line !== null && market_line !== undefined &&
+      market_price_over !== null && market_price_over !== undefined &&
+      edge_over_pp !== null && ev_over !== null
+    ) {
+      opportunity_score =
+        0.45 * edge_over_pp +
+        0.20 * ev_over +
+        0.20 * (sog_mu - market_line) +
+        0.10 * trend_score +
+        0.05 * shot_env_adj;
+    }
   }
 
   return {
@@ -595,6 +612,7 @@ function projectBlkV1(inputs) {
     market_price_over = null,
     market_price_under = null,
     lines_to_price = [],
+    play_direction = 'OVER',
   } = inputs || {};
 
   // ---- Flags ----
@@ -698,21 +716,36 @@ function projectBlkV1(inputs) {
     ev_under = fairUnderProb * payoutDm1 - (1 - fairUnderProb);
   }
 
-  // ---- OpportunityScore ----
+  // ---- OpportunityScore (direction-aware, WI-0575) ----
   // Weights reflect that blocked shots is a role/environment market.
   // opponent_attempt_factor and playoff_tightening replace trend/env from SOG.
   let opportunity_score = null;
-  if (
-    market_line !== null && market_line !== undefined &&
-    market_price_over !== null && market_price_over !== undefined &&
-    edge_over_pp !== null && ev_over !== null
-  ) {
-    opportunity_score =
-      0.40 * edge_over_pp +
-      0.20 * ev_over +
-      0.20 * (blk_mu - market_line) +
-      0.10 * (opp_attempt_factor - 1.0) +
-      0.10 * (playoff_tightening_factor - 1.0);
+  if (play_direction === 'UNDER') {
+    if (
+      market_line !== null && market_line !== undefined &&
+      market_price_under !== null && market_price_under !== undefined &&
+      edge_under_pp !== null && ev_under !== null
+    ) {
+      opportunity_score =
+        0.40 * edge_under_pp +
+        0.20 * ev_under +
+        0.20 * (market_line - blk_mu) +
+        0.10 * (opp_attempt_factor - 1.0) +
+        0.10 * (playoff_tightening_factor - 1.0);
+    }
+  } else {
+    if (
+      market_line !== null && market_line !== undefined &&
+      market_price_over !== null && market_price_over !== undefined &&
+      edge_over_pp !== null && ev_over !== null
+    ) {
+      opportunity_score =
+        0.40 * edge_over_pp +
+        0.20 * ev_over +
+        0.20 * (blk_mu - market_line) +
+        0.10 * (opp_attempt_factor - 1.0) +
+        0.10 * (playoff_tightening_factor - 1.0);
+    }
   }
 
   return {
