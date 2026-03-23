@@ -155,11 +155,9 @@ function applyUiActionFields(payload, context = {}) {
         official === 'PLAY' ? 'FIRE' : official === 'LEAN' ? 'WATCH' : 'PASS';
       payload.pass_reason_code =
         official === 'PASS' ? decisionV2.primary_reason_code : null;
+      // Replace — do not accumulate. Only keep the current primary reason code.
       payload.reason_codes = Array.from(
-        new Set([
-          ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
-          decisionV2.primary_reason_code,
-        ]),
+        new Set([decisionV2.primary_reason_code].filter(Boolean))
       );
       return payload;
     }
