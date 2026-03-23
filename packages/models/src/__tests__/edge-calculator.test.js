@@ -240,6 +240,123 @@ assert(
   `got ${spreadCardsAboveGate.length} card(s)`
 );
 
+// ── WI-0552: computeSigmaFromHistory ─────────────────────────────────────────
+
+console.log('\n=== WI-0552: computeSigmaFromHistory ===');
+
+const {
+  computeSigmaFromHistory,
+  getSigmaDefaults,
+} = require('../edge-calculator');
+
+assert(
+  'computeSigmaFromHistory is exported',
+  typeof computeSigmaFromHistory === 'function',
+  'expected function'
+);
+
+assert(
+  'getSigmaDefaults is exported',
+  typeof getSigmaDefaults === 'function',
+  'expected function'
+);
+
+// Helper to build a mock db with prepare().all() returning canned rows
+function makeMockDb(rows) {
+  return {
+    prepare: () => ({
+      all: () => rows,
+    }),
+  };
+}
+
+// Test: empty db → fallback
+const sigmaEmpty = computeSigmaFromHistory({ sport: 'NBA', db: makeMockDb([]) });
+assert(
+  'computeSigmaFromHistory with 0 games returns sigma_source: fallback',
+  sigmaEmpty && sigmaEmpty.sigma_source === 'fallback',
+  JSON.stringify(sigmaEmpty)
+);
+assert(
+  'computeSigmaFromHistory with 0 games returns NBA margin default',
+  sigmaEmpty && sigmaEmpty.margin === 12,
+  `got margin=${sigmaEmpty && sigmaEmpty.margin}`
+);
+assert(
+  'computeSigmaFromHistory with 0 games returns NBA total default',
+  sigmaEmpty && sigmaEmpty.total === 14,
+  `got total=${sigmaEmpty && sigmaEmpty.total}`
+);
+
+// Test: 15 games → below threshold → fallback
+function makeRows(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    final_score_home: 110 + (i % 5),
+    final_score_away: 100 + (i % 7),
+  }));
+}
+const sigma15 = computeSigmaFromHistory({ sport: 'NBA', db: makeMockDb(makeRows(15)) });
+assert(
+  'computeSigmaFromHistory with 15 games returns sigma_source: fallback',
+  sigma15 && sigma15.sigma_source === 'fallback',
+  JSON.stringify(sigma15)
+);
+
+// Test: 25 games with known deltas → computed
+// Build 25 rows with realistic NBA-style scores so std-dev lands in plausible range
+const nbaRows = Array.from({ length: 25 }, (_, i) => ({
+  final_score_home: 108 + (i % 12) - 6, // varies ±6
+  final_score_away: 105 + (i % 10) - 5, // varies ±5
+}));
+const sigma25 = computeSigmaFromHistory({ sport: 'NBA', db: makeMockDb(nbaRows) });
+assert(
+  'computeSigmaFromHistory with 25 games returns sigma_source: computed',
+  sigma25 && sigma25.sigma_source === 'computed',
+  JSON.stringify(sigma25)
+);
+assert(
+  'computeSigmaFromHistory with 25 games returns games_sampled',
+  sigma25 && typeof sigma25.games_sampled === 'number' && sigma25.games_sampled === 25,
+  `got games_sampled=${sigma25 && sigma25.games_sampled}`
+);
+assert(
+  'computeSigmaFromHistory with 25 NBA games: margin in plausible range [1, 20]',
+  sigma25 && sigma25.margin >= 1 && sigma25.margin <= 20,
+  `got margin=${sigma25 && sigma25.margin}`
+);
+assert(
+  'computeSigmaFromHistory with 25 NBA games: total in plausible range [1, 25]',
+  sigma25 && sigma25.total >= 1 && sigma25.total <= 25,
+  `got total=${sigma25 && sigma25.total}`
+);
+
+// Test: accepts windowGames param
+const sigmaWindow = computeSigmaFromHistory({ sport: 'NBA', db: makeMockDb(makeRows(25)), windowGames: 60 });
+assert(
+  'computeSigmaFromHistory accepts windowGames param without error',
+  sigmaWindow && sigmaWindow.sigma_source !== undefined,
+  JSON.stringify(sigmaWindow)
+);
+
+// Test: DB error → fallback
+const errorDb = {
+  prepare: () => { throw new Error('DB unavailable'); },
+};
+const sigmaErr = computeSigmaFromHistory({ sport: 'NBA', db: errorDb });
+assert(
+  'computeSigmaFromHistory returns fallback on DB error',
+  sigmaErr && sigmaErr.sigma_source === 'fallback',
+  JSON.stringify(sigmaErr)
+);
+
+// Test: getSigmaDefaults JSDoc annotated (we check the function still works correctly)
+const defaults = getSigmaDefaults('NBA');
+assert(
+  'getSigmaDefaults(NBA) still returns { margin: 12, total: 14 }',
+  defaults && defaults.margin === 12 && defaults.total === 14,
+  JSON.stringify(defaults)
+);
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
