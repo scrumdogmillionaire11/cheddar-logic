@@ -29,8 +29,15 @@ const cspConnectSrc =
     ? "connect-src 'self' https://cloudflareinsights.com http://localhost:8000 http://localhost:8001"
     : "connect-src 'self' https://cloudflareinsights.com";
 
+// React dev mode uses eval() for call-stack reconstruction and hot-reload
+// instrumentation. 'unsafe-eval' is never emitted in production builds.
+const cspScriptSrc =
+  process.env.NODE_ENV === 'development'
+    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://static.cloudflareinsights.com"
+    : "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com";
+
 export const CONTENT_SECURITY_POLICY =
-  `default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; font-src 'self' data:; ${cspConnectSrc}; frame-ancestors 'none'; form-action 'self'; base-uri 'self'`;
+  `default-src 'self'; ${cspScriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; font-src 'self' data:; ${cspConnectSrc}; frame-ancestors 'none'; form-action 'self'; base-uri 'self'`;
 
 /**
  * HTTP Strict Transport Security header value
