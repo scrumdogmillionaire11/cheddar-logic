@@ -254,8 +254,8 @@ function shouldFlip(current, candidate, ctx = {}) {
         allow: true,
         reason_code: 'CRITICAL_OVERRIDE',
         reason_detail: 'Hard lock overridden by critical event',
-        edge_delta: edgeComparable
-          ? (candidate.edge ?? 0) - (current.edge ?? 0)
+        edge_delta: (hasFiniteEdge(candidate?.edge) && hasFiniteEdge(current?.edge))
+          ? candidate.edge - current.edge
           : null,
       };
     }
@@ -268,8 +268,8 @@ function shouldFlip(current, candidate, ctx = {}) {
   }
 
   const sideChanged = candidate.side !== current.recommended_side;
-  const edgeDelta = edgeComparable
-    ? (candidate.edge ?? 0) - (current.edge ?? 0)
+  const edgeDelta = (hasFiniteEdge(candidate?.edge) && hasFiniteEdge(current?.edge))
+    ? candidate.edge - current.edge
     : null;
 
   if (!sideChanged) {

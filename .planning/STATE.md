@@ -16,15 +16,16 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-22
-- Next action for operators/agents: Tier 1 security blockers all done. Pick the next unclaimed item from new Tier 1 — start with **WI-0554** (confidence function, now unblocked)
+- Last reviewed: 2026-03-23
+- Next action for operators/agents: Hostile audit (WI-0572) complete — 2 CRITICAL + 4 HIGH defects found in live decision pipeline. NHL props pipeline audit (2026-03-23) added 5 CRITICAL + 4 HIGH + 3 MEDIUM findings (WI-0573–WI-0584). **Start with WI-0573** (negative American price display broken in `/api/games`) — that is broken in prod right now.
 
 ---
 
-## Sprint Plan — 2026-03-22 prioritization (updated)
+## Sprint Plan — 2026-03-23 re-prioritization
 
 ### Dependency Chains (respect order within chains)
-- **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → WI-0554 → WI-0556
+- **Audit fixes (parallel, independent):** AUDIT-FIX-01, AUDIT-FIX-02, AUDIT-FIX-03, AUDIT-FIX-04, AUDIT-FIX-05, AUDIT-FIX-06
+- **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → WI-0554 → WI-0556 → WI-0553
 - **Auth/JWT:** ~~WI-0559~~✓ → ~~WI-0560~~✓ (both done)
 - **Settlement → CLV (serial):** WI-0564 → WI-0566 → WI-0557
 - **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
@@ -32,7 +33,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 ---
 
-### Tier 1 — All Security & Correctness Blockers DONE ✓
+### Historical Tier 1 — Security & Edge Math (all DONE ✓)
 
 | WI | Summary | Status |
 |---|---|---|
@@ -42,16 +43,55 @@ This file is intentionally minimal to avoid stale status drift.
 | ~~[WI-0551](../WORK_QUEUE/COMPLETE/WI-0551.md)~~ | Remove vig from implied probability (edge math baseline) | ✓ DONE (qt-66) |
 | ~~[WI-0555](../WORK_QUEUE/COMPLETE/WI-0555.md)~~ | Unify spread threshold + enable `MARKET_THRESHOLDS_V2` | ✓ DONE (qt-66) |
 | ~~[WI-0552](../WORK_QUEUE/COMPLETE/WI-0552.md)~~ | Empirical sigma from game history (replace hardcoded 12/14) | ✓ DONE (qt-67) |
+| ~~[WI-0572](../WORK_QUEUE/WI-0572.md)~~ | Hostile audit — betting decision pipeline (10 findings) | ✓ DONE (2026-03-23) |
 
 ---
 
-### Tier 1 (New) — Edge Model & CI Correctness (do now)
+### Tier 0 — Audit-Derived Critical/High Fixes (create WIs first, do before Tier 1)
+
+> Source: [hostile-betting-pipeline-audit-2026-03.md](../docs/runbooks/hostile-betting-pipeline-audit-2026-03.md)
+> Each item needs its own WI file before implementation starts. All are independent (no cross-dependencies).
+
+| Priority | Placeholder | Finding | Severity | Target file |
+|---|---|---|---|---|
+| 1 | AUDIT-FIX-01 | NHL OVER edge suppressed by spurious `+0.5` line adjustment — every NHL OVER total loses ~0.02–0.04 edge silently | **CRITICAL** | `packages/models/src/edge-calculator.js` |
+| 2 | AUDIT-FIX-02 | Silent exception swallow in `buildDecisionV2` — parse failures become `DEGRADED` with no log, masking real errors | **CRITICAL** | `packages/models/src/decision-pipeline-v2.js` |
+| 3 | AUDIT-FIX-03 | `truePlayMap` first-come ordering — stale LEAN shadows a fresh FIRE for the same game | **HIGH** | `packages/models/src/decision-pipeline-v2.js` |
+| 4 | AUDIT-FIX-04 | `shouldFlip` coerces null edge to `0` via `?? 0` — phantom flip when `edge_available=true` but edge is null | **HIGH** | `packages/models/src/decision-gate.js` |
+| 5 | AUDIT-FIX-05 | `reason_codes` accumulates monotonically, never purged — stale codes contradict current card status | **HIGH** | `apps/worker/src/utils/decision-publisher.js` |
+| 6 | AUDIT-FIX-06 | `EVIDENCE` cards carry permanent `PASS_UNREPAIRABLE_LEGACY` in `reason_codes`, never refreshed on re-evaluation | **HIGH** | `apps/worker/src/utils/decision-publisher.js` |
+
+---
+
+### Tier 0b — NHL Props Pipeline Audit Fixes (2026-03-23)
+
+> Source: NHL player shot props pipeline audit — full trace from ingest → model → display.
+> WI-0573–WI-0584. Critical/High items must land before treating NHL prop plays as actionable bets.
+
+| Priority | WI | Finding | Severity | Target file(s) |
+|---|---|---|---|---|
+| 1 | [WI-0573](../WORK_QUEUE/WI-0573.md) | Negative American prices (`−110`, `−115`) passed to `decimalToAmerican()` — `> 10` check must be `Math.abs() > 10`; every prop price on display is currently wrong | **CRITICAL** | `web/src/app/api/games/route.ts` |
+| 2 | [WI-0574](../WORK_QUEUE/WI-0574.md) | `selection.price` hardcoded to `−110` in full-game + 1P card payloads; real `over_price`/`under_price` from Odds API are stored but never wired to the canonical price field | **CRITICAL** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 3 | [WI-0575](../WORK_QUEUE/WI-0575.md) | `opportunity_score` is always computed for the OVER direction regardless of V1 play direction; an UNDER call shows a positive OVER opportunity_score, contradicting the bet | **CRITICAL** | `apps/worker/src/models/nhl-player-shots.js` |
+| 4 | [WI-0576](../WORK_QUEUE/WI-0576.md) | `NHL_SOG_PROP_EVENTS_ENABLED` defaults false — real Odds API lines are never ingested unless explicitly set; all cards run on synthetic `2.5` floor line silently | **CRITICAL** | `apps/worker/src/jobs/pull_nhl_player_shots_props.js`, `.env` |
+| 5 | [WI-0577](../WORK_QUEUE/WI-0577.md) | V1 drives bet decision; V2 Poisson edge is computed but never gates FIRE — V1 can emit a PLAY while V2's `edge_over_pp` is negative; add V2 veto gate for FIRE on odds-backed cards | **CRITICAL** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 6 | [WI-0578](../WORK_QUEUE/WI-0578.md) | `PP_RATE_MISSING` flag set but PP component silently collapses to 0 for top PP players; under-projects by 0.3–0.5 SOG for players with non-zero `ppToi` | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 7 | [WI-0579](../WORK_QUEUE/WI-0579.md) | 1P cards don't run `projectSogV2`; `v2AnomalyDetected` from full-game run is reused against 1P mu, which uses a different (scaled) projection | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 8 | [WI-0580](../WORK_QUEUE/WI-0580.md) | PROP cards are not wave-1 eligible — `decision_v2.official_status` does not override V1 `action`/`status` because `PROP` is not in `WAVE1_MARKETS`; V1 classification wins unconditionally | **HIGH** | `web/src/app/api/games/route.ts` |
+| 9 | [WI-0581](../WORK_QUEUE/WI-0581.md) | `edge_pct` in `decision_v2` is `(mu−line)/line×100` (projection-delta %) while V2 `edge_over_pp` is probability edge (p_fair−p_implied); both surface as "edge" — rename `decision_v2.edge_pct` → `edge_delta_pct` for clarity | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 10 | [WI-0582](../WORK_QUEUE/WI-0582.md) | `opponentFactor`/`paceFactor` silently default to `1.0` at `console.debug` when `team_metrics_cache` is empty after a refresh failure; should be `console.warn` and surfaced in card flags | **MEDIUM** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 11 | [WI-0583](../WORK_QUEUE/WI-0583.md) | V1 (recency-decay blend) and V2 (rate-weighted blend) produce different mu from the same data with no reconciliation or accuracy audit; calibration study needed | **MEDIUM** | `apps/worker/src/models/nhl-player-shots.js` |
+| 12 | [WI-0584](../WORK_QUEUE/WI-0584.md) | Line change between model runs can surface two cards for the same player/side if `purgePlayerCardsForGame` fails silently; dedup key differs on `dedupeLine`, bypassing `seenNhlShotsPlayKeys` | **MEDIUM** | `web/src/app/api/games/route.ts`, `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+
+---
+
+### Tier 1 — Edge Model Correctness & CI Integrity
 
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
-| 1 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function (replace 0.95/0.88/0.85 literals) | WI-0551 ✓, WI-0552 ✓ — **unblocked** |
-| 2 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate mutating web tests to temp DB (prevent CI prod mutation) | — |
-| 3 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI with no local server | — |
+| 7 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function (replace 0.95/0.88/0.85 literals) | WI-0551 ✓, WI-0552 ✓ — **unblocked** |
+| 8 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate mutating web tests to temp DB (prevent CI prod mutation) | — |
+| 9 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI with no local server | — |
 
 ---
 
@@ -59,29 +99,31 @@ This file is intentionally minimal to avoid stale status drift.
 
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
-| 4 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | — |
-| 5 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge (not projection signal) | WI-0554 |
-| 6 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 |
-| 7 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | — |
-| 8 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
-| 9 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
+| 10 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | — |
+| 11 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | — |
+| 12 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge (not projection signal) | WI-0554 |
+| 13 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 |
+| 14 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
+| 15 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
 
 ---
 
 ### Tier 3 — Market Evaluator Layer (serial chain)
 
 | Order | WI | Summary | Depends on |
-| --- | --- | --- | --- |
-| 10 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion, confidence) | — |
-| 11 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector for all markets (best-price separate from best-line) | WI-0568 |
-| 12 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
-| 13 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, edge vs best available, execution alpha) | WI-0568, WI-0569 |
+|---|---|---|---|
+| 16 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion, confidence) | — |
+| 17 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector for all markets (best-price separate from best-line) | WI-0568 |
+| 18 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
+| 19 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, edge vs best available, execution alpha) | WI-0568, WI-0569 |
+
+---
 
 ### Tier 4 — Polish / Display
 
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
-| 14 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | — |
+| 20 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | — |
 
 ### Quick Tasks Completed
 
@@ -127,5 +169,8 @@ This file is intentionally minimal to avoid stale status drift.
 | 65 | WI-0559 + WI-0560 JWT security fixes: RFC-compliant HS256 signatures + fail-closed prod AUTH_SECRET guard | 2026-03-23 | c656a20 | [65-follow-sprint-plan-in-state](./quick/65-follow-sprint-plan-in-state/) |
 | 66 | WI-0561 + WI-0551 + WI-0555: Next.js 16.2.1, noVigImplied vig removal, NBA spread gate via resolveThresholdProfile | 2026-03-23 | eb034c8 | [66-follow-sprint-plan-in-state](./quick/66-follow-sprint-plan-in-state/) |
 | 67 | WI-0552: Empirical sigma from game history — computeSigmaFromHistory, getSigmaDefaults fallback docs, NBA model runner wiring | 2026-03-23 | b55095d | [67-follow-sprint-plan-in-state](./quick/67-follow-sprint-plan-in-state/) |
+| 68 | Tier 0 audit-derived fixes AUDIT-FIX-01 through 05-06 | 2026-03-23 | 26b3d48 | [68-tier-0-audit-derived-fixes-audit-fix-01-](./quick/68-tier-0-audit-derived-fixes-audit-fix-01-/) |
+| 69 | WI-0573 Fix negative American price display — Math.abs() guard in already-American detection | 2026-03-23 | 307e286 | [69-wi-0573-fix-negative-american-price-disp](./quick/69-wi-0573-fix-negative-american-price-disp/) |
+| 70 | WI-0574 Wire real over_price/under_price into selection.price for full-game + 1P cards | 2026-03-23 | 69f91eb | [70-wi-0574-wire-real-over-price-under-price](./quick/70-wi-0574-wire-real-over-price-under-price/) |
 
-Last activity: 2026-03-22 - Updated sprint plan: Tier 1 fully cleared (WI-0559/0560/0561/0551/0555/0552 all done). WI-0554 is now top priority (edge math stack unblocked).
+Last activity: 2026-03-23 - Completed quick task 70: WI-0574 — real over_price/under_price from Odds API wired into selection.price for both full-game and 1P card payloads; hardcoded -110 replaced with direction-conditional ternaries with ?? -110 fallback.

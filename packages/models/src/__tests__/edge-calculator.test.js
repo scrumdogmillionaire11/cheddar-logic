@@ -363,3 +363,76 @@ console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
 if (failed > 0) {
   process.exit(1);
 }
+
+// ── AUDIT-FIX-01: NHL half-integer continuity correction (Jest test block) ────
+
+const { shouldFlip } = require('../decision-gate');
+
+describe('AUDIT-FIX-01: computeTotalEdge NHL half-integer continuity correction', () => {
+  test('half-integer NHL total (5.5, sigmaTotal=1.8) — adjustedLine must NOT add +0.5', () => {
+    // With old bug: adjustedLine = 5.5 + 0.5 = 6.0
+    // With fix: adjustedLine = 5.5 (half-integer, no correction)
+    // p_over_old = 1 - normCdf((6.0 - 5.8) / 1.8) = 1 - normCdf(0.111) ≈ 0.4558
+    // p_over_fix = 1 - normCdf((5.5 - 5.8) / 1.8) = 1 - normCdf(-0.167) ≈ 0.5663
+    // So p_fair (isPredictionOver=true) with fix is significantly higher than with bug
+    const result = computeTotalEdge({
+      projectionTotal: 5.8,
+      totalLine: 5.5,
+      totalPriceOver: -110,
+      totalPriceUnder: -110,
+      sigmaTotal: 1.8,
+      isPredictionOver: true,
+    });
+    // With fix: p_fair ≈ 0.5663 (unadjusted 5.5 line)
+    // With bug: p_fair ≈ 0.4558 (adjusted to 6.0)
+    // The fix should produce p_fair > 0.5 (above break-even) for a 5.8 projection vs 5.5 line
+    expect(result).not.toBeNull();
+    expect(result.p_fair).toBeGreaterThan(0.5);
+  });
+
+  test('integer NHL total (6, sigmaTotal=1.8) — adjustedLine must be 6.5 (old behaviour preserved)', () => {
+    // With integer line: adjustedLine = 6 + 0.5 = 6.5 (continuity correction applied)
+    // p_over = 1 - normCdf((6.5 - 6.2) / 1.8) = 1 - normCdf(0.167) ≈ 0.4338
+    const result = computeTotalEdge({
+      projectionTotal: 6.2,
+      totalLine: 6,
+      totalPriceOver: -110,
+      totalPriceUnder: -110,
+      sigmaTotal: 1.8,
+      isPredictionOver: true,
+    });
+    // With integer line, correction applied: adjustedLine = 6.5
+    // p_over for projection 6.2 vs adjusted 6.5 should be < 0.5 (projection < adjusted line)
+    expect(result).not.toBeNull();
+    expect(result.p_fair).toBeLessThan(0.5);
+  });
+});
+
+// ── AUDIT-FIX-04: decision-gate null-safe edgeDelta (Jest test block) ─────────
+
+describe('AUDIT-FIX-04: shouldFlip null-safe edgeDelta', () => {
+  const currentRecord = {
+    recommended_side: 'OVER',
+    edge: 0.02,
+    edge_available: true,
+    locked_status: null,
+  };
+
+  test('candidate.edge=null + edge_available=true — edgeDelta must be null, not EDGE_UPGRADE', () => {
+    const result = shouldFlip(
+      currentRecord,
+      { side: 'OVER', edge: null, edge_available: true },
+      { candidateSeenCount: 3 },
+    );
+    expect(result.edge_delta).toBeNull();
+  });
+
+  test('candidate.edge=0.04 + current.edge=0.01 — edgeDelta must be 0.03', () => {
+    const result = shouldFlip(
+      { ...currentRecord, edge: 0.01 },
+      { side: 'OVER', edge: 0.04, edge_available: true },
+      { candidateSeenCount: 3 },
+    );
+    expect(result.edge_delta).toBeCloseTo(0.03, 5);
+  });
+});

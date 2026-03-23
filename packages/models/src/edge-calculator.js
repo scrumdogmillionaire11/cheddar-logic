@@ -256,7 +256,10 @@ function computeTotalEdge({
   const mu = projectionTotal;
   const L = totalLine;
   const isNhlStyleTotal = sigmaTotal <= 3;
-  const adjustedLine = isNhlStyleTotal ? L + 0.5 : L;
+  // Only apply continuity correction for integer lines (e.g., line=6 → 6.5).
+  // Half-integer NHL lines (e.g., 5.5, 6.5) already sit between integers — no adjustment needed.
+  const lineIsInteger = L % 1 === 0;
+  const adjustedLine = (isNhlStyleTotal && lineIsInteger) ? L + 0.5 : L;
 
   // Probability over
   const p_over = 1 - normCdf((adjustedLine - mu) / sigmaTotal);

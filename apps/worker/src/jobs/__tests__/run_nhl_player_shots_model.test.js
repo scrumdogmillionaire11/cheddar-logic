@@ -73,6 +73,7 @@ function buildMockDb({
   games = [],
   players = [],
   playerLogs = [],
+  playerPropLines = [],
   availabilityRow = null,
   oddsSnapshotRawData = null,
 } = {}) {
@@ -87,6 +88,9 @@ function buildMockDb({
       }
       if (s.includes('from player_shot_logs') && s.includes('player_id = ?')) {
         return { all: jest.fn(() => playerLogs) };
+      }
+      if (s.includes('from player_prop_lines')) {
+        return { all: jest.fn(() => playerPropLines) };
       }
       if (s.includes('from player_availability')) {
         return { get: jest.fn(() => availabilityRow) };
@@ -235,10 +239,10 @@ describe('run_nhl_player_shots_model', () => {
     logSpy.mockRestore();
   });
 
-  test('setCurrentRunId is called even when 0 cards are created (COLD edge)', async () => {
+  test('setCurrentRunId is called when a COLD edge now renders as a PROJECTION prop row', async () => {
     const { mod, data, shots } = loadFreshModule();
 
-    // 5 logs, but edge is COLD — no card
+    // 5 logs, COLD edge, no real price -> props mode now emits a PROJECTION row.
     shots.classifyEdge.mockReturnValue({ tier: 'COLD', direction: 'OVER', edge: 0.1 });
 
     data.getDatabase.mockReturnValue(buildMockDb({
@@ -249,8 +253,9 @@ describe('run_nhl_player_shots_model', () => {
 
     await mod.runNHLPlayerShotsModel();
 
-    // No card
-    expect(data.insertCardPayload).not.toHaveBeenCalled();
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
     // setCurrentRunId should still be called (unconditionally on success path)
     expect(data.setCurrentRunId).toHaveBeenCalled();
   });
@@ -539,6 +544,31 @@ describe('run_nhl_player_shots_model', () => {
     const { mod, data, shots } = loadFreshModule();
 
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.5,
+      sog_sigma: 1.87,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: { '2.5': 0.62 },
+      fair_under_prob_by_line: { '2.5': 0.38 },
+      fair_price_over_by_line: { '2.5': -163 },
+      fair_price_under_by_line: { '2.5': 163 },
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      implied_over_prob: 0.5349,
+      implied_under_prob: 0.5122,
+      edge_over_pp: 0.0851,
+      edge_under_pp: -0.1322,
+      ev_over: 0.16,
+      ev_under: -0.19,
+      opportunity_score: 0.58,
+      flags: [],
+    });
     // Real prop line (over/under prices present → usingRealLine=true → FIRE allowed).
     data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
 
@@ -556,6 +586,8 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.play.action).toBe('FIRE');
     expect(card.payloadData.play.classification).toBe('BASE');
     expect(card.payloadData.play.status).toBe('FIRE');
+    expect(card.payloadData.prop_decision.verdict).toBe('PLAY');
+    expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
     expect(card.payloadData.suggested_line).toBe(3);
     expect(card.payloadData.play.pick_string).toMatch(/Proj \d+\.\d+ · Fair \d+(\.\d+)? · Edge [+-]\d+\.\d+/i);
     expect(card.payloadData.confidence).toBeGreaterThan(0.75);
@@ -610,7 +642,7 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.drivers.pace_factor).toBeGreaterThan(1.0);
   });
 
-  test('suppresses PASS cards when consistency support is weak', async () => {
+  test('weak-support priced cards now render explicit PROJECTION or NO_PLAY rows instead of being suppressed', async () => {
     const { mod, data, shots } = loadFreshModule();
 
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
@@ -624,7 +656,9 @@ describe('run_nhl_player_shots_model', () => {
 
     await mod.runNHLPlayerShotsModel();
 
-    expect(data.insertCardPayload).not.toHaveBeenCalled();
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
   });
 
   test('adds decision_basis_meta and records projection telemetry when flagged and no real line', async () => {
@@ -669,9 +703,7 @@ describe('run_nhl_player_shots_model', () => {
     delete process.env.ENABLE_PROJECTION_PERF_LEDGER;
   });
 
-  test('Guard 1: HOT projection-only card (no real line) is downgraded FIRE→HOLD, card still emitted', async () => {
-    // No real prop line → usingRealLine=false → FIRE must be blocked.
-    // Card should still be created (HOLD is not PASS), but action must be 'HOLD'.
+  test('Guard 1: projection-only cards with no real line are emitted as PROJECTION rows', async () => {
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
     // getPlayerPropLine returns null (default) — no real line.
@@ -687,14 +719,14 @@ describe('run_nhl_player_shots_model', () => {
 
     expect(data.insertCardPayload).toHaveBeenCalled();
     const card = data.insertCardPayload.mock.calls[0][0];
-    // Must be HOLD (downgraded), not FIRE.
-    expect(card.payloadData.play.action).toBe('HOLD');
-    expect(card.payloadData.play.status).toBe('WATCH');
+    expect(card.payloadData.play.action).toBe('PASS');
+    expect(card.payloadData.play.status).toBe('PASS');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
     // SYNTHETIC_LINE flag must be set in v2 flags.
     expect(card.payloadData.decision.v2.flags).toContain('SYNTHETIC_LINE');
   });
 
-  test('Guard 2: PROJECTION_ANOMALY (weighted mu < 60% of L5 mean) blocks FIRE and flags payload', async () => {
+  test('Guard 2: PROJECTION_ANOMALY rows stay visible but verdict becomes PROJECTION', async () => {
     // l5Sog = [2,2,2,2,2] → arithmetic mean = 2.0
     // calcMu mocked to return 1.0 → V1 anomaly: 1.0 < 0.6*2.0=1.2 → FIRE→HOLD downgrade
     // projectSogV2 also returns sog_mu=1.0 → V2 anomaly: 1.0 < 0.6*2.0=1.2 → PROJECTION_ANOMALY in flags
@@ -744,11 +776,355 @@ describe('run_nhl_player_shots_model', () => {
 
     expect(data.insertCardPayload).toHaveBeenCalled();
     const card = data.insertCardPayload.mock.calls[0][0];
-    // Action must be HOLD (anomaly guard blocked FIRE).
-    expect(card.payloadData.play.action).toBe('HOLD');
-    expect(card.payloadData.play.status).toBe('WATCH');
+    expect(card.payloadData.play.action).toBe('PASS');
+    expect(card.payloadData.play.status).toBe('PASS');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
     // PROJECTION_ANOMALY flag must appear in v2 flags.
     expect(card.payloadData.decision.v2.flags).toContain('PROJECTION_ANOMALY');
+  });
+
+  test('threshold semantics: projectSogV2 prices integer lines as no-push thresholds', () => {
+    jest.resetModules();
+    const actualShots = jest.requireActual('../../models/nhl-player-shots');
+
+    const integerLine = actualShots.projectSogV2({
+      player_id: 1,
+      game_id: 'threshold-int-01',
+      ev_shots_season_per60: 9,
+      ev_shots_l10_per60: 9,
+      ev_shots_l5_per60: 9,
+      pp_shots_season_per60: 0,
+      pp_shots_l10_per60: 0,
+      pp_shots_l5_per60: 0,
+      toi_proj_ev: 20,
+      toi_proj_pp: 0,
+      market_line: 3.0,
+      market_price_over: 110,
+      market_price_under: -130,
+      play_direction: 'OVER',
+    });
+    const halfLine = actualShots.projectSogV2({
+      player_id: 1,
+      game_id: 'threshold-half-01',
+      ev_shots_season_per60: 9,
+      ev_shots_l10_per60: 9,
+      ev_shots_l5_per60: 9,
+      pp_shots_season_per60: 0,
+      pp_shots_l10_per60: 0,
+      pp_shots_l5_per60: 0,
+      toi_proj_ev: 20,
+      toi_proj_pp: 0,
+      market_line: 2.5,
+      market_price_over: 110,
+      market_price_under: -130,
+      play_direction: 'OVER',
+    });
+
+    expect(integerLine.fair_over_prob_by_line['3']).toBeCloseTo(
+      halfLine.fair_over_prob_by_line['2.5'],
+      6,
+    );
+    expect(integerLine.fair_under_prob_by_line['3']).toBeCloseTo(
+      halfLine.fair_under_prob_by_line['2.5'],
+      6,
+    );
+    expect(
+      integerLine.fair_over_prob_by_line['3'] +
+        integerLine.fair_under_prob_by_line['3'],
+    ).toBeCloseTo(1, 6);
+    expect(integerLine.fair_over_prob_by_line['3']).toBeCloseTo(0.5768, 4);
+  });
+
+  test('decision-first contract: integer 3.0 threshold lines use 3+ pricing downstream', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    const actualShots = jest.requireActual('../../models/nhl-player-shots');
+    const thresholdLogs = buildGames(5).map((row, index) => ({
+      ...row,
+      raw_data: index === 0 ? JSON.stringify({ shotsPer60: 9 }) : row.raw_data,
+    }));
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(4.0);
+    shots.projectSogV2.mockImplementation(actualShots.projectSogV2);
+    data.getPlayerPropLine.mockReturnValue({ line: 3.0, over_price: 110, under_price: -130 });
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'prop-threshold-int-01' })],
+      players: [buildPlayer({ player_id: 9910, player_name: 'Integer Threshold Player' })],
+      playerLogs: thresholdLogs,
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.verdict).toBe('PLAY');
+    expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
+    expect(card.payloadData.prop_decision.line).toBe(3);
+    expect(card.payloadData.prop_decision.fair_prob).toBeCloseTo(0.5768, 4);
+    expect(card.payloadData.prop_decision.implied_prob).toBeCloseTo(0.4762, 4);
+    expect(card.payloadData.prop_decision.prob_edge_pp).toBeCloseTo(0.1006, 4);
+  });
+
+  test('decision-first contract: normalizes decimal stored odds before pricing the selected row', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    const actualShots = jest.requireActual('../../models/nhl-player-shots');
+    const thresholdLogs = buildGames(5).map((row, index) => ({
+      ...row,
+      raw_data: index === 0 ? JSON.stringify({ shotsPer60: 9 }) : row.raw_data,
+    }));
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(4.0);
+    shots.projectSogV2.mockImplementation(actualShots.projectSogV2);
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'prop-decimal-odds-01' })],
+      players: [buildPlayer({ player_id: 9911, player_name: 'Decimal Odds Player' })],
+      playerLogs: thresholdLogs,
+      playerPropLines: [
+        { line: 3.0, over_price: 1.77, under_price: 2.15, bookmaker: 'draftkings' },
+      ],
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.over_price).toBe(-130);
+    expect(card.payloadData.under_price).toBe(115);
+    expect(card.payloadData.market_bookmaker).toBe('draftkings');
+    expect(card.payloadData.play.selection.price).toBe(-130);
+    expect(card.payloadData.prop_decision.line).toBe(3);
+    expect(card.payloadData.prop_decision.display_price).toBe(-130);
+    expect(card.payloadData.prop_decision.implied_prob).toBeCloseTo(0.5652, 4);
+    expect(card.payloadData.prop_decision.fair_prob).toBeCloseTo(0.5768, 4);
+  });
+
+  test('decision-first contract: selects a matched threshold row instead of mixing same-book ladders', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    const actualShots = jest.requireActual('../../models/nhl-player-shots');
+    const thresholdLogs = buildGames(5).map((row, index) => ({
+      ...row,
+      raw_data: index === 0 ? JSON.stringify({ shotsPer60: 9 }) : row.raw_data,
+    }));
+    shots.classifyEdge.mockImplementation((projection, line) => ({
+      tier: projection > line ? 'HOT' : 'COLD',
+      direction: projection >= line ? 'OVER' : 'UNDER',
+      edge: Math.abs(projection - line),
+    }));
+    shots.calcMu.mockReturnValue(4.0);
+    shots.projectSogV2.mockImplementation(actualShots.projectSogV2);
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'prop-ladder-01' })],
+      players: [buildPlayer({ player_id: 9912, player_name: 'Ladder Player' })],
+      playerLogs: thresholdLogs,
+      playerPropLines: [
+        { line: 3.0, over_price: -330, under_price: -500, bookmaker: 'draftkings' },
+        { line: 4.0, over_price: 110, under_price: -130, bookmaker: 'draftkings' },
+      ],
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.decision.market_line).toBe(4);
+    expect(card.payloadData.over_price).toBe(110);
+    expect(card.payloadData.under_price).toBe(-130);
+    expect(card.payloadData.market_bookmaker).toBe('draftkings');
+    expect(card.payloadData.suggested_line).toBe(3);
+    expect(card.payloadData.play.selection.line).toBe(4);
+    expect(card.payloadData.play.selection.price).toBe(110);
+    expect(card.payloadData.prop_decision.verdict).toBe('NO_PLAY');
+    expect(card.payloadData.prop_decision.line).toBe(4);
+    expect(card.payloadData.prop_decision.display_price).toBe(110);
+    expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
+    expect(card.payloadData.prop_decision.fair_prob).toBeCloseTo(0.3528, 4);
+    expect(card.payloadData.prop_decision.implied_prob).toBeCloseTo(0.4762, 4);
+    expect(card.payloadData.prop_decision.prob_edge_pp).toBeCloseTo(-0.1234, 4);
+    expect(card.payloadData.prop_decision.flags).toContain('PROJECTION_CONFLICT');
+    expect(card.payloadData.prop_decision.why).toMatch(/projection conflict/i);
+    expect(card.payloadData.play.action).toBe('PASS');
+  });
+
+  test('decision-first contract: priced over-side edge that clears thresholds becomes PLAY', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.4,
+      sog_sigma: 1.84,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.06,
+      fair_over_prob_by_line: { '2.5': 0.62 },
+      fair_under_prob_by_line: { '2.5': 0.38 },
+      fair_price_over_by_line: { '2.5': -163 },
+      fair_price_under_by_line: { '2.5': 163 },
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      implied_over_prob: 0.5349,
+      implied_under_prob: 0.5122,
+      edge_over_pp: 0.0851,
+      edge_under_pp: -0.1322,
+      ev_over: 0.12,
+      ev_under: -0.18,
+      opportunity_score: 0.52,
+      flags: [],
+    });
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'prop-decision-play-01' })],
+      players: [buildPlayer({ player_id: 9911, player_name: 'Play Threshold Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.verdict).toBe('PLAY');
+    expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
+    expect(card.payloadData.prop_decision.prob_edge_pp).toBeCloseTo(0.0851, 4);
+    expect(card.payloadData.prop_decision.ev).toBeCloseTo(0.12, 4);
+  });
+
+  test('decision-first contract: priced weak edge becomes WATCH, not PLAY', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'WATCH', direction: 'UNDER', edge: -0.5 });
+    shots.calcMu.mockReturnValue(1.8);
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 1.8,
+      sog_sigma: 1.48,
+      toi_proj: 19,
+      shot_rate_ev_per60: 8.1,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: -0.02,
+      fair_over_prob_by_line: { '2.5': 0.42 },
+      fair_under_prob_by_line: { '2.5': 0.58 },
+      fair_price_over_by_line: { '2.5': 138 },
+      fair_price_under_by_line: { '2.5': -138 },
+      market_line: 2.5,
+      market_price_over: 120,
+      market_price_under: -105,
+      implied_over_prob: 0.4545,
+      implied_under_prob: 0.5122,
+      edge_over_pp: -0.0345,
+      edge_under_pp: 0.0678,
+      ev_over: -0.07,
+      ev_under: 0.08,
+      opportunity_score: 0.08,
+      flags: ['LOW_SAMPLE'],
+    });
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: 120, under_price: -105 });
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'prop-decision-watch-01' })],
+      players: [buildPlayer({ player_id: 9912, player_name: 'Watch Threshold Player' })],
+      playerLogs: buildGamesFromShots([2, 2, 3, 2, 2]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.verdict).toBe('WATCH');
+    expect(card.payloadData.prop_decision.lean_side).toBe('UNDER');
+  });
+
+  test('decision-first contract: projection-conflict priced side is hard-blocked to NO_PLAY', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 0.9 });
+    shots.calcMu.mockReturnValue(3.4);
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.4,
+      sog_sigma: 1.84,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.06,
+      fair_over_prob_by_line: { '2.5': 0.62 },
+      fair_under_prob_by_line: { '2.5': 0.38 },
+      fair_price_over_by_line: { '2.5': -163 },
+      fair_price_under_by_line: { '2.5': 163 },
+      market_line: 2.5,
+      market_price_over: -105,
+      market_price_under: 140,
+      implied_over_prob: 0.5122,
+      implied_under_prob: 0.4167,
+      edge_over_pp: 0.01,
+      edge_under_pp: 0.072,
+      ev_over: 0.01,
+      ev_under: 0.08,
+      opportunity_score: 0.09,
+      flags: [],
+    });
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -105, under_price: 140 });
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'prop-projection-conflict-01' })],
+      players: [buildPlayer({ player_id: 9914, player_name: 'Projection Conflict Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.verdict).toBe('NO_PLAY');
+    expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
+    expect(card.payloadData.prop_decision.flags).toContain('PROJECTION_CONFLICT');
+    expect(card.payloadData.prop_decision.fair_prob).toBeCloseTo(0.62, 4);
+    expect(card.payloadData.prop_decision.implied_prob).toBeCloseTo(0.5122, 4);
+    expect(card.payloadData.prop_decision.prob_edge_pp).toBeCloseTo(0.01, 4);
+    expect(card.payloadData.prop_decision.ev).toBeCloseTo(0.01, 4);
+    expect(card.payloadData.prop_decision.why).toMatch(/projection conflict/i);
+    expect(card.payloadData.play.action).toBe('PASS');
+  });
+
+  test('decision-first contract: priced market-efficient card becomes NO_PLAY', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'WATCH', direction: 'OVER', edge: 0.5 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 2.9,
+      sog_sigma: 1.7,
+      toi_proj: 19,
+      shot_rate_ev_per60: 8.9,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.01,
+      fair_over_prob_by_line: { '2.5': 0.54 },
+      fair_under_prob_by_line: { '2.5': 0.46 },
+      fair_price_over_by_line: { '2.5': -117 },
+      fair_price_under_by_line: { '2.5': 117 },
+      market_line: 2.5,
+      market_price_over: -125,
+      market_price_under: 110,
+      implied_over_prob: 0.5556,
+      implied_under_prob: 0.4762,
+      edge_over_pp: -0.0156,
+      edge_under_pp: -0.0162,
+      ev_over: -0.02,
+      ev_under: -0.03,
+      opportunity_score: -0.01,
+      flags: [],
+    });
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -125, under_price: 110 });
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'prop-decision-no-play-01' })],
+      players: [buildPlayer({ player_id: 9913, player_name: 'No Play Threshold Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.verdict).toBe('NO_PLAY');
+    expect(card.payloadData.play.action).toBe('PASS');
   });
 
   // --- WI-0527: v2 anomaly flag, pricing nullification, extended drivers ---

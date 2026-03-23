@@ -102,7 +102,9 @@ interface GameRow {
   created_at: string;
   h2h_home: number | null;
   h2h_away: number | null;
+  h2h_book: string | null;
   total: number | null;
+  total_book: string | null;
   spread_home: number | null;
   spread_away: number | null;
   spread_home_book: string | null;
@@ -353,6 +355,23 @@ interface Play {
   l5_mean?: number | null;
   market_price_over?: number | null;
   market_price_under?: number | null;
+  market_bookmaker?: string | null;
+  prop_decision?: {
+    verdict: 'PLAY' | 'WATCH' | 'NO_PLAY' | 'PROJECTION';
+    lean_side: 'OVER' | 'UNDER' | null;
+    line: number | null;
+    display_price: number | null;
+    projection: number | null;
+    line_delta: number | null;
+    fair_prob: number | null;
+    implied_prob: number | null;
+    prob_edge_pp: number | null;
+    ev: number | null;
+    l5_mean: number | null;
+    l5_trend: 'uptrend' | 'downtrend' | 'stable' | null;
+    why: string;
+    flags: string[];
+  };
 }
 
 interface IngestFailureRow {
@@ -1679,9 +1698,13 @@ export async function GET(request: NextRequest) {
           GameRow,
           | 'h2h_home'
           | 'h2h_away'
+          | 'h2h_book'
           | 'total'
+          | 'total_book'
           | 'spread_home'
           | 'spread_away'
+          | 'spread_home_book'
+          | 'spread_away_book'
           | 'spread_price_home'
           | 'spread_price_away'
           | 'total_price_over'
@@ -1701,9 +1724,13 @@ export async function GET(request: NextRequest) {
           o.game_id,
           o.h2h_home,
           o.h2h_away,
+          o.h2h_book,
           o.total,
+          o.total_book,
           o.spread_home,
           o.spread_away,
+          o.spread_home_book,
+          o.spread_away_book,
           o.spread_price_home,
           o.spread_price_away,
           o.total_price_over,
@@ -1726,9 +1753,13 @@ export async function GET(request: NextRequest) {
         game_id: string;
         h2h_home: number | null;
         h2h_away: number | null;
+        h2h_book: string | null;
         total: number | null;
+        total_book: string | null;
         spread_home: number | null;
         spread_away: number | null;
+        spread_home_book: string | null;
+        spread_away_book: string | null;
         spread_price_home: number | null;
         spread_price_away: number | null;
         total_price_over: number | null;
@@ -1771,9 +1802,13 @@ export async function GET(request: NextRequest) {
           ...game,
           h2h_home: odds?.h2h_home ?? null,
           h2h_away: odds?.h2h_away ?? null,
+          h2h_book: odds?.h2h_book ?? null,
           total: odds?.total ?? null,
+          total_book: odds?.total_book ?? null,
           spread_home: odds?.spread_home ?? null,
           spread_away: odds?.spread_away ?? null,
+          spread_home_book: odds?.spread_home_book ?? null,
+          spread_away_book: odds?.spread_away_book ?? null,
           spread_price_home: odds?.spread_price_home ?? null,
           spread_price_away: odds?.spread_price_away ?? null,
           total_price_over: odds?.total_price_over ?? null,
@@ -2365,6 +2400,127 @@ export async function GET(request: NextRequest) {
                 normalizedL5Sog.length
             : undefined,
         );
+        const payloadPropDecision = toObject(
+          (payload as Record<string, unknown>).prop_decision,
+        );
+        const payloadPlayPropDecision = toObject(payloadPlay?.prop_decision);
+        const rawPropDecision = payloadPropDecision ?? payloadPlayPropDecision;
+        const rawPropDecisionVerdict = firstString(
+          rawPropDecision?.verdict,
+          payloadPlayPropDecision?.verdict,
+        );
+        const normalizedPropDecisionVerdict =
+          rawPropDecisionVerdict === 'PLAY' ||
+          rawPropDecisionVerdict === 'WATCH' ||
+          rawPropDecisionVerdict === 'NO_PLAY' ||
+          rawPropDecisionVerdict === 'PROJECTION'
+            ? (rawPropDecisionVerdict as
+                | 'PLAY'
+                | 'WATCH'
+                | 'NO_PLAY'
+                | 'PROJECTION')
+            : null;
+        const normalizedPropDecision = rawPropDecision &&
+          normalizedPropDecisionVerdict
+          ? {
+              verdict: normalizedPropDecisionVerdict,
+              lean_side:
+                firstString(
+                  rawPropDecision.lean_side,
+                  payloadPlayPropDecision?.lean_side,
+                ) === 'OVER' ||
+                firstString(
+                  rawPropDecision.lean_side,
+                  payloadPlayPropDecision?.lean_side,
+                ) === 'UNDER'
+                  ? (firstString(
+                      rawPropDecision.lean_side,
+                      payloadPlayPropDecision?.lean_side,
+                    ) as 'OVER' | 'UNDER')
+                  : null,
+              line:
+                firstNumber(
+                  rawPropDecision.line,
+                  payloadPlayPropDecision?.line,
+                ) ?? null,
+              display_price:
+                firstNumber(
+                  rawPropDecision.display_price,
+                  payloadPlayPropDecision?.display_price,
+                ) ?? null,
+              projection:
+                firstNumber(
+                  rawPropDecision.projection,
+                  payloadPlayPropDecision?.projection,
+                ) ?? null,
+              line_delta:
+                firstNumber(
+                  rawPropDecision.line_delta,
+                  payloadPlayPropDecision?.line_delta,
+                ) ?? null,
+              fair_prob:
+                firstNumber(
+                  rawPropDecision.fair_prob,
+                  payloadPlayPropDecision?.fair_prob,
+                ) ?? null,
+              implied_prob:
+                firstNumber(
+                  rawPropDecision.implied_prob,
+                  payloadPlayPropDecision?.implied_prob,
+                ) ?? null,
+              prob_edge_pp:
+                firstNumber(
+                  rawPropDecision.prob_edge_pp,
+                  payloadPlayPropDecision?.prob_edge_pp,
+                ) ?? null,
+              ev:
+                firstNumber(
+                  rawPropDecision.ev,
+                  payloadPlayPropDecision?.ev,
+                ) ?? null,
+              l5_mean:
+                firstNumber(
+                  rawPropDecision.l5_mean,
+                  payloadPlayPropDecision?.l5_mean,
+                  normalizedL5Mean,
+                ) ?? null,
+              l5_trend:
+                firstString(
+                  rawPropDecision.l5_trend,
+                  payloadPlayPropDecision?.l5_trend,
+                ) === 'uptrend' ||
+                firstString(
+                  rawPropDecision.l5_trend,
+                  payloadPlayPropDecision?.l5_trend,
+                ) === 'downtrend' ||
+                firstString(
+                  rawPropDecision.l5_trend,
+                  payloadPlayPropDecision?.l5_trend,
+                ) === 'stable'
+                  ? (firstString(
+                      rawPropDecision.l5_trend,
+                      payloadPlayPropDecision?.l5_trend,
+                    ) as 'uptrend' | 'downtrend' | 'stable')
+                  : null,
+              why:
+                firstString(
+                  rawPropDecision.why,
+                  payloadPlayPropDecision?.why,
+                ) ?? '',
+              flags: Array.from(
+                new Set(
+                  [
+                    ...(Array.isArray(rawPropDecision.flags)
+                      ? rawPropDecision.flags
+                      : []),
+                    ...(Array.isArray(payloadPlayPropDecision?.flags)
+                      ? payloadPlayPropDecision.flags
+                      : []),
+                  ].map((value) => String(value)),
+                ),
+              ),
+            }
+          : undefined;
         const decimalToAmerican = (dec: number | null | undefined): number | null => {
           if (dec == null || dec <= 1) return null;
           return dec >= 2 ? Math.round((dec - 1) * 100) : Math.round(-100 / (dec - 1));
@@ -2382,12 +2538,19 @@ export async function GET(request: NextRequest) {
             payloadPlay?.market_price_under,
           ) ?? null;
         // Prices stored as decimal odds (e.g. 1.83) — convert to American (-122)
-        const normalizedPriceOver = rawPriceOver != null && rawPriceOver > 10
-          ? rawPriceOver  // already American
+        // Math.abs() handles negative American prices (-110, -115) which would
+        // otherwise fail the > 10 check and be erroneously re-fed into decimalToAmerican()
+        const normalizedPriceOver = rawPriceOver != null && Math.abs(rawPriceOver) > 10
+          ? rawPriceOver  // already American (handles both +110 and -110)
           : decimalToAmerican(rawPriceOver);
-        const normalizedPriceUnder = rawPriceUnder != null && rawPriceUnder > 10
-          ? rawPriceUnder  // already American
+        const normalizedPriceUnder = rawPriceUnder != null && Math.abs(rawPriceUnder) > 10
+          ? rawPriceUnder  // already American (handles both +110 and -110)
           : decimalToAmerican(rawPriceUnder);
+        const normalizedMarketBookmaker =
+          firstString(
+            (payload as Record<string, unknown>).market_bookmaker,
+            payloadPlay?.market_bookmaker,
+          ) ?? null;
         const payloadProjection = toObject(payload.projection);
         const payloadPlayProjection = toObject(payloadPlayObj?.projection);
         const normalizedProjectedTotal = firstNumber(
@@ -2906,6 +3069,8 @@ export async function GET(request: NextRequest) {
           l5_mean: normalizedL5Mean ?? null,
           market_price_over: normalizedPriceOver,
           market_price_under: normalizedPriceUnder,
+          market_bookmaker: normalizedMarketBookmaker,
+          prop_decision: normalizedPropDecision,
           consistency:
             payload.consistency && typeof payload.consistency === 'object'
               ? {
@@ -3148,7 +3313,6 @@ export async function GET(request: NextRequest) {
       for (const displayLogRow of displayLogRows) {
         const canonicalGameId =
           externalToCanonicalMap.get(displayLogRow.game_id) ?? displayLogRow.game_id;
-        if (truePlayMap.has(canonicalGameId)) continue;
         const candidate = playByCardId.get(displayLogRow.pick_id);
         if (!candidate) continue;
         if ((candidate.kind ?? 'PLAY') !== 'PLAY') continue;
@@ -3164,6 +3328,30 @@ export async function GET(request: NextRequest) {
                   ? 'LEAN'
                   : 'PASS');
         if (officialStatus !== 'PLAY' && officialStatus !== 'LEAN') continue;
+
+        // officialTier: PLAY=2, LEAN=1, other=0
+        const officialTier = officialStatus === 'PLAY' ? 2 : officialStatus === 'LEAN' ? 1 : 0;
+
+        const existing = truePlayMap.get(canonicalGameId);
+        if (existing) {
+          const existingStatus =
+            existing.decision_v2?.official_status ??
+            (existing.action === 'FIRE'
+              ? 'PLAY'
+              : existing.action === 'HOLD'
+                ? 'LEAN'
+                : existing.status === 'FIRE'
+                  ? 'PLAY'
+                  : existing.status === 'WATCH'
+                    ? 'LEAN'
+                    : 'PASS');
+          const existingTier = existingStatus === 'PLAY' ? 2 : existingStatus === 'LEAN' ? 1 : 0;
+          // Only replace if candidate is strictly better tier, or same tier with higher edge
+          const candidateEdge = candidate.decision_v2?.edge_pct ?? candidate.edge ?? -Infinity;
+          const existingEdge = existing.decision_v2?.edge_pct ?? existing.edge ?? -Infinity;
+          if (officialTier < existingTier) continue;
+          if (officialTier === existingTier && candidateEdge <= existingEdge) continue;
+        }
         truePlayMap.set(canonicalGameId, candidate);
       }
     }
@@ -3302,7 +3490,9 @@ export async function GET(request: NextRequest) {
           ? {
               h2hHome: row.h2h_home,
               h2hAway: row.h2h_away,
+              h2hBook: row.h2h_book ?? null,
               total: row.total,
+              totalBook: row.total_book ?? null,
               spreadHome: row.spread_home,
               spreadAway: row.spread_away,
               spreadHomeBook: row.spread_home_book ?? null,

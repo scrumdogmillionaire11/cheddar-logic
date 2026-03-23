@@ -1157,9 +1157,10 @@ function insertOddsSnapshot(snapshot) {
       spread_home, spread_away, spread_home_book, spread_away_book,
       moneyline_home, moneyline_away,
       spread_price_home, spread_price_away, total_price_over, total_price_under,
+      h2h_book, total_book,
       raw_data, job_run_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -1180,6 +1181,8 @@ function insertOddsSnapshot(snapshot) {
     snapshot.spreadPriceAway || null,
     snapshot.totalPriceOver || null,
     snapshot.totalPriceUnder || null,
+    snapshot.h2hBook || null,
+    snapshot.totalBook || null,
     snapshot.rawData ? JSON.stringify(snapshot.rawData) : null,
     snapshot.jobRunId
   );
@@ -3694,9 +3697,8 @@ function upsertPlayerPropLine(row) {
       line, over_price, under_price, bookmaker, fetched_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(sport, game_id, player_name, prop_type, period, bookmaker) DO UPDATE SET
+    ON CONFLICT(sport, game_id, player_name, prop_type, period, bookmaker, line) DO UPDATE SET
       odds_event_id = excluded.odds_event_id,
-      line = excluded.line,
       over_price = excluded.over_price,
       under_price = excluded.under_price,
       fetched_at = excluded.fetched_at

@@ -407,6 +407,8 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
       sidePrice === null
         ? 'FIRST_PERIOD_NO_PROJECTION' // 1P price unavailable in odds feed
         : 'SUPPORT_BELOW_LEAN_THRESHOLD'; // model PASS — no edge
+    // Sync reason_codes so EVIDENCE cards don't carry stale accumulated codes (AUDIT-FIX-06)
+    payload.reason_codes = [payload.pass_reason_code].filter(Boolean);
   }
   payload.selection =
     selection !== null

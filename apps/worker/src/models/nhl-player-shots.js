@@ -310,26 +310,42 @@ function poissonCDF(lambda, k) {
   return cdf;
 }
 
+function getThresholdBoundary(line) {
+  if (!Number.isFinite(line)) return null;
+  return Math.ceil(line) - 1;
+}
+
 /**
- * P(X > line) where line is a half-integer (e.g. 2.5 → floor = 2).
+ * Threshold-market over probability.
+ *
+ * Integer lines are priced as no-push thresholds:
+ * - Over 3.0 -> P(X >= 3)
+ * - Under 3.0 -> P(X <= 2)
+ *
+ * Half lines preserve their expected semantics:
+ * - Over 2.5 -> P(X >= 3)
+ * - Under 2.5 -> P(X <= 2)
+ *
  * @param {number} lambda
  * @param {number} line
  * @returns {number}
  */
 function poissonOverProb(lambda, line) {
-  const k = Math.floor(line);
-  return 1 - poissonCDF(lambda, k);
+  const boundary = getThresholdBoundary(line);
+  if (boundary === null) return 0;
+  return 1 - poissonCDF(lambda, boundary);
 }
 
 /**
- * P(X < line) where line is a half-integer (e.g. 2.5 → floor = 2, P(X<=1)).
+ * Threshold-market under probability complementary to poissonOverProb().
  * @param {number} lambda
  * @param {number} line
  * @returns {number}
  */
 function poissonUnderProb(lambda, line) {
-  const k = Math.floor(line);
-  return poissonCDF(lambda, k - 1);
+  const boundary = getThresholdBoundary(line);
+  if (boundary === null) return 0;
+  return poissonCDF(lambda, boundary);
 }
 
 /**
@@ -381,6 +397,7 @@ function projectSogV2(inputs) {
     market_price_over = null,
     market_price_under = null,
     lines_to_price = [],
+    play_direction = 'OVER',
   } = inputs || {};
 
   // ---- Flags ----
@@ -469,10 +486,13 @@ function projectSogV2(inputs) {
   let edge_under_pp = null;
   let ev_over = null;
   let ev_under = null;
+  let implied_over_prob = null;
+  let implied_under_prob = null;
 
   if (market_price_over !== null && market_price_over !== undefined && market_line !== null && market_line !== undefined) {
     const fairOverProb = fair_over_prob_by_line[String(market_line)];
     const impliedOverProb = americanToImplied(market_price_over);
+    implied_over_prob = impliedOverProb;
     edge_over_pp = fairOverProb - impliedOverProb;
     const payoutDm1Over = market_price_over >= 0
       ? market_price_over / 100
@@ -483,6 +503,7 @@ function projectSogV2(inputs) {
   if (market_price_under !== null && market_price_under !== undefined && market_line !== null && market_line !== undefined) {
     const fairUnderProb = fair_under_prob_by_line[String(market_line)];
     const impliedUnderProb = americanToImplied(market_price_under);
+    implied_under_prob = impliedUnderProb;
     edge_under_pp = fairUnderProb - impliedUnderProb;
     const payoutDm1Under = market_price_under >= 0
       ? market_price_under / 100
@@ -490,20 +511,36 @@ function projectSogV2(inputs) {
     ev_under = fairUnderProb * payoutDm1Under - (1 - fairUnderProb);
   }
 
-  // ---- OpportunityScore ----
+  // ---- OpportunityScore (direction-aware, WI-0575) ----
   let opportunity_score = null;
-  if (
-    market_line !== null && market_line !== undefined &&
-    market_price_over !== null && market_price_over !== undefined &&
-    edge_over_pp !== null && ev_over !== null
-  ) {
-    const shot_env_adj = (rawShotEnvFactor ?? 1.0) - 1.0;
-    opportunity_score =
-      0.45 * edge_over_pp +
-      0.20 * ev_over +
-      0.20 * (sog_mu - market_line) +
-      0.10 * trend_score +
-      0.05 * shot_env_adj;
+  const shot_env_adj = (rawShotEnvFactor ?? 1.0) - 1.0;
+  if (play_direction === 'UNDER') {
+    if (
+      market_line !== null && market_line !== undefined &&
+      market_price_under !== null && market_price_under !== undefined &&
+      edge_under_pp !== null && ev_under !== null
+    ) {
+      opportunity_score =
+        0.45 * edge_under_pp +
+        0.20 * ev_under +
+        0.20 * (market_line - sog_mu) +
+        0.10 * trend_score +
+        0.05 * shot_env_adj;
+    }
+  } else {
+    // Default: OVER direction
+    if (
+      market_line !== null && market_line !== undefined &&
+      market_price_over !== null && market_price_over !== undefined &&
+      edge_over_pp !== null && ev_over !== null
+    ) {
+      opportunity_score =
+        0.45 * edge_over_pp +
+        0.20 * ev_over +
+        0.20 * (sog_mu - market_line) +
+        0.10 * trend_score +
+        0.05 * shot_env_adj;
+    }
   }
 
   return {
@@ -525,6 +562,8 @@ function projectSogV2(inputs) {
     market_line: market_line ?? null,
     market_price_over: market_price_over ?? null,
     market_price_under: market_price_under ?? null,
+    implied_over_prob,
+    implied_under_prob,
     edge_over_pp,
     edge_under_pp,
     ev_over,
@@ -595,6 +634,7 @@ function projectBlkV1(inputs) {
     market_price_over = null,
     market_price_under = null,
     lines_to_price = [],
+    play_direction = 'OVER',
   } = inputs || {};
 
   // ---- Flags ----
@@ -698,21 +738,36 @@ function projectBlkV1(inputs) {
     ev_under = fairUnderProb * payoutDm1 - (1 - fairUnderProb);
   }
 
-  // ---- OpportunityScore ----
+  // ---- OpportunityScore (direction-aware, WI-0575) ----
   // Weights reflect that blocked shots is a role/environment market.
   // opponent_attempt_factor and playoff_tightening replace trend/env from SOG.
   let opportunity_score = null;
-  if (
-    market_line !== null && market_line !== undefined &&
-    market_price_over !== null && market_price_over !== undefined &&
-    edge_over_pp !== null && ev_over !== null
-  ) {
-    opportunity_score =
-      0.40 * edge_over_pp +
-      0.20 * ev_over +
-      0.20 * (blk_mu - market_line) +
-      0.10 * (opp_attempt_factor - 1.0) +
-      0.10 * (playoff_tightening_factor - 1.0);
+  if (play_direction === 'UNDER') {
+    if (
+      market_line !== null && market_line !== undefined &&
+      market_price_under !== null && market_price_under !== undefined &&
+      edge_under_pp !== null && ev_under !== null
+    ) {
+      opportunity_score =
+        0.40 * edge_under_pp +
+        0.20 * ev_under +
+        0.20 * (market_line - blk_mu) +
+        0.10 * (opp_attempt_factor - 1.0) +
+        0.10 * (playoff_tightening_factor - 1.0);
+    }
+  } else {
+    if (
+      market_line !== null && market_line !== undefined &&
+      market_price_over !== null && market_price_over !== undefined &&
+      edge_over_pp !== null && ev_over !== null
+    ) {
+      opportunity_score =
+        0.40 * edge_over_pp +
+        0.20 * ev_over +
+        0.20 * (blk_mu - market_line) +
+        0.10 * (opp_attempt_factor - 1.0) +
+        0.10 * (playoff_tightening_factor - 1.0);
+    }
   }
 
   return {

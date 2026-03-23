@@ -3319,6 +3319,16 @@ function inferPlayerNameFromText(play: ApiPlay): string | undefined {
   return undefined;
 }
 
+const PROP_VERDICT_RANK: Record<
+  NonNullable<PropPlayRow['propVerdict']>,
+  number
+> = {
+  PLAY: 4,
+  WATCH: 3,
+  NO_PLAY: 2,
+  PROJECTION: 1,
+};
+
 /**
  * Transform games to PropGameCard format - for player props view
  * Groups all PROP plays under each game as rows
@@ -3377,16 +3387,47 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         propType = 'Rebounds';
       }
 
-      // Determine status: prefer prop_display_state from payload (WI-0529)
-      // so anomaly-flagged props render as PROJECTION_ONLY, not FIRE.
-      // Fall back to resolvePlayDisplayDecision for legacy rows without the field.
+      const rawPropDecision = (
+        play as unknown as Record<string, unknown>
+      ).prop_decision as
+        | {
+            verdict?: string;
+            lean_side?: string | null;
+            line?: number | null;
+            display_price?: number | null;
+            line_delta?: number | null;
+            fair_prob?: number | null;
+            implied_prob?: number | null;
+            prob_edge_pp?: number | null;
+            ev?: number | null;
+            l5_trend?: string | null;
+            why?: string;
+            flags?: string[];
+          }
+        | undefined;
+      const rawPropDisplayState = (
+        play as unknown as Record<string, unknown>
+      ).prop_display_state as string | undefined;
+      const propVerdict =
+        rawPropDecision?.verdict === 'PLAY' ||
+        rawPropDecision?.verdict === 'WATCH' ||
+        rawPropDecision?.verdict === 'NO_PLAY' ||
+        rawPropDecision?.verdict === 'PROJECTION'
+          ? rawPropDecision.verdict
+          : rawPropDisplayState === 'PLAY'
+            ? 'PLAY'
+            : rawPropDisplayState === 'WATCH'
+              ? 'WATCH'
+              : rawPropDisplayState === 'PROJECTION_ONLY'
+                ? 'PROJECTION'
+                : undefined;
+
       let status: PropPlayRow['status'] = 'NO_PLAY';
-      const rawPropDisplayState = (play as unknown as Record<string, unknown>).prop_display_state as string | undefined;
-      if (rawPropDisplayState === 'PLAY') {
+      if (propVerdict === 'PLAY') {
         status = 'FIRE';
-      } else if (rawPropDisplayState === 'WATCH') {
+      } else if (propVerdict === 'WATCH') {
         status = 'WATCH';
-      } else if (rawPropDisplayState === 'PROJECTION_ONLY') {
+      } else if (propVerdict === 'PROJECTION' || propVerdict === 'NO_PLAY') {
         status = 'NO_PLAY';
       } else {
         // Legacy fallback: no prop_display_state field
@@ -3404,10 +3445,18 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       }
 
       const mu = play.mu ?? play.projectedTotal ?? null;
-      const suggestedLine = play.suggested_line ?? play.line ?? null;
+      const canonicalPropLine =
+        typeof rawPropDecision?.line === 'number'
+          ? rawPropDecision.line
+          : typeof play.line === 'number'
+            ? play.line
+            : null;
+      const suggestedLine = play.suggested_line ?? null;
       const edge =
         play.edge ??
-        (mu !== null && suggestedLine !== null ? mu - suggestedLine : null);
+        (mu !== null && canonicalPropLine !== null
+          ? mu - canonicalPropLine
+          : null);
 
       return {
         runId: play.run_id,
@@ -3417,7 +3466,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         teamAbbr: play.team_abbr ?? undefined,
         gameId: play.game_id ?? game.gameId,
         propType,
-        line: play.line ?? play.suggested_line ?? null,
+        line: canonicalPropLine ?? play.suggested_line ?? null,
         projection: play.projectedTotal ?? play.mu ?? null,
         mu,
         suggestedLine,
@@ -3433,19 +3482,82 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         reasonCodes: play.reason_codes,
         l5Sog: play.l5_sog ?? undefined,
         l5Mean: play.l5_mean ?? null,
-        marketLine: typeof play.line === 'number' ? play.line : null,
+        marketLine: canonicalPropLine,
         priceOver: ((play as unknown as Record<string, unknown>).market_price_over as number | null | undefined) ?? null,
         priceUnder: ((play as unknown as Record<string, unknown>).market_price_under as number | null | undefined) ?? null,
+        bookmaker: ((play as unknown as Record<string, unknown>).market_bookmaker as string | null | undefined) ?? null,
         sourceCardType: play.cardType,
         sourceCardTitle: play.cardTitle,
         updatedAtUtc: game.odds?.capturedAt || game.createdAt,
         reasoning: play.reasoning,
+        propVerdict,
+        leanSide:
+          rawPropDecision?.lean_side === 'OVER' ||
+          rawPropDecision?.lean_side === 'UNDER'
+            ? rawPropDecision.lean_side
+            : null,
+        displayPrice:
+          typeof rawPropDecision?.display_price === 'number'
+            ? rawPropDecision.display_price
+            : null,
+        lineDelta:
+          typeof rawPropDecision?.line_delta === 'number'
+            ? rawPropDecision.line_delta
+            : null,
+        fairProb:
+          typeof rawPropDecision?.fair_prob === 'number'
+            ? rawPropDecision.fair_prob
+            : null,
+        impliedProb:
+          typeof rawPropDecision?.implied_prob === 'number'
+            ? rawPropDecision.implied_prob
+            : null,
+        probEdgePp:
+          typeof rawPropDecision?.prob_edge_pp === 'number'
+            ? rawPropDecision.prob_edge_pp
+            : null,
+        ev:
+          typeof rawPropDecision?.ev === 'number' ? rawPropDecision.ev : null,
+        l5Trend:
+          rawPropDecision?.l5_trend === 'uptrend' ||
+          rawPropDecision?.l5_trend === 'downtrend' ||
+          rawPropDecision?.l5_trend === 'stable'
+            ? rawPropDecision.l5_trend
+            : null,
+        propWhy: rawPropDecision?.why ?? undefined,
+        propFlags: Array.isArray(rawPropDecision?.flags)
+          ? rawPropDecision.flags
+          : undefined,
         propDisplayState: rawPropDisplayState as PropPlayRow['propDisplayState'] | undefined,
       };
     });
 
-    // Sort rows by confidence desc, then edge desc
+    // Sort rows by canonical props verdict, then priced edge quality, then line delta.
     propPlayRows.sort((a, b) => {
+      const verdictRankA = a.propVerdict ? PROP_VERDICT_RANK[a.propVerdict] : 0;
+      const verdictRankB = b.propVerdict ? PROP_VERDICT_RANK[b.propVerdict] : 0;
+      if (verdictRankA !== verdictRankB) {
+        return verdictRankB - verdictRankA;
+      }
+      if (a.propVerdict === 'NO_PLAY' && b.propVerdict === 'NO_PLAY') {
+        const noPlayGapA =
+          typeof a.lineDelta === 'number'
+            ? Math.abs(a.lineDelta)
+            : Number.NEGATIVE_INFINITY;
+        const noPlayGapB =
+          typeof b.lineDelta === 'number'
+            ? Math.abs(b.lineDelta)
+            : Number.NEGATIVE_INFINITY;
+        if (noPlayGapA !== noPlayGapB) {
+          return noPlayGapB - noPlayGapA;
+        }
+      }
+      if ((a.probEdgePp ?? Number.NEGATIVE_INFINITY) !== (b.probEdgePp ?? Number.NEGATIVE_INFINITY)) {
+        return (b.probEdgePp ?? Number.NEGATIVE_INFINITY) - (a.probEdgePp ?? Number.NEGATIVE_INFINITY);
+      }
+      if ((a.lineDelta ?? Number.NEGATIVE_INFINITY) !== (b.lineDelta ?? Number.NEGATIVE_INFINITY)) {
+        return (b.lineDelta ?? Number.NEGATIVE_INFINITY) - (a.lineDelta ?? Number.NEGATIVE_INFINITY);
+      }
       if ((a.confidence ?? 0) !== (b.confidence ?? 0)) {
         return (b.confidence ?? 0) - (a.confidence ?? 0);
       }

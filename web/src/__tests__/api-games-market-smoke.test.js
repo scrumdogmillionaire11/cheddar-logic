@@ -8,6 +8,8 @@ const DEFAULT_BASE_URL = 'http://localhost:3000';
 async function run() {
   const assertModule = await import('node:assert');
   const assert = assertModule.default || assertModule;
+  const fs = await import('node:fs');
+  const path = await import('node:path');
 
   const baseUrl = process.env.CARDS_API_BASE_URL || DEFAULT_BASE_URL;
   const response = await fetch(`${baseUrl}/api/games?limit=200`);
@@ -41,6 +43,17 @@ async function run() {
     unknownLegacyMarket.length,
     0,
     `Expected zero legacy market-like cards without market_type, found ${unknownLegacyMarket.length}`,
+  );
+
+  // WI-0573: negative American prices must not be passed to decimalToAmerican()
+  const routeSource = fs.readFileSync(
+    path.resolve('src/app/api/games/route.ts'),
+    'utf8'
+  );
+  assert(
+    routeSource.includes('Math.abs(rawPriceOver) > 10') &&
+      routeSource.includes('Math.abs(rawPriceUnder) > 10'),
+    'WI-0573: already-American guard must use Math.abs() to handle negative American prices (-110, -115)',
   );
 
   console.log('✅ API games market smoke test passed');

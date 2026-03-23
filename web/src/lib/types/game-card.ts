@@ -484,6 +484,28 @@ export interface PropPlayRow {
   sourceCardTitle: string;
   updatedAtUtc: string;
   reasoning?: string;
+  /** Canonical props verdict for NHL SOG cards. */
+  propVerdict?: 'PLAY' | 'WATCH' | 'NO_PLAY' | 'PROJECTION';
+  /** Canonical lean side selected from the better-priced prop side. */
+  leanSide?: 'OVER' | 'UNDER' | null;
+  /** Price associated with the displayed lean side. */
+  displayPrice?: number | null;
+  /** Projection delta expressed in the lean direction. */
+  lineDelta?: number | null;
+  /** Fair probability for the displayed lean side. */
+  fairProb?: number | null;
+  /** Implied probability for the displayed lean side. */
+  impliedProb?: number | null;
+  /** Probability edge for the displayed lean side (fair - implied). */
+  probEdgePp?: number | null;
+  /** EV for the displayed lean side. */
+  ev?: number | null;
+  /** Recency signal label for the displayed projection. */
+  l5Trend?: 'uptrend' | 'downtrend' | 'stable' | null;
+  /** Deterministic reason string for the displayed props verdict. */
+  propWhy?: string;
+  /** Canonical prop-decision flags for UI display/debug. */
+  propFlags?: string[];
   /** WI-0529: Three-state display decision from model job. Absent on legacy rows. */
   propDisplayState?: 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
   /** The sportsbook O/U line being priced (e.g. 2.5). Null if projection-only. */
@@ -492,6 +514,8 @@ export interface PropPlayRow {
   priceOver?: number | null;
   /** American odds for the UNDER side from sportsbook. Null if no real line. */
   priceUnder?: number | null;
+  /** Sportsbook the line/price was sourced from. Null if synthetic/unknown. */
+  bookmaker?: string | null;
 }
 
 export interface PropGameCard {

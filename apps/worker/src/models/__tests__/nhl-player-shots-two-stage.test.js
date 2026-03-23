@@ -310,6 +310,52 @@ describe('projectSogV2 — two-stage model', () => {
       expect(result.opportunity_score).not.toBeNull();
       expect(typeof result.opportunity_score).toBe('number');
     });
+
+    // ---- Direction-aware opportunity_score (WI-0575) ----
+
+    test('opportunity_score with play_direction OVER equals result without play_direction', () => {
+      const withDir = projectSogV2(buildInputs({ market_line: 2.5, market_price_over: -110, market_price_under: -110, play_direction: 'OVER' }));
+      const withoutDir = projectSogV2(buildInputs({ market_line: 2.5, market_price_over: -110, market_price_under: -110 }));
+      expect(withDir.opportunity_score).toBeCloseTo(withoutDir.opportunity_score, 6);
+    });
+
+    test('opportunity_score with play_direction UNDER uses under-direction formula', () => {
+      // Low shot rate → sog_mu < market_line → UNDER is the true edge
+      const result = projectSogV2(buildInputs({
+        ev_shots_season_per60: 4.0,
+        ev_shots_l10_per60: 3.8,
+        ev_shots_l5_per60: 3.6,
+        toi_proj_ev: 12.0,
+        toi_proj_pp: 0,
+        market_line: 3.5,
+        market_price_over: -110,
+        market_price_under: -110,
+        play_direction: 'UNDER',
+      }));
+      expect(result.opportunity_score).not.toBeNull();
+      // Under direction: sog_mu < market_line so (market_line - sog_mu) > 0 → positive contribution
+      expect(result.opportunity_score).toBeGreaterThan(0);
+    });
+
+    test('opportunity_score is null when play_direction=UNDER but market_price_under is null', () => {
+      const result = projectSogV2(buildInputs({
+        market_line: 2.5,
+        market_price_over: -110,
+        market_price_under: null,
+        play_direction: 'UNDER',
+      }));
+      expect(result.opportunity_score).toBeNull();
+    });
+
+    test('opportunity_score is null when play_direction=OVER but market_price_over is null', () => {
+      const result = projectSogV2(buildInputs({
+        market_line: 2.5,
+        market_price_over: null,
+        market_price_under: -110,
+        play_direction: 'OVER',
+      }));
+      expect(result.opportunity_score).toBeNull();
+    });
   });
 
   // ---- Flags invariants ----
