@@ -2472,6 +2472,54 @@ describe('run_nhl_player_shots_model', () => {
     expect(card1p.payloadData.play.status).toBe('WATCH');
   });
 
+  test('WI-0577 Guard 3: full-game FIRE is downgraded to WATCH when V2 edge_over_pp is negative on odds-backed card', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.2);
+    shots.calcMu1p.mockReturnValue(1.0);
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.2,
+      sog_sigma: 1.84,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.06,
+      fair_over_prob_by_line: { '2.5': 0.65 },
+      fair_under_prob_by_line: { '2.5': 0.35 },
+      fair_price_over_by_line: { '2.5': -186 },
+      fair_price_under_by_line: { '2.5': 186 },
+      market_line: 2.5,
+      market_price_over: -110,
+      market_price_under: -110,
+      implied_over_prob: 0.5238,
+      implied_under_prob: 0.4762,
+      edge_over_pp: -0.0400,   // NEGATIVE — Guard 3 must fire
+      edge_under_pp: 0.0262,
+      ev_over: -0.06,
+      ev_under: 0.03,
+      opportunity_score: -0.04,
+      flags: [],
+    });
+    // Real odds line → usingRealLine=true → Guard 3 applies
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -110, under_price: -110 });
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi-0577-guard3-full-01' })],
+      players: [buildPlayer({ player_id: 9916, player_name: 'Guard3 Full Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+    warnSpy.mockRestore();
+
+    // Guard 3 must have emitted the [v2-veto-full] log tag
+    const vetoWarn = warnSpy.mock.calls.find(([msg]) => typeof msg === 'string' && msg.includes('[v2-veto-full]'));
+    expect(vetoWarn).toBeDefined();
+  });
+
   test('WI-0579: full-game V2 anomaly does not suppress a clean 1P card', async () => {
     process.env.NHL_SOG_1P_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();
