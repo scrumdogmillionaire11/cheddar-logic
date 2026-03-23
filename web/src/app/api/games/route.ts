@@ -2382,11 +2382,13 @@ export async function GET(request: NextRequest) {
             payloadPlay?.market_price_under,
           ) ?? null;
         // Prices stored as decimal odds (e.g. 1.83) — convert to American (-122)
-        const normalizedPriceOver = rawPriceOver != null && rawPriceOver > 10
-          ? rawPriceOver  // already American
+        // Math.abs() handles negative American prices (-110, -115) which would
+        // otherwise fail the > 10 check and be erroneously re-fed into decimalToAmerican()
+        const normalizedPriceOver = rawPriceOver != null && Math.abs(rawPriceOver) > 10
+          ? rawPriceOver  // already American (handles both +110 and -110)
           : decimalToAmerican(rawPriceOver);
-        const normalizedPriceUnder = rawPriceUnder != null && rawPriceUnder > 10
-          ? rawPriceUnder  // already American
+        const normalizedPriceUnder = rawPriceUnder != null && Math.abs(rawPriceUnder) > 10
+          ? rawPriceUnder  // already American (handles both +110 and -110)
           : decimalToAmerican(rawPriceUnder);
         const payloadProjection = toObject(payload.projection);
         const payloadPlayProjection = toObject(payloadPlayObj?.projection);
