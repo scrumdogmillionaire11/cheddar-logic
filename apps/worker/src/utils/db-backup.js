@@ -23,6 +23,29 @@ const ensureBackupDir = () => {
   return dir;
 };
 
+const BACKUP_RETENTION_HOURS = 72;
+
+const pruneOldBackups = (backupDir) => {
+  const cutoff = Date.now() - BACKUP_RETENTION_HOURS * 60 * 60 * 1000;
+  let pruned = 0;
+  for (const f of fs.readdirSync(backupDir)) {
+    if (!f.endsWith('.db')) continue;
+    const full = path.join(backupDir, f);
+    try {
+      const mtime = fs.statSync(full).mtimeMs;
+      if (mtime < cutoff) {
+        fs.unlinkSync(full);
+        pruned++;
+      }
+    } catch {
+      // ignore individual file errors
+    }
+  }
+  if (pruned > 0) {
+    console.log(`[DBBackup] Pruned ${pruned} backup(s) older than ${BACKUP_RETENTION_HOURS}h`);
+  }
+};
+
 const backupDatabase = (label = '') => {
   const dbPath = path.resolve(getDbPath());
 
@@ -42,6 +65,7 @@ const backupDatabase = (label = '') => {
     console.log(
       `[DBBackup] ✓ Backed up to ${backupName} (${(stats.size / 1024 / 1024).toFixed(1)}MB)`
     );
+    pruneOldBackups(backupDir);
     return backupPath;
   } catch (err) {
     console.error(`[DBBackup] ✗ Backup failed: ${err.message}`);

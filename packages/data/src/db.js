@@ -1154,13 +1154,14 @@ function insertOddsSnapshot(snapshot) {
   const stmt = db.prepare(`
     INSERT INTO odds_snapshots (
       id, game_id, sport, captured_at, h2h_home, h2h_away, total,
-      spread_home, spread_away, moneyline_home, moneyline_away,
+      spread_home, spread_away, spread_home_book, spread_away_book,
+      moneyline_home, moneyline_away,
       spread_price_home, spread_price_away, total_price_over, total_price_under,
       raw_data, job_run_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  
+
   stmt.run(
     snapshot.id,
     snapshot.gameId,
@@ -1171,6 +1172,8 @@ function insertOddsSnapshot(snapshot) {
     snapshot.total,
     snapshot.spreadHome || null,
     snapshot.spreadAway || null,
+    snapshot.spreadHomeBook || null,
+    snapshot.spreadAwayBook || null,
     snapshot.monelineHome || null,
     snapshot.monelineAway || null,
     snapshot.spreadPriceHome || null,

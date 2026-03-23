@@ -311,6 +311,8 @@ interface GameData {
     total: number | null;
     spreadHome: number | null;
     spreadAway: number | null;
+    spreadHomeBook: string | null;
+    spreadAwayBook: string | null;
     spreadPriceHome: number | null;
     spreadPriceAway: number | null;
     totalPriceOver: number | null;
@@ -1826,6 +1828,22 @@ export default function CardsPageClient() {
     return value >= 0 ? `+${fixed}` : fixed;
   };
 
+  const formatBookName = (book: string | null | undefined): string => {
+    if (!book) return '';
+    const names: Record<string, string> = {
+      betmgm: 'BetMGM',
+      draftkings: 'DraftKings',
+      fanduel: 'FanDuel',
+      williamhill_us: 'Caesars',
+      espnbet: 'ESPN Bet',
+      fliff: 'Fliff',
+      pinnacle: 'Pinnacle',
+      fanatics: 'Fanatics',
+      hardrockbet: 'Hard Rock',
+    };
+    return names[book] ?? book;
+  };
+
   const formatProjectedMarginDirectional = (
     projectedMargin: number | undefined,
   ) => {
@@ -2496,12 +2514,29 @@ export default function CardsPageClient() {
         : undefined;
     const bakedLine =
       typeof displayPlay.line === 'number' ? displayPlay.line : undefined;
-    // For total-market cards, prefer the live odds line so edge % and delta
-    // reflect the current market, not the stale value baked at model-run time.
+    // For total-market and spread-market cards, prefer the live odds line so
+    // the displayed market line reflects the current market, not the stale
+    // value baked at model-run time.
+    const spreadSelectionSide = (
+      displayPlay.selection?.side ?? displayPlay.bet?.side
+    )?.toUpperCase();
+    const isAwaySpread = spreadSelectionSide === 'AWAY';
+    const liveSpreadLine =
+      isSpreadLikeMarket && typeof originalGame.odds?.spreadHome === 'number'
+        ? isAwaySpread
+          ? -originalGame.odds.spreadHome
+          : originalGame.odds.spreadHome
+        : undefined;
+    const marketLineBook =
+      liveSpreadLine !== undefined
+        ? isAwaySpread
+          ? originalGame.odds?.spreadAwayBook ?? null
+          : originalGame.odds?.spreadHomeBook ?? null
+        : null;
     const marketLine =
       isTotalLikeMarket && typeof originalGame.odds?.total === 'number'
         ? originalGame.odds.total
-        : bakedLine;
+        : liveSpreadLine ?? bakedLine;
     const lineMoved =
       isTotalLikeMarket &&
       typeof bakedLine === 'number' &&
@@ -2784,7 +2819,12 @@ export default function CardsPageClient() {
                           {typeof marketLine === 'number'
                             ? formatSignedDecimal(marketLine)
                             : 'N/A'}
-                        </span>{' '}
+                        </span>
+                        {marketLineBook && (
+                          <span className="text-cloud/45 ml-1">
+                            ({formatBookName(marketLineBook)})
+                          </span>
+                        )}{' '}
                         | Delta:{' '}
                         <span className="text-cloud/90 font-bold">
                           {typeof edgePoints === 'number'
