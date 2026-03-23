@@ -2432,4 +2432,59 @@ describe('run_nhl_player_shots_model', () => {
     expect(card1p.payloadData.play.action).toBe('HOLD');
     expect(card1p.payloadData.play.status).toBe('WATCH');
   });
+
+  test('WI-0578: ppRatePer60=null + ppToi=2.5 → projectSogV2 called with pp_shots_season_per60=3.0 (league-avg fallback, not null)', async () => {
+    // Verifies that the PP component no longer silently collapses to 0 when
+    // NST PP rate data is missing but the player has real ppToi.
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.0);
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -115, under_price: -105 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.1,
+      sog_sigma: 1.76,
+      toi_proj: 18,
+      shot_rate_ev_per60: 9.0,
+      shot_rate_pp_per60: 3.0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.04,
+      fair_over_prob_by_line: { '2.5': 0.59 },
+      fair_under_prob_by_line: { '2.5': 0.41 },
+      fair_price_over_by_line: { '2.5': -144 },
+      fair_price_under_by_line: { '2.5': 144 },
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      implied_over_prob: 0.535,
+      implied_under_prob: 0.512,
+      edge_over_pp: 0.055,
+      edge_under_pp: -0.102,
+      ev_over: 0.07,
+      ev_under: -0.12,
+      opportunity_score: 0.35,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi-0578-pp-fallback-01' })],
+      players: [buildPlayer({ player_id: 9930, player_name: 'PP Fallback Player' })],
+      // ppRatePer60=null, ppToi=2.5 → PP_RATE_MISSING scenario
+      playerLogs: buildGamesWithRawData({ shotsPer60: 9.0, projToi: 16, ppToi: 2.5, ppRatePer60: null }),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(shots.projectSogV2).toHaveBeenCalled();
+    const v2Call = shots.projectSogV2.mock.calls[0][0];
+
+    // WI-0578: must use league-avg fallback 3.0, NOT null
+    expect(v2Call.pp_shots_season_per60).toBe(3.0);
+
+    // PP_RATE_MISSING flag must still appear so the card signals the estimate
+    expect(data.insertCardPayload).toHaveBeenCalled();
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.decision.v2.flags).toContain('PP_RATE_MISSING');
+  });
 });

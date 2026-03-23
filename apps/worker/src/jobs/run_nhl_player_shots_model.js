@@ -39,6 +39,12 @@ const {
 
 const JOB_NAME = 'run-nhl-player-shots-model';
 
+// WI-0578: Conservative league-average PP shot rate (shots/60) used as fallback
+// when NST PP rate data is missing (PP_RATE_MISSING) but the player has non-zero ppToi.
+// Prevents pp_component silently collapsing to 0 for top PP players.
+// Value ~3.0 is ~25th-percentile among PP-eligible players (conservative, not inflated).
+const PP_RATE_LEAGUE_AVG_PER60 = 3.0;
+
 /**
  * WI-0529: Compute three-state display decision for prop cards.
  * PROJECTION_ONLY: anomaly flagged or no odds price (no actionable signal).
@@ -1787,7 +1793,19 @@ async function runNHLPlayerShotsModel() {
               // This avoids a false LOW_SAMPLE flag while being directionally correct.
               ev_shots_l10_per60: l5RatePer60 ?? shotsPer60 ?? null,
               ev_shots_l5_per60: l5RatePer60,
-              pp_shots_season_per60: ppRatePer60,
+              // WI-0578: When PP_RATE_MISSING (NST rate unavailable but player has real ppToi),
+              // use a conservative league-average fallback instead of null. Passing null silently
+              // collapses pp_component to 0, under-projecting by 0.3–0.5 SOG for top PP players.
+              pp_shots_season_per60: ppRatePer60 ?? (
+                ppToi > 0
+                  ? (() => {
+                      console.warn(
+                        `[${JOB_NAME}] [pp-rate-fallback] ${playerName}: ppRatePer60 missing with ppToi=${ppToi.toFixed(2)} — using league-avg fallback ${PP_RATE_LEAGUE_AVG_PER60}/60`,
+                      );
+                      return PP_RATE_LEAGUE_AVG_PER60;
+                    })()
+                  : null
+              ),
               pp_shots_l10_per60: ppRateL10Per60,
               pp_shots_l5_per60: ppRateL5Per60,
               toi_proj_ev: projToi ?? 0,
