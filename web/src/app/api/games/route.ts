@@ -105,6 +105,8 @@ interface GameRow {
   total: number | null;
   spread_home: number | null;
   spread_away: number | null;
+  spread_home_book: string | null;
+  spread_away_book: string | null;
   spread_price_home: number | null;
   spread_price_away: number | null;
   total_price_over: number | null;
