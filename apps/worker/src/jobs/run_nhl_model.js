@@ -398,6 +398,16 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
   payload.recommended_bet_type = 'total';
   payload.period = '1P';
   payload.kind = isPlayable ? 'PLAY' : 'EVIDENCE';
+  // When demoted to EVIDENCE, set an explicit no-edge pass_reason_code so the
+  // transform layer classifies this as a healthy no-play (quality='OK') rather
+  // than a fetch failure (quality='DEGRADED'). Without this, nhl-pace-1p EVIDENCE
+  // cards produce 'fetch_failure:play_producer_no_output' → Degraded badge on board.
+  if (!isPlayable && !payload.pass_reason_code) {
+    payload.pass_reason_code =
+      sidePrice === null
+        ? 'FIRST_PERIOD_NO_PROJECTION' // 1P price unavailable in odds feed
+        : 'SUPPORT_BELOW_LEAN_THRESHOLD'; // model PASS — no edge
+  }
   payload.selection =
     selection !== null
       ? {

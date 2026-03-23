@@ -17,61 +17,71 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-22
-- Next action for operators/agents: see sprint plan below → pick the next unclaimed item in Tier 1
+- Next action for operators/agents: Tier 1 security blockers all done. Pick the next unclaimed item from new Tier 1 — start with **WI-0554** (confidence function, now unblocked)
 
 ---
 
-## Sprint Plan — 2026-03-22 prioritization
+## Sprint Plan — 2026-03-22 prioritization (updated)
 
 ### Dependency Chains (respect order within chains)
-- **Edge math stack (serial):** WI-0551 → WI-0552 → WI-0554 → WI-0556
-- **Auth/JWT (one branch):** WI-0559 → WI-0560 (same `jwt.ts` file, do back-to-back)
+- **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → WI-0554 → WI-0556
+- **Auth/JWT:** ~~WI-0559~~✓ → ~~WI-0560~~✓ (both done)
 - **Settlement → CLV (serial):** WI-0564 → WI-0566 → WI-0557
+- **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
 - **All others:** independent, can be parallelized across agents
 
 ---
 
-### Tier 1 — Security & Correctness Blockers (do now)
+### Tier 1 — All Security & Correctness Blockers DONE ✓
 
-| Order | WI | Summary | Key files |
-|---|---|---|---|
-| 1 | [WI-0560](../WORK_QUEUE/WI-0560.md) | Fail closed when `AUTH_SECRET` is missing/default in prod | `web/src/lib/api-security/jwt.ts`, `token/route.ts` |
-| 2 | [WI-0559](../WORK_QUEUE/WI-0559.md) | Fix JWT HS256 signature to RFC-compliant base64url | `web/src/lib/api-security/jwt.ts` |
-| 3 | ~~[WI-0561](../WORK_QUEUE/COMPLETE/WI-0561.md)~~ DONE | Upgrade Next.js 16.1.6 → 16.2.1 (zero CVEs) | `web/package.json`, `web/package-lock.json` |
-| 4 | ~~[WI-0551](../WORK_QUEUE/COMPLETE/WI-0551.md)~~ DONE | Remove vig from implied probability (edge math baseline) | `packages/models/src/edge-calculator.js` |
-| 5 | ~~[WI-0555](../WORK_QUEUE/COMPLETE/WI-0555.md)~~ DONE | Unify spread threshold + enable `MARKET_THRESHOLDS_V2` | `run_nba_model.js`, `decision-pipeline-v2.patch.js`, `flags.js` |
+| WI | Summary | Status |
+|---|---|---|
+| ~~[WI-0560](../WORK_QUEUE/COMPLETE/WI-0560.md)~~ | Fail closed when `AUTH_SECRET` missing/default in prod | ✓ DONE (qt-65) |
+| ~~[WI-0559](../WORK_QUEUE/COMPLETE/WI-0559.md)~~ | Fix JWT HS256 signature to RFC-compliant base64url | ✓ DONE (qt-65) |
+| ~~[WI-0561](../WORK_QUEUE/COMPLETE/WI-0561.md)~~ | Upgrade Next.js 16.1.6 → 16.2.1 (zero CVEs) | ✓ DONE (qt-66) |
+| ~~[WI-0551](../WORK_QUEUE/COMPLETE/WI-0551.md)~~ | Remove vig from implied probability (edge math baseline) | ✓ DONE (qt-66) |
+| ~~[WI-0555](../WORK_QUEUE/COMPLETE/WI-0555.md)~~ | Unify spread threshold + enable `MARKET_THRESHOLDS_V2` | ✓ DONE (qt-66) |
+| ~~[WI-0552](../WORK_QUEUE/COMPLETE/WI-0552.md)~~ | Empirical sigma from game history (replace hardcoded 12/14) | ✓ DONE (qt-67) |
 
 ---
 
-### Tier 2 — High-Value Model Improvements
+### Tier 1 (New) — Edge Model & CI Correctness (do now)
 
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
-| 6 | ~~[WI-0552](../WORK_QUEUE/COMPLETE/WI-0552.md)~~ DONE | Empirical sigma from game history (replace hardcoded 12/14) | WI-0551 |
-| 7 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function (replace 0.95/0.88/0.85 literals) | WI-0551, WI-0552 |
-| 8 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate mutating web tests to temp DB (prevent CI prod mutation) | — |
-| 9 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI with no local server | — |
+| 1 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function (replace 0.95/0.88/0.85 literals) | WI-0551 ✓, WI-0552 ✓ — **unblocked** |
+| 2 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate mutating web tests to temp DB (prevent CI prod mutation) | — |
+| 3 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI with no local server | — |
 
 ---
 
-### Tier 3 — Feature Completions
+### Tier 2 — Feature Completions
 
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
-| 10 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | — |
-| 11 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge (not projection signal) | WI-0551–0554 |
-| 12 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0551–0554 |
-| 13 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | — |
-| 14 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
-| 15 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
+| 4 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | — |
+| 5 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge (not projection signal) | WI-0554 |
+| 6 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 |
+| 7 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | — |
+| 8 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
+| 9 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
 
 ---
+
+### Tier 3 — Market Evaluator Layer (serial chain)
+
+| Order | WI | Summary | Depends on |
+| --- | --- | --- | --- |
+| 10 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion, confidence) | — |
+| 11 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector for all markets (best-price separate from best-line) | WI-0568 |
+| 12 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
+| 13 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, edge vs best available, execution alpha) | WI-0568, WI-0569 |
 
 ### Tier 4 — Polish / Display
 
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
-| 16 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | — |
+| 14 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | — |
 
 ### Quick Tasks Completed
 
@@ -118,4 +128,4 @@ This file is intentionally minimal to avoid stale status drift.
 | 66 | WI-0561 + WI-0551 + WI-0555: Next.js 16.2.1, noVigImplied vig removal, NBA spread gate via resolveThresholdProfile | 2026-03-23 | eb034c8 | [66-follow-sprint-plan-in-state](./quick/66-follow-sprint-plan-in-state/) |
 | 67 | WI-0552: Empirical sigma from game history — computeSigmaFromHistory, getSigmaDefaults fallback docs, NBA model runner wiring | 2026-03-23 | b55095d | [67-follow-sprint-plan-in-state](./quick/67-follow-sprint-plan-in-state/) |
 
-Last activity: 2026-03-23 - Completed quick task 67: WI-0552 (computeSigmaFromHistory with fallback, 31 tests, NBA model runner wired)
+Last activity: 2026-03-22 - Updated sprint plan: Tier 1 fully cleared (WI-0559/0560/0561/0551/0555/0552 all done). WI-0554 is now top priority (edge math stack unblocked).
