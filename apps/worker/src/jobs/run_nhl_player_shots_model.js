@@ -51,6 +51,218 @@ function computePropDisplayState(v2AnomalyDetected, v2OpportunityScore) {
   return 'WATCH';
 }
 
+const PROP_PROJECTION_FLAGS = new Set([
+  'PROJECTION_ANOMALY',
+  'SYNTHETIC_LINE',
+  'MISSING_PRICE',
+]);
+
+const PROP_WARNING_FLAGS = new Set([
+  'LOW_SAMPLE',
+  'ROLE_IN_FLUX',
+  'PP_RATE_MISSING',
+  'PP_SMALL_SAMPLE',
+  'PP_MATCHUP_MISSING',
+  'PP_CONTRIBUTION_CAPPED',
+]);
+
+function roundMetric(value, digits = 4) {
+  if (!Number.isFinite(value)) return null;
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function formatSignedPercent(probabilityEdge) {
+  if (!Number.isFinite(probabilityEdge)) return '0.0%';
+  const percent = probabilityEdge * 100;
+  return `${percent >= 0 ? '+' : ''}${percent.toFixed(1)}%`;
+}
+
+function formatSignedEv(ev) {
+  if (!Number.isFinite(ev)) return '0.00';
+  return `${ev >= 0 ? '+' : ''}${ev.toFixed(2)}`;
+}
+
+function computePropTrendLabel(l5Mean, projection) {
+  if (!Number.isFinite(l5Mean) || !Number.isFinite(projection)) return null;
+  const delta = projection - l5Mean;
+  if (delta >= 0.3) return 'uptrend';
+  if (delta <= -0.3) return 'downtrend';
+  return 'stable';
+}
+
+function deriveLegacyActionFromVerdict(verdict) {
+  if (verdict === 'PLAY') {
+    return {
+      action: 'FIRE',
+      status: 'FIRE',
+      classification: 'BASE',
+      officialStatus: 'PLAY',
+    };
+  }
+  if (verdict === 'WATCH') {
+    return {
+      action: 'HOLD',
+      status: 'WATCH',
+      classification: 'LEAN',
+      officialStatus: 'LEAN',
+    };
+  }
+  return {
+    action: 'PASS',
+    status: 'PASS',
+    classification: 'PASS',
+    officialStatus: 'PASS',
+  };
+}
+
+function buildCanonicalPropDecision({
+  projection,
+  marketLine,
+  marketPriceOver,
+  marketPriceUnder,
+  fairOverProb,
+  fairUnderProb,
+  impliedOverProb,
+  impliedUnderProb,
+  edgeOverPp,
+  edgeUnderPp,
+  evOver,
+  evUnder,
+  opportunityScore,
+  confidence,
+  roleStability,
+  l5Mean,
+  flags,
+  usingRealLine,
+}) {
+  const normalizedFlags = Array.from(
+    new Set((Array.isArray(flags) ? flags : []).map((flag) => String(flag))),
+  );
+  const projectionFlag = normalizedFlags.find((flag) =>
+    PROP_PROJECTION_FLAGS.has(flag),
+  );
+  const warningFlags = normalizedFlags.filter((flag) =>
+    PROP_WARNING_FLAGS.has(flag),
+  );
+
+  const overCandidate = {
+    lean_side: 'OVER',
+    display_price: Number.isFinite(marketPriceOver) ? marketPriceOver : null,
+    fair_prob: Number.isFinite(fairOverProb) ? fairOverProb : null,
+    implied_prob: Number.isFinite(impliedOverProb) ? impliedOverProb : null,
+    prob_edge_pp: Number.isFinite(edgeOverPp) ? edgeOverPp : null,
+    ev: Number.isFinite(evOver) ? evOver : null,
+    line_delta:
+      Number.isFinite(projection) && Number.isFinite(marketLine)
+        ? projection - marketLine
+        : null,
+  };
+  const underCandidate = {
+    lean_side: 'UNDER',
+    display_price: Number.isFinite(marketPriceUnder) ? marketPriceUnder : null,
+    fair_prob: Number.isFinite(fairUnderProb) ? fairUnderProb : null,
+    implied_prob: Number.isFinite(impliedUnderProb) ? impliedUnderProb : null,
+    prob_edge_pp: Number.isFinite(edgeUnderPp) ? edgeUnderPp : null,
+    ev: Number.isFinite(evUnder) ? evUnder : null,
+    line_delta:
+      Number.isFinite(projection) && Number.isFinite(marketLine)
+        ? marketLine - projection
+        : null,
+  };
+
+  const betterPricedCandidate =
+    (overCandidate.prob_edge_pp ?? Number.NEGATIVE_INFINITY) >=
+    (underCandidate.prob_edge_pp ?? Number.NEGATIVE_INFINITY)
+      ? overCandidate
+      : underCandidate;
+
+  const fallbackLeanSide =
+    Number.isFinite(projection) && Number.isFinite(marketLine)
+      ? projection >= marketLine
+        ? 'OVER'
+        : 'UNDER'
+      : null;
+  const fallbackCandidate =
+    fallbackLeanSide === 'UNDER' ? underCandidate : overCandidate;
+
+  const usePricedLean =
+    Number.isFinite(betterPricedCandidate.prob_edge_pp) &&
+    betterPricedCandidate.prob_edge_pp >= 0.02;
+  const selected = usePricedLean ? betterPricedCandidate : fallbackCandidate;
+
+  const hasRealMarket =
+    usingRealLine &&
+    Number.isFinite(marketLine) &&
+    Number.isFinite(marketPriceOver) &&
+    Number.isFinite(marketPriceUnder);
+
+  const lineDeltaAbs = Math.abs(selected.line_delta ?? 0);
+  const probEdge = selected.prob_edge_pp;
+  const ev = selected.ev;
+  const projectionBlocked =
+    !hasRealMarket || Boolean(projectionFlag);
+  let verdict = 'NO_PLAY';
+
+  if (projectionBlocked) {
+    verdict = 'PROJECTION';
+  } else if (
+    Number.isFinite(probEdge) &&
+    probEdge >= 0.06 &&
+    Number.isFinite(ev) &&
+    ev >= 0.05 &&
+    lineDeltaAbs >= 0.5 &&
+    roleStability !== 'LOW' &&
+    Number.isFinite(confidence) &&
+    confidence >= 0.6 &&
+    warningFlags.length === 0
+  ) {
+    verdict = 'PLAY';
+  } else if (
+    Number.isFinite(probEdge) &&
+    probEdge >= 0.02 &&
+    Number.isFinite(ev) &&
+    ev >= -0.01 &&
+    (lineDeltaAbs >= 0.25 ||
+      (Number.isFinite(opportunityScore) && opportunityScore > 0) ||
+      (Number.isFinite(ev) && ev >= 0 && probEdge > 0))
+  ) {
+    verdict = 'WATCH';
+  }
+
+  let why = 'Market already efficient at current price';
+  if (verdict === 'PROJECTION') {
+    why =
+      projectionFlag === 'PROJECTION_ANOMALY'
+        ? 'Projection anomaly — do not price'
+        : 'Projection only — no bettable market';
+  } else if (verdict === 'PLAY') {
+    why = `Edge ${formatSignedPercent(probEdge)} and EV ${formatSignedEv(ev)} clear play threshold`;
+  } else if (verdict === 'WATCH') {
+    why =
+      warningFlags.length > 0
+        ? 'Positive edge, but flagged data keeps this at WATCH'
+        : 'Projection clears the line, but price is not strong enough';
+  }
+
+  return {
+    verdict,
+    lean_side: selected.lean_side,
+    line: Number.isFinite(marketLine) ? marketLine : null,
+    display_price: selected.display_price,
+    projection: Number.isFinite(projection) ? projection : null,
+    line_delta: roundMetric(selected.line_delta, 3),
+    fair_prob: roundMetric(selected.fair_prob, 4),
+    implied_prob: roundMetric(selected.implied_prob, 4),
+    prob_edge_pp: roundMetric(selected.prob_edge_pp, 4),
+    ev: roundMetric(selected.ev, 4),
+    l5_mean: Number.isFinite(l5Mean) ? roundMetric(l5Mean, 3) : null,
+    l5_trend: computePropTrendLabel(l5Mean, projection),
+    why,
+    flags: normalizedFlags,
+  };
+}
+
 function attachRunId(card, runId) {
   if (!card) return;
   card.runId = runId;
@@ -1249,6 +1461,7 @@ async function runNHLPlayerShotsModel() {
             // previously only read .line — now we read the prices too.
             const overPrice = realPropLine?.over_price ?? null;
             const underPrice = realPropLine?.under_price ?? null;
+            const propBookmaker = realPropLine?.bookmaker ?? null;
             const isOddsBacked = overPrice !== null && underPrice !== null;
 
             // Derive a trending L5 rate for projectSogV2's weighted blend.
@@ -1324,8 +1537,12 @@ async function runNHLPlayerShotsModel() {
 
             // Null out pricing fields when V2 anomaly is present — no bet-worthy signal should be emitted.
             const v2EdgeOverPp = v2AnomalyDetected ? null : (v2Projection.edge_over_pp != null ? Math.round(v2Projection.edge_over_pp * 10000) / 10000 : null);
+            const v2EdgeUnderPp = v2AnomalyDetected ? null : (v2Projection.edge_under_pp != null ? Math.round(v2Projection.edge_under_pp * 10000) / 10000 : null);
             const v2EvOver = v2AnomalyDetected ? null : (v2Projection.ev_over != null ? Math.round(v2Projection.ev_over * 10000) / 10000 : null);
+            const v2EvUnder = v2AnomalyDetected ? null : (v2Projection.ev_under != null ? Math.round(v2Projection.ev_under * 10000) / 10000 : null);
             const v2OpportunityScore = v2AnomalyDetected ? null : (v2Projection.opportunity_score ?? null);
+            const v2ImpliedOverProb = v2AnomalyDetected ? null : (v2Projection.implied_over_prob ?? null);
+            const v2ImpliedUnderProb = v2AnomalyDetected ? null : (v2Projection.implied_under_prob ?? null);
 
             const syntheticLine = marketLine; // kept for card payload references below
 
@@ -1439,18 +1656,47 @@ async function runNHLPlayerShotsModel() {
 
             const fullDirectionLabel =
               fullGameEdge.direction === 'OVER' ? 'Over' : 'Under';
-            const fullRecommendationPrefix =
-              fullDecision.action === 'FIRE'
-                ? 'Play'
-                : fullDecision.action === 'HOLD'
-                  ? 'Lean'
-                  : 'Pass';
 
-            // Only create cards for actionable signals.
-            if (
-              (fullGameEdge.tier === 'HOT' || fullGameEdge.tier === 'WATCH') &&
-              fullDecision.action !== 'PASS'
-            ) {
+            const propDecisionFlags = [
+              ...(v2Projection.flags ?? []),
+              ...(v2AnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
+              ...(!usingRealLine ? ['SYNTHETIC_LINE'] : []),
+            ];
+            const fullPropDecision = buildCanonicalPropDecision({
+              projection: mu,
+              marketLine: syntheticLine,
+              marketPriceOver: overPrice,
+              marketPriceUnder: underPrice,
+              fairOverProb:
+                v2Projection.fair_over_prob_by_line?.[String(marketLine)] ?? null,
+              fairUnderProb:
+                v2Projection.fair_under_prob_by_line?.[String(marketLine)] ?? null,
+              impliedOverProb: v2ImpliedOverProb,
+              impliedUnderProb: v2ImpliedUnderProb,
+              edgeOverPp: v2EdgeOverPp,
+              edgeUnderPp: v2EdgeUnderPp,
+              evOver: v2EvOver,
+              evUnder: v2EvUnder,
+              opportunityScore: v2OpportunityScore,
+              confidence,
+              roleStability: v2Projection.role_stability ?? 'HIGH',
+              l5Mean,
+              flags: propDecisionFlags,
+              usingRealLine,
+            });
+            const legacyDecisionFromProp = deriveLegacyActionFromVerdict(
+              fullPropDecision.verdict,
+            );
+            const fullVerdictPrefix =
+              fullPropDecision.verdict === 'PLAY'
+                ? 'Play'
+                : fullPropDecision.verdict === 'WATCH'
+                  ? 'Watch'
+                  : fullPropDecision.verdict === 'PROJECTION'
+                    ? 'Projection'
+                    : 'No Play';
+
+            {
               const cardId = `nhl-player-sog-${player.player_id}-${resolvedGameId}-full-${uuidV4().slice(0, 8)}`;
 
               // For PROP cards, don't set market_type to 'PROP' in the root; keep it implied
@@ -1466,43 +1712,51 @@ async function runNHLPlayerShotsModel() {
                 card_status: 'active',
                 model_name: 'nhl-player-shots-v1',
                 model_version: '1.0.0',
-                action: fullDecision.action,
-                status: fullDecision.status,
-                classification: fullDecision.classification,
+                action: legacyDecisionFromProp.action,
+                status: legacyDecisionFromProp.status,
+                classification: legacyDecisionFromProp.classification,
                 // Required by basePayloadSchema
-                prediction: `${fullRecommendationPrefix} ${playerName} ${fullDirectionLabel} ${syntheticLine} SOG | Proj ${mu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
+                prediction: `${fullVerdictPrefix} ${playerName} ${fullPropDecision.lean_side ?? fullDirectionLabel} ${syntheticLine} SOG | Proj ${mu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
                 confidence: confidence,
                 recommended_bet_type: 'unknown',
                 generated_at: timestamp,
                 suggested_line: fairLine,
                 threshold: fairLine,
                 decision_v2: {
-                  official_status: fullDecision.officialStatus,
-                  direction: fullGameEdge.direction,
+                  official_status: legacyDecisionFromProp.officialStatus,
+                  direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
                   edge_pct: computeEdgePct(mu, syntheticLine),
                   fair_line: fairLine,
                 },
+                prop_decision: fullPropDecision,
                 // PROP-specific
                 play: {
-                  action: fullDecision.action,
-                  status: fullDecision.status,
-                  classification: fullDecision.classification,
+                  action: legacyDecisionFromProp.action,
+                  status: legacyDecisionFromProp.status,
+                  classification: legacyDecisionFromProp.classification,
                   decision_v2: {
-                    official_status: fullDecision.officialStatus,
-                    direction: fullGameEdge.direction,
+                    official_status: legacyDecisionFromProp.officialStatus,
+                    direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
                     edge_pct: computeEdgePct(mu, syntheticLine),
                     fair_line: fairLine,
                   },
-                  pick_string: `${fullRecommendationPrefix} ${playerName} ${fullDirectionLabel} ${syntheticLine} SOG | Proj ${mu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
+                  prop_decision: fullPropDecision,
+                  pick_string: `${fullVerdictPrefix} ${playerName} ${fullPropDecision.lean_side ?? fullDirectionLabel} ${syntheticLine} SOG | Proj ${mu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
                   market_type: 'PROP',
                   player_name: playerName,
                   player_id: player.player_id.toString(),
                   prop_type: 'shots_on_goal',
                   period: 'full_game',
                   selection: {
-                    side: fullGameEdge.direction === 'OVER' ? 'over' : 'under',
+                    side:
+                      (fullPropDecision.lean_side ?? fullGameEdge.direction) === 'OVER'
+                        ? 'over'
+                        : 'under',
                     line: syntheticLine,
-                    price: fullGameEdge.direction === 'OVER' ? (overPrice ?? -110) : (underPrice ?? -110),
+                    price:
+                      (fullPropDecision.lean_side ?? fullGameEdge.direction) === 'OVER'
+                        ? (overPrice ?? -110)
+                        : (underPrice ?? -110),
                     team: player.team_abbrev,
                     player_name: playerName,
                     player_id: player.player_id.toString(),
@@ -1511,6 +1765,7 @@ async function runNHLPlayerShotsModel() {
                 odds_backed: isOddsBacked,
                 over_price: isOddsBacked ? overPrice : null,
                 under_price: isOddsBacked ? underPrice : null,
+                market_bookmaker: isOddsBacked ? propBookmaker : null,
                 opportunity_score: v2OpportunityScore,
                 prop_display_state: computePropDisplayState(v2AnomalyDetected, v2OpportunityScore),
                 decision: {
@@ -1520,7 +1775,7 @@ async function runNHLPlayerShotsModel() {
                   matchup_edge: matchupEdge,
                   model_projection: mu,
                   market_line: syntheticLine,
-                  direction: fullGameEdge.direction,
+                  direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
                   confidence: confidence,
                   market_line_source: usingRealLine ? 'odds_api' : 'synthetic_fallback',
                   consistency_score:
@@ -1531,13 +1786,13 @@ async function runNHLPlayerShotsModel() {
                   v2: {
                     sog_mu: v2Projection.sog_mu != null ? Math.round(v2Projection.sog_mu * 1000) / 1000 : null,
                     edge_over_pp: v2EdgeOverPp,
+                    edge_under_pp: v2EdgeUnderPp,
                     ev_over: v2EvOver,
+                    ev_under: v2EvUnder,
                     opportunity_score: v2OpportunityScore,
-                    flags: [
-                      ...(v2Projection.flags ?? []),
-                      ...(v2AnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
-                      ...(!usingRealLine ? ['SYNTHETIC_LINE'] : []),
-                    ],
+                    implied_over_prob: v2ImpliedOverProb,
+                    implied_under_prob: v2ImpliedUnderProb,
+                    flags: propDecisionFlags,
                     odds_backed: isOddsBacked,
                   },
                 },
@@ -1598,8 +1853,8 @@ async function runNHLPlayerShotsModel() {
               };
               attachRunId(card, jobRunId);
 
-              try {
-                insertCardPayload(card);
+                try {
+                  insertCardPayload(card);
                 try {
                   recordNhlProjectionTelemetry(recordProjectionEntry, card);
                 } catch (telemetryErr) {
@@ -1609,17 +1864,13 @@ async function runNHLPlayerShotsModel() {
                 }
                 cardsCreated++;
                 console.log(
-                  `[${JOB_NAME}] ✓ Created ${fullGameEdge.tier} card: ${playerName} ${fullGameEdge.direction} ${syntheticLine} (fair ${fairLine}, conf ${Math.round(confidence * 100)}%)`,
+                  `[${JOB_NAME}] ✓ Created ${fullPropDecision.verdict} card: ${playerName} ${fullPropDecision.lean_side ?? fullGameEdge.direction} ${syntheticLine} (fair ${fairLine}, conf ${Math.round(confidence * 100)}%)`,
                 );
               } catch (insertErr) {
                 console.error(
                   `[${JOB_NAME}] Failed to insert card: ${insertErr.message}`,
                 );
               }
-            } else if (fullDecision.action === 'PASS') {
-              console.log(
-                `[${JOB_NAME}] Skipping ${playerName} ${fullGameEdge.direction} ${syntheticLine}: PASS (consistency=${fullConsistencyScore.toFixed(2)}, matchup=${fullMatchupScore.toFixed(2)})`,
-              );
             }
 
             // Gap 5: 1P card block gated by NHL_SOG_1P_CARDS_ENABLED flag (default off).

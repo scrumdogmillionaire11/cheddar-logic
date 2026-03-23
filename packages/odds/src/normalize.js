@@ -165,9 +165,11 @@ function normalizeGame(rawGame, sport) {
     odds: {
       h2hHome: h2h?.home ?? null,
       h2hAway: h2h?.away ?? null,
+      h2hBook: h2h?.book ?? null,
       total: totals?.line ?? null,
       totalPriceOver: totals?.over ?? null,
       totalPriceUnder: totals?.under ?? null,
+      totalBook: totals?.book ?? null,
       spreadHome: bestSpreadHome,
       spreadHomeBook: bestSpreadHomeBook,
       spreadAway: bestSpreadAway,

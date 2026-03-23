@@ -1157,9 +1157,10 @@ function insertOddsSnapshot(snapshot) {
       spread_home, spread_away, spread_home_book, spread_away_book,
       moneyline_home, moneyline_away,
       spread_price_home, spread_price_away, total_price_over, total_price_under,
+      h2h_book, total_book,
       raw_data, job_run_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -1180,6 +1181,8 @@ function insertOddsSnapshot(snapshot) {
     snapshot.spreadPriceAway || null,
     snapshot.totalPriceOver || null,
     snapshot.totalPriceUnder || null,
+    snapshot.h2hBook || null,
+    snapshot.totalBook || null,
     snapshot.rawData ? JSON.stringify(snapshot.rawData) : null,
     snapshot.jobRunId
   );

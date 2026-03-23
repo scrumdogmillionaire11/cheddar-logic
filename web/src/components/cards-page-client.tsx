@@ -308,7 +308,9 @@ interface GameData {
   odds: {
     h2hHome: number | null;
     h2hAway: number | null;
+    h2hBook: string | null;
     total: number | null;
+    totalBook: string | null;
     spreadHome: number | null;
     spreadAway: number | null;
     spreadHomeBook: string | null;
@@ -1693,6 +1695,27 @@ export default function CardsPageClient() {
     return undefined;
   };
 
+  /** Return the bookmaker key for the odds being shown for a given market+side. */
+  const resolvePlayLiveBook = (
+    marketType: string | undefined,
+    selectionSide: string | undefined,
+    gameOdds: GameData['odds'],
+  ): string | null => {
+    if (!gameOdds) return null;
+    const side = selectionSide?.toUpperCase();
+    if (marketType === 'MONEYLINE') {
+      return gameOdds.h2hBook ?? null;
+    }
+    if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+      if (side === 'HOME') return gameOdds.spreadHomeBook ?? null;
+      if (side === 'AWAY') return gameOdds.spreadAwayBook ?? null;
+    }
+    if (marketType === 'TOTAL') {
+      return gameOdds.totalBook ?? null;
+    }
+    return null;
+  };
+
   /** American-odds → implied probability (no vig removed, raw conversion). */
   const impliedProbFromOdds = (americanOdds: number): number | undefined => {
     if (!Number.isFinite(americanOdds) || americanOdds === 0) return undefined;
@@ -2355,6 +2378,12 @@ export default function CardsPageClient() {
       displayPlay.selection?.side ?? displayPlay.bet?.side?.toUpperCase(),
       originalGame.odds,
     );
+    // Bookmaker source for the displayed odds.
+    const liveBook = resolvePlayLiveBook(
+      displayPlay.market_type ?? displayPlay.bet?.market_type?.toUpperCase(),
+      displayPlay.selection?.side ?? displayPlay.bet?.side?.toUpperCase(),
+      originalGame.odds,
+    );
     // For total-market bets, prefer the live odds line over the baked card line
     // so "BET: Over X" reflects what's actually available to bet.
     const liveTotalLine =
@@ -2789,6 +2818,11 @@ export default function CardsPageClient() {
               </div>
             </div>
             <p className="mt-2 text-xl font-bold text-cloud">{visibleBetText}</p>
+            {liveBook && visibleBetText !== 'NO PLAY' && (
+              <p className="mt-0.5 text-xs text-cloud/45">
+                via {formatBookName(liveBook)}
+              </p>
+            )}
             <p className="mt-1 text-xs text-cloud/65">{contextLine1}</p>
           </div>
 

@@ -28,9 +28,30 @@ const formatOdds = (americanOdds: number) => {
   return americanOdds > 0 ? `+${americanOdds}` : String(americanOdds);
 };
 
+const formatBookName = (book: string | null | undefined): string => {
+  if (!book) return '';
+  const names: Record<string, string> = {
+    betmgm: 'BetMGM',
+    draftkings: 'DraftKings',
+    fanduel: 'FanDuel',
+    williamhill_us: 'Caesars',
+    espnbet: 'ESPN Bet',
+    fliff: 'Fliff',
+    pinnacle: 'Pinnacle',
+    fanatics: 'Fanatics',
+    hardrockbet: 'Hard Rock',
+  };
+  return names[book] ?? book;
+};
+
 const formatNumber = (value: number | null | undefined, digits = 1) => {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
   return value.toFixed(digits);
+};
+
+const formatPercent = (value: number | null | undefined, digits = 1) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return `${(value * 100).toFixed(digits)}%`;
 };
 
 const getAverage = (values?: number[]) => {
@@ -39,25 +60,30 @@ const getAverage = (values?: number[]) => {
   return sum / values.length;
 };
 
-const getStatusColor = (status: PropPlayRow['status']) => {
-  switch (status) {
-    case 'FIRE':
-      return 'text-execute border-execute/30 bg-execute/10';
+const getVerdictColor = (verdict: PropPlayRow['propVerdict']) => {
+  switch (verdict) {
+    case 'PLAY':
+      return 'text-execute border-execute/40 bg-execute/10';
     case 'WATCH':
-      return 'text-teal border-teal/30 bg-teal/10';
-    case 'HOLD':
-      return 'text-yellow-400 border-yellow-400/30 bg-yellow-400/10';
+      return 'text-teal border-teal/40 bg-teal/10';
     case 'NO_PLAY':
-      return 'text-cloud/40 border-cloud/20 bg-cloud/5';
+      return 'text-amber-300 border-amber-400/30 bg-amber-400/10';
+    case 'PROJECTION':
+      return 'text-cloud/55 border-cloud/20 bg-cloud/5';
     default:
       return 'text-cloud/60 border-cloud/20 bg-cloud/5';
   }
 };
 
-const getStatusBadge = (status: PropPlayRow['status']) => {
+const getVerdictBadge = (verdict: PropPlayRow['propVerdict']) => {
   const baseClass = 'px-2 py-1 text-xs font-semibold rounded border';
-  const colorClass = getStatusColor(status);
+  const colorClass = getVerdictColor(verdict);
   return `${baseClass} ${colorClass}`;
+};
+
+const getVerdictLabel = (verdict: PropPlayRow['propVerdict']) => {
+  if (verdict === 'NO_PLAY') return 'NO PLAY';
+  return verdict ?? 'NO PLAY';
 };
 
 export default function PropGameCardComponent({ card }: PropGameCardProps) {
@@ -111,35 +137,50 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
           {displayPlays.map((prop, idx) => {
             const projectionValue = prop.mu ?? prop.projection;
             const lineValue = prop.suggestedLine ?? prop.line ?? prop.marketLine;
-            const oddsInline =
-              prop.priceOver != null || prop.priceUnder != null
-                ? ` | O ${prop.priceOver != null ? formatOdds(prop.priceOver) : '—'} / U ${prop.priceUnder != null ? formatOdds(prop.priceUnder) : '—'}`
+            const verdict = prop.propVerdict ?? 'NO_PLAY';
+            const leanSide =
+              prop.leanSide ??
+              ((projectionValue ?? 0) >= (lineValue ?? 0) ? 'OVER' : 'UNDER');
+            const heroOdds =
+              typeof prop.displayPrice === 'number'
+                ? ` (${formatOdds(prop.displayPrice)})`
                 : '';
-            const contextLine1 = `Projection: ${formatNumber(projectionValue)} vs line ${formatNumber(lineValue)}`;
+            const heroLine =
+              verdict === 'PROJECTION'
+                ? `PROJECTION ${leanSide} ${formatNumber(lineValue)}`
+                : `LEAN ${leanSide} ${formatNumber(lineValue)}${heroOdds}`;
             const WARNING_FLAGS = ['SYNTHETIC_LINE', 'PROJECTION_ANOMALY'];
-            const warningFlags = (prop.reasonCodes ?? []).filter((c) =>
+            const warningFlags = [...new Set([...(prop.propFlags ?? []), ...(prop.reasonCodes ?? [])])].filter((c) =>
               WARNING_FLAGS.includes(c),
             );
-            const riskLine =
-              warningFlags.length > 0
-                ? `Risk: ${warningFlags
-                    .map((flag) =>
-                      flag === 'SYNTHETIC_LINE'
-                        ? 'Synthetic line'
-                        : 'Projection anomaly',
-                    )
-                    .join(' | ')}`
-                : null;
             const hasDetails =
               warningFlags.length > 0 ||
               (prop.l5Sog && prop.l5Sog.length > 0) ||
               (prop.l5Mean !== null && prop.l5Mean !== undefined) ||
-              (prop.priceOver != null || prop.priceUnder != null);
+              (prop.priceOver != null || prop.priceUnder != null) ||
+              (prop.propFlags && prop.propFlags.length > 0);
+            const projectionDeltaText =
+              typeof prop.lineDelta === 'number'
+                ? `${prop.lineDelta >= 0 ? '+' : ''}${prop.lineDelta.toFixed(1)} vs line`
+                : '—';
+            const trendLabel = prop.l5Trend ?? 'stable';
+            const trendText =
+              prop.l5Mean !== null && prop.l5Mean !== undefined
+                ? `${formatNumber(prop.l5Mean)} (${trendLabel})`
+                : '—';
 
             return (
               <div
                 key={`${prop.playerId}-${prop.propType}-${idx}`}
-                className="rounded-lg border border-white/10 bg-surface/50 hover:border-white/20 transition"
+                className={`rounded-lg border bg-surface/50 transition ${
+                  verdict === 'PLAY'
+                    ? 'border-execute/30 hover:border-execute/50'
+                    : verdict === 'WATCH'
+                      ? 'border-teal/25 hover:border-teal/45'
+                      : verdict === 'NO_PLAY'
+                        ? 'border-amber-400/20 hover:border-amber-400/35'
+                        : 'border-white/10 hover:border-white/20'
+                }`}
               >
                 <div className="px-4 py-3 space-y-3">
                   <div className="flex items-start justify-between gap-3">
@@ -152,22 +193,89 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                         {prop.teamAbbr ? ` · ${prop.teamAbbr}` : ''}
                       </div>
                     </div>
-                    <span className={getStatusBadge(prop.status)}>{prop.status}</span>
+                    <span className={getVerdictBadge(verdict)}>
+                      {getVerdictLabel(verdict)}
+                    </span>
                   </div>
 
-                  <div className="rounded border border-white/10 bg-white/5 p-2.5">
-                    <p className="text-sm font-semibold text-cloud">
-                      {prop.playerName} {formatNumber(lineValue)}
-                      {oddsInline}
-                    </p>
-                    <p className="text-xs text-cloud/65 mt-1">{contextLine1}</p>
-                  </div>
-
-                  {riskLine && (
-                    <div className="rounded border border-white/10 bg-white/5 p-2.5">
-                      <p className="text-xs text-cloud/75">{riskLine}</p>
+                  <div className="rounded-md border border-white/10 bg-white/5 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold uppercase tracking-[0.12em] text-cloud/55">
+                          {prop.playerName} — {prop.propType}
+                        </p>
+                        <p className="mt-1 text-lg font-bold text-cloud">
+                          {heroLine}
+                        </p>
+                      </div>
+                      {typeof prop.probEdgePp === 'number' && (
+                        <div className="text-right">
+                          <div className="text-[11px] uppercase tracking-[0.12em] text-cloud/45">
+                            Edge
+                          </div>
+                          <div
+                            className={`text-sm font-semibold ${
+                              prop.probEdgePp > 0
+                                ? 'text-execute'
+                                : 'text-cloud/70'
+                            }`}
+                          >
+                            {formatPercent(prop.probEdgePp)}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
+                    <p className="mt-2 text-xs text-cloud/70">
+                      {prop.propWhy ?? prop.reasoning ?? 'No prop reason available.'}
+                    </p>
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <div className="rounded border border-white/10 bg-night/40 p-3">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-cloud/45">
+                        Projection
+                      </div>
+                      <div className="mt-2 space-y-1 text-sm text-cloud/80">
+                        <p>Proj: {formatNumber(projectionValue)}</p>
+                        <p>{projectionDeltaText}</p>
+                        <p>L5: {trendText}</p>
+                      </div>
+                    </div>
+
+                    <div className="rounded border border-white/10 bg-night/40 p-3">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-cloud/45">
+                        Market
+                      </div>
+                      <div className="mt-2 space-y-1 text-sm text-cloud/80">
+                        <p>Line: {formatNumber(lineValue)}</p>
+                        <p>
+                          Over{' '}
+                          {prop.priceOver != null ? formatOdds(prop.priceOver) : '—'}
+                        </p>
+                        <p>
+                          Under{' '}
+                          {prop.priceUnder != null ? formatOdds(prop.priceUnder) : '—'}
+                        </p>
+                        {prop.bookmaker && (
+                          <p className="text-cloud/40">
+                            via {formatBookName(prop.bookmaker)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded border border-white/10 bg-night/40 p-3">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-cloud/45">
+                        Edge
+                      </div>
+                      <div className="mt-2 space-y-1 text-sm text-cloud/80">
+                        <p>Fair: {formatPercent(prop.fairProb)}</p>
+                        <p>Implied: {formatPercent(prop.impliedProb)}</p>
+                        <p>Edge: {formatPercent(prop.probEdgePp)}</p>
+                        <p>EV: {formatNumber(prop.ev, 2)}</p>
+                      </div>
+                    </div>
+                  </div>
 
                   {hasDetails && (
                     <details className="rounded border border-white/10 bg-white/5 p-2.5">
@@ -175,6 +283,9 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                         Details
                       </summary>
                       <div className="mt-2 space-y-1.5 text-xs text-cloud/60">
+                        {prop.propFlags && prop.propFlags.length > 0 && (
+                          <p>Flags: {prop.propFlags.join(' | ')}</p>
+                        )}
                         {(prop.priceOver != null || prop.priceUnder != null) && (
                           <p>
                             Market odds: OVER{' '}
