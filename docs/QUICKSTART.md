@@ -411,6 +411,65 @@ npm --prefix apps/worker run scheduler
 
 **Important:** The scheduler must be stopped before running manual jobs to avoid database lock conflicts due to the single-writer contract.
 
+### Go-Live Checklist: NBA Spread Staleness Fixes (2026-03-23)
+
+Three changes ship in commit `8874feb`. Steps to deploy safely:
+
+#### 1. Stop the scheduler (required — single-writer contract)
+
+```bash
+./scripts/manage-scheduler.sh stop
+./scripts/manage-scheduler.sh status  # confirm stopped
+```
+
+#### 2. Pull and deploy
+
+```bash
+git pull origin main  # or trigger your CI deploy
+```
+
+#### 3. (Optional) Set env var explicitly in `.env.production`
+
+```bash
+# Defaults to 24h without this, but makes intent explicit:
+REFRESH_STALE_ODDS_HORIZON_HOURS=24
+```
+
+#### 4. Restart scheduler
+
+```bash
+./scripts/manage-scheduler.sh start
+./scripts/manage-scheduler.sh db     # confirm DB path matches expected
+```
+
+#### 5. Expect one extra odds pull on first tick
+
+The hourly idempotency key format changed from `odds|hourly|{date}|{hour}` to
+`odds|hourly|{date}|{hour}|{slot}`. Existing job-run records don't match the new
+keys, so the scheduler will fire one extra `pull_odds_hourly` on the first tick
+after deploy (regardless of when the last pull ran). This is safe — just one
+extra API call.
+
+#### 6. Verify
+
+```bash
+# Confirm stale-odds backstop now covers T+24h games
+set -a; source .env.production; set +a; CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db \
+  npm --prefix apps/worker run job:check-odds-health
+
+# Spot-check that the latest NBA snapshot has the current spread
+sqlite3 /opt/data/cheddar-prod.db \
+  "SELECT home_team, away_team, spread_home, spread_away, captured_at
+   FROM odds_snapshots
+   WHERE LOWER(sport)='nba'
+   ORDER BY captured_at DESC LIMIT 5;"
+```
+
+Expected result: Spurs game shows `spread_home = -3.5` (not -5.5) within one
+scheduler tick (~30s after restart).
+
+---
+
 ### Quick Commands (Production)
 
 ```bash
