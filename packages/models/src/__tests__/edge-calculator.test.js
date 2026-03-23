@@ -193,6 +193,53 @@ assert(
   JSON.stringify(totalOneSide)
 );
 
+// ── WI-0555: NBA spread gate via resolveThresholdProfile ─────────────────────
+
+console.log('\n=== WI-0555: generateNBAMarketCallCards spread gate ===');
+
+// We test the gating logic in isolation — a spread decision at edge=0.025 (below
+// NBA:SPREAD lean_edge_min=0.035) must NOT produce a call card when the canonical
+// resolveThresholdProfile is used as the gate, and MUST produce one at edge=0.04.
+const {
+  generateNBAMarketCallCards,
+} = require('../../../../apps/worker/src/jobs/run_nba_model');
+
+function makeSpreadDecision(edge) {
+  return {
+    SPREAD: {
+      status: 'FIRE',
+      edge,
+      reasoning: 'test reasoning',
+      best_candidate: { side: 'HOME', line: -6.5 },
+      drivers: [{ eligible: true, driverKey: 'rest-advantage', weight: 1, signal: 0.6 }],
+    },
+  };
+}
+
+const oddsSnap = {
+  home_team: 'Lakers',
+  away_team: 'Celtics',
+  game_time_utc: new Date(Date.now() + 3600 * 1000).toISOString(),
+  spread_price_home: -110,
+  spread_price_away: -110,
+};
+
+const cardsBelowGate = generateNBAMarketCallCards('game-001', makeSpreadDecision(0.025), oddsSnap);
+const spreadCardsBelowGate = cardsBelowGate.filter((c) => c && c.cardType === 'nba-spread-call');
+assert(
+  'No spread call card generated for edge=0.025 (below lean_edge_min=0.035)',
+  spreadCardsBelowGate.length === 0,
+  `got ${spreadCardsBelowGate.length} card(s) — edge gate must use 0.035, not 0.02`
+);
+
+const cardsAboveGate = generateNBAMarketCallCards('game-002', makeSpreadDecision(0.04), oddsSnap);
+const spreadCardsAboveGate = cardsAboveGate.filter((c) => c && c.cardType === 'nba-spread-call');
+assert(
+  'Spread call card IS generated for edge=0.04 (above lean_edge_min=0.035)',
+  spreadCardsAboveGate.length === 1,
+  `got ${spreadCardsAboveGate.length} card(s)`
+);
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
