@@ -2513,10 +2513,10 @@ describe('run_nhl_player_shots_model', () => {
     }));
 
     await mod.runNHLPlayerShotsModel();
-    warnSpy.mockRestore();
 
     // Guard 3 must have emitted the [v2-veto-full] log tag
     const vetoWarn = warnSpy.mock.calls.find(([msg]) => typeof msg === 'string' && msg.includes('[v2-veto-full]'));
+    warnSpy.mockRestore();
     expect(vetoWarn).toBeDefined();
   });
 
