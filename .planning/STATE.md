@@ -17,7 +17,7 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-23
-- Next action for operators/agents: Hostile audit (WI-0572) complete — 2 CRITICAL + 4 HIGH defects found in live decision pipeline. **Create fix WIs from audit before WI-0554.** Start with **AUDIT-FIX-01** (NHL OVER +0.5 edge suppression in `edge-calculator.js`) and **AUDIT-FIX-02** (silent exception swallow in `buildDecisionV2`).
+- Next action for operators/agents: Hostile audit (WI-0572) complete — 2 CRITICAL + 4 HIGH defects found in live decision pipeline. NHL props pipeline audit (2026-03-23) added 5 CRITICAL + 4 HIGH + 3 MEDIUM findings (WI-0573–WI-0584). **Start with WI-0573** (negative American price display broken in `/api/games`) — that is broken in prod right now.
 
 ---
 
@@ -60,6 +60,28 @@ This file is intentionally minimal to avoid stale status drift.
 | 4 | AUDIT-FIX-04 | `shouldFlip` coerces null edge to `0` via `?? 0` — phantom flip when `edge_available=true` but edge is null | **HIGH** | `packages/models/src/decision-gate.js` |
 | 5 | AUDIT-FIX-05 | `reason_codes` accumulates monotonically, never purged — stale codes contradict current card status | **HIGH** | `apps/worker/src/utils/decision-publisher.js` |
 | 6 | AUDIT-FIX-06 | `EVIDENCE` cards carry permanent `PASS_UNREPAIRABLE_LEGACY` in `reason_codes`, never refreshed on re-evaluation | **HIGH** | `apps/worker/src/utils/decision-publisher.js` |
+
+---
+
+### Tier 0b — NHL Props Pipeline Audit Fixes (2026-03-23)
+
+> Source: NHL player shot props pipeline audit — full trace from ingest → model → display.
+> WI-0573–WI-0584. Critical/High items must land before treating NHL prop plays as actionable bets.
+
+| Priority | WI | Finding | Severity | Target file(s) |
+|---|---|---|---|---|
+| 1 | [WI-0573](../WORK_QUEUE/WI-0573.md) | Negative American prices (`−110`, `−115`) passed to `decimalToAmerican()` — `> 10` check must be `Math.abs() > 10`; every prop price on display is currently wrong | **CRITICAL** | `web/src/app/api/games/route.ts` |
+| 2 | [WI-0574](../WORK_QUEUE/WI-0574.md) | `selection.price` hardcoded to `−110` in full-game + 1P card payloads; real `over_price`/`under_price` from Odds API are stored but never wired to the canonical price field | **CRITICAL** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 3 | [WI-0575](../WORK_QUEUE/WI-0575.md) | `opportunity_score` is always computed for the OVER direction regardless of V1 play direction; an UNDER call shows a positive OVER opportunity_score, contradicting the bet | **CRITICAL** | `apps/worker/src/models/nhl-player-shots.js` |
+| 4 | [WI-0576](../WORK_QUEUE/WI-0576.md) | `NHL_SOG_PROP_EVENTS_ENABLED` defaults false — real Odds API lines are never ingested unless explicitly set; all cards run on synthetic `2.5` floor line silently | **CRITICAL** | `apps/worker/src/jobs/pull_nhl_player_shots_props.js`, `.env` |
+| 5 | [WI-0577](../WORK_QUEUE/WI-0577.md) | V1 drives bet decision; V2 Poisson edge is computed but never gates FIRE — V1 can emit a PLAY while V2's `edge_over_pp` is negative; add V2 veto gate for FIRE on odds-backed cards | **CRITICAL** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 6 | [WI-0578](../WORK_QUEUE/WI-0578.md) | `PP_RATE_MISSING` flag set but PP component silently collapses to 0 for top PP players; under-projects by 0.3–0.5 SOG for players with non-zero `ppToi` | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 7 | [WI-0579](../WORK_QUEUE/WI-0579.md) | 1P cards don't run `projectSogV2`; `v2AnomalyDetected` from full-game run is reused against 1P mu, which uses a different (scaled) projection | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 8 | [WI-0580](../WORK_QUEUE/WI-0580.md) | PROP cards are not wave-1 eligible — `decision_v2.official_status` does not override V1 `action`/`status` because `PROP` is not in `WAVE1_MARKETS`; V1 classification wins unconditionally | **HIGH** | `web/src/app/api/games/route.ts` |
+| 9 | [WI-0581](../WORK_QUEUE/WI-0581.md) | `edge_pct` in `decision_v2` is `(mu−line)/line×100` (projection-delta %) while V2 `edge_over_pp` is probability edge (p_fair−p_implied); both surface as "edge" — rename `decision_v2.edge_pct` → `edge_delta_pct` for clarity | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 10 | [WI-0582](../WORK_QUEUE/WI-0582.md) | `opponentFactor`/`paceFactor` silently default to `1.0` at `console.debug` when `team_metrics_cache` is empty after a refresh failure; should be `console.warn` and surfaced in card flags | **MEDIUM** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 11 | [WI-0583](../WORK_QUEUE/WI-0583.md) | V1 (recency-decay blend) and V2 (rate-weighted blend) produce different mu from the same data with no reconciliation or accuracy audit; calibration study needed | **MEDIUM** | `apps/worker/src/models/nhl-player-shots.js` |
+| 12 | [WI-0584](../WORK_QUEUE/WI-0584.md) | Line change between model runs can surface two cards for the same player/side if `purgePlayerCardsForGame` fails silently; dedup key differs on `dedupeLine`, bypassing `seenNhlShotsPlayKeys` | **MEDIUM** | `web/src/app/api/games/route.ts`, `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
 
 ---
 
