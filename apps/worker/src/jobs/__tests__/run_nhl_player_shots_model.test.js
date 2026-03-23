@@ -2350,4 +2350,86 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.decision.v2.flags).toContain('PP_MATCHUP_MISSING');
     expect(card.payloadData.drivers.pp_matchup_factor).toBe(1.0);
   });
+
+  test('WI-0577 Guard 3: 1P FIRE is downgraded to WATCH when V2 edge_over_pp is negative on odds-backed card', async () => {
+    // V1 classifyEdge returns HOT OVER for 1P → derivePlayDecision → FIRE
+    // V2 edge_over_pp = -0.04 (negative) → Guard 3 should veto FIRE → HOLD/WATCH
+    process.env.NHL_SOG_1P_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+
+    // classifyEdge is called 5 times per player when usingRealLine=true + sog1pEnabled:
+    //   call 1 → evalPlayerPropMarket directionSeed (line 916)
+    //   call 2 → fullDirectionSeed (line 1939)
+    //   call 3 → fullGameEdge (line 1976)
+    //   call 4 → firstPeriodDirectionSeed (line 2243)
+    //   call 5 → firstPeriodEdge (line 2266)
+    shots.classifyEdge
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 }) // call 1
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 }) // call 2
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 }) // call 3
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 }) // call 4
+      .mockReturnValueOnce({ tier: 'HOT', direction: 'OVER', edge: 1.0 }); // call 5 → 1P firstPeriodEdge
+
+    // calcMu: 3.2 → no anomaly (3.2 >= 0.6 * 3.0 = 1.8)
+    shots.calcMu.mockReturnValue(3.2);
+    shots.calcMu1p.mockReturnValue(1.0);
+
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.2,
+      sog_sigma: 1.79,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.05,
+      fair_over_prob_by_line: { '0.5': 0.51 },
+      fair_under_prob_by_line: { '0.5': 0.49 },
+      fair_price_over_by_line: { '0.5': -104 },
+      fair_price_under_by_line: { '0.5': 104 },
+      market_line: 0.5,
+      market_price_over: -115,
+      market_price_under: 105,
+      implied_over_prob: 0.535,
+      implied_under_prob: 0.488,
+      // Negative OVER edge → V2 veto should fire for 1P OVER card
+      edge_over_pp: -0.04,
+      edge_under_pp: 0.05,
+      ev_over: -0.03,
+      ev_under: 0.04,
+      opportunity_score: 0.02,
+      flags: [],
+    });
+
+    // Return a real prop line so Guard 1 (no-real-line) does NOT fire
+    data.getPlayerPropLine.mockReturnValue({ line: 0.5, over_price: -115, under_price: 105 });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi-0577-guard3-01' })],
+      players: [buildPlayer({ player_id: 9920, player_name: 'V2 Veto 1P Player' })],
+      // shots=3 → l5Mean=3.0; calcMu=3.2 → no anomaly
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    delete process.env.NHL_SOG_1P_CARDS_ENABLED;
+
+    // Find the 1P card
+    const allCalls = data.insertCardPayload.mock.calls;
+    const onePCards = allCalls
+      .map((c) => c[0])
+      .filter((c) => c && c.payloadData && c.payloadData.card_type === 'nhl-player-shots-1p');
+
+    expect(onePCards.length).toBe(1);
+    const card1p = onePCards[0];
+
+    // Guard 3 must have downgraded FIRE → HOLD/WATCH
+    expect(card1p.payloadData.action).not.toBe('FIRE');
+    expect(card1p.payloadData.action).toBe('HOLD');
+    expect(card1p.payloadData.status).toBe('WATCH');
+    expect(card1p.payloadData.play.action).toBe('HOLD');
+    expect(card1p.payloadData.play.status).toBe('WATCH');
+  });
 });

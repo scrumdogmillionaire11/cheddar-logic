@@ -2282,6 +2282,30 @@ async function runNHLPlayerShotsModel() {
                 firstPeriodDecision = { action: 'HOLD', status: 'WATCH', classification: 'LEAN', officialStatus: 'LEAN' };
               }
 
+              // Guard 3 (WI-0577): V2 Poisson veto — on odds-backed 1P cards,
+              // if V2's probability edge for the selected direction is negative,
+              // downgrade FIRE→WATCH. V1 can overstate edge when its recency
+              // weighting diverges from Poisson fair pricing.
+              if (realPropLine1p && firstPeriodDecision.action === 'FIRE') {
+                const v2EdgeForDir1p =
+                  firstPeriodEdge.direction === 'UNDER' ? v2EdgeUnderPp : v2EdgeOverPp;
+                if (
+                  typeof v2EdgeForDir1p === 'number' &&
+                  Number.isFinite(v2EdgeForDir1p) &&
+                  v2EdgeForDir1p < 0
+                ) {
+                  console.warn(
+                    `[${JOB_NAME}] [v2-veto-1p] Downgraded ${playerName} 1P FIRE→WATCH (V2 edge_${firstPeriodEdge.direction.toLowerCase()}_pp=${v2EdgeForDir1p.toFixed(4)} < 0)`,
+                  );
+                  firstPeriodDecision = {
+                    action: 'HOLD',
+                    status: 'WATCH',
+                    classification: 'LEAN',
+                    officialStatus: 'LEAN',
+                  };
+                }
+              }
+
               const l5FairValue1p = calcFairLine1p({ l5Sog, shotsPer60, projToi });
               const fairLine1p = roundToHalfLine(l5FairValue1p) ?? syntheticLine1p;
               const matchupEdge1p = Math.round((mu1p - l5FairValue1p) * 10) / 10;
