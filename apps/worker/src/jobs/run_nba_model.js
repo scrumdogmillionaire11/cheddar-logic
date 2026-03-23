@@ -687,6 +687,14 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
     try {
       insertJobRun('run_nba_model', jobRunId, jobKey);
 
+      // WI-0552: Compute empirical sigma from settled game history at job start.
+      // Falls back to hardcoded defaults when fewer than 20 settled games exist.
+      const computedSigma = edgeCalculator.computeSigmaFromHistory({
+        sport: 'NBA',
+        db: getDatabase(),
+      });
+      console.log('[run_nba_model] sigma:', JSON.stringify(computedSigma));
+
       const { DateTime } = require('luxon');
       const nowUtc = DateTime.utc();
       const horizonUtc = nowUtc.plus({ hours: 36 }).toISO();
