@@ -106,6 +106,35 @@ jobs:
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-fpl-sage.service /etc/systemd/system/cheddar-fpl-sage.service
             sudo systemctl daemon-reload
             sudo systemctl enable cheddar-worker cheddar-web cheddar-fpl-sage
+            # ── Disk hygiene before installs ───────────────────────────────────
+            # Abort early with a clear message if available disk is critically low.
+            AVAIL_KB=$(df /opt --output=avail | tail -1)
+            echo "Disk available before cleanup: ${AVAIL_KB}KB"
+            # Remove rollback snapshot from previous deploy (can be 100–300 MB)
+            rm -rf /tmp/cheddar-prev-next-full || true
+            # Prune Next.js static archive: keep only the 3 most recent snapshots
+            ARCHIVE_ROOT="/opt/cheddar-logic/.next-static-archive"
+            if [ -d "$ARCHIVE_ROOT" ]; then
+              ARCHIVE_COUNT=$(find "$ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d | wc -l)
+              if [ "$ARCHIVE_COUNT" -gt 3 ]; then
+                PRUNE=$(( ARCHIVE_COUNT - 3 ))
+                find "$ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d | sort | head -n "$PRUNE" | xargs rm -rf
+                echo "Pruned $PRUNE old static archive snapshot(s)"
+              fi
+            fi
+            # Clear npm cache to reclaim space from partial/failed installs
+            npm cache clean --force 2>/dev/null || true
+            # Trim systemd journal to 50 MB
+            sudo journalctl --vacuum-size=50M 2>/dev/null || true
+            # Remove apt cache
+            sudo apt-get clean 2>/dev/null || true
+            AVAIL_KB_AFTER=$(df /opt --output=avail | tail -1)
+            echo "Disk available after cleanup: ${AVAIL_KB_AFTER}KB"
+            if [ "$AVAIL_KB_AFTER" -lt 524288 ]; then
+              echo "ERROR: Less than 512 MB free after cleanup (${AVAIL_KB_AFTER}KB) — aborting to prevent partial install"
+              exit 1
+            fi
+            # ───────────────────────────────────────────────────────────────────
             # Clean node_modules to avoid corrupted tar state from stale backups
             rm -rf packages/*/node_modules apps/*/node_modules web/node_modules
             # Install dependencies
