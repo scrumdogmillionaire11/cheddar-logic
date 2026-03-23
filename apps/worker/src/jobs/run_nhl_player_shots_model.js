@@ -1280,6 +1280,9 @@ async function runNHLPlayerShotsModel() {
               market_line: marketLine,
               market_price_over: overPrice,
               market_price_under: underPrice,
+              // WI-0575: derive play direction so opportunity_score uses correct side.
+              // classifyEdge is deterministic; this matches fullGameEdge.direction computed later.
+              play_direction: classifyEdge(mu, marketLine, 0.75).direction,
             });
 
             if (!isOddsBacked) {
