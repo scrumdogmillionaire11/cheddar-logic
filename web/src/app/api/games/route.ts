@@ -530,6 +530,7 @@ const WAVE1_MARKETS = new Set<MarketType>([
   'PUCKLINE',
   'TEAM_TOTAL',
   'FIRST_PERIOD',
+  'PROP',
 ]);
 const COUNTER_ALL_MARKET = 'ALL';
 const UNKNOWN_SPORT = 'UNKNOWN';
