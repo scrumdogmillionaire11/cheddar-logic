@@ -1033,6 +1033,55 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.prop_decision.lean_side).toBe('UNDER');
   });
 
+  test('WI-0577: legacy HOT over seed cannot leak FIRE when priced over edge is non-playable', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.calcMu.mockReturnValue(3.2);
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.2,
+      sog_sigma: 1.84,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.06,
+      fair_over_prob_by_line: { '2.5': 0.51 },
+      fair_under_prob_by_line: { '2.5': 0.49 },
+      fair_price_over_by_line: { '2.5': -104 },
+      fair_price_under_by_line: { '2.5': 104 },
+      market_line: 2.5,
+      market_price_over: -125,
+      market_price_under: 130,
+      implied_over_prob: 0.5556,
+      implied_under_prob: 0.4348,
+      edge_over_pp: -0.0456,
+      edge_under_pp: 0.0552,
+      ev_over: -0.07,
+      ev_under: 0.06,
+      opportunity_score: 0.08,
+      flags: [],
+    });
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -125, under_price: 130 });
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi-0577-veto-01' })],
+      players: [buildPlayer({ player_id: 9915, player_name: 'Veto Proof Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.verdict).toBe('NO_PLAY');
+    expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
+    expect(card.payloadData.prop_decision.flags).toContain('PROJECTION_CONFLICT');
+    expect(card.payloadData.play.action).toBe('PASS');
+    expect(card.payloadData.play.status).toBe('PASS');
+    expect(card.payloadData.play.decision_v2.official_status).toBe('PASS');
+    expect(card.payloadData.decision_v2.official_status).toBe('PASS');
+  });
+
   test('decision-first contract: projection-conflict priced side is hard-blocked to NO_PLAY', async () => {
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 0.9 });
@@ -1082,6 +1131,55 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.prop_decision.ev).toBeCloseTo(0.01, 4);
     expect(card.payloadData.prop_decision.why).toMatch(/projection conflict/i);
     expect(card.payloadData.play.action).toBe('PASS');
+  });
+
+  test('WI-0577: explicit projection conflict keeps canonical PASS fields aligned', async () => {
+    const { mod, data, shots } = loadFreshModule();
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 0.9 });
+    shots.calcMu.mockReturnValue(3.4);
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.4,
+      sog_sigma: 1.84,
+      toi_proj: 20,
+      shot_rate_ev_per60: 9.6,
+      shot_rate_pp_per60: 0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.06,
+      fair_over_prob_by_line: { '2.5': 0.62 },
+      fair_under_prob_by_line: { '2.5': 0.38 },
+      fair_price_over_by_line: { '2.5': -163 },
+      fair_price_under_by_line: { '2.5': 163 },
+      market_line: 2.5,
+      market_price_over: -105,
+      market_price_under: 140,
+      implied_over_prob: 0.5122,
+      implied_under_prob: 0.4167,
+      edge_over_pp: 0.01,
+      edge_under_pp: 0.072,
+      ev_over: 0.01,
+      ev_under: 0.08,
+      opportunity_score: 0.09,
+      flags: [],
+    });
+    data.getPlayerPropLine.mockReturnValue({ line: 2.5, over_price: -105, under_price: 140 });
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi-0577-conflict-01' })],
+      players: [buildPlayer({ player_id: 9916, player_name: 'Conflict Proof Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.verdict).toBe('NO_PLAY');
+    expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
+    expect(card.payloadData.prop_decision.flags).toContain('PROJECTION_CONFLICT');
+    expect(card.payloadData.play.action).toBe('PASS');
+    expect(card.payloadData.play.status).toBe('PASS');
+    expect(card.payloadData.play.decision_v2.official_status).toBe('PASS');
+    expect(card.payloadData.decision_v2.official_status).toBe('PASS');
   });
 
   test('decision-first contract: priced market-efficient card becomes NO_PLAY', async () => {
