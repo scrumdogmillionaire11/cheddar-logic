@@ -89,7 +89,7 @@ async function fetchPitcherRecentStats(pitcherId) {
 
   const last5 = splits.slice(-5);
   if (last5.length === 0) {
-    return { recent_k_per_9: null, recent_ip: null };
+    return { recent_k_per_9: null, recent_ip: null, allSplits: splits };
   }
 
   let totalK = 0;
@@ -107,13 +107,75 @@ async function fetchPitcherRecentStats(pitcherId) {
   }
 
   if (validStarts === 0 || totalIp === 0) {
-    return { recent_k_per_9: null, recent_ip: null };
+    return { recent_k_per_9: null, recent_ip: null, allSplits: splits };
   }
 
   return {
     recent_k_per_9: (totalK / totalIp) * 9,
     recent_ip: totalIp / validStarts,
+    allSplits: splits,
   };
+}
+
+function ensureGameLogsTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mlb_pitcher_game_logs (
+      id              TEXT PRIMARY KEY,
+      mlb_pitcher_id  INTEGER NOT NULL,
+      game_pk         INTEGER NOT NULL,
+      game_date       TEXT NOT NULL,
+      season          INTEGER NOT NULL,
+      innings_pitched REAL,
+      strikeouts      INTEGER,
+      walks           INTEGER,
+      hits            INTEGER,
+      earned_runs     INTEGER,
+      opponent        TEXT,
+      home_away       TEXT,
+      updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (mlb_pitcher_id, game_pk)
+    );
+    CREATE INDEX IF NOT EXISTS idx_mlb_pitcher_game_logs_pitcher_date
+      ON mlb_pitcher_game_logs (mlb_pitcher_id, game_date);
+  `);
+}
+
+function upsertGameLogs(db, mlbPitcherId, splits, season) {
+  ensureGameLogsTable(db);
+  const stmt = db.prepare(`
+    INSERT INTO mlb_pitcher_game_logs
+      (id, mlb_pitcher_id, game_pk, game_date, season,
+       innings_pitched, strikeouts, walks, hits, earned_runs, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(mlb_pitcher_id, game_pk) DO UPDATE SET
+      innings_pitched = excluded.innings_pitched,
+      strikeouts = excluded.strikeouts,
+      walks = excluded.walks,
+      hits = excluded.hits,
+      earned_runs = excluded.earned_runs,
+      updated_at = datetime('now')
+  `);
+  let count = 0;
+  for (const split of splits) {
+    const gamePk = split?.game?.gamePk;
+    const gameDate = split?.date;
+    if (!gamePk || !gameDate) continue;
+    const stat = split?.stat ?? {};
+    stmt.run(
+      uuidV4(),
+      mlbPitcherId,
+      gamePk,
+      gameDate,
+      season,
+      parseFloat(stat.inningsPitched) || null,
+      parseInt(stat.strikeOuts, 10) || null,
+      parseInt(stat.baseOnBalls, 10) || null,
+      parseInt(stat.hits, 10) || null,
+      parseInt(stat.earnedRuns, 10) || null,
+    );
+    count += 1;
+  }
+  return count;
 }
 
 async function fetchPitcherInfo(pitcherId) {
@@ -144,6 +206,7 @@ async function fetchAllPitcherData(pitcherId) {
     innings_pitched: seasonStats.innings_pitched,
     recent_k_per_9: recentStats.recent_k_per_9,
     recent_ip: recentStats.recent_ip,
+    allSplits: recentStats.allSplits ?? [],
   };
 }
 
@@ -270,14 +333,23 @@ async function pullMlbPitcherStats({
       const db = getDatabase();
       const upserted = upsertPitcherRows(db, validRows);
 
+      // Also store raw per-start game logs for walk-forward backtesting
+      let gameLogsCount = 0;
+      for (const row of validRows) {
+        if (row.allSplits && row.allSplits.length > 0) {
+          gameLogsCount += upsertGameLogs(db, row.mlb_id, row.allSplits, row.season);
+        }
+      }
+
       markJobRunSuccess(jobRunId, {
         date,
         pitcherCount: pitcherIds.length,
         upserted,
+        gameLogsCount,
       });
 
       console.log(
-        `[${JOB_NAME}] date=${date} pitcherCount=${pitcherIds.length} upserted=${upserted}`,
+        `[${JOB_NAME}] date=${date} pitcherCount=${pitcherIds.length} upserted=${upserted} gameLogs=${gameLogsCount}`,
       );
 
       return {
@@ -335,6 +407,8 @@ module.exports = {
   fetchAllPitcherData,
   ensurePitcherStatsTable,
   upsertPitcherRows,
+  ensureGameLogsTable,
+  upsertGameLogs,
   parseCliArgs,
   pullMlbPitcherStats,
 };
