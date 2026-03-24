@@ -17,7 +17,7 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-23
-- Next action for operators/agents: Hostile audit (WI-0572) complete — 2 CRITICAL + 4 HIGH defects found in live decision pipeline. NHL props pipeline audit (2026-03-23) added 5 CRITICAL + 4 HIGH + 3 MEDIUM findings (WI-0573–WI-0584). **Start with WI-0573** (negative American price display broken in `/api/games`) — that is broken in prod right now.
+- Next action for operators/agents: All Tier 0b CRITICALs (WI-0573–WI-0577) resolved. Next: WI-0579 (1P independent V2 run, HIGH) → WI-0581 (edge_delta_pct rename, HIGH) → WI-0582/0583/0584 (MEDIUM).
 
 ---
 
@@ -70,11 +70,11 @@ This file is intentionally minimal to avoid stale status drift.
 
 | Priority | WI | Finding | Severity | Target file(s) |
 |---|---|---|---|---|
-| 1 | [WI-0573](../WORK_QUEUE/WI-0573.md) | Negative American prices (`−110`, `−115`) passed to `decimalToAmerican()` — `> 10` check must be `Math.abs() > 10`; every prop price on display is currently wrong | **CRITICAL** | `web/src/app/api/games/route.ts` |
-| 2 | [WI-0574](../WORK_QUEUE/WI-0574.md) | `selection.price` hardcoded to `−110` in full-game + 1P card payloads; real `over_price`/`under_price` from Odds API are stored but never wired to the canonical price field | **CRITICAL** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
-| 3 | [WI-0575](../WORK_QUEUE/WI-0575.md) | `opportunity_score` is always computed for the OVER direction regardless of V1 play direction; an UNDER call shows a positive OVER opportunity_score, contradicting the bet | **CRITICAL** | `apps/worker/src/models/nhl-player-shots.js` |
-| 4 | [WI-0576](../WORK_QUEUE/WI-0576.md) | `NHL_SOG_PROP_EVENTS_ENABLED` defaults false — real Odds API lines are never ingested unless explicitly set; all cards run on synthetic `2.5` floor line silently | **CRITICAL** | `apps/worker/src/jobs/pull_nhl_player_shots_props.js`, `.env` |
-| 5 | [WI-0577](../WORK_QUEUE/WI-0577.md) | V1 drives bet decision; V2 Poisson edge is computed but never gates FIRE — V1 can emit a PLAY while V2's `edge_over_pp` is negative; add V2 veto gate for FIRE on odds-backed cards | **CRITICAL** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 1 | ~~[WI-0573](../WORK_QUEUE/COMPLETE/WI-0573.md)~~ ✓ | Negative American prices (`−110`, `−115`) passed to `decimalToAmerican()` — `> 10` check must be `Math.abs() > 10`; every prop price on display is currently wrong | **CRITICAL** | ✓ DONE (qt-69) |
+| 2 | ~~[WI-0574](../WORK_QUEUE/COMPLETE/WI-0574.md)~~ ✓ | `selection.price` hardcoded to `−110` in full-game + 1P card payloads; real `over_price`/`under_price` from Odds API are stored but never wired to the canonical price field | **CRITICAL** | ✓ DONE (qt-70) |
+| 3 | ~~[WI-0575](../WORK_QUEUE/COMPLETE/WI-0575.md)~~ ✓ | `opportunity_score` is always computed for the OVER direction regardless of V1 play direction; an UNDER call shows a positive OVER opportunity_score, contradicting the bet | **CRITICAL** | ✓ DONE (qt-71) |
+| 4 | ~~[WI-0576](../WORK_QUEUE/COMPLETE/WI-0576.md)~~ ✓ | `NHL_SOG_PROP_EVENTS_ENABLED` defaults false — real Odds API lines are never ingested unless explicitly set; all cards run on synthetic `2.5` floor line silently | **CRITICAL** | ✓ DONE (qt-72) |
+| 5 | ~~[WI-0577](../WORK_QUEUE/COMPLETE/WI-0577.md)~~ ✓ | V1 drives bet decision; V2 Poisson edge is computed but never gates FIRE — V1 can emit a PLAY while V2's `edge_over_pp` is negative; add V2 veto gate for FIRE on odds-backed cards | **CRITICAL** | ✓ DONE (qt-75) |
 | 6 | ~~[WI-0578](../WORK_QUEUE/WI-0578.md)~~ ✓ | `PP_RATE_MISSING` flag set but PP component silently collapses to 0 for top PP players; under-projects by 0.3–0.5 SOG for players with non-zero `ppToi` | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
 | 7 | [WI-0579](../WORK_QUEUE/WI-0579.md) | 1P cards don't run `projectSogV2` independently; full-game `v2AnomalyDetected` reused against 1P mu | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
 | 8 | ~~[WI-0580](../WORK_QUEUE/COMPLETE/WI-0580.md)~~ ✓ | PROP cards not wave-1 eligible — V1 wins unconditionally; V2 `official_status` never overrides | **HIGH** | `web/src/app/api/games/route.ts` |
@@ -177,4 +177,4 @@ This file is intentionally minimal to avoid stale status drift.
 | 74 | WI-0575 Direction-aware opportunity_score — closure session; fix confirmed live from quick-71 (no code changes) | 2026-03-23 | c516c07 | [74-wi-0575-fix-opportunity-score-direction-](./quick/74-wi-0575-fix-opportunity-score-direction-/) |
 | 75 | WI-0577 Guard 3 full-game V2 Poisson veto: FIRE→WATCH when edge_<dir>_pp < 0 on odds-backed cards; mirrors 1P Guard 3 with [v2-veto-full] log tag | 2026-03-23 | 556d1cc | [75-wi-0577-fix-v2-poisson-edge-never-gates-](./quick/75-wi-0577-fix-v2-poisson-edge-never-gates-/) |
 
-Last activity: 2026-03-23 - WI-0577 Guard 3 full-game V2 Poisson veto added via quick-75. Next: WI-0581 (edge_delta_pct rename, HIGH) → WI-0582/0583/0584 (MEDIUM).
+Last activity: 2026-03-23 - All Tier 0b CRITICALs resolved (WI-0573/0574/0575/0576/0577). Next: WI-0579 (1P independent V2 run, HIGH) → WI-0581 (edge_delta_pct rename, HIGH) → WI-0582/0583/0584 (MEDIUM).
