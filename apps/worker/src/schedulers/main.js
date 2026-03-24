@@ -56,6 +56,8 @@ const {
 } = require('../jobs/refresh_team_metrics_daily');
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availability');
+const { pullNhlPlayerShotsProps } = require('../jobs/pull_nhl_player_shots_props');
+const { runNHLPlayerShotsModel } = require('../jobs/run_nhl_player_shots_model');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
 
 // Timezone for fixed-time windows
@@ -79,6 +81,8 @@ const ENABLE_NHL_SOG_PLAYER_SYNC =
   process.env.ENABLE_NHL_SOG_PLAYER_SYNC !== 'false';
 const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC =
   process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC !== 'false';
+const ENABLE_NHL_SOG_PROP_PULL =
+  process.env.ENABLE_NHL_SOG_PROP_PULL !== 'false';
 const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
   process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
 );
@@ -449,6 +453,26 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   let ncaamFtRefreshQueued = false;
   let teamMetricsRefreshQueued = false;
 
+  function queueNhlShotsPropIngestBeforeModel(modelJobKey, reason) {
+    if (!ENABLE_NHL_SOG_PROP_PULL) return;
+    const propPullJobKey = `nhl_sog_props|${modelJobKey}`;
+    jobs.push({
+      jobName: 'pull_nhl_player_shots_props',
+      jobKey: propPullJobKey,
+      execute: pullNhlPlayerShotsProps,
+      args: { jobKey: propPullJobKey, dryRun },
+      reason: `pre-shots-model NHL SOG prop ingest (${reason})`,
+    });
+    const shotsModelJobKey = `nhl_sog_model|${modelJobKey}`;
+    jobs.push({
+      jobName: 'run_nhl_player_shots_model',
+      jobKey: shotsModelJobKey,
+      execute: runNHLPlayerShotsModel,
+      args: { jobKey: shotsModelJobKey, dryRun },
+      reason: `NHL player shots model (${reason})`,
+    });
+  }
+
   function queueSoccerPropIngestBeforeModel(modelJobKey, reason) {
     const xgJobKey = `soccer_xg|${modelJobKey}`;
     jobs.push({
@@ -656,6 +680,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       if (sport === 'soccer') {
         queueSoccerPropIngestBeforeModel(jobKey, `fixed ${t} ET`);
       }
+      if (sport === 'nhl') {
+        queueNhlShotsPropIngestBeforeModel(jobKey, `fixed ${t} ET`);
+      }
       jobs.push({
         jobName,
         jobKey,
@@ -684,6 +711,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       const jobKey = keyTminus(sport, g.game_id, mins);
       if (sport === 'soccer') {
         queueSoccerPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
+      }
+      if (sport === 'nhl') {
+        queueNhlShotsPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
       }
       // For projection-model sports, force a fresh odds pull immediately before the model
       // so T-minus runs always see the current line (not up-to-29-min-stale hourly snapshot).
@@ -955,6 +985,9 @@ async function start() {
   );
   console.log(
     `  ENABLE_NHL_PLAYER_AVAILABILITY_SYNC: ${ENABLE_NHL_PLAYER_AVAILABILITY_SYNC ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  ENABLE_NHL_SOG_PROP_PULL: ${ENABLE_NHL_SOG_PROP_PULL ? 'true' : 'false'}`,
   );
   console.log(
     `  NCAAM_FT_REFRESH_MAX_AGE_MINUTES: ${NCAAM_FT_REFRESH_MAX_AGE_MINUTES}`,
