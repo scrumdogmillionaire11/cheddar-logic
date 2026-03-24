@@ -2118,46 +2118,10 @@ function computeNCAAMDriverCards(_gameId, oddsSnapshot) {
     }
   }
 
-  // --- Matchup Style Driver (Elite O vs Weak D) ---
-  if (avgPtsHome && avgPtsAllowedAway && avgPtsAway && avgPtsAllowedHome) {
-    let prediction = 'NEUTRAL';
-    let confidence = 0.55;
-    let reasoning = 'Balanced matchup';
-
-    const homeEfficiency = avgPtsHome - avgPtsAllowedHome;
-    const awayEfficiency = avgPtsAway - avgPtsAllowedAway;
-    const efficiencyGap = homeEfficiency - awayEfficiency;
-
-    if (Math.abs(efficiencyGap) >= 5) {
-      confidence = clamp(0.65 + Math.abs(efficiencyGap) * 0.04, 0.6, 0.78);
-      prediction = efficiencyGap > 0 ? 'HOME' : 'AWAY';
-      reasoning = `Efficiency gap: ${prediction} has +${Math.abs(efficiencyGap).toFixed(1)} net rating`;
-    }
-
-    if (prediction !== 'NEUTRAL' && confidence > 0.6) {
-      descriptors.push({
-        cardType: 'ncaam-matchup-style',
-        cardTitle: `NCAAM Matchup: ${prediction}`,
-        confidence,
-        tier: determineTier(confidence),
-        prediction,
-        reasoning,
-        ev_threshold_passed: true,
-        driverKey: 'matchupStyle',
-        driverInputs: {
-          home_offensive_rating: avgPtsHome,
-          home_defensive_rating: avgPtsAllowedHome,
-          away_offensive_rating: avgPtsAway,
-          away_defensive_rating: avgPtsAllowedAway,
-          efficiency_gap: efficiencyGap,
-        },
-        driverScore: prediction === 'HOME' ? 0.7 : 0.3,
-        driverStatus: 'ok',
-        inference_source: 'driver',
-        is_mock: false,
-      });
-    }
-  }
+  // --- Matchup Style Driver (SUPPRESSED) ---
+  // ncaam-matchup-style produced a 0-5 record in production. The driver block is removed
+  // so no actionable card can be generated. NCAAM_DRIVER_WEIGHTS.matchupStyle is retained
+  // in run_ncaam_model.js for backward compatibility with persisted payloads only.
 
   // --- Free Throw Spread Driver (rule-based) ---
   if (
