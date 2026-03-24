@@ -195,9 +195,15 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
   const homePitcher = mlb.home_pitcher ?? null;
   const awayPitcher = mlb.away_pitcher ?? null;
 
+  // Extract weather overlays from raw_data.mlb (populated by enrichMlbPitcherData)
+  const weatherOverlays = {
+    wind_mph: mlb.wind_mph ?? null,
+    temp_f: mlb.temp_f ?? null,
+  };
+
   // Strikeout card — home pitcher
   if (homePitcher && mlb.strikeout_lines?.home != null) {
-    const result = projectStrikeouts(homePitcher, mlb.strikeout_lines.home);
+    const result = projectStrikeouts(homePitcher, mlb.strikeout_lines.home, weatherOverlays);
     if (result) {
       cards.push({
         market: 'strikeouts_home',
@@ -213,7 +219,7 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
 
   // Strikeout card — away pitcher
   if (awayPitcher && mlb.strikeout_lines?.away != null) {
-    const result = projectStrikeouts(awayPitcher, mlb.strikeout_lines.away);
+    const result = projectStrikeouts(awayPitcher, mlb.strikeout_lines.away, weatherOverlays);
     if (result) {
       cards.push({
         market: 'strikeouts_away',

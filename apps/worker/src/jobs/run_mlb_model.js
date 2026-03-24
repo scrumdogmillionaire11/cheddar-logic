@@ -178,6 +178,21 @@ function enrichMlbPitcherData(oddsSnapshot) {
     // Strikeout lines come from player_prop_lines table — out of scope for this WI.
     // Leave strikeout_lines as-is (from existing raw_data or null).
 
+    // Look up weather for this game by (game_date, home_team)
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const weatherRow = db.prepare(
+        'SELECT temp_f, wind_mph, wind_dir, conditions FROM mlb_game_weather WHERE game_date = ? AND home_team = ? LIMIT 1',
+      ).get(today, homeTeam);
+
+      if (weatherRow && weatherRow.conditions !== 'INDOOR') {
+        mlb.temp_f = weatherRow.temp_f ?? mlb.temp_f ?? null;
+        mlb.wind_mph = weatherRow.wind_mph ?? mlb.wind_mph ?? null;
+      }
+    } catch (weatherErr) {
+      // Non-fatal — model uses neutral defaults
+    }
+
     return {
       ...oddsSnapshot,
       raw_data: {
