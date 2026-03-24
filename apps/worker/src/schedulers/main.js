@@ -41,6 +41,7 @@ const { runNBAModel } = require('../jobs/run_nba_model');
 const { runFPLModel } = require('../jobs/run_fpl_model');
 const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
+const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
 const { runSoccerModel } = require('../jobs/run_soccer_model');
 const { pullSoccerPlayerProps } = require('../jobs/pull_soccer_player_props');
 const { pullSoccerXgStats } = require('../jobs/pull_soccer_xg_stats');
@@ -493,6 +494,17 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
+  function queueMlbPitcherStatsBeforeModel(modelJobKey, reason) {
+    const pitcherJobKey = `mlb_pitcher_stats|${modelJobKey}`;
+    jobs.push({
+      jobName: 'pull_mlb_pitcher_stats',
+      jobKey: pitcherJobKey,
+      execute: pullMlbPitcherStats,
+      args: { jobKey: pitcherJobKey, dryRun },
+      reason: `pre-model MLB pitcher stats refresh (${reason})`,
+    });
+  }
+
   function maybeQueueNcaamFtRefresh(triggerReason) {
     if (!ENABLE_NCAAM_FT_REFRESH) return;
     if (ncaamFtRefreshQueued) return;
@@ -714,6 +726,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       }
       if (sport === 'nhl') {
         queueNhlShotsPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
+      }
+      if (sport === 'mlb') {
+        queueMlbPitcherStatsBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
       }
       // For projection-model sports, force a fresh odds pull immediately before the model
       // so T-minus runs always see the current line (not up-to-29-min-stale hourly snapshot).
