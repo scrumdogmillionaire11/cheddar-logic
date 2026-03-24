@@ -82,6 +82,8 @@ Proposed execution branches (when each WI starts):
 - `WI-0535`: (dependency of WI-0536/0537 — see governance notes)
 - `WI-0536`: Canonical edge contract + unit normalization
 - `WI-0537`: FIRST_PERIOD policy centralization in canonical decision layer
+- `WI-0572`: Hostile audit — betting decision pipeline (10 findings, all addressed)
+- `WI-0587`: Remove ncaam-matchup-style as actionable betting source
 
 ## Rules
 
