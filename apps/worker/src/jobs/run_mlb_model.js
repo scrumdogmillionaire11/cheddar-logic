@@ -20,6 +20,7 @@ const { v4: uuidV4 } = require('uuid');
 
 // Import cheddar-logic data layer
 const {
+  getDatabase,
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
@@ -140,6 +141,77 @@ function generateMLBCard(gameId, modelOutput, oddsSnapshot) {
 }
 
 /**
+ * Enrich an odds snapshot with pitcher stats from the mlb_pitcher_stats table.
+ *
+ * Queries by team name for rows updated today. Falls back gracefully when no
+ * rows are found (returns original oddsSnapshot unchanged).
+ *
+ * Also attaches market lines (total, f5) from the snapshot into raw_data.mlb
+ * so computeMLBDriverCards can read them without needing the top-level fields.
+ *
+ * @param {object} oddsSnapshot
+ * @returns {object} Enriched snapshot (or original if DB unavailable / no data)
+ */
+function enrichMlbPitcherData(oddsSnapshot) {
+  const homeTeam = oddsSnapshot?.home_team ?? '';
+  const awayTeam = oddsSnapshot?.away_team ?? '';
+
+  try {
+    const db = getDatabase();
+    const byTeam = db.prepare(
+      "SELECT * FROM mlb_pitcher_stats WHERE team = ? AND date(updated_at) = date('now') LIMIT 1",
+    );
+
+    const homePitcher = homeTeam ? (byTeam.get(homeTeam) ?? null) : null;
+    const awayPitcher = awayTeam ? (byTeam.get(awayTeam) ?? null) : null;
+
+    const existingRaw =
+      typeof oddsSnapshot.raw_data === 'string'
+        ? JSON.parse(oddsSnapshot.raw_data)
+        : (oddsSnapshot.raw_data ?? {});
+
+    const mlb = existingRaw.mlb ?? {};
+
+    // Attach market lines from odds snapshot to raw_data.mlb
+    mlb.total_line = oddsSnapshot.total ?? mlb.total_line ?? null;
+    mlb.f5_line = oddsSnapshot.total_f5 ?? mlb.f5_line ?? null;
+    // Strikeout lines come from player_prop_lines table — out of scope for this WI.
+    // Leave strikeout_lines as-is (from existing raw_data or null).
+
+    return {
+      ...oddsSnapshot,
+      raw_data: {
+        ...existingRaw,
+        mlb: {
+          ...mlb,
+          home_pitcher: homePitcher
+            ? {
+                era: homePitcher.era,
+                whip: homePitcher.whip,
+                k_per_9: homePitcher.k_per_9,
+                recent_k_per_9: homePitcher.recent_k_per_9,
+                avg_ip: homePitcher.recent_ip,
+              }
+            : mlb.home_pitcher ?? null,
+          away_pitcher: awayPitcher
+            ? {
+                era: awayPitcher.era,
+                whip: awayPitcher.whip,
+                k_per_9: awayPitcher.k_per_9,
+                recent_k_per_9: awayPitcher.recent_k_per_9,
+                avg_ip: awayPitcher.recent_ip,
+              }
+            : mlb.away_pitcher ?? null,
+        },
+      },
+    };
+  } catch (err) {
+    console.warn(`[MLBModel] Pitcher enrichment failed: ${err.message}`);
+    return oddsSnapshot; // proceed without enrichment
+  }
+}
+
+/**
  * Main job entrypoint
  * @param {object} options - Job options
  * @param {string|null} options.jobKey - Optional deterministic window key for idempotency
@@ -218,7 +290,8 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
       // Process each game
       for (const gameId of gameIds) {
         try {
-          const oddsSnapshot = gameOdds[gameId];
+          let oddsSnapshot = gameOdds[gameId];
+          oddsSnapshot = enrichMlbPitcherData(oddsSnapshot);
 
           // Run inference (using pluggable model)
           const modelOutput = await model.infer(gameId, oddsSnapshot);
