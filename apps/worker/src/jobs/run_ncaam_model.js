@@ -30,6 +30,7 @@ const {
   withDb,
   enrichOddsSnapshotWithEspnMetrics,
   updateOddsSnapshotRawData,
+  getDatabase,
 } = require('@cheddar-logic/data');
 const { computeNCAAMDriverCards, generateCard } = require('../models');
 const {
@@ -349,6 +350,14 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
       console.log('[NCAAMModel] Recording job start...');
       insertJobRun('run_ncaam_model', jobRunId, jobKey);
 
+      // WI-0591: Compute empirical sigma from settled game history at job start.
+      // Falls back to hardcoded defaults when fewer than 20 settled games exist.
+      const computedSigma = edgeCalculator.computeSigmaFromHistory({
+        sport: 'NCAAM',
+        db: getDatabase(),
+      });
+      console.log('[run_ncaam_model] sigma:', JSON.stringify(computedSigma));
+
       // Get latest NCAAM odds for upcoming games
       console.log('[NCAAMModel] Fetching odds for upcoming NCAAM games...');
       const { DateTime } = require('luxon');
@@ -535,8 +544,8 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
               card,
               oddsSnapshot,
               options: allowFtTrendOverride
-                ? { criticalOverride: true }
-                : undefined,
+                ? { criticalOverride: true, sigmaOverride: computedSigma }
+                : { sigmaOverride: computedSigma },
             });
             if (decisionOutcome.gated) gatedCount++;
             if (decisionOutcome.gated && !decisionOutcome.allow) {

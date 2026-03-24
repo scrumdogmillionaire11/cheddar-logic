@@ -1101,10 +1101,24 @@ function buildDecisionV2(payload, context = {}) {
     let edge_method = null;
     let edge_line_delta = null;
     let edge_lean = null;
+    // WI-0591: sigma_source exposed in return value for auditability
+    let resolvedSigmaSource = 'fallback';
 
     if (fair_prob === null) {
       const sport = normalizeSport(payload?.sport);
       const sigmaDefaults = edgeCalculator.getSigmaDefaults(sport);
+      // WI-0591: accept pre-computed empirical sigma from the model job.
+      // context.sigmaOverride = { margin, total, sigma_source: 'computed'|'fallback' }
+      const sigmaOverride = context?.sigmaOverride;
+      const resolvedSigmaMargin =
+        sigmaOverride?.margin != null && Number.isFinite(sigmaOverride.margin)
+          ? sigmaOverride.margin
+          : sigmaDefaults.margin;
+      const resolvedSigmaTotal =
+        sigmaOverride?.total != null && Number.isFinite(sigmaOverride.total)
+          ? sigmaOverride.total
+          : sigmaDefaults.total;
+      resolvedSigmaSource = sigmaOverride?.sigma_source ?? 'fallback';
       const oddsCtx = payload?.odds_context;
 
       if (market_type === 'SPREAD' || market_type === 'PUCKLINE') {
@@ -1116,7 +1130,7 @@ function buildDecisionV2(payload, context = {}) {
             spreadLine: spreadLineHome,
             spreadPriceHome: asNumber(oddsCtx?.spread_price_home),
             spreadPriceAway: asNumber(oddsCtx?.spread_price_away),
-            sigmaMargin: sigmaDefaults.margin,
+            sigmaMargin: resolvedSigmaMargin,
             isPredictionHome: direction === 'HOME',
           });
           if (result.p_fair !== null) {
@@ -1149,7 +1163,7 @@ function buildDecisionV2(payload, context = {}) {
               market_type === 'FIRST_PERIOD'
                 ? null
                 : asNumber(oddsCtx?.total_price_under),
-            sigmaTotal: sigmaDefaults.total,
+            sigmaTotal: resolvedSigmaTotal,
             isPredictionOver: direction === 'OVER',
           });
           if (result.p_fair !== null) {
@@ -1324,6 +1338,8 @@ function buildDecisionV2(payload, context = {}) {
       proxy_used,
       proxy_capped,
       exact_wager_valid,
+      // WI-0591: expose which sigma source was used for auditability
+      sigma_source: resolvedSigmaSource ?? 'fallback',
       pricing_trace: {
         market_type,
         market_side: direction !== 'NONE' ? direction : null,

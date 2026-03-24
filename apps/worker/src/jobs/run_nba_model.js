@@ -867,6 +867,9 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             const decisionOutcome = publishDecisionForCard({
               card,
               oddsSnapshot,
+              // WI-0591: thread empirical sigma so decisioning uses computed
+              // values instead of silently falling back to static defaults.
+              options: { sigmaOverride: computedSigma },
             });
             if (decisionOutcome.gated) gatedCount++;
             if (decisionOutcome.gated && !decisionOutcome.allow) {
@@ -914,6 +917,9 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             const decisionOutcome = publishDecisionForCard({
               card,
               oddsSnapshot,
+              // WI-0591: thread empirical sigma so decisioning uses computed
+              // values instead of silently falling back to static defaults.
+              options: { sigmaOverride: computedSigma },
             });
             if (decisionOutcome.gated) gatedCount++;
             if (decisionOutcome.gated && !decisionOutcome.allow) {
