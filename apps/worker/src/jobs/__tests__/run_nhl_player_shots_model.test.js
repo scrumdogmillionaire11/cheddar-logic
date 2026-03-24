@@ -648,6 +648,43 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.drivers.pace_factor).toBeGreaterThan(1.0);
   });
 
+  test('WI-0582: empty team_metrics_cache warns and flags full-game plus 1P cards', async () => {
+    process.env.NHL_SOG_1P_CARDS_ENABLED = 'true';
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi-0582-empty-cache-01' })],
+      players: [buildPlayer({ player_id: 5821, player_name: 'Fallback Flag Player' })],
+      playerLogs: buildGames(5),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    delete process.env.NHL_SOG_1P_CARDS_ENABLED;
+
+    const fullGameCard = getInsertedCardsByType(data, 'nhl-player-shots')[0];
+    const onePCard = getInsertedCardsByType(data, 'nhl-player-shots-1p')[0];
+    const warnings = warnSpy.mock.calls.map(([message]) => String(message)).join('\n');
+
+    expect(warnings).toMatch(/\[opponent-factor-fallback\]/);
+    expect(warnings).toMatch(/\[pace-factor-fallback\]/);
+    expect(warnings).toContain('Fallback Flag Player');
+    expect(warnings).toContain('wi-0582-empty-cache-01');
+
+    expect(fullGameCard.payloadData.decision.v2.flags).toContain('OPPONENT_FACTOR_MISSING');
+    expect(fullGameCard.payloadData.decision.v2.flags).toContain('PACE_FACTOR_MISSING');
+    expect(fullGameCard.payloadData.prop_decision.flags).toContain('OPPONENT_FACTOR_MISSING');
+    expect(fullGameCard.payloadData.prop_decision.flags).toContain('PACE_FACTOR_MISSING');
+
+    expect(onePCard.payloadData.decision.v2.flags).toContain('OPPONENT_FACTOR_MISSING');
+    expect(onePCard.payloadData.decision.v2.flags).toContain('PACE_FACTOR_MISSING');
+
+    warnSpy.mockRestore();
+  });
+
   test('weak-support priced cards now render explicit PROJECTION or NO_PLAY rows instead of being suppressed', async () => {
     const { mod, data, shots } = loadFreshModule();
 
