@@ -1384,6 +1384,10 @@ async function runNHLPlayerShotsModel() {
                 console.log(
                   `[${JOB_NAME}] Purged ${purgedCount} existing card(s) for ${displayName} (${player.player_id}) in game ${resolvedGameId} before recalculation`,
                 );
+              } else {
+                console.warn(
+                  `[${JOB_NAME}] purgePlayerCardsForGame returned 0 rows deleted for ${displayName} (${player.player_id}) in game ${resolvedGameId} — duplicate cards may persist`,
+                );
               }
             } catch (purgeErr) {
               console.warn(

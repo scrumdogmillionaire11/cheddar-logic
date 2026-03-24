@@ -3181,7 +3181,6 @@ export async function GET(request: NextRequest) {
             dedupePropType,
             dedupePeriod,
             dedupeSide,
-            dedupeLine != null ? dedupeLine.toFixed(3) : '',
           ].join('|');
 
           if (seenNhlShotsPlayKeys.has(dedupeKey)) {
@@ -3324,6 +3323,31 @@ export async function GET(request: NextRequest) {
         }
       }
       perf.cardsParseMs = Date.now() - cardsParseStartedAt;
+
+      // WI-0584: Secondary dedup — keep only the most-recent card per (gameId, playerId, propType, side).
+      // The SQL query returns rows newest-first (ORDER BY created_at DESC, id DESC), so the first
+      // occurrence of a tuple is always the newest card.
+      {
+        const seenPropTupleKeys = new Set<string>();
+        for (const [gid, gamePlays] of playsMap) {
+          const dedupedPropPlays = gamePlays.filter((p) => {
+            const isNhlProp =
+              p.cardType === 'nhl-player-shots' ||
+              p.cardType === 'nhl-player-shots-1p' ||
+              p.market_type === 'PROP';
+            if (!isNhlProp) return true;
+            const pid = p.player_id ?? p.player_name ?? 'unknown';
+            const pType = p.market_type ?? 'prop';
+            const side =
+              normalizeSelectionSide(p.selection?.side ?? p.prediction) ?? 'NONE';
+            const tupleKey = `${gid}|${pid}|${pType}|${side}`;
+            if (seenPropTupleKeys.has(tupleKey)) return false;
+            seenPropTupleKeys.add(tupleKey);
+            return true;
+          });
+          playsMap.set(gid, dedupedPropPlays);
+        }
+      }
 
       for (const displayLogRow of displayLogRows) {
         const canonicalGameId =
