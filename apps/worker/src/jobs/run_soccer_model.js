@@ -1902,6 +1902,15 @@ function buildSoccerTier1CardFromPropLine(gameId, oddsSnapshot, propLineRow) {
       available: true,
       missing_fields: [],
     },
+    // Soccer is not in WAVE1_SPORTS so applyUiActionFields falls through to
+    // deriveAction({tier}) which always returns 'PASS' when tier is unset.
+    // Set action/status/classification directly here since we have a real
+    // market line + priced outcome (market_line_observed, no model projection).
+    // Use HOLD/WATCH tier rather than FIRE to signal market-line-only basis.
+    action: 'HOLD',
+    status: 'WATCH',
+    classification: 'LEAN',
+    tier: 'WATCH',
   };
 
   return {
