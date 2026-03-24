@@ -4,6 +4,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   hasRunningJobRun,
+  hasRunningJobName,
   hasSuccessfulJobRun,
   runMigrations,
 } = require('@cheddar-logic/data');
@@ -67,6 +68,22 @@ describe('job run claim guard', () => {
     // Now it's no longer running (but is successful)
     expect(hasRunningJobRun(jobKey)).toBe(false);
     expect(hasSuccessfulJobRun(jobKey)).toBe(true);
+  });
+
+  test('hasRunningJobName detects running settlement across window-scoped keys', () => {
+    const jobId = `settlement-running-${Date.now()}`;
+    const hourlyKey = 'settle|hourly|2026-03-24|01|game-results';
+
+    expect(hasRunningJobName('settle_game_results')).toBe(false);
+
+    insertJobRun('settle_game_results', jobId, hourlyKey);
+
+    expect(hasRunningJobName('settle_game_results')).toBe(true);
+    expect(hasRunningJobName('settle_pending_cards')).toBe(false);
+
+    markJobRunSuccess(jobId);
+
+    expect(hasRunningJobName('settle_game_results')).toBe(false);
   });
 
   test('singleton settlement keys prevent concurrent execution', () => {

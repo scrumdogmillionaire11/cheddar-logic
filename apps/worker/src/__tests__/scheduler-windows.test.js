@@ -198,9 +198,24 @@ async function runSchedulerWindowTests() {
       );
     }
 
+    // Test 7: Settlement windows remain recurring across hours/days
+    console.log('🧪 Test 7: Settlement windows are isolated by sweep key');
+    const settleHourOne = 'settle|hourly|2026-03-23|01|game-results';
+    const settleHourTwo = 'settle|hourly|2026-03-23|02|game-results';
+    const settleNextDay = 'settle|nightly|2026-03-24|game-results';
+    const settlementRunId = `job-test-settlement-${Date.now()}`;
+
+    insertJobRun('settle_game_results', settlementRunId, settleHourOne);
+    markJobRunSuccess(settlementRunId);
+    expect(shouldRunJobKey(settleHourOne)).toBe(false);
+    expect(shouldRunJobKey(settleHourTwo)).toBe(true);
+    expect(shouldRunJobKey(settleNextDay)).toBe(true);
+    console.log('   ✅ PASS: One successful sweep key does not block later sweeps\n');
+
     // Cleanup
     console.log('🧹 Cleaning up test data...');
     db.prepare(`DELETE FROM job_runs WHERE job_key LIKE '%test-game-%'`).run();
+    db.prepare(`DELETE FROM job_runs WHERE job_key LIKE 'settle|%'`).run();
     console.log('✓ Cleaned\n');
 
     console.log('✅ All scheduler window tests passed!\n');
@@ -239,17 +254,22 @@ if (require.main === module) {
 }
 
 function loadSchedulerModuleForDiscord() {
+  return loadSchedulerModule();
+}
+
+function loadSchedulerModule(dataOverrides = {}) {
   jest.resetModules();
 
   jest.doMock('@cheddar-logic/data', () => ({
     initDb: jest.fn(),
     getUpcomingGames: jest.fn(() => []),
     shouldRunJobKey: jest.fn(() => true),
-    hasRunningJobRun: jest.fn(() => false),
+    hasRunningJobName: jest.fn(() => false),
     wasJobRecentlySuccessful: jest.fn((jobName) => {
       if (jobName === 'pull_odds_hourly') return true;
       return false;
     }),
+    ...dataOverrides,
   }));
 
   jest.doMock('../jobs/pull_odds_hourly', () => ({ pullOddsHourly: jest.fn() }));
@@ -342,5 +362,145 @@ describe('scheduler Discord webhook windows', () => {
 
     const discordJob = dueJobs.find((job) => job.jobName === 'post_discord_cards');
     expect(discordJob).toBeUndefined();
+  });
+});
+
+describe('scheduler settlement windows', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env = { ...originalEnv };
+    process.env.ENABLE_ODDS_PULL = 'false';
+    process.env.ENABLE_SETTLEMENT = 'true';
+    process.env.ENABLE_HOURLY_SETTLEMENT_SWEEP = 'true';
+    process.env.ENABLE_NHL_MODEL = 'false';
+    process.env.ENABLE_NBA_MODEL = 'false';
+    process.env.ENABLE_NCAAM_MODEL = 'false';
+    process.env.ENABLE_SOCCER_MODEL = 'false';
+    process.env.ENABLE_FPL_MODEL = 'false';
+    process.env.ENABLE_NFL_MODEL = 'false';
+    process.env.ENABLE_MLB_MODEL = 'false';
+    process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC = 'false';
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'false';
+    process.env.FIXED_CATCHUP = 'false';
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  test('queues hourly settlement with hour-scoped keys', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-24T01:02:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: [],
+      dryRun: true,
+    });
+
+    expect(dueJobs.some((job) => job.jobName === 'sync_game_statuses')).toBe(true);
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'settle_game_results' &&
+          job.jobKey === 'settle|hourly|2026-03-24|01|game-results',
+      ),
+    ).toBe(true);
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'settle_pending_cards' &&
+          job.jobKey === 'settle|hourly|2026-03-24|01|pending-cards',
+      ),
+    ).toBe(true);
+  });
+
+  test('02:00 ET nightly sweep owns settlement keys', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-24T02:02:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: [],
+      dryRun: true,
+    });
+
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'backfill_card_results' &&
+          job.jobKey === 'settle|backfill-card-results|2026-03-24',
+      ),
+    ).toBe(true);
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'settle_game_results' &&
+          job.jobKey === 'settle|nightly|2026-03-24|game-results',
+      ),
+    ).toBe(true);
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'settle_pending_cards' &&
+          job.jobKey === 'settle|nightly|2026-03-24|pending-cards',
+      ),
+    ).toBe(true);
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'settle_game_results' &&
+          job.jobKey === 'settle|hourly|2026-03-24|02|game-results',
+      ),
+    ).toBe(false);
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'settle_pending_cards' &&
+          job.jobKey === 'settle|hourly|2026-03-24|02|pending-cards',
+      ),
+    ).toBe(false);
+  });
+
+  test('running settlement job suppresses new enqueue across window keys', () => {
+    const scheduler = loadSchedulerModule({
+      hasRunningJobName: jest.fn((jobName) => jobName === 'settle_game_results'),
+    });
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-24T03:02:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: [],
+      dryRun: true,
+    });
+
+    expect(dueJobs.some((job) => job.jobName === 'settle_game_results')).toBe(false);
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'settle_pending_cards' &&
+          job.jobKey === 'settle|hourly|2026-03-24|03|pending-cards',
+      ),
+    ).toBe(true);
   });
 });
