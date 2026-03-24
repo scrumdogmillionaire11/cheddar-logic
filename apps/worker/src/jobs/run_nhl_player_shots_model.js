@@ -2062,6 +2062,32 @@ async function runNHLPlayerShotsModel() {
               };
             }
 
+            // Guard 3 (WI-0577): V2 Poisson veto — on odds-backed full-game cards,
+            // if V2's probability edge for the selected direction is negative,
+            // downgrade FIRE→WATCH. V1 can overstate edge when classifyEdge HOT tier
+            // is met while Poisson fair pricing disagrees with the market line.
+            if (usingRealLine && fullDecision.action === 'FIRE') {
+              const v2EdgeForDir =
+                fullGameEdge.direction === 'UNDER'
+                  ? v2EdgeUnderPp
+                  : v2EdgeOverPp;
+              if (
+                typeof v2EdgeForDir === 'number' &&
+                Number.isFinite(v2EdgeForDir) &&
+                v2EdgeForDir < 0
+              ) {
+                console.warn(
+                  `[${JOB_NAME}] [v2-veto-full] Downgraded ${playerName} FIRE→WATCH (V2 edge_${fullGameEdge.direction.toLowerCase()}_pp=${v2EdgeForDir.toFixed(4)} < 0)`,
+                );
+                fullDecision = {
+                  action: 'HOLD',
+                  status: 'WATCH',
+                  classification: 'LEAN',
+                  officialStatus: 'LEAN',
+                };
+              }
+            }
+
             const fullDirectionLabel =
               fullGameEdge.direction === 'OVER' ? 'Over' : 'Under';
 
