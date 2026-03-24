@@ -16,20 +16,78 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-23
-- Next action for operators/agents: All Tier 0b items through WI-0584 resolved. Next: WI-0587 + WI-0588 (NBA/NCAAM quarantine, parallel) → WI-0590 (NBA totals diagnostic) → WI-0591 (empirical sigma wiring) → WI-0589 (PLAY vs LEAN tier correction) → WI-0554 chain.
+- Last reviewed: 2026-03-24
+- Next action: WI-0588 (NBA totals quarantine) + WI-0591 (empirical sigma wiring) — parallel, both unblocked, both bleed EV every night they're open.
 
 ---
 
-## Sprint Plan — 2026-03-23 re-prioritization
+## Sprint Plan — 2026-03-24 full re-prioritization (20 open items)
 
 ### Dependency Chains (respect order within chains)
-- **Audit fixes (parallel, independent):** AUDIT-FIX-01, AUDIT-FIX-02, AUDIT-FIX-03, AUDIT-FIX-04, AUDIT-FIX-05, AUDIT-FIX-06
 - **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → WI-0554 → WI-0556 → WI-0553
 - **Auth/JWT:** ~~WI-0559~~✓ → ~~WI-0560~~✓ (both done)
 - **Settlement → CLV (serial):** WI-0564 → WI-0566 → WI-0557
 - **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
+- **NBA quarantine → diagnosis → tier fix:** WI-0588 → WI-0590 → WI-0589
 - **All others:** independent, can be parallelized across agents
+
+### Note on WI-0587
+WI-0587 (demote `ncaam-matchup-style` to evidence-only) has no file in `WORK_QUEUE/`. It is listed as a dependency of WI-0589. Needs to be created before WI-0589 can start.
+
+---
+
+## Prioritized Open Work Queue — 2026-03-24
+
+### P0 — Active EV Bleed (do tonight)
+
+| # | WI | Summary | Deps | Why now |
+|---|---|---|---|---|
+| 1 | [WI-0588](../WORK_QUEUE/WI-0588.md) | Quarantine NBA totals — demote actionable tiers one level | none | 14-21, −8.35u in prod; every night open costs real units |
+| 2 | [WI-0591](../WORK_QUEUE/WI-0591.md) | Wire empirical sigma overrides into NBA + NCAAM decisioning | none | Currently falling back to static sigma silently; mis-calibrates every basketball card |
+
+### P1 — High-impact, unblocked (this week)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 3 | [WI-0590](../WORK_QUEUE/WI-0590.md) | NBA totals diagnostic report (projection bias vs sigma vs threshold) | WI-0588 should land first |
+| 4 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function — replace hardcoded 0.95/0.88/0.85 literals | none (unblocked) |
+| 5 | WI-0587 *(file missing — create first)* | Demote `ncaam-matchup-style` to evidence-only (0-5, −5u in prod) | none |
+| 6 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate web tests to temp DB — prevent CI from mutating prod DB | none |
+| 7 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI, no local server required | none |
+| 8 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | none |
+
+### P2 — Unblocked features / completions (next sprint)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 9 | [WI-0589](../WORK_QUEUE/WI-0589.md) | PLAY vs LEAN tier correction — cleanliness/contradiction gates | WI-0587, WI-0588 |
+| 10 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | none |
+| 11 | [WI-0592](../WORK_QUEUE/WI-0592.md) | NHL SOG breakout usage overlay — rising-usage OVER candidates no longer flattened | none |
+| 12 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |
+
+### P3 — Serial chains (after P1/P2 land)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 13 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 |
+| 14 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge, not projection signal | WI-0554 |
+| 15 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
+| 16 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
+
+### P4 — Market evaluator layer (serial chain, can start parallel with P3)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 17 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion) | none |
+| 18 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector (best-price separate from best-line) | WI-0568 |
+| 19 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
+| 20 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | WI-0568, WI-0569 |
+
+### P5 — New markets (after core pipeline is stable)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 21 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (data ingest → model runner → display) | none |
 
 ---
 
