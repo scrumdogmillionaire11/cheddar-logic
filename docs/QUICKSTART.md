@@ -439,7 +439,8 @@ REFRESH_STALE_ODDS_HORIZON_HOURS=24
 
 ```bash
 ./scripts/manage-scheduler.sh start
-./scripts/manage-scheduler.sh db     # confirm DB path matches expected
+./scripts/manage-scheduler.sh db     
+# confirm DB path matches expected
 ```
 
 #### 5. Expect one extra odds pull on first tick
