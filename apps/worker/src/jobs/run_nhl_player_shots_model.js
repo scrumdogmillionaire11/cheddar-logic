@@ -890,6 +890,8 @@ function buildSharedPropFlags({
   ppRateL10Per60,
   ppRateL5Per60,
   ppMatchupMissing,
+  opponentFactorMissing,
+  paceFactorMissing,
 }) {
   const flags = [];
   if (ppRatePer60 === null && ppToi > 0) {
@@ -900,6 +902,12 @@ function buildSharedPropFlags({
   }
   if (ppMatchupMissing) {
     flags.push('PP_MATCHUP_MISSING');
+  }
+  if (opponentFactorMissing) {
+    flags.push('OPPONENT_FACTOR_MISSING');
+  }
+  if (paceFactorMissing) {
+    flags.push('PACE_FACTOR_MISSING');
   }
   return flags;
 }
@@ -1524,7 +1532,7 @@ async function runNHLPlayerShotsModel() {
             const opponentAbbrev = resolveTeamAbbrev(opponentTeam);
             if (!opponentAbbrev) {
               console.debug(
-                `[${JOB_NAME}] Could not resolve opponent abbreviation for '${opponentTeam}' — opponentFactor defaulting to 1.0`,
+                `[${JOB_NAME}] Could not resolve opponent abbreviation for '${opponentTeam}' — using raw team name for matchup lookup`,
               );
             }
             const opponentTeamName =
@@ -1533,6 +1541,13 @@ async function runNHLPlayerShotsModel() {
 
             let opponentFactor = 1.0;
             let paceFactor = 1.0;
+            let opponentFactorMissing = false;
+            let paceFactorMissing = false;
+            const opponentLookupNote = !opponentAbbrev
+              ? 'opponent abbreviation unresolved; '
+              : '';
+            const matchupContext =
+              `${playerName} (${playerTeamName}) vs ${opponentTeamName} [game=${resolvedGameId}]`;
             try {
               const factorRow = db.prepare(`
                 SELECT
@@ -1622,8 +1637,9 @@ async function runNHLPlayerShotsModel() {
                   factorRow.opponent_shots_against_pg /
                   factorRow.league_avg_shots_against_pg;
               } else {
-                console.debug(
-                  `[${JOB_NAME}] No usable team_metrics_cache matchup data for '${opponentTeamName}' — opponentFactor defaulting to 1.0`,
+                opponentFactorMissing = true;
+                console.warn(
+                  `[${JOB_NAME}] [opponent-factor-fallback] ${matchupContext} — ${opponentLookupNote}no usable team_metrics_cache matchup data; opponentFactor defaulting to 1.0`,
                 );
               }
 
@@ -1637,13 +1653,17 @@ async function runNHLPlayerShotsModel() {
               ) {
                 paceFactor = clamp((teamPaceProxy + opponentPaceProxy) / 2, 0.85, 1.2);
               } else {
-                console.debug(
-                  `[${JOB_NAME}] No usable NHL pace proxy for '${playerTeamName}' vs '${opponentTeamName}' — paceFactor defaulting to 1.0`,
+                paceFactorMissing = true;
+                console.warn(
+                  `[${JOB_NAME}] [pace-factor-fallback] ${matchupContext} — no usable NHL pace proxy; paceFactor defaulting to 1.0`,
                 );
               }
-            } catch {
-              console.debug(
-                `[${JOB_NAME}] Could not query team_metrics_cache for matchup factors — defaulting to opponentFactor=1.0 paceFactor=1.0`,
+            } catch (error) {
+              opponentFactorMissing = true;
+              paceFactorMissing = true;
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              console.warn(
+                `[${JOB_NAME}] [matchup-factor-fallback] ${matchupContext} — could not query team_metrics_cache for matchup factors; defaulting to opponentFactor=1.0 paceFactor=1.0 (${errorMessage})`,
               );
             }
 
@@ -1814,6 +1834,8 @@ async function runNHLPlayerShotsModel() {
               ppRateL10Per60,
               ppRateL5Per60,
               ppMatchupMissing,
+              opponentFactorMissing,
+              paceFactorMissing,
             });
             const roleStability = playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH';
             const v2ProjectionInputs = {
@@ -2418,6 +2440,12 @@ async function runNHLPlayerShotsModel() {
                   : firstPeriodDecision.action === 'HOLD'
                     ? 'Lean'
                     : 'Pass';
+              const firstPeriodFlags = [
+                ...(firstPeriodV2Projection.flags ?? []),
+                ...sharedPropFlags,
+                ...(firstPeriodV2AnomalyDetected ? ['PROJECTION_ANOMALY'] : []),
+                ...(!realPropLine1p ? ['SYNTHETIC_LINE'] : []),
+              ];
 
               if (
                 (firstPeriodEdge.tier === 'HOT' ||
@@ -2497,6 +2525,9 @@ async function runNHLPlayerShotsModel() {
                       Math.round(firstPeriodMatchupScore * 1000) / 1000,
                     support_score:
                       Math.round(firstPeriodSupportScore * 1000) / 1000,
+                    v2: {
+                      flags: firstPeriodFlags,
+                    },
                   },
                   drivers: {
                     l5_avg_1p: (l5Sog.reduce((a, b) => a + b, 0) / 5) * 0.32,
