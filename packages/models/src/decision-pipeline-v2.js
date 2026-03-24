@@ -1,5 +1,5 @@
 const edgeCalculator = require('./edge-calculator');
-const { resolveThresholdProfile } = require('./decision-pipeline-v2.patch');
+const { resolveThresholdProfile, applyNbaTotalQuarantine } = require('./decision-pipeline-v2.patch');
 
 // Edge unit: all edge values in this pipeline are decimal fractions.
 // See CANONICAL_EDGE_CONTRACT in decision-gate.js for the authoritative definition.
@@ -1264,6 +1264,16 @@ function buildDecisionV2(payload, context = {}) {
         PRICE_REASONS.HEAVY_FAVORITE_PRICE_CAP,
       );
     }
+
+    // WI-0588: NBA totals quarantine — demote actionable tiers one level.
+    const nbaQuarantineResult = applyNbaTotalQuarantine({
+      sport,
+      marketType: market_type,
+      officialStatus: finalOfficialStatus,
+      priceReasonCodes: finalPriceReasonCodes,
+    });
+    finalOfficialStatus = nbaQuarantineResult.officialStatus;
+    finalPriceReasonCodes = nbaQuarantineResult.priceReasonCodes;
 
     let primary_reason_code = resolvePrimaryReason({
       watchdogReasonCodes: watchdog.watchdog_reason_codes,
