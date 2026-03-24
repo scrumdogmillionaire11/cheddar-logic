@@ -472,7 +472,11 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
   }
 
   // Attach canonical decision fields before insert.
-  applyUiActionFields(card.payloadData, { oddsSnapshot });
+  // WI-0591: pass sigmaOverride from options into buildDecisionV2 context.
+  applyUiActionFields(card.payloadData, {
+    oddsSnapshot,
+    sigmaOverride: options.sigmaOverride ?? null,
+  });
 
   return {
     card,

@@ -436,3 +436,86 @@ describe('AUDIT-FIX-04: shouldFlip null-safe edgeDelta', () => {
     expect(result.edge_delta).toBeCloseTo(0.03, 5);
   });
 });
+
+// ── WI-0591: buildDecisionV2 consumes sigmaOverride from context ───────────
+
+describe('WI-0591: buildDecisionV2 sigma override', () => {
+  const { buildDecisionV2 } = require('../decision-pipeline-v2');
+
+  const basePayload = {
+    sport: 'NBA',
+    kind: 'PLAY',
+    market_type: 'SPREAD',
+    recommended_bet_type: 'spread',
+    prediction: 'HOME',
+    selection: { side: 'HOME', team: 'Home Team' },
+    line: -3.5,
+    price: -110,
+    confidence: 0.74,
+    tier: 'T1',
+    model_version: 'nba-cross-market-v1',
+    game_id: 'test-game',
+    home_team: 'Home Team',
+    away_team: 'Away Team',
+    start_time_utc: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
+    projection: { margin_home: 9.8, total: null, win_prob_home: null },
+    odds_context: {
+      spread_home: -3.5,
+      spread_away: 3.5,
+      spread_price_home: -110,
+      spread_price_away: -110,
+      total: 224,
+      captured_at: new Date().toISOString(),
+    },
+    consistency: { total_bias: 'OK', pace_tier: 'MID', event_env: 'INDOOR', event_direction_tag: 'FAVOR_HOME', vol_env: 'STABLE' },
+    reasoning: 'test',
+    driver: { key: 'powerRating', inputs: {} },
+    drivers_active: ['powerRating'],
+    reason_codes: [],
+    tags: [],
+  };
+
+  test('without sigmaOverride uses getSigmaDefaults (fallback)', () => {
+    const result = buildDecisionV2(basePayload, {});
+    expect(result).not.toBeNull();
+    expect(result.sigma_source).toBe('fallback');
+  });
+
+  test('with computed sigmaOverride returns sigma_source=computed', () => {
+    const result = buildDecisionV2(basePayload, {
+      sigmaOverride: { margin: 10.5, total: 13.2, sigma_source: 'computed', games_sampled: 60 },
+    });
+    expect(result).not.toBeNull();
+    expect(result.sigma_source).toBe('computed');
+  });
+
+  test('tighter sigma produces larger edge_pct than wider sigma for same projection delta', () => {
+    const wideResult = buildDecisionV2(basePayload, {
+      sigmaOverride: { margin: 20, total: 25, sigma_source: 'computed', games_sampled: 60 },
+    });
+    const tightResult = buildDecisionV2(basePayload, {
+      sigmaOverride: { margin: 6, total: 8, sigma_source: 'computed', games_sampled: 60 },
+    });
+    expect(wideResult).not.toBeNull();
+    expect(tightResult).not.toBeNull();
+    // Tighter sigma → higher p_fair for same projection advantage → larger edge_pct
+    expect(tightResult.edge_pct).toBeGreaterThan(wideResult.edge_pct);
+  });
+
+  test('sigmaOverride with null margin falls back to getSigmaDefaults', () => {
+    const result = buildDecisionV2(basePayload, {
+      sigmaOverride: { margin: null, total: null, sigma_source: 'fallback' },
+    });
+    expect(result).not.toBeNull();
+    expect(result.sigma_source).toBe('fallback');
+  });
+
+  test('NCAAM payload with sigmaOverride forwards sigma_source=computed', () => {
+    const ncaamPayload = { ...basePayload, sport: 'NCAAM' };
+    const result = buildDecisionV2(ncaamPayload, {
+      sigmaOverride: { margin: 9.1, total: 12.4, sigma_source: 'computed', games_sampled: 45 },
+    });
+    expect(result).not.toBeNull();
+    expect(result.sigma_source).toBe('computed');
+  });
+});
