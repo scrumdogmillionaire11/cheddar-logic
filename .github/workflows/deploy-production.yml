@@ -288,9 +288,10 @@ jobs:
             SAMPLE_CSS_REL="${SAMPLE_CSS_FILE#web/.next/static/}"
             echo "Selected sample CSS: /_next/static/$SAMPLE_CSS_REL"
             echo "Build verification passed: BUILD_ID exists, static dir exists, $CHUNK_COUNT JS chunks, $CSS_COUNT CSS chunks found"
+            echo "=== Post-build disk / memory ===" && df -h /opt && free -h || true
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
-            sudo systemctl restart cheddar-fpl-sage
+            sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
             sleep 5
             restore_previous_next() {
               if [ "$ROLLBACK_READY" != "1" ] || [ ! -d "$PREV_NEXT_ROLLBACK" ]; then
