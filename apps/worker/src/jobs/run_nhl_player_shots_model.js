@@ -2160,9 +2160,10 @@ async function runNHLPlayerShotsModel() {
                 suggested_line: fairLine,
                 threshold: fairLine,
                 decision_v2: {
+                  // Projection-delta percent vs. line; pricing edge lives in edge_over_pp / edge_under_pp.
                   official_status: legacyDecisionFromProp.officialStatus,
                   direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
-                  edge_pct: computeEdgePct(mu, syntheticLine),
+                  edge_delta_pct: computeEdgePct(mu, syntheticLine),
                   fair_line: fairLine,
                 },
                 prop_decision: fullPropDecision,
@@ -2174,7 +2175,7 @@ async function runNHLPlayerShotsModel() {
                   decision_v2: {
                     official_status: legacyDecisionFromProp.officialStatus,
                     direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
-                    edge_pct: computeEdgePct(mu, syntheticLine),
+                    edge_delta_pct: computeEdgePct(mu, syntheticLine),
                     fair_line: fairLine,
                   },
                   prop_decision: fullPropDecision,
@@ -2447,9 +2448,10 @@ async function runNHLPlayerShotsModel() {
                   suggested_line: fairLine1p,
                   threshold: fairLine1p,
                   decision_v2: {
+                    // Projection-delta percent vs. line; pricing edge lives in edge_over_pp / edge_under_pp.
                     official_status: firstPeriodDecision.officialStatus,
                     direction: firstPeriodEdge.direction,
-                    edge_pct: computeEdgePct(mu1p, syntheticLine1p),
+                    edge_delta_pct: computeEdgePct(mu1p, syntheticLine1p),
                     fair_line: fairLine1p,
                   },
                   // PROP-specific
@@ -2460,7 +2462,7 @@ async function runNHLPlayerShotsModel() {
                     decision_v2: {
                       official_status: firstPeriodDecision.officialStatus,
                       direction: firstPeriodEdge.direction,
-                      edge_pct: computeEdgePct(mu1p, syntheticLine1p),
+                      edge_delta_pct: computeEdgePct(mu1p, syntheticLine1p),
                       fair_line: fairLine1p,
                     },
                     pick_string: `${firstPeriodRecommendationPrefix} ${playerName} ${firstPeriodDirectionLabel} ${syntheticLine1p} SOG (1P) | Proj ${mu1p.toFixed(1)} · Fair ${fairLine1p} · Edge ${formatSignedEdge(matchupEdge1p)}`,

@@ -2470,6 +2470,10 @@ describe('run_nhl_player_shots_model', () => {
     expect(card1p.payloadData.status).toBe('WATCH');
     expect(card1p.payloadData.play.action).toBe('HOLD');
     expect(card1p.payloadData.play.status).toBe('WATCH');
+    expect(card1p.payloadData.decision_v2.edge_delta_pct).toEqual(expect.any(Number));
+    expect(card1p.payloadData.decision_v2.edge_pct).toBeUndefined();
+    expect(card1p.payloadData.play.decision_v2.edge_delta_pct).toEqual(expect.any(Number));
+    expect(card1p.payloadData.play.decision_v2.edge_pct).toBeUndefined();
   });
 
   test('WI-0577 Guard 3: full-game FIRE is downgraded to WATCH when V2 edge_over_pp is negative on odds-backed card', async () => {
@@ -2514,10 +2518,17 @@ describe('run_nhl_player_shots_model', () => {
 
     await mod.runNHLPlayerShotsModel();
 
+    const fullGameCard = getInsertedCardsByType(data, 'nhl-player-shots')[0];
+
     // Guard 3 must have emitted the [v2-veto-full] log tag
     const vetoWarn = warnSpy.mock.calls.find(([msg]) => typeof msg === 'string' && msg.includes('[v2-veto-full]'));
     warnSpy.mockRestore();
     expect(vetoWarn).toBeDefined();
+    expect(fullGameCard).toBeTruthy();
+    expect(fullGameCard.payloadData.decision_v2.edge_delta_pct).toEqual(expect.any(Number));
+    expect(fullGameCard.payloadData.decision_v2.edge_pct).toBeUndefined();
+    expect(fullGameCard.payloadData.play.decision_v2.edge_delta_pct).toEqual(expect.any(Number));
+    expect(fullGameCard.payloadData.play.decision_v2.edge_pct).toBeUndefined();
   });
 
   test('WI-0579: full-game V2 anomaly does not suppress a clean 1P card', async () => {

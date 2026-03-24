@@ -152,6 +152,7 @@ interface ApiPlay {
   p_fair?: number | null;
   p_implied?: number | null;
   edge_pct?: number | null;
+  edge_delta_pct?: number | null;
   model_prob?: number | null;
   proxy_used?: boolean;
   line_source?: string | null;
@@ -505,6 +506,14 @@ function inferMarketFromPlay(play: ApiPlay): {
     reasonCodes,
     tags,
   };
+}
+
+function resolveDecisionV2EdgePct(
+  decisionV2: Pick<DecisionV2, 'edge_pct' | 'edge_delta_pct'> | null | undefined,
+): number | null {
+  if (typeof decisionV2?.edge_delta_pct === 'number') return decisionV2.edge_delta_pct;
+  if (typeof decisionV2?.edge_pct === 'number') return decisionV2.edge_pct;
+  return null;
 }
 
 function normalizeSoccerAhToken(value: unknown): string {
@@ -1082,10 +1091,8 @@ function selectWave1DecisionCandidate(
       officialRank(aDecision.official_status);
     if (statusDiff !== 0) return statusDiff;
 
-    const aEdge =
-      typeof aDecision.edge_pct === 'number' ? aDecision.edge_pct : -1;
-    const bEdge =
-      typeof bDecision.edge_pct === 'number' ? bDecision.edge_pct : -1;
+    const aEdge = resolveDecisionV2EdgePct(aDecision) ?? -1;
+    const bEdge = resolveDecisionV2EdgePct(bDecision) ?? -1;
     if (bEdge !== aEdge) return bEdge - aEdge;
 
     return bDecision.support_score - aDecision.support_score;
@@ -1516,10 +1523,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           ? `${wave1PickText} (Verification Required)`
           : 'NO PLAY'
         : wave1PickText;
-    const edgePct =
-      typeof effectiveDecisionV2.edge_pct === 'number'
-        ? effectiveDecisionV2.edge_pct
-        : null;
+    const edgePct = resolveDecisionV2EdgePct(effectiveDecisionV2);
     const projectedMargin =
       typeof wave1DecisionPlay.projection?.projected_margin === 'number'
         ? wave1DecisionPlay.projection.projected_margin
