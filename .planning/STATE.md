@@ -17,7 +17,7 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-23
-- Next action for operators/agents: All Tier 0b CRITICALs (WI-0573–WI-0577) resolved. Next: WI-0579 (1P independent V2 run, HIGH) → WI-0581 (edge_delta_pct rename, HIGH) → WI-0582/0583/0584 (MEDIUM).
+- Next action for operators/agents: All Tier 0b items through WI-0584 resolved. Next: WI-0587 + WI-0588 (NBA/NCAAM quarantine, parallel) → WI-0590 (NBA totals diagnostic) → WI-0591 (empirical sigma wiring) → WI-0589 (PLAY vs LEAN tier correction) → WI-0554 chain.
 
 ---
 
@@ -76,12 +76,12 @@ This file is intentionally minimal to avoid stale status drift.
 | 4 | ~~[WI-0576](../WORK_QUEUE/COMPLETE/WI-0576.md)~~ ✓ | `NHL_SOG_PROP_EVENTS_ENABLED` defaults false — real Odds API lines are never ingested unless explicitly set; all cards run on synthetic `2.5` floor line silently | **CRITICAL** | ✓ DONE (qt-72) |
 | 5 | ~~[WI-0577](../WORK_QUEUE/COMPLETE/WI-0577.md)~~ ✓ | V1 drives bet decision; V2 Poisson edge is computed but never gates FIRE — V1 can emit a PLAY while V2's `edge_over_pp` is negative; add V2 veto gate for FIRE on odds-backed cards | **CRITICAL** | ✓ DONE (qt-75) |
 | 6 | ~~[WI-0578](../WORK_QUEUE/WI-0578.md)~~ ✓ | `PP_RATE_MISSING` flag set but PP component silently collapses to 0 for top PP players; under-projects by 0.3–0.5 SOG for players with non-zero `ppToi` | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
-| 7 | [WI-0579](../WORK_QUEUE/WI-0579.md) | 1P cards don't run `projectSogV2` independently; full-game `v2AnomalyDetected` reused against 1P mu | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 7 | ~~[WI-0579](../WORK_QUEUE/WI-0579.md)~~ ✓ | 1P cards don't run `projectSogV2` independently; full-game `v2AnomalyDetected` reused against 1P mu | **HIGH** | ✓ DONE (qt-78) |
 | 8 | ~~[WI-0580](../WORK_QUEUE/COMPLETE/WI-0580.md)~~ ✓ | PROP cards not wave-1 eligible — V1 wins unconditionally; V2 `official_status` never overrides | **HIGH** | `web/src/app/api/games/route.ts` |
-| 9 | [WI-0581](../WORK_QUEUE/WI-0581.md) | Rename `decision_v2.edge_pct` → `edge_delta_pct` — projection-delta % vs probability edge conflation | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
-| 10 | [WI-0582](../WORK_QUEUE/WI-0582.md) | `opponentFactor`/`paceFactor` fallback silent at `console.debug` — upgrade to `warn` + card flag | **MEDIUM** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
-| 11 | [WI-0583](../WORK_QUEUE/WI-0583.md) | V1 vs V2 mu calibration study — no accuracy audit exists; no reconciliation when models disagree | **MEDIUM** | `apps/worker/src/models/nhl-player-shots.js` |
-| 12 | [WI-0584](../WORK_QUEUE/WI-0584.md) | Line-change dedup gap — two cards same player/side after odds update; `dedupeLine` key mismatch bypasses `seenNhlShotsPlayKeys` | **MEDIUM** | `web/src/app/api/games/route.ts`, `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 9 | ~~[WI-0581](../WORK_QUEUE/WI-0581.md)~~ ✓ | Rename `decision_v2.edge_pct` → `edge_delta_pct` — projection-delta % vs probability edge conflation | **HIGH** | ✓ DONE (qt-79) |
+| 10 | ~~[WI-0582](../WORK_QUEUE/WI-0582.md)~~ ✓ | `opponentFactor`/`paceFactor` fallback silent at `console.debug` — upgrade to `warn` + card flag | **MEDIUM** | ✓ DONE (qt-80) |
+| 11 | ~~[WI-0583](../WORK_QUEUE/COMPLETE/WI-0583.md)~~ ✓ | V1 vs V2 mu calibration study — no accuracy audit exists; no reconciliation when models disagree | **MEDIUM** | ✓ DONE (qt-76) |
+| 12 | ~~[WI-0584](../WORK_QUEUE/COMPLETE/WI-0584.md)~~ ✓ | Line-change dedup gap — two cards same player/side after odds update; `dedupeLine` key mismatch bypasses `seenNhlShotsPlayKeys` | **MEDIUM** | ✓ DONE (qt-77) |
 
 ---
 
@@ -179,5 +179,8 @@ This file is intentionally minimal to avoid stale status drift.
 
 | 76 | WI-0583 V1 vs V2 mu calibration study | 2026-03-24 | ea7b3b9 | [76-wi-0583-v1-vs-v2-mu-calibration-study](./quick/76-wi-0583-v1-vs-v2-mu-calibration-study/) |
 | 77 | WI-0584 Line-change dedup gap: 6-element key + secondary seenPropTupleKeys pass + warn-on-zero purge | 2026-03-24 | 974f114 | [77-wi-0584-line-change-dedup-gap](./quick/77-wi-0584-line-change-dedup-gap/) |
+| 78 | WI-0579 1P independent V2 run: projectSogV2 called with 1P-specific mu; full-game v2AnomalyDetected no longer reused against 1P mu | 2026-03-24 | — | — |
+| 79 | WI-0581 Rename decision_v2.edge_pct → edge_delta_pct: removes conflation between projection-delta % and probability edge across model job + downstream consumers | 2026-03-24 | — | — |
+| 80 | WI-0582 opponentFactor/paceFactor fallback: console.debug → console.warn + OPPONENT_FACTOR_MISSING / PACE_FACTOR_MISSING reason_code flag on card | 2026-03-24 | — | — |
 
-Last activity: 2026-03-24 - Completed quick task 77: WI-0584 line-change dedup gap fixed
+Last activity: 2026-03-24 - Closed out WI-0579/0581/0582 (qt-78/79/80) and moved WI-0583/0584 to COMPLETE
