@@ -201,6 +201,7 @@ interface Play {
   p_fair?: number | null;
   p_implied?: number | null;
   edge_pct?: number | null;
+  edge_delta_pct?: number | null;
   model_prob?: number | null;
   projection?: {
     margin_home?: number | null;
@@ -311,6 +312,7 @@ interface Play {
     fair_prob: number | null;
     implied_prob: number | null;
     edge_pct: number | null;
+    edge_delta_pct?: number | null;
     edge_method?:
       | 'ML_PROB'
       | 'MARGIN_DELTA'
@@ -1094,6 +1096,13 @@ function firstNumber(...values: unknown[]): number | undefined {
   return undefined;
 }
 
+function resolveDecisionV2EdgePct(
+  value: { edge_delta_pct?: unknown; edge_pct?: unknown } | null | undefined,
+): number | undefined {
+  if (!value) return undefined;
+  return firstNumber(value.edge_delta_pct, value.edge_pct);
+}
+
 function normalizeSport(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const upper = value.trim().toUpperCase();
@@ -1249,6 +1258,10 @@ function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
     edge_pct:
       typeof input.edge_pct === 'number' && Number.isFinite(input.edge_pct)
         ? input.edge_pct
+        : null,
+    edge_delta_pct:
+      typeof resolveDecisionV2EdgePct(input) === 'number'
+        ? resolveDecisionV2EdgePct(input)
         : null,
     edge_method:
       input.edge_method === 'ML_PROB' ||
@@ -2595,6 +2608,7 @@ export async function GET(request: NextRequest) {
           payloadPlayObj?.p_implied,
         );
         const normalizedEdgePct = firstNumber(
+          normalizedDecisionV2?.edge_delta_pct,
           normalizedDecisionV2?.edge_pct,
           (payload as Record<string, unknown>).edge_pct,
           payloadPlayObj?.edge_pct,
@@ -3348,8 +3362,14 @@ export async function GET(request: NextRequest) {
                     : 'PASS');
           const existingTier = existingStatus === 'PLAY' ? 2 : existingStatus === 'LEAN' ? 1 : 0;
           // Only replace if candidate is strictly better tier, or same tier with higher edge
-          const candidateEdge = candidate.decision_v2?.edge_pct ?? candidate.edge ?? -Infinity;
-          const existingEdge = existing.decision_v2?.edge_pct ?? existing.edge ?? -Infinity;
+          const candidateEdge =
+            resolveDecisionV2EdgePct(candidate.decision_v2) ??
+            candidate.edge ??
+            -Infinity;
+          const existingEdge =
+            resolveDecisionV2EdgePct(existing.decision_v2) ??
+            existing.edge ??
+            -Infinity;
           if (officialTier < existingTier) continue;
           if (officialTier === existingTier && candidateEdge <= existingEdge) continue;
         }

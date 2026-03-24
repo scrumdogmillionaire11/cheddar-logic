@@ -246,7 +246,9 @@ function buildBackfillRankContext(db, candidate, cache) {
   return {
     statusRank,
     weightedConfidence: confidencePct * perf.factor,
-    edgePct: toBackfillSortableNumber(payloadData?.decision_v2?.edge_pct),
+    edgePct: toBackfillSortableNumber(
+      payloadData?.decision_v2?.edge_delta_pct ?? payloadData?.decision_v2?.edge_pct,
+    ),
     supportScore: toBackfillSortableNumber(payloadData?.decision_v2?.support_score),
     displayedAtMs: safeBackfillTimestampMs(candidate?.displayedAt),
     pickId: String(candidate?.pickId || ''),
@@ -1819,7 +1821,12 @@ async function settlePendingCards({
           const d2 = payloadData?.decision_v2 ?? {};
           const sharpPriceStatus = typeof d2.sharp_price_status === 'string' ? d2.sharp_price_status : null;
           const primaryReasonCode = typeof d2.primary_reason_code === 'string' ? d2.primary_reason_code : null;
-          const edgePct = typeof d2.edge_pct === 'number' && Number.isFinite(d2.edge_pct) ? d2.edge_pct : null;
+          const edgePct =
+            typeof d2.edge_delta_pct === 'number' && Number.isFinite(d2.edge_delta_pct)
+              ? d2.edge_delta_pct
+              : typeof d2.edge_pct === 'number' && Number.isFinite(d2.edge_pct)
+                ? d2.edge_pct
+                : null;
 
           db.prepare(
             `

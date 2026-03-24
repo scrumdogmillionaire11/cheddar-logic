@@ -2366,7 +2366,9 @@ function buildDisplayedPlayRankContext(db, candidate, cache) {
     cache,
   );
   const weightedConfidence = confidencePct * perf.factor;
-  const edgePct = toSortableNumber(payloadData?.decision_v2?.edge_pct);
+  const edgePct = toSortableNumber(
+    payloadData?.decision_v2?.edge_delta_pct ?? payloadData?.decision_v2?.edge_pct,
+  );
   const supportScore = toSortableNumber(payloadData?.decision_v2?.support_score);
   const displayedAtMs = safeTimestampMs(candidate?.displayedAt);
   const pickId = String(candidate?.pickId || '');

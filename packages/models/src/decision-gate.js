@@ -8,7 +8,9 @@ const nodeCrypto = require('crypto');
  *   Example: 0.06 = 6% edge above market implied probability
  *
  * Sources of truth (in precedence order):
- *   1. decision_v2.edge_pct  (computed by buildDecisionV2, most authoritative)
+ *   1. decision_v2.edge_pct  (wave-1 probability edge from buildDecisionV2)
+ *      decision_v2.edge_delta_pct may also appear on NHL prop payloads and
+ *      represents projection delta vs. line, not price edge.
  *   2. payload.edge          (set explicitly by model runners that compute CDF edge)
  *   3. null                  (edge unavailable — do not coerce to 0)
  *
@@ -20,7 +22,7 @@ const CANONICAL_EDGE_CONTRACT = Object.freeze({
   unit: 'decimal_fraction',
   description: 'edge = p_fair - p_implied; 0.06 = 6% edge',
   upgrade_min: 0.5,
-  sources: ['decision_v2.edge_pct', 'payload.edge', 'null'],
+  sources: ['decision_v2.edge_pct (wave-1)', 'decision_v2.edge_delta_pct (nhl props)', 'payload.edge', 'null'],
 });
 
 const DEFAULTS = {

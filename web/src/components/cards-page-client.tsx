@@ -2419,9 +2419,15 @@ export default function CardsPageClient() {
         ? extractFtTrendInsight(card)
         : null;
     const isFtTrendSpread = Boolean(ftTrendInsight);
+    const resolvedDecisionV2EdgePct =
+      typeof resolvedDecisionV2?.edge_delta_pct === 'number'
+        ? resolvedDecisionV2.edge_delta_pct
+        : typeof resolvedDecisionV2?.edge_pct === 'number'
+          ? resolvedDecisionV2.edge_pct
+          : undefined;
     const effectiveEdgePct =
-      typeof resolvedDecisionV2?.edge_pct === 'number'
-        ? resolvedDecisionV2.edge_pct
+      typeof resolvedDecisionV2EdgePct === 'number'
+        ? resolvedDecisionV2EdgePct
         : typeof displayPlay.decision_data?.edge_pct === 'number'
           ? displayPlay.decision_data.edge_pct
           : typeof displayPlay.edge === 'number'

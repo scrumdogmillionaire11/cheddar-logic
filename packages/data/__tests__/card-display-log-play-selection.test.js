@@ -24,6 +24,7 @@ function buildPlayPayload({
   kind = 'PLAY',
   confidencePct = 63.5,
   edgePct = 0.01,
+  edgeDeltaPct,
   supportScore = 50,
 }) {
   return {
@@ -40,6 +41,7 @@ function buildPlayPayload({
     decision_v2: {
       official_status: officialStatus,
       edge_pct: edgePct,
+      edge_delta_pct: edgeDeltaPct,
       support_score: supportScore,
     },
     confidence_pct: confidencePct,
@@ -517,5 +519,83 @@ describe('card_display_log capture for playable rows', () => {
     expect(row.pick_id).toBe('card-spread-perf');
     expect(String(row.market_type).toUpperCase()).toBe('SPREAD');
     expect(String(row.selection).toUpperCase()).toBe('HOME');
+  });
+
+  test('falls back to decision_v2.edge_delta_pct when ranking display-log candidates', () => {
+    const db = dbModule.getDatabase();
+    ensureCoreTables(db);
+    const now = new Date().toISOString();
+    const gameId = 'game-edge-delta-pct-rank-1';
+
+    db.prepare(
+      `
+      INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run('g-edge-delta-1', 'nhl', gameId, 'Home', 'Away', now, 'scheduled');
+
+    dbModule.insertCardPayload({
+      id: 'card-edge-delta-low',
+      gameId,
+      sport: 'nhl',
+      cardType: 'nhl-test-play',
+      cardTitle: 'Lower edge delta',
+      createdAt: now,
+      payloadData: buildPlayPayload({
+        gameId,
+        sport: 'NHL',
+        homeTeam: 'Home',
+        awayTeam: 'Away',
+        officialStatus: 'PLAY',
+        marketType: 'TOTAL',
+        selection: 'OVER',
+        line: 5.5,
+        price: -110,
+        confidencePct: 65,
+        edgePct: null,
+        edgeDeltaPct: 0.04,
+        supportScore: 60,
+      }),
+      runId: 'run-edge-delta-rank',
+    });
+
+    dbModule.insertCardPayload({
+      id: 'card-edge-delta-high',
+      gameId,
+      sport: 'nhl',
+      cardType: 'nhl-test-play',
+      cardTitle: 'Higher edge delta',
+      createdAt: now,
+      payloadData: buildPlayPayload({
+        gameId,
+        sport: 'NHL',
+        homeTeam: 'Home',
+        awayTeam: 'Away',
+        officialStatus: 'PLAY',
+        marketType: 'TOTAL',
+        selection: 'UNDER',
+        line: 5.5,
+        price: -110,
+        confidencePct: 65,
+        edgePct: null,
+        edgeDeltaPct: 0.09,
+        supportScore: 60,
+      }),
+      runId: 'run-edge-delta-rank',
+    });
+
+    const row = db
+      .prepare(
+        `
+        SELECT pick_id, selection
+        FROM card_display_log
+        WHERE game_id = ? AND run_id = ?
+      `,
+      )
+      .get(gameId, 'run-edge-delta-rank');
+
+    expect(row).toBeDefined();
+    expect(row.pick_id).toBe('card-edge-delta-high');
+    expect(String(row.selection).toUpperCase()).toBe('UNDER');
   });
 });
