@@ -28,6 +28,7 @@ const {
   initDb,
   getUpcomingGames,
   shouldRunJobKey,
+  hasRunningJobRun,
   hasRunningJobName,
   wasJobRecentlySuccessful,
 } = require('@cheddar-logic/data');
@@ -220,6 +221,10 @@ function isHourlySettlementDue(nowEt) {
     process.env.SETTLEMENT_HOURLY_BOUNDARY_MINUTES || 5,
   );
   return nowEt.minute >= 0 && nowEt.minute < Math.max(boundaryMinutes, 1);
+}
+
+function isNightlySettlementOwningHourlyWindow(nowEt) {
+  return nowEt.hour === 2 && isHourlySettlementDue(nowEt);
 }
 
 /**
@@ -720,7 +725,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // ========== SETTLEMENT (4) ==========
   if (process.env.ENABLE_SETTLEMENT !== 'false') {
     const sweepDate = nowEt.toISODate();
-    const nightlySettlementDue = isFixedDue(nowEt, '02:00');
+    const nightlySettlementOwnsHourlyWindow =
+      isNightlySettlementOwningHourlyWindow(nowEt);
 
     // Enforce singleton settlement across all processes (race mitigation)
     const settlementGameRunning = hasRunningJobName('settle_game_results');
@@ -743,7 +749,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         reason: `hourly game status sync ${hourlyKey}`,
       });
 
-      if (nightlySettlementDue) {
+      if (nightlySettlementOwnsHourlyWindow) {
         console.log(
           '[Scheduler] Skipping hourly settlement enqueue — nightly settlement owns the 02:00 ET window',
         );
@@ -762,7 +768,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         );
       }
 
-      if (nightlySettlementDue) {
+      if (nightlySettlementOwnsHourlyWindow) {
         // Nightly sweep owns settlement for this minute; keep hourly status sync only.
       } else if (!settlementCardsRunning) {
         const pendingCardsJobKey = keyHourlySettlementJob(nowEt, 'pending-cards');

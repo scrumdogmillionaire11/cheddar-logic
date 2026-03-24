@@ -264,6 +264,7 @@ function loadSchedulerModule(dataOverrides = {}) {
     initDb: jest.fn(),
     getUpcomingGames: jest.fn(() => []),
     shouldRunJobKey: jest.fn(() => true),
+    hasRunningJobRun: jest.fn(() => false),
     hasRunningJobName: jest.fn(() => false),
     wasJobRecentlySuccessful: jest.fn((jobName) => {
       if (jobName === 'pull_odds_hourly') return true;
@@ -476,6 +477,38 @@ describe('scheduler settlement windows', () => {
     ).toBe(false);
   });
 
+  test('nightly ownership does not suppress hourly settlement after 02:00 ET', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-24T11:00:23', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: [],
+      dryRun: true,
+    });
+
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'settle_game_results' &&
+          job.jobKey === 'settle|hourly|2026-03-24|11|game-results',
+      ),
+    ).toBe(true);
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'settle_pending_cards' &&
+          job.jobKey === 'settle|hourly|2026-03-24|11|pending-cards',
+      ),
+    ).toBe(true);
+  });
+
   test('running settlement job suppresses new enqueue across window keys', () => {
     const scheduler = loadSchedulerModule({
       hasRunningJobName: jest.fn((jobName) => jobName === 'settle_game_results'),
@@ -502,5 +535,17 @@ describe('scheduler settlement windows', () => {
           job.jobKey === 'settle|hourly|2026-03-24|03|pending-cards',
       ),
     ).toBe(true);
+  });
+
+  test('tick executes without overlap reference errors', async () => {
+    const scheduler = loadSchedulerModule({
+      initDb: jest.fn(),
+      getUpcomingGames: jest.fn(() => []),
+      shouldRunJobKey: jest.fn(() => false),
+      hasRunningJobRun: jest.fn(() => false),
+    });
+
+    const now = new Date('2026-03-24T15:06:00Z');
+    await expect(scheduler.tick({ now, dryRun: false })).resolves.toBeUndefined();
   });
 });
