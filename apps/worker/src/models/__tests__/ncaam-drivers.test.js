@@ -171,4 +171,59 @@ describe('computeNCAAMDriverCards', () => {
     expect(ftCard.driverInputs.away_ft_pct).toBe(75.1);
     expect(ftCard.driverInputs.ft_gap).toBe(-3);
   });
+
+  test('never emits ncaam-matchup-style even with large efficiency gap', () => {
+    // home avgPoints=90, avgPointsAllowed=65, away avgPoints=70, avgPointsAllowed=80
+    // homeEfficiency = 90 - 65 = 25; awayEfficiency = 70 - 80 = -10; efficiencyGap = 35 (well above >=5 threshold)
+    const cards = computeNCAAMDriverCards('game-matchup-style-1', {
+      spread_home: -8.0,
+      raw_data: {
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgPoints: 90,
+              avgPointsAllowed: 65,
+              restDays: 2,
+            },
+          },
+          away: {
+            metrics: {
+              avgPoints: 70,
+              avgPointsAllowed: 80,
+              restDays: 2,
+            },
+          },
+        },
+      },
+    });
+
+    expect(cards.some((c) => c.cardType === 'ncaam-matchup-style')).toBe(false);
+  });
+
+  test('still emits ncaam-base-projection when team metrics are present', () => {
+    // Same large-efficiency-gap snapshot — base-projection should still fire
+    const cards = computeNCAAMDriverCards('game-matchup-style-2', {
+      spread_home: -8.0,
+      raw_data: {
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgPoints: 90,
+              avgPointsAllowed: 65,
+              restDays: 2,
+            },
+          },
+          away: {
+            metrics: {
+              avgPoints: 70,
+              avgPointsAllowed: 80,
+              restDays: 2,
+            },
+          },
+        },
+      },
+    });
+
+    expect(cards.some((c) => c.cardType === 'ncaam-base-projection')).toBe(true);
+  });
 });

@@ -97,9 +97,26 @@ function resolveThresholdProfile({ sport, marketType }) {
   };
 }
 
+// WI-0588: NBA totals quarantine — demote actionable tiers one level.
+const QUARANTINE_REASON = 'NBA_TOTAL_QUARANTINE_DEMOTE';
+
+function applyNbaTotalQuarantine({ sport, marketType, officialStatus, priceReasonCodes }) {
+  if (!FLAGS.QUARANTINE_NBA_TOTAL) return { officialStatus, priceReasonCodes };
+  const s = typeof sport === 'string' ? sport.toUpperCase() : '';
+  const m = typeof marketType === 'string' ? marketType.toUpperCase() : '';
+  if (s !== 'NBA' || m !== 'TOTAL') return { officialStatus, priceReasonCodes };
+  if (officialStatus === 'PASS') return { officialStatus, priceReasonCodes };
+
+  const demoted = officialStatus === 'PLAY' ? 'LEAN' : 'PASS';
+  const codes = Array.isArray(priceReasonCodes) ? [...priceReasonCodes] : [];
+  if (!codes.includes(QUARANTINE_REASON)) codes.push(QUARANTINE_REASON);
+  return { officialStatus: demoted, priceReasonCodes: codes };
+}
+
 module.exports = {
   DEFAULT_EDGE_THRESHOLDS,
   SPORT_MARKET_THRESHOLDS_V2,
   defaultSupportThresholds,
   resolveThresholdProfile,
+  applyNbaTotalQuarantine,
 };

@@ -128,10 +128,9 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
     playProducerCardTypes: new Set([
       'ncaam-base-projection',
       'ncaam-rest-advantage',
-      'ncaam-matchup-style',
       'ncaam-ft-trend',
     ]),
-    evidenceOnlyCardTypes: new Set([]),
+    evidenceOnlyCardTypes: new Set(['ncaam-matchup-style']),
   },
 };
 

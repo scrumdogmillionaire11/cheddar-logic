@@ -28,7 +28,7 @@ const {
   initDb,
   getUpcomingGames,
   shouldRunJobKey,
-  hasRunningJobRun,
+  hasRunningJobName,
   wasJobRecentlySuccessful,
 } = require('@cheddar-logic/data');
 
@@ -205,6 +205,14 @@ function keyNhlPlayerAvailabilitySync(nowEt) {
 
 function keyHourlySettlementSweep(nowEt) {
   return `settle|hourly|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+}
+
+function keyHourlySettlementJob(nowEt, suffix) {
+  return `${keyHourlySettlementSweep(nowEt)}|${suffix}`;
+}
+
+function keyNightlySettlementJob(nowEt, suffix) {
+  return `${keyNightlySweep(nowEt)}|${suffix}`;
 }
 
 function isHourlySettlementDue(nowEt) {
@@ -712,14 +720,11 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // ========== SETTLEMENT (4) ==========
   if (process.env.ENABLE_SETTLEMENT !== 'false') {
     const sweepDate = nowEt.toISODate();
+    const nightlySettlementDue = isFixedDue(nowEt, '02:00');
 
     // Enforce singleton settlement across all processes (race mitigation)
-    const settlementGameRunning = hasRunningJobRun(
-      'settle|global|game-results',
-    );
-    const settlementCardsRunning = hasRunningJobRun(
-      'settle|global|pending-cards',
-    );
+    const settlementGameRunning = hasRunningJobName('settle_game_results');
+    const settlementCardsRunning = hasRunningJobName('settle_pending_cards');
 
     // 4A) Hourly settlement sweep (default enabled)
     if (
@@ -738,12 +743,17 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         reason: `hourly game status sync ${hourlyKey}`,
       });
 
-      if (!settlementGameRunning) {
+      if (nightlySettlementDue) {
+        console.log(
+          '[Scheduler] Skipping hourly settlement enqueue — nightly settlement owns the 02:00 ET window',
+        );
+      } else if (!settlementGameRunning) {
+        const gameResultsJobKey = keyHourlySettlementJob(nowEt, 'game-results');
         jobs.push({
           jobName: 'settle_game_results',
-          jobKey: 'settle|global|game-results',
+          jobKey: gameResultsJobKey,
           execute: settleGameResults,
-          args: { jobKey: 'settle|global|game-results', dryRun },
+          args: { jobKey: gameResultsJobKey, dryRun },
           reason: `hourly settlement sweep ${hourlyKey}`,
         });
       } else {
@@ -752,13 +762,16 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         );
       }
 
-      if (!settlementCardsRunning) {
+      if (nightlySettlementDue) {
+        // Nightly sweep owns settlement for this minute; keep hourly status sync only.
+      } else if (!settlementCardsRunning) {
+        const pendingCardsJobKey = keyHourlySettlementJob(nowEt, 'pending-cards');
         jobs.push({
           jobName: 'settle_pending_cards',
-          jobKey: 'settle|global|pending-cards',
+          jobKey: pendingCardsJobKey,
           execute: settlePendingCards,
           args: {
-            jobKey: 'settle|global|pending-cards',
+            jobKey: pendingCardsJobKey,
             dryRun,
             allowDisplayBackfill: SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL,
           },
@@ -782,11 +795,12 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       });
 
       if (!settlementGameRunning) {
+        const gameResultsJobKey = keyNightlySettlementJob(nowEt, 'game-results');
         jobs.push({
           jobName: 'settle_game_results',
-          jobKey: 'settle|global|game-results',
+          jobKey: gameResultsJobKey,
           execute: settleGameResults,
-          args: { jobKey: 'settle|global|game-results', dryRun },
+          args: { jobKey: gameResultsJobKey, dryRun },
           reason: `nightly settlement sweep ${sweepDate}`,
         });
       } else {
@@ -796,12 +810,13 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       }
 
       if (!settlementCardsRunning) {
+        const pendingCardsJobKey = keyNightlySettlementJob(nowEt, 'pending-cards');
         jobs.push({
           jobName: 'settle_pending_cards',
-          jobKey: 'settle|global|pending-cards',
+          jobKey: pendingCardsJobKey,
           execute: settlePendingCards,
           args: {
-            jobKey: 'settle|global|pending-cards',
+            jobKey: pendingCardsJobKey,
             dryRun,
             allowDisplayBackfill: SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL,
           },
@@ -1010,6 +1025,8 @@ module.exports = {
   keyNhlSogPlayerSync,
   keyNhlPlayerAvailabilitySync,
   keyHourlySettlementSweep,
+  keyHourlySettlementJob,
+  keyNightlySettlementJob,
   isHourlySettlementDue,
   isFixedDue,
   dueTminusMinutes,

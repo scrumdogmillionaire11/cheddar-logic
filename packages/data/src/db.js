@@ -1796,6 +1796,29 @@ function hasRunningJobRun(jobKey) {
 }
 
 /**
+ * Check if any run for a job_name is currently running.
+ * Used when overlap protection must span multiple window-scoped job keys.
+ * @param {string} jobName - Job name
+ * @returns {boolean}
+ */
+function hasRunningJobName(jobName) {
+  if (!jobName) return false;
+
+  const db = getDatabase();
+
+  const stmt = db.prepare(`
+    SELECT 1
+    FROM job_runs
+    WHERE job_name = ?
+      AND status = 'running'
+    LIMIT 1
+  `);
+
+  const row = stmt.get(jobName);
+  return Boolean(row);
+}
+
+/**
  * Determine if a job_key should run (abstracts success/running/failed logic)
  * @param {string} jobKey - Deterministic window key
  * @returns {boolean} - true if should run, false if should skip
@@ -3851,6 +3874,7 @@ module.exports = {
   markJobRunFailure,
   hasSuccessfulJobRun,
   hasRunningJobRun,
+  hasRunningJobName,
   shouldRunJobKey,
   getLatestJobRunByKey,
   wasJobKeyRecentlySuccessful,

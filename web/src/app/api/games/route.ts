@@ -602,10 +602,9 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
     playProducerCardTypes: new Set([
       'ncaam-base-projection',
       'ncaam-rest-advantage',
-      'ncaam-matchup-style',
       'ncaam-ft-trend',
     ]),
-    evidenceOnlyCardTypes: new Set([]),
+    evidenceOnlyCardTypes: new Set(['ncaam-matchup-style']),
     expectedPlayableMarkets: new Set<MarketType>(['MONEYLINE', 'SPREAD']),
   },
 };
@@ -696,6 +695,12 @@ function inferMarketFromCardType(cardType: string): MarketType | undefined {
   }
   if (normalized.includes('total')) {
     return 'TOTAL';
+  }
+  if (
+    normalized.includes('player-shots') ||
+    normalized.includes('player_shots')
+  ) {
+    return 'PROP';
   }
   return undefined;
 }
@@ -3187,6 +3192,10 @@ export async function GET(request: NextRequest) {
             continue;
           }
           seenNhlShotsPlayKeys.add(dedupeKey);
+
+          // Ensure market_type is PROP so the no-market-type guard below doesn't
+          // force this play to INFO/EVIDENCE before it reaches the props output.
+          play.market_type = 'PROP';
         }
 
         incrementStageCounter(
@@ -3221,7 +3230,12 @@ export async function GET(request: NextRequest) {
           play.market_type,
         );
 
-        if (wave1Eligible) {
+        // PROP plays (nhl-player-shots etc.) carry action/status directly in the
+        // payload — they don't use the wave-1 decision_v2 pipeline.  Skip the
+        // wave-1 path for them so they aren't silently dropped.
+        const isPropPlay = play.market_type === 'PROP';
+
+        if (wave1Eligible && !isPropPlay) {
           // Wave-1 rows MUST have decision_v2 from worker - skip if missing
           if (!play.decision_v2) {
             incrementStageCounter(

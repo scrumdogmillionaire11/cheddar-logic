@@ -39,11 +39,12 @@ NHL alignment execution order: `WI-0500` -> `WI-0501` -> `WI-0502` -> `WI-0506` 
 
 ### Production performance remediation (queued)
 
-- `WI-0587`: Remove `ncaam-matchup-style` as an actionable betting source
+- ~~`WI-0587`~~: Remove `ncaam-matchup-style` as an actionable betting source (DONE — qt-78)
 - `WI-0588`: Quarantine NBA totals by demoting actionable tiers one level
 - `WI-0589`: Confidence tier correction layer for PLAY vs LEAN
 - `WI-0590`: Diagnose NBA totals underperformance before permanent retuning
 - `WI-0591`: Wire empirical sigma overrides into NBA and NCAAM decisioning
+- `WI-0592`: NHL shots props breakout-usage overlay
 
 Recommended execution order: (`WI-0587` + `WI-0588`) -> `WI-0589`, with (`WI-0590` + `WI-0591`) in parallel as diagnostic/calibration enablers for later retuning.
 
@@ -81,6 +82,8 @@ Proposed execution branches (when each WI starts):
 - `WI-0535`: (dependency of WI-0536/0537 — see governance notes)
 - `WI-0536`: Canonical edge contract + unit normalization
 - `WI-0537`: FIRST_PERIOD policy centralization in canonical decision layer
+- `WI-0572`: Hostile audit — betting decision pipeline (10 findings, all addressed)
+- `WI-0587`: Remove ncaam-matchup-style as actionable betting source
 
 ## Rules
 

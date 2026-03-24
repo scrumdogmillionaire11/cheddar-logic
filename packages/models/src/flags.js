@@ -13,6 +13,9 @@ const FLAGS = Object.freeze({
     : true,
   ENABLE_PROJECTION_PERF_LEDGER: isTruthy(process.env.ENABLE_PROJECTION_PERF_LEDGER),
   ENABLE_CLV_LEDGER: isTruthy(process.env.ENABLE_CLV_LEDGER),
+  QUARANTINE_NBA_TOTAL: process.env.QUARANTINE_NBA_TOTAL !== undefined
+    ? isTruthy(process.env.QUARANTINE_NBA_TOTAL)
+    : true,
 });
 
 module.exports = {

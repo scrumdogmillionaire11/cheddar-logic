@@ -57,6 +57,7 @@ module.exports = {
   wasJobRecentlySuccessful: db.wasJobRecentlySuccessful,
   hasSuccessfulJobRun: db.hasSuccessfulJobRun,
   hasRunningJobRun: db.hasRunningJobRun,
+  hasRunningJobName: db.hasRunningJobName,
   shouldRunJobKey: db.shouldRunJobKey,
   getLatestJobRunByKey: db.getLatestJobRunByKey,
   wasJobKeyRecentlySuccessful: db.wasJobKeyRecentlySuccessful,

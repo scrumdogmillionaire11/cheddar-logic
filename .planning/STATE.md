@@ -16,20 +16,78 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-23
-- Next action for operators/agents: All Tier 0b CRITICALs (WI-0573–WI-0577) resolved. Next: WI-0579 (1P independent V2 run, HIGH) → WI-0581 (edge_delta_pct rename, HIGH) → WI-0582/0583/0584 (MEDIUM).
+- Last reviewed: 2026-03-24
+- Next action: WI-0588 (NBA totals quarantine) + WI-0591 (empirical sigma wiring) — parallel, both unblocked, both bleed EV every night they're open.
 
 ---
 
-## Sprint Plan — 2026-03-23 re-prioritization
+## Sprint Plan — 2026-03-24 full re-prioritization (20 open items)
 
 ### Dependency Chains (respect order within chains)
-- **Audit fixes (parallel, independent):** AUDIT-FIX-01, AUDIT-FIX-02, AUDIT-FIX-03, AUDIT-FIX-04, AUDIT-FIX-05, AUDIT-FIX-06
 - **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → WI-0554 → WI-0556 → WI-0553
 - **Auth/JWT:** ~~WI-0559~~✓ → ~~WI-0560~~✓ (both done)
 - **Settlement → CLV (serial):** WI-0564 → WI-0566 → WI-0557
 - **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
+- **NBA quarantine → diagnosis → tier fix:** WI-0588 → WI-0590 → WI-0589
 - **All others:** independent, can be parallelized across agents
+
+### Note on WI-0587
+WI-0587 (demote `ncaam-matchup-style` to evidence-only) has no file in `WORK_QUEUE/`. It is listed as a dependency of WI-0589. Needs to be created before WI-0589 can start.
+
+---
+
+## Prioritized Open Work Queue — 2026-03-24
+
+### P0 — Active EV Bleed (do tonight)
+
+| # | WI | Summary | Deps | Why now |
+|---|---|---|---|---|
+| 1 | [WI-0588](../WORK_QUEUE/WI-0588.md) | Quarantine NBA totals — demote actionable tiers one level | none | 14-21, −8.35u in prod; every night open costs real units |
+| 2 | [WI-0591](../WORK_QUEUE/WI-0591.md) | Wire empirical sigma overrides into NBA + NCAAM decisioning | none | Currently falling back to static sigma silently; mis-calibrates every basketball card |
+
+### P1 — High-impact, unblocked (this week)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 3 | [WI-0590](../WORK_QUEUE/WI-0590.md) | NBA totals diagnostic report (projection bias vs sigma vs threshold) | WI-0588 should land first |
+| 4 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function — replace hardcoded 0.95/0.88/0.85 literals | none (unblocked) |
+| 5 | WI-0587 *(file missing — create first)* | Demote `ncaam-matchup-style` to evidence-only (0-5, −5u in prod) | none |
+| 6 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate web tests to temp DB — prevent CI from mutating prod DB | none |
+| 7 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI, no local server required | none |
+| 8 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | none |
+
+### P2 — Unblocked features / completions (next sprint)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 9 | [WI-0589](../WORK_QUEUE/WI-0589.md) | PLAY vs LEAN tier correction — cleanliness/contradiction gates | WI-0587, WI-0588 |
+| 10 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | none |
+| 11 | [WI-0592](../WORK_QUEUE/WI-0592.md) | NHL SOG breakout usage overlay — rising-usage OVER candidates no longer flattened | none |
+| 12 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |
+
+### P3 — Serial chains (after P1/P2 land)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 13 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 |
+| 14 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge, not projection signal | WI-0554 |
+| 15 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
+| 16 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
+
+### P4 — Market evaluator layer (serial chain, can start parallel with P3)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 17 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion) | none |
+| 18 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector (best-price separate from best-line) | WI-0568 |
+| 19 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
+| 20 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | WI-0568, WI-0569 |
+
+### P5 — New markets (after core pipeline is stable)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 21 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (data ingest → model runner → display) | none |
 
 ---
 
@@ -76,12 +134,12 @@ This file is intentionally minimal to avoid stale status drift.
 | 4 | ~~[WI-0576](../WORK_QUEUE/COMPLETE/WI-0576.md)~~ ✓ | `NHL_SOG_PROP_EVENTS_ENABLED` defaults false — real Odds API lines are never ingested unless explicitly set; all cards run on synthetic `2.5` floor line silently | **CRITICAL** | ✓ DONE (qt-72) |
 | 5 | ~~[WI-0577](../WORK_QUEUE/COMPLETE/WI-0577.md)~~ ✓ | V1 drives bet decision; V2 Poisson edge is computed but never gates FIRE — V1 can emit a PLAY while V2's `edge_over_pp` is negative; add V2 veto gate for FIRE on odds-backed cards | **CRITICAL** | ✓ DONE (qt-75) |
 | 6 | ~~[WI-0578](../WORK_QUEUE/WI-0578.md)~~ ✓ | `PP_RATE_MISSING` flag set but PP component silently collapses to 0 for top PP players; under-projects by 0.3–0.5 SOG for players with non-zero `ppToi` | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
-| 7 | [WI-0579](../WORK_QUEUE/WI-0579.md) | 1P cards don't run `projectSogV2` independently; full-game `v2AnomalyDetected` reused against 1P mu | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 7 | ~~[WI-0579](../WORK_QUEUE/WI-0579.md)~~ ✓ | 1P cards don't run `projectSogV2` independently; full-game `v2AnomalyDetected` reused against 1P mu | **HIGH** | ✓ DONE (qt-78) |
 | 8 | ~~[WI-0580](../WORK_QUEUE/COMPLETE/WI-0580.md)~~ ✓ | PROP cards not wave-1 eligible — V1 wins unconditionally; V2 `official_status` never overrides | **HIGH** | `web/src/app/api/games/route.ts` |
-| 9 | [WI-0581](../WORK_QUEUE/WI-0581.md) | Rename `decision_v2.edge_pct` → `edge_delta_pct` — projection-delta % vs probability edge conflation | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
-| 10 | [WI-0582](../WORK_QUEUE/WI-0582.md) | `opponentFactor`/`paceFactor` fallback silent at `console.debug` — upgrade to `warn` + card flag | **MEDIUM** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
-| 11 | [WI-0583](../WORK_QUEUE/WI-0583.md) | V1 vs V2 mu calibration study — no accuracy audit exists; no reconciliation when models disagree | **MEDIUM** | `apps/worker/src/models/nhl-player-shots.js` |
-| 12 | [WI-0584](../WORK_QUEUE/WI-0584.md) | Line-change dedup gap — two cards same player/side after odds update; `dedupeLine` key mismatch bypasses `seenNhlShotsPlayKeys` | **MEDIUM** | `web/src/app/api/games/route.ts`, `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
+| 9 | ~~[WI-0581](../WORK_QUEUE/WI-0581.md)~~ ✓ | Rename `decision_v2.edge_pct` → `edge_delta_pct` — projection-delta % vs probability edge conflation | **HIGH** | ✓ DONE (qt-79) |
+| 10 | ~~[WI-0582](../WORK_QUEUE/WI-0582.md)~~ ✓ | `opponentFactor`/`paceFactor` fallback silent at `console.debug` — upgrade to `warn` + card flag | **MEDIUM** | ✓ DONE (qt-80) |
+| 11 | ~~[WI-0583](../WORK_QUEUE/COMPLETE/WI-0583.md)~~ ✓ | V1 vs V2 mu calibration study — no accuracy audit exists; no reconciliation when models disagree | **MEDIUM** | ✓ DONE (qt-76) |
+| 12 | ~~[WI-0584](../WORK_QUEUE/COMPLETE/WI-0584.md)~~ ✓ | Line-change dedup gap — two cards same player/side after odds update; `dedupeLine` key mismatch bypasses `seenNhlShotsPlayKeys` | **MEDIUM** | ✓ DONE (qt-77) |
 
 ---
 
@@ -179,5 +237,10 @@ This file is intentionally minimal to avoid stale status drift.
 
 | 76 | WI-0583 V1 vs V2 mu calibration study | 2026-03-24 | ea7b3b9 | [76-wi-0583-v1-vs-v2-mu-calibration-study](./quick/76-wi-0583-v1-vs-v2-mu-calibration-study/) |
 | 77 | WI-0584 Line-change dedup gap: 6-element key + secondary seenPropTupleKeys pass + warn-on-zero purge | 2026-03-24 | 974f114 | [77-wi-0584-line-change-dedup-gap](./quick/77-wi-0584-line-change-dedup-gap/) |
+| 78 | WI-0579 1P independent V2 run: projectSogV2 called with 1P-specific mu; full-game v2AnomalyDetected no longer reused against 1P mu | 2026-03-24 | — | — |
+| 79 | WI-0581 Rename decision_v2.edge_pct → edge_delta_pct: removes conflation between projection-delta % and probability edge across model job + downstream consumers | 2026-03-24 | — | — |
+| 80 | WI-0582 opponentFactor/paceFactor fallback: console.debug → console.warn + OPPONENT_FACTOR_MISSING / PACE_FACTOR_MISSING reason_code flag on card | 2026-03-24 | — | — |
+| 81 | WI-0587: Remove ncaam-matchup-style as actionable betting source | 2026-03-24 | 2f35455 | [78-wi-0587-remove-ncaam-matchup-style-as-ac](./quick/78-wi-0587-remove-ncaam-matchup-style-as-ac/) |
+| 82 | WI-0588 NBA totals quarantine — demote tier one level | 2026-03-24 | ddfc2fc | [79-wi-0588-nba-totals-quarantine-demote-tie](./quick/79-wi-0588-nba-totals-quarantine-demote-tie/) |
 
-Last activity: 2026-03-24 - Completed quick task 77: WI-0584 line-change dedup gap fixed
+Last activity: 2026-03-24 - Completed quick task 82 (WI-0588): NBA totals quarantine — PLAY→LEAN, LEAN→PASS demotion active
