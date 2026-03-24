@@ -241,5 +241,6 @@ WI-0587 (demote `ncaam-matchup-style` to evidence-only) has no file in `WORK_QUE
 | 79 | WI-0581 Rename decision_v2.edge_pct → edge_delta_pct: removes conflation between projection-delta % and probability edge across model job + downstream consumers | 2026-03-24 | — | — |
 | 80 | WI-0582 opponentFactor/paceFactor fallback: console.debug → console.warn + OPPONENT_FACTOR_MISSING / PACE_FACTOR_MISSING reason_code flag on card | 2026-03-24 | — | — |
 | 81 | WI-0587: Remove ncaam-matchup-style as actionable betting source | 2026-03-24 | 2f35455 | [78-wi-0587-remove-ncaam-matchup-style-as-ac](./quick/78-wi-0587-remove-ncaam-matchup-style-as-ac/) |
+| 82 | WI-0588 NBA totals quarantine — demote tier one level | 2026-03-24 | ddfc2fc | [79-wi-0588-nba-totals-quarantine-demote-tie](./quick/79-wi-0588-nba-totals-quarantine-demote-tie/) |
 
-Last activity: 2026-03-24 - Completed quick task 81 (WI-0587): ncaam-matchup-style quarantined from all production paths
+Last activity: 2026-03-24 - Completed quick task 82 (WI-0588): NBA totals quarantine — PLAY→LEAN, LEAN→PASS demotion active
