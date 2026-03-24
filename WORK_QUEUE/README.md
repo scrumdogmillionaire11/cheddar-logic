@@ -14,7 +14,7 @@ See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decision
 
 ## Active Work Items
 
-**Updated**: 2026-03-21
+**Updated**: 2026-03-23
 
 - `WI-0485`: Phase 4 telemetry calibration report + enforcement gate
 - `WI-0486`: Phase 4 soak-window runbook + weekly go/no-go cadence (depends on `WI-0485`)
@@ -36,6 +36,16 @@ See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decision
 Recommended execution order: `WI-0485` -> (`WI-0486` + `WI-0487` in parallel if staffing allows) -> `WI-0488` -> `WI-0489`.
 
 NHL alignment execution order: `WI-0500` -> `WI-0501` -> `WI-0502` -> `WI-0506` -> `WI-0503` -> `WI-0504` -> `WI-0505`.
+
+### Production performance remediation (queued)
+
+- `WI-0587`: Remove `ncaam-matchup-style` as an actionable betting source
+- `WI-0588`: Quarantine NBA totals by demoting actionable tiers one level
+- `WI-0589`: Confidence tier correction layer for PLAY vs LEAN
+- `WI-0590`: Diagnose NBA totals underperformance before permanent retuning
+- `WI-0591`: Wire empirical sigma overrides into NBA and NCAAM decisioning
+
+Recommended execution order: (`WI-0587` + `WI-0588`) -> `WI-0589`, with (`WI-0590` + `WI-0591`) in parallel as diagnostic/calibration enablers for later retuning.
 
 ### Soccer Asian Handicap workstream (queued)
 
