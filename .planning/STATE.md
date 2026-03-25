@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-25T00:09:53.241Z"
-last_activity: "2026-03-24 - Completed quick task 82 (WI-0588): NBA totals quarantine — PLAY→LEAN, LEAN→PASS demotion active"
+last_updated: "2026-03-25T00:39:27Z"
+last_activity: "2026-03-25 - Completed quick-80 (WI-0594): active tab regression fix — rolling 36h activeStartUtc for active lifecycle mode"
 progress:
   total_phases: 4
   completed_phases: 3
@@ -30,7 +30,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-24
+- Last reviewed: 2026-03-25
 - Next action: WI-0588 (NBA totals quarantine) + WI-0591 (empirical sigma wiring) — parallel, both unblocked, both bleed EV every night they're open.
 
 ---
@@ -56,7 +56,7 @@ WI-0587 (demote `ncaam-matchup-style` to evidence-only) has no file in `WORK_QUE
 
 | # | WI | Summary | Deps | Why now |
 |---|---|---|---|---|
-| 1 | [WI-0594](../WORK_QUEUE/WI-0594.md) | **REGRESSION** Active tab — in-progress games missing ACTIVE label in prod | none | Live games invisible in Active tab every game window; dev works, prod broken |
+| 1 | ~~[WI-0594](../WORK_QUEUE/COMPLETE/WI-0594.md)~~ ✓ | **REGRESSION** Active tab — in-progress games missing ACTIVE label in prod | none | DONE: rolling 36h activeStartUtc replaces todayUtc for active mode |
 | 2 | [WI-0588](../WORK_QUEUE/WI-0588.md) | Quarantine NBA totals — demote actionable tiers one level | none | 14-21, −8.35u in prod; every night open costs real units |
 | 3 | [WI-0591](../WORK_QUEUE/WI-0591.md) | Wire empirical sigma overrides into NBA + NCAAM decisioning | none | Currently falling back to static sigma silently; mis-calibrates every basketball card |
 
