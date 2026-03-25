@@ -91,10 +91,6 @@ const getVerdictLabel = (verdict: PropPlayRow['propVerdict']) => {
   return verdict ?? 'NO PLAY';
 };
 
-const toTitleCase = (value: string | null | undefined) => {
-  if (!value) return 'Over';
-  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
-};
 
 const americanToImplied = (americanOdds: number) => {
   if (!Number.isFinite(americanOdds) || americanOdds === 0) return null;
@@ -136,11 +132,6 @@ const getThresholdOutcomeText = ({
   return `${resolvedTarget}+ shots`;
 };
 
-const getThresholdToken = (lineValue: number | null | undefined) => {
-  const target = getThresholdTarget(lineValue);
-  if (!Number.isFinite(target)) return 'threshold';
-  return `${target}+`;
-};
 
 const getHitRateLabel = ({
   leanSide,

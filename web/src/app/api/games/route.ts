@@ -1868,7 +1868,7 @@ export async function GET(request: NextRequest) {
     };
 
     const loadGamesStartedAt = Date.now();
-    let activeLifecycleFallbackApplied = false;
+    const activeLifecycleFallbackApplied = false;
     // Active mode uses activeStartUtc (36h rolling lookback) so games started
     // before today's ET midnight boundary stay visible while in progress.
     // Pregame mode continues using gamesStartUtc (today midnight ET).
@@ -3197,7 +3197,6 @@ export async function GET(request: NextRequest) {
             normalizeSelectionSide(
               play.selection?.side ?? play.prediction,
             ) || 'NONE';
-          const dedupeLine = firstNumber(play.line, play.suggested_line, play.threshold);
           const dedupeKey = [
             canonicalGameId,
             cardRow.card_type,
