@@ -607,6 +607,11 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
     evidenceOnlyCardTypes: new Set(['ncaam-matchup-style']),
     expectedPlayableMarkets: new Set<MarketType>(['MONEYLINE', 'SPREAD']),
   },
+  MLB: {
+    playProducerCardTypes: new Set(['mlb-strikeout', 'mlb-f5']),
+    evidenceOnlyCardTypes: new Set(['mlb-model-output']),
+    expectedPlayableMarkets: new Set<MarketType>(['PROP', 'FIRST_PERIOD']),
+  },
 };
 
 function createStageCounters(): StageCounters {
@@ -698,9 +703,13 @@ function inferMarketFromCardType(cardType: string): MarketType | undefined {
   }
   if (
     normalized.includes('player-shots') ||
-    normalized.includes('player_shots')
+    normalized.includes('player_shots') ||
+    normalized === 'mlb-strikeout'
   ) {
     return 'PROP';
+  }
+  if (normalized === 'mlb-f5') {
+    return 'FIRST_PERIOD';
   }
   return undefined;
 }
@@ -1615,6 +1624,19 @@ export async function GET(request: NextRequest) {
       : null;
 
     const gamesStartUtc = lookbackUtc ?? todayUtc;
+    // Active mode uses a rolling 36h lookback so late-night games that started
+    // before today's ET midnight boundary remain visible while in progress.
+    // Pregame mode keeps using todayUtc (already-started games shouldn't appear
+    // as pregame picks anyway).
+    const ACTIVE_LOOKBACK_HOURS = Number(
+      process.env.ACTIVE_GAMES_LOOKBACK_HOURS || 36,
+    );
+    const activeStartUtc =
+      lookbackUtc ??
+      new Date(now.getTime() - ACTIVE_LOOKBACK_HOURS * 60 * 60 * 1000)
+        .toISOString()
+        .substring(0, 19)
+        .replace('T', ' ');
     const gamesEndUtc = HAS_API_GAMES_HORIZON
       ? new Date(now.getTime() + API_GAMES_HORIZON_HOURS * 60 * 60 * 1000)
           .toISOString()
@@ -1847,7 +1869,12 @@ export async function GET(request: NextRequest) {
 
     const loadGamesStartedAt = Date.now();
     let activeLifecycleFallbackApplied = false;
-    let rows = loadGamesWithLatestOdds(gamesStartUtc, gamesEndUtc);
+    // Active mode uses activeStartUtc (36h rolling lookback) so games started
+    // before today's ET midnight boundary stay visible while in progress.
+    // Pregame mode continues using gamesStartUtc (today midnight ET).
+    const initialStartUtc =
+      lifecycleMode === 'active' ? activeStartUtc : gamesStartUtc;
+    let rows = loadGamesWithLatestOdds(initialStartUtc, gamesEndUtc);
 
     if (isNonProd && rows.length === 0 && !shouldUseDevLookback) {
       const fallbackLookbackHours = Number(
@@ -1863,17 +1890,9 @@ export async function GET(request: NextRequest) {
         rows = loadGamesWithLatestOdds(fallbackStartUtc, gamesEndUtc);
       }
     }
-
-    if (rows.length === 0 && lifecycleMode === 'active') {
-      const activeFallbackStartUtc = new Date(
-        now.getTime() - 36 * 60 * 60 * 1000,
-      )
-        .toISOString()
-        .substring(0, 19)
-        .replace('T', ' ');
-      rows = loadGamesWithLatestOdds(activeFallbackStartUtc, gamesEndUtc);
-      activeLifecycleFallbackApplied = rows.length > 0;
-    }
+    // Note: active mode no longer needs a secondary fallback — activeStartUtc
+    // already spans 36 h so there is no scenario where rows drops to 0 for live
+    // games solely due to the start-date boundary.
     perf.loadGamesMs = Date.now() - loadGamesStartedAt;
 
     for (const row of rows) {
