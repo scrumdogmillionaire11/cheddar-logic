@@ -79,7 +79,7 @@ const REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS =
 const TEAM_METRICS_MAX_AGE_MINUTES = Number(
   process.env.TEAM_METRICS_MAX_AGE_MINUTES || 20 * 60,
 );
-const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH !== 'false';
+const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH === 'true'; // default OFF — NCAAM model disabled 2026-03-24
 const ENABLE_NHL_SOG_PLAYER_SYNC =
   process.env.ENABLE_NHL_SOG_PLAYER_SYNC !== 'false';
 const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC =
@@ -144,6 +144,7 @@ const SPORT_JOBS = {
     jobName: 'run_ncaam_model',
     execute: runNCAAMModel,
     env: 'ENABLE_NCAAM_MODEL',
+    defaultOn: false, // disabled 2026-03-24: season winding down
   },
 
   // TEMPORARY: FPL here until deadline-based scheduler refactor
@@ -158,9 +159,13 @@ const SPORT_JOBS = {
  * Get list of enabled sports from environment
  */
 function enabledSports() {
-  return Object.keys(SPORT_JOBS).filter(
-    (s) => process.env[SPORT_JOBS[s].env] !== 'false',
-  );
+  return Object.keys(SPORT_JOBS).filter((s) => {
+    const job = SPORT_JOBS[s];
+    const envVal = process.env[job.env];
+    if (envVal === 'false') return false;
+    if (envVal === 'true') return true;
+    return job.defaultOn !== false; // explicit opt-in required when defaultOn=false
+  });
 }
 
 /**

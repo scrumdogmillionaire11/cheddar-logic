@@ -96,7 +96,7 @@ const SPORTS_CONFIG = {
   },
 
   NCAAM: {
-    active: true,
+    active: false, // disabled 2026-03-24: season winding down, model shut off E2E
     season: { start: '11-01', end: '04-15' },
     markets: ['h2h', 'totals', 'spreads'],
     tokensPerFetch: 3,
