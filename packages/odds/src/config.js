@@ -115,7 +115,7 @@ const SPORTS_CONFIG = {
   },
 
   SOCCER: {
-    active: true,
+    active: false, // disabled 2026-03-24: 9 tokens/fetch — too expensive on 500-token budget
     season: { start: '08-01', end: '06-30' }, // EPL/European football season
     markets: ['h2h', 'totals', 'spreads'],
     tokensPerFetch: 9,

@@ -139,6 +139,7 @@ const SPORT_JOBS = {
     jobName: 'run_soccer_model',
     execute: runSoccerModel,
     env: 'ENABLE_SOCCER_MODEL',
+    defaultOn: false, // disabled 2026-03-24: odds fetch off (9 tokens/fetch)
   },
   ncaam: {
     jobName: 'run_ncaam_model',
