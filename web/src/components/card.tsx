@@ -155,13 +155,6 @@ function getAccentColor(confidence: number): {
 }
 
 /**
- * Format confidence as percentage
- */
-function formatConfidence(confidence: number): string {
-  return `${Math.round(confidence * 100)}%`;
-}
-
-/**
  * Format timestamp for display
  */
 function formatTimestamp(iso: string): string {
@@ -184,7 +177,6 @@ export default function Card({
   id,
   gameId,
   sport,
-  cardType,
   cardTitle,
   createdAt,
   expiresAt,
