@@ -56,8 +56,9 @@ WI-0587 (demote `ncaam-matchup-style` to evidence-only) has no file in `WORK_QUE
 
 | # | WI | Summary | Deps | Why now |
 |---|---|---|---|---|
-| 1 | [WI-0588](../WORK_QUEUE/WI-0588.md) | Quarantine NBA totals — demote actionable tiers one level | none | 14-21, −8.35u in prod; every night open costs real units |
-| 2 | [WI-0591](../WORK_QUEUE/WI-0591.md) | Wire empirical sigma overrides into NBA + NCAAM decisioning | none | Currently falling back to static sigma silently; mis-calibrates every basketball card |
+| 1 | [WI-0594](../WORK_QUEUE/WI-0594.md) | **REGRESSION** Active tab — in-progress games missing ACTIVE label in prod | none | Live games invisible in Active tab every game window; dev works, prod broken |
+| 2 | [WI-0588](../WORK_QUEUE/WI-0588.md) | Quarantine NBA totals — demote actionable tiers one level | none | 14-21, −8.35u in prod; every night open costs real units |
+| 3 | [WI-0591](../WORK_QUEUE/WI-0591.md) | Wire empirical sigma overrides into NBA + NCAAM decisioning | none | Currently falling back to static sigma silently; mis-calibrates every basketball card |
 
 ### P1 — High-impact, unblocked (this week)
 
