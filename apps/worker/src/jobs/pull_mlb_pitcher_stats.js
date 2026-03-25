@@ -30,9 +30,13 @@ async function fetchJson(url) {
   return response.json();
 }
 
-async function fetchProbablePitcherIds(date) {
+async function fetchSchedule(date) {
   const url = `${MLB_API_BASE}/schedule?sportId=1&date=${date}&hydrate=probablePitcher(note),team`;
-  const payload = await fetchJson(url);
+  return fetchJson(url);
+}
+
+async function fetchProbablePitcherIds(date) {
+  const payload = await fetchSchedule(date);
 
   const ids = new Set();
   const dates = Array.isArray(payload.dates) ? payload.dates : [];
@@ -46,6 +50,51 @@ async function fetchProbablePitcherIds(date) {
     }
   }
   return [...ids];
+}
+
+function ensureMlbGamePkMap(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mlb_game_pk_map (
+      game_pk_key TEXT PRIMARY KEY,
+      game_pk     INTEGER NOT NULL,
+      game_date   TEXT NOT NULL,
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_mlb_game_pk_map_date
+      ON mlb_game_pk_map (game_date);
+  `);
+}
+
+function upsertGamePkMap(db, gamePkKey, gamePk, gameDate) {
+  ensureMlbGamePkMap(db);
+  db.prepare(`
+    INSERT INTO mlb_game_pk_map (game_pk_key, game_pk, game_date)
+    VALUES (?, ?, ?)
+    ON CONFLICT(game_pk_key) DO UPDATE SET
+      game_pk = excluded.game_pk,
+      game_date = excluded.game_date,
+      updated_at = datetime('now')
+  `).run(gamePkKey, gamePk, gameDate);
+}
+
+async function storeGamePkMap(db, date) {
+  const payload = await fetchSchedule(date);
+  const dates = Array.isArray(payload.dates) ? payload.dates : [];
+  let count = 0;
+  for (const d of dates) {
+    const games = Array.isArray(d.games) ? d.games : [];
+    for (const game of games) {
+      const gamePk = game?.gamePk;
+      const gameDate = game?.gameDate?.slice(0, 10) || date;
+      const homeAbbr = game?.teams?.home?.team?.abbreviation;
+      const awayAbbr = game?.teams?.away?.team?.abbreviation;
+      if (!gamePk || !homeAbbr || !awayAbbr) continue;
+      const gamePkKey = `${gameDate}|${homeAbbr}|${awayAbbr}`;
+      upsertGamePkMap(db, gamePkKey, gamePk, gameDate);
+      count += 1;
+    }
+  }
+  return count;
 }
 
 function toFinite(value) {
@@ -319,6 +368,11 @@ async function pullMlbPitcherStats({
         };
       }
 
+      // Store gamePk map so settlement job can look up gamePk from game_date + team abbreviations
+      const db = getDatabase();
+      const gamePkCount = await storeGamePkMap(db, date);
+      console.log(`[${JOB_NAME}] gamePkMap stored=${gamePkCount}`);
+
       const rows = await Promise.all(
         pitcherIds.map((id) =>
           fetchAllPitcherData(id).catch((err) => {
@@ -330,7 +384,6 @@ async function pullMlbPitcherStats({
 
       const validRows = rows.filter(Boolean);
 
-      const db = getDatabase();
       const upserted = upsertPitcherRows(db, validRows);
 
       // Also store raw per-start game logs for walk-forward backtesting
@@ -401,6 +454,7 @@ if (require.main === module) {
 module.exports = {
   JOB_NAME,
   todayDateString,
+  fetchSchedule,
   fetchProbablePitcherIds,
   fetchPitcherSeasonStats,
   fetchPitcherRecentStats,
@@ -409,6 +463,9 @@ module.exports = {
   upsertPitcherRows,
   ensureGameLogsTable,
   upsertGameLogs,
+  ensureMlbGamePkMap,
+  upsertGamePkMap,
+  storeGamePkMap,
   parseCliArgs,
   pullMlbPitcherStats,
 };
