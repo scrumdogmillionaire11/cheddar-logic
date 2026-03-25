@@ -29,6 +29,7 @@ const {
   projectNCAAM,
   projectNHL,
 } = require('./projections');
+const { computeMLBDriverCards } = require('./mlb-model');
 const { generateWelcomeHomeCard } = require('./welcome-home-v2');
 const {
   computeNHLMarketDecisions,
@@ -1945,6 +1946,23 @@ async function getInference(sport, gameId, oddsSnapshot) {
     }
   }
 
+  if (sport === 'MLB') {
+    const mlbCards = computeMLBDriverCards(gameId, oddsSnapshot);
+    if (mlbCards.length > 0) {
+      const best = mlbCards.reduce((a, b) => b.confidence > a.confidence ? b : a);
+      return {
+        prediction: best.prediction,
+        confidence: best.confidence,
+        ev_threshold_passed: best.ev_threshold_passed,
+        reasoning: best.reasoning,
+        drivers: mlbCards,
+        inference_source: 'local',
+        model_endpoint: null,
+        is_mock: false,
+      };
+    }
+  }
+
   // Remaining sports (NFL, MLB, FPL) — keep mock constant fallback.
   // Note: For FPL this is a shared-contract compatibility signal only;
   // the domain strategy engine is FPL Sage.
@@ -2256,4 +2274,5 @@ module.exports = {
   extractNhlDriverDataQualityContext,
   computeSkaterInjuryFactor,
   computeSkaterDefInjuryFactor,
+  computeMLBDriverCards,
 };

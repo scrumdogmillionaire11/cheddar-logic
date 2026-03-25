@@ -167,22 +167,22 @@ const PROPS_PRESETS: FilterPreset[] = [
 const PROJECTIONS_PRESETS: FilterPreset[] = [
   {
     id: 'proj_all',
-    name: 'All 1P',
-    description: 'All NHL first-period pace projections',
+    name: 'All Game Props',
+    description: 'All NHL 1P projections and MLB F5 totals',
     icon: '📊',
     filters: { ...DEFAULT_PROJECTIONS_FILTERS },
   },
   {
     id: 'proj_today',
     name: 'Tonight',
-    description: 'First-period projections for tonight',
+    description: 'Game props for tonight',
     icon: '📅',
     filters: { ...DEFAULT_PROJECTIONS_FILTERS, timeWindow: 'today' as const },
   },
   {
     id: 'proj_active',
     name: 'OVER/UNDER only',
-    description: 'Only games with a directional 1P call',
+    description: 'Only directional calls (OVER/UNDER)',
     icon: '🎯',
     filters: {
       ...DEFAULT_PROJECTIONS_FILTERS,

@@ -41,6 +41,9 @@ const { runNBAModel } = require('../jobs/run_nba_model');
 const { runFPLModel } = require('../jobs/run_fpl_model');
 const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
+const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
+const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
+const { settleMlbF5 } = require('../jobs/settle_mlb_f5');
 const { runSoccerModel } = require('../jobs/run_soccer_model');
 const { pullSoccerPlayerProps } = require('../jobs/pull_soccer_player_props');
 const { pullSoccerXgStats } = require('../jobs/pull_soccer_xg_stats');
@@ -76,7 +79,7 @@ const REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS =
 const TEAM_METRICS_MAX_AGE_MINUTES = Number(
   process.env.TEAM_METRICS_MAX_AGE_MINUTES || 20 * 60,
 );
-const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH !== 'false';
+const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH === 'true'; // default OFF — NCAAM model disabled 2026-03-24
 const ENABLE_NHL_SOG_PLAYER_SYNC =
   process.env.ENABLE_NHL_SOG_PLAYER_SYNC !== 'false';
 const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC =
@@ -86,6 +89,9 @@ const ENABLE_NHL_SOG_PROP_PULL =
 const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
   process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
 );
+const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 30);
+// First hour of day to start fetching odds (ET). Raise to 10 on starter-key budget.
+const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 6);
 const SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL =
   process.env.SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL === 'true';
 const SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL =
@@ -136,11 +142,13 @@ const SPORT_JOBS = {
     jobName: 'run_soccer_model',
     execute: runSoccerModel,
     env: 'ENABLE_SOCCER_MODEL',
+    defaultOn: false, // disabled 2026-03-24: odds fetch off (9 tokens/fetch)
   },
   ncaam: {
     jobName: 'run_ncaam_model',
     execute: runNCAAMModel,
     env: 'ENABLE_NCAAM_MODEL',
+    defaultOn: false, // disabled 2026-03-24: season winding down
   },
 
   // TEMPORARY: FPL here until deadline-based scheduler refactor
@@ -155,9 +163,13 @@ const SPORT_JOBS = {
  * Get list of enabled sports from environment
  */
 function enabledSports() {
-  return Object.keys(SPORT_JOBS).filter(
-    (s) => process.env[SPORT_JOBS[s].env] !== 'false',
-  );
+  return Object.keys(SPORT_JOBS).filter((s) => {
+    const job = SPORT_JOBS[s];
+    const envVal = process.env[job.env];
+    if (envVal === 'false') return false;
+    if (envVal === 'true') return true;
+    return job.defaultOn !== false; // explicit opt-in required when defaultOn=false
+  });
 }
 
 /**
@@ -171,10 +183,11 @@ function nowET() {
  * Job key builders (deterministic identifiers for idempotency)
  */
 function keyOddsHourly(nowEt) {
-  // Split into 30-min slots (0 = :00–:29, 1 = :30–:59) to halve worst-case stale window.
-  // This doubles hourly fetch count from 21 to 42/day (still well within paid-tier budget).
-  const slot = Math.floor(nowEt.minute / 30);
-  return `odds|hourly|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}|${slot}`;
+  // Slot size is configurable via ODDS_FETCH_SLOT_MINUTES (default 30).
+  // Increase to 120 on the starter key (500 tokens/month) to survive quota crunches.
+  const minuteOfDay = nowEt.hour * 60 + nowEt.minute;
+  const slot = Math.floor(minuteOfDay / ODDS_FETCH_SLOT_MINUTES);
+  return `odds|hourly|${nowEt.toISODate()}|s${String(slot).padStart(3, '0')}`;
 }
 
 function keyFixed(sport, nowEt, hhmm) {
@@ -493,6 +506,28 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
+  function queueMlbPitcherStatsBeforeModel(modelJobKey, reason) {
+    const pitcherJobKey = `mlb_pitcher_stats|${modelJobKey}`;
+    jobs.push({
+      jobName: 'pull_mlb_pitcher_stats',
+      jobKey: pitcherJobKey,
+      execute: pullMlbPitcherStats,
+      args: { jobKey: pitcherJobKey, dryRun },
+      reason: `pre-model MLB pitcher stats refresh (${reason})`,
+    });
+  }
+
+  function queueMlbWeatherBeforeModel(modelJobKey, reason) {
+    const weatherJobKey = `pull_mlb_weather|${modelJobKey}`;
+    jobs.push({
+      jobName: 'pull_mlb_weather',
+      jobKey: weatherJobKey,
+      execute: pullMlbWeather,
+      args: { jobKey: weatherJobKey, dryRun },
+      reason: `pre-model MLB weather overlay fetch (${reason})`,
+    });
+  }
+
   function maybeQueueNcaamFtRefresh(triggerReason) {
     if (!ENABLE_NCAAM_FT_REFRESH) return;
     if (ncaamFtRefreshQueued) return;
@@ -541,18 +576,18 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // ========== ODDS (2) ==========
   // Keep existing hourly bucket for backward compatibility, but can also add time-aware logic
   if (process.env.ENABLE_ODDS_PULL !== 'false') {
-    // Skip overnight hours (2am-5am ET) when no games start
-    // Saves 3 fetches/day × 30 days × 8 tokens = 720 tokens/month
-    const isOvernightHours = nowEt.hour >= 2 && nowEt.hour <= 5;
+    // Skip quiet hours (midnight to ODDS_FETCH_START_HOUR ET).
+    // Default: skip midnight–6am. Set ODDS_FETCH_START_HOUR=10 on starter-key budget.
+    const isQuietHours = nowEt.hour < ODDS_FETCH_START_HOUR;
 
-    if (!isOvernightHours) {
+    if (!isQuietHours) {
       const jobKey = keyOddsHourly(nowEt);
       jobs.push({
         jobName: 'pull_odds_hourly',
         jobKey,
         execute: pullOddsHourly,
         args: { jobKey, dryRun },
-        reason: `hourly bucket ${nowEt.toISODate()} ${nowEt.hour}h (21/day, skip 2am-5am)`,
+        reason: `hourly bucket ${nowEt.toISODate()} ${nowEt.hour}h (slot=${ODDS_FETCH_SLOT_MINUTES}min, start=${ODDS_FETCH_START_HOUR}h ET)`,
       });
     }
 
@@ -715,6 +750,10 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       if (sport === 'nhl') {
         queueNhlShotsPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
       }
+      if (sport === 'mlb') {
+        queueMlbPitcherStatsBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
+        queueMlbWeatherBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
+      }
       // For projection-model sports, force a fresh odds pull immediately before the model
       // so T-minus runs always see the current line (not up-to-29-min-stale hourly snapshot).
       if (isProjectionModelSport(sport) && process.env.ENABLE_ODDS_PULL !== 'false') {
@@ -866,6 +905,18 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     }
   }
 
+  // ========== MLB F5 SETTLEMENT (4C) ==========
+  if (process.env.ENABLE_MLB_MODEL !== 'false') {
+    const f5SettleKey = `settle_mlb_f5|${nowEt.toISODate()}|${nowEt.hour}`;
+    jobs.push({
+      jobName: 'settle_mlb_f5',
+      jobKey: f5SettleKey,
+      execute: settleMlbF5,
+      args: { jobKey: f5SettleKey, dryRun },
+      reason: 'MLB F5 card settlement (post-game)',
+    });
+  }
+
   // ========== HEALTH WATCHDOG (5) ==========
   if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') {
     const watchdogJobs = getPipelineHealthJobs(nowUtc);
@@ -989,6 +1040,8 @@ async function start() {
   console.log(
     `  ENABLE_NHL_SOG_PROP_PULL: ${ENABLE_NHL_SOG_PROP_PULL ? 'true' : 'false'}`,
   );
+  console.log(`  ODDS_FETCH_SLOT_MINUTES: ${ODDS_FETCH_SLOT_MINUTES}`);
+  console.log(`  ODDS_FETCH_START_HOUR: ${ODDS_FETCH_START_HOUR}h ET`);
   console.log(
     `  NCAAM_FT_REFRESH_MAX_AGE_MINUTES: ${NCAAM_FT_REFRESH_MAX_AGE_MINUTES}`,
   );

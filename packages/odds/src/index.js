@@ -106,8 +106,9 @@ function mergeSoccerSpreadMarkets(primaryApiGames, spreadOnlyApiGames) {
  */
 async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
   const apiKey = process.env.ODDS_API_KEY;
+  const backupApiKey = process.env.BACKUP_ODDS_API_KEY;
 
-  if (!apiKey) {
+  if (!apiKey && !backupApiKey) {
     return {
       games: [],
       errors: ['ODDS_API_KEY not found in environment variables'],
@@ -129,8 +130,21 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
   try {
     console.log(`[Odds] Fetching ${sport} (${hoursAhead}h horizon)...`);
 
-    // Call The Odds API directly
-    const rawGames = await fetchFromOddsAPI(sport, config, apiKey);
+    // Try primary key; fall back to backup on auth/quota errors
+    let rawGames;
+    try {
+      rawGames = await fetchFromOddsAPI(sport, config, apiKey);
+    } catch (primaryErr) {
+      const status = primaryErr?.response?.status;
+      if (backupApiKey && (status === 401 || status === 402 || status === 429)) {
+        console.warn(
+          `[Odds] Primary key failed (HTTP ${status}) — retrying with BACKUP_ODDS_API_KEY`,
+        );
+        rawGames = await fetchFromOddsAPI(sport, config, backupApiKey);
+      } else {
+        throw primaryErr;
+      }
+    }
 
     console.log(`[Odds] Got ${rawGames.length} raw games for ${sport}`);
 

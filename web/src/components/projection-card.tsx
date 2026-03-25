@@ -19,6 +19,7 @@ interface ProjectionCardProps {
   awayTeam: string;
   startTime: string;
   play: RawProjectionPlay;
+  sport?: string;
 }
 
 function formatGameTime(iso: string): string {
@@ -50,7 +51,9 @@ export default function ProjectionCard({
   awayTeam,
   startTime,
   play,
+  sport = 'NHL',
 }: ProjectionCardProps) {
+  const isMlb = sport === 'MLB';
   const side = play.selection?.side ?? 'NONE';
   const projectedTotal =
     typeof play.projectedTotal === 'number' ? play.projectedTotal : null;
@@ -91,7 +94,7 @@ export default function ProjectionCard({
           : 'text-cloud/40';
 
   const hasGoalieContext =
-    play.goalie_home_name || play.goalie_away_name || isGoalieUncertain;
+    !isMlb && (play.goalie_home_name || play.goalie_away_name || isGoalieUncertain);
 
   return (
     <div className="rounded-lg border border-white/10 bg-surface/60 p-4 space-y-3">
@@ -99,10 +102,10 @@ export default function ProjectionCard({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="px-2 py-0.5 text-xs font-bold rounded bg-blue-900/40 text-blue-300 border border-blue-700/40">
-            NHL
+            {sport}
           </span>
           <span className="text-[10px] font-mono tracking-widest text-cloud/30 uppercase">
-            1P Projection
+            {isMlb ? 'F5 Total' : '1P Projection'}
           </span>
         </div>
         <span className="text-xs font-mono text-cloud/40">
@@ -122,7 +125,7 @@ export default function ProjectionCard({
           <div className="text-3xl font-bold font-mono text-cloud leading-none">
             {projectedTotal !== null ? projectedTotal.toFixed(2) : '—'}
           </div>
-          <div className="text-[10px] text-cloud/30 mt-1">proj. goals</div>
+          <div className="text-[10px] text-cloud/30 mt-1">{isMlb ? 'proj. runs' : 'proj. goals'}</div>
         </div>
 
         {/* Line + delta */}
@@ -136,7 +139,7 @@ export default function ProjectionCard({
           {delta !== null && (
             <span className={`text-xs font-mono font-semibold ${deltaColor}`}>
               {delta > 0 ? '+' : ''}
-              {delta.toFixed(2)} goals
+              {delta.toFixed(2)} {isMlb ? 'runs' : 'goals'}
             </span>
           )}
         </div>

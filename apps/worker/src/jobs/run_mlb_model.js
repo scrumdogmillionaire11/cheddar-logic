@@ -20,6 +20,7 @@ const { v4: uuidV4 } = require('uuid');
 
 // Import cheddar-logic data layer
 const {
+  getDatabase,
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
@@ -36,7 +37,7 @@ const {
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
-const { getModel } = require('../models');
+const { getModel, computeMLBDriverCards } = require('../models');
 const {
   buildRecommendationFromPrediction,
   buildMatchup,
@@ -140,6 +141,92 @@ function generateMLBCard(gameId, modelOutput, oddsSnapshot) {
 }
 
 /**
+ * Enrich an odds snapshot with pitcher stats from the mlb_pitcher_stats table.
+ *
+ * Queries by team name for rows updated today. Falls back gracefully when no
+ * rows are found (returns original oddsSnapshot unchanged).
+ *
+ * Also attaches market lines (total, f5) from the snapshot into raw_data.mlb
+ * so computeMLBDriverCards can read them without needing the top-level fields.
+ *
+ * @param {object} oddsSnapshot
+ * @returns {object} Enriched snapshot (or original if DB unavailable / no data)
+ */
+function enrichMlbPitcherData(oddsSnapshot) {
+  const homeTeam = oddsSnapshot?.home_team ?? '';
+  const awayTeam = oddsSnapshot?.away_team ?? '';
+
+  try {
+    const db = getDatabase();
+    const byTeam = db.prepare(
+      "SELECT * FROM mlb_pitcher_stats WHERE team = ? AND date(updated_at) = date('now') LIMIT 1",
+    );
+
+    const homePitcher = homeTeam ? (byTeam.get(homeTeam) ?? null) : null;
+    const awayPitcher = awayTeam ? (byTeam.get(awayTeam) ?? null) : null;
+
+    const existingRaw =
+      typeof oddsSnapshot.raw_data === 'string'
+        ? JSON.parse(oddsSnapshot.raw_data)
+        : (oddsSnapshot.raw_data ?? {});
+
+    const mlb = existingRaw.mlb ?? {};
+
+    // Attach market lines from odds snapshot to raw_data.mlb
+    mlb.total_line = oddsSnapshot.total ?? mlb.total_line ?? null;
+    mlb.f5_line = oddsSnapshot.total_f5 ?? mlb.f5_line ?? null;
+    // Strikeout lines come from player_prop_lines table — out of scope for this WI.
+    // Leave strikeout_lines as-is (from existing raw_data or null).
+
+    // Look up weather for this game by (game_date, home_team)
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const weatherRow = db.prepare(
+        'SELECT temp_f, wind_mph, wind_dir, conditions FROM mlb_game_weather WHERE game_date = ? AND home_team = ? LIMIT 1',
+      ).get(today, homeTeam);
+
+      if (weatherRow && weatherRow.conditions !== 'INDOOR') {
+        mlb.temp_f = weatherRow.temp_f ?? mlb.temp_f ?? null;
+        mlb.wind_mph = weatherRow.wind_mph ?? mlb.wind_mph ?? null;
+      }
+    } catch (weatherErr) {
+      // Non-fatal — model uses neutral defaults
+    }
+
+    return {
+      ...oddsSnapshot,
+      raw_data: {
+        ...existingRaw,
+        mlb: {
+          ...mlb,
+          home_pitcher: homePitcher
+            ? {
+                era: homePitcher.era,
+                whip: homePitcher.whip,
+                k_per_9: homePitcher.k_per_9,
+                recent_k_per_9: homePitcher.recent_k_per_9,
+                avg_ip: homePitcher.recent_ip,
+              }
+            : mlb.home_pitcher ?? null,
+          away_pitcher: awayPitcher
+            ? {
+                era: awayPitcher.era,
+                whip: awayPitcher.whip,
+                k_per_9: awayPitcher.k_per_9,
+                recent_k_per_9: awayPitcher.recent_k_per_9,
+                avg_ip: awayPitcher.recent_ip,
+              }
+            : mlb.away_pitcher ?? null,
+        },
+      },
+    };
+  } catch (err) {
+    console.warn(`[MLBModel] Pitcher enrichment failed: ${err.message}`);
+    return oddsSnapshot; // proceed without enrichment
+  }
+}
+
+/**
  * Main job entrypoint
  * @param {object} options - Job options
  * @param {string|null} options.jobKey - Optional deterministic window key for idempotency
@@ -215,41 +302,97 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
       let cardsFailed = 0;
       const errors = [];
 
-      // Process each game
+      // Process each game — emit one card per qualifying driver market
       for (const gameId of gameIds) {
         try {
-          const oddsSnapshot = gameOdds[gameId];
+          let oddsSnapshot = gameOdds[gameId];
+          oddsSnapshot = enrichMlbPitcherData(oddsSnapshot);
 
-          // Run inference (using pluggable model)
-          const modelOutput = await model.infer(gameId, oddsSnapshot);
+          const driverCards = computeMLBDriverCards(gameId, oddsSnapshot);
+          const qualified = driverCards.filter((d) => d.ev_threshold_passed);
 
-          // Only generate card if model passed confidence threshold
-          if (modelOutput.ev_threshold_passed) {
-            const card = generateMLBCard(gameId, modelOutput, oddsSnapshot);
-            const validation = validateCardPayload(
-              card.cardType,
-              card.payloadData,
-            );
-            if (!validation.success) {
-              throw new Error(
-                `Invalid card payload: ${validation.errors.join('; ')}`,
-              );
-            }
+          // Clean up stale cards from previous runs for this game
+          prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-model-output', { runId: jobRunId });
+          prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-strikeout', { runId: jobRunId });
+          prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-f5', { runId: jobRunId });
 
-            const { deletedOutputs, deletedCards } = prepareModelAndCardWrite(
+          if (qualified.length === 0) {
+            console.log(`  ⏭️  ${gameId}: No markets passed threshold`);
+            continue;
+          }
+
+          const now = new Date().toISOString();
+          const matchup = buildMatchup(oddsSnapshot?.home_team, oddsSnapshot?.away_team);
+
+          for (const driver of qualified) {
+            const isF5 = driver.market === 'f5_total';
+            const cardType = isF5 ? 'mlb-f5' : 'mlb-strikeout';
+
+            const driverDetail = driver.drivers?.[0] ?? {};
+            const projected = driverDetail.projected ?? null;
+            const edge = driverDetail.edge ?? null;
+            const line =
+              projected !== null && edge !== null
+                ? Math.round((projected - edge) * 10) / 10
+                : null;
+
+            const pitcherTeam = driver.market === 'strikeouts_home'
+              ? (oddsSnapshot?.home_team ?? null)
+              : driver.market === 'strikeouts_away'
+                ? (oddsSnapshot?.away_team ?? null)
+                : null;
+
+            const tier =
+              driver.confidence >= 0.8 ? 'BEST' :
+              driver.confidence >= 0.6 ? 'WATCH' : 'WATCH';
+
+            const payloadData = {
+              game_id: gameId,
+              sport: 'MLB',
+              model_version: 'mlb-model-v1',
+              home_team: oddsSnapshot?.home_team ?? null,
+              away_team: oddsSnapshot?.away_team ?? null,
+              matchup,
+              start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+              market_type: isF5 ? 'FIRST_PERIOD' : 'PROP',
+              prediction: driver.prediction,
+              selection: { side: driver.prediction },
+              line,
+              confidence: driver.confidence,
+              tier,
+              ev_passed: true,
+              reasoning: driver.reasoning,
+              disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
+              generated_at: now,
+              ...(isF5
+                ? { projection: { projected_total: projected } }
+                : {
+                    player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
+                    canonical_market_key: 'pitcher_strikeouts',
+                  }),
+            };
+
+            const cardTitle = isF5
+              ? `F5 ${driver.prediction}: ${oddsSnapshot?.away_team ?? '?'} @ ${oddsSnapshot?.home_team ?? '?'}`
+              : `${pitcherTeam ?? '?'} SP Strikeouts ${driver.prediction}`;
+
+            const cardId = `card-mlb-${cardType}-${gameId}-${uuidV4().slice(0, 8)}`;
+            const card = {
+              id: cardId,
               gameId,
-              'mlb-model-v1',
-              'mlb-model-output',
-              { runId: jobRunId },
-            );
+              sport: 'MLB',
+              cardType,
+              cardTitle,
+              createdAt: now,
+              expiresAt: null,
+              payloadData,
+            };
 
-            if (deletedOutputs > 0 || deletedCards > 0) {
-              console.log(
-                `  🔄 ${gameId}: Removed ${deletedOutputs} output(s), ${deletedCards} card(s)`,
-              );
+            const validation = validateCardPayload(cardType, payloadData);
+            if (!validation.success) {
+              throw new Error(`Invalid ${cardType} payload: ${validation.errors.join('; ')}`);
             }
 
-            // Store model output
             const modelOutputId = `model-mlb-${gameId}-${uuidV4().slice(0, 8)}`;
             insertModelOutput({
               id: modelOutputId,
@@ -257,30 +400,23 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
               sport: 'MLB',
               modelName: 'mlb-model-v1',
               modelVersion: '1.0.0',
-              predictionType: 'moneyline',
-              predictedAt: new Date().toISOString(),
-              confidence: modelOutput.confidence,
-              outputData: modelOutput,
+              predictionType: cardType,
+              predictedAt: now,
+              confidence: driver.confidence,
+              outputData: driver,
               oddsSnapshotId: oddsSnapshot.id,
               jobRunId,
             });
 
-            // Generate and store card
             card.modelOutputIds = modelOutputId;
             attachRunId(card, jobRunId);
             insertCardPayload(card);
 
             cardsGenerated++;
-            console.log(
-              `  ✅ ${gameId}: ${modelOutput.prediction} (${(modelOutput.confidence * 100).toFixed(0)}% confidence)`,
-            );
-          } else {
-            console.log(
-              `  ⏭️  ${gameId}: Abstained (confidence ${(modelOutput.confidence * 100).toFixed(0)}% below threshold)`,
-            );
+            console.log(`  ✅ ${gameId} [${cardType}]: ${driver.prediction} (${(driver.confidence * 100).toFixed(0)}%)`);
           }
         } catch (gameError) {
-          if (gameError.message.startsWith('Invalid card payload')) {
+          if (gameError.message.startsWith('Invalid')) {
             throw gameError;
           }
           cardsFailed++;
