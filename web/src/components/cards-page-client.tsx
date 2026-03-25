@@ -856,7 +856,9 @@ export default function CardsPageClient() {
     const todayKey = getEtDayKey(new Date());
 
     return games.flatMap((game) => {
-      const play1p = game.plays.find((p) => p.cardType === 'nhl-pace-1p');
+      const play1p = game.plays.find(
+        (p) => p.cardType === 'nhl-pace-1p' || p.cardType === 'mlb-f5',
+      );
       if (!play1p) return [];
 
       // Sport filter (game.sport from API is lowercase, filter values are uppercase)
@@ -3306,7 +3308,7 @@ export default function CardsPageClient() {
                 : 'bg-white/5 text-cloud/70 border-white/10 hover:border-white/20'
             }`}
           >
-            1P Projections
+            Game Props
           </button>
         </div>
 
@@ -3377,7 +3379,7 @@ export default function CardsPageClient() {
                 {viewMode === 'props'
                   ? 'No qualified props match your filters'
                   : viewMode === 'projections'
-                    ? 'No 1P projections match your filters'
+                    ? 'No game props match your filters'
                     : 'No games match your filters'}
               </div>
               {diagnosticsEnabled &&
@@ -3447,10 +3449,11 @@ export default function CardsPageClient() {
           <div className="space-y-4">
             {projectionItems.map(({ game, play }) => (
               <ProjectionCard
-                key={`${game.gameId}-1p`}
+                key={`${game.gameId}-gameprops`}
                 homeTeam={game.homeTeam}
                 awayTeam={game.awayTeam}
                 startTime={game.gameTimeUtc}
+                sport={game.sport?.toUpperCase() ?? 'NHL'}
                 play={play}
               />
             ))}

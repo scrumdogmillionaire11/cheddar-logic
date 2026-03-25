@@ -3380,6 +3380,8 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         propType = 'Shots on Goal';
       } else if (canonicalMarketKey === 'to_score_or_assist') {
         propType = 'To Score or Assist';
+      } else if (canonicalMarketKey === 'pitcher_strikeouts' || titleLower.includes('strikeout')) {
+        propType = 'Strikeouts';
       } else if (titleLower.includes('shots') || titleLower.includes('sog')) {
         propType = 'Shots on Goal';
       } else if (titleLower.includes('points')) {
