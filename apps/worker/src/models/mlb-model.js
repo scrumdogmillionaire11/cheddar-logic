@@ -162,6 +162,54 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line) {
 }
 
 /**
+ * Compute pitcher K/9 and recent IP as-of a specific date.
+ * Uses only game logs WHERE game_date < asOfDate — true walk-forward simulation.
+ * Anti-look-ahead: same guarantee as Python BacktestEngine.get_pitcher_data_as_of_date().
+ *
+ * @param {number} mlbPitcherId
+ * @param {string} asOfDate - 'YYYY-MM-DD'
+ * @param {object} db - better-sqlite3 database instance
+ * @param {number} recentStarts - number of recent starts for recent_k_per_9 (default 5)
+ * @returns {{ k_per_9, recent_k_per_9, recent_ip, era, whip, starts } | null}
+ */
+function computePitcherStatsAsOf(mlbPitcherId, asOfDate, db, recentStarts = 5) {
+  // All starts before asOfDate in current season
+  const season = new Date(asOfDate).getFullYear();
+  const allStarts = db.prepare(`
+    SELECT innings_pitched, strikeouts, walks, hits, earned_runs, game_date
+    FROM mlb_pitcher_game_logs
+    WHERE mlb_pitcher_id = ?
+      AND season = ?
+      AND game_date < ?
+      AND innings_pitched > 0
+    ORDER BY game_date DESC
+  `).all(mlbPitcherId, season, asOfDate);
+
+  if (allStarts.length === 0) return null;
+
+  // Season totals
+  const totalIp = allStarts.reduce((s, r) => s + (r.innings_pitched ?? 0), 0);
+  const totalK  = allStarts.reduce((s, r) => s + (r.strikeouts ?? 0), 0);
+  const totalBb = allStarts.reduce((s, r) => s + (r.walks ?? 0), 0);
+  const totalH  = allStarts.reduce((s, r) => s + (r.hits ?? 0), 0);
+  const totalEr = allStarts.reduce((s, r) => s + (r.earned_runs ?? 0), 0);
+
+  const k_per_9 = totalIp > 0 ? (totalK / totalIp) * 9 : null;
+  const era = totalIp > 0 ? (totalEr / totalIp) * 9 : null;
+  const whip = totalIp > 0 ? (totalBb + totalH) / totalIp : null;
+
+  // Recent starts
+  const recent = allStarts.slice(0, recentStarts);
+  const recentIpSum = recent.reduce((s, r) => s + (r.innings_pitched ?? 0), 0);
+  const recentKSum  = recent.reduce((s, r) => s + (r.strikeouts ?? 0), 0);
+
+  const recent_k_per_9 = recentIpSum > 0 ? (recentKSum / recentIpSum) * 9 : k_per_9;
+  const recent_ip = recent.length > 0 ? recentIpSum / recent.length : null;
+
+  return { k_per_9, recent_k_per_9, recent_ip, era, whip, starts: allStarts.length };
+}
+
+/**
  * Parse raw_data from oddsSnapshot (handles string or object).
  */
 function parseRawMlb(oddsSnapshot) {
@@ -256,4 +304,5 @@ module.exports = {
   projectF5Total,
   projectF5TotalCard,
   computeMLBDriverCards,
+  computePitcherStatsAsOf,
 };
