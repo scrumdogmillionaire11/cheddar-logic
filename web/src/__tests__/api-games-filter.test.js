@@ -121,6 +121,12 @@ async function runTests() {
     !routeSource.includes('raw_status:'),
     'route no longer emits raw_status field',
   );
+  assert(
+    routeSource.includes('activeStartUtc') &&
+      routeSource.includes('ACTIVE_LOOKBACK_HOURS') &&
+      routeSource.includes("lifecycleMode === 'active' ? activeStartUtc : gamesStartUtc"),
+    'route uses rolling activeStartUtc for active mode (not todayUtc) to include late-night in-progress games',
+  );
 
   console.log();
 
@@ -275,6 +281,106 @@ async function runTests() {
     .run();
   client
     .prepare(`DELETE FROM games WHERE game_id LIKE '${TEST_PREFIX}%'`)
+    .run();
+  console.log();
+
+  // ── Section 3: Prod-parity regression — late-night game before ET midnight ──
+  // Regression for WI-0594: games started before today's ET midnight boundary
+  // (e.g. 10pm ET the previous calendar day = ~2-3am UTC today) were excluded
+  // from active mode because gamesStartUtc used today's ET midnight as the lower
+  // bound. The fix uses a rolling 36h activeStartUtc for active mode.
+
+  console.log('── Section 3: Prod-parity regression — late-night in-progress game ──');
+
+  const PROD_PARITY_PREFIX = 'test-prod-parity-';
+  client
+    .prepare(`DELETE FROM card_payloads WHERE game_id LIKE '${PROD_PARITY_PREFIX}%'`)
+    .run();
+  client
+    .prepare(`DELETE FROM game_results WHERE game_id LIKE '${PROD_PARITY_PREFIX}%'`)
+    .run();
+  client
+    .prepare(`DELETE FROM games WHERE game_id LIKE '${PROD_PARITY_PREFIX}%'`)
+    .run();
+
+  // Simulate a game that started 20 hours ago (past ET midnight but still live)
+  const lateNightGameId = `${PROD_PARITY_PREFIX}late-night-live`;
+  const lateNightGameTime = new Date(now.getTime() - 20 * 60 * 60 * 1000).toISOString();
+  client
+    .prepare(
+      `INSERT OR REPLACE INTO games
+         (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
+       VALUES (?, 'nhl', ?, 'Home', 'Away', ?, 'in_progress', datetime('now'), datetime('now'))`,
+    )
+    .run(`id-${lateNightGameId}`, lateNightGameId, lateNightGameTime);
+
+  // compute a todayUtc equivalent (midnight today ET, expressed as UTC)
+  const etDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
+  const tzPart = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    timeZoneName: 'shortOffset',
+  }).formatToParts(now).find((p) => p.type === 'timeZoneName').value;
+  const offsetHours = parseInt(tzPart.replace('GMT', '') || '-5', 10);
+  const absH = Math.abs(offsetHours).toString().padStart(2, '0');
+  const signCh = offsetHours < 0 ? '-' : '+';
+  const localMidnight = new Date(`${etDateStr}T00:00:00${signCh}${absH}:00`);
+  const todayUtcStr = localMidnight.toISOString().substring(0, 19).replace('T', ' ');
+  const rollingStartUtc = toSqlUtc(new Date(now.getTime() - 36 * 60 * 60 * 1000));
+
+  // With todayUtc as startUtc: game started 20h ago may fall before midnight ET →
+  // must check whether it falls before todayUtcStr
+  const activeWithTodayStart = queryActive(client, todayUtcStr, nowUtc, endUtc);
+  const activeIdsWithToday = new Set(activeWithTodayStart.map((r) => r.game_id));
+  const gameStartedBeforeTodayEt = new Date(lateNightGameTime).getTime() < localMidnight.getTime();
+
+  if (gameStartedBeforeTodayEt) {
+    assert(
+      !activeIdsWithToday.has(lateNightGameId),
+      'Late-night in-progress game (before ET midnight) is MISSING when startUtc=todayUtc [confirms regression exists]',
+    );
+  }
+
+  // With rolling 36h startUtc: game must appear
+  const activeWithRollingStart = queryActive(client, rollingStartUtc, nowUtc, endUtc);
+  const activeIdsWithRolling = new Set(activeWithRollingStart.map((r) => r.game_id));
+  assert(
+    activeIdsWithRolling.has(lateNightGameId),
+    'Late-night in-progress game (started 20h ago) IS visible when startUtc=rolling-36h [fix verified]',
+  );
+
+  // Ensure final-result game still excluded even with rolling start
+  const lateNightFinalId = `${PROD_PARITY_PREFIX}late-night-final`;
+  const lateNightFinalTime = new Date(now.getTime() - 22 * 60 * 60 * 1000).toISOString();
+  client
+    .prepare(
+      `INSERT OR REPLACE INTO games
+         (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
+       VALUES (?, 'nhl', ?, 'Home', 'Away', ?, 'in_progress', datetime('now'), datetime('now'))`,
+    )
+    .run(`id-${lateNightFinalId}`, lateNightFinalId, lateNightFinalTime);
+  client
+    .prepare(
+      `INSERT OR REPLACE INTO game_results
+         (id, game_id, sport, final_score_home, final_score_away, status, result_source, settled_at, created_at, updated_at)
+       VALUES (?, ?, 'nhl', 3, 1, 'final', 'manual', datetime('now'), datetime('now'), datetime('now'))`,
+    )
+    .run(`gr-${lateNightFinalId}`, lateNightFinalId);
+
+  const activeWithFinalResult = queryActive(client, rollingStartUtc, nowUtc, endUtc);
+  const activeIdsFinalResult = new Set(activeWithFinalResult.map((r) => r.game_id));
+  assert(
+    !activeIdsFinalResult.has(lateNightFinalId),
+    'Late-night game with final game_results is excluded from active even with rolling-36h startUtc',
+  );
+
+  client
+    .prepare(`DELETE FROM card_payloads WHERE game_id LIKE '${PROD_PARITY_PREFIX}%'`)
+    .run();
+  client
+    .prepare(`DELETE FROM game_results WHERE game_id LIKE '${PROD_PARITY_PREFIX}%'`)
+    .run();
+  client
+    .prepare(`DELETE FROM games WHERE game_id LIKE '${PROD_PARITY_PREFIX}%'`)
     .run();
   console.log();
 
