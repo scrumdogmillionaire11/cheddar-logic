@@ -43,6 +43,7 @@ const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
 const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
+const { settleMlbF5 } = require('../jobs/settle_mlb_f5');
 const { runSoccerModel } = require('../jobs/run_soccer_model');
 const { pullSoccerPlayerProps } = require('../jobs/pull_soccer_player_props');
 const { pullSoccerXgStats } = require('../jobs/pull_soccer_xg_stats');
@@ -892,6 +893,18 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         );
       }
     }
+  }
+
+  // ========== MLB F5 SETTLEMENT (4C) ==========
+  if (process.env.ENABLE_MLB_MODEL !== 'false') {
+    const f5SettleKey = `settle_mlb_f5|${nowEt.toISODate()}|${nowEt.hour}`;
+    jobs.push({
+      jobName: 'settle_mlb_f5',
+      jobKey: f5SettleKey,
+      execute: settleMlbF5,
+      args: { jobKey: f5SettleKey, dryRun },
+      reason: 'MLB F5 card settlement (post-game)',
+    });
   }
 
   // ========== HEALTH WATCHDOG (5) ==========
