@@ -57,7 +57,7 @@ const SPORTS_CONFIG = {
   },
 
   MLB: {
-    active: false, // Flip this when season starts (~March 20)
+    active: true, // season starts 2026-03-25
     season: { start: '03-20', end: '11-01' },
     markets: ['h2h', 'totals'],
     tokensPerFetch: 2,
@@ -96,7 +96,7 @@ const SPORTS_CONFIG = {
   },
 
   NCAAM: {
-    active: false, // disabled 2026-03-24: season winding down, model shut off E2E
+    active: false, // re-enable when 20k quota resets (~Apr 1); March Madness runs through ~Apr 7
     season: { start: '11-01', end: '04-15' },
     markets: ['h2h', 'totals', 'spreads'],
     tokensPerFetch: 3,

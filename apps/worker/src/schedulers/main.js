@@ -89,6 +89,9 @@ const ENABLE_NHL_SOG_PROP_PULL =
 const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
   process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
 );
+const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 30);
+// First hour of day to start fetching odds (ET). Raise to 10 on starter-key budget.
+const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 6);
 const SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL =
   process.env.SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL === 'true';
 const SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL =
@@ -180,10 +183,11 @@ function nowET() {
  * Job key builders (deterministic identifiers for idempotency)
  */
 function keyOddsHourly(nowEt) {
-  // Split into 30-min slots (0 = :00–:29, 1 = :30–:59) to halve worst-case stale window.
-  // This doubles hourly fetch count from 21 to 42/day (still well within paid-tier budget).
-  const slot = Math.floor(nowEt.minute / 30);
-  return `odds|hourly|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}|${slot}`;
+  // Slot size is configurable via ODDS_FETCH_SLOT_MINUTES (default 30).
+  // Increase to 120 on the starter key (500 tokens/month) to survive quota crunches.
+  const minuteOfDay = nowEt.hour * 60 + nowEt.minute;
+  const slot = Math.floor(minuteOfDay / ODDS_FETCH_SLOT_MINUTES);
+  return `odds|hourly|${nowEt.toISODate()}|s${String(slot).padStart(3, '0')}`;
 }
 
 function keyFixed(sport, nowEt, hhmm) {
@@ -572,18 +576,18 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // ========== ODDS (2) ==========
   // Keep existing hourly bucket for backward compatibility, but can also add time-aware logic
   if (process.env.ENABLE_ODDS_PULL !== 'false') {
-    // Skip overnight hours (2am-5am ET) when no games start
-    // Saves 3 fetches/day × 30 days × 8 tokens = 720 tokens/month
-    const isOvernightHours = nowEt.hour >= 2 && nowEt.hour <= 5;
+    // Skip quiet hours (midnight to ODDS_FETCH_START_HOUR ET).
+    // Default: skip midnight–6am. Set ODDS_FETCH_START_HOUR=10 on starter-key budget.
+    const isQuietHours = nowEt.hour < ODDS_FETCH_START_HOUR;
 
-    if (!isOvernightHours) {
+    if (!isQuietHours) {
       const jobKey = keyOddsHourly(nowEt);
       jobs.push({
         jobName: 'pull_odds_hourly',
         jobKey,
         execute: pullOddsHourly,
         args: { jobKey, dryRun },
-        reason: `hourly bucket ${nowEt.toISODate()} ${nowEt.hour}h (21/day, skip 2am-5am)`,
+        reason: `hourly bucket ${nowEt.toISODate()} ${nowEt.hour}h (slot=${ODDS_FETCH_SLOT_MINUTES}min, start=${ODDS_FETCH_START_HOUR}h ET)`,
       });
     }
 
@@ -1036,6 +1040,8 @@ async function start() {
   console.log(
     `  ENABLE_NHL_SOG_PROP_PULL: ${ENABLE_NHL_SOG_PROP_PULL ? 'true' : 'false'}`,
   );
+  console.log(`  ODDS_FETCH_SLOT_MINUTES: ${ODDS_FETCH_SLOT_MINUTES}`);
+  console.log(`  ODDS_FETCH_START_HOUR: ${ODDS_FETCH_START_HOUR}h ET`);
   console.log(
     `  NCAAM_FT_REFRESH_MAX_AGE_MINUTES: ${NCAAM_FT_REFRESH_MAX_AGE_MINUTES}`,
   );
