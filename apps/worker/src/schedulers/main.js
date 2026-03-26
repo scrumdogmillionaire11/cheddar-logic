@@ -47,6 +47,7 @@ const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
 const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
+const { pullMlbPitcherStrikeoutProps } = require('../jobs/pull_mlb_pitcher_strikeout_props');
 const { settleMlbF5 } = require('../jobs/settle_mlb_f5');
 const { runSoccerModel } = require('../jobs/run_soccer_model');
 const { pullSoccerPlayerProps } = require('../jobs/pull_soccer_player_props');
@@ -93,6 +94,10 @@ const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC =
   process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC !== 'false';
 const ENABLE_NHL_SOG_PROP_PULL =
   process.env.ENABLE_NHL_SOG_PROP_PULL !== 'false';
+// MLB pitcher K prop pull: opt-in (default OFF); only runs in ODDS_BACKED mode
+const ENABLE_MLB_PITCHER_K_PROP_PULL =
+  process.env.MLB_PITCHER_K_PROP_EVENTS_ENABLED === 'true' &&
+  process.env.PITCHER_KS_MODEL_MODE === 'ODDS_BACKED';
 const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
   process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
 );
@@ -681,6 +686,18 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
+  function queueMlbPitcherKPropIngestBeforeModel(modelJobKey, reason) {
+    if (!ENABLE_MLB_PITCHER_K_PROP_PULL) return;
+    const kPropJobKey = `mlb_pitcher_k_props|${modelJobKey}`;
+    jobs.push({
+      jobName: 'pull_mlb_pitcher_strikeout_props',
+      jobKey: kPropJobKey,
+      execute: pullMlbPitcherStrikeoutProps,
+      args: { jobKey: kPropJobKey, dryRun },
+      reason: `pre-model MLB pitcher K prop ingest (${reason})`,
+    });
+  }
+
   function maybeQueueNcaamFtRefresh(triggerReason) {
     if (!ENABLE_NCAAM_FT_REFRESH) return;
     if (ncaamFtRefreshQueued) return;
@@ -938,6 +955,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       if (sport === 'mlb') {
         queueMlbPitcherStatsBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
         queueMlbWeatherBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
+        queueMlbPitcherKPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
       }
       // For projection-model sports, force a fresh odds pull immediately before the model
       // so T-minus runs always see the current line (not up-to-29-min-stale hourly snapshot).
@@ -1234,6 +1252,9 @@ async function start() {
   );
   console.log(
     `  ENABLE_NHL_SOG_PROP_PULL: ${ENABLE_NHL_SOG_PROP_PULL ? 'true' : 'false'}`,
+  );
+  console.log(
+    `  ENABLE_MLB_PITCHER_K_PROP_PULL: ${ENABLE_MLB_PITCHER_K_PROP_PULL ? 'true' : 'false'} (MLB_PITCHER_K_PROP_EVENTS_ENABLED=${process.env.MLB_PITCHER_K_PROP_EVENTS_ENABLED || 'unset'}, PITCHER_KS_MODEL_MODE=${process.env.PITCHER_KS_MODEL_MODE || 'unset'})`,
   );
   console.log(`  ODDS_FETCH_SLOT_MINUTES: ${ODDS_FETCH_SLOT_MINUTES}`);
   console.log(`  ODDS_FETCH_START_HOUR: ${ODDS_FETCH_START_HOUR}h ET`);
