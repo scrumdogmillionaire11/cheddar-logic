@@ -34,6 +34,7 @@ const {
   validateCardPayload,
   shouldRunJobKey,
   withDb,
+  getPlayerPropLinesForGame,
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
@@ -283,8 +284,39 @@ function enrichMlbPitcherData(oddsSnapshot, { forKEngine = false } = {}) {
     // Attach market lines from odds snapshot to raw_data.mlb
     mlb.total_line = oddsSnapshot.total ?? mlb.total_line ?? null;
     mlb.f5_line = oddsSnapshot.total_f5 ?? mlb.f5_line ?? null;
-    // Strikeout lines come from player_prop_lines table — out of scope for this WI.
-    // Leave strikeout_lines as-is (from existing raw_data or null).
+
+    // Strikeout lines: look up player_prop_lines for pitcher_strikeouts when in
+    // ODDS_BACKED mode. Best-line logic: lowest over_line among DraftKings/FanDuel/BetMGM.
+    // In PROJECTION_ONLY mode, leave strikeout_lines as-is (null or existing).
+    if (forKEngine && PITCHER_KS_MODEL_MODE === 'ODDS_BACKED') {
+      try {
+        const gameId = oddsSnapshot?.game_id ?? oddsSnapshot?.id ?? null;
+        if (gameId) {
+          const propLines = getPlayerPropLinesForGame('MLB', gameId, ['pitcher_strikeouts']);
+          // Build a lookup: pitcher_name (lower) → { line, over_price, under_price, bookmaker }
+          // Use the priority-ordered line for each pitcher (draftkings > fanduel > betmgm > any)
+          const strikeoutLinesByPitcher = {};
+          for (const row of propLines) {
+            const key = (row.player_name || '').toLowerCase();
+            if (!strikeoutLinesByPitcher[key]) {
+              strikeoutLinesByPitcher[key] = {
+                line: row.line,
+                over_price: row.over_price ?? null,
+                under_price: row.under_price ?? null,
+                bookmaker: row.bookmaker ?? null,
+                fetched_at: row.fetched_at ?? null,
+              };
+            }
+          }
+          mlb.strikeout_lines = strikeoutLinesByPitcher;
+        }
+      } catch (_propErr) {
+        // Non-fatal — K engine falls back to PROJECTION_ONLY gating if no line found
+        console.warn(`[MLBModel] [pitcher-k] Failed to load strikeout_lines from player_prop_lines: ${_propErr.message}`);
+      }
+    } else if (!forKEngine) {
+      // Standard moneyline mode: leave strikeout_lines as-is (from existing raw_data or null)
+    }
 
     // Look up weather for this game by (game_date, home_team)
     try {
@@ -523,8 +555,14 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
                       player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
                       canonical_market_key: 'pitcher_strikeouts',
                       basis: driver.basis || 'PROJECTION_ONLY',
-                      tags: ['no_odds_mode'],
+                      tags: (driver.basis === 'ODDS_BACKED') ? [] : ['no_odds_mode'],
                       pitcher_k_result: driver.pitcher_k_result ?? null,
+                      // Odds-backed enrichment (null in PROJECTION_ONLY)
+                      line_source: driver.line_source ?? null,
+                      over_price: driver.over_price ?? null,
+                      under_price: driver.under_price ?? null,
+                      best_line_bookmaker: driver.best_line_bookmaker ?? null,
+                      margin: driver.margin ?? null,
                     }
                   : {
                       player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
@@ -535,7 +573,7 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
             const cardTitle = isF5
               ? `F5 ${driver.prediction}: ${oddsSnapshot?.away_team ?? '?'} @ ${oddsSnapshot?.home_team ?? '?'}`
               : isPitcherK
-                ? `${pitcherTeam ?? '?'} SP Ks ${driver.prediction} [PROJECTION_ONLY]`
+                ? `${pitcherTeam ?? '?'} SP Ks ${driver.prediction} [${driver.basis === 'ODDS_BACKED' ? 'ODDS_BACKED' : 'PROJECTION_ONLY'}]`
                 : `${pitcherTeam ?? '?'} SP Strikeouts ${driver.prediction}`;
 
             const cardId = `card-mlb-${cardType}-${gameId}-${uuidV4().slice(0, 8)}`;
