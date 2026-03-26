@@ -115,16 +115,22 @@ async function fetchPitcherSeasonStats(pitcherId) {
 
   const stats = payload?.stats?.[0]?.splits?.[0]?.stat;
   if (!stats) {
-    return { era: null, whip: null, k_per_9: null, innings_pitched: null };
+    return { era: null, whip: null, k_per_9: null, innings_pitched: null, season_starts: null, season_k_pct: null };
   }
 
   const ip = toFinite(stats.inningsPitched);
   const strikeOuts = toFinite(stats.strikeOuts);
+  const battersFaced = toFinite(stats.battersFaced);
   return {
     era: toFinite(stats.era),
     whip: toFinite(stats.whip),
+    // pitcher_input_schema.md: season_k9 required — halt if missing
     k_per_9: safeDiv(strikeOuts, ip, 9),
     innings_pitched: ip,
+    // pitcher_input_schema.md: season_starts required — halt if missing
+    season_starts: toFinite(stats.gamesStarted),
+    // pitcher_input_schema.md: season_k_pct required for Block 3 trend
+    season_k_pct: safeDiv(strikeOuts, battersFaced),
   };
 }
 
@@ -138,7 +144,16 @@ async function fetchPitcherRecentStats(pitcherId) {
 
   const last5 = splits.slice(-5);
   if (last5.length === 0) {
-    return { recent_k_per_9: null, recent_ip: null, allSplits: splits };
+    return {
+      recent_k_per_9: null,
+      recent_ip: null,
+      allSplits: splits,
+      last_three_pitch_counts: null,
+      last_three_ip: null,
+      k_pct_last_4_starts: null,
+      k_pct_prior_4_starts: null,
+      days_since_last_start: null,
+    };
   }
 
   let totalK = 0;
@@ -155,38 +170,96 @@ async function fetchPitcherRecentStats(pitcherId) {
     }
   }
 
-  if (validStarts === 0 || totalIp === 0) {
-    return { recent_k_per_9: null, recent_ip: null, allSplits: splits };
+  // pitcher_input_schema.md: last_three_pitch_counts required — halt if missing
+  // splits are chronological (oldest first); most recent last
+  const last3 = splits.slice(-3);
+  const pitchCountArr = last3
+    .map((s) => toFinite(s?.stat?.numberOfPitches))
+    .filter((v) => v !== null);
+  // Spec: most recent first
+  const last_three_pitch_counts =
+    pitchCountArr.length >= 3
+      ? JSON.stringify([...pitchCountArr].reverse())
+      : null;
+
+  const ipArr = last3
+    .map((s) => toFinite(s?.stat?.inningsPitched))
+    .filter((v) => v !== null);
+  const last_three_ip =
+    ipArr.length >= 3 ? JSON.stringify([...ipArr].reverse()) : null;
+
+  // pitcher_input_schema.md: rolling_4start_k_pct required if >= 4 starts
+  function kPctWindow(window) {
+    const totalKw = window.reduce(
+      (acc, e) => acc + (toFinite(e?.stat?.strikeOuts) ?? 0),
+      0,
+    );
+    const totalBF = window.reduce(
+      (acc, e) => acc + (toFinite(e?.stat?.battersFaced) ?? 0),
+      0,
+    );
+    return totalBF > 0 ? totalKw / totalBF : null;
+  }
+
+  const k_pct_last_4_starts = kPctWindow(splits.slice(-4));
+  const k_pct_prior_4_starts = kPctWindow(splits.slice(-8, -4));
+
+  // pitcher_input_schema.md: days_since_last_start required — halt if missing
+  let days_since_last_start = null;
+  if (splits.length > 0) {
+    const lastDate = splits[splits.length - 1]?.date;
+    if (lastDate) {
+      const diffMs = Date.now() - new Date(lastDate).getTime();
+      days_since_last_start = Math.floor(diffMs / 86_400_000);
+    }
   }
 
   return {
-    recent_k_per_9: (totalK / totalIp) * 9,
-    recent_ip: totalIp / validStarts,
+    recent_k_per_9:
+      validStarts > 0 && totalIp > 0 ? (totalK / totalIp) * 9 : null,
+    recent_ip: validStarts > 0 ? totalIp / validStarts : null,
     allSplits: splits,
+    last_three_pitch_counts,
+    last_three_ip,
+    k_pct_last_4_starts,
+    k_pct_prior_4_starts,
+    days_since_last_start,
   };
 }
 
 function ensureGameLogsTable(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS mlb_pitcher_game_logs (
-      id              TEXT PRIMARY KEY,
-      mlb_pitcher_id  INTEGER NOT NULL,
-      game_pk         INTEGER NOT NULL,
-      game_date       TEXT NOT NULL,
-      season          INTEGER NOT NULL,
-      innings_pitched REAL,
-      strikeouts      INTEGER,
-      walks           INTEGER,
-      hits            INTEGER,
-      earned_runs     INTEGER,
-      opponent        TEXT,
-      home_away       TEXT,
-      updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      id               TEXT PRIMARY KEY,
+      mlb_pitcher_id   INTEGER NOT NULL,
+      game_pk          INTEGER NOT NULL,
+      game_date        TEXT NOT NULL,
+      season           INTEGER NOT NULL,
+      innings_pitched  REAL,
+      strikeouts       INTEGER,
+      walks            INTEGER,
+      hits             INTEGER,
+      earned_runs      INTEGER,
+      -- Added WI-0596: required for last_three_pitch_counts and k_pct window derivation
+      number_of_pitches INTEGER,
+      batters_faced     INTEGER,
+      opponent          TEXT,
+      home_away         TEXT,
+      updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE (mlb_pitcher_id, game_pk)
     );
     CREATE INDEX IF NOT EXISTS idx_mlb_pitcher_game_logs_pitcher_date
       ON mlb_pitcher_game_logs (mlb_pitcher_id, game_date);
   `);
+
+  // Idempotent migrations for tables created before WI-0596
+  const migrations = [
+    'ALTER TABLE mlb_pitcher_game_logs ADD COLUMN number_of_pitches INTEGER',
+    'ALTER TABLE mlb_pitcher_game_logs ADD COLUMN batters_faced INTEGER',
+  ];
+  for (const sql of migrations) {
+    try { db.exec(sql); } catch (_) { /* column already exists */ }
+  }
 }
 
 function upsertGameLogs(db, mlbPitcherId, splits, season) {
@@ -194,15 +267,18 @@ function upsertGameLogs(db, mlbPitcherId, splits, season) {
   const stmt = db.prepare(`
     INSERT INTO mlb_pitcher_game_logs
       (id, mlb_pitcher_id, game_pk, game_date, season,
-       innings_pitched, strikeouts, walks, hits, earned_runs, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       innings_pitched, strikeouts, walks, hits, earned_runs,
+       number_of_pitches, batters_faced, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(mlb_pitcher_id, game_pk) DO UPDATE SET
-      innings_pitched = excluded.innings_pitched,
-      strikeouts = excluded.strikeouts,
-      walks = excluded.walks,
-      hits = excluded.hits,
-      earned_runs = excluded.earned_runs,
-      updated_at = datetime('now')
+      innings_pitched   = excluded.innings_pitched,
+      strikeouts        = excluded.strikeouts,
+      walks             = excluded.walks,
+      hits              = excluded.hits,
+      earned_runs       = excluded.earned_runs,
+      number_of_pitches = excluded.number_of_pitches,
+      batters_faced     = excluded.batters_faced,
+      updated_at        = datetime('now')
   `);
   let count = 0;
   for (const split of splits) {
@@ -221,6 +297,8 @@ function upsertGameLogs(db, mlbPitcherId, splits, season) {
       parseInt(stat.baseOnBalls, 10) || null,
       parseInt(stat.hits, 10) || null,
       parseInt(stat.earnedRuns, 10) || null,
+      parseInt(stat.numberOfPitches, 10) || null,
+      parseInt(stat.battersFaced, 10) || null,
     );
     count += 1;
   }
@@ -234,6 +312,8 @@ async function fetchPitcherInfo(pitcherId) {
   return {
     full_name: person?.fullName || null,
     team: person?.currentTeam?.name || null,
+    // pitcher_input_schema.md: handedness required for opp splits
+    handedness: person?.pitchHand?.code || null, // 'R' or 'L'
   };
 }
 
@@ -248,18 +328,40 @@ async function fetchAllPitcherData(pitcherId) {
     mlb_id: pitcherId,
     full_name: info.full_name,
     team: info.team,
+    // pitcher_input_schema.md: handedness required for opp splits
+    handedness: info.handedness,
     season: MLB_SEASON,
     era: seasonStats.era,
     whip: seasonStats.whip,
     k_per_9: seasonStats.k_per_9,
     innings_pitched: seasonStats.innings_pitched,
+    // pitcher_input_schema.md: season_starts + season_k_pct required
+    season_starts: seasonStats.season_starts,
+    season_k_pct: seasonStats.season_k_pct,
     recent_k_per_9: recentStats.recent_k_per_9,
     recent_ip: recentStats.recent_ip,
+    // pitcher_input_schema.md: last_three_pitch_counts required — leash classification
+    last_three_pitch_counts: recentStats.last_three_pitch_counts, // JSON string, most recent first
+    last_three_ip: recentStats.last_three_ip,                    // JSON string, most recent first
+    // pitcher_input_schema.md: k% windows for trend overlay
+    k_pct_last_4_starts: recentStats.k_pct_last_4_starts,
+    k_pct_prior_4_starts: recentStats.k_pct_prior_4_starts,
+    // pitcher_input_schema.md: days_since_last_start required
+    days_since_last_start: recentStats.days_since_last_start,
+    // il_status / il_return / role not derivable from MLB stats API — default safe values.
+    // Populate via manual override or future transactions feed.
+    il_status: 0,
+    il_return: 0,
+    role: 'starter',
+    // season_swstr_pct / season_avg_velo require Statcast — stored null until pull_mlb_statcast is added
+    season_swstr_pct: null,
+    season_avg_velo: null,
     allSplits: recentStats.allSplits ?? [],
   };
 }
 
 function ensurePitcherStatsTable(db) {
+  // Schema aligned to pitcher_input_schema.md (WI-0596)
   db.exec(`
     CREATE TABLE IF NOT EXISTS mlb_pitcher_stats (
       id            TEXT PRIMARY KEY,
@@ -269,8 +371,31 @@ function ensurePitcherStatsTable(db) {
       season        INTEGER,
       era           REAL,
       whip          REAL,
+      -- pitcher_input_schema.md: season_k9 required — halt if missing
       k_per_9       REAL,
       innings_pitched REAL,
+      -- pitcher_input_schema.md: season_starts required — halt if missing
+      season_starts   INTEGER,
+      -- pitcher_input_schema.md: handedness required for opp splits
+      handedness      TEXT,
+      -- pitcher_input_schema.md: season_k_pct required for Block 3 trend
+      season_k_pct    REAL,
+      -- pitcher_input_schema.md: rolling_4start_k_pct required if >= 4 starts
+      k_pct_last_4_starts  REAL,
+      k_pct_prior_4_starts REAL,
+      -- pitcher_input_schema.md: last_three_pitch_counts required — leash classification
+      last_three_pitch_counts TEXT,  -- JSON array, most recent first
+      last_three_ip           TEXT,  -- JSON array, most recent first
+      -- pitcher_input_schema.md: days_since_last_start required
+      days_since_last_start INTEGER,
+      -- pitcher_input_schema.md: il_status / il_return required; defaulted — not in MLB stats API
+      il_status  INTEGER NOT NULL DEFAULT 0,
+      il_return  INTEGER NOT NULL DEFAULT 0,
+      -- pitcher_input_schema.md: role required; defaulted — not in MLB stats API
+      role       TEXT NOT NULL DEFAULT 'starter',
+      -- Statcast fields: null until pull_mlb_statcast is added (WI-0596 notes)
+      season_swstr_pct REAL,
+      season_avg_velo  REAL,
       recent_k_per_9  REAL,
       recent_ip       REAL,
       updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
@@ -280,7 +405,29 @@ function ensurePitcherStatsTable(db) {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_mlb_pitcher_stats_mlb_id
     ON mlb_pitcher_stats (mlb_id);
+    CREATE INDEX IF NOT EXISTS idx_mlb_pitcher_stats_team
+    ON mlb_pitcher_stats (team);
   `);
+
+  // Idempotent migrations for tables created before WI-0596
+  const migrations = [
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN season_starts INTEGER',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN handedness TEXT',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN season_k_pct REAL',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN k_pct_last_4_starts REAL',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN k_pct_prior_4_starts REAL',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN last_three_pitch_counts TEXT',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN last_three_ip TEXT',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN days_since_last_start INTEGER',
+    "ALTER TABLE mlb_pitcher_stats ADD COLUMN il_status INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE mlb_pitcher_stats ADD COLUMN il_return INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE mlb_pitcher_stats ADD COLUMN role TEXT NOT NULL DEFAULT 'starter'",
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN season_swstr_pct REAL',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN season_avg_velo REAL',
+  ];
+  for (const sql of migrations) {
+    try { db.exec(sql); } catch (_) { /* column already exists */ }
+  }
 }
 
 function upsertPitcherRows(db, rows) {
@@ -296,23 +443,49 @@ function upsertPitcherRows(db, rows) {
       whip,
       k_per_9,
       innings_pitched,
+      season_starts,
+      handedness,
+      season_k_pct,
+      k_pct_last_4_starts,
+      k_pct_prior_4_starts,
+      last_three_pitch_counts,
+      last_three_ip,
+      days_since_last_start,
+      il_status,
+      il_return,
+      role,
+      season_swstr_pct,
+      season_avg_velo,
       recent_k_per_9,
       recent_ip,
       updated_at
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')
     )
     ON CONFLICT(mlb_id) DO UPDATE SET
-      full_name = excluded.full_name,
-      team = excluded.team,
-      season = excluded.season,
-      era = excluded.era,
-      whip = excluded.whip,
-      k_per_9 = excluded.k_per_9,
-      innings_pitched = excluded.innings_pitched,
-      recent_k_per_9 = excluded.recent_k_per_9,
-      recent_ip = excluded.recent_ip,
-      updated_at = datetime('now')
+      full_name               = excluded.full_name,
+      team                    = excluded.team,
+      season                  = excluded.season,
+      era                     = excluded.era,
+      whip                    = excluded.whip,
+      k_per_9                 = excluded.k_per_9,
+      innings_pitched         = excluded.innings_pitched,
+      season_starts           = excluded.season_starts,
+      handedness              = excluded.handedness,
+      season_k_pct            = excluded.season_k_pct,
+      k_pct_last_4_starts     = excluded.k_pct_last_4_starts,
+      k_pct_prior_4_starts    = excluded.k_pct_prior_4_starts,
+      last_three_pitch_counts = excluded.last_three_pitch_counts,
+      last_three_ip           = excluded.last_three_ip,
+      days_since_last_start   = excluded.days_since_last_start,
+      il_status               = excluded.il_status,
+      il_return               = excluded.il_return,
+      role                    = excluded.role,
+      season_swstr_pct        = excluded.season_swstr_pct,
+      season_avg_velo         = excluded.season_avg_velo,
+      recent_k_per_9          = excluded.recent_k_per_9,
+      recent_ip               = excluded.recent_ip,
+      updated_at              = datetime('now')
   `);
 
   let upserted = 0;
@@ -327,6 +500,19 @@ function upsertPitcherRows(db, rows) {
       row.whip,
       row.k_per_9,
       row.innings_pitched,
+      row.season_starts,
+      row.handedness,
+      row.season_k_pct,
+      row.k_pct_last_4_starts,
+      row.k_pct_prior_4_starts,
+      row.last_three_pitch_counts,
+      row.last_three_ip,
+      row.days_since_last_start,
+      row.il_status,
+      row.il_return,
+      row.role,
+      row.season_swstr_pct,
+      row.season_avg_velo,
       row.recent_k_per_9,
       row.recent_ip,
     );

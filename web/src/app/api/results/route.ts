@@ -223,6 +223,18 @@ function buildCardCategoryFilter(
 // NOTE: ensureCardDisplayLogSchema removed — worker owns all DB writes (single-writer architecture).
 
 export async function GET(request: NextRequest) {
+  // Without Odds Mode: settlement is disabled, so there are no results to show.
+  if (process.env.ENABLE_WITHOUT_ODDS_MODE === 'true') {
+    return NextResponse.json(
+      {
+        success: true,
+        withoutOddsMode: true,
+        data: null,
+      },
+      { status: 200 },
+    );
+  }
+
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
   try {
     // Security checks: rate limiting, input validation

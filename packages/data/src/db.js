@@ -2594,6 +2594,8 @@ function insertCardPayload(card) {
   // are not actionable and skip market locking entirely; OVER/UNDER calls lock without a price.
   const is1pDriver = String(card.cardType || '').includes('-pace-1p');
   const is1pPassCall = is1pDriver && toUpperToken(payloadData?.selection?.side) === 'NONE';
+  // Without Odds Mode: LEAN cards have no market price — skip price requirement at lock time.
+  const isNoOddsModeLean = Array.isArray(payloadData?.tags) && payloadData.tags.includes('no_odds_mode');
 
   let lockedMarket = null;
   if (!is1pPassCall) {
@@ -2602,8 +2604,8 @@ function insertCardPayload(card) {
         gameId: card.gameId,
         homeTeam: payloadData.home_team ?? null,
         awayTeam: payloadData.away_team ?? null,
-        requirePrice: !is1pDriver,
-        requireLineForMarket: true,
+        requirePrice: !is1pDriver && !isNoOddsModeLean,
+        requireLineForMarket: !isNoOddsModeLean,
       });
     } catch (error) {
       const code = error?.code || 'INVALID_MARKET_CONTRACT';

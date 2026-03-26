@@ -23,3 +23,9 @@ module.exports = {
 const { computeWinProbHome, buildDriverSummary } = require('./card-utilities');
 module.exports.computeWinProbHome = computeWinProbHome;
 module.exports.buildDriverSummary = buildDriverSummary;
+
+// Decision basis helpers (used by model runners in Without Odds Mode)
+const { buildDecisionBasisMeta, DECISION_BASIS, MARKET_LINE_SOURCE } = require('./decision-basis.types');
+module.exports.buildDecisionBasisMeta = buildDecisionBasisMeta;
+module.exports.DECISION_BASIS = DECISION_BASIS;
+module.exports.MARKET_LINE_SOURCE = MARKET_LINE_SOURCE;

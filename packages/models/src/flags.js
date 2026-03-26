@@ -16,6 +16,9 @@ const FLAGS = Object.freeze({
   QUARANTINE_NBA_TOTAL: process.env.QUARANTINE_NBA_TOTAL !== undefined
     ? isTruthy(process.env.QUARANTINE_NBA_TOTAL)
     : true,
+  // Without Odds Mode: run projections from ESPN-direct ingestion; skip market pricing and settlement.
+  // Set ENABLE_WITHOUT_ODDS_MODE=true to activate. All cards in this mode are PROJECTION_ONLY.
+  ENABLE_WITHOUT_ODDS_MODE: isTruthy(process.env.ENABLE_WITHOUT_ODDS_MODE),
 });
 
 module.exports = {

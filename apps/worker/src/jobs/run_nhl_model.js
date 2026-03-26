@@ -63,6 +63,7 @@ const {
   edgeCalculator,
   marginToWinProbability,
   WATCHDOG_REASONS,
+  buildDecisionBasisMeta,
 } = require('@cheddar-logic/models');
 const {
   publishDecisionForCard,
@@ -627,6 +628,7 @@ function generateNHLMarketCallCards(
     homeGoalieState = null,
     awayGoalieState = null,
     useOrchestratedMarket = USE_ORCHESTRATED_MARKET,
+    withoutOddsMode = false,
   } = {},
 ) {
   const now = new Date().toISOString();
@@ -659,22 +661,33 @@ function generateNHLMarketCallCards(
 
   // TOTAL decision → nhl-totals-call
   const totalDecision = marketDecisions?.TOTAL;
+  const _totalProjection = totalDecision?.projection?.projected_total ?? null;
   if (
     totalDecision &&
     (!chosenCardType || chosenCardType === 'nhl-totals-call') &&
-    (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')
+    (
+      (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH') ||
+      // Without Odds Mode: emit lean whenever projection is available regardless of edge-based status
+      (withoutOddsMode && _totalProjection != null)
+    )
   ) {
-    const status = totalDecision.status || 'PASS';
-    const confidence = CONFIDENCE_MAP[status] ?? 0.5;
+    const rawStatus = totalDecision.status || 'PASS';
+    // In Without Odds Mode a below-threshold status becomes LEAN, not PASS
+    const status = withoutOddsMode && rawStatus === 'PASS' ? 'LEAN' : rawStatus;
+    const confidence = CONFIDENCE_MAP[rawStatus] ?? (withoutOddsMode ? 0.52 : 0.5);
     const tier = determineTier(confidence);
-    const { side, line } = totalDecision.best_candidate;
-    const totalPrice =
-      side === 'OVER'
+    const { side, line: marketLine } = totalDecision.best_candidate;
+    // In Without Odds Mode there is no market line — fall back to projection.
+    const projectedTotal = totalDecision.projection?.projected_total ?? null;
+    const line = withoutOddsMode ? (projectedTotal ?? marketLine) : marketLine;
+    const totalPrice = withoutOddsMode
+      ? null
+      : side === 'OVER'
         ? (oddsSnapshot?.total_price_over ?? null)
         : (oddsSnapshot?.total_price_under ?? null);
     const hasLine = line != null;
     const hasPrice = totalPrice != null;
-    if (hasLine && hasPrice) {
+    if (hasLine && (hasPrice || withoutOddsMode)) {
       const lineText = line != null ? ` ${line}` : '';
       const pickText = `${side === 'OVER' ? 'OVER' : 'UNDER'}${lineText}`;
       const reasonCodes = [];
@@ -718,7 +731,7 @@ function generateNHLMarketCallCards(
         line,
         price: totalPrice,
         reason_codes: reasonCodes,
-        tags: [],
+        tags: withoutOddsMode ? ['no_odds_mode'] : [],
         consistency: marketPayload.consistency,
         expression_choice: marketPayload.expression_choice,
         market_narrative: marketPayload.market_narrative,
@@ -751,28 +764,34 @@ function generateNHLMarketCallCards(
           wager: {
             called_line: line ?? null,
             called_price: totalPrice ?? null,
-            line_source: totalDecision.line_source ?? 'odds_snapshot',
-            price_source: totalDecision.price_source ?? 'odds_snapshot',
+            line_source: withoutOddsMode ? 'projection_floor' : (totalDecision.line_source ?? 'odds_snapshot'),
+            price_source: withoutOddsMode ? null : (totalDecision.price_source ?? 'odds_snapshot'),
           },
         },
         market,
-        line_source: totalDecision.line_source ?? 'odds_snapshot',
-        price_source: totalDecision.price_source ?? 'odds_snapshot',
+        line_source: withoutOddsMode ? 'projection_floor' : (totalDecision.line_source ?? 'odds_snapshot'),
+        price_source: withoutOddsMode ? null : (totalDecision.price_source ?? 'odds_snapshot'),
+        decision_basis_meta: buildDecisionBasisMeta({
+          usingRealLine: !withoutOddsMode,
+          edgePct: withoutOddsMode ? null : (totalDecision.edge ?? null),
+          marketLineSource: withoutOddsMode ? 'projection_floor' : 'odds_api',
+          marketOrPropType: 'total_pace',
+        }),
         pricing_trace: {
           called_market_type: 'TOTAL',
           called_side: side,
           called_line: line ?? null,
           called_price: totalPrice ?? null,
-          line_source: totalDecision.line_source ?? 'odds_snapshot',
-          price_source: totalDecision.price_source ?? 'odds_snapshot',
-          proxy_used: totalDecision?.projection?.projected_total == null,
+          line_source: withoutOddsMode ? 'projection_floor' : (totalDecision.line_source ?? 'odds_snapshot'),
+          price_source: withoutOddsMode ? null : (totalDecision.price_source ?? 'odds_snapshot'),
+          proxy_used: withoutOddsMode || totalDecision?.projection?.projected_total == null,
         },
         drivers_active: activeDrivers,
         driver_summary: {
           weights: topDrivers,
           impact_note: 'Cross-market totals decision.',
         },
-        ev_passed: totalDecision.status === 'FIRE',
+        ev_passed: !withoutOddsMode && totalDecision.status === 'FIRE',
         odds_context: {
           h2h_home: oddsSnapshot?.h2h_home,
           h2h_away: oddsSnapshot?.h2h_away,
@@ -980,10 +999,15 @@ function generateNHLMarketCallCards(
   if (
     moneylineDecision &&
     (!chosenCardType || chosenCardType === 'nhl-moneyline-call') &&
-    (moneylineDecision.status === 'FIRE' ||
-      moneylineDecision.status === 'WATCH')
+    (
+      (moneylineDecision.status === 'FIRE' || moneylineDecision.status === 'WATCH') ||
+      // Without Odds Mode: emit lean for any directional signal regardless of edge-based status
+      (withoutOddsMode && (moneylineDecision.best_candidate?.side === 'HOME' || moneylineDecision.best_candidate?.side === 'AWAY'))
+    )
   ) {
-    const confidence = CONFIDENCE_MAP[moneylineDecision.status];
+    const mlRawStatus = moneylineDecision.status || 'PASS';
+    const mlStatus = withoutOddsMode && mlRawStatus === 'PASS' ? 'LEAN' : mlRawStatus;
+    const confidence = CONFIDENCE_MAP[mlRawStatus] ?? (withoutOddsMode ? 0.52 : 0.5);
     const tier = determineTier(confidence);
     const side = moneylineDecision.best_candidate?.side;
     const moneylinePrice =
@@ -993,7 +1017,7 @@ function generateNHLMarketCallCards(
           ? (oddsSnapshot?.h2h_away ?? null)
           : null;
 
-    if ((side === 'HOME' || side === 'AWAY') && moneylinePrice != null) {
+    if ((side === 'HOME' || side === 'AWAY') && (moneylinePrice != null || withoutOddsMode)) {
       const teamName =
         side === 'HOME'
           ? (oddsSnapshot?.home_team ?? 'Home')
@@ -1026,7 +1050,7 @@ function generateNHLMarketCallCards(
         prediction: side,
         confidence,
         tier,
-        status: moneylineDecision.status,
+        status: mlStatus,
         recommended_bet_type: 'moneyline',
         kind: 'PLAY',
         market_type: 'MONEYLINE',
@@ -1036,7 +1060,7 @@ function generateNHLMarketCallCards(
         },
         price: moneylinePrice,
         reason_codes: [],
-        tags: [],
+        tags: withoutOddsMode ? ['no_odds_mode'] : [],
         consistency: marketPayload.consistency,
         expression_choice: marketPayload.expression_choice,
         market_narrative: marketPayload.market_narrative,
@@ -1090,7 +1114,13 @@ function generateNHLMarketCallCards(
           weights: topDrivers,
           impact_note: 'Cross-market moneyline decision.',
         },
-        ev_passed: moneylineDecision.status === 'FIRE',
+        ev_passed: !withoutOddsMode && moneylineDecision.status === 'FIRE',
+        decision_basis_meta: withoutOddsMode ? buildDecisionBasisMeta({
+          usingRealLine: false,
+          edgePct: null,
+          marketLineSource: 'projection_floor',
+          marketOrPropType: 'moneyline',
+        }) : undefined,
         odds_context: {
           h2h_home: oddsSnapshot?.h2h_home,
           h2h_away: oddsSnapshot?.h2h_away,
@@ -1142,12 +1172,15 @@ function generateNHLMarketCallCards(
  * @param {string|null} options.jobKey - Optional deterministic window key for idempotency
  * @param {boolean} options.dryRun - If true, skip execution (log only)
  */
-async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
+async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = process.env.ENABLE_WITHOUT_ODDS_MODE === 'true' } = {}) {
   const jobRunId = `job-nhl-model-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[NHLModel] Starting job run: ${jobRunId}`);
   if (jobKey) {
     console.log(`[NHLModel] Job key: ${jobKey}`);
+  }
+  if (withoutOddsMode) {
+    console.log('[NHLModel] WITHOUT_ODDS_MODE=true — projection-floor lines, PROJECTION_ONLY cards, no settlement');
   }
   console.log(`[NHLModel] Time: ${new Date().toISOString()}`);
 
@@ -1418,6 +1451,7 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
               expressionChoice,
               homeGoalieState: canonicalGoalieState?.home,
               awayGoalieState: canonicalGoalieState?.away,
+              withoutOddsMode,
             },
           );
           if (marketCallCards.length > 0) {
@@ -1456,6 +1490,21 @@ async function runNHLModel({ jobKey = null, dryRun = false } = {}) {
               );
             }
             applyUiActionFields(card.payloadData, { oddsSnapshot });
+            // Without Odds Mode: buildDecisionV2 always returns PASS when edgePct=null.
+            // Override to LEAN AFTER applyUiActionFields so the last write wins.
+            if (
+              withoutOddsMode &&
+              Array.isArray(card.payloadData.tags) &&
+              card.payloadData.tags.includes('no_odds_mode')
+            ) {
+              card.payloadData.classification = 'LEAN';
+              card.payloadData.action = 'HOLD';
+              card.payloadData.status = 'WATCH';
+              card.payloadData.pass_reason_code = null;
+              if (card.payloadData.decision_v2) {
+                card.payloadData.decision_v2.official_status = 'LEAN';
+              }
+            }
             attachRunId(card, jobRunId);
             pendingCards.push({
               card,

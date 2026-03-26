@@ -38,6 +38,7 @@ const {
 
 // Import all jobs
 const { pullOddsHourly } = require('../jobs/pull_odds_hourly');
+const { pullEspnGamesDirect } = require('../jobs/pull_espn_games_direct');
 const { refreshStaleOdds } = require('../jobs/refresh_stale_odds');
 const { runNHLModel } = require('../jobs/run_nhl_model');
 const { runNBAModel } = require('../jobs/run_nba_model');
@@ -74,6 +75,9 @@ const ODDS_GAP_ALERT_COOLDOWN_MS = Number(
 );
 const REQUIRE_FRESH_ODDS_FOR_MODELS =
   process.env.REQUIRE_FRESH_ODDS_FOR_MODELS !== 'false';
+// Without Odds Mode: use ESPN-direct ingestion; skip market odds + settlement.
+// Set ENABLE_WITHOUT_ODDS_MODE=true. All model outputs are PROJECTION_ONLY.
+const ENABLE_WITHOUT_ODDS_MODE = process.env.ENABLE_WITHOUT_ODDS_MODE === 'true';
 const MODEL_ODDS_MAX_AGE_MINUTES = Number(
   process.env.MODEL_ODDS_MAX_AGE_MINUTES || ODDS_GAP_ALERT_MINUTES,
 );
@@ -185,6 +189,12 @@ function nowET() {
 /**
  * Job key builders (deterministic identifiers for idempotency)
  */
+function keyEspnGamesDirect(nowEt) {
+  const minuteOfDay = nowEt.hour * 60 + nowEt.minute;
+  const slot = Math.floor(minuteOfDay / ODDS_FETCH_SLOT_MINUTES);
+  return `espn_direct|${nowEt.toISODate()}|s${String(slot).padStart(3, '0')}`;
+}
+
 function keyOddsHourly(nowEt) {
   // Slot size is configurable via ODDS_FETCH_SLOT_MINUTES (default 30).
   // Increase to 120 on the starter key (500 tokens/month) to survive quota crunches.
@@ -339,6 +349,7 @@ function getPipelineHealthJobs(nowUtc) {
  * Health check: detect stale odds pipeline based on last successful pull job
  */
 function checkOddsFreshnessHealth(nowUtc) {
+  if (ENABLE_WITHOUT_ODDS_MODE) return; // ESPN-direct mode — odds freshness irrelevant
   if (process.env.ENABLE_ODDS_PULL === 'false') return;
 
   const recentlySuccessful = wasJobRecentlySuccessful(
@@ -370,13 +381,29 @@ function isModelJob(jobName) {
   );
 }
 
-function hasFreshOddsForModels() {
+/**
+ * Gate: are model inputs fresh enough to run?
+ * In Without Odds Mode: checks pull_espn_games_direct recency.
+ * In normal mode: checks pull_odds_hourly recency.
+ */
+function hasFreshInputsForModels() {
   if (!REQUIRE_FRESH_ODDS_FOR_MODELS) return true;
+  if (ENABLE_WITHOUT_ODDS_MODE) {
+    return wasJobRecentlySuccessful(
+      'pull_espn_games_direct',
+      MODEL_ODDS_MAX_AGE_MINUTES,
+    );
+  }
   if (process.env.ENABLE_ODDS_PULL === 'false') return true;
   return wasJobRecentlySuccessful(
     'pull_odds_hourly',
     MODEL_ODDS_MAX_AGE_MINUTES,
   );
+}
+
+/** @deprecated Use hasFreshInputsForModels. Kept for call-site compatibility. */
+function hasFreshOddsForModels() {
+  return hasFreshInputsForModels();
 }
 
 function isProjectionModelSport(sport) {
@@ -699,9 +726,25 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // Use new time-aware schedule refresh logic (optional, can keep old hourly for now)
   // Old behavior maintained for backward compatibility
 
+  // ========== INGESTION (2) ==========
+  // Without Odds Mode: use ESPN-direct ingestion instead of The Odds API.
+  if (ENABLE_WITHOUT_ODDS_MODE) {
+    const isQuietHours = nowEt.hour < ODDS_FETCH_START_HOUR;
+    if (!isQuietHours) {
+      const jobKey = keyEspnGamesDirect(nowEt);
+      jobs.push({
+        jobName: 'pull_espn_games_direct',
+        jobKey,
+        execute: pullEspnGamesDirect,
+        args: { jobKey, dryRun },
+        reason: `ESPN-direct ingestion (without-odds mode) slot=${ODDS_FETCH_SLOT_MINUTES}min`,
+      });
+    }
+  }
+
   // ========== ODDS (2) ==========
   // Keep existing hourly bucket for backward compatibility, but can also add time-aware logic
-  if (process.env.ENABLE_ODDS_PULL !== 'false' && quotaTier !== 'CRITICAL') {
+  if (!ENABLE_WITHOUT_ODDS_MODE && process.env.ENABLE_ODDS_PULL !== 'false' && quotaTier !== 'CRITICAL') {
     // Skip quiet hours (midnight to ODDS_FETCH_START_HOUR ET).
     // Default: skip midnight–6am. Set ODDS_FETCH_START_HOUR=10 on starter-key budget.
     const isQuietHours = nowEt.hour < ODDS_FETCH_START_HOUR;
@@ -850,8 +893,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         jobName,
         jobKey,
         execute,
-        args: { jobKey, dryRun },
-        reason: `fixed ${t} ET`,
+        args: { jobKey, dryRun, withoutOddsMode: ENABLE_WITHOUT_ODDS_MODE },
+        reason: `fixed ${t} ET${ENABLE_WITHOUT_ODDS_MODE ? ' [WITHOUT_ODDS]' : ''}`,
       });
     }
   }
@@ -899,7 +942,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       // For projection-model sports, force a fresh odds pull immediately before the model
       // so T-minus runs always see the current line (not up-to-29-min-stale hourly snapshot).
       // Deduped per sport per T-minus window — one pull serves all games in the same window.
-      if (isProjectionModelSport(sport) && process.env.ENABLE_ODDS_PULL !== 'false' && quotaTier === 'FULL') {
+      // Skipped in Without Odds Mode (no Odds API calls).
+      if (!ENABLE_WITHOUT_ODDS_MODE && isProjectionModelSport(sport) && process.env.ENABLE_ODDS_PULL !== 'false' && quotaTier === 'FULL') {
         const oddsWindowKey = `${sport}|T-${mins}|${hourSlot}`;
         if (claimTminusPullSlot(sport, oddsWindowKey)) {
           const oddsPreKey = `odds|pre-model|${sport}|T-${mins}`;
@@ -916,8 +960,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         jobName: SPORT_JOBS[sport].jobName,
         jobKey,
         execute: SPORT_JOBS[sport].execute,
-        args: { jobKey, dryRun },
-        reason: `T-${mins} for ${g.game_id}`,
+        args: { jobKey, dryRun, withoutOddsMode: ENABLE_WITHOUT_ODDS_MODE },
+        reason: `T-${mins} for ${g.game_id}${ENABLE_WITHOUT_ODDS_MODE ? ' [WITHOUT_ODDS]' : ''}`,
       });
     }
 
@@ -938,7 +982,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   }
 
   // ========== SETTLEMENT (4) ==========
-  if (process.env.ENABLE_SETTLEMENT !== 'false') {
+  // Settlement is disabled in Without Odds Mode — cards have no locked prices to settle against.
+  if (!ENABLE_WITHOUT_ODDS_MODE && process.env.ENABLE_SETTLEMENT !== 'false') {
     const sweepDate = nowEt.toISODate();
     const nightlySettlementOwnsHourlyWindow =
       isNightlySettlementOwningHourlyWindow(nowEt);
@@ -1105,14 +1150,15 @@ async function tick() {
   let staleOddsSkipLogged = false;
 
   for (const job of uniqueDue) {
-    if (isModelJob(job.jobName) && !hasFreshOddsForModels()) {
+    if (isModelJob(job.jobName) && !hasFreshInputsForModels()) {
       if (!staleOddsSkipLogged) {
+        const gateJobName = ENABLE_WITHOUT_ODDS_MODE ? 'pull_espn_games_direct' : 'pull_odds_hourly';
         console.warn(
-          `[SCHEDULER][GATE] Skipping model jobs: no successful pull_odds_hourly in last ${MODEL_ODDS_MAX_AGE_MINUTES} minutes`,
+          `[SCHEDULER][GATE] Skipping model jobs: no successful ${gateJobName} in last ${MODEL_ODDS_MAX_AGE_MINUTES} minutes`,
         );
         staleOddsSkipLogged = true;
       }
-      console.log(`  ⏭️  skip ${job.jobKey} (${job.jobName}) — stale odds`);
+      console.log(`  ⏭️  skip ${job.jobKey} (${job.jobName}) — stale inputs`);
       continue;
     }
 
@@ -1153,6 +1199,9 @@ async function start() {
   console.log('\n');
   console.log('═'.repeat(60));
   console.log('  CHEDDAR-LOGIC WINDOW SCHEDULER (Tick Loop)');
+  if (ENABLE_WITHOUT_ODDS_MODE) {
+    console.log('  *** WITHOUT ODDS MODE — ESPN-direct ingestion, PROJECTION_ONLY cards, no settlement ***');
+  }
   console.log('═'.repeat(60));
   console.log(`  TZ: ${TZ}`);
   console.log(`  TICK_MS: ${tickMs}`);
@@ -1203,6 +1252,9 @@ async function start() {
     `  SETTLEMENT_HOURLY_BOUNDARY_MINUTES: ${process.env.SETTLEMENT_HOURLY_BOUNDARY_MINUTES || '5'}`,
   );
   console.log(`  Enabled sports: ${enabledSports().join(', ') || 'none'}`);
+  console.log(
+    `  ENABLE_WITHOUT_ODDS_MODE: ${ENABLE_WITHOUT_ODDS_MODE ? 'true — ESPN-direct, PROJECTION_ONLY, no settlement' : 'false'}`,
+  );
   console.log('═'.repeat(60));
   console.log('');
 

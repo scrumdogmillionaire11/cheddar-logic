@@ -44,6 +44,7 @@ const {
   edgeCalculator,
   marginToWinProbability,
   WATCHDOG_REASONS,
+  buildDecisionBasisMeta,
 } = require('@cheddar-logic/models');
 const {
   publishDecisionForCard,
@@ -192,7 +193,7 @@ function canPriceCard(card) {
  * Generate insertable card objects from NCAAM driver descriptors.
  * Generates both moneyline AND spread cards for each driver signal.
  */
-function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
+function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot, { withoutOddsMode = false } = {}) {
   const now = new Date().toISOString();
   const expiresAt = null;
 
@@ -206,18 +207,27 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
     const allowSpread = !marketTypes || marketTypes.includes('spread');
 
     if (allowMoneyline) {
-      cards.push(
-        generateCard({
-          sport: 'NCAAM',
-          gameId,
-          descriptor,
-          oddsSnapshot,
-          now,
-          expiresAt,
-          marketType: 'moneyline',
-          driverWeights: NCAAM_DRIVER_WEIGHTS,
-        }),
-      );
+      const mlCard = generateCard({
+        sport: 'NCAAM',
+        gameId,
+        descriptor,
+        oddsSnapshot,
+        now,
+        expiresAt,
+        marketType: 'moneyline',
+        driverWeights: NCAAM_DRIVER_WEIGHTS,
+      });
+      // In Without Odds Mode, explicitly stamp PROJECTION_ONLY basis on every card.
+      if (withoutOddsMode && mlCard?.payloadData) {
+        mlCard.payloadData.decision_basis_meta = buildDecisionBasisMeta({
+          usingRealLine: false,
+          marketLineSource: 'projection_floor',
+          marketOrPropType: 'soccer_ml', // moneyline volatility band
+        });
+        mlCard.payloadData.line_source = 'projection_floor';
+        mlCard.payloadData.price_source = null;
+      }
+      cards.push(mlCard);
     }
 
     // Generate SPREAD card only when both line and price are available
@@ -284,6 +294,7 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
         : effectiveMargin < -spreadHome);
 
     if (
+      !withoutOddsMode && // spread cards require market prices; skip in Without Odds Mode
       allowSpread &&
       projectionBeatsSpread &&
       oddsSnapshot?.spread_home != null &&
@@ -319,12 +330,15 @@ function generateNCAAMCards(gameId, driverDescriptors, oddsSnapshot) {
  * @param {string|null} options.jobKey - Optional deterministic window key for idempotency
  * @param {boolean} options.dryRun - If true, skip execution (log only)
  */
-async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
+async function runNCAAMModel({ jobKey = null, dryRun = false, withoutOddsMode = false } = {}) {
   const jobRunId = `job-ncaam-model-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[NCAAMModel] Starting job run: ${jobRunId}`);
   if (jobKey) {
     console.log(`[NCAAMModel] Job key: ${jobKey}`);
+  }
+  if (withoutOddsMode) {
+    console.log('[NCAAMModel] WITHOUT_ODDS_MODE=true — moneyline-only cards, PROJECTION_ONLY basis, no settlement');
   }
   console.log(`[NCAAMModel] Time: ${new Date().toISOString()}`);
 
@@ -522,7 +536,7 @@ async function runNCAAMModel({ jobKey = null, dryRun = false } = {}) {
             });
           }
 
-          const cards = generateNCAAMCards(gameId, driverCards, oddsSnapshot);
+          const cards = generateNCAAMCards(gameId, driverCards, oddsSnapshot, { withoutOddsMode });
           const pendingCards = [];
 
           for (const card of cards) {

@@ -38,13 +38,6 @@ export default function EducationPage() {
               </article>
             ))}
           </div>
-
-          <div className="rounded-xl border border-white/10 bg-surface/80 p-8">
-            <h2 className="mb-4 text-xl font-semibold">Video Tutorials</h2>
-            <p className="text-cloud/70">
-              Coming soon - video content explaining key concepts
-            </p>
-          </div>
         </div>
       </div>
     </div>

@@ -37,7 +37,11 @@ const {
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
-const { getModel, computeMLBDriverCards } = require('../models');
+const { getModel, computeMLBDriverCards, computePitcherKDriverCards } = require('../models');
+
+// Pitcher K model mode: 'PROJECTION_ONLY' enables the Sharp Cheddar K pipeline
+// without requiring market odds. Set PITCHER_KS_MODEL_MODE=PROJECTION_ONLY.
+const PITCHER_KS_MODEL_MODE = process.env.PITCHER_KS_MODEL_MODE || null;
 const {
   buildRecommendationFromPrediction,
   buildMatchup,
@@ -140,30 +144,134 @@ function generateMLBCard(gameId, modelOutput, oddsSnapshot) {
   };
 }
 
+// K engine — required pitcher fields that must be non-null before scoring.
+// Based on pitcher_input_schema.md "Halt if missing" rows.
+const PITCHER_K_REQUIRED_FIELDS = [
+  'k_per_9',              // season_k9 — primary stat
+  'season_starts',        // must be >= 3 for projection to be calculable
+  'handedness',           // required for opp splits
+  'days_since_last_start', // required for rest/leash gate
+];
+
+/**
+ * Check whether a pitcher_stats DB row is fresh relative to today.
+ *
+ * Returns:
+ *   'MISSING' — no row
+ *   'STALE'   — row exists but was not updated today
+ *   'FRESH'   — row updated today
+ *
+ * Exported for unit tests.
+ *
+ * @param {object|null} row
+ * @param {string} [todayDate] YYYY-MM-DD override (defaults to UTC today)
+ * @returns {'MISSING'|'STALE'|'FRESH'}
+ */
+function checkPitcherFreshness(row, todayDate) {
+  if (!row) return 'MISSING';
+  const today = todayDate || new Date().toISOString().slice(0, 10);
+  const rowDate = (row.updated_at || '').slice(0, 10);
+  return rowDate === today ? 'FRESH' : 'STALE';
+}
+
+/**
+ * Validate that a pitcher object contains all required K engine fields (non-null).
+ *
+ * Returns null if valid, or { code, missing_fields } if any required field is absent.
+ * Exported for unit tests.
+ *
+ * @param {object} pitcher
+ * @returns {null | { code: string, missing_fields: string[] }}
+ */
+function validatePitcherKInputs(pitcher) {
+  const missing = PITCHER_K_REQUIRED_FIELDS.filter((f) => pitcher[f] == null);
+  if (missing.length === 0) return null;
+  return { code: 'PITCHER_REQUIRED_FIELD_NULL', missing_fields: missing };
+}
+
+/**
+ * Map a fresh mlb_pitcher_stats DB row to the full K engine pitcher object.
+ * Parses JSON fields (last_three_pitch_counts, last_three_ip) to arrays.
+ *
+ * @param {object} row
+ * @returns {object}
+ */
+function buildPitcherKObject(row) {
+  let last_three_pitch_counts = null;
+  try {
+    if (row.last_three_pitch_counts) {
+      const parsed = JSON.parse(row.last_three_pitch_counts);
+      if (Array.isArray(parsed) && parsed.length >= 3) last_three_pitch_counts = parsed;
+    }
+  } catch (_) { /* leave null */ }
+
+  let last_three_ip = null;
+  try {
+    if (row.last_three_ip) {
+      const parsed = JSON.parse(row.last_three_ip);
+      if (Array.isArray(parsed) && parsed.length >= 3) last_three_ip = parsed;
+    }
+  } catch (_) { /* leave null */ }
+
+  return {
+    // Moneyline-compat fields (kept so computeMLBDriverCards still works)
+    era: row.era,
+    whip: row.whip,
+    avg_ip: row.recent_ip,
+    // K engine fields
+    k_per_9: row.k_per_9,
+    recent_k_per_9: row.recent_k_per_9,
+    recent_ip: row.recent_ip,
+    season_starts: row.season_starts,
+    handedness: row.handedness,
+    season_k_pct: row.season_k_pct,
+    k_pct_last_4_starts: row.k_pct_last_4_starts,
+    k_pct_prior_4_starts: row.k_pct_prior_4_starts,
+    last_three_pitch_counts,
+    last_three_ip,
+    days_since_last_start: row.days_since_last_start,
+    il_status: Boolean(row.il_status),
+    il_return: Boolean(row.il_return),
+    role: row.role ?? 'starter',
+    // Statcast — null until pull_mlb_statcast is added
+    swstr_pct: row.season_swstr_pct ?? null,
+    season_avg_velo: row.season_avg_velo ?? null,
+  };
+}
+
 /**
  * Enrich an odds snapshot with pitcher stats from the mlb_pitcher_stats table.
  *
- * Queries by team name for rows updated today. Falls back gracefully when no
- * rows are found (returns original oddsSnapshot unchanged).
+ * In standard mode (forKEngine=false): attaches 5 moneyline fields per pitcher,
+ * falls back silently when no row found today (existing behavior).
  *
- * Also attaches market lines (total, f5) from the snapshot into raw_data.mlb
- * so computeMLBDriverCards can read them without needing the top-level fields.
+ * In K engine mode (forKEngine=true): attaches all K engine fields, enforces
+ * per-pitcher freshness and required-field gates. Failed pitchers are set to null
+ * with an explicit ingest_failure_reason_code logged and stored in
+ * snapshot.pitcher_k_diagnostics. Does NOT abort the other pitcher.
+ *
+ * Also attaches market lines (total, f5) from the snapshot into raw_data.mlb.
  *
  * @param {object} oddsSnapshot
- * @returns {object} Enriched snapshot (or original if DB unavailable / no data)
+ * @param {object} [opts]
+ * @param {boolean} [opts.forKEngine=false] Enable K engine enrichment mode
+ * @returns {object} Enriched snapshot (or original if DB unavailable)
  */
-function enrichMlbPitcherData(oddsSnapshot) {
+function enrichMlbPitcherData(oddsSnapshot, { forKEngine = false } = {}) {
   const homeTeam = oddsSnapshot?.home_team ?? '';
   const awayTeam = oddsSnapshot?.away_team ?? '';
 
   try {
     const db = getDatabase();
-    const byTeam = db.prepare(
-      "SELECT * FROM mlb_pitcher_stats WHERE team = ? AND date(updated_at) = date('now') LIMIT 1",
-    );
 
-    const homePitcher = homeTeam ? (byTeam.get(homeTeam) ?? null) : null;
-    const awayPitcher = awayTeam ? (byTeam.get(awayTeam) ?? null) : null;
+    // K mode: query without date filter so we can distinguish STALE vs MISSING.
+    // Standard mode: keep today-only filter (existing behavior).
+    const byTeam = forKEngine
+      ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE team = ? ORDER BY updated_at DESC LIMIT 1')
+      : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE team = ? AND date(updated_at) = date('now') LIMIT 1");
+
+    const homeRow = homeTeam ? (byTeam.get(homeTeam) ?? null) : null;
+    const awayRow = awayTeam ? (byTeam.get(awayTeam) ?? null) : null;
 
     const existingRaw =
       typeof oddsSnapshot.raw_data === 'string'
@@ -189,37 +297,76 @@ function enrichMlbPitcherData(oddsSnapshot) {
         mlb.temp_f = weatherRow.temp_f ?? mlb.temp_f ?? null;
         mlb.wind_mph = weatherRow.wind_mph ?? mlb.wind_mph ?? null;
       }
-    } catch (weatherErr) {
+    } catch (_weatherErr) {
       // Non-fatal — model uses neutral defaults
     }
 
-    return {
+    const today = new Date().toISOString().slice(0, 10);
+    const pitcherKDiagnostics = {};
+
+    /**
+     * Build the pitcher entry for raw_data.mlb, applying K engine gates when
+     * forKEngine is true. Returns the pitcher object, or null on gate failure.
+     */
+    function buildPitcherEntry(row, side, team, existingPitcher) {
+      if (!forKEngine) {
+        // Standard moneyline mode — original 5-field enrichment, silent fallback
+        return row
+          ? { era: row.era, whip: row.whip, k_per_9: row.k_per_9, recent_k_per_9: row.recent_k_per_9, avg_ip: row.recent_ip }
+          : (existingPitcher ?? null);
+      }
+
+      // K engine mode — per-pitcher fail-closed with explicit reason codes
+      const freshness = checkPitcherFreshness(row, today);
+
+      if (freshness === 'MISSING') {
+        pitcherKDiagnostics[side] = { ingest_failure_reason_code: 'PITCHER_DATA_MISSING', team };
+        console.warn(`[MLBModel] [pitcher-k] ${team || side}: PITCHER_DATA_MISSING — no row in mlb_pitcher_stats`);
+        return null;
+      }
+
+      if (freshness === 'STALE') {
+        pitcherKDiagnostics[side] = {
+          ingest_failure_reason_code: 'PITCHER_DATA_STALE',
+          team,
+          stale_since: row.updated_at,
+        };
+        console.warn(`[MLBModel] [pitcher-k] ${team || side}: PITCHER_DATA_STALE — last updated ${row.updated_at}`);
+        return null;
+      }
+
+      // Fresh row — validate required K engine fields
+      const pitcherObj = buildPitcherKObject(row);
+      const validationErr = validatePitcherKInputs(pitcherObj);
+      if (validationErr) {
+        pitcherKDiagnostics[side] = {
+          ingest_failure_reason_code: validationErr.code,
+          team,
+          missing_fields: validationErr.missing_fields,
+        };
+        console.warn(
+          `[MLBModel] [pitcher-k] ${team || side}: ${validationErr.code} — missing: ${validationErr.missing_fields.join(', ')}`,
+        );
+        return null;
+      }
+
+      return pitcherObj;
+    }
+
+    mlb.home_pitcher = buildPitcherEntry(homeRow, 'home', homeTeam, mlb.home_pitcher);
+    mlb.away_pitcher = buildPitcherEntry(awayRow, 'away', awayTeam, mlb.away_pitcher);
+
+    const enriched = {
       ...oddsSnapshot,
-      raw_data: {
-        ...existingRaw,
-        mlb: {
-          ...mlb,
-          home_pitcher: homePitcher
-            ? {
-                era: homePitcher.era,
-                whip: homePitcher.whip,
-                k_per_9: homePitcher.k_per_9,
-                recent_k_per_9: homePitcher.recent_k_per_9,
-                avg_ip: homePitcher.recent_ip,
-              }
-            : mlb.home_pitcher ?? null,
-          away_pitcher: awayPitcher
-            ? {
-                era: awayPitcher.era,
-                whip: awayPitcher.whip,
-                k_per_9: awayPitcher.k_per_9,
-                recent_k_per_9: awayPitcher.recent_k_per_9,
-                avg_ip: awayPitcher.recent_ip,
-              }
-            : mlb.away_pitcher ?? null,
-        },
-      },
+      raw_data: { ...existingRaw, mlb },
     };
+
+    // Attach per-pitcher diagnostics so callers and tests can inspect them
+    if (forKEngine && Object.keys(pitcherKDiagnostics).length > 0) {
+      enriched.pitcher_k_diagnostics = pitcherKDiagnostics;
+    }
+
+    return enriched;
   } catch (err) {
     console.warn(`[MLBModel] Pitcher enrichment failed: ${err.message}`);
     return oddsSnapshot; // proceed without enrichment
@@ -306,15 +453,18 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
       for (const gameId of gameIds) {
         try {
           let oddsSnapshot = gameOdds[gameId];
-          oddsSnapshot = enrichMlbPitcherData(oddsSnapshot);
+          oddsSnapshot = enrichMlbPitcherData(oddsSnapshot, { forKEngine: PITCHER_KS_MODEL_MODE === 'PROJECTION_ONLY' });
 
-          const driverCards = computeMLBDriverCards(gameId, oddsSnapshot);
+          const driverCards = PITCHER_KS_MODEL_MODE === 'PROJECTION_ONLY'
+            ? computePitcherKDriverCards(gameId, oddsSnapshot, { mode: 'PROJECTION_ONLY' })
+            : computeMLBDriverCards(gameId, oddsSnapshot);
           const qualified = driverCards.filter((d) => d.ev_threshold_passed);
 
           // Clean up stale cards from previous runs for this game
           prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-model-output', { runId: jobRunId });
           prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-strikeout', { runId: jobRunId });
           prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-f5', { runId: jobRunId });
+          prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-pitcher-k', { runId: jobRunId });
 
           if (qualified.length === 0) {
             console.log(`  ⏭️  ${gameId}: No markets passed threshold`);
@@ -326,7 +476,8 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
 
           for (const driver of qualified) {
             const isF5 = driver.market === 'f5_total';
-            const cardType = isF5 ? 'mlb-f5' : 'mlb-strikeout';
+            const isPitcherK = driver.market?.startsWith('pitcher_k_');
+            const cardType = isF5 ? 'mlb-f5' : isPitcherK ? 'mlb-pitcher-k' : 'mlb-strikeout';
 
             const driverDetail = driver.drivers?.[0] ?? {};
             const projected = driverDetail.projected ?? null;
@@ -336,11 +487,12 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
                 ? Math.round((projected - edge) * 10) / 10
                 : null;
 
-            const pitcherTeam = driver.market === 'strikeouts_home'
-              ? (oddsSnapshot?.home_team ?? null)
-              : driver.market === 'strikeouts_away'
-                ? (oddsSnapshot?.away_team ?? null)
-                : null;
+            const pitcherTeam = driver.pitcher_team
+              ?? (driver.market === 'strikeouts_home' || driver.market === 'pitcher_k_home'
+                  ? (oddsSnapshot?.home_team ?? null)
+                  : driver.market === 'strikeouts_away' || driver.market === 'pitcher_k_away'
+                    ? (oddsSnapshot?.away_team ?? null)
+                    : null);
 
             const tier =
               driver.confidence >= 0.8 ? 'BEST' :
@@ -366,15 +518,25 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
               generated_at: now,
               ...(isF5
                 ? { projection: { projected_total: projected } }
-                : {
-                    player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
-                    canonical_market_key: 'pitcher_strikeouts',
-                  }),
+                : isPitcherK
+                  ? {
+                      player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
+                      canonical_market_key: 'pitcher_strikeouts',
+                      basis: driver.basis || 'PROJECTION_ONLY',
+                      tags: ['no_odds_mode'],
+                      pitcher_k_result: driver.pitcher_k_result ?? null,
+                    }
+                  : {
+                      player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
+                      canonical_market_key: 'pitcher_strikeouts',
+                    }),
             };
 
             const cardTitle = isF5
               ? `F5 ${driver.prediction}: ${oddsSnapshot?.away_team ?? '?'} @ ${oddsSnapshot?.home_team ?? '?'}`
-              : `${pitcherTeam ?? '?'} SP Strikeouts ${driver.prediction}`;
+              : isPitcherK
+                ? `${pitcherTeam ?? '?'} SP Ks ${driver.prediction} [PROJECTION_ONLY]`
+                : `${pitcherTeam ?? '?'} SP Strikeouts ${driver.prediction}`;
 
             const cardId = `card-mlb-${cardType}-${gameId}-${uuidV4().slice(0, 8)}`;
             const card = {
@@ -474,4 +636,11 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runMLBModel, generateMLBCard };
+module.exports = {
+  runMLBModel,
+  generateMLBCard,
+  // Exported for WI-0596 unit tests
+  checkPitcherFreshness,
+  validatePitcherKInputs,
+  buildPitcherKObject,
+};

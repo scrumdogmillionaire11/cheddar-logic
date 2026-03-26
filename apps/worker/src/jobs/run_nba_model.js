@@ -57,6 +57,7 @@ const {
   edgeCalculator,
   marginToWinProbability,
   WATCHDOG_REASONS,
+  buildDecisionBasisMeta,
 } = require('@cheddar-logic/models');
 const {
   publishDecisionForCard,
@@ -323,7 +324,7 @@ function getHomeTeamRecentRoadTrip(
  * Generate standalone market call cards (nba-totals-call, nba-spread-call)
  * from cross-market decisions. Only emits for FIRE or WATCH status.
  */
-function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
+function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot, { withoutOddsMode = false } = {}) {
   const now = new Date().toISOString();
   const expiresAt = null;
 
@@ -343,21 +344,31 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
   // TOTAL decision → nba-totals-call
   const totalDecision = marketDecisions?.TOTAL;
   const totalBias = computeTotalBias(totalDecision);
+  const _totalProjection = totalDecision?.projection?.projected_total ?? null;
   if (
     totalDecision &&
-    (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH')
+    (
+      (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH') ||
+      // Without Odds Mode: emit lean whenever projection is available regardless of edge-based status
+      (withoutOddsMode && _totalProjection != null)
+    )
   ) {
-    const status = totalDecision.status || 'PASS';
-    const confidence = CONFIDENCE_MAP[status] ?? 0.5;
+    const rawStatus = totalDecision.status || 'PASS';
+    const status = withoutOddsMode && rawStatus === 'PASS' ? 'LEAN' : rawStatus;
+    const confidence = CONFIDENCE_MAP[rawStatus] ?? (withoutOddsMode ? 0.52 : 0.5);
     const tier = determineTier(confidence);
-    const { side, line } = totalDecision.best_candidate;
-    const totalPrice =
-      side === 'OVER'
+    const { side, line: marketLine } = totalDecision.best_candidate;
+    // In Without Odds Mode there is no market line — fall back to projection.
+    const projectedTotal = totalDecision.projection?.projected_total ?? null;
+    const line = withoutOddsMode ? (projectedTotal ?? marketLine) : marketLine;
+    const totalPrice = withoutOddsMode
+      ? null
+      : side === 'OVER'
         ? (oddsSnapshot?.total_price_over ?? null)
         : (oddsSnapshot?.total_price_under ?? null);
     const hasLine = line != null;
     const hasPrice = totalPrice != null;
-    if (hasLine && hasPrice) {
+    if (hasLine && (hasPrice || withoutOddsMode)) {
       const lineText = line != null ? ` ${line}` : '';
       const pickText = `${side === 'OVER' ? 'OVER' : 'UNDER'}${lineText}`;
       const reasonCodes = [];
@@ -399,7 +410,7 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
         line,
         price: totalPrice,
         reason_codes: reasonCodes,
-        tags: [],
+        tags: withoutOddsMode ? ['no_odds_mode'] : [],
         consistency: {
           total_bias: totalBias,
         },
@@ -431,28 +442,34 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
           wager: {
             called_line: line ?? null,
             called_price: totalPrice ?? null,
-            line_source: totalDecision.line_source ?? 'odds_snapshot',
-            price_source: totalDecision.price_source ?? 'odds_snapshot',
+            line_source: withoutOddsMode ? 'projection_floor' : (totalDecision.line_source ?? 'odds_snapshot'),
+            price_source: withoutOddsMode ? null : (totalDecision.price_source ?? 'odds_snapshot'),
           },
         },
         market,
-        line_source: totalDecision.line_source ?? 'odds_snapshot',
-        price_source: totalDecision.price_source ?? 'odds_snapshot',
+        line_source: withoutOddsMode ? 'projection_floor' : (totalDecision.line_source ?? 'odds_snapshot'),
+        price_source: withoutOddsMode ? null : (totalDecision.price_source ?? 'odds_snapshot'),
+        decision_basis_meta: buildDecisionBasisMeta({
+          usingRealLine: !withoutOddsMode,
+          edgePct: withoutOddsMode ? null : (totalDecision.edge ?? null),
+          marketLineSource: withoutOddsMode ? 'projection_floor' : 'odds_api',
+          marketOrPropType: 'total_pace',
+        }),
         pricing_trace: {
           called_market_type: 'TOTAL',
           called_side: side,
           called_line: line ?? null,
           called_price: totalPrice ?? null,
-          line_source: totalDecision.line_source ?? 'odds_snapshot',
-          price_source: totalDecision.price_source ?? 'odds_snapshot',
-          proxy_used: totalDecision?.projection?.projected_total == null,
+          line_source: withoutOddsMode ? 'projection_floor' : (totalDecision.line_source ?? 'odds_snapshot'),
+          price_source: withoutOddsMode ? null : (totalDecision.price_source ?? 'odds_snapshot'),
+          proxy_used: withoutOddsMode || totalDecision?.projection?.projected_total == null,
         },
         drivers_active: activeDrivers,
         driver_summary: {
           weights: topDrivers,
           impact_note: 'Cross-market totals decision.',
         },
-        ev_passed: totalDecision.status === 'FIRE',
+        ev_passed: !withoutOddsMode && totalDecision.status === 'FIRE',
         odds_context: {
           h2h_home: oddsSnapshot?.h2h_home,
           h2h_away: oddsSnapshot?.h2h_away,
@@ -662,11 +679,14 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot) {
  * @param {string|null} options.jobKey - Deterministic window key for idempotency
  * @param {boolean} options.dryRun - If true, skip execution (log only)
  */
-async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
+async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = process.env.ENABLE_WITHOUT_ODDS_MODE === 'true' } = {}) {
   const jobRunId = `job-nba-model-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[NBAModel] Starting job run: ${jobRunId}`);
   if (jobKey) console.log(`[NBAModel] Job key: ${jobKey}`);
+  if (withoutOddsMode) {
+    console.log('[NBAModel] WITHOUT_ODDS_MODE=true — projection-floor lines, PROJECTION_ONLY cards, no settlement');
+  }
   console.log(`[NBAModel] Time: ${new Date().toISOString()}`);
 
   return withDb(async () => {
@@ -894,6 +914,7 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
             gameId,
             nbaMarketDecisions,
             oddsSnapshot,
+            { withoutOddsMode },
           );
           if (nbaMarketCallCards.length > 0) {
             for (const ct of ['nba-totals-call', 'nba-spread-call']) {
@@ -929,6 +950,21 @@ async function runNBAModel({ jobKey = null, dryRun = false } = {}) {
               );
             }
             applyUiActionFields(card.payloadData, { oddsSnapshot });
+            // Without Odds Mode: buildDecisionV2 always returns PASS when edgePct=null.
+            // Override to LEAN AFTER applyUiActionFields so the last write wins.
+            if (
+              withoutOddsMode &&
+              Array.isArray(card.payloadData.tags) &&
+              card.payloadData.tags.includes('no_odds_mode')
+            ) {
+              card.payloadData.classification = 'LEAN';
+              card.payloadData.action = 'HOLD';
+              card.payloadData.status = 'WATCH';
+              card.payloadData.pass_reason_code = null;
+              if (card.payloadData.decision_v2) {
+                card.payloadData.decision_v2.official_status = 'LEAN';
+              }
+            }
             attachRunId(card, jobRunId);
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
