@@ -124,6 +124,16 @@ MLB model note:
 - F5 first-half settlement runs automatically on every scheduler tick (`settle_mlb_f5`). No manual action needed.
 - Controlled by `ENABLE_MLB_MODEL` env flag (default **on** — set `ENABLE_MLB_MODEL=false` to disable).
 
+MLB pitcher K prop note:
+
+- Pitcher K (strikeout over/under) cards are emitted by `job:run-mlb-model` — no separate job required.
+- **Projection-only mode** (default while API token budget is constrained): cards emit with `tags: ['no_odds_mode']` and `kind: 'PLAY'` at projection-only EV. No `line` or `line_source` in payload.
+- **Odds-backed mode** (when `PITCHER_K_ODDS_ENABLED=true`): real strikeout lines from The Odds API are ingested by `job:pull-mlb-pitcher-k-odds` (wired in scheduler). Cards carry `line`, `line_source`, and `basis: 'ODDS_BACKED'`.
+- Mode switch: set/unset `PITCHER_K_ODDS_ENABLED=true` in `.env` and restart the scheduler. Web UI and props filters update automatically.
+- Cards appear under the **Props** tab with stat-group filter `Strikeouts`. Use preset **Strikeouts Focus** to view only pitcher K cards.
+- Triage: if no pitcher K cards appear, ensure `ENABLE_MLB_MODEL` is not `false` and at least one game with pitcher stats has odds within the active window.
+
+
 ### Mega Commands
 
 Three commands cover 99% of daily manual runs. All require env loaded (`.env` or `CHEDDAR_DB_PATH` set).
