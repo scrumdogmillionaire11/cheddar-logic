@@ -32,6 +32,8 @@ const {
   hasRunningJobName,
   wasJobRecentlySuccessful,
   getQuotaLedger,
+  claimTminusPullSlot,
+  purgeStaleTminusPullLog,
 } = require('@cheddar-logic/data');
 
 // Import all jobs
@@ -855,7 +857,11 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // Once-per-game T-minus pulls burned both API keys in a single evening.
   // 25 NBA games × 4 T-minus windows × 7 tokens = 700 tokens in one evening — no circuit
   // breaker, no dev env wall. This dedup guard is the first line of defense.
-  const preModelOddsQueued = new Set(); // keyed on `${sport}|T-${mins}`
+  //
+  // DB-backed dedup: claimTminusPullSlot uses INSERT OR IGNORE so a scheduler crash-restart
+  // mid-tick cannot double-pull for the same sport+window. The in-memory Set provided no
+  // protection across restarts. window_key: '<sport>|T-<mins>|<YYYY-MM-DDTHH>'
+  const hourSlot = nowUtc.toISO().slice(0, 13); // YYYY-MM-DDTHH
 
   for (const g of games) {
     const sport = String(g.sport).toLowerCase();
@@ -886,10 +892,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       // so T-minus runs always see the current line (not up-to-29-min-stale hourly snapshot).
       // Deduped per sport per T-minus window — one pull serves all games in the same window.
       if (isProjectionModelSport(sport) && process.env.ENABLE_ODDS_PULL !== 'false' && quotaTier === 'FULL') {
-        const oddsWindowKey = `${sport}|T-${mins}`;
-        if (!preModelOddsQueued.has(oddsWindowKey)) {
-          preModelOddsQueued.add(oddsWindowKey);
-          const oddsPreKey = `odds|pre-model|${oddsWindowKey}`;
+        const oddsWindowKey = `${sport}|T-${mins}|${hourSlot}`;
+        if (claimTminusPullSlot(sport, oddsWindowKey)) {
+          const oddsPreKey = `odds|pre-model|${sport}|T-${mins}`;
           jobs.push({
             jobName: 'pull_odds_hourly',
             jobKey: oddsPreKey,
@@ -1197,6 +1202,8 @@ async function start() {
   console.log('[SCHEDULER] Initializing database...');
   await initDb();
   console.log('[SCHEDULER] Database ready.\n');
+  purgeStaleTminusPullLog();
+  console.log('[SCHEDULER] T-minus pull log: stale rows purged (>48h).');
 
   let tickRunning = false;
 
