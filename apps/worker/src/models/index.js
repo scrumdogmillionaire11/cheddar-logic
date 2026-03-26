@@ -29,7 +29,7 @@ const {
   projectNCAAM,
   projectNHL,
 } = require('./projections');
-const { computeMLBDriverCards } = require('./mlb-model');
+const { computeMLBDriverCards, computePitcherKDriverCards, scorePitcherK } = require('./mlb-model');
 const { generateWelcomeHomeCard } = require('./welcome-home-v2');
 const {
   computeNHLMarketDecisions,
@@ -2275,4 +2275,6 @@ module.exports = {
   computeSkaterInjuryFactor,
   computeSkaterDefInjuryFactor,
   computeMLBDriverCards,
+  computePitcherKDriverCards,
+  scorePitcherK,
 };

@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-25T00:39:27Z"
-last_activity: "2026-03-25 - Completed quick-80 (WI-0594): active tab regression fix — rolling 36h activeStartUtc for active lifecycle mode"
+last_updated: "2026-03-26T00:00:00Z"
+last_activity: "2026-03-26 - Locked MLB pitcher-K rollout plan into WI-0595..WI-0600 with dependency order and scheduler precedence"
 progress:
   total_phases: 4
   completed_phases: 3
@@ -30,43 +30,39 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-25
-- Next action: WI-0588 (NBA totals quarantine) + WI-0591 (empirical sigma wiring) — parallel, both unblocked, both bleed EV every night they're open.
+- Last reviewed: 2026-03-26
+- Next action: WI-0596 ✓ complete — unlock WI-0597/WI-0598 (odds ingestion + market evaluation).
 
----
-
-## Sprint Plan — 2026-03-24 full re-prioritization (20 open items)
+## Sprint Plan — 2026-03-24 (updated 2026-03-26)
 
 ### Dependency Chains (respect order within chains)
+
 - **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → WI-0554 → WI-0556 → WI-0553
 - **Auth/JWT:** ~~WI-0559~~✓ → ~~WI-0560~~✓ (both done)
 - **Settlement → CLV (serial):** WI-0564 → WI-0566 → WI-0557
 - **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
 - **NBA quarantine → diagnosis → tier fix:** WI-0588 → WI-0590 → WI-0589
+- **MLB pitcher-K market (serial with one gated branch):** WI-0595 → WI-0596 → (WI-0598 + prep for WI-0597) → WI-0597 → WI-0599 → WI-0600
 - **All others:** independent, can be parallelized across agents
-
-### Note on WI-0587
-WI-0587 (demote `ncaam-matchup-style` to evidence-only) has no file in `WORK_QUEUE/`. It is listed as a dependency of WI-0589. Needs to be created before WI-0589 can start.
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-24
+## Prioritized Open Work Queue — 2026-03-26
 
 ### P0 — Active EV Bleed (do tonight)
 
 | # | WI | Summary | Deps | Why now |
 |---|---|---|---|---|
 | 1 | ~~[WI-0594](../WORK_QUEUE/COMPLETE/WI-0594.md)~~ ✓ | **REGRESSION** Active tab — in-progress games missing ACTIVE label in prod | none | DONE: rolling 36h activeStartUtc replaces todayUtc for active mode |
-| 2 | [WI-0588](../WORK_QUEUE/WI-0588.md) | Quarantine NBA totals — demote actionable tiers one level | none | 14-21, −8.35u in prod; every night open costs real units |
-| 3 | [WI-0591](../WORK_QUEUE/WI-0591.md) | Wire empirical sigma overrides into NBA + NCAAM decisioning | none | Currently falling back to static sigma silently; mis-calibrates every basketball card |
+| 2 | [WI-0593](../WORK_QUEUE/WI-0593.md) | Restore recurring settlement sweeps in scheduler | none | Prevent settlement staleness from recurring after first successful run |
+| 3 | [WI-0595](../WORK_QUEUE/WI-0595.md) | Pitcher Ks core engine (projection-only parity) | none | Establish new market in projection-only mode while tokens are constrained |
 
 ### P1 — High-impact, unblocked (this week)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 3 | [WI-0590](../WORK_QUEUE/WI-0590.md) | NBA totals diagnostic report (projection bias vs sigma vs threshold) | WI-0588 should land first |
-| 4 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function — replace hardcoded 0.95/0.88/0.85 literals | none (unblocked) |
-| 5 | WI-0587 *(file missing — create first)* | Demote `ncaam-matchup-style` to evidence-only (0-5, −5u in prod) | none |
+| 4 | [WI-0590](../WORK_QUEUE/WI-0590.md) | NBA totals diagnostic report (projection bias vs sigma vs threshold) | WI-0588 ✓ |
+| 5 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function — replace hardcoded 0.95/0.88/0.85 literals | none |
 | 6 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate web tests to temp DB — prevent CI from mutating prod DB | none |
 | 7 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI, no local server required | none |
 | 8 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | none |
@@ -75,7 +71,7 @@ WI-0587 (demote `ncaam-matchup-style` to evidence-only) has no file in `WORK_QUE
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 9 | [WI-0589](../WORK_QUEUE/WI-0589.md) | PLAY vs LEAN tier correction — cleanliness/contradiction gates | WI-0587, WI-0588 |
+| 9 | [WI-0589](../WORK_QUEUE/WI-0589.md) | PLAY vs LEAN tier correction — cleanliness/contradiction gates | WI-0587 ✓, WI-0588 ✓ |
 | 10 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | none |
 | 11 | [WI-0592](../WORK_QUEUE/WI-0592.md) | NHL SOG breakout usage overlay — rising-usage OVER candidates no longer flattened | none |
 | 12 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |

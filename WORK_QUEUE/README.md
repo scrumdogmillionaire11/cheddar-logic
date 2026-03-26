@@ -14,7 +14,7 @@ See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decision
 
 ## Active Work Items
 
-**Updated**: 2026-03-23
+**Updated**: 2026-03-26
 
 - `WI-0485`: Phase 4 telemetry calibration report + enforcement gate
 - `WI-0486`: Phase 4 soak-window runbook + weekly go/no-go cadence (depends on `WI-0485`)
@@ -47,6 +47,19 @@ NHL alignment execution order: `WI-0500` -> `WI-0501` -> `WI-0502` -> `WI-0506` 
 - `WI-0592`: NHL shots props breakout-usage overlay
 
 Recommended execution order: (`WI-0587` + `WI-0588`) -> `WI-0589`, with (`WI-0590` + `WI-0591`) in parallel as diagnostic/calibration enablers for later retuning.
+
+### MLB Pitcher Ks rollout (queued)
+
+- `WI-0595`: Pitcher Ks core engine (projection-only parity)
+- `WI-0596`: Pitcher Ks data foundations and freshness gates (depends on `WI-0595`)
+- `WI-0597`: Pitcher Ks odds pull + dual-mode runtime wiring (depends on `WI-0595`, `WI-0596`, should start after `WI-0593` due scheduler touchpoint)
+- `WI-0598`: Pitcher Ks contract hardening (validator + market contract; depends on `WI-0595`, `WI-0596`)
+- `WI-0599`: Pitcher Ks web integration (depends on `WI-0595`, `WI-0598`)
+- `WI-0600`: Pitcher Ks rollout docs + acceptance pack (depends on `WI-0595`-`WI-0599`)
+
+Recommended execution order: `WI-0595` -> `WI-0596` -> (`WI-0598` + prep for `WI-0597`) -> `WI-0597` -> `WI-0599` -> `WI-0600`.
+
+Precedence note: complete `WI-0593` before `WI-0597` to avoid concurrent edits in `apps/worker/src/schedulers/main.js`.
 
 ### Soccer Asian Handicap workstream (queued)
 

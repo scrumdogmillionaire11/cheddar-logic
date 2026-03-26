@@ -180,6 +180,15 @@ module.exports = {
   recordProjectionEntry: dbTelemetry.recordProjectionEntry,
   settleProjectionEntry: dbTelemetry.settleProjectionEntry,
 
+  // Token quota ledger
+  getQuotaLedger: db.getQuotaLedger,
+  upsertQuotaLedger: db.upsertQuotaLedger,
+  isQuotaCircuitOpen: db.isQuotaCircuitOpen,
+
+  // T-minus pull dedup log
+  claimTminusPullSlot: db.claimTminusPullSlot,
+  purgeStaleTminusPullLog: db.purgeStaleTminusPullLog,
+
   // Dual-database mode (recommended for production)
   initDualDb: dbDualInit.initDualDb,
   closeDualDb: dbDualInit.closeDualDb,

@@ -436,6 +436,32 @@ Production uses **Node/JS worker for all sports models** (NBA, NHL, NCAAM, Socce
 
 ---
 
+## 🔐 Dev Environment: Read-Only Prod DB Mount
+
+To run the scheduler locally without hitting the odds API, mount the prod DB read-only via sshfs:
+
+```bash
+# Mount prod DB (read-only — WAL mode allows concurrent readers)
+sshfs babycheeses11@CheddarPi:/opt/data /mnt/cheddar-prod -o ro
+
+# Point local worker at prod DB
+export CHEDDAR_DB_PATH=/mnt/cheddar-prod/cheddar.db
+
+# Confirm read-only access works
+node -e "require('@cheddar-logic/data').getDatabase()"
+```
+
+**Why:** The hard gate in `pull_odds_hourly.js` throws if `APP_ENV=local` and `ENABLE_ODDS_PULL=true`.
+A read-only prod DB mount lets you run models + observe odds data without spending any tokens.
+
+**Unmount when done:**
+
+```bash
+umount /mnt/cheddar-prod
+```
+
+---
+
 ## 📎 Related Documentation
 
 - [SETTLEMENT_CANONICAL_WORKFLOW.md](SETTLEMENT_CANONICAL_WORKFLOW.md) — How results are settled

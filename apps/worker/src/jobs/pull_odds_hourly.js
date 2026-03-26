@@ -31,6 +31,9 @@ const {
   insertOddsSnapshot,
   recordOddsIngestFailure,
   withDb,
+  getQuotaLedger,
+  upsertQuotaLedger,
+  isQuotaCircuitOpen,
 } = require('@cheddar-logic/data');
 
 const { resolveTeamVariant } = require('@cheddar-logic/data/src/normalize');
@@ -48,6 +51,26 @@ const {
 } = require('@cheddar-logic/odds');
 
 const PREGAME_STATUSES = new Set(['scheduled', 'not_started', 'pre']);
+
+// In-memory 401 circuit breaker — set when any sport fetch returns HTTP 401.
+// Also backed by DB-persisted circuit_open_until (survives restarts).
+let _apiKeyExhaustedAt = null;
+const ODDS_401_COOLDOWN_MS =
+  Number(process.env.ODDS_401_COOLDOWN_MS) || 2 * 60 * 60 * 1000; // 2h default
+
+const QUOTA_PROVIDER = 'odds_api';
+function getCurrentPeriod() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function getTokenCostPerFetch() {
+  // Token cost is determined once per invocation — same value used for all sports
+  const {
+    getActiveSports,
+    getTokensForFetch,
+  } = require('@cheddar-logic/odds');
+  return getTokensForFetch(getActiveSports());
+}
 
 function chooseStatusForUpsert(existingStatus, incomingStatus) {
   const existing =
@@ -85,6 +108,43 @@ function chooseStatusForUpsert(existingStatus, incomingStatus) {
  */
 async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
   const jobRunId = `job-pull-odds-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
+
+  // Dev environment hard gate — local must never hit the live odds API
+  if (process.env.APP_ENV === 'local' && process.env.ENABLE_ODDS_PULL === 'true') {
+    throw new Error(
+      '[PullOdds] Dev environment must not hit the odds API. ' +
+        'Set ENABLE_ODDS_PULL=false in .env, or use a read-only prod DB mount. ' +
+        'See ARCHITECTURE_SEPARATION.md for the sshfs mount command.',
+    );
+  }
+
+  // Circuit breaker — check both in-memory flag and DB-persisted state (survives restarts)
+  const _period = getCurrentPeriod();
+  if (_apiKeyExhaustedAt !== null) {
+    const elapsed = Date.now() - _apiKeyExhaustedAt;
+    if (elapsed < ODDS_401_COOLDOWN_MS) {
+      const remainingMins = Math.ceil((ODDS_401_COOLDOWN_MS - elapsed) / 60000);
+      console.warn(
+        `[PullOdds] 🔴 Circuit open (in-memory) — API key exhausted ${Math.floor(elapsed / 60000)}m ago. Skipping for ${remainingMins}m more.`,
+      );
+      return { success: false, skipped: true, reason: '401_circuit_open', jobKey };
+    }
+    // Cooldown expired — reset and try again
+    console.log('[PullOdds] In-memory circuit cooldown expired — resetting flag.');
+    _apiKeyExhaustedAt = null;
+  }
+  // DB-persisted circuit check (survives process restarts)
+  try {
+    const dbCircuit = isQuotaCircuitOpen(QUOTA_PROVIDER, _period);
+    if (dbCircuit.open) {
+      console.warn(
+        `[PullOdds] 🔴 Circuit open (DB-persisted) — reason: ${dbCircuit.reason}, until: ${dbCircuit.until}. Skipping.`,
+      );
+      return { success: false, skipped: true, reason: 'db_circuit_open', jobKey };
+    }
+  } catch (_circuitErr) {
+    // DB not yet initialized (e.g. migration not run) — fall through to in-memory guard
+  }
 
   console.log(`[PullOdds] Starting job run: ${jobRunId}`);
   if (jobKey) {
@@ -180,20 +240,54 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
         }
       };
 
+      // Pessimistic token pre-deduct: charge before each sport fetch, reconcile after
+      let sessionTokensSpent = 0;
+      const tokenCostPerSport = Math.ceil(getTokenCostPerFetch() / activeSports.length);
+
       for (const sport of activeSports) {
         kpis.sportsProcessed += 1;
         try {
           console.log(`[PullOdds] Processing ${sport}...`);
+
+          // Pre-deduct tokens before the network call
+          sessionTokensSpent += tokenCostPerSport;
+          try {
+            upsertQuotaLedger({
+              provider: QUOTA_PROVIDER,
+              period: _period,
+              tokens_spent_session: sessionTokensSpent,
+              updated_by: jobRunId,
+            });
+          } catch (_ledgerErr) {
+            // DB not yet migrated — safe to continue without ledger
+          }
 
           const {
             games: normalizedGames,
             errors: fetchErrors,
             rawCount,
             windowRawCount,
+            remainingTokens,
           } = await fetchOdds({
             sport,
             hoursAhead: 36,
           });
+
+          // Reconcile: write actual remaining balance from API header
+          if (remainingTokens !== null) {
+            try {
+              upsertQuotaLedger({
+                provider: QUOTA_PROVIDER,
+                period: _period,
+                tokens_remaining: remainingTokens,
+                tokens_spent_session: sessionTokensSpent,
+                monthly_limit: Number(process.env.ODDS_MONTHLY_LIMIT) || 20000,
+                updated_by: jobRunId,
+              });
+            } catch (_ledgerErr) {
+              // DB not yet migrated — safe to continue without ledger
+            }
+          }
 
           const contractRawCount = Number.isFinite(windowRawCount)
             ? windowRawCount
@@ -203,6 +297,30 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
           kpis.normalizedGamesSeen += Number(normalizedGames?.length || 0);
 
           if (fetchErrors && fetchErrors.length > 0) {
+            // Check for 401 — both keys exhausted. Trip circuit breaker and abort all remaining sports.
+            const is401 = fetchErrors.some(
+              (e) => String(e).includes('401') || String(e).includes('Unauthorized'),
+            );
+            if (is401) {
+              _apiKeyExhaustedAt = Date.now();
+              const circuitUntil = new Date(Date.now() + ODDS_401_COOLDOWN_MS).toISOString();
+              console.error(
+                `[PullOdds] 🔴 HTTP 401 on ${sport} — API key(s) exhausted. Circuit open until ${circuitUntil}. Aborting remaining sports.`,
+              );
+              try {
+                upsertQuotaLedger({
+                  provider: QUOTA_PROVIDER,
+                  period: _period,
+                  circuit_open_until: circuitUntil,
+                  circuit_reason: '401',
+                  updated_by: jobRunId,
+                });
+              } catch (_ledgerErr) { /* DB not yet migrated */ }
+              errors.push(`${sport}: 401 — API key exhausted, circuit tripped`);
+              kpis.fetchErrors += 1;
+              break;
+            }
+
             fetchErrors.forEach((errorMessage) => {
               console.error(`[PullOdds]   ❌ ${errorMessage}`);
               errors.push(`${sport}: ${errorMessage}`);

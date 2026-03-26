@@ -71,6 +71,7 @@ type LedgerRow = {
 
 type ResultsResponse = {
   success: boolean;
+  withoutOddsMode?: boolean;
   data?: {
     summary: ResultsSummary;
     segments: SegmentRow[];
@@ -178,6 +179,7 @@ export default function ResultsPage() {
   const [ledger, setLedger] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [withoutOddsMode, setWithoutOddsMode] = useState(false);
 
   // Filter state
   const [filterSport, setFilterSport] = useState<string>('');
@@ -212,6 +214,12 @@ export default function ResultsPage() {
         payload = await response.json();
       } catch {
         setError('Failed to parse API response');
+        return;
+      }
+
+      if (payload.withoutOddsMode) {
+        setWithoutOddsMode(true);
+        setError(null);
         return;
       }
 
@@ -350,6 +358,16 @@ export default function ResultsPage() {
           {error ? <p className="text-sm text-rose-200">{error}</p> : null}
           {loading ? (
             <p className="text-sm text-cloud/50">Loading results...</p>
+          ) : null}
+          {!loading && withoutOddsMode ? (
+            <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-sm text-amber-200">
+              <p className="font-semibold">Without Odds Mode — settlement disabled</p>
+              <p className="mt-1 text-amber-200/70">
+                Results tracking is unavailable. Cards show projection-only model
+                views backed by ESPN direct data, not market odds. No settlement
+                runs while this mode is active.
+              </p>
+            </div>
           ) : null}
           {!loading && dataMeta ? (
             <p className="text-xs text-cloud/50">

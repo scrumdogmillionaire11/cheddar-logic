@@ -131,20 +131,25 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
     console.log(`[Odds] Fetching ${sport} (${hoursAhead}h horizon)...`);
 
     // Try primary key; fall back to backup on auth/quota errors
-    let rawGames;
+    let fetchResult;
     try {
-      rawGames = await fetchFromOddsAPI(sport, config, apiKey);
+      fetchResult = await fetchFromOddsAPI(sport, config, apiKey);
     } catch (primaryErr) {
       const status = primaryErr?.response?.status;
       if (backupApiKey && (status === 401 || status === 402 || status === 429)) {
         console.warn(
           `[Odds] Primary key failed (HTTP ${status}) — retrying with BACKUP_ODDS_API_KEY`,
         );
-        rawGames = await fetchFromOddsAPI(sport, config, backupApiKey);
+        fetchResult = await fetchFromOddsAPI(sport, config, backupApiKey);
       } else {
         throw primaryErr;
       }
     }
+
+    // fetchFromOddsAPI returns { games, remainingTokens } for single-league path.
+    // Multi-league path still returns a plain array — handle both.
+    const rawGames = Array.isArray(fetchResult) ? fetchResult : fetchResult.games;
+    const remainingTokens = Array.isArray(fetchResult) ? null : fetchResult.remainingTokens;
 
     console.log(`[Odds] Got ${rawGames.length} raw games for ${sport}`);
 
@@ -181,6 +186,7 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
       errors,
       rawCount: rawGames.length,
       windowRawCount: filteredGames.length,
+      remainingTokens,
     };
   } catch (err) {
     console.error(`[Odds] Error fetching ${sport}:`, err.message);
@@ -189,6 +195,7 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
       errors: [`${sport}: ${err.message}`],
       rawCount: 0,
       windowRawCount: 0,
+      remainingTokens: null,
     };
   }
 }
@@ -273,16 +280,17 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
   });
 
   const remaining = response.headers['x-requests-remaining'];
+  let remainingTokens = null;
   if (remaining) {
-    const remainingInt = parseInt(remaining);
-    console.log(`[Odds] API quota remaining: ${remainingInt}`);
-    if (remainingInt < 200) {
+    remainingTokens = parseInt(remaining);
+    console.log(`[Odds] API quota remaining: ${remainingTokens}`);
+    if (remainingTokens < 200) {
       console.warn(`[Odds] ⚠️  LOW API QUOTA: ${remaining} requests remaining`);
     }
   }
 
   // Transform API response to internal format (matches shared-data structure)
-  return transformAPIResponse(response.data, sport);
+  return { games: transformAPIResponse(response.data, sport), remainingTokens };
 }
 
 /**
