@@ -429,9 +429,17 @@ function getCurrentQuotaTier() {
     return tier;
   }
 
+  // Migration 043 set DEFAULT 0 on tokens_remaining (NOT NULL), so a row with
+  // tokens_remaining=0 AND tokens_spent_session=0 means "no fetches have run yet"
+  // — treat it the same as a missing row (null) to avoid spurious CRITICAL on first startup.
+  const effectiveRemaining =
+    ledger.tokens_remaining === 0 && ledger.tokens_spent_session === 0
+      ? null
+      : ledger.tokens_remaining;
+
   // If we have a known remaining balance, use it
-  if (ledger.tokens_remaining !== null) {
-    const pctRemaining = (ledger.tokens_remaining / monthlyLimit) * 100;
+  if (effectiveRemaining !== null) {
+    const pctRemaining = (effectiveRemaining / monthlyLimit) * 100;
 
     // Burn rate projection: if projected month-end spend > effectiveLimit → force MEDIUM
     const hoursElapsed = new Date().getDate() * 24 + new Date().getHours();
