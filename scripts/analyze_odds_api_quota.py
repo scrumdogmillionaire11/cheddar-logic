@@ -16,9 +16,80 @@ Outputs:
 """
 
 import math
+import os
+import sqlite3
 from dataclasses import dataclass
-from typing import List, Tuple
+from datetime import datetime
+from typing import List, Optional, Tuple
 from enum import Enum
+
+
+# ============================================================================
+# LIVE LEDGER READER — reads actual usage from token_quota_ledger table
+# ============================================================================
+
+def read_live_ledger(db_path: Optional[str] = None) -> Optional[dict]:
+    """
+    Read current quota state from the token_quota_ledger SQLite table.
+    Returns None if the DB or table is unavailable (script degrades gracefully).
+
+    DB path priority:
+      1. db_path argument
+      2. CHEDDAR_DB_PATH env var
+      3. Common Pi production path: /opt/data/cheddar.db
+    """
+    candidates = [
+        db_path,
+        os.environ.get('CHEDDAR_DB_PATH'),
+        '/opt/data/cheddar.db',
+    ]
+    resolved = next((p for p in candidates if p and os.path.exists(p)), None)
+    if not resolved:
+        return None
+
+    period = datetime.now().strftime('%Y-%m')
+    try:
+        conn = sqlite3.connect(f'file:{resolved}?mode=ro', uri=True)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            'SELECT * FROM token_quota_ledger WHERE provider = ? AND period = ? LIMIT 1',
+            ('odds_api', period),
+        ).fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+    except Exception:
+        pass
+    return None
+
+
+def print_live_ledger(ledger: dict) -> None:
+    period = ledger.get('period', '?')
+    remaining = ledger.get('tokens_remaining')
+    monthly_limit = ledger.get('monthly_limit') or MONTHLY_QUOTA
+    spent = ledger.get('tokens_spent_session', 0) or 0
+    circuit_until = ledger.get('circuit_open_until')
+    circuit_reason = ledger.get('circuit_reason')
+    last_updated = ledger.get('last_updated', 'unknown')
+
+    pct_remaining = (remaining / monthly_limit * 100) if remaining is not None else None
+    tier = (
+        'CRITICAL' if pct_remaining is not None and pct_remaining < 10 else
+        'LOW'      if pct_remaining is not None and pct_remaining < 25 else
+        'MEDIUM'   if pct_remaining is not None and pct_remaining < 50 else
+        'FULL'
+    )
+
+    print(f"  Period:            {period}")
+    print(f"  Tokens Remaining:  {remaining:,}" if remaining is not None else "  Tokens Remaining:  unknown")
+    print(f"  Monthly Limit:     {monthly_limit:,}")
+    if pct_remaining is not None:
+        print(f"  % Remaining:       {pct_remaining:.1f}%")
+    print(f"  Spent (session):   {spent:,}")
+    print(f"  Current Tier:      {tier}")
+    if circuit_until:
+        print(f"  ⚠️  Circuit Open:   until {circuit_until} (reason: {circuit_reason})")
+    print(f"  Last Updated:      {last_updated}")
 
 
 # ============================================================================
@@ -445,9 +516,21 @@ def print_hybrid_recommendations(risk_zone: RiskZone, current_consumption: int):
 def main():
     """Run complete quota analysis"""
     print_header("ODDS API Token Quota Analysis")
-    print(f"Analysis Date: March 7, 2026")
+    print(f"Analysis Date: {datetime.now().strftime('%Y-%m-%d')}")
     print(f"API Tier: {MONTHLY_QUOTA:,} tokens/month")
     print(f"Test Environment: Uses production API key (same quota)")
+
+    # Live ledger — show actual DB state if available
+    live = read_live_ledger()
+    if live:
+        print()
+        print("── LIVE QUOTA STATE (from token_quota_ledger) ──────────────────────────")
+        print_live_ledger(live)
+        print("────────────────────────────────────────────────────────────────────────")
+    else:
+        print()
+        print("  (No live DB found — showing projected analysis only)")
+        print("  Set CHEDDAR_DB_PATH or run from Pi to see actual balance.")
     
     # Calculate components
     tokens_per_fetch = calculate_tokens_per_fetch()

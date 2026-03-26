@@ -31,6 +31,7 @@ const {
   hasRunningJobRun,
   hasRunningJobName,
   wasJobRecentlySuccessful,
+  getQuotaLedger,
 } = require('@cheddar-logic/data');
 
 // Import all jobs
@@ -380,6 +381,78 @@ function isProjectionModelSport(sport) {
   return ['nba', 'nhl', 'ncaam'].includes(String(sport || '').toLowerCase());
 }
 
+let _lastQuotaTier = null;
+
+/**
+ * Token quota tier — governs odds fetch frequency and feature gating.
+ *
+ * | Tier     | Condition              | T-minus pulls | Backstop pulls |
+ * |----------|------------------------|---------------|----------------|
+ * | FULL     | >50% remaining         | ✅            | ✅             |
+ * | MEDIUM   | 25–50% remaining       | ❌            | ❌             |
+ * | LOW      | 10–25% remaining       | ❌            | ❌             |
+ * | CRITICAL | <10% remaining         | ❌            | ❌             |
+ *
+ * Also forces MEDIUM if the burn rate projects overage by end of month.
+ *
+ * @returns {'FULL'|'MEDIUM'|'LOW'|'CRITICAL'}
+ */
+function getCurrentQuotaTier() {
+  const period = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  })();
+
+  let ledger;
+  try {
+    ledger = getQuotaLedger('odds_api', period);
+  } catch (_e) {
+    return 'FULL'; // DB not yet migrated — default to unrestricted
+  }
+
+  const monthlyLimit = ledger.monthly_limit || Number(process.env.ODDS_MONTHLY_LIMIT) || 20000;
+  const reservePct = Number(process.env.ODDS_BUDGET_RESERVE_PCT) || 15;
+  const effectiveLimit = monthlyLimit * (1 - reservePct / 100);
+
+  function emitTier(tier) {
+    if (_lastQuotaTier !== null && _lastQuotaTier !== tier) {
+      console.log(
+        `[QUOTA] Tier changed: ${_lastQuotaTier} → ${tier} ` +
+          `(tokens_remaining=${ledger.tokens_remaining}, ` +
+          `burn_rate=${Math.round(ledger.tokens_spent_session)}tokens/session, ` +
+          `monthly_limit=${monthlyLimit})`,
+      );
+    }
+    _lastQuotaTier = tier;
+    return tier;
+  }
+
+  // If we have a known remaining balance, use it
+  if (ledger.tokens_remaining !== null) {
+    const pctRemaining = (ledger.tokens_remaining / monthlyLimit) * 100;
+
+    // Burn rate projection: if projected month-end spend > effectiveLimit → force MEDIUM
+    const hoursElapsed = new Date().getDate() * 24 + new Date().getHours();
+    if (hoursElapsed > 0 && ledger.tokens_spent_session > 0) {
+      const projectedMonthly = (ledger.tokens_spent_session / hoursElapsed) * 24 * 30;
+      if (projectedMonthly > effectiveLimit) {
+        console.warn(
+          `[QUOTA] Burn rate alarm: projected ${Math.round(projectedMonthly)} tokens/month > limit ${Math.round(effectiveLimit)} — forcing MEDIUM`,
+        );
+        return emitTier('MEDIUM');
+      }
+    }
+
+    if (pctRemaining > 50) return emitTier('FULL');
+    if (pctRemaining > 25) return emitTier('MEDIUM');
+    if (pctRemaining > 10) return emitTier('LOW');
+    return emitTier('CRITICAL');
+  }
+
+  // No ledger data yet — default to FULL
+  return emitTier('FULL');
+}
+
 function hasFreshTeamMetricsCache() {
   if (!REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS) return true;
   return wasJobRecentlySuccessful(
@@ -465,6 +538,49 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   const sports = enabledSports();
   let ncaamFtRefreshQueued = false;
   let teamMetricsRefreshQueued = false;
+
+  // Token quota tier — gates T-minus and backstop odds pulls to protect monthly budget.
+  // FULL: all features enabled. MEDIUM/LOW/CRITICAL: T-minus + backstop shut off.
+  // Hourly baseline remains until CRITICAL (hard stop).
+  const quotaTier = getCurrentQuotaTier();
+  if (quotaTier !== 'FULL') {
+    console.warn(`[QUOTA] Tier=${quotaTier} — T-minus and backstop odds pulls disabled this tick`);
+  }
+  if (quotaTier === 'CRITICAL') {
+    console.error('[QUOTA] Tier=CRITICAL — all odds fetches halted for this tick');
+  }
+
+  // Daily quota summary at 09:00 ET — log current balance, burn rate, and tier context.
+  if (isFixedDue(nowEt, '09:00')) {
+    try {
+      const period = `${nowEt.year}-${String(nowEt.month).padStart(2, '0')}`;
+      const ledger = getQuotaLedger('odds_api', period);
+      const monthlyLimit = ledger.monthly_limit || Number(process.env.ODDS_MONTHLY_LIMIT) || 20000;
+      const hoursElapsed = (nowEt.day - 1) * 24 + nowEt.hour;
+      const spentSession = ledger.tokens_spent_session || 0;
+      const projectedMonthly = hoursElapsed > 0
+        ? Math.round((spentSession / hoursElapsed) * 24 * 30)
+        : 0;
+      const pctUsed = ledger.tokens_remaining !== null
+        ? Math.round(((monthlyLimit - ledger.tokens_remaining) / monthlyLimit) * 100)
+        : null;
+      const tierNextChange =
+        quotaTier === 'FULL' ? `>50% remaining (currently ${pctUsed !== null ? 100 - pctUsed : '?'}%)` :
+        quotaTier === 'MEDIUM' ? 'drops to LOW below 25% remaining' :
+        quotaTier === 'LOW' ? 'drops to CRITICAL below 10% remaining' :
+        'CRITICAL — no odds fetches until balance recovers';
+      console.log(
+        `[QUOTA] Daily summary (09:00 ET) — ` +
+        `period=${period}, tier=${quotaTier}, ` +
+        `tokens_remaining=${ledger.tokens_remaining ?? 'unknown'}, ` +
+        `spent_session=${spentSession}, projected_monthly=${projectedMonthly}, ` +
+        `monthly_limit=${monthlyLimit} | ` +
+        `tier_context: ${tierNextChange}`,
+      );
+    } catch (_summaryErr) {
+      // DB not yet migrated — skip summary
+    }
+  }
 
   function queueNhlShotsPropIngestBeforeModel(modelJobKey, reason) {
     if (!ENABLE_NHL_SOG_PROP_PULL) return;
@@ -575,7 +691,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
   // ========== ODDS (2) ==========
   // Keep existing hourly bucket for backward compatibility, but can also add time-aware logic
-  if (process.env.ENABLE_ODDS_PULL !== 'false') {
+  if (process.env.ENABLE_ODDS_PULL !== 'false' && quotaTier !== 'CRITICAL') {
     // Skip quiet hours (midnight to ODDS_FETCH_START_HOUR ET).
     // Default: skip midnight–6am. Set ODDS_FETCH_START_HOUR=10 on starter-key budget.
     const isQuietHours = nowEt.hour < ODDS_FETCH_START_HOUR;
@@ -614,8 +730,10 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     }
 
     // Global backstop: every 10 minutes, refresh stale odds for T-6h games
+    // Disabled at MEDIUM or below (tier check preserves hourly baseline only)
     if (
       process.env.ENABLE_ODDS_BACKSTOP !== 'false' &&
+      quotaTier === 'FULL' &&
       nowUtc.minute % 10 === 0
     ) {
       const jobKey = `odds|global-backstop|${nowUtc.toISO().slice(0, 16)}`;
@@ -728,7 +846,17 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     }
   }
 
-  // T-minus windows (per game) - UNCHANGED
+  // T-minus windows (per game)
+  // Pre-model odds pulls are deduped per sport per T-minus window (not per game).
+  // On a 25-game NBA night, without dedup: 25 × 4 T-minus windows = 100 pulls (700+ tokens).
+  // With dedup: 1 pull per sport per window (nba|T-30) = max ~4 pulls/sport/day (~56 tokens).
+  //
+  // *** March 2026 incident ***
+  // Once-per-game T-minus pulls burned both API keys in a single evening.
+  // 25 NBA games × 4 T-minus windows × 7 tokens = 700 tokens in one evening — no circuit
+  // breaker, no dev env wall. This dedup guard is the first line of defense.
+  const preModelOddsQueued = new Set(); // keyed on `${sport}|T-${mins}`
+
   for (const g of games) {
     const sport = String(g.sport).toLowerCase();
     if (!SPORT_JOBS[sport]) continue;
@@ -756,15 +884,20 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       }
       // For projection-model sports, force a fresh odds pull immediately before the model
       // so T-minus runs always see the current line (not up-to-29-min-stale hourly snapshot).
-      if (isProjectionModelSport(sport) && process.env.ENABLE_ODDS_PULL !== 'false') {
-        const oddsPreKey = `odds|pre-model|${sport}|${g.game_id}|T-${mins}`;
-        jobs.push({
-          jobName: 'pull_odds_hourly',
-          jobKey: oddsPreKey,
-          execute: pullOddsHourly,
-          args: { jobKey: oddsPreKey, dryRun },
-          reason: `pre-model odds refresh (T-${mins} for ${g.game_id})`,
-        });
+      // Deduped per sport per T-minus window — one pull serves all games in the same window.
+      if (isProjectionModelSport(sport) && process.env.ENABLE_ODDS_PULL !== 'false' && quotaTier === 'FULL') {
+        const oddsWindowKey = `${sport}|T-${mins}`;
+        if (!preModelOddsQueued.has(oddsWindowKey)) {
+          preModelOddsQueued.add(oddsWindowKey);
+          const oddsPreKey = `odds|pre-model|${oddsWindowKey}`;
+          jobs.push({
+            jobName: 'pull_odds_hourly',
+            jobKey: oddsPreKey,
+            execute: pullOddsHourly,
+            args: { jobKey: oddsPreKey, dryRun },
+            reason: `pre-model odds refresh (T-${mins}, ${sport})`,
+          });
+        }
       }
       jobs.push({
         jobName: SPORT_JOBS[sport].jobName,
