@@ -56,6 +56,23 @@ async function run() {
     'WI-0573: already-American guard must use Math.abs() to handle negative American prices (-110, -115)',
   );
 
+  // WI-0599: pitcher K cards must flow through props routing without being dropped
+  assert(
+    routeSource.includes("normalized === 'mlb-pitcher-k'") &&
+      routeSource.includes("return 'PROP'"),
+    'WI-0599: mlb-pitcher-k must map to PROP via inferMarketFromCardType',
+  );
+  assert(
+    routeSource.includes("'mlb-pitcher-k'") &&
+      routeSource.includes('playProducerCardTypes'),
+    'WI-0599: mlb-pitcher-k must be in MLB playProducerCardTypes contract',
+  );
+  assert(
+    routeSource.includes('isMlbPitcherKPlay') &&
+      routeSource.includes('seenMlbPitcherKPlayKeys'),
+    'WI-0599: MLB pitcher K prop plays must have dedup block parallel to isNhlPropPlay',
+  );
+
   console.log('✅ API games market smoke test passed');
 }
 

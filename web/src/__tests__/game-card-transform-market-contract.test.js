@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const filePath = path.resolve('web/src/lib/game-card/transform.ts');
+const filePath = path.resolve('src/lib/game-card/transform.ts');
 const source = fs.readFileSync(filePath, 'utf8');
 
 console.log('🧪 Transform market contract source tests');
@@ -100,6 +100,12 @@ assert(
     source.includes("a.propVerdict === 'NO_PLAY' && b.propVerdict === 'NO_PLAY'") &&
     source.includes('Math.abs(a.lineDelta'),
   'transform props mode should sort by verdict rank, preserve stronger no-play gaps, then probEdgePp and lineDelta',
+);
+
+assert(
+  source.includes("canonicalMarketKey === 'pitcher_strikeouts' || titleLower.includes('strikeout')") &&
+    source.includes("propType = 'Strikeouts'"),
+  'transform props mode should classify pitcher_strikeouts canonical_market_key as Strikeouts propType',
 );
 
 console.log('✅ Transform market contract source tests passed');

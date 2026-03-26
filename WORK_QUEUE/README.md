@@ -48,18 +48,17 @@ NHL alignment execution order: `WI-0500` -> `WI-0501` -> `WI-0502` -> `WI-0506` 
 
 Recommended execution order: (`WI-0587` + `WI-0588`) -> `WI-0589`, with (`WI-0590` + `WI-0591`) in parallel as diagnostic/calibration enablers for later retuning.
 
-### MLB Pitcher Ks rollout (queued)
+### MLB Pitcher Ks rollout (complete ✓ — 2026-03-26)
 
-- `WI-0595`: Pitcher Ks core engine (projection-only parity)
-- `WI-0596`: Pitcher Ks data foundations and freshness gates (depends on `WI-0595`)
-- `WI-0597`: Pitcher Ks odds pull + dual-mode runtime wiring (depends on `WI-0595`, `WI-0596`, should start after `WI-0593` due scheduler touchpoint)
-- `WI-0598`: Pitcher Ks contract hardening (validator + market contract; depends on `WI-0595`, `WI-0596`)
-- `WI-0599`: Pitcher Ks web integration (depends on `WI-0595`, `WI-0598`)
-- `WI-0600`: Pitcher Ks rollout docs + acceptance pack (depends on `WI-0595`-`WI-0599`)
+- ~~`WI-0595`~~: ✓ Pitcher Ks core engine (projection-only parity)
+- ~~`WI-0596`~~: ✓ Pitcher Ks data foundations and freshness gates
+- ~~`WI-0597`~~: ✓ Pitcher Ks odds pull + dual-mode runtime wiring
+- ~~`WI-0598`~~: ✓ Pitcher Ks contract hardening (validator + market contract)
+- ~~`WI-0599`~~: ✓ Pitcher Ks web integration — props surfaces (route.ts, filters, presets, dedup)
+- ~~`WI-0600`~~: ✓ Pitcher Ks rollout docs + acceptance pack
 
-Recommended execution order: `WI-0595` -> `WI-0596` -> (`WI-0598` + prep for `WI-0597`) -> `WI-0597` -> `WI-0599` -> `WI-0600`.
+**Rollout state:** Projection-only mode active by default. Odds-backed mode available via `PITCHER_K_ODDS_ENABLED=true`. See [docs/runbooks/pitcher-ks-rollout.md](../docs/runbooks/pitcher-ks-rollout.md) for mode switch protocol and acceptance checklist.
 
-Precedence note: complete `WI-0593` before `WI-0597` to avoid concurrent edits in `apps/worker/src/schedulers/main.js`.
 
 ### Soccer Asian Handicap workstream (queued)
 

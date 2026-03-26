@@ -31,6 +31,7 @@
     "job:run-nfl-model:test": "node -e \"require('./src/jobs/run_nfl_model.js').runNFLModel().then(console.log).catch(console.error)\"",
     "job:run-mlb-model": "node src/jobs/run_mlb_model.js",
     "job:run-mlb-model:test": "node -e \"require('./src/jobs/run_mlb_model.js').runMLBModel().then(console.log).catch(console.error)\"",
+    "job:pull-mlb-pitcher-strikeout-props": "node src/jobs/pull_mlb_pitcher_strikeout_props.js",
     "job:run-soccer-model": "node src/jobs/run_soccer_model.js",
     "job:run-soccer-model:test": "node -e \"require('./src/jobs/run_soccer_model.js').runSoccerModel().then(console.log).catch(console.error)\"",
     "job:run-ncaam-model": "node src/jobs/run_ncaam_model.js",

@@ -454,6 +454,88 @@ const soccerAsianHandicapAwaySchema = buildSoccerAsianHandicapSchema(
   'asian_handicap_away',
 );
 
+// ============================================================================
+// MLB Pitcher K schema
+// ============================================================================
+// Card type: 'mlb-pitcher-k'
+// canonical_market_key: 'pitcher_strikeouts'
+// Emitted by: run_mlb_model.js in PITCHER_KS_MODEL_MODE=PROJECTION_ONLY or ODDS_BACKED
+//
+// Contract (docs/pitcher_ks/07output.md):
+//   - basis: 'PROJECTION_ONLY' | 'ODDS_BACKED'
+//   - player_name: '<TEAM> SP'
+//   - canonical_market_key: 'pitcher_strikeouts'
+//   - pitcher_k_result: null | object (engine signal diagnostics)
+//   - tags: string[] (may include 'no_odds_mode', 'HIGH VIG', etc.)
+// ============================================================================
+
+const mlbPitcherKPayloadSchema = z
+  .object({
+    game_id: z.string().min(1),
+    sport: z.literal('MLB'),
+    model_version: z.string().min(1),
+    home_team: z.string().min(1).nullable(),
+    away_team: z.string().min(1).nullable(),
+    matchup: z.string().nullable().optional(),
+    start_time_utc: z.string().nullable().optional(),
+    market_type: z.literal('PROP'),
+    prediction: z.string().min(1),
+    selection: z.object({
+      side: z.string().min(1),
+    }),
+    line: z.number().nullable(),
+    confidence: z.number().min(0).max(1),
+    tier: z.enum(['BEST', 'WATCH']).nullable().optional(),
+    ev_passed: z.boolean(),
+    reasoning: z.string().nullable().optional(),
+    disclaimer: z.string().optional(),
+    generated_at: isoDateString,
+    player_name: z.string().min(1),
+    canonical_market_key: z.literal('pitcher_strikeouts'),
+    basis: z.enum(['PROJECTION_ONLY', 'ODDS_BACKED']),
+    tags: z.array(z.string()).optional(),
+    pitcher_k_result: z.unknown().nullable().optional(),
+    // Odds-backed mode enrichment (optional — absent in PROJECTION_ONLY)
+    line_source: z.string().nullable().optional(),
+    over_price: z.number().int().nullable().optional(),
+    under_price: z.number().int().nullable().optional(),
+    best_line_bookmaker: z.string().nullable().optional(),
+    margin: z.number().nullable().optional(),
+    // Diagnostics (optional — populated on fail-closed paths)
+    ingest_failure_reason_code: z.string().nullable().optional(),
+  })
+  .passthrough()
+  .superRefine((payload, ctx) => {
+    // ODDS_BACKED cards must carry a line and line_source
+    if (payload.basis === 'ODDS_BACKED') {
+      if (payload.line === null || payload.line === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['line'],
+          message: 'ODDS_BACKED pitcher_k card must have a numeric line',
+        });
+      }
+      if (!payload.line_source) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['line_source'],
+          message: 'ODDS_BACKED pitcher_k card must have line_source set',
+        });
+      }
+    }
+    // PROJECTION_ONLY cards must carry the 'no_odds_mode' tag
+    if (payload.basis === 'PROJECTION_ONLY') {
+      const tags = payload.tags || [];
+      if (!tags.includes('no_odds_mode')) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['tags'],
+          message: "PROJECTION_ONLY pitcher_k card must include 'no_odds_mode' in tags",
+        });
+      }
+    }
+  });
+
 const schemaByCardType = {
   // Active NHL driver + evidence cards
   'nhl-goalie': driverPayloadSchema,
@@ -506,7 +588,13 @@ const schemaByCardType = {
   'soccer_double_chance': soccerDoubleChanceSchema,
   'asian_handicap_home': soccerAsianHandicapHomeSchema,
   'asian_handicap_away': soccerAsianHandicapAwaySchema,
+  // Active MLB prop cards
+  'mlb-pitcher-k': mlbPitcherKPayloadSchema,
+
+  // Active MLB game/model output cards
   'mlb-model-output': basePayloadSchema,
+  'mlb-strikeout': basePayloadSchema,
+  'mlb-f5': basePayloadSchema,
   'nfl-model-output': basePayloadSchema,
   'fpl-model-output': basePayloadSchema,
 
@@ -517,9 +605,9 @@ const schemaByCardType = {
   'nhl-welcome-home': driverPayloadSchema, // deprecated alias; canonical replacement is welcome-home-v2
 };
 
-// Soccer card types that use self-contained schemas and should skip
+// Card types that use self-contained schemas and should skip
 // deriveLockedMarketContext (which only handles SPREAD/TOTAL/MONEYLINE contracts
-// and does not understand soccer-specific payload shapes).
+// and does not understand soccer-specific or MLB-prop payload shapes).
 const SOCCER_SELF_CONTAINED_TYPES = new Set([
   'soccer',
   'soccer_ml',
@@ -527,6 +615,10 @@ const SOCCER_SELF_CONTAINED_TYPES = new Set([
   'soccer_double_chance',
   'asian_handicap_home',
   'asian_handicap_away',
+  // MLB prop cards — PROP market_type bypasses standard SPREAD/TOTAL/ML contract
+  'mlb-pitcher-k',
+  'mlb-strikeout',
+  'mlb-f5',
 ]);
 
 /**

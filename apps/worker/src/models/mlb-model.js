@@ -694,6 +694,7 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
  */
 function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
   const mode = (options || {}).mode || 'PROJECTION_ONLY';
+  const isOddsBacked = mode === 'ODDS_BACKED';
   const mlb = parseRawMlb(oddsSnapshot);
   const cards = [];
 
@@ -745,9 +746,44 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       wind_direction: mlb.wind_dir ?? null,
     };
 
-    const result = scorePitcherK(pitcherInput, matchupInput, {}, null, weatherInput, { mode, side: 'over' });
+    // Resolve market input from strikeout_lines for ODDS_BACKED mode.
+    // strikeout_lines is a map of pitcher_name (lower) → { line, over_price, under_price, bookmaker }
+    // populated by enrichMlbPitcherData when mode = 'ODDS_BACKED'.
+    let marketInput = null;
+    let lineMeta = { line_source: null, over_price: null, under_price: null, best_line_bookmaker: null };
 
-    const emitsCard = result.status === 'COMPLETE' && result.verdict !== 'Pass';
+    if (isOddsBacked) {
+      const pitcherNameKey = (pitcher.full_name || team || '').toLowerCase();
+      const strikeoutLines = mlb.strikeout_lines ?? {};
+      // Exact key match first, then partial match (pitcher full name may differ from team name)
+      const lineRow =
+        strikeoutLines[pitcherNameKey] ||
+        Object.entries(strikeoutLines).find(([k]) =>
+          k.includes(pitcherNameKey.slice(0, 4)) || pitcherNameKey.includes(k.slice(0, 4)),
+        )?.[1] ||
+        null;
+
+      if (lineRow) {
+        marketInput = { line: lineRow.line, opening_line: lineRow.line };
+        lineMeta = {
+          line_source: lineRow.bookmaker ?? 'unknown',
+          over_price: lineRow.over_price ?? null,
+          under_price: lineRow.under_price ?? null,
+          best_line_bookmaker: lineRow.bookmaker ?? null,
+        };
+      } else {
+        // No line found for this pitcher in ODDS_BACKED mode — downgrade to PROJECTION_ONLY
+        console.warn(
+          `[mlb-model] [pitcher-k] No market line found for ${team || role} pitcher ` +
+            `in ODDS_BACKED mode — scoring as PROJECTION_ONLY (line_basis_missing).`,
+        );
+      }
+    }
+
+    // Pass 'FULL' mode when odds are available (enables Block 1 + Block 4),
+    // otherwise 'PROJECTION_ONLY'.
+    const scoreMode = isOddsBacked && marketInput ? 'FULL' : 'PROJECTION_ONLY';
+    const result = scorePitcherK(pitcherInput, matchupInput, {}, marketInput, weatherInput, { mode: scoreMode, side: 'over' });
 
     cards.push({
       market: `pitcher_k_${role}`,
@@ -764,7 +800,10 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
         tier: result.tier ?? null,
       }],
       pitcher_k_result: result,
-      basis: result.basis,
+      // basis reflects actual scoring mode: 'FULL' → 'ODDS_BACKED', 'PROJECTION_ONLY' → 'PROJECTION_ONLY'
+      basis: result.basis === 'FULL' ? 'ODDS_BACKED' : 'PROJECTION_ONLY',
+      // Odds-backed enrichment fields (all null in PROJECTION_ONLY)
+      ...lineMeta,
     });
   }
 

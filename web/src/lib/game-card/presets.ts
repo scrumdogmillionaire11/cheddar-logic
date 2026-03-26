@@ -152,6 +152,17 @@ const PROPS_PRESETS: FilterPreset[] = [
     },
   },
   {
+    id: 'props_strikeouts',
+    name: 'Strikeouts Focus',
+    description: 'MLB pitcher strikeout props only',
+    icon: '⚾',
+    filters: {
+      ...DEFAULT_FILTERS_BY_MODE.props,
+      propStatGroups: ['K'],
+      sortMode: 'signal_strength',
+    },
+  },
+  {
     id: 'props_points',
     name: 'Points Focus',
     description: 'Points/PRA style props',

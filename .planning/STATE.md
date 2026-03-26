@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 status: unknown
 last_updated: "2026-03-26T00:00:00Z"
-last_activity: "2026-03-26 - Locked MLB pitcher-K rollout plan into WI-0595..WI-0600 with dependency order and scheduler precedence"
+last_activity: "2026-03-26 - Completed WI-0599 (pitcher K web integration — props surfaces) and WI-0600 (pitcher K rollout docs + acceptance pack). Full pitcher K pipeline (WI-0595–WI-0600) complete."
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 6
-  completed_plans: 4
+  completed_plans: 6
 ---
 
 # Project State
@@ -31,7 +31,7 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-26
-- Next action: WI-0596 ✓ complete — unlock WI-0597/WI-0598 (odds ingestion + market evaluation).
+- Next action: WI-0597 ✓ complete — WI-0598 ✓ complete — unlock WI-0599 (player/team ID mapping + settlement schema) then WI-0600 (full pipeline activation).
 
 ## Sprint Plan — 2026-03-24 (updated 2026-03-26)
 
