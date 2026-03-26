@@ -57,6 +57,7 @@ export type PropStatGroup =
   | 'GOALS'
   | 'HITS'
   | 'BLOCKS'
+  | 'K'
   | 'OTHER';
 
 export type PropType = 'OVER' | 'UNDER' | 'ALT' | 'COMBO';

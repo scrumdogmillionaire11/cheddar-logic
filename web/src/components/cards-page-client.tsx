@@ -585,7 +585,7 @@ function mapPropStatusToExpression(
   return 'PASS';
 }
 
-function mapPropTypeToGroup(propType: string): 'SOG' | 'PTS' | 'AST' | 'REB' | 'PRA' | 'OTHER' {
+function mapPropTypeToGroup(propType: string): 'SOG' | 'PTS' | 'AST' | 'REB' | 'PRA' | 'K' | 'OTHER' {
   const normalized = String(propType || '').toUpperCase();
 
   if (
@@ -599,6 +599,7 @@ function mapPropTypeToGroup(propType: string): 'SOG' | 'PTS' | 'AST' | 'REB' | '
   if (normalized.includes('ASSIST')) return 'AST';
   if (normalized.includes('REBOUND')) return 'REB';
   if (normalized.includes('PRA')) return 'PRA';
+  if (normalized.includes('STRIKEOUT') || normalized === 'K') return 'K';
 
   return 'OTHER';
 }

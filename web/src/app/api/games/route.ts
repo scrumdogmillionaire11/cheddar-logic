@@ -608,7 +608,7 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
     expectedPlayableMarkets: new Set<MarketType>(['MONEYLINE', 'SPREAD']),
   },
   MLB: {
-    playProducerCardTypes: new Set(['mlb-strikeout', 'mlb-f5']),
+    playProducerCardTypes: new Set(['mlb-strikeout', 'mlb-f5', 'mlb-pitcher-k']),
     evidenceOnlyCardTypes: new Set(['mlb-model-output']),
     expectedPlayableMarkets: new Set<MarketType>(['PROP', 'FIRST_PERIOD']),
   },
@@ -704,7 +704,8 @@ function inferMarketFromCardType(cardType: string): MarketType | undefined {
   if (
     normalized.includes('player-shots') ||
     normalized.includes('player_shots') ||
-    normalized === 'mlb-strikeout'
+    normalized === 'mlb-strikeout' ||
+    normalized === 'mlb-pitcher-k'
   ) {
     return 'PROP';
   }
@@ -1915,6 +1916,7 @@ export async function GET(request: NextRequest) {
     const truePlayMap = new Map<string, Play>();
     const gameConsistencyMap = new Map<string, Play['consistency']>();
     const seenNhlShotsPlayKeys = new Set<string>();
+    const seenMlbPitcherKPlayKeys = new Set<string>();
     const injuredNhlPlayerIds = new Set<string>();
     const injuredNhlPlayerNames = new Set<string>();
 
@@ -3213,6 +3215,42 @@ export async function GET(request: NextRequest) {
 
           // Ensure market_type is PROP so the no-market-type guard below doesn't
           // force this play to INFO/EVIDENCE before it reaches the props output.
+          play.market_type = 'PROP';
+        }
+
+        // MLB pitcher K prop plays — deduplicate by (gameId, pitcher identity, side)
+        // and ensure they flow through the props output path.
+        const isMlbPitcherKPlay =
+          parsedSport === 'MLB' &&
+          parsedMarket === 'PROP' &&
+          (cardRow.card_type === 'mlb-pitcher-k' ||
+            play.market_type === 'PROP');
+        if (isMlbPitcherKPlay) {
+          const pitcherId = firstString(play.player_id);
+          const pitcherName =
+            normalizePlayerNameKey(play.player_name) ||
+            normalizePlayerNameKey(
+              (payloadPlay as Record<string, unknown> | null)?.pitcher_name,
+            );
+          const dedupeIdentity = pitcherId || pitcherName || 'unknown';
+          const dedupeSide =
+            normalizeSelectionSide(
+              play.selection?.side ?? play.prediction,
+            ) || 'NONE';
+          const dedupeKey = [
+            canonicalGameId,
+            cardRow.card_type,
+            dedupeIdentity,
+            dedupeSide,
+          ].join('|');
+
+          if (seenMlbPitcherKPlayKeys.has(dedupeKey)) {
+            continue;
+          }
+          seenMlbPitcherKPlayKeys.add(dedupeKey);
+
+          // Ensure market_type is PROP so the no-market-type guard doesn't
+          // force this play to INFO/EVIDENCE before reaching the props output.
           play.market_type = 'PROP';
         }
 
