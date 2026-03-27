@@ -222,6 +222,26 @@ function computeCandidateHash({
   return nodeCrypto.createHash('sha256').update(raw).digest('hex');
 }
 
+function resolveLineMoveContext(ctx = {}) {
+  const nestedLineDelta = Number.isFinite(ctx?.lineContext?.delta)
+    ? ctx.lineContext.delta
+    : Number.isFinite(ctx?.lineContext?.lineDelta)
+      ? ctx.lineContext.lineDelta
+      : null;
+  const lineDelta = Number.isFinite(ctx?.lineDelta)
+    ? ctx.lineDelta
+    : nestedLineDelta;
+  const lineMoved =
+    ctx?.lineMoved === true ||
+    ctx?.lineContext?.lineMoved === true ||
+    (Number.isFinite(lineDelta) && Math.abs(lineDelta) > 0);
+
+  return {
+    lineMoved,
+    lineDelta: Number.isFinite(lineDelta) ? lineDelta : 0,
+  };
+}
+
 /**
  * Determines whether a new candidate decision should replace the current one.
  *
@@ -235,6 +255,7 @@ function computeCandidateHash({
  */
 function shouldFlip(current, candidate, ctx = {}) {
   const config = { ...DEFAULTS, ...(ctx || {}) };
+  const { lineMoved, lineDelta } = resolveLineMoveContext(ctx);
   const candidateEdgeAvailable =
     candidate?.edge_available === true || hasFiniteEdge(candidate?.edge);
   const currentEdgeAvailable =
@@ -293,11 +314,11 @@ function shouldFlip(current, candidate, ctx = {}) {
   }
 
   if (!candidateEdgeAvailable || !currentEdgeAvailable) {
-    if (ctx.lineMoved && Math.abs(ctx.lineDelta || 0) >= config.LINE_MOVE_MIN) {
+    if (lineMoved && Math.abs(lineDelta || 0) >= config.LINE_MOVE_MIN) {
       return {
         allow: true,
         reason_code: 'LINE_MOVE_NO_EDGE',
-        reason_detail: `Line moved ${ctx.lineDelta}; accepted without edge comparison`,
+        reason_detail: `Line moved ${lineDelta}; accepted without edge comparison`,
         edge_delta: null,
       };
     }
@@ -312,15 +333,15 @@ function shouldFlip(current, candidate, ctx = {}) {
   }
 
   if (
-    ctx.lineMoved &&
-    Math.abs(ctx.lineDelta || 0) >= config.LINE_MOVE_MIN &&
+    lineMoved &&
+    Math.abs(lineDelta || 0) >= config.LINE_MOVE_MIN &&
     edgeDelta !== null &&
     edgeDelta >= 0
   ) {
     return {
       allow: true,
       reason_code: 'LINE_MOVE',
-      reason_detail: `Line moved ${ctx.lineDelta}; edge improved/held`,
+      reason_detail: `Line moved ${lineDelta}; edge improved/held`,
       edge_delta: edgeDelta,
     };
   }

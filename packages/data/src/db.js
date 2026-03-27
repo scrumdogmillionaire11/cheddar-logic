@@ -1296,6 +1296,155 @@ function getOddsSnapshots(sport, sinceUtc) {
   return stmt.all(normalizedSport, sinceUtc);
 }
 
+function normalizeLineDeltaMarketType(marketType) {
+  const raw = String(marketType || '').trim().toUpperCase();
+  if (!raw) return null;
+  if (raw === 'FIRSTPERIOD') return 'FIRST_PERIOD';
+  if (raw === 'PUCK_LINE') return 'PUCKLINE';
+  if (raw === 'TEAMTOTAL') return 'TEAM_TOTAL';
+  return raw;
+}
+
+function normalizeLineDeltaSelectionSide(selectionSide) {
+  const raw = String(selectionSide || '').trim().toUpperCase();
+  if (raw === 'HOME' || raw === 'AWAY' || raw === 'OVER' || raw === 'UNDER') {
+    return raw;
+  }
+  return null;
+}
+
+function getSnapshotLineForMarket(snapshot, marketType, selectionSide) {
+  const normalizedMarketType = normalizeLineDeltaMarketType(marketType);
+  const normalizedSelectionSide =
+    normalizeLineDeltaSelectionSide(selectionSide);
+
+  if (
+    normalizedMarketType === 'TOTAL' ||
+    normalizedMarketType === 'TEAM_TOTAL' ||
+    normalizedMarketType === 'FIRST_PERIOD'
+  ) {
+    return Number.isFinite(snapshot?.total) ? snapshot.total : null;
+  }
+
+  if (
+    normalizedMarketType === 'SPREAD' ||
+    normalizedMarketType === 'PUCKLINE'
+  ) {
+    if (normalizedSelectionSide === 'AWAY') {
+      return Number.isFinite(snapshot?.spread_away) ? snapshot.spread_away : null;
+    }
+    return Number.isFinite(snapshot?.spread_home) ? snapshot.spread_home : null;
+  }
+
+  if (normalizedMarketType === 'MONEYLINE') {
+    if (normalizedSelectionSide === 'AWAY') {
+      return Number.isFinite(snapshot?.h2h_away)
+        ? snapshot.h2h_away
+        : Number.isFinite(snapshot?.moneyline_away)
+          ? snapshot.moneyline_away
+          : null;
+    }
+    return Number.isFinite(snapshot?.h2h_home)
+      ? snapshot.h2h_home
+      : Number.isFinite(snapshot?.moneyline_home)
+        ? snapshot.moneyline_home
+        : null;
+  }
+
+  return null;
+}
+
+/**
+ * Compute opener vs current line movement for a game/market from odds_snapshots.
+ *
+ * The returned line values are selection-side aware for spread/puckline when
+ * selectionSide is provided (HOME uses spread_home, AWAY uses spread_away).
+ *
+ * @param {object} params
+ * @param {string} params.sport
+ * @param {string} params.gameId
+ * @param {string} params.marketType
+ * @param {string} [params.selectionSide]
+ * @param {object} [params.db]
+ * @returns {{opener_line:number|null,current_line:number|null,delta:number|null,delta_pct:number|null,snapshot_count:number}}
+ */
+function computeLineDelta({
+  sport,
+  gameId,
+  marketType,
+  selectionSide = null,
+  db = null,
+}) {
+  const database = db || getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'computeLineDelta');
+  const normalizedMarketType = normalizeLineDeltaMarketType(marketType);
+  const normalizedSelectionSide =
+    normalizeLineDeltaSelectionSide(selectionSide);
+
+  if (!normalizedSport || !gameId || !normalizedMarketType) {
+    return {
+      opener_line: null,
+      current_line: null,
+      delta: null,
+      delta_pct: null,
+      snapshot_count: 0,
+    };
+  }
+
+  const rows = database
+    .prepare(`
+      SELECT
+        captured_at,
+        total,
+        spread_home,
+        spread_away,
+        h2h_home,
+        h2h_away,
+        moneyline_home,
+        moneyline_away
+      FROM odds_snapshots
+      WHERE game_id = ?
+        AND LOWER(sport) = ?
+      ORDER BY captured_at ASC
+    `)
+    .all(gameId, normalizedSport);
+
+  const snapshotsWithLine = rows
+    .map((row) => ({
+      captured_at: row.captured_at,
+      line: getSnapshotLineForMarket(
+        row,
+        normalizedMarketType,
+        normalizedSelectionSide,
+      ),
+    }))
+    .filter((row) => Number.isFinite(row.line));
+
+  if (snapshotsWithLine.length === 0) {
+    return {
+      opener_line: null,
+      current_line: null,
+      delta: null,
+      delta_pct: null,
+      snapshot_count: 0,
+    };
+  }
+
+  const openerLine = snapshotsWithLine[0].line;
+  const currentLine = snapshotsWithLine[snapshotsWithLine.length - 1].line;
+  const delta = currentLine - openerLine;
+  const deltaPct =
+    openerLine === 0 ? null : Number((delta / Math.abs(openerLine)).toFixed(4));
+
+  return {
+    opener_line: openerLine,
+    current_line: currentLine,
+    delta: Number(delta.toFixed(4)),
+    delta_pct,
+    snapshot_count: snapshotsWithLine.length,
+  };
+}
+
 /**
  * Get latest odds snapshots for upcoming games only (prevents stale data processing)
  * Joins with games table to filter by game_time_utc
@@ -4002,6 +4151,7 @@ module.exports = {
   prepareOddsSnapshotWrite,
   getLatestOdds,
   getOddsSnapshots,
+  computeLineDelta,
   getOddsWithUpcomingGames,
   recordOddsIngestFailure,
   getOddsIngestFailureSummary,

@@ -49,6 +49,7 @@ const PRICE_REASONS = {
   FIRST_PERIOD_PROJECTION_PLAY: 'FIRST_PERIOD_PROJECTION_PLAY',
   FIRST_PERIOD_PROJECTION_LEAN: 'FIRST_PERIOD_PROJECTION_LEAN',
   FIRST_PERIOD_NO_PROJECTION: 'FIRST_PERIOD_NO_PROJECTION',
+  LINE_MOVE_ADVERSE: 'LINE_MOVE_ADVERSE',
 };
 
 /**
@@ -150,6 +151,95 @@ function uniqueReasonCodes(...reasonGroups) {
     }
   }
   return merged;
+}
+
+function normalizeLineContext(payload, context = {}) {
+  const raw =
+    (context?.lineContext && typeof context.lineContext === 'object'
+      ? context.lineContext
+      : null) ||
+    (payload?.line_context && typeof payload.line_context === 'object'
+      ? payload.line_context
+      : null) ||
+    (payload?.lineContext && typeof payload.lineContext === 'object'
+      ? payload.lineContext
+      : null);
+
+  if (!raw) return null;
+
+  const opener_line = asNumber(raw.opener_line ?? raw.openerLine);
+  const current_line = asNumber(raw.current_line ?? raw.currentLine);
+  const rawDelta = asNumber(raw.delta ?? raw.lineDelta);
+  const delta =
+    rawDelta !== null
+      ? rawDelta
+      : opener_line !== null && current_line !== null
+        ? current_line - opener_line
+        : null;
+  const delta_pct = asNumber(raw.delta_pct ?? raw.deltaPct);
+
+  if (opener_line === null && current_line === null && delta === null) {
+    return null;
+  }
+
+  return {
+    opener_line,
+    current_line,
+    delta,
+    delta_pct,
+  };
+}
+
+function computeAdverseLineDelta({ marketType, direction, lineContext }) {
+  if (!lineContext) return 0;
+
+  const signedDelta =
+    asNumber(lineContext.delta) ??
+    (asNumber(lineContext.opener_line) !== null &&
+    asNumber(lineContext.current_line) !== null
+      ? asNumber(lineContext.current_line) - asNumber(lineContext.opener_line)
+      : null);
+
+  if (signedDelta === null) return 0;
+
+  if (
+    marketType === 'TOTAL' ||
+    marketType === 'TEAM_TOTAL' ||
+    marketType === 'FIRST_PERIOD'
+  ) {
+    if (direction === 'OVER') return Math.max(signedDelta, 0);
+    if (direction === 'UNDER') return Math.max(-signedDelta, 0);
+    return 0;
+  }
+
+  if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+    if (direction === 'HOME' || direction === 'AWAY') {
+      return Math.max(-signedDelta, 0);
+    }
+  }
+
+  return 0;
+}
+
+function applyAdverseLineMoveToEdge({
+  edgePct,
+  edgeLineDelta,
+  adverseLineDelta,
+}) {
+  if (
+    !Number.isFinite(edgePct) ||
+    !Number.isFinite(edgeLineDelta) ||
+    !Number.isFinite(adverseLineDelta) ||
+    adverseLineDelta <= 0
+  ) {
+    return edgePct;
+  }
+
+  const edgeLineMagnitude = Math.abs(edgeLineDelta);
+  if (edgeLineMagnitude <= 0) return edgePct;
+
+  const adjustedRatio = (edgeLineMagnitude - adverseLineDelta) / edgeLineMagnitude;
+  return Number((edgePct * adjustedRatio).toFixed(4));
 }
 
 function buildPipelineState(input = {}) {
@@ -1236,10 +1326,25 @@ function buildDecisionV2(payload, context = {}) {
       }
     }
 
-    const edge_pct =
+    const raw_edge_pct =
       fair_prob !== null && implied_prob !== null
         ? fair_prob - implied_prob
         : null;
+    const lineContext = normalizeLineContext(payload, context);
+    const adverse_line_delta = computeAdverseLineDelta({
+      marketType: market_type,
+      direction,
+      lineContext,
+    });
+    const edge_pct = applyAdverseLineMoveToEdge({
+      edgePct: raw_edge_pct,
+      edgeLineDelta: edge_line_delta,
+      adverseLineDelta: adverse_line_delta,
+    });
+    const lineMoveReasonCodes =
+      adverse_line_delta > 1
+        ? [PRICE_REASONS.LINE_MOVE_ADVERSE]
+        : [];
 
     const hasPrimarySupport =
       drivers_used.length > 0 || asString(payload?.driver?.key) !== null;
@@ -1278,7 +1383,10 @@ function buildDecisionV2(payload, context = {}) {
       priceReasonCodes: priceDecision.price_reason_codes,
     });
     let finalOfficialStatus = playCleanlinessResult.officialStatus;
-    let finalPriceReasonCodes = [...playCleanlinessResult.priceReasonCodes];
+    let finalPriceReasonCodes = uniqueReasonCodes(
+      playCleanlinessResult.priceReasonCodes,
+      lineMoveReasonCodes,
+    );
 
     if (
       market_type === 'FIRST_PERIOD' &&
@@ -1366,6 +1474,7 @@ function buildDecisionV2(payload, context = {}) {
       fair_prob,
       implied_prob,
       edge_pct,
+      edge_pct_raw: raw_edge_pct,
       edge_units: EDGE_UNITS,   // unit per CANONICAL_EDGE_CONTRACT
       threshold_profile: {
         source: thresholdProfile.source,
@@ -1377,6 +1486,15 @@ function buildDecisionV2(payload, context = {}) {
       edge_method,
       edge_line_delta,
       edge_lean,
+      line_moved:
+        Number.isFinite(lineContext?.delta) && Math.abs(lineContext.delta) > 0,
+      line_delta: lineContext?.delta ?? null,
+      line_delta_pct: lineContext?.delta_pct ?? null,
+      opener_line: lineContext?.opener_line ?? null,
+      current_line:
+        lineContext?.current_line ?? lineContext?.opener_line ?? null,
+      adverse_line_delta:
+        adverse_line_delta > 0 ? Number(adverse_line_delta.toFixed(4)) : 0,
       proxy_used,
       proxy_capped,
       exact_wager_valid,
