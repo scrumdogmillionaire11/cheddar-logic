@@ -88,6 +88,41 @@ function normCdf(z) {
   );
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function computeConfidence({
+  baseConfidence,
+  watchdogStatus,
+  missingFieldCount,
+  proxyUsed,
+  conflictScore,
+}) {
+  if (!Number.isFinite(baseConfidence)) return null;
+
+  let confidence = baseConfidence;
+
+  if (watchdogStatus === 'CAUTION') {
+    confidence -= 0.1;
+  }
+
+  if (proxyUsed === true) {
+    confidence -= 0.15;
+  }
+
+  const normalizedMissingFieldCount = Number.isFinite(missingFieldCount)
+    ? Math.max(0, missingFieldCount)
+    : 0;
+  confidence -= Math.min(normalizedMissingFieldCount * 0.05, 0.2);
+
+  if (Number.isFinite(conflictScore) && conflictScore > 0.3) {
+    confidence -= 0.1;
+  }
+
+  return Number(clamp(confidence, 0.3, baseConfidence).toFixed(4));
+}
+
 /**
  * Compute moneyline edge
  * @param {object} params
@@ -102,6 +137,7 @@ function computeMoneylineEdge({
   americanOdds,
   priceOpposite,
   isPredictionHome = true,
+  confidenceContext = {},
 }) {
   if (
     !Number.isFinite(projectionWinProbHome) ||
@@ -142,7 +178,10 @@ function computeMoneylineEdge({
     edge: Number(edge.toFixed(4)),
     p_fair: Number(p_fair.toFixed(4)),
     p_implied: Number(p_implied.toFixed(4)),
-    confidence: 0.95,
+    confidence: computeConfidence({
+      baseConfidence: 0.95,
+      ...confidenceContext,
+    }),
   };
   if (vigRemovalSkipped) result.VIG_REMOVAL_SKIPPED = true;
   return result;
@@ -166,6 +205,7 @@ function computeSpreadEdge({
   spreadPriceAway,
   sigmaMargin = 12,
   isPredictionHome = true,
+  confidenceContext = {},
 }) {
   if (!Number.isFinite(projectionMarginHome) || !Number.isFinite(spreadLine)) {
     return {
@@ -217,7 +257,10 @@ function computeSpreadEdge({
     edgePoints: Number(edgePoints.toFixed(2)),
     p_fair: Number(p_fair.toFixed(4)),
     p_implied: Number(p_implied.toFixed(4)),
-    confidence: 0.85, // spread projections less calibrated than ML
+    confidence: computeConfidence({
+      baseConfidence: 0.85,
+      ...confidenceContext,
+    }),
     sigma_used: sigmaMargin,
   };
   if (vigRemovalSkipped) result.VIG_REMOVAL_SKIPPED = true;
@@ -242,6 +285,7 @@ function computeTotalEdge({
   totalPriceUnder,
   sigmaTotal = 14,
   isPredictionOver = true,
+  confidenceContext = {},
 }) {
   if (!Number.isFinite(projectionTotal) || !Number.isFinite(totalLine)) {
     return {
@@ -309,7 +353,10 @@ function computeTotalEdge({
     edgePoints: Number(edgePoints.toFixed(2)),
     p_fair: Number(p_fair.toFixed(4)),
     p_implied: Number(p_implied.toFixed(4)),
-    confidence: 0.88,
+    confidence: computeConfidence({
+      baseConfidence: 0.88,
+      ...confidenceContext,
+    }),
     sigma_used: sigmaTotal,
     rail_flags: railFlags,
   };
@@ -411,6 +458,7 @@ module.exports = {
   noVigImplied,
   normCdf,
   invNormCdf,
+  computeConfidence,
   computeMoneylineEdge,
   computeSpreadEdge,
   computeTotalEdge,

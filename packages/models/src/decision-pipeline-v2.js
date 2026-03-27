@@ -1037,6 +1037,9 @@ function buildDecisionV2(payload, context = {}) {
     const driver_reasons = getDriverReasons(payload);
 
     const watchdog = computeWatchdog(payload, context);
+    const missingFieldCount = Array.isArray(watchdog?.missing_data?.missing_fields)
+      ? watchdog.missing_data.missing_fields.length
+      : 0;
 
     const line = asNumber(payload?.line);
     const payloadPrice = asNumber(payload?.price);
@@ -1132,6 +1135,12 @@ function buildDecisionV2(payload, context = {}) {
             spreadPriceAway: asNumber(oddsCtx?.spread_price_away),
             sigmaMargin: resolvedSigmaMargin,
             isPredictionHome: direction === 'HOME',
+            confidenceContext: {
+              watchdogStatus: watchdog.watchdog_status,
+              missingFieldCount,
+              proxyUsed: proxy_used,
+              conflictScore: conflict_score,
+            },
           });
           if (result.p_fair !== null) {
             fair_prob = clamp(result.p_fair, 0, 1);
@@ -1165,6 +1174,12 @@ function buildDecisionV2(payload, context = {}) {
                 : asNumber(oddsCtx?.total_price_under),
             sigmaTotal: resolvedSigmaTotal,
             isPredictionOver: direction === 'OVER',
+            confidenceContext: {
+              watchdogStatus: watchdog.watchdog_status,
+              missingFieldCount,
+              proxyUsed: proxy_used,
+              conflictScore: conflict_score,
+            },
           });
           if (result.p_fair !== null) {
             fair_prob = clamp(result.p_fair, 0, 1);

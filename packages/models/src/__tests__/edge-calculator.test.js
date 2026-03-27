@@ -1,5 +1,9 @@
 'use strict';
 
+const assertStrict = require('node:assert/strict');
+// eslint-disable-next-line no-redeclare
+const { describe, test } = require('node:test');
+
 /**
  * Tests for edge-calculator.js
  *
@@ -9,10 +13,38 @@
 const {
   impliedProbFromAmerican,
   noVigImplied,
+  computeConfidence,
   computeMoneylineEdge,
   computeSpreadEdge,
   computeTotalEdge,
 } = require('../edge-calculator');
+
+// eslint-disable-next-line no-redeclare
+function expect(received) {
+  return {
+    toBe(expected) {
+      assertStrict.strictEqual(received, expected);
+    },
+    toBeNull() {
+      assertStrict.strictEqual(received, null);
+    },
+    toBeGreaterThan(expected) {
+      assertStrict.ok(received > expected);
+    },
+    toBeLessThan(expected) {
+      assertStrict.ok(received < expected);
+    },
+    toBeCloseTo(expected, precision = 2) {
+      const tolerance = 10 ** -precision;
+      assertStrict.ok(Math.abs(received - expected) <= tolerance);
+    },
+    not: {
+      toBeNull() {
+        assertStrict.notStrictEqual(received, null);
+      },
+    },
+  };
+}
 
 let passed = 0;
 let failed = 0;
@@ -193,6 +225,90 @@ assert(
   JSON.stringify(totalOneSide)
 );
 
+// ── WI-0554: computed confidence ────────────────────────────────────────────
+
+console.log('\n=== WI-0554: computed confidence ===');
+
+assert(
+  'computeConfidence is exported',
+  typeof computeConfidence === 'function',
+  'expected function'
+);
+
+const baseConfidence = computeConfidence({ baseConfidence: 0.88 });
+assert(
+  'computeConfidence with no penalties preserves base confidence',
+  approx(baseConfidence, 0.88),
+  `got ${baseConfidence}`
+);
+
+const degradedConfidence = computeConfidence({
+  baseConfidence: 0.88,
+  watchdogStatus: 'CAUTION',
+  missingFieldCount: 2,
+  proxyUsed: true,
+  conflictScore: 0.4,
+});
+assert(
+  'computeConfidence applies CAUTION, proxy, missing-field, and conflict penalties',
+  approx(degradedConfidence, 0.43),
+  `got ${degradedConfidence}`
+);
+
+const flooredConfidence = computeConfidence({
+  baseConfidence: 0.35,
+  watchdogStatus: 'CAUTION',
+  missingFieldCount: 10,
+  proxyUsed: true,
+  conflictScore: 0.8,
+});
+assert(
+  'computeConfidence floors at 0.30',
+  approx(flooredConfidence, 0.3),
+  `got ${flooredConfidence}`
+);
+
+assert(
+  'computeMoneylineEdge without confidenceContext preserves 0.95 base confidence',
+  mlBoth && approx(mlBoth.confidence, 0.95),
+  JSON.stringify(mlBoth)
+);
+
+assert(
+  'computeSpreadEdge without confidenceContext preserves 0.85 base confidence',
+  spreadBoth && approx(spreadBoth.confidence, 0.85),
+  JSON.stringify(spreadBoth)
+);
+
+assert(
+  'computeTotalEdge without confidenceContext preserves 0.88 base confidence',
+  totalBoth && approx(totalBoth.confidence, 0.88),
+  JSON.stringify(totalBoth)
+);
+
+const totalDegraded = computeTotalEdge({
+  projectionTotal: 240,
+  totalLine: 238.5,
+  totalPriceOver: -110,
+  totalPriceUnder: -110,
+  sigmaTotal: 14,
+  isPredictionOver: true,
+  confidenceContext: {
+    watchdogStatus: 'CAUTION',
+    missingFieldCount: 2,
+    proxyUsed: true,
+    conflictScore: 0.4,
+  },
+});
+assert(
+  'computeTotalEdge lowers confidence for degraded inputs',
+  totalDegraded &&
+    totalBoth &&
+    totalDegraded.confidence < totalBoth.confidence &&
+    approx(totalDegraded.confidence, 0.43),
+  JSON.stringify(totalDegraded)
+);
+
 // ── WI-0555: NBA spread gate via resolveThresholdProfile ─────────────────────
 
 console.log('\n=== WI-0555: generateNBAMarketCallCards spread gate ===');
@@ -220,6 +336,9 @@ const oddsSnap = {
   home_team: 'Lakers',
   away_team: 'Celtics',
   game_time_utc: new Date(Date.now() + 3600 * 1000).toISOString(),
+  total: 238.5,
+  total_price_over: -110,
+  total_price_under: -110,
   spread_price_home: -110,
   spread_price_away: -110,
 };
@@ -238,6 +357,67 @@ assert(
   'Spread call card IS generated for edge=0.04 (above lean_edge_min=0.035)',
   spreadCardsAboveGate.length === 1,
   `got ${spreadCardsAboveGate.length} card(s)`
+);
+
+function makeTotalDecision(edge, conflict = 0) {
+  return {
+    TOTAL: {
+      status: 'FIRE',
+      edge,
+      conflict,
+      reasoning: 'total test reasoning',
+      best_candidate: { side: 'OVER', line: 238.5 },
+      projection: { projected_total: 240.5 },
+      drivers: [{ eligible: true, driverKey: 'totalProjection', weight: 1, signal: 0.7 }],
+    },
+  };
+}
+
+const totalCardsLowEdge = generateNBAMarketCallCards(
+  'game-003',
+  makeTotalDecision(0.02),
+  oddsSnap,
+);
+const totalCardsHighEdge = generateNBAMarketCallCards(
+  'game-004',
+  makeTotalDecision(0.12),
+  oddsSnap,
+);
+const totalCardsNoOdds = generateNBAMarketCallCards(
+  'game-005',
+  makeTotalDecision(0.12),
+  oddsSnap,
+  { withoutOddsMode: true },
+);
+
+const totalLowConfidence =
+  totalCardsLowEdge.find((card) => card.cardType === 'nba-totals-call')?.payloadData
+    ?.confidence;
+const totalHighConfidence =
+  totalCardsHighEdge.find((card) => card.cardType === 'nba-totals-call')?.payloadData
+    ?.confidence;
+const totalNoOddsConfidence =
+  totalCardsNoOdds.find((card) => card.cardType === 'nba-totals-call')?.payloadData
+    ?.confidence;
+
+assert(
+  'NBA totals call-card confidence increases with larger edge_pct',
+  typeof totalLowConfidence === 'number' &&
+    typeof totalHighConfidence === 'number' &&
+    totalHighConfidence > totalLowConfidence,
+  `low=${totalLowConfidence}, high=${totalHighConfidence}`
+);
+
+assert(
+  'NBA totals call-card confidence never exceeds 0.90',
+  typeof totalHighConfidence === 'number' && totalHighConfidence <= 0.9,
+  `got ${totalHighConfidence}`
+);
+
+assert(
+  'NBA totals no-odds mode keeps the 0.52 bounded low-confidence fallback',
+  approx(totalNoOddsConfidence, 0.52),
+  `got ${totalNoOddsConfidence}`
 );
 
 // ── WI-0552: computeSigmaFromHistory ─────────────────────────────────────────

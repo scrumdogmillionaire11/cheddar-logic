@@ -113,6 +113,26 @@ function hasFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function computePricedCallCardConfidence({ edgePct, conflictScore }) {
+  const normalizedEdgePct = hasFiniteNumber(edgePct) ? edgePct : 0;
+  const normalizedConflictScore = hasFiniteNumber(conflictScore)
+    ? conflictScore
+    : 0;
+  const baseConfidence = clamp(0.5 + normalizedEdgePct * 3, 0.5, 0.9);
+
+  return edgeCalculator.computeConfidence({
+    baseConfidence,
+    watchdogStatus: 'OK',
+    missingFieldCount: 0,
+    proxyUsed: false,
+    conflictScore: normalizedConflictScore,
+  });
+}
+
 function hasMoneylineOdds(oddsSnapshot) {
   const homePrice = oddsSnapshot?.h2h_home ?? oddsSnapshot?.moneyline_home;
   const awayPrice = oddsSnapshot?.h2h_away ?? oddsSnapshot?.moneyline_away;
@@ -339,7 +359,6 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot, { wit
   const market = buildMarketFromOdds(oddsSnapshot);
 
   const cards = [];
-  const CONFIDENCE_MAP = { FIRE: 0.74, WATCH: 0.61 };
 
   // TOTAL decision → nba-totals-call
   const totalDecision = marketDecisions?.TOTAL;
@@ -355,7 +374,12 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot, { wit
   ) {
     const rawStatus = totalDecision.status || 'PASS';
     const status = withoutOddsMode && rawStatus === 'PASS' ? 'LEAN' : rawStatus;
-    const confidence = CONFIDENCE_MAP[rawStatus] ?? (withoutOddsMode ? 0.52 : 0.5);
+    const confidence = withoutOddsMode
+      ? 0.52
+      : computePricedCallCardConfidence({
+          edgePct: totalDecision.edge,
+          conflictScore: totalDecision.conflict,
+        });
     const tier = determineTier(confidence);
     const { side, line: marketLine } = totalDecision.best_candidate;
     // In Without Odds Mode there is no market line — fall back to projection.
@@ -521,7 +545,10 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot, { wit
     (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH') &&
     (spreadDecision.edge == null || spreadDecision.edge > SPREAD_LEAN_MIN)
   ) {
-    const confidence = CONFIDENCE_MAP[spreadDecision.status];
+    const confidence = computePricedCallCardConfidence({
+      edgePct: spreadDecision.edge,
+      conflictScore: spreadDecision.conflict,
+    });
     const tier = determineTier(confidence);
     const { side, line } = spreadDecision.best_candidate;
     const spreadPrice =

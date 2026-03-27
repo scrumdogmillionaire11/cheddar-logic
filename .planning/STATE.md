@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: unknown
 last_updated: "2026-03-26T00:00:00Z"
-last_activity: "2026-03-26 - Completed WI-0599 (pitcher K web integration — props surfaces) and WI-0600 (pitcher K rollout docs + acceptance pack). Full pitcher K pipeline (WI-0595–WI-0600) complete."
+last_activity: "2026-03-26 - WI-0593 ✓ (settlement sweeps restored), WI-0599 ✓ (pitcher K web integration). Pitcher K core chain WI-0595/0596/0597/0598 still open."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,7 +31,7 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-26
-- Next action: WI-0597 ✓ complete — WI-0598 ✓ complete — unlock WI-0599 (player/team ID mapping + settlement schema) then WI-0600 (full pipeline activation).
+- Next action: Start pitcher K core chain — WI-0595 (core engine) → WI-0596 (data foundations) → WI-0597 (odds pull) → WI-0598 (contract hardening). WI-0554 (confidence function) unblocks WI-0553/WI-0556 in parallel.
 
 ## Sprint Plan — 2026-03-24 (updated 2026-03-26)
 
@@ -42,7 +42,7 @@ This file is intentionally minimal to avoid stale status drift.
 - **Settlement → CLV (serial):** WI-0564 → WI-0566 → WI-0557
 - **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
 - **NBA quarantine → diagnosis → tier fix:** WI-0588 → WI-0590 → WI-0589
-- **MLB pitcher-K market (serial with one gated branch):** WI-0595 → WI-0596 → (WI-0598 + prep for WI-0597) → WI-0597 → WI-0599 → WI-0600
+- **MLB pitcher-K market (serial with one gated branch):** WI-0595 → WI-0596 → (WI-0598 + prep for WI-0597) → WI-0597 → ~~WI-0599~~✓ (web surfaces done early as scaffolding)
 - **All others:** independent, can be parallelized across agents
 
 ---
@@ -54,8 +54,8 @@ This file is intentionally minimal to avoid stale status drift.
 | # | WI | Summary | Deps | Why now |
 |---|---|---|---|---|
 | 1 | ~~[WI-0594](../WORK_QUEUE/COMPLETE/WI-0594.md)~~ ✓ | **REGRESSION** Active tab — in-progress games missing ACTIVE label in prod | none | DONE: rolling 36h activeStartUtc replaces todayUtc for active mode |
-| 2 | [WI-0593](../WORK_QUEUE/WI-0593.md) | Restore recurring settlement sweeps in scheduler | none | Prevent settlement staleness from recurring after first successful run |
-| 3 | [WI-0595](../WORK_QUEUE/WI-0595.md) | Pitcher Ks core engine (projection-only parity) | none | Establish new market in projection-only mode while tokens are constrained |
+| 2 | ~~[WI-0593](../WORK_QUEUE/COMPLETE/WI-0593.md)~~ ✓ | Restore recurring settlement sweeps in scheduler | none | DONE |
+| 3 | [WI-0595](../WORK_QUEUE/WI-0595.md) | Pitcher Ks core engine (projection-only parity) | none | Start pitcher K chain — WI-0596/0597/0598 follow in order |
 
 ### P1 — High-impact, unblocked (this week)
 
