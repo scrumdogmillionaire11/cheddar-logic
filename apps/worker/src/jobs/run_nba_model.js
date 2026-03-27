@@ -33,6 +33,7 @@ const {
   enrichOddsSnapshotWithEspnMetrics,
   updateOddsSnapshotRawData,
   getDatabase,
+  computeLineDelta,
 } = require('@cheddar-logic/data');
 
 const {
@@ -131,6 +132,35 @@ function computePricedCallCardConfidence({ edgePct, conflictScore }) {
     proxyUsed: false,
     conflictScore: normalizedConflictScore,
   });
+}
+
+function buildMarketLineContext({
+  sport,
+  gameId,
+  marketType,
+  selectionSide = null,
+}) {
+  try {
+    return computeLineDelta({
+      sport,
+      gameId,
+      marketType,
+      selectionSide,
+    });
+  } catch (error) {
+    console.warn(
+      `[NBAModel] Failed to compute ${marketType} line delta for ${gameId}: ${error.message}`,
+    );
+    return null;
+  }
+}
+
+function buildLineContextPayload(lineContext, selectionSide) {
+  if (!lineContext || typeof lineContext !== 'object') return null;
+  return {
+    ...lineContext,
+    selection_side: selectionSide || null,
+  };
 }
 
 function hasMoneylineOdds(oddsSnapshot) {
@@ -344,7 +374,12 @@ function getHomeTeamRecentRoadTrip(
  * Generate standalone market call cards (nba-totals-call, nba-spread-call)
  * from cross-market decisions. Only emits for FIRE or WATCH status.
  */
-function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot, { withoutOddsMode = false } = {}) {
+function generateNBAMarketCallCards(
+  gameId,
+  marketDecisions,
+  oddsSnapshot,
+  { withoutOddsMode = false, lineContexts = {} } = {},
+) {
   const now = new Date().toISOString();
   const expiresAt = null;
 
@@ -357,6 +392,8 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot, { wit
   );
   const countdown = formatCountdown(oddsSnapshot?.game_time_utc);
   const market = buildMarketFromOdds(oddsSnapshot);
+  const totalLineContext = lineContexts?.TOTAL || null;
+  const spreadLineContext = lineContexts?.SPREAD || null;
 
   const cards = [];
 
@@ -506,6 +543,9 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot, { wit
           total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at,
         },
+        line_context: buildLineContextPayload(totalLineContext, side),
+        line_delta: totalLineContext?.delta ?? null,
+        line_delta_pct: totalLineContext?.delta_pct ?? null,
         confidence_pct: Math.round(confidence * 100),
         driver: {
           key: 'cross_market_total',
@@ -667,6 +707,9 @@ function generateNBAMarketCallCards(gameId, marketDecisions, oddsSnapshot, { wit
           total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at,
         },
+        line_context: buildLineContextPayload(spreadLineContext, side),
+        line_delta: spreadLineContext?.delta ?? null,
+        line_delta_pct: spreadLineContext?.delta_pct ?? null,
         confidence_pct: Math.round(confidence * 100),
         driver: {
           key: 'cross_market_spread',
@@ -877,6 +920,22 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           }
 
           const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);
+          const nbaLineContexts = {
+            TOTAL: buildMarketLineContext({
+              sport: 'NBA',
+              gameId,
+              marketType: 'TOTAL',
+              selectionSide:
+                nbaMarketDecisions?.TOTAL?.best_candidate?.side ?? null,
+            }),
+            SPREAD: buildMarketLineContext({
+              sport: 'NBA',
+              gameId,
+              marketType: 'SPREAD',
+              selectionSide:
+                nbaMarketDecisions?.SPREAD?.best_candidate?.side ?? null,
+            }),
+          };
           const nbaExpressionChoice =
             selectExpressionChoice(nbaMarketDecisions);
           const nbaMarketPayload = buildMarketPayload({
@@ -941,7 +1000,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             gameId,
             nbaMarketDecisions,
             oddsSnapshot,
-            { withoutOddsMode },
+            { withoutOddsMode, lineContexts: nbaLineContexts },
           );
           if (nbaMarketCallCards.length > 0) {
             for (const ct of ['nba-totals-call', 'nba-spread-call']) {

@@ -18,6 +18,7 @@
  */
 
 const SPORTS_CONFIG = require('./config');
+const { buildConsensus } = require('./market_evaluator');
 
 /**
  * Get required markets for a sport from config
@@ -134,6 +135,17 @@ function normalizeGame(rawGame, sport) {
   const market = rawGame.markets || {};
   const h2h = Array.isArray(market.h2h) ? market.h2h[0] : null;
   const totals = Array.isArray(market.totals) ? market.totals[0] : null;
+  const spreadConsensus = buildConsensus(market.spreads || [], 'spread');
+  const totalConsensus = buildConsensus(market.totals || [], 'total');
+  const h2hConsensus = buildConsensus(market.h2h || [], 'h2h');
+
+  // F5 Moneyline: h2h scoped to first 5 innings (The Odds API key variants)
+  const mlF5Entry =
+    (Array.isArray(market.h2h_f5) && market.h2h_f5[0]) ||
+    (Array.isArray(market.ml_f5) && market.ml_f5[0]) ||
+    (Array.isArray(market.moneyline_f5) && market.moneyline_f5[0]) ||
+    (Array.isArray(market.first_5_h2h) && market.first_5_h2h[0]) ||
+    null;
 
   // Best-line spread selection: pick the most favorable line per side across all books.
   // For a home bet, max(home_line) = fewest points to cover; same logic for away.
@@ -176,8 +188,21 @@ function normalizeGame(rawGame, sport) {
       spreadAwayBook: bestSpreadAwayBook,
       spreadPriceHome: bestSpreadPriceHome,
       spreadPriceAway: bestSpreadPriceAway,
+      spreadConsensusLine: spreadConsensus.consensus_line,
+      spreadConsensusConfidence: spreadConsensus.consensus_confidence,
+      spreadDispersionStddev: spreadConsensus.dispersion_stddev,
+      spreadSourceBookCount: spreadConsensus.source_book_count,
       monelineHome: h2h?.home ?? null,
       monelineAway: h2h?.away ?? null,
+      totalConsensusLine: totalConsensus.consensus_line,
+      totalConsensusConfidence: totalConsensus.consensus_confidence,
+      totalDispersionStddev: totalConsensus.dispersion_stddev,
+      totalSourceBookCount: totalConsensus.source_book_count,
+      h2hConsensusHome: h2hConsensus.consensus_price_home,
+      h2hConsensusAway: h2hConsensus.consensus_price_away,
+      h2hConsensusConfidence: h2hConsensus.consensus_confidence,
+      mlF5Home: mlF5Entry?.home ?? null,
+      mlF5Away: mlF5Entry?.away ?? null,
     },
     raw: rawGame, // Keep raw for debugging
   };

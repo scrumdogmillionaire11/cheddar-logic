@@ -615,6 +615,263 @@ function normalizePlayerNameForLookup(name) {
     .trim();
 }
 
+function mergeUniqueFlags(...flagLists) {
+  return Array.from(
+    new Set(
+      flagLists
+        .flat()
+        .filter((flag) => typeof flag === 'string' && flag.length > 0),
+    ),
+  );
+}
+
+function computeAverage(values) {
+  const finiteValues = (Array.isArray(values) ? values : []).filter(Number.isFinite);
+  if (finiteValues.length === 0) return null;
+  return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length;
+}
+
+function computeShotsPer60FromGames(games = []) {
+  const validGames = (Array.isArray(games) ? games : []).filter((game) =>
+    Number.isFinite(Number(game?.toi_minutes)) && Number(game.toi_minutes) > 0,
+  );
+  if (validGames.length === 0) return null;
+
+  const totalShots = validGames.reduce(
+    (sum, game) => sum + Number(game?.shots || 0),
+    0,
+  );
+  const totalToi = validGames.reduce(
+    (sum, game) => sum + Number(game.toi_minutes || 0),
+    0,
+  );
+  if (!Number.isFinite(totalShots) || !Number.isFinite(totalToi) || totalToi <= 0) {
+    return null;
+  }
+
+  return (totalShots / totalToi) * 60;
+}
+
+function resolveMoneyPuckSkatersForTeam(snapshot, teamName) {
+  const skatersByTeam = snapshot?.skaters?.by_team || {};
+  const direct = skatersByTeam?.[teamName];
+  if (direct && typeof direct === 'object') return direct;
+
+  const normalizedTeamName =
+    typeof teamName === 'string' ? teamName.trim().toLowerCase() : '';
+  if (normalizedTeamName) {
+    const caseInsensitiveKey = Object.keys(skatersByTeam).find(
+      (key) =>
+        typeof key === 'string' && key.trim().toLowerCase() === normalizedTeamName,
+    );
+    if (caseInsensitiveKey && skatersByTeam[caseInsensitiveKey]) {
+      return skatersByTeam[caseInsensitiveKey];
+    }
+  }
+
+  if (teamName === 'Utah Mammoth' && skatersByTeam['Utah Hockey Club']) {
+    return skatersByTeam['Utah Hockey Club'];
+  }
+  if (teamName === 'Utah Hockey Club' && skatersByTeam['Utah Mammoth']) {
+    return skatersByTeam['Utah Mammoth'];
+  }
+
+  return {};
+}
+
+function resolveMoneyPuckSkaterEntry(snapshot, teamName, playerName) {
+  if (!snapshot || typeof playerName !== 'string' || playerName.trim().length === 0) {
+    return null;
+  }
+
+  const lookupKey = normalizePlayerNameForLookup(playerName);
+  if (!lookupKey) return null;
+  const teamSkaters = resolveMoneyPuckSkatersForTeam(snapshot, teamName);
+  return teamSkaters?.[lookupKey] || teamSkaters?.[lookupKey.replace(/\s+/g, '')] || null;
+}
+
+function buildBreakoutPayload(breakoutContext) {
+  if (!breakoutContext) return null;
+  return {
+    baseline_toi: roundMetric(breakoutContext.baselineToi, 3),
+    baseline_shots60: roundMetric(breakoutContext.baselineShots60, 3),
+    baseline_sog_mu: roundMetric(breakoutContext.baselineSogMu, 3),
+    tonight_toi_proj: roundMetric(breakoutContext.tonightToiProj, 3),
+    adjusted_shots60: roundMetric(breakoutContext.adjustedShots60, 3),
+    breakout_sog_mu: roundMetric(breakoutContext.breakoutSogMu, 3),
+    delta_mu: roundMetric(breakoutContext.deltaMu, 3),
+    score: breakoutContext.score,
+    flags: [...breakoutContext.flags],
+    eligible: breakoutContext.eligible,
+  };
+}
+
+function shouldAdoptBreakoutEvaluation(baseEvaluation, breakoutEvaluation) {
+  if (!baseEvaluation || !breakoutEvaluation) return false;
+  if (breakoutEvaluation.propDecision?.lean_side !== 'OVER') return false;
+
+  const baseRank = getPropVerdictRank(baseEvaluation.propDecision?.verdict);
+  const breakoutRank = getPropVerdictRank(breakoutEvaluation.propDecision?.verdict);
+  if (breakoutRank > baseRank) return true;
+  if (breakoutRank < baseRank) return false;
+
+  return (
+    (breakoutEvaluation.propDecision?.prob_edge_pp ?? Number.NEGATIVE_INFINITY) >
+    (baseEvaluation.propDecision?.prob_edge_pp ?? Number.NEGATIVE_INFINITY)
+  );
+}
+
+function computeBreakoutContext({
+  lookbackGames,
+  baselineShots60,
+  projToi,
+  ppToi,
+  ppMatchupFactor,
+  opponentFactor,
+  paceFactor,
+  playerAvailabilityTier,
+  usingRealLine,
+  isOddsBacked,
+  basePropDecision,
+  baseV2Projection,
+  moneyPuckSkater,
+}) {
+  const validLookbackGames = Array.isArray(lookbackGames) ? lookbackGames : [];
+  const validToiGames = validLookbackGames.filter((game) =>
+    Number.isFinite(Number(game?.toi_minutes)) && Number(game.toi_minutes) > 0,
+  );
+  const recentGames = validToiGames.slice(0, 3);
+
+  const baselineToi = computeAverage(
+    validToiGames.map((game) => Number(game.toi_minutes)),
+  );
+  const last3ToiAvg = computeAverage(
+    recentGames.map((game) => Number(game.toi_minutes)),
+  );
+  const recentShots60 = computeShotsPer60FromGames(recentGames);
+  const resolvedBaselineShots60 = Number.isFinite(baselineShots60)
+    ? baselineShots60
+    : computeShotsPer60FromGames(validToiGames);
+
+  const flags = [];
+  const toiTrendDelta =
+    Number.isFinite(last3ToiAvg) && Number.isFinite(baselineToi)
+      ? last3ToiAvg - baselineToi
+      : 0;
+  if (toiTrendDelta >= 1.0) flags.push('TOI_TREND_UP');
+  if (toiTrendDelta >= 2.0) flags.push('TOI_TREND_STRONG');
+  if (Number.isFinite(ppToi) && ppToi >= 1.8) flags.push('PP_ROLE_ELEVATED');
+  if (
+    Number.isFinite(recentShots60) &&
+    Number.isFinite(resolvedBaselineShots60) &&
+    resolvedBaselineShots60 > 0 &&
+    recentShots60 >= resolvedBaselineShots60 * 1.15
+  ) {
+    flags.push('SHOTS60_TREND_UP');
+  }
+
+  const moneypuckImpact = Number(moneyPuckSkater?.impact);
+  const moneypuckUsageFactor = Number.isFinite(moneypuckImpact)
+    ? clamp(1 + ((moneypuckImpact - 1) * 0.15), 1.0, 1.03)
+    : 1.0;
+  const positionEnvFactor = 1.0;
+  if (
+    Number(opponentFactor) > 1.02 ||
+    Number(paceFactor) > 1.02 ||
+    moneypuckUsageFactor > 1.0
+  ) {
+    flags.push('ENV_BOOST');
+  }
+
+  const toiUplift = clamp(Math.max(toiTrendDelta, 0), 0, 2.5);
+  const tonightToiBase = Number.isFinite(projToi) ? projToi : baselineToi;
+  const tonightToiProj = Number.isFinite(tonightToiBase)
+    ? tonightToiBase + toiUplift
+    : null;
+  const rateRatio =
+    Number.isFinite(recentShots60) &&
+    Number.isFinite(resolvedBaselineShots60) &&
+    resolvedBaselineShots60 > 0
+      ? recentShots60 / resolvedBaselineShots60
+      : 1.0;
+  const adjustedShots60 = Number.isFinite(resolvedBaselineShots60)
+    ? resolvedBaselineShots60 * clamp(rateRatio, 1.0, 1.15)
+    : null;
+  const baselineSogMu =
+    Number.isFinite(baselineToi) &&
+    Number.isFinite(resolvedBaselineShots60)
+      ? (baselineToi * resolvedBaselineShots60) / 60
+      : null;
+
+  const breakoutSogMu =
+    Number.isFinite(adjustedShots60) &&
+    Number.isFinite(tonightToiProj)
+      ? (
+        ((adjustedShots60 * tonightToiProj) / 60) +
+        (((baseV2Projection?.shot_rate_pp_per60 || 0) * (ppToi || 0)) / 60 * (ppMatchupFactor || 1.0))
+      ) *
+        (opponentFactor || 1.0) *
+        (paceFactor || 1.0) *
+        moneypuckUsageFactor *
+        positionEnvFactor
+      : null;
+  const deltaMu =
+    Number.isFinite(breakoutSogMu) && Number.isFinite(baseV2Projection?.sog_mu)
+      ? breakoutSogMu - baseV2Projection.sog_mu
+      : null;
+
+  const blockedAnomaly =
+    Array.isArray(basePropDecision?.flags) &&
+    (basePropDecision.flags.includes('PROJECTION_ANOMALY') ||
+      basePropDecision.flags.includes(PROP_PROJECTION_CONFLICT_FLAG));
+  const blockedRole =
+    playerAvailabilityTier === 'DTD' || baseV2Projection?.role_stability === 'LOW';
+  const blockedNoRealLine = !usingRealLine || !isOddsBacked;
+  const breakoutLeanSide = basePropDecision?.lean_side || 'OVER';
+  const eligible =
+    breakoutLeanSide === 'OVER' &&
+    !blockedAnomaly &&
+    !blockedRole &&
+    !blockedNoRealLine;
+
+  if (blockedAnomaly) flags.push('BREAKOUT_BLOCKED_ANOMALY');
+  if (blockedRole) flags.push('BREAKOUT_BLOCKED_ROLE');
+  if (blockedNoRealLine) flags.push('BREAKOUT_BLOCKED_NO_REAL_LINE');
+
+  let score = 0;
+  if (flags.includes('TOI_TREND_UP')) score += 1;
+  if (flags.includes('TOI_TREND_STRONG')) score += 1;
+  if (flags.includes('PP_ROLE_ELEVATED')) score += 1;
+  if (flags.includes('SHOTS60_TREND_UP')) score += 1;
+  if (flags.includes('ENV_BOOST')) score += 1;
+  if (Number.isFinite(deltaMu) && deltaMu >= 0.6) score += 1;
+
+  const breakoutCandidate =
+    eligible &&
+    Number.isFinite(deltaMu) &&
+    deltaMu >= 0.45 &&
+    Number.isFinite(breakoutSogMu) &&
+    breakoutSogMu >= 2.4;
+  if (breakoutCandidate) flags.push('BREAKOUT_CANDIDATE');
+
+  return {
+    baselineToi,
+    baselineShots60: resolvedBaselineShots60,
+    baselineSogMu,
+    last3ToiAvg,
+    recentShots60,
+    tonightToiProj,
+    adjustedShots60,
+    breakoutSogMu,
+    deltaMu,
+    moneypuckUsageFactor,
+    positionEnvFactor,
+    eligible,
+    score,
+    flags: mergeUniqueFlags(flags),
+  };
+}
+
 function classifyMoneyPuckInjuryEntry(entry = {}) {
   const status =
     typeof entry?.status === 'string' ? entry.status.trim().toLowerCase() : '';
@@ -958,6 +1215,7 @@ function evaluatePropMarketCandidate({
   opponentFactor,
   sharedPropFlags,
   projectionInputs,
+  projectionInputOverrides = null,
 }) {
   const directionSeed = classifyEdge(mu, market.line, 0.75);
   const consistencyScore = computeConsistencyScore(
@@ -980,6 +1238,7 @@ function evaluatePropMarketCandidate({
   );
   const v2Projection = projectSogV2({
     ...projectionInputs,
+    ...(projectionInputOverrides || {}),
     market_line: market.line,
     market_price_over: market.over_price,
     market_price_under: market.under_price,
@@ -1458,8 +1717,8 @@ async function runNHLPlayerShotsModel() {
               );
             }
 
-            // Get L5 games for this player (prepare fresh to avoid statement closure issues)
-            const getPlayerL5Stmt = db.prepare(`
+            // Pull up to 10 games for breakout context while preserving L5 core logic.
+            const getPlayerLookbackStmt = db.prepare(`
             SELECT
               game_id,
               game_date,
@@ -1471,11 +1730,11 @@ async function runNHLPlayerShotsModel() {
             FROM player_shot_logs
             WHERE player_id = ?
             ORDER BY game_date DESC
-            LIMIT 5
+            LIMIT 10
           `);
-            const l5Games = getPlayerL5Stmt.all(player.player_id);
+            const playerLookbackGames = getPlayerLookbackStmt.all(player.player_id);
 
-            if (l5Games.length < 5) {
+            if (playerLookbackGames.length < 5) {
               // Task 1: Log explicit skip reason for players with insufficient recent logs
               console.log(
                 `[${JOB_NAME}] Skipping ${player.player_name} (${player.player_id}): fewer than 5 recent game logs (possible injury/absence)`,
@@ -1492,6 +1751,8 @@ async function runNHLPlayerShotsModel() {
               ? player.player_name.trim()
               : `Player #${player.player_id}`;
 
+            const l5Games = playerLookbackGames.slice(0, 5);
+
             // Build L5 SOG array (most recent first)
             const l5Sog = l5Games.map((g) => g.shots || 0);
 
@@ -1502,11 +1763,11 @@ async function runNHLPlayerShotsModel() {
             let ppRatePer60 = null; // WI-0530: season PP shot rate from NST player_pp_rates
             let ppRateL10Per60 = null; // WI-0531: L10 rolling PP shot rate
             let ppRateL5Per60 = null;  // WI-0531: L5 rolling PP shot rate
-            if (l5Games[0]?.raw_data) {
+            if (playerLookbackGames[0]?.raw_data) {
               try {
-                const rawData = JSON.parse(l5Games[0].raw_data);
+                const rawData = JSON.parse(playerLookbackGames[0].raw_data);
                 shotsPer60 = rawData.shotsPer60 || null;
-                projToi = rawData.projToi || l5Games[0].toi_minutes || null;
+                projToi = rawData.projToi || playerLookbackGames[0].toi_minutes || null;
                 ppToi = Number.isFinite(rawData.ppToi) && rawData.ppToi > 0 ? rawData.ppToi : 0; // WI-0528: real PP TOI
                 // WI-0530: treat 0 same as null — only positive rates are meaningful
                 if (Number.isFinite(rawData.ppRatePer60) && rawData.ppRatePer60 > 0) {
@@ -1532,6 +1793,11 @@ async function runNHLPlayerShotsModel() {
             const playerTeamName =
               (playerTeamAbbrev && TEAM_ABBREV_TO_NAME[playerTeamAbbrev]) ||
               player.team_abbrev;
+            const moneyPuckSkater = resolveMoneyPuckSkaterEntry(
+              moneyPuckSnapshot,
+              playerTeamName,
+              playerName,
+            );
             const opponentTeam = isHome ? awayTeam : homeTeam;
             const opponentAbbrev = resolveTeamAbbrev(opponentTeam);
             if (!opponentAbbrev) {
@@ -1886,7 +2152,7 @@ async function runNHLPlayerShotsModel() {
               propType: 'shots_on_goal',
               period: 'full_game',
             });
-            const selectedPropMarketEvaluation = realPropLineCandidates.length > 0
+            const baseSelectedPropMarketEvaluation = realPropLineCandidates.length > 0
               ? [...realPropLineCandidates]
                 .map((market) =>
                   evaluatePropMarketCandidate({
@@ -1900,6 +2166,9 @@ async function runNHLPlayerShotsModel() {
                   }))
                 .sort(comparePropMarketEvaluations)[0]
               : null;
+            let activeSelectedPropMarketEvaluation = baseSelectedPropMarketEvaluation;
+            let breakoutContext = null;
+            let breakoutAdopted = false;
 
             let marketLine;
             let overPrice = null;
@@ -1916,18 +2185,18 @@ async function runNHLPlayerShotsModel() {
             let v2ImpliedUnderProb;
             let preselectedPropDecision = null;
             let preselectedPropDecisionFlags = null;
-            const usingRealLine = !!selectedPropMarketEvaluation;
+            const usingRealLine = !!baseSelectedPropMarketEvaluation;
 
-            if (selectedPropMarketEvaluation) {
-              marketLine = selectedPropMarketEvaluation.market.line;
-              overPrice = selectedPropMarketEvaluation.market.over_price;
-              underPrice = selectedPropMarketEvaluation.market.under_price;
-              propBookmaker = selectedPropMarketEvaluation.market.bookmaker ?? null;
-              v2Projection = selectedPropMarketEvaluation.v2Projection;
-              v2AnomalyDetected = selectedPropMarketEvaluation.v2AnomalyDetected;
-              preselectedPropDecision = selectedPropMarketEvaluation.propDecision;
+            if (activeSelectedPropMarketEvaluation) {
+              marketLine = activeSelectedPropMarketEvaluation.market.line;
+              overPrice = activeSelectedPropMarketEvaluation.market.over_price;
+              underPrice = activeSelectedPropMarketEvaluation.market.under_price;
+              propBookmaker = activeSelectedPropMarketEvaluation.market.bookmaker ?? null;
+              v2Projection = activeSelectedPropMarketEvaluation.v2Projection;
+              v2AnomalyDetected = activeSelectedPropMarketEvaluation.v2AnomalyDetected;
+              preselectedPropDecision = activeSelectedPropMarketEvaluation.propDecision;
               preselectedPropDecisionFlags =
-                selectedPropMarketEvaluation.propDecisionFlags;
+                activeSelectedPropMarketEvaluation.propDecisionFlags;
             } else {
               marketLine = parseFloat(process.env.NHL_SOG_PROJECTION_LINE || '2.5');
               console.log(`[projection-mode] line=${marketLine} (no real Odds API line — using projection floor)`);
@@ -1951,6 +2220,96 @@ async function runNHLPlayerShotsModel() {
             if (!isOddsBacked) {
               console.log(
                 `[${JOB_NAME}] [projection-mode] No prices for ${playerName} — MISSING_PRICE flag, opportunity_score=null`,
+              );
+            }
+
+            breakoutContext = computeBreakoutContext({
+              lookbackGames: playerLookbackGames,
+              baselineShots60: shotsPer60,
+              projToi,
+              ppToi,
+              ppMatchupFactor,
+              opponentFactor,
+              paceFactor,
+              playerAvailabilityTier,
+              usingRealLine,
+              isOddsBacked,
+              basePropDecision: preselectedPropDecision,
+              baseV2Projection: v2Projection,
+              moneyPuckSkater,
+            });
+
+            if (
+              breakoutContext?.flags.includes('BREAKOUT_CANDIDATE') &&
+              realPropLineCandidates.length > 0
+            ) {
+              const breakoutProjectionOverrides = {
+                ev_shots_season_per60: breakoutContext.adjustedShots60,
+                ev_shots_l10_per60: breakoutContext.adjustedShots60,
+                ev_shots_l5_per60: breakoutContext.adjustedShots60,
+                toi_proj_ev: breakoutContext.tonightToiProj ?? (projToi ?? 0),
+                shot_env_factor:
+                  paceFactor *
+                  breakoutContext.moneypuckUsageFactor *
+                  breakoutContext.positionEnvFactor,
+              };
+
+              const breakoutSelectedPropMarketEvaluation = [...realPropLineCandidates]
+                .map((market) =>
+                  evaluatePropMarketCandidate({
+                    market,
+                    mu: breakoutContext.breakoutSogMu,
+                    l5Sog,
+                    l5Mean,
+                    opponentFactor,
+                    sharedPropFlags,
+                    projectionInputs: v2ProjectionInputs,
+                    projectionInputOverrides: breakoutProjectionOverrides,
+                  }))
+                .sort(comparePropMarketEvaluations)[0];
+
+              const breakoutProbEdge =
+                breakoutSelectedPropMarketEvaluation?.propDecision?.prob_edge_pp;
+              if (
+                breakoutContext.eligible &&
+                (
+                  Number(breakoutSelectedPropMarketEvaluation?.market?.over_price) <= -160 ||
+                  (Number.isFinite(breakoutProbEdge) && breakoutProbEdge < 0.02)
+                )
+              ) {
+                breakoutContext.flags = mergeUniqueFlags(
+                  breakoutContext.flags,
+                  'PRICE_TOO_JUICED',
+                );
+              }
+
+              if (
+                shouldAdoptBreakoutEvaluation(
+                  baseSelectedPropMarketEvaluation,
+                  breakoutSelectedPropMarketEvaluation,
+                )
+              ) {
+                activeSelectedPropMarketEvaluation = breakoutSelectedPropMarketEvaluation;
+                breakoutAdopted = true;
+              }
+            }
+
+            if (activeSelectedPropMarketEvaluation) {
+              marketLine = activeSelectedPropMarketEvaluation.market.line;
+              overPrice = activeSelectedPropMarketEvaluation.market.over_price;
+              underPrice = activeSelectedPropMarketEvaluation.market.under_price;
+              propBookmaker = activeSelectedPropMarketEvaluation.market.bookmaker ?? null;
+              v2Projection = activeSelectedPropMarketEvaluation.v2Projection;
+              v2AnomalyDetected = activeSelectedPropMarketEvaluation.v2AnomalyDetected;
+              preselectedPropDecision = activeSelectedPropMarketEvaluation.propDecision;
+              preselectedPropDecisionFlags = mergeUniqueFlags(
+                activeSelectedPropMarketEvaluation.propDecisionFlags,
+                breakoutContext?.flags || [],
+              );
+            } else {
+              preselectedPropDecisionFlags = mergeUniqueFlags(
+                preselectedPropDecisionFlags,
+                breakoutContext?.flags || [],
               );
             }
 
@@ -2005,6 +2364,11 @@ async function runNHLPlayerShotsModel() {
               console.warn(`[${JOB_NAME}] No real prop line for ${playerName} game ${resolvedGameId} — using synthetic fallback`);
             }
 
+            const effectiveMu =
+              breakoutAdopted && Number.isFinite(breakoutContext?.breakoutSogMu)
+                ? breakoutContext.breakoutSogMu
+                : mu;
+
             // Fair line: L5 consistency baseline (no matchup adjustments).
             // This is what the market typically prices the player at.
             const l5FairValue = calcFairLine({ l5Sog, shotsPer60, projToi });
@@ -2012,46 +2376,56 @@ async function runNHLPlayerShotsModel() {
 
             // Matchup edge: how much the projection departs from the L5 baseline.
             // Positive = matchup-positive (tough defense hurt opponents, home ice, etc.).
-            const matchupEdge = Math.round((mu - l5FairValue) * 10) / 10;
+            const matchupEdge = Math.round((effectiveMu - l5FairValue) * 10) / 10;
 
-            const fullDirectionSeed = classifyEdge(mu, syntheticLine, 0.75);
-            const fullConsistencyScore = computeConsistencyScore(
-              l5Sog,
-              syntheticLine,
-              fullDirectionSeed.direction,
-            );
-            const fullMatchupScore = computeMatchupScore(
-              opponentFactor,
-              fullDirectionSeed.direction,
-            );
-            const fullSupportScore = computeDecisionSupport(
-              fullConsistencyScore,
-              fullMatchupScore,
-            );
-            const confidence = computeConfidence(
-              fullConsistencyScore,
-              fullMatchupScore,
-              Math.abs(mu - syntheticLine),
-            );
+            const fullDirectionSeed = activeSelectedPropMarketEvaluation
+              ? activeSelectedPropMarketEvaluation.directionSeed
+              : classifyEdge(effectiveMu, syntheticLine, 0.75);
+            const fullConsistencyScore = activeSelectedPropMarketEvaluation
+              ? activeSelectedPropMarketEvaluation.consistencyScore
+              : computeConsistencyScore(
+                l5Sog,
+                syntheticLine,
+                fullDirectionSeed.direction,
+              );
+            const fullMatchupScore = activeSelectedPropMarketEvaluation
+              ? activeSelectedPropMarketEvaluation.matchupScore
+              : computeMatchupScore(
+                opponentFactor,
+                fullDirectionSeed.direction,
+              );
+            const fullSupportScore = activeSelectedPropMarketEvaluation
+              ? activeSelectedPropMarketEvaluation.supportScore
+              : computeDecisionSupport(
+                fullConsistencyScore,
+                fullMatchupScore,
+              );
+            const confidence = activeSelectedPropMarketEvaluation
+              ? activeSelectedPropMarketEvaluation.confidence
+              : computeConfidence(
+                fullConsistencyScore,
+                fullMatchupScore,
+                Math.abs(effectiveMu - syntheticLine),
+              );
 
             // Projection anomaly guard: when recency-weighted mu is <60% of the
             // arithmetic L5 mean, the model is collapsing due to recent low-shot
             // games. In this case we must never emit FIRE — the "huge UNDER edge"
             // against a synthetic floor line is not a real signal.
-            const projectionAnomalyDetected = mu < 0.6 * l5Mean;
+            const projectionAnomalyDetected = effectiveMu < 0.6 * l5Mean;
             if (projectionAnomalyDetected) {
               console.warn(
-                `[${JOB_NAME}] PROJECTION_ANOMALY: ${playerName} weighted_mu=${mu.toFixed(2)} < 0.6 * l5_arith_mean=${l5Mean.toFixed(2)} — FIRE will be blocked. Check recent shot log; likely had 0–1 shots in last 2 games.`,
+                `[${JOB_NAME}] PROJECTION_ANOMALY: ${playerName} weighted_mu=${effectiveMu.toFixed(2)} < 0.6 * l5_arith_mean=${l5Mean.toFixed(2)} — FIRE will be blocked. Check recent shot log; likely had 0–1 shots in last 2 games.`,
               );
             }
 
             // Structured debug log — every player gets one line for diagnostics.
             console.log(
-              `[${JOB_NAME}] [debug] ${playerName}: l5=${JSON.stringify(l5Sog)} l5_arith=${l5Mean.toFixed(2)} mu=${mu.toFixed(3)} line=${syntheticLine} real_line=${usingRealLine} projToi=${projToi ?? 'null'} shotsPer60=${shotsPer60 ?? 'null'} oppF=${opponentFactor.toFixed(3)} paceF=${paceFactor.toFixed(3)} ppMatch=${ppMatchupFactor.toFixed(3)} isHome=${isHome} anomaly=${projectionAnomalyDetected}`,
+              `[${JOB_NAME}] [debug] ${playerName}: l5=${JSON.stringify(l5Sog)} l5_arith=${l5Mean.toFixed(2)} mu=${mu.toFixed(3)} effective_mu=${effectiveMu.toFixed(3)} breakout_adopted=${breakoutAdopted} breakout_flags=${JSON.stringify(breakoutContext?.flags || [])} line=${syntheticLine} real_line=${usingRealLine} projToi=${projToi ?? 'null'} shotsPer60=${shotsPer60 ?? 'null'} oppF=${opponentFactor.toFixed(3)} paceF=${paceFactor.toFixed(3)} ppMatch=${ppMatchupFactor.toFixed(3)} isHome=${isHome} anomaly=${projectionAnomalyDetected}`,
             );
 
             // Classify edges after confidence is derived from consistency + matchup.
-            const fullGameEdge = classifyEdge(mu, syntheticLine, confidence);
+            const fullGameEdge = classifyEdge(effectiveMu, syntheticLine, confidence);
             let fullDecision = derivePlayDecision({
               edgeTier: fullGameEdge.tier,
               supportScore: fullSupportScore,
@@ -2126,7 +2500,7 @@ async function runNHLPlayerShotsModel() {
               ];
             const fullPropDecision =
               preselectedPropDecision ?? buildCanonicalPropDecision({
-                projection: mu,
+                projection: effectiveMu,
                 marketLine: syntheticLine,
                 marketPriceOver: overPrice,
                 marketPriceUnder: underPrice,
@@ -2179,7 +2553,7 @@ async function runNHLPlayerShotsModel() {
                 status: legacyDecisionFromProp.status,
                 classification: legacyDecisionFromProp.classification,
                 // Required by basePayloadSchema
-                prediction: `${fullVerdictPrefix} ${playerName} ${fullPropDecision.lean_side ?? fullDirectionLabel} ${syntheticLine} SOG | Proj ${mu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
+                prediction: `${fullVerdictPrefix} ${playerName} ${fullPropDecision.lean_side ?? fullDirectionLabel} ${syntheticLine} SOG | Proj ${effectiveMu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
                 confidence: confidence,
                 recommended_bet_type: 'unknown',
                 generated_at: timestamp,
@@ -2189,10 +2563,11 @@ async function runNHLPlayerShotsModel() {
                   // Projection-delta percent vs. line; pricing edge lives in edge_over_pp / edge_under_pp.
                   official_status: legacyDecisionFromProp.officialStatus,
                   direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
-                  edge_delta_pct: computeEdgePct(mu, syntheticLine),
+                  edge_delta_pct: computeEdgePct(effectiveMu, syntheticLine),
                   fair_line: fairLine,
                 },
                 prop_decision: fullPropDecision,
+                breakout: buildBreakoutPayload(breakoutContext),
                 // PROP-specific
                 play: {
                   action: legacyDecisionFromProp.action,
@@ -2201,11 +2576,11 @@ async function runNHLPlayerShotsModel() {
                   decision_v2: {
                     official_status: legacyDecisionFromProp.officialStatus,
                     direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
-                    edge_delta_pct: computeEdgePct(mu, syntheticLine),
+                    edge_delta_pct: computeEdgePct(effectiveMu, syntheticLine),
                     fair_line: fairLine,
                   },
                   prop_decision: fullPropDecision,
-                  pick_string: `${fullVerdictPrefix} ${playerName} ${fullPropDecision.lean_side ?? fullDirectionLabel} ${syntheticLine} SOG | Proj ${mu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
+                  pick_string: `${fullVerdictPrefix} ${playerName} ${fullPropDecision.lean_side ?? fullDirectionLabel} ${syntheticLine} SOG | Proj ${effectiveMu.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
                   market_type: 'PROP',
                   player_name: playerName,
                   player_id: player.player_id.toString(),
@@ -2233,11 +2608,11 @@ async function runNHLPlayerShotsModel() {
                 opportunity_score: v2OpportunityScore,
                 prop_display_state: computePropDisplayState(v2AnomalyDetected, v2OpportunityScore),
                 decision: {
-                  edge_pct: computeEdgePct(mu, syntheticLine),
-                  projection: Math.round(mu * 100) / 100,
+                  edge_pct: computeEdgePct(effectiveMu, syntheticLine),
+                  projection: Math.round(effectiveMu * 100) / 100,
                   fair_line: fairLine,
                   matchup_edge: matchupEdge,
-                  model_projection: mu,
+                  model_projection: effectiveMu,
                   market_line: syntheticLine,
                   direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
                   confidence: confidence,
@@ -2280,7 +2655,7 @@ async function runNHLPlayerShotsModel() {
                       : null,
                   consistency_score:
                     Math.round(fullConsistencyScore * 1000) / 1000,
-                  matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
+                    matchup_score: Math.round(fullMatchupScore * 1000) / 1000,
                   // Projection model inputs surfaced for debugging and audit
                   sog_mu: v2Projection.sog_mu != null ? Math.round(v2Projection.sog_mu * 1000) / 1000 : null,
                   toi_proj_ev: v2Projection.toi_proj != null ? v2Projection.toi_proj : (projToi ?? null),
@@ -2294,10 +2669,11 @@ async function runNHLPlayerShotsModel() {
                   shot_env_factor: v2Projection.shot_env_factor != null ? Math.round(v2Projection.shot_env_factor * 1000) / 1000 : null,
                   trend_factor: v2Projection.trend_score != null ? Math.round(v2Projection.trend_score * 1000) / 1000 : null,
                   v2_anomaly: v2AnomalyDetected,
+                  breakout_applied: breakoutAdopted,
                 },
               };
 
-              const edgePct = computeEdgePct(mu, syntheticLine);
+              const edgePct = computeEdgePct(effectiveMu, syntheticLine);
               applyNhlDecisionBasisMeta(payloadData, {
                 usingRealLine,
                 edgePct,

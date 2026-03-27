@@ -28,6 +28,15 @@ const NHL_ML_RELIABILITY_BIN_RANGES = Object.freeze([
   [0.8, 0.9],
   [0.9, 1.0],
 ]);
+const DECISION_TIER_AUDIT_SPORTS = Object.freeze(['NBA', 'NHL']);
+const DECISION_TIER_AUDIT_MARKET_TYPES = Object.freeze([
+  'MONEYLINE',
+  'SPREAD',
+  'TOTAL',
+  'PUCKLINE',
+  'TEAM_TOTAL',
+]);
+const DECISION_TIER_AUDIT_STATUSES = Object.freeze(['PLAY', 'LEAN']);
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -478,6 +487,307 @@ function buildEdgeVerificationReport(db) {
   return { tablePresent: true, buckets };
 }
 
+function buildEmptyDecisionTierBucket(officialStatus) {
+  return {
+    tier: officialStatus,
+    sampleSize: 0,
+    wins: 0,
+    losses: 0,
+    pushes: 0,
+    winRate: null,
+    totalPnlUnits: null,
+    avgPnlPerCard: null,
+    roi: null,
+  };
+}
+
+function finalizeDecisionTierBucket(bucket) {
+  const decisions = bucket.wins + bucket.losses;
+  const hasSample = bucket.sampleSize > 0;
+  const totalPnlUnits =
+    hasSample && Number.isFinite(bucket.totalPnlUnits)
+      ? bucket.totalPnlUnits
+      : null;
+  return {
+    tier: bucket.tier,
+    sampleSize: bucket.sampleSize,
+    wins: bucket.wins,
+    losses: bucket.losses,
+    pushes: bucket.pushes,
+    winRate: decisions > 0 ? toRounded(bucket.wins / decisions) : null,
+    totalPnlUnits: Number.isFinite(totalPnlUnits) ? toRounded(totalPnlUnits) : null,
+    avgPnlPerCard:
+      hasSample && Number.isFinite(totalPnlUnits)
+        ? toRounded(totalPnlUnits / bucket.sampleSize)
+        : null,
+    roi:
+      hasSample && Number.isFinite(totalPnlUnits)
+        ? toRounded(totalPnlUnits / bucket.sampleSize)
+        : null,
+  };
+}
+
+function buildDecisionTierAudit(db, windowDays, generatedAtIso) {
+  const generatedAtMs = Date.parse(generatedAtIso);
+  const nowMs = Number.isFinite(generatedAtMs) ? generatedAtMs : Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const sampleWindow = {
+    days: windowDays,
+    anchorField: 'settled_at',
+    startUtc: new Date(nowMs - windowDays * dayMs).toISOString(),
+    endUtc: new Date(nowMs).toISOString(),
+  };
+  const baseReport = {
+    status: 'INSUFFICIENT_DATA',
+    sampleWindow,
+    sports: [...DECISION_TIER_AUDIT_SPORTS],
+    marketTypes: [...DECISION_TIER_AUDIT_MARKET_TYPES],
+    tiers: DECISION_TIER_AUDIT_STATUSES.map((status) =>
+      buildEmptyDecisionTierBucket(status),
+    ),
+  };
+  const hasCardResults = tableExists(db, 'card_results');
+  const hasCardPayloads = tableExists(db, 'card_payloads');
+  if (!hasCardResults || !hasCardPayloads) {
+    return baseReport;
+  }
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        cr.result,
+        cr.pnl_units,
+        cp.payload_data
+      FROM card_results cr
+      INNER JOIN card_payloads cp ON cp.id = cr.card_id
+      WHERE LOWER(COALESCE(cr.status, '')) = 'settled'
+        AND cr.settled_at IS NOT NULL
+        AND datetime(cr.settled_at) >= datetime('now', ?)
+        AND UPPER(COALESCE(cr.sport, '')) IN (${DECISION_TIER_AUDIT_SPORTS.map(() => '?').join(', ')})
+        AND UPPER(COALESCE(cr.market_type, '')) IN (${DECISION_TIER_AUDIT_MARKET_TYPES.map(() => '?').join(', ')})
+    `,
+    )
+    .all(
+      `-${windowDays} days`,
+      ...DECISION_TIER_AUDIT_SPORTS,
+      ...DECISION_TIER_AUDIT_MARKET_TYPES,
+    );
+
+  const buckets = Object.fromEntries(
+    DECISION_TIER_AUDIT_STATUSES.map((status) => [
+      status,
+      {
+        ...buildEmptyDecisionTierBucket(status),
+        totalPnlUnits: 0,
+      },
+    ]),
+  );
+
+  for (const row of rows) {
+    const payloadData = parseJsonObject(row.payload_data);
+    const officialStatus = toUpperToken(payloadData?.decision_v2?.official_status);
+    if (!DECISION_TIER_AUDIT_STATUSES.includes(officialStatus)) {
+      continue;
+    }
+
+    const bucket = buckets[officialStatus];
+    if (!bucket) continue;
+
+    bucket.sampleSize += 1;
+    const result = toUpperToken(row.result);
+    if (result === 'WIN') bucket.wins += 1;
+    else if (result === 'LOSS') bucket.losses += 1;
+    else if (result === 'PUSH') bucket.pushes += 1;
+
+    const pnlUnits = toNumber(row.pnl_units, 0);
+    bucket.totalPnlUnits += pnlUnits;
+  }
+
+  const tiers = DECISION_TIER_AUDIT_STATUSES.map((status) =>
+    finalizeDecisionTierBucket(buckets[status]),
+  );
+  const sampleSize = tiers.reduce((total, tier) => total + tier.sampleSize, 0);
+
+  return {
+    ...baseReport,
+    status: sampleSize > 0 ? 'OK' : 'INSUFFICIENT_DATA',
+    tiers,
+  };
+}
+
+function computeLowerQuartile(values = []) {
+  const sorted = (Array.isArray(values) ? values : [])
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const index = Math.floor((sorted.length + 3) / 4) - 1;
+  return sorted[Math.max(0, index)] ?? null;
+}
+
+function buildEmptyBreakoutBucket(label) {
+  return {
+    label,
+    sampleSize: 0,
+    wins: 0,
+    losses: 0,
+    pushes: 0,
+    hitRate: null,
+    totalPnlUnits: null,
+    roi: null,
+    clvSampleSize: 0,
+    meanClv: null,
+    p25Clv: null,
+  };
+}
+
+function finalizeBreakoutBucket(bucket) {
+  const decisionCount = bucket.wins + bucket.losses;
+  const clvValues = bucket.clvValues || [];
+  return {
+    label: bucket.label,
+    sampleSize: bucket.sampleSize,
+    wins: bucket.wins,
+    losses: bucket.losses,
+    pushes: bucket.pushes,
+    hitRate: decisionCount > 0 ? toRounded(bucket.wins / decisionCount) : null,
+    totalPnlUnits:
+      bucket.sampleSize > 0 && Number.isFinite(bucket.totalPnlUnits)
+        ? toRounded(bucket.totalPnlUnits)
+        : null,
+    roi:
+      bucket.sampleSize > 0 && Number.isFinite(bucket.totalPnlUnits)
+        ? toRounded(bucket.totalPnlUnits / bucket.sampleSize)
+        : null,
+    clvSampleSize: clvValues.length,
+    meanClv:
+      clvValues.length > 0
+        ? toRounded(clvValues.reduce((sum, value) => sum + value, 0) / clvValues.length)
+        : null,
+    p25Clv: toRounded(computeLowerQuartile(clvValues)),
+  };
+}
+
+function buildNhlShotsBreakoutCalibrationReport(db, windowDays, generatedAtIso) {
+  const generatedAtMs = Date.parse(generatedAtIso);
+  const nowMs = Number.isFinite(generatedAtMs) ? generatedAtMs : Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const sampleWindow = {
+    days: windowDays,
+    anchorField: 'settled_at',
+    startUtc: new Date(nowMs - windowDays * dayMs).toISOString(),
+    endUtc: new Date(nowMs).toISOString(),
+  };
+  const baseReport = {
+    status: 'INSUFFICIENT_DATA',
+    sampleWindow,
+    scope: {
+      sport: 'NHL',
+      propType: 'shots_on_goal',
+      period: 'full_game',
+      side: 'OVER',
+    },
+    buckets: {
+      breakoutTagged: buildEmptyBreakoutBucket('breakout_tagged'),
+      nonBreakoutTagged: buildEmptyBreakoutBucket('non_breakout_tagged'),
+    },
+  };
+  const hasCardResults = tableExists(db, 'card_results');
+  const hasCardPayloads = tableExists(db, 'card_payloads');
+  const hasClvLedger = tableExists(db, 'clv_ledger');
+  if (!hasCardResults || !hasCardPayloads) {
+    return baseReport;
+  }
+
+  const clvByCardCte = hasClvLedger
+    ? `
+      WITH clv_by_card AS (
+        SELECT card_id, AVG(clv_pct) AS clv_pct
+        FROM clv_ledger
+        WHERE closed_at IS NOT NULL
+          AND clv_pct IS NOT NULL
+        GROUP BY card_id
+      )
+    `
+    : `
+      WITH clv_by_card AS (
+        SELECT NULL AS card_id, NULL AS clv_pct
+        WHERE 0
+      )
+    `;
+
+  const rows = db
+    .prepare(
+      `
+      ${clvByCardCte}
+      SELECT
+        cr.card_id,
+        cr.result,
+        cr.pnl_units,
+        cp.payload_data,
+        clv_by_card.clv_pct
+      FROM card_results cr
+      INNER JOIN card_payloads cp ON cp.id = cr.card_id
+      LEFT JOIN clv_by_card ON clv_by_card.card_id = cr.card_id
+      WHERE LOWER(COALESCE(cr.sport, '')) = 'nhl'
+        AND LOWER(COALESCE(cr.status, '')) = 'settled'
+        AND cr.settled_at IS NOT NULL
+        AND datetime(cr.settled_at) >= datetime('now', ?)
+        AND LOWER(COALESCE(json_extract(cp.payload_data, '$.play.prop_type'), '')) = 'shots_on_goal'
+        AND LOWER(COALESCE(json_extract(cp.payload_data, '$.play.period'), '')) = 'full_game'
+        AND LOWER(COALESCE(json_extract(cp.payload_data, '$.play.selection.side'), '')) = 'over'
+    `,
+    )
+    .all(`-${windowDays} days`);
+
+  const breakoutTagged = {
+    ...buildEmptyBreakoutBucket('breakout_tagged'),
+    totalPnlUnits: 0,
+    clvValues: [],
+  };
+  const nonBreakoutTagged = {
+    ...buildEmptyBreakoutBucket('non_breakout_tagged'),
+    totalPnlUnits: 0,
+    clvValues: [],
+  };
+
+  for (const row of rows) {
+    const payloadData = parseJsonObject(row.payload_data) || {};
+    const breakoutFlags = Array.isArray(payloadData?.breakout?.flags)
+      ? payloadData.breakout.flags
+      : [];
+    const bucket = breakoutFlags.includes('BREAKOUT_CANDIDATE')
+      ? breakoutTagged
+      : nonBreakoutTagged;
+
+    bucket.sampleSize += 1;
+    const result = toUpperToken(row.result);
+    if (result === 'WIN') bucket.wins += 1;
+    else if (result === 'LOSS') bucket.losses += 1;
+    else if (result === 'PUSH') bucket.pushes += 1;
+
+    bucket.totalPnlUnits += toNumber(row.pnl_units, 0);
+    const clvPct = toNumber(row.clv_pct);
+    if (Number.isFinite(clvPct)) {
+      bucket.clvValues.push(clvPct);
+    }
+  }
+
+  const finalizedBuckets = {
+    breakoutTagged: finalizeBreakoutBucket(breakoutTagged),
+    nonBreakoutTagged: finalizeBreakoutBucket(nonBreakoutTagged),
+  };
+  const sampleSize =
+    finalizedBuckets.breakoutTagged.sampleSize +
+    finalizedBuckets.nonBreakoutTagged.sampleSize;
+
+  return {
+    ...baseReport,
+    status: sampleSize > 0 ? 'OK' : 'INSUFFICIENT_DATA',
+    buckets: finalizedBuckets,
+  };
+}
+
 function buildReliabilityBinTemplate() {
   return NHL_ML_RELIABILITY_BIN_RANGES.map(([lower, upper], index) => ({
     bucket: `${lower.toFixed(1)}-${upper.toFixed(1)}`,
@@ -862,6 +1172,12 @@ async function generateTelemetryCalibrationReport({
       windowDays,
       generatedAt,
     );
+    const nhlShotsBreakoutCalibration = buildNhlShotsBreakoutCalibrationReport(
+      reader,
+      windowDays,
+      generatedAt,
+    );
+    const decisionTierAudit = buildDecisionTierAudit(reader, windowDays, generatedAt);
     const edgeVerification = buildEdgeVerificationReport(reader);
     const checks = collectChecks(projection, clv);
     const diagnostics = buildFetchDiagnostics(reader, windowDays, projection, clv);
@@ -888,6 +1204,8 @@ async function generateTelemetryCalibrationReport({
         clv,
       },
       nhlMoneylineCalibration,
+      nhlShotsBreakoutCalibration,
+      decisionTierAudit,
       edgeVerification,
       checks,
       overallStatus,
@@ -957,6 +1275,37 @@ function formatTelemetryCalibrationReport(report, { enforce = false } = {}) {
   lines.push(
     `- selected_reliability_bins: ${formatReliabilityBinsInline(report.nhlMoneylineCalibration.mappings.selected.reliabilityBins)}`,
   );
+  lines.push('');
+
+  lines.push('nhl_shots_breakout_calibration');
+  lines.push(
+    `- status: ${report.nhlShotsBreakoutCalibration.status} | window: ${report.nhlShotsBreakoutCalibration.sampleWindow.startUtc} -> ${report.nhlShotsBreakoutCalibration.sampleWindow.endUtc} (${report.nhlShotsBreakoutCalibration.sampleWindow.anchorField})`,
+  );
+  lines.push(
+    `- scope: sport=${report.nhlShotsBreakoutCalibration.scope.sport} | prop=${report.nhlShotsBreakoutCalibration.scope.propType} | period=${report.nhlShotsBreakoutCalibration.scope.period} | side=${report.nhlShotsBreakoutCalibration.scope.side}`,
+  );
+  for (const bucket of [
+    report.nhlShotsBreakoutCalibration.buckets.breakoutTagged,
+    report.nhlShotsBreakoutCalibration.buckets.nonBreakoutTagged,
+  ]) {
+    lines.push(
+      `- ${bucket.label} | ${bucket.wins}W-${bucket.losses}L-${bucket.pushes}P (${bucket.sampleSize}) | hit_rate ${formatPct(bucket.hitRate)} | total_pnl ${Number.isFinite(bucket.totalPnlUnits) ? bucket.totalPnlUnits.toFixed(3) : 'n/a'} | roi ${formatPct(bucket.roi)} | clv_n ${bucket.clvSampleSize} | mean_clv ${Number.isFinite(bucket.meanClv) ? bucket.meanClv.toFixed(4) : 'n/a'} | p25_clv ${Number.isFinite(bucket.p25Clv) ? bucket.p25Clv.toFixed(4) : 'n/a'}`,
+    );
+  }
+  lines.push('');
+
+  lines.push('decision_tier_audit');
+  lines.push(
+    `- status: ${report.decisionTierAudit.status} | window: ${report.decisionTierAudit.sampleWindow.startUtc} -> ${report.decisionTierAudit.sampleWindow.endUtc} (${report.decisionTierAudit.sampleWindow.anchorField})`,
+  );
+  lines.push(
+    `- scope: sports=${report.decisionTierAudit.sports.join(', ')} | markets=${report.decisionTierAudit.marketTypes.join(', ')}`,
+  );
+  for (const tier of report.decisionTierAudit.tiers) {
+    lines.push(
+      `- ${tier.tier} | ${tier.wins}W-${tier.losses}L-${tier.pushes}P (${tier.sampleSize}) | win_rate ${formatPct(tier.winRate)} | total_pnl ${Number.isFinite(tier.totalPnlUnits) ? tier.totalPnlUnits.toFixed(3) : 'n/a'} | avg_pnl ${Number.isFinite(tier.avgPnlPerCard) ? tier.avgPnlPerCard.toFixed(3) : 'n/a'} | roi ${formatPct(tier.roi)}`,
+    );
+  }
   lines.push('');
 
   lines.push('edge_verification_outcomes');
@@ -1042,6 +1391,7 @@ module.exports = {
   __private: {
     buildEmptyMappingStats,
     buildClvLedgerReport,
+    buildDecisionTierAudit,
     buildFetchDiagnostics,
     buildNhlMoneylineCalibrationReport,
     buildProjectionLedgerReport,

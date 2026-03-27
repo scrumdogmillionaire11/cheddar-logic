@@ -25,6 +25,7 @@ const {
   recordJobSuccess,
   recordJobError,
 } = require('@cheddar-logic/data');
+const { buildMlbMarketAvailability } = require('./run_mlb_model');
 
 const ODDS_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES || 15,
@@ -204,8 +205,132 @@ function checkCardsFreshness() {
   return { ok: false, reason };
 }
 
+function getLatestOddsSnapshot(db, gameId) {
+  return db
+    .prepare(
+      `
+    SELECT *
+    FROM odds_snapshots
+    WHERE game_id = ?
+    ORDER BY captured_at DESC
+    LIMIT 1
+  `,
+    )
+    .get(gameId);
+}
+
 /**
- * Check 4: Settlement backlog
+ * Check 4: MLB F5 market availability
+ * For upcoming MLB games within T-6h, report F5 total availability separately
+ * from full-game totals so watchdog output matches MLB market intent.
+ */
+function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
+  const db = getDb();
+  const nowUtc = DateTime.utc();
+  const endUtc = nowUtc.plus({ hours: 6 });
+  const upcomingGames = db
+    .prepare(
+      `
+    SELECT game_id, game_time_utc, home_team, away_team
+    FROM games
+    WHERE LOWER(sport) = 'mlb'
+      AND game_time_utc >= ?
+      AND game_time_utc <= ?
+  `,
+    )
+    .all(nowUtc.toISO(), endUtc.toISO());
+
+  if (upcomingGames.length === 0) {
+    return {
+      ok: true,
+      reason: 'No MLB games within T-6h',
+      games_checked: 0,
+      missing_f5_total_count: 0,
+      missing_full_game_total_count: 0,
+      expected_f5_ml_count: 0,
+      missing_f5_ml_count: 0,
+    };
+  }
+
+  const missingF5Total = [];
+  const missingFullGameTotal = [];
+  const missingF5Ml = [];
+  let expectedF5MlCount = 0;
+
+  for (const game of upcomingGames) {
+    const latestOdds = getLatestOddsSnapshot(db, game.game_id);
+    const availability = buildMlbMarketAvailability(
+      latestOdds
+        ? {
+            ...latestOdds,
+            game_id: game.game_id,
+            game_time_utc: game.game_time_utc,
+            home_team: game.home_team,
+            away_team: game.away_team,
+          }
+        : {
+            game_id: game.game_id,
+            game_time_utc: game.game_time_utc,
+            home_team: game.home_team,
+            away_team: game.away_team,
+          },
+      { expectF5Ml },
+    );
+
+    if (!availability.f5_line_ok) {
+      missingF5Total.push(game.game_id);
+    }
+    if (!availability.full_game_total_ok) {
+      missingFullGameTotal.push(game.game_id);
+    }
+    if (availability.expect_f5_ml) {
+      expectedF5MlCount += 1;
+      if (!availability.f5_ml_ok) {
+        missingF5Ml.push(game.game_id);
+      }
+    }
+  }
+
+  const baseReason =
+    missingF5Total.length === 0
+      ? `F5 totals available for all ${upcomingGames.length} MLB games within T-6h`
+      : `${missingF5Total.length}/${upcomingGames.length} MLB games within T-6h missing F5 totals`;
+  const reasonParts = [baseReason];
+
+  if (missingFullGameTotal.length > 0) {
+    reasonParts.push(
+      `${missingFullGameTotal.length} missing full-game totals (informational)`,
+    );
+  }
+  if (expectedF5MlCount > 0) {
+    reasonParts.push(
+      `${missingF5Ml.length}/${expectedF5MlCount} missing F5 ML`,
+    );
+  } else {
+    reasonParts.push('F5 ML health dormant');
+  }
+
+  const reason = reasonParts.join('; ');
+  if (missingF5Total.length > 0) {
+    writePipelineHealth('mlb', 'f5_market_availability', 'failed', reason);
+  }
+
+  return {
+    ok: missingF5Total.length === 0,
+    reason,
+    games_checked: upcomingGames.length,
+    missing_f5_total_count: missingF5Total.length,
+    missing_f5_total_games: missingF5Total,
+    missing_full_game_total_count: missingFullGameTotal.length,
+    missing_full_game_total_games: missingFullGameTotal,
+    expected_f5_ml_count: expectedF5MlCount,
+    missing_f5_ml_count: missingF5Ml.length,
+    missing_f5_ml_games: missingF5Ml,
+  };
+}
+
+/**
+ * Check 5: Settlement backlog
  * Find games with status='final' but no game_results entry
  */
 function checkSettlementBacklog() {
@@ -255,6 +380,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       schedule_freshness: checkScheduleFreshness,
       odds_freshness: checkOddsFreshness,
       cards_freshness: checkCardsFreshness,
+      mlb_f5_market_availability: checkMlbF5MarketAvailability,
       settlement_backlog: checkSettlementBacklog,
     };
 
@@ -286,4 +412,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
   }
 }
 
-module.exports = { checkPipelineHealth };
+module.exports = {
+  checkPipelineHealth,
+  checkMlbF5MarketAvailability,
+};

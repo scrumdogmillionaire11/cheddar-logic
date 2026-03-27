@@ -54,6 +54,12 @@ type LedgerRow = {
   payload_id: string | null;
   game_home_team: string | null;
   game_away_team: string | null;
+  market_period_token: string | null;
+  clv_odds_at_pick: number | null;
+  clv_closing_odds: number | null;
+  clv_pct: number | null;
+  clv_recorded_at: string | null;
+  clv_closed_at: string | null;
 };
 
 function clampNumber(
@@ -294,6 +300,13 @@ export async function GET(request: NextRequest) {
         .map((row) => String(row.name || '').toLowerCase())
         .filter(Boolean),
     );
+    const hasClvLedger = Boolean(
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='clv_ledger'`,
+        )
+        .get(),
+    );
     const hasMarketKeyColumn = cardResultsColumns.has('market_key');
     const hasMarketTypeColumn = cardResultsColumns.has('market_type');
     const hasSelectionColumn = cardResultsColumns.has('selection');
@@ -313,6 +326,24 @@ export async function GET(request: NextRequest) {
     const lockedPriceSelect = hasLockedPriceColumn
       ? 'cr.locked_price AS locked_price'
       : 'NULL AS locked_price';
+    const clvOddsAtPickSelect = hasClvLedger
+      ? 'clv.odds_at_pick AS clv_odds_at_pick'
+      : 'NULL AS clv_odds_at_pick';
+    const clvClosingOddsSelect = hasClvLedger
+      ? 'clv.closing_odds AS clv_closing_odds'
+      : 'NULL AS clv_closing_odds';
+    const clvPctSelect = hasClvLedger
+      ? 'clv.clv_pct AS clv_pct'
+      : 'NULL AS clv_pct';
+    const clvRecordedAtSelect = hasClvLedger
+      ? 'clv.recorded_at AS clv_recorded_at'
+      : 'NULL AS clv_recorded_at';
+    const clvClosedAtSelect = hasClvLedger
+      ? 'clv.closed_at AS clv_closed_at'
+      : 'NULL AS clv_closed_at';
+    const clvJoin = hasClvLedger
+      ? 'LEFT JOIN clv_ledger clv ON clv.card_id = cr.card_id'
+      : '';
 
     const { searchParams } = request.nextUrl;
     const limit = clampNumber(searchParams.get('limit'), 50, 1, 200);
@@ -777,7 +808,20 @@ export async function GET(request: NextRequest) {
         cdl.displayed_at AS created_at,
         cp.payload_data,
         g.home_team AS game_home_team,
-        g.away_team AS game_away_team
+        g.away_team AS game_away_team,
+        CASE
+          WHEN COALESCE(${marketKeyValueExpr}, '') LIKE '%:1P:%'
+            OR UPPER(COALESCE(json_extract(cp.payload_data, '$.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
+            OR UPPER(COALESCE(json_extract(cp.payload_data, '$.play.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
+            OR UPPER(COALESCE(cr.card_type, '')) LIKE '%1P%'
+          THEN '1P'
+          ELSE 'FULL_GAME'
+        END AS market_period_token,
+        ${clvOddsAtPickSelect},
+        ${clvClosingOddsSelect},
+        ${clvPctSelect},
+        ${clvRecordedAtSelect},
+        ${clvClosedAtSelect}
       FROM card_results cr
       INNER JOIN (
         SELECT id, pick_id, displayed_at, api_endpoint
@@ -799,6 +843,7 @@ export async function GET(request: NextRequest) {
       ) cdl ON cr.card_id = cdl.pick_id
       LEFT JOIN card_payloads cp ON cr.card_id = cp.id
       LEFT JOIN games g ON g.game_id = cr.game_id
+      ${clvJoin}
       WHERE cr.id IN (${placeholders})
       ORDER BY cdl.displayed_at DESC
       LIMIT ${limit}
@@ -988,6 +1033,21 @@ export async function GET(request: NextRequest) {
               : null;
       }
 
+      const clv =
+        row.clv_recorded_at !== null ||
+        row.clv_closed_at !== null ||
+        row.clv_odds_at_pick !== null ||
+        row.clv_closing_odds !== null ||
+        row.clv_pct !== null
+          ? {
+              oddsAtPick: row.clv_odds_at_pick,
+              closingOdds: row.clv_closing_odds,
+              clvPct: row.clv_pct,
+              recordedAt: row.clv_recorded_at,
+              closedAt: row.clv_closed_at,
+            }
+          : null;
+
       return {
         id: row.id,
         gameId: row.game_id,
@@ -1011,6 +1071,7 @@ export async function GET(request: NextRequest) {
         marketSelectionLabel,
         homeTeam,
         awayTeam,
+        marketPeriodToken: row.market_period_token,
         line,
         marketKey,
         price: lockedPrice,
@@ -1019,6 +1080,7 @@ export async function GET(request: NextRequest) {
         payloadMissing: parsed.missing || row.payload_id === null,
         projection1p,
         projectionTotal,
+        clv,
       };
     });
 

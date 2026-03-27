@@ -372,8 +372,24 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
                 spreadAwayBook: normalized.odds?.spreadAwayBook,
                 spreadPriceHome: normalized.odds?.spreadPriceHome,
                 spreadPriceAway: normalized.odds?.spreadPriceAway,
+                spreadConsensusLine: normalized.odds?.spreadConsensusLine,
+                spreadConsensusConfidence:
+                  normalized.odds?.spreadConsensusConfidence,
+                spreadDispersionStddev:
+                  normalized.odds?.spreadDispersionStddev,
+                spreadSourceBookCount: normalized.odds?.spreadSourceBookCount,
                 monelineHome: normalized.odds?.monelineHome,
                 monelineAway: normalized.odds?.monelineAway,
+                totalConsensusLine: normalized.odds?.totalConsensusLine,
+                totalConsensusConfidence:
+                  normalized.odds?.totalConsensusConfidence,
+                totalDispersionStddev:
+                  normalized.odds?.totalDispersionStddev,
+                totalSourceBookCount: normalized.odds?.totalSourceBookCount,
+                h2hConsensusHome: normalized.odds?.h2hConsensusHome,
+                h2hConsensusAway: normalized.odds?.h2hConsensusAway,
+                h2hConsensusConfidence:
+                  normalized.odds?.h2hConsensusConfidence,
                 rawData: normalized.market,
                 jobRunId,
               });

@@ -185,30 +185,11 @@ npm --prefix apps/worker run job:pull-nhl-player-shots
 # Sync NHL player availability (refreshes INJURED/DTD/ACTIVE status)
 npm --prefix apps/worker run job:sync-nhl-player-availability
 
-# Pull NHL player shots props
-# ⚠️  DISABLED on 500-token budget (2026-03-24) — SOG prop API calls burn 2 tokens/event × 6 windows/day
-# Re-enable when upgraded to paid API tier:
-# set -a; source .env; set +a; npm --prefix apps/worker run job:pull-nhl-player-shots-props
-
 # Run NHL player shots prop model (runs on cached/stale lines even without prop pull)
 npm --prefix apps/worker run job:run-nhl-player-shots-model
 
-# DISABLED — Soccer model off (2026-03-24): odds fetch disabled, 9 tokens/fetch
-# set -a; source .env; set +a; SOCCER_PROP_EVENTS_ENABLED=true npm --prefix apps/worker run job:pull-soccer-player-props
-
-# DISABLED — Soccer xG off (soccer model disabled)
-# set -a; source .env; set +a; ENABLE_SOCCER_XG_MODEL=true npm --prefix apps/worker run job:pull-soccer-xg-stats
-
 # Prewarm team metrics cache (recommended before early model windows)
 set -a; source .env; set +a; npm --prefix apps/worker run job:refresh-team-metrics
-
-# Post Discord per-game decision snapshot (manual)
-# Requires: ENABLE_DISCORD_CARD_WEBHOOKS=true and DISCORD_CARD_WEBHOOK_URL set
-set -a; source .env; set +a; npm --prefix apps/worker run job:post-discord-cards
-
-# Post Discord per-game decision snapshot on the Pi (production DB)
-# Run from repo root on the Pi
-set -a; source .env.production; set +a; ENABLE_DISCORD_CARD_WEBHOOKS=true CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:post-discord-cards
 
 # Pull MLB pitcher stats + weather (no npm script — run directly; scheduler does this automatically)
 node apps/worker/src/jobs/pull_mlb_pitcher_stats.js
@@ -219,11 +200,23 @@ set -a; source .env; set +a; npm --prefix apps/worker run job:run-nba-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-nhl-model
 set -a; source .env; set +a; npm --prefix apps/worker run job:run-mlb-model
 
+# Post Discord per-game decision snapshot on the Pi (production DB)
+# Run from repo root on the Pi
+set -a; source .env.production; set +a; ENABLE_DISCORD_CARD_WEBHOOKS=true CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix apps/worker run job:post-discord-cards
+
+# Post Discord per-game decision snapshot (manual)
+# Requires: ENABLE_DISCORD_CARD_WEBHOOKS=true and DISCORD_CARD_WEBHOOK_URL set
+set -a; source .env; set +a; npm --prefix apps/worker run job:post-discord-cards
+
 # DISABLED — Soccer: odds fetch off (9 tokens/fetch), 2026-03-24
 # set -a; source .env; set +a; npm --prefix apps/worker run job:run-soccer-model
 
 # DISABLED — NCAAM: off-season + budget
 # set -a; source .env; set +a; npm --prefix apps/worker run job:run-ncaam-model
+# Pull NHL player shots props
+# ⚠️  DISABLED on 500-token budget (2026-03-24) — SOG prop API calls burn 2 tokens/event × 6 windows/day
+# Re-enable when upgraded to paid API tier:
+# set -a; source .env; set +a; npm --prefix apps/worker run job:pull-nhl-player-shots-props
 
 ```
 

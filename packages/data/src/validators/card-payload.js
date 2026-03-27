@@ -595,6 +595,7 @@ const schemaByCardType = {
   'mlb-model-output': basePayloadSchema,
   'mlb-strikeout': basePayloadSchema,
   'mlb-f5': basePayloadSchema,
+  'mlb-f5-ml': basePayloadSchema,
   'nfl-model-output': basePayloadSchema,
   'fpl-model-output': basePayloadSchema,
 
@@ -619,6 +620,7 @@ const SOCCER_SELF_CONTAINED_TYPES = new Set([
   'mlb-pitcher-k',
   'mlb-strikeout',
   'mlb-f5',
+  'mlb-f5-ml',
 ]);
 
 /**

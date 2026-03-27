@@ -106,18 +106,18 @@ describe('decision publisher v2 pipeline', () => {
     expect(deriveAction({ tier: null })).toBe('PASS');
   });
 
-  test('attaches decision_v2 for wave1 payload and derives PLAY', () => {
+  test('attaches decision_v2 for wave1 payload and preserves the actionable decision envelope', () => {
     const payload = buildWave1Payload();
     applyUiActionFields(payload);
 
     expect(payload.decision_v2).toBeDefined();
     expect(payload.decision_v2.pipeline_version).toBe('v2');
-    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.official_status).toBe('LEAN');
     expect(payload.decision_v2.play_tier).toBe('GOOD');
     expect(payload.decision_v2.primary_reason_code).toBe('EDGE_CLEAR');
-    expect(payload.action).toBe('FIRE');
-    expect(payload.status).toBe('FIRE');
-    expect(payload.classification).toBe('BASE');
+    expect(payload.action).toBe('HOLD');
+    expect(payload.status).toBe('WATCH');
+    expect(payload.classification).toBe('LEAN');
   });
 
   test('preserves additive pipeline_state metadata', () => {
@@ -140,7 +140,7 @@ describe('decision publisher v2 pipeline', () => {
 
     expect(payload.pipeline_state).toEqual(pipelineState);
     expect(payload.decision_v2).toBeDefined();
-    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.official_status).toBe('LEAN');
   });
 
   test('synthesizes required consistency fields when missing', () => {
@@ -165,6 +165,9 @@ describe('decision publisher v2 pipeline', () => {
 
   test('marks freshness as CAUTION when odds_context.captured_at is between 5 and 30 minutes old', () => {
     const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
       odds_context: {
         captured_at: minutesAgoIso(10),
       },
@@ -175,8 +178,13 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2.watchdog_reason_codes).toContain(
       'WATCHDOG_STALE_SNAPSHOT',
     );
-    // Within the caution window, card may still classify as playable.
-    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'PLAY_REQUIRES_FRESH_MARKET',
+    );
+    expect(payload.decision_v2.primary_reason_code).toBe(
+      'PLAY_REQUIRES_FRESH_MARKET',
+    );
   });
 
   test('blocks when odds are stale beyond 30 minutes with explicit stale-input reason code', () => {
@@ -250,6 +258,9 @@ describe('decision publisher v2 pipeline', () => {
 
   test('maps LEAN and PASS correctly from support/edge bands', () => {
     const leanPayload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
       driver: {
         score: 0.5,
         inputs: { conflict: 0.1 },
@@ -272,6 +283,63 @@ describe('decision publisher v2 pipeline', () => {
     applyUiActionFields(passPayload);
     expect(passPayload.decision_v2.official_status).toBe('PASS');
     expect(passPayload.action).toBe('PASS');
+  });
+
+  test('caps high-conflict PLAY rows to LEAN with explicit contradiction reason', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      driver: {
+        score: 0.72,
+        inputs: { conflict: 0.45 },
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'PLAY_CONTRADICTION_CAPPED',
+    );
+    expect(payload.decision_v2.primary_reason_code).toBe(
+      'PLAY_CONTRADICTION_CAPPED',
+    );
+  });
+
+  test('keeps clean NHL PLAY rows as PLAY under the new ceiling', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.watchdog_status).toBe('OK');
+    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
+      'PLAY_REQUIRES_FRESH_MARKET',
+    );
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
+      'PLAY_CONTRADICTION_CAPPED',
+    );
+  });
+
+  test('leaves NCAAM behavior unchanged outside the new cleanliness scope', () => {
+    const payload = buildWave1Payload({
+      sport: 'NCAAM',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      odds_context: {
+        captured_at: minutesAgoIso(10),
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.watchdog_status).toBe('CAUTION');
+    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
+      'PLAY_REQUIRES_FRESH_MARKET',
+    );
   });
 
   test('downgrades heavy-favorite moneyline PLAY to LEAN at -300 band when edge is below 2x play threshold', () => {
@@ -448,6 +516,9 @@ describe('decision publisher v2 pipeline', () => {
 
   test('blocks priced promotion when proxy edge is marked as proxy_used', () => {
     const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
       proxy_used: true,
       edge: 0.07,
       model_prob: 0.6,

@@ -319,6 +319,17 @@ interface GameData {
     spreadPriceAway: number | null;
     totalPriceOver: number | null;
     totalPriceUnder: number | null;
+    spreadConsensusLine: number | null;
+    spreadConsensusConfidence: string | null;
+    spreadDispersionStddev: number | null;
+    spreadSourceBookCount: number | null;
+    totalConsensusLine: number | null;
+    totalConsensusConfidence: string | null;
+    totalDispersionStddev: number | null;
+    totalSourceBookCount: number | null;
+    h2hConsensusHome: number | null;
+    h2hConsensusAway: number | null;
+    h2hConsensusConfidence: string | null;
     capturedAt: string | null;
   } | null;
   plays: Array<{
@@ -1870,6 +1881,15 @@ export default function CardsPageClient() {
     return names[book] ?? book;
   };
 
+  const formatConsensusConfidence = (
+    confidence: string | null | undefined,
+  ): string | null => {
+    if (confidence === 'high') return 'high';
+    if (confidence === 'medium') return 'med';
+    if (confidence === 'low') return 'low';
+    return null;
+  };
+
   const formatProjectedMarginDirectional = (
     projectedMargin: number | undefined,
   ) => {
@@ -2559,17 +2579,34 @@ export default function CardsPageClient() {
       displayPlay.selection?.side ?? displayPlay.bet?.side
     )?.toUpperCase();
     const isAwaySpread = spreadSelectionSide === 'AWAY';
-    const liveSpreadLine =
-      isSpreadLikeMarket && typeof originalGame.odds?.spreadHome === 'number'
-        ? isAwaySpread
-          ? -originalGame.odds.spreadHome
-          : originalGame.odds.spreadHome
+    const consensusSpreadHomeLine =
+      isSpreadLikeMarket &&
+      typeof originalGame.odds?.spreadConsensusLine === 'number'
+        ? originalGame.odds.spreadConsensusLine
         : undefined;
-    const marketLineBook =
-      liveSpreadLine !== undefined
+    const liveSpreadLine =
+      consensusSpreadHomeLine !== undefined
+        ? isAwaySpread
+          ? -consensusSpreadHomeLine
+          : consensusSpreadHomeLine
+        : isSpreadLikeMarket && typeof originalGame.odds?.spreadHome === 'number'
+          ? isAwaySpread
+            ? -originalGame.odds.spreadHome
+            : originalGame.odds.spreadHome
+          : undefined;
+    const bestSpreadBook =
+      isSpreadLikeMarket && liveSpreadLine !== undefined
         ? isAwaySpread
           ? originalGame.odds?.spreadAwayBook ?? null
           : originalGame.odds?.spreadHomeBook ?? null
+        : null;
+    const usingConsensusSpreadLine =
+      isSpreadLikeMarket && consensusSpreadHomeLine !== undefined;
+    const spreadConsensusConfidenceLabel =
+      usingConsensusSpreadLine
+        ? formatConsensusConfidence(
+            originalGame.odds?.spreadConsensusConfidence ?? null,
+          )
         : null;
     const marketLine =
       isTotalLikeMarket && typeof originalGame.odds?.total === 'number'
@@ -2863,9 +2900,16 @@ export default function CardsPageClient() {
                             ? formatSignedDecimal(marketLine)
                             : 'N/A'}
                         </span>
-                        {marketLineBook && (
+                        {spreadConsensusConfidenceLabel && (
                           <span className="text-cloud/45 ml-1">
-                            ({formatBookName(marketLineBook)})
+                            [{spreadConsensusConfidenceLabel} consensus]
+                          </span>
+                        )}
+                        {bestSpreadBook && (
+                          <span className="text-cloud/45 ml-1">
+                            {usingConsensusSpreadLine
+                              ? `best book ${formatBookName(bestSpreadBook)}`
+                              : `(${formatBookName(bestSpreadBook)})`}
                           </span>
                         )}{' '}
                         | Delta:{' '}

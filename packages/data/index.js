@@ -189,6 +189,9 @@ module.exports = {
   claimTminusPullSlot: db.claimTminusPullSlot,
   purgeStaleTminusPullLog: db.purgeStaleTminusPullLog,
 
+  // Line delta utility
+  computeLineDelta: db.computeLineDelta,
+
   // Dual-database mode (recommended for production)
   initDualDb: dbDualInit.initDualDb,
   closeDualDb: dbDualInit.closeDualDb,

@@ -1,5 +1,9 @@
 const edgeCalculator = require('./edge-calculator');
-const { resolveThresholdProfile, applyNbaTotalQuarantine } = require('./decision-pipeline-v2.patch');
+const {
+  resolveThresholdProfile,
+  resolvePlayCleanlinessProfile,
+  applyNbaTotalQuarantine,
+} = require('./decision-pipeline-v2.patch');
 
 // Edge unit: all edge values in this pipeline are decimal fractions.
 // See CANONICAL_EDGE_CONTRACT in decision-gate.js for the authoritative definition.
@@ -39,10 +43,13 @@ const PRICE_REASONS = {
   EDGE_VERIFICATION_REQUIRED: 'EDGE_VERIFICATION_REQUIRED',
   EDGE_SANITY_NON_TOTAL: 'EDGE_SANITY_NON_TOTAL',
   HEAVY_FAVORITE_PRICE_CAP: 'HEAVY_FAVORITE_PRICE_CAP',
+  PLAY_REQUIRES_FRESH_MARKET: 'PLAY_REQUIRES_FRESH_MARKET',
+  PLAY_CONTRADICTION_CAPPED: 'PLAY_CONTRADICTION_CAPPED',
   // FIRST_PERIOD canonical reason codes (WI-0537)
   FIRST_PERIOD_PROJECTION_PLAY: 'FIRST_PERIOD_PROJECTION_PLAY',
   FIRST_PERIOD_PROJECTION_LEAN: 'FIRST_PERIOD_PROJECTION_LEAN',
   FIRST_PERIOD_NO_PROJECTION: 'FIRST_PERIOD_NO_PROJECTION',
+  LINE_MOVE_ADVERSE: 'LINE_MOVE_ADVERSE',
 };
 
 /**
@@ -55,51 +62,19 @@ const PRICE_REASONS = {
  * classifyPrice, computeOfficialStatus, and play_tier derivation.
  *
  * Contract:
- *  - FIRST_PERIOD does NOT require a market price to be actionable.
  *  - Direction must be OVER or UNDER (enforced by sideValidForMarket).
- *  - Actionability is determined solely by projectionSignal (PLAY/LEAN/PASS).
+ *  - FIRST_PERIOD_NO_PROJECTION remains available as a PASS/no-signal
+ *    compatibility reason code for downstream diagnostics.
  */
 const FIRST_PERIOD_POLICY = Object.freeze({
   /**
-   * Maps a projectionSignal to the sharp_price_status that classifyPrice
-   * should return for a FIRST_PERIOD payload.
-   */
-  toSharpPriceStatus(projectionSignal) {
-    if (projectionSignal === 'PLAY' || projectionSignal === 'LEAN')
-      return 'CHEDDAR';
-    return 'COTTAGE';
-  },
-
-  /**
    * Maps a projectionSignal to the single canonical price_reason_code for
-   * the FIRST_PERIOD market type.  Callers should include this as the first
-   * entry in the price_reason_codes array.
+   * the FIRST_PERIOD market type when preserving PASS/no-signal compatibility.
    */
   toPriceReasonCode(projectionSignal) {
-    if (projectionSignal === 'PLAY')
-      return PRICE_REASONS.FIRST_PERIOD_PROJECTION_PLAY;
-    if (projectionSignal === 'LEAN')
-      return PRICE_REASONS.FIRST_PERIOD_PROJECTION_LEAN;
-    return PRICE_REASONS.FIRST_PERIOD_NO_PROJECTION;
-  },
-
-  /**
-   * Maps a projectionSignal to the official_status returned by
-   * computeOfficialStatus for a FIRST_PERIOD market.
-   */
-  toOfficialStatus(projectionSignal) {
-    if (projectionSignal === 'PLAY') return 'PLAY';
-    if (projectionSignal === 'LEAN') return 'LEAN';
-    return 'PASS';
-  },
-
-  /**
-   * Maps a projectionSignal to the play_tier used in the decision envelope.
-   */
-  toPlayTier(projectionSignal) {
-    if (projectionSignal === 'PLAY') return 'GOOD';
-    if (projectionSignal === 'LEAN') return 'OK';
-    return 'BAD';
+    return projectionSignal === 'PASS'
+      ? PRICE_REASONS.FIRST_PERIOD_NO_PROJECTION
+      : null;
   },
 });
 
@@ -130,6 +105,10 @@ const HARD_INVALIDATION_PRICE_REASONS = new Set([
   PRICE_REASONS.MARKET_EDGE_UNAVAILABLE,
   PRICE_REASONS.PROXY_EDGE_BLOCKED,
   PRICE_REASONS.EDGE_VERIFICATION_REQUIRED,
+]);
+const PLAY_CAPPED_PRICE_REASONS = new Set([
+  PRICE_REASONS.PLAY_REQUIRES_FRESH_MARKET,
+  PRICE_REASONS.PLAY_CONTRADICTION_CAPPED,
 ]);
 
 const FIELD_SOURCES = {
@@ -172,6 +151,95 @@ function uniqueReasonCodes(...reasonGroups) {
     }
   }
   return merged;
+}
+
+function normalizeLineContext(payload, context = {}) {
+  const raw =
+    (context?.lineContext && typeof context.lineContext === 'object'
+      ? context.lineContext
+      : null) ||
+    (payload?.line_context && typeof payload.line_context === 'object'
+      ? payload.line_context
+      : null) ||
+    (payload?.lineContext && typeof payload.lineContext === 'object'
+      ? payload.lineContext
+      : null);
+
+  if (!raw) return null;
+
+  const opener_line = asNumber(raw.opener_line ?? raw.openerLine);
+  const current_line = asNumber(raw.current_line ?? raw.currentLine);
+  const rawDelta = asNumber(raw.delta ?? raw.lineDelta);
+  const delta =
+    rawDelta !== null
+      ? rawDelta
+      : opener_line !== null && current_line !== null
+        ? current_line - opener_line
+        : null;
+  const delta_pct = asNumber(raw.delta_pct ?? raw.deltaPct);
+
+  if (opener_line === null && current_line === null && delta === null) {
+    return null;
+  }
+
+  return {
+    opener_line,
+    current_line,
+    delta,
+    delta_pct,
+  };
+}
+
+function computeAdverseLineDelta({ marketType, direction, lineContext }) {
+  if (!lineContext) return 0;
+
+  const signedDelta =
+    asNumber(lineContext.delta) ??
+    (asNumber(lineContext.opener_line) !== null &&
+    asNumber(lineContext.current_line) !== null
+      ? asNumber(lineContext.current_line) - asNumber(lineContext.opener_line)
+      : null);
+
+  if (signedDelta === null) return 0;
+
+  if (
+    marketType === 'TOTAL' ||
+    marketType === 'TEAM_TOTAL' ||
+    marketType === 'FIRST_PERIOD'
+  ) {
+    if (direction === 'OVER') return Math.max(signedDelta, 0);
+    if (direction === 'UNDER') return Math.max(-signedDelta, 0);
+    return 0;
+  }
+
+  if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+    if (direction === 'HOME' || direction === 'AWAY') {
+      return Math.max(-signedDelta, 0);
+    }
+  }
+
+  return 0;
+}
+
+function applyAdverseLineMoveToEdge({
+  edgePct,
+  edgeLineDelta,
+  adverseLineDelta,
+}) {
+  if (
+    !Number.isFinite(edgePct) ||
+    !Number.isFinite(edgeLineDelta) ||
+    !Number.isFinite(adverseLineDelta) ||
+    adverseLineDelta <= 0
+  ) {
+    return edgePct;
+  }
+
+  const edgeLineMagnitude = Math.abs(edgeLineDelta);
+  if (edgeLineMagnitude <= 0) return edgePct;
+
+  const adjustedRatio = (edgeLineMagnitude - adverseLineDelta) / edgeLineMagnitude;
+  return Number((edgePct * adjustedRatio).toFixed(4));
 }
 
 function buildPipelineState(input = {}) {
@@ -460,7 +528,6 @@ function classifyPrice({
   hasPrimarySupport = true,
   proxyUsed = false,
   proxyAllowed = false,
-  projectionSignal = 'PASS',
 }) {
   const thresholds = getThresholdProfile(marketType, sport);
 
@@ -484,15 +551,6 @@ function classifyPrice({
     return {
       sharp_price_status: 'UNPRICED',
       price_reason_codes: [PRICE_REASONS.NO_PRIMARY_SUPPORT],
-      proxy_capped: false,
-    };
-  }
-
-  if (marketType === 'FIRST_PERIOD') {
-    // All FIRST_PERIOD actionability is encoded in FIRST_PERIOD_POLICY (WI-0537).
-    return {
-      sharp_price_status: FIRST_PERIOD_POLICY.toSharpPriceStatus(projectionSignal),
-      price_reason_codes: [FIRST_PERIOD_POLICY.toPriceReasonCode(projectionSignal)],
       proxy_capped: false,
     };
   }
@@ -596,7 +654,8 @@ function marketRequiresPrice(marketType) {
     marketType === 'SPREAD' ||
     marketType === 'PUCKLINE' ||
     marketType === 'TOTAL' ||
-    marketType === 'TEAM_TOTAL'
+    marketType === 'TEAM_TOTAL' ||
+    marketType === 'FIRST_PERIOD'
   );
 }
 
@@ -820,7 +879,6 @@ function computeOfficialStatus({
   sport,
   marketType,
   proxyCapped = false,
-  projectionSignal = 'PASS',
 }) {
   const thresholds = getThresholdProfile(marketType, sport);
 
@@ -828,11 +886,6 @@ function computeOfficialStatus({
   if (sharpPriceStatus === 'PENDING_VERIFICATION') return 'PASS';
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
     return 'PASS';
-  }
-
-  if (marketType === 'FIRST_PERIOD') {
-    // Delegate to FIRST_PERIOD_POLICY — single source of truth (WI-0537).
-    return FIRST_PERIOD_POLICY.toOfficialStatus(projectionSignal);
   }
 
   if (edgePct === null) return 'PASS';
@@ -854,6 +907,46 @@ function computeOfficialStatus({
   }
 
   return 'PASS';
+}
+
+function applyPlayCleanlinessCap({
+  officialStatus,
+  sport,
+  marketType,
+  watchdogStatus,
+  conflictScore,
+  priceReasonCodes = [],
+}) {
+  if (officialStatus !== 'PLAY') {
+    return { officialStatus, priceReasonCodes };
+  }
+
+  const profile = resolvePlayCleanlinessProfile({ sport, marketType });
+  if (!profile?.enabled) {
+    return { officialStatus, priceReasonCodes };
+  }
+
+  const capReasons = [];
+  if (profile.require_watchdog_ok && watchdogStatus !== 'OK') {
+    capReasons.push(PRICE_REASONS.PLAY_REQUIRES_FRESH_MARKET);
+  }
+
+  if (
+    Number.isFinite(profile.play_conflict_max) &&
+    Number.isFinite(conflictScore) &&
+    conflictScore > profile.play_conflict_max
+  ) {
+    capReasons.push(PRICE_REASONS.PLAY_CONTRADICTION_CAPPED);
+  }
+
+  if (capReasons.length === 0) {
+    return { officialStatus, priceReasonCodes };
+  }
+
+  return {
+    officialStatus: 'LEAN',
+    priceReasonCodes: uniqueReasonCodes(priceReasonCodes, capReasons),
+  };
 }
 
 function resolvePrimaryReason({
@@ -880,6 +973,13 @@ function resolvePrimaryReason({
 
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
     return priceReasonCodes[0] || PRICE_REASONS.MARKET_PRICE_MISSING;
+  }
+
+  const playCappedReason = priceReasonCodes.find((code) =>
+    PLAY_CAPPED_PRICE_REASONS.has(code),
+  );
+  if (playCappedReason) {
+    return playCappedReason;
   }
 
   if (proxyCapped) {
@@ -1166,11 +1266,11 @@ function buildDecisionV2(payload, context = {}) {
             totalLine,
             totalPriceOver:
               market_type === 'FIRST_PERIOD'
-                ? null
+                ? asNumber(oddsCtx?.total_price_over_1p)
                 : asNumber(oddsCtx?.total_price_over),
             totalPriceUnder:
               market_type === 'FIRST_PERIOD'
-                ? null
+                ? asNumber(oddsCtx?.total_price_under_1p)
                 : asNumber(oddsCtx?.total_price_under),
             sigmaTotal: resolvedSigmaTotal,
             isPredictionOver: direction === 'OVER',
@@ -1226,10 +1326,25 @@ function buildDecisionV2(payload, context = {}) {
       }
     }
 
-    const edge_pct =
+    const raw_edge_pct =
       fair_prob !== null && implied_prob !== null
         ? fair_prob - implied_prob
         : null;
+    const lineContext = normalizeLineContext(payload, context);
+    const adverse_line_delta = computeAdverseLineDelta({
+      marketType: market_type,
+      direction,
+      lineContext,
+    });
+    const edge_pct = applyAdverseLineMoveToEdge({
+      edgePct: raw_edge_pct,
+      edgeLineDelta: edge_line_delta,
+      adverseLineDelta: adverse_line_delta,
+    });
+    const lineMoveReasonCodes =
+      adverse_line_delta > 1
+        ? [PRICE_REASONS.LINE_MOVE_ADVERSE]
+        : [];
 
     const hasPrimarySupport =
       drivers_used.length > 0 || asString(payload?.driver?.key) !== null;
@@ -1245,7 +1360,6 @@ function buildDecisionV2(payload, context = {}) {
       hasPrimarySupport,
       proxyUsed: proxy_used,
       proxyAllowed: proxy_allowed,
-      projectionSignal: firstPeriodProjectionSignal,
     });
     const proxy_capped = priceDecision.proxy_capped === true;
 
@@ -1257,18 +1371,39 @@ function buildDecisionV2(payload, context = {}) {
       sport,
       marketType: market_type,
       proxyCapped: proxy_capped,
-      projectionSignal: firstPeriodProjectionSignal,
     });
 
     const thresholdProfile = getThresholdProfile(market_type, sport);
-    let finalOfficialStatus = computedOfficialStatus;
-    let finalPriceReasonCodes = [...priceDecision.price_reason_codes];
+    const playCleanlinessResult = applyPlayCleanlinessCap({
+      officialStatus: computedOfficialStatus,
+      sport,
+      marketType: market_type,
+      watchdogStatus: watchdog.watchdog_status,
+      conflictScore: conflict_score,
+      priceReasonCodes: priceDecision.price_reason_codes,
+    });
+    let finalOfficialStatus = playCleanlinessResult.officialStatus;
+    let finalPriceReasonCodes = uniqueReasonCodes(
+      playCleanlinessResult.priceReasonCodes,
+      lineMoveReasonCodes,
+    );
 
-    // play_tier for FIRST_PERIOD delegates to canonical policy (WI-0537).
-    const play_tier =
-      market_type === 'FIRST_PERIOD'
-        ? FIRST_PERIOD_POLICY.toPlayTier(firstPeriodProjectionSignal)
-        : derivePlayTierWithThresholds(edge_pct, thresholdProfile);
+    if (
+      market_type === 'FIRST_PERIOD' &&
+      firstPeriodProjectionSignal === 'PASS' &&
+      finalOfficialStatus === 'PASS'
+    ) {
+      const compatibilityReason =
+        FIRST_PERIOD_POLICY.toPriceReasonCode(firstPeriodProjectionSignal);
+      if (compatibilityReason) {
+        finalPriceReasonCodes = uniqueReasonCodes(
+          compatibilityReason,
+          finalPriceReasonCodes,
+        );
+      }
+    }
+
+    const play_tier = derivePlayTierWithThresholds(edge_pct, thresholdProfile);
 
     const heavyFavoriteMultiplier = getHeavyFavoritePlayEdgeMultiplier(price);
     const heavyFavoritePlayEdgeMin =
@@ -1339,6 +1474,7 @@ function buildDecisionV2(payload, context = {}) {
       fair_prob,
       implied_prob,
       edge_pct,
+      edge_pct_raw: raw_edge_pct,
       edge_units: EDGE_UNITS,   // unit per CANONICAL_EDGE_CONTRACT
       threshold_profile: {
         source: thresholdProfile.source,
@@ -1350,6 +1486,15 @@ function buildDecisionV2(payload, context = {}) {
       edge_method,
       edge_line_delta,
       edge_lean,
+      line_moved:
+        Number.isFinite(lineContext?.delta) && Math.abs(lineContext.delta) > 0,
+      line_delta: lineContext?.delta ?? null,
+      line_delta_pct: lineContext?.delta_pct ?? null,
+      opener_line: lineContext?.opener_line ?? null,
+      current_line:
+        lineContext?.current_line ?? lineContext?.opener_line ?? null,
+      adverse_line_delta:
+        adverse_line_delta > 0 ? Number(adverse_line_delta.toFixed(4)) : 0,
       proxy_used,
       proxy_capped,
       exact_wager_valid,

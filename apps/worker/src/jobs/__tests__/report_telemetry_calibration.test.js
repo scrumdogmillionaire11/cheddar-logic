@@ -409,6 +409,286 @@ function seedNhlMoneylineCalibrationFixture(db, scenario = 'justified') {
   }
 }
 
+function insertSettledDecisionTierCard(db, {
+  id,
+  gameId,
+  sport,
+  marketType,
+  result,
+  pnlUnits,
+  officialStatus,
+  timestamp,
+}) {
+  runInsert(
+    db,
+    `
+    INSERT OR IGNORE INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    `g-${gameId}`,
+    sport.toLowerCase(),
+    gameId,
+    `Home ${gameId}`,
+    `Away ${gameId}`,
+    timestamp,
+    'final',
+  );
+
+  runInsert(
+    db,
+    `
+    INSERT INTO card_payloads (
+      id, game_id, sport, card_type, card_title, created_at, payload_data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    id,
+    gameId,
+    sport.toLowerCase(),
+    `${sport.toLowerCase()}-${marketType.toLowerCase()}-call`,
+    `${sport} ${marketType} ${id}`,
+    timestamp,
+    JSON.stringify({
+      sport,
+      market_type: marketType,
+      decision_v2: {
+        official_status: officialStatus,
+      },
+    }),
+  );
+
+  runInsert(
+    db,
+    `
+    INSERT INTO card_results (
+      id, card_id, game_id, sport, card_type, recommended_bet_type,
+      market_key, market_type, selection, line, locked_price,
+      status, result, settled_at, pnl_units, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    `result-${id}`,
+    id,
+    gameId,
+    sport.toLowerCase(),
+    `${sport.toLowerCase()}-${marketType.toLowerCase()}-call`,
+    marketType.toLowerCase(),
+    `${sport}|${marketType}|${gameId}`,
+    marketType,
+    'HOME',
+    null,
+    -110,
+    'settled',
+    result,
+    timestamp,
+    pnlUnits,
+    JSON.stringify({ source: 'decision-tier-fixture' }),
+  );
+}
+
+function seedDecisionTierAuditFixture(db) {
+  const now = '2026-03-18T10:00:00.000Z';
+
+  insertSettledDecisionTierCard(db, {
+    id: 'tier-play-win',
+    gameId: 'tier-play-win-game',
+    sport: 'NBA',
+    marketType: 'TOTAL',
+    result: 'win',
+    pnlUnits: 0.91,
+    officialStatus: 'PLAY',
+    timestamp: now,
+  });
+  insertSettledDecisionTierCard(db, {
+    id: 'tier-play-loss',
+    gameId: 'tier-play-loss-game',
+    sport: 'NHL',
+    marketType: 'MONEYLINE',
+    result: 'loss',
+    pnlUnits: -1.0,
+    officialStatus: 'PLAY',
+    timestamp: now,
+  });
+  insertSettledDecisionTierCard(db, {
+    id: 'tier-lean-win',
+    gameId: 'tier-lean-win-game',
+    sport: 'NHL',
+    marketType: 'SPREAD',
+    result: 'win',
+    pnlUnits: 0.91,
+    officialStatus: 'LEAN',
+    timestamp: now,
+  });
+  insertSettledDecisionTierCard(db, {
+    id: 'tier-lean-push',
+    gameId: 'tier-lean-push-game',
+    sport: 'NBA',
+    marketType: 'TEAM_TOTAL',
+    result: 'push',
+    pnlUnits: 0,
+    officialStatus: 'LEAN',
+    timestamp: now,
+  });
+  insertSettledDecisionTierCard(db, {
+    id: 'tier-ncaam-ignored',
+    gameId: 'tier-ncaam-ignored-game',
+    sport: 'NCAAM',
+    marketType: 'TOTAL',
+    result: 'win',
+    pnlUnits: 0.91,
+    officialStatus: 'PLAY',
+    timestamp: now,
+  });
+}
+
+function insertSettledNhlShotsBreakoutCard(db, {
+  id,
+  gameId,
+  result,
+  pnlUnits,
+  breakoutFlags = [],
+  clvPct = null,
+  timestamp,
+}) {
+  runInsert(
+    db,
+    `
+    INSERT OR IGNORE INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    `g-${gameId}`,
+    'nhl',
+    gameId,
+    `Home ${gameId}`,
+    `Away ${gameId}`,
+    timestamp,
+    'final',
+  );
+
+  runInsert(
+    db,
+    `
+    INSERT INTO card_payloads (
+      id, game_id, sport, card_type, card_title, created_at, payload_data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    id,
+    gameId,
+    'nhl',
+    'nhl-player-shots',
+    `NHL SOG ${id}`,
+    timestamp,
+    JSON.stringify({
+      sport: 'NHL',
+      breakout: {
+        flags: breakoutFlags,
+        score: breakoutFlags.includes('BREAKOUT_CANDIDATE') ? 4 : 1,
+        eligible: breakoutFlags.includes('BREAKOUT_CANDIDATE'),
+      },
+      play: {
+        prop_type: 'shots_on_goal',
+        period: 'full_game',
+        selection: {
+          side: 'over',
+          line: 2.5,
+        },
+      },
+    }),
+  );
+
+  runInsert(
+    db,
+    `
+    INSERT INTO card_results (
+      id, card_id, game_id, sport, card_type, recommended_bet_type,
+      market_key, market_type, selection, line, locked_price,
+      status, result, settled_at, pnl_units, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    `result-${id}`,
+    id,
+    gameId,
+    'nhl',
+    'nhl-player-shots',
+    'prop',
+    `nhl|prop|${gameId}|over`,
+    'PROP',
+    'OVER',
+    2.5,
+    -110,
+    'settled',
+    result,
+    timestamp,
+    pnlUnits,
+    JSON.stringify({ source: 'breakout-fixture' }),
+  );
+
+  if (clvPct !== null) {
+    runInsert(
+      db,
+      `
+      INSERT INTO clv_ledger (
+        id, card_id, game_id, sport, market_type, prop_type, selection, line,
+        odds_at_pick, closing_odds, clv_pct, recorded_at, closed_at, decision_basis
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      `clv-${id}`,
+      id,
+      gameId,
+      'NHL',
+      'PROP',
+      'shots_on_goal',
+      'OVER',
+      2.5,
+      -110,
+      -105,
+      clvPct,
+      timestamp,
+      timestamp,
+      'ODDS_BACKED',
+    );
+  }
+}
+
+function seedNhlShotsBreakoutFixture(db) {
+  const now = '2026-03-18T10:00:00.000Z';
+
+  insertSettledNhlShotsBreakoutCard(db, {
+    id: 'breakout-win',
+    gameId: 'breakout-win-game',
+    result: 'win',
+    pnlUnits: 0.91,
+    breakoutFlags: ['BREAKOUT_CANDIDATE', 'TOI_TREND_UP'],
+    clvPct: 0.03,
+    timestamp: now,
+  });
+  insertSettledNhlShotsBreakoutCard(db, {
+    id: 'breakout-loss',
+    gameId: 'breakout-loss-game',
+    result: 'loss',
+    pnlUnits: -1.0,
+    breakoutFlags: ['BREAKOUT_CANDIDATE', 'ENV_BOOST'],
+    clvPct: -0.01,
+    timestamp: now,
+  });
+  insertSettledNhlShotsBreakoutCard(db, {
+    id: 'non-breakout-win',
+    gameId: 'non-breakout-win-game',
+    result: 'win',
+    pnlUnits: 0.91,
+    breakoutFlags: ['TOI_TREND_UP'],
+    clvPct: 0.01,
+    timestamp: now,
+  });
+  insertSettledNhlShotsBreakoutCard(db, {
+    id: 'non-breakout-push',
+    gameId: 'non-breakout-push-game',
+    result: 'push',
+    pnlUnits: 0,
+    breakoutFlags: [],
+    clvPct: null,
+    timestamp: now,
+  });
+}
+
 describe('telemetry calibration report', () => {
   beforeAll(async () => {
     process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
@@ -497,6 +777,107 @@ describe('telemetry calibration report', () => {
     expect(text).toContain('verdict: NOT_JUSTIFIED');
   });
 
+  test('includes targeted PLAY vs LEAN tier audit in json and text output', async () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+    seedDecisionTierAuditFixture(db);
+
+    const report = await generateTelemetryCalibrationReport({ db, days: 14 });
+    expect(report.decisionTierAudit).toMatchObject({
+      status: 'OK',
+      sampleWindow: {
+        days: 14,
+        anchorField: 'settled_at',
+      },
+      sports: ['NBA', 'NHL'],
+      marketTypes: ['MONEYLINE', 'SPREAD', 'TOTAL', 'PUCKLINE', 'TEAM_TOTAL'],
+    });
+
+    const playTier = report.decisionTierAudit.tiers.find(
+      (tier) => tier.tier === 'PLAY',
+    );
+    const leanTier = report.decisionTierAudit.tiers.find(
+      (tier) => tier.tier === 'LEAN',
+    );
+    expect(playTier).toMatchObject({
+      sampleSize: 2,
+      wins: 1,
+      losses: 1,
+      pushes: 0,
+      winRate: 0.5,
+      totalPnlUnits: -0.09,
+      avgPnlPerCard: -0.045,
+      roi: -0.045,
+    });
+    expect(leanTier).toMatchObject({
+      sampleSize: 2,
+      wins: 1,
+      losses: 0,
+      pushes: 1,
+      winRate: 1,
+      totalPnlUnits: 0.91,
+      avgPnlPerCard: 0.455,
+      roi: 0.455,
+    });
+
+    const text = formatTelemetryCalibrationReport(report, { enforce: true });
+    expect(text).toContain('decision_tier_audit');
+    expect(text).toContain('scope: sports=NBA, NHL | markets=MONEYLINE, SPREAD, TOTAL, PUCKLINE, TEAM_TOTAL');
+    expect(text).toContain('PLAY | 1W-1L-0P (2)');
+    expect(text).toContain('LEAN | 1W-0L-1P (2)');
+  });
+
+  test('reports breakout-tagged vs non-breakout NHL shots calibration buckets', async () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+    seedNhlShotsBreakoutFixture(db);
+
+    const report = await generateTelemetryCalibrationReport({ db, days: 14 });
+    expect(report.nhlShotsBreakoutCalibration).toMatchObject({
+      status: 'OK',
+      scope: {
+        sport: 'NHL',
+        propType: 'shots_on_goal',
+        period: 'full_game',
+        side: 'OVER',
+      },
+      sampleWindow: {
+        days: 14,
+        anchorField: 'settled_at',
+      },
+    });
+
+    expect(report.nhlShotsBreakoutCalibration.buckets.breakoutTagged).toMatchObject({
+      sampleSize: 2,
+      wins: 1,
+      losses: 1,
+      pushes: 0,
+      hitRate: 0.5,
+      totalPnlUnits: -0.09,
+      roi: -0.045,
+      clvSampleSize: 2,
+      meanClv: 0.01,
+      p25Clv: -0.01,
+    });
+    expect(report.nhlShotsBreakoutCalibration.buckets.nonBreakoutTagged).toMatchObject({
+      sampleSize: 2,
+      wins: 1,
+      losses: 0,
+      pushes: 1,
+      hitRate: 1,
+      totalPnlUnits: 0.91,
+      roi: 0.455,
+      clvSampleSize: 1,
+      meanClv: 0.01,
+      p25Clv: 0.01,
+    });
+
+    const text = formatTelemetryCalibrationReport(report, { enforce: true });
+    expect(text).toContain('nhl_shots_breakout_calibration');
+    expect(text).toContain('breakout_tagged | 1W-1L-0P (2)');
+    expect(text).toContain('non_breakout_tagged | 1W-0L-1P (2)');
+  });
+
   test('returns insufficient-data status with learning diagnostics and zero enforce exit', async () => {
     const db = getDatabase();
     clearTelemetryTables(db);
@@ -508,6 +889,15 @@ describe('telemetry calibration report', () => {
     expect(report.ledgers.clv.sampleGateMet).toBe(false);
     expect(report.diagnostics.projectionUnresolvedTopBuckets.length).toBeGreaterThan(0);
     expect(report.diagnostics.clvUnresolvedTopBuckets.length).toBeGreaterThan(0);
+    expect(report.diagnostics.clvUnresolvedTopBuckets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sport: 'NBA',
+          marketType: 'MONEYLINE',
+          unresolvedCount: 8,
+        }),
+      ]),
+    );
     expect(report.diagnostics.recommendations.length).toBeGreaterThan(0);
     expect(report.nhlMoneylineCalibration.status).toBe('INSUFFICIENT_DATA');
     expect(report.nhlMoneylineCalibration.verdict).toBe('INSUFFICIENT_DATA');

@@ -110,6 +110,11 @@ function settleClvEntry(cardId, closingOdds, clvPct, closedAt) {
   if (!isFlagEnabled('ENABLE_CLV_LEDGER')) return;
   const normalizedCardId = cardId ? String(cardId).trim() : '';
   if (!normalizedCardId) return;
+  const normalizedClosingOdds = Number(closingOdds);
+  const normalizedClvPct = Number(clvPct);
+  if (!Number.isFinite(normalizedClosingOdds) || !Number.isFinite(normalizedClvPct)) {
+    return;
+  }
 
   const db = getDb();
   ensureClvLedgerSchema(db);
@@ -120,8 +125,8 @@ function settleClvEntry(cardId, closingOdds, clvPct, closedAt) {
   `);
 
   stmt.run(
-    closingOdds ?? null,
-    clvPct ?? null,
+    normalizedClosingOdds,
+    normalizedClvPct,
     closedAt || new Date().toISOString(),
     normalizedCardId,
   );
