@@ -39,7 +39,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 - **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → ~~WI-0554~~✓ → WI-0556 → WI-0553
 - **Auth/JWT:** ~~WI-0559~~✓ → ~~WI-0560~~✓ (both done)
-- **Settlement → CLV (serial):** WI-0564 → WI-0566 → WI-0557
+- **Settlement → CLV:** ~~WI-0564~~(obsolete) → ~~WI-0566~~(obsolete) → WI-0557 now unblocked (NHL settlement sufficient)
 - **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
 - **NBA quarantine → diagnosis → tier fix:** ~~WI-0588~~✓ → ~~WI-0590~~✓ → WI-0589
 - **MLB pitcher-K market (serial with one gated branch):** WI-0595 → WI-0596 → (WI-0598 + prep for WI-0597) → WI-0597 → ~~WI-0599~~✓ (web surfaces done early as scaffolding)
@@ -83,7 +83,7 @@ This file is intentionally minimal to avoid stale status drift.
 | # | WI | Summary | Deps |
 |---|---|---|---|
 | 8 | [WI-0592](../WORK_QUEUE/WI-0592.md) | NHL SOG breakout usage overlay — rising-usage OVER candidates no longer flattened | none |
-| 9 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | none |
+| 9 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) — NHL settlement sufficient as base | none (WI-0564 obsolete) |
 | 10 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion) | none |
 | 11 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |
 
@@ -91,11 +91,9 @@ This file is intentionally minimal to avoid stale status drift.
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 12 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
-| 13 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
-| 14 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector (best-price separate from best-line) | WI-0568 |
-| 15 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
-| 16 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | WI-0568, WI-0569 |
+| 12 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector (best-price separate from best-line) | WI-0568 |
+| 13 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
+| 14 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | WI-0568, WI-0569 |
 
 ### P4 — New markets (after core pipeline stable)
 
@@ -172,11 +170,11 @@ This file is intentionally minimal to avoid stale status drift.
 | Order | WI | Summary | Depends on |
 |---|---|---|---|
 | 10 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | — |
-| 11 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | — |
-| 12 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge (not projection signal) | WI-0554 |
-| 13 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 |
-| 14 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
-| 15 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
+| 11 | ~~WI-0564~~ | Soccer settlement | OBSOLETE |
+| 12 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge (not projection signal) | WI-0554 ✓ |
+| 13 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 ✓ |
+| 14 | ~~WI-0566~~ | Player props settlement framework generalization | OBSOLETE (soccer dep) |
+| 15 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | none (WI-0564 obsolete — NHL settlement sufficient) |
 
 ---
 

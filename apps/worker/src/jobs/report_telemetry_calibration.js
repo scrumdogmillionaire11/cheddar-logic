@@ -28,6 +28,15 @@ const NHL_ML_RELIABILITY_BIN_RANGES = Object.freeze([
   [0.8, 0.9],
   [0.9, 1.0],
 ]);
+const DECISION_TIER_AUDIT_SPORTS = Object.freeze(['NBA', 'NHL']);
+const DECISION_TIER_AUDIT_MARKET_TYPES = Object.freeze([
+  'MONEYLINE',
+  'SPREAD',
+  'TOTAL',
+  'PUCKLINE',
+  'TEAM_TOTAL',
+]);
+const DECISION_TIER_AUDIT_STATUSES = Object.freeze(['PLAY', 'LEAN']);
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -478,6 +487,135 @@ function buildEdgeVerificationReport(db) {
   return { tablePresent: true, buckets };
 }
 
+function buildEmptyDecisionTierBucket(officialStatus) {
+  return {
+    tier: officialStatus,
+    sampleSize: 0,
+    wins: 0,
+    losses: 0,
+    pushes: 0,
+    winRate: null,
+    totalPnlUnits: null,
+    avgPnlPerCard: null,
+    roi: null,
+  };
+}
+
+function finalizeDecisionTierBucket(bucket) {
+  const decisions = bucket.wins + bucket.losses;
+  const hasSample = bucket.sampleSize > 0;
+  const totalPnlUnits =
+    hasSample && Number.isFinite(bucket.totalPnlUnits)
+      ? bucket.totalPnlUnits
+      : null;
+  return {
+    tier: bucket.tier,
+    sampleSize: bucket.sampleSize,
+    wins: bucket.wins,
+    losses: bucket.losses,
+    pushes: bucket.pushes,
+    winRate: decisions > 0 ? toRounded(bucket.wins / decisions) : null,
+    totalPnlUnits: Number.isFinite(totalPnlUnits) ? toRounded(totalPnlUnits) : null,
+    avgPnlPerCard:
+      hasSample && Number.isFinite(totalPnlUnits)
+        ? toRounded(totalPnlUnits / bucket.sampleSize)
+        : null,
+    roi:
+      hasSample && Number.isFinite(totalPnlUnits)
+        ? toRounded(totalPnlUnits / bucket.sampleSize)
+        : null,
+  };
+}
+
+function buildDecisionTierAudit(db, windowDays, generatedAtIso) {
+  const generatedAtMs = Date.parse(generatedAtIso);
+  const nowMs = Number.isFinite(generatedAtMs) ? generatedAtMs : Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const sampleWindow = {
+    days: windowDays,
+    anchorField: 'settled_at',
+    startUtc: new Date(nowMs - windowDays * dayMs).toISOString(),
+    endUtc: new Date(nowMs).toISOString(),
+  };
+  const baseReport = {
+    status: 'INSUFFICIENT_DATA',
+    sampleWindow,
+    sports: [...DECISION_TIER_AUDIT_SPORTS],
+    marketTypes: [...DECISION_TIER_AUDIT_MARKET_TYPES],
+    tiers: DECISION_TIER_AUDIT_STATUSES.map((status) =>
+      buildEmptyDecisionTierBucket(status),
+    ),
+  };
+  const hasCardResults = tableExists(db, 'card_results');
+  const hasCardPayloads = tableExists(db, 'card_payloads');
+  if (!hasCardResults || !hasCardPayloads) {
+    return baseReport;
+  }
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        cr.result,
+        cr.pnl_units,
+        cp.payload_data
+      FROM card_results cr
+      INNER JOIN card_payloads cp ON cp.id = cr.card_id
+      WHERE LOWER(COALESCE(cr.status, '')) = 'settled'
+        AND cr.settled_at IS NOT NULL
+        AND datetime(cr.settled_at) >= datetime('now', ?)
+        AND UPPER(COALESCE(cr.sport, '')) IN (${DECISION_TIER_AUDIT_SPORTS.map(() => '?').join(', ')})
+        AND UPPER(COALESCE(cr.market_type, '')) IN (${DECISION_TIER_AUDIT_MARKET_TYPES.map(() => '?').join(', ')})
+    `,
+    )
+    .all(
+      `-${windowDays} days`,
+      ...DECISION_TIER_AUDIT_SPORTS,
+      ...DECISION_TIER_AUDIT_MARKET_TYPES,
+    );
+
+  const buckets = Object.fromEntries(
+    DECISION_TIER_AUDIT_STATUSES.map((status) => [
+      status,
+      {
+        ...buildEmptyDecisionTierBucket(status),
+        totalPnlUnits: 0,
+      },
+    ]),
+  );
+
+  for (const row of rows) {
+    const payloadData = parseJsonObject(row.payload_data);
+    const officialStatus = toUpperToken(payloadData?.decision_v2?.official_status);
+    if (!DECISION_TIER_AUDIT_STATUSES.includes(officialStatus)) {
+      continue;
+    }
+
+    const bucket = buckets[officialStatus];
+    if (!bucket) continue;
+
+    bucket.sampleSize += 1;
+    const result = toUpperToken(row.result);
+    if (result === 'WIN') bucket.wins += 1;
+    else if (result === 'LOSS') bucket.losses += 1;
+    else if (result === 'PUSH') bucket.pushes += 1;
+
+    const pnlUnits = toNumber(row.pnl_units, 0);
+    bucket.totalPnlUnits += pnlUnits;
+  }
+
+  const tiers = DECISION_TIER_AUDIT_STATUSES.map((status) =>
+    finalizeDecisionTierBucket(buckets[status]),
+  );
+  const sampleSize = tiers.reduce((total, tier) => total + tier.sampleSize, 0);
+
+  return {
+    ...baseReport,
+    status: sampleSize > 0 ? 'OK' : 'INSUFFICIENT_DATA',
+    tiers,
+  };
+}
+
 function buildReliabilityBinTemplate() {
   return NHL_ML_RELIABILITY_BIN_RANGES.map(([lower, upper], index) => ({
     bucket: `${lower.toFixed(1)}-${upper.toFixed(1)}`,
@@ -862,6 +1000,7 @@ async function generateTelemetryCalibrationReport({
       windowDays,
       generatedAt,
     );
+    const decisionTierAudit = buildDecisionTierAudit(reader, windowDays, generatedAt);
     const edgeVerification = buildEdgeVerificationReport(reader);
     const checks = collectChecks(projection, clv);
     const diagnostics = buildFetchDiagnostics(reader, windowDays, projection, clv);
@@ -888,6 +1027,7 @@ async function generateTelemetryCalibrationReport({
         clv,
       },
       nhlMoneylineCalibration,
+      decisionTierAudit,
       edgeVerification,
       checks,
       overallStatus,
@@ -957,6 +1097,20 @@ function formatTelemetryCalibrationReport(report, { enforce = false } = {}) {
   lines.push(
     `- selected_reliability_bins: ${formatReliabilityBinsInline(report.nhlMoneylineCalibration.mappings.selected.reliabilityBins)}`,
   );
+  lines.push('');
+
+  lines.push('decision_tier_audit');
+  lines.push(
+    `- status: ${report.decisionTierAudit.status} | window: ${report.decisionTierAudit.sampleWindow.startUtc} -> ${report.decisionTierAudit.sampleWindow.endUtc} (${report.decisionTierAudit.sampleWindow.anchorField})`,
+  );
+  lines.push(
+    `- scope: sports=${report.decisionTierAudit.sports.join(', ')} | markets=${report.decisionTierAudit.marketTypes.join(', ')}`,
+  );
+  for (const tier of report.decisionTierAudit.tiers) {
+    lines.push(
+      `- ${tier.tier} | ${tier.wins}W-${tier.losses}L-${tier.pushes}P (${tier.sampleSize}) | win_rate ${formatPct(tier.winRate)} | total_pnl ${Number.isFinite(tier.totalPnlUnits) ? tier.totalPnlUnits.toFixed(3) : 'n/a'} | avg_pnl ${Number.isFinite(tier.avgPnlPerCard) ? tier.avgPnlPerCard.toFixed(3) : 'n/a'} | roi ${formatPct(tier.roi)}`,
+    );
+  }
   lines.push('');
 
   lines.push('edge_verification_outcomes');
@@ -1042,6 +1196,7 @@ module.exports = {
   __private: {
     buildEmptyMappingStats,
     buildClvLedgerReport,
+    buildDecisionTierAudit,
     buildFetchDiagnostics,
     buildNhlMoneylineCalibrationReport,
     buildProjectionLedgerReport,

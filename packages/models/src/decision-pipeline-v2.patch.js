@@ -6,6 +6,24 @@ const DEFAULT_EDGE_THRESHOLDS = Object.freeze({
   play_edge_min: 0.06,
   lean_edge_min: 0.03,
 });
+const DEFAULT_PLAY_CLEANLINESS_PROFILE = Object.freeze({
+  enabled: false,
+  require_watchdog_ok: false,
+  play_conflict_max: null,
+});
+const TARGETED_PLAY_CLEANLINESS_PROFILE = Object.freeze({
+  enabled: true,
+  require_watchdog_ok: true,
+  play_conflict_max: 0.3,
+});
+const PLAY_CLEANLINESS_SPORTS = new Set(['NBA', 'NHL']);
+const PLAY_CLEANLINESS_MARKETS = new Set([
+  'MONEYLINE',
+  'SPREAD',
+  'TOTAL',
+  'PUCKLINE',
+  'TEAM_TOTAL',
+]);
 
 function defaultSupportThresholds(marketType) {
   if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
@@ -97,6 +115,21 @@ function resolveThresholdProfile({ sport, marketType }) {
   };
 }
 
+function resolvePlayCleanlinessProfile({ sport, marketType }) {
+  const normalizedSport = typeof sport === 'string' ? sport.toUpperCase() : '';
+  const normalizedMarket =
+    typeof marketType === 'string' ? marketType.toUpperCase() : '';
+
+  if (
+    PLAY_CLEANLINESS_SPORTS.has(normalizedSport) &&
+    PLAY_CLEANLINESS_MARKETS.has(normalizedMarket)
+  ) {
+    return TARGETED_PLAY_CLEANLINESS_PROFILE;
+  }
+
+  return DEFAULT_PLAY_CLEANLINESS_PROFILE;
+}
+
 // WI-0588: NBA totals quarantine — demote actionable tiers one level.
 const QUARANTINE_REASON = 'NBA_TOTAL_QUARANTINE_DEMOTE';
 
@@ -118,5 +151,6 @@ module.exports = {
   SPORT_MARKET_THRESHOLDS_V2,
   defaultSupportThresholds,
   resolveThresholdProfile,
+  resolvePlayCleanlinessProfile,
   applyNbaTotalQuarantine,
 };

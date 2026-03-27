@@ -1,5 +1,9 @@
 const edgeCalculator = require('./edge-calculator');
-const { resolveThresholdProfile, applyNbaTotalQuarantine } = require('./decision-pipeline-v2.patch');
+const {
+  resolveThresholdProfile,
+  resolvePlayCleanlinessProfile,
+  applyNbaTotalQuarantine,
+} = require('./decision-pipeline-v2.patch');
 
 // Edge unit: all edge values in this pipeline are decimal fractions.
 // See CANONICAL_EDGE_CONTRACT in decision-gate.js for the authoritative definition.
@@ -39,6 +43,8 @@ const PRICE_REASONS = {
   EDGE_VERIFICATION_REQUIRED: 'EDGE_VERIFICATION_REQUIRED',
   EDGE_SANITY_NON_TOTAL: 'EDGE_SANITY_NON_TOTAL',
   HEAVY_FAVORITE_PRICE_CAP: 'HEAVY_FAVORITE_PRICE_CAP',
+  PLAY_REQUIRES_FRESH_MARKET: 'PLAY_REQUIRES_FRESH_MARKET',
+  PLAY_CONTRADICTION_CAPPED: 'PLAY_CONTRADICTION_CAPPED',
   // FIRST_PERIOD canonical reason codes (WI-0537)
   FIRST_PERIOD_PROJECTION_PLAY: 'FIRST_PERIOD_PROJECTION_PLAY',
   FIRST_PERIOD_PROJECTION_LEAN: 'FIRST_PERIOD_PROJECTION_LEAN',
@@ -130,6 +136,10 @@ const HARD_INVALIDATION_PRICE_REASONS = new Set([
   PRICE_REASONS.MARKET_EDGE_UNAVAILABLE,
   PRICE_REASONS.PROXY_EDGE_BLOCKED,
   PRICE_REASONS.EDGE_VERIFICATION_REQUIRED,
+]);
+const PLAY_CAPPED_PRICE_REASONS = new Set([
+  PRICE_REASONS.PLAY_REQUIRES_FRESH_MARKET,
+  PRICE_REASONS.PLAY_CONTRADICTION_CAPPED,
 ]);
 
 const FIELD_SOURCES = {
@@ -856,6 +866,46 @@ function computeOfficialStatus({
   return 'PASS';
 }
 
+function applyPlayCleanlinessCap({
+  officialStatus,
+  sport,
+  marketType,
+  watchdogStatus,
+  conflictScore,
+  priceReasonCodes = [],
+}) {
+  if (officialStatus !== 'PLAY') {
+    return { officialStatus, priceReasonCodes };
+  }
+
+  const profile = resolvePlayCleanlinessProfile({ sport, marketType });
+  if (!profile?.enabled) {
+    return { officialStatus, priceReasonCodes };
+  }
+
+  const capReasons = [];
+  if (profile.require_watchdog_ok && watchdogStatus !== 'OK') {
+    capReasons.push(PRICE_REASONS.PLAY_REQUIRES_FRESH_MARKET);
+  }
+
+  if (
+    Number.isFinite(profile.play_conflict_max) &&
+    Number.isFinite(conflictScore) &&
+    conflictScore > profile.play_conflict_max
+  ) {
+    capReasons.push(PRICE_REASONS.PLAY_CONTRADICTION_CAPPED);
+  }
+
+  if (capReasons.length === 0) {
+    return { officialStatus, priceReasonCodes };
+  }
+
+  return {
+    officialStatus: 'LEAN',
+    priceReasonCodes: uniqueReasonCodes(priceReasonCodes, capReasons),
+  };
+}
+
 function resolvePrimaryReason({
   watchdogReasonCodes,
   watchdogStatus,
@@ -880,6 +930,13 @@ function resolvePrimaryReason({
 
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
     return priceReasonCodes[0] || PRICE_REASONS.MARKET_PRICE_MISSING;
+  }
+
+  const playCappedReason = priceReasonCodes.find((code) =>
+    PLAY_CAPPED_PRICE_REASONS.has(code),
+  );
+  if (playCappedReason) {
+    return playCappedReason;
   }
 
   if (proxyCapped) {
@@ -1261,8 +1318,16 @@ function buildDecisionV2(payload, context = {}) {
     });
 
     const thresholdProfile = getThresholdProfile(market_type, sport);
-    let finalOfficialStatus = computedOfficialStatus;
-    let finalPriceReasonCodes = [...priceDecision.price_reason_codes];
+    const playCleanlinessResult = applyPlayCleanlinessCap({
+      officialStatus: computedOfficialStatus,
+      sport,
+      marketType: market_type,
+      watchdogStatus: watchdog.watchdog_status,
+      conflictScore: conflict_score,
+      priceReasonCodes: priceDecision.price_reason_codes,
+    });
+    let finalOfficialStatus = playCleanlinessResult.officialStatus;
+    let finalPriceReasonCodes = [...playCleanlinessResult.priceReasonCodes];
 
     // play_tier for FIRST_PERIOD delegates to canonical policy (WI-0537).
     const play_tier =

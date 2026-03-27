@@ -409,6 +409,136 @@ function seedNhlMoneylineCalibrationFixture(db, scenario = 'justified') {
   }
 }
 
+function insertSettledDecisionTierCard(db, {
+  id,
+  gameId,
+  sport,
+  marketType,
+  result,
+  pnlUnits,
+  officialStatus,
+  timestamp,
+}) {
+  runInsert(
+    db,
+    `
+    INSERT OR IGNORE INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    `g-${gameId}`,
+    sport.toLowerCase(),
+    gameId,
+    `Home ${gameId}`,
+    `Away ${gameId}`,
+    timestamp,
+    'final',
+  );
+
+  runInsert(
+    db,
+    `
+    INSERT INTO card_payloads (
+      id, game_id, sport, card_type, card_title, created_at, payload_data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    id,
+    gameId,
+    sport.toLowerCase(),
+    `${sport.toLowerCase()}-${marketType.toLowerCase()}-call`,
+    `${sport} ${marketType} ${id}`,
+    timestamp,
+    JSON.stringify({
+      sport,
+      market_type: marketType,
+      decision_v2: {
+        official_status: officialStatus,
+      },
+    }),
+  );
+
+  runInsert(
+    db,
+    `
+    INSERT INTO card_results (
+      id, card_id, game_id, sport, card_type, recommended_bet_type,
+      market_key, market_type, selection, line, locked_price,
+      status, result, settled_at, pnl_units, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    `result-${id}`,
+    id,
+    gameId,
+    sport.toLowerCase(),
+    `${sport.toLowerCase()}-${marketType.toLowerCase()}-call`,
+    marketType.toLowerCase(),
+    `${sport}|${marketType}|${gameId}`,
+    marketType,
+    'HOME',
+    null,
+    -110,
+    'settled',
+    result,
+    timestamp,
+    pnlUnits,
+    JSON.stringify({ source: 'decision-tier-fixture' }),
+  );
+}
+
+function seedDecisionTierAuditFixture(db) {
+  const now = '2026-03-18T10:00:00.000Z';
+
+  insertSettledDecisionTierCard(db, {
+    id: 'tier-play-win',
+    gameId: 'tier-play-win-game',
+    sport: 'NBA',
+    marketType: 'TOTAL',
+    result: 'win',
+    pnlUnits: 0.91,
+    officialStatus: 'PLAY',
+    timestamp: now,
+  });
+  insertSettledDecisionTierCard(db, {
+    id: 'tier-play-loss',
+    gameId: 'tier-play-loss-game',
+    sport: 'NHL',
+    marketType: 'MONEYLINE',
+    result: 'loss',
+    pnlUnits: -1.0,
+    officialStatus: 'PLAY',
+    timestamp: now,
+  });
+  insertSettledDecisionTierCard(db, {
+    id: 'tier-lean-win',
+    gameId: 'tier-lean-win-game',
+    sport: 'NHL',
+    marketType: 'SPREAD',
+    result: 'win',
+    pnlUnits: 0.91,
+    officialStatus: 'LEAN',
+    timestamp: now,
+  });
+  insertSettledDecisionTierCard(db, {
+    id: 'tier-lean-push',
+    gameId: 'tier-lean-push-game',
+    sport: 'NBA',
+    marketType: 'TEAM_TOTAL',
+    result: 'push',
+    pnlUnits: 0,
+    officialStatus: 'LEAN',
+    timestamp: now,
+  });
+  insertSettledDecisionTierCard(db, {
+    id: 'tier-ncaam-ignored',
+    gameId: 'tier-ncaam-ignored-game',
+    sport: 'NCAAM',
+    marketType: 'TOTAL',
+    result: 'win',
+    pnlUnits: 0.91,
+    officialStatus: 'PLAY',
+    timestamp: now,
+  });
+}
+
 describe('telemetry calibration report', () => {
   beforeAll(async () => {
     process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
@@ -495,6 +625,56 @@ describe('telemetry calibration report', () => {
 
     const text = formatTelemetryCalibrationReport(report, { enforce: true });
     expect(text).toContain('verdict: NOT_JUSTIFIED');
+  });
+
+  test('includes targeted PLAY vs LEAN tier audit in json and text output', async () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+    seedDecisionTierAuditFixture(db);
+
+    const report = await generateTelemetryCalibrationReport({ db, days: 14 });
+    expect(report.decisionTierAudit).toMatchObject({
+      status: 'OK',
+      sampleWindow: {
+        days: 14,
+        anchorField: 'settled_at',
+      },
+      sports: ['NBA', 'NHL'],
+      marketTypes: ['MONEYLINE', 'SPREAD', 'TOTAL', 'PUCKLINE', 'TEAM_TOTAL'],
+    });
+
+    const playTier = report.decisionTierAudit.tiers.find(
+      (tier) => tier.tier === 'PLAY',
+    );
+    const leanTier = report.decisionTierAudit.tiers.find(
+      (tier) => tier.tier === 'LEAN',
+    );
+    expect(playTier).toMatchObject({
+      sampleSize: 2,
+      wins: 1,
+      losses: 1,
+      pushes: 0,
+      winRate: 0.5,
+      totalPnlUnits: -0.09,
+      avgPnlPerCard: -0.045,
+      roi: -0.045,
+    });
+    expect(leanTier).toMatchObject({
+      sampleSize: 2,
+      wins: 1,
+      losses: 0,
+      pushes: 1,
+      winRate: 1,
+      totalPnlUnits: 0.91,
+      avgPnlPerCard: 0.455,
+      roi: 0.455,
+    });
+
+    const text = formatTelemetryCalibrationReport(report, { enforce: true });
+    expect(text).toContain('decision_tier_audit');
+    expect(text).toContain('scope: sports=NBA, NHL | markets=MONEYLINE, SPREAD, TOTAL, PUCKLINE, TEAM_TOTAL');
+    expect(text).toContain('PLAY | 1W-1L-0P (2)');
+    expect(text).toContain('LEAN | 1W-0L-1P (2)');
   });
 
   test('returns insufficient-data status with learning diagnostics and zero enforce exit', async () => {
