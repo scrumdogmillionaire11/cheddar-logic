@@ -124,10 +124,28 @@ jobs:
             fi
             # Clear npm cache to reclaim space from partial/failed installs
             npm cache clean --force 2>/dev/null || true
+            # Clear npm user-level cache (~/.npm/_cacache can grow to several GB)
+            rm -rf ~/.npm/_cacache 2>/dev/null || true
             # Trim systemd journal to 50 MB
             sudo journalctl --vacuum-size=50M 2>/dev/null || true
             # Remove apt cache
             sudo apt-get clean 2>/dev/null || true
+            # Rotate deploy.log — keep the last 500 lines if it has grown large
+            DEPLOY_LOG_PATH="/opt/cheddar-logic/logs/deploy.log"
+            if [ -f "$DEPLOY_LOG_PATH" ] && [ "$(wc -c < "$DEPLOY_LOG_PATH")" -gt 5242880 ]; then
+              tail -500 "$DEPLOY_LOG_PATH" > "${DEPLOY_LOG_PATH}.tmp" && mv "${DEPLOY_LOG_PATH}.tmp" "$DEPLOY_LOG_PATH"
+              echo "Rotated deploy.log (trimmed to last 500 lines)"
+            fi
+            # Rotate scheduler.log — keep the last 2000 lines if it has grown large
+            SCHED_LOG_PATH="/opt/cheddar-logic/apps/worker/logs/scheduler.log"
+            if [ -f "$SCHED_LOG_PATH" ] && [ "$(wc -c < "$SCHED_LOG_PATH")" -gt 52428800 ]; then
+              tail -2000 "$SCHED_LOG_PATH" > "${SCHED_LOG_PATH}.tmp" && mv "${SCHED_LOG_PATH}.tmp" "$SCHED_LOG_PATH"
+              echo "Rotated scheduler.log (trimmed to last 2000 lines)"
+            fi
+            # Remove stale test database artifacts left in /tmp from CI or manual runs
+            find /tmp -maxdepth 1 \( -name "cheddar-test-*.db" -o -name "cheddar-test-*.db.lock" -o -name "cheddar-db-backup-*" \) -mtime +0 -exec rm -rf {} + 2>/dev/null || true
+            # Clear Python pip cache if present
+            pip3 cache purge 2>/dev/null || true
             AVAIL_KB_AFTER=$(df /opt --output=avail | tail -1)
             echo "Disk available after cleanup: ${AVAIL_KB_AFTER}KB"
             if [ "$AVAIL_KB_AFTER" -lt 524288 ]; then
