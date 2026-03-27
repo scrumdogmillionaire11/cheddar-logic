@@ -58,6 +58,7 @@ type LedgerRow = {
   marketKey?: string | null;
   homeTeam: string | null;
   awayTeam: string | null;
+  marketPeriodToken?: string | null;
   price: number | null;
   confidencePct: number | null;
   payloadParseError: boolean;
@@ -130,6 +131,25 @@ function formatLabel(value: string | null | undefined) {
 
 function formatMarketSelectionLabel(row: LedgerRow) {
   return row.marketSelectionLabel || '--';
+}
+
+function isFirstPeriodRow(row: LedgerRow) {
+  return row.marketPeriodToken === '1P';
+}
+
+function formatSegmentTypeLabel(cardType: string | null | undefined) {
+  if (cardType === 'nhl-pace-1p') return 'NHL 1P Totals';
+  if (cardType === 'nhl-pace-totals') return 'NHL Totals';
+  return formatLabel(cardType);
+}
+
+function renderPeriodBadge(row: LedgerRow) {
+  if (!isFirstPeriodRow(row)) return null;
+  return (
+    <span className="rounded-full border border-cyan-400/35 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-200">
+      1P
+    </span>
+  );
 }
 
 function normalizeResult(
@@ -589,7 +609,9 @@ export default function ResultsPage() {
                               className={`grid grid-cols-6 gap-4 px-4 py-3 text-sm ${isHighWinRate ? 'bg-emerald-500/10' : ''}`}
                             >
                               <span className="text-cloud/70">{row.sport}</span>
-                              <span className="text-cloud/70">{row.cardType}</span>
+                              <span className="text-cloud/70">
+                                {formatSegmentTypeLabel(row.cardType)}
+                              </span>
                               <span className="text-cloud/70 capitalize">
                                 {row.recommendedBetType || '--'}
                               </span>
@@ -635,7 +657,7 @@ export default function ResultsPage() {
                                 <p className="text-sm font-semibold text-cloud">
                                   {row.sport} -{' '}
                                   <span className="text-cloud/75">
-                                    {row.cardType}
+                                    {formatSegmentTypeLabel(row.cardType)}
                                   </span>
                                 </p>
                                 <p className="mt-1 text-xs text-cloud/60 capitalize">
@@ -728,7 +750,10 @@ export default function ResultsPage() {
                           row.gameTimeUtc || row.createdAt || row.settledAt,
                         )}
                       </span>
-                      <span>{row.sport}</span>
+                      <span className="inline-flex items-center gap-2">
+                        <span>{row.sport}</span>
+                        {renderPeriodBadge(row)}
+                      </span>
                       <span>
                         {row.homeTeam && row.awayTeam
                           ? `${row.awayTeam} @ ${row.homeTeam}`
@@ -794,12 +819,13 @@ export default function ResultsPage() {
                   >
                     <summary className="cursor-pointer list-none px-4 py-4">
                       <div className="flex items-center justify-between gap-3">
-                        <p className="text-xs text-cloud/55">
+                        <p className="inline-flex items-center gap-2 text-xs text-cloud/55">
                           {formatLedgerDate(
                             row.gameTimeUtc || row.createdAt || row.settledAt,
                           )}{' '}
                           ·{' '}
-                          {row.sport}
+                          <span>{row.sport}</span>
+                          {renderPeriodBadge(row)}
                         </p>
                         <span
                           className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${resultBadgeClass(outcome)}`}

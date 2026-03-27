@@ -466,11 +466,34 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 spreadAwayBook: normalized.odds?.spreadAwayBook,
                 spreadPriceHome: normalized.odds?.spreadPriceHome,
                 spreadPriceAway: normalized.odds?.spreadPriceAway,
+                spreadConsensusLine: normalized.odds?.spreadConsensusLine,
+                spreadConsensusConfidence:
+                  normalized.odds?.spreadConsensusConfidence,
+                spreadDispersionStddev:
+                  normalized.odds?.spreadDispersionStddev,
+                spreadSourceBookCount: normalized.odds?.spreadSourceBookCount,
                 monelineHome: normalized.odds?.monelineHome,
                 monelineAway: normalized.odds?.monelineAway,
+                totalConsensusLine: normalized.odds?.totalConsensusLine,
+                totalConsensusConfidence:
+                  normalized.odds?.totalConsensusConfidence,
+                totalDispersionStddev:
+                  normalized.odds?.totalDispersionStddev,
+                totalSourceBookCount: normalized.odds?.totalSourceBookCount,
+                h2hConsensusHome: normalized.odds?.h2hConsensusHome,
+                h2hConsensusAway: normalized.odds?.h2hConsensusAway,
+                h2hConsensusConfidence:
+                  normalized.odds?.h2hConsensusConfidence,
+                mlF5Home: normalized.odds?.mlF5Home ?? null,
+                mlF5Away: normalized.odds?.mlF5Away ?? null,
                 rawData: normalized.market,
                 jobRunId,
               });
+              if (normalized.odds?.mlF5Home == null || normalized.odds?.mlF5Away == null) {
+                if (sport === 'MLB') {
+                  console.log(`[PullOdds]   NO_F5_ML_LINE: ${normalized.gameId} — ml_f5 price absent from provider`);
+                }
+              }
               snapshotsInserted++;
               kpis.snapshotsInserted += 1;
             } catch (gameErr) {

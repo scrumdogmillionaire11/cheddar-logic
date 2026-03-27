@@ -1150,6 +1150,8 @@ function markJobRunFailure(jobRunId, errorMessage) {
 function insertOddsSnapshot(snapshot) {
   const db = getDatabase();
   const normalizedSport = normalizeSportValue(snapshot.sport, 'insertOddsSnapshot');
+  const toNullableNumber = (value) =>
+    Number.isFinite(value) ? value : null;
   
   const stmt = db.prepare(`
     INSERT INTO odds_snapshots (
@@ -1157,10 +1159,16 @@ function insertOddsSnapshot(snapshot) {
       spread_home, spread_away, spread_home_book, spread_away_book,
       moneyline_home, moneyline_away,
       spread_price_home, spread_price_away, total_price_over, total_price_under,
+      spread_consensus_line, spread_consensus_confidence,
+      spread_dispersion_stddev, spread_source_book_count,
+      total_consensus_line, total_consensus_confidence,
+      total_dispersion_stddev, total_source_book_count,
+      h2h_consensus_home, h2h_consensus_away, h2h_consensus_confidence,
       h2h_book, total_book,
+      ml_f5_home, ml_f5_away,
       raw_data, job_run_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -1168,21 +1176,38 @@ function insertOddsSnapshot(snapshot) {
     snapshot.gameId,
     normalizedSport,
     snapshot.capturedAt,
-    snapshot.h2hHome,
-    snapshot.h2hAway,
-    snapshot.total,
-    snapshot.spreadHome || null,
-    snapshot.spreadAway || null,
+    toNullableNumber(snapshot.h2hHome),
+    toNullableNumber(snapshot.h2hAway),
+    toNullableNumber(snapshot.total),
+    toNullableNumber(snapshot.spreadHome),
+    toNullableNumber(snapshot.spreadAway),
     snapshot.spreadHomeBook || null,
     snapshot.spreadAwayBook || null,
-    snapshot.monelineHome || null,
-    snapshot.monelineAway || null,
-    snapshot.spreadPriceHome || null,
-    snapshot.spreadPriceAway || null,
-    snapshot.totalPriceOver || null,
-    snapshot.totalPriceUnder || null,
+    toNullableNumber(snapshot.monelineHome),
+    toNullableNumber(snapshot.monelineAway),
+    toNullableNumber(snapshot.spreadPriceHome),
+    toNullableNumber(snapshot.spreadPriceAway),
+    toNullableNumber(snapshot.totalPriceOver),
+    toNullableNumber(snapshot.totalPriceUnder),
+    toNullableNumber(snapshot.spreadConsensusLine),
+    snapshot.spreadConsensusConfidence || null,
+    toNullableNumber(snapshot.spreadDispersionStddev),
+    Number.isInteger(snapshot.spreadSourceBookCount)
+      ? snapshot.spreadSourceBookCount
+      : null,
+    toNullableNumber(snapshot.totalConsensusLine),
+    snapshot.totalConsensusConfidence || null,
+    toNullableNumber(snapshot.totalDispersionStddev),
+    Number.isInteger(snapshot.totalSourceBookCount)
+      ? snapshot.totalSourceBookCount
+      : null,
+    toNullableNumber(snapshot.h2hConsensusHome),
+    toNullableNumber(snapshot.h2hConsensusAway),
+    snapshot.h2hConsensusConfidence || null,
     snapshot.h2hBook || null,
     snapshot.totalBook || null,
+    toNullableNumber(snapshot.mlF5Home),
+    toNullableNumber(snapshot.mlF5Away),
     snapshot.rawData ? JSON.stringify(snapshot.rawData) : null,
     snapshot.jobRunId
   );

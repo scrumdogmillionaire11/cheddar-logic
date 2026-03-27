@@ -889,6 +889,15 @@ describe('telemetry calibration report', () => {
     expect(report.ledgers.clv.sampleGateMet).toBe(false);
     expect(report.diagnostics.projectionUnresolvedTopBuckets.length).toBeGreaterThan(0);
     expect(report.diagnostics.clvUnresolvedTopBuckets.length).toBeGreaterThan(0);
+    expect(report.diagnostics.clvUnresolvedTopBuckets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sport: 'NBA',
+          marketType: 'MONEYLINE',
+          unresolvedCount: 8,
+        }),
+      ]),
+    );
     expect(report.diagnostics.recommendations.length).toBeGreaterThan(0);
     expect(report.nhlMoneylineCalibration.status).toBe('INSUFFICIENT_DATA');
     expect(report.nhlMoneylineCalibration.verdict).toBe('INSUFFICIENT_DATA');

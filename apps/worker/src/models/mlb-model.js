@@ -163,6 +163,76 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line) {
 }
 
 /**
+ * Project F5 Moneyline side pick from pitcher matchup vs. published F5 ML prices.
+ *
+ * Algorithm:
+ *   1. Derive per-team expected F5 runs from ERA (same as projectF5Total base).
+ *   2. Convert run differential to home win probability via logistic function.
+ *   3. Compare projected win probability to implied probability from ML prices.
+ *   4. Emit HOME / AWAY / PASS based on edge vs. lean_edge_min (0.04) and confidence.
+ *
+ * @param {object} homePitcher - { era, whip, k_per_9 }
+ * @param {object} awayPitcher - { era, whip, k_per_9 }
+ * @param {number} mlF5Home - American odds for home side (e.g. -120)
+ * @param {number} mlF5Away - American odds for away side (e.g. +105)
+ * @returns {object|null}
+ */
+function projectF5ML(homePitcher, awayPitcher, mlF5Home, mlF5Away) {
+  if (!homePitcher || !awayPitcher) return null;
+  if (mlF5Home == null || mlF5Away == null) return null;
+  if (homePitcher.era == null || awayPitcher.era == null) return null;
+
+  const LEAGUE_AVG_RPG = 4.5;
+  // Home team expected F5 runs = function of away pitcher ERA
+  const homeExpected = (awayPitcher.era + LEAGUE_AVG_RPG) / 2 * (5 / 9);
+  // Away team expected F5 runs = function of home pitcher ERA
+  const awayExpected = (homePitcher.era + LEAGUE_AVG_RPG) / 2 * (5 / 9);
+  const runDiff = homeExpected - awayExpected; // positive = home advantage
+
+  // Logistic win probability from run differential (coefficient 0.8 empirical for F5)
+  const winProbHome = 1 / (1 + Math.exp(-0.8 * runDiff));
+
+  // American odds → implied probability (includes vig)
+  function mlToImplied(ml) {
+    if (!Number.isFinite(ml)) return null;
+    return ml < 0 ? (-ml) / (-ml + 100) : 100 / (ml + 100);
+  }
+  const impliedHome = mlToImplied(mlF5Home);
+  const impliedAway = mlToImplied(mlF5Away);
+  if (impliedHome === null || impliedAway === null) return null;
+
+  const homeEdge = winProbHome - impliedHome;
+  const awayEdge = (1 - winProbHome) - impliedAway;
+
+  // Reuse confidence from projectF5Total — pitcher quality gates both markets
+  const proj = projectF5Total(homePitcher, awayPitcher);
+  const confidence = proj ? proj.confidence : 5;
+
+  const LEAN_EDGE_MIN = 0.04; // F5 ML edge threshold (slightly wider than totals)
+  const CONFIDENCE_MIN = 6;
+
+  let side = 'PASS';
+  let edge = 0;
+  if (homeEdge >= LEAN_EDGE_MIN && confidence >= CONFIDENCE_MIN) {
+    side = 'HOME';
+    edge = homeEdge;
+  } else if (awayEdge >= LEAN_EDGE_MIN && confidence >= CONFIDENCE_MIN) {
+    side = 'AWAY';
+    edge = awayEdge;
+  }
+
+  return {
+    side,
+    prediction: side,
+    edge,
+    projected_win_prob_home: winProbHome,
+    confidence,
+    ev_threshold_passed: side !== 'PASS',
+    reasoning: `F5 ML: homeExp=${homeExpected.toFixed(2)} awayExp=${awayExpected.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp conf=${confidence}/10`,
+  };
+}
+
+/**
  * Compute pitcher K/9 and recent IP as-of a specific date.
  * Uses only game logs WHERE game_date < asOfDate — true walk-forward simulation.
  * Anti-look-ahead: same guarantee as Python BacktestEngine.get_pitcher_data_as_of_date().
@@ -842,6 +912,7 @@ module.exports = {
   projectStrikeouts,
   projectF5Total,
   projectF5TotalCard,
+  projectF5ML,
   computeMLBDriverCards,
   selectMlbGameMarket,
   computePitcherStatsAsOf,

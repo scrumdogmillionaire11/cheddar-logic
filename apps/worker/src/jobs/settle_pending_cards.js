@@ -102,6 +102,260 @@ function buildClvEntryFromPendingCard({ pendingCard, payloadData, lockedMarket }
   };
 }
 
+function getFirstFiniteNumber(...values) {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function americanOddsToImpliedProbability(odds) {
+  const parsed = Number(odds);
+  if (!Number.isFinite(parsed) || parsed === 0) return null;
+  if (parsed > 0) return 100 / (parsed + 100);
+  const absoluteOdds = Math.abs(parsed);
+  return absoluteOdds / (absoluteOdds + 100);
+}
+
+function normalizeClvSettlementPeriod(period) {
+  const token = toUpperToken(period);
+  if (
+    token === '1P' ||
+    token === 'P1' ||
+    token === 'FIRST_PERIOD' ||
+    token === '1ST_PERIOD'
+  ) {
+    return '1P';
+  }
+  return 'FULL_GAME';
+}
+
+function resolveClosingOddsFromSnapshot({
+  snapshot,
+  marketType,
+  selection,
+  period = null,
+}) {
+  if (!snapshot) return null;
+
+  const rawData = parseJsonObject(snapshot.raw_data) || {};
+  const rawOdds =
+    rawData && typeof rawData.odds === 'object' && rawData.odds !== null
+      ? rawData.odds
+      : rawData;
+  const normalizedMarketType = toUpperToken(marketType);
+  const normalizedSelection = toUpperToken(selection);
+  const normalizedPeriod = normalizeClvSettlementPeriod(period);
+
+  if (normalizedMarketType === 'MONEYLINE') {
+    if (normalizedSelection === 'HOME') {
+      return getFirstFiniteNumber(
+        snapshot.h2h_home,
+        snapshot.moneyline_home,
+        rawOdds.h2h_home,
+        rawOdds.moneyline_home,
+      );
+    }
+    if (normalizedSelection === 'AWAY') {
+      return getFirstFiniteNumber(
+        snapshot.h2h_away,
+        snapshot.moneyline_away,
+        rawOdds.h2h_away,
+        rawOdds.moneyline_away,
+      );
+    }
+  }
+
+  if (normalizedMarketType === 'SPREAD' || normalizedMarketType === 'PUCKLINE') {
+    if (normalizedSelection === 'HOME') {
+      return getFirstFiniteNumber(
+        snapshot.spread_price_home,
+        rawOdds.spread_price_home,
+        rawOdds.spread_home_odds,
+      );
+    }
+    if (normalizedSelection === 'AWAY') {
+      return getFirstFiniteNumber(
+        snapshot.spread_price_away,
+        rawOdds.spread_price_away,
+        rawOdds.spread_away_odds,
+      );
+    }
+  }
+
+  if (normalizedMarketType === 'TOTAL') {
+    if (normalizedSelection === 'OVER') {
+      if (normalizedPeriod === '1P') {
+        return getFirstFiniteNumber(
+          snapshot.total_price_over_1p,
+          rawOdds.total_price_over_1p,
+          rawOdds.total_1p_price_over,
+          snapshot.total_price_over,
+          rawOdds.total_price_over,
+        );
+      }
+      return getFirstFiniteNumber(
+        snapshot.total_price_over,
+        rawOdds.total_price_over,
+      );
+    }
+    if (normalizedSelection === 'UNDER') {
+      if (normalizedPeriod === '1P') {
+        return getFirstFiniteNumber(
+          snapshot.total_price_under_1p,
+          rawOdds.total_price_under_1p,
+          rawOdds.total_1p_price_under,
+          snapshot.total_price_under,
+          rawOdds.total_price_under,
+        );
+      }
+      return getFirstFiniteNumber(
+        snapshot.total_price_under,
+        rawOdds.total_price_under,
+      );
+    }
+  }
+
+  return null;
+}
+
+function getLatestClosingOddsSnapshot(db, gameId, cache = new Map()) {
+  const normalizedGameId = gameId ? String(gameId).trim() : '';
+  if (!normalizedGameId) return null;
+  if (cache.has(normalizedGameId)) return cache.get(normalizedGameId);
+
+  const snapshot =
+    db
+      .prepare(
+        `
+        SELECT *
+        FROM odds_snapshots
+        WHERE game_id = ?
+        ORDER BY datetime(COALESCE(captured_at, '1970-01-01T00:00:00Z')) DESC, id DESC
+        LIMIT 1
+      `,
+      )
+      .get(normalizedGameId) || null;
+
+  cache.set(normalizedGameId, snapshot);
+  return snapshot;
+}
+
+function buildClvSettlementPayload({
+  db,
+  gameId,
+  marketType,
+  selection,
+  period = null,
+  oddsAtPick,
+  snapshotCache = new Map(),
+}) {
+  const pickOdds = Number(oddsAtPick);
+  if (!Number.isFinite(pickOdds)) return null;
+
+  const snapshot = getLatestClosingOddsSnapshot(db, gameId, snapshotCache);
+  const closingOdds = resolveClosingOddsFromSnapshot({
+    snapshot,
+    marketType,
+    selection,
+    period,
+  });
+  if (!Number.isFinite(closingOdds)) return null;
+
+  const closingProbability = americanOddsToImpliedProbability(closingOdds);
+  const pickProbability = americanOddsToImpliedProbability(pickOdds);
+  if (!Number.isFinite(closingProbability) || !Number.isFinite(pickProbability)) {
+    return null;
+  }
+
+  return {
+    closingOdds,
+    clvPct: Number((closingProbability - pickProbability).toFixed(6)),
+  };
+}
+
+function reconcileOpenClvEntries(db, settledAt = new Date().toISOString()) {
+  const hasClvLedger = Boolean(
+    db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'clv_ledger'`,
+      )
+      .get(),
+  );
+  if (!hasClvLedger) {
+    return {
+      openRows: 0,
+      reconciled: 0,
+      unresolved: 0,
+    };
+  }
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        clv.card_id,
+        clv.game_id,
+        clv.market_type,
+        clv.selection,
+        clv.odds_at_pick,
+        cr.market_key,
+        cr.metadata,
+        cp.payload_data
+      FROM clv_ledger clv
+      INNER JOIN card_results cr ON cr.card_id = clv.card_id
+      LEFT JOIN card_payloads cp ON cp.id = clv.card_id
+      WHERE clv.closed_at IS NULL
+        AND cr.status IN ('settled', 'error')
+        AND cr.settled_at IS NOT NULL
+    `,
+    )
+    .all();
+
+  const snapshotCache = new Map();
+  let reconciled = 0;
+  let unresolved = 0;
+
+  for (const row of rows) {
+    const payloadData = parseJsonObject(row.payload_data) || {};
+    const cardResultMetadata = parseJsonObject(row.metadata) || {};
+    const period = extractSettlementPeriod({
+      row,
+      payloadData,
+      cardResultMetadata,
+    });
+    const clvSettlement = buildClvSettlementPayload({
+      db,
+      gameId: row.game_id,
+      marketType: row.market_type,
+      selection: row.selection,
+      period,
+      oddsAtPick: row.odds_at_pick,
+      snapshotCache,
+    });
+
+    if (!clvSettlement) {
+      unresolved += 1;
+      continue;
+    }
+
+    settleClvEntry(
+      row.card_id,
+      clvSettlement.closingOdds,
+      clvSettlement.clvPct,
+      settledAt,
+    );
+    reconciled += 1;
+  }
+
+  return {
+    openRows: rows.length,
+    reconciled,
+    unresolved,
+  };
+}
+
 function toBackfillUpperToken(value) {
   if (value === null || value === undefined) return '';
   return String(value).trim().toUpperCase();
@@ -1665,7 +1919,10 @@ async function settlePendingCards({
       let cardsErrored = 0;
       let cardsRaced = 0;
       let cardsSkipped = 0;
+      let clvResolvedAtSettlement = 0;
+      let clvOpenAfterSettlement = 0;
       const settledAt = new Date().toISOString();
+      const clvSnapshotCache = new Map();
       let nonActionableAutoClosed = 0;
       let nonActionableAutoClosedReasons = {};
       let duplicateAutoClosed = 0;
@@ -1762,9 +2019,9 @@ async function settlePendingCards({
         const firstPeriodScores = readFirstPeriodScores(gameResultMetadata);
         const isNhlShotsCard = isNhlShotsOnGoalCard(pendingCard, payloadData);
         let clvTracked = false;
+        let lockedMarket = null;
 
         try {
-          let lockedMarket;
           let result;
 
           if (isNhlShotsCard) {
@@ -1852,8 +2109,27 @@ async function settlePendingCards({
             state.settled_at === settledAt;
           if (didSettleNow) {
             cardsSettled++;
-            if (clvTracked) {
-              settleClvEntry(pendingCard.card_id, null, null, settledAt);
+            if (clvTracked && lockedMarket) {
+              const clvSettlement = buildClvSettlementPayload({
+                db,
+                gameId: pendingCard.game_id,
+                marketType: lockedMarket.marketType,
+                selection: lockedMarket.selection,
+                period: lockedMarket.period,
+                oddsAtPick: lockedMarket.lockedPrice,
+                snapshotCache: clvSnapshotCache,
+              });
+              if (clvSettlement) {
+                settleClvEntry(
+                  pendingCard.card_id,
+                  clvSettlement.closingOdds,
+                  clvSettlement.clvPct,
+                  settledAt,
+                );
+                clvResolvedAtSettlement += 1;
+              } else {
+                clvOpenAfterSettlement += 1;
+              }
             }
             if (marketBucket) {
               marketDailyCounts[marketBucket].settled += 1;
@@ -1924,8 +2200,27 @@ async function settlePendingCards({
             state.settled_at === settledAt;
           if (didErrorNow) {
             cardsErrored++;
-            if (clvTracked) {
-              settleClvEntry(pendingCard.card_id, null, null, settledAt);
+            if (clvTracked && lockedMarket) {
+              const clvSettlement = buildClvSettlementPayload({
+                db,
+                gameId: pendingCard.game_id,
+                marketType: lockedMarket.marketType,
+                selection: lockedMarket.selection,
+                period: lockedMarket.period,
+                oddsAtPick: lockedMarket.lockedPrice,
+                snapshotCache: clvSnapshotCache,
+              });
+              if (clvSettlement) {
+                settleClvEntry(
+                  pendingCard.card_id,
+                  clvSettlement.closingOdds,
+                  clvSettlement.clvPct,
+                  settledAt,
+                );
+                clvResolvedAtSettlement += 1;
+              } else {
+                clvOpenAfterSettlement += 1;
+              }
             }
             if (marketBucket) {
               marketDailyCounts[marketBucket].failed += 1;
@@ -1963,11 +2258,15 @@ async function settlePendingCards({
         );
       }
       const totalSkipped = cardsSkipped;
+      const clvReconciliation = reconcileOpenClvEntries(db, settledAt);
       console.log(
         `[SettleCards] Step 1 complete — pending: ${coverageBefore.totalPending}, eligible: ${eligibleCount}, settled: ${cardsSettled}, errored: ${cardsErrored}, raced: ${cardsRaced}, skipped: ${totalSkipped}, autoClosedNonActionable: ${nonActionableAutoClosed}, autoClosedDuplicates: ${duplicateAutoClosed}`,
       );
       console.log(
         `[SettleCards] Market daily counts — NBA_TOTAL: ${JSON.stringify(marketDailyCounts.NBA_TOTAL)}, NHL_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_TOTAL)}, NHL_1P_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_1P_TOTAL)}, NHL_MONEYLINE: ${JSON.stringify(marketDailyCounts.NHL_MONEYLINE)}`,
+      );
+      console.log(
+        `[SettleCards] CLV telemetry — resolvedAtSettlement: ${clvResolvedAtSettlement}, leftOpenAfterSettlement: ${clvOpenAfterSettlement}, reconciledOpenRows: ${clvReconciliation.reconciled}, stillOpen: ${clvReconciliation.unresolved}`,
       );
 
       // --- Step 2: Increment tracking_stats (race-safe) ---
@@ -2155,6 +2454,10 @@ async function settlePendingCards({
           nonActionableAutoClosedReasons,
           duplicateAutoClosedFinal: duplicateAutoClosed,
           duplicateAutoClosedReasons,
+          clvResolvedAtSettlement,
+          clvOpenAfterSettlement,
+          clvReconciledAfterSettlementSweep: clvReconciliation.reconciled,
+          clvStillOpen: clvReconciliation.unresolved,
           marketDailyCounts,
           displayBackfilled: backfilledDisplayed,
           displayBackfillEnabled: enableDisplayBackfill,
@@ -2213,15 +2516,20 @@ module.exports = {
     backfillDisplayedPlaysFromPayloads,
     computePnlOutcome,
     computePnlUnits,
+    americanOddsToImpliedProbability,
     extractSettlementPeriod,
     getSettlementCoverageDiagnostics,
+    getLatestClosingOddsSnapshot,
     gradeNhlPlayerShotsMarket,
     gradeLockedMarket,
     buildClvEntryFromPendingCard,
+    buildClvSettlementPayload,
     isClvEligiblePayload,
     isNhlShotsOnGoalCard,
     readFirstPeriodScores,
+    reconcileOpenClvEntries,
     resolveNhlShotsSettlementContext,
+    resolveClosingOddsFromSnapshot,
     resolvePlayerShotsActualValue,
     resolveDecisionBasisForSettlement,
     resolveSettlementMarketBucket,

@@ -37,6 +37,17 @@
  *       spreadPriceAway: number | null,
  *       totalPriceOver: number | null,
  *       totalPriceUnder: number | null,
+ *       spreadConsensusLine: number | null,
+ *       spreadConsensusConfidence: string | null,
+ *       spreadDispersionStddev: number | null,
+ *       spreadSourceBookCount: number | null,
+ *       totalConsensusLine: number | null,
+ *       totalConsensusConfidence: string | null,
+ *       totalDispersionStddev: number | null,
+ *       totalSourceBookCount: number | null,
+ *       h2hConsensusHome: number | null,
+ *       h2hConsensusAway: number | null,
+ *       h2hConsensusConfidence: string | null,
  *       capturedAt: string | null,
  *     } | null,
  *     true_play: Play | null,
@@ -113,6 +124,17 @@ interface GameRow {
   spread_price_away: number | null;
   total_price_over: number | null;
   total_price_under: number | null;
+  spread_consensus_line: number | null;
+  spread_consensus_confidence: string | null;
+  spread_dispersion_stddev: number | null;
+  spread_source_book_count: number | null;
+  total_consensus_line: number | null;
+  total_consensus_confidence: string | null;
+  total_dispersion_stddev: number | null;
+  total_source_book_count: number | null;
+  h2h_consensus_home: number | null;
+  h2h_consensus_away: number | null;
+  h2h_consensus_confidence: string | null;
   odds_captured_at: string | null;
   projection_inputs_complete: boolean | null;
   projection_missing_inputs: string[];
@@ -152,6 +174,33 @@ const FINAL_GAME_RESULT_STATUSES = ['FINAL', 'FT', 'COMPLETE', 'COMPLETED', 'CLO
 
 function toSqlUtc(date: Date): string {
   return date.toISOString().substring(0, 19).replace('T', ' ');
+}
+
+function getTableColumnNames(
+  db: ReturnType<typeof getDatabaseReadOnly>,
+  tableName: string,
+): Set<string> {
+  try {
+    const rows = db
+      .prepare(`PRAGMA table_info(${tableName})`)
+      .all() as Array<{ name?: string }>;
+    return new Set(
+      rows
+        .map((row) => (typeof row.name === 'string' ? row.name : ''))
+        .filter(Boolean),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function buildOptionalOddsSelect(
+  availableColumns: Set<string>,
+  columnName: string,
+): string {
+  return availableColumns.has(columnName)
+    ? `o.${columnName}`
+    : `NULL AS ${columnName}`;
 }
 
 function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
@@ -1720,6 +1769,25 @@ export async function GET(request: NextRequest) {
       baseWindowCount = Number(baseWindowCountRow?.total ?? 0);
     }
 
+    const oddsSnapshotColumns = getTableColumnNames(db, 'odds_snapshots');
+    const hasConsensusOddsColumns =
+      oddsSnapshotColumns.has('spread_consensus_line') &&
+      oddsSnapshotColumns.has('spread_consensus_confidence') &&
+      oddsSnapshotColumns.has('spread_dispersion_stddev') &&
+      oddsSnapshotColumns.has('spread_source_book_count') &&
+      oddsSnapshotColumns.has('total_consensus_line') &&
+      oddsSnapshotColumns.has('total_consensus_confidence') &&
+      oddsSnapshotColumns.has('total_dispersion_stddev') &&
+      oddsSnapshotColumns.has('total_source_book_count') &&
+      oddsSnapshotColumns.has('h2h_consensus_home') &&
+      oddsSnapshotColumns.has('h2h_consensus_away') &&
+      oddsSnapshotColumns.has('h2h_consensus_confidence');
+    if (!hasConsensusOddsColumns) {
+      console.warn(
+        '[api/games] odds_snapshots missing consensus columns; falling back to null consensus fields. Run migration 046_add_consensus_to_odds_snapshots.sql on the writer DB.',
+      );
+    }
+
     const loadGamesWithLatestOdds = (
       startUtc: string,
       endUtc: string | null,
@@ -1751,6 +1819,17 @@ export async function GET(request: NextRequest) {
           | 'spread_price_away'
           | 'total_price_over'
           | 'total_price_under'
+          | 'spread_consensus_line'
+          | 'spread_consensus_confidence'
+          | 'spread_dispersion_stddev'
+          | 'spread_source_book_count'
+          | 'total_consensus_line'
+          | 'total_consensus_confidence'
+          | 'total_dispersion_stddev'
+          | 'total_source_book_count'
+          | 'h2h_consensus_home'
+          | 'h2h_consensus_away'
+          | 'h2h_consensus_confidence'
           | 'odds_captured_at'
         >
       >;
@@ -1777,6 +1856,17 @@ export async function GET(request: NextRequest) {
           o.spread_price_away,
           o.total_price_over,
           o.total_price_under,
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_consensus_line')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_consensus_confidence')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_dispersion_stddev')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_source_book_count')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_consensus_line')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_consensus_confidence')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_dispersion_stddev')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_source_book_count')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_consensus_home')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_consensus_away')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_consensus_confidence')},
           o.captured_at AS odds_captured_at,
           o.raw_data
         FROM odds_snapshots o
@@ -1806,6 +1896,17 @@ export async function GET(request: NextRequest) {
         spread_price_away: number | null;
         total_price_over: number | null;
         total_price_under: number | null;
+        spread_consensus_line: number | null;
+        spread_consensus_confidence: string | null;
+        spread_dispersion_stddev: number | null;
+        spread_source_book_count: number | null;
+        total_consensus_line: number | null;
+        total_consensus_confidence: string | null;
+        total_dispersion_stddev: number | null;
+        total_source_book_count: number | null;
+        h2h_consensus_home: number | null;
+        h2h_consensus_away: number | null;
+        h2h_consensus_confidence: string | null;
         odds_captured_at: string | null;
         raw_data: string | null;
       }>;
@@ -1855,6 +1956,19 @@ export async function GET(request: NextRequest) {
           spread_price_away: odds?.spread_price_away ?? null,
           total_price_over: odds?.total_price_over ?? null,
           total_price_under: odds?.total_price_under ?? null,
+          spread_consensus_line: odds?.spread_consensus_line ?? null,
+          spread_consensus_confidence:
+            odds?.spread_consensus_confidence ?? null,
+          spread_dispersion_stddev: odds?.spread_dispersion_stddev ?? null,
+          spread_source_book_count: odds?.spread_source_book_count ?? null,
+          total_consensus_line: odds?.total_consensus_line ?? null,
+          total_consensus_confidence:
+            odds?.total_consensus_confidence ?? null,
+          total_dispersion_stddev: odds?.total_dispersion_stddev ?? null,
+          total_source_book_count: odds?.total_source_book_count ?? null,
+          h2h_consensus_home: odds?.h2h_consensus_home ?? null,
+          h2h_consensus_away: odds?.h2h_consensus_away ?? null,
+          h2h_consensus_confidence: odds?.h2h_consensus_confidence ?? null,
           odds_captured_at: odds?.odds_captured_at ?? null,
           projection_inputs_complete:
             projectionHealth.projection_inputs_complete,
@@ -3616,6 +3730,20 @@ export async function GET(request: NextRequest) {
               spreadPriceAway: row.spread_price_away,
               totalPriceOver: row.total_price_over,
               totalPriceUnder: row.total_price_under,
+              spreadConsensusLine: row.spread_consensus_line,
+              spreadConsensusConfidence:
+                row.spread_consensus_confidence ?? null,
+              spreadDispersionStddev: row.spread_dispersion_stddev,
+              spreadSourceBookCount: row.spread_source_book_count,
+              totalConsensusLine: row.total_consensus_line,
+              totalConsensusConfidence:
+                row.total_consensus_confidence ?? null,
+              totalDispersionStddev: row.total_dispersion_stddev,
+              totalSourceBookCount: row.total_source_book_count,
+              h2hConsensusHome: row.h2h_consensus_home,
+              h2hConsensusAway: row.h2h_consensus_away,
+              h2hConsensusConfidence:
+                row.h2h_consensus_confidence ?? null,
               capturedAt: row.odds_captured_at,
             }
           : null,

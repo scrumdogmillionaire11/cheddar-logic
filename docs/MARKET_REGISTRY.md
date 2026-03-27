@@ -72,7 +72,7 @@ This document is the single source of truth for which markets are supported per 
 | Market | Type | Status | Notes |
 | --- | --- | --- | --- |
 | F5 Total (first 5 innings) | Game | ⚙️ | Model wired (`projectF5TotalCard`); `total_f5` ingested from odds snapshot; no DUAL_RUN-style selection or dedicated pipeline health check |
-| F5 Moneyline | Game | ⚙️ | Not wired — odds key `ml_f5` not yet pulled or mapped to a side-projection layer |
+| F5 Moneyline | Game | ✅ | `ml_f5_home`/`ml_f5_away` ingested; `projectF5ML` projects side from ERA matchup vs. implied prob; emits `mlb-f5-ml` card when edge clears threshold (WI-0603) |
 | Pitcher Strikeouts (home) | Player Prop | ✅ | Full pipeline; projection + market structure + trap scan |
 | Pitcher Strikeouts (away) | Player Prop | ✅ | Full pipeline; projection + market structure + trap scan |
 | Full-game Total | Game | ❌ | Not a target market — full-game pitching context degrades after 5th inning |
@@ -81,8 +81,8 @@ This document is the single source of truth for which markets are supported per 
 **Key gaps (backlog):**
 
 1. **No DUAL_RUN market selection** — F5 Total and Pitcher K cards currently compete as peers; F5 should be elevated as the primary game market with Ks treated as props.
-2. **F5 ML not ingested** — `pull_odds_hourly` does not pull `ml_f5`; odds key needs mapping and the model needs a side-projection layer to emit an F5 ML signal.
-3. **No pipeline health differentiation** for F5 — `WATCHDOG_MARKET_UNAVAILABLE` does not distinguish between a missing full-game total and a missing F5 total.
+2. ~~**F5 ML not ingested**~~ — Resolved in WI-0603: `ml_f5_home`/`ml_f5_away` now ingested and modeled.
+3. **No pipeline health differentiation** for F5 — `WATCHDOG_MARKET_UNAVAILABLE` does not distinguish between a missing full-game total and a missing F5 total (WI-0604).
 
 ---
 

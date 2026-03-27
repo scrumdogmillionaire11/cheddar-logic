@@ -16,11 +16,12 @@
  * Tests run without DB, network, or job runner.
  */
 
-const { scorePitcherK } = require('../../models/mlb-model');
+const { scorePitcherK, projectF5ML } = require('../../models/mlb-model');
 const {
   checkPitcherFreshness,
   validatePitcherKInputs,
   buildPitcherKObject,
+  resolveMlbTeamLookupKeys,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -330,5 +331,111 @@ describe('buildPitcherKObject — DB row → K engine shape (WI-0596)', () => {
     const obj = buildPitcherKObject(row);
     expect(obj.swstr_pct).toBeNull();
     expect(obj.season_avg_velo).toBeNull();
+  });
+});
+
+describe('resolveMlbTeamLookupKeys — MLB team join fallback', () => {
+  test('returns full team name plus abbreviation for known MLB teams', () => {
+    expect(resolveMlbTeamLookupKeys('San Francisco Giants')).toEqual([
+      'San Francisco Giants',
+      'SF',
+    ]);
+    expect(resolveMlbTeamLookupKeys('New York Yankees')).toEqual([
+      'New York Yankees',
+      'NYY',
+    ]);
+  });
+
+  test('returns cleaned input only for unknown labels', () => {
+    expect(resolveMlbTeamLookupKeys('  Unknown Team  ')).toEqual([
+      'Unknown Team',
+    ]);
+  });
+
+  test('returns empty array for empty input', () => {
+    expect(resolveMlbTeamLookupKeys('')).toEqual([]);
+    expect(resolveMlbTeamLookupKeys(null)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-0603: projectF5ML — F5 Moneyline side-projection
+// ---------------------------------------------------------------------------
+
+describe('projectF5ML — F5 ML side projection (WI-0603)', () => {
+  const avgPitcher  = { era: 4.00, whip: 1.25, k_per_9: 8.5 };
+  const weakPitcher = { era: 5.40, whip: 1.55, k_per_9: 6.5 };
+
+  test('returns null when homePitcher is missing', () => {
+    expect(projectF5ML(null, avgPitcher, -120, 105)).toBeNull();
+  });
+
+  test('returns null when awayPitcher is missing', () => {
+    expect(projectF5ML(avgPitcher, null, -120, 105)).toBeNull();
+  });
+
+  test('returns null when ml_f5_home is null', () => {
+    expect(projectF5ML(avgPitcher, avgPitcher, null, 105)).toBeNull();
+  });
+
+  test('returns null when ml_f5_away is null', () => {
+    expect(projectF5ML(avgPitcher, avgPitcher, -120, null)).toBeNull();
+  });
+
+  test('returns null when home pitcher ERA is missing', () => {
+    expect(projectF5ML({ whip: 1.20 }, avgPitcher, -120, 105)).toBeNull();
+  });
+
+  test('result shape: has required fields on valid input', () => {
+    const result = projectF5ML(avgPitcher, avgPitcher, -115, 105);
+    expect(result).not.toBeNull();
+    expect(typeof result.side).toBe('string');
+    expect(typeof result.prediction).toBe('string');
+    expect(typeof result.edge).toBe('number');
+    expect(typeof result.projected_win_prob_home).toBe('number');
+    expect(typeof result.confidence).toBe('number');
+    expect(typeof result.ev_threshold_passed).toBe('boolean');
+    expect(typeof result.reasoning).toBe('string');
+  });
+
+  test('PASS when pitchers are evenly matched (no edge)', () => {
+    // Even ERA matchup → run diff ≈ 0 → win prob ≈ 50%; vig prevents edge clearing threshold
+    const result = projectF5ML(avgPitcher, avgPitcher, -115, -105);
+    expect(result.side).toBe('PASS');
+    expect(result.ev_threshold_passed).toBe(false);
+  });
+
+  test('projected_win_prob_home > 0.5 when home faces weak away starter', () => {
+    // weakPitcher pitching for away → home team scores more → home expected to win F5
+    const result = projectF5ML(avgPitcher, weakPitcher, -130, 115);
+    expect(result).not.toBeNull();
+    expect(result.projected_win_prob_home).toBeGreaterThan(0.5);
+  });
+
+  test('projected_win_prob_home < 0.5 when away faces weak home starter', () => {
+    // weakPitcher pitching for home → away team scores more → away expected to win F5
+    const result = projectF5ML(weakPitcher, avgPitcher, 115, -130);
+    expect(result).not.toBeNull();
+    expect(result.projected_win_prob_home).toBeLessThan(0.5);
+  });
+
+  test('emits HOME when home edge is large enough and confidence clears minimum', () => {
+    // Both pitchers quality (ERA < 3.50, WHIP < 1.20) → confidence = 8, clears CONFIDENCE_MIN=6.
+    // Home faces slightly weaker away pitcher → pWin(H) > 0.5.
+    // Home priced at +180 (impliedH ≈ 36%) while model says ~53% → homeEdge ≈ +17pp > LEAN_EDGE_MIN.
+    const homePitcher = { era: 2.80, whip: 1.15, k_per_9: 9.0 };
+    const awayPitcher = { era: 3.40, whip: 1.18, k_per_9: 8.5 };
+    const result = projectF5ML(homePitcher, awayPitcher, 180, -220);
+    expect(result).not.toBeNull();
+    expect(result.side).toBe('HOME');
+    expect(result.edge).toBeGreaterThan(0.04);
+    expect(result.ev_threshold_passed).toBe(true);
+  });
+
+  test('reasoning string contains expected diagnostic tokens', () => {
+    const result = projectF5ML(avgPitcher, avgPitcher, -110, -110);
+    expect(result.reasoning).toMatch(/F5 ML/);
+    expect(result.reasoning).toMatch(/pWin\(H\)/);
+    expect(result.reasoning).toMatch(/conf=/);
   });
 });

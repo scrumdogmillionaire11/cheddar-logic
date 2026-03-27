@@ -39,6 +39,10 @@ async function validateResultsSourceContract(assert) {
     new URL('../app/api/results/route.ts', import.meta.url),
     'utf8',
   );
+  const pageSource = await fs.readFile(
+    new URL('../app/results/page.tsx', import.meta.url),
+    'utf8',
+  );
 
   [
     'totalCards:',
@@ -79,6 +83,24 @@ async function validateResultsSourceContract(assert) {
     routeSource.includes('ledger: []') &&
       routeSource.includes('ledger: ledgerRows'),
     'results route must expose ledger in empty and populated responses',
+  );
+  assert.ok(
+    routeSource.includes('LEFT JOIN clv_ledger clv ON clv.card_id = cr.card_id') &&
+      routeSource.includes('const clv =') &&
+      routeSource.includes('clv,'),
+    'results route must left join clv_ledger and expose optional clv data',
+  );
+  assert.ok(
+    routeSource.includes('END AS market_period_token') &&
+      routeSource.includes('marketPeriodToken: row.market_period_token'),
+    'results route must expose market_period_token on ledger rows as marketPeriodToken',
+  );
+  assert.ok(
+    pageSource.includes("return row.marketPeriodToken === '1P';") &&
+      pageSource.includes('function renderPeriodBadge(row: LedgerRow)') &&
+      pageSource.includes('renderPeriodBadge(row)') &&
+      pageSource.includes('text-cyan-200'),
+    'results page must reference marketPeriodToken and render a 1P badge path',
   );
 }
 
@@ -147,6 +169,30 @@ async function validateLiveResultsPayload(baseUrl, assert) {
     );
   });
   assert.ok(Array.isArray(payload.data.ledger), 'Ledger is not an array');
+  payload.data.ledger.forEach((row, index) => {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(row, 'marketPeriodToken'),
+      `Ledger row ${index} missing marketPeriodToken field`,
+    );
+    assert.ok(
+      row.marketPeriodToken === null || typeof row.marketPeriodToken === 'string',
+      `Ledger row ${index} marketPeriodToken must be string|null`,
+    );
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(row, 'clv'),
+      `Ledger row ${index} missing clv field`,
+    );
+    if (row.clv !== null) {
+      ['oddsAtPick', 'closingOdds', 'clvPct', 'recordedAt', 'closedAt'].forEach(
+        (key) => {
+          assert.ok(
+            Object.prototype.hasOwnProperty.call(row.clv, key),
+            `Ledger row ${index} clv missing ${key}`,
+          );
+        },
+      );
+    }
+  });
 }
 
 async function run() {

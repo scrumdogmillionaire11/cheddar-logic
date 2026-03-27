@@ -71,6 +71,17 @@ async function validateResultsSegmentationSourceContract(assert) {
       routeSource.includes("'SLIGHT EDGE'"),
     'results route must derive segment families and ledger labels from canonical decision tiers',
   );
+  assert.ok(
+    routeSource.includes('LEFT JOIN clv_ledger clv ON clv.card_id = cr.card_id') &&
+      routeSource.includes('const clv =') &&
+      routeSource.includes('clv,'),
+    'results route must left join clv_ledger and expose optional clv data',
+  );
+  assert.ok(
+    routeSource.includes('END AS market_period_token') &&
+      routeSource.includes('marketPeriodToken: row.market_period_token'),
+    'results route must expose market_period_token on ledger rows as marketPeriodToken',
+  );
 }
 
 function sumNullable(values) {
@@ -98,6 +109,7 @@ function assertDecisionSegmentation(payload, assert, label) {
   const families = Array.isArray(payload.data.segmentFamilies)
     ? payload.data.segmentFamilies
     : [];
+  const ledger = Array.isArray(payload.data.ledger) ? payload.data.ledger : [];
 
   const familyIds = new Set(families.map((family) => family.segmentId));
   ['play', 'slight_edge'].forEach((segmentId) => {
@@ -223,6 +235,31 @@ function assertDecisionSegmentation(payload, assert, label) {
     slightEdgeSettledFromSegments,
     `${label}: slight_edge family settledCards mismatch`,
   );
+
+  for (const [index, row] of ledger.entries()) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(row, 'marketPeriodToken'),
+      `${label}: ledger row ${index} missing marketPeriodToken field`,
+    );
+    assert.ok(
+      row.marketPeriodToken === null || typeof row.marketPeriodToken === 'string',
+      `${label}: ledger row ${index} marketPeriodToken must be string|null`,
+    );
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(row, 'clv'),
+      `${label}: ledger row ${index} missing clv field`,
+    );
+    if (row.clv !== null) {
+      ['oddsAtPick', 'closingOdds', 'clvPct', 'recordedAt', 'closedAt'].forEach(
+        (key) => {
+          assert.ok(
+            Object.prototype.hasOwnProperty.call(row.clv, key),
+            `${label}: ledger row ${index} clv missing ${key}`,
+          );
+        },
+      );
+    }
+  }
 }
 
 async function getJson(url) {
