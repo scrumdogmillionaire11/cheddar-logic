@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-27T00:00:00Z"
-last_activity: "2026-03-27 - WI-0553 ✓ (1P edge gate), WI-0556 ✓ (stale-edge detection), WI-0589 ✓ (tier correction), WI-0591 ✓ (NBA/NCAAM sigma wiring), WI-0599 ✓ (K web surfaces), WI-0600 ✓ (K rollout docs). Sprint reprioritized: P0=WI-0592/0602/0604, P1=K-chain, P2=WI-0603/0557/0568/0567."
+last_updated: "2026-03-27T12:00:00Z"
+last_activity: "2026-03-27 - WI-0592 ✓ (NHL SOG overlay), WI-0602 ✓ (MLB DUAL_RUN F5 primary market), WI-0604 ✓ (MLB pipeline health F5/full-game split). New regressions surfaced: WI-0605 (MLB pitcher team=null blocks all MLB cards), WI-0606 (computeLineDelta not exported — NBA runtime crash). Both promoted to P0."
 progress:
   total_phases: 4
   completed_phases: 3

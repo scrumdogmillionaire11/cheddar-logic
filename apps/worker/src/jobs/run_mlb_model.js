@@ -50,7 +50,227 @@ const {
   formatStartTimeLocal,
   formatCountdown,
   buildMarketFromOdds,
+  buildPipelineState,
+  WATCHDOG_REASONS,
 } = require('@cheddar-logic/models');
+
+// MLB-specific watchdog vocabulary stays local to this runner so WI-0604 can
+// document the new codes without widening shared registries.
+const MLB_PIPELINE_REASON_CODES = Object.freeze({
+  F5_TOTAL_UNAVAILABLE: 'F5_TOTAL_UNAVAILABLE',
+  F5_ML_UNAVAILABLE: 'F5_ML_UNAVAILABLE',
+});
+
+function toFiniteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function pickFirstFinite(...values) {
+  for (const value of values) {
+    const parsed = toFiniteNumber(value);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+function uniqueReasonCodes(codes = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(codes) ? codes : [codes]).filter(
+        (code) => typeof code === 'string' && code.length > 0,
+      ),
+    ),
+  );
+}
+
+function parseMlbRawData(oddsSnapshot) {
+  try {
+    if (typeof oddsSnapshot?.raw_data === 'string') {
+      const parsed = JSON.parse(oddsSnapshot.raw_data);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    }
+    if (oddsSnapshot?.raw_data && typeof oddsSnapshot.raw_data === 'object') {
+      return oddsSnapshot.raw_data;
+    }
+  } catch (_error) {
+    return {};
+  }
+  return {};
+}
+
+function getMarketEntry(rawData, keys) {
+  for (const key of keys) {
+    const value = rawData?.[key];
+    if (Array.isArray(value) && value.length > 0) {
+      return value[0];
+    }
+    if (value && typeof value === 'object') {
+      return value;
+    }
+  }
+  return null;
+}
+
+function resolveMlbF5TotalContext(oddsSnapshot) {
+  const rawData = parseMlbRawData(oddsSnapshot);
+  const mlb = rawData?.mlb && typeof rawData.mlb === 'object' ? rawData.mlb : {};
+  const rawEntry = getMarketEntry(rawData, [
+    'totals_f5',
+    'f5_totals',
+    'total_f5',
+    'first_5_totals',
+    'totals_first_5',
+  ]);
+
+  const line = pickFirstFinite(
+    oddsSnapshot?.total_f5,
+    oddsSnapshot?.f5_total,
+    mlb?.f5_line,
+    mlb?.total_f5,
+    rawEntry?.line,
+    rawEntry?.total,
+    rawEntry?.f5_line,
+  );
+  const overPrice = pickFirstFinite(
+    oddsSnapshot?.total_price_over_f5,
+    oddsSnapshot?.total_f5_price_over,
+    mlb?.total_price_over_f5,
+    mlb?.total_f5_price_over,
+    rawEntry?.over,
+    rawEntry?.over_price,
+  );
+  const underPrice = pickFirstFinite(
+    oddsSnapshot?.total_price_under_f5,
+    oddsSnapshot?.total_f5_price_under,
+    mlb?.total_price_under_f5,
+    mlb?.total_f5_price_under,
+    rawEntry?.under,
+    rawEntry?.under_price,
+  );
+
+  return { line, over_price: overPrice, under_price: underPrice };
+}
+
+function resolveMlbF5MoneylineContext(oddsSnapshot) {
+  const rawData = parseMlbRawData(oddsSnapshot);
+  const mlb = rawData?.mlb && typeof rawData.mlb === 'object' ? rawData.mlb : {};
+  const rawEntry = getMarketEntry(rawData, [
+    'h2h_f5',
+    'ml_f5',
+    'moneyline_f5',
+    'first_5_h2h',
+  ]);
+
+  const home = pickFirstFinite(
+    oddsSnapshot?.ml_f5_home,
+    oddsSnapshot?.h2h_home_f5,
+    oddsSnapshot?.moneyline_home_f5,
+    mlb?.ml_f5_home,
+    mlb?.h2h_home_f5,
+    rawEntry?.home,
+    rawEntry?.home_price,
+  );
+  const away = pickFirstFinite(
+    oddsSnapshot?.ml_f5_away,
+    oddsSnapshot?.h2h_away_f5,
+    oddsSnapshot?.moneyline_away_f5,
+    mlb?.ml_f5_away,
+    mlb?.h2h_away_f5,
+    rawEntry?.away,
+    rawEntry?.away_price,
+  );
+
+  return { home, away };
+}
+
+function resolveMlbFullGameTotalContext(oddsSnapshot) {
+  const rawData = parseMlbRawData(oddsSnapshot);
+  const rawEntry = getMarketEntry(rawData, ['totals']);
+
+  const line = pickFirstFinite(oddsSnapshot?.total, rawEntry?.line, rawEntry?.total);
+  const overPrice = pickFirstFinite(
+    oddsSnapshot?.total_price_over,
+    rawEntry?.over,
+    rawEntry?.over_price,
+  );
+  const underPrice = pickFirstFinite(
+    oddsSnapshot?.total_price_under,
+    rawEntry?.under,
+    rawEntry?.under_price,
+  );
+
+  return { line, over_price: overPrice, under_price: underPrice };
+}
+
+function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false } = {}) {
+  const f5TotalContext = resolveMlbF5TotalContext(oddsSnapshot);
+  const f5MoneylineContext = resolveMlbF5MoneylineContext(oddsSnapshot);
+  const fullGameTotalContext = resolveMlbFullGameTotalContext(oddsSnapshot);
+  const blockingReasonCodes = [];
+
+  const f5LineOk = f5TotalContext.line !== null;
+  const f5MlOk =
+    f5MoneylineContext.home !== null && f5MoneylineContext.away !== null;
+  const fullGameTotalOk = fullGameTotalContext.line !== null;
+
+  if (!f5LineOk) {
+    blockingReasonCodes.push(MLB_PIPELINE_REASON_CODES.F5_TOTAL_UNAVAILABLE);
+  }
+  if (expectF5Ml && !f5MlOk) {
+    blockingReasonCodes.push(MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE);
+  }
+  if (!fullGameTotalOk) {
+    blockingReasonCodes.push(WATCHDOG_REASONS.MARKET_UNAVAILABLE);
+  }
+
+  return {
+    f5_line_ok: f5LineOk,
+    f5_ml_ok: f5MlOk,
+    full_game_total_ok: fullGameTotalOk,
+    expect_f5_total: true,
+    expect_f5_ml: expectF5Ml === true,
+    blocking_reason_codes: uniqueReasonCodes(blockingReasonCodes),
+  };
+}
+
+function buildMlbPipelineState({
+  oddsSnapshot,
+  marketAvailability,
+  projectionReady,
+  driversReady,
+  pricingReady,
+  cardReady,
+}) {
+  const availability =
+    marketAvailability || buildMlbMarketAvailability(oddsSnapshot);
+  const marketLinesOk =
+    availability.f5_line_ok ||
+    availability.full_game_total_ok ||
+    (availability.expect_f5_ml && availability.f5_ml_ok);
+
+  return {
+    ...buildPipelineState({
+      ingested: Boolean(oddsSnapshot),
+      team_mapping_ok: Boolean(
+        oddsSnapshot?.home_team && oddsSnapshot?.away_team,
+      ),
+      odds_ok: Boolean(oddsSnapshot?.captured_at) && marketLinesOk,
+      market_lines_ok: marketLinesOk,
+      projection_ready: projectionReady === true,
+      drivers_ready: driversReady === true,
+      pricing_ready: pricingReady === true,
+      card_ready: cardReady === true,
+      blocking_reason_codes: availability.blocking_reason_codes,
+    }),
+    f5_line_ok: availability.f5_line_ok,
+    f5_ml_ok: availability.f5_ml_ok,
+    full_game_total_ok: availability.full_game_total_ok,
+    expect_f5_total: availability.expect_f5_total,
+    expect_f5_ml: availability.expect_f5_ml,
+  };
+}
 
 function attachRunId(card, runId) {
   if (!card) return;
@@ -450,8 +670,13 @@ function enrichMlbPitcherData(oddsSnapshot, { forKEngine = false } = {}) {
  * @param {object} options - Job options
  * @param {string|null} options.jobKey - Optional deterministic window key for idempotency
  * @param {boolean} options.dryRun - If true, skip execution (log only)
+ * @param {boolean} options.expectF5Ml - Enable F5 ML watchdog expectations
  */
-async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
+async function runMLBModel({
+  jobKey = null,
+  dryRun = false,
+  expectF5Ml = false,
+} = {}) {
   const jobRunId = `job-mlb-model-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[MLBModel] Starting job run: ${jobRunId}`);
@@ -520,6 +745,7 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
       let cardsGenerated = 0;
       let cardsFailed = 0;
       const errors = [];
+      const gamePipelineStates = {};
 
       // Process each game — emit one card per qualifying driver market
       for (const gameId of gameIds) {
@@ -547,6 +773,9 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
             gameSelection,
           );
           console.log(`[MLB_DUAL_RUN] ${JSON.stringify(dualRunRecord)}`);
+          const marketAvailability = buildMlbMarketAvailability(gameOddsSnapshot, {
+            expectF5Ml,
+          });
 
           const selectedGameDriver = gameSelection.selected_driver;
           const qualified = [
@@ -559,6 +788,23 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
           prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-strikeout', { runId: jobRunId });
           prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-f5', { runId: jobRunId });
           prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-pitcher-k', { runId: jobRunId });
+
+          const pipelineState = buildMlbPipelineState({
+            oddsSnapshot: gameOddsSnapshot,
+            marketAvailability,
+            projectionReady: true,
+            driversReady:
+              gameDriverCards.length > 0 || pitcherKDriverCards.length > 0,
+            pricingReady: qualified.length > 0,
+            cardReady: qualified.length > 0,
+          });
+          gamePipelineStates[gameId] = pipelineState;
+          console.log(
+            `[MLB_PIPELINE_STATE] ${JSON.stringify({
+              game_id: gameId,
+              ...pipelineState,
+            })}`,
+          );
 
           if (qualified.length === 0) {
             console.log(`  ⏭️  ${gameId}: No markets passed threshold`);
@@ -682,6 +928,7 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
 
             card.modelOutputIds = modelOutputId;
             attachRunId(card, jobRunId);
+            card.payloadData.pipeline_state = pipelineState;
             insertCardPayload(card);
 
             cardsGenerated++;
@@ -692,6 +939,19 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
             throw gameError;
           }
           cardsFailed++;
+          if (!gamePipelineStates[gameId]) {
+            const fallbackOddsSnapshot = gameOdds[gameId];
+            gamePipelineStates[gameId] = buildMlbPipelineState({
+              oddsSnapshot: fallbackOddsSnapshot,
+              marketAvailability: buildMlbMarketAvailability(fallbackOddsSnapshot, {
+                expectF5Ml,
+              }),
+              projectionReady: false,
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+            });
+          }
           errors.push(`${gameId}: ${gameError.message}`);
           console.error(`  ❌ ${gameId}: ${gameError.message}`);
         }
@@ -709,13 +969,23 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
       console.log(
         `[MLBModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
       );
+      console.log(
+        `[MLBModel] Pipeline states: ${JSON.stringify(gamePipelineStates)}`,
+      );
 
       if (errors.length > 0) {
         console.error('[MLBModel] Errors:');
         errors.forEach((err) => console.error(`  - ${err}`));
       }
 
-      return { success: true, jobRunId, cardsGenerated, cardsFailed, errors };
+      return {
+        success: true,
+        jobRunId,
+        cardsGenerated,
+        cardsFailed,
+        errors,
+        pipeline_states: gamePipelineStates,
+      };
     } catch (error) {
       console.error(`[MLBModel] ❌ Job failed:`, error.message);
       console.error(error.stack);
@@ -751,6 +1021,9 @@ module.exports = {
   generateMLBCard,
   buildMlbDualRunRecord,
   buildMlbF5OddsContext,
+  buildMlbMarketAvailability,
+  buildMlbPipelineState,
+  MLB_PIPELINE_REASON_CODES,
   resolvePitcherKsMode,
   // Exported for WI-0596 unit tests
   checkPitcherFreshness,

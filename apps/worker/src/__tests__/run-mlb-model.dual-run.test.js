@@ -4,7 +4,9 @@ const {
   selectMlbGameMarket,
 } = require('../models/mlb-model');
 const {
+  buildMlbMarketAvailability,
   buildMlbF5OddsContext,
+  MLB_PIPELINE_REASON_CODES,
 } = require('../jobs/run_mlb_model');
 
 function buildF5Snapshot(overrides = {}) {
@@ -15,6 +17,9 @@ function buildF5Snapshot(overrides = {}) {
     away_team: 'Red Sox',
     game_time_utc: '2026-03-28T23:05:00.000Z',
     captured_at: '2026-03-27T18:00:00.000Z',
+    total: 8.5,
+    total_price_over: -110,
+    total_price_under: -110,
     total_f5: 4.5,
     total_price_over_f5: -112,
     total_price_under_f5: -108,
@@ -69,6 +74,7 @@ function loadRunMlbModel({
   gameDriverCards,
   pitcherKDriverCards,
   selection,
+  snapshotOverrides = {},
 }) {
   jest.resetModules();
 
@@ -102,7 +108,7 @@ function loadRunMlbModel({
     markJobRunFailure: jest.fn(),
     setCurrentRunId: jest.fn(),
     getOddsSnapshots: jest.fn(),
-    getOddsWithUpcomingGames: jest.fn(() => [buildF5Snapshot()]),
+    getOddsWithUpcomingGames: jest.fn(() => [buildF5Snapshot(snapshotOverrides)]),
     getLatestOdds: jest.fn(),
     insertModelOutput,
     insertCardPayload,
@@ -215,6 +221,56 @@ describe('mlb dual-run helpers', () => {
       errors: [],
     });
   });
+
+  test('market availability resolves from current snapshot fields without F5 ML expectation', () => {
+    const availability = buildMlbMarketAvailability(buildF5Snapshot());
+
+    expect(availability).toMatchObject({
+      f5_line_ok: true,
+      f5_ml_ok: false,
+      full_game_total_ok: true,
+      expect_f5_total: true,
+      expect_f5_ml: false,
+    });
+    expect(availability.blocking_reason_codes).toEqual([]);
+  });
+
+  test('market availability falls back to raw_data when F5 values are not promoted to top-level fields', () => {
+    const availability = buildMlbMarketAvailability(
+      buildF5Snapshot({
+        total_f5: null,
+        total_price_over_f5: null,
+        total_price_under_f5: null,
+        raw_data: {
+          totals: [{ line: 8.5, over: -110, under: -110 }],
+          totals_f5: [{ line: 4.5, over: -112, under: -108 }],
+          mlb: {
+            home_pitcher: buildF5Snapshot().raw_data.mlb.home_pitcher,
+            away_pitcher: buildF5Snapshot().raw_data.mlb.away_pitcher,
+          },
+        },
+      }),
+    );
+
+    expect(availability.f5_line_ok).toBe(true);
+    expect(availability.full_game_total_ok).toBe(true);
+    expect(availability.blocking_reason_codes).toEqual([]);
+  });
+
+  test('market availability emits F5_ML_UNAVAILABLE only when F5 ML expectation is active', () => {
+    const availability = buildMlbMarketAvailability(buildF5Snapshot(), {
+      expectF5Ml: true,
+    });
+
+    expect(availability.expect_f5_ml).toBe(true);
+    expect(availability.f5_ml_ok).toBe(false);
+    expect(availability.blocking_reason_codes).toContain(
+      MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE,
+    );
+    expect(availability.blocking_reason_codes).not.toContain(
+      MLB_PIPELINE_REASON_CODES.F5_TOTAL_UNAVAILABLE,
+    );
+  });
 });
 
 describe('runMLBModel dual-run orchestration', () => {
@@ -313,9 +369,17 @@ describe('runMLBModel dual-run orchestration', () => {
     expect(f5Payload.chosen_market).toBe('F5_TOTAL');
     expect(f5Payload.recommended_bet_type).toBe('total');
     expect(f5Payload.odds_context).toBeDefined();
+    expect(f5Payload.pipeline_state).toMatchObject({
+      f5_line_ok: true,
+      f5_ml_ok: false,
+      full_game_total_ok: true,
+    });
+    expect(f5Payload.pipeline_state.blocking_reason_codes).not.toContain(
+      MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE,
+    );
   });
 
-  test('missing F5 line logs NO_F5_LINE and still writes mlb-pitcher-k in ODDS_BACKED mode', async () => {
+  test('missing F5 line logs NO_F5_LINE, emits F5_TOTAL_UNAVAILABLE, and still writes mlb-pitcher-k in ODDS_BACKED mode', async () => {
     const selection = {
       chosen_market: 'F5_TOTAL',
       why_this_market: 'Rule 1: only configured MLB game market',
@@ -334,6 +398,21 @@ describe('runMLBModel dual-run orchestration', () => {
       gameDriverCards: [],
       pitcherKDriverCards: [oddsBackedProp],
       selection,
+      snapshotOverrides: {
+        total_f5: null,
+        total_price_over_f5: null,
+        total_price_under_f5: null,
+        raw_data: {
+          mlb: {
+            strikeout_lines: {
+              home: 6.5,
+              away: 6.5,
+            },
+            home_pitcher: buildF5Snapshot().raw_data.mlb.home_pitcher,
+            away_pitcher: buildF5Snapshot().raw_data.mlb.away_pitcher,
+          },
+        },
+      },
     });
     const consoleLog = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -350,8 +429,52 @@ describe('runMLBModel dual-run orchestration', () => {
     expect(
       mocks.insertCardPayload.mock.calls.map(([card]) => card.cardType),
     ).toEqual(['mlb-pitcher-k']);
+    const payload = mocks.insertCardPayload.mock.calls[0][0].payloadData;
+    expect(payload.pipeline_state.blocking_reason_codes).toContain(
+      MLB_PIPELINE_REASON_CODES.F5_TOTAL_UNAVAILABLE,
+    );
+    expect(payload.pipeline_state.blocking_reason_codes).not.toContain(
+      'WATCHDOG_MARKET_UNAVAILABLE',
+    );
     expect(consoleLog).toHaveBeenCalledWith(
       expect.stringContaining('"NO_F5_LINE"'),
+    );
+  });
+
+  test('active F5 ML expectation emits F5_ML_UNAVAILABLE in pipeline state', async () => {
+    const selection = {
+      chosen_market: 'F5_TOTAL',
+      why_this_market: 'Rule 1: only configured MLB game market',
+      markets: [
+        {
+          market: 'F5_TOTAL',
+          status: 'FIRE',
+          prediction: 'OVER',
+          score: 0.9,
+          edge: 0.8,
+          projected: 5.3,
+        },
+      ],
+      rejected: {},
+      selected_driver: gameDriver,
+    };
+
+    const { runMLBModel, mocks } = loadRunMlbModel({
+      mode: 'PROJECTION_ONLY',
+      gameDriverCards: [gameDriver],
+      pitcherKDriverCards: [pitcherKHome],
+      selection,
+    });
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runMLBModel({ expectF5Ml: true });
+
+    expect(result.success).toBe(true);
+    const payload = mocks.insertCardPayload.mock.calls[0][0].payloadData;
+    expect(payload.pipeline_state.blocking_reason_codes).toContain(
+      MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE,
     );
   });
 });
