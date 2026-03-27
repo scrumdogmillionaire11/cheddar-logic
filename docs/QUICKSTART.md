@@ -605,6 +605,23 @@ npm --prefix web run test:ui:results
 npm --prefix web run test:decision:canonical
 ```
 
+DB-backed mutating web tests use a stricter contract:
+
+```bash
+# Full mutating web DB test bundle
+npm --prefix web run test:db-mutating
+
+# Individual mutating DB tests
+npm --prefix web run test:dedupe
+npm --prefix web run test:games-filter
+npm --prefix web run test:cards-sport-filter
+npm --prefix web run test:cards-lifecycle-regression
+```
+
+- These commands always provision their own migrated temp SQLite DB under the system temp directory.
+- They fail closed before any write if an explicit DB env var points at `/opt/data`, `/opt/cheddar-logic`, or a `cheddar-prod.db` path.
+- CI also pins `CHEDDAR_DB_PATH=/tmp/cheddar-logic/ci-safe.db` as a defense-in-depth default, but the mutating tests still replace that with a per-run temp DB.
+
 If you need a one-shot script:
 
 ```bash

@@ -10,9 +10,11 @@
  */
 
 import db from '../../../packages/data/src/db.js';
+import { setupIsolatedTestDb } from './db-test-runtime.js';
 
 async function runTests() {
   console.log('🧪 Starting API Dedupe Behavior Tests...\n');
+  const testRuntime = await setupIsolatedTestDb('api-dedupe');
 
   try {
     // Initialize database
@@ -404,7 +406,7 @@ async function runTests() {
     console.error('❌ Test error:', error);
     process.exit(1);
   } finally {
-    db.closeDatabase();
+    testRuntime.cleanup();
   }
 }
 

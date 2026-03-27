@@ -9,6 +9,7 @@
  */
 
 import db from '../../../packages/data/src/db.js';
+import { setupIsolatedTestDb } from './db-test-runtime.js';
 
 function toSqlUtc(date) {
   return date.toISOString().substring(0, 19).replace('T', ' ');
@@ -64,6 +65,7 @@ function queryActive(client, startUtc, nowUtc, endUtc = null) {
 // ---------------------------------------------------------------------------
 async function runTests() {
   console.log('🧪 Starting /api/games lifecycle filter tests...\n');
+  const testRuntime = await setupIsolatedTestDb('api-games-filter');
   let passed = 0;
   let failed = 0;
 
@@ -77,72 +79,73 @@ async function runTests() {
     }
   }
 
-  await db.initDb();
-  const client = db.getDatabase();
+  try {
+    await db.initDb();
+    const client = db.getDatabase();
 
-  const fsModule = await import('node:fs');
-  const pathModule = await import('node:path');
-  const fs = fsModule.default || fsModule;
-  const path = pathModule.default || pathModule;
-  const routePath = path.resolve('src/app/api/games/route.ts');
-  const routeSource = fs.readFileSync(routePath, 'utf8');
+    const fsModule = await import('node:fs');
+    const pathModule = await import('node:path');
+    const fs = fsModule.default || fsModule;
+    const path = pathModule.default || pathModule;
+    const routePath = path.resolve('src/app/api/games/route.ts');
+    const routeSource = fs.readFileSync(routePath, 'utf8');
 
-  console.log('── Section 1: Route contract assertions ──');
+    console.log('── Section 1: Route contract assertions ──');
 
-  assert(
-    routeSource.includes("lifecycle_mode: lifecycleMode") &&
-      routeSource.includes('display_status: displayStatus'),
-    'route emits derived lifecycle fields (lifecycle_mode/display_status)',
-  );
-  assert(
-    routeSource.includes("cr.status = 'settled'"),
-    'route preserves settled exclusion contract',
-  );
-  assert(
-    routeSource.includes('ACTIVE_EXCLUDED_STATUSES'),
-    'route defines active-mode non-live status exclusions',
-  );
-  assert(
-    routeSource.includes('FINAL_GAME_RESULT_STATUSES') &&
-      routeSource.includes('FROM game_results gr'),
-    'route excludes games already finalized in game_results during active mode',
-  );
-  assert(
-    !routeSource.includes('include_started') &&
-      !routeSource.includes('active_plays'),
-    'route uses canonical lifecycle query param only (legacy aliases removed)',
-  );
-  assert(
-    routeSource.includes("searchParams.get('sport')") &&
-      routeSource.includes('AND UPPER(g.sport) = ?'),
-    'route applies sport query param as SQL filter in both base window and game rows query',
-  );
-  assert(
-    !routeSource.includes('raw_status:'),
-    'route no longer emits raw_status field',
-  );
-  assert(
-    routeSource.includes('activeStartUtc') &&
-      routeSource.includes('ACTIVE_LOOKBACK_HOURS') &&
-      routeSource.includes("lifecycleMode === 'active' ? activeStartUtc : gamesStartUtc"),
-    'route uses rolling activeStartUtc for active mode (not todayUtc) to include late-night in-progress games',
-  );
+    assert(
+      routeSource.includes("lifecycle_mode: lifecycleMode") &&
+        routeSource.includes('display_status: displayStatus'),
+      'route emits derived lifecycle fields (lifecycle_mode/display_status)',
+    );
+    assert(
+      routeSource.includes("cr.status = 'settled'"),
+      'route preserves settled exclusion contract',
+    );
+    assert(
+      routeSource.includes('ACTIVE_EXCLUDED_STATUSES'),
+      'route defines active-mode non-live status exclusions',
+    );
+    assert(
+      routeSource.includes('FINAL_GAME_RESULT_STATUSES') &&
+        routeSource.includes('FROM game_results gr'),
+      'route excludes games already finalized in game_results during active mode',
+    );
+    assert(
+      !routeSource.includes('include_started') &&
+        !routeSource.includes('active_plays'),
+      'route uses canonical lifecycle query param only (legacy aliases removed)',
+    );
+    assert(
+      routeSource.includes("searchParams.get('sport')") &&
+        routeSource.includes('AND UPPER(g.sport) = ?'),
+      'route applies sport query param as SQL filter in both base window and game rows query',
+    );
+    assert(
+      !routeSource.includes('raw_status:'),
+      'route no longer emits raw_status field',
+    );
+    assert(
+      routeSource.includes('activeStartUtc') &&
+        routeSource.includes('ACTIVE_LOOKBACK_HOURS') &&
+        routeSource.includes("lifecycleMode === 'active' ? activeStartUtc : gamesStartUtc"),
+      'route uses rolling activeStartUtc for active mode (not todayUtc) to include late-night in-progress games',
+    );
 
-  console.log();
+    console.log();
 
-  console.log('── Section 2: Lifecycle query behavior ──');
+    console.log('── Section 2: Lifecycle query behavior ──');
 
-  const TEST_PREFIX = 'test-filter-';
-  // Clean up any leftover test data (delete child rows first due to FK constraints)
-  client
-    .prepare(`DELETE FROM card_payloads WHERE game_id LIKE '${TEST_PREFIX}%'`)
-    .run();
-  client
-    .prepare(`DELETE FROM game_results WHERE game_id LIKE '${TEST_PREFIX}%'`)
-    .run();
-  client
-    .prepare(`DELETE FROM games WHERE game_id LIKE '${TEST_PREFIX}%'`)
-    .run();
+    const TEST_PREFIX = 'test-filter-';
+    // Clean up any leftover test data (delete child rows first due to FK constraints)
+    client
+      .prepare(`DELETE FROM card_payloads WHERE game_id LIKE '${TEST_PREFIX}%'`)
+      .run();
+    client
+      .prepare(`DELETE FROM game_results WHERE game_id LIKE '${TEST_PREFIX}%'`)
+      .run();
+    client
+      .prepare(`DELETE FROM games WHERE game_id LIKE '${TEST_PREFIX}%'`)
+      .run();
 
   const now = new Date();
   const nowUtc = toSqlUtc(now);
@@ -384,17 +387,19 @@ async function runTests() {
     .run();
   console.log();
 
-  // -------------------------------------------------------------------------
-  // Results
-  // -------------------------------------------------------------------------
-  db.closeDatabase();
-  console.log(`Results: ${passed} passed, ${failed} failed`);
+    // -----------------------------------------------------------------------
+    // Results
+    // -----------------------------------------------------------------------
+    console.log(`Results: ${passed} passed, ${failed} failed`);
 
-  if (failed > 0) {
-    console.error('\n❌ Tests failed');
-    process.exit(1);
-  } else {
-    console.log('\n✅ All tests passed');
+    if (failed > 0) {
+      console.error('\n❌ Tests failed');
+      process.exit(1);
+    } else {
+      console.log('\n✅ All tests passed');
+    }
+  } finally {
+    testRuntime.cleanup();
   }
 }
 

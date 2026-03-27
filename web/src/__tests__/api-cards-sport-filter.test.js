@@ -5,9 +5,11 @@
  */
 
 import db from '../../../packages/data/src/db.js';
+import { setupIsolatedTestDb } from './db-test-runtime.js';
 
 async function runTests() {
   console.log('🧪 Starting /api/cards sport filter tests...\n');
+  const testRuntime = await setupIsolatedTestDb('api-cards-sport-filter');
 
   try {
     await db.initDb();
@@ -99,7 +101,7 @@ async function runTests() {
     console.error('❌ Test error:', error);
     process.exit(1);
   } finally {
-    db.closeDatabase();
+    testRuntime.cleanup();
   }
 }
 

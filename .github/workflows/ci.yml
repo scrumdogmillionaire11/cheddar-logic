@@ -8,6 +8,8 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      CHEDDAR_DB_PATH: /tmp/cheddar-logic/ci-safe.db
     steps:
       - name: Checkout
         # WI-0517: v5 uses Node.js 24 runtime (v4/Node.js 20 deprecated June 2026)
