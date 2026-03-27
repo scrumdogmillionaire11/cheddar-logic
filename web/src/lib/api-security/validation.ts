@@ -6,7 +6,7 @@
 const ALLOWED_QUERY_PARAMS: Record<string, Set<string>> = {
   '/api/games': new Set(['limit', 'offset', 'sport', 'filter', 'lifecycle']),
   '/api/cards': new Set(['gameId', 'sport', 'card_type', 'game_id', 'include_expired', 'dedupe', 'limit', 'offset', 'lifecycle']),
-  '/api/cards/[gameId]': new Set(['lifecycle']),
+  '/api/cards/[gameId]': new Set(['cardType', 'card_type', 'dedupe', 'limit', 'offset', 'lifecycle']),
   '/api/props': new Set(['gameId', 'limit', 'offset']),
   '/api/results': new Set([
     'limit',
@@ -96,11 +96,22 @@ export function validateQueryParams(
     }
 
     // Boolean-ish parameters
-    if (key === 'include_orphaned' || key === 'dedupe') {
+    if (key === 'include_orphaned') {
       const normalized = stringValue.trim().toLowerCase();
       const valid = ['1', '0', 'true', 'false', 'yes', 'no', 'on', 'off'];
       if (!valid.includes(normalized)) {
         errors.push(`${key} must be boolean-like (0/1/true/false)`);
+      } else {
+        sanitized[key] = normalized;
+      }
+    }
+
+    // Dedupe mode parameter
+    if (key === 'dedupe') {
+      const normalized = stringValue.trim().toLowerCase();
+      const valid = ['1', '0', 'true', 'false', 'yes', 'no', 'on', 'off', 'none', 'latest_per_game_type'];
+      if (!valid.includes(normalized)) {
+        errors.push(`${key} must be boolean-like (0/1/true/false) or 'none'/'latest_per_game_type'`);
       } else {
         sanitized[key] = normalized;
       }

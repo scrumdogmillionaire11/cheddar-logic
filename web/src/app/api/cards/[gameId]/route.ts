@@ -41,6 +41,7 @@ import {
 } from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
+  performSecurityChecks,
   requireEntitlementForRequest,
   RESOURCE,
 } from '../../../../lib/api-security';
@@ -208,6 +209,11 @@ export async function GET(
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
   try {
     await ensureDbReady();
+
+    const securityCheck = performSecurityChecks(request, '/api/cards/[gameId]');
+    if (!securityCheck.allowed) {
+      return securityCheck.error!;
+    }
 
     if (process.env.ENABLE_AUTH_WALLS === 'true') {
       const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);

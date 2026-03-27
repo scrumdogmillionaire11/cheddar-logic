@@ -788,9 +788,9 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
     cards.push({
       market: `pitcher_k_${role}`,
       pitcher_team: team,
-      prediction: emitsCard ? result.verdict.toUpperCase() : 'PASS',
+      prediction: result.ev_threshold_passed ? result.verdict.toUpperCase() : 'PASS',
       confidence: result.net_score != null ? result.net_score / 10 : 0,
-      ev_threshold_passed: emitsCard,
+      ev_threshold_passed: result.ev_threshold_passed,
       reasoning: _buildPitcherKReasoning(result),
       drivers: [{
         type: 'pitcher-k',

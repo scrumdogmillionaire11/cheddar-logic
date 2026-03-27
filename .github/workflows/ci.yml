@@ -8,10 +8,22 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      CHEDDAR_DB_PATH: /tmp/cheddar-logic/ci-safe.db
     steps:
       - name: Checkout
         # WI-0517: v5 uses Node.js 24 runtime (v4/Node.js 20 deprecated June 2026)
         uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            packages/data/package-lock.json
+            packages/models/package-lock.json
+            web/package-lock.json
 
       - name: Make scripts executable
         run: |
@@ -38,3 +50,12 @@ jobs:
           else
             echo "link-integrity.sh not found, skipping validation"
           fi
+
+      - name: Install scoped web test dependencies
+        run: |
+          npm --prefix packages/data ci
+          npm --prefix packages/models ci
+          npm --prefix web ci
+
+      - name: Run deterministic web smoke gate
+        run: npm --prefix web run test:ci:smoke

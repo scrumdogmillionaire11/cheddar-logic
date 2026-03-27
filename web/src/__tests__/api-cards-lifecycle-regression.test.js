@@ -14,6 +14,7 @@ import db from '../../../packages/data/src/db.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setupIsolatedTestDb } from './db-test-runtime.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +22,9 @@ const REPO_ROOT = path.resolve(__dirname, '../../..');
 
 async function runTests() {
   console.log('🧪 Starting WI-0392: API Cards Lifecycle Parity Tests...\n');
+  const testRuntime = await setupIsolatedTestDb(
+    'api-cards-lifecycle-regression',
+  );
 
   try {
     // Initialize database
@@ -428,6 +432,8 @@ async function runTests() {
     console.error('❌ Test Error:', error.message);
     console.error(error);
     process.exit(1);
+  } finally {
+    testRuntime.cleanup();
   }
 }
 

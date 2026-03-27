@@ -8,7 +8,11 @@
     "build": "next build --webpack && node scripts/copy-native-bindings.cjs",
     "start": "next start",
     "lint": "eslint",
+    "test:api:cards:security": "node --import tsx/esm src/__tests__/api-cards-gameId-security.test.js",
     "test:dedupe": "node src/__tests__/api-dedupe.test.js",
+    "test:cards-sport-filter": "node src/__tests__/api-cards-sport-filter.test.js",
+    "test:cards-lifecycle-regression": "node src/__tests__/api-cards-lifecycle-regression.test.js",
+    "test:db-mutating": "npm run test:dedupe && npm run test:games-filter && npm run test:cards-sport-filter && npm run test:cards-lifecycle-regression",
     "test:api:nhl-contract": "node src/__tests__/api-nhl-payload-contract.test.js",
     "test:games-filter": "node src/__tests__/api-games-filter.test.js",
     "test:filters": "node --import tsx/esm src/__tests__/game-card-filters.test.js && node --import tsx/esm src/__tests__/game-card-filters-play-first.test.js && node --import tsx/esm src/__tests__/filters-pass-play-main-view-regression.test.js",
@@ -25,9 +29,11 @@
     "test:ui:evidence": "node src/__tests__/ui-evidence-no-play-contract.test.js",
     "test:api:games:market": "node src/__tests__/api-games-market-smoke.test.js",
     "test:api:games:repair-budget": "node src/__tests__/api-games-repair-budget.test.js",
+    "test:api:results:decision-segmentation": "node src/__tests__/api-results-decision-segmentation.test.js",
     "test:api:results:flags": "node src/__tests__/api-results-flags.test.js",
     "test:decision:canonical": "node src/__tests__/canonical-play-decision.test.js",
-    "test:filters:presets": "node src/__tests__/filters-presets-contract.test.js"
+    "test:filters:presets": "node src/__tests__/filters-presets-contract.test.js",
+    "test:ci:smoke": "npm run test:ui:results && npm run test:api:games:market && npm run test:api:games:repair-budget && npm run test:api:nhl-contract && npm run test:api:results:decision-segmentation"
   },
   "dependencies": {
     "@cheddar-logic/data": "file:../packages/data",
