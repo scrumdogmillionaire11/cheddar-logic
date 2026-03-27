@@ -52,6 +52,30 @@ async function fetchProbablePitcherIds(date) {
   return [...ids];
 }
 
+/**
+ * Build a Map<pitcherId, teamAbbreviation> from a schedule API payload.
+ * The schedule `hydrate=probablePitcher,team` response includes team.abbreviation
+ * alongside each probablePitcher — this is the canonical join key used by
+ * run_mlb_model.js (which queries mlb_pitcher_stats WHERE team = odds_snapshot.home_team).
+ */
+function buildPitcherTeamMap(schedulePayload) {
+  const map = new Map();
+  const dates = Array.isArray(schedulePayload?.dates) ? schedulePayload.dates : [];
+  for (const d of dates) {
+    const games = Array.isArray(d.games) ? d.games : [];
+    for (const game of games) {
+      for (const side of ['home', 'away']) {
+        const pitcher = game?.teams?.[side]?.probablePitcher;
+        const abbrev = game?.teams?.[side]?.team?.abbreviation;
+        if (pitcher?.id && abbrev) {
+          map.set(Number(pitcher.id), abbrev);
+        }
+      }
+    }
+  }
+  return map;
+}
+
 function ensureMlbGamePkMap(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS mlb_game_pk_map (
@@ -317,17 +341,22 @@ async function fetchPitcherInfo(pitcherId) {
   };
 }
 
-async function fetchAllPitcherData(pitcherId) {
+async function fetchAllPitcherData(pitcherId, { teamFromSchedule = null } = {}) {
   const [info, seasonStats, recentStats] = await Promise.all([
     fetchPitcherInfo(pitcherId),
     fetchPitcherSeasonStats(pitcherId),
     fetchPitcherRecentStats(pitcherId),
   ]);
 
+  // Prefer schedule-derived team abbreviation (matches odds_snapshot.home_team / away_team
+  // used by run_mlb_model.js enrichment). Fall back to currentTeam.name if schedule didn't
+  // include this pitcher (edge case).
+  const team = teamFromSchedule ?? info.team;
+
   return {
     mlb_id: pitcherId,
     full_name: info.full_name,
-    team: info.team,
+    team,
     // pitcher_input_schema.md: handedness required for opp splits
     handedness: info.handedness,
     season: MLB_SEASON,
@@ -541,7 +570,25 @@ async function pullMlbPitcherStats({
         jobInserted = true;
       }
 
-      const pitcherIds = await fetchProbablePitcherIds(date);
+      // Fetch schedule once; derive pitcher IDs and team abbreviation map from it.
+      // The team abbreviation (e.g. "NYY") is the join key used by run_mlb_model.js
+      // (WHERE team = odds_snapshot.home_team). Using currentTeam.name from /people/
+      // can return null or a full name that doesn't match — so we source it here.
+      const schedulePayload = await fetchSchedule(date);
+      const pitcherIds = (() => {
+        const ids = new Set();
+        const dates = Array.isArray(schedulePayload.dates) ? schedulePayload.dates : [];
+        for (const d of dates) {
+          for (const game of (Array.isArray(d.games) ? d.games : [])) {
+            const h = game?.teams?.home?.probablePitcher;
+            const a = game?.teams?.away?.probablePitcher;
+            if (h?.id) ids.add(Number(h.id));
+            if (a?.id) ids.add(Number(a.id));
+          }
+        }
+        return [...ids];
+      })();
+      const pitcherTeamMap = buildPitcherTeamMap(schedulePayload);
       console.log(`[${JOB_NAME}] date=${date} probable_pitchers=${pitcherIds.length}`);
 
       if (dryRun) {
@@ -561,7 +608,7 @@ async function pullMlbPitcherStats({
 
       const rows = await Promise.all(
         pitcherIds.map((id) =>
-          fetchAllPitcherData(id).catch((err) => {
+          fetchAllPitcherData(id, { teamFromSchedule: pitcherTeamMap.get(id) ?? null }).catch((err) => {
             console.warn(`[${JOB_NAME}] Failed to fetch data for pitcher ${id}: ${err.message}`);
             return null;
           }),
@@ -642,6 +689,7 @@ module.exports = {
   todayDateString,
   fetchSchedule,
   fetchProbablePitcherIds,
+  buildPitcherTeamMap,
   fetchPitcherSeasonStats,
   fetchPitcherRecentStats,
   fetchAllPitcherData,

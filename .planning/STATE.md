@@ -31,79 +31,77 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-27
-- Next action: WI-0592 (NHL SOG overlay) + WI-0602 (MLB DUAL_RUN) + WI-0604 (MLB health) are all P0 and independent — run in parallel. Then start pitcher K chain: WI-0595 → WI-0596 → WI-0597 → WI-0598.
+- Next action: **WI-0606 first** (NBA runtime crash, 2-line fix). **WI-0605 in parallel** (MLB pitcher team=null — blocks all MLB cards). Both are solo, no deps. Once clear, WI-0603 is unblocked (WI-0602 ✓). Then start K chain: WI-0595 → WI-0596 → WI-0597 → WI-0598.
 
-## Sprint Plan — 2026-03-27 (reprioritized)
+## Sprint Plan — 2026-03-27 (reprioritized — post-P0-completion)
 
 ### Dependency Chains (respect order within chains)
 
-- **Edge math stack:** ALL DONE ✓ (WI-0551→0552→0554→0556→0553)
-- **Auth/JWT:** ALL DONE ✓ (WI-0559→0560)
-- **NBA totals:** ALL DONE ✓ (WI-0588→0590→0589)
-- **CLV:** WI-0557 unblocked (WI-0564 obsolete — NHL settlement sufficient)
+- **Edge math stack:** ALL DONE ✓
+- **Auth/JWT:** ALL DONE ✓
+- **NBA totals:** ALL DONE ✓
+- **MLB F5/DUAL_RUN:** ~~WI-0602~~✓ → WI-0603 (unblocked); ~~WI-0604~~✓ done
+- **MLB pitcher K (serial):** WI-0595 → WI-0596 → WI-0597 → WI-0598
 - **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
-- **MLB pitcher-K market (serial):** WI-0595 → WI-0596 → WI-0597 → WI-0598 (~~WI-0599~~✓, ~~WI-0600~~✓ docs done)
-- **MLB F5/DUAL_RUN (serial):** WI-0602 → WI-0603 (WI-0604 independent)
-- **All others:** independent, can be parallelized across agents
+- **CLV:** WI-0557 unblocked
+- **All others:** independent
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-27
+## Prioritized Open Work Queue — 2026-03-27 (post-P0)
 
 ### Recently Completed ✓
 
 | WI | Summary |
 |---|---|
+| ~~WI-0604~~ ✓ | MLB pipeline health — F5 vs full-game watchdog differentiation |
+| ~~WI-0602~~ ✓ | MLB DUAL_RUN market selection — F5 Total as primary game market |
+| ~~WI-0592~~ ✓ | NHL SOG breakout usage overlay |
 | ~~WI-0600~~ ✓ | Pitcher Ks rollout docs and acceptance pack |
 | ~~WI-0599~~ ✓ | Pitcher Ks web surfaces (scaffolding) |
-| ~~WI-0594~~ ✓ | REGRESSION: Active tab missing ACTIVE label |
-| ~~WI-0593~~ ✓ | Restore recurring settlement sweeps |
 | ~~WI-0591~~ ✓ | Wire empirical sigma overrides into NBA and NCAAM decisioning |
-| ~~WI-0590~~ ✓ | NBA totals diagnostic (bias vs sigma vs threshold) |
-| ~~WI-0589~~ ✓ | PLAY vs LEAN tier correction — cleanliness/contradiction gates |
-| ~~WI-0556~~ ✓ | Track line movement delta to detect stale-edge cards |
+| ~~WI-0589~~ ✓ | PLAY vs LEAN tier correction |
+| ~~WI-0556~~ ✓ | Track line movement delta — stale-edge detection |
 | ~~WI-0553~~ ✓ | Gate FIRST_PERIOD on edge, not projection signal |
-| ~~WI-0554~~ ✓ | Computed confidence function (replace 0.95/0.88/0.85 literals) |
 
-### P0 — Do now (unblocked, high card-quality impact)
+### P0 — Fix now (production regressions, both solo/independent)
 
 | # | WI | Summary | Deps | Why now |
 |---|---|---|---|---|
-| 1 | [WI-0592](../WORK_QUEUE/WI-0592.md) | NHL SOG breakout usage overlay — rising-usage OVER candidates no longer flattened | none | Improves live prop card quality immediately; quick, self-contained |
-| 2 | [WI-0602](../WORK_QUEUE/WI-0602.md) | MLB DUAL_RUN market selection — elevate F5 Total as primary game market | none | Sets MLB market architecture before K chain odds-backstop lands; avoids rework in WI-0597/0598 |
-| 3 | [WI-0604](../WORK_QUEUE/WI-0604.md) | MLB pipeline health — differentiate F5 vs full-game watchdog blocking | none | Small guard, unblocked, prevents misleading health alerts once F5 is primary |
+| 1 | [WI-0606](../WORK_QUEUE/WI-0606.md) | Re-export `computeLineDelta` — NBA model runtime crash (`is not a function`) | none | **NBA cards broken right now.** 2-line package export fix. |
+| 2 | [WI-0605](../WORK_QUEUE/WI-0605.md) | MLB pitcher stats ingest — populate team join key (`team = null` bug) | none | **MLB emitting zero cards.** All probable-pitcher enrichment lookups fail silently. |
 
-### P1 — MLB Pitcher K chain (serial, run in order)
+### P1 — MLB F5 continuation + Pitcher K chain
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
+| 3 | [WI-0603](../WORK_QUEUE/WI-0603.md) | MLB F5 ML ingest + side-projection layer | ~~WI-0602~~✓ |
 | 4 | [WI-0595](../WORK_QUEUE/WI-0595.md) | Pitcher Ks core engine (projection-only parity) | none |
 | 5 | [WI-0596](../WORK_QUEUE/WI-0596.md) | Pitcher Ks data foundations and freshness gates | WI-0595 |
 | 6 | [WI-0597](../WORK_QUEUE/WI-0597.md) | Pitcher Ks odds pull + dual-mode runtime wiring | WI-0596 |
 | 7 | [WI-0598](../WORK_QUEUE/WI-0598.md) | Pitcher Ks contract hardening (validator + market contract) | WI-0597 |
 
-### P2 — MLB F5 extension + unblocked features (parallelize across agents)
+### P2 — Unblocked features (parallelize across agents)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 8 | [WI-0603](../WORK_QUEUE/WI-0603.md) | MLB F5 ML ingest + side-projection layer | WI-0602 |
-| 9 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | none |
-| 10 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion) | none |
-| 11 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |
+| 8 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | none |
+| 9 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion) | none |
+| 10 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |
 
 ### P3 — Market evaluator serial continuations (after WI-0568 lands)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 12 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector (best-price separate from best-line) | WI-0568 |
-| 13 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
-| 14 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | WI-0568, WI-0569 |
+| 11 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector (best-price separate from best-line) | WI-0568 |
+| 12 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
+| 13 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | WI-0568, WI-0569 |
 
 ### P4 — New markets (after core pipeline stable)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 15 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (data ingest → model runner → display) | none |
+| 14 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (data ingest → model runner → display) | none |
 
 ---
 
