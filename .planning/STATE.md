@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: unknown
 last_updated: "2026-03-26T00:00:00Z"
-last_activity: "2026-03-26 - WI-0593 ✓ (settlement sweeps restored), WI-0599 ✓ (pitcher K web integration). Pitcher K core chain WI-0595/0596/0597/0598 still open."
+last_activity: "2026-03-26 - WI-0554 ✓ (confidence function), WI-0558 ✓ (CI smoke tests), WI-0562 ✓ (DB isolation — OBSOLETE), WI-0563 ✓ (API security/SQLi), WI-0590 ✓ (NBA totals diagnostic). WI-0553/0556/0589 now unblocked."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,17 +31,17 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-26
-- Next action: Start pitcher K core chain — WI-0595 (core engine) → WI-0596 (data foundations) → WI-0597 (odds pull) → WI-0598 (contract hardening). WI-0554 (confidence function) unblocks WI-0553/WI-0556 in parallel.
+- Next action: WI-0589 (PLAY/LEAN tier fix) is fully unblocked — run it. WI-0553 + WI-0556 are unblocked (WI-0554 ✓). Start pitcher K core chain: WI-0595 → WI-0596 → WI-0597 → WI-0598.
 
 ## Sprint Plan — 2026-03-24 (updated 2026-03-26)
 
 ### Dependency Chains (respect order within chains)
 
-- **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → WI-0554 → WI-0556 → WI-0553
+- **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → ~~WI-0554~~✓ → WI-0556 → WI-0553
 - **Auth/JWT:** ~~WI-0559~~✓ → ~~WI-0560~~✓ (both done)
 - **Settlement → CLV (serial):** WI-0564 → WI-0566 → WI-0557
 - **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
-- **NBA quarantine → diagnosis → tier fix:** WI-0588 → WI-0590 → WI-0589
+- **NBA quarantine → diagnosis → tier fix:** ~~WI-0588~~✓ → ~~WI-0590~~✓ → WI-0589
 - **MLB pitcher-K market (serial with one gated branch):** WI-0595 → WI-0596 → (WI-0598 + prep for WI-0597) → WI-0597 → ~~WI-0599~~✓ (web surfaces done early as scaffolding)
 - **All others:** independent, can be parallelized across agents
 
@@ -49,56 +49,59 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Prioritized Open Work Queue — 2026-03-26
 
-### P0 — Active EV Bleed (do tonight)
+### Recently Completed ✓
+
+| WI | Summary |
+|---|---|
+| ~~WI-0594~~ ✓ | REGRESSION: Active tab missing ACTIVE label |
+| ~~WI-0593~~ ✓ | Restore recurring settlement sweeps |
+| ~~WI-0590~~ ✓ | NBA totals diagnostic (bias vs sigma vs threshold) |
+| ~~WI-0554~~ ✓ | Computed confidence function (replace 0.95/0.88/0.85 literals) |
+| ~~WI-0562~~ ✓ | Isolate web tests to temp DB |
+| ~~WI-0558~~ ✓ | Stabilize smoke/contract tests — deterministic CI |
+| ~~WI-0563~~ ✓ | API security on `/api/cards/[gameId]` + SQLi regression tests |
+
+### P0 — Do now (unblocked correctness / EV correctness)
 
 | # | WI | Summary | Deps | Why now |
 |---|---|---|---|---|
-| 1 | ~~[WI-0594](../WORK_QUEUE/COMPLETE/WI-0594.md)~~ ✓ | **REGRESSION** Active tab — in-progress games missing ACTIVE label in prod | none | DONE: rolling 36h activeStartUtc replaces todayUtc for active mode |
-| 2 | ~~[WI-0593](../WORK_QUEUE/COMPLETE/WI-0593.md)~~ ✓ | Restore recurring settlement sweeps in scheduler | none | DONE |
-| 3 | [WI-0595](../WORK_QUEUE/WI-0595.md) | Pitcher Ks core engine (projection-only parity) | none | Start pitcher K chain — WI-0596/0597/0598 follow in order |
+| 1 | [WI-0589](../WORK_QUEUE/WI-0589.md) | PLAY vs LEAN tier correction — cleanliness/contradiction gates | WI-0588 ✓, WI-0590 ✓ | Diagnostic complete — fix the tier logic now |
+| 2 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge, not projection signal | WI-0554 ✓ | Prevents bad 1P plays; unblocked |
+| 3 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 ✓ | Prevents stale EV surviving odds movement; unblocked |
 
-### P1 — High-impact, unblocked (this week)
-
-| # | WI | Summary | Deps |
-|---|---|---|---|
-| 4 | [WI-0590](../WORK_QUEUE/WI-0590.md) | NBA totals diagnostic report (projection bias vs sigma vs threshold) | WI-0588 ✓ |
-| 5 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function — replace hardcoded 0.95/0.88/0.85 literals | none |
-| 6 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate web tests to temp DB — prevent CI from mutating prod DB | none |
-| 7 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI, no local server required | none |
-| 8 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | none |
-
-### P2 — Unblocked features / completions (next sprint)
+### P1 — Pitcher K chain (this week, serial)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 9 | [WI-0589](../WORK_QUEUE/WI-0589.md) | PLAY vs LEAN tier correction — cleanliness/contradiction gates | WI-0587 ✓, WI-0588 ✓ |
-| 10 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | none |
-| 11 | [WI-0592](../WORK_QUEUE/WI-0592.md) | NHL SOG breakout usage overlay — rising-usage OVER candidates no longer flattened | none |
-| 12 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |
+| 4 | [WI-0595](../WORK_QUEUE/WI-0595.md) | Pitcher Ks core engine (projection-only parity) | none |
+| 5 | [WI-0596](../WORK_QUEUE/WI-0596.md) | Pitcher Ks data foundations and freshness gates | WI-0595 |
+| 6 | [WI-0597](../WORK_QUEUE/WI-0597.md) | Pitcher Ks odds pull + dual-mode runtime wiring | WI-0596 |
+| 7 | [WI-0598](../WORK_QUEUE/WI-0598.md) | Pitcher Ks contract hardening (validator + market contract) | WI-0597 |
 
-### P3 — Serial chains (after P1/P2 land)
-
-| # | WI | Summary | Deps |
-|---|---|---|---|
-| 13 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 |
-| 14 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge, not projection signal | WI-0554 |
-| 15 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
-| 16 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
-
-### P4 — Market evaluator layer (serial chain, can start parallel with P3)
+### P2 — Unblocked feature work (this sprint, can parallelize)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 17 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion) | none |
-| 18 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector (best-price separate from best-line) | WI-0568 |
-| 19 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
-| 20 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | WI-0568, WI-0569 |
+| 8 | [WI-0592](../WORK_QUEUE/WI-0592.md) | NHL SOG breakout usage overlay — rising-usage OVER candidates no longer flattened | none |
+| 9 | [WI-0564](../WORK_QUEUE/WI-0564.md) | Soccer settlement — ingest final scores, grade ML/total/spread cards | none |
+| 10 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion) | none |
+| 11 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |
 
-### P5 — New markets (after core pipeline is stable)
+### P3 — Serial chains (after P2 lands)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 21 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (data ingest → model runner → display) | none |
+| 12 | [WI-0566](../WORK_QUEUE/WI-0566.md) | Player props settlement framework generalization | WI-0564 |
+| 13 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | WI-0564 |
+| 14 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector (best-price separate from best-line) | WI-0568 |
+| 15 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
+| 16 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | WI-0568, WI-0569 |
+
+### P4 — New markets (after core pipeline stable)
+
+| # | WI | Summary | Deps |
+|---|---|---|---|
+| 17 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (data ingest → model runner → display) | none |
 
 ---
 
@@ -112,7 +115,7 @@ This file is intentionally minimal to avoid stale status drift.
 | ~~[WI-0551](../WORK_QUEUE/COMPLETE/WI-0551.md)~~ | Remove vig from implied probability (edge math baseline) | ✓ DONE (qt-66) |
 | ~~[WI-0555](../WORK_QUEUE/COMPLETE/WI-0555.md)~~ | Unify spread threshold + enable `MARKET_THRESHOLDS_V2` | ✓ DONE (qt-66) |
 | ~~[WI-0552](../WORK_QUEUE/COMPLETE/WI-0552.md)~~ | Empirical sigma from game history (replace hardcoded 12/14) | ✓ DONE (qt-67) |
-| ~~[WI-0572](../WORK_QUEUE/WI-0572.md)~~ | Hostile audit — betting decision pipeline (10 findings) | ✓ DONE (2026-03-23) |
+| ~~[WI-0572](../WORK_QUEUE/COMPLETE/WI-0572.md)~~ | Hostile audit — betting decision pipeline (10 findings) | ✓ DONE (2026-03-23) |
 
 ---
 
