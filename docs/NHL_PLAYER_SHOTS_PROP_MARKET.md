@@ -12,7 +12,7 @@ NHL Stats API (api.nhle.com)
         └── tracked_players table      — Active player IDs for shots_on_goal market
 
 NHL API (api-web.nhle.com)
-  └── pull_nhl_player_shots.js        — Fetches L5 game logs per tracked player
+  └── pull_nhl_player_shots.js        — Fetches recent game logs per tracked player
         └── player_shot_logs table     — Stores shots, TOI, opponent per game
 
 The Odds API (api.the-odds-api.com)
@@ -20,7 +20,7 @@ The Odds API (api.the-odds-api.com)
         └── player_prop_lines table    — Stores real market lines per player+game
 
 run_nhl_player_shots_model.js
-  ├── Reads: player_shot_logs (L5 data)
+  ├── Reads: player_shot_logs (L5 core + 10-game breakout context)
   ├── Reads: games (upcoming NHL schedule)
   ├── Reads: player_prop_lines (real O/U lines)
   ├── Runs: nhl-player-shots model (calcMu, calcMu1p, classifyEdge)
@@ -33,7 +33,7 @@ Run in this order before each NHL card cycle:
 
 1. `npm --prefix apps/worker run job:sync-nhl-sog-player-ids` — refresh tracked NHL SOG player IDs (scheduled daily at 04:00 ET)
 2. `npm --prefix apps/worker run job:pull-schedule-nhl` — refresh game schedule
-3. `npm --prefix apps/worker run job:pull-nhl-player-shots` — fetch L5 player logs
+3. `npm --prefix apps/worker run job:pull-nhl-player-shots` — fetch recent player logs used by the L5 core model and the 10-game breakout overlay context
 4. `npm --prefix apps/worker run job:pull-nhl-player-shots-props` — fetch real prop lines
 5. `npm --prefix apps/worker run job:run-nhl-player-shots-model` — generate cards
 
@@ -112,6 +112,42 @@ The SOG model (`apps/worker/src/models/nhl-player-shots.js`) is a JS port of `ch
 
 Cards are only created for HOT or WATCH tiers.
 
+## Breakout Overlay (full game only)
+
+The full-game runner adds a bounded breakout overlay for rising-usage OVER candidates. The core model remains L5-based; the overlay only adds advisory context and may lift the adopted full-game projection when all existing guards still pass.
+
+- Lookback: uses up to the last 10 games for `baseline_toi`, `baseline_shots60`, recent TOI trend, and recent shots/60 trend.
+- Full-game only: 1P cards do not use the breakout overlay.
+- Bounds:
+  - projected TOI uplift capped at `+2.5`
+  - EV shots/60 uplift capped at `+15%`
+- Required blockers remain authoritative:
+  - `PROJECTION_CONFLICT`
+  - `PROJECTION_ANOMALY`
+  - role-blocked cases
+  - missing real line / missing prices
+  - negative priced-edge behavior
+- Position-specific matchup is intentionally neutral in this WI via `position_env_factor = 1.0`.
+
+Full-game payloads may include an optional root-level `breakout` object:
+
+```json
+{
+  "baseline_toi": 17.8,
+  "baseline_shots60": 8.1,
+  "baseline_sog_mu": 2.4,
+  "tonight_toi_proj": 19.9,
+  "adjusted_shots60": 9.3,
+  "breakout_sog_mu": 3.1,
+  "delta_mu": 0.5,
+  "score": 4,
+  "flags": ["TOI_TREND_UP", "SHOTS60_TREND_UP", "BREAKOUT_CANDIDATE"],
+  "eligible": true
+}
+```
+
+Breakout flags are also surfaced through the existing full-game decision flag surfaces so downstream consumers do not need a new contract.
+
 ## Card Types
 
 | card_type | period | Description |
@@ -141,6 +177,7 @@ player_prop_lines (
 ## Known Limitations / Future Work
 
 - **1P prop lines:** The Odds API does not consistently offer `player_shots_on_goal_1p` lines. First-period cards use synthetic fallback by default.
+- **Breakout overlay is full-game only:** WI-0592 does not change 1P behavior.
 - **Tracked-player sync dependency:** `pull_nhl_player_shots` prefers DB-backed tracked IDs from `tracked_players` (`sport=nhl`, `market=shots_on_goal`). If the sync job has not run or returns no active rows, the job falls back to `NHL_SOG_PLAYER_IDS`.
 - **Player name matching:** Real line lookup is case-insensitive by `player_name`. If The Odds API uses a different name format than the NHL API pull, lines may not match — monitor `market_line_source: "synthetic_fallback"` in card payloads as a signal.
 - **opponentFactor / paceFactor:** Sourced from `team_metrics_cache` when available. `opponentFactor` uses `shots_against_pg / league_avg_shots_against_pg`; `paceFactor` uses the average of team+opponent pace proxies (`pace_proxy`, `paceFactor`, `pace`, `corsi_for_pct/50`, or `shots_for_pg / league_avg_shots_for_pg`). Missing cache data fails open to `1.0`.
@@ -184,3 +221,7 @@ EV = fair_prob * payout_decimal_minus_1 - (1 - fair_prob)
 ### Tests
 
 `apps/worker/src/models/__tests__/nhl-player-shots-two-stage.test.js` — 25 unit + smoke tests.
+
+## Telemetry Reporting
+
+`npm --prefix apps/worker run job:report-telemetry-calibration -- --json --days 30` now includes a dedicated `nhlShotsBreakoutCalibration` section and matching `nhl_shots_breakout_calibration` text block. The report compares settled full-game NHL `shots_on_goal` OVER props split into breakout-tagged vs non-breakout-tagged buckets for hit rate, ROI, and CLV.

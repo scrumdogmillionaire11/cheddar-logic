@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-26T00:00:00Z"
-last_activity: "2026-03-26 - WI-0554 ✓ (confidence function), WI-0558 ✓ (CI smoke tests), WI-0562 ✓ (DB isolation — OBSOLETE), WI-0563 ✓ (API security/SQLi), WI-0590 ✓ (NBA totals diagnostic). WI-0553/0556/0589 now unblocked."
+last_updated: "2026-03-27T00:00:00Z"
+last_activity: "2026-03-27 - WI-0553 ✓ (1P edge gate), WI-0556 ✓ (stale-edge detection), WI-0589 ✓ (tier correction), WI-0591 ✓ (NBA/NCAAM sigma wiring), WI-0599 ✓ (K web surfaces), WI-0600 ✓ (K rollout docs). Sprint reprioritized: P0=WI-0592/0602/0604, P1=K-chain, P2=WI-0603/0557/0568/0567."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -30,46 +30,50 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-26
-- Next action: WI-0589 (PLAY/LEAN tier fix) is fully unblocked — run it. WI-0553 + WI-0556 are unblocked (WI-0554 ✓). Start pitcher K core chain: WI-0595 → WI-0596 → WI-0597 → WI-0598.
+- Last reviewed: 2026-03-27
+- Next action: WI-0592 (NHL SOG overlay) + WI-0602 (MLB DUAL_RUN) + WI-0604 (MLB health) are all P0 and independent — run in parallel. Then start pitcher K chain: WI-0595 → WI-0596 → WI-0597 → WI-0598.
 
-## Sprint Plan — 2026-03-24 (updated 2026-03-26)
+## Sprint Plan — 2026-03-27 (reprioritized)
 
 ### Dependency Chains (respect order within chains)
 
-- **Edge math stack (serial):** ~~WI-0551~~✓ → ~~WI-0552~~✓ → ~~WI-0554~~✓ → WI-0556 → WI-0553
-- **Auth/JWT:** ~~WI-0559~~✓ → ~~WI-0560~~✓ (both done)
-- **Settlement → CLV:** ~~WI-0564~~(obsolete) → ~~WI-0566~~(obsolete) → WI-0557 now unblocked (NHL settlement sufficient)
+- **Edge math stack:** ALL DONE ✓ (WI-0551→0552→0554→0556→0553)
+- **Auth/JWT:** ALL DONE ✓ (WI-0559→0560)
+- **NBA totals:** ALL DONE ✓ (WI-0588→0590→0589)
+- **CLV:** WI-0557 unblocked (WI-0564 obsolete — NHL settlement sufficient)
 - **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
-- **NBA quarantine → diagnosis → tier fix:** ~~WI-0588~~✓ → ~~WI-0590~~✓ → WI-0589
-- **MLB pitcher-K market (serial with one gated branch):** WI-0595 → WI-0596 → (WI-0598 + prep for WI-0597) → WI-0597 → ~~WI-0599~~✓ (web surfaces done early as scaffolding)
+- **MLB pitcher-K market (serial):** WI-0595 → WI-0596 → WI-0597 → WI-0598 (~~WI-0599~~✓, ~~WI-0600~~✓ docs done)
+- **MLB F5/DUAL_RUN (serial):** WI-0602 → WI-0603 (WI-0604 independent)
 - **All others:** independent, can be parallelized across agents
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-26
+## Prioritized Open Work Queue — 2026-03-27
 
 ### Recently Completed ✓
 
 | WI | Summary |
 |---|---|
+| ~~WI-0600~~ ✓ | Pitcher Ks rollout docs and acceptance pack |
+| ~~WI-0599~~ ✓ | Pitcher Ks web surfaces (scaffolding) |
 | ~~WI-0594~~ ✓ | REGRESSION: Active tab missing ACTIVE label |
 | ~~WI-0593~~ ✓ | Restore recurring settlement sweeps |
+| ~~WI-0591~~ ✓ | Wire empirical sigma overrides into NBA and NCAAM decisioning |
 | ~~WI-0590~~ ✓ | NBA totals diagnostic (bias vs sigma vs threshold) |
+| ~~WI-0589~~ ✓ | PLAY vs LEAN tier correction — cleanliness/contradiction gates |
+| ~~WI-0556~~ ✓ | Track line movement delta to detect stale-edge cards |
+| ~~WI-0553~~ ✓ | Gate FIRST_PERIOD on edge, not projection signal |
 | ~~WI-0554~~ ✓ | Computed confidence function (replace 0.95/0.88/0.85 literals) |
-| ~~WI-0562~~ ✓ | Isolate web tests to temp DB |
-| ~~WI-0558~~ ✓ | Stabilize smoke/contract tests — deterministic CI |
-| ~~WI-0563~~ ✓ | API security on `/api/cards/[gameId]` + SQLi regression tests |
 
-### P0 — Do now (unblocked correctness / EV correctness)
+### P0 — Do now (unblocked, high card-quality impact)
 
 | # | WI | Summary | Deps | Why now |
 |---|---|---|---|---|
-| 1 | [WI-0589](../WORK_QUEUE/WI-0589.md) | PLAY vs LEAN tier correction — cleanliness/contradiction gates | WI-0588 ✓, WI-0590 ✓ | Diagnostic complete — fix the tier logic now |
-| 2 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge, not projection signal | WI-0554 ✓ | Prevents bad 1P plays; unblocked |
-| 3 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 ✓ | Prevents stale EV surviving odds movement; unblocked |
+| 1 | [WI-0592](../WORK_QUEUE/WI-0592.md) | NHL SOG breakout usage overlay — rising-usage OVER candidates no longer flattened | none | Improves live prop card quality immediately; quick, self-contained |
+| 2 | [WI-0602](../WORK_QUEUE/WI-0602.md) | MLB DUAL_RUN market selection — elevate F5 Total as primary game market | none | Sets MLB market architecture before K chain odds-backstop lands; avoids rework in WI-0597/0598 |
+| 3 | [WI-0604](../WORK_QUEUE/WI-0604.md) | MLB pipeline health — differentiate F5 vs full-game watchdog blocking | none | Small guard, unblocked, prevents misleading health alerts once F5 is primary |
 
-### P1 — Pitcher K chain (this week, serial)
+### P1 — MLB Pitcher K chain (serial, run in order)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
@@ -78,16 +82,16 @@ This file is intentionally minimal to avoid stale status drift.
 | 6 | [WI-0597](../WORK_QUEUE/WI-0597.md) | Pitcher Ks odds pull + dual-mode runtime wiring | WI-0596 |
 | 7 | [WI-0598](../WORK_QUEUE/WI-0598.md) | Pitcher Ks contract hardening (validator + market contract) | WI-0597 |
 
-### P2 — Unblocked feature work (this sprint, can parallelize)
+### P2 — MLB F5 extension + unblocked features (parallelize across agents)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 8 | [WI-0592](../WORK_QUEUE/WI-0592.md) | NHL SOG breakout usage overlay — rising-usage OVER candidates no longer flattened | none |
-| 9 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) — NHL settlement sufficient as base | none (WI-0564 obsolete) |
+| 8 | [WI-0603](../WORK_QUEUE/WI-0603.md) | MLB F5 ML ingest + side-projection layer | WI-0602 |
+| 9 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | none |
 | 10 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion) | none |
 | 11 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |
 
-### P3 — Serial chains (after P2 lands)
+### P3 — Market evaluator serial continuations (after WI-0568 lands)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
@@ -99,7 +103,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 17 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (data ingest → model runner → display) | none |
+| 15 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (data ingest → model runner → display) | none |
 
 ---
 

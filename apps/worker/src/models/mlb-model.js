@@ -785,12 +785,17 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
     const scoreMode = isOddsBacked && marketInput ? 'FULL' : 'PROJECTION_ONLY';
     const result = scorePitcherK(pitcherInput, matchupInput, {}, marketInput, weatherInput, { mode: scoreMode, side: 'over' });
 
+    // scorePitcherK returns `verdict: 'Play' | 'Pass'` — not `ev_threshold_passed`.
+    // Map verdict to the standard ev_threshold_passed contract so the caller's filter works.
+    // side is always 'over', so a 'Play' verdict is an OVER signal.
+    const isPlay = result.status === 'COMPLETE' && result.verdict === 'Play';
+
     cards.push({
       market: `pitcher_k_${role}`,
       pitcher_team: team,
-      prediction: result.ev_threshold_passed ? result.verdict.toUpperCase() : 'PASS',
+      prediction: isPlay ? 'OVER' : 'PASS',
       confidence: result.net_score != null ? result.net_score / 10 : 0,
-      ev_threshold_passed: result.ev_threshold_passed,
+      ev_threshold_passed: isPlay,
       reasoning: _buildPitcherKReasoning(result),
       drivers: [{
         type: 'pitcher-k',

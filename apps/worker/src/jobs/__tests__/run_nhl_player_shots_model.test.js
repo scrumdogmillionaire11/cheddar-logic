@@ -67,6 +67,29 @@ function buildGamesFromShots(shotsByGame = []) {
   }));
 }
 
+function buildLookbackGames(entries = [], rawDataOverrides = {}) {
+  return entries.map((entry, index) => ({
+    game_id: `g${index}`,
+    game_date: `2026-03-${String(index + 1).padStart(2, '0')}`,
+    opponent: entry.opponent || 'TOR',
+    is_home: entry.is_home ?? 1,
+    shots: entry.shots ?? 3,
+    toi_minutes: entry.toi_minutes ?? 20,
+    raw_data:
+      index === 0
+        ? JSON.stringify({
+            shotsPer60: 8.2,
+            projToi: 18,
+            ppToi: 2.0,
+            ppRatePer60: 3.1,
+            ppRateL10Per60: 3.0,
+            ppRateL5Per60: 3.2,
+            ...rawDataOverrides,
+          })
+        : '{}',
+  }));
+}
+
 // Build a mock DB whose prepare() dispatches by SQL keyword
 // availabilityRow: if set, returned for player_availability queries (null = no record = fail-open)
 function buildMockDb({
@@ -220,6 +243,343 @@ describe('run_nhl_player_shots_model', () => {
     const sql = String(gamesPrepare[0]).toLowerCase();
     expect(sql).toContain("datetime(game_time_utc) > datetime('now')");
     expect(sql).toContain("datetime(game_time_utc) < datetime('now', '+36 hours')");
+  });
+
+  test('uses 10-game lookback for breakout context while keeping 5-game minimum', async () => {
+    const { mod, data } = loadFreshModule();
+    const mockDb = buildMockDb({
+      games: [buildFutureGame()],
+      players: [buildPlayer()],
+      playerLogs: buildGames(10),
+    });
+    data.getDatabase.mockReturnValue(mockDb);
+
+    await mod.runNHLPlayerShotsModel();
+
+    const lookbackPrepare = mockDb.prepare.mock.calls.find(([sql]) =>
+      String(sql).toLowerCase().includes('from player_shot_logs') &&
+      String(sql).toLowerCase().includes('limit 10'),
+    );
+    expect(lookbackPrepare).toBeTruthy();
+  });
+
+  test('emits breakout metadata and adopts breakout evaluation for rising-usage over candidates', async () => {
+    const { mod, data, shots, moneyPuck } = loadFreshModule();
+
+    shots.projectSogV2.mockImplementation((inputs = {}) => {
+      const evRate = Number(
+        inputs.ev_shots_l5_per60 ??
+        inputs.ev_shots_l10_per60 ??
+        inputs.ev_shots_season_per60 ??
+        8,
+      );
+      const ppRate = Number(
+        inputs.pp_shots_l5_per60 ??
+        inputs.pp_shots_l10_per60 ??
+        inputs.pp_shots_season_per60 ??
+        0,
+      );
+      const toiProjEv = Number(inputs.toi_proj_ev || 0);
+      const toiProjPp = Number(inputs.toi_proj_pp || 0);
+      const ppMatchup = Number(inputs.pp_matchup_factor || 1);
+      const rawMu =
+        ((evRate * toiProjEv) / 60) +
+        ((ppRate * toiProjPp) / 60 * ppMatchup);
+      const mu = rawMu * (toiProjEv >= 19 ? 1.18 : 0.82);
+      const overEdge = Math.max(-0.05, Math.min(0.12, (mu - Number(inputs.market_line || 0)) / 12));
+      const overProb = Math.max(0.01, Math.min(0.99, 0.5 + overEdge));
+      return {
+        sog_mu: mu,
+        sog_sigma: Math.sqrt(Math.max(mu, 0.01)),
+        toi_proj: toiProjEv + toiProjPp,
+        shot_rate_ev_per60: evRate,
+        shot_rate_pp_per60: ppRate,
+        pp_matchup_factor: ppMatchup,
+        shot_env_factor: Number(inputs.shot_env_factor || 1),
+        role_stability: inputs.role_stability || 'HIGH',
+        trend_score: 0.08,
+        fair_over_prob_by_line: { [String(inputs.market_line)]: overProb },
+        fair_under_prob_by_line: { [String(inputs.market_line)]: 1 - overProb },
+        fair_price_over_by_line: { [String(inputs.market_line)]: -125 },
+        fair_price_under_by_line: { [String(inputs.market_line)]: 105 },
+        market_line: inputs.market_line,
+        market_price_over: inputs.market_price_over ?? -115,
+        market_price_under: inputs.market_price_under ?? -105,
+        implied_over_prob: 0.52,
+        implied_under_prob: 0.48,
+        edge_over_pp: overEdge,
+        edge_under_pp: -overEdge,
+        ev_over: overEdge + 0.01,
+        ev_under: -(overEdge + 0.01),
+        opportunity_score: overEdge + 0.12,
+        flags: [],
+      };
+    });
+    moneyPuck.fetchMoneyPuckSnapshot.mockResolvedValue({
+      injuries: {},
+      skaters: {
+        by_team: {
+          'Edmonton Oilers': {
+            'test player': { impact: 1.2 },
+          },
+        },
+      },
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'game-breakout-01' })],
+      players: [buildPlayer({ player_id: 9911, player_name: 'Test Player' })],
+      playerLogs: buildLookbackGames(
+        [
+          { shots: 4, toi_minutes: 22 },
+          { shots: 4, toi_minutes: 21 },
+          { shots: 4, toi_minutes: 20 },
+          { shots: 1, toi_minutes: 16 },
+          { shots: 1, toi_minutes: 16 },
+          { shots: 2, toi_minutes: 17 },
+          { shots: 2, toi_minutes: 17 },
+          { shots: 2, toi_minutes: 17 },
+          { shots: 2, toi_minutes: 18 },
+          { shots: 2, toi_minutes: 18 },
+        ],
+        {
+          shotsPer60: 7.2,
+          projToi: 17.5,
+          ppToi: 2.1,
+          ppRatePer60: 3.2,
+          ppRateL10Per60: 3.1,
+          ppRateL5Per60: 3.3,
+        },
+      ),
+      playerPropLines: [{ line: 2.5, over_price: -115, under_price: -105, bookmaker: 'draftkings' }],
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.breakout).toMatchObject({
+      eligible: true,
+    });
+    expect(card.payloadData.breakout.delta_mu).toBeGreaterThanOrEqual(0.45);
+    expect(card.payloadData.breakout.flags).toContain('BREAKOUT_CANDIDATE');
+    expect(card.payloadData.decision.v2.flags).toContain('BREAKOUT_CANDIDATE');
+    expect(card.payloadData.drivers.breakout_applied).toBe(true);
+    expect(card.payloadData.breakout.breakout_sog_mu).toBeGreaterThan(
+      card.payloadData.breakout.baseline_sog_mu,
+    );
+    expect(card.payloadData.decision.projection).toBeGreaterThan(
+      card.payloadData.decision.market_line,
+    );
+  });
+
+  test('marks breakout as blocked when no real line exists', async () => {
+    const { mod, data } = loadFreshModule();
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'game-breakout-blocked-line' })],
+      players: [buildPlayer({ player_id: 9912, player_name: 'No Line Player' })],
+      playerLogs: buildLookbackGames([
+        { shots: 4, toi_minutes: 22 },
+        { shots: 4, toi_minutes: 21 },
+        { shots: 4, toi_minutes: 20 },
+        { shots: 1, toi_minutes: 16 },
+        { shots: 1, toi_minutes: 16 },
+      ]),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.breakout.flags).toContain('BREAKOUT_BLOCKED_NO_REAL_LINE');
+    expect(card.payloadData.breakout.flags).not.toContain('BREAKOUT_CANDIDATE');
+  });
+
+  test('marks breakout as role-blocked for DTD players', async () => {
+    const { mod, data } = loadFreshModule();
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'game-breakout-blocked-role' })],
+      players: [buildPlayer({ player_id: 9913, player_name: 'DTD Player' })],
+      playerLogs: buildLookbackGames([
+        { shots: 4, toi_minutes: 22 },
+        { shots: 4, toi_minutes: 21 },
+        { shots: 4, toi_minutes: 20 },
+        { shots: 1, toi_minutes: 16 },
+        { shots: 1, toi_minutes: 16 },
+      ]),
+      playerPropLines: [{ line: 2.5, over_price: -115, under_price: -105, bookmaker: 'draftkings' }],
+      availabilityRow: { status: 'DTD', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.breakout.flags).toContain('BREAKOUT_BLOCKED_ROLE');
+    expect(card.payloadData.breakout.flags).not.toContain('BREAKOUT_CANDIDATE');
+  });
+
+  test('marks breakout as anomaly-blocked when projection conflict is present', async () => {
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 3.0,
+      sog_sigma: 1.73,
+      toi_proj: 19,
+      shot_rate_ev_per60: 8.4,
+      shot_rate_pp_per60: 3.0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: 0.02,
+      fair_over_prob_by_line: { '2.5': 0.46 },
+      fair_under_prob_by_line: { '2.5': 0.54 },
+      fair_price_over_by_line: { '2.5': 117 },
+      fair_price_under_by_line: { '2.5': -117 },
+      market_line: 2.5,
+      market_price_over: -115,
+      market_price_under: -105,
+      implied_over_prob: 0.53,
+      implied_under_prob: 0.51,
+      edge_over_pp: -0.07,
+      edge_under_pp: 0.03,
+      ev_over: -0.09,
+      ev_under: 0.01,
+      opportunity_score: -0.02,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'game-breakout-conflict' })],
+      players: [buildPlayer({ player_id: 9916, player_name: 'Conflict Player' })],
+      playerLogs: buildLookbackGames([
+        { shots: 4, toi_minutes: 22 },
+        { shots: 4, toi_minutes: 21 },
+        { shots: 4, toi_minutes: 20 },
+        { shots: 1, toi_minutes: 16 },
+        { shots: 1, toi_minutes: 16 },
+      ]),
+      playerPropLines: [{ line: 2.5, over_price: -115, under_price: -105, bookmaker: 'draftkings' }],
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.flags).toContain('PROJECTION_CONFLICT');
+    expect(card.payloadData.breakout.flags).toContain('BREAKOUT_BLOCKED_ANOMALY');
+    expect(card.payloadData.breakout.flags).not.toContain('BREAKOUT_CANDIDATE');
+  });
+
+  test('adds PRICE_TOO_JUICED breakout flag without bypassing priced-edge behavior', async () => {
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.projectSogV2.mockImplementation((inputs = {}) => {
+      const toiProjEv = Number(inputs.toi_proj_ev || 18);
+      const toiProjPp = Number(inputs.toi_proj_pp || 2);
+      const evRate = Number(inputs.ev_shots_l5_per60 || 8.5);
+      const rawMu = ((evRate * toiProjEv) / 60) + ((3.0 * toiProjPp) / 60);
+      const mu = rawMu * (toiProjEv >= 19 ? 1.2 : 0.8);
+      return {
+        sog_mu: mu,
+        sog_sigma: Math.sqrt(Math.max(mu, 0.01)),
+        toi_proj: toiProjEv + toiProjPp,
+        shot_rate_ev_per60: evRate,
+        shot_rate_pp_per60: 3.0,
+        pp_matchup_factor: Number(inputs.pp_matchup_factor || 1),
+        shot_env_factor: Number(inputs.shot_env_factor || 1),
+        role_stability: inputs.role_stability || 'HIGH',
+        trend_score: 0.06,
+        fair_over_prob_by_line: { [String(inputs.market_line)]: 0.53 },
+        fair_under_prob_by_line: { [String(inputs.market_line)]: 0.47 },
+        fair_price_over_by_line: { [String(inputs.market_line)]: -113 },
+        fair_price_under_by_line: { [String(inputs.market_line)]: 101 },
+        market_line: inputs.market_line,
+        market_price_over: inputs.market_price_over ?? -170,
+        market_price_under: inputs.market_price_under ?? 140,
+        implied_over_prob: 0.58,
+        implied_under_prob: 0.42,
+        edge_over_pp: 0.01,
+        edge_under_pp: -0.01,
+        ev_over: -0.005,
+        ev_under: -0.02,
+        opportunity_score: 0.03,
+        flags: [],
+      };
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'game-breakout-price' })],
+      players: [buildPlayer({ player_id: 9914, player_name: 'Juiced Player' })],
+      playerLogs: buildLookbackGames([
+        { shots: 4, toi_minutes: 22 },
+        { shots: 4, toi_minutes: 21 },
+        { shots: 4, toi_minutes: 20 },
+        { shots: 1, toi_minutes: 16 },
+        { shots: 1, toi_minutes: 16 },
+      ]),
+      playerPropLines: [{ line: 2.5, over_price: -170, under_price: 140, bookmaker: 'draftkings' }],
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.breakout.flags).toContain('PRICE_TOO_JUICED');
+    expect(card.payloadData.prop_decision.verdict).not.toBe('PLAY');
+  });
+
+  test('keeps under-side behavior unchanged when breakout path is not an eligible over', async () => {
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.calcMu.mockReturnValue(1.8);
+    shots.classifyEdge.mockReturnValue({ tier: 'WATCH', direction: 'UNDER', edge: -0.7 });
+    shots.projectSogV2.mockReturnValue({
+      sog_mu: 1.8,
+      sog_sigma: 1.34,
+      toi_proj: 18,
+      shot_rate_ev_per60: 6.5,
+      shot_rate_pp_per60: 2.0,
+      shot_env_factor: 1.0,
+      role_stability: 'HIGH',
+      trend_score: -0.05,
+      fair_over_prob_by_line: { '2.5': 0.35 },
+      fair_under_prob_by_line: { '2.5': 0.65 },
+      fair_price_over_by_line: { '2.5': 185 },
+      fair_price_under_by_line: { '2.5': -185 },
+      market_line: 2.5,
+      market_price_over: -110,
+      market_price_under: -110,
+      implied_over_prob: 0.52,
+      implied_under_prob: 0.52,
+      edge_over_pp: -0.17,
+      edge_under_pp: 0.13,
+      ev_over: -0.2,
+      ev_under: 0.09,
+      opportunity_score: 0.21,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'game-breakout-under' })],
+      players: [buildPlayer({ player_id: 9915, player_name: 'Under Player' })],
+      playerLogs: buildLookbackGames([
+        { shots: 4, toi_minutes: 22 },
+        { shots: 4, toi_minutes: 21 },
+        { shots: 4, toi_minutes: 20 },
+        { shots: 1, toi_minutes: 16 },
+        { shots: 1, toi_minutes: 16 },
+      ]),
+      playerPropLines: [{ line: 2.5, over_price: -110, under_price: -110, bookmaker: 'draftkings' }],
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const card = data.insertCardPayload.mock.calls[0][0];
+    expect(card.payloadData.prop_decision.lean_side).toBe('UNDER');
+    expect(card.payloadData.breakout.eligible).toBe(false);
+    expect(card.payloadData.breakout.flags).not.toContain('BREAKOUT_CANDIDATE');
   });
 
   test('player with only 3 logs is skipped — no card and skip log emitted', async () => {
