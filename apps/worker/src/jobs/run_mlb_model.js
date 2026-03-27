@@ -39,6 +39,7 @@ const {
 
 // Import pluggable inference layer
 const { getModel, computeMLBDriverCards, computePitcherKDriverCards } = require('../models');
+const { selectMlbGameMarket } = require('../models/mlb-model');
 
 // Pitcher K model mode: 'PROJECTION_ONLY' enables the Sharp Cheddar K pipeline
 // without requiring market odds. Set PITCHER_KS_MODEL_MODE=PROJECTION_ONLY.
@@ -59,6 +60,45 @@ function attachRunId(card, runId) {
       card.payloadData.run_id = runId;
     }
   }
+}
+
+function resolvePitcherKsMode() {
+  return PITCHER_KS_MODEL_MODE === 'ODDS_BACKED'
+    ? 'ODDS_BACKED'
+    : 'PROJECTION_ONLY';
+}
+
+function buildMlbDualRunRecord(gameId, oddsSnapshot, selection) {
+  return {
+    game_id: gameId,
+    matchup:
+      selection?.matchup ??
+      `${oddsSnapshot?.away_team ?? 'unknown'} @ ${oddsSnapshot?.home_team ?? 'unknown'}`,
+    run_at: new Date().toISOString(),
+    chosen_market: selection?.chosen_market ?? 'F5_TOTAL',
+    why_this_market:
+      selection?.why_this_market ?? 'Rule 1: only configured MLB game market',
+    markets: Array.isArray(selection?.markets) ? selection.markets : [],
+    rejected:
+      selection?.rejected && typeof selection.rejected === 'object'
+        ? selection.rejected
+        : {},
+  };
+}
+
+function buildMlbF5OddsContext(oddsSnapshot) {
+  return {
+    total_f5: oddsSnapshot?.total_f5 ?? null,
+    total_price_over_f5:
+      oddsSnapshot?.total_price_over_f5 ??
+      oddsSnapshot?.total_f5_price_over ??
+      null,
+    total_price_under_f5:
+      oddsSnapshot?.total_price_under_f5 ??
+      oddsSnapshot?.total_f5_price_under ??
+      null,
+    captured_at: oddsSnapshot?.captured_at ?? null,
+  };
 }
 
 /**
@@ -484,13 +524,35 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
       // Process each game — emit one card per qualifying driver market
       for (const gameId of gameIds) {
         try {
-          let oddsSnapshot = gameOdds[gameId];
-          oddsSnapshot = enrichMlbPitcherData(oddsSnapshot, { forKEngine: PITCHER_KS_MODEL_MODE === 'PROJECTION_ONLY' });
+          const baseOddsSnapshot = gameOdds[gameId];
+          const gameOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
+            forKEngine: false,
+          });
+          const pitcherKOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
+            forKEngine: true,
+          });
 
-          const driverCards = PITCHER_KS_MODEL_MODE === 'PROJECTION_ONLY'
-            ? computePitcherKDriverCards(gameId, oddsSnapshot, { mode: 'PROJECTION_ONLY' })
-            : computeMLBDriverCards(gameId, oddsSnapshot);
-          const qualified = driverCards.filter((d) => d.ev_threshold_passed);
+          const gameDriverCards = computeMLBDriverCards(gameId, gameOddsSnapshot);
+          const pitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, {
+            mode: resolvePitcherKsMode(),
+          });
+          const gameSelection = selectMlbGameMarket(
+            gameId,
+            gameOddsSnapshot,
+            gameDriverCards,
+          );
+          const dualRunRecord = buildMlbDualRunRecord(
+            gameId,
+            gameOddsSnapshot,
+            gameSelection,
+          );
+          console.log(`[MLB_DUAL_RUN] ${JSON.stringify(dualRunRecord)}`);
+
+          const selectedGameDriver = gameSelection.selected_driver;
+          const qualified = [
+            ...(selectedGameDriver?.ev_threshold_passed ? [selectedGameDriver] : []),
+            ...pitcherKDriverCards.filter((d) => d.ev_threshold_passed),
+          ];
 
           // Clean up stale cards from previous runs for this game
           prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-model-output', { runId: jobRunId });
@@ -504,7 +566,10 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
           }
 
           const now = new Date().toISOString();
-          const matchup = buildMatchup(oddsSnapshot?.home_team, oddsSnapshot?.away_team);
+          const matchup = buildMatchup(
+            gameOddsSnapshot?.home_team,
+            gameOddsSnapshot?.away_team,
+          );
 
           for (const driver of qualified) {
             const isF5 = driver.market === 'f5_total';
@@ -521,9 +586,9 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
 
             const pitcherTeam = driver.pitcher_team
               ?? (driver.market === 'strikeouts_home' || driver.market === 'pitcher_k_home'
-                  ? (oddsSnapshot?.home_team ?? null)
+                  ? (pitcherKOddsSnapshot?.home_team ?? null)
                   : driver.market === 'strikeouts_away' || driver.market === 'pitcher_k_away'
-                    ? (oddsSnapshot?.away_team ?? null)
+                    ? (pitcherKOddsSnapshot?.away_team ?? null)
                     : null);
 
             const tier =
@@ -534,10 +599,10 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
               game_id: gameId,
               sport: 'MLB',
               model_version: 'mlb-model-v1',
-              home_team: oddsSnapshot?.home_team ?? null,
-              away_team: oddsSnapshot?.away_team ?? null,
+              home_team: gameOddsSnapshot?.home_team ?? null,
+              away_team: gameOddsSnapshot?.away_team ?? null,
               matchup,
-              start_time_utc: oddsSnapshot?.game_time_utc ?? null,
+              start_time_utc: gameOddsSnapshot?.game_time_utc ?? null,
               market_type: isF5 ? 'FIRST_PERIOD' : 'PROP',
               prediction: driver.prediction,
               selection: { side: driver.prediction },
@@ -549,7 +614,14 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
               disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
               generated_at: now,
               ...(isF5
-                ? { projection: { projected_total: projected } }
+                ? {
+                    projection: { projected_total: projected },
+                    recommended_bet_type: 'total',
+                    odds_context: buildMlbF5OddsContext(gameOddsSnapshot),
+                    primary_game_market: true,
+                    chosen_market: gameSelection.chosen_market,
+                    why_this_market: gameSelection.why_this_market,
+                  }
                 : isPitcherK
                   ? {
                       player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
@@ -571,7 +643,7 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
             };
 
             const cardTitle = isF5
-              ? `F5 ${driver.prediction}: ${oddsSnapshot?.away_team ?? '?'} @ ${oddsSnapshot?.home_team ?? '?'}`
+              ? `F5 ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
               : isPitcherK
                 ? `${pitcherTeam ?? '?'} SP Ks ${driver.prediction} [${driver.basis === 'ODDS_BACKED' ? 'ODDS_BACKED' : 'PROJECTION_ONLY'}]`
                 : `${pitcherTeam ?? '?'} SP Strikeouts ${driver.prediction}`;
@@ -604,7 +676,7 @@ async function runMLBModel({ jobKey = null, dryRun = false } = {}) {
               predictedAt: now,
               confidence: driver.confidence,
               outputData: driver,
-              oddsSnapshotId: oddsSnapshot.id,
+              oddsSnapshotId: baseOddsSnapshot.id,
               jobRunId,
             });
 
@@ -677,6 +749,9 @@ if (require.main === module) {
 module.exports = {
   runMLBModel,
   generateMLBCard,
+  buildMlbDualRunRecord,
+  buildMlbF5OddsContext,
+  resolvePitcherKsMode,
   // Exported for WI-0596 unit tests
   checkPitcherFreshness,
   validatePitcherKInputs,

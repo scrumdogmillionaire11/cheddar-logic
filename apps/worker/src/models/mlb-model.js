@@ -9,7 +9,8 @@
  *   projectStrikeouts(pitcherStats, line, overlays)  → strikeout prop card
  *   projectF5Total(homePitcher, awayPitcher)          → raw F5 projection
  *   projectF5TotalCard(home, away, f5Line)            → F5 card with thresholds
- *   computeMLBDriverCards(gameId, oddsSnapshot)       → array of card descriptors
+ *   computeMLBDriverCards(gameId, oddsSnapshot)       → F5-only game market candidates
+ *   selectMlbGameMarket(gameId, oddsSnapshot, cards)  → deterministic MLB selector result
  */
 
 /**
@@ -230,7 +231,7 @@ function parseRawMlb(oddsSnapshot) {
  *   { market, prediction, confidence (0-1), ev_threshold_passed, reasoning, drivers }
  *
  * Reads from oddsSnapshot.raw_data.mlb:
- *   home_pitcher, away_pitcher, strikeout_lines.{home,away}, f5_line
+ *   home_pitcher, away_pitcher, f5_line
  *
  * @param {string} gameId
  * @param {object} oddsSnapshot
@@ -242,44 +243,6 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
 
   const homePitcher = mlb.home_pitcher ?? null;
   const awayPitcher = mlb.away_pitcher ?? null;
-
-  // Extract weather overlays from raw_data.mlb (populated by enrichMlbPitcherData)
-  const weatherOverlays = {
-    wind_mph: mlb.wind_mph ?? null,
-    temp_f: mlb.temp_f ?? null,
-  };
-
-  // Strikeout card — home pitcher
-  if (homePitcher && mlb.strikeout_lines?.home != null) {
-    const result = projectStrikeouts(homePitcher, mlb.strikeout_lines.home, weatherOverlays);
-    if (result) {
-      cards.push({
-        market: 'strikeouts_home',
-        pitcher: oddsSnapshot?.home_team,
-        prediction: result.prediction,
-        confidence: result.confidence / 10, // normalize to 0-1
-        ev_threshold_passed: result.ev_threshold_passed,
-        reasoning: result.reasoning,
-        drivers: [{ type: 'mlb-strikeout', edge: result.edge, projected: result.projected }],
-      });
-    }
-  }
-
-  // Strikeout card — away pitcher
-  if (awayPitcher && mlb.strikeout_lines?.away != null) {
-    const result = projectStrikeouts(awayPitcher, mlb.strikeout_lines.away, weatherOverlays);
-    if (result) {
-      cards.push({
-        market: 'strikeouts_away',
-        pitcher: oddsSnapshot?.away_team,
-        prediction: result.prediction,
-        confidence: result.confidence / 10,
-        ev_threshold_passed: result.ev_threshold_passed,
-        reasoning: result.reasoning,
-        drivers: [{ type: 'mlb-strikeout', edge: result.edge, projected: result.projected }],
-      });
-    }
-  }
 
   // F5 total card
   if (homePitcher && awayPitcher && mlb.f5_line != null) {
@@ -297,6 +260,53 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
   }
 
   return cards;
+}
+
+function roundScore(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.round(value * 1000) / 1000;
+}
+
+/**
+ * MLB currently has one configured game market: F5 total.
+ * This helper keeps selector behavior explicit and stable before additional
+ * MLB game markets arrive in later work items.
+ *
+ * @param {string} gameId
+ * @param {object} oddsSnapshot
+ * @param {Array<object>} driverCards
+ * @returns {object}
+ */
+function selectMlbGameMarket(gameId, oddsSnapshot, driverCards = []) {
+  const f5Card = driverCards.find((card) => card.market === 'f5_total') ?? null;
+  const chosen_market = 'F5_TOTAL';
+  const why_this_market = 'Rule 1: only configured MLB game market';
+  const rejected = {};
+
+  if (!f5Card) {
+    rejected.F5_TOTAL = 'NO_F5_LINE';
+  }
+
+  return {
+    game_id: gameId,
+    matchup: `${oddsSnapshot?.away_team ?? 'unknown'} @ ${oddsSnapshot?.home_team ?? 'unknown'}`,
+    chosen_market,
+    why_this_market,
+    markets: f5Card
+      ? [
+          {
+            market: 'F5_TOTAL',
+            status: f5Card.ev_threshold_passed ? 'FIRE' : 'PASS',
+            prediction: f5Card.prediction,
+            score: roundScore(f5Card.confidence),
+            edge: f5Card.drivers?.[0]?.edge ?? null,
+            projected: f5Card.drivers?.[0]?.projected ?? null,
+          },
+        ]
+      : [],
+    rejected,
+    selected_driver: f5Card,
+  };
 }
 
 // ============================================================
@@ -833,6 +843,7 @@ module.exports = {
   projectF5Total,
   projectF5TotalCard,
   computeMLBDriverCards,
+  selectMlbGameMarket,
   computePitcherStatsAsOf,
   // Sharp Cheddar K pipeline
   scorePitcherK,
