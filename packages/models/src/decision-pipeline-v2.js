@@ -61,51 +61,19 @@ const PRICE_REASONS = {
  * classifyPrice, computeOfficialStatus, and play_tier derivation.
  *
  * Contract:
- *  - FIRST_PERIOD does NOT require a market price to be actionable.
  *  - Direction must be OVER or UNDER (enforced by sideValidForMarket).
- *  - Actionability is determined solely by projectionSignal (PLAY/LEAN/PASS).
+ *  - FIRST_PERIOD_NO_PROJECTION remains available as a PASS/no-signal
+ *    compatibility reason code for downstream diagnostics.
  */
 const FIRST_PERIOD_POLICY = Object.freeze({
   /**
-   * Maps a projectionSignal to the sharp_price_status that classifyPrice
-   * should return for a FIRST_PERIOD payload.
-   */
-  toSharpPriceStatus(projectionSignal) {
-    if (projectionSignal === 'PLAY' || projectionSignal === 'LEAN')
-      return 'CHEDDAR';
-    return 'COTTAGE';
-  },
-
-  /**
    * Maps a projectionSignal to the single canonical price_reason_code for
-   * the FIRST_PERIOD market type.  Callers should include this as the first
-   * entry in the price_reason_codes array.
+   * the FIRST_PERIOD market type when preserving PASS/no-signal compatibility.
    */
   toPriceReasonCode(projectionSignal) {
-    if (projectionSignal === 'PLAY')
-      return PRICE_REASONS.FIRST_PERIOD_PROJECTION_PLAY;
-    if (projectionSignal === 'LEAN')
-      return PRICE_REASONS.FIRST_PERIOD_PROJECTION_LEAN;
-    return PRICE_REASONS.FIRST_PERIOD_NO_PROJECTION;
-  },
-
-  /**
-   * Maps a projectionSignal to the official_status returned by
-   * computeOfficialStatus for a FIRST_PERIOD market.
-   */
-  toOfficialStatus(projectionSignal) {
-    if (projectionSignal === 'PLAY') return 'PLAY';
-    if (projectionSignal === 'LEAN') return 'LEAN';
-    return 'PASS';
-  },
-
-  /**
-   * Maps a projectionSignal to the play_tier used in the decision envelope.
-   */
-  toPlayTier(projectionSignal) {
-    if (projectionSignal === 'PLAY') return 'GOOD';
-    if (projectionSignal === 'LEAN') return 'OK';
-    return 'BAD';
+    return projectionSignal === 'PASS'
+      ? PRICE_REASONS.FIRST_PERIOD_NO_PROJECTION
+      : null;
   },
 });
 
@@ -470,7 +438,6 @@ function classifyPrice({
   hasPrimarySupport = true,
   proxyUsed = false,
   proxyAllowed = false,
-  projectionSignal = 'PASS',
 }) {
   const thresholds = getThresholdProfile(marketType, sport);
 
@@ -494,15 +461,6 @@ function classifyPrice({
     return {
       sharp_price_status: 'UNPRICED',
       price_reason_codes: [PRICE_REASONS.NO_PRIMARY_SUPPORT],
-      proxy_capped: false,
-    };
-  }
-
-  if (marketType === 'FIRST_PERIOD') {
-    // All FIRST_PERIOD actionability is encoded in FIRST_PERIOD_POLICY (WI-0537).
-    return {
-      sharp_price_status: FIRST_PERIOD_POLICY.toSharpPriceStatus(projectionSignal),
-      price_reason_codes: [FIRST_PERIOD_POLICY.toPriceReasonCode(projectionSignal)],
       proxy_capped: false,
     };
   }
@@ -606,7 +564,8 @@ function marketRequiresPrice(marketType) {
     marketType === 'SPREAD' ||
     marketType === 'PUCKLINE' ||
     marketType === 'TOTAL' ||
-    marketType === 'TEAM_TOTAL'
+    marketType === 'TEAM_TOTAL' ||
+    marketType === 'FIRST_PERIOD'
   );
 }
 
@@ -830,7 +789,6 @@ function computeOfficialStatus({
   sport,
   marketType,
   proxyCapped = false,
-  projectionSignal = 'PASS',
 }) {
   const thresholds = getThresholdProfile(marketType, sport);
 
@@ -838,11 +796,6 @@ function computeOfficialStatus({
   if (sharpPriceStatus === 'PENDING_VERIFICATION') return 'PASS';
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
     return 'PASS';
-  }
-
-  if (marketType === 'FIRST_PERIOD') {
-    // Delegate to FIRST_PERIOD_POLICY — single source of truth (WI-0537).
-    return FIRST_PERIOD_POLICY.toOfficialStatus(projectionSignal);
   }
 
   if (edgePct === null) return 'PASS';
@@ -1223,11 +1176,11 @@ function buildDecisionV2(payload, context = {}) {
             totalLine,
             totalPriceOver:
               market_type === 'FIRST_PERIOD'
-                ? null
+                ? asNumber(oddsCtx?.total_price_over_1p)
                 : asNumber(oddsCtx?.total_price_over),
             totalPriceUnder:
               market_type === 'FIRST_PERIOD'
-                ? null
+                ? asNumber(oddsCtx?.total_price_under_1p)
                 : asNumber(oddsCtx?.total_price_under),
             sigmaTotal: resolvedSigmaTotal,
             isPredictionOver: direction === 'OVER',
@@ -1302,7 +1255,6 @@ function buildDecisionV2(payload, context = {}) {
       hasPrimarySupport,
       proxyUsed: proxy_used,
       proxyAllowed: proxy_allowed,
-      projectionSignal: firstPeriodProjectionSignal,
     });
     const proxy_capped = priceDecision.proxy_capped === true;
 
@@ -1314,7 +1266,6 @@ function buildDecisionV2(payload, context = {}) {
       sport,
       marketType: market_type,
       proxyCapped: proxy_capped,
-      projectionSignal: firstPeriodProjectionSignal,
     });
 
     const thresholdProfile = getThresholdProfile(market_type, sport);
@@ -1329,11 +1280,22 @@ function buildDecisionV2(payload, context = {}) {
     let finalOfficialStatus = playCleanlinessResult.officialStatus;
     let finalPriceReasonCodes = [...playCleanlinessResult.priceReasonCodes];
 
-    // play_tier for FIRST_PERIOD delegates to canonical policy (WI-0537).
-    const play_tier =
-      market_type === 'FIRST_PERIOD'
-        ? FIRST_PERIOD_POLICY.toPlayTier(firstPeriodProjectionSignal)
-        : derivePlayTierWithThresholds(edge_pct, thresholdProfile);
+    if (
+      market_type === 'FIRST_PERIOD' &&
+      firstPeriodProjectionSignal === 'PASS' &&
+      finalOfficialStatus === 'PASS'
+    ) {
+      const compatibilityReason =
+        FIRST_PERIOD_POLICY.toPriceReasonCode(firstPeriodProjectionSignal);
+      if (compatibilityReason) {
+        finalPriceReasonCodes = uniqueReasonCodes(
+          compatibilityReason,
+          finalPriceReasonCodes,
+        );
+      }
+    }
+
+    const play_tier = derivePlayTierWithThresholds(edge_pct, thresholdProfile);
 
     const heavyFavoriteMultiplier = getHeavyFavoritePlayEdgeMultiplier(price);
     const heavyFavoritePlayEdgeMin =
