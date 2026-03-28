@@ -64,6 +64,14 @@ function computePropDisplayStateFromVerdict(verdict) {
   return 'PROJECTION_ONLY';
 }
 
+function americanToImplied(americanOdds) {
+  if (!Number.isFinite(americanOdds) || americanOdds === 0) return null;
+  if (americanOdds > 0) {
+    return 100 / (americanOdds + 100);
+  }
+  return Math.abs(americanOdds) / (Math.abs(americanOdds) + 100);
+}
+
 const PROP_PROJECTION_FLAGS = new Set([
   'PROJECTION_ANOMALY',
   'SYNTHETIC_LINE',
@@ -1769,11 +1777,13 @@ async function runNHLPlayerShotsModel() {
             LIMIT 10
           `);
             const playerBlkLookbackGames = getPlayerBlkLookbackStmt.all(player.player_id);
+            const hasSogLookback = playerLookbackGames.length >= 5;
+            const hasBlkLookback = playerBlkLookbackGames.length >= 5;
 
-            if (playerLookbackGames.length < 5) {
+            if (!hasSogLookback && !hasBlkLookback) {
               // Task 1: Log explicit skip reason for players with insufficient recent logs
               console.log(
-                `[${JOB_NAME}] Skipping ${player.player_name} (${player.player_id}): fewer than 5 recent game logs (possible injury/absence)`,
+                `[${JOB_NAME}] Skipping ${player.player_name} (${player.player_id}): fewer than 5 recent shot or blocked-shot logs (possible injury/absence)`,
               );
               continue;
             }
@@ -1786,7 +1796,9 @@ async function runNHLPlayerShotsModel() {
             const playerName = hasValidName
               ? player.player_name.trim()
               : `Player #${player.player_id}`;
+            const roleStability = playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH';
 
+            if (hasSogLookback) {
             const l5Games = playerLookbackGames.slice(0, 5);
 
             // Build L5 SOG array (most recent first)
@@ -3005,8 +3017,9 @@ async function runNHLPlayerShotsModel() {
                 );
               }
             }
+            }
 
-            if (blkEnabled && playerBlkLookbackGames.length >= 5) {
+            if (blkEnabled && hasBlkLookback) {
               const blkGames = playerBlkLookbackGames.slice(0, 5);
               const l5Blk = blkGames.map((g) => Number(g.blocked_shots) || 0);
               const l5BlkMean = computeL5Mean(l5Blk);
