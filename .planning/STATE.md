@@ -104,7 +104,7 @@ This file is intentionally minimal to avoid stale status drift.
 | # | WI | Summary | LOE |
 |---|---|---|---|
 | 6 | [WI-0618](../WORK_QUEUE/WI-0618.md) | Delete orphaned archive directories | XS |
-| 7 | [WI-0617](../WORK_QUEUE/WI-0617.md) | Remove initDb() no-op callers | S |
+| 7 | ~~[WI-0617](../WORK_QUEUE/COMPLETE/WI-0617.md)~~ ✓ | Remove initDb() no-op callers | S |
 | 8 | [WI-0615](../WORK_QUEUE/WI-0615.md) | Remove homeGoalieConfirmed deprecated field | S |
 | 9 | [WI-0616](../WORK_QUEUE/WI-0616.md) | Rename welcome-home-v2 card_type | M |
 | 10 | [WI-0619](../WORK_QUEUE/WI-0619.md) | Extract FPL scheduler to schedulers/fpl.js | M |
