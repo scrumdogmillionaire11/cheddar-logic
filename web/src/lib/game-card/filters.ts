@@ -500,8 +500,8 @@ function filterByWelcomeHome(
 
   // Check if any driver or evidence item is Welcome Home Fade
   const hasWHF =
-    card.drivers.some((d) => d.cardType === 'welcome-home-v2') ||
-    (card.evidence?.some((e) => e.cardType === 'welcome-home-v2') ?? false);
+    card.drivers.some((d) => d.cardType === 'welcome-home' || d.cardType === 'welcome-home-v2') ||
+    (card.evidence?.some((e) => e.cardType === 'welcome-home' || e.cardType === 'welcome-home-v2') ?? false);
   return hasWHF;
 }
 

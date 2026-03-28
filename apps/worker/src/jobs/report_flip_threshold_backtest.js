@@ -5,7 +5,6 @@ require('dotenv').config();
 const {
   closeReadOnlyInstance,
   getDatabaseReadOnly,
-  initDb,
   resolveDatabasePath,
 } = require('@cheddar-logic/data');
 
@@ -537,7 +536,6 @@ function formatReport(report) {
 }
 
 async function generateFlipThresholdBacktestReport({ days = DEFAULT_WINDOW_DAYS } = {}) {
-  await initDb();
   const db = getDatabaseReadOnly();
 
   try {

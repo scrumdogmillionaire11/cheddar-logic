@@ -15,7 +15,6 @@ const fs = require('fs');
 const {
   closeDatabase,
   getDatabase,
-  initDb,
   runMigrations,
 } = require('@cheddar-logic/data');
 
@@ -81,7 +80,6 @@ describe('Job Key Audit', () => {
     }
 
     await runMigrations();
-    await initDb();
     db = getDatabase();
   });
 

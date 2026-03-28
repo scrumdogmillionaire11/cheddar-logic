@@ -11,12 +11,11 @@
 
 const { execSync } = require('child_process');
 const fs = require('fs');
-const { initDb, getDatabase, closeDatabase } = require('@cheddar-logic/data');
+const {getDatabase, closeDatabase } = require('@cheddar-logic/data');
 
 const TEST_DB_PATH = '/tmp/cheddar-nba-test.db';
 
 async function queryDb(fn) {
-  await initDb();
   const db = getDatabase();
   try {
     return await fn(db);

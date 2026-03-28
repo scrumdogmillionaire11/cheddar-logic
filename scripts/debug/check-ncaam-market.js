@@ -1,7 +1,6 @@
-const {initDb,getDatabase,closeDatabase}=require('../../packages/data/src/db.js');
+const {getDatabase,closeDatabase}=require('../../packages/data/src/db.js');
 
 (async()=>{
-  await initDb();
   const db=getDatabase();
   
   const row=db.prepare(`

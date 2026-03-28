@@ -3,7 +3,6 @@
  * Singleton connection to the SQLite database (via better-sqlite3)
  *
  * Usage:
- *   await require('./db.js').initDb()  // no-op, preserved for back-compat
  *   const db = require('./db.js').getDatabase()
  *
  * All timestamps stored in ISO 8601 UTC format
@@ -462,15 +461,6 @@ function normalizeSportValue(sport, context) {
   return normalized;
 }
 
-/**
- * Initialize database (preserved as async no-op for caller back-compat).
- * better-sqlite3 opens synchronously on first getDatabase() call.
- */
-async function initDb() {
-  // better-sqlite3 opens synchronously on first getDatabase() call.
-  // Preserved as an async no-op so existing callers need no changes.
-  oddsContextReferenceRegistry = new WeakMap();
-}
 
 /**
  * Load database from disk or create new
@@ -4225,7 +4215,6 @@ function pruneExpiredRevokedTokens() {
 }
 
 module.exports = {
-  initDb,
   getDatabase,
   getDatabaseReadOnly,
   closeDatabase,

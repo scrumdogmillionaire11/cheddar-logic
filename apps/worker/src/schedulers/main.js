@@ -25,7 +25,6 @@ require('dotenv').config();
 
 const { DateTime } = require('luxon');
 const {
-  initDb,
   getUpcomingGames,
   shouldRunJobKey,
   hasRunningJobRun,
@@ -1281,7 +1280,6 @@ async function start() {
 
   // Initialize database
   console.log('[SCHEDULER] Initializing database...');
-  await initDb();
   console.log('[SCHEDULER] Database ready.\n');
   purgeStaleTminusPullLog();
   console.log('[SCHEDULER] T-minus pull log: stale rows purged (>48h).');

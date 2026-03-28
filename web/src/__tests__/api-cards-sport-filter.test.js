@@ -12,7 +12,6 @@ async function runTests() {
   const testRuntime = await setupIsolatedTestDb('api-cards-sport-filter');
 
   try {
-    await db.initDb();
     const client = db.getDatabase();
 
     const testGameId = 'test-sport-filter-game-1';

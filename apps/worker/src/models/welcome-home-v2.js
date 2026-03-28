@@ -310,7 +310,7 @@ function generateWelcomeHomeCard(gameCtx) {
   );
 
   return {
-    cardType: 'welcome-home-v2',
+    cardType: 'welcome-home',
     cardTitle: `[${sport}] Welcome Home Fade: Road Trip Fatigue`,
     confidence,
     tier,

@@ -13,7 +13,6 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const {
-  initDb,
   getDatabase,
   closeDatabase,
 } = require('../src/db');
@@ -39,7 +38,6 @@ describe('Auth Persistence Regression Tests', () => {
     delete process.env.CHEDDAR_DB_PATH;
     process.env.DATABASE_PATH = dbPath;
     
-    await initDb();
     
     // Run migrations
     const db = getDatabase();
@@ -107,7 +105,6 @@ describe('Auth Persistence Regression Tests', () => {
   });
 
   test('REGRESSION: session persists to disk after creation', async () => {
-    await initDb();
     const db = getDatabase();
     
     const userId = crypto.randomUUID();
@@ -141,7 +138,6 @@ describe('Auth Persistence Regression Tests', () => {
     expect(stats.size).toBeGreaterThan(0);
     
     // Reload database from disk
-    await initDb();
     const db2 = getDatabase();
     
     const user = db2.prepare('SELECT * FROM users WHERE id = ?').get(userId);
@@ -160,7 +156,6 @@ describe('Auth Persistence Regression Tests', () => {
   });
 
   test('REGRESSION: magic link verification creates persistent session', async () => {
-    await initDb();
     const db = getDatabase();
     
     const email = 'magic-persist@example.com';
@@ -177,7 +172,6 @@ describe('Auth Persistence Regression Tests', () => {
     closeDatabase();
     
     // Simulate magic link verification (new DB connection)
-    await initDb();
     const db2 = getDatabase();
     const nowIso = new Date().toISOString();
     
@@ -214,7 +208,6 @@ describe('Auth Persistence Regression Tests', () => {
     closeDatabase();
     
     // Verify persistence across new connection
-    await initDb();
     const db3 = getDatabase();
     
     const persistedUser = db3.prepare('SELECT * FROM users WHERE email = ?').get(email);
@@ -232,7 +225,6 @@ describe('Auth Persistence Regression Tests', () => {
   });
 
   test('REGRESSION: access token validation works after session creation', async () => {
-    await initDb();
     const db = getDatabase();
     
     const userId = crypto.randomUUID();
@@ -268,7 +260,6 @@ describe('Auth Persistence Regression Tests', () => {
     }, 24 * 60 * 60 * 1000);
     
     // Verify token works in new connection
-    await initDb();
     const db2 = getDatabase();
     
     const payload = verifySignedPayload(accessToken);
@@ -301,7 +292,6 @@ describe('Auth Persistence Regression Tests', () => {
   });
 
   test('REGRESSION: refresh token survives database reload', async () => {
-    await initDb();
     const db = getDatabase();
     
     const userId = crypto.randomUUID();
@@ -328,7 +318,6 @@ describe('Auth Persistence Regression Tests', () => {
     closeDatabase();
     
     // Simulate refresh request (new DB connection)
-    await initDb();
     const db2 = getDatabase();
     
     const providedHash = hashTokenHmac(refreshToken);
@@ -347,7 +336,6 @@ describe('Auth Persistence Regression Tests', () => {
     closeDatabase();
     
     // Verify update persisted
-    await initDb();
     const db3 = getDatabase();
     
     const updatedSession = db3.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
@@ -357,7 +345,6 @@ describe('Auth Persistence Regression Tests', () => {
   });
 
   test('REGRESSION: multiple sessions for same user persist independently', async () => {
-    await initDb();
     const db = getDatabase();
     
     const userId = crypto.randomUUID();
@@ -390,7 +377,6 @@ describe('Auth Persistence Regression Tests', () => {
     closeDatabase();
     
     // Verify all sessions persisted
-    await initDb();
     const db2 = getDatabase();
     
     const persistedSessions = db2.prepare('SELECT * FROM sessions WHERE user_id = ? ORDER BY created_at').all(userId);
@@ -405,7 +391,6 @@ describe('Auth Persistence Regression Tests', () => {
     closeDatabase();
     
     // Verify revocation persisted, others still active
-    await initDb();
     const db3 = getDatabase();
     
     const activeSessions = db3.prepare('SELECT * FROM sessions WHERE user_id = ? AND revoked_at IS NULL').all(userId);
@@ -419,7 +404,6 @@ describe('Auth Persistence Regression Tests', () => {
   });
 
   test('REGRESSION: session expiry check survives database reload', async () => {
-    await initDb();
     const db = getDatabase();
     
     const userId = crypto.randomUUID();
@@ -456,7 +440,6 @@ describe('Auth Persistence Regression Tests', () => {
     closeDatabase();
     
     // Verify expiry logic after reload
-    await initDb();
     const db2 = getDatabase();
     
     const expiredSession = db2.prepare('SELECT * FROM sessions WHERE id = ?').get(expiredSessionId);
@@ -469,7 +452,6 @@ describe('Auth Persistence Regression Tests', () => {
   });
 
   test('REGRESSION: user role change persists and affects entitlement', async () => {
-    await initDb();
     const db = getDatabase();
     
     const userId = crypto.randomUUID();
@@ -488,7 +470,6 @@ describe('Auth Persistence Regression Tests', () => {
     closeDatabase();
     
     // Verify no entitlement
-    await initDb();
     let db2 = getDatabase();
     
     let userContext = db2.prepare(
@@ -503,7 +484,6 @@ describe('Auth Persistence Regression Tests', () => {
     closeDatabase();
     
     // Verify entitlement after upgrade persists
-    await initDb();
     const db3 = getDatabase();
     
     userContext = db3.prepare(
@@ -517,7 +497,6 @@ describe('Auth Persistence Regression Tests', () => {
   });
 
   test('REGRESSION: large batch of users persists correctly', async () => {
-    await initDb();
     const db = getDatabase();
     
     const testPrefix = `batch-${Date.now()}`;
@@ -535,7 +514,6 @@ describe('Auth Persistence Regression Tests', () => {
     closeDatabase();
     
     // Verify users persisted after reload
-    await initDb();
     const db2 = getDatabase();
     
     const count = db2.prepare(`SELECT COUNT(*) as count FROM users WHERE email LIKE ?`).get(`${testPrefix}%`);

@@ -4,7 +4,6 @@
 const db = require('./src/db.js');
 
 (async () => {
-  await db.initDb();
   const client = db.getDatabase();
   
   console.log('=== GAMES TABLE ===');

@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { initDb, getDatabase, closeDatabase } = require('../src/db');
+const {getDatabase, closeDatabase } = require('../src/db');
 const { runMigrations } = require('../src/migrate');
 const { ensureCompedUser } = require('../src/comped-users');
 
@@ -16,7 +16,6 @@ function makeTempDbPath() {
 async function setupDb() {
   const dbPath = makeTempDbPath();
   process.env.DATABASE_PATH = dbPath;
-  await initDb();
   await runMigrations();
   return { db: getDatabase(), dbPath };
 }

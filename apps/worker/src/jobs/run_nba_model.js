@@ -85,7 +85,8 @@ const NBA_DRIVER_WEIGHTS = {
 const NBA_DRIVER_CARD_TYPES = [
   'nba-base-projection',
   'nba-rest-advantage',
-  'welcome-home-v2',
+  'welcome-home',
+  'welcome-home-v2', // alias: backward compat with existing DB rows
   'nba-matchup-style',
   'nba-blowout-risk',
   'nba-total-projection',

@@ -972,7 +972,6 @@ describe('decision publisher v2 pipeline', () => {
       edge: 0.12,
       tier: 'SUPER',
       official_eligible: false,
-      homeGoalieConfirmed: true, // DEPRECATED legacy field — must not override
       homeGoalieState: { starter_state: 'CONFLICTING' },
       awayGoalieState: { starter_state: 'CONFIRMED' },
       odds_context: {

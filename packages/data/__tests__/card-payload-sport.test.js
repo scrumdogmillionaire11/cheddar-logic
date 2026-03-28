@@ -98,7 +98,6 @@ describe('card payload/card_results sport normalization', () => {
 
     jest.resetModules();
     dbModule = require('../src/db.js');
-    await dbModule.initDb();
   });
 
   afterEach(() => {

@@ -36,9 +36,8 @@ describe('seed-cards DATABASE_PATH', () => {
     process.env.CHEDDAR_DB_PATH = '';
 
     jest.resetModules();
-    const { initDb, getDatabase, closeDatabase } = require('../src/db.js');
+    const {getDatabase, closeDatabase } = require('../src/db.js');
 
-    await initDb();
     const db = getDatabase();
 
     db.exec(`
@@ -99,8 +98,7 @@ describe('seed-cards DATABASE_PATH', () => {
     await seedCards();
 
     jest.resetModules();
-    const { initDb: initDb2, getDatabase: getDatabase2, closeDatabase: closeDatabase2 } = require('../src/db.js');
-    await initDb2();
+    const { getDatabase: getDatabase2, closeDatabase: closeDatabase2 } = require('../src/db.js');
     const db2 = getDatabase2();
 
     const count = db2.prepare('SELECT COUNT(*) as c FROM card_payloads').get();

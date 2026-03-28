@@ -5,14 +5,12 @@
  */
 
 const {
-  initDb,
   getDatabase,
   closeDatabase,
 } = require('../src/db.js');
 
 describe('Data Pipeline Integration', () => {
   beforeAll(async () => {
-    await initDb();
   });
 
   afterAll(() => {

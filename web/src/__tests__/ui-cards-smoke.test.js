@@ -91,7 +91,6 @@ async function validateDbFallback(assert) {
   const dbModule = await import('../../../packages/data/src/db.js');
   const db = dbModule.default || dbModule;
 
-  await db.initDb();
   const client = db.getDatabase();
   try {
     const successRunRows = client
@@ -117,7 +116,7 @@ async function validateDbFallback(assert) {
     const where = [
       "(cp.expires_at IS NULL OR datetime(cp.expires_at) > datetime('now'))",
       "cp.sport != 'FPL'",
-      "cp.card_type != 'welcome-home-v2'",
+      "cp.card_type NOT IN ('welcome-home', 'welcome-home-v2')",
     ];
     const params = [];
 

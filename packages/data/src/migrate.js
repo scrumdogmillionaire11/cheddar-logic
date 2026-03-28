@@ -11,7 +11,7 @@
  * This handles both bundled (Next.js) and development environments.
  */
 
-const { initDb, getDatabase } = require('./db');
+const {getDatabase } = require('./db');
 const fs = require('fs');
 const path = require('path');
 
@@ -81,7 +81,6 @@ function resolveMigrationsDir() {
 
 async function runMigrations() {
   // Initialize SQL.js first
-  await initDb();
   
   const db = getDatabase();
 

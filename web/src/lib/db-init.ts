@@ -6,7 +6,6 @@
  * The worker process owns all DB writes.
  */
 
-import { initDb } from '@cheddar-logic/data';
 
 let dbReadyPromise: Promise<void> | null = null;
 
@@ -17,7 +16,6 @@ export async function ensureDbReady(): Promise<void> {
 
   dbReadyPromise = (async () => {
     try {
-      await initDb();
       // NOTE: No runMigrations() here. Worker owns all schema changes.
       console.log('[DB] SQL.js engine initialized (read-only mode)');
     } catch (error) {

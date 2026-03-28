@@ -1,7 +1,6 @@
 const db = require('@cheddar-logic/data');
 
 (async () => {
-  await db.initDb();
   const client = db.getDatabase();
   const runs = client.prepare(`
     SELECT job_name, job_key, status, started_at

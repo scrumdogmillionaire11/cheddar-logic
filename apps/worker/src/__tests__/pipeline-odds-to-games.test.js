@@ -12,7 +12,6 @@ const fs = require('fs');
 const { v4: uuidV4 } = require('uuid');
 const { DateTime } = require('luxon');
 const {
-  initDb,
   getDatabase,
   upsertGame,
   insertOddsSnapshot,
@@ -28,7 +27,6 @@ const TEST_DB_PATH = '/tmp/cheddar-test-odds-to-games.db';
 async function testPipelineOddsToPipeline() {
   console.log('\n=== E2E TEST: Odds → Games → Scheduler → T-Minus ===\n');
 
-  await initDb();
   const client = getDatabase();
 
   try {

@@ -1,7 +1,6 @@
 const db = require('./db.js');
 
 async function assertNoSeedOdds() {
-  await db.initDb();
   const client = db.getDatabase();
 
   const seedRuns = client.prepare(`

@@ -100,7 +100,8 @@ const NHL_DRIVER_WEIGHTS = {
 const NHL_DRIVER_CARD_TYPES = [
   'nhl-base-projection',
   'nhl-rest-advantage',
-  'welcome-home-v2',
+  'welcome-home',
+  'welcome-home-v2', // alias: backward compat with existing DB rows
   'nhl-goalie',
   'nhl-goalie-certainty',
   'nhl-model-output',

@@ -15,8 +15,7 @@ const TEST_DB_PATH = '/tmp/cheddar-nhl-idempotency.db';
 
 async function queryDb(fn) {
   jest.resetModules();
-  const { initDb, getDatabase, closeDatabase } = require('@cheddar-logic/data');
-  await initDb();
+  const {getDatabase, closeDatabase } = require('@cheddar-logic/data');
   const db = getDatabase();
   try {
     return await fn(db);

@@ -1,11 +1,10 @@
 /**
  * Test script to verify getOddsWithUpcomingGames filters stale data correctly
  */
-const { initDb, getOddsWithUpcomingGames, getOddsSnapshots } = require('@cheddar-logic/data');
+const {getOddsWithUpcomingGames, getOddsSnapshots } = require('@cheddar-logic/data');
 const { DateTime } = require('luxon');
 
 (async () => {
-  await initDb();
   const nowUtc = DateTime.utc().toISO();
   
   console.log('Current UTC:', nowUtc);

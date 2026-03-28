@@ -1,7 +1,6 @@
 'use strict';
 
 const {
-  initDb,
   getDatabase,
   closeDatabase,
 } = require('../packages/data/src/db');
@@ -61,7 +60,6 @@ function resolveFtPct(raw, side, teamName) {
 }
 
 async function runBacktest() {
-  await initDb();
   const db = getDatabase();
 
   const rows = db

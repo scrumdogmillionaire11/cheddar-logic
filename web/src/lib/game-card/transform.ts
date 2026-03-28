@@ -103,7 +103,8 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
       'nba-blowout-risk',
       'nba-travel',
       'nba-lineup',
-      'welcome-home-v2',
+      'welcome-home',
+      'welcome-home-v2', // alias: backward compat with existing DB rows
     ]),
   },
   NHL: {
@@ -121,7 +122,8 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
       'nhl-goalie-certainty',
       'nhl-model-output',
       'nhl-shot-environment',
-      'welcome-home-v2',
+      'welcome-home',
+      'welcome-home-v2', // alias: backward compat with existing DB rows
     ]),
   },
   NCAAM: {
@@ -319,7 +321,7 @@ function isEvidenceItem(play: ApiPlay, sport?: string): boolean {
 }
 
 function isWelcomeHomePlay(play: ApiPlay): boolean {
-  return play.cardType === 'welcome-home-v2';
+  return play.cardType === 'welcome-home' || play.cardType === 'welcome-home-v2';
 }
 
 function mapCanonicalToLegacyMarket(
@@ -2996,7 +2998,7 @@ export function transformToGameCard(game: GameData): GameCard {
     .map(playToDriver);
   const scopedRawDrivers = ENABLE_WELCOME_HOME
     ? rawDrivers
-    : rawDrivers.filter((driver) => driver.cardType !== 'welcome-home-v2');
+    : rawDrivers.filter((driver) => driver.cardType !== 'welcome-home' && driver.cardType !== 'welcome-home-v2');
   const drivers = deduplicateDrivers(scopedRawDrivers);
   const evidenceSource = ENABLE_WELCOME_HOME
     ? game.plays.filter((play) => isEvidenceItem(play, game.sport))

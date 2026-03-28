@@ -11,7 +11,6 @@
 
 const fs = require('fs');
 const {
-  initDb,
   getDatabase,
   insertJobRun,
   markJobRunSuccess,
@@ -57,7 +56,6 @@ async function runSchedulerWindowTests() {
   console.log('🧪 Starting Scheduler Window Integration Tests...\n');
 
   try {
-    await initDb();
     const db = getDatabase();
 
     // Clean up test data
@@ -261,7 +259,6 @@ function loadSchedulerModule(dataOverrides = {}) {
   jest.resetModules();
 
   jest.doMock('@cheddar-logic/data', () => ({
-    initDb: jest.fn(),
     getUpcomingGames: jest.fn(() => []),
     shouldRunJobKey: jest.fn(() => true),
     hasRunningJobRun: jest.fn(() => false),
@@ -539,7 +536,6 @@ describe('scheduler settlement windows', () => {
 
   test('tick executes without overlap reference errors', async () => {
     const scheduler = loadSchedulerModule({
-      initDb: jest.fn(),
       getUpcomingGames: jest.fn(() => []),
       shouldRunJobKey: jest.fn(() => false),
       hasRunningJobRun: jest.fn(() => false),

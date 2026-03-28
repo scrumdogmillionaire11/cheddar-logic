@@ -11,7 +11,6 @@ const os = require('os');
 const { DateTime } = require('luxon');
 
 const {
-  initDb,
   getTeamMetricsCache,
   upsertTeamMetricsCache,
   deleteStaleTeamMetricsCache,
@@ -34,7 +33,6 @@ async function testCache() {
   try {
     // Initialize DB and run migrations
     console.log('[Test] Initializing DB and running migrations...');
-    initDb();
     await runMigrations();
     
     const nowEt = DateTime.now().setZone('America/New_York');
