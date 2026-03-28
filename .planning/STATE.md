@@ -200,5 +200,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 90 | WI-0636 Turbopack/dev-chunk guard in deploy workflow | 2026-03-28 | f3c0db7 | [88-wi-0636-turbopack-dev-chunk-guard-in-dep](./quick/88-wi-0636-turbopack-dev-chunk-guard-in-dep/) |
 | 91 | WI-0635: CF public-HTML convergence retries in deploy workflow | 2026-03-28 | 96cfdfb | [89-wi-0635-cf-public-html-convergence-retri](./quick/89-wi-0635-cf-public-html-convergence-retri/) |
 | 92 | WI-0627: Wire check_odds_health into scheduler as 30-min watchdog | 2026-03-28 | 0e4d8e3 | [90-wi-0627-wire-check-odds-health-into-sche](./quick/90-wi-0627-wire-check-odds-health-into-sche/) |
+| 93 | Test suite for settle_mlb_f5.js | 2026-03-28 | cd72034 | [91-test-suite-for-settle-mlb-f5-js](./quick/91-test-suite-for-settle-mlb-f5-js/) |
 
-Last activity: 2026-03-28 - Completed quick task 90: WI-0627: wire check_odds_health into scheduler as 30-min watchdog
+Last activity: 2026-03-28 - Completed quick task 93: Test suite for settle_mlb_f5.js
