@@ -123,6 +123,7 @@ MLB model note:
 - The scheduler pulls pitcher stats and weather automatically before each model window. For manual runs, pull them first with `node apps/worker/src/jobs/pull_mlb_pitcher_stats.js` and `node apps/worker/src/jobs/pull_mlb_weather.js`.
 - F5 first-half settlement runs automatically on every scheduler tick (`settle_mlb_f5`). No manual action needed.
 - Controlled by `ENABLE_MLB_MODEL` env flag (default **on** — set `ENABLE_MLB_MODEL=false` to disable).
+- **Opening Day / season-start behavior:** MLB Stats API returns no 2026 stats until the first game is played. `pull_mlb_pitcher_stats` automatically falls back to 2025 season stats and sets `days_since_last_start = 5` (approximating a spring training start 4-6 days prior). This is correct — the EXTENDED_REST gate (`>= 10 days`) is designed for mid-season IL returns, not Opening Day. If you skip the pitcher stats pull, the K engine will see the actual last-start date from October 2025 (~175 days), trigger EXTENDED_REST on every pitcher, and block all K cards. Always run `pull_mlb_pitcher_stats` before `run_mlb_model` at season start.
 
 MLB pitcher K prop note:
 

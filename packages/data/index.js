@@ -106,6 +106,7 @@ module.exports = {
 
   // Convenience exports - games
   getUpcomingGames: db.getUpcomingGames,
+  getUpcomingGamesAsSyntheticSnapshots: db.getUpcomingGamesAsSyntheticSnapshots,
   upsertGame: db.upsertGame,
   upsertGameIdMap: db.upsertGameIdMap,
 

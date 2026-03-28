@@ -22,6 +22,9 @@
  */
 
 require('dotenv').config();
+// Also load .env.local (Next.js convention for local overrides, not loaded by dotenv by default)
+// __dirname = apps/worker/src/schedulers/ → ../../ = apps/worker/
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env.local'), override: false });
 
 const { DateTime } = require('luxon');
 const {

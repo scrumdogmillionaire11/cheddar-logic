@@ -133,8 +133,8 @@ function safeDiv(numerator, denominator, multiplier = 1) {
   return (n / d) * multiplier;
 }
 
-async function fetchPitcherSeasonStats(pitcherId) {
-  const url = `${MLB_API_BASE}/people/${pitcherId}/stats?stats=season&season=${MLB_SEASON}&group=pitching`;
+async function fetchPitcherSeasonStats(pitcherId, season = MLB_SEASON) {
+  const url = `${MLB_API_BASE}/people/${pitcherId}/stats?stats=season&season=${season}&group=pitching`;
   const payload = await fetchJson(url);
 
   const stats = payload?.stats?.[0]?.splits?.[0]?.stat;
@@ -158,8 +158,8 @@ async function fetchPitcherSeasonStats(pitcherId) {
   };
 }
 
-async function fetchPitcherRecentStats(pitcherId) {
-  const url = `${MLB_API_BASE}/people/${pitcherId}/stats?stats=gameLog&season=${MLB_SEASON}&group=pitching`;
+async function fetchPitcherRecentStats(pitcherId, season = MLB_SEASON) {
+  const url = `${MLB_API_BASE}/people/${pitcherId}/stats?stats=gameLog&season=${season}&group=pitching`;
   const payload = await fetchJson(url);
 
   const splits = Array.isArray(payload?.stats?.[0]?.splits)
@@ -341,12 +341,57 @@ async function fetchPitcherInfo(pitcherId) {
   };
 }
 
+/**
+ * Returns true when a season stats object has no meaningful data — i.e. Opening Day
+ * or the pitcher has not yet appeared in a game this season.
+ */
+function isSeasonStatsEmpty(seasonStats) {
+  return (
+    seasonStats.era === null &&
+    seasonStats.k_per_9 === null &&
+    (seasonStats.season_starts === null || seasonStats.season_starts === 0)
+  );
+}
+
 async function fetchAllPitcherData(pitcherId, { teamFromSchedule = null } = {}) {
   const [info, seasonStats, recentStats] = await Promise.all([
     fetchPitcherInfo(pitcherId),
-    fetchPitcherSeasonStats(pitcherId),
-    fetchPitcherRecentStats(pitcherId),
+    fetchPitcherSeasonStats(pitcherId, MLB_SEASON),
+    fetchPitcherRecentStats(pitcherId, MLB_SEASON),
   ]);
+
+  // Opening Day / early-season fallback: if current season has no stats yet (no games played),
+  // pull the prior season as a proxy so ERA, k_per_9, season_starts etc. are populated.
+  let effectiveSeasonStats = seasonStats;
+  let effectiveRecentStats = recentStats;
+  let statsSourceSeason = MLB_SEASON;
+
+  if (isSeasonStatsEmpty(seasonStats)) {
+    const priorSeason = MLB_SEASON - 1;
+    console.log(`[${JOB_NAME}] pitcher ${pitcherId}: no ${MLB_SEASON} stats yet — falling back to ${priorSeason}`);
+    const [priorSeasonStats, priorRecentStats] = await Promise.all([
+      fetchPitcherSeasonStats(pitcherId, priorSeason),
+      fetchPitcherRecentStats(pitcherId, priorSeason),
+    ]);
+    if (!isSeasonStatsEmpty(priorSeasonStats)) {
+      effectiveSeasonStats = priorSeasonStats;
+      effectiveRecentStats = priorRecentStats;
+      statsSourceSeason = priorSeason;
+
+      // On Opening Day, days_since_last_start from the prior season game log will be
+      // ~175 days (last Oct start), which trips the EXTENDED_REST gate (>= 10 days)
+      // in classifyLeash and blocks every K projection.
+      // The gate is designed for mid-season IL returns — not season starts.
+      // Opening Day starters pitch spring training ~4-6 days before Opening Day,
+      // so we pin days_since_last_start to 5 when prior-season fallback is used.
+      if (
+        effectiveRecentStats.days_since_last_start == null ||
+        effectiveRecentStats.days_since_last_start >= 10
+      ) {
+        effectiveRecentStats = { ...effectiveRecentStats, days_since_last_start: 5 };
+      }
+    }
+  }
 
   // Prefer schedule-derived team abbreviation (matches odds_snapshot.home_team / away_team
   // used by run_mlb_model.js enrichment). Fall back to currentTeam.name if schedule didn't
@@ -359,24 +404,24 @@ async function fetchAllPitcherData(pitcherId, { teamFromSchedule = null } = {}) 
     team,
     // pitcher_input_schema.md: handedness required for opp splits
     handedness: info.handedness,
-    season: MLB_SEASON,
-    era: seasonStats.era,
-    whip: seasonStats.whip,
-    k_per_9: seasonStats.k_per_9,
-    innings_pitched: seasonStats.innings_pitched,
+    season: statsSourceSeason,
+    era: effectiveSeasonStats.era,
+    whip: effectiveSeasonStats.whip,
+    k_per_9: effectiveSeasonStats.k_per_9,
+    innings_pitched: effectiveSeasonStats.innings_pitched,
     // pitcher_input_schema.md: season_starts + season_k_pct required
-    season_starts: seasonStats.season_starts,
-    season_k_pct: seasonStats.season_k_pct,
-    recent_k_per_9: recentStats.recent_k_per_9,
-    recent_ip: recentStats.recent_ip,
+    season_starts: effectiveSeasonStats.season_starts,
+    season_k_pct: effectiveSeasonStats.season_k_pct,
+    recent_k_per_9: effectiveRecentStats.recent_k_per_9,
+    recent_ip: effectiveRecentStats.recent_ip,
     // pitcher_input_schema.md: last_three_pitch_counts required — leash classification
-    last_three_pitch_counts: recentStats.last_three_pitch_counts, // JSON string, most recent first
-    last_three_ip: recentStats.last_three_ip,                    // JSON string, most recent first
+    last_three_pitch_counts: effectiveRecentStats.last_three_pitch_counts, // JSON string, most recent first
+    last_three_ip: effectiveRecentStats.last_three_ip,                    // JSON string, most recent first
     // pitcher_input_schema.md: k% windows for trend overlay
-    k_pct_last_4_starts: recentStats.k_pct_last_4_starts,
-    k_pct_prior_4_starts: recentStats.k_pct_prior_4_starts,
+    k_pct_last_4_starts: effectiveRecentStats.k_pct_last_4_starts,
+    k_pct_prior_4_starts: effectiveRecentStats.k_pct_prior_4_starts,
     // pitcher_input_schema.md: days_since_last_start required
-    days_since_last_start: recentStats.days_since_last_start,
+    days_since_last_start: effectiveRecentStats.days_since_last_start,
     // il_status / il_return / role not derivable from MLB stats API — default safe values.
     // Populate via manual override or future transactions feed.
     il_status: 0,
@@ -385,7 +430,7 @@ async function fetchAllPitcherData(pitcherId, { teamFromSchedule = null } = {}) 
     // season_swstr_pct / season_avg_velo require Statcast — stored null until pull_mlb_statcast is added
     season_swstr_pct: null,
     season_avg_velo: null,
-    allSplits: recentStats.allSplits ?? [],
+    allSplits: effectiveRecentStats.allSplits ?? [],
   };
 }
 
