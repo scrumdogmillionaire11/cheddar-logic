@@ -18,7 +18,6 @@ async function runTests() {
 
   try {
     // Initialize database
-    await db.initDb();
     const client = db.getDatabase();
 
     // Clean up test data first
@@ -354,7 +353,7 @@ async function runTests() {
       'cp.sport = ?',
       "(cp.expires_at IS NULL OR datetime(cp.expires_at) > datetime('now'))",
       "cp.sport != 'FPL'",
-      "cp.card_type != 'welcome-home-v2'",
+      "cp.card_type NOT IN ('welcome-home', 'welcome-home-v2')",
     ];
     const baseParams = [runScopeGameId, sport];
     const runIdPlaceholders = activeRunIds.map(() => '?').join(', ');

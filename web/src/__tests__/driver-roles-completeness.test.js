@@ -39,6 +39,7 @@ async function run() {
     'nhl-totals-call',
     'soccer-model-output',
     'soccer',
+    'welcome-home',
     'welcome-home-v2',
   ];
 

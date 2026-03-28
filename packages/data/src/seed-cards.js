@@ -11,10 +11,9 @@ require('dotenv').config({
   path: path.resolve(__dirname, '../../../.env')
 });
 
-const { initDb, getDatabase, closeDatabase } = require('./db.js');
+const {getDatabase, closeDatabase } = require('./db.js');
 
 async function seedCards() {
-  await initDb();
   const db = getDatabase();
 
   const now = new Date();

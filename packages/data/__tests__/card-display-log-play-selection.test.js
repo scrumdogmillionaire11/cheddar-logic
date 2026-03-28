@@ -243,7 +243,6 @@ describe('card_display_log capture for playable rows', () => {
 
     jest.resetModules();
     dbModule = require('../src/db.js');
-    await dbModule.initDb();
   });
 
   afterEach(() => {

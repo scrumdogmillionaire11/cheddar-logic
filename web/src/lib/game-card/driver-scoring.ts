@@ -46,7 +46,8 @@ export const DRIVER_ROLES: Record<string, DriverRole> = {
   'nhl-shot-environment':'CONTEXT',
   'nhl-model-output':    'CONTEXT',
   'nhl-rest-advantage':  'CONTEXT',
-  'welcome-home-v2':     'CONTEXT',
+  'welcome-home':        'CONTEXT',
+  'welcome-home-v2':     'CONTEXT', // alias: backward compat with existing DB rows
   'ncaam-rest-advantage': 'CONTEXT',
   'ncaam-matchup-style': 'CONTEXT',
 

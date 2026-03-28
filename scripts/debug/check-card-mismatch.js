@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { initDb, getDatabase, closeDatabase } = require('../../packages/data/src/db.js');
+const {getDatabase, closeDatabase } = require('../../packages/data/src/db.js');
 
 async function checkMismatch() {
-  await initDb();
   const db = getDatabase();
 
   // Check NBA games - do they have NBA card types?

@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const { initDb, getDatabase, closeDatabase } = require('../src/db');
+const {getDatabase, closeDatabase } = require('../src/db');
 const { runMigrations } = require('../src/migrate');
 const {
   USER_ROLE,
@@ -25,7 +25,6 @@ function makeTempDbPath() {
 async function setupDb() {
   const dbPath = makeTempDbPath();
   process.env.DATABASE_PATH = dbPath;
-  await initDb();
   await runMigrations();
   return { db: getDatabase(), dbPath };
 }

@@ -139,7 +139,6 @@ async function runTests() {
   // --- DB-level bound param safety ---
   console.log('\n📋 Section 5: DB bound params handle SQLi probes safely');
 
-  await db.initDb();
   const client = db.getDatabase();
 
   for (const probe of sqliProbes) {

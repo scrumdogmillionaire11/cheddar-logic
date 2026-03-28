@@ -30,7 +30,6 @@ describe('Odds Enrichment Persistence', () => {
 
     jest.resetModules();
     dbModule = require('../src/db.js');
-    await dbModule.initDb();
     const { runMigrations } = require('../src/migrate');
     await runMigrations();
   });

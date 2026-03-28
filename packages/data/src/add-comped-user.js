@@ -1,6 +1,6 @@
 'use strict';
 
-const { initDb, getDatabase, closeDatabase } = require('./db');
+const {getDatabase, closeDatabase } = require('./db');
 const { runMigrations } = require('./migrate');
 const { ensureCompedUser } = require('./comped-users');
 
@@ -53,7 +53,6 @@ async function main() {
     process.exit(1);
   }
 
-  await initDb();
   await runMigrations();
 
   const db = getDatabase();

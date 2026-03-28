@@ -19,7 +19,6 @@
 // To load env from file before running: set -a; source .env; set +a; node scripts/audit-lineage.js
 
 const {
-  initDb,
   getDatabase,
   closeDatabase,
 } = require('../packages/data/src/db.js');
@@ -47,7 +46,6 @@ const EXPECTED_SPORT_MARKET_PAIRS = [
 async function main() {
   // Initialize DB
   try {
-    await initDb();
   } catch (err) {
     console.error('[audit-lineage] ERROR: Could not open database.');
     console.error('  Make sure CHEDDAR_DB_PATH is set and the DB file exists.');

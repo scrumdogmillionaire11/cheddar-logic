@@ -220,8 +220,8 @@ export function deriveTags(card: GameCard): GameTag[] {
 
   // Situational signals
   if (
-    card.drivers.some((d) => d.cardType === 'welcome-home-v2') ||
-    (card.evidence?.some((e) => e.cardType === 'welcome-home-v2') ?? false)
+    card.drivers.some((d) => d.cardType === 'welcome-home' || d.cardType === 'welcome-home-v2') ||
+    (card.evidence?.some((e) => e.cardType === 'welcome-home' || e.cardType === 'welcome-home-v2') ?? false)
   ) {
     tags.add(GAME_TAGS.WELCOME_HOME_FADE);
   }

@@ -266,7 +266,7 @@ export async function GET(
         AND cr.status = 'settled'
     )`);
     if (!ENABLE_WELCOME_HOME) {
-      baseWhere.push("card_type != 'welcome-home-v2'");
+      baseWhere.push("card_type NOT IN ('welcome-home', 'welcome-home-v2')");
     }
 
     // Apply lifecycle filtering if enabled and lifecycle=active is requested

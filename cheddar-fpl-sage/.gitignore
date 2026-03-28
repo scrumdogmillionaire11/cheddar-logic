@@ -84,6 +84,10 @@ data/*
 .env.*.local
 run_context.json
 
+# Project specific - Archive and legacy planning (content preserved in git history)
+archive/
+.planning/legacy/
+
 # Project specific - BMAD (local development only)
 .bmad-core/
 .bmad-*/

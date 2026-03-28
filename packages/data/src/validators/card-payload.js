@@ -551,7 +551,8 @@ const schemaByCardType = {
   'nhl-pace-1p': driverPayloadSchema,
   'nhl-player-shots': driverPayloadSchema,
   'nhl-player-shots-1p': driverPayloadSchema,
-  'welcome-home-v2': driverPayloadSchema,
+  'welcome-home': driverPayloadSchema,
+  'welcome-home-v2': driverPayloadSchema, // alias: backward compat with existing DB rows
 
   // Active NHL market call cards
   'nhl-totals-call': nhlMarketCallPayloadSchema,

@@ -11,7 +11,6 @@
  * 
  * SINGLE-DATABASE MODE (legacy, default):
  *   - Single DB for all data
- *   Usage: await require('.').initDb()
  */
 
 const db = require('./src/db');
@@ -33,9 +32,6 @@ const dbTelemetry = require('./src/db-telemetry');
 module.exports = {
   // Database client
   db,
-  
-  // Initialization (MUST be called before any DB operations)
-  initDb: db.initDb,
   
   // Migration runner
   runMigrations,

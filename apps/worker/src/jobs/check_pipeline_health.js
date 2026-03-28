@@ -19,7 +19,6 @@
 require('dotenv').config();
 const { DateTime } = require('luxon');
 const {
-  initDb,
   getDb,
   recordJobStart,
   recordJobSuccess,
@@ -364,7 +363,6 @@ function checkSettlementBacklog() {
  * Main health check runner
  */
 async function checkPipelineHealth({ jobKey, dryRun }) {
-  await initDb();
 
   if (dryRun) {
     console.log(`[check_pipeline_health] DRY_RUN: ${jobKey}`);

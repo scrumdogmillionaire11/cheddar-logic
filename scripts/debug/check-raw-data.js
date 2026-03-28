@@ -1,7 +1,6 @@
-const {initDb,getDatabase,closeDatabase}=require('../../packages/data/src/db.js');
+const {getDatabase,closeDatabase}=require('../../packages/data/src/db.js');
 
 (async()=>{
-  await initDb();
   const db=getDatabase();
   const row=db.prepare("SELECT raw_data FROM odds_snapshots WHERE game_id='fd0885d45c58793ffda72c543d20ae16' ORDER BY captured_at DESC LIMIT 1").get();
   const raw=JSON.parse(row.raw_data);

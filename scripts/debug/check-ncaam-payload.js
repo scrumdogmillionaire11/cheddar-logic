@@ -1,7 +1,6 @@
-const {initDb,getDatabase,closeDatabase}=require('../../packages/data/src/db.js');
+const {getDatabase,closeDatabase}=require('../../packages/data/src/db.js');
 
 (async()=>{
-  await initDb();
   const db=getDatabase();
   const row=db.prepare("SELECT payload_data FROM card_payloads WHERE sport='NCAAM' AND card_type='ncaam-base-projection' ORDER BY created_at DESC LIMIT 1").get();
   const p=JSON.parse(row.payload_data);

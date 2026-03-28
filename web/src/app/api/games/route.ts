@@ -663,7 +663,8 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'nba-blowout-risk',
       'nba-travel',
       'nba-lineup',
-      'welcome-home-v2',
+      'welcome-home',
+      'welcome-home-v2', // alias: backward compat with existing DB rows
       // Legacy evidence alias retained for compatibility with historical rows.
       'nba-model-output',
     ]),
@@ -686,7 +687,8 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'nhl-goalie-certainty',
       'nhl-model-output',
       'nhl-shot-environment',
-      'welcome-home-v2',
+      'welcome-home',
+      'welcome-home-v2', // alias: backward compat with existing DB rows
       // Legacy welcome-home alias retained for compatibility with historical rows.
       'nhl-welcome-home',
     ]),
@@ -2252,7 +2254,7 @@ export async function GET(request: NextRequest) {
         FROM card_payloads
         WHERE game_id IN (${queryPlaceholders})
           ${runClause}
-          ${ENABLE_WELCOME_HOME ? '' : "AND card_type != 'welcome-home-v2'"}
+          ${ENABLE_WELCOME_HOME ? '' : "AND card_type NOT IN ('welcome-home', 'welcome-home-v2')"}
         ORDER BY created_at DESC, id DESC
         LIMIT ${API_GAMES_MAX_CARD_ROWS}
       `;

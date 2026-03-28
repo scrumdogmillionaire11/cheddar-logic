@@ -15,7 +15,6 @@ function makeId() {
 }
 
 (async () => {
-  await db.initDb();
   const conn = db.getDatabase();
   
   // Check if user exists

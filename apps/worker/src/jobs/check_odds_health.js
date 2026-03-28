@@ -9,7 +9,7 @@
  */
 
 require('dotenv').config();
-const { initDb, getJobRunHistory } = require('@cheddar-logic/data');
+const {getJobRunHistory } = require('@cheddar-logic/data');
 
 function getLatestSuccessfulRun(jobRuns) {
   return jobRuns.find((run) => run && run.status === 'success') || null;
@@ -18,7 +18,6 @@ function getLatestSuccessfulRun(jobRuns) {
 async function checkOddsHealth() {
   const maxAgeMinutes = Number(process.env.ODDS_HEALTH_MAX_AGE_MINUTES || 90);
 
-  await initDb();
 
   const history = getJobRunHistory('pull_odds_hourly', 200);
   const latestSuccess = getLatestSuccessfulRun(history);

@@ -4,7 +4,7 @@
  * Ensures DB is initialized, migrations are run, and connections are closed.
  */
 
-const { initDb, getDatabase, closeDatabase } = require('./db');
+const {getDatabase, closeDatabase } = require('./db');
 const { runMigrations } = require('./migrate');
 
 /**
@@ -13,7 +13,6 @@ const { runMigrations } = require('./migrate');
  * @returns {Promise<any>} Result of fn
  */
 async function withDb(fn) {
-  await initDb();
   await runMigrations();
   const db = getDatabase();
 

@@ -1,7 +1,6 @@
 const db = require('./db.js');
 
 async function purgeSeedOdds() {
-  await db.initDb();
   const client = db.getDatabase();
   const rawDb = client._db;
 

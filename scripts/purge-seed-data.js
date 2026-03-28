@@ -6,7 +6,6 @@
 const db = require('../packages/data/src/db.js');
 
 async function main() {
-  await db.initDb();
   const client = db.getDatabase();
 
   const seed = client

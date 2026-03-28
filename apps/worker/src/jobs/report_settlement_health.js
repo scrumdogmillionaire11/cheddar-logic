@@ -23,7 +23,6 @@ const path = require('path');
 const {
   closeReadOnlyInstance,
   getDatabaseReadOnly,
-  initDb,
   resolveDatabasePath,
 } = require('@cheddar-logic/data');
 
@@ -648,7 +647,6 @@ async function generateSettlementHealthReport({
   let reader = db;
 
   if (ownDb) {
-    await initDb();
     reader = getDatabaseReadOnly();
   }
 

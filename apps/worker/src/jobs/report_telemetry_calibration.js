@@ -5,7 +5,6 @@ require('dotenv').config();
 const {
   closeReadOnlyInstance,
   getDatabaseReadOnly,
-  initDb,
   resolveDatabasePath,
 } = require('@cheddar-logic/data');
 const { edgeCalculator, marginToWinProbability } = require('@cheddar-logic/models');
@@ -1158,7 +1157,6 @@ async function generateTelemetryCalibrationReport({
   const ownDb = !db;
   let reader = db;
   if (ownDb) {
-    await initDb();
     reader = getDatabaseReadOnly();
   }
 

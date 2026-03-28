@@ -25,7 +25,6 @@
 const path = require('path');
 const fs = require('fs');
 const {
-  initDb,
   getDatabase,
 } = require('../packages/data/src/db.js');
 
@@ -256,7 +255,6 @@ async function main() {
 
   // Initialise DB
   try {
-    await initDb();
   } catch (err) {
     console.error('[calibrate_sog_v1_v2] ERROR: Could not open database.');
     console.error('  CHEDDAR_DB_PATH:', dbPath);

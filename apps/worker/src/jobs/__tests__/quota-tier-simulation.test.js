@@ -13,7 +13,6 @@
 
 const fs = require('fs');
 const {
-  initDb,
   runMigrations,
   getDatabase,
   closeDatabase,

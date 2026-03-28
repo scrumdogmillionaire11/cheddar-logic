@@ -80,7 +80,6 @@ async function runTests() {
   }
 
   try {
-    await db.initDb();
     const client = db.getDatabase();
 
     const fsModule = await import('node:fs');

@@ -132,8 +132,6 @@ function applyUiActionFields(payload, context = {}) {
 
   // WI-0383: Hard-gate — if model has marked this card ineligible for official
   // action (official_eligible=false), force PASS regardless of tier or pipeline.
-  // Reads from canonical official_eligible field, NOT from legacy homeGoalieConfirmed
-  // (DEPRECATED: not authoritative for NHL totals after WI-0383 — use homeGoalieState.starter_state instead)
   if (payload.official_eligible === false) {
     payload.action = 'PASS';
     payload.status = 'PASS';

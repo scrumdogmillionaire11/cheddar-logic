@@ -28,7 +28,6 @@ async function runTests() {
 
   try {
     // Initialize database
-    await db.initDb();
     const client = db.getDatabase();
 
     // Clean up test data first

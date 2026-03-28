@@ -36,7 +36,6 @@ function loadSchedulerModule() {
   jest.resetModules();
 
   jest.doMock('@cheddar-logic/data', () => ({
-    initDb: jest.fn(),
     getUpcomingGames: jest.fn(() => []),
     shouldRunJobKey: jest.fn(() => true),
     hasRunningJobRun: jest.fn(() => false),
