@@ -962,6 +962,20 @@ function extractSettlementPeriod({
   );
 }
 
+/**
+ * Merge a derived market_period_token into an existing metadata object without
+ * overwriting any other fields. Returns a new plain object — does not mutate input.
+ *
+ * @param {object} opts
+ * @param {object|null} opts.existingMeta - Current metadata object (may be null/undefined)
+ * @param {string} opts.token - '1P' or 'FULL_GAME'
+ * @returns {object}
+ */
+function deriveAndMergePeriodToken({ existingMeta, token }) {
+  const base = existingMeta && typeof existingMeta === 'object' ? existingMeta : {};
+  return { ...base, market_period_token: token };
+}
+
 function readFirstPeriodScores(gameResultMetadata) {
   if (!gameResultMetadata || typeof gameResultMetadata !== 'object') {
     return { home: null, away: null };
@@ -2085,14 +2099,21 @@ async function settlePendingCards({
                 ? d2.edge_pct
                 : null;
 
+          // Merge market_period_token into existing metadata so the classification
+          // is durable and survives future rule changes (WI-0607).
+          const settledMetadata = deriveAndMergePeriodToken({
+            existingMeta: cardResultMetadata,
+            token: period,
+          });
+
           db.prepare(
             `
             UPDATE card_results
             SET status = 'settled', result = ?, settled_at = ?, pnl_units = ?,
-                sharp_price_status = ?, primary_reason_code = ?, edge_pct = ?
+                sharp_price_status = ?, primary_reason_code = ?, edge_pct = ?, metadata = ?
             WHERE id = ? AND status = 'pending'
           `,
-          ).run(result, settledAt, pnlOutcome.pnlUnits, sharpPriceStatus, primaryReasonCode, edgePct, pendingCard.result_id);
+          ).run(result, settledAt, pnlOutcome.pnlUnits, sharpPriceStatus, primaryReasonCode, edgePct, JSON.stringify(settledMetadata), pendingCard.result_id);
           const state = db
             .prepare(
               `
@@ -2517,7 +2538,9 @@ module.exports = {
     computePnlOutcome,
     computePnlUnits,
     americanOddsToImpliedProbability,
+    deriveAndMergePeriodToken,
     extractSettlementPeriod,
+    normalizeSettlementPeriod,
     getSettlementCoverageDiagnostics,
     getLatestClosingOddsSnapshot,
     gradeNhlPlayerShotsMarket,
