@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-03-28T21:00:00Z"
-last_activity: "2026-03-28 - All P2 complete. WI-0634 + WI-0631 done. P2 board clear. Advancing to P3."
+last_activity: "2026-03-28 - WI-0633 obsoleted (NCAAM not pursued). 12 open WIs: 0P1+0P2+7P3+5Backlog."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -33,7 +33,7 @@ This file is intentionally minimal to avoid stale status drift.
 - Last reviewed: 2026-03-28
 - Next action: **WI-0618** (archive dirs) — P2 board clear, all security hardening done. Advancing to P3.
 
-## Sprint Plan — 2026-03-28 re-assess (13 open WIs: 0 P1 + 0 P2 + 8 P3 + 5 Backlog)
+## Sprint Plan — 2026-03-28 re-assess (12 open WIs: 0 P1 + 0 P2 + 7 P3 + 5 Backlog)
 
 ### Dependency Chains
 
@@ -109,7 +109,7 @@ This file is intentionally minimal to avoid stale status drift.
 | 9 | [WI-0616](../WORK_QUEUE/WI-0616.md) | Rename welcome-home-v2 card_type | M |
 | 10 | [WI-0619](../WORK_QUEUE/WI-0619.md) | Extract FPL scheduler to schedulers/fpl.js | M |
 | 11 | [WI-0632](../WORK_QUEUE/WI-0632.md) | Test suite for run_nfl_model.js | M |
-| 12 | [WI-0633](../WORK_QUEUE/WI-0633.md) | Test suite for run_ncaam_model.js | M |
+| 12 | ~~[WI-0633](../WORK_QUEUE/COMPLETE/WI-0633.md)~~ OBSOLETE | Test suite for run_ncaam_model.js — NCAAM not pursued | M |
 | 13 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (full end-to-end) | XL |
 
 ### Backlog — Tech Debt Milestone
