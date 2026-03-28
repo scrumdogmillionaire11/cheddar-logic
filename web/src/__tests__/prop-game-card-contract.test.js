@@ -24,8 +24,9 @@ assert(
     source.includes('NO PLAY${closeTag} —') &&
     source.includes("' (Close)'") &&
     source.includes('getNoPlayLeanStrength') &&
-    source.includes('shots') &&
-    source.includes('or fewer shots') &&
+    source.includes('getThresholdOutcomeText') &&
+    source.includes('or fewer ${units.plural}') &&
+    source.includes('${resolvedTarget}+ ${resolvedTarget === 1 ? units.singular : units.plural}') &&
     source.includes("return 'Strong';") &&
     source.includes("return 'Weak';"),
   'prop-game-card should render threshold-market hero copy and differentiate strong vs weak non-play leans',
@@ -33,12 +34,19 @@ assert(
 
 assert(
   source.includes('projectionLead') &&
-    source.includes('Projection: ${formatNumber(projectionValue)} shots') &&
+    source.includes('Projection: ${formatNumber(projectionValue)} ${getPropUnits(prop.propType).plural}') &&
     source.includes('getHitRateLabel') &&
     source.includes('Hit rate (') &&
     source.includes('Win condition: {thresholdOutcomeText}') &&
     !source.includes('vs line'),
   'prop-game-card should render projection and side-aware threshold hit rate prominently without totals-style vs-line copy',
+);
+
+assert(
+  source.includes("const getPropUnits = (propType: string | null | undefined) => {") &&
+    source.includes("return { singular: 'block', plural: 'blocks' };") &&
+    source.includes('getPropUnits(prop.propType).plural'),
+  'prop-game-card should use blocked-shot-specific block/blocks wording instead of hard-coded shots labels',
 );
 
 assert(

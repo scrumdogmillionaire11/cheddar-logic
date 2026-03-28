@@ -679,6 +679,7 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'nhl-pace-1p',
       'nhl-player-shots',
       'nhl-player-shots-1p',
+      'nhl-player-blk',
     ]),
     evidenceOnlyCardTypes: new Set([
       'nhl-base-projection',
@@ -806,6 +807,8 @@ function inferMarketFromCardType(cardType: string): MarketType | undefined {
   if (
     normalized.includes('player-shots') ||
     normalized.includes('player_shots') ||
+    normalized.includes('player-blk') ||
+    normalized.includes('blocked-shots') ||
     normalized === 'mlb-strikeout' ||
     normalized === 'mlb-pitcher-k'
   ) {

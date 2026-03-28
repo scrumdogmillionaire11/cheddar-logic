@@ -1651,6 +1651,140 @@ function getPlayerShotLogs(playerId, limit = 5) {
 }
 
 /**
+ * Upsert a blocked-shot log row.
+ * @param {object} log
+ */
+function upsertPlayerBlkLog(log) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(log.sport, 'upsertPlayerBlkLog');
+
+  const stmt = db.prepare(`
+    INSERT INTO player_blk_logs (
+      id, sport, player_id, player_name, game_id, game_date,
+      opponent, is_home, blocked_shots, toi_minutes, raw_data, fetched_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(sport, player_id, game_id) DO UPDATE SET
+      player_name = excluded.player_name,
+      game_date = excluded.game_date,
+      opponent = excluded.opponent,
+      is_home = excluded.is_home,
+      blocked_shots = excluded.blocked_shots,
+      toi_minutes = excluded.toi_minutes,
+      raw_data = excluded.raw_data,
+      fetched_at = excluded.fetched_at
+  `);
+
+  stmt.run(
+    log.id,
+    normalizedSport,
+    log.playerId,
+    log.playerName || null,
+    log.gameId,
+    log.gameDate || null,
+    log.opponent || null,
+    log.isHome ? 1 : 0,
+    Number.isFinite(log.blockedShots) ? log.blockedShots : null,
+    Number.isFinite(log.toiMinutes) ? log.toiMinutes : null,
+    log.rawData ? JSON.stringify(log.rawData) : null,
+    log.fetchedAt,
+  );
+}
+
+/**
+ * Get latest blocked-shot logs for a player.
+ * @param {number} playerId
+ * @param {number} limit
+ * @returns {array}
+ */
+function getPlayerBlkLogs(playerId, limit = 5) {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT * FROM player_blk_logs
+    WHERE player_id = ?
+    ORDER BY game_date DESC, fetched_at DESC
+    LIMIT ?
+  `);
+
+  return stmt.all(playerId, limit);
+}
+
+/**
+ * Upsert NST blocked-shot rate row.
+ * @param {object} row
+ */
+function upsertPlayerBlkRates(row) {
+  const db = getDatabase();
+  const playerId = String(row.nhlPlayerId || row.playerId || '').trim();
+  const season = String(row.season || process.env.NHL_CURRENT_SEASON || '20242025').trim();
+  if (!playerId) {
+    throw new Error('upsertPlayerBlkRates requires nhlPlayerId');
+  }
+  if (!season) {
+    throw new Error('upsertPlayerBlkRates requires season');
+  }
+
+  const stmt = db.prepare(`
+    INSERT INTO player_blk_rates (
+      nhl_player_id, player_name, team, season,
+      ev_blocks_season_per60, ev_blocks_l10_per60, ev_blocks_l5_per60,
+      pk_blocks_season_per60, pk_blocks_l10_per60, pk_blocks_l5_per60,
+      pk_toi_per_game, source, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(nhl_player_id, season) DO UPDATE SET
+      player_name = excluded.player_name,
+      team = excluded.team,
+      ev_blocks_season_per60 = excluded.ev_blocks_season_per60,
+      ev_blocks_l10_per60 = excluded.ev_blocks_l10_per60,
+      ev_blocks_l5_per60 = excluded.ev_blocks_l5_per60,
+      pk_blocks_season_per60 = excluded.pk_blocks_season_per60,
+      pk_blocks_l10_per60 = excluded.pk_blocks_l10_per60,
+      pk_blocks_l5_per60 = excluded.pk_blocks_l5_per60,
+      pk_toi_per_game = excluded.pk_toi_per_game,
+      source = excluded.source,
+      updated_at = excluded.updated_at
+  `);
+
+  stmt.run(
+    playerId,
+    row.playerName || null,
+    row.team || null,
+    season,
+    Number.isFinite(row.evBlocksSeasonPer60) ? row.evBlocksSeasonPer60 : null,
+    Number.isFinite(row.evBlocksL10Per60) ? row.evBlocksL10Per60 : null,
+    Number.isFinite(row.evBlocksL5Per60) ? row.evBlocksL5Per60 : null,
+    Number.isFinite(row.pkBlocksSeasonPer60) ? row.pkBlocksSeasonPer60 : null,
+    Number.isFinite(row.pkBlocksL10Per60) ? row.pkBlocksL10Per60 : null,
+    Number.isFinite(row.pkBlocksL5Per60) ? row.pkBlocksL5Per60 : null,
+    Number.isFinite(row.pkToiPerGame) ? row.pkToiPerGame : null,
+    row.source || 'nst',
+  );
+}
+
+/**
+ * Get NST blocked-shot rate row for a player and season.
+ * @param {number|string} playerId
+ * @param {string} [season]
+ * @returns {object|null}
+ */
+function getPlayerBlkRates(
+  playerId,
+  season = process.env.NHL_CURRENT_SEASON || '20242025',
+) {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT *
+    FROM player_blk_rates
+    WHERE nhl_player_id = ?
+      AND season = ?
+    LIMIT 1
+  `);
+
+  return stmt.get(String(playerId), season) || null;
+}
+
+/**
  * Upsert a tracked player row for a sport+market.
  * Used by automated ID sync jobs (e.g., NHL SOG top-shooter sync).
  *
@@ -4404,6 +4538,10 @@ module.exports = {
   getOddsIngestFailureSummary,
   upsertPlayerShotLog,
   getPlayerShotLogs,
+  upsertPlayerBlkLog,
+  getPlayerBlkLogs,
+  upsertPlayerBlkRates,
+  getPlayerBlkRates,
   upsertTrackedPlayer,
   listTrackedPlayers,
   deactivateTrackedPlayersNotInSet,

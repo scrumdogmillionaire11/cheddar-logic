@@ -48,6 +48,11 @@ assert(
 );
 
 assert(
+  routeSource.includes("'nhl-player-blk'"),
+  'Expected /api/games route to include nhl-player-blk in the NHL prop contract path',
+);
+
+assert(
   routeSource.includes('market_bookmaker?: string | null;') &&
     routeSource.includes('(payload as Record<string, unknown>).market_bookmaker') &&
     routeSource.includes('payloadPlay?.market_bookmaker') &&

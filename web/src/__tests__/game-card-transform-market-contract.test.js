@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const filePath = path.resolve('src/lib/game-card/transform.ts');
+const filePath = path.resolve('web/src/lib/game-card/transform.ts');
 const source = fs.readFileSync(filePath, 'utf8');
 
 console.log('🧪 Transform market contract source tests');
@@ -106,6 +106,13 @@ assert(
   source.includes("canonicalMarketKey === 'pitcher_strikeouts' || titleLower.includes('strikeout')") &&
     source.includes("propType = 'Strikeouts'"),
   'transform props mode should classify pitcher_strikeouts canonical_market_key as Strikeouts propType',
+);
+
+assert(
+  source.includes("canonicalMarketKey === 'player_blocked_shots'") &&
+    source.includes("titleLower.includes('blocked shots') || play.cardType === 'nhl-player-blk'") &&
+    source.includes("propType = 'Blocked Shots'"),
+  'transform props mode should classify blocked-shot payloads from canonical market or nhl-player-blk card type',
 );
 
 console.log('✅ Transform market contract source tests passed');

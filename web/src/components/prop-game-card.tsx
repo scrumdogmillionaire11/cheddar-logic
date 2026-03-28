@@ -59,6 +59,26 @@ const formatSignedNumber = (value: number | null | undefined, digits = 1) => {
   return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}`;
 };
 
+const getPropUnits = (propType: string | null | undefined) => {
+  const normalized = (propType || '').toLowerCase();
+  if (normalized.includes('blocked shot')) {
+    return { singular: 'block', plural: 'blocks' };
+  }
+  if (normalized.includes('strikeout')) {
+    return { singular: 'strikeout', plural: 'strikeouts' };
+  }
+  if (normalized.includes('rebound')) {
+    return { singular: 'rebound', plural: 'rebounds' };
+  }
+  if (normalized.includes('assist')) {
+    return { singular: 'assist', plural: 'assists' };
+  }
+  if (normalized.includes('point')) {
+    return { singular: 'point', plural: 'points' };
+  }
+  return { singular: 'shot', plural: 'shots' };
+};
+
 const getAverage = (values?: number[]) => {
   if (!values || values.length === 0) return null;
   const sum = values.reduce((acc, val) => acc + val, 0);
@@ -117,28 +137,33 @@ const getThresholdTarget = (lineValue: number | null | undefined) => {
 const getThresholdOutcomeText = ({
   leanSide,
   lineValue,
+  propType,
 }: {
   leanSide: 'OVER' | 'UNDER';
   lineValue: number | null | undefined;
+  propType?: string | null;
 }) => {
+  const units = getPropUnits(propType);
   const target = getThresholdTarget(lineValue);
   if (!Number.isFinite(target)) {
     return leanSide === 'UNDER' ? 'under outcome' : 'over outcome';
   }
   const resolvedTarget = target as number;
   if (leanSide === 'UNDER') {
-    return `${Math.max(resolvedTarget - 1, 0)} or fewer shots`;
+    return `${Math.max(resolvedTarget - 1, 0)} or fewer ${units.plural}`;
   }
-  return `${resolvedTarget}+ shots`;
+  return `${resolvedTarget}+ ${resolvedTarget === 1 ? units.singular : units.plural}`;
 };
 
 
 const getHitRateLabel = ({
   leanSide,
   lineValue,
+  propType,
 }: {
   leanSide: 'OVER' | 'UNDER';
   lineValue: number | null | undefined;
+  propType?: string | null;
 }) => {
   const target = getThresholdTarget(lineValue);
   if (!Number.isFinite(target)) {
@@ -172,14 +197,16 @@ const buildHeroLine = ({
   lineValue,
   displayPrice,
   thresholdGap,
+  propType,
 }: {
   verdict: NonNullable<PropPlayRow['propVerdict']>;
   leanSide: 'OVER' | 'UNDER';
   lineValue: number | null | undefined;
   displayPrice: number | null | undefined;
   thresholdGap: number | null | undefined;
+  propType?: string | null;
 }) => {
-  const outcomeText = getThresholdOutcomeText({ leanSide, lineValue });
+  const outcomeText = getThresholdOutcomeText({ leanSide, lineValue, propType });
   const oddsText =
     typeof displayPrice === 'number' ? ` (${formatOdds(displayPrice)})` : '';
 
@@ -202,10 +229,12 @@ const getL5RelativeText = ({
   l5Mean,
   lineValue,
   trend,
+  propType,
 }: {
   l5Mean: number | null | undefined;
   lineValue: number | null | undefined;
   trend: PropPlayRow['l5Trend'];
+  propType?: string | null;
 }) => {
   if (l5Mean === null || l5Mean === undefined || Number.isNaN(l5Mean)) {
     return 'L5: unavailable';
@@ -215,7 +244,11 @@ const getL5RelativeText = ({
     return `L5: ${formatNumber(l5Mean)}`;
   }
   const delta = l5Mean - thresholdTarget;
-  const thresholdText = `${thresholdTarget}+ threshold`;
+  const thresholdText = getThresholdOutcomeText({
+    leanSide: 'OVER',
+    lineValue,
+    propType,
+  });
   const relation =
     delta >= 0.3
       ? `above ${thresholdText}`
@@ -436,14 +469,17 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
             const thresholdOutcomeText = getThresholdOutcomeText({
               leanSide,
               lineValue,
+              propType: prop.propType,
             });
             const underOutcomeText = getThresholdOutcomeText({
               leanSide: 'UNDER',
               lineValue,
+              propType: prop.propType,
             });
             const overOutcomeText = getThresholdOutcomeText({
               leanSide: 'OVER',
               lineValue,
+              propType: prop.propType,
             });
             const heroLine = buildHeroLine({
               verdict,
@@ -451,6 +487,7 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
               lineValue,
               displayPrice: prop.displayPrice,
               thresholdGap,
+              propType: prop.propType,
             });
             const WARNING_FLAGS = ['SYNTHETIC_LINE', 'PROJECTION_ANOMALY'];
             const warningFlags = [...new Set([...(prop.propFlags ?? []), ...(prop.reasonCodes ?? [])])].filter((c) =>
@@ -467,15 +504,16 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
               (prop.l5Mean !== null && prop.l5Mean !== undefined) ||
               (prop.priceOver != null || prop.priceUnder != null) ||
               (prop.propFlags && prop.propFlags.length > 0);
-            const projectionLead = `Projection: ${formatNumber(projectionValue)} shots`;
+            const projectionLead = `Projection: ${formatNumber(projectionValue)} ${getPropUnits(prop.propType).plural}`;
             const hitRateText =
               Number.isFinite(prop.fairProb)
-                ? `Hit rate (${getHitRateLabel({ leanSide, lineValue })}): ${formatPercent(prop.fairProb)}`
+                ? `Hit rate (${getHitRateLabel({ leanSide, lineValue, propType: prop.propType })}): ${formatPercent(prop.fairProb)}`
                 : null;
             const l5RelativeText = getL5RelativeText({
               l5Mean: prop.l5Mean,
               lineValue,
               trend: prop.l5Trend,
+              propType: prop.propType,
             });
             const explanationLine = getDeterministicExplanation({
               verdict,
@@ -627,7 +665,7 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                         {((prop.l5Sog && prop.l5Sog.length > 0) ||
                           (prop.l5Mean !== null && prop.l5Mean !== undefined)) && (
                           <p>
-                            L5 shots: {(prop.l5Sog ?? []).join(', ') || formatNumber(getAverage(prop.l5Sog), 1)}
+                            {`L5 ${getPropUnits(prop.propType).plural}`}: {(prop.l5Sog ?? []).join(', ') || formatNumber(getAverage(prop.l5Sog), 1)}
                           </p>
                         )}
                         {warningFlags.length > 0 && (

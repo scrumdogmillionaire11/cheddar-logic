@@ -90,12 +90,33 @@ function buildLookbackGames(entries = [], rawDataOverrides = {}) {
   }));
 }
 
+function buildBlkGames(blocksByGame = [], rawDataOverrides = {}) {
+  return blocksByGame.map((blocked_shots, i) => ({
+    game_id: `bg${i}`,
+    game_date: `2026-03-${String(i + 1).padStart(2, '0')}`,
+    opponent: 'TOR',
+    is_home: 1,
+    blocked_shots,
+    toi_minutes: 20,
+    raw_data:
+      i === 0
+        ? JSON.stringify({
+            projToi: 19,
+            teamAbbrev: 'EDM',
+            ...rawDataOverrides,
+          })
+        : '{}',
+  }));
+}
+
 // Build a mock DB whose prepare() dispatches by SQL keyword
 // availabilityRow: if set, returned for player_availability queries (null = no record = fail-open)
 function buildMockDb({
   games = [],
   players = [],
   playerLogs = [],
+  playerBlkLogs = [],
+  playerBlkRateRow = null,
   playerPropLines = [],
   availabilityRow = null,
   oddsSnapshotRawData = null,
@@ -112,8 +133,22 @@ function buildMockDb({
       if (s.includes('from player_shot_logs') && s.includes('player_id = ?')) {
         return { all: jest.fn(() => playerLogs) };
       }
+      if (s.includes('from player_blk_logs') && s.includes('distinct')) {
+        return { all: jest.fn(() => players) };
+      }
+      if (s.includes('from player_blk_logs') && s.includes('player_id = ?')) {
+        return { all: jest.fn(() => playerBlkLogs) };
+      }
+      if (s.includes('from player_blk_rates')) {
+        return { get: jest.fn(() => playerBlkRateRow) };
+      }
       if (s.includes('from player_prop_lines')) {
-        return { all: jest.fn(() => playerPropLines) };
+        return {
+          all: jest.fn((...args) => {
+            const propType = args[3];
+            return playerPropLines.filter((row) => !row.prop_type || row.prop_type === propType);
+          }),
+        };
       }
       if (s.includes('from player_availability')) {
         return { get: jest.fn(() => availabilityRow) };
@@ -222,6 +257,7 @@ function getInsertedCardsByType(data, cardType) {
 describe('run_nhl_player_shots_model', () => {
   beforeEach(() => {
     delete process.env.NHL_SOG_1P_CARDS_ENABLED;
+    delete process.env.NHL_BLK_CARDS_ENABLED;
     jest.clearAllMocks();
   });
 
@@ -3184,5 +3220,106 @@ describe('run_nhl_player_shots_model', () => {
     expect(data.insertCardPayload).toHaveBeenCalled();
     const card = data.insertCardPayload.mock.calls[0][0];
     expect(card.payloadData.decision.v2.flags).toContain('PP_RATE_MISSING');
+  });
+
+  test('emits nhl-player-blk cards from blocked-shot logs when BLK cards are enabled', async () => {
+    process.env.NHL_BLK_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.projectBlkV1.mockReturnValue({
+      blk_mu: 2.4,
+      blk_sigma: 1.2,
+      block_rate_ev_per60: 5.5,
+      block_rate_pk_per60: 11.8,
+      role_stability: 'HIGH',
+      fair_over_prob_by_line: { '1.5': 0.61 },
+      fair_under_prob_by_line: { '1.5': 0.39 },
+      edge_over_pp: 0.085,
+      edge_under_pp: -0.085,
+      ev_over: 0.12,
+      ev_under: -0.09,
+      opportunity_score: 0.24,
+      flags: [],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'blk-only-01' })],
+      players: [buildPlayer({ player_id: 8458, player_name: 'Shot Blocker' })],
+      playerLogs: [],
+      playerBlkLogs: buildBlkGames([3, 2, 2, 1, 2], { projToi: 21 }),
+      playerBlkRateRow: {
+        nhl_player_id: '8458',
+        season: '20252026',
+        ev_blocks_season_per60: 4.9,
+        ev_blocks_l10_per60: 5.1,
+        ev_blocks_l5_per60: 5.5,
+        pk_blocks_season_per60: 11.2,
+        pk_blocks_l10_per60: 11.5,
+        pk_blocks_l5_per60: 11.8,
+        pk_toi_per_game: 2.5,
+      },
+      playerPropLines: [
+        { prop_type: 'blocked_shots', line: 1.5, over_price: -115, under_price: -105, bookmaker: 'draftkings' },
+      ],
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const blkCards = getInsertedCardsByType(data, 'nhl-player-blk');
+    expect(blkCards).toHaveLength(1);
+    expect(blkCards[0].payloadData.prop_decision.verdict).toBe('PLAY');
+    expect(blkCards[0].payloadData.play.prop_type).toBe('blocked_shots');
+    expect(blkCards[0].payloadData.play.market_type).toBe('PROP');
+    expect(blkCards[0].payloadData.play.canonical_market_key).toBe('player_blocked_shots');
+    expect(blkCards[0].payloadData.drivers.proj_toi_ev).toBeCloseTo(18.5, 6);
+    expect(getInsertedCardsByType(data, 'nhl-player-shots')).toHaveLength(0);
+  });
+
+  test('LOW_SAMPLE blocked-shot output is forced to PROJECTION without regressing SOG output', async () => {
+    process.env.NHL_BLK_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
+    shots.projectBlkV1.mockReturnValue({
+      blk_mu: 1.7,
+      blk_sigma: 1.0,
+      block_rate_ev_per60: null,
+      block_rate_pk_per60: null,
+      role_stability: 'LOW',
+      fair_over_prob_by_line: { '1.5': 0.52 },
+      fair_under_prob_by_line: { '1.5': 0.48 },
+      edge_over_pp: 0.01,
+      edge_under_pp: -0.01,
+      ev_over: 0.01,
+      ev_under: -0.01,
+      opportunity_score: 0.02,
+      flags: ['LOW_SAMPLE'],
+    });
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'blk-low-sample-01' })],
+      players: [buildPlayer({ player_id: 8459, player_name: 'Two Way Player' })],
+      playerLogs: buildGames(5),
+      playerBlkLogs: buildBlkGames([2, 1, 2, 1, 2], { projToi: 20 }),
+      playerBlkRateRow: null,
+      playerPropLines: [
+        { prop_type: 'shots_on_goal', line: 2.5, over_price: -115, under_price: -105, bookmaker: 'draftkings' },
+        { prop_type: 'blocked_shots', line: 1.5, over_price: -120, under_price: 100, bookmaker: 'fanduel' },
+      ],
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const sogCards = getInsertedCardsByType(data, 'nhl-player-shots');
+    const blkCards = getInsertedCardsByType(data, 'nhl-player-blk');
+
+    expect(sogCards).toHaveLength(1);
+    expect(blkCards).toHaveLength(1);
+    expect(blkCards[0].payloadData.prop_decision.verdict).toBe('PROJECTION');
+    expect(blkCards[0].payloadData.prop_decision.flags).toContain('LOW_SAMPLE');
+    expect(blkCards[0].payloadData.prop_display_state).toBe('PROJECTION_ONLY');
+    expect(blkCards[0].payloadData.play.action).toBe('PASS');
   });
 });
