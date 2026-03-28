@@ -87,7 +87,7 @@ This file is intentionally minimal to avoid stale status drift.
 | 2 | [WI-0636](../WORK_QUEUE/WI-0636.md) | Add turbopack/dev-chunk pattern guard to deploy verification (`needs-sync`) | none | S |
 | 3 | [WI-0635](../WORK_QUEUE/WI-0635.md) | Stabilize deploy verification — public HTML CF convergence retries (`needs-sync`) | after WI-0636 | M |
 | 4 | [WI-0625](../WORK_QUEUE/WI-0625.md) | Remove unused liveLineBook variable | none | XS |
-| 5 | [WI-0627](../WORK_QUEUE/WI-0627.md) | Wire check_odds_health into scheduler as watchdog | none | S |
+| 5 | ~~WI-0627~~ ✓ | Wire check_odds_health into scheduler as watchdog | none | S |
 | 6 | [WI-0630](../WORK_QUEUE/WI-0630.md) | Wire pull_nhl_team_stats into scheduler daily cadence | none | S |
 | 7 | [WI-0628](../WORK_QUEUE/WI-0628.md) | Surface edge_vs_consensus and edge_vs_best_available in cards UI | none | S |
 | 8 | [WI-0629](../WORK_QUEUE/WI-0629.md) | Test suite for settle_mlb_f5.js | WI-0626 first | M |
@@ -199,5 +199,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 89 | Gap audit 2026-03-28: 9 new WIs (WI-0626–0634) — settle_mlb_f5 doubleheader bug, check_odds_health/report_settlement_health/pull_nhl_team_stats scheduler gaps, market evaluator UI, refresh token storage, run_nfl_model/run_ncaam_model test coverage | 2026-03-28 | — | — |
 | 90 | WI-0636 Turbopack/dev-chunk guard in deploy workflow | 2026-03-28 | f3c0db7 | [88-wi-0636-turbopack-dev-chunk-guard-in-dep](./quick/88-wi-0636-turbopack-dev-chunk-guard-in-dep/) |
 | 91 | WI-0635: CF public-HTML convergence retries in deploy workflow | 2026-03-28 | 96cfdfb | [89-wi-0635-cf-public-html-convergence-retri](./quick/89-wi-0635-cf-public-html-convergence-retri/) |
+| 92 | WI-0627: Wire check_odds_health into scheduler as 30-min watchdog | 2026-03-28 | 0e4d8e3 | [90-wi-0627-wire-check-odds-health-into-sche](./quick/90-wi-0627-wire-check-odds-health-into-sche/) |
 
-Last activity: 2026-03-28 - Completed quick task 89: WI-0635: CF public-HTML convergence retries in deploy workflow
+Last activity: 2026-03-28 - Completed quick task 90: WI-0627: wire check_odds_health into scheduler as 30-min watchdog
