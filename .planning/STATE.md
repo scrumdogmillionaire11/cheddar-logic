@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-28T02:10:00Z"
-last_activity: "2026-03-27 - qt-87 / WI-0607 persist market_period_token: deriveAndMergePeriodToken() in settle_pending_cards.js writes token to card_results.metadata at settlement; backfill_period_token.js (dry-run + apply, 411 eligible historical rows); /api/results COALESCE(persisted, derived) in both SQL blocks; 20 tests pass; tsc clean. WI-0607 moved to COMPLETE."
+last_updated: "2026-03-28T08:00:00Z"
+last_activity: "2026-03-28 - Gap audit: 9 new WIs created (WI-0626–0634). WI-0571 complete (market evaluator projection comparator). WI-0609/0610 complete. Identified: settle_mlb_f5 doubleheader bug (WI-0626 P1), check_odds_health unwired (WI-0627), market evaluator UI gap (WI-0628), settle_mlb_f5 zero tests (WI-0629), pull_nhl_team_stats unwired (WI-0630), refresh token not persisted (WI-0631), run_nfl_model/run_ncaam_model zero tests (WI-0632/0633), report_settlement_health unwired (WI-0634)."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -30,10 +30,10 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-27
-- Next action: **WI-0571** (market evaluator projection comparator) is the highest-leverage item — completes the 4-WI market evaluator chain. Then **WI-0613 + WI-0614** (zero-risk cleanup). Then the security pair **WI-0608 + WI-0609**. Full priority order in the sprint tables below.
+- Last reviewed: 2026-03-28
+- Next action: **WI-0626** (P1 correctness — settle_mlb_f5 doubleheader gamePk bug, silent mis-settlement every MLB day). Then **WI-0625** (tiny: remove unused liveLineBook). Then **WI-0627** (check_odds_health watchdog), **WI-0628** (market evaluator UI), **WI-0629** (settle_mlb_f5 tests). Full priority order in the sprint tables below.
 
-## Sprint Plan — 2026-03-27 (20 open WIs: 1 chain-finisher + 6 sprint+1 + 8 sprint+2 + 5 backlog)
+## Sprint Plan — 2026-03-28 (28 open WIs: 1 P1 + 7 P2 + 9 P3 + 6 Backlog + 3 new Backlog)
 
 ### Dependency Chains
 
@@ -41,21 +41,28 @@ This file is intentionally minimal to avoid stale status drift.
 - **MLB F5:** ALL DONE ✓ (WI-0602→0603→0604)
 - **CLV:** ALL DONE ✓ (WI-0557)
 - **Display:** ALL DONE ✓ (WI-0567 1P label)
-- **Market evaluator (serial):** ~~WI-0568~~✓ → ~~WI-0569~~✓ / ~~WI-0570~~✓ → **WI-0571** (now unblocked — last item in chain)
-- **Security hardening:** WI-0608 → WI-0609 (sequential; 608 adds DB revocation layer, 609 adds IP guard)
+- **Market evaluator (serial):** ALL DONE ✓ (~~WI-0568~~✓ → ~~WI-0569~~✓ / ~~WI-0570~~✓ → ~~WI-0571~~✓ — UI half deferred to WI-0628)
+- **Security hardening:** ~~WI-0608~~✓ → ~~WI-0609~~✓ → WI-0631 (refresh token persistence)
+- **settle_mlb_f5 correctness:** WI-0626 (fix doubleheader bug) → WI-0629 (tests, unblocked after 0626)
 - **New markets:** WI-0586 independent (NHL blocked shots)
-- **Results:** WI-0607 independent (period token persistence)
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-27
+## Prioritized Open Work Queue — 2026-03-28
 
 ### Recently Completed ✓
 
 | WI | Summary |
 |---|---|
+| ~~WI-0571~~ ✓ | Market evaluator — projection comparator (edge vs consensus, execution alpha) |
+| ~~WI-0610~~ ✓ | moneypuck.js test suite |
+| ~~WI-0609~~ ✓ | Token route IP whitelist / endpoint hardening |
 | ~~WI-0570~~ ✓ | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) |
 | ~~WI-0569~~ ✓ | Market evaluator — execution selector (best-price separate from best-line) |
+| ~~WI-0607~~ ✓ | Persist + backfill results market period token |
+| ~~WI-0608~~ ✓ | JWT revocation persistence — move to DB table |
+| ~~WI-0614~~ ✓ | Rename decision-pipeline-v2.patch.js |
+| ~~WI-0613~~ ✓ | Delete committed scratch/debug/backup files |
 | ~~WI-0598~~ ✓ | Pitcher Ks contract hardening (validator + market contract) |
 | ~~WI-0597~~ ✓ | Pitcher Ks odds pull + dual-mode runtime wiring |
 | ~~WI-0596~~ ✓ | Pitcher Ks data foundations and freshness gates |
@@ -67,35 +74,37 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### P0 — (empty ✓)
 
-### P1 — Market evaluator chain (0569/0570 done ✓ — WI-0571 now unblocked)
+### P1 — Correctness bug (silent mis-settlement)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 1 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | ~~0568~~✓, ~~0569~~✓ |
+| 1 | [WI-0626](../WORK_QUEUE/WI-0626.md) | Fix settle_mlb_f5 doubleheader gamePk lookup bug | none |
 
-### P2 — Sprint +1 independent
+### P2 — Sprint +1
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 2 | ~~WI-0607~~ ✓ | Persist + backfill results market period token | none |
-| 3 | ~~WI-0608~~ ✓ | JWT revocation persistence — move to DB table | none |
-| 4 | [WI-0609](../WORK_QUEUE/WI-0609.md) | Token route IP whitelist / endpoint hardening | none |
-| 5 | [WI-0610](../WORK_QUEUE/WI-0610.md) | moneypuck.js test suite | none |
-| 6 | [WI-0613](../WORK_QUEUE/WI-0613.md) | Delete committed scratch/debug/backup files | none |
-| 7 | [WI-0614](../WORK_QUEUE/WI-0614.md) | Rename decision-pipeline-v2.patch.js | none |
+| 2 | [WI-0625](../WORK_QUEUE/WI-0625.md) | Remove unused liveLineBook variable | none |
+| 3 | [WI-0627](../WORK_QUEUE/WI-0627.md) | Wire check_odds_health into scheduler as watchdog | none |
+| 4 | [WI-0628](../WORK_QUEUE/WI-0628.md) | Surface edge_vs_consensus and edge_vs_best_available in cards UI | none |
+| 5 | [WI-0629](../WORK_QUEUE/WI-0629.md) | Test suite for settle_mlb_f5.js | WI-0626 first |
+| 6 | [WI-0630](../WORK_QUEUE/WI-0630.md) | Wire pull_nhl_team_stats into scheduler daily cadence | none |
+| 7 | [WI-0611](../WORK_QUEUE/WI-0611.md) | Replace NHL fault harness stubs | none |
+| 8 | [WI-0612](../WORK_QUEUE/WI-0612.md) | team-metrics.js test suite | none |
 
 ### P3 — Sprint +2
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 8 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (full end-to-end) | none |
-| 9 | [WI-0611](../WORK_QUEUE/WI-0611.md) | Replace NHL fault harness stubs | none |
-| 10 | [WI-0612](../WORK_QUEUE/WI-0612.md) | team-metrics.js test suite | none |
-| 11 | [WI-0615](../WORK_QUEUE/WI-0615.md) | Remove homeGoalieConfirmed deprecated field | none |
-| 12 | [WI-0616](../WORK_QUEUE/WI-0616.md) | Rename welcome-home-v2 card_type | none |
-| 13 | [WI-0617](../WORK_QUEUE/WI-0617.md) | Remove initDb() no-op callers | none |
-| 14 | [WI-0618](../WORK_QUEUE/WI-0618.md) | Delete orphaned archive directories | none |
-| 15 | [WI-0619](../WORK_QUEUE/WI-0619.md) | Extract FPL scheduler to schedulers/fpl.js | none |
+| 9 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (full end-to-end) | none |
+| 10 | [WI-0615](../WORK_QUEUE/WI-0615.md) | Remove homeGoalieConfirmed deprecated field | none |
+| 11 | [WI-0616](../WORK_QUEUE/WI-0616.md) | Rename welcome-home-v2 card_type | none |
+| 12 | [WI-0617](../WORK_QUEUE/WI-0617.md) | Remove initDb() no-op callers | none |
+| 13 | [WI-0618](../WORK_QUEUE/WI-0618.md) | Delete orphaned archive directories | none |
+| 14 | [WI-0619](../WORK_QUEUE/WI-0619.md) | Extract FPL scheduler to schedulers/fpl.js | none |
+| 15 | [WI-0631](../WORK_QUEUE/WI-0631.md) | Implement refresh token persistence and revocation | none |
+| 16 | [WI-0632](../WORK_QUEUE/WI-0632.md) | Test suite for run_nfl_model.js | none |
+| 17 | [WI-0633](../WORK_QUEUE/WI-0633.md) | Test suite for run_ncaam_model.js | none |
 
 ### Backlog — Tech Debt Milestone
 
@@ -106,6 +115,7 @@ This file is intentionally minimal to avoid stale status drift.
 | [WI-0622](../WORK_QUEUE/WI-0622.md) | Decompose transform.ts into split modules | L |
 | [WI-0623](../WORK_QUEUE/WI-0623.md) | Decompose cards-page-client.tsx into sub-components | XL |
 | [WI-0624](../WORK_QUEUE/WI-0624.md) | Audit + remove legacy reason codes | L |
+| [WI-0634](../WORK_QUEUE/WI-0634.md) | Wire report_settlement_health into scheduler daily | S |
 
 ---
 
@@ -182,5 +192,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 86 | qt-85 / WI-0614 rename decision-pipeline-v2.patch.js to decision-pipeline-v2-edge-config.js | 2026-03-28 | e5cf823 | [85-wi-0614-rename-decision-pipeline-v2-edg](./quick/85-wi-0614-rename-decision-pipeline-v2-edg/) |
 | 87 | qt-86 / WI-0608 JWT revocation persistence — move to DB table | 2026-03-28 | 34adcd7 | [86-wi-0608-security-jwt-revocation-persiste](./quick/86-wi-0608-security-jwt-revocation-persiste/) |
 | 88 | qt-87 / WI-0607 persist market_period_token at settlement + backfill job + COALESCE in /api/results | 2026-03-27 | 70f1f5b | [87-wi-0607-results-persist-market-period-to](./quick/87-wi-0607-results-persist-market-period-to/) |
+| 89 | Gap audit 2026-03-28: 9 new WIs (WI-0626–0634) — settle_mlb_f5 doubleheader bug, check_odds_health/report_settlement_health/pull_nhl_team_stats scheduler gaps, market evaluator UI, refresh token storage, run_nfl_model/run_ncaam_model test coverage | 2026-03-28 | — | — |
 
-Last activity: 2026-03-28 - Completed qt-85 / WI-0614: renamed `decision-pipeline-v2.patch.js` to `decision-pipeline-v2-edge-config.js`, updated live callers, moved WI-0614 to COMPLETE, and recorded pre-existing out-of-scope worker test failures while `tsc` passed.
+Last activity: 2026-03-28 - Gap audit created 9 new WIs (WI-0626–0634). STATE.md updated: WI-0571/0609/0610 moved to recently completed, new P1 (WI-0626 correctness bug), dependency chains updated, backlog extended with WI-0634.
