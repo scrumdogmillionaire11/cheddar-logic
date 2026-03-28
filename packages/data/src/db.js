@@ -1530,6 +1530,49 @@ function getOddsWithUpcomingGames(sport, nowUtc, horizonUtc) {
 }
 
 /**
+ * Without-Odds-Mode fallback: return upcoming games as minimal synthetic snapshot objects.
+ * Used when ENABLE_WITHOUT_ODDS_MODE=true and odds_snapshots is empty.
+ * All odds fields are null; models using withoutOddsMode will use projection_floor lines.
+ * @param {string} sport - Sport code (e.g., 'NHL')
+ * @param {string} nowUtc - Current time in ISO UTC
+ * @param {string} horizonUtc - End of time window in ISO UTC
+ * @returns {array} Synthetic snapshot-shaped objects, one per upcoming game
+ */
+function getUpcomingGamesAsSyntheticSnapshots(sport, nowUtc, horizonUtc) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'getUpcomingGamesAsSyntheticSnapshots');
+  const now = new Date().toISOString();
+  const rows = db.prepare(`
+    SELECT game_id, home_team, away_team, game_time_utc
+    FROM games
+    WHERE LOWER(sport) = ?
+      AND game_time_utc IS NOT NULL
+      AND game_time_utc > ?
+      AND game_time_utc <= ?
+    ORDER BY game_time_utc ASC
+  `).all(normalizedSport, nowUtc, horizonUtc);
+  return rows.map((g) => ({
+    id: `synthetic-${g.game_id}`,
+    game_id: g.game_id,
+    sport: normalizedSport,
+    captured_at: now,
+    game_time_utc: g.game_time_utc,
+    home_team: g.home_team,
+    away_team: g.away_team,
+    h2h_home: null,
+    h2h_away: null,
+    total: null,
+    spread_home: null,
+    spread_away: null,
+    moneyline_home: null,
+    moneyline_away: null,
+    total_price_over: null,
+    total_price_under: null,
+    raw_data: null,
+  }));
+}
+
+/**
  * Upsert a player shot log row
  * @param {object} log
  * @param {string} log.id - Unique ID
@@ -4240,6 +4283,7 @@ module.exports = {
   getOddsSnapshots,
   computeLineDelta,
   getOddsWithUpcomingGames,
+  getUpcomingGamesAsSyntheticSnapshots,
   recordOddsIngestFailure,
   getOddsIngestFailureSummary,
   upsertPlayerShotLog,

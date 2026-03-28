@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-28T08:00:00Z"
-last_activity: "2026-03-28 - Gap audit: 9 new WIs created (WI-0626–0634). WI-0571 complete (market evaluator projection comparator). WI-0609/0610 complete. Identified: settle_mlb_f5 doubleheader bug (WI-0626 P1), check_odds_health unwired (WI-0627), market evaluator UI gap (WI-0628), settle_mlb_f5 zero tests (WI-0629), pull_nhl_team_stats unwired (WI-0630), refresh token not persisted (WI-0631), run_nfl_model/run_ncaam_model zero tests (WI-0632/0633), report_settlement_health unwired (WI-0634)."
+last_updated: "2026-03-28T12:00:00Z"
+last_activity: "2026-03-28 - Priority re-assessment + gap: WI-0635/0636 slotted into P2 (deploy rollback fix). WI-0638 (remove NCAAM+Soccer from UI permanently) and WI-0639 (NFL UI seasonal gate) added to P3."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,9 +31,9 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-28
-- Next action: **WI-0626** (P1 correctness — settle_mlb_f5 doubleheader gamePk bug, silent mis-settlement every MLB day). Then **WI-0625** (tiny: remove unused liveLineBook). Then **WI-0627** (check_odds_health watchdog), **WI-0628** (market evaluator UI), **WI-0629** (settle_mlb_f5 tests). Full priority order in the sprint tables below.
+- Next action: **WI-0626** (P1 correctness — settle_mlb_f5 doubleheader gamePk bug, silent mis-settlement every MLB day). Then **WI-0636** + **WI-0635** (`needs-sync`, deploy verification — turbopack guard + CF convergence retries; block future false-rollbacks). Then **WI-0625** (tiny: remove unused liveLineBook). Then **WI-0627** (check_odds_health watchdog), **WI-0630** (pull_nhl_team_stats scheduler), **WI-0628** (market evaluator UI), **WI-0629** (settle_mlb_f5 tests). Full priority order in the sprint tables below.
 
-## Sprint Plan — 2026-03-28 (28 open WIs: 1 P1 + 7 P2 + 9 P3 + 6 Backlog + 3 new Backlog)
+## Sprint Plan — 2026-03-28 (29 open WIs: 1 P1 + 9 P2 + 11 P3 + 6 Backlog + 2 Backlog-S)
 
 ### Dependency Chains
 
@@ -82,15 +82,17 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### P2 — Sprint +1
 
-| # | WI | Summary | Deps |
-|---|---|---|---|
-| 2 | [WI-0625](../WORK_QUEUE/WI-0625.md) | Remove unused liveLineBook variable | none |
-| 3 | [WI-0627](../WORK_QUEUE/WI-0627.md) | Wire check_odds_health into scheduler as watchdog | none |
-| 4 | [WI-0628](../WORK_QUEUE/WI-0628.md) | Surface edge_vs_consensus and edge_vs_best_available in cards UI | none |
-| 5 | [WI-0629](../WORK_QUEUE/WI-0629.md) | Test suite for settle_mlb_f5.js | WI-0626 first |
-| 6 | [WI-0630](../WORK_QUEUE/WI-0630.md) | Wire pull_nhl_team_stats into scheduler daily cadence | none |
-| 7 | [WI-0611](../WORK_QUEUE/WI-0611.md) | Replace NHL fault harness stubs | none |
-| 8 | [WI-0612](../WORK_QUEUE/WI-0612.md) | team-metrics.js test suite | none |
+| # | WI | Summary | Deps | LOE |
+|---|---|---|---|---|
+| 2 | [WI-0636](../WORK_QUEUE/WI-0636.md) | Add turbopack/dev-chunk pattern guard to deploy verification (`needs-sync`) | none | S |
+| 3 | [WI-0635](../WORK_QUEUE/WI-0635.md) | Stabilize deploy verification — public HTML CF convergence retries (`needs-sync`) | after WI-0636 | M |
+| 4 | [WI-0625](../WORK_QUEUE/WI-0625.md) | Remove unused liveLineBook variable | none | XS |
+| 5 | ~~WI-0627~~ ✓ | Wire check_odds_health into scheduler as watchdog | none | S |
+| 6 | [WI-0630](../WORK_QUEUE/WI-0630.md) | Wire pull_nhl_team_stats into scheduler daily cadence | none | S |
+| 7 | [WI-0628](../WORK_QUEUE/WI-0628.md) | Surface edge_vs_consensus and edge_vs_best_available in cards UI | none | S |
+| 8 | [WI-0629](../WORK_QUEUE/WI-0629.md) | Test suite for settle_mlb_f5.js | WI-0626 first | M |
+| 9 | [WI-0611](../WORK_QUEUE/WI-0611.md) | Replace NHL fault harness stubs | none | S |
+| 10 | [WI-0612](../WORK_QUEUE/WI-0612.md) | team-metrics.js test suite | none | M |
 
 ### P3 — Sprint +2
 
@@ -105,6 +107,8 @@ This file is intentionally minimal to avoid stale status drift.
 | 15 | [WI-0631](../WORK_QUEUE/WI-0631.md) | Implement refresh token persistence and revocation | none |
 | 16 | [WI-0632](../WORK_QUEUE/WI-0632.md) | Test suite for run_nfl_model.js | none |
 | 17 | [WI-0633](../WORK_QUEUE/WI-0633.md) | Test suite for run_ncaam_model.js | none |
+| 18 | [WI-0638](../WORK_QUEUE/WI-0638.md) | Remove NCAAM + Soccer from UI sport filter permanently | none |
+| 19 | [WI-0639](../WORK_QUEUE/WI-0639.md) | NFL UI seasonal gate — hide sport filter outside Sep–Feb | none |
 
 ### Backlog — Tech Debt Milestone
 
@@ -193,5 +197,9 @@ This file is intentionally minimal to avoid stale status drift.
 | 87 | qt-86 / WI-0608 JWT revocation persistence — move to DB table | 2026-03-28 | 34adcd7 | [86-wi-0608-security-jwt-revocation-persiste](./quick/86-wi-0608-security-jwt-revocation-persiste/) |
 | 88 | qt-87 / WI-0607 persist market_period_token at settlement + backfill job + COALESCE in /api/results | 2026-03-27 | 70f1f5b | [87-wi-0607-results-persist-market-period-to](./quick/87-wi-0607-results-persist-market-period-to/) |
 | 89 | Gap audit 2026-03-28: 9 new WIs (WI-0626–0634) — settle_mlb_f5 doubleheader bug, check_odds_health/report_settlement_health/pull_nhl_team_stats scheduler gaps, market evaluator UI, refresh token storage, run_nfl_model/run_ncaam_model test coverage | 2026-03-28 | — | — |
+| 90 | WI-0636 Turbopack/dev-chunk guard in deploy workflow | 2026-03-28 | f3c0db7 | [88-wi-0636-turbopack-dev-chunk-guard-in-dep](./quick/88-wi-0636-turbopack-dev-chunk-guard-in-dep/) |
+| 91 | WI-0635: CF public-HTML convergence retries in deploy workflow | 2026-03-28 | 96cfdfb | [89-wi-0635-cf-public-html-convergence-retri](./quick/89-wi-0635-cf-public-html-convergence-retri/) |
+| 92 | WI-0627: Wire check_odds_health into scheduler as 30-min watchdog | 2026-03-28 | 0e4d8e3 | [90-wi-0627-wire-check-odds-health-into-sche](./quick/90-wi-0627-wire-check-odds-health-into-sche/) |
+| 93 | Test suite for settle_mlb_f5.js | 2026-03-28 | cd72034 | [91-test-suite-for-settle-mlb-f5-js](./quick/91-test-suite-for-settle-mlb-f5-js/) |
 
-Last activity: 2026-03-28 - Gap audit created 9 new WIs (WI-0626–0634). STATE.md updated: WI-0571/0609/0610 moved to recently completed, new P1 (WI-0626 correctness bug), dependency chains updated, backlog extended with WI-0634.
+Last activity: 2026-03-28 - Completed quick task 93: Test suite for settle_mlb_f5.js

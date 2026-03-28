@@ -25,6 +25,7 @@ const {
   markJobRunFailure,
   setCurrentRunId,
   getOddsWithUpcomingGames,
+  getUpcomingGamesAsSyntheticSnapshots,
   insertCardPayload,
   prepareModelAndCardWrite,
   validateCardPayload,
@@ -799,9 +800,19 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       );
 
       if (oddsSnapshots.length === 0) {
-        console.log('[NBAModel] No upcoming NBA games found, exiting.');
-        markJobRunSuccess(jobRunId);
-        return { success: true, jobRunId, cardsGenerated: 0 };
+        if (!withoutOddsMode) {
+          console.log('[NBAModel] No upcoming NBA games found, exiting.');
+          markJobRunSuccess(jobRunId);
+          return { success: true, jobRunId, cardsGenerated: 0 };
+        }
+        // Without-Odds-Mode: no odds_snapshots but games exist — synthesize from games table
+        console.log('[NBAModel] WITHOUT_ODDS_MODE: no odds snapshots, building synthetic snapshots from games table');
+        oddsSnapshots.push(...getUpcomingGamesAsSyntheticSnapshots('NBA', nowUtc.toISO(), horizonUtc));
+        if (oddsSnapshots.length === 0) {
+          console.log('[NBAModel] No upcoming NBA games found in games table, exiting.');
+          markJobRunSuccess(jobRunId);
+          return { success: true, jobRunId, cardsGenerated: 0 };
+        }
       }
 
       console.log(`[NBAModel] Found ${oddsSnapshots.length} odds snapshots`);

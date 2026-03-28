@@ -2738,6 +2738,9 @@ export default function CardsPageClient() {
       typeof displayPlay.edgeVsBestAvailablePts === 'number'
         ? displayPlay.edgeVsBestAvailablePts
         : undefined;
+    const hasProjectionComparison =
+      typeof edgeVsConsensusPts === 'number' ||
+      typeof edgeVsBestAvailablePts === 'number';
     const isMoneylineMarket = marketType === 'MONEYLINE';
     const hasEdgeMathContext =
       typeof resolvedModelProb === 'number' &&
@@ -3020,16 +3023,25 @@ export default function CardsPageClient() {
                               [price {formatBookName(bestSpreadPriceBook)}]
                             </span>
                           )}{' '}
-                          {typeof edgeVsConsensusPts === 'number' && typeof edgeVsBestAvailablePts === 'number' ? (
+                          {hasProjectionComparison ? (
                             <>
                               {' '}| Edge vs market:{' '}
                               <span className="text-cloud/90 font-bold">
-                                {formatSignedDecimal(edgeVsConsensusPts)} pts
+                                {typeof edgeVsConsensusPts === 'number'
+                                  ? `${formatSignedDecimal(edgeVsConsensusPts)} pts`
+                                  : 'N/A'}
                               </span>
                               {' '}| Edge at best book:{' '}
                               <span className="text-cloud/90 font-bold">
-                                {formatSignedDecimal(edgeVsBestAvailablePts)} pts
+                                {typeof edgeVsBestAvailablePts === 'number'
+                                  ? `${formatSignedDecimal(edgeVsBestAvailablePts)} pts`
+                                  : 'N/A'}
                               </span>
+                              {bestSpreadBook && (
+                                <span className="text-cloud/45 ml-1">
+                                  ({formatBookName(bestSpreadBook)})
+                                </span>
+                              )}
                             </>
                           ) : (
                             <>
@@ -3085,16 +3097,25 @@ export default function CardsPageClient() {
                               [price {formatBookName(bestTotalPriceBook)}]
                             </span>
                           )}{' '}
-                          {typeof edgeVsConsensusPts === 'number' && typeof edgeVsBestAvailablePts === 'number' ? (
+                          {hasProjectionComparison ? (
                             <>
                               {' '}| Edge vs market:{' '}
                               <span className="text-cloud/90 font-bold">
-                                {formatSignedDecimal(edgeVsConsensusPts)} pts
+                                {typeof edgeVsConsensusPts === 'number'
+                                  ? `${formatSignedDecimal(edgeVsConsensusPts)} pts`
+                                  : 'N/A'}
                               </span>
                               {' '}| Edge at best book:{' '}
                               <span className="text-cloud/90 font-bold">
-                                {formatSignedDecimal(edgeVsBestAvailablePts)} pts
+                                {typeof edgeVsBestAvailablePts === 'number'
+                                  ? `${formatSignedDecimal(edgeVsBestAvailablePts)} pts`
+                                  : 'N/A'}
                               </span>
+                              {bestTotalBook && (
+                                <span className="text-cloud/45 ml-1">
+                                  ({formatBookName(bestTotalBook)})
+                                </span>
+                              )}
                             </>
                           ) : (
                             <>

@@ -27,6 +27,7 @@ const {
   setCurrentRunId,
   getOddsSnapshots,
   getOddsWithUpcomingGames,
+  getUpcomingGamesAsSyntheticSnapshots,
   getLatestOdds,
   insertModelOutput,
   insertCardPayload,
@@ -245,19 +246,25 @@ function resolveMlbFullGameTotalContext(oddsSnapshot) {
   return { line, over_price: overPrice, under_price: underPrice };
 }
 
-function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false } = {}) {
+function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutOddsMode = false, projectionFloorF5 = null } = {}) {
   const f5TotalContext = resolveMlbF5TotalContext(oddsSnapshot);
   const f5MoneylineContext = resolveMlbF5MoneylineContext(oddsSnapshot);
   const fullGameTotalContext = resolveMlbFullGameTotalContext(oddsSnapshot);
   const blockingReasonCodes = [];
 
   const f5LineOk = f5TotalContext.line !== null;
+  const useFloor = withoutOddsMode && projectionFloorF5 !== null && !f5LineOk;
+  const effectiveF5LineOk = f5LineOk || useFloor;
+
   const f5MlOk =
     f5MoneylineContext.home !== null && f5MoneylineContext.away !== null;
   const fullGameTotalOk = fullGameTotalContext.line !== null;
 
-  if (!f5LineOk) {
+  if (!effectiveF5LineOk) {
     blockingReasonCodes.push(MLB_PIPELINE_REASON_CODES.F5_TOTAL_UNAVAILABLE);
+  }
+  if (useFloor) {
+    blockingReasonCodes.push(WATCHDOG_REASONS.MARKET_PRICE_MISSING);
   }
   if (expectF5Ml && !f5MlOk) {
     blockingReasonCodes.push(MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE);
@@ -267,12 +274,13 @@ function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false } = {}) {
   }
 
   return {
-    f5_line_ok: f5LineOk,
+    f5_line_ok: effectiveF5LineOk,
     f5_ml_ok: f5MlOk,
     full_game_total_ok: fullGameTotalOk,
     expect_f5_total: true,
     expect_f5_ml: expectF5Ml === true,
     blocking_reason_codes: uniqueReasonCodes(blockingReasonCodes),
+    ...(useFloor ? { projection_floor: true, f5_total: projectionFloorF5 } : {}),
   };
 }
 
@@ -327,6 +335,30 @@ function resolvePitcherKsMode() {
   return PITCHER_KS_MODEL_MODE === 'ODDS_BACKED'
     ? 'ODDS_BACKED'
     : 'PROJECTION_ONLY';
+}
+
+const PROJECTION_FLOOR_F5_FALLBACK = 8.5;
+
+/**
+ * Derive a synthetic F5 total projection floor from pitcher ERA stats.
+ * Returns a value rounded to the nearest 0.5, or the fallback constant if
+ * pitcher stats are unavailable.
+ *
+ * @param {object} oddsSnapshot - Enriched odds snapshot (must have raw_data.mlb.{home,away}_pitcher)
+ * @returns {number}
+ */
+function computeProjectionFloorF5(oddsSnapshot) {
+  try {
+    const rawData = parseMlbRawData(oddsSnapshot);
+    const mlb = rawData?.mlb && typeof rawData.mlb === 'object' ? rawData.mlb : {};
+    const homeEra = toFiniteNumber(mlb.home_pitcher?.era);
+    const awayEra = toFiniteNumber(mlb.away_pitcher?.era);
+    if (homeEra === null || awayEra === null) return PROJECTION_FLOOR_F5_FALLBACK;
+    const raw = (homeEra / 9) * 5 + (awayEra / 9) * 5;
+    return Math.round(raw * 2) / 2;
+  } catch (_) {
+    return PROJECTION_FLOOR_F5_FALLBACK;
+  }
 }
 
 function buildMlbDualRunRecord(gameId, oddsSnapshot, selection) {
@@ -725,6 +757,7 @@ async function runMLBModel({
   jobKey = null,
   dryRun = false,
   expectF5Ml = true,
+  withoutOddsMode = process.env.ENABLE_WITHOUT_ODDS_MODE === 'true',
 } = {}) {
   const jobRunId = `job-mlb-model-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
@@ -767,9 +800,19 @@ async function runMLBModel({
       );
 
       if (oddsSnapshots.length === 0) {
-        console.log('[MLBModel] No recent MLB odds found, exiting.');
-        markJobRunSuccess(jobRunId);
-        return { success: true, jobRunId, cardsGenerated: 0 };
+        if (!withoutOddsMode) {
+          console.log('[MLBModel] No recent MLB odds found, exiting.');
+          markJobRunSuccess(jobRunId);
+          return { success: true, jobRunId, cardsGenerated: 0 };
+        }
+        // Without-Odds-Mode: no odds_snapshots but games exist — synthesize from games table
+        console.log('[MLBModel] WITHOUT_ODDS_MODE: no odds snapshots, building synthetic snapshots from games table');
+        oddsSnapshots.push(...getUpcomingGamesAsSyntheticSnapshots('MLB', nowUtc.toISO(), horizonUtc));
+        if (oddsSnapshots.length === 0) {
+          console.log('[MLBModel] No upcoming MLB games found in games table, exiting.');
+          markJobRunSuccess(jobRunId);
+          return { success: true, jobRunId, cardsGenerated: 0 };
+        }
       }
 
       console.log(`[MLBModel] Found ${oddsSnapshots.length} odds snapshots`);
@@ -822,9 +865,18 @@ async function runMLBModel({
             gameSelection,
           );
           console.log(`[MLB_DUAL_RUN] ${JSON.stringify(dualRunRecord)}`);
+          const f5TotalContextForFloor = resolveMlbF5TotalContext(gameOddsSnapshot);
+          const projectionFloorF5 = (withoutOddsMode && f5TotalContextForFloor.line === null)
+            ? computeProjectionFloorF5(gameOddsSnapshot)
+            : null;
           const marketAvailability = buildMlbMarketAvailability(gameOddsSnapshot, {
             expectF5Ml,
+            withoutOddsMode,
+            projectionFloorF5,
           });
+          if (projectionFloorF5 !== null) {
+            console.log(`[MLBModel] WITHOUT_ODDS_MODE: ${gameId} — using projection floor F5=${projectionFloorF5}`);
+          }
 
           // F5 ML side-projection card
           const f5MlContext = resolveMlbF5MoneylineContext(gameOddsSnapshot);
@@ -861,10 +913,27 @@ async function runMLBModel({
           }
 
           const selectedGameDriver = gameSelection.selected_driver;
+
+          // Without-odds mode: synthesize a PROJECTION_ONLY F5 driver when the floor was applied
+          const projectionFloorDriver = (withoutOddsMode && marketAvailability.projection_floor && projectionFloorF5 !== null)
+            ? {
+                market: 'f5_total',
+                prediction: 'OVER',
+                confidence: 0.5,
+                ev_threshold_passed: true,
+                reasoning: `Without-odds mode: synthetic F5 total projection floor (${projectionFloorF5}) derived from pitcher ERA`,
+                drivers: [{ type: 'mlb-f5-projection-floor', projected: projectionFloorF5, edge: 0 }],
+                without_odds_mode: true,
+                projection_floor: true,
+                projection_floor_line: projectionFloorF5,
+              }
+            : null;
+
           const qualified = [
             ...(selectedGameDriver?.ev_threshold_passed ? [selectedGameDriver] : []),
             ...pitcherKDriverCards.filter((d) => d.ev_threshold_passed),
             ...(f5MlDriverCard?.ev_threshold_passed ? [f5MlDriverCard] : []),
+            ...(projectionFloorDriver ? [projectionFloorDriver] : []),
           ];
 
           // Clean up stale cards from previous runs for this game
@@ -879,7 +948,7 @@ async function runMLBModel({
             marketAvailability,
             projectionReady: true,
             driversReady:
-              gameDriverCards.length > 0 || pitcherKDriverCards.length > 0,
+              gameDriverCards.length > 0 || pitcherKDriverCards.length > 0 || projectionFloorDriver !== null,
             pricingReady: qualified.length > 0,
             cardReady: qualified.length > 0,
           });
@@ -945,6 +1014,7 @@ async function runMLBModel({
               reasoning: driver.reasoning,
               disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
               generated_at: now,
+              ...(driver.without_odds_mode ? { without_odds_mode: true, projection_floor: true, tags: ['no_odds_mode'] } : {}),
               ...(isF5
                 ? {
                     projection: { projected_total: projected },
@@ -1130,4 +1200,6 @@ module.exports = {
   checkPitcherFreshness,
   validatePitcherKInputs,
   buildPitcherKObject,
+  // Exported for WI-0637 unit tests
+  computeProjectionFloorF5,
 };

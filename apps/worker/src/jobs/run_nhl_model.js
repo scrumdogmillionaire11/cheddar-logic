@@ -25,6 +25,7 @@ const {
   markJobRunFailure,
   setCurrentRunId,
   getOddsWithUpcomingGames,
+  getUpcomingGamesAsSyntheticSnapshots,
   insertCardPayload,
   prepareModelAndCardWrite,
   validateCardPayload,
@@ -1221,9 +1222,19 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       );
 
       if (oddsSnapshots.length === 0) {
-        console.log('[NHLModel] No recent NHL odds found, exiting.');
-        markJobRunSuccess(jobRunId);
-        return { success: true, jobRunId, cardsGenerated: 0 };
+        if (!withoutOddsMode) {
+          console.log('[NHLModel] No recent NHL odds found, exiting.');
+          markJobRunSuccess(jobRunId);
+          return { success: true, jobRunId, cardsGenerated: 0 };
+        }
+        // Without-Odds-Mode: no odds_snapshots but games exist — synthesize from games table
+        console.log('[NHLModel] WITHOUT_ODDS_MODE: no odds snapshots, building synthetic snapshots from games table');
+        oddsSnapshots.push(...getUpcomingGamesAsSyntheticSnapshots('NHL', nowUtc.toISO(), horizonUtc));
+        if (oddsSnapshots.length === 0) {
+          console.log('[NHLModel] No upcoming NHL games found in games table, exiting.');
+          markJobRunSuccess(jobRunId);
+          return { success: true, jobRunId, cardsGenerated: 0 };
+        }
       }
 
       console.log(`[NHLModel] Found ${oddsSnapshots.length} odds snapshots`);
