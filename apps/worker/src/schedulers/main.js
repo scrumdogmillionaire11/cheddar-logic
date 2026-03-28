@@ -61,6 +61,7 @@ const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
 const { backfillCardResults } = require('../jobs/backfill_card_results');
 const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
+const { checkOddsHealth } = require('../jobs/check_odds_health');
 const {
   run: refreshTeamMetricsDaily,
 } = require('../jobs/refresh_team_metrics_daily');
@@ -68,6 +69,7 @@ const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availability');
 const { pullNhlPlayerShotsProps } = require('../jobs/pull_nhl_player_shots_props');
 const { runNHLPlayerShotsModel } = require('../jobs/run_nhl_player_shots_model');
+const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
 
 // Timezone for fixed-time windows
@@ -241,6 +243,10 @@ function keyNhlPlayerAvailabilitySync(nowEt) {
   return `sync_nhl_player_availability|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
 }
 
+function keyNhlTeamStats(nowEt) {
+  return `pull_nhl_team_stats|${nowEt.toISODate()}`;
+}
+
 function keyHourlySettlementSweep(nowEt) {
   return `settle|hourly|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
 }
@@ -347,6 +353,32 @@ function getPipelineHealthJobs(nowUtc) {
       dryRun: false,
     },
     reason: `pipeline health watchdog (5-min cadence)`,
+  });
+
+  return jobs;
+}
+
+/**
+ * Watchdog: check odds freshness every 30 minutes
+ * @param {DateTime} nowUtc - Current UTC time
+ * @returns {array} - Health check jobs
+ */
+function getOddsHealthJobs(nowUtc) {
+  const jobs = [];
+
+  // 30-min cadence: slot = floor((hour*60 + minute) / 30)
+  const minuteOfDay = nowUtc.hour * 60 + nowUtc.minute;
+  if (minuteOfDay % 30 !== 0) return jobs;
+
+  const slot = Math.floor(minuteOfDay / 30);
+  const jobKey = `health|odds|${nowUtc.toISODate()}|s${String(slot).padStart(3, '0')}`;
+
+  jobs.push({
+    jobName: 'check_odds_health',
+    jobKey,
+    execute: checkOddsHealth,
+    args: { jobKey, dryRun: false },
+    reason: 'odds freshness watchdog (30-min cadence)',
   });
 
   return jobs;
@@ -843,6 +875,19 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     maybeQueueNcaamFtRefresh('early-morning bootstrap (06:00 ET)');
   }
 
+  // ========== NHL TEAM STATS (2.6) ==========
+  // Daily early-morning refresh keeps team_stats current before the NHL model window.
+  if (isFixedDue(nowEt, '06:00')) {
+    const jobKey = keyNhlTeamStats(nowEt);
+    jobs.push({
+      jobName: 'pull_nhl_team_stats',
+      jobKey,
+      execute: pullNhlTeamStats,
+      args: { jobKey, dryRun },
+      reason: 'daily NHL team stats refresh (06:00 ET)',
+    });
+  }
+
   // ========== NHL SOG PLAYER SYNC (2.75) ==========
   // Daily refresh of tracked NHL SOG player IDs before regular morning jobs.
   if (ENABLE_NHL_SOG_PLAYER_SYNC && isFixedDue(nowEt, '04:00')) {
@@ -1134,6 +1179,12 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     jobs.push(...watchdogJobs);
   }
 
+  // ========== ODDS HEALTH WATCHDOG (6) ==========
+  if (process.env.ENABLE_ODDS_HEALTH_WATCHDOG !== 'false') {
+    const oddsHealthJobs = getOddsHealthJobs(nowUtc);
+    jobs.push(...oddsHealthJobs);
+  }
+
   return jobs;
 }
 
@@ -1352,4 +1403,5 @@ module.exports = {
   getScheduleRefreshDue,
   shouldRefreshOddsForGame,
   getPipelineHealthJobs,
+  getOddsHealthJobs,
 };
