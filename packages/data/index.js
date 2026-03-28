@@ -142,6 +142,9 @@ module.exports = {
   hasEntitlement: auth.hasEntitlement,
   createAccessToken: auth.createAccessToken,
   verifySignedPayload: auth.verifySignedPayload,
+  issueRefreshToken: db.issueRefreshToken,
+  revokeRefreshToken: db.revokeRefreshToken,
+  isRefreshTokenValid: db.isRefreshTokenValid,
 
   // ESPN team metrics
   getTeamMetrics,

@@ -53,6 +53,7 @@ const {
   buildMarketFromOdds,
   buildPipelineState,
   WATCHDOG_REASONS,
+  PRICE_REASONS,
 } = require('@cheddar-logic/models');
 
 // MLB-specific watchdog vocabulary stays local to this runner so WI-0604 can
@@ -264,7 +265,7 @@ function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutO
     blockingReasonCodes.push(MLB_PIPELINE_REASON_CODES.F5_TOTAL_UNAVAILABLE);
   }
   if (useFloor) {
-    blockingReasonCodes.push(WATCHDOG_REASONS.MARKET_PRICE_MISSING);
+    blockingReasonCodes.push(PRICE_REASONS.MARKET_PRICE_MISSING);
   }
   if (expectF5Ml && !f5MlOk) {
     blockingReasonCodes.push(MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE);
@@ -943,13 +944,15 @@ async function runMLBModel({
           prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-f5-ml', { runId: jobRunId });
           prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-pitcher-k', { runId: jobRunId });
 
+          // pricing_ready = true only when odds-backed qualified cards exist (not floor-only)
+          const oddsBackedQualified = qualified.filter((d) => !d.projection_floor);
           const pipelineState = buildMlbPipelineState({
             oddsSnapshot: gameOddsSnapshot,
             marketAvailability,
             projectionReady: true,
             driversReady:
               gameDriverCards.length > 0 || pitcherKDriverCards.length > 0 || projectionFloorDriver !== null,
-            pricingReady: qualified.length > 0,
+            pricingReady: oddsBackedQualified.length > 0,
             cardReady: qualified.length > 0,
           });
           gamePipelineStates[gameId] = pipelineState;

@@ -49,8 +49,11 @@ import {
   STALE_ASSET_RELOAD_GUARD_KEY,
   stringifyUnknownError,
 } from '@/lib/stale-asset-recovery';
+import { isNflSeason } from '@/lib/game-card/season-gates';
 
-const TRACKED_SPORTS = ['NCAAM', 'NBA', 'NHL', 'SOCCER', 'MLB', 'NFL'] as const;
+const TRACKED_SPORTS: Sport[] = isNflSeason()
+  ? ['NBA', 'NHL', 'MLB', 'NFL']
+  : ['NBA', 'NHL', 'MLB'];
 
 type SportCountMap = Record<string, number>;
 
@@ -723,69 +726,6 @@ function filterPropCards(cards: PropGameCardType[], filters: GameFilters): PropG
 
     return b.maxConfidence - a.maxConfidence;
   });
-}
-
-type FtTrendInsight = {
-  advantagedTeam: string;
-  disadvantagedTeam: string;
-  advantagedPct: number | null;
-  disadvantagedPct: number | null;
-  totalLine: number | null;
-};
-
-function extractFtTrendInsight(card: GameCard): FtTrendInsight | null {
-  const ftDriver = card.drivers.find(
-    (driver) => driver.cardType === 'ncaam-ft-trend',
-  );
-  if (!ftDriver) return null;
-
-  const context = ftDriver.ftTrendContext;
-
-  const safeHomePct =
-    typeof context?.homeFtPct === 'number' ? context.homeFtPct : null;
-  const safeAwayPct =
-    typeof context?.awayFtPct === 'number' ? context.awayFtPct : null;
-  const safeTotalLine =
-    typeof context?.totalLine === 'number' ? context.totalLine : null;
-
-  const sideFromPct =
-    safeHomePct !== null && safeAwayPct !== null
-      ? safeHomePct > safeAwayPct
-        ? 'HOME'
-        : safeAwayPct > safeHomePct
-          ? 'AWAY'
-          : null
-      : null;
-  const resolvedSide =
-    sideFromPct ??
-    context?.advantagedSide ??
-    (ftDriver.direction === 'HOME' || ftDriver.direction === 'AWAY'
-      ? ftDriver.direction
-      : null);
-
-  if (!resolvedSide) return null;
-
-  const homeSide = resolvedSide === 'HOME';
-
-  return {
-    advantagedTeam: homeSide ? card.homeTeam : card.awayTeam,
-    disadvantagedTeam: homeSide ? card.awayTeam : card.homeTeam,
-    advantagedPct: homeSide ? safeHomePct : safeAwayPct,
-    disadvantagedPct: homeSide ? safeAwayPct : safeHomePct,
-    totalLine: safeTotalLine,
-  };
-}
-
-function formatFtTrendInsight(insight: FtTrendInsight): string {
-  const ftPart =
-    insight.advantagedPct !== null && insight.disadvantagedPct !== null
-      ? `${insight.advantagedTeam} ${insight.advantagedPct.toFixed(1)}% vs ${insight.disadvantagedTeam} ${insight.disadvantagedPct.toFixed(1)}%`
-      : `${insight.advantagedTeam} over ${insight.disadvantagedTeam}`;
-  const totalPart =
-    insight.totalLine !== null
-      ? ` (total ${insight.totalLine.toFixed(1)})`
-      : '';
-  return `${ftPart}${totalPart}`;
 }
 
 export default function CardsPageClient() {
@@ -2505,11 +2445,6 @@ export default function CardsPageClient() {
         ? formatDate(displayPlay.bet.as_of_iso)
         : updatedTime;
     const canRenderModelSummary = !isBroken && card.drivers.length > 0;
-    const ftTrendInsight =
-      card.sport === 'NCAAM' && displayPlay.market_type === 'SPREAD'
-        ? extractFtTrendInsight(card)
-        : null;
-    const isFtTrendSpread = Boolean(ftTrendInsight);
     const resolvedDecisionV2EdgePct =
       typeof resolvedDecisionV2?.edge_delta_pct === 'number'
         ? resolvedDecisionV2.edge_delta_pct
@@ -2752,7 +2687,7 @@ export default function CardsPageClient() {
       (typeof projectedMargin === 'number' ||
         typeof edgePoints === 'number' ||
         typeof marketLine === 'number');
-    const shouldRenderSpreadContext = hasSpreadContext && !isFtTrendSpread;
+    const shouldRenderSpreadContext = hasSpreadContext;
     const hasTotalContext =
       isTotalLikeMarket &&
       (typeof projectedTotal === 'number' ||
@@ -2899,8 +2834,7 @@ export default function CardsPageClient() {
       showPassDetail ||
       showAdvancedRisk ||
       Boolean(displayOddsTimestamp) ||
-      Boolean(updatedTime) ||
-      Boolean(ftTrendInsight);
+      Boolean(updatedTime);
 
     return (
       <div
@@ -3221,9 +3155,7 @@ export default function CardsPageClient() {
                     <p>
                       Model direction:{' '}
                       <span className="text-cloud/90 font-semibold">
-                        {isFtTrendSpread
-                          ? `Take ${ftTrendInsight?.advantagedTeam ?? 'better FT% team'} spread`
-                          : (modelLean ?? 'NONE')}
+                        {(modelLean ?? 'NONE')}
                       </span>
                     </p>
                     <p>
@@ -3366,12 +3298,6 @@ export default function CardsPageClient() {
                     {decisionV2
                       ? decisionV2.missing_data.missing_fields.join(', ')
                       : displayPlay.transform_meta?.missing_inputs.join(', ')}
-                  </p>
-                )}
-
-                {ftTrendInsight && (
-                  <p className="text-xs text-cloud/60">
-                    FT context: {formatFtTrendInsight(ftTrendInsight)}
                   </p>
                 )}
 

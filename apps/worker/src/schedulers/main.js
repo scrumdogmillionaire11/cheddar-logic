@@ -63,6 +63,9 @@ const { backfillCardResults } = require('../jobs/backfill_card_results');
 const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
 const { checkOddsHealth } = require('../jobs/check_odds_health');
 const {
+  generateSettlementHealthReport: runSettlementHealthReport,
+} = require('../jobs/report_settlement_health');
+const {
   run: refreshTeamMetricsDaily,
 } = require('../jobs/refresh_team_metrics_daily');
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
@@ -245,6 +248,10 @@ function keyNhlPlayerAvailabilitySync(nowEt) {
 
 function keyNhlTeamStats(nowEt) {
   return `pull_nhl_team_stats|${nowEt.toISODate()}`;
+}
+
+function keySettlementHealthReport(nowEt) {
+  return `report_settlement_health|${nowEt.toISODate()}`;
 }
 
 function keyHourlySettlementSweep(nowEt) {
@@ -888,6 +895,19 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
+  // ========== SETTLEMENT HEALTH REPORT (2.65) ==========
+  // Daily read-only diagnostic so settlement failures surface in the scheduler flow.
+  if (isFixedDue(nowEt, '08:00')) {
+    const jobKey = keySettlementHealthReport(nowEt);
+    jobs.push({
+      jobName: 'report_settlement_health',
+      jobKey,
+      execute: runSettlementHealthReport,
+      args: { jobKey, dryRun },
+      reason: 'daily settlement health diagnostic (08:00 ET)',
+    });
+  }
+
   // ========== NHL SOG PLAYER SYNC (2.75) ==========
   // Daily refresh of tracked NHL SOG player IDs before regular morning jobs.
   if (ENABLE_NHL_SOG_PLAYER_SYNC && isFixedDue(nowEt, '04:00')) {
@@ -1389,6 +1409,7 @@ module.exports = {
   keyNightlySweep,
   keyNhlSogPlayerSync,
   keyNhlPlayerAvailabilitySync,
+  keySettlementHealthReport,
   keyHourlySettlementSweep,
   keyHourlySettlementJob,
   keyNightlySettlementJob,

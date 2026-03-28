@@ -791,7 +791,7 @@ describe('decision publisher v2 pipeline', () => {
     );
   });
 
-  test('promotes FIRST_PERIOD LEAN_OVER projection to PLAY even when payload price is missing', () => {
+  test('keeps FIRST_PERIOD LEAN_OVER projection at LEAN when edge clears only the lean band', () => {
     const payload = buildWave1Payload({
       sport: 'NHL',
       market_type: 'FIRST_PERIOD',
@@ -819,11 +819,8 @@ describe('decision publisher v2 pipeline', () => {
 
     expect(payload.decision_v2.market_price).toBe(-125);
     expect(payload.decision_v2.sharp_price_status).toBe('CHEDDAR');
-    expect(payload.decision_v2.official_status).toBe('PLAY');
-    // WI-0537: canonical FIRST_PERIOD_POLICY reason code (signal resolves to PLAY via OVER token)
-    expect(payload.decision_v2.price_reason_codes).toContain(
-      'FIRST_PERIOD_PROJECTION_PLAY',
-    );
+    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.price_reason_codes).toContain('EDGE_CLEAR');
     expect(payload.decision_v2.price_reason_codes).not.toContain(
       'MARKET_PRICE_MISSING',
     );
@@ -855,14 +852,14 @@ describe('decision publisher v2 pipeline', () => {
 
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.sharp_price_status).toBe('COTTAGE');
+    expect(payload.decision_v2.sharp_price_status).toBe('UNPRICED');
     expect(payload.decision_v2.official_status).toBe('PASS');
-    // WI-0537: canonical FIRST_PERIOD_POLICY reason code replaces generic NO_EDGE_AT_PRICE
+    // WI-0537: compatibility reason is preserved, while missing fair prob leaves the row unpriced.
     expect(payload.decision_v2.price_reason_codes).toContain(
       'FIRST_PERIOD_NO_PROJECTION',
     );
-    expect(payload.decision_v2.price_reason_codes).not.toContain(
-      'NO_EDGE_AT_PRICE',
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'MODEL_PROB_MISSING',
     );
   });
 
@@ -959,7 +956,7 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.action).toBe('PASS');
   });
 
-  test('FC-7: canonical CONFLICTING goalie wins over legacy homeGoalieConfirmed=true', () => {
+  test('FC-7: canonical CONFLICTING goalie still PASSes via starter_state', () => {
     const payload = buildWave1Payload({
       sport: 'NHL',
       market_type: 'TOTAL',
@@ -981,7 +978,7 @@ describe('decision publisher v2 pipeline', () => {
       },
     });
     applyUiActionFields(payload);
-    // canonical official_eligible=false wins — legacy boolean is irrelevant
+    // canonical official_eligible=false wins based on starter_state inputs
     expect(payload.action).toBe('PASS');
   });
 
