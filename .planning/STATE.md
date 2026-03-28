@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-03-28T21:00:00Z"
-last_activity: "2026-03-28 - WI-0633 obsoleted (NCAAM not pursued). 12 open WIs: 0P1+0P2+7P3+5Backlog."
+last_activity: "2026-03-28 - WI-0618+0617+0615+0616 complete. WI-0632 (NFL model tests) in progress. 8 open WIs: 0P1+0P2+3P3+5Backlog."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,9 +31,9 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-28
-- Next action: **WI-0618** (archive dirs) — P2 board clear, all security hardening done. Advancing to P3.
+- Next action: **WI-0632** (NFL model tests — in progress). Then WI-0619, WI-0586.
 
-## Sprint Plan — 2026-03-28 re-assess (12 open WIs: 0 P1 + 0 P2 + 7 P3 + 5 Backlog)
+## Sprint Plan — 2026-03-28 re-assess (8 open WIs: 0 P1 + 0 P2 + 3 P3 + 5 Backlog)
 
 ### Dependency Chains
 
@@ -103,12 +103,12 @@ This file is intentionally minimal to avoid stale status drift.
 
 | # | WI | Summary | LOE |
 |---|---|---|---|
-| 6 | [WI-0618](../WORK_QUEUE/WI-0618.md) | Delete orphaned archive directories | XS |
+| 6 | ~~[WI-0618](../WORK_QUEUE/COMPLETE/WI-0618.md)~~ ✓ | Delete orphaned archive directories | XS |
 | 7 | ~~[WI-0617](../WORK_QUEUE/COMPLETE/WI-0617.md)~~ ✓ | Remove initDb() no-op callers | S |
-| 8 | [WI-0615](../WORK_QUEUE/WI-0615.md) | Remove homeGoalieConfirmed deprecated field | S |
-| 9 | [WI-0616](../WORK_QUEUE/WI-0616.md) | Rename welcome-home-v2 card_type | M |
+| 8 | ~~[WI-0615](../WORK_QUEUE/COMPLETE/WI-0615.md)~~ ✓ | Remove homeGoalieConfirmed deprecated field | S |
+| 9 | ~~[WI-0616](../WORK_QUEUE/COMPLETE/WI-0616.md)~~ ✓ | Rename welcome-home-v2 card_type | M |
 | 10 | [WI-0619](../WORK_QUEUE/WI-0619.md) | Extract FPL scheduler to schedulers/fpl.js | M |
-| 11 | [WI-0632](../WORK_QUEUE/WI-0632.md) | Test suite for run_nfl_model.js | M |
+| 11 | **[WI-0632](../WORK_QUEUE/WI-0632.md) ⟳ IN PROGRESS** | Test suite for run_nfl_model.js | M |
 | 12 | ~~[WI-0633](../WORK_QUEUE/COMPLETE/WI-0633.md)~~ OBSOLETE | Test suite for run_ncaam_model.js — NCAAM not pursued | M |
 | 13 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (full end-to-end) | XL |
 
