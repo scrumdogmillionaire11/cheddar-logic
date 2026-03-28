@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-28T08:00:00Z"
-last_activity: "2026-03-28 - Gap audit: 9 new WIs created (WI-0626–0634). WI-0571 complete (market evaluator projection comparator). WI-0609/0610 complete. Identified: settle_mlb_f5 doubleheader bug (WI-0626 P1), check_odds_health unwired (WI-0627), market evaluator UI gap (WI-0628), settle_mlb_f5 zero tests (WI-0629), pull_nhl_team_stats unwired (WI-0630), refresh token not persisted (WI-0631), run_nfl_model/run_ncaam_model zero tests (WI-0632/0633), report_settlement_health unwired (WI-0634)."
+last_updated: "2026-03-28T12:00:00Z"
+last_activity: "2026-03-28 - Priority re-assessment: WI-0635 (deploy CF convergence retries) and WI-0636 (turbopack dev-chunk guard) added to P2 — both slotted ahead of scheduler wiring work given recent deploy rollback (PR #128). Full priority order updated in sprint table."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,9 +31,9 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-28
-- Next action: **WI-0626** (P1 correctness — settle_mlb_f5 doubleheader gamePk bug, silent mis-settlement every MLB day). Then **WI-0625** (tiny: remove unused liveLineBook). Then **WI-0627** (check_odds_health watchdog), **WI-0628** (market evaluator UI), **WI-0629** (settle_mlb_f5 tests). Full priority order in the sprint tables below.
+- Next action: **WI-0626** (P1 correctness — settle_mlb_f5 doubleheader gamePk bug, silent mis-settlement every MLB day). Then **WI-0636** + **WI-0635** (`needs-sync`, deploy verification — turbopack guard + CF convergence retries; block future false-rollbacks). Then **WI-0625** (tiny: remove unused liveLineBook). Then **WI-0627** (check_odds_health watchdog), **WI-0630** (pull_nhl_team_stats scheduler), **WI-0628** (market evaluator UI), **WI-0629** (settle_mlb_f5 tests). Full priority order in the sprint tables below.
 
-## Sprint Plan — 2026-03-28 (28 open WIs: 1 P1 + 7 P2 + 9 P3 + 6 Backlog + 3 new Backlog)
+## Sprint Plan — 2026-03-28 (27 open WIs: 1 P1 + 9 P2 + 9 P3 + 6 Backlog + 2 Backlog-S)
 
 ### Dependency Chains
 
@@ -82,15 +82,17 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### P2 — Sprint +1
 
-| # | WI | Summary | Deps |
-|---|---|---|---|
-| 2 | [WI-0625](../WORK_QUEUE/WI-0625.md) | Remove unused liveLineBook variable | none |
-| 3 | [WI-0627](../WORK_QUEUE/WI-0627.md) | Wire check_odds_health into scheduler as watchdog | none |
-| 4 | [WI-0628](../WORK_QUEUE/WI-0628.md) | Surface edge_vs_consensus and edge_vs_best_available in cards UI | none |
-| 5 | [WI-0629](../WORK_QUEUE/WI-0629.md) | Test suite for settle_mlb_f5.js | WI-0626 first |
-| 6 | [WI-0630](../WORK_QUEUE/WI-0630.md) | Wire pull_nhl_team_stats into scheduler daily cadence | none |
-| 7 | [WI-0611](../WORK_QUEUE/WI-0611.md) | Replace NHL fault harness stubs | none |
-| 8 | [WI-0612](../WORK_QUEUE/WI-0612.md) | team-metrics.js test suite | none |
+| # | WI | Summary | Deps | LOE |
+|---|---|---|---|---|
+| 2 | [WI-0636](../WORK_QUEUE/WI-0636.md) | Add turbopack/dev-chunk pattern guard to deploy verification (`needs-sync`) | none | S |
+| 3 | [WI-0635](../WORK_QUEUE/WI-0635.md) | Stabilize deploy verification — public HTML CF convergence retries (`needs-sync`) | after WI-0636 | M |
+| 4 | [WI-0625](../WORK_QUEUE/WI-0625.md) | Remove unused liveLineBook variable | none | XS |
+| 5 | [WI-0627](../WORK_QUEUE/WI-0627.md) | Wire check_odds_health into scheduler as watchdog | none | S |
+| 6 | [WI-0630](../WORK_QUEUE/WI-0630.md) | Wire pull_nhl_team_stats into scheduler daily cadence | none | S |
+| 7 | [WI-0628](../WORK_QUEUE/WI-0628.md) | Surface edge_vs_consensus and edge_vs_best_available in cards UI | none | S |
+| 8 | [WI-0629](../WORK_QUEUE/WI-0629.md) | Test suite for settle_mlb_f5.js | WI-0626 first | M |
+| 9 | [WI-0611](../WORK_QUEUE/WI-0611.md) | Replace NHL fault harness stubs | none | S |
+| 10 | [WI-0612](../WORK_QUEUE/WI-0612.md) | team-metrics.js test suite | none | M |
 
 ### P3 — Sprint +2
 
