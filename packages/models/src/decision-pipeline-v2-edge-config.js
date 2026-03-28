@@ -64,18 +64,6 @@ const SPORT_MARKET_THRESHOLDS_V2 = Object.freeze({
     support: Object.freeze({ play: 0.57, lean: 0.45 }),
     edge: Object.freeze({ play_edge_min: 0.058, lean_edge_min: 0.029 }),
   }),
-  'NCAAM:SPREAD': Object.freeze({
-    support: Object.freeze({ play: 0.58, lean: 0.45 }),
-    edge: Object.freeze({ play_edge_min: 0.055, lean_edge_min: 0.028 }),
-  }),
-  'NCAAM:TOTAL': Object.freeze({
-    support: Object.freeze({ play: 0.56, lean: 0.44 }),
-    edge: Object.freeze({ play_edge_min: 0.054, lean_edge_min: 0.027 }),
-  }),
-  'NCAAM:MONEYLINE': Object.freeze({
-    support: Object.freeze({ play: 0.57, lean: 0.45 }),
-    edge: Object.freeze({ play_edge_min: 0.055, lean_edge_min: 0.028 }),
-  }),
 });
 
 function resolveThresholdProfile({ sport, marketType }) {

@@ -19,13 +19,6 @@ assert(
 );
 
 assert(
-  source.includes('function isSoccerAsianHandicapPlay(play: ApiPlay): boolean') &&
-    source.includes("if (play.market_type === 'PROP')") &&
-    source.includes('SOCCER_AH_REMAP_TOKEN'),
-  'transform should defensively remap soccer asian handicap rows away from prop flow',
-);
-
-assert(
   source.includes('const secondary = inferCanonicalFromSecondary(play);'),
   'transform should use recommended/recommendation fallback before title inference',
 );
@@ -58,23 +51,17 @@ assert(
 );
 
 assert(
-  source.includes("token === 'HOME_OR_DRAW'") &&
-    source.includes("token === 'AWAY_OR_DRAW'") &&
-    source.includes("token === 'HOME_DNB'") &&
-    source.includes("token === 'AWAY_DNB'"),
-  'transform should normalize soccer moneyline-family selection sides for display and ranking',
+  !source.includes('isSoccerAsianHandicapPlay') &&
+    !source.includes('HOME_OR_DRAW') &&
+    !source.includes('AWAY_OR_DRAW') &&
+    !source.includes('HOME_DNB') &&
+    !source.includes('AWAY_DNB'),
+  'transform should not retain soccer-specific market or selection remap branches',
 );
 
 assert(
-  source.includes("rawSelectionSide === 'HOME_OR_DRAW'") &&
-    source.includes("rawSelectionSide === 'AWAY_OR_DRAW'") &&
-    source.includes("rawSelectionSide === 'HOME_OR_AWAY'"),
-  'transform should treat soccer double-chance and DNB selections as playable moneyline-family bets',
-);
-
-assert(
-  source.includes("p.market_type === 'PROP' && !isSoccerAsianHandicapPlay(p)"),
-  'transform props mode should exclude soccer asian handicap rows even when malformed as PROP',
+  source.includes("const propPlays = game.plays.filter((p) => p.market_type === 'PROP');"),
+  'transform props mode should scope prop rows by canonical PROP market only',
 );
 
 assert(

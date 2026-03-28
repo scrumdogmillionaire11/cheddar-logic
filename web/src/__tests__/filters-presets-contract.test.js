@@ -17,7 +17,7 @@ function resolveSrc(rel) {
 const presetsSource = fs.readFileSync(resolveSrc('lib/game-card/presets.ts'), 'utf8');
 const filtersSource = fs.readFileSync(resolveSrc('lib/game-card/filters.ts'), 'utf8');
 
-console.log('🧪 Filter presets + sort + FT-trend source-contract checks');
+console.log('🧪 Filter presets + sort source-contract checks');
 
 // ─── Default sort ──────────────────────────────────────────────────────────
 assert(
@@ -128,28 +128,10 @@ assert(
   'filterByCardType must not rely on first driver only',
 );
 
-// ─── FT trend preset still targets correct card types ─────────────────────
 assert(
-  presetsSource.includes("id: 'ncaam_ft_trend'"),
-  'ncaam_ft_trend preset must exist',
+  !presetsSource.includes("id: 'ncaam_ft_trend'"),
+  'ncaam_ft_trend preset must be removed',
 );
-assert(
-  presetsSource.includes("cardTypes: ['ncaam-ft-trend', 'ncaam-ft-spread']"),
-  'ncaam_ft_trend preset must target ncaam-ft-trend and ncaam-ft-spread card types',
-);
-{
-  const ftIdx = presetsSource.indexOf("id: 'ncaam_ft_trend'");
-  const ftBlock = presetsSource.slice(ftIdx, ftIdx + 400);
-
-  assert(
-    ftBlock.includes("sports: ['NCAAM']"),
-    'ncaam_ft_trend must scope to NCAAM',
-  );
-  assert(
-    ftBlock.includes("markets: ['SPREAD']"),
-    'ncaam_ft_trend must scope to SPREAD market',
-  );
-}
 
 // ─── Welcome Home Fade still present ─────────────────────────────────────
 assert(
@@ -167,4 +149,4 @@ assert(
   );
 }
 
-console.log('✅ All filter preset + sort + FT-trend contract checks passed');
+console.log('✅ All filter preset + sort contract checks passed');

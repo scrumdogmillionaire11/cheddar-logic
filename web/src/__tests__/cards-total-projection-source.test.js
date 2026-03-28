@@ -47,8 +47,8 @@ assert(
 assert(
   gamesRouteSource.includes('/api/models/*') &&
     gamesRouteSource.includes('/api/betting/projections') &&
-    gamesRouteSource.includes('/api/soccer/slate'),
-  '/api/games contract comments should keep legacy endpoint families marked as deprecated references',
+    !gamesRouteSource.includes('/api/soccer/slate'),
+  '/api/games contract comments should retain deprecated legacy read-surface references without soccer runtime endpoints',
 );
 
 assert(

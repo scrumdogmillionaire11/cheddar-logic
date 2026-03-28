@@ -4,7 +4,6 @@
  * Originally extracted from:
  * - apps/worker/src/jobs/run_nba_model.js
  * - apps/worker/src/jobs/run_nhl_model.js
- * - apps/worker/src/jobs/run_ncaam_model.js
  *
  * Consolidated 2026-03-04 to eliminate duplication.
  * Functions are sport-agnostic; sport-specific logic
@@ -20,10 +19,9 @@ const edgeCalculator = require('./edge-calculator');
  * Sport-specific sigma defaults:
  * - NBA: sigma=12 (standard deviation of spreads)
  * - NHL: sigma=12 (same as NBA)
- * - NCAAM: sigma=11 (college spreads have tighter variance)
  *
  * @param {number} projectedMargin - Home team projected margin
- * @param {string} sport - Sport code ('NBA', 'NHL', 'NCAAM')
+ * @param {string} sport - Sport code ('NBA', 'NHL', etc.)
  * @returns {number|null} Win probability (0-1 scale), null if invalid
  */
 function computeWinProbHome(projectedMargin, sport) {

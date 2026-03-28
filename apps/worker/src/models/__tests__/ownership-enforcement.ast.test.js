@@ -30,7 +30,6 @@ describe('AST Ownership Enforcement', () => {
     const jobFiles = [
       'apps/worker/src/jobs/run_nba_model.js',
       'apps/worker/src/jobs/run_nhl_model.js',
-      'apps/worker/src/jobs/run_ncaam_model.js',
     ];
 
     const violations = [];

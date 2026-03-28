@@ -6,7 +6,7 @@
  * odds snapshot per game, plus any active driver play calls from card_payloads.
  * Games with no card_payloads still appear.
  *
- * Historical route families (`/api/models/*`, `/api/betting/projections`, `/api/soccer/slate`)
+ * Historical route families (`/api/models/*`, `/api/betting/projections`)
  * are deprecated references only and are not active runtime contracts.
  *
  * Query window:
@@ -93,7 +93,7 @@ import {
   requireEntitlementForRequest,
   RESOURCE,
 } from '../../../lib/api-security';
-import type { ExpressionStatus, CanonicalMarketType, FtTrendContext } from '@/lib/types/game-card';
+import type { ExpressionStatus, CanonicalMarketType } from '@/lib/types/game-card';
 import type { PlayDisplayAction } from '@/lib/game-card/decision';
 
 const ENABLE_WELCOME_HOME =
@@ -206,8 +206,6 @@ const ACTIVE_EXCLUDED_STATUSES = [
 const CORE_RUN_STATE_SPORTS = [
   'nba',
   'nhl',
-  'ncaam',
-  'soccer',
   'mlb',
   'nfl',
   'fpl',
@@ -216,6 +214,12 @@ const CORE_RUN_STATE_SPORTS = [
 const CORE_RUN_STATE_SPORT_SQL = CORE_RUN_STATE_SPORTS.map(
   (sport) => `'${sport}'`,
 ).join(', ');
+const ACTIVE_GAME_SPORTS = ['NBA', 'NHL', 'MLB', 'NFL'] as const;
+const ACTIVE_GAME_SPORT_SQL = ACTIVE_GAME_SPORTS.map(
+  (sport) => `'${sport}'`,
+).join(', ');
+const ACTIVE_GAME_SPORT_SET = new Set<string>(ACTIVE_GAME_SPORTS);
+const INVALID_SPORT_FILTER = '__INVALID_SPORT_FILTER__';
 const FINAL_GAME_RESULT_STATUSES = ['FINAL', 'FT', 'COMPLETE', 'COMPLETED', 'CLOSED'];
 
 function toSqlUtc(date: Date): string {
@@ -258,7 +262,9 @@ function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
 function resolveSportFilter(searchParams: URLSearchParams): string | null {
   const normalized = normalizeSport(searchParams.get('sport'));
   if (!normalized || normalized === 'ALL') return null;
-  return normalized;
+  return ACTIVE_GAME_SPORT_SET.has(normalized)
+    ? normalized
+    : INVALID_SPORT_FILTER;
 }
 
 function deriveDisplayStatus(lifecycleMode: LifecycleMode): DisplayStatus {
@@ -323,7 +329,6 @@ interface Play {
   selection?: { side: string; team?: string };
   line?: number;
   price?: number;
-  ft_trend_context?: FtTrendContext;
   line_source?: string | null;
   price_source?: string | null;
   market_context?: {
@@ -528,7 +533,7 @@ function assessProjectionInputsFromRawData(
   const homeRaw = parseJsonObject(raw.home);
   const awayRaw = parseJsonObject(raw.away);
 
-  if (normalizedSport === 'NBA' || normalizedSport === 'NCAAM') {
+  if (normalizedSport === 'NBA') {
     const homeAvgPoints =
       homeMetrics?.avgPoints ??
       raw.avg_points_home ??
@@ -624,7 +629,7 @@ type StageCounterBucket = Record<string, number>;
 type StageCounterBySport = Record<string, StageCounterBucket>;
 type StageCounters = Record<StageCounterStage, StageCounterBySport>;
 
-const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
+const WAVE1_SPORTS = new Set(['NBA', 'NHL']);
 const WAVE1_MARKETS = new Set<MarketType>([
   'MONEYLINE',
   'SPREAD',
@@ -636,12 +641,6 @@ const WAVE1_MARKETS = new Set<MarketType>([
 ]);
 const COUNTER_ALL_MARKET = 'ALL';
 const UNKNOWN_SPORT = 'UNKNOWN';
-const SOCCER_AH_CANONICAL_KEYS = new Set([
-  'asian_handicap_home',
-  'asian_handicap_away',
-]);
-const SOCCER_AH_REMAP_TOKEN = 'MARKET_REMAP_AH_FROM_PROP';
-
 type SportCardTypeContract = {
   playProducerCardTypes: Set<string>;
   evidenceOnlyCardTypes: Set<string>;
@@ -700,15 +699,6 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
       'FIRST_PERIOD',
       'PROP',
     ]),
-  },
-  NCAAM: {
-    playProducerCardTypes: new Set([
-      'ncaam-base-projection',
-      'ncaam-rest-advantage',
-      'ncaam-ft-trend',
-    ]),
-    evidenceOnlyCardTypes: new Set(['ncaam-matchup-style']),
-    expectedPlayableMarkets: new Set<MarketType>(['MONEYLINE', 'SPREAD']),
   },
   MLB: {
     playProducerCardTypes: new Set(['mlb-strikeout', 'mlb-f5', 'mlb-pitcher-k']),
@@ -944,12 +934,7 @@ function hasMinimumViability(play: Play, marketType: MarketType): boolean {
     typeof play.price === 'number' && Number.isFinite(play.price);
   const isMoneylineFamilySide =
     side === 'HOME' ||
-    side === 'AWAY' ||
-    side === 'HOME_OR_DRAW' ||
-    side === 'AWAY_OR_DRAW' ||
-    side === 'HOME_OR_AWAY' ||
-    side === 'HOME_DNB' ||
-    side === 'AWAY_DNB';
+    side === 'AWAY';
   if (marketType === 'TOTAL') {
     // Price is sourced from odds snapshot at display time — only require side + line.
     return (
@@ -1003,49 +988,6 @@ function normalizeMarketType(value: unknown): Play['market_type'] | undefined {
 function normalizeKeyToken(value: unknown): string {
   if (typeof value !== 'string') return '';
   return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
-}
-
-function isSoccerAsianHandicapPayload(params: {
-  rowSport: unknown;
-  cardType: string;
-  payload: Record<string, unknown>;
-  payloadPlay: Record<string, unknown> | null;
-  payloadMarketContext: Record<string, unknown> | null;
-}): boolean {
-  const {
-    rowSport,
-    cardType,
-    payload,
-    payloadPlay,
-    payloadMarketContext,
-  } = params;
-
-  const normalizedSport = normalizeSport(
-    firstString(payload.sport, payloadPlay?.sport) ?? rowSport,
-  );
-  if (normalizedSport !== 'SOCCER') return false;
-
-  const canonicalMarketKey = normalizeKeyToken(
-    firstString(
-      payload.canonical_market_key,
-      payloadPlay?.canonical_market_key,
-      payloadMarketContext?.canonical_market_key,
-    ),
-  );
-  if (SOCCER_AH_CANONICAL_KEYS.has(canonicalMarketKey)) return true;
-
-  const marketTypeToken = normalizeKeyToken(
-    firstString(payload.market_type, payloadPlay?.market_type),
-  );
-  if (marketTypeToken.includes('asian_handicap')) return true;
-
-  const marketKeyToken = normalizeKeyToken(
-    firstString(payload.market_key, payloadPlay?.market_key),
-  );
-  if (marketKeyToken.includes('asian_handicap')) return true;
-
-  const cardTypeToken = normalizeKeyToken(cardType);
-  return cardTypeToken.includes('asian_handicap');
 }
 
 function normalizeTier(value: unknown): Play['tier'] {
@@ -1146,12 +1088,7 @@ function normalizeSelectionSide(value: unknown): string | undefined {
     upper === 'FAV' ||
     upper === 'DOG' ||
     upper === 'NONE' ||
-    upper === 'NEUTRAL' ||
-    upper === 'HOME_OR_DRAW' ||
-    upper === 'AWAY_OR_DRAW' ||
-    upper === 'HOME_OR_AWAY' ||
-    upper === 'HOME_DNB' ||
-    upper === 'AWAY_DNB'
+    upper === 'NEUTRAL'
   ) {
     return upper;
   }
@@ -1688,6 +1625,12 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const lifecycleMode = resolveLifecycleMode(searchParams);
     const sportFilter = resolveSportFilter(searchParams);
+    if (sportFilter === INVALID_SPORT_FILTER) {
+      return NextResponse.json(
+        { success: false, error: 'Unknown sport filter' },
+        { status: 400 },
+      );
+    }
 
     // Compute midnight America/New_York as a UTC string for the SQL param.
     // en-CA locale gives YYYY-MM-DD; shortOffset gives "GMT-5" / "GMT-4" (DST-aware).
@@ -1782,6 +1725,7 @@ export async function GET(request: NextRequest) {
         g.created_at
       FROM games g
       WHERE datetime(g.game_time_utc) >= ?
+        AND UPPER(g.sport) IN (${ACTIVE_GAME_SPORT_SQL})
         ${sportFilter ? 'AND UPPER(g.sport) = ?' : ''}
         AND NOT EXISTS (
           SELECT 1
@@ -1799,6 +1743,7 @@ export async function GET(request: NextRequest) {
       SELECT COUNT(*) AS total
       FROM games g
       WHERE datetime(g.game_time_utc) >= ?
+        AND UPPER(g.sport) IN (${ACTIVE_GAME_SPORT_SQL})
         ${sportFilter ? 'AND UPPER(g.sport) = ?' : ''}
         AND NOT EXISTS (
           SELECT 1
@@ -2388,9 +2333,6 @@ export async function GET(request: NextRequest) {
 
         const payloadPlay = toObject(payload.play);
         const payloadPlayObj = toObject(payloadPlay);
-        const payloadFtTrendContext = toObject(
-          (payload as Record<string, unknown>).ft_trend_context,
-        );
         const payloadMarketContext =
           toObject((payload as Record<string, unknown>).market_context) ??
           toObject(payloadPlayObj?.market_context);
@@ -2442,86 +2384,14 @@ export async function GET(request: NextRequest) {
           payload.confidence,
           payloadPlay?.confidence,
         );
-        const isSoccerAhPayload = isSoccerAsianHandicapPayload({
-          rowSport,
-          cardType: cardRow.card_type,
-          payload,
-          payloadPlay: payloadPlayObj,
-          payloadMarketContext,
-        });
         const normalizedMarketTypeRaw = normalizeMarketType(
           payload.market_type ??
             payloadPlay?.market_type ??
             payloadMarketContext?.market_type,
         );
-        const normalizedMarketType =
-          isSoccerAhPayload ? 'SPREAD' : normalizedMarketTypeRaw;
-        const ahRemappedFromProp =
-          isSoccerAhPayload && normalizedMarketTypeRaw === 'PROP';
-        const isFtTrendCard =
-          cardRow.card_type === 'ncaam-ft-trend';
-        const normalizedFtTrendContext = isFtTrendCard
-          ? (() => {
-              const homeFtPct = firstNumber(
-                payloadFtTrendContext?.home_ft_pct,
-                driverInputs?.home_ft_pct,
-              );
-              const awayFtPct = firstNumber(
-                payloadFtTrendContext?.away_ft_pct,
-                driverInputs?.away_ft_pct,
-              );
-              const totalLine = firstNumber(
-                payloadFtTrendContext?.total_line,
-                driverInputs?.total_line,
-                payload.odds_context &&
-                  typeof payload.odds_context === 'object' &&
-                  'total' in (payload.odds_context as object)
-                  ? (payload.odds_context as Record<string, unknown>).total
-                  : null,
-              );
-
-              const explicitSideRaw = firstString(
-                payloadFtTrendContext?.advantaged_side,
-              );
-              const explicitSide =
-                explicitSideRaw === 'HOME' || explicitSideRaw === 'AWAY'
-                  ? explicitSideRaw
-                  : explicitSideRaw === 'home' || explicitSideRaw === 'away'
-                    ? (explicitSideRaw.toUpperCase() as 'HOME' | 'AWAY')
-                    : null;
-              const inferredSide =
-                typeof homeFtPct === 'number' && typeof awayFtPct === 'number'
-                  ? homeFtPct > awayFtPct
-                    ? 'HOME'
-                    : awayFtPct > homeFtPct
-                      ? 'AWAY'
-                      : null
-                  : null;
-              const advantagedSide = explicitSide ?? inferredSide;
-
-              if (
-                homeFtPct === null &&
-                awayFtPct === null &&
-                totalLine === null &&
-                advantagedSide === null
-              ) {
-                return undefined;
-              }
-
-              return {
-                home_ft_pct: homeFtPct ?? null,
-                away_ft_pct: awayFtPct ?? null,
-                total_line: totalLine ?? null,
-                advantaged_side: advantagedSide,
-              };
-            })()
-          : undefined;
-        const normalizedDisplaySelectionSide =
-          isFtTrendCard &&
-          (normalizedFtTrendContext?.advantaged_side === 'HOME' ||
-            normalizedFtTrendContext?.advantaged_side === 'AWAY')
-            ? normalizedFtTrendContext.advantaged_side
-            : normalizedSelectionSide;
+        const normalizedMarketType = normalizedMarketTypeRaw;
+        const normalizedFtTrendContext = undefined;
+        const normalizedDisplaySelectionSide = normalizedSelectionSide;
         const normalizedPrediction =
           normalizedDisplaySelectionSide === 'HOME' ||
           normalizedDisplaySelectionSide === 'AWAY' ||
@@ -2540,14 +2410,7 @@ export async function GET(request: NextRequest) {
           payloadMarketContext?.selection_team,
           payloadPlay?.team,
         );
-        const normalizedSelectionTeam =
-          isFtTrendCard
-            ? normalizedDisplaySelectionSide === 'HOME'
-              ? gameRow?.home_team ?? normalizedSelectionTeamBase
-              : normalizedDisplaySelectionSide === 'AWAY'
-                ? gameRow?.away_team ?? normalizedSelectionTeamBase
-                : normalizedSelectionTeamBase
-            : normalizedSelectionTeamBase;
+        const normalizedSelectionTeam = normalizedSelectionTeamBase;
         const normalizedLineBase = firstNumber(
           payload.line,
           payloadMarketContextWager?.called_line,
@@ -2555,14 +2418,7 @@ export async function GET(request: NextRequest) {
           payloadPlay?.line,
           payloadSelection?.line,
         );
-        const normalizedLine =
-          isFtTrendCard
-            ? normalizedDisplaySelectionSide === 'HOME'
-              ? gameRow?.spread_home ?? normalizedLineBase
-              : normalizedDisplaySelectionSide === 'AWAY'
-                ? gameRow?.spread_away ?? normalizedLineBase
-                : normalizedLineBase
-            : normalizedLineBase;
+        const normalizedLine = normalizedLineBase;
         const normalizedPriceBase = firstNumber(
           payload.price,
           payloadMarketContextWager?.called_price,
@@ -2575,14 +2431,7 @@ export async function GET(request: NextRequest) {
             ? firstNumber((payload as Record<string, unknown>).under_price)
             : undefined,
         );
-        const normalizedPrice =
-          isFtTrendCard
-            ? normalizedDisplaySelectionSide === 'HOME'
-              ? gameRow?.spread_price_home ?? normalizedPriceBase
-              : normalizedDisplaySelectionSide === 'AWAY'
-                ? gameRow?.spread_price_away ?? normalizedPriceBase
-                : normalizedPriceBase
-            : normalizedPriceBase;
+        const normalizedPrice = normalizedPriceBase;
         const normalizedRunId = firstString(
           (payload as Record<string, unknown>).run_id,
           payloadPlay?.run_id,
@@ -2971,29 +2820,10 @@ export async function GET(request: NextRequest) {
           ...(Array.isArray(payload.tags) ? payload.tags : []),
           ...(Array.isArray(payloadPlay?.tags) ? payloadPlay.tags : []),
         ].map((value) => String(value));
-        if (ahRemappedFromProp) {
-          combinedReasonCodes.push(SOCCER_AH_REMAP_TOKEN);
-          combinedTags.push(SOCCER_AH_REMAP_TOKEN);
-        }
         const dedupedReasonCodes = Array.from(new Set(combinedReasonCodes));
         const dedupedTags = Array.from(new Set(combinedTags));
 
-        const ftSpreadDisplayOverrideActive =
-          isFtTrendCard &&
-          (normalizedDisplaySelectionSide === 'HOME' ||
-            normalizedDisplaySelectionSide === 'AWAY') &&
-          normalizedDisplaySelectionSide !== normalizedSelectionSide;
-
         const resolvedActionBase: Play['action'] | undefined =
-          (ftSpreadDisplayOverrideActive &&
-          normalizedAction !== 'FIRE' &&
-          normalizedAction !== 'HOLD' &&
-          normalizedClassification !== 'BASE' &&
-          normalizedClassification !== 'LEAN' &&
-          normalizedStatus !== 'FIRE' &&
-          normalizedStatus !== 'WATCH'
-            ? actionFromTier(normalizedTier)
-            : undefined) ??
           normalizedAction ??
           actionFromClassification(normalizedClassification) ??
           (normalizedStatus === 'FIRE'
@@ -3003,10 +2833,7 @@ export async function GET(request: NextRequest) {
               : normalizedStatus === 'PASS'
                 ? 'PASS'
                 : undefined);
-        const resolvedAction: Play['action'] | undefined =
-          ftSpreadDisplayOverrideActive && resolvedActionBase === 'PASS'
-            ? actionFromTier(normalizedTier) ?? resolvedActionBase
-            : resolvedActionBase;
+        const resolvedAction: Play['action'] | undefined = resolvedActionBase;
         const resolvedClassification: Play['classification'] | undefined =
           normalizedClassification ?? classificationFromAction(resolvedAction);
         const resolvedStatus: Play['status'] | undefined =
@@ -3255,18 +3082,15 @@ export async function GET(request: NextRequest) {
           },
           line: normalizedLine,
           price: normalizedPrice,
-          ft_trend_context: normalizedFtTrendContext,
           line_source: normalizedLineSource ?? null,
           price_source: normalizedPriceSource ?? null,
           market_context: payloadMarketContext
             ? {
                 version: firstString(payloadMarketContext.version) ?? 'v1',
                 market_type:
-                  isSoccerAhPayload
-                    ? 'SPREAD'
-                    : firstString(payloadMarketContext.market_type) ??
-                      normalizedMarketType ??
-                      null,
+                  firstString(payloadMarketContext.market_type) ??
+                  normalizedMarketType ??
+                  null,
                 selection_side:
                   firstString(payloadMarketContext.selection_side) ??
                   normalizedDisplaySelectionSide,

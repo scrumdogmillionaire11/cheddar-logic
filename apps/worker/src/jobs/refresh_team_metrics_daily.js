@@ -2,7 +2,7 @@
  * Refresh Team Metrics Daily Job
  *
  * Prewarm the daily team metrics cache by fetching ESPN data for all active teams
- * across NBA, NHL, and NCAAM. This reduces API call volume during model runs
+ * across NBA and NHL. This reduces API call volume during model runs
  * and stabilizes projection inputs.
  *
  * Refresh window: 09:00 ET fixed window (aligned with first model run)
@@ -107,52 +107,6 @@ const SPORTS = [
       'Washington Capitals',
       'Winnipeg Jets',
       'Utah Hockey Club',
-    ],
-  },
-  {
-    sport: 'NCAAM',
-    teams: [
-      // Top 50 teams from 2024-25 season (can be extended)
-      'Duke',
-      'Kansas',
-      'North Carolina',
-      'Kentucky',
-      'Gonzaga',
-      'Purdue',
-      'Houston',
-      'Alabama',
-      'Tennessee',
-      'UCLA',
-      'Arizona',
-      'Baylor',
-      'Creighton',
-      'UConn',
-      'Marquette',
-      'Texas',
-      'Illinois',
-      'Auburn',
-      'Iowa State',
-      'San Diego State',
-      "Saint Mary's",
-      'Michigan State',
-      'Wisconsin',
-      'Virginia',
-      'Florida Atlantic',
-      'Arkansas',
-      'Northwestern',
-      'Memphis',
-      'TCU',
-      'Xavier',
-      'Indiana',
-      'Maryland',
-      'Missouri',
-      'Texas A&M',
-      'Clemson',
-      'Utah State',
-      'Colorado State',
-      'Drake',
-      'VCU',
-      'Dayton',
     ],
   },
 ];

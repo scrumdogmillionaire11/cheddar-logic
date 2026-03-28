@@ -18,10 +18,6 @@ async function run() {
     'nba-spread-call',
     'nba-total-projection',
     'nba-totals-call',
-    'ncaam-base-projection',
-    'ncaam-ft-trend',
-    'ncaam-matchup-style',
-    'ncaam-rest-advantage',
     'nfl-model-output',
     'nhl-base-projection',
     'nhl-goalie',
@@ -37,8 +33,6 @@ async function run() {
     'nhl-shot-environment',
     'nhl-spread-call',
     'nhl-totals-call',
-    'soccer-model-output',
-    'soccer',
     'welcome-home',
     'welcome-home-v2',
   ];
@@ -47,8 +41,6 @@ async function run() {
     'fpl-model-output',
     'mlb-model-output',
     'nfl-model-output',
-    'soccer-model-output',
-    'soccer',
   ]);
 
   const requiredCardTypes = workerCardTypes.filter(

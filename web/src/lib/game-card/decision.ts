@@ -91,7 +91,7 @@ function hasPlaceholderDriverText(value: string): boolean {
   if (!normalized) return true;
   return (
     normalized.includes('generic analysis for') ||
-    normalized.includes('ncaam ncaam generic')
+    normalized.includes('generic matchup analysis')
   );
 }
 
@@ -208,10 +208,7 @@ function isSideIntentDriver(driver: DriverRow): boolean {
     text.includes('matchup') ||
     text.includes('nba projection') ||
     text.includes('nba rest') ||
-    text.includes('nba matchup') ||
-    text.includes('ncaam projection') ||
-    text.includes('ncaam rest') ||
-    text.includes('ncaam matchup')
+    text.includes('nba matchup')
   );
 }
 

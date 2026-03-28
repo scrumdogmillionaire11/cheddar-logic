@@ -374,7 +374,7 @@ describe('runMLBModel dual-run orchestration', () => {
       f5_ml_ok: false,
       full_game_total_ok: true,
     });
-    expect(f5Payload.pipeline_state.blocking_reason_codes).not.toContain(
+    expect(f5Payload.pipeline_state.blocking_reason_codes).toContain(
       MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE,
     );
   });

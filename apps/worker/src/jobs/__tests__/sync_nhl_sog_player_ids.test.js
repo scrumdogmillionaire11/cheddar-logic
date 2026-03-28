@@ -49,9 +49,6 @@ function loadSchedulerModule() {
   jest.doMock('../run_fpl_model', () => ({ runFPLModel: jest.fn() }));
   jest.doMock('../run_nfl_model', () => ({ runNFLModel: jest.fn() }));
   jest.doMock('../run_mlb_model', () => ({ runMLBModel: jest.fn() }));
-  jest.doMock('../run_soccer_model', () => ({ runSoccerModel: jest.fn() }));
-  jest.doMock('../run_ncaam_model', () => ({ runNCAAMModel: jest.fn() }));
-  jest.doMock('../refresh_ncaam_ft_csv', () => ({ runRefreshNcaamFtCsv: jest.fn() }));
   jest.doMock('../settle_game_results', () => ({ settleGameResults: jest.fn() }));
   jest.doMock('../settle_pending_cards', () => ({ settlePendingCards: jest.fn() }));
   jest.doMock('../backfill_card_results', () => ({ backfillCardResults: jest.fn() }));

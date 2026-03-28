@@ -2,7 +2,7 @@
  * Projections Module
  *
  * Core scoring formulas imported from personal-dashboard projections.
- * Provides base projections for NBA, NCAAM, NHL with pace/rest/confidence adjustments.
+ * Provides base projections for NBA and NHL with pace/rest/confidence adjustments.
  */
 
 /**
@@ -96,32 +96,6 @@ function assessProjectionInputs(sport, oddsSnapshot) {
     }
     if (!hasNumeric(awayGoalsAgainst)) {
       missingInputs.push('away_avg_goals_against');
-    }
-  } else if (normalizedSport === 'NCAAM') {
-    const homeAvgPoints =
-      raw?.espn_metrics?.home?.metrics?.avgPoints ??
-      raw?.avg_points_home ??
-      raw?.home?.avg_points;
-    const awayAvgPoints =
-      raw?.espn_metrics?.away?.metrics?.avgPoints ??
-      raw?.avg_points_away ??
-      raw?.away?.avg_points;
-    const homeAvgPointsAllowed =
-      raw?.espn_metrics?.home?.metrics?.avgPointsAllowed ??
-      raw?.avg_points_allowed_home ??
-      raw?.home?.avg_points_allowed;
-    const awayAvgPointsAllowed =
-      raw?.espn_metrics?.away?.metrics?.avgPointsAllowed ??
-      raw?.avg_points_allowed_away ??
-      raw?.away?.avg_points_allowed;
-
-    if (!hasNumeric(homeAvgPoints)) missingInputs.push('home_avg_points');
-    if (!hasNumeric(awayAvgPoints)) missingInputs.push('away_avg_points');
-    if (!hasNumeric(homeAvgPointsAllowed)) {
-      missingInputs.push('home_avg_points_allowed');
-    }
-    if (!hasNumeric(awayAvgPointsAllowed)) {
-      missingInputs.push('away_avg_points_allowed');
     }
   }
 
@@ -279,30 +253,6 @@ function projectNBA(
     homeRestAdj,
     awayRestAdj,
     netRatingGap,
-  };
-}
-
-/**
- * Calculate NCAAM base projection with 2.5pt HCA
- * @param {number} homeOffense - avgPoints
- * @param {number} homeDefense - avgPointsAllowed
- * @param {number} awayOffense - avgPoints
- * @param {number} awayDefense - avgPointsAllowed
- * @returns {object} { homeProjected, awayProjected, projectedMargin }
- */
-function projectNCAAM(homeOffense, homeDefense, awayOffense, awayDefense) {
-  if (!homeOffense || !awayDefense || !awayOffense || !homeDefense) {
-    return { homeProjected: null, awayProjected: null, projectedMargin: null };
-  }
-
-  const HCA = 2.5; // Home court advantage
-  const homeProjected = (homeOffense + awayDefense) / 2 + HCA;
-  const awayProjected = (awayOffense + homeDefense) / 2;
-
-  return {
-    homeProjected: Math.round(homeProjected * 10) / 10,
-    awayProjected: Math.round(awayProjected * 10) / 10,
-    projectedMargin: Math.round((homeProjected - awayProjected) * 10) / 10,
   };
 }
 
@@ -474,6 +424,5 @@ module.exports = {
   buildProjectionNullDiagnostic,
   projectNBA,
   projectNBACanonical,
-  projectNCAAM,
   projectNHL,
 };
