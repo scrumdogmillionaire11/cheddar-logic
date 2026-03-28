@@ -111,20 +111,6 @@ const GAME_PRESETS: FilterPreset[] = [
       sortMode: 'start_time',
     },
   },
-  {
-    id: 'ncaam_ft_trend',
-    name: 'NCAAM FT% Trend',
-    description: 'Spread calls for FT% edge (>75 vs <75) with total < 160',
-    icon: '🎯',
-    filters: {
-      ...DEFAULT_FILTERS_BY_MODE.game,
-      sports: ['NCAAM'],
-      markets: ['SPREAD'],
-      statuses: FIRE_WATCH,
-      cardTypes: ['ncaam-ft-trend', 'ncaam-ft-spread'],
-      sortMode: 'signal_strength',
-    },
-  },
   ...(ENABLE_WELCOME_HOME ? [WELCOME_HOME_PRESET] : []),
 ];
 

@@ -151,7 +151,7 @@ export default function FilterPanel({
     }
   };
 
-  const sportOptions: Sport[] = ['NHL', 'NBA', 'NCAAM', 'SOCCER', 'MLB', 'NFL'];
+  const sportOptions: Sport[] = ['NHL', 'NBA', 'MLB', 'NFL'];
   const statusOptions: Array<{ value: ExpressionStatus; label: string }> = [
     { value: 'FIRE', label: 'PLAY' },
     { value: 'WATCH', label: 'LEAN' },
