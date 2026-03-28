@@ -437,14 +437,17 @@ export async function GET(request: NextRequest) {
           ${selectionSelect},
           ${lineSelect},
           ${lockedPriceSelect},
-          CASE
-            WHEN COALESCE(${marketKeyValueExpr}, '') LIKE '%:1P:%'
-              OR UPPER(COALESCE(json_extract(cp.payload_data, '$.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
-              OR UPPER(COALESCE(json_extract(cp.payload_data, '$.play.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
-              OR UPPER(COALESCE(cr.card_type, '')) LIKE '%1P%'
-            THEN '1P'
-            ELSE 'FULL_GAME'
-          END AS market_period_token,
+          COALESCE(
+            json_extract(cr.metadata, '$.market_period_token'),
+            CASE
+              WHEN COALESCE(${marketKeyValueExpr}, '') LIKE '%:1P:%'
+                OR UPPER(COALESCE(json_extract(cp.payload_data, '$.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
+                OR UPPER(COALESCE(json_extract(cp.payload_data, '$.play.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
+                OR UPPER(COALESCE(cr.card_type, '')) LIKE '%1P%'
+              THEN '1P'
+              ELSE 'FULL_GAME'
+            END
+          ) AS market_period_token,
           LOWER(COALESCE(json_extract(cp.payload_data, '$.play.prop_type'), json_extract(cp.payload_data, '$.prop_type'), '')) AS prop_type_token,
           COALESCE(
             CAST(json_extract(cp.payload_data, '$.play.player_id') AS TEXT),
@@ -809,14 +812,17 @@ export async function GET(request: NextRequest) {
         cp.payload_data,
         g.home_team AS game_home_team,
         g.away_team AS game_away_team,
-        CASE
-          WHEN COALESCE(${marketKeyValueExpr}, '') LIKE '%:1P:%'
-            OR UPPER(COALESCE(json_extract(cp.payload_data, '$.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
-            OR UPPER(COALESCE(json_extract(cp.payload_data, '$.play.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
-            OR UPPER(COALESCE(cr.card_type, '')) LIKE '%1P%'
-          THEN '1P'
-          ELSE 'FULL_GAME'
-        END AS market_period_token,
+        COALESCE(
+          json_extract(cr.metadata, '$.market_period_token'),
+          CASE
+            WHEN COALESCE(${marketKeyValueExpr}, '') LIKE '%:1P:%'
+              OR UPPER(COALESCE(json_extract(cp.payload_data, '$.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
+              OR UPPER(COALESCE(json_extract(cp.payload_data, '$.play.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
+              OR UPPER(COALESCE(cr.card_type, '')) LIKE '%1P%'
+            THEN '1P'
+            ELSE 'FULL_GAME'
+          END
+        ) AS market_period_token,
         ${clvOddsAtPickSelect},
         ${clvClosingOddsSelect},
         ${clvPctSelect},

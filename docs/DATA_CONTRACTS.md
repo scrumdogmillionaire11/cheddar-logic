@@ -228,6 +228,17 @@ CREATE INDEX idx_card_results_sport ON card_results(sport);
 CREATE INDEX idx_card_results_settled_at ON card_results(settled_at);
 ```
 
+**`metadata.market_period_token` — persisted period classification (WI-0607):**
+
+| Field | Values | Notes |
+|---|---|---|
+| `metadata.market_period_token` | `'1P'` \| `'FULL_GAME'` | Written at settlement time by `settle_pending_cards.js`; backfillable via `job:backfill-period-token` for historical rows |
+
+- **Writer:** `apps/worker/src/jobs/settle_pending_cards.js` — merged into `card_results.metadata` at successful settlement time.
+- **Backfill:** `apps/worker/src/jobs/backfill_period_token.js` — updates only `card_results.metadata` for already-settled rows missing the token; supports `--dry-run` mode. Run: `npm --prefix apps/worker run job:backfill-period-token:dry-run`.
+- **Reader:** `/api/results` prefers `json_extract(cr.metadata, '$.market_period_token')` when present; falls back to the derived CASE expression when absent (backward-compatible during partial rollout).
+- **Invariant:** Backfill never re-grades cards — `result`, `pnl_units`, and `settled_at` are untouched.
+
 ---
 
 ### Betting Card Payload Structure
