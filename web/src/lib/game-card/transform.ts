@@ -148,6 +148,7 @@ interface ApiPlay {
   projectedTotal?: number | null;
   edge?: number | null;
   edge_points?: number | null;
+  odds_context?: Record<string, unknown> | null;
   p_fair?: number | null;
   p_implied?: number | null;
   edge_pct?: number | null;
@@ -1565,6 +1566,24 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       typeof wave1DecisionPlay.edge_points === 'number'
         ? wave1DecisionPlay.edge_points
         : null;
+    const projectionComparison =
+      wave1DecisionPlay.odds_context?.projection_comparison as Record<string, unknown> | undefined | null;
+    const edgeVsConsensusPts =
+      typeof projectionComparison?.edge_vs_consensus_pts === 'number'
+        ? projectionComparison.edge_vs_consensus_pts
+        : null;
+    const edgeVsBestAvailablePts =
+      typeof projectionComparison?.edge_vs_best_available_pts === 'number'
+        ? projectionComparison.edge_vs_best_available_pts
+        : null;
+    const executionAlphaPts =
+      typeof projectionComparison?.execution_alpha_pts === 'number'
+        ? projectionComparison.execution_alpha_pts
+        : null;
+    const playableEdge =
+      typeof projectionComparison?.playable_edge === 'boolean'
+        ? projectionComparison.playable_edge
+        : null;
     const betMarketType = mapCanonicalToBetMarketType(marketType);
     const betSide = direction ? mapDirectionToBetSide(direction) : null;
     const requiresLineForBet =
@@ -1720,6 +1739,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           : undefined,
       edge: edgePct ?? undefined,
       edgePoints: edgePoints ?? undefined,
+      edgeVsConsensusPts: edgeVsConsensusPts ?? undefined,
+      edgeVsBestAvailablePts: edgeVsBestAvailablePts ?? undefined,
+      executionAlphaPts: executionAlphaPts ?? undefined,
+      playableEdge: playableEdge ?? undefined,
       projectedMargin: projectedMargin ?? undefined,
       projectedTotal: projectedTotal ?? undefined,
       projectedTeamTotal: projectedTeamTotal ?? undefined,

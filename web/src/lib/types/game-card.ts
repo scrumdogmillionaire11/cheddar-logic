@@ -412,6 +412,10 @@ export interface Play {
   impliedProb?: number;
   edge?: number;
   edgePoints?: number;
+  edgeVsConsensusPts?: number;
+  edgeVsBestAvailablePts?: number;
+  executionAlphaPts?: number;
+  playableEdge?: boolean;
   projectedMargin?: number;
   projectedTotal?: number;
   projectedTeamTotal?: number;

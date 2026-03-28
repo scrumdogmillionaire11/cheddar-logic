@@ -2482,11 +2482,6 @@ export default function CardsPageClient() {
       displayPlay.selection?.side ?? displayPlay.bet?.side?.toUpperCase(),
       originalGame.odds,
     );
-    const liveLineBook = resolvePlayLiveLineBook(
-      displayPlay.market_type ?? displayPlay.bet?.market_type?.toUpperCase(),
-      displayPlay.selection?.side ?? displayPlay.bet?.side?.toUpperCase(),
-      originalGame.odds,
-    );
     const displayBetText = displayPlay.bet
       ? formatCanonicalBetText(
           liveLine !== undefined
@@ -2735,6 +2730,14 @@ export default function CardsPageClient() {
           : typeof projectedLineValue === 'number' && typeof marketLine === 'number'
             ? Number((projectedLineValue - marketLine).toFixed(2))
             : undefined;
+    const edgeVsConsensusPts =
+      typeof displayPlay.edgeVsConsensusPts === 'number'
+        ? displayPlay.edgeVsConsensusPts
+        : undefined;
+    const edgeVsBestAvailablePts =
+      typeof displayPlay.edgeVsBestAvailablePts === 'number'
+        ? displayPlay.edgeVsBestAvailablePts
+        : undefined;
     const isMoneylineMarket = marketType === 'MONEYLINE';
     const hasEdgeMathContext =
       typeof resolvedModelProb === 'number' &&
@@ -3017,12 +3020,27 @@ export default function CardsPageClient() {
                               [price {formatBookName(bestSpreadPriceBook)}]
                             </span>
                           )}{' '}
-                          | Delta:{' '}
-                          <span className="text-cloud/90 font-bold">
-                            {typeof edgePoints === 'number'
-                              ? `${formatSignedDecimal(edgePoints)} pts`
-                              : 'N/A'}
-                          </span>
+                          {typeof edgeVsConsensusPts === 'number' && typeof edgeVsBestAvailablePts === 'number' ? (
+                            <>
+                              {' '}| Edge vs market:{' '}
+                              <span className="text-cloud/90 font-bold">
+                                {formatSignedDecimal(edgeVsConsensusPts)} pts
+                              </span>
+                              {' '}| Edge at best book:{' '}
+                              <span className="text-cloud/90 font-bold">
+                                {formatSignedDecimal(edgeVsBestAvailablePts)} pts
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              {' '}| Delta:{' '}
+                              <span className="text-cloud/90 font-bold">
+                                {typeof edgePoints === 'number'
+                                  ? `${formatSignedDecimal(edgePoints)} pts`
+                                  : 'N/A'}
+                              </span>
+                            </>
+                          )}
                         </p>
                         {spreadSoftLineFlag && (
                           <p className="text-amber-300">
@@ -3067,12 +3085,27 @@ export default function CardsPageClient() {
                               [price {formatBookName(bestTotalPriceBook)}]
                             </span>
                           )}{' '}
-                          | Delta:{' '}
-                          <span className="text-cloud/90 font-bold">
-                            {typeof edgePoints === 'number'
-                              ? `${formatSignedDecimal(edgePoints)} pts`
-                              : 'N/A'}
-                          </span>
+                          {typeof edgeVsConsensusPts === 'number' && typeof edgeVsBestAvailablePts === 'number' ? (
+                            <>
+                              {' '}| Edge vs market:{' '}
+                              <span className="text-cloud/90 font-bold">
+                                {formatSignedDecimal(edgeVsConsensusPts)} pts
+                              </span>
+                              {' '}| Edge at best book:{' '}
+                              <span className="text-cloud/90 font-bold">
+                                {formatSignedDecimal(edgeVsBestAvailablePts)} pts
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              {' '}| Delta:{' '}
+                              <span className="text-cloud/90 font-bold">
+                                {typeof edgePoints === 'number'
+                                  ? `${formatSignedDecimal(edgePoints)} pts`
+                                  : 'N/A'}
+                              </span>
+                            </>
+                          )}
                         </p>
                         {totalSoftLineFlag && (
                           <p className="text-amber-300">

@@ -293,6 +293,11 @@ interface Play {
   projectedTotal: number | null;
   edge: number | null;
   edge_points?: number | null;
+  edge_vs_consensus_pts?: number | null;
+  edge_vs_best_available_pts?: number | null;
+  execution_alpha_pts?: number | null;
+  playable_edge?: boolean | null;
+  odds_context?: Record<string, unknown> | null;
   p_fair?: number | null;
   p_implied?: number | null;
   edge_pct?: number | null;
@@ -3039,6 +3044,11 @@ export async function GET(request: NextRequest) {
           edge_points:
             typeof normalizedEdgePoints === 'number'
               ? normalizedEdgePoints
+              : null,
+          odds_context:
+            payload.odds_context &&
+            typeof payload.odds_context === 'object'
+              ? (payload.odds_context as Record<string, unknown>)
               : null,
           p_fair: typeof normalizedPFair === 'number' ? normalizedPFair : null,
           p_implied:

@@ -486,6 +486,55 @@ function detectMisprice(consensus, executionBlock, entries, marketType) {
   };
 }
 
+const PLAYABLE_EDGE_THRESHOLD_PTS = 1.0;
+
+/**
+ * Compare model projection against consensus and best-available market lines.
+ *
+ * Inputs should be normalized to the bettor's side perspective so that
+ * positive edge always means "model more bullish on the bet side":
+ *   - TOTAL OVER/UNDER:  fairLine = projectedTotal, consensusLine = totalConsensusLine,
+ *                        bestLine = total_line_over (OVER) or total_line_under (UNDER)
+ *   - SPREAD HOME:       fairLine = projectedMargin, consensusLine = -spread_consensus_line,
+ *                        bestLine = -spread_home (negate to get "home must beat X" threshold)
+ *   - SPREAD AWAY:       fairLine = -projectedMargin, consensusLine = spread_consensus_line,
+ *                        bestLine = -spread_away (negate positive away line)
+ */
+function compareProjection({ fairLine, consensusLine, bestLine, consensusPrice, bestPrice }) {
+  const edgeVsConsensusPts =
+    isFiniteNumber(fairLine) && isFiniteNumber(consensusLine)
+      ? Number((fairLine - consensusLine).toFixed(2))
+      : null;
+
+  const edgeVsBestAvailablePts =
+    isFiniteNumber(fairLine) && isFiniteNumber(bestLine)
+      ? Number((fairLine - bestLine).toFixed(2))
+      : null;
+
+  const executionAlphaPts =
+    isFiniteNumber(edgeVsBestAvailablePts) && isFiniteNumber(edgeVsConsensusPts)
+      ? Number((edgeVsBestAvailablePts - edgeVsConsensusPts).toFixed(2))
+      : null;
+
+  const playableEdge =
+    isFiniteNumber(edgeVsConsensusPts) &&
+    isFiniteNumber(edgeVsBestAvailablePts) &&
+    Math.abs(edgeVsConsensusPts) >= PLAYABLE_EDGE_THRESHOLD_PTS &&
+    Math.abs(edgeVsBestAvailablePts) >= PLAYABLE_EDGE_THRESHOLD_PTS &&
+    Math.sign(edgeVsConsensusPts) === Math.sign(edgeVsBestAvailablePts);
+
+  return {
+    fair_line_from_projection: isFiniteNumber(fairLine) ? fairLine : null,
+    edge_vs_consensus_pts: edgeVsConsensusPts,
+    edge_vs_best_available_pts: edgeVsBestAvailablePts,
+    execution_alpha_pts: executionAlphaPts,
+    fair_price_from_projection: null,
+    edge_vs_consensus_pct: null,
+    edge_vs_best_available_pct: null,
+    playable_edge: playableEdge,
+  };
+}
+
 function buildConsensus(entries, marketType) {
   const normalizedMarketType = String(marketType || '').toLowerCase();
 
@@ -506,6 +555,7 @@ function buildConsensus(entries, marketType) {
 
 module.exports = {
   buildConsensus,
+  compareProjection,
   detectMisprice,
   median,
   selectBestExecution,
