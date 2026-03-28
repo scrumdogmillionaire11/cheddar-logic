@@ -9,6 +9,7 @@
  */
 
 const Database = require('better-sqlite3');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
@@ -24,6 +25,11 @@ const {
   normalizeCardTitle,
   normalizeSportCode,
 } = require('./normalize');
+const {
+  addMsIso,
+  hashTokenHmac,
+  randomToken,
+} = require('./auth');
 
 let dbInstance = null;
 let dbPath = null;
@@ -35,6 +41,7 @@ const warnedSportValues = new Set();
 let oddsContextReferenceRegistry = new WeakMap();
 const EXPECTED_TABLE_NAMES = ['games', 'card_payloads', 'card_results', 'game_results'];
 const REQUIRED_CARD_RESULTS_MARKET_COLUMNS = ['market_key', 'market_type', 'selection', 'line', 'locked_price'];
+const DEFAULT_REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 function normalizeConfiguredPath(rawPath) {
   if (!rawPath || typeof rawPath !== 'string') return null;
@@ -4257,6 +4264,115 @@ function pruneExpiredRevokedTokens() {
   return info.changes;
 }
 
+function getRefreshTokenTtlMs() {
+  const parsed = Number.parseInt(process.env.AUTH_REFRESH_TTL_MS || '', 10);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return DEFAULT_REFRESH_TOKEN_TTL_MS;
+}
+
+function hashRefreshToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  return hashTokenHmac(token);
+}
+
+/**
+ * Issue a refresh token backed by the canonical sessions table.
+ * Returns the plaintext token once; only its HMAC is persisted.
+ *
+ * @param {string} userId
+ * @param {{ expiresAt?: string, ipAddress?: string | null, userAgent?: string | null }} [options]
+ * @returns {{ token: string, sessionId: string, expiresAt: string }}
+ */
+function issueRefreshToken(userId, options = {}) {
+  if (!userId || typeof userId !== 'string') {
+    throw new Error('issueRefreshToken requires a non-empty userId');
+  }
+
+  const db = getDatabase();
+  const token = randomToken(32);
+  const tokenHash = hashRefreshToken(token);
+  const sessionId = crypto.randomUUID();
+  const expiresAt =
+    typeof options.expiresAt === 'string' && options.expiresAt.trim()
+      ? options.expiresAt
+      : addMsIso(getRefreshTokenTtlMs());
+
+  db.prepare(
+    `INSERT INTO sessions (id, user_id, refresh_token_hash, expires_at, ip_address, user_agent)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    sessionId,
+    userId,
+    tokenHash,
+    expiresAt,
+    options.ipAddress ?? null,
+    options.userAgent ?? null,
+  );
+
+  return { token, sessionId, expiresAt };
+}
+
+/**
+ * Revoke a refresh token by marking its backing session row as revoked.
+ * Uses the existing sessions table instead of duplicating refresh-token state.
+ *
+ * @param {string} token
+ * @returns {boolean} true when an active session was revoked
+ */
+function revokeRefreshToken(token) {
+  const tokenHash = hashRefreshToken(token);
+  if (!tokenHash) return false;
+
+  const db = getDatabase();
+  const info = db.prepare(
+    `UPDATE sessions
+     SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+     WHERE refresh_token_hash = ?
+       AND revoked_at IS NULL`,
+  ).run(tokenHash);
+
+  return info.changes > 0;
+}
+
+/**
+ * Validate a refresh token against the canonical sessions table.
+ *
+ * @param {string} token
+ * @returns {boolean} true when the token exists, is unrevoked, and unexpired
+ */
+function isRefreshTokenValid(token) {
+  const tokenHash = hashRefreshToken(token);
+  if (!tokenHash) return false;
+
+  let db = null;
+  try {
+    db = getDatabaseReadOnly();
+    const row = db.prepare(
+      `SELECT expires_at, revoked_at
+       FROM sessions
+       WHERE refresh_token_hash = ?
+       LIMIT 1`,
+    ).get(tokenHash);
+
+    if (!row || row.revoked_at) {
+      return false;
+    }
+
+    const expiresAt = new Date(row.expires_at);
+    if (Number.isNaN(expiresAt.getTime())) {
+      return false;
+    }
+
+    return expiresAt.getTime() > Date.now();
+  } catch {
+    return false;
+  } finally {
+    closeReadOnlyInstance(db);
+  }
+}
+
 module.exports = {
   getDatabase,
   getDatabaseReadOnly,
@@ -4345,4 +4461,7 @@ module.exports = {
   insertRevokedToken,
   isTokenRevoked,
   pruneExpiredRevokedTokens,
+  issueRefreshToken,
+  revokeRefreshToken,
+  isRefreshTokenValid,
 };

@@ -6,10 +6,27 @@
 import * as crypto from 'crypto';
 // @cheddar-logic/data is a CommonJS module; use default import + destructure for ESM compat
 import cheddarData from '@cheddar-logic/data';
-const { insertRevokedToken, isTokenRevoked, pruneExpiredRevokedTokens: pruneRevoked } = cheddarData as {
+const {
+  insertRevokedToken,
+  isTokenRevoked,
+  pruneExpiredRevokedTokens: pruneRevoked,
+  issueRefreshToken,
+  revokeRefreshToken: revokeStoredRefreshToken,
+  isRefreshTokenValid: isStoredRefreshTokenValid,
+} = cheddarData as {
   insertRevokedToken: (jti: string, expiresAt: number) => void;
   isTokenRevoked: (jti: string) => boolean;
   pruneExpiredRevokedTokens: () => number;
+  issueRefreshToken: (
+    userId: string,
+    options?: {
+      expiresAt?: string;
+      ipAddress?: string | null;
+      userAgent?: string | null;
+    },
+  ) => { token: string; sessionId: string; expiresAt: string };
+  revokeRefreshToken: (token: string) => boolean;
+  isRefreshTokenValid: (token: string) => boolean;
 };
 
 // Prune expired revocation records at module load (best-effort, non-fatal)
@@ -32,6 +49,13 @@ interface JWTHeader {
 }
 
 type JWTPayload = AuthToken;
+
+export interface RefreshTokenOptions {
+  userId: string;
+  expiresAt?: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
 
 const ALGORITHM = 'HS256';
 const ACCESS_TOKEN_EXPIRES_IN = 15 * 60 * 1000; // 15 minutes
@@ -104,14 +128,38 @@ export function createAccessToken(
 }
 
 /**
- * Create a refresh token (longer-lived, opaque)
- * In production, store refresh tokens in database or Redis
- * TODO: Implement token storage with userId tracking
+ * Create a refresh token (longer-lived, opaque) backed by the canonical
+ * sessions table. Returns the plaintext token once; only a hash is persisted.
  */
-export function createRefreshToken(): string {
-  const token = crypto.randomBytes(32).toString('hex');
-  // TODO: Store in Redis/DB with expiration and userId
-  return token;
+export function createRefreshToken(
+  options: RefreshTokenOptions | string,
+): string {
+  const normalizedOptions =
+    typeof options === 'string' ? { userId: options } : options;
+
+  if (!normalizedOptions?.userId) {
+    throw new Error('createRefreshToken requires a userId');
+  }
+
+  return issueRefreshToken(normalizedOptions.userId, {
+    expiresAt: normalizedOptions.expiresAt,
+    ipAddress: normalizedOptions.ipAddress,
+    userAgent: normalizedOptions.userAgent,
+  }).token;
+}
+
+/**
+ * Revoke a refresh token persisted in the sessions table.
+ */
+export function revokeRefreshToken(token: string): boolean {
+  return revokeStoredRefreshToken(token);
+}
+
+/**
+ * Check whether a refresh token still maps to an active, unexpired session.
+ */
+export function isRefreshTokenValid(token: string): boolean {
+  return isStoredRefreshTokenValid(token);
 }
 
 /**
