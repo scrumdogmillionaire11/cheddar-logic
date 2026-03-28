@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-03-28T12:00:00Z"
-last_activity: "2026-03-28 - Priority re-assessment: WI-0635 (deploy CF convergence retries) and WI-0636 (turbopack dev-chunk guard) added to P2 — both slotted ahead of scheduler wiring work given recent deploy rollback (PR #128). Full priority order updated in sprint table."
+last_activity: "2026-03-28 - Priority re-assessment + gap: WI-0635/0636 slotted into P2 (deploy rollback fix). WI-0638 (remove NCAAM+Soccer from UI permanently) and WI-0639 (NFL UI seasonal gate) added to P3."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -33,7 +33,7 @@ This file is intentionally minimal to avoid stale status drift.
 - Last reviewed: 2026-03-28
 - Next action: **WI-0626** (P1 correctness — settle_mlb_f5 doubleheader gamePk bug, silent mis-settlement every MLB day). Then **WI-0636** + **WI-0635** (`needs-sync`, deploy verification — turbopack guard + CF convergence retries; block future false-rollbacks). Then **WI-0625** (tiny: remove unused liveLineBook). Then **WI-0627** (check_odds_health watchdog), **WI-0630** (pull_nhl_team_stats scheduler), **WI-0628** (market evaluator UI), **WI-0629** (settle_mlb_f5 tests). Full priority order in the sprint tables below.
 
-## Sprint Plan — 2026-03-28 (27 open WIs: 1 P1 + 9 P2 + 9 P3 + 6 Backlog + 2 Backlog-S)
+## Sprint Plan — 2026-03-28 (29 open WIs: 1 P1 + 9 P2 + 11 P3 + 6 Backlog + 2 Backlog-S)
 
 ### Dependency Chains
 
@@ -107,6 +107,8 @@ This file is intentionally minimal to avoid stale status drift.
 | 15 | [WI-0631](../WORK_QUEUE/WI-0631.md) | Implement refresh token persistence and revocation | none |
 | 16 | [WI-0632](../WORK_QUEUE/WI-0632.md) | Test suite for run_nfl_model.js | none |
 | 17 | [WI-0633](../WORK_QUEUE/WI-0633.md) | Test suite for run_ncaam_model.js | none |
+| 18 | [WI-0638](../WORK_QUEUE/WI-0638.md) | Remove NCAAM + Soccer from UI sport filter permanently | none |
+| 19 | [WI-0639](../WORK_QUEUE/WI-0639.md) | NFL UI seasonal gate — hide sport filter outside Sep–Feb | none |
 
 ### Backlog — Tech Debt Milestone
 
