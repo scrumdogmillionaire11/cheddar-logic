@@ -529,6 +529,18 @@ jobs:
                 test "$PUBLIC_ROUTE_JS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing JS asset references in public HTML after purge"
                 test "$PUBLIC_ROUTE_CSS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing CSS asset references in public HTML after purge"
               done
+              # ── WI-0636: Turbopack / dev-chunk guard ─────────────────────────────
+              # If CF is serving HTML that references turbopack or HMR dev-mode chunks
+              # (artifacts only produced by `next dev`, never `next build`), the retry
+              # loops below will spend ~3 minutes on 12×3s timeouts per chunk before
+              # failing with a misleading "public JS request failed" message.
+              # This guard detects the bad refs immediately after HTML collection and
+              # fails fast with a human-readable explanation.
+              DEV_CHUNK_HIT=$(printf '%s\n' "$PUBLIC_ROUTE_JS_REFS" | awk -F'|' 'NF>=2 && tolower($2) ~ /turbopack|%5bturbopack%5d|_browser_dev_|hmr-client/ { print "route=" $1 " ref=" $2; exit }')
+              if [ -n "$DEV_CHUNK_HIT" ]; then
+                fail_with_rollback "CF served stale dev/turbopack HTML: ${DEV_CHUNK_HIT} — likely stale CF cache or a prior dev build was cached; re-run deploy after CF propagation completes"
+              fi
+              # ─────────────────────────────────────────────────────────────────────
               PUBLIC_JS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_JS_REFS" | awk -F'|' 'NF >= 2 { print $2 }' | sort -u | grep -c . || true)
               PUBLIC_CSS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_CSS_REFS" | awk -F'|' 'NF >= 2 { print $2 }' | sort -u | grep -c . || true)
               printf '%s\n' "$PUBLIC_ROUTE_JS_REFS" | while IFS='|' read -r route ref; do
