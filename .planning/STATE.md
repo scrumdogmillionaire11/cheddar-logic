@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-27T23:59:00Z"
-last_activity: "2026-03-27 - WI-0569 ✓ (execution selector) + WI-0570 ✓ (misprice detector) committed. WI-0571 now unblocked. WI-0607–0624 drafted from CONCERNS.md tech-debt audit (3 security, 2 test suites, 6 housekeeping, 5 god-file decompositions). Sprint plan restructured — 20 open WIs total."
+last_updated: "2026-03-28T01:35:00Z"
+last_activity: "2026-03-28 - qt-85 / WI-0614 renamed decision-pipeline-v2.patch.js to decision-pipeline-v2-edge-config.js, updated live callers, and moved WI-0614 to WORK_QUEUE/COMPLETE. Worker tests still show pre-existing failures in run_nhl_model/decision-publisher/run-mlb-model; web TypeScript check passed."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -179,5 +179,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 83 | WI-0569 Market evaluator — execution selector (best-price separate from best-line); migration 047 | 2026-03-27 | 7e08784 | — |
 | 84 | WI-0570 Market evaluator — misprice detector (soft line, price-only, high-dispersion flags); migration 048, UI soft-line display | 2026-03-27 | 4f6af7b | — |
 | 85 | WI-0613 delete scratch debug backup files | 2026-03-28 | dcbaeb2 | [81-wi-0613-delete-scratch-debug-backup-file](./quick/81-wi-0613-delete-scratch-debug-backup-file/) |
+| 86 | qt-85 / WI-0614 rename decision-pipeline-v2.patch.js to decision-pipeline-v2-edge-config.js | 2026-03-28 | pending | [85-wi-0614-rename-decision-pipeline-v2-edg](./quick/85-wi-0614-rename-decision-pipeline-v2-edg/) |
 
-Last activity: 2026-03-28 - Completed quick task 81: WI-0613 delete scratch debug backup files
+Last activity: 2026-03-28 - Completed qt-85 / WI-0614: renamed `decision-pipeline-v2.patch.js` to `decision-pipeline-v2-edge-config.js`, updated live callers, moved WI-0614 to COMPLETE, and recorded pre-existing out-of-scope worker test failures while `tsc` passed.

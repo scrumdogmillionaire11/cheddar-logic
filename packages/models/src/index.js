@@ -3,7 +3,7 @@ const marketOrchestration = require('./market-orchestration');
 const edgeCalculator = require('./edge-calculator');
 const decisionGate = require('./decision-gate');
 const decisionPipelineV2 = require('./decision-pipeline-v2');
-const decisionPipelineV2Patch = require('./decision-pipeline-v2.patch');
+const decisionPipelineV2Patch = require('./decision-pipeline-v2-edge-config');
 const nhlSog = require('./nhl-sog/projection');
 const { generateCard, buildMarketCallCard } = require('./card-factory');
 

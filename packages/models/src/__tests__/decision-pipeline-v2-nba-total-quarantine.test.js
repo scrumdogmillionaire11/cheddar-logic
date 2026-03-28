@@ -66,7 +66,7 @@ describe('applyNbaTotalQuarantine (unit)', () => {
   beforeEach(() => {
     jest.resetModules();
     delete process.env.QUARANTINE_NBA_TOTAL;
-    const patch = require('../decision-pipeline-v2.patch');
+    const patch = require('../decision-pipeline-v2-edge-config');
     applyNbaTotalQuarantine = patch.applyNbaTotalQuarantine;
   });
 
@@ -131,7 +131,7 @@ describe('applyNbaTotalQuarantine (unit)', () => {
   it('returns unchanged when QUARANTINE_NBA_TOTAL flag is off', () => {
     jest.resetModules();
     process.env.QUARANTINE_NBA_TOTAL = '0';
-    const patch = require('../decision-pipeline-v2.patch');
+    const patch = require('../decision-pipeline-v2-edge-config');
     const fn = patch.applyNbaTotalQuarantine;
     const input = { sport: 'NBA', marketType: 'TOTAL', officialStatus: 'PLAY', priceReasonCodes: [] };
     const result = fn(input);
