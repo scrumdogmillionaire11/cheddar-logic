@@ -178,5 +178,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 82 | WI-0588 NBA totals quarantine — demote tier one level | 2026-03-24 | ddfc2fc | [79-wi-0588-nba-totals-quarantine-demote-tie](./quick/79-wi-0588-nba-totals-quarantine-demote-tie/) |
 | 83 | WI-0569 Market evaluator — execution selector (best-price separate from best-line); migration 047 | 2026-03-27 | 7e08784 | — |
 | 84 | WI-0570 Market evaluator — misprice detector (soft line, price-only, high-dispersion flags); migration 048, UI soft-line display | 2026-03-27 | 4f6af7b | — |
+| 85 | WI-0613 delete scratch debug backup files | 2026-03-28 | dcbaeb2 | [81-wi-0613-delete-scratch-debug-backup-file](./quick/81-wi-0613-delete-scratch-debug-backup-file/) |
 
-Last activity: 2026-03-27 — qt-84 (WI-0570) committed. Market evaluator chain 3/4 complete. WI-0607–0624 drafted from CONCERNS.md audit. 20 WIs open.
+Last activity: 2026-03-28 - Completed quick task 81: WI-0613 delete scratch debug backup files
