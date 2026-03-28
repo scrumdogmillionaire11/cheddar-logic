@@ -30,13 +30,31 @@
  *     odds: {
  *       h2hHome: number | null,
  *       h2hAway: number | null,
+ *       h2hHomeBook: string | null,
+ *       h2hAwayBook: string | null,
  *       total: number | null,
+ *       totalLineOver: number | null,
+ *       totalLineOverBook: string | null,
+ *       totalLineUnder: number | null,
+ *       totalLineUnderBook: string | null,
  *       spreadHome: number | null,
  *       spreadAway: number | null,
+ *       spreadHomeBook: string | null,
+ *       spreadAwayBook: string | null,
  *       spreadPriceHome: number | null,
+ *       spreadPriceHomeBook: string | null,
  *       spreadPriceAway: number | null,
+ *       spreadPriceAwayBook: string | null,
  *       totalPriceOver: number | null,
+ *       totalPriceOverBook: string | null,
  *       totalPriceUnder: number | null,
+ *       totalPriceUnderBook: string | null,
+ *       spreadIsMispriced: boolean | null,
+ *       spreadMispriceType: string | null,
+ *       spreadMispriceStrength: number | null,
+ *       spreadOutlierBook: string | null,
+ *       spreadOutlierDelta: number | null,
+ *       spreadReviewFlag: boolean | null,
  *       spreadConsensusLine: number | null,
  *       spreadConsensusConfidence: string | null,
  *       spreadDispersionStddev: number | null,
@@ -45,6 +63,12 @@
  *       totalConsensusConfidence: string | null,
  *       totalDispersionStddev: number | null,
  *       totalSourceBookCount: number | null,
+ *       totalIsMispriced: boolean | null,
+ *       totalMispriceType: string | null,
+ *       totalMispriceStrength: number | null,
+ *       totalOutlierBook: string | null,
+ *       totalOutlierDelta: number | null,
+ *       totalReviewFlag: boolean | null,
  *       h2hConsensusHome: number | null,
  *       h2hConsensusAway: number | null,
  *       h2hConsensusConfidence: string | null,
@@ -114,20 +138,42 @@ interface GameRow {
   h2h_home: number | null;
   h2h_away: number | null;
   h2h_book: string | null;
+  h2h_home_book: string | null;
+  h2h_away_book: string | null;
   total: number | null;
   total_book: string | null;
+  total_line_over: number | null;
+  total_line_over_book: string | null;
+  total_line_under: number | null;
+  total_line_under_book: string | null;
   spread_home: number | null;
   spread_away: number | null;
   spread_home_book: string | null;
   spread_away_book: string | null;
   spread_price_home: number | null;
+  spread_price_home_book: string | null;
   spread_price_away: number | null;
+  spread_price_away_book: string | null;
   total_price_over: number | null;
+  total_price_over_book: string | null;
   total_price_under: number | null;
+  total_price_under_book: string | null;
+  spread_is_mispriced: number | null;
+  spread_misprice_type: string | null;
+  spread_misprice_strength: number | null;
+  spread_outlier_book: string | null;
+  spread_outlier_delta: number | null;
+  spread_review_flag: number | null;
   spread_consensus_line: number | null;
   spread_consensus_confidence: string | null;
   spread_dispersion_stddev: number | null;
   spread_source_book_count: number | null;
+  total_is_mispriced: number | null;
+  total_misprice_type: string | null;
+  total_misprice_strength: number | null;
+  total_outlier_book: string | null;
+  total_outlier_delta: number | null;
+  total_review_flag: number | null;
   total_consensus_line: number | null;
   total_consensus_confidence: string | null;
   total_dispersion_stddev: number | null;
@@ -1809,20 +1855,42 @@ export async function GET(request: NextRequest) {
           | 'h2h_home'
           | 'h2h_away'
           | 'h2h_book'
+          | 'h2h_home_book'
+          | 'h2h_away_book'
           | 'total'
           | 'total_book'
+          | 'total_line_over'
+          | 'total_line_over_book'
+          | 'total_line_under'
+          | 'total_line_under_book'
           | 'spread_home'
           | 'spread_away'
           | 'spread_home_book'
           | 'spread_away_book'
           | 'spread_price_home'
+          | 'spread_price_home_book'
           | 'spread_price_away'
+          | 'spread_price_away_book'
           | 'total_price_over'
+          | 'total_price_over_book'
           | 'total_price_under'
+          | 'total_price_under_book'
+          | 'spread_is_mispriced'
+          | 'spread_misprice_type'
+          | 'spread_misprice_strength'
+          | 'spread_outlier_book'
+          | 'spread_outlier_delta'
+          | 'spread_review_flag'
           | 'spread_consensus_line'
           | 'spread_consensus_confidence'
           | 'spread_dispersion_stddev'
           | 'spread_source_book_count'
+          | 'total_is_mispriced'
+          | 'total_misprice_type'
+          | 'total_misprice_strength'
+          | 'total_outlier_book'
+          | 'total_outlier_delta'
+          | 'total_review_flag'
           | 'total_consensus_line'
           | 'total_consensus_confidence'
           | 'total_dispersion_stddev'
@@ -1846,20 +1914,42 @@ export async function GET(request: NextRequest) {
           o.h2h_home,
           o.h2h_away,
           o.h2h_book,
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_home_book')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_away_book')},
           o.total,
           o.total_book,
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_line_over')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_line_over_book')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_line_under')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_line_under_book')},
           o.spread_home,
           o.spread_away,
           o.spread_home_book,
           o.spread_away_book,
           o.spread_price_home,
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_price_home_book')},
           o.spread_price_away,
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_price_away_book')},
           o.total_price_over,
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_price_over_book')},
           o.total_price_under,
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_price_under_book')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_is_mispriced')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_misprice_type')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_misprice_strength')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_outlier_book')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_outlier_delta')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_review_flag')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_consensus_line')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_consensus_confidence')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_dispersion_stddev')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'spread_source_book_count')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_is_mispriced')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_misprice_type')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_misprice_strength')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_outlier_book')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_outlier_delta')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_review_flag')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_consensus_line')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_consensus_confidence')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'total_dispersion_stddev')},
@@ -1886,20 +1976,42 @@ export async function GET(request: NextRequest) {
         h2h_home: number | null;
         h2h_away: number | null;
         h2h_book: string | null;
+        h2h_home_book: string | null;
+        h2h_away_book: string | null;
         total: number | null;
         total_book: string | null;
+        total_line_over: number | null;
+        total_line_over_book: string | null;
+        total_line_under: number | null;
+        total_line_under_book: string | null;
         spread_home: number | null;
         spread_away: number | null;
         spread_home_book: string | null;
         spread_away_book: string | null;
         spread_price_home: number | null;
+        spread_price_home_book: string | null;
         spread_price_away: number | null;
+        spread_price_away_book: string | null;
         total_price_over: number | null;
+        total_price_over_book: string | null;
         total_price_under: number | null;
+        total_price_under_book: string | null;
+        spread_is_mispriced: number | null;
+        spread_misprice_type: string | null;
+        spread_misprice_strength: number | null;
+        spread_outlier_book: string | null;
+        spread_outlier_delta: number | null;
+        spread_review_flag: number | null;
         spread_consensus_line: number | null;
         spread_consensus_confidence: string | null;
         spread_dispersion_stddev: number | null;
         spread_source_book_count: number | null;
+        total_is_mispriced: number | null;
+        total_misprice_type: string | null;
+        total_misprice_strength: number | null;
+        total_outlier_book: string | null;
+        total_outlier_delta: number | null;
+        total_review_flag: number | null;
         total_consensus_line: number | null;
         total_consensus_confidence: string | null;
         total_dispersion_stddev: number | null;
@@ -1946,21 +2058,43 @@ export async function GET(request: NextRequest) {
           h2h_home: odds?.h2h_home ?? null,
           h2h_away: odds?.h2h_away ?? null,
           h2h_book: odds?.h2h_book ?? null,
+          h2h_home_book: odds?.h2h_home_book ?? null,
+          h2h_away_book: odds?.h2h_away_book ?? null,
           total: odds?.total ?? null,
           total_book: odds?.total_book ?? null,
+          total_line_over: odds?.total_line_over ?? null,
+          total_line_over_book: odds?.total_line_over_book ?? null,
+          total_line_under: odds?.total_line_under ?? null,
+          total_line_under_book: odds?.total_line_under_book ?? null,
           spread_home: odds?.spread_home ?? null,
           spread_away: odds?.spread_away ?? null,
           spread_home_book: odds?.spread_home_book ?? null,
           spread_away_book: odds?.spread_away_book ?? null,
           spread_price_home: odds?.spread_price_home ?? null,
+          spread_price_home_book: odds?.spread_price_home_book ?? null,
           spread_price_away: odds?.spread_price_away ?? null,
+          spread_price_away_book: odds?.spread_price_away_book ?? null,
           total_price_over: odds?.total_price_over ?? null,
+          total_price_over_book: odds?.total_price_over_book ?? null,
           total_price_under: odds?.total_price_under ?? null,
+          total_price_under_book: odds?.total_price_under_book ?? null,
+          spread_is_mispriced: odds?.spread_is_mispriced ?? null,
+          spread_misprice_type: odds?.spread_misprice_type ?? null,
+          spread_misprice_strength: odds?.spread_misprice_strength ?? null,
+          spread_outlier_book: odds?.spread_outlier_book ?? null,
+          spread_outlier_delta: odds?.spread_outlier_delta ?? null,
+          spread_review_flag: odds?.spread_review_flag ?? null,
           spread_consensus_line: odds?.spread_consensus_line ?? null,
           spread_consensus_confidence:
             odds?.spread_consensus_confidence ?? null,
           spread_dispersion_stddev: odds?.spread_dispersion_stddev ?? null,
           spread_source_book_count: odds?.spread_source_book_count ?? null,
+          total_is_mispriced: odds?.total_is_mispriced ?? null,
+          total_misprice_type: odds?.total_misprice_type ?? null,
+          total_misprice_strength: odds?.total_misprice_strength ?? null,
+          total_outlier_book: odds?.total_outlier_book ?? null,
+          total_outlier_delta: odds?.total_outlier_delta ?? null,
+          total_review_flag: odds?.total_review_flag ?? null,
           total_consensus_line: odds?.total_consensus_line ?? null,
           total_consensus_confidence:
             odds?.total_consensus_confidence ?? null,
@@ -3720,21 +3854,55 @@ export async function GET(request: NextRequest) {
               h2hHome: row.h2h_home,
               h2hAway: row.h2h_away,
               h2hBook: row.h2h_book ?? null,
+              h2hHomeBook: row.h2h_home_book ?? null,
+              h2hAwayBook: row.h2h_away_book ?? null,
               total: row.total,
               totalBook: row.total_book ?? null,
+              totalLineOver: row.total_line_over,
+              totalLineOverBook: row.total_line_over_book ?? null,
+              totalLineUnder: row.total_line_under,
+              totalLineUnderBook: row.total_line_under_book ?? null,
               spreadHome: row.spread_home,
               spreadAway: row.spread_away,
               spreadHomeBook: row.spread_home_book ?? null,
               spreadAwayBook: row.spread_away_book ?? null,
               spreadPriceHome: row.spread_price_home,
+              spreadPriceHomeBook: row.spread_price_home_book ?? null,
               spreadPriceAway: row.spread_price_away,
+              spreadPriceAwayBook: row.spread_price_away_book ?? null,
               totalPriceOver: row.total_price_over,
+              totalPriceOverBook: row.total_price_over_book ?? null,
               totalPriceUnder: row.total_price_under,
+              totalPriceUnderBook: row.total_price_under_book ?? null,
+              spreadIsMispriced:
+                row.spread_is_mispriced === null
+                  ? null
+                  : row.spread_is_mispriced === 1,
+              spreadMispriceType: row.spread_misprice_type ?? null,
+              spreadMispriceStrength: row.spread_misprice_strength,
+              spreadOutlierBook: row.spread_outlier_book ?? null,
+              spreadOutlierDelta: row.spread_outlier_delta,
+              spreadReviewFlag:
+                row.spread_review_flag === null
+                  ? null
+                  : row.spread_review_flag === 1,
               spreadConsensusLine: row.spread_consensus_line,
               spreadConsensusConfidence:
                 row.spread_consensus_confidence ?? null,
               spreadDispersionStddev: row.spread_dispersion_stddev,
               spreadSourceBookCount: row.spread_source_book_count,
+              totalIsMispriced:
+                row.total_is_mispriced === null
+                  ? null
+                  : row.total_is_mispriced === 1,
+              totalMispriceType: row.total_misprice_type ?? null,
+              totalMispriceStrength: row.total_misprice_strength,
+              totalOutlierBook: row.total_outlier_book ?? null,
+              totalOutlierDelta: row.total_outlier_delta,
+              totalReviewFlag:
+                row.total_review_flag === null
+                  ? null
+                  : row.total_review_flag === 1,
               totalConsensusLine: row.total_consensus_line,
               totalConsensusConfidence:
                 row.total_consensus_confidence ?? null,
