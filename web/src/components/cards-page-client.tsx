@@ -309,20 +309,42 @@ interface GameData {
     h2hHome: number | null;
     h2hAway: number | null;
     h2hBook: string | null;
+    h2hHomeBook: string | null;
+    h2hAwayBook: string | null;
     total: number | null;
     totalBook: string | null;
+    totalLineOver: number | null;
+    totalLineOverBook: string | null;
+    totalLineUnder: number | null;
+    totalLineUnderBook: string | null;
     spreadHome: number | null;
     spreadAway: number | null;
     spreadHomeBook: string | null;
     spreadAwayBook: string | null;
     spreadPriceHome: number | null;
+    spreadPriceHomeBook: string | null;
     spreadPriceAway: number | null;
+    spreadPriceAwayBook: string | null;
     totalPriceOver: number | null;
+    totalPriceOverBook: string | null;
     totalPriceUnder: number | null;
+    totalPriceUnderBook: string | null;
+    spreadIsMispriced: boolean | null;
+    spreadMispriceType: string | null;
+    spreadMispriceStrength: number | null;
+    spreadOutlierBook: string | null;
+    spreadOutlierDelta: number | null;
+    spreadReviewFlag: boolean | null;
     spreadConsensusLine: number | null;
     spreadConsensusConfidence: string | null;
     spreadDispersionStddev: number | null;
     spreadSourceBookCount: number | null;
+    totalIsMispriced: boolean | null;
+    totalMispriceType: string | null;
+    totalMispriceStrength: number | null;
+    totalOutlierBook: string | null;
+    totalOutlierDelta: number | null;
+    totalReviewFlag: boolean | null;
     totalConsensusLine: number | null;
     totalConsensusConfidence: string | null;
     totalDispersionStddev: number | null;
@@ -1709,7 +1731,26 @@ export default function CardsPageClient() {
     return undefined;
   };
 
-  /** Return the bookmaker key for the odds being shown for a given market+side. */
+  const resolvePlayLiveLine = (
+    marketType: string | undefined,
+    selectionSide: string | undefined,
+    gameOdds: GameData['odds'],
+  ): number | undefined => {
+    if (!gameOdds) return undefined;
+    const side = selectionSide?.toUpperCase();
+    if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+      if (side === 'HOME' && gameOdds.spreadHome != null) return gameOdds.spreadHome;
+      if (side === 'AWAY' && gameOdds.spreadAway != null) return gameOdds.spreadAway;
+    }
+    if (marketType === 'TOTAL') {
+      if (side === 'OVER' && gameOdds.totalLineOver != null) return gameOdds.totalLineOver;
+      if (side === 'UNDER' && gameOdds.totalLineUnder != null) return gameOdds.totalLineUnder;
+      if (gameOdds.total != null) return gameOdds.total;
+    }
+    return undefined;
+  };
+
+  /** Return the bookmaker key for the price being shown for a given market+side. */
   const resolvePlayLiveBook = (
     marketType: string | undefined,
     selectionSide: string | undefined,
@@ -1718,14 +1759,43 @@ export default function CardsPageClient() {
     if (!gameOdds) return null;
     const side = selectionSide?.toUpperCase();
     if (marketType === 'MONEYLINE') {
+      if (side === 'HOME') return gameOdds.h2hHomeBook ?? gameOdds.h2hBook ?? null;
+      if (side === 'AWAY') return gameOdds.h2hAwayBook ?? gameOdds.h2hBook ?? null;
       return gameOdds.h2hBook ?? null;
     }
+    if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
+      if (side === 'HOME')
+        return gameOdds.spreadPriceHomeBook ?? gameOdds.spreadHomeBook ?? null;
+      if (side === 'AWAY')
+        return gameOdds.spreadPriceAwayBook ?? gameOdds.spreadAwayBook ?? null;
+    }
+    if (marketType === 'TOTAL') {
+      if (side === 'OVER')
+        return gameOdds.totalPriceOverBook ?? gameOdds.totalBook ?? null;
+      if (side === 'UNDER')
+        return gameOdds.totalPriceUnderBook ?? gameOdds.totalBook ?? null;
+      return gameOdds.totalBook ?? null;
+    }
+    return null;
+  };
+
+  /** Return the bookmaker key for the line being shown for a given market+side. */
+  const resolvePlayLiveLineBook = (
+    marketType: string | undefined,
+    selectionSide: string | undefined,
+    gameOdds: GameData['odds'],
+  ): string | null => {
+    if (!gameOdds) return null;
+    const side = selectionSide?.toUpperCase();
     if (marketType === 'SPREAD' || marketType === 'PUCKLINE') {
       if (side === 'HOME') return gameOdds.spreadHomeBook ?? null;
       if (side === 'AWAY') return gameOdds.spreadAwayBook ?? null;
     }
     if (marketType === 'TOTAL') {
-      return gameOdds.totalBook ?? null;
+      if (side === 'OVER')
+        return gameOdds.totalLineOverBook ?? gameOdds.totalBook ?? null;
+      if (side === 'UNDER')
+        return gameOdds.totalLineUnderBook ?? gameOdds.totalBook ?? null;
     }
     return null;
   };
@@ -2407,17 +2477,20 @@ export default function CardsPageClient() {
       displayPlay.selection?.side ?? displayPlay.bet?.side?.toUpperCase(),
       originalGame.odds,
     );
-    // For total-market bets, prefer the live odds line over the baked card line
-    // so "BET: Over X" reflects what's actually available to bet.
-    const liveTotalLine =
-      displayPlay.bet?.market_type === 'total' &&
-      typeof originalGame.odds?.total === 'number'
-        ? originalGame.odds.total
-        : undefined;
+    const liveLine = resolvePlayLiveLine(
+      displayPlay.market_type ?? displayPlay.bet?.market_type?.toUpperCase(),
+      displayPlay.selection?.side ?? displayPlay.bet?.side?.toUpperCase(),
+      originalGame.odds,
+    );
+    const liveLineBook = resolvePlayLiveLineBook(
+      displayPlay.market_type ?? displayPlay.bet?.market_type?.toUpperCase(),
+      displayPlay.selection?.side ?? displayPlay.bet?.side?.toUpperCase(),
+      originalGame.odds,
+    );
     const displayBetText = displayPlay.bet
       ? formatCanonicalBetText(
-          liveTotalLine !== undefined
-            ? { ...displayPlay.bet, line: liveTotalLine }
+          liveLine !== undefined
+            ? { ...displayPlay.bet, line: liveLine }
             : displayPlay.bet,
           card.homeTeam,
           card.awayTeam,
@@ -2578,6 +2651,9 @@ export default function CardsPageClient() {
     const spreadSelectionSide = (
       displayPlay.selection?.side ?? displayPlay.bet?.side
     )?.toUpperCase();
+    const displaySelectionSide = normalizeSelectionSide(
+      displayPlay.selection?.side ?? displayPlay.bet?.side ?? displayPlay.side,
+    );
     const isAwaySpread = spreadSelectionSide === 'AWAY';
     const consensusSpreadHomeLine =
       isSpreadLikeMarket &&
@@ -2595,11 +2671,37 @@ export default function CardsPageClient() {
             : originalGame.odds.spreadHome
           : undefined;
     const bestSpreadBook =
-      isSpreadLikeMarket && liveSpreadLine !== undefined
-        ? isAwaySpread
-          ? originalGame.odds?.spreadAwayBook ?? null
-          : originalGame.odds?.spreadHomeBook ?? null
+      isSpreadLikeMarket
+        ? resolvePlayLiveLineBook(
+            marketType,
+            displaySelectionSide,
+            originalGame.odds,
+          )
         : null;
+    const bestSpreadPriceBook =
+      isSpreadLikeMarket
+        ? resolvePlayLiveBook(marketType, displaySelectionSide, originalGame.odds)
+        : null;
+    const bestTotalBook =
+      isTotalLikeMarket
+        ? resolvePlayLiveLineBook(marketType, displaySelectionSide, originalGame.odds)
+        : null;
+    const bestTotalPriceBook =
+      isTotalLikeMarket
+        ? resolvePlayLiveBook(marketType, displaySelectionSide, originalGame.odds)
+        : null;
+    const spreadSoftLineFlag =
+      isSpreadLikeMarket &&
+      originalGame.odds?.spreadIsMispriced === true &&
+      originalGame.odds?.spreadMispriceType === 'SOFT_LINE';
+    const spreadReviewFlag =
+      isSpreadLikeMarket && originalGame.odds?.spreadReviewFlag === true;
+    const totalSoftLineFlag =
+      isTotalLikeMarket &&
+      originalGame.odds?.totalIsMispriced === true &&
+      originalGame.odds?.totalMispriceType === 'SOFT_LINE';
+    const totalReviewFlag =
+      isTotalLikeMarket && originalGame.odds?.totalReviewFlag === true;
     const usingConsensusSpreadLine =
       isSpreadLikeMarket && consensusSpreadHomeLine !== undefined;
     const spreadConsensusConfidenceLabel =
@@ -2633,9 +2735,6 @@ export default function CardsPageClient() {
           : typeof projectedLineValue === 'number' && typeof marketLine === 'number'
             ? Number((projectedLineValue - marketLine).toFixed(2))
             : undefined;
-    const displaySelectionSide = normalizeSelectionSide(
-      displayPlay.selection?.side ?? displayPlay.bet?.side ?? displayPlay.side,
-    );
     const isMoneylineMarket = marketType === 'MONEYLINE';
     const hasEdgeMathContext =
       typeof resolvedModelProb === 'number' &&
@@ -2887,62 +2986,109 @@ export default function CardsPageClient() {
                 {showMathDetails && (
                   <div className="space-y-1 text-xs font-mono text-cloud/65">
                     {shouldRenderSpreadContext && (
-                      <p>
-                        Model spread (home):{' '}
-                        <span className="text-cloud/90 font-bold">
-                          {typeof projectedSpreadHome === 'number'
-                            ? formatSignedDecimal(projectedSpreadHome)
-                            : 'N/A'}
-                        </span>{' '}
-                        | Market line:{' '}
-                        <span className="text-cloud/90 font-bold">
-                          {typeof marketLine === 'number'
-                            ? formatSignedDecimal(marketLine)
-                            : 'N/A'}
-                        </span>
-                        {spreadConsensusConfidenceLabel && (
-                          <span className="text-cloud/45 ml-1">
-                            [{spreadConsensusConfidenceLabel} consensus]
+                      <div className="space-y-1">
+                        <p>
+                          Model spread (home):{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {typeof projectedSpreadHome === 'number'
+                              ? formatSignedDecimal(projectedSpreadHome)
+                              : 'N/A'}
+                          </span>{' '}
+                          | Market line:{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {typeof marketLine === 'number'
+                              ? formatSignedDecimal(marketLine)
+                              : 'N/A'}
                           </span>
+                          {spreadConsensusConfidenceLabel && (
+                            <span className="text-cloud/45 ml-1">
+                              [{spreadConsensusConfidenceLabel} consensus]
+                            </span>
+                          )}
+                          {bestSpreadBook && (
+                            <span className="text-cloud/45 ml-1">
+                              {usingConsensusSpreadLine
+                                ? `best line ${formatBookName(bestSpreadBook)}`
+                                : `(${formatBookName(bestSpreadBook)})`}
+                            </span>
+                          )}{' '}
+                          {bestSpreadPriceBook && (
+                            <span className="text-cloud/45 ml-1">
+                              [price {formatBookName(bestSpreadPriceBook)}]
+                            </span>
+                          )}{' '}
+                          | Delta:{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {typeof edgePoints === 'number'
+                              ? `${formatSignedDecimal(edgePoints)} pts`
+                              : 'N/A'}
+                          </span>
+                        </p>
+                        {spreadSoftLineFlag && (
+                          <p className="text-amber-300">
+                            Soft line at{' '}
+                            {formatBookName(
+                              originalGame.odds?.spreadOutlierBook ?? 'unknown',
+                            )}
+                            {typeof originalGame.odds?.spreadOutlierDelta === 'number'
+                              ? ` (${formatSignedDecimal(originalGame.odds.spreadOutlierDelta)} vs consensus)`
+                              : ''}
+                          </p>
                         )}
-                        {bestSpreadBook && (
-                          <span className="text-cloud/45 ml-1">
-                            {usingConsensusSpreadLine
-                              ? `best book ${formatBookName(bestSpreadBook)}`
-                              : `(${formatBookName(bestSpreadBook)})`}
-                          </span>
-                        )}{' '}
-                        | Delta:{' '}
-                        <span className="text-cloud/90 font-bold">
-                          {typeof edgePoints === 'number'
-                            ? `${formatSignedDecimal(edgePoints)} pts`
-                            : 'N/A'}
-                        </span>
-                      </p>
+                        {!spreadSoftLineFlag && spreadReviewFlag && (
+                          <p className="text-cloud/45">Market disagreement</p>
+                        )}
+                      </div>
                     )}
                     {hasTotalContext && (
-                      <p>
-                        Model total:{' '}
-                        <span className="text-cloud/90 font-bold">
-                          {typeof projectedTeamTotal === 'number'
-                            ? projectedTeamTotal.toFixed(1)
-                            : typeof projectedTotal === 'number'
-                              ? projectedTotal.toFixed(1)
+                      <div className="space-y-1">
+                        <p>
+                          Model total:{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {typeof projectedTeamTotal === 'number'
+                              ? projectedTeamTotal.toFixed(1)
+                              : typeof projectedTotal === 'number'
+                                ? projectedTotal.toFixed(1)
+                                : 'N/A'}
+                          </span>{' '}
+                          | Market line:{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {typeof marketLine === 'number'
+                              ? marketLine.toFixed(1)
                               : 'N/A'}
-                        </span>{' '}
-                        | Market line:{' '}
-                        <span className="text-cloud/90 font-bold">
-                          {typeof marketLine === 'number'
-                            ? marketLine.toFixed(1)
-                            : 'N/A'}
-                        </span>{' '}
-                        | Delta:{' '}
-                        <span className="text-cloud/90 font-bold">
-                          {typeof edgePoints === 'number'
-                            ? `${formatSignedDecimal(edgePoints)} pts`
-                            : 'N/A'}
-                        </span>
-                      </p>
+                          </span>{' '}
+                          {bestTotalBook && (
+                            <span className="text-cloud/45 ml-1">
+                              [line {formatBookName(bestTotalBook)}]
+                            </span>
+                          )}{' '}
+                          {bestTotalPriceBook && (
+                            <span className="text-cloud/45 ml-1">
+                              [price {formatBookName(bestTotalPriceBook)}]
+                            </span>
+                          )}{' '}
+                          | Delta:{' '}
+                          <span className="text-cloud/90 font-bold">
+                            {typeof edgePoints === 'number'
+                              ? `${formatSignedDecimal(edgePoints)} pts`
+                              : 'N/A'}
+                          </span>
+                        </p>
+                        {totalSoftLineFlag && (
+                          <p className="text-amber-300">
+                            Soft line at{' '}
+                            {formatBookName(
+                              originalGame.odds?.totalOutlierBook ?? 'unknown',
+                            )}
+                            {typeof originalGame.odds?.totalOutlierDelta === 'number'
+                              ? ` (${formatSignedDecimal(originalGame.odds.totalOutlierDelta)} vs consensus)`
+                              : ''}
+                          </p>
+                        )}
+                        {!totalSoftLineFlag && totalReviewFlag && (
+                          <p className="text-cloud/45">Market disagreement</p>
+                        )}
+                      </div>
                     )}
                     {hasMlContext && (
                       <p>
