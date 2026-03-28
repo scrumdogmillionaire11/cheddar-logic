@@ -30,6 +30,7 @@ const {
   calcFairLine,
   calcFairLine1p,
   projectSogV2,
+  projectBlkV1,
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 const {
@@ -55,6 +56,12 @@ function computePropDisplayState(v2AnomalyDetected, v2OpportunityScore) {
   if (v2AnomalyDetected || v2OpportunityScore == null) return 'PROJECTION_ONLY';
   if (v2OpportunityScore > 0) return 'PLAY';
   return 'WATCH';
+}
+
+function computePropDisplayStateFromVerdict(verdict) {
+  if (verdict === 'PLAY') return 'PLAY';
+  if (verdict === 'WATCH') return 'WATCH';
+  return 'PROJECTION_ONLY';
 }
 
 const PROP_PROJECTION_FLAGS = new Set([
@@ -1371,7 +1378,7 @@ function purgePlayerCardsForGame({ db, gameIds, playerId, playerName }) {
     FROM card_payloads
     WHERE LOWER(sport) = 'nhl'
       ${gameFilterClause}
-      AND card_type IN ('nhl-player-shots', 'nhl-player-shots-1p')
+      AND card_type IN ('nhl-player-shots', 'nhl-player-shots-1p', 'nhl-player-blk')
       AND (
         CAST(json_extract(payload_data, '$.play.player_id') AS TEXT) = CAST(? AS TEXT)
         OR LOWER(COALESCE(json_extract(payload_data, '$.play.player_name'), '')) = LOWER(COALESCE(?, ''))
@@ -1475,17 +1482,30 @@ async function runNHLPlayerShotsModel() {
       ORDER BY player_id ASC
     `);
       const uniquePlayersRaw = uniquePlayersStmt.all();
+      const uniqueBlkPlayersStmt = db.prepare(`
+      SELECT DISTINCT
+        player_id,
+        player_name,
+        json_extract(raw_data, '$.teamAbbrev') as team_abbrev
+      FROM player_blk_logs
+      WHERE fetched_at > datetime('now', '-7 days')
+      ORDER BY player_id ASC
+    `);
+      const uniqueBlkPlayersRaw = uniqueBlkPlayersStmt.all();
 
-      if (!uniquePlayersRaw || uniquePlayersRaw.length === 0) {
+      if (
+        (!uniquePlayersRaw || uniquePlayersRaw.length === 0) &&
+        (!uniqueBlkPlayersRaw || uniqueBlkPlayersRaw.length === 0)
+      ) {
         console.log(
-          `[${JOB_NAME}] No player shot logs found. Run 'npm run job:pull-nhl-player-shots' first.`,
+          `[${JOB_NAME}] No player shot or block logs found. Run the NHL player pull jobs first.`,
         );
-        markJobRunFailure(jobRunId, { error: 'No player shot logs available' });
-        return { success: false, error: 'No player shot logs available' };
+        markJobRunFailure(jobRunId, { error: 'No player shot or block logs available' });
+        return { success: false, error: 'No player shot or block logs available' };
       }
 
       const uniquePlayerMap = new Map();
-      for (const row of uniquePlayersRaw) {
+      for (const row of [...uniquePlayersRaw, ...uniqueBlkPlayersRaw]) {
         const existing = uniquePlayerMap.get(row.player_id);
         const existingName =
           typeof existing?.player_name === 'string' ? existing.player_name : '';
@@ -1512,6 +1532,7 @@ async function runNHLPlayerShotsModel() {
       // Gap 5: 1P card generation is gated behind NHL_SOG_1P_CARDS_ENABLED env flag (default off).
       // The 1P Odds API market is unreliable — enable only when lines are consistently available.
       const sog1pEnabled = process.env.NHL_SOG_1P_CARDS_ENABLED === 'true';
+      const blkEnabled = process.env.NHL_BLK_CARDS_ENABLED === 'true';
       const excludedPlayerIds = new Set(
         parsePlayerIds(process.env.NHL_SOG_EXCLUDE_PLAYER_IDS),
       );
@@ -1733,6 +1754,21 @@ async function runNHLPlayerShotsModel() {
             LIMIT 10
           `);
             const playerLookbackGames = getPlayerLookbackStmt.all(player.player_id);
+            const getPlayerBlkLookbackStmt = db.prepare(`
+            SELECT
+              game_id,
+              game_date,
+              opponent,
+              is_home,
+              blocked_shots,
+              toi_minutes,
+              raw_data
+            FROM player_blk_logs
+            WHERE player_id = ?
+            ORDER BY game_date DESC
+            LIMIT 10
+          `);
+            const playerBlkLookbackGames = getPlayerBlkLookbackStmt.all(player.player_id);
 
             if (playerLookbackGames.length < 5) {
               // Task 1: Log explicit skip reason for players with insufficient recent logs
@@ -2967,6 +3003,259 @@ async function runNHLPlayerShotsModel() {
                 console.log(
                   `[${JOB_NAME}] Skipping 1P ${playerName} ${firstPeriodEdge.direction} ${syntheticLine1p}: PASS (consistency=${firstPeriodConsistencyScore.toFixed(2)}, matchup=${firstPeriodMatchupScore.toFixed(2)})`,
                 );
+              }
+            }
+
+            if (blkEnabled && playerBlkLookbackGames.length >= 5) {
+              const blkGames = playerBlkLookbackGames.slice(0, 5);
+              const l5Blk = blkGames.map((g) => Number(g.blocked_shots) || 0);
+              const l5BlkMean = computeL5Mean(l5Blk);
+              let blkTotalToi = playerBlkLookbackGames[0]?.toi_minutes || null;
+
+              if (playerBlkLookbackGames[0]?.raw_data) {
+                try {
+                  const rawData = JSON.parse(playerBlkLookbackGames[0].raw_data);
+                  if (Number.isFinite(rawData.projToi) && rawData.projToi > 0) {
+                    blkTotalToi = rawData.projToi;
+                  }
+                } catch {
+                  // ignore legacy parse failures
+                }
+              }
+
+              const blkRateRow = db.prepare(`
+                SELECT *
+                FROM player_blk_rates
+                WHERE nhl_player_id = ?
+                  AND season = ?
+                LIMIT 1
+              `).get(String(player.player_id), nhlSeasonKey);
+
+              const blkLineCandidates = resolvePlayerPropLineCandidatesWithFallback({
+                db,
+                sport: 'NHL',
+                gameId: resolvedGameId,
+                playerName,
+                propType: 'blocked_shots',
+                period: 'full_game',
+              });
+              const blkMarket = blkLineCandidates[0] || null;
+
+              if (blkMarket) {
+                const blkToiProjPk =
+                  Number.isFinite(blkRateRow?.pk_toi_per_game) &&
+                  blkRateRow.pk_toi_per_game > 0
+                    ? blkRateRow.pk_toi_per_game
+                    : 0;
+                const blkToiProjEv = Math.max(
+                  (Number.isFinite(blkTotalToi) ? blkTotalToi : 0) - blkToiProjPk,
+                  0,
+                );
+                const blkLeanSide =
+                  Number.isFinite(l5BlkMean) && Number.isFinite(blkMarket.line)
+                    ? l5BlkMean >= Math.ceil(blkMarket.line)
+                      ? 'OVER'
+                      : 'UNDER'
+                    : 'OVER';
+                const blkProjection = projectBlkV1({
+                  player_id: player.player_id,
+                  game_id: resolvedGameId,
+                  ev_blocks_season_per60: blkRateRow?.ev_blocks_season_per60 ?? null,
+                  ev_blocks_l10_per60: blkRateRow?.ev_blocks_l10_per60 ?? null,
+                  ev_blocks_l5_per60: blkRateRow?.ev_blocks_l5_per60 ?? null,
+                  pk_blocks_season_per60: blkRateRow?.pk_blocks_season_per60 ?? null,
+                  pk_blocks_l10_per60: blkRateRow?.pk_blocks_l10_per60 ?? null,
+                  pk_blocks_l5_per60: blkRateRow?.pk_blocks_l5_per60 ?? null,
+                  toi_proj_ev: blkToiProjEv,
+                  toi_proj_pk: blkToiProjPk,
+                  role_stability: roleStability,
+                  market_line: blkMarket.line,
+                  market_price_over: blkMarket.over_price,
+                  market_price_under: blkMarket.under_price,
+                  play_direction: blkLeanSide,
+                });
+                const blkConfidence = Math.max(
+                  0.55,
+                  Math.min(
+                    0.8,
+                    0.55 + Math.abs((blkProjection.blk_mu ?? 0) - blkMarket.line) * 0.08,
+                  ),
+                );
+                const blkFlags = Array.from(new Set(blkProjection.flags ?? []));
+                let blkPropDecision = buildCanonicalPropDecision({
+                  projection: blkProjection.blk_mu,
+                  marketLine: blkMarket.line,
+                  marketPriceOver: blkMarket.over_price,
+                  marketPriceUnder: blkMarket.under_price,
+                  fairOverProb:
+                    blkProjection.fair_over_prob_by_line?.[String(blkMarket.line)] ?? null,
+                  fairUnderProb:
+                    blkProjection.fair_under_prob_by_line?.[String(blkMarket.line)] ?? null,
+                  impliedOverProb:
+                    blkMarket.over_price != null
+                      ? americanToImplied(blkMarket.over_price)
+                      : null,
+                  impliedUnderProb:
+                    blkMarket.under_price != null
+                      ? americanToImplied(blkMarket.under_price)
+                      : null,
+                  edgeOverPp: blkProjection.edge_over_pp,
+                  edgeUnderPp: blkProjection.edge_under_pp,
+                  evOver: blkProjection.ev_over,
+                  evUnder: blkProjection.ev_under,
+                  opportunityScore: blkProjection.opportunity_score,
+                  confidence: blkConfidence,
+                  roleStability: blkProjection.role_stability ?? roleStability,
+                  l5Mean: l5BlkMean,
+                  flags: blkFlags,
+                  usingRealLine: true,
+                });
+
+                if (blkFlags.includes('LOW_SAMPLE')) {
+                  blkPropDecision = {
+                    ...blkPropDecision,
+                    verdict: 'PROJECTION',
+                    why: 'Projection only — missing NST blocked-shot rates',
+                    flags: Array.from(new Set([...(blkPropDecision.flags || []), 'LOW_SAMPLE'])),
+                  };
+                }
+
+                const blkLegacyDecision = deriveLegacyActionFromVerdict(
+                  blkPropDecision.verdict,
+                );
+                const blkResolvedLean = blkPropDecision.lean_side || blkLeanSide;
+                const blkFairLine = roundToHalfLine(blkProjection.blk_mu) ?? blkMarket.line;
+                const blkPrediction = `${playerName} ${blkResolvedLean} ${blkMarket.line} BLK | Proj ${blkProjection.blk_mu.toFixed(1)} · Fair ${blkFairLine}`;
+                const blkCardId = `nhl-player-blk-${player.player_id}-${resolvedGameId}-${uuidV4().slice(0, 8)}`;
+                const payloadDataBlk = {
+                  sport: 'NHL',
+                  home_team: homeTeam,
+                  away_team: awayTeam,
+                  game_time_utc: game.game_time_utc,
+                  card_type: 'nhl-player-blk',
+                  canonical_market_key: 'player_blocked_shots',
+                  tier:
+                    blkPropDecision.verdict === 'PLAY'
+                      ? 'HOT'
+                      : blkPropDecision.verdict === 'WATCH'
+                        ? 'WATCH'
+                        : 'COLD',
+                  availability_tier: playerAvailabilityTier,
+                  card_status: 'active',
+                  model_name: 'nhl-player-blk-v1',
+                  model_version: '1.0.0',
+                  action: blkLegacyDecision.action,
+                  status: blkLegacyDecision.status,
+                  classification: blkLegacyDecision.classification,
+                  prediction: blkPrediction,
+                  confidence: blkConfidence,
+                  recommended_bet_type: 'unknown',
+                  generated_at: timestamp,
+                  suggested_line: blkFairLine,
+                  threshold: blkFairLine,
+                  prop_decision: blkPropDecision,
+                  prop_display_state: computePropDisplayStateFromVerdict(
+                    blkPropDecision.verdict,
+                  ),
+                  mu: blkProjection.blk_mu,
+                  projectedTotal: blkProjection.blk_mu,
+                  l5_mean: l5BlkMean,
+                  l5_sog: l5Blk,
+                  line: blkMarket.line,
+                  market_price_over: blkMarket.over_price,
+                  market_price_under: blkMarket.under_price,
+                  market_bookmaker: blkMarket.bookmaker ?? null,
+                  price:
+                    blkResolvedLean === 'OVER'
+                      ? blkMarket.over_price
+                      : blkMarket.under_price,
+                  player_name: playerName,
+                  player_id: player.player_id.toString(),
+                  team_abbr: player.team_abbrev ?? null,
+                  reasoning: blkPropDecision.why,
+                  decision_v2: {
+                    official_status: blkLegacyDecision.officialStatus,
+                    direction: blkResolvedLean,
+                    edge_delta_pct: computeEdgePct(blkProjection.blk_mu, blkMarket.line),
+                    fair_line: blkFairLine,
+                  },
+                  play: {
+                    action: blkLegacyDecision.action,
+                    status: blkLegacyDecision.status,
+                    classification: blkLegacyDecision.classification,
+                    decision_v2: {
+                      official_status: blkLegacyDecision.officialStatus,
+                      direction: blkResolvedLean,
+                      edge_delta_pct: computeEdgePct(blkProjection.blk_mu, blkMarket.line),
+                      fair_line: blkFairLine,
+                    },
+                    prop_decision: blkPropDecision,
+                    pick_string: blkPrediction,
+                    market_type: 'PROP',
+                    player_name: playerName,
+                    player_id: player.player_id.toString(),
+                    prop_type: 'blocked_shots',
+                    period: 'full_game',
+                    canonical_market_key: 'player_blocked_shots',
+                    selection: {
+                      side: blkResolvedLean === 'OVER' ? 'over' : 'under',
+                      line: blkMarket.line,
+                      price:
+                        blkResolvedLean === 'OVER'
+                          ? blkMarket.over_price
+                          : blkMarket.under_price,
+                      team: player.team_abbrev,
+                      player_name: playerName,
+                      player_id: player.player_id.toString(),
+                    },
+                  },
+                  decision: {
+                    edge_pct: computeEdgePct(blkProjection.blk_mu, blkMarket.line),
+                    projection: Math.round(blkProjection.blk_mu * 100) / 100,
+                    fair_line: blkFairLine,
+                    market_line: blkMarket.line,
+                    direction: blkResolvedLean,
+                    confidence: blkConfidence,
+                  },
+                  drivers: {
+                    l5_avg: l5BlkMean,
+                    l5_blk: l5Blk,
+                    proj_toi_total: blkTotalToi,
+                    proj_toi_pk: blkToiProjPk,
+                    proj_toi_ev: blkToiProjEv,
+                    ev_block_rate: blkProjection.block_rate_ev_per60,
+                    pk_block_rate: blkProjection.block_rate_pk_per60,
+                    role_stability: blkProjection.role_stability ?? roleStability,
+                  },
+                };
+
+                applyNhlDecisionBasisMeta(payloadDataBlk, {
+                  usingRealLine: true,
+                  edgePct: computeEdgePct(blkProjection.blk_mu, blkMarket.line),
+                });
+
+                const blkCard = {
+                  id: blkCardId,
+                  gameId: resolvedGameId,
+                  sport: 'NHL',
+                  cardType: 'nhl-player-blk',
+                  cardTitle: `${playerName} Blocked Shots`,
+                  createdAt: timestamp,
+                  payloadData: payloadDataBlk,
+                };
+                attachRunId(blkCard, jobRunId);
+
+                try {
+                  insertCardPayload(blkCard);
+                  cardsCreated++;
+                  console.log(
+                    `[${JOB_NAME}] ✓ Created ${blkPropDecision.verdict} BLK card: ${playerName} ${blkResolvedLean} ${blkMarket.line}`,
+                  );
+                } catch (insertErr) {
+                  console.error(
+                    `[${JOB_NAME}] Failed to insert BLK card: ${insertErr.message}`,
+                  );
+                }
               }
             }
           } catch (err) {
