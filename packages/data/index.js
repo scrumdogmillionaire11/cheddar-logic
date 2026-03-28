@@ -192,6 +192,11 @@ module.exports = {
   // Line delta utility
   computeLineDelta: db.computeLineDelta,
 
+  // JWT revocation persistence (WI-0608)
+  insertRevokedToken: db.insertRevokedToken,
+  isTokenRevoked: db.isTokenRevoked,
+  pruneExpiredRevokedTokens: db.pruneExpiredRevokedTokens,
+
   // Dual-database mode (recommended for production)
   initDualDb: dbDualInit.initDualDb,
   closeDualDb: dbDualInit.closeDualDb,

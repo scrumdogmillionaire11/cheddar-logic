@@ -4,6 +4,16 @@
  */
 
 import * as crypto from 'crypto';
+// @cheddar-logic/data is a CommonJS module; use default import + destructure for ESM compat
+import cheddarData from '@cheddar-logic/data';
+const { insertRevokedToken, isTokenRevoked, pruneExpiredRevokedTokens: pruneRevoked } = cheddarData as {
+  insertRevokedToken: (jti: string, expiresAt: number) => void;
+  isTokenRevoked: (jti: string) => boolean;
+  pruneExpiredRevokedTokens: () => number;
+};
+
+// Prune expired revocation records at module load (best-effort, non-fatal)
+try { pruneRevoked(); } catch { /* non-fatal */ }
 
 export interface AuthToken {
   userId: string;
@@ -11,6 +21,7 @@ export interface AuthToken {
   role: 'ADMIN' | 'PAID' | 'FREE_ACCOUNT';
   subscription_status: 'NONE' | 'TRIAL' | 'ACTIVE' | 'PAST_DUE';
   flags?: string[];
+  jti?: string; // JWT ID — used for revocation (WI-0608)
   iat: number; // issued at
   exp: number; // expiration
 }
@@ -79,6 +90,7 @@ export function createAccessToken(
 
   const payload: JWTPayload = {
     ...claims,
+    jti: crypto.randomUUID(),
     iat: now,
     exp: expiresAt,
   };
@@ -130,10 +142,33 @@ export function verifyToken(token: string): AuthToken | null {
       return null; // Token expired
     }
 
+    // Check DB revocation (WI-0608)
+    if (payload.jti && isTokenRevoked(payload.jti)) {
+      return null; // Token explicitly revoked
+    }
+
     return payload;
   } catch (error) {
     console.error('[AUTH] Token verification failed:', error);
     return null;
+  }
+}
+
+/**
+ * Revoke a token by inserting its jti into the persistent revoked_tokens table.
+ * Decodes the token without signature verification (token may already be suspect).
+ * Fails open on decode errors — an invalid token is not a security concern here.
+ */
+export function revokeToken(token: string): void {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return;
+    const payload = JSON.parse(base64UrlDecode(parts[1])) as JWTPayload;
+    if (payload.jti && payload.exp) {
+      insertRevokedToken(payload.jti, payload.exp);
+    }
+  } catch {
+    // fail-open on decode error — token is invalid anyway
   }
 }
 
