@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-28T01:35:00Z"
-last_activity: "2026-03-28 - qt-85 / WI-0614 renamed decision-pipeline-v2.patch.js to decision-pipeline-v2-edge-config.js, updated live callers, and moved WI-0614 to WORK_QUEUE/COMPLETE. Worker tests still show pre-existing failures in run_nhl_model/decision-publisher/run-mlb-model; web TypeScript check passed."
+last_updated: "2026-03-28T02:10:00Z"
+last_activity: "2026-03-28 - qt-86 / WI-0608 JWT revocation persistence: migration 049 (revoked_tokens), insertRevokedToken/isTokenRevoked/pruneExpiredRevokedTokens in db.js + index.js, jwt.ts jti+revokeToken+DB check, 11 tests pass (8 existing + 3 new WI-0608), tsc clean. WI-0608 moved to COMPLETE."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -78,7 +78,7 @@ This file is intentionally minimal to avoid stale status drift.
 | # | WI | Summary | Deps |
 |---|---|---|---|
 | 2 | [WI-0607](../WORK_QUEUE/WI-0607.md) | Persist + backfill results market period token | none |
-| 3 | [WI-0608](../WORK_QUEUE/WI-0608.md) | JWT revocation persistence — move to DB table | none |
+| 3 | ~~WI-0608~~ ✓ | JWT revocation persistence — move to DB table | none |
 | 4 | [WI-0609](../WORK_QUEUE/WI-0609.md) | Token route IP whitelist / endpoint hardening | none |
 | 5 | [WI-0610](../WORK_QUEUE/WI-0610.md) | moneypuck.js test suite | none |
 | 6 | [WI-0613](../WORK_QUEUE/WI-0613.md) | Delete committed scratch/debug/backup files | none |
@@ -179,6 +179,7 @@ This file is intentionally minimal to avoid stale status drift.
 | 83 | WI-0569 Market evaluator — execution selector (best-price separate from best-line); migration 047 | 2026-03-27 | 7e08784 | — |
 | 84 | WI-0570 Market evaluator — misprice detector (soft line, price-only, high-dispersion flags); migration 048, UI soft-line display | 2026-03-27 | 4f6af7b | — |
 | 85 | WI-0613 delete scratch debug backup files | 2026-03-28 | dcbaeb2 | [81-wi-0613-delete-scratch-debug-backup-file](./quick/81-wi-0613-delete-scratch-debug-backup-file/) |
-| 86 | qt-85 / WI-0614 rename decision-pipeline-v2.patch.js to decision-pipeline-v2-edge-config.js | 2026-03-28 | pending | [85-wi-0614-rename-decision-pipeline-v2-edg](./quick/85-wi-0614-rename-decision-pipeline-v2-edg/) |
+| 86 | qt-85 / WI-0614 rename decision-pipeline-v2.patch.js to decision-pipeline-v2-edge-config.js | 2026-03-28 | e5cf823 | [85-wi-0614-rename-decision-pipeline-v2-edg](./quick/85-wi-0614-rename-decision-pipeline-v2-edg/) |
+| 87 | qt-86 / WI-0608 JWT revocation persistence — move to DB table | 2026-03-28 | 34adcd7 | [86-wi-0608-security-jwt-revocation-persiste](./quick/86-wi-0608-security-jwt-revocation-persiste/) |
 
 Last activity: 2026-03-28 - Completed qt-85 / WI-0614: renamed `decision-pipeline-v2.patch.js` to `decision-pipeline-v2-edge-config.js`, updated live callers, moved WI-0614 to COMPLETE, and recorded pre-existing out-of-scope worker test failures while `tsc` passed.
