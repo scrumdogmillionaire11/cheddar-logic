@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-27T18:00:00Z"
-last_activity: "2026-03-27 - WI-0595 ✓ + WI-0596 ✓ (K chain audit: both WIs already fully implemented and tested — 27/27 tests green, all acceptance criteria met). Next: WI-0597 (odds pull + dual-mode runtime wiring)."
+last_updated: "2026-03-27T23:30:00Z"
+last_activity: "2026-03-27 - WI-0569 ✓ (execution selector) + WI-0570 ✓ (misprice detector) committed. WI-0571 now unblocked. WI-0607 (market period token) added. New WIs drafted: WI-0608–0624 (security, test coverage, cleanup, tech-debt backlog) from CONCERNS.md codebase audit."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,68 +31,80 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-27
-- Next action: **WI-0595 + WI-0596 done.** Start WI-0597 (odds pull + dual-mode runtime wiring) — unblocked. Run WI-0603 (F5 ML) in parallel — independent of K chain. WI-0557, WI-0568, WI-0567 can also run in parallel across agents.
+- Next action: **Sprint wave complete. 4 items remain.** WI-0568 ✓ unblocks WI-0569 + WI-0570 now — run them in parallel. WI-0571 gates on WI-0569. WI-0586 (NHL blocked shots) is independent and can start any time.
 
-## Sprint Plan — 2026-03-27 (P0 clear — K chain + F5 now active)
+## Sprint Plan — 2026-03-27 (near-complete — market evaluator chain + one new market)
 
 ### Dependency Chains
 
-- **MLB pitcher K (serial, start now):** WI-0595 → WI-0596 → WI-0597 → WI-0598
-- **MLB F5 ML (unblocked):** WI-0603 (WI-0602 ✓)
-- **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
-- **CLV / display / new markets:** WI-0557, WI-0567, WI-0586 — all independent
+- **MLB pitcher K:** ALL DONE ✓ (WI-0595→0596→0597→0598)
+- **MLB F5:** ALL DONE ✓ (WI-0602→0603→0604)
+- **CLV:** ALL DONE ✓ (WI-0557)
+- **Display:** ALL DONE ✓ (WI-0567 1P label)
+- **Market evaluator (serial):** ~~WI-0568~~✓ → ~~WI-0569~~✓ / ~~WI-0570~~✓ → **WI-0571** (now unblocked)
+- **New markets:** WI-0586 independent
+- **Results:** WI-0607 independent
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-27 (P0 clear)
+## Prioritized Open Work Queue — 2026-03-27
 
 ### Recently Completed ✓
 
 | WI | Summary |
 |---|---|
-| ~~WI-0606~~ ✓ | Re-export `computeLineDelta` — NBA model runtime crash resolved |
-| ~~WI-0605~~ ✓ | MLB pitcher `team` join key fix (`buildPitcherTeamMap` + schedule abbreviation) |
-| ~~WI-0604~~ ✓ | MLB pipeline health — F5 vs full-game watchdog differentiation |
-| ~~WI-0602~~ ✓ | MLB DUAL_RUN market selection — F5 Total as primary game market |
-| ~~WI-0592~~ ✓ | NHL SOG breakout usage overlay |
-| ~~WI-0591~~ ✓ | Wire empirical sigma overrides into NBA and NCAAM decisioning |
-| ~~WI-0589~~ ✓ | PLAY vs LEAN tier correction |
-| ~~WI-0556~~ ✓ | Track line movement delta — stale-edge detection |
-| ~~WI-0553~~ ✓ | Gate FIRST_PERIOD on edge, not projection signal |
+| ~~WI-0570~~ ✓ | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) |
+| ~~WI-0569~~ ✓ | Market evaluator — execution selector (best-price separate from best-line) |
+| ~~WI-0598~~ ✓ | Pitcher Ks contract hardening (validator + market contract) |
+| ~~WI-0597~~ ✓ | Pitcher Ks odds pull + dual-mode runtime wiring |
+| ~~WI-0596~~ ✓ | Pitcher Ks data foundations and freshness gates |
+| ~~WI-0595~~ ✓ | Pitcher Ks core engine (projection-only parity) |
+| ~~WI-0603~~ ✓ | MLB F5 ML ingest + side-projection layer |
+| ~~WI-0568~~ ✓ | Market evaluator — consensus layer (median line/price, dispersion) |
+| ~~WI-0567~~ ✓ | Surface 1P vs full-game label on /results page |
+| ~~WI-0557~~ ✓ | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) |
 
-### P0 — (empty, pipeline healthy ✓)
+### P0 — (empty ✓)
 
-### P1 — MLB Pitcher K chain (serial) + F5 ML (parallel, independent)
-
-| # | WI | Summary | Deps |
-|---|---|---|---|
-| 1 | ~~[WI-0595](../WORK_QUEUE/WI-0595.md)~~ ✓ | Pitcher Ks core engine (projection-only parity) | none |
-| 2 | [WI-0603](../WORK_QUEUE/WI-0603.md) | MLB F5 ML ingest + side-projection layer | ~~WI-0602~~✓ |
-| 3 | ~~[WI-0596](../WORK_QUEUE/WI-0596.md)~~ ✓ | Pitcher Ks data foundations and freshness gates | ~~WI-0595~~✓ |
-| 4 | [WI-0597](../WORK_QUEUE/WI-0597.md) | Pitcher Ks odds pull + dual-mode runtime wiring | ~~WI-0596~~✓ |
-| 5 | [WI-0598](../WORK_QUEUE/WI-0598.md) | Pitcher Ks contract hardening (validator + market contract) | WI-0597 |
-
-### P2 — Unblocked features (parallelize across agents)
+### P1 — Market evaluator chain (0569/0570 done ✓ — WI-0571 now unblocked)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 6 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | none |
-| 7 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion) | none |
-| 8 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |
+| 1 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | ~~0568~~✓, ~~0569~~✓ |
 
-### P3 — Market evaluator serial continuations (after WI-0568 lands)
+### P2 — Sprint +1 independent
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 9 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector (best-price separate from best-line) | WI-0568 |
-| 10 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
-| 11 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | WI-0568, WI-0569 |
+| 2 | [WI-0607](../WORK_QUEUE/WI-0607.md) | Persist + backfill results market period token | none |
+| 3 | [WI-0608](../WORK_QUEUE/WI-0608.md) | JWT revocation persistence — move to DB table | none |
+| 4 | [WI-0609](../WORK_QUEUE/WI-0609.md) | Token route IP whitelist / endpoint hardening | none |
+| 5 | [WI-0610](../WORK_QUEUE/WI-0610.md) | moneypuck.js test suite | none |
+| 6 | [WI-0613](../WORK_QUEUE/WI-0613.md) | Delete committed scratch/debug/backup files | none |
+| 7 | [WI-0614](../WORK_QUEUE/WI-0614.md) | Rename decision-pipeline-v2.patch.js | none |
 
-### P4 — New markets (after core pipeline stable)
+### P3 — Sprint +2
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 12 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (data ingest → model runner → display) | none |
+| 8 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (full end-to-end) | none |
+| 9 | [WI-0611](../WORK_QUEUE/WI-0611.md) | Replace NHL fault harness stubs | none |
+| 10 | [WI-0612](../WORK_QUEUE/WI-0612.md) | team-metrics.js test suite | none |
+| 11 | [WI-0615](../WORK_QUEUE/WI-0615.md) | Remove homeGoalieConfirmed deprecated field | none |
+| 12 | [WI-0616](../WORK_QUEUE/WI-0616.md) | Rename welcome-home-v2 card_type | none |
+| 13 | [WI-0617](../WORK_QUEUE/WI-0617.md) | Remove initDb() no-op callers | none |
+| 14 | [WI-0618](../WORK_QUEUE/WI-0618.md) | Delete orphaned archive directories | none |
+| 15 | [WI-0619](../WORK_QUEUE/WI-0619.md) | Extract FPL scheduler to schedulers/fpl.js | none |
+
+### Backlog — Tech Debt Milestone
+
+| WI | Summary | LOE |
+|---|---|---|
+| [WI-0620](../WORK_QUEUE/WI-0620.md) | Decompose db.js into domain modules | XL |
+| [WI-0621](../WORK_QUEUE/WI-0621.md) | Decompose games/route.ts into lib/games/ helpers | XL |
+| [WI-0622](../WORK_QUEUE/WI-0622.md) | Decompose transform.ts into split modules | L |
+| [WI-0623](../WORK_QUEUE/WI-0623.md) | Decompose cards-page-client.tsx into sub-components | XL |
+| [WI-0624](../WORK_QUEUE/WI-0624.md) | Audit + remove legacy reason codes | L |
 
 ---
 
