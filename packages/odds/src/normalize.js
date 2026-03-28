@@ -18,7 +18,11 @@
  */
 
 const SPORTS_CONFIG = require('./config');
-const { buildConsensus } = require('./market_evaluator');
+const {
+  buildConsensus,
+  detectMisprice,
+  selectBestExecution,
+} = require('./market_evaluator');
 
 /**
  * Get required markets for a sport from config
@@ -133,11 +137,24 @@ function normalizeGame(rawGame, sport) {
 
   // Build normalized object
   const market = rawGame.markets || {};
-  const h2h = Array.isArray(market.h2h) ? market.h2h[0] : null;
-  const totals = Array.isArray(market.totals) ? market.totals[0] : null;
   const spreadConsensus = buildConsensus(market.spreads || [], 'spread');
   const totalConsensus = buildConsensus(market.totals || [], 'total');
   const h2hConsensus = buildConsensus(market.h2h || [], 'h2h');
+  const spreadExecution = selectBestExecution(market.spreads || [], 'spread');
+  const totalExecution = selectBestExecution(market.totals || [], 'total');
+  const h2hExecution = selectBestExecution(market.h2h || [], 'h2h');
+  const spreadMisprice = detectMisprice(
+    spreadConsensus,
+    spreadExecution,
+    market.spreads || [],
+    'spread',
+  );
+  const totalMisprice = detectMisprice(
+    totalConsensus,
+    totalExecution,
+    market.totals || [],
+    'total',
+  );
 
   // F5 Moneyline: h2h scoped to first 5 innings (The Odds API key variants)
   const mlF5Entry =
@@ -147,24 +164,11 @@ function normalizeGame(rawGame, sport) {
     (Array.isArray(market.first_5_h2h) && market.first_5_h2h[0]) ||
     null;
 
-  // Best-line spread selection: pick the most favorable line per side across all books.
-  // For a home bet, max(home_line) = fewest points to cover; same logic for away.
-  // home_line and away_line are negatives of each other so best home ≠ best away book.
-  let bestSpreadHome = null, bestSpreadHomeBook = null;
-  let bestSpreadAway = null, bestSpreadAwayBook = null;
-  let bestSpreadPriceHome = null, bestSpreadPriceAway = null;
-  for (const entry of (market.spreads || [])) {
-    if (entry.home_line != null && (bestSpreadHome === null || entry.home_line > bestSpreadHome)) {
-      bestSpreadHome = entry.home_line;
-      bestSpreadHomeBook = entry.book ?? null;
-      bestSpreadPriceHome = entry.home_price ?? null;
-    }
-    if (entry.away_line != null && (bestSpreadAway === null || entry.away_line > bestSpreadAway)) {
-      bestSpreadAway = entry.away_line;
-      bestSpreadAwayBook = entry.book ?? null;
-      bestSpreadPriceAway = entry.away_price ?? null;
-    }
-  }
+  const sharedH2HBook =
+    h2hExecution.best_price_home_book &&
+    h2hExecution.best_price_home_book === h2hExecution.best_price_away_book
+      ? h2hExecution.best_price_home_book
+      : null;
 
   return {
     gameId,
@@ -175,29 +179,51 @@ function normalizeGame(rawGame, sport) {
     capturedAtUtc: new Date().toISOString(),
     market, // Raw market data (h2h, totals, spreads, etc.)
     odds: {
-      h2hHome: h2h?.home ?? null,
-      h2hAway: h2h?.away ?? null,
-      h2hBook: h2h?.book ?? null,
-      total: totals?.line ?? null,
-      totalPriceOver: totals?.over ?? null,
-      totalPriceUnder: totals?.under ?? null,
-      totalBook: totals?.book ?? null,
-      spreadHome: bestSpreadHome,
-      spreadHomeBook: bestSpreadHomeBook,
-      spreadAway: bestSpreadAway,
-      spreadAwayBook: bestSpreadAwayBook,
-      spreadPriceHome: bestSpreadPriceHome,
-      spreadPriceAway: bestSpreadPriceAway,
+      h2hHome: h2hExecution.best_price_home,
+      h2hAway: h2hExecution.best_price_away,
+      h2hBook: sharedH2HBook,
+      h2hHomeBook: h2hExecution.best_price_home_book,
+      h2hAwayBook: h2hExecution.best_price_away_book,
+      total: totalConsensus.consensus_line,
+      totalBook: null,
+      totalLineOver: totalExecution.best_line_over,
+      totalLineOverBook: totalExecution.best_line_over_book,
+      totalLineUnder: totalExecution.best_line_under,
+      totalLineUnderBook: totalExecution.best_line_under_book,
+      totalPriceOver: totalExecution.best_price_over,
+      totalPriceOverBook: totalExecution.best_price_over_book,
+      totalPriceUnder: totalExecution.best_price_under,
+      totalPriceUnderBook: totalExecution.best_price_under_book,
+      spreadHome: spreadExecution.best_line_home,
+      spreadHomeBook: spreadExecution.best_line_home_book,
+      spreadAway: spreadExecution.best_line_away,
+      spreadAwayBook: spreadExecution.best_line_away_book,
+      spreadPriceHome: spreadExecution.best_price_home,
+      spreadPriceHomeBook: spreadExecution.best_price_home_book,
+      spreadPriceAway: spreadExecution.best_price_away,
+      spreadPriceAwayBook: spreadExecution.best_price_away_book,
       spreadConsensusLine: spreadConsensus.consensus_line,
       spreadConsensusConfidence: spreadConsensus.consensus_confidence,
       spreadDispersionStddev: spreadConsensus.dispersion_stddev,
       spreadSourceBookCount: spreadConsensus.source_book_count,
-      monelineHome: h2h?.home ?? null,
-      monelineAway: h2h?.away ?? null,
+      spreadIsMispriced: spreadMisprice.is_mispriced,
+      spreadMispriceType: spreadMisprice.misprice_type,
+      spreadMispriceStrength: spreadMisprice.misprice_strength,
+      spreadOutlierBook: spreadMisprice.outlier_book,
+      spreadOutlierDelta: spreadMisprice.outlier_delta_vs_consensus,
+      spreadReviewFlag: spreadMisprice.review_flag,
+      monelineHome: h2hExecution.best_price_home,
+      monelineAway: h2hExecution.best_price_away,
       totalConsensusLine: totalConsensus.consensus_line,
       totalConsensusConfidence: totalConsensus.consensus_confidence,
       totalDispersionStddev: totalConsensus.dispersion_stddev,
       totalSourceBookCount: totalConsensus.source_book_count,
+      totalIsMispriced: totalMisprice.is_mispriced,
+      totalMispriceType: totalMisprice.misprice_type,
+      totalMispriceStrength: totalMisprice.misprice_strength,
+      totalOutlierBook: totalMisprice.outlier_book,
+      totalOutlierDelta: totalMisprice.outlier_delta_vs_consensus,
+      totalReviewFlag: totalMisprice.review_flag,
       h2hConsensusHome: h2hConsensus.consensus_price_home,
       h2hConsensusAway: h2hConsensus.consensus_price_away,
       h2hConsensusConfidence: h2hConsensus.consensus_confidence,

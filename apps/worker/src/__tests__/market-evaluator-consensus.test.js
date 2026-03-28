@@ -1,6 +1,8 @@
 const {
   buildConsensus,
+  detectMisprice,
   median,
+  selectBestExecution,
   stddev,
 } = require('../../../../packages/odds/src/market_evaluator.js');
 const {
@@ -121,7 +123,157 @@ describe('market evaluator consensus', () => {
     expect(lowConfidence.consensus_confidence).toBe('medium');
   });
 
-  test('normalizeGame emits consensus fields alongside existing best-line fields', () => {
+  test('selectBestExecution separates spread line-book from price-book', () => {
+    const execution = selectBestExecution(
+      [
+        { book: 'draftkings', home_line: -2.5, away_line: 2.5, home_price: -118, away_price: +102 },
+        { book: 'fanduel', home_line: -3.0, away_line: 3.0, home_price: -105, away_price: -110 },
+        { book: 'betmgm', home_line: -3.5, away_line: 3.5, home_price: +100, away_price: -120 },
+      ],
+      'spread',
+    );
+
+    expect(execution).toEqual({
+      best_line_home: -2.5,
+      best_line_home_book: 'draftkings',
+      best_line_away: 3.5,
+      best_line_away_book: 'betmgm',
+      best_price_home: 100,
+      best_price_home_book: 'betmgm',
+      best_price_away: 102,
+      best_price_away_book: 'draftkings',
+    });
+  });
+
+  test('selectBestExecution handles total side-specific lines and books', () => {
+    const execution = selectBestExecution(
+      [
+        { book: 'draftkings', line: 220.5, over: -115, under: +100 },
+        { book: 'fanduel', line: 219.5, over: -110, under: -105 },
+        { book: 'betmgm', line: 221.0, over: +102, under: -120 },
+      ],
+      'total',
+    );
+
+    expect(execution).toEqual({
+      best_line_over: 219.5,
+      best_line_over_book: 'fanduel',
+      best_line_under: 221,
+      best_line_under_book: 'betmgm',
+      best_price_over: 102,
+      best_price_over_book: 'betmgm',
+      best_price_under: 100,
+      best_price_under_book: 'draftkings',
+    });
+  });
+
+  test('selectBestExecution handles h2h price books and sparse rows', () => {
+    const execution = selectBestExecution(
+      [
+        { book: 'draftkings', home: -140, away: 120 },
+        { book: 'fanduel', home: -132, away: null },
+        { book: 'betmgm', home: null, away: 125 },
+      ],
+      'h2h',
+    );
+
+    expect(execution).toEqual({
+      best_price_home: -132,
+      best_price_home_book: 'fanduel',
+      best_price_away: 125,
+      best_price_away_book: 'betmgm',
+    });
+  });
+
+  test('detectMisprice flags soft spread lines against consensus', () => {
+    const misprice = detectMisprice(
+      {
+        consensus_line: -3,
+        dispersion_stddev: 0.4,
+      },
+      {
+        best_line_home: -1,
+        best_line_home_book: 'draftkings',
+        best_line_away: 3,
+        best_line_away_book: 'fanduel',
+      },
+      [
+        { book: 'draftkings', home_line: -1, away_line: 1, home_price: -110, away_price: -110 },
+        { book: 'fanduel', home_line: -3, away_line: 3, home_price: -110, away_price: -110 },
+      ],
+      'spread',
+    );
+
+    expect(misprice).toEqual({
+      is_mispriced: true,
+      misprice_type: 'SOFT_LINE',
+      misprice_strength: 2,
+      outlier_book: 'draftkings',
+      outlier_delta_vs_consensus: 2,
+      stale_or_soft_flag: true,
+      review_flag: false,
+    });
+  });
+
+  test('detectMisprice flags price-only totals misprices in decimal-odds bps', () => {
+    const misprice = detectMisprice(
+      {
+        consensus_line: 220.5,
+        dispersion_stddev: 0,
+      },
+      {
+        best_line_over: 220.5,
+        best_line_over_book: 'draftkings',
+        best_line_under: 220.5,
+        best_line_under_book: 'draftkings',
+      },
+      [
+        { book: 'draftkings', line: 220.5, over: +102, under: -120 },
+        { book: 'fanduel', line: 220.5, over: -110, under: -110 },
+        { book: 'betmgm', line: 220.5, over: -110, under: -112 },
+      ],
+      'total',
+    );
+
+    expect(misprice.is_mispriced).toBe(true);
+    expect(misprice.misprice_type).toBe('PRICE_ONLY');
+    expect(misprice.outlier_book).toBe('draftkings');
+    expect(misprice.misprice_strength).toBeGreaterThan(800);
+    expect(misprice.review_flag).toBe(false);
+  });
+
+  test('detectMisprice sets review flag for high dispersion without a soft-line winner', () => {
+    const misprice = detectMisprice(
+      {
+        consensus_line: -3,
+        dispersion_stddev: 1.8,
+      },
+      {
+        best_line_home: -2,
+        best_line_home_book: 'draftkings',
+        best_line_away: 3,
+        best_line_away_book: 'fanduel',
+      },
+      [
+        { book: 'draftkings', home_line: -2, away_line: 2, home_price: -110, away_price: -110 },
+        { book: 'fanduel', home_line: -3, away_line: 3, home_price: -110, away_price: -110 },
+        { book: 'betmgm', home_line: -5, away_line: 5, home_price: -110, away_price: -110 },
+      ],
+      'spread',
+    );
+
+    expect(misprice).toEqual({
+      is_mispriced: true,
+      misprice_type: 'HIGH_DISPERSION',
+      misprice_strength: 1.8,
+      outlier_book: null,
+      outlier_delta_vs_consensus: null,
+      stale_or_soft_flag: false,
+      review_flag: true,
+    });
+  });
+
+  test('normalizeGame emits consensus fields alongside execution fields', () => {
     const normalized = normalizeGame(
       {
         id: 'game-1',
@@ -152,12 +304,37 @@ describe('market evaluator consensus', () => {
     expect(normalized.odds).toMatchObject({
       spreadHome: -2.5,
       spreadAway: 3.5,
+      spreadHomeBook: 'c',
+      spreadAwayBook: 'a',
+      spreadPriceHome: -105,
+      spreadPriceHomeBook: 'c',
+      spreadPriceAway: -110,
+      spreadPriceAwayBook: 'a',
       spreadConsensusLine: -3,
       spreadConsensusConfidence: 'medium',
       spreadSourceBookCount: 3,
+      total: 220.5,
+      totalLineOver: 220,
+      totalLineOverBook: 'c',
+      totalLineUnder: 221.5,
+      totalLineUnderBook: 'b',
+      totalPriceOver: -105,
+      totalPriceOverBook: 'c',
+      totalPriceUnder: -110,
+      totalPriceUnderBook: 'a',
       totalConsensusLine: 220.5,
       totalConsensusConfidence: 'medium',
       totalSourceBookCount: 3,
+      totalIsMispriced: false,
+      totalMispriceType: null,
+      totalReviewFlag: false,
+      h2hHome: -132,
+      h2hHomeBook: 'c',
+      h2hAway: 122,
+      h2hAwayBook: 'a',
+      spreadIsMispriced: false,
+      spreadMispriceType: null,
+      spreadReviewFlag: false,
       h2hConsensusHome: -135,
       h2hConsensusAway: 120,
       h2hConsensusConfidence: 'medium',

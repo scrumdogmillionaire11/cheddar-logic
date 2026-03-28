@@ -542,6 +542,7 @@ function generateNBAMarketCallCards(
           total_price_over: oddsSnapshot?.total_price_over,
           total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at,
+          projection_comparison: totalDecision.projection_comparison ?? null,
         },
         line_context: buildLineContextPayload(totalLineContext, side),
         line_delta: totalLineContext?.delta ?? null,
@@ -706,6 +707,7 @@ function generateNBAMarketCallCards(
           total_price_over: oddsSnapshot?.total_price_over,
           total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at,
+          projection_comparison: spreadDecision.projection_comparison ?? null,
         },
         line_context: buildLineContextPayload(spreadLineContext, side),
         line_delta: spreadLineContext?.delta ?? null,
@@ -920,6 +922,21 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           }
 
           const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);
+
+          // WI-0571: log projection comparison per game
+          const totalPC = nbaMarketDecisions?.TOTAL?.projection_comparison;
+          const spreadPC = nbaMarketDecisions?.SPREAD?.projection_comparison;
+          if (totalPC) {
+            console.log(
+              `  [proj] ${gameId} TOTAL: consensus edge=${totalPC.edge_vs_consensus_pts ?? 'n/a'} pts, best edge=${totalPC.edge_vs_best_available_pts ?? 'n/a'} pts, alpha=${totalPC.execution_alpha_pts ?? 'n/a'} pts, playable=${totalPC.playable_edge}`,
+            );
+          }
+          if (spreadPC) {
+            console.log(
+              `  [proj] ${gameId} SPREAD: consensus edge=${spreadPC.edge_vs_consensus_pts ?? 'n/a'} pts, best edge=${spreadPC.edge_vs_best_available_pts ?? 'n/a'} pts, alpha=${spreadPC.execution_alpha_pts ?? 'n/a'} pts, playable=${spreadPC.playable_edge}`,
+            );
+          }
+
           const nbaLineContexts = {
             TOTAL: buildMarketLineContext({
               sport: 'NBA',

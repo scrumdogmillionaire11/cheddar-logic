@@ -803,6 +803,7 @@ function generateNHLMarketCallCards(
           total_price_over: oddsSnapshot?.total_price_over,
           total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at,
+          projection_comparison: totalDecision.projection_comparison ?? null,
         },
         confidence_pct: Math.round(confidence * 100),
         driver: {
@@ -963,6 +964,7 @@ function generateNHLMarketCallCards(
           total_price_over: oddsSnapshot?.total_price_over,
           total_price_under: oddsSnapshot?.total_price_under,
           captured_at: oddsSnapshot?.captured_at,
+          projection_comparison: spreadDecision.projection_comparison ?? null,
         },
         confidence_pct: Math.round(confidence * 100),
         driver: {
@@ -1340,6 +1342,21 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           });
 
           const marketDecisions = computeNHLMarketDecisions(oddsSnapshot);
+
+          // WI-0571: log projection comparison per game
+          const nhlTotalPC = marketDecisions?.TOTAL?.projection_comparison;
+          const nhlSpreadPC = marketDecisions?.SPREAD?.projection_comparison;
+          if (nhlTotalPC) {
+            console.log(
+              `  [proj] ${gameId} TOTAL: consensus edge=${nhlTotalPC.edge_vs_consensus_pts ?? 'n/a'} pts, best edge=${nhlTotalPC.edge_vs_best_available_pts ?? 'n/a'} pts, alpha=${nhlTotalPC.execution_alpha_pts ?? 'n/a'} pts, playable=${nhlTotalPC.playable_edge}`,
+            );
+          }
+          if (nhlSpreadPC) {
+            console.log(
+              `  [proj] ${gameId} SPREAD: consensus edge=${nhlSpreadPC.edge_vs_consensus_pts ?? 'n/a'} pts, best edge=${nhlSpreadPC.edge_vs_best_available_pts ?? 'n/a'} pts, alpha=${nhlSpreadPC.execution_alpha_pts ?? 'n/a'} pts, playable=${nhlSpreadPC.playable_edge}`,
+            );
+          }
+
           const expressionChoice = selectExpressionChoice(marketDecisions);
 
           // WI-0503: Dual-run observation log — records selector decisions per game

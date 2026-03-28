@@ -3,7 +3,7 @@ const {
   resolveThresholdProfile,
   resolvePlayCleanlinessProfile,
   applyNbaTotalQuarantine,
-} = require('./decision-pipeline-v2.patch');
+} = require('./decision-pipeline-v2-edge-config');
 
 // Edge unit: all edge values in this pipeline are decimal fractions.
 // See CANONICAL_EDGE_CONTRACT in decision-gate.js for the authoritative definition.

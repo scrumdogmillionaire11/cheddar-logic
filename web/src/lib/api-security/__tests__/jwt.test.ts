@@ -4,7 +4,7 @@
  */
 
 import * as crypto from 'crypto';
-import { createAccessToken, verifyToken } from '../jwt';
+import { createAccessToken, verifyToken, revokeToken } from '../jwt.ts';
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -319,6 +319,121 @@ describe('WI-0560: getAuthSecret fail-closed in production', () => {
         delete process.env.CHEDDAR_AUTH_SECRET;
       } else {
         process.env.CHEDDAR_AUTH_SECRET = originalCheddar;
+      }
+      if (originalNode === undefined) {
+        delete mutEnv.NODE_ENV;
+      } else {
+        mutEnv.NODE_ENV = originalNode;
+      }
+    }
+  });
+});
+
+// ---- WI-0608: DB revocation persistence ----
+
+describe('WI-0608: DB revocation persistence', () => {
+  test('Test 9: createAccessToken embeds a jti field in the payload', () => {
+    const originalEnv = process.env.AUTH_SECRET;
+    const originalNode = process.env.NODE_ENV;
+    process.env.AUTH_SECRET = 'test-secret-jti-check';
+    mutEnv.NODE_ENV = 'development';
+
+    try {
+      const token = createAccessToken({
+        userId: 'jti-user',
+        email: 'jti@example.com',
+        role: 'FREE_ACCOUNT',
+        subscription_status: 'NONE',
+      });
+
+      const parts = token.split('.');
+      assert.equal(parts.length, 3, 'Token must have 3 parts');
+      const padded = parts[1] + '==='.slice((parts[1].length + 3) % 4);
+      const payloadJson = Buffer.from(
+        padded.replace(/-/g, '+').replace(/_/g, '/'),
+        'base64',
+      ).toString();
+      const payload = JSON.parse(payloadJson);
+      assert.ok(typeof payload.jti === 'string' && payload.jti.length > 0, 'Token payload must include a non-empty jti field');
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.AUTH_SECRET;
+      } else {
+        process.env.AUTH_SECRET = originalEnv;
+      }
+      if (originalNode === undefined) {
+        delete mutEnv.NODE_ENV;
+      } else {
+        mutEnv.NODE_ENV = originalNode;
+      }
+    }
+  });
+
+  test('Test 10: revokeToken causes verifyToken to return null', () => {
+    const originalEnv = process.env.AUTH_SECRET;
+    const originalNode = process.env.NODE_ENV;
+    process.env.AUTH_SECRET = 'test-secret-revoke';
+    mutEnv.NODE_ENV = 'development';
+
+    try {
+      const token = createAccessToken({
+        userId: 'revoke-user',
+        email: 'revoke@example.com',
+        role: 'FREE_ACCOUNT',
+        subscription_status: 'NONE',
+      });
+
+      // Token should be valid before revocation
+      const beforeRevoke = verifyToken(token);
+      assert.notEqual(beforeRevoke, null, 'Token must be valid before revocation');
+
+      // Revoke and verify
+      revokeToken(token);
+      const afterRevoke = verifyToken(token);
+      assert.equal(afterRevoke, null, 'verifyToken must return null after revokeToken');
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.AUTH_SECRET;
+      } else {
+        process.env.AUTH_SECRET = originalEnv;
+      }
+      if (originalNode === undefined) {
+        delete mutEnv.NODE_ENV;
+      } else {
+        mutEnv.NODE_ENV = originalNode;
+      }
+    }
+  });
+
+  test('Test 11: revoking token-A does not affect token-B (different jti)', () => {
+    const originalEnv = process.env.AUTH_SECRET;
+    const originalNode = process.env.NODE_ENV;
+    process.env.AUTH_SECRET = 'test-secret-isolation';
+    mutEnv.NODE_ENV = 'development';
+
+    try {
+      const tokenA = createAccessToken({
+        userId: 'user-a',
+        email: 'a@example.com',
+        role: 'FREE_ACCOUNT',
+        subscription_status: 'NONE',
+      });
+      const tokenB = createAccessToken({
+        userId: 'user-b',
+        email: 'b@example.com',
+        role: 'FREE_ACCOUNT',
+        subscription_status: 'NONE',
+      });
+
+      revokeToken(tokenA);
+
+      assert.equal(verifyToken(tokenA), null, 'Token A must be revoked');
+      assert.notEqual(verifyToken(tokenB), null, 'Token B must still be valid after revoking token A');
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.AUTH_SECRET;
+      } else {
+        process.env.AUTH_SECRET = originalEnv;
       }
       if (originalNode === undefined) {
         delete mutEnv.NODE_ENV;

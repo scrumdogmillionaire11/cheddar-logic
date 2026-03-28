@@ -9,6 +9,9 @@ const {
 const {
   settlePendingCards,
 } = require('../jobs/settle_pending_cards.js');
+const {
+  backfillPeriodToken,
+} = require('../jobs/backfill_period_token.js');
 
 const TEST_DB_PATH = '/tmp/cheddar-test-settlement-pipeline.db';
 const LOCK_PATH = `${TEST_DB_PATH}.lock`;
@@ -403,5 +406,156 @@ describe('settlement pipeline integration (totals + 1P)', () => {
       NHL_1P_TOTAL: { pending: 3, settled: 2, failed: 1 },
       NHL_MONEYLINE: { pending: 0, settled: 0, failed: 0 },
     });
+  });
+});
+
+describe('backfill_period_token job (backfillPeriodToken)', () => {
+  const BACKFILL_DB_PATH = '/tmp/cheddar-test-backfill-period-token.db';
+  const BACKFILL_LOCK_PATH = `${BACKFILL_DB_PATH}.lock`;
+
+  function removeBackfillBackups() {
+    const backupsDir = path.join(path.dirname(BACKFILL_DB_PATH), 'backups');
+    if (!fs.existsSync(backupsDir)) return;
+    for (const entry of fs.readdirSync(backupsDir)) {
+      if (
+        entry.startsWith('cheddar-before-settle-cards-') &&
+        entry.endsWith('.db')
+      ) {
+        try { fs.unlinkSync(path.join(backupsDir, entry)); } catch {}
+      }
+    }
+  }
+
+  beforeEach(async () => {
+    process.env.CHEDDAR_DB_PATH = BACKFILL_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+
+    try { fs.unlinkSync(BACKFILL_DB_PATH); } catch {}
+    try { fs.unlinkSync(BACKFILL_LOCK_PATH); } catch {}
+    removeBackfillBackups();
+
+    await runMigrations();
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    try { fs.unlinkSync(BACKFILL_DB_PATH); } catch {}
+    try { fs.unlinkSync(BACKFILL_LOCK_PATH); } catch {}
+    removeBackfillBackups();
+  });
+
+  function insertSettledRow(db, { resultId, cardId, cardType, metadata = null, payloadPeriod = null }) {
+    const now = new Date().toISOString();
+    const gameId = `g-${cardId}`;
+
+    // Insert prerequisite game row
+    db.prepare(`
+      INSERT OR IGNORE INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(`games-${cardId}`, 'NHL', gameId, 'Home', 'Away', now, 'completed');
+
+    // Insert a minimal card_payload
+    db.prepare(`
+      INSERT OR IGNORE INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(cardId, gameId, 'nhl', cardType, `Card ${cardId}`, now,
+      JSON.stringify({ period: payloadPeriod, game_id: gameId }));
+
+    db.prepare(`
+      INSERT INTO card_results (id, card_id, game_id, sport, card_type, recommended_bet_type,
+        status, result, settled_at, pnl_units, metadata, market_key, market_type, selection, line, locked_price)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      resultId, cardId, gameId, 'nhl', cardType, 'total',
+      'settled', 'win', now, 1.0,
+      metadata ? JSON.stringify(metadata) : null,
+      `${gameId}:TOTAL:OVER:5.5:FULL_GAME`, 'TOTAL', 'OVER', 5.5, -110
+    );
+  }
+
+  test('dry-run returns candidates count and writes nothing', async () => {
+    let db = getDatabase();
+    insertSettledRow(db, { resultId: 'r-dry-1', cardId: 'c-dry-1', cardType: 'nhl-totals-call' });
+    insertSettledRow(db, { resultId: 'r-dry-2', cardId: 'c-dry-2', cardType: 'nhl-pace-1p' });
+    closeDatabase();
+
+    const result = await backfillPeriodToken({ dryRun: true });
+
+    expect(result.success).toBe(true);
+    expect(result.candidates).toBe(2);
+    expect(result.updated).toBe(0);
+
+    // Confirm DB was not written (get a fresh connection after withDb closed the previous one)
+    db = getDatabase();
+    const row = db.prepare('SELECT metadata FROM card_results WHERE id = ?').get('r-dry-1');
+    expect(row.metadata).toBeNull();
+  });
+
+  test('apply mode writes market_period_token without changing result/pnl_units/settled_at', async () => {
+    let db = getDatabase();
+    insertSettledRow(db, {
+      resultId: 'r-apply-1',
+      cardId: 'c-apply-1',
+      cardType: 'nhl-totals-call',
+      payloadPeriod: 'FULL_GAME',
+    });
+
+    const before = db.prepare('SELECT result, pnl_units, settled_at FROM card_results WHERE id = ?').get('r-apply-1');
+    closeDatabase();
+
+    const result = await backfillPeriodToken({ dryRun: false });
+
+    expect(result.success).toBe(true);
+    expect(result.updated).toBeGreaterThanOrEqual(1);
+
+    db = getDatabase();
+    const row = db.prepare('SELECT metadata, result, pnl_units, settled_at FROM card_results WHERE id = ?').get('r-apply-1');
+    const meta = JSON.parse(row.metadata);
+    expect(meta.market_period_token).toBe('FULL_GAME');
+    // Immutable fields must not change
+    expect(row.result).toBe(before.result);
+    expect(row.pnl_units).toBe(before.pnl_units);
+    expect(row.settled_at).toBe(before.settled_at);
+  });
+
+  test('rows already having market_period_token are not re-written (idempotent)', async () => {
+    let db = getDatabase();
+    insertSettledRow(db, {
+      resultId: 'r-idem-1',
+      cardId: 'c-idem-1',
+      cardType: 'nhl-totals-call',
+      metadata: { market_period_token: 'FULL_GAME', backfilledAt: '2025-01-01T00:00:00Z' },
+    });
+    closeDatabase();
+
+    const result = await backfillPeriodToken({ dryRun: false });
+
+    // Row already has token, should not be in candidates
+    expect(result.candidates).toBe(0);
+    expect(result.updated).toBe(0);
+
+    // Original metadata unchanged
+    db = getDatabase();
+    const row = db.prepare('SELECT metadata FROM card_results WHERE id = ?').get('r-idem-1');
+    const meta = JSON.parse(row.metadata);
+    expect(meta.market_period_token).toBe('FULL_GAME');
+    expect(meta.backfilledAt).toBe('2025-01-01T00:00:00Z');
+  });
+
+  test('1P card_type receives token 1P; full-game card receives FULL_GAME', async () => {
+    let db = getDatabase();
+    insertSettledRow(db, { resultId: 'r-type-1p', cardId: 'c-type-1p', cardType: 'nhl-pace-1p' });
+    insertSettledRow(db, { resultId: 'r-type-fg', cardId: 'c-type-fg', cardType: 'nhl-totals-call' });
+    closeDatabase();
+
+    await backfillPeriodToken({ dryRun: false });
+
+    db = getDatabase();
+    const row1p = db.prepare('SELECT metadata FROM card_results WHERE id = ?').get('r-type-1p');
+    const rowFg = db.prepare('SELECT metadata FROM card_results WHERE id = ?').get('r-type-fg');
+
+    expect(JSON.parse(row1p.metadata).market_period_token).toBe('1P');
+    expect(JSON.parse(rowFg.metadata).market_period_token).toBe('FULL_GAME');
   });
 });

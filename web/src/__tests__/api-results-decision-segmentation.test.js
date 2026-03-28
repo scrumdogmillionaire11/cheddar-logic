@@ -82,6 +82,15 @@ async function validateResultsSegmentationSourceContract(assert) {
       routeSource.includes('marketPeriodToken: row.market_period_token'),
     'results route must expose market_period_token on ledger rows as marketPeriodToken',
   );
+  // WI-0607: COALESCE(persisted, derived) pattern must be present for both SQL blocks
+  assert.ok(
+    routeSource.includes("json_extract(cr.metadata, '$.market_period_token')"),
+    'results route must prefer persisted metadata.market_period_token via json_extract',
+  );
+  assert.ok(
+    routeSource.includes("ELSE 'FULL_GAME'"),
+    'results route must retain derived CASE fallback expression for backward compatibility',
+  );
 }
 
 function sumNullable(values) {

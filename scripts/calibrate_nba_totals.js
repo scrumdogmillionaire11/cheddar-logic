@@ -9,7 +9,7 @@ const {
 const { resolveDatabasePath } = require('../packages/data/src/db-path.js');
 const {
   resolveThresholdProfile,
-} = require('../packages/models/src/decision-pipeline-v2.patch.js');
+} = require('../packages/models/src/decision-pipeline-v2-edge-config.js');
 const edgeCalculator = require('../packages/models/src/edge-calculator.js');
 
 const REPORT_PATH = path.resolve(

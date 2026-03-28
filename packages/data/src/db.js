@@ -1159,8 +1159,17 @@ function insertOddsSnapshot(snapshot) {
       spread_home, spread_away, spread_home_book, spread_away_book,
       moneyline_home, moneyline_away,
       spread_price_home, spread_price_away, total_price_over, total_price_under,
+      spread_price_home_book, spread_price_away_book,
+      h2h_home_book, h2h_away_book,
+      total_line_over, total_line_over_book,
+      total_line_under, total_line_under_book,
+      total_price_over_book, total_price_under_book,
+      spread_is_mispriced, spread_misprice_type, spread_misprice_strength,
+      spread_outlier_book, spread_outlier_delta, spread_review_flag,
       spread_consensus_line, spread_consensus_confidence,
       spread_dispersion_stddev, spread_source_book_count,
+      total_is_mispriced, total_misprice_type, total_misprice_strength,
+      total_outlier_book, total_outlier_delta, total_review_flag,
       total_consensus_line, total_consensus_confidence,
       total_dispersion_stddev, total_source_book_count,
       h2h_consensus_home, h2h_consensus_away, h2h_consensus_confidence,
@@ -1168,7 +1177,7 @@ function insertOddsSnapshot(snapshot) {
       ml_f5_home, ml_f5_away,
       raw_data, job_run_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -1189,12 +1198,34 @@ function insertOddsSnapshot(snapshot) {
     toNullableNumber(snapshot.spreadPriceAway),
     toNullableNumber(snapshot.totalPriceOver),
     toNullableNumber(snapshot.totalPriceUnder),
+    snapshot.spreadPriceHomeBook || null,
+    snapshot.spreadPriceAwayBook || null,
+    snapshot.h2hHomeBook || null,
+    snapshot.h2hAwayBook || null,
+    toNullableNumber(snapshot.totalLineOver),
+    snapshot.totalLineOverBook || null,
+    toNullableNumber(snapshot.totalLineUnder),
+    snapshot.totalLineUnderBook || null,
+    snapshot.totalPriceOverBook || null,
+    snapshot.totalPriceUnderBook || null,
+    snapshot.spreadIsMispriced === true ? 1 : 0,
+    snapshot.spreadMispriceType || null,
+    toNullableNumber(snapshot.spreadMispriceStrength),
+    snapshot.spreadOutlierBook || null,
+    toNullableNumber(snapshot.spreadOutlierDelta),
+    snapshot.spreadReviewFlag === true ? 1 : 0,
     toNullableNumber(snapshot.spreadConsensusLine),
     snapshot.spreadConsensusConfidence || null,
     toNullableNumber(snapshot.spreadDispersionStddev),
     Number.isInteger(snapshot.spreadSourceBookCount)
       ? snapshot.spreadSourceBookCount
       : null,
+    snapshot.totalIsMispriced === true ? 1 : 0,
+    snapshot.totalMispriceType || null,
+    toNullableNumber(snapshot.totalMispriceStrength),
+    snapshot.totalOutlierBook || null,
+    toNullableNumber(snapshot.totalOutlierDelta),
+    snapshot.totalReviewFlag === true ? 1 : 0,
     toNullableNumber(snapshot.totalConsensusLine),
     snapshot.totalConsensusConfidence || null,
     toNullableNumber(snapshot.totalDispersionStddev),
@@ -4151,6 +4182,48 @@ function purgeStaleTminusPullLog() {
   ).run();
 }
 
+// ---- WI-0608: JWT revocation persistence ----
+
+/**
+ * Insert a revoked token record.
+ * Uses INSERT OR IGNORE so duplicate revocations are silently no-ops.
+ * @param {string} jti - JWT ID claim (unique per token)
+ * @param {number} expiresAt - Unix epoch seconds matching the token's exp claim
+ */
+function insertRevokedToken(jti, expiresAt) {
+  const db = getDatabase();
+  db.prepare(
+    `INSERT OR IGNORE INTO revoked_tokens (jti, revoked_at, expires_at)
+     VALUES (?, strftime('%s','now'), ?)`,
+  ).run(jti, expiresAt);
+}
+
+/**
+ * Check if a token has been revoked.
+ * @param {string} jti - JWT ID claim
+ * @returns {boolean} true if the jti exists in the revoked_tokens table
+ */
+function isTokenRevoked(jti) {
+  const db = getDatabase();
+  const row = db.prepare(
+    `SELECT 1 FROM revoked_tokens WHERE jti = ? LIMIT 1`,
+  ).get(jti);
+  return !!row;
+}
+
+/**
+ * Remove expired revocation records to bound table growth.
+ * Deletes rows whose expires_at is in the past (< current epoch).
+ * @returns {number} number of rows deleted
+ */
+function pruneExpiredRevokedTokens() {
+  const db = getDatabase();
+  const info = db.prepare(
+    `DELETE FROM revoked_tokens WHERE expires_at < strftime('%s','now')`,
+  ).run();
+  return info.changes;
+}
+
 module.exports = {
   initDb,
   getDatabase,
@@ -4236,4 +4309,7 @@ module.exports = {
   isQuotaCircuitOpen,
   claimTminusPullSlot,
   purgeStaleTminusPullLog,
+  insertRevokedToken,
+  isTokenRevoked,
+  pruneExpiredRevokedTokens,
 };

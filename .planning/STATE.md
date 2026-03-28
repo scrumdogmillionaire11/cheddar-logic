@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-27T18:00:00Z"
-last_activity: "2026-03-27 - WI-0595 ✓ + WI-0596 ✓ (K chain audit: both WIs already fully implemented and tested — 27/27 tests green, all acceptance criteria met). Next: WI-0597 (odds pull + dual-mode runtime wiring)."
+status: active
+last_updated: "2026-03-28T02:10:00Z"
+last_activity: "2026-03-27 - qt-87 / WI-0607 persist market_period_token: deriveAndMergePeriodToken() in settle_pending_cards.js writes token to card_results.metadata at settlement; backfill_period_token.js (dry-run + apply, 411 eligible historical rows); /api/results COALESCE(persisted, derived) in both SQL blocks; 20 tests pass; tsc clean. WI-0607 moved to COMPLETE."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,162 +31,91 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-27
-- Next action: **WI-0595 + WI-0596 done.** Start WI-0597 (odds pull + dual-mode runtime wiring) — unblocked. Run WI-0603 (F5 ML) in parallel — independent of K chain. WI-0557, WI-0568, WI-0567 can also run in parallel across agents.
+- Next action: **WI-0571** (market evaluator projection comparator) is the highest-leverage item — completes the 4-WI market evaluator chain. Then **WI-0613 + WI-0614** (zero-risk cleanup). Then the security pair **WI-0608 + WI-0609**. Full priority order in the sprint tables below.
 
-## Sprint Plan — 2026-03-27 (P0 clear — K chain + F5 now active)
+## Sprint Plan — 2026-03-27 (20 open WIs: 1 chain-finisher + 6 sprint+1 + 8 sprint+2 + 5 backlog)
 
 ### Dependency Chains
 
-- **MLB pitcher K (serial, start now):** WI-0595 → WI-0596 → WI-0597 → WI-0598
-- **MLB F5 ML (unblocked):** WI-0603 (WI-0602 ✓)
-- **Market evaluator (serial):** WI-0568 → WI-0569 / WI-0570 → WI-0571
-- **CLV / display / new markets:** WI-0557, WI-0567, WI-0586 — all independent
+- **MLB pitcher K:** ALL DONE ✓ (WI-0595→0596→0597→0598)
+- **MLB F5:** ALL DONE ✓ (WI-0602→0603→0604)
+- **CLV:** ALL DONE ✓ (WI-0557)
+- **Display:** ALL DONE ✓ (WI-0567 1P label)
+- **Market evaluator (serial):** ~~WI-0568~~✓ → ~~WI-0569~~✓ / ~~WI-0570~~✓ → **WI-0571** (now unblocked — last item in chain)
+- **Security hardening:** WI-0608 → WI-0609 (sequential; 608 adds DB revocation layer, 609 adds IP guard)
+- **New markets:** WI-0586 independent (NHL blocked shots)
+- **Results:** WI-0607 independent (period token persistence)
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-27 (P0 clear)
+## Prioritized Open Work Queue — 2026-03-27
 
 ### Recently Completed ✓
 
 | WI | Summary |
 |---|---|
-| ~~WI-0606~~ ✓ | Re-export `computeLineDelta` — NBA model runtime crash resolved |
-| ~~WI-0605~~ ✓ | MLB pitcher `team` join key fix (`buildPitcherTeamMap` + schedule abbreviation) |
-| ~~WI-0604~~ ✓ | MLB pipeline health — F5 vs full-game watchdog differentiation |
-| ~~WI-0602~~ ✓ | MLB DUAL_RUN market selection — F5 Total as primary game market |
-| ~~WI-0592~~ ✓ | NHL SOG breakout usage overlay |
-| ~~WI-0591~~ ✓ | Wire empirical sigma overrides into NBA and NCAAM decisioning |
-| ~~WI-0589~~ ✓ | PLAY vs LEAN tier correction |
-| ~~WI-0556~~ ✓ | Track line movement delta — stale-edge detection |
-| ~~WI-0553~~ ✓ | Gate FIRST_PERIOD on edge, not projection signal |
+| ~~WI-0570~~ ✓ | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) |
+| ~~WI-0569~~ ✓ | Market evaluator — execution selector (best-price separate from best-line) |
+| ~~WI-0598~~ ✓ | Pitcher Ks contract hardening (validator + market contract) |
+| ~~WI-0597~~ ✓ | Pitcher Ks odds pull + dual-mode runtime wiring |
+| ~~WI-0596~~ ✓ | Pitcher Ks data foundations and freshness gates |
+| ~~WI-0595~~ ✓ | Pitcher Ks core engine (projection-only parity) |
+| ~~WI-0603~~ ✓ | MLB F5 ML ingest + side-projection layer |
+| ~~WI-0568~~ ✓ | Market evaluator — consensus layer (median line/price, dispersion) |
+| ~~WI-0567~~ ✓ | Surface 1P vs full-game label on /results page |
+| ~~WI-0557~~ ✓ | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) |
 
-### P0 — (empty, pipeline healthy ✓)
+### P0 — (empty ✓)
 
-### P1 — MLB Pitcher K chain (serial) + F5 ML (parallel, independent)
-
-| # | WI | Summary | Deps |
-|---|---|---|---|
-| 1 | ~~[WI-0595](../WORK_QUEUE/WI-0595.md)~~ ✓ | Pitcher Ks core engine (projection-only parity) | none |
-| 2 | [WI-0603](../WORK_QUEUE/WI-0603.md) | MLB F5 ML ingest + side-projection layer | ~~WI-0602~~✓ |
-| 3 | ~~[WI-0596](../WORK_QUEUE/WI-0596.md)~~ ✓ | Pitcher Ks data foundations and freshness gates | ~~WI-0595~~✓ |
-| 4 | [WI-0597](../WORK_QUEUE/WI-0597.md) | Pitcher Ks odds pull + dual-mode runtime wiring | ~~WI-0596~~✓ |
-| 5 | [WI-0598](../WORK_QUEUE/WI-0598.md) | Pitcher Ks contract hardening (validator + market contract) | WI-0597 |
-
-### P2 — Unblocked features (parallelize across agents)
+### P1 — Market evaluator chain (0569/0570 done ✓ — WI-0571 now unblocked)
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 6 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | none |
-| 7 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion) | none |
-| 8 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | none |
+| 1 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | ~~0568~~✓, ~~0569~~✓ |
 
-### P3 — Market evaluator serial continuations (after WI-0568 lands)
+### P2 — Sprint +1 independent
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 9 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector (best-price separate from best-line) | WI-0568 |
-| 10 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
-| 11 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, execution alpha) | WI-0568, WI-0569 |
+| 2 | ~~WI-0607~~ ✓ | Persist + backfill results market period token | none |
+| 3 | ~~WI-0608~~ ✓ | JWT revocation persistence — move to DB table | none |
+| 4 | [WI-0609](../WORK_QUEUE/WI-0609.md) | Token route IP whitelist / endpoint hardening | none |
+| 5 | [WI-0610](../WORK_QUEUE/WI-0610.md) | moneypuck.js test suite | none |
+| 6 | [WI-0613](../WORK_QUEUE/WI-0613.md) | Delete committed scratch/debug/backup files | none |
+| 7 | [WI-0614](../WORK_QUEUE/WI-0614.md) | Rename decision-pipeline-v2.patch.js | none |
 
-### P4 — New markets (after core pipeline stable)
+### P3 — Sprint +2
 
 | # | WI | Summary | Deps |
 |---|---|---|---|
-| 12 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (data ingest → model runner → display) | none |
+| 8 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (full end-to-end) | none |
+| 9 | [WI-0611](../WORK_QUEUE/WI-0611.md) | Replace NHL fault harness stubs | none |
+| 10 | [WI-0612](../WORK_QUEUE/WI-0612.md) | team-metrics.js test suite | none |
+| 11 | [WI-0615](../WORK_QUEUE/WI-0615.md) | Remove homeGoalieConfirmed deprecated field | none |
+| 12 | [WI-0616](../WORK_QUEUE/WI-0616.md) | Rename welcome-home-v2 card_type | none |
+| 13 | [WI-0617](../WORK_QUEUE/WI-0617.md) | Remove initDb() no-op callers | none |
+| 14 | [WI-0618](../WORK_QUEUE/WI-0618.md) | Delete orphaned archive directories | none |
+| 15 | [WI-0619](../WORK_QUEUE/WI-0619.md) | Extract FPL scheduler to schedulers/fpl.js | none |
 
----
+### Backlog — Tech Debt Milestone
 
-### Historical Tier 1 — Security & Edge Math (all DONE ✓)
-
-| WI | Summary | Status |
+| WI | Summary | LOE |
 |---|---|---|
-| ~~[WI-0560](../WORK_QUEUE/COMPLETE/WI-0560.md)~~ | Fail closed when `AUTH_SECRET` missing/default in prod | ✓ DONE (qt-65) |
-| ~~[WI-0559](../WORK_QUEUE/COMPLETE/WI-0559.md)~~ | Fix JWT HS256 signature to RFC-compliant base64url | ✓ DONE (qt-65) |
-| ~~[WI-0561](../WORK_QUEUE/COMPLETE/WI-0561.md)~~ | Upgrade Next.js 16.1.6 → 16.2.1 (zero CVEs) | ✓ DONE (qt-66) |
-| ~~[WI-0551](../WORK_QUEUE/COMPLETE/WI-0551.md)~~ | Remove vig from implied probability (edge math baseline) | ✓ DONE (qt-66) |
-| ~~[WI-0555](../WORK_QUEUE/COMPLETE/WI-0555.md)~~ | Unify spread threshold + enable `MARKET_THRESHOLDS_V2` | ✓ DONE (qt-66) |
-| ~~[WI-0552](../WORK_QUEUE/COMPLETE/WI-0552.md)~~ | Empirical sigma from game history (replace hardcoded 12/14) | ✓ DONE (qt-67) |
-| ~~[WI-0572](../WORK_QUEUE/COMPLETE/WI-0572.md)~~ | Hostile audit — betting decision pipeline (10 findings) | ✓ DONE (2026-03-23) |
+| [WI-0620](../WORK_QUEUE/WI-0620.md) | Decompose db.js into domain modules | XL |
+| [WI-0621](../WORK_QUEUE/WI-0621.md) | Decompose games/route.ts into lib/games/ helpers | XL |
+| [WI-0622](../WORK_QUEUE/WI-0622.md) | Decompose transform.ts into split modules | L |
+| [WI-0623](../WORK_QUEUE/WI-0623.md) | Decompose cards-page-client.tsx into sub-components | XL |
+| [WI-0624](../WORK_QUEUE/WI-0624.md) | Audit + remove legacy reason codes | L |
 
 ---
 
-### Tier 0 — Audit-Derived Critical/High Fixes (create WIs first, do before Tier 1)
+### Historical Audit Fixes — Tier 0 / Tier 0b (all DONE ✓ as of 2026-03-24)
 
-> Source: [hostile-betting-pipeline-audit-2026-03.md](../docs/runbooks/hostile-betting-pipeline-audit-2026-03.md)
-> Each item needs its own WI file before implementation starts. All are independent (no cross-dependencies).
-
-| Priority | Placeholder | Finding | Severity | Target file |
-|---|---|---|---|---|
-| 1 | AUDIT-FIX-01 | NHL OVER edge suppressed by spurious `+0.5` line adjustment — every NHL OVER total loses ~0.02–0.04 edge silently | **CRITICAL** | `packages/models/src/edge-calculator.js` |
-| 2 | AUDIT-FIX-02 | Silent exception swallow in `buildDecisionV2` — parse failures become `DEGRADED` with no log, masking real errors | **CRITICAL** | `packages/models/src/decision-pipeline-v2.js` |
-| 3 | AUDIT-FIX-03 | `truePlayMap` first-come ordering — stale LEAN shadows a fresh FIRE for the same game | **HIGH** | `packages/models/src/decision-pipeline-v2.js` |
-| 4 | AUDIT-FIX-04 | `shouldFlip` coerces null edge to `0` via `?? 0` — phantom flip when `edge_available=true` but edge is null | **HIGH** | `packages/models/src/decision-gate.js` |
-| 5 | AUDIT-FIX-05 | `reason_codes` accumulates monotonically, never purged — stale codes contradict current card status | **HIGH** | `apps/worker/src/utils/decision-publisher.js` |
-| 6 | AUDIT-FIX-06 | `EVIDENCE` cards carry permanent `PASS_UNREPAIRABLE_LEGACY` in `reason_codes`, never refreshed on re-evaluation | **HIGH** | `apps/worker/src/utils/decision-publisher.js` |
-
----
-
-### Tier 0b — NHL Props Pipeline Audit Fixes (2026-03-23)
-
-> Source: NHL player shot props pipeline audit — full trace from ingest → model → display.
-> WI-0573–WI-0584. Critical/High items must land before treating NHL prop plays as actionable bets.
-
-| Priority | WI | Finding | Severity | Target file(s) |
-|---|---|---|---|---|
-| 1 | ~~[WI-0573](../WORK_QUEUE/COMPLETE/WI-0573.md)~~ ✓ | Negative American prices (`−110`, `−115`) passed to `decimalToAmerican()` — `> 10` check must be `Math.abs() > 10`; every prop price on display is currently wrong | **CRITICAL** | ✓ DONE (qt-69) |
-| 2 | ~~[WI-0574](../WORK_QUEUE/COMPLETE/WI-0574.md)~~ ✓ | `selection.price` hardcoded to `−110` in full-game + 1P card payloads; real `over_price`/`under_price` from Odds API are stored but never wired to the canonical price field | **CRITICAL** | ✓ DONE (qt-70) |
-| 3 | ~~[WI-0575](../WORK_QUEUE/COMPLETE/WI-0575.md)~~ ✓ | `opportunity_score` is always computed for the OVER direction regardless of V1 play direction; an UNDER call shows a positive OVER opportunity_score, contradicting the bet | **CRITICAL** | ✓ DONE (qt-71) |
-| 4 | ~~[WI-0576](../WORK_QUEUE/COMPLETE/WI-0576.md)~~ ✓ | `NHL_SOG_PROP_EVENTS_ENABLED` defaults false — real Odds API lines are never ingested unless explicitly set; all cards run on synthetic `2.5` floor line silently | **CRITICAL** | ✓ DONE (qt-72) |
-| 5 | ~~[WI-0577](../WORK_QUEUE/COMPLETE/WI-0577.md)~~ ✓ | V1 drives bet decision; V2 Poisson edge is computed but never gates FIRE — V1 can emit a PLAY while V2's `edge_over_pp` is negative; add V2 veto gate for FIRE on odds-backed cards | **CRITICAL** | ✓ DONE (qt-75) |
-| 6 | ~~[WI-0578](../WORK_QUEUE/WI-0578.md)~~ ✓ | `PP_RATE_MISSING` flag set but PP component silently collapses to 0 for top PP players; under-projects by 0.3–0.5 SOG for players with non-zero `ppToi` | **HIGH** | `apps/worker/src/jobs/run_nhl_player_shots_model.js` |
-| 7 | ~~[WI-0579](../WORK_QUEUE/WI-0579.md)~~ ✓ | 1P cards don't run `projectSogV2` independently; full-game `v2AnomalyDetected` reused against 1P mu | **HIGH** | ✓ DONE (qt-78) |
-| 8 | ~~[WI-0580](../WORK_QUEUE/COMPLETE/WI-0580.md)~~ ✓ | PROP cards not wave-1 eligible — V1 wins unconditionally; V2 `official_status` never overrides | **HIGH** | `web/src/app/api/games/route.ts` |
-| 9 | ~~[WI-0581](../WORK_QUEUE/WI-0581.md)~~ ✓ | Rename `decision_v2.edge_pct` → `edge_delta_pct` — projection-delta % vs probability edge conflation | **HIGH** | ✓ DONE (qt-79) |
-| 10 | ~~[WI-0582](../WORK_QUEUE/WI-0582.md)~~ ✓ | `opponentFactor`/`paceFactor` fallback silent at `console.debug` — upgrade to `warn` + card flag | **MEDIUM** | ✓ DONE (qt-80) |
-| 11 | ~~[WI-0583](../WORK_QUEUE/COMPLETE/WI-0583.md)~~ ✓ | V1 vs V2 mu calibration study — no accuracy audit exists; no reconciliation when models disagree | **MEDIUM** | ✓ DONE (qt-76) |
-| 12 | ~~[WI-0584](../WORK_QUEUE/COMPLETE/WI-0584.md)~~ ✓ | Line-change dedup gap — two cards same player/side after odds update; `dedupeLine` key mismatch bypasses `seenNhlShotsPlayKeys` | **MEDIUM** | ✓ DONE (qt-77) |
-
----
-
-### Tier 1 — Edge Model Correctness & CI Integrity
-
-| Order | WI | Summary | Depends on |
-|---|---|---|---|
-| 7 | [WI-0554](../WORK_QUEUE/WI-0554.md) | Computed confidence function (replace 0.95/0.88/0.85 literals) | WI-0551 ✓, WI-0552 ✓ — **unblocked** |
-| 8 | [WI-0562](../WORK_QUEUE/WI-0562.md) | Isolate mutating web tests to temp DB (prevent CI prod mutation) | — |
-| 9 | [WI-0558](../WORK_QUEUE/WI-0558.md) | Stabilize smoke/contract tests — deterministic CI with no local server | — |
-
----
-
-### Tier 2 — Feature Completions
-
-| Order | WI | Summary | Depends on |
-|---|---|---|---|
-| 10 | [WI-0563](../WORK_QUEUE/WI-0563.md) | API security on `/api/cards/[gameId]` + SQLi regression tests | — |
-| 11 | ~~WI-0564~~ | Soccer settlement | OBSOLETE |
-| 12 | [WI-0553](../WORK_QUEUE/WI-0553.md) | Gate FIRST_PERIOD on edge (not projection signal) | WI-0554 ✓ |
-| 13 | [WI-0556](../WORK_QUEUE/WI-0556.md) | Track line movement delta to detect stale-edge cards | WI-0554 ✓ |
-| 14 | ~~WI-0566~~ | Player props settlement framework generalization | OBSOLETE (soccer dep) |
-| 15 | [WI-0557](../WORK_QUEUE/WI-0557.md) | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) | none (WI-0564 obsolete — NHL settlement sufficient) |
-
----
-
-### Tier 3 — Market Evaluator Layer (serial chain)
-
-| Order | WI | Summary | Depends on |
-|---|---|---|---|
-| 16 | [WI-0568](../WORK_QUEUE/WI-0568.md) | Market evaluator — consensus layer (median line/price, dispersion, confidence) | — |
-| 17 | [WI-0569](../WORK_QUEUE/WI-0569.md) | Market evaluator — execution selector for all markets (best-price separate from best-line) | WI-0568 |
-| 18 | [WI-0570](../WORK_QUEUE/WI-0570.md) | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) | WI-0568 |
-| 19 | [WI-0571](../WORK_QUEUE/WI-0571.md) | Market evaluator — projection comparator (edge vs consensus, edge vs best available, execution alpha) | WI-0568, WI-0569 |
-
----
-
-### Tier 4 — Polish / Display
-
-| Order | WI | Summary | Depends on |
-|---|---|---|---|
-| 20 | [WI-0567](../WORK_QUEUE/WI-0567.md) | Surface 1P vs full-game label on /results page | — |
+> All 12 NHL props audit findings (WI-0573–0584) and 6 pipeline audit findings (AUDIT-FIX-01–06) are closed.
+> WI-0551/0552/0555/0557/0559/0560/0561/0567/0568/0569/0570/0572 all done.
+> See quick tasks qt-65–qt-80 and `WORK_QUEUE/COMPLETE/` for details.
+> WI-0554/0558/0562/0563/0553/0556 — closed or removed from active queue 2026-03-27.
+> WI-0564/0566 — OBSOLETE (soccer dependency removed).
 
 ### Quick Tasks Completed
 
@@ -247,5 +176,11 @@ This file is intentionally minimal to avoid stale status drift.
 | 80 | WI-0582 opponentFactor/paceFactor fallback: console.debug → console.warn + OPPONENT_FACTOR_MISSING / PACE_FACTOR_MISSING reason_code flag on card | 2026-03-24 | — | — |
 | 81 | WI-0587: Remove ncaam-matchup-style as actionable betting source | 2026-03-24 | 2f35455 | [78-wi-0587-remove-ncaam-matchup-style-as-ac](./quick/78-wi-0587-remove-ncaam-matchup-style-as-ac/) |
 | 82 | WI-0588 NBA totals quarantine — demote tier one level | 2026-03-24 | ddfc2fc | [79-wi-0588-nba-totals-quarantine-demote-tie](./quick/79-wi-0588-nba-totals-quarantine-demote-tie/) |
+| 83 | WI-0569 Market evaluator — execution selector (best-price separate from best-line); migration 047 | 2026-03-27 | 7e08784 | — |
+| 84 | WI-0570 Market evaluator — misprice detector (soft line, price-only, high-dispersion flags); migration 048, UI soft-line display | 2026-03-27 | 4f6af7b | — |
+| 85 | WI-0613 delete scratch debug backup files | 2026-03-28 | dcbaeb2 | [81-wi-0613-delete-scratch-debug-backup-file](./quick/81-wi-0613-delete-scratch-debug-backup-file/) |
+| 86 | qt-85 / WI-0614 rename decision-pipeline-v2.patch.js to decision-pipeline-v2-edge-config.js | 2026-03-28 | e5cf823 | [85-wi-0614-rename-decision-pipeline-v2-edg](./quick/85-wi-0614-rename-decision-pipeline-v2-edg/) |
+| 87 | qt-86 / WI-0608 JWT revocation persistence — move to DB table | 2026-03-28 | 34adcd7 | [86-wi-0608-security-jwt-revocation-persiste](./quick/86-wi-0608-security-jwt-revocation-persiste/) |
+| 88 | qt-87 / WI-0607 persist market_period_token at settlement + backfill job + COALESCE in /api/results | 2026-03-27 | 70f1f5b | [87-wi-0607-results-persist-market-period-to](./quick/87-wi-0607-results-persist-market-period-to/) |
 
-Last activity: 2026-03-24 - Completed quick task 82 (WI-0588): NBA totals quarantine — PLAY→LEAN, LEAN→PASS demotion active
+Last activity: 2026-03-28 - Completed qt-85 / WI-0614: renamed `decision-pipeline-v2.patch.js` to `decision-pipeline-v2-edge-config.js`, updated live callers, moved WI-0614 to COMPLETE, and recorded pre-existing out-of-scope worker test failures while `tsc` passed.

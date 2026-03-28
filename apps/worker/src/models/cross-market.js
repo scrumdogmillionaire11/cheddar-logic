@@ -11,6 +11,7 @@ const {
 
 const { projectNHL, projectNBA } = require('./projections');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
+const { compareProjection } = require('../../../../packages/odds/src/market_evaluator.js');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -651,6 +652,38 @@ function computeNHLMarketDecisions(oddsSnapshot) {
     riskFlags: spreadBadNumber ? ['BAD_NUMBER'] : [],
   });
 
+  // WI-0571: projection comparison (edge vs consensus vs best available)
+  const nhlTotalSide = totalDecision.best_candidate.side;
+  const nhlTotalConsensusLine = totalLine; // oddsSnapshot.total IS the consensus line
+  const nhlTotalBestLine = nhlTotalSide === 'OVER'
+    ? toNumber(oddsSnapshot?.total_line_over)
+    : toNumber(oddsSnapshot?.total_line_under);
+  totalDecision.projection_comparison = compareProjection({
+    fairLine: projectedTotal,
+    consensusLine: nhlTotalConsensusLine,
+    bestLine: nhlTotalBestLine,
+    consensusPrice: null,
+    bestPrice: nhlTotalSide === 'OVER'
+      ? toNumber(oddsSnapshot?.total_price_over)
+      : toNumber(oddsSnapshot?.total_price_under),
+  });
+
+  const nhlSpreadSide = spreadDecision.best_candidate.side;
+  const nhlRawConsensusLine = toNumber(oddsSnapshot?.spread_consensus_line);
+  spreadDecision.projection_comparison = compareProjection({
+    fairLine: nhlSpreadSide === 'HOME' ? projectedMargin : (projectedMargin !== null ? -projectedMargin : null),
+    consensusLine: nhlSpreadSide === 'HOME'
+      ? (nhlRawConsensusLine !== null ? -nhlRawConsensusLine : null)
+      : nhlRawConsensusLine,
+    bestLine: nhlSpreadSide === 'HOME'
+      ? (spreadHome !== null ? -spreadHome : null)
+      : (toNumber(oddsSnapshot?.spread_away) !== null ? -toNumber(oddsSnapshot?.spread_away) : null),
+    consensusPrice: null,
+    bestPrice: nhlSpreadSide === 'HOME'
+      ? toNumber(oddsSnapshot?.spread_price_home)
+      : toNumber(oddsSnapshot?.spread_price_away),
+  });
+
   const modelWinProb =
     projectedMargin !== null
       ? marginToWinProbability(
@@ -1023,6 +1056,38 @@ function computeNBAMarketDecisions(oddsSnapshot) {
       spread_home_line: spreadHome,
     }),
     riskFlags: spreadBadNumber ? ['BAD_NUMBER'] : [],
+  });
+
+  // WI-0571: projection comparison (edge vs consensus vs best available)
+  const nbaTotalSide = totalDecision.best_candidate.side;
+  const nbaTotalConsensusLine = totalLine; // oddsSnapshot.total IS the consensus line
+  const nbaTotalBestLine = nbaTotalSide === 'OVER'
+    ? toNumber(oddsSnapshot?.total_line_over)
+    : toNumber(oddsSnapshot?.total_line_under);
+  totalDecision.projection_comparison = compareProjection({
+    fairLine: projectedTotal,
+    consensusLine: nbaTotalConsensusLine,
+    bestLine: nbaTotalBestLine,
+    consensusPrice: null,
+    bestPrice: nbaTotalSide === 'OVER'
+      ? toNumber(oddsSnapshot?.total_price_over)
+      : toNumber(oddsSnapshot?.total_price_under),
+  });
+
+  const nbaSpreadSide = spreadDecision.best_candidate.side;
+  const nbaRawConsensusLine = toNumber(oddsSnapshot?.spread_consensus_line);
+  spreadDecision.projection_comparison = compareProjection({
+    fairLine: nbaSpreadSide === 'HOME' ? projectedMargin : (projectedMargin !== null ? -projectedMargin : null),
+    consensusLine: nbaSpreadSide === 'HOME'
+      ? (nbaRawConsensusLine !== null ? -nbaRawConsensusLine : null)
+      : nbaRawConsensusLine,
+    bestLine: nbaSpreadSide === 'HOME'
+      ? (spreadHome !== null ? -spreadHome : null)
+      : (toNumber(oddsSnapshot?.spread_away) !== null ? -toNumber(oddsSnapshot?.spread_away) : null),
+    consensusPrice: null,
+    bestPrice: nbaSpreadSide === 'HOME'
+      ? toNumber(oddsSnapshot?.spread_price_home)
+      : toNumber(oddsSnapshot?.spread_price_away),
   });
 
   return { TOTAL: totalDecision, SPREAD: spreadDecision };

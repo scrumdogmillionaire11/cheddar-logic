@@ -438,6 +438,8 @@ export async function GET(request: NextRequest) {
           ${lineSelect},
           ${lockedPriceSelect},
           CASE
+            WHEN json_extract(cr.metadata, '$.market_period_token') IS NOT NULL
+              THEN json_extract(cr.metadata, '$.market_period_token')
             WHEN COALESCE(${marketKeyValueExpr}, '') LIKE '%:1P:%'
               OR UPPER(COALESCE(json_extract(cp.payload_data, '$.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
               OR UPPER(COALESCE(json_extract(cp.payload_data, '$.play.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
@@ -810,6 +812,8 @@ export async function GET(request: NextRequest) {
         g.home_team AS game_home_team,
         g.away_team AS game_away_team,
         CASE
+          WHEN json_extract(cr.metadata, '$.market_period_token') IS NOT NULL
+            THEN json_extract(cr.metadata, '$.market_period_token')
           WHEN COALESCE(${marketKeyValueExpr}, '') LIKE '%:1P:%'
             OR UPPER(COALESCE(json_extract(cp.payload_data, '$.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
             OR UPPER(COALESCE(json_extract(cp.payload_data, '$.play.period'), '')) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD')
