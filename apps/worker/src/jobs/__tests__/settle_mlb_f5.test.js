@@ -156,6 +156,8 @@ function removeIfExists(filePath) {
  * @param {string} opts.resultId
  * @param {string} opts.marketKey  - stored in card_results.market_key
  * @param {string} opts.payloadMarketKey - stored in card_payloads payload_data.market_key
+ * @param {string} [opts.homeTeam] - home team abbreviation (default 'BOS')
+ * @param {string} [opts.awayTeam] - away team abbreviation (default 'NYY')
  * @param {string} [opts.gamePkKey] - key for mlb_game_pk_map (omit to test missing entry)
  * @param {number} [opts.gamePk]   - value for mlb_game_pk_map
  */
@@ -165,16 +167,18 @@ function insertF5Scenario(db, {
   resultId,
   marketKey,
   payloadMarketKey,
+  homeTeam = 'BOS',
+  awayTeam = 'NYY',
   gamePkKey,
   gamePk,
 }) {
   const pastTime = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
 
-  // games row
+  // games row — sport must be lowercase per schema CHECK constraint
   db.prepare(`
     INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
-    VALUES (?, 'MLB', ?, 'BOS', 'NYY', ?, 'scheduled')
-  `).run(`g-${gameId}`, gameId, pastTime);
+    VALUES (?, 'mlb', ?, ?, ?, ?, 'scheduled')
+  `).run(`g-${gameId}`, gameId, homeTeam, awayTeam, pastTime);
 
   // card_payloads row — payload includes prediction, f5_line, and market_key
   const payloadData = {
@@ -188,12 +192,12 @@ function insertF5Scenario(db, {
     VALUES (?, ?, 'mlb', 'f5-total', 'Test F5 Card', ?, ?)
   `).run(cardId, gameId, pastTime, JSON.stringify(payloadData));
 
-  // card_results row
+  // card_results row — sport must be lowercase per schema CHECK constraint
   db.prepare(`
     INSERT INTO card_results (
       id, card_id, game_id, sport, card_type, recommended_bet_type,
       status, market_key, market_type, selection, line, locked_price
-    ) VALUES (?, ?, ?, 'MLB', 'f5-total', 'total', 'pending', ?, 'TOTAL', 'OVER', 7.5, -110)
+    ) VALUES (?, ?, ?, 'mlb', 'f5-total', 'total', 'pending', ?, 'TOTAL', 'OVER', 7.5, -110)
   `).run(resultId, cardId, gameId, marketKey);
 
   // mlb_game_pk_map table (created by pull_mlb_pitcher_stats, not a migration)
@@ -215,7 +219,6 @@ function insertF5Scenario(db, {
 
 describe('settleMlbF5 integration', () => {
   let originalFetch;
-  let db;
 
   beforeAll(async () => {
     process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
@@ -225,9 +228,11 @@ describe('settleMlbF5 integration', () => {
     removeIfExists(TEST_DB_PATH);
     removeIfExists(LOCK_PATH);
 
-    const { runMigrations, getDatabase } = require('@cheddar-logic/data');
+    // Run migrations once to create the schema
+    const { runMigrations, closeDatabase } = require('@cheddar-logic/data');
     await runMigrations();
-    db = getDatabase();
+    // Close after migration so withDb can re-open as needed
+    closeDatabase();
   });
 
   afterAll(() => {
@@ -253,6 +258,9 @@ describe('settleMlbF5 integration', () => {
     } else {
       delete global.fetch;
     }
+    // Ensure DB is closed between tests so each settleMlbF5 call starts fresh
+    const { closeDatabase } = require('@cheddar-logic/data');
+    try { closeDatabase(); } catch { /* best effort */ }
   });
 
   test('settles a pending F5 card when gamePk resolves and API returns total', async () => {
@@ -260,6 +268,9 @@ describe('settleMlbF5 integration', () => {
     const pastTime = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
     const gameDate = pastTime.slice(0, 10);
 
+    // Open DB, insert scenario, close so withDb can re-open cleanly
+    const { getDatabase, closeDatabase } = require('@cheddar-logic/data');
+    const db = getDatabase();
     insertF5Scenario(db, {
       gameId,
       cardId: `card-${gameId}`,
@@ -269,6 +280,7 @@ describe('settleMlbF5 integration', () => {
       gamePkKey: `${gameDate}|BOS|NYY`,
       gamePk: 745398,
     });
+    closeDatabase();
 
     const result = await settleMlbF5({ dryRun: true });
     expect(result.success).toBe(true);
@@ -281,47 +293,55 @@ describe('settleMlbF5 integration', () => {
     const pastTime = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
     const gameDate = pastTime.slice(0, 10);
 
+    const { getDatabase, closeDatabase } = require('@cheddar-logic/data');
+    const db = getDatabase();
     insertF5Scenario(db, {
       gameId,
       cardId: `card-${gameId}`,
       resultId: `result-${gameId}`,
       marketKey: `${gameId}:mlb_totals`,
       payloadMarketKey: 'mlb_totals',  // does NOT include 'f5'
-      gamePkKey: `${gameDate}|BOS|NYY`,
+      homeTeam: 'CHC',
+      awayTeam: 'STL',
+      gamePkKey: `${gameDate}|CHC|STL`,
       gamePk: 745399,
     });
 
-    // Only check this game's card by running fresh — prior settled cards from
-    // other tests won't affect the non-F5 skip count since they were settled.
-    // We verify that settled=0 and failed=0 for this card's processing path.
-    // dryRun=true so settled cards from prior test remain 'pending' in the DB.
-    // Re-query only this game's result to validate.
+    // Verify the card starts as pending before settlement run
     const rowBefore = db.prepare(
       `SELECT status FROM card_results WHERE id = ?`
     ).get(`result-${gameId}`);
     expect(rowBefore.status).toBe('pending');
+    closeDatabase();
 
     const result = await settleMlbF5({ dryRun: true });
     expect(result.success).toBe(true);
 
-    // The non-F5 card must remain pending (skipped, not settled)
-    const rowAfter = db.prepare(
+    // Re-open DB to verify the non-F5 card was skipped (still pending)
+    const db2 = getDatabase();
+    const rowAfter = db2.prepare(
       `SELECT status FROM card_results WHERE id = ?`
     ).get(`result-${gameId}`);
     expect(rowAfter.status).toBe('pending');
+    closeDatabase();
   });
 
   test('counts as failed when gamePk missing from mlb_game_pk_map', async () => {
     const gameId = 'mlb-f5-no-pk-test-1';
 
+    const { getDatabase, closeDatabase } = require('@cheddar-logic/data');
+    const db = getDatabase();
     insertF5Scenario(db, {
       gameId,
       cardId: `card-${gameId}`,
       resultId: `result-${gameId}`,
       marketKey: `${gameId}:mlb_f5_total`,
       payloadMarketKey: 'mlb_f5_total',
-      // No gamePkKey / gamePk — simulates missing map entry
+      homeTeam: 'LAD',
+      awayTeam: 'SF',
+      // No gamePkKey / gamePk — simulates missing map entry for LAD|SF
     });
+    closeDatabase();
 
     const result = await settleMlbF5({ dryRun: true });
     expect(result.success).toBe(true);

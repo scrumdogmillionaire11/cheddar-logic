@@ -91,7 +91,7 @@ async function settleMlbF5({ jobKey = null, dryRun = false } = {}) {
         JOIN card_payloads cp ON cr.card_id = cp.id
         JOIN games g ON cr.game_id = g.game_id
         LEFT JOIN game_results gr ON gr.game_id = cr.game_id AND gr.status = 'final'
-        WHERE cr.sport = 'MLB'
+        WHERE cr.sport = 'mlb'
           AND cr.status = 'pending'
           AND g.game_time_utc < ?
         ORDER BY g.game_time_utc DESC
