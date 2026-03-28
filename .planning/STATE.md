@@ -197,5 +197,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 87 | qt-86 / WI-0608 JWT revocation persistence — move to DB table | 2026-03-28 | 34adcd7 | [86-wi-0608-security-jwt-revocation-persiste](./quick/86-wi-0608-security-jwt-revocation-persiste/) |
 | 88 | qt-87 / WI-0607 persist market_period_token at settlement + backfill job + COALESCE in /api/results | 2026-03-27 | 70f1f5b | [87-wi-0607-results-persist-market-period-to](./quick/87-wi-0607-results-persist-market-period-to/) |
 | 89 | Gap audit 2026-03-28: 9 new WIs (WI-0626–0634) — settle_mlb_f5 doubleheader bug, check_odds_health/report_settlement_health/pull_nhl_team_stats scheduler gaps, market evaluator UI, refresh token storage, run_nfl_model/run_ncaam_model test coverage | 2026-03-28 | — | — |
+| 90 | WI-0636 Turbopack/dev-chunk guard in deploy workflow | 2026-03-28 | f3c0db7 | [88-wi-0636-turbopack-dev-chunk-guard-in-dep](./quick/88-wi-0636-turbopack-dev-chunk-guard-in-dep/) |
 
-Last activity: 2026-03-28 - Gap audit created 9 new WIs (WI-0626–0634). STATE.md updated: WI-0571/0609/0610 moved to recently completed, new P1 (WI-0626 correctness bug), dependency chains updated, backlog extended with WI-0634.
+Last activity: 2026-03-28 - Completed quick task 88: WI-0636 Turbopack/dev-chunk guard in deploy workflow
