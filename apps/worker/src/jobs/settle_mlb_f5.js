@@ -84,6 +84,8 @@ async function settleMlbF5({ jobKey = null, dryRun = false } = {}) {
           cr.game_id,
           cp.payload_data,
           g.game_time_utc,
+          g.home_team,
+          g.away_team,
           gr.metadata as game_result_meta
         FROM card_results cr
         JOIN card_payloads cp ON cr.card_id = cp.id
@@ -133,17 +135,22 @@ async function settleMlbF5({ jobKey = null, dryRun = false } = {}) {
           // If not cached, look up gamePk from mlb_game_pk_map and fetch from MLB API
           if (actualF5 === null) {
             const gameDate = card.game_time_utc?.slice(0, 10);
-            const pkRow = gameDate
+            const homeTeam = card.home_team;
+            const awayTeam = card.away_team;
+            const gamePkKey = gameDate && homeTeam && awayTeam
+              ? `${gameDate}|${homeTeam}|${awayTeam}`
+              : null;
+            const pkRow = gamePkKey
               ? db
                   .prepare(
-                    'SELECT game_pk FROM mlb_game_pk_map WHERE game_date = ? LIMIT 1',
+                    'SELECT game_pk FROM mlb_game_pk_map WHERE game_pk_key = ?',
                   )
-                  .get(gameDate)
+                  .get(gamePkKey)
               : null;
 
             if (!pkRow?.game_pk) {
               console.warn(
-                `  [${JOB_NAME}] ${card.game_id}: no gamePk in mlb_game_pk_map for date=${gameDate}`,
+                `  [${JOB_NAME}] ${card.game_id}: no gamePk in mlb_game_pk_map for key=${gamePkKey ?? `date=${gameDate} (missing home/away team)`}`,
               );
               failed++;
               continue;
