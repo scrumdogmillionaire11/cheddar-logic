@@ -4182,6 +4182,48 @@ function purgeStaleTminusPullLog() {
   ).run();
 }
 
+// ---- WI-0608: JWT revocation persistence ----
+
+/**
+ * Insert a revoked token record.
+ * Uses INSERT OR IGNORE so duplicate revocations are silently no-ops.
+ * @param {string} jti - JWT ID claim (unique per token)
+ * @param {number} expiresAt - Unix epoch seconds matching the token's exp claim
+ */
+function insertRevokedToken(jti, expiresAt) {
+  const db = getDatabase();
+  db.prepare(
+    `INSERT OR IGNORE INTO revoked_tokens (jti, revoked_at, expires_at)
+     VALUES (?, strftime('%s','now'), ?)`,
+  ).run(jti, expiresAt);
+}
+
+/**
+ * Check if a token has been revoked.
+ * @param {string} jti - JWT ID claim
+ * @returns {boolean} true if the jti exists in the revoked_tokens table
+ */
+function isTokenRevoked(jti) {
+  const db = getDatabase();
+  const row = db.prepare(
+    `SELECT 1 FROM revoked_tokens WHERE jti = ? LIMIT 1`,
+  ).get(jti);
+  return !!row;
+}
+
+/**
+ * Remove expired revocation records to bound table growth.
+ * Deletes rows whose expires_at is in the past (< current epoch).
+ * @returns {number} number of rows deleted
+ */
+function pruneExpiredRevokedTokens() {
+  const db = getDatabase();
+  const info = db.prepare(
+    `DELETE FROM revoked_tokens WHERE expires_at < strftime('%s','now')`,
+  ).run();
+  return info.changes;
+}
+
 module.exports = {
   initDb,
   getDatabase,
@@ -4267,4 +4309,7 @@ module.exports = {
   isQuotaCircuitOpen,
   claimTminusPullSlot,
   purgeStaleTminusPullLog,
+  insertRevokedToken,
+  isTokenRevoked,
+  pruneExpiredRevokedTokens,
 };
