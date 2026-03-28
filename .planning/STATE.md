@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-28T20:00:00Z"
-last_activity: "2026-03-28 - WI-0637 complete (MLB without-odds synthetic F5 projection_floor: PRICE_REASONS fix, pricingReady split, 27 cards). Next: WI-0634 (report_settlement_health scheduler)."
+last_updated: "2026-03-28T21:00:00Z"
+last_activity: "2026-03-28 - All P2 complete. WI-0634 + WI-0631 done. P2 board clear. Advancing to P3."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,9 +31,9 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-28
-- Next action: **WI-0634** (report_settlement_health scheduler), **WI-0631** (refresh token persistence — security closure). Full priority order in the sprint tables below.
+- Next action: **WI-0618** (archive dirs) — P2 board clear, all security hardening done. Advancing to P3.
 
-## Sprint Plan — 2026-03-28 re-assess (18 open WIs: 0 P1 + 5 P2 + 8 P3 + 5 Backlog)
+## Sprint Plan — 2026-03-28 re-assess (13 open WIs: 0 P1 + 0 P2 + 8 P3 + 5 Backlog)
 
 ### Dependency Chains
 
@@ -42,7 +42,7 @@ This file is intentionally minimal to avoid stale status drift.
 - **CLV:** ALL DONE ✓ (WI-0557)
 - **Display:** ALL DONE ✓ (WI-0567 1P label)
 - **Market evaluator (serial):** ALL DONE ✓ (~~WI-0568~~✓ → ~~WI-0569~~✓ / ~~WI-0570~~✓ → ~~WI-0571~~✓ — UI half deferred to WI-0628)
-- **Security hardening:** ~~WI-0608~~✓ → ~~WI-0609~~✓ → WI-0631 (refresh token persistence — last open item)
+- **Security hardening:** ~~WI-0608~~✓ → ~~WI-0609~~✓ → ~~WI-0631~~✓ — ALL DONE
 - **settle_mlb_f5 correctness:** ~~WI-0626~~✓ → ~~WI-0629~~✓ — ALL DONE
 - **New markets:** WI-0586 independent (NHL blocked shots)
 - **UI cleanup:** WI-0638 (rm NCAAM+Soccer) → WI-0639 (NFL gate) — independent
@@ -89,15 +89,15 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### P1 — (empty ✓)
 
-### P2 — Now
+### P2 — (empty ✓)
 
 | # | WI | Summary | LOE |
 |---|---|---|---|
 | 1 | ~~[WI-0638](../WORK_QUEUE/WI-0638.md)~~ ✓ | Remove NCAAM + Soccer from UI sport filter permanently | XS |
 | 2 | ~~[WI-0639](../WORK_QUEUE/COMPLETE/WI-0639.md)~~ ✓ | NFL UI seasonal gate — hide sport filter outside Sep–Feb | S |
-| 3 | [WI-0634](../WORK_QUEUE/WI-0634.md) | Wire report_settlement_health into scheduler daily | S |
+| 3 | ~~[WI-0634](../WORK_QUEUE/COMPLETE/WI-0634.md)~~ ✓ | Wire report_settlement_health into scheduler daily | S |
 | 4 | ~~[WI-0637](../WORK_QUEUE/COMPLETE/WI-0637.md)~~ ✓ | MLB without-odds mode synthetic F5 projection_floor line | S |
-| 5 | [WI-0631](../WORK_QUEUE/WI-0631.md) | Implement refresh token persistence + revocation (security closure) | M |
+| 5 | ~~[WI-0631](../WORK_QUEUE/COMPLETE/WI-0631.md)~~ ✓ | Implement refresh token persistence + revocation (security closure) | M |
 
 ### P3 — Sprint +1
 
