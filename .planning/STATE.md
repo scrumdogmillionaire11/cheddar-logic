@@ -207,5 +207,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 96 | WI-0628: Surface edge_vs_consensus + edge_vs_best_available in cards UI + WI-0611: Replace NHL fault harness stubs | 2026-03-28 | 9045859 | — |
 | 97 | WI-0612: team-metrics.js test suite | 2026-03-28 | 551bd7a | — |
 | 98 | WI-0639: NFL UI seasonal gate — isNflSeason() in season-gates.ts, gating filter-panel + filters + cards-page-client | 2026-03-28 | 56ffef1 | [92-wi-0639-nfl-ui-seasonal-gate-hide-sport-](./quick/92-wi-0639-nfl-ui-seasonal-gate-hide-sport-/) |
+| 99 | WI-0617: Remove initDb() no-op callers — confirmed already absent (qt-47/WI-0456), acceptance checks pass | 2026-03-28 | 4b1b437 | [93-wi-0617-remove-initdb-no-op-callers](./quick/93-wi-0617-remove-initdb-no-op-callers/) |
 
-Last activity: 2026-03-28 - WI-0639 complete (NFL seasonal gate). Queue: 17 open WIs, 0 P1, 4 P2, 8 P3, 5 Backlog.
+Last activity: 2026-03-28 - Completed quick task 99: WI-0617 Remove initDb() callers (already absent, zero code changes)
