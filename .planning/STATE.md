@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-28T12:00:00Z"
-last_activity: "2026-03-28 - Priority re-assessment + gap: WI-0635/0636 slotted into P2 (deploy rollback fix). WI-0638 (remove NCAAM+Soccer from UI permanently) and WI-0639 (NFL UI seasonal gate) added to P3."
+last_updated: "2026-03-28T18:00:00Z"
+last_activity: "2026-03-28 - P1+P2 sprint complete. Completed: WI-0626 (mlb_f5 doubleheader), WI-0636/0635 (deploy guards), WI-0625 (lint), WI-0627/0630 (scheduler watchdogs), WI-0628 (edge UI), WI-0629 (settle_mlb_f5 tests), WI-0611/0612 (test coverage). Re-prioritized: 18 open WIs across 0 P1 + 5 P2 + 8 P3 + 5 Backlog. Ready for verifier audit."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,9 +31,9 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-28
-- Next action: **WI-0626** (P1 correctness — settle_mlb_f5 doubleheader gamePk bug, silent mis-settlement every MLB day). Then **WI-0636** + **WI-0635** (`needs-sync`, deploy verification — turbopack guard + CF convergence retries; block future false-rollbacks). Then **WI-0625** (tiny: remove unused liveLineBook). Then **WI-0627** (check_odds_health watchdog), **WI-0630** (pull_nhl_team_stats scheduler), **WI-0628** (market evaluator UI), **WI-0629** (settle_mlb_f5 tests). Full priority order in the sprint tables below.
+- Next action: **WI-0638** (remove NCAAM+Soccer UI filters — XS, user-facing cleanup). Then **WI-0639** (NFL seasonal gate), **WI-0634** (report_settlement_health scheduler), **WI-0637** (MLB F5 synthetic floor), **WI-0631** (refresh token persistence — security closure). Full priority order in the sprint tables below.
 
-## Sprint Plan — 2026-03-28 (29 open WIs: 1 P1 + 9 P2 + 11 P3 + 6 Backlog + 2 Backlog-S)
+## Sprint Plan — 2026-03-28 re-assess (18 open WIs: 0 P1 + 5 P2 + 8 P3 + 5 Backlog)
 
 ### Dependency Chains
 
@@ -42,9 +42,10 @@ This file is intentionally minimal to avoid stale status drift.
 - **CLV:** ALL DONE ✓ (WI-0557)
 - **Display:** ALL DONE ✓ (WI-0567 1P label)
 - **Market evaluator (serial):** ALL DONE ✓ (~~WI-0568~~✓ → ~~WI-0569~~✓ / ~~WI-0570~~✓ → ~~WI-0571~~✓ — UI half deferred to WI-0628)
-- **Security hardening:** ~~WI-0608~~✓ → ~~WI-0609~~✓ → WI-0631 (refresh token persistence)
-- **settle_mlb_f5 correctness:** WI-0626 (fix doubleheader bug) → WI-0629 (tests, unblocked after 0626)
+- **Security hardening:** ~~WI-0608~~✓ → ~~WI-0609~~✓ → WI-0631 (refresh token persistence — last open item)
+- **settle_mlb_f5 correctness:** ~~WI-0626~~✓ → ~~WI-0629~~✓ — ALL DONE
 - **New markets:** WI-0586 independent (NHL blocked shots)
+- **UI cleanup:** WI-0638 (rm NCAAM+Soccer) → WI-0639 (NFL gate) — independent
 
 ---
 
@@ -54,6 +55,16 @@ This file is intentionally minimal to avoid stale status drift.
 
 | WI | Summary |
 |---|---|
+| ~~WI-0612~~ ✓ | team-metrics.js test suite |
+| ~~WI-0611~~ ✓ | Replace NHL fault harness stubs with real implementations |
+| ~~WI-0629~~ ✓ | Test suite for settle_mlb_f5.js |
+| ~~WI-0628~~ ✓ | Surface edge_vs_consensus + edge_vs_best_available in cards UI |
+| ~~WI-0630~~ ✓ | Wire pull_nhl_team_stats into scheduler daily cadence |
+| ~~WI-0627~~ ✓ | Wire check_odds_health into scheduler as 30-min watchdog |
+| ~~WI-0625~~ ✓ | Remove unused liveLineBook variable |
+| ~~WI-0636~~ ✓ | Turbopack/dev-chunk pattern guard in deploy workflow |
+| ~~WI-0635~~ ✓ | CF public-HTML convergence retries in deploy workflow |
+| ~~WI-0626~~ ✓ | Fix settle_mlb_f5 doubleheader gamePk lookup bug |
 | ~~WI-0571~~ ✓ | Market evaluator — projection comparator (edge vs consensus, execution alpha) |
 | ~~WI-0610~~ ✓ | moneypuck.js test suite |
 | ~~WI-0609~~ ✓ | Token route IP whitelist / endpoint hardening |
@@ -74,41 +85,30 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### P0 — (empty ✓)
 
-### P1 — Correctness bug (silent mis-settlement)
+### P1 — (empty ✓)
 
-| # | WI | Summary | Deps |
+### P2 — Now
+
+| # | WI | Summary | LOE |
 |---|---|---|---|
-| 1 | [WI-0626](../WORK_QUEUE/WI-0626.md) | Fix settle_mlb_f5 doubleheader gamePk lookup bug | none |
+| 1 | [WI-0638](../WORK_QUEUE/WI-0638.md) | Remove NCAAM + Soccer from UI sport filter permanently | XS |
+| 2 | [WI-0639](../WORK_QUEUE/WI-0639.md) | NFL UI seasonal gate — hide sport filter outside Sep–Feb | S |
+| 3 | [WI-0634](../WORK_QUEUE/WI-0634.md) | Wire report_settlement_health into scheduler daily | S |
+| 4 | [WI-0637](../WORK_QUEUE/WI-0637.md) | MLB without-odds mode synthetic F5 projection_floor line | S |
+| 5 | [WI-0631](../WORK_QUEUE/WI-0631.md) | Implement refresh token persistence + revocation (security closure) | M |
 
-### P2 — Sprint +1
+### P3 — Sprint +1
 
-| # | WI | Summary | Deps | LOE |
-|---|---|---|---|---|
-| 2 | [WI-0636](../WORK_QUEUE/WI-0636.md) | Add turbopack/dev-chunk pattern guard to deploy verification (`needs-sync`) | none | S |
-| 3 | [WI-0635](../WORK_QUEUE/WI-0635.md) | Stabilize deploy verification — public HTML CF convergence retries (`needs-sync`) | after WI-0636 | M |
-| 4 | [WI-0625](../WORK_QUEUE/WI-0625.md) | Remove unused liveLineBook variable | none | XS |
-| 5 | ~~WI-0627~~ ✓ | Wire check_odds_health into scheduler as watchdog | none | S |
-| 6 | [WI-0630](../WORK_QUEUE/WI-0630.md) | Wire pull_nhl_team_stats into scheduler daily cadence | none | S |
-| 7 | [WI-0628](../WORK_QUEUE/WI-0628.md) | Surface edge_vs_consensus and edge_vs_best_available in cards UI | none | S |
-| 8 | [WI-0629](../WORK_QUEUE/WI-0629.md) | Test suite for settle_mlb_f5.js | WI-0626 first | M |
-| 9 | [WI-0611](../WORK_QUEUE/WI-0611.md) | Replace NHL fault harness stubs | none | S |
-| 10 | [WI-0612](../WORK_QUEUE/WI-0612.md) | team-metrics.js test suite | none | M |
-
-### P3 — Sprint +2
-
-| # | WI | Summary | Deps |
+| # | WI | Summary | LOE |
 |---|---|---|---|
-| 9 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (full end-to-end) | none |
-| 10 | [WI-0615](../WORK_QUEUE/WI-0615.md) | Remove homeGoalieConfirmed deprecated field | none |
-| 11 | [WI-0616](../WORK_QUEUE/WI-0616.md) | Rename welcome-home-v2 card_type | none |
-| 12 | [WI-0617](../WORK_QUEUE/WI-0617.md) | Remove initDb() no-op callers | none |
-| 13 | [WI-0618](../WORK_QUEUE/WI-0618.md) | Delete orphaned archive directories | none |
-| 14 | [WI-0619](../WORK_QUEUE/WI-0619.md) | Extract FPL scheduler to schedulers/fpl.js | none |
-| 15 | [WI-0631](../WORK_QUEUE/WI-0631.md) | Implement refresh token persistence and revocation | none |
-| 16 | [WI-0632](../WORK_QUEUE/WI-0632.md) | Test suite for run_nfl_model.js | none |
-| 17 | [WI-0633](../WORK_QUEUE/WI-0633.md) | Test suite for run_ncaam_model.js | none |
-| 18 | [WI-0638](../WORK_QUEUE/WI-0638.md) | Remove NCAAM + Soccer from UI sport filter permanently | none |
-| 19 | [WI-0639](../WORK_QUEUE/WI-0639.md) | NFL UI seasonal gate — hide sport filter outside Sep–Feb | none |
+| 6 | [WI-0618](../WORK_QUEUE/WI-0618.md) | Delete orphaned archive directories | XS |
+| 7 | [WI-0617](../WORK_QUEUE/WI-0617.md) | Remove initDb() no-op callers | S |
+| 8 | [WI-0615](../WORK_QUEUE/WI-0615.md) | Remove homeGoalieConfirmed deprecated field | S |
+| 9 | [WI-0616](../WORK_QUEUE/WI-0616.md) | Rename welcome-home-v2 card_type | M |
+| 10 | [WI-0619](../WORK_QUEUE/WI-0619.md) | Extract FPL scheduler to schedulers/fpl.js | M |
+| 11 | [WI-0632](../WORK_QUEUE/WI-0632.md) | Test suite for run_nfl_model.js | M |
+| 12 | [WI-0633](../WORK_QUEUE/WI-0633.md) | Test suite for run_ncaam_model.js | M |
+| 13 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (full end-to-end) | XL |
 
 ### Backlog — Tech Debt Milestone
 
@@ -119,7 +119,6 @@ This file is intentionally minimal to avoid stale status drift.
 | [WI-0622](../WORK_QUEUE/WI-0622.md) | Decompose transform.ts into split modules | L |
 | [WI-0623](../WORK_QUEUE/WI-0623.md) | Decompose cards-page-client.tsx into sub-components | XL |
 | [WI-0624](../WORK_QUEUE/WI-0624.md) | Audit + remove legacy reason codes | L |
-| [WI-0634](../WORK_QUEUE/WI-0634.md) | Wire report_settlement_health into scheduler daily | S |
 
 ---
 
@@ -201,5 +200,9 @@ This file is intentionally minimal to avoid stale status drift.
 | 91 | WI-0635: CF public-HTML convergence retries in deploy workflow | 2026-03-28 | 96cfdfb | [89-wi-0635-cf-public-html-convergence-retri](./quick/89-wi-0635-cf-public-html-convergence-retri/) |
 | 92 | WI-0627: Wire check_odds_health into scheduler as 30-min watchdog | 2026-03-28 | 0e4d8e3 | [90-wi-0627-wire-check-odds-health-into-sche](./quick/90-wi-0627-wire-check-odds-health-into-sche/) |
 | 93 | Test suite for settle_mlb_f5.js | 2026-03-28 | cd72034 | [91-test-suite-for-settle-mlb-f5-js](./quick/91-test-suite-for-settle-mlb-f5-js/) |
+| 94 | WI-0626: Fix settle_mlb_f5 doubleheader gamePk lookup bug | 2026-03-28 | a51e3e8 | — |
+| 95 | WI-0630: Wire pull_nhl_team_stats into scheduler daily | 2026-03-28 | c6210c3 | — |
+| 96 | WI-0628: Surface edge_vs_consensus + edge_vs_best_available in cards UI + WI-0611: Replace NHL fault harness stubs | 2026-03-28 | 9045859 | — |
+| 97 | WI-0612: team-metrics.js test suite | 2026-03-28 | 551bd7a | — |
 
-Last activity: 2026-03-28 - Completed quick task 93: Test suite for settle_mlb_f5.js
+Last activity: 2026-03-28 - P1+P2 sprint complete. All 10 items shipped. Queue re-prioritized for verifier audit: 18 open WIs, 0 P1, 5 P2 (UI cleanup + security), 8 P3, 5 Backlog.
