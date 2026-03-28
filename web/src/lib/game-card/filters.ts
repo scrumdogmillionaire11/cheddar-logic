@@ -12,6 +12,12 @@ import type {
 } from '../types/game-card';
 import { GAME_TAGS } from '../types/game-card';
 import { getPlayDisplayAction } from './decision';
+import { isNflSeason } from './season-gates';
+
+// Season-gated sports list: NFL excluded during off-season (Mar–Aug)
+const NFL_SPORTS: Sport[] = isNflSeason()
+  ? ['NHL', 'NBA', 'MLB', 'NFL']
+  : ['NHL', 'NBA', 'MLB'];
 
 const ENABLE_WELCOME_HOME =
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
@@ -125,7 +131,7 @@ export type GameFilters = GameModeFilters | PropsModeFilters;
  * Default filter state
  */
 export const DEFAULT_GAME_FILTERS: GameModeFilters = {
-  sports: ['NHL', 'NBA', 'MLB', 'NFL'],
+  sports: NFL_SPORTS,
   statuses: ['FIRE', 'WATCH'],
   markets: ['ML', 'SPREAD', 'TOTAL'],
   onlyGamesWithPicks: false,
@@ -142,7 +148,7 @@ export const DEFAULT_GAME_FILTERS: GameModeFilters = {
 };
 
 export const DEFAULT_PROPS_FILTERS: PropsModeFilters = {
-  sports: ['NHL', 'NBA', 'MLB', 'NFL'],
+  sports: NFL_SPORTS,
   statuses: ['FIRE', 'WATCH', 'PASS'],
   searchQuery: '',
   sortMode: 'start_time',
@@ -155,7 +161,7 @@ export const DEFAULT_PROPS_FILTERS: PropsModeFilters = {
 };
 
 export const DEFAULT_PROJECTIONS_FILTERS: GameModeFilters = {
-  sports: ['NHL', 'NBA', 'MLB', 'NFL'],
+  sports: NFL_SPORTS,
   statuses: ['FIRE', 'WATCH', 'PASS'],
   markets: ['ML', 'SPREAD', 'TOTAL'],
   onlyGamesWithPicks: false,

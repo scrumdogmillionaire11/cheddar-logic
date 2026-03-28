@@ -21,6 +21,7 @@ import type {
   ExpressionStatus,
 } from '@/lib/types/game-card';
 import { getPresetsForMode } from '@/lib/game-card/presets';
+import { isNflSeason } from '@/lib/game-card/season-gates';
 
 interface FilterPanelProps {
   filters: GameFilters;
@@ -151,7 +152,9 @@ export default function FilterPanel({
     }
   };
 
-  const sportOptions: Sport[] = ['NHL', 'NBA', 'MLB', 'NFL'];
+  const sportOptions: Sport[] = isNflSeason()
+    ? ['NHL', 'NBA', 'MLB', 'NFL']
+    : ['NHL', 'NBA', 'MLB'];
   const statusOptions: Array<{ value: ExpressionStatus; label: string }> = [
     { value: 'FIRE', label: 'PLAY' },
     { value: 'WATCH', label: 'LEAN' },

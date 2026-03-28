@@ -49,8 +49,11 @@ import {
   STALE_ASSET_RELOAD_GUARD_KEY,
   stringifyUnknownError,
 } from '@/lib/stale-asset-recovery';
+import { isNflSeason } from '@/lib/game-card/season-gates';
 
-const TRACKED_SPORTS = ['NBA', 'NHL', 'MLB', 'NFL'] as const;
+const TRACKED_SPORTS: Sport[] = isNflSeason()
+  ? ['NBA', 'NHL', 'MLB', 'NFL']
+  : ['NBA', 'NHL', 'MLB'];
 
 type SportCountMap = Record<string, number>;
 
