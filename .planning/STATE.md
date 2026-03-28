@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-28T18:00:00Z"
-last_activity: "2026-03-28 - WI-0639 complete (NFL seasonal gate — isNflSeason() in season-gates.ts, gating filter-panel, filters, cards-page-client). Next: WI-0634 (report_settlement_health scheduler)."
+last_updated: "2026-03-28T20:00:00Z"
+last_activity: "2026-03-28 - WI-0637 complete (MLB without-odds synthetic F5 projection_floor: PRICE_REASONS fix, pricingReady split, 27 cards). Next: WI-0634 (report_settlement_health scheduler)."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,7 +31,7 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-28
-- Next action: **WI-0634** (report_settlement_health scheduler), **WI-0637** (MLB F5 synthetic floor), **WI-0631** (refresh token persistence — security closure). Full priority order in the sprint tables below.
+- Next action: **WI-0634** (report_settlement_health scheduler), **WI-0631** (refresh token persistence — security closure). Full priority order in the sprint tables below.
 
 ## Sprint Plan — 2026-03-28 re-assess (18 open WIs: 0 P1 + 5 P2 + 8 P3 + 5 Backlog)
 
@@ -96,7 +96,7 @@ This file is intentionally minimal to avoid stale status drift.
 | 1 | ~~[WI-0638](../WORK_QUEUE/WI-0638.md)~~ ✓ | Remove NCAAM + Soccer from UI sport filter permanently | XS |
 | 2 | ~~[WI-0639](../WORK_QUEUE/COMPLETE/WI-0639.md)~~ ✓ | NFL UI seasonal gate — hide sport filter outside Sep–Feb | S |
 | 3 | [WI-0634](../WORK_QUEUE/WI-0634.md) | Wire report_settlement_health into scheduler daily | S |
-| 4 | [WI-0637](../WORK_QUEUE/WI-0637.md) | MLB without-odds mode synthetic F5 projection_floor line | S |
+| 4 | ~~[WI-0637](../WORK_QUEUE/COMPLETE/WI-0637.md)~~ ✓ | MLB without-odds mode synthetic F5 projection_floor line | S |
 | 5 | [WI-0631](../WORK_QUEUE/WI-0631.md) | Implement refresh token persistence + revocation (security closure) | M |
 
 ### P3 — Sprint +1
