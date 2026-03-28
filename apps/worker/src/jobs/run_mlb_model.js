@@ -341,19 +341,56 @@ function resolvePitcherKsMode() {
 const PROJECTION_FLOOR_F5_FALLBACK = 8.5;
 
 /**
+ * Look up ERA for a team from mlb_pitcher_stats. Returns null if not found.
+ * Used as a DB fallback when raw_data has no embedded pitcher info (WITHOUT_ODDS_MODE).
+ * Tries all lookup keys (full name + abbreviation) via resolveMlbTeamLookupKeys.
+ * @param {string} team - Full team name or abbreviation (e.g. 'Toronto Blue Jays' or 'TOR')
+ * @returns {number|null}
+ */
+function getPitcherEraFromDb(team) {
+  if (!team) return null;
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(
+      'SELECT era FROM mlb_pitcher_stats WHERE team = ? AND era IS NOT NULL AND era > 0 ORDER BY updated_at DESC LIMIT 1',
+    );
+    for (const key of resolveMlbTeamLookupKeys(team)) {
+      const row = stmt.get(key);
+      if (row) return toFiniteNumber(row.era);
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
  * Derive a synthetic F5 total projection floor from pitcher ERA stats.
+ * First attempts to read ERA from oddsSnapshot.raw_data.mlb (enriched snapshots).
+ * Falls back to a direct mlb_pitcher_stats DB lookup by home_team/away_team
+ * (used in WITHOUT_ODDS_MODE where raw_data is null).
  * Returns a value rounded to the nearest 0.5, or the fallback constant if
- * pitcher stats are unavailable.
+ * pitcher stats are unavailable for both teams.
  *
- * @param {object} oddsSnapshot - Enriched odds snapshot (must have raw_data.mlb.{home,away}_pitcher)
+ * @param {object} oddsSnapshot - Enriched or synthetic odds snapshot
  * @returns {number}
  */
 function computeProjectionFloorF5(oddsSnapshot) {
   try {
     const rawData = parseMlbRawData(oddsSnapshot);
     const mlb = rawData?.mlb && typeof rawData.mlb === 'object' ? rawData.mlb : {};
-    const homeEra = toFiniteNumber(mlb.home_pitcher?.era);
-    const awayEra = toFiniteNumber(mlb.away_pitcher?.era);
+    let homeEra = toFiniteNumber(mlb.home_pitcher?.era);
+    let awayEra = toFiniteNumber(mlb.away_pitcher?.era);
+
+    // WITHOUT_ODDS_MODE: raw_data is null — fall back to DB lookup by team abbreviation
+    // Also skip era=0 (Opening Day pitcher with 0 IP so far — not a real ERA signal)
+    if ((homeEra === null || homeEra === 0) && oddsSnapshot?.home_team) {
+      homeEra = getPitcherEraFromDb(oddsSnapshot.home_team);
+    }
+    if ((awayEra === null || awayEra === 0) && oddsSnapshot?.away_team) {
+      awayEra = getPitcherEraFromDb(oddsSnapshot.away_team);
+    }
+
     if (homeEra === null || awayEra === null) return PROJECTION_FLOOR_F5_FALLBACK;
     const raw = (homeEra / 9) * 5 + (awayEra / 9) * 5;
     return Math.round(raw * 2) / 2;
