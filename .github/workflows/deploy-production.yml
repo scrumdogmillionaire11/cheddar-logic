@@ -384,6 +384,13 @@ jobs:
                 | sed -E 's#^(src|href)="([^"]+)"$#\2#' \
                 | sed "s#^#${route}|#"
             }
+            extract_route_ref_values() {
+              refs="$1"
+              route="$2"
+              printf "%s\n" "$refs" \
+                | awk -F'|' -v route="$route" '$1 == route && NF >= 2 { print $2 }' \
+                | sort -u
+            }
             ORIGIN_HOMEPAGE_HTML=$(curl -fsS "http://127.0.0.1:3000/" || true)
             ORIGIN_CARDS_HTML=$(curl -fsS "http://127.0.0.1:3000/cards" || true)
             ORIGIN_FPL_HTML=$(curl -fsS "http://127.0.0.1:3000/fpl" || true)
@@ -422,6 +429,65 @@ jobs:
               [ -n "$ref" ] || continue
               retry_url "http://127.0.0.1:3000$ref" "origin css [$route] $ref" || fail_with_rollback "origin CSS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-http://127.0.0.1:3000$ref}"
             done
+            retry_public_route_refs() {
+              route="$1"
+              url="$2"
+              expected_origin_route="origin:${route}"
+              expected_js=$(extract_route_ref_values "$ORIGIN_ROUTE_JS_REFS" "$expected_origin_route")
+              expected_css=$(extract_route_ref_values "$ORIGIN_ROUTE_CSS_REFS" "$expected_origin_route")
+              attempts=12
+              delay=5
+              last_actual_js=""
+              last_actual_css=""
+
+              for i in $(seq 1 "$attempts"); do
+                probe_url="$url"
+                sep='?'
+                case "$probe_url" in
+                  *\?*) sep='&' ;;
+                esac
+                probe_url="${probe_url}${sep}cf_html_probe=$(date +%s)-${i}"
+                html=$(curl -fsS \
+                  -H "Cache-Control: no-cache, no-store, must-revalidate" \
+                  -H "Pragma: no-cache" \
+                  "$probe_url" || true)
+                actual_js_refs=$(extract_asset_refs "public:${route}" "$html" "js" | sort -u)
+                actual_css_refs=$(extract_asset_refs "public:${route}" "$html" "css" | sort -u)
+                actual_js=$(extract_route_ref_values "$actual_js_refs" "public:${route}")
+                actual_css=$(extract_route_ref_values "$actual_css_refs" "public:${route}")
+                actual_js_count=$(printf "%s\n" "$actual_js" | grep -c . || true)
+                actual_css_count=$(printf "%s\n" "$actual_css" | grep -c . || true)
+                last_actual_js="$actual_js"
+                last_actual_css="$actual_css"
+
+                if [ "$actual_js_count" -eq 0 ] || [ "$actual_css_count" -eq 0 ]; then
+                  echo "public route ${route} HTML missing asset refs (js=$actual_js_count css=$actual_css_count) attempt $i/$attempts"
+                  sleep "$delay"
+                  continue
+                fi
+
+                if [ "$actual_js" = "$expected_js" ] && [ "$actual_css" = "$expected_css" ]; then
+                  LAST_PUBLIC_ROUTE_JS_REFS="$actual_js_refs"
+                  LAST_PUBLIC_ROUTE_CSS_REFS="$actual_css_refs"
+                  echo "public route ${route} HTML matches origin asset refs"
+                  return 0
+                fi
+
+                echo "public route ${route} HTML asset refs differ from origin attempt $i/$attempts"
+                sleep "$delay"
+              done
+
+              echo "public route ${route} HTML failed to match origin asset refs after $attempts attempts"
+              echo "expected js refs for ${route}:"
+              printf '%s\n' "$expected_js"
+              echo "last public js refs for ${route}:"
+              printf '%s\n' "$last_actual_js"
+              echo "expected css refs for ${route}:"
+              printf '%s\n' "$expected_css"
+              echo "last public css refs for ${route}:"
+              printf '%s\n' "$last_actual_css"
+              return 1
+            }
             PUBLIC_DOMAIN_URL="${NEXT_PUBLIC_PUBLIC_DOMAIN:-${PUBLIC_DOMAIN:-https://cheddarlogic.com}}"
             PUBLIC_DOMAIN_URL="${PUBLIC_DOMAIN_URL%/}"
             CF_PURGE_SKIPPED=false
@@ -442,27 +508,22 @@ jobs:
               sleep 45
             fi
             if [ "$CF_PURGE_SKIPPED" = "false" ]; then
-              PUBLIC_HOMEPAGE_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/" || true)
-              PUBLIC_CARDS_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/cards" || true)
-              PUBLIC_FPL_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/fpl" || true)
-              PUBLIC_RESULTS_HTML=$(curl -fsS "$PUBLIC_DOMAIN_URL/results" || true)
-              PUBLIC_ROUTE_JS_REFS=$(
-                {
-                  { extract_asset_refs "public:/" "$PUBLIC_HOMEPAGE_HTML" "js"; } || true
-                  { extract_asset_refs "public:/cards" "$PUBLIC_CARDS_HTML" "js"; } || true
-                  { extract_asset_refs "public:/fpl" "$PUBLIC_FPL_HTML" "js"; } || true
-                  { extract_asset_refs "public:/results" "$PUBLIC_RESULTS_HTML" "js"; } || true
-                } | sort -u
-              )
-              PUBLIC_ROUTE_CSS_REFS=$(
-                {
-                  { extract_asset_refs "public:/" "$PUBLIC_HOMEPAGE_HTML" "css"; } || true
-                  { extract_asset_refs "public:/cards" "$PUBLIC_CARDS_HTML" "css"; } || true
-                  { extract_asset_refs "public:/fpl" "$PUBLIC_FPL_HTML" "css"; } || true
-                  { extract_asset_refs "public:/results" "$PUBLIC_RESULTS_HTML" "css"; } || true
-                } | sort -u
-              )
+              PUBLIC_ROUTE_JS_REFS=""
+              PUBLIC_ROUTE_CSS_REFS=""
               for route in "/" "/cards" "/fpl" "/results"; do
+                retry_public_route_refs "$route" "$PUBLIC_DOMAIN_URL$route" || fail_with_rollback "route ${route} public HTML did not converge to origin asset refs after purge"
+                PUBLIC_ROUTE_JS_REFS=$(
+                  {
+                    printf '%s\n' "$PUBLIC_ROUTE_JS_REFS"
+                    printf '%s\n' "$LAST_PUBLIC_ROUTE_JS_REFS"
+                  } | sed '/^$/d' | sort -u
+                )
+                PUBLIC_ROUTE_CSS_REFS=$(
+                  {
+                    printf '%s\n' "$PUBLIC_ROUTE_CSS_REFS"
+                    printf '%s\n' "$LAST_PUBLIC_ROUTE_CSS_REFS"
+                  } | sed '/^$/d' | sort -u
+                )
                 PUBLIC_ROUTE_JS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_JS_REFS" | awk -F'|' -v route="public:${route}" '$1 == route { count++ } END { print count + 0 }')
                 PUBLIC_ROUTE_CSS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_CSS_REFS" | awk -F'|' -v route="public:${route}" '$1 == route { count++ } END { print count + 0 }')
                 test "$PUBLIC_ROUTE_JS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing JS asset references in public HTML after purge"
