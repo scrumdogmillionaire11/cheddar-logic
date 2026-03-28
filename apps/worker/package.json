@@ -41,6 +41,8 @@
     "job:refresh-ncaam-ft-csv": "node src/jobs/refresh_ncaam_ft_csv.js",
     "job:backfill-card-results": "node src/jobs/backfill_card_results.js",
     "job:backfill-card-results:dry-run": "node src/jobs/backfill_card_results.js --dry-run",
+    "job:backfill-period-token": "node src/jobs/backfill_period_token.js",
+    "job:backfill-period-token:dry-run": "node src/jobs/backfill_period_token.js --dry-run",
     "job:settle-games": "node src/jobs/settle_game_results.js",
     "job:settle-cards": "node src/jobs/settle_pending_cards.js",
     "job:settlement-report": "node src/jobs/report_settlement_health.js",
