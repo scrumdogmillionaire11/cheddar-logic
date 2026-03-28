@@ -121,3 +121,10 @@ web-bundles/
 # Test/debug scripts (loose)
 test_*.js
 debug_*.js
+
+# Scratch, debug, and backup files (development-time artifacts)
+*.backup
+*.bak
+Claude-research/
+scripts/tmp_*
+scripts/debug/
