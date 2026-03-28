@@ -18,7 +18,7 @@
  *
  * Domain Split:
  * - Betting Engine: NHL/NBA/MLB/NFL (game-time windows)
- * - FPL-SAGE Engine: FPL (deadline-based, NOT game-time) — TODO future refactor
+ * - FPL-SAGE Engine: FPL (deadline-based) — see schedulers/fpl.js
  */
 
 require('dotenv').config();
@@ -44,7 +44,6 @@ const { pullEspnGamesDirect } = require('../jobs/pull_espn_games_direct');
 const { refreshStaleOdds } = require('../jobs/refresh_stale_odds');
 const { runNHLModel } = require('../jobs/run_nhl_model');
 const { runNBAModel } = require('../jobs/run_nba_model');
-const { runFPLModel } = require('../jobs/run_fpl_model');
 const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
@@ -74,6 +73,7 @@ const { pullNhlPlayerShotsProps } = require('../jobs/pull_nhl_player_shots_props
 const { runNHLPlayerShotsModel } = require('../jobs/run_nhl_player_shots_model');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
+const { computeFplDueJobs } = require('./fpl');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -168,13 +168,6 @@ const SPORT_JOBS = {
     execute: runNCAAMModel,
     env: 'ENABLE_NCAAM_MODEL',
     defaultOn: false, // disabled 2026-03-24: season winding down
-  },
-
-  // TEMPORARY: FPL here until deadline-based scheduler refactor
-  fpl: {
-    jobName: 'run_fpl_model',
-    execute: runFPLModel,
-    env: 'ENABLE_FPL_MODEL',
   },
 };
 
@@ -1204,6 +1197,12 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     const oddsHealthJobs = getOddsHealthJobs(nowUtc);
     jobs.push(...oddsHealthJobs);
   }
+
+  // ========== FPL DEADLINE SCHEDULER (7) ==========
+  // Runs in parallel with game-time sports; keyed to GW deadline windows (not kick-offs).
+  // Delegation to schedulers/fpl.js keeps deadline logic isolated from game-time logic.
+  const fplJobs = computeFplDueJobs(nowEt, { dryRun });
+  jobs.push(...fplJobs);
 
   return jobs;
 }
