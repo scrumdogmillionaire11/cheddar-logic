@@ -179,5 +179,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 100 | WI-0641: Player props scheduler extraction — player-props.js (NHL SOG/BLK + MLB pitcher-K), 18 tests, main.js cleaned | 2026-03-28 | eea2e0d | [94-wi-0641-player-props-scheduler-refactor](./quick/94-wi-0641-player-props-scheduler-refactor/) |
 | 101 | WI-0649: Add fixture difficulty tracking to FPL Sage | 2026-03-29 | 193b580 | [97-wi-0649-add-fixture-difficulty-tracking-](./quick/97-wi-0649-add-fixture-difficulty-tracking-/) |
 | 102 | Audit and remove legacy reason codes (WI-0624) | 2026-03-29 | fb79136 | [98-audit-and-remove-legacy-reason-codes-wi-](./quick/98-audit-and-remove-legacy-reason-codes-wi-/) |
+| 103 | WI-0646 (Playoff-mode detection) — must land before Apr 19 | 2026-03-29 | 4725c55 | [99-wi-0646-playoff-mode-detection-must-land](./quick/99-wi-0646-playoff-mode-detection-must-land/) |
 
-Last activity: 2026-03-29 - Completed quick task 102: Audit and remove legacy reason codes (WI-0624)
+Last activity: 2026-03-29 - Completed quick task 103: WI-0646 (Playoff-mode detection) — must land before Apr 19
