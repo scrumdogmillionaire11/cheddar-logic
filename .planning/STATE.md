@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-29T00:00:00Z"
-last_activity: "2026-03-29 - WI-0624 in progress (legacy reason code audit). Prior sprint fully closed. New sprint: WI-0644–0651 (playoff models, test coverage, ROI audit, FPL run-in, edge UX). 2 hard deadlines: WI-0649 ~Apr 4, WI-0646 Apr 19."
+last_updated: "2026-03-29T12:00:00Z"
+last_activity: "2026-03-29 - FPL Sage chip engine recalibrated (BB/TC thresholds). WI-0649 (FPL FDR) elevated to P0 — GW31 is ~Apr 4, only 6 days. WI-0624 continues in parallel. WI-0646 (playoff mode) due Apr 19."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,24 +31,25 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-29
-- Next action: **WI-0624** (legacy reason code audit — in progress). Then WI-0649 (FPL FDR, hard deadline ~Apr 4), WI-0646 (playoff mode, hard deadline Apr 19).
+- Next action: **WI-0649** (FPL FDR — GW31 in ~6 days, drop everything else). Then finish WI-0624, then WI-0646 (playoff mode, Apr 19).
 
-## Sprint Plan — 2026-03-29 re-assess (9 open WIs: 0 P0 + 2 P1 + 3 P2 + 4 Backlog)
+## Sprint Plan — 2026-03-29 re-assess (9 open WIs: 1 P0 + 1 P1 + 3 P2 + 4 Backlog)
 
-> Previous sprint (WI-0619/0620/0621/0622/0623/0586/0632 + quick tasks 85–100) is fully closed. See Quick Tasks table below for full history.
+> Previous sprint (WI-0619/0620/0621/0622/0623/0586/0632 + quick tasks 85–100) is fully closed.
+> FPL Sage chip engine recalibrated 2026-03-29 (BB threshold 55→20, TC 50→14, urgency multiplier, 67 tests pass).
 
 ### Hard Deadlines
 
-- **WI-0649** FPL GW run-in fixture difficulty — must land before GW31 (~**Apr 4, 2026**)
-- **WI-0646** Playoff-mode model adjustment (NBA/NHL) — must land before NBA playoff start (**Apr 19, 2026**)
+- 🔴 **WI-0649** FPL GW run-in FDR — must land before GW31 (~**Apr 4, 2026**) — **6 days**
+- 🟡 **WI-0646** Playoff-mode model adjustment (NBA/NHL) — must land before NBA playoff start (**Apr 19, 2026**)
 
 ### Dependency Chains
 
-- **WI-0624 → (unblocks cleaner transform scope for any future WI)** — in progress
+- **WI-0649** — independent (FPL Sage subproject), START NOW
+- **WI-0624** — in progress, can continue in parallel with WI-0649 (separate subproject)
 - **WI-0644 → WI-0646** — NBA test suite recommended before playoff-mode branch (can parallel)
 - **WI-0647** — independent, can run any time prod DB is available
 - **WI-0648** — independent, target ~Apr 20 (20 MLB games/team threshold)
-- **WI-0649** — independent (FPL Sage subproject)
 - **WI-0650, WI-0651** — independent backlog
 
 ---
@@ -61,11 +62,16 @@ This file is intentionally minimal to avoid stale status drift.
 |---|---|---|
 | **[WI-0624](../WORK_QUEUE/WI-0624.md) ⟳** | Audit + remove legacy reason codes (`PROXY_LEGACY_MARKET_INFERRED` etc.) | L |
 
-### P1 — Hard Deadlines
+### P0 — START NOW (hard deadline in 6 days)
 
 | # | WI | Summary | LOE | Deadline |
 |---|---|---|---|---|
-| 1 | [WI-0649](../WORK_QUEUE/WI-0649.md) | FPL GW run-in fixture difficulty (FDR integration, GW31–38) | M | **~Apr 4** |
+| 1 | **[WI-0649](../WORK_QUEUE/WI-0649.md)** | FPL GW run-in fixture difficulty (FDR integration, GW31–38) | M | **~Apr 4** |
+
+### P1 — Hard Deadline
+
+| # | WI | Summary | LOE | Deadline |
+|---|---|---|---|---|
 | 2 | [WI-0646](../WORK_QUEUE/WI-0646.md) | Playoff-mode detection + threshold overrides (NBA + NHL models) | M | **Apr 19** |
 
 ### P2 — High Value, No Hard Deadline
