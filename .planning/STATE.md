@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-29T12:00:00Z"
-last_activity: "2026-03-29 - FPL Sage chip engine recalibrated (BB/TC thresholds). WI-0649 (FPL FDR) elevated to P0 — GW31 is ~Apr 4, only 6 days. WI-0624 continues in parallel. WI-0646 (playoff mode) due Apr 19."
+last_updated: "2026-03-29T22:41:09Z"
+last_activity: "2026-03-29 - Queue re-assessed: WI-0624, WI-0649, WI-0668 are complete; WI-0646 and WI-0645 are in closeout. Next execution priority is WI-0647 (ROI report), then WI-0648 (MLB recal gate, Apr 20 target), then WI-0650/WI-0651; parallel longer-track chains are WI-0652→0662 (FPL product) and WI-0664→0667 (public splits pipeline)."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,64 +31,53 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-29
-- Next action: **WI-0649** (FPL FDR — GW31 in ~6 days, drop everything else). Then finish WI-0624, then WI-0646 (playoff mode, Apr 19).
+- Next action: Close out **WI-0646/WI-0645** evidence + file moves, then start **WI-0647**.
 
-## Sprint Plan — 2026-03-29 re-assess (9 open WIs: 1 P0 + 1 P1 + 3 P2 + 4 Backlog)
+## Sprint Plan — 2026-03-29 re-assess (active queue after 0624/0649/0668 completion)
 
-> Previous sprint (WI-0619/0620/0621/0622/0623/0586/0632 + quick tasks 85–100) is fully closed.
-> FPL Sage chip engine recalibrated 2026-03-29 (BB threshold 55→20, TC 50→14, urgency multiplier, 67 tests pass).
+> Recent completions include WI-0624, WI-0644, WI-0649, WI-0668 (see `WORK_QUEUE/COMPLETE/`).
+> WI-0646 and WI-0645 are treated as near-complete closeout items.
 
 ### Hard Deadlines
 
-- 🔴 **WI-0649** FPL GW run-in FDR — must land before GW31 (~**Apr 4, 2026**) — **6 days**
-- 🟡 **WI-0646** Playoff-mode model adjustment (NBA/NHL) — must land before NBA playoff start (**Apr 19, 2026**)
+- 🟡 **WI-0646** Playoff-mode model adjustment (NBA/NHL) — closeout target before NBA playoff start (**Apr 19, 2026**)
+- 🟡 **WI-0648** MLB empirical recalibration gate — target completion around **Apr 20, 2026** (20 games/team threshold)
 
 ### Dependency Chains
 
-- **WI-0649** — independent (FPL Sage subproject), START NOW
-- **WI-0624** — in progress, can continue in parallel with WI-0649 (separate subproject)
-- **WI-0644 → WI-0646** — NBA test suite recommended before playoff-mode branch (can parallel)
-- **WI-0647** — independent, can run any time prod DB is available
-- **WI-0648** — independent, target ~Apr 20 (20 MLB games/team threshold)
-- **WI-0650, WI-0651** — independent backlog
+- **WI-0646 / WI-0645** — closeout/verification only
+- **WI-0647** — independent, can run immediately (read-only DB)
+- **WI-0648** — independent with seasonal target (~Apr 20)
+- **WI-0650** and **WI-0651** — independent quality/UX follow-ups
+- **WI-0652 → WI-0662** — FPL product-platform program chain
+- **WI-0664 → WI-0667** — public betting splits data + worker + pipeline-gate chain
 
 ---
 
 ## Prioritized Open Work Queue — 2026-03-29
 
-### In Progress
+### In Progress / Closeout
 
-| WI | Summary | LOE |
-|---|---|---|
-| **[WI-0624](../WORK_QUEUE/WI-0624.md) ⟳** | Audit + remove legacy reason codes (`PROXY_LEGACY_MARKET_INFERRED` etc.) | L |
+- [WI-0646](../WORK_QUEUE/WI-0646.md) ⟳ — Playoff-mode detection + threshold overrides (NBA/NHL), LOE M
 
-### P0 — START NOW (hard deadline in 6 days)
+### Next Up (Immediate)
 
-| # | WI | Summary | LOE | Deadline |
-|---|---|---|---|---|
-| 1 | **[WI-0649](../WORK_QUEUE/WI-0649.md)** | FPL GW run-in fixture difficulty (FDR integration, GW31–38) | M | **~Apr 4** |
+- [WI-0647](../WORK_QUEUE/WI-0647.md) — Cross-market settlement ROI report (LOE M); unlocks evidence-based promote/watch/quarantine decisions.
+- [WI-0648](../WORK_QUEUE/WI-0648.md) — MLB empirical sigma recalibration gate (LOE M); time-sensitive seasonal gate (~Apr 20).
+- [WI-0650](../WORK_QUEUE/WI-0650.md) — OWNERSHIP + CI import boundary check (LOE S); protects db decomposition contracts.
+- [WI-0651](../WORK_QUEUE/WI-0651.md) — Edge sort + min-edge filter in cards UI (LOE M); converts edge data into actionable workflow.
 
-### P1 — Hard Deadline
+### Program Track A — FPL Product Platform
 
-| # | WI | Summary | LOE | Deadline |
-|---|---|---|---|---|
-| 2 | [WI-0646](../WORK_QUEUE/WI-0646.md) | Playoff-mode detection + threshold overrides (NBA + NHL models) | M | **Apr 19** |
+`WI-0652 → (WI-0653, WI-0655, WI-0657) → (WI-0654, WI-0656, WI-0658) → WI-0659 → (WI-0660, WI-0661) → WI-0662`
 
-### P2 — High Value, No Hard Deadline
+### Program Track B — Public Splits Pipeline
 
-| # | WI | Summary | LOE |
-|---|---|---|---|
-| 3 | [WI-0644](../WORK_QUEUE/WI-0644.md) | Test suite for `run_nba_model.js` | M |
-| 4 | [WI-0645](../WORK_QUEUE/WI-0645.md) | Test suite for `run_nhl_player_shots_model.js` | M |
-| 5 | [WI-0647](../WORK_QUEUE/WI-0647.md) | Cross-market settlement win-rate audit / ROI report script | M |
+`WI-0664 → WI-0665 → WI-0666 → WI-0667`
 
 ### Backlog
 
-| WI | Summary | LOE | Note |
-|---|---|---|---|
-| [WI-0648](../WORK_QUEUE/WI-0648.md) | MLB empirical sigma recalibration gate (2026 season data) | M | Target ~Apr 20 |
-| [WI-0651](../WORK_QUEUE/WI-0651.md) | Edge sort + min-edge filter in cards UI | M | — |
-| [WI-0650](../WORK_QUEUE/WI-0650.md) | OWNERSHIP.md + CI import boundary check for db modules | S | needs-sync |
+- [WI-0663](../WORK_QUEUE/WI-0663.md) — MLB pitcher-K strong under monitoring (LOE M), independent MLB enhancement.
 
 ---
 
