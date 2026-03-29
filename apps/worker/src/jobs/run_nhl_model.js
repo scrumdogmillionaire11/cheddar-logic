@@ -74,6 +74,10 @@ const {
   normalizeRawDataPayload,
 } = require('../utils/normalize-raw-data-payload');
 const { resolveGoalieState } = require('../models/nhl-goalie-state');
+const {
+  isPlayoffGame,
+  PLAYOFF_SIGMA_MULTIPLIER,
+} = require('../utils/playoff-detection');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const USE_ORCHESTRATED_MARKET =
@@ -110,6 +114,19 @@ const NHL_DRIVER_CARD_TYPES = [
   'nhl-pace-totals',
   'nhl-pace-1p',
 ];
+
+/**
+ * WI-0646: Apply PLAYOFF_SIGMA_MULTIPLIER to sigma overrides.
+ * Only multiplies finite numeric fields so null/undefined gracefully pass through.
+ */
+function applyPlayoffSigmaMultiplier(sigma, multiplier) {
+  if (!sigma) return sigma;
+  return {
+    ...sigma,
+    spread: Number.isFinite(sigma.spread) ? sigma.spread * multiplier : sigma.spread,
+    total: Number.isFinite(sigma.total) ? sigma.total * multiplier : sigma.total,
+  };
+}
 
 function attachRunId(card, runId) {
   if (!card) return;
@@ -1210,6 +1227,10 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       console.log('[NHLModel] Recording job start...');
       insertJobRun('run_nhl_model', jobRunId, jobKey);
 
+      // WI-0646: Compute NHL base sigma for playoff-mode overrides.
+      // NHL does not yet use computeSigmaFromHistory — use getSigmaDefaults as base.
+      const nhlBaseSigma = edgeCalculator.getSigmaDefaults('NHL');
+
       // Get latest NHL odds for UPCOMING games only (prevents stale data processing)
       console.log('[NHLModel] Fetching odds for upcoming NHL games...');
       const { DateTime } = require('luxon');
@@ -1288,6 +1309,13 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               `  [warn] ${gameId}: Failed to persist enrichment payload (${persistError.message})`,
             );
           }
+
+          // WI-0646: Detect playoff game and apply threshold overrides
+          const isPlayoff = isPlayoffGame(oddsSnapshot);
+          if (isPlayoff) console.log(`[PLAYOFF_MODE] gameId: ${gameId}`);
+          const effectiveSigma = isPlayoff
+            ? applyPlayoffSigmaMultiplier(nhlBaseSigma, PLAYOFF_SIGMA_MULTIPLIER)
+            : nhlBaseSigma;
 
           const projectionGate = assessProjectionInputs('NHL', oddsSnapshot);
           if (!projectionGate.projection_inputs_complete) {
@@ -1454,6 +1482,8 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             const decisionOutcome = publishDecisionForCard({
               card,
               oddsSnapshot,
+              // WI-0646: effectiveSigma applies PLAYOFF_SIGMA_MULTIPLIER when isPlayoff.
+              options: { sigmaOverride: effectiveSigma },
             });
             if (decisionOutcome.gated) gatedCount++;
             if (decisionOutcome.gated && !decisionOutcome.allow) {
@@ -1510,6 +1540,8 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             const decisionOutcome = publishDecisionForCard({
               card,
               oddsSnapshot,
+              // WI-0646: effectiveSigma applies PLAYOFF_SIGMA_MULTIPLIER when isPlayoff.
+              options: { sigmaOverride: effectiveSigma },
             });
             if (decisionOutcome.gated) gatedCount++;
             if (decisionOutcome.gated && !decisionOutcome.allow) {

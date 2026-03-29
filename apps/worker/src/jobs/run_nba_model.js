@@ -71,6 +71,11 @@ const {
 const {
   resolveThresholdProfile,
 } = require('@cheddar-logic/models');
+const {
+  isPlayoffGame,
+  PLAYOFF_SIGMA_MULTIPLIER,
+  PLAYOFF_EDGE_MIN_INCREMENT,
+} = require('../utils/playoff-detection');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -92,6 +97,19 @@ const NBA_DRIVER_CARD_TYPES = [
   'nba-blowout-risk',
   'nba-total-projection',
 ];
+
+/**
+ * WI-0646: Apply PLAYOFF_SIGMA_MULTIPLIER to empirical sigma overrides.
+ * Only multiplies finite numeric fields so null/undefined gracefully pass through.
+ */
+function applyPlayoffSigmaMultiplier(sigma, multiplier) {
+  if (!sigma) return sigma;
+  return {
+    ...sigma,
+    spread: Number.isFinite(sigma.spread) ? sigma.spread * multiplier : sigma.spread,
+    total: Number.isFinite(sigma.total) ? sigma.total * multiplier : sigma.total,
+  };
+}
 
 function attachRunId(card, runId) {
   if (!card) return;
@@ -380,7 +398,7 @@ function generateNBAMarketCallCards(
   gameId,
   marketDecisions,
   oddsSnapshot,
-  { withoutOddsMode = false, lineContexts = {} } = {},
+  { withoutOddsMode = false, lineContexts = {}, spreadLeanMin = null } = {},
 ) {
   const now = new Date().toISOString();
   const expiresAt = null;
@@ -582,7 +600,8 @@ function generateNBAMarketCallCards(
   // SPREAD decision → nba-spread-call
   const spreadDecision = marketDecisions?.SPREAD;
   const nbaSpreadProfile = resolveThresholdProfile({ sport: 'NBA', marketType: 'SPREAD' });
-  const SPREAD_LEAN_MIN = nbaSpreadProfile.edge.lean_edge_min; // 0.035 via v2 profile
+  // WI-0646: use playoff-adjusted spreadLeanMin when provided (isPlayoff=true), else default profile value
+  const SPREAD_LEAN_MIN = spreadLeanMin != null ? spreadLeanMin : nbaSpreadProfile.edge.lean_edge_min; // 0.035 via v2 profile
   if (
     spreadDecision &&
     (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH') &&
@@ -867,6 +886,16 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             );
           }
 
+          // WI-0646: Detect playoff game and apply threshold overrides
+          const isPlayoff = isPlayoffGame(oddsSnapshot);
+          if (isPlayoff) console.log(`[PLAYOFF_MODE] gameId: ${gameId}`);
+          const effectiveSigma = isPlayoff
+            ? applyPlayoffSigmaMultiplier(computedSigma, PLAYOFF_SIGMA_MULTIPLIER)
+            : computedSigma;
+          const effectiveSpreadLeanMin = isPlayoff
+            ? (resolveThresholdProfile({ sport: 'NBA', marketType: 'SPREAD' }).edge.lean_edge_min + PLAYOFF_EDGE_MIN_INCREMENT)
+            : null; // null = use default from generateNBAMarketCallCards
+
           const projectionGate = assessProjectionInputs('NBA', oddsSnapshot);
           if (!projectionGate.projection_inputs_complete) {
             projectionBlockedCount++;
@@ -1004,7 +1033,8 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               oddsSnapshot,
               // WI-0591: thread empirical sigma so decisioning uses computed
               // values instead of silently falling back to static defaults.
-              options: { sigmaOverride: computedSigma },
+              // WI-0646: effectiveSigma applies PLAYOFF_SIGMA_MULTIPLIER when isPlayoff.
+              options: { sigmaOverride: effectiveSigma },
             });
             if (decisionOutcome.gated) gatedCount++;
             if (decisionOutcome.gated && !decisionOutcome.allow) {
@@ -1029,7 +1059,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             gameId,
             nbaMarketDecisions,
             oddsSnapshot,
-            { withoutOddsMode, lineContexts: nbaLineContexts },
+            { withoutOddsMode, lineContexts: nbaLineContexts, spreadLeanMin: effectiveSpreadLeanMin },
           );
           if (nbaMarketCallCards.length > 0) {
             for (const ct of ['nba-totals-call', 'nba-spread-call']) {
@@ -1055,7 +1085,8 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               oddsSnapshot,
               // WI-0591: thread empirical sigma so decisioning uses computed
               // values instead of silently falling back to static defaults.
-              options: { sigmaOverride: computedSigma },
+              // WI-0646: effectiveSigma applies PLAYOFF_SIGMA_MULTIPLIER when isPlayoff.
+              options: { sigmaOverride: effectiveSigma },
             });
             if (decisionOutcome.gated) gatedCount++;
             if (decisionOutcome.gated && !decisionOutcome.allow) {

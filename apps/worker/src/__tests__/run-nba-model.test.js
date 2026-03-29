@@ -129,15 +129,6 @@ function loadRunNBAModel({
     })),
   }));
 
-  jest.doMock('../utils/decision-publisher', () => ({
-    publishDecisionForCard: jest.fn(() => ({
-      gated: false,
-      allow: true,
-      reasonCode: null,
-    })),
-    applyUiActionFields: jest.fn(),
-  }));
-
   jest.doMock('../utils/normalize-raw-data-payload', () => ({
     normalizeRawDataPayload: jest.fn((raw) => raw),
   }));
@@ -176,6 +167,17 @@ function loadRunNBAModel({
     buildMarketCallCard: jest.fn(),
   }));
 
+  const publishDecisionForCardMock = jest.fn(() => ({
+    gated: false,
+    allow: true,
+    reasonCode: null,
+  }));
+
+  jest.doMock('../utils/decision-publisher', () => ({
+    publishDecisionForCard: publishDecisionForCardMock,
+    applyUiActionFields: jest.fn(),
+  }));
+
   const moduleUnderTest = require('../jobs/run_nba_model');
 
   return {
@@ -195,6 +197,7 @@ function loadRunNBAModel({
       getUpcomingGamesAsSyntheticSnapshots,
       computeNBADriverCardsMock,
       generateCardMock,
+      publishDecisionForCardMock,
     },
   };
 }
@@ -471,5 +474,94 @@ describe('runNBAModel', () => {
     expect(mocks.getUpcomingGamesAsSyntheticSnapshots).toHaveBeenCalledTimes(1);
     expect(mocks.insertCardPayload).not.toHaveBeenCalled();
     expect(mocks.markJobRunSuccess).toHaveBeenCalledWith(result.jobRunId);
+  });
+});
+
+// WI-0646: Playoff mode detection tests
+describe('playoff mode detection', () => {
+  let consoleLogSpy;
+  let consoleErrorSpy;
+
+  beforeEach(() => {
+    delete process.env.ENABLE_WITHOUT_ODDS_MODE;
+    delete process.env.ENABLE_WELCOME_HOME;
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+    jest.restoreAllMocks();
+    jest.resetModules();
+    jest.clearAllMocks();
+    delete process.env.ENABLE_WITHOUT_ODDS_MODE;
+    delete process.env.ENABLE_WELCOME_HOME;
+  });
+
+  test('applies PLAYOFF_MODE sigma override and logs flag when raw_data.season.type is 3', async () => {
+    const playoffSnapshot = buildOddsSnapshot({
+      game_id: 'nba-playoff-001',
+      raw_data: { season: { type: 3 } },
+    });
+
+    const { runNBAModel, mocks } = loadRunNBAModel({
+      oddsSnapshots: [playoffSnapshot],
+    });
+
+    await runNBAModel();
+
+    // Should log [PLAYOFF_MODE]
+    const logCalls = consoleLogSpy.mock.calls.map((args) => args[0]);
+    expect(logCalls.some((msg) => /\[PLAYOFF_MODE\]/.test(String(msg)))).toBe(true);
+
+    // publishDecisionForCard should be called with inflated sigma (spread * 1.2, total * 1.2)
+    // computeSigmaFromHistory mock returns { total: 12, spread: 4.5 }
+    // After PLAYOFF_SIGMA_MULTIPLIER=1.2: spread=5.4, total=14.4
+    expect(mocks.publishDecisionForCardMock).toHaveBeenCalled();
+    const calls = mocks.publishDecisionForCardMock.mock.calls;
+    const sigmaArgs = calls.map((c) => c[0].options?.sigmaOverride).filter(Boolean);
+    expect(sigmaArgs.length).toBeGreaterThan(0);
+    sigmaArgs.forEach((sigma) => {
+      // Playoff sigma should be larger than baseline values (4.5 and 12)
+      if (Number.isFinite(sigma.spread)) {
+        expect(sigma.spread).toBeGreaterThan(4.5);
+      }
+      if (Number.isFinite(sigma.total)) {
+        expect(sigma.total).toBeGreaterThan(12);
+      }
+    });
+  });
+
+  test('does not apply PLAYOFF_MODE for regular-season game', async () => {
+    const regularSnapshot = buildOddsSnapshot({
+      game_id: 'nba-regular-001',
+      raw_data: { season: { type: 2 } },
+    });
+
+    const { runNBAModel, mocks } = loadRunNBAModel({
+      oddsSnapshots: [regularSnapshot],
+    });
+
+    await runNBAModel();
+
+    // Should NOT log [PLAYOFF_MODE]
+    const logCalls = consoleLogSpy.mock.calls.map((args) => args[0]);
+    expect(logCalls.some((msg) => /\[PLAYOFF_MODE\]/.test(String(msg)))).toBe(false);
+
+    // publishDecisionForCard should be called with unmodified sigma (spread=4.5, total=12)
+    expect(mocks.publishDecisionForCardMock).toHaveBeenCalled();
+    const calls = mocks.publishDecisionForCardMock.mock.calls;
+    const sigmaArgs = calls.map((c) => c[0].options?.sigmaOverride).filter(Boolean);
+    expect(sigmaArgs.length).toBeGreaterThan(0);
+    sigmaArgs.forEach((sigma) => {
+      // Regular-season sigma should match baseline values exactly
+      if (Number.isFinite(sigma.spread)) {
+        expect(sigma.spread).toBe(4.5);
+      }
+      if (Number.isFinite(sigma.total)) {
+        expect(sigma.total).toBe(12);
+      }
+    });
   });
 });
