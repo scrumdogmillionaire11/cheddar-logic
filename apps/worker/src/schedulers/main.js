@@ -60,6 +60,7 @@ const {
   run: refreshTeamMetricsDaily,
 } = require('../jobs/refresh_team_metrics_daily');
 const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availability');
+const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
 const { computeFplDueJobs } = require('./fpl');
@@ -86,6 +87,8 @@ const TEAM_METRICS_MAX_AGE_MINUTES = Number(
 );
 const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC =
   process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC !== 'false';
+const ENABLE_NHL_SOG_PLAYER_SYNC =
+  process.env.ENABLE_NHL_SOG_PLAYER_SYNC === 'true';
 const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 30);
 // First hour of day to start fetching odds (ET). Raise to 10 on starter-key budget.
 const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 6);
@@ -178,6 +181,11 @@ function keyNightlySweep(nowEt) {
 
 function keyNhlPlayerAvailabilitySync(nowEt) {
   return `sync_nhl_player_availability|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+}
+
+function keyNhlSogPlayerSync(nowEt) {
+  const hhmm = `${String(nowEt.hour).padStart(2, '0')}${String(nowEt.minute).padStart(2, '0')}`;
+  return `sync_nhl_sog_player_ids|${nowEt.toISODate()}|${hhmm}`;
 }
 
 function keyNhlTeamStats(nowEt) {
@@ -704,6 +712,19 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
+  // ========== NHL SOG PLAYER ID SYNC (2.55) ==========
+  // Daily 04:00 ET sync refreshes the tracked SOG player roster before prop ingest windows.
+  if (ENABLE_NHL_SOG_PLAYER_SYNC && isFixedDue(nowEt, '04:00')) {
+    const jobKey = keyNhlSogPlayerSync(nowEt);
+    jobs.push({
+      jobName: 'sync_nhl_sog_player_ids',
+      jobKey,
+      execute: syncNhlSogPlayerIds,
+      args: { jobKey, dryRun },
+      reason: 'daily NHL SOG player ID sync (04:00 ET)',
+    });
+  }
+
   // ========== NHL TEAM STATS (2.6) ==========
   // Daily early-morning refresh keeps team_stats current before the NHL model window.
   if (isFixedDue(nowEt, '06:00')) {
@@ -1178,6 +1199,7 @@ module.exports = {
   keyTminus,
   keyNightlySweep,
   keyNhlPlayerAvailabilitySync,
+  keyNhlSogPlayerSync,
   keySettlementHealthReport,
   keyHourlySettlementSweep,
   keyHourlySettlementJob,
