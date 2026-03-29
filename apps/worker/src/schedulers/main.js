@@ -46,9 +46,6 @@ const { runNHLModel } = require('../jobs/run_nhl_model');
 const { runNBAModel } = require('../jobs/run_nba_model');
 const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
-const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
-const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
-const { pullMlbPitcherStrikeoutProps } = require('../jobs/pull_mlb_pitcher_strikeout_props');
 const { settleMlbF5 } = require('../jobs/settle_mlb_f5');
 const { syncGameStatuses } = require('../jobs/sync_game_statuses');
 const { settleGameResults } = require('../jobs/settle_game_results');
@@ -62,13 +59,11 @@ const {
 const {
   run: refreshTeamMetricsDaily,
 } = require('../jobs/refresh_team_metrics_daily');
-const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availability');
-const { pullNhlPlayerShotsProps } = require('../jobs/pull_nhl_player_shots_props');
-const { runNHLPlayerShotsModel } = require('../jobs/run_nhl_player_shots_model');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
 const { computeFplDueJobs } = require('./fpl');
+const { computePlayerPropsDueJobs } = require('./player-props');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -89,16 +84,8 @@ const REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS =
 const TEAM_METRICS_MAX_AGE_MINUTES = Number(
   process.env.TEAM_METRICS_MAX_AGE_MINUTES || 20 * 60,
 );
-const ENABLE_NHL_SOG_PLAYER_SYNC =
-  process.env.ENABLE_NHL_SOG_PLAYER_SYNC !== 'false';
 const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC =
   process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC !== 'false';
-const ENABLE_NHL_SOG_PROP_PULL =
-  process.env.ENABLE_NHL_SOG_PROP_PULL !== 'false';
-// MLB pitcher K prop pull: opt-in (default OFF); only runs in ODDS_BACKED mode
-const ENABLE_MLB_PITCHER_K_PROP_PULL =
-  process.env.MLB_PITCHER_K_PROP_EVENTS_ENABLED === 'true' &&
-  process.env.PITCHER_KS_MODEL_MODE === 'ODDS_BACKED';
 const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 30);
 // First hour of day to start fetching odds (ET). Raise to 10 on starter-key budget.
 const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 6);
@@ -188,9 +175,6 @@ function keyNightlySweep(nowEt) {
   return `settle|nightly|${nowEt.toISODate()}`;
 }
 
-function keyNhlSogPlayerSync(nowEt) {
-  return `sync_nhl_sog_player_ids|${nowEt.toISODate()}|0400`;
-}
 
 function keyNhlPlayerAvailabilitySync(nowEt) {
   return `sync_nhl_player_availability|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
@@ -607,60 +591,6 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     }
   }
 
-  function queueNhlShotsPropIngestBeforeModel(modelJobKey, reason) {
-    if (!ENABLE_NHL_SOG_PROP_PULL) return;
-    const propPullJobKey = `nhl_sog_props|${modelJobKey}`;
-    jobs.push({
-      jobName: 'pull_nhl_player_shots_props',
-      jobKey: propPullJobKey,
-      execute: pullNhlPlayerShotsProps,
-      args: { jobKey: propPullJobKey, dryRun },
-      reason: `pre-shots-model NHL SOG prop ingest (${reason})`,
-    });
-    const shotsModelJobKey = `nhl_sog_model|${modelJobKey}`;
-    jobs.push({
-      jobName: 'run_nhl_player_shots_model',
-      jobKey: shotsModelJobKey,
-      execute: runNHLPlayerShotsModel,
-      args: { jobKey: shotsModelJobKey, dryRun },
-      reason: `NHL player shots model (${reason})`,
-    });
-  }
-
-  function queueMlbPitcherStatsBeforeModel(modelJobKey, reason) {
-    const pitcherJobKey = `mlb_pitcher_stats|${modelJobKey}`;
-    jobs.push({
-      jobName: 'pull_mlb_pitcher_stats',
-      jobKey: pitcherJobKey,
-      execute: pullMlbPitcherStats,
-      args: { jobKey: pitcherJobKey, dryRun },
-      reason: `pre-model MLB pitcher stats refresh (${reason})`,
-    });
-  }
-
-  function queueMlbWeatherBeforeModel(modelJobKey, reason) {
-    const weatherJobKey = `pull_mlb_weather|${modelJobKey}`;
-    jobs.push({
-      jobName: 'pull_mlb_weather',
-      jobKey: weatherJobKey,
-      execute: pullMlbWeather,
-      args: { jobKey: weatherJobKey, dryRun },
-      reason: `pre-model MLB weather overlay fetch (${reason})`,
-    });
-  }
-
-  function queueMlbPitcherKPropIngestBeforeModel(modelJobKey, reason) {
-    if (!ENABLE_MLB_PITCHER_K_PROP_PULL) return;
-    const kPropJobKey = `mlb_pitcher_k_props|${modelJobKey}`;
-    jobs.push({
-      jobName: 'pull_mlb_pitcher_strikeout_props',
-      jobKey: kPropJobKey,
-      execute: pullMlbPitcherStrikeoutProps,
-      args: { jobKey: kPropJobKey, dryRun },
-      reason: `pre-model MLB pitcher K prop ingest (${reason})`,
-    });
-  }
-
   function maybeQueueTeamMetricsRefresh(triggerReason, sport) {
     if (!isProjectionModelSport(sport)) return;
     if (!REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS) return;
@@ -800,19 +730,6 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
-  // ========== NHL SOG PLAYER SYNC (2.75) ==========
-  // Daily refresh of tracked NHL SOG player IDs before regular morning jobs.
-  if (ENABLE_NHL_SOG_PLAYER_SYNC && isFixedDue(nowEt, '04:00')) {
-    const jobKey = keyNhlSogPlayerSync(nowEt);
-    jobs.push({
-      jobName: 'sync_nhl_sog_player_ids',
-      jobKey,
-      execute: syncNhlSogPlayerIds,
-      args: { jobKey, dryRun },
-      reason: 'daily NHL SOG tracked-player sync (04:00 ET)',
-    });
-  }
-
   // ========== NHL PLAYER AVAILABILITY SYNC (2.8) ==========
   // Hourly injury/availability poll to keep player_availability fresh between
   // pull_nhl_player_shots runs (which may run infrequently).
@@ -855,9 +772,6 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       if (!isFixedDue(nowEt, t)) continue;
       maybeQueueTeamMetricsRefresh(`fixed ${t} ET`, sport);
       const jobKey = keyFixed(sport, nowEt, t);
-      if (sport === 'nhl') {
-        queueNhlShotsPropIngestBeforeModel(jobKey, `fixed ${t} ET`);
-      }
       jobs.push({
         jobName,
         jobKey,
@@ -895,14 +809,6 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       maybeQueueTeamMetricsRefresh(`T-${mins} for ${g.game_id}`, sport);
 
       const jobKey = keyTminus(sport, g.game_id, mins);
-      if (sport === 'nhl') {
-        queueNhlShotsPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
-      }
-      if (sport === 'mlb') {
-        queueMlbPitcherStatsBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
-        queueMlbWeatherBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
-        queueMlbPitcherKPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
-      }
       // For projection-model sports, force a fresh odds pull immediately before the model
       // so T-minus runs always see the current line (not up-to-29-min-stale hourly snapshot).
       // Deduped per sport per T-minus window — one pull serves all games in the same window.
@@ -1075,6 +981,12 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   const fplJobs = computeFplDueJobs(nowEt, { dryRun });
   jobs.push(...fplJobs);
 
+  // ========== PLAYER PROPS SCHEDULER (8) ==========
+  // NHL SOG/BLK + MLB pitcher-K prop ingest/model — dedicated cadence (09:00, 18:00, T-60).
+  // See schedulers/player-props.js for window logic and key format.
+  const playerPropsJobs = computePlayerPropsDueJobs(nowEt, { games, dryRun });
+  jobs.push(...playerPropsJobs);
+
   return jobs;
 }
 
@@ -1182,16 +1094,13 @@ async function start() {
   );
   console.log(`  TEAM_METRICS_MAX_AGE_MINUTES: ${TEAM_METRICS_MAX_AGE_MINUTES}`);
   console.log(
-    `  ENABLE_NHL_SOG_PLAYER_SYNC: ${ENABLE_NHL_SOG_PLAYER_SYNC ? 'true' : 'false'}`,
-  );
-  console.log(
     `  ENABLE_NHL_PLAYER_AVAILABILITY_SYNC: ${ENABLE_NHL_PLAYER_AVAILABILITY_SYNC ? 'true' : 'false'}`,
   );
   console.log(
-    `  ENABLE_NHL_SOG_PROP_PULL: ${ENABLE_NHL_SOG_PROP_PULL ? 'true' : 'false'}`,
+    `  ENABLE_PLAYER_PROPS_SCHEDULER: ${process.env.ENABLE_PLAYER_PROPS_SCHEDULER || 'true (default)'}`,
   );
   console.log(
-    `  ENABLE_MLB_PITCHER_K_PROP_PULL: ${ENABLE_MLB_PITCHER_K_PROP_PULL ? 'true' : 'false'} (MLB_PITCHER_K_PROP_EVENTS_ENABLED=${process.env.MLB_PITCHER_K_PROP_EVENTS_ENABLED || 'unset'}, PITCHER_KS_MODEL_MODE=${process.env.PITCHER_KS_MODEL_MODE || 'unset'})`,
+    `  ENABLE_NHL_BLK_INGEST: ${process.env.ENABLE_NHL_BLK_INGEST || 'true (default)'}`,
   );
   console.log(`  ODDS_FETCH_SLOT_MINUTES: ${ODDS_FETCH_SLOT_MINUTES}`);
   console.log(`  ODDS_FETCH_START_HOUR: ${ODDS_FETCH_START_HOUR}h ET`);
@@ -1268,7 +1177,6 @@ module.exports = {
   keyDiscordCardsSnapshot,
   keyTminus,
   keyNightlySweep,
-  keyNhlSogPlayerSync,
   keyNhlPlayerAvailabilitySync,
   keySettlementHealthReport,
   keyHourlySettlementSweep,
