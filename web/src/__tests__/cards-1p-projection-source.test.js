@@ -15,13 +15,17 @@ const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 const gamesRoutePath = path.resolve(__dirname, '../../src/app/api/games/route.ts');
 const cardsRoutePath = path.resolve(__dirname, '../../src/app/api/cards/route.ts');
 const cardsByGameRoutePath = path.resolve(__dirname, '../../src/app/api/cards/[gameId]/route.ts');
-const cardsPagePath = path.resolve(__dirname, '../../src/components/cards-page-client.tsx');
+const cardsGameCardPath = path.resolve(__dirname, '../../src/components/cards/GameCardItem.tsx');
+const cardsSharedPath = path.resolve(__dirname, '../../src/components/cards/shared.ts');
 const transformPath = path.resolve(__dirname, '../../src/lib/game-card/transform.ts');
 
 const gamesRouteSource = fs.readFileSync(gamesRoutePath, 'utf8');
 const cardsRouteSource = fs.readFileSync(cardsRoutePath, 'utf8');
 const cardsByGameRouteSource = fs.readFileSync(cardsByGameRoutePath, 'utf8');
-const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
+const cardsPageSource =
+  fs.readFileSync(cardsGameCardPath, 'utf8') +
+  '\n' +
+  fs.readFileSync(cardsSharedPath, 'utf8');
 const transformSource = fs.readFileSync(transformPath, 'utf8');
 
 console.log('🧪 NHL 1P projection source contract tests');

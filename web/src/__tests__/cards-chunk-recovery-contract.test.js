@@ -10,8 +10,10 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const filePath = path.resolve(__dirname, '../components/cards-page-client.tsx');
-const source = fs.readFileSync(filePath, 'utf8');
+const contextPath = path.resolve(__dirname, '../components/cards/CardsPageContext.tsx');
+const sharedPath = path.resolve(__dirname, '../components/cards/shared.ts');
+const source =
+  fs.readFileSync(contextPath, 'utf8') + '\n' + fs.readFileSync(sharedPath, 'utf8');
 
 console.log('🧪 Cards chunk recovery source contract tests');
 

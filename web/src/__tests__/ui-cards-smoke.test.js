@@ -62,7 +62,7 @@ async function validateApiSmoke(baseUrl, assert) {
 async function validateCardsSourceContract(assert) {
   const fs = await import('node:fs/promises');
   const source = await fs.readFile(
-    new URL('../components/cards-page-client.tsx', import.meta.url),
+    new URL('../components/cards/GameCardItem.tsx', import.meta.url),
     'utf8',
   );
   assert.ok(

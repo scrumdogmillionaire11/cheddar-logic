@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
-const filePath = path.resolve(__dirname, '../../src/components/cards-page-client.tsx');
+const filePath = path.resolve(__dirname, '../../src/components/cards/CardsPageContext.tsx');
 const source = fs.readFileSync(filePath, 'utf8');
 
 console.log('🧪 Starting WI-0396: Cards Lifecycle Fetch Race Tests...\n');
@@ -21,7 +21,7 @@ console.log('🧪 Starting WI-0396: Cards Lifecycle Fetch Race Tests...\n');
 // Test 1: Lifecycle mode defaults to 'pregame' for SSR compatibility
 console.log('Test 1: Lifecycle mode SSR-safe default');
 assert(
-  source.includes("useState<LifecycleMode>('pregame')"),
+  source.includes("lifecycleMode: 'pregame'"),
   'cards page initializes with pregame for SSR + hydration safety',
 );
 assert(
@@ -41,7 +41,7 @@ console.log('✓ globalGamesRequestLifecycle variable declared\n');
 // Test 3: Latest lifecycle mode ref for race detection
 console.log('Test 3: Lifecycle mode ref for detecting changes');
 assert(
-  source.includes('const latestLifecycleModeRef = useRef<LifecycleMode>'),
+  source.includes('const latestLifecycleModeRef = useRef<LifecycleMode>('),
   'cards page should track latest lifecycle mode in ref',
 );
 console.log('✓ latestLifecycleModeRef declared\n');
@@ -63,9 +63,7 @@ assert(
   'fetchGames must read latest lifecycle mode from ref',
 );
 assert(
-  source.includes(
-    'const lifecycleQuery =\n          requestedLifecycleMode === \'active\' ? \'?lifecycle=active\' : \'\';',
-  ),
+  source.includes("requestedLifecycleMode === 'active' ? '?lifecycle=active' : ''"),
   'fetch URL must use requestedLifecycleMode, not stale state',
 );
 console.log('✓ Fetch constructs query from requested lifecycle mode\n');
@@ -86,9 +84,7 @@ console.log('✓ In-flight request lifecycle recorded and cleared\n');
 console.log('Test 7: Detect lifecycle mismatch during in-flight fetch');
 assert(
   source.includes('cards] Skipping fetch - global request already in flight') &&
-    source.includes(
-      'const shouldRetryForLifecycleChange =\n          globalGamesRequestLifecycle !== requestedLifecycleMode;',
-    ),
+  source.includes('globalGamesRequestLifecycle !== requestedLifecycleMode'),
   'must detect when requested lifecycle differs from in-flight',
 );
 console.log('✓ Lifecycle mismatch detection exists\n');
@@ -106,7 +102,7 @@ console.log('✓ Retry queued with 150ms delay\n');
 // Test 9: Keep ref in sync with lifecycle state
 console.log('Test 9: Keep ref in sync with lifecycle state');
 assert(
-  source.includes('useEffect(() => {\n    latestLifecycleModeRef.current = lifecycleMode;'),
+  source.includes('latestLifecycleModeRef.current = uiState.lifecycleMode;'),
   'useEffect must update ref when lifecycleMode state changes',
 );
 console.log('✓ Ref synchronized with state\n');
@@ -114,10 +110,9 @@ console.log('✓ Ref synchronized with state\n');
 // Test 10: Manual lifecycle change clears pending retries
 console.log('Test 10: Manual lifecycle change clears retry queue');
 assert(
-  source.includes('const handleLifecycleModeChange = (nextMode: LifecycleMode)') &&
-    source.includes(
-      'if (lifecycleRetryTimeoutRef.current) {\n      clearTimeout(lifecycleRetryTimeoutRef.current);',
-    ),
+  source.includes('onLifecycleModeChange: (nextMode) =>') &&
+    source.includes('if (lifecycleRetryTimeoutRef.current) {') &&
+    source.includes('clearTimeout(lifecycleRetryTimeoutRef.current);'),
   'handleLifecycleModeChange must clear pending retry timeout',
 );
 console.log('✓ Manual lifecycle change clears pending retry\n');
@@ -148,4 +143,3 @@ console.log('✓ Request lifecycle tracked to detect mid-flight changes');
 console.log('✓ Mismatch during in-flight request triggers automatic retry');
 console.log('✓ Retry uses correct lifecycle parameter immediately');
 console.log('✓ No orphaned timeouts or stale state left behind');
-

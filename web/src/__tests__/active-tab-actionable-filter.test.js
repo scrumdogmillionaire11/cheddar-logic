@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 
 const cardsSource = fs.readFileSync(
-  new URL('../components/cards-page-client.tsx', import.meta.url),
+  new URL('../components/cards/shared.ts', import.meta.url),
   'utf8',
 );
 const filtersSource = fs.readFileSync(
