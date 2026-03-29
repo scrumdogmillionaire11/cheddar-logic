@@ -41,19 +41,25 @@ from .types import ChipAction, ChipDecision, GameweekState
 _WC_HALF_SEASON_FRACTION = 0.45             # ~GW 17 in a 38-GW season
 
 # Minimum inputs required to score above PASS threshold.
-_WC_MIN_EV_DELTA = 2.0                      # points gained vs current squad
-_WC_MIN_FIXTURE_SCORE = 50.0               # fixture run quality, 0-100
+# EV delta is the expected improvement (in FPL pts) of the optimal new squad vs current.
+# Lowered from 2.0 → 0.5 so that any meaningful upgrade triggers evaluation rather than
+# blocking at the gate; the overall score threshold still prevents premature firing.
+_WC_MIN_EV_DELTA = 0.5                      # points gained vs current squad
+_WC_MIN_FIXTURE_SCORE = 45.0               # fixture run quality, 0-100 (lowered: avg fixture scores ~50-60)
 
 # Score weights
 _WC_W_EV_DELTA = 0.50
 _WC_W_FIXTURE = 0.30
 _WC_W_HIT_AVOIDED = 0.20
 
-# FIRE threshold after weighting + horizon adjustment
-_WC_FIRE_THRESHOLD = 55.0
+# FIRE threshold after weighting + horizon adjustment.
+# Score = 0.50*(ev_delta/20*100) + 0.30*fixture_score + 0.20*(hits_avoided/20*100)
+# Typical good wildcard: delta=4 → ev=20, fixture=68 → score=10+20.4=30.4
+# Strong wildcard:       delta=8 → ev=40, fixture=72 → score=20+21.6=41.6  → FIRE
+_WC_FIRE_THRESHOLD = 38.0
 
 # Late-season hard escalation: fire if unused after this GW fraction
-_WC_ESCALATION_FRACTION = 0.92              # ~GW 35 in a 38-GW season
+_WC_ESCALATION_FRACTION = 0.84              # ~GW 32 in a 38-GW season (earlier: WC wasted if held past GW32)
 
 # DGW-imminent window: suppress Wildcard if a DGW is this many GWs ahead
 # (the Wildcard should be saved to capture the DGW instead)
