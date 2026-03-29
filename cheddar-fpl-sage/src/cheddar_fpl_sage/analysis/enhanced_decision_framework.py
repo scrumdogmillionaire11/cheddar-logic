@@ -723,6 +723,60 @@ class EnhancedDecisionFramework:
                     f"({_projected_points_of(lowest_starter):.1f})."
                 )
 
+            def _outfield_shape(players: List[Any]) -> tuple[int, int, int]:
+                return (
+                    len([p for p in players if p.position == "DEF"]),
+                    len([p for p in players if p.position == "MID"]),
+                    len([p for p in players if p.position == "FWD"]),
+                )
+
+            changed = True
+            while changed:
+                changed = False
+                bench_outfield = sorted(
+                    [p for p in playable_non_starters if p.position in {"DEF", "MID", "FWD"}],
+                    key=_projected_points_of,
+                    reverse=True,
+                )
+                starter_outfield = sorted(
+                    [p for p in starters if p.position in {"DEF", "MID", "FWD"}],
+                    key=_projected_points_of,
+                )
+
+                for bench_player in bench_outfield:
+                    bench_status = player_status_by_id.get(bench_player.player_id, "FIT")
+                    blocking_reason = _blocking_swap_reason(bench_player, bench_status)
+                    if blocking_reason:
+                        continue
+
+                    for starter_player in starter_outfield:
+                        if bench_player.position == starter_player.position:
+                            continue
+                        if _projected_points_of(bench_player) <= _projected_points_of(starter_player) + threshold:
+                            continue
+
+                        simulated = [
+                            bench_player if p.player_id == starter_player.player_id else p
+                            for p in starters
+                        ]
+                        if _outfield_shape(simulated) not in allowed_formations:
+                            continue
+
+                        starters.remove(starter_player)
+                        starters.append(bench_player)
+                        playable_non_starters.remove(bench_player)
+                        playable_non_starters.append(starter_player)
+                        swap_notes.append(
+                            f"Projection sanity swap ({starter_player.position}->{bench_player.position}): "
+                            f"{bench_player.name} ({_projected_points_of(bench_player):.1f}) replaced "
+                            f"{starter_player.name} ({_projected_points_of(starter_player):.1f}) in a legal shape."
+                        )
+                        changed = True
+                        break
+
+                    if changed:
+                        break
+
             return starters, swap_notes
 
         selected_xi, sanity_swap_notes = _apply_projection_sanity_swap(

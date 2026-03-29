@@ -1,4 +1,6 @@
-import backend.routers.user as user_router
+def _route_globals(client, path: str):
+    route = next(route for route in client.app.routes if getattr(route, "path", None) == path)
+    return route.endpoint.__globals__
 
 
 def test_user_analyses_endpoint_forwards_query_params(client, monkeypatch):
@@ -8,7 +10,8 @@ def test_user_analyses_endpoint_forwards_query_params(client, monkeypatch):
         captured.update(kwargs)
         return {"user_id": "user_123", "total": 0, "analyses": []}
 
-    monkeypatch.setattr(user_router.engine_service, "list_user_analyses", _fake_list_user_analyses)
+    route_globals = _route_globals(client, "/api/v1/user/{user_id}/analyses")
+    monkeypatch.setattr(route_globals["engine_service"], "list_user_analyses", _fake_list_user_analyses)
 
     response = client.get(
         "/api/v1/user/user_123/analyses?limit=10&offset=5&season=2025-26&sort_by=gameweek"
@@ -63,7 +66,8 @@ def test_user_performance_endpoint_include_details(client, monkeypatch):
             "details": [],
         }
 
-    monkeypatch.setattr(user_router.engine_service, "get_user_performance", _fake_get_user_performance)
+    route_globals = _route_globals(client, "/api/v1/user/{user_id}/performance")
+    monkeypatch.setattr(route_globals["engine_service"], "get_user_performance", _fake_get_user_performance)
 
     response = client.get("/api/v1/user/user_123/performance?season=2025-26&include_details=true")
     assert response.status_code == 200

@@ -22,6 +22,13 @@ BANNED = [
     "import utils",
 ]
 
+IGNORED_PATH_PARTS = {
+    "venv",
+    ".venv",
+    "site-packages",
+    "__pycache__",
+}
+
 
 def test_no_legacy_namespace_imports():
     root = Path(__file__).resolve().parents[1]
@@ -29,6 +36,8 @@ def test_no_legacy_namespace_imports():
     offenders = []
     for p in root.rglob("*.py"):
         if p == guard_file:
+            continue
+        if any(part in IGNORED_PATH_PARTS for part in p.parts):
             continue
         text = p.read_text(encoding="utf-8", errors="ignore")
         for token in BANNED:
