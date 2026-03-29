@@ -4,7 +4,8 @@ Goal: |
   Add explicit query timeout to /api/games route and fail gracefully on slow queries.
   Prevent Cloudflare from returning 502 due to backend hanging;
   return partial or cached data instead.
-Status: ready
+Status: queued
+Dependency: Start only after WI-0701 PR review is complete and WI-0701 is merged to main
 Priority: high
 Scope: |
   - web/src/lib/games/route-handler.ts
@@ -61,6 +62,7 @@ Add query timeout to /api/games route:
 3. Monitor slow queries (>3s) for operational visibility
 
 ## Implementation Notes
+- Queue behind WI-0701 merge so backend timeout behavior is evaluated on top of the preserved-games UX already in place.
 - Use existing `createTimeoutSignal` pattern if available, or implement server-side timeout
 - Consider returning last N games if fresh query fails
 - Add performance logging: queryDuration, rowCount, timeoutOccurred

@@ -139,6 +139,7 @@ export function CardsPageProvider({
   const lifecycleRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const lifecycleFallbackAttemptedRef = useRef(false);
   const diagnosticsEnabled =
     process.env.NODE_ENV !== 'production' &&
     process.env.NEXT_PUBLIC_ENABLE_CARDS_DIAGNOSTICS === 'true';
@@ -619,6 +620,7 @@ export function CardsPageProvider({
 
   useEffect(() => {
     let cancelled = false;
+    lifecycleFallbackAttemptedRef.current = false;
 
     const fetchGames = async () => {
       const now = Date.now();
@@ -762,9 +764,11 @@ export function CardsPageProvider({
         if (
           requestedLifecycleMode === 'active' &&
           isInitialLoad.current &&
-          !hasAnyActionableInRequestedMode
+          !hasAnyActionableInRequestedMode &&
+          !lifecycleFallbackAttemptedRef.current
         ) {
           if (!cancelled) {
+            lifecycleFallbackAttemptedRef.current = true;
             globalGamesLastFetchAt = 0;
             latestLifecycleModeRef.current = 'pregame';
             dispatch({ type: 'set_lifecycle_mode', lifecycleMode: 'pregame' });
@@ -792,6 +796,7 @@ export function CardsPageProvider({
       } finally {
         globalGamesFetchInFlight = false;
         globalGamesRequestLifecycle = null;
+        lifecycleFallbackAttemptedRef.current = false;
         if (!cancelled) {
           setLoading(false);
           isInitialLoad.current = false;

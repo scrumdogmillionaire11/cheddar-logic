@@ -73,3 +73,4 @@ Change error handling to ONLY clear games on non-recoverable errors (auth, malfo
 ## Related
 - Debug session: .planning/debug/resolved/prod-plays-disappear-reappear.md
 - Root cause: worker snapshot contention + frontend clears state too aggressively
+- Merge of WI-0701 unblocks WI-0702 backend timeout resilience work.
