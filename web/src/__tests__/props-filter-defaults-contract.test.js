@@ -15,7 +15,7 @@ const presetsSource = fs.readFileSync(
   'utf8',
 );
 const cardsPageSource = fs.readFileSync(
-  path.resolve('web/src/components/cards-page-client.tsx'),
+  path.resolve('web/src/components/cards/shared.ts'),
   'utf8',
 );
 

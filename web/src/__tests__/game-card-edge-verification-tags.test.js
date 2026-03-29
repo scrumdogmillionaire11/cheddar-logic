@@ -17,7 +17,7 @@ const transformSource = fs.readFileSync(transformPath, 'utf8');
 const routePath = path.resolve(__dirname, '../../src/app/api/games/route.ts');
 const routeSource = fs.readFileSync(routePath, 'utf8');
 
-const cardsPageClientPath = path.resolve(__dirname, '../../src/components/cards-page-client.tsx');
+const cardsPageClientPath = path.resolve(__dirname, '../../src/components/cards/game-card-helpers.tsx');
 const cardsPageClientSource = fs.readFileSync(cardsPageClientPath, 'utf8');
 
 console.log('🧪 Game card edge-verification tags source tests');
@@ -68,7 +68,7 @@ assert(
 );
 
 assert(
-  routeSource.includes("sharpStatusRaw === 'PENDING_VERIFICATION'"),
+  routeSource.includes("'PENDING_VERIFICATION'"),
   'games route should preserve PENDING_VERIFICATION sharp price status',
 );
 

@@ -16,10 +16,17 @@ import path from 'node:path';
 const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
 const gamesRoutePath = path.resolve(__dirname, '../../src/app/api/games/route.ts');
-const cardsPagePath = path.resolve(__dirname, '../../src/components/cards-page-client.tsx');
+const cardsGameCardPath = path.resolve(__dirname, '../../src/components/cards/GameCardItem.tsx');
+const cardsSharedPath = path.resolve(__dirname, '../../src/components/cards/shared.ts');
+const cardsHelpersPath = path.resolve(__dirname, '../../src/components/cards/game-card-helpers.tsx');
 
 const gamesRouteSource = fs.readFileSync(gamesRoutePath, 'utf8');
-const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
+const cardsPageSource =
+  fs.readFileSync(cardsGameCardPath, 'utf8') +
+  '\n' +
+  fs.readFileSync(cardsSharedPath, 'utf8') +
+  '\n' +
+  fs.readFileSync(cardsHelpersPath, 'utf8');
 
 console.log('🧪 total projection source contract tests');
 

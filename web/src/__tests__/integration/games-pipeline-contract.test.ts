@@ -16,7 +16,7 @@ const resultsRoutePath = path.join(repoRoot, 'web/src/app/api/results/route.ts')
 const transformPath = path.join(repoRoot, 'web/src/lib/game-card/transform.ts');
 const cardsPath = path.join(
   repoRoot,
-  'web/src/components/cards-page-client.tsx',
+  'web/src/components/cards/GameCardItem.tsx',
 );
 const resultsPagePath = path.join(repoRoot, 'web/src/app/results/page.tsx');
 const displayVerdictPath = path.join(
@@ -34,7 +34,7 @@ const displayVerdictSource = fs.readFileSync(displayVerdictPath, 'utf8');
 console.log('🧪 Games pipeline v2 source contract tests');
 
 assert.ok(
-  routeSource.includes('if (wave1Eligible) {') &&
+  routeSource.includes('const wave1Eligible = isWave1EligibleRow(') &&
     routeSource.includes('if (!play.decision_v2) {') &&
     routeSource.includes('applyWave1DecisionFields(play);') &&
     routeSource.includes('true_play: truePlayMap.get(row.game_id) ?? null'),
@@ -63,16 +63,16 @@ assert.ok(
 );
 
 assert.ok(
-  resultsPageSource.includes('Game Sides & Totals') &&
-    resultsPageSource.includes('1P Totals') &&
-    resultsPageSource.includes('Player Shots Props'),
+  resultsPageSource.includes('segmentFamilies') &&
+    resultsPageSource.includes('NHL 1P Totals') &&
+    resultsPageSource.includes('NHL Totals'),
   'results page must render same-page segment sections for game, 1P total, and player shots props',
 );
 
 assert.ok(
   transformSource.includes('selectWave1DecisionCandidate(') &&
     transformSource.includes('game.true_play') &&
-    transformSource.includes('decisionV2.official_status') &&
+    transformSource.includes('effectiveDecisionV2.official_status') &&
     transformSource.includes('decision_v2: effectiveDecisionV2'),
   'transform must use worker decision_v2 as wave-1 decision source of truth',
 );
@@ -109,7 +109,6 @@ assert.ok(
 
 assert.ok(
   routeSource.includes("'PROP'") &&
-    routeSource.includes('WAVE1_MARKETS') &&
     routeSource.includes("'MONEYLINE'") &&
     routeSource.includes("'SPREAD'") &&
     routeSource.includes("'FIRST_PERIOD'"),

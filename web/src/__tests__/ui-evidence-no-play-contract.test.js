@@ -7,9 +7,11 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const filePath = path.resolve('src/components/cards-page-client.tsx');
-const displayVerdictPath = path.resolve('src/lib/game-card/display-verdict.ts');
-const source = fs.readFileSync(filePath, 'utf8');
+const filePath = path.resolve('web/src/components/cards/GameCardItem.tsx');
+const helperPath = path.resolve('web/src/components/cards/game-card-helpers.tsx');
+const displayVerdictPath = path.resolve('web/src/lib/game-card/display-verdict.ts');
+const source =
+  fs.readFileSync(filePath, 'utf8') + '\n' + fs.readFileSync(helperPath, 'utf8');
 const displayVerdictSource = fs.readFileSync(displayVerdictPath, 'utf8');
 
 console.log('🧪 UI degraded-data contract source tests');

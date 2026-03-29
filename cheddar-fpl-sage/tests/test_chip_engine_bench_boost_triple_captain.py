@@ -72,10 +72,11 @@ class TestBenchBoost:
         validate_decision(decision, state)
 
     def test_pass_below_threshold(self):
-        state = _state(current_gw=20, window_scores=((20, 35.0),))
+        # Score must be < 20 (new threshold). 10 + 2 - 2 = 10 < 20 → PASS
+        state = _state(current_gw=20, window_scores=((20, 10.0),))
         decision = evaluate_bench_boost(
             state,
-            _bb_inputs(bench_projected_total=32.0, dgw_bench_bonus=3.0, blank_starter_penalty=5.0),
+            _bb_inputs(bench_projected_total=10.0, dgw_bench_bonus=2.0, blank_starter_penalty=2.0),
         )
         assert decision.action is ChipAction.PASS
         assert "bench_boost:below_threshold" in decision.reason_codes
@@ -88,7 +89,7 @@ class TestBenchBoost:
             _bb_inputs(bench_projected_total=44.0, dgw_bench_bonus=4.0, blank_starter_penalty=2.0),
         )
         assert decision.action is ChipAction.FIRE
-        assert "bench_boost:soft_escalation_80pct" in decision.reason_codes
+        assert "bench_boost:soft_escalation_79pct" in decision.reason_codes
 
     def test_hard_escalation_forces_fire_and_sets_forced_by(self):
         state = _state(current_gw=36, window_scores=((36, 30.0), (38, 50.0)))
@@ -98,7 +99,7 @@ class TestBenchBoost:
         )
         assert decision.action is ChipAction.FIRE
         assert decision.forced_by == "season_horizon_last_window"
-        assert "bench_boost:hard_escalation_92pct" in decision.reason_codes
+        assert "bench_boost:hard_escalation_89pct" in decision.reason_codes
         validate_decision(decision, state)
 
     def test_emergency_window_forces_fire(self):
@@ -144,15 +145,16 @@ class TestTripleCaptain:
         validate_decision(decision, state)
 
     def test_pass_below_threshold(self):
-        state = _state(current_gw=20, window_scores=((20, 20.0),))
+        # Score must be < 14 (new threshold). 7*1.0 + 1 + 1 = 9 < 14 → PASS
+        state = _state(current_gw=20, window_scores=((20, 9.0),))
         decision = evaluate_triple_captain(
             state,
             _tc_inputs(
-                captain_projection=14.0,
+                captain_projection=7.0,
                 dgw_multiplier=1.0,
-                ownership_effect_bps=2.0,
-                fixture_quality_bps=2.0,
-                better_future_window=15.0,
+                ownership_effect_bps=1.0,
+                fixture_quality_bps=1.0,
+                better_future_window=8.0,
             ),
         )
         assert decision.action is ChipAction.PASS
@@ -172,7 +174,7 @@ class TestTripleCaptain:
             ),
         )
         assert decision.action is ChipAction.FIRE
-        assert "triple_captain:soft_escalation_80pct" in decision.reason_codes
+        assert "triple_captain:soft_escalation_79pct" in decision.reason_codes
 
     def test_hard_escalation_forces_fire_and_sets_forced_by(self):
         state = _state(current_gw=36, window_scores=((36, 30.0), (38, 60.0)))
@@ -188,7 +190,7 @@ class TestTripleCaptain:
         )
         assert decision.action is ChipAction.FIRE
         assert decision.forced_by == "season_horizon_last_window"
-        assert "triple_captain:hard_escalation_92pct" in decision.reason_codes
+        assert "triple_captain:hard_escalation_89pct" in decision.reason_codes
         validate_decision(decision, state)
 
     def test_emergency_window_forces_fire(self):

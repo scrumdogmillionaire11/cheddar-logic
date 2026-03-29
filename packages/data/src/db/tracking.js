@@ -1,0 +1,339 @@
+const { getDatabase } = require('./connection');
+
+/**
+ * Upsert tracking stat
+ * @param {object} stat - Tracking stat data
+ * @param {string} stat.id - Unique ID
+ * @param {string} stat.statKey - Composite key (sport|market|direction|confidence|driver|period)
+ * @param {string} stat.sport - Sport filter
+ * @param {string} stat.marketType - Market type filter
+ * @param {string} stat.direction - Direction filter
+ * @param {string} stat.confidenceTier - Confidence tier filter
+ * @param {string} stat.driverKey - Driver filter
+ * @param {string} stat.timePeriod - Time period filter
+ * @param {number} stat.totalCards - Total cards count
+ * @param {number} stat.settledCards - Settled cards count
+ * @param {number} stat.wins - Win count
+ * @param {number} stat.losses - Loss count
+ * @param {number} stat.pushes - Push count
+ * @param {number} stat.totalPnlUnits - Total P&L in units
+ * @param {number} stat.winRate - Win rate (computed)
+ * @param {number} stat.avgPnlPerCard - Avg P&L per card (computed)
+ * @param {number} stat.confidenceCalibration - Confidence calibration score
+ * @param {object|null} stat.metadata - Optional metadata
+ */
+function upsertTrackingStat(stat) {
+  const db = getDatabase();
+  
+  const stmt = db.prepare(`
+    INSERT INTO tracking_stats (
+      id, stat_key, sport, market_type, direction, confidence_tier, driver_key, time_period,
+      total_cards, settled_cards, wins, losses, pushes, total_pnl_units,
+      win_rate, avg_pnl_per_card, confidence_calibration, metadata, computed_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(stat_key) DO UPDATE SET
+      total_cards = excluded.total_cards,
+      settled_cards = excluded.settled_cards,
+      wins = excluded.wins,
+      losses = excluded.losses,
+      pushes = excluded.pushes,
+      total_pnl_units = excluded.total_pnl_units,
+      win_rate = excluded.win_rate,
+      avg_pnl_per_card = excluded.avg_pnl_per_card,
+      confidence_calibration = excluded.confidence_calibration,
+      metadata = excluded.metadata,
+      computed_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  
+  stmt.run(
+    stat.id,
+    stat.statKey,
+    stat.sport || null,
+    stat.marketType || null,
+    stat.direction || null,
+    stat.confidenceTier || null,
+    stat.driverKey || null,
+    stat.timePeriod || null,
+    stat.totalCards,
+    stat.settledCards,
+    stat.wins,
+    stat.losses,
+    stat.pushes,
+    stat.totalPnlUnits,
+    stat.winRate,
+    stat.avgPnlPerCard,
+    stat.confidenceCalibration || null,
+    stat.metadata ? JSON.stringify(stat.metadata) : null
+  );
+}
+
+/**
+ * Atomically increment tracking stat counters by delta values.
+ * Race-safe for concurrent settlement processes.
+ * 
+ * @param {object} params - Increment parameters
+ * @param {string} params.statKey - Unique stat key (e.g., "NHL|moneyline|all|all|all|alltime")
+ * @param {string} params.id - Stat ID (used only on first insert)
+ * @param {string} params.sport - Sport name
+ * @param {string} params.marketType - Market type
+ * @param {string} params.direction - Direction (HOME/AWAY/OVER/UNDER/all)
+ * @param {string} params.confidenceTier - Confidence tier
+ * @param {string} params.driverKey - Driver key
+ * @param {string} params.timePeriod - Time period
+ * @param {number} params.deltaWins - Wins to add (default 0)
+ * @param {number} params.deltaLosses - Losses to add (default 0)
+ * @param {number} params.deltaPushes - Pushes to add (default 0)
+ * @param {number} params.deltaPnl - PnL units to add (default 0)
+ * @param {object|null} params.metadata - Optional metadata
+ */
+function incrementTrackingStat(params) {
+  const db = getDatabase();
+  
+  const {
+    statKey,
+    id,
+    sport,
+    marketType,
+    direction,
+    confidenceTier,
+    driverKey,
+    timePeriod,
+    deltaWins = 0,
+    deltaLosses = 0,
+    deltaPushes = 0,
+    deltaPnl = 0,
+    metadata = null
+  } = params;
+  
+  const deltaTotal = deltaWins + deltaLosses + deltaPushes;
+  const deltaDecided = deltaWins + deltaLosses;
+  const winRate = deltaDecided > 0 ? deltaWins / deltaDecided : 0;
+  const avgPnlPerCard = deltaTotal > 0 ? deltaPnl / deltaTotal : 0;
+  
+  // Insert new row or increment existing counters atomically
+  const stmt = db.prepare(`
+    INSERT INTO tracking_stats (
+      id, stat_key, sport, market_type, direction, confidence_tier, driver_key, time_period,
+      total_cards, settled_cards, wins, losses, pushes, total_pnl_units,
+      win_rate, avg_pnl_per_card, confidence_calibration, metadata, computed_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(stat_key) DO UPDATE SET
+      total_cards = total_cards + ?,
+      settled_cards = settled_cards + ?,
+      wins = wins + ?,
+      losses = losses + ?,
+      pushes = pushes + ?,
+      total_pnl_units = total_pnl_units + ?,
+      win_rate = CASE 
+        WHEN (wins + ? + losses + ?) > 0 
+        THEN CAST(wins + ? AS REAL) / (wins + ? + losses + ?)
+        ELSE 0 
+      END,
+      avg_pnl_per_card = CASE
+        WHEN (settled_cards + ?) > 0
+        THEN (total_pnl_units + ?) / (settled_cards + ?)
+        ELSE 0
+      END,
+      metadata = CASE WHEN ? IS NOT NULL THEN ? ELSE metadata END,
+      computed_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  
+  const metadataJson = metadata ? JSON.stringify(metadata) : null;
+  
+  stmt.run(
+    // INSERT values (used only on first creation)
+    id,
+    statKey,
+    sport || null,
+    marketType || null,
+    direction || null,
+    confidenceTier || null,
+    driverKey || null,
+    timePeriod || null,
+    deltaTotal,
+    deltaTotal,
+    deltaWins,
+    deltaLosses,
+    deltaPushes,
+    deltaPnl,
+    winRate,
+    avgPnlPerCard,
+    metadataJson,
+    // UPDATE deltas
+    deltaTotal,
+    deltaTotal,
+    deltaWins,
+    deltaLosses,
+    deltaPushes,
+    deltaPnl,
+    // win_rate calculation
+    deltaWins, deltaLosses, deltaWins, deltaWins, deltaLosses,
+    // avg_pnl_per_card calculation
+    deltaTotal, deltaPnl, deltaTotal,
+    // metadata
+    metadataJson, metadataJson
+  );
+}
+
+/**
+ * Get tracking stats by filters
+ * @param {object} filters - Filter object
+ * @param {string} filters.sport - Sport filter (optional)
+ * @param {string} filters.marketType - Market type filter (optional)
+ * @param {string} filters.timePeriod - Time period filter (optional)
+ * @returns {array} Tracking stats
+ */
+function getTrackingStats(filters = {}) {
+  const db = getDatabase();
+  
+  const where = [];
+  const params = [];
+  
+  if (filters.sport) {
+    where.push('sport = ?');
+    params.push(filters.sport);
+  }
+  
+  if (filters.marketType) {
+    where.push('market_type = ?');
+    params.push(filters.marketType);
+  }
+  
+  if (filters.timePeriod) {
+    where.push('time_period = ?');
+    params.push(filters.timePeriod);
+  }
+  
+  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+  
+  const stmt = db.prepare(`
+    SELECT * FROM tracking_stats
+    ${whereSql}
+    ORDER BY computed_at DESC
+  `);
+  
+  return stmt.all(...params);
+}
+
+/**
+ * Get cached team metrics for a specific sport/team/date
+ * @param {string} sport - Sport (e.g., 'NBA', 'NHL')
+ * @param {string} teamName - Team name (as normalized by team-metrics.js)
+ * @param {string} cacheDate - Cache date in ET (YYYY-MM-DD format)
+ * @returns {object|null} Cached metrics object or null if not found/expired
+ */
+function getTeamMetricsCache(sport, teamName, cacheDate) {
+  const db = getDatabase();
+  // Keep sport uppercase for CHECK constraint
+  const normalizedSport = String(sport || '').trim().toUpperCase();
+  
+  const stmt = db.prepare(`
+    SELECT 
+      id, sport, team_name, cache_date, status,
+      metrics, team_info, recent_games, resolution,
+      fetched_at, created_at
+    FROM team_metrics_cache
+    WHERE sport = ? AND team_name = ? AND cache_date = ?
+  `);
+  
+  const row = stmt.get(normalizedSport, teamName, cacheDate);
+  
+  if (!row) return null;
+  
+  // Parse JSON columns
+  return {
+    id: row.id,
+    sport: row.sport,
+    teamName: row.team_name,
+    cacheDate: row.cache_date,
+    status: row.status,
+    metrics: row.metrics ? JSON.parse(row.metrics) : null,
+    teamInfo: row.team_info ? JSON.parse(row.team_info) : null,
+    recentGames: row.recent_games ? JSON.parse(row.recent_games) : null,
+    resolution: row.resolution ? JSON.parse(row.resolution) : null,
+    fetchedAt: row.fetched_at,
+    createdAt: row.created_at
+  };
+}
+
+/**
+ * Upsert team metrics cache entry
+ * @param {object} cacheEntry - Cache entry object
+ * @param {string} cacheEntry.sport - Sport
+ * @param {string} cacheEntry.teamName - Team name
+ * @param {string} cacheEntry.cacheDate - Cache date (ET, YYYY-MM-DD)
+ * @param {string} cacheEntry.status - Status ('ok', 'missing', 'failed', 'partial')
+ * @param {object} cacheEntry.metrics - Metrics object (optional)
+ * @param {object} cacheEntry.teamInfo - Team info object (optional)
+ * @param {array} cacheEntry.recentGames - Recent games array (optional)
+ * @param {object} cacheEntry.resolution - Resolution metadata (optional)
+ * @returns {number} Row ID
+ */
+function upsertTeamMetricsCache(cacheEntry) {
+  const db = getDatabase();
+  // Keep sport uppercase for CHECK constraint
+  const normalizedSport = String(cacheEntry.sport || '').trim().toUpperCase();
+  
+  const metricsJson = cacheEntry.metrics ? JSON.stringify(cacheEntry.metrics) : null;
+  const teamInfoJson = cacheEntry.teamInfo ? JSON.stringify(cacheEntry.teamInfo) : null;
+  const recentGamesJson = cacheEntry.recentGames ? JSON.stringify(cacheEntry.recentGames) : null;
+  const resolutionJson = cacheEntry.resolution ? JSON.stringify(cacheEntry.resolution) : null;
+  
+  const stmt = db.prepare(`
+    INSERT INTO team_metrics_cache (
+      sport, team_name, cache_date, status,
+      metrics, team_info, recent_games, resolution,
+      fetched_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(sport, team_name, cache_date) DO UPDATE SET
+      status = excluded.status,
+      metrics = excluded.metrics,
+      team_info = excluded.team_info,
+      recent_games = excluded.recent_games,
+      resolution = excluded.resolution,
+      fetched_at = CURRENT_TIMESTAMP
+  `);
+  
+  const info = stmt.run(
+    normalizedSport,
+    cacheEntry.teamName,
+    cacheEntry.cacheDate,
+    cacheEntry.status,
+    metricsJson,
+    teamInfoJson,
+    recentGamesJson,
+    resolutionJson
+  );
+  
+  return info.lastInsertRowid;
+}
+
+/**
+ * Delete team metrics cache entries older than a given date
+ * @param {string} beforeDate - Delete entries before this date (YYYY-MM-DD)
+ * @returns {number} Number of rows deleted
+ */
+function deleteStaleTeamMetricsCache(beforeDate) {
+  const db = getDatabase();
+
+  const stmt = db.prepare(`
+    DELETE FROM team_metrics_cache
+    WHERE cache_date < ?
+  `);
+
+  const info = stmt.run(beforeDate);
+  return info.changes;
+}
+
+module.exports = {
+  upsertTrackingStat,
+  incrementTrackingStat,
+  getTrackingStats,
+  getTeamMetricsCache,
+  upsertTeamMetricsCache,
+  deleteStaleTeamMetricsCache,
+};

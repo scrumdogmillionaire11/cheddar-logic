@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-28T21:00:00Z"
-last_activity: "2026-03-28 - WI-0618+0617+0615+0616 complete. WI-0632 (NFL model tests) in progress. 8 open WIs: 0P1+0P2+3P3+5Backlog."
+last_updated: "2026-03-29T00:00:00Z"
+last_activity: "2026-03-29 - WI-0624 in progress (legacy reason code audit). Prior sprint fully closed. New sprint: WI-0644–0651 (playoff models, test coverage, ROI audit, FPL run-in, edge UX). 2 hard deadlines: WI-0649 ~Apr 4, WI-0646 Apr 19."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -30,97 +30,59 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-28
-- Next action: **WI-0632** (NFL model tests — in progress). Then WI-0619, WI-0586.
+- Last reviewed: 2026-03-29
+- Next action: **WI-0624** (legacy reason code audit — in progress). Then WI-0649 (FPL FDR, hard deadline ~Apr 4), WI-0646 (playoff mode, hard deadline Apr 19).
 
-## Sprint Plan — 2026-03-28 re-assess (8 open WIs: 0 P1 + 0 P2 + 3 P3 + 5 Backlog)
+## Sprint Plan — 2026-03-29 re-assess (9 open WIs: 0 P0 + 2 P1 + 3 P2 + 4 Backlog)
+
+> Previous sprint (WI-0619/0620/0621/0622/0623/0586/0632 + quick tasks 85–100) is fully closed. See Quick Tasks table below for full history.
+
+### Hard Deadlines
+
+- **WI-0649** FPL GW run-in fixture difficulty — must land before GW31 (~**Apr 4, 2026**)
+- **WI-0646** Playoff-mode model adjustment (NBA/NHL) — must land before NBA playoff start (**Apr 19, 2026**)
 
 ### Dependency Chains
 
-- **MLB pitcher K:** ALL DONE ✓ (WI-0595→0596→0597→0598)
-- **MLB F5:** ALL DONE ✓ (WI-0602→0603→0604)
-- **CLV:** ALL DONE ✓ (WI-0557)
-- **Display:** ALL DONE ✓ (WI-0567 1P label)
-- **Market evaluator (serial):** ALL DONE ✓ (~~WI-0568~~✓ → ~~WI-0569~~✓ / ~~WI-0570~~✓ → ~~WI-0571~~✓ — UI half deferred to WI-0628)
-- **Security hardening:** ~~WI-0608~~✓ → ~~WI-0609~~✓ → ~~WI-0631~~✓ — ALL DONE
-- **settle_mlb_f5 correctness:** ~~WI-0626~~✓ → ~~WI-0629~~✓ — ALL DONE
-- **New markets:** WI-0586 independent (NHL blocked shots)
-- **UI cleanup:** WI-0638 (rm NCAAM+Soccer) → WI-0639 (NFL gate) — independent
+- **WI-0624 → (unblocks cleaner transform scope for any future WI)** — in progress
+- **WI-0644 → WI-0646** — NBA test suite recommended before playoff-mode branch (can parallel)
+- **WI-0647** — independent, can run any time prod DB is available
+- **WI-0648** — independent, target ~Apr 20 (20 MLB games/team threshold)
+- **WI-0649** — independent (FPL Sage subproject)
+- **WI-0650, WI-0651** — independent backlog
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-28
+## Prioritized Open Work Queue — 2026-03-29
 
-### Recently Completed ✓
-
-| WI | Summary |
-|---|---|
-| ~~WI-0639~~ ✓ | NFL UI seasonal gate — isNflSeason() hides NFL filter pill during Mar–Aug (commit 56ffef1) |
-| ~~WI-0638~~ ✓ | Remove NCAAM + Soccer from all UI filter surfaces (commit afbe944) |
-| ~~WI-0612~~ ✓ | team-metrics.js test suite |
-| ~~WI-0611~~ ✓ | Replace NHL fault harness stubs with real implementations |
-| ~~WI-0629~~ ✓ | Test suite for settle_mlb_f5.js |
-| ~~WI-0628~~ ✓ | Surface edge_vs_consensus + edge_vs_best_available in cards UI |
-| ~~WI-0630~~ ✓ | Wire pull_nhl_team_stats into scheduler daily cadence |
-| ~~WI-0627~~ ✓ | Wire check_odds_health into scheduler as 30-min watchdog |
-| ~~WI-0625~~ ✓ | Remove unused liveLineBook variable |
-| ~~WI-0636~~ ✓ | Turbopack/dev-chunk pattern guard in deploy workflow |
-| ~~WI-0635~~ ✓ | CF public-HTML convergence retries in deploy workflow |
-| ~~WI-0626~~ ✓ | Fix settle_mlb_f5 doubleheader gamePk lookup bug |
-| ~~WI-0571~~ ✓ | Market evaluator — projection comparator (edge vs consensus, execution alpha) |
-| ~~WI-0610~~ ✓ | moneypuck.js test suite |
-| ~~WI-0609~~ ✓ | Token route IP whitelist / endpoint hardening |
-| ~~WI-0570~~ ✓ | Market evaluator — misprice detector (soft line, price-only, high-dispersion flags) |
-| ~~WI-0569~~ ✓ | Market evaluator — execution selector (best-price separate from best-line) |
-| ~~WI-0607~~ ✓ | Persist + backfill results market period token |
-| ~~WI-0608~~ ✓ | JWT revocation persistence — move to DB table |
-| ~~WI-0614~~ ✓ | Rename decision-pipeline-v2.patch.js |
-| ~~WI-0613~~ ✓ | Delete committed scratch/debug/backup files |
-| ~~WI-0598~~ ✓ | Pitcher Ks contract hardening (validator + market contract) |
-| ~~WI-0597~~ ✓ | Pitcher Ks odds pull + dual-mode runtime wiring |
-| ~~WI-0596~~ ✓ | Pitcher Ks data foundations and freshness gates |
-| ~~WI-0595~~ ✓ | Pitcher Ks core engine (projection-only parity) |
-| ~~WI-0603~~ ✓ | MLB F5 ML ingest + side-projection layer |
-| ~~WI-0568~~ ✓ | Market evaluator — consensus layer (median line/price, dispersion) |
-| ~~WI-0567~~ ✓ | Surface 1P vs full-game label on /results page |
-| ~~WI-0557~~ ✓ | Wire CLV feedback loop (`ENABLE_CLV_LEDGER`) |
-
-### P0 — (empty ✓)
-
-### P1 — (empty ✓)
-
-### P2 — (empty ✓)
-
-| # | WI | Summary | LOE |
-|---|---|---|---|
-| 1 | ~~[WI-0638](../WORK_QUEUE/WI-0638.md)~~ ✓ | Remove NCAAM + Soccer from UI sport filter permanently | XS |
-| 2 | ~~[WI-0639](../WORK_QUEUE/COMPLETE/WI-0639.md)~~ ✓ | NFL UI seasonal gate — hide sport filter outside Sep–Feb | S |
-| 3 | ~~[WI-0634](../WORK_QUEUE/COMPLETE/WI-0634.md)~~ ✓ | Wire report_settlement_health into scheduler daily | S |
-| 4 | ~~[WI-0637](../WORK_QUEUE/COMPLETE/WI-0637.md)~~ ✓ | MLB without-odds mode synthetic F5 projection_floor line | S |
-| 5 | ~~[WI-0631](../WORK_QUEUE/COMPLETE/WI-0631.md)~~ ✓ | Implement refresh token persistence + revocation (security closure) | M |
-
-### P3 — Sprint +1
-
-| # | WI | Summary | LOE |
-|---|---|---|---|
-| 6 | ~~[WI-0618](../WORK_QUEUE/COMPLETE/WI-0618.md)~~ ✓ | Delete orphaned archive directories | XS |
-| 7 | ~~[WI-0617](../WORK_QUEUE/COMPLETE/WI-0617.md)~~ ✓ | Remove initDb() no-op callers | S |
-| 8 | ~~[WI-0615](../WORK_QUEUE/COMPLETE/WI-0615.md)~~ ✓ | Remove homeGoalieConfirmed deprecated field | S |
-| 9 | ~~[WI-0616](../WORK_QUEUE/COMPLETE/WI-0616.md)~~ ✓ | Rename welcome-home-v2 card_type | M |
-| 10 | [WI-0619](../WORK_QUEUE/WI-0619.md) | Extract FPL scheduler to schedulers/fpl.js | M |
-| 11 | **[WI-0632](../WORK_QUEUE/WI-0632.md) ⟳ IN PROGRESS** | Test suite for run_nfl_model.js | M |
-| 12 | ~~[WI-0633](../WORK_QUEUE/COMPLETE/WI-0633.md)~~ OBSOLETE | Test suite for run_ncaam_model.js — NCAAM not pursued | M |
-| 13 | [WI-0586](../WORK_QUEUE/WI-0586.md) | NHL blocked shots prop pipeline (full end-to-end) | XL |
-
-### Backlog — Tech Debt Milestone
+### In Progress
 
 | WI | Summary | LOE |
 |---|---|---|
-| [WI-0620](../WORK_QUEUE/WI-0620.md) | Decompose db.js into domain modules | XL |
-| [WI-0621](../WORK_QUEUE/WI-0621.md) | Decompose games/route.ts into lib/games/ helpers | XL |
-| [WI-0622](../WORK_QUEUE/WI-0622.md) | Decompose transform.ts into split modules | L |
-| [WI-0623](../WORK_QUEUE/WI-0623.md) | Decompose cards-page-client.tsx into sub-components | XL |
-| [WI-0624](../WORK_QUEUE/WI-0624.md) | Audit + remove legacy reason codes | L |
+| **[WI-0624](../WORK_QUEUE/WI-0624.md) ⟳** | Audit + remove legacy reason codes (`PROXY_LEGACY_MARKET_INFERRED` etc.) | L |
+
+### P1 — Hard Deadlines
+
+| # | WI | Summary | LOE | Deadline |
+|---|---|---|---|---|
+| 1 | [WI-0649](../WORK_QUEUE/WI-0649.md) | FPL GW run-in fixture difficulty (FDR integration, GW31–38) | M | **~Apr 4** |
+| 2 | [WI-0646](../WORK_QUEUE/WI-0646.md) | Playoff-mode detection + threshold overrides (NBA + NHL models) | M | **Apr 19** |
+
+### P2 — High Value, No Hard Deadline
+
+| # | WI | Summary | LOE |
+|---|---|---|---|
+| 3 | [WI-0644](../WORK_QUEUE/WI-0644.md) | Test suite for `run_nba_model.js` | M |
+| 4 | [WI-0645](../WORK_QUEUE/WI-0645.md) | Test suite for `run_nhl_player_shots_model.js` | M |
+| 5 | [WI-0647](../WORK_QUEUE/WI-0647.md) | Cross-market settlement win-rate audit / ROI report script | M |
+
+### Backlog
+
+| WI | Summary | LOE | Note |
+|---|---|---|---|
+| [WI-0648](../WORK_QUEUE/WI-0648.md) | MLB empirical sigma recalibration gate (2026 season data) | M | Target ~Apr 20 |
+| [WI-0651](../WORK_QUEUE/WI-0651.md) | Edge sort + min-edge filter in cards UI | M | — |
+| [WI-0650](../WORK_QUEUE/WI-0650.md) | OWNERSHIP.md + CI import boundary check for db modules | S | needs-sync |
 
 ---
 
@@ -208,5 +170,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 97 | WI-0612: team-metrics.js test suite | 2026-03-28 | 551bd7a | — |
 | 98 | WI-0639: NFL UI seasonal gate — isNflSeason() in season-gates.ts, gating filter-panel + filters + cards-page-client | 2026-03-28 | 56ffef1 | [92-wi-0639-nfl-ui-seasonal-gate-hide-sport-](./quick/92-wi-0639-nfl-ui-seasonal-gate-hide-sport-/) |
 | 99 | WI-0617: Remove initDb() no-op callers — confirmed already absent (qt-47/WI-0456), acceptance checks pass | 2026-03-28 | 4b1b437 | [93-wi-0617-remove-initdb-no-op-callers](./quick/93-wi-0617-remove-initdb-no-op-callers/) |
+| 100 | WI-0641: Player props scheduler extraction — player-props.js (NHL SOG/BLK + MLB pitcher-K), 18 tests, main.js cleaned | 2026-03-28 | eea2e0d | [94-wi-0641-player-props-scheduler-refactor](./quick/94-wi-0641-player-props-scheduler-refactor/) |
 
-Last activity: 2026-03-28 - Completed quick task 99: WI-0617 Remove initDb() callers (already absent, zero code changes)
+Last activity: 2026-03-28 - Completed quick task 100: WI-0641 Player props scheduler extraction into player-props.js

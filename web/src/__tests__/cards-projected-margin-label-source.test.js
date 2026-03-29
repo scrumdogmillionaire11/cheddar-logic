@@ -8,8 +8,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
-const cardsPagePath = path.resolve(__dirname, '../../src/components/cards-page-client.tsx');
-const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
+const cardsGameCardPath = path.resolve(__dirname, '../../src/components/cards/GameCardItem.tsx');
+const cardsHelpersPath = path.resolve(__dirname, '../../src/components/cards/game-card-helpers.tsx');
+const cardsPageSource =
+  fs.readFileSync(cardsGameCardPath, 'utf8') +
+  '\n' +
+  fs.readFileSync(cardsHelpersPath, 'utf8');
 
 console.log('Projected margin labeling source-contract checks');
 

@@ -52,8 +52,9 @@ async function preflightGamesEndpoint(baseUrl, assert) {
 
 async function runSourceContractAssertions(assert) {
   const fs = await import('node:fs/promises');
+  // WI-0621 thinned app/api/games/route.ts to a re-export shim; read the handler directly.
   const source = await fs.readFile(
-    new URL('../app/api/games/route.ts', import.meta.url),
+    new URL('../lib/games/route-handler.ts', import.meta.url),
     'utf8',
   );
 

@@ -69,7 +69,6 @@ export type PassReasonCode =
   | 'PASS_MISSING_SELECTION'
   | 'PASS_MISSING_PRICE'
   | 'PASS_NO_MARKET_PRICE'
-  | 'PASS_UNREPAIRABLE_LEGACY'
   | 'PASS_TOTAL_INSUFFICIENT_DATA'
   | 'PASS_NO_QUALIFIED_PLAYS'
   | 'PASS_DRIVER_LOAD_FAILED'
@@ -93,8 +92,6 @@ export type PassReasonCode =
   | 'MATCHUP_EDGE_SIDE'
   | 'EDGE_FOUND_SIDE'
   | 'EDGE_FOUND'
-  | 'REPAIRED_LEGACY_CARD'
-  | 'LEGACY_TITLE_INFERENCE_USED'
   // Consensus-gated pass reasons (from driver-scoring framework)
   | 'PASS_NO_EDGE'
   | 'PASS_MISSING_PRIMARY_DRIVER'
@@ -120,8 +117,7 @@ export type RiskTag =
   | 'RISK_BLOWOUT'
   | 'RISK_FRAGILITY'
   | 'RISK_KEY_NUMBER'
-  | 'RISK_STALE'
-  | 'LEGACY_REPAIR';
+  | 'RISK_STALE';
 
 /**
  * Canonical selection (bet side/direction)
