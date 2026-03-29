@@ -8,6 +8,27 @@ from typing import Dict
 logger = logging.getLogger(__name__)
 
 
+def _fdr_flag(player) -> str:
+    """Append a run-in flag when a player carries computed FDR context."""
+    if isinstance(player, dict):
+        run_in_fdr = player.get("run_in_fdr") or {}
+    else:
+        run_in_fdr = getattr(player, "run_in_fdr", None) or {}
+
+    try:
+        avg_fdr = float(run_in_fdr.get("avg_fdr") or 0.0)
+    except (AttributeError, TypeError, ValueError):
+        return ""
+
+    if avg_fdr == 0.0:
+        return ""
+    if avg_fdr < 2.5:
+        return f" [EASY_RUN avg_fdr={avg_fdr:.1f}]"
+    if avg_fdr > 3.5:
+        return f" [HARD_RUN avg_fdr={avg_fdr:.1f}]"
+    return ""
+
+
 class CaptainSelector:
     """Selects optimal captain and vice-captain."""
 
@@ -200,7 +221,11 @@ class CaptainSelector:
                 "position": captain.get('position'),
                 "expected_pts": round(float(captain.get('total_points', 0) or 0), 2),
                 "ownership_pct": float(captain.get('ownership', 0)),
-                "rationale": "Highest total points among available starters; steady minutes profile" + _get_ownership_warning(captain)
+                "rationale": (
+                    "Highest total points among available starters; steady minutes profile"
+                    + _fdr_flag(captain)
+                    + _get_ownership_warning(captain)
+                )
             }
         }
         if vice:
@@ -210,7 +235,11 @@ class CaptainSelector:
                 "position": vice.get('position'),
                 "expected_pts": round(float(vice.get('total_points', 0) or 0), 2),
                 "ownership_pct": float(vice.get('ownership', 0)),
-                "rationale": "Second-best form/points among available players; injury insurance" + _get_ownership_warning(vice)
+                "rationale": (
+                    "Second-best form/points among available players; injury insurance"
+                    + _fdr_flag(vice)
+                    + _get_ownership_warning(vice)
+                )
             }
             
         return recommendation
@@ -302,6 +331,7 @@ class CaptainSelector:
                 "rationale": (
                     f"Top captain score in XI for {self.strategy_mode} mode "
                     f"({captain_score:.2f} score; {getattr(captain, 'nextGW_pts', 0):.1f} projected pts)"
+                    + _fdr_flag(captain)
                 )
             },
             "vice_captain": {
@@ -314,6 +344,7 @@ class CaptainSelector:
                 "rationale": (
                     f"Second captain score option "
                     f"({vice_score:.2f} score; {getattr(vice, 'nextGW_pts', 0):.1f} projected pts)"
+                    + _fdr_flag(vice)
                 )
             },
             "candidate_pool": candidate_list

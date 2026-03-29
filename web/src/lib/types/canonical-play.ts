@@ -263,14 +263,6 @@ export interface CanonicalPlay {
   created_at: string; // ISO timestamp
   expires_at?: string; // ISO timestamp (optional)
 
-  // LEGACY COMPATIBILITY (TO BE DEPRECATED)
-  // These exist only for backward compat during migration
-  status?: 'FIRE' | 'WATCH' | 'PASS'; // Deprecated: use action + classification
-  market?: 'ML' | 'SPREAD' | 'TOTAL' | 'RISK' | 'UNKNOWN' | 'NONE';
-  pick?: string;
-  lean?: string;
-  reason_codes?: string[];
-  tags?: string[];
 }
 
 // ============================================================================

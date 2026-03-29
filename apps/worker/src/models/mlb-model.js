@@ -648,6 +648,303 @@ function getKVerdict(tier) {
   return 'Play';
 }
 
+function normalizePitcherMarketKey(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .toLowerCase()
+    .replace(/[.'\u2019-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function averageFinite(values = []) {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (finite.length === 0) return null;
+  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
+function buildUnderHistoryMetrics(history = [], line = null) {
+  const validHistory = (Array.isArray(history) ? history : []).filter(
+    (entry) => Number.isFinite(entry?.strikeouts),
+  );
+  const last5 = validHistory.slice(0, 5);
+  const last10 = validHistory.slice(0, 10);
+  const underRate = (entries) => {
+    if (!Number.isFinite(line) || entries.length === 0) return null;
+    const underCount = entries.filter((entry) => entry.strikeouts < line).length;
+    return underCount / entries.length;
+  };
+
+  return {
+    starts_available: validHistory.length,
+    last5_count: last5.length,
+    last10_count: last10.length,
+    under_rate_last5: underRate(last5),
+    under_rate_last10: underRate(last10),
+    avg_k_last10: averageFinite(last10.map((entry) => entry.strikeouts)),
+    avg_pitch_count_last3: averageFinite(
+      validHistory
+        .slice(0, 3)
+        .map((entry) => entry.number_of_pitches),
+    ),
+  };
+}
+
+function pushUnderScoreComponent(components, code, label, points, applied) {
+  components.push({ code, label, points, applied: Boolean(applied) });
+  return applied ? points : 0;
+}
+
+function buildPitcherKUnderWhy(result) {
+  const parts = [];
+  const history = result.history_metrics || {};
+  const form = result.current_form_metrics || {};
+
+  if (Number.isFinite(history.under_rate_last5)) {
+    parts.push(`L5 under ${(history.under_rate_last5 * 100).toFixed(0)}%`);
+  }
+  if (Number.isFinite(history.avg_k_last10) && Number.isFinite(result.selected_market?.line)) {
+    parts.push(
+      `avg ${history.avg_k_last10.toFixed(1)} Ks vs ${result.selected_market.line.toFixed(1)} line`,
+    );
+  }
+  if (
+    Number.isFinite(form.season_k9) &&
+    Number.isFinite(form.recent_k9) &&
+    form.season_k9 > form.recent_k9
+  ) {
+    parts.push(`recent K/9 down ${(form.season_k9 - form.recent_k9).toFixed(1)}`);
+  }
+  if (Number.isFinite(form.avg_pitch_count_last3)) {
+    parts.push(`pitch count ${form.avg_pitch_count_last3.toFixed(0)}`);
+  }
+
+  return parts.join(' | ');
+}
+
+function scorePitcherKUnder(pitcherInput, matchupInput, marketInput, weatherInput) {
+  const leashResult = classifyLeash(pitcherInput);
+  if (leashResult.uncalculable) {
+    return {
+      status: 'HALTED',
+      verdict: 'NO_PLAY',
+      reason_code: leashResult.flag,
+      basis: 'ODDS_BACKED',
+      direction: 'UNDER',
+      flags: [leashResult.flag].filter(Boolean),
+    };
+  }
+
+  const leashTier = leashResult.tier || 'Mod';
+  const projectionResult = calculateProjectionK(
+    pitcherInput,
+    matchupInput,
+    leashTier,
+    weatherInput || {},
+  );
+  if (projectionResult.uncalculable) {
+    return {
+      status: 'HALTED',
+      verdict: 'NO_PLAY',
+      reason_code: projectionResult.reason_code,
+      basis: 'ODDS_BACKED',
+      direction: 'UNDER',
+      flags: [projectionResult.reason_code].filter(Boolean),
+    };
+  }
+
+  const projection = projectionResult.value;
+  const selectedLine = Number.isFinite(marketInput?.line) ? marketInput.line : null;
+  const underPrice = Number.isFinite(marketInput?.under_price)
+    ? marketInput.under_price
+    : null;
+  const historyMetrics = buildUnderHistoryMetrics(
+    pitcherInput?.strikeout_history,
+    selectedLine,
+  );
+  const avgLast3PitchCount =
+    averageFinite(pitcherInput?.last_three_pitch_counts || []) ??
+    historyMetrics.avg_pitch_count_last3;
+  const currentFormMetrics = {
+    season_k9: pitcherInput?.k_per_9 ?? null,
+    recent_k9: pitcherInput?.recent_k_per_9 ?? pitcherInput?.k_per_9 ?? null,
+    recent_ip: pitcherInput?.recent_ip ?? null,
+    avg_pitch_count_last3: avgLast3PitchCount,
+  };
+
+  const hardFlags = [];
+  if (selectedLine === null) hardFlags.push('UNDER_MARKET_LINE_MISSING');
+  if (underPrice === null) hardFlags.push('UNDER_MARKET_PRICE_MISSING');
+  if (selectedLine !== null && selectedLine < 5.0) hardFlags.push('UNDER_LINE_TOO_LOW');
+  if (underPrice !== null && underPrice < -155) hardFlags.push('UNDER_PRICE_TOO_JUICED');
+  if (historyMetrics.starts_available < 5) hardFlags.push('UNDER_HISTORY_THIN');
+
+  const selectedMarket = {
+    line: selectedLine,
+    under_price: underPrice,
+    over_price: Number.isFinite(marketInput?.over_price) ? marketInput.over_price : null,
+    bookmaker: marketInput?.bookmaker ?? null,
+  };
+
+  if (hardFlags.length > 0) {
+    return {
+      status: 'COMPLETE',
+      verdict: 'NO_PLAY',
+      basis: 'ODDS_BACKED',
+      direction: 'UNDER',
+      projection,
+      line_delta: selectedLine !== null ? projection - selectedLine : null,
+      under_score: 0,
+      score_components: [],
+      history_metrics: historyMetrics,
+      current_form_metrics: currentFormMetrics,
+      selected_market: selectedMarket,
+      flags: hardFlags,
+      why: hardFlags.join(', '),
+    };
+  }
+
+  const components = [];
+  let score = 0;
+  const lineMinusAvgKLast10 = selectedLine - historyMetrics.avg_k_last10;
+  const seasonMinusRecentK9 =
+    currentFormMetrics.season_k9 !== null && currentFormMetrics.recent_k9 !== null
+      ? currentFormMetrics.season_k9 - currentFormMetrics.recent_k9
+      : null;
+
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_LAST5_80',
+    'Last 5 under rate >= 80%',
+    3,
+    historyMetrics.under_rate_last5 >= 0.8,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_LAST5_60',
+    'Last 5 under rate >= 60%',
+    2,
+    historyMetrics.under_rate_last5 >= 0.6 && historyMetrics.under_rate_last5 < 0.8,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_LAST5_40',
+    'Last 5 under rate >= 40%',
+    1,
+    historyMetrics.under_rate_last5 >= 0.4 && historyMetrics.under_rate_last5 < 0.6,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_LAST10_70',
+    'Last 10 under rate >= 70%',
+    2,
+    historyMetrics.under_rate_last10 >= 0.7,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_LAST10_60',
+    'Last 10 under rate >= 60%',
+    1,
+    historyMetrics.under_rate_last10 >= 0.6 && historyMetrics.under_rate_last10 < 0.7,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_LINE_PLUS_1',
+    'Line is at least 1.0 above average Ks',
+    2,
+    lineMinusAvgKLast10 >= 1.0,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_LINE_PLUS_05',
+    'Line is at least 0.5 above average Ks',
+    1,
+    lineMinusAvgKLast10 >= 0.5 && lineMinusAvgKLast10 < 1.0,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_LINE_NEGATIVE',
+    'Line is not above average Ks',
+    -1,
+    lineMinusAvgKLast10 <= 0,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_RECENT_K_DROP_MAJOR',
+    'Recent K/9 is down at least 0.75',
+    1,
+    seasonMinusRecentK9 >= 0.75,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_RECENT_K_DROP_MINOR',
+    'Recent K/9 is down at least 0.35',
+    0.5,
+    seasonMinusRecentK9 >= 0.35 && seasonMinusRecentK9 < 0.75,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_RECENT_K_SPIKE',
+    'Recent K/9 is up sharply',
+    -1,
+    seasonMinusRecentK9 <= -0.75,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_PITCH_COUNT_SUPPRESSION',
+    'Average pitch count last 3 starts is below 90',
+    1,
+    avgLast3PitchCount !== null && avgLast3PitchCount < 90,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_RECENT_IP_SUPPRESSION',
+    'Recent innings pitched is below 5.5',
+    1,
+    currentFormMetrics.recent_ip !== null && currentFormMetrics.recent_ip < 5.5,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_FULL_LEASH_PENALTY',
+    'Pitch count and innings still show a full leash',
+    -1,
+    avgLast3PitchCount !== null &&
+      avgLast3PitchCount >= 95 &&
+      currentFormMetrics.recent_ip !== null &&
+      currentFormMetrics.recent_ip >= 6.2,
+  );
+  score += pushUnderScoreComponent(
+    components,
+    'UNDER_HOT_WEATHER',
+    'Hot weather leans under on leash durability',
+    0.5,
+    Number.isFinite(weatherInput?.temp_f) && weatherInput.temp_f >= 85,
+  );
+
+  const roundedScore = Math.max(0, Math.round(score * 10) / 10);
+  const verdict =
+    roundedScore >= 7.5 ? 'PLAY' : roundedScore >= 5.5 ? 'WATCH' : 'NO_PLAY';
+  const flags = components.filter((component) => component.applied).map((component) => component.code);
+
+  const result = {
+    status: 'COMPLETE',
+    verdict,
+    basis: 'ODDS_BACKED',
+    direction: 'UNDER',
+    projection,
+    line_delta: selectedLine !== null ? projection - selectedLine : null,
+    under_score: roundedScore,
+    score_components: components,
+    history_metrics: historyMetrics,
+    current_form_metrics: currentFormMetrics,
+    selected_market: selectedMarket,
+    flags,
+  };
+
+  result.why = buildPitcherKUnderWhy(result);
+  return result;
+}
+
 /**
  * Score a pitcher K prop using the Sharp Cheddar K 6-step pipeline.
  *
@@ -787,6 +1084,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
     if (!pitcher) continue;
 
     const pitcherInput = {
+      full_name: pitcher.full_name ?? null,
       k_per_9: pitcher.k_per_9 ?? null,
       recent_k_per_9: pitcher.recent_k_per_9 ?? null,
       recent_ip: pitcher.recent_ip ?? pitcher.avg_ip ?? null,
@@ -804,6 +1102,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       is_star_name: pitcher.is_star_name ?? false,
       season_avg_velo: pitcher.season_avg_velo ?? null,
       last3_avg_velo: pitcher.last3_avg_velo ?? null,
+      strikeout_history: pitcher.strikeout_history ?? [],
     };
 
     const matchupInput = {
@@ -826,48 +1125,101 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       wind_direction: mlb.wind_dir ?? null,
     };
 
-    // Resolve market input from strikeout_lines for ODDS_BACKED mode.
-    // strikeout_lines is a map of pitcher_name (lower) → { line, over_price, under_price, bookmaker }
-    // populated by enrichMlbPitcherData when mode = 'ODDS_BACKED'.
-    let marketInput = null;
-    let lineMeta = { line_source: null, over_price: null, under_price: null, best_line_bookmaker: null };
-
     if (isOddsBacked) {
-      const pitcherNameKey = (pitcher.full_name || team || '').toLowerCase();
+      let marketInput = null;
+      let lineMeta = {
+        line_source: null,
+        over_price: null,
+        under_price: null,
+        best_line_bookmaker: null,
+      };
+      const pitcherNameKey = normalizePitcherMarketKey(pitcher.full_name || team || '');
       const strikeoutLines = mlb.strikeout_lines ?? {};
-      // Exact key match first, then partial match (pitcher full name may differ from team name)
       const lineRow =
         strikeoutLines[pitcherNameKey] ||
         Object.entries(strikeoutLines).find(([k]) =>
-          k.includes(pitcherNameKey.slice(0, 4)) || pitcherNameKey.includes(k.slice(0, 4)),
+          k.includes(pitcherNameKey) ||
+          pitcherNameKey.includes(k) ||
+          (
+            pitcherNameKey.split(' ').length > 1 &&
+            k.includes(pitcherNameKey.split(' ').slice(-1)[0])
+          ),
         )?.[1] ||
         null;
 
       if (lineRow) {
-        marketInput = { line: lineRow.line, opening_line: lineRow.line };
+        marketInput = {
+          line: lineRow.line,
+          opening_line: lineRow.line,
+          over_price: lineRow.over_price ?? null,
+          under_price: lineRow.under_price ?? null,
+          bookmaker: lineRow.bookmaker ?? null,
+        };
         lineMeta = {
           line_source: lineRow.bookmaker ?? 'unknown',
           over_price: lineRow.over_price ?? null,
           under_price: lineRow.under_price ?? null,
           best_line_bookmaker: lineRow.bookmaker ?? null,
         };
-      } else {
-        // No line found for this pitcher in ODDS_BACKED mode — downgrade to PROJECTION_ONLY
-        console.warn(
-          `[mlb-model] [pitcher-k] No market line found for ${team || role} pitcher ` +
-            `in ODDS_BACKED mode — scoring as PROJECTION_ONLY (line_basis_missing).`,
-        );
       }
+
+      const result = scorePitcherKUnder(
+        pitcherInput,
+        matchupInput,
+        marketInput,
+        weatherInput,
+      );
+      const verdict = result.verdict || 'NO_PLAY';
+      const emitCard = verdict === 'PLAY' || verdict === 'WATCH';
+
+      cards.push({
+        market: `pitcher_k_${role}`,
+        pitcher_team: team,
+        prediction: emitCard ? 'UNDER' : 'PASS',
+        confidence:
+          result.under_score != null ? Math.max(0, Math.min(1, result.under_score / 10)) : 0,
+        ev_threshold_passed: verdict === 'PLAY',
+        emit_card: emitCard,
+        card_verdict: verdict,
+        tier: verdict === 'PLAY' ? 'BEST' : verdict === 'WATCH' ? 'WATCH' : null,
+        reasoning: _buildPitcherKReasoning(result),
+        drivers: [{
+          type: 'pitcher-k-under',
+          projection: result.projection ?? null,
+          line: result.selected_market?.line ?? null,
+          line_delta: result.line_delta ?? null,
+          under_score: result.under_score ?? null,
+        }],
+        prop_decision: {
+          verdict,
+          lean_side: 'UNDER',
+          line: result.selected_market?.line ?? null,
+          display_price: result.selected_market?.under_price ?? null,
+          projection: result.projection ?? null,
+          line_delta: result.line_delta ?? null,
+          fair_prob: null,
+          implied_prob: null,
+          prob_edge_pp: null,
+          ev: null,
+          why: result.why || _buildPitcherKReasoning(result),
+          flags: result.flags ?? [],
+        },
+        pitcher_k_result: result,
+        basis: 'ODDS_BACKED',
+        line: result.selected_market?.line ?? null,
+        ...lineMeta,
+      });
+      continue;
     }
 
-    // Pass 'FULL' mode when odds are available (enables Block 1 + Block 4),
-    // otherwise 'PROJECTION_ONLY'.
-    const scoreMode = isOddsBacked && marketInput ? 'FULL' : 'PROJECTION_ONLY';
-    const result = scorePitcherK(pitcherInput, matchupInput, {}, marketInput, weatherInput, { mode: scoreMode, side: 'over' });
-
-    // scorePitcherK returns `verdict: 'Play' | 'Pass'` — not `ev_threshold_passed`.
-    // Map verdict to the standard ev_threshold_passed contract so the caller's filter works.
-    // side is always 'over', so a 'Play' verdict is an OVER signal.
+    const result = scorePitcherK(
+      pitcherInput,
+      matchupInput,
+      {},
+      null,
+      weatherInput,
+      { mode: 'PROJECTION_ONLY', side: 'over' },
+    );
     const isPlay = result.status === 'COMPLETE' && result.verdict === 'Play';
 
     cards.push({
@@ -876,6 +1228,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       prediction: isPlay ? 'OVER' : 'PASS',
       confidence: result.net_score != null ? result.net_score / 10 : 0,
       ev_threshold_passed: isPlay,
+      emit_card: isPlay,
       reasoning: _buildPitcherKReasoning(result),
       drivers: [{
         type: 'pitcher-k',
@@ -885,10 +1238,11 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
         tier: result.tier ?? null,
       }],
       pitcher_k_result: result,
-      // basis reflects actual scoring mode: 'FULL' → 'ODDS_BACKED', 'PROJECTION_ONLY' → 'PROJECTION_ONLY'
       basis: result.basis === 'FULL' ? 'ODDS_BACKED' : 'PROJECTION_ONLY',
-      // Odds-backed enrichment fields (all null in PROJECTION_ONLY)
-      ...lineMeta,
+      line_source: null,
+      over_price: null,
+      under_price: null,
+      best_line_bookmaker: null,
     });
   }
 
@@ -896,6 +1250,17 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
 }
 
 function _buildPitcherKReasoning(result) {
+  if (result.direction === 'UNDER') {
+    const parts = [];
+    if (result.projection != null) parts.push(`Projection: ${result.projection} Ks`);
+    if (result.selected_market?.line != null) {
+      parts.push(`Line: ${result.selected_market.line}`);
+    }
+    if (result.under_score != null) parts.push(`Under score: ${result.under_score}/10`);
+    parts.push(`Verdict: ${result.verdict}`);
+    if (result.why) parts.push(result.why);
+    return parts.join(' | ');
+  }
   if (result.status === 'HALTED')
     return `HALTED at ${result.halted_at}: ${result.reason_code}`;
   if (result.status === 'SUSPENDED')
@@ -918,5 +1283,7 @@ module.exports = {
   computePitcherStatsAsOf,
   // Sharp Cheddar K pipeline
   scorePitcherK,
+  scorePitcherKUnder,
+  buildUnderHistoryMetrics,
   computePitcherKDriverCards,
 };

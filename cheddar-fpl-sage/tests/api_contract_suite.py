@@ -10,6 +10,15 @@ import backend.routers.user as user_router
 import backend.services.result_transformer as result_transformer
 
 
+def _load_result_transformer():
+    """Reload if present, otherwise import a fresh module after test-side eviction."""
+    module_name = "backend.services.result_transformer"
+    module = sys.modules.get(module_name)
+    if module is None:
+        return importlib.import_module(module_name)
+    return importlib.reload(module)
+
+
 def _job(
     analysis_id: str = "abcd1234",
     status: str = "queued",
@@ -339,7 +348,7 @@ def test_transformer_backfills_manager_state_with_rank_aware_strategy() -> None:
         },
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(
         raw_results,
         overrides={"risk_posture": "aggressive", "free_transfers": 2},
@@ -390,7 +399,7 @@ def test_transformer_rewrites_no_free_transfer_reason_when_ft_override_positive(
         },
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(
         raw_results,
         overrides={"risk_posture": "aggressive", "free_transfers": 2},
@@ -481,7 +490,7 @@ def test_transformer_rebuilds_fixture_planner_from_fixture_horizon_context() -> 
         },
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(raw_results, overrides={"free_transfers": 2})
 
     planner = transformed["fixture_planner"]
@@ -533,7 +542,7 @@ def test_transformer_emits_deterministic_minimal_fixture_planner_when_sparse() -
         },
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(raw_results, overrides={"free_transfers": 2})
 
     planner = transformed["fixture_planner"]
@@ -593,7 +602,7 @@ def test_transformer_surfaces_section_specific_reason_fields_when_empty() -> Non
         },
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(raw_results, overrides={"free_transfers": 2})
 
     assert transformed["near_threshold_reason"] == "No near-threshold moves: no viable alternatives this week."
@@ -657,7 +666,7 @@ def test_transformer_clears_reason_fields_when_section_has_content() -> None:
         },
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(raw_results, overrides={"free_transfers": 2})
 
     assert transformed["near_threshold_reason"] is None
@@ -716,7 +725,7 @@ def test_transformer_strategy_sanitizer_is_id_first_for_duplicate_names() -> Non
         },
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(raw_results, overrides={"free_transfers": 2})
     safe_path = transformed["strategy_paths"]["safe"]
 
@@ -808,7 +817,7 @@ def test_transformer_normalizes_malformed_planner_payload_to_numeric_safe_shape(
         },
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(raw_results, overrides={"free_transfers": 2})
     planner = transformed["fixture_planner"]
 
@@ -956,7 +965,7 @@ def test_transformer_lineup_decision_preserves_price_and_ownership_from_squad_me
         },
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(raw_results, overrides={"free_transfers": 2})
     starter = transformed["starting_xi"][0]
 

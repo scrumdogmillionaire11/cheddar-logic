@@ -16,12 +16,19 @@
  * Tests run without DB, network, or job runner.
  */
 
-const { scorePitcherK, projectF5ML } = require('../../models/mlb-model');
+const {
+  scorePitcherK,
+  scorePitcherKUnder,
+  projectF5ML,
+  computePitcherKDriverCards,
+} = require('../../models/mlb-model');
 const {
   checkPitcherFreshness,
   validatePitcherKInputs,
   buildPitcherKObject,
   resolveMlbTeamLookupKeys,
+  selectBestPitcherUnderMarket,
+  buildPitcherStrikeoutLookback,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -57,6 +64,32 @@ const neutralMatchup = {
 };
 
 const PROJECTION_ONLY_OPTS = { mode: 'PROJECTION_ONLY', side: 'over' };
+
+const strongUnderHistory = [
+  { strikeouts: 5, number_of_pitches: 87, innings_pitched: 5.1, game_date: '2026-03-25' },
+  { strikeouts: 4, number_of_pitches: 88, innings_pitched: 5.0, game_date: '2026-03-20' },
+  { strikeouts: 6, number_of_pitches: 89, innings_pitched: 5.2, game_date: '2026-03-15' },
+  { strikeouts: 5, number_of_pitches: 86, innings_pitched: 5.0, game_date: '2026-03-10' },
+  { strikeouts: 3, number_of_pitches: 85, innings_pitched: 4.2, game_date: '2026-03-05' },
+  { strikeouts: 7, number_of_pitches: 90, innings_pitched: 5.2, game_date: '2026-02-28' },
+  { strikeouts: 5, number_of_pitches: 84, innings_pitched: 4.2, game_date: '2026-02-23' },
+  { strikeouts: 4, number_of_pitches: 83, innings_pitched: 4.1, game_date: '2026-02-18' },
+  { strikeouts: 6, number_of_pitches: 88, innings_pitched: 5.0, game_date: '2026-02-13' },
+  { strikeouts: 4, number_of_pitches: 82, innings_pitched: 4.0, game_date: '2026-02-08' },
+];
+
+const watchUnderHistory = [
+  { strikeouts: 5, number_of_pitches: 92, innings_pitched: 5.8, game_date: '2026-03-25' },
+  { strikeouts: 7, number_of_pitches: 93, innings_pitched: 6.0, game_date: '2026-03-20' },
+  { strikeouts: 6, number_of_pitches: 91, innings_pitched: 5.9, game_date: '2026-03-15' },
+  { strikeouts: 5, number_of_pitches: 90, innings_pitched: 5.6, game_date: '2026-03-10' },
+  { strikeouts: 7, number_of_pitches: 92, innings_pitched: 6.0, game_date: '2026-03-05' },
+  { strikeouts: 6, number_of_pitches: 91, innings_pitched: 5.8, game_date: '2026-02-28' },
+  { strikeouts: 5, number_of_pitches: 90, innings_pitched: 5.5, game_date: '2026-02-23' },
+  { strikeouts: 4, number_of_pitches: 89, innings_pitched: 5.1, game_date: '2026-02-18' },
+  { strikeouts: 7, number_of_pitches: 94, innings_pitched: 6.2, game_date: '2026-02-13' },
+  { strikeouts: 6, number_of_pitches: 92, innings_pitched: 5.7, game_date: '2026-02-08' },
+];
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -137,6 +170,177 @@ describe('scorePitcherK — projection-only mode', () => {
     expect(result.halted_at).toBe('STEP_2');
     expect(result.reason_code).toBe('IL_RETURN');
     expect(result.verdict).toBe('PASS');
+  });
+});
+
+describe('MLB pitcher-K under monitoring', () => {
+  test('selectBestPitcherUnderMarket prefers highest line, then best under price, then bookmaker priority', () => {
+    const best = selectBestPitcherUnderMarket([
+      { line: 6.5, under_price: -105, over_price: -115, bookmaker: 'draftkings' },
+      { line: 7.5, under_price: -125, over_price: 105, bookmaker: 'fanduel' },
+      { line: 7.5, under_price: -115, over_price: 100, bookmaker: 'betmgm' },
+      { line: 7.5, under_price: -115, over_price: 100, bookmaker: 'draftkings' },
+    ]);
+
+    expect(best).toMatchObject({
+      line: 7.5,
+      under_price: -115,
+      bookmaker: 'draftkings',
+    });
+  });
+
+  test('buildPitcherStrikeoutLookback fills current season first, then prior season', () => {
+    const currentRows = [
+      { season: 2026, game_date: '2026-03-20', strikeouts: 5, number_of_pitches: 88, innings_pitched: 5.0 },
+      { season: 2026, game_date: '2026-03-14', strikeouts: 6, number_of_pitches: 90, innings_pitched: 5.2 },
+      { season: 2026, game_date: '2026-03-08', strikeouts: 4, number_of_pitches: 84, innings_pitched: 4.1 },
+      { season: 2026, game_date: '2026-03-02', strikeouts: 5, number_of_pitches: 86, innings_pitched: 4.2 },
+    ];
+    const priorRows = [
+      { season: 2025, game_date: '2025-09-28', strikeouts: 7, number_of_pitches: 95, innings_pitched: 6.0 },
+      { season: 2025, game_date: '2025-09-22', strikeouts: 8, number_of_pitches: 97, innings_pitched: 6.1 },
+      { season: 2025, game_date: '2025-09-15', strikeouts: 6, number_of_pitches: 93, innings_pitched: 5.2 },
+    ];
+    const db = {
+      prepare: jest.fn((sql) => ({
+        all: jest.fn((_pitcherId, season) =>
+          sql.includes('season = ?') ? currentRows : priorRows
+        ),
+      })),
+    };
+
+    const lookback = buildPitcherStrikeoutLookback(db, 1234, 2026, 7);
+    expect(lookback).toHaveLength(7);
+    expect(lookback.slice(0, 4).map((row) => row.season)).toEqual([2026, 2026, 2026, 2026]);
+    expect(lookback.slice(4).map((row) => row.season)).toEqual([2025, 2025, 2025]);
+  });
+
+  test('scorePitcherKUnder returns PLAY for a strong under profile', () => {
+    const result = scorePitcherKUnder(
+      {
+        ...fullPitcher,
+        recent_k_per_9: 9.0,
+        recent_ip: 5.2,
+        last_three_pitch_counts: [89, 88, 87],
+        strikeout_history: strongUnderHistory,
+      },
+      neutralMatchup,
+      { line: 6.5, under_price: -105, over_price: -115, bookmaker: 'draftkings' },
+      { temp_f: 86 },
+    );
+
+    expect(result.verdict).toBe('PLAY');
+    expect(result.direction).toBe('UNDER');
+    expect(result.under_score).toBeGreaterThanOrEqual(7.5);
+    expect(result.flags).toContain('UNDER_LAST5_80');
+    expect(result.history_metrics.under_rate_last10).toBeGreaterThanOrEqual(0.7);
+  });
+
+  test('scorePitcherKUnder returns WATCH for a middling under profile', () => {
+    const result = scorePitcherKUnder(
+      {
+        ...fullPitcher,
+        recent_k_per_9: 9.8,
+        recent_ip: 5.8,
+        last_three_pitch_counts: [92, 91, 90],
+        strikeout_history: watchUnderHistory,
+      },
+      neutralMatchup,
+      { line: 6.5, under_price: -110, over_price: -110, bookmaker: 'fanduel' },
+      { temp_f: 72 },
+    );
+
+    expect(result.verdict).toBe('WATCH');
+    expect(result.under_score).toBe(5.5);
+    expect(result.flags).toContain('UNDER_LAST5_60');
+  });
+
+  test('scorePitcherKUnder returns NO_PLAY on hard gates', () => {
+    const result = scorePitcherKUnder(
+      {
+        ...fullPitcher,
+        recent_k_per_9: 9.8,
+        recent_ip: 5.3,
+        last_three_pitch_counts: [88, 87, 86],
+        strikeout_history: strongUnderHistory.slice(0, 4),
+      },
+      neutralMatchup,
+      { line: 4.5, under_price: -170, over_price: 140, bookmaker: 'draftkings' },
+      { temp_f: 88 },
+    );
+
+    expect(result.verdict).toBe('NO_PLAY');
+    expect(result.flags).toEqual(
+      expect.arrayContaining(['UNDER_LINE_TOO_LOW', 'UNDER_PRICE_TOO_JUICED', 'UNDER_HISTORY_THIN']),
+    );
+  });
+
+  test('computePitcherKDriverCards emits odds-backed UNDER play with prop_decision', () => {
+    const cards = computePitcherKDriverCards(
+      'game-1',
+      {
+        home_team: 'New York Yankees',
+        raw_data: {
+          mlb: {
+            temp_f: 86,
+            home_pitcher: {
+              ...fullPitcher,
+              full_name: 'Ace Under',
+              recent_k_per_9: 9.0,
+              recent_ip: 5.2,
+              last_three_pitch_counts: [89, 88, 87],
+              strikeout_history: strongUnderHistory,
+            },
+            strikeout_lines: {
+              'ace under': {
+                line: 6.5,
+                under_price: -105,
+                over_price: -115,
+                bookmaker: 'draftkings',
+              },
+            },
+          },
+        },
+      },
+      { mode: 'ODDS_BACKED' },
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      prediction: 'UNDER',
+      emit_card: true,
+      card_verdict: 'PLAY',
+      basis: 'ODDS_BACKED',
+    });
+    expect(cards[0].prop_decision).toMatchObject({
+      verdict: 'PLAY',
+      lean_side: 'UNDER',
+      line: 6.5,
+      display_price: -105,
+    });
+  });
+
+  test('computePitcherKDriverCards keeps projection-only branch unchanged', () => {
+    const cards = computePitcherKDriverCards(
+      'game-1',
+      {
+        home_team: 'New York Yankees',
+        raw_data: {
+          mlb: {
+            home_pitcher: {
+              ...fullPitcher,
+              full_name: 'Projection Only',
+            },
+          },
+        },
+      },
+      { mode: 'PROJECTION_ONLY' },
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].basis).toBe('PROJECTION_ONLY');
+    expect(cards[0].prop_decision).toBeUndefined();
+    expect(['OVER', 'PASS']).toContain(cards[0].prediction);
   });
 });
 

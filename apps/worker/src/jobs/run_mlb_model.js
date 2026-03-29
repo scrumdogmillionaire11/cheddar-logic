@@ -35,7 +35,6 @@ const {
   validateCardPayload,
   shouldRunJobKey,
   withDb,
-  getPlayerPropLinesForGame,
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
@@ -94,6 +93,12 @@ const MLB_TEAM_ABBREVIATIONS = Object.freeze({
   'Texas Rangers': 'TEX',
   'Toronto Blue Jays': 'TOR',
   'Washington Nationals': 'WSH',
+});
+
+const MLB_PROP_BOOKMAKER_PRIORITY = Object.freeze({
+  draftkings: 1,
+  fanduel: 2,
+  betmgm: 3,
 });
 
 function toFiniteNumber(value) {
@@ -336,6 +341,126 @@ function resolvePitcherKsMode() {
   return PITCHER_KS_MODEL_MODE === 'ODDS_BACKED'
     ? 'ODDS_BACKED'
     : 'PROJECTION_ONLY';
+}
+
+function normalizePitcherLookupKey(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .toLowerCase()
+    .replace(/[.'\u2019-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getPitcherPropBookmakerPriority(bookmaker) {
+  const normalized = String(bookmaker || '').toLowerCase();
+  return MLB_PROP_BOOKMAKER_PRIORITY[normalized] ?? 99;
+}
+
+function selectBestPitcherUnderMarket(rows = []) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  const sorted = [...rows].sort((left, right) => {
+    const leftLine = toFiniteNumber(left?.line) ?? Number.NEGATIVE_INFINITY;
+    const rightLine = toFiniteNumber(right?.line) ?? Number.NEGATIVE_INFINITY;
+    if (rightLine !== leftLine) return rightLine - leftLine;
+
+    const leftUnder = toFiniteNumber(left?.under_price) ?? Number.NEGATIVE_INFINITY;
+    const rightUnder = toFiniteNumber(right?.under_price) ?? Number.NEGATIVE_INFINITY;
+    if (rightUnder !== leftUnder) return rightUnder - leftUnder;
+
+    return (
+      getPitcherPropBookmakerPriority(left?.bookmaker) -
+      getPitcherPropBookmakerPriority(right?.bookmaker)
+    );
+  });
+
+  const best = sorted[0];
+  return best
+    ? {
+        line: toFiniteNumber(best.line),
+        over_price: toFiniteNumber(best.over_price),
+        under_price: toFiniteNumber(best.under_price),
+        bookmaker: best.bookmaker ?? null,
+        fetched_at: best.fetched_at ?? null,
+      }
+    : null;
+}
+
+function loadPitcherStrikeoutMarkets(db, gameId) {
+  if (!db || !gameId) return {};
+  const rows = db
+    .prepare(`
+      SELECT player_name, line, over_price, under_price, bookmaker, fetched_at
+      FROM player_prop_lines
+      WHERE sport = 'MLB'
+        AND game_id = ?
+        AND prop_type = 'pitcher_strikeouts'
+        AND period = 'full_game'
+    `)
+    .all(gameId);
+
+  const grouped = new Map();
+  for (const row of rows) {
+    const key = normalizePitcherLookupKey(row.player_name);
+    if (!key) continue;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(row);
+  }
+
+  const selected = {};
+  for (const [key, group] of grouped.entries()) {
+    const best = selectBestPitcherUnderMarket(group);
+    if (best) selected[key] = best;
+  }
+  return selected;
+}
+
+function buildPitcherStrikeoutLookback(
+  db,
+  mlbPitcherId,
+  currentSeason = new Date().getUTCFullYear(),
+  limit = 10,
+) {
+  if (!db || !mlbPitcherId || !Number.isFinite(Number(limit)) || limit <= 0) {
+    return [];
+  }
+
+  const currentRows = db
+    .prepare(`
+      SELECT season, game_date, strikeouts, number_of_pitches, innings_pitched
+      FROM mlb_pitcher_game_logs
+      WHERE mlb_pitcher_id = ?
+        AND season = ?
+        AND innings_pitched > 0
+      ORDER BY game_date DESC
+      LIMIT ?
+    `)
+    .all(mlbPitcherId, currentSeason, limit);
+
+  const remaining = Math.max(limit - currentRows.length, 0);
+  const priorRows =
+    remaining > 0
+      ? db
+          .prepare(`
+            SELECT season, game_date, strikeouts, number_of_pitches, innings_pitched
+            FROM mlb_pitcher_game_logs
+            WHERE mlb_pitcher_id = ?
+              AND season < ?
+              AND innings_pitched > 0
+            ORDER BY season DESC, game_date DESC
+            LIMIT ?
+          `)
+          .all(mlbPitcherId, currentSeason, remaining)
+      : [];
+
+  return [...currentRows, ...priorRows].map((row) => ({
+    season: toFiniteNumber(row.season),
+    game_date: row.game_date,
+    strikeouts: toFiniteNumber(row.strikeouts),
+    number_of_pitches: toFiniteNumber(row.number_of_pitches),
+    innings_pitched: toFiniteNumber(row.innings_pitched),
+  }));
 }
 
 const PROJECTION_FLOOR_F5_FALLBACK = 8.5;
@@ -586,6 +711,8 @@ function buildPitcherKObject(row) {
   } catch (_) { /* leave null */ }
 
   return {
+    mlb_id: row.mlb_id ?? null,
+    full_name: row.full_name ?? null,
     // Moneyline-compat fields (kept so computeMLBDriverCards still works)
     era: row.era,
     whip: row.whip,
@@ -671,23 +798,7 @@ function enrichMlbPitcherData(oddsSnapshot, { forKEngine = false } = {}) {
       try {
         const gameId = oddsSnapshot?.game_id ?? oddsSnapshot?.id ?? null;
         if (gameId) {
-          const propLines = getPlayerPropLinesForGame('MLB', gameId, ['pitcher_strikeouts']);
-          // Build a lookup: pitcher_name (lower) → { line, over_price, under_price, bookmaker }
-          // Use the priority-ordered line for each pitcher (draftkings > fanduel > betmgm > any)
-          const strikeoutLinesByPitcher = {};
-          for (const row of propLines) {
-            const key = (row.player_name || '').toLowerCase();
-            if (!strikeoutLinesByPitcher[key]) {
-              strikeoutLinesByPitcher[key] = {
-                line: row.line,
-                over_price: row.over_price ?? null,
-                under_price: row.under_price ?? null,
-                bookmaker: row.bookmaker ?? null,
-                fetched_at: row.fetched_at ?? null,
-              };
-            }
-          }
-          mlb.strikeout_lines = strikeoutLinesByPitcher;
+          mlb.strikeout_lines = loadPitcherStrikeoutMarkets(db, gameId);
         }
       } catch (_propErr) {
         // Non-fatal — K engine falls back to PROJECTION_ONLY gating if no line found
@@ -760,6 +871,13 @@ function enrichMlbPitcherData(oddsSnapshot, { forKEngine = false } = {}) {
         );
         return null;
       }
+
+      pitcherObj.strikeout_history = buildPitcherStrikeoutLookback(
+        db,
+        row.mlb_id,
+        new Date().getUTCFullYear(),
+        10,
+      );
 
       return pitcherObj;
     }
@@ -969,7 +1087,7 @@ async function runMLBModel({
 
           const qualified = [
             ...(selectedGameDriver?.ev_threshold_passed ? [selectedGameDriver] : []),
-            ...pitcherKDriverCards.filter((d) => d.ev_threshold_passed),
+            ...pitcherKDriverCards.filter((d) => d.emit_card === true),
             ...(f5MlDriverCard?.ev_threshold_passed ? [f5MlDriverCard] : []),
             ...(projectionFloorDriver ? [projectionFloorDriver] : []),
           ];
@@ -1018,10 +1136,12 @@ async function runMLBModel({
             const cardType = isF5 ? 'mlb-f5' : isF5ML ? 'mlb-f5-ml' : isPitcherK ? 'mlb-pitcher-k' : 'mlb-strikeout';
 
             const driverDetail = driver.drivers?.[0] ?? {};
-            const projected = driverDetail.projected ?? null;
-            const edge = driverDetail.edge ?? null;
-            const line =
-              projected !== null && edge !== null
+            const projected =
+              driverDetail.projected ?? driverDetail.projection ?? null;
+            const edge = driverDetail.edge ?? driverDetail.line_delta ?? null;
+            const line = isPitcherK && driver.line != null
+              ? driver.line
+              : projected !== null && edge !== null
                 ? Math.round((projected - edge) * 10) / 10
                 : null;
 
@@ -1032,9 +1152,11 @@ async function runMLBModel({
                     ? (pitcherKOddsSnapshot?.away_team ?? null)
                     : null);
 
-            const tier =
-              driver.confidence >= 0.8 ? 'BEST' :
-              driver.confidence >= 0.6 ? 'WATCH' : 'WATCH';
+            const tier = isPitcherK
+              ? (driver.card_verdict === 'PLAY' ? 'BEST' : 'WATCH')
+              : driver.confidence >= 0.8
+                ? 'BEST'
+                : 'WATCH';
 
             const payloadData = {
               game_id: gameId,
@@ -1050,7 +1172,7 @@ async function runMLBModel({
               line,
               confidence: driver.confidence,
               tier,
-              ev_passed: true,
+              ev_passed: isPitcherK ? driver.card_verdict !== 'NO_PLAY' : true,
               reasoning: driver.reasoning,
               disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
               generated_at: now,
@@ -1082,6 +1204,7 @@ async function runMLBModel({
                       canonical_market_key: 'pitcher_strikeouts',
                       basis: driver.basis || 'PROJECTION_ONLY',
                       tags: (driver.basis === 'ODDS_BACKED') ? [] : ['no_odds_mode'],
+                      prop_decision: driver.prop_decision ?? null,
                       pitcher_k_result: driver.pitcher_k_result ?? null,
                       // Odds-backed enrichment (null in PROJECTION_ONLY)
                       line_source: driver.line_source ?? null,
@@ -1240,6 +1363,8 @@ module.exports = {
   checkPitcherFreshness,
   validatePitcherKInputs,
   buildPitcherKObject,
+  selectBestPitcherUnderMarket,
+  buildPitcherStrikeoutLookback,
   // Exported for WI-0637 unit tests
   computeProjectionFloorF5,
 };
