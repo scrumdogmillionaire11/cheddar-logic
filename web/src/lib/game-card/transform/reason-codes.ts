@@ -23,9 +23,6 @@ export function normalizePassReasonCode(reason?: string | null): string | null {
 
 export const NO_ACTIONABLE_IGNORE_REASON_CODES = new Set([
   'PASS_MISSING_MARKET_TYPE',
-  // Backward-compat bridge: DB records created before WI-0624 may carry this code.
-  // Route-handler no longer emits it; keep here until DB records are purged.
-  'PASS_UNREPAIRABLE_LEGACY',
 ]);
 
 export const NO_ACTIONABLE_EXPLICIT_NO_EDGE_REASON_CODES = new Set([

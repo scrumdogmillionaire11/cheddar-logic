@@ -38,12 +38,12 @@ describe('pipeline card payload contract', () => {
   test('legacy unrepairable PASS fixture remains blocked', () => {
     const fixture = loadFixture('ncaam-pass-unrepairable-legacy.json');
 
-    expect(fixture.legacy_play.action).toBe('PASS');
-    expect(fixture.legacy_play.kind).toBe('EVIDENCE');
-    expect(fixture.legacy_play.market_type).toBe('INFO');
-    expect(fixture.legacy_play.repair_applied).toBe(false);
-    expect(fixture.legacy_play.reason_codes).toEqual(
-      expect.arrayContaining(['PASS_UNREPAIRABLE_LEGACY']),
+    expect(fixture.play.action).toBe('PASS');
+    expect(fixture.play.kind).toBe('EVIDENCE');
+    expect(fixture.play.market_type).toBe('INFO');
+    expect(fixture.play.repair_applied).toBe(false);
+    expect(fixture.play.reason_codes).toEqual(
+      expect.arrayContaining(['PASS_MISSING_MARKET_TYPE']),
     );
   });
 

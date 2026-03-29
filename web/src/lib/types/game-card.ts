@@ -263,7 +263,7 @@ export interface CanonicalApiPlay {
 
   // Deterministic messaging
   tags?: string[]; // e.g. ["RISK_BLOWOUT", "ACCELERANT_SCORE"]
-  reason_codes?: (PassReasonCode | string)[]; // e.g. ["PASS_MISSING_EDGE", "LEGACY_REPAIR"]
+  reason_codes?: (PassReasonCode | string)[]; // e.g. ["PASS_MISSING_EDGE", "PASS_DATA_ERROR"]
 
   // Repair metadata (if API applied inference)
   repair_applied?: boolean;
