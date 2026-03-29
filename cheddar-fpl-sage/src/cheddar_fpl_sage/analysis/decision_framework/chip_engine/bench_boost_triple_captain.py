@@ -176,9 +176,9 @@ def evaluate_bench_boost(
     if season_progress >= _BB_HARD_ESCALATION_FRACTION:  # ~89%
         threshold = _BB_FIRE_THRESHOLD * 0.5  # 10.0
         reason_codes.append("bench_boost:hard_escalation_89pct")
-    elif season_progress >= _BB_SOFT_ESCALATION_FRACTION:  # ~72%
+    elif season_progress >= _BB_SOFT_ESCALATION_FRACTION:  # ~79%
         threshold = _BB_FIRE_THRESHOLD * 0.8  # 16.0
-        reason_codes.append("bench_boost:soft_escalation_72pct")
+        reason_codes.append("bench_boost:soft_escalation_79pct")
 
     # SoN emergency: remaining GWs <= 1
     if remaining_gws <= _BB_SON_EMERGENCY_GWS:
@@ -337,7 +337,7 @@ def evaluate_triple_captain(
         reason_codes.append("triple_captain:hard_escalation_89pct")
     elif season_progress >= _TC_SOFT_ESCALATION_FRACTION:  # ~72%
         threshold = _TC_FIRE_THRESHOLD * 0.8  # 11.2
-        reason_codes.append("triple_captain:soft_escalation_72pct")
+        reason_codes.append("triple_captain:soft_escalation_79pct")
 
     # SoN emergency: remaining GWs <= 2
     if remaining_gws <= _TC_SON_EMERGENCY_GWS:
