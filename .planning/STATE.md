@@ -171,5 +171,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 102 | Audit and remove legacy reason codes (WI-0624) | 2026-03-29 | fb79136 | [98-audit-and-remove-legacy-reason-codes-wi-](./quick/98-audit-and-remove-legacy-reason-codes-wi-/) |
 | 103 | WI-0646 (Playoff-mode detection) — must land before Apr 19 | 2026-03-29 | 4725c55 | [99-wi-0646-playoff-mode-detection-must-land](./quick/99-wi-0646-playoff-mode-detection-must-land/) |
 | 104 | WI-0701: Preserve games state on transient fetch failures (5xx, timeout) | 2026-03-29 | cee5421 | [101-wi-0701](./quick/101-wi-0701/) |
+| 105 | WI-0647: Cross-market settlement ROI report | 2026-03-29 | 9ef8f99 | [102-wi-0647](./quick/102-wi-0647/) |
 
-Last activity: 2026-03-29 - Completed quick task 104: WI-0701 preserve games on transient fetch errors
+Last activity: 2026-03-29 - Completed quick task 105: WI-0647 cross-market settlement ROI report
