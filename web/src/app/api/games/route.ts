@@ -95,6 +95,69 @@ import {
 } from '../../../lib/api-security';
 import type { ExpressionStatus, CanonicalMarketType } from '@/lib/types/game-card';
 import type { PlayDisplayAction } from '@/lib/game-card/decision';
+import {
+  parseJsonObject,
+  toFiniteNumber,
+  toObject,
+  firstString,
+  firstNumber,
+  normalizeMarketType,
+  normalizeKeyToken,
+  normalizeTier,
+  normalizeAction,
+  normalizeStatus,
+  normalizeClassification,
+  normalizeSelectionSide,
+  normalizePrediction,
+  normalizeGoalieStatus,
+  normalizeSport,
+  normalizePassReasonCode,
+  normalizePlayerNameKey,
+  normalizeNumberArray,
+  extractShotsFromRecentGames,
+} from '@/lib/games/normalizers';
+import {
+  inferMarketFromCardType,
+  applyCardTypeKindContract,
+  isFirstPeriodCardType,
+  isCanonicalTotalsCallPlay,
+  isFallbackEvidenceTotalProjectionPlay,
+  isWave1EligibleRow,
+  deriveNhl1PModelCall,
+  normalizeDecisionV2,
+  resolveDecisionV2EdgePct,
+  applyWave1DecisionFields,
+  actionFromClassification,
+  classificationFromAction,
+  statusFromAction,
+  actionFromTier,
+} from '@/lib/games/market-inference';
+import {
+  createStageCounters,
+  normalizeCounterSport,
+  normalizeCounterMarket,
+  incrementStageCounter,
+  bumpCount,
+  registerGameWithPlayableMarket,
+  buildPlayableMarketFamilyDiagnostics,
+  COUNTER_ALL_MARKET,
+  UNKNOWN_SPORT,
+  type StageCounters,
+  type StageCounterStage,
+} from '@/lib/games/stage-counters';
+import {
+  assessProjectionInputsFromRawData,
+  deriveSourceMappingHealth,
+  hasMinimumViability,
+  getActiveRunIds,
+  getFallbackRunIdsFromCards,
+  getRunStatus,
+} from '@/lib/games/validators';
+import {
+  toSqlUtc,
+  getTableColumnNames,
+  buildOptionalOddsSelect,
+} from '@/lib/games/query-builder';
 
 const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
@@ -203,17 +266,6 @@ const ACTIVE_EXCLUDED_STATUSES = [
   'COMPLETED',
   'FT',
 ];
-const CORE_RUN_STATE_SPORTS = [
-  'nba',
-  'nhl',
-  'mlb',
-  'nfl',
-  'fpl',
-  'nhl_props',
-] as const;
-const CORE_RUN_STATE_SPORT_SQL = CORE_RUN_STATE_SPORTS.map(
-  (sport) => `'${sport}'`,
-).join(', ');
 const ACTIVE_GAME_SPORTS = ['NBA', 'NHL', 'MLB', 'NFL'] as const;
 const ACTIVE_GAME_SPORT_SQL = ACTIVE_GAME_SPORTS.map(
   (sport) => `'${sport}'`,
@@ -221,37 +273,6 @@ const ACTIVE_GAME_SPORT_SQL = ACTIVE_GAME_SPORTS.map(
 const ACTIVE_GAME_SPORT_SET = new Set<string>(ACTIVE_GAME_SPORTS);
 const INVALID_SPORT_FILTER = '__INVALID_SPORT_FILTER__';
 const FINAL_GAME_RESULT_STATUSES = ['FINAL', 'FT', 'COMPLETE', 'COMPLETED', 'CLOSED'];
-
-function toSqlUtc(date: Date): string {
-  return date.toISOString().substring(0, 19).replace('T', ' ');
-}
-
-function getTableColumnNames(
-  db: ReturnType<typeof getDatabaseReadOnly>,
-  tableName: string,
-): Set<string> {
-  try {
-    const rows = db
-      .prepare(`PRAGMA table_info(${tableName})`)
-      .all() as Array<{ name?: string }>;
-    return new Set(
-      rows
-        .map((row) => (typeof row.name === 'string' ? row.name : ''))
-        .filter(Boolean),
-    );
-  } catch {
-    return new Set();
-  }
-}
-
-function buildOptionalOddsSelect(
-  availableColumns: Set<string>,
-  columnName: string,
-): string {
-  return availableColumns.has(columnName)
-    ? `o.${columnName}`
-    : `NULL AS ${columnName}`;
-}
 
 function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
   const lifecycleParam = (searchParams.get('lifecycle') || '').toLowerCase();
@@ -488,159 +509,8 @@ interface IngestFailureRow {
   last_seen: string;
 }
 
-function parseJsonObject(value: unknown): Record<string, unknown> | null {
-  if (!value) return null;
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === 'object'
-        ? (parsed as Record<string, unknown>)
-        : null;
-    } catch {
-      return null;
-    }
-  }
-  return value && typeof value === 'object'
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function toFiniteNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function assessProjectionInputsFromRawData(
-  sport: string,
-  rawData: unknown,
-): { projection_inputs_complete: boolean | null; projection_missing_inputs: string[] } {
-  const raw = parseJsonObject(rawData);
-  if (!raw) {
-    return {
-      projection_inputs_complete: null,
-      projection_missing_inputs: [],
-    };
-  }
-
-  const normalizedSport = String(sport || '').toUpperCase();
-  const missingInputs: string[] = [];
-  const espnMetrics = parseJsonObject(raw.espn_metrics);
-  const homeEspnMetrics = parseJsonObject(espnMetrics?.home)?.metrics;
-  const awayEspnMetrics = parseJsonObject(espnMetrics?.away)?.metrics;
-  const homeMetrics = parseJsonObject(homeEspnMetrics);
-  const awayMetrics = parseJsonObject(awayEspnMetrics);
-  const homeRaw = parseJsonObject(raw.home);
-  const awayRaw = parseJsonObject(raw.away);
-
-  if (normalizedSport === 'NBA') {
-    const homeAvgPoints =
-      homeMetrics?.avgPoints ??
-      raw.avg_points_home ??
-      homeRaw?.avg_points;
-    const awayAvgPoints =
-      awayMetrics?.avgPoints ??
-      raw.avg_points_away ??
-      awayRaw?.avg_points;
-    const homeAvgPointsAllowed =
-      homeMetrics?.avgPointsAllowed ??
-      raw.avg_points_allowed_home ??
-      homeRaw?.avg_points_allowed;
-    const awayAvgPointsAllowed =
-      awayMetrics?.avgPointsAllowed ??
-      raw.avg_points_allowed_away ??
-      awayRaw?.avg_points_allowed;
-
-    if (toFiniteNumber(homeAvgPoints) === null) missingInputs.push('home_avg_points');
-    if (toFiniteNumber(awayAvgPoints) === null) missingInputs.push('away_avg_points');
-    if (toFiniteNumber(homeAvgPointsAllowed) === null) {
-      missingInputs.push('home_avg_points_allowed');
-    }
-    if (toFiniteNumber(awayAvgPointsAllowed) === null) {
-      missingInputs.push('away_avg_points_allowed');
-    }
-  } else if (normalizedSport === 'NHL') {
-    const homeGoalsFor =
-      homeMetrics?.avgGoalsFor ??
-      raw.avg_goals_for_home ??
-      homeRaw?.avg_goals_for;
-    const awayGoalsFor =
-      awayMetrics?.avgGoalsFor ??
-      raw.avg_goals_for_away ??
-      awayRaw?.avg_goals_for;
-    const homeGoalsAgainst =
-      homeMetrics?.avgGoalsAgainst ??
-      raw.avg_goals_against_home ??
-      homeRaw?.avg_goals_against;
-    const awayGoalsAgainst =
-      awayMetrics?.avgGoalsAgainst ??
-      raw.avg_goals_against_away ??
-      awayRaw?.avg_goals_against;
-
-    if (toFiniteNumber(homeGoalsFor) === null) missingInputs.push('home_avg_goals_for');
-    if (toFiniteNumber(awayGoalsFor) === null) missingInputs.push('away_avg_goals_for');
-    if (toFiniteNumber(homeGoalsAgainst) === null) {
-      missingInputs.push('home_avg_goals_against');
-    }
-    if (toFiniteNumber(awayGoalsAgainst) === null) {
-      missingInputs.push('away_avg_goals_against');
-    }
-  }
-
-  return {
-    projection_inputs_complete: missingInputs.length === 0,
-    projection_missing_inputs: missingInputs,
-  };
-}
-
-function deriveSourceMappingHealth(rawData: unknown): {
-  source_mapping_ok: boolean | null;
-  source_mapping_failures: string[];
-} {
-  const raw = parseJsonObject(rawData);
-  const sourceContract = raw?.espn_metrics &&
-    typeof raw.espn_metrics === 'object' &&
-    (raw.espn_metrics as Record<string, unknown>).source_contract &&
-    typeof (raw.espn_metrics as Record<string, unknown>).source_contract === 'object'
-      ? ((raw.espn_metrics as Record<string, unknown>).source_contract as Record<string, unknown>)
-      : null;
-
-  return {
-    source_mapping_ok:
-      typeof sourceContract?.mapping_ok === 'boolean'
-        ? (sourceContract.mapping_ok as boolean)
-        : null,
-    source_mapping_failures: Array.isArray(sourceContract?.mapping_failures)
-      ? sourceContract.mapping_failures.map((item) => String(item))
-      : [],
-  };
-}
-
 type MarketType = NonNullable<Play['market_type']>;
 type DecisionV2 = NonNullable<Play['decision_v2']>;
-type StageCounterStage =
-  | 'base_games'
-  | 'card_rows'
-  | 'parsed_rows'
-  | 'wave1_skipped_no_d2'
-  | 'plays_emitted'
-  | 'games_with_plays';
-type StageCounterBucket = Record<string, number>;
-type StageCounterBySport = Record<string, StageCounterBucket>;
-type StageCounters = Record<StageCounterStage, StageCounterBySport>;
-
-const WAVE1_SPORTS = new Set(['NBA', 'NHL']);
-const WAVE1_MARKETS = new Set<MarketType>([
-  'MONEYLINE',
-  'SPREAD',
-  'TOTAL',
-  'PUCKLINE',
-  'TEAM_TOTAL',
-  'FIRST_PERIOD',
-  'PROP',
-]);
-const COUNTER_ALL_MARKET = 'ALL';
-const UNKNOWN_SPORT = 'UNKNOWN';
 type SportCardTypeContract = {
   playProducerCardTypes: Set<string>;
   evidenceOnlyCardTypes: Set<string>;
@@ -707,160 +577,6 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
   },
 };
 
-function createStageCounters(): StageCounters {
-  return {
-    base_games: {},
-    card_rows: {},
-    parsed_rows: {},
-    wave1_skipped_no_d2: {},
-    plays_emitted: {},
-    games_with_plays: {},
-  };
-}
-
-function normalizeCounterSport(value: unknown): string {
-  const sport = normalizeSport(value);
-  return sport ?? UNKNOWN_SPORT;
-}
-
-function normalizeCounterMarket(value: unknown): string {
-  const market = normalizeMarketType(value);
-  return market ?? COUNTER_ALL_MARKET;
-}
-
-function incrementStageCounter(
-  counters: StageCounters,
-  stage: StageCounterStage,
-  sport: unknown,
-  market: unknown = COUNTER_ALL_MARKET,
-  amount = 1,
-): void {
-  const normalizedSport = normalizeCounterSport(sport);
-  const normalizedMarket =
-    typeof market === 'string' &&
-    market.trim().toUpperCase() === COUNTER_ALL_MARKET
-      ? COUNTER_ALL_MARKET
-      : normalizeCounterMarket(market);
-  if (!counters[stage][normalizedSport]) {
-    counters[stage][normalizedSport] = {};
-  }
-  counters[stage][normalizedSport][normalizedMarket] =
-    (counters[stage][normalizedSport][normalizedMarket] ?? 0) + amount;
-}
-
-function bumpCount(store: Map<string, number>, key: string, amount = 1): void {
-  store.set(key, (store.get(key) ?? 0) + amount);
-}
-
-function registerGameWithPlayableMarket(
-  store: Map<string, Map<string, Set<string>>>,
-  sport: unknown,
-  market: unknown,
-  gameId: string,
-): void {
-  const normalizedSport = normalizeCounterSport(sport);
-  const normalizedMarket = normalizeCounterMarket(market);
-  if (!store.has(normalizedSport)) {
-    store.set(normalizedSport, new Map());
-  }
-  const marketMap = store.get(normalizedSport)!;
-  if (!marketMap.has(normalizedMarket)) {
-    marketMap.set(normalizedMarket, new Set());
-  }
-  marketMap.get(normalizedMarket)!.add(gameId);
-}
-
-function inferMarketFromCardType(cardType: string): MarketType | undefined {
-  const normalized = cardType.trim().toLowerCase();
-  if (normalized.includes('1p') || normalized.includes('first-period')) {
-    return 'FIRST_PERIOD';
-  }
-  if (
-    normalized.includes('double_chance') ||
-    normalized.includes('double-chance')
-  ) {
-    return 'MONEYLINE';
-  }
-  if (normalized.includes('moneyline') || normalized.includes('-ml-')) {
-    return 'MONEYLINE';
-  }
-  if (
-    normalized.includes('spread') ||
-    normalized.includes('puckline') ||
-    normalized.includes('puck-line')
-  ) {
-    return 'SPREAD';
-  }
-  if (normalized.includes('total')) {
-    return 'TOTAL';
-  }
-  if (
-    normalized.includes('player-shots') ||
-    normalized.includes('player_shots') ||
-    normalized.includes('player-blk') ||
-    normalized.includes('blocked-shots') ||
-    normalized === 'mlb-strikeout' ||
-    normalized === 'mlb-pitcher-k'
-  ) {
-    return 'PROP';
-  }
-  if (normalized === 'mlb-f5') {
-    return 'FIRST_PERIOD';
-  }
-  return undefined;
-}
-
-function applyCardTypeKindContract(
-  sport: unknown,
-  cardType: string,
-  fallbackKind: Play['kind'] | undefined,
-): {
-  kind: Play['kind'];
-  downgradedOutOfContractPlay: boolean;
-} {
-  const normalizedSport = normalizeSport(sport);
-  const normalizedCardType = cardType.trim().toLowerCase();
-  const contract = normalizedSport
-    ? ACTIVE_SPORT_CARD_TYPE_CONTRACT[normalizedSport]
-    : undefined;
-  const inferredKind = fallbackKind ?? 'PLAY';
-  if (!contract) {
-    return { kind: inferredKind, downgradedOutOfContractPlay: false };
-  }
-  if (contract.evidenceOnlyCardTypes.has(normalizedCardType)) {
-    return { kind: 'EVIDENCE', downgradedOutOfContractPlay: false };
-  }
-  if (
-    inferredKind === 'PLAY' &&
-    !contract.playProducerCardTypes.has(normalizedCardType)
-  ) {
-    return { kind: 'EVIDENCE', downgradedOutOfContractPlay: true };
-  }
-  return { kind: inferredKind, downgradedOutOfContractPlay: false };
-}
-
-function isFirstPeriodCardType(cardType: string): boolean {
-  const normalized = cardType.trim().toLowerCase();
-  return normalized.includes('1p') || normalized.includes('first-period');
-}
-
-function isCanonicalTotalsCallPlay(play: Play): boolean {
-  if (play.kind !== 'PLAY') return false;
-  if (play.market_type !== 'TOTAL') return false;
-  if (typeof play.projectedTotal !== 'number') return false;
-  const normalizedCardType = String(play.cardType || '').toLowerCase();
-  if (isFirstPeriodCardType(normalizedCardType)) return false;
-  return normalizedCardType.includes('totals-call');
-}
-
-function isFallbackEvidenceTotalProjectionPlay(play: Play): boolean {
-  if (play.kind !== 'EVIDENCE') return false;
-  if (typeof play.projectedTotal !== 'number') return false;
-  const normalizedCardType = String(play.cardType || '').toLowerCase();
-  if (isFirstPeriodCardType(normalizedCardType)) return false;
-  return normalizedCardType.includes('total-projection');
-}
-
 function emitTotalProjectionDriftWarnings(
   games: Array<{ gameId: string; sport: string; plays: Play[] }>,
 ): void {
@@ -890,669 +606,6 @@ function emitTotalProjectionDriftWarnings(
       },
     });
   }
-}
-
-function buildPlayableMarketFamilyDiagnostics(counters: StageCounters): {
-  expected_playable_markets: Record<string, MarketType[]>;
-  emitted_playable_markets: Record<string, string[]>;
-  missing_playable_markets: Record<string, string[]>;
-} {
-  const expected: Record<string, MarketType[]> = {};
-  const emitted: Record<string, string[]> = {};
-  const missing: Record<string, string[]> = {};
-
-  for (const [sport, contract] of Object.entries(
-    ACTIVE_SPORT_CARD_TYPE_CONTRACT,
-  )) {
-    expected[sport] = Array.from(contract.expectedPlayableMarkets).sort();
-    const emittedMarkets = Object.entries(counters.plays_emitted[sport] ?? {})
-      .filter(
-        ([market, count]) =>
-          market !== COUNTER_ALL_MARKET &&
-          typeof count === 'number' &&
-          count > 0,
-      )
-      .map(([market]) => market)
-      .sort();
-    emitted[sport] = emittedMarkets;
-    const emittedSet = new Set(emittedMarkets);
-    missing[sport] = Array.from(contract.expectedPlayableMarkets)
-      .filter((market) => !emittedSet.has(market))
-      .sort();
-  }
-
-  return {
-    expected_playable_markets: expected,
-    emitted_playable_markets: emitted,
-    missing_playable_markets: missing,
-  };
-}
-
-function hasMinimumViability(play: Play, marketType: MarketType): boolean {
-  const side = play.selection?.side;
-  const hasPrice =
-    typeof play.price === 'number' && Number.isFinite(play.price);
-  const isMoneylineFamilySide =
-    side === 'HOME' ||
-    side === 'AWAY';
-  if (marketType === 'TOTAL') {
-    // Price is sourced from odds snapshot at display time — only require side + line.
-    return (
-      (side === 'OVER' || side === 'UNDER') && typeof play.line === 'number'
-    );
-  }
-  if (marketType === 'SPREAD') {
-    return (
-      (side === 'HOME' || side === 'AWAY') &&
-      typeof play.line === 'number' &&
-      hasPrice
-    );
-  }
-  if (marketType === 'MONEYLINE') {
-    return isMoneylineFamilySide && hasPrice;
-  }
-  return true;
-}
-
-function normalizeMarketType(value: unknown): Play['market_type'] | undefined {
-  if (typeof value !== 'string') return undefined;
-  const upper = value.trim().toUpperCase();
-
-  if (
-    upper === 'MONEYLINE' ||
-    upper === 'SPREAD' ||
-    upper === 'TOTAL' ||
-    upper === 'PUCKLINE' ||
-    upper === 'TEAM_TOTAL' ||
-    upper === 'FIRST_PERIOD' ||
-    upper === 'PROP' ||
-    upper === 'INFO'
-  ) {
-    return upper as Play['market_type'];
-  }
-
-  if (upper === 'PUCK_LINE') return 'PUCKLINE';
-  if (upper === 'GAME_TOTAL') return 'TOTAL';
-  if (upper === 'TEAMTOTAL') return 'TEAM_TOTAL';
-  if (upper === 'FIRSTPERIOD') return 'FIRST_PERIOD';
-  if (upper === 'DOUBLE_CHANCE' || upper === 'DOUBLECHANCE') {
-    return 'MONEYLINE';
-  }
-  if (upper === 'DRAW_NO_BET' || upper === 'DRAWNOBET') {
-    return 'MONEYLINE';
-  }
-  if (upper === 'ASIAN_HANDICAP') return 'SPREAD';
-  return undefined;
-}
-
-function normalizeKeyToken(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
-}
-
-function normalizeTier(value: unknown): Play['tier'] {
-  if (typeof value !== 'string') return null;
-  const upper = value.trim().toUpperCase();
-  if (upper === 'SUPER') return 'SUPER';
-  if (upper === 'BEST' || upper === 'HOT') return 'BEST';
-  if (upper === 'WATCH') return 'WATCH';
-  return null;
-}
-
-function normalizeAction(value: unknown): Play['action'] | undefined {
-  if (typeof value !== 'string') return undefined;
-  const upper = value.trim().toUpperCase();
-  if (upper === 'FIRE' || upper === 'HOLD' || upper === 'PASS') {
-    return upper as Play['action'];
-  }
-  if (upper === 'WATCH') return 'HOLD';
-  return undefined;
-}
-
-function normalizeStatus(value: unknown): Play['status'] | undefined {
-  if (typeof value !== 'string') return undefined;
-  const upper = value.trim().toUpperCase();
-  if (upper === 'FIRE' || upper === 'WATCH' || upper === 'PASS') {
-    return upper as Play['status'];
-  }
-  if (upper === 'HOLD') return 'WATCH';
-  return undefined;
-}
-
-function normalizeClassification(
-  value: unknown,
-): Play['classification'] | undefined {
-  if (typeof value !== 'string') return undefined;
-  const upper = value.trim().toUpperCase();
-  if (upper === 'BASE' || upper === 'LEAN' || upper === 'PASS') {
-    return upper as Play['classification'];
-  }
-  return undefined;
-}
-
-function actionFromClassification(
-  classification?: Play['classification'],
-): Play['action'] | undefined {
-  if (classification === 'BASE') return 'FIRE';
-  if (classification === 'LEAN') return 'HOLD';
-  if (classification === 'PASS') return 'PASS';
-  return undefined;
-}
-
-function classificationFromAction(
-  action?: Play['action'],
-): Play['classification'] | undefined {
-  if (action === 'FIRE') return 'BASE';
-  if (action === 'HOLD') return 'LEAN';
-  if (action === 'PASS') return 'PASS';
-  return undefined;
-}
-
-function deriveNhl1PModelCall(
-  reasonCodes: string[],
-  prediction?: Play['prediction'],
-): Play['one_p_model_call'] {
-  if (reasonCodes.includes('NHL_1P_OVER_BEST')) return 'BEST_OVER';
-  if (reasonCodes.includes('NHL_1P_OVER_PLAY')) return 'PLAY_OVER';
-  if (reasonCodes.includes('NHL_1P_OVER_LEAN')) return 'LEAN_OVER';
-  if (reasonCodes.includes('NHL_1P_UNDER_BEST')) return 'BEST_UNDER';
-  if (reasonCodes.includes('NHL_1P_UNDER_PLAY')) return 'PLAY_UNDER';
-  if (reasonCodes.includes('NHL_1P_UNDER_LEAN')) return 'LEAN_UNDER';
-  if (reasonCodes.includes('NHL_1P_PASS_DEAD_ZONE')) return 'PASS';
-  if (prediction === 'OVER') return 'LEAN_OVER';
-  if (prediction === 'UNDER') return 'LEAN_UNDER';
-  return null;
-}
-
-function statusFromAction(action?: Play['action']): Play['status'] | undefined {
-  if (action === 'FIRE') return 'FIRE';
-  if (action === 'HOLD') return 'WATCH';
-  if (action === 'PASS') return 'PASS';
-  return undefined;
-}
-
-function actionFromTier(tier?: Play['tier']): Play['action'] | undefined {
-  if (tier === 'BEST' || tier === 'SUPER') return 'FIRE';
-  if (tier === 'WATCH') return 'HOLD';
-  return undefined;
-}
-
-function normalizeSelectionSide(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const upper = value.trim().toUpperCase();
-  if (
-    upper === 'HOME' ||
-    upper === 'AWAY' ||
-    upper === 'OVER' ||
-    upper === 'UNDER' ||
-    upper === 'FAV' ||
-    upper === 'DOG' ||
-    upper === 'NONE' ||
-    upper === 'NEUTRAL'
-  ) {
-    return upper;
-  }
-  return undefined;
-}
-
-function normalizePrediction(value: unknown): Play['prediction'] | undefined {
-  if (typeof value !== 'string') return undefined;
-  const upper = value.trim().toUpperCase();
-  if (
-    upper === 'HOME' ||
-    upper === 'AWAY' ||
-    upper === 'OVER' ||
-    upper === 'UNDER' ||
-    upper === 'NEUTRAL'
-  ) {
-    return upper as Play['prediction'];
-  }
-  if (upper.includes(' OVER ')) return 'OVER';
-  if (upper.includes(' UNDER ')) return 'UNDER';
-  return undefined;
-}
-
-function normalizeGoalieStatus(
-  value: unknown,
-): 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | undefined {
-  // Status semantics:
-  // CONFIRMED = official game-day roster (locked in)
-  // EXPECTED = projected/likely but not yet confirmed (subject to change)
-  // UNKNOWN = uncertain or unconfirmed
-  //
-  // Both CONFIRMED and EXPECTED must reach the UI so it can display
-  // appropriate certainty levels. DO NOT collapse either to UNKNOWN.
-  if (typeof value !== 'string') return undefined;
-  const upper = value.trim().toUpperCase();
-  if (upper === 'CONFIRMED') return 'CONFIRMED';
-  if (upper === 'EXPECTED') return 'EXPECTED';
-  if (upper === 'UNKNOWN') return 'UNKNOWN';
-  return undefined;
-}
-
-function toObject(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object') return null;
-  return value as Record<string, unknown>;
-}
-
-function firstString(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-  return undefined;
-}
-
-function firstNumber(...values: unknown[]): number | undefined {
-  for (const value of values) {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function resolveDecisionV2EdgePct(
-  value: { edge_delta_pct?: unknown; edge_pct?: unknown } | null | undefined,
-): number | undefined {
-  if (!value) return undefined;
-  return firstNumber(value.edge_delta_pct, value.edge_pct);
-}
-
-function normalizeSport(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const upper = value.trim().toUpperCase();
-  return upper || undefined;
-}
-
-function isWave1EligibleRow(
-  sport: unknown,
-  kind: Play['kind'] | undefined,
-  marketType: Play['market_type'] | undefined,
-): boolean {
-  const normalizedSport = normalizeSport(sport);
-  if (!normalizedSport || !WAVE1_SPORTS.has(normalizedSport)) return false;
-  if ((kind ?? 'PLAY') !== 'PLAY') return false;
-  if (!marketType) return false;
-  return WAVE1_MARKETS.has(marketType);
-}
-
-function normalizeDecisionV2(value: unknown): Play['decision_v2'] | undefined {
-  const input = toObject(value);
-  if (!input) return undefined;
-
-  const officialStatusRaw =
-    typeof input.official_status === 'string'
-      ? input.official_status.toUpperCase()
-      : '';
-  const official_status =
-    officialStatusRaw === 'PLAY' ||
-    officialStatusRaw === 'LEAN' ||
-    officialStatusRaw === 'PASS'
-      ? (officialStatusRaw as DecisionV2['official_status'])
-      : null;
-  if (!official_status) return undefined;
-
-  const directionRaw =
-    typeof input.direction === 'string' ? input.direction.toUpperCase() : '';
-  const direction =
-    directionRaw === 'HOME' ||
-    directionRaw === 'AWAY' ||
-    directionRaw === 'OVER' ||
-    directionRaw === 'UNDER' ||
-    directionRaw === 'NONE'
-      ? (directionRaw as DecisionV2['direction'])
-      : 'NONE';
-
-  const watchdogStatusRaw =
-    typeof input.watchdog_status === 'string'
-      ? input.watchdog_status.toUpperCase()
-      : '';
-  const watchdog_status =
-    watchdogStatusRaw === 'OK' ||
-    watchdogStatusRaw === 'CAUTION' ||
-    watchdogStatusRaw === 'BLOCKED'
-      ? (watchdogStatusRaw as DecisionV2['watchdog_status'])
-      : 'BLOCKED';
-
-  const sharpStatusRaw =
-    typeof input.sharp_price_status === 'string'
-      ? input.sharp_price_status.toUpperCase()
-      : '';
-  const sharp_price_status =
-    sharpStatusRaw === 'CHEDDAR' ||
-    sharpStatusRaw === 'COTTAGE' ||
-    sharpStatusRaw === 'PENDING_VERIFICATION' ||
-    sharpStatusRaw === 'UNPRICED'
-      ? (sharpStatusRaw as DecisionV2['sharp_price_status'])
-      : 'UNPRICED';
-
-  const playTierRaw =
-    typeof input.play_tier === 'string' ? input.play_tier.toUpperCase() : '';
-  const play_tier =
-    playTierRaw === 'BEST' ||
-    playTierRaw === 'GOOD' ||
-    playTierRaw === 'OK' ||
-    playTierRaw === 'BAD'
-      ? (playTierRaw as DecisionV2['play_tier'])
-      : 'BAD';
-
-  const missingDataObject = toObject(input.missing_data);
-  const consistencyObject = toObject(input.consistency);
-  // Allow missing_data to be absent (it's optional), but consistency is required
-  if (!consistencyObject) return undefined;
-
-  return {
-    direction,
-    support_score: firstNumber(input.support_score, 0) ?? 0,
-    conflict_score: firstNumber(input.conflict_score, 0) ?? 0,
-    drivers_used: Array.isArray(input.drivers_used)
-      ? input.drivers_used.map((item) => String(item))
-      : [],
-    driver_reasons: Array.isArray(input.driver_reasons)
-      ? input.driver_reasons.map((item) => String(item))
-      : [],
-    watchdog_status,
-    watchdog_reason_codes: Array.isArray(input.watchdog_reason_codes)
-      ? input.watchdog_reason_codes.map((item) => String(item))
-      : [],
-    missing_data: {
-      missing_fields: Array.isArray(missingDataObject?.missing_fields)
-        ? missingDataObject.missing_fields.map((item) => String(item))
-        : [],
-      source_attempts: Array.isArray(missingDataObject?.source_attempts)
-        ? missingDataObject.source_attempts
-            .map((attempt) => toObject(attempt))
-            .filter((attempt): attempt is Record<string, unknown> =>
-              Boolean(attempt),
-            )
-            .map((attempt) => {
-              const resultRaw =
-                typeof attempt.result === 'string'
-                  ? attempt.result.toUpperCase()
-                  : 'ERROR';
-              const result =
-                resultRaw === 'FOUND' ||
-                resultRaw === 'MISSING' ||
-                resultRaw === 'ERROR'
-                  ? (resultRaw as 'FOUND' | 'MISSING' | 'ERROR')
-                  : 'ERROR';
-              return {
-                field: String(attempt.field ?? ''),
-                source: String(attempt.source ?? ''),
-                result,
-                note:
-                  typeof attempt.note === 'string' ? attempt.note : undefined,
-              };
-            })
-        : [],
-      severity:
-        missingDataObject?.severity === 'INFO' ||
-        missingDataObject?.severity === 'WARNING' ||
-        missingDataObject?.severity === 'BLOCKING'
-          ? (missingDataObject.severity as 'INFO' | 'WARNING' | 'BLOCKING')
-          : 'INFO',
-    },
-    consistency: {
-      pace_tier: String(consistencyObject.pace_tier ?? 'MISSING'),
-      event_env: String(consistencyObject.event_env ?? 'MISSING'),
-      event_direction_tag: String(
-        consistencyObject.event_direction_tag ?? 'MISSING',
-      ),
-      vol_env: String(consistencyObject.vol_env ?? 'MISSING'),
-      total_bias: String(consistencyObject.total_bias ?? 'MISSING'),
-    },
-    fair_prob:
-      typeof input.fair_prob === 'number' && Number.isFinite(input.fair_prob)
-        ? input.fair_prob
-        : null,
-    implied_prob:
-      typeof input.implied_prob === 'number' &&
-      Number.isFinite(input.implied_prob)
-        ? input.implied_prob
-        : null,
-    edge_pct:
-      typeof input.edge_pct === 'number' && Number.isFinite(input.edge_pct)
-        ? input.edge_pct
-        : null,
-    edge_delta_pct:
-      typeof resolveDecisionV2EdgePct(input) === 'number'
-        ? resolveDecisionV2EdgePct(input)
-        : null,
-    edge_method:
-      input.edge_method === 'ML_PROB' ||
-      input.edge_method === 'MARGIN_DELTA' ||
-      input.edge_method === 'TOTAL_DELTA' ||
-      input.edge_method === 'ONE_PERIOD_DELTA'
-        ? (input.edge_method as 'ML_PROB' | 'MARGIN_DELTA' | 'TOTAL_DELTA' | 'ONE_PERIOD_DELTA')
-        : null,
-    edge_line_delta:
-      typeof input.edge_line_delta === 'number' &&
-      Number.isFinite(input.edge_line_delta)
-        ? input.edge_line_delta
-        : null,
-    edge_lean:
-      input.edge_lean === 'OVER' || input.edge_lean === 'UNDER'
-        ? (input.edge_lean as 'OVER' | 'UNDER')
-        : null,
-    proxy_used:
-      typeof input.proxy_used === 'boolean' ? input.proxy_used : undefined,
-    proxy_capped:
-      typeof input.proxy_capped === 'boolean' ? input.proxy_capped : undefined,
-    exact_wager_valid:
-      typeof input.exact_wager_valid === 'boolean'
-        ? input.exact_wager_valid
-        : undefined,
-    pricing_trace: toObject(input.pricing_trace)
-      ? {
-          market_type:
-            typeof toObject(input.pricing_trace)?.market_type === 'string'
-              ? String(toObject(input.pricing_trace)?.market_type)
-              : null,
-          market_side:
-            typeof toObject(input.pricing_trace)?.market_side === 'string'
-              ? String(toObject(input.pricing_trace)?.market_side)
-              : null,
-          market_line:
-            firstNumber(toObject(input.pricing_trace)?.market_line) ?? null,
-          market_price:
-            firstNumber(toObject(input.pricing_trace)?.market_price) ?? null,
-          line_source:
-            typeof toObject(input.pricing_trace)?.line_source === 'string'
-              ? String(toObject(input.pricing_trace)?.line_source)
-              : null,
-          price_source:
-            typeof toObject(input.pricing_trace)?.price_source === 'string'
-              ? String(toObject(input.pricing_trace)?.price_source)
-              : null,
-        }
-      : undefined,
-    sharp_price_status,
-    price_reason_codes: Array.isArray(input.price_reason_codes)
-      ? input.price_reason_codes.map((item) => String(item))
-      : [],
-    official_status,
-    play_tier,
-    primary_reason_code: String(input.primary_reason_code ?? 'UNKNOWN'),
-    pipeline_version: 'v2',
-    decided_at:
-      typeof input.decided_at === 'string' && input.decided_at.trim().length > 0
-        ? input.decided_at
-        : new Date().toISOString(),
-  };
-}
-
-function applyWave1DecisionFields(play: Play): void {
-  const decisionV2 = play.decision_v2;
-  if (!decisionV2) return;
-  if (decisionV2.official_status === 'PLAY') {
-    play.action = 'FIRE';
-    play.classification = 'BASE';
-    play.status = 'FIRE';
-    play.pass_reason_code = null;
-    return;
-  }
-  if (decisionV2.official_status === 'LEAN') {
-    play.action = 'HOLD';
-    play.classification = 'LEAN';
-    play.status = 'WATCH';
-    play.pass_reason_code = null;
-    return;
-  }
-  play.action = 'PASS';
-  play.classification = 'PASS';
-  play.status = 'PASS';
-  play.pass_reason_code = decisionV2.primary_reason_code;
-}
-
-function normalizePassReasonCode(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const code = value.trim().toUpperCase();
-  if (!code) return null;
-  if (code.startsWith('PASS_')) return code;
-
-  const mapped: Record<string, string> = {
-    MISSING_LINE: 'PASS_MISSING_LINE',
-    MISSING_EDGE: 'PASS_MISSING_EDGE',
-    MISSING_SELECTION: 'PASS_MISSING_SELECTION',
-    MISSING_PRICE: 'PASS_MISSING_PRICE',
-    NO_MARKET_PRICE: 'PASS_NO_MARKET_PRICE',
-    NO_STARTER_SIGNAL: 'PASS_MISSING_DRIVER_INPUTS',
-  };
-
-  return mapped[code] ?? code;
-}
-
-function normalizeNumberArray(value: unknown): number[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const numbers = value.filter(
-    (item) => typeof item === 'number' && Number.isFinite(item),
-  ) as number[];
-  return numbers.length > 0 ? numbers : undefined;
-}
-
-function normalizePlayerNameKey(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const cleaned = value
-    .trim()
-    .toLowerCase()
-    .replace(/[.'\u2019-]/g, ' ')
-    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return cleaned.length > 0 ? cleaned : null;
-}
-
-function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
-  // Prefer per-sport rows (added by migration 021); fall back to singleton
-  try {
-    const successRows = db
-      .prepare(
-        `SELECT rs.current_run_id
-         FROM run_state rs
-         WHERE id != 'singleton'
-           AND LOWER(COALESCE(rs.sport, rs.id, '')) IN (${CORE_RUN_STATE_SPORT_SQL})
-           AND rs.current_run_id IS NOT NULL
-           AND TRIM(rs.current_run_id) != ''
-           AND EXISTS (
-             SELECT 1
-             FROM job_runs jr
-             WHERE jr.id = rs.current_run_id
-               AND LOWER(jr.status) = 'success'
-           )
-         ORDER BY datetime(rs.updated_at) DESC, rs.id ASC`,
-      )
-      .all() as Array<{ current_run_id: string }>;
-    if (successRows.length > 0) {
-      return [...new Set(successRows.map((r) => r.current_run_id))];
-    }
-
-    const sportRows = db
-      .prepare(
-        `SELECT rs.current_run_id
-         FROM run_state rs
-         WHERE rs.id != 'singleton'
-           AND LOWER(COALESCE(rs.sport, rs.id, '')) IN (${CORE_RUN_STATE_SPORT_SQL})
-           AND rs.current_run_id IS NOT NULL
-           AND TRIM(rs.current_run_id) != ''
-         ORDER BY datetime(rs.updated_at) DESC, rs.id ASC`,
-      )
-      .all() as Array<{ current_run_id: string }>;
-    if (sportRows.length > 0) {
-      return [...new Set(sportRows.map((r) => r.current_run_id))];
-    }
-  } catch {
-    // fall through to singleton
-  }
-  try {
-    const row = db
-      .prepare(
-        `SELECT current_run_id FROM run_state WHERE id = 'singleton' LIMIT 1`,
-      )
-      .get() as { current_run_id?: string | null } | undefined;
-    return row?.current_run_id ? [row.current_run_id] : [];
-  } catch {
-    return [];
-  }
-}
-
-function getFallbackRunIdsFromCards(
-  db: ReturnType<typeof getDatabaseReadOnly>,
-): string[] {
-  try {
-    const row = db
-      .prepare(
-        `SELECT run_id
-         FROM card_payloads
-         WHERE run_id IS NOT NULL
-           AND TRIM(run_id) != ''
-         ORDER BY datetime(created_at) DESC, id DESC
-         LIMIT 1`,
-      )
-      .get() as { run_id?: string | null } | undefined;
-    return row?.run_id ? [String(row.run_id)] : [];
-  } catch {
-    return [];
-  }
-}
-
-function getRunStatus(
-  db: ReturnType<typeof getDatabaseReadOnly>,
-  runId: string | null,
-): string {
-  if (!runId) return 'NONE';
-  try {
-    const stmt = db.prepare(
-      `SELECT status FROM job_runs WHERE id = ? ORDER BY started_at DESC LIMIT 1`,
-    );
-    const row = stmt.get(runId) as { status?: string | null } | undefined;
-    return row?.status ? String(row.status).toUpperCase() : 'UNKNOWN';
-  } catch {
-    return 'UNKNOWN';
-  }
-}
-
-function extractShotsFromRecentGames(value: unknown): number[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-
-  const shots = value
-    .map((item) => {
-      if (!item || typeof item !== 'object') return undefined;
-      const row = item as Record<string, unknown>;
-      const direct = row.shots;
-      if (typeof direct === 'number' && Number.isFinite(direct)) return direct;
-      if (typeof direct === 'string') {
-        const parsed = Number(direct);
-        if (Number.isFinite(parsed)) return parsed;
-      }
-      return undefined;
-    })
-    .filter(
-      (num): num is number => typeof num === 'number' && Number.isFinite(num),
-    );
-
-  return shots.length > 0 ? shots : undefined;
 }
 
 export async function GET(request: NextRequest) {
@@ -3354,6 +2407,7 @@ export async function GET(request: NextRequest) {
           parsedSport,
           cardRow.card_type,
           fallbackKind,
+          ACTIVE_SPORT_CARD_TYPE_CONTRACT[normalizeSport(parsedSport) ?? ''],
         );
         play.kind = kindContractResult.kind;
         if (kindContractResult.downgradedOutOfContractPlay) {
@@ -3782,7 +2836,7 @@ export async function GET(request: NextRequest) {
         }
       : undefined;
     const playableMarketDiagnostics =
-      buildPlayableMarketFamilyDiagnostics(stageCounters);
+      buildPlayableMarketFamilyDiagnostics(stageCounters, ACTIVE_SPORT_CARD_TYPE_CONTRACT);
     const outOfContractRows = Array.from(outOfContractPlayDowngrades.entries())
       .map(([key, count]) => {
         const delimiterIndex = key.indexOf('|');
