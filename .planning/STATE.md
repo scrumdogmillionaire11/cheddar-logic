@@ -177,5 +177,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 98 | WI-0639: NFL UI seasonal gate — isNflSeason() in season-gates.ts, gating filter-panel + filters + cards-page-client | 2026-03-28 | 56ffef1 | [92-wi-0639-nfl-ui-seasonal-gate-hide-sport-](./quick/92-wi-0639-nfl-ui-seasonal-gate-hide-sport-/) |
 | 99 | WI-0617: Remove initDb() no-op callers — confirmed already absent (qt-47/WI-0456), acceptance checks pass | 2026-03-28 | 4b1b437 | [93-wi-0617-remove-initdb-no-op-callers](./quick/93-wi-0617-remove-initdb-no-op-callers/) |
 | 100 | WI-0641: Player props scheduler extraction — player-props.js (NHL SOG/BLK + MLB pitcher-K), 18 tests, main.js cleaned | 2026-03-28 | eea2e0d | [94-wi-0641-player-props-scheduler-refactor](./quick/94-wi-0641-player-props-scheduler-refactor/) |
+| 101 | WI-0649: Add fixture difficulty tracking to FPL Sage | 2026-03-29 | 193b580 | [97-wi-0649-add-fixture-difficulty-tracking-](./quick/97-wi-0649-add-fixture-difficulty-tracking-/) |
 
-Last activity: 2026-03-28 - Completed quick task 100: WI-0641 Player props scheduler extraction into player-props.js
+Last activity: 2026-03-29 - Completed quick task 101: WI-0649 Add fixture difficulty tracking to FPL Sage
