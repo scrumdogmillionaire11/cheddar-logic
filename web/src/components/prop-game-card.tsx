@@ -159,11 +159,9 @@ const getThresholdOutcomeText = ({
 const getHitRateLabel = ({
   leanSide,
   lineValue,
-  propType,
 }: {
   leanSide: 'OVER' | 'UNDER';
   lineValue: number | null | undefined;
-  propType?: string | null;
 }) => {
   const target = getThresholdTarget(lineValue);
   if (!Number.isFinite(target)) {
@@ -507,7 +505,7 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
             const projectionLead = `Projection: ${formatNumber(projectionValue)} ${getPropUnits(prop.propType).plural}`;
             const hitRateText =
               Number.isFinite(prop.fairProb)
-                ? `Hit rate (${getHitRateLabel({ leanSide, lineValue, propType: prop.propType })}): ${formatPercent(prop.fairProb)}`
+                ? `Hit rate (${getHitRateLabel({ leanSide, lineValue })}): ${formatPercent(prop.fairProb)}`
                 : null;
             const l5RelativeText = getL5RelativeText({
               l5Mean: prop.l5Mean,

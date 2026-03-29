@@ -96,13 +96,10 @@ import {
 import type { ExpressionStatus, CanonicalMarketType } from '@/lib/types/game-card';
 import type { PlayDisplayAction } from '@/lib/game-card/decision';
 import {
-  parseJsonObject,
-  toFiniteNumber,
   toObject,
   firstString,
   firstNumber,
   normalizeMarketType,
-  normalizeKeyToken,
   normalizeTier,
   normalizeAction,
   normalizeStatus,
@@ -119,7 +116,6 @@ import {
 import {
   inferMarketFromCardType,
   applyCardTypeKindContract,
-  isFirstPeriodCardType,
   isCanonicalTotalsCallPlay,
   isFallbackEvidenceTotalProjectionPlay,
   isWave1EligibleRow,
@@ -130,20 +126,16 @@ import {
   actionFromClassification,
   classificationFromAction,
   statusFromAction,
-  actionFromTier,
 } from '@/lib/games/market-inference';
 import {
   createStageCounters,
   normalizeCounterSport,
-  normalizeCounterMarket,
   incrementStageCounter,
   bumpCount,
   registerGameWithPlayableMarket,
   buildPlayableMarketFamilyDiagnostics,
   COUNTER_ALL_MARKET,
   UNKNOWN_SPORT,
-  type StageCounters,
-  type StageCounterStage,
 } from '@/lib/games/stage-counters';
 import {
   assessProjectionInputsFromRawData,
@@ -510,7 +502,6 @@ interface IngestFailureRow {
 }
 
 type MarketType = NonNullable<Play['market_type']>;
-type DecisionV2 = NonNullable<Play['decision_v2']>;
 type SportCardTypeContract = {
   playProducerCardTypes: Set<string>;
   evidenceOnlyCardTypes: Set<string>;
@@ -1163,7 +1154,6 @@ export async function GET(request: NextRequest) {
 
     // Collect all game IDs for the card_payloads query
     const gameIds = rows.map((r) => r.game_id);
-    const gameRowById = new Map(rows.map((r) => [r.game_id, r]));
     const sportByGameId = new Map(rows.map((r) => [r.game_id, r.sport]));
 
     // Build a plays map keyed by canonical game_id
@@ -1359,7 +1349,6 @@ export async function GET(request: NextRequest) {
       for (const cardRow of cardRows) {
         const canonicalGameIdForRow =
           externalToCanonicalMap.get(cardRow.game_id) ?? cardRow.game_id;
-        const gameRow = gameRowById.get(canonicalGameIdForRow);
         const rowSport =
           normalizeSport(sportByGameId.get(canonicalGameIdForRow)) ??
           UNKNOWN_SPORT;
@@ -1443,7 +1432,6 @@ export async function GET(request: NextRequest) {
             payloadMarketContext?.market_type,
         );
         const normalizedMarketType = normalizedMarketTypeRaw;
-        const normalizedFtTrendContext = undefined;
         const normalizedDisplaySelectionSide = normalizedSelectionSide;
         const normalizedPrediction =
           normalizedDisplaySelectionSide === 'HOME' ||
@@ -2483,23 +2471,18 @@ export async function GET(request: NextRequest) {
         }
 
         if (!play.market_type) {
-          if (play.kind === 'PLAY') {
-            play.reason_codes = Array.from(
-              new Set([...(play.reason_codes ?? []), 'PASS_MISSING_MARKET_TYPE']),
-            );
-          }
+          play.reason_codes = Array.from(
+            new Set([...(play.reason_codes ?? []), 'PASS_MISSING_MARKET_TYPE']),
+          );
           play.market_type = 'INFO';
           play.kind = 'EVIDENCE';
-          play.reason_codes = Array.from(
-            new Set([...(play.reason_codes ?? []), 'PASS_UNREPAIRABLE_LEGACY']),
-          );
         }
 
         if (!wave1Eligible && !hasMinimumViability(play, play.market_type)) {
           play.market_type = 'INFO';
           play.kind = 'EVIDENCE';
           play.reason_codes = Array.from(
-            new Set([...(play.reason_codes ?? []), 'PASS_UNREPAIRABLE_LEGACY']),
+            new Set([...(play.reason_codes ?? []), 'PASS_MISSING_MARKET_TYPE']),
           );
         }
 

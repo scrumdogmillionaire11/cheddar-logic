@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import {
   getCardDecisionModel,
 } from '@/lib/game-card/decision';
@@ -9,7 +9,6 @@ import {
   hasEdgeVerification,
   hasProxyCap,
 } from '@/lib/game-card/tags';
-import type { Direction, DriverRow, Market } from '@/lib/types/game-card';
 import type { DecisionModel, GameCard, GameData } from './types';
 import {
   deriveOnePModelCallFromReasons,
@@ -45,6 +44,26 @@ import {
   resolvePlayLivePrice,
   resolveProjectedValueForMarketContext,
 } from './game-card-helpers';
+
+const driverVisibilityListeners = new Set<() => void>();
+
+function subscribeDriverVisibility(listener: () => void) {
+  driverVisibilityListeners.add(listener);
+  return () => {
+    driverVisibilityListeners.delete(listener);
+  };
+}
+
+function emitDriverVisibilityChange() {
+  for (const listener of driverVisibilityListeners) {
+    listener();
+  }
+}
+
+function readDriverVisibility(storageKey: string) {
+  if (typeof window === 'undefined') return false;
+  return window.sessionStorage.getItem(storageKey) === 'true';
+}
 
 export default function GameCardItem({
   card,
@@ -529,25 +548,17 @@ export default function GameCardItem({
     isCoinflip && hasActionableEdge && effectiveEdgePct > 0.05;
   const isCoinflipLowEdge =
     isCoinflip && (!hasActionableEdge || effectiveEdgePct <= 0.05);
-  const [showAllDrivers, setShowAllDrivers] = useState(false);
   const storageKey = `cheddar-card-show-drivers:${card.id}`;
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const stored = window.sessionStorage.getItem(storageKey);
-    if (stored !== null) {
-      setShowAllDrivers(stored === 'true');
-    }
-  }, [storageKey]);
+  const showAllDrivers = useSyncExternalStore(
+    subscribeDriverVisibility,
+    () => readDriverVisibility(storageKey),
+    () => false,
+  );
 
   const toggleDrivers = () => {
-    setShowAllDrivers((prev) => {
-      const next = !prev;
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.setItem(storageKey, String(next));
-      }
-      return next;
-    });
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(storageKey, String(!showAllDrivers));
+    emitDriverVisibilityChange();
   };
 
   const gameTime = formatDate(card.startTime);

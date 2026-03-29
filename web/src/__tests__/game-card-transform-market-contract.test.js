@@ -24,11 +24,6 @@ assert(
 );
 
 assert(
-  source.includes("reasonCodes.push('LEGACY_TITLE_INFERENCE_USED');"),
-  'transform should mark legacy title inference usage explicitly',
-);
-
-assert(
   source.includes("reasonCodes.push('PASS_MISSING_MARKET_TYPE');"),
   'transform should attach deterministic pass reason when canonical market is missing',
 );

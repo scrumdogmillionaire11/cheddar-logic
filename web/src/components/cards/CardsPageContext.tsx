@@ -133,6 +133,11 @@ export function CardsPageProvider({
     process.env.NODE_ENV !== 'production' &&
     process.env.NEXT_PUBLIC_ENABLE_CARDS_DIAGNOSTICS === 'true';
   const propsEnabled = process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true';
+  const {
+    sports: activeSports,
+    timeWindow: activeTimeWindow,
+    customTimeRange: activeCustomTimeRange,
+  } = uiState.filters;
 
   const effectiveFilters = useMemo(
     () =>
@@ -830,9 +835,9 @@ export function CardsPageProvider({
         viewMode: 'props',
         filters: {
           ...defaults,
-          sports: uiState.filters.sports,
-          timeWindow: uiState.filters.timeWindow,
-          customTimeRange: uiState.filters.customTimeRange,
+          sports: activeSports,
+          timeWindow: activeTimeWindow,
+          customTimeRange: activeCustomTimeRange,
         },
       });
     } else if (modeParam === 'projections') {
@@ -842,13 +847,19 @@ export function CardsPageProvider({
         viewMode: 'projections',
         filters: {
           ...defaults,
-          sports: uiState.filters.sports,
-          timeWindow: uiState.filters.timeWindow,
-          customTimeRange: uiState.filters.customTimeRange,
+          sports: activeSports,
+          timeWindow: activeTimeWindow,
+          customTimeRange: activeCustomTimeRange,
         },
       });
     }
-  }, [propsEnabled]);
+  }, [
+    activeCustomTimeRange,
+    activeSports,
+    activeTimeWindow,
+    propsEnabled,
+    uiState.lifecycleMode,
+  ]);
 
   useEffect(() => {
     if (propsEnabled || uiState.viewMode !== 'props') return;

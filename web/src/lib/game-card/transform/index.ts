@@ -12,12 +12,10 @@ import type {
   CanonicalMarketType,
   DriverTier,
   Direction,
-  GameMarkets,
   Play,
   TruthStatus,
   ValueStatus,
   PriceFlag,
-  PassReasonCode,
   SelectionSide,
   PropGameCard,
   PropPlayRow,
@@ -25,7 +23,6 @@ import type {
   DecisionClassification,
   CanonicalGate,
   CanonicalBet,
-  BetMarketType,
   BetSide,
   DecisionData,
   CardQuality,
@@ -49,7 +46,6 @@ import {
   hasEdgeVerificationSignals,
 } from '../../play-decision/decision-logic';
 import {
-  ACTIVE_SPORT_CARD_TYPE_CONTRACT,
   getSportCardTypeContract,
   getSourcePlayAction,
   isEvidenceItem,
@@ -101,8 +97,6 @@ const OPPOSITE_DIRECTION: Partial<Record<Direction, Direction>> = {
 
 const PROXY_SIGNAL_TAGS = new Set<string>([
   'PROXY_MODEL_PROB_INFERRED',
-  'PROXY_LEGACY_MARKET_INFERRED',
-  'LEGACY_REPAIR',
 ]);
 const WAVE1_SPORTS = new Set(['NBA', 'NHL']);
 const WAVE1_MARKETS = new Set<CanonicalMarketType>([
@@ -350,7 +344,6 @@ function hasPlayableBet(
   canonical: CanonicalMarketType | undefined,
   side: CanonicalSide,
 ): boolean {
-  const rawSelectionSide = String(play.selection?.side ?? '').toUpperCase();
   if (canonical === 'MONEYLINE') {
     return (side === 'HOME' || side === 'AWAY') && typeof play.price === 'number';
   }
@@ -562,16 +555,6 @@ function actionFromOfficial(
   return 'PASS';
 }
 
-function actionFromWave1SourcePlay(
-  play: ApiPlay,
-): 'FIRE' | 'HOLD' | 'PASS' {
-  const resolvedAction = getSourcePlayAction(play);
-  if (resolvedAction) return resolvedAction;
-  if (play.tier === 'BEST' || play.tier === 'SUPER') return 'FIRE';
-  if (play.tier === 'WATCH') return 'HOLD';
-  return 'PASS';
-}
-
 function selectWave1DecisionCandidate(
   plays: ApiPlay[],
   sport: string,
@@ -588,8 +571,6 @@ function selectWave1DecisionCandidate(
     if (official === 'LEAN') return 2;
     return 1;
   };
-
-  const normalizedSport = normalizeSport(sport);
 
   const sorted = [...candidates].sort((a, b) => {
     const aDecision = a.decision_v2!;

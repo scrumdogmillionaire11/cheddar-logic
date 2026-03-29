@@ -165,7 +165,6 @@ export function inferMarketFromPlay(play: ApiPlayLike): InferredMarket {
   }
 
   const fallbackMarket = inferMarketFromCardTitle(play.cardTitle);
-  reasonCodes.push('LEGACY_TITLE_INFERENCE_USED');
   return {
     market: fallbackMarket,
     canonical:

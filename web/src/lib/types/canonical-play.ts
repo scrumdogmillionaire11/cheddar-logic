@@ -176,8 +176,6 @@ export type PassReasonCode =
   // Model veto
   | 'MODEL_VETO'
   | 'INSUFFICIENT_DATA'
-  | 'PASS_UNREPAIRABLE_LEGACY'
-  | 'LEGACY_TITLE_INFERENCE_USED'
 
   // Generic
   | 'UNKNOWN_REASON';
