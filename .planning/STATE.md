@@ -208,5 +208,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 97 | WI-0612: team-metrics.js test suite | 2026-03-28 | 551bd7a | — |
 | 98 | WI-0639: NFL UI seasonal gate — isNflSeason() in season-gates.ts, gating filter-panel + filters + cards-page-client | 2026-03-28 | 56ffef1 | [92-wi-0639-nfl-ui-seasonal-gate-hide-sport-](./quick/92-wi-0639-nfl-ui-seasonal-gate-hide-sport-/) |
 | 99 | WI-0617: Remove initDb() no-op callers — confirmed already absent (qt-47/WI-0456), acceptance checks pass | 2026-03-28 | 4b1b437 | [93-wi-0617-remove-initdb-no-op-callers](./quick/93-wi-0617-remove-initdb-no-op-callers/) |
+| 100 | WI-0641: Player props scheduler extraction — player-props.js (NHL SOG/BLK + MLB pitcher-K), 18 tests, main.js cleaned | 2026-03-28 | eea2e0d | [94-wi-0641-player-props-scheduler-refactor](./quick/94-wi-0641-player-props-scheduler-refactor/) |
 
-Last activity: 2026-03-28 - Completed quick task 99: WI-0617 Remove initDb() callers (already absent, zero code changes)
+Last activity: 2026-03-28 - Completed quick task 100: WI-0641 Player props scheduler extraction into player-props.js
