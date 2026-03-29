@@ -310,12 +310,16 @@ function upsertGameLogs(db, mlbPitcherId, splits, season) {
     const gameDate = split?.date;
     if (!gamePk || !gameDate) continue;
     const stat = split?.stat ?? {};
+    const splitSeason =
+      parseInt(split?.season, 10) ||
+      parseInt(String(gameDate).slice(0, 4), 10) ||
+      season;
     stmt.run(
       uuidV4(),
       mlbPitcherId,
       gamePk,
       gameDate,
-      season,
+      splitSeason,
       parseFloat(stat.inningsPitched) || null,
       parseInt(stat.strikeOuts, 10) || null,
       parseInt(stat.baseOnBalls, 10) || null,
@@ -365,18 +369,30 @@ async function fetchAllPitcherData(pitcherId, { teamFromSchedule = null } = {}) 
   let effectiveSeasonStats = seasonStats;
   let effectiveRecentStats = recentStats;
   let statsSourceSeason = MLB_SEASON;
+  let supplementalSplits = [];
+  let priorSeasonStats = null;
+  let priorRecentStats = null;
+  const currentLookbackCount = recentStats?.allSplits?.length ?? 0;
+  const needsPriorSeasonFallback = isSeasonStatsEmpty(seasonStats);
+  const needsPriorSeasonSupplement = currentLookbackCount < 10;
 
-  if (isSeasonStatsEmpty(seasonStats)) {
+  if (needsPriorSeasonFallback || needsPriorSeasonSupplement) {
     const priorSeason = MLB_SEASON - 1;
-    console.log(`[${JOB_NAME}] pitcher ${pitcherId}: no ${MLB_SEASON} stats yet — falling back to ${priorSeason}`);
-    const [priorSeasonStats, priorRecentStats] = await Promise.all([
+    if (needsPriorSeasonFallback) {
+      console.log(
+        `[${JOB_NAME}] pitcher ${pitcherId}: no ${MLB_SEASON} stats yet — falling back to ${priorSeason}`,
+      );
+    }
+    [priorSeasonStats, priorRecentStats] = await Promise.all([
       fetchPitcherSeasonStats(pitcherId, priorSeason),
       fetchPitcherRecentStats(pitcherId, priorSeason),
     ]);
-    if (!isSeasonStatsEmpty(priorSeasonStats)) {
+  }
+
+  if (needsPriorSeasonFallback && priorSeasonStats && !isSeasonStatsEmpty(priorSeasonStats)) {
       effectiveSeasonStats = priorSeasonStats;
       effectiveRecentStats = priorRecentStats;
-      statsSourceSeason = priorSeason;
+      statsSourceSeason = MLB_SEASON - 1;
 
       // On Opening Day, days_since_last_start from the prior season game log will be
       // ~175 days (last Oct start), which trips the EXTENDED_REST gate (>= 10 days)
@@ -390,7 +406,10 @@ async function fetchAllPitcherData(pitcherId, { teamFromSchedule = null } = {}) 
       ) {
         effectiveRecentStats = { ...effectiveRecentStats, days_since_last_start: 5 };
       }
-    }
+  }
+
+  if (!needsPriorSeasonFallback && needsPriorSeasonSupplement && priorRecentStats) {
+    supplementalSplits = priorRecentStats.allSplits ?? [];
   }
 
   // Prefer schedule-derived team abbreviation (matches odds_snapshot.home_team / away_team
@@ -431,6 +450,7 @@ async function fetchAllPitcherData(pitcherId, { teamFromSchedule = null } = {}) 
     season_swstr_pct: null,
     season_avg_velo: null,
     allSplits: effectiveRecentStats.allSplits ?? [],
+    supplementalSplits,
   };
 }
 
@@ -669,6 +689,14 @@ async function pullMlbPitcherStats({
       for (const row of validRows) {
         if (row.allSplits && row.allSplits.length > 0) {
           gameLogsCount += upsertGameLogs(db, row.mlb_id, row.allSplits, row.season);
+        }
+        if (row.supplementalSplits && row.supplementalSplits.length > 0) {
+          gameLogsCount += upsertGameLogs(
+            db,
+            row.mlb_id,
+            row.supplementalSplits,
+            MLB_SEASON - 1,
+          );
         }
       }
 
