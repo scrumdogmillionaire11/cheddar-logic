@@ -81,9 +81,13 @@ class TransferAdvisor:
         if status_norm in {"OUT", "DOUBT", "D", "SUSPENDED", "INJURED"}:
             return True
 
-        # chance_of_playing_next_round is a *soft* signal — low probability is handled as a
-        # scoring penalty in _score_candidate_for_strategy, not a hard gate here.
-        # Hard exclusion applies only to explicitly unavailable status codes above.
+        chance_next = self._coerce_float(getattr(candidate, "chance_of_playing_next_round", None))
+        if (
+            chance_next is not None
+            and chance_next < 85.0
+            and status_norm not in {"FIT", "AVAILABLE"}
+        ):
+            return True
 
         return False
 

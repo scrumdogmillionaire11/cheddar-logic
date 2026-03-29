@@ -174,14 +174,14 @@ class TestWildcardPass:
 
     def test_below_min_ev_delta_pass(self):
         state = _state(current_gw=22)
-        inputs = _good_wc_inputs(team_ev_delta=1.0)  # below 2.0 minimum
+        inputs = _good_wc_inputs(team_ev_delta=0.4)  # below 0.5 minimum
         decision = evaluate_wildcard(state, inputs)
         assert decision.action is ChipAction.PASS
         assert "below_min_ev_delta" in decision.reason_codes
 
     def test_below_min_fixture_score_pass(self):
         state = _state(current_gw=22)
-        inputs = _good_wc_inputs(fixture_run_score=40.0)  # below 50.0 minimum
+        inputs = _good_wc_inputs(fixture_run_score=40.0)  # below 45.0 minimum
         decision = evaluate_wildcard(state, inputs)
         assert decision.action is ChipAction.PASS
         assert "below_min_fixture_score" in decision.reason_codes

@@ -26,7 +26,9 @@ __version__ = "1.0.0"
 
 # Package root
 PACKAGE_ROOT = Path(__file__).parent
-BMAD_CORE_ROOT = PACKAGE_ROOT.parent / ".bmad-core"
+REPO_BMAD_CORE_ROOT = PACKAGE_ROOT.parent / ".bmad-core"
+EMBEDDED_BMAD_CORE_ROOT = PACKAGE_ROOT / "_bmad_core"
+BMAD_CORE_ROOT = REPO_BMAD_CORE_ROOT if REPO_BMAD_CORE_ROOT.exists() else EMBEDDED_BMAD_CORE_ROOT
 DOCS_ROOT = PACKAGE_ROOT.parent / "docs"
 
 

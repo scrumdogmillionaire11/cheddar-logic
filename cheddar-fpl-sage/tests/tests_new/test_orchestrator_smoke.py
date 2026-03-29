@@ -33,6 +33,7 @@ def test_orchestrator_smoke_pass(monkeypatch, tmp_path):
     target_gw = 1
     bundle = _make_bundle(tmp_path, target_gw)
     now = datetime.now(timezone.utc).isoformat()
+    monkeypatch.chdir(tmp_path)
 
     # Write bundle artifacts
     teams = [{"id": 1, "short_name": "AAA"}, {"id": 2, "short_name": "BBB"}]
@@ -74,18 +75,20 @@ def test_orchestrator_smoke_pass(monkeypatch, tmp_path):
     # Monkeypatch bundle collector to avoid network
     async def fake_collect(team_id, target_gw, force_refresh=False, run_id=None):
         return bundle
-    monkeypatch.setattr("cheddar_fpl_sage.analysis.fpl_sage_integration.collect_weekly_bundle", fake_collect)
-    # Monkeypatch gate to always pass
-    monkeypatch.setattr("cheddar_fpl_sage.analysis.fpl_sage_integration.validate_bundle", lambda bp, tid, gw, freshness_max_minutes: GateResult(status="PASS"))
+    run_globals = FPLSageIntegration.run_full_analysis.__globals__
+    monkeypatch.setitem(run_globals, "collect_weekly_bundle", fake_collect)
+    # Monkeypatch gate to always pass on the exact globals used by run_full_analysis
+    monkeypatch.setitem(
+        run_globals,
+        "validate_bundle",
+        lambda bp, tid, gw, freshness_max_minutes: GateResult(status="PASS"),
+    )
     class StubOutputBundleManager(OutputBundleManager):
         def __init__(self, base_dir=tmp_path / "outputs"):
             super().__init__(base_dir=base_dir)
 
     # Use temp outputs dir
-    monkeypatch.setattr(
-        "cheddar_fpl_sage.analysis.fpl_sage_integration.OutputBundleManager",
-        StubOutputBundleManager,
-    )
+    monkeypatch.setitem(run_globals, "OutputBundleManager", StubOutputBundleManager)
 
     # Minimal config loader
     monkeypatch.setattr(FPLSageIntegration, "_load_config", lambda self: {"team_id": 123, "chip_policy": {}})

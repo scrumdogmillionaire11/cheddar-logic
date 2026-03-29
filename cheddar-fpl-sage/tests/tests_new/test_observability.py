@@ -1,6 +1,16 @@
+import importlib
 import logging
+import sys
 
 import backend.main as main_module
+
+
+def _load_main_module():
+    module_name = "backend.main"
+    module = sys.modules.get(module_name)
+    if module is None:
+        return importlib.import_module(module_name)
+    return module
 
 
 def test_request_observability_headers_are_present(client):
@@ -30,8 +40,10 @@ def test_structured_request_log_emitted(client, caplog):
 
 
 def test_health_probe_marks_degraded_when_upstream_unavailable(client, monkeypatch):
-    monkeypatch.setattr(main_module.settings, "FPL_API_HEALTHCHECK_ENABLED", True)
-    monkeypatch.setattr(main_module, "check_http_health", lambda *_args, **_kwargs: ("unavailable", "timeout"))
+    health_route = next(route for route in client.app.routes if getattr(route, "path", None) == "/health")
+    health_globals = health_route.endpoint.__globals__
+    monkeypatch.setattr(health_globals["settings"], "FPL_API_HEALTHCHECK_ENABLED", True)
+    monkeypatch.setitem(health_globals, "check_http_health", lambda *_args, **_kwargs: ("unavailable", "timeout"))
 
     response = client.get("/health")
     body = response.json()

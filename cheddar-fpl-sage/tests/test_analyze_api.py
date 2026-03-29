@@ -43,10 +43,26 @@ def test_post_analyze_queues_job_without_usage_gate(client, monkeypatch) -> None
 
 
 def test_post_analyze_can_return_cached_result(client, monkeypatch) -> None:
+    cached_payload = {
+        "team_name": "Cached Team",
+        "manager_name": "AJ",
+        "manager_state": {
+            "risk_posture": "BALANCED",
+            "strategy_mode": "BALANCED",
+            "free_transfers": 1,
+        },
+        "fixture_planner": {
+            "gw_timeline": [],
+            "squad_windows": [],
+            "target_windows": [],
+            "key_planning_notes": [],
+        },
+        "starting_xi": [{"name": "Starter", "price": 5.0}],
+    }
     monkeypatch.setattr(
         analyze_router.cache_service,
         "get_cached_analysis",
-        lambda *_args, **_kwargs: {"team_name": "Cached Team"},
+        lambda *_args, **_kwargs: cached_payload,
     )
 
     response = client.post("/api/v1/analyze", json={"team_id": 711511})

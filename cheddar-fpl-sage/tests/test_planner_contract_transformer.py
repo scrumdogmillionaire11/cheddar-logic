@@ -13,6 +13,22 @@ import backend.services.contract_transformer as contract_transformer  # noqa: E4
 import backend.services.result_transformer as result_transformer  # noqa: E402
 
 
+def _load_result_transformer():
+    module_name = "backend.services.result_transformer"
+    module = sys.modules.get(module_name)
+    if module is None:
+        return importlib.import_module(module_name)
+    return importlib.reload(module)
+
+
+def _load_contract_transformer():
+    module_name = "backend.services.contract_transformer"
+    module = sys.modules.get(module_name)
+    if module is None:
+        return importlib.import_module(module_name)
+    return importlib.reload(module)
+
+
 def _fixture_planner_payload():
     return {
         "horizon_gws": 8,
@@ -83,7 +99,7 @@ def test_result_transformer_keeps_old_keys_and_adds_fixture_planner() -> None:
         },
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(raw_results)
 
     assert transformed["team_name"] == "FPL XI"
@@ -114,7 +130,7 @@ def test_contract_transformer_passes_fixture_planner_additively() -> None:
         error=None,
     )
 
-    module = importlib.reload(contract_transformer)
+    module = _load_contract_transformer()
     payload = module.build_detailed_analysis_contract(job)
 
     assert payload["analysis_id"] == "a1"

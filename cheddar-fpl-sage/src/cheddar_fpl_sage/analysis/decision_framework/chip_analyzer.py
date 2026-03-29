@@ -159,8 +159,26 @@ class ChipAnalyzer:
             current_gw=current_gw,
             chip_policy=chip_policy,
         )
+        active_window_chip, next_window_gw = self._resolve_policy_window_targets(
+            chip_status=chip_status,
+            current_gw=current_gw,
+            chip_policy=chip_policy,
+        )
 
-        chip_name = guidance.selected_chip.value if isinstance(guidance.selected_chip, ChipType) else "None"
+        if active_window_chip is not None:
+            return ChipRecommendation(
+                chip=active_window_chip,
+                use_this_gw=True,
+                optimal_window_gw=current_gw,
+                reasoning=f"FIRE: Activate {active_window_chip} this GW (configured_window_active).",
+                confidence="HIGH",
+            )
+
+        chip_name = (
+            self._chip_type_to_name(guidance.selected_chip)
+            if isinstance(guidance.selected_chip, ChipType)
+            else "None"
+        )
         status = (guidance.status or "PASS").upper()
         use_this_gw = status == "FIRE" and chip_name != "None"
         confidence = "HIGH" if status == "FIRE" else "MEDIUM" if status == "WATCH" else "LOW"
@@ -168,7 +186,7 @@ class ChipAnalyzer:
         return ChipRecommendation(
             chip=chip_name if use_this_gw else "None",
             use_this_gw=use_this_gw,
-            optimal_window_gw=guidance.watch_until or guidance.next_optimal_window,
+            optimal_window_gw=guidance.watch_until or guidance.next_optimal_window or next_window_gw,
             reasoning=guidance.narrative or "No chip recommendation available.",
             confidence=confidence,
         )
@@ -201,22 +219,61 @@ class ChipAnalyzer:
                 rationale="No chips available.",
             )
 
+        policy = chip_policy if isinstance(chip_policy, dict) else {}
+        chip_windows = policy.get("chip_windows")
+        if not isinstance(chip_windows, list) or len(chip_windows) == 0:
+            return ChipDecisionContext(
+                current_gw=current_gw,
+                chip_type=ChipType.NONE,
+                selected_chip=ChipType.NONE,
+                available_chips=available_chip_types,
+                status="PASS",
+                recommendation="SAVE",
+                reason_codes=["no_chip_windows_defined"],
+                reason_code="no_chip_windows_defined",
+                narrative="PASS: No chip windows defined; save chips until a valid window is configured.",
+                rationale="No chip windows defined; save chips until a valid window is configured.",
+            )
+
+        policy_chip_names = self._resolve_policy_chip_names(chip_windows)
+        candidate_chip_names = (
+            [chip_name for chip_name in available_chip_names if chip_name in policy_chip_names]
+            if policy_chip_names
+            else list(available_chip_names)
+        )
+        candidate_chip_types = [self._chip_name_to_type(name) for name in candidate_chip_names]
+        candidate_chip_types = [chip for chip in candidate_chip_types if chip is not None]
+
+        if not candidate_chip_names:
+            return ChipDecisionContext(
+                current_gw=current_gw,
+                chip_type=ChipType.NONE,
+                selected_chip=ChipType.NONE,
+                available_chips=available_chip_types,
+                status="PASS",
+                recommendation="SAVE",
+                reason_codes=["chip_unavailable"],
+                reason_code="chip_unavailable",
+                narrative="PASS: No policy-eligible chips available.",
+                rationale="No policy-eligible chips available.",
+            )
+
         state = self._build_gameweek_state(
             current_gw=current_gw,
             chip_policy=chip_policy,
-            available_chip_names=available_chip_names,
+            available_chip_names=candidate_chip_names,
         )
 
         decisions: List[Tuple[str, Any]] = []
         squad = squad_data.get("current_squad", []) if isinstance(squad_data, dict) else []
 
-        if "Bench Boost" in available_chip_names:
+        if "Bench Boost" in candidate_chip_names:
             decisions.append(("Bench Boost", evaluate_bench_boost(state, self._build_bench_boost_inputs(squad, projections))))
-        if "Triple Captain" in available_chip_names:
+        if "Triple Captain" in candidate_chip_names:
             decisions.append(("Triple Captain", evaluate_triple_captain(state, self._build_triple_captain_inputs(squad, fixture_data, projections, state))))
-        if "Free Hit" in available_chip_names:
+        if "Free Hit" in candidate_chip_names:
             decisions.append(("Free Hit", evaluate_free_hit(state, self._build_free_hit_inputs(squad, fixture_data))))
-        if "Wildcard" in available_chip_names:
+        if "Wildcard" in candidate_chip_names:
             decisions.append(("Wildcard", evaluate_wildcard(state, self._build_wildcard_inputs(squad, fixture_data, projections))))
 
         if not decisions:
@@ -224,7 +281,7 @@ class ChipAnalyzer:
                 current_gw=current_gw,
                 chip_type=ChipType.NONE,
                 selected_chip=ChipType.NONE,
-                available_chips=available_chip_types,
+                available_chips=candidate_chip_types,
                 status="PASS",
                 recommendation="SAVE",
                 reason_codes=["chip_unavailable"],
@@ -288,6 +345,71 @@ class ChipAnalyzer:
             "Wildcard": ChipType.WILDCARD,
         }
         return mapping.get(chip_name)
+
+    @staticmethod
+    def _chip_type_to_name(chip_type: ChipType) -> str:
+        mapping = {
+            ChipType.BENCH_BOOST: "Bench Boost",
+            ChipType.TRIPLE_CAPTAIN: "Triple Captain",
+            ChipType.FREE_HIT: "Free Hit",
+            ChipType.WILDCARD: "Wildcard",
+            ChipType.NONE: "None",
+        }
+        return mapping.get(chip_type, "None")
+
+    @staticmethod
+    def _resolve_policy_chip_names(chip_windows: List[Dict[str, Any]]) -> List[str]:
+        names: List[str] = []
+        for row in chip_windows:
+            if not isinstance(row, dict):
+                continue
+            chip_name = row.get("chip")
+            if chip_name in CHIP_NAMES and chip_name not in names:
+                names.append(chip_name)
+        return names
+
+    def _resolve_policy_window_targets(
+        self,
+        chip_status: Dict[str, Any],
+        current_gw: int,
+        chip_policy: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[str], Optional[int]]:
+        policy = chip_policy if isinstance(chip_policy, dict) else {}
+        chip_windows = policy.get("chip_windows")
+        if not isinstance(chip_windows, list):
+            return None, None
+
+        available_chip_names = set(self._resolve_available_chip_names(chip_status))
+        active_window_chips: List[str] = []
+        future_window_gws: List[int] = []
+
+        for row in chip_windows:
+            if not isinstance(row, dict):
+                continue
+            chip_name = row.get("chip")
+            if chip_name not in available_chip_names:
+                continue
+
+            start_gw = row.get("start_gw") or row.get("start_event") or row.get("gw")
+            end_gw = row.get("end_gw") or row.get("end_event") or start_gw
+
+            try:
+                start_gw_int = int(start_gw)
+                end_gw_int = int(end_gw)
+            except (TypeError, ValueError):
+                continue
+
+            if start_gw_int <= current_gw <= end_gw_int:
+                active_window_chips.append(chip_name)
+            elif current_gw < start_gw_int:
+                future_window_gws.append(start_gw_int)
+
+        if active_window_chips:
+            active_window_chips.sort(key=self._chip_engine_priority)
+            return active_window_chips[0], None
+        if future_window_gws:
+            return None, min(future_window_gws)
+        return None, None
 
     @staticmethod
     def _chip_engine_priority(chip_name: str) -> int:

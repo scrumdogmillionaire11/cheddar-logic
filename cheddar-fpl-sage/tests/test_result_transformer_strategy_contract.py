@@ -10,6 +10,14 @@ for module_name in list(sys.modules):
 import backend.services.result_transformer as result_transformer
 
 
+def _load_result_transformer():
+    module_name = "backend.services.result_transformer"
+    module = sys.modules.get(module_name)
+    if module is None:
+        return importlib.import_module(module_name)
+    return importlib.reload(module)
+
+
 def _raw_results(decision: dict) -> dict:
     return {
         "analysis": {"decision": decision},
@@ -89,7 +97,7 @@ def test_transformer_exposes_strategy_and_transparency_fields_additively() -> No
         "risk_scenarios": [],
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     assert "cheddar-logic/cheddar-fpl-sage" in module.__file__
     transformed = module.transform_analysis_results(_raw_results(decision))
 
@@ -127,7 +135,7 @@ def test_transformer_backfills_manager_state_from_override_context() -> None:
         "risk_scenarios": [],
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(
         _raw_results(decision),
         overrides={"risk_posture": "aggressive", "free_transfers": 2},
@@ -158,7 +166,7 @@ def test_transformer_invalid_strategy_mode_falls_back_to_rank_derivation() -> No
         "risk_scenarios": [],
     }
 
-    module = importlib.reload(result_transformer)
+    module = _load_result_transformer()
     transformed = module.transform_analysis_results(_raw_results(decision))
 
     assert transformed["strategy_mode"] == "RECOVERY"
