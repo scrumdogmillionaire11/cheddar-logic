@@ -17,7 +17,7 @@ from backend.config import (
     get_cors_allowed_methods,
     get_cors_allowed_origins,
 )
-from backend.routers import analyze_router, user_router
+from backend.routers import advisor_router, analyze_router, user_router
 from backend.routers.dashboard import router as dashboard_router
 from backend.middleware import RateLimitMiddleware, RequestLoggingMiddleware
 from backend.services.cache_service import cache_service
@@ -109,6 +109,7 @@ if settings.REQUEST_LOGGING_ENABLED:
     app.add_middleware(RequestLoggingMiddleware)
 
 # Include routers
+app.include_router(advisor_router, prefix="/api")
 app.include_router(analyze_router, prefix=settings.API_V1_PREFIX)
 app.include_router(dashboard_router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_router, prefix=settings.API_V1_PREFIX)
