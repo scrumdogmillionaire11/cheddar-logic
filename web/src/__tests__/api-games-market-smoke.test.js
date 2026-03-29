@@ -34,8 +34,14 @@ async function preflightGamesEndpoint(baseUrl, assert) {
 
 async function runSourceContractAssertions(assert) {
   const fs = await import('node:fs/promises');
+  // WI-0621 thinned app/api/games/route.ts to a re-export shim; read the handler directly.
   const routeSource = await fs.readFile(
-    new URL('../app/api/games/route.ts', import.meta.url),
+    new URL('../lib/games/route-handler.ts', import.meta.url),
+    'utf8',
+  );
+  // WI-0621 extracted inferMarketFromCardType into a separate module.
+  const marketInferenceSource = await fs.readFile(
+    new URL('../lib/games/market-inference.ts', import.meta.url),
     'utf8',
   );
 
@@ -46,8 +52,8 @@ async function runSourceContractAssertions(assert) {
   );
 
   assert(
-    routeSource.includes("normalized === 'mlb-pitcher-k'") &&
-      routeSource.includes("return 'PROP'"),
+    marketInferenceSource.includes("normalized === 'mlb-pitcher-k'") &&
+      marketInferenceSource.includes("return 'PROP'"),
     'WI-0599: mlb-pitcher-k must map to PROP via inferMarketFromCardType',
   );
   assert(
