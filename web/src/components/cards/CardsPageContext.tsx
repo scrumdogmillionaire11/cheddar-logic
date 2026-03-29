@@ -79,6 +79,16 @@ let globalGamesLastFetchAt = 0;
 let globalGamesBlockedUntil = 0;
 let globalGamesRequestLifecycle: LifecycleMode | null = null;
 
+/**
+ * Returns true for HTTP status codes that represent transient failures where
+ * preserving the last-known games state is preferable to clearing it.
+ * Returns false for non-recoverable errors (auth, not found, bad request)
+ * that warrant clearing stale state.
+ */
+function isRecoverableHttpError(status: number): boolean {
+  return status >= 500 || status === 429;
+}
+
 function cardsUiReducer(state: CardsUiState, action: CardsUiAction): CardsUiState {
   switch (action.type) {
     case 'set_filters':
@@ -718,7 +728,7 @@ export function CardsPageProvider({
             }`;
           if (!cancelled) {
             setError(nonJsonDetail);
-            if (isInitialLoad.current) {
+            if (isInitialLoad.current && !isRecoverableHttpError(response.status)) {
               setGames([]);
             }
           }
@@ -778,9 +788,6 @@ export function CardsPageProvider({
         });
         if (!cancelled && !isAbort) {
           setError(message);
-          if (isInitialLoad.current) {
-            setGames([]);
-          }
         }
       } finally {
         globalGamesFetchInFlight = false;
