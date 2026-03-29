@@ -29,8 +29,6 @@ const MARKET_VOLATILITY_MAP = Object.freeze({
   receiving_yards: VOLATILITY_BAND.MEDIUM,
   asian_handicap: VOLATILITY_BAND.MEDIUM,
   btts: VOLATILITY_BAND.MEDIUM,
-  soccer_ml: VOLATILITY_BAND.MEDIUM,
-  soccer_game_total: VOLATILITY_BAND.MEDIUM,
   home_run: VOLATILITY_BAND.HIGH,
   anytime_td: VOLATILITY_BAND.HIGH,
   anytime_goalscorer: VOLATILITY_BAND.HIGH,

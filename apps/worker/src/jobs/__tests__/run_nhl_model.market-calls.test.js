@@ -95,11 +95,11 @@ function buildBaseDecisions() {
 
 describe('run_nhl_model market call generation', () => {
   afterEach(() => {
-    delete process.env.ENABLE_MARKET_THRESHOLDS_V2;
+    process.env.ENABLE_MARKET_THRESHOLDS_V2 = 'false';
   });
 
   test('threshold profile defaults stay baseline-equivalent when flag is off', () => {
-    delete process.env.ENABLE_MARKET_THRESHOLDS_V2;
+    process.env.ENABLE_MARKET_THRESHOLDS_V2 = 'false';
 
     const resolveThresholdProfile = loadResolveThresholdProfile();
 

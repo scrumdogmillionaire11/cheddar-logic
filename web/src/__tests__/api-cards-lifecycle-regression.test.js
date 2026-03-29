@@ -353,7 +353,7 @@ async function runTests() {
     // Test 6: Non-canonical run_state rows (e.g., nhl_props) do not contaminate canonical run_id selection
     console.log('Test 6: Non-canonical run_state rows (nhl_props) are excluded from core run_id selection');
 
-    const CANONICAL_SPORTS_SQL = "'nba', 'nhl', 'ncaam', 'soccer', 'mlb', 'nfl', 'fpl'";
+    const CANONICAL_SPORTS_SQL = "'nba', 'nhl', 'mlb', 'nfl', 'fpl'";
     const TEST_RUN_CANONICAL = 'run-test-canonical-nhl-wi0447';
     const TEST_RUN_NONCANONICAL = 'run-test-noncanonical-props-wi0447';
 

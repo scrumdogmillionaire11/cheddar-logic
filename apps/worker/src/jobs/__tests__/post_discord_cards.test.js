@@ -206,14 +206,14 @@ describe('post_discord_cards helpers', () => {
   test('buildDiscordSnapshot does not print @ null when price is missing', () => {
     const cards = [
       makeCard({
-        id: 'soccer-1',
+        id: 'price-missing-1',
         matchup: 'LIVERPOOL @ BRIGHTON',
-        cardType: 'soccer',
+        cardType: 'nhl-moneyline-call',
         payloadData: {
           action: 'FIRE',
           kind: 'PLAY',
           market_type: 'MONEYLINE',
-          selection: { side: 'OVER' },
+          selection: { side: 'HOME' },
           price: null,
           projection_only: false,
         },
@@ -229,14 +229,14 @@ describe('post_discord_cards helpers', () => {
   test('buildDiscordSnapshot collapses conflicting market sides to a single latest pick', () => {
     const cards = [
       makeCard({
-        id: 'soccer-away',
-        gameId: 'soccer-game-1',
-        cardType: 'asian_handicap_away',
+        id: 'spread-away',
+        gameId: 'game-1',
+        cardType: 'nhl-spread-call',
         createdAt: '2026-03-20T16:59:00.000Z',
         payloadData: {
           action: 'FIRE',
           kind: 'PLAY',
-          market_key: 'soccer_epl:asian_handicap',
+          market_type: 'SPREAD',
           selection: { side: 'AWAY' },
           line: -0.25,
           price: -114,
@@ -244,14 +244,14 @@ describe('post_discord_cards helpers', () => {
         },
       }),
       makeCard({
-        id: 'soccer-home',
-        gameId: 'soccer-game-1',
-        cardType: 'asian_handicap_home',
+        id: 'spread-home',
+        gameId: 'game-1',
+        cardType: 'nhl-spread-call',
         createdAt: '2026-03-20T17:01:00.000Z',
         payloadData: {
           action: 'FIRE',
           kind: 'PLAY',
-          market_key: 'soccer_epl:asian_handicap',
+          market_type: 'SPREAD',
           selection: { side: 'HOME' },
           line: 0.25,
           price: 105,

@@ -52,11 +52,6 @@ const SPORTS_CONFIG = {
     espnLeague: 'basketball/nba',
     scoreboardOptions: null,
   },
-  NCAAM: {
-    espnLeague: 'basketball/mens-college-basketball',
-    // groups=50 restricts to D-I schools; limit=1000 prevents pagination
-    scoreboardOptions: { groups: '50', limit: '1000' },
-  },
   MLB: {
     espnLeague: 'baseball/mlb',
     scoreboardOptions: null,
@@ -96,7 +91,7 @@ function extractTeamName(competitor) {
  * Parse an ESPN scoreboard event into a normalised game descriptor.
  * Returns null if mandatory fields are missing or the game is already completed.
  * @param {object} event - ESPN scoreboard event
- * @param {string} sport - uppercase sport code ('NHL' | 'NBA' | 'NCAAM')
+ * @param {string} sport - uppercase sport code ('NHL' | 'NBA' | 'MLB')
  * @returns {{ gameId, sport, homeTeam, awayTeam, gameTimeUtc, espnEventId }|null}
  */
 function parseEspnEvent(event, sport) {

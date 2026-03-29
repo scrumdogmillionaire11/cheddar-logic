@@ -50,11 +50,6 @@ const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
 const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
 const { pullMlbPitcherStrikeoutProps } = require('../jobs/pull_mlb_pitcher_strikeout_props');
 const { settleMlbF5 } = require('../jobs/settle_mlb_f5');
-const { runSoccerModel } = require('../jobs/run_soccer_model');
-const { pullSoccerPlayerProps } = require('../jobs/pull_soccer_player_props');
-const { pullSoccerXgStats } = require('../jobs/pull_soccer_xg_stats');
-const { runNCAAMModel } = require('../jobs/run_ncaam_model');
-const { runRefreshNcaamFtCsv } = require('../jobs/refresh_ncaam_ft_csv');
 const { syncGameStatuses } = require('../jobs/sync_game_statuses');
 const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
@@ -94,7 +89,6 @@ const REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS =
 const TEAM_METRICS_MAX_AGE_MINUTES = Number(
   process.env.TEAM_METRICS_MAX_AGE_MINUTES || 20 * 60,
 );
-const ENABLE_NCAAM_FT_REFRESH = process.env.ENABLE_NCAAM_FT_REFRESH === 'true'; // default OFF — NCAAM model disabled 2026-03-24
 const ENABLE_NHL_SOG_PLAYER_SYNC =
   process.env.ENABLE_NHL_SOG_PLAYER_SYNC !== 'false';
 const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC =
@@ -105,9 +99,6 @@ const ENABLE_NHL_SOG_PROP_PULL =
 const ENABLE_MLB_PITCHER_K_PROP_PULL =
   process.env.MLB_PITCHER_K_PROP_EVENTS_ENABLED === 'true' &&
   process.env.PITCHER_KS_MODEL_MODE === 'ODDS_BACKED';
-const NCAAM_FT_REFRESH_MAX_AGE_MINUTES = Number(
-  process.env.NCAAM_FT_REFRESH_MAX_AGE_MINUTES || 360,
-);
 const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 30);
 // First hour of day to start fetching odds (ET). Raise to 10 on starter-key budget.
 const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 6);
@@ -116,21 +107,6 @@ const SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL =
 const SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL =
   process.env.SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL === 'true';
 let lastOddsGapAlertAt = 0;
-
-const SOCCER_LINEUP_T45_MINUTES = 45;
-
-function isSoccerLineupT45Enabled() {
-  return process.env.ENABLE_SOCCER_T45_LINEUP_CHECK !== 'false';
-}
-
-function getSoccerLineupT45Bounds() {
-  const min = Number(process.env.SOCCER_LINEUP_T45_MIN || 40);
-  const max = Number(process.env.SOCCER_LINEUP_T45_MAX || 45);
-  return {
-    min: Number.isFinite(min) ? min : 40,
-    max: Number.isFinite(max) ? max : 45,
-  };
-}
 
 /**
  * Sport-to-job mapping
@@ -156,18 +132,6 @@ const SPORT_JOBS = {
     jobName: 'run_nfl_model',
     execute: runNFLModel,
     env: 'ENABLE_NFL_MODEL',
-  },
-  soccer: {
-    jobName: 'run_soccer_model',
-    execute: runSoccerModel,
-    env: 'ENABLE_SOCCER_MODEL',
-    defaultOn: false, // disabled 2026-03-24: odds fetch off (9 tokens/fetch)
-  },
-  ncaam: {
-    jobName: 'run_ncaam_model',
-    execute: runNCAAMModel,
-    env: 'ENABLE_NCAAM_MODEL',
-    defaultOn: false, // disabled 2026-03-24: season winding down
   },
 };
 
@@ -222,13 +186,6 @@ function keyTminus(sport, gameId, minutes) {
 
 function keyNightlySweep(nowEt) {
   return `settle|nightly|${nowEt.toISODate()}`;
-}
-
-function keyNcaamFtRefresh(nowEt) {
-  const freshnessWindow = Math.max(15, NCAAM_FT_REFRESH_MAX_AGE_MINUTES);
-  const minutesSinceMidnight = nowEt.hour * 60 + nowEt.minute;
-  const bucket = Math.floor(minutesSinceMidnight / freshnessWindow);
-  return `refresh_ncaam_ft_csv|${nowEt.toISODate()}|b${bucket}`;
 }
 
 function keyNhlSogPlayerSync(nowEt) {
@@ -446,7 +403,7 @@ function hasFreshOddsForModels() {
 }
 
 function isProjectionModelSport(sport) {
-  return ['nba', 'nhl', 'ncaam'].includes(String(sport || '').toLowerCase());
+  return ['nba', 'nhl'].includes(String(sport || '').toLowerCase());
 }
 
 let _lastQuotaTier = null;
@@ -591,13 +548,6 @@ function dueTminusMinutes(nowUtc, startUtc) {
   );
 }
 
-function isSoccerLineupT45Due(nowUtc, startUtc) {
-  if (!isSoccerLineupT45Enabled()) return false;
-  const delta = Math.floor(startUtc.diff(nowUtc, 'minutes').minutes);
-  const { min, max } = getSoccerLineupT45Bounds();
-  return delta >= min && delta <= max;
-}
-
 /**
  * Compute due jobs (pure function, no side effects)
  * OPTIMIZED VERSION: Time-aware odds pulls, gated model runs, status-triggered settlement
@@ -612,7 +562,6 @@ function isSoccerLineupT45Due(nowUtc, startUtc) {
 function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   const jobs = [];
   const sports = enabledSports();
-  let ncaamFtRefreshQueued = false;
   let teamMetricsRefreshQueued = false;
 
   // Token quota tier — gates T-minus and backstop odds pulls to protect monthly budget.
@@ -678,26 +627,6 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
-  function queueSoccerPropIngestBeforeModel(modelJobKey, reason) {
-    const xgJobKey = `soccer_xg|${modelJobKey}`;
-    jobs.push({
-      jobName: 'pull_soccer_xg_stats',
-      jobKey: xgJobKey,
-      execute: pullSoccerXgStats,
-      args: { jobKey: xgJobKey, dryRun },
-      reason: `pre-model soccer xG ingest (${reason})`,
-    });
-
-    const propJobKey = `soccer_props|${modelJobKey}`;
-    jobs.push({
-      jobName: 'pull_soccer_player_props',
-      jobKey: propJobKey,
-      execute: pullSoccerPlayerProps,
-      args: { jobKey: propJobKey, dryRun },
-      reason: `pre-model soccer Tier-1 prop ingest (${reason})`,
-    });
-  }
-
   function queueMlbPitcherStatsBeforeModel(modelJobKey, reason) {
     const pitcherJobKey = `mlb_pitcher_stats|${modelJobKey}`;
     jobs.push({
@@ -730,29 +659,6 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       args: { jobKey: kPropJobKey, dryRun },
       reason: `pre-model MLB pitcher K prop ingest (${reason})`,
     });
-  }
-
-  function maybeQueueNcaamFtRefresh(triggerReason) {
-    if (!ENABLE_NCAAM_FT_REFRESH) return;
-    if (ncaamFtRefreshQueued) return;
-    if (
-      wasJobRecentlySuccessful(
-        'refresh_ncaam_ft_csv',
-        NCAAM_FT_REFRESH_MAX_AGE_MINUTES,
-      )
-    ) {
-      return;
-    }
-
-    const refreshJobKey = keyNcaamFtRefresh(nowEt);
-    jobs.push({
-      jobName: 'refresh_ncaam_ft_csv',
-      jobKey: refreshJobKey,
-      execute: runRefreshNcaamFtCsv,
-      args: { jobKey: refreshJobKey, dryRun },
-      reason: `pre-NCAAM FT CSV refresh (${triggerReason})`,
-    });
-    ncaamFtRefreshQueued = true;
   }
 
   function maybeQueueTeamMetricsRefresh(triggerReason, sport) {
@@ -868,13 +774,6 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
-  // ========== NCAAM FT BOOTSTRAP (2.5) ==========
-  // Early-morning (06:00 ET) pre-refresh ensures CSv is fresh before 09:00 model runs
-  // Prevents race conditions if a scheduled refresh fails overnight
-  if (ENABLE_NCAAM_FT_REFRESH && isFixedDue(nowEt, '06:00')) {
-    maybeQueueNcaamFtRefresh('early-morning bootstrap (06:00 ET)');
-  }
-
   // ========== NHL TEAM STATS (2.6) ==========
   // Daily early-morning refresh keeps team_stats current before the NHL model window.
   if (isFixedDue(nowEt, '06:00')) {
@@ -955,14 +854,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     for (const t of fixedTimes) {
       if (!isFixedDue(nowEt, t)) continue;
       maybeQueueTeamMetricsRefresh(`fixed ${t} ET`, sport);
-      if (sport === 'ncaam') {
-        maybeQueueNcaamFtRefresh(`fixed ${t} ET`);
-      }
-
       const jobKey = keyFixed(sport, nowEt, t);
-      if (sport === 'soccer') {
-        queueSoccerPropIngestBeforeModel(jobKey, `fixed ${t} ET`);
-      }
       if (sport === 'nhl') {
         queueNhlShotsPropIngestBeforeModel(jobKey, `fixed ${t} ET`);
       }
@@ -1001,14 +893,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
     for (const mins of minsList) {
       maybeQueueTeamMetricsRefresh(`T-${mins} for ${g.game_id}`, sport);
-      if (sport === 'ncaam') {
-        maybeQueueNcaamFtRefresh(`T-${mins} for ${g.game_id}`);
-      }
 
       const jobKey = keyTminus(sport, g.game_id, mins);
-      if (sport === 'soccer') {
-        queueSoccerPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
-      }
       if (sport === 'nhl') {
         queueNhlShotsPropIngestBeforeModel(jobKey, `T-${mins} for ${g.game_id}`);
       }
@@ -1040,21 +926,6 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         execute: SPORT_JOBS[sport].execute,
         args: { jobKey, dryRun, withoutOddsMode: ENABLE_WITHOUT_ODDS_MODE },
         reason: `T-${mins} for ${g.game_id}${ENABLE_WITHOUT_ODDS_MODE ? ' [WITHOUT_ODDS]' : ''}`,
-      });
-    }
-
-    if (sport === 'soccer' && isSoccerLineupT45Due(nowUtc, startUtc)) {
-      const jobKey = keyTminus(sport, g.game_id, SOCCER_LINEUP_T45_MINUTES);
-      queueSoccerPropIngestBeforeModel(
-        jobKey,
-        `soccer lineup checkpoint T-${SOCCER_LINEUP_T45_MINUTES} for ${g.game_id}`,
-      );
-      jobs.push({
-        jobName: SPORT_JOBS[sport].jobName,
-        jobKey,
-        execute: SPORT_JOBS[sport].execute,
-        args: { jobKey, dryRun },
-        reason: `soccer lineup checkpoint T-${SOCCER_LINEUP_T45_MINUTES} for ${g.game_id}`,
       });
     }
   }
@@ -1311,12 +1182,6 @@ async function start() {
   );
   console.log(`  TEAM_METRICS_MAX_AGE_MINUTES: ${TEAM_METRICS_MAX_AGE_MINUTES}`);
   console.log(
-    `  ENABLE_SOCCER_T45_LINEUP_CHECK: ${isSoccerLineupT45Enabled() ? 'true' : 'false'} (window ${getSoccerLineupT45Bounds().min}-${getSoccerLineupT45Bounds().max}m)`,
-  );
-  console.log(
-    `  ENABLE_NCAAM_FT_REFRESH: ${ENABLE_NCAAM_FT_REFRESH ? 'true' : 'false'}`,
-  );
-  console.log(
     `  ENABLE_NHL_SOG_PLAYER_SYNC: ${ENABLE_NHL_SOG_PLAYER_SYNC ? 'true' : 'false'}`,
   );
   console.log(
@@ -1330,9 +1195,6 @@ async function start() {
   );
   console.log(`  ODDS_FETCH_SLOT_MINUTES: ${ODDS_FETCH_SLOT_MINUTES}`);
   console.log(`  ODDS_FETCH_START_HOUR: ${ODDS_FETCH_START_HOUR}h ET`);
-  console.log(
-    `  NCAAM_FT_REFRESH_MAX_AGE_MINUTES: ${NCAAM_FT_REFRESH_MAX_AGE_MINUTES}`,
-  );
   console.log(
     `  ENABLE_SETTLEMENT: ${process.env.ENABLE_SETTLEMENT !== 'false' ? 'true' : 'false'}`,
   );
@@ -1415,8 +1277,6 @@ module.exports = {
   isHourlySettlementDue,
   isFixedDue,
   dueTminusMinutes,
-  isSoccerLineupT45Due,
-  SOCCER_LINEUP_T45_MINUTES,
   TMINUS_BANDS,
   // New helper functions
   getOddsIntervalMinutes,

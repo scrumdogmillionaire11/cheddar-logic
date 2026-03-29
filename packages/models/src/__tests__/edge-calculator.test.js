@@ -690,12 +690,4 @@ describe('WI-0591: buildDecisionV2 sigma override', () => {
     expect(result.sigma_source).toBe('fallback');
   });
 
-  test('NCAAM payload with sigmaOverride forwards sigma_source=computed', () => {
-    const ncaamPayload = { ...basePayload, sport: 'NCAAM' };
-    const result = buildDecisionV2(ncaamPayload, {
-      sigmaOverride: { margin: 9.1, total: 12.4, sigma_source: 'computed', games_sampled: 45 },
-    });
-    expect(result).not.toBeNull();
-    expect(result.sigma_source).toBe('computed');
-  });
 });

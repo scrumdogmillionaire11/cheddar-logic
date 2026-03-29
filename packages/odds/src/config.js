@@ -8,7 +8,6 @@
  * - NBA: h2h + totals + spreads = 3 tokens
  * - MLB: h2h + totals = 2 tokens
  * - NFL: h2h + totals + spreads = 3 tokens
- * - SOCCER: h2h + totals + spreads × 3 leagues (EPL, MLS, UCL) = 9 tokens
  * - Multiple bookmakers doesn't increase token cost
  *
  * US Bookmakers:
@@ -92,43 +91,6 @@ const SPORTS_CONFIG = {
       'williamhill_us',
       'espnbet',
       'fliff',
-    ],
-  },
-
-  NCAAM: {
-    active: false, // re-enable when 20k quota resets (~Apr 1); March Madness runs through ~Apr 7
-    season: { start: '11-01', end: '04-15' },
-    markets: ['h2h', 'totals', 'spreads'],
-    tokensPerFetch: 3,
-    defaultTTL: 240,
-    pregameTTL: 30,
-    sharpWindowTTL: 0,
-    apiKey: 'basketball_ncaab',
-    bookmakers: [
-      'betmgm',
-      'draftkings',
-      'fanduel',
-      'williamhill_us',
-      'espnbet',
-      'fliff',
-    ],
-  },
-
-  SOCCER: {
-    active: false, // disabled 2026-03-24: 9 tokens/fetch — too expensive on 500-token budget
-    season: { start: '08-01', end: '06-30' }, // EPL/European football season
-    markets: ['h2h', 'totals', 'spreads'],
-    tokensPerFetch: 9,
-    defaultTTL: 240,
-    pregameTTL: 30,
-    sharpWindowTTL: 0,
-    apiKeys: ['soccer_epl', 'soccer_usa_mls', 'soccer_uefa_champs_league'],
-    bookmakers: [
-      'betmgm',
-      'draftkings',
-      'fanduel',
-      'williamhill_us',
-      'espnbet',
     ],
   },
 };

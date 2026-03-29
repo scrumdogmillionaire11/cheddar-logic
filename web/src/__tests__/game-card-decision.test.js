@@ -233,45 +233,6 @@ async function run() {
     'NBA fixture should resolve to a side market',
   );
 
-  const ncaamCard = {
-    ...card,
-    id: 'card-ncaam',
-    gameId: 'game-ncaam',
-    sport: 'NCAAM',
-    drivers: [
-      buildDriver({
-        key: 'ncaam_matchup_away',
-        market: 'UNKNOWN',
-        tier: 'SUPER',
-        direction: 'AWAY',
-        confidence: 0.7,
-        note: 'NCAAM matchup edge',
-        cardTitle: 'NCAAM Matchup',
-      }),
-      buildDriver({
-        key: 'ncaam_rest_away',
-        market: 'UNKNOWN',
-        tier: 'SUPER',
-        direction: 'AWAY',
-        confidence: 0.66,
-        note: 'NCAAM rest edge',
-        cardTitle: 'NCAAM Rest',
-      }),
-    ],
-    tags: ['has_watch'],
-  };
-
-  const ncaamDecision = getCardDecisionModel(ncaamCard, odds);
-  assert.ok(
-    ncaamDecision.primaryPlay.pick !== 'NO PLAY',
-    'NCAAM fixture should produce a play',
-  );
-  assert.ok(
-    ncaamDecision.primaryPlay.market === 'ML' ||
-      ncaamDecision.primaryPlay.market === 'SPREAD',
-    'NCAAM fixture should resolve to a side market',
-  );
-
   // ── SpreadCompare derivation ──────────────────────────────────────────────
 
   console.log('🧪 SpreadCompare derivation tests');

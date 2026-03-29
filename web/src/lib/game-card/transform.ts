@@ -31,7 +31,6 @@ import type {
   CardQuality,
   DecisionV2,
   ExpressionStatus,
-  FtTrendContext,
 } from '../types/game-card';
 import type {
   CanonicalPlay,
@@ -71,12 +70,7 @@ const PROXY_SIGNAL_TAGS = new Set<string>([
   'PROXY_LEGACY_MARKET_INFERRED',
   'LEGACY_REPAIR',
 ]);
-const SOCCER_AH_CANONICAL_KEYS = new Set([
-  'asian_handicap_home',
-  'asian_handicap_away',
-]);
-const SOCCER_AH_REMAP_TOKEN = 'MARKET_REMAP_AH_FROM_PROP';
-const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
+const WAVE1_SPORTS = new Set(['NBA', 'NHL']);
 const WAVE1_MARKETS = new Set<CanonicalMarketType>([
   'MONEYLINE',
   'SPREAD',
@@ -125,14 +119,6 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
       'welcome-home',
       'welcome-home-v2', // alias: backward compat with existing DB rows
     ]),
-  },
-  NCAAM: {
-    playProducerCardTypes: new Set([
-      'ncaam-base-projection',
-      'ncaam-rest-advantage',
-      'ncaam-ft-trend',
-    ]),
-    evidenceOnlyCardTypes: new Set(['ncaam-matchup-style']),
   },
 };
 
@@ -197,7 +183,6 @@ interface ApiPlay {
   selection?: { side?: string; team?: string };
   line?: number;
   price?: number;
-  ft_trend_context?: Partial<FtTrendContext>;
   reason_codes?: string[];
   projection_inputs_complete?: boolean | null;
   missing_inputs?: string[];
@@ -450,19 +435,6 @@ function inferMarketFromPlay(play: ApiPlay): {
     };
   }
 
-  if (isSoccerAsianHandicapPlay(play)) {
-    if (play.market_type === 'PROP') {
-      reasonCodes.push(SOCCER_AH_REMAP_TOKEN);
-      tags.push(SOCCER_AH_REMAP_TOKEN);
-    }
-    return {
-      market: 'SPREAD',
-      canonical: 'SPREAD',
-      reasonCodes: Array.from(new Set(reasonCodes)),
-      tags: Array.from(new Set(tags)),
-    };
-  }
-
   if (play.market_type) {
     return {
       market: mapCanonicalToLegacyMarket(play.market_type) as Market,
@@ -516,24 +488,6 @@ function resolveDecisionV2EdgePct(
   if (typeof decisionV2?.edge_delta_pct === 'number') return decisionV2.edge_delta_pct;
   if (typeof decisionV2?.edge_pct === 'number') return decisionV2.edge_pct;
   return null;
-}
-
-function normalizeSoccerAhToken(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
-}
-
-function isSoccerAsianHandicapPlay(play: ApiPlay): boolean {
-  const canonicalKey = normalizeSoccerAhToken(play.canonical_market_key);
-  if (SOCCER_AH_CANONICAL_KEYS.has(canonicalKey)) return true;
-
-  const cardType = normalizeSoccerAhToken(play.cardType);
-  if (cardType.includes('asian_handicap')) return true;
-
-  const rawMarketType = normalizeSoccerAhToken(
-    (play as unknown as Record<string, unknown>).market_type,
-  );
-  return rawMarketType.includes('asian_handicap');
 }
 
 function toDiagnosticToken(prefix: string, value: unknown): string | null {
@@ -705,16 +659,12 @@ function normalizeSideToken(value: unknown): CanonicalSide {
   const token = String(value ?? '').toUpperCase();
   if (
     token === 'HOME' ||
-    token === 'HOME_OR_DRAW' ||
-    token === 'HOME_DNB' ||
     token === 'AWAY' ||
-    token === 'AWAY_OR_DRAW' ||
-    token === 'AWAY_DNB' ||
     token === 'OVER' ||
     token === 'UNDER'
   ) {
-    if (token.startsWith('HOME')) return 'HOME';
-    if (token.startsWith('AWAY')) return 'AWAY';
+    if (token === 'HOME') return 'HOME';
+    if (token === 'AWAY') return 'AWAY';
     return token === 'OVER' ? 'OVER' : 'UNDER';
   }
   return 'NONE';
@@ -771,17 +721,7 @@ function hasPlayableBet(
 ): boolean {
   const rawSelectionSide = String(play.selection?.side ?? '').toUpperCase();
   if (canonical === 'MONEYLINE') {
-    return (
-      (
-        side === 'HOME' ||
-        side === 'AWAY' ||
-        rawSelectionSide === 'HOME_OR_DRAW' ||
-        rawSelectionSide === 'AWAY_OR_DRAW' ||
-        rawSelectionSide === 'HOME_OR_AWAY' ||
-        rawSelectionSide === 'HOME_DNB' ||
-        rawSelectionSide === 'AWAY_DNB'
-      ) && typeof play.price === 'number'
-    );
+    return (side === 'HOME' || side === 'AWAY') && typeof play.price === 'number';
   }
   if (canonical === 'SPREAD' || canonical === 'PUCKLINE') {
     return (
@@ -1074,20 +1014,10 @@ function selectWave1DecisionCandidate(
   };
 
   const normalizedSport = normalizeSport(sport);
-  const ftTrendCardTypes = new Set(['ncaam-ft-trend']);
-
-  const cardTypePriority = (play: ApiPlay): number => {
-    if (normalizedSport !== 'NCAAM') return 0;
-    const normalizedCardType = normalizeCardType(play.cardType || '');
-    return ftTrendCardTypes.has(normalizedCardType) ? 1 : 0;
-  };
 
   const sorted = [...candidates].sort((a, b) => {
     const aDecision = a.decision_v2!;
     const bDecision = b.decision_v2!;
-    const cardTypeDiff = cardTypePriority(b) - cardTypePriority(a);
-    if (cardTypeDiff !== 0) return cardTypeDiff;
-
     const statusDiff =
       officialRank(bDecision.official_status) -
       officialRank(aDecision.official_status);
@@ -1123,8 +1053,6 @@ function normalizeSport(sport: unknown): Sport {
   if (
     sportUpper === 'NHL' ||
     sportUpper === 'NBA' ||
-    sportUpper === 'NCAAM' ||
-    sportUpper === 'SOCCER' ||
     sportUpper === 'MLB' ||
     sportUpper === 'NFL'
   ) {
@@ -1152,27 +1080,6 @@ function playToDriver(play: ApiPlay): DriverRow {
     note: play.reasoning,
     cardType: play.cardType,
     cardTitle: play.cardTitle,
-    ftTrendContext: play.ft_trend_context
-      ? {
-          homeFtPct:
-            typeof play.ft_trend_context.home_ft_pct === 'number'
-              ? play.ft_trend_context.home_ft_pct
-              : null,
-          awayFtPct:
-            typeof play.ft_trend_context.away_ft_pct === 'number'
-              ? play.ft_trend_context.away_ft_pct
-              : null,
-          totalLine:
-            typeof play.ft_trend_context.total_line === 'number'
-              ? play.ft_trend_context.total_line
-              : null,
-          advantagedSide:
-            play.ft_trend_context.advantaged_side === 'HOME' ||
-            play.ft_trend_context.advantaged_side === 'AWAY'
-              ? play.ft_trend_context.advantaged_side
-              : null,
-        }
-      : undefined,
     role: DRIVER_ROLES[play.cardType] ?? 'CONTEXT',
   };
 }
@@ -1384,7 +1291,6 @@ function hasPlaceholderText(value?: string): boolean {
   if (!normalized) return true;
   return (
     normalized.includes('generic analysis for') ||
-    normalized.includes('ncaam ncaam generic') ||
     normalized === 'no contributors available'
   );
 }
@@ -1402,8 +1308,7 @@ function resolveSourceModelProb(play?: ApiPlay): number | undefined {
 function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const canonicalTruePlay =
     game.true_play &&
-    (game.true_play.market_type !== 'PROP' ||
-      isSoccerAsianHandicapPlay(game.true_play)) &&
+    game.true_play.market_type !== 'PROP' &&
     isPlayItem(game.true_play, game.sport) &&
     (ENABLE_WELCOME_HOME || !isWelcomeHomePlay(game.true_play))
       ? game.true_play
@@ -1412,12 +1317,6 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   // Props are rendered via transformPropGames in cards props mode only.
   const basePlayCandidates = game.plays.filter(
     (play) => isPlayItem(play, game.sport) && play.market_type !== 'PROP',
-  );
-  const ahPropCandidates = game.plays.filter(
-    (play) =>
-      isPlayItem(play, game.sport) &&
-      play.market_type === 'PROP' &&
-      isSoccerAsianHandicapPlay(play),
   );
   const hasCanonicalInCandidates = canonicalTruePlay
     ? basePlayCandidates.some((play) => {
@@ -1432,8 +1331,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     : false;
   const playCandidates =
     canonicalTruePlay && !hasCanonicalInCandidates
-      ? [canonicalTruePlay, ...basePlayCandidates, ...ahPropCandidates]
-      : [...basePlayCandidates, ...ahPropCandidates];
+      ? [canonicalTruePlay, ...basePlayCandidates]
+      : [...basePlayCandidates];
   const dedupedPlayCandidates = dedupePlayCandidates(game, playCandidates);
   const evidenceCandidates = game.plays.filter((play) =>
     isEvidenceItem(play, game.sport),
@@ -1452,56 +1351,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       : selectWave1DecisionCandidate(scopedPlayCandidates, game.sport);
   if (wave1DecisionPlay?.decision_v2) {
     const decisionV2 = wave1DecisionPlay.decision_v2;
-    const ftTrendOverrideDirection =
-      wave1DecisionPlay.cardType === 'ncaam-ft-trend' &&
-      wave1DecisionPlay.market_type === 'SPREAD' &&
-      (wave1DecisionPlay.ft_trend_context?.advantaged_side === 'HOME' ||
-        wave1DecisionPlay.ft_trend_context?.advantaged_side === 'AWAY')
-        ? wave1DecisionPlay.ft_trend_context.advantaged_side
-        : null;
-    const ftTrendSourceActionBase = actionFromWave1SourcePlay(wave1DecisionPlay);
-    const ftTrendSourceAction =
-      ftTrendOverrideDirection &&
-      ftTrendSourceActionBase === 'PASS' &&
-      (wave1DecisionPlay.tier === 'WATCH' ||
-        wave1DecisionPlay.tier === 'SUPER' ||
-        wave1DecisionPlay.tier === 'BEST')
-        ? wave1DecisionPlay.tier === 'WATCH'
-          ? 'HOLD'
-          : 'FIRE'
-        : ftTrendSourceActionBase;
-    const effectiveOfficialStatus: DecisionV2['official_status'] =
-      ftTrendOverrideDirection && decisionV2.official_status === 'PASS'
-        ? ftTrendSourceAction === 'FIRE'
-          ? 'PLAY'
-          : ftTrendSourceAction === 'HOLD'
-            ? 'LEAN'
-            : 'PASS'
-        : decisionV2.official_status;
-    const effectiveDirection: DecisionV2['direction'] =
-      ftTrendOverrideDirection ?? decisionV2.direction;
-    const effectiveDecisionV2: DecisionV2 =
-      ftTrendOverrideDirection &&
-      (effectiveDirection !== decisionV2.direction ||
-        effectiveOfficialStatus !== decisionV2.official_status)
-        ? {
-            ...decisionV2,
-            direction: effectiveDirection,
-            official_status: effectiveOfficialStatus,
-            pricing_trace: {
-              ...decisionV2.pricing_trace,
-              market_side: effectiveDirection,
-              market_line:
-                typeof wave1DecisionPlay.line === 'number'
-                  ? wave1DecisionPlay.line
-                  : decisionV2.pricing_trace?.market_line ?? null,
-              market_price:
-                typeof wave1DecisionPlay.price === 'number'
-                  ? wave1DecisionPlay.price
-                  : decisionV2.pricing_trace?.market_price ?? null,
-            },
-          }
-        : decisionV2;
+    const effectiveDecisionV2: DecisionV2 = decisionV2;
     const officialStatus = effectiveDecisionV2.official_status;
     const status = statusFromOfficial(officialStatus);
     const action = actionFromOfficial(officialStatus);
@@ -3367,8 +3217,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
 
   for (const game of games) {
     for (const play of game.plays) {
-      if (play.market_type !== 'PROP' || isSoccerAsianHandicapPlay(play))
-        continue;
+      if (play.market_type !== 'PROP') continue;
       const playerId = extractPlayerId(play);
       const inferredName = inferPlayerNameFromText(play);
       if (playerId && inferredName) {
@@ -3379,9 +3228,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
 
   for (const game of games) {
     // Extract all PROP plays from this game
-    const propPlays = game.plays.filter(
-      (p) => p.market_type === 'PROP' && !isSoccerAsianHandicapPlay(p),
-    );
+    const propPlays = game.plays.filter((p) => p.market_type === 'PROP');
 
     // Skip games with no props
     if (propPlays.length === 0) continue;

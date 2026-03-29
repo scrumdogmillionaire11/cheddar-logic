@@ -30,9 +30,6 @@ export const DRIVER_ROLES: Record<string, DriverRole> = {
   'nhl-spread-call':       'PRIMARY',
   'nhl-pace-totals':       'PRIMARY',
   'nhl-pace-1p':           'PRIMARY',
-  'ncaam-base-projection': 'PRIMARY',
-  'ncaam-ft-trend':        'PRIMARY',
-  'ncaam-ft-spread':       'PRIMARY',
   'nhl-player-shots':      'PRIMARY',
   'nhl-player-shots-1p':   'PRIMARY',
 
@@ -48,8 +45,6 @@ export const DRIVER_ROLES: Record<string, DriverRole> = {
   'nhl-rest-advantage':  'CONTEXT',
   'welcome-home':        'CONTEXT',
   'welcome-home-v2':     'CONTEXT', // alias: backward compat with existing DB rows
-  'ncaam-rest-advantage': 'CONTEXT',
-  'ncaam-matchup-style': 'CONTEXT',
 
   // RISK — never contributes positive score
   'nba-blowout-risk': 'RISK',

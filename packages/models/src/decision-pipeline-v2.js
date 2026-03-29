@@ -9,7 +9,7 @@ const {
 // See CANONICAL_EDGE_CONTRACT in decision-gate.js for the authoritative definition.
 const EDGE_UNITS = 'decimal_fraction';
 
-const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'NCAAM']);
+const WAVE1_SPORTS = new Set(['NBA', 'NHL']);
 const WAVE1_MARKETS = new Set([
   'MONEYLINE',
   'SPREAD',

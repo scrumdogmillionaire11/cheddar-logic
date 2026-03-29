@@ -324,7 +324,7 @@ describe('decision publisher v2 pipeline', () => {
     );
   });
 
-  test('leaves NCAAM behavior unchanged outside the new cleanliness scope', () => {
+  test('falls back to legacy action mapping for NCAAM after wave-1 extraction', () => {
     const payload = buildWave1Payload({
       sport: 'NCAAM',
       market_type: 'TOTAL',
@@ -335,11 +335,9 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.watchdog_status).toBe('CAUTION');
-    expect(payload.decision_v2.official_status).toBe('PLAY');
-    expect(payload.decision_v2.price_reason_codes).not.toContain(
-      'PLAY_REQUIRES_FRESH_MARKET',
-    );
+    expect(payload.decision_v2).toBeUndefined();
+    expect(payload.action).toBe('FIRE');
+    expect(payload.status).toBe('FIRE');
   });
 
   test('downgrades heavy-favorite moneyline PLAY to LEAN at -300 band when edge is below 2x play threshold', () => {

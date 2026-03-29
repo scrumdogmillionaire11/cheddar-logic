@@ -48,8 +48,6 @@ async function seedCards() {
   const cardTypesBySport = {
     'NHL': ['nhl-goalie', 'nhl-special-teams', 'nhl-shot-environment', 'nhl-pace-totals', 'nhl-rest-advantage'],
     'NBA': ['nba-base-projection', 'nba-pace-1p', 'nba-matchup-style', 'nba-rest-advantage', 'nba-blowout-risk'],
-    'NCAAM': ['ncaam-base-projection', 'ncaam-matchup-style', 'ncaam-rest-advantage'],
-    'SOCCER': ['soccer-base-projection', 'soccer-matchup'],
     'MLB': ['mlb-pitcher-matchup', 'mlb-bullpen'],
     'NFL': ['nfl-qb-matchup', 'nfl-defense-matchup']
   };
