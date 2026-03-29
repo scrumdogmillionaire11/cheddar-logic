@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-29T22:41:09Z"
-last_activity: "2026-03-29 - Queue re-assessed: WI-0624, WI-0649, WI-0668 are complete; WI-0646 and WI-0645 are in closeout. Next execution priority is WI-0647 (ROI report), then WI-0648 (MLB recal gate, Apr 20 target), then WI-0650/WI-0651; parallel longer-track chains are WI-0652→0662 (FPL product) and WI-0664→0667 (public splits pipeline)."
+last_updated: "2026-03-29T23:10:00Z"
+last_activity: "2026-03-29 - Queue note added for incident follow-up: WI-0701 should land first; WI-0702 stays queued until WI-0701 PR review is complete and merged. Higher-priority execution order remains WI-0647, WI-0648, then WI-0650/WI-0651, with WI-0652→0662 and WI-0664→0667 as parallel program tracks."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -78,6 +78,7 @@ This file is intentionally minimal to avoid stale status drift.
 ### Backlog
 
 - [WI-0663](../WORK_QUEUE/WI-0663.md) — MLB pitcher-K strong under monitoring (LOE M), independent MLB enhancement.
+- Incident follow-up queue note: [WI-0701](../WORK_QUEUE/WI-0701-frontend-preserve-games-on-transient-errors.md) should land before [WI-0702](../WORK_QUEUE/WI-0702-backend-api-games-timeout-resilience.md); `WI-0702` stays queued until `WI-0701` PR review is complete and merged.
 
 ---
 
