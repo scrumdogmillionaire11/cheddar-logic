@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T01:40:03Z"
-last_activity: "2026-03-30 - Queue refreshed after completion of WI-0648, WI-0650, WI-0651, and WI-0652. Next execution batch is WI-0653, WI-0655, and WI-0657 in parallel, followed by gated FPL chain steps (WI-0654/WI-0658/WI-0656) toward WI-0659."
+last_updated: "2026-03-30T11:20:34Z"
+last_activity: "2026-03-30 - Completed quick task 106: WI-0653 manager profile APIs + archetype mapping (POST/GET/PATCH /api/v1/profiles, 33 tests passing). WI-0655 and WI-0657 still in parallel batch."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -177,5 +177,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 105 | WI-0647: Cross-market settlement ROI report | 2026-03-29 | 9ef8f99 | [102-wi-0647](./quick/102-wi-0647/) |
 | 106 | WI-0648: MLB empirical sigma recalibration gate — MIN_MLB_GAMES_FOR_RECAL=20, computeSigmaFromHistory, 11 tests | 2026-03-30 | 9599cbc | [103-wi-0648-mlb-sigma-recal](./quick/103-wi-0648-mlb-sigma-recal/) |
 | 107 | WI-0650: Governance + CI import boundary hardening — OWNERSHIP.md DB Domain Modules, scripts/check-db-imports.js, CI check-db-import-boundaries step | 2026-03-30 | c2ef9b6 | [104-wi-0650-governance-ci-hardening-needs-sy](./quick/104-wi-0650-governance-ci-hardening-needs-sy/) |
+| 108 | WI-0653: Manager profile APIs + archetype mapping — POST/GET/PATCH /api/v1/profiles, 5-archetype deterministic rules, per-archetype constraint defaults, 33 tests | 2026-03-30 | 19187bd | [106-wi-0653-manager-profile-apis-and-archety](./quick/106-wi-0653-manager-profile-apis-and-archety/) |
 
-Last activity: 2026-03-30 - Completed quick task 107: WI-0650 governance + CI import boundary hardening
+Last activity: 2026-03-30 - Completed quick task 108: WI-0653 manager profile APIs + archetype mapping (33 tests passing)
