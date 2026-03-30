@@ -1,4 +1,3 @@
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare module '@cheddar-logic/data' {
   // Database helpers
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -24,6 +23,5 @@ declare module '@cheddar-logic/data' {
   // Default export (CJS interop via esModuleInterop)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const _default: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   export default _default;
 }
