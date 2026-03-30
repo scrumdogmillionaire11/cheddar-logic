@@ -20,6 +20,7 @@ from backend.config import (
 from backend.routers import (
     advisor_router,
     analyze_router,
+    draft_analysis_router,
     draft_sessions_router,
     receipts_router,
     screenshot_parse_router,
@@ -126,6 +127,7 @@ app.include_router(dashboard_router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_router, prefix=settings.API_V1_PREFIX)
 app.include_router(screenshot_parse_router, prefix=settings.API_V1_PREFIX)
 app.include_router(draft_sessions_router, prefix=settings.API_V1_PREFIX)
+app.include_router(draft_analysis_router, prefix=settings.API_V1_PREFIX)
 app.include_router(receipts_router, prefix=settings.API_V1_PREFIX)
 
 
