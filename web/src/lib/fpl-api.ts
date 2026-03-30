@@ -578,3 +578,450 @@ export async function pollForDetailedProjections(
 
   throw new Error('Analysis timed out. Please try again.');
 }
+
+// ─── Manager Profile (WI-0653) ───────────────────────────────────────────────
+
+export interface OnboardingAnswers {
+  /** How many seasons of FPL experience? */
+  seasons_played: number;
+  /** Transfer activity preference: 'minimal' | 'moderate' | 'active' */
+  transfer_frequency: 'minimal' | 'moderate' | 'active';
+  /** Primary goal: 'rank' | 'enjoyment' | 'competitive' */
+  primary_goal: 'rank' | 'enjoyment' | 'competitive';
+  /** Risk appetite: 1 (lowest) – 5 (highest) */
+  risk_appetite: 1 | 2 | 3 | 4 | 5;
+  /** Use differential captains? */
+  differential_captains: boolean;
+  /** Willing to take multiple hits when necessary? */
+  accept_hits: boolean;
+}
+
+export interface ManagerConstraints {
+  max_hits_per_gw: number;
+  chip_deploy_threshold: 'early' | 'standard' | 'late';
+  differential_tolerance: 'low' | 'medium' | 'high';
+  bench_investment_level: 'minimal' | 'balanced' | 'heavy';
+}
+
+export interface ManagerProfile {
+  user_id: string;
+  archetype:
+    | 'rank_climber'
+    | 'chip_strategist'
+    | 'differential_hunter'
+    | 'template_follower'
+    | 'wildcard_gambler';
+  constraints: ManagerConstraints;
+  onboarding_answers: OnboardingAnswers;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProfileCreateRequest {
+  user_id: string;
+  onboarding_answers: OnboardingAnswers;
+}
+
+export interface ProfilePatchRequest {
+  onboarding_answers?: Partial<OnboardingAnswers>;
+  constraints?: Partial<ManagerConstraints>;
+}
+
+/** POST /api/v1/profiles */
+export async function createProfile(
+  request: ProfileCreateRequest,
+): Promise<ManagerProfile> {
+  const response = await fetch(`${FPL_API_BASE_URL}/profiles`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(err, `Failed to create profile (${response.status})`),
+    );
+  }
+  return response.json();
+}
+
+/** GET /api/v1/profiles/{userId} */
+export async function getProfile(userId: string): Promise<ManagerProfile> {
+  const response = await fetch(`${FPL_API_BASE_URL}/profiles/${userId}`);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(err, `Failed to fetch profile (${response.status})`),
+    );
+  }
+  return response.json();
+}
+
+/** PATCH /api/v1/profiles/{userId} */
+export async function patchProfile(
+  userId: string,
+  patch: ProfilePatchRequest,
+): Promise<ManagerProfile> {
+  const response = await fetch(`${FPL_API_BASE_URL}/profiles/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(err, `Failed to update profile (${response.status})`),
+    );
+  }
+  return response.json();
+}
+
+// ─── Draft Sessions (WI-0654) ────────────────────────────────────────────────
+
+export interface DraftCandidate {
+  player_id: string | number;
+  name: string;
+  team: string;
+  position: 'GK' | 'DEF' | 'MID' | 'FWD';
+  price: number;
+  notes?: string;
+}
+
+export interface DraftSession {
+  session_id: string;
+  user_id: string;
+  label?: string;
+  candidates: DraftCandidate[];
+  status: 'draft' | 'generated' | 'audited';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DraftSessionCreateRequest {
+  user_id: string;
+  label?: string;
+  candidates?: DraftCandidate[];
+}
+
+export interface DraftSessionPatchRequest {
+  label?: string;
+  candidates?: DraftCandidate[];
+}
+
+export interface DraftGenerateResponse {
+  session_id: string;
+  generated_squad: DraftCandidate[];
+  rationale: string;
+}
+
+/** POST /api/v1/draft-sessions */
+export async function createDraftSession(
+  request: DraftSessionCreateRequest,
+): Promise<DraftSession> {
+  const response = await fetch(`${FPL_API_BASE_URL}/draft-sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        err,
+        `Failed to create draft session (${response.status})`,
+      ),
+    );
+  }
+  return response.json();
+}
+
+/** GET /api/v1/draft-sessions/{sessionId} */
+export async function getDraftSession(
+  sessionId: string,
+): Promise<DraftSession> {
+  const response = await fetch(
+    `${FPL_API_BASE_URL}/draft-sessions/${sessionId}`,
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        err,
+        `Failed to fetch draft session (${response.status})`,
+      ),
+    );
+  }
+  return response.json();
+}
+
+/** POST /api/v1/draft-sessions/{sessionId}/generate */
+export async function generateDraft(
+  sessionId: string,
+): Promise<DraftGenerateResponse> {
+  const response = await fetch(
+    `${FPL_API_BASE_URL}/draft-sessions/${sessionId}/generate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        err,
+        `Failed to generate draft (${response.status})`,
+      ),
+    );
+  }
+  return response.json();
+}
+
+// ─── Screenshot Parse (WI-0655) ──────────────────────────────────────────────
+
+export interface ParsedSlot {
+  slot_index: number;
+  position: 'GK' | 'DEF' | 'MID' | 'FWD';
+  matched_name: string | null;
+  raw_text: string;
+  confidence: number;
+  is_captain?: boolean;
+  is_vice_captain?: boolean;
+}
+
+export interface ParsedSquad {
+  slots: ParsedSlot[];
+  unresolved_slots: ParsedSlot[];
+  layout: string;
+  overall_confidence: number;
+  parse_warnings: string[];
+}
+
+export interface ScreenshotParseRequest {
+  /** Base64-encoded image(s). 1–3 images. */
+  images: string[];
+}
+
+export interface ScreenshotParseResponse {
+  parsed_squad: ParsedSquad;
+  image_count: number;
+}
+
+/** POST /api/v1/screenshot-parse */
+export async function parseScreenshot(
+  request: ScreenshotParseRequest,
+): Promise<ScreenshotParseResponse> {
+  const response = await fetch(`${FPL_API_BASE_URL}/screenshot-parse`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        err,
+        `Failed to parse screenshot (${response.status})`,
+      ),
+    );
+  }
+  return response.json();
+}
+
+// ─── Draft Audit & Compare (WI-0656) ─────────────────────────────────────────
+
+export interface AuditDimension {
+  dimension: string;
+  score: number;
+  label: string;
+  rationale: string;
+  flags: string[];
+}
+
+export interface DraftAuditRequest {
+  user_id?: string;
+}
+
+export interface DraftAuditResponse {
+  session_id: string;
+  overall_score: number;
+  grade: string;
+  dimensions: AuditDimension[];
+  summary: string;
+  top_strengths: string[];
+  top_risks: string[];
+}
+
+export interface CompareDraftsRequest {
+  session_ids: [string, string];
+  user_id?: string;
+}
+
+export interface CompareDraftsDimension {
+  dimension: string;
+  session_a_score: number;
+  session_b_score: number;
+  winner: 'a' | 'b' | 'tie';
+  delta: number;
+}
+
+export interface CompareDraftsResponse {
+  session_a_id: string;
+  session_b_id: string;
+  overall_winner: 'a' | 'b' | 'tie';
+  dimensions: CompareDraftsDimension[];
+  recommendation: string;
+}
+
+/** POST /api/v1/draft-sessions/{sessionId}/audit */
+export async function auditDraft(
+  sessionId: string,
+  request: DraftAuditRequest = {},
+): Promise<DraftAuditResponse> {
+  const response = await fetch(
+    `${FPL_API_BASE_URL}/draft-sessions/${sessionId}/audit`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(err, `Failed to audit draft (${response.status})`),
+    );
+  }
+  return response.json();
+}
+
+/** POST /api/v1/draft-sessions/compare */
+export async function compareDrafts(
+  request: CompareDraftsRequest,
+): Promise<CompareDraftsResponse> {
+  const response = await fetch(
+    `${FPL_API_BASE_URL}/draft-sessions/compare`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        err,
+        `Failed to compare drafts (${response.status})`,
+      ),
+    );
+  }
+  return response.json();
+}
+
+// ─── Decision Receipts & Memory (WI-0658) ────────────────────────────────────
+
+export interface DecisionDetails {
+  transfer_out?: string;
+  transfer_in?: string;
+  chip_activated?: string;
+  captain?: string;
+  notes?: string;
+}
+
+export interface DecisionReceiptRequest {
+  manager_id: string;
+  gameweek: number;
+  decision_type: 'transfer' | 'chip' | 'captain' | 'hold';
+  decision_details: DecisionDetails;
+  rationale: string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  analysis_id?: string;
+}
+
+export interface DecisionReceiptResponse {
+  receipt_id: string;
+  manager_id: string;
+  gameweek: number;
+  decision_type: string;
+  decision_details: DecisionDetails;
+  rationale: string;
+  confidence: string;
+  created_at: string;
+  drift_flags: string[];
+}
+
+export interface UserAnalyticsResponse {
+  manager_id: string;
+  total_decisions: number;
+  decisions_by_type: Record<string, number>;
+  confidence_distribution: Record<string, number>;
+  drift_flag_summary: Record<string, number>;
+  gameweek_coverage: number[];
+}
+
+export interface DecisionMemorySummary {
+  manager_id: string;
+  recent_decisions: DecisionReceiptResponse[];
+  pattern_notes: string[];
+  drift_flags_active: string[];
+}
+
+/** POST /api/v1/decision-receipts */
+export async function submitDecisionReceipt(
+  request: DecisionReceiptRequest,
+): Promise<DecisionReceiptResponse> {
+  const response = await fetch(`${FPL_API_BASE_URL}/decision-receipts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        err,
+        `Failed to submit decision receipt (${response.status})`,
+      ),
+    );
+  }
+  return response.json();
+}
+
+/** GET /api/v1/user/{managerId}/analytics */
+export async function getUserAnalytics(
+  managerId: string,
+): Promise<UserAnalyticsResponse> {
+  const response = await fetch(
+    `${FPL_API_BASE_URL}/user/${managerId}/analytics`,
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        err,
+        `Failed to fetch user analytics (${response.status})`,
+      ),
+    );
+  }
+  return response.json();
+}
+
+/** GET /api/v1/user/{managerId}/memory */
+export async function getUserMemory(
+  managerId: string,
+): Promise<DecisionMemorySummary> {
+  const response = await fetch(
+    `${FPL_API_BASE_URL}/user/${managerId}/memory`,
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        err,
+        `Failed to fetch user memory (${response.status})`,
+      ),
+    );
+  }
+  return response.json();
+}

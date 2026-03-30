@@ -145,6 +145,26 @@ async def http_exception_handler(
     )
 
 
+def _sanitize_validation_errors(errors: list) -> list:
+    """Ensure all values in the errors list are JSON-serializable.
+
+    Pydantic v2 can include non-serializable objects (e.g. ValueError instances)
+    in the 'ctx' field of validation error dicts.  This strips them down to
+    their string representation so the handler doesn't crash.
+    """
+    sanitized = []
+    for error in errors:
+        clean = {k: v for k, v in error.items() if k != "ctx"}
+        if "ctx" in error:
+            ctx = error["ctx"]
+            clean["ctx"] = {
+                k: str(v) if not isinstance(v, (str, int, float, bool, type(None))) else v
+                for k, v in ctx.items()
+            } if isinstance(ctx, dict) else str(ctx)
+        sanitized.append(clean)
+    return sanitized
+
+
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
@@ -165,7 +185,7 @@ async def validation_exception_handler(
             message="Validation error",
             details={
                 "detail": "; ".join(error_messages),
-                "errors": errors,  # Include full error details for debugging
+                "errors": _sanitize_validation_errors(errors),
             },
         ),
     )
