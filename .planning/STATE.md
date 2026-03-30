@@ -180,4 +180,4 @@ This file is intentionally minimal to avoid stale status drift.
 | 108 | WI-0653: Manager profile APIs + archetype mapping — POST/GET/PATCH /api/v1/profiles, 5-archetype deterministic rules, per-archetype constraint defaults, 33 tests | 2026-03-30 | 19187bd | [106-wi-0653-manager-profile-apis-and-archety](./quick/106-wi-0653-manager-profile-apis-and-archety/) |
 | 109 | WI-0655: Screenshot parsing + parsed-squad normalization — POST /api/v1/screenshot-parse, PlayerRegistry fuzzy match, layout detection, synthetic 15-slot scaffold, 51 tests | 2026-03-30 | 8d91364 | [107-wi-0655-screenshot-parsing-and-parsed-sq](./quick/107-wi-0655-screenshot-parsing-and-parsed-sq/) |
 
-Last activity: 2026-03-30 - Completed quick task 108: WI-0653 manager profile APIs + archetype mapping (33 tests passing)
+Last activity: 2026-03-30 - Completed quick task 109: WI-0655 screenshot parsing + parsed-squad normalization (POST /api/v1/screenshot-parse, 51 tests passing)
