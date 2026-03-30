@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T17:32:00Z"
-last_activity: "2026-03-30 - Completed WI-0659 (FPL product shell + API-client cutover, 58 contract checks, build green)."
+last_updated: "2026-03-30T19:28:08Z"
+last_activity: "2026-03-30 - Completed quick task 114: WI-0660 draft workbench UI — 7 components (onboarding, draft-lab, candidate-card, screenshot-uploader, parse-review, draft-audit, draft-compare) + shell wiring + 2 contract test files. Active: WI-0661, then WI-0662."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,59 +31,49 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-30
-- Next action: Continue **WI-0654** (critical FPL path, gates WI-0656 and WI-0659); **WI-0663 + WI-0664** are independent and can run concurrently. WI-0658 ✓ done.
+- Next action: Start **WI-0660 + WI-0661 in parallel** (both unblocked); then **WI-0662** after both land.
 
-## Sprint Plan — 2026-03-30 re-assess (post WI-0653/0655/0657 completion)
+## Sprint Plan — 2026-03-30 re-assess (post WI-0659 completion — all gated items done)
 
-> Recent completions: WI-0648, WI-0650, WI-0651, WI-0652, WI-0653, WI-0655, WI-0657, WI-0658, WI-0701, WI-0702, WI-0703 (see `WORK_QUEUE/COMPLETE/`).
+> Recent completions: WI-0648, WI-0650, WI-0651, WI-0652, WI-0653, WI-0654, WI-0655, WI-0656, WI-0657, WI-0658, WI-0659, WI-0701, WI-0702, WI-0703 (see `WORK_QUEUE/COMPLETE/`).
 
 ### Hard Deadlines
 
-- No hard date-bound incidents currently open in active queue; highest priority is dependency-efficient execution of Program Track A.
+- No hard date-bound deadlines in active queue.
 
 ### Dependency Chains
 
-- ~~**WI-0653**, **WI-0655**, **WI-0657**~~ — ✓ DONE
-- **WI-0654** — depends on WI-0652 ✓, WI-0653 ✓ → **UNBLOCKED**
-- ~~**WI-0658**~~ — ✓ DONE (decision receipts + memory + trust analytics)
-- ~~**WI-0656**~~ — ✓ DONE (draft audit + compare APIs, 38 tests)
-- **WI-0659** — depends on WI-0654 ❌, WI-0656 ✓, WI-0658 ✓ → blocked on WI-0654 only
-- **WI-0660** and **WI-0661** — parallel after WI-0659 and their respective prerequisites
-- **WI-0662** — final FPL track closeout (after WI-0659, WI-0660, WI-0661)
-- **WI-0652 → WI-0662** — FPL product-platform program chain
+- **WI-0660** — depends on WI-0654 ✓, WI-0655 ✓, WI-0656 ✓, WI-0659 ✓ → **UNBLOCKED**
+- **WI-0661** — depends on WI-0657 ✓, WI-0658 ✓, WI-0659 ✓ → **UNBLOCKED**
+- **WI-0662** — depends on WI-0659 ✓, WI-0660, WI-0661 → blocked until both land
 - **WI-0663** — independent MLB enhancement → **UNBLOCKED**
 - **WI-0664 → WI-0667** — public betting splits pipeline; WI-0664 → **UNBLOCKED**
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-30 (re-assessed)
+## Prioritized Open Work Queue — 2026-03-30
 
 ### Next Up (Immediate — Parallel Batch)
 
-- [WI-0654](../WORK_QUEUE/WI-0654.md) — Draft sessions API + draft builder (LOE L) — **critical FPL path, gates WI-0656 and WI-0659**
-- ~~[WI-0658](../WORK_QUEUE/COMPLETE/WI-0658.md)~~ — ✓ Done: decision receipts + memory + trust analytics APIs (35 tests)
-- [WI-0663](../WORK_QUEUE/WI-0663.md) — MLB pitcher-K strong under monitoring (LOE M) — **independent, no FPL chain dependency**
-- [WI-0664](../WORK_QUEUE/WI-0664.md) — DB migration: public betting splits columns (LOE S) — **independent, gates Track B**
+- [WI-0660](../WORK_QUEUE/WI-0660.md) — Draft coach + screenshot-audit UI surfaces (LOE L) — **unblocked**
+- [WI-0661](../WORK_QUEUE/WI-0661.md) — Weekly co-pilot dashboard refresh + report-card UI (LOE M) — **unblocked**
 
 ### Next Up (Gated Follow-on)
 
-- ~~[WI-0656](../WORK_QUEUE/COMPLETE/WI-0656.md)~~ — ✓ Done: Draft audit scoring + comparison APIs (38 tests)
-- [WI-0659](../WORK_QUEUE/WI-0659.md) — Main Next.js FPL product shell + API-client cutover (after WI-0654, WI-0656, WI-0658, and WI-0653 ✓, WI-0657 ✓)
-- [WI-0660](../WORK_QUEUE/WI-0660.md) + [WI-0661](../WORK_QUEUE/WI-0661.md) — Draft coach UI + weekly co-pilot dashboard (parallel, after WI-0659)
-- [WI-0662](../WORK_QUEUE/WI-0662.md) — Standalone Sage frontend internal-only conversion (after WI-0659, WI-0660, WI-0661)
-- [WI-0665](../WORK_QUEUE/WI-0665.md) → [WI-0666](../WORK_QUEUE/WI-0666.md) → [WI-0667](../WORK_QUEUE/WI-0667.md) — Track B follow-ons (after WI-0664)
+- [WI-0662](../WORK_QUEUE/WI-0662.md) — Standalone Sage frontend internal-only conversion + runbook cleanup (LOE S) — after WI-0660 and WI-0661
+
+### Secondary / Independent Tracks
+
+- [WI-0663](../WORK_QUEUE/WI-0663.md) — MLB pitcher-K strong under monitoring (LOE M) — independent, no chain dependency
+- [WI-0664](../WORK_QUEUE/WI-0664.md) → [WI-0665](../WORK_QUEUE/WI-0665.md) → [WI-0666](../WORK_QUEUE/WI-0666.md) → [WI-0667](../WORK_QUEUE/WI-0667.md) — public betting splits pipeline (low priority overlay)
 
 ### Program Track A — FPL Product Platform
 
-`WI-0652 ✓ → (WI-0653 ✓, WI-0655 ✓, WI-0657 ✓) → (WI-0654, WI-0658 ✓) → WI-0656 ✓ → WI-0659 → (WI-0660, WI-0661) → WI-0662`
+`WI-0652 ✓ → (WI-0653 ✓, WI-0655 ✓, WI-0657 ✓) → (WI-0654 ✓, WI-0656 ✓, WI-0658 ✓) → WI-0659 ✓ → (WI-0660, WI-0661) → WI-0662`
 
 ### Program Track B — Public Splits Pipeline
 
 `WI-0664 → WI-0665 → WI-0666 → WI-0667`
-
-### Independent Tracks
-
-- [WI-0663](../WORK_QUEUE/WI-0663.md) — MLB pitcher-K strong under monitoring (LOE M), no dependencies.
 
 ---
 
@@ -184,5 +174,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 110 | WI-0657: Weekly analysis explainability contract — ConfidenceBand/ScenarioNote/ExplainabilityBlock/RelativeRiskFrame Pydantic models, 5 additive fields in build_detailed_analysis_contract, 43 tests | 2026-03-30 | 3bd566f | [108-wi-0657-weekly-analysis-explainability-u](./quick/108-wi-0657-weekly-analysis-explainability-u/) |
 | 111 | WI-0658: Decision receipts + memory + trust analytics APIs — POST /decision-receipts, GET /user/{id}/analytics + /memory, 4 drift flags, 35 tests | 2026-03-30 | 70e2ad2 | [111-wi-0658-decision-receipts-memory-and-tru](./quick/111-wi-0658-decision-receipts-memory-and-tru/) |
 | 112 | WI-0656: Draft audit scoring + comparison APIs — POST /draft-sessions/{id}/audit (8 dimensions, profile-aware), POST /draft-sessions/compare (archetype-weighted), 38 tests | 2026-03-30 | e3d02a4 | [112-wi-0656](./quick/112-wi-0656/) |
+| 114 | WI-0660: Draft workbench UI — 7 components (onboarding, draft-lab, candidate-card, screenshot-uploader, parse-review, draft-audit, draft-compare), shell wiring, 2 contract test files | 2026-03-30 | d576106 | [114-wi-0660-draft-workbench-profile-build-pa](./quick/114-wi-0660-draft-workbench-profile-build-pa/) |
 
-Last activity: 2026-03-30 - Completed quick task 112: WI-0656 draft audit + compare APIs (38 tests, 8-dimension scorer, archetype-weighted compare)
+Last activity: 2026-03-30 - Completed quick task 114: WI-0660 draft workbench UI — 7 components, shell wiring, 2 contract test files (16 checks all pass)
