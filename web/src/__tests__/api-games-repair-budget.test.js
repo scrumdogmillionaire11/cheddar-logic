@@ -84,8 +84,17 @@ async function runSourceContractAssertions(assert) {
     'route must attach non-prod diagnostics metadata to response meta',
   );
   assert.ok(
-    source.includes('true_play: truePlayMap.get(row.game_id) ?? null'),
-    'route must expose canonical true_play per game',
+    source.includes('buildGamesResponseData(deduplicatedRows, lifecycleMode') &&
+      source.includes("response_mode: params.responseMode") &&
+      source.includes('timeout_fallback: params.timeoutFallback ?? false') &&
+      source.includes('cache_age_ms: params.cacheAgeMs ?? null'),
+    'route must build /api/games responses through the timeout-aware payload helper',
+  );
+  assert.ok(
+    source.includes('true_play: truePlayMap.get(row.game_id) ?? null') &&
+      source.includes('db.pragma(`busy_timeout = ${busyTimeoutMs}`)') &&
+      source.includes('buildGamesTimeoutFallbackPayload('),
+    'route must preserve canonical true_play while applying read-only busy_timeout and timeout fallback handling',
   );
 
   assert.ok(
@@ -115,6 +124,16 @@ async function validateLivePayload(baseUrl, assert) {
   assert.ok(
     payload.meta && typeof payload.meta === 'object',
     'API payload must include meta',
+  );
+  assert.strictEqual(
+    payload.meta.response_mode,
+    'full',
+    'healthy /api/games responses should report response_mode=full',
+  );
+  assert.strictEqual(
+    payload.meta.timeout_fallback,
+    false,
+    'healthy /api/games responses should not report timeout_fallback',
   );
 
   if (payload.meta?.diagnostics) {

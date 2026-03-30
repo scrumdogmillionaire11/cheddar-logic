@@ -82,10 +82,7 @@
  */
 
 import { NextResponse, NextRequest } from 'next/server';
-import {
-  getDatabaseReadOnly,
-  closeReadOnlyInstance,
-} from '@cheddar-logic/data';
+import cheddarData from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
@@ -151,6 +148,11 @@ import {
   buildOptionalOddsSelect,
 } from '@/lib/games/query-builder';
 
+const { getDatabaseReadOnly, closeReadOnlyInstance } = cheddarData as {
+  getDatabaseReadOnly: typeof import('@cheddar-logic/data').getDatabaseReadOnly;
+  closeReadOnlyInstance: typeof import('@cheddar-logic/data').closeReadOnlyInstance;
+};
+
 const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
@@ -180,6 +182,27 @@ const API_GAMES_HORIZON_HOURS = Number.isFinite(RAW_API_GAMES_HORIZON_HOURS)
 const HAS_API_GAMES_HORIZON = API_GAMES_HORIZON_HOURS > 0;
 const API_GAMES_INGEST_FAILURE_LOOKBACK_HOURS = 12;
 const TOTAL_PROJECTION_DRIFT_WARN_THRESHOLD = 0.5;
+const RAW_API_GAMES_TIMEOUT_MS = Number.parseInt(
+  process.env.API_GAMES_TIMEOUT_MS || '5000',
+  10,
+);
+const API_GAMES_TIMEOUT_MS =
+  Number.isFinite(RAW_API_GAMES_TIMEOUT_MS) && RAW_API_GAMES_TIMEOUT_MS > 0
+    ? RAW_API_GAMES_TIMEOUT_MS
+    : 5000;
+const RAW_API_GAMES_SLOW_WARN_MS = Number.parseInt(
+  process.env.API_GAMES_SLOW_WARN_MS || '3000',
+  10,
+);
+const API_GAMES_SLOW_WARN_MS =
+  Number.isFinite(RAW_API_GAMES_SLOW_WARN_MS) &&
+  RAW_API_GAMES_SLOW_WARN_MS > 0
+    ? RAW_API_GAMES_SLOW_WARN_MS
+    : 3000;
+const API_GAMES_BUSY_TIMEOUT_MS =
+  API_GAMES_TIMEOUT_MS > 250
+    ? Math.max(250, API_GAMES_TIMEOUT_MS - 250)
+    : API_GAMES_TIMEOUT_MS;
 
 interface GameRow {
   id: string;
@@ -507,6 +530,408 @@ type SportCardTypeContract = {
   evidenceOnlyCardTypes: Set<string>;
   expectedPlayableMarkets: Set<MarketType>;
 };
+type ApiGamesResponseMode = 'full' | 'degraded_base_games' | 'stale_cache';
+type GamesTimeoutStage =
+  | 'db_ready'
+  | 'db_open'
+  | 'load_games'
+  | 'cards_query'
+  | 'cards_parse'
+  | 'response_build';
+type GamesApiDataRow = {
+  id: string;
+  gameId: string;
+  sport: string;
+  homeTeam: string;
+  awayTeam: string;
+  gameTimeUtc: string;
+  status: string;
+  lifecycle_mode: LifecycleMode;
+  display_status: DisplayStatus;
+  createdAt: string;
+  projection_inputs_complete: boolean | null;
+  projection_missing_inputs: string[];
+  source_mapping_ok: boolean | null;
+  source_mapping_failures: string[];
+  ingest_failure_reason_code: string | null;
+  ingest_failure_reason_detail: string | null;
+  odds: {
+    h2hHome: number | null;
+    h2hAway: number | null;
+    h2hBook: string | null;
+    h2hHomeBook: string | null;
+    h2hAwayBook: string | null;
+    total: number | null;
+    totalBook: string | null;
+    totalLineOver: number | null;
+    totalLineOverBook: string | null;
+    totalLineUnder: number | null;
+    totalLineUnderBook: string | null;
+    spreadHome: number | null;
+    spreadAway: number | null;
+    spreadHomeBook: string | null;
+    spreadAwayBook: string | null;
+    spreadPriceHome: number | null;
+    spreadPriceHomeBook: string | null;
+    spreadPriceAway: number | null;
+    spreadPriceAwayBook: string | null;
+    totalPriceOver: number | null;
+    totalPriceOverBook: string | null;
+    totalPriceUnder: number | null;
+    totalPriceUnderBook: string | null;
+    spreadIsMispriced: boolean | null;
+    spreadMispriceType: string | null;
+    spreadMispriceStrength: number | null;
+    spreadOutlierBook: string | null;
+    spreadOutlierDelta: number | null;
+    spreadReviewFlag: boolean | null;
+    spreadConsensusLine: number | null;
+    spreadConsensusConfidence: string | null;
+    spreadDispersionStddev: number | null;
+    spreadSourceBookCount: number | null;
+    totalIsMispriced: boolean | null;
+    totalMispriceType: string | null;
+    totalMispriceStrength: number | null;
+    totalOutlierBook: string | null;
+    totalOutlierDelta: number | null;
+    totalReviewFlag: boolean | null;
+    totalConsensusLine: number | null;
+    totalConsensusConfidence: string | null;
+    totalDispersionStddev: number | null;
+    totalSourceBookCount: number | null;
+    h2hConsensusHome: number | null;
+    h2hConsensusAway: number | null;
+    h2hConsensusConfidence: string | null;
+    capturedAt: string | null;
+  } | null;
+  consistency: Play['consistency'];
+  true_play: Play | null;
+  plays: Play[];
+};
+type GamesResponseMeta = {
+  current_run_id: string | null;
+  generated_at: string;
+  run_status: ReturnType<typeof getRunStatus> | null;
+  items_count: number;
+  response_mode: ApiGamesResponseMode;
+  timeout_fallback: boolean;
+  timeout_stage?: GamesTimeoutStage;
+  cache_age_ms?: number | null;
+  perf_ms?:
+    | {
+        total: number;
+        db_ready: number;
+        load_games: number;
+        cards_query: number;
+        cards_parse: number;
+        card_rows: number;
+      }
+    | undefined;
+  diagnostics?: Record<string, unknown> | undefined;
+};
+type GamesResponsePayload = {
+  success: true;
+  data: GamesApiDataRow[];
+  meta: GamesResponseMeta;
+  join_debug?: Record<string, unknown>;
+};
+type GamesPerf = {
+  dbReadyMs: number;
+  loadGamesMs: number;
+  cardsQueryMs: number;
+  cardsParseMs: number;
+  cardRows: number;
+  totalMs: number;
+};
+type GamesPayloadCacheEntry = {
+  payload: GamesResponsePayload;
+  cachedAt: number;
+};
+
+const lastGoodGamesPayloadCache = new Map<string, GamesPayloadCacheEntry>();
+
+class GamesRouteTimeoutError extends Error {
+  stage: GamesTimeoutStage;
+  elapsedMs: number;
+
+  constructor(stage: GamesTimeoutStage, elapsedMs: number) {
+    super(
+      `[API] /api/games request budget exceeded at ${stage} after ${elapsedMs}ms`,
+    );
+    this.name = 'GamesRouteTimeoutError';
+    this.stage = stage;
+    this.elapsedMs = elapsedMs;
+  }
+}
+
+function createGamesCacheKey(
+  lifecycleMode: LifecycleMode,
+  sportFilter: string | null,
+): string {
+  return `${lifecycleMode}|${sportFilter ?? 'ALL'}`;
+}
+
+function createGamesRequestBudget(requestStartedAt: number) {
+  const deadlineAt = requestStartedAt + API_GAMES_TIMEOUT_MS;
+  return {
+    timeoutMs: API_GAMES_TIMEOUT_MS,
+    elapsedMs(): number {
+      return Date.now() - requestStartedAt;
+    },
+    remainingMs(): number {
+      return Math.max(0, deadlineAt - Date.now());
+    },
+    assertWithin(stage: GamesTimeoutStage): void {
+      const elapsedMs = Date.now() - requestStartedAt;
+      if (elapsedMs > API_GAMES_TIMEOUT_MS) {
+        throw new GamesRouteTimeoutError(stage, elapsedMs);
+      }
+    },
+  };
+}
+
+function isRecoverableGamesTimeoutError(error: unknown): boolean {
+  if (error instanceof GamesRouteTimeoutError) {
+    return true;
+  }
+  const message = String(
+    error instanceof Error ? error.message : error ?? '',
+  ).toLowerCase();
+  return (
+    message.includes('sqlite_busy') ||
+    message.includes('database is locked') ||
+    message.includes('database is busy') ||
+    message.includes('busy_timeout')
+  );
+}
+
+function isNonRecoverableGamesDbError(error: unknown): boolean {
+  const message = String(
+    error instanceof Error ? error.message : error ?? '',
+  ).toLowerCase();
+  return (
+    message.includes('database file not found') ||
+    message.includes('malformed and cannot be opened')
+  );
+}
+
+function deriveTimeoutStage(
+  error: unknown,
+  fallbackStage: GamesTimeoutStage,
+): GamesTimeoutStage {
+  return error instanceof GamesRouteTimeoutError ? error.stage : fallbackStage;
+}
+
+export function buildGamesResponseData(
+  rows: GameRow[],
+  lifecycleMode: LifecycleMode,
+  options?: {
+    gameConsistencyMap?: Map<string, Play['consistency']>;
+    truePlayMap?: Map<string, Play>;
+    playsMap?: Map<string, Play[]>;
+  },
+): GamesApiDataRow[] {
+  const gameConsistencyMap = options?.gameConsistencyMap ?? new Map();
+  const truePlayMap = options?.truePlayMap ?? new Map();
+  const playsMap = options?.playsMap ?? new Map();
+
+  return rows.map((row) => {
+    const hasOdds =
+      row.h2h_home !== null ||
+      row.h2h_away !== null ||
+      row.total !== null ||
+      row.spread_home !== null ||
+      row.spread_away !== null;
+
+    const displayStatus = deriveDisplayStatus(lifecycleMode);
+
+    return {
+      id: row.id,
+      gameId: row.game_id,
+      sport: row.sport,
+      homeTeam: row.home_team,
+      awayTeam: row.away_team,
+      gameTimeUtc: row.game_time_utc,
+      status: row.status,
+      lifecycle_mode: lifecycleMode,
+      display_status: displayStatus,
+      createdAt: row.created_at,
+      projection_inputs_complete: row.projection_inputs_complete,
+      projection_missing_inputs: row.projection_missing_inputs,
+      source_mapping_ok: row.source_mapping_ok,
+      source_mapping_failures: row.source_mapping_failures,
+      ingest_failure_reason_code: row.ingest_failure_reason_code,
+      ingest_failure_reason_detail: row.ingest_failure_reason_detail,
+      odds: hasOdds
+        ? {
+            h2hHome: row.h2h_home,
+            h2hAway: row.h2h_away,
+            h2hBook: row.h2h_book ?? null,
+            h2hHomeBook: row.h2h_home_book ?? null,
+            h2hAwayBook: row.h2h_away_book ?? null,
+            total: row.total,
+            totalBook: row.total_book ?? null,
+            totalLineOver: row.total_line_over,
+            totalLineOverBook: row.total_line_over_book ?? null,
+            totalLineUnder: row.total_line_under,
+            totalLineUnderBook: row.total_line_under_book ?? null,
+            spreadHome: row.spread_home,
+            spreadAway: row.spread_away,
+            spreadHomeBook: row.spread_home_book ?? null,
+            spreadAwayBook: row.spread_away_book ?? null,
+            spreadPriceHome: row.spread_price_home,
+            spreadPriceHomeBook: row.spread_price_home_book ?? null,
+            spreadPriceAway: row.spread_price_away,
+            spreadPriceAwayBook: row.spread_price_away_book ?? null,
+            totalPriceOver: row.total_price_over,
+            totalPriceOverBook: row.total_price_over_book ?? null,
+            totalPriceUnder: row.total_price_under,
+            totalPriceUnderBook: row.total_price_under_book ?? null,
+            spreadIsMispriced:
+              row.spread_is_mispriced === null
+                ? null
+                : row.spread_is_mispriced === 1,
+            spreadMispriceType: row.spread_misprice_type ?? null,
+            spreadMispriceStrength: row.spread_misprice_strength,
+            spreadOutlierBook: row.spread_outlier_book ?? null,
+            spreadOutlierDelta: row.spread_outlier_delta,
+            spreadReviewFlag:
+              row.spread_review_flag === null
+                ? null
+                : row.spread_review_flag === 1,
+            spreadConsensusLine: row.spread_consensus_line,
+            spreadConsensusConfidence:
+              row.spread_consensus_confidence ?? null,
+            spreadDispersionStddev: row.spread_dispersion_stddev,
+            spreadSourceBookCount: row.spread_source_book_count,
+            totalIsMispriced:
+              row.total_is_mispriced === null
+                ? null
+                : row.total_is_mispriced === 1,
+            totalMispriceType: row.total_misprice_type ?? null,
+            totalMispriceStrength: row.total_misprice_strength,
+            totalOutlierBook: row.total_outlier_book ?? null,
+            totalOutlierDelta: row.total_outlier_delta,
+            totalReviewFlag:
+              row.total_review_flag === null
+                ? null
+                : row.total_review_flag === 1,
+            totalConsensusLine: row.total_consensus_line,
+            totalConsensusConfidence:
+              row.total_consensus_confidence ?? null,
+            totalDispersionStddev: row.total_dispersion_stddev,
+            totalSourceBookCount: row.total_source_book_count,
+            h2hConsensusHome: row.h2h_consensus_home,
+            h2hConsensusAway: row.h2h_consensus_away,
+            h2hConsensusConfidence: row.h2h_consensus_confidence ?? null,
+            capturedAt: row.odds_captured_at,
+          }
+        : null,
+      consistency: gameConsistencyMap.get(row.game_id) ?? {
+        total_bias: 'UNKNOWN',
+      },
+      true_play: truePlayMap.get(row.game_id) ?? null,
+      plays: playsMap.get(row.game_id) ?? [],
+    };
+  });
+}
+
+export function buildGamesSuccessPayload(params: {
+  data: GamesApiDataRow[];
+  currentRunId: string | null;
+  runStatus: ReturnType<typeof getRunStatus> | null;
+  perf: GamesPerf;
+  responseMode: ApiGamesResponseMode;
+  isDev: boolean;
+  timeoutFallback?: boolean;
+  timeoutStage?: GamesTimeoutStage;
+  cacheAgeMs?: number | null;
+  diagnostics?: Record<string, unknown>;
+  joinDebug?: Record<string, unknown>;
+  generatedAt?: string;
+}): GamesResponsePayload {
+  const generatedAt = params.generatedAt ?? new Date().toISOString();
+  const payload: GamesResponsePayload = {
+    success: true,
+    data: params.data,
+    meta: {
+      current_run_id: params.currentRunId,
+      generated_at: generatedAt,
+      run_status: params.runStatus,
+      items_count: params.data.length,
+      response_mode: params.responseMode,
+      timeout_fallback: params.timeoutFallback ?? false,
+      timeout_stage: params.timeoutStage,
+      cache_age_ms: params.cacheAgeMs ?? null,
+      perf_ms: params.isDev
+        ? {
+            total: params.perf.totalMs,
+            db_ready: params.perf.dbReadyMs,
+            load_games: params.perf.loadGamesMs,
+            cards_query: params.perf.cardsQueryMs,
+            cards_parse: params.perf.cardsParseMs,
+            card_rows: params.perf.cardRows,
+          }
+        : undefined,
+      diagnostics: params.diagnostics,
+    },
+  };
+  if (params.joinDebug) {
+    payload.join_debug = params.joinDebug;
+  }
+  return payload;
+}
+
+export function buildGamesTimeoutFallbackPayload(params: {
+  rows: GameRow[] | null;
+  lifecycleMode: LifecycleMode;
+  currentRunId: string | null;
+  runStatus: ReturnType<typeof getRunStatus> | null;
+  perf: GamesPerf;
+  timeoutStage: GamesTimeoutStage;
+  cacheEntry?: GamesPayloadCacheEntry | null;
+  isDev: boolean;
+}): GamesResponsePayload | null {
+  if (params.rows) {
+    return buildGamesSuccessPayload({
+      data: buildGamesResponseData(params.rows, params.lifecycleMode),
+      currentRunId: params.currentRunId,
+      runStatus: params.runStatus,
+      perf: params.perf,
+      responseMode: 'degraded_base_games',
+      isDev: params.isDev,
+      timeoutFallback: true,
+      timeoutStage: params.timeoutStage,
+      cacheAgeMs: null,
+    });
+  }
+
+  if (!params.cacheEntry) {
+    return null;
+  }
+
+  const cacheAgeMs = Math.max(0, Date.now() - params.cacheEntry.cachedAt);
+  return {
+    ...params.cacheEntry.payload,
+    meta: {
+      ...params.cacheEntry.payload.meta,
+      response_mode: 'stale_cache',
+      timeout_fallback: true,
+      timeout_stage: params.timeoutStage,
+      cache_age_ms: cacheAgeMs,
+      perf_ms: params.isDev
+        ? {
+            total: params.perf.totalMs,
+            db_ready: params.perf.dbReadyMs,
+            load_games: params.perf.loadGamesMs,
+            cards_query: params.perf.cardsQueryMs,
+            cards_parse: params.perf.cardsParseMs,
+            card_rows: params.perf.cardRows,
+          }
+        : undefined,
+    },
+  };
+}
 
 const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
   NBA: {
@@ -602,10 +1027,11 @@ function emitTotalProjectionDriftWarnings(
 export async function GET(request: NextRequest) {
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
   const requestStartedAt = Date.now();
+  const budget = createGamesRequestBudget(requestStartedAt);
   const stageCounters = createStageCounters();
   const gamesWithPlayableMarkets = new Map<string, Map<string, Set<string>>>();
   const outOfContractPlayDowngrades = new Map<string, number>();
-  const perf = {
+  const perf: GamesPerf = {
     dbReadyMs: 0,
     loadGamesMs: 0,
     cardsQueryMs: 0,
@@ -613,6 +1039,15 @@ export async function GET(request: NextRequest) {
     cardRows: 0,
     totalMs: 0,
   };
+  const isDev = process.env.NODE_ENV !== 'production';
+  let currentStage: GamesTimeoutStage = 'db_ready';
+  let lifecycleMode: LifecycleMode = 'pregame';
+  let sportFilter: string | null = null;
+  let rows: GameRow[] | null = null;
+  let activeRunIds: string[] = [];
+  let currentRunId: string | null = null;
+  let runStatus: ReturnType<typeof getRunStatus> | null = null;
+  let cacheKey: string | null = null;
   try {
     // Security checks: rate limiting, input validation
     const securityCheck = performSecurityChecks(request, '/api/games');
@@ -620,9 +1055,11 @@ export async function GET(request: NextRequest) {
       return securityCheck.error!;
     }
 
+    currentStage = 'db_ready';
     const dbReadyStartedAt = Date.now();
     await ensureDbReady();
     perf.dbReadyMs = Date.now() - dbReadyStartedAt;
+    budget.assertWithin('db_ready');
 
     if (process.env.ENABLE_AUTH_WALLS === 'true') {
       const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
@@ -634,13 +1071,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    currentStage = 'db_open';
     db = getDatabaseReadOnly();
-    let activeRunIds = getActiveRunIds(db);
+    const busyTimeoutMs = Math.max(
+      1,
+      Math.min(API_GAMES_BUSY_TIMEOUT_MS, Math.max(1, budget.remainingMs())),
+    );
+    db.pragma(`busy_timeout = ${busyTimeoutMs}`);
+    budget.assertWithin('db_open');
+
+    activeRunIds = getActiveRunIds(db);
     if (activeRunIds.length === 0) {
       activeRunIds = getFallbackRunIdsFromCards(db);
     }
-    const currentRunId = activeRunIds[0] ?? null;
-    const runStatus = getRunStatus(db, currentRunId);
+    currentRunId = activeRunIds[0] ?? null;
+    runStatus = getRunStatus(db, currentRunId);
 
     // Check if database is empty or uninitialized
     const tableCheckStmt = db.prepare(
@@ -650,25 +1095,31 @@ export async function GET(request: NextRequest) {
 
     if (!hasGamesTable) {
       // Database is not initialized - return empty data
-      const response = NextResponse.json(
-        {
-          success: true,
-          data: [],
-          meta: {
-            current_run_id: currentRunId,
-            generated_at: new Date().toISOString(),
-            run_status: runStatus,
-            items_count: 0,
-          },
-        },
-        { headers: { 'Content-Type': 'application/json' } },
-      );
+      perf.totalMs = Date.now() - requestStartedAt;
+      const payload = buildGamesSuccessPayload({
+        data: [],
+        currentRunId,
+        runStatus,
+        perf,
+        responseMode: 'full',
+        isDev,
+      });
+      const response = NextResponse.json(payload, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (cacheKey) {
+        lastGoodGamesPayloadCache.set(cacheKey, {
+          payload,
+          cachedAt: Date.now(),
+        });
+      }
       return addRateLimitHeaders(response, request);
     }
 
     const searchParams = request.nextUrl.searchParams;
-    const lifecycleMode = resolveLifecycleMode(searchParams);
-    const sportFilter = resolveSportFilter(searchParams);
+    lifecycleMode = resolveLifecycleMode(searchParams);
+    sportFilter = resolveSportFilter(searchParams);
+    cacheKey = createGamesCacheKey(lifecycleMode, sportFilter);
     if (sportFilter === INVALID_SPORT_FILTER) {
       return NextResponse.json(
         { success: false, error: 'Unknown sport filter' },
@@ -702,7 +1153,7 @@ export async function GET(request: NextRequest) {
       .substring(0, 19)
       .replace('T', ' ');
 
-    const isNonProd = process.env.NODE_ENV !== 'production';
+    const isNonProd = isDev;
     const shouldUseDevLookback =
       isNonProd &&
       ENABLE_DEV_PAST_GAMES &&
@@ -1115,6 +1566,7 @@ export async function GET(request: NextRequest) {
       });
     };
 
+    currentStage = 'load_games';
     const loadGamesStartedAt = Date.now();
     const activeLifecycleFallbackApplied = false;
     // Active mode uses activeStartUtc (36h rolling lookback) so games started
@@ -1122,7 +1574,7 @@ export async function GET(request: NextRequest) {
     // Pregame mode continues using gamesStartUtc (today midnight ET).
     const initialStartUtc =
       lifecycleMode === 'active' ? activeStartUtc : gamesStartUtc;
-    let rows = loadGamesWithLatestOdds(initialStartUtc, gamesEndUtc);
+    rows = loadGamesWithLatestOdds(initialStartUtc, gamesEndUtc);
 
     if (isNonProd && rows.length === 0 && !shouldUseDevLookback) {
       const fallbackLookbackHours = Number(
@@ -1142,6 +1594,7 @@ export async function GET(request: NextRequest) {
     // already spans 36 h so there is no scenario where rows drops to 0 for live
     // games solely due to the start-date boundary.
     perf.loadGamesMs = Date.now() - loadGamesStartedAt;
+    budget.assertWithin('load_games');
 
     for (const row of rows) {
       incrementStageCounter(
@@ -1252,6 +1705,7 @@ export async function GET(request: NextRequest) {
       };
       let cardRows: CardPayloadRow[] = [];
       try {
+        currentStage = 'cards_query';
         const cardsQueryStartedAt = Date.now();
         const cardsStmt = db.prepare(
           buildCardsSql(allQueryableIds, runIdClause),
@@ -1291,7 +1745,17 @@ export async function GET(request: NextRequest) {
           }
         }
         perf.cardsQueryMs += Date.now() - cardsQueryStartedAt;
-      } catch {
+        budget.assertWithin('cards_query');
+      } catch (error) {
+        if (isRecoverableGamesTimeoutError(error)) {
+          throw error;
+        }
+        const message = String(
+          error instanceof Error ? error.message : error ?? '',
+        ).toLowerCase();
+        if (!message.includes('no such table')) {
+          throw error;
+        }
         // card_payloads table not yet created; plays will be empty
       }
 
@@ -1339,11 +1803,21 @@ export async function GET(request: NextRequest) {
             cardRows = Array.from(dedupedCardRows.values());
           }
         }
-      } catch {
+      } catch (error) {
+        if (isRecoverableGamesTimeoutError(error)) {
+          throw error;
+        }
+        const message = String(
+          error instanceof Error ? error.message : error ?? '',
+        ).toLowerCase();
+        if (!message.includes('no such table')) {
+          throw error;
+        }
         displayLogRows = [];
       }
 
       perf.cardRows = cardRows.length;
+      currentStage = 'cards_parse';
       const cardsParseStartedAt = Date.now();
 
       for (const cardRow of cardRows) {
@@ -2517,6 +2991,7 @@ export async function GET(request: NextRequest) {
         }
       }
       perf.cardsParseMs = Date.now() - cardsParseStartedAt;
+      budget.assertWithin('cards_parse');
 
       // WI-0584: Secondary dedup — keep only the most-recent card per (gameId, playerId, propType, side).
       // The SQL query returns rows newest-first (ORDER BY created_at DESC, id DESC), so the first
@@ -2698,106 +3173,13 @@ export async function GET(request: NextRequest) {
       return result;
     })();
 
-    const data = deduplicatedRows.map((row) => {
-      const hasOdds =
-        row.h2h_home !== null ||
-        row.h2h_away !== null ||
-        row.total !== null ||
-        row.spread_home !== null ||
-        row.spread_away !== null;
-
-      const displayStatus = deriveDisplayStatus(lifecycleMode);
-
-      return {
-        id: row.id,
-        gameId: row.game_id,
-        sport: row.sport,
-        homeTeam: row.home_team,
-        awayTeam: row.away_team,
-        gameTimeUtc: row.game_time_utc,
-        status: row.status,
-        lifecycle_mode: lifecycleMode,
-        display_status: displayStatus,
-        createdAt: row.created_at,
-        projection_inputs_complete: row.projection_inputs_complete,
-        projection_missing_inputs: row.projection_missing_inputs,
-        source_mapping_ok: row.source_mapping_ok,
-        source_mapping_failures: row.source_mapping_failures,
-        ingest_failure_reason_code: row.ingest_failure_reason_code,
-        ingest_failure_reason_detail: row.ingest_failure_reason_detail,
-        odds: hasOdds
-          ? {
-              h2hHome: row.h2h_home,
-              h2hAway: row.h2h_away,
-              h2hBook: row.h2h_book ?? null,
-              h2hHomeBook: row.h2h_home_book ?? null,
-              h2hAwayBook: row.h2h_away_book ?? null,
-              total: row.total,
-              totalBook: row.total_book ?? null,
-              totalLineOver: row.total_line_over,
-              totalLineOverBook: row.total_line_over_book ?? null,
-              totalLineUnder: row.total_line_under,
-              totalLineUnderBook: row.total_line_under_book ?? null,
-              spreadHome: row.spread_home,
-              spreadAway: row.spread_away,
-              spreadHomeBook: row.spread_home_book ?? null,
-              spreadAwayBook: row.spread_away_book ?? null,
-              spreadPriceHome: row.spread_price_home,
-              spreadPriceHomeBook: row.spread_price_home_book ?? null,
-              spreadPriceAway: row.spread_price_away,
-              spreadPriceAwayBook: row.spread_price_away_book ?? null,
-              totalPriceOver: row.total_price_over,
-              totalPriceOverBook: row.total_price_over_book ?? null,
-              totalPriceUnder: row.total_price_under,
-              totalPriceUnderBook: row.total_price_under_book ?? null,
-              spreadIsMispriced:
-                row.spread_is_mispriced === null
-                  ? null
-                  : row.spread_is_mispriced === 1,
-              spreadMispriceType: row.spread_misprice_type ?? null,
-              spreadMispriceStrength: row.spread_misprice_strength,
-              spreadOutlierBook: row.spread_outlier_book ?? null,
-              spreadOutlierDelta: row.spread_outlier_delta,
-              spreadReviewFlag:
-                row.spread_review_flag === null
-                  ? null
-                  : row.spread_review_flag === 1,
-              spreadConsensusLine: row.spread_consensus_line,
-              spreadConsensusConfidence:
-                row.spread_consensus_confidence ?? null,
-              spreadDispersionStddev: row.spread_dispersion_stddev,
-              spreadSourceBookCount: row.spread_source_book_count,
-              totalIsMispriced:
-                row.total_is_mispriced === null
-                  ? null
-                  : row.total_is_mispriced === 1,
-              totalMispriceType: row.total_misprice_type ?? null,
-              totalMispriceStrength: row.total_misprice_strength,
-              totalOutlierBook: row.total_outlier_book ?? null,
-              totalOutlierDelta: row.total_outlier_delta,
-              totalReviewFlag:
-                row.total_review_flag === null
-                  ? null
-                  : row.total_review_flag === 1,
-              totalConsensusLine: row.total_consensus_line,
-              totalConsensusConfidence:
-                row.total_consensus_confidence ?? null,
-              totalDispersionStddev: row.total_dispersion_stddev,
-              totalSourceBookCount: row.total_source_book_count,
-              h2hConsensusHome: row.h2h_consensus_home,
-              h2hConsensusAway: row.h2h_consensus_away,
-              h2hConsensusConfidence:
-                row.h2h_consensus_confidence ?? null,
-              capturedAt: row.odds_captured_at,
-            }
-          : null,
-        consistency: gameConsistencyMap.get(row.game_id) ?? {
-          total_bias: 'UNKNOWN',
-        },
-        true_play: truePlayMap.get(row.game_id) ?? null,
-        plays: playsMap.get(row.game_id) ?? [],
-      };
+    currentStage = 'response_build';
+    const data = buildGamesResponseData(deduplicatedRows, lifecycleMode, {
+      gameConsistencyMap,
+      truePlayMap,
+      playsMap,
     });
+    budget.assertWithin('response_build');
 
     emitTotalProjectionDriftWarnings(data);
 
@@ -2805,7 +3187,6 @@ export async function GET(request: NextRequest) {
     // Worker owns all DB writes (single-writer architecture).
 
     // Join diagnostics for game ID mapping (dev mode only)
-    const isDev = process.env.NODE_ENV !== 'production';
     const joinDebug = isDev
       ? {
           canonical_game_ids_queried: gameIds.length,
@@ -2870,7 +3251,7 @@ export async function GET(request: NextRequest) {
           playableMarketDiagnostics.missing_playable_markets,
       });
     }
-    if (perf.totalMs > 1500) {
+    if (perf.totalMs > API_GAMES_SLOW_WARN_MS) {
       console.warn('[API] /api/games slow request', {
         total_ms: perf.totalMs,
         db_ready_ms: perf.dbReadyMs,
@@ -2879,37 +3260,63 @@ export async function GET(request: NextRequest) {
         cards_parse_ms: perf.cardsParseMs,
         card_rows: perf.cardRows,
         active_run_ids: activeRunIds.length,
+        response_mode: 'full',
       });
     }
 
-    const response = NextResponse.json(
-      {
-        success: true,
-        data,
-        meta: {
-          current_run_id: currentRunId,
-          generated_at: new Date().toISOString(),
-          run_status: runStatus,
-          items_count: data.length,
-          perf_ms:
-            process.env.NODE_ENV !== 'production'
-              ? {
-                  total: perf.totalMs,
-                  db_ready: perf.dbReadyMs,
-                  load_games: perf.loadGamesMs,
-                  cards_query: perf.cardsQueryMs,
-                  cards_parse: perf.cardsParseMs,
-                  card_rows: perf.cardRows,
-                }
-              : undefined,
-          diagnostics: flowDiagnostics,
-        },
-        ...(joinDebug ? { join_debug: joinDebug } : {}),
-      },
-      { headers: { 'Content-Type': 'application/json' } },
-    );
+    const payload = buildGamesSuccessPayload({
+      data,
+      currentRunId,
+      runStatus,
+      perf,
+      responseMode: 'full',
+      isDev,
+      diagnostics: flowDiagnostics,
+      joinDebug,
+    });
+    if (cacheKey) {
+      lastGoodGamesPayloadCache.set(cacheKey, {
+        payload,
+        cachedAt: Date.now(),
+      });
+    }
+    const response = NextResponse.json(payload, {
+      headers: { 'Content-Type': 'application/json' },
+    });
     return addRateLimitHeaders(response, request);
   } catch (error) {
+    perf.totalMs = Date.now() - requestStartedAt;
+    if (
+      !isNonRecoverableGamesDbError(error) &&
+      isRecoverableGamesTimeoutError(error)
+    ) {
+      const timeoutStage = deriveTimeoutStage(error, currentStage);
+      const fallbackPayload = buildGamesTimeoutFallbackPayload({
+        rows,
+        lifecycleMode,
+        currentRunId,
+        runStatus,
+        perf,
+        timeoutStage,
+        cacheEntry: cacheKey ? lastGoodGamesPayloadCache.get(cacheKey) : null,
+        isDev,
+      });
+      if (fallbackPayload) {
+        console.warn('[API] /api/games timeout fallback', {
+          response_mode: fallbackPayload.meta.response_mode,
+          timeout_stage: timeoutStage,
+          elapsed_ms: perf.totalMs,
+          cache_age_ms: fallbackPayload.meta.cache_age_ms ?? null,
+          row_count: fallbackPayload.data.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        const response = NextResponse.json(fallbackPayload, {
+          headers: { 'Content-Type': 'application/json' },
+        });
+        return addRateLimitHeaders(response, request);
+      }
+    }
+
     console.error('[API] Error fetching games:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     const response = NextResponse.json(
