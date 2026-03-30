@@ -30,7 +30,8 @@ class MatchResult:
     candidates: list[CandidateMatch] = field(default_factory=list)
 
 
-# Small hardcoded sample sufficient for unit tests.
+# Hardcoded sample covering common FPL assets.
+# Sized to support both unit tests and the synthetic MVP scaffold in screenshot_parser.
 # Production bootstrap loader can replace this singleton at startup.
 _SAMPLE_PLAYERS: dict[int, str] = {
     1: "Mohamed Salah",
@@ -43,6 +44,15 @@ _SAMPLE_PLAYERS: dict[int, str] = {
     8: "Bruno Fernandes",
     9: "Marcus Rashford",
     10: "Harry Kane",
+    11: "Phil Foden",
+    12: "Martin Odegaard",
+    13: "Gabriel Magalhaes",
+    14: "Pedro Porro",
+    15: "Ollie Watkins",
+    16: "Mark Flekken",
+    17: "Matt Doherty",
+    18: "Jacob Murphy",
+    19: "Dominic Solanke",
 }
 
 
