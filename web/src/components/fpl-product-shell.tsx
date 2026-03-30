@@ -94,7 +94,7 @@ export default function FPLProductShell() {
         {activeSection === 'weekly' && <FPLPageClient embedded />}
         {activeSection === 'onboarding' && (
           <div className="mx-auto max-w-5xl px-6 py-10">
-            <FPLOnboarding userId="demo" />
+            <FPLOnboarding userId="demo" mock />
           </div>
         )}
         {activeSection === 'build' && (
