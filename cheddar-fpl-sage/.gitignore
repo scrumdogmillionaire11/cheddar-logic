@@ -104,6 +104,7 @@ vendor/wheels/
 /run_context.json
 /team_config.json
 /config/team_config.json
+/backend/team_config.json
 
 # Project specific - Test artifacts (keep test files in tests/ only)
 test_*.py
