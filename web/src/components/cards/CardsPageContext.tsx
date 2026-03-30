@@ -140,6 +140,7 @@ export function CardsPageProvider({
     null,
   );
   const lifecycleFallbackAttemptedRef = useRef(false);
+  const hasHydratedUrlStateRef = useRef(false);
   const diagnosticsEnabled =
     process.env.NODE_ENV !== 'production' &&
     process.env.NEXT_PUBLIC_ENABLE_CARDS_DIAGNOSTICS === 'true';
@@ -830,6 +831,9 @@ export function CardsPageProvider({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (hasHydratedUrlStateRef.current) return;
+    hasHydratedUrlStateRef.current = true;
+
     const params = new URLSearchParams(window.location.search);
     const resolvedLifecycleMode = resolveLifecycleModeFromUrlAndStorage();
     if (uiState.lifecycleMode !== resolvedLifecycleMode) {

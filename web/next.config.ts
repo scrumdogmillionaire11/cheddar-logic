@@ -38,15 +38,19 @@ const nextConfig: NextConfig = {
           },
         ],
       },
-      {
-        source: "/_next/static/:path*",
-        headers: [
-          {
-            key: "Cache-Control",
-            value: "public, max-age=31536000, immutable",
-          },
-        ],
-      },
+      ...(isProduction
+        ? [
+            {
+              source: "/_next/static/:path*",
+              headers: [
+                {
+                  key: "Cache-Control",
+                  value: "public, max-age=31536000, immutable",
+                },
+              ],
+            },
+          ]
+        : []),
       // Prevent Cloudflare (and any other CDN) from caching dynamic pages.
       // force-dynamic sets no-store on the server response, but CF can override
       // that when caching is enabled for the zone. This header makes it explicit.

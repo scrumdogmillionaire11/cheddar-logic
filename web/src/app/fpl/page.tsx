@@ -17,6 +17,10 @@ export default async function FPLPage() {
 
     return <FPLPageClient />;
   } finally {
-    closeDatabaseReadOnly();
+    try {
+      closeDatabaseReadOnly();
+    } catch (error) {
+      console.warn('[fpl] closeDatabaseReadOnly failed during page teardown', error);
+    }
   }
 }
