@@ -7,3 +7,4 @@ pydantic-settings>=2.1.0
 # Already in main project but needed for backend
 aiohttp>=3.9.0
 redis>=5.0.0
+Pillow>=10.0.0
