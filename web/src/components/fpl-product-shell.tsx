@@ -3,6 +3,13 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import FPLPageClient from '@/components/fpl-page-client';
+import FPLOnboarding from '@/components/fpl-onboarding';
+import FPLDraftLab from '@/components/fpl-draft-lab';
+import FPLScreenshotUploader from '@/components/fpl-screenshot-uploader';
+import FPLParseReview from '@/components/fpl-parse-review';
+import FPLDraftAudit from '@/components/fpl-draft-audit';
+import FPLDraftCompare from '@/components/fpl-draft-compare';
+import type { ScreenshotParseResponse, ParsedSlot } from '@/lib/fpl-api';
 
 type Section = 'onboarding' | 'build' | 'screenshot' | 'compare' | 'weekly';
 
@@ -85,153 +92,108 @@ export default function FPLProductShell() {
       {/* Section content */}
       <div>
         {activeSection === 'weekly' && <FPLPageClient embedded />}
-        {activeSection === 'onboarding' && <OnboardingSection />}
-        {activeSection === 'build' && <BuildLabSection />}
+        {activeSection === 'onboarding' && (
+          <div className="mx-auto max-w-5xl px-6 py-10">
+            <FPLOnboarding userId="demo" />
+          </div>
+        )}
+        {activeSection === 'build' && (
+          <div className="mx-auto max-w-5xl px-6 py-10">
+            <FPLDraftLab userId="demo" />
+          </div>
+        )}
         {activeSection === 'screenshot' && <ScreenshotAuditSection />}
-        {activeSection === 'compare' && <CompareSection />}
-      </div>
-    </div>
-  );
-}
-
-// ─── Section placeholders ─────────────────────────────────────────────────────
-// Detailed controls for non-weekly sections are out of scope for WI-0659.
-// Each section is scaffolded and ready for WI-0660/0661 to fill in.
-
-function OnboardingSection() {
-  return (
-    <div className="mx-auto max-w-5xl px-6 py-10 space-y-6">
-      <div>
-        <h2 className="mb-1 font-display text-2xl font-semibold">
-          Manager Profile
-        </h2>
-        <p className="text-cloud/60">
-          Create or update your FPL manager profile to unlock archetype-aware
-          advice tailored to your play style.
-        </p>
-      </div>
-
-      <div className="rounded-xl border border-cloud/10 bg-surface/50 p-8">
-        <div className="mb-4 flex items-start gap-4">
-          <span className="text-3xl">👤</span>
-          <div>
-            <p className="font-semibold">Profile &amp; Archetype Setup</p>
-            <p className="mt-1 text-sm text-cloud/60">
-              Answer a short questionnaire to map your manager style to one of
-              five FPL archetypes: Rank Climber, Chip Strategist, Differential
-              Hunter, Template Follower, or Wildcard Gambler. Your archetype
-              unlocks personalised risk thresholds and transfer logic.
-            </p>
+        {activeSection === 'compare' && (
+          <div className="mx-auto max-w-5xl px-6 py-10">
+            <FPLDraftCompare />
           </div>
-        </div>
-        <div className="rounded-lg border border-cloud/5 bg-cloud/5 px-4 py-3 text-sm text-cloud/50">
-          Available after WI-0653 backend implementation — profile onboarding
-          APIs are in queue.
-        </div>
+        )}
       </div>
     </div>
   );
 }
 
-function BuildLabSection() {
-  return (
-    <div className="mx-auto max-w-5xl px-6 py-10 space-y-6">
-      <div>
-        <h2 className="mb-1 font-display text-2xl font-semibold">Build Lab</h2>
-        <p className="text-cloud/60">
-          Create draft sessions, iterate on squad options, and generate
-          AI-powered squad recommendations.
-        </p>
-      </div>
-
-      <div className="rounded-xl border border-cloud/10 bg-surface/50 p-8">
-        <div className="mb-4 flex items-start gap-4">
-          <span className="text-3xl">🔬</span>
-          <div>
-            <p className="font-semibold">Draft Sessions &amp; Builder</p>
-            <p className="mt-1 text-sm text-cloud/60">
-              Start a draft session with candidate players and let the engine
-              build the optimal squad, score each draft on eight dimensions, and
-              surface audit findings before you commit.
-            </p>
-          </div>
-        </div>
-        <div className="rounded-lg border border-cloud/5 bg-cloud/5 px-4 py-3 text-sm text-cloud/50">
-          Available after WI-0654 draft-sessions backend — builder controls are
-          in queue.
-        </div>
-      </div>
-    </div>
-  );
-}
+// ─── Screenshot Audit Section — upload -> review -> audit flow ────────────────
 
 function ScreenshotAuditSection() {
+  const [parsedResult, setParsedResult] = useState<ScreenshotParseResponse | null>(null);
+  const [resolvedSlots, setResolvedSlots] = useState<ParsedSlot[] | null>(null);
+  const [auditSessionId, setAuditSessionId] = useState('');
+  const [showAudit, setShowAudit] = useState(false);
+  const [pendingSessionId, setPendingSessionId] = useState('');
+
+  const handleResolved = (corrected: ParsedSlot[]) => {
+    setResolvedSlots(corrected);
+  };
+
+  const handleProceedToAudit = () => {
+    if (!pendingSessionId.trim()) return;
+    setAuditSessionId(pendingSessionId.trim());
+    setShowAudit(true);
+  };
+
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10 space-y-6">
-      <div>
-        <h2 className="mb-1 font-display text-2xl font-semibold">
-          Squad Audit
-        </h2>
-        <p className="text-cloud/60">
-          Upload 1–3 screenshots of your FPL app to parse your current squad
-          automatically.
-        </p>
-      </div>
+    <div className="mx-auto max-w-5xl px-6 py-10">
+      {!parsedResult && (
+        <FPLScreenshotUploader onParsed={setParsedResult} />
+      )}
 
-      <div className="rounded-xl border border-cloud/10 bg-surface/50 p-8">
-        <div className="mb-4 flex items-start gap-4">
-          <span className="text-3xl">📸</span>
-          <div>
-            <p className="font-semibold">Screenshot Parser</p>
-            <p className="mt-1 text-sm text-cloud/60">
-              The backend accepts up to three base64-encoded FPL mobile
-              screenshots, detects the layout, fuzzy-matches player names via
-              the player registry, and returns a confidence-scored 15-man parsed
-              squad. Low-confidence slots are surfaced explicitly — never silent
-              completions.
-            </p>
+      {parsedResult && !resolvedSlots && (
+        <FPLParseReview parsed={parsedResult} onResolved={handleResolved} />
+      )}
+
+      {resolvedSlots && !showAudit && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-teal/20 bg-teal/5 px-4 py-3">
+            <p className="text-sm text-teal font-medium">Squad confirmed — {resolvedSlots.length} slots resolved</p>
+            <p className="text-xs text-cloud/50 mt-1">Enter a draft session ID to run the audit against.</p>
           </div>
-        </div>
-        <div className="rounded-lg border border-cloud/5 bg-cloud/5 px-4 py-3 text-sm text-cloud/50">
-          Screenshot correction UI is out of scope for WI-0659 — upload
-          controls arrive in WI-0660.
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CompareSection() {
-  return (
-    <div className="mx-auto max-w-5xl px-6 py-10 space-y-6">
-      <div>
-        <h2 className="mb-1 font-display text-2xl font-semibold">
-          Compare Drafts
-        </h2>
-        <p className="text-cloud/60">
-          Compare two draft sessions side-by-side across eight weighted
-          dimensions.
-        </p>
-      </div>
-
-      <div className="rounded-xl border border-cloud/10 bg-surface/50 p-8">
-        <div className="mb-4 flex items-start gap-4">
-          <span className="text-3xl">⚖️</span>
-          <div>
-            <p className="font-semibold">Archetype-Weighted Comparison</p>
-            <p className="mt-1 text-sm text-cloud/60">
-              Submit two draft-session IDs and receive a dimension-by-dimension
-              winner breakdown weighted by your manager archetype. The engine
-              identifies which squad better matches your play style and
-              highlights the decisive deltas.
-            </p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <input
+              type="text"
+              placeholder="Draft session ID"
+              value={pendingSessionId}
+              onChange={(e) => setPendingSessionId(e.target.value)}
+              className="rounded border border-cloud/20 bg-night px-3 py-2 text-sm text-cloud placeholder-cloud/30 focus:border-teal focus:outline-none"
+            />
+            <button
+              onClick={handleProceedToAudit}
+              disabled={!pendingSessionId.trim()}
+              className="rounded-lg bg-teal px-5 py-2 text-sm font-semibold text-night hover:opacity-90 disabled:opacity-40 transition-opacity"
+            >
+              Proceed to Audit
+            </button>
           </div>
+          <button
+            onClick={() => {
+              setParsedResult(null);
+              setResolvedSlots(null);
+              setShowAudit(false);
+            }}
+            className="text-xs text-cloud/40 hover:text-cloud/60 underline"
+          >
+            Start over
+          </button>
         </div>
-        <div className="rounded-lg border border-cloud/5 bg-cloud/5 px-4 py-3 text-sm text-cloud/50">
-          Compare UI controls arrive in WI-0661 — the backend comparison API is
-          already live.
+      )}
+
+      {showAudit && auditSessionId && (
+        <div className="space-y-4">
+          <FPLDraftAudit sessionId={auditSessionId} userId="demo" />
+          <button
+            onClick={() => {
+              setParsedResult(null);
+              setResolvedSlots(null);
+              setShowAudit(false);
+              setAuditSessionId('');
+              setPendingSessionId('');
+            }}
+            className="text-xs text-cloud/40 hover:text-cloud/60 underline"
+          >
+            Start over
+          </button>
         </div>
-      </div>
+      )}
     </div>
   );
 }
