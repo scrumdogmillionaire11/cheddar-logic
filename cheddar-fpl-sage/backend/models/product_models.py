@@ -145,3 +145,19 @@ class DecisionReceipt(BaseModel):
     )
     issued_at: datetime = Field(default_factory=_utcnow, description="Receipt issuance timestamp (UTC)")
     schema_version: str = Field(default=PRODUCT_SCHEMA_VERSION, description="Contract version")
+    # WI-0658: extended outcome-tracking fields (all optional for backward compat)
+    user_choice: Optional[Dict[str, Any]] = Field(
+        None, description="What the manager actually chose (if known)"
+    )
+    applied_overrides: Optional[Dict[str, Any]] = Field(
+        None, description="Manual overrides applied to this decision"
+    )
+    outcome: Optional[Literal["followed", "ignored", "partial"]] = Field(
+        None, description="Whether the manager followed the recommendation"
+    )
+    process_verdict: Optional[Literal["good_process", "bad_process"]] = Field(
+        None, description="Quality assessment of the decision process"
+    )
+    drift_flags: List[str] = Field(
+        default_factory=list, description="Detected drift signals for this receipt"
+    )
