@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T01:30:00Z"
-last_activity: "2026-03-29 - Completed WI-0652: FPL product-store foundation (versioned contract models + file-backed ProductStore + main.py wiring). 59/59 tests pass. Branch: agent/copilot/WI-0652-fpl-product-store-foundation. FPL program track now ready for WI-0653 (screenshot parsing)."
+last_updated: "2026-03-30T01:40:03Z"
+last_activity: "2026-03-30 - Queue refreshed after completion of WI-0648, WI-0650, WI-0651, and WI-0652. Next execution batch is WI-0653, WI-0655, and WI-0657 in parallel, followed by gated FPL chain steps (WI-0654/WI-0658/WI-0656) toward WI-0659."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -30,42 +30,45 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-29
-- Next action: Close out **WI-0646/WI-0645** evidence + file moves, then start **WI-0647**.
+- Last reviewed: 2026-03-30
+- Next action: Start **WI-0653 + WI-0655 + WI-0657** in parallel (all depend only on WI-0652).
 
-## Sprint Plan — 2026-03-29 re-assess (active queue after 0624/0649/0668 completion)
+## Sprint Plan — 2026-03-30 re-assess (post WI-0648/0650/0651/0652 completion)
 
-> Recent completions include WI-0624, WI-0644, WI-0649, WI-0668 (see `WORK_QUEUE/COMPLETE/`).
-> WI-0646 and WI-0645 are treated as near-complete closeout items.
+> Recent completions include WI-0648, WI-0650, WI-0651, WI-0652, WI-0701, WI-0702, and WI-0703 (see `WORK_QUEUE/COMPLETE/`).
 
 ### Hard Deadlines
 
-- 🟡 **WI-0646** Playoff-mode model adjustment (NBA/NHL) — closeout target before NBA playoff start (**Apr 19, 2026**)
-- ✅ ~~**WI-0648**~~ MLB empirical recalibration gate — **DONE** (2026-03-30; seasonal gate active, `[MLB_SIGMA_EMPIRICAL]` will fire when 20+ games settle)
+- No hard date-bound incidents currently open in active queue; highest priority is dependency-efficient execution of Program Track A.
 
 ### Dependency Chains
 
-- **WI-0646 / WI-0645** — closeout/verification only
-- **WI-0647** — independent, can run immediately (read-only DB)
-- ✅ **WI-0648** — DONE
-- **WI-0650** and **WI-0651** — independent quality/UX follow-ups
+- **WI-0653**, **WI-0655**, **WI-0657** — parallel start (all depend only on WI-0652)
+- **WI-0654** — depends on WI-0653
+- **WI-0658** — depends on WI-0657
+- **WI-0656** — depends on WI-0654 and WI-0655
+- **WI-0659** — depends on WI-0653, WI-0654, WI-0656, WI-0657, WI-0658
+- **WI-0660** and **WI-0661** — parallel after WI-0659 and their respective prerequisites
+- **WI-0662** — final FPL track closeout (after WI-0659, WI-0660, WI-0661)
 - **WI-0652 → WI-0662** — FPL product-platform program chain
 - **WI-0664 → WI-0667** — public betting splits data + worker + pipeline-gate chain
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-29
+## Prioritized Open Work Queue — 2026-03-30
 
-### In Progress / Closeout
+### Next Up (Immediate — Parallel Batch)
 
-- [WI-0646](../WORK_QUEUE/WI-0646.md) ⟳ — Playoff-mode detection + threshold overrides (NBA/NHL), LOE M
+- [WI-0653](../WORK_QUEUE/WI-0653.md) — Manager profile APIs + archetype mapping (LOE M)
+- [WI-0655](../WORK_QUEUE/WI-0655.md) — Screenshot parsing + parsed-squad normalization (LOE L)
+- [WI-0657](../WORK_QUEUE/WI-0657.md) — Weekly explainability/uncertainty/relative-risk contract (LOE L, needs-sync)
 
-### Next Up (Immediate)
+### Next Up (Gated Follow-on)
 
-- [WI-0647](../WORK_QUEUE/WI-0647.md) — Cross-market settlement ROI report (LOE M); unlocks evidence-based promote/watch/quarantine decisions.
-- ~~WI-0648~~ ✓ DONE — MLB empirical sigma recalibration gate (committed 9599cbc 2026-03-30)
-- [WI-0650](../WORK_QUEUE/WI-0650.md) — OWNERSHIP + CI import boundary check (LOE S); protects db decomposition contracts.
-- [WI-0651](../WORK_QUEUE/WI-0651.md) — Edge sort + min-edge filter in cards UI (LOE M); converts edge data into actionable workflow.
+- [WI-0654](../WORK_QUEUE/WI-0654.md) — Draft sessions API + draft builder (after WI-0653)
+- [WI-0658](../WORK_QUEUE/WI-0658.md) — Decision receipts + memory + trust analytics APIs (after WI-0657)
+- [WI-0656](../WORK_QUEUE/WI-0656.md) — Draft audit scoring + comparison APIs (after WI-0654 and WI-0655)
+- [WI-0659](../WORK_QUEUE/WI-0659.md) — Main Next.js FPL product shell + API-client cutover
 
 ### Program Track A — FPL Product Platform
 
@@ -78,8 +81,7 @@ This file is intentionally minimal to avoid stale status drift.
 ### Backlog
 
 - [WI-0663](../WORK_QUEUE/WI-0663.md) — MLB pitcher-K strong under monitoring (LOE M), independent MLB enhancement.
-- Incident follow-up queue note: [WI-0701](../WORK_QUEUE/WI-0701-frontend-preserve-games-on-transient-errors.md) should land before [WI-0702](../WORK_QUEUE/WI-0702-backend-api-games-timeout-resilience.md); `WI-0702` stays queued until `WI-0701` PR review is complete and merged.
-- Parallel/background diagnostic note: [WI-0703](../WORK_QUEUE/WI-0703-investigate-worker-snapshot-db-contention.md) is queued as low-priority non-blocking work and can run alongside the primary queue.
+- Public splits program (independent secondary lane): [WI-0664](../WORK_QUEUE/WI-0664.md) → [WI-0665](../WORK_QUEUE/WI-0665.md) → [WI-0666](../WORK_QUEUE/WI-0666.md) → [WI-0667](../WORK_QUEUE/WI-0667.md).
 
 ---
 
