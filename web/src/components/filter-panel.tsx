@@ -181,6 +181,7 @@ export default function FilterPanel({
     { value: 'odds_updated', label: 'Odds Updated' },
     { value: 'signal_strength', label: 'Signal Strength' },
     { value: 'pick_score', label: 'Pick Score' },
+    { value: 'edge_pct', label: 'Edge %' },
   ];
 
   return (
@@ -375,6 +376,37 @@ export default function FilterPanel({
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+
+          {/* Min Edge Filter (Game mode only) */}
+          {viewMode === 'game' && 'minEdgePct' in filters && (
+            <div>
+              <p className="text-xs uppercase tracking-widest text-cloud/40 mb-2 font-semibold">
+                Min Edge
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {([null, 1, 2, 3, 5] as (number | null)[]).map((val) => {
+                  const current = (filters as { minEdgePct?: number | null }).minEdgePct ?? null;
+                  const isActive = val === null ? (current == null || current <= 0) : current === val;
+                  const label = val === null ? 'Any' : `≥ ${val}%`;
+                  return (
+                    <button
+                      key={label}
+                      onClick={() =>
+                        updateFilters({ minEdgePct: val == null ? null : val } as Partial<GameFilters>)
+                      }
+                      className={`px-3 py-1.5 text-sm rounded border transition ${
+                        isActive
+                          ? 'bg-emerald-700/50 text-emerald-200 border-emerald-600/60'
+                          : 'bg-white/5 border-white/10 hover:border-white/20'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 

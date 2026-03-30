@@ -121,6 +121,7 @@ export function getFirstDropReason(
   if (!flags.search) return 'DROP_SEARCH';
   if (!flags.hasPicks) return 'DROP_NO_PLAY';
   if (!flags.clearPlay) return 'DROP_PRESET_RULE';
+  if (!flags.minEdge) return 'DROP_MIN_EDGE';
   return 'DROP_UNKNOWN';
 }
 

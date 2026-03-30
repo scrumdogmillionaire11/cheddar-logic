@@ -29,6 +29,7 @@ export type DropReason =
   | 'DROP_SEARCH'
   | 'DROP_NO_PLAY'
   | 'DROP_PRESET_RULE'
+  | 'DROP_MIN_EDGE'
   | 'DROP_UNKNOWN';
 
 export type DropReasonCounts = Record<DropReason, number>;

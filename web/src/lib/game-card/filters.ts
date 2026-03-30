@@ -30,7 +30,8 @@ export type SortMode =
   | 'start_time'
   | 'odds_updated'
   | 'signal_strength'
-  | 'pick_score';
+  | 'pick_score'
+  | 'edge_pct';
 
 export type ViewMode = 'game' | 'props' | 'projections';
 
@@ -47,6 +48,7 @@ export type FilterDebugFlags = {
   hasPicks: boolean;
   clearPlay: boolean;
   totalProjection: boolean;
+  minEdge: boolean;
 };
 
 /**
@@ -105,6 +107,10 @@ export interface GameModeFilters extends CommonFilters {
   // Card types
   cardTypes?: string[]; // e.g., ['nhl-pace-1p']
 
+  // Edge filter — whole-number percentage threshold (1 = 1%, 2 = 2%, etc.)
+  // null means no filter
+  minEdgePct?: number | null;
+
   // Driver strength
   minTier?: DriverTier; // BEST only / SUPER+ / WATCH+
   minConfidence?: number; // 0-1 range
@@ -139,6 +145,7 @@ export const DEFAULT_GAME_FILTERS: GameModeFilters = {
   requireTotalProjection: false,
   onlyWelcomeHome: false,
   cardTypes: [],
+  minEdgePct: null,
   hideFragility: false,
   hideBlowout: false,
   hideLowCoverage: false,
@@ -169,6 +176,7 @@ export const DEFAULT_PROJECTIONS_FILTERS: GameModeFilters = {
   requireTotalProjection: false,
   onlyWelcomeHome: false,
   cardTypes: ['nhl-pace-1p'],
+  minEdgePct: null,
   hideFragility: false,
   hideBlowout: false,
   hideLowCoverage: false,
@@ -566,6 +574,7 @@ export function getFilterDebugFlags(
       hasPicks: true,
       clearPlay: true,
       totalProjection: true,
+      minEdge: true,
     };
   }
 
@@ -583,6 +592,7 @@ export function getFilterDebugFlags(
     hasPicks: filterByHasPicks(card, gameFilters),
     clearPlay: filterByClearPlay(card, gameFilters),
     totalProjection: filterByTotalProjection(card, gameFilters),
+    minEdge: filterByMinEdgePct(card, gameFilters),
   };
 }
 
@@ -615,9 +625,33 @@ function getSortValue(card: GameCard, sortMode: SortMode): number {
     case 'pick_score':
       return card.expressionChoice?.score || 0;
 
+    case 'edge_pct': {
+      // Use decision_v2.edge_pct (canonical probability edge).
+      // Null values sort last (return -Infinity so descending puts them at end).
+      const ep = card.play?.decision_v2?.edge_pct;
+      return typeof ep === 'number' && Number.isFinite(ep) ? ep : -Infinity;
+    }
+
     default:
       return 0;
   }
+}
+
+/**
+ * Filter by minimum edge percentage threshold.
+ * minEdgePct is stored as a whole-number percentage (e.g. 2 = 2%).
+ * Cards with null edge_pct fail the filter when a threshold is set.
+ */
+function filterByMinEdgePct(
+  card: GameCard,
+  filters: GameModeFilters,
+): boolean {
+  const threshold = filters.minEdgePct;
+  if (threshold == null || threshold <= 0) return true;
+
+  const edgePct = card.play?.decision_v2?.edge_pct;
+  if (typeof edgePct !== 'number' || !Number.isFinite(edgePct)) return false;
+  return edgePct * 100 >= threshold;
 }
 
 /**
@@ -629,7 +663,7 @@ function sortCards(cards: GameCard[], sortMode: SortMode): GameCard[] {
     const bVal = getSortValue(b, sortMode);
 
     // For start_time and odds_updated: ascending (soonest first)
-    // For signal_strength and pick_score: descending (strongest first)
+    // For signal_strength, pick_score, and edge_pct: descending (strongest first)
     if (sortMode === 'start_time' || sortMode === 'odds_updated') {
       return aVal - bVal;
     } else {
@@ -660,7 +694,8 @@ function applyGameFilters(
     .filter((card) => filterByWelcomeHome(card, filters))
     .filter((card) => filterByHasPicks(card, filters))
     .filter((card) => filterByClearPlay(card, filters))
-    .filter((card) => filterByTotalProjection(card, filters));
+    .filter((card) => filterByTotalProjection(card, filters))
+    .filter((card) => filterByMinEdgePct(card, filters));
 
   return sortCards(filtered, filters.sortMode);
 }
@@ -704,6 +739,7 @@ export function getActiveFilterCount(
     if (filters.sortMode !== defaults.sortMode) count++;
     return count;
   }
+  // Note: props mode does not support minEdgePct — falls through to game filter count
 
   const gameFilters = filters as GameModeFilters;
   const defaults = mode === 'projections' ? DEFAULT_PROJECTIONS_FILTERS : DEFAULT_GAME_FILTERS;
@@ -723,6 +759,7 @@ export function getActiveFilterCount(
   if (gameFilters.searchQuery) count++;
   if (gameFilters.timeWindow) count++;
   if (gameFilters.sortMode !== defaults.sortMode) count++;
+  if (gameFilters.minEdgePct != null && gameFilters.minEdgePct > 0) count++;
 
   return count;
 }

@@ -7,6 +7,7 @@ const {
   buildMlbMarketAvailability,
   buildMlbF5OddsContext,
   MLB_PIPELINE_REASON_CODES,
+  MIN_MLB_GAMES_FOR_RECAL,
 } = require('../jobs/run_mlb_model');
 
 function buildF5Snapshot(overrides = {}) {
@@ -69,12 +70,20 @@ function buildPitcherStatsRow(team) {
   };
 }
 
+function buildSigmaGameRows(count) {
+  return Array.from({ length: count }, (_, i) => ({
+    final_score_home: 4 + (i % 3),
+    final_score_away: 3 + (i % 4),
+  }));
+}
+
 function loadRunMlbModel({
   mode,
   gameDriverCards,
   pitcherKDriverCards,
   selection,
   snapshotOverrides = {},
+  sigmaGameRows = null,
 }) {
   jest.resetModules();
 
@@ -98,6 +107,13 @@ function loadRunMlbModel({
         }
         return null;
       },
+      all: jest.fn(() => {
+        if (sql.includes('game_results')) {
+          return sigmaGameRows ?? [];
+        }
+        return [];
+      }),
+      run: jest.fn(),
     })),
   }));
 
@@ -478,5 +494,77 @@ describe('runMLBModel dual-run orchestration', () => {
     expect(payload.pipeline_state.blocking_reason_codes).toContain(
       MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE,
     );
+  });
+
+  // ── WI-0648: MLB empirical sigma recalibration gate ───────────────────────
+
+  test('sigma gate: emits MLB_SIGMA_PRESEASON_DEFAULT when game_results < threshold', async () => {
+    const selection = {
+      chosen_market: 'F5_TOTAL',
+      why_this_market: 'Rule 1: only configured MLB game market',
+      markets: [{ market: 'F5_TOTAL', status: 'FIRE', prediction: 'OVER', score: 0.9, edge: 0.8, projected: 5.3 }],
+      rejected: {},
+      selected_driver: gameDriver,
+    };
+
+    const { runMLBModel } = loadRunMlbModel({
+      mode: 'PROJECTION_ONLY',
+      gameDriverCards: [gameDriver],
+      pitcherKDriverCards: [],
+      selection,
+      sigmaGameRows: buildSigmaGameRows(MIN_MLB_GAMES_FOR_RECAL - 1), // 19 rows — below threshold
+    });
+    const consoleLog = jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runMLBModel();
+
+    expect(result.success).toBe(true);
+    const sigmaLog = consoleLog.mock.calls.find((args) =>
+      args[0]?.includes('[MLB_SIGMA_PRESEASON_DEFAULT]'),
+    );
+    expect(sigmaLog).toBeDefined();
+    expect(sigmaLog[0]).toContain(`threshold=${MIN_MLB_GAMES_FOR_RECAL}`);
+    // Empirical log must NOT appear
+    const empiricalLog = consoleLog.mock.calls.find((args) =>
+      args[0]?.includes('[MLB_SIGMA_EMPIRICAL]'),
+    );
+    expect(empiricalLog).toBeUndefined();
+  });
+
+  test('sigma gate: emits MLB_SIGMA_EMPIRICAL when game_results >= threshold', async () => {
+    const selection = {
+      chosen_market: 'F5_TOTAL',
+      why_this_market: 'Rule 1: only configured MLB game market',
+      markets: [{ market: 'F5_TOTAL', status: 'FIRE', prediction: 'OVER', score: 0.9, edge: 0.8, projected: 5.3 }],
+      rejected: {},
+      selected_driver: gameDriver,
+    };
+
+    const { runMLBModel } = loadRunMlbModel({
+      mode: 'PROJECTION_ONLY',
+      gameDriverCards: [gameDriver],
+      pitcherKDriverCards: [],
+      selection,
+      sigmaGameRows: buildSigmaGameRows(MIN_MLB_GAMES_FOR_RECAL), // exactly 20 rows — at threshold
+    });
+    const consoleLog = jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runMLBModel();
+
+    expect(result.success).toBe(true);
+    const empiricalLog = consoleLog.mock.calls.find((args) =>
+      args[0]?.includes('[MLB_SIGMA_EMPIRICAL]'),
+    );
+    expect(empiricalLog).toBeDefined();
+    expect(empiricalLog[0]).toContain('games_sampled=20');
+    // Preseason default log must NOT appear
+    const preseasonLog = consoleLog.mock.calls.find((args) =>
+      args[0]?.includes('[MLB_SIGMA_PRESEASON_DEFAULT]'),
+    );
+    expect(preseasonLog).toBeUndefined();
   });
 });
