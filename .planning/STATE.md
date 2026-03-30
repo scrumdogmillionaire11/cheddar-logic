@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T11:31:42Z"
-last_activity: "2026-03-30 - Completed quick task 107: WI-0655 screenshot parsing + parsed-squad normalization (POST /api/v1/screenshot-parse, PlayerRegistry fuzzy match, 51 tests passing). WI-0657 still in parallel batch."
+last_updated: "2026-03-30T11:45:19Z"
+last_activity: "2026-03-30 - Completed quick task 108: WI-0657 weekly analysis explainability contract (ConfidenceBand/ExplainabilityBlock/RelativeRiskFrame Pydantic models, 5 new additive fields in build_detailed_analysis_contract, 43 new tests passing)."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -179,5 +179,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 107 | WI-0650: Governance + CI import boundary hardening — OWNERSHIP.md DB Domain Modules, scripts/check-db-imports.js, CI check-db-import-boundaries step | 2026-03-30 | c2ef9b6 | [104-wi-0650-governance-ci-hardening-needs-sy](./quick/104-wi-0650-governance-ci-hardening-needs-sy/) |
 | 108 | WI-0653: Manager profile APIs + archetype mapping — POST/GET/PATCH /api/v1/profiles, 5-archetype deterministic rules, per-archetype constraint defaults, 33 tests | 2026-03-30 | 19187bd | [106-wi-0653-manager-profile-apis-and-archety](./quick/106-wi-0653-manager-profile-apis-and-archety/) |
 | 109 | WI-0655: Screenshot parsing + parsed-squad normalization — POST /api/v1/screenshot-parse, PlayerRegistry fuzzy match, layout detection, synthetic 15-slot scaffold, 51 tests | 2026-03-30 | 8d91364 | [107-wi-0655-screenshot-parsing-and-parsed-sq](./quick/107-wi-0655-screenshot-parsing-and-parsed-sq/) |
+| 110 | WI-0657: Weekly analysis explainability contract — ConfidenceBand/ScenarioNote/ExplainabilityBlock/RelativeRiskFrame Pydantic models, 5 additive fields in build_detailed_analysis_contract, 43 tests | 2026-03-30 | 3bd566f | [108-wi-0657-weekly-analysis-explainability-u](./quick/108-wi-0657-weekly-analysis-explainability-u/) |
 
-Last activity: 2026-03-30 - Completed quick task 109: WI-0655 screenshot parsing + parsed-squad normalization (POST /api/v1/screenshot-parse, 51 tests passing)
+Last activity: 2026-03-30 - Completed quick task 110: WI-0657 weekly analysis explainability contract (5 new additive fields, 43 tests)
