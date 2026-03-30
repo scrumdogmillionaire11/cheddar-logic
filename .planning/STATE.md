@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T12:30:00Z"
-last_activity: "2026-03-30 - Completed WI-0653 (manager profile APIs + archetype mapping), WI-0655 (screenshot parsing + parsed-squad normalization), WI-0657 (weekly explainability contract). Priority reassessed: WI-0654 + WI-0658 now parallel-start; WI-0663 + WI-0664 also unblocked as independent tracks."
+last_updated: "2026-03-30T15:41:06Z"
+last_activity: "2026-03-30 - Completed WI-0658 (decision receipts + memory + trust analytics APIs, 35 tests). WI-0654 + WI-0658 batch now both unblocked; WI-0659 gated on WI-0654+WI-0656 remaining."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,11 +31,11 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-30
-- Next action: Start **WI-0654 + WI-0658** in parallel (FPL critical path); **WI-0663 + WI-0664** are independent and can run concurrently.
+- Next action: Continue **WI-0654** (critical FPL path, gates WI-0656 and WI-0659); **WI-0663 + WI-0664** are independent and can run concurrently. WI-0658 ✓ done.
 
 ## Sprint Plan — 2026-03-30 re-assess (post WI-0653/0655/0657 completion)
 
-> Recent completions: WI-0648, WI-0650, WI-0651, WI-0652, WI-0653, WI-0655, WI-0657, WI-0701, WI-0702, WI-0703 (see `WORK_QUEUE/COMPLETE/`).
+> Recent completions: WI-0648, WI-0650, WI-0651, WI-0652, WI-0653, WI-0655, WI-0657, WI-0658, WI-0701, WI-0702, WI-0703 (see `WORK_QUEUE/COMPLETE/`).
 
 ### Hard Deadlines
 
@@ -45,9 +45,9 @@ This file is intentionally minimal to avoid stale status drift.
 
 - ~~**WI-0653**, **WI-0655**, **WI-0657**~~ — ✓ DONE
 - **WI-0654** — depends on WI-0652 ✓, WI-0653 ✓ → **UNBLOCKED**
-- **WI-0658** — depends on WI-0652 ✓, WI-0657 ✓ → **UNBLOCKED**
+- ~~**WI-0658**~~ — ✓ DONE (decision receipts + memory + trust analytics)
 - **WI-0656** — depends on WI-0654 ❌, WI-0655 ✓ → blocked on WI-0654
-- **WI-0659** — depends on WI-0654 ❌, WI-0656 ❌, WI-0658 ❌ → blocked
+- **WI-0659** — depends on WI-0654 ❌, WI-0656 ❌, WI-0658 ✓ → blocked on WI-0654/WI-0656
 - **WI-0660** and **WI-0661** — parallel after WI-0659 and their respective prerequisites
 - **WI-0662** — final FPL track closeout (after WI-0659, WI-0660, WI-0661)
 - **WI-0652 → WI-0662** — FPL product-platform program chain
@@ -61,7 +61,7 @@ This file is intentionally minimal to avoid stale status drift.
 ### Next Up (Immediate — Parallel Batch)
 
 - [WI-0654](../WORK_QUEUE/WI-0654.md) — Draft sessions API + draft builder (LOE L) — **critical FPL path, gates WI-0656 and WI-0659**
-- [WI-0658](../WORK_QUEUE/WI-0658.md) — Decision receipts + memory + trust analytics APIs (LOE M) — **critical FPL path, gates WI-0659 and WI-0661**
+- ~~[WI-0658](../WORK_QUEUE/COMPLETE/WI-0658.md)~~ — ✓ Done: decision receipts + memory + trust analytics APIs (35 tests)
 - [WI-0663](../WORK_QUEUE/WI-0663.md) — MLB pitcher-K strong under monitoring (LOE M) — **independent, no FPL chain dependency**
 - [WI-0664](../WORK_QUEUE/WI-0664.md) — DB migration: public betting splits columns (LOE S) — **independent, gates Track B**
 
@@ -75,7 +75,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### Program Track A — FPL Product Platform
 
-`WI-0652 ✓ → (WI-0653 ✓, WI-0655 ✓, WI-0657 ✓) → (WI-0654, WI-0658) → WI-0656 → WI-0659 → (WI-0660, WI-0661) → WI-0662`
+`WI-0652 ✓ → (WI-0653 ✓, WI-0655 ✓, WI-0657 ✓) → (WI-0654, WI-0658 ✓) → WI-0656 → WI-0659 → (WI-0660, WI-0661) → WI-0662`
 
 ### Program Track B — Public Splits Pipeline
 
@@ -182,5 +182,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 108 | WI-0653: Manager profile APIs + archetype mapping — POST/GET/PATCH /api/v1/profiles, 5-archetype deterministic rules, per-archetype constraint defaults, 33 tests | 2026-03-30 | 19187bd | [106-wi-0653-manager-profile-apis-and-archety](./quick/106-wi-0653-manager-profile-apis-and-archety/) |
 | 109 | WI-0655: Screenshot parsing + parsed-squad normalization — POST /api/v1/screenshot-parse, PlayerRegistry fuzzy match, layout detection, synthetic 15-slot scaffold, 51 tests | 2026-03-30 | 8d91364 | [107-wi-0655-screenshot-parsing-and-parsed-sq](./quick/107-wi-0655-screenshot-parsing-and-parsed-sq/) |
 | 110 | WI-0657: Weekly analysis explainability contract — ConfidenceBand/ScenarioNote/ExplainabilityBlock/RelativeRiskFrame Pydantic models, 5 additive fields in build_detailed_analysis_contract, 43 tests | 2026-03-30 | 3bd566f | [108-wi-0657-weekly-analysis-explainability-u](./quick/108-wi-0657-weekly-analysis-explainability-u/) |
+| 111 | WI-0658: Decision receipts + memory + trust analytics APIs — POST /decision-receipts, GET /user/{id}/analytics + /memory, 4 drift flags, 35 tests | 2026-03-30 | 70e2ad2 | [111-wi-0658-decision-receipts-memory-and-tru](./quick/111-wi-0658-decision-receipts-memory-and-tru/) |
 
-Last activity: 2026-03-30 - Completed quick task 110: WI-0657 weekly analysis explainability contract (5 new additive fields, 43 tests)
+Last activity: 2026-03-30 - Completed quick task 111: WI-0658 decision receipts + memory + trust analytics APIs (35 tests, 4 drift flags)
