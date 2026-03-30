@@ -12,6 +12,8 @@ let dbLockPath = null;
 let dbLockRegistered = false;
 const warnedSportValues = new Set();
 let oddsContextReferenceRegistry = new WeakMap();
+let readOnlyOpenFailureStreak = 0;
+let lastReadOnlyFailureAtMs = 0;
 const EXPECTED_TABLE_NAMES = ['games', 'card_payloads', 'card_results', 'game_results'];
 const REQUIRED_CARD_RESULTS_MARKET_COLUMNS = ['market_key', 'market_type', 'selection', 'line', 'locked_price'];
 const DEFAULT_REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -273,6 +275,42 @@ function registerDbLockCleanup() {
 function spinSleepMs(ms) {
   const end = Date.now() + ms;
   while (Date.now() < end) { /* spin */ }
+}
+
+function getReadOnlyRetryConfig() {
+  const retryMs = Number(process.env.CHEDDAR_DB_READ_RETRY_MS || 300);
+  const retryIntervalMs = Number(process.env.CHEDDAR_DB_READ_RETRY_INTERVAL_MS || 25);
+
+  return {
+    retryMs: Number.isFinite(retryMs) ? Math.max(0, retryMs) : 300,
+    retryIntervalMs: Number.isFinite(retryIntervalMs)
+      ? Math.max(1, retryIntervalMs)
+      : 25,
+  };
+}
+
+function markReadOnlyOpenSuccess(filePath, attempts, waitedMs) {
+  if (readOnlyOpenFailureStreak > 0) {
+    console.info(
+      `[DB] getDatabaseReadOnly recovered after transient access failure (path=${filePath}, attempts=${attempts}, waited_ms=${waitedMs}, prior_failures=${readOnlyOpenFailureStreak}).`,
+    );
+  }
+  readOnlyOpenFailureStreak = 0;
+  lastReadOnlyFailureAtMs = 0;
+}
+
+function markReadOnlyOpenFailure(filePath, reason, attempts, waitedMs) {
+  const nowMs = Date.now();
+  if (nowMs - lastReadOnlyFailureAtMs > 60_000) {
+    readOnlyOpenFailureStreak = 0;
+  }
+  readOnlyOpenFailureStreak += 1;
+  lastReadOnlyFailureAtMs = nowMs;
+
+  const level = readOnlyOpenFailureStreak >= 3 ? 'error' : 'warn';
+  console[level](
+    `[DB] getDatabaseReadOnly failed (path=${filePath}, attempts=${attempts}, waited_ms=${waitedMs}, streak=${readOnlyOpenFailureStreak}, reason=${reason}).`,
+  );
 }
 
 function acquireDbFileLock(dbFile) {
@@ -640,28 +678,58 @@ function getDatabaseReadOnly() {
   const resolved = resolveDatabasePath();
   const filePath = dbPath || resolved.dbPath;
 
-  if (!filePath || !fs.existsSync(filePath)) {
-    throw new Error(
-      `[DB] getDatabaseReadOnly: database file not found at ${filePath}. ` +
-      'Ensure CHEDDAR_DB_PATH is set and the worker has initialized the database.'
-    );
-  }
+  const { retryMs, retryIntervalMs } = getReadOnlyRetryConfig();
+  const startedAtMs = Date.now();
+  const deadlineMs = startedAtMs + retryMs;
+  let attempts = 0;
+  let lastOpenError = null;
 
-  let instance;
-  try {
-    instance = new Database(filePath, { readonly: true });
-    instance.pragma('foreign_keys = ON');
-  } catch (e) {
-    throw new Error(
-      `[DB] getDatabaseReadOnly: database file at ${filePath} is malformed and cannot be opened: ${e.message}. ` +
-      'Do not serve stale or empty data — fail the request and investigate the DB file.'
-    );
+  while (true) {
+    attempts += 1;
+
+    const hasDbFile = Boolean(filePath) && fs.existsSync(filePath);
+    if (hasDbFile) {
+      try {
+        const instance = new Database(filePath, { readonly: true });
+        instance.pragma('foreign_keys = ON');
+        const waitedMs = Date.now() - startedAtMs;
+        markReadOnlyOpenSuccess(filePath, attempts, waitedMs);
+        return new ReadOnlyDatabaseProxy(instance);
+      } catch (error) {
+        lastOpenError = error;
+        const transientOpenError =
+          error &&
+          (error.code === 'ENOENT' ||
+            error.code === 'SQLITE_CANTOPEN' ||
+            /no such file|unable to open database file/i.test(String(error.message || '')));
+        if (!transientOpenError) {
+          throw new Error(
+            `[DB] getDatabaseReadOnly: database file at ${filePath} is malformed and cannot be opened: ${error.message}. ` +
+            'Do not serve stale or empty data — fail the request and investigate the DB file.'
+          );
+        }
+      }
+    }
+
+    const nowMs = Date.now();
+    if (nowMs >= deadlineMs) {
+      const waitedMs = nowMs - startedAtMs;
+      const lastReason = lastOpenError
+        ? `${lastOpenError.code || 'unknown'}: ${lastOpenError.message}`
+        : 'file_missing';
+      markReadOnlyOpenFailure(filePath, lastReason, attempts, waitedMs);
+      throw new Error(
+        `[DB] getDatabaseReadOnly: database file not accessible at ${filePath} after ${attempts} attempts over ${waitedMs}ms. ` +
+        'Ensure CHEDDAR_DB_PATH is set and the worker has initialized the database.'
+      );
+    }
+
+    spinSleepMs(retryIntervalMs);
   }
 
   // Wrap in a ReadOnlyProxy that:
   // - Returns null (not undefined) from .get() for consistency with former sql.js behaviour
   // - Throws on any write attempt
-  return new ReadOnlyDatabaseProxy(instance);
 }
 
 /**

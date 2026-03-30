@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-29T23:10:00Z"
-last_activity: "2026-03-29 - Queue note added for incident follow-up: WI-0701 should land first; WI-0702 stays queued until WI-0701 PR review is complete and merged. Higher-priority execution order remains WI-0647, WI-0648, then WI-0650/WI-0651, with WI-0652→0662 and WI-0664→0667 as parallel program tracks."
+last_updated: "2026-03-29T23:48:30Z"
+last_activity: "2026-03-29 - Incident follow-up queue refined: WI-0701 should land first; WI-0702 remains queued until WI-0701 merge; WI-0703 is queued as low-priority parallel/background diagnostic work. Higher-priority execution order remains WI-0647, WI-0648, then WI-0650/WI-0651, with WI-0652→0662 and WI-0664→0667 as parallel program tracks."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -79,6 +79,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 - [WI-0663](../WORK_QUEUE/WI-0663.md) — MLB pitcher-K strong under monitoring (LOE M), independent MLB enhancement.
 - Incident follow-up queue note: [WI-0701](../WORK_QUEUE/WI-0701-frontend-preserve-games-on-transient-errors.md) should land before [WI-0702](../WORK_QUEUE/WI-0702-backend-api-games-timeout-resilience.md); `WI-0702` stays queued until `WI-0701` PR review is complete and merged.
+- Parallel/background diagnostic note: [WI-0703](../WORK_QUEUE/WI-0703-investigate-worker-snapshot-db-contention.md) is queued as low-priority non-blocking work and can run alongside the primary queue.
 
 ---
 

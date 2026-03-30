@@ -10,12 +10,12 @@ Priority: high
 Scope: |
   - web/src/lib/games/route-handler.ts
     - GET function main query execution
-    - Add query timeout assertion/abort signal
-    - Return strategy on timeout (partial vs cached vs empty)
-  - web/src/lib/db-init.ts
-    - Verify read-only DB doesn't have multi-second hangs
-  - Possibly: packages/data/src/db/query-builder.ts
-    - If query builder needs timeout hints
+    - Add stage-level request budget and degraded response modes
+    - Apply read-only busy_timeout and stale-cache fallback
+  - web/src/__tests__/api-games-timeout-resilience.test.js
+    - Route-level timeout/degraded response coverage
+  - web/src/__tests__/api-games-repair-budget.test.js
+    - Source contract coverage for timeout meta fields
 Out of scope: |
   - Worker snapshot mechanism (separate WI)
   - Frontend error handling (WI-0701)
@@ -26,12 +26,13 @@ Acceptance: |
   ✓ Error logging captures slow query attempts
   ✓ Cloudflare no longer sees 502 on DB contention
   ✓ Load tests show query completes <5s consistently
-Owner agent: (claim required)
+Owner agent: gsd-executor
+CLAIM: gsd-executor 2026-03-29T23:47:39Z
 Time window: 3-4 hours
 Coordination flag: needs-sync (modifies shared API contract)
 Tests to run: |
-  npm run test -- web/src/lib/games/route-handler.test.ts
-  npm run test:load -- /api/games (if load test suite exists)
+  node web/src/__tests__/api-games-timeout-resilience.test.js
+  npm --prefix web run test:api:games:repair-budget
 Manual validation: |
   1. Deploy to staging with simulated slow DB query
   2. Verify /api/games returns 200 with data (not timeout/502)
@@ -54,19 +55,19 @@ No explicit query timeout in route handler. Large or complex queries can block f
 
 ## Solution
 Add query timeout to /api/games route:
-1. Wrap main query execution with AbortSignal timeout (5-10 seconds)
+1. Use stage-level request budget checks plus SQLite read-only busy_timeout (5 seconds default)
 2. If query times out:
    - Log warning with query duration
-   - Return 200 with partial/cached games instead of 500 error
+   - Return 200 with degraded base-game rows or stale cached payload instead of 500 error
    - Preserve user experience over perfect data freshness
 3. Monitor slow queries (>3s) for operational visibility
 
 ## Implementation Notes
 - Queue behind WI-0701 merge so backend timeout behavior is evaluated on top of the preserved-games UX already in place.
-- Use existing `createTimeoutSignal` pattern if available, or implement server-side timeout
-- Consider returning last N games if fresh query fails
-- Add performance logging: queryDuration, rowCount, timeoutOccurred
-- Route should return `{success: true, data: [...], meta: {timeout_fallback: true}}`
+- Do not use `AbortSignal` for DB query cancellation; read path is synchronous `better-sqlite3`
+- Prefer response modes `full`, `degraded_base_games`, and `stale_cache`
+- Add performance logging: queryDuration, rowCount, timeoutOccurred, timeoutStage, responseMode
+- Route should return `{success: true, data: [...], meta: {response_mode, timeout_fallback}}`
 
 ## Testing Strategy
 - Inject slow DB mock, verify timeout handling

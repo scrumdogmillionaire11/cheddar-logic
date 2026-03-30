@@ -3,8 +3,8 @@ ID: WI-0703
 Goal: |
   Investigate and eliminate brief database inaccessibility windows during worker snapshot rotation.
   Ensure web server (read-only) never blocks or fails due to worker snapshot saving.
-Status: ready
-Priority: medium
+Status: queued
+Priority: low
 Scope: |
   - apps/worker/src/scheduler/index.js or snapshot mechanism
     - Understand when/how snapshots are saved
@@ -28,9 +28,11 @@ Acceptance: |
   ✓ Snapshot operation takes <100ms (no observable window)
   ✓ Monitoring in place for persistent DB access failures
   ✓ If new code needed: snapshot process improved to minimize reader impact
-Owner agent: (claim required)
+Owner agent: github-copilot
+CLAIM: github-copilot 2026-03-29T23:50:49Z
 Time window: 4-6 hours
 Coordination flag: needs-sync (affects worker + web coordination)
+Execution mode: parallel background diagnostic (non-blocking)
 Tests to run: |
   N/A - investigation and monitoring setup only
 Manual validation: |
@@ -74,7 +76,20 @@ Worker writes CHEDDAR_DB_PATH periodically (snapshot save); during file lock or 
 - Add enhanced logging around DB access failures (include timestamp, retry count)
 
 ## Related
+
 - Debug session: .planning/debug/resolved/prod-plays-disappear-reappear.md
 - WI-0701 (frontend resilience)
 - WI-0702 (backend timeout)
 - ADR-0002 (single-writer DB contract)
+
+## Execution Notes (2026-03-29)
+
+- Confirmed current worker path does not rotate/swap the live DB file in place; backup utility (`apps/worker/src/utils/db-backup.js`) uses `fs.copyFileSync` to backup targets, not primary-file rename.
+- Confirmed WAL is enabled in writer and reader open paths (`packages/data/src/db/connection.js`), and web service has required write/read paths configured (`deploy/systemd/cheddar-web.service`).
+- Implemented transient read-only open retry in `getDatabaseReadOnly()` with bounded retry window and interval:
+  - `CHEDDAR_DB_READ_RETRY_MS` (default `300`)
+  - `CHEDDAR_DB_READ_RETRY_INTERVAL_MS` (default `25`)
+- Added persistent-failure diagnostics in DB connection layer:
+  - failure streak tracking for repeated read-open failures
+  - escalates from warning to error at streak >= 3 within 60s
+  - recovery log emitted when transient failures self-heal
