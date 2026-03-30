@@ -60,27 +60,33 @@ function DimensionRow({ dim }: { dim: AuditDimension }) {
   );
 }
 
+interface AuditResult {
+  forSessionId: string;
+  forUserId: string | undefined;
+  audit: DraftAuditResponse | null;
+  error: string | null;
+}
+
 export default function FPLDraftAudit({ sessionId, userId }: FPLDraftAuditProps) {
-  const [audit, setAudit] = useState<DraftAuditResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<AuditResult | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
 
     auditDraft(sessionId, userId ? { user_id: userId } : {})
-      .then((result) => {
+      .then((data) => {
         if (!cancelled) {
-          setAudit(result);
-          setLoading(false);
+          setResult({ forSessionId: sessionId, forUserId: userId, audit: data, error: null });
         }
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load audit');
-          setLoading(false);
+          setResult({
+            forSessionId: sessionId,
+            forUserId: userId,
+            audit: null,
+            error: err instanceof Error ? err.message : 'Failed to load audit',
+          });
         }
       });
 
@@ -88,6 +94,11 @@ export default function FPLDraftAudit({ sessionId, userId }: FPLDraftAuditProps)
       cancelled = true;
     };
   }, [sessionId, userId]);
+
+  const resolved = result?.forSessionId === sessionId && result?.forUserId === userId;
+  const loading = !resolved;
+  const error = resolved ? result.error : null;
+  const audit = resolved ? result.audit : null;
 
   if (loading) {
     return (
