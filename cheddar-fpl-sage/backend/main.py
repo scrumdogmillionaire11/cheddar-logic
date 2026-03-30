@@ -23,6 +23,7 @@ from backend.middleware import RateLimitMiddleware, RequestLoggingMiddleware
 from backend.services.cache_service import cache_service
 from backend.services.engine_service import engine_service
 from backend.services.monitoring_service import check_http_health
+from backend.services.product_store import product_store
 from backend.exceptions import register_exception_handlers
 
 logging.basicConfig(level=logging.INFO if not settings.DEBUG else logging.DEBUG)
@@ -60,7 +61,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan context manager."""
     logger.info("FPL Sage API starting up...")
 
-    # Initialize Redis connection
+    # Initialize Redis connection (transient analysis-job cache/rate-limiting)
     client = get_redis_client()
 
     # Configure services with Redis
@@ -68,6 +69,9 @@ async def lifespan(app: FastAPI):
         cache_service.redis = client
         cache_service.ttl = settings.CACHE_TTL_SECONDS
         engine_service.configure_redis(client, settings.ANALYSIS_JOB_TTL_SECONDS)
+
+    # Initialize durable product store (separate from Redis/transient state)
+    product_store.initialize()
 
     yield
 
@@ -134,6 +138,7 @@ async def health_check():
         "fpl_api": fpl_api_status,
         "database": "healthy" if redis_client else "degraded",
         "analysis_engine": "healthy",
+        "product_store": "healthy" if product_store.health()["initialized"] else "degraded",
     }
     is_critical_degraded = components["analysis_engine"] != "healthy" or components["fpl_api"] != "healthy"
     service_status = "degraded" if is_critical_degraded else "healthy"
