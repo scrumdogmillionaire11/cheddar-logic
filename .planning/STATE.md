@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T00:49:27Z"
-last_activity: "2026-03-30 - Completed WI-0648: MLB empirical sigma recalibration gate (MIN_MLB_GAMES_FOR_RECAL=20, computeSigmaFromHistory wired, 11 tests green). Next: WI-0650, WI-0651, then program tracks 0652→0662 and 0664→0667."
+last_updated: "2026-03-30T01:10:00Z"
+last_activity: "2026-03-30 - Completed WI-0650: OWNERSHIP.md DB Domain Modules section + scripts/check-db-imports.js CI gate (exits 0 on clean codebase). Next: WI-0651, then program tracks 0652→0662 and 0664→0667."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -174,5 +174,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 104 | WI-0701: Preserve games state on transient fetch failures (5xx, timeout) | 2026-03-29 | cee5421 | [101-wi-0701](./quick/101-wi-0701/) |
 | 105 | WI-0647: Cross-market settlement ROI report | 2026-03-29 | 9ef8f99 | [102-wi-0647](./quick/102-wi-0647/) |
 | 106 | WI-0648: MLB empirical sigma recalibration gate — MIN_MLB_GAMES_FOR_RECAL=20, computeSigmaFromHistory, 11 tests | 2026-03-30 | 9599cbc | [103-wi-0648-mlb-sigma-recal](./quick/103-wi-0648-mlb-sigma-recal/) |
+| 107 | WI-0650: Governance + CI import boundary hardening — OWNERSHIP.md DB Domain Modules, scripts/check-db-imports.js, CI check-db-import-boundaries step | 2026-03-30 | c2ef9b6 | [104-wi-0650-governance-ci-hardening-needs-sy](./quick/104-wi-0650-governance-ci-hardening-needs-sy/) |
 
-Last activity: 2026-03-30 - Completed quick task 106: WI-0648 MLB empirical sigma recalibration gate
+Last activity: 2026-03-30 - Completed quick task 107: WI-0650 governance + CI import boundary hardening
