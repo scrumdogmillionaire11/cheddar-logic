@@ -41,6 +41,12 @@ const {
 const { getModel, computeMLBDriverCards, computePitcherKDriverCards } = require('../models');
 const { selectMlbGameMarket, projectF5ML } = require('../models/mlb-model');
 
+// WI-0648: Empirical sigma recalibration gate
+// Threshold: once a team has accumulated >= MIN_MLB_GAMES_FOR_RECAL settled games
+// in the 2026 season, computeSigmaFromHistory replaces MLB_SIGMA_DEFAULT constants.
+const edgeCalculator = require('@cheddar-logic/models/src/edge-calculator');
+const MIN_MLB_GAMES_FOR_RECAL = parseInt(process.env.MIN_MLB_GAMES_FOR_RECAL || '20', 10);
+
 // Pitcher K model mode: 'PROJECTION_ONLY' enables the Sharp Cheddar K pipeline
 // without requiring market odds. Set PITCHER_KS_MODEL_MODE=PROJECTION_ONLY.
 const PITCHER_KS_MODEL_MODE = process.env.PITCHER_KS_MODEL_MODE || null;
@@ -944,6 +950,26 @@ async function runMLBModel({
       console.log('[MLBModel] Recording job start...');
       insertJobRun('run_mlb_model', jobRunId, jobKey);
 
+      // WI-0648: MLB empirical sigma recalibration gate.
+      // Queries settled game_results for MLB. Falls back to getSigmaDefaults('MLB')
+      // when fewer than MIN_MLB_GAMES_FOR_RECAL (20) settled games exist — typical
+      // during the first ~3 weeks of the season. Once the threshold is met, logs
+      // [MLB_SIGMA_EMPIRICAL] and the computed values are available for future use.
+      const mlbSigma = edgeCalculator.computeSigmaFromHistory({
+        sport: 'MLB',
+        db: getDatabase(),
+        windowGames: MIN_MLB_GAMES_FOR_RECAL * 30, // pool: up to 30 teams × threshold
+      });
+      if (mlbSigma.sigma_source === 'computed') {
+        console.log(
+          `[MLB_SIGMA_EMPIRICAL] games_sampled=${mlbSigma.games_sampled} sigma=${JSON.stringify(mlbSigma)}`,
+        );
+      } else {
+        console.log(
+          `[MLB_SIGMA_PRESEASON_DEFAULT] threshold=${MIN_MLB_GAMES_FOR_RECAL} sigma=${JSON.stringify(mlbSigma)}`,
+        );
+      }
+
       // Get latest MLB odds for UPCOMING games only (prevents stale data processing)
       console.log('[MLBModel] Fetching odds for upcoming MLB games...');
       const { DateTime } = require('luxon');
@@ -1367,4 +1393,6 @@ module.exports = {
   buildPitcherStrikeoutLookback,
   // Exported for WI-0637 unit tests
   computeProjectionFloorF5,
+  // Exported for WI-0648 unit tests
+  MIN_MLB_GAMES_FOR_RECAL,
 };
