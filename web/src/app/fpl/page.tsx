@@ -1,5 +1,5 @@
 import { closeDatabaseReadOnly } from '@cheddar-logic/data';
-import FPLPageClient from '@/components/fpl-page-client';
+import FPLProductShell from '@/components/fpl-product-shell';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,7 +15,7 @@ export default async function FPLPage() {
     //   redirect('/subscribe?next=/fpl');
     // }
 
-    return <FPLPageClient />;
+    return <FPLProductShell />;
   } finally {
     try {
       closeDatabaseReadOnly();
