@@ -17,6 +17,10 @@ export default async function CardsPage() {
 
     return <CardsPageClient />;
   } finally {
-    closeDatabaseReadOnly();
+    try {
+      closeDatabaseReadOnly();
+    } catch (error) {
+      console.warn('[cards] closeDatabaseReadOnly failed during page teardown', error);
+    }
   }
 }
