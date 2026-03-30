@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-29T23:48:30Z"
-last_activity: "2026-03-29 - Incident follow-up queue refined: WI-0701 should land first; WI-0702 remains queued until WI-0701 merge; WI-0703 is queued as low-priority parallel/background diagnostic work. Higher-priority execution order remains WI-0647, WI-0648, then WI-0650/WI-0651, with WI-0652→0662 and WI-0664→0667 as parallel program tracks."
+last_updated: "2026-03-30T00:49:27Z"
+last_activity: "2026-03-30 - Completed WI-0648: MLB empirical sigma recalibration gate (MIN_MLB_GAMES_FOR_RECAL=20, computeSigmaFromHistory wired, 11 tests green). Next: WI-0650, WI-0651, then program tracks 0652→0662 and 0664→0667."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -41,13 +41,13 @@ This file is intentionally minimal to avoid stale status drift.
 ### Hard Deadlines
 
 - 🟡 **WI-0646** Playoff-mode model adjustment (NBA/NHL) — closeout target before NBA playoff start (**Apr 19, 2026**)
-- 🟡 **WI-0648** MLB empirical recalibration gate — target completion around **Apr 20, 2026** (20 games/team threshold)
+- ✅ ~~**WI-0648**~~ MLB empirical recalibration gate — **DONE** (2026-03-30; seasonal gate active, `[MLB_SIGMA_EMPIRICAL]` will fire when 20+ games settle)
 
 ### Dependency Chains
 
 - **WI-0646 / WI-0645** — closeout/verification only
 - **WI-0647** — independent, can run immediately (read-only DB)
-- **WI-0648** — independent with seasonal target (~Apr 20)
+- ✅ **WI-0648** — DONE
 - **WI-0650** and **WI-0651** — independent quality/UX follow-ups
 - **WI-0652 → WI-0662** — FPL product-platform program chain
 - **WI-0664 → WI-0667** — public betting splits data + worker + pipeline-gate chain
@@ -63,7 +63,7 @@ This file is intentionally minimal to avoid stale status drift.
 ### Next Up (Immediate)
 
 - [WI-0647](../WORK_QUEUE/WI-0647.md) — Cross-market settlement ROI report (LOE M); unlocks evidence-based promote/watch/quarantine decisions.
-- [WI-0648](../WORK_QUEUE/WI-0648.md) — MLB empirical sigma recalibration gate (LOE M); time-sensitive seasonal gate (~Apr 20).
+- ~~WI-0648~~ ✓ DONE — MLB empirical sigma recalibration gate (committed 9599cbc 2026-03-30)
 - [WI-0650](../WORK_QUEUE/WI-0650.md) — OWNERSHIP + CI import boundary check (LOE S); protects db decomposition contracts.
 - [WI-0651](../WORK_QUEUE/WI-0651.md) — Edge sort + min-edge filter in cards UI (LOE M); converts edge data into actionable workflow.
 
@@ -173,5 +173,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 103 | WI-0646 (Playoff-mode detection) — must land before Apr 19 | 2026-03-29 | 4725c55 | [99-wi-0646-playoff-mode-detection-must-land](./quick/99-wi-0646-playoff-mode-detection-must-land/) |
 | 104 | WI-0701: Preserve games state on transient fetch failures (5xx, timeout) | 2026-03-29 | cee5421 | [101-wi-0701](./quick/101-wi-0701/) |
 | 105 | WI-0647: Cross-market settlement ROI report | 2026-03-29 | 9ef8f99 | [102-wi-0647](./quick/102-wi-0647/) |
+| 106 | WI-0648: MLB empirical sigma recalibration gate — MIN_MLB_GAMES_FOR_RECAL=20, computeSigmaFromHistory, 11 tests | 2026-03-30 | 9599cbc | [103-wi-0648-mlb-sigma-recal](./quick/103-wi-0648-mlb-sigma-recal/) |
 
-Last activity: 2026-03-29 - Completed quick task 105: WI-0647 cross-market settlement ROI report
+Last activity: 2026-03-30 - Completed quick task 106: WI-0648 MLB empirical sigma recalibration gate
