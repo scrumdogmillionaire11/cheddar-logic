@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T16:35:00Z"
-last_activity: "2026-03-30 - Completed WI-0656 (draft audit + compare APIs, 38 tests, 2 endpoints). WI-0659 gated on WI-0654 remaining."
+last_updated: "2026-03-30T17:32:00Z"
+last_activity: "2026-03-30 - Completed WI-0659 (FPL product shell + API-client cutover, 58 contract checks, build green)."
 progress:
   total_phases: 4
   completed_phases: 3
