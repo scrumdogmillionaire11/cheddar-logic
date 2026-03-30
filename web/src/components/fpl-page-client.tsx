@@ -29,7 +29,11 @@ const RISK_POSTURES = [
   },
 ];
 
-export default function FPLPageClient() {
+export default function FPLPageClient({
+  embedded = false,
+}: {
+  embedded?: boolean;
+} = {}) {
   const [teamId, setTeamId] = useState('');
   const [state, setState] = useState<
     'input' | 'loading' | 'dashboard' | 'error'
@@ -177,14 +181,21 @@ export default function FPLPageClient() {
     window.history.pushState({}, '', url);
   };
 
+  const outerClass = embedded
+    ? 'px-6 py-10 text-cloud'
+    : 'min-h-screen bg-night px-6 py-12 text-cloud';
+  const innerClass = embedded ? '' : 'mx-auto max-w-4xl';
+
   return (
-    <div className="min-h-screen bg-night px-6 py-12 text-cloud">
-      <div className="mx-auto max-w-4xl">
-        <div className="mb-8">
-          <Link href="/" className="text-sm text-cloud/60 hover:text-cloud/80">
-            ← Back to Home
-          </Link>
-        </div>
+    <div className={outerClass}>
+      <div className={innerClass}>
+        {!embedded && (
+          <div className="mb-8">
+            <Link href="/" className="text-sm text-cloud/60 hover:text-cloud/80">
+              ← Back to Home
+            </Link>
+          </div>
+        )}
 
         {/* Input State */}
         {state === 'input' && (
