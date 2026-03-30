@@ -59,6 +59,28 @@ If a path is not listed here, create/update `OWNERSHIP.md` before editing that p
 | `web/src/types/**` | `lane/web-platform` | `lane/data-platform` | Global web types (`needs-sync` if cross-domain) |
 | `scripts/**` | `lane/release-infra` | `lane/worker-betting` | Operational scripts |
 
+## DB Domain Modules
+
+All modules in `packages/data/src/db/` are owned by `lane/data-platform`.
+The **only public entry point** is `packages/data/src/db/index.js`.
+Direct imports of non-public modules from outside `packages/data/` are prohibited and enforced by CI (`check-db-import-boundaries`).
+
+| Module | Owner | Permitted Consumers |
+| --- | --- | --- |
+| `index.js` | `lane/data-platform` | Any file in the repo (public entry point) |
+| `auth-store.js` | `lane/data-platform` | `packages/data/` only |
+| `cards.js` | `lane/data-platform` | `packages/data/` only |
+| `connection.js` | `lane/data-platform` | `packages/data/` only |
+| `games.js` | `lane/data-platform` | `packages/data/` only |
+| `job-runs.js` | `lane/data-platform` | `packages/data/` only |
+| `models.js` | `lane/data-platform` | `packages/data/` only |
+| `odds.js` | `lane/data-platform` | `packages/data/` only |
+| `players.js` | `lane/data-platform` | `packages/data/` only |
+| `quota.js` | `lane/data-platform` | `packages/data/` only |
+| `results.js` | `lane/data-platform` | `packages/data/` only |
+| `scheduler.js` | `lane/data-platform` | `packages/data/` only |
+| `tracking.js` | `lane/data-platform` | `packages/data/` only |
+
 ## Escalation Rule For Ownership Conflicts
 If a file is touched by two work items:
 1. Stop edits on that file.
