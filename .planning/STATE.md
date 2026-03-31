@@ -51,7 +51,13 @@ This file is intentionally minimal to avoid stale status drift.
 - **WI-0668** — NL intent translation; depends on WI-0660 ✓, WI-0652 ✓ → **UNBLOCKED**
 - **WI-0669** — Final Recommendation output; depends on WI-0656 ✓, WI-0660 ✓ → **UNBLOCKED**
 - **WI-0670** — Comparison as core + tradeoff chips; depends on WI-0669 → blocked
-- **WI-0671** — Post-draft season loop stub; depends on WI-0669, WI-0652 ✓ → blocked
+- **WI-0671** — Post-draft season loop (retention foundation); depends on WI-0669, WI-0652 ✓ → blocked
+- **WI-0672** — Constraint state panel + reset to baseline; depends on WI-0668, WI-0660 ✓ → blocked until WI-0668 lands
+- **WI-0668** — NL intent translation; depends on WI-0660 ✓, WI-0652 ✓ → **UNBLOCKED**
+- **WI-0669** — Final Recommendation output; depends on WI-0656 ✓, WI-0660 ✓ → **UNBLOCKED**
+- **WI-0670** — Comparison as core + tradeoff chips; depends on WI-0669 → blocked
+- **WI-0671** — Post-draft season loop (retention foundation); depends on WI-0669, WI-0652 ✓ → blocked
+- **WI-0672** — Constraint state panel + reset to baseline; depends on WI-0668, WI-0660 ✓ → blocked until WI-0668 lands
 
 ---
 
@@ -67,6 +73,7 @@ This file is intentionally minimal to avoid stale status drift.
 - [WI-0669](../WORK_QUEUE/WI-0669.md) — Final Recommendation terminal output (LOE M) — **unblocked**
 - [WI-0670](../WORK_QUEUE/WI-0670.md) — Comparison as core + tradeoff surface (LOE M) — blocked on WI-0669
 - [WI-0671](../WORK_QUEUE/WI-0671.md) — Post-draft season loop stub (LOE M) — blocked on WI-0669
+- [WI-0672](../WORK_QUEUE/WI-0672.md) — Constraint state panel + reset to baseline (LOE M) — blocked on WI-0668
 - [WI-0662](../WORK_QUEUE/WI-0662.md) — Standalone Sage frontend internal-only conversion + runbook cleanup (LOE S) — after WI-0661
 
 ### Secondary / Independent Tracks
@@ -76,7 +83,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### Program Track A — FPL Product Platform
 
-`WI-0652 ✓ → (WI-0653 ✓, WI-0655 ✓, WI-0657 ✓) → (WI-0654 ✓, WI-0656 ✓, WI-0658 ✓) → WI-0659 ✓ → WI-0660 ✓ → (WI-0661, WI-0668) → (WI-0669, WI-0662) → (WI-0670, WI-0671)`
+`WI-0652 ✓ → (WI-0653 ✓, WI-0655 ✓, WI-0657 ✓) → (WI-0654 ✓, WI-0656 ✓, WI-0658 ✓) → WI-0659 ✓ → WI-0660 ✓ → (WI-0661, WI-0668) → (WI-0668: WI-0669 + WI-0672, WI-0662) → (WI-0670, WI-0671)`
 
 ### Program Track B — Public Splits Pipeline
 
