@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T20:00:00Z"
-last_activity: "2026-03-30 - Completed quick task 114: WI-0660 draft workbench UI — 7 components (onboarding, draft-lab, candidate-card, screenshot-uploader, parse-review, draft-audit, draft-compare) + shell wiring + 2 contract test files. Active: WI-0661, then WI-0662."
+last_updated: "2026-03-30T23:00:00Z"
+last_activity: "2026-03-30 - Sprint re-assess. WI-0660 complete. WI-0673–0680 (FPL Sage test-isolation / chip-engine / analyzer fixes) all merged and done. 12 WIs remain open: WI-0661 (primary active), WI-0662, WI-0663, WI-0664–0667 (public splits pipeline), WI-0668, WI-0669, WI-0670, WI-0671, WI-0672. NOTE: WORK_QUEUE/COMPLETE/ contains WI-0668–0672 as earlier test-fix items (different scope); product WIs of the same numbers are the active ones in WORK_QUEUE/."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -31,11 +31,23 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-30
-- Next action: **WI-0661** (weekly dashboard) + **WI-0668** (NL translation layer) in parallel. Then WI-0669 then WI-0670 and WI-0671. WI-0662 after WI-0661 lands.
+- Next action: **WI-0661** (weekly dashboard) as primary. **WI-0668** (NL translation) and **WI-0669** (Final Recommendation) are both unblocked and can run in parallel once WI-0661 is claimed. WI-0662 after WI-0661 lands. WI-0670/0671 after WI-0669.
 
-## Sprint Plan — 2026-03-30 re-assess (post WI-0659 completion — all gated items done)
+## Sprint Plan — 2026-03-30 re-assess (post WI-0660 + WI-0673–0680 completions)
 
-> Recent completions: WI-0648, WI-0650, WI-0651, WI-0652, WI-0653, WI-0654, WI-0655, WI-0656, WI-0657, WI-0658, WI-0659, WI-0701, WI-0702, WI-0703 (see `WORK_QUEUE/COMPLETE/`).
+> Recent completions (not reflected in prior STATE snapshot):
+> - WI-0660 ✓ — Draft workbench UI (7 components + shell + contract tests) — 2026-03-30
+> - WI-0673 ✓ — FPL Sage test namespace guard scope fix — 2026-03-30
+> - WI-0674 ✓ — Replace stale importlib.reload in contract tests — 2026-03-30
+> - WI-0675 ✓ — ChipAnalyzer full chip name emission fix — 2026-03-30
+> - WI-0676 ✓ — Starting XI projection sanity swap cross-position fix — 2026-03-30
+> - WI-0677 ✓ — Observability test monkeypatch isolation — 2026-03-30
+> - WI-0678 ✓ — Orchestrator smoke test patch isolation — 2026-03-30
+> - WI-0679 ✓ — ChipAnalyzer chip_windows policy guard — 2026-03-30
+> - WI-0680 ✓ — User endpoint test monkeypatch isolation — 2026-03-30
+> - Full prior train: WI-0648–0659, WI-0701–0703 (see `WORK_QUEUE/COMPLETE/`)
+>
+> ⚠️ WI number collision note: `WORK_QUEUE/COMPLETE/` contains items numbered WI-0668–0672 that are **test-fix tasks** (different scope). The active product WIs with the same numbers in `WORK_QUEUE/` are the canonical ones for this sprint.
 
 ### Hard Deadlines
 
@@ -44,46 +56,49 @@ This file is intentionally minimal to avoid stale status drift.
 ### Dependency Chains
 
 - **WI-0660** ✓ — DONE 2026-03-30
-- **WI-0661** — depends on WI-0657 ✓, WI-0658 ✓, WI-0659 ✓ → **UNBLOCKED**
+- **WI-0661** — depends on WI-0657 ✓, WI-0658 ✓, WI-0659 ✓ → **UNBLOCKED** ← primary active
 - **WI-0662** — depends on WI-0659 ✓, WI-0660 ✓, WI-0661 → blocked until WI-0661 lands
-- **WI-0663** — independent MLB enhancement → **UNBLOCKED**
-- **WI-0664 → WI-0667** — public betting splits pipeline; WI-0664 → **UNBLOCKED**
+- **WI-0663** — independent MLB pitcher-K UNDER enhancement → **UNBLOCKED**
+- **WI-0664** — independent schema-only (no deps) → **UNBLOCKED**
+- **WI-0665** — depends on WI-0664 → blocked until WI-0664 lands
+- **WI-0666** — depends on WI-0664, WI-0665 → blocked
+- **WI-0667** — depends on WI-0664, WI-0665, WI-0666 → blocked
 - **WI-0668** — NL intent translation; depends on WI-0660 ✓, WI-0652 ✓ → **UNBLOCKED**
 - **WI-0669** — Final Recommendation output; depends on WI-0656 ✓, WI-0660 ✓ → **UNBLOCKED**
-- **WI-0670** — Comparison as core + tradeoff chips; depends on WI-0669 → blocked
-- **WI-0671** — Post-draft season loop (retention foundation); depends on WI-0669, WI-0652 ✓ → blocked
-- **WI-0672** — Constraint state panel + reset to baseline; depends on WI-0668, WI-0660 ✓ → blocked until WI-0668 lands
-- **WI-0668** — NL intent translation; depends on WI-0660 ✓, WI-0652 ✓ → **UNBLOCKED**
-- **WI-0669** — Final Recommendation output; depends on WI-0656 ✓, WI-0660 ✓ → **UNBLOCKED**
-- **WI-0670** — Comparison as core + tradeoff chips; depends on WI-0669 → blocked
-- **WI-0671** — Post-draft season loop (retention foundation); depends on WI-0669, WI-0652 ✓ → blocked
-- **WI-0672** — Constraint state panel + reset to baseline; depends on WI-0668, WI-0660 ✓ → blocked until WI-0668 lands
+- **WI-0670** — Comparison as core + tradeoff chips; depends on WI-0656 ✓, WI-0660 ✓, WI-0669 → blocked on WI-0669
+- **WI-0671** — Post-draft season loop (retention foundation); depends on WI-0669, WI-0652 ✓ → blocked on WI-0669
+- **WI-0672** — Constraint state panel + reset to baseline; depends on WI-0668, WI-0660 ✓ → blocked on WI-0668
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-30
+## Prioritized Open Work Queue — 2026-03-30 re-assess
 
-### Next Up (Immediate — Parallel Batch)
+### Now (Primary Active)
 
-- [WI-0661](../WORK_QUEUE/WI-0661.md) — Weekly co-pilot dashboard refresh + report-card UI (LOE M) — **unblocked**
-- [WI-0668](../WORK_QUEUE/WI-0668.md) — NL intent translation layer (LOE M) — **unblocked**
+- [WI-0661](../WORK_QUEUE/WI-0661.md) — Weekly co-pilot dashboard refresh + report-card UI (LOE M) — **UNBLOCKED, unassigned**
 
-### Next Up (Gated Follow-on)
+### Parallel / Immediate — Can Start Alongside WI-0661
 
-- [WI-0669](../WORK_QUEUE/WI-0669.md) — Final Recommendation terminal output (LOE M) — **unblocked**
+- [WI-0668](../WORK_QUEUE/WI-0668.md) — NL intent translation layer (LOE M) — **UNBLOCKED**
+- [WI-0669](../WORK_QUEUE/WI-0669.md) — Final Recommendation terminal output (LOE M) — **UNBLOCKED**
+
+### Gated Follow-on
+
+- [WI-0662](../WORK_QUEUE/WI-0662.md) — Standalone Sage frontend internal-only conversion + runbook cleanup (LOE S) — blocked on WI-0661
 - [WI-0670](../WORK_QUEUE/WI-0670.md) — Comparison as core + tradeoff surface (LOE M) — blocked on WI-0669
 - [WI-0671](../WORK_QUEUE/WI-0671.md) — Post-draft season loop stub (LOE M) — blocked on WI-0669
 - [WI-0672](../WORK_QUEUE/WI-0672.md) — Constraint state panel + reset to baseline (LOE M) — blocked on WI-0668
-- [WI-0662](../WORK_QUEUE/WI-0662.md) — Standalone Sage frontend internal-only conversion + runbook cleanup (LOE S) — after WI-0661
 
 ### Secondary / Independent Tracks
 
-- [WI-0663](../WORK_QUEUE/WI-0663.md) — MLB pitcher-K strong under monitoring (LOE M) — independent, no chain dependency
-- [WI-0664](../WORK_QUEUE/WI-0664.md) → [WI-0665](../WORK_QUEUE/WI-0665.md) → [WI-0666](../WORK_QUEUE/WI-0666.md) → [WI-0667](../WORK_QUEUE/WI-0667.md) — public betting splits pipeline (low priority overlay)
+- [WI-0663](../WORK_QUEUE/WI-0663.md) — MLB pitcher-K strong UNDER monitoring (LOE M) — **UNBLOCKED**, no chain dependency
+- [WI-0664](../WORK_QUEUE/WI-0664.md) → [WI-0665](../WORK_QUEUE/WI-0665.md) → [WI-0666](../WORK_QUEUE/WI-0666.md) → [WI-0667](../WORK_QUEUE/WI-0667.md) — public betting splits pipeline (low priority overlay; WI-0664 UNBLOCKED)
 
 ### Program Track A — FPL Product Platform
 
-`WI-0652 ✓ → (WI-0653 ✓, WI-0655 ✓, WI-0657 ✓) → (WI-0654 ✓, WI-0656 ✓, WI-0658 ✓) → WI-0659 ✓ → WI-0660 ✓ → (WI-0661, WI-0668) → (WI-0668: WI-0669 + WI-0672, WI-0662) → (WI-0670, WI-0671)`
+`WI-0652 ✓ → (WI-0653 ✓, WI-0655 ✓, WI-0657 ✓) → (WI-0654 ✓, WI-0656 ✓, WI-0658 ✓) → WI-0659 ✓ → WI-0660 ✓ → WI-0661 → WI-0662`
+`WI-0660 ✓ + WI-0652 ✓ → WI-0668 → WI-0672`
+`WI-0656 ✓ + WI-0660 ✓ → WI-0669 → (WI-0670, WI-0671)`
 
 ### Program Track B — Public Splits Pipeline
 
