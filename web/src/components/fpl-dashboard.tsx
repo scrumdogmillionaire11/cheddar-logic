@@ -3,9 +3,7 @@
 import { useState } from 'react';
 import type {
   DetailedAnalysisResponse,
-  ExplainabilityBlock,
   FixturePlannerPlayerWindow,
-  RelativeRiskBlock,
   StrategyPathMove,
   TransferPlan,
   TransferPlans,
