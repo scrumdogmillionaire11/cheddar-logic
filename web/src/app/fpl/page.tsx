@@ -1,20 +1,8 @@
 import { closeDatabaseReadOnly } from '@cheddar-logic/data';
-import dynamicImport from 'next/dynamic';
 import FPLPageClient from '@/components/fpl-page-client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-// Feature flag: FPL_PRODUCT_SHELL=true enables the new multi-tab product shell
-// (Profile, Build Lab, Squad Audit, Compare, Weekly).
-// Server-side only (no NEXT_PUBLIC_ prefix) so it is never baked into the
-// production bundle — it is evaluated at request time on the server.
-// Set in .env.local for dev; do NOT set in production until the shell is ready.
-const FPL_PRODUCT_SHELL = process.env.FPL_PRODUCT_SHELL === 'true';
-
-const FPLProductShell = FPL_PRODUCT_SHELL
-  ? dynamicImport(() => import('@/components/fpl-product-shell'))
-  : null;
 
 export default async function FPLPage() {
   try {
@@ -27,7 +15,22 @@ export default async function FPLPage() {
     //   redirect('/subscribe?next=/fpl');
     // }
 
-    return FPLProductShell ? <FPLProductShell /> : <FPLPageClient />;
+    // Feature flag: FPL_PRODUCT_SHELL=true enables the new multi-tab product shell.
+    // Server-side only (no NEXT_PUBLIC_ prefix) — evaluated at request time, never
+    // baked into the client bundle.
+    //
+    // Using await import() inside the function body instead of next/dynamic at
+    // module scope avoids a Next.js 16 App Router bug where next/dynamic emits a
+    // webpack client-manifest entry with a _next/-prefixed chunk path. The webpack
+    // runtime then prepends /_next/ again, producing /_next/_next/… 404s.
+    // With await import() the client component is included via RSC streaming
+    // (not lazy chunk loading), so no client manifest entry is created.
+    if (process.env.FPL_PRODUCT_SHELL === 'true') {
+      const { default: FPLProductShell } = await import('@/components/fpl-product-shell');
+      return <FPLProductShell />;
+    }
+
+    return <FPLPageClient />;
   } finally {
     try {
       closeDatabaseReadOnly();
