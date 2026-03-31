@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T19:28:08Z"
+last_updated: "2026-03-30T20:00:00Z"
 last_activity: "2026-03-30 - Completed quick task 114: WI-0660 draft workbench UI — 7 components (onboarding, draft-lab, candidate-card, screenshot-uploader, parse-review, draft-audit, draft-compare) + shell wiring + 2 contract test files. Active: WI-0661, then WI-0662."
 progress:
   total_phases: 4
@@ -31,7 +31,7 @@ This file is intentionally minimal to avoid stale status drift.
 ## Review Cadence
 
 - Last reviewed: 2026-03-30
-- Next action: Start **WI-0660 + WI-0661 in parallel** (both unblocked); then **WI-0662** after both land.
+- Next action: **WI-0661** (weekly dashboard) + **WI-0668** (NL translation layer) in parallel. Then WI-0669 then WI-0670 and WI-0671. WI-0662 after WI-0661 lands.
 
 ## Sprint Plan — 2026-03-30 re-assess (post WI-0659 completion — all gated items done)
 
@@ -43,11 +43,15 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### Dependency Chains
 
-- **WI-0660** — depends on WI-0654 ✓, WI-0655 ✓, WI-0656 ✓, WI-0659 ✓ → **UNBLOCKED**
+- **WI-0660** ✓ — DONE 2026-03-30
 - **WI-0661** — depends on WI-0657 ✓, WI-0658 ✓, WI-0659 ✓ → **UNBLOCKED**
-- **WI-0662** — depends on WI-0659 ✓, WI-0660, WI-0661 → blocked until both land
+- **WI-0662** — depends on WI-0659 ✓, WI-0660 ✓, WI-0661 → blocked until WI-0661 lands
 - **WI-0663** — independent MLB enhancement → **UNBLOCKED**
 - **WI-0664 → WI-0667** — public betting splits pipeline; WI-0664 → **UNBLOCKED**
+- **WI-0668** — NL intent translation; depends on WI-0660 ✓, WI-0652 ✓ → **UNBLOCKED**
+- **WI-0669** — Final Recommendation output; depends on WI-0656 ✓, WI-0660 ✓ → **UNBLOCKED**
+- **WI-0670** — Comparison as core + tradeoff chips; depends on WI-0669 → blocked
+- **WI-0671** — Post-draft season loop stub; depends on WI-0669, WI-0652 ✓ → blocked
 
 ---
 
@@ -55,12 +59,15 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### Next Up (Immediate — Parallel Batch)
 
-- [WI-0660](../WORK_QUEUE/WI-0660.md) — Draft coach + screenshot-audit UI surfaces (LOE L) — **unblocked**
 - [WI-0661](../WORK_QUEUE/WI-0661.md) — Weekly co-pilot dashboard refresh + report-card UI (LOE M) — **unblocked**
+- [WI-0668](../WORK_QUEUE/WI-0668.md) — NL intent translation layer (LOE M) — **unblocked**
 
 ### Next Up (Gated Follow-on)
 
-- [WI-0662](../WORK_QUEUE/WI-0662.md) — Standalone Sage frontend internal-only conversion + runbook cleanup (LOE S) — after WI-0660 and WI-0661
+- [WI-0669](../WORK_QUEUE/WI-0669.md) — Final Recommendation terminal output (LOE M) — **unblocked**
+- [WI-0670](../WORK_QUEUE/WI-0670.md) — Comparison as core + tradeoff surface (LOE M) — blocked on WI-0669
+- [WI-0671](../WORK_QUEUE/WI-0671.md) — Post-draft season loop stub (LOE M) — blocked on WI-0669
+- [WI-0662](../WORK_QUEUE/WI-0662.md) — Standalone Sage frontend internal-only conversion + runbook cleanup (LOE S) — after WI-0661
 
 ### Secondary / Independent Tracks
 
@@ -69,7 +76,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### Program Track A — FPL Product Platform
 
-`WI-0652 ✓ → (WI-0653 ✓, WI-0655 ✓, WI-0657 ✓) → (WI-0654 ✓, WI-0656 ✓, WI-0658 ✓) → WI-0659 ✓ → (WI-0660, WI-0661) → WI-0662`
+`WI-0652 ✓ → (WI-0653 ✓, WI-0655 ✓, WI-0657 ✓) → (WI-0654 ✓, WI-0656 ✓, WI-0658 ✓) → WI-0659 ✓ → WI-0660 ✓ → (WI-0661, WI-0668) → (WI-0669, WI-0662) → (WI-0670, WI-0671)`
 
 ### Program Track B — Public Splits Pipeline
 
