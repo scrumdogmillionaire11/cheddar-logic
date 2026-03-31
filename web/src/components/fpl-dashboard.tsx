@@ -3,12 +3,15 @@
 import { useState } from 'react';
 import type {
   DetailedAnalysisResponse,
+  ExplainabilityBlock,
   FixturePlannerPlayerWindow,
+  RelativeRiskBlock,
   StrategyPathMove,
   TransferPlan,
   TransferPlans,
 } from '@/lib/fpl-api';
 import FPLLineupView from '@/components/fpl-lineup-view';
+import FPLWeeklyReportCard from '@/components/fpl-weekly-report-card';
 
 interface FPLDashboardProps {
   data: DetailedAnalysisResponse;
@@ -667,6 +670,82 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
           </div>
         )}
 
+        {/* Decision Explainability */}
+        {data.explainability && (
+          <div className="order-4 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
+            <h2 className="mb-6 text-2xl font-semibold">Decision Explainability</h2>
+            <div className="space-y-3">
+              {data.explainability.why_this != null && (
+                <div className="text-sm">
+                  <span className="text-cloud/60">Why this recommendation: </span>
+                  <span className="text-cloud/80">{data.explainability.why_this}</span>
+                </div>
+              )}
+              {data.explainability.why_not_alternatives != null && (
+                <div className="text-sm">
+                  <span className="text-cloud/60">Why not alternatives: </span>
+                  <span className="text-cloud/80">{data.explainability.why_not_alternatives}</span>
+                </div>
+              )}
+              {data.explainability.what_would_change != null && (
+                <div className="text-sm">
+                  <span className="text-cloud/60">What would change this: </span>
+                  <span className="text-cloud/80">{data.explainability.what_would_change}</span>
+                </div>
+              )}
+              {Array.isArray(data.explainability.key_risk_drivers) &&
+                data.explainability.key_risk_drivers.length > 0 && (
+                  <div>
+                    <div className="mb-1 text-xs font-semibold uppercase text-cloud/60">
+                      Key risk drivers
+                    </div>
+                    <ul className="space-y-1 text-sm text-cloud/70">
+                      {(data.explainability.key_risk_drivers as string[]).map((driver, idx) => (
+                        <li key={`risk-driver-${idx}`}>{driver}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+            </div>
+          </div>
+        )}
+
+        {/* Uncertainty and Risk Framing */}
+        {(data.confidence_band || data.relative_risk) && (
+          <div className="order-4 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
+            <h2 className="mb-6 text-2xl font-semibold">Uncertainty and Risk Framing</h2>
+            <div className="space-y-3">
+              {data.confidence_band?.label != null && (
+                <div className="text-sm">
+                  <span className="text-cloud/60">Confidence band: </span>
+                  <span className="text-cloud/80">{data.confidence_band.label}</span>
+                </div>
+              )}
+              {data.relative_risk?.recommended_risk_posture != null && (
+                <div className="text-sm">
+                  <span className="text-cloud/60">Risk posture: </span>
+                  <span className="text-teal">{data.relative_risk.recommended_risk_posture}</span>
+                </div>
+              )}
+              {data.relative_risk?.framing_note != null && (
+                <p className="text-sm text-cloud/70">{data.relative_risk.framing_note}</p>
+              )}
+              {Array.isArray(data.scenario_notes) && data.scenario_notes.length > 0 && (
+                <div>
+                  <div className="mb-1 text-xs font-semibold uppercase text-cloud/60">
+                    Scenario notes
+                  </div>
+                  <ul className="space-y-1 text-sm text-cloud/70">
+                    {(data.scenario_notes as string[]).map((note, idx) => (
+                      <li key={`scenario-note-${idx}`}>{note}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Strategy Notes (collapsible on mobile) */}
         <div className="order-5 rounded-xl border border-white/10 bg-surface/80 md:order-none">
           <button
@@ -914,6 +993,9 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
             )}
           </div>
         </div>
+
+        {/* Weekly Report Card */}
+        <FPLWeeklyReportCard reportCard={data.weekly_report_card} />
 
         {/* Risk Notes (collapsible on mobile) */}
         {(data.risk_scenarios.length > 0 || data.squad_health) && (
