@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-03-30T23:30:00Z"
-last_activity: "2026-03-30 - WI-0661 complete (quick-115). Explainability blocks, uncertainty/risk framing, and weekly report-card UI wired into fpl-dashboard from WI-0657/0658 backend contract. All 3 contract tests green, build clean. 11 WIs remain open: WI-0662 (now unblocked), WI-0663, WI-0664–0667 (public splits pipeline), WI-0668, WI-0669, WI-0670, WI-0671, WI-0672."
+last_activity: "2026-03-31 - Completed quick task 115: Weekly co-pilot dashboard WI-0661 UNBLOCKED"
 progress:
   total_phases: 4
   completed_phases: 3
@@ -204,5 +204,6 @@ This file is intentionally minimal to avoid stale status drift.
 | 111 | WI-0658: Decision receipts + memory + trust analytics APIs — POST /decision-receipts, GET /user/{id}/analytics + /memory, 4 drift flags, 35 tests | 2026-03-30 | 70e2ad2 | [111-wi-0658-decision-receipts-memory-and-tru](./quick/111-wi-0658-decision-receipts-memory-and-tru/) |
 | 112 | WI-0656: Draft audit scoring + comparison APIs — POST /draft-sessions/{id}/audit (8 dimensions, profile-aware), POST /draft-sessions/compare (archetype-weighted), 38 tests | 2026-03-30 | e3d02a4 | [112-wi-0656](./quick/112-wi-0656/) |
 | 114 | WI-0660: Draft workbench UI — 7 components (onboarding, draft-lab, candidate-card, screenshot-uploader, parse-review, draft-audit, draft-compare), shell wiring, 2 contract test files | 2026-03-30 | d576106 | [114-wi-0660-draft-workbench-profile-build-pa](./quick/114-wi-0660-draft-workbench-profile-build-pa/) |
+| 115 | Weekly co-pilot dashboard WI-0661 UNBLOCKED | 2026-03-31 | c205ca7 | [115-weekly-co-pilot-dashboard-wi-0661-unbloc](./quick/115-weekly-co-pilot-dashboard-wi-0661-unbloc/) |
 
 Last activity: 2026-03-30 - Completed quick task 114: WI-0660 draft workbench UI — 7 components, shell wiring, 2 contract test files (16 checks all pass)
