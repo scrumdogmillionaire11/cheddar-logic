@@ -191,6 +191,38 @@ export interface ChipTimingOutlook {
   rationale?: string;
 }
 
+export interface ExplainabilityBlock {
+  why_this?: string | null;
+  why_not_alternatives?: string | null;
+  what_would_change?: string | null;
+  key_risk_drivers?: string[] | null;
+}
+
+export interface RelativeRiskBlock {
+  rank_percentile?: number | null;
+  ownership_safe_threshold?: number | null;
+  recommended_risk_posture?: string | null;
+  framing_note?: string | null;
+}
+
+export interface ConfidenceBand {
+  lower?: number | null;
+  upper?: number | null;
+  label?: string | null;
+}
+
+export interface WeeklyReportCard {
+  gameweek?: number | null;
+  expected_pts?: number | null;
+  actual_pts?: number | null;
+  captain_accuracy?: string | null;
+  transfer_quality?: string | null;
+  missed_opportunities?: string[] | null;
+  profile_adherence?: string | null;
+  drift_flags?: string[] | null;
+  verdict?: string | null;
+}
+
 export interface FixturePlannerTimelineCell {
   gw: number;
   dgw_teams: string[];
@@ -304,6 +336,11 @@ export interface DetailedAnalysisResponse {
   fixture_planner_reason?: string | null;
   available_chips: string[];
   squad_health?: SquadHealth | null;
+  confidence_band?: ConfidenceBand | null;
+  scenario_notes?: string[] | null;
+  explainability?: ExplainabilityBlock | null;
+  relative_risk?: RelativeRiskBlock | null;
+  weekly_report_card?: WeeklyReportCard | null;
 }
 
 export interface DashboardData {
