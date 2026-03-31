@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T23:00:00Z"
-last_activity: "2026-03-30 - Sprint re-assess. WI-0660 complete. WI-0673–0680 (FPL Sage test-isolation / chip-engine / analyzer fixes) all merged and done. 12 WIs remain open: WI-0661 (primary active), WI-0662, WI-0663, WI-0664–0667 (public splits pipeline), WI-0668, WI-0669, WI-0670, WI-0671, WI-0672. NOTE: WORK_QUEUE/COMPLETE/ contains WI-0668–0672 as earlier test-fix items (different scope); product WIs of the same numbers are the active ones in WORK_QUEUE/."
+last_updated: "2026-03-30T23:30:00Z"
+last_activity: "2026-03-30 - WI-0661 complete (quick-115). Explainability blocks, uncertainty/risk framing, and weekly report-card UI wired into fpl-dashboard from WI-0657/0658 backend contract. All 3 contract tests green, build clean. 11 WIs remain open: WI-0662 (now unblocked), WI-0663, WI-0664–0667 (public splits pipeline), WI-0668, WI-0669, WI-0670, WI-0671, WI-0672."
 progress:
   total_phases: 4
   completed_phases: 3
@@ -56,8 +56,8 @@ This file is intentionally minimal to avoid stale status drift.
 ### Dependency Chains
 
 - **WI-0660** ✓ — DONE 2026-03-30
-- **WI-0661** — depends on WI-0657 ✓, WI-0658 ✓, WI-0659 ✓ → **UNBLOCKED** ← primary active
-- **WI-0662** — depends on WI-0659 ✓, WI-0660 ✓, WI-0661 → blocked until WI-0661 lands
+- **WI-0661** ✓ — DONE 2026-03-30 (quick-115)
+- **WI-0662** — depends on WI-0659 ✓, WI-0660 ✓, WI-0661 ✓ → **UNBLOCKED**
 - **WI-0663** — independent MLB pitcher-K UNDER enhancement → **UNBLOCKED**
 - **WI-0664** — independent schema-only (no deps) → **UNBLOCKED**
 - **WI-0665** — depends on WI-0664 → blocked until WI-0664 lands
@@ -75,7 +75,7 @@ This file is intentionally minimal to avoid stale status drift.
 
 ### Now (Primary Active)
 
-- [WI-0661](../WORK_QUEUE/WI-0661.md) — Weekly co-pilot dashboard refresh + report-card UI (LOE M) — **UNBLOCKED, unassigned**
+- [WI-0662](../WORK_QUEUE/WI-0662.md) — Draft coach + report card integration (LOE M) — **UNBLOCKED** (WI-0661 ✓ landed)
 
 ### Parallel / Immediate — Can Start Alongside WI-0661
 
