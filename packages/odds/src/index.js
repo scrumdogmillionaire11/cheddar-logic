@@ -28,72 +28,6 @@ const { getSportConfig } = require('./config');
 // Load .env from project root (3 levels up from packages/odds/src)
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
 
-function countSpreadMarketsInApiData(apiData) {
-  if (!Array.isArray(apiData)) return 0;
-  let count = 0;
-  for (const game of apiData) {
-    for (const bookmaker of game?.bookmakers || []) {
-      if ((bookmaker?.markets || []).some((market) => market?.key === 'spreads')) {
-        count += 1;
-      }
-    }
-  }
-  return count;
-}
-
-function mergeSoccerSpreadMarkets(primaryApiGames, spreadOnlyApiGames) {
-  if (!Array.isArray(primaryApiGames) || !Array.isArray(spreadOnlyApiGames)) {
-    return primaryApiGames;
-  }
-
-  const spreadByGameId = new Map(
-    spreadOnlyApiGames
-      .filter((game) => game && game.id)
-      .map((game) => [game.id, game]),
-  );
-
-  return primaryApiGames.map((game) => {
-    const spreadSource = spreadByGameId.get(game?.id);
-    if (!spreadSource) return game;
-
-    const mergedBookmakers = [...(game.bookmakers || [])];
-    const bookmakerIndex = new Map(
-      mergedBookmakers.map((bookmaker, index) => [bookmaker.key, index]),
-    );
-
-    for (const spreadBookmaker of spreadSource.bookmakers || []) {
-      const spreads = (spreadBookmaker.markets || []).filter(
-        (market) => market?.key === 'spreads',
-      );
-      if (spreads.length === 0) continue;
-
-      const existingIndex = bookmakerIndex.get(spreadBookmaker.key);
-      if (existingIndex === undefined) {
-        mergedBookmakers.push({
-          ...spreadBookmaker,
-          markets: spreads,
-        });
-        bookmakerIndex.set(spreadBookmaker.key, mergedBookmakers.length - 1);
-        continue;
-      }
-
-      const existing = mergedBookmakers[existingIndex] || { key: spreadBookmaker.key, markets: [] };
-      const existingMarkets = (existing.markets || []).filter(
-        (market) => market?.key !== 'spreads',
-      );
-      mergedBookmakers[existingIndex] = {
-        ...existing,
-        markets: [...existingMarkets, ...spreads],
-      };
-    }
-
-    return {
-      ...game,
-      bookmakers: mergedBookmakers,
-    };
-  });
-}
-
 /**
  * Fetch odds for a sport and normalize the output
  *
@@ -146,10 +80,7 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
       }
     }
 
-    // fetchFromOddsAPI returns { games, remainingTokens } for single-league path.
-    // Multi-league path still returns a plain array — handle both.
-    const rawGames = Array.isArray(fetchResult) ? fetchResult : fetchResult.games;
-    const remainingTokens = Array.isArray(fetchResult) ? null : fetchResult.remainingTokens;
+const { games: rawGames, remainingTokens } = fetchResult;
 
     console.log(`[Odds] Got ${rawGames.length} raw games for ${sport}`);
 
@@ -205,64 +136,7 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
  * @private
  */
 async function fetchFromOddsAPI(sport, config, apiKey) {
-  // Multi-league path: used when config.apiKeys is an array (currently only SOCCER)
-  if (Array.isArray(config.apiKeys)) {
-    const allGames = [];
-    for (const leagueKey of config.apiKeys) {
-      const url = `https://api.the-odds-api.com/v4/sports/${leagueKey}/odds`;
-      const params = {
-        apiKey,
-        regions: 'us',
-        markets: config.markets.join(','),
-        bookmakers: config.bookmakers.join(','),
-        oddsFormat: 'american',
-      };
-      console.log(`[Odds] API call: ${url}?markets=${config.markets.join(',')}`);
-      const response = await axios.get(url, { params, timeout: 10000 });
-      const remaining = response.headers['x-requests-remaining'];
-      if (remaining) {
-        const remainingInt = parseInt(remaining);
-        console.log(`[Odds] API quota remaining: ${remainingInt}`);
-        if (remainingInt < 200) {
-          console.warn(`[Odds] ⚠️  LOW API QUOTA: ${remaining} requests remaining`);
-        }
-      }
-      let leagueApiGames = response.data;
-      const wantsSpreads = config.markets.includes('spreads');
-      const spreadsSeen = countSpreadMarketsInApiData(leagueApiGames);
-
-      if (
-        sport?.toUpperCase() === 'SOCCER' &&
-        wantsSpreads &&
-        spreadsSeen === 0
-      ) {
-        const spreadParams = {
-          apiKey,
-          regions: 'us',
-          markets: 'spreads',
-          bookmakers: 'pinnacle',
-          oddsFormat: 'american',
-        };
-        console.log(
-          `[Odds] Soccer spreads fallback: ${leagueKey} had no spreads for configured books; retrying spreads with pinnacle`,
-        );
-        const spreadResponse = await axios.get(url, {
-          params: spreadParams,
-          timeout: 10000,
-        });
-        leagueApiGames = mergeSoccerSpreadMarkets(
-          leagueApiGames,
-          spreadResponse.data,
-        );
-      }
-
-      const leagueGames = transformAPIResponse(leagueApiGames, sport);
-      allGames.push(...leagueGames);
-    }
-    return allGames;
-  }
-
-  // Single-league path: all other sports use config.apiKey (singular)
+  // All active sports use config.apiKey (singular).
   const url = `https://api.the-odds-api.com/v4/sports/${config.apiKey}/odds`;
   const params = {
     apiKey,
@@ -289,8 +163,59 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
     }
   }
 
+  // If sport has period markets, fetch them separately (Odds API returns 422
+  // when period/alternate markets are mixed with featured markets in one call).
+  let mergedApiData = response.data;
+  if (config.periodMarkets && config.periodMarkets.length > 0) {
+    const periodParams = {
+      apiKey,
+      regions: 'us',
+      markets: config.periodMarkets.join(','),
+      bookmakers: config.bookmakers.join(','),
+      oddsFormat: 'american',
+    };
+    console.log(
+      `[Odds] API call: ${url}?markets=${config.periodMarkets.join(',')} (period)`,
+    );
+    const periodResponse = await axios.get(url, {
+      params: periodParams,
+      timeout: 10000,
+    });
+
+    // Overwrite remainingTokens with the most recent API header value
+    const periodRemaining = periodResponse.headers['x-requests-remaining'];
+    if (periodRemaining) {
+      remainingTokens = parseInt(periodRemaining);
+      console.log(`[Odds] API quota remaining after period fetch: ${remainingTokens}`);
+      if (remainingTokens < 200) {
+        console.warn(`[Odds] ⚠️  LOW API QUOTA: ${remainingTokens} requests remaining`);
+      }
+    }
+
+    // Merge period-market bookmaker data into featured game objects by game.id
+    if (Array.isArray(periodResponse.data)) {
+      const periodByGameId = new Map(
+        periodResponse.data
+          .filter((g) => g && g.id)
+          .map((g) => [g.id, g]),
+      );
+
+      mergedApiData = (response.data || []).map((game) => {
+        const periodGame = periodByGameId.get(game?.id);
+        if (!periodGame) return game;
+        return {
+          ...game,
+          bookmakers: [
+            ...(game.bookmakers || []),
+            ...(periodGame.bookmakers || []),
+          ],
+        };
+      });
+    }
+  }
+
   // Transform API response to internal format (matches shared-data structure)
-  return { games: transformAPIResponse(response.data, sport), remainingTokens };
+  return { games: transformAPIResponse(mergedApiData, sport), remainingTokens };
 }
 
 /**
@@ -381,7 +306,7 @@ function transformAPIResponse(apiData, sport) {
             });
           }
 
-          if (market.key === 'totals_1st_period') {
+          if (market.key === 'totals_1st_period' || market.key === 'totals_p1') {
             const overOutcome = market.outcomes.find((o) => o.name === 'Over');
             const underOutcome = market.outcomes.find((o) => o.name === 'Under');
 

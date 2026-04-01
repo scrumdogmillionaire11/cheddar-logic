@@ -12,15 +12,15 @@
  * Cadence model
  * -------------
  * 09:00 ET (heavy ingest window):
- *   NHL: sync_nhl_sog_player_ids → [BLK chain] → pull_nhl_player_shots_props → run_nhl_player_shots_model
+ *   NHL: sync_nhl_sog_player_ids → [BLK chain] → pull_nhl_player_shots_props + pull_nhl_1p_odds → run_nhl_player_shots_model
  *   MLB: pull_mlb_pitcher_stats → pull_mlb_weather → pull_mlb_pitcher_strikeout_props → run_mlb_model
  *
  * 18:00 ET (prop-refresh only — no heavy ingest):
- *   NHL: pull_nhl_player_shots_props → run_nhl_player_shots_model
+ *   NHL: pull_nhl_player_shots_props + pull_nhl_1p_odds → run_nhl_player_shots_model
  *   MLB: pull_mlb_pitcher_strikeout_props → run_mlb_model
  *
  * T-60 per game:
- *   NHL: pull_nhl_player_shots_props → run_nhl_player_shots_model
+ *   NHL: pull_nhl_player_shots_props + pull_nhl_1p_odds → run_nhl_player_shots_model
  *   MLB: pull_mlb_pitcher_strikeout_props → run_mlb_model
  *
  * T-120, T-90, T-30: NO player-prop jobs — only T-60 band fires.
@@ -55,6 +55,7 @@ const { syncNhlBlkPlayerIds } = require('../jobs/sync_nhl_blk_player_ids');
 const { pullNhlPlayerBlk } = require('../jobs/pull_nhl_player_blk');
 const { ingestNstBlkRates } = require('../jobs/ingest_nst_blk_rates');
 const { pullNhlPlayerShotsProps } = require('../jobs/pull_nhl_player_shots_props');
+const { pullNhl1pOdds } = require('../jobs/pull_nhl_1p_odds');
 const { runNHLPlayerShotsModel } = require('../jobs/run_nhl_player_shots_model');
 const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
 const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
@@ -260,6 +261,14 @@ function computePlayerPropsDueJobs(nowEt, { games = [], dryRun = false } = {}) {
       args: { jobKey: nhlPropKey, dryRun },
       reason: `player-props NHL shots prop pull (${hhmm} ET)`,
     });
+    const nhl1pKey = `${keyNhlFixed(dateStr, hhmm)}|1p_odds`;
+    jobs.push({
+      jobName: 'pull_nhl_1p_odds',
+      jobKey: nhl1pKey,
+      execute: pullNhl1pOdds,
+      args: { jobKey: nhl1pKey, dryRun },
+      reason: `player-props NHL 1P total odds pull (${hhmm} ET)`,
+    });
     const nhlModelKey = `${keyNhlFixed(dateStr, hhmm)}|shots_model`;
     jobs.push({
       jobName: 'run_nhl_player_shots_model',
@@ -326,6 +335,14 @@ function computePlayerPropsDueJobs(nowEt, { games = [], dryRun = false } = {}) {
         execute: pullNhlPlayerShotsProps,
         args: { jobKey: nhlPropT60, dryRun },
         reason: `player-props NHL shots prop pull T-60 (${g.game_id})`,
+      });
+      const nhl1pT60 = `${nhlKey}|1p_odds`;
+      jobs.push({
+        jobName: 'pull_nhl_1p_odds',
+        jobKey: nhl1pT60,
+        execute: pullNhl1pOdds,
+        args: { jobKey: nhl1pT60, dryRun },
+        reason: `player-props NHL 1P odds pull T-60 (${g.game_id})`,
       });
       const nhlModelT60 = `${nhlKey}|shots_model`;
       jobs.push({

@@ -65,10 +65,6 @@ function getCurrentPeriod() {
 }
 function getTokenCostPerFetch() {
   // Token cost is determined once per invocation — same value used for all sports
-  const {
-    getActiveSports,
-    getTokensForFetch,
-  } = require('@cheddar-logic/odds');
   return getTokensForFetch(getActiveSports());
 }
 
@@ -178,16 +174,17 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       // To add/remove sports, update the `active` field in config.js — not here.
       const activeSports = getActiveSports();
 
-      // Token math (ODDS_FETCH_SLOT_MINUTES=120, ~9 fetches/day):
-      // NHL:   2 tokens/fetch × 9 fetches/day = 18 tokens/day (main)
-      // NBA:   2 tokens/fetch × 9 fetches/day = 18 tokens/day (main)
-      // MLB:   1 token/fetch  × 9 fetches/day =  9 tokens/day (main)
-      // Total: 5 tokens/fetch × 9 fetches/day = 45 tokens/day (main hourly job)
+      // Token math (ODDS_FETCH_SLOT_MINUTES=30, ODDS_FETCH_START_HOUR=6 → ~32 fetches/day):
+      // NHL:   2 tokens/fetch × 32 fetches/day =  64 tokens/day (h2h + totals, featured only)
+      // NBA:   2 tokens/fetch × 32 fetches/day =  64 tokens/day (totals + spreads)
+      // MLB:   1 token/fetch  × 32 fetches/day =  32 tokens/day (h2h only, featured)
+      // Total: 5 tokens/fetch × 32 fetches/day = 160 tokens/day (main hourly job)
       // Prop jobs (separate cadence via player-props scheduler — 09:00, 18:00, T-60):
       //   NHL SOG: 1 token/run × ~3 runs/day = ~3 tokens/day
       //   MLB K:   1 token/run × ~3 runs/day = ~3 tokens/day
-      // Paid tier: 20,000 tokens/month → ~51/day × 30 = ~1,530/month (~8% utilization)
-      // T-minus pre-model pulls add up to 5 tokens × active games per day
+      // Paid tier: 20,000 tokens/month → ~166/day × 30 = ~4,980/month (~25% utilization)
+      // Note: period markets (totals_p1) are fetched separately by pull_nhl_1p_odds.js
+      //       via the per-event endpoint and patched onto the existing snapshot.
       const tokenCost = getTokensForFetch(activeSports);
       console.log(
         `[PullOdds] Active sports (from config): ${activeSports.join(', ')} | tokens/fetch: ${tokenCost} | ~${tokenCost * 42}/day (30-min buckets, skip 2am-5am)`,
@@ -507,19 +504,12 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 h2hConsensusAway: normalized.odds?.h2hConsensusAway,
                 h2hConsensusConfidence:
                   normalized.odds?.h2hConsensusConfidence,
-                mlF5Home: normalized.odds?.mlF5Home ?? null,
-                mlF5Away: normalized.odds?.mlF5Away ?? null,
                 totalF5Line: normalized.odds?.totalF5Line ?? null,
                 totalF5Over: normalized.odds?.totalF5Over ?? null,
                 totalF5Under: normalized.odds?.totalF5Under ?? null,
                 rawData: normalized.market,
                 jobRunId,
               });
-              if (normalized.odds?.mlF5Home == null || normalized.odds?.mlF5Away == null) {
-                if (sport === 'MLB') {
-                  console.log(`[PullOdds]   NO_F5_ML_LINE: ${normalized.gameId} — ml_f5 price absent from provider`);
-                }
-              }
               snapshotsInserted++;
               kpis.snapshotsInserted += 1;
             } catch (gameErr) {

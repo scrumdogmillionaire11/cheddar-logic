@@ -6,17 +6,22 @@
  * - 1 token = 1 market pulled (region fixed to 'us')
  * - Multiple bookmakers doesn't increase token cost
  *
- * Canonical market budget — MUST stay at 7 tokens total per composite run:
- *   NBA  (main job):  totals + spreads                       = 2 tokens
- *   NHL  (main job):  totals + totals_1st_period              = 2 tokens
- *   NHL  (prop job):  player_shots_on_goal                   = 1 token
- *   MLB  (main job):  totals_1st_5_innings                   = 1 token
- *   MLB  (prop job):  pitcher_strikeouts                     = 1 token
- *   ──────────────────────────────────────────────────────── = 7 tokens
+ * Canonical market budget — working featured markets only (bulk endpoint):
+ *   NHL  (main job):  h2h + totals                 = 2 tokens
+ *   NBA  (main job):  totals + spreads              = 2 tokens
+ *   MLB  (main job):  h2h                           = 1 token
+ *   NHL  (prop job):  player_shots_on_goal          = 1 token (separate scheduler)
+ *   MLB  (prop job):  pitcher_strikeouts            = 1 token (separate scheduler)
+ *   ──────────────────────────────────────────────── = 5 tokens/main composite fetch
  *
- * To add a market: increment tokensPerFetch / propTokensPerRun here,
- * verify the total above stays acceptable, update the pipeline (index.js,
- * normalize.js, odds.js migration) if it is a new game-market type.
+ * NOTE: The Odds API /v4/sports/{sport}/odds bulk endpoint only accepts featured
+ * markets (h2h, spreads, totals, outrights). Period/alternate markets such as
+ * totals_p1 or totals_1st_5_innings return 422. Per-event fetching via
+ * /v4/sports/{sport}/events/{event_id}/odds is the supported approach — deferred
+ * to a future WI (see WI-0715 dead-code cleanup for context).
+ *
+ * To add a market: increment tokensPerFetch here, verify total stays ≤7,
+ * update fetchFromOddsAPI (index.js) and normalize.js if a new market type.
  *
  * US Bookmakers:
  * - betmgm, draftkings, fanduel (main books)
@@ -28,10 +33,8 @@ const SPORTS_CONFIG = {
   NHL: {
     active: true,
     season: { start: '10-01', end: '04-30' },
-    markets: ['totals', 'totals_1st_period'],
+    markets: ['h2h', 'totals'],
     tokensPerFetch: 2,
-    propMarkets: ['player_shots_on_goal'],
-    propTokensPerRun: 1,
     defaultTTL: 240, // 4 hours standard
     pregameTTL: 30, // 30 min inside 2 hours
     sharpWindowTTL: 0, // Don't cache inside 1 hour — fetch on demand
@@ -68,10 +71,8 @@ const SPORTS_CONFIG = {
   MLB: {
     active: true, // season starts 2026-03-25
     season: { start: '03-20', end: '11-01' },
-    markets: ['totals_1st_5_innings'],
+    markets: ['h2h'],
     tokensPerFetch: 1,
-    propMarkets: ['pitcher_strikeouts'],
-    propTokensPerRun: 1,
     defaultTTL: 180, // Shorter — SP confirmations move lines faster
     pregameTTL: 20, // Tighter pregame window for weather/lineup
     sharpWindowTTL: 0,

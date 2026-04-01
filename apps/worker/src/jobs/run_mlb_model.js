@@ -135,7 +135,12 @@ function resolveMlbTeamLookupKeys(teamName) {
   if (!teamName || typeof teamName !== 'string') return [];
   const cleaned = teamName.trim();
   if (!cleaned) return [];
-  const abbreviation = MLB_TEAM_ABBREVIATIONS[cleaned] ?? null;
+  // Case-insensitive lookup: games table stores names in ALL CAPS (e.g. "NEW YORK METS")
+  const cleanedLower = cleaned.toLowerCase();
+  const matchedKey = Object.keys(MLB_TEAM_ABBREVIATIONS).find(
+    (k) => k.toLowerCase() === cleanedLower,
+  );
+  const abbreviation = matchedKey ? MLB_TEAM_ABBREVIATIONS[matchedKey] : null;
   return abbreviation ? [cleaned, abbreviation] : [cleaned];
 }
 
@@ -469,7 +474,9 @@ function buildPitcherStrikeoutLookback(
   }));
 }
 
-const PROJECTION_FLOOR_F5_FALLBACK = 8.5;
+// F5 total last-resort fallback (when both pitcher ERAs are unavailable).
+// F5 spans 5 innings ≈ 55% of a full game. MLB avg full-game total ~8.5 → F5 ≈ 4.5.
+const PROJECTION_FLOOR_F5_FALLBACK = 4.5;
 
 /**
  * Look up ERA for a team from mlb_pitcher_stats. Returns null if not found.

@@ -395,8 +395,8 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
   const selection = deriveOnePeriodSelection(payload);
   const modelLine = toFiniteNumber(payload?.driver?.inputs?.market_1p_total);
   const line = modelLine !== null ? modelLine : 1.5;
-  const overPrice1P = toFiniteNumber(oddsSnapshot?.total_price_over_1p);
-  const underPrice1P = toFiniteNumber(oddsSnapshot?.total_price_under_1p);
+  const overPrice1P = toFiniteNumber(oddsSnapshot?.total_1p_price_over);
+  const underPrice1P = toFiniteNumber(oddsSnapshot?.total_1p_price_under);
   const sidePrice =
     selection === 'OVER'
       ? overPrice1P

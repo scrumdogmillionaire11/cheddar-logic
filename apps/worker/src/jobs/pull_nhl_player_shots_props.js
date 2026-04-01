@@ -2,16 +2,18 @@
 /**
  * Pull NHL Player Shots On Goal Prop Lines
  *
- * Fetches player_shots_on_goal O/U market lines from The Odds API bulk
- * odds endpoint for upcoming NHL games, stores in player_prop_lines.
+ * Fetches player_shots_on_goal O/U market lines from The Odds API using
+ * the per-event endpoint (player props are NOT supported on the bulk /odds
+ * endpoint). Stores results in player_prop_lines.
  * player_blocked_shots (BLK) is available but OFF by default — it is not
  * part of the canonical 7-token budget defined in packages/odds/src/config.js.
  *
- * Endpoint: GET /v4/sports/icehockey_nhl/odds
+ * Step 1: GET /v4/sports/icehockey_nhl/events  (1 token — get event IDs)
+ * Step 2: GET /v4/sports/icehockey_nhl/events/{eventId}/odds  (1 token/game)
  *   ?markets=player_shots_on_goal&regions=us&bookmakers=...
  *
- * Token cost: 1 token per **market** for ALL games (bulk endpoint).
- *   Default (SOG only) = 1 token total regardless of game count.
+ * Token cost: 1 (events list) + N (one per upcoming game in HOURS_AHEAD window).
+ *   For a typical NHL night (8–15 games) = ~9–16 tokens total.
  *
  * Guard flags:
  *   NHL_SOG_PROP_EVENTS_ENABLED   — enables player_shots_on_goal pull (default ON)
@@ -44,8 +46,9 @@ const MARKET_TO_PROP_TYPE = {
 
 const BOOKMAKERS = 'draftkings,fanduel,betmgm';
 const HOURS_AHEAD = 36;
-const DEFAULT_SLEEP_MS = Number(process.env.NHL_SOG_PROP_SLEEP_MS || 1000);
 const JOB_NAME = 'pull-nhl-player-shots-props';
+/** Minimum ms between per-event API requests to avoid 429 rate limiting */
+const REQUEST_DELAY_MS = 150;
 
 function normalizePriceToAmerican(rawPrice) {
   const numericPrice = Number(rawPrice);
@@ -58,18 +61,6 @@ function normalizePriceToAmerican(rawPrice) {
     return Math.round((numericPrice - 1) * 100);
   }
   return Math.round(-100 / (numericPrice - 1));
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url, { headers: { 'user-agent': 'cheddar-logic-worker' } });
-  if (!response.ok) {
-    throw new Error(`Odds API ${response.status} for ${url}`);
-  }
-  return response.json();
 }
 
 async function fetchJsonWithHeaders(url) {
@@ -90,26 +81,43 @@ async function fetchJsonWithHeaders(url) {
 }
 
 /**
- * Fetch all upcoming NHL game prop odds in a single bulk call.
- * Costs 1 token per market (vs 1 token per game per market on the per-event endpoint).
+ * Fetch upcoming NHL events (game list with IDs) from the /events endpoint.
+ * Costs 1 token. Returns events filtered to the HOURS_AHEAD window.
  * @param {string} apiKey
- * @param {string[]} marketKeys  - e.g. ['player_shots_on_goal', 'player_blocked_shots']
- * @returns {{ games: object[], remainingTokens: number|null }}
+ * @returns {{ events: object[], remainingTokens: number|null }}
  */
-async function fetchBulkPropOdds(apiKey, marketKeys) {
-  const marketsParam = marketKeys.join(',');
+async function fetchUpcomingNhlEvents(apiKey) {
+  const cutoffIso = new Date(Date.now() + HOURS_AHEAD * 60 * 60 * 1000)
+    .toISOString()
+    .replace(/\.\d+Z$/, 'Z'); // strip ms — Odds API requires YYYY-MM-DDTHH:MM:SSZ
   const url =
-    `${ODDS_API_BASE}/sports/${SPORT_KEY}/odds` +
-    `?apiKey=${apiKey}&regions=us&markets=${marketsParam}&bookmakers=${BOOKMAKERS}&oddsFormat=american`;
-  console.log(`[${JOB_NAME}] Bulk API call: markets=${marketsParam} (1 token/market for all games)`);
+    `${ODDS_API_BASE}/sports/${SPORT_KEY}/events` +
+    `?apiKey=${apiKey}&dateFormat=iso&commenceTimeTo=${cutoffIso}`;
+  console.log(`[${JOB_NAME}] Fetching upcoming NHL events (next ${HOURS_AHEAD}h window)`);
   const response = await fetchJsonWithHeaders(url);
   const now = Date.now();
-  const cutoff = now + HOURS_AHEAD * 60 * 60 * 1000;
-  const games = (Array.isArray(response.data) ? response.data : []).filter((g) => {
-    const t = new Date(g.commence_time).getTime();
-    return t > now && t <= cutoff;
+  const events = (Array.isArray(response.data) ? response.data : []).filter((e) => {
+    return new Date(e.commence_time).getTime() > now;
   });
-  return { games, remainingTokens: response.remainingTokens };
+  return { events, remainingTokens: response.remainingTokens };
+}
+
+/**
+ * Fetch player prop odds for a single NHL event using the per-event endpoint.
+ * Player prop markets (player_shots_on_goal, player_blocked_shots) are NOT
+ * supported by the bulk /odds endpoint — they require /events/{id}/odds.
+ * Costs 1 token per event.
+ * @param {string} apiKey
+ * @param {string} eventId  - Odds API event UUID
+ * @param {string[]} marketKeys
+ * @returns {{ data: object, remainingTokens: number|null }}
+ */
+async function fetchEventPropOdds(apiKey, eventId, marketKeys) {
+  const marketsParam = marketKeys.join(',');
+  const url =
+    `${ODDS_API_BASE}/sports/${SPORT_KEY}/events/${eventId}/odds` +
+    `?apiKey=${apiKey}&regions=us&markets=${marketsParam}&bookmakers=${BOOKMAKERS}&oddsFormat=american`;
+  return fetchJsonWithHeaders(url);
 }
 
 /**
@@ -273,34 +281,44 @@ async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
     try {
       insertJobRun(JOB_NAME, jobRunId, null);
 
-const { games, remainingTokens } = await fetchBulkPropOdds(apiKey, activeMarkets);
-      if (remainingTokens != null) {
-        console.log(`[${JOB_NAME}] Tokens remaining after bulk fetch: ${remainingTokens}`);
+      // Step 1: fetch event list (1 token) to get Odds API event IDs
+      const { events, remainingTokens: eventsTokens } = await fetchUpcomingNhlEvents(apiKey);
+      if (eventsTokens != null) {
         const _period = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
         try {
-          upsertQuotaLedger({ provider: 'odds_api', period: _period, tokens_remaining: remainingTokens, updated_by: jobRunId });
+          upsertQuotaLedger({ provider: 'odds_api', period: _period, tokens_remaining: eventsTokens, updated_by: jobRunId });
         } catch (_ledgerErr) { /* DB not yet migrated */ }
       }
-      if (games.length === 0) {
-        console.log(`[${JOB_NAME}] No upcoming NHL games in ${HOURS_AHEAD}h window from bulk response`);
+      if (events.length === 0) {
+        console.log(`[${JOB_NAME}] No upcoming NHL events in ${HOURS_AHEAD}h window`);
         markJobRunSuccess(jobRunId, { eventsProcessed: 0, linesInserted: 0 });
         return { success: true, eventsProcessed: 0, linesInserted: 0 };
       }
-      console.log(`[${JOB_NAME}] Bulk fetch returned ${games.length} NHL games, markets: [${activeMarkets.join(', ')}]`);
+      console.log(`[${JOB_NAME}] Found ${events.length} upcoming NHL events, fetching per-event props for markets: [${activeMarkets.join(', ')}]`);
 
       let linesInserted = 0;
       let eventsProcessed = 0;
+      let lastRemainingTokens = eventsTokens;
       const fetchedAt = new Date().toISOString();
 
-      for (const game of games) {
-        const gameId = resolveGameId(db, game);
+      // Step 2: per-event prop fetch (1 token/event) — player props require /events/{id}/odds
+      for (const event of events) {
+        const gameId = resolveGameId(db, event);
         if (!gameId) {
-          console.warn(`[${JOB_NAME}] Could not resolve game_id for ${game.away_team} @ ${game.home_team}`);
+          console.warn(`[${JOB_NAME}] Could not resolve game_id for ${event.away_team} @ ${event.home_team}`);
           continue;
         }
 
         try {
-          const rows = parseEventPropLines(game, gameId, fetchedAt);
+          const { data: eventOdds, remainingTokens: rt } = await fetchEventPropOdds(apiKey, event.id, activeMarkets);
+          if (rt != null) {
+            lastRemainingTokens = rt;
+            const _period = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+            try {
+              upsertQuotaLedger({ provider: 'odds_api', period: _period, tokens_remaining: rt, updated_by: jobRunId });
+            } catch (_ledgerErr) { /* DB not yet migrated */ }
+          }
+          const rows = parseEventPropLines(eventOdds, gameId, fetchedAt);
           rows.forEach((row) => {
             upsertPlayerPropLine(row);
             linesInserted += 1;
@@ -309,12 +327,17 @@ const { games, remainingTokens } = await fetchBulkPropOdds(apiKey, activeMarkets
           const blkRows = rows.filter((r) => r.propType === 'blocked_shots').length;
           eventsProcessed += 1;
           console.log(
-            `[${JOB_NAME}] ${game.away_team} @ ${game.home_team}: ` +
+            `[${JOB_NAME}] ${event.away_team} @ ${event.home_team}: ` +
             `${sogRows} SOG lines, ${blkRows} BLK lines`,
           );
         } catch (err) {
-          console.error(`[${JOB_NAME}] Game ${game.id} failed: ${err.message}`);
+          console.error(`[${JOB_NAME}] Event ${event.id} (${event.away_team} @ ${event.home_team}) failed: ${err.message}`);
         }
+        // Throttle requests to stay within Odds API freq limit
+        await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS));
+      }
+      if (lastRemainingTokens != null) {
+        console.log(`[${JOB_NAME}] Tokens remaining after all fetches: ${lastRemainingTokens}`);
       }
 
       markJobRunSuccess(jobRunId, { eventsProcessed, linesInserted });
