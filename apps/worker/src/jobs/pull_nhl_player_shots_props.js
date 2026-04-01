@@ -235,6 +235,11 @@ function resolveGameId(db, event) {
 async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
+  if (process.env.APP_ENV === 'local') {
+    console.log(`[${JOB_NAME}] Skipped — APP_ENV=local. Prop pulls must not hit the live API in dev.`);
+    return { success: true, eventsProcessed: 0, linesInserted: 0 };
+  }
+
   // Guard: SOG default ON; BLK default OFF (not in canonical 7-token budget)
   const sogEnabled = process.env.NHL_SOG_PROP_EVENTS_ENABLED !== 'false';
   const blkEnabled = process.env.NHL_BLK_PROP_EVENTS_ENABLED === 'true';

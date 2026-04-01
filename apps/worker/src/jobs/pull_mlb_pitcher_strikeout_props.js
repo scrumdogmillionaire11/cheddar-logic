@@ -287,6 +287,11 @@ async function pullMlbPitcherStrikeoutProps({ dryRun = false, jobKey = null } = 
   const ksMode = process.env.PITCHER_KS_MODEL_MODE || null;
   const isOddsBacked = ksMode === 'ODDS_BACKED';
 
+  if (process.env.APP_ENV === 'local') {
+    console.log(`[${JOB_NAME}] Skipped — APP_ENV=local. Prop pulls must not hit the live API in dev.`);
+    return { success: true, insertedRows: 0, errors: [] };
+  }
+
   if (!isEnabled && !dryRun) {
     console.log(
       `[${JOB_NAME}] Skipped — MLB_PITCHER_K_PROP_EVENTS_ENABLED is not 'true'. ` +
