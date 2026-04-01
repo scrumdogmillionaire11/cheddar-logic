@@ -13,7 +13,7 @@ const CONFIDENCE_LOW = 0.8;
 export default function FPLParseReview({ parsed, onResolved }: FPLParseReviewProps) {
   const { parsed_squad } = parsed;
   const unresolvedIndexes = new Set(
-    parsed_squad.unresolved_slots.map((s) => s.slot_index),
+    (parsed_squad.unresolved_slots ?? []).map((s) => s.slot_index),
   );
 
   // Map of slot_index -> user correction string
@@ -57,7 +57,7 @@ export default function FPLParseReview({ parsed, onResolved }: FPLParseReviewPro
         </p>
       </div>
 
-      {parsed_squad.parse_warnings.length > 0 && (
+      {(parsed_squad.parse_warnings ?? []).length > 0 && (
         <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 space-y-1">
           <p className="text-xs font-medium text-yellow-400">Parse warnings</p>
           {parsed_squad.parse_warnings.map((w, i) => (
