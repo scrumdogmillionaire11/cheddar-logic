@@ -366,6 +366,20 @@ function transformAPIResponse(apiData, sport) {
               away_price: awayOutcome?.price,
             });
           }
+
+          if (market.key === 'totals_1st_5_innings') {
+            const overOutcome = market.outcomes.find((o) => o.name === 'Over');
+            const underOutcome = market.outcomes.find((o) => o.name === 'Under');
+
+            if (!transformed.markets.totals_1st_5_innings)
+              transformed.markets.totals_1st_5_innings = [];
+            transformed.markets.totals_1st_5_innings.push({
+              book: bookmaker.key,
+              line: overOutcome?.point,
+              over: overOutcome?.price,
+              under: underOutcome?.price,
+            });
+          }
         });
       });
     }

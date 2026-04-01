@@ -6,7 +6,7 @@
  * - 1 token = 1 market pulled (region fixed to 'us')
  * - NHL: h2h + totals = 2 tokens
  * - NBA: h2h + totals + spreads = 3 tokens
- * - MLB: h2h + totals = 2 tokens
+ * - MLB: totals_1st_5_innings = 1 token
  * - NFL: h2h + totals + spreads = 3 tokens
  * - Multiple bookmakers doesn't increase token cost
  *
@@ -58,8 +58,8 @@ const SPORTS_CONFIG = {
   MLB: {
     active: true, // season starts 2026-03-25
     season: { start: '03-20', end: '11-01' },
-    markets: ['h2h', 'totals'],
-    tokensPerFetch: 2,
+    markets: ['totals_1st_5_innings'],
+    tokensPerFetch: 1,
     defaultTTL: 180, // Shorter — SP confirmations move lines faster
     pregameTTL: 20, // Tighter pregame window for weather/lineup
     sharpWindowTTL: 0,
