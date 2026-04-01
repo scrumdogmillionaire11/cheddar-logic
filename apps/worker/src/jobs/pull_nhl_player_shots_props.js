@@ -6,16 +6,15 @@
  * from The Odds API event player props endpoint for upcoming NHL games,
  * stores in player_prop_lines.
  *
- * Endpoint: GET /v4/sports/icehockey_nhl/events/{eventId}/odds
+ * Endpoint: GET /v4/sports/icehockey_nhl/odds
  *   ?markets=player_shots_on_goal,player_blocked_shots&regions=us&bookmakers=...
  *
- * Token cost: 1 token per event per **market** (only runs for games within 36h).
+ * Token cost: 1 token per **market** for ALL games (bulk endpoint).
+ *   e.g. SOG+BLK enabled = 2 tokens total regardless of game count.
+ *
  * Guard flags (both default ON — set to 'false' to disable):
  *   NHL_SOG_PROP_EVENTS_ENABLED   — enables player_shots_on_goal pull
  *   NHL_BLK_PROP_EVENTS_ENABLED   — enables player_blocked_shots pull
- *
- * Both markets are requested in a single API call per event when both flags
- * are set, to minimise token spend.
  *
  * Exit codes: 0 = success, 1 = failure
  */
@@ -71,33 +70,44 @@ async function fetchJson(url) {
   return response.json();
 }
 
-/**
- * Fetch list of upcoming NHL events from The Odds API.
- * Returns events commencing within HOURS_AHEAD hours.
- */
-async function fetchNhlEvents(apiKey) {
-  const url = `${ODDS_API_BASE}/sports/${SPORT_KEY}/events?apiKey=${apiKey}`;
-  const events = await fetchJson(url);
-  const now = Date.now();
-  const cutoff = now + HOURS_AHEAD * 60 * 60 * 1000;
-  return (Array.isArray(events) ? events : []).filter((e) => {
-    const t = new Date(e.commence_time).getTime();
-    return t > now && t <= cutoff;
-  });
+async function fetchJsonWithHeaders(url) {
+  const response = await fetch(url, { headers: { 'user-agent': 'cheddar-logic-worker' } });
+  if (!response.ok) {
+    throw new Error(`Odds API ${response.status} for ${url}`);
+  }
+  const remaining = response.headers.get('x-requests-remaining');
+  const remainingTokens = remaining != null ? parseInt(remaining, 10) : null;
+  if (remainingTokens != null) {
+    console.log(`[${JOB_NAME}] API quota remaining: ${remainingTokens}`);
+    if (remainingTokens < 200) {
+      console.warn(`[${JOB_NAME}] ⚠️  LOW API QUOTA: ${remainingTokens} requests remaining`);
+    }
+  }
+  const data = await response.json();
+  return { data, remainingTokens };
 }
 
 /**
- * Fetch player prop lines for a single event.
+ * Fetch all upcoming NHL game prop odds in a single bulk call.
+ * Costs 1 token per market (vs 1 token per game per market on the per-event endpoint).
  * @param {string} apiKey
- * @param {string} eventId
  * @param {string[]} marketKeys  - e.g. ['player_shots_on_goal', 'player_blocked_shots']
+ * @returns {{ games: object[], remainingTokens: number|null }}
  */
-async function fetchEventPropLines(apiKey, eventId, marketKeys) {
+async function fetchBulkPropOdds(apiKey, marketKeys) {
   const marketsParam = marketKeys.join(',');
   const url =
-    `${ODDS_API_BASE}/sports/${SPORT_KEY}/events/${eventId}/odds` +
+    `${ODDS_API_BASE}/sports/${SPORT_KEY}/odds` +
     `?apiKey=${apiKey}&regions=us&markets=${marketsParam}&bookmakers=${BOOKMAKERS}&oddsFormat=american`;
-  return fetchJson(url);
+  console.log(`[${JOB_NAME}] Bulk API call: markets=${marketsParam} (1 token/market for all games)`);
+  const response = await fetchJsonWithHeaders(url);
+  const now = Date.now();
+  const cutoff = now + HOURS_AHEAD * 60 * 60 * 1000;
+  const games = (Array.isArray(response.data) ? response.data : []).filter((g) => {
+    const t = new Date(g.commence_time).getTime();
+    return t > now && t <= cutoff;
+  });
+  return { games, remainingTokens: response.remainingTokens };
 }
 
 /**
@@ -256,27 +266,30 @@ async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
     try {
       insertJobRun(JOB_NAME, jobRunId, null);
 
-      const events = await fetchNhlEvents(apiKey);
-      if (events.length === 0) {
-        console.log(`[${JOB_NAME}] No upcoming NHL events in ${HOURS_AHEAD}h window`);
+const { games, remainingTokens } = await fetchBulkPropOdds(apiKey, activeMarkets);
+      if (remainingTokens != null) {
+        console.log(`[${JOB_NAME}] Tokens remaining after bulk fetch: ${remainingTokens}`);
+      }
+      if (games.length === 0) {
+        console.log(`[${JOB_NAME}] No upcoming NHL games in ${HOURS_AHEAD}h window from bulk response`);
         markJobRunSuccess(jobRunId, { eventsProcessed: 0, linesInserted: 0 });
         return { success: true, eventsProcessed: 0, linesInserted: 0 };
       }
-      console.log(`[${JOB_NAME}] ${events.length} NHL events in window, markets: [${activeMarkets.join(', ')}]`);
+      console.log(`[${JOB_NAME}] Bulk fetch returned ${games.length} NHL games, markets: [${activeMarkets.join(', ')}]`);
 
       let linesInserted = 0;
       let eventsProcessed = 0;
+      const fetchedAt = new Date().toISOString();
 
-      for (const event of events) {
-        const gameId = resolveGameId(db, event);
+      for (const game of games) {
+        const gameId = resolveGameId(db, game);
         if (!gameId) {
-          console.warn(`[${JOB_NAME}] Could not resolve game_id for event ${event.id} (${event.away_team} @ ${event.home_team})`);
+          console.warn(`[${JOB_NAME}] Could not resolve game_id for ${game.away_team} @ ${game.home_team}`);
           continue;
         }
 
         try {
-          const eventOdds = await fetchEventPropLines(apiKey, event.id, activeMarkets);
-          const rows = parseEventPropLines(eventOdds, gameId, new Date().toISOString());
+          const rows = parseEventPropLines(game, gameId, fetchedAt);
           rows.forEach((row) => {
             upsertPlayerPropLine(row);
             linesInserted += 1;
@@ -285,14 +298,12 @@ async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
           const blkRows = rows.filter((r) => r.propType === 'blocked_shots').length;
           eventsProcessed += 1;
           console.log(
-            `[${JOB_NAME}] ${event.away_team} @ ${event.home_team}: ` +
+            `[${JOB_NAME}] ${game.away_team} @ ${game.home_team}: ` +
             `${sogRows} SOG lines, ${blkRows} BLK lines`,
           );
         } catch (err) {
-          console.error(`[${JOB_NAME}] Event ${event.id} failed: ${err.message}`);
+          console.error(`[${JOB_NAME}] Game ${game.id} failed: ${err.message}`);
         }
-
-        if (DEFAULT_SLEEP_MS > 0) await sleep(DEFAULT_SLEEP_MS);
       }
 
       markJobRunSuccess(jobRunId, { eventsProcessed, linesInserted });
