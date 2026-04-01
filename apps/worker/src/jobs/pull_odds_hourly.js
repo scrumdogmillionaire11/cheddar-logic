@@ -508,6 +508,9 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                   normalized.odds?.h2hConsensusConfidence,
                 mlF5Home: normalized.odds?.mlF5Home ?? null,
                 mlF5Away: normalized.odds?.mlF5Away ?? null,
+                totalF5Line: normalized.odds?.totalF5Line ?? null,
+                totalF5Over: normalized.odds?.totalF5Over ?? null,
+                totalF5Under: normalized.odds?.totalF5Under ?? null,
                 rawData: normalized.market,
                 jobRunId,
               });
