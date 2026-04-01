@@ -69,7 +69,7 @@ function validateMarketContract(game, sport) {
     const hasValidPrices =
       market === 'h2h'
         ? marketData.home !== null && marketData.away !== null
-        : market === 'totals'
+        : market === 'totals' || market === 'totals_1st_5_innings'
           ? marketData.over !== null && marketData.under !== null
           : market === 'spreads'
             ? marketData.home_price !== null && marketData.away_price !== null
@@ -139,9 +139,11 @@ function normalizeGame(rawGame, sport) {
   const market = rawGame.markets || {};
   const spreadConsensus = buildConsensus(market.spreads || [], 'spread');
   const totalConsensus = buildConsensus(market.totals || [], 'total');
+  const totalF5Consensus = buildConsensus(market.totals_1st_5_innings || [], 'total');
   const h2hConsensus = buildConsensus(market.h2h || [], 'h2h');
   const spreadExecution = selectBestExecution(market.spreads || [], 'spread');
   const totalExecution = selectBestExecution(market.totals || [], 'total');
+  const totalF5Execution = selectBestExecution(market.totals_1st_5_innings || [], 'total');
   const h2hExecution = selectBestExecution(market.h2h || [], 'h2h');
   const spreadMisprice = detectMisprice(
     spreadConsensus,
@@ -155,14 +157,6 @@ function normalizeGame(rawGame, sport) {
     market.totals || [],
     'total',
   );
-
-  // F5 Moneyline: h2h scoped to first 5 innings (The Odds API key variants)
-  const mlF5Entry =
-    (Array.isArray(market.h2h_f5) && market.h2h_f5[0]) ||
-    (Array.isArray(market.ml_f5) && market.ml_f5[0]) ||
-    (Array.isArray(market.moneyline_f5) && market.moneyline_f5[0]) ||
-    (Array.isArray(market.first_5_h2h) && market.first_5_h2h[0]) ||
-    null;
 
   const sharedH2HBook =
     h2hExecution.best_price_home_book &&
@@ -227,8 +221,11 @@ function normalizeGame(rawGame, sport) {
       h2hConsensusHome: h2hConsensus.consensus_price_home,
       h2hConsensusAway: h2hConsensus.consensus_price_away,
       h2hConsensusConfidence: h2hConsensus.consensus_confidence,
-      mlF5Home: mlF5Entry?.home ?? null,
-      mlF5Away: mlF5Entry?.away ?? null,
+      totalF5Line: totalF5Consensus.consensus_line ?? null,
+      totalF5Over: totalF5Execution.best_price_over ?? null,
+      totalF5OverBook: totalF5Execution.best_price_over_book ?? null,
+      totalF5Under: totalF5Execution.best_price_under ?? null,
+      totalF5UnderBook: totalF5Execution.best_price_under_book ?? null,
     },
     raw: rawGame, // Keep raw for debugging
   };

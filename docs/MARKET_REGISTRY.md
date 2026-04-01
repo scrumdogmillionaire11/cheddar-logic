@@ -1,7 +1,7 @@
 # Market Registry
 
 **Status:** Authoritative
-**Last updated:** 2026-03-27
+**Last updated:** 2026-03-31
 **Owner:** @ajcolubiale
 
 This document is the single source of truth for which markets are supported per sport, their current wiring status, and what is on the roadmap. All model, pipeline, and display-layer decisions should reference this registry when determining what is in scope.
@@ -65,24 +65,22 @@ This document is the single source of truth for which markets are supported per 
 
 ## MLB
 
-**Primary game market:** F5 Total
-**Secondary game market:** F5 Moneyline (not yet wired)
+**Primary game market:** F5 Total (`totals_1st_5_innings`)
 **Primary player market:** Pitcher Strikeouts
 
 | Market | Type | Status | Notes |
 | --- | --- | --- | --- |
-| F5 Total (first 5 innings) | Game | ⚙️ | Model wired (`projectF5TotalCard`); `total_f5` ingested from odds snapshot; no DUAL_RUN-style selection or dedicated pipeline health check |
-| F5 Moneyline | Game | ✅ | `ml_f5_home`/`ml_f5_away` ingested; `projectF5ML` projects side from ERA matchup vs. implied prob; emits `mlb-f5-ml` card when edge clears threshold (WI-0603) |
-| Pitcher Strikeouts (home) | Player Prop | ✅ | Full pipeline; projection + market structure + trap scan |
-| Pitcher Strikeouts (away) | Player Prop | ✅ | Full pipeline; projection + market structure + trap scan |
+| F5 Total (first 5 innings) | Game | ✅ | Fetched via `totals_1st_5_innings`; `totalF5Line/Over/Under` in odds snapshot; required market for MLB contract |
+| Pitcher Strikeouts (home) | Player Prop | ✅ | Separate pipeline (`pull_mlb_pitcher_strikeout_props`); requires `MLB_PITCHER_K_PROP_EVENTS_ENABLED=true` and `PITCHER_KS_MODEL_MODE=ODDS_BACKED` |
+| Pitcher Strikeouts (away) | Player Prop | ✅ | Same pipeline as above |
+| F5 Moneyline | Game | ❌ | Out of scope — not a target market |
 | Full-game Total | Game | ❌ | Not a target market — full-game pitching context degrades after 5th inning |
-| Full-game Spread / ML | Game | ❌ | Out of scope for current model |
+| Full-game Spread / ML | Game | ❌ | Out of scope |
 
 **Key gaps (backlog):**
 
 1. **No DUAL_RUN market selection** — F5 Total and Pitcher K cards currently compete as peers; F5 should be elevated as the primary game market with Ks treated as props.
-2. ~~**F5 ML not ingested**~~ — Resolved in WI-0603: `ml_f5_home`/`ml_f5_away` now ingested and modeled.
-3. **No pipeline health differentiation** for F5 — `WATCHDOG_MARKET_UNAVAILABLE` does not distinguish between a missing full-game total and a missing F5 total (WI-0604).
+2. **No pipeline health differentiation** for F5 — `WATCHDOG_MARKET_UNAVAILABLE` does not distinguish between a missing F5 total and other market failures (WI-0604).
 
 ---
 

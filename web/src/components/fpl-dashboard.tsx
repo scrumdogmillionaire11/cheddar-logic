@@ -302,6 +302,11 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
     return null;
   }
 
+  // Feature flag: V2 explainability/risk-framing/report-card sections are dev-only
+  // until the backend contract is stable. Set NEXT_PUBLIC_FPL_V2_FEATURES=true in
+  // .env.local to enable. Do NOT set in production.
+  const v2FeaturesEnabled = process.env.NEXT_PUBLIC_FPL_V2_FEATURES === 'true';
+
   const plans: TransferPlans | null | undefined = data.transfer_plans;
   const managerState = data.manager_state || {};
   const strategyMode = data.strategy_mode || managerState.strategy_mode;
@@ -668,8 +673,8 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
           </div>
         )}
 
-        {/* Decision Explainability */}
-        {data.explainability && (
+        {/* Decision Explainability — dev-only behind NEXT_PUBLIC_FPL_V2_FEATURES */}
+        {v2FeaturesEnabled && data.explainability && (
           <div className="order-4 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
             <h2 className="mb-6 text-2xl font-semibold">Decision Explainability</h2>
             <div className="space-y-3">
@@ -708,8 +713,8 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
           </div>
         )}
 
-        {/* Uncertainty and Risk Framing */}
-        {(data.confidence_band || data.relative_risk) && (
+        {/* Uncertainty and Risk Framing — dev-only behind NEXT_PUBLIC_FPL_V2_FEATURES */}
+        {v2FeaturesEnabled && (data.confidence_band || data.relative_risk) && (
           <div className="order-4 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
             <h2 className="mb-6 text-2xl font-semibold">Uncertainty and Risk Framing</h2>
             <div className="space-y-3">
@@ -992,8 +997,8 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
           </div>
         </div>
 
-        {/* Weekly Report Card */}
-        <FPLWeeklyReportCard reportCard={data.weekly_report_card} />
+        {/* Weekly Report Card — dev-only behind NEXT_PUBLIC_FPL_V2_FEATURES */}
+        {v2FeaturesEnabled && <FPLWeeklyReportCard reportCard={data.weekly_report_card} />}
 
         {/* Risk Notes (collapsible on mobile) */}
         {(data.risk_scenarios.length > 0 || data.squad_health) && (
