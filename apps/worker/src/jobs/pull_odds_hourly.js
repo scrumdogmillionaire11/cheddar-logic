@@ -183,7 +183,8 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       //   NHL SOG: 1 token/run × ~3 runs/day = ~3 tokens/day
       //   MLB K:   1 token/run × ~3 runs/day = ~3 tokens/day
       // Paid tier: 20,000 tokens/month → ~166/day × 30 = ~4,980/month (~25% utilization)
-      // Note: period markets (totals_p1, totals_1st_5_innings) require per-event endpoint — future WI
+      // Note: period markets (totals_p1) are fetched separately by pull_nhl_1p_odds.js
+      //       via the per-event endpoint and patched onto the existing snapshot.
       const tokenCost = getTokensForFetch(activeSports);
       console.log(
         `[PullOdds] Active sports (from config): ${activeSports.join(', ')} | tokens/fetch: ${tokenCost} | ~${tokenCost * 42}/day (30-min buckets, skip 2am-5am)`,

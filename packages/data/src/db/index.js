@@ -30,6 +30,7 @@ module.exports = {
   getLatestJobRunByKey: jobRuns.getLatestJobRunByKey,
   wasJobKeyRecentlySuccessful: jobRuns.wasJobKeyRecentlySuccessful,
   insertOddsSnapshot: odds.insertOddsSnapshot,
+  patchOddsSnapshot1p: odds.patchOddsSnapshot1p,
   updateOddsSnapshotRawData: odds.updateOddsSnapshotRawData,
   deleteOddsSnapshotsByGameAndCapturedAt: odds.deleteOddsSnapshotsByGameAndCapturedAt,
   prepareOddsSnapshotWrite: odds.prepareOddsSnapshotWrite,

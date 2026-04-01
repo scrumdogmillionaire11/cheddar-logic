@@ -338,6 +338,41 @@ function insertOddsSnapshot(snapshot) {
 }
 
 /**
+ * Patch the most-recent odds snapshot for a game with 1st-period total line and prices.
+ * Called by pull_nhl_1p_odds after fetching per-event totals_p1 odds.
+ * Writes total_1p, total_1p_price_over, total_1p_price_under on the latest row
+ * for the given game_id (matched by MAX(captured_at)).
+ *
+ * @param {string} gameId - Game ID
+ * @param {{ line: number, overPrice: number|null, underPrice: number|null }} data
+ * @returns {number} Number of rows updated (0 if no snapshot exists yet)
+ */
+function patchOddsSnapshot1p(gameId, { line, overPrice, underPrice }) {
+  const db = getDatabase();
+  const toNullableNumber = (v) => (Number.isFinite(v) ? v : null);
+  const result = db
+    .prepare(
+      `UPDATE odds_snapshots
+         SET total_1p           = ?,
+             total_1p_price_over  = ?,
+             total_1p_price_under = ?
+       WHERE id = (
+         SELECT id FROM odds_snapshots
+         WHERE game_id = ?
+         ORDER BY captured_at DESC
+         LIMIT 1
+       )`,
+    )
+    .run(
+      toNullableNumber(line),
+      toNullableNumber(overPrice),
+      toNullableNumber(underPrice),
+      gameId,
+    );
+  return result.changes;
+}
+
+/**
  * Delete odds snapshots for a game + captured_at timestamp
  * @param {string} gameId - Game ID
  * @param {string} capturedAt - ISO 8601 timestamp
@@ -677,6 +712,7 @@ function getUpcomingGamesAsSyntheticSnapshots(sport, nowUtc, horizonUtc) {
 
 module.exports = {
   insertOddsSnapshot,
+  patchOddsSnapshot1p,
   updateOddsSnapshotRawData,
   deleteOddsSnapshotsByGameAndCapturedAt,
   prepareOddsSnapshotWrite,

@@ -16,6 +16,8 @@
     "job:pull-nhl-player-shots": "node src/jobs/pull_nhl_player_shots.js",
     "job:pull-nhl-player-shots-props": "node src/jobs/pull_nhl_player_shots_props.js",
     "job:pull-nhl-player-shots-props:dry": "node src/jobs/pull_nhl_player_shots_props.js --dry-run",
+    "job:pull-nhl-1p-odds": "node src/jobs/pull_nhl_1p_odds.js",
+    "job:pull-nhl-1p-odds:dry": "node src/jobs/pull_nhl_1p_odds.js --dry-run",
     "job:pull-soccer-player-props": "node src/jobs/pull_soccer_player_props.js",
     "job:pull-soccer-player-props:dry": "node src/jobs/pull_soccer_player_props.js --dry-run",
     "job:pull-soccer-xg-stats": "node src/jobs/pull_soccer_xg_stats.js",
