@@ -2,6 +2,7 @@
   "name": "cheddar-logic-root",
   "private": true,
   "scripts": {
+    "db:sync": "bash scripts/sync-prod-db.sh",
     "refresh:ncaam-ft-csv": "node scripts/refresh-teamrankings-ncaam-ft.js",
     "backtest:ncaam-ft-spread": "node scripts/backtest-ncaam-ft-spread-rule.js",
     "lint:web": "npm --prefix web run lint",

@@ -28,6 +28,7 @@ const {
   getDatabase,
   withDb,
   upsertPlayerPropLine,
+  upsertQuotaLedger,
 } = require('@cheddar-logic/data');
 
 const ODDS_API_BASE = 'https://api.the-odds-api.com/v4';
@@ -234,6 +235,11 @@ function resolveGameId(db, event) {
 async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
+  if (process.env.APP_ENV === 'local') {
+    console.log(`[${JOB_NAME}] Skipped — APP_ENV=local. Prop pulls must not hit the live API in dev.`);
+    return { success: true, eventsProcessed: 0, linesInserted: 0 };
+  }
+
   // Guard: SOG default ON; BLK default OFF (not in canonical 7-token budget)
   const sogEnabled = process.env.NHL_SOG_PROP_EVENTS_ENABLED !== 'false';
   const blkEnabled = process.env.NHL_BLK_PROP_EVENTS_ENABLED === 'true';
@@ -270,6 +276,10 @@ async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
 const { games, remainingTokens } = await fetchBulkPropOdds(apiKey, activeMarkets);
       if (remainingTokens != null) {
         console.log(`[${JOB_NAME}] Tokens remaining after bulk fetch: ${remainingTokens}`);
+        const _period = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        try {
+          upsertQuotaLedger({ provider: 'odds_api', period: _period, tokens_remaining: remainingTokens, updated_by: jobRunId });
+        } catch (_ledgerErr) { /* DB not yet migrated */ }
       }
       if (games.length === 0) {
         console.log(`[${JOB_NAME}] No upcoming NHL games in ${HOURS_AHEAD}h window from bulk response`);

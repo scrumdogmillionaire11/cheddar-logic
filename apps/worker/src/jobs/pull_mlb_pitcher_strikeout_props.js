@@ -32,6 +32,7 @@ const {
   getDatabase,
   withDb,
   upsertPlayerPropLine,
+  upsertQuotaLedger,
 } = require('@cheddar-logic/data');
 
 const ODDS_API_BASE = 'https://api.the-odds-api.com/v4';
@@ -286,6 +287,11 @@ async function pullMlbPitcherStrikeoutProps({ dryRun = false, jobKey = null } = 
   const ksMode = process.env.PITCHER_KS_MODEL_MODE || null;
   const isOddsBacked = ksMode === 'ODDS_BACKED';
 
+  if (process.env.APP_ENV === 'local') {
+    console.log(`[${JOB_NAME}] Skipped — APP_ENV=local. Prop pulls must not hit the live API in dev.`);
+    return { success: true, insertedRows: 0, errors: [] };
+  }
+
   if (!isEnabled && !dryRun) {
     console.log(
       `[${JOB_NAME}] Skipped — MLB_PITCHER_K_PROP_EVENTS_ENABLED is not 'true'. ` +
@@ -329,6 +335,10 @@ async function pullMlbPitcherStrikeoutProps({ dryRun = false, jobKey = null } = 
         : await fetchBulkPropOdds(apiKey);
       if (remainingTokens != null) {
         console.log(`[${JOB_NAME}] Tokens remaining after bulk fetch: ${remainingTokens}`);
+        const _period = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        try {
+          upsertQuotaLedger({ provider: 'odds_api', period: _period, tokens_remaining: remainingTokens, updated_by: jobRunId });
+        } catch (_ledgerErr) { /* DB not yet migrated */ }
       }
       console.log(`[${JOB_NAME}] Bulk fetch returned ${games.length} upcoming MLB games.`);
 
