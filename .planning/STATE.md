@@ -98,7 +98,7 @@ Before any code work, manually verify on the Pi / production worker:
 3. **`check_odds_health` watchdog**: confirm `ENABLE_ODDS_HEALTH_WATCHDOG` is not disabled. Watch scheduler logs for the 30-min `check_odds_health` job executing.
 4. **`pull_odds_hourly` succeeding**: confirm a successful run appears in `job_runs` within the last 60 min during game hours.
 5. **`ENABLE_WITHOUT_ODDS_MODE`**: confirm this is `false` in production (ESPN-direct mode disables settlement and real play calls).
-6. **Discord cards posting**: confirm `ENABLE_DISCORD_CARD_WEBHOOKS=true` and `DISCORD_CARD_WEBHOOK_URL` is set. Verify the 09:00/12:00/18:00 ET snapshots are firing.
+6. **Discord cards posting**: confirm `ENABLE_DISCORD_CARD_WEBHOOKS=true` and `DISCORD_CARD_WEBHOOK_URL` is set. Verify the 09:00/12:00/18:00 ET snapshots are firing. - this was disabled until models are fine-tuned.
 7. **Settlement**: after games complete, confirm `settle_game_results` and `settle_pending_cards` are running and `card_results` rows are being written.
 
 If any of (1)–(7) are broken, that diagnosis + fix is the only work that matters until the pipeline is green.

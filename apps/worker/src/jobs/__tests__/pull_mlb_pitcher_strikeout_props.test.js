@@ -13,6 +13,7 @@
 const {
   parseEventPropLines,
   resolveGameId,
+  resolveScopedOddsEventId,
 } = require('../pull_mlb_pitcher_strikeout_props');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,5 +333,181 @@ describe('resolveGameId — no match', () => {
       away_team: 'New York Yankees',
     });
     expect(result).toBeNull();
+  });
+});
+
+describe('resolveScopedOddsEventId', () => {
+  test('returns latest cached odds_event_id for a game', () => {
+    const db = {
+      prepare: jest.fn().mockReturnValue({
+        get: jest.fn().mockReturnValue({ odds_event_id: 'evt-mlb-123' }),
+      }),
+    };
+
+    expect(resolveScopedOddsEventId(db, 'mlb-game-1')).toBe('evt-mlb-123');
+  });
+
+  test('returns null when no cached odds_event_id exists', () => {
+    const db = {
+      prepare: jest.fn().mockReturnValue({
+        get: jest.fn().mockReturnValue(undefined),
+      }),
+    };
+
+    expect(resolveScopedOddsEventId(db, 'mlb-game-2')).toBeNull();
+  });
+});
+
+describe('pullMlbPitcherStrikeoutProps scoped mode', () => {
+  const ORIGINAL_ENV = process.env;
+
+  beforeEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+    process.env = {
+      ...ORIGINAL_ENV,
+      APP_ENV: 'production',
+      MLB_PITCHER_K_PROP_EVENTS_ENABLED: 'true',
+      PITCHER_KS_MODEL_MODE: 'ODDS_BACKED',
+      ODDS_API_KEY: 'test-key',
+    };
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+    delete global.fetch;
+    jest.restoreAllMocks();
+  });
+
+  test('skips successfully when scoped refresh cannot resolve odds_event_id', async () => {
+    const insertJobRun = jest.fn();
+    const markJobRunSuccess = jest.fn();
+    const markJobRunFailure = jest.fn();
+    const upsertPlayerPropLine = jest.fn();
+    const upsertQuotaLedger = jest.fn();
+    const mockDb = {
+      prepare: jest.fn().mockReturnValue({
+        get: jest.fn().mockReturnValue(undefined),
+      }),
+    };
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      insertJobRun,
+      markJobRunSuccess,
+      markJobRunFailure,
+      getDatabase: () => mockDb,
+      withDb: async (fn) => fn(),
+      upsertPlayerPropLine,
+      upsertQuotaLedger,
+    }));
+
+    const { pullMlbPitcherStrikeoutProps: scopedPull } = require('../pull_mlb_pitcher_strikeout_props');
+    global.fetch = jest.fn();
+
+    const result = await scopedPull({ gameId: 'mlb-game-1', jobKey: 'job-key' });
+
+    expect(result).toMatchObject({
+      success: true,
+      insertedRows: 0,
+      skipped: true,
+      reason: 'NO_EVENT_ID',
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(upsertPlayerPropLine).not.toHaveBeenCalled();
+    expect(markJobRunSuccess).toHaveBeenCalled();
+    expect(markJobRunFailure).not.toHaveBeenCalled();
+  });
+
+  test('scoped refresh with explicit oddsEventId fetches only the single event endpoint', async () => {
+    const insertJobRun = jest.fn();
+    const markJobRunSuccess = jest.fn();
+    const markJobRunFailure = jest.fn();
+    const upsertPlayerPropLine = jest.fn();
+    const upsertQuotaLedger = jest.fn();
+    const mockDb = {
+      prepare: jest.fn(() => ({
+        get: jest.fn(),
+      })),
+    };
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      insertJobRun,
+      markJobRunSuccess,
+      markJobRunFailure,
+      getDatabase: () => mockDb,
+      withDb: async (fn) => fn(),
+      upsertPlayerPropLine,
+      upsertQuotaLedger,
+    }));
+
+    const { pullMlbPitcherStrikeoutProps: scopedPull } = require('../pull_mlb_pitcher_strikeout_props');
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: jest.fn().mockReturnValue('1234'),
+      },
+      json: async () => ({
+        id: 'evt-mlb-123',
+        bookmakers: [
+          {
+            key: 'draftkings',
+            markets: [
+              {
+                key: 'pitcher_strikeouts',
+                outcomes: [
+                  { name: 'Over', description: 'Gerrit Cole', point: 7.5, price: -115 },
+                  { name: 'Under', description: 'Gerrit Cole', point: 7.5, price: -105 },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const result = await scopedPull({
+      gameId: 'mlb-game-1',
+      oddsEventId: 'evt-mlb-123',
+      jobKey: 'job-key',
+    });
+
+    expect(result).toMatchObject({ success: true, insertedRows: 1 });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toContain('/events/evt-mlb-123/odds');
+    expect(global.fetch.mock.calls[0][0]).not.toContain('/events?');
+    expect(upsertPlayerPropLine).toHaveBeenCalledTimes(1);
+    expect(upsertQuotaLedger).toHaveBeenCalled();
+    expect(markJobRunFailure).not.toHaveBeenCalled();
+  });
+
+  test('pipelineMode rejects any full-slate prop fetch path as a fatal invariant violation', async () => {
+    const insertJobRun = jest.fn();
+    const markJobRunSuccess = jest.fn();
+    const markJobRunFailure = jest.fn();
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      insertJobRun,
+      markJobRunSuccess,
+      markJobRunFailure,
+      getDatabase: () => ({ prepare: jest.fn() }),
+      withDb: async (fn) => fn(),
+      upsertPlayerPropLine: jest.fn(),
+      upsertQuotaLedger: jest.fn(),
+    }));
+
+    const { pullMlbPitcherStrikeoutProps: scopedPull } = require('../pull_mlb_pitcher_strikeout_props');
+    global.fetch = jest.fn();
+
+    const result = await scopedPull({
+      jobKey: 'job-key',
+      pipelineMode: true,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors[0]).toContain('FULL_SLATE_PROP_FETCH_INVARIANT');
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(markJobRunFailure).toHaveBeenCalled();
+    expect(markJobRunSuccess).not.toHaveBeenCalled();
   });
 });

@@ -29,6 +29,9 @@ const {
   resolveMlbTeamLookupKeys,
   selectBestPitcherUnderMarket,
   buildPitcherStrikeoutLookback,
+  computeProjectionFloorF5,
+  resolveMlbPitcherPropRolloutState,
+  evaluatePitcherPropPublishability,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -418,6 +421,69 @@ describe('checkPitcherFreshness — freshness gate (WI-0596)', () => {
   test('STALE: row with empty updated_at returns STALE', () => {
     const row = { updated_at: '' };
     expect(checkPitcherFreshness(row, TODAY)).toBe('STALE');
+  });
+});
+
+describe('MLB prop rollout + freshness gating', () => {
+  afterEach(() => {
+    delete process.env.MLB_K_PROPS;
+    jest.restoreAllMocks();
+  });
+
+  test('resolveMlbPitcherPropRolloutState defaults to SHADOW', () => {
+    delete process.env.MLB_K_PROPS;
+    expect(resolveMlbPitcherPropRolloutState()).toBe('SHADOW');
+  });
+
+  test('evaluatePitcherPropPublishability marks fresh scoped odds as publishable', () => {
+    jest.spyOn(Date, 'now').mockReturnValue(new Date('2026-03-26T18:00:00Z').getTime());
+    const result = evaluatePitcherPropPublishability(
+      {
+        raw_data: {
+          mlb: {
+            home_pitcher: { full_name: 'Ace Under' },
+            strikeout_lines: {
+              'ace under': {
+                line: 6.5,
+                fetched_at: '2026-03-26T17:15:00Z',
+              },
+            },
+          },
+        },
+      },
+      { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+    );
+
+    expect(result).toMatchObject({
+      publishable: true,
+      status: 'FRESH',
+    });
+  });
+
+  test('evaluatePitcherPropPublishability blocks stale scoped odds with STALE_ODDS', () => {
+    jest.spyOn(Date, 'now').mockReturnValue(new Date('2026-03-26T18:45:00Z').getTime());
+    const result = evaluatePitcherPropPublishability(
+      {
+        raw_data: {
+          mlb: {
+            away_pitcher: { full_name: 'Stale Arm' },
+            strikeout_lines: {
+              'stale arm': {
+                line: 5.5,
+                fetched_at: '2026-03-26T16:00:00Z',
+              },
+            },
+          },
+        },
+      },
+      { market: 'pitcher_k_away', basis: 'ODDS_BACKED' },
+    );
+
+    expect(result).toMatchObject({
+      publishable: false,
+      status: 'STALE_ODDS',
+      reason: 'STALE_ODDS',
+    });
   });
 });
 

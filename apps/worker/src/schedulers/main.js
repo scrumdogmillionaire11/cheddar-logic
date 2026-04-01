@@ -36,6 +36,8 @@ const {
   getQuotaLedger,
   claimTminusPullSlot,
   purgeStaleTminusPullLog,
+  purgeStalePropOddsUsageLog,
+  purgeExpiredPropEventMappings,
 } = require('@cheddar-logic/data');
 
 // Import all jobs
@@ -68,7 +70,7 @@ const { computePlayerPropsDueJobs } = require('./player-props');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
-const ODDS_GAP_ALERT_MINUTES = Number(process.env.ODDS_GAP_ALERT_MINUTES || 90);
+const ODDS_GAP_ALERT_MINUTES = Number(process.env.ODDS_GAP_ALERT_MINUTES || 210);
 const ODDS_GAP_ALERT_COOLDOWN_MS = Number(
   process.env.ODDS_GAP_ALERT_COOLDOWN_MS || 15 * 60 * 1000,
 );
@@ -89,9 +91,10 @@ const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC =
   process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC !== 'false';
 const ENABLE_NHL_SOG_PLAYER_SYNC =
   process.env.ENABLE_NHL_SOG_PLAYER_SYNC === 'true';
-const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 30);
-// First hour of day to start fetching odds (ET). Raise to 10 on starter-key budget.
-const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 6);
+const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 180);
+// Conservative default: start the 3-hour baseline at 09:00 ET so it aligns with the first model window.
+const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 9);
+const ENABLE_ODDS_BACKSTOP = process.env.ENABLE_ODDS_BACKSTOP === 'true';
 const SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL =
   process.env.SETTLEMENT_HOURLY_ENABLE_DISPLAY_BACKFILL === 'true';
 const SETTLEMENT_NIGHTLY_ENABLE_DISPLAY_BACKFILL =
@@ -155,8 +158,8 @@ function keyEspnGamesDirect(nowEt) {
 }
 
 function keyOddsHourly(nowEt) {
-  // Slot size is configurable via ODDS_FETCH_SLOT_MINUTES (default 30).
-  // Increase to 120 on the starter key (500 tokens/month) to survive quota crunches.
+  // Slot size is configurable via ODDS_FETCH_SLOT_MINUTES (default 180).
+  // Conservative default keeps the main baseline at 09:00/12:00/15:00/18:00/21:00 ET.
   const minuteOfDay = nowEt.hour * 60 + nowEt.minute;
   const slot = Math.floor(minuteOfDay / ODDS_FETCH_SLOT_MINUTES);
   return `odds|hourly|${nowEt.toISODate()}|s${String(slot).padStart(3, '0')}`;
@@ -641,7 +644,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // Keep existing hourly bucket for backward compatibility, but can also add time-aware logic
   if (!ENABLE_WITHOUT_ODDS_MODE && process.env.ENABLE_ODDS_PULL !== 'false' && quotaTier !== 'CRITICAL') {
     // Skip quiet hours (midnight to ODDS_FETCH_START_HOUR ET).
-    // Default: skip midnight–6am. Set ODDS_FETCH_START_HOUR=10 on starter-key budget.
+    // Conservative default: skip midnight–09:00 ET and run a 3-hour baseline.
     const isQuietHours = nowEt.hour < ODDS_FETCH_START_HOUR;
 
     if (!isQuietHours) {
@@ -680,7 +683,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     // Global backstop: every 10 minutes, refresh stale odds for T-6h games
     // Disabled at MEDIUM or below (tier check preserves hourly baseline only)
     if (
-      process.env.ENABLE_ODDS_BACKSTOP !== 'false' &&
+      ENABLE_ODDS_BACKSTOP &&
       quotaTier === 'FULL' &&
       nowUtc.minute % 10 === 0
     ) {
@@ -1005,7 +1008,11 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // ========== PLAYER PROPS SCHEDULER (8) ==========
   // NHL SOG/BLK + MLB pitcher-K prop ingest/model — dedicated cadence (09:00, 18:00, T-60).
   // See schedulers/player-props.js for window logic and key format.
-  const playerPropsJobs = computePlayerPropsDueJobs(nowEt, { games, dryRun });
+  const playerPropsJobs = computePlayerPropsDueJobs(nowEt, {
+    games,
+    dryRun,
+    quotaTier,
+  });
   jobs.push(...playerPropsJobs);
 
   return jobs;
@@ -1148,6 +1155,9 @@ async function start() {
   console.log('[SCHEDULER] Database ready.\n');
   purgeStaleTminusPullLog();
   console.log('[SCHEDULER] T-minus pull log: stale rows purged (>48h).');
+  purgeStalePropOddsUsageLog();
+  purgeExpiredPropEventMappings();
+  console.log('[SCHEDULER] Prop odds control tables: usage log and expired mappings pruned.');
 
   let tickRunning = false;
 

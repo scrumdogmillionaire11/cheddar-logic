@@ -34,11 +34,8 @@ jest.mock('../../jobs/pull_mlb_pitcher_stats', () => ({
 jest.mock('../../jobs/pull_mlb_weather', () => ({
   pullMlbWeather: jest.fn(),
 }));
-jest.mock('../../jobs/pull_mlb_pitcher_strikeout_props', () => ({
-  pullMlbPitcherStrikeoutProps: jest.fn(),
-}));
-jest.mock('../../jobs/run_mlb_model', () => ({
-  runMLBModel: jest.fn(),
+jest.mock('../../jobs/run_mlb_prop_pipeline', () => ({
+  runMlbPropPipeline: jest.fn(),
 }));
 
 const {
@@ -99,6 +96,10 @@ describe('computePlayerPropsDueJobs', () => {
     delete process.env.ENABLE_PLAYER_PROPS_SCHEDULER;
     delete process.env.ENABLE_NHL_BLK_INGEST;
     delete process.env.PLAYER_PROPS_FIXED_TIMES_ET;
+    process.env.NHL_SOG_PROP_EVENTS_ENABLED = 'true';
+    process.env.NHL_1P_ODDS_ENABLED = 'true';
+    process.env.MLB_PITCHER_K_PROP_EVENTS_ENABLED = 'true';
+    process.env.PITCHER_KS_MODEL_MODE = 'ODDS_BACKED';
   });
 
   afterEach(() => {
@@ -113,6 +114,22 @@ describe('computePlayerPropsDueJobs', () => {
       const nowEt = makeNowEt('09:00');
       const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('default conservative posture', () => {
+    it('does not queue NHL player-prop jobs when NHL prop env flags are not explicitly enabled', () => {
+      delete process.env.NHL_SOG_PROP_EVENTS_ENABLED;
+      delete process.env.NHL_1P_ODDS_ENABLED;
+
+      const nowEt = makeNowEt('09:00');
+      const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
+      const jobNames = result.map((j) => j.jobName);
+
+      expect(jobNames).not.toContain('sync_nhl_sog_player_ids');
+      expect(jobNames).not.toContain('pull_nhl_player_shots_props');
+      expect(jobNames).not.toContain('pull_nhl_1p_odds');
+      expect(jobNames).not.toContain('run_nhl_player_shots_model');
     });
   });
 
@@ -141,24 +158,26 @@ describe('computePlayerPropsDueJobs', () => {
       expect(shotsPropsIdx).toBeLessThan(shotsModelIdx);
     });
 
-    it('MLB: queues pull_mlb_pitcher_stats, pull_mlb_weather, pull_mlb_pitcher_strikeout_props, run_mlb_model', () => {
+    it('MLB: queues pull_mlb_pitcher_stats, pull_mlb_weather, run_mlb_prop_pipeline(window=MORNING)', () => {
       const nowEt = makeNowEt('09:00');
       const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
 
       const jobNames = result.map((j) => j.jobName);
       expect(jobNames).toContain('pull_mlb_pitcher_stats');
       expect(jobNames).toContain('pull_mlb_weather');
-      expect(jobNames).toContain('pull_mlb_pitcher_strikeout_props');
-      expect(jobNames).toContain('run_mlb_model');
+      expect(jobNames).toContain('run_mlb_prop_pipeline');
+      expect(jobNames).not.toContain('pull_mlb_pitcher_strikeout_props');
+      expect(jobNames).not.toContain('run_mlb_model');
 
-      // pitcher_stats and weather come before strikeout_props and model
+      // pitcher_stats and weather come before pipeline
       const statsIdx = jobNames.indexOf('pull_mlb_pitcher_stats');
       const weatherIdx = jobNames.indexOf('pull_mlb_weather');
-      const kPropIdx = jobNames.indexOf('pull_mlb_pitcher_strikeout_props');
-      const modelIdx = jobNames.indexOf('run_mlb_model');
-      expect(statsIdx).toBeLessThan(kPropIdx);
-      expect(weatherIdx).toBeLessThan(kPropIdx);
-      expect(kPropIdx).toBeLessThan(modelIdx);
+      const pipelineIdx = jobNames.indexOf('run_mlb_prop_pipeline');
+      expect(statsIdx).toBeLessThan(pipelineIdx);
+      expect(weatherIdx).toBeLessThan(pipelineIdx);
+
+      const pipelineJob = result.find((j) => j.jobName === 'run_mlb_prop_pipeline');
+      expect(pipelineJob.args.window).toBe('MORNING');
     });
 
     it('ENABLE_NHL_BLK_INGEST=false: BLK jobs absent, SOG jobs present', () => {
@@ -177,34 +196,36 @@ describe('computePlayerPropsDueJobs', () => {
     });
   });
 
-  // ─── 18:00 ET fixed window ────────────────────────────────────────────────
+  // ─── 15:00 ET fixed window ────────────────────────────────────────────────
 
-  describe('18:00 ET fixed window', () => {
+  describe('15:00 ET fixed window', () => {
     it('NHL: only pull_nhl_player_shots_props + run_nhl_player_shots_model (no sync, no BLK)', () => {
-      const nowEt = makeNowEt('18:00');
+      const nowEt = makeNowEt('15:00');
       const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
 
       const jobNames = result.map((j) => j.jobName);
       expect(jobNames).toContain('pull_nhl_player_shots_props');
       expect(jobNames).toContain('run_nhl_player_shots_model');
 
-      // No heavy ingest at 18:00
+      // No heavy ingest at 15:00
       expect(jobNames).not.toContain('sync_nhl_sog_player_ids');
       expect(jobNames).not.toContain('sync_nhl_blk_player_ids');
       expect(jobNames).not.toContain('pull_nhl_player_blk');
       expect(jobNames).not.toContain('ingest_nst_blk_rates');
     });
 
-    it('MLB: only pull_mlb_pitcher_strikeout_props + run_mlb_model (no pitcher stats, no weather)', () => {
-      const nowEt = makeNowEt('18:00');
+    it('MLB: only run_mlb_prop_pipeline(window=MIDDAY) (no pitcher stats, no weather)', () => {
+      const nowEt = makeNowEt('15:00');
       const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
 
       const jobNames = result.map((j) => j.jobName);
-      expect(jobNames).toContain('pull_mlb_pitcher_strikeout_props');
-      expect(jobNames).toContain('run_mlb_model');
+      expect(jobNames).toContain('run_mlb_prop_pipeline');
 
       expect(jobNames).not.toContain('pull_mlb_pitcher_stats');
       expect(jobNames).not.toContain('pull_mlb_weather');
+
+      const pipelineJob = result.find((j) => j.jobName === 'run_mlb_prop_pipeline');
+      expect(pipelineJob.args.window).toBe('MIDDAY');
     });
   });
 
@@ -228,7 +249,7 @@ describe('computePlayerPropsDueJobs', () => {
       expect(jobNames).not.toContain('sync_nhl_blk_player_ids');
     });
 
-    it('MLB game at T-60: queues pull_mlb_pitcher_strikeout_props + run_mlb_model', () => {
+    it('MLB game at T-60: queues one run_mlb_prop_pipeline job with scoped gameIds', () => {
       const nowEt = makeNowEt('15:00');
       const games = [makeGame('mlb', 57, nowEt)]; // within [55,60] band
 
@@ -236,10 +257,12 @@ describe('computePlayerPropsDueJobs', () => {
       const result = computePlayerPropsDueJobs(nowEt, { games, dryRun: false });
 
       const jobNames = result.map((j) => j.jobName);
-      expect(jobNames).toContain('pull_mlb_pitcher_strikeout_props');
-      expect(jobNames).toContain('run_mlb_model');
+      expect(jobNames).toContain('run_mlb_prop_pipeline');
       expect(jobNames).not.toContain('pull_mlb_pitcher_stats');
       expect(jobNames).not.toContain('pull_mlb_weather');
+
+      const pipelineJob = result.find((j) => j.jobName === 'run_mlb_prop_pipeline');
+      expect(pipelineJob.args).toMatchObject({ window: 'T60', gameIds: ['mlb_game_57'] });
     });
 
     it('T-120 game: no player-prop jobs returned', () => {
@@ -270,6 +293,35 @@ describe('computePlayerPropsDueJobs', () => {
     });
   });
 
+  describe('quota tier gating', () => {
+    it('MEDIUM tier still queues the MLB pipeline and leaves candidate selection to the pipeline budget controller', () => {
+      const nowEt = makeNowEt('15:00');
+      const result = computePlayerPropsDueJobs(nowEt, {
+        games: [],
+        dryRun: false,
+        quotaTier: 'MEDIUM',
+      });
+
+      const jobNames = result.map((j) => j.jobName);
+      expect(jobNames).toContain('run_mlb_prop_pipeline');
+    });
+
+    it('MEDIUM tier suppresses MLB T-60 prop pipeline jobs', () => {
+      const nowEt = makeNowEt('15:00');
+      const games = [makeGame('mlb', 57, nowEt)];
+      process.env.PLAYER_PROPS_FIXED_TIMES_ET = '99:00';
+
+      const result = computePlayerPropsDueJobs(nowEt, {
+        games,
+        dryRun: false,
+        quotaTier: 'MEDIUM',
+      });
+
+      const jobNames = result.map((j) => j.jobName);
+      expect(jobNames).not.toContain('run_mlb_prop_pipeline');
+    });
+  });
+
   // ─── Idempotency keys ────────────────────────────────────────────────────
 
   describe('idempotency keys', () => {
@@ -289,8 +341,8 @@ describe('computePlayerPropsDueJobs', () => {
     });
 
     it('MLB fixed key format: player_props|mlb|fixed|YYYY-MM-DD|HH:MM', () => {
-      const key = keyMlbFixed('2026-03-28', '18:00');
-      expect(key).toBe('player_props|mlb|fixed|2026-03-28|18:00');
+      const key = keyMlbFixed('2026-03-28', '15:00');
+      expect(key).toBe('player_props|mlb|fixed|2026-03-28|15:00');
     });
 
     it('MLB T-60 key format: player_props|mlb|tminus|<game_id>|T60', () => {
@@ -318,9 +370,9 @@ describe('computePlayerPropsDueJobs', () => {
       process.env.PLAYER_PROPS_FIXED_TIMES_ET = '99:00';
       const result = computePlayerPropsDueJobs(nowEt, { games, dryRun: false });
 
-      const kPropJob = result.find((j) => j.jobName === 'pull_mlb_pitcher_strikeout_props');
-      expect(kPropJob).toBeDefined();
-      expect(kPropJob.jobKey).toMatch(/^player_props\|mlb\|tminus\|mlb_game_57\|T60/);
+      const pipelineJob = result.find((j) => j.jobName === 'run_mlb_prop_pipeline');
+      expect(pipelineJob).toBeDefined();
+      expect(pipelineJob.jobKey).toMatch(/^player_props\|mlb\|tminus\|mlb_game_57\|T60/);
     });
   });
 });

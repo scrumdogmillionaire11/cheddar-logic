@@ -2,8 +2,8 @@
 /**
  * Pull MLB Pitcher Strikeout Prop Lines
  *
- * Fetches `pitcher_strikeouts` O/U market lines from The Odds API bulk odds
- * endpoint for all upcoming MLB games, stores into player_prop_lines.
+ * Fetches `pitcher_strikeouts` O/U market lines from The Odds API per-event
+ * endpoint for upcoming MLB games, stores into player_prop_lines.
  *
  * Endpoint: GET /v4/sports/baseball_mlb/odds
  *   ?markets=pitcher_strikeouts&regions=us&bookmakers=...
@@ -32,6 +32,7 @@ const {
   getDatabase,
   withDb,
   upsertPlayerPropLine,
+  upsertQuotaLedger,
 } = require('@cheddar-logic/data');
 
 const ODDS_API_BASE = 'https://api.the-odds-api.com/v4';
@@ -42,7 +43,6 @@ const PROP_TYPE = 'pitcher_strikeouts';
 
 const BOOKMAKERS = 'draftkings,fanduel,betmgm';
 const HOURS_AHEAD = 36;
-const DEFAULT_SLEEP_MS = Number(process.env.MLB_PITCHER_K_PROP_SLEEP_MS || 1000);
 const JOB_NAME = 'pull-mlb-pitcher-strikeout-props';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,20 +64,6 @@ function normalizePriceToAmerican(rawPrice) {
   }
   // Decimal between 1 and 2 (e.g. 1.77 → -130)
   return Math.round(-100 / (numericPrice - 1));
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url, {
-    headers: { 'user-agent': 'cheddar-logic-worker' },
-  });
-  if (!response.ok) {
-    throw new Error(`Odds API ${response.status} for ${url}`);
-  }
-  return response.json();
 }
 
 async function fetchJsonWithHeaders(url) {
@@ -103,25 +89,42 @@ async function fetchJsonWithHeaders(url) {
 // Odds API fetch layer
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Fetch all upcoming MLB game pitcher_strikeouts odds in a single bulk call.
- * Costs 1 token per market (vs 1 token per game on the per-event endpoint).
- * @param {string} apiKey
- * @returns {{ games: object[], remainingTokens: number|null }}
- */
-async function fetchBulkPropOdds(apiKey) {
+async function fetchUpcomingMlbEvents(apiKey) {
+  const cutoffIso = new Date(Date.now() + HOURS_AHEAD * 60 * 60 * 1000)
+    .toISOString()
+    .replace(/\.\d+Z$/, 'Z');
   const url =
-    `${ODDS_API_BASE}/sports/${SPORT_KEY}/odds` +
-    `?apiKey=${apiKey}&regions=us&markets=${MARKET_KEY}&bookmakers=${BOOKMAKERS}&oddsFormat=american`;
-  console.log(`[${JOB_NAME}] Bulk API call: markets=${MARKET_KEY} (1 token for all games)`);
+    `${ODDS_API_BASE}/sports/${SPORT_KEY}/events` +
+    `?apiKey=${apiKey}&dateFormat=iso&commenceTimeTo=${cutoffIso}`;
+  console.log(`[${JOB_NAME}] Fetching upcoming MLB events (next ${HOURS_AHEAD}h window)`);
   const response = await fetchJsonWithHeaders(url);
   const now = Date.now();
-  const cutoff = now + HOURS_AHEAD * 60 * 60 * 1000;
-  const games = (Array.isArray(response.data) ? response.data : []).filter((g) => {
-    const t = new Date(g.commence_time).getTime();
-    return t > now && t <= cutoff;
+  const events = (Array.isArray(response.data) ? response.data : []).filter((e) => {
+    return new Date(e.commence_time).getTime() > now;
   });
-  return { games, remainingTokens: response.remainingTokens };
+  return { events, remainingTokens: response.remainingTokens };
+}
+
+async function fetchEventPropOdds(apiKey, eventId) {
+  const url =
+    `${ODDS_API_BASE}/sports/${SPORT_KEY}/events/${eventId}/odds` +
+    `?apiKey=${apiKey}&regions=us&markets=${MARKET_KEY}&bookmakers=${BOOKMAKERS}&oddsFormat=american`;
+  return fetchJsonWithHeaders(url);
+}
+
+function resolveScopedOddsEventId(db, gameId) {
+  if (!gameId) return null;
+  const row = db.prepare(`
+    SELECT odds_event_id
+    FROM player_prop_lines
+    WHERE sport = 'MLB'
+      AND game_id = ?
+      AND prop_type = 'pitcher_strikeouts'
+      AND odds_event_id IS NOT NULL
+    ORDER BY fetched_at DESC
+    LIMIT 1
+  `).get(gameId);
+  return row?.odds_event_id ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -278,20 +281,30 @@ function resolveGameId(db, event) {
  * Guard: MLB_PITCHER_K_PROP_EVENTS_ENABLED must be 'true' to run.
  * In PROJECTION_ONLY mode the engine does not need market lines — pull is skipped.
  *
- * @param {{ dryRun?: boolean, jobKey?: string }} [options]
- * @returns {Promise<{ success: boolean, insertedRows: number, errors: string[] }>}
+ * @param {{ dryRun?: boolean, jobKey?: string, gameId?: string|null, oddsEventId?: string|null, pipelineMode?: boolean, requireScoped?: boolean }} [options]
+ * @returns {Promise<{ success: boolean, insertedRows: number, errors: string[], skipped?: boolean, reason?: string|null, tokenCost?: number, remainingTokens?: number|null, remainingQuota?: number|null }>}
  */
-async function pullMlbPitcherStrikeoutProps({ dryRun = false, jobKey = null } = {}) {
+async function pullMlbPitcherStrikeoutProps({
+  dryRun = false,
+  jobKey = null,
+  gameId = null,
+  oddsEventId = null,
+  pipelineMode = false,
+  requireScoped = false,
+} = {}) {
   const isEnabled = process.env.MLB_PITCHER_K_PROP_EVENTS_ENABLED === 'true';
   const ksMode = process.env.PITCHER_KS_MODEL_MODE || null;
   const isOddsBacked = ksMode === 'ODDS_BACKED';
-
+  if (process.env.APP_ENV === 'local') {
+    console.log(`[${JOB_NAME}] Skipped — APP_ENV=local. Prop pulls must not hit the live API in dev.`);
+    return { success: true, insertedRows: 0, errors: [], tokenCost: 0, remainingQuota: null };
+  }
   if (!isEnabled && !dryRun) {
     console.log(
       `[${JOB_NAME}] Skipped — MLB_PITCHER_K_PROP_EVENTS_ENABLED is not 'true'. ` +
         `Set to 'true' together with PITCHER_KS_MODEL_MODE=ODDS_BACKED to activate.`,
     );
-    return { success: true, insertedRows: 0, errors: [] };
+    return { success: true, insertedRows: 0, errors: [], tokenCost: 0, remainingQuota: null };
   }
 
   if (!isOddsBacked && !dryRun) {
@@ -299,7 +312,7 @@ async function pullMlbPitcherStrikeoutProps({ dryRun = false, jobKey = null } = 
       `[${JOB_NAME}] Skipped — PITCHER_KS_MODEL_MODE is '${ksMode || '(unset)'}'. ` +
         `Pull only runs in ODDS_BACKED mode. Set PITCHER_KS_MODEL_MODE=ODDS_BACKED to activate.`,
     );
-    return { success: true, insertedRows: 0, errors: [] };
+    return { success: true, insertedRows: 0, errors: [], tokenCost: 0, remainingQuota: null };
   }
 
   const apiKey = process.env.ODDS_API_KEY;
@@ -311,45 +324,124 @@ async function pullMlbPitcherStrikeoutProps({ dryRun = false, jobKey = null } = 
   return withDb(async () => {
     const resolvedJobKey = jobKey || `${JOB_NAME}|${new Date().toISOString().slice(0, 16)}`;
     const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
+    const isScopedRefresh = Boolean(gameId || oddsEventId);
 
-    insertJobRun({
-      id: jobRunId,
-      jobName: JOB_NAME,
-      jobKey: resolvedJobKey,
-      startedAt: new Date().toISOString(),
-    });
+    insertJobRun(JOB_NAME, jobRunId, resolvedJobKey);
 
     const errors = [];
     let insertedRows = 0;
     const fetchedAt = new Date().toISOString();
 
     try {
-      const { games, remainingTokens } = dryRun
-        ? { games: [], remainingTokens: null }
-        : await fetchBulkPropOdds(apiKey);
-      if (remainingTokens != null) {
-        console.log(`[${JOB_NAME}] Tokens remaining after bulk fetch: ${remainingTokens}`);
-      }
-      console.log(`[${JOB_NAME}] Bulk fetch returned ${games.length} upcoming MLB games.`);
-
       const db = getDatabase();
-
-      for (const game of games) {
+      const updateQuotaLedgerWithRemaining = (remainingTokens) => {
+        if (remainingTokens == null) return;
+        const _period = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
         try {
-          // Resolve canonical game_id from the games table
-          const gameId = resolveGameId(db, game);
-          if (!gameId) {
+          upsertQuotaLedger({
+            provider: 'odds_api',
+            period: _period,
+            tokens_remaining: remainingTokens,
+            updated_by: jobRunId,
+          });
+        } catch (_ledgerErr) {
+          // DB not yet migrated
+        }
+      };
+
+      let lastRemainingTokens = null;
+      let events = [];
+      let resolvedScopedOddsEventId = oddsEventId || null;
+
+      if ((pipelineMode || requireScoped) && !isScopedRefresh) {
+        throw new Error('FULL_SLATE_PROP_FETCH_INVARIANT');
+      }
+
+      if (isScopedRefresh) {
+        if (!gameId) {
+          console.log(`[${JOB_NAME}] Scoped refresh skipped — gameId is required when using scoped mode.`);
+          markJobRunSuccess(jobRunId);
+          return {
+            success: true,
+            insertedRows: 0,
+            errors: [],
+            skipped: true,
+            reason: 'NO_EVENT_ID',
+            tokenCost: 0,
+            remainingQuota: null,
+          };
+        }
+        if (!resolvedScopedOddsEventId) {
+          resolvedScopedOddsEventId = resolveScopedOddsEventId(db, gameId);
+        }
+        if (!resolvedScopedOddsEventId) {
+          console.log(
+            `[${JOB_NAME}] Scoped refresh skipped — no cached odds_event_id for gameId=${gameId}.`,
+          );
+          markJobRunSuccess(jobRunId);
+          return {
+            success: true,
+            insertedRows: 0,
+            errors: [],
+            skipped: true,
+            reason: 'NO_EVENT_ID',
+            tokenCost: 0,
+            remainingQuota: null,
+          };
+        }
+        events = [{ id: resolvedScopedOddsEventId, gameId }];
+        console.log(
+          `[${JOB_NAME}] Scoped refresh for ${gameId} using odds_event_id=${resolvedScopedOddsEventId}. Estimated tokens: 1`,
+        );
+      } else {
+        // Step 1: fetch event list (1 token) — player props need per-event endpoint
+        const { events: fetchedEvents, remainingTokens: eventsTokens } = dryRun
+          ? { events: [], remainingTokens: null }
+          : await fetchUpcomingMlbEvents(apiKey);
+        updateQuotaLedgerWithRemaining(eventsTokens);
+        lastRemainingTokens = eventsTokens;
+
+        if (fetchedEvents.length === 0) {
+          console.log(`[${JOB_NAME}] No upcoming MLB events in ${HOURS_AHEAD}h window`);
+          markJobRunSuccess(jobRunId);
+          return {
+            success: true,
+            insertedRows: 0,
+            errors: [],
+            tokenCost: 1,
+            remainingTokens: lastRemainingTokens,
+            remainingQuota: lastRemainingTokens,
+          };
+        }
+        events = fetchedEvents;
+        console.log(
+          `[${JOB_NAME}] Found ${events.length} upcoming MLB events, fetching per-event pitcher_strikeouts props. Estimated tokens: ${1 + events.length}`,
+        );
+      }
+
+      for (const event of events) {
+        try {
+          const resolvedGameId = event.gameId || resolveGameId(db, event);
+          if (!resolvedGameId) {
             console.warn(
-              `[${JOB_NAME}] Could not resolve game_id for ${game.away_team} @ ${game.home_team}`,
+              `[${JOB_NAME}] Could not resolve game_id for ${event.away_team} @ ${event.home_team}`,
             );
             continue;
           }
+          const { data: eventOdds, remainingTokens: eventTokens } = dryRun
+            ? { data: {}, remainingTokens: null }
+            : await fetchEventPropOdds(apiKey, event.id);
 
-          const rows = parseEventPropLines(game, gameId, fetchedAt);
+          if (eventTokens != null) {
+            lastRemainingTokens = eventTokens;
+            updateQuotaLedgerWithRemaining(eventTokens);
+          }
+
+          const rows = parseEventPropLines(eventOdds, resolvedGameId, fetchedAt);
 
           if (rows.length === 0) {
             console.log(
-              `[${JOB_NAME}] No pitcher_strikeouts lines for ${gameId} (market may be unavailable).`,
+              `[${JOB_NAME}] No pitcher_strikeouts lines for ${resolvedGameId} (market may be unavailable).`,
             );
           }
 
@@ -361,10 +453,13 @@ async function pullMlbPitcherStrikeoutProps({ dryRun = false, jobKey = null } = 
           }
 
           console.log(
-            `[${JOB_NAME}] ${gameId}: ${rows.length} lines ingested (dryRun=${dryRun}).`,
+            `[${JOB_NAME}] ${resolvedGameId}: ${rows.length} lines ingested (dryRun=${dryRun}). Tokens remaining: ${lastRemainingTokens ?? 'unknown'}`,
           );
-        } catch (gameErr) {
-          const msg = `Game ${game.id} (${game.away_team} @ ${game.home_team}): ${gameErr.message}`;
+        } catch (eventErr) {
+          const eventLabel = event.away_team && event.home_team
+            ? `${event.away_team} @ ${event.home_team}`
+            : `gameId=${event.gameId ?? gameId ?? 'unknown'}`;
+          const msg = `Event ${event.id} (${eventLabel}): ${eventErr.message}`;
           errors.push(msg);
           console.error(`[${JOB_NAME}] ${msg}`);
         }
@@ -374,11 +469,26 @@ async function pullMlbPitcherStrikeoutProps({ dryRun = false, jobKey = null } = 
       console.log(
         `[${JOB_NAME}] ✅ Done — ${insertedRows} prop lines ingested, ${errors.length} errors.`,
       );
-      return { success: true, insertedRows, errors };
+      const tokenCost = isScopedRefresh ? 1 : 1 + events.length;
+      return {
+        success: true,
+        insertedRows,
+        errors,
+        tokenCost,
+        remainingTokens: lastRemainingTokens,
+        remainingQuota: lastRemainingTokens,
+      };
     } catch (err) {
       markJobRunFailure(jobRunId, err.message);
       console.error(`[${JOB_NAME}] ❌ Job failed: ${err.message}`);
-      return { success: false, insertedRows, errors: [err.message, ...errors] };
+      return {
+        success: false,
+        insertedRows,
+        errors: [err.message, ...errors],
+        reason: err.message === 'FULL_SLATE_PROP_FETCH_INVARIANT' ? err.message : null,
+        tokenCost: 0,
+        remainingQuota: null,
+      };
     }
   });
 }
@@ -397,6 +507,9 @@ if (require.main === module) {
 
 module.exports = {
   pullMlbPitcherStrikeoutProps,
+  fetchUpcomingMlbEvents,
+  fetchEventPropOdds,
   parseEventPropLines,
   resolveGameId,
+  resolveScopedOddsEventId,
 };
