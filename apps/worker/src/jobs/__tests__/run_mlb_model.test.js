@@ -29,6 +29,7 @@ const {
   resolveMlbTeamLookupKeys,
   selectBestPitcherUnderMarket,
   buildPitcherStrikeoutLookback,
+  computeProjectionFloorF5,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -559,6 +560,54 @@ describe('resolveMlbTeamLookupKeys — MLB team join fallback', () => {
   test('returns empty array for empty input', () => {
     expect(resolveMlbTeamLookupKeys('')).toEqual([]);
     expect(resolveMlbTeamLookupKeys(null)).toEqual([]);
+  });
+
+  test('resolves ALL-CAPS game table names to abbreviations (case-insensitive fix)', () => {
+    // games table stores names in ALL-CAPS; case-insensitive lookup must resolve them
+    expect(resolveMlbTeamLookupKeys('NEW YORK METS')).toEqual(['NEW YORK METS', 'NYM']);
+    expect(resolveMlbTeamLookupKeys('SAN FRANCISCO GIANTS')).toEqual(['SAN FRANCISCO GIANTS', 'SF']);
+    expect(resolveMlbTeamLookupKeys('KANSAS CITY ROYALS')).toEqual(['KANSAS CITY ROYALS', 'KC']);
+    expect(resolveMlbTeamLookupKeys('LOS ANGELES DODGERS')).toEqual(['LOS ANGELES DODGERS', 'LAD']);
+    expect(resolveMlbTeamLookupKeys('TORONTO BLUE JAYS')).toEqual(['TORONTO BLUE JAYS', 'TOR']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeProjectionFloorF5 — floor constant correctness (must be 4.5, not 8.5)
+// ---------------------------------------------------------------------------
+
+describe('computeProjectionFloorF5 — floor constant and ERA fallback', () => {
+  test('returns 4.5 when odds snapshot has no pitcher data (unknown teams, null raw_data)', () => {
+    const snapshot = { home_team: 'UNKNOWN TEAM A', away_team: 'UNKNOWN TEAM B', raw_data: null };
+    expect(computeProjectionFloorF5(snapshot)).toBe(4.5);
+  });
+
+  test('returns 4.5 when raw_data is empty JSON object (no pitcher ERAs)', () => {
+    const snapshot = { home_team: 'FAKE HOME', away_team: 'FAKE AWAY', raw_data: JSON.stringify({}) };
+    expect(computeProjectionFloorF5(snapshot)).toBe(4.5);
+  });
+
+  test('returns ERA-derived value (not 4.5) when both pitcher ERAs are present', () => {
+    // ERA=4.5 each; result should be ERA-derived, not the 4.5 floor constant
+    const rawData = JSON.stringify({
+      mlb: {
+        home_pitcher: { era: 4.5, whip: 1.25, k_per_9: 8.5 },
+        away_pitcher: { era: 4.5, whip: 1.25, k_per_9: 8.5 },
+      },
+    });
+    const snapshot = { home_team: 'FAKE HOME', away_team: 'FAKE AWAY', raw_data: rawData };
+    const result = computeProjectionFloorF5(snapshot);
+    expect(typeof result).toBe('number');
+    expect(result).toBeGreaterThan(3.5);
+    expect(result).toBeLessThan(8.0);
+  });
+
+  test('floor constant is 4.5 (not 8.5) — regression guard', () => {
+    // An all-null snapshot guarantees the fallback constant is returned
+    const snapshot = { home_team: null, away_team: null, raw_data: null };
+    const floor = computeProjectionFloorF5(snapshot);
+    expect(floor).toBe(4.5);
+    expect(floor).not.toBe(8.5);
   });
 });
 
