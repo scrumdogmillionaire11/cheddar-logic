@@ -69,7 +69,9 @@ function validateMarketContract(game, sport) {
     const hasValidPrices =
       market === 'h2h'
         ? marketData.home !== null && marketData.away !== null
-        : market === 'totals' || market === 'totals_1st_5_innings'
+        : market === 'totals' ||
+            market === 'totals_1st_5_innings' ||
+            market === 'totals_1st_period'
           ? marketData.over !== null && marketData.under !== null
           : market === 'spreads'
             ? marketData.home_price !== null && marketData.away_price !== null
@@ -140,10 +142,12 @@ function normalizeGame(rawGame, sport) {
   const spreadConsensus = buildConsensus(market.spreads || [], 'spread');
   const totalConsensus = buildConsensus(market.totals || [], 'total');
   const totalF5Consensus = buildConsensus(market.totals_1st_5_innings || [], 'total');
+  const total1pConsensus = buildConsensus(market.totals_1st_period || [], 'total');
   const h2hConsensus = buildConsensus(market.h2h || [], 'h2h');
   const spreadExecution = selectBestExecution(market.spreads || [], 'spread');
   const totalExecution = selectBestExecution(market.totals || [], 'total');
   const totalF5Execution = selectBestExecution(market.totals_1st_5_innings || [], 'total');
+  const total1pExecution = selectBestExecution(market.totals_1st_period || [], 'total');
   const h2hExecution = selectBestExecution(market.h2h || [], 'h2h');
   const spreadMisprice = detectMisprice(
     spreadConsensus,
@@ -226,6 +230,9 @@ function normalizeGame(rawGame, sport) {
       totalF5OverBook: totalF5Execution.best_price_over_book ?? null,
       totalF5Under: totalF5Execution.best_price_under ?? null,
       totalF5UnderBook: totalF5Execution.best_price_under_book ?? null,
+      total1pLine: total1pConsensus.consensus_line ?? null,
+      total1pOver: total1pExecution.best_price_over ?? null,
+      total1pUnder: total1pExecution.best_price_under ?? null,
     },
     raw: rawGame, // Keep raw for debugging
   };

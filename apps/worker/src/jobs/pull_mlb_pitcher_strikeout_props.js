@@ -2,13 +2,13 @@
 /**
  * Pull MLB Pitcher Strikeout Prop Lines
  *
- * Fetches `pitcher_strikeouts` O/U market lines from The Odds API per-event
- * player props endpoint for upcoming MLB games, stores into player_prop_lines.
+ * Fetches `pitcher_strikeouts` O/U market lines from The Odds API bulk odds
+ * endpoint for all upcoming MLB games, stores into player_prop_lines.
  *
- * Endpoint: GET /v4/sports/baseball_mlb/events/{eventId}/odds
+ * Endpoint: GET /v4/sports/baseball_mlb/odds
  *   ?markets=pitcher_strikeouts&regions=us&bookmakers=...
  *
- * Token cost: 1 token per event (only runs for games within HOURS_AHEAD window).
+ * Token cost: 1 token per run regardless of game count (bulk endpoint).
  *
  * Guard flag (default OFF — must opt-in):
  *   MLB_PITCHER_K_PROP_EVENTS_ENABLED=true   — enables pitcher_strikeouts pull
@@ -80,35 +80,48 @@ async function fetchJson(url) {
   return response.json();
 }
 
+async function fetchJsonWithHeaders(url) {
+  const response = await fetch(url, {
+    headers: { 'user-agent': 'cheddar-logic-worker' },
+  });
+  if (!response.ok) {
+    throw new Error(`Odds API ${response.status} for ${url}`);
+  }
+  const remaining = response.headers.get('x-requests-remaining');
+  const remainingTokens = remaining != null ? parseInt(remaining, 10) : null;
+  if (remainingTokens != null) {
+    console.log(`[${JOB_NAME}] API quota remaining: ${remainingTokens}`);
+    if (remainingTokens < 200) {
+      console.warn(`[${JOB_NAME}] ⚠️  LOW API QUOTA: ${remainingTokens} requests remaining`);
+    }
+  }
+  const data = await response.json();
+  return { data, remainingTokens };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Odds API fetch layer
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Fetch list of upcoming MLB events from The Odds API.
- * Returns events commencing within HOURS_AHEAD hours.
+ * Fetch all upcoming MLB game pitcher_strikeouts odds in a single bulk call.
+ * Costs 1 token per market (vs 1 token per game on the per-event endpoint).
+ * @param {string} apiKey
+ * @returns {{ games: object[], remainingTokens: number|null }}
  */
-async function fetchMlbEvents(apiKey) {
-  const url = `${ODDS_API_BASE}/sports/${SPORT_KEY}/events?apiKey=${apiKey}`;
-  const events = await fetchJson(url);
+async function fetchBulkPropOdds(apiKey) {
+  const url =
+    `${ODDS_API_BASE}/sports/${SPORT_KEY}/odds` +
+    `?apiKey=${apiKey}&regions=us&markets=${MARKET_KEY}&bookmakers=${BOOKMAKERS}&oddsFormat=american`;
+  console.log(`[${JOB_NAME}] Bulk API call: markets=${MARKET_KEY} (1 token for all games)`);
+  const response = await fetchJsonWithHeaders(url);
   const now = Date.now();
   const cutoff = now + HOURS_AHEAD * 60 * 60 * 1000;
-  return (Array.isArray(events) ? events : []).filter((e) => {
-    const t = new Date(e.commence_time).getTime();
+  const games = (Array.isArray(response.data) ? response.data : []).filter((g) => {
+    const t = new Date(g.commence_time).getTime();
     return t > now && t <= cutoff;
   });
-}
-
-/**
- * Fetch pitcher_strikeouts prop lines for a single event.
- * @param {string} apiKey
- * @param {string} eventId
- */
-async function fetchEventPropLines(apiKey, eventId) {
-  const url =
-    `${ODDS_API_BASE}/sports/${SPORT_KEY}/events/${eventId}/odds` +
-    `?apiKey=${apiKey}&regions=us&markets=${MARKET_KEY}&bookmakers=${BOOKMAKERS}&oddsFormat=american`;
-  return fetchJson(url);
+  return { games, remainingTokens: response.remainingTokens };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -308,36 +321,35 @@ async function pullMlbPitcherStrikeoutProps({ dryRun = false, jobKey = null } = 
 
     const errors = [];
     let insertedRows = 0;
+    const fetchedAt = new Date().toISOString();
 
     try {
-      console.log(`[${JOB_NAME}] Fetching MLB events (T+${HOURS_AHEAD}h window)...`);
-      const events = dryRun ? [] : await fetchMlbEvents(apiKey);
-      console.log(`[${JOB_NAME}] Found ${events.length} upcoming MLB events.`);
+      const { games, remainingTokens } = dryRun
+        ? { games: [], remainingTokens: null }
+        : await fetchBulkPropOdds(apiKey);
+      if (remainingTokens != null) {
+        console.log(`[${JOB_NAME}] Tokens remaining after bulk fetch: ${remainingTokens}`);
+      }
+      console.log(`[${JOB_NAME}] Bulk fetch returned ${games.length} upcoming MLB games.`);
 
       const db = getDatabase();
 
-      for (const event of events) {
+      for (const game of games) {
         try {
           // Resolve canonical game_id from the games table
-          const gameId = resolveGameId(db, event);
+          const gameId = resolveGameId(db, game);
           if (!gameId) {
             console.warn(
-              `[${JOB_NAME}] Could not resolve game_id for event ${event.id} ` +
-                `(${event.away_team} @ ${event.home_team})`,
+              `[${JOB_NAME}] Could not resolve game_id for ${game.away_team} @ ${game.home_team}`,
             );
             continue;
           }
 
-          console.log(
-            `[${JOB_NAME}] Fetching pitcher_strikeouts for ${event.away_team} @ ${event.home_team} → ${gameId}`,
-          );
-          const eventOdds = await fetchEventPropLines(apiKey, event.id);
-          const fetchedAt = new Date().toISOString();
-          const rows = parseEventPropLines(eventOdds, gameId, fetchedAt);
+          const rows = parseEventPropLines(game, gameId, fetchedAt);
 
           if (rows.length === 0) {
             console.log(
-              `[${JOB_NAME}] No pitcher_strikeouts lines returned for ${gameId} (market may be unavailable).`,
+              `[${JOB_NAME}] No pitcher_strikeouts lines for ${gameId} (market may be unavailable).`,
             );
           }
 
@@ -351,12 +363,8 @@ async function pullMlbPitcherStrikeoutProps({ dryRun = false, jobKey = null } = 
           console.log(
             `[${JOB_NAME}] ${gameId}: ${rows.length} lines ingested (dryRun=${dryRun}).`,
           );
-
-          if (events.length > 1) {
-            await sleep(DEFAULT_SLEEP_MS);
-          }
-        } catch (eventErr) {
-          const msg = `Event ${event.id} (${event.away_team} @ ${event.home_team}): ${eventErr.message}`;
+        } catch (gameErr) {
+          const msg = `Game ${game.id} (${game.away_team} @ ${game.home_team}): ${gameErr.message}`;
           errors.push(msg);
           console.error(`[${JOB_NAME}] ${msg}`);
         }

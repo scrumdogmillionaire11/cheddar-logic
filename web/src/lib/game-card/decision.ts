@@ -346,7 +346,8 @@ function buildPickString(
     if (line === null || line === undefined) {
       return { pick: `${direction === 'OVER' ? 'Over' : 'Under'} (Line N/A)` };
     }
-    return { pick: `${direction === 'OVER' ? 'Over' : 'Under'} ${line}`, line };
+    const displayLine = +line.toFixed(1);
+    return { pick: `${direction === 'OVER' ? 'Over' : 'Under'} ${displayLine}`, line };
   }
 
   return { pick: `${direction} ${market}` };
