@@ -25,12 +25,18 @@ export default async function FPLPage() {
     // runtime then prepends /_next/ again, producing /_next/_next/… 404s.
     // With await import() the client component is included via RSC streaming
     // (not lazy chunk loading), so no client manifest entry is created.
+    // Feature flag: FPL_V2_FEATURES=true (server-side only, no NEXT_PUBLIC_ prefix)
+    // enables the Decision Explainability, Risk Framing, and Weekly Report Card
+    // sections in FPLDashboard. Passed as a prop so it is never baked into the
+    // client bundle — same pattern as FPL_PRODUCT_SHELL.
+    const v2FeaturesEnabled = process.env.FPL_V2_FEATURES === 'true';
+
     if (process.env.FPL_PRODUCT_SHELL === 'true') {
       const { default: FPLProductShell } = await import('@/components/fpl-product-shell');
       return <FPLProductShell />;
     }
 
-    return <FPLPageClient />;
+    return <FPLPageClient v2FeaturesEnabled={v2FeaturesEnabled} />;
   } finally {
     try {
       closeDatabaseReadOnly();
