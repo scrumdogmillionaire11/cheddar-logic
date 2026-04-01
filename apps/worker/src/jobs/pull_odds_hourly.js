@@ -507,19 +507,12 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 h2hConsensusAway: normalized.odds?.h2hConsensusAway,
                 h2hConsensusConfidence:
                   normalized.odds?.h2hConsensusConfidence,
-                mlF5Home: normalized.odds?.mlF5Home ?? null,
-                mlF5Away: normalized.odds?.mlF5Away ?? null,
                 totalF5Line: normalized.odds?.totalF5Line ?? null,
                 totalF5Over: normalized.odds?.totalF5Over ?? null,
                 totalF5Under: normalized.odds?.totalF5Under ?? null,
                 rawData: normalized.market,
                 jobRunId,
               });
-              if (normalized.odds?.mlF5Home == null || normalized.odds?.mlF5Away == null) {
-                if (sport === 'MLB') {
-                  console.log(`[PullOdds]   NO_F5_ML_LINE: ${normalized.gameId} — ml_f5 price absent from provider`);
-                }
-              }
               snapshotsInserted++;
               kpis.snapshotsInserted += 1;
             } catch (gameErr) {
