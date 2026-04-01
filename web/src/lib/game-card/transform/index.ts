@@ -1359,7 +1359,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             : (game.odds?.totalPriceUnder ?? undefined);
       }
       if (line !== undefined) {
-        pick = `${direction === 'OVER' ? 'Over' : 'Under'} ${line}`;
+        pick = `${direction === 'OVER' ? 'Over' : 'Under'} ${typeof line === 'number' ? +line.toFixed(1) : line}`;
       } else {
         pick = `${direction === 'OVER' ? 'Over' : 'Under'} (Line N/A)`;
       }
@@ -1520,7 +1520,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             : (game.odds?.totalPriceUnder ?? undefined);
       }
       if (direction === 'OVER' || direction === 'UNDER') {
-        pick = `${direction === 'OVER' ? 'Over' : 'Under'} ${line !== undefined ? line : '(Line N/A)'}`;
+        pick = `${direction === 'OVER' ? 'Over' : 'Under'} ${
+          line !== undefined
+            ? typeof line === 'number' ? +line.toFixed(1) : line
+            : '(Line N/A)'
+        }`;
       }
     }
   }

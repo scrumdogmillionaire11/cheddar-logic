@@ -71,7 +71,7 @@ export function buildWave1PickText(
     play.market_type === 'FIRST_PERIOD'
   ) {
     if (typeof play.line === 'number') {
-      return `${direction === 'OVER' ? 'Over' : 'Under'} ${play.line}`;
+      return `${direction === 'OVER' ? 'Over' : 'Under'} ${+play.line.toFixed(1)}`;
     }
     return direction === 'OVER' ? 'Over' : 'Under';
   }
