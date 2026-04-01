@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-03-30T23:30:00Z"
-last_activity: "2026-03-31 - Completed quick task 115: Weekly co-pilot dashboard WI-0661 UNBLOCKED"
+last_updated: "2026-03-31T00:00:00Z"
+last_activity: "2026-03-31 - Sprint re-prioritised: odds pipeline health first, FPL shell bug fixes, core product unblocked"
 progress:
   total_phases: 4
   completed_phases: 3
@@ -30,54 +30,119 @@ This file is intentionally minimal to avoid stale status drift.
 
 ## Review Cadence
 
-- Last reviewed: 2026-03-30
-- Next action: **WI-0661** (weekly dashboard) as primary. **WI-0668** (NL translation) and **WI-0669** (Final Recommendation) are both unblocked and can run in parallel once WI-0661 is claimed. WI-0662 after WI-0661 lands. WI-0670/0671 after WI-0669.
+- Last reviewed: 2026-03-31
+- Next action: See sprint plan below. **Odds pipeline health check is the first thing on April 1** before any product work proceeds.
 
-## Sprint Plan — 2026-03-30 re-assess (post WI-0660 + WI-0673–0680 completions)
+## Sprint Plan — 2026-03-31 re-assess (post WI-0704 + new April priorities)
 
-> Recent completions (not reflected in prior STATE snapshot):
+> Recent completions since last STATE:
 > - WI-0660 ✓ — Draft workbench UI (7 components + shell + contract tests) — 2026-03-30
-> - WI-0673 ✓ — FPL Sage test namespace guard scope fix — 2026-03-30
-> - WI-0674 ✓ — Replace stale importlib.reload in contract tests — 2026-03-30
-> - WI-0675 ✓ — ChipAnalyzer full chip name emission fix — 2026-03-30
-> - WI-0676 ✓ — Starting XI projection sanity swap cross-position fix — 2026-03-30
-> - WI-0677 ✓ — Observability test monkeypatch isolation — 2026-03-30
-> - WI-0678 ✓ — Orchestrator smoke test patch isolation — 2026-03-30
-> - WI-0679 ✓ — ChipAnalyzer chip_windows policy guard — 2026-03-30
-> - WI-0680 ✓ — User endpoint test monkeypatch isolation — 2026-03-30
+> - WI-0661 ✓ — Weekly co-pilot dashboard — 2026-03-31
+> - WI-0704 ✓ — FPLParseReview crash on unresolved_slots undefined — 2026-03-31
+> - WI-0673–0680 ✓ — FPL Sage test harness hardening train — 2026-03-30
 > - Full prior train: WI-0648–0659, WI-0701–0703 (see `WORK_QUEUE/COMPLETE/`)
 >
 > ⚠️ WI number collision note: `WORK_QUEUE/COMPLETE/` contains items numbered WI-0668–0672 that are **test-fix tasks** (different scope). The active product WIs with the same numbers in `WORK_QUEUE/` are the canonical ones for this sprint.
-
-### Hard Deadlines
-
-- No hard date-bound deadlines in active queue.
-
-### Dependency Chains
-
-- **WI-0660** ✓ — DONE 2026-03-30
-- **WI-0661** ✓ — DONE 2026-03-30 (quick-115)
-- **WI-0662** — depends on WI-0659 ✓, WI-0660 ✓, WI-0661 ✓ → **UNBLOCKED**
-- **WI-0663** — independent MLB pitcher-K UNDER enhancement → **UNBLOCKED**
-- **WI-0664** — independent schema-only (no deps) → **UNBLOCKED**
-- **WI-0665** — depends on WI-0664 → blocked until WI-0664 lands
-- **WI-0666** — depends on WI-0664, WI-0665 → blocked
-- **WI-0667** — depends on WI-0664, WI-0665, WI-0666 → blocked
-- **WI-0668** — NL intent translation; depends on WI-0660 ✓, WI-0652 ✓ → **UNBLOCKED**
-- **WI-0669** — Final Recommendation output; depends on WI-0656 ✓, WI-0660 ✓ → **UNBLOCKED**
-- **WI-0670** — Comparison as core + tradeoff chips; depends on WI-0656 ✓, WI-0660 ✓, WI-0669 → blocked on WI-0669
-- **WI-0671** — Post-draft season loop (retention foundation); depends on WI-0669, WI-0652 ✓ → blocked on WI-0669
-- **WI-0672** — Constraint state panel + reset to baseline; depends on WI-0668, WI-0660 ✓ → blocked on WI-0668
+>
+> ⚠️ Verification failures: WI-0653 (0/5 truths — never implemented, docs-only commit) and WI-0657 (3/5 truths — five contract fields absent) must be re-implemented before any work that depends on them.
 
 ---
 
-## Prioritized Open Work Queue — 2026-03-30 re-assess
+## ⚡ April Priority: Get the ML/Sports Pipeline Profitable
 
-### Now (Primary Active)
+**Context:** We had a dry week with no odds flowing. April 1 is the start of a new quota cycle. Before shipping any FPL product work, confirm the betting pipeline is healthy and producing play calls.
 
-- [WI-0662](../WORK_QUEUE/WI-0662.md) — Draft coach + report card integration (LOE M) — **UNBLOCKED** (WI-0661 ✓ landed)
+**Goal:** Odds are flowing → models are running → play calls are posted to Discord → results are settling correctly.
 
-### Parallel / Immediate — Can Start Alongside WI-0661
+---
+
+### Hard Deadlines
+
+- **April 1**: Verify odds quota reset, `check_odds_health` watchdog active, `pull_odds_hourly` succeeding. Diagnose and fix any dry-run or env flag that may be silencing odds fetches.
+- **No hard date deadlines** on FPL product items.
+
+---
+
+### Dependency Chains
+
+- **WI-0704** ✓ — DONE 2026-03-31
+- **WI-0710** — OCR + live FPL registry (UX enhancement over WI-0704); depends on WI-0704 ✓ → **UNBLOCKED** (lower priority, Q2)
+- **WI-0705** — Build Lab 422 fix; no deps → **UNBLOCKED**
+- **WI-0706** — Profile persistence; semantically depends on WI-0653 working → **blocked until WI-0653 re-implemented**
+- **WI-0653** — Manager Profile APIs (re-implement — 0/5 verified, never committed); no deps → **UNBLOCKED**
+- **WI-0657** — Explainability contract gap-fill (3/5 verified); no deps → **UNBLOCKED**
+- **WI-0662** — Sage frontend internal-only + runbook; depends on WI-0659 ✓, WI-0660 ✓, WI-0661 ✓ → **UNBLOCKED**
+- **WI-0663** — MLB pitcher-K UNDER monitoring; independent → **UNBLOCKED**
+- **WI-0664** — DB migration (public betting splits schema); independent, low priority → **UNBLOCKED**
+- **WI-0665** — ActionNetwork adapter; depends on WI-0664 → blocked
+- **WI-0666** — pull_public_splits worker job; depends on WI-0664, WI-0665 → blocked
+- **WI-0667** — computePublicSplitsGate; depends on WI-0664–0666 → blocked
+- **WI-0668** — NL intent translation; depends on WI-0660 ✓, WI-0652 ✓ → **UNBLOCKED**
+- **WI-0669** — Final Recommendation output; depends on WI-0656 ✓, WI-0660 ✓ → **UNBLOCKED**
+- **WI-0670** — Comparison + tradeoff chips; depends on WI-0669 → blocked on WI-0669
+- **WI-0671** — Post-draft season loop; depends on WI-0669, WI-0652 ✓ → blocked on WI-0669
+- **WI-0672** — Constraint state panel + reset; depends on WI-0668, WI-0660 ✓ → blocked on WI-0668
+- **WI-0708** — API contract expansion (posture-aware outputs); depends on WI-0707 ✓ → **UNBLOCKED**
+- **WI-0709** — nextGW ceiling/floor pts from FPL data; depends on WI-0707 ✓ → **UNBLOCKED**
+
+---
+
+## Prioritized Open Work Queue — 2026-03-31 re-assess
+
+### 🔴 P0 — Odds Pipeline Health (April 1 first thing)
+
+Before any code work, manually verify on the Pi / production worker:
+
+1. **Odds quota reset**: confirm `quota_ledger` row for `2026-04` exists or will be seeded on first fetch. Verify `tokens_remaining` is non-zero and `getCurrentQuotaTier()` returns `FULL`.
+2. **`ENABLE_ODDS_PULL` flag**: confirm it is NOT set to `false` in the `.env` or Railway env vars.
+3. **`check_odds_health` watchdog**: confirm `ENABLE_ODDS_HEALTH_WATCHDOG` is not disabled. Watch scheduler logs for the 30-min `check_odds_health` job executing.
+4. **`pull_odds_hourly` succeeding**: confirm a successful run appears in `job_runs` within the last 60 min during game hours.
+5. **`ENABLE_WITHOUT_ODDS_MODE`**: confirm this is `false` in production (ESPN-direct mode disables settlement and real play calls).
+6. **Discord cards posting**: confirm `ENABLE_DISCORD_CARD_WEBHOOKS=true` and `DISCORD_CARD_WEBHOOK_URL` is set. Verify the 09:00/12:00/18:00 ET snapshots are firing.
+7. **Settlement**: after games complete, confirm `settle_game_results` and `settle_pending_cards` are running and `card_results` rows are being written.
+
+If any of (1)–(7) are broken, that diagnosis + fix is the only work that matters until the pipeline is green.
+
+### 🔴 P1 — Broken / Never-Implemented (FPL Shell)
+
+These must land before any downstream FPL product work:
+
+- **WI-0705** — Fix Build Lab "New session" 422 (frontend sends `user_id`, backend expects `manager_id` + `gameweek`). Fast fix, no deps. Run immediately.
+- **WI-0653** (re-implement) — Manager Profile APIs. Zero code was ever committed. `profile_api_models.py`, `profile_service.py`, `profiles.py`, and both test files all missing. WI-0706 is blocked until this lands.
+- **WI-0657** (gap-fill) — Explainability contract: `confidence_band`, `scenario_notes`, `explainability`, `relative_risk`, `receipt_id` absent from `contract_transformer.py`; two test files missing.
+
+### 🟡 P2 — Unblocked Core Product (gates downstream)
+
+Run in parallel after P1 fixes are claimed:
+
+- **WI-0669** — Final Recommendation terminal output. Gates WI-0670 and WI-0671. Highest leverage item in the queue.
+- **WI-0668** — NL Intent Translation Layer. Gates WI-0672.
+- **WI-0709** — Derive `nextGW_ceiling_pts` / `nextGW_floor_pts` from FPL API. Direct production impact on transfer ranking. WI-0707 ✓ is its only dep.
+- **WI-0708** — API contract expansion for posture-aware outputs. Companion to WI-0709.
+
+### 🟡 P3 — Unblocked Independents
+
+- **WI-0706** — Persist manager profile across reload. Can start immediately after WI-0653 lands.
+- **WI-0662** — Sage frontend internal-only conversion + runbook cleanup. All deps done.
+- **WI-0663** — MLB pitcher-K UNDER monitoring. Fully independent; extends the profitable pitcher-K pipeline.
+
+### 🟢 P4 — Blocked (awaiting P2)
+
+- **WI-0670** — blocked on WI-0669
+- **WI-0671** — blocked on WI-0669
+- **WI-0672** — blocked on WI-0668
+- **WI-0710** — OCR + live FPL player registry (UX enhancement). Blocked on WI-0704 ✓ (done). Low urgency — synthetic scaffold is functional for now.
+
+### ⚪ P5 — Low Priority / Nice-to-Have
+
+Public betting splits pipeline (sequential chain — all marked `Priority: low` in WI files):
+- WI-0664 → WI-0665 → WI-0666 → WI-0667
+
+Defer until the core pipeline is consistently profitable.
+
+- WI-0664 → WI-0665 → WI-0666 → WI-0667
+
+---
 
 - [WI-0668](../WORK_QUEUE/WI-0668.md) — NL intent translation layer (LOE M) — **UNBLOCKED**
 - [WI-0669](../WORK_QUEUE/WI-0669.md) — Final Recommendation terminal output (LOE M) — **UNBLOCKED**
