@@ -28,6 +28,7 @@ const {
   getDatabase,
   withDb,
   upsertPlayerPropLine,
+  upsertQuotaLedger,
 } = require('@cheddar-logic/data');
 
 const ODDS_API_BASE = 'https://api.the-odds-api.com/v4';
@@ -270,6 +271,10 @@ async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
 const { games, remainingTokens } = await fetchBulkPropOdds(apiKey, activeMarkets);
       if (remainingTokens != null) {
         console.log(`[${JOB_NAME}] Tokens remaining after bulk fetch: ${remainingTokens}`);
+        const _period = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        try {
+          upsertQuotaLedger({ provider: 'odds_api', period: _period, tokens_remaining: remainingTokens, updated_by: jobRunId });
+        } catch (_ledgerErr) { /* DB not yet migrated */ }
       }
       if (games.length === 0) {
         console.log(`[${JOB_NAME}] No upcoming NHL games in ${HOURS_AHEAD}h window from bulk response`);
