@@ -7,6 +7,11 @@ from typing import Dict
 
 logger = logging.getLogger(__name__)
 
+try:
+    from backend.config.risk_posture import get_posture_config as _get_posture_config
+except ImportError:
+    _get_posture_config = None  # type: ignore[assignment]
+
 
 def _fdr_flag(player) -> str:
     """Append a run-in flag when a player carries computed FDR context."""
@@ -166,6 +171,14 @@ class CaptainSelector:
             base_score = next_pts + (floor * 0.15) + ((100 - ownership) * 0.015)
         else:
             base_score = next_pts + (floor * 0.10)
+
+        # Posture-aware differential captain bias.
+        # Aggressive posture boosts low-ownership (differential) captains.
+        # Conservative posture leaves base_score unchanged (diff_captain_bias=0).
+        if _get_posture_config is not None:
+            posture_cfg = _get_posture_config(self.risk_posture)
+            differential_bonus = max(0.0, 1.0 - (ownership / 100.0))
+            base_score = base_score * (1.0 + posture_cfg.diff_captain_bias * differential_bonus)
 
         horizon_adj = self._horizon_captain_adjustment(player)
         immediate_dgw_bonus = 0.0

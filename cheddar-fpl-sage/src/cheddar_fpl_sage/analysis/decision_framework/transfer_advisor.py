@@ -17,6 +17,11 @@ from .constants import (
     get_volatility_multiplier,
 )
 
+try:
+    from backend.config.risk_posture import get_posture_config as _get_posture_config
+except ImportError:  # fallback when running outside the backend package context
+    _get_posture_config = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -298,6 +303,20 @@ class TransferAdvisor:
         volatility = float(getattr(candidate, "volatility_score", 0.5) or 0.5)
         ppm = float(getattr(candidate, "points_per_million", 0.0) or 0.0)
 
+        # Posture-aware ceiling/floor blend: when explicit floor/ceiling projections
+        # are present on the candidate, use them weighted by the posture config.
+        # Aggressive posture weights ceiling more heavily; conservative weights floor.
+        posture_cfg = _get_posture_config(self.risk_posture) if _get_posture_config else None
+        if posture_cfg is not None:
+            ceiling_pts = float(getattr(candidate, "nextGW_ceiling_pts", None) or ceiling)
+            floor_pts = float(getattr(candidate, "nextGW_floor_pts", None) or floor)
+            effective_pts = (
+                posture_cfg.transfer_ceiling_weight * ceiling_pts
+                + posture_cfg.transfer_floor_weight * floor_pts
+            )
+        else:
+            effective_pts = next_pts
+
         # Soft penalty for reduced start probability (spec §4.2).  Scales linearly from
         # 0 pts at 85 % down to 1.5 pts deduction at 0 %.  This keeps low-start candidates
         # in the pool but pushes them below fully-fit equivalents.
@@ -307,16 +326,16 @@ class TransferAdvisor:
         if strategy == "RECOVERY":
             # Rank-chasing mode: allow volatility and reward leverage + upside.
             base_score = (
-                (next_pts * 1.00)
+                (effective_pts * 1.00)
                 + ((100.0 - ownership) * 0.04)
-                + ((ceiling - next_pts) * 0.60)
+                + ((ceiling - effective_pts) * 0.60)
                 - (volatility * (0.20 * get_volatility_multiplier(self.risk_posture)))
                 - low_start_penalty
             )
         elif strategy == "DEFEND":
             # Protect rank: stronger floor/template bias.
             base_score = (
-                (next_pts * 1.00)
+                (effective_pts * 1.00)
                 + (floor * 0.30)
                 + (ownership * 0.02)
                 - (volatility * (1.20 * get_volatility_multiplier(self.risk_posture)))
@@ -324,7 +343,7 @@ class TransferAdvisor:
             )
         elif strategy == "CONTROLLED":
             base_score = (
-                (next_pts * 1.00)
+                (effective_pts * 1.00)
                 + (ppm * 0.80)
                 + (floor * 0.20)
                 - (volatility * (0.80 * get_volatility_multiplier(self.risk_posture)))
@@ -333,7 +352,7 @@ class TransferAdvisor:
         else:
             # BALANCED default
             base_score = (
-                (next_pts * 1.00)
+                (effective_pts * 1.00)
                 + (ppm * 0.90)
                 + ((ceiling - floor) * 0.10)
                 - (volatility * (0.60 * get_volatility_multiplier(self.risk_posture)))

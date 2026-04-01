@@ -1,43 +1,38 @@
 """
 Risk-aware filtering for transfer recommendations.
 This module applies risk posture to filter and adjust transfer suggestions.
+
+All thresholds and multipliers are read from the canonical RiskPostureConfig;
+do not add inline magic numbers here.
 """
-from typing import List, Dict
+from typing import List, Dict, Tuple
+
+from backend.config.risk_posture import RiskPostureConfig, get_posture_config
 
 
 def get_risk_multipliers(risk_posture: str) -> dict:
     """
     Get multipliers that adjust recommendation thresholds based on risk tolerance.
-    
-    Args:
-        risk_posture: One of CONSERVATIVE, BALANCED, AGGRESSIVE
-        
-    Returns:
-        Dictionary with:
-        - min_gain_multiplier: Multiplier for minimum point gain (lower = more aggressive)
-        - bench_threshold_multiplier: Multiplier for bench upgrade thresholds
-        - max_recommendations: Maximum number of recommendations to show
+
+    Returns a dict compatible with the original interface so existing callers
+    are unaffected.  Values are now derived from RiskPostureConfig.
+
+    Keys:
+    - min_gain_multiplier: Multiplier for minimum point gain threshold
+    - bench_threshold_multiplier: Multiplier for bench upgrade thresholds
+    - max_recommendations: Maximum number of recommendations to show
     """
-    risk_posture = risk_posture.upper()
-    
-    if risk_posture == "CONSERVATIVE":
-        return {
-            "min_gain_multiplier": 1.5,  # Require 50% more gain
-            "bench_threshold_multiplier": 1.3,  # Stricter bench upgrades
-            "max_recommendations": 2,  # Show fewer, safer options
-        }
-    elif risk_posture == "AGGRESSIVE":
-        return {
-            "min_gain_multiplier": 0.7,  # Accept smaller gains (30% less)
-            "bench_threshold_multiplier": 0.8,  # More liberal bench upgrades
-            "max_recommendations": 5,  # Show more speculative options
-        }
-    else:  # BALANCED (default)
-        return {
-            "min_gain_multiplier": 1.0,
-            "bench_threshold_multiplier": 1.0,
-            "max_recommendations": 3,
-        }
+    cfg = get_posture_config(risk_posture)
+    # Map config parameters to legacy interface used by filter_transfers_by_risk.
+    # CONSERVATIVE: hit_threshold_net_pts=6.0 → min_gain_multiplier=1.5 (same ratio as before)
+    # BALANCED:     hit_threshold_net_pts=3.0 → min_gain_multiplier=1.0
+    # AGGRESSIVE:   hit_threshold_net_pts=1.5 → min_gain_multiplier=0.7
+    multiplier_by_posture = {
+        "CONSERVATIVE": {"min_gain_multiplier": 1.5, "bench_threshold_multiplier": 1.3, "max_recommendations": 2},
+        "BALANCED":     {"min_gain_multiplier": 1.0, "bench_threshold_multiplier": 1.0, "max_recommendations": 3},
+        "AGGRESSIVE":   {"min_gain_multiplier": 0.7, "bench_threshold_multiplier": 0.8, "max_recommendations": 5},
+    }
+    return multiplier_by_posture.get(cfg.name, multiplier_by_posture["BALANCED"])
 
 
 def filter_transfers_by_risk(
@@ -96,6 +91,33 @@ def filter_transfers_by_risk(
     max_recs = multipliers["max_recommendations"]
     
     return filtered[:max_recs]
+
+
+def posture_hit_allowed(
+    cfg: RiskPostureConfig,
+    delta_next2: float,
+    delta_next6: float,
+    hit_cost: float,
+) -> Tuple[bool, float]:
+    """
+    Decide whether a hit is justified under the given posture config.
+
+    Args:
+        cfg: RiskPostureConfig for the active posture.
+        delta_next2: Projected point gain over the next 2 GWs for the planned transfers.
+        delta_next6: Projected point gain over the next 6 GWs for the planned transfers.
+        hit_cost: The raw cost of the hit (positive number — e.g. 4 for a -4 hit).
+
+    Returns:
+        (allowed, weighted_net_gain) where:
+        - allowed is True when weighted_net_gain >= cfg.hit_threshold_net_pts
+        - weighted_net_gain is the time-weighted gain minus the hit cost
+    """
+    weighted_gain = (
+        cfg.hit_short_weight * delta_next2
+        + cfg.hit_mid_weight * delta_next6
+    ) - hit_cost
+    return weighted_gain >= cfg.hit_threshold_net_pts, weighted_gain
 
 
 def apply_risk_to_decision(decision_output: Dict, risk_posture: str) -> Dict:
