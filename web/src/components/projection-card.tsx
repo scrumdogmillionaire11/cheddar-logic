@@ -12,6 +12,8 @@ export interface RawProjectionPlay {
   goalie_away_name?: string | null;
   goalie_home_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
   goalie_away_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
+  odds_context?: Record<string, unknown> | null;
+  price?: number | null;
 }
 
 interface ProjectionCardProps {
@@ -93,6 +95,16 @@ export default function ProjectionCard({
           ? 'text-orange-400'
           : 'text-cloud/40';
 
+  const overPrice =
+    typeof play.odds_context?.['total_price_over_1p'] === 'number'
+      ? (play.odds_context['total_price_over_1p'] as number)
+      : null;
+  const underPrice =
+    typeof play.odds_context?.['total_price_under_1p'] === 'number'
+      ? (play.odds_context['total_price_under_1p'] as number)
+      : null;
+  const hasOdds = overPrice !== null || underPrice !== null;
+
   const hasGoalieContext =
     !isMlb && (play.goalie_home_name || play.goalie_away_name || isGoalieUncertain);
 
@@ -143,6 +155,30 @@ export default function ProjectionCard({
             </span>
           )}
         </div>
+
+        {/* O/U prices */}
+        {hasOdds && (
+          <div className="flex flex-col gap-0.5">
+            {overPrice !== null && (
+              <span
+                className={`text-xs font-mono font-semibold ${
+                  side === 'OVER' ? 'text-cyan-300' : 'text-cloud/35'
+                }`}
+              >
+                O {overPrice > 0 ? '+' : ''}{overPrice}
+              </span>
+            )}
+            {underPrice !== null && (
+              <span
+                className={`text-xs font-mono font-semibold ${
+                  side === 'UNDER' ? 'text-orange-300' : 'text-cloud/35'
+                }`}
+              >
+                U {underPrice > 0 ? '+' : ''}{underPrice}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Call badge + confidence */}
         <div className="ml-auto flex flex-col items-end gap-1.5">

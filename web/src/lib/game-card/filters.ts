@@ -175,7 +175,7 @@ export const DEFAULT_PROJECTIONS_FILTERS: GameModeFilters = {
   hasClearPlay: false,
   requireTotalProjection: false,
   onlyWelcomeHome: false,
-  cardTypes: ['nhl-pace-1p'],
+  cardTypes: ['nhl-pace-1p', 'mlb-f5'],
   minEdgePct: null,
   hideFragility: false,
   hideBlowout: false,
@@ -264,7 +264,7 @@ function canonicalToLegacyMarket(canonical?: string): Market | null {
   const upper = canonical.toUpperCase();
   if (upper === 'MONEYLINE' || upper === 'ML') return 'ML';
   if (upper === 'SPREAD' || upper === 'PUCKLINE') return 'SPREAD';
-  if (upper === 'TOTAL' || upper === 'TEAM_TOTAL') return 'TOTAL';
+  if (upper === 'TOTAL' || upper === 'TEAM_TOTAL' || upper === 'FIRST_PERIOD') return 'TOTAL';
   if (upper === 'INFO') return null; // INFO items don't count as bettable markets
   return 'UNKNOWN';
 }
