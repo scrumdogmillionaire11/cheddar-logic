@@ -44,7 +44,6 @@ const MARKET_TO_PROP_TYPE = {
 
 const BOOKMAKERS = 'draftkings,fanduel,betmgm';
 const HOURS_AHEAD = 36;
-const DEFAULT_SLEEP_MS = Number(process.env.NHL_SOG_PROP_SLEEP_MS || 1000);
 const JOB_NAME = 'pull-nhl-player-shots-props';
 
 function normalizePriceToAmerican(rawPrice) {
@@ -58,18 +57,6 @@ function normalizePriceToAmerican(rawPrice) {
     return Math.round((numericPrice - 1) * 100);
   }
   return Math.round(-100 / (numericPrice - 1));
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url, { headers: { 'user-agent': 'cheddar-logic-worker' } });
-  if (!response.ok) {
-    throw new Error(`Odds API ${response.status} for ${url}`);
-  }
-  return response.json();
 }
 
 async function fetchJsonWithHeaders(url) {

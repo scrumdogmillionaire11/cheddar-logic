@@ -65,10 +65,6 @@ function getCurrentPeriod() {
 }
 function getTokenCostPerFetch() {
   // Token cost is determined once per invocation — same value used for all sports
-  const {
-    getActiveSports,
-    getTokensForFetch,
-  } = require('@cheddar-logic/odds');
   return getTokensForFetch(getActiveSports());
 }
 

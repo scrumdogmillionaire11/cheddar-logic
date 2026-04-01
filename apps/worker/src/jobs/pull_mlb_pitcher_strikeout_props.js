@@ -43,7 +43,6 @@ const PROP_TYPE = 'pitcher_strikeouts';
 
 const BOOKMAKERS = 'draftkings,fanduel,betmgm';
 const HOURS_AHEAD = 36;
-const DEFAULT_SLEEP_MS = Number(process.env.MLB_PITCHER_K_PROP_SLEEP_MS || 1000);
 const JOB_NAME = 'pull-mlb-pitcher-strikeout-props';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,20 +64,6 @@ function normalizePriceToAmerican(rawPrice) {
   }
   // Decimal between 1 and 2 (e.g. 1.77 → -130)
   return Math.round(-100 / (numericPrice - 1));
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url, {
-    headers: { 'user-agent': 'cheddar-logic-worker' },
-  });
-  if (!response.ok) {
-    throw new Error(`Odds API ${response.status} for ${url}`);
-  }
-  return response.json();
 }
 
 async function fetchJsonWithHeaders(url) {
