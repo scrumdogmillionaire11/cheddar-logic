@@ -4,16 +4,18 @@
 # Requires: Pi on local network, SSH password ready
 
 set -e
-PI_HOST="babycheeeses11@cheddarpi.local"
+PI_HOST="babycheeses11@cheddarpi.local"
 PI_PATH="/opt/cheddar-logic"
+SSH_KEY="$HOME/.ssh/cheddar-deploy"
+SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no"
 
 echo "=== Step 1: Copy .env.production to Pi ==="
-scp .env.production "$PI_HOST:$PI_PATH/.env.production"
+scp $SSH_OPTS .env.production "$PI_HOST:$PI_PATH/.env.production"
 echo "✓ .env.production copied"
 
 echo ""
 echo "=== Step 2: Restart worker with new env ==="
-ssh "$PI_HOST" "
+ssh $SSH_OPTS "$PI_HOST" "
   cd $PI_PATH
   export PATH=\"\$PATH:\$(npm prefix -g)/bin\"
   pm2 restart worker --update-env
@@ -24,7 +26,7 @@ echo "✓ Worker restarted"
 
 echo ""
 echo "=== Step 3: Verify key flags are active ==="
-ssh "$PI_HOST" "
+ssh $SSH_OPTS "$PI_HOST" "
   grep -E 'ENABLE_DISCORD|ENABLE_ODDS|WITHOUT_ODDS|ENABLE_SETTLEMENT' $PI_PATH/.env.production
 "
 

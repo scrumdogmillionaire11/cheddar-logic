@@ -31,8 +31,10 @@ const RISK_POSTURES = [
 
 export default function FPLPageClient({
   embedded = false,
+  v2FeaturesEnabled = false,
 }: {
   embedded?: boolean;
+  v2FeaturesEnabled?: boolean;
 } = {}) {
   const [teamId, setTeamId] = useState('');
   const [state, setState] = useState<
@@ -639,7 +641,7 @@ export default function FPLPageClient({
               <h1 className="mb-6 font-display text-4xl font-semibold">
                 Team {teamId} Analysis
               </h1>
-              <FPLDashboard data={dashboardData} />
+              <FPLDashboard data={dashboardData} v2FeaturesEnabled={v2FeaturesEnabled} />
             </div>
           </div>
         )}

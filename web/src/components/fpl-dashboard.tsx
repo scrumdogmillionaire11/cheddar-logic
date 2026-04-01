@@ -13,6 +13,7 @@ import FPLWeeklyReportCard from '@/components/fpl-weekly-report-card';
 
 interface FPLDashboardProps {
   data: DetailedAnalysisResponse;
+  v2FeaturesEnabled?: boolean;
 }
 
 const formatPts = (value?: number) =>
@@ -289,7 +290,7 @@ const renderFixtureWindowTable = (
   );
 };
 
-export default function FPLDashboard({ data }: FPLDashboardProps) {
+export default function FPLDashboard({ data, v2FeaturesEnabled = false }: FPLDashboardProps) {
   // Collapsible section state (collapsed by default on mobile)
   const [strategyNotesOpen, setStrategyNotesOpen] = useState(false);
   const [plannerOpen, setPlannerOpen] = useState(false);
@@ -302,10 +303,9 @@ export default function FPLDashboard({ data }: FPLDashboardProps) {
     return null;
   }
 
-  // Feature flag: V2 explainability/risk-framing/report-card sections are dev-only
-  // until the backend contract is stable. Set NEXT_PUBLIC_FPL_V2_FEATURES=true in
-  // .env.local to enable. Do NOT set in production.
-  const v2FeaturesEnabled = process.env.NEXT_PUBLIC_FPL_V2_FEATURES === 'true';
+  // Feature flag: v2FeaturesEnabled is passed from the server component (page.tsx)
+  // via FPLPageClient. The server reads FPL_V2_FEATURES (no NEXT_PUBLIC_ prefix) so
+  // the value is never baked into the client bundle — it is evaluated per-request.
 
   const plans: TransferPlans | null | undefined = data.transfer_plans;
   const managerState = data.manager_state || {};
