@@ -840,7 +840,7 @@ export interface ScreenshotParseRequest {
 }
 
 export interface ScreenshotParseResponse {
-  parsed_squad: ParsedSquad;
+  parsed_squad?: ParsedSquad;
   image_count: number;
 }
 

@@ -11,13 +11,24 @@ interface FPLParseReviewProps {
 const CONFIDENCE_LOW = 0.8;
 
 export default function FPLParseReview({ parsed, onResolved }: FPLParseReviewProps) {
-  const { parsed_squad } = parsed;
+  // State must be declared before any early return (Rules of Hooks)
+  const [corrections, setCorrections] = useState<Map<number, string>>(new Map());
+
+  const parsed_squad = parsed?.parsed_squad;
+
+  if (!parsed_squad) {
+    return (
+      <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-6 text-center">
+        <p className="text-sm text-red-400">Parse failed — no squad data returned. Please try uploading again.</p>
+      </div>
+    );
+  }
+
   const unresolvedIndexes = new Set(
     (parsed_squad.unresolved_slots ?? []).map((s) => s.slot_index),
   );
 
   // Map of slot_index -> user correction string
-  const [corrections, setCorrections] = useState<Map<number, string>>(new Map());
 
   const setCorrection = (slotIndex: number, value: string) => {
     setCorrections((prev) => {
