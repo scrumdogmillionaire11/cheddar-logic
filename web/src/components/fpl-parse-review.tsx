@@ -14,9 +14,9 @@ export default function FPLParseReview({ parsed, onResolved }: FPLParseReviewPro
   // State must be declared before any early return (Rules of Hooks)
   const [corrections, setCorrections] = useState<Map<number, string>>(new Map());
 
-  const parsed_squad = parsed?.parsed_squad;
+  const squad = parsed?.squad;
 
-  if (!parsed_squad) {
+  if (!squad) {
     return (
       <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-6 text-center">
         <p className="text-sm text-red-400">Parse failed — no squad data returned. Please try uploading again.</p>
@@ -24,8 +24,9 @@ export default function FPLParseReview({ parsed, onResolved }: FPLParseReviewPro
     );
   }
 
+  const allSlots = [...(squad.starters ?? []), ...(squad.bench ?? [])];
   const unresolvedIndexes = new Set(
-    (parsed_squad.unresolved_slots ?? []).map((s) => s.slot_index),
+    (squad.unresolved_slots ?? []).map((s) => s.slot_index),
   );
 
   // Map of slot_index -> user correction string
@@ -49,10 +50,10 @@ export default function FPLParseReview({ parsed, onResolved }: FPLParseReviewPro
   });
 
   const handleConfirm = () => {
-    const correctedSlots: ParsedSlot[] = parsed_squad.slots.map((slot) => {
+    const correctedSlots: ParsedSlot[] = allSlots.map((slot) => {
       const override = corrections.get(slot.slot_index);
       if (override && override.trim()) {
-        return { ...slot, matched_name: override.trim() };
+        return { ...slot, display_name: override.trim() };
       }
       return slot;
     });
@@ -68,17 +69,17 @@ export default function FPLParseReview({ parsed, onResolved }: FPLParseReviewPro
         </p>
       </div>
 
-      {(parsed_squad.parse_warnings ?? []).length > 0 && (
+      {(parsed.parse_warnings ?? []).length > 0 && (
         <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 space-y-1">
           <p className="text-xs font-medium text-yellow-400">Parse warnings</p>
-          {parsed_squad.parse_warnings.map((w, i) => (
+          {parsed.parse_warnings.map((w, i) => (
             <p key={i} className="text-xs text-yellow-300/70">{w}</p>
           ))}
         </div>
       )}
 
       <div className="space-y-2">
-        {parsed_squad.slots.map((slot) => {
+        {allSlots.map((slot) => {
           const isLowConfidence = slot.confidence < CONFIDENCE_LOW;
           const isUnresolved = unresolvedIndexes.has(slot.slot_index);
           const correction = corrections.get(slot.slot_index) ?? '';
@@ -104,12 +105,9 @@ export default function FPLParseReview({ parsed, onResolved }: FPLParseReviewPro
                   </span>
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-cloud truncate">
-                      {slot.matched_name ?? (
+                      {slot.display_name ?? (
                         <span className="text-cloud/40 italic">unmatched</span>
                       )}
-                    </p>
-                    <p className="text-xs text-cloud/40 truncate">
-                      raw: {slot.raw_text}
                     </p>
                   </div>
                   {slot.is_captain && (

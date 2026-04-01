@@ -816,22 +816,29 @@ export async function generateDraft(
 
 // ─── Screenshot Parse (WI-0655) ──────────────────────────────────────────────
 
+export interface CandidateMatch {
+  player_id: number;
+  display_name: string;
+  confidence: number;
+}
+
 export interface ParsedSlot {
   slot_index: number;
-  position: 'GK' | 'DEF' | 'MID' | 'FWD';
-  matched_name: string | null;
-  raw_text: string;
+  position: 'GKP' | 'DEF' | 'MID' | 'FWD' | 'BENCH';
+  player_id?: number | null;
+  display_name: string | null;
   confidence: number;
+  candidates?: CandidateMatch[];
   is_captain?: boolean;
   is_vice_captain?: boolean;
 }
 
 export interface ParsedSquad {
-  slots: ParsedSlot[];
+  starters: ParsedSlot[];
+  bench: ParsedSlot[];
+  captain?: ParsedSlot | null;
+  vice_captain?: ParsedSlot | null;
   unresolved_slots: ParsedSlot[];
-  layout: string;
-  overall_confidence: number;
-  parse_warnings: string[];
 }
 
 export interface ScreenshotParseRequest {
@@ -840,8 +847,10 @@ export interface ScreenshotParseRequest {
 }
 
 export interface ScreenshotParseResponse {
-  parsed_squad?: ParsedSquad;
-  image_count: number;
+  squad: ParsedSquad;
+  layout_detected: 'pitch_view' | 'list_view' | 'unknown';
+  images_processed: number;
+  parse_warnings: string[];
 }
 
 /** POST /api/v1/screenshot-parse */
