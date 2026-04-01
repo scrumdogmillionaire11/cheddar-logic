@@ -178,16 +178,15 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       // To add/remove sports, update the `active` field in config.js — not here.
       const activeSports = getActiveSports();
 
-      // Token math (ODDS_FETCH_SLOT_MINUTES=120, ~9 fetches/day):
-      // NHL:   2 tokens/fetch × 9 fetches/day = 18 tokens/day (main)
-      // NBA:   2 tokens/fetch × 9 fetches/day = 18 tokens/day (main)
-      // MLB:   1 token/fetch  × 9 fetches/day =  9 tokens/day (main)
-      // Total: 5 tokens/fetch × 9 fetches/day = 45 tokens/day (main hourly job)
+      // Token math (ODDS_FETCH_SLOT_MINUTES=30, ODDS_FETCH_START_HOUR=6 → ~32 fetches/day):
+      // NHL:   3 tokens/fetch × 32 fetches/day =  96 tokens/day (h2h+totals featured, totals_p1 period)
+      // NBA:   2 tokens/fetch × 32 fetches/day =  64 tokens/day (totals+spreads)
+      // MLB:   2 tokens/fetch × 32 fetches/day =  64 tokens/day (h2h featured, totals_1st_5_innings period)
+      // Total: 7 tokens/fetch × 32 fetches/day = 224 tokens/day (main hourly job)
       // Prop jobs (separate cadence via player-props scheduler — 09:00, 18:00, T-60):
       //   NHL SOG: 1 token/run × ~3 runs/day = ~3 tokens/day
       //   MLB K:   1 token/run × ~3 runs/day = ~3 tokens/day
-      // Paid tier: 20,000 tokens/month → ~51/day × 30 = ~1,530/month (~8% utilization)
-      // T-minus pre-model pulls add up to 5 tokens × active games per day
+      // Paid tier: 20,000 tokens/month → 224/day × 30 = ~6,720/month (~34% utilization)
       const tokenCost = getTokensForFetch(activeSports);
       console.log(
         `[PullOdds] Active sports (from config): ${activeSports.join(', ')} | tokens/fetch: ${tokenCost} | ~${tokenCost * 42}/day (30-min buckets, skip 2am-5am)`,

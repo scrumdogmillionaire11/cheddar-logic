@@ -6,17 +6,20 @@
  * - 1 token = 1 market pulled (region fixed to 'us')
  * - Multiple bookmakers doesn't increase token cost
  *
- * Canonical market budget — MUST stay at 7 tokens total per composite run:
- *   NBA  (main job):  totals + spreads                       = 2 tokens
- *   NHL  (main job):  totals + totals_1st_period              = 2 tokens
- *   NHL  (prop job):  player_shots_on_goal                   = 1 token
- *   MLB  (main job):  totals_1st_5_innings                   = 1 token
- *   MLB  (prop job):  pitcher_strikeouts                     = 1 token
- *   ──────────────────────────────────────────────────────── = 7 tokens
+ * Canonical market budget — MUST stay at 7 tokens total per composite fetch:
+ *   NHL  (main job):  h2h + totals (featured) + totals_p1 (period)  = 3 tokens
+ *   NBA  (main job):  totals + spreads                               = 2 tokens
+ *   MLB  (main job):  h2h (featured) + totals_1st_5_innings (period) = 2 tokens
+ *   NHL  (prop job):  player_shots_on_goal  (separate scheduler)     = 1 token
+ *   MLB  (prop job):  pitcher_strikeouts    (separate scheduler)     = 1 token
+ *   ──────────────────────────────────────────────────────────────── = 7 tokens/composite fetch
  *
- * To add a market: increment tokensPerFetch / propTokensPerRun here,
- * verify the total above stays acceptable, update the pipeline (index.js,
- * normalize.js, odds.js migration) if it is a new game-market type.
+ * Period markets (totals_p1, totals_1st_5_innings) MUST be fetched as a separate
+ * bulk call — the Odds API /v4/sports/{sport}/odds endpoint returns 422 when
+ * period/alternate markets are mixed with featured markets in one request.
+ *
+ * To add a market: increment tokensPerFetch here, verify total stays ≤7,
+ * update fetchFromOddsAPI (index.js) and normalize.js if a new market type.
  *
  * US Bookmakers:
  * - betmgm, draftkings, fanduel (main books)
@@ -28,10 +31,9 @@ const SPORTS_CONFIG = {
   NHL: {
     active: true,
     season: { start: '10-01', end: '04-30' },
-    markets: ['totals', 'totals_1st_period'],
-    tokensPerFetch: 2,
-    propMarkets: ['player_shots_on_goal'],
-    propTokensPerRun: 1,
+    markets: ['h2h', 'totals'],
+    periodMarkets: ['totals_p1'],
+    tokensPerFetch: 3,
     defaultTTL: 240, // 4 hours standard
     pregameTTL: 30, // 30 min inside 2 hours
     sharpWindowTTL: 0, // Don't cache inside 1 hour — fetch on demand
@@ -68,10 +70,9 @@ const SPORTS_CONFIG = {
   MLB: {
     active: true, // season starts 2026-03-25
     season: { start: '03-20', end: '11-01' },
-    markets: ['totals_1st_5_innings'],
-    tokensPerFetch: 1,
-    propMarkets: ['pitcher_strikeouts'],
-    propTokensPerRun: 1,
+    markets: ['h2h'],
+    periodMarkets: ['totals_1st_5_innings'],
+    tokensPerFetch: 2,
     defaultTTL: 180, // Shorter — SP confirmations move lines faster
     pregameTTL: 20, // Tighter pregame window for weather/lineup
     sharpWindowTTL: 0,

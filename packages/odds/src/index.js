@@ -289,8 +289,59 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
     }
   }
 
+  // If sport has period markets, fetch them separately (Odds API returns 422
+  // when period/alternate markets are mixed with featured markets in one call).
+  let mergedApiData = response.data;
+  if (config.periodMarkets && config.periodMarkets.length > 0) {
+    const periodParams = {
+      apiKey,
+      regions: 'us',
+      markets: config.periodMarkets.join(','),
+      bookmakers: config.bookmakers.join(','),
+      oddsFormat: 'american',
+    };
+    console.log(
+      `[Odds] API call: ${url}?markets=${config.periodMarkets.join(',')} (period)`,
+    );
+    const periodResponse = await axios.get(url, {
+      params: periodParams,
+      timeout: 10000,
+    });
+
+    // Overwrite remainingTokens with the most recent API header value
+    const periodRemaining = periodResponse.headers['x-requests-remaining'];
+    if (periodRemaining) {
+      remainingTokens = parseInt(periodRemaining);
+      console.log(`[Odds] API quota remaining after period fetch: ${remainingTokens}`);
+      if (remainingTokens < 200) {
+        console.warn(`[Odds] ⚠️  LOW API QUOTA: ${remainingTokens} requests remaining`);
+      }
+    }
+
+    // Merge period-market bookmaker data into featured game objects by game.id
+    if (Array.isArray(periodResponse.data)) {
+      const periodByGameId = new Map(
+        periodResponse.data
+          .filter((g) => g && g.id)
+          .map((g) => [g.id, g]),
+      );
+
+      mergedApiData = (response.data || []).map((game) => {
+        const periodGame = periodByGameId.get(game?.id);
+        if (!periodGame) return game;
+        return {
+          ...game,
+          bookmakers: [
+            ...(game.bookmakers || []),
+            ...(periodGame.bookmakers || []),
+          ],
+        };
+      });
+    }
+  }
+
   // Transform API response to internal format (matches shared-data structure)
-  return { games: transformAPIResponse(response.data, sport), remainingTokens };
+  return { games: transformAPIResponse(mergedApiData, sport), remainingTokens };
 }
 
 /**
@@ -381,7 +432,7 @@ function transformAPIResponse(apiData, sport) {
             });
           }
 
-          if (market.key === 'totals_1st_period') {
+          if (market.key === 'totals_1st_period' || market.key === 'totals_p1') {
             const overOutcome = market.outcomes.find((o) => o.name === 'Over');
             const underOutcome = market.outcomes.find((o) => o.name === 'Under');
 
