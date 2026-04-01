@@ -2,7 +2,7 @@
  * GET /api/cards
  *
  * Canonical card read surface in the current worker+DB runtime.
- * Returns betting dashboard cards (NBA, NHL, SOCCER, NCAAM).
+ * Returns betting dashboard cards (NBA, NHL, SOCCER, MLB).
  * FPL projections are served from cheddar-fpl-sage backend.
  *
  * Historical endpoint families (`/api/models/*`, `/api/betting/projections`,
@@ -76,7 +76,6 @@ const ACTIVE_EXCLUDED_STATUSES = [
 const CORE_RUN_STATE_SPORTS = [
   'nba',
   'nhl',
-  'ncaam',
   'soccer',
   'mlb',
   'nfl',
@@ -289,8 +288,9 @@ export async function GET(request: NextRequest) {
       baseParams.push(gameId);
     }
 
-    // Exclude FPL cards - they are served from cheddar-fpl-sage backend
+    // Exclude FPL and NCAAM cards
     baseWhere.push("LOWER(cp.sport) != 'fpl'");
+    baseWhere.push("LOWER(cp.sport) != 'ncaam'");
     baseWhere.push(`NOT EXISTS (
       SELECT 1
       FROM card_results cr
