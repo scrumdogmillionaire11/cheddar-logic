@@ -380,6 +380,20 @@ function transformAPIResponse(apiData, sport) {
               under: underOutcome?.price,
             });
           }
+
+          if (market.key === 'totals_1st_period') {
+            const overOutcome = market.outcomes.find((o) => o.name === 'Over');
+            const underOutcome = market.outcomes.find((o) => o.name === 'Under');
+
+            if (!transformed.markets.totals_1st_period)
+              transformed.markets.totals_1st_period = [];
+            transformed.markets.totals_1st_period.push({
+              book: bookmaker.key,
+              line: overOutcome?.point,
+              over: overOutcome?.price,
+              under: underOutcome?.price,
+            });
+          }
         });
       });
     }

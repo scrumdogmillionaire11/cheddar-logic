@@ -1,20 +1,21 @@
 'use strict';
 /**
- * Pull NHL Player Shots On Goal + Blocked Shots Prop Lines
+ * Pull NHL Player Shots On Goal Prop Lines
  *
- * Fetches player_shots_on_goal and/or player_blocked_shots O/U market lines
- * from The Odds API event player props endpoint for upcoming NHL games,
- * stores in player_prop_lines.
+ * Fetches player_shots_on_goal O/U market lines from The Odds API bulk
+ * odds endpoint for upcoming NHL games, stores in player_prop_lines.
+ * player_blocked_shots (BLK) is available but OFF by default — it is not
+ * part of the canonical 7-token budget defined in packages/odds/src/config.js.
  *
  * Endpoint: GET /v4/sports/icehockey_nhl/odds
- *   ?markets=player_shots_on_goal,player_blocked_shots&regions=us&bookmakers=...
+ *   ?markets=player_shots_on_goal&regions=us&bookmakers=...
  *
  * Token cost: 1 token per **market** for ALL games (bulk endpoint).
- *   e.g. SOG+BLK enabled = 2 tokens total regardless of game count.
+ *   Default (SOG only) = 1 token total regardless of game count.
  *
- * Guard flags (both default ON — set to 'false' to disable):
- *   NHL_SOG_PROP_EVENTS_ENABLED   — enables player_shots_on_goal pull
- *   NHL_BLK_PROP_EVENTS_ENABLED   — enables player_blocked_shots pull
+ * Guard flags:
+ *   NHL_SOG_PROP_EVENTS_ENABLED   — enables player_shots_on_goal pull (default ON)
+ *   NHL_BLK_PROP_EVENTS_ENABLED   — enables player_blocked_shots pull (default OFF)
  *
  * Exit codes: 0 = success, 1 = failure
  */
@@ -233,13 +234,13 @@ function resolveGameId(db, event) {
 async function pullNhlPlayerShotsProps({ dryRun = false } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
-  // Guard: markets default ON — set to 'false' to disable
+  // Guard: SOG default ON; BLK default OFF (not in canonical 7-token budget)
   const sogEnabled = process.env.NHL_SOG_PROP_EVENTS_ENABLED !== 'false';
-  const blkEnabled = process.env.NHL_BLK_PROP_EVENTS_ENABLED !== 'false';
+  const blkEnabled = process.env.NHL_BLK_PROP_EVENTS_ENABLED === 'true';
 
   if (!sogEnabled && !blkEnabled && !dryRun) {
     console.log(
-      `[${JOB_NAME}] Skipped — set NHL_SOG_PROP_EVENTS_ENABLED=false and NHL_BLK_PROP_EVENTS_ENABLED=false to disable both`,
+      `[${JOB_NAME}] Skipped — NHL_SOG_PROP_EVENTS_ENABLED=false and NHL_BLK_PROP_EVENTS_ENABLED not set`,
     );
     return { success: true, skipped: true, reason: 'not_enabled' };
   }

@@ -4,11 +4,19 @@
  *
  * Token costs (The Odds API pricing):
  * - 1 token = 1 market pulled (region fixed to 'us')
- * - NHL: h2h + totals = 2 tokens
- * - NBA: h2h + totals + spreads = 3 tokens
- * - MLB: totals_1st_5_innings = 1 token
- * - NFL: h2h + totals + spreads = 3 tokens
  * - Multiple bookmakers doesn't increase token cost
+ *
+ * Canonical market budget — MUST stay at 7 tokens total per composite run:
+ *   NBA  (main job):  totals + spreads                       = 2 tokens
+ *   NHL  (main job):  totals + totals_1st_period              = 2 tokens
+ *   NHL  (prop job):  player_shots_on_goal                   = 1 token
+ *   MLB  (main job):  totals_1st_5_innings                   = 1 token
+ *   MLB  (prop job):  pitcher_strikeouts                     = 1 token
+ *   ──────────────────────────────────────────────────────── = 7 tokens
+ *
+ * To add a market: increment tokensPerFetch / propTokensPerRun here,
+ * verify the total above stays acceptable, update the pipeline (index.js,
+ * normalize.js, odds.js migration) if it is a new game-market type.
  *
  * US Bookmakers:
  * - betmgm, draftkings, fanduel (main books)
@@ -20,8 +28,10 @@ const SPORTS_CONFIG = {
   NHL: {
     active: true,
     season: { start: '10-01', end: '04-30' },
-    markets: ['h2h', 'totals'],
+    markets: ['totals', 'totals_1st_period'],
     tokensPerFetch: 2,
+    propMarkets: ['player_shots_on_goal'],
+    propTokensPerRun: 1,
     defaultTTL: 240, // 4 hours standard
     pregameTTL: 30, // 30 min inside 2 hours
     sharpWindowTTL: 0, // Don't cache inside 1 hour — fetch on demand
@@ -39,8 +49,8 @@ const SPORTS_CONFIG = {
   NBA: {
     active: true,
     season: { start: '10-01', end: '06-30' },
-    markets: ['h2h', 'totals', 'spreads'],
-    tokensPerFetch: 3,
+    markets: ['totals', 'spreads'],
+    tokensPerFetch: 2,
     defaultTTL: 240,
     pregameTTL: 30,
     sharpWindowTTL: 0,
@@ -60,6 +70,8 @@ const SPORTS_CONFIG = {
     season: { start: '03-20', end: '11-01' },
     markets: ['totals_1st_5_innings'],
     tokensPerFetch: 1,
+    propMarkets: ['pitcher_strikeouts'],
+    propTokensPerRun: 1,
     defaultTTL: 180, // Shorter — SP confirmations move lines faster
     pregameTTL: 20, // Tighter pregame window for weather/lineup
     sharpWindowTTL: 0,
