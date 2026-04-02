@@ -37,7 +37,7 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 ## Review Cadence
 
 - Last reviewed: 2026-04-02
-- Next action: Run WI-0728 (baseline lock) and WI-0730 (family registry) in parallel. WI-0731 (scorecard) is gated on both.
+- Next action: Run WI-0728 (baseline lock) then WI-0731 (scorecard). WI-0730 is complete. WI-0729 (runbook) can run in parallel.
 
 ## Sprint Plan — 2026-04-02 (Model Audit Rollout Cycle)
 
@@ -52,6 +52,7 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 - WI-0725 ✓ — Model audit stack: frozen audit contract, snapshot runner, comparator, scorecard, CI gate
 - WI-0726 ✓ — Performance drift report + golden fixture library
 - WI-0727 ✓ — Remove per-event odds fetching; force NHL 1P / NHL shots / MLB F5 / MLB pitcher-K to PROJECTION_ONLY
+- WI-0730 ✓ — Card family registry (4 LIVE, 4 PROJECTION_ONLY; audit/README.md added)
 
 ---
 
@@ -59,7 +60,7 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 
 - **WI-0728** — First baseline lock-in cycle; no deps → **READY**
 - **WI-0729** — Model audit rollout runbook; no blocking deps (reference WI-0730 paths before close) → **READY**
-- **WI-0730** — Card family registry with operational status; no deps → **READY**
+- **WI-0730** ✓ — Card family registry with operational status (2026-04-02)
 - **WI-0731** — First weekly scorecard; depends on WI-0728 ✓ + WI-0730 ✓ → **blocked until both close**
 
 ### Dependency Chains — Open FPL / Product
