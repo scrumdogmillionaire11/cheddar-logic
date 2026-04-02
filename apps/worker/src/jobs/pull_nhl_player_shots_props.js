@@ -8,7 +8,8 @@
  * part of the canonical 7-token budget defined in packages/odds/src/config.js.
  *
  * Endpoint: GET /v4/sports/icehockey_nhl/odds
- *   ?markets=player_shots_on_goal&regions=us&bookmakers=...
+ *   ?markets=player_shots_on_goal&regions=us
+ *   (bookmakers param omitted — bulk endpoint returns 422 for prop/alternate markets)
  *
  * Token cost: 1 token per **market** for ALL games (bulk endpoint).
  *   Default (SOG only) = 1 token total regardless of game count.
@@ -41,7 +42,6 @@ const MARKET_TO_PROP_TYPE = {
   [BLK_MARKET]: 'blocked_shots',
 };
 
-const BOOKMAKERS = 'draftkings,fanduel,betmgm';
 const HOURS_AHEAD = 36;
 const DEFAULT_SLEEP_MS = Number(process.env.NHL_SOG_PROP_SLEEP_MS || 1000);
 const JOB_NAME = 'pull-nhl-player-shots-props';
@@ -97,9 +97,12 @@ async function fetchJsonWithHeaders(url) {
  */
 async function fetchBulkPropOdds(apiKey, marketKeys) {
   const marketsParam = marketKeys.join(',');
+  // The bulk /odds endpoint returns 422 when `bookmakers` is combined with
+  // prop/alternate markets (player_shots_on_goal, player_blocked_shots).
+  // These markets are only available via `regions=us` on the bulk endpoint.
   const url =
     `${ODDS_API_BASE}/sports/${SPORT_KEY}/odds` +
-    `?apiKey=${apiKey}&regions=us&markets=${marketsParam}&bookmakers=${BOOKMAKERS}&oddsFormat=american`;
+    `?apiKey=${apiKey}&regions=us&markets=${marketsParam}&oddsFormat=american`;
   console.log(`[${JOB_NAME}] Bulk API call: markets=${marketsParam} (1 token/market for all games)`);
   const response = await fetchJsonWithHeaders(url);
   const now = Date.now();

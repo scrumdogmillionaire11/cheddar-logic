@@ -264,13 +264,32 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
 
   // Single-league path: all other sports use config.apiKey (singular)
   const url = `https://api.the-odds-api.com/v4/sports/${config.apiKey}/odds`;
+
+  // The Odds API v4 returns 422 when `bookmakers` is combined with alternate/period
+  // markets (e.g. totals_1st_period, totals_1st_5_innings).  Those markets are only
+  // available via the `regions` path.  Drop `bookmakers` whenever any market in the
+  // request is an alternate market.
+  const ALTERNATE_MARKETS = new Set([
+    'totals_1st_5_innings',
+    'totals_1st_period',
+    'totals_1st_half',
+    'totals_2nd_half',
+    'player_shots_on_goal',
+    'pitcher_strikeouts',
+  ]);
+  const hasAlternateMarket = config.markets.some((m) => ALTERNATE_MARKETS.has(m));
+
   const params = {
     apiKey,
     regions: 'us',
     markets: config.markets.join(','),
-    bookmakers: config.bookmakers.join(','),
     oddsFormat: 'american',
   };
+
+  // Only filter by specific bookmakers when all markets support it
+  if (!hasAlternateMarket && config.bookmakers?.length) {
+    params.bookmakers = config.bookmakers.join(',');
+  }
 
   console.log(`[Odds] API call: ${url}?markets=${config.markets.join(',')}`);
 
