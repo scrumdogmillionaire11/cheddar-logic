@@ -62,10 +62,9 @@ const SPORTS_CONFIG = {
   },
 
   MLB: {
-    active: true, // season starts 2026-03-25
+    active: false, // April 2026: disabled — no odds-backed MLB model. F5 and pitcher-K are projection-only.
+    // Re-enable when MLB odds lanes are wired to a live model. Game seeding handled by pull_espn_games_direct.
     season: { start: '03-20', end: '11-01' },
-    // Keep one featured market so pull_odds_hourly continues to seed MLB games
-    // into the canonical games table while F5 and pitcher-K stay projection-only.
     markets: ['h2h'],
     tokensPerFetch: 1,
     defaultTTL: 180, // Shorter — SP confirmations move lines faster

@@ -179,13 +179,12 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       const activeSports = getActiveSports();
 
       // Token math (featured markets only; per-event/alternate markets removed):
-      // NHL:   1 token/fetch × 42 fetches/day = 42 tokens/day
-      // NBA:   2 tokens/fetch × 42 fetches/day = 84 tokens/day
-      // MLB:   1 token/fetch × 42 fetches/day = 42 tokens/day
-      // Total: 4 tokens/fetch × 42 fetches/day = 168 tokens/day
-      // Skips 2am-5am ET (3 hours × 2 slots/h = 6 slots) → ~42 active slots/day
-      // The Odds API free tier: 500 tokens/month → not viable for production
-      // Paid tier: 20,000 tokens/month → 168/day = 5,040/month (25% utilization)
+      // NHL:   1 token/fetch × 5 fetches/day  =  5 tokens/day  (180-min slots, START_HOUR=10)
+      // NBA:   2 tokens/fetch × 5 fetches/day = 10 tokens/day
+      // MLB:   DISABLED — active:false in config. No odds-backed model. ESPN-direct seeds games.
+      // Total: 3 tokens/fetch × 5 fetches/day = 15 tokens/day
+      // April 2026 budget: 2,000 tokens. 15/day × 28 days = 420 tokens → 1,580 buffer.
+      // Paid tier (normal): 20,000 tokens/month. Restore MLB + 120-min slots on May 1.
       const tokenCost = getTokensForFetch(activeSports);
       console.log(
         `[PullOdds] Active sports (from config): ${activeSports.join(', ')} | tokens/fetch: ${tokenCost} | ~${tokenCost * 42}/day (30-min buckets, skip 2am-5am)`,
