@@ -41,6 +41,148 @@ function asNonEmptyString(value) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeStrictReasonCodes(reasonCodes) {
+  if (!Array.isArray(reasonCodes)) return [];
+  return Array.from(new Set(reasonCodes.filter(Boolean))).sort();
+}
+
+function syncSelectionCompatibilityFields(payload, updates = {}) {
+  if (!payload || typeof payload !== 'object') return;
+  const nextSide = updates.side || payload?.selection?.side || payload?.prediction || null;
+  const nextTeam =
+    updates.team !== undefined
+      ? updates.team
+      : payload?.selection?.team;
+  if (!payload.selection || typeof payload.selection !== 'object') {
+    payload.selection = {};
+  }
+  if (nextSide) {
+    payload.selection.side = nextSide;
+    payload.prediction = nextSide;
+  }
+  if (nextTeam !== undefined) {
+    payload.selection.team = nextTeam;
+  }
+}
+
+function mapOfficialStatusToLegacyDecision(officialStatus) {
+  if (officialStatus === 'PLAY') {
+    return {
+      classification: 'BASE',
+      action: 'FIRE',
+      status: 'FIRE',
+      passReasonCode: null,
+    };
+  }
+  if (officialStatus === 'LEAN') {
+    return {
+      classification: 'LEAN',
+      action: 'HOLD',
+      status: 'WATCH',
+      passReasonCode: null,
+    };
+  }
+  return {
+    classification: 'PASS',
+    action: 'PASS',
+    status: 'PASS',
+    passReasonCode: null,
+  };
+}
+
+function mapActionToClassification(action) {
+  const normalizedAction = String(action || '').toUpperCase();
+  if (normalizedAction === 'FIRE') return 'BASE';
+  if (normalizedAction === 'HOLD') return 'LEAN';
+  return 'PASS';
+}
+
+function resolveExecutionStatus(payload) {
+  const explicitStatus = String(payload?.execution_status || '').toUpperCase();
+  const sharpPriceStatus = String(
+    payload?.decision_v2?.sharp_price_status || '',
+  ).toUpperCase();
+  const hasExecutablePricing =
+    sharpPriceStatus.length > 0 && sharpPriceStatus !== 'UNPRICED';
+
+  if (explicitStatus === 'PROJECTION_ONLY' || explicitStatus === 'BLOCKED') {
+    return explicitStatus;
+  }
+
+  if (explicitStatus === 'EXECUTABLE') {
+    return hasExecutablePricing ? 'EXECUTABLE' : 'BLOCKED';
+  }
+
+  return hasExecutablePricing ? 'EXECUTABLE' : 'BLOCKED';
+}
+
+function capturePublishedDecisionState(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  return {
+    classification: payload.classification ?? null,
+    action: payload.action ?? null,
+    status: payload.status ?? null,
+    execution_status: payload.execution_status ?? null,
+    pass_reason_code: payload.pass_reason_code ?? null,
+    reason_codes: normalizeStrictReasonCodes(payload.reason_codes),
+    decision_v2_official_status: payload.decision_v2?.official_status ?? null,
+  };
+}
+
+function buildDecisionMutationDiffs(payload, expectedSnapshot) {
+  const currentSnapshot = capturePublishedDecisionState(payload);
+  if (!expectedSnapshot || !currentSnapshot) return [];
+
+  const diffs = [];
+  const fieldPathMap = {
+    classification: 'classification',
+    action: 'action',
+    status: 'status',
+    execution_status: 'execution_status',
+    pass_reason_code: 'pass_reason_code',
+    reason_codes: 'reason_codes',
+    decision_v2_official_status: 'decision_v2.official_status',
+  };
+
+  for (const [key, fieldPath] of Object.entries(fieldPathMap)) {
+    const expected = expectedSnapshot[key];
+    const actual = currentSnapshot[key];
+    if (JSON.stringify(expected) === JSON.stringify(actual)) continue;
+    diffs.push({
+      field_path: fieldPath,
+      expected,
+      actual,
+    });
+  }
+
+  return diffs;
+}
+
+function assertNoDecisionMutation(payload, expectedSnapshot, context = {}) {
+  const diffs = buildDecisionMutationDiffs(payload, expectedSnapshot);
+  if (diffs.length === 0) return [];
+
+  const label = context.label || 'post_publish';
+  const details = diffs
+    .map(
+      (diff) =>
+        `${diff.field_path}: expected=${JSON.stringify(diff.expected)} actual=${JSON.stringify(diff.actual)}`,
+    )
+    .join('; ');
+  const error = new Error(
+    `[INVARIANT_BREACH] ${label}: strict decision fields mutated after publish (${details})`,
+  );
+  error.code = 'INVARIANT_BREACH';
+  error.diffs = diffs;
+
+  if (context.throwOnViolation ?? process.env.NODE_ENV === 'test') {
+    throw error;
+  }
+
+  console.warn(error.message);
+  return diffs;
+}
+
 function derivePaceTier(payload) {
   const total =
     typeof payload?.odds_context?.total === 'number'
@@ -121,21 +263,34 @@ function ensureDecisionConsistencyEnvelope(payload) {
 }
 
 /**
- * Apply UI action fields to payload
- * Ensures every PLAY payload has `action` and `status` fields
- * so getPlayDisplayAction() in UI can properly recognize plays
+ * Finalize decision-authoritative fields on the payload.
+ * This must only run inside the publish boundary.
  */
-function applyUiActionFields(payload, context = {}) {
+function finalizeDecisionFields(payload, context = {}) {
   if (!payload || payload.kind !== 'PLAY') {
-    return payload; // Only apply to PLAY payloads
+    return payload;
   }
 
-  // WI-0383: Hard-gate — if model has marked this card ineligible for official
-  // action (official_eligible=false), force PASS regardless of tier or pipeline.
+  syncSelectionCompatibilityFields(payload);
+
   if (payload.official_eligible === false) {
+    payload.decision_v2 = {
+      ...(payload.decision_v2 && typeof payload.decision_v2 === 'object'
+        ? payload.decision_v2
+        : {}),
+      official_status: 'PASS',
+      primary_reason_code:
+        payload.pass_reason_code || payload.decision_v2?.primary_reason_code || 'OFFICIAL_INELIGIBLE',
+      pipeline_version: payload.decision_v2?.pipeline_version || 'v2',
+    };
+    payload.classification = 'PASS';
     payload.action = 'PASS';
     payload.status = 'PASS';
-    payload.classification = 'PASS';
+    payload.pass_reason_code = payload.decision_v2.primary_reason_code;
+    payload.reason_codes = normalizeStrictReasonCodes([
+      payload.decision_v2.primary_reason_code,
+    ]);
+    payload.execution_status = resolveExecutionStatus(payload);
     return payload;
   }
 
@@ -144,19 +299,21 @@ function applyUiActionFields(payload, context = {}) {
     const decisionV2 = buildDecisionV2(payload, context);
     if (decisionV2) {
       payload.decision_v2 = decisionV2;
-      const official = decisionV2.official_status;
-      payload.classification =
-        official === 'PLAY' ? 'BASE' : official === 'LEAN' ? 'LEAN' : 'PASS';
-      payload.action =
-        official === 'PLAY' ? 'FIRE' : official === 'LEAN' ? 'HOLD' : 'PASS';
-      payload.status =
-        official === 'PLAY' ? 'FIRE' : official === 'LEAN' ? 'WATCH' : 'PASS';
-      payload.pass_reason_code =
-        official === 'PASS' ? decisionV2.primary_reason_code : null;
-      // Replace — do not accumulate. Only keep the current primary reason code.
-      payload.reason_codes = Array.from(
-        new Set([decisionV2.primary_reason_code].filter(Boolean))
+      const legacyDecision = mapOfficialStatusToLegacyDecision(
+        decisionV2.official_status,
       );
+      payload.classification = legacyDecision.classification;
+      payload.action = legacyDecision.action;
+      payload.status = legacyDecision.status;
+      payload.pass_reason_code =
+        decisionV2.official_status === 'PASS'
+          ? decisionV2.primary_reason_code
+          : null;
+      payload.reason_codes = normalizeStrictReasonCodes([
+        decisionV2.primary_reason_code,
+      ]);
+      payload.execution_status = resolveExecutionStatus(payload);
+      syncSelectionCompatibilityFields(payload);
       return payload;
     }
   }
@@ -171,6 +328,64 @@ function applyUiActionFields(payload, context = {}) {
   // Legacy fallback for getPlayDisplayAction() backward compatibility
   payload.status =
     action === 'FIRE' ? 'FIRE' : action === 'HOLD' ? 'WATCH' : 'PASS';
+  payload.classification = mapActionToClassification(action);
+  payload.execution_status = resolveExecutionStatus(payload);
+  syncSelectionCompatibilityFields(payload);
+
+  return payload;
+}
+
+function deriveUiDisplayStatus(payload) {
+  const executionStatus = String(payload?.execution_status || '').toUpperCase();
+  const officialStatus = String(
+    payload?.decision_v2?.official_status || '',
+  ).toUpperCase();
+  const legacyStatus = String(payload?.status || '').toUpperCase();
+
+  if (executionStatus === 'PROJECTION_ONLY') return 'WATCH';
+  if (executionStatus === 'BLOCKED') return 'PASS';
+  if (executionStatus === 'EXECUTABLE' && officialStatus === 'PLAY') {
+    return 'PLAY';
+  }
+  if (executionStatus === 'EXECUTABLE' && officialStatus === 'LEAN') {
+    return 'WATCH';
+  }
+  if (legacyStatus === 'FIRE') return 'PLAY';
+  if (legacyStatus === 'WATCH') return 'WATCH';
+  if (officialStatus === 'LEAN') return 'WATCH';
+  return 'PASS';
+}
+
+/**
+ * Backward-compatible wrapper:
+ * - Pre-publish payloads: finalize semantic decision fields, then decorate UI
+ * - Post-publish payloads: decorate UI only
+ */
+function applyUiActionFields(payload, context = {}) {
+  if (!payload || payload.kind !== 'PLAY') {
+    return payload;
+  }
+
+  const hasPublishedDecision =
+    Boolean(payload.decision_v2) &&
+    typeof payload.classification === 'string' &&
+    typeof payload.action === 'string' &&
+    typeof payload.status === 'string';
+  const strictDecisionSnapshot = hasPublishedDecision
+    ? capturePublishedDecisionState(payload)
+    : null;
+
+  if (!hasPublishedDecision) {
+    finalizeDecisionFields(payload, context);
+  }
+
+  payload.ui_display_status = deriveUiDisplayStatus(payload);
+
+  if (strictDecisionSnapshot) {
+    assertNoDecisionMutation(payload, strictDecisionSnapshot, {
+      label: 'applyUiActionFields',
+    });
+  }
 
   return payload;
 }
@@ -220,8 +435,7 @@ function applyPublishedDecisionToPayload(
   if (side === 'HOME') team = homeTeam || team;
   if (side === 'AWAY') team = awayTeam || team;
 
-  payload.selection = { ...(payload.selection || {}), side, team };
-  payload.prediction = side;
+  syncSelectionCompatibilityFields(payload, { side, team });
   payload.line = line;
   payload.price = price;
   payload.edge = decision.edge ?? payload.edge ?? null;
@@ -230,9 +444,10 @@ function applyPublishedDecisionToPayload(
   payload.published_from_gate = true;
   payload.gate_reason = gateReason || null;
   payload.published_decision_key = decisionKey || null;
-  payload.reason_codes = Array.from(
-    new Set([...(payload.reason_codes || []), 'DECISION_HELD']),
-  );
+  payload.gate_reason_codes = normalizeStrictReasonCodes([
+    'DECISION_HELD',
+    gateReason || null,
+  ]);
   payload.tags = Array.from(
     new Set([...(payload.tags || []), 'PUBLISHED_FROM_GATE']),
   );
@@ -309,7 +524,18 @@ function applyPublishedDecisionToPayload(
 function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
   const payload = card?.payloadData;
   if (!isRecommendationPayload(payload)) {
-    return { card, gated: false };
+    applyUiActionFields(card?.payloadData, {
+      oddsSnapshot,
+      sigmaOverride: options.sigmaOverride ?? null,
+    });
+    if (card?.payloadData && typeof card.payloadData === 'object') {
+      card.payloadData._audit_stage = 'PUBLISH_OUTPUT';
+    }
+    return {
+      card,
+      gated: false,
+      strictDecisionSnapshot: capturePublishedDecisionState(card?.payloadData),
+    };
   }
 
   const market = normalizeMarketType(
@@ -471,10 +697,13 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
 
   // Attach canonical decision fields before insert.
   // WI-0591: pass sigmaOverride from options into buildDecisionV2 context.
-  applyUiActionFields(card.payloadData, {
+  finalizeDecisionFields(card.payloadData, {
     oddsSnapshot,
     sigmaOverride: options.sigmaOverride ?? null,
   });
+  applyUiActionFields(card.payloadData);
+  card.payloadData._audit_stage = 'PUBLISH_OUTPUT';
+  const strictDecisionSnapshot = capturePublishedDecisionState(card.payloadData);
 
   return {
     card,
@@ -482,12 +711,16 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
     allow: gateResult.allow,
     decisionKey,
     reasonCode: gateResult.reason_code,
+    strictDecisionSnapshot,
   };
 }
 
 module.exports = {
   publishDecisionForCard,
   applyUiActionFields,
+  finalizeDecisionFields,
+  capturePublishedDecisionState,
+  assertNoDecisionMutation,
   deriveAction,
   deriveVolEnv,
 };
