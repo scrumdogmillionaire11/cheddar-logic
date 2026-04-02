@@ -86,7 +86,7 @@ function clearTelemetryTables(db) {
 }
 
 function seedBreachFixture(db) {
-  const now = '2026-03-18T10:00:00.000Z';
+  const now = new Date().toISOString();
 
   for (let index = 0; index < 60; index += 1) {
     const won = index < 24 ? 1 : 0;
@@ -164,7 +164,7 @@ function seedBreachFixture(db) {
 }
 
 function seedInsufficientFixture(db) {
-  const now = '2026-03-18T10:00:00.000Z';
+  const now = new Date().toISOString();
 
   for (let index = 0; index < 20; index += 1) {
     runInsert(
@@ -365,7 +365,7 @@ function insertSettledNhlMoneylineCard(db, {
 }
 
 function seedNhlMoneylineCalibrationFixture(db, scenario = 'justified') {
-  const now = '2026-03-18T10:00:00.000Z';
+  const now = new Date().toISOString();
 
   if (scenario === 'justified') {
     for (let index = 0; index < 10; index += 1) {
@@ -485,7 +485,7 @@ function insertSettledDecisionTierCard(db, {
 }
 
 function seedDecisionTierAuditFixture(db) {
-  const now = '2026-03-18T10:00:00.000Z';
+  const now = new Date().toISOString();
 
   insertSettledDecisionTierCard(db, {
     id: 'tier-play-win',
@@ -649,7 +649,7 @@ function insertSettledNhlShotsBreakoutCard(db, {
 }
 
 function seedNhlShotsBreakoutFixture(db) {
-  const now = '2026-03-18T10:00:00.000Z';
+  const now = new Date().toISOString();
 
   insertSettledNhlShotsBreakoutCard(db, {
     id: 'breakout-win',
