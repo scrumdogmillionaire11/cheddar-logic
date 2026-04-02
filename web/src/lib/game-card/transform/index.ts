@@ -139,12 +139,21 @@ interface ApiPlay {
     score_away?: number | null;
     projected_margin?: number | null;
     projected_total?: number | null;
+    projected_total_low?: number | null;
+    projected_total_high?: number | null;
+    projected_home_f5_runs?: number | null;
+    projected_away_f5_runs?: number | null;
     projected_team_total?: number | null;
     projected_goal_diff?: number | null;
     projected_score_home?: number | null;
     projected_score_away?: number | null;
     win_prob_home?: number | null;
   };
+  projection_source?: 'FULL_MODEL' | 'SYNTHETIC_FALLBACK' | null;
+  playability?: {
+    over_playable_at_or_below?: number | null;
+    under_playable_at_or_above?: number | null;
+  } | null;
   status?: 'FIRE' | 'WATCH' | 'PASS';
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
@@ -1561,6 +1570,30 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
 
   const sourceModelProb = resolveSourceModelProb(sourcePlay);
   const modelProb = sourceModelProb;
+  const projectedTotal =
+    typeof sourcePlay?.projectedTotal === 'number'
+      ? sourcePlay.projectedTotal
+      : typeof sourcePlay?.projection?.projected_total === 'number'
+        ? sourcePlay.projection.projected_total
+        : typeof sourcePlay?.projection?.total === 'number'
+          ? sourcePlay.projection.total
+          : undefined;
+  const projectedTotalLow =
+    typeof sourcePlay?.projection?.projected_total_low === 'number'
+      ? sourcePlay.projection.projected_total_low
+      : undefined;
+  const projectedTotalHigh =
+    typeof sourcePlay?.projection?.projected_total_high === 'number'
+      ? sourcePlay.projection.projected_total_high
+      : undefined;
+  const projectedHomeF5Runs =
+    typeof sourcePlay?.projection?.projected_home_f5_runs === 'number'
+      ? sourcePlay.projection.projected_home_f5_runs
+      : undefined;
+  const projectedAwayF5Runs =
+    typeof sourcePlay?.projection?.projected_away_f5_runs === 'number'
+      ? sourcePlay.projection.projected_away_f5_runs
+      : undefined;
 
   const impliedProb =
     resolvedMarketType === 'MONEYLINE' ||
@@ -2293,6 +2326,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     modelProb,
     impliedProb,
     edge,
+    projectedTotal,
+    projectedTotalLow,
+    projectedTotalHigh,
+    projectedHomeF5Runs,
+    projectedAwayF5Runs,
+    projectionSource: sourcePlay?.projection_source ?? undefined,
+    playability: sourcePlay?.playability ?? undefined,
     valueStatus,
     betAction: finalBetAction,
     priceFlags,
@@ -2743,6 +2783,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
             lean_side?: string | null;
             line?: number | null;
             display_price?: number | null;
+            projection?: number | null;
             line_delta?: number | null;
             fair_prob?: number | null;
             implied_prob?: number | null;
@@ -2792,7 +2833,11 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         }
       }
 
-      const mu = play.mu ?? play.projectedTotal ?? null;
+      const canonicalPropProjection =
+        typeof rawPropDecision?.projection === 'number'
+          ? rawPropDecision.projection
+          : play.mu ?? play.projectedTotal ?? null;
+      const mu = canonicalPropProjection;
       const canonicalPropLine =
         typeof rawPropDecision?.line === 'number'
           ? rawPropDecision.line
@@ -2815,7 +2860,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         gameId: play.game_id ?? game.gameId,
         propType,
         line: canonicalPropLine ?? play.suggested_line ?? null,
-        projection: play.projectedTotal ?? play.mu ?? null,
+        projection: canonicalPropProjection,
         mu,
         suggestedLine,
         threshold: play.threshold ?? null,

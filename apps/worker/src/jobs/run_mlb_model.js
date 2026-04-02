@@ -113,6 +113,101 @@ const MLB_PROP_BOOKMAKER_PRIORITY = Object.freeze({
   betmgm: 3,
 });
 
+const MLB_F5_TEAM_OFFENSE_SPLITS = Object.freeze({
+  AZ: { wrc_plus_vs_lhp: 104, wrc_plus_vs_rhp: 98, k_pct_vs_lhp: 0.212, k_pct_vs_rhp: 0.222, iso_vs_lhp: 0.172, iso_vs_rhp: 0.165 },
+  ATH: { wrc_plus_vs_lhp: 96, wrc_plus_vs_rhp: 91, k_pct_vs_lhp: 0.236, k_pct_vs_rhp: 0.241, iso_vs_lhp: 0.155, iso_vs_rhp: 0.146 },
+  ATL: { wrc_plus_vs_lhp: 107, wrc_plus_vs_rhp: 105, k_pct_vs_lhp: 0.218, k_pct_vs_rhp: 0.226, iso_vs_lhp: 0.188, iso_vs_rhp: 0.181 },
+  BAL: { wrc_plus_vs_lhp: 102, wrc_plus_vs_rhp: 105, k_pct_vs_lhp: 0.219, k_pct_vs_rhp: 0.224, iso_vs_lhp: 0.175, iso_vs_rhp: 0.184 },
+  BOS: { wrc_plus_vs_lhp: 100, wrc_plus_vs_rhp: 103, k_pct_vs_lhp: 0.232, k_pct_vs_rhp: 0.228, iso_vs_lhp: 0.169, iso_vs_rhp: 0.178 },
+  CHC: { wrc_plus_vs_lhp: 103, wrc_plus_vs_rhp: 97, k_pct_vs_lhp: 0.222, k_pct_vs_rhp: 0.229, iso_vs_lhp: 0.171, iso_vs_rhp: 0.16 },
+  CWS: { wrc_plus_vs_lhp: 89, wrc_plus_vs_rhp: 86, k_pct_vs_lhp: 0.243, k_pct_vs_rhp: 0.247, iso_vs_lhp: 0.138, iso_vs_rhp: 0.134 },
+  CIN: { wrc_plus_vs_lhp: 98, wrc_plus_vs_rhp: 101, k_pct_vs_lhp: 0.225, k_pct_vs_rhp: 0.231, iso_vs_lhp: 0.17, iso_vs_rhp: 0.176 },
+  CLE: { wrc_plus_vs_lhp: 102, wrc_plus_vs_rhp: 100, k_pct_vs_lhp: 0.196, k_pct_vs_rhp: 0.204, iso_vs_lhp: 0.151, iso_vs_rhp: 0.157 },
+  COL: { wrc_plus_vs_lhp: 98, wrc_plus_vs_rhp: 93, k_pct_vs_lhp: 0.238, k_pct_vs_rhp: 0.247, iso_vs_lhp: 0.176, iso_vs_rhp: 0.163 },
+  DET: { wrc_plus_vs_lhp: 99, wrc_plus_vs_rhp: 101, k_pct_vs_lhp: 0.231, k_pct_vs_rhp: 0.235, iso_vs_lhp: 0.164, iso_vs_rhp: 0.168 },
+  HOU: { wrc_plus_vs_lhp: 112, wrc_plus_vs_rhp: 108, k_pct_vs_lhp: 0.193, k_pct_vs_rhp: 0.202, iso_vs_lhp: 0.184, iso_vs_rhp: 0.179 },
+  KC: { wrc_plus_vs_lhp: 101, wrc_plus_vs_rhp: 103, k_pct_vs_lhp: 0.197, k_pct_vs_rhp: 0.206, iso_vs_lhp: 0.168, iso_vs_rhp: 0.171 },
+  LAA: { wrc_plus_vs_lhp: 97, wrc_plus_vs_rhp: 95, k_pct_vs_lhp: 0.234, k_pct_vs_rhp: 0.242, iso_vs_lhp: 0.164, iso_vs_rhp: 0.162 },
+  LAD: { wrc_plus_vs_lhp: 113, wrc_plus_vs_rhp: 112, k_pct_vs_lhp: 0.206, k_pct_vs_rhp: 0.213, iso_vs_lhp: 0.195, iso_vs_rhp: 0.191 },
+  MIA: { wrc_plus_vs_lhp: 92, wrc_plus_vs_rhp: 90, k_pct_vs_lhp: 0.226, k_pct_vs_rhp: 0.234, iso_vs_lhp: 0.146, iso_vs_rhp: 0.141 },
+  MIL: { wrc_plus_vs_lhp: 103, wrc_plus_vs_rhp: 101, k_pct_vs_lhp: 0.231, k_pct_vs_rhp: 0.226, iso_vs_lhp: 0.171, iso_vs_rhp: 0.167 },
+  MIN: { wrc_plus_vs_lhp: 105, wrc_plus_vs_rhp: 102, k_pct_vs_lhp: 0.238, k_pct_vs_rhp: 0.233, iso_vs_lhp: 0.183, iso_vs_rhp: 0.176 },
+  NYM: { wrc_plus_vs_lhp: 106, wrc_plus_vs_rhp: 102, k_pct_vs_lhp: 0.214, k_pct_vs_rhp: 0.221, iso_vs_lhp: 0.177, iso_vs_rhp: 0.169 },
+  NYY: { wrc_plus_vs_lhp: 114, wrc_plus_vs_rhp: 109, k_pct_vs_lhp: 0.223, k_pct_vs_rhp: 0.229, iso_vs_lhp: 0.202, iso_vs_rhp: 0.191 },
+  PHI: { wrc_plus_vs_lhp: 105, wrc_plus_vs_rhp: 104, k_pct_vs_lhp: 0.217, k_pct_vs_rhp: 0.223, iso_vs_lhp: 0.182, iso_vs_rhp: 0.176 },
+  PIT: { wrc_plus_vs_lhp: 93, wrc_plus_vs_rhp: 91, k_pct_vs_lhp: 0.236, k_pct_vs_rhp: 0.241, iso_vs_lhp: 0.148, iso_vs_rhp: 0.145 },
+  SD: { wrc_plus_vs_lhp: 107, wrc_plus_vs_rhp: 104, k_pct_vs_lhp: 0.204, k_pct_vs_rhp: 0.211, iso_vs_lhp: 0.172, iso_vs_rhp: 0.168 },
+  SF: { wrc_plus_vs_lhp: 100, wrc_plus_vs_rhp: 96, k_pct_vs_lhp: 0.229, k_pct_vs_rhp: 0.237, iso_vs_lhp: 0.161, iso_vs_rhp: 0.155 },
+  SEA: { wrc_plus_vs_lhp: 99, wrc_plus_vs_rhp: 101, k_pct_vs_lhp: 0.247, k_pct_vs_rhp: 0.239, iso_vs_lhp: 0.168, iso_vs_rhp: 0.172 },
+  STL: { wrc_plus_vs_lhp: 100, wrc_plus_vs_rhp: 99, k_pct_vs_lhp: 0.205, k_pct_vs_rhp: 0.214, iso_vs_lhp: 0.157, iso_vs_rhp: 0.153 },
+  TB: { wrc_plus_vs_lhp: 101, wrc_plus_vs_rhp: 100, k_pct_vs_lhp: 0.227, k_pct_vs_rhp: 0.232, iso_vs_lhp: 0.166, iso_vs_rhp: 0.169 },
+  TEX: { wrc_plus_vs_lhp: 103, wrc_plus_vs_rhp: 102, k_pct_vs_lhp: 0.221, k_pct_vs_rhp: 0.225, iso_vs_lhp: 0.175, iso_vs_rhp: 0.172 },
+  TOR: { wrc_plus_vs_lhp: 106, wrc_plus_vs_rhp: 100, k_pct_vs_lhp: 0.21, k_pct_vs_rhp: 0.217, iso_vs_lhp: 0.171, iso_vs_rhp: 0.164 },
+  WSH: { wrc_plus_vs_lhp: 96, wrc_plus_vs_rhp: 94, k_pct_vs_lhp: 0.215, k_pct_vs_rhp: 0.219, iso_vs_lhp: 0.152, iso_vs_rhp: 0.149 },
+});
+
+const MLB_F5_PARK_RUN_FACTORS = Object.freeze({
+  AZ: 1.03,
+  ATH: 0.96,
+  ATL: 1.02,
+  BAL: 0.97,
+  BOS: 1.04,
+  CHC: 1.01,
+  CWS: 1.01,
+  CIN: 1.08,
+  CLE: 0.98,
+  COL: 1.15,
+  DET: 0.97,
+  HOU: 1,
+  KC: 0.99,
+  LAA: 0.99,
+  LAD: 1,
+  MIA: 0.96,
+  MIL: 1.01,
+  MIN: 1,
+  NYM: 0.97,
+  NYY: 1.04,
+  PHI: 1.03,
+  PIT: 0.98,
+  SD: 0.97,
+  SF: 0.95,
+  SEA: 0.96,
+  STL: 0.98,
+  TB: 0.97,
+  TEX: 1.03,
+  TOR: 1.02,
+  WSH: 0.99,
+});
+
+const MLB_TEAM_VARIANT_ALIASES = Object.freeze({
+  'D BACKS': 'Arizona Diamondbacks',
+  'DBACKS': 'Arizona Diamondbacks',
+  'DIAMONDBACKS': 'Arizona Diamondbacks',
+  'ARIZONA D BACKS': 'Arizona Diamondbacks',
+  'A S': 'Athletics',
+  'AS': 'Athletics',
+  'ATHLETICS': 'Athletics',
+  'WHITE SOX': 'Chicago White Sox',
+  'RED SOX': 'Boston Red Sox',
+  'BLUE JAYS': 'Toronto Blue Jays',
+  'METS': 'New York Mets',
+  'YANKEES': 'New York Yankees',
+  'GIANTS': 'San Francisco Giants',
+  'PADRES': 'San Diego Padres',
+  'ROYALS': 'Kansas City Royals',
+  'TWINS': 'Minnesota Twins',
+  'BRAVES': 'Atlanta Braves',
+});
+
+const loggedUnknownMlbTeamVariants = new Set();
+const MLB_TEAM_CANONICAL_BY_TOKEN = Object.freeze(
+  Object.entries(MLB_TEAM_ABBREVIATIONS).reduce((acc, [fullName, abbreviation]) => {
+    acc[normalizeTokenForMap(fullName)] = fullName;
+    acc[normalizeTokenForMap(abbreviation)] = fullName;
+    return acc;
+  }, {}),
+);
+
 function toFiniteNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -137,12 +232,83 @@ function uniqueReasonCodes(codes = []) {
   );
 }
 
+function normalizeMlbTeamVariant(value) {
+  if (!value || typeof value !== 'string') return '';
+  return normalizeTokenForMap(value);
+}
+
+function normalizeTokenForMap(value) {
+  if (!value || typeof value !== 'string') return '';
+  return value
+    .trim()
+    .replace(/[.'\u2019-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function logUnknownMlbTeamVariant(rawValue, normalizedValue) {
+  const key = `${normalizedValue}|${String(rawValue || '').trim()}`;
+  if (!normalizedValue || loggedUnknownMlbTeamVariants.has(key)) return;
+  loggedUnknownMlbTeamVariants.add(key);
+  console.warn(
+    `[MLB_TEAM_VARIANT_UNKNOWN] raw="${String(rawValue || '').trim()}" normalized="${normalizedValue}"`,
+  );
+}
+
 function resolveMlbTeamLookupKeys(teamName) {
   if (!teamName || typeof teamName !== 'string') return [];
   const cleaned = teamName.trim();
   if (!cleaned) return [];
-  const abbreviation = MLB_TEAM_ABBREVIATIONS[cleaned] ?? null;
-  return abbreviation ? [cleaned, abbreviation] : [cleaned];
+
+  const normalized = normalizeMlbTeamVariant(cleaned);
+  const directCanonical = MLB_TEAM_CANONICAL_BY_TOKEN[normalized] ?? null;
+  const aliasedCanonical = directCanonical ?? MLB_TEAM_VARIANT_ALIASES[normalized] ?? null;
+  const canonicalFullName = directCanonical ?? aliasedCanonical;
+  const abbreviation =
+    canonicalFullName && MLB_TEAM_ABBREVIATIONS[canonicalFullName]
+      ? MLB_TEAM_ABBREVIATIONS[canonicalFullName]
+      : /^[A-Z]{2,4}$/.test(normalized)
+        ? normalized
+        : null;
+
+  if (!canonicalFullName && !abbreviation) {
+    logUnknownMlbTeamVariant(cleaned, normalized);
+  }
+
+  return Array.from(
+    new Set(
+      [
+        cleaned,
+        canonicalFullName,
+        abbreviation,
+      ].filter((value) => typeof value === 'string' && value.trim().length > 0),
+    ),
+  );
+}
+
+function resolveMlbTeamAbbreviation(teamName) {
+  for (const key of resolveMlbTeamLookupKeys(teamName)) {
+    const normalized = normalizeTokenForMap(key);
+    if (/^[A-Z]{2,4}$/.test(normalized)) return normalized;
+    const canonical =
+      MLB_TEAM_CANONICAL_BY_TOKEN[normalized] ??
+      MLB_TEAM_VARIANT_ALIASES[normalized] ??
+      null;
+    if (canonical && MLB_TEAM_ABBREVIATIONS[canonical]) {
+      return MLB_TEAM_ABBREVIATIONS[canonical];
+    }
+  }
+  return null;
+}
+
+function resolveMlbF5OffenseProfile(teamName) {
+  const abbreviation = resolveMlbTeamAbbreviation(teamName);
+  return abbreviation ? (MLB_F5_TEAM_OFFENSE_SPLITS[abbreviation] ?? null) : null;
+}
+
+function resolveMlbF5ParkRunFactor(homeTeamName) {
+  const abbreviation = resolveMlbTeamAbbreviation(homeTeamName);
+  return abbreviation ? toFiniteNumber(MLB_F5_PARK_RUN_FACTORS[abbreviation]) : null;
 }
 
 function parseMlbRawData(oddsSnapshot) {
@@ -390,6 +556,11 @@ function deriveMlbExecutionEnvelope({
     if (rolloutState === 'OFF') {
       blockReason = 'rollout_state=OFF';
       kPropExecutionPath = 'DISABLED';
+    } else if (isProjectionOnly) {
+      executionStatus = 'PROJECTION_ONLY';
+      emitAllowed = true;
+      blockReason = pricingReason;
+      kPropExecutionPath = 'PROJECTION_ONLY';
     } else if (rolloutState === 'SHADOW') {
       blockReason = 'rollout_state=SHADOW';
       kPropExecutionPath = 'SHADOW_ROLLOUT';
@@ -407,11 +578,6 @@ function deriveMlbExecutionEnvelope({
     } else if (driver?.basis === 'ODDS_BACKED' && normalizedPricingStatus === 'STALE') {
       blockReason = pricingReason || 'STALE_ODDS';
       kPropExecutionPath = 'STALE_ODDS_BLOCKED';
-    } else {
-      executionStatus = 'PROJECTION_ONLY';
-      emitAllowed = true;
-      blockReason = pricingReason;
-      kPropExecutionPath = 'PROJECTION_ONLY';
     }
   } else if (isProjectionOnly || normalizedPricingStatus === 'NOT_REQUIRED') {
     executionStatus = 'PROJECTION_ONLY';
@@ -505,6 +671,10 @@ function attachRunId(card, runId) {
 }
 
 function resolvePitcherKsMode() {
+  const mode = String(
+    process.env.PITCHER_KS_MODEL_MODE || 'PROJECTION_ONLY',
+  ).toUpperCase();
+  if (mode === 'ODDS_BACKED') return 'ODDS_BACKED';
   return 'PROJECTION_ONLY';
 }
 
@@ -716,7 +886,7 @@ function buildPitcherStrikeoutLookback(
   }));
 }
 
-const PROJECTION_FLOOR_F5_FALLBACK = 8.5;
+const PROJECTION_FLOOR_F5_FALLBACK = 4.5;
 
 /**
  * Look up ERA for a team from mlb_pitcher_stats. Returns null if not found.
@@ -970,6 +1140,10 @@ function buildPitcherKObject(row) {
     era: row.era,
     whip: row.whip,
     avg_ip: row.recent_ip,
+    x_fip: row.x_fip ?? null,
+    siera: row.siera ?? null,
+    bb_pct: row.bb_pct ?? null,
+    hr_per_9: row.hr_per_9 ?? null,
     // K engine fields
     k_per_9: row.k_per_9,
     recent_k_per_9: row.recent_k_per_9,
@@ -1009,7 +1183,10 @@ function buildPitcherKObject(row) {
  * @param {boolean} [opts.forKEngine=false] Enable K engine enrichment mode
  * @returns {object} Enriched snapshot (or original if DB unavailable)
  */
-function enrichMlbPitcherData(oddsSnapshot, { forKEngine = false } = {}) {
+function enrichMlbPitcherData(
+  oddsSnapshot,
+  { forKEngine = false, useF5ProjectionFloor = false } = {},
+) {
   const homeTeam = oddsSnapshot?.home_team ?? '';
   const awayTeam = oddsSnapshot?.away_team ?? '';
 
@@ -1045,7 +1222,13 @@ function enrichMlbPitcherData(oddsSnapshot, { forKEngine = false } = {}) {
     mlb.f5_line =
       oddsSnapshot.total_f5 ??
       mlb.f5_line ??
-      computeProjectionFloorF5(oddsSnapshot);
+      (useF5ProjectionFloor ? computeProjectionFloorF5(oddsSnapshot) : null);
+    mlb.home_offense_profile =
+      mlb.home_offense_profile ?? resolveMlbF5OffenseProfile(homeTeam);
+    mlb.away_offense_profile =
+      mlb.away_offense_profile ?? resolveMlbF5OffenseProfile(awayTeam);
+    mlb.park_run_factor =
+      mlb.park_run_factor ?? resolveMlbF5ParkRunFactor(homeTeam);
 
     // Strikeout lines: look up player_prop_lines for pitcher_strikeouts when in
     // ODDS_BACKED mode. Best-line logic: lowest over_line among DraftKings/FanDuel/BetMGM.
@@ -1074,6 +1257,7 @@ function enrichMlbPitcherData(oddsSnapshot, { forKEngine = false } = {}) {
       if (weatherRow && weatherRow.conditions !== 'INDOOR') {
         mlb.temp_f = weatherRow.temp_f ?? mlb.temp_f ?? null;
         mlb.wind_mph = weatherRow.wind_mph ?? mlb.wind_mph ?? null;
+        mlb.wind_dir = weatherRow.wind_dir ?? mlb.wind_dir ?? null;
       }
     } catch (_weatherErr) {
       // Non-fatal — model uses neutral defaults
@@ -1090,7 +1274,19 @@ function enrichMlbPitcherData(oddsSnapshot, { forKEngine = false } = {}) {
       if (!forKEngine) {
         // Standard moneyline mode — original 5-field enrichment, silent fallback
         return row
-          ? { era: row.era, whip: row.whip, k_per_9: row.k_per_9, recent_k_per_9: row.recent_k_per_9, avg_ip: row.recent_ip }
+          ? {
+              era: row.era,
+              whip: row.whip,
+              k_per_9: row.k_per_9,
+              recent_k_per_9: row.recent_k_per_9,
+              avg_ip: row.recent_ip,
+              handedness: row.handedness ?? null,
+              x_fip: row.x_fip ?? null,
+              siera: row.siera ?? null,
+              bb_pct: row.bb_pct ?? null,
+              hr_per_9: row.hr_per_9 ?? null,
+              season_k_pct: row.season_k_pct ?? null,
+            }
           : (existingPitcher ?? null);
       }
 
@@ -1286,6 +1482,7 @@ async function runMLBModel({
           const baseOddsSnapshot = gameOdds[gameId];
           const gameOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
             forKEngine: false,
+            useF5ProjectionFloor: withoutOddsMode,
           });
           const pitcherKOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
             forKEngine: true,
@@ -1412,9 +1609,32 @@ async function runMLBModel({
                 market: 'f5_total',
                 prediction: 'OVER',
                 confidence: 0.5,
-                ev_threshold_passed: true,
-                reasoning: `Without-odds mode: synthetic F5 total projection floor (${projectionFloorF5}) derived from pitcher ERA`,
-                drivers: [{ type: 'mlb-f5-projection-floor', projected: projectionFloorF5, edge: 0 }],
+                status: 'PASS',
+                action: 'PASS',
+                classification: 'PASS',
+                ev_threshold_passed: false,
+                projection_source: 'SYNTHETIC_FALLBACK',
+                reason_codes: ['PASS_SYNTHETIC_FALLBACK', 'PASS_NO_EDGE'],
+                missing_inputs: ['market_line'],
+                pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
+                playability: {
+                  over_playable_at_or_below: projectionFloorF5 - 0.5,
+                  under_playable_at_or_above: projectionFloorF5 + 0.5,
+                },
+                projection: {
+                  projected_total: projectionFloorF5,
+                  projected_total_low: Math.max(0, projectionFloorF5 - 0.5),
+                  projected_total_high: projectionFloorF5 + 0.5,
+                  projected_home_f5_runs: Math.round((projectionFloorF5 / 2) * 10) / 10,
+                  projected_away_f5_runs: Math.round((projectionFloorF5 / 2) * 10) / 10,
+                },
+                reasoning: `F5 SYNTHETIC_FALLBACK projection floor ${projectionFloorF5.toFixed(1)}; PASS only until a real F5 market line is available`,
+                drivers: [{
+                  type: 'mlb-f5-projection-floor',
+                  projected: projectionFloorF5,
+                  edge: 0,
+                  projection_source: 'SYNTHETIC_FALLBACK',
+                }],
                 without_odds_mode: true,
                 projection_floor: true,
                 projection_floor_line: projectionFloorF5,
@@ -1425,7 +1645,7 @@ async function runMLBModel({
             ? null
             : 'ODDS_SNAPSHOT_MISSING';
           const candidateDrivers = [
-            ...(selectedGameDriver?.ev_threshold_passed
+            ...(selectedGameDriver
               ? [{
                   driver: selectedGameDriver,
                   executionEnvelope: deriveMlbExecutionEnvelope({
@@ -1549,7 +1769,9 @@ async function runMLBModel({
                   : driver.card_verdict === 'WATCH'
                     ? 'WATCH'
                     : null)
-              : driver.confidence >= 0.8
+              : driver.ev_threshold_passed === false
+                ? null
+                : driver.confidence >= 0.8
                 ? 'BEST'
                 : 'WATCH';
             const pitcherKLeanSide =
@@ -1567,6 +1789,9 @@ async function runMLBModel({
               matchup,
               start_time_utc: gameOddsSnapshot?.game_time_utc ?? null,
               market_type: (isF5 || isF5ML) ? 'FIRST_PERIOD' : 'PROP',
+              status: driver.status ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
+              action: driver.action ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
+              classification: driver.classification ?? (driver.ev_threshold_passed ? 'BASE' : 'PASS'),
               prediction:
                 isPitcherK && pitcherKLeanSide
                   ? pitcherKLeanSide
@@ -1584,14 +1809,22 @@ async function runMLBModel({
                 isPitcherK
                   ? driver.card_verdict === 'PLAY' ||
                     driver.card_verdict === 'WATCH'
-                  : true,
+                  : driver.ev_threshold_passed === true,
               reasoning: driver.reasoning,
+              reason_codes: Array.isArray(driver.reason_codes) ? driver.reason_codes : [],
+              pass_reason_code: driver.pass_reason_code ?? null,
+              projection_source: driver.projection_source ?? null,
+              playability: driver.playability ?? null,
+              missing_inputs: Array.isArray(driver.missing_inputs) ? driver.missing_inputs : [],
               disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
               generated_at: now,
               ...(driver.without_odds_mode ? { without_odds_mode: true, projection_floor: true, tags: ['no_odds_mode'] } : {}),
               ...(isF5
                 ? {
-                    projection: { projected_total: projected },
+                    projection:
+                      driver.projection && typeof driver.projection === 'object'
+                        ? driver.projection
+                        : { projected_total: projected },
                     recommended_bet_type: 'total',
                     odds_context: buildMlbF5OddsContext(gameOddsSnapshot),
                     primary_game_market: true,

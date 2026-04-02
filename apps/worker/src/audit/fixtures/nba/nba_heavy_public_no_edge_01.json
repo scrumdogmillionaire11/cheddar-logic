@@ -33,9 +33,9 @@
     }
   },
   "expected": {
-    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "input_hash": "2c7dea68b70e312bab78cb667abed25bc2e2314d4eea0ff72ef35b0bfc08fbcb",
     "execution_status": "BLOCKED",
     "reason_codes_must_not_include": ["EDGE_CLEAR"]
   },
-  "baseline_reviewed": false
+  "baseline_reviewed": true
 }

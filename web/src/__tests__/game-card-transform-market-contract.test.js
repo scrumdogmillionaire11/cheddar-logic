@@ -9,6 +9,10 @@ import path from 'node:path';
 
 const filePath = path.resolve('web/src/lib/game-card/transform/index.ts');
 const source = fs.readFileSync(filePath, 'utf8');
+const gameCardSource = fs.readFileSync(
+  path.resolve('web/src/components/cards/GameCardItem.tsx'),
+  'utf8',
+);
 const titleInferenceSource = fs.readFileSync(
   path.resolve('web/src/lib/game-card/transform/title-inference.ts'),
   'utf8',
@@ -79,6 +83,31 @@ assert(
     source.includes('line: canonicalPropLine') &&
     source.includes('marketLine: canonicalPropLine'),
   'transform props mode should prefer prop_decision.line ahead of suggestedLine for canonical threshold display semantics',
+);
+
+assert(
+  source.includes('const canonicalPropProjection =') &&
+    source.includes("typeof rawPropDecision?.projection === 'number'") &&
+    source.includes('const mu = canonicalPropProjection;') &&
+    source.includes('projection: canonicalPropProjection'),
+  'transform props mode should prefer prop_decision.projection as the canonical numeric projection for display',
+);
+
+assert(
+  source.includes('projection_source?: \'FULL_MODEL\' | \'SYNTHETIC_FALLBACK\' | null;') &&
+    source.includes('projected_total_low?: number | null;') &&
+    source.includes('projectionSource: sourcePlay?.projection_source ?? undefined') &&
+    source.includes('playability: sourcePlay?.playability ?? undefined'),
+  'transform game-line mode should preserve MLB F5 projection provenance and playable range metadata',
+);
+
+assert(
+  gameCardSource.includes("const isF5TotalMarket = card.sport === 'MLB' && marketType === 'FIRST_PERIOD';") &&
+    gameCardSource.includes('const projectionSourceLabel =') &&
+    gameCardSource.includes('Playable O&lt;=') &&
+    gameCardSource.includes('Team means:') &&
+    gameCardSource.includes("displayPlay.projectionSource === 'SYNTHETIC_FALLBACK'"),
+  'GameCardItem should render MLB F5 source, range, team means, and playable thresholds',
 );
 
 assert(

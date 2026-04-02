@@ -28,11 +28,11 @@
     "captured_at": "2026-04-01T18:00:00Z"
   },
   "expected": {
-    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "input_hash": "fbd896f804057af37808867e774ea911e6f6961fba4e8f3be457defb9ef183b7",
     "execution_status": "EXECUTABLE",
     "classification": "PLAY",
     "market_type": "TOTAL",
     "reason_codes_must_not_include": ["PASS_NO_EDGE", "BLOCKED_MISSING_PRICING"]
   },
-  "baseline_reviewed": false
+  "baseline_reviewed": true
 }

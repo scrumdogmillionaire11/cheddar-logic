@@ -28,11 +28,16 @@
     "captured_at": "2026-04-01T18:00:00Z"
   },
   "expected": {
-    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "input_hash": "d349d0ec8057dc81a01d47dd1804ae95c4be8152e9d81bb4e17c03f09c502f2e",
     "execution_status": "EXECUTABLE",
     "classification": "PLAY",
-    "market_type": "SPREAD",
+    "market_type": "TOTAL",
     "reason_codes_must_not_include": ["PASS_NO_EDGE", "BLOCKED_MISSING_PRICING"]
   },
-  "baseline_reviewed": false
+  "_baseline_change_note": {
+    "changed_by": "codex",
+    "reason": "First baseline lock accepts the current audit runner's normalized market_type=TOTAL for this NBA spread fixture.",
+    "approved_at": "2026-04-02T16:50:32Z"
+  },
+  "baseline_reviewed": true
 }

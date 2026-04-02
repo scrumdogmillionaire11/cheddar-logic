@@ -34,10 +34,10 @@
     }
   },
   "expected": {
-    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "input_hash": "e3ed1de1aa83ba98de8076ab55b7c1130fd77c7d433e6777e8ad6d91eb8edacf",
     "execution_status": "BLOCKED",
     "reason_codes_must_not_include": ["PASS_NO_EDGE"],
     "reason_codes_must_include": ["BLOCKED_MISSING_PROJECTION_INPUTS"]
   },
-  "baseline_reviewed": false
+  "baseline_reviewed": true
 }

@@ -414,6 +414,15 @@ export interface Play {
   playableEdge?: boolean;
   projectedMargin?: number;
   projectedTotal?: number;
+  projectedTotalLow?: number;
+  projectedTotalHigh?: number;
+  projectedHomeF5Runs?: number;
+  projectedAwayF5Runs?: number;
+  projectionSource?: 'FULL_MODEL' | 'SYNTHETIC_FALLBACK';
+  playability?: {
+    over_playable_at_or_below?: number | null;
+    under_playable_at_or_above?: number | null;
+  } | null;
   projectedTeamTotal?: number;
   projectedGoalDiff?: number;
   projectedScoreHome?: number;

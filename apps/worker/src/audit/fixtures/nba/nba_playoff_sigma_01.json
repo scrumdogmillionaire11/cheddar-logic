@@ -33,7 +33,7 @@
     }
   },
   "expected": {
-    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "input_hash": "92e102310f522b61a2228ce189b7d0961f3afeb325ecadf5aa4f72bd6df3deb5",
     "execution_status": "EXECUTABLE",
     "market_type": "TOTAL",
     "_model_snapshot_must_include": {
@@ -41,5 +41,5 @@
     },
     "reason_codes_must_not_include": ["PASS_NO_EDGE"]
   },
-  "baseline_reviewed": false
+  "baseline_reviewed": true
 }

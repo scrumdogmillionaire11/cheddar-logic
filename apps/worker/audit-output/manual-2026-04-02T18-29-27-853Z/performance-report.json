@@ -1,0 +1,1689 @@
+{
+  "alerts": [
+    {
+      "alert_type": "PASS_RATE_COLLAPSE",
+      "baseline_value": null,
+      "card_family": "NBA_TOTAL",
+      "card_mode": "PROJECTION_ONLY",
+      "execution_status": "BLOCKED",
+      "model_version": "nba-cross-market-v1",
+      "previous_model_version": null,
+      "sample_count": 72,
+      "sport": "NBA",
+      "threshold": 0.2,
+      "value": 0,
+      "window": "last_200",
+      "baseline_window": "previous_200",
+      "severity": "WARN"
+    }
+  ],
+  "dimensions": [
+    "sport",
+    "card_family",
+    "card_mode",
+    "execution_status",
+    "model_version"
+  ],
+  "generated_at": "2026-04-02T18:29:27.853Z",
+  "windows": {
+    "last_50": {
+      "size": 50,
+      "baseline_window": {
+        "name": "previous_50",
+        "sample_count": 50,
+        "size": 50
+      },
+      "segments": [
+        {
+          "actionable_sample_count": 7,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 7,
+                "hit_rate": 0.4286,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NBA_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.4286,
+          "lean_rate": 1,
+          "losses": 4,
+          "model_version": "nba-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.1708,
+          "roi_available": true,
+          "sample_count": 7,
+          "sport": "NBA",
+          "wins": 3
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 1
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 8,
+                "hit_rate": 0.5,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NBA_TOTAL",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.2759,
+          "lean_rate": 1,
+          "losses": 21,
+          "model_version": "nba-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.4689,
+          "roi_available": true,
+          "sample_count": 29,
+          "sport": "NBA",
+          "wins": 8
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 0.6667
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 2,
+                "hit_rate": 0,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_ML",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.1667,
+          "lean_rate": 1,
+          "losses": 5,
+          "model_version": "nhl-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.6818,
+          "roi_available": true,
+          "sample_count": 6,
+          "sport": "NHL",
+          "wins": 1
+        },
+        {
+          "actionable_sample_count": 1,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 1,
+          "lean_rate": 1,
+          "losses": 0,
+          "model_version": "nhl-drivers-v1",
+          "pass_rate": 0,
+          "previous_model_version": "nhl-cross-market-v1",
+          "pushes": 0,
+          "roi": 0.8772,
+          "roi_available": true,
+          "sample_count": 1,
+          "sport": "NHL",
+          "wins": 1
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 1
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.5714,
+          "lean_rate": 1,
+          "losses": 3,
+          "model_version": "nhl-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.0971,
+          "roi_available": true,
+          "sample_count": 7,
+          "sport": "NHL",
+          "wins": 4
+        }
+      ]
+    },
+    "last_100": {
+      "size": 100,
+      "baseline_window": {
+        "name": "previous_100",
+        "sample_count": 100,
+        "size": 100
+      },
+      "segments": [
+        {
+          "actionable_sample_count": 7,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 7,
+                "hit_rate": 0.4286,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NBA_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.4286,
+          "lean_rate": 1,
+          "losses": 4,
+          "model_version": "nba-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.1708,
+          "roi_available": true,
+          "sample_count": 7,
+          "sport": "NBA",
+          "wins": 3
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 1
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 8,
+                "hit_rate": 0.5,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NBA_TOTAL",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.3696,
+          "lean_rate": 1,
+          "losses": 29,
+          "model_version": "nba-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.2916,
+          "roi_available": true,
+          "sample_count": 46,
+          "sport": "NBA",
+          "wins": 17
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 0.9333
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 2,
+                "hit_rate": 0,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_ML",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.5667,
+          "lean_rate": 1,
+          "losses": 13,
+          "model_version": "nhl-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.0818,
+          "roi_available": true,
+          "sample_count": 30,
+          "sport": "NHL",
+          "wins": 17
+        },
+        {
+          "actionable_sample_count": 1,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 1,
+          "lean_rate": 1,
+          "losses": 0,
+          "model_version": "nhl-drivers-v1",
+          "pass_rate": 0,
+          "previous_model_version": "nhl-cross-market-v1",
+          "pushes": 0,
+          "roi": 0.8772,
+          "roi_available": true,
+          "sample_count": 1,
+          "sport": "NHL",
+          "wins": 1
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 1
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.375,
+          "lean_rate": 1,
+          "losses": 10,
+          "model_version": "nhl-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.2814,
+          "roi_available": true,
+          "sample_count": 16,
+          "sport": "NHL",
+          "wins": 6
+        }
+      ]
+    },
+    "last_200": {
+      "size": 200,
+      "baseline_window": {
+        "name": "previous_200",
+        "sample_count": 200,
+        "size": 200
+      },
+      "segments": [
+        {
+          "actionable_sample_count": 5,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 5,
+                "hit_rate": 0.8,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NBA_SPREAD",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.8,
+          "lean_rate": 0.8,
+          "losses": 1,
+          "model_version": "nba-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.5051,
+          "roi_available": true,
+          "sample_count": 5,
+          "sport": "NBA",
+          "wins": 4
+        },
+        {
+          "actionable_sample_count": 22,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 22,
+                "hit_rate": 0.6364,
+                "label": "0.58+",
+                "sufficient_sample": true
+              }
+            ]
+          },
+          "card_family": "NBA_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.6364,
+          "lean_rate": 0.8636,
+          "losses": 8,
+          "model_version": "nba-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.2194,
+          "roi_available": true,
+          "sample_count": 22,
+          "sport": "NBA",
+          "wins": 14
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 1
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 8,
+                "hit_rate": 0.5,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NBA_TOTAL",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.3472,
+          "lean_rate": 1,
+          "losses": 47,
+          "model_version": "nba-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.3353,
+          "roi_available": true,
+          "sample_count": 72,
+          "sport": "NBA",
+          "wins": 25
+        },
+        {
+          "actionable_sample_count": 2,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 0,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NCAAM_MONEYLINE",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.5,
+          "lean_rate": 1,
+          "losses": 1,
+          "model_version": "ncaam-drivers-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.2475,
+          "roi_available": true,
+          "sample_count": 2,
+          "sport": "NCAAM",
+          "wins": 1
+        },
+        {
+          "actionable_sample_count": 8,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 2,
+                "hit_rate": 0.5,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 2,
+                "hit_rate": 0.5,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 4,
+                "hit_rate": 0.75,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NCAAM_SPREAD",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.625,
+          "lean_rate": 0.375,
+          "losses": 3,
+          "model_version": "ncaam-drivers-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.2066,
+          "roi_available": true,
+          "sample_count": 8,
+          "sport": "NCAAM",
+          "wins": 5
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 0.9574
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 2,
+                "hit_rate": 0,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_ML",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.5532,
+          "lean_rate": 1,
+          "losses": 21,
+          "model_version": "nhl-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.0561,
+          "roi_available": true,
+          "sample_count": 47,
+          "sport": "NHL",
+          "wins": 26
+        },
+        {
+          "actionable_sample_count": 5,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 2,
+                "hit_rate": 0.5,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 3,
+                "hit_rate": 1,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.8,
+          "lean_rate": 0.4,
+          "losses": 1,
+          "model_version": "nhl-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.5333,
+          "roi_available": true,
+          "sample_count": 5,
+          "sport": "NHL",
+          "wins": 4
+        },
+        {
+          "actionable_sample_count": 20,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.55,
+          "lean_rate": 1,
+          "losses": 9,
+          "model_version": "nhl-drivers-v1",
+          "pass_rate": 0,
+          "previous_model_version": "nhl-cross-market-v1",
+          "pushes": 0,
+          "roi": 0.005,
+          "roi_available": true,
+          "sample_count": 20,
+          "sport": "NHL",
+          "wins": 11
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 1
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.4737,
+          "lean_rate": 1,
+          "losses": 10,
+          "model_version": "nhl-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.0934,
+          "roi_available": true,
+          "sample_count": 19,
+          "sport": "NHL",
+          "wins": 9
+        }
+      ]
+    },
+    "season_to_date": {
+      "size": 538,
+      "baseline_window": null,
+      "segments": [
+        {
+          "actionable_sample_count": 19,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 5,
+                "hit_rate": 1,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 14,
+                "hit_rate": 0.7857,
+                "label": "0.58+",
+                "sufficient_sample": true
+              }
+            ]
+          },
+          "card_family": "NBA_SPREAD",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.8421,
+          "lean_rate": 0.8421,
+          "losses": 3,
+          "model_version": "nba-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.6014,
+          "roi_available": true,
+          "sample_count": 19,
+          "sport": "NBA",
+          "wins": 16
+        },
+        {
+          "actionable_sample_count": 135,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 135,
+                "hit_rate": 0.5556,
+                "label": "0.58+",
+                "sufficient_sample": true
+              }
+            ]
+          },
+          "card_family": "NBA_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.5556,
+          "lean_rate": 0.6148,
+          "losses": 60,
+          "model_version": "nba-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.0583,
+          "roi_available": true,
+          "sample_count": 135,
+          "sport": "NBA",
+          "wins": 75
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 1
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 8,
+                "hit_rate": 0.5,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NBA_TOTAL",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.3472,
+          "lean_rate": 1,
+          "losses": 47,
+          "model_version": "nba-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.3353,
+          "roi_available": true,
+          "sample_count": 72,
+          "sport": "NBA",
+          "wins": 25
+        },
+        {
+          "actionable_sample_count": 33,
+          "block_rate_by_reason": {
+            "MODEL_PROB_MISSING": 0.0303
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 0,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 30,
+                "hit_rate": 0.6333,
+                "label": "0.58+",
+                "sufficient_sample": true
+              }
+            ]
+          },
+          "card_family": "NCAAM_MONEYLINE",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.6061,
+          "lean_rate": 0.4848,
+          "losses": 13,
+          "model_version": "ncaam-drivers-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.0647,
+          "roi_available": true,
+          "sample_count": 33,
+          "sport": "NCAAM",
+          "wins": 20
+        },
+        {
+          "actionable_sample_count": 30,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 2,
+                "hit_rate": 0.5,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 6,
+                "hit_rate": 0.5,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 22,
+                "hit_rate": 0.5,
+                "label": "0.58+",
+                "sufficient_sample": true
+              }
+            ]
+          },
+          "card_family": "NCAAM_SPREAD",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.5,
+          "lean_rate": 0.4,
+          "losses": 15,
+          "model_version": "ncaam-drivers-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.0424,
+          "roi_available": true,
+          "sample_count": 30,
+          "sport": "NCAAM",
+          "wins": 15
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 0.9574
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 2,
+                "hit_rate": 0,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_ML",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.5532,
+          "lean_rate": 1,
+          "losses": 21,
+          "model_version": "nhl-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.0561,
+          "roi_available": true,
+          "sample_count": 47,
+          "sport": "NHL",
+          "wins": 26
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "NO_EDGE_AT_PRICE": 0.8182
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 0.9252,
+          "execution_status": "BLOCKED",
+          "hit_rate": 0,
+          "lean_rate": 0.6871,
+          "losses": 11,
+          "model_version": "nhl-drivers-v1",
+          "pass_rate": 0.0748,
+          "previous_model_version": "nhl-cross-market-v1",
+          "pushes": 0,
+          "roi": -1,
+          "roi_available": true,
+          "sample_count": 11,
+          "sport": "NHL",
+          "wins": 0
+        },
+        {
+          "actionable_sample_count": 36,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 0,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 2,
+                "hit_rate": 0.5,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 2,
+                "hit_rate": 0,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 31,
+                "hit_rate": 0.7097,
+                "label": "0.58+",
+                "sufficient_sample": true
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 1,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.6389,
+          "lean_rate": 0.1944,
+          "losses": 13,
+          "model_version": "nhl-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": 0.1834,
+          "roi_available": true,
+          "sample_count": 36,
+          "sport": "NHL",
+          "wins": 23
+        },
+        {
+          "actionable_sample_count": 136,
+          "block_rate_by_reason": {},
+          "calibration": {
+            "buckets": [
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "ODDS_BACKED",
+          "clv_available": false,
+          "executable_rate": 0.9252,
+          "execution_status": "EXECUTABLE",
+          "hit_rate": 0.4779,
+          "lean_rate": 0.6871,
+          "losses": 71,
+          "model_version": "nhl-drivers-v1",
+          "pass_rate": 0.0748,
+          "previous_model_version": "nhl-cross-market-v1",
+          "pushes": 0,
+          "roi": -0.1031,
+          "roi_available": true,
+          "sample_count": 136,
+          "sport": "NHL",
+          "wins": 65
+        },
+        {
+          "actionable_sample_count": 0,
+          "block_rate_by_reason": {
+            "MARKET_PRICE_MISSING": 1
+          },
+          "calibration": {
+            "buckets": [
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.50-0.52",
+                "sufficient_sample": false
+              },
+              {
+                "count": 1,
+                "hit_rate": 1,
+                "label": "0.52-0.54",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.54-0.56",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.56-0.58",
+                "sufficient_sample": false
+              },
+              {
+                "count": 0,
+                "hit_rate": null,
+                "label": "0.58+",
+                "sufficient_sample": false
+              }
+            ]
+          },
+          "card_family": "NHL_TOTAL",
+          "card_mode": "PROJECTION_ONLY",
+          "clv_available": false,
+          "executable_rate": 0,
+          "execution_status": "PROJECTION_ONLY",
+          "hit_rate": 0.4737,
+          "lean_rate": 1,
+          "losses": 10,
+          "model_version": "nhl-cross-market-v1",
+          "pass_rate": 0,
+          "previous_model_version": null,
+          "pushes": 0,
+          "roi": -0.0934,
+          "roi_available": true,
+          "sample_count": 19,
+          "sport": "NHL",
+          "wins": 9
+        }
+      ]
+    }
+  }
+}

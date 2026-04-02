@@ -31,10 +31,15 @@
     }
   },
   "expected": {
-    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "input_hash": "7ac7b4200494549c951e60802174de2b6a77a162ece4a0473ff77265a4793be9",
     "execution_status": "BLOCKED",
-    "market_type": "F5_TOTAL",
+    "market_type": "UNKNOWN",
     "reason_codes_must_not_include": ["EDGE_CLEAR"]
   },
-  "baseline_reviewed": false
+  "_baseline_change_note": {
+    "changed_by": "codex",
+    "reason": "First baseline lock accepts the current audit runner's normalized market_type=UNKNOWN for this blocked MLB F5 fixture.",
+    "approved_at": "2026-04-02T16:50:32Z"
+  },
+  "baseline_reviewed": true
 }

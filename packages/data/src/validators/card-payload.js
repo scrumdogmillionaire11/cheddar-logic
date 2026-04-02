@@ -165,6 +165,74 @@ const mlbPitcherKPayloadSchema = z
     }
   });
 
+const mlbF5PayloadSchema = basePayloadSchema
+  .extend({
+    game_id: z.string().min(1),
+    sport: z.literal('MLB'),
+    model_version: z.string().min(1),
+    home_team: z.string().min(1).nullable(),
+    away_team: z.string().min(1).nullable(),
+    market_type: z.literal('FIRST_PERIOD'),
+    selection: z.object({
+      side: z.enum(['OVER', 'UNDER']),
+    }),
+    line: z.number().nullable(),
+    status: z.enum(['FIRE', 'WATCH', 'PASS']).optional(),
+    action: z.enum(['FIRE', 'HOLD', 'PASS']).optional(),
+    classification: z.enum(['BASE', 'LEAN', 'PASS']).optional(),
+    tier: z.enum(['BEST', 'WATCH']).nullable().optional(),
+    ev_passed: z.boolean(),
+    projection_source: z.enum(['FULL_MODEL', 'SYNTHETIC_FALLBACK']),
+    projection: z.object({
+      projected_total: z.number(),
+      projected_total_low: z.number().nullable().optional(),
+      projected_total_high: z.number().nullable().optional(),
+      projected_home_f5_runs: z.number().nullable().optional(),
+      projected_away_f5_runs: z.number().nullable().optional(),
+    }).passthrough(),
+    playability: z
+      .object({
+        over_playable_at_or_below: z.number().nullable().optional(),
+        under_playable_at_or_above: z.number().nullable().optional(),
+      })
+      .nullable()
+      .optional(),
+    missing_inputs: z.array(z.string()),
+    reason_codes: z.array(z.string()).optional(),
+    pass_reason_code: z.string().nullable().optional(),
+    primary_game_market: z.boolean().optional(),
+    chosen_market: z.string().optional(),
+    why_this_market: z.string().optional(),
+  })
+  .passthrough()
+  .superRefine((payload, ctx) => {
+    if (payload.projection_source === 'SYNTHETIC_FALLBACK') {
+      const status = String(payload.status || '').toUpperCase();
+      const action = String(payload.action || '').toUpperCase();
+      if (status !== 'PASS') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['status'],
+          message: 'SYNTHETIC_FALLBACK mlb-f5 payload must have status=PASS',
+        });
+      }
+      if (action !== 'PASS') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['action'],
+          message: 'SYNTHETIC_FALLBACK mlb-f5 payload must have action=PASS',
+        });
+      }
+      if (payload.ev_passed !== false) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ev_passed'],
+          message: 'SYNTHETIC_FALLBACK mlb-f5 payload must have ev_passed=false',
+        });
+      }
+    }
+  });
+
 const schemaByCardType = {
   // Active NHL driver + evidence cards
   'nhl-goalie': driverPayloadSchema,
@@ -209,7 +277,7 @@ const schemaByCardType = {
   // Active MLB game/model output cards
   'mlb-model-output': basePayloadSchema,
   'mlb-strikeout': basePayloadSchema,
-  'mlb-f5': basePayloadSchema,
+  'mlb-f5': mlbF5PayloadSchema,
   'mlb-f5-ml': basePayloadSchema,
   'nfl-model-output': basePayloadSchema,
   'fpl-model-output': basePayloadSchema,

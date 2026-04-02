@@ -19,7 +19,7 @@
     "captured_at": "2026-04-01T18:00:00Z"
   },
   "expected": {
-    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "input_hash": "283a832512ba633204587a395ae202b8d0d426e186153f986a3fd0e61a6c42da",
     "sub_card_count": 3
   },
   "sub_cards": [
@@ -44,7 +44,7 @@
         }
       },
       "expected": {
-        "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+        "input_hash": "e9cbd01b3c94a24cc87cbc0279f4889c7b7f66de562cffd2c7c1c57b0d5adc40",
         "execution_status": "EXECUTABLE",
         "market_type": "TOTAL"
       }
@@ -67,7 +67,7 @@
         }
       },
       "expected": {
-        "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+        "input_hash": "9f593fca7a508c7b314eb00b04057924e8d32108a33e368e7e8f8655f509c244",
         "execution_status": "PROJECTION_ONLY",
         "market_type": "1P_TOTAL"
       }
@@ -92,11 +92,11 @@
         }
       },
       "expected": {
-        "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+        "input_hash": "fa08135df7ae82955d9f4f62e60019561c912ab4be7a06cc93142e57e0561a8d",
         "execution_status": "PROJECTION_ONLY",
         "market_type": "PLAYER_SHOTS"
       }
     }
   ],
-  "baseline_reviewed": false
+  "baseline_reviewed": true
 }

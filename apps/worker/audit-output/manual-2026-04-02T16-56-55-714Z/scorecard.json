@@ -1,0 +1,250 @@
+{
+  "audit": {
+    "by_sport": {
+      "NBA": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 5,
+        "high_severity_count": 0,
+        "passed": 5,
+        "warn_count": 3
+      },
+      "NHL": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 7,
+        "high_severity_count": 0,
+        "passed": 7,
+        "warn_count": 3
+      },
+      "MLB": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 6,
+        "high_severity_count": 0,
+        "passed": 6,
+        "warn_count": 0
+      }
+    },
+    "critical_count": 0,
+    "drift_categories": [],
+    "failed": 0,
+    "fixture_count": 18,
+    "gate_failures": [],
+    "high_severity_count": 0,
+    "passed": 18,
+    "warn_count": 6
+  },
+  "families": {
+    "MLB.MLB_F5_TOTAL": {
+      "audit": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 2,
+        "high_severity_count": 0,
+        "passed": 2,
+        "warn_count": 0
+      },
+      "card_family": "MLB_F5_TOTAL",
+      "performance_alerts": [],
+      "reasons": [],
+      "risk": "LOW",
+      "sport": "MLB",
+      "trend": {
+        "calibration": "STABLE",
+        "executable_rate": "STABLE",
+        "pass_rate": "STABLE"
+      }
+    },
+    "MLB.MLB_PITCHER_K": {
+      "audit": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 4,
+        "high_severity_count": 0,
+        "passed": 4,
+        "warn_count": 0
+      },
+      "card_family": "MLB_PITCHER_K",
+      "performance_alerts": [],
+      "reasons": [],
+      "risk": "LOW",
+      "sport": "MLB",
+      "trend": {
+        "calibration": "STABLE",
+        "executable_rate": "STABLE",
+        "pass_rate": "STABLE"
+      }
+    },
+    "NBA.NBA_SPREAD": {
+      "audit": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 1,
+        "high_severity_count": 0,
+        "passed": 1,
+        "warn_count": 1
+      },
+      "card_family": "NBA_SPREAD",
+      "performance_alerts": [],
+      "reasons": [
+        "WARN_AUDIT_DRIFT"
+      ],
+      "risk": "MEDIUM",
+      "sport": "NBA",
+      "trend": {
+        "calibration": "STABLE",
+        "executable_rate": "STABLE",
+        "pass_rate": "STABLE"
+      }
+    },
+    "NBA.NBA_TOTAL": {
+      "audit": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 4,
+        "high_severity_count": 0,
+        "passed": 4,
+        "warn_count": 2
+      },
+      "card_family": "NBA_TOTAL",
+      "model_decay": true,
+      "performance_alerts": [
+        {
+          "alert_type": "PASS_RATE_COLLAPSE",
+          "severity": "WARN",
+          "threshold": 0.2,
+          "value": 0,
+          "window": "last_200"
+        }
+      ],
+      "reasons": [
+        "WARN_AUDIT_DRIFT",
+        "WARN_PERFORMANCE_ALERT:PASS_RATE_COLLAPSE"
+      ],
+      "risk": "MEDIUM",
+      "sport": "NBA",
+      "trend": {
+        "calibration": "STABLE",
+        "card_family": "NBA_TOTAL",
+        "executable_rate": "UP",
+        "pass_rate": "STABLE",
+        "sport": "NBA"
+      }
+    },
+    "NHL.MIXED": {
+      "audit": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 1,
+        "high_severity_count": 0,
+        "passed": 1,
+        "warn_count": 0
+      },
+      "card_family": "MIXED",
+      "performance_alerts": [],
+      "reasons": [],
+      "risk": "LOW",
+      "sport": "NHL",
+      "trend": {
+        "calibration": "STABLE",
+        "executable_rate": "STABLE",
+        "pass_rate": "STABLE"
+      }
+    },
+    "NHL.NHL_1P_TOTAL": {
+      "audit": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 1,
+        "high_severity_count": 0,
+        "passed": 1,
+        "warn_count": 0
+      },
+      "card_family": "NHL_1P_TOTAL",
+      "performance_alerts": [],
+      "reasons": [],
+      "risk": "LOW",
+      "sport": "NHL",
+      "trend": {
+        "calibration": "STABLE",
+        "executable_rate": "STABLE",
+        "pass_rate": "STABLE"
+      }
+    },
+    "NHL.NHL_ML": {
+      "audit": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 1,
+        "high_severity_count": 0,
+        "passed": 1,
+        "warn_count": 1
+      },
+      "card_family": "NHL_ML",
+      "performance_alerts": [],
+      "reasons": [
+        "WARN_AUDIT_DRIFT"
+      ],
+      "risk": "MEDIUM",
+      "sport": "NHL",
+      "trend": {
+        "calibration": "STABLE",
+        "card_family": "NHL_ML",
+        "executable_rate": "STABLE",
+        "pass_rate": "STABLE",
+        "sport": "NHL"
+      }
+    },
+    "NHL.NHL_PLAYER_SHOTS": {
+      "audit": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 1,
+        "high_severity_count": 0,
+        "passed": 1,
+        "warn_count": 0
+      },
+      "card_family": "NHL_PLAYER_SHOTS",
+      "performance_alerts": [],
+      "reasons": [],
+      "risk": "LOW",
+      "sport": "NHL",
+      "trend": {
+        "calibration": "STABLE",
+        "executable_rate": "STABLE",
+        "pass_rate": "STABLE"
+      }
+    },
+    "NHL.NHL_TOTAL": {
+      "audit": {
+        "critical_count": 0,
+        "failed": 0,
+        "fixture_count": 3,
+        "high_severity_count": 0,
+        "passed": 3,
+        "warn_count": 2
+      },
+      "card_family": "NHL_TOTAL",
+      "performance_alerts": [],
+      "reasons": [
+        "WARN_AUDIT_DRIFT"
+      ],
+      "risk": "MEDIUM",
+      "sport": "NHL",
+      "trend": {
+        "calibration": "STABLE",
+        "card_family": "NHL_TOTAL",
+        "executable_rate": "UP",
+        "pass_rate": "STABLE",
+        "sport": "NHL"
+      }
+    }
+  },
+  "generated_at": "2026-04-02T16:56:55.714Z",
+  "performance": {
+    "alert_count": 1,
+    "unavailable_reason": null
+  },
+  "run_scope": "manual-2026-04-02T16-56-55-714Z"
+}

@@ -30,10 +30,15 @@
     }
   },
   "expected": {
-    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "input_hash": "30ef4e22ab8dec17bc9c50d612ff6e57042cccf42a8431905f388f77052bf59f",
     "execution_status": "PROJECTION_ONLY",
-    "market_type": "F5_TOTAL",
+    "market_type": "UNKNOWN",
     "reason_codes_must_not_include": ["BLOCKED_MISSING_PRICING", "DEGRADED_MISSING_WEATHER"]
   },
-  "baseline_reviewed": false
+  "_baseline_change_note": {
+    "changed_by": "codex",
+    "reason": "First baseline lock accepts the current audit runner's normalized market_type=UNKNOWN for this projection-only MLB F5 fixture.",
+    "approved_at": "2026-04-02T16:50:32Z"
+  },
+  "baseline_reviewed": true
 }

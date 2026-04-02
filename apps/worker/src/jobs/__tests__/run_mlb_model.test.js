@@ -17,6 +17,9 @@
  */
 
 const {
+  computeMLBDriverCards,
+  projectF5Total,
+  projectF5TotalCard,
   scorePitcherK,
   scorePitcherKUnder,
   projectF5ML,
@@ -70,6 +73,45 @@ const neutralMatchup = {
 };
 
 const PROJECTION_ONLY_OPTS = { mode: 'PROJECTION_ONLY', side: 'over' };
+
+const f5HomePitcher = {
+  era: 3.5,
+  whip: 1.12,
+  k_per_9: 9.4,
+  handedness: 'R',
+  x_fip: 3.42,
+  bb_pct: 0.071,
+  hr_per_9: 0.98,
+  season_k_pct: 0.272,
+};
+
+const f5AwayPitcher = {
+  era: 4.1,
+  whip: 1.28,
+  k_per_9: 8.6,
+  handedness: 'L',
+  x_fip: 3.95,
+  bb_pct: 0.083,
+  hr_per_9: 1.14,
+  season_k_pct: 0.238,
+};
+
+const f5FullContext = {
+  home_offense_profile: {
+    wrc_plus_vs_lhp: 118,
+    k_pct_vs_lhp: 0.208,
+    iso_vs_lhp: 0.201,
+  },
+  away_offense_profile: {
+    wrc_plus_vs_rhp: 94,
+    k_pct_vs_rhp: 0.247,
+    iso_vs_rhp: 0.142,
+  },
+  park_run_factor: 1.04,
+  temp_f: 82,
+  wind_mph: 12,
+  wind_dir: 'OUT',
+};
 
 const strongUnderHistory = [
   { strikeouts: 5, number_of_pitches: 87, innings_pitched: 5.1, game_date: '2026-03-25' },
@@ -142,14 +184,14 @@ describe('scorePitcherK — projection-only mode', () => {
     expect(['Play', 'Conditional', 'Pass']).toContain(result.verdict);
   });
 
-  test('2. Blocked: INSUFFICIENT_STARTS halts at Step 1', () => {
+  test('2. Thin-sample starters still emit projection-only results with an explicit flag', () => {
     const greenPitcher = { ...fullPitcher, season_starts: 2, starts: 2 };
     const result = scorePitcherK(greenPitcher, neutralMatchup, {}, null, {}, PROJECTION_ONLY_OPTS);
 
-    expect(result.status).toBe('HALTED');
-    expect(result.halted_at).toBe('STEP_1');
-    expect(result.reason_code).toBe('INSUFFICIENT_STARTS');
-    expect(result.verdict).toBe('PASS');
+    expect(result.status).toBe('COMPLETE');
+    expect(result.projection_only).toBe(true);
+    expect(result.reason_codes).toContain('THIN_SAMPLE_STARTS');
+    expect(result.projection).toBeGreaterThan(0);
   });
 
   test('3. Blocked: SHORT_LEASH kills over at Step 2', () => {
@@ -176,6 +218,133 @@ describe('scorePitcherK — projection-only mode', () => {
     expect(result.halted_at).toBe('STEP_2');
     expect(result.reason_code).toBe('IL_RETURN');
     expect(result.verdict).toBe('PASS');
+  });
+});
+
+describe('MLB F5 full-model projection', () => {
+  test('uses FULL_MODEL starter/matchup/environment inputs when all required fields are present', () => {
+    const projection = projectF5Total(f5HomePitcher, f5AwayPitcher, f5FullContext);
+
+    expect(projection).toMatchObject({
+      projection_source: 'FULL_MODEL',
+      missing_inputs: [],
+      playability: {
+        over_playable_at_or_below: expect.any(Number),
+        under_playable_at_or_above: expect.any(Number),
+      },
+    });
+    expect(projection.base).toBeGreaterThan(0);
+    expect(projection.projected_home_f5_runs).toBeGreaterThan(0);
+    expect(projection.projected_away_f5_runs).toBeGreaterThan(0);
+    expect(projection.projected_total_high).toBeGreaterThan(projection.projected_total_low);
+  });
+
+  test('falls back to SYNTHETIC_FALLBACK and records missing inputs when matchup context is incomplete', () => {
+    const projection = projectF5Total(f5HomePitcher, f5AwayPitcher, {
+      home_offense_profile: null,
+      away_offense_profile: null,
+      park_run_factor: null,
+      temp_f: null,
+      wind_mph: null,
+      wind_dir: null,
+    });
+
+    expect(projection.projection_source).toBe('SYNTHETIC_FALLBACK');
+    expect(projection.reason_codes).toEqual(
+      expect.arrayContaining(['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']),
+    );
+    expect(projection.missing_inputs).toEqual(
+      expect.arrayContaining([
+        'home_opponent_split_profile',
+        'away_opponent_split_profile',
+        'home_park_run_factor',
+        'away_park_run_factor',
+      ]),
+    );
+  });
+
+  test('projectF5TotalCard forces PASS when abs(edge) is below 0.5 runs', () => {
+    const projection = projectF5Total(f5HomePitcher, f5AwayPitcher, f5FullContext);
+    const result = projectF5TotalCard(
+      f5HomePitcher,
+      f5AwayPitcher,
+      projection.base + 0.2,
+      f5FullContext,
+    );
+
+    expect(result.status).toBe('PASS');
+    expect(result.action).toBe('PASS');
+    expect(result.classification).toBe('PASS');
+    expect(result.ev_threshold_passed).toBe(false);
+    expect(result.reason_codes).toContain('PASS_NO_EDGE');
+    expect(result.pass_reason_code).toBe('PASS_NO_EDGE');
+    expect(result.projection_source).toBe('FULL_MODEL');
+  });
+
+  test('computeMLBDriverCards keeps no-edge PASS cards visible with playability metadata', () => {
+    const projection = projectF5Total(f5HomePitcher, f5AwayPitcher, f5FullContext);
+    const cards = computeMLBDriverCards('mlb-f5-pass', {
+      away_team: 'Boston Red Sox',
+      home_team: 'New York Yankees',
+      raw_data: {
+        mlb: {
+          f5_line: projection.base + 0.2,
+          home_pitcher: f5HomePitcher,
+          away_pitcher: f5AwayPitcher,
+          ...f5FullContext,
+        },
+      },
+    });
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      market: 'f5_total',
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      ev_threshold_passed: false,
+      projection_source: 'FULL_MODEL',
+      pass_reason_code: 'PASS_NO_EDGE',
+      playability: {
+        over_playable_at_or_below: expect.any(Number),
+        under_playable_at_or_above: expect.any(Number),
+      },
+    });
+    expect(cards[0].reason_codes).toContain('PASS_NO_EDGE');
+    expect(cards[0].projection).toMatchObject({
+      projected_total: expect.any(Number),
+      projected_total_low: expect.any(Number),
+      projected_total_high: expect.any(Number),
+    });
+  });
+
+  test('computeMLBDriverCards emits synthetic-fallback PASS when a starter is missing', () => {
+    const cards = computeMLBDriverCards('mlb-f5-missing-sp', {
+      away_team: 'Boston Red Sox',
+      home_team: 'New York Yankees',
+      raw_data: {
+        mlb: {
+          f5_line: 4.5,
+          home_pitcher: null,
+          away_pitcher: f5AwayPitcher,
+          ...f5FullContext,
+        },
+      },
+    });
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      projection_source: 'SYNTHETIC_FALLBACK',
+      pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
+      ev_threshold_passed: false,
+    });
+    expect(cards[0].missing_inputs).toContain('home_starting_pitcher');
+    expect(cards[0].reason_codes).toEqual(
+      expect.arrayContaining(['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']),
+    );
   });
 });
 
@@ -366,6 +535,32 @@ describe('MLB pitcher-K under monitoring', () => {
       display_price: null,
       projection: expect.any(Number),
     });
+  });
+
+  test('computePitcherKDriverCards emits projection-only rows for thin-sample starters with flags', () => {
+    const cards = computePitcherKDriverCards(
+      'game-1',
+      {
+        home_team: 'New York Yankees',
+        raw_data: {
+          mlb: {
+            home_pitcher: {
+              ...fullPitcher,
+              full_name: 'Thin Sample Starter',
+              season_starts: 1,
+              starts: 1,
+            },
+          },
+        },
+      },
+      { mode: 'PROJECTION_ONLY' },
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].emit_card).toBe(true);
+    expect(cards[0].card_verdict).toBe('PROJECTION');
+    expect(cards[0].prop_decision?.flags).toContain('THIN_SAMPLE_STARTS');
+    expect(cards[0].pitcher_k_result?.reason_codes).toContain('THIN_SAMPLE_STARTS');
   });
 
   test('projection-only pitcher K rows remain non-actionable even when emitted', () => {
@@ -637,6 +832,23 @@ describe('WI-0720 MLB execution envelope', () => {
       },
     ],
     [
+      'projection-only pitcher K emits under shadow rollout',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'PROJECTION_ONLY' },
+        pricingStatus: 'NOT_REQUIRED',
+        isPitcherK: true,
+        rolloutState: 'SHADOW',
+      },
+      {
+        execution_status: 'PROJECTION_ONLY',
+        actionable: false,
+        pricing_status: 'NOT_REQUIRED',
+        publish_ready: false,
+        emit_allowed: true,
+        k_prop_execution_path: 'PROJECTION_ONLY',
+      },
+    ],
+    [
       'shadow rollout suppresses pitcher K output',
       {
         driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
@@ -869,10 +1081,53 @@ describe('resolveMlbTeamLookupKeys — MLB team join fallback', () => {
     ]);
   });
 
+  test('normalizes uppercase full-name variants to canonical full name plus abbreviation', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(resolveMlbTeamLookupKeys('KANSAS CITY ROYALS')).toEqual([
+      'KANSAS CITY ROYALS',
+      'Kansas City Royals',
+      'KC',
+    ]);
+    expect(resolveMlbTeamLookupKeys('MINNESOTA TWINS')).toEqual([
+      'MINNESOTA TWINS',
+      'Minnesota Twins',
+      'MIN',
+    ]);
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  test('keeps known abbreviations available as lookup keys', () => {
+    expect(resolveMlbTeamLookupKeys('KC')).toEqual([
+      'KC',
+      'Kansas City Royals',
+    ]);
+    expect(resolveMlbTeamLookupKeys('SF')).toEqual([
+      'SF',
+      'San Francisco Giants',
+    ]);
+  });
+
   test('returns cleaned input only for unknown labels', () => {
     expect(resolveMlbTeamLookupKeys('  Unknown Team  ')).toEqual([
       'Unknown Team',
     ]);
+  });
+
+  test('logs unknown variants once so new source labels are visible in worker output', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    warnSpy.mockClear();
+
+    expect(resolveMlbTeamLookupKeys('  Unknown Franchise  ')).toEqual([
+      'Unknown Franchise',
+    ]);
+    expect(resolveMlbTeamLookupKeys('Unknown Franchise')).toEqual([
+      'Unknown Franchise',
+    ]);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0][0])).toContain('MLB_TEAM_VARIANT_UNKNOWN');
   });
 
   test('returns empty array for empty input', () => {

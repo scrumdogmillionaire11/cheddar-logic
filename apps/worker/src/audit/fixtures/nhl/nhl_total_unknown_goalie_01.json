@@ -30,11 +30,11 @@
     }
   },
   "expected": {
-    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "input_hash": "e7b186621d786229462785de379ab1b784cc7b50c14f96c2b84d25d0bb050a05",
     "execution_status": "BLOCKED",
     "market_type": "TOTAL",
     "nhl_goalie_certainty_pair": "CONFIRMED/UNKNOWN",
     "reason_codes_must_not_include": ["EDGE_CLEAR"]
   },
-  "baseline_reviewed": false
+  "baseline_reviewed": true
 }

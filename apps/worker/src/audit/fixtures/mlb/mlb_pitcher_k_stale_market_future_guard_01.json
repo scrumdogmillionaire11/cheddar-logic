@@ -32,10 +32,15 @@
     }
   },
   "expected": {
-    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "input_hash": "9fe7f78d3e7419260e6bcf8a8128310d29fcbe6b1c1b329dd2d97764c23bb75d",
     "execution_status": "BLOCKED",
-    "market_type": "PITCHER_K",
+    "market_type": "UNKNOWN",
     "reason_codes_must_not_include": ["EDGE_CLEAR"]
   },
-  "baseline_reviewed": false
+  "_baseline_change_note": {
+    "changed_by": "codex",
+    "reason": "First baseline lock accepts the current audit runner's normalized market_type=UNKNOWN for this stale-market MLB pitcher-K fixture.",
+    "approved_at": "2026-04-02T16:50:32Z"
+  },
+  "baseline_reviewed": true
 }
