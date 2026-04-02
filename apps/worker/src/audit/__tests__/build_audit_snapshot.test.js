@@ -14,6 +14,7 @@ const {
 const {
   runAuditCli,
   runFixtureAudit,
+  shouldFailGate,
 } = require('../run_model_audit');
 
 function makeFixture(sport = 'NBA', overrides = {}) {
@@ -83,6 +84,64 @@ function writeFixture(root, sport, fileName, fixture) {
     JSON.stringify(fixture, null, 2),
     'utf8',
   );
+}
+
+function buildInvariantBreakingAdapter() {
+  return {
+    runner: 'test_runner',
+    enrich(input) {
+      return { ...input };
+    },
+    model(enriched) {
+      return {
+        confidence: 0.61,
+        game_id: enriched.game_id,
+        market_type: 'TOTAL',
+        p_fair: 0.54,
+        prediction: 'OVER',
+        projection: { total: 226 },
+      };
+    },
+    decide(model) {
+      return {
+        _prediction_state: { reason: null, status: 'QUALIFIED' },
+        _pricing_state: { reason: 'stale', status: 'STALE' },
+        _publish_state: {
+          block_reason: null,
+          emit_allowed: true,
+          execution_status: 'EXECUTABLE',
+          publish_ready: true,
+        },
+        actionable: true,
+        card_type: 'nba-total-call',
+        classification: 'PLAY',
+        confidence: model.confidence,
+        consistency: {
+          event_env: 'INDOOR',
+          pace_tier: 'MID',
+          total_bias: 'OK',
+        },
+        decision_v2: {
+          official_status: 'PLAY',
+          primary_reason_code: 'EDGE_CLEAR_AUDIT_STUB',
+          watchdog_reason_codes: [],
+          watchdog_status: 'OK',
+        },
+        execution_status: 'EXECUTABLE',
+        game_id: model.game_id,
+        market_type: 'TOTAL',
+        prediction: 'OVER',
+        reason_codes: ['EDGE_CLEAR_AUDIT_STUB'],
+        selection: { side: 'OVER' },
+      };
+    },
+    publish(decision) {
+      return { ...decision };
+    },
+    extractFinalCards(publish) {
+      return [{ ...publish }];
+    },
+  };
 }
 
 describe('audit snapshot hashing', () => {
@@ -464,5 +523,143 @@ describe('audit CLI and suite mode', () => {
     expect(report.failed).toBe(0);
     expect(written.total).toBe(1);
     expect(written.results[0].fixture_id).toBe('single_fixture');
+  });
+
+  test('warn-only drift does not fail the audit gate', () => {
+    const root = makeTempFixturesRoot();
+    writeFixture(root, 'NBA', 'nba_warn_only_01.json', makeFixture('NBA', {
+      expected: {
+        input_hash: 'RECOMPUTE_ON_FIRST_RUN',
+        model_snapshot: { confidence: 0.65 },
+      },
+    }));
+
+    const report = runAuditCli(['--sport', 'NBA'], {
+      fixturesRoot: root,
+      runAt: '2026-04-02T02:00:00Z',
+      stdout: { write: jest.fn() },
+    });
+
+    expect(report.failed).toBe(0);
+    expect(report.warn_count).toBeGreaterThan(0);
+    expect(shouldFailGate(report)).toBe(false);
+  });
+
+  test('fails the audit gate on invariant breach', () => {
+    const root = makeTempFixturesRoot();
+    writeFixture(root, 'NBA', 'nba_invariant_01.json', makeFixture('NBA'));
+
+    const report = runAuditCli(['--sport', 'NBA'], {
+      adapterOverrides: {
+        NBA: buildInvariantBreakingAdapter(),
+      },
+      fixturesRoot: root,
+      runAt: '2026-04-02T02:00:00Z',
+      stdout: { write: jest.fn() },
+    });
+
+    expect(report.failed).toBe(1);
+    expect(report.critical_count).toBeGreaterThan(0);
+    expect(shouldFailGate(report)).toBe(true);
+  });
+
+  test('fails the gate when no fixtures are present', () => {
+    const root = makeTempFixturesRoot();
+    fs.mkdirSync(path.join(root, 'nba'), { recursive: true });
+
+    const report = runAuditCli(
+      ['--sport', 'NBA', '--output-dir', path.join(root, 'out')],
+      {
+        fixturesRoot: root,
+        runAt: '2026-04-02T02:00:00Z',
+        stdout: { write: jest.fn() },
+      },
+    );
+
+    expect(report.fixture_count).toBe(0);
+    expect(report.gate_failures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ drift_type: 'FIXTURE_SET_EMPTY' }),
+      ]),
+    );
+    expect(shouldFailGate(report)).toBe(true);
+  });
+
+  test('fails the gate when a touched fixture still uses RECOMPUTE_ON_FIRST_RUN', () => {
+    const root = makeTempFixturesRoot();
+    const fileName = 'nba_touched_fixture_01.json';
+    const fixturePath = path.join(root, 'nba', fileName);
+    const changedFixturesPath = path.join(root, 'changed-fixtures.txt');
+    writeFixture(root, 'NBA', fileName, makeFixture('NBA'));
+    fs.writeFileSync(changedFixturesPath, `${fixturePath}\n`, 'utf8');
+
+    const report = runAuditCli(
+      ['--sport', 'NBA', '--changed-fixtures-file', changedFixturesPath],
+      {
+        fixturesRoot: root,
+        runAt: '2026-04-02T02:00:00Z',
+        stdout: { write: jest.fn() },
+      },
+    );
+
+    expect(report.failing_fixtures[0].diffs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ drift_type: 'BASELINE_REVIEW_REQUIRED' }),
+      ]),
+    );
+    expect(shouldFailGate(report)).toBe(true);
+  });
+
+  test('fails the gate when baseline change note is malformed', () => {
+    const root = makeTempFixturesRoot();
+    const outputDir = path.join(root, 'out');
+    writeFixture(root, 'NBA', 'nba_bad_note_01.json', makeFixture('NBA', {
+      _baseline_change_note: {
+        changed_by: 'WI-0730',
+        reason: 'Approved baseline refresh',
+      },
+    }));
+
+    const report = runAuditCli(
+      ['--sport', 'NBA', '--output-dir', outputDir],
+      {
+        fixturesRoot: root,
+        runAt: '2026-04-02T02:00:00Z',
+        stdout: { write: jest.fn() },
+      },
+    );
+
+    expect(report.gate_failures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ drift_type: 'FIXTURE_LOAD_FAILURE' }),
+      ]),
+    );
+    expect(fs.existsSync(path.join(outputDir, 'audit-summary.json'))).toBe(true);
+    expect(shouldFailGate(report)).toBe(true);
+  });
+
+  test('fails the gate when baseline change note expiry is exceeded', () => {
+    const root = makeTempFixturesRoot();
+    writeFixture(root, 'NBA', 'nba_expired_note_01.json', makeFixture('NBA', {
+      _baseline_change_note: {
+        changed_by: 'WI-0730',
+        reason: 'Approved baseline refresh',
+        approved_at: '2026-03-01T00:00:00Z',
+        expires_after_runs: 3,
+      },
+    }));
+
+    const report = runAuditCli(['--sport', 'NBA'], {
+      fixturesRoot: root,
+      runAt: '2026-04-02T02:00:00Z',
+      stdout: { write: jest.fn() },
+    });
+
+    expect(report.failing_fixtures[0].diffs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ drift_type: 'BASELINE_NOTE_EXPIRED' }),
+      ]),
+    );
+    expect(shouldFailGate(report)).toBe(true);
   });
 });

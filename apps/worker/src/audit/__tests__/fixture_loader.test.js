@@ -5,6 +5,8 @@ const os = require('os');
 const path = require('path');
 
 const {
+  DEFAULT_BASELINE_NOTE_EXPIRY_RUNS,
+  evaluateBaselineChangeNote,
   loadFixturesForSport,
   validateFixtureSchema,
 } = require('../fixture_loader');
@@ -208,6 +210,67 @@ describe('validateFixtureSchema — baseline_reviewed guard', () => {
       expected: { input_hash: 'RECOMPUTE_ON_FIRST_RUN', execution_status: 'EXECUTABLE' },
     });
     expect(() => validateFixtureSchema(fixture)).toThrow(/baseline_reviewed.*true/i);
+  });
+});
+
+describe('validateFixtureSchema — baseline change notes', () => {
+  test('normalizes valid baseline change note and defaults expires_after_runs to 3', () => {
+    const fixture = validNbaFixture({
+      _baseline_change_note: {
+        changed_by: 'WI-0730',
+        reason: 'Approved baseline refresh',
+        approved_at: '2026-04-01',
+      },
+    });
+
+    const result = validateFixtureSchema(fixture);
+    expect(result._baseline_change_note).toMatchObject({
+      changed_by: 'WI-0730',
+      reason: 'Approved baseline refresh',
+      expires_after_runs: DEFAULT_BASELINE_NOTE_EXPIRY_RUNS,
+    });
+  });
+
+  test('missing approved_at fails hard', () => {
+    const fixture = validNbaFixture({
+      _baseline_change_note: {
+        changed_by: 'WI-0730',
+        reason: 'Approved baseline refresh',
+      },
+    });
+
+    expect(() => validateFixtureSchema(fixture)).toThrow(/_baseline_change_note\.approved_at/i);
+  });
+
+  test('non-positive expires_after_runs fails hard', () => {
+    const fixture = validNbaFixture({
+      _baseline_change_note: {
+        changed_by: 'WI-0730',
+        reason: 'Approved baseline refresh',
+        approved_at: '2026-04-01',
+        expires_after_runs: 0,
+      },
+    });
+
+    expect(() => validateFixtureSchema(fixture)).toThrow(/expires_after_runs/i);
+  });
+
+  test('evaluateBaselineChangeNote expires after weekly run budget', () => {
+    const note = validateFixtureSchema(validNbaFixture({
+      _baseline_change_note: {
+        changed_by: 'WI-0730',
+        reason: 'Approved baseline refresh',
+        approved_at: '2026-04-01T00:00:00Z',
+        expires_after_runs: 3,
+      },
+    }))._baseline_change_note;
+
+    expect(
+      evaluateBaselineChangeNote(note, { runAt: '2026-04-21T00:00:00Z' }).expired,
+    ).toBe(false);
+    expect(
+      evaluateBaselineChangeNote(note, { runAt: '2026-04-22T00:00:00Z' }).expired,
+    ).toBe(true);
   });
 });
 

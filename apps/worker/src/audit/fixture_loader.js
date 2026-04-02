@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 const FIXTURES_ROOT = path.join(__dirname, 'fixtures');
+const DEFAULT_BASELINE_NOTE_EXPIRY_RUNS = 3;
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
 const VALID_CARD_MODES = ['ODDS_BACKED', 'PROJECTION_ONLY', 'MIXED'];
 
@@ -15,6 +17,12 @@ function asNonEmptyString(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function asPositiveInteger(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 function normalizeSport(sport) {
@@ -104,6 +112,90 @@ function validateSubCard(subCard, index, label) {
   if (scCardMode === 'ODDS_BACKED' && !hasPriceInput(subCard.input)) {
     throw new Error(subLabel + ' has card_mode=ODDS_BACKED but input contains no price fields');
   }
+}
+
+function normalizeBaselineChangeNote(note, options = {}) {
+  const label = options.label || 'fixture';
+  if (note === undefined) return undefined;
+  if (!isPlainObject(note)) {
+    throw new Error(label + ' field "_baseline_change_note" must be an object when present');
+  }
+
+  const changedBy = asNonEmptyString(note.changed_by);
+  if (!changedBy) {
+    throw new Error(label + ' field "_baseline_change_note.changed_by" is required');
+  }
+
+  const reason = asNonEmptyString(note.reason);
+  if (!reason) {
+    throw new Error(label + ' field "_baseline_change_note.reason" is required');
+  }
+
+  const approvedAt = asNonEmptyString(note.approved_at);
+  if (!approvedAt) {
+    throw new Error(label + ' field "_baseline_change_note.approved_at" is required');
+  }
+
+  const approvedAtMs = Date.parse(approvedAt);
+  if (!Number.isFinite(approvedAtMs)) {
+    throw new Error(label + ' field "_baseline_change_note.approved_at" must be a valid date');
+  }
+
+  const expiresAfterRuns =
+    note.expires_after_runs === undefined
+      ? DEFAULT_BASELINE_NOTE_EXPIRY_RUNS
+      : asPositiveInteger(note.expires_after_runs);
+  if (!expiresAfterRuns) {
+    throw new Error(
+      label +
+        ' field "_baseline_change_note.expires_after_runs" must be a positive integer when present',
+    );
+  }
+
+  const normalized = {
+    changed_by: changedBy,
+    reason: reason,
+    approved_at: new Date(approvedAtMs).toISOString(),
+    expires_after_runs: expiresAfterRuns,
+  };
+
+  const expectedDownstreamEffect = asNonEmptyString(note.expected_downstream_effect);
+  if (expectedDownstreamEffect) {
+    normalized.expected_downstream_effect = expectedDownstreamEffect;
+  }
+
+  return normalized;
+}
+
+function evaluateBaselineChangeNote(note, options = {}) {
+  if (!note || typeof note !== 'object') {
+    return {
+      approved_at_ms: null,
+      cycles_elapsed: 0,
+      expired: false,
+      expires_after_runs: null,
+      present: false,
+    };
+  }
+
+  const runAtValue = options.runAt || new Date().toISOString();
+  const runAtMs = Date.parse(runAtValue);
+  if (!Number.isFinite(runAtMs)) {
+    throw new Error('Invalid runAt for baseline change note evaluation');
+  }
+
+  const approvedAtMs = Date.parse(note.approved_at);
+  const deltaMs = Math.max(0, runAtMs - approvedAtMs);
+  const cyclesElapsed = Math.floor(deltaMs / MS_PER_WEEK);
+  const expiresAfterRuns = asPositiveInteger(note.expires_after_runs) || DEFAULT_BASELINE_NOTE_EXPIRY_RUNS;
+
+  return {
+    approved_at_ms: approvedAtMs,
+    cycles_elapsed: cyclesElapsed,
+    expired: cyclesElapsed >= expiresAfterRuns,
+    expires_after_runs: expiresAfterRuns,
+    present: true,
+  };
 }
 
 function validateFixtureSchema(fixture, options) {
@@ -253,8 +345,14 @@ function validateFixtureSchema(fixture, options) {
     );
   }
 
+  const baselineChangeNote = normalizeBaselineChangeNote(fixture._baseline_change_note, {
+    label,
+  });
+
   return Object.assign({}, fixture, {
+    _baseline_change_note: baselineChangeNote,
     fixture_id: fixtureId,
+    fixture_file_path: options.filePath ? path.resolve(options.filePath) : null,
     sport: sport,
     card_family: cardFamily,
     card_mode: cardMode,
@@ -306,11 +404,14 @@ function isFixturePathCandidate(value) {
 
 module.exports = {
   FIXTURES_ROOT: FIXTURES_ROOT,
+  DEFAULT_BASELINE_NOTE_EXPIRY_RUNS: DEFAULT_BASELINE_NOTE_EXPIRY_RUNS,
+  evaluateBaselineChangeNote: evaluateBaselineChangeNote,
   getFixtureDirectory: getFixtureDirectory,
   isFixturePathCandidate: isFixturePathCandidate,
   loadFixture: loadFixture,
   loadFixtureFromPath: loadFixtureFromPath,
   loadFixturesForSport: loadFixturesForSport,
+  normalizeBaselineChangeNote: normalizeBaselineChangeNote,
   normalizeSport: normalizeSport,
   resolveFixturePath: resolveFixturePath,
   validateFixtureSchema: validateFixtureSchema,
