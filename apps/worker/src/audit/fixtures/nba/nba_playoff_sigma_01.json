@@ -1,0 +1,45 @@
+{
+  "fixture_id": "nba_playoff_sigma_01",
+  "sport": "NBA",
+  "card_family": "NBA_TOTAL",
+  "card_mode": "ODDS_BACKED",
+  "description": "Playoff game — sigma multiplier applied, inflated vs regular-season baseline",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "nba_playoff_game_001",
+    "market_type": "TOTAL",
+    "selection": "UNDER"
+  },
+  "input": {
+    "game_id": "nba_playoff_game_001",
+    "sport": "NBA",
+    "home_team": "Indiana Pacers",
+    "away_team": "New York Knicks",
+    "game_time_utc": "2026-04-18T23:00:00Z",
+    "total": 212.5,
+    "total_price_over": -110,
+    "total_price_under": -110,
+    "spread_home": 2.5,
+    "spread_away": -2.5,
+    "spread_price_home": -110,
+    "spread_price_away": -110,
+    "h2h_home": 115,
+    "h2h_away": -135,
+    "captured_at": "2026-04-18T18:00:00Z",
+    "_game_context": {
+      "is_playoff": true,
+      "playoff_round": "FIRST_ROUND",
+      "game_number": 3
+    }
+  },
+  "expected": {
+    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "execution_status": "EXECUTABLE",
+    "market_type": "TOTAL",
+    "_model_snapshot_must_include": {
+      "sigma_multiplier_applied": true
+    },
+    "reason_codes_must_not_include": ["PASS_NO_EDGE"]
+  },
+  "baseline_reviewed": false
+}

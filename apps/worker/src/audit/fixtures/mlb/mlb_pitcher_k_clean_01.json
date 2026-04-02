@@ -1,0 +1,39 @@
+{
+  "fixture_id": "mlb_pitcher_k_clean_01",
+  "sport": "MLB",
+  "card_family": "MLB_PITCHER_K",
+  "card_mode": "PROJECTION_ONLY",
+  "description": "Pitcher K prop — clean, full projection data, no price required",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "mlb_test_game_001",
+    "market_type": "PITCHER_K",
+    "selection": "OVER"
+  },
+  "input": {
+    "game_id": "mlb_test_game_001",
+    "sport": "MLB",
+    "home_team": "Atlanta Braves",
+    "away_team": "New York Mets",
+    "game_time_utc": "2026-04-02T17:10:00Z",
+    "captured_at": "2026-04-01T18:00:00Z",
+    "_pitcher_prop": {
+      "player_id": "mlb_pitcher_strider_99",
+      "player_name": "Spencer Strider",
+      "team": "ATL",
+      "k_line": 7.5,
+      "season_k_avg": 9.1,
+      "last_5_k_avg": 8.6,
+      "opponent_k_rate": 0.247,
+      "days_rest": 5,
+      "innings_pitched_cap": 6.0
+    }
+  },
+  "expected": {
+    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "execution_status": "PROJECTION_ONLY",
+    "market_type": "PITCHER_K",
+    "reason_codes_must_not_include": ["BLOCKED_MISSING_PRICING", "UNQUALIFIED_PITCHER"]
+  },
+  "baseline_reviewed": false
+}

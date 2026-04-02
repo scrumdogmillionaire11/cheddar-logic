@@ -1,0 +1,40 @@
+{
+  "fixture_id": "nhl_total_unknown_goalie_01",
+  "sport": "NHL",
+  "card_family": "NHL_TOTAL",
+  "card_mode": "ODDS_BACKED",
+  "description": "One goalie UNKNOWN — confidence capped, 1P must be PASS per invariant",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "nhl_test_game_003",
+    "market_type": "TOTAL",
+    "selection": "UNDER"
+  },
+  "input": {
+    "game_id": "nhl_test_game_003",
+    "sport": "NHL",
+    "home_team": "Toronto Maple Leafs",
+    "away_team": "Ottawa Senators",
+    "game_time_utc": "2026-04-02T00:00:00Z",
+    "total": 6.5,
+    "total_price_over": -110,
+    "total_price_under": -110,
+    "h2h_home": -175,
+    "h2h_away": 150,
+    "captured_at": "2026-04-01T18:00:00Z",
+    "_goalie_report": {
+      "home_goalie": "Ilya Samsonov",
+      "home_certainty": "CONFIRMED",
+      "away_goalie": null,
+      "away_certainty": "UNKNOWN"
+    }
+  },
+  "expected": {
+    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "execution_status": "BLOCKED",
+    "market_type": "TOTAL",
+    "nhl_goalie_certainty_pair": "CONFIRMED/UNKNOWN",
+    "reason_codes_must_not_include": ["EDGE_CLEAR"]
+  },
+  "baseline_reviewed": false
+}

@@ -1,0 +1,38 @@
+{
+  "fixture_id": "nba_spread_clean_01",
+  "sport": "NBA",
+  "card_family": "NBA_SPREAD",
+  "card_mode": "ODDS_BACKED",
+  "description": "Clean spread edge — full odds, FIRE status, executable",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "nba_test_game_002",
+    "market_type": "SPREAD",
+    "selection": "HOME"
+  },
+  "input": {
+    "game_id": "nba_test_game_002",
+    "sport": "NBA",
+    "home_team": "Milwaukee Bucks",
+    "away_team": "Miami Heat",
+    "game_time_utc": "2026-04-02T01:30:00Z",
+    "total": 218.5,
+    "total_price_over": -110,
+    "total_price_under": -110,
+    "spread_home": -5.5,
+    "spread_away": 5.5,
+    "spread_price_home": -108,
+    "spread_price_away": -112,
+    "h2h_home": -220,
+    "h2h_away": 185,
+    "captured_at": "2026-04-01T18:00:00Z"
+  },
+  "expected": {
+    "input_hash": "RECOMPUTE_ON_FIRST_RUN",
+    "execution_status": "EXECUTABLE",
+    "classification": "PLAY",
+    "market_type": "SPREAD",
+    "reason_codes_must_not_include": ["PASS_NO_EDGE", "BLOCKED_MISSING_PRICING"]
+  },
+  "baseline_reviewed": false
+}

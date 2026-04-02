@@ -17,10 +17,20 @@ const {
 } = require('../run_model_audit');
 
 function makeFixture(sport = 'NBA', overrides = {}) {
+  const isProjectionOnly = sport === 'MLB';
+  const cardFamily = isProjectionOnly ? 'MLB_PITCHER_K' : sport === 'NHL' ? 'NHL_TOTAL' : 'NBA_TOTAL';
+  const cardMode = isProjectionOnly ? 'PROJECTION_ONLY' : 'ODDS_BACKED';
   const base = {
     fixture_id: `${sport.toLowerCase()}_fixture_01`,
     sport,
+    card_family: cardFamily,
+    card_mode: cardMode,
     input_contract: 'ODDS_SNAPSHOT',
+    match_key: {
+      game_id: `${sport.toLowerCase()}_game_01`,
+      market_type: 'TOTAL',
+      selection: 'OVER',
+    },
     input: {
       game_id: `${sport.toLowerCase()}_game_01`,
       sport,
@@ -29,20 +39,27 @@ function makeFixture(sport = 'NBA', overrides = {}) {
       game_time_utc: '2026-04-02T00:00:00Z',
       captured_at: '2026-04-01T18:00:00Z',
       total: 224.5,
-      total_price_over: -110,
-      total_price_under: -110,
+      ...(isProjectionOnly ? {} : {
+        total_price_over: -110,
+        total_price_under: -110,
+      }),
     },
     expected: {
       input_hash: 'RECOMPUTE_ON_FIRST_RUN',
       classification: 'PLAY',
-      execution_status: 'EXECUTABLE',
+      execution_status: isProjectionOnly ? 'PROJECTION_ONLY' : 'EXECUTABLE',
       market_type: 'TOTAL',
     },
+    baseline_reviewed: false,
   };
 
   return {
     ...base,
     ...overrides,
+    match_key: {
+      ...base.match_key,
+      ...(overrides.match_key || {}),
+    },
     input: {
       ...base.input,
       ...(overrides.input || {}),
@@ -120,7 +137,10 @@ describe('fixture loader validation', () => {
       JSON.stringify({
         fixture_id: 'broken_fixture',
         sport: 'NBA',
+        card_family: 'NBA_TOTAL',
+        card_mode: 'ODDS_BACKED',
         input_contract: 'ODDS_SNAPSHOT',
+        match_key: { game_id: 'nba_game_broken' },
         input: {},
         expected: {},
       }),
@@ -230,7 +250,13 @@ describe('buildAuditSnapshot', () => {
       expect(snapshot.snapshot_version).toBe('v1');
       expect(snapshot.stage_metadata.runner).toMatch(/^run_(nba|mlb|nhl)_model$/);
       expect(snapshot.stage_hashes.input).toHaveLength(64);
-      expect(snapshot.final_cards.length).toBe(1);
+      // MLB fixtures are PROJECTION_ONLY — they do not produce publish-ready cards.
+      // ODDS_BACKED sports (NBA, NHL) produce exactly one final card per fixture.
+      if (sport === 'MLB') {
+        expect(snapshot.final_cards.length).toBe(0);
+      } else {
+        expect(snapshot.final_cards.length).toBe(1);
+      }
     });
   });
 
@@ -381,10 +407,15 @@ describe('audit CLI and suite mode', () => {
     writeFixture(root, 'NBA', 'bad.json', {
       fixture_id: 'bad_fixture',
       sport: 'NBA',
+      card_family: 'NBA_TOTAL',
+      card_mode: 'ODDS_BACKED',
       input_contract: 'ODDS_SNAPSHOT',
+      match_key: { game_id: 'bad_game', market_type: 'TOTAL', selection: 'OVER' },
       input: {
         game_id: 'bad_game',
         sport: 'NBA',
+        total_price_over: -110,
+        total_price_under: -110,
       },
       expected: {
         input_hash: 'RECOMPUTE_ON_FIRST_RUN',
@@ -395,6 +426,7 @@ describe('audit CLI and suite mode', () => {
           classification: 'PASS',
         },
       },
+      baseline_reviewed: false,
     });
 
     const stdout = { write: jest.fn() };
