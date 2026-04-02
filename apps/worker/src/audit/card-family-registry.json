@@ -1,0 +1,66 @@
+[
+  {
+    "family": "NBA_TOTAL",
+    "card_family_status": "LIVE",
+    "status_set_date": "2026-04-02",
+    "status_rationale": "Full odds pipeline is active; game totals are supported by live closing-line data and model is calibrated against completed seasons.",
+    "odds_backed": true,
+    "executable": true
+  },
+  {
+    "family": "NBA_SPREAD",
+    "card_family_status": "LIVE",
+    "status_set_date": "2026-04-02",
+    "status_rationale": "Full odds pipeline is active; spread cards are supported by live closing-line data and model is calibrated against completed seasons.",
+    "odds_backed": true,
+    "executable": true
+  },
+  {
+    "family": "NHL_TOTAL",
+    "card_family_status": "LIVE",
+    "status_set_date": "2026-04-02",
+    "status_rationale": "Full odds pipeline is active; game totals are supported by live closing-line data and model is calibrated against completed seasons.",
+    "odds_backed": true,
+    "executable": true
+  },
+  {
+    "family": "NHL_ML",
+    "card_family_status": "LIVE",
+    "status_set_date": "2026-04-02",
+    "status_rationale": "Full odds pipeline is active; moneyline cards are supported by live closing-line data and model is calibrated against completed seasons.",
+    "odds_backed": true,
+    "executable": true
+  },
+  {
+    "family": "NHL_1P_TOTAL",
+    "card_family_status": "PROJECTION_ONLY",
+    "status_set_date": "2026-04-02",
+    "status_rationale": "Per-event first-period odds fetch was removed (WI-0727); the model runs on projection inputs only and cards must not be surfaced as executable until a live odds lane is restored.",
+    "odds_backed": false,
+    "executable": false
+  },
+  {
+    "family": "NHL_PLAYER_SHOTS",
+    "card_family_status": "PROJECTION_ONLY",
+    "status_set_date": "2026-04-02",
+    "status_rationale": "Per-event player shots odds fetch was removed (WI-0727); the model runs on projection inputs only and cards must not be surfaced as executable until a live odds lane is restored.",
+    "odds_backed": false,
+    "executable": false
+  },
+  {
+    "family": "MLB_PITCHER_K",
+    "card_family_status": "PROJECTION_ONLY",
+    "status_set_date": "2026-04-02",
+    "status_rationale": "Per-event pitcher strikeout odds fetch was removed (WI-0727); the model runs on projection inputs only and cards must not be surfaced as executable until a live odds lane is restored.",
+    "odds_backed": false,
+    "executable": false
+  },
+  {
+    "family": "MLB_F5_TOTAL",
+    "card_family_status": "PROJECTION_ONLY",
+    "status_set_date": "2026-04-02",
+    "status_rationale": "Per-event F5 total odds fetch was removed (WI-0727); the model runs on projection inputs only and cards must not be surfaced as executable until a live odds lane is restored.",
+    "odds_backed": false,
+    "executable": false
+  }
+]
