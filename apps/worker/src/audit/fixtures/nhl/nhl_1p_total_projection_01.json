@@ -1,0 +1,45 @@
+{
+  "fixture_id": "nhl_1p_total_projection_01",
+  "sport": "NHL",
+  "card_family": "NHL_1P_TOTAL",
+  "card_mode": "PROJECTION_ONLY",
+  "description": "First-period total, projection-only lane — no price fields required",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "nhl_test_game_005",
+    "market_type": "1P_TOTAL",
+    "selection": "UNDER"
+  },
+  "input": {
+    "game_id": "nhl_test_game_005",
+    "sport": "NHL",
+    "home_team": "New York Rangers",
+    "away_team": "New Jersey Devils",
+    "game_time_utc": "2026-04-02T23:00:00Z",
+    "captured_at": "2026-04-01T18:00:00Z",
+    "_goalie_report": {
+      "home_goalie": "Igor Shesterkin",
+      "home_certainty": "CONFIRMED",
+      "away_goalie": "Vitek Vanecek",
+      "away_certainty": "CONFIRMED"
+    },
+    "_1p_model_inputs": {
+      "home_sog_1p_avg": 9.2,
+      "away_sog_1p_avg": 8.7,
+      "home_save_pct_1p": 0.921,
+      "away_save_pct_1p": 0.917
+    }
+  },
+  "expected": {
+    "input_hash": "bb7be8e897ef5c9bb52e24806cef13351efcb4a51c9097c2eeab50a95527e74c",
+    "execution_status": "PROJECTION_ONLY",
+    "market_type": "UNKNOWN",
+    "reason_codes_must_not_include": ["BLOCKED_MISSING_PRICING"]
+  },
+  "_baseline_change_note": {
+    "changed_by": "codex",
+    "reason": "First baseline lock accepts the current audit runner's normalized market_type=UNKNOWN for this NHL 1P total projection fixture.",
+    "approved_at": "2026-04-02T16:50:32Z"
+  },
+  "baseline_reviewed": true
+}

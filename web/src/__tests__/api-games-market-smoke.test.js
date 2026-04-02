@@ -63,8 +63,15 @@ async function runSourceContractAssertions(assert) {
   );
   assert(
     routeSource.includes('isMlbPitcherKPlay') &&
-      routeSource.includes('seenMlbPitcherKPlayKeys'),
-    'WI-0599: MLB pitcher K prop plays must have dedup block parallel to isNhlPropPlay',
+      routeSource.includes('seenMlbPitcherKPlayKeys') &&
+      routeSource.includes("play.canonical_market_key === 'pitcher_strikeouts'"),
+    'WI-0599: MLB pitcher K prop plays must have a pitcher-strikeouts-specific dedup block instead of matching every MLB PROP row',
+  );
+  assert(
+    routeSource.includes('const isProp = p.market_type === \'PROP\';') &&
+      routeSource.includes('p.canonical_market_key ??') &&
+      routeSource.includes('p.cardType ??'),
+    'Prop secondary dedupe must use a prop-family key, not generic PROP, so MLB pitcher K rows are not collapsed',
   );
 }
 

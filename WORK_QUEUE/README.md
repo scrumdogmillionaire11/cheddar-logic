@@ -57,7 +57,7 @@ Recommended execution order: (`WI-0587` + `WI-0588`) -> `WI-0589`, with (`WI-059
 - ~~`WI-0599`~~: ✓ Pitcher Ks web integration — props surfaces (route.ts, filters, presets, dedup)
 - ~~`WI-0600`~~: ✓ Pitcher Ks rollout docs + acceptance pack
 
-**Rollout state:** Projection-only mode active by default. Odds-backed mode available via `PITCHER_K_ODDS_ENABLED=true`. See [docs/runbooks/pitcher-ks-rollout.md](../docs/runbooks/pitcher-ks-rollout.md) for mode switch protocol and acceptance checklist.
+**Rollout state:** Projection-only only. Event-level pitcher-K odds fetching was removed in `WI-0727`; see [docs/runbooks/pitcher-ks-rollout.md](../docs/runbooks/pitcher-ks-rollout.md) for the current operating contract.
 
 
 ### Soccer Asian Handicap workstream (queued)

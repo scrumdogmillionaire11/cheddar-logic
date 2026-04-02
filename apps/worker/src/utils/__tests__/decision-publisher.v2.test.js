@@ -9,8 +9,11 @@ jest.mock('@cheddar-logic/data', () => ({
 
 const {
   applyUiActionFields,
+  assertNoDecisionMutation,
+  capturePublishedDecisionState,
   deriveAction,
   deriveVolEnv,
+  finalizeDecisionFields,
   publishDecisionForCard,
 } = require('../decision-publisher.js');
 const {
@@ -104,6 +107,58 @@ describe('decision publisher v2 pipeline', () => {
     expect(deriveAction({ tier: 'BEST' })).toBe('HOLD');
     expect(deriveAction({ tier: 'WATCH' })).toBe('HOLD');
     expect(deriveAction({ tier: null })).toBe('PASS');
+  });
+
+  test('applyUiActionFields is display-only once decision fields already exist', () => {
+    const payload = buildWave1Payload({
+      execution_status: 'PROJECTION_ONLY',
+    });
+    applyUiActionFields(payload);
+
+    const strictSnapshot = capturePublishedDecisionState(payload);
+    const decisionRef = payload.decision_v2;
+
+    applyUiActionFields(payload);
+
+    expect(capturePublishedDecisionState(payload)).toEqual(strictSnapshot);
+    expect(payload.decision_v2).toBe(decisionRef);
+    expect(payload.ui_display_status).toBe('WATCH');
+  });
+
+  test('projection-only cards never surface PLAY in ui_display_status', () => {
+    const payload = {
+      kind: 'PLAY',
+      execution_status: 'PROJECTION_ONLY',
+      classification: 'BASE',
+      action: 'FIRE',
+      status: 'FIRE',
+      reason_codes: ['EDGE_CLEAR'],
+      decision_v2: {
+        official_status: 'PLAY',
+        primary_reason_code: 'EDGE_CLEAR',
+      },
+    };
+
+    applyUiActionFields(payload);
+
+    expect(payload.ui_display_status).toBe('WATCH');
+    expect(payload.decision_v2.official_status).toBe('PLAY');
+  });
+
+  test('assertNoDecisionMutation throws when strict decision fields drift after publish', () => {
+    const payload = buildWave1Payload({
+      execution_status: 'EXECUTABLE',
+    });
+    finalizeDecisionFields(payload);
+    const strictSnapshot = capturePublishedDecisionState(payload);
+
+    payload.classification = 'PASS';
+
+    expect(() =>
+      assertNoDecisionMutation(payload, strictSnapshot, {
+        label: 'test-mutation',
+      }),
+    ).toThrow('[INVARIANT_BREACH]');
   });
 
   test('attaches decision_v2 for wave1 payload and preserves the actionable decision envelope', () => {
@@ -1122,6 +1177,11 @@ describe('decision publisher v2 pipeline', () => {
     expect(outcome.gated).toBe(true);
     expect(outcome.allow).toBe(false);
     expect(outcome.reasonCode).toBe('EDGE_UNAVAILABLE');
+    expect(card.payloadData.gate_reason_codes).toEqual(
+      expect.arrayContaining(['DECISION_HELD', 'EDGE_UNAVAILABLE']),
+    );
+    expect(card.payloadData.reason_codes).not.toContain('DECISION_HELD');
+    expect(card.payloadData.selection.side).toBe(card.payloadData.prediction);
 
     expect(data.insertDecisionEvent).toHaveBeenCalledWith(
       expect.objectContaining({

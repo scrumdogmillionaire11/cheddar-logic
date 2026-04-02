@@ -1,0 +1,82 @@
+name: Model Audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 9 * * 1'
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      CHEDDAR_DB_PATH: /tmp/cheddar-logic/audit.db
+      RUN_SCOPE: ci-${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            apps/worker/package-lock.json
+            packages/adapters/package-lock.json
+            packages/data/package-lock.json
+            packages/models/package-lock.json
+            packages/odds/package-lock.json
+
+      - name: Install audit dependencies
+        run: |
+          npm --prefix packages/data ci
+          npm --prefix apps/worker ci
+
+      - name: Collect changed audit fixtures
+        run: |
+          mkdir -p /tmp/audit
+          : > /tmp/audit/changed-fixtures.txt
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            exit 0
+          fi
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > /tmp/audit/changed-files.txt
+          grep '^apps/worker/src/audit/fixtures/.*\.json$' /tmp/audit/changed-files.txt > /tmp/audit/changed-fixtures-rel.txt || true
+          while IFS= read -r rel; do
+            [ -n "$rel" ] || continue
+            printf '%s/%s\n' "$GITHUB_WORKSPACE" "$rel" >> /tmp/audit/changed-fixtures.txt
+          done < /tmp/audit/changed-fixtures-rel.txt
+
+      - name: Run audit gate
+        run: |
+          OUTPUT_DIR="apps/worker/audit-output/${RUN_SCOPE}"
+          mkdir -p "$OUTPUT_DIR"
+          EXTRA_ARGS=""
+          if [ -s /tmp/audit/changed-fixtures.txt ]; then
+            EXTRA_ARGS="--changed-fixtures-file /tmp/audit/changed-fixtures.txt"
+          fi
+          set +e
+          npm --prefix apps/worker run audit:all -- --output-dir "$OUTPUT_DIR" --run-scope "$RUN_SCOPE" --out "$OUTPUT_DIR/audit-report.json" $EXTRA_ARGS
+          STATUS=$?
+          if [ -f "$OUTPUT_DIR/audit-summary.json" ]; then
+            cat "$OUTPUT_DIR/audit-summary.json"
+          else
+            echo "audit-summary.json was not produced"
+          fi
+          exit $STATUS
+
+      - name: Generate scorecard
+        if: always()
+        run: |
+          OUTPUT_DIR="apps/worker/audit-output/${RUN_SCOPE}"
+          npm --prefix apps/worker run audit:scorecard -- --output-dir "$OUTPUT_DIR" --run-scope "$RUN_SCOPE" --audit-report "$OUTPUT_DIR/audit-report.json"
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-scorecard-${{ github.run_id }}
+          path: apps/worker/audit-output/${{ env.RUN_SCOPE }}/

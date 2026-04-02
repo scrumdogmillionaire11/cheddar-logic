@@ -63,7 +63,7 @@ const {
 } = require('@cheddar-logic/models');
 const {
   publishDecisionForCard,
-  applyUiActionFields,
+  assertNoDecisionMutation,
 } = require('../utils/decision-publisher');
 const {
   normalizeRawDataPayload,
@@ -274,6 +274,57 @@ function deriveGameBlockingReasonCodes({
 function canPriceCard(card) {
   const sharpPriceStatus = card?.payloadData?.decision_v2?.sharp_price_status;
   return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
+}
+
+function deriveExecutionStatusForCard(
+  card,
+  { withoutOddsMode = false } = {},
+) {
+  const payload = card?.payloadData;
+  const existingStatus = String(payload?.execution_status || '').toUpperCase();
+  if (
+    existingStatus === 'EXECUTABLE' ||
+    existingStatus === 'PROJECTION_ONLY' ||
+    existingStatus === 'BLOCKED'
+  ) {
+    return existingStatus;
+  }
+
+  if (
+    withoutOddsMode ||
+    Array.isArray(payload?.tags) && payload.tags.includes('no_odds_mode') ||
+    payload?.line_source === 'projection_floor'
+  ) {
+    return 'PROJECTION_ONLY';
+  }
+
+  return Number.isFinite(payload?.price) ? 'EXECUTABLE' : 'BLOCKED';
+}
+
+function assignExecutionStatus(card, options = {}) {
+  if (!card?.payloadData || typeof card.payloadData !== 'object') return null;
+  const executionStatus = deriveExecutionStatusForCard(card, options);
+  card.payloadData.execution_status = executionStatus;
+  return executionStatus;
+}
+
+function assertExecutableCardsArePriced(card) {
+  const executionStatus = String(
+    card?.payloadData?.execution_status || '',
+  ).toUpperCase();
+  if (executionStatus !== 'EXECUTABLE') return;
+  if (canPriceCard(card)) return;
+
+  const error = new Error(
+    `[INVARIANT_BREACH] pricing_ready=false cannot coexist with execution_status=EXECUTABLE for ${card?.cardType || 'unknown-card'}`,
+  );
+  error.code = 'INVARIANT_BREACH';
+
+  if (process.env.NODE_ENV === 'test') {
+    throw error;
+  }
+
+  console.warn(error.message);
 }
 
 function applyNbaSettlementMarketContext(card) {
@@ -496,6 +547,7 @@ function generateNBAMarketCallCards(
           total_bias: totalBias,
         },
         reasoning: `${pickText}: ${totalDecision.reasoning}`,
+        execution_status: withoutOddsMode ? 'PROJECTION_ONLY' : 'EXECUTABLE',
         edge: totalDecision.edge ?? null,
         edge_pct: totalDecision.edge ?? null,
         edge_points: totalDecision.edge_points ?? null,
@@ -665,6 +717,7 @@ function generateNBAMarketCallCards(
           total_bias: totalBias,
         },
         reasoning: `${pickText}: ${spreadDecision.reasoning}`,
+        execution_status: 'EXECUTABLE',
         edge: spreadDecision.edge ?? null,
         edge_pct: spreadDecision.edge ?? null,
         edge_points: spreadDecision.edge_points ?? null,
@@ -1019,6 +1072,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
             applyNbaSettlementMarketContext(card);
+            assignExecutionStatus(card, { withoutOddsMode });
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -1043,13 +1097,14 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                 `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
               );
             }
-            applyUiActionFields(card.payloadData, { oddsSnapshot });
+            assertExecutableCardsArePriced(card);
             attachRunId(card, jobRunId);
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';
             pendingCards.push({
               card,
+              strictDecisionSnapshot: decisionOutcome.strictDecisionSnapshot,
               logLine: `  [ok] ${gameId} [${card.cardType}]${tierLabel}: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
             });
           }
@@ -1071,6 +1126,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           for (const card of nbaMarketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
             applyNbaSettlementMarketContext(card);
+            assignExecutionStatus(card, { withoutOddsMode });
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -1095,28 +1151,14 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                 `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
               );
             }
-            applyUiActionFields(card.payloadData, { oddsSnapshot });
-            // Without Odds Mode: buildDecisionV2 always returns PASS when edgePct=null.
-            // Override to LEAN AFTER applyUiActionFields so the last write wins.
-            if (
-              withoutOddsMode &&
-              Array.isArray(card.payloadData.tags) &&
-              card.payloadData.tags.includes('no_odds_mode')
-            ) {
-              card.payloadData.classification = 'LEAN';
-              card.payloadData.action = 'HOLD';
-              card.payloadData.status = 'WATCH';
-              card.payloadData.pass_reason_code = null;
-              if (card.payloadData.decision_v2) {
-                card.payloadData.decision_v2.official_status = 'LEAN';
-              }
-            }
+            assertExecutableCardsArePriced(card);
             attachRunId(card, jobRunId);
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';
             pendingCards.push({
               card,
+              strictDecisionSnapshot: decisionOutcome.strictDecisionSnapshot,
               logLine: `  [ok] ${gameId} [${card.cardType}]${tierLabel}: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
             });
           }
@@ -1141,6 +1183,13 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
 
           for (const entry of pendingCards) {
             entry.card.payloadData.pipeline_state = pipelineState;
+            assertNoDecisionMutation(
+              entry.card.payloadData,
+              entry.strictDecisionSnapshot,
+              {
+                label: `${entry.card.cardType}:before_insert`,
+              },
+            );
             insertCardPayload(entry.card);
             cardsGenerated++;
             console.log(entry.logLine);
@@ -1217,4 +1266,8 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runNBAModel, generateNBAMarketCallCards };
+module.exports = {
+  runNBAModel,
+  generateNBAMarketCallCards,
+  deriveExecutionStatusForCard,
+};

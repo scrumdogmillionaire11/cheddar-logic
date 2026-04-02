@@ -312,10 +312,11 @@ export default function GameCardItem({
     (hasMarketSpecificEdge && Math.abs(effectiveEdgePct) < 0.0005);
   const hasActionableEdge = hasMarketSpecificEdge && !isNoEdgeAtPrice;
   const marketType = displayPlay.market_type;
+  const isF5TotalMarket = card.sport === 'MLB' && marketType === 'FIRST_PERIOD';
   const isSpreadLikeMarket =
     marketType === 'SPREAD' || marketType === 'PUCKLINE';
   const isTotalLikeMarket =
-    marketType === 'TOTAL' || marketType === 'TEAM_TOTAL';
+    marketType === 'TOTAL' || marketType === 'TEAM_TOTAL' || isF5TotalMarket;
   const projectedMargin =
     typeof displayPlay.projectedMargin === 'number'
       ? displayPlay.projectedMargin
@@ -335,8 +336,24 @@ export default function GameCardItem({
       : typeof displayPlay.projectedTotal === 'number'
         ? displayPlay.projectedTotal
         : typeof totalFallbackPlay?.projectedTotal === 'number'
-          ? totalFallbackPlay.projectedTotal
-          : undefined;
+        ? totalFallbackPlay.projectedTotal
+        : undefined;
+  const projectedTotalLow =
+    typeof displayPlay.projectedTotalLow === 'number'
+      ? displayPlay.projectedTotalLow
+      : undefined;
+  const projectedTotalHigh =
+    typeof displayPlay.projectedTotalHigh === 'number'
+      ? displayPlay.projectedTotalHigh
+      : undefined;
+  const projectedHomeF5Runs =
+    typeof displayPlay.projectedHomeF5Runs === 'number'
+      ? displayPlay.projectedHomeF5Runs
+      : undefined;
+  const projectedAwayF5Runs =
+    typeof displayPlay.projectedAwayF5Runs === 'number'
+      ? displayPlay.projectedAwayF5Runs
+      : undefined;
   const onePeriodTotalsPlay = originalGame.plays.find(
     (p) => p.cardType === 'nhl-pace-1p',
   );
@@ -412,6 +429,20 @@ export default function GameCardItem({
     typeof displayPlay.projectedScoreAway === 'number'
       ? displayPlay.projectedScoreAway
       : undefined;
+  const projectionSourceLabel =
+    displayPlay.projectionSource === 'FULL_MODEL'
+      ? 'Full model'
+      : displayPlay.projectionSource === 'SYNTHETIC_FALLBACK'
+        ? 'Synthetic fallback'
+        : null;
+  const f5OverPlayableAtOrBelow =
+    typeof displayPlay.playability?.over_playable_at_or_below === 'number'
+      ? displayPlay.playability.over_playable_at_or_below
+      : null;
+  const f5UnderPlayableAtOrAbove =
+    typeof displayPlay.playability?.under_playable_at_or_above === 'number'
+      ? displayPlay.playability.under_playable_at_or_above
+      : null;
   const bakedLine =
     typeof displayPlay.line === 'number' ? displayPlay.line : undefined;
   const spreadSelectionSide = (
@@ -728,6 +759,11 @@ export default function GameCardItem({
                   Data issue
                 </span>
               )}
+              {isF5TotalMarket && projectionSourceLabel && (
+                <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-slate-700/30 text-slate-200 border-slate-600/50">
+                  {projectionSourceLabel}
+                </span>
+              )}
             </div>
           </div>
           <p className="mt-2 text-xl font-bold text-cloud">{visibleBetText}</p>
@@ -835,7 +871,7 @@ export default function GameCardItem({
                   {hasTotalContext && (
                     <div className="space-y-1">
                       <p>
-                        Model total:{' '}
+                        {isF5TotalMarket ? 'Model F5 total' : 'Model total'}:{' '}
                         <span className="text-cloud/90 font-bold">
                           {typeof projectedTeamTotal === 'number'
                             ? projectedTeamTotal.toFixed(1)
@@ -884,12 +920,53 @@ export default function GameCardItem({
                             {' '}| Delta:{' '}
                             <span className="text-cloud/90 font-bold">
                               {typeof edgePoints === 'number'
-                                ? `${formatSignedDecimal(edgePoints)} pts`
-                                : 'N/A'}
+                            ? `${formatSignedDecimal(edgePoints)} pts`
+                            : 'N/A'}
                             </span>
                           </>
                         )}
                       </p>
+                      {isF5TotalMarket && (
+                        <>
+                          <p>
+                            Range:{' '}
+                            <span className="text-cloud/90 font-bold">
+                              {typeof projectedTotalLow === 'number' &&
+                              typeof projectedTotalHigh === 'number'
+                                ? `${projectedTotalLow.toFixed(1)}-${projectedTotalHigh.toFixed(1)}`
+                                : 'N/A'}
+                            </span>
+                            {' '}| Source:{' '}
+                            <span className="text-cloud/90 font-bold">
+                              {projectionSourceLabel ?? 'N/A'}
+                            </span>
+                          </p>
+                          <p>
+                            Playable O&lt;={' '}
+                            <span className="text-cloud/90 font-bold">
+                              {f5OverPlayableAtOrBelow !== null
+                                ? f5OverPlayableAtOrBelow.toFixed(1)
+                                : 'N/A'}
+                            </span>
+                            {' '}| U&gt;={' '}
+                            <span className="text-cloud/90 font-bold">
+                              {f5UnderPlayableAtOrAbove !== null
+                                ? f5UnderPlayableAtOrAbove.toFixed(1)
+                                : 'N/A'}
+                            </span>
+                            {typeof projectedAwayF5Runs === 'number' &&
+                              typeof projectedHomeF5Runs === 'number' && (
+                                <>
+                                  {' '}| Team means:{' '}
+                                  <span className="text-cloud/90 font-bold">
+                                    {card.awayTeam} {projectedAwayF5Runs.toFixed(1)} /{' '}
+                                    {card.homeTeam} {projectedHomeF5Runs.toFixed(1)}
+                                  </span>
+                                </>
+                              )}
+                          </p>
+                        </>
+                      )}
                       {totalSoftLineFlag && (
                         <p className="text-amber-300">
                           Soft line at{' '}

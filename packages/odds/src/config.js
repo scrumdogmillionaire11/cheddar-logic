@@ -6,22 +6,15 @@
  * - 1 token = 1 market pulled (region fixed to 'us')
  * - Multiple bookmakers doesn't increase token cost
  *
- * Canonical market budget — working featured markets only (bulk endpoint):
- *   NHL  (main job):  h2h + totals                 = 2 tokens
- *   NBA  (main job):  totals + spreads              = 2 tokens
- *   MLB  (main job):  h2h                           = 1 token
- *   NHL  (prop job):  player_shots_on_goal          = 1 token (separate scheduler)
- *   MLB  (prop job):  pitcher_strikeouts            = 1 token (separate scheduler)
- *   ──────────────────────────────────────────────── = 5 tokens/main composite fetch
+ * Canonical featured-market budget — MUST stay focused on sport-level markets:
+ *   NBA  (main job): totals + spreads                        = 2 tokens
+ *   NHL  (main job): totals                                  = 1 token
+ *   MLB  (schedule baseline): h2h                            = 1 token
+ *   ──────────────────────────────────────────────────────── = 4 tokens
  *
- * NOTE: The Odds API /v4/sports/{sport}/odds bulk endpoint only accepts featured
- * markets (h2h, spreads, totals, outrights). Period/alternate markets such as
- * totals_p1 or totals_1st_5_innings return 422. Per-event fetching via
- * /v4/sports/{sport}/events/{event_id}/odds is the supported approach — deferred
- * to a future WI (see WI-0715 dead-code cleanup for context).
- *
- * To add a market: increment tokensPerFetch here, verify total stays ≤7,
- * update fetchFromOddsAPI (index.js) and normalize.js if a new market type.
+ * Per-event / alternate-period markets are intentionally excluded here.
+ * NHL 1P, NHL props, MLB F5, and MLB pitcher-K now run projection-only and
+ * must not re-enter the shared odds fetch surface without a dedicated WI.
  *
  * US Bookmakers:
  * - betmgm, draftkings, fanduel (main books)
@@ -33,8 +26,8 @@ const SPORTS_CONFIG = {
   NHL: {
     active: true,
     season: { start: '10-01', end: '04-30' },
-    markets: ['h2h', 'totals'],
-    tokensPerFetch: 2,
+    markets: ['totals'],
+    tokensPerFetch: 1,
     defaultTTL: 240, // 4 hours standard
     pregameTTL: 30, // 30 min inside 2 hours
     sharpWindowTTL: 0, // Don't cache inside 1 hour — fetch on demand
@@ -71,6 +64,8 @@ const SPORTS_CONFIG = {
   MLB: {
     active: true, // season starts 2026-03-25
     season: { start: '03-20', end: '11-01' },
+    // Keep one featured market so pull_odds_hourly continues to seed MLB games
+    // into the canonical games table while F5 and pitcher-K stay projection-only.
     markets: ['h2h'],
     tokensPerFetch: 1,
     defaultTTL: 180, // Shorter — SP confirmations move lines faster
@@ -85,7 +80,7 @@ const SPORTS_CONFIG = {
       'espnbet',
       'fliff',
     ],
-    notes: 'No external model yet — dashboard only',
+    notes: 'Projection-only MLB lanes keep schedule seeding via featured-market fetch only',
   },
 
   NFL: {
@@ -119,12 +114,8 @@ function getActiveSports() {
     .filter(([_, cfg]) => {
       if (!cfg.active) return false;
 
-      // Use OR for wrap-around seasons (e.g. NFL: Sep–Feb, start > end)
-      // Use AND for within-year seasons (e.g. MLB: Mar–Nov, start < end)
-      const wrapsYear = cfg.season.start > cfg.season.end;
-      const inSeason = wrapsYear
-        ? (mmdd >= cfg.season.start || mmdd <= cfg.season.end)
-        : (mmdd >= cfg.season.start && mmdd <= cfg.season.end);
+      // Simple date range check (doesn't handle year boundaries perfectly, but works for season logic)
+      const inSeason = mmdd >= cfg.season.start || mmdd <= cfg.season.end;
       return inSeason;
     })
     .map(([sport]) => sport);
@@ -157,12 +148,7 @@ function isInSeason(sport) {
   const today = new Date();
   const mmdd = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-  // Use OR for wrap-around seasons (e.g. NFL: Sep–Feb, start > end)
-  // Use AND for within-year seasons (e.g. MLB: Mar–Nov, start < end)
-  const wrapsYear = cfg.season.start > cfg.season.end;
-  return wrapsYear
-    ? (mmdd >= cfg.season.start || mmdd <= cfg.season.end)
-    : (mmdd >= cfg.season.start && mmdd <= cfg.season.end);
+  return mmdd >= cfg.season.start || mmdd <= cfg.season.end;
 }
 
 module.exports = {

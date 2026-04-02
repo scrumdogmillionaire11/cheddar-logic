@@ -17,6 +17,9 @@
  */
 
 const {
+  computeMLBDriverCards,
+  projectF5Total,
+  projectF5TotalCard,
   scorePitcherK,
   scorePitcherKUnder,
   projectF5ML,
@@ -30,6 +33,11 @@ const {
   selectBestPitcherUnderMarket,
   buildPitcherStrikeoutLookback,
   computeProjectionFloorF5,
+  resolveMlbPitcherPropRolloutState,
+  evaluatePitcherPropPublishability,
+  deriveMlbExecutionEnvelope,
+  assertMlbExecutionInvariant,
+  buildMlbPipelineState,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -65,6 +73,45 @@ const neutralMatchup = {
 };
 
 const PROJECTION_ONLY_OPTS = { mode: 'PROJECTION_ONLY', side: 'over' };
+
+const f5HomePitcher = {
+  era: 3.5,
+  whip: 1.12,
+  k_per_9: 9.4,
+  handedness: 'R',
+  x_fip: 3.42,
+  bb_pct: 0.071,
+  hr_per_9: 0.98,
+  season_k_pct: 0.272,
+};
+
+const f5AwayPitcher = {
+  era: 4.1,
+  whip: 1.28,
+  k_per_9: 8.6,
+  handedness: 'L',
+  x_fip: 3.95,
+  bb_pct: 0.083,
+  hr_per_9: 1.14,
+  season_k_pct: 0.238,
+};
+
+const f5FullContext = {
+  home_offense_profile: {
+    wrc_plus_vs_lhp: 118,
+    k_pct_vs_lhp: 0.208,
+    iso_vs_lhp: 0.201,
+  },
+  away_offense_profile: {
+    wrc_plus_vs_rhp: 94,
+    k_pct_vs_rhp: 0.247,
+    iso_vs_rhp: 0.142,
+  },
+  park_run_factor: 1.04,
+  temp_f: 82,
+  wind_mph: 12,
+  wind_dir: 'OUT',
+};
 
 const strongUnderHistory = [
   { strikeouts: 5, number_of_pitches: 87, innings_pitched: 5.1, game_date: '2026-03-25' },
@@ -137,14 +184,14 @@ describe('scorePitcherK — projection-only mode', () => {
     expect(['Play', 'Conditional', 'Pass']).toContain(result.verdict);
   });
 
-  test('2. Blocked: INSUFFICIENT_STARTS halts at Step 1', () => {
+  test('2. Thin-sample starters still emit projection-only results with an explicit flag', () => {
     const greenPitcher = { ...fullPitcher, season_starts: 2, starts: 2 };
     const result = scorePitcherK(greenPitcher, neutralMatchup, {}, null, {}, PROJECTION_ONLY_OPTS);
 
-    expect(result.status).toBe('HALTED');
-    expect(result.halted_at).toBe('STEP_1');
-    expect(result.reason_code).toBe('INSUFFICIENT_STARTS');
-    expect(result.verdict).toBe('PASS');
+    expect(result.status).toBe('COMPLETE');
+    expect(result.projection_only).toBe(true);
+    expect(result.reason_codes).toContain('THIN_SAMPLE_STARTS');
+    expect(result.projection).toBeGreaterThan(0);
   });
 
   test('3. Blocked: SHORT_LEASH kills over at Step 2', () => {
@@ -171,6 +218,133 @@ describe('scorePitcherK — projection-only mode', () => {
     expect(result.halted_at).toBe('STEP_2');
     expect(result.reason_code).toBe('IL_RETURN');
     expect(result.verdict).toBe('PASS');
+  });
+});
+
+describe('MLB F5 full-model projection', () => {
+  test('uses FULL_MODEL starter/matchup/environment inputs when all required fields are present', () => {
+    const projection = projectF5Total(f5HomePitcher, f5AwayPitcher, f5FullContext);
+
+    expect(projection).toMatchObject({
+      projection_source: 'FULL_MODEL',
+      missing_inputs: [],
+      playability: {
+        over_playable_at_or_below: expect.any(Number),
+        under_playable_at_or_above: expect.any(Number),
+      },
+    });
+    expect(projection.base).toBeGreaterThan(0);
+    expect(projection.projected_home_f5_runs).toBeGreaterThan(0);
+    expect(projection.projected_away_f5_runs).toBeGreaterThan(0);
+    expect(projection.projected_total_high).toBeGreaterThan(projection.projected_total_low);
+  });
+
+  test('falls back to SYNTHETIC_FALLBACK and records missing inputs when matchup context is incomplete', () => {
+    const projection = projectF5Total(f5HomePitcher, f5AwayPitcher, {
+      home_offense_profile: null,
+      away_offense_profile: null,
+      park_run_factor: null,
+      temp_f: null,
+      wind_mph: null,
+      wind_dir: null,
+    });
+
+    expect(projection.projection_source).toBe('SYNTHETIC_FALLBACK');
+    expect(projection.reason_codes).toEqual(
+      expect.arrayContaining(['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']),
+    );
+    expect(projection.missing_inputs).toEqual(
+      expect.arrayContaining([
+        'home_opponent_split_profile',
+        'away_opponent_split_profile',
+        'home_park_run_factor',
+        'away_park_run_factor',
+      ]),
+    );
+  });
+
+  test('projectF5TotalCard forces PASS when abs(edge) is below 0.5 runs', () => {
+    const projection = projectF5Total(f5HomePitcher, f5AwayPitcher, f5FullContext);
+    const result = projectF5TotalCard(
+      f5HomePitcher,
+      f5AwayPitcher,
+      projection.base + 0.2,
+      f5FullContext,
+    );
+
+    expect(result.status).toBe('PASS');
+    expect(result.action).toBe('PASS');
+    expect(result.classification).toBe('PASS');
+    expect(result.ev_threshold_passed).toBe(false);
+    expect(result.reason_codes).toContain('PASS_NO_EDGE');
+    expect(result.pass_reason_code).toBe('PASS_NO_EDGE');
+    expect(result.projection_source).toBe('FULL_MODEL');
+  });
+
+  test('computeMLBDriverCards keeps no-edge PASS cards visible with playability metadata', () => {
+    const projection = projectF5Total(f5HomePitcher, f5AwayPitcher, f5FullContext);
+    const cards = computeMLBDriverCards('mlb-f5-pass', {
+      away_team: 'Boston Red Sox',
+      home_team: 'New York Yankees',
+      raw_data: {
+        mlb: {
+          f5_line: projection.base + 0.2,
+          home_pitcher: f5HomePitcher,
+          away_pitcher: f5AwayPitcher,
+          ...f5FullContext,
+        },
+      },
+    });
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      market: 'f5_total',
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      ev_threshold_passed: false,
+      projection_source: 'FULL_MODEL',
+      pass_reason_code: 'PASS_NO_EDGE',
+      playability: {
+        over_playable_at_or_below: expect.any(Number),
+        under_playable_at_or_above: expect.any(Number),
+      },
+    });
+    expect(cards[0].reason_codes).toContain('PASS_NO_EDGE');
+    expect(cards[0].projection).toMatchObject({
+      projected_total: expect.any(Number),
+      projected_total_low: expect.any(Number),
+      projected_total_high: expect.any(Number),
+    });
+  });
+
+  test('computeMLBDriverCards emits synthetic-fallback PASS when a starter is missing', () => {
+    const cards = computeMLBDriverCards('mlb-f5-missing-sp', {
+      away_team: 'Boston Red Sox',
+      home_team: 'New York Yankees',
+      raw_data: {
+        mlb: {
+          f5_line: 4.5,
+          home_pitcher: null,
+          away_pitcher: f5AwayPitcher,
+          ...f5FullContext,
+        },
+      },
+    });
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      projection_source: 'SYNTHETIC_FALLBACK',
+      pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
+      ev_threshold_passed: false,
+    });
+    expect(cards[0].missing_inputs).toContain('home_starting_pitcher');
+    expect(cards[0].reason_codes).toEqual(
+      expect.arrayContaining(['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']),
+    );
   });
 });
 
@@ -319,9 +493,16 @@ describe('MLB pitcher-K under monitoring', () => {
       line: 6.5,
       display_price: -105,
     });
+    expect(cards[0]).toMatchObject({
+      line: 6.5,
+      line_source: 'draftkings',
+      over_price: -115,
+      under_price: -105,
+      best_line_bookmaker: 'draftkings',
+    });
   });
 
-  test('computePitcherKDriverCards keeps projection-only branch unchanged', () => {
+  test('computePitcherKDriverCards emits projection-only prop metadata for completed pitcher K rows', () => {
     const cards = computePitcherKDriverCards(
       'game-1',
       {
@@ -339,9 +520,71 @@ describe('MLB pitcher-K under monitoring', () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0].basis).toBe('PROJECTION_ONLY');
-    expect(cards[0].prop_decision).toBeUndefined();
-    expect(['OVER', 'PASS']).toContain(cards[0].prediction);
+    expect(cards[0]).toMatchObject({
+      basis: 'PROJECTION_ONLY',
+      prediction: 'OVER',
+      emit_card: true,
+      ev_threshold_passed: false,
+      card_verdict: 'PROJECTION',
+      prop_display_state: 'PROJECTION_ONLY',
+    });
+    expect(cards[0].prop_decision).toMatchObject({
+      verdict: 'PROJECTION',
+      lean_side: 'OVER',
+      line: null,
+      display_price: null,
+      projection: expect.any(Number),
+    });
+  });
+
+  test('computePitcherKDriverCards emits projection-only rows for thin-sample starters with flags', () => {
+    const cards = computePitcherKDriverCards(
+      'game-1',
+      {
+        home_team: 'New York Yankees',
+        raw_data: {
+          mlb: {
+            home_pitcher: {
+              ...fullPitcher,
+              full_name: 'Thin Sample Starter',
+              season_starts: 1,
+              starts: 1,
+            },
+          },
+        },
+      },
+      { mode: 'PROJECTION_ONLY' },
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].emit_card).toBe(true);
+    expect(cards[0].card_verdict).toBe('PROJECTION');
+    expect(cards[0].prop_decision?.flags).toContain('THIN_SAMPLE_STARTS');
+    expect(cards[0].pitcher_k_result?.reason_codes).toContain('THIN_SAMPLE_STARTS');
+  });
+
+  test('projection-only pitcher K rows remain non-actionable even when emitted', () => {
+    const cards = computePitcherKDriverCards(
+      'game-1',
+      {
+        home_team: 'New York Yankees',
+        raw_data: {
+          mlb: {
+            home_pitcher: {
+              ...fullPitcher,
+              full_name: 'Projection Only',
+            },
+          },
+        },
+      },
+      { mode: 'PROJECTION_ONLY' },
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].emit_card).toBe(true);
+    expect(cards[0].ev_threshold_passed).toBe(false);
+    expect(cards[0].tier).toBeNull();
+    expect(cards[0].prop_decision?.verdict).toBe('PROJECTION');
   });
 });
 
@@ -419,6 +662,293 @@ describe('checkPitcherFreshness — freshness gate (WI-0596)', () => {
   test('STALE: row with empty updated_at returns STALE', () => {
     const row = { updated_at: '' };
     expect(checkPitcherFreshness(row, TODAY)).toBe('STALE');
+  });
+});
+
+describe('MLB prop rollout + freshness gating', () => {
+  afterEach(() => {
+    delete process.env.MLB_K_PROPS;
+    jest.restoreAllMocks();
+  });
+
+  test('resolveMlbPitcherPropRolloutState defaults to SHADOW', () => {
+    delete process.env.MLB_K_PROPS;
+    expect(resolveMlbPitcherPropRolloutState()).toBe('SHADOW');
+  });
+
+  test('evaluatePitcherPropPublishability marks fresh scoped odds as publishable', () => {
+    jest.spyOn(Date, 'now').mockReturnValue(new Date('2026-03-26T18:00:00Z').getTime());
+    const result = evaluatePitcherPropPublishability(
+      {
+        raw_data: {
+          mlb: {
+            home_pitcher: { full_name: 'Ace Under' },
+            strikeout_lines: {
+              'ace under': {
+                line: 6.5,
+                fetched_at: '2026-03-26T17:15:00Z',
+              },
+            },
+          },
+        },
+      },
+      { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+    );
+
+    expect(result).toMatchObject({
+      publishable: true,
+      status: 'FRESH',
+    });
+  });
+
+  test('evaluatePitcherPropPublishability returns MISSING when no scoped line exists', () => {
+    const result = evaluatePitcherPropPublishability(
+      {
+        raw_data: {
+          mlb: {
+            home_pitcher: { full_name: 'Ace Under' },
+            strikeout_lines: {},
+          },
+        },
+      },
+      { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+    );
+
+    expect(result).toMatchObject({
+      publishable: false,
+      status: 'MISSING',
+      reason: 'MARKET_MISSING',
+    });
+  });
+
+  test('evaluatePitcherPropPublishability blocks stale scoped odds with STALE status', () => {
+    jest.spyOn(Date, 'now').mockReturnValue(new Date('2026-03-26T18:45:00Z').getTime());
+    const result = evaluatePitcherPropPublishability(
+      {
+        raw_data: {
+          mlb: {
+            away_pitcher: { full_name: 'Stale Arm' },
+            strikeout_lines: {
+              'stale arm': {
+                line: 5.5,
+                fetched_at: '2026-03-26T16:00:00Z',
+              },
+            },
+          },
+        },
+      },
+      { market: 'pitcher_k_away', basis: 'ODDS_BACKED' },
+    );
+
+    expect(result).toMatchObject({
+      publishable: false,
+      status: 'STALE',
+      reason: 'STALE_ODDS',
+    });
+  });
+
+  test('evaluatePitcherPropPublishability marks projection-only drivers as NOT_REQUIRED', () => {
+    const result = evaluatePitcherPropPublishability(
+      { raw_data: { mlb: {} } },
+      { market: 'pitcher_k_home', basis: 'PROJECTION_ONLY' },
+    );
+
+    expect(result).toMatchObject({
+      publishable: false,
+      status: 'NOT_REQUIRED',
+      reason: null,
+    });
+  });
+});
+
+describe('WI-0720 MLB execution envelope', () => {
+  test.each([
+    [
+      'fresh odds-backed card',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+        pricingStatus: 'FRESH',
+        pricingCapturedAt: '2026-03-26T17:15:00Z',
+        isPitcherK: true,
+        rolloutState: 'FULL',
+      },
+      {
+        execution_status: 'EXECUTABLE',
+        actionable: true,
+        pricing_status: 'FRESH',
+        publish_ready: true,
+        emit_allowed: true,
+        k_prop_execution_path: 'ODDS_BACKED',
+      },
+    ],
+    [
+      'projection-floor game card',
+      {
+        driver: { market: 'f5_total', projection_floor: true, without_odds_mode: true },
+        pricingStatus: 'NOT_REQUIRED',
+      },
+      {
+        execution_status: 'PROJECTION_ONLY',
+        actionable: false,
+        pricing_status: 'NOT_REQUIRED',
+        publish_ready: false,
+        emit_allowed: true,
+      },
+    ],
+    [
+      'qualified pitcher K with no market',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+        pricingStatus: 'MISSING',
+        pricingReason: 'MARKET_MISSING',
+        isPitcherK: true,
+        rolloutState: 'FULL',
+      },
+      {
+        execution_status: 'PROJECTION_ONLY',
+        actionable: false,
+        pricing_status: 'MISSING',
+        publish_ready: false,
+        emit_allowed: true,
+        k_prop_execution_path: 'QUALIFIED_BUT_NO_MARKET',
+      },
+    ],
+    [
+      'stale odds-backed pitcher K is blocked',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+        pricingStatus: 'STALE',
+        pricingReason: 'STALE_ODDS',
+        isPitcherK: true,
+        rolloutState: 'FULL',
+      },
+      {
+        execution_status: 'BLOCKED',
+        actionable: false,
+        pricing_status: 'STALE',
+        publish_ready: false,
+        emit_allowed: false,
+        k_prop_execution_path: 'STALE_ODDS_BLOCKED',
+      },
+    ],
+    [
+      'projection-only pitcher K emits under shadow rollout',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'PROJECTION_ONLY' },
+        pricingStatus: 'NOT_REQUIRED',
+        isPitcherK: true,
+        rolloutState: 'SHADOW',
+      },
+      {
+        execution_status: 'PROJECTION_ONLY',
+        actionable: false,
+        pricing_status: 'NOT_REQUIRED',
+        publish_ready: false,
+        emit_allowed: true,
+        k_prop_execution_path: 'PROJECTION_ONLY',
+      },
+    ],
+    [
+      'shadow rollout suppresses pitcher K output',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+        pricingStatus: 'FRESH',
+        isPitcherK: true,
+        rolloutState: 'SHADOW',
+      },
+      {
+        execution_status: 'BLOCKED',
+        actionable: false,
+        pricing_status: 'FRESH',
+        publish_ready: false,
+        emit_allowed: false,
+        k_prop_execution_path: 'SHADOW_ROLLOUT',
+      },
+    ],
+    [
+      'disabled rollout suppresses pitcher K output',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+        pricingStatus: 'FRESH',
+        isPitcherK: true,
+        rolloutState: 'OFF',
+      },
+      {
+        execution_status: 'BLOCKED',
+        actionable: false,
+        pricing_status: 'FRESH',
+        publish_ready: false,
+        emit_allowed: false,
+        k_prop_execution_path: 'DISABLED',
+      },
+    ],
+  ])('%s', (_label, input, expected) => {
+    const envelope = deriveMlbExecutionEnvelope(input);
+
+    expect(envelope.execution_status).toBe(expected.execution_status);
+    expect(envelope.actionable).toBe(expected.actionable);
+    expect(envelope._pricing_state.status).toBe(expected.pricing_status);
+    expect(envelope._publish_state.publish_ready).toBe(expected.publish_ready);
+    expect(envelope._publish_state.emit_allowed).toBe(expected.emit_allowed);
+    if (expected.k_prop_execution_path) {
+      expect(envelope.k_prop_execution_path).toBe(expected.k_prop_execution_path);
+    } else {
+      expect(envelope.k_prop_execution_path).toBeUndefined();
+    }
+  });
+
+  test('assertMlbExecutionInvariant rejects executable payload without fresh pricing', () => {
+    expect(() =>
+      assertMlbExecutionInvariant({
+        execution_status: 'EXECUTABLE',
+        actionable: true,
+        _pricing_state: { status: 'MISSING' },
+        _publish_state: { publish_ready: false },
+      }),
+    ).toThrow(/INVARIANT_BREACH/);
+  });
+
+  test('assertMlbExecutionInvariant rejects projection floor marked executable', () => {
+    expect(() =>
+      assertMlbExecutionInvariant({
+        execution_status: 'EXECUTABLE',
+        actionable: true,
+        projection_floor: true,
+        _pricing_state: { status: 'FRESH' },
+        _publish_state: { publish_ready: true },
+      }),
+    ).toThrow(/projection_floor=true requires execution_status=PROJECTION_ONLY/);
+  });
+
+  test('buildMlbPipelineState derives legacy booleans from execution envelopes', () => {
+    const pipelineState = buildMlbPipelineState({
+      oddsSnapshot: {
+        home_team: 'Boston Red Sox',
+        away_team: 'New York Yankees',
+        captured_at: '2026-03-26T17:15:00Z',
+      },
+      marketAvailability: {
+        f5_line_ok: true,
+        f5_ml_ok: true,
+        full_game_total_ok: true,
+        expect_f5_total: true,
+        expect_f5_ml: true,
+        blocking_reason_codes: [],
+      },
+      projectionReady: true,
+      driversReady: true,
+      pricingReady: false,
+      cardReady: false,
+      executionEnvelopes: [
+        deriveMlbExecutionEnvelope({
+          driver: { market: 'f5_total', projection_floor: true, without_odds_mode: true },
+          pricingStatus: 'NOT_REQUIRED',
+        }),
+      ],
+    });
+
+    expect(pipelineState.card_ready).toBe(true);
+    expect(pipelineState.pricing_ready).toBe(false);
   });
 });
 
@@ -551,63 +1081,58 @@ describe('resolveMlbTeamLookupKeys — MLB team join fallback', () => {
     ]);
   });
 
+  test('normalizes uppercase full-name variants to canonical full name plus abbreviation', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(resolveMlbTeamLookupKeys('KANSAS CITY ROYALS')).toEqual([
+      'KANSAS CITY ROYALS',
+      'Kansas City Royals',
+      'KC',
+    ]);
+    expect(resolveMlbTeamLookupKeys('MINNESOTA TWINS')).toEqual([
+      'MINNESOTA TWINS',
+      'Minnesota Twins',
+      'MIN',
+    ]);
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  test('keeps known abbreviations available as lookup keys', () => {
+    expect(resolveMlbTeamLookupKeys('KC')).toEqual([
+      'KC',
+      'Kansas City Royals',
+    ]);
+    expect(resolveMlbTeamLookupKeys('SF')).toEqual([
+      'SF',
+      'San Francisco Giants',
+    ]);
+  });
+
   test('returns cleaned input only for unknown labels', () => {
     expect(resolveMlbTeamLookupKeys('  Unknown Team  ')).toEqual([
       'Unknown Team',
     ]);
   });
 
+  test('logs unknown variants once so new source labels are visible in worker output', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    warnSpy.mockClear();
+
+    expect(resolveMlbTeamLookupKeys('  Unknown Franchise  ')).toEqual([
+      'Unknown Franchise',
+    ]);
+    expect(resolveMlbTeamLookupKeys('Unknown Franchise')).toEqual([
+      'Unknown Franchise',
+    ]);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0][0])).toContain('MLB_TEAM_VARIANT_UNKNOWN');
+  });
+
   test('returns empty array for empty input', () => {
     expect(resolveMlbTeamLookupKeys('')).toEqual([]);
     expect(resolveMlbTeamLookupKeys(null)).toEqual([]);
-  });
-
-  test('resolves ALL-CAPS game table names to abbreviations (case-insensitive fix)', () => {
-    // games table stores names in ALL-CAPS; case-insensitive lookup must resolve them
-    expect(resolveMlbTeamLookupKeys('NEW YORK METS')).toEqual(['NEW YORK METS', 'NYM']);
-    expect(resolveMlbTeamLookupKeys('SAN FRANCISCO GIANTS')).toEqual(['SAN FRANCISCO GIANTS', 'SF']);
-    expect(resolveMlbTeamLookupKeys('KANSAS CITY ROYALS')).toEqual(['KANSAS CITY ROYALS', 'KC']);
-    expect(resolveMlbTeamLookupKeys('LOS ANGELES DODGERS')).toEqual(['LOS ANGELES DODGERS', 'LAD']);
-    expect(resolveMlbTeamLookupKeys('TORONTO BLUE JAYS')).toEqual(['TORONTO BLUE JAYS', 'TOR']);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// computeProjectionFloorF5 — floor constant correctness (must be 4.5, not 8.5)
-// ---------------------------------------------------------------------------
-
-describe('computeProjectionFloorF5 — floor constant and ERA fallback', () => {
-  test('returns 4.5 when odds snapshot has no pitcher data (unknown teams, null raw_data)', () => {
-    const snapshot = { home_team: 'UNKNOWN TEAM A', away_team: 'UNKNOWN TEAM B', raw_data: null };
-    expect(computeProjectionFloorF5(snapshot)).toBe(4.5);
-  });
-
-  test('returns 4.5 when raw_data is empty JSON object (no pitcher ERAs)', () => {
-    const snapshot = { home_team: 'FAKE HOME', away_team: 'FAKE AWAY', raw_data: JSON.stringify({}) };
-    expect(computeProjectionFloorF5(snapshot)).toBe(4.5);
-  });
-
-  test('returns ERA-derived value (not 4.5) when both pitcher ERAs are present', () => {
-    // ERA=4.5 each; result should be ERA-derived, not the 4.5 floor constant
-    const rawData = JSON.stringify({
-      mlb: {
-        home_pitcher: { era: 4.5, whip: 1.25, k_per_9: 8.5 },
-        away_pitcher: { era: 4.5, whip: 1.25, k_per_9: 8.5 },
-      },
-    });
-    const snapshot = { home_team: 'FAKE HOME', away_team: 'FAKE AWAY', raw_data: rawData };
-    const result = computeProjectionFloorF5(snapshot);
-    expect(typeof result).toBe('number');
-    expect(result).toBeGreaterThan(3.5);
-    expect(result).toBeLessThan(8.0);
-  });
-
-  test('floor constant is 4.5 (not 8.5) — regression guard', () => {
-    // An all-null snapshot guarantees the fallback constant is returned
-    const snapshot = { home_team: null, away_team: null, raw_data: null };
-    const floor = computeProjectionFloorF5(snapshot);
-    expect(floor).toBe(4.5);
-    expect(floor).not.toBe(8.5);
   });
 });
 

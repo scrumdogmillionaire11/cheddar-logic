@@ -12,8 +12,52 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const {getDatabase, closeDatabase } = require('@cheddar-logic/data');
+const {
+  generateNBAMarketCallCards,
+  deriveExecutionStatusForCard,
+} = require('../run_nba_model');
+const {
+  publishDecisionForCard,
+} = require('../../utils/decision-publisher');
 
 const TEST_DB_PATH = '/tmp/cheddar-nba-test.db';
+
+const baseOdds = {
+  home_team: 'LAL',
+  away_team: 'GSW',
+  game_time_utc: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+  spread_home: -4.5,
+  spread_away: 4.5,
+  spread_price_home: -110,
+  spread_price_away: -110,
+  h2h_home: -180,
+  h2h_away: 155,
+  total: 224.5,
+  total_price_over: -110,
+  total_price_under: -110,
+  captured_at: new Date().toISOString(),
+};
+
+function makeTotalDecision(overrides = {}) {
+  return {
+    status: 'FIRE',
+    edge: 0.08,
+    edge_points: 2.4,
+    best_candidate: { side: 'OVER', line: 224.5 },
+    drivers: [],
+    reasoning: 'test reasoning',
+    score: 0.7,
+    net: 0.6,
+    conflict: 0.1,
+    coverage: 0.8,
+    p_fair: 0.58,
+    p_implied: 0.52,
+    projection: { projected_total: 226.5 },
+    line_source: 'odds_snapshot',
+    price_source: 'odds_snapshot',
+    ...overrides,
+  };
+}
 
 async function queryDb(fn) {
   const db = getDatabase();
@@ -69,6 +113,51 @@ describe('run_nba_model job', () => {
         `Job failed with exit code ${error.status}: ${error.stdout || error.message}`,
       );
     }
+  });
+
+  test('without-odds market call cards carry PROJECTION_ONLY execution status and never surface PLAY', () => {
+    const [card] = generateNBAMarketCallCards(
+      'game-123',
+      { TOTAL: makeTotalDecision({ status: 'PASS', edge: null }) },
+      baseOdds,
+      { withoutOddsMode: true },
+    );
+
+    expect(card).toBeDefined();
+    expect(card.payloadData.execution_status).toBe('PROJECTION_ONLY');
+
+    publishDecisionForCard({
+      card,
+      oddsSnapshot: {
+        game_time_utc: baseOdds.game_time_utc,
+      },
+    });
+
+    expect(card.payloadData.ui_display_status).toBe('WATCH');
+  });
+
+  test('deriveExecutionStatusForCard blocks unpriced cards outside without-odds mode', () => {
+    const card = {
+      payloadData: {
+        kind: 'PLAY',
+        price: null,
+        tags: [],
+      },
+    };
+
+    expect(deriveExecutionStatusForCard(card)).toBe('BLOCKED');
+  });
+
+  test('priced cards derive EXECUTABLE execution status', () => {
+    const card = {
+      payloadData: {
+        kind: 'PLAY',
+        price: -110,
+        tags: [],
+      },
+    };
+
+    expect(deriveExecutionStatusForCard(card)).toBe('EXECUTABLE');
   });
 
   test('job_runs table records job execution as success', async () => {

@@ -1,0 +1,43 @@
+{
+  "fixture_id": "nba_projection_inputs_incomplete_01",
+  "sport": "NBA",
+  "card_family": "NBA_TOTAL",
+  "card_mode": "ODDS_BACKED",
+  "description": "Missing ESPN enrichment — projection gate fires, card blocked",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "nba_test_game_003",
+    "market_type": "TOTAL",
+    "selection": "OVER"
+  },
+  "input": {
+    "game_id": "nba_test_game_003",
+    "sport": "NBA",
+    "home_team": "Denver Nuggets",
+    "away_team": "Phoenix Suns",
+    "game_time_utc": "2026-04-02T02:00:00Z",
+    "total": 227.5,
+    "total_price_over": -110,
+    "total_price_under": -110,
+    "spread_home": -3.5,
+    "spread_away": 3.5,
+    "spread_price_home": -110,
+    "spread_price_away": -110,
+    "h2h_home": -160,
+    "h2h_away": 135,
+    "captured_at": "2026-04-01T18:00:00Z",
+    "_enrichment": {
+      "espn_pace": null,
+      "espn_off_rtg_home": null,
+      "espn_off_rtg_away": null,
+      "source": "MISSING"
+    }
+  },
+  "expected": {
+    "input_hash": "e3ed1de1aa83ba98de8076ab55b7c1130fd77c7d433e6777e8ad6d91eb8edacf",
+    "execution_status": "BLOCKED",
+    "reason_codes_must_not_include": ["PASS_NO_EDGE"],
+    "reason_codes_must_include": ["BLOCKED_MISSING_PROJECTION_INPUTS"]
+  },
+  "baseline_reviewed": true
+}

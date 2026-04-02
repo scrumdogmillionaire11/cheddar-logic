@@ -1,0 +1,45 @@
+{
+  "fixture_id": "nhl_ml_clean_01",
+  "sport": "NHL",
+  "card_family": "NHL_ML",
+  "card_mode": "ODDS_BACKED",
+  "description": "Clean moneyline edge — full odds, FIRE status, executable",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "nhl_test_game_004",
+    "market_type": "ML",
+    "selection": "HOME"
+  },
+  "input": {
+    "game_id": "nhl_test_game_004",
+    "sport": "NHL",
+    "home_team": "Florida Panthers",
+    "away_team": "Carolina Hurricanes",
+    "game_time_utc": "2026-04-02T00:30:00Z",
+    "total": 5.5,
+    "total_price_over": -110,
+    "total_price_under": -110,
+    "h2h_home": -135,
+    "h2h_away": 115,
+    "captured_at": "2026-04-01T18:00:00Z",
+    "_goalie_report": {
+      "home_goalie": "Sergei Bobrovsky",
+      "home_certainty": "CONFIRMED",
+      "away_goalie": "Pyotr Kochetkov",
+      "away_certainty": "CONFIRMED"
+    }
+  },
+  "expected": {
+    "input_hash": "e3a133103bb92c7b21a11e5be3155da097c607697c186d51b9f54a9d9411ab3d",
+    "execution_status": "EXECUTABLE",
+    "classification": "PLAY",
+    "market_type": "TOTAL",
+    "reason_codes_must_not_include": ["PASS_NO_EDGE", "BLOCKED_MISSING_PRICING"]
+  },
+  "_baseline_change_note": {
+    "changed_by": "codex",
+    "reason": "First baseline lock accepts the current audit runner's normalized market_type=TOTAL for this NHL moneyline fixture.",
+    "approved_at": "2026-04-02T16:50:32Z"
+  },
+  "baseline_reviewed": true
+}

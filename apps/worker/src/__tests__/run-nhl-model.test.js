@@ -27,25 +27,37 @@ function buildOddsSnapshot(overrides = {}) {
   };
 }
 
-function buildFakeDriverCard(gameId = 'nhl-game-001') {
+function buildFakeDriverCard(gameId = 'nhl-game-001', descriptor = {}) {
   return {
-    cardType: 'nhl-base-projection',
+    cardType: descriptor.cardType || 'nhl-base-projection',
     gameId,
     sport: 'NHL',
-    cardTitle: 'NHL Base Projection: HOME',
+    cardTitle: descriptor.cardTitle || 'NHL Base Projection: HOME',
     modelOutputIds: null,
     runId: null,
     payloadData: {
       game_id: gameId,
       sport: 'NHL',
       model_version: 'nhl-drivers-v1',
-      prediction: 'HOME',
-      confidence: 0.60,
-      confidence_pct: 60,
-      tier: 'B',
+      prediction: descriptor.prediction || 'HOME',
+      confidence: descriptor.confidence ?? 0.60,
+      confidence_pct: Math.round((descriptor.confidence ?? 0.60) * 100),
+      tier: descriptor.tier || 'B',
+      market_type: descriptor.market_type || 'TOTAL',
+      consistency: descriptor.consistency || {
+        pace_tier: 'MID',
+        event_env: 'INDOOR',
+        total_bias: 'OK',
+      },
+      line: descriptor.line ?? 6.5,
+      price: descriptor.price ?? -110,
       pipeline_state: null,
       run_id: null,
-      decision_v2: { sharp_price_status: 'PRICED', official_status: 'FIRE' },
+      decision_v2: {
+        sharp_price_status:
+          descriptor.price == null ? 'UNPRICED' : 'PRICED',
+        official_status: 'PLAY',
+      },
     },
   };
 }
@@ -59,6 +71,7 @@ function loadRunNHLModel({
   withoutOddsMode = false,
   projectionComplete = true,
   enrichImpl = async (snap) => snap,
+  generateCardImpl = null,
 } = {}) {
   jest.resetModules();
 
@@ -110,7 +123,11 @@ function loadRunNHLModel({
   }));
 
   const computeNHLDriverCardsMock = jest.fn(() => driverCards);
-  const generateCardMock = jest.fn((opts) => buildFakeDriverCard(opts.gameId));
+  const generateCardMock = jest.fn((opts) =>
+    generateCardImpl
+      ? generateCardImpl(opts)
+      : buildFakeDriverCard(opts.gameId, opts.descriptor),
+  );
 
   jest.doMock('../models', () => ({
     computeNHLDriverCards: computeNHLDriverCardsMock,
@@ -191,7 +208,21 @@ function loadRunNHLModel({
 
   jest.doMock('../utils/decision-publisher', () => ({
     publishDecisionForCard: publishDecisionForCardMock,
-    applyUiActionFields: jest.fn(),
+    applyUiActionFields: jest.fn((payload) => {
+      if (!payload || typeof payload !== 'object') return payload;
+      payload.execution_status =
+        payload.execution_status ||
+        (payload.decision_v2?.sharp_price_status === 'UNPRICED'
+          ? 'BLOCKED'
+          : 'EXECUTABLE');
+      payload.consistency = {
+        pace_tier: 'MID',
+        event_env: 'INDOOR',
+        total_bias: 'OK',
+        ...(payload.consistency || {}),
+      };
+      return payload;
+    }),
   }));
 
   const moduleUnderTest = require('../jobs/run_nhl_model');
@@ -271,6 +302,85 @@ describe('runNHLModel', () => {
       expect.any(Object),
     );
     expect(mocks.markJobRunFailure).not.toHaveBeenCalled();
+  });
+
+  test('attaches immutable NHL pace snapshot fields and demotes unknown-goalie pace cards from EXECUTABLE', async () => {
+    const paceResult = {
+      homeExpected: 3.01,
+      awayExpected: 2.77,
+      expectedTotal: 5.78,
+      rawTotalModel: 5.82,
+      regressedTotalModel: 5.79,
+      modifierBreakdown: {
+        base_5v5_total: 5.61,
+        special_teams_delta: 0.09,
+        home_ice_delta: 0.07,
+        rest_delta: 0.01,
+        goalie_delta_raw: 0.12,
+        goalie_delta_applied: 0.02,
+        raw_modifier_total: 0.21,
+        capped_modifier_total: 0.21,
+        modifier_cap_applied: false,
+      },
+      homeGoalieCertainty: 'UNKNOWN',
+      awayGoalieCertainty: 'CONFIRMED',
+      homeAdjustmentTrust: 'NEUTRALIZED',
+      awayAdjustmentTrust: 'FULL',
+      official_eligible: true,
+      first_period_model: {
+        classification: 'PASS',
+        reason_codes: ['NHL_1P_GOALIE_UNCERTAIN'],
+      },
+    };
+    const descriptors = [
+      {
+        cardType: 'nhl-pace-totals',
+        cardTitle: 'NHL Total: OVER 5.78 vs Line 5.5',
+        prediction: 'OVER',
+        confidence: 0.64,
+        tier: 'BEST',
+        market_type: 'TOTAL',
+        price: -110,
+        auditContext: { paceResult },
+      },
+    ];
+
+    const { runNHLModel, mocks } = loadRunNHLModel({
+      driverCards: descriptors,
+    });
+
+    await runNHLModel();
+
+    expect(mocks.insertCardPayload).toHaveBeenCalledTimes(1);
+    const insertedCard = mocks.insertCardPayload.mock.calls[0][0];
+    expect(insertedCard.cardType).toBe('nhl-pace-totals');
+    expect(insertedCard.payloadData.execution_status).toBe('PROJECTION_ONLY');
+    expect(insertedCard.payloadData._pricing_state).toMatchObject({
+      status: 'FRESH',
+    });
+    expect(insertedCard.payloadData._publish_state).toMatchObject({
+      publish_ready: false,
+      execution_status: 'PROJECTION_ONLY',
+    });
+    expect(insertedCard.payloadData.nhl_goalie_certainty_pair).toBe(
+      'UNKNOWN/CONFIRMED',
+    );
+    expect(insertedCard.payloadData._model_snapshot).toMatchObject({
+      homeExpected: 3.01,
+      awayExpected: 2.77,
+      sigma_total: 8,
+      consistency: {
+        pace_tier: 'MID',
+        event_env: 'INDOOR',
+        total_bias: 'OK',
+      },
+    });
+    expect(Object.isFrozen(insertedCard.payloadData._model_snapshot)).toBe(
+      true,
+    );
+    expect(
+      Object.isFrozen(insertedCard.payloadData._model_snapshot.consistency),
+    ).toBe(true);
   });
 });
 

@@ -1,6 +1,9 @@
 'use strict';
 
-const { predictNHLGame } = require('../nhl-pace-model');
+const {
+  predictNHLGame,
+  NHL_PACE_AUDIT_RULES,
+} = require('../nhl-pace-model');
 const { makeCanonicalGoalieState } = require('../nhl-goalie-state');
 
 function buildBase(overrides = {}) {
@@ -176,6 +179,9 @@ describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
     expect(neutralized.official_eligible).toBe(true);
     expect(neutralized.expectedTotal).toBe(noGoalie.expectedTotal);
     expect(neutralized.modifierBreakdown.goalie_delta_applied).toBe(0);
+    expect(neutralized.confidence).toBeLessThanOrEqual(
+      NHL_PACE_AUDIT_RULES.unknown_goalie_confidence_cap,
+    );
   });
 
   test('BLOCKED trust yields descriptive projection but official_eligible false', () => {
@@ -249,6 +255,23 @@ describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
     expect(neutralized).toHaveProperty('homeAdjustmentTrust');
     expect(neutralized).toHaveProperty('awayAdjustmentTrust');
     expect(neutralized).toHaveProperty('official_eligible');
+  });
+
+  test('UNKNOWN goalie certainty never coexists with FULL adjustment trust', () => {
+    const result = predictNHLGame(
+      buildBase({
+        homeGoalieState: makeState('home', 'UNKNOWN'),
+        awayGoalieState: makeState('away', 'UNKNOWN'),
+      }),
+    );
+
+    expect(result.homeGoalieCertainty).toBe('UNKNOWN');
+    expect(result.awayGoalieCertainty).toBe('UNKNOWN');
+    expect(result.homeAdjustmentTrust).not.toBe('FULL');
+    expect(result.awayAdjustmentTrust).not.toBe('FULL');
+    expect(result.confidence).toBeLessThanOrEqual(
+      NHL_PACE_AUDIT_RULES.unknown_goalie_confidence_cap,
+    );
   });
 });
 

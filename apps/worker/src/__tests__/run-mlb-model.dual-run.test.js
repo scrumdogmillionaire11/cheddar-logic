@@ -31,12 +31,31 @@ function buildF5Snapshot(overrides = {}) {
           home: 6.5,
           away: 6.5,
         },
+        home_offense_profile: {
+          wrc_plus_vs_lhp: 114,
+          k_pct_vs_lhp: 0.21,
+          iso_vs_lhp: 0.19,
+        },
+        away_offense_profile: {
+          wrc_plus_vs_rhp: 99,
+          k_pct_vs_rhp: 0.23,
+          iso_vs_rhp: 0.17,
+        },
+        park_run_factor: 1.04,
+        temp_f: 78,
+        wind_mph: 8,
+        wind_dir: 'OUT',
         home_pitcher: {
           era: 3.1,
           whip: 1.08,
           k_per_9: 9.8,
           recent_k_per_9: 10.1,
           recent_ip: 6.2,
+          handedness: 'R',
+          x_fip: 3.25,
+          bb_pct: 0.07,
+          hr_per_9: 0.92,
+          season_k_pct: 0.28,
         },
         away_pitcher: {
           era: 3.4,
@@ -44,6 +63,11 @@ function buildF5Snapshot(overrides = {}) {
           k_per_9: 9.2,
           recent_k_per_9: 8.9,
           recent_ip: 6.0,
+          handedness: 'L',
+          x_fip: 3.65,
+          bb_pct: 0.078,
+          hr_per_9: 1.05,
+          season_k_pct: 0.245,
         },
       },
     },
@@ -58,6 +82,10 @@ function buildPitcherStatsRow(team) {
     era: 3.2,
     whip: 1.09,
     recent_ip: 6.0,
+    x_fip: 3.55,
+    siera: null,
+    bb_pct: 0.07,
+    hr_per_9: 0.96,
     k_per_9: 9.7,
     recent_k_per_9: 9.9,
     season_starts: 5,
@@ -225,6 +253,14 @@ describe('mlb dual-run helpers', () => {
       disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
       generated_at: '2026-03-27T18:00:00.000Z',
       projection: { projected_total: 5.1 },
+      projection_source: 'FULL_MODEL',
+      playability: {
+        over_playable_at_or_below: 4.5,
+        under_playable_at_or_above: 5.5,
+      },
+      missing_inputs: [],
+      reason_codes: [],
+      pass_reason_code: null,
       recommended_bet_type: 'total',
       odds_context: buildMlbF5OddsContext(snapshot),
       primary_game_market: true,
@@ -290,12 +326,36 @@ describe('mlb dual-run helpers', () => {
 });
 
 describe('runMLBModel dual-run orchestration', () => {
+  beforeEach(() => {
+    // Most tests that exercise K prop emission need rollout gate open.
+    // Tests that verify blocked/suppressed behaviour set their own value.
+    process.env.MLB_K_PROPS = 'FULL';
+  });
+
   const gameDriver = {
     market: 'f5_total',
     prediction: 'OVER',
+    status: 'FIRE',
+    action: 'FIRE',
+    classification: 'BASE',
     confidence: 0.9,
     ev_threshold_passed: true,
     reasoning: 'F5 edge',
+    projection_source: 'FULL_MODEL',
+    reason_codes: [],
+    missing_inputs: [],
+    pass_reason_code: null,
+    playability: {
+      over_playable_at_or_below: 4.5,
+      under_playable_at_or_above: 5.5,
+    },
+    projection: {
+      projected_total: 5.3,
+      projected_total_low: 4.7,
+      projected_total_high: 5.9,
+      projected_home_f5_runs: 2.8,
+      projected_away_f5_runs: 2.5,
+    },
     drivers: [{ type: 'mlb-f5', edge: 0.8, projected: 5.3 }],
   };
 
@@ -323,6 +383,7 @@ describe('runMLBModel dual-run orchestration', () => {
 
   afterEach(() => {
     delete process.env.PITCHER_KS_MODEL_MODE;
+    delete process.env.MLB_K_PROPS;
     jest.restoreAllMocks();
     jest.resetModules();
     jest.clearAllMocks();
@@ -386,6 +447,18 @@ describe('runMLBModel dual-run orchestration', () => {
     expect(f5Payload.primary_game_market).toBe(true);
     expect(f5Payload.chosen_market).toBe('F5_TOTAL');
     expect(f5Payload.recommended_bet_type).toBe('total');
+    expect(f5Payload.projection_source).toBe('FULL_MODEL');
+    expect(f5Payload.playability).toMatchObject({
+      over_playable_at_or_below: 4.5,
+      under_playable_at_or_above: 5.5,
+    });
+    expect(f5Payload.projection).toMatchObject({
+      projected_total: 5.3,
+      projected_total_low: 4.7,
+      projected_total_high: 5.9,
+      projected_home_f5_runs: 2.8,
+      projected_away_f5_runs: 2.5,
+    });
     expect(f5Payload.odds_context).toBeDefined();
     expect(f5Payload.pipeline_state).toMatchObject({
       f5_line_ok: true,
@@ -457,6 +530,80 @@ describe('runMLBModel dual-run orchestration', () => {
     expect(consoleLog).toHaveBeenCalledWith(
       expect.stringContaining('"NO_F5_LINE"'),
     );
+  });
+
+  test('no-edge mlb-f5 PASS cards are still written with playability metadata', async () => {
+    const noEdgeDriver = {
+      ...gameDriver,
+      prediction: 'OVER',
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      confidence: 0.76,
+      ev_threshold_passed: false,
+      pass_reason_code: 'PASS_NO_EDGE',
+      reason_codes: ['PASS_NO_EDGE'],
+      drivers: [{ type: 'mlb-f5', edge: 0.2, projected: 4.7 }],
+      projection: {
+        projected_total: 4.7,
+        projected_total_low: 4.1,
+        projected_total_high: 5.3,
+        projected_home_f5_runs: 2.4,
+        projected_away_f5_runs: 2.3,
+      },
+      playability: {
+        over_playable_at_or_below: 4.0,
+        under_playable_at_or_above: 5.5,
+      },
+    };
+    const selection = {
+      chosen_market: 'F5_TOTAL',
+      why_this_market: 'Rule 1: only configured MLB game market',
+      markets: [
+        {
+          market: 'F5_TOTAL',
+          status: 'PASS',
+          prediction: 'OVER',
+          score: 0.76,
+          edge: 0.2,
+          projected: 4.7,
+          projection_source: 'FULL_MODEL',
+          pass_reason_code: 'PASS_NO_EDGE',
+        },
+      ],
+      rejected: {},
+      selected_driver: noEdgeDriver,
+    };
+
+    const { runMLBModel, mocks } = loadRunMlbModel({
+      mode: 'PROJECTION_ONLY',
+      gameDriverCards: [noEdgeDriver],
+      pitcherKDriverCards: [],
+      selection,
+    });
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runMLBModel();
+
+    expect(result.success).toBe(true);
+    expect(
+      mocks.insertCardPayload.mock.calls.map(([card]) => card.cardType),
+    ).toEqual(['mlb-f5']);
+    expect(mocks.insertCardPayload.mock.calls[0][0].payloadData).toMatchObject({
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      ev_passed: false,
+      projection_source: 'FULL_MODEL',
+      reason_codes: ['PASS_NO_EDGE'],
+      pass_reason_code: 'PASS_NO_EDGE',
+      playability: {
+        over_playable_at_or_below: 4.0,
+        under_playable_at_or_above: 5.5,
+      },
+    });
   });
 
   test('active F5 ML expectation emits F5_ML_UNAVAILABLE in pipeline state', async () => {

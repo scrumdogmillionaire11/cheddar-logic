@@ -1,7 +1,7 @@
 # Market Registry
 
 **Status:** Authoritative
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-02
 **Owner:** @ajcolubiale
 
 This document is the single source of truth for which markets are supported per sport, their current wiring status, and what is on the roadmap. All model, pipeline, and display-layer decisions should reference this registry when determining what is in scope.
@@ -30,14 +30,14 @@ This document is the single source of truth for which markets are supported per 
 | Total (full game) | Game | ✅ | DUAL_RUN selected; primary market |
 | Moneyline | Game | ✅ | DUAL_RUN secondary; requires price + edge |
 | Spread | Game | ✅ | DUAL_RUN tertiary; requires price + edge |
-| First Period Total (1P) | Game | ⚙️ | Driver fires (`nhl-pace-1p`); blocked unless 1P market price + edge present (WI-0553) |
-| Player Shots on Goal | Player Prop | ✅ | Separate pipeline (`pull_nhl_player_shots`); own model and card type |
+| First Period Total (1P) | Game | ⚙️ | Projection-only lane for now; live 1P odds ingestion removed to avoid alternate-market token burn |
+| Player Shots on Goal | Player Prop | ⚙️ | Projection-only lane for now; model and card type stay active, Odds API prop ingestion removed |
 | Player Blocks | Player Prop | 🗺️ | Roadmap; same architecture as Player Shots |
 
 **Key constraints:**
 
-- FIRST_PERIOD cards require a 1P total line and edge >= `lean_edge_min` — projection signal alone is not sufficient (WI-0553).
-- Player props are independent of game-level DUAL_RUN market selection.
+- FIRST_PERIOD cards remain visible as a projection-only research lane; they do not consume live Odds API 1P pricing.
+- NHL player props remain independent of game-level DUAL_RUN selection, but they currently run without live prop-line ingestion.
 
 ---
 
@@ -65,22 +65,22 @@ This document is the single source of truth for which markets are supported per 
 
 ## MLB
 
-**Primary game market:** F5 Total (`totals_1st_5_innings`)
+**Primary game market:** F5 Total (projection-only for now)
 **Primary player market:** Pitcher Strikeouts
 
 | Market | Type | Status | Notes |
 | --- | --- | --- | --- |
-| F5 Total (first 5 innings) | Game | ✅ | Fetched via `totals_1st_5_innings`; `totalF5Line/Over/Under` in odds snapshot; required market for MLB contract |
-| Pitcher Strikeouts (home) | Player Prop | ✅ | Separate pipeline (`pull_mlb_pitcher_strikeout_props`); requires `MLB_PITCHER_K_PROP_EVENTS_ENABLED=true` and `PITCHER_KS_MODEL_MODE=ODDS_BACKED` |
-| Pitcher Strikeouts (away) | Player Prop | ✅ | Same pipeline as above |
+| F5 Total (first 5 innings) | Game | ⚙️ | Projection-only lane; live F5 odds ingestion removed |
+| Pitcher Strikeouts (home) | Player Prop | ⚙️ | Projection-only lane; live prop pull removed |
+| Pitcher Strikeouts (away) | Player Prop | ⚙️ | Same projection-only posture as home side |
 | F5 Moneyline | Game | ❌ | Out of scope — not a target market |
 | Full-game Total | Game | ❌ | Not a target market — full-game pitching context degrades after 5th inning |
 | Full-game Spread / ML | Game | ❌ | Out of scope |
 
-**Key gaps (backlog):**
+**Key constraints:**
 
-1. **No DUAL_RUN market selection** — F5 Total and Pitcher K cards currently compete as peers; F5 should be elevated as the primary game market with Ks treated as props.
-2. **No pipeline health differentiation** for F5 — `WATCHDOG_MARKET_UNAVAILABLE` does not distinguish between a missing F5 total and other market failures (WI-0604).
+1. MLB F5 and pitcher-K cards are intentionally projection-only until a quota-safe featured-market strategy exists.
+2. Deprecated `odds_snapshots` F5 columns remain for compatibility but are no longer populated by the shared odds fetcher.
 
 ---
 
@@ -109,6 +109,6 @@ Not a betting market. Separate pipeline. See `docs/FPL_DASHBOARD.md`.
 ## Cross-Sport Rules
 
 - **All game-level markets** must be routed through `decision-pipeline-v2.js` with edge gating before a card reaches CHEDDAR status.
-- **Projection-signal-only paths to CHEDDAR are prohibited.** This was the root cause closed by WI-0553 for NHL 1P, and is the design intent for all markets.
+- **Projection-only exceptions are explicit.** NHL 1P, NHL player shots, MLB F5, and MLB pitcher K are currently research lanes and must not re-introduce live event-level odds fetches without a dedicated work item.
 - **Player props are always additive** to game-level market selection — they never compete with game markets in the same DUAL_RUN pass.
 - **`ENABLE_WITHOUT_ODDS_MODE=true`** (dev env default) allows model runs without live odds. All cards will show `odds_ok: false` and `WATCHDOG_MARKET_UNAVAILABLE`. This is expected behaviour, not a bug.

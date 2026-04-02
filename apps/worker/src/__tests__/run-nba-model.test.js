@@ -176,6 +176,9 @@ function loadRunNBAModel({
   jest.doMock('../utils/decision-publisher', () => ({
     publishDecisionForCard: publishDecisionForCardMock,
     applyUiActionFields: jest.fn(),
+    finalizeDecisionFields: jest.fn((p) => p),
+    capturePublishedDecisionState: jest.fn(() => null),
+    assertNoDecisionMutation: jest.fn(() => []),
   }));
 
   const moduleUnderTest = require('../jobs/run_nba_model');

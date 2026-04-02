@@ -1,0 +1,50 @@
+{
+  "by_sport": {
+    "NBA": {
+      "critical_count": 0,
+      "failed": 0,
+      "fixture_count": 4,
+      "high_severity_count": 0,
+      "passed": 4,
+      "warn_count": 2
+    },
+    "NHL": {
+      "critical_count": 0,
+      "failed": 0,
+      "fixture_count": 7,
+      "high_severity_count": 0,
+      "passed": 7,
+      "warn_count": 3
+    },
+    "MLB": {
+      "critical_count": 0,
+      "failed": 0,
+      "fixture_count": 6,
+      "high_severity_count": 0,
+      "passed": 6,
+      "warn_count": 0
+    }
+  },
+  "critical_count": 0,
+  "drift_categories": [
+    "FIXTURE_LOAD_FAILURE"
+  ],
+  "failed": 0,
+  "failing_fixtures": [],
+  "fixture_count": 17,
+  "gate_failures": [
+    {
+      "fixture_id": "nba_total_clean_01",
+      "fixture_path": "/Users/ajcolubiale/projects/cheddar-logic/apps/worker/src/audit/fixtures/nba/nba_total_clean_01.json",
+      "drift_type": "FIXTURE_LOAD_FAILURE",
+      "error": "/Users/ajcolubiale/projects/cheddar-logic/apps/worker/src/audit/fixtures/nba/nba_total_clean_01.json is missing required string field \"fixture_id\"",
+      "severity": "HIGH"
+    }
+  ],
+  "gate_failure_count": 1,
+  "generated_at": "2026-04-02T18:29:42.006Z",
+  "high_severity_count": 1,
+  "passed": 17,
+  "run_scope": "manual-2026-04-02T18-29-42-006Z",
+  "warn_count": 5
+}

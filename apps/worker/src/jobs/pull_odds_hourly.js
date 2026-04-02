@@ -65,6 +65,10 @@ function getCurrentPeriod() {
 }
 function getTokenCostPerFetch() {
   // Token cost is determined once per invocation — same value used for all sports
+  const {
+    getActiveSports,
+    getTokensForFetch,
+  } = require('@cheddar-logic/odds');
   return getTokensForFetch(getActiveSports());
 }
 
@@ -174,17 +178,14 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
       // To add/remove sports, update the `active` field in config.js — not here.
       const activeSports = getActiveSports();
 
-      // Token math (ODDS_FETCH_SLOT_MINUTES=30, ODDS_FETCH_START_HOUR=6 → ~32 fetches/day):
-      // NHL:   2 tokens/fetch × 32 fetches/day =  64 tokens/day (h2h + totals, featured only)
-      // NBA:   2 tokens/fetch × 32 fetches/day =  64 tokens/day (totals + spreads)
-      // MLB:   1 token/fetch  × 32 fetches/day =  32 tokens/day (h2h only, featured)
-      // Total: 5 tokens/fetch × 32 fetches/day = 160 tokens/day (main hourly job)
-      // Prop jobs (separate cadence via player-props scheduler — 09:00, 18:00, T-60):
-      //   NHL SOG: 1 token/run × ~3 runs/day = ~3 tokens/day
-      //   MLB K:   1 token/run × ~3 runs/day = ~3 tokens/day
-      // Paid tier: 20,000 tokens/month → ~166/day × 30 = ~4,980/month (~25% utilization)
-      // Note: period markets (totals_p1) are fetched separately by pull_nhl_1p_odds.js
-      //       via the per-event endpoint and patched onto the existing snapshot.
+      // Token math (featured markets only; per-event/alternate markets removed):
+      // NHL:   1 token/fetch × 42 fetches/day = 42 tokens/day
+      // NBA:   2 tokens/fetch × 42 fetches/day = 84 tokens/day
+      // MLB:   1 token/fetch × 42 fetches/day = 42 tokens/day
+      // Total: 4 tokens/fetch × 42 fetches/day = 168 tokens/day
+      // Skips 2am-5am ET (3 hours × 2 slots/h = 6 slots) → ~42 active slots/day
+      // The Odds API free tier: 500 tokens/month → not viable for production
+      // Paid tier: 20,000 tokens/month → 168/day = 5,040/month (25% utilization)
       const tokenCost = getTokensForFetch(activeSports);
       console.log(
         `[PullOdds] Active sports (from config): ${activeSports.join(', ')} | tokens/fetch: ${tokenCost} | ~${tokenCost * 42}/day (30-min buckets, skip 2am-5am)`,
@@ -504,9 +505,13 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 h2hConsensusAway: normalized.odds?.h2hConsensusAway,
                 h2hConsensusConfidence:
                   normalized.odds?.h2hConsensusConfidence,
+                mlF5Home: normalized.odds?.mlF5Home ?? null,
+                mlF5Away: normalized.odds?.mlF5Away ?? null,
                 totalF5Line: normalized.odds?.totalF5Line ?? null,
                 totalF5Over: normalized.odds?.totalF5Over ?? null,
                 totalF5Under: normalized.odds?.totalF5Under ?? null,
+                // Deprecated F5 / 1P snapshot columns remain in the schema but are
+                // now intentionally left null by the shared odds normalizer.
                 rawData: normalized.market,
                 jobRunId,
               });

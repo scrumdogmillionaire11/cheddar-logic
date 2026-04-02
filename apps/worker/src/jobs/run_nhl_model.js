@@ -114,6 +114,11 @@ const NHL_DRIVER_CARD_TYPES = [
   'nhl-pace-totals',
   'nhl-pace-1p',
 ];
+const NHL_SNAPSHOT_CARD_TYPES = new Set([
+  'nhl-pace-totals',
+  'nhl-pace-1p',
+  'nhl-totals-call',
+]);
 
 /**
  * WI-0646: Apply PLAYOFF_SIGMA_MULTIPLIER to sigma overrides.
@@ -180,6 +185,7 @@ function buildGamePipelineState({
   driversReady,
   pricingReady,
   cardReady,
+  cards = [],
   blockingReasonCodes = [],
 }) {
   const teamMappingOk = Boolean(
@@ -189,6 +195,14 @@ function buildGamePipelineState({
     hasMoneylineOdds(oddsSnapshot) ||
     hasSpreadOdds(oddsSnapshot) ||
     hasTotalOdds(oddsSnapshot);
+  const derivedPricingReady =
+    Array.isArray(cards) && cards.length > 0
+      ? cards.some((card) => card?.payloadData?._pricing_state?.status === 'FRESH')
+      : pricingReady === true;
+  const derivedCardReady =
+    Array.isArray(cards) && cards.length > 0
+      ? cards.some((card) => card?.payloadData?._publish_state?.emit_allowed === true)
+      : cardReady === true;
 
   return buildPipelineState({
     ingested: Boolean(oddsSnapshot),
@@ -197,8 +211,8 @@ function buildGamePipelineState({
     market_lines_ok: marketLinesOk,
     projection_ready: projectionReady === true,
     drivers_ready: driversReady === true,
-    pricing_ready: pricingReady === true,
-    card_ready: cardReady === true,
+    pricing_ready: derivedPricingReady,
+    card_ready: derivedCardReady,
     blocking_reason_codes: blockingReasonCodes,
   });
 }
@@ -259,6 +273,51 @@ function canPriceCard(card) {
   return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
 }
 
+function attachNhlExecutionEnvelope(card, { projectionReady = true } = {}) {
+  if (!card?.payloadData || typeof card.payloadData !== 'object') return;
+  const payload = card.payloadData;
+  const executionStatus = String(payload.execution_status || '').toUpperCase() || 'BLOCKED';
+  const pricingStatus =
+    payload?._pricing_state?.status ||
+    (canPriceCard(card)
+      ? 'FRESH'
+      : executionStatus === 'PROJECTION_ONLY'
+        ? 'NOT_REQUIRED'
+        : 'MISSING');
+
+  payload._prediction_state = {
+    ...(payload._prediction_state && typeof payload._prediction_state === 'object'
+      ? payload._prediction_state
+      : {}),
+    status: projectionReady === true ? 'QUALIFIED' : 'UNQUALIFIED',
+    reason: projectionReady === true ? null : 'PROJECTION_INPUTS_INCOMPLETE',
+  };
+  payload._pricing_state = {
+    status: pricingStatus,
+    reason:
+      payload?._pricing_state?.reason ??
+      (pricingStatus === 'FRESH' ? null : `pricing_status=${pricingStatus}`),
+    captured_at:
+      payload?._pricing_state?.captured_at ??
+      payload?.odds_context?.captured_at ??
+      null,
+  };
+  payload._publish_state = {
+    ...(payload._publish_state && typeof payload._publish_state === 'object'
+      ? payload._publish_state
+      : {}),
+    publish_ready: executionStatus === 'EXECUTABLE',
+    emit_allowed: true,
+    execution_status: executionStatus,
+    block_reason:
+      executionStatus === 'EXECUTABLE'
+        ? null
+        : payload?._publish_state?.block_reason || `execution_status=${executionStatus}`,
+  };
+  payload.actionable = executionStatus === 'EXECUTABLE';
+  payload.publish_ready = payload._publish_state.publish_ready === true;
+}
+
 function toFiniteNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -267,6 +326,195 @@ function toFiniteNumber(value) {
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function cloneAuditValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneAuditValue(item));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, cloneAuditValue(nested)]),
+    );
+  }
+  return value;
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) {
+    return value;
+  }
+
+  Object.freeze(value);
+  Object.values(value).forEach((nested) => {
+    deepFreeze(nested);
+  });
+  return value;
+}
+
+function emitNhlSnapshotInvariant(level, message) {
+  const error = new Error(`[INVARIANT_BREACH][LEVEL=${level}] ${message}`);
+  error.code = 'INVARIANT_BREACH';
+  error.level = level;
+
+  if (process.env.NODE_ENV === 'test') {
+    throw error;
+  }
+
+  console.warn(error.message);
+}
+
+function assertNhlSnapshotInvariant(condition, level, message) {
+  if (condition) return;
+  emitNhlSnapshotInvariant(level, message);
+}
+
+function extractNhlPaceAuditContext(descriptors) {
+  if (!Array.isArray(descriptors)) return null;
+  for (const descriptor of descriptors) {
+    const paceResult = descriptor?.auditContext?.paceResult;
+    if (paceResult && typeof paceResult === 'object') {
+      return {
+        paceResult,
+      };
+    }
+  }
+  return null;
+}
+
+function isNhlSnapshotCard(card) {
+  return NHL_SNAPSHOT_CARD_TYPES.has(card?.cardType);
+}
+
+function hasUnknownGoalie(paceResult) {
+  return (
+    paceResult?.homeGoalieCertainty === 'UNKNOWN' ||
+    paceResult?.awayGoalieCertainty === 'UNKNOWN'
+  );
+}
+
+function buildNhlGoalieCertaintyPair(paceResult) {
+  const home = paceResult?.homeGoalieCertainty ?? 'UNKNOWN';
+  const away = paceResult?.awayGoalieCertainty ?? 'UNKNOWN';
+  return `${home}/${away}`;
+}
+
+function applyNhlGoalieExecutionStatusGuard(card, paceResult) {
+  if (!isNhlSnapshotCard(card) || !card?.payloadData || !paceResult) return;
+  if (!hasUnknownGoalie(paceResult)) return;
+  card.payloadData.execution_status = 'PROJECTION_ONLY';
+}
+
+function buildNhlModelSnapshot({ paceResult, payload, sigmaTotal }) {
+  const missingFields = [];
+  const requiredFields = [
+    'homeExpected',
+    'awayExpected',
+    'expectedTotal',
+    'rawTotalModel',
+    'regressedTotalModel',
+    'modifierBreakdown',
+    'homeGoalieCertainty',
+    'awayGoalieCertainty',
+    'homeAdjustmentTrust',
+    'awayAdjustmentTrust',
+    'official_eligible',
+    'first_period_model',
+  ];
+
+  requiredFields.forEach((field) => {
+    if (paceResult?.[field] === undefined) {
+      missingFields.push(field);
+    }
+  });
+
+  const consistency = {
+    pace_tier: payload?.consistency?.pace_tier ?? null,
+    event_env: payload?.consistency?.event_env ?? null,
+    total_bias: payload?.consistency?.total_bias ?? null,
+  };
+  Object.entries(consistency).forEach(([field, value]) => {
+    if (!isNonEmptyString(value)) {
+      missingFields.push(`consistency.${field}`);
+    }
+  });
+
+  const snapshot = {
+    homeExpected: paceResult?.homeExpected ?? null,
+    awayExpected: paceResult?.awayExpected ?? null,
+    expectedTotal: paceResult?.expectedTotal ?? null,
+    rawTotalModel: paceResult?.rawTotalModel ?? null,
+    regressedTotalModel: paceResult?.regressedTotalModel ?? null,
+    sigma_total: Number.isFinite(sigmaTotal) ? sigmaTotal : null,
+    modifierBreakdown: cloneAuditValue(paceResult?.modifierBreakdown ?? {}),
+    homeGoalieCertainty: paceResult?.homeGoalieCertainty ?? null,
+    awayGoalieCertainty: paceResult?.awayGoalieCertainty ?? null,
+    homeAdjustmentTrust: paceResult?.homeAdjustmentTrust ?? null,
+    awayAdjustmentTrust: paceResult?.awayAdjustmentTrust ?? null,
+    official_eligible: paceResult?.official_eligible ?? null,
+    first_period_model: cloneAuditValue(paceResult?.first_period_model ?? {}),
+    consistency,
+  };
+
+  if (missingFields.length > 0) {
+    emitNhlSnapshotInvariant(
+      'WARNING',
+      `snapshot fields missing for ${payload?.game_id || 'unknown-game'}: ${missingFields.join(', ')}`,
+    );
+  }
+
+  const modifierBreakdown = snapshot.modifierBreakdown || {};
+  if (modifierBreakdown.modifier_cap_applied === true) {
+    assertNhlSnapshotInvariant(
+      Math.abs(
+        (snapshot.rawTotalModel ?? 0) -
+          ((modifierBreakdown.base_5v5_total ?? 0) +
+            (modifierBreakdown.capped_modifier_total ?? 0)),
+      ) <= 0.01,
+      'CRITICAL',
+      'modifier cap applied but rawTotalModel does not reflect capped_modifier_total',
+    );
+  }
+
+  const executionStatus = String(payload?.execution_status || '').toUpperCase();
+  if (hasUnknownGoalie(paceResult)) {
+    assertNhlSnapshotInvariant(
+      executionStatus !== 'EXECUTABLE',
+      'CRITICAL',
+      `${payload?.game_id || 'unknown-game'} ${payload?.market_type || 'unknown-market'} cannot remain EXECUTABLE when goalie certainty is UNKNOWN`,
+    );
+  }
+
+  if (String(payload?.market_type || '').toUpperCase() === 'FIRST_PERIOD') {
+    if (hasUnknownGoalie(paceResult)) {
+      assertNhlSnapshotInvariant(
+        executionStatus !== 'EXECUTABLE',
+        'CRITICAL',
+        'nhl-pace-1p cannot remain actionable when full-game execution is blocked by unknown goalie gating',
+      );
+    }
+  }
+
+  return deepFreeze(snapshot);
+}
+
+function attachNhlSnapshotAuditFields(card, { paceResult, sigmaTotal } = {}) {
+  if (!isNhlSnapshotCard(card) || !card?.payloadData) return;
+  if (!paceResult) {
+    emitNhlSnapshotInvariant(
+      'WARNING',
+      `pace snapshot source missing for ${card.cardType} (${card.payloadData.game_id || 'unknown-game'})`,
+    );
+    return;
+  }
+
+  card.payloadData._model_snapshot = buildNhlModelSnapshot({
+    paceResult,
+    payload: card.payloadData,
+    sigmaTotal,
+  });
+  card.payloadData.nhl_goalie_certainty_pair =
+    buildNhlGoalieCertaintyPair(paceResult);
 }
 
 function buildScraperGoalieInput(rawData, side) {
@@ -395,6 +643,8 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
   const selection = deriveOnePeriodSelection(payload);
   const modelLine = toFiniteNumber(payload?.driver?.inputs?.market_1p_total);
   const line = modelLine !== null ? modelLine : 1.5;
+  // Read live 1P prices from odds snapshot when available (feat(nhl-1p): WI-0715).
+  // Falls back to null when the live odds lane is not active (PROJECTION_ONLY mode).
   const overPrice1P = toFiniteNumber(oddsSnapshot?.total_1p_price_over);
   const underPrice1P = toFiniteNumber(oddsSnapshot?.total_1p_price_under);
   const sidePrice =
@@ -404,11 +654,11 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
         ? underPrice1P
         : null;
   const lineSource =
-    toFiniteNumber(oddsSnapshot?.total_1p) !== null
-      ? 'odds_snapshot'
-      : 'fixed_reference';
+    toFiniteNumber(oddsSnapshot?.total_1p) !== null ? 'odds_snapshot' : 'fixed_reference';
   const priceSource = sidePrice !== null ? 'odds_snapshot' : null;
   const statusToken = String(payload.status || '').toUpperCase();
+  // Card is playable only when live 1P prices are present (live odds lane active).
+  // When prices are null the card degrades to EVIDENCE / PROJECTION_ONLY.
   const isPlayable =
     (statusToken === 'FIRE' || statusToken === 'WATCH') &&
     (selection === 'OVER' || selection === 'UNDER') &&
@@ -418,6 +668,11 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
   payload.recommended_bet_type = 'total';
   payload.period = '1P';
   payload.kind = isPlayable ? 'PLAY' : 'EVIDENCE';
+  if (!isPlayable) {
+    payload.execution_status = 'PROJECTION_ONLY';
+    payload.actionable = false;
+    payload.publish_ready = false;
+  }
   // When demoted to EVIDENCE, set an explicit no-edge pass_reason_code so the
   // transform layer classifies this as a healthy no-play (quality='OK') rather
   // than a fetch failure (quality='DEGRADED'). Without this, nhl-pace-1p EVIDENCE
@@ -1380,6 +1635,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             phase2FairProbEnabled: NHL_1P_FAIR_PROB_PHASE2 && hasReal1pLine,
             sigma1p: NHL_1P_SIGMA,
           });
+          const nhlPaceAuditContext = extractNhlPaceAuditContext(driverCards);
 
           const marketDecisions = computeNHLMarketDecisions(oddsSnapshot);
 
@@ -1492,7 +1748,16 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                 `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
               );
             }
+            applyNhlGoalieExecutionStatusGuard(
+              card,
+              nhlPaceAuditContext?.paceResult,
+            );
             applyUiActionFields(card.payloadData, { oddsSnapshot });
+            attachNhlExecutionEnvelope(card, { projectionReady: true });
+            attachNhlSnapshotAuditFields(card, {
+              paceResult: nhlPaceAuditContext?.paceResult,
+              sigmaTotal: effectiveSigma?.total,
+            });
             attachRunId(card, jobRunId);
             pendingCards.push({
               card,
@@ -1550,6 +1815,10 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                 `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
               );
             }
+            applyNhlGoalieExecutionStatusGuard(
+              card,
+              nhlPaceAuditContext?.paceResult,
+            );
             applyUiActionFields(card.payloadData, { oddsSnapshot });
             // Without Odds Mode: buildDecisionV2 always returns PASS when edgePct=null.
             // Override to LEAN AFTER applyUiActionFields so the last write wins.
@@ -1566,6 +1835,11 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                 card.payloadData.decision_v2.official_status = 'LEAN';
               }
             }
+            attachNhlExecutionEnvelope(card, { projectionReady: true });
+            attachNhlSnapshotAuditFields(card, {
+              paceResult: nhlPaceAuditContext?.paceResult,
+              sigmaTotal: effectiveSigma?.total,
+            });
             attachRunId(card, jobRunId);
             pendingCards.push({
               card,
@@ -1582,6 +1856,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             driversReady: true,
             pricingReady,
             cardReady: pendingCards.length > 0,
+            cards: pendingCards.map((entry) => entry.card),
             blockingReasonCodes: deriveGameBlockingReasonCodes({
               oddsSnapshot,
               projectionReady: true,
@@ -1732,6 +2007,7 @@ function buildDualRunRecord(gameId, oddsSnapshot, marketDecisions, expressionCho
 module.exports = {
   runNHLModel,
   generateNHLMarketCallCards,
+  buildNhlModelSnapshot,
   applyNhlSettlementMarketContext,
   applyNhlDriverContextMetadata,
   attachNhlDriverContextToRawData,

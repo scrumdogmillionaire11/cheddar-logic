@@ -299,7 +299,7 @@ describe('run_nhl_player_shots_model', () => {
     expect(lookbackPrepare).toBeTruthy();
   });
 
-  test('emits breakout metadata and adopts breakout evaluation for rising-usage over candidates', async () => {
+  test('emits breakout metadata but blocks breakout adoption when event pricing is disabled', async () => {
     const { mod, data, shots, moneyPuck } = loadFreshModule();
 
     shots.projectSogV2.mockImplementation((inputs = {}) => {
@@ -395,12 +395,13 @@ describe('run_nhl_player_shots_model', () => {
 
     const card = data.insertCardPayload.mock.calls[0][0];
     expect(card.payloadData.breakout).toMatchObject({
-      eligible: true,
+      eligible: false,
     });
     expect(card.payloadData.breakout.delta_mu).toBeGreaterThanOrEqual(0.45);
-    expect(card.payloadData.breakout.flags).toContain('BREAKOUT_CANDIDATE');
-    expect(card.payloadData.decision.v2.flags).toContain('BREAKOUT_CANDIDATE');
-    expect(card.payloadData.drivers.breakout_applied).toBe(true);
+    expect(card.payloadData.breakout.flags).toContain('BREAKOUT_BLOCKED_NO_REAL_LINE');
+    expect(card.payloadData.breakout.flags).not.toContain('BREAKOUT_CANDIDATE');
+    expect(card.payloadData.decision.v2.flags).not.toContain('BREAKOUT_CANDIDATE');
+    expect(card.payloadData.drivers.breakout_applied).toBe(false);
     expect(card.payloadData.breakout.breakout_sog_mu).toBeGreaterThan(
       card.payloadData.breakout.baseline_sog_mu,
     );
@@ -502,12 +503,14 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.prop_decision.flags).toContain('PROJECTION_CONFLICT');
-    expect(card.payloadData.breakout.flags).toContain('BREAKOUT_BLOCKED_ANOMALY');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
+    expect(card.payloadData.prop_decision.flags).toContain('SYNTHETIC_LINE');
+    expect(card.payloadData.breakout.flags).toContain('BREAKOUT_BLOCKED_NO_REAL_LINE');
+    expect(card.payloadData.breakout.flags).not.toContain('BREAKOUT_BLOCKED_ANOMALY');
     expect(card.payloadData.breakout.flags).not.toContain('BREAKOUT_CANDIDATE');
   });
 
-  test('adds PRICE_TOO_JUICED breakout flag without bypassing priced-edge behavior', async () => {
+  test('does not add PRICE_TOO_JUICED breakout flag when no priced candidates are available', async () => {
     const { mod, data, shots } = loadFreshModule();
 
     shots.projectSogV2.mockImplementation((inputs = {}) => {
@@ -561,8 +564,9 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.breakout.flags).toContain('PRICE_TOO_JUICED');
-    expect(card.payloadData.prop_decision.verdict).not.toBe('PLAY');
+    expect(card.payloadData.breakout.flags).toContain('BREAKOUT_BLOCKED_NO_REAL_LINE');
+    expect(card.payloadData.breakout.flags).not.toContain('PRICE_TOO_JUICED');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
   });
 
   test('keeps under-side behavior unchanged when breakout path is not an eligible over', async () => {
@@ -940,7 +944,7 @@ describe('run_nhl_player_shots_model', () => {
     expect(data.insertCardPayload).toHaveBeenCalledTimes(1);
   });
 
-  test('writes canonical play action fields and fair-line recommendation for playable cards', async () => {
+  test('writes canonical pass action fields and synthetic fallback metadata for projection-only cards', async () => {
     // Provide a real odds-backed prop line so the no-real-line guard does NOT
     // fire, giving us a genuine FIRE card we can assert against.
     const { mod, data, shots } = loadFreshModule();
@@ -985,16 +989,16 @@ describe('run_nhl_player_shots_model', () => {
 
     expect(data.insertCardPayload).toHaveBeenCalled();
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.play.action).toBe('FIRE');
-    expect(card.payloadData.play.classification).toBe('BASE');
-    expect(card.payloadData.play.status).toBe('FIRE');
-    expect(card.payloadData.prop_decision.verdict).toBe('PLAY');
+    expect(card.payloadData.play.action).toBe('PASS');
+    expect(card.payloadData.play.classification).toBe('PASS');
+    expect(card.payloadData.play.status).toBe('PASS');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
     expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
     expect(card.payloadData.suggested_line).toBe(3);
     expect(card.payloadData.play.pick_string).toMatch(/Proj \d+\.\d+ · Fair \d+(\.\d+)? · Edge [+-]\d+\.\d+/i);
     expect(card.payloadData.confidence).toBeGreaterThan(0.75);
-    // Odds-backed card must NOT have SYNTHETIC_LINE or anomaly flags.
-    expect(card.payloadData.decision.v2.flags).not.toContain('SYNTHETIC_LINE');
+    expect(card.payloadData.decision.market_line_source).toBe('synthetic_fallback');
+    expect(card.payloadData.decision.v2.flags).toContain('SYNTHETIC_LINE');
   });
 
   test('uses opponent team profile from team_metrics_cache for matchup scoring', async () => {
@@ -1274,7 +1278,7 @@ describe('run_nhl_player_shots_model', () => {
     expect(integerLine.fair_over_prob_by_line['3']).toBeCloseTo(0.5768, 4);
   });
 
-  test('decision-first contract: integer 3.0 threshold lines use 3+ pricing downstream', async () => {
+  test('decision-first contract: integer event-priced thresholds are ignored when the lane is projection-only', async () => {
     const { mod, data, shots } = loadFreshModule();
     const actualShots = jest.requireActual('../../models/nhl-player-shots');
     const thresholdLogs = buildGames(5).map((row, index) => ({
@@ -1295,15 +1299,14 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.prop_decision.verdict).toBe('PLAY');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
     expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
-    expect(card.payloadData.prop_decision.line).toBe(3);
-    expect(card.payloadData.prop_decision.fair_prob).toBeCloseTo(0.5768, 4);
-    expect(card.payloadData.prop_decision.implied_prob).toBeCloseTo(0.4762, 4);
-    expect(card.payloadData.prop_decision.prob_edge_pp).toBeCloseTo(0.1006, 4);
+    expect(card.payloadData.prop_decision.line).toBe(2.5);
+    expect(card.payloadData.prop_decision.display_price).toBeNull();
+    expect(card.payloadData.prop_decision.flags).toContain('SYNTHETIC_LINE');
   });
 
-  test('decision-first contract: normalizes decimal stored odds before pricing the selected row', async () => {
+  test('decision-first contract: decimal stored odds are ignored when no event-priced row can be selected', async () => {
     const { mod, data, shots } = loadFreshModule();
     const actualShots = jest.requireActual('../../models/nhl-player-shots');
     const thresholdLogs = buildGames(5).map((row, index) => ({
@@ -1326,17 +1329,17 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.over_price).toBe(-130);
-    expect(card.payloadData.under_price).toBe(115);
-    expect(card.payloadData.market_bookmaker).toBe('draftkings');
-    expect(card.payloadData.play.selection.price).toBe(-130);
-    expect(card.payloadData.prop_decision.line).toBe(3);
-    expect(card.payloadData.prop_decision.display_price).toBe(-130);
-    expect(card.payloadData.prop_decision.implied_prob).toBeCloseTo(0.5652, 4);
-    expect(card.payloadData.prop_decision.fair_prob).toBeCloseTo(0.5768, 4);
+    expect(card.payloadData.over_price).toBeNull();
+    expect(card.payloadData.under_price).toBeNull();
+    expect(card.payloadData.market_bookmaker).toBeNull();
+    expect(card.payloadData.play.selection.price).toBe(-110);
+    expect(card.payloadData.prop_decision.line).toBe(2.5);
+    expect(card.payloadData.prop_decision.display_price).toBeNull();
+    expect(card.payloadData.prop_decision.implied_prob).toBeNull();
+    expect(card.payloadData.decision.market_line_source).toBe('synthetic_fallback');
   });
 
-  test('decision-first contract: selects a matched threshold row instead of mixing same-book ladders', async () => {
+  test('decision-first contract: ladder rows are bypassed when event-priced selection is disabled', async () => {
     const { mod, data, shots } = loadFreshModule();
     const actualShots = jest.requireActual('../../models/nhl-player-shots');
     const thresholdLogs = buildGames(5).map((row, index) => ({
@@ -1364,26 +1367,25 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.decision.market_line).toBe(4);
-    expect(card.payloadData.over_price).toBe(110);
-    expect(card.payloadData.under_price).toBe(-130);
-    expect(card.payloadData.market_bookmaker).toBe('draftkings');
+    expect(card.payloadData.decision.market_line).toBe(2.5);
+    expect(card.payloadData.over_price).toBeNull();
+    expect(card.payloadData.under_price).toBeNull();
+    expect(card.payloadData.market_bookmaker).toBeNull();
     expect(card.payloadData.suggested_line).toBe(3);
-    expect(card.payloadData.play.selection.line).toBe(4);
-    expect(card.payloadData.play.selection.price).toBe(110);
-    expect(card.payloadData.prop_decision.verdict).toBe('NO_PLAY');
-    expect(card.payloadData.prop_decision.line).toBe(4);
-    expect(card.payloadData.prop_decision.display_price).toBe(110);
+    expect(card.payloadData.play.selection.line).toBe(2.5);
+    expect(card.payloadData.play.selection.price).toBe(-110);
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
+    expect(card.payloadData.prop_decision.line).toBe(2.5);
+    expect(card.payloadData.prop_decision.display_price).toBeNull();
     expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
-    expect(card.payloadData.prop_decision.fair_prob).toBeCloseTo(0.3528, 4);
-    expect(card.payloadData.prop_decision.implied_prob).toBeCloseTo(0.4762, 4);
-    expect(card.payloadData.prop_decision.prob_edge_pp).toBeCloseTo(-0.1234, 4);
-    expect(card.payloadData.prop_decision.flags).toContain('PROJECTION_CONFLICT');
-    expect(card.payloadData.prop_decision.why).toMatch(/projection conflict/i);
+    expect(card.payloadData.prop_decision.implied_prob).toBeNull();
+    expect(card.payloadData.prop_decision.flags).toContain('SYNTHETIC_LINE');
+    expect(card.payloadData.prop_decision.flags).not.toContain('PROJECTION_CONFLICT');
+    expect(card.payloadData.prop_decision.why).toMatch(/projection only/i);
     expect(card.payloadData.play.action).toBe('PASS');
   });
 
-  test('decision-first contract: priced over-side edge that clears thresholds becomes PLAY', async () => {
+  test('decision-first contract: projection-only over-side edges stay non-actionable', async () => {
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
     shots.projectSogV2.mockReturnValue({
@@ -1422,13 +1424,13 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.prop_decision.verdict).toBe('PLAY');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
     expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
-    expect(card.payloadData.prop_decision.prob_edge_pp).toBeCloseTo(0.0851, 4);
-    expect(card.payloadData.prop_decision.ev).toBeCloseTo(0.12, 4);
+    expect(card.payloadData.prop_decision.display_price).toBeNull();
+    expect(card.payloadData.prop_decision.flags).toContain('SYNTHETIC_LINE');
   });
 
-  test('decision-first contract: priced weak edge becomes WATCH, not PLAY', async () => {
+  test('decision-first contract: projection-only weak edges stay projection rows', async () => {
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'WATCH', direction: 'UNDER', edge: -0.5 });
     shots.calcMu.mockReturnValue(1.8);
@@ -1468,11 +1470,11 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.prop_decision.verdict).toBe('WATCH');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
     expect(card.payloadData.prop_decision.lean_side).toBe('UNDER');
   });
 
-  test('WI-0577: legacy HOT over seed cannot leak FIRE when priced over edge is non-playable', async () => {
+  test('WI-0577: projection-only over seeds cannot leak FIRE when event pricing is disabled', async () => {
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
     shots.calcMu.mockReturnValue(3.2);
@@ -1512,16 +1514,17 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.prop_decision.verdict).toBe('NO_PLAY');
-    expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
-    expect(card.payloadData.prop_decision.flags).toContain('PROJECTION_CONFLICT');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
+    expect(card.payloadData.prop_decision.lean_side).toBe('UNDER');
+    expect(card.payloadData.prop_decision.flags).toContain('SYNTHETIC_LINE');
+    expect(card.payloadData.prop_decision.flags).not.toContain('PROJECTION_CONFLICT');
     expect(card.payloadData.play.action).toBe('PASS');
     expect(card.payloadData.play.status).toBe('PASS');
     expect(card.payloadData.play.decision_v2.official_status).toBe('PASS');
     expect(card.payloadData.decision_v2.official_status).toBe('PASS');
   });
 
-  test('decision-first contract: projection-conflict priced side is hard-blocked to NO_PLAY', async () => {
+  test('decision-first contract: projection-only rows do not surface priced-side conflicts', async () => {
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 0.9 });
     shots.calcMu.mockReturnValue(3.4);
@@ -1561,18 +1564,17 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.prop_decision.verdict).toBe('NO_PLAY');
-    expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
-    expect(card.payloadData.prop_decision.flags).toContain('PROJECTION_CONFLICT');
-    expect(card.payloadData.prop_decision.fair_prob).toBeCloseTo(0.62, 4);
-    expect(card.payloadData.prop_decision.implied_prob).toBeCloseTo(0.5122, 4);
-    expect(card.payloadData.prop_decision.prob_edge_pp).toBeCloseTo(0.01, 4);
-    expect(card.payloadData.prop_decision.ev).toBeCloseTo(0.01, 4);
-    expect(card.payloadData.prop_decision.why).toMatch(/projection conflict/i);
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
+    expect(card.payloadData.prop_decision.lean_side).toBe('UNDER');
+    expect(card.payloadData.prop_decision.flags).toContain('SYNTHETIC_LINE');
+    expect(card.payloadData.prop_decision.flags).not.toContain('PROJECTION_CONFLICT');
+    expect(card.payloadData.prop_decision.implied_prob).toBeCloseTo(0.4167, 4);
+    expect(card.payloadData.prop_decision.display_price).toBeNull();
+    expect(card.payloadData.prop_decision.why).toMatch(/projection only/i);
     expect(card.payloadData.play.action).toBe('PASS');
   });
 
-  test('WI-0577: explicit projection conflict keeps canonical PASS fields aligned', async () => {
+  test('WI-0577: explicit projection-only rows keep canonical PASS fields aligned', async () => {
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 0.9 });
     shots.calcMu.mockReturnValue(3.4);
@@ -1612,16 +1614,17 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.prop_decision.verdict).toBe('NO_PLAY');
-    expect(card.payloadData.prop_decision.lean_side).toBe('OVER');
-    expect(card.payloadData.prop_decision.flags).toContain('PROJECTION_CONFLICT');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
+    expect(card.payloadData.prop_decision.lean_side).toBe('UNDER');
+    expect(card.payloadData.prop_decision.flags).toContain('SYNTHETIC_LINE');
+    expect(card.payloadData.prop_decision.flags).not.toContain('PROJECTION_CONFLICT');
     expect(card.payloadData.play.action).toBe('PASS');
     expect(card.payloadData.play.status).toBe('PASS');
     expect(card.payloadData.play.decision_v2.official_status).toBe('PASS');
     expect(card.payloadData.decision_v2.official_status).toBe('PASS');
   });
 
-  test('decision-first contract: priced market-efficient card becomes NO_PLAY', async () => {
+  test('decision-first contract: market-efficient rows stay projection-only without event pricing', async () => {
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'WATCH', direction: 'OVER', edge: 0.5 });
     shots.projectSogV2.mockReturnValue({
@@ -1660,7 +1663,7 @@ describe('run_nhl_player_shots_model', () => {
     await mod.runNHLPlayerShotsModel();
 
     const card = data.insertCardPayload.mock.calls[0][0];
-    expect(card.payloadData.prop_decision.verdict).toBe('NO_PLAY');
+    expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
     expect(card.payloadData.play.action).toBe('PASS');
   });
 
@@ -2790,7 +2793,7 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.drivers.pp_matchup_factor).toBe(1.0);
   });
 
-  test('WI-0577 Guard 3: 1P FIRE is downgraded to WATCH when V2 edge_over_pp is negative on odds-backed card', async () => {
+  test('WI-0577 Guard 3: 1P cards use synthetic fallback lines when event pricing is disabled', async () => {
     // V1 classifyEdge returns HOT OVER for 1P → derivePlayDecision → FIRE
     // V2 edge_over_pp = -0.04 (negative) → Guard 3 should veto FIRE → HOLD/WATCH
     process.env.NHL_SOG_1P_CARDS_ENABLED = 'true';
@@ -2866,7 +2869,7 @@ describe('run_nhl_player_shots_model', () => {
       flags: [],
       });
 
-    // Return a real prop line so Guard 1 (no-real-line) does NOT fire
+    // getPlayerPropLine is ignored in the projection-only path.
     data.getPlayerPropLine.mockReturnValue({ line: 0.5, over_price: -115, under_price: 105 });
 
     data.getDatabase.mockReturnValue(buildMockDb({
@@ -2885,9 +2888,9 @@ describe('run_nhl_player_shots_model', () => {
     expect(shots.projectSogV2).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        market_line: 0.5,
-        market_price_over: -115,
-        market_price_under: 105,
+        market_line: 1,
+        market_price_over: null,
+        market_price_under: null,
         play_direction: 'OVER',
       }),
     );
@@ -2897,7 +2900,6 @@ describe('run_nhl_player_shots_model', () => {
     expect(onePCards.length).toBe(1);
     const card1p = onePCards[0];
 
-    // Guard 3 must have downgraded FIRE → HOLD/WATCH
     expect(card1p.payloadData.action).not.toBe('FIRE');
     expect(card1p.payloadData.action).toBe('HOLD');
     expect(card1p.payloadData.status).toBe('WATCH');
@@ -2909,7 +2911,7 @@ describe('run_nhl_player_shots_model', () => {
     expect(card1p.payloadData.play.decision_v2.edge_pct).toBeUndefined();
   });
 
-  test('WI-0577 Guard 3: full-game FIRE is downgraded to WATCH when V2 edge_over_pp is negative on odds-backed card', async () => {
+  test('WI-0577 Guard 3: full-game veto logging does not fire once the card is projection-only', async () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
@@ -2953,18 +2955,16 @@ describe('run_nhl_player_shots_model', () => {
 
     const fullGameCard = getInsertedCardsByType(data, 'nhl-player-shots')[0];
 
-    // Guard 3 must have emitted the [v2-veto-full] log tag
     const vetoWarn = warnSpy.mock.calls.find(([msg]) => typeof msg === 'string' && msg.includes('[v2-veto-full]'));
     warnSpy.mockRestore();
-    expect(vetoWarn).toBeDefined();
+    expect(vetoWarn).toBeUndefined();
     expect(fullGameCard).toBeTruthy();
-    expect(fullGameCard.payloadData.decision_v2.edge_delta_pct).toEqual(expect.any(Number));
-    expect(fullGameCard.payloadData.decision_v2.edge_pct).toBeUndefined();
-    expect(fullGameCard.payloadData.play.decision_v2.edge_delta_pct).toEqual(expect.any(Number));
-    expect(fullGameCard.payloadData.play.decision_v2.edge_pct).toBeUndefined();
+    expect(fullGameCard.payloadData.prop_decision.verdict).toBe('PROJECTION');
+    expect(fullGameCard.payloadData.play.action).toBe('PASS');
+    expect(fullGameCard.payloadData.decision.v2.flags).toContain('SYNTHETIC_LINE');
   });
 
-  test('WI-0579: full-game V2 anomaly does not suppress a clean 1P card', async () => {
+  test('WI-0579: full-game V2 anomaly still emits a synthetic 1P watch card', async () => {
     process.env.NHL_SOG_1P_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();
 
@@ -3049,19 +3049,20 @@ describe('run_nhl_player_shots_model', () => {
     expect(shots.projectSogV2).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        market_line: 0.5,
-        market_price_over: -115,
-        market_price_under: 105,
+        market_line: 1,
+        market_price_over: null,
+        market_price_under: null,
       }),
     );
 
     const card1p = getInsertedCardsByType(data, 'nhl-player-shots-1p')[0];
     expect(card1p).toBeTruthy();
-    expect(card1p.payloadData.action).toBe('FIRE');
-    expect(card1p.payloadData.play.action).toBe('FIRE');
+    expect(card1p.payloadData.action).toBe('HOLD');
+    expect(card1p.payloadData.status).toBe('WATCH');
+    expect(card1p.payloadData.play.action).toBe('HOLD');
   });
 
-  test('WI-0579: 1P V2 anomaly downgrades the 1P card even when full-game V2 is clean', async () => {
+  test('WI-0579: 1P projection-only cards stay watch-level without anomaly-specific veto logging', async () => {
     process.env.NHL_SOG_1P_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
@@ -3147,9 +3148,9 @@ describe('run_nhl_player_shots_model', () => {
     expect(shots.projectSogV2).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        market_line: 0.5,
-        market_price_over: -115,
-        market_price_under: 105,
+        market_line: 1,
+        market_price_over: null,
+        market_price_under: null,
       }),
     );
 
@@ -3161,7 +3162,7 @@ describe('run_nhl_player_shots_model', () => {
     expect(card1p.payloadData.play.status).toBe('WATCH');
 
     const warnings = warnSpy.mock.calls.map((call) => call.join(' ')).join('\n');
-    expect(warnings).toMatch(/\[anomaly-guard-1p\]/);
+    expect(warnings).not.toMatch(/\[anomaly-guard-1p\]/);
     expect(warnings).not.toMatch(/\[v2-veto-1p\]/);
 
     warnSpy.mockRestore();
@@ -3222,7 +3223,7 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.decision.v2.flags).toContain('PP_RATE_MISSING');
   });
 
-  test('emits nhl-player-blk cards from blocked-shot logs when BLK cards are enabled', async () => {
+  test('emits projection-only nhl-player-blk cards from blocked-shot logs when BLK cards are enabled', async () => {
     process.env.NHL_BLK_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();
 
@@ -3268,7 +3269,8 @@ describe('run_nhl_player_shots_model', () => {
 
     const blkCards = getInsertedCardsByType(data, 'nhl-player-blk');
     expect(blkCards).toHaveLength(1);
-    expect(blkCards[0].payloadData.prop_decision.verdict).toBe('PLAY');
+    expect(blkCards[0].payloadData.prop_decision.verdict).toBe('PROJECTION');
+    expect(blkCards[0].payloadData.prop_decision.flags).toContain('SYNTHETIC_LINE');
     expect(blkCards[0].payloadData.play.prop_type).toBe('blocked_shots');
     expect(blkCards[0].payloadData.play.market_type).toBe('PROP');
     expect(blkCards[0].payloadData.play.canonical_market_key).toBe('player_blocked_shots');

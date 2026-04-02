@@ -46,6 +46,7 @@ const TOTAL_REGRESSION_K = 0.7;
 const TOTAL_FLOOR = 5.0;
 const TOTAL_CEILING = 7.6;
 const MODIFIER_CAP_ABS = 0.7;
+const UNKNOWN_GOALIE_CONFIDENCE_CAP = 0.35;
 const ONE_P_TOTAL_FLOOR = 1.2;
 const ONE_P_TOTAL_CEILING = 2.25;
 const ONE_P_BASE_INTERCEPT = 0.18;
@@ -62,6 +63,28 @@ const ONE_P_TOTAL_ADJ_CAP = 0.18;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function approxEqual(left, right, tolerance = 0.002) {
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+  return Math.abs(left - right) <= tolerance;
+}
+
+function emitNhlPaceInvariant(level, message) {
+  const error = new Error(`[INVARIANT_BREACH][LEVEL=${level}] ${message}`);
+  error.code = 'INVARIANT_BREACH';
+  error.level = level;
+
+  if (process.env.NODE_ENV === 'test') {
+    throw error;
+  }
+
+  console.warn(error.message);
+}
+
+function assertNhlPaceInvariant(condition, level, message) {
+  if (condition) return;
+  emitNhlPaceInvariant(level, message);
 }
 
 /**
@@ -664,12 +687,12 @@ function predictNHLGame(opts) {
   const goalieConfidenceCapped =
     homeCertainty === 'UNKNOWN' || awayCertainty === 'UNKNOWN';
   if (goalieConfidenceCapped) {
-    confidence = Math.min(confidence, 0.35);
+    confidence = Math.min(confidence, UNKNOWN_GOALIE_CONFIDENCE_CAP);
   } else if (homeCertainty !== 'CONFIRMED' || awayCertainty !== 'CONFIRMED') {
     confidence = Math.min(confidence, 0.5);
   }
 
-  return {
+  const result = {
     homeExpected,
     awayExpected,
     expectedTotal,
@@ -704,6 +727,115 @@ function predictNHLGame(opts) {
     adjustments,
     confidence,
   };
+
+  validateNhlPaceResult(result);
+  return result;
 }
 
-module.exports = { predictNHLGame };
+function validateNhlPaceResult(result) {
+  if (!result || typeof result !== 'object') return result;
+
+  const homeUnknown = result.homeGoalieCertainty === 'UNKNOWN';
+  const awayUnknown = result.awayGoalieCertainty === 'UNKNOWN';
+  const goalieUnknown = homeUnknown || awayUnknown;
+  const modifierBreakdown =
+    result.modifierBreakdown && typeof result.modifierBreakdown === 'object'
+      ? result.modifierBreakdown
+      : {};
+  const firstPeriodModel =
+    result.first_period_model && typeof result.first_period_model === 'object'
+      ? result.first_period_model
+      : {};
+
+  if (goalieUnknown) {
+    assertNhlPaceInvariant(
+      Number.isFinite(result.confidence) &&
+        result.confidence <= UNKNOWN_GOALIE_CONFIDENCE_CAP,
+      'CRITICAL',
+      `UNKNOWN goalie must cap confidence to ${UNKNOWN_GOALIE_CONFIDENCE_CAP} (actual=${result.confidence})`,
+    );
+  }
+
+  if (homeUnknown) {
+    assertNhlPaceInvariant(
+      result.homeAdjustmentTrust !== 'FULL',
+      'CRITICAL',
+      'homeGoalieCertainty=UNKNOWN cannot coexist with homeAdjustmentTrust=FULL',
+    );
+  }
+
+  if (awayUnknown) {
+    assertNhlPaceInvariant(
+      result.awayAdjustmentTrust !== 'FULL',
+      'CRITICAL',
+      'awayGoalieCertainty=UNKNOWN cannot coexist with awayAdjustmentTrust=FULL',
+    );
+  }
+
+  assertNhlPaceInvariant(
+    Number.isFinite(modifierBreakdown.capped_modifier_total) &&
+      Math.abs(modifierBreakdown.capped_modifier_total) <=
+        MODIFIER_CAP_ABS + 0.002,
+    'CRITICAL',
+    `capped_modifier_total must stay within modifier cap ${MODIFIER_CAP_ABS} (actual=${modifierBreakdown.capped_modifier_total})`,
+  );
+
+  if (modifierBreakdown.modifier_cap_applied === true) {
+    assertNhlPaceInvariant(
+      !approxEqual(
+        modifierBreakdown.raw_modifier_total,
+        modifierBreakdown.capped_modifier_total,
+      ),
+      'CRITICAL',
+      'modifier_cap_applied=true requires raw_modifier_total and capped_modifier_total to differ',
+    );
+  }
+
+  assertNhlPaceInvariant(
+    approxEqual(
+      result.rawTotalModel,
+      modifierBreakdown.base_5v5_total + modifierBreakdown.capped_modifier_total,
+      0.01,
+    ),
+    'CRITICAL',
+    `rawTotalModel must equal base_5v5_total + capped_modifier_total (raw=${result.rawTotalModel}, base=${modifierBreakdown.base_5v5_total}, capped=${modifierBreakdown.capped_modifier_total})`,
+  );
+
+  assertNhlPaceInvariant(
+    Math.abs(result.regressedTotalModel - NHL_TOTAL_BASELINE) <=
+      Math.abs(result.rawTotalModel - NHL_TOTAL_BASELINE) + 0.002,
+    'CRITICAL',
+    `regressedTotalModel must move toward baseline ${NHL_TOTAL_BASELINE} (raw=${result.rawTotalModel}, regressed=${result.regressedTotalModel})`,
+  );
+
+  if (goalieUnknown) {
+    assertNhlPaceInvariant(
+      String(firstPeriodModel.classification || '').toUpperCase() === 'PASS',
+      'CRITICAL',
+      'first_period_model.classification must be PASS when any goalie certainty is UNKNOWN',
+    );
+  }
+
+  if (String(firstPeriodModel.classification || '').toUpperCase() !== 'PASS') {
+    assertNhlPaceInvariant(
+      Array.isArray(firstPeriodModel.reason_codes) &&
+        firstPeriodModel.reason_codes.length > 0,
+      'WARNING',
+      'first_period_model.reason_codes must be non-empty when classification is not PASS',
+    );
+  }
+
+  return result;
+}
+
+const NHL_PACE_AUDIT_RULES = Object.freeze({
+  total_baseline: NHL_TOTAL_BASELINE,
+  modifier_cap_abs: MODIFIER_CAP_ABS,
+  unknown_goalie_confidence_cap: UNKNOWN_GOALIE_CONFIDENCE_CAP,
+});
+
+module.exports = {
+  predictNHLGame,
+  validateNhlPaceResult,
+  NHL_PACE_AUDIT_RULES,
+};

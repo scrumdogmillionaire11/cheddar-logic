@@ -133,18 +133,45 @@ function safeDiv(numerator, denominator, multiplier = 1) {
   return (n / d) * multiplier;
 }
 
+function estimatePitcherXFip({ kPct, bbPct, hrPer9 }) {
+  const kRate = toFinite(kPct);
+  const walkRate = toFinite(bbPct);
+  const hrRate = toFinite(hrPer9);
+  if (kRate === null || walkRate === null || hrRate === null) return null;
+
+  // xFIP-style run estimator centered near league-average run prevention.
+  const xFip = 4.2 + 10 * (walkRate - 0.085) - 12 * (kRate - 0.225) + 0.35 * (hrRate - 1.1);
+  return Math.max(2.0, Math.min(6.8, Math.round(xFip * 100) / 100));
+}
+
 async function fetchPitcherSeasonStats(pitcherId, season = MLB_SEASON) {
   const url = `${MLB_API_BASE}/people/${pitcherId}/stats?stats=season&season=${season}&group=pitching`;
   const payload = await fetchJson(url);
 
   const stats = payload?.stats?.[0]?.splits?.[0]?.stat;
   if (!stats) {
-    return { era: null, whip: null, k_per_9: null, innings_pitched: null, season_starts: null, season_k_pct: null };
+    return {
+      era: null,
+      whip: null,
+      k_per_9: null,
+      innings_pitched: null,
+      season_starts: null,
+      season_k_pct: null,
+      bb_pct: null,
+      hr_per_9: null,
+      x_fip: null,
+      siera: null,
+    };
   }
 
   const ip = toFinite(stats.inningsPitched);
   const strikeOuts = toFinite(stats.strikeOuts);
+  const walks = toFinite(stats.baseOnBalls);
+  const homeRuns = toFinite(stats.homeRuns);
   const battersFaced = toFinite(stats.battersFaced);
+  const seasonKPct = safeDiv(strikeOuts, battersFaced);
+  const bbPct = safeDiv(walks, battersFaced);
+  const hrPer9 = safeDiv(homeRuns, ip, 9);
   return {
     era: toFinite(stats.era),
     whip: toFinite(stats.whip),
@@ -154,7 +181,11 @@ async function fetchPitcherSeasonStats(pitcherId, season = MLB_SEASON) {
     // pitcher_input_schema.md: season_starts required — halt if missing
     season_starts: toFinite(stats.gamesStarted),
     // pitcher_input_schema.md: season_k_pct required for Block 3 trend
-    season_k_pct: safeDiv(strikeOuts, battersFaced),
+    season_k_pct: seasonKPct,
+    bb_pct: bbPct,
+    hr_per_9: hrPer9,
+    x_fip: estimatePitcherXFip({ kPct: seasonKPct, bbPct, hrPer9 }),
+    siera: null,
   };
 }
 
@@ -431,6 +462,10 @@ async function fetchAllPitcherData(pitcherId, { teamFromSchedule = null } = {}) 
     // pitcher_input_schema.md: season_starts + season_k_pct required
     season_starts: effectiveSeasonStats.season_starts,
     season_k_pct: effectiveSeasonStats.season_k_pct,
+    bb_pct: effectiveSeasonStats.bb_pct,
+    hr_per_9: effectiveSeasonStats.hr_per_9,
+    x_fip: effectiveSeasonStats.x_fip,
+    siera: effectiveSeasonStats.siera,
     recent_k_per_9: effectiveRecentStats.recent_k_per_9,
     recent_ip: effectiveRecentStats.recent_ip,
     // pitcher_input_schema.md: last_three_pitch_counts required — leash classification
@@ -490,6 +525,10 @@ function ensurePitcherStatsTable(db) {
       -- Statcast fields: null until pull_mlb_statcast is added (WI-0596 notes)
       season_swstr_pct REAL,
       season_avg_velo  REAL,
+      x_fip          REAL,
+      siera          REAL,
+      bb_pct         REAL,
+      hr_per_9       REAL,
       recent_k_per_9  REAL,
       recent_ip       REAL,
       updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
@@ -518,6 +557,10 @@ function ensurePitcherStatsTable(db) {
     "ALTER TABLE mlb_pitcher_stats ADD COLUMN role TEXT NOT NULL DEFAULT 'starter'",
     'ALTER TABLE mlb_pitcher_stats ADD COLUMN season_swstr_pct REAL',
     'ALTER TABLE mlb_pitcher_stats ADD COLUMN season_avg_velo REAL',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN x_fip REAL',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN siera REAL',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN bb_pct REAL',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN hr_per_9 REAL',
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch (_) { /* column already exists */ }
@@ -550,11 +593,15 @@ function upsertPitcherRows(db, rows) {
       role,
       season_swstr_pct,
       season_avg_velo,
+      x_fip,
+      siera,
+      bb_pct,
+      hr_per_9,
       recent_k_per_9,
       recent_ip,
       updated_at
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')
     )
     ON CONFLICT(mlb_id) DO UPDATE SET
       full_name               = excluded.full_name,
@@ -577,6 +624,10 @@ function upsertPitcherRows(db, rows) {
       role                    = excluded.role,
       season_swstr_pct        = excluded.season_swstr_pct,
       season_avg_velo         = excluded.season_avg_velo,
+      x_fip                   = excluded.x_fip,
+      siera                   = excluded.siera,
+      bb_pct                  = excluded.bb_pct,
+      hr_per_9                = excluded.hr_per_9,
       recent_k_per_9          = excluded.recent_k_per_9,
       recent_ip               = excluded.recent_ip,
       updated_at              = datetime('now')
@@ -607,6 +658,10 @@ function upsertPitcherRows(db, rows) {
       row.role,
       row.season_swstr_pct,
       row.season_avg_velo,
+      row.x_fip,
+      row.siera,
+      row.bb_pct,
+      row.hr_per_9,
       row.recent_k_per_9,
       row.recent_ip,
     );

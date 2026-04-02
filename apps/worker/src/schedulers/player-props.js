@@ -1,27 +1,24 @@
 /**
- * Player Props Scheduler — NHL SOG/BLK + MLB Pitcher-K
+ * Player Props Scheduler — projection-only support jobs
  *
  * Architecture note
  * -----------------
- * This module owns all NHL shots-on-goal / blocked-shots and MLB pitcher-K
- * player-prop scheduling. It is intentionally isolated from the game-time window
- * scheduler in schedulers/main.js (which handles T-120/T-90/T-60/T-30 for
- * full-game betting models). Player-prop lines don't move on the T-120/T-90/T-30
- * cadence, so firing ingest at those bands burns Odds API quota for zero gain.
+ * This module owns non-odds prep plus projection-only NHL player-prop model
+ * scheduling. It is intentionally isolated from the game-time window scheduler
+ * in schedulers/main.js (which handles T-120/T-90/T-60/T-30 for game-level
+ * betting models).
  *
  * Cadence model
  * -------------
  * 09:00 ET (heavy ingest window):
- *   NHL: sync_nhl_sog_player_ids → [BLK chain] → pull_nhl_player_shots_props + pull_nhl_1p_odds → run_nhl_player_shots_model
- *   MLB: pull_mlb_pitcher_stats → pull_mlb_weather → pull_mlb_pitcher_strikeout_props → run_mlb_model
+ *   NHL: sync_nhl_sog_player_ids → [BLK chain] → run_nhl_player_shots_model
+ *   MLB: pull_mlb_pitcher_stats → pull_mlb_weather
  *
- * 18:00 ET (prop-refresh only — no heavy ingest):
- *   NHL: pull_nhl_player_shots_props + pull_nhl_1p_odds → run_nhl_player_shots_model
- *   MLB: pull_mlb_pitcher_strikeout_props → run_mlb_model
+ * 15:00 ET:
+ *   NHL: run_nhl_player_shots_model
  *
  * T-60 per game:
- *   NHL: pull_nhl_player_shots_props + pull_nhl_1p_odds → run_nhl_player_shots_model
- *   MLB: pull_mlb_pitcher_strikeout_props → run_mlb_model
+ *   NHL: run_nhl_player_shots_model
  *
  * T-120, T-90, T-30: NO player-prop jobs — only T-60 band fires.
  *
@@ -37,7 +34,7 @@
  * --------
  * ENABLE_PLAYER_PROPS_SCHEDULER  — set to "false" to disable entire scheduler
  * ENABLE_NHL_BLK_INGEST          — set to "false" to suppress the three BLK jobs only
- * PLAYER_PROPS_FIXED_TIMES_ET    — comma-separated HH:MM times (default "09:00,18:00")
+ * PLAYER_PROPS_FIXED_TIMES_ET    — comma-separated HH:MM times (default "09:00,15:00")
  * FIXED_CATCHUP                  — set to "false" for strict 2×TICK_MS window (default: true)
  * TICK_MS                        — scheduler tick interval in ms (default: 60000)
  */
@@ -54,13 +51,9 @@ const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { syncNhlBlkPlayerIds } = require('../jobs/sync_nhl_blk_player_ids');
 const { pullNhlPlayerBlk } = require('../jobs/pull_nhl_player_blk');
 const { ingestNstBlkRates } = require('../jobs/ingest_nst_blk_rates');
-const { pullNhlPlayerShotsProps } = require('../jobs/pull_nhl_player_shots_props');
-const { pullNhl1pOdds } = require('../jobs/pull_nhl_1p_odds');
 const { runNHLPlayerShotsModel } = require('../jobs/run_nhl_player_shots_model');
 const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
 const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
-const { pullMlbPitcherStrikeoutProps } = require('../jobs/pull_mlb_pitcher_strikeout_props');
-const { runMLBModel } = require('../jobs/run_mlb_model');
 
 // ─── isFixedDue ──────────────────────────────────────────────────────────────
 // Copied from schedulers/main.js#isFixedDue — pure helper, no dependencies.
@@ -118,7 +111,7 @@ function isTminusDue(nowUtc, startUtc) {
 
 /**
  * Parse PLAYER_PROPS_FIXED_TIMES_ET env var.
- * Defaults to ["09:00", "18:00"] if unset or unparseable.
+ * Defaults to ["09:00", "15:00"] if unset or unparseable.
  *
  * @returns {string[]} Array of "HH:MM" strings
  */
@@ -131,7 +124,7 @@ function getPlayerPropsFixedTimes() {
       .filter((s) => /^\d{2}:\d{2}$/.test(s));
     if (parsed.length > 0) return parsed;
   }
-  return ['09:00', '18:00'];
+  return ['09:00', '15:00'];
 }
 
 // ─── Key builders ─────────────────────────────────────────────────────────────
@@ -191,16 +184,20 @@ function keyMlbTminus(gameId) {
  * @param {object}  [opts]
  * @param {Array}   [opts.games=[]]    - Upcoming games from DB
  * @param {boolean} [opts.dryRun=false]
+ * @param {'FULL'|'MEDIUM'|'LOW'|'CRITICAL'} [opts.quotaTier='FULL']
  * @returns {Array<{jobName: string, jobKey: string, execute: Function, args: object, reason: string}>}
  */
-function computePlayerPropsDueJobs(nowEt, { games = [], dryRun = false } = {}) {
+function computePlayerPropsDueJobs(
+  nowEt,
+  { games = [], dryRun = false, quotaTier = 'FULL' } = {},
+) {
   if (process.env.ENABLE_PLAYER_PROPS_SCHEDULER === 'false') return [];
 
   const nowUtc = nowEt.toUTC();
   const dateStr = nowEt.toISODate();
   const fixedTimes = getPlayerPropsFixedTimes();
   const blkEnabled = process.env.ENABLE_NHL_BLK_INGEST !== 'false';
-
+  const mlbFixedRefreshAllowed = quotaTier === 'FULL' || quotaTier === 'MEDIUM';
   const jobs = [];
 
   // ── Fixed-time windows ────────────────────────────────────────────────────
@@ -252,36 +249,21 @@ function computePlayerPropsDueJobs(nowEt, { games = [], dryRun = false } = {}) {
       }
     }
 
-    // NHL shots props + model — runs at every fixed window
-    const nhlPropKey = `${keyNhlFixed(dateStr, hhmm)}|shots_props`;
-    jobs.push({
-      jobName: 'pull_nhl_player_shots_props',
-      jobKey: nhlPropKey,
-      execute: pullNhlPlayerShotsProps,
-      args: { jobKey: nhlPropKey, dryRun },
-      reason: `player-props NHL shots prop pull (${hhmm} ET)`,
-    });
-    const nhl1pKey = `${keyNhlFixed(dateStr, hhmm)}|1p_odds`;
-    jobs.push({
-      jobName: 'pull_nhl_1p_odds',
-      jobKey: nhl1pKey,
-      execute: pullNhl1pOdds,
-      args: { jobKey: nhl1pKey, dryRun },
-      reason: `player-props NHL 1P total odds pull (${hhmm} ET)`,
-    });
-    const nhlModelKey = `${keyNhlFixed(dateStr, hhmm)}|shots_model`;
-    jobs.push({
-      jobName: 'run_nhl_player_shots_model',
-      jobKey: nhlModelKey,
-      execute: runNHLPlayerShotsModel,
-      args: { jobKey: nhlModelKey, dryRun },
-      reason: `player-props NHL shots model (${hhmm} ET)`,
-    });
+    // NHL projection-only model — runs at every fixed window
+    {
+      const nhlModelKey = `${keyNhlFixed(dateStr, hhmm)}|shots_model`;
+      jobs.push({
+        jobName: 'run_nhl_player_shots_model',
+        jobKey: nhlModelKey,
+        execute: runNHLPlayerShotsModel,
+        args: { jobKey: nhlModelKey, dryRun },
+        reason: `player-props NHL shots model (${hhmm} ET)`,
+      });
+    }
 
     // MLB fixed window
-    // Heavy (09:00): pitcher stats + weather + strikeout props + model
-    // Light (18:00+): strikeout props + model only
-    if (isHeavyWindow) {
+    // Heavy (09:00): non-odds prep only.
+    if (isHeavyWindow && mlbFixedRefreshAllowed) {
       const mlbStatsKey = `${keyMlbFixed(dateStr, hhmm)}|pitcher_stats`;
       jobs.push({
         jobName: 'pull_mlb_pitcher_stats',
@@ -298,24 +280,8 @@ function computePlayerPropsDueJobs(nowEt, { games = [], dryRun = false } = {}) {
         args: { jobKey: mlbWeatherKey, dryRun },
         reason: `player-props daily MLB weather overlay (${hhmm} ET)`,
       });
+      continue;
     }
-
-    const mlbKPropKey = `${keyMlbFixed(dateStr, hhmm)}|k_props`;
-    jobs.push({
-      jobName: 'pull_mlb_pitcher_strikeout_props',
-      jobKey: mlbKPropKey,
-      execute: pullMlbPitcherStrikeoutProps,
-      args: { jobKey: mlbKPropKey, dryRun },
-      reason: `player-props MLB pitcher K prop pull (${hhmm} ET)`,
-    });
-    const mlbModelKey = `${keyMlbFixed(dateStr, hhmm)}|mlb_model`;
-    jobs.push({
-      jobName: 'run_mlb_model',
-      jobKey: mlbModelKey,
-      execute: runMLBModel,
-      args: { jobKey: mlbModelKey, dryRun },
-      reason: `player-props MLB model run (${hhmm} ET)`,
-    });
   }
 
   // ── T-60 per game ─────────────────────────────────────────────────────────
@@ -328,22 +294,6 @@ function computePlayerPropsDueJobs(nowEt, { games = [], dryRun = false } = {}) {
 
     if (sport === 'nhl') {
       const nhlKey = keyNhlTminus(g.game_id);
-      const nhlPropT60 = `${nhlKey}|shots_props`;
-      jobs.push({
-        jobName: 'pull_nhl_player_shots_props',
-        jobKey: nhlPropT60,
-        execute: pullNhlPlayerShotsProps,
-        args: { jobKey: nhlPropT60, dryRun },
-        reason: `player-props NHL shots prop pull T-60 (${g.game_id})`,
-      });
-      const nhl1pT60 = `${nhlKey}|1p_odds`;
-      jobs.push({
-        jobName: 'pull_nhl_1p_odds',
-        jobKey: nhl1pT60,
-        execute: pullNhl1pOdds,
-        args: { jobKey: nhl1pT60, dryRun },
-        reason: `player-props NHL 1P odds pull T-60 (${g.game_id})`,
-      });
       const nhlModelT60 = `${nhlKey}|shots_model`;
       jobs.push({
         jobName: 'run_nhl_player_shots_model',
@@ -351,26 +301,6 @@ function computePlayerPropsDueJobs(nowEt, { games = [], dryRun = false } = {}) {
         execute: runNHLPlayerShotsModel,
         args: { jobKey: nhlModelT60, dryRun },
         reason: `player-props NHL shots model T-60 (${g.game_id})`,
-      });
-    }
-
-    if (sport === 'mlb') {
-      const mlbKey = keyMlbTminus(g.game_id);
-      const mlbKPropT60 = `${mlbKey}|k_props`;
-      jobs.push({
-        jobName: 'pull_mlb_pitcher_strikeout_props',
-        jobKey: mlbKPropT60,
-        execute: pullMlbPitcherStrikeoutProps,
-        args: { jobKey: mlbKPropT60, dryRun },
-        reason: `player-props MLB pitcher K prop pull T-60 (${g.game_id})`,
-      });
-      const mlbModelT60 = `${mlbKey}|mlb_model`;
-      jobs.push({
-        jobName: 'run_mlb_model',
-        jobKey: mlbModelT60,
-        execute: runMLBModel,
-        args: { jobKey: mlbModelT60, dryRun },
-        reason: `player-props MLB model run T-60 (${g.game_id})`,
       });
     }
   }

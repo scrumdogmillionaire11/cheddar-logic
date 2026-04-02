@@ -34,7 +34,28 @@ function purgeStaleTminusPullLog() {
   ).run();
 }
 
+function purgeStalePropOddsUsageLog() {
+  const db = getDatabase();
+  db.prepare(
+    `DELETE FROM prop_odds_usage_log WHERE created_at < datetime('now', '-14 days')`,
+  ).run();
+}
+
+function purgeExpiredPropEventMappings() {
+  const db = getDatabase();
+  db.prepare(`
+    UPDATE prop_event_mappings
+    SET status = 'EXPIRED',
+        updated_at = datetime('now')
+    WHERE expires_at IS NOT NULL
+      AND expires_at < datetime('now')
+      AND status != 'EXPIRED'
+  `).run();
+}
+
 module.exports = {
   claimTminusPullSlot,
   purgeStaleTminusPullLog,
+  purgeStalePropOddsUsageLog,
+  purgeExpiredPropEventMappings,
 };

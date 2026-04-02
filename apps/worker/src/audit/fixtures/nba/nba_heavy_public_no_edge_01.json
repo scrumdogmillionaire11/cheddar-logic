@@ -1,0 +1,41 @@
+{
+  "fixture_id": "nba_heavy_public_no_edge_01",
+  "sport": "NBA",
+  "card_family": "NBA_TOTAL",
+  "card_mode": "ODDS_BACKED",
+  "description": "Heavy public side but edge below lean_edge_min — should be PASS or BLOCKED",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "nba_test_game_004",
+    "market_type": "TOTAL",
+    "selection": "OVER"
+  },
+  "input": {
+    "game_id": "nba_test_game_004",
+    "sport": "NBA",
+    "home_team": "LA Lakers",
+    "away_team": "Dallas Mavericks",
+    "game_time_utc": "2026-04-02T01:00:00Z",
+    "total": 221.5,
+    "total_price_over": -128,
+    "total_price_under": 108,
+    "spread_home": -2.5,
+    "spread_away": 2.5,
+    "spread_price_home": -112,
+    "spread_price_away": -108,
+    "h2h_home": -140,
+    "h2h_away": 118,
+    "captured_at": "2026-04-01T18:00:00Z",
+    "_public_action": {
+      "over_pct": 82,
+      "public_lean": "OVER",
+      "sharp_lean": "NONE"
+    }
+  },
+  "expected": {
+    "input_hash": "2c7dea68b70e312bab78cb667abed25bc2e2314d4eea0ff72ef35b0bfc08fbcb",
+    "execution_status": "BLOCKED",
+    "reason_codes_must_not_include": ["EDGE_CLEAR"]
+  },
+  "baseline_reviewed": true
+}

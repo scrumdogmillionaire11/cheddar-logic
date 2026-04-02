@@ -1176,6 +1176,9 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
             direction === 'OVER'
               ? toNumber(oddsSnapshot?.total_price_over ?? null)
               : toNumber(oddsSnapshot?.total_price_under ?? null),
+          auditContext: {
+            paceResult,
+          },
         });
         } // end absEdge >= 0.4
       }
@@ -1280,6 +1283,9 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           line_source: 'fixed_reference',
           price: null,
           price_source: null,
+          auditContext: {
+            paceResult,
+          },
         });
       }
     }

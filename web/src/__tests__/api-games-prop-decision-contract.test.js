@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const routeSource = fs.readFileSync(
-  path.resolve('web/src/app/api/games/route.ts'),
+  path.resolve('web/src/lib/games/route-handler.ts'),
   'utf8',
 );
 
@@ -48,8 +48,21 @@ assert(
 );
 
 assert(
+  routeSource.includes('prop_display_state?: \'PLAY\' | \'WATCH\' | \'PROJECTION_ONLY\';') &&
+    routeSource.includes('rawPropDisplayState') &&
+    routeSource.includes('prop_display_state: normalizedPropDisplayState'),
+  'Expected /api/games route to preserve prop_display_state for projection-first prop rows',
+);
+
+assert(
   routeSource.includes("'nhl-player-blk'"),
   'Expected /api/games route to include nhl-player-blk in the NHL prop contract path',
+);
+
+assert(
+  routeSource.includes("cardRow.card_type === 'mlb-pitcher-k'") &&
+    routeSource.includes("play.canonical_market_key === 'pitcher_strikeouts'"),
+  'Expected /api/games route to keep MLB pitcher-K dedupe scoped to pitcher_strikeouts rows, not every MLB PROP row',
 );
 
 assert(

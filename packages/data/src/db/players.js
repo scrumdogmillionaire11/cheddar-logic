@@ -541,6 +541,259 @@ function getPlayerPropLinesForGame(sport, gameId, propTypes = null) {
   return uniqueRows;
 }
 
+function upsertPropEventMapping({
+  sport = 'MLB',
+  marketFamily,
+  gameId,
+  oddsEventId,
+  mappedAt = new Date().toISOString(),
+  expiresAt = null,
+  status = 'ACTIVE',
+} = {}) {
+  if (!marketFamily || !gameId || !oddsEventId) {
+    throw new Error('upsertPropEventMapping requires marketFamily, gameId, and oddsEventId');
+  }
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'upsertPropEventMapping');
+  db.prepare(`
+    INSERT INTO prop_event_mappings (
+      sport, market_family, game_id, odds_event_id, mapped_at, expires_at, status, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(sport, market_family, game_id) DO UPDATE SET
+      odds_event_id = excluded.odds_event_id,
+      mapped_at = excluded.mapped_at,
+      expires_at = excluded.expires_at,
+      status = excluded.status,
+      updated_at = datetime('now')
+  `).run(
+    normalizedSport,
+    String(marketFamily),
+    String(gameId),
+    String(oddsEventId),
+    mappedAt,
+    expiresAt,
+    String(status || 'ACTIVE'),
+  );
+}
+
+function getPropEventMapping({
+  sport = 'MLB',
+  marketFamily,
+  gameId,
+} = {}) {
+  if (!marketFamily || !gameId) return null;
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'getPropEventMapping');
+  return db.prepare(`
+    SELECT sport, market_family, game_id, odds_event_id, mapped_at, expires_at, status, updated_at
+    FROM prop_event_mappings
+    WHERE sport = ?
+      AND market_family = ?
+      AND game_id = ?
+    LIMIT 1
+  `).get(normalizedSport, String(marketFamily), String(gameId)) || null;
+}
+
+function listPropEventMappings({
+  sport = 'MLB',
+  marketFamily,
+  gameIds = [],
+} = {}) {
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'listPropEventMappings');
+  const safeGameIds = Array.isArray(gameIds)
+    ? gameIds.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const filters = ['sport = ?'];
+  const params = [normalizedSport];
+  if (marketFamily) {
+    filters.push('market_family = ?');
+    params.push(String(marketFamily));
+  }
+  if (safeGameIds.length > 0) {
+    filters.push(`game_id IN (${safeGameIds.map(() => '?').join(', ')})`);
+    params.push(...safeGameIds);
+  }
+  return db.prepare(`
+    SELECT sport, market_family, game_id, odds_event_id, mapped_at, expires_at, status, updated_at
+    FROM prop_event_mappings
+    WHERE ${filters.join(' AND ')}
+    ORDER BY mapped_at DESC, game_id ASC
+  `).all(...params);
+}
+
+function recordPropOddsUsage({
+  id,
+  sport = 'MLB',
+  marketFamily,
+  gameId = null,
+  oddsEventId = null,
+  dedupeKey,
+  windowBucket,
+  jobName,
+  status,
+  skipReason = null,
+  tokenCost = 0,
+  remainingQuota = null,
+  candidateRank = null,
+  candidatesEvaluated = null,
+  executablePropsPublished = 0,
+  leansOnlyCount = 0,
+  passCount = 0,
+  metadata = null,
+} = {}) {
+  if (!id || !marketFamily || !dedupeKey || !windowBucket || !jobName || !status) {
+    throw new Error('recordPropOddsUsage requires id, marketFamily, dedupeKey, windowBucket, jobName, and status');
+  }
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'recordPropOddsUsage');
+  const info = db.prepare(`
+    INSERT OR IGNORE INTO prop_odds_usage_log (
+      id, sport, market_family, game_id, odds_event_id, dedupe_key, window_bucket, job_name,
+      status, skip_reason, token_cost, remaining_quota, candidate_rank, candidates_evaluated,
+      executable_props_published, leans_only_count, pass_count, metadata, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+  `).run(
+    id,
+    normalizedSport,
+    String(marketFamily),
+    gameId ? String(gameId) : null,
+    oddsEventId ? String(oddsEventId) : null,
+    String(dedupeKey),
+    String(windowBucket),
+    String(jobName),
+    String(status),
+    skipReason ? String(skipReason) : null,
+    Number.isFinite(Number(tokenCost)) ? Number(tokenCost) : 0,
+    Number.isFinite(Number(remainingQuota)) ? Number(remainingQuota) : null,
+    Number.isFinite(Number(candidateRank)) ? Number(candidateRank) : null,
+    Number.isFinite(Number(candidatesEvaluated)) ? Number(candidatesEvaluated) : null,
+    Number.isFinite(Number(executablePropsPublished)) ? Number(executablePropsPublished) : 0,
+    Number.isFinite(Number(leansOnlyCount)) ? Number(leansOnlyCount) : 0,
+    Number.isFinite(Number(passCount)) ? Number(passCount) : 0,
+    metadata ? JSON.stringify(metadata) : null,
+  );
+  return info.changes > 0;
+}
+
+function updatePropOddsUsage({
+  dedupeKey,
+  status = null,
+  skipReason = null,
+  tokenCost = null,
+  remainingQuota = null,
+  executablePropsPublished = null,
+  leansOnlyCount = null,
+  passCount = null,
+  metadata = undefined,
+} = {}) {
+  if (!dedupeKey) {
+    throw new Error('updatePropOddsUsage requires dedupeKey');
+  }
+  const db = getDatabase();
+  const updates = ['updated_at = datetime(\'now\')'];
+  const params = [];
+  if (status !== null) {
+    updates.push('status = ?');
+    params.push(String(status));
+  }
+  if (skipReason !== null) {
+    updates.push('skip_reason = ?');
+    params.push(skipReason ? String(skipReason) : null);
+  }
+  if (tokenCost !== null) {
+    updates.push('token_cost = ?');
+    params.push(Number.isFinite(Number(tokenCost)) ? Number(tokenCost) : 0);
+  }
+  if (remainingQuota !== null) {
+    updates.push('remaining_quota = ?');
+    params.push(Number.isFinite(Number(remainingQuota)) ? Number(remainingQuota) : null);
+  }
+  if (executablePropsPublished !== null) {
+    updates.push('executable_props_published = ?');
+    params.push(Number.isFinite(Number(executablePropsPublished)) ? Number(executablePropsPublished) : 0);
+  }
+  if (leansOnlyCount !== null) {
+    updates.push('leans_only_count = ?');
+    params.push(Number.isFinite(Number(leansOnlyCount)) ? Number(leansOnlyCount) : 0);
+  }
+  if (passCount !== null) {
+    updates.push('pass_count = ?');
+    params.push(Number.isFinite(Number(passCount)) ? Number(passCount) : 0);
+  }
+  if (metadata !== undefined) {
+    updates.push('metadata = ?');
+    params.push(metadata ? JSON.stringify(metadata) : null);
+  }
+  params.push(String(dedupeKey));
+  const info = db.prepare(`
+    UPDATE prop_odds_usage_log
+    SET ${updates.join(', ')}
+    WHERE dedupe_key = ?
+  `).run(...params);
+  return info.changes || 0;
+}
+
+function listPropOddsUsage({
+  sport = 'MLB',
+  marketFamily,
+  since,
+  until = null,
+} = {}) {
+  if (!since) return [];
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'listPropOddsUsage');
+  const filters = ['sport = ?', 'created_at >= ?'];
+  const params = [normalizedSport, since];
+  if (marketFamily) {
+    filters.push('market_family = ?');
+    params.push(String(marketFamily));
+  }
+  if (until) {
+    filters.push('created_at <= ?');
+    params.push(until);
+  }
+  return db.prepare(`
+    SELECT *
+    FROM prop_odds_usage_log
+    WHERE ${filters.join(' AND ')}
+    ORDER BY created_at DESC, dedupe_key ASC
+  `).all(...params);
+}
+
+function getPropOddsUsageSummary({
+  sport = 'MLB',
+  marketFamily,
+  since,
+  until = null,
+} = {}) {
+  if (!since) return null;
+  const db = getDatabase();
+  const normalizedSport = normalizeSportValue(sport, 'getPropOddsUsageSummary');
+  const filters = ['sport = ?', 'created_at >= ?'];
+  const params = [normalizedSport, since];
+  if (marketFamily) {
+    filters.push('market_family = ?');
+    params.push(String(marketFamily));
+  }
+  if (until) {
+    filters.push('created_at <= ?');
+    params.push(until);
+  }
+  return db.prepare(`
+    SELECT
+      COUNT(*) AS total_calls,
+      COALESCE(SUM(token_cost), 0) AS token_cost,
+      COALESCE(SUM(executable_props_published), 0) AS executable_props_published,
+      COALESCE(SUM(leans_only_count), 0) AS leans_only_count,
+      COALESCE(SUM(pass_count), 0) AS pass_count
+    FROM prop_odds_usage_log
+    WHERE ${filters.join(' AND ')}
+  `).get(...params);
+}
+
 module.exports = {
   upsertPlayerShotLog,
   getPlayerShotLogs,
@@ -556,4 +809,11 @@ module.exports = {
   upsertPlayerPropLine,
   getPlayerPropLine,
   getPlayerPropLinesForGame,
+  upsertPropEventMapping,
+  getPropEventMapping,
+  listPropEventMappings,
+  recordPropOddsUsage,
+  updatePropOddsUsage,
+  listPropOddsUsage,
+  getPropOddsUsageSummary,
 };

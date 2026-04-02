@@ -1,0 +1,102 @@
+{
+  "fixture_id": "nhl_multi_card_same_game_01",
+  "sport": "NHL",
+  "card_family": "MIXED",
+  "card_mode": "MIXED",
+  "description": "Multi-card: one NHL game produces full-game total (ODDS_BACKED) + 1P total (PROJECTION_ONLY) + player shots (PROJECTION_ONLY). Tests comparator match_key pairing when multiple cards share game_id.",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "nhl_test_game_multi_01",
+    "market_type": "MULTI",
+    "selection": "ALL"
+  },
+  "input": {
+    "game_id": "nhl_test_game_multi_01",
+    "sport": "NHL",
+    "home_team": "Tampa Bay Lightning",
+    "away_team": "Boston Bruins",
+    "game_time_utc": "2026-04-03T00:00:00Z",
+    "captured_at": "2026-04-01T18:00:00Z"
+  },
+  "expected": {
+    "input_hash": "283a832512ba633204587a395ae202b8d0d426e186153f986a3fd0e61a6c42da",
+    "sub_card_count": 3
+  },
+  "sub_cards": [
+    {
+      "card_family": "NHL_TOTAL",
+      "card_mode": "ODDS_BACKED",
+      "match_key": {
+        "game_id": "nhl_test_game_multi_01",
+        "market_type": "TOTAL",
+        "selection": "UNDER"
+      },
+      "input": {
+        "game_id": "nhl_test_game_multi_01",
+        "total": 5.5,
+        "total_price_over": -115,
+        "total_price_under": -105,
+        "_goalie_report": {
+          "home_goalie": "Andrei Vasilevskiy",
+          "home_certainty": "CONFIRMED",
+          "away_goalie": "Jeremy Swayman",
+          "away_certainty": "CONFIRMED"
+        }
+      },
+      "expected": {
+        "input_hash": "e9cbd01b3c94a24cc87cbc0279f4889c7b7f66de562cffd2c7c1c57b0d5adc40",
+        "execution_status": "EXECUTABLE",
+        "market_type": "TOTAL"
+      }
+    },
+    {
+      "card_family": "NHL_1P_TOTAL",
+      "card_mode": "PROJECTION_ONLY",
+      "match_key": {
+        "game_id": "nhl_test_game_multi_01",
+        "market_type": "1P_TOTAL",
+        "selection": "UNDER"
+      },
+      "input": {
+        "game_id": "nhl_test_game_multi_01",
+        "_1p_model_inputs": {
+          "home_sog_1p_avg": 8.8,
+          "away_sog_1p_avg": 9.1,
+          "home_save_pct_1p": 0.935,
+          "away_save_pct_1p": 0.929
+        }
+      },
+      "expected": {
+        "input_hash": "9f593fca7a508c7b314eb00b04057924e8d32108a33e368e7e8f8655f509c244",
+        "execution_status": "PROJECTION_ONLY",
+        "market_type": "1P_TOTAL"
+      }
+    },
+    {
+      "card_family": "NHL_PLAYER_SHOTS",
+      "card_mode": "PROJECTION_ONLY",
+      "match_key": {
+        "game_id": "nhl_test_game_multi_01",
+        "market_type": "PLAYER_SHOTS",
+        "selection": "OVER"
+      },
+      "input": {
+        "game_id": "nhl_test_game_multi_01",
+        "_player_prop": {
+          "player_id": "nhl_player_kucherov_86",
+          "player_name": "Nikita Kucherov",
+          "team": "TBL",
+          "shots_on_goal_line": 3.5,
+          "season_sog_avg": 3.9,
+          "last_5_sog_avg": 4.2
+        }
+      },
+      "expected": {
+        "input_hash": "fa08135df7ae82955d9f4f62e60019561c912ab4be7a06cc93142e57e0561a8d",
+        "execution_status": "PROJECTION_ONLY",
+        "market_type": "PLAYER_SHOTS"
+      }
+    }
+  ],
+  "baseline_reviewed": true
+}

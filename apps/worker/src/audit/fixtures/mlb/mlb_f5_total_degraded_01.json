@@ -1,0 +1,45 @@
+{
+  "fixture_id": "mlb_f5_total_degraded_01",
+  "sport": "MLB",
+  "card_family": "MLB_F5_TOTAL",
+  "card_mode": "PROJECTION_ONLY",
+  "description": "F5 total — degraded input (missing weather and projected lineup), execution blocked",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "mlb_test_game_005",
+    "market_type": "F5_TOTAL",
+    "selection": "UNDER"
+  },
+  "input": {
+    "game_id": "mlb_test_game_005",
+    "sport": "MLB",
+    "home_team": "Seattle Mariners",
+    "away_team": "Oakland Athletics",
+    "game_time_utc": "2026-04-02T21:10:00Z",
+    "captured_at": "2026-04-01T18:00:00Z",
+    "_f5_model_inputs": {
+      "home_starter_id": "mlb_pitcher_gilbert_29",
+      "home_starter_era_f5": 3.12,
+      "home_starter_k_rate": 0.255,
+      "away_starter_id": null,
+      "away_starter_era_f5": null,
+      "away_starter_k_rate": null,
+      "home_off_run_rate_f5": 1.8,
+      "away_off_run_rate_f5": null,
+      "weather": null,
+      "data_completeness": "DEGRADED"
+    }
+  },
+  "expected": {
+    "input_hash": "7ac7b4200494549c951e60802174de2b6a77a162ece4a0473ff77265a4793be9",
+    "execution_status": "BLOCKED",
+    "market_type": "UNKNOWN",
+    "reason_codes_must_not_include": ["EDGE_CLEAR"]
+  },
+  "_baseline_change_note": {
+    "changed_by": "codex",
+    "reason": "First baseline lock accepts the current audit runner's normalized market_type=UNKNOWN for this blocked MLB F5 fixture.",
+    "approved_at": "2026-04-02T16:50:32Z"
+  },
+  "baseline_reviewed": true
+}
