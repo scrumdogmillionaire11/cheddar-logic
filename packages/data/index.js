@@ -60,6 +60,8 @@ module.exports = {
   
   // Convenience exports - odds_snapshots
   insertOddsSnapshot: db.insertOddsSnapshot,
+  patchOddsSnapshot1p: db.patchOddsSnapshot1p,
+  patchOddsSnapshotF5: db.patchOddsSnapshotF5,
   updateOddsSnapshotRawData: db.updateOddsSnapshotRawData,
   deleteOddsSnapshotsByGameAndCapturedAt: db.deleteOddsSnapshotsByGameAndCapturedAt,
   prepareOddsSnapshotWrite: db.prepareOddsSnapshotWrite,

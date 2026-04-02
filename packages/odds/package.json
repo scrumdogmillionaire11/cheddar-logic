@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Odds fetching and normalization layer for cheddar-logic",
   "main": "src/index.js",
+  "scripts": {
+    "test": "jest"
+  },
   "keywords": [
     "odds",
     "fetching",
@@ -13,5 +16,8 @@
     "axios": "^1.7.0",
     "dotenv": "^16.0.3",
     "luxon": "^3.3.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
   }
 }

@@ -177,7 +177,6 @@ function normalizeGame(rawGame, sport) {
       h2hHomeBook: h2hExecution.best_price_home_book,
       h2hAwayBook: h2hExecution.best_price_away_book,
       total: totalConsensus.consensus_line,
-      totalBook: null,
       totalLineOver: totalExecution.best_line_over,
       totalLineOverBook: totalExecution.best_line_over_book,
       totalLineUnder: totalExecution.best_line_under,
