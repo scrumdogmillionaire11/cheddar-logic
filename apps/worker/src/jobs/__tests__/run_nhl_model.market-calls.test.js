@@ -1,5 +1,6 @@
 const {
   generateNHLMarketCallCards,
+  buildNhlModelSnapshot,
   applyNhlSettlementMarketContext,
   applyNhlDriverContextMetadata,
   attachNhlDriverContextToRawData,
@@ -93,6 +94,37 @@ function buildBaseDecisions() {
   };
 }
 
+function buildPaceResult(overrides = {}) {
+  return {
+    homeExpected: 2.85,
+    awayExpected: 2.6,
+    expectedTotal: 5.45,
+    rawTotalModel: 5.5,
+    regressedTotalModel: 5.47,
+    modifierBreakdown: {
+      base_5v5_total: 5.01,
+      special_teams_delta: 0.12,
+      home_ice_delta: 0.08,
+      rest_delta: -0.04,
+      goalie_delta_raw: -0.3,
+      goalie_delta_applied: -0.18,
+      raw_modifier_total: -0.14,
+      capped_modifier_total: -0.14,
+      modifier_cap_applied: false,
+    },
+    homeGoalieCertainty: 'CONFIRMED',
+    awayGoalieCertainty: 'EXPECTED',
+    homeAdjustmentTrust: 'FULL',
+    awayAdjustmentTrust: 'DEGRADED',
+    official_eligible: true,
+    first_period_model: {
+      classification: 'PASS',
+      reason_codes: ['NHL_1P_PASS_DEAD_ZONE'],
+    },
+    ...overrides,
+  };
+}
+
 describe('run_nhl_model market call generation', () => {
   afterEach(() => {
     process.env.ENABLE_MARKET_THRESHOLDS_V2 = 'false';
@@ -173,6 +205,75 @@ describe('run_nhl_model market call generation', () => {
         price_source: 'odds_snapshot',
       },
     });
+  });
+
+  test('buildNhlModelSnapshot freezes nested totals-call audit payloads', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+    );
+    const totalCard = cards.find((card) => card.cardType === 'nhl-totals-call');
+    totalCard.payloadData.execution_status = 'PROJECTION_ONLY';
+    totalCard.payloadData.consistency = {
+      pace_tier: 'MID',
+      event_env: 'INDOOR',
+      total_bias: 'OK',
+    };
+
+    const snapshot = buildNhlModelSnapshot({
+      paceResult: buildPaceResult(),
+      payload: totalCard.payloadData,
+      sigmaTotal: 1.8,
+    });
+    totalCard.payloadData._model_snapshot = snapshot;
+    totalCard.payloadData.nhl_goalie_certainty_pair = 'CONFIRMED/EXPECTED';
+
+    expect(totalCard.payloadData._model_snapshot).toMatchObject({
+      sigma_total: 1.8,
+      consistency: {
+        pace_tier: 'MID',
+        event_env: 'INDOOR',
+        total_bias: 'OK',
+      },
+    });
+    expect(totalCard.payloadData.nhl_goalie_certainty_pair).toBe(
+      'CONFIRMED/EXPECTED',
+    );
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.modifierBreakdown)).toBe(true);
+    expect(Object.isFrozen(snapshot.first_period_model)).toBe(true);
+    expect(Object.isFrozen(snapshot.consistency)).toBe(true);
+    expect(() => {
+      'use strict';
+      snapshot.consistency.total_bias = 'BAD';
+    }).toThrow();
+  });
+
+  test('buildNhlModelSnapshot rejects unknown-goalie totals payloads that remain EXECUTABLE', () => {
+    const payload = {
+      game_id: 'nhl-test-game',
+      market_type: 'TOTAL',
+      execution_status: 'EXECUTABLE',
+      consistency: {
+        pace_tier: 'MID',
+        event_env: 'INDOOR',
+        total_bias: 'OK',
+      },
+    };
+
+    expect(() =>
+      buildNhlModelSnapshot({
+        paceResult: buildPaceResult({
+          homeGoalieCertainty: 'UNKNOWN',
+          homeAdjustmentTrust: 'NEUTRALIZED',
+        }),
+        payload,
+        sigmaTotal: 1.8,
+      }),
+    ).toThrow(/\[INVARIANT_BREACH\]\[LEVEL=CRITICAL\]/);
   });
 
   test('does not emit nhl-moneyline-call when candidate price is unavailable', () => {

@@ -32,6 +32,9 @@ const {
   computeProjectionFloorF5,
   resolveMlbPitcherPropRolloutState,
   evaluatePitcherPropPublishability,
+  deriveMlbExecutionEnvelope,
+  assertMlbExecutionInvariant,
+  buildMlbPipelineState,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -460,7 +463,27 @@ describe('MLB prop rollout + freshness gating', () => {
     });
   });
 
-  test('evaluatePitcherPropPublishability blocks stale scoped odds with STALE_ODDS', () => {
+  test('evaluatePitcherPropPublishability returns MISSING when no scoped line exists', () => {
+    const result = evaluatePitcherPropPublishability(
+      {
+        raw_data: {
+          mlb: {
+            home_pitcher: { full_name: 'Ace Under' },
+            strikeout_lines: {},
+          },
+        },
+      },
+      { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+    );
+
+    expect(result).toMatchObject({
+      publishable: false,
+      status: 'MISSING',
+      reason: 'MARKET_MISSING',
+    });
+  });
+
+  test('evaluatePitcherPropPublishability blocks stale scoped odds with STALE status', () => {
     jest.spyOn(Date, 'now').mockReturnValue(new Date('2026-03-26T18:45:00Z').getTime());
     const result = evaluatePitcherPropPublishability(
       {
@@ -481,9 +504,196 @@ describe('MLB prop rollout + freshness gating', () => {
 
     expect(result).toMatchObject({
       publishable: false,
-      status: 'STALE_ODDS',
+      status: 'STALE',
       reason: 'STALE_ODDS',
     });
+  });
+
+  test('evaluatePitcherPropPublishability marks projection-only drivers as NOT_REQUIRED', () => {
+    const result = evaluatePitcherPropPublishability(
+      { raw_data: { mlb: {} } },
+      { market: 'pitcher_k_home', basis: 'PROJECTION_ONLY' },
+    );
+
+    expect(result).toMatchObject({
+      publishable: false,
+      status: 'NOT_REQUIRED',
+      reason: null,
+    });
+  });
+});
+
+describe('WI-0720 MLB execution envelope', () => {
+  test.each([
+    [
+      'fresh odds-backed card',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+        pricingStatus: 'FRESH',
+        pricingCapturedAt: '2026-03-26T17:15:00Z',
+        isPitcherK: true,
+        rolloutState: 'FULL',
+      },
+      {
+        execution_status: 'EXECUTABLE',
+        actionable: true,
+        pricing_status: 'FRESH',
+        publish_ready: true,
+        emit_allowed: true,
+        k_prop_execution_path: 'ODDS_BACKED',
+      },
+    ],
+    [
+      'projection-floor game card',
+      {
+        driver: { market: 'f5_total', projection_floor: true, without_odds_mode: true },
+        pricingStatus: 'NOT_REQUIRED',
+      },
+      {
+        execution_status: 'PROJECTION_ONLY',
+        actionable: false,
+        pricing_status: 'NOT_REQUIRED',
+        publish_ready: false,
+        emit_allowed: true,
+      },
+    ],
+    [
+      'qualified pitcher K with no market',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+        pricingStatus: 'MISSING',
+        pricingReason: 'MARKET_MISSING',
+        isPitcherK: true,
+        rolloutState: 'FULL',
+      },
+      {
+        execution_status: 'PROJECTION_ONLY',
+        actionable: false,
+        pricing_status: 'MISSING',
+        publish_ready: false,
+        emit_allowed: true,
+        k_prop_execution_path: 'QUALIFIED_BUT_NO_MARKET',
+      },
+    ],
+    [
+      'stale odds-backed pitcher K is blocked',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+        pricingStatus: 'STALE',
+        pricingReason: 'STALE_ODDS',
+        isPitcherK: true,
+        rolloutState: 'FULL',
+      },
+      {
+        execution_status: 'BLOCKED',
+        actionable: false,
+        pricing_status: 'STALE',
+        publish_ready: false,
+        emit_allowed: false,
+        k_prop_execution_path: 'STALE_ODDS_BLOCKED',
+      },
+    ],
+    [
+      'shadow rollout suppresses pitcher K output',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+        pricingStatus: 'FRESH',
+        isPitcherK: true,
+        rolloutState: 'SHADOW',
+      },
+      {
+        execution_status: 'BLOCKED',
+        actionable: false,
+        pricing_status: 'FRESH',
+        publish_ready: false,
+        emit_allowed: false,
+        k_prop_execution_path: 'SHADOW_ROLLOUT',
+      },
+    ],
+    [
+      'disabled rollout suppresses pitcher K output',
+      {
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+        pricingStatus: 'FRESH',
+        isPitcherK: true,
+        rolloutState: 'OFF',
+      },
+      {
+        execution_status: 'BLOCKED',
+        actionable: false,
+        pricing_status: 'FRESH',
+        publish_ready: false,
+        emit_allowed: false,
+        k_prop_execution_path: 'DISABLED',
+      },
+    ],
+  ])('%s', (_label, input, expected) => {
+    const envelope = deriveMlbExecutionEnvelope(input);
+
+    expect(envelope.execution_status).toBe(expected.execution_status);
+    expect(envelope.actionable).toBe(expected.actionable);
+    expect(envelope._pricing_state.status).toBe(expected.pricing_status);
+    expect(envelope._publish_state.publish_ready).toBe(expected.publish_ready);
+    expect(envelope._publish_state.emit_allowed).toBe(expected.emit_allowed);
+    if (expected.k_prop_execution_path) {
+      expect(envelope.k_prop_execution_path).toBe(expected.k_prop_execution_path);
+    } else {
+      expect(envelope.k_prop_execution_path).toBeUndefined();
+    }
+  });
+
+  test('assertMlbExecutionInvariant rejects executable payload without fresh pricing', () => {
+    expect(() =>
+      assertMlbExecutionInvariant({
+        execution_status: 'EXECUTABLE',
+        actionable: true,
+        _pricing_state: { status: 'MISSING' },
+        _publish_state: { publish_ready: false },
+      }),
+    ).toThrow(/INVARIANT_BREACH/);
+  });
+
+  test('assertMlbExecutionInvariant rejects projection floor marked executable', () => {
+    expect(() =>
+      assertMlbExecutionInvariant({
+        execution_status: 'EXECUTABLE',
+        actionable: true,
+        projection_floor: true,
+        _pricing_state: { status: 'FRESH' },
+        _publish_state: { publish_ready: true },
+      }),
+    ).toThrow(/projection_floor=true requires execution_status=PROJECTION_ONLY/);
+  });
+
+  test('buildMlbPipelineState derives legacy booleans from execution envelopes', () => {
+    const pipelineState = buildMlbPipelineState({
+      oddsSnapshot: {
+        home_team: 'Boston Red Sox',
+        away_team: 'New York Yankees',
+        captured_at: '2026-03-26T17:15:00Z',
+      },
+      marketAvailability: {
+        f5_line_ok: true,
+        f5_ml_ok: true,
+        full_game_total_ok: true,
+        expect_f5_total: true,
+        expect_f5_ml: true,
+        blocking_reason_codes: [],
+      },
+      projectionReady: true,
+      driversReady: true,
+      pricingReady: false,
+      cardReady: false,
+      executionEnvelopes: [
+        deriveMlbExecutionEnvelope({
+          driver: { market: 'f5_total', projection_floor: true, without_odds_mode: true },
+          pricingStatus: 'NOT_REQUIRED',
+        }),
+      ],
+    });
+
+    expect(pipelineState.card_ready).toBe(true);
+    expect(pipelineState.pricing_ready).toBe(false);
   });
 });
 

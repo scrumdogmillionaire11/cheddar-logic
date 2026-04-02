@@ -309,6 +309,7 @@ function buildMlbPipelineState({
   driversReady,
   pricingReady,
   cardReady,
+  executionEnvelopes = [],
 }) {
   const availability =
     marketAvailability || buildMlbMarketAvailability(oddsSnapshot);
@@ -316,6 +317,18 @@ function buildMlbPipelineState({
     availability.f5_line_ok ||
     availability.full_game_total_ok ||
     (availability.expect_f5_ml && availability.f5_ml_ok);
+  const derivedPricingReady =
+    Array.isArray(executionEnvelopes) && executionEnvelopes.length > 0
+      ? executionEnvelopes.some(
+          (envelope) => envelope?._pricing_state?.status === 'FRESH',
+        )
+      : pricingReady === true;
+  const derivedCardReady =
+    Array.isArray(executionEnvelopes) && executionEnvelopes.length > 0
+      ? executionEnvelopes.some(
+          (envelope) => envelope?._publish_state?.emit_allowed === true,
+        )
+      : cardReady === true;
 
   return {
     ...buildPipelineState({
@@ -327,8 +340,8 @@ function buildMlbPipelineState({
       market_lines_ok: marketLinesOk,
       projection_ready: projectionReady === true,
       drivers_ready: driversReady === true,
-      pricing_ready: pricingReady === true,
-      card_ready: cardReady === true,
+      pricing_ready: derivedPricingReady,
+      card_ready: derivedCardReady,
       blocking_reason_codes: availability.blocking_reason_codes,
     }),
     f5_line_ok: availability.f5_line_ok,
@@ -337,6 +350,142 @@ function buildMlbPipelineState({
     expect_f5_total: availability.expect_f5_total,
     expect_f5_ml: availability.expect_f5_ml,
   };
+}
+
+function deriveMlbExecutionEnvelope({
+  driver,
+  pricingStatus = 'FRESH',
+  pricingReason = null,
+  pricingCapturedAt = null,
+  isPitcherK = false,
+  rolloutState = null,
+} = {}) {
+  const normalizedPricingStatus = ['FRESH', 'STALE', 'MISSING', 'NOT_REQUIRED'].includes(
+    String(pricingStatus || '').toUpperCase(),
+  )
+    ? String(pricingStatus || '').toUpperCase()
+    : 'MISSING';
+  const predictionState = {
+    status: driver ? 'QUALIFIED' : 'UNQUALIFIED',
+    reason: driver ? null : 'DRIVER_UNQUALIFIED',
+  };
+  const pricingState = {
+    status: normalizedPricingStatus,
+    reason: pricingReason ?? null,
+    captured_at: pricingCapturedAt ?? null,
+  };
+
+  let executionStatus = 'BLOCKED';
+  let publishReady = false;
+  let emitAllowed = false;
+  let blockReason = pricingReason ?? null;
+  let kPropExecutionPath = null;
+
+  const isProjectionOnly =
+    driver?.projection_floor === true ||
+    driver?.without_odds_mode === true ||
+    driver?.basis === 'PROJECTION_ONLY';
+
+  if (isPitcherK) {
+    if (rolloutState === 'OFF') {
+      blockReason = 'rollout_state=OFF';
+      kPropExecutionPath = 'DISABLED';
+    } else if (rolloutState === 'SHADOW') {
+      blockReason = 'rollout_state=SHADOW';
+      kPropExecutionPath = 'SHADOW_ROLLOUT';
+    } else if (driver?.basis === 'ODDS_BACKED' && normalizedPricingStatus === 'FRESH') {
+      executionStatus = 'EXECUTABLE';
+      publishReady = true;
+      emitAllowed = true;
+      blockReason = null;
+      kPropExecutionPath = 'ODDS_BACKED';
+    } else if (driver?.basis === 'ODDS_BACKED' && normalizedPricingStatus === 'MISSING') {
+      executionStatus = 'PROJECTION_ONLY';
+      emitAllowed = true;
+      blockReason = pricingReason || 'MARKET_MISSING';
+      kPropExecutionPath = 'QUALIFIED_BUT_NO_MARKET';
+    } else if (driver?.basis === 'ODDS_BACKED' && normalizedPricingStatus === 'STALE') {
+      blockReason = pricingReason || 'STALE_ODDS';
+      kPropExecutionPath = 'STALE_ODDS_BLOCKED';
+    } else {
+      executionStatus = 'PROJECTION_ONLY';
+      emitAllowed = true;
+      blockReason = pricingReason;
+      kPropExecutionPath = 'PROJECTION_ONLY';
+    }
+  } else if (isProjectionOnly || normalizedPricingStatus === 'NOT_REQUIRED') {
+    executionStatus = 'PROJECTION_ONLY';
+    emitAllowed = true;
+    blockReason = pricingReason || 'pricing_status=NOT_REQUIRED';
+  } else if (normalizedPricingStatus === 'FRESH') {
+    executionStatus = 'EXECUTABLE';
+    publishReady = true;
+    emitAllowed = true;
+    blockReason = null;
+  } else if (normalizedPricingStatus === 'MISSING') {
+    blockReason = pricingReason || 'pricing_status=MISSING';
+  } else if (normalizedPricingStatus === 'STALE') {
+    blockReason = pricingReason || 'pricing_status=STALE';
+  }
+
+  return {
+    execution_status: executionStatus,
+    actionable: executionStatus === 'EXECUTABLE',
+    _prediction_state: predictionState,
+    _pricing_state: pricingState,
+    _publish_state: {
+      publish_ready: publishReady,
+      emit_allowed: emitAllowed,
+      execution_status: executionStatus,
+      block_reason: blockReason,
+    },
+    ...(isPitcherK ? { k_prop_execution_path: kPropExecutionPath } : {}),
+  };
+}
+
+function assertMlbExecutionInvariant(payload) {
+  if (!payload || typeof payload !== 'object') return;
+
+  const executionStatus = String(payload.execution_status || '').toUpperCase();
+  const pricingStatus = String(payload?._pricing_state?.status || '').toUpperCase();
+  const publishReady = payload?._publish_state?.publish_ready === true;
+  const actionable = payload.actionable === true;
+  const projectionFloor = payload.projection_floor === true;
+  const failures = [];
+
+  if (executionStatus === 'EXECUTABLE' && pricingStatus !== 'FRESH') {
+    failures.push(
+      `execution_status=EXECUTABLE requires _pricing_state.status=FRESH (actual=${pricingStatus || 'MISSING'})`,
+    );
+  }
+  if (executionStatus === 'EXECUTABLE' && publishReady !== true) {
+    failures.push('execution_status=EXECUTABLE requires _publish_state.publish_ready=true');
+  }
+  if (executionStatus === 'PROJECTION_ONLY' && actionable) {
+    failures.push('execution_status=PROJECTION_ONLY requires actionable=false');
+  }
+  if (projectionFloor && executionStatus !== 'PROJECTION_ONLY') {
+    failures.push(
+      `projection_floor=true requires execution_status=PROJECTION_ONLY (actual=${executionStatus || 'MISSING'})`,
+    );
+  }
+  if (actionable !== (executionStatus === 'EXECUTABLE')) {
+    failures.push(
+      `actionable must equal execution_status===EXECUTABLE (execution_status=${executionStatus || 'MISSING'}, actionable=${String(actionable)})`,
+    );
+  }
+
+  if (failures.length === 0) return;
+
+  const error = new Error(`[INVARIANT_BREACH] ${failures.join('; ')}`);
+  error.code = 'INVARIANT_BREACH';
+  error.failures = failures;
+
+  if (process.env.NODE_ENV === 'test') {
+    throw error;
+  }
+
+  console.warn(error.message);
 }
 
 function attachRunId(card, runId) {
@@ -500,15 +649,18 @@ function getPitcherStrikeoutLineForDriver(oddsSnapshot, driver) {
 
 function evaluatePitcherPropPublishability(oddsSnapshot, driver) {
   if (driver?.basis !== 'ODDS_BACKED') {
-    return { publishable: false, status: 'PROJECTION_ONLY', reason: null, fetched_at: null };
+    return { publishable: false, status: 'NOT_REQUIRED', reason: null, fetched_at: null };
   }
   const line = getPitcherStrikeoutLineForDriver(oddsSnapshot, driver);
+  if (!line || line.line == null) {
+    return { publishable: false, status: 'MISSING', reason: 'MARKET_MISSING', fetched_at: null };
+  }
   if (!line?.fetched_at) {
-    return { publishable: false, status: 'STALE_ODDS', reason: 'STALE_ODDS', fetched_at: null };
+    return { publishable: false, status: 'MISSING', reason: 'MARKET_MISSING', fetched_at: null };
   }
   const ageMinutes = (Date.now() - Date.parse(line.fetched_at)) / 60000;
   if (!Number.isFinite(ageMinutes) || ageMinutes > MLB_K_PROP_ODDS_MAX_AGE_MINUTES) {
-    return { publishable: false, status: 'STALE_ODDS', reason: 'STALE_ODDS', fetched_at: line.fetched_at };
+    return { publishable: false, status: 'STALE', reason: 'STALE_ODDS', fetched_at: line.fetched_at };
   }
   return { publishable: true, status: 'FRESH', reason: null, fetched_at: line.fetched_at };
 }
@@ -1138,36 +1290,49 @@ async function runMLBModel({
           });
           const pitcherKDriverCards = rawPitcherKDriverCards.map((driver) => {
             if (!driver.market?.startsWith('pitcher_k_')) return driver;
+            if (driver.emit_card !== true) {
+              driver.execution_envelope = null;
+              return driver;
+            }
             const publishability = evaluatePitcherPropPublishability(pitcherKOddsSnapshot, driver);
+            const executionEnvelope = deriveMlbExecutionEnvelope({
+              driver,
+              pricingStatus: publishability.status,
+              pricingReason: publishability.reason,
+              pricingCapturedAt: publishability.fetched_at,
+              isPitcherK: true,
+              rolloutState,
+            });
             driver.odds_freshness = publishability.status;
             driver.line_fetched_at = publishability.fetched_at;
+            driver.execution_envelope = executionEnvelope;
             if (driver.prop_decision) {
               driver.prop_decision.flags = uniqueReasonCodes([
                 ...(driver.prop_decision.flags || []),
                 ...(publishability.reason ? [publishability.reason] : []),
               ]);
             }
-            if (rolloutState === 'OFF' || rolloutState === 'SHADOW') {
-              driver.emit_card = false;
-              driver.block_publish_reason = 'MARKET_DISABLED';
-              return driver;
-            }
-            if (driver.basis === 'ODDS_BACKED' && !publishability.publishable) {
-              driver.emit_card = false;
-              driver.block_publish_reason = publishability.reason || 'STALE_ODDS';
-            }
+            driver.emit_card = executionEnvelope._publish_state.emit_allowed === true;
+            driver.block_publish_reason =
+              executionEnvelope._publish_state.block_reason;
             return driver;
           });
           const gamePitcherSummary = {
             executable_props_published: 0,
             leans_only_count: 0,
             pass_count: 0,
+            execution_path_counts: {},
           };
           for (const driver of pitcherKDriverCards) {
             if (!driver.market?.startsWith('pitcher_k_')) continue;
-            if (driver.emit_card === true && driver.card_verdict === 'PLAY') {
+            const executionEnvelope = driver.execution_envelope;
+            if (executionEnvelope?.k_prop_execution_path) {
+              gamePitcherSummary.execution_path_counts[executionEnvelope.k_prop_execution_path] =
+                (gamePitcherSummary.execution_path_counts[executionEnvelope.k_prop_execution_path] || 0) + 1;
+            }
+            if (executionEnvelope?.execution_status === 'EXECUTABLE') {
               gamePitcherSummary.executable_props_published += 1;
-            } else if (driver.emit_card === true && driver.card_verdict === 'WATCH') {
+            } else if (executionEnvelope?._publish_state?.emit_allowed === true) {
               gamePitcherSummary.leans_only_count += 1;
             } else {
               gamePitcherSummary.pass_count += 1;
@@ -1248,13 +1413,67 @@ async function runMLBModel({
                 projection_floor_line: projectionFloorF5,
               }
             : null;
-
-          const qualified = [
-            ...(selectedGameDriver?.ev_threshold_passed ? [selectedGameDriver] : []),
-            ...pitcherKDriverCards.filter((d) => d.emit_card === true),
-            ...(f5MlDriverCard?.ev_threshold_passed ? [f5MlDriverCard] : []),
-            ...(projectionFloorDriver ? [projectionFloorDriver] : []),
+          const gamePricingStatus = gameOddsSnapshot?.captured_at ? 'FRESH' : 'MISSING';
+          const gamePricingReason = gameOddsSnapshot?.captured_at
+            ? null
+            : 'ODDS_SNAPSHOT_MISSING';
+          const candidateDrivers = [
+            ...(selectedGameDriver?.ev_threshold_passed
+              ? [{
+                  driver: selectedGameDriver,
+                  executionEnvelope: deriveMlbExecutionEnvelope({
+                    driver: selectedGameDriver,
+                    pricingStatus: gamePricingStatus,
+                    pricingReason: gamePricingReason,
+                    pricingCapturedAt: gameOddsSnapshot?.captured_at ?? null,
+                  }),
+                }]
+              : []),
+            ...pitcherKDriverCards
+              .filter((driver) => driver.execution_envelope)
+              .map((driver) => ({
+                driver,
+                executionEnvelope: driver.execution_envelope,
+              })),
+            ...(f5MlDriverCard?.ev_threshold_passed
+              ? [{
+                  driver: f5MlDriverCard,
+                  executionEnvelope: deriveMlbExecutionEnvelope({
+                    driver: f5MlDriverCard,
+                    pricingStatus: gamePricingStatus,
+                    pricingReason: gamePricingReason,
+                    pricingCapturedAt: gameOddsSnapshot?.captured_at ?? null,
+                  }),
+                }]
+              : []),
+            ...(projectionFloorDriver
+              ? [{
+                  driver: projectionFloorDriver,
+                  executionEnvelope: deriveMlbExecutionEnvelope({
+                    driver: projectionFloorDriver,
+                    pricingStatus: 'NOT_REQUIRED',
+                    pricingReason: 'PROJECTION_FLOOR',
+                    pricingCapturedAt: null,
+                  }),
+                }]
+              : []),
           ];
+          const candidateExecutionEnvelopes = candidateDrivers.map(
+            ({ executionEnvelope }) => executionEnvelope,
+          );
+          const qualified = candidateDrivers
+            .filter(
+              ({ executionEnvelope }) =>
+                executionEnvelope?._publish_state?.emit_allowed === true,
+            )
+            .map(({ driver, executionEnvelope }) => {
+              driver.execution_envelope = executionEnvelope;
+              if (executionEnvelope.k_prop_execution_path) {
+                driver.k_prop_execution_path =
+                  executionEnvelope.k_prop_execution_path;
+              }
+              return driver;
+            });
 
           // Clean up stale cards from previous runs for this game
           prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-model-output', { runId: jobRunId });
@@ -1273,6 +1492,7 @@ async function runMLBModel({
               gameDriverCards.length > 0 || pitcherKDriverCards.length > 0 || projectionFloorDriver !== null,
             pricingReady: oddsBackedQualified.length > 0,
             cardReady: qualified.length > 0,
+            executionEnvelopes: candidateExecutionEnvelopes,
           });
           gamePipelineStates[gameId] = pipelineState;
           console.log(
@@ -1385,13 +1605,34 @@ async function runMLBModel({
                       canonical_market_key: 'pitcher_strikeouts',
                     }),
             };
+            const executionEnvelope = driver.execution_envelope || deriveMlbExecutionEnvelope({
+              driver,
+              pricingStatus:
+                driver.without_odds_mode || driver.projection_floor
+                  ? 'NOT_REQUIRED'
+                  : gamePricingStatus,
+              pricingReason:
+                driver.without_odds_mode || driver.projection_floor
+                  ? 'PROJECTION_FLOOR'
+                  : gamePricingReason,
+              pricingCapturedAt: gameOddsSnapshot?.captured_at ?? null,
+              isPitcherK,
+              rolloutState: isPitcherK ? rolloutState : null,
+            });
+            driver.execution_envelope = executionEnvelope;
+            Object.assign(payloadData, executionEnvelope);
+            assertMlbExecutionInvariant(payloadData);
 
             const cardTitle = isF5
               ? `F5 ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
               : isF5ML
                 ? `F5 ML ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
               : isPitcherK
-                ? `${pitcherTeam ?? '?'} SP Ks ${driver.prediction} [${driver.basis === 'ODDS_BACKED' ? 'ODDS_BACKED' : 'PROJECTION_ONLY'}]`
+                ? `${pitcherTeam ?? '?'} SP Ks ${driver.prediction} [${
+                    payloadData.k_prop_execution_path === 'ODDS_BACKED'
+                      ? 'ODDS_BACKED'
+                      : 'PROJECTION_ONLY'
+                  }]`
                 : `${pitcherTeam ?? '?'} SP Strikeouts ${driver.prediction}`;
 
             const cardId = `card-mlb-${cardType}-${gameId}-${uuidV4().slice(0, 8)}`;
@@ -1532,6 +1773,8 @@ module.exports = {
   resolvePitcherKPublishGate,
   filterSnapshotsByGameIds,
   evaluatePitcherPropPublishability,
+  deriveMlbExecutionEnvelope,
+  assertMlbExecutionInvariant,
   // Exported for WI-0596 unit tests
   checkPitcherFreshness,
   validatePitcherKInputs,
