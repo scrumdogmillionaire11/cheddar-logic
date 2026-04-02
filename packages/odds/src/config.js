@@ -6,17 +6,15 @@
  * - 1 token = 1 market pulled (region fixed to 'us')
  * - Multiple bookmakers doesn't increase token cost
  *
- * Canonical market budget — MUST stay at 7 tokens total per composite run:
- *   NBA  (main job):  totals + spreads                       = 2 tokens
- *   NHL  (main job):  totals + totals_1st_period              = 2 tokens
- *   NHL  (prop job):  player_shots_on_goal                   = 1 token
- *   MLB  (main job):  totals_1st_5_innings                   = 1 token
- *   MLB  (prop job):  pitcher_strikeouts                     = 1 token
- *   ──────────────────────────────────────────────────────── = 7 tokens
+ * Canonical featured-market budget — MUST stay focused on sport-level markets:
+ *   NBA  (main job): totals + spreads                        = 2 tokens
+ *   NHL  (main job): totals                                  = 1 token
+ *   MLB  (schedule baseline): h2h                            = 1 token
+ *   ──────────────────────────────────────────────────────── = 4 tokens
  *
- * To add a market: increment tokensPerFetch / propTokensPerRun here,
- * verify the total above stays acceptable, update the pipeline (index.js,
- * normalize.js, odds.js migration) if it is a new game-market type.
+ * Per-event / alternate-period markets are intentionally excluded here.
+ * NHL 1P, NHL props, MLB F5, and MLB pitcher-K now run projection-only and
+ * must not re-enter the shared odds fetch surface without a dedicated WI.
  *
  * US Bookmakers:
  * - betmgm, draftkings, fanduel (main books)
@@ -28,10 +26,8 @@ const SPORTS_CONFIG = {
   NHL: {
     active: true,
     season: { start: '10-01', end: '04-30' },
-    markets: ['totals', 'totals_1st_period'],
-    tokensPerFetch: 2,
-    propMarkets: ['player_shots_on_goal'],
-    propTokensPerRun: 1,
+    markets: ['totals'],
+    tokensPerFetch: 1,
     defaultTTL: 240, // 4 hours standard
     pregameTTL: 30, // 30 min inside 2 hours
     sharpWindowTTL: 0, // Don't cache inside 1 hour — fetch on demand
@@ -68,10 +64,10 @@ const SPORTS_CONFIG = {
   MLB: {
     active: true, // season starts 2026-03-25
     season: { start: '03-20', end: '11-01' },
-    markets: ['totals_1st_5_innings'],
+    // Keep one featured market so pull_odds_hourly continues to seed MLB games
+    // into the canonical games table while F5 and pitcher-K stay projection-only.
+    markets: ['h2h'],
     tokensPerFetch: 1,
-    propMarkets: ['pitcher_strikeouts'],
-    propTokensPerRun: 1,
     defaultTTL: 180, // Shorter — SP confirmations move lines faster
     pregameTTL: 20, // Tighter pregame window for weather/lineup
     sharpWindowTTL: 0,
@@ -84,7 +80,7 @@ const SPORTS_CONFIG = {
       'espnbet',
       'fliff',
     ],
-    notes: 'No external model yet — dashboard only',
+    notes: 'Projection-only MLB lanes keep schedule seeding via featured-market fetch only',
   },
 
   NFL: {

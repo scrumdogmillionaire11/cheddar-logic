@@ -45,6 +45,7 @@ const JOB_NAME = 'run-nhl-player-shots-model';
 // Prevents pp_component silently collapsing to 0 for top PP players.
 // Value ~3.0 is ~25th-percentile among PP-eligible players (conservative, not inflated).
 const PP_RATE_LEAGUE_AVG_PER60 = 3.0;
+const EVENT_PRICING_DISABLED = true;
 
 /**
  * WI-0529: Compute three-state display decision for prop cards.
@@ -2188,18 +2189,18 @@ async function runNHLPlayerShotsModel() {
               role_stability: roleStability,
             };
 
-            // Fetch real market lines from DB (populated by pull_nhl_player_shots_props job).
-            // Same-book threshold ladders are preserved; select the single best-matching
-            // row so the displayed line, price, bookmaker, and edge math all come from
-            // the same market entry.
-            const realPropLineCandidates = resolvePlayerPropLineCandidatesWithFallback({
-              db,
-              sport: 'NHL',
-              gameId: resolvedGameId,
-              playerName,
-              propType: 'shots_on_goal',
-              period: 'full_game',
-            });
+            // Event-priced odds are disabled for this lane, so full-game SOG cards
+            // always use the synthetic projection-floor reference line.
+            const realPropLineCandidates = EVENT_PRICING_DISABLED
+              ? []
+              : resolvePlayerPropLineCandidatesWithFallback({
+                db,
+                sport: 'NHL',
+                gameId: resolvedGameId,
+                playerName,
+                propType: 'shots_on_goal',
+                period: 'full_game',
+              });
             const baseSelectedPropMarketEvaluation = realPropLineCandidates.length > 0
               ? [...realPropLineCandidates]
                 .map((market) =>
@@ -2388,13 +2389,15 @@ async function runNHLPlayerShotsModel() {
             const syntheticLine = marketLine; // kept for card payload references below
 
             // 1P: also use projection floor when no real line (scaled from full-game floor by 1P share)
-            const realPropLine1p = resolvePlayerPropLineWithFallback({
-              sport: 'NHL',
-              gameId: resolvedGameId,
-              playerName,
-              propType: 'shots_on_goal',
-              period: 'first_period',
-            });
+            const realPropLine1p = EVENT_PRICING_DISABLED
+              ? null
+              : resolvePlayerPropLineWithFallback({
+                sport: 'NHL',
+                gameId: resolvedGameId,
+                playerName,
+                propType: 'shots_on_goal',
+                period: 'first_period',
+              });
             const overPrice1p = normalizePropOddsPrice(realPropLine1p?.over_price);
             const underPrice1p = normalizePropOddsPrice(realPropLine1p?.under_price);
             let syntheticLine1p;
@@ -3044,17 +3047,37 @@ async function runNHLPlayerShotsModel() {
                 LIMIT 1
               `).get(String(player.player_id), nhlSeasonKey);
 
-              const blkLineCandidates = resolvePlayerPropLineCandidatesWithFallback({
-                db,
-                sport: 'NHL',
-                gameId: resolvedGameId,
-                playerName,
-                propType: 'blocked_shots',
-                period: 'full_game',
-              });
-              const blkMarket = blkLineCandidates[0] || null;
+              const blkLineCandidates = EVENT_PRICING_DISABLED
+                ? []
+                : resolvePlayerPropLineCandidatesWithFallback({
+                  db,
+                  sport: 'NHL',
+                  gameId: resolvedGameId,
+                  playerName,
+                  propType: 'blocked_shots',
+                  period: 'full_game',
+                });
+              const blkMarket =
+                blkLineCandidates[0] || (
+                  EVENT_PRICING_DISABLED
+                    ? {
+                        line: Math.max(
+                          0.5,
+                          Math.round(Math.max(l5BlkMean || 0.5, 0.5) * 2) / 2,
+                        ),
+                        over_price: null,
+                        under_price: null,
+                        bookmaker: null,
+                      }
+                    : null
+                );
 
               if (blkMarket) {
+                const blkUsingRealLine =
+                  !EVENT_PRICING_DISABLED &&
+                  blkLineCandidates.length > 0 &&
+                  blkMarket.over_price != null &&
+                  blkMarket.under_price != null;
                 const blkToiProjPk =
                   Number.isFinite(blkRateRow?.pk_toi_per_game) &&
                   blkRateRow.pk_toi_per_game > 0
@@ -3121,7 +3144,7 @@ async function runNHLPlayerShotsModel() {
                   roleStability: blkProjection.role_stability ?? roleStability,
                   l5Mean: l5BlkMean,
                   flags: blkFlags,
-                  usingRealLine: true,
+                  usingRealLine: blkUsingRealLine,
                 });
 
                 if (blkFlags.includes('LOW_SAMPLE')) {
@@ -3130,6 +3153,16 @@ async function runNHLPlayerShotsModel() {
                     verdict: 'PROJECTION',
                     why: 'Projection only — missing NST blocked-shot rates',
                     flags: Array.from(new Set([...(blkPropDecision.flags || []), 'LOW_SAMPLE'])),
+                  };
+                }
+                if (!blkUsingRealLine) {
+                  blkPropDecision = {
+                    ...blkPropDecision,
+                    verdict: 'PROJECTION',
+                    why: 'Projection only — event-priced blocked-shot market disabled',
+                    flags: Array.from(
+                      new Set([...(blkPropDecision.flags || []), 'SYNTHETIC_LINE']),
+                    ),
                   };
                 }
 
@@ -3243,7 +3276,7 @@ async function runNHLPlayerShotsModel() {
                 };
 
                 applyNhlDecisionBasisMeta(payloadDataBlk, {
-                  usingRealLine: true,
+                  usingRealLine: blkUsingRealLine,
                   edgePct: computeEdgePct(blkProjection.blk_mu, blkMarket.line),
                 });
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide describes how to add a new player prop market to cheddar-logic. Every new prop market follows the same 4-file pattern used by the NHL Shots on Goal (SOG) pipeline — the canonical reference implementation. New markets are gated behind environment flags and must be registered in the web layer or cards will be silently dropped.
+This guide describes the historical pattern used to add a player prop market to cheddar-logic. As of WI-0727, live event-level Odds API prop ingestion is paused because it burns quota too aggressively. New prop markets should default to projection-only unless a future work item explicitly re-approves event-level fetching.
 
 ---
 
@@ -12,7 +12,9 @@ Every new player prop market requires exactly these 4 files:
 
 ### 1. `apps/worker/src/jobs/pull_{sport}_{prop}.js`
 
-**Purpose:** Fetch O/U prop lines from The Odds API and upsert them into `player_prop_lines`.
+**Purpose:** Historical event-level fetch path for O/U prop lines from The Odds API into `player_prop_lines`.
+
+**Current policy:** Do not add new copies of this job unless the work item explicitly approves event-level token spend.
 
 **Contract:**
 - Reads `ODDS_API_KEY` and a `{SPORT}_{PROP}_PROP_EVENTS_ENABLED` env flag
@@ -24,7 +26,7 @@ Every new player prop market requires exactly these 4 files:
 
 **Odds API market key:** See the Odds API Market Keys table below.
 
-**Reference:** `apps/worker/src/jobs/pull_nhl_player_shots_props.js`
+**Reference:** Historical NHL SOG pull job removed in WI-0727; use this section as an archival pattern only.
 
 ### 2. `apps/worker/src/jobs/run_{sport}_{prop}_model.js`
 
@@ -158,6 +160,7 @@ events_per_day × runs_per_day × days_in_season ≈ monthly_token_budget
 **Rules:**
 
 - Gate every new market behind `{SPORT}_{PROP}_ENABLED=false` by default
+- Prefer projection-only rollout first; treat event-level odds ingestion as an exception, not the default
 - Enable in staging first and monitor token consumption via Odds API dashboard
 - Do not enable multiple new markets simultaneously — isolate token attribution
 - 1P markets are almost always unreliable and double token cost; disable by default via `{SPORT}_{PROP}_1P_CARDS_ENABLED=false`

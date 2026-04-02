@@ -499,9 +499,7 @@ function attachRunId(card, runId) {
 }
 
 function resolvePitcherKsMode() {
-  return PITCHER_KS_MODEL_MODE === 'ODDS_BACKED'
-    ? 'ODDS_BACKED'
-    : 'PROJECTION_ONLY';
+  return 'PROJECTION_ONLY';
 }
 
 function resolveMlbPitcherPropRolloutState() {
@@ -1038,12 +1036,15 @@ function enrichMlbPitcherData(oddsSnapshot, { forKEngine = false } = {}) {
 
     // Attach market lines from odds snapshot to raw_data.mlb
     mlb.total_line = oddsSnapshot.total ?? mlb.total_line ?? null;
-    mlb.f5_line = oddsSnapshot.total_f5 ?? mlb.f5_line ?? null;
+    mlb.f5_line =
+      oddsSnapshot.total_f5 ??
+      mlb.f5_line ??
+      computeProjectionFloorF5(oddsSnapshot);
 
     // Strikeout lines: look up player_prop_lines for pitcher_strikeouts when in
     // ODDS_BACKED mode. Best-line logic: lowest over_line among DraftKings/FanDuel/BetMGM.
     // In PROJECTION_ONLY mode, leave strikeout_lines as-is (null or existing).
-    if (forKEngine && PITCHER_KS_MODEL_MODE === 'ODDS_BACKED') {
+    if (forKEngine && resolvePitcherKsMode() === 'ODDS_BACKED') {
       try {
         const gameId = oddsSnapshot?.game_id ?? oddsSnapshot?.id ?? null;
         if (gameId) {
@@ -1605,15 +1606,16 @@ async function runMLBModel({
                       canonical_market_key: 'pitcher_strikeouts',
                     }),
             };
+            const projectionOnlyMarket = isF5 || isF5ML || isPitcherK;
             const executionEnvelope = driver.execution_envelope || deriveMlbExecutionEnvelope({
               driver,
               pricingStatus:
-                driver.without_odds_mode || driver.projection_floor
+                projectionOnlyMarket || driver.without_odds_mode || driver.projection_floor
                   ? 'NOT_REQUIRED'
                   : gamePricingStatus,
               pricingReason:
-                driver.without_odds_mode || driver.projection_floor
-                  ? 'PROJECTION_FLOOR'
+                projectionOnlyMarket || driver.without_odds_mode || driver.projection_floor
+                  ? 'PROJECTION_ONLY_MARKET'
                   : gamePricingReason,
               pricingCapturedAt: gameOddsSnapshot?.captured_at ?? null,
               isPitcherK,
@@ -1621,6 +1623,17 @@ async function runMLBModel({
             });
             driver.execution_envelope = executionEnvelope;
             Object.assign(payloadData, executionEnvelope);
+            if (isPitcherK) {
+              payloadData.basis = 'PROJECTION_ONLY';
+              payloadData.tags = ['no_odds_mode'];
+              payloadData.line_source = null;
+              payloadData.over_price = null;
+              payloadData.under_price = null;
+              payloadData.best_line_bookmaker = null;
+              payloadData.margin = null;
+              payloadData.line_fetched_at = null;
+              payloadData.odds_freshness = null;
+            }
             assertMlbExecutionInvariant(payloadData);
 
             const cardTitle = isF5
