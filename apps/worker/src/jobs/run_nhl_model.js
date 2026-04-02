@@ -643,27 +643,45 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
   const selection = deriveOnePeriodSelection(payload);
   const modelLine = toFiniteNumber(payload?.driver?.inputs?.market_1p_total);
   const line = modelLine !== null ? modelLine : 1.5;
-  const overPrice1P = null;
-  const underPrice1P = null;
-  const sidePrice = null;
-  const lineSource = 'fixed_reference';
-  const priceSource = null;
+  // Read live 1P prices from odds snapshot when available (feat(nhl-1p): WI-0715).
+  // Falls back to null when the live odds lane is not active (PROJECTION_ONLY mode).
+  const overPrice1P = toFiniteNumber(oddsSnapshot?.total_1p_price_over);
+  const underPrice1P = toFiniteNumber(oddsSnapshot?.total_1p_price_under);
+  const sidePrice =
+    selection === 'OVER'
+      ? overPrice1P
+      : selection === 'UNDER'
+        ? underPrice1P
+        : null;
+  const lineSource =
+    toFiniteNumber(oddsSnapshot?.total_1p) !== null ? 'odds_snapshot' : 'fixed_reference';
+  const priceSource = sidePrice !== null ? 'odds_snapshot' : null;
   const statusToken = String(payload.status || '').toUpperCase();
-  const isPlayable = false;
+  // Card is playable only when live 1P prices are present (live odds lane active).
+  // When prices are null the card degrades to EVIDENCE / PROJECTION_ONLY.
+  const isPlayable =
+    (statusToken === 'FIRE' || statusToken === 'WATCH') &&
+    (selection === 'OVER' || selection === 'UNDER') &&
+    sidePrice !== null;
 
   payload.market_type = 'FIRST_PERIOD';
   payload.recommended_bet_type = 'total';
   payload.period = '1P';
-  payload.kind = 'EVIDENCE';
-  payload.execution_status = 'PROJECTION_ONLY';
-  payload.actionable = false;
-  payload.publish_ready = false;
+  payload.kind = isPlayable ? 'PLAY' : 'EVIDENCE';
+  if (!isPlayable) {
+    payload.execution_status = 'PROJECTION_ONLY';
+    payload.actionable = false;
+    payload.publish_ready = false;
+  }
   // When demoted to EVIDENCE, set an explicit no-edge pass_reason_code so the
   // transform layer classifies this as a healthy no-play (quality='OK') rather
   // than a fetch failure (quality='DEGRADED'). Without this, nhl-pace-1p EVIDENCE
   // cards produce 'fetch_failure:play_producer_no_output' → Degraded badge on board.
   if (!isPlayable && !payload.pass_reason_code) {
-    payload.pass_reason_code = 'FIRST_PERIOD_NO_PROJECTION';
+    payload.pass_reason_code =
+      sidePrice === null
+        ? 'FIRST_PERIOD_NO_PROJECTION' // 1P price unavailable in odds feed
+        : 'SUPPORT_BELOW_LEAN_THRESHOLD'; // model PASS — no edge
     // Sync reason_codes so EVIDENCE cards don't carry stale accumulated codes (AUDIT-FIX-06)
     payload.reason_codes = [payload.pass_reason_code].filter(Boolean);
   }

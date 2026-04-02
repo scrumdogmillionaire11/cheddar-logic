@@ -363,8 +363,8 @@ describe('run_nhl_model market call generation', () => {
     const oddsSnapshot = {
       ...buildBaseOddsSnapshot(),
       total_1p: 1.5,
-      total_price_over_1p: -124,
-      total_price_under_1p: 102,
+      total_1p_price_over: -124,
+      total_1p_price_under: 102,
     };
 
     const card = {
@@ -418,8 +418,8 @@ describe('run_nhl_model market call generation', () => {
     const oddsSnapshot = {
       ...buildBaseOddsSnapshot(),
       total_1p: 1.5,
-      total_price_over_1p: null,
-      total_price_under_1p: null,
+      total_1p_price_over: null,
+      total_1p_price_under: null,
     };
 
     const card = {

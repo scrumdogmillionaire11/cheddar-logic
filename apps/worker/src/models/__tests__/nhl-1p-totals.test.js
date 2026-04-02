@@ -452,8 +452,8 @@ describe('applyNhlSettlementMarketContext — 1P market_context contract', () =>
     const oddsSnapshot = {
       total: 6.0,
       total_1p: 1.5,
-      total_price_over_1p: -125,
-      total_price_under_1p: 105,
+      total_1p_price_over: -125,
+      total_1p_price_under: 105,
     };
 
     applyNhlSettlementMarketContext(card, oddsSnapshot);
@@ -476,8 +476,8 @@ describe('applyNhlSettlementMarketContext — 1P market_context contract', () =>
     const oddsSnapshot = {
       total: 6.0,
       total_1p: 1.5,
-      total_price_over_1p: -125,
-      total_price_under_1p: 105,
+      total_1p_price_over: -125,
+      total_1p_price_under: 105,
     };
 
     applyNhlSettlementMarketContext(card, oddsSnapshot);
