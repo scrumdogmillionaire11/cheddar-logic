@@ -1220,15 +1220,23 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       weatherInput,
       { mode: 'PROJECTION_ONLY', side: 'over' },
     );
-    const isPlay = result.status === 'COMPLETE' && result.verdict === 'Play';
+    const hasProjection =
+      result.status === 'COMPLETE' &&
+      typeof result.projection === 'number' &&
+      Number.isFinite(result.projection);
+    const projectionFlags = Array.isArray(result.reason_codes)
+      ? result.reason_codes
+      : [];
 
     cards.push({
       market: `pitcher_k_${role}`,
       pitcher_team: team,
-      prediction: isPlay ? 'OVER' : 'PASS',
+      prediction: hasProjection ? 'OVER' : 'PASS',
       confidence: result.net_score != null ? result.net_score / 10 : 0,
-      ev_threshold_passed: isPlay,
-      emit_card: isPlay,
+      ev_threshold_passed: false,
+      emit_card: hasProjection,
+      card_verdict: hasProjection ? 'PROJECTION' : 'NO_PLAY',
+      tier: null,
       reasoning: _buildPitcherKReasoning(result),
       drivers: [{
         type: 'pitcher-k',
@@ -1237,6 +1245,23 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
         net_score: result.net_score ?? null,
         tier: result.tier ?? null,
       }],
+      prop_decision: hasProjection
+        ? {
+            verdict: 'PROJECTION',
+            lean_side: 'OVER',
+            line: null,
+            display_price: null,
+            projection: result.projection ?? null,
+            line_delta: null,
+            fair_prob: null,
+            implied_prob: null,
+            prob_edge_pp: null,
+            ev: null,
+            why: _buildPitcherKReasoning(result),
+            flags: projectionFlags,
+          }
+        : undefined,
+      prop_display_state: hasProjection ? 'PROJECTION_ONLY' : undefined,
       pitcher_k_result: result,
       basis: result.basis === 'FULL' ? 'ODDS_BACKED' : 'PROJECTION_ONLY',
       line_source: null,

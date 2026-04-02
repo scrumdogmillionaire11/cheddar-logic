@@ -1,5 +1,5 @@
 /*
- * Verifies payload-first market inference contract in transform.ts.
+ * Verifies payload-first market inference contract in transform/index.ts.
  * Run: npm --prefix web run test:transform:market
  */
 
@@ -7,20 +7,25 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const filePath = path.resolve('web/src/lib/game-card/transform.ts');
+const filePath = path.resolve('web/src/lib/game-card/transform/index.ts');
 const source = fs.readFileSync(filePath, 'utf8');
+const titleInferenceSource = fs.readFileSync(
+  path.resolve('web/src/lib/game-card/transform/title-inference.ts'),
+  'utf8',
+);
 
 console.log('🧪 Transform market contract source tests');
 
 assert(
-  source.includes('if (play.market_type) {') &&
-    source.includes('mapCanonicalToLegacyMarket(play.market_type)'),
+  source.includes("const marketType = wave1DecisionPlay.market_type ?? 'INFO';") &&
+    source.includes('mapCanonicalToLegacyMarket(marketType)'),
   'transform should prioritize payload market_type before all fallbacks',
 );
 
 assert(
-  source.includes('const secondary = inferCanonicalFromSecondary(play);'),
-  'transform should use recommended/recommendation fallback before title inference',
+  source.includes("const propPlay = scopedPlayCandidates.find(") &&
+    source.includes("(p) => p.market_type === 'PROP' && p.confidence >= 0.0"),
+  'transform should check canonical PROP plays before falling back to game-line market selection',
 );
 
 assert(
@@ -30,18 +35,19 @@ assert(
 
 assert(
   source.includes('getRiskTagsFromText') &&
-    source.includes("'RISK_FRAGILITY'") &&
-    source.includes("'RISK_BLOWOUT'"),
+    titleInferenceSource.includes("tags.push('RISK_FRAGILITY')") &&
+    titleInferenceSource.includes("tags.push('RISK_BLOWOUT')"),
   'risk should be modeled as tags, not as a market bucket',
 );
 
 assert(
-  source.includes('const resolvedAction = getSourcePlayAction(play);'),
+  source.includes('const action = getSourcePlayAction(play);') &&
+    source.includes('const sourceAction = getSourcePlayAction(sourcePlay);'),
   'transform wave-1 action selection should resolve through shared play action helper',
 );
 
 assert(
-  source.includes("play.market_type === 'FIRST_PERIOD'"),
+  source.includes("canonical === 'FIRST_PERIOD'"),
   'transform should preserve FIRST_PERIOD market handling for 1P totals cards',
 );
 

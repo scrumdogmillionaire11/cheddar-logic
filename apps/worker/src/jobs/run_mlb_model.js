@@ -488,6 +488,12 @@ function assertMlbExecutionInvariant(payload) {
   console.warn(error.message);
 }
 
+function computePitcherKPropDisplayState(verdict) {
+  if (verdict === 'PLAY') return 'PLAY';
+  if (verdict === 'WATCH') return 'WATCH';
+  return 'PROJECTION_ONLY';
+}
+
 function attachRunId(card, runId) {
   if (!card) return;
   card.runId = runId;
@@ -1538,10 +1544,19 @@ async function runMLBModel({
                     : null);
 
             const tier = isPitcherK
-              ? (driver.card_verdict === 'PLAY' ? 'BEST' : 'WATCH')
+              ? (driver.card_verdict === 'PLAY'
+                  ? 'BEST'
+                  : driver.card_verdict === 'WATCH'
+                    ? 'WATCH'
+                    : null)
               : driver.confidence >= 0.8
                 ? 'BEST'
                 : 'WATCH';
+            const pitcherKLeanSide =
+              driver.prop_decision?.lean_side ??
+              (driver.prediction === 'OVER' || driver.prediction === 'UNDER'
+                ? driver.prediction
+                : null);
 
             const payloadData = {
               game_id: gameId,
@@ -1552,12 +1567,24 @@ async function runMLBModel({
               matchup,
               start_time_utc: gameOddsSnapshot?.game_time_utc ?? null,
               market_type: (isF5 || isF5ML) ? 'FIRST_PERIOD' : 'PROP',
-              prediction: driver.prediction,
-              selection: { side: driver.prediction },
+              prediction:
+                isPitcherK && pitcherKLeanSide
+                  ? pitcherKLeanSide
+                  : driver.prediction,
+              selection: {
+                side:
+                  isPitcherK && pitcherKLeanSide
+                    ? pitcherKLeanSide
+                    : driver.prediction,
+              },
               line,
               confidence: driver.confidence,
               tier,
-              ev_passed: isPitcherK ? driver.card_verdict !== 'NO_PLAY' : true,
+              ev_passed:
+                isPitcherK
+                  ? driver.card_verdict === 'PLAY' ||
+                    driver.card_verdict === 'WATCH'
+                  : true,
               reasoning: driver.reasoning,
               disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
               generated_at: now,
@@ -1589,6 +1616,9 @@ async function runMLBModel({
                       canonical_market_key: 'pitcher_strikeouts',
                       basis: driver.basis || 'PROJECTION_ONLY',
                       tags: (driver.basis === 'ODDS_BACKED') ? [] : ['no_odds_mode'],
+                      prop_display_state: computePitcherKPropDisplayState(
+                        driver.prop_decision?.verdict ?? driver.card_verdict,
+                      ),
                       prop_decision: driver.prop_decision ?? null,
                       pitcher_k_result: driver.pitcher_k_result ?? null,
                       // Odds-backed enrichment (null in PROJECTION_ONLY)
@@ -1623,7 +1653,7 @@ async function runMLBModel({
             });
             driver.execution_envelope = executionEnvelope;
             Object.assign(payloadData, executionEnvelope);
-            if (isPitcherK) {
+            if (isPitcherK && payloadData.basis === 'PROJECTION_ONLY') {
               payloadData.basis = 'PROJECTION_ONLY';
               payloadData.tags = ['no_odds_mode'];
               payloadData.line_source = null;

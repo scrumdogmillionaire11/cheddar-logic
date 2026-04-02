@@ -499,6 +499,7 @@ interface Play {
   market_price_over?: number | null;
   market_price_under?: number | null;
   market_bookmaker?: string | null;
+  prop_display_state?: 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
   prop_decision?: {
     verdict: 'PLAY' | 'WATCH' | 'NO_PLAY' | 'PROJECTION';
     lean_side: 'OVER' | 'UNDER' | null;
@@ -2067,6 +2068,16 @@ export async function GET(request: NextRequest) {
         );
         const payloadPlayPropDecision = toObject(payloadPlay?.prop_decision);
         const rawPropDecision = payloadPropDecision ?? payloadPlayPropDecision;
+        const rawPropDisplayState = firstString(
+          (payload as Record<string, unknown>).prop_display_state,
+          payloadPlay?.prop_display_state,
+        );
+        const normalizedPropDisplayState =
+          rawPropDisplayState === 'PLAY' ||
+          rawPropDisplayState === 'WATCH' ||
+          rawPropDisplayState === 'PROJECTION_ONLY'
+            ? (rawPropDisplayState as 'PLAY' | 'WATCH' | 'PROJECTION_ONLY')
+            : undefined;
         const rawPropDecisionVerdict = firstString(
           rawPropDecision?.verdict,
           payloadPlayPropDecision?.verdict,
@@ -2713,6 +2724,7 @@ export async function GET(request: NextRequest) {
           market_price_over: normalizedPriceOver,
           market_price_under: normalizedPriceUnder,
           market_bookmaker: normalizedMarketBookmaker,
+          prop_display_state: normalizedPropDisplayState,
           prop_decision: normalizedPropDecision,
           consistency:
             payload.consistency && typeof payload.consistency === 'object'
@@ -2826,7 +2838,7 @@ export async function GET(request: NextRequest) {
           parsedSport === 'MLB' &&
           parsedMarket === 'PROP' &&
           (cardRow.card_type === 'mlb-pitcher-k' ||
-            play.market_type === 'PROP');
+            play.canonical_market_key === 'pitcher_strikeouts');
         if (isMlbPitcherKPlay) {
           const pitcherId = firstString(play.player_id);
           const pitcherName =
@@ -2993,20 +3005,23 @@ export async function GET(request: NextRequest) {
       perf.cardsParseMs = Date.now() - cardsParseStartedAt;
       budget.assertWithin('cards_parse');
 
-      // WI-0584: Secondary dedup — keep only the most-recent card per (gameId, playerId, propType, side).
+      // WI-0584: Secondary dedup — keep only the most-recent card per
+      // (gameId, playerId, prop family, side). Use canonical_market_key/cardType
+      // instead of generic PROP so different prop families do not collapse.
       // The SQL query returns rows newest-first (ORDER BY created_at DESC, id DESC), so the first
       // occurrence of a tuple is always the newest card.
       {
         const seenPropTupleKeys = new Set<string>();
         for (const [gid, gamePlays] of playsMap) {
           const dedupedPropPlays = gamePlays.filter((p) => {
-            const isNhlProp =
-              p.cardType === 'nhl-player-shots' ||
-              p.cardType === 'nhl-player-shots-1p' ||
-              p.market_type === 'PROP';
-            if (!isNhlProp) return true;
+            const isProp = p.market_type === 'PROP';
+            if (!isProp) return true;
             const pid = p.player_id ?? p.player_name ?? 'unknown';
-            const pType = p.market_type ?? 'prop';
+            const pType =
+              p.canonical_market_key ??
+              p.cardType ??
+              p.market_type ??
+              'prop';
             const side =
               normalizeSelectionSide(p.selection?.side ?? p.prediction) ?? 'NONE';
             const tupleKey = `${gid}|${pid}|${pType}|${side}`;

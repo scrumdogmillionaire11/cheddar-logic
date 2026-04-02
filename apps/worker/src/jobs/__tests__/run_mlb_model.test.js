@@ -324,9 +324,16 @@ describe('MLB pitcher-K under monitoring', () => {
       line: 6.5,
       display_price: -105,
     });
+    expect(cards[0]).toMatchObject({
+      line: 6.5,
+      line_source: 'draftkings',
+      over_price: -115,
+      under_price: -105,
+      best_line_bookmaker: 'draftkings',
+    });
   });
 
-  test('computePitcherKDriverCards keeps projection-only branch unchanged', () => {
+  test('computePitcherKDriverCards emits projection-only prop metadata for completed pitcher K rows', () => {
     const cards = computePitcherKDriverCards(
       'game-1',
       {
@@ -344,9 +351,45 @@ describe('MLB pitcher-K under monitoring', () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0].basis).toBe('PROJECTION_ONLY');
-    expect(cards[0].prop_decision).toBeUndefined();
-    expect(['OVER', 'PASS']).toContain(cards[0].prediction);
+    expect(cards[0]).toMatchObject({
+      basis: 'PROJECTION_ONLY',
+      prediction: 'OVER',
+      emit_card: true,
+      ev_threshold_passed: false,
+      card_verdict: 'PROJECTION',
+      prop_display_state: 'PROJECTION_ONLY',
+    });
+    expect(cards[0].prop_decision).toMatchObject({
+      verdict: 'PROJECTION',
+      lean_side: 'OVER',
+      line: null,
+      display_price: null,
+      projection: expect.any(Number),
+    });
+  });
+
+  test('projection-only pitcher K rows remain non-actionable even when emitted', () => {
+    const cards = computePitcherKDriverCards(
+      'game-1',
+      {
+        home_team: 'New York Yankees',
+        raw_data: {
+          mlb: {
+            home_pitcher: {
+              ...fullPitcher,
+              full_name: 'Projection Only',
+            },
+          },
+        },
+      },
+      { mode: 'PROJECTION_ONLY' },
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].emit_card).toBe(true);
+    expect(cards[0].ev_threshold_passed).toBe(false);
+    expect(cards[0].tier).toBeNull();
+    expect(cards[0].prop_decision?.verdict).toBe('PROJECTION');
   });
 });
 
