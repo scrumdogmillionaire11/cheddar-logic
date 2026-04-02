@@ -31,8 +31,10 @@ jobs:
             packages/models/package-lock.json
             packages/odds/package-lock.json
 
-      - name: Install worker dependencies
-        run: npm --prefix apps/worker ci
+      - name: Install audit dependencies
+        run: |
+          npm --prefix packages/data ci
+          npm --prefix apps/worker ci
 
       - name: Collect changed audit fixtures
         run: |
