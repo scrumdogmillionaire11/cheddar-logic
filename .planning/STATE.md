@@ -28,6 +28,15 @@ This file is intentionally minimal to avoid stale status drift.
 - What is done: items moved to `WORK_QUEUE/COMPLETE/`
 - What is obsolete/superseded: explicit status notes inside the WI file
 
+## Accumulated Context
+
+### Pending Todos
+
+- `3` pending todos in `.planning/todos/pending/`
+- `2026-02-28-per-sport-model-health-agents-nba-nhl-ncaam-agents-own-model-health-checks.md`
+- `2026-04-02-add-live-player-props-regression-coverage.md`
+- `2026-04-02-restore-configurable-mlb-pitcher-k-rollout-mode.md`
+
 ## Review Cadence
 
 - Last reviewed: 2026-03-31
