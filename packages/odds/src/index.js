@@ -265,10 +265,12 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
   // Single-league path: all other sports use config.apiKey (singular)
   const url = `https://api.the-odds-api.com/v4/sports/${config.apiKey}/odds`;
 
-  // The Odds API v4 returns 422 when `bookmakers` is combined with alternate/period
-  // markets (e.g. totals_1st_period, totals_1st_5_innings).  Those markets are only
-  // available via the `regions` path.  Drop `bookmakers` whenever any market in the
-  // request is an alternate market.
+  // The Odds API v4 returns 422 when alternate/period markets
+  // (e.g. totals_1st_period, totals_1st_5_innings) are mixed with standard
+  // markets in the SAME request — even without the `bookmakers` param.
+  // Fix: split into two separate calls and merge results by game ID.
+  //   - Core markets   → include `bookmakers` filter
+  //   - Alternate markets → `regions=us` only, no `bookmakers`
   const ALTERNATE_MARKETS = new Set([
     'totals_1st_5_innings',
     'totals_1st_period',
@@ -277,39 +279,86 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
     'player_shots_on_goal',
     'pitcher_strikeouts',
   ]);
-  const hasAlternateMarket = config.markets.some((m) => ALTERNATE_MARKETS.has(m));
 
-  const params = {
-    apiKey,
-    regions: 'us',
-    markets: config.markets.join(','),
-    oddsFormat: 'american',
-  };
+  const coreMarkets = config.markets.filter((m) => !ALTERNATE_MARKETS.has(m));
+  const alternateMarkets = config.markets.filter((m) => ALTERNATE_MARKETS.has(m));
 
-  // Only filter by specific bookmakers when all markets support it
-  if (!hasAlternateMarket && config.bookmakers?.length) {
-    params.bookmakers = config.bookmakers.join(',');
+  let remainingTokens = null;
+
+  async function doFetch(markets, includeBookmakers) {
+    const params = {
+      apiKey,
+      regions: 'us',
+      markets: markets.join(','),
+      oddsFormat: 'american',
+    };
+    if (includeBookmakers && config.bookmakers?.length) {
+      params.bookmakers = config.bookmakers.join(',');
+    }
+    console.log(`[Odds] API call: ${url}?markets=${markets.join(',')}`);
+    const response = await axios.get(url, { params, timeout: 10000 });
+    const remaining = response.headers['x-requests-remaining'];
+    if (remaining) {
+      remainingTokens = parseInt(remaining);
+      console.log(`[Odds] API quota remaining: ${remainingTokens}`);
+      if (remainingTokens < 200) {
+        console.warn(`[Odds] ⚠️  LOW API QUOTA: ${remaining} requests remaining`);
+      }
+    }
+    return response.data;
   }
 
-  console.log(`[Odds] API call: ${url}?markets=${config.markets.join(',')}`);
+  let mergedApiData;
 
-  const response = await axios.get(url, {
-    params,
-    timeout: 10000,
-  });
+  if (coreMarkets.length > 0 && alternateMarkets.length > 0) {
+    // Two separate calls — merge bookmakers by game ID
+    const [coreData, altData] = await Promise.all([
+      doFetch(coreMarkets, true),
+      doFetch(alternateMarkets, false),
+    ]);
 
-  const remaining = response.headers['x-requests-remaining'];
-  let remainingTokens = null;
-  if (remaining) {
-    remainingTokens = parseInt(remaining);
-    console.log(`[Odds] API quota remaining: ${remainingTokens}`);
-    if (remainingTokens < 200) {
-      console.warn(`[Odds] ⚠️  LOW API QUOTA: ${remaining} requests remaining`);
-    }
+    const altByGameId = new Map(
+      (Array.isArray(altData) ? altData : [])
+        .filter((g) => g?.id)
+        .map((g) => [g.id, g]),
+    );
+
+    mergedApiData = (Array.isArray(coreData) ? coreData : []).map((game) => {
+      const altGame = altByGameId.get(game?.id);
+      if (!altGame) return game;
+      // Merge only alternate-market bookmaker entries into the core game object
+      const mergedBookmakers = [...(game.bookmakers || [])];
+      const bmIndexMap = new Map(
+        mergedBookmakers.map((bm, i) => [bm.key, i]),
+      );
+      for (const altBm of altGame.bookmakers || []) {
+        const altMkts = (altBm.markets || []).filter((m) =>
+          ALTERNATE_MARKETS.has(m.key),
+        );
+        if (altMkts.length === 0) continue;
+        const existingIdx = bmIndexMap.get(altBm.key);
+        if (existingIdx !== undefined) {
+          mergedBookmakers[existingIdx] = {
+            ...mergedBookmakers[existingIdx],
+            markets: [...(mergedBookmakers[existingIdx].markets || []), ...altMkts],
+          };
+        } else {
+          mergedBookmakers.push({ ...altBm, markets: altMkts });
+          bmIndexMap.set(altBm.key, mergedBookmakers.length - 1);
+        }
+      }
+      return { ...game, bookmakers: mergedBookmakers };
+    });
+  } else if (alternateMarkets.length > 0) {
+    // Only alternate markets — regions only, no bookmakers filter
+    mergedApiData = await doFetch(alternateMarkets, false);
+  } else {
+    // Only core markets — include bookmakers filter
+    mergedApiData = await doFetch(coreMarkets, true);
   }
 
   // Transform API response to internal format (matches shared-data structure)
-  return { games: transformAPIResponse(response.data, sport), remainingTokens };
+  return { games: transformAPIResponse(mergedApiData, sport), remainingTokens };
 }
 
 /**
