@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-04-02T18:01:01Z"
-last_activity: "2026-04-02 - WI-0729 complete (model audit rollout runbook); WI-0728 and WI-0731 remain"
+last_updated: "2026-04-02T18:30:00Z"
+last_activity: "2026-04-02 - WI-0731 complete (first weekly scorecard 2026-W14); WI-0728 remains"
 ---
 
 # Project State
@@ -37,7 +37,7 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 ## Review Cadence
 
 - Last reviewed: 2026-04-02
-- Next action: Run WI-0728 (baseline lock) then WI-0731 (scorecard). WI-0729 and WI-0730 are complete.
+- Next action: Run WI-0728 (baseline lock). WI-0729, WI-0730, and WI-0731 are complete.
 
 ## Sprint Plan — 2026-04-02 (Model Audit Rollout Cycle)
 
@@ -54,6 +54,7 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 - WI-0727 ✓ — Remove per-event odds fetching; force NHL 1P / NHL shots / MLB F5 / MLB pitcher-K to PROJECTION_ONLY
 - WI-0729 ✓ — Model audit rollout runbook (docs/model_audit_rollout_runbook.md)
 - WI-0730 ✓ — Card family registry (4 LIVE, 4 PROJECTION_ONLY; audit/README.md added)
+- WI-0731 ✓ — First weekly scorecard 2026-W14 (all 8 families ranked; NBA_TOTAL Watch/model_decay; next review 2026-04-09)
 
 ---
 
@@ -62,7 +63,7 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 - **WI-0728** — First baseline lock-in cycle; no deps → **READY**
 - **WI-0729** ✓ — Model audit rollout runbook (2026-04-02)
 - **WI-0730** ✓ — Card family registry with operational status (2026-04-02)
-- **WI-0731** — First weekly scorecard; depends on WI-0728 ✓ + WI-0730 ✓ → **blocked until both close**
+- **WI-0731** ✓ — First weekly scorecard 2026-W14 (2026-04-02)
 
 ### Dependency Chains — Open FPL / Product
 
