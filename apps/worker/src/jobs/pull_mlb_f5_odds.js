@@ -12,8 +12,8 @@
  *
  * Token cost: 1 (events list) + 1 per game = ~8 tokens for a typical daily slate.
  *
- * Guard flag (default ON — runs unless explicitly disabled):
- *   MLB_F5_ODDS_ENABLED=false   — set to disable
+ * WI-0727: MLB F5 is a projection-only lane. This job is hard-disabled to
+ * prevent per-event Odds API token burn. See docs/MARKET_REGISTRY.md.
  *
  * Exit codes: 0 = success, 1 = failure
  */
@@ -213,11 +213,13 @@ function resolveGameId(db, event) {
  * @returns {Promise<{ success: boolean, patchedRows: number, errors: string[] }>}
  */
 async function pullMlbF5Odds({ dryRun = false, jobKey = null } = {}) {
-  if (process.env.MLB_F5_ODDS_ENABLED === 'false') {
-    console.log(`[${JOB_NAME}] Skipped — MLB_F5_ODDS_ENABLED=false`);
-    return { success: true, patchedRows: 0, errors: [] };
-  }
+  // WI-0727: MLB F5 is a projection-only lane. Odds fetching is hard-disabled
+  // to prevent per-event Odds API token burn. Do not remove this guard without
+  // a new work item that establishes a quota-safe featured-market strategy.
+  console.log(`[${JOB_NAME}] Skipped — MLB F5 odds fetch is hard-disabled (projection-only lane)`);
+  return { success: true, patchedRows: 0, errors: [], skipped: true, reason: 'projection_only_lane' };
 
+  // eslint-disable-next-line no-unreachable
   if (process.env.APP_ENV === 'local') {
     console.log(`[${JOB_NAME}] Skipped — APP_ENV=local. API pulls must not run in dev.`);
     return { success: true, patchedRows: 0, errors: [] };
