@@ -1,6 +1,10 @@
 'use strict';
 
-const { predictNHLGame } = require('../nhl-pace-model');
+const {
+  predictNHLGame,
+  validateNhlPaceResult,
+  NHL_PACE_AUDIT_RULES,
+} = require('../nhl-pace-model');
 const { edgeCalculator } = require('@cheddar-logic/models');
 
 function buildBaseOverrides(overrides = {}) {
@@ -55,6 +59,11 @@ describe('NHL pace calibration rails', () => {
     expect(result.rawTotalModel).toBeGreaterThan(7.6);
     expect(result.expectedTotal).toBeLessThanOrEqual(7.6);
     expect(result.totalClampedHigh).toBe(true);
+    expect(
+      Math.abs(result.regressedTotalModel - NHL_PACE_AUDIT_RULES.total_baseline),
+    ).toBeLessThanOrEqual(
+      Math.abs(result.rawTotalModel - NHL_PACE_AUDIT_RULES.total_baseline),
+    );
   });
 
   test('keeps normal environments near league baseline without forced clamp', () => {
@@ -177,6 +186,11 @@ describe('NHL pace calibration rails', () => {
     if (Math.abs(result.modifierBreakdown.raw_modifier_total) > 0.7) {
       expect(result.modifierCapApplied).toBe(true);
     }
+    expect(result.rawTotalModel).toBeCloseTo(
+      result.modifierBreakdown.base_5v5_total +
+        result.modifierBreakdown.capped_modifier_total,
+      2,
+    );
   });
 });
 
@@ -333,6 +347,30 @@ describe('NHL 1P calibration rails', () => {
     expect(expected.first_period_model.projection_final).toBeLessThan(
       unknown.first_period_model.projection_final,
     );
+  });
+
+  test('warning path fires when non-PASS 1P classification has empty reason_codes', () => {
+    expect(() =>
+      validateNhlPaceResult({
+        homeGoalieCertainty: 'CONFIRMED',
+        awayGoalieCertainty: 'CONFIRMED',
+        homeAdjustmentTrust: 'FULL',
+        awayAdjustmentTrust: 'FULL',
+        confidence: 0.7,
+        rawTotalModel: 6.3,
+        regressedTotalModel: 6.2,
+        modifierBreakdown: {
+          base_5v5_total: 6.0,
+          capped_modifier_total: 0.3,
+          raw_modifier_total: 0.3,
+          modifier_cap_applied: false,
+        },
+        first_period_model: {
+          classification: 'PLAY_OVER',
+          reason_codes: [],
+        },
+      }),
+    ).toThrow(/\[INVARIANT_BREACH\]\[LEVEL=WARNING\]/);
   });
 });
 

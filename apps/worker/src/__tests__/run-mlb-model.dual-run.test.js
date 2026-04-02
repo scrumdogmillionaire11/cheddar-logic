@@ -290,6 +290,12 @@ describe('mlb dual-run helpers', () => {
 });
 
 describe('runMLBModel dual-run orchestration', () => {
+  beforeEach(() => {
+    // Most tests that exercise K prop emission need rollout gate open.
+    // Tests that verify blocked/suppressed behaviour set their own value.
+    process.env.MLB_K_PROPS = 'FULL';
+  });
+
   const gameDriver = {
     market: 'f5_total',
     prediction: 'OVER',
@@ -323,6 +329,7 @@ describe('runMLBModel dual-run orchestration', () => {
 
   afterEach(() => {
     delete process.env.PITCHER_KS_MODEL_MODE;
+    delete process.env.MLB_K_PROPS;
     jest.restoreAllMocks();
     jest.resetModules();
     jest.clearAllMocks();
