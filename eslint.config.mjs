@@ -38,6 +38,7 @@ export default [
   {
     files: [
       'apps/worker/**/*.js',
+      'packages/adapters/**/*.js',
       'packages/models/**/*.js',
       'packages/odds/**/*.js',
     ],
