@@ -50,6 +50,7 @@ const { runNBAModel } = require('../jobs/run_nba_model');
 const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { settleMlbF5 } = require('../jobs/settle_mlb_f5');
+const { settleProjections } = require('../jobs/settle_projections');
 const { syncGameStatuses } = require('../jobs/sync_game_statuses');
 const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
@@ -985,6 +986,20 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       execute: settleMlbF5,
       args: { jobKey: f5SettleKey, dryRun },
       reason: 'MLB F5 card settlement (post-game)',
+    });
+  }
+
+  // ========== PROJECTION ACTUAL RESULT INGESTION (4D) ==========
+  // Runs in the same window as MLB F5 settlement — post-game, hourly.
+  // Writes actual_result for nhl-pace-1p (goals_1p) and mlb-f5 (runs_f5) cards.
+  {
+    const projSettleKey = `settle_projections|${nowEt.toISODate()}|${nowEt.hour}`;
+    jobs.push({
+      jobName: 'settle_projections',
+      jobKey: projSettleKey,
+      execute: settleProjections,
+      args: { jobKey: projSettleKey, dryRun },
+      reason: 'Projection actual result ingestion (nhl-pace-1p, mlb-f5)',
     });
   }
 
