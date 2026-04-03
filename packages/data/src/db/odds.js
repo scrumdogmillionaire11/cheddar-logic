@@ -374,8 +374,7 @@ function patchOddsSnapshot1p(gameId, { line, overPrice, underPrice }) {
 
 /**
  * Patch the F5 total (1st-5-innings) fields on the latest odds_snapshot for a game.
- * Used by pull_mlb_f5_odds to write totals_1st_5_innings into odds_snapshots without
- * re-running the full bulk pipeline.
+ * Writes totals_1st_5_innings into odds_snapshots without re-running the full bulk pipeline.
  *
  * @param {string} gameId
  * @param {{ line: number|null, overPrice: number|null, underPrice: number|null }} fields
