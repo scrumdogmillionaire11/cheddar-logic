@@ -31,7 +31,6 @@ const {
   validatePitcherKInputs,
   buildPitcherKObject,
   resolveMlbTeamLookupKeys,
-  selectBestPitcherUnderMarket,
   buildPitcherStrikeoutLookback,
   computeProjectionFloorF5,
   resolvePitcherKsMode,
@@ -639,22 +638,6 @@ describe('MLB pitcher-K under monitoring', () => {
     });
   });
 
-  test('selectBestPitcherUnderMarket prefers highest line, then best under price, then bookmaker priority', () => {
-    const best = selectBestPitcherUnderMarket([
-      { line: 6.5, under_price: -105, over_price: -115, bookmaker: 'draftkings' },
-      { line: 7.5, under_price: -125, over_price: 105, bookmaker: 'fanduel' },
-      { line: 7.5, under_price: -115, over_price: 100, bookmaker: 'betmgm' },
-      { line: 7.5, under_price: -115, over_price: 100, bookmaker: 'draftkings' },
-    ]);
-
-    expect(best).toMatchObject({
-      line: 7.5,
-      under_price: -115,
-      bookmaker: 'draftkings',
-      line_source: 'draftkings',
-    });
-  });
-
   test('buildPitcherStrikeoutLookback fills current season first, then prior season', () => {
     const currentRows = [
       { season: 2026, game_date: '2026-03-20', strikeouts: 5, number_of_pitches: 88, innings_pitched: 5.0 },
@@ -1121,55 +1104,6 @@ describe('MLB prop rollout + freshness gating', () => {
     });
   });
 
-  test('evaluatePitcherPropPublishability reads dormant ODDS_BACKED line freshness but still blocks publish', () => {
-    jest.spyOn(Date, 'now').mockReturnValue(new Date('2026-04-03T02:00:00Z').getTime());
-
-    const result = evaluatePitcherPropPublishability(
-      {
-        raw_data: {
-          mlb: {
-            home_pitcher: { full_name: 'Ace Under' },
-            strikeout_lines: {
-              'ace under': {
-                line: 7.5,
-                over_price: -112,
-                under_price: -108,
-                bookmaker: 'draftkings',
-                line_source: 'draftkings',
-                current_timestamp: '2026-04-03T01:15:00Z',
-                alt_lines: [
-                  { line: 8.5, side: 'under', juice: 120, book: 'draftkings' },
-                ],
-              },
-            },
-          },
-        },
-      },
-      { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
-    );
-
-    expect(result).toMatchObject({
-      publishable: false,
-      status: 'FRESH',
-      reason: null,
-      fetched_at: '2026-04-03T01:15:00Z',
-      line_contract: {
-        line: 7.5,
-        over_price: -112,
-        under_price: -108,
-        bookmaker: 'draftkings',
-        line_source: 'draftkings',
-        alt_lines: [
-          {
-            line: 8.5,
-            side: 'under',
-            juice: 120,
-            book: 'draftkings',
-          },
-        ],
-      },
-    });
-  });
 });
 
 describe('WI-0720 MLB execution envelope', () => {

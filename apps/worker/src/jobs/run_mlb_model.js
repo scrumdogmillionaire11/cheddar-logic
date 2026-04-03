@@ -749,110 +749,11 @@ function buildPitcherKLineContract(rawEntry = null) {
   };
 }
 
-function selectBestPitcherUnderMarket(rows = []) {
-  if (!Array.isArray(rows) || rows.length === 0) return null;
-
-  const sorted = [...rows].sort((left, right) => {
-    const leftLine = toFiniteNumber(left?.line) ?? Number.NEGATIVE_INFINITY;
-    const rightLine = toFiniteNumber(right?.line) ?? Number.NEGATIVE_INFINITY;
-    if (rightLine !== leftLine) return rightLine - leftLine;
-
-    const leftUnder = toFiniteNumber(left?.under_price) ?? Number.NEGATIVE_INFINITY;
-    const rightUnder = toFiniteNumber(right?.under_price) ?? Number.NEGATIVE_INFINITY;
-    if (rightUnder !== leftUnder) return rightUnder - leftUnder;
-
-    return (
-      getPitcherPropBookmakerPriority(left?.bookmaker) -
-      getPitcherPropBookmakerPriority(right?.bookmaker)
-    );
-  });
-
-  const best = sorted[0];
-  if (!best) return null;
-
-  const altLines = sorted.flatMap((row) => {
-    const rowLine = toFiniteNumber(row?.line);
-    const rowBook = String(row?.bookmaker || '').trim() || null;
-    const rowFetchedAt = String(row?.fetched_at || '').trim() || null;
-    if (rowLine === null) return [];
-    return [
-      row?.over_price == null
-        ? null
-        : {
-            line: rowLine,
-            side: 'over',
-            juice: normalizePitcherKPrice(row.over_price),
-            book: rowBook,
-            source: rowBook,
-            captured_at: rowFetchedAt,
-          },
-      row?.under_price == null
-        ? null
-        : {
-            line: rowLine,
-            side: 'under',
-            juice: normalizePitcherKPrice(row.under_price),
-            book: rowBook,
-            source: rowBook,
-            captured_at: rowFetchedAt,
-          },
-    ].filter(Boolean);
-  });
-
-  return buildPitcherKLineContract({
-    ...best,
-    line_source: best.bookmaker ?? null,
-    current_timestamp: best.fetched_at ?? null,
-    alt_lines: altLines,
-  });
-}
-
-function loadPitcherStrikeoutMarkets(db, gameId) {
-  if (!db || !gameId) return {};
-  const rows = db
-    .prepare(`
-      SELECT player_name, line, over_price, under_price, bookmaker, fetched_at
-      FROM player_prop_lines
-      WHERE sport = 'MLB'
-        AND game_id = ?
-        AND prop_type = 'pitcher_strikeouts'
-        AND period = 'full_game'
-    `)
-    .all(gameId);
-
-  const grouped = new Map();
-  for (const row of rows) {
-    const key = normalizePitcherLookupKey(row.player_name);
-    if (!key) continue;
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(row);
-  }
-
-  const selected = {};
-  for (const [key, group] of grouped.entries()) {
-    const best = selectBestPitcherUnderMarket(group);
-    if (best) selected[key] = best;
-  }
-  return selected;
-}
-
 function isTimestampFresh(timestamp, maxAgeMinutes = MLB_K_PROP_FRESHNESS_MINUTES, now = Date.now()) {
   if (!timestamp) return false;
   const parsed = new Date(timestamp).getTime();
   if (!Number.isFinite(parsed)) return false;
   return now - parsed <= maxAgeMinutes * 60 * 1000;
-}
-
-function resolvePitcherKPublishGate(
-  _oddsSnapshot,
-  { mode = resolvePitcherKsMode() } = {},
-) {
-  if (mode && mode !== 'PROJECTION_ONLY') {
-    console.warn(
-      `[MLBModel] Pitcher K publish gate forced to PROJECTION_ONLY (requested=${mode})`,
-    );
-  }
-  return { allowed: true, reason: null };
 }
 
 function filterSnapshotsByGameIds(snapshots = [], gameIds = null) {
@@ -874,52 +775,13 @@ function getPitcherRoleFromDriver(driver) {
   return null;
 }
 
-function getPitcherStrikeoutLineForDriver(oddsSnapshot, driver) {
-  const role = getPitcherRoleFromDriver(driver);
-  if (!role) return null;
-  const rawData = typeof oddsSnapshot?.raw_data === 'string'
-    ? JSON.parse(oddsSnapshot.raw_data)
-    : (oddsSnapshot?.raw_data ?? {});
-  const mlb = rawData?.mlb ?? {};
-  const pitcherName = mlb?.[`${role}_pitcher`]?.full_name ?? null;
-  const strikeoutLines = mlb?.strikeout_lines ?? {};
-  const pitcherKey = normalizePitcherLookupKey(pitcherName);
-  return buildPitcherKLineContract(strikeoutLines[pitcherKey] ?? null);
-}
-
-function evaluatePitcherPropPublishability(oddsSnapshot, driver) {
-  const lineContract = getPitcherStrikeoutLineForDriver(oddsSnapshot, driver);
-  if (driver?.basis === 'ODDS_BACKED') {
-    console.warn(
-      `[MLBModel] Pitcher K basis forced to PROJECTION_ONLY publishability semantics (basis=${driver.basis})`,
-    );
-    if (!lineContract) {
-      return {
-        publishable: false,
-        status: 'MISSING',
-        reason: 'PITCHER_K_LINE_MISSING',
-        fetched_at: null,
-        line_contract: null,
-      };
-    }
-
-    const fetchedAt = lineContract.current_timestamp ?? null;
-    const fresh = isTimestampFresh(fetchedAt, MLB_K_PROP_ODDS_MAX_AGE_MINUTES);
-    return {
-      publishable: false,
-      status: fresh ? 'FRESH' : 'STALE',
-      reason: fresh ? null : 'PITCHER_K_LINE_STALE',
-      fetched_at: fetchedAt,
-      line_contract: lineContract,
-    };
-  }
-
+function evaluatePitcherPropPublishability(_oddsSnapshot, _driver) {
   return {
     publishable: false,
     status: 'NOT_REQUIRED',
     reason: null,
     fetched_at: null,
-    line_contract: lineContract,
+    line_contract: null,
   };
 }
 
@@ -2147,7 +2009,6 @@ module.exports = {
   resolvePitcherKsMode,
   resolveMlbPitcherPropRolloutState,
   isTimestampFresh,
-  resolvePitcherKPublishGate,
   filterSnapshotsByGameIds,
   evaluatePitcherPropPublishability,
   deriveMlbExecutionEnvelope,
@@ -2157,7 +2018,6 @@ module.exports = {
   validatePitcherKInputs,
   buildPitcherKObject,
   buildPitcherKLineContract,
-  selectBestPitcherUnderMarket,
   buildPitcherStrikeoutLookback,
   // Exported for WI-0637 unit tests
   computeProjectionFloorF5,
