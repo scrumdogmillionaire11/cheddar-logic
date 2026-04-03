@@ -51,6 +51,38 @@ function resolveNhlGamecenterId(db, gameId) {
   return null;
 }
 
+async function fetchMlbPitcherKs(gamePk) {
+  const urls = [
+    `https://statsapi.mlb.com/api/v1.1/game/${gamePk}/feed/live`,
+    `https://statsapi.mlb.com/api/v1/game/${gamePk}/feed/live`,
+  ];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { headers: { 'user-agent': 'cheddar-logic-worker' } });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const gameState = String(data?.gameData?.status?.abstractGameState || '').toUpperCase();
+      if (gameState !== 'FINAL') return { available: false, reason: 'game_not_final' };
+      const ksByPlayerId = {};
+      for (const side of ['home', 'away']) {
+        const players = data?.liveData?.boxscore?.teams?.[side]?.players ?? {};
+        for (const [key, pData] of Object.entries(players)) {
+          const ks = pData?.stats?.pitching?.strikeOuts;
+          if (ks !== undefined && ks !== null) {
+            // key is "ID8675309"
+            const id = key.replace(/^ID/, '');
+            ksByPlayerId[id] = Number(ks);
+          }
+        }
+      }
+      return { available: true, ksByPlayerId };
+    } catch {
+      // try next url
+    }
+  }
+  return { available: false, reason: 'fetch_failed' };
+}
+
 async function settleProjections({ jobKey = null, dryRun = false } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
@@ -170,6 +202,198 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             continue;
           }
 
+          // ── NHL nhl-player-shots ─────────────────────────────────────────
+          if (card.card_type === 'nhl-player-shots') {
+            const nhlGameId = resolveNhlGamecenterId(db, card.game_id);
+            if (!nhlGameId) {
+              console.warn(
+                `  [${JOB_NAME}] nhl ${card.game_id}: no NHL Gamecenter ID resolvable`,
+              );
+              skipped++;
+              continue;
+            }
+
+            const snapshot = await fetchNhlSettlementSnapshot({ nhlGameId });
+
+            if (!snapshot.available) {
+              console.warn(
+                `  [${JOB_NAME}] nhl ${card.game_id}: snapshot unavailable (${snapshot.reason || 'unknown'})`,
+              );
+              skipped++;
+              continue;
+            }
+
+            if (!snapshot.isFinal) {
+              skipped++;
+              continue;
+            }
+
+            const playerId = String(payload.player_id);
+            const shots = snapshot.playerShots.fullGameByPlayerId[playerId];
+            if (shots === undefined || shots === null) {
+              console.warn(
+                `  [${JOB_NAME}] nhl-player-shots ${card.game_id} player=${playerId}: not found in snapshot`,
+              );
+              skipped++;
+              continue;
+            }
+
+            if (!dryRun) {
+              setProjectionActualResult(card.card_id, { shots });
+            }
+            console.log(
+              `  [${JOB_NAME}] nhl-player-shots ${card.game_id} player=${playerId}: shots=${shots}`,
+            );
+            settled++;
+            continue;
+          }
+
+          // ── NHL nhl-player-shots-1p ──────────────────────────────────────
+          if (card.card_type === 'nhl-player-shots-1p') {
+            const nhlGameId = resolveNhlGamecenterId(db, card.game_id);
+            if (!nhlGameId) {
+              console.warn(
+                `  [${JOB_NAME}] nhl ${card.game_id}: no NHL Gamecenter ID resolvable`,
+              );
+              skipped++;
+              continue;
+            }
+
+            const snapshot = await fetchNhlSettlementSnapshot({ nhlGameId });
+
+            if (!snapshot.available) {
+              console.warn(
+                `  [${JOB_NAME}] nhl ${card.game_id}: snapshot unavailable (${snapshot.reason || 'unknown'})`,
+              );
+              skipped++;
+              continue;
+            }
+
+            if (!snapshot.isFirstPeriodComplete) {
+              skipped++;
+              continue;
+            }
+
+            const playerId = String(payload.player_id);
+            const shots_1p = snapshot.playerShots.firstPeriodByPlayerId[playerId];
+            if (shots_1p === undefined || shots_1p === null) {
+              console.warn(
+                `  [${JOB_NAME}] nhl-player-shots-1p ${card.game_id} player=${playerId}: not found in snapshot`,
+              );
+              skipped++;
+              continue;
+            }
+
+            if (!dryRun) {
+              setProjectionActualResult(card.card_id, { shots_1p });
+            }
+            console.log(
+              `  [${JOB_NAME}] nhl-player-shots-1p ${card.game_id} player=${playerId}: shots_1p=${shots_1p}`,
+            );
+            settled++;
+            continue;
+          }
+
+          // ── NHL nhl-player-blk ───────────────────────────────────────────
+          if (card.card_type === 'nhl-player-blk') {
+            const nhlGameId = resolveNhlGamecenterId(db, card.game_id);
+            if (!nhlGameId) {
+              console.warn(
+                `  [${JOB_NAME}] nhl ${card.game_id}: no NHL Gamecenter ID resolvable`,
+              );
+              skipped++;
+              continue;
+            }
+
+            const snapshot = await fetchNhlSettlementSnapshot({ nhlGameId });
+
+            if (!snapshot.available) {
+              console.warn(
+                `  [${JOB_NAME}] nhl ${card.game_id}: snapshot unavailable (${snapshot.reason || 'unknown'})`,
+              );
+              skipped++;
+              continue;
+            }
+
+            if (!snapshot.isFinal) {
+              skipped++;
+              continue;
+            }
+
+            const playerId = String(payload.player_id);
+            const blocks = snapshot.playerBlocks.fullGameByPlayerId[playerId];
+            if (blocks === undefined || blocks === null) {
+              console.warn(
+                `  [${JOB_NAME}] nhl-player-blk ${card.game_id} player=${playerId}: not found in snapshot`,
+              );
+              skipped++;
+              continue;
+            }
+
+            if (!dryRun) {
+              setProjectionActualResult(card.card_id, { blocks });
+            }
+            console.log(
+              `  [${JOB_NAME}] nhl-player-blk ${card.game_id} player=${playerId}: blocks=${blocks}`,
+            );
+            settled++;
+            continue;
+          }
+
+          // ── MLB mlb-pitcher-k ────────────────────────────────────────────
+          if (card.card_type === 'mlb-pitcher-k') {
+            const gameDate = card.game_time_utc?.slice(0, 10);
+            const homeTeam = card.home_team;
+            const awayTeam = card.away_team;
+            const gamePkKey =
+              gameDate && homeTeam && awayTeam
+                ? `${gameDate}|${homeTeam}|${awayTeam}`
+                : null;
+
+            const pkRow = gamePkKey
+              ? db
+                  .prepare(
+                    'SELECT game_pk FROM mlb_game_pk_map WHERE game_pk_key = ?',
+                  )
+                  .get(gamePkKey)
+              : null;
+
+            if (!pkRow?.game_pk) {
+              console.warn(
+                `  [${JOB_NAME}] mlb ${card.game_id}: no gamePk in mlb_game_pk_map for key=${gamePkKey ?? `(missing date/teams)`}`,
+              );
+              skipped++;
+              continue;
+            }
+
+            const ksResult = await fetchMlbPitcherKs(pkRow.game_pk);
+
+            if (!ksResult.available) {
+              // Game may not yet be final — skip silently
+              skipped++;
+              continue;
+            }
+
+            const playerId = String(payload.player_id);
+            const pitcher_ks = ksResult.ksByPlayerId[playerId];
+            if (pitcher_ks === undefined) {
+              console.warn(
+                `  [${JOB_NAME}] mlb-pitcher-k ${card.game_id} player=${playerId}: not found in boxscore`,
+              );
+              skipped++;
+              continue;
+            }
+
+            if (!dryRun) {
+              setProjectionActualResult(card.card_id, { pitcher_ks });
+            }
+            console.log(
+              `  [${JOB_NAME}] mlb-pitcher-k ${card.game_id} player=${playerId}: pitcher_ks=${pitcher_ks}`,
+            );
+            settled++;
+            continue;
+          }
+
           // Unknown card_type in the result set — skip
           skipped++;
         } catch (err) {
@@ -210,4 +434,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { JOB_NAME, settleProjections, parseCliArgs };
+module.exports = { JOB_NAME, settleProjections, parseCliArgs, fetchMlbPitcherKs };
