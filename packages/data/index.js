@@ -57,7 +57,8 @@ module.exports = {
   shouldRunJobKey: db.shouldRunJobKey,
   getLatestJobRunByKey: db.getLatestJobRunByKey,
   wasJobKeyRecentlySuccessful: db.wasJobKeyRecentlySuccessful,
-  
+  recoverStaleJobRuns: db.recoverStaleJobRuns,
+
   // Convenience exports - odds_snapshots
   insertOddsSnapshot: db.insertOddsSnapshot,
   patchOddsSnapshot1p: db.patchOddsSnapshot1p,

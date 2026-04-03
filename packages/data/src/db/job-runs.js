@@ -290,6 +290,26 @@ function wasJobKeyRecentlySuccessful(jobKey, minutesAgo = 60) {
   return Boolean(stmt.get(jobKey, threshold));
 }
 
+/**
+ * On worker boot, transition any orphaned 'running' rows to 'failed'.
+ * Stale rows are produced when the process is killed mid-job (crash, OOM, pm2 restart).
+ * Must be called synchronously at startup, before the scheduler's first tick.
+ * @returns {number} Count of rows recovered (0 if none)
+ */
+function recoverStaleJobRuns() {
+  const db = getDatabase();
+  const recovered_at = new Date().toISOString();
+  const stmt = db.prepare(`
+    UPDATE job_runs
+    SET status = 'failed',
+        ended_at = ?,
+        error_message = 'Recovered from stale lock on process restart'
+    WHERE status = 'running'
+  `);
+  const result = stmt.run(recovered_at);
+  return result.changes;
+}
+
 module.exports = {
   getCurrentRunId,
   setCurrentRunId,
@@ -304,4 +324,5 @@ module.exports = {
   shouldRunJobKey,
   getLatestJobRunByKey,
   wasJobKeyRecentlySuccessful,
+  recoverStaleJobRuns,
 };
