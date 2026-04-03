@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-03T00:00:00Z"
-last_activity: "2026-04-03 - Completed quick task 118: WI-0757: Actual result ingestion for projection cards (nhl-pace-1p and mlb-f5)"
+last_activity: "2026-04-03 - Completed quick task 119: WI-0758: Actual result ingestion for player prop cards"
 ---
 
 # Project State
@@ -135,7 +135,8 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 
 ### Quick Tasks Completed
 
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
+| #   | Description                                                                     | Date       | Commit  | Directory                                                                                              |
+|-----|---------------------------------------------------------------------------------|------------|---------|--------------------------------------------------------------------------------------------------------|
 | 118 | WI-0757: Actual result ingestion for projection cards (nhl-pace-1p and mlb-f5) | 2026-04-03 | edcc5e9 | [118-wi-0757-actual-result-ingestion-for-proj](./quick/118-wi-0757-actual-result-ingestion-for-proj/) |
+| 119 | WI-0758: Actual result ingestion for player prop cards                         | 2026-04-03 | 7284284 | [119-wi-0758-actual-result-ingestion-for-play](./quick/119-wi-0758-actual-result-ingestion-for-play/) |
 
