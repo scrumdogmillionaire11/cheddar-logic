@@ -57,8 +57,23 @@ const MARKET_KEY_MAP = {
 };
 
 /**
- * Pct-sum tolerance. Allow small rounding slack from whole-number percentages.
- * Asymmetric sums (one side null) are always invalid.
+ * Pct-sum tolerance band.
+ *
+ * ActionNetwork serves whole-number percentages (e.g. 60/40, 55/45). The
+ * sum of two rounded integers can legally reach 99 or 101 without any data
+ * problem. We allow [96, 104] to cover:
+ *
+ *   - Normal rounding from whole-number display (±2 each side)
+ *   - Stale partial updates where one side has updated and the other hasn't yet
+ *     (observed in community captures; gaps close within seconds)
+ *
+ * We do NOT allow anything beyond 104 because that suggests a real bad-data
+ * condition (scale problem, duplicate field read, or two different markets
+ * accidentally merged). Asymmetric sums (one side null) are always invalid
+ * regardless of this band — they indicate ambiguous side-order, not rounding.
+ *
+ * If WI-0759 fixture capture shows ActionNetwork routinely emits larger gaps,
+ * update this band and document the fixture date that justified the change.
  */
 const PCT_SUM_MIN = 96;
 const PCT_SUM_MAX = 104;
@@ -340,6 +355,17 @@ function normalizeSplitsResponse(raw) {
       const markets = betsArray
         .map(parseMarketEntry)
         .filter(Boolean); // null = unrecognised key, silently dropped
+
+      // Surface invalid markets in logs so runtime failures are observable
+      // (invalid entries are retained in markets[] so callers see them; warn here)
+      for (const m of markets) {
+        if (!m.valid) {
+          console.warn(
+            `[ActionNetwork] invalid market in game ${actionNetworkGameId || '?'}: ` +
+              `${m.sourceMarketKey} — ${m.invalidReason}`,
+          );
+        }
+      }
 
       return { actionNetworkGameId, homeTeam, awayTeam, commenceTime, markets };
     });

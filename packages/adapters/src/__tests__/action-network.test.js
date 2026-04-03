@@ -407,4 +407,34 @@ describe('matchSplitsToGameId', () => {
     matchSplitsToGameId([NORMALIZED_GAME], []);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('unmatched'));
   });
+
+  it('binds correctly when ActionNetwork uses a known nickname alias', () => {
+    // resolveTeamVariant has a canonical lookup: "Celtics" → "BOSTON CELTICS",
+    // "Warriors" → "GOLDEN STATE WARRIORS". ActionNetwork may send nicknames,
+    // not full names. The match layer must handle this correctly (not reject it).
+    const result = matchSplitsToGameId([{
+      actionNetworkGameId: '88',
+      homeTeam: 'Celtics',    // known nickname alias → resolves to BOSTON CELTICS
+      awayTeam: 'Warriors',   // known nickname alias → resolves to GOLDEN STATE WARRIORS
+      commenceTime: null,
+      markets: [],
+    }], KNOWN_GAMES);
+    expect(result).toHaveLength(1);
+    expect(result[0].gameId).toBe('game-abc');
+  });
+
+  it('does NOT bind completely unknown team names — no nearest-neighbor', () => {
+    // Names not in the canonical registry fall back to themselves as lowercase keys.
+    // They must not produce a false match against a real game entry.
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = matchSplitsToGameId([{
+      actionNetworkGameId: '99',
+      homeTeam: 'Unknown Squad FC',   // not in resolveTeamVariant registry
+      awayTeam: 'Mystery Club XI',    // not in resolveTeamVariant registry
+      commenceTime: null,
+      markets: [],
+    }], KNOWN_GAMES);
+    expect(result).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('unmatched'));
+  });
 });
