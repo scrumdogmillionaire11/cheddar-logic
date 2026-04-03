@@ -74,9 +74,29 @@ jobs:
           OUTPUT_DIR="apps/worker/audit-output/${RUN_SCOPE}"
           npm --prefix apps/worker run audit:scorecard -- --output-dir "$OUTPUT_DIR" --run-scope "$RUN_SCOPE" --audit-report "$OUTPUT_DIR/audit-report.json"
 
+      - name: Ensure audit artifacts exist
+        if: always()
+        run: |
+          OUTPUT_DIR="apps/worker/audit-output/${RUN_SCOPE}"
+          echo "Available audit artifact files:"
+          find apps/worker/audit-output -maxdepth 3 -type f | sort || true
+
+          missing=0
+          for artifact in audit-report.json audit-summary.json scorecard.json audit-scorecard.md; do
+            if [ ! -f "$OUTPUT_DIR/$artifact" ]; then
+              echo "Missing required audit artifact: $OUTPUT_DIR/$artifact"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
       - name: Upload audit artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: audit-scorecard-${{ github.run_id }}
           path: apps/worker/audit-output/${{ env.RUN_SCOPE }}/
+          if-no-files-found: error
