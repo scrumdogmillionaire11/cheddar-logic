@@ -739,6 +739,12 @@ export function CardsPageProvider({
             `HTTP ${response.status} ${response.statusText}${
               responseText ? `: ${summarizeNonJsonBody(responseText)}` : ''
             }`;
+          console.error('[cards] /api/games fetch failed', {
+            status: response.status,
+            error: nonJsonDetail,
+            is_initial_load: isInitialLoad.current,
+            lifecycle: requestedLifecycleMode,
+          });
           if (!cancelled) {
             setError(nonJsonDetail);
             if (isInitialLoad.current && !isRecoverableHttpError(response.status)) {
@@ -771,6 +777,15 @@ export function CardsPageProvider({
         }
 
         const nextGames = Array.isArray(data.data) ? data.data : [];
+        const gamesMode = response.headers.get('X-Games-Mode') ?? 'unknown';
+        const gamesCount = response.headers.get('X-Games-Count') ?? String(nextGames.length);
+        if (gamesMode !== 'full' && gamesMode !== 'unknown') {
+          console.warn('[cards] /api/games degraded response', {
+            response_mode: gamesMode,
+            data_count: gamesCount,
+            lifecycle: requestedLifecycleMode,
+          });
+        }
         const hasAnyActionableInRequestedMode = nextGames.some(hasActionablePlay);
         if (
           requestedLifecycleMode === 'active' &&

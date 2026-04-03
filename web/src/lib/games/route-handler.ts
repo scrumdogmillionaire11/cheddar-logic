@@ -3468,6 +3468,8 @@ export async function GET(request: NextRequest) {
     const response = NextResponse.json(payload, {
       headers: { 'Content-Type': 'application/json' },
     });
+    response.headers.set('X-Games-Mode', String(payload?.meta?.response_mode ?? 'full'));
+    response.headers.set('X-Games-Count', String(Array.isArray(payload?.data) ? payload.data.length : 0));
     return addRateLimitHeaders(response, request);
   } catch (error) {
     perf.totalMs = Date.now() - requestStartedAt;
@@ -3498,6 +3500,8 @@ export async function GET(request: NextRequest) {
         const response = NextResponse.json(fallbackPayload, {
           headers: { 'Content-Type': 'application/json' },
         });
+        response.headers.set('X-Games-Mode', String(fallbackPayload?.meta?.response_mode ?? 'timeout_fallback'));
+        response.headers.set('X-Games-Count', String(Array.isArray(fallbackPayload?.data) ? fallbackPayload.data.length : 0));
         return addRateLimitHeaders(response, request);
       }
     }
@@ -3508,6 +3512,8 @@ export async function GET(request: NextRequest) {
       { success: false, error: message },
       { status: 500 },
     );
+    response.headers.set('X-Games-Mode', 'error');
+    response.headers.set('X-Games-Count', '0');
     return addRateLimitHeaders(response, request);
   } finally {
     if (db) closeReadOnlyInstance(db);
