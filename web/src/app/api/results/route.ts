@@ -14,6 +14,7 @@ import {
 const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
 const ALLOWED_CATEGORIES = ['driver', 'call'] as const;
 const ALLOWED_MARKETS = ['moneyline', 'spread', 'total'] as const;
+const DEFAULT_EXCLUDED_SPORT = 'NCAAM';
 
 type ActionableSourceRow = {
   id: string;
@@ -226,6 +227,23 @@ function buildCardCategoryFilter(
   }
 }
 
+function buildSportFilter(
+  sport: string | null,
+  sportExpr: string,
+): { sql: string; params: string[] } {
+  if (sport) {
+    return {
+      sql: `AND UPPER(${sportExpr}) = ?`,
+      params: [sport],
+    };
+  }
+
+  return {
+    sql: `AND UPPER(${sportExpr}) != '${DEFAULT_EXCLUDED_SPORT}'`,
+    params: [],
+  };
+}
+
 // NOTE: ensureCardDisplayLogSchema removed — worker owns all DB writes (single-writer architecture).
 
 export async function GET(request: NextRequest) {
@@ -381,10 +399,10 @@ export async function GET(request: NextRequest) {
     const dedupe = parseBooleanLikeParam(searchParams.get('dedupe'), true);
 
     // Build filter SQL fragments
-    const sportFilter = sport
-      ? `AND UPPER(COALESCE(cdl.sport, cr.sport)) = ?`
-      : '';
-    const sportParams = sport ? [sport] : [];
+    const sportFilter = buildSportFilter(
+      sport,
+      'COALESCE(cdl.sport, cr.sport)',
+    );
 
     const categoryFilter = buildCardCategoryFilter(cardCategory, 'cr');
     const confidenceExpr = `COALESCE(CAST(json_extract(cp.payload_data, '$.confidence_pct') AS REAL), CAST(json_extract(cp.payload_data, '$.confidence') AS REAL) * 100.0)`;
@@ -459,7 +477,7 @@ export async function GET(request: NextRequest) {
         INNER JOIN display_log_latest cdl ON cr.card_id = cdl.pick_id
         LEFT JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'settled'
-          ${sportFilter}
+          ${sportFilter.sql}
           ${categoryFilter.sql}
           ${confidenceFilter}
           ${marketFilter}
@@ -501,7 +519,7 @@ export async function GET(request: NextRequest) {
       `;
 
     const dedupParams = [
-      ...sportParams,
+      ...sportFilter.params,
       ...categoryFilter.params,
       ...confidenceParams,
       ...marketParams,
@@ -521,11 +539,21 @@ export async function GET(request: NextRequest) {
       .get(...dedupParams) as { count: number } | null;
     const filteredCount = Number(filteredCountRow?.count || 0);
 
+    const totalSettledSportFilter = buildSportFilter(sport, 'cr.sport');
     const totalSettledRow = db
       .prepare(
-        `SELECT COUNT(*) AS count FROM card_results WHERE status = 'settled'`,
+        `
+        SELECT COUNT(*) AS count
+        FROM card_results cr
+        WHERE cr.status = 'settled'
+          ${totalSettledSportFilter.sql}
+      `,
       )
-      .get() as { count: number } | null;
+      .get(...totalSettledSportFilter.params) as { count: number } | null;
+    const displayedSettledSportFilter = buildSportFilter(
+      sport,
+      'COALESCE(cdl.sport, cr.sport)',
+    );
     const displayedSettledRow = db
       .prepare(
         `
@@ -533,12 +561,17 @@ export async function GET(request: NextRequest) {
         FROM card_results cr
         INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
         WHERE cr.status = 'settled'
+          ${displayedSettledSportFilter.sql}
       `,
       )
-      .get() as { count: number } | null;
+      .get(...displayedSettledSportFilter.params) as { count: number } | null;
     const totalSettled = Number(totalSettledRow?.count || 0);
     const withPayloadSettled = Number(displayedSettledRow?.count || 0);
     const orphanedSettled = totalSettled - withPayloadSettled;
+    const displayedFinalSportFilter = buildSportFilter(
+      sport,
+      'COALESCE(cdl.sport, gr.sport)',
+    );
     const displayedFinalRow = db
       .prepare(
         `
@@ -546,9 +579,14 @@ export async function GET(request: NextRequest) {
         FROM card_display_log cdl
         INNER JOIN game_results gr ON gr.game_id = cdl.game_id
         WHERE gr.status = 'final'
+          ${displayedFinalSportFilter.sql}
       `,
       )
-      .get() as { count: number } | null;
+      .get(...displayedFinalSportFilter.params) as { count: number } | null;
+    const settledFinalDisplayedSportFilter = buildSportFilter(
+      sport,
+      'COALESCE(cdl.sport, cr.sport, gr.sport)',
+    );
     const settledFinalDisplayedRow = db
       .prepare(
         `
@@ -558,9 +596,12 @@ export async function GET(request: NextRequest) {
         INNER JOIN game_results gr ON gr.game_id = cdl.game_id
         WHERE gr.status = 'final'
           AND cr.status = 'settled'
+          ${settledFinalDisplayedSportFilter.sql}
       `,
       )
-      .get() as { count: number } | null;
+      .get(...settledFinalDisplayedSportFilter.params) as {
+        count: number;
+      } | null;
     const displayedFinal = Number(displayedFinalRow?.count || 0);
     const settledFinalDisplayed = Number(settledFinalDisplayedRow?.count || 0);
     const missingFinalDisplayed = Math.max(

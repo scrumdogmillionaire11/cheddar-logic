@@ -646,6 +646,13 @@ function computePitcherKPropDisplayState(verdict) {
   return 'PROJECTION_ONLY';
 }
 
+function resolvePitcherKPayloadIdentity(driver = {}, pitcherTeam = null) {
+  return {
+    playerId: driver.player_id != null ? String(driver.player_id) : null,
+    playerName: driver.player_name || (pitcherTeam ? `${pitcherTeam} SP` : 'SP'),
+  };
+}
+
 function attachRunId(card, runId) {
   if (!card) return;
   card.runId = runId;
@@ -1736,6 +1743,8 @@ async function runMLBModel({
                   : driver.market === 'strikeouts_away' || driver.market === 'pitcher_k_away'
                     ? (pitcherKOddsSnapshot?.away_team ?? null)
                     : null);
+            const { playerId: pitcherPlayerId, playerName: pitcherPlayerName } =
+              resolvePitcherKPayloadIdentity(driver, pitcherTeam);
 
             const tier = isPitcherK
               ? (driver.card_verdict === 'PLAY'
@@ -1808,7 +1817,8 @@ async function runMLBModel({
                     }
                 : isPitcherK
                   ? {
-                      player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
+                      player_id: pitcherPlayerId,
+                      player_name: pitcherPlayerName,
                       canonical_market_key: 'pitcher_strikeouts',
                       basis: driver.basis || 'PROJECTION_ONLY',
                       tags: ['no_odds_mode'],
@@ -2008,6 +2018,7 @@ module.exports = {
   resolveMlbTeamLookupKeys,
   resolvePitcherKsMode,
   resolveMlbPitcherPropRolloutState,
+  resolvePitcherKPayloadIdentity,
   isTimestampFresh,
   filterSnapshotsByGameIds,
   evaluatePitcherPropPublishability,

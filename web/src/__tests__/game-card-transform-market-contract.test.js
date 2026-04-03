@@ -90,6 +90,14 @@ assert(
 );
 
 assert(
+  source.includes('const fromPayload = play.player_name;') &&
+    source.includes('if (fromPayload && !isPlaceholderPlayerName(fromPayload))') &&
+    source.includes('const selectionTeam = play.selection?.team;') &&
+    source.includes('if (selectionTeam && !isPlaceholderPlayerName(selectionTeam))'),
+  'transform props mode should infer player_name from payload before falling back to selection.team',
+);
+
+assert(
   source.includes('const canonicalPropLine =') &&
     source.includes('typeof rawPropDecision?.line === \'number\'') &&
     source.includes('line: canonicalPropLine') &&

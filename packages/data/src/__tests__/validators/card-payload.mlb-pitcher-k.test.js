@@ -65,7 +65,8 @@ function buildProjectionOnlyPayload(overrides = {}) {
     reasoning: 'K mean: 7.1 Ks | BF=25.5 x Kint=0.278 x leash=1 | fair O<=6.5 U>=7.5 | Source: FULL_MODEL | Verdict: PASS',
     disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
     generated_at: new Date().toISOString(),
-    player_name: 'NYY SP',
+    player_id: '592450',
+    player_name: 'Gerrit Cole',
     canonical_market_key: 'pitcher_strikeouts',
     basis: 'PROJECTION_ONLY',
     tags: ['no_odds_mode'],
@@ -193,6 +194,15 @@ describe('mlb-pitcher-k validator — PROJECTION_ONLY mode', () => {
     const result = validateCardPayload('mlb-pitcher-k', payload);
     expect(result.success).toBe(false);
     expect(result.errors.join(' ')).toMatch(/player_name/);
+  });
+
+  test('accepts team SP fallback when full_name is unavailable', () => {
+    const payload = buildProjectionOnlyPayload({
+      player_id: null,
+      player_name: 'New York Yankees SP',
+    });
+    const result = validateCardPayload('mlb-pitcher-k', payload);
+    expect(result.success).toBe(true);
   });
 
   test('rejects payload with invalid basis value', () => {

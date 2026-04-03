@@ -459,7 +459,6 @@ export default function ResultsPage() {
                 <option value="">All Sports</option>
                 <option value="NHL">NHL</option>
                 <option value="NBA">NBA</option>
-                <option value="NCAAM">NCAAM</option>
               </select>
 
               {/* Card category select */}
@@ -522,7 +521,6 @@ export default function ResultsPage() {
                   <option value="">All Sports</option>
                   <option value="NHL">NHL</option>
                   <option value="NBA">NBA</option>
-                  <option value="NCAAM">NCAAM</option>
                 </select>
                 <select
                   value={filterCategory}

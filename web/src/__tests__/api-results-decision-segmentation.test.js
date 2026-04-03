@@ -91,6 +91,14 @@ async function validateResultsSegmentationSourceContract(assert) {
     routeSource.includes("ELSE 'FULL_GAME'"),
     'results route must retain derived CASE fallback expression for backward compatibility',
   );
+  assert.ok(
+    routeSource.includes("const DEFAULT_EXCLUDED_SPORT = 'NCAAM';") &&
+      routeSource.includes('function buildSportFilter(') &&
+      routeSource.includes(
+        "sql: `AND UPPER(${sportExpr}) != '${DEFAULT_EXCLUDED_SPORT}'`",
+      ),
+    'results route must suppress NCAAM by default while preserving explicit sport filters',
+  );
 }
 
 function sumNullable(values) {
@@ -141,6 +149,11 @@ function assertDecisionSegmentation(payload, assert, label) {
   );
 
   for (const segment of segments) {
+    assert.notStrictEqual(
+      String(segment.sport || '').toUpperCase(),
+      'NCAAM',
+      `${label}: default segment unexpectedly contains NCAAM`,
+    );
     assert.ok(
       segment.segmentId === 'play' || segment.segmentId === 'slight_edge',
       `${label}: unexpected segmentId ${segment.segmentId}`,
@@ -246,6 +259,11 @@ function assertDecisionSegmentation(payload, assert, label) {
   );
 
   for (const [index, row] of ledger.entries()) {
+    assert.notStrictEqual(
+      String(row.sport || '').toUpperCase(),
+      'NCAAM',
+      `${label}: default ledger row ${index} unexpectedly contains NCAAM`,
+    );
     assert.ok(
       Object.prototype.hasOwnProperty.call(row, 'marketPeriodToken'),
       `${label}: ledger row ${index} missing marketPeriodToken field`,

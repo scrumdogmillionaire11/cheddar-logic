@@ -102,6 +102,18 @@ async function validateResultsSourceContract(assert) {
       pageSource.includes('text-cyan-200'),
     'results page must reference marketPeriodToken and render a 1P badge path',
   );
+  assert.ok(
+    routeSource.includes("const DEFAULT_EXCLUDED_SPORT = 'NCAAM';") &&
+      routeSource.includes('function buildSportFilter(') &&
+      routeSource.includes(
+        "sql: `AND UPPER(${sportExpr}) != '${DEFAULT_EXCLUDED_SPORT}'`",
+      ),
+    'results route must suppress NCAAM by default',
+  );
+  assert.ok(
+    !pageSource.includes('<option value="NCAAM">NCAAM</option>'),
+    'results page must not expose NCAAM in sport filters',
+  );
 }
 
 async function validateLiveResultsPayload(baseUrl, assert) {
@@ -157,6 +169,13 @@ async function validateLiveResultsPayload(baseUrl, assert) {
   );
 
   assert.ok(Array.isArray(payload.data.segments), 'Segments is not an array');
+  payload.data.segments.forEach((row, index) => {
+    assert.notStrictEqual(
+      String(row.sport || '').toUpperCase(),
+      'NCAAM',
+      `Segment row ${index} unexpectedly contains NCAAM`,
+    );
+  });
   assert.ok(
     Array.isArray(payload.data.segmentFamilies),
     'segmentFamilies is not an array',
@@ -170,6 +189,11 @@ async function validateLiveResultsPayload(baseUrl, assert) {
   });
   assert.ok(Array.isArray(payload.data.ledger), 'Ledger is not an array');
   payload.data.ledger.forEach((row, index) => {
+    assert.notStrictEqual(
+      String(row.sport || '').toUpperCase(),
+      'NCAAM',
+      `Ledger row ${index} unexpectedly contains NCAAM`,
+    );
     assert.ok(
       Object.prototype.hasOwnProperty.call(row, 'marketPeriodToken'),
       `Ledger row ${index} missing marketPeriodToken field`,

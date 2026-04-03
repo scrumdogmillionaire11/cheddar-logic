@@ -1983,8 +1983,11 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
   for (const { pitcher, role, team } of candidates) {
     if (!pitcher) continue;
 
+    const playerId = pitcher.mlb_id != null ? String(pitcher.mlb_id) : null;
+    const playerName = pitcher.full_name ?? null;
+
     const pitcherInput = {
-      full_name: pitcher.full_name ?? null,
+      full_name: playerName,
       k_per_9: pitcher.k_per_9 ?? null,
       recent_k_per_9: pitcher.recent_k_per_9 ?? null,
       season_k_pct: pitcher.season_k_pct ?? pitcher.k_pct ?? null,
@@ -2077,6 +2080,8 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
     cards.push({
       market: `pitcher_k_${role}`,
       pitcher_team: team,
+      player_id: playerId,
+      player_name: playerName,
       prediction: 'PASS',
       status: 'PASS',
       action: 'PASS',

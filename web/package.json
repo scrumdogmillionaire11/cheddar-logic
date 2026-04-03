@@ -31,6 +31,7 @@
     "test:api:games:repair-budget": "node src/__tests__/api-games-repair-budget.test.js",
     "test:api:results:decision-segmentation": "node src/__tests__/api-results-decision-segmentation.test.js",
     "test:api:results:flags": "node src/__tests__/api-results-flags.test.js",
+    "test:api:results:sport-filter": "node --import tsx/esm src/__tests__/api-results-sport-filter.test.js",
     "test:decision:canonical": "node src/__tests__/canonical-play-decision.test.js",
     "test:filters:presets": "node src/__tests__/filters-presets-contract.test.js",
     "test:ci:smoke": "npm run test:ui:results && npm run test:api:games:market && npm run test:api:games:repair-budget && npm run test:api:nhl-contract && npm run test:api:results:decision-segmentation"
