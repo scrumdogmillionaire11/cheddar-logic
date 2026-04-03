@@ -83,6 +83,34 @@ const nhlMarketCallPayloadSchema = driverPayloadSchema.extend({
   market_narrative: marketNarrativeSchema,
 });
 
+const mlbPitcherKAltLineSchema = z.object({
+  line: z.number(),
+  side: z.enum(['over', 'under']),
+  juice: z.number().int().nullable().optional(),
+  book: z.string().nullable().optional(),
+  source: z.string().nullable().optional(),
+  captured_at: z.string().nullable().optional(),
+});
+
+const mlbPitcherKLineContractSchema = z
+  .object({
+    line: z.number().nullable().optional(),
+    over_price: z.number().int().nullable().optional(),
+    under_price: z.number().int().nullable().optional(),
+    bookmaker: z.string().nullable().optional(),
+    line_source: z.string().nullable().optional(),
+    opening_line: z.number().nullable().optional(),
+    opening_over_price: z.number().int().nullable().optional(),
+    opening_under_price: z.number().int().nullable().optional(),
+    best_available_line: z.number().nullable().optional(),
+    best_available_over_price: z.number().int().nullable().optional(),
+    best_available_under_price: z.number().int().nullable().optional(),
+    best_available_bookmaker: z.string().nullable().optional(),
+    current_timestamp: z.string().nullable().optional(),
+    alt_lines: z.array(mlbPitcherKAltLineSchema).optional(),
+  })
+  .passthrough();
+
 // ============================================================================
 // MLB Pitcher K schema
 // ============================================================================
@@ -97,6 +125,7 @@ const nhlMarketCallPayloadSchema = driverPayloadSchema.extend({
 //   - canonical_market_key: 'pitcher_strikeouts'
 //   - pitcher_k_result: null | object (engine signal diagnostics)
 //   - tags: string[] (may include 'no_odds_mode', 'HIGH VIG', etc.)
+//   - pitcher_k_line_contract: dormant ODDS_BACKED line contract (standard + alt)
 // ============================================================================
 
 const mlbPitcherKPayloadSchema = z
@@ -176,6 +205,8 @@ const mlbPitcherKPayloadSchema = z
     margin: z.number().nullable().optional(),
     // Diagnostics (optional — populated on fail-closed paths)
     ingest_failure_reason_code: z.string().nullable().optional(),
+    // Dormant odds-backed market contract; must stay null in PROJECTION_ONLY runtime.
+    pitcher_k_line_contract: mlbPitcherKLineContractSchema.nullable().optional(),
   })
   .passthrough()
   .superRefine((payload, ctx) => {
@@ -193,6 +224,16 @@ const mlbPitcherKPayloadSchema = z
           code: z.ZodIssueCode.custom,
           path: ['line_source'],
           message: 'ODDS_BACKED pitcher_k card must have line_source set',
+        });
+      }
+      if (
+        payload.pitcher_k_line_contract &&
+        payload.pitcher_k_line_contract.line == null
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pitcher_k_line_contract', 'line'],
+          message: 'ODDS_BACKED pitcher_k card line contract must have line set',
         });
       }
     }
@@ -266,6 +307,13 @@ const mlbPitcherKPayloadSchema = z
             message: `PROJECTION_ONLY pitcher_k card must have ${key}=null`,
           });
         }
+      }
+      if (payload.pitcher_k_line_contract !== null && payload.pitcher_k_line_contract !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pitcher_k_line_contract'],
+          message: 'PROJECTION_ONLY pitcher_k card must not carry pitcher_k_line_contract',
+        });
       }
     }
   });

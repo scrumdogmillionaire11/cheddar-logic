@@ -1417,6 +1417,78 @@ function buildPitcherKUnderWhy(result) {
   return parts.join(' | ');
 }
 
+function normalizePitcherKMarketInput(marketContract = null) {
+  if (!marketContract || typeof marketContract !== 'object') return null;
+
+  const line = toFiniteNumberOrNull(marketContract.line);
+  const overPrice = toFiniteNumberOrNull(marketContract.over_price);
+  const underPrice = toFiniteNumberOrNull(marketContract.under_price);
+  const bookmaker =
+    String(marketContract.bookmaker || marketContract.book || '').trim() || null;
+  const lineSource =
+    String(marketContract.line_source || marketContract.source || bookmaker || '').trim() ||
+    null;
+  const currentTimestamp =
+    String(marketContract.current_timestamp || marketContract.fetched_at || '').trim() ||
+    null;
+  const altLines = (Array.isArray(marketContract.alt_lines) ? marketContract.alt_lines : [])
+    .map((altLine) => {
+      if (!altLine || typeof altLine !== 'object') return null;
+      const side = String(altLine.side || '').trim().toLowerCase();
+      const lineValue = toFiniteNumberOrNull(altLine.line);
+      const juice = toFiniteNumberOrNull(altLine.juice ?? altLine.price);
+      const book = String(altLine.book || altLine.bookmaker || '').trim() || null;
+      if (!['over', 'under'].includes(side) || lineValue === null) return null;
+      return {
+        side,
+        line: lineValue,
+        juice: juice === null ? null : Math.trunc(juice),
+        book,
+        source:
+          String(altLine.source || altLine.line_source || lineSource || '').trim() || null,
+        captured_at:
+          String(altLine.captured_at || altLine.current_timestamp || currentTimestamp || '').trim() ||
+          null,
+      };
+    })
+    .filter(Boolean);
+
+  if (
+    line === null &&
+    overPrice === null &&
+    underPrice === null &&
+    altLines.length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    line,
+    over_price: overPrice === null ? null : Math.trunc(overPrice),
+    under_price: underPrice === null ? null : Math.trunc(underPrice),
+    bookmaker,
+    line_source: lineSource,
+    opening_line: toFiniteNumberOrNull(marketContract.opening_line),
+    opening_over_price: toFiniteNumberOrNull(
+      marketContract.opening_over_price ?? marketContract.opening_juice_over,
+    ),
+    opening_under_price: toFiniteNumberOrNull(
+      marketContract.opening_under_price ?? marketContract.opening_juice_under,
+    ),
+    best_available_line: toFiniteNumberOrNull(marketContract.best_available_line) ?? line,
+    best_available_over_price: toFiniteNumberOrNull(
+      marketContract.best_available_over_price ?? overPrice,
+    ),
+    best_available_under_price: toFiniteNumberOrNull(
+      marketContract.best_available_under_price ?? underPrice,
+    ),
+    best_available_bookmaker:
+      String(marketContract.best_available_bookmaker || bookmaker || '').trim() || null,
+    current_timestamp: currentTimestamp,
+    alt_lines: altLines,
+  };
+}
+
 function scorePitcherKUnder(pitcherInput, matchupInput, marketInput, weatherInput) {
   const leashResult = classifyLeash(pitcherInput);
   if (leashResult.uncalculable) {
@@ -2133,5 +2205,6 @@ module.exports = {
   scorePitcherK,
   scorePitcherKUnder,
   buildUnderHistoryMetrics,
+  normalizePitcherKMarketInput,
   computePitcherKDriverCards,
 };

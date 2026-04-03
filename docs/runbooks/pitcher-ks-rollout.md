@@ -1,8 +1,8 @@
 # Pitcher Ks Runbook
 
-**WI chain:** WI-0595 → WI-0596 → WI-0597 → WI-0598 → WI-0599 → WI-0600 → WI-0727 → WI-0733
+**WI chain:** WI-0595 → WI-0596 → WI-0597 → WI-0598 → WI-0599 → WI-0600 → WI-0727 → WI-0733 → WI-0738
 
-**Current state (2026-04-02):** MLB pitcher strikeout cards are projection-only PASS rows. The prior odds-backed pull path has been removed to stop event-level Odds API burn, and free line sourcing is deferred to a separate follow-up WI.
+**Current state (2026-04-02):** MLB pitcher strikeout cards are projection-only PASS rows. The prior odds-backed pull path has been removed to stop event-level Odds API burn. ADR-0009 selects a DK/FD-first scraping strategy with OddsTrader/OddsJam fallback, but that line contract is dormant and runtime publication remains `PROJECTION_ONLY` until a later implementation WI ships parser health, backoff, and source-policy guardrails.
 
 ---
 
@@ -14,12 +14,23 @@ MLB pitcher strikeout (K) cards are still emitted by `job:run-mlb-model`, but th
 |---|---|---|---|
 | **Projection-only** | default and only supported mode | `basis: 'PROJECTION_ONLY'`, `prediction/status/action/classification: 'PASS'`, `tags` include `no_odds_mode`, `projection.probability_ladder` and `projection.fair_prices` populated, no live `line` / `line_source` | Zero event-level Odds API tokens |
 
+## Future ODDS_BACKED Activation Gate
+
+ADR-0009 defines the dormant standard + alt-line contract under `pitcher_k_line_contract`, but that object must not appear on `PROJECTION_ONLY` payloads yet.
+
+Before any runtime odds-backed mode is enabled:
+- Ship a dedicated scraper job for DraftKings/FanDuel first, with OddsTrader/OddsJam fallback only if direct-book parsing is unavailable or unhealthy
+- Add source-specific rate limits, exponential backoff, parser-shape checks, and a freshness gate based on `MLB_K_PROP_FRESHNESS_MINUTES`
+- Keep fail-closed behavior: if standard line, one side of juice, or alt ladder parsing is stale/malformed, publish `PROJECTION_ONLY` PASS instead of synthetic plays
+- Re-check source terms and disable any source whose terms prohibit automated access or require authenticated scraping/CAPTCHA bypass
+
 ## Required Environment Flags
 
 | Flag | Default | Purpose |
 |---|---|---|
 | `ENABLE_MLB_MODEL` | `true` | Master gate for MLB model jobs including pitcher K |
 | `MLB_K_PROPS` | `SHADOW` | Governs MLB pitcher-K publication posture |
+| `MLB_K_PROP_FRESHNESS_MINUTES` | `75` | Dormant pitcher-K line freshness window; line metadata older than this must not become executable |
 | `CHEDDAR_DB_PATH` | required | Worker write path; web remains read-only |
 
 ## Manual Commands
@@ -73,6 +84,7 @@ sqlite3 "$CHEDDAR_DB_PATH" \
 npm --prefix web run test:api:games:market
 npm --prefix web run test:ui:cards
 npm --prefix apps/worker test -- src/jobs/__tests__/run_mlb_model.test.js
+npm --prefix packages/data test -- src/__tests__/validators/card-payload.mlb-pitcher-k.test.js --runInBand
 ```
 
 ### Checkpoint 3 — Props tab visibility (manual)
@@ -96,4 +108,5 @@ npm --prefix apps/worker test -- src/jobs/__tests__/run_mlb_model.test.js
 - [ ] Projection-only emit confirmed
 - [ ] Automated tests pass
 - [ ] Props tab renders pitcher K cards
-- [ ] Docs and env examples no longer mention odds-backed pitcher-K mode
+- [ ] ADR-0009 source policy and dormant line contract reviewed
+- [ ] Docs and env examples no longer mention active odds-backed pitcher-K mode as live runtime behavior

@@ -23,6 +23,7 @@ const {
   scorePitcherK,
   scorePitcherKUnder,
   projectF5ML,
+  normalizePitcherKMarketInput,
   computePitcherKDriverCards,
 } = require('../../models/mlb-model');
 const {
@@ -39,6 +40,7 @@ const {
   deriveMlbExecutionEnvelope,
   assertMlbExecutionInvariant,
   buildMlbPipelineState,
+  buildPitcherKLineContract,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -536,6 +538,107 @@ describe('MLB F5 full-model projection', () => {
 });
 
 describe('MLB pitcher-K under monitoring', () => {
+  test('buildPitcherKLineContract normalizes standard and alt K markets', () => {
+    const contract = buildPitcherKLineContract({
+      line: '7.5',
+      over_price: '-112',
+      under_price: '-108',
+      bookmaker: 'draftkings',
+      line_source: 'draftkings',
+      fetched_at: '2026-04-03T01:15:00Z',
+      opening_line: '7.5',
+      opening_over_price: '-110',
+      opening_under_price: '-110',
+      alt_lines: [
+        { line: '6.5', side: 'over', juice: '-145', book: 'fanduel' },
+        { line: '8.5', side: 'under', price: '120', bookmaker: 'draftkings' },
+        { line: 'bad', side: 'over', juice: -110, book: 'draftkings' },
+      ],
+    });
+
+    expect(contract).toMatchObject({
+      line: 7.5,
+      over_price: -112,
+      under_price: -108,
+      bookmaker: 'draftkings',
+      line_source: 'draftkings',
+      current_timestamp: '2026-04-03T01:15:00Z',
+      opening_line: 7.5,
+      opening_over_price: -110,
+      opening_under_price: -110,
+      best_available_line: 7.5,
+      best_available_bookmaker: 'draftkings',
+      alt_lines: [
+        {
+          line: 6.5,
+          side: 'over',
+          juice: -145,
+          book: 'fanduel',
+          source: 'draftkings',
+          captured_at: '2026-04-03T01:15:00Z',
+        },
+        {
+          line: 8.5,
+          side: 'under',
+          juice: 120,
+          book: 'draftkings',
+          source: 'draftkings',
+          captured_at: '2026-04-03T01:15:00Z',
+        },
+      ],
+    });
+  });
+
+  test('normalizePitcherKMarketInput converts a dormant line contract into model market input', () => {
+    const marketInput = normalizePitcherKMarketInput({
+      line: 7.5,
+      over_price: -112,
+      under_price: -108,
+      bookmaker: 'draftkings',
+      line_source: 'draftkings',
+      current_timestamp: '2026-04-03T01:15:00Z',
+      opening_line: 7.0,
+      best_available_line: 8.0,
+      best_available_under_price: 110,
+      best_available_bookmaker: 'fanduel',
+      alt_lines: [
+        { line: 8.0, side: 'under', juice: 110, book: 'fanduel' },
+        { line: 6.5, side: 'over', juice: -145, book: 'draftkings' },
+      ],
+    });
+
+    expect(marketInput).toMatchObject({
+      line: 7.5,
+      over_price: -112,
+      under_price: -108,
+      bookmaker: 'draftkings',
+      line_source: 'draftkings',
+      current_timestamp: '2026-04-03T01:15:00Z',
+      opening_line: 7.0,
+      best_available_line: 8.0,
+      best_available_under_price: 110,
+      best_available_bookmaker: 'fanduel',
+      alt_lines: [
+        {
+          side: 'under',
+          line: 8.0,
+          juice: 110,
+          book: 'fanduel',
+          source: 'draftkings',
+          captured_at: '2026-04-03T01:15:00Z',
+        },
+        {
+          side: 'over',
+          line: 6.5,
+          juice: -145,
+          book: 'draftkings',
+          source: 'draftkings',
+          captured_at: '2026-04-03T01:15:00Z',
+        },
+      ],
+    });
+  });
+
   test('selectBestPitcherUnderMarket prefers highest line, then best under price, then bookmaker priority', () => {
     const best = selectBestPitcherUnderMarket([
       { line: 6.5, under_price: -105, over_price: -115, bookmaker: 'draftkings' },
@@ -548,6 +651,7 @@ describe('MLB pitcher-K under monitoring', () => {
       line: 7.5,
       under_price: -115,
       bookmaker: 'draftkings',
+      line_source: 'draftkings',
     });
   });
 
@@ -1016,6 +1120,56 @@ describe('MLB prop rollout + freshness gating', () => {
       reason: null,
     });
   });
+
+  test('evaluatePitcherPropPublishability reads dormant ODDS_BACKED line freshness but still blocks publish', () => {
+    jest.spyOn(Date, 'now').mockReturnValue(new Date('2026-04-03T02:00:00Z').getTime());
+
+    const result = evaluatePitcherPropPublishability(
+      {
+        raw_data: {
+          mlb: {
+            home_pitcher: { full_name: 'Ace Under' },
+            strikeout_lines: {
+              'ace under': {
+                line: 7.5,
+                over_price: -112,
+                under_price: -108,
+                bookmaker: 'draftkings',
+                line_source: 'draftkings',
+                current_timestamp: '2026-04-03T01:15:00Z',
+                alt_lines: [
+                  { line: 8.5, side: 'under', juice: 120, book: 'draftkings' },
+                ],
+              },
+            },
+          },
+        },
+      },
+      { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+    );
+
+    expect(result).toMatchObject({
+      publishable: false,
+      status: 'FRESH',
+      reason: null,
+      fetched_at: '2026-04-03T01:15:00Z',
+      line_contract: {
+        line: 7.5,
+        over_price: -112,
+        under_price: -108,
+        bookmaker: 'draftkings',
+        line_source: 'draftkings',
+        alt_lines: [
+          {
+            line: 8.5,
+            side: 'under',
+            juice: 120,
+            book: 'draftkings',
+          },
+        ],
+      },
+    });
+  });
 });
 
 describe('WI-0720 MLB execution envelope', () => {
@@ -1035,9 +1189,9 @@ describe('WI-0720 MLB execution envelope', () => {
       },
     ],
     [
-      'projection-only pitcher K emits under shadow rollout',
+      'pitcher K stays PROJECTION_ONLY under shadow rollout even with ODDS_BACKED driver basis',
       {
-        driver: { market: 'pitcher_k_home', basis: 'PROJECTION_ONLY' },
+        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
         pricingStatus: 'NOT_REQUIRED',
         isPitcherK: true,
         rolloutState: 'SHADOW',

@@ -92,6 +92,63 @@ function buildProjectionOnlyPayload(overrides = {}) {
   };
 }
 
+function buildOddsBackedPayload(overrides = {}) {
+  return {
+    ...buildProjectionOnlyPayload({
+      prediction: 'UNDER',
+      selection: { side: 'UNDER' },
+      line: 7.5,
+      status: 'WATCH',
+      action: 'HOLD',
+      classification: 'LEAN',
+      tier: 'WATCH',
+      ev_passed: true,
+      reason_codes: ['UNDER_LAST5_60'],
+      pass_reason_code: null,
+      basis: 'ODDS_BACKED',
+      tags: ['draftkings_primary'],
+      line_source: 'draftkings',
+      over_price: -112,
+      under_price: -108,
+      best_line_bookmaker: 'draftkings',
+      margin: 0.8,
+      pitcher_k_line_contract: {
+        line: 7.5,
+        over_price: -112,
+        under_price: -108,
+        bookmaker: 'draftkings',
+        line_source: 'draftkings',
+        opening_line: 7.5,
+        opening_over_price: -110,
+        opening_under_price: -110,
+        best_available_line: 8.0,
+        best_available_under_price: 120,
+        best_available_bookmaker: 'fanduel',
+        current_timestamp: '2026-04-03T01:15:00Z',
+        alt_lines: [
+          {
+            line: 8.0,
+            side: 'under',
+            juice: 120,
+            book: 'fanduel',
+            source: 'fanduel',
+            captured_at: '2026-04-03T01:15:00Z',
+          },
+          {
+            line: 6.5,
+            side: 'over',
+            juice: -145,
+            book: 'draftkings',
+            source: 'draftkings',
+            captured_at: '2026-04-03T01:15:00Z',
+          },
+        ],
+      },
+    }),
+    ...overrides,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PROJECTION_ONLY payloads
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,6 +239,54 @@ describe('mlb-pitcher-k validator — PROJECTION_ONLY mode', () => {
     const result = validateCardPayload('mlb-pitcher-k', payload);
     expect(result.success).toBe(false);
     expect(result.errors.join(' ')).toMatch(/status=PASS|ev_passed=false|must not set tier/);
+  });
+
+  test('rejects PROJECTION_ONLY payload carrying dormant line contract metadata', () => {
+    const payload = buildProjectionOnlyPayload({
+      pitcher_k_line_contract: {
+        line: 7.5,
+        over_price: -112,
+        under_price: -108,
+        bookmaker: 'draftkings',
+        line_source: 'draftkings',
+        current_timestamp: '2026-04-03T01:15:00Z',
+        alt_lines: [{ line: 8.5, side: 'under', juice: 120, book: 'draftkings' }],
+      },
+    });
+    const result = validateCardPayload('mlb-pitcher-k', payload);
+    expect(result.success).toBe(false);
+    expect(result.errors.join(' ')).toContain('pitcher_k_line_contract');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ODDS_BACKED payloads (dormant contract only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('mlb-pitcher-k validator — dormant ODDS_BACKED mode', () => {
+  test('accepts valid ODDS_BACKED payload with standard and alt K lines', () => {
+    const result = validateCardPayload('mlb-pitcher-k', buildOddsBackedPayload());
+    expect(result.success).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  test('rejects ODDS_BACKED payload missing line_source', () => {
+    const payload = buildOddsBackedPayload({ line_source: null });
+    const result = validateCardPayload('mlb-pitcher-k', payload);
+    expect(result.success).toBe(false);
+    expect(result.errors.join(' ')).toContain('line_source');
+  });
+
+  test('rejects ODDS_BACKED payload with null line contract line', () => {
+    const payload = buildOddsBackedPayload({
+      pitcher_k_line_contract: {
+        ...buildOddsBackedPayload().pitcher_k_line_contract,
+        line: null,
+      },
+    });
+    const result = validateCardPayload('mlb-pitcher-k', payload);
+    expect(result.success).toBe(false);
+    expect(result.errors.join(' ')).toContain('line contract must have line set');
   });
 });
 
