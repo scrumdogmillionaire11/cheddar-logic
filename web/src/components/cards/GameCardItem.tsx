@@ -609,6 +609,13 @@ export default function GameCardItem({
     displayPlay.market_type === 'FIRST_PERIOD' ||
     displayPlay.market_type === 'INFO' ||
     displayPlay.market_type === 'PROP';
+  const isNhlPace1p = displayPlay.cardType === 'nhl-pace-1p';
+  const pace1pDirection: 'OVER' | 'UNDER' | null =
+    isNhlPace1p && typeof projectedTotal1p === 'number'
+      ? projectedTotal1p > 1.5
+        ? 'OVER'
+        : 'UNDER'
+      : null;
   const isActionableDecision =
     displayDecision === 'PLAY' || displayDecision === 'LEAN';
   const shouldDemoteForMissingOdds =
@@ -740,17 +747,19 @@ export default function GameCardItem({
                 displayPlay.bet?.market_type,
                 displayPlay.market,
               )}
-              <span
-                className={`px-2 py-1 text-xs font-bold rounded border ${
-                  visibleDecision === 'PLAY'
-                    ? 'bg-green-700/50 text-green-200 border-green-600/60'
-                    : visibleDecision === 'LEAN'
-                      ? 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60'
-                      : 'bg-slate-700/50 text-slate-200 border-slate-600/60'
-                }`}
-              >
-                {visibleStatusLabel}
-              </span>
+              {!isNhlPace1p && (
+                <span
+                  className={`px-2 py-1 text-xs font-bold rounded border ${
+                    visibleDecision === 'PLAY'
+                      ? 'bg-green-700/50 text-green-200 border-green-600/60'
+                      : visibleDecision === 'LEAN'
+                        ? 'bg-yellow-700/50 text-yellow-200 border-yellow-600/60'
+                        : 'bg-slate-700/50 text-slate-200 border-slate-600/60'
+                  }`}
+                >
+                  {visibleStatusLabel}
+                </span>
+              )}
               {isDegraded && (
                 <span className="px-2 py-0.5 text-xs font-semibold rounded border bg-amber-700/30 text-amber-200 border-amber-600/50">
                   Degraded
@@ -774,8 +783,41 @@ export default function GameCardItem({
               via {formatBookName(liveBook)}
             </p>
           )}
-          <p className="mt-1 text-xs text-cloud/65">{contextLine1}</p>
+          {!isNhlPace1p && (
+            <p className="mt-1 text-xs text-cloud/65">{contextLine1}</p>
+          )}
         </div>
+
+        {isNhlPace1p && typeof projectedTotal1p === 'number' && (
+          <div className="rounded-md border border-white/10 bg-white/5 p-3">
+            <p className="text-xs uppercase tracking-widest text-cloud/45 font-semibold mb-2">
+              1P Total &mdash; Projection
+            </p>
+            <div className="space-y-1 text-sm text-cloud/80">
+              <p>
+                Line:{' '}
+                <span className="text-cloud font-bold">1.5</span>
+              </p>
+              <p>
+                Projected:{' '}
+                <span className="text-cloud font-bold">
+                  {projectedTotal1p.toFixed(1)} goals
+                </span>
+              </p>
+            </div>
+            {pace1pDirection && (
+              <span
+                className={`mt-2 inline-block px-2 py-1 text-xs font-bold rounded border ${
+                  pace1pDirection === 'OVER'
+                    ? 'bg-amber-700/40 text-amber-200 border-amber-600/60'
+                    : 'bg-blue-700/40 text-blue-200 border-blue-600/60'
+                }`}
+              >
+                {pace1pDirection}
+              </span>
+            )}
+          </div>
+        )}
 
         {contextLine2 && (
           <div className="rounded-md border border-white/10 bg-white/5 p-3">
