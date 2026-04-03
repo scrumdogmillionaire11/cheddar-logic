@@ -316,8 +316,17 @@ async function fetchSplitsForDate({ sport, date }) {
  *
  * NOTE: schema hypothesis — not yet validated against real browser fixture.
  *
+ * CALLER CONTRACT — markets[] contains BOTH valid and invalid entries:
+ *   markets.filter(m => m.valid)    // safe to use: shape integrity confirmed
+ *   markets.filter(m => !m.valid)   // data quality problems; inspect invalidReason
+ *
+ * Invalid entries are intentionally retained rather than silently dropped so
+ * callers can distinguish "market absent" (not in array) from "market present
+ * but rejected" (in array, valid: false). Never pass invalid entries downstream.
+ *
  * @param {object[]} raw - games array from fetchSplitsForDate().games
- * @returns {object[]}
+ * @returns {object[]} Game objects with markets[]; each market has valid: boolean.
+ *   Callers MUST filter markets by valid===true before using split data.
  */
 function normalizeSplitsResponse(raw) {
   if (!Array.isArray(raw)) return [];

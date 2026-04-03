@@ -312,6 +312,28 @@ describe('normalizeSplitsResponse', () => {
     const result = normalizeSplitsResponse([null, undefined, SAMPLE_GAME]);
     expect(result).toHaveLength(1);
   });
+
+  it('retains invalid markets in markets[] — callers must filter valid:true', () => {
+    // IMPORTANT: invalid entries are NOT silently dropped. This is intentional.
+    // Callers must filter markets.filter(m => m.valid) before using split data.
+    // Absent market (not in bets[]) vs rejected market (in bets[], valid:false)
+    // are distinguishable; silent dropping would make them identical.
+    const game = {
+      ...SAMPLE_GAME,
+      bets: [
+        mlEntry({ home_bets: 90, away_bets: 1 }), // bad sum → INVALID_INPUT
+        totalEntry(),                              // valid → safe to use
+      ],
+    };
+    const [result] = normalizeSplitsResponse([game]);
+    expect(result.markets).toHaveLength(2);
+    const invalid = result.markets.filter((m) => !m.valid);
+    const valid = result.markets.filter((m) => m.valid);
+    expect(invalid).toHaveLength(1);
+    expect(invalid[0].invalidReason).toMatch(/INVALID_INPUT/);
+    expect(valid).toHaveLength(1);
+    expect(valid[0].marketType).toBe('TOTAL');
+  });
 });
 
 // ─── fetchSplitsForDate ───────────────────────────────────────────────────────
