@@ -14,8 +14,8 @@
  *
  * Token cost: 1 (events list) + N games in HOURS_AHEAD window ≈ 2–16 tokens/run.
  *
- * WI-0727: NHL 1P totals are projection-only. This job is hard-disabled to
- * prevent per-event Odds API token burn.
+ * WI-0736: NHL 1P totals fetches fail closed by default. Set
+ * NHL_1P_ODDS_ENABLED=true for an explicit operator opt-in.
  *
  * Run model after this job to pick up real 1P lines:
  *   NHL_1P_FAIR_PROB_PHASE2=true enables the enhanced 1P probability calc.
@@ -161,8 +161,10 @@ async function pullNhl1pOdds({ dryRun = false } = {}) {
     return { success: true, eventsProcessed: 0, gamesPatched: 0 };
   }
 
-  console.log(`[${JOB_NAME}] Skipped — NHL 1P odds fetch is hard-disabled (projection-only lane)`);
-  return { success: true, skipped: true, reason: 'projection_only_lane' };
+  if (process.env.NHL_1P_ODDS_ENABLED !== 'true') {
+    console.log(`[${JOB_NAME}] Skipped — NHL_1P_ODDS_ENABLED is not set to "true"`);
+    return { success: true, skipped: true, reason: 'not_enabled' };
+  }
 
   const apiKey = process.env.ODDS_API_KEY;
   if (!apiKey) {
