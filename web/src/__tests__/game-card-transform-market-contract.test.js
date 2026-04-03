@@ -201,4 +201,12 @@ assert(
   'transform props mode should classify blocked-shot payloads from canonical market or nhl-player-blk card type',
 );
 
+// WI-0663: lean_side must flow through prop cards (supports ODDS_BACKED UNDER cards)
+assert(
+  source.includes("rawPropDecision?.lean_side === 'OVER'") &&
+    source.includes("rawPropDecision?.lean_side === 'UNDER'") &&
+    source.includes('rawPropDecision.lean_side'),
+  'transform props mode should pass through lean_side from prop_decision for ODDS_BACKED UNDER cards',
+);
+
 console.log('✅ Transform market contract source tests passed');

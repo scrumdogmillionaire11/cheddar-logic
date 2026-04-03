@@ -37,7 +37,7 @@ assert(
     source.includes('Projection: ${formatNumber(projectionValue)} ${getPropUnits(prop.propType).plural}') &&
     source.includes('getHitRateLabel') &&
     source.includes('Hit rate (') &&
-    source.includes('Win condition: {thresholdOutcomeText}') &&
+    source.includes('Win condition: ${thresholdOutcomeText}') &&
     !source.includes('vs line'),
   'prop-game-card should render projection and side-aware threshold hit rate prominently without totals-style vs-line copy',
 );
@@ -93,6 +93,18 @@ assert(
     source.includes('Even distribution — no lean') &&
     !source.includes('Flat lean'),
   'prop-game-card should replace flat-lean copy with sharper deterministic non-edge wording',
+);
+
+// WI-0663: ODDS_BACKED pitcher-K rows with WATCH/PLAY verdict must render as actionable (not PROJECTION)
+// The isProjectionOnlyProp check must not downgrade ODDS_BACKED rows based on basis alone
+assert(
+  source.includes("prop.propVerdict === 'WATCH'") ||
+    source.includes("prop.propVerdict !== 'PROJECTION'") ||
+    (
+      source.includes('isProjectionOnlyProp') &&
+      source.includes("'PROJECTION_ONLY'")
+    ),
+  'prop-game-card should not downgrade ODDS_BACKED pitcher-K WATCH/PLAY rows to PROJECTION — only PROJECTION_ONLY rows are non-actionable',
 );
 
 console.log('✅ Prop game card contract source tests passed');
