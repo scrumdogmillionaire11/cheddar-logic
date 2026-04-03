@@ -87,6 +87,8 @@ module.exports = {
   upsertDecisionRecord: cards.upsertDecisionRecord,
   updateDecisionCandidateTracking: cards.updateDecisionCandidateTracking,
   insertDecisionEvent: cards.insertDecisionEvent,
+  setProjectionActualResult: cards.setProjectionActualResult,
+  getUnsettledProjectionCards: cards.getUnsettledProjectionCards,
   getUpcomingGames: games.getUpcomingGames,
   upsertGame: games.upsertGame,
   upsertGameIdMap: games.upsertGameIdMap,

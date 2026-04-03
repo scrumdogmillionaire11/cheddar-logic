@@ -110,6 +110,8 @@ module.exports = {
   upsertDecisionRecord: db.upsertDecisionRecord,
   updateDecisionCandidateTracking: db.updateDecisionCandidateTracking,
   insertDecisionEvent: db.insertDecisionEvent,
+  setProjectionActualResult: db.setProjectionActualResult,
+  getUnsettledProjectionCards: db.getUnsettledProjectionCards,
 
   // Convenience exports - games
   getUpcomingGames: db.getUpcomingGames,

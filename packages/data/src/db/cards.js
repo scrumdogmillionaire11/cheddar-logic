@@ -25,6 +25,46 @@ function ensureCardPayloadRunIdColumn(db) {
   );
 }
 
+function ensureActualResultColumn(db) {
+  const columns = db.prepare(`PRAGMA table_info(card_payloads)`).all();
+  const has = columns.some(c => String(c.name).toLowerCase() === 'actual_result');
+  if (!has) {
+    db.exec(`ALTER TABLE card_payloads ADD COLUMN actual_result TEXT`);
+  }
+}
+
+function setProjectionActualResult(cardId, actualResult) {
+  const db = getDatabase();
+  ensureActualResultColumn(db);
+  db.prepare(`
+    UPDATE card_payloads SET actual_result = ? WHERE id = ?
+  `).run(JSON.stringify(actualResult), cardId);
+}
+
+function getUnsettledProjectionCards() {
+  const db = getDatabase();
+  ensureActualResultColumn(db);
+  const cutoff = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+  return db.prepare(`
+    SELECT
+      cp.id as card_id,
+      cp.game_id,
+      cp.sport,
+      cp.card_type,
+      cp.payload_data,
+      g.game_time_utc,
+      g.home_team,
+      g.away_team
+    FROM card_payloads cp
+    JOIN games g ON cp.game_id = g.game_id
+    WHERE cp.card_type IN ('nhl-pace-1p', 'mlb-f5')
+      AND cp.actual_result IS NULL
+      AND g.game_time_utc < ?
+    ORDER BY g.game_time_utc DESC
+    LIMIT 100
+  `).all(cutoff);
+}
+
 function deleteCardPayloadsByGameAndType(gameId, cardType, options = {}) {
   return deleteCardPayloadsForGame(gameId, cardType, options);
 }
@@ -1055,4 +1095,6 @@ module.exports = {
   upsertDecisionRecord,
   updateDecisionCandidateTracking,
   insertDecisionEvent,
+  setProjectionActualResult,
+  getUnsettledProjectionCards,
 };
