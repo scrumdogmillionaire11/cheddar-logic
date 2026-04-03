@@ -149,7 +149,8 @@ interface ApiPlay {
     projected_score_away?: number | null;
     win_prob_home?: number | null;
   };
-  projection_source?: 'FULL_MODEL' | 'SYNTHETIC_FALLBACK' | null;
+  projection_source?: 'FULL_MODEL' | 'DEGRADED_MODEL' | 'SYNTHETIC_FALLBACK' | null;
+  status_cap?: 'PLAY' | 'LEAN' | 'PASS' | null;
   playability?: {
     over_playable_at_or_below?: number | null;
     under_playable_at_or_above?: number | null;
@@ -2332,6 +2333,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     projectedHomeF5Runs,
     projectedAwayF5Runs,
     projectionSource: sourcePlay?.projection_source ?? undefined,
+    statusCap: sourcePlay?.status_cap ?? undefined,
     playability: sourcePlay?.playability ?? undefined,
     valueStatus,
     betAction: finalBetAction,

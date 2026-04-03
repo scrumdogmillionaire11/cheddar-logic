@@ -18,9 +18,15 @@ const MLB_F5_DEFAULT_XFIP = 4.3;
 const MLB_F5_DEFAULT_TEAM_WRC_PLUS = 100;
 const MLB_F5_DEFAULT_TEAM_K_PCT = 0.225;
 const MLB_F5_DEFAULT_TEAM_ISO = 0.165;
+const MLB_F5_DEFAULT_TEAM_BB_PCT = 0.085;
+const MLB_F5_DEFAULT_TEAM_XWOBA = 0.320;
+const MLB_F5_DEFAULT_TEAM_HARD_HIT = 39.0;
 const MLB_F5_DEFAULT_PARK_FACTOR = 1.0;
 const MLB_F5_DEFAULT_TEMP_F = 72;
 const MLB_F5_DEFAULT_WIND_MPH = 0;
+const MLB_F5_DEFAULT_PITCH_COUNT = 92;
+const MLB_F5_DEFAULT_BF_PER_INNING = 4.25;
+const MLB_F5_DEFAULT_STARTER_XWOBA = 0.320;
 const MLB_F5_POISSON_RANGE_SCALE = 0.3;
 
 function toFiniteNumberOrNull(value) {
@@ -46,18 +52,50 @@ function roundToHalf(value, direction = 'nearest') {
   return Math.round(scaled) / 2;
 }
 
-function resolveStarterSkillRa9(pitcher) {
+function resolveStarterSkillProfile(pitcher) {
+  const siera = toFiniteNumberOrNull(pitcher?.siera);
   const xFip =
     toFiniteNumberOrNull(pitcher?.x_fip) ??
-    toFiniteNumberOrNull(pitcher?.xfip) ??
-    toFiniteNumberOrNull(pitcher?.siera);
-  if (xFip === null) return null;
+    toFiniteNumberOrNull(pitcher?.xfip);
+  const xEra =
+    toFiniteNumberOrNull(pitcher?.x_era) ??
+    toFiniteNumberOrNull(pitcher?.xera);
+
+  const skillParts = [
+    { value: siera, weight: 0.4, missing: 'starter_siera' },
+    { value: xFip, weight: 0.35, missing: 'starter_xfip' },
+    { value: xEra, weight: 0.25, missing: 'starter_xera' },
+  ];
+  const availableSkillParts = skillParts.filter((part) => part.value !== null);
+  if (availableSkillParts.length === 0) {
+    return {
+      starter_skill_ra9: null,
+      xwoba_allowed: null,
+      missing_inputs: ['starter_skill_ra9'],
+      degraded_inputs: [],
+    };
+  }
+
+  const totalWeight = availableSkillParts.reduce(
+    (sum, part) => sum + part.weight,
+    0,
+  );
+  const missingSkillParts = skillParts
+    .filter((part) => part.value === null)
+    .map((part) => part.missing);
 
   const kPct = toFiniteNumberOrNull(pitcher?.season_k_pct ?? pitcher?.k_pct);
   const bbPct = toFiniteNumberOrNull(pitcher?.bb_pct);
   const hrPer9 = toFiniteNumberOrNull(pitcher?.hr_per_9);
+  const gbPct = toFiniteNumberOrNull(pitcher?.gb_pct);
+  const xwobaAllowed =
+    toFiniteNumberOrNull(pitcher?.xwoba_allowed) ??
+    toFiniteNumberOrNull(pitcher?.x_woba_allowed);
 
-  let skillRa9 = xFip;
+  let skillRa9 = availableSkillParts.reduce(
+    (sum, part) => sum + (part.value * part.weight),
+    0,
+  ) / totalWeight;
   if (kPct !== null) {
     skillRa9 *= clampValue(1 - (kPct - MLB_F5_DEFAULT_TEAM_K_PCT) * 0.35, 0.88, 1.12);
   }
@@ -67,8 +105,16 @@ function resolveStarterSkillRa9(pitcher) {
   if (hrPer9 !== null) {
     skillRa9 *= clampValue(1 + (hrPer9 - 1.1) * 0.08, 0.9, 1.15);
   }
+  if (gbPct !== null) {
+    skillRa9 *= clampValue(1 - (gbPct - 43) * 0.003, 0.94, 1.06);
+  }
 
-  return clampValue(skillRa9, 2.0, 7.5);
+  return {
+    starter_skill_ra9: clampValue(skillRa9, 2.0, 7.5),
+    xwoba_allowed: xwobaAllowed,
+    missing_inputs: [],
+    degraded_inputs: missingSkillParts,
+  };
 }
 
 function resolveTeamSplitProfile(offenseProfile, pitcherHandedness) {
@@ -82,6 +128,17 @@ function resolveTeamSplitProfile(offenseProfile, pitcherHandedness) {
   const iso =
     toFiniteNumberOrNull(offenseProfile?.[`iso_vs_${handToken}`]) ??
     toFiniteNumberOrNull(offenseProfile?.iso);
+  const bbPct =
+    toFiniteNumberOrNull(offenseProfile?.[`bb_pct_vs_${handToken}`]) ??
+    toFiniteNumberOrNull(offenseProfile?.bb_pct);
+  const xwoba =
+    toFiniteNumberOrNull(offenseProfile?.[`xwoba_vs_${handToken}`]) ??
+    toFiniteNumberOrNull(offenseProfile?.xwoba);
+  const hardHitPct = toFiniteNumberOrNull(offenseProfile?.hard_hit_pct);
+  const rollingWrcPlus =
+    toFiniteNumberOrNull(
+      offenseProfile?.[`rolling_14d_wrc_plus_vs_${handToken}`],
+    ) ?? toFiniteNumberOrNull(offenseProfile?.rolling_14d_wrc_plus_vs_hand);
 
   if (wrcPlus === null || kPct === null || iso === null) return null;
 
@@ -89,10 +146,17 @@ function resolveTeamSplitProfile(offenseProfile, pitcherHandedness) {
     wrc_plus: wrcPlus,
     k_pct: kPct,
     iso,
+    bb_pct: bbPct,
+    xwoba,
+    hard_hit_pct: hardHitPct,
+    rolling_14d_wrc_plus: rollingWrcPlus,
   };
 }
 
 function resolveWeatherRunFactor(context = {}) {
+  const roof = String(context.roof || '').trim().toUpperCase();
+  if (roof === 'CLOSED' || roof === 'INDOOR') return 1.0;
+
   const tempF = toFiniteNumberOrNull(context.temp_f);
   const windMph = toFiniteNumberOrNull(context.wind_mph);
   const windDir = String(context.wind_dir || '').trim().toUpperCase();
@@ -105,15 +169,77 @@ function resolveWeatherRunFactor(context = {}) {
 
   if (windMph >= 10) {
     const windStep = Math.min(0.08, (windMph - 8) * 0.005);
-    if (windDir === 'OUT') factor *= 1 + windStep;
-    else if (windDir === 'IN') factor *= 1 - windStep;
+    if (windDir === 'OUT' || windDir.startsWith('OUT_') || windDir.includes('OUT')) {
+      factor *= 1 + windStep;
+    } else if (windDir === 'IN' || windDir.startsWith('IN_') || windDir.includes('IN')) {
+      factor *= 1 - windStep;
+    }
   }
 
   return clampValue(factor, 0.88, 1.12);
 }
 
+function resolveStarterLeashProfile(starterPitcher) {
+  const avgIp =
+    toFiniteNumberOrNull(starterPitcher?.avg_ip) ??
+    toFiniteNumberOrNull(starterPitcher?.recent_ip);
+  const pitchCountAvg =
+    toFiniteNumberOrNull(starterPitcher?.pitch_count_avg) ??
+    toFiniteNumberOrNull(starterPitcher?.avg_pitch_count);
+  const bbPct = toFiniteNumberOrNull(starterPitcher?.bb_pct);
+  const xwobaAllowed =
+    toFiniteNumberOrNull(starterPitcher?.xwoba_allowed) ??
+    toFiniteNumberOrNull(starterPitcher?.x_woba_allowed);
+  const ttopProfile = starterPitcher?.times_through_order_profile;
+
+  const degradedInputs = [];
+  if (avgIp === null && pitchCountAvg === null) {
+    degradedInputs.push('starter_leash');
+  }
+  if (!ttopProfile || typeof ttopProfile !== 'object') {
+    degradedInputs.push('times_through_order_profile');
+  }
+
+  const expectedPitchesPerInning = clampValue(
+    15.8 +
+      ((bbPct ?? MLB_F5_DEFAULT_TEAM_BB_PCT) - MLB_F5_DEFAULT_TEAM_BB_PCT) * 22 +
+      ((xwobaAllowed ?? MLB_F5_DEFAULT_STARTER_XWOBA) - MLB_F5_DEFAULT_STARTER_XWOBA) * 18,
+    13.5,
+    19.5,
+  );
+  const ipFromPitchCount =
+    pitchCountAvg !== null
+      ? pitchCountAvg / expectedPitchesPerInning
+      : null;
+  const projectedIp =
+    avgIp !== null && ipFromPitchCount !== null
+      ? (avgIp * 0.55) + (ipFromPitchCount * 0.45)
+      : (avgIp ?? ipFromPitchCount ?? 4.8);
+  const starterIpF5Exp = clampValue(Math.min(5.0, projectedIp), 3.0, 5.0);
+
+  const tto1 = toFiniteNumberOrNull(ttopProfile?.['1st']);
+  const tto3 = toFiniteNumberOrNull(ttopProfile?.['3rd']);
+  const ttoGap = tto1 !== null && tto3 !== null
+    ? Math.max(0, tto3 - tto1)
+    : 0.03;
+  const ttopPenaltyMult = clampValue(
+    1 + ttoGap * Math.max(0, starterIpF5Exp - 3.5) * 0.75,
+    1.0,
+    1.12,
+  );
+
+  return {
+    starter_ip_f5_exp: starterIpF5Exp,
+    ttop_penalty_mult: ttopPenaltyMult,
+    bf_exp: starterIpF5Exp * MLB_F5_DEFAULT_BF_PER_INNING,
+    degraded_inputs: degradedInputs,
+  };
+}
+
 function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context) {
-  const starterSkillRa9 = resolveStarterSkillRa9(starterPitcher);
+  const starterSkillProfile = resolveStarterSkillProfile(starterPitcher);
+  const starterSkillRa9 = starterSkillProfile.starter_skill_ra9;
+  const starterLeashProfile = resolveStarterLeashProfile(starterPitcher);
   const matchupProfile = resolveTeamSplitProfile(
     offenseProfile,
     starterPitcher?.handedness,
@@ -122,14 +248,26 @@ function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context
   const weatherFactor = resolveWeatherRunFactor(context);
 
   const missingInputs = [];
-  if (starterSkillRa9 === null) missingInputs.push('starter_skill_xfip');
+  const degradedInputs = [
+    ...(starterSkillProfile.degraded_inputs || []),
+    ...(starterLeashProfile.degraded_inputs || []),
+  ];
+  if (starterSkillRa9 === null) missingInputs.push('starter_skill_ra9');
   if (!starterPitcher || !starterPitcher.handedness) missingInputs.push('starter_handedness');
   if (!matchupProfile) missingInputs.push('opponent_split_profile');
   if (parkFactor === null) missingInputs.push('park_run_factor');
-  if (weatherFactor === null) missingInputs.push('weather');
+  if (weatherFactor === null) degradedInputs.push('weather');
 
   if (missingInputs.length > 0) {
-    return { f5_runs: null, missing_inputs: missingInputs, matchup_profile: matchupProfile, starter_skill_ra9: starterSkillRa9 };
+    return {
+      f5_runs: null,
+      missing_inputs: missingInputs,
+      degraded_inputs: Array.from(new Set(degradedInputs)),
+      matchup_profile: matchupProfile,
+      starter_skill_ra9: starterSkillRa9,
+      starter_ip_f5_exp: starterLeashProfile.starter_ip_f5_exp,
+      ttop_penalty_mult: starterLeashProfile.ttop_penalty_mult,
+    };
   }
 
   let adjustedRa9 = starterSkillRa9 * (matchupProfile.wrc_plus / 100);
@@ -143,26 +281,57 @@ function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context
     0.9,
     1.12,
   );
+  adjustedRa9 *= clampValue(
+    1 + ((matchupProfile.bb_pct ?? MLB_F5_DEFAULT_TEAM_BB_PCT) - MLB_F5_DEFAULT_TEAM_BB_PCT) * 0.8,
+    0.94,
+    1.08,
+  );
+  const contactMult = clampValue(
+    1 +
+      ((matchupProfile.xwoba ?? MLB_F5_DEFAULT_TEAM_XWOBA) - MLB_F5_DEFAULT_TEAM_XWOBA) * 0.9 +
+      (((matchupProfile.hard_hit_pct ?? MLB_F5_DEFAULT_TEAM_HARD_HIT) - MLB_F5_DEFAULT_TEAM_HARD_HIT) / 100) * 0.25 +
+      ((starterSkillProfile.xwoba_allowed ?? MLB_F5_DEFAULT_STARTER_XWOBA) - MLB_F5_DEFAULT_STARTER_XWOBA) * 0.9,
+    0.9,
+    1.12,
+  );
+  adjustedRa9 *= contactMult;
+  if (matchupProfile.rolling_14d_wrc_plus !== null) {
+    adjustedRa9 *= clampValue(
+      1 + ((matchupProfile.rolling_14d_wrc_plus - 100) / 100) * 0.15,
+      0.95,
+      1.05,
+    );
+  }
   adjustedRa9 *= clampValue(parkFactor, 0.9, 1.12);
-  adjustedRa9 *= weatherFactor;
+  adjustedRa9 *= weatherFactor ?? 1.0;
+  adjustedRa9 *= starterLeashProfile.ttop_penalty_mult;
 
   return {
-    f5_runs: Math.max(0.4, adjustedRa9 * (5 / 9)),
+    f5_runs: Math.max(0.3, adjustedRa9 * (starterLeashProfile.starter_ip_f5_exp / 9)),
     missing_inputs: [],
+    degraded_inputs: Array.from(new Set(degradedInputs)),
     matchup_profile: matchupProfile,
     starter_skill_ra9: starterSkillRa9,
+    starter_ip_f5_exp: starterLeashProfile.starter_ip_f5_exp,
+    ttop_penalty_mult: starterLeashProfile.ttop_penalty_mult,
+    bf_exp: starterLeashProfile.bf_exp,
+    contact_mult: contactMult,
     park_factor: parkFactor,
-    weather_factor: weatherFactor,
+    weather_factor: weatherFactor ?? 1.0,
   };
 }
 
 function buildF5SyntheticFallbackProjection(homePitcher, awayPitcher) {
-  const homeEra = toFiniteNumberOrNull(homePitcher?.era);
-  const awayEra = toFiniteNumberOrNull(awayPitcher?.era);
-  const homeRa9 = awayEra ?? MLB_F5_DEFAULT_XFIP;
-  const awayRa9 = homeEra ?? MLB_F5_DEFAULT_XFIP;
-  const homeMean = Math.max(0.4, ((homeRa9 + 4.5) / 2) * (5 / 9));
-  const awayMean = Math.max(0.4, ((awayRa9 + 4.5) / 2) * (5 / 9));
+  const homeStarterSkill =
+    resolveStarterSkillProfile(homePitcher).starter_skill_ra9 ??
+    MLB_F5_DEFAULT_XFIP;
+  const awayStarterSkill =
+    resolveStarterSkillProfile(awayPitcher).starter_skill_ra9 ??
+    MLB_F5_DEFAULT_XFIP;
+  const homeLeashIp = resolveStarterLeashProfile(awayPitcher).starter_ip_f5_exp;
+  const awayLeashIp = resolveStarterLeashProfile(homePitcher).starter_ip_f5_exp;
+  const homeMean = Math.max(0.3, awayStarterSkill * (homeLeashIp / 9));
+  const awayMean = Math.max(0.3, homeStarterSkill * (awayLeashIp / 9));
   const totalMean = homeMean + awayMean;
   const rangeWidth = Math.max(0.4, Math.sqrt(Math.max(totalMean, 0.1)) * MLB_F5_POISSON_RANGE_SCALE);
 
@@ -172,6 +341,7 @@ function buildF5SyntheticFallbackProjection(homePitcher, awayPitcher) {
     avgWhip: ((homePitcher?.whip ?? 1.25) + (awayPitcher?.whip ?? 1.25)) / 2,
     avgK9: ((homePitcher?.k_per_9 ?? 8.5) + (awayPitcher?.k_per_9 ?? 8.5)) / 2,
     projection_source: 'SYNTHETIC_FALLBACK',
+    status_cap: 'PASS',
     missing_inputs: [],
     reason_codes: ['PASS_SYNTHETIC_FALLBACK'],
     projected_home_f5_runs: homeMean,
@@ -299,6 +469,7 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
     temp_f: context?.temp_f,
     wind_mph: context?.wind_mph,
     wind_dir: context?.wind_dir,
+    roof: context?.roof,
   };
 
   const homeTeamProjection = projectTeamF5RunsAgainstStarter(
@@ -315,10 +486,17 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
     ...(homeTeamProjection.missing_inputs || []).map((name) => `home_${name}`),
     ...(awayTeamProjection.missing_inputs || []).map((name) => `away_${name}`),
   ]));
+  const degradedInputs = Array.from(new Set([
+    ...(homeTeamProjection.degraded_inputs || []).map((name) => `home_${name}`),
+    ...(awayTeamProjection.degraded_inputs || []).map((name) => `away_${name}`),
+  ]));
 
   if (missingInputs.length > 0) {
     const fallback = buildF5SyntheticFallbackProjection(homePitcher, awayPitcher);
-    fallback.missing_inputs = missingInputs;
+    fallback.missing_inputs = Array.from(new Set([
+      ...missingInputs,
+      ...degradedInputs,
+    ]));
     fallback.reason_codes = Array.from(new Set([
       ...(fallback.reason_codes || []),
       'PASS_MISSING_DRIVER_INPUTS',
@@ -351,9 +529,11 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
     confidence,
     avgWhip,
     avgK9,
-    projection_source: 'FULL_MODEL',
-    missing_inputs: [],
-    reason_codes: [],
+    projection_source: degradedInputs.length > 0 ? 'DEGRADED_MODEL' : 'FULL_MODEL',
+    status_cap: degradedInputs.length > 0 ? 'LEAN' : 'PLAY',
+    missing_inputs: degradedInputs,
+    degraded_inputs: degradedInputs,
+    reason_codes: degradedInputs.length > 0 ? ['MODEL_DEGRADED_INPUTS'] : [],
     projected_home_f5_runs: homeMean,
     projected_away_f5_runs: awayMean,
     projected_total_mean: base,
@@ -361,6 +541,10 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
     projected_total_high: base + rangeWidth,
     home_starter_skill_ra9: homeTeamProjection.starter_skill_ra9,
     away_starter_skill_ra9: awayTeamProjection.starter_skill_ra9,
+    home_starter_ip_f5_exp: homeTeamProjection.starter_ip_f5_exp,
+    away_starter_ip_f5_exp: awayTeamProjection.starter_ip_f5_exp,
+    home_ttop_penalty_mult: homeTeamProjection.ttop_penalty_mult,
+    away_ttop_penalty_mult: awayTeamProjection.ttop_penalty_mult,
     home_offense_profile: homeTeamProjection.matchup_profile,
     away_offense_profile: awayTeamProjection.matchup_profile,
     park_run_factor: homeTeamProjection.park_factor,
@@ -392,30 +576,43 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
   const edge = proj.base - f5Line;
   const leanSide = edge >= 0 ? 'OVER' : 'UNDER';
   const fallbackProjection = proj.projection_source === 'SYNTHETIC_FALLBACK';
+  const degradedProjection = proj.projection_source === 'DEGRADED_MODEL';
   const hasEdge = Math.abs(edge) >= MLB_F5_EDGE_THRESHOLD;
   const isOver = !fallbackProjection && edge >= MLB_F5_EDGE_THRESHOLD && proj.confidence >= 8;
   const isUnder = !fallbackProjection && edge <= -MLB_F5_EDGE_THRESHOLD && proj.confidence >= 8;
   const prediction = isOver ? 'OVER' : isUnder ? 'UNDER' : leanSide;
   const evThresholdPassed = isOver || isUnder;
+  const sourceLabel = proj.projection_source === 'FULL_MODEL'
+    ? 'F5 FULL_MODEL'
+    : proj.projection_source === 'DEGRADED_MODEL'
+      ? 'F5 DEGRADED_MODEL'
+      : 'F5 SYNTHETIC_FALLBACK';
+  const status = fallbackProjection || !evThresholdPassed
+    ? 'PASS'
+    : degradedProjection
+      ? 'WATCH'
+      : 'FIRE';
   const reasonCodes = Array.from(new Set([
     ...(proj.reason_codes || []),
     ...(fallbackProjection ? ['PASS_SYNTHETIC_FALLBACK'] : []),
     ...(!hasEdge ? ['PASS_NO_EDGE'] : []),
+    ...(degradedProjection && evThresholdPassed ? ['MODEL_DEGRADED_INPUTS'] : []),
   ]));
 
   return {
     prediction,
-    status: evThresholdPassed ? 'FIRE' : 'PASS',
-    action: evThresholdPassed ? 'FIRE' : 'PASS',
-    classification: evThresholdPassed ? 'BASE' : 'PASS',
+    status,
+    action: status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS',
+    classification: status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS',
     edge,
     projected: proj.base,
     confidence: proj.confidence,
-    ev_threshold_passed: evThresholdPassed,
+    ev_threshold_passed: status === 'FIRE' || status === 'WATCH',
     projection_source: proj.projection_source,
+    status_cap: proj.status_cap,
     missing_inputs: proj.missing_inputs,
     reason_codes: reasonCodes,
-    pass_reason_code: evThresholdPassed
+    pass_reason_code: status !== 'PASS'
       ? null
       : (reasonCodes.find((code) => code.startsWith('PASS_')) ?? 'PASS_NO_EDGE'),
     playability: proj.playability,
@@ -425,8 +622,12 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
       projected_total_high: roundToTenth(proj.projected_total_high),
       projected_home_f5_runs: roundToTenth(proj.projected_home_f5_runs),
       projected_away_f5_runs: roundToTenth(proj.projected_away_f5_runs),
+      projected_home_f5_ip: roundToTenth(proj.home_starter_ip_f5_exp),
+      projected_away_f5_ip: roundToTenth(proj.away_starter_ip_f5_exp),
+      home_ttop_penalty_mult: roundToTenth(proj.home_ttop_penalty_mult),
+      away_ttop_penalty_mult: roundToTenth(proj.away_ttop_penalty_mult),
     },
-    reasoning: `${proj.projection_source === 'FULL_MODEL' ? 'F5 FULL_MODEL' : 'F5 SYNTHETIC_FALLBACK'} projected ${proj.base.toFixed(2)} vs line ${f5Line} (edge ${edge >= 0 ? '+' : ''}${edge.toFixed(2)}, playable O<=${proj.playability?.over_playable_at_or_below ?? 'n/a'} U>=${proj.playability?.under_playable_at_or_above ?? 'n/a'}, range ${roundToTenth(proj.projected_total_low)}-${roundToTenth(proj.projected_total_high)}, conf ${proj.confidence}/10)`,
+    reasoning: `${sourceLabel} projected ${proj.base.toFixed(2)} vs line ${f5Line} (edge ${edge >= 0 ? '+' : ''}${edge.toFixed(2)}, playable O<=${proj.playability?.over_playable_at_or_below ?? 'n/a'} U>=${proj.playability?.under_playable_at_or_above ?? 'n/a'}, range ${roundToTenth(proj.projected_total_low)}-${roundToTenth(proj.projected_total_high)}, conf ${proj.confidence}/10)`,
   };
 }
 
@@ -608,6 +809,7 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
         temp_f: mlb.temp_f ?? null,
         wind_mph: mlb.wind_mph ?? null,
         wind_dir: mlb.wind_dir ?? null,
+        roof: mlb.roof ?? null,
       },
     );
     if (result) {
@@ -621,6 +823,7 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
         action: result.action,
         classification: result.classification,
         projection_source: result.projection_source,
+        status_cap: result.status_cap,
         pass_reason_code: result.pass_reason_code,
         reason_codes: result.reason_codes,
         missing_inputs: result.missing_inputs,
@@ -679,6 +882,7 @@ function selectMlbGameMarket(gameId, oddsSnapshot, driverCards = []) {
             edge: f5Card.drivers?.[0]?.edge ?? null,
             projected: f5Card.drivers?.[0]?.projected ?? null,
             projection_source: f5Card.projection_source ?? null,
+            status_cap: f5Card.status_cap ?? null,
             pass_reason_code: f5Card.pass_reason_code ?? null,
           },
         ]
@@ -694,6 +898,14 @@ function selectMlbGameMarket(gameId, oddsSnapshot, driverCards = []) {
 // ============================================================
 
 const LEAGUE_AVG_K_PCT = 0.225; // ~22.5% — update seasonally
+const MLB_K_DEFAULT_SWSTR_PCT = 0.112;
+const MLB_K_DEFAULT_OPP_OBP = 0.315;
+const MLB_K_DEFAULT_OPP_XWOBA = 0.320;
+const MLB_K_DEFAULT_OPP_HARD_HIT_PCT = 39.0;
+const MLB_K_MIN_PROJECTION_STARTS = 3;
+const MLB_K_NO_EDGE_BAND_KS = 0.5;
+const MLB_K_POISSON_THRESHOLDS = [5, 6, 7];
+const MLB_K_PROJECTION_ONLY_PASS_REASON = 'PASS_PROJECTION_ONLY_NO_MARKET';
 
 const LEASH_TIER_PARAMS = {
   Full:   { score: 2.0, expected_ip: 6.0 },
@@ -746,70 +958,243 @@ function classifyLeash(pitcher) {
   return { tier: 'Mod', flag: 'SMALL_SAMPLE', over_eligible: true, expected_ip: 5.0 };
 }
 
+function getPitcherKLeashMultiplier(leashTier) {
+  if (leashTier === 'Full') return 1.0;
+  if (leashTier === 'Mod+') return 0.98;
+  if (leashTier === 'Mod') return 0.95;
+  if (leashTier === 'Short') return 0.9;
+  return 0.95;
+}
+
+function calculatePoissonTail(lambda, threshold) {
+  if (!Number.isFinite(lambda) || lambda < 0 || !Number.isInteger(threshold) || threshold < 0) {
+    return null;
+  }
+  let cdfBelow = 0;
+  let pmf = Math.exp(-lambda);
+  for (let k = 0; k < threshold; k += 1) {
+    if (k > 0) pmf *= lambda / k;
+    cdfBelow += pmf;
+  }
+  return clampValue(1 - cdfBelow, 0, 1);
+}
+
+function impliedProbabilityToAmericanOdds(probability) {
+  if (!Number.isFinite(probability) || probability <= 0 || probability >= 1) {
+    return null;
+  }
+  const odds = probability >= 0.5
+    ? -Math.round((probability / (1 - probability)) * 100)
+    : Math.round(((1 - probability) / probability) * 100);
+  return Object.is(odds, -0) ? 0 : odds;
+}
+
+function buildPitcherKProbabilityLadder(kMean) {
+  const ladder = {};
+  const fairPrices = {};
+  for (const threshold of MLB_K_POISSON_THRESHOLDS) {
+    const pOver = calculatePoissonTail(kMean, threshold);
+    const key = `p_${threshold}_plus`;
+    const fairKey = `k_${threshold}_plus`;
+    ladder[key] = pOver === null ? null : Math.round(pOver * 1000) / 1000;
+    fairPrices[fairKey] = {
+      over: impliedProbabilityToAmericanOdds(pOver),
+      under: impliedProbabilityToAmericanOdds(
+        pOver === null ? null : 1 - pOver,
+      ),
+    };
+  }
+  return { probability_ladder: ladder, fair_prices: fairPrices };
+}
+
+function resolveOpponentPitcherKProfile(matchup = {}) {
+  const l30K = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_l30);
+  const l30Pa = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_l30_pa) ?? 0;
+  const seasonK = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_season);
+  const seasonPa = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_season_pa) ?? 0;
+  const oppObp = toFiniteNumberOrNull(matchup?.opp_obp);
+  const oppXwoba = toFiniteNumberOrNull(matchup?.opp_xwoba);
+  const oppHardHitPct = toFiniteNumberOrNull(matchup?.opp_hard_hit_pct);
+
+  if (l30Pa >= 100 && l30K !== null) {
+    return {
+      opp_k_pct_vs_hand: l30K,
+      opp_obp: oppObp,
+      opp_xwoba: oppXwoba,
+      opp_hard_hit_pct: oppHardHitPct,
+      thin_sample: false,
+      missing_inputs: [],
+    };
+  }
+
+  if (seasonPa >= 100 && seasonK !== null) {
+    return {
+      opp_k_pct_vs_hand: seasonK,
+      opp_obp: oppObp,
+      opp_xwoba: oppXwoba,
+      opp_hard_hit_pct: oppHardHitPct,
+      thin_sample: false,
+      missing_inputs: [],
+    };
+  }
+
+  return {
+    opp_k_pct_vs_hand: seasonK ?? l30K ?? LEAGUE_AVG_K_PCT,
+    opp_obp: oppObp,
+    opp_xwoba: oppXwoba,
+    opp_hard_hit_pct: oppHardHitPct,
+    thin_sample: true,
+    missing_inputs: [
+      ...(seasonK === null && l30K === null ? ['opponent_k_pct_vs_hand'] : []),
+    ],
+  };
+}
+
 /**
  * Calculate raw K projection.
  * docs/pitcher_ks/02projection.md
  */
 function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}) {
-  const seasonStarts = pitcher.season_starts ?? pitcher.starts ?? 0;
-  const seasonK9 = pitcher.k_per_9 ?? null;
+  const seasonStarts = pitcher?.season_starts ?? pitcher?.starts ?? 0;
+  const starterKPct =
+    toFiniteNumberOrNull(pitcher?.season_k_pct) ??
+    toFiniteNumberOrNull(pitcher?.k_pct);
+  const starterSwStrPct =
+    toFiniteNumberOrNull(pitcher?.current_season_swstr_pct) ??
+    toFiniteNumberOrNull(pitcher?.swstr_pct);
+  const bbPct = toFiniteNumberOrNull(pitcher?.bb_pct);
+  const xwobaAllowed =
+    toFiniteNumberOrNull(pitcher?.xwoba_allowed) ??
+    toFiniteNumberOrNull(pitcher?.x_woba_allowed);
   const allowThinSample = options.allowThinSample === true;
   const projectionFlags = [];
-  if (seasonStarts < 3 && !allowThinSample)
-    return { value: null, reason_code: 'INSUFFICIENT_STARTS', uncalculable: true };
-  if (!seasonK9)
-    return { value: null, reason_code: 'MISSING_K9', uncalculable: true };
-  if (seasonStarts < 3) {
+  const missingInputs = [];
+  const degradedInputs = [];
+  const opponentProfile = resolveOpponentPitcherKProfile(matchup);
+  const expectedIp =
+    toFiniteNumberOrNull(LEASH_TIER_PARAMS[leashTier]?.expected_ip) ?? 5.0;
+  const kLeashMult = getPitcherKLeashMultiplier(leashTier);
+
+  if (seasonStarts < MLB_K_MIN_PROJECTION_STARTS && !allowThinSample) {
+    return {
+      value: null,
+      projection: null,
+      reason_code: 'INSUFFICIENT_STARTS',
+      missing_inputs: ['season_starts'],
+      projection_source: 'SYNTHETIC_FALLBACK',
+      status_cap: 'PASS',
+      uncalculable: true,
+    };
+  }
+  if (seasonStarts < MLB_K_MIN_PROJECTION_STARTS) {
     projectionFlags.push('THIN_SAMPLE_STARTS');
   }
-
-  // Blended K/9: 40% season + 60% rolling if >= 4 starts
-  const blendedK9 = (seasonStarts >= 4 && pitcher.recent_k_per_9 != null)
-    ? 0.40 * seasonK9 + 0.60 * pitcher.recent_k_per_9
-    : seasonK9;
-
-  const expectedIp = LEASH_TIER_PARAMS[leashTier]?.expected_ip ?? 5.0;
-
-  // Opponent environment — use L30 split if 100+ PA, else season, else neutral
-  const oppL30     = matchup?.opp_k_pct_vs_handedness_l30;
-  const oppL30Pa   = matchup?.opp_k_pct_vs_handedness_l30_pa ?? 0;
-  const oppSeason  = matchup?.opp_k_pct_vs_handedness_season;
-  const oppSeasonPa = matchup?.opp_k_pct_vs_handedness_season_pa ?? 0;
-  const chaseRate  = matchup?.opp_chase_rate_l30;
-
-  let usedKPct = LEAGUE_AVG_K_PCT;
-  let thinSample = true;
-  if (oppL30Pa >= 100 && oppL30 != null)         { usedKPct = oppL30;    thinSample = false; }
-  else if (oppSeasonPa >= 100 && oppSeason != null) { usedKPct = oppSeason; thinSample = false; }
-
-  // Contact cap check
-  let base;
-  if (!thinSample && usedKPct < 0.18 && chaseRate != null && chaseRate < 0.26) {
-    base = Math.min((blendedK9 / 9) * expectedIp, (blendedK9 / 9) * 4.5);
-  } else if (!thinSample && (usedKPct < 0.18 || (chaseRate != null && chaseRate < 0.26))) {
-    base = Math.min((blendedK9 / 9) * expectedIp, (blendedK9 / 9) * 5.0);
-  } else {
-    base = (blendedK9 / 9) * expectedIp * (usedKPct / LEAGUE_AVG_K_PCT);
+  if (starterKPct === null) missingInputs.push('starter_k_pct');
+  if (!pitcher?.handedness) missingInputs.push('starter_handedness');
+  if (starterSwStrPct === null) degradedInputs.push('starter_whiff_proxy');
+  missingInputs.push(...(opponentProfile.missing_inputs || []));
+  if (
+    opponentProfile.opp_obp === null &&
+    opponentProfile.opp_xwoba === null &&
+    opponentProfile.opp_hard_hit_pct === null
+  ) {
+    missingInputs.push('opponent_contact_profile');
+  }
+  if (opponentProfile.thin_sample) {
+    projectionFlags.push('THIN_SAMPLE_OPPONENT_SPLIT');
   }
 
-  // Park factor
-  const pf = matchup?.park_k_factor ?? 1.0;
-  if (pf >= 1.05) base *= 1.04;
-  else if (pf < 0.95) base *= 0.94;
-  else if (pf < 1.00) base *= 0.97;
+  const effectiveStarterKPct = starterKPct ?? LEAGUE_AVG_K_PCT;
+  const whiffProxyPct = starterSwStrPct ?? clampValue(
+    effectiveStarterKPct * 0.42,
+    0.08,
+    0.18,
+  );
+  const oppKPctVsHand =
+    opponentProfile.opp_k_pct_vs_hand ?? LEAGUE_AVG_K_PCT;
+  const oppObp = opponentProfile.opp_obp ?? MLB_K_DEFAULT_OPP_OBP;
+  const oppXwoba = opponentProfile.opp_xwoba ?? MLB_K_DEFAULT_OPP_XWOBA;
+  const oppHardHitPct =
+    opponentProfile.opp_hard_hit_pct ?? MLB_K_DEFAULT_OPP_HARD_HIT_PCT;
 
-  // Weather
+  const battersPerInning = clampValue(
+    MLB_F5_DEFAULT_BF_PER_INNING +
+      ((bbPct ?? MLB_F5_DEFAULT_TEAM_BB_PCT) - MLB_F5_DEFAULT_TEAM_BB_PCT) * 5.5 +
+      ((xwobaAllowed ?? MLB_F5_DEFAULT_STARTER_XWOBA) - MLB_F5_DEFAULT_STARTER_XWOBA) * 8.0 +
+      (oppObp - MLB_K_DEFAULT_OPP_OBP) * 4.5 +
+      (oppXwoba - MLB_K_DEFAULT_OPP_XWOBA) * 5.5 +
+      ((oppHardHitPct - MLB_K_DEFAULT_OPP_HARD_HIT_PCT) / 100) * 1.2,
+    3.8,
+    4.9,
+  );
+  const projectedIp = pitcher?.is_doubleheader_first_game
+    ? Math.max(3.0, expectedIp - 0.5)
+    : expectedIp;
+  const bfExp = projectedIp * battersPerInning;
+  let kInteraction =
+    (effectiveStarterKPct * oppKPctVsHand) / LEAGUE_AVG_K_PCT;
+  kInteraction *= clampValue(
+    1 + (whiffProxyPct - MLB_K_DEFAULT_SWSTR_PCT) * 0.45,
+    0.93,
+    1.08,
+  );
+  kInteraction *= clampValue(
+    1 - (oppXwoba - MLB_K_DEFAULT_OPP_XWOBA) * 0.35 -
+      ((oppHardHitPct - MLB_K_DEFAULT_OPP_HARD_HIT_PCT) / 100) * 0.08,
+    0.9,
+    1.08,
+  );
+  kInteraction = clampValue(kInteraction, 0.08, 0.38);
+
+  let kMean = bfExp * kInteraction * kLeashMult;
+
+  const parkFactor = toFiniteNumberOrNull(matchup?.park_k_factor) ?? 1.0;
+  if (parkFactor >= 1.05) kMean *= 1.04;
+  else if (parkFactor < 0.95) kMean *= 0.94;
+  else if (parkFactor < 1.0) kMean *= 0.97;
+
   const temp = weather?.temp_at_first_pitch ?? weather?.temp_f ?? 72;
-  if (temp < 45) base *= 0.95;
+  if (temp < 45) kMean *= 0.95;
 
-  // Double-header first game
-  if (pitcher.is_doubleheader_first_game)
-    base *= (expectedIp - 0.5) / expectedIp;
+  const roundedMean = Math.round(kMean * 10) / 10;
+  const ladder = buildPitcherKProbabilityLadder(roundedMean);
+  const overPlayableAtOrBelow = roundToHalf(
+    roundedMean - MLB_K_NO_EDGE_BAND_KS,
+    'floor',
+  );
+  const underPlayableAtOrAbove = roundToHalf(
+    roundedMean + MLB_K_NO_EDGE_BAND_KS,
+    'ceil',
+  );
 
   return {
-    value: Math.round(base * 10) / 10,
-    blended_k9: blendedK9,
-    expected_ip: expectedIp,
+    value: roundedMean,
+    projection: roundedMean,
+    k_mean: roundedMean,
+    starter_k_pct: effectiveStarterKPct,
+    starter_swstr_pct: starterSwStrPct,
+    whiff_proxy_pct: whiffProxyPct,
+    opp_k_pct_vs_hand: oppKPctVsHand,
+    projected_ip: projectedIp,
+    expected_ip: projectedIp,
+    batters_per_inning: Math.round(battersPerInning * 100) / 100,
+    bf_exp: Math.round(bfExp * 10) / 10,
+    k_interaction: Math.round(kInteraction * 1000) / 1000,
+    k_leash_mult: kLeashMult,
+    projection_source: missingInputs.length > 0
+      ? 'SYNTHETIC_FALLBACK'
+      : degradedInputs.length > 0 || projectionFlags.length > 0
+        ? 'DEGRADED_MODEL'
+        : 'FULL_MODEL',
+    status_cap: 'PASS',
+    missing_inputs: Array.from(new Set(missingInputs)),
+    degraded_inputs: Array.from(new Set(degradedInputs)),
+    playability: {
+      over_playable_at_or_below: overPlayableAtOrBelow,
+      under_playable_at_or_above: underPlayableAtOrAbove,
+    },
+    fair_prices: ladder.fair_prices,
+    probability_ladder: ladder.probability_ladder,
     flags: projectionFlags,
     uncalculable: false,
   };
@@ -965,15 +1350,6 @@ function getKVerdict(tier) {
   if (tier === 'No play') return 'Pass';
   if (tier === 'Marginal') return 'Conditional';
   return 'Play';
-}
-
-function normalizePitcherMarketKey(name) {
-  if (!name || typeof name !== 'string') return '';
-  return name
-    .toLowerCase()
-    .replace(/[.'\u2019-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function averageFinite(values = []) {
@@ -1282,16 +1658,38 @@ function scorePitcherKUnder(pitcherInput, matchupInput, marketInput, weatherInpu
  * @returns {object}
  */
 function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weatherInput, options) {
-  const mode = (options || {}).mode || 'FULL';
+  const _requestedMode = (options || {}).mode || 'PROJECTION_ONLY';
+  const mode = 'PROJECTION_ONLY';
   const side = (options || {}).side || 'over';
-  const projectionOnly = mode === 'PROJECTION_ONLY';
-  const reasonCodes = [];
+  const projectionOnly = true;
+  const reasonCodes = [MLB_K_PROJECTION_ONLY_PASS_REASON];
 
   // Step 1A — Leash (needed for expected_ip in projection formula)
   const leashResult = classifyLeash(pitcherInput);
   if (leashResult.uncalculable) {
-    return { status: 'HALTED', halted_at: 'STEP_1', reason_code: leashResult.flag,
-             verdict: 'PASS', basis: mode };
+    return {
+      status: 'HALTED',
+      halted_at: 'STEP_1',
+      reason_code: leashResult.flag,
+      verdict: 'PASS',
+      basis: mode,
+      projection_only: true,
+      reason_codes: [
+        MLB_K_PROJECTION_ONLY_PASS_REASON,
+        leashResult.flag,
+        `MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`,
+      ].filter(Boolean),
+      projection_source: 'SYNTHETIC_FALLBACK',
+      status_cap: 'PASS',
+      missing_inputs: ['starter_role'],
+      degraded_inputs: [],
+      playability: {
+        over_playable_at_or_below: null,
+        under_playable_at_or_above: null,
+      },
+      fair_prices: null,
+      probability_ladder: null,
+    };
   }
 
   // Step 1B — Raw K projection
@@ -1304,11 +1702,38 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
     { allowThinSample: projectionOnly },
   );
   if (projResult.uncalculable) {
-    return { status: 'HALTED', halted_at: 'STEP_1', reason_code: projResult.reason_code,
-             verdict: 'PASS', basis: mode };
+    return {
+      status: 'HALTED',
+      halted_at: 'STEP_1',
+      reason_code: projResult.reason_code,
+      verdict: 'PASS',
+      basis: mode,
+      projection_only: true,
+      reason_codes: [
+        MLB_K_PROJECTION_ONLY_PASS_REASON,
+        projResult.reason_code,
+        ...(projResult.flags || []),
+        `MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`,
+      ].filter(Boolean),
+      projection_source: projResult.projection_source ?? 'SYNTHETIC_FALLBACK',
+      status_cap: projResult.status_cap ?? 'PASS',
+      missing_inputs: projResult.missing_inputs ?? [],
+      degraded_inputs: projResult.degraded_inputs ?? [],
+      playability: projResult.playability ?? {
+        over_playable_at_or_below: null,
+        under_playable_at_or_above: null,
+      },
+      fair_prices: projResult.fair_prices ?? null,
+      probability_ladder: projResult.probability_ladder ?? null,
+    };
   }
   const projection = projResult.value;
   reasonCodes.push(...(projResult.flags || []));
+  reasonCodes.push(...(projResult.missing_inputs || []).map((field) => `MISSING_INPUT:${field}`));
+  reasonCodes.push(...(projResult.degraded_inputs || []).map((field) => `DEGRADED_INPUT:${field}`));
+  if (_requestedMode !== 'PROJECTION_ONLY') {
+    reasonCodes.push(`MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`);
+  }
 
   // Step 1C — Block 1: margin (full mode only)
   let block1Score = 0;
@@ -1325,9 +1750,37 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
 
   // Step 2 — Leash gate (overs)
   if (!leashResult.over_eligible && side === 'over') {
-    return { status: 'HALTED', halted_at: 'STEP_2',
-             reason_code: leashResult.flag || 'SHORT_LEASH',
-             projection, leash_tier: leashResult.tier, verdict: 'PASS', basis: mode };
+    return {
+      status: 'HALTED',
+      halted_at: 'STEP_2',
+      reason_code: leashResult.flag || 'SHORT_LEASH',
+      projection,
+      k_mean: projResult.k_mean,
+      bf_exp: projResult.bf_exp,
+      projected_ip: projResult.projected_ip,
+      batters_per_inning: projResult.batters_per_inning,
+      k_interaction: projResult.k_interaction,
+      k_leash_mult: projResult.k_leash_mult,
+      starter_k_pct: projResult.starter_k_pct,
+      starter_swstr_pct: projResult.starter_swstr_pct,
+      whiff_proxy_pct: projResult.whiff_proxy_pct,
+      opp_k_pct_vs_hand: projResult.opp_k_pct_vs_hand,
+      fair_prices: projResult.fair_prices,
+      probability_ladder: projResult.probability_ladder,
+      playability: projResult.playability,
+      projection_source: projResult.projection_source,
+      status_cap: 'PASS',
+      missing_inputs: projResult.missing_inputs,
+      degraded_inputs: projResult.degraded_inputs,
+      leash_tier: leashResult.tier,
+      verdict: 'PASS',
+      basis: mode,
+      projection_only: true,
+      reason_codes: Array.from(new Set([
+        ...reasonCodes,
+        leashResult.flag || 'SHORT_LEASH',
+      ])),
+    };
   }
   const block2Score = scoreLeashBlock2(leashResult);
 
@@ -1350,10 +1803,40 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
     side, projectionOnly, block1Score,
   });
   if (!trapResult.verdict_eligible) {
-    return { status: 'SUSPENDED', halted_at: 'STEP_5', reason_code: 'ENVIRONMENT_COMPROMISED',
-             trap_flags: trapResult.flags, projection, leash_tier: leashResult.tier,
-             overlays: { trend: trendResult, ump: umpResult, bvp: bvpResult },
-             verdict: 'PASS', basis: mode };
+    return {
+      status: 'SUSPENDED',
+      halted_at: 'STEP_5',
+      reason_code: 'ENVIRONMENT_COMPROMISED',
+      trap_flags: trapResult.flags,
+      projection,
+      k_mean: projResult.k_mean,
+      bf_exp: projResult.bf_exp,
+      projected_ip: projResult.projected_ip,
+      batters_per_inning: projResult.batters_per_inning,
+      k_interaction: projResult.k_interaction,
+      k_leash_mult: projResult.k_leash_mult,
+      starter_k_pct: projResult.starter_k_pct,
+      starter_swstr_pct: projResult.starter_swstr_pct,
+      whiff_proxy_pct: projResult.whiff_proxy_pct,
+      opp_k_pct_vs_hand: projResult.opp_k_pct_vs_hand,
+      fair_prices: projResult.fair_prices,
+      probability_ladder: projResult.probability_ladder,
+      playability: projResult.playability,
+      projection_source: projResult.projection_source,
+      status_cap: 'PASS',
+      missing_inputs: projResult.missing_inputs,
+      degraded_inputs: projResult.degraded_inputs,
+      leash_tier: leashResult.tier,
+      overlays: { trend: trendResult, ump: umpResult, bvp: bvpResult },
+      verdict: 'PASS',
+      basis: mode,
+      projection_only: true,
+      reason_codes: Array.from(new Set([
+        ...reasonCodes,
+        'ENVIRONMENT_COMPROMISED',
+        ...(trapResult.flags || []),
+      ])),
+    };
   }
   const block5Score = trapResult.block5_score;
 
@@ -1361,12 +1844,28 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
   const penalties = calculatePenalties(pitcherInput, matchupInput || {});
   const rawScore  = block1Score + block2Score + block3Score + block4Score + block5Score;
   const netScore  = Math.max(0, rawScore + penalties.total);
-  const tier      = getConfidenceTier(netScore);
-  const verdict   = getKVerdict(tier);
+  const tier = getConfidenceTier(netScore);
 
   return {
     status: 'COMPLETE',
     projection,
+    k_mean: projResult.k_mean,
+    bf_exp: projResult.bf_exp,
+    projected_ip: projResult.projected_ip,
+    batters_per_inning: projResult.batters_per_inning,
+    k_interaction: projResult.k_interaction,
+    k_leash_mult: projResult.k_leash_mult,
+    starter_k_pct: projResult.starter_k_pct,
+    starter_swstr_pct: projResult.starter_swstr_pct,
+    whiff_proxy_pct: projResult.whiff_proxy_pct,
+    opp_k_pct_vs_hand: projResult.opp_k_pct_vs_hand,
+    fair_prices: projResult.fair_prices,
+    probability_ladder: projResult.probability_ladder,
+    playability: projResult.playability,
+    projection_source: projResult.projection_source,
+    status_cap: projResult.status_cap,
+    missing_inputs: projResult.missing_inputs,
+    degraded_inputs: projResult.degraded_inputs,
     leash_tier: leashResult.tier,
     leash_flag: leashResult.flag || null,
     overlays: { trend: trendResult, ump: umpResult, bvp: bvpResult },
@@ -1375,9 +1874,13 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
     raw_score: rawScore,
     net_score: netScore,
     tier,
-    verdict,
+    verdict: 'PASS',
     trap_flags: trapResult.flags,
-    reason_codes: reasonCodes,
+    reason_codes: Array.from(new Set([
+      ...reasonCodes,
+      ...(leashResult.flag ? [leashResult.flag] : []),
+      ...(trapResult.flags || []),
+    ])),
     basis: mode,
     projection_only: projectionOnly,
   };
@@ -1396,8 +1899,7 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
  * @returns {Array<object>}
  */
 function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
-  const mode = (options || {}).mode || 'PROJECTION_ONLY';
-  const isOddsBacked = mode === 'ODDS_BACKED';
+  const requestedMode = (options || {}).mode || 'PROJECTION_ONLY';
   const mlb = parseRawMlb(oddsSnapshot);
   const cards = [];
 
@@ -1413,6 +1915,10 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       full_name: pitcher.full_name ?? null,
       k_per_9: pitcher.k_per_9 ?? null,
       recent_k_per_9: pitcher.recent_k_per_9 ?? null,
+      season_k_pct: pitcher.season_k_pct ?? pitcher.k_pct ?? null,
+      handedness: pitcher.handedness ?? null,
+      bb_pct: pitcher.bb_pct ?? null,
+      xwoba_allowed: pitcher.xwoba_allowed ?? pitcher.x_woba_allowed ?? null,
       recent_ip: pitcher.recent_ip ?? pitcher.avg_ip ?? null,
       season_starts: pitcher.starts ?? pitcher.season_starts ?? 0,
       starts: pitcher.starts ?? pitcher.season_starts ?? 0,
@@ -1422,7 +1928,8 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       last_three_pitch_counts: pitcher.last_three_pitch_counts ?? null,
       k_pct_last_4_starts: pitcher.k_pct_last_4_starts ?? null,
       k_pct_prior_4_starts: pitcher.k_pct_prior_4_starts ?? null,
-      current_season_swstr_pct: pitcher.swstr_pct ?? null,
+      current_season_swstr_pct:
+        pitcher.current_season_swstr_pct ?? pitcher.swstr_pct ?? null,
       bvp_pa: pitcher.bvp_pa ?? 0,
       bvp_k: pitcher.bvp_k ?? 0,
       is_star_name: pitcher.is_star_name ?? false,
@@ -1431,11 +1938,32 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       strikeout_history: pitcher.strikeout_history ?? [],
     };
 
+    const opponentProfile = resolveTeamSplitProfile(
+      role === 'home'
+        ? mlb.away_offense_profile
+        : mlb.home_offense_profile,
+      pitcher.handedness,
+    );
     const matchupInput = {
-      opp_k_pct_vs_handedness_l30: mlb.opp_k_pct_vs_handedness_l30?.[role] ?? null,
-      opp_k_pct_vs_handedness_l30_pa: mlb.opp_k_pct_pa?.[role] ?? 0,
-      opp_k_pct_vs_handedness_season: mlb.opp_k_pct_season?.[role] ?? null,
-      opp_k_pct_vs_handedness_season_pa: mlb.opp_k_pct_season_pa?.[role] ?? 0,
+      opp_k_pct_vs_handedness_l30:
+        mlb.opp_k_pct_vs_handedness_l30?.[role] ??
+        opponentProfile?.k_pct ??
+        null,
+      opp_k_pct_vs_handedness_l30_pa:
+        mlb.opp_k_pct_pa?.[role] ??
+        (opponentProfile?.k_pct != null ? 600 : 0),
+      opp_k_pct_vs_handedness_season:
+        mlb.opp_k_pct_season?.[role] ??
+        opponentProfile?.k_pct ??
+        null,
+      opp_k_pct_vs_handedness_season_pa:
+        mlb.opp_k_pct_season_pa?.[role] ??
+        (opponentProfile?.k_pct != null ? 600 : 0),
+      opp_obp: opponentProfile?.bb_pct != null
+        ? clampValue(0.245 + opponentProfile.bb_pct * 0.8, 0.285, 0.355)
+        : null,
+      opp_xwoba: opponentProfile?.xwoba ?? null,
+      opp_hard_hit_pct: opponentProfile?.hard_hit_pct ?? null,
       opp_chase_rate_l30: mlb.opp_chase_rate?.[role] ?? null,
       park_k_factor: mlb.park_k_factor ?? 1.0,
       confirmed_lineup: mlb.confirmed_lineup?.[role] ?? null,
@@ -1451,145 +1979,99 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       wind_direction: mlb.wind_dir ?? null,
     };
 
-    if (isOddsBacked) {
-      let marketInput = null;
-      let lineMeta = {
-        line_source: null,
-        over_price: null,
-        under_price: null,
-        best_line_bookmaker: null,
-      };
-      const pitcherNameKey = normalizePitcherMarketKey(pitcher.full_name || team || '');
-      const strikeoutLines = mlb.strikeout_lines ?? {};
-      const lineRow =
-        strikeoutLines[pitcherNameKey] ||
-        Object.entries(strikeoutLines).find(([k]) =>
-          k.includes(pitcherNameKey) ||
-          pitcherNameKey.includes(k) ||
-          (
-            pitcherNameKey.split(' ').length > 1 &&
-            k.includes(pitcherNameKey.split(' ').slice(-1)[0])
-          ),
-        )?.[1] ||
-        null;
-
-      if (lineRow) {
-        marketInput = {
-          line: lineRow.line,
-          opening_line: lineRow.line,
-          over_price: lineRow.over_price ?? null,
-          under_price: lineRow.under_price ?? null,
-          bookmaker: lineRow.bookmaker ?? null,
-        };
-        lineMeta = {
-          line_source: lineRow.bookmaker ?? 'unknown',
-          over_price: lineRow.over_price ?? null,
-          under_price: lineRow.under_price ?? null,
-          best_line_bookmaker: lineRow.bookmaker ?? null,
-        };
-      }
-
-      const result = scorePitcherKUnder(
-        pitcherInput,
-        matchupInput,
-        marketInput,
-        weatherInput,
-      );
-      const verdict = result.verdict || 'NO_PLAY';
-      const emitCard = verdict === 'PLAY' || verdict === 'WATCH';
-
-      cards.push({
-        market: `pitcher_k_${role}`,
-        pitcher_team: team,
-        prediction: emitCard ? 'UNDER' : 'PASS',
-        confidence:
-          result.under_score != null ? Math.max(0, Math.min(1, result.under_score / 10)) : 0,
-        ev_threshold_passed: verdict === 'PLAY',
-        emit_card: emitCard,
-        card_verdict: verdict,
-        tier: verdict === 'PLAY' ? 'BEST' : verdict === 'WATCH' ? 'WATCH' : null,
-        reasoning: _buildPitcherKReasoning(result),
-        drivers: [{
-          type: 'pitcher-k-under',
-          projection: result.projection ?? null,
-          line: result.selected_market?.line ?? null,
-          line_delta: result.line_delta ?? null,
-          under_score: result.under_score ?? null,
-        }],
-        prop_decision: {
-          verdict,
-          lean_side: 'UNDER',
-          line: result.selected_market?.line ?? null,
-          display_price: result.selected_market?.under_price ?? null,
-          projection: result.projection ?? null,
-          line_delta: result.line_delta ?? null,
-          fair_prob: null,
-          implied_prob: null,
-          prob_edge_pp: null,
-          ev: null,
-          why: result.why || _buildPitcherKReasoning(result),
-          flags: result.flags ?? [],
-        },
-        pitcher_k_result: result,
-        basis: 'ODDS_BACKED',
-        line: result.selected_market?.line ?? null,
-        ...lineMeta,
-      });
-      continue;
-    }
-
     const result = scorePitcherK(
       pitcherInput,
       matchupInput,
       {},
       null,
       weatherInput,
-      { mode: 'PROJECTION_ONLY', side: 'over' },
+      { mode: requestedMode, side: 'over' },
     );
     const hasProjection =
-      result.status === 'COMPLETE' &&
       typeof result.projection === 'number' &&
       Number.isFinite(result.projection);
-    const projectionFlags = Array.isArray(result.reason_codes)
-      ? result.reason_codes
-      : [];
+    const reasonCodes = Array.from(new Set([
+      ...(Array.isArray(result.reason_codes) ? result.reason_codes : []),
+      MLB_K_PROJECTION_ONLY_PASS_REASON,
+      ...(result.projection_source === 'SYNTHETIC_FALLBACK'
+        ? ['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']
+        : []),
+      ...(!hasProjection ? ['PASS_MISSING_DRIVER_INPUTS'] : []),
+    ]));
+    const passReasonCode =
+      reasonCodes.find((code) => code.startsWith('PASS_')) ??
+      MLB_K_PROJECTION_ONLY_PASS_REASON;
 
     cards.push({
       market: `pitcher_k_${role}`,
       pitcher_team: team,
-      prediction: hasProjection ? 'OVER' : 'PASS',
+      prediction: 'PASS',
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
       confidence: result.net_score != null ? result.net_score / 10 : 0,
       ev_threshold_passed: false,
-      emit_card: hasProjection,
-      card_verdict: hasProjection ? 'PROJECTION' : 'NO_PLAY',
+      emit_card: true,
+      card_verdict: 'PASS',
       tier: null,
       reasoning: _buildPitcherKReasoning(result),
+      projection_source: result.projection_source ?? 'SYNTHETIC_FALLBACK',
+      status_cap: result.status_cap ?? 'PASS',
+      missing_inputs: Array.isArray(result.missing_inputs) ? result.missing_inputs : [],
+      reason_codes: reasonCodes,
+      pass_reason_code: passReasonCode,
+      playability: result.playability ?? null,
+      projection: hasProjection
+        ? {
+            k_mean: result.k_mean ?? result.projection ?? null,
+            projected_ip: result.projected_ip ?? result.expected_ip ?? null,
+            bf_exp: result.bf_exp ?? null,
+            batters_per_inning: result.batters_per_inning ?? null,
+            k_interaction: result.k_interaction ?? null,
+            k_leash_mult: result.k_leash_mult ?? null,
+            starter_k_pct: result.starter_k_pct ?? null,
+            starter_swstr_pct: result.starter_swstr_pct ?? null,
+            whiff_proxy_pct: result.whiff_proxy_pct ?? null,
+            opp_k_pct_vs_hand: result.opp_k_pct_vs_hand ?? null,
+            probability_ladder: result.probability_ladder ?? null,
+            fair_prices: result.fair_prices ?? null,
+          }
+        : null,
       drivers: [{
         type: 'pitcher-k',
         projection: result.projection ?? null,
+        k_mean: result.k_mean ?? result.projection ?? null,
+        probability_ladder: result.probability_ladder ?? null,
+        fair_prices: result.fair_prices ?? null,
         leash_tier: result.leash_tier ?? null,
         net_score: result.net_score ?? null,
         tier: result.tier ?? null,
       }],
-      prop_decision: hasProjection
-        ? {
-            verdict: 'PROJECTION',
-            lean_side: 'OVER',
-            line: null,
-            display_price: null,
-            projection: result.projection ?? null,
-            line_delta: null,
-            fair_prob: null,
-            implied_prob: null,
-            prob_edge_pp: null,
-            ev: null,
-            why: _buildPitcherKReasoning(result),
-            flags: projectionFlags,
-          }
-        : undefined,
-      prop_display_state: hasProjection ? 'PROJECTION_ONLY' : undefined,
+      prop_decision: {
+        verdict: 'PASS',
+        lean_side: null,
+        line: null,
+        display_price: null,
+        projection: result.projection ?? null,
+        k_mean: result.k_mean ?? result.projection ?? null,
+        probability_ladder: result.probability_ladder ?? null,
+        fair_prices: result.fair_prices ?? null,
+        playability: result.playability ?? null,
+        projection_source: result.projection_source ?? 'SYNTHETIC_FALLBACK',
+        status_cap: result.status_cap ?? 'PASS',
+        missing_inputs: Array.isArray(result.missing_inputs) ? result.missing_inputs : [],
+        line_delta: null,
+        fair_prob: result.probability_ladder?.p_6_plus ?? null,
+        implied_prob: null,
+        prob_edge_pp: null,
+        ev: null,
+        why: _buildPitcherKReasoning(result),
+        flags: reasonCodes,
+      },
+      prop_display_state: 'PROJECTION_ONLY',
       pitcher_k_result: result,
-      basis: result.basis === 'FULL' ? 'ODDS_BACKED' : 'PROJECTION_ONLY',
+      basis: 'PROJECTION_ONLY',
+      line: null,
       line_source: null,
       over_price: null,
       under_price: null,
@@ -1617,9 +2099,24 @@ function _buildPitcherKReasoning(result) {
   if (result.status === 'SUSPENDED')
     return `SUSPENDED — environment compromised: ${(result.trap_flags || []).join(', ')}`;
   const parts = [];
-  if (result.projection != null) parts.push(`Projection: ${result.projection} Ks`);
-  if (result.leash_tier)         parts.push(`Leash: ${result.leash_tier}`);
-  if (result.net_score != null)  parts.push(`Score: ${result.net_score}/10 (${result.tier})`);
+  if (result.projection != null) parts.push(`K mean: ${result.projection} Ks`);
+  if (result.bf_exp != null && result.k_interaction != null && result.k_leash_mult != null) {
+    parts.push(`BF=${result.bf_exp} × Kint=${result.k_interaction} × leash=${result.k_leash_mult}`);
+  }
+  if (result.probability_ladder) {
+    const ladder = result.probability_ladder;
+    parts.push(
+      `P(5+)=${ladder.p_5_plus ?? 'n/a'} P(6+)=${ladder.p_6_plus ?? 'n/a'} P(7+)=${ladder.p_7_plus ?? 'n/a'}`,
+    );
+  }
+  if (result.playability) {
+    parts.push(
+      `fair O<=${result.playability.over_playable_at_or_below ?? 'n/a'} U>=${result.playability.under_playable_at_or_above ?? 'n/a'}`,
+    );
+  }
+  if (result.leash_tier) parts.push(`Leash: ${result.leash_tier}`);
+  if (result.projection_source) parts.push(`Source: ${result.projection_source}`);
+  if (result.net_score != null) parts.push(`Signal score: ${result.net_score}/10 (${result.tier})`);
   parts.push(`Verdict: ${result.verdict}`);
   return parts.join(' | ');
 }

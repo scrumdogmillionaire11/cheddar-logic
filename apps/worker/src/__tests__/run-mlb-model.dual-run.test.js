@@ -361,23 +361,93 @@ describe('runMLBModel dual-run orchestration', () => {
 
   const pitcherKHome = {
     market: 'pitcher_k_home',
-    prediction: 'OVER',
-    confidence: 0.84,
-    ev_threshold_passed: true,
+    prediction: 'PASS',
+    status: 'PASS',
+    action: 'PASS',
+    classification: 'PASS',
+    confidence: 0.24,
+    ev_threshold_passed: false,
     emit_card: true,
-    reasoning: 'Home SP edge',
-    drivers: [{ type: 'pitcher-k', projection: 7.1 }],
+    card_verdict: 'PASS',
+    reasoning: 'Home SP projection-only',
+    drivers: [{ type: 'pitcher-k', projection: 7.1, k_mean: 7.1 }],
+    projection: {
+      k_mean: 7.1,
+      probability_ladder: { p_5_plus: 0.81, p_6_plus: 0.69, p_7_plus: 0.54 },
+      fair_prices: { k_6_plus: { over: -223, under: 223 } },
+    },
+    projection_source: 'FULL_MODEL',
+    status_cap: 'PASS',
+    playability: {
+      over_playable_at_or_below: 6.5,
+      under_playable_at_or_above: 7.5,
+    },
+    prop_decision: {
+      verdict: 'PASS',
+      lean_side: null,
+      line: null,
+      display_price: null,
+      projection: 7.1,
+      k_mean: 7.1,
+      probability_ladder: { p_5_plus: 0.81, p_6_plus: 0.69, p_7_plus: 0.54 },
+      fair_prices: { k_6_plus: { over: -223, under: 223 } },
+      playability: {
+        over_playable_at_or_below: 6.5,
+        under_playable_at_or_above: 7.5,
+      },
+      projection_source: 'FULL_MODEL',
+      status_cap: 'PASS',
+      missing_inputs: [],
+      flags: ['PASS_PROJECTION_ONLY_NO_MARKET'],
+    },
+    reason_codes: ['PASS_PROJECTION_ONLY_NO_MARKET'],
+    pass_reason_code: 'PASS_PROJECTION_ONLY_NO_MARKET',
     basis: 'PROJECTION_ONLY',
   };
 
   const pitcherKAway = {
     market: 'pitcher_k_away',
-    prediction: 'OVER',
-    confidence: 0.81,
-    ev_threshold_passed: true,
+    prediction: 'PASS',
+    status: 'PASS',
+    action: 'PASS',
+    classification: 'PASS',
+    confidence: 0.2,
+    ev_threshold_passed: false,
     emit_card: true,
-    reasoning: 'Away SP edge',
-    drivers: [{ type: 'pitcher-k', projection: 6.8 }],
+    card_verdict: 'PASS',
+    reasoning: 'Away SP projection-only',
+    drivers: [{ type: 'pitcher-k', projection: 6.8, k_mean: 6.8 }],
+    projection: {
+      k_mean: 6.8,
+      probability_ladder: { p_5_plus: 0.79, p_6_plus: 0.65, p_7_plus: 0.5 },
+      fair_prices: { k_6_plus: { over: -186, under: 186 } },
+    },
+    projection_source: 'FULL_MODEL',
+    status_cap: 'PASS',
+    playability: {
+      over_playable_at_or_below: 6.0,
+      under_playable_at_or_above: 7.5,
+    },
+    prop_decision: {
+      verdict: 'PASS',
+      lean_side: null,
+      line: null,
+      display_price: null,
+      projection: 6.8,
+      k_mean: 6.8,
+      probability_ladder: { p_5_plus: 0.79, p_6_plus: 0.65, p_7_plus: 0.5 },
+      fair_prices: { k_6_plus: { over: -186, under: 186 } },
+      playability: {
+        over_playable_at_or_below: 6.0,
+        under_playable_at_or_above: 7.5,
+      },
+      projection_source: 'FULL_MODEL',
+      status_cap: 'PASS',
+      missing_inputs: [],
+      flags: ['PASS_PROJECTION_ONLY_NO_MARKET'],
+    },
+    reason_codes: ['PASS_PROJECTION_ONLY_NO_MARKET'],
+    pass_reason_code: 'PASS_PROJECTION_ONLY_NO_MARKET',
     basis: 'PROJECTION_ONLY',
   };
 
@@ -470,7 +540,7 @@ describe('runMLBModel dual-run orchestration', () => {
     );
   });
 
-  test('missing F5 line logs NO_F5_LINE, emits F5_TOTAL_UNAVAILABLE, and still writes mlb-pitcher-k in ODDS_BACKED mode', async () => {
+  test('missing F5 line logs NO_F5_LINE, emits F5_TOTAL_UNAVAILABLE, and still writes projection-only mlb-pitcher-k when ODDS_BACKED is requested', async () => {
     const selection = {
       chosen_market: 'F5_TOTAL',
       why_this_market: 'Rule 1: only configured MLB game market',
@@ -480,8 +550,7 @@ describe('runMLBModel dual-run orchestration', () => {
     };
     const oddsBackedProp = {
       ...pitcherKHome,
-      basis: 'ODDS_BACKED',
-      line_source: 'DraftKings',
+      basis: 'PROJECTION_ONLY',
     };
 
     const { runMLBModel, mocks } = loadRunMlbModel({
@@ -495,10 +564,6 @@ describe('runMLBModel dual-run orchestration', () => {
         total_price_under_f5: null,
         raw_data: {
           mlb: {
-            strikeout_lines: {
-              home: 6.5,
-              away: 6.5,
-            },
             home_pitcher: buildF5Snapshot().raw_data.mlb.home_pitcher,
             away_pitcher: buildF5Snapshot().raw_data.mlb.away_pitcher,
           },
@@ -515,12 +580,32 @@ describe('runMLBModel dual-run orchestration', () => {
     expect(mocks.computePitcherKDriverCardsMock).toHaveBeenCalledWith(
       'mlb-game-001',
       expect.any(Object),
-      { mode: 'ODDS_BACKED' },
+      { mode: 'PROJECTION_ONLY' },
     );
     expect(
       mocks.insertCardPayload.mock.calls.map(([card]) => card.cardType),
     ).toEqual(['mlb-pitcher-k']);
     const payload = mocks.insertCardPayload.mock.calls[0][0].payloadData;
+    expect(payload).toMatchObject({
+      basis: 'PROJECTION_ONLY',
+      prediction: 'PASS',
+      selection: { side: 'PASS' },
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      ev_passed: false,
+      status_cap: 'PASS',
+      line: null,
+      tags: ['no_odds_mode'],
+      projection: {
+        k_mean: expect.any(Number),
+        probability_ladder: {
+          p_5_plus: expect.any(Number),
+          p_6_plus: expect.any(Number),
+          p_7_plus: expect.any(Number),
+        },
+      },
+    });
     expect(payload.pipeline_state.blocking_reason_codes).toContain(
       MLB_PIPELINE_REASON_CODES.F5_TOTAL_UNAVAILABLE,
     );

@@ -1,8 +1,8 @@
-# Market line schema
+# Market line schema (future work)
 
 ## Purpose
 
-Defines the market line input object used for margin calculation (Block 1), market structure scoring (Block 4), vig flagging, and line shopping.
+Defines the future market line input object for a restored odds-backed pitcher-K path. This schema is not used by current runtime. WI-0733 keeps MLB pitcher-K projection-only and PASS-only; a separate follow-up WI must implement free line sourcing before this object becomes active.
 
 ---
 
@@ -58,6 +58,12 @@ Defines the market line input object used for margin calculation (Block 1), mark
 | `current_timestamp` | Yes | No — log only, but staleness check fails |
 | `alt_lines` | No | Optional |
 | `sharp_book_action` | Recommended | Block 4 limited if missing |
+
+---
+
+## Current runtime status
+
+Do not populate this object in active `mlb-pitcher-k` cards. Current payloads must keep `line`, `line_source`, `over_price`, `under_price`, `best_line_bookmaker`, and `margin` null or omitted, and emit `projection.probability_ladder` plus `projection.fair_prices` instead.
 
 ---
 

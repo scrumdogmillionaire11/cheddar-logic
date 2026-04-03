@@ -432,6 +432,8 @@ export default function GameCardItem({
   const projectionSourceLabel =
     displayPlay.projectionSource === 'FULL_MODEL'
       ? 'Full model'
+      : displayPlay.projectionSource === 'DEGRADED_MODEL'
+        ? 'Degraded model'
       : displayPlay.projectionSource === 'SYNTHETIC_FALLBACK'
         ? 'Synthetic fallback'
         : null;
@@ -940,6 +942,14 @@ export default function GameCardItem({
                             <span className="text-cloud/90 font-bold">
                               {projectionSourceLabel ?? 'N/A'}
                             </span>
+                            {displayPlay.statusCap && (
+                              <>
+                                {' '}| Cap:{' '}
+                                <span className="text-cloud/90 font-bold">
+                                  {displayPlay.statusCap}
+                                </span>
+                              </>
+                            )}
                           </p>
                           <p>
                             Playable O&lt;={' '}

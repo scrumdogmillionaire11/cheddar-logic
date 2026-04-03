@@ -1,14 +1,14 @@
-# Sharp Cheddar K — MLB Strikeout Prop Engine
+# Sharp Cheddar K — MLB Pitcher-K Projection Engine
 
-A structured decision engine for evaluating MLB pitcher strikeout props (overs and unders). Built to eliminate narrative reasoning, enforce signal discipline, and produce repeatable, auditable verdicts.
+A structured projection engine for MLB pitcher strikeouts. Current runtime is `PROJECTION_ONLY` only: it estimates a K mean, emits a Poisson ladder and fair-price thresholds, and forces PASS rows because no live line is ingested.
 
 ---
 
 ## What this system is
 
-Sharp Cheddar K is a projection-first, trap-aware strikeout prop engine. It takes pitcher and matchup inputs, runs them through a defined pipeline, and outputs a scored verdict with explicit confidence and unit size. Every step is documented, codified, and testable.
+Sharp Cheddar K is a projection-first, trap-aware strikeout engine. It takes pitcher and matchup inputs, runs them through a defined pipeline, and outputs a projection package with explicit PASS diagnostics. Every step is documented, codified, and testable.
 
-The engine does not chase lines. It does not romance small samples. It does not issue verdicts without margin. It does not play through traps it has identified.
+The engine does not chase lines. It does not romance small samples. It does not emit executable plays without a verified market line. In the current runtime path, all cards are PASS-only research rows.
 
 ---
 
@@ -24,16 +24,17 @@ Before the engine runs, the following data must be confirmed present. See `docs/
 
 | Input | Source |
 |-------|--------|
-| Pitcher K/9 (season + rolling 4-start) | Baseball Savant / FanGraphs |
+| Pitcher K% / SwStr% (season + rolling windows when available) | Baseball Savant / FanGraphs |
 | Expected innings pitched | Starting rotation depth charts |
 | Pitch count last 3 starts | Baseball Reference / game logs |
 | Opponent K% vs. handedness (last 30 days) | FanGraphs team splits |
-| Opponent lineup (confirmed, not projected) | Beat reporters / official lineup cards |
-| Market line (opening + current) | Pinnacle / DraftKings / FanDuel |
+| Opponent OBP / xwOBA / hard-hit profile vs. handedness | FanGraphs / Savant team splits |
 | Umpire K rate | UmpScorecards.com |
 | Weather (if outdoor park) | Weather.com / Weatherball |
 | Park factor (K environment) | FanGraphs park factors |
 | Pitcher IL status / rest days | MLB transaction wire |
+
+Market lines are intentionally not a required input in WI-0733. DraftKings/FanDuel/OddsTrader/OddsJam sourcing is deferred to a separate work item because there is no clean free structured pitcher-K odds API.
 
 ---
 
@@ -46,13 +47,13 @@ Leash classification
       ↓
 Overlay layer (trend / ump / BvP)
       ↓
-Market comparison
+Poisson ladder + fair thresholds
       ↓
 Trap detection
       ↓
 Confidence scoring (0–10)
       ↓
-Final verdict + unit size
+Projection-only PASS verdict + diagnostics
 ```
 
 Full pipeline detail: `docs/01_process_overview.md`
@@ -65,13 +66,17 @@ Every evaluated prop produces a structured verdict. See `docs/07_output_format.m
 
 ```
 ## Pick
-[Pitcher] o/u [line] Ks
+[Pitcher] Ks PASS [PROJECTION_ONLY]
 
 ## Projection
 [X.X] Ks
 
-## Margin
-[+/-X.X] Ks
+## Distribution
+P(5+)=[x.xx], P(6+)=[x.xx], P(7+)=[x.xx]
+
+## Fair thresholds
+Over playable at <= [x.x]
+Under playable at >= [x.x]
 
 ## Leash
 [Full / Mod+ / Mod / Short]
@@ -88,7 +93,7 @@ Every evaluated prop produces a structured verdict. See `docs/07_output_format.m
 [Pass / Flag: reason]
 
 ## Verdict
-[Play / Conditional / Pass] — [X.Xu]
+PASS — `PASS_PROJECTION_ONLY_NO_MARKET`
 ```
 
 ---
@@ -137,7 +142,7 @@ sharp-cheddar-k/
 
 ## Design principles
 
-**Projection first.** No overlay, market signal, or gut read overrides a projection with no margin. If the edge isn't in the number, it isn't anywhere.
+**Projection first.** No overlay, market signal, or gut read overrides a projection with no model support.
 
 **Leash is structural.** A fake leash makes the over fake. No amount of positive overlay compensates for a ceiling on innings pitched.
 
@@ -145,7 +150,7 @@ sharp-cheddar-k/
 
 **Trap detection is a program step, not a gut check.** It runs every time. It has defined triggers. It produces a binary result.
 
-**Confidence is earned, not assumed.** The scoring model rewards independent confirming signals. It penalizes structural headwinds. It does not round up.
+**PASS-only until market sourcing is trustworthy.** Confidence metadata can be logged, but runtime cards must not become actionable until a separate line ingestion WI lands.
 
 ---
 

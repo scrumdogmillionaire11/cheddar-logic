@@ -88,7 +88,8 @@ const nhlMarketCallPayloadSchema = driverPayloadSchema.extend({
 // ============================================================================
 // Card type: 'mlb-pitcher-k'
 // canonical_market_key: 'pitcher_strikeouts'
-// Emitted by: run_mlb_model.js in PITCHER_KS_MODEL_MODE=PROJECTION_ONLY or ODDS_BACKED
+// Current runtime: run_mlb_model.js emits PROJECTION_ONLY only (WI-0733).
+// ODDS_BACKED remains accepted for historical payload compatibility only.
 //
 // Contract (docs/pitcher_ks/07output.md):
 //   - basis: 'PROJECTION_ONLY' | 'ODDS_BACKED'
@@ -114,9 +115,52 @@ const mlbPitcherKPayloadSchema = z
     }),
     line: z.number().nullable(),
     confidence: z.number().min(0).max(1),
+    status: z.enum(['FIRE', 'WATCH', 'PASS']).optional(),
+    action: z.enum(['FIRE', 'HOLD', 'PASS']).optional(),
+    classification: z.enum(['BASE', 'LEAN', 'PASS']).optional(),
     tier: z.enum(['BEST', 'WATCH']).nullable().optional(),
     ev_passed: z.boolean(),
     reasoning: z.string().nullable().optional(),
+    reason_codes: z.array(z.string()).optional(),
+    pass_reason_code: z.string().nullable().optional(),
+    projection_source: z.enum([
+      'FULL_MODEL',
+      'DEGRADED_MODEL',
+      'SYNTHETIC_FALLBACK',
+    ]).nullable().optional(),
+    status_cap: z.enum(['PLAY', 'LEAN', 'PASS']).nullable().optional(),
+    playability: z
+      .object({
+        over_playable_at_or_below: z.number().nullable().optional(),
+        under_playable_at_or_above: z.number().nullable().optional(),
+      })
+      .nullable()
+      .optional(),
+    missing_inputs: z.array(z.string()).optional(),
+    projection: z
+      .object({
+        k_mean: z.number().nullable().optional(),
+        projected_ip: z.number().nullable().optional(),
+        bf_exp: z.number().nullable().optional(),
+        batters_per_inning: z.number().nullable().optional(),
+        k_interaction: z.number().nullable().optional(),
+        k_leash_mult: z.number().nullable().optional(),
+        starter_k_pct: z.number().nullable().optional(),
+        starter_swstr_pct: z.number().nullable().optional(),
+        whiff_proxy_pct: z.number().nullable().optional(),
+        opp_k_pct_vs_hand: z.number().nullable().optional(),
+        probability_ladder: z
+          .object({
+            p_5_plus: z.number().nullable().optional(),
+            p_6_plus: z.number().nullable().optional(),
+            p_7_plus: z.number().nullable().optional(),
+          })
+          .nullable()
+          .optional(),
+        fair_prices: z.record(z.unknown()).nullable().optional(),
+      })
+      .nullable()
+      .optional(),
     disclaimer: z.string().optional(),
     generated_at: isoDateString,
     player_name: z.string().min(1),
@@ -162,6 +206,67 @@ const mlbPitcherKPayloadSchema = z
           message: "PROJECTION_ONLY pitcher_k card must include 'no_odds_mode' in tags",
         });
       }
+      const status = String(payload.status || '').toUpperCase();
+      const action = String(payload.action || '').toUpperCase();
+      const classification = String(payload.classification || '').toUpperCase();
+      if (status && status !== 'PASS') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['status'],
+          message: 'PROJECTION_ONLY pitcher_k card must have status=PASS',
+        });
+      }
+      if (action && action !== 'PASS') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['action'],
+          message: 'PROJECTION_ONLY pitcher_k card must have action=PASS',
+        });
+      }
+      if (classification && classification !== 'PASS') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['classification'],
+          message: 'PROJECTION_ONLY pitcher_k card must have classification=PASS',
+        });
+      }
+      if (payload.ev_passed !== false) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ev_passed'],
+          message: 'PROJECTION_ONLY pitcher_k card must have ev_passed=false',
+        });
+      }
+      if (payload.line !== null && payload.line !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['line'],
+          message: 'PROJECTION_ONLY pitcher_k card must have line=null',
+        });
+      }
+      if (payload.tier !== null && payload.tier !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['tier'],
+          message: 'PROJECTION_ONLY pitcher_k card must not set tier',
+        });
+      }
+      if (payload.status_cap && payload.status_cap !== 'PASS') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['status_cap'],
+          message: 'PROJECTION_ONLY pitcher_k card must cap at PASS',
+        });
+      }
+      for (const key of ['line_source', 'over_price', 'under_price', 'best_line_bookmaker', 'margin']) {
+        if (payload[key] !== null && payload[key] !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `PROJECTION_ONLY pitcher_k card must have ${key}=null`,
+          });
+        }
+      }
     }
   });
 
@@ -182,7 +287,12 @@ const mlbF5PayloadSchema = basePayloadSchema
     classification: z.enum(['BASE', 'LEAN', 'PASS']).optional(),
     tier: z.enum(['BEST', 'WATCH']).nullable().optional(),
     ev_passed: z.boolean(),
-    projection_source: z.enum(['FULL_MODEL', 'SYNTHETIC_FALLBACK']),
+    projection_source: z.enum([
+      'FULL_MODEL',
+      'DEGRADED_MODEL',
+      'SYNTHETIC_FALLBACK',
+    ]),
+    status_cap: z.enum(['PLAY', 'LEAN', 'PASS']).nullable().optional(),
     projection: z.object({
       projected_total: z.number(),
       projected_total_low: z.number().nullable().optional(),
@@ -228,6 +338,23 @@ const mlbF5PayloadSchema = basePayloadSchema
           code: z.ZodIssueCode.custom,
           path: ['ev_passed'],
           message: 'SYNTHETIC_FALLBACK mlb-f5 payload must have ev_passed=false',
+        });
+      }
+    }
+    if (payload.projection_source === 'DEGRADED_MODEL') {
+      const status = String(payload.status || '').toUpperCase();
+      if (status === 'FIRE') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['status'],
+          message: 'DEGRADED_MODEL mlb-f5 payload must not have status=FIRE',
+        });
+      }
+      if (payload.status_cap && payload.status_cap !== 'LEAN') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['status_cap'],
+          message: 'DEGRADED_MODEL mlb-f5 payload must cap at LEAN',
         });
       }
     }

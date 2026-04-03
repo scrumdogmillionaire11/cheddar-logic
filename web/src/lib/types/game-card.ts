@@ -418,7 +418,8 @@ export interface Play {
   projectedTotalHigh?: number;
   projectedHomeF5Runs?: number;
   projectedAwayF5Runs?: number;
-  projectionSource?: 'FULL_MODEL' | 'SYNTHETIC_FALLBACK';
+  projectionSource?: 'FULL_MODEL' | 'DEGRADED_MODEL' | 'SYNTHETIC_FALLBACK';
+  statusCap?: 'PLAY' | 'LEAN' | 'PASS' | null;
   playability?: {
     over_playable_at_or_below?: number | null;
     under_playable_at_or_above?: number | null;

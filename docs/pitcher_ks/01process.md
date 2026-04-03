@@ -6,9 +6,17 @@ The Sharp Cheddar K engine runs every pitcher strikeout prop through a six-step 
 
 ## Step 1 — Raw K projection
 
-**What happens:** Build a number-of-strikeouts projection from first principles using three inputs: pitcher K/9, expected innings pitched, and opponent strikeout environment. Apply a contact cap if the matchup indicates balls will be put in play at a rate that suppresses Ks.
+**What happens:** Build a strikeout mean from expected batters faced and pitcher/opponent strikeout interaction:
 
-**Gate:** If projection cannot be calculated (missing K/9, unconfirmed lineup, or IP is unknown due to role ambiguity), evaluation halts. No projection = no play.
+```
+bf_exp = projected_ip * batters_per_inning
+k_interaction = starter_k_pct * opp_k_pct_vs_hand / league_avg_k_pct
+k_mean = bf_exp * k_interaction * k_leash_mult
+```
+
+Opponent OBP/xwOBA/hard-hit profile can expand `batters_per_inning` and apply a contact penalty before weather/park adjustments.
+
+**Gate:** If starter role/leash is unclassifiable or too few starts are available, emit a PASS row with `projection_source='SYNTHETIC_FALLBACK'` or `HALTED` diagnostics. No market-backed play is allowed.
 
 **Key rule:** The projection is independent of the market line at this stage. Do not look at the line before completing Step 1. Looking at the line first invites anchoring.
 
@@ -46,15 +54,15 @@ Full spec: `docs/04_overlay_rules.md`
 
 ---
 
-## Step 4 — Market comparison
+## Step 4 — Poisson ladder + fair thresholds
 
-**What happens:** Compare the projection to the current market line to calculate the margin. Apply the directional market check — is the line moving with or against the play? Note the vig differential if applicable.
+**What happens:** Convert `k_mean` into `P(5+)`, `P(6+)`, and `P(7+)` using a Poisson tail. Convert each probability into a fair American price and derive the nearest over/under playability thresholds.
 
-**Gate:** If margin is below the minimum floor for the side (0.5K over, 0.75K under), evaluation halts. No margin = no play. Thin edges are not played.
+**Gate:** Current runtime has no live line, so every card remains `PASS` with `status_cap='PASS'` and reason `PASS_PROJECTION_ONLY_NO_MARKET`. The fair thresholds are research metadata only.
 
-**Key rule:** Under requires a larger margin than over at every tier. This reflects the structural over-bias books build into the prop market. Betting the under into a tight margin means fighting both the book and the market design.
+**Key rule:** Do not infer an actionable side from fair thresholds alone. Without a verified line and price, no odds-backed edge exists.
 
-**Output:** Margin (projection minus line), market movement direction, confidence block score for market structure.
+**Output:** Probability ladder, fair prices, playability thresholds, and projection source.
 
 Full spec: `docs/05_market_tiers.md`
 
@@ -92,11 +100,10 @@ Full spec: `rules/confidence_rules.md`
 
 | Step | Gate condition | Action |
 |------|---------------|--------|
-| Step 1 | Projection uncalculable | Halt — no play |
-| Step 1 | Block 1 = 0 (no margin) | Halt — no play |
+| Step 1 | Projection degraded or synthetic | Emit PASS row with `projection_source` and `missing_inputs` |
 | Step 2 | Short leash on over | Halt — structural ceiling |
 | Step 2 | IL / extended rest on over | Halt — structural ceiling |
-| Step 4 | Margin below floor | Halt — no play |
+| Step 4 | No live line available | PASS-only output with fair-threshold metadata |
 | Step 5 | Two+ trap flags | Suspend — environment compromised |
 | Step 6 | Net score < 5 | Pass verdict |
 
@@ -104,8 +111,8 @@ Full spec: `rules/confidence_rules.md`
 
 ## What does not happen in this pipeline
 
-- The line is not consulted before the projection is complete
-- Overlays are not used to justify plays with no projection margin
+- The line is not consulted in current runtime because no pitcher-K line source is active
+- Overlays are not used to justify actionable plays without a verified market line
 - Public sentiment, recency bias, and narrative are not inputs at any step
 - Unit size is not decided before the confidence score is known
 - A play is never issued when a kill-switch has fired

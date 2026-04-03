@@ -44,6 +44,8 @@ Every new player prop market requires exactly these 4 files:
 
 **Reference:** `apps/worker/src/jobs/run_nhl_player_shots_model.js`
 
+**MLB pitcher-K exception:** `mlb-pitcher-k` is currently `PROJECTION_ONLY` only (ADR-0008). It must emit PASS rows with `tags: ['no_odds_mode']`, `line: null`, and Poisson/fair-price metadata until a separate free-line sourcing WI restores line comparison.
+
 ### 3. `apps/worker/package.json` npm scripts
 
 Add two scripts:
@@ -113,7 +115,7 @@ Use these market keys in your pull job when calling The Odds API `/sports/{sport
 | NBA | Rebounds | `player_rebounds` | Reliably available |
 | NBA | Assists | `player_assists` | Reliably available |
 | NBA | Threes made | `player_threes` | Reliably available |
-| MLB | Strikeouts (pitcher) | `batter_total_strikeouts` | Available on game days |
+| MLB | Strikeouts (pitcher) | `batter_total_strikeouts` | Historical reference only; current runtime does not pull paid Odds API pitcher-K props |
 | NFL | Passing yards | `player_pass_yds` | Available for weekly slate |
 
 **Finding new market keys:** Use `GET /sports/{sport}/events` to get event IDs, then `GET /sports/{sport}/events/{eventId}/odds?markets=player_*` to discover available market keys. Market key availability varies by sport, bookmaker, and time relative to game start.

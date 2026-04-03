@@ -94,9 +94,11 @@ assert(
 );
 
 assert(
-  source.includes('projection_source?: \'FULL_MODEL\' | \'SYNTHETIC_FALLBACK\' | null;') &&
+  source.includes('projection_source?: \'FULL_MODEL\' | \'DEGRADED_MODEL\' | \'SYNTHETIC_FALLBACK\' | null;') &&
+    source.includes('status_cap?: \'PLAY\' | \'LEAN\' | \'PASS\' | null;') &&
     source.includes('projected_total_low?: number | null;') &&
     source.includes('projectionSource: sourcePlay?.projection_source ?? undefined') &&
+    source.includes('statusCap: sourcePlay?.status_cap ?? undefined') &&
     source.includes('playability: sourcePlay?.playability ?? undefined'),
   'transform game-line mode should preserve MLB F5 projection provenance and playable range metadata',
 );
@@ -104,6 +106,7 @@ assert(
 assert(
   gameCardSource.includes("const isF5TotalMarket = card.sport === 'MLB' && marketType === 'FIRST_PERIOD';") &&
     gameCardSource.includes('const projectionSourceLabel =') &&
+    gameCardSource.includes("displayPlay.projectionSource === 'DEGRADED_MODEL'") &&
     gameCardSource.includes('Playable O&lt;=') &&
     gameCardSource.includes('Team means:') &&
     gameCardSource.includes("displayPlay.projectionSource === 'SYNTHETIC_FALLBACK'"),

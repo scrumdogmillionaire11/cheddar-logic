@@ -2,40 +2,42 @@
 
 ## Rule
 
-The raw K projection is calculated from three primary inputs — pitcher K/9, expected innings pitched, and opponent strikeout environment — then adjusted by a contact cap if the matchup qualifies. The result is a single decimal K total representing the engine's true expected output before market comparison.
+The raw K projection is calculated from expected batters faced multiplied by a pitcher/opponent K interaction and a leash multiplier. The result is a single decimal K mean (`k_mean`) plus a Poisson probability ladder for common strikeout thresholds.
 
 ---
 
 ## Formula
 
 ```
-Base projection = (K/9 ÷ 9) × expected_IP × opponent_environment_multiplier
+bf_exp = projected_IP × batters_per_inning
+k_interaction = starter_K% × opp_K%_vs_hand / league_avg_K%
+k_mean = bf_exp × k_interaction × k_leash_mult
 
-Final projection = min(base_projection, contact_cap)
+Poisson ladder = { P(5+), P(6+), P(7+) }
 ```
 
 ---
 
 ## Input definitions
 
-### K/9
+### Starter K skill
 
-Use a blended K/9 that weights recent performance against the season baseline:
+Use a blended starter K% when rolling windows exist, otherwise season K%:
 
 ```
-blended_K9 = (0.40 × season_K9) + (0.60 × rolling_4start_K9)
+starter_K% = 0.40 × season_K% + 0.60 × rolling_4start_K%
 ```
 
-- Season K/9 = full season strikeouts per 9 innings
-- Rolling 4-start K/9 = K/9 over last 4 starts only
-- If fewer than 4 starts exist on the season, use season K/9 only (no rolling window)
+- Season K% = full season strikeouts / batters faced
+- Rolling 4-start K% = K% over last 4 starts only when available
+- If fewer than 4 starts exist on the season, use season K% only
 - If fewer than 3 season starts exist, projection is uncalculable — halt
 
 **Why 60/40 toward recent:** Four starts is enough to detect real workload and stuff changes without overreacting to a single outlier. The season baseline prevents recency panic.
 
 ---
 
-### Expected innings pitched (expected_IP)
+### Expected innings pitched and leash multiplier
 
 Expected IP is derived from leash classification, not from raw season average:
 
@@ -46,16 +48,25 @@ Expected IP is derived from leash classification, not from raw season average:
 | Mod | 5.0 IP |
 | Short | 4.0 IP |
 
+`k_leash_mult` dampens strikeout expectation under lighter workload:
+
+| Leash tier | `k_leash_mult` |
+|------------|----------------|
+| Full | 1.00 |
+| Mod+ | 0.98 |
+| Mod | 0.95 |
+| Short | 0.90 |
+
 > Do not use the pitcher's season IP average as the expected IP input. A pitcher averaging 6.1 IP who has thrown 75 pitches in each of his last 3 starts is a Mod leash, not a Full leash. Leash classification governs IP expectation.
 
 ---
 
-### Opponent environment multiplier
+### Expected batters faced and opponent interaction
 
-The opponent environment multiplier adjusts the base projection up or down based on how strikeout-prone the opposing lineup is relative to league average.
+`batters_per_inning` starts from a neutral run environment and is nudged by opponent OBP/xwOBA/hard-hit profile plus pitcher walk/contact suppression. `k_interaction` then scales starter K% by opponent K% against pitcher handedness relative to league average.
 
 ```
-opponent_multiplier = opp_K%_vs_handedness_L30 ÷ league_avg_K%_vs_handedness
+k_interaction = starter_K% × opp_K%_vs_handedness ÷ league_avg_K%
 ```
 
 - Use the opponent's K% against the pitcher's handedness over the last 30 days
@@ -73,24 +84,6 @@ opponent_multiplier = opp_K%_vs_handedness_L30 ÷ league_avg_K%_vs_handedness
 | Below 19% | 0.80 |
 
 > If the opponent's 30-day split sample is fewer than 100 PA, fall back to the season-long split. If the season split is also below 100 PA (e.g., early season), use 1.00 neutral multiplier and flag as thin sample.
-
----
-
-### Contact cap
-
-The contact cap is a ceiling applied when the matchup context indicates the opponent is likely to put the ball in play at a rate that structurally limits K upside.
-
-**Contact cap triggers:**
-
-| Condition | Cap applied |
-|-----------|------------|
-| Opp K% vs. handedness < 18% (last 30 days) | Cap = blended_K9 ÷ 9 × 5.0 |
-| Opp chase rate < 26% (last 30 days) | Cap = blended_K9 ÷ 9 × 5.0 |
-| Both conditions present | Cap = blended_K9 ÷ 9 × 4.5 |
-
-When the contact cap is applied, it replaces the opponent environment multiplier. Do not apply both.
-
-**Why the contact cap exists:** The opponent multiplier assumes K% scales linearly with the base rate. Contact-heavy lineups suppress K ceiling in a non-linear way — disciplined hitters put the ball in play even against elite stuff, reducing the effective K opportunities per inning.
 
 ---
 
@@ -116,28 +109,28 @@ Park K factor is pulled from FanGraphs park factors (K column). Values above 1.0
 ## Full worked example
 
 **Inputs:**
-- Pitcher season K/9: 10.2
-- Pitcher rolling 4-start K/9: 11.4
+- Pitcher season K%: 28.2%
 - Leash: Full (6.0 IP)
 - Opp K% vs. RHP last 30 days: 25.5%
+- Opponent OBP/xwOBA/hard-hit: neutral
 - Park K factor: 1.02 (neutral)
 
 **Calculation:**
 
 ```
-blended_K9 = (0.40 × 10.2) + (0.60 × 11.4) = 4.08 + 6.84 = 10.92
+bf_exp = 6.0 × 4.22 = 25.32
 
-opponent_multiplier = 25.5% ÷ 22.5% = 1.133
+k_interaction = 0.282 × 0.255 ÷ 0.225 = 0.3196
 
-base_projection = (10.92 ÷ 9) × 6.0 × 1.133
-               = 1.213 × 6.0 × 1.133
-               = 8.24
+k_mean = 25.32 × 0.3196 × 1.00 = 8.09
 
-park_adjusted = 8.24 × 1.00 (neutral park)
-              = 8.24 Ks
+park_adjusted = 8.09 × 1.00 = 8.09 Ks
+
+Poisson ladder:
+P(5+) = 0.90
+P(6+) = 0.80
+P(7+) = 0.68
 ```
-
-**Contact cap check:** Opp K% = 25.5%, chase rate not below 26% — no cap triggered.
 
 **Final projection: 8.2 Ks**
 
@@ -147,7 +140,7 @@ park_adjusted = 8.24 × 1.00 (neutral park)
 
 | Scenario | Handling |
 |----------|----------|
-| Fewer than 3 season starts | Projection uncalculable — halt |
+| Fewer than 3 season starts | `projection_source='SYNTHETIC_FALLBACK'` or HALTED PASS diagnostics |
 | Pitcher returning from IL | Apply IL flag at Step 2 — halt overs before projection is used |
 | Opener / bulk reliever role | Projection uncalculable — expected IP is undefined |
 | Double-header first game | Reduce expected IP by 0.5 regardless of leash tier |
@@ -159,17 +152,19 @@ park_adjusted = 8.24 × 1.00 (neutral park)
 
 ```python
 def calculate_projection(pitcher, opponent, park, weather):
-    # Blended K/9
+    # Starter K%
     if pitcher.season_starts < 3:
         raise ProjectionUncalculable("Insufficient starts")
     if pitcher.season_starts < 4:
-        blended_k9 = pitcher.season_k9
+        starter_k_pct = pitcher.season_k_pct
     else:
-        blended_k9 = (0.40 * pitcher.season_k9) + (0.60 * pitcher.rolling_4start_k9)
+        starter_k_pct = (0.40 * pitcher.season_k_pct) + (0.60 * pitcher.rolling_4start_k_pct)
 
     # Expected IP from leash
     ip_map = {"Full": 6.0, "Mod+": 5.5, "Mod": 5.0, "Short": 4.0}
+    leash_mult_map = {"Full": 1.00, "Mod+": 0.98, "Mod": 0.95, "Short": 0.90}
     expected_ip = ip_map[pitcher.leash_tier]
+    k_leash_mult = leash_mult_map[pitcher.leash_tier]
 
     # Opponent environment
     if opponent.k_pct_vs_handedness_pa >= 100:
@@ -179,16 +174,16 @@ def calculate_projection(pitcher, opponent, park, weather):
     else:
         opp_k_pct = LEAGUE_AVG_K_PCT  # neutral fallback, flag thin sample
 
-    # Contact cap check
-    if opponent.k_pct_vs_handedness_L30 < 0.18 and opponent.chase_rate_L30 < 0.26:
-        cap = (blended_k9 / 9) * 4.5
-        base = min((blended_k9 / 9) * expected_ip, cap)
-    elif opponent.k_pct_vs_handedness_L30 < 0.18 or opponent.chase_rate_L30 < 0.26:
-        cap = (blended_k9 / 9) * 5.0
-        base = min((blended_k9 / 9) * expected_ip, cap)
-    else:
-        multiplier = opp_k_pct / LEAGUE_AVG_K_PCT
-        base = (blended_k9 / 9) * expected_ip * multiplier
+    batters_per_inning = estimate_batters_per_inning(
+        pitcher.bb_pct,
+        pitcher.xwoba_allowed,
+        opponent.obp,
+        opponent.xwoba,
+        opponent.hard_hit_pct,
+    )
+    bf_exp = expected_ip * batters_per_inning
+    k_interaction = starter_k_pct * opp_k_pct / LEAGUE_AVG_K_PCT
+    base = bf_exp * k_interaction * k_leash_mult
 
     # Park adjustment
     park_factor = get_park_k_factor(park)
@@ -203,5 +198,11 @@ def calculate_projection(pitcher, opponent, park, weather):
     if weather.temp_at_first_pitch < 45:
         base *= 0.95
 
-    return round(base, 1)
+    return {
+        "k_mean": round(base, 2),
+        "bf_exp": round(bf_exp, 2),
+        "k_interaction": round(k_interaction, 4),
+        "k_leash_mult": k_leash_mult,
+        "probability_ladder": poisson_tail_ladder(base, thresholds=[5, 6, 7]),
+    }
 ```

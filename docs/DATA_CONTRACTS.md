@@ -591,6 +591,74 @@ interface BettingCardPayload {
 `card_type='nhl-model-output'` is retained for compatibility with existing/historical rows and evidence rendering.
 New writes should prefer current NHL card families (`nhl-*-call`, `nhl-base-projection`, `nhl-pace-*`, etc.).
 
+### MLB Pitcher-K Payload (`card_type='mlb-pitcher-k'`)
+
+Current runtime emits projection-only PASS rows for MLB pitcher strikeouts. Live line fields are intentionally null until a separate free-line sourcing WI ships. See ADR-0008.
+
+```typescript
+interface MlbPitcherKPayload {
+  prediction: 'PASS';
+  confidence: number;
+  recommended_bet_type: 'total';
+  generated_at: string;
+  odds_context: Record<string, unknown>;
+
+  basis: 'PROJECTION_ONLY';
+  tags: Array<'no_odds_mode' | string>;
+  status: 'PASS';
+  action: 'PASS';
+  classification: 'PASS';
+  ev_passed: false;
+  status_cap: 'PASS';
+
+  line: null;
+  line_source?: null;
+  over_price?: null;
+  under_price?: null;
+  best_line_bookmaker?: null;
+  margin?: null;
+
+  projection_source: 'FULL_MODEL' | 'DEGRADED_MODEL' | 'SYNTHETIC_FALLBACK';
+  missing_inputs: string[];
+  reason_codes: string[];
+  pass_reason_code?: string;
+
+  playability?: {
+    over_playable_at_or_below: number | null;
+    under_playable_at_or_above: number | null;
+  };
+
+  projection: {
+    k_mean: number;
+    projected_ip: number;
+    batters_per_inning: number;
+    bf_exp: number;
+    k_interaction: number;
+    k_leash_mult: number;
+    starter_k_pct: number;
+    starter_swstr_pct?: number | null;
+    whiff_proxy_pct?: number | null;
+    opp_k_pct_vs_hand: number;
+    probability_ladder: {
+      p_5_plus: number;
+      p_6_plus: number;
+      p_7_plus: number;
+    };
+    fair_prices: {
+      k_5_plus: number;
+      k_6_plus: number;
+      k_7_plus: number;
+    };
+  };
+}
+```
+
+Contract rules:
+
+- Active worker runtime must not emit `basis='ODDS_BACKED'` for `mlb-pitcher-k`.
+- `projection_source='SYNTHETIC_FALLBACK'` is allowed, but the row must remain PASS-only and must expose `missing_inputs` / `reason_codes`.
+- Legacy odds-backed payloads remain validator-compatible for historical rows only.
+
 ### Global Driver: `welcomeHome` (All Sports)
 
 `welcomeHome` is a global meta-driver contract applied to all betting sports where home/away context exists.
