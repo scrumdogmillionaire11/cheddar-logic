@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { useCardsPageActions, useCardsPageState } from './CardsPageContext';
 
 const BASE = 'px-4 py-2 rounded-md border text-sm font-semibold transition';
@@ -11,8 +11,7 @@ const INACTIVE = 'bg-white/5 text-cloud/70 border-white/10 hover:border-white/20
 export default function CardsModeTabs() {
   const { lifecycleMode, propsEnabled, viewMode } = useCardsPageState();
   const { onLifecycleModeChange, onModeChange } = useCardsPageActions();
-  const [hasMounted, setHasMounted] = useState(false);
-  useEffect(() => { setHasMounted(true); }, []);
+  const hasMounted = useSyncExternalStore(() => () => {}, () => true, () => false);
 
   if (!hasMounted) {
     return <div className="mb-6 flex flex-wrap items-center gap-2" />;

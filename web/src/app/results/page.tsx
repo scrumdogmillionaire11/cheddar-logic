@@ -160,12 +160,6 @@ function isFirstPeriodRow(row: LedgerRow) {
   return row.marketPeriodToken === '1P';
 }
 
-function formatSegmentTypeLabel(cardType: string | null | undefined) {
-  if (cardType === 'nhl-pace-1p') return 'NHL 1P Totals';
-  if (cardType === 'nhl-pace-totals') return 'NHL Totals';
-  return formatLabel(cardType);
-}
-
 function renderPeriodBadge(row: LedgerRow) {
   if (!isFirstPeriodRow(row)) return null;
   return (
