@@ -10,10 +10,7 @@ const {
 const { edgeCalculator, marginToWinProbability } = require('@cheddar-logic/models');
 
 const DEFAULT_WINDOW_DAYS = 14;
-const PROJECTION_MIN_SAMPLE = 100;
 const CLV_MIN_SAMPLE = 150;
-const PROJECTION_WIN_RATE_FLOOR = 0.48;
-const CONFIDENCE_DRIFT_THRESHOLD = 0.03;
 const CLV_MEAN_THRESHOLD = -0.02;
 const CLV_P25_THRESHOLD = -0.05;
 const MAX_DIAGNOSTIC_BUCKETS = 5;
@@ -140,122 +137,6 @@ function checkStatus({ gateMet, breached }) {
   return breached ? 'FAIL' : 'PASS';
 }
 
-function buildProjectionLedgerReport(db, windowDays) {
-  const exists = tableExists(db, 'projection_perf_ledger');
-  if (!exists) {
-    return {
-      table: 'projection_perf_ledger',
-      tablePresent: false,
-      sampleSize: 0,
-      minSample: PROJECTION_MIN_SAMPLE,
-      sampleGateMet: false,
-      winRate: null,
-      highWinRate: null,
-      mediumWinRate: null,
-      confidenceDrift: null,
-      checks: {
-        winRateFloor: {
-          threshold: `>= ${formatPct(PROJECTION_WIN_RATE_FLOOR)}`,
-          status: 'INSUFFICIENT_DATA',
-          breached: false,
-          reason: 'TABLE_MISSING',
-        },
-        confidenceDrift: {
-          threshold: `< ${formatPct(CONFIDENCE_DRIFT_THRESHOLD)}`,
-          status: 'INSUFFICIENT_DATA',
-          breached: false,
-          reason: 'TABLE_MISSING',
-        },
-      },
-    };
-  }
-
-  const row = db
-    .prepare(
-      `
-      WITH windowed AS (
-        SELECT won, confidence
-        FROM projection_perf_ledger
-        WHERE settled_at IS NOT NULL
-          AND datetime(settled_at) >= datetime('now', ?)
-      )
-      SELECT
-        COUNT(*) AS sample_size,
-        AVG(CASE WHEN won = 1 THEN 1.0 ELSE 0.0 END) AS win_rate,
-        SUM(CASE WHEN UPPER(COALESCE(confidence, '')) = 'HIGH' THEN 1 ELSE 0 END) AS high_sample,
-        AVG(
-          CASE
-            WHEN UPPER(COALESCE(confidence, '')) = 'HIGH'
-            THEN CASE WHEN won = 1 THEN 1.0 ELSE 0.0 END
-            ELSE NULL
-          END
-        ) AS high_win_rate,
-        SUM(CASE WHEN UPPER(COALESCE(confidence, '')) = 'MEDIUM' THEN 1 ELSE 0 END) AS medium_sample,
-        AVG(
-          CASE
-            WHEN UPPER(COALESCE(confidence, '')) = 'MEDIUM'
-            THEN CASE WHEN won = 1 THEN 1.0 ELSE 0.0 END
-            ELSE NULL
-          END
-        ) AS medium_win_rate
-      FROM windowed
-    `,
-    )
-    .get(`-${windowDays} days`);
-
-  const sampleSize = toNumber(row?.sample_size, 0);
-  const highSample = toNumber(row?.high_sample, 0);
-  const mediumSample = toNumber(row?.medium_sample, 0);
-  const winRate = toNumber(row?.win_rate);
-  const highWinRate = toNumber(row?.high_win_rate);
-  const mediumWinRate = toNumber(row?.medium_win_rate);
-  const sampleGateMet = sampleSize >= PROJECTION_MIN_SAMPLE;
-  const confidencePairAvailable = highSample > 0 && mediumSample > 0;
-  const confidenceDrift =
-    Number.isFinite(mediumWinRate) && Number.isFinite(highWinRate)
-      ? mediumWinRate - highWinRate
-      : null;
-
-  const winRateBreached = sampleGateMet && Number.isFinite(winRate)
-    ? winRate < PROJECTION_WIN_RATE_FLOOR
-    : false;
-  const driftBreached =
-    sampleGateMet && confidencePairAvailable && Number.isFinite(confidenceDrift)
-      ? confidenceDrift >= CONFIDENCE_DRIFT_THRESHOLD
-      : false;
-
-  return {
-    table: 'projection_perf_ledger',
-    tablePresent: true,
-    sampleSize,
-    minSample: PROJECTION_MIN_SAMPLE,
-    sampleGateMet,
-    winRate: toRounded(winRate),
-    highWinRate: toRounded(highWinRate),
-    mediumWinRate: toRounded(mediumWinRate),
-    confidenceDrift: toRounded(confidenceDrift),
-    checks: {
-      winRateFloor: {
-        threshold: `>= ${formatPct(PROJECTION_WIN_RATE_FLOOR)}`,
-        status: checkStatus({ gateMet: sampleGateMet, breached: winRateBreached }),
-        breached: winRateBreached,
-      },
-      confidenceDrift: {
-        threshold: `< ${formatPct(CONFIDENCE_DRIFT_THRESHOLD)}`,
-        status: checkStatus({
-          gateMet: sampleGateMet && confidencePairAvailable,
-          breached: driftBreached,
-        }),
-        breached: driftBreached,
-        details: {
-          highSample,
-          mediumSample,
-        },
-      },
-    },
-  };
-}
-
 function buildClvLedgerReport(db, windowDays) {
   const exists = tableExists(db, 'clv_ledger');
   if (!exists) {
@@ -348,35 +229,8 @@ function buildClvLedgerReport(db, windowDays) {
   };
 }
 
-function buildFetchDiagnostics(db, windowDays, projection, clv) {
+function buildFetchDiagnostics(db, windowDays, clv) {
   const recommendations = [];
-
-  const projectionGaps =
-    projection.tablePresent && projection.sampleGateMet === false
-      ? db
-          .prepare(
-            `
-            SELECT
-              COALESCE(sport, 'UNKNOWN') AS sport,
-              COALESCE(prop_type, 'UNKNOWN') AS prop_type,
-              COALESCE(confidence, 'UNKNOWN') AS confidence,
-              COUNT(*) AS unresolved_count
-            FROM projection_perf_ledger
-            WHERE settled_at IS NULL
-              AND datetime(recorded_at) >= datetime('now', ?)
-            GROUP BY sport, prop_type, confidence
-            ORDER BY unresolved_count DESC, sport ASC, prop_type ASC, confidence ASC
-            LIMIT ${MAX_DIAGNOSTIC_BUCKETS}
-          `,
-          )
-          .all(`-${windowDays} days`)
-          .map((row) => ({
-            sport: row.sport,
-            propType: row.prop_type,
-            confidence: row.confidence,
-            unresolvedCount: toNumber(row.unresolved_count, 0),
-          }))
-      : [];
 
   const clvGaps =
     clv.tablePresent && clv.sampleGateMet === false
@@ -426,13 +280,6 @@ function buildFetchDiagnostics(db, windowDays, projection, clv) {
         }))
     : [];
 
-  if (!projection.sampleGateMet) {
-    recommendations.push(
-      projectionGaps.length > 0
-        ? 'Increase settlement-result fetch cadence for projection buckets with highest unresolved counts before enforcing projection thresholds.'
-        : 'Projection sample minimum not met; continue ingest + settlement cycles until at least 100 settled projection rows are available in the last 14 days.',
-    );
-  }
   if (!clv.sampleGateMet) {
     recommendations.push(
       clvGaps.length > 0
@@ -447,7 +294,6 @@ function buildFetchDiagnostics(db, windowDays, projection, clv) {
   }
 
   return {
-    projectionUnresolvedTopBuckets: projectionGaps,
     clvUnresolvedTopBuckets: clvGaps,
     oddsCoverageBySport: oddsCoverage,
     recommendations,
@@ -1098,18 +944,8 @@ function buildNhlMoneylineCalibrationReport(db, windowDays, generatedAtIso) {
   };
 }
 
-function collectChecks(projection, clv) {
+function collectChecks(clv) {
   return [
-    {
-      name: 'projection_win_rate_floor',
-      status: projection.checks.winRateFloor.status,
-      breached: projection.checks.winRateFloor.breached,
-    },
-    {
-      name: 'projection_confidence_drift',
-      status: projection.checks.confidenceDrift.status,
-      breached: projection.checks.confidenceDrift.breached,
-    },
     {
       name: 'clv_mean_degradation',
       status: clv.checks.meanClv.status,
@@ -1163,7 +999,6 @@ async function generateTelemetryCalibrationReport({
   try {
     const windowDays = Number.isFinite(days) && days > 0 ? Math.trunc(days) : DEFAULT_WINDOW_DAYS;
     const generatedAt = new Date().toISOString();
-    const projection = buildProjectionLedgerReport(reader, windowDays);
     const clv = buildClvLedgerReport(reader, windowDays);
     const nhlMoneylineCalibration = buildNhlMoneylineCalibrationReport(
       reader,
@@ -1177,8 +1012,8 @@ async function generateTelemetryCalibrationReport({
     );
     const decisionTierAudit = buildDecisionTierAudit(reader, windowDays, generatedAt);
     const edgeVerification = buildEdgeVerificationReport(reader);
-    const checks = collectChecks(projection, clv);
-    const diagnostics = buildFetchDiagnostics(reader, windowDays, projection, clv);
+    const checks = collectChecks(clv);
+    const diagnostics = buildFetchDiagnostics(reader, windowDays, clv);
     const overallStatus = determineOverallStatus(checks);
     const dbResolution = resolveDatabasePath();
 
@@ -1190,15 +1025,11 @@ async function generateTelemetryCalibrationReport({
       },
       windowDays,
       thresholds: {
-        projectionMinSample: PROJECTION_MIN_SAMPLE,
-        projectionWinRateFloor: PROJECTION_WIN_RATE_FLOOR,
-        projectionConfidenceDrift: CONFIDENCE_DRIFT_THRESHOLD,
         clvMinSample: CLV_MIN_SAMPLE,
         clvMeanThreshold: CLV_MEAN_THRESHOLD,
         clvP25Threshold: CLV_P25_THRESHOLD,
       },
       ledgers: {
-        projection,
         clv,
       },
       nhlMoneylineCalibration,
@@ -1224,18 +1055,6 @@ function formatTelemetryCalibrationReport(report, { enforce = false } = {}) {
   lines.push(`Window: last ${report.windowDays} day(s)`);
   lines.push(`Enforcement: ${enforce ? 'enabled' : 'disabled'}`);
   lines.push(`Overall status: ${report.overallStatus}`);
-  lines.push('');
-
-  lines.push('projection_perf_ledger');
-  lines.push(
-    `- sample: ${report.ledgers.projection.sampleSize}/${report.ledgers.projection.minSample} (gate ${report.ledgers.projection.sampleGateMet ? 'met' : 'not met'})`,
-  );
-  lines.push(
-    `- win_rate: ${formatPct(report.ledgers.projection.winRate)} | threshold ${report.ledgers.projection.checks.winRateFloor.threshold} | ${report.ledgers.projection.checks.winRateFloor.status}`,
-  );
-  lines.push(
-    `- high_vs_medium_drift: ${formatPct(report.ledgers.projection.confidenceDrift)} (HIGH ${formatPct(report.ledgers.projection.highWinRate)} vs MEDIUM ${formatPct(report.ledgers.projection.mediumWinRate)}) | threshold ${report.ledgers.projection.checks.confidenceDrift.threshold} | ${report.ledgers.projection.checks.confidenceDrift.status}`,
-  );
   lines.push('');
 
   lines.push('clv_ledger');
@@ -1322,16 +1141,6 @@ function formatTelemetryCalibrationReport(report, { enforce = false } = {}) {
   lines.push('');
 
   lines.push('learning_diagnostics');
-  if (report.diagnostics.projectionUnresolvedTopBuckets.length === 0) {
-    lines.push('- projection_unresolved: none');
-  } else {
-    lines.push('- projection_unresolved:');
-    for (const bucket of report.diagnostics.projectionUnresolvedTopBuckets) {
-      lines.push(
-        `  - ${bucket.sport} | ${bucket.propType} | ${bucket.confidence} => ${bucket.unresolvedCount}`,
-      );
-    }
-  }
   if (report.diagnostics.clvUnresolvedTopBuckets.length === 0) {
     lines.push('- clv_unresolved: none');
   } else {
@@ -1392,7 +1201,6 @@ module.exports = {
     buildDecisionTierAudit,
     buildFetchDiagnostics,
     buildNhlMoneylineCalibrationReport,
-    buildProjectionLedgerReport,
     buildReliabilityBinTemplate,
     checkStatus,
     collectChecks,

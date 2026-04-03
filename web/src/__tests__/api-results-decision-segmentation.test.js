@@ -72,6 +72,13 @@ async function validateResultsSegmentationSourceContract(assert) {
     'results route must derive segment families and ledger labels from canonical decision tiers',
   );
   assert.ok(
+    routeSource.includes("import {\n  buildProjectionSummaries,\n  deriveResultCardMode,\n} from './projection-metrics';") &&
+      routeSource.includes("if (deriveResultCardMode(payload) !== 'ODDS_BACKED')") &&
+      routeSource.includes('const projectionSummaries = buildProjectionSummaries(') &&
+      routeSource.includes('projectionSummaries,'),
+    'results route must split ODDS_BACKED betting rows from PROJECTION_ONLY projection summaries',
+  );
+  assert.ok(
     routeSource.includes('LEFT JOIN clv_ledger clv ON clv.card_id = cr.card_id') &&
       routeSource.includes('const clv =') &&
       routeSource.includes('clv,'),

@@ -51,16 +51,6 @@ export default function CardsModeTabs() {
           Player Props
         </button>
       )}
-      <button
-        onClick={() => onModeChange('projections')}
-        className={`px-4 py-2 rounded-md border text-sm font-semibold transition ${
-          viewMode === 'projections'
-            ? 'bg-emerald-700/50 text-emerald-100 border-emerald-600/60'
-            : 'bg-white/5 text-cloud/70 border-white/10 hover:border-white/20'
-        }`}
-      >
-        Game Props
-      </button>
     </div>
   );
 }

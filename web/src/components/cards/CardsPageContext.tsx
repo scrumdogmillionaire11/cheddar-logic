@@ -856,18 +856,6 @@ export function CardsPageProvider({
           customTimeRange: activeCustomTimeRange,
         },
       });
-    } else if (modeParam === 'projections') {
-      const defaults = getDefaultFilters('projections');
-      dispatch({
-        type: 'set_view_mode',
-        viewMode: 'projections',
-        filters: {
-          ...defaults,
-          sports: activeSports,
-          timeWindow: activeTimeWindow,
-          customTimeRange: activeCustomTimeRange,
-        },
-      });
     }
   }, [
     activeCustomTimeRange,
@@ -991,12 +979,13 @@ export function CardsPageProvider({
         });
       },
       onModeChange: (nextMode) => {
-        if (nextMode === uiState.viewMode) return;
-        if (nextMode === 'props' && !propsEnabled) return;
-        const defaults = getDefaultFilters(nextMode);
+        const safeNextMode = nextMode === 'projections' ? 'game' : nextMode;
+        if (safeNextMode === uiState.viewMode) return;
+        if (safeNextMode === 'props' && !propsEnabled) return;
+        const defaults = getDefaultFilters(safeNextMode);
         dispatch({
           type: 'set_view_mode',
-          viewMode: nextMode,
+          viewMode: safeNextMode,
           filters: {
             ...defaults,
             sports: uiState.filters.sports,

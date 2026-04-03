@@ -98,6 +98,50 @@ interface CardRow {
   model_output_ids: string | null;
 }
 
+const PROJECTION_ONLY_LINE_SOURCES = [
+  'projection_floor',
+  'synthetic',
+  'synthetic_fallback',
+];
+
+function buildBettingSurfacePayloadPredicate(payloadExpr: string): string {
+  const lineSourceList = PROJECTION_ONLY_LINE_SOURCES.map(
+    (source) => `'${source}'`,
+  ).join(', ');
+
+  return `
+    CASE
+      WHEN json_valid(${payloadExpr}) = 0 THEN 1
+      ELSE NOT (
+        UPPER(COALESCE(
+          json_extract(${payloadExpr}, '$.decision_basis_meta.decision_basis'),
+          json_extract(${payloadExpr}, '$.basis'),
+          json_extract(${payloadExpr}, '$.execution_status'),
+          json_extract(${payloadExpr}, '$.play.execution_status'),
+          json_extract(${payloadExpr}, '$.prop_display_state'),
+          json_extract(${payloadExpr}, '$.play.prop_display_state'),
+          ''
+        )) = 'PROJECTION_ONLY'
+        OR LOWER(COALESCE(
+          json_extract(${payloadExpr}, '$.decision_basis_meta.market_line_source'),
+          json_extract(${payloadExpr}, '$.market_context.wager.line_source'),
+          json_extract(${payloadExpr}, '$.play.market_context.wager.line_source'),
+          json_extract(${payloadExpr}, '$.line_source'),
+          json_extract(${payloadExpr}, '$.play.line_source'),
+          ''
+        )) IN (${lineSourceList})
+        OR UPPER(COALESCE(
+          json_extract(${payloadExpr}, '$.prop_decision.projection_source'),
+          json_extract(${payloadExpr}, '$.play.prop_decision.projection_source'),
+          json_extract(${payloadExpr}, '$.projection_source'),
+          json_extract(${payloadExpr}, '$.play.projection_source'),
+          ''
+        )) = 'SYNTHETIC_FALLBACK'
+      )
+    END = 1
+  `;
+}
+
 function clampNumber(
   value: string | null,
   fallback: number,
@@ -131,6 +175,63 @@ function normalizePayloadMeta(payload: Record<string, unknown> | null) {
     meta.model_endpoint = null;
   }
   return payload;
+}
+
+function getPayloadString(
+  payload: Record<string, unknown> | null,
+  path: string[],
+): string | null {
+  let current: unknown = payload;
+  for (const key of path) {
+    if (!current || typeof current !== 'object' || !(key in current)) {
+      return null;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  if (typeof current !== 'string') return null;
+  const normalized = current.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isBettingSurfacePayload(payload: Record<string, unknown> | null): boolean {
+  if (!payload) return true;
+
+  const basis = String(
+    getPayloadString(payload, ['decision_basis_meta', 'decision_basis']) ||
+      getPayloadString(payload, ['basis']) ||
+      '',
+  ).toUpperCase();
+  if (basis === 'PROJECTION_ONLY') return false;
+
+  const executionStatus = String(
+    getPayloadString(payload, ['execution_status']) ||
+      getPayloadString(payload, ['play', 'execution_status']) ||
+      getPayloadString(payload, ['prop_display_state']) ||
+      getPayloadString(payload, ['play', 'prop_display_state']) ||
+      '',
+  ).toUpperCase();
+  if (executionStatus === 'PROJECTION_ONLY') return false;
+
+  const lineSource = String(
+    getPayloadString(payload, ['decision_basis_meta', 'market_line_source']) ||
+      getPayloadString(payload, ['market_context', 'wager', 'line_source']) ||
+      getPayloadString(payload, ['play', 'market_context', 'wager', 'line_source']) ||
+      getPayloadString(payload, ['line_source']) ||
+      getPayloadString(payload, ['play', 'line_source']) ||
+      '',
+  ).toLowerCase();
+  if (PROJECTION_ONLY_LINE_SOURCES.includes(lineSource)) return false;
+
+  const projectionSource = String(
+    getPayloadString(payload, ['prop_decision', 'projection_source']) ||
+      getPayloadString(payload, ['play', 'prop_decision', 'projection_source']) ||
+      getPayloadString(payload, ['projection_source']) ||
+      getPayloadString(payload, ['play', 'projection_source']) ||
+      '',
+  ).toUpperCase();
+  if (projectionSource === 'SYNTHETIC_FALLBACK') return false;
+
+  return true;
 }
 
 function getActiveRunIds(db: ReturnType<typeof getDatabaseReadOnly>): string[] {
@@ -259,6 +360,9 @@ export async function GET(
 
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
     baseWhere.push("sport != 'FPL'");
+    baseWhere.push(
+      buildBettingSurfacePayloadPredicate('card_payloads.payload_data'),
+    );
     baseWhere.push(`NOT EXISTS (
       SELECT 1
       FROM card_results cr
@@ -334,10 +438,13 @@ export async function GET(
     }
 
     // Parse JSON fields for response
-    const response = cards.map((card) => {
+    const response = cards.flatMap((card) => {
       const parsed = safeJsonParse(card.payload_data);
       const normalizedPayload = normalizePayloadMeta(parsed.data);
-      return {
+      if (!parsed.error && !isBettingSurfacePayload(normalizedPayload)) {
+        return [];
+      }
+      return [{
         id: card.id,
         gameId: card.game_id,
         sport: card.sport,
@@ -348,7 +455,7 @@ export async function GET(
         payloadData: normalizedPayload,
         payloadParseError: parsed.error,
         modelOutputIds: card.model_output_ids,
-      };
+      }];
     });
 
     return NextResponse.json(

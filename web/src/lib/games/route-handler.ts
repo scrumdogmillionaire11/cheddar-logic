@@ -288,6 +288,10 @@ const ACTIVE_GAME_SPORT_SQL = ACTIVE_GAME_SPORTS.map(
 const ACTIVE_GAME_SPORT_SET = new Set<string>(ACTIVE_GAME_SPORTS);
 const INVALID_SPORT_FILTER = '__INVALID_SPORT_FILTER__';
 const FINAL_GAME_RESULT_STATUSES = ['FINAL', 'FT', 'COMPLETE', 'COMPLETED', 'CLOSED'];
+const PROJECTION_ONLY_LINE_SOURCES = new Set<string>([
+  'PROJECTION_FLOOR',
+  'SYNTHETIC_FALLBACK',
+]);
 
 function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
   const lifecycleParam = (searchParams.get('lifecycle') || '').toLowerCase();
@@ -503,6 +507,8 @@ interface Play {
   market_price_over?: number | null;
   market_price_under?: number | null;
   market_bookmaker?: string | null;
+  basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
+  execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
   prop_display_state?: 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
   prop_decision?: {
     verdict: 'PLAY' | 'WATCH' | 'NO_PLAY' | 'PROJECTION';
@@ -1036,6 +1042,43 @@ function emitTotalProjectionDriftWarnings(
       },
     });
   }
+}
+
+function normalizeDecisionBasisToken(
+  value: string | null | undefined,
+): Play['basis'] | undefined {
+  const normalized = value?.trim().toUpperCase();
+  if (normalized === 'PROJECTION_ONLY') return 'PROJECTION_ONLY';
+  if (normalized === 'ODDS_BACKED') return 'ODDS_BACKED';
+  return undefined;
+}
+
+function normalizeExecutionStatusToken(
+  value: string | null | undefined,
+): Play['execution_status'] | undefined {
+  const normalized = value?.trim().toUpperCase();
+  if (normalized === 'EXECUTABLE') return 'EXECUTABLE';
+  if (normalized === 'PROJECTION_ONLY') return 'PROJECTION_ONLY';
+  if (normalized === 'BLOCKED') return 'BLOCKED';
+  return undefined;
+}
+
+function isProjectionOnlyPlayPayload(play: Play): boolean {
+  const lineSource = play.line_source?.trim().toUpperCase() ?? null;
+  const marketLineSource =
+    play.market_context?.wager?.line_source?.trim().toUpperCase() ?? null;
+  const projectionSource =
+    play.prop_decision?.projection_source?.trim().toUpperCase() ?? null;
+
+  return (
+    play.basis === 'PROJECTION_ONLY' ||
+    play.execution_status === 'PROJECTION_ONLY' ||
+    play.prop_display_state === 'PROJECTION_ONLY' ||
+    (lineSource != null && PROJECTION_ONLY_LINE_SOURCES.has(lineSource)) ||
+    (marketLineSource != null &&
+      PROJECTION_ONLY_LINE_SOURCES.has(marketLineSource)) ||
+    projectionSource === 'SYNTHETIC_FALLBACK'
+  );
 }
 
 export async function GET(request: NextRequest) {
@@ -2000,6 +2043,24 @@ export async function GET(request: NextRequest) {
           payloadPlay?.game_id,
         );
         const payloadDecision = toObject((payload as Record<string, unknown>).decision);
+        const payloadDecisionBasisMeta = toObject(
+          (payload as Record<string, unknown>).decision_basis_meta,
+        );
+        const normalizedDecisionBasis = normalizeDecisionBasisToken(
+          firstString(
+            (payload as Record<string, unknown>).basis,
+            (payload as Record<string, unknown>).decision_basis,
+            payloadDecisionBasisMeta?.decision_basis,
+            payloadPlay?.basis,
+            payloadPlay?.decision_basis,
+          ),
+        );
+        const normalizedExecutionStatus = normalizeExecutionStatusToken(
+          firstString(
+            (payload as Record<string, unknown>).execution_status,
+            payloadPlay?.execution_status,
+          ),
+        );
         const normalizedMu = firstNumber(
           (payload as Record<string, unknown>).mu,
           payloadPlay?.mu,
@@ -2818,6 +2879,8 @@ export async function GET(request: NextRequest) {
           market_price_over: normalizedPriceOver,
           market_price_under: normalizedPriceUnder,
           market_bookmaker: normalizedMarketBookmaker,
+          basis: normalizedDecisionBasis,
+          execution_status: normalizedExecutionStatus,
           prop_display_state: normalizedPropDisplayState,
           prop_decision: normalizedPropDecision,
           consistency:
@@ -2868,6 +2931,10 @@ export async function GET(request: NextRequest) {
                   }
                 : undefined,
         };
+
+        if (isProjectionOnlyPlayPayload(play)) {
+          continue;
+        }
 
         const canonicalGameId = canonicalGameIdForRow;
         const playSport =

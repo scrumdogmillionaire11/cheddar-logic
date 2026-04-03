@@ -46,6 +46,16 @@ function ensureAuditTables(db) {
       clv_pct REAL,
       closed_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS game_results (
+      id TEXT PRIMARY KEY,
+      game_id TEXT UNIQUE,
+      sport TEXT,
+      status TEXT,
+      final_score_home INTEGER,
+      final_score_away INTEGER,
+      metadata TEXT
+    );
   `);
 }
 
@@ -135,6 +145,21 @@ function insertSeedRow(db, params = {}) {
     params.result || 'win',
     settledAt,
     params.pnlUnits !== undefined ? params.pnlUnits : 0.91,
+  );
+
+  db.prepare(
+    `
+      INSERT INTO game_results (
+        id, game_id, sport, status, final_score_home, final_score_away, metadata
+      ) VALUES (?, ?, ?, 'final', ?, ?, ?)
+    `,
+  ).run(
+    `game-result-${gameId}`,
+    gameId,
+    sport.toLowerCase(),
+    params.finalScoreHome !== undefined ? params.finalScoreHome : 3,
+    params.finalScoreAway !== undefined ? params.finalScoreAway : 2,
+    JSON.stringify(params.gameResultMetadata || {}),
   );
 
   if (params.clvPct !== undefined) {
@@ -244,8 +269,14 @@ describe('performance_drift_report', () => {
       losses: 0,
       previous_model_version: 'nba-v1',
     });
+    expect(executableSegment.projection_metrics).toBeUndefined();
     expect(projectionSegment).toMatchObject({
       actionable_sample_count: 0,
+      projection_metrics: {
+        actuals_available: false,
+        sample_count: 0,
+        rows_seen: 1,
+      },
       sample_count: 1,
       card_mode: 'PROJECTION_ONLY',
       execution_status: 'PROJECTION_ONLY',
@@ -403,69 +434,89 @@ describe('performance_drift_report', () => {
     expect(report.alerts.some((entry) => entry.alert_type.includes('CLV'))).toBe(false);
   });
 
-  test('compares last_50 against previous_50 for block-rate shifts', () => {
+  test('adds projection_metrics for PROJECTION_ONLY segments and suppresses execution block-rate alerts', () => {
     const db = data.getDatabase();
     const baseTime = Date.parse('2026-04-02T12:00:00.000Z');
 
     for (let index = 0; index < 50; index += 1) {
       insertSeedRow(db, {
-        id: `mlb-current-${index}`,
-        sport: 'MLB',
-        cardType: 'mlb-pitcher-k',
+        id: `nhl-proj-${index}`,
+        sport: 'NHL',
+        cardType: 'nhl-player-shots',
         marketType: 'PROP',
         decisionBasis: 'PROJECTION_ONLY',
         executionStatus: 'PROJECTION_ONLY',
         actionable: false,
         lineSource: 'projection_floor',
-        pFair: 0.56,
         reasonCodes: index < 20 ? ['BLOCKED_MISSING_PRICING'] : [],
         settledAt: new Date(baseTime - index * 60000).toISOString(),
         play: {
-          canonical_market_key: 'pitcher_strikeouts',
           market_type: 'PROP',
+          period: 'full_game',
+          player_id: '97',
+          player_name: 'Connor McDavid',
+          prop_type: 'shots_on_goal',
+          selection: {
+            side: 'OVER',
+          },
         },
-      });
-    }
-
-    for (let index = 0; index < 50; index += 1) {
-      insertSeedRow(db, {
-        id: `mlb-baseline-${index}`,
-        sport: 'MLB',
-        cardType: 'mlb-pitcher-k',
-        marketType: 'PROP',
-        decisionBasis: 'PROJECTION_ONLY',
-        executionStatus: 'PROJECTION_ONLY',
-        actionable: false,
-        lineSource: 'projection_floor',
-        pFair: 0.56,
-        reasonCodes: index < 2 ? ['BLOCKED_MISSING_PRICING'] : [],
-        settledAt: new Date(baseTime - (index + 50) * 60000).toISOString(),
-        play: {
-          canonical_market_key: 'pitcher_strikeouts',
-          market_type: 'PROP',
+        payloadOverrides: {
+          decision: {
+            model_projection: 4,
+          },
+        },
+        gameResultMetadata: {
+          playerShots: {
+            fullGameByPlayerId: {
+              97: 5,
+            },
+            firstPeriodByPlayerId: {},
+            playerIdByNormalizedName: {
+              'connor mcdavid': '97',
+            },
+          },
         },
       });
     }
 
     const report = reportModule.generatePerformanceDriftReport({
       db,
-      sport: 'MLB',
+      sport: 'NHL',
     });
 
-    const alert = report.alerts.find(
+    const blockAlert = report.alerts.find(
       (entry) =>
         entry.alert_type === 'BLOCK_RATE_SHIFT' &&
-        entry.reason_code === 'BLOCKED_MISSING_PRICING' &&
-        entry.window === 'last_50',
+        entry.card_mode === 'PROJECTION_ONLY',
+    );
+    const projectionAlert = report.alerts.find(
+      (entry) =>
+        entry.alert_type === 'PROJECTION_BIAS_BREACH' &&
+        entry.window === 'season_to_date',
+    );
+    const segment = report.windows.season_to_date.segments.find(
+      (entry) =>
+        entry.card_family === 'NHL_PLAYER_SHOTS' &&
+        entry.card_mode === 'PROJECTION_ONLY' &&
+        entry.execution_status === 'PROJECTION_ONLY',
     );
 
-    expect(alert).toMatchObject({
-      baseline_window: 'previous_50',
-      baseline_value: 0.04,
-      card_family: 'MLB_PITCHER_K',
+    expect(blockAlert).toBeUndefined();
+    expect(segment.projection_metrics).toMatchObject({
+      actuals_available: true,
+      bias: -1,
+      directional_accuracy: 1,
+      mae: 1,
+      sample_count: 50,
+      rows_seen: 50,
+    });
+    expect(projectionAlert).toMatchObject({
+      card_family: 'NHL_PLAYER_SHOTS',
       card_mode: 'PROJECTION_ONLY',
-      execution_status: 'PROJECTION_ONLY',
-      value: 0.4,
+      severity: 'CRITICAL',
+      threshold: 0.6,
+      value: -1,
+      window: 'season_to_date',
     });
   });
 

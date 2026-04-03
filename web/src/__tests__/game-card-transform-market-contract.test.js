@@ -77,8 +77,10 @@ assert(
 );
 
 assert(
-  source.includes("const propPlays = game.plays.filter((p) => p.market_type === 'PROP');"),
-  'transform props mode should scope prop rows by canonical PROP market only',
+  source.includes("(p) => p.market_type === 'PROP' && !isProjectionOnlyPropPlay(p, p.prop_decision)") &&
+    source.includes('!isProjectionOnlyCardPlay(play) &&') &&
+    source.includes('!isProjectionOnlyCardPlay(game.true_play)'),
+  'transform should exclude projection-only rows from game-line and props betting surfaces',
 );
 
 assert(
@@ -116,10 +118,12 @@ assert(
 
 assert(
   source.includes("play.basis === 'PROJECTION_ONLY'") &&
+    source.includes("play.execution_status === 'PROJECTION_ONLY'") &&
+    source.includes("play.prop_display_state === 'PROJECTION_ONLY'") &&
     source.includes("projectionSource === 'SYNTHETIC_FALLBACK'") &&
     source.includes("if (rawVerdict === 'PASS')") &&
     source.includes("return 'PROJECTION';"),
-  'transform props mode should hard-demote projection-only or synthetic-fallback pitcher K rows before legacy action inference',
+  'transform should identify projection-only rows via basis, execution_status, prop_display_state, and synthetic fallback provenance',
 );
 
 assert(
@@ -174,15 +178,15 @@ assert(
 
 assert(
   propGameCardSource.includes('const isProjectionOnlyProp = (prop: PropPlayRow) =>') &&
-    propGameCardSource.includes('K mean:') &&
+    propGameCardSource.includes('Model Projection \\u2014 No Line Applied') &&
     propGameCardSource.includes('PITCHER_K_THRESHOLDS') &&
     propGameCardSource.includes('Fair O') &&
-    propGameCardSource.includes('Playable thresholds:') &&
+    propGameCardSource.includes('Over at {formatNumber(prop.playability?.over_playable_at_or_below, 1)} or lower') &&
     propGameCardSource.includes('Standard line:') &&
     propGameCardSource.includes('PASS reason:') &&
     propGameCardSource.includes('getSourceBadgeClass') &&
     propGameCardSource.includes('getStatusCapBadgeClass'),
-  'PropGameCard should render pitcher K mean, ladder/fair odds, playable thresholds, source/cap badges, and PASS diagnostics with projection-only demotion',
+  'PropGameCard should render pitcher K ladders/fair odds, playable thresholds, source/cap badges, PASS diagnostics, and model-only fallback copy',
 );
 
 assert(

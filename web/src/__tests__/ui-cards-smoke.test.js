@@ -65,6 +65,14 @@ async function validateCardsSourceContract(assert) {
     new URL('../components/cards/GameCardItem.tsx', import.meta.url),
     'utf8',
   );
+  const modeTabsSource = await fs.readFile(
+    new URL('../components/cards/CardsModeTabs.tsx', import.meta.url),
+    'utf8',
+  );
+  const pageContextSource = await fs.readFile(
+    new URL('../components/cards/CardsPageContext.tsx', import.meta.url),
+    'utf8',
+  );
   assert.ok(
     !source.includes('displayPlay.edge ?? 0'),
     'cards page must not synthesize edge from `displayPlay.edge ?? 0`',
@@ -84,6 +92,16 @@ async function validateCardsSourceContract(assert) {
   assert.ok(
     !source.includes('Sharp Verdict:'),
     'cards page should not leak internal sharp verdict label',
+  );
+  assert.ok(
+    !modeTabsSource.includes('Game Props') &&
+      !modeTabsSource.includes("onModeChange('projections')"),
+    'cards page should not expose projection-only Game Props tab in betting surfaces',
+  );
+  assert.ok(
+    !pageContextSource.includes("modeParam === 'projections'") &&
+      pageContextSource.includes("const safeNextMode = nextMode === 'projections' ? 'game' : nextMode;"),
+    'cards page should force projection mode requests back to game mode',
   );
 }
 

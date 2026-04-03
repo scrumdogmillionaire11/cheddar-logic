@@ -53,6 +53,7 @@ async function validateResultsSourceContract(assert) {
     'totalPnlUnits:',
     'winRate:',
     'avgPnl:',
+    'avgClvPct:',
   ].forEach((token) => {
     assert.ok(
       routeSource.includes(token),
@@ -78,6 +79,11 @@ async function validateResultsSourceContract(assert) {
   assert.ok(
     routeSource.includes('segmentFamilies: DECISION_SEGMENTS.map'),
     'results route must derive segmentFamilies from DECISION_SEGMENTS',
+  );
+  assert.ok(
+    routeSource.includes('projectionSummaries: []') &&
+      routeSource.includes('projectionSummaries,'),
+    'results route must expose projectionSummaries in empty and populated responses',
   );
   assert.ok(
     routeSource.includes('ledger: []') &&
@@ -114,6 +120,13 @@ async function validateResultsSourceContract(assert) {
     !pageSource.includes('<option value="NCAAM">NCAAM</option>'),
     'results page must not expose NCAAM in sport filters',
   );
+  assert.ok(
+    pageSource.includes('Betting Record') &&
+      pageSource.includes('Projection Models (Research Only)') &&
+      pageSource.includes('Model Projection — No Line Applied') &&
+      pageSource.includes('Awaiting settled outcome data'),
+    'results page must render split betting/projection lanes with hard projection-only labeling',
+  );
 }
 
 async function validateLiveResultsPayload(baseUrl, assert) {
@@ -140,6 +153,7 @@ async function validateLiveResultsPayload(baseUrl, assert) {
     'totalPnlUnits',
     'winRate',
     'avgPnl',
+    'avgClvPct',
   ].forEach((key) => {
     assert.ok(
       Object.prototype.hasOwnProperty.call(summary, key),
@@ -164,6 +178,10 @@ async function validateLiveResultsPayload(baseUrl, assert) {
     'Summary avgPnl must be number|null',
   );
   assert.ok(
+    summary.avgClvPct === null || typeof summary.avgClvPct === 'number',
+    'Summary avgClvPct must be number|null',
+  );
+  assert.ok(
     summary.wins + summary.losses + summary.pushes <= summary.settledCards,
     'Summary W/L/P counts cannot exceed settledCards',
   );
@@ -185,6 +203,32 @@ async function validateLiveResultsPayload(baseUrl, assert) {
     assert.ok(
       segmentFamilies.some((segment) => segment.segmentId === segmentId),
       `segmentFamilies missing ${segmentId}`,
+    );
+  });
+  assert.ok(
+    Array.isArray(payload.data.projectionSummaries),
+    'projectionSummaries is not an array',
+  );
+  payload.data.projectionSummaries.forEach((row, index) => {
+    [
+      'actualsAvailable',
+      'bias',
+      'cardFamily',
+      'directionalAccuracy',
+      'familyLabel',
+      'mae',
+      'rowsSeen',
+      'sampleSize',
+    ].forEach((key) => {
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(row, key),
+        `projectionSummaries row ${index} missing ${key}`,
+      );
+    });
+    assert.strictEqual(
+      typeof row.actualsAvailable,
+      'boolean',
+      `projectionSummaries row ${index} actualsAvailable must be boolean`,
     );
   });
   assert.ok(Array.isArray(payload.data.ledger), 'Ledger is not an array');

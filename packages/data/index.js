@@ -183,8 +183,6 @@ module.exports = {
   // Additive telemetry (flag-gated, default-off)
   recordClvEntry: dbTelemetry.recordClvEntry,
   settleClvEntry: dbTelemetry.settleClvEntry,
-  recordProjectionEntry: dbTelemetry.recordProjectionEntry,
-  settleProjectionEntry: dbTelemetry.settleProjectionEntry,
 
   // Token quota ledger
   getQuotaLedger: db.getQuotaLedger,

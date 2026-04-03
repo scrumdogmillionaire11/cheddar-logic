@@ -18,7 +18,6 @@ const {
   markJobRunFailure,
   setCurrentRunId,
   insertCardPayload,
-  recordProjectionEntry,
   validateCardPayload,
   withDb,
   getPlayerPropLine,
@@ -33,10 +32,7 @@ const {
   projectBlkV1,
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
-const {
-  applyNhlDecisionBasisMeta,
-  recordNhlProjectionTelemetry,
-} = require('../utils/nhl-shots-patch');
+const { applyNhlDecisionBasisMeta } = require('../utils/nhl-shots-patch');
 
 const JOB_NAME = 'run-nhl-player-shots-model';
 
@@ -2746,13 +2742,6 @@ async function runNHLPlayerShotsModel() {
 
                 try {
                   insertCardPayload(card);
-                try {
-                  recordNhlProjectionTelemetry(recordProjectionEntry, card);
-                } catch (telemetryErr) {
-                  console.warn(
-                    `[${JOB_NAME}] Projection telemetry skipped for ${card.id}: ${telemetryErr.message}`,
-                  );
-                }
                 cardsCreated++;
                 console.log(
                   `[${JOB_NAME}] ✓ Created ${fullPropDecision.verdict} card: ${playerName} ${fullPropDecision.lean_side ?? fullGameEdge.direction} ${syntheticLine} (fair ${fairLine}, conf ${Math.round(confidence * 100)}%)`,
@@ -2998,13 +2987,6 @@ async function runNHLPlayerShotsModel() {
 
                 try {
                   insertCardPayload(card1p);
-                  try {
-                    recordNhlProjectionTelemetry(recordProjectionEntry, card1p);
-                  } catch (telemetryErr) {
-                    console.warn(
-                      `[${JOB_NAME}] Projection telemetry skipped for ${card1p.id}: ${telemetryErr.message}`,
-                    );
-                  }
                   cardsCreated++;
                   console.log(
                     `[${JOB_NAME}] ✓ Created ${firstPeriodEdge.tier} 1P card: ${playerName} ${firstPeriodEdge.direction} ${syntheticLine1p} (fair ${fairLine1p}, conf ${Math.round(firstPeriodConfidence * 100)}%)`,

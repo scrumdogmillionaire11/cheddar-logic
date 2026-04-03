@@ -194,7 +194,6 @@ function loadFreshModule() {
     markJobRunFailure: jest.fn(),
     setCurrentRunId: jest.fn(),
     insertCardPayload: jest.fn(),
-    recordProjectionEntry: jest.fn(),
     validateCardPayload: jest.fn(),
     withDb: jest.fn((fn) => fn()),
     getPlayerPropLine: jest.fn(() => null),
@@ -1104,9 +1103,8 @@ describe('run_nhl_player_shots_model', () => {
     expect(card.payloadData.prop_decision.verdict).toBe('PROJECTION');
   });
 
-  test('adds decision_basis_meta and records projection telemetry when flagged and no real line', async () => {
+  test('adds decision_basis_meta when flagged and no real line', async () => {
     process.env.ENABLE_DECISION_BASIS_TAGS = 'true';
-    process.env.ENABLE_PROJECTION_PERF_LEDGER = 'true';
 
     const { mod, data, shots } = loadFreshModule();
     shots.classifyEdge.mockReturnValue({ tier: 'HOT', direction: 'OVER', edge: 1.0 });
@@ -1133,17 +1131,7 @@ describe('run_nhl_player_shots_model', () => {
       'synthetic_fallback',
     );
 
-    expect(data.recordProjectionEntry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cardId: insertedCard.id,
-        gameId: insertedCard.gameId,
-        sport: 'NHL',
-        decisionBasis: 'PROJECTION_ONLY',
-      }),
-    );
-
     delete process.env.ENABLE_DECISION_BASIS_TAGS;
-    delete process.env.ENABLE_PROJECTION_PERF_LEDGER;
   });
 
   test('Guard 1: projection-only cards with no real line are emitted as PROJECTION rows', async () => {

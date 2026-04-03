@@ -282,7 +282,7 @@ const buildHeroLine = ({
     return `WATCH — ${outcomeText}${oddsText}`;
   }
   if (verdict === 'PROJECTION') {
-    return 'PROJECTION ANCHOR';
+    return 'Model Projection \u2014 No Line Applied';
   }
 
   const strength = getNoPlayLeanStrength(thresholdGap);
@@ -368,7 +368,7 @@ const getDeterministicExplanation = ({
   if (verdict === 'PROJECTION') {
     return hasProjectionAnomaly
       ? 'Projection anomaly triggered, so this row stays model-only'
-      : 'Projection only — no bettable market is available';
+      : 'Model Projection \u2014 No Line Applied';
   }
   if (verdict === 'PLAY') {
     return (
@@ -535,16 +535,16 @@ const getPitcherKDiagnostics = (prop: PropPlayRow) => {
       : 'FULL MODEL';
 
   const statusLine = isFallback
-    ? 'PASS-only projection anchor'
+    ? 'Model Projection \u2014 No Line Applied'
     : prop.basis === 'PROJECTION_ONLY'
-      ? 'Projection only \u2014 no odds market'
+      ? 'Model Projection \u2014 No Line Applied'
       : null;
 
   const reasonText =
     prop.passReason ||
     formatReasonLabel(prop.passReasonCode) ||
     (isFallback ? 'Synthetic fallback projection' : null) ||
-    (prop.basis === 'PROJECTION_ONLY' ? 'Projection only \u2014 no odds market available' : null);
+    (prop.basis === 'PROJECTION_ONLY' ? 'Model Projection \u2014 No Line Applied' : null);
 
   const missingInputsText =
     prop.missingInputs && prop.missingInputs.length > 0

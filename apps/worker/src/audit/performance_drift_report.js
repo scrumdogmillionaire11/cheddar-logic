@@ -8,6 +8,10 @@ const {
   closeReadOnlyInstance,
   getDatabaseReadOnly,
 } = require('@cheddar-logic/data');
+const {
+  collectProjectionAlerts,
+  evaluateProjectionRows,
+} = require('./projection_evaluator');
 
 const DIMENSIONS = Object.freeze([
   'sport',
@@ -406,6 +410,7 @@ function normalizeResultToken(value) {
 
 function normalizeRow(row) {
   const payload = parseJsonObject(row.payload_data) || {};
+  const gameResultMetadata = parseJsonObject(row.game_result_metadata);
   const sport = toUpperToken(payload?.sport || row?.sport) || 'UNKNOWN';
   const cardMode = deriveCardMode(payload);
   const executionStatus = resolveExecutionStatus(payload, cardMode);
@@ -422,6 +427,9 @@ function normalizeRow(row) {
     card_type: row.card_type || payload.card_type || null,
     clv_pct: toNumber(row.clv_pct),
     execution_status: executionStatus,
+    final_score_away: toNumber(row.final_score_away),
+    final_score_home: toNumber(row.final_score_home),
+    game_result_metadata: gameResultMetadata,
     model_version: resolveModelVersion(payload),
     official_status: officialStatus,
     p_fair: firstFiniteNumber(
@@ -484,9 +492,13 @@ function loadSettledRows({ db, sport = null }) {
         cr.settled_at,
         cr.sport,
         cp.payload_data,
-        clv_by_card.clv_pct
+        clv_by_card.clv_pct,
+        gr.final_score_home,
+        gr.final_score_away,
+        gr.metadata AS game_result_metadata
       FROM card_results cr
       INNER JOIN card_payloads cp ON cp.id = cr.card_id
+      LEFT JOIN game_results gr ON gr.game_id = cr.game_id
       LEFT JOIN clv_by_card ON clv_by_card.card_id = cr.card_id
       WHERE LOWER(COALESCE(cr.status, '')) = 'settled'
         AND cr.settled_at IS NOT NULL
@@ -710,7 +722,7 @@ function buildSegments(rows, previousModelVersions) {
       `${firstRow.sport}||${firstRow.card_family}||${firstRow.card_mode}||${firstRow.model_version}`,
     ) || null;
 
-    segments.push({
+    const segment = {
       actionable_sample_count: groupedRows.filter((row) => row.actionable).length,
       block_rate_by_reason: finalizeBlockRateByReason(reasonCounts, sampleCount),
       calibration: {
@@ -736,7 +748,16 @@ function buildSegments(rows, previousModelVersions) {
       sample_count: sampleCount,
       sport: firstRow.sport,
       wins,
-    });
+    };
+
+    if (firstRow.card_mode === 'PROJECTION_ONLY') {
+      segment.projection_metrics = evaluateProjectionRows(
+        groupedRows,
+        firstRow.card_family,
+      );
+    }
+
+    segments.push(segment);
   }
 
   return segments.sort(compareSegments);
@@ -839,6 +860,7 @@ function collectWindowAlertCandidates(
   const baselineCohortIndex = buildCohortIndex(baselineSegments);
 
   for (const cohort of currentCohortIndex.values()) {
+    if (cohort.card_mode !== 'ODDS_BACKED') continue;
     if (cohort.sample_count < ALERT_SAMPLE_MIN) continue;
 
     const cohortKey = [
@@ -891,6 +913,7 @@ function collectWindowAlertCandidates(
   }
 
   for (const segment of currentSegmentIndex.values()) {
+    if (segment.card_mode !== 'ODDS_BACKED') continue;
     if (segment.sample_count < ALERT_SAMPLE_MIN) continue;
 
     const divergence = calculateCalibrationDivergence(segment.calibration);
@@ -1041,6 +1064,7 @@ function buildPerformanceDriftReport(rows, options = {}) {
   const previousModelVersions = buildModelVersionHistory(sortedRows);
   const windows = {};
   const alertCandidates = [];
+  const projectionAlerts = [];
 
   for (const definition of WINDOW_DEFS) {
     const currentRows =
@@ -1067,10 +1091,17 @@ function buildPerformanceDriftReport(rows, options = {}) {
         },
       ),
     );
+
+    for (const segment of currentSegments) {
+      projectionAlerts.push(...collectProjectionAlerts(segment, definition.name));
+    }
   }
 
   return {
-    alerts: decorateAlertSeverities(alertCandidates),
+    alerts: [
+      ...decorateAlertSeverities(alertCandidates),
+      ...projectionAlerts,
+    ].sort(compareAlerts),
     dimensions: [...DIMENSIONS],
     generated_at: generatedAt,
     windows,

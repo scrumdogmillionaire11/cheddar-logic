@@ -147,7 +147,6 @@ function loadRunNHLPlayerShotsModel({
   const markJobRunFailure = jest.fn();
   const setCurrentRunId = jest.fn();
   const insertCardPayload = jest.fn();
-  const recordProjectionEntry = jest.fn();
   const validateCardPayload = jest.fn();
   const withDb = jest.fn(async (fn) => fn());
   const getPlayerPropLine = jest.fn(() => null);
@@ -169,7 +168,6 @@ function loadRunNHLPlayerShotsModel({
     markJobRunFailure,
     setCurrentRunId,
     insertCardPayload,
-    recordProjectionEntry,
     validateCardPayload,
     withDb,
     getPlayerPropLine,
@@ -228,10 +226,8 @@ function loadRunNHLPlayerShotsModel({
   }));
 
   const applyNhlDecisionBasisMeta = jest.fn();
-  const recordNhlProjectionTelemetry = jest.fn();
   jest.doMock('../utils/nhl-shots-patch', () => ({
     applyNhlDecisionBasisMeta,
-    recordNhlProjectionTelemetry,
   }));
 
   const moduleUnderTest = require('../jobs/run_nhl_player_shots_model');
@@ -244,7 +240,6 @@ function loadRunNHLPlayerShotsModel({
       markJobRunFailure,
       setCurrentRunId,
       insertCardPayload,
-      recordProjectionEntry,
       validateCardPayload,
       withDb,
       getPlayerPropLine,
@@ -257,7 +252,6 @@ function loadRunNHLPlayerShotsModel({
       projectSogV2,
       fetchMoneyPuckSnapshot,
       applyNhlDecisionBasisMeta,
-      recordNhlProjectionTelemetry,
     },
   };
 }
