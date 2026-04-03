@@ -104,7 +104,6 @@ export const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
     playProducerCardTypes: new Set([
       'nba-totals-call',
       'nba-spread-call',
-      'nba-moneyline-call',
     ]),
     evidenceOnlyCardTypes: new Set([
       'nba-base-projection',

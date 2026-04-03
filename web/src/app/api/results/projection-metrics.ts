@@ -366,9 +366,6 @@ const CARD_FAMILY_MAP: Record<string, string> = {
   'nba-totals-call': 'NBA_TOTAL',
   // NBA spread
   'nba-spread-call': 'NBA_SPREAD',
-  // NBA moneyline
-  'nba-ml-call': 'NBA_ML',
-  'nba-moneyline': 'NBA_ML',
   // MLB pitcher strikeouts
   'mlb-pitcher-k': 'MLB_PITCHER_K',
   // MLB F5
@@ -393,7 +390,6 @@ const MODEL_FAMILY_LABELS: Record<string, string> = {
   NHL_INFO: 'NHL Context',
   NBA_TOTAL: 'NBA Cross-Market Totals',
   NBA_SPREAD: 'NBA Spread',
-  NBA_ML: 'NBA Moneyline',
   MLB_PITCHER_K: 'MLB Pitcher Strikeouts',
   MLB_F5_TOTAL: 'MLB F5 Totals',
   MLB_F5_ML: 'MLB F5 Moneyline',
@@ -411,7 +407,6 @@ const MODEL_VERSION_MAP: Record<string, string> = {
   NHL_PLAYER_SHOTS: 'nhl-player-shots-v1',
   NBA_TOTAL: 'nba-totals-v1',
   NBA_SPREAD: 'nba-spread-v1',
-  NBA_ML: 'nba-ml-v1',
   MLB_PITCHER_K: 'mlb-pitcher-k-v1',
   MLB_F5_TOTAL: 'mlb-f5-v1',
   MLB_F5_ML: 'mlb-f5-v1',
