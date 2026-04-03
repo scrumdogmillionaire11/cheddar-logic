@@ -57,7 +57,7 @@ function getUnsettledProjectionCards() {
       g.away_team
     FROM card_payloads cp
     JOIN games g ON cp.game_id = g.game_id
-    WHERE cp.card_type IN ('nhl-pace-1p', 'mlb-f5')
+    WHERE cp.card_type IN ('nhl-pace-1p', 'mlb-f5', 'nhl-player-shots', 'nhl-player-shots-1p', 'nhl-player-blk', 'mlb-pitcher-k')
       AND cp.actual_result IS NULL
       AND g.game_time_utc < ?
     ORDER BY g.game_time_utc DESC
