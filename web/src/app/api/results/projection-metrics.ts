@@ -28,6 +28,12 @@ type ProjectionAccumulator = {
   sampleSize: number;
 };
 
+// PROJECTION_FAMILY_LABELS drives projection accuracy summaries (buildProjectionSummaries).
+// It intentionally covers families that are ALWAYS PROJECTION_ONLY — sub-period and
+// prop markets that never fetch live odds (per WI-0727).
+// Full-game odds-backed families (NHL_TOTAL, NHL_ML, NHL_SPREAD, NBA_*, MLB_*) live only
+// in CARD_FAMILY_MAP below, which feeds the betting ledger path in /api/results.
+// Note: NHL_1P_TOTAL is PROJECTION_ONLY only — it appears here but NOT in CARD_FAMILY_MAP.
 const PROJECTION_FAMILY_LABELS: Record<string, string> = {
   MLB_F5_TOTAL: 'MLB F5 Total',
   MLB_PITCHER_K: 'MLB Pitcher K',
@@ -309,13 +315,22 @@ function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | n
 // Maps raw card_type strings to canonical card family keys.
 // Both driver types (nhl-pace-totals) and call types (nhl-totals-call) collapse
 // to the same family so results grouping never shows duplicate rows.
+//
+// IMPORTANT: Only ODDS_BACKED families belong here. This map feeds the betting
+// ledger grouping in /api/results (route.ts lines ~741, ~982) which is gated by
+// deriveResultCardMode === 'ODDS_BACKED' before it ever calls deriveCardFamily.
+//
+// NHL 1P totals (nhl-pace-1p, nhl-1p-call) are intentionally OMITTED:
+//   - pull_nhl_1p_odds.js is gated behind NHL_1P_ODDS_ENABLED=true (never set)
+//     and is not registered in the scheduler (WI-0736 / WI-0727).
+//   - run_nhl_model.js always sets execution_status=PROJECTION_ONLY when
+//     total_1p_price_over/under are null (which they always are today).
+//   - They appear in PROJECTION_FAMILY_LABELS above for the projection accuracy path.
+//   Re-add here only if NHL_1P_ODDS_ENABLED is activated in production.
 const CARD_FAMILY_MAP: Record<string, string> = {
   // NHL full-game totals
   'nhl-pace-totals': 'NHL_TOTAL',
   'nhl-totals-call': 'NHL_TOTAL',
-  // NHL 1P totals
-  'nhl-pace-1p': 'NHL_1P_TOTAL',
-  'nhl-1p-call': 'NHL_1P_TOTAL',
   // NHL spread / puckline
   'nhl-spread-call': 'NHL_SPREAD',
   'nhl-puckline': 'NHL_SPREAD',
