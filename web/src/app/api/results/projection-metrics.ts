@@ -298,6 +298,130 @@ function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | n
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Canonical reporting identity helpers (WI-0749)
+// ---------------------------------------------------------------------------
+
+// Maps raw card_type strings to canonical card family keys.
+// Both driver types (nhl-pace-totals) and call types (nhl-totals-call) collapse
+// to the same family so results grouping never shows duplicate rows.
+const CARD_FAMILY_MAP: Record<string, string> = {
+  // NHL full-game totals
+  'nhl-pace-totals': 'NHL_TOTAL',
+  'nhl-totals-call': 'NHL_TOTAL',
+  // NHL 1P totals
+  'nhl-pace-1p': 'NHL_1P_TOTAL',
+  'nhl-1p-call': 'NHL_1P_TOTAL',
+  // NHL spread / puckline
+  'nhl-spread-call': 'NHL_SPREAD',
+  'nhl-puckline': 'NHL_SPREAD',
+  // NHL moneyline
+  'nhl-ml-call': 'NHL_ML',
+  'nhl-moneyline': 'NHL_ML',
+  // NHL player shots
+  'nhl-player-shots': 'NHL_PLAYER_SHOTS',
+  'nhl-player-shots-call': 'NHL_PLAYER_SHOTS',
+  // NHL blowout risk / synergy / matchup info cards
+  'nhl-blowout-risk': 'NHL_INFO',
+  'nhl-synergy': 'NHL_INFO',
+  'nhl-matchup-style': 'NHL_INFO',
+  // NBA totals
+  'nba-pace-totals': 'NBA_TOTAL',
+  'nba-totals-call': 'NBA_TOTAL',
+  // NBA spread
+  'nba-spread-call': 'NBA_SPREAD',
+  // NBA moneyline
+  'nba-ml-call': 'NBA_ML',
+  'nba-moneyline': 'NBA_ML',
+  // MLB pitcher strikeouts
+  'mlb-pitcher-k': 'MLB_PITCHER_K',
+  // MLB F5
+  'mlb-f5': 'MLB_F5_TOTAL',
+  'mlb-f5-call': 'MLB_F5_TOTAL',
+  'mlb-f5-ml': 'MLB_F5_ML',
+  // MLB full-game totals
+  'mlb-totals-call': 'MLB_TOTAL',
+  // MLB spread
+  'mlb-spread-call': 'MLB_SPREAD',
+  // MLB moneyline
+  'mlb-ml-call': 'MLB_ML',
+};
+
+const MODEL_FAMILY_LABELS: Record<string, string> = {
+  NHL_TOTAL: 'NHL Full-Game Totals',
+  NHL_1P_TOTAL: 'NHL 1P Totals',
+  NHL_SPREAD: 'NHL Spread / Puckline',
+  NHL_ML: 'NHL Moneyline',
+  NHL_PLAYER_SHOTS: 'NHL Player Shots',
+  NHL_INFO: 'NHL Context',
+  NBA_TOTAL: 'NBA Cross-Market Totals',
+  NBA_SPREAD: 'NBA Spread',
+  NBA_ML: 'NBA Moneyline',
+  MLB_PITCHER_K: 'MLB Pitcher Strikeouts',
+  MLB_F5_TOTAL: 'MLB F5 Totals',
+  MLB_F5_ML: 'MLB F5 Moneyline',
+  MLB_TOTAL: 'MLB Full-Game Totals',
+  MLB_SPREAD: 'MLB Spread',
+  MLB_ML: 'MLB Moneyline',
+};
+
+const MODEL_VERSION_MAP: Record<string, string> = {
+  NHL_TOTAL: 'nhl-totals-v1',
+  NHL_1P_TOTAL: 'nhl-1p-v1',
+  NHL_SPREAD: 'nhl-spread-v1',
+  NHL_ML: 'nhl-ml-v1',
+  NHL_PLAYER_SHOTS: 'nhl-player-shots-v1',
+  NBA_TOTAL: 'nba-totals-v1',
+  NBA_SPREAD: 'nba-spread-v1',
+  NBA_ML: 'nba-ml-v1',
+  MLB_PITCHER_K: 'mlb-pitcher-k-v1',
+  MLB_F5_TOTAL: 'mlb-f5-v1',
+  MLB_F5_ML: 'mlb-f5-v1',
+  MLB_TOTAL: 'mlb-totals-v1',
+  MLB_SPREAD: 'mlb-spread-v1',
+  MLB_ML: 'mlb-ml-v1',
+};
+
+/**
+ * Derive the canonical card family key from sport + card_type.
+ * This is the stable grouping key for results aggregation — both driver types
+ * (nhl-pace-totals) and call types (nhl-totals-call) resolve to the same family
+ * (NHL_TOTAL) so the results table never shows duplicate rows for the same market.
+ */
+export function deriveCardFamily(
+  sport: string | null,
+  cardType: string | null,
+): string {
+  const normalized = String(cardType || '').trim().toLowerCase();
+  const mapped = CARD_FAMILY_MAP[normalized];
+  if (mapped) return mapped;
+  // Fallback: build an uppercase token from sport + card_type
+  const sportToken = String(sport || 'UNKNOWN').trim().toUpperCase();
+  return `${sportToken}_${normalized.replace(/-/g, '_').toUpperCase() || 'UNKNOWN'}`;
+}
+
+/**
+ * Derive the human-readable model engine label for a sport + card_type.
+ */
+export function deriveModelFamily(
+  sport: string | null,
+  cardType: string | null,
+): string {
+  const family = deriveCardFamily(sport, cardType);
+  return MODEL_FAMILY_LABELS[family] || family;
+}
+
+/**
+ * Derive the short model version slug for a sport + card_type.
+ */
+export function deriveModelVersion(
+  sport: string | null,
+  cardType: string | null,
+): string {
+  const family = deriveCardFamily(sport, cardType);
+  return MODEL_VERSION_MAP[family] || 'v1';
+}
+
 export function buildProjectionSummaries(
   rows: ProjectionMetricInputRow[],
 ): ProjectionSummaryRow[] {

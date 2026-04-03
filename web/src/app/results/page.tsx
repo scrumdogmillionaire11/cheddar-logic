@@ -30,6 +30,9 @@ type ProjectionSummaryRow = {
 type SegmentRow = {
   sport: string;
   cardType: string;
+  cardFamily: string;
+  modelFamily: string;
+  modelVersion: string;
   cardCategory: string;
   recommendedBetType: string;
   settledCards: number;
@@ -80,6 +83,8 @@ type LedgerRow = {
   projectionTotal?: number | null;
   decisionTier?: 'PLAY' | 'LEAN' | null;
   decisionLabel?: string | null;
+  cardFamily?: string | null;
+  modelFamily?: string | null;
 };
 
 type ResultsResponse = {
@@ -669,8 +674,8 @@ export default function ResultsPage() {
                   <div className="hidden overflow-hidden rounded-xl border border-white/10 md:block">
                     <div className="grid grid-cols-6 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
                       <span>Sport</span>
-                      <span>Type</span>
-                      <span>Market</span>
+                      <span>Family</span>
+                      <span>Engine</span>
                       <span>Plays</span>
                       <span>Win Rate</span>
                       <span>ROI</span>
@@ -690,15 +695,15 @@ export default function ResultsPage() {
                           const isHighWinRate = winRate >= 0.6;
                           return (
                             <div
-                              key={`${family.segmentId}-${row.sport}-${row.cardType}-${row.recommendedBetType}`}
+                              key={`${family.segmentId}-${row.sport}-${row.cardFamily}-${row.recommendedBetType}`}
                               className={`grid grid-cols-6 gap-4 px-4 py-3 text-sm ${isHighWinRate ? 'bg-emerald-500/10' : ''}`}
                             >
                               <span className="text-cloud/70">{row.sport}</span>
                               <span className="text-cloud/70">
-                                {formatSegmentTypeLabel(row.cardType)}
+                                {row.cardFamily}
                               </span>
-                              <span className="text-cloud/70 capitalize">
-                                {row.recommendedBetType || '--'}
+                              <span className="text-cloud/70">
+                                {row.modelFamily || '--'}
                               </span>
                               <span className="text-cloud/70">{total}</span>
                               <span
@@ -734,7 +739,7 @@ export default function ResultsPage() {
                             : 0;
                         return (
                           <article
-                            key={`${family.segmentId}-${row.sport}-${row.cardType}-${row.recommendedBetType}-mobile`}
+                            key={`${family.segmentId}-${row.sport}-${row.cardFamily}-${row.recommendedBetType}-mobile`}
                             className="rounded-xl border border-white/10 bg-night/40 px-4 py-4"
                           >
                             <div className="flex items-start justify-between gap-3">
@@ -742,11 +747,11 @@ export default function ResultsPage() {
                                 <p className="text-sm font-semibold text-cloud">
                                   {row.sport} -{' '}
                                   <span className="text-cloud/75">
-                                    {formatSegmentTypeLabel(row.cardType)}
+                                    {row.cardFamily}
                                   </span>
                                 </p>
-                                <p className="mt-1 text-xs text-cloud/60 capitalize">
-                                  {row.recommendedBetType || '--'}
+                                <p className="mt-1 text-xs text-cloud/60">
+                                  {row.modelFamily || '--'}
                                 </p>
                               </div>
                               <span

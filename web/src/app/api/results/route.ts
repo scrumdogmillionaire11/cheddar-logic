@@ -13,6 +13,9 @@ import {
 import {
   buildProjectionSummaries,
   deriveResultCardMode,
+  deriveCardFamily,
+  deriveModelFamily,
+  deriveModelVersion,
 } from './projection-metrics';
 
 const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
@@ -744,12 +747,18 @@ export async function GET(request: NextRequest) {
         return [];
       }
       const decisionSegment = deriveDecisionSegment(decisionTier);
+      const cardFamily = deriveCardFamily(row.sport, row.card_type);
+      const modelFamily = deriveModelFamily(row.sport, row.card_type);
+      const modelVersion = deriveModelVersion(row.sport, row.card_type);
       return [
         {
           ...row,
           decisionTier,
           segmentId: decisionSegment.id,
           segmentLabel: decisionSegment.label,
+          cardFamily,
+          modelFamily,
+          modelVersion,
         },
       ];
     });
@@ -759,6 +768,9 @@ export async function GET(request: NextRequest) {
       {
         sport: string;
         cardType: string;
+        cardFamily: string;
+        modelFamily: string;
+        modelVersion: string;
         cardCategory: string;
         recommendedBetType: string;
         settledCards: number;
@@ -800,11 +812,13 @@ export async function GET(request: NextRequest) {
 
       const cardCategory = deriveCardCategoryFromType(row.card_type);
       const recommendedBetType = row.recommended_bet_type || 'unknown';
+      // Key on cardFamily (canonical market bucket) instead of raw card_type.
+      // This merges driver types (nhl-pace-totals) and call types (nhl-totals-call)
+      // into a single NHL_TOTAL row rather than producing duplicate table rows.
       const key = [
         row.segmentId,
         row.sport,
-        row.card_type,
-        cardCategory,
+        row.cardFamily,
         recommendedBetType,
       ].join('||');
       const existing = segmentMap.get(key);
@@ -812,6 +826,9 @@ export async function GET(request: NextRequest) {
         segmentMap.set(key, {
           sport: row.sport,
           cardType: row.card_type,
+          cardFamily: row.cardFamily,
+          modelFamily: row.modelFamily,
+          modelVersion: row.modelVersion,
           cardCategory,
           recommendedBetType,
           settledCards: 1,
@@ -844,6 +861,9 @@ export async function GET(request: NextRequest) {
       .map((row) => ({
         sport: row.sport,
         cardType: row.cardType,
+        cardFamily: row.cardFamily,
+        modelFamily: row.modelFamily,
+        modelVersion: row.modelVersion,
         cardCategory: row.cardCategory,
         recommendedBetType: row.recommendedBetType,
         settledCards: row.settledCards,
@@ -860,10 +880,7 @@ export async function GET(request: NextRequest) {
           return a.segmentId.localeCompare(b.segmentId);
         }
         if (a.sport !== b.sport) return a.sport.localeCompare(b.sport);
-        if (a.cardType !== b.cardType) return a.cardType.localeCompare(b.cardType);
-        if (a.cardCategory !== b.cardCategory) {
-          return a.cardCategory.localeCompare(b.cardCategory);
-        }
+        if (a.cardFamily !== b.cardFamily) return a.cardFamily.localeCompare(b.cardFamily);
         return a.recommendedBetType.localeCompare(b.recommendedBetType);
       });
 
@@ -961,6 +978,9 @@ export async function GET(request: NextRequest) {
       if (deriveResultCardMode(payload) !== 'ODDS_BACKED') {
         return [];
       }
+
+      const cardFamily = deriveCardFamily(row.sport, row.card_type);
+      const modelFamily = deriveModelFamily(row.sport, row.card_type);
 
       const tier =
         payload && typeof payload.tier === 'string' ? payload.tier : null;
@@ -1162,6 +1182,8 @@ export async function GET(request: NextRequest) {
           gameId: row.game_id,
           sport: row.sport,
           cardType: row.card_type,
+          cardFamily,
+          modelFamily,
           result: row.result,
           pnlUnits: row.pnl_units,
           settledAt: row.settled_at,
