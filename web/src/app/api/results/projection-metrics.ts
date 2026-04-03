@@ -451,11 +451,22 @@ export function buildProjectionSummaries(
   const grouped = new Map<string, ProjectionAccumulator>();
 
   for (const row of rows) {
-    if (deriveResultCardMode(row.payload) !== 'PROJECTION_ONLY') continue;
-
     const cardFamily = deriveProjectionCardFamily(row);
+
+    // Use PROJECTION_FAMILY_LABELS as a strict allowlist.
+    // This has two effects:
+    //   1. Blocks odds-backed families (NBA_TOTAL, NHL_TOTAL, etc.) from leaking
+    //      into this section when they happen to carry execution_status=PROJECTION_ONLY
+    //      (e.g., blocked model runs or cards with synthetic line source).
+    //   2. Includes all rows for model-projection families (NHL_PLAYER_SHOTS,
+    //      NHL_1P_TOTAL, MLB_F5_TOTAL, MLB_PITCHER_K, etc.) regardless of whether
+    //      the individual card was odds-backed in that era — the model always
+    //      emits a projection even when a real line is available, so tracking
+    //      them all gives a more complete accuracy picture.
+    if (!PROJECTION_FAMILY_LABELS[cardFamily]) continue;
+
     const accumulator =
-      grouped.get(cardFamily) ||
+      grouped.get(cardFamily) ??
       {
         absErrorSum: 0,
         biasSum: 0,
@@ -492,6 +503,7 @@ export function buildProjectionSummaries(
     grouped.set(cardFamily, accumulator);
   }
 
+  // Return summaries sorted so families with actuals come first, then by label.
   return Array.from(grouped.values())
     .map((summary) => ({
       actualsAvailable: summary.sampleSize > 0,
