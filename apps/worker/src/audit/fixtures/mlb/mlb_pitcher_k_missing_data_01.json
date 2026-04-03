@@ -35,6 +35,7 @@
     "execution_status": "BLOCKED",
     "market_type": "UNKNOWN",
     "prediction_state_status": "UNQUALIFIED",
+    "prop_decision_model_quality": "FALLBACK",
     "reason_codes_must_not_include": ["EDGE_CLEAR"]
   },
   "_baseline_change_note": {

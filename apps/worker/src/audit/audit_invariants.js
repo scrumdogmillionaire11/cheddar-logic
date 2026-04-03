@@ -198,6 +198,84 @@ function checkExecutionStateConsistency(publishSnapshot) {
   };
 }
 
+/**
+ * INV-007 — MLB_PITCHER_K model_quality contract
+ *
+ * Asserts:
+ *   1. prop_decision.model_quality is one of FULL_MODEL | DEGRADED_MODEL | FALLBACK
+ *      (required for every MLB_PITCHER_K card where prop_decision is present)
+ *   2. If prop_decision.proxy_fields is a non-empty array, model_quality MUST be FALLBACK
+ *   3. prop_decision.degradation_reasons must be an array (may be empty)
+ *
+ * WI: WORK_QUEUE/WI-0747.md
+ * Contract: docs/mlb_projection_input_contract.md
+ */
+function checkMlbPitcherKQualityContract(decisionSnapshot, publishSnapshot) {
+  const cardType = publishSnapshot?.cardType ?? publishSnapshot?.card_type;
+  const payloadData = publishSnapshot?.payloadData ?? publishSnapshot;
+
+  // Only applies to MLB_PITCHER_K cards
+  if (cardType !== 'mlb-pitcher-k') {
+    return { passed: true };
+  }
+
+  const pd = payloadData?.prop_decision;
+  if (!pd) {
+    // prop_decision may be null for PASS cards without a model result; skip
+    return { passed: true };
+  }
+
+  const VALID_QUALITY_TIERS = new Set(['FULL_MODEL', 'DEGRADED_MODEL', 'FALLBACK']);
+  const cardKey = getCardKey(publishSnapshot);
+
+  // Check 1: model_quality must be a valid enum value
+  if (!VALID_QUALITY_TIERS.has(pd.model_quality)) {
+    return {
+      passed: false,
+      violation: buildViolation({
+        invariantId: 'INV-007',
+        severity: 'ERROR',
+        fieldPath: 'prop_decision.model_quality',
+        expected: 'FULL_MODEL|DEGRADED_MODEL|FALLBACK',
+        actual: pd.model_quality ?? 'MISSING',
+        cardKey,
+      }),
+    };
+  }
+
+  // Check 2: proxy_fields present → model_quality must be FALLBACK
+  if (Array.isArray(pd.proxy_fields) && pd.proxy_fields.length > 0 && pd.model_quality !== 'FALLBACK') {
+    return {
+      passed: false,
+      violation: buildViolation({
+        invariantId: 'INV-007',
+        severity: 'ERROR',
+        fieldPath: 'prop_decision.model_quality',
+        expected: 'FALLBACK (proxy_fields is non-empty)',
+        actual: pd.model_quality,
+        cardKey,
+      }),
+    };
+  }
+
+  // Check 3: degradation_reasons must be an array
+  if (!Array.isArray(pd.degradation_reasons)) {
+    return {
+      passed: false,
+      violation: buildViolation({
+        invariantId: 'INV-007',
+        severity: 'WARN',
+        fieldPath: 'prop_decision.degradation_reasons',
+        expected: 'array (may be empty)',
+        actual: typeof pd.degradation_reasons,
+        cardKey,
+      }),
+    };
+  }
+
+  return { passed: true };
+}
+
 function runAuditInvariants({ decisionSnapshot, publishSnapshot, cards = [] } = {}) {
   const targets = [];
   if (publishSnapshot && typeof publishSnapshot === 'object') {
@@ -218,6 +296,7 @@ function runAuditInvariants({ decisionSnapshot, publishSnapshot, cards = [] } = 
     (_decisionSnapshot, candidate) => checkProjectionOnlyNotExecutable(candidate),
     (_decisionSnapshot, candidate) => checkConsistencyFieldsPresent(candidate),
     (_decisionSnapshot, candidate) => checkExecutionStateConsistency(candidate),
+    (_decisionSnapshot, candidate) => checkMlbPitcherKQualityContract(_decisionSnapshot, candidate),
   ];
 
   const violations = targets.flatMap(({ decisionSnapshot: currentDecision, publishSnapshot: currentPublish }) =>
@@ -238,6 +317,7 @@ function runAuditInvariants({ decisionSnapshot, publishSnapshot, cards = [] } = 
 module.exports = {
   checkConsistencyFieldsPresent,
   checkExecutionStateConsistency,
+  checkMlbPitcherKQualityContract,
   checkNoPostDecisionClassificationRewrite,
   checkNoPricingGap,
   checkNoPublishOnWatchdogBlock,
