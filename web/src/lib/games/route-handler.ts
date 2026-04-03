@@ -357,6 +357,10 @@ interface Play {
     projected_team_total?: number | null;
     projected_score_home?: number | null;
     projected_score_away?: number | null;
+    // Pitcher-K prop fields
+    k_mean?: number | null;
+    probability_ladder?: Record<string, unknown> | null;
+    fair_prices?: Record<string, unknown> | null;
   };
   status?: ExpressionStatus;
   kind?: 'PLAY' | 'EVIDENCE';
@@ -515,6 +519,15 @@ interface Play {
     l5_trend: 'uptrend' | 'downtrend' | 'stable' | null;
     why: string;
     flags: string[];
+    // Pitcher-K prop fields
+    k_mean: number | null;
+    probability_ladder: Record<string, unknown> | null;
+    fair_prices: Record<string, unknown> | null;
+    playability: Record<string, unknown> | null;
+    projection_source: string | null;
+    status_cap: string | null;
+    pass_reason_code: string | null;
+    missing_inputs: string[];
   };
 }
 
@@ -1916,9 +1929,9 @@ export async function GET(request: NextRequest) {
             ? normalizedDisplaySelectionSide
             : baseNormalizedPrediction;
         const normalizedPlayerName = firstString(
-          payloadSelection?.player_name,
-          payloadPlay?.player_name,
           (payload as Record<string, unknown>).player_name,
+          payloadPlay?.player_name,
+          payloadSelection?.player_name,
         );
         const normalizedSelectionTeamBase = firstString(
           normalizedPlayerName,
@@ -2082,17 +2095,14 @@ export async function GET(request: NextRequest) {
           rawPropDecision?.verdict,
           payloadPlayPropDecision?.verdict,
         );
-        const normalizedPropDecisionVerdict =
-          rawPropDecisionVerdict === 'PLAY' ||
-          rawPropDecisionVerdict === 'WATCH' ||
-          rawPropDecisionVerdict === 'NO_PLAY' ||
-          rawPropDecisionVerdict === 'PROJECTION'
-            ? (rawPropDecisionVerdict as
-                | 'PLAY'
-                | 'WATCH'
-                | 'NO_PLAY'
-                | 'PROJECTION')
-            : null;
+        // 'PASS' is the pitcher-K model's projection-only verdict — map it to
+        // 'PROJECTION' so the card's k_mean and related fields are not dropped.
+        const normalizedPropDecisionVerdict: 'PLAY' | 'WATCH' | 'NO_PLAY' | 'PROJECTION' | null =
+          rawPropDecisionVerdict === 'PLAY' ? 'PLAY'
+          : rawPropDecisionVerdict === 'WATCH' ? 'WATCH'
+          : rawPropDecisionVerdict === 'NO_PLAY' ? 'NO_PLAY'
+          : rawPropDecisionVerdict === 'PROJECTION' || rawPropDecisionVerdict === 'PASS' ? 'PROJECTION'
+          : null;
         const normalizedPropDecision = rawPropDecision &&
           normalizedPropDecisionVerdict
           ? {
@@ -2188,6 +2198,66 @@ export async function GET(request: NextRequest) {
                       : []),
                     ...(Array.isArray(payloadPlayPropDecision?.flags)
                       ? payloadPlayPropDecision.flags
+                      : []),
+                  ].map((value) => String(value)),
+                ),
+              ),
+              // Pitcher-K prop fields
+              k_mean:
+                firstNumber(
+                  rawPropDecision.k_mean,
+                  payloadPlayPropDecision?.k_mean,
+                ) ?? null,
+              probability_ladder:
+                (rawPropDecision.probability_ladder != null &&
+                typeof rawPropDecision.probability_ladder === 'object'
+                  ? (rawPropDecision.probability_ladder as Record<string, unknown>)
+                  : null) ??
+                (payloadPlayPropDecision?.probability_ladder != null &&
+                typeof payloadPlayPropDecision.probability_ladder === 'object'
+                  ? (payloadPlayPropDecision.probability_ladder as Record<string, unknown>)
+                  : null),
+              fair_prices:
+                (rawPropDecision.fair_prices != null &&
+                typeof rawPropDecision.fair_prices === 'object'
+                  ? (rawPropDecision.fair_prices as Record<string, unknown>)
+                  : null) ??
+                (payloadPlayPropDecision?.fair_prices != null &&
+                typeof payloadPlayPropDecision.fair_prices === 'object'
+                  ? (payloadPlayPropDecision.fair_prices as Record<string, unknown>)
+                  : null),
+              playability:
+                (rawPropDecision.playability != null &&
+                typeof rawPropDecision.playability === 'object'
+                  ? (rawPropDecision.playability as Record<string, unknown>)
+                  : null) ??
+                (payloadPlayPropDecision?.playability != null &&
+                typeof payloadPlayPropDecision.playability === 'object'
+                  ? (payloadPlayPropDecision.playability as Record<string, unknown>)
+                  : null),
+              projection_source:
+                firstString(
+                  rawPropDecision.projection_source,
+                  payloadPlayPropDecision?.projection_source,
+                ) ?? null,
+              status_cap:
+                firstString(
+                  rawPropDecision.status_cap,
+                  payloadPlayPropDecision?.status_cap,
+                ) ?? null,
+              pass_reason_code:
+                firstString(
+                  rawPropDecision.pass_reason_code,
+                  payloadPlayPropDecision?.pass_reason_code,
+                ) ?? null,
+              missing_inputs: Array.from(
+                new Set(
+                  [
+                    ...(Array.isArray(rawPropDecision.missing_inputs)
+                      ? rawPropDecision.missing_inputs
+                      : []),
+                    ...(Array.isArray(payloadPlayPropDecision?.missing_inputs)
+                      ? payloadPlayPropDecision.missing_inputs
                       : []),
                   ].map((value) => String(value)),
                 ),
@@ -2521,6 +2591,30 @@ export async function GET(request: NextRequest) {
                 payloadProjection?.score_away,
                 payloadPlayProjection?.score_away,
               ) ?? null,
+            // Pitcher-K prop fields (belt-and-suspenders fallback for transform)
+            k_mean:
+              firstNumber(
+                payloadProjection?.k_mean,
+                payloadPlayProjection?.k_mean,
+              ) ?? null,
+            probability_ladder:
+              (payloadProjection?.probability_ladder != null &&
+              typeof payloadProjection.probability_ladder === 'object'
+                ? (payloadProjection.probability_ladder as Record<string, unknown>)
+                : null) ??
+              (payloadPlayProjection?.probability_ladder != null &&
+              typeof payloadPlayProjection.probability_ladder === 'object'
+                ? (payloadPlayProjection.probability_ladder as Record<string, unknown>)
+                : null),
+            fair_prices:
+              (payloadProjection?.fair_prices != null &&
+              typeof payloadProjection.fair_prices === 'object'
+                ? (payloadProjection.fair_prices as Record<string, unknown>)
+                : null) ??
+              (payloadPlayProjection?.fair_prices != null &&
+              typeof payloadPlayProjection.fair_prices === 'object'
+                ? (payloadPlayProjection.fair_prices as Record<string, unknown>)
+                : null),
           },
           status: resolvedStatus,
           // Canonical decision fields (preferred over legacy status field)
