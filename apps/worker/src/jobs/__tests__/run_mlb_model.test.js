@@ -1124,10 +1124,15 @@ describe('MLB prop rollout + freshness gating', () => {
     expect(resolveMlbPitcherPropRolloutState()).toBe('SHADOW');
   });
 
-  test('resolvePitcherKsMode returns ODDS_BACKED when PITCHER_KS_MODEL_MODE=ODDS_BACKED', () => {
+  test('resolvePitcherKsMode is hard-locked to PROJECTION_ONLY even when PITCHER_KS_MODEL_MODE=ODDS_BACKED', () => {
+    // ODDS_BACKED path is dormant. The env var must never trigger it \u2014 doing so
+    // would activate live prop-odds fetching and drain API quota.
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     process.env.PITCHER_KS_MODEL_MODE = 'ODDS_BACKED';
-    expect(resolvePitcherKsMode()).toBe('ODDS_BACKED');
+    expect(resolvePitcherKsMode()).toBe('PROJECTION_ONLY');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('ODDS_BACKED is set but has NO effect'));
     delete process.env.PITCHER_KS_MODEL_MODE;
+    errorSpy.mockRestore();
   });
 
   test('resolvePitcherKsMode returns PROJECTION_ONLY when PITCHER_KS_MODEL_MODE is unset', () => {

@@ -670,8 +670,25 @@ function attachRunId(card, runId) {
 }
 
 function resolvePitcherKsMode() {
+  // HARD LOCK: pitcher-K is PROJECTION_ONLY only. The ODDS_BACKED scoring path
+  // (selectPitcherKUnderMarket + scorePitcherKUnder) exists in mlb-model.js for
+  // future use but MUST NOT be activated by env var — doing so would trigger
+  // live prop-odds fetching and drain API quota.
+  //
+  // To enable ODDS_BACKED mode intentionally: remove this guard in code,
+  // implement the strikeout_lines pull job (WI-0663 scope), and do a
+  // deliberate release. Never activate via env var alone.
+  //
+  // NOTE: WI-0663 intentionally built the scoring path dormant.
   const envValue = String(process.env.PITCHER_KS_MODEL_MODE || '').toUpperCase();
-  if (envValue === 'ODDS_BACKED') return 'ODDS_BACKED';
+  if (envValue === 'ODDS_BACKED') {
+    // Deliberately ignored — emit a loud warning so operators know it's gated.
+    console.error(
+      '[run_mlb_model] WARNING: PITCHER_KS_MODEL_MODE=ODDS_BACKED is set but has NO effect. ' +
+      'The ODDS_BACKED path is dormant and requires a code change to enable. ' +
+      'Defaulting to PROJECTION_ONLY.',
+    );
+  }
   return 'PROJECTION_ONLY';
 }
 
