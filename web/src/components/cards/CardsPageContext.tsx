@@ -139,6 +139,8 @@ export function CardsPageProvider({
   const lifecycleRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const initialLoadRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialLoadRetryAttemptsRef = useRef(0);
   const lifecycleFallbackAttemptedRef = useRef(false);
   const hasHydratedUrlStateRef = useRef(false);
   const diagnosticsEnabled =
@@ -632,10 +634,13 @@ export function CardsPageProvider({
   useEffect(() => {
     let cancelled = false;
     lifecycleFallbackAttemptedRef.current = false;
+    initialLoadRetryAttemptsRef.current = 0;
 
     const fetchGames = async () => {
       const now = Date.now();
       const requestedLifecycleMode = latestLifecycleModeRef.current;
+      const wasInitialLoad = isInitialLoad.current;
+      let failedRecoverably = false;
 
       if (globalGamesFetchInFlight) {
         console.debug('[cards] Skipping fetch - global request already in flight', {
@@ -742,12 +747,15 @@ export function CardsPageProvider({
           console.error('[cards] /api/games fetch failed', {
             status: response.status,
             error: nonJsonDetail,
-            is_initial_load: isInitialLoad.current,
+            is_initial_load: wasInitialLoad,
             lifecycle: requestedLifecycleMode,
           });
+          if (wasInitialLoad && isRecoverableHttpError(response.status)) {
+            failedRecoverably = true;
+          }
           if (!cancelled) {
             setError(nonJsonDetail);
-            if (isInitialLoad.current && !isRecoverableHttpError(response.status)) {
+            if (wasInitialLoad && !isRecoverableHttpError(response.status)) {
               setGames([]);
             }
           }
@@ -815,7 +823,12 @@ export function CardsPageProvider({
         console.error(`[${FETCH_ERROR_LOG_CODE}]`, {
           message,
           error_name: err instanceof Error ? err.name : 'UnknownError',
+          is_initial_load: wasInitialLoad,
         });
+        if (wasInitialLoad) {
+          // Network errors and timeouts are recoverable on initial load
+          failedRecoverably = true;
+        }
         if (!cancelled && !isAbort) {
           setError(message);
         }
@@ -824,8 +837,30 @@ export function CardsPageProvider({
         globalGamesRequestLifecycle = null;
         lifecycleFallbackAttemptedRef.current = false;
         if (!cancelled) {
-          setLoading(false);
-          isInitialLoad.current = false;
+          const MAX_INITIAL_RETRIES = 4;
+          if (
+            wasInitialLoad &&
+            failedRecoverably &&
+            initialLoadRetryAttemptsRef.current < MAX_INITIAL_RETRIES
+          ) {
+            // Keep loading spinner + isInitialLoad=true, schedule expedited retry
+            // instead of waiting the full 60s poll interval.
+            initialLoadRetryAttemptsRef.current += 1;
+            console.warn('[cards] Initial load failed, scheduling retry', {
+              attempt: initialLoadRetryAttemptsRef.current,
+              max: MAX_INITIAL_RETRIES,
+              retry_in_ms: CLIENT_MIN_FETCH_INTERVAL_MS,
+            });
+            initialLoadRetryTimeoutRef.current = setTimeout(() => {
+              initialLoadRetryTimeoutRef.current = null;
+              globalGamesLastFetchAt = 0;
+              void fetchGames();
+            }, CLIENT_MIN_FETCH_INTERVAL_MS);
+            // Keep setLoading(true) and isInitialLoad=true
+          } else {
+            setLoading(false);
+            isInitialLoad.current = false;
+          }
         }
       }
     };
@@ -848,6 +883,10 @@ export function CardsPageProvider({
       if (lifecycleRetryTimeoutRef.current) {
         clearTimeout(lifecycleRetryTimeoutRef.current);
         lifecycleRetryTimeoutRef.current = null;
+      }
+      if (initialLoadRetryTimeoutRef.current) {
+        clearTimeout(initialLoadRetryTimeoutRef.current);
+        initialLoadRetryTimeoutRef.current = null;
       }
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibilityChange);
