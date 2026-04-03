@@ -94,14 +94,13 @@ async function validateCardsSourceContract(assert) {
     'cards page should not leak internal sharp verdict label',
   );
   assert.ok(
-    !modeTabsSource.includes('Game Props') &&
-      !modeTabsSource.includes("onModeChange('projections')"),
-    'cards page should not expose projection-only Game Props tab in betting surfaces',
+    modeTabsSource.includes('Game Props') &&
+      modeTabsSource.includes("onModeChange('projections')"),
+    'cards page should expose the Game Props tab as a separate projection surface',
   );
   assert.ok(
-    !pageContextSource.includes("modeParam === 'projections'") &&
-      pageContextSource.includes("const safeNextMode = nextMode === 'projections' ? 'game' : nextMode;"),
-    'cards page should force projection mode requests back to game mode',
+    pageContextSource.includes("modeParam === 'projections'"),
+    'cards page should support projections mode via URL param',
   );
 }
 

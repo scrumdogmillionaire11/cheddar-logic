@@ -22,6 +22,7 @@ export default function CardsModeTabs() {
   const activeCls = `${BASE} ${lifecycleMode === 'active' ? ACTIVE_LC : INACTIVE}`;
   const gameCls = `${BASE} ${viewMode === 'game' ? ACTIVE_VM : INACTIVE}`;
   const propsCls = `${BASE} ${viewMode === 'props' ? ACTIVE_VM : INACTIVE}`;
+  const projectionsCls = `${BASE} ${viewMode === 'projections' ? ACTIVE_VM : INACTIVE}`;
 
   return (
     <div className="mb-6 flex flex-wrap items-center gap-2">
@@ -40,6 +41,9 @@ export default function CardsModeTabs() {
           Player Props
         </button>
       )}
+      <button onClick={() => onModeChange('projections')} className={projectionsCls}>
+        Game Props
+      </button>
     </div>
   );
 }

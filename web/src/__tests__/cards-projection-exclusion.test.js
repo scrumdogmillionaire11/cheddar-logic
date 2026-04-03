@@ -77,15 +77,14 @@ assert.ok(
 );
 
 assert.ok(
-  !modeTabsSource.includes('Game Props') &&
-    !modeTabsSource.includes("onModeChange('projections')"),
-  '/cards mode tabs should not expose a projection-only betting surface',
+  modeTabsSource.includes('Game Props') &&
+    modeTabsSource.includes("onModeChange('projections')"),
+  '/cards mode tabs should expose Game Props as a dedicated projection surface',
 );
 
 assert.ok(
-  !cardsPageContextSource.includes("modeParam === 'projections'") &&
-    cardsPageContextSource.includes("const safeNextMode = nextMode === 'projections' ? 'game' : nextMode;"),
-  '/cards should normalize projection mode requests back to game mode',
+  cardsPageContextSource.includes("modeParam === 'projections'"),
+  '/cards should support projections mode via URL param',
 );
 
 console.log('✅ Cards projection exclusion source tests passed');
