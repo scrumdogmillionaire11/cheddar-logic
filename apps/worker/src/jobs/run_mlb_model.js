@@ -670,6 +670,8 @@ function attachRunId(card, runId) {
 }
 
 function resolvePitcherKsMode() {
+  const envValue = String(process.env.PITCHER_KS_MODEL_MODE || '').toUpperCase();
+  if (envValue === 'ODDS_BACKED') return 'ODDS_BACKED';
   return 'PROJECTION_ONLY';
 }
 
@@ -1477,6 +1479,7 @@ async function runMLBModel({
           const gameDriverCards = computeMLBDriverCards(gameId, gameOddsSnapshot);
           const rawPitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, {
             mode: resolvePitcherKsMode(),
+            bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY,
           });
           const pitcherKDriverCards = rawPitcherKDriverCards.map((driver) => {
             if (!driver.market?.startsWith('pitcher_k_')) return driver;

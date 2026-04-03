@@ -1721,10 +1721,36 @@ function buildOddsSnapshot(pitcherOverrides = {}, strikeoutLines = null) {
   };
 }
 
+// Pitcher with declining K rate (season K/9 higher than recent) — produces UNDER_RECENT_K_DROP_MAJOR
+const decliningKPitcher = {
+  k_per_9: 11.4,
+  recent_k_per_9: 10.2, // declined: season - recent = 1.2 >= 0.75
+  season_k_pct: 0.282,
+  handedness: 'R',
+  bb_pct: 0.072,
+  xwoba_allowed: 0.304,
+  season_starts: 8,
+  starts: 8,
+  recent_ip: 5.1, // < 5.5 → UNDER_RECENT_IP_SUPPRESSION
+  last_three_pitch_counts: [87, 85, 86], // avg 86 < 90 → UNDER_PITCH_COUNT_SUPPRESSION
+  il_return: false,
+  days_since_last_start: 5,
+  role: 'starter',
+  k_pct_last_4_starts: 0.28,
+  k_pct_prior_4_starts: 0.27,
+  current_season_swstr_pct: 0.13,
+  bvp_pa: 0,
+  bvp_k: 0,
+};
+
 describe('computePitcherKDriverCards ODDS_BACKED mode (WI-0663)', () => {
   test('emits PLAY card in ODDS_BACKED mode with strong under profile', () => {
+    // decliningKPitcher with strongUnderHistory and line 6.5 should score >= 7.5 → PLAY
+    // Scoring: UNDER_LAST5_80(+3) + UNDER_LAST10_70(+2) + UNDER_LINE_PLUS_1(+2)
+    //        + UNDER_RECENT_K_DROP_MAJOR(+1) + UNDER_PITCH_COUNT_SUPPRESSION(+1)
+    //        + UNDER_RECENT_IP_SUPPRESSION(+1) = 10 → PLAY
     const snapshot = buildOddsSnapshot(
-      { strikeout_history: strongUnderHistory },
+      { ...decliningKPitcher, strikeout_history: strongUnderHistory },
       { 'ace pitcher': { line: 6.5, under_price: -105, bookmaker: 'draftkings' } },
     );
     const cards = computePitcherKDriverCards('game-1', snapshot, {
@@ -1740,8 +1766,10 @@ describe('computePitcherKDriverCards ODDS_BACKED mode (WI-0663)', () => {
   });
 
   test('emits WATCH card in ODDS_BACKED mode with moderate under profile', () => {
+    // watchUnderHistory has last5 under rate 60% (score 2) + last10 70% (score 2) + line_delta 0.7 (score 1)
+    // + UNDER_RECENT_K_DROP_MAJOR(+1) = 6.0 → WATCH (5.5-7.4)
     const snapshot = buildOddsSnapshot(
-      { strikeout_history: watchUnderHistory },
+      { ...decliningKPitcher, strikeout_history: watchUnderHistory },
       { 'ace pitcher': { line: 6.5, under_price: -105, bookmaker: 'draftkings' } },
     );
     const cards = computePitcherKDriverCards('game-2', snapshot, {

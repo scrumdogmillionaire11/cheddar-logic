@@ -1959,19 +1959,92 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
 }
 
 /**
+ * Normalize a pitcher name for lookup in strikeout_lines keys.
+ * Mirrors normalizePitcherLookupKey in run_mlb_model.js — kept in sync manually.
+ * @param {string|null} name
+ * @returns {string}
+ */
+function _normalizePitcherLookupKey(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .toLowerCase()
+    .replace(/[.'\u2019-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Select the best under market entry from a strikeout_lines map.
+ *
+ * Selection criteria (descending priority):
+ *   1. Highest line (>= 5.0 minimum)
+ *   2. Best under_price (closest to 0 from negative side; -105 beats -115)
+ *   3. Bookmaker priority (lower number = higher priority)
+ *
+ * @param {object|null} strikeoutLines  raw_data.mlb.strikeout_lines
+ * @param {string|null} pitcherName     pitcher full_name for normalized key lookup
+ * @param {object}      bookmakerPriority  map of bookmaker -> priority number
+ * @returns {{ line, under_price, over_price, bookmaker, line_source, fetched_at }|null}
+ */
+function selectPitcherKUnderMarket(strikeoutLines, pitcherName, bookmakerPriority) {
+  if (!strikeoutLines || typeof strikeoutLines !== 'object') return null;
+
+  const bpMap = bookmakerPriority || {};
+  const entries = Object.entries(strikeoutLines)
+    .map(([key, entry]) => ({ key, entry }))
+    .filter(({ entry }) => {
+      if (!entry || typeof entry !== 'object') return false;
+      const line = Number(entry.line);
+      return Number.isFinite(line) && line >= 5.0;
+    });
+
+  if (entries.length === 0) return null;
+
+  entries.sort((a, b) => {
+    const lineA = Number(a.entry.line);
+    const lineB = Number(b.entry.line);
+    if (lineB !== lineA) return lineB - lineA; // highest line first
+
+    const priceA = Number.isFinite(Number(a.entry.under_price)) ? Number(a.entry.under_price) : -999;
+    const priceB = Number.isFinite(Number(b.entry.under_price)) ? Number(b.entry.under_price) : -999;
+    if (priceB !== priceA) return priceB - priceA; // closest to 0 wins (-105 > -115)
+
+    const bkA = String(a.entry.bookmaker || '').toLowerCase();
+    const bkB = String(b.entry.bookmaker || '').toLowerCase();
+    const priorityA = bpMap[bkA] ?? 99;
+    const priorityB = bpMap[bkB] ?? 99;
+    return priorityA - priorityB; // lower number = higher priority
+  });
+
+  const best = entries[0].entry;
+  return {
+    line: Number.isFinite(Number(best.line)) ? Number(best.line) : null,
+    under_price: Number.isFinite(Number(best.under_price)) ? Number(best.under_price) : null,
+    over_price: Number.isFinite(Number(best.over_price)) ? Number(best.over_price) : null,
+    bookmaker: String(best.bookmaker || '').trim() || null,
+    line_source: String(best.line_source || best.bookmaker || '').trim() || null,
+    fetched_at: String(best.fetched_at || '').trim() || null,
+  };
+}
+
+/**
  * Build pitcher-K driver cards from an odds snapshot.
  *
  * Reads raw_data.mlb.{home,away}_pitcher (populated by enrichMlbPitcherData).
  * Default mode is PROJECTION_ONLY — no market line required.
+ * When mode='ODDS_BACKED', attempts to select an under market from
+ * raw_data.mlb.strikeout_lines and calls scorePitcherKUnder.
  *
  * @param {string} gameId
  * @param {object} oddsSnapshot
  * @param {object} [options]
- * @param {'PROJECTION_ONLY'|'FULL'} [options.mode]
+ * @param {'PROJECTION_ONLY'|'ODDS_BACKED'} [options.mode]
+ * @param {object} [options.bookmakerPriority]  bookmaker -> priority map (required for ODDS_BACKED)
  * @returns {Array<object>}
  */
 function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
   const requestedMode = (options || {}).mode || 'PROJECTION_ONLY';
+  const bookmakerPriority = (options || {}).bookmakerPriority || {};
   const mlb = parseRawMlb(oddsSnapshot);
   const cards = [];
 
@@ -2064,6 +2137,103 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       wind_direction: mlb.wind_dir ?? null,
     };
 
+    // ── ODDS_BACKED branch ─────────────────────────────────────────────────
+    if (requestedMode === 'ODDS_BACKED') {
+      const strikeoutLinesMap = mlb.strikeout_lines ?? {};
+      const selectedMarket = selectPitcherKUnderMarket(
+        strikeoutLinesMap,
+        playerName,
+        bookmakerPriority,
+      );
+
+      if (selectedMarket !== null) {
+        const normalizedMarket = normalizePitcherKMarketInput(selectedMarket);
+        const underResult = scorePitcherKUnder(pitcherInput, matchupInput, normalizedMarket, weatherInput);
+        const verdict = underResult.verdict ?? 'NO_PLAY';
+        const emitCard = verdict === 'PLAY' || verdict === 'WATCH';
+        // Determine prop_display_state inline
+        const propDisplayState = verdict === 'PLAY' ? 'PLAY' : verdict === 'WATCH' ? 'WATCH' : 'PROJECTION_ONLY';
+        const underReasonCodes = Array.from(new Set([
+          'ODDS_BACKED_UNDER',
+          ...(Array.isArray(underResult.flags) ? underResult.flags : []),
+        ]));
+
+        cards.push({
+          market: `pitcher_k_${role}`,
+          pitcher_team: team,
+          player_id: playerId,
+          player_name: playerName,
+          prediction: verdict,
+          status: verdict,
+          action: verdict,
+          classification: verdict,
+          confidence: 0,
+          ev_threshold_passed: emitCard,
+          emit_card: emitCard,
+          card_verdict: verdict,
+          tier: null,
+          reasoning: _buildPitcherKReasoning(underResult),
+          projection_source: 'ODDS_BACKED',
+          status_cap: verdict,
+          missing_inputs: [],
+          reason_codes: underReasonCodes,
+          pass_reason_code: null,
+          playability: null,
+          projection: null,
+          drivers: [{
+            type: 'pitcher-k',
+            projection: underResult.projection ?? null,
+            k_mean: null,
+            probability_ladder: null,
+            fair_prices: null,
+            leash_tier: null,
+            net_score: null,
+            tier: null,
+          }],
+          prop_decision: {
+            verdict,
+            lean_side: 'UNDER',
+            line: normalizedMarket?.line ?? null,
+            display_price: normalizedMarket?.under_price ?? null,
+            projection: underResult.projection ?? null,
+            k_mean: null,
+            line_delta: underResult.line_delta ?? null,
+            under_score: underResult.under_score ?? null,
+            score_components: underResult.score_components ?? null,
+            history_metrics: underResult.history_metrics ?? null,
+            current_form_metrics: underResult.current_form_metrics ?? null,
+            selected_market: underResult.selected_market ?? null,
+            flags: underResult.flags ?? null,
+            why: underResult.why ?? null,
+            probability_ladder: null,
+            fair_prices: null,
+            playability: null,
+            projection_source: 'ODDS_BACKED',
+            status_cap: verdict,
+            missing_inputs: [],
+            fair_prob: null,
+            implied_prob: null,
+            prob_edge_pp: null,
+            ev: null,
+          },
+          prop_display_state: propDisplayState,
+          pitcher_k_result: underResult,
+          basis: 'ODDS_BACKED',
+          direction: 'UNDER',
+          line: normalizedMarket?.line ?? null,
+          line_source: normalizedMarket?.line_source ?? null,
+          over_price: normalizedMarket?.over_price ?? null,
+          under_price: normalizedMarket?.under_price ?? null,
+          best_line_bookmaker: normalizedMarket?.bookmaker ?? null,
+        });
+        continue; // skip PROJECTION_ONLY path for this pitcher
+      }
+
+      // ODDS_BACKED requested but no qualifying market found — fall back to PROJECTION_ONLY
+      // and annotate with reason code.
+    }
+    // ── PROJECTION_ONLY path (default + ODDS_BACKED fallback) ──────────────
+
     const result = scorePitcherK(
       pitcherInput,
       matchupInput,
@@ -2078,6 +2248,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
     const reasonCodes = Array.from(new Set([
       ...(Array.isArray(result.reason_codes) ? result.reason_codes : []),
       MLB_K_PROJECTION_ONLY_PASS_REASON,
+      ...(requestedMode === 'ODDS_BACKED' ? ['MODE_FORCED:ODDS_BACKED->PROJECTION_ONLY'] : []),
       ...(result.projection_source === 'SYNTHETIC_FALLBACK'
         ? ['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']
         : []),
@@ -2221,5 +2392,6 @@ module.exports = {
   scorePitcherKUnder,
   buildUnderHistoryMetrics,
   normalizePitcherKMarketInput,
+  selectPitcherKUnderMarket,
   computePitcherKDriverCards,
 };
