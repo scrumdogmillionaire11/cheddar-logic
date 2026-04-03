@@ -2932,7 +2932,16 @@ export async function GET(request: NextRequest) {
                 : undefined,
         };
 
-        if (isProjectionOnlyPlayPayload(play)) {
+        // PROP plays (nhl-player-shots, mlb-pitcher-k) and designated projection-surface
+        // card types (nhl-pace-1p, mlb-f5) must pass through even when PROJECTION_ONLY.
+        // - PROP plays are shown in the Player Props tab with propVerdict='PROJECTION'
+        // - nhl-pace-1p / mlb-f5 are the sole data source for the Game Props tab
+        // Filtering them here means those tabs are permanently empty.
+        const isProjectionSurfaceCardType =
+          cardRow.card_type === 'nhl-pace-1p' || cardRow.card_type === 'mlb-f5';
+        const isPropMarket = play.market_type === 'PROP';
+
+        if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceCardType) {
           continue;
         }
 
