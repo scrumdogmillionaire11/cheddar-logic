@@ -237,6 +237,34 @@ export interface DecisionV2 {
 
 export type CardQuality = 'OK' | 'DEGRADED' | 'BROKEN';
 
+export type ProjectionSource =
+  | 'FULL_MODEL'
+  | 'DEGRADED_MODEL'
+  | 'SYNTHETIC_FALLBACK';
+export type StatusCap = 'PLAY' | 'LEAN' | 'PASS';
+
+export interface PlayabilityBand {
+  over_playable_at_or_below?: number | null;
+  under_playable_at_or_above?: number | null;
+}
+
+export interface PitcherKProbabilityLadder {
+  p_5_plus?: number | null;
+  p_6_plus?: number | null;
+  p_7_plus?: number | null;
+}
+
+export interface PitcherKFairPricePair {
+  over?: number | null;
+  under?: number | null;
+}
+
+export interface PitcherKFairPrices {
+  k_5_plus?: PitcherKFairPricePair | null;
+  k_6_plus?: PitcherKFairPricePair | null;
+  k_7_plus?: PitcherKFairPricePair | null;
+}
+
 export interface TransformMeta {
   quality: CardQuality;
   missing_inputs: string[];
@@ -418,12 +446,9 @@ export interface Play {
   projectedTotalHigh?: number;
   projectedHomeF5Runs?: number;
   projectedAwayF5Runs?: number;
-  projectionSource?: 'FULL_MODEL' | 'DEGRADED_MODEL' | 'SYNTHETIC_FALLBACK';
-  statusCap?: 'PLAY' | 'LEAN' | 'PASS' | null;
-  playability?: {
-    over_playable_at_or_below?: number | null;
-    under_playable_at_or_above?: number | null;
-  } | null;
+  projectionSource?: ProjectionSource;
+  statusCap?: StatusCap | null;
+  playability?: PlayabilityBand | null;
   projectedTeamTotal?: number;
   projectedGoalDiff?: number;
   projectedScoreHome?: number;
@@ -476,6 +501,9 @@ export interface PropPlayRow {
   line: number | null;
   projection: number | null;
   mu?: number | null;
+  kMean?: number | null;
+  probabilityLadder?: PitcherKProbabilityLadder | null;
+  fairPrices?: PitcherKFairPrices | null;
   suggestedLine?: number | null;
   threshold?: number | null;
   confidence: number | null; // 0-1 (convert to 0-100 for display)
@@ -487,6 +515,13 @@ export interface PropPlayRow {
   roleGatePass?: boolean;
   dataQuality?: string | null;
   reasonCodes?: string[];
+  missingInputs?: string[];
+  projectionSource?: ProjectionSource | null;
+  statusCap?: StatusCap | null;
+  playability?: PlayabilityBand | null;
+  passReasonCode?: string | null;
+  passReason?: string | null;
+  basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
   l5Sog?: number[];
   l5Mean?: number | null;
 

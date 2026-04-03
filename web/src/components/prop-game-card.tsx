@@ -111,6 +111,73 @@ const getVerdictLabel = (verdict: PropPlayRow['propVerdict']) => {
   return verdict ?? 'NO PLAY';
 };
 
+const formatReasonLabel = (value: string | null | undefined) => {
+  if (!value) return null;
+  return value
+    .replace(/^PASS_/, '')
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
+const formatProjectionSource = (source: PropPlayRow['projectionSource']) => {
+  switch (source) {
+    case 'FULL_MODEL':
+      return 'Full model';
+    case 'DEGRADED_MODEL':
+      return 'Degraded model';
+    case 'SYNTHETIC_FALLBACK':
+      return 'Synthetic fallback';
+    default:
+      return null;
+  }
+};
+
+const getSourceBadgeClass = (source: PropPlayRow['projectionSource']) => {
+  const baseClass =
+    'rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]';
+  if (source === 'FULL_MODEL') {
+    return `${baseClass} border-emerald-400/30 bg-emerald-400/10 text-emerald-200`;
+  }
+  if (source === 'DEGRADED_MODEL') {
+    return `${baseClass} border-amber-400/30 bg-amber-400/10 text-amber-200`;
+  }
+  if (source === 'SYNTHETIC_FALLBACK') {
+    return `${baseClass} border-cloud/15 bg-cloud/5 text-cloud/55`;
+  }
+  return `${baseClass} border-white/10 bg-white/5 text-cloud/55`;
+};
+
+const getStatusCapBadgeClass = (statusCap: PropPlayRow['statusCap']) => {
+  const baseClass =
+    'rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]';
+  if (statusCap === 'PLAY') {
+    return `${baseClass} border-execute/30 bg-execute/10 text-execute`;
+  }
+  if (statusCap === 'LEAN') {
+    return `${baseClass} border-teal/30 bg-teal/10 text-teal`;
+  }
+  return `${baseClass} border-cloud/15 bg-cloud/5 text-cloud/55`;
+};
+
+const isProjectionOnlyProp = (prop: PropPlayRow) =>
+  prop.propVerdict === 'PROJECTION' ||
+  prop.propDisplayState === 'PROJECTION_ONLY' ||
+  prop.basis === 'PROJECTION_ONLY' ||
+  prop.projectionSource === 'SYNTHETIC_FALLBACK';
+
+const formatPlayabilityBand = (prop: PropPlayRow) => {
+  const overLine = prop.playability?.over_playable_at_or_below;
+  const underLine = prop.playability?.under_playable_at_or_above;
+  if (!Number.isFinite(overLine) && !Number.isFinite(underLine)) return null;
+  const overText = Number.isFinite(overLine)
+    ? `Over ${formatNumber(overLine, 1)} playable`
+    : null;
+  const underText = Number.isFinite(underLine)
+    ? `Under ${formatNumber(underLine, 1)} playable`
+    : null;
+  return [overText, underText].filter(Boolean).join(' · ');
+};
 
 const americanToImplied = (americanOdds: number) => {
   if (!Number.isFinite(americanOdds) || americanOdds === 0) return null;
@@ -404,6 +471,29 @@ const getWatchlistTrigger = ({
     : `Bet if the threshold rises to ${targetThreshold}+`;
 };
 
+const PITCHER_K_THRESHOLDS = [
+  { key: 'p_5_plus', fairKey: 'k_5_plus', label: '5+', underLabel: '4 or fewer' },
+  { key: 'p_6_plus', fairKey: 'k_6_plus', label: '6+', underLabel: '5 or fewer' },
+  { key: 'p_7_plus', fairKey: 'k_7_plus', label: '7+', underLabel: '6 or fewer' },
+] as const;
+
+const getPitcherKDiagnostics = (prop: PropPlayRow) => {
+  const reasonText =
+    prop.passReason ||
+    formatReasonLabel(prop.passReasonCode) ||
+    (prop.projectionSource === 'SYNTHETIC_FALLBACK'
+      ? 'Synthetic fallback projection'
+      : null) ||
+    (prop.basis === 'PROJECTION_ONLY'
+      ? 'Projection only — no odds market available'
+      : null);
+  const missingInputsText =
+    prop.missingInputs && prop.missingInputs.length > 0
+      ? `Missing inputs: ${prop.missingInputs.join(', ')}`
+      : null;
+  return { reasonText, missingInputsText };
+};
+
 export default function PropGameCardComponent({ card }: PropGameCardProps) {
   const [isExpanded, setIsExpanded] = useState(card.propPlays.length <= 5);
 
@@ -453,9 +543,14 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
 
         <div className="space-y-2">
           {displayPlays.map((prop, idx) => {
-            const projectionValue = prop.mu ?? prop.projection;
+            const projectionValue = prop.kMean ?? prop.mu ?? prop.projection;
             const lineValue = prop.marketLine ?? prop.line ?? prop.suggestedLine;
             const verdict = prop.propVerdict ?? 'NO_PLAY';
+            const projectionOnlyRow = isProjectionOnlyProp(prop);
+            const projectionSourceLabel = formatProjectionSource(prop.projectionSource);
+            const statusCapLabel = prop.statusCap ? `Cap ${prop.statusCap}` : null;
+            const playabilityText = formatPlayabilityBand(prop);
+            const { reasonText, missingInputsText } = getPitcherKDiagnostics(prop);
             const thresholdTarget = getThresholdTarget(lineValue);
             const thresholdGap =
               typeof projectionValue === 'number' && typeof thresholdTarget === 'number'
@@ -491,6 +586,13 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
             const warningFlags = [...new Set([...(prop.propFlags ?? []), ...(prop.reasonCodes ?? [])])].filter((c) =>
               WARNING_FLAGS.includes(c),
             );
+            const hasPitcherKLadder =
+              prop.propType === 'Strikeouts' &&
+              Boolean(
+                prop.probabilityLadder?.p_5_plus != null ||
+                  prop.probabilityLadder?.p_6_plus != null ||
+                  prop.probabilityLadder?.p_7_plus != null,
+              );
             const showEdgeBox =
               Number.isFinite(prop.fairProb) &&
               Number.isFinite(prop.impliedProb) &&
@@ -501,8 +603,13 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
               (prop.l5Sog && prop.l5Sog.length > 0) ||
               (prop.l5Mean !== null && prop.l5Mean !== undefined) ||
               (prop.priceOver != null || prop.priceUnder != null) ||
-              (prop.propFlags && prop.propFlags.length > 0);
-            const projectionLead = `Projection: ${formatNumber(projectionValue)} ${getPropUnits(prop.propType).plural}`;
+              (prop.propFlags && prop.propFlags.length > 0) ||
+              hasPitcherKLadder ||
+              Boolean(playabilityText || reasonText || missingInputsText);
+            const projectionLead =
+              prop.propType === 'Strikeouts'
+                ? `K mean: ${formatNumber(prop.kMean ?? projectionValue, 2)} strikeouts`
+                : `Projection: ${formatNumber(projectionValue)} ${getPropUnits(prop.propType).plural}`;
             const hitRateText =
               Number.isFinite(prop.fairProb)
                 ? `Hit rate (${getHitRateLabel({ leanSide, lineValue })}): ${formatPercent(prop.fairProb)}`
@@ -537,14 +644,16 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
             return (
               <div
                 key={`${prop.playerId}-${prop.propType}-${idx}`}
-                className={`rounded-lg border bg-surface/50 transition ${
-                  verdict === 'PLAY'
-                    ? 'border-execute/30 hover:border-execute/50'
-                    : verdict === 'WATCH'
-                      ? 'border-teal/25 hover:border-teal/45'
-                      : verdict === 'NO_PLAY'
-                        ? 'border-amber-400/20 hover:border-amber-400/35'
-                        : 'border-white/10 hover:border-white/20'
+                className={`rounded-lg border transition ${
+                  projectionOnlyRow
+                    ? 'border-dashed border-white/10 bg-surface/30 opacity-90 hover:border-white/20'
+                    : verdict === 'PLAY'
+                      ? 'border-execute/30 bg-surface/50 hover:border-execute/50'
+                      : verdict === 'WATCH'
+                        ? 'border-teal/25 bg-surface/50 hover:border-teal/45'
+                        : verdict === 'NO_PLAY'
+                          ? 'border-amber-400/20 bg-surface/50 hover:border-amber-400/35'
+                          : 'border-white/10 bg-surface/50 hover:border-white/20'
                 }`}
               >
                 <div className="px-4 py-3 space-y-3">
@@ -558,9 +667,21 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                         {prop.teamAbbr ? ` · ${prop.teamAbbr}` : ''}
                       </div>
                     </div>
-                    <span className={getVerdictBadge(verdict)}>
-                      {getVerdictLabel(verdict)}
-                    </span>
+                    <div className="flex flex-wrap justify-end gap-1.5">
+                      {projectionSourceLabel && (
+                        <span className={getSourceBadgeClass(prop.projectionSource)}>
+                          {projectionSourceLabel}
+                        </span>
+                      )}
+                      {statusCapLabel && (
+                        <span className={getStatusCapBadgeClass(prop.statusCap)}>
+                          {statusCapLabel}
+                        </span>
+                      )}
+                      <span className={getVerdictBadge(verdict)}>
+                        {getVerdictLabel(verdict)}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="rounded-md border border-white/10 bg-white/5 p-3">
@@ -576,12 +697,44 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                     <p className="mt-2 text-xl font-bold text-sage-white">
                       {projectionLead}
                     </p>
+                    {Number.isFinite(lineValue) && (
+                      <p className="mt-1 text-sm font-semibold text-cloud/80">
+                        Standard line: {formatNumber(lineValue, 1)}
+                      </p>
+                    )}
                     {hitRateText && (
                       <p className="mt-1 text-sm font-semibold text-cloud">
                         {hitRateText}
                       </p>
                     )}
+                    {hasPitcherKLadder && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {PITCHER_K_THRESHOLDS.map((threshold) => {
+                          const overProb =
+                            prop.probabilityLadder?.[threshold.key] ?? null;
+                          if (!Number.isFinite(overProb)) return null;
+                          return (
+                            <span
+                              key={threshold.key}
+                              className="rounded-full border border-white/10 bg-night/30 px-2 py-1 text-[11px] font-semibold text-cloud/80"
+                            >
+                              {`P(${threshold.label}) ${formatPercent(overProb)}`}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
                     <p className="mt-2 text-sm text-cloud/72">{explanationLine}</p>
+                    {reasonText && (
+                      <p className="mt-1 text-xs font-semibold text-cloud/60">
+                        PASS reason: {reasonText}
+                      </p>
+                    )}
+                    {missingInputsText && (
+                      <p className="mt-1 text-xs text-cloud/55">
+                        {missingInputsText}
+                      </p>
+                    )}
                     {watchlistTrigger && (
                       <p className="mt-1 text-xs font-semibold text-amber-200">
                         {watchlistTrigger}
@@ -591,7 +744,9 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
 
                   <div
                     className={`grid gap-2 ${
-                      showEdgeBox ? 'md:grid-cols-3' : 'md:grid-cols-2'
+                      showEdgeBox || hasPitcherKLadder
+                        ? 'md:grid-cols-3'
+                        : 'md:grid-cols-2'
                     }`}
                   >
                     {showEdgeBox && (
@@ -608,11 +763,40 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                       </div>
                     )}
 
+                    {!showEdgeBox && hasPitcherKLadder && (
+                      <div className="rounded border border-white/10 bg-night/40 p-3">
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-cloud/45">
+                          K Ladder
+                        </div>
+                        <div className="mt-2 space-y-1 text-sm text-cloud/80">
+                          {PITCHER_K_THRESHOLDS.map((threshold) => {
+                            const overProb =
+                              prop.probabilityLadder?.[threshold.key] ?? null;
+                            if (!Number.isFinite(overProb)) return null;
+                            const fairOver =
+                              prop.fairPrices?.[threshold.fairKey]?.over ??
+                              probabilityToAmerican(overProb as number);
+                            const fairUnder =
+                              prop.fairPrices?.[threshold.fairKey]?.under ??
+                              probabilityToAmerican(1 - (overProb as number));
+                            return (
+                              <p key={threshold.key}>
+                                {`P(${threshold.label}) ${formatPercent(overProb)} · Fair O ${fairOver != null ? formatOdds(fairOver) : '—'} / U ${fairUnder != null ? formatOdds(fairUnder) : '—'}`}
+                              </p>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="rounded border border-white/10 bg-night/40 p-3">
                       <div className="text-[11px] uppercase tracking-[0.12em] text-cloud/45">
                         Market
                       </div>
                       <div className="mt-2 space-y-1 text-sm text-cloud/80">
+                        {Number.isFinite(lineValue) && (
+                          <p>Standard line: {formatNumber(lineValue, 1)}</p>
+                        )}
                         <p>Threshold: {overOutcomeText}</p>
                         {prop.priceOver != null && (
                           <p>{overOutcomeText} {formatOdds(prop.priceOver)}</p>
@@ -628,6 +812,11 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                             Book: {formatBookName(prop.bookmaker)}
                           </p>
                         )}
+                        {playabilityText && (
+                          <p className="text-cloud/60">
+                            Playable thresholds: {playabilityText}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -640,9 +829,15 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                         {thresholdGap !== null && verdict === 'NO_PLAY' && (
                           <p>{getNoPlayLeanContext(thresholdGap)}</p>
                         )}
+                        {reasonText && <p>{reasonText}</p>}
+                        {missingInputsText && <p>{missingInputsText}</p>}
                         {prop.propFlags && prop.propFlags.length > 0 && (
                           <p>Flags: {prop.propFlags.join(' | ')}</p>
                         )}
+                        {projectionSourceLabel && (
+                          <p>Source: {projectionSourceLabel}</p>
+                        )}
+                        {statusCapLabel && <p>{statusCapLabel}</p>}
                       </div>
                     </div>
                   </div>

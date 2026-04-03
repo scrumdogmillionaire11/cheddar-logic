@@ -28,6 +28,11 @@ import type {
   CardQuality,
   DecisionV2,
   ExpressionStatus,
+  PitcherKFairPrices,
+  PitcherKProbabilityLadder,
+  PlayabilityBand,
+  ProjectionSource,
+  StatusCap,
 } from '../../types/game-card';
 import type {
   CanonicalPlay,
@@ -107,6 +112,34 @@ const WAVE1_MARKETS = new Set<CanonicalMarketType>([
   'TEAM_TOTAL',
   'FIRST_PERIOD',
 ]);
+
+type ApiPropDisplayState = 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
+
+interface ApiPropDecision {
+  verdict?: string;
+  lean_side?: string | null;
+  line?: number | null;
+  display_price?: number | null;
+  projection?: number | null;
+  k_mean?: number | null;
+  probability_ladder?: PitcherKProbabilityLadder | null;
+  fair_prices?: PitcherKFairPrices | null;
+  playability?: PlayabilityBand | null;
+  projection_source?: ProjectionSource | null;
+  status_cap?: StatusCap | null;
+  missing_inputs?: string[];
+  pass_reason_code?: string | null;
+  pass_reason?: string | null;
+  line_delta?: number | null;
+  fair_prob?: number | null;
+  implied_prob?: number | null;
+  prob_edge_pp?: number | null;
+  ev?: number | null;
+  l5_trend?: string | null;
+  why?: string;
+  flags?: string[];
+}
+
 // API types from cards page
 interface ApiPlay {
   source_card_id?: string;
@@ -131,6 +164,7 @@ interface ApiPlay {
   line_source?: string | null;
   price_source?: string | null;
   projection?: {
+    k_mean?: number | null;
     margin_home?: number | null;
     total?: number | null;
     team_total?: number | null;
@@ -148,18 +182,20 @@ interface ApiPlay {
     projected_score_home?: number | null;
     projected_score_away?: number | null;
     win_prob_home?: number | null;
+    probability_ladder?: PitcherKProbabilityLadder | null;
+    fair_prices?: PitcherKFairPrices | null;
   };
-  projection_source?: 'FULL_MODEL' | 'DEGRADED_MODEL' | 'SYNTHETIC_FALLBACK' | null;
-  status_cap?: 'PLAY' | 'LEAN' | 'PASS' | null;
-  playability?: {
-    over_playable_at_or_below?: number | null;
-    under_playable_at_or_above?: number | null;
-  } | null;
+  projection_source?: ProjectionSource | null;
+  status_cap?: StatusCap | null;
+  playability?: PlayabilityBand | null;
   status?: 'FIRE' | 'WATCH' | 'PASS';
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
   pass_reason?: string | null;
+  basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
+  prop_decision?: ApiPropDecision | null;
+  prop_display_state?: ApiPropDisplayState;
   run_id?: string;
   created_at?: string;
   player_id?: string;
@@ -187,6 +223,9 @@ interface ApiPlay {
   recommendation?: { type?: string };
   recommended_bet_type?: string;
   canonical_market_key?: string;
+  market_price_over?: number | null;
+  market_price_under?: number | null;
+  market_bookmaker?: string | null;
   kind?: 'PLAY' | 'EVIDENCE';
   evidence_for_play_id?: string;
   aggregation_key?: string;
@@ -2716,6 +2755,62 @@ const PROP_VERDICT_RANK: Record<
   PROJECTION: 1,
 };
 
+function isProjectionOnlyPropPlay(
+  play: ApiPlay,
+  propDecision?: ApiPropDecision | null,
+): boolean {
+  const projectionSource =
+    propDecision?.projection_source ?? play.projection_source ?? null;
+
+  return (
+    play.basis === 'PROJECTION_ONLY' ||
+    play.prop_display_state === 'PROJECTION_ONLY' ||
+    projectionSource === 'SYNTHETIC_FALLBACK'
+  );
+}
+
+function normalizePropVerdict(
+  play: ApiPlay,
+  propDecision?: ApiPropDecision | null,
+): PropPlayRow['propVerdict'] {
+  const rawVerdict = propDecision?.verdict;
+  const statusCap = propDecision?.status_cap ?? play.status_cap ?? null;
+
+  if (isProjectionOnlyPropPlay(play, propDecision)) {
+    return 'PROJECTION';
+  }
+
+  if (statusCap === 'PASS' && (rawVerdict === 'PLAY' || rawVerdict === 'WATCH')) {
+    return 'NO_PLAY';
+  }
+
+  if (
+    rawVerdict === 'PLAY' ||
+    rawVerdict === 'WATCH' ||
+    rawVerdict === 'PROJECTION'
+  ) {
+    return rawVerdict;
+  }
+
+  if (rawVerdict === 'PASS') {
+    return 'NO_PLAY';
+  }
+
+  if (play.prop_display_state === 'PLAY') {
+    return 'PLAY';
+  }
+
+  if (play.prop_display_state === 'WATCH') {
+    return 'WATCH';
+  }
+
+  if (play.prop_display_state === 'PROJECTION_ONLY') {
+    return 'PROJECTION';
+  }
+
+  return undefined;
+}
+
 /**
  * Transform games to PropGameCard format - for player props view
  * Groups all PROP plays under each game as rows
@@ -2777,41 +2872,9 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         propType = 'Rebounds';
       }
 
-      const rawPropDecision = (
-        play as unknown as Record<string, unknown>
-      ).prop_decision as
-        | {
-            verdict?: string;
-            lean_side?: string | null;
-            line?: number | null;
-            display_price?: number | null;
-            projection?: number | null;
-            line_delta?: number | null;
-            fair_prob?: number | null;
-            implied_prob?: number | null;
-            prob_edge_pp?: number | null;
-            ev?: number | null;
-            l5_trend?: string | null;
-            why?: string;
-            flags?: string[];
-          }
-        | undefined;
-      const rawPropDisplayState = (
-        play as unknown as Record<string, unknown>
-      ).prop_display_state as string | undefined;
-      const propVerdict =
-        rawPropDecision?.verdict === 'PLAY' ||
-        rawPropDecision?.verdict === 'WATCH' ||
-        rawPropDecision?.verdict === 'NO_PLAY' ||
-        rawPropDecision?.verdict === 'PROJECTION'
-          ? rawPropDecision.verdict
-          : rawPropDisplayState === 'PLAY'
-            ? 'PLAY'
-            : rawPropDisplayState === 'WATCH'
-              ? 'WATCH'
-              : rawPropDisplayState === 'PROJECTION_ONLY'
-                ? 'PROJECTION'
-                : undefined;
+      const rawPropDecision = play.prop_decision;
+      const rawPropDisplayState = play.prop_display_state;
+      const propVerdict = normalizePropVerdict(play, rawPropDecision);
 
       let status: PropPlayRow['status'] = 'NO_PLAY';
       if (propVerdict === 'PLAY') {
@@ -2821,7 +2884,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       } else if (propVerdict === 'PROJECTION' || propVerdict === 'NO_PLAY') {
         status = 'NO_PLAY';
       } else {
-        // Legacy fallback: no prop_display_state field
+        // Legacy fallback: no prop verdict fields and not projection-only/fallback.
         const resolvedAction = resolvePlayDisplayDecision({
           action: play.action,
           status: play.status,
@@ -2836,9 +2899,36 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       }
 
       const canonicalPropProjection =
-        typeof rawPropDecision?.projection === 'number'
-          ? rawPropDecision.projection
-          : play.mu ?? play.projectedTotal ?? null;
+        typeof rawPropDecision?.k_mean === 'number'
+          ? rawPropDecision.k_mean
+          : typeof play.projection?.k_mean === 'number'
+            ? play.projection.k_mean
+            : typeof rawPropDecision?.projection === 'number'
+              ? rawPropDecision.projection
+              : play.mu ?? play.projectedTotal ?? null;
+      const kMean =
+        typeof rawPropDecision?.k_mean === 'number'
+          ? rawPropDecision.k_mean
+          : typeof play.projection?.k_mean === 'number'
+            ? play.projection.k_mean
+            : null;
+      const probabilityLadder =
+        rawPropDecision?.probability_ladder ??
+        play.projection?.probability_ladder ??
+        null;
+      const fairPrices =
+        rawPropDecision?.fair_prices ?? play.projection?.fair_prices ?? null;
+      const playability =
+        rawPropDecision?.playability ?? play.playability ?? null;
+      const projectionSource =
+        rawPropDecision?.projection_source ?? play.projection_source ?? null;
+      const statusCap = rawPropDecision?.status_cap ?? play.status_cap ?? null;
+      const missingInputs =
+        rawPropDecision?.missing_inputs ?? play.missing_inputs ?? undefined;
+      const passReasonCode =
+        rawPropDecision?.pass_reason_code ?? play.pass_reason_code ?? null;
+      const passReason =
+        rawPropDecision?.pass_reason ?? play.pass_reason ?? null;
       const mu = canonicalPropProjection;
       const canonicalPropLine =
         typeof rawPropDecision?.line === 'number'
@@ -2864,6 +2954,9 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         line: canonicalPropLine ?? play.suggested_line ?? null,
         projection: canonicalPropProjection,
         mu,
+        kMean,
+        probabilityLadder,
+        fairPrices,
         suggestedLine,
         threshold: play.threshold ?? null,
         confidence: play.confidence ?? null,
@@ -2875,12 +2968,19 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         roleGatePass: play.role_gate_pass,
         dataQuality: play.data_quality ?? null,
         reasonCodes: play.reason_codes,
+        missingInputs,
+        projectionSource,
+        statusCap,
+        playability,
+        passReasonCode,
+        passReason,
+        basis: play.basis,
         l5Sog: play.l5_sog ?? undefined,
         l5Mean: play.l5_mean ?? null,
         marketLine: canonicalPropLine,
-        priceOver: ((play as unknown as Record<string, unknown>).market_price_over as number | null | undefined) ?? null,
-        priceUnder: ((play as unknown as Record<string, unknown>).market_price_under as number | null | undefined) ?? null,
-        bookmaker: ((play as unknown as Record<string, unknown>).market_bookmaker as string | null | undefined) ?? null,
+        priceOver: play.market_price_over ?? null,
+        priceUnder: play.market_price_under ?? null,
+        bookmaker: play.market_bookmaker ?? null,
         sourceCardType: play.cardType,
         sourceCardTitle: play.cardTitle,
         updatedAtUtc: game.odds?.capturedAt || game.createdAt,
