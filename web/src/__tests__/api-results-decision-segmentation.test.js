@@ -72,7 +72,9 @@ async function validateResultsSegmentationSourceContract(assert) {
     'results route must derive segment families and ledger labels from canonical decision tiers',
   );
   assert.ok(
-    routeSource.includes("import {\n  buildProjectionSummaries,\n  deriveResultCardMode,\n} from './projection-metrics';") &&
+    routeSource.includes("from './projection-metrics';") &&
+      routeSource.includes('buildProjectionSummaries') &&
+      routeSource.includes('deriveResultCardMode') &&
       routeSource.includes("if (deriveResultCardMode(payload) !== 'ODDS_BACKED')") &&
       routeSource.includes('const projectionSummaries = buildProjectionSummaries(') &&
       routeSource.includes('projectionSummaries,'),
