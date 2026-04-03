@@ -540,7 +540,7 @@ describe('runMLBModel dual-run orchestration', () => {
     );
   });
 
-  test('missing F5 line logs NO_F5_LINE, emits F5_TOTAL_UNAVAILABLE, and still writes projection-only mlb-pitcher-k when ODDS_BACKED is requested', async () => {
+  test('missing F5 line emits projection-floor mlb-f5 and still writes projection-only mlb-pitcher-k when ODDS_BACKED is requested', async () => {
     const selection = {
       chosen_market: 'F5_TOTAL',
       why_this_market: 'Rule 1: only configured MLB game market',
@@ -582,10 +582,11 @@ describe('runMLBModel dual-run orchestration', () => {
       expect.any(Object),
       { mode: 'PROJECTION_ONLY' },
     );
-    expect(
-      mocks.insertCardPayload.mock.calls.map(([card]) => card.cardType),
-    ).toEqual(['mlb-pitcher-k']);
-    const payload = mocks.insertCardPayload.mock.calls[0][0].payloadData;
+    const emittedTypes = mocks.insertCardPayload.mock.calls.map(([card]) => card.cardType);
+    expect(emittedTypes).toEqual(expect.arrayContaining(['mlb-pitcher-k', 'mlb-f5']));
+    expect(emittedTypes).toHaveLength(2);
+    const pitcherKCall = mocks.insertCardPayload.mock.calls.find(([card]) => card.cardType === 'mlb-pitcher-k');
+    const payload = pitcherKCall[0].payloadData;
     expect(payload).toMatchObject({
       basis: 'PROJECTION_ONLY',
       prediction: 'PASS',
@@ -606,8 +607,12 @@ describe('runMLBModel dual-run orchestration', () => {
         },
       },
     });
-    expect(payload.pipeline_state.blocking_reason_codes).toContain(
+    // With projection floor applied, F5_TOTAL_UNAVAILABLE is replaced by MARKET_PRICE_MISSING
+    expect(payload.pipeline_state.blocking_reason_codes).not.toContain(
       MLB_PIPELINE_REASON_CODES.F5_TOTAL_UNAVAILABLE,
+    );
+    expect(payload.pipeline_state.blocking_reason_codes).toContain(
+      'MARKET_PRICE_MISSING',
     );
     expect(payload.pipeline_state.blocking_reason_codes).not.toContain(
       'WATCHDOG_MARKET_UNAVAILABLE',

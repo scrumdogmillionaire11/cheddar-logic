@@ -444,7 +444,7 @@ function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutO
   const blockingReasonCodes = [];
 
   const f5LineOk = f5TotalContext.line !== null;
-  const useFloor = withoutOddsMode && projectionFloorF5 !== null && !f5LineOk;
+  const useFloor = projectionFloorF5 !== null && !f5LineOk;
   const effectiveF5LineOk = f5LineOk || useFloor;
 
   const f5MlOk =
@@ -1588,7 +1588,7 @@ async function runMLBModel({
           );
           console.log(`[MLB_DUAL_RUN] ${JSON.stringify(dualRunRecord)}`);
           const f5TotalContextForFloor = resolveMlbF5TotalContext(gameOddsSnapshot);
-          const projectionFloorF5 = (withoutOddsMode && f5TotalContextForFloor.line === null)
+          const projectionFloorF5 = (f5TotalContextForFloor.line === null)
             ? computeProjectionFloorF5(gameOddsSnapshot)
             : null;
           const marketAvailability = buildMlbMarketAvailability(gameOddsSnapshot, {
@@ -1636,8 +1636,8 @@ async function runMLBModel({
 
           const selectedGameDriver = gameSelection.selected_driver;
 
-          // Without-odds mode: synthesize a PROJECTION_ONLY F5 driver when the floor was applied
-          const projectionFloorDriver = (withoutOddsMode && marketAvailability.projection_floor && projectionFloorF5 !== null)
+          // Synthesize a PROJECTION_ONLY F5 driver when the floor was applied (no market line available)
+          const projectionFloorDriver = (marketAvailability.projection_floor && projectionFloorF5 !== null)
             ? {
                 market: 'f5_total',
                 prediction: 'OVER',
