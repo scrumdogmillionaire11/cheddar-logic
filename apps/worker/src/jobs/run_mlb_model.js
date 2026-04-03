@@ -66,6 +66,12 @@ const {
   PRICE_REASONS,
 } = require('@cheddar-logic/models');
 
+// WI-0747: MLB K explicit input contract — deterministic quality classifier
+const {
+  classifyMlbPitcherKQuality,
+  dedupeFlags,
+} = require('./mlb-k-input-classifier');
+
 // MLB-specific watchdog vocabulary stays local to this runner so WI-0604 can
 // document the new codes without widening shared registries.
 const MLB_PIPELINE_REASON_CODES = Object.freeze({
@@ -438,7 +444,7 @@ function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutO
   const blockingReasonCodes = [];
 
   const f5LineOk = f5TotalContext.line !== null;
-  const useFloor = withoutOddsMode && projectionFloorF5 !== null && !f5LineOk;
+  const useFloor = projectionFloorF5 !== null && !f5LineOk;
   const effectiveF5LineOk = f5LineOk || useFloor;
 
   const f5MlOk =
@@ -644,6 +650,13 @@ function computePitcherKPropDisplayState(verdict) {
   if (verdict === 'PLAY') return 'PLAY';
   if (verdict === 'WATCH') return 'WATCH';
   return 'PROJECTION_ONLY';
+}
+
+function resolvePitcherKPayloadIdentity(driver = {}, pitcherTeam = null) {
+  return {
+    playerId: driver.player_id != null ? String(driver.player_id) : null,
+    playerName: driver.player_name || (pitcherTeam ? `${pitcherTeam} SP` : 'SP'),
+  };
 }
 
 function attachRunId(card, runId) {
@@ -1467,6 +1480,53 @@ async function runMLBModel({
           });
           const pitcherKDriverCards = rawPitcherKDriverCards.map((driver) => {
             if (!driver.market?.startsWith('pitcher_k_')) return driver;
+
+            // ── WI-0747: MLB_K_AUDIT — quality classification before card write ──
+            if (driver.prop_decision) {
+              const pd = driver.prop_decision;
+              const missingInputs = pd.missing_inputs ?? [];
+              const degradedInputs = pd.degraded_inputs ?? [];
+              // Map existing model-layer flags → classifier input signals
+              const _starter = {
+                k_pct:       missingInputs.includes('starter_k_pct') ? null : 0.25,
+                swstr_pct:   degradedInputs.includes('starter_whiff_proxy') ? null : 0.12,
+                csw_pct:     null,
+                whiff_proxy: degradedInputs.includes('starter_whiff_proxy') ? 0.1 : null,
+              };
+              const _leash = {
+                pitch_count_avg: missingInputs.includes('leash_metric') ? null : 90,
+                ip_proxy:        missingInputs.includes('leash_metric') ? 5.5 : null,
+              };
+              const _opponent = {
+                k_pct_vs_hand:       (missingInputs.includes('opp_k_pct_vs_hand') ||
+                                      missingInputs.includes('league_avg_k_fallback')) ? null : 0.22,
+                contact_pct_vs_hand: missingInputs.includes('opponent_contact_profile') ? null : 0.76,
+              };
+              const _qr = classifyMlbPitcherKQuality({ starter: _starter, opponent: _opponent, leash: _leash });
+              pd.model_quality        = _qr.model_quality;
+              pd.proxy_fields         = _qr.proxies;
+              pd.degradation_reasons  = [..._qr.hardMissing, ..._qr.proxies];
+              // Dedup pre-existing missing_inputs and flags
+              pd.missing_inputs = dedupeFlags(pd.missing_inputs ?? []);
+              pd.flags          = dedupeFlags(pd.flags ?? []);
+              const sideStr = driver.market?.endsWith('_home') ? 'home' : 'away';
+              const _mlbRaw = (typeof pitcherKOddsSnapshot.raw_data === 'string'
+                ? JSON.parse(pitcherKOddsSnapshot.raw_data)
+                : pitcherKOddsSnapshot.raw_data) ?? {};
+              const _pitcher = (_mlbRaw.mlb ?? {})[`${sideStr}_pitcher`];
+              console.log(`[MLB_K_AUDIT] ${JSON.stringify({
+                pitcher:                  _pitcher?.full_name ?? `${sideStr}_sp`,
+                starter_skill_status:     (degradedInputs.includes('starter_whiff_proxy') ||
+                                           missingInputs.includes('starter_k_pct')) ? 'PARTIAL' : 'COMPLETE',
+                opponent_contact_status:  missingInputs.includes('opponent_contact_profile') ? 'PARTIAL' : 'COMPLETE',
+                leash_status:             missingInputs.includes('leash_metric') ? 'PARTIAL' : 'COMPLETE',
+                missing_fields:           _qr.hardMissing,
+                proxy_fields:             _qr.proxies,
+                quality_before_projection: _qr.model_quality,
+              })}`);
+            }
+            // ────────────────────────────────────────────────────────────────────
+
             if (driver.emit_card !== true) {
               driver.execution_envelope = null;
               return driver;
@@ -1528,7 +1588,7 @@ async function runMLBModel({
           );
           console.log(`[MLB_DUAL_RUN] ${JSON.stringify(dualRunRecord)}`);
           const f5TotalContextForFloor = resolveMlbF5TotalContext(gameOddsSnapshot);
-          const projectionFloorF5 = (withoutOddsMode && f5TotalContextForFloor.line === null)
+          const projectionFloorF5 = (f5TotalContextForFloor.line === null)
             ? computeProjectionFloorF5(gameOddsSnapshot)
             : null;
           const marketAvailability = buildMlbMarketAvailability(gameOddsSnapshot, {
@@ -1576,8 +1636,8 @@ async function runMLBModel({
 
           const selectedGameDriver = gameSelection.selected_driver;
 
-          // Without-odds mode: synthesize a PROJECTION_ONLY F5 driver when the floor was applied
-          const projectionFloorDriver = (withoutOddsMode && marketAvailability.projection_floor && projectionFloorF5 !== null)
+          // Synthesize a PROJECTION_ONLY F5 driver when the floor was applied (no market line available)
+          const projectionFloorDriver = (marketAvailability.projection_floor && projectionFloorF5 !== null)
             ? {
                 market: 'f5_total',
                 prediction: 'OVER',
@@ -1736,6 +1796,8 @@ async function runMLBModel({
                   : driver.market === 'strikeouts_away' || driver.market === 'pitcher_k_away'
                     ? (pitcherKOddsSnapshot?.away_team ?? null)
                     : null);
+            const { playerId: pitcherPlayerId, playerName: pitcherPlayerName } =
+              resolvePitcherKPayloadIdentity(driver, pitcherTeam);
 
             const tier = isPitcherK
               ? (driver.card_verdict === 'PLAY'
@@ -1778,8 +1840,9 @@ async function runMLBModel({
               projection_source: driver.projection_source ?? null,
               status_cap: driver.status_cap ?? null,
               playability: driver.playability ?? null,
-              missing_inputs: Array.isArray(driver.missing_inputs) ? driver.missing_inputs : [],
+              missing_inputs: dedupeFlags(Array.isArray(driver.missing_inputs) ? driver.missing_inputs : []),
               disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
+              // Note: driver.prop_decision already carries model_quality (set by WI-0747 classifier block above)
               generated_at: now,
               ...(driver.without_odds_mode ? { without_odds_mode: true, projection_floor: true, tags: ['no_odds_mode'] } : {}),
               ...(isF5
@@ -1808,7 +1871,8 @@ async function runMLBModel({
                     }
                 : isPitcherK
                   ? {
-                      player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
+                      player_id: pitcherPlayerId,
+                      player_name: pitcherPlayerName,
                       canonical_market_key: 'pitcher_strikeouts',
                       basis: driver.basis || 'PROJECTION_ONLY',
                       tags: ['no_odds_mode'],
@@ -2008,6 +2072,7 @@ module.exports = {
   resolveMlbTeamLookupKeys,
   resolvePitcherKsMode,
   resolveMlbPitcherPropRolloutState,
+  resolvePitcherKPayloadIdentity,
   isTimestampFresh,
   filterSnapshotsByGameIds,
   evaluatePitcherPropPublishability,

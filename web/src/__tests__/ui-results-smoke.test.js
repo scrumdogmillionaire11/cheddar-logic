@@ -53,6 +53,7 @@ async function validateResultsSourceContract(assert) {
     'totalPnlUnits:',
     'winRate:',
     'avgPnl:',
+    'avgClvPct:',
   ].forEach((token) => {
     assert.ok(
       routeSource.includes(token),
@@ -80,6 +81,11 @@ async function validateResultsSourceContract(assert) {
     'results route must derive segmentFamilies from DECISION_SEGMENTS',
   );
   assert.ok(
+    routeSource.includes('projectionSummaries: []') &&
+      routeSource.includes('projectionSummaries,'),
+    'results route must expose projectionSummaries in empty and populated responses',
+  );
+  assert.ok(
     routeSource.includes('ledger: []') &&
       routeSource.includes('ledger: ledgerRows'),
     'results route must expose ledger in empty and populated responses',
@@ -101,6 +107,25 @@ async function validateResultsSourceContract(assert) {
       pageSource.includes('renderPeriodBadge(row)') &&
       pageSource.includes('text-cyan-200'),
     'results page must reference marketPeriodToken and render a 1P badge path',
+  );
+  assert.ok(
+    routeSource.includes("const DEFAULT_EXCLUDED_SPORT = 'NCAAM';") &&
+      routeSource.includes('function buildSportFilter(') &&
+      routeSource.includes(
+        "sql: `AND UPPER(${sportExpr}) != '${DEFAULT_EXCLUDED_SPORT}'`",
+      ),
+    'results route must suppress NCAAM by default',
+  );
+  assert.ok(
+    !pageSource.includes('<option value="NCAAM">NCAAM</option>'),
+    'results page must not expose NCAAM in sport filters',
+  );
+  assert.ok(
+    pageSource.includes('Betting Record') &&
+      pageSource.includes('Projection Models (Research Only)') &&
+      pageSource.includes('Model Projection — No Line Applied') &&
+      pageSource.includes('Awaiting settled outcome data'),
+    'results page must render split betting/projection lanes with hard projection-only labeling',
   );
 }
 
@@ -128,6 +153,7 @@ async function validateLiveResultsPayload(baseUrl, assert) {
     'totalPnlUnits',
     'winRate',
     'avgPnl',
+    'avgClvPct',
   ].forEach((key) => {
     assert.ok(
       Object.prototype.hasOwnProperty.call(summary, key),
@@ -152,11 +178,22 @@ async function validateLiveResultsPayload(baseUrl, assert) {
     'Summary avgPnl must be number|null',
   );
   assert.ok(
+    summary.avgClvPct === null || typeof summary.avgClvPct === 'number',
+    'Summary avgClvPct must be number|null',
+  );
+  assert.ok(
     summary.wins + summary.losses + summary.pushes <= summary.settledCards,
     'Summary W/L/P counts cannot exceed settledCards',
   );
 
   assert.ok(Array.isArray(payload.data.segments), 'Segments is not an array');
+  payload.data.segments.forEach((row, index) => {
+    assert.notStrictEqual(
+      String(row.sport || '').toUpperCase(),
+      'NCAAM',
+      `Segment row ${index} unexpectedly contains NCAAM`,
+    );
+  });
   assert.ok(
     Array.isArray(payload.data.segmentFamilies),
     'segmentFamilies is not an array',
@@ -168,8 +205,39 @@ async function validateLiveResultsPayload(baseUrl, assert) {
       `segmentFamilies missing ${segmentId}`,
     );
   });
+  assert.ok(
+    Array.isArray(payload.data.projectionSummaries),
+    'projectionSummaries is not an array',
+  );
+  payload.data.projectionSummaries.forEach((row, index) => {
+    [
+      'actualsAvailable',
+      'bias',
+      'cardFamily',
+      'directionalAccuracy',
+      'familyLabel',
+      'mae',
+      'rowsSeen',
+      'sampleSize',
+    ].forEach((key) => {
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(row, key),
+        `projectionSummaries row ${index} missing ${key}`,
+      );
+    });
+    assert.strictEqual(
+      typeof row.actualsAvailable,
+      'boolean',
+      `projectionSummaries row ${index} actualsAvailable must be boolean`,
+    );
+  });
   assert.ok(Array.isArray(payload.data.ledger), 'Ledger is not an array');
   payload.data.ledger.forEach((row, index) => {
+    assert.notStrictEqual(
+      String(row.sport || '').toUpperCase(),
+      'NCAAM',
+      `Ledger row ${index} unexpectedly contains NCAAM`,
+    );
     assert.ok(
       Object.prototype.hasOwnProperty.call(row, 'marketPeriodToken'),
       `Ledger row ${index} missing marketPeriodToken field`,

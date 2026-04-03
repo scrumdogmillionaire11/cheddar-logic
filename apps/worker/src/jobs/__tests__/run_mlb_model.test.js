@@ -40,6 +40,7 @@ const {
   assertMlbExecutionInvariant,
   buildMlbPipelineState,
   buildPitcherKLineContract,
+  resolvePitcherKPayloadIdentity,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -804,7 +805,8 @@ describe('MLB pitcher-K under monitoring', () => {
           mlb: {
             home_pitcher: {
               ...fullPitcher,
-              full_name: 'Projection Only',
+              mlb_id: 592450,
+              full_name: 'Gerrit Cole',
             },
             away_offense_profile: {
               wrc_plus_vs_rhp: 102,
@@ -823,6 +825,9 @@ describe('MLB pitcher-K under monitoring', () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]).toMatchObject({
       basis: 'PROJECTION_ONLY',
+      player_id: '592450',
+      player_name: 'Gerrit Cole',
+      pitcher_team: 'New York Yankees',
       prediction: 'PASS',
       status: 'PASS',
       emit_card: true,
@@ -848,6 +853,65 @@ describe('MLB pitcher-K under monitoring', () => {
         under_playable_at_or_above: expect.any(Number),
       },
     });
+  });
+
+  test('computePitcherKDriverCards threads starter identity for home and away pitcher cards', () => {
+    const cards = computePitcherKDriverCards(
+      'game-1',
+      {
+        home_team: 'New York Yankees',
+        away_team: 'Boston Red Sox',
+        raw_data: {
+          mlb: {
+            home_pitcher: {
+              ...fullPitcher,
+              mlb_id: 592450,
+              full_name: 'Gerrit Cole',
+            },
+            away_pitcher: {
+              ...fullPitcher,
+              mlb_id: 608337,
+              full_name: 'Lucas Giolito',
+            },
+            home_offense_profile: {
+              wrc_plus_vs_rhp: 102,
+              k_pct_vs_rhp: 0.231,
+              iso_vs_rhp: 0.169,
+              bb_pct_vs_rhp: 0.085,
+              xwoba_vs_rhp: 0.321,
+              hard_hit_pct: 40.3,
+            },
+            away_offense_profile: {
+              wrc_plus_vs_rhp: 98,
+              k_pct_vs_rhp: 0.241,
+              iso_vs_rhp: 0.162,
+              bb_pct_vs_rhp: 0.081,
+              xwoba_vs_rhp: 0.316,
+              hard_hit_pct: 38.8,
+            },
+          },
+        },
+      },
+      { mode: 'PROJECTION_ONLY' },
+    );
+
+    expect(cards).toHaveLength(2);
+    expect(cards).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          market: 'pitcher_k_home',
+          pitcher_team: 'New York Yankees',
+          player_id: '592450',
+          player_name: 'Gerrit Cole',
+        }),
+        expect.objectContaining({
+          market: 'pitcher_k_away',
+          pitcher_team: 'Boston Red Sox',
+          player_id: '608337',
+          player_name: 'Lucas Giolito',
+        }),
+      ]),
+    );
   });
 
   test('computePitcherKDriverCards emits projection-only rows for thin-sample starters with flags', () => {
@@ -1104,6 +1168,32 @@ describe('MLB prop rollout + freshness gating', () => {
     });
   });
 
+});
+
+describe('resolvePitcherKPayloadIdentity', () => {
+  test('prefers driver player_name and player_id when available', () => {
+    expect(
+      resolvePitcherKPayloadIdentity(
+        { player_id: 592450, player_name: 'Gerrit Cole' },
+        'New York Yankees',
+      ),
+    ).toEqual({
+      playerId: '592450',
+      playerName: 'Gerrit Cole',
+    });
+  });
+
+  test('falls back to team SP label when driver player_name is missing', () => {
+    expect(
+      resolvePitcherKPayloadIdentity(
+        { player_id: null, player_name: null },
+        'New York Yankees',
+      ),
+    ).toEqual({
+      playerId: null,
+      playerName: 'New York Yankees SP',
+    });
+  });
 });
 
 describe('WI-0720 MLB execution envelope', () => {

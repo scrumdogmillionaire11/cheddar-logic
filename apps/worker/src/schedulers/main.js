@@ -38,6 +38,7 @@ const {
   purgeStaleTminusPullLog,
   purgeStalePropOddsUsageLog,
   purgeExpiredPropEventMappings,
+  recoverStaleJobRuns,
 } = require('@cheddar-logic/data');
 
 // Import all jobs
@@ -1158,6 +1159,13 @@ async function start() {
   purgeStalePropOddsUsageLog();
   purgeExpiredPropEventMappings();
   console.log('[SCHEDULER] Prop odds control tables: usage log and expired mappings pruned.');
+
+  const staleLockCount = recoverStaleJobRuns();
+  if (staleLockCount > 0) {
+    console.log(`[SCHEDULER] Stale lock recovery: ${staleLockCount} orphaned job_run(s) transitioned from 'running' to 'failed'.`);
+  } else {
+    console.log('[SCHEDULER] Stale lock recovery: no orphaned locks found.');
+  }
 
   let tickRunning = false;
 

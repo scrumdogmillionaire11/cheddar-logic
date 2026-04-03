@@ -65,6 +65,14 @@ async function validateCardsSourceContract(assert) {
     new URL('../components/cards/GameCardItem.tsx', import.meta.url),
     'utf8',
   );
+  const modeTabsSource = await fs.readFile(
+    new URL('../components/cards/CardsModeTabs.tsx', import.meta.url),
+    'utf8',
+  );
+  const pageContextSource = await fs.readFile(
+    new URL('../components/cards/CardsPageContext.tsx', import.meta.url),
+    'utf8',
+  );
   assert.ok(
     !source.includes('displayPlay.edge ?? 0'),
     'cards page must not synthesize edge from `displayPlay.edge ?? 0`',
@@ -84,6 +92,15 @@ async function validateCardsSourceContract(assert) {
   assert.ok(
     !source.includes('Sharp Verdict:'),
     'cards page should not leak internal sharp verdict label',
+  );
+  assert.ok(
+    modeTabsSource.includes('Game Props') &&
+      modeTabsSource.includes("onModeChange('projections')"),
+    'cards page should expose the Game Props tab as a separate projection surface',
+  );
+  assert.ok(
+    pageContextSource.includes("modeParam === 'projections'"),
+    'cards page should support projections mode via URL param',
   );
 }
 

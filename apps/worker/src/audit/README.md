@@ -71,6 +71,7 @@ Field rules:
 | `run_model_audit.js` | Orchestrates snapshot + comparison; used by CI gate. |
 | `scorecard.js` | Generates the weekly model scorecard from audit data. |
 | `performance_drift_report.js` | Produces a per-family drift summary for review. |
+| `projection_evaluator.js` | Computes projection-only MAE, bias, directional accuracy, and calibration buckets from settled actuals. |
 | `audit_invariants.js` | Enforces structural invariants on audit output (completeness, schema). |
 | `audit_rules_config.js` | Threshold configuration for invariant checks (pass/warn/fail bands). |
 | `fixture_loader.js` | Loads golden fixture data for snapshot runs. |

@@ -1983,8 +1983,11 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
   for (const { pitcher, role, team } of candidates) {
     if (!pitcher) continue;
 
+    const playerId = pitcher.mlb_id != null ? String(pitcher.mlb_id) : null;
+    const playerName = pitcher.full_name ?? null;
+
     const pitcherInput = {
-      full_name: pitcher.full_name ?? null,
+      full_name: playerName,
       k_per_9: pitcher.k_per_9 ?? null,
       recent_k_per_9: pitcher.recent_k_per_9 ?? null,
       season_k_pct: pitcher.season_k_pct ?? pitcher.k_pct ?? null,
@@ -2031,11 +2034,21 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       opp_k_pct_vs_handedness_season_pa:
         mlb.opp_k_pct_season_pa?.[role] ??
         (opponentProfile?.k_pct != null ? 600 : 0),
-      opp_obp: opponentProfile?.bb_pct != null
-        ? clampValue(0.245 + opponentProfile.bb_pct * 0.8, 0.285, 0.355)
-        : null,
-      opp_xwoba: opponentProfile?.xwoba ?? null,
-      opp_hard_hit_pct: opponentProfile?.hard_hit_pct ?? null,
+      // opp_obp: prefer live mlb_team_batting_stats row (attached by enrichMlbPitcherData
+      // after WI-0744 migration), then bb_pct-derived estimate from static offense profile,
+      // then league-average default. The static MLB_F5_TEAM_OFFENSE_SPLITS have no bb_pct /
+      // xwoba / hard_hit_pct, so the final fallback is always exercised until the DB table
+      // is populated — but it is never null, preventing the 'opponent_contact_profile' flag.
+      opp_obp: mlb[role === 'home' ? 'away_batting_stats' : 'home_batting_stats']?.obp
+        ?? (opponentProfile?.bb_pct != null
+          ? clampValue(0.245 + opponentProfile.bb_pct * 0.8, 0.285, 0.355)
+          : MLB_K_DEFAULT_OPP_OBP),
+      opp_xwoba: mlb[role === 'home' ? 'away_batting_stats' : 'home_batting_stats']?.xwoba
+        ?? opponentProfile?.xwoba
+        ?? MLB_K_DEFAULT_OPP_XWOBA,
+      opp_hard_hit_pct: mlb[role === 'home' ? 'away_batting_stats' : 'home_batting_stats']?.hard_hit_pct
+        ?? opponentProfile?.hard_hit_pct
+        ?? MLB_K_DEFAULT_OPP_HARD_HIT_PCT,
       opp_chase_rate_l30: mlb.opp_chase_rate?.[role] ?? null,
       park_k_factor: mlb.park_k_factor ?? 1.0,
       confirmed_lineup: mlb.confirmed_lineup?.[role] ?? null,
@@ -2077,6 +2090,8 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
     cards.push({
       market: `pitcher_k_${role}`,
       pitcher_team: team,
+      player_id: playerId,
+      player_name: playerName,
       prediction: 'PASS',
       status: 'PASS',
       action: 'PASS',

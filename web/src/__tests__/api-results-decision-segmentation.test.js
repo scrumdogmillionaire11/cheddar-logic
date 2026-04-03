@@ -72,6 +72,15 @@ async function validateResultsSegmentationSourceContract(assert) {
     'results route must derive segment families and ledger labels from canonical decision tiers',
   );
   assert.ok(
+    routeSource.includes("from './projection-metrics';") &&
+      routeSource.includes('buildProjectionSummaries') &&
+      routeSource.includes('deriveResultCardMode') &&
+      routeSource.includes("if (deriveResultCardMode(payload) !== 'ODDS_BACKED')") &&
+      routeSource.includes('const projectionSummaries = buildProjectionSummaries(') &&
+      routeSource.includes('projectionSummaries,'),
+    'results route must split ODDS_BACKED betting rows from PROJECTION_ONLY projection summaries',
+  );
+  assert.ok(
     routeSource.includes('LEFT JOIN clv_ledger clv ON clv.card_id = cr.card_id') &&
       routeSource.includes('const clv =') &&
       routeSource.includes('clv,'),
@@ -90,6 +99,14 @@ async function validateResultsSegmentationSourceContract(assert) {
   assert.ok(
     routeSource.includes("ELSE 'FULL_GAME'"),
     'results route must retain derived CASE fallback expression for backward compatibility',
+  );
+  assert.ok(
+    routeSource.includes("const DEFAULT_EXCLUDED_SPORT = 'NCAAM';") &&
+      routeSource.includes('function buildSportFilter(') &&
+      routeSource.includes(
+        "sql: `AND UPPER(${sportExpr}) != '${DEFAULT_EXCLUDED_SPORT}'`",
+      ),
+    'results route must suppress NCAAM by default while preserving explicit sport filters',
   );
 }
 
@@ -141,6 +158,11 @@ function assertDecisionSegmentation(payload, assert, label) {
   );
 
   for (const segment of segments) {
+    assert.notStrictEqual(
+      String(segment.sport || '').toUpperCase(),
+      'NCAAM',
+      `${label}: default segment unexpectedly contains NCAAM`,
+    );
     assert.ok(
       segment.segmentId === 'play' || segment.segmentId === 'slight_edge',
       `${label}: unexpected segmentId ${segment.segmentId}`,
@@ -246,6 +268,11 @@ function assertDecisionSegmentation(payload, assert, label) {
   );
 
   for (const [index, row] of ledger.entries()) {
+    assert.notStrictEqual(
+      String(row.sport || '').toUpperCase(),
+      'NCAAM',
+      `${label}: default ledger row ${index} unexpectedly contains NCAAM`,
+    );
     assert.ok(
       Object.prototype.hasOwnProperty.call(row, 'marketPeriodToken'),
       `${label}: ledger row ${index} missing marketPeriodToken field`,

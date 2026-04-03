@@ -112,6 +112,10 @@ const WAVE1_MARKETS = new Set<CanonicalMarketType>([
   'TEAM_TOTAL',
   'FIRST_PERIOD',
 ]);
+const PROJECTION_ONLY_LINE_SOURCES = new Set<string>([
+  'PROJECTION_FLOOR',
+  'SYNTHETIC_FALLBACK',
+]);
 
 type ApiPropDisplayState = 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
 
@@ -194,6 +198,7 @@ interface ApiPlay {
   pass_reason_code?: string | null;
   pass_reason?: string | null;
   basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
+  execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
   prop_decision?: ApiPropDecision | null;
   prop_display_state?: ApiPropDisplayState;
   run_id?: string;
@@ -417,6 +422,22 @@ function hasPlayableBet(
     return typeof play.line === 'number' || typeof play.price === 'number';
   }
   return false;
+}
+
+function isProjectionOnlyCardPlay(play: ApiPlay): boolean {
+  const lineSource = play.line_source?.trim().toUpperCase() ?? null;
+  const projectionSource =
+    play.prop_decision?.projection_source ??
+    play.projection_source ??
+    null;
+
+  return (
+    play.basis === 'PROJECTION_ONLY' ||
+    play.execution_status === 'PROJECTION_ONLY' ||
+    play.prop_display_state === 'PROJECTION_ONLY' ||
+    (lineSource != null && PROJECTION_ONLY_LINE_SOURCES.has(lineSource)) ||
+    projectionSource === 'SYNTHETIC_FALLBACK'
+  );
 }
 
 function playDecisionRank(play: ApiPlay): number {
@@ -820,6 +841,7 @@ function getValueStatus(edge?: number): ValueStatus {
 function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const canonicalTruePlay =
     game.true_play &&
+    !isProjectionOnlyCardPlay(game.true_play) &&
     game.true_play.market_type !== 'PROP' &&
     isPlayItem(game.true_play, game.sport) &&
     (ENABLE_WELCOME_HOME || !isWelcomeHomePlay(game.true_play))
@@ -828,7 +850,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   // Game mode must not promote player props into canonical game-line play slots.
   // Props are rendered via transformPropGames in cards props mode only.
   const basePlayCandidates = game.plays.filter(
-    (play) => isPlayItem(play, game.sport) && play.market_type !== 'PROP',
+    (play) =>
+      !isProjectionOnlyCardPlay(play) &&
+      isPlayItem(play, game.sport) &&
+      play.market_type !== 'PROP',
   );
   const hasCanonicalInCandidates = canonicalTruePlay
     ? basePlayCandidates.some((play) => {
@@ -847,7 +872,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       : [...basePlayCandidates];
   const dedupedPlayCandidates = dedupePlayCandidates(game, playCandidates);
   const evidenceCandidates = game.plays.filter((play) =>
-    isEvidenceItem(play, game.sport),
+    !isProjectionOnlyCardPlay(play) && isEvidenceItem(play, game.sport),
   );
   const scopedPlayCandidates = ENABLE_WELCOME_HOME
     ? dedupedPlayCandidates
@@ -2759,14 +2784,10 @@ function isProjectionOnlyPropPlay(
   play: ApiPlay,
   propDecision?: ApiPropDecision | null,
 ): boolean {
-  const projectionSource =
-    propDecision?.projection_source ?? play.projection_source ?? null;
-
-  return (
-    play.basis === 'PROJECTION_ONLY' ||
-    play.prop_display_state === 'PROJECTION_ONLY' ||
-    projectionSource === 'SYNTHETIC_FALLBACK'
-  );
+  if (propDecision?.projection_source === 'SYNTHETIC_FALLBACK') {
+    return true;
+  }
+  return isProjectionOnlyCardPlay(play);
 }
 
 function normalizePropVerdict(
@@ -2831,8 +2852,14 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
   }
 
   for (const game of games) {
-    // Extract all PROP plays from this game
-    const propPlays = game.plays.filter((p) => p.market_type === 'PROP');
+    // Extract all PROP plays from this game.
+    // PROJECTION_ONLY plays are intentionally included — normalizePropVerdict converts
+    // them to propVerdict='PROJECTION' / status='NO_PLAY' so they render as projections
+    // in the Player Props tab. Filtering them here would leave the tab empty whenever
+    // the model runs without live prop line prices (common during the day).
+    const propPlays = game.plays.filter(
+      (p) => p.market_type === 'PROP',
+    );
 
     // Skip games with no props
     if (propPlays.length === 0) continue;

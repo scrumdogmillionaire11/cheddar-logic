@@ -29,6 +29,7 @@ module.exports = {
   shouldRunJobKey: jobRuns.shouldRunJobKey,
   getLatestJobRunByKey: jobRuns.getLatestJobRunByKey,
   wasJobKeyRecentlySuccessful: jobRuns.wasJobKeyRecentlySuccessful,
+  recoverStaleJobRuns: jobRuns.recoverStaleJobRuns,
   insertOddsSnapshot: odds.insertOddsSnapshot,
   patchOddsSnapshot1p: odds.patchOddsSnapshot1p,
   patchOddsSnapshotF5: odds.patchOddsSnapshotF5,

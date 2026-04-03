@@ -55,6 +55,16 @@ assert(
 );
 
 assert(
+  routeSource.includes('const normalizedPlayerName = firstString(') &&
+    routeSource.includes('(payload as Record<string, unknown>).player_name,') &&
+    routeSource.includes('payloadPlay?.player_name,') &&
+    routeSource.includes('payloadSelection?.player_name,') &&
+    routeSource.includes('const normalizedSelectionTeamBase = firstString(') &&
+    routeSource.includes('normalizedPlayerName,'),
+  'Expected /api/games route to prefer canonical payload.player_name and use it before team fallback labels',
+);
+
+assert(
   routeSource.includes("'nhl-player-blk'"),
   'Expected /api/games route to include nhl-player-blk in the NHL prop contract path',
 );
@@ -72,5 +82,20 @@ assert(
     routeSource.includes('market_bookmaker: normalizedMarketBookmaker'),
   'Expected /api/games route to preserve market_bookmaker from payload normalization through emitted play rows',
 );
+
+// Pitcher-K numeric fields must flow through prop_decision
+assert(
+  routeSource.includes("'PASS' ? 'PROJECTION'") ||
+    routeSource.includes("=== 'PASS' ? 'PROJECTION'"),
+  'Expected /api/games route to map PASS verdict to PROJECTION so pitcher-K k_mean is not dropped',
+);
+
+const pitcherKFields = ['k_mean', 'probability_ladder', 'fair_prices', 'playability', 'projection_source', 'status_cap'];
+for (const field of pitcherKFields) {
+  assert(
+    routeSource.includes(`rawPropDecision.${field}`),
+    `Expected /api/games route to map prop_decision.${field} for pitcher-K cards`,
+  );
+}
 
 console.log('✅ API games prop decision contract test passed');

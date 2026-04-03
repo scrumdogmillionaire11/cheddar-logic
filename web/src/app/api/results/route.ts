@@ -10,10 +10,18 @@ import {
   performSecurityChecks,
   addRateLimitHeaders,
 } from '../../../lib/api-security';
+import {
+  buildProjectionSummaries,
+  deriveResultCardMode,
+  deriveCardFamily,
+  deriveModelFamily,
+  deriveModelVersion,
+} from './projection-metrics';
 
 const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
 const ALLOWED_CATEGORIES = ['driver', 'call'] as const;
 const ALLOWED_MARKETS = ['moneyline', 'spread', 'total'] as const;
+const DEFAULT_EXCLUDED_SPORT = 'NCAAM';
 
 type ActionableSourceRow = {
   id: string;
@@ -23,6 +31,8 @@ type ActionableSourceRow = {
   result: string | null;
   pnl_units: number | null;
   payload_data: string | null;
+  game_result_metadata: string | null;
+  clv_pct: number | null;
 };
 
 type DecisionSegmentId = 'play' | 'slight_edge';
@@ -226,6 +236,23 @@ function buildCardCategoryFilter(
   }
 }
 
+function buildSportFilter(
+  sport: string | null,
+  sportExpr: string,
+): { sql: string; params: string[] } {
+  if (sport) {
+    return {
+      sql: `AND UPPER(${sportExpr}) = ?`,
+      params: [sport],
+    };
+  }
+
+  return {
+    sql: `AND UPPER(${sportExpr}) != '${DEFAULT_EXCLUDED_SPORT}'`,
+    params: [],
+  };
+}
+
 // NOTE: ensureCardDisplayLogSchema removed — worker owns all DB writes (single-writer architecture).
 
 export async function GET(request: NextRequest) {
@@ -273,6 +300,7 @@ export async function GET(request: NextRequest) {
               totalPnlUnits: null,
               winRate: 0,
               avgPnl: null,
+              avgClvPct: null,
             },
             segments: [],
             segmentFamilies: DECISION_SEGMENTS.map((segment) => ({
@@ -280,6 +308,7 @@ export async function GET(request: NextRequest) {
               segmentLabel: segment.label,
               settledCards: 0,
             })),
+            projectionSummaries: [],
             ledger: [],
           },
         },
@@ -381,10 +410,10 @@ export async function GET(request: NextRequest) {
     const dedupe = parseBooleanLikeParam(searchParams.get('dedupe'), true);
 
     // Build filter SQL fragments
-    const sportFilter = sport
-      ? `AND UPPER(COALESCE(cdl.sport, cr.sport)) = ?`
-      : '';
-    const sportParams = sport ? [sport] : [];
+    const sportFilter = buildSportFilter(
+      sport,
+      'COALESCE(cdl.sport, cr.sport)',
+    );
 
     const categoryFilter = buildCardCategoryFilter(cardCategory, 'cr');
     const confidenceExpr = `COALESCE(CAST(json_extract(cp.payload_data, '$.confidence_pct') AS REAL), CAST(json_extract(cp.payload_data, '$.confidence') AS REAL) * 100.0)`;
@@ -459,7 +488,7 @@ export async function GET(request: NextRequest) {
         INNER JOIN display_log_latest cdl ON cr.card_id = cdl.pick_id
         LEFT JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'settled'
-          ${sportFilter}
+          ${sportFilter.sql}
           ${categoryFilter.sql}
           ${confidenceFilter}
           ${marketFilter}
@@ -501,7 +530,7 @@ export async function GET(request: NextRequest) {
       `;
 
     const dedupParams = [
-      ...sportParams,
+      ...sportFilter.params,
       ...categoryFilter.params,
       ...confidenceParams,
       ...marketParams,
@@ -521,11 +550,21 @@ export async function GET(request: NextRequest) {
       .get(...dedupParams) as { count: number } | null;
     const filteredCount = Number(filteredCountRow?.count || 0);
 
+    const totalSettledSportFilter = buildSportFilter(sport, 'cr.sport');
     const totalSettledRow = db
       .prepare(
-        `SELECT COUNT(*) AS count FROM card_results WHERE status = 'settled'`,
+        `
+        SELECT COUNT(*) AS count
+        FROM card_results cr
+        WHERE cr.status = 'settled'
+          ${totalSettledSportFilter.sql}
+      `,
       )
-      .get() as { count: number } | null;
+      .get(...totalSettledSportFilter.params) as { count: number } | null;
+    const displayedSettledSportFilter = buildSportFilter(
+      sport,
+      'COALESCE(cdl.sport, cr.sport)',
+    );
     const displayedSettledRow = db
       .prepare(
         `
@@ -533,12 +572,17 @@ export async function GET(request: NextRequest) {
         FROM card_results cr
         INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
         WHERE cr.status = 'settled'
+          ${displayedSettledSportFilter.sql}
       `,
       )
-      .get() as { count: number } | null;
+      .get(...displayedSettledSportFilter.params) as { count: number } | null;
     const totalSettled = Number(totalSettledRow?.count || 0);
     const withPayloadSettled = Number(displayedSettledRow?.count || 0);
     const orphanedSettled = totalSettled - withPayloadSettled;
+    const displayedFinalSportFilter = buildSportFilter(
+      sport,
+      'COALESCE(cdl.sport, gr.sport)',
+    );
     const displayedFinalRow = db
       .prepare(
         `
@@ -546,9 +590,14 @@ export async function GET(request: NextRequest) {
         FROM card_display_log cdl
         INNER JOIN game_results gr ON gr.game_id = cdl.game_id
         WHERE gr.status = 'final'
+          ${displayedFinalSportFilter.sql}
       `,
       )
-      .get() as { count: number } | null;
+      .get(...displayedFinalSportFilter.params) as { count: number } | null;
+    const settledFinalDisplayedSportFilter = buildSportFilter(
+      sport,
+      'COALESCE(cdl.sport, cr.sport, gr.sport)',
+    );
     const settledFinalDisplayedRow = db
       .prepare(
         `
@@ -558,9 +607,12 @@ export async function GET(request: NextRequest) {
         INNER JOIN game_results gr ON gr.game_id = cdl.game_id
         WHERE gr.status = 'final'
           AND cr.status = 'settled'
+          ${settledFinalDisplayedSportFilter.sql}
       `,
       )
-      .get() as { count: number } | null;
+      .get(...settledFinalDisplayedSportFilter.params) as {
+        count: number;
+      } | null;
     const displayedFinal = Number(displayedFinalRow?.count || 0);
     const settledFinalDisplayed = Number(settledFinalDisplayedRow?.count || 0);
     const missingFinalDisplayed = Math.max(
@@ -569,6 +621,21 @@ export async function GET(request: NextRequest) {
     );
 
     const placeholders = dedupedIdRows.map(() => '?').join(',');
+    const clvByCardCte = hasClvLedger
+      ? `
+        WITH clv_by_card AS (
+          SELECT card_id, AVG(clv_pct) AS clv_pct
+          FROM clv_ledger
+          WHERE clv_pct IS NOT NULL
+          GROUP BY card_id
+        )
+      `
+      : `
+        WITH clv_by_card AS (
+          SELECT NULL AS card_id, NULL AS clv_pct
+          WHERE 0
+        )
+      `;
 
     if (dedupedIdRows.length === 0) {
       const response = NextResponse.json(
@@ -584,6 +651,7 @@ export async function GET(request: NextRequest) {
               totalPnlUnits: null,
               winRate: 0,
               avgPnl: null,
+              avgClvPct: null,
             },
             segments: [],
             segmentFamilies: DECISION_SEGMENTS.map((segment) => ({
@@ -591,6 +659,7 @@ export async function GET(request: NextRequest) {
               segmentLabel: segment.label,
               settledCards: 0,
             })),
+            projectionSummaries: [],
             ledger: [],
             filters: {
               sport,
@@ -631,6 +700,7 @@ export async function GET(request: NextRequest) {
     const actionableSourceRows = db
       .prepare(
         `
+      ${clvByCardCte}
       SELECT
         cr.id,
         cr.sport,
@@ -638,28 +708,57 @@ export async function GET(request: NextRequest) {
         cr.recommended_bet_type,
         cr.result,
         cr.pnl_units,
-        cp.payload_data
+        cp.payload_data,
+        gr.metadata AS game_result_metadata,
+        clv_by_card.clv_pct
       FROM card_results cr
       LEFT JOIN card_payloads cp ON cp.id = cr.card_id
+      LEFT JOIN game_results gr ON gr.game_id = cr.game_id
+      LEFT JOIN clv_by_card ON clv_by_card.card_id = cr.card_id
       WHERE cr.id IN (${placeholders})
     `,
       )
       .all(...ids) as ActionableSourceRow[];
 
+    const projectionSummaries = buildProjectionSummaries(
+      actionableSourceRows.map((row) => ({
+        sport: row.sport,
+        cardType: row.card_type,
+        payload: safeJsonParse(row.payload_data).data as Record<string, unknown> | null,
+        gameResultMetadata: safeJsonParse(row.game_result_metadata)
+          .data as Record<string, unknown> | null,
+      })),
+    );
+    const oddsBackedLedgerIds = actionableSourceRows.flatMap((row) => {
+      const parsed = safeJsonParse(row.payload_data);
+      const payload = parsed.data as Record<string, unknown> | null;
+      return deriveResultCardMode(payload) === 'ODDS_BACKED' ? [row.id] : [];
+    });
+
     const actionableRows = actionableSourceRows.flatMap((row) => {
       const parsed = safeJsonParse(row.payload_data);
       const payload = parsed.data as Record<string, unknown> | null;
+      if (deriveResultCardMode(payload) !== 'ODDS_BACKED') {
+        return [];
+      }
+
       const decisionTier = resolveDecisionTier(payload);
       if (decisionTier !== 'PLAY' && decisionTier !== 'LEAN') {
         return [];
       }
       const decisionSegment = deriveDecisionSegment(decisionTier);
+      const cardFamily = deriveCardFamily(row.sport, row.card_type);
+      const modelFamily = deriveModelFamily(row.sport, row.card_type);
+      const modelVersion = deriveModelVersion(row.sport, row.card_type);
       return [
         {
           ...row,
           decisionTier,
           segmentId: decisionSegment.id,
           segmentLabel: decisionSegment.label,
+          cardFamily,
+          modelFamily,
+          modelVersion,
         },
       ];
     });
@@ -669,6 +768,9 @@ export async function GET(request: NextRequest) {
       {
         sport: string;
         cardType: string;
+        cardFamily: string;
+        modelFamily: string;
+        modelVersion: string;
         cardCategory: string;
         recommendedBetType: string;
         settledCards: number;
@@ -690,6 +792,8 @@ export async function GET(request: NextRequest) {
     let totalCards = 0;
     let totalPnlSum = 0;
     let hasTotalPnl = false;
+    let totalClvPctSum = 0;
+    let totalClvPctCount = 0;
 
     for (const row of actionableRows) {
       totalCards += 1;
@@ -701,14 +805,20 @@ export async function GET(request: NextRequest) {
         totalPnlSum += row.pnl_units;
         hasTotalPnl = true;
       }
+      if (typeof row.clv_pct === 'number' && Number.isFinite(row.clv_pct)) {
+        totalClvPctSum += row.clv_pct;
+        totalClvPctCount += 1;
+      }
 
       const cardCategory = deriveCardCategoryFromType(row.card_type);
       const recommendedBetType = row.recommended_bet_type || 'unknown';
+      // Key on cardFamily (canonical market bucket) instead of raw card_type.
+      // This merges driver types (nhl-pace-totals) and call types (nhl-totals-call)
+      // into a single NHL_TOTAL row rather than producing duplicate table rows.
       const key = [
         row.segmentId,
         row.sport,
-        row.card_type,
-        cardCategory,
+        row.cardFamily,
         recommendedBetType,
       ].join('||');
       const existing = segmentMap.get(key);
@@ -716,6 +826,9 @@ export async function GET(request: NextRequest) {
         segmentMap.set(key, {
           sport: row.sport,
           cardType: row.card_type,
+          cardFamily: row.cardFamily,
+          modelFamily: row.modelFamily,
+          modelVersion: row.modelVersion,
           cardCategory,
           recommendedBetType,
           settledCards: 1,
@@ -748,6 +861,9 @@ export async function GET(request: NextRequest) {
       .map((row) => ({
         sport: row.sport,
         cardType: row.cardType,
+        cardFamily: row.cardFamily,
+        modelFamily: row.modelFamily,
+        modelVersion: row.modelVersion,
         cardCategory: row.cardCategory,
         recommendedBetType: row.recommendedBetType,
         settledCards: row.settledCards,
@@ -764,10 +880,7 @@ export async function GET(request: NextRequest) {
           return a.segmentId.localeCompare(b.segmentId);
         }
         if (a.sport !== b.sport) return a.sport.localeCompare(b.sport);
-        if (a.cardType !== b.cardType) return a.cardType.localeCompare(b.cardType);
-        if (a.cardCategory !== b.cardCategory) {
-          return a.cardCategory.localeCompare(b.cardCategory);
-        }
+        if (a.cardFamily !== b.cardFamily) return a.cardFamily.localeCompare(b.cardFamily);
         return a.recommendedBetType.localeCompare(b.recommendedBetType);
       });
 
@@ -785,10 +898,13 @@ export async function GET(request: NextRequest) {
       totalPnlUnits !== null && settledCards > 0
         ? totalPnlUnits / settledCards
         : null;
+    const avgClvPct =
+      totalClvPctCount > 0 ? totalClvPctSum / totalClvPctCount : null;
 
-    const ledger = db
-      .prepare(
-        `
+    const ledger = oddsBackedLedgerIds.length
+      ? (db
+          .prepare(
+            `
       SELECT
         cr.id,
         cr.game_id,
@@ -848,16 +964,24 @@ export async function GET(request: NextRequest) {
       LEFT JOIN card_payloads cp ON cr.card_id = cp.id
       LEFT JOIN games g ON g.game_id = cr.game_id
       ${clvJoin}
-      WHERE cr.id IN (${placeholders})
+      WHERE cr.id IN (${oddsBackedLedgerIds.map(() => '?').join(',')})
       ORDER BY cdl.displayed_at DESC
       LIMIT ${limit}
     `,
-      )
-      .all(...ids) as LedgerRow[];
+          )
+          .all(...oddsBackedLedgerIds) as LedgerRow[])
+      : [];
 
-    const ledgerRows = ledger.map((row) => {
+    const ledgerRows = ledger.flatMap((row) => {
       const parsed = safeJsonParse(row.payload_data);
       const payload = parsed.data as Record<string, unknown> | null;
+      if (deriveResultCardMode(payload) !== 'ODDS_BACKED') {
+        return [];
+      }
+
+      const cardFamily = deriveCardFamily(row.sport, row.card_type);
+      const modelFamily = deriveModelFamily(row.sport, row.card_type);
+
       const tier =
         payload && typeof payload.tier === 'string' ? payload.tier : null;
       const decisionTier = resolveDecisionTier(payload);
@@ -1052,40 +1176,44 @@ export async function GET(request: NextRequest) {
             }
           : null;
 
-      return {
-        id: row.id,
-        gameId: row.game_id,
-        sport: row.sport,
-        cardType: row.card_type,
-        result: row.result,
-        pnlUnits: row.pnl_units,
-        settledAt: row.settled_at,
-        gameTimeUtc: row.game_time_utc,
-        createdAt: row.created_at,
-        prediction,
-        tier,
-        decisionTier:
-          decisionTier === 'PLAY' || decisionTier === 'LEAN'
-            ? decisionTier
-            : null,
-        decisionLabel,
-        market,
-        marketType,
-        selection,
-        marketSelectionLabel,
-        homeTeam,
-        awayTeam,
-        marketPeriodToken: row.market_period_token,
-        line,
-        marketKey,
-        price: lockedPrice,
-        confidencePct,
-        payloadParseError: parsed.error,
-        payloadMissing: parsed.missing || row.payload_id === null,
-        projection1p,
-        projectionTotal,
-        clv,
-      };
+      return [
+        {
+          id: row.id,
+          gameId: row.game_id,
+          sport: row.sport,
+          cardType: row.card_type,
+          cardFamily,
+          modelFamily,
+          result: row.result,
+          pnlUnits: row.pnl_units,
+          settledAt: row.settled_at,
+          gameTimeUtc: row.game_time_utc,
+          createdAt: row.created_at,
+          prediction,
+          tier,
+          decisionTier:
+            decisionTier === 'PLAY' || decisionTier === 'LEAN'
+              ? decisionTier
+              : null,
+          decisionLabel,
+          market,
+          marketType,
+          selection,
+          marketSelectionLabel,
+          homeTeam,
+          awayTeam,
+          marketPeriodToken: row.market_period_token,
+          line,
+          marketKey,
+          price: lockedPrice,
+          confidencePct,
+          payloadParseError: parsed.error,
+          payloadMissing: parsed.missing || row.payload_id === null,
+          projection1p,
+          projectionTotal,
+          clv,
+        },
+      ];
     });
 
     const response = NextResponse.json(
@@ -1101,9 +1229,11 @@ export async function GET(request: NextRequest) {
             totalPnlUnits,
             winRate,
             avgPnl,
+            avgClvPct,
           },
           segments: segmentRows,
           segmentFamilies,
+          projectionSummaries,
           ledger: ledgerRows,
           filters: {
             sport,

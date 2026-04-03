@@ -121,7 +121,8 @@ const mlbPitcherKLineContractSchema = z
 //
 // Contract (docs/pitcher_ks/07output.md):
 //   - basis: 'PROJECTION_ONLY' | 'ODDS_BACKED'
-//   - player_name: '<TEAM> SP'
+//   - player_name: starter full_name when known, otherwise '<TEAM> SP'
+//   - player_id: MLB pitcher ID string when available
 //   - canonical_market_key: 'pitcher_strikeouts'
 //   - pitcher_k_result: null | object (engine signal diagnostics)
 //   - tags: string[] (may include 'no_odds_mode', 'HIGH VIG', etc.)
@@ -192,6 +193,7 @@ const mlbPitcherKPayloadSchema = z
       .optional(),
     disclaimer: z.string().optional(),
     generated_at: isoDateString,
+    player_id: z.string().min(1).nullable().optional(),
     player_name: z.string().min(1),
     canonical_market_key: z.literal('pitcher_strikeouts'),
     basis: z.enum(['PROJECTION_ONLY', 'ODDS_BACKED']),

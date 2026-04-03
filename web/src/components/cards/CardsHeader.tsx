@@ -74,7 +74,7 @@ export default function CardsHeader() {
           </p>
         </div>
       )}
-      {!loading && !error && diagnosticsEnabled && hiddenDataErrors > 0 && (
+      {!loading && !error && hiddenDataErrors > 0 && (
         <details className="rounded-md border border-amber-600/50 bg-amber-700/20 px-3 py-2 text-xs text-amber-100">
           <summary className="cursor-pointer font-semibold">
             {hiddenDataErrors} game{hiddenDataErrors !== 1 ? 's' : ''} excluded due

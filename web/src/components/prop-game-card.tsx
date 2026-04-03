@@ -143,7 +143,7 @@ const getSourceBadgeClass = (source: PropPlayRow['projectionSource']) => {
     return `${baseClass} border-amber-400/30 bg-amber-400/10 text-amber-200`;
   }
   if (source === 'SYNTHETIC_FALLBACK') {
-    return `${baseClass} border-cloud/15 bg-cloud/5 text-cloud/55`;
+    return `${baseClass} border-red-500/40 bg-red-500/10 text-red-300`;
   }
   return `${baseClass} border-white/10 bg-white/5 text-cloud/55`;
 };
@@ -171,10 +171,10 @@ const formatPlayabilityBand = (prop: PropPlayRow) => {
   const underLine = prop.playability?.under_playable_at_or_above;
   if (!Number.isFinite(overLine) && !Number.isFinite(underLine)) return null;
   const overText = Number.isFinite(overLine)
-    ? `Over ${formatNumber(overLine, 1)} playable`
+    ? `Over playable at ${formatNumber(overLine, 1)} or lower`
     : null;
   const underText = Number.isFinite(underLine)
-    ? `Under ${formatNumber(underLine, 1)} playable`
+    ? `Under playable at ${formatNumber(underLine, 1)} or higher`
     : null;
   return [overText, underText].filter(Boolean).join(' · ');
 };
@@ -282,7 +282,7 @@ const buildHeroLine = ({
     return `WATCH — ${outcomeText}${oddsText}`;
   }
   if (verdict === 'PROJECTION') {
-    return `PROJECTION — Model ${outcomeText}`;
+    return 'Model Projection \u2014 No Line Applied';
   }
 
   const strength = getNoPlayLeanStrength(thresholdGap);
@@ -368,7 +368,7 @@ const getDeterministicExplanation = ({
   if (verdict === 'PROJECTION') {
     return hasProjectionAnomaly
       ? 'Projection anomaly triggered, so this row stays model-only'
-      : 'Projection only — no bettable market is available';
+      : 'Model Projection \u2014 No Line Applied';
   }
   if (verdict === 'PLAY') {
     return (
@@ -477,21 +477,89 @@ const PITCHER_K_THRESHOLDS = [
   { key: 'p_7_plus', fairKey: 'k_7_plus', label: '7+', underLabel: '6 or fewer' },
 ] as const;
 
+const CORE_MISSING_INPUTS: Record<string, string> = {
+  opponent_contact_profile: 'opponent contact profile',
+  starter_k_pct: 'starter K rate',
+  starter_handedness: 'pitcher handedness',
+  starter_role: 'starter role',
+  season_starts: 'season starts',
+};
+
+const SECONDARY_MISSING_INPUTS: Record<string, string> = {
+  starter_whiff_proxy: 'whiff rate (estimated)',
+};
+
+const computeNoEdgeZone = (playability: PropPlayRow['playability']) => {
+  const overLine = playability?.over_playable_at_or_below;
+  const underLine = playability?.under_playable_at_or_above;
+  if (!Number.isFinite(overLine) || !Number.isFinite(underLine)) return null;
+  return `${formatNumber(overLine as number, 1)}\u2013${formatNumber(underLine as number, 1)}`;
+};
+
+const getLeashDisplay = (flags: string[] | null | undefined) => {
+  if (!flags || flags.length === 0) return null;
+  const flagSet = new Set(flags);
+  if (flagSet.has('IL_RETURN')) return 'IL return';
+  if (flagSet.has('EXTENDED_REST')) return 'Extended rest';
+  if (flagSet.has('SHORT_LEASH') || flagSet.has('SHORT_LEASH_HALTED')) return 'Short';
+  if (flagSet.has('IP_PROXY')) return 'IP proxy (estimated from IP)';
+  if (flagSet.has('SMALL_SAMPLE') || flagSet.has('THIN_SAMPLE_STARTS')) return 'Thin sample';
+  return null;
+};
+
 const getPitcherKDiagnostics = (prop: PropPlayRow) => {
+  const isFallback = prop.projectionSource === 'SYNTHETIC_FALLBACK';
+
+  const coreMissing = (prop.missingInputs ?? [])
+    .filter((k) => k in CORE_MISSING_INPUTS)
+    .map((k) => CORE_MISSING_INPUTS[k]);
+
+  const secondaryMissing = (prop.missingInputs ?? [])
+    .filter((k) => k in SECONDARY_MISSING_INPUTS)
+    .map((k) => SECONDARY_MISSING_INPUTS[k]);
+
+  const coreMissingText =
+    coreMissing.length > 0
+      ? `Missing core input${coreMissing.length > 1 ? 's' : ''}: ${coreMissing.join(', ')}`
+      : null;
+
+  const secondaryText =
+    secondaryMissing.length > 0
+      ? `Secondary degradation: ${secondaryMissing.join(', ')}`
+      : null;
+
+  const qualityLabel = isFallback
+    ? 'FALLBACK'
+    : prop.projectionSource === 'DEGRADED_MODEL'
+      ? 'DEGRADED'
+      : 'FULL MODEL';
+
+  const statusLine = isFallback
+    ? 'Model Projection \u2014 No Line Applied'
+    : prop.basis === 'PROJECTION_ONLY'
+      ? 'Model Projection \u2014 No Line Applied'
+      : null;
+
   const reasonText =
     prop.passReason ||
     formatReasonLabel(prop.passReasonCode) ||
-    (prop.projectionSource === 'SYNTHETIC_FALLBACK'
-      ? 'Synthetic fallback projection'
-      : null) ||
-    (prop.basis === 'PROJECTION_ONLY'
-      ? 'Projection only — no odds market available'
-      : null);
+    (isFallback ? 'Synthetic fallback projection' : null) ||
+    (prop.basis === 'PROJECTION_ONLY' ? 'Model Projection \u2014 No Line Applied' : null);
+
   const missingInputsText =
     prop.missingInputs && prop.missingInputs.length > 0
       ? `Missing inputs: ${prop.missingInputs.join(', ')}`
       : null;
-  return { reasonText, missingInputsText };
+
+  return {
+    reasonText,
+    missingInputsText,
+    coreMissingText,
+    secondaryText,
+    qualityLabel,
+    statusLine,
+    isFallback,
+  };
 };
 
 export default function PropGameCardComponent({ card }: PropGameCardProps) {
@@ -550,7 +618,19 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
             const projectionSourceLabel = formatProjectionSource(prop.projectionSource);
             const statusCapLabel = prop.statusCap ? `Cap ${prop.statusCap}` : null;
             const playabilityText = formatPlayabilityBand(prop);
-            const { reasonText, missingInputsText } = getPitcherKDiagnostics(prop);
+            const {
+              reasonText,
+              missingInputsText,
+              coreMissingText,
+              secondaryText,
+              qualityLabel,
+              statusLine,
+              isFallback,
+            } = getPitcherKDiagnostics(prop);
+            const noEdgeZoneText = computeNoEdgeZone(prop.playability);
+            const leashDisplay = getLeashDisplay([...(prop.propFlags ?? []), ...(prop.reasonCodes ?? [])]);
+            const isPitcherKCard = prop.propType === 'Strikeouts';
+            const hasL5Data = prop.l5Mean !== null && prop.l5Mean !== undefined;
             const thresholdTarget = getThresholdTarget(lineValue);
             const thresholdGap =
               typeof projectionValue === 'number' && typeof thresholdTarget === 'number'
@@ -608,7 +688,9 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
               Boolean(playabilityText || reasonText || missingInputsText);
             const projectionLead =
               prop.propType === 'Strikeouts'
-                ? `K mean: ${formatNumber(prop.kMean ?? projectionValue, 2)} strikeouts`
+                ? (isFallback
+                    ? `~${(Math.round(((prop.kMean ?? projectionValue ?? 0) as number) * 2) / 2).toFixed(1)} Ks`
+                    : `${formatNumber(prop.kMean ?? projectionValue, 1)} Ks`)
                 : `Projection: ${formatNumber(projectionValue)} ${getPropUnits(prop.propType).plural}`;
             const hitRateText =
               Number.isFinite(prop.fairProb)
@@ -692,17 +774,19 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                       {heroLine}
                     </p>
                     <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-cloud/55">
-                      Win condition: {thresholdOutcomeText}
+                      {isPitcherKCard && projectionOnlyRow
+                        ? 'Compare against posted K line'
+                        : `Win condition: ${thresholdOutcomeText}`}
                     </p>
                     <p className="mt-2 text-xl font-bold text-sage-white">
                       {projectionLead}
                     </p>
-                    {Number.isFinite(lineValue) && (
+                    {Number.isFinite(lineValue) && !isPitcherKCard && (
                       <p className="mt-1 text-sm font-semibold text-cloud/80">
                         Standard line: {formatNumber(lineValue, 1)}
                       </p>
                     )}
-                    {hitRateText && (
+                    {hitRateText && !isPitcherKCard && (
                       <p className="mt-1 text-sm font-semibold text-cloud">
                         {hitRateText}
                       </p>
@@ -724,13 +808,15 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                         })}
                       </div>
                     )}
-                    <p className="mt-2 text-sm text-cloud/72">{explanationLine}</p>
-                    {reasonText && (
+                    {(!isPitcherKCard || !projectionOnlyRow) && (
+                      <p className="mt-2 text-sm text-cloud/72">{explanationLine}</p>
+                    )}
+                    {reasonText && !isPitcherKCard && (
                       <p className="mt-1 text-xs font-semibold text-cloud/60">
                         PASS reason: {reasonText}
                       </p>
                     )}
-                    {missingInputsText && (
+                    {missingInputsText && !isPitcherKCard && (
                       <p className="mt-1 text-xs text-cloud/55">
                         {missingInputsText}
                       </p>
@@ -812,34 +898,74 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                             Book: {formatBookName(prop.bookmaker)}
                           </p>
                         )}
-                        {playabilityText && (
-                          <p className="text-cloud/60">
-                            Playable thresholds: {playabilityText}
+                        {Number.isFinite(prop.playability?.over_playable_at_or_below) && (
+                          <p className="text-cloud/80">
+                            Over at {formatNumber(prop.playability?.over_playable_at_or_below, 1)} or lower
+                          </p>
+                        )}
+                        {Number.isFinite(prop.playability?.under_playable_at_or_above) && (
+                          <p className="text-cloud/80">
+                            Under at {formatNumber(prop.playability?.under_playable_at_or_above, 1)} or higher
+                          </p>
+                        )}
+                        {noEdgeZoneText && (
+                          <p className="text-cloud/50">
+                            No edge zone: {noEdgeZoneText}
+                          </p>
+                        )}
+                        {leashDisplay && isPitcherKCard && (
+                          <p className="text-cloud/50">
+                            Leash: {leashDisplay}
                           </p>
                         )}
                       </div>
                     </div>
 
-                    <div className="rounded border border-white/10 bg-night/40 p-3">
-                      <div className="text-[11px] uppercase tracking-[0.12em] text-cloud/45">
-                        L5 / Context
+                    {isPitcherKCard ? (
+                      <div className="rounded border border-white/10 bg-night/40 p-3">
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-cloud/45">
+                          Model Quality
+                        </div>
+                        <div className="mt-2 space-y-1 text-sm">
+                          <p className={`font-semibold ${isFallback ? 'text-red-300' : 'text-amber-200'}`}>
+                            {qualityLabel}
+                          </p>
+                          {coreMissingText && (
+                            <p className="text-xs text-red-300/80">{coreMissingText}</p>
+                          )}
+                          {secondaryText && (
+                            <p className="text-xs text-amber-300/70">{secondaryText}</p>
+                          )}
+                          {statusLine && (
+                            <p className="text-xs text-cloud/55">{statusLine}</p>
+                          )}
+                          {!hasL5Data && (
+                            <p className="text-xs text-cloud/40">Recent form unavailable</p>
+                          )}
+                        </div>
                       </div>
-                      <div className="mt-2 space-y-1 text-sm text-cloud/80">
-                        <p>{l5RelativeText}</p>
-                        {thresholdGap !== null && verdict === 'NO_PLAY' && (
-                          <p>{getNoPlayLeanContext(thresholdGap)}</p>
-                        )}
-                        {reasonText && <p>{reasonText}</p>}
-                        {missingInputsText && <p>{missingInputsText}</p>}
-                        {prop.propFlags && prop.propFlags.length > 0 && (
-                          <p>Flags: {prop.propFlags.join(' | ')}</p>
-                        )}
-                        {projectionSourceLabel && (
-                          <p>Source: {projectionSourceLabel}</p>
-                        )}
-                        {statusCapLabel && <p>{statusCapLabel}</p>}
+                    ) : (
+                      <div className="rounded border border-white/10 bg-night/40 p-3">
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-cloud/45">
+                          L5 / Context
+                        </div>
+                        <div className="mt-2 space-y-1 text-sm text-cloud/80">
+                          <p>{l5RelativeText}</p>
+                          {thresholdGap !== null && verdict === 'NO_PLAY' && (
+                            <p>{getNoPlayLeanContext(thresholdGap)}</p>
+                          )}
+                          {reasonText && <p>{reasonText}</p>}
+                          {missingInputsText && <p>{missingInputsText}</p>}
+                          {prop.propFlags && prop.propFlags.length > 0 && (
+                            <p>Flags: {prop.propFlags.join(' | ')}</p>
+                          )}
+                          {projectionSourceLabel && (
+                            <p>Source: {projectionSourceLabel}</p>
+                          )}
+                          {statusCapLabel && <p>{statusCapLabel}</p>}
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
 
                   {hasDetails && (
@@ -873,6 +999,14 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                                   : 'Projection anomaly'}
                               </span>
                             ))}
+                          </div>
+                        )}
+                        {isPitcherKCard && (prop.propFlags ?? []).length > 0 && (
+                          <div className="pt-1">
+                            <p className="mb-0.5 text-cloud/40">Model flags</p>
+                            <p className="break-all font-mono text-[10px] text-cloud/35">
+                              {[...(prop.propFlags ?? []), ...(prop.reasonCodes ?? [])].filter(Boolean).join(' \u00b7 ')}
+                            </p>
                           </div>
                         )}
                       </div>

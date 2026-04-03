@@ -18,6 +18,9 @@ type ResultsSummary = {
 type SegmentRow = {
   sport: string;
   cardType: string;
+  cardFamily: string;
+  modelFamily: string;
+  modelVersion: string;
   cardCategory: string;
   recommendedBetType: string;
   settledCards: number;
@@ -68,6 +71,19 @@ type LedgerRow = {
   projectionTotal?: number | null;
   decisionTier?: 'PLAY' | 'LEAN' | null;
   decisionLabel?: string | null;
+  cardFamily?: string | null;
+  modelFamily?: string | null;
+};
+
+type ProjectionSummaryRow = {
+  actualsAvailable: boolean;
+  bias: number | null;
+  cardFamily: string;
+  directionalAccuracy: number | null;
+  familyLabel: string;
+  mae: number | null;
+  rowsSeen: number;
+  sampleSize: number;
 };
 
 type ResultsResponse = {
@@ -77,6 +93,7 @@ type ResultsResponse = {
     summary: ResultsSummary;
     segments: SegmentRow[];
     segmentFamilies?: SegmentFamily[];
+    projectionSummaries?: ProjectionSummaryRow[];
     ledger: LedgerRow[];
     filters?: {
       sport: string | null;
@@ -112,6 +129,12 @@ function formatUnits(value: number | null | undefined) {
   return `${sign}${value.toFixed(2)}u`;
 }
 
+function formatDecimal(value: number | null | undefined, digits = 1) {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'N/A';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(digits)}`;
+}
+
 function formatLedgerDate(value: string | null | undefined) {
   if (!value) return '--';
   const parsed = new Date(value);
@@ -135,12 +158,6 @@ function formatMarketSelectionLabel(row: LedgerRow) {
 
 function isFirstPeriodRow(row: LedgerRow) {
   return row.marketPeriodToken === '1P';
-}
-
-function formatSegmentTypeLabel(cardType: string | null | undefined) {
-  if (cardType === 'nhl-pace-1p') return 'NHL 1P Totals';
-  if (cardType === 'nhl-pace-totals') return 'NHL Totals';
-  return formatLabel(cardType);
 }
 
 function renderPeriodBadge(row: LedgerRow) {
@@ -196,6 +213,7 @@ const SEGMENT_DEFINITIONS: SegmentFamily[] = [
 export default function ResultsPage() {
   const [summary, setSummary] = useState<ResultsSummary | null>(null);
   const [segments, setSegments] = useState<SegmentRow[]>([]);
+  const [projectionSummaries, setProjectionSummaries] = useState<ProjectionSummaryRow[]>([]);
   const [ledger, setLedger] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -250,6 +268,7 @@ export default function ResultsPage() {
 
       setSummary(payload.data.summary);
       setSegments(payload.data.segments);
+      setProjectionSummaries(payload.data.projectionSummaries ?? []);
       setLedger(payload.data.ledger);
       setDataMeta(payload.data.meta || null);
       setError(null);
@@ -278,24 +297,19 @@ export default function ResultsPage() {
       : 'N/A';
     return [
       {
-        label: 'Record (W-L-P)',
+        label: 'Betting Record',
         value: record,
-        note: 'Graded outcomes',
+        note: `ODDS_BACKED only · ${isValidSummary ? formatPercent(summary.winRate) : 'N/A'} win rate`,
       },
       {
-        label: 'Win Rate',
-        value: isValidSummary ? formatPercent(summary.winRate) : 'N/A',
-        note: 'Wins vs losses',
-      },
-      {
-        label: 'Settled Plays',
-        value: isValidSummary ? String(summary.settledCards) : 'N/A',
-        note: 'Resolved cards',
-      },
-      {
-        label: 'ROI (units)',
+        label: 'Units',
         value: isValidSummary ? formatUnits(summary.totalPnlUnits) : 'N/A',
-        note: 'Optional P/L',
+        note: `${isValidSummary ? String(summary.settledCards) : 'N/A'} settled bets`,
+      },
+      {
+        label: 'ROI',
+        value: isValidSummary ? formatPercent(summary.avgPnl) : 'N/A',
+        note: 'Per 1u stake',
       },
     ];
   }, [summary]);
@@ -402,41 +416,57 @@ export default function ResultsPage() {
 
         <section className="sticky top-0 z-10 mb-6 rounded-xl border border-white/10 bg-night/85 px-4 py-3 backdrop-blur md:hidden">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-cloud/70">Record</span>
+            <span className="text-cloud/70">Betting Record</span>
             <span className="font-semibold text-cloud">{mobileRecord}</span>
           </div>
           <div className="mt-1 flex items-center justify-between text-xs text-cloud/60">
-            <span>ROI (optional)</span>
+            <span>Units</span>
             <span className={roiTextClass(summary?.totalPnlUnits)}>
               {summary ? formatUnits(summary.totalPnlUnits) : 'N/A'}
             </span>
           </div>
         </section>
 
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {summaryCards.map((card) => (
-            <div
-              key={card.label}
-              className="rounded-2xl border border-white/10 bg-surface/80 p-6 shadow-[0_0_40px_rgba(0,0,0,0.3)]"
-            >
-              <p className="text-xs uppercase tracking-[0.25em] text-cloud/50">
-                {card.label}
+        <section>
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-2xl font-semibold">Betting Record</h2>
+              <p className="mt-2 text-sm text-cloud/70">
+                Profit/loss is computed from ODDS_BACKED settled bets only.
+                Projection-only rows are excluded from all W-L and units
+                totals.
               </p>
-              <div className="mt-4 text-3xl font-semibold text-cloud">
-                {card.value}
-              </div>
-              <p className="mt-2 text-sm text-cloud/60">{card.note}</p>
             </div>
-          ))}
+            <span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
+              ODDS_BACKED
+            </span>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            {summaryCards.map((card) => (
+              <div
+                key={card.label}
+                className="rounded-2xl border border-white/10 bg-surface/80 p-6 shadow-[0_0_40px_rgba(0,0,0,0.3)]"
+              >
+                <p className="text-xs uppercase tracking-[0.25em] text-cloud/50">
+                  {card.label}
+                </p>
+                <div className="mt-4 text-3xl font-semibold text-cloud">
+                  {card.value}
+                </div>
+                <p className="mt-2 text-sm text-cloud/60">{card.note}</p>
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h2 className="text-2xl font-semibold">Decision Tiers</h2>
+              <h2 className="text-2xl font-semibold">Betting Decision Tiers</h2>
               <p className="mt-2 text-sm text-cloud/70">
-                Track settled performance by decision tier so PLAY and SLIGHT
-                EDGE outcomes reconcile directly to the summary above.
+                ODDS_BACKED PLAY and SLIGHT EDGE outcomes reconcile directly to
+                the Betting Record summary above.
               </p>
             </div>
 
@@ -459,7 +489,6 @@ export default function ResultsPage() {
                 <option value="">All Sports</option>
                 <option value="NHL">NHL</option>
                 <option value="NBA">NBA</option>
-                <option value="NCAAM">NCAAM</option>
               </select>
 
               {/* Card category select */}
@@ -522,7 +551,6 @@ export default function ResultsPage() {
                   <option value="">All Sports</option>
                   <option value="NHL">NHL</option>
                   <option value="NBA">NBA</option>
-                  <option value="NCAAM">NCAAM</option>
                 </select>
                 <select
                   value={filterCategory}
@@ -584,8 +612,8 @@ export default function ResultsPage() {
                   <div className="hidden overflow-hidden rounded-xl border border-white/10 md:block">
                     <div className="grid grid-cols-6 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
                       <span>Sport</span>
-                      <span>Type</span>
-                      <span>Market</span>
+                      <span>Family</span>
+                      <span>Engine</span>
                       <span>Plays</span>
                       <span>Win Rate</span>
                       <span>ROI</span>
@@ -605,15 +633,15 @@ export default function ResultsPage() {
                           const isHighWinRate = winRate >= 0.6;
                           return (
                             <div
-                              key={`${family.segmentId}-${row.sport}-${row.cardType}-${row.recommendedBetType}`}
+                              key={`${family.segmentId}-${row.sport}-${row.cardFamily}-${row.recommendedBetType}`}
                               className={`grid grid-cols-6 gap-4 px-4 py-3 text-sm ${isHighWinRate ? 'bg-emerald-500/10' : ''}`}
                             >
                               <span className="text-cloud/70">{row.sport}</span>
                               <span className="text-cloud/70">
-                                {formatSegmentTypeLabel(row.cardType)}
+                                {row.cardFamily}
                               </span>
-                              <span className="text-cloud/70 capitalize">
-                                {row.recommendedBetType || '--'}
+                              <span className="text-cloud/70">
+                                {row.modelFamily || '--'}
                               </span>
                               <span className="text-cloud/70">{total}</span>
                               <span
@@ -649,7 +677,7 @@ export default function ResultsPage() {
                             : 0;
                         return (
                           <article
-                            key={`${family.segmentId}-${row.sport}-${row.cardType}-${row.recommendedBetType}-mobile`}
+                            key={`${family.segmentId}-${row.sport}-${row.cardFamily}-${row.recommendedBetType}-mobile`}
                             className="rounded-xl border border-white/10 bg-night/40 px-4 py-4"
                           >
                             <div className="flex items-start justify-between gap-3">
@@ -657,11 +685,11 @@ export default function ResultsPage() {
                                 <p className="text-sm font-semibold text-cloud">
                                   {row.sport} -{' '}
                                   <span className="text-cloud/75">
-                                    {formatSegmentTypeLabel(row.cardType)}
+                                    {row.cardFamily}
                                   </span>
                                 </p>
-                                <p className="mt-1 text-xs text-cloud/60 capitalize">
-                                  {row.recommendedBetType || '--'}
+                                <p className="mt-1 text-xs text-cloud/60">
+                                  {row.modelFamily || '--'}
                                 </p>
                               </div>
                               <span
@@ -703,13 +731,56 @@ export default function ResultsPage() {
           </div>
         </section>
 
+        {projectionSummaries.length > 0 && (
+          <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
+            <h2 className="text-2xl font-semibold">Projection Models (Research Only)</h2>
+            <p className="mt-2 text-sm text-cloud/70">
+              Model Projection — No Line Applied. Projection-only markets tracked
+              separately — no P&amp;L, just model accuracy versus actuals.
+            </p>
+            <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
+              <div className="grid grid-cols-5 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+                <span>Model</span>
+                <span>Sample</span>
+                <span>MAE</span>
+                <span>Bias</span>
+                <span>Dir. Acc.</span>
+              </div>
+              <div className="divide-y divide-white/10">
+                {projectionSummaries.map((row) => (
+                  <div
+                    key={row.cardFamily}
+                    className="grid grid-cols-5 gap-4 px-4 py-3 text-sm text-cloud/70"
+                  >
+                    <span className="font-medium text-cloud">{row.familyLabel}</span>
+                    <span>{row.sampleSize > 0 ? row.sampleSize : '—'}</span>
+                    <span>
+                      {row.mae !== null ? formatDecimal(row.mae, 2) : '—'}
+                    </span>
+                    <span>
+                      {row.bias !== null ? formatDecimal(row.bias, 2) : '—'}
+                    </span>
+                    <span>
+                      {row.actualsAvailable && row.directionalAccuracy !== null
+                        ? formatPercent(row.directionalAccuracy)
+                        : row.actualsAvailable === false
+                          ? 'Awaiting settled outcome data'
+                          : '—'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
         <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h2 className="text-2xl font-semibold">Play Ledger</h2>
+              <h2 className="text-2xl font-semibold">Betting Ledger</h2>
               <p className="mt-2 text-sm text-cloud/70">
-                A full audit trail of every logged call, sortable and
-                exportable.
+                A full audit trail of odds-backed calls only. Projection-only
+                model accuracy is tracked in the section above.
               </p>
             </div>
             <button

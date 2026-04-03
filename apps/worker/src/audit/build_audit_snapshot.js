@@ -1,4 +1,4 @@
-const crypto = require('crypto');
+const nodeCrypto = require('crypto');
 
 const {
   normalizeReasonCodes,
@@ -142,7 +142,7 @@ function normalizeForHash(value) {
 }
 
 function stableHash(value) {
-  return crypto
+  return nodeCrypto
     .createHash('sha256')
     .update(JSON.stringify(normalizeForHash(value)))
     .digest('hex');

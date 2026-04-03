@@ -50,31 +50,6 @@ function ensureClvLedgerSchema(db) {
   `);
 }
 
-function ensureProjectionPerfLedgerSchema(db) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS projection_perf_ledger (
-      id TEXT PRIMARY KEY,
-      card_id TEXT NOT NULL,
-      game_id TEXT NOT NULL,
-      sport TEXT,
-      prop_type TEXT,
-      player_name TEXT,
-      pick_side TEXT,
-      projection REAL,
-      prop_line REAL,
-      actual_result REAL,
-      won INTEGER,
-      confidence TEXT,
-      volatility_band TEXT,
-      recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      settled_at TEXT,
-      decision_basis TEXT NOT NULL DEFAULT 'PROJECTION_ONLY',
-      CONSTRAINT proj_perf_no_odds_backed
-        CHECK (decision_basis = 'PROJECTION_ONLY')
-    );
-  `);
-}
-
 function recordClvEntry(entry = {}) {
   if (!isFlagEnabled('ENABLE_CLV_LEDGER')) return;
   if (normalizeDecisionBasis(entry.decisionBasis) === 'PROJECTION_ONLY') return;
@@ -132,70 +107,7 @@ function settleClvEntry(cardId, closingOdds, clvPct, closedAt) {
   );
 }
 
-function recordProjectionEntry(entry = {}) {
-  if (!isFlagEnabled('ENABLE_PROJECTION_PERF_LEDGER')) return;
-  if (entry.decisionBasis === 'ODDS_BACKED') return;
-
-  const db = getDb();
-  ensureProjectionPerfLedgerSchema(db);
-  const stmt = db.prepare(`
-    INSERT OR IGNORE INTO projection_perf_ledger (
-      id, card_id, game_id, sport, prop_type, player_name,
-      pick_side, projection, prop_line, confidence, volatility_band, decision_basis
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PROJECTION_ONLY')
-  `);
-
-  stmt.run(
-    entry.id,
-    entry.cardId,
-    entry.gameId,
-    entry.sport || null,
-    entry.propType || null,
-    entry.playerName || null,
-    entry.pickSide || null,
-    entry.projection ?? null,
-    entry.propLine ?? null,
-    entry.confidence || null,
-    entry.volatilityBand || null,
-  );
-}
-
-function settleProjectionEntry(cardId, actualResult, settledAt) {
-  if (!isFlagEnabled('ENABLE_PROJECTION_PERF_LEDGER')) return;
-  if (!cardId) return;
-
-  const db = getDb();
-  const row = db
-    .prepare(
-      `
-        SELECT pick_side, prop_line
-        FROM projection_perf_ledger
-        WHERE card_id = ? AND settled_at IS NULL
-        LIMIT 1
-      `,
-    )
-    .get(cardId);
-  if (!row) return;
-
-  let won = null;
-  if (Number.isFinite(actualResult) && Number.isFinite(row.prop_line)) {
-    const side = String(row.pick_side || '').toUpperCase();
-    if (side === 'OVER') won = actualResult > row.prop_line ? 1 : 0;
-    if (side === 'UNDER') won = actualResult < row.prop_line ? 1 : 0;
-  }
-
-  db.prepare(
-    `
-      UPDATE projection_perf_ledger
-      SET actual_result = ?, won = ?, settled_at = ?
-      WHERE card_id = ? AND settled_at IS NULL
-    `,
-  ).run(actualResult ?? null, won, settledAt || new Date().toISOString(), cardId);
-}
-
 module.exports = {
   recordClvEntry,
   settleClvEntry,
-  recordProjectionEntry,
-  settleProjectionEntry,
 };

@@ -1,0 +1,57 @@
+{
+  "fixture_id": "mlb_pitcher_k_proxy_degraded_01",
+  "sport": "MLB",
+  "card_family": "MLB_PITCHER_K",
+  "card_mode": "PROJECTION_ONLY",
+  "description": "Pitcher K prop — FALLBACK quality: starter_whiff_proxy used (no real swstr_pct/csw_pct) and opponent contact profile unavailable. Projection still emitted but play_range is conservative (no STRONG edge claims).",
+  "input_contract": "ODDS_SNAPSHOT",
+  "match_key": {
+    "game_id": "mlb_test_game_proxy_001",
+    "market_type": "PITCHER_K",
+    "selection": "OVER"
+  },
+  "input": {
+    "game_id": "mlb_test_game_proxy_001",
+    "sport": "MLB",
+    "home_team": "Detroit Tigers",
+    "away_team": "Kansas City Royals",
+    "game_time_utc": "2026-04-03T18:10:00Z",
+    "captured_at": "2026-04-03T12:00:00Z",
+    "_pitcher_prop": {
+      "player_id": "mlb_pitcher_mcgreevy_123",
+      "player_name": "Michael McGreevy",
+      "team": "KCR",
+      "k_line": null,
+      "season_k_avg": 5.2,
+      "last_5_k_avg": 4.9,
+      "opponent_k_rate": null,
+      "days_rest": 5,
+      "innings_pitched_cap": 5.5,
+      "swstr_pct": null,
+      "csw_pct": null,
+      "whiff_proxy": 0.145,
+      "opp_contact_pct": null,
+      "data_source_status": "PARTIAL"
+    }
+  },
+  "expected": {
+    "input_hash": "proxy_degraded_fixture_v1",
+    "execution_status": "PROJECTION_ONLY",
+    "market_type": "UNKNOWN",
+    "prop_decision_model_quality": "FALLBACK",
+    "prop_decision_proxy_fields_must_include": ["starter_whiff_proxy"],
+    "reason_codes_must_not_include": ["EDGE_CLEAR", "STRONG_OVER", "STRONG_UNDER"]
+  },
+  "_inv007_check": {
+    "expected_model_quality": "FALLBACK",
+    "expected_proxy_fields": ["starter_whiff_proxy"],
+    "expected_degradation_reasons": ["opp_contact_profile", "starter_whiff_proxy"],
+    "note": "INV-007 must pass: proxy_fields non-empty + model_quality=FALLBACK is valid"
+  },
+  "_baseline_change_note": {
+    "changed_by": "codex",
+    "reason": "WI-0747 — new FALLBACK fixture representing whiff-proxy + missing opponent contact. Validates INV-007 proxy-exclusion rule.",
+    "approved_at": "2026-04-03T00:00:00Z"
+  },
+  "baseline_reviewed": true
+}

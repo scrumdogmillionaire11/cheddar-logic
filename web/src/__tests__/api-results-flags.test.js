@@ -45,6 +45,14 @@ async function validateResultsFlagsSourceContract(assert) {
     routeSource.includes('const clv =') && routeSource.includes('clv,'),
     'results route must expose optional clv data on ledger rows',
   );
+  assert.ok(
+    routeSource.includes("const DEFAULT_EXCLUDED_SPORT = 'NCAAM';") &&
+      routeSource.includes('function buildSportFilter(') &&
+      routeSource.includes(
+        "sql: `AND UPPER(${sportExpr}) != '${DEFAULT_EXCLUDED_SPORT}'`",
+      ),
+    'results route must suppress NCAAM from default responses',
+  );
 }
 
 async function getJson(url) {
@@ -163,7 +171,22 @@ async function run() {
   const defaultLedger = Array.isArray(payloadDefault.data?.ledger)
     ? payloadDefault.data.ledger
     : [];
+  const defaultSegments = Array.isArray(payloadDefault.data?.segments)
+    ? payloadDefault.data.segments
+    : [];
+  defaultSegments.forEach((segment, index) => {
+    assert.notStrictEqual(
+      String(segment.sport || '').toUpperCase(),
+      'NCAAM',
+      `default segment ${index} unexpectedly contains NCAAM`,
+    );
+  });
   defaultLedger.forEach((row, index) => {
+    assert.notStrictEqual(
+      String(row.sport || '').toUpperCase(),
+      'NCAAM',
+      `default ledger row ${index} unexpectedly contains NCAAM`,
+    );
     assert.ok(
       Object.prototype.hasOwnProperty.call(row, 'clv'),
       `default ledger row ${index} missing clv field`,

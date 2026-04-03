@@ -288,6 +288,10 @@ const ACTIVE_GAME_SPORT_SQL = ACTIVE_GAME_SPORTS.map(
 const ACTIVE_GAME_SPORT_SET = new Set<string>(ACTIVE_GAME_SPORTS);
 const INVALID_SPORT_FILTER = '__INVALID_SPORT_FILTER__';
 const FINAL_GAME_RESULT_STATUSES = ['FINAL', 'FT', 'COMPLETE', 'COMPLETED', 'CLOSED'];
+const PROJECTION_ONLY_LINE_SOURCES = new Set<string>([
+  'PROJECTION_FLOOR',
+  'SYNTHETIC_FALLBACK',
+]);
 
 function resolveLifecycleMode(searchParams: URLSearchParams): LifecycleMode {
   const lifecycleParam = (searchParams.get('lifecycle') || '').toLowerCase();
@@ -357,6 +361,10 @@ interface Play {
     projected_team_total?: number | null;
     projected_score_home?: number | null;
     projected_score_away?: number | null;
+    // Pitcher-K prop fields
+    k_mean?: number | null;
+    probability_ladder?: Record<string, unknown> | null;
+    fair_prices?: Record<string, unknown> | null;
   };
   status?: ExpressionStatus;
   kind?: 'PLAY' | 'EVIDENCE';
@@ -499,6 +507,8 @@ interface Play {
   market_price_over?: number | null;
   market_price_under?: number | null;
   market_bookmaker?: string | null;
+  basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
+  execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
   prop_display_state?: 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
   prop_decision?: {
     verdict: 'PLAY' | 'WATCH' | 'NO_PLAY' | 'PROJECTION';
@@ -515,6 +525,15 @@ interface Play {
     l5_trend: 'uptrend' | 'downtrend' | 'stable' | null;
     why: string;
     flags: string[];
+    // Pitcher-K prop fields
+    k_mean: number | null;
+    probability_ladder: Record<string, unknown> | null;
+    fair_prices: Record<string, unknown> | null;
+    playability: Record<string, unknown> | null;
+    projection_source: string | null;
+    status_cap: string | null;
+    pass_reason_code: string | null;
+    missing_inputs: string[];
   };
 }
 
@@ -1023,6 +1042,43 @@ function emitTotalProjectionDriftWarnings(
       },
     });
   }
+}
+
+function normalizeDecisionBasisToken(
+  value: string | null | undefined,
+): Play['basis'] | undefined {
+  const normalized = value?.trim().toUpperCase();
+  if (normalized === 'PROJECTION_ONLY') return 'PROJECTION_ONLY';
+  if (normalized === 'ODDS_BACKED') return 'ODDS_BACKED';
+  return undefined;
+}
+
+function normalizeExecutionStatusToken(
+  value: string | null | undefined,
+): Play['execution_status'] | undefined {
+  const normalized = value?.trim().toUpperCase();
+  if (normalized === 'EXECUTABLE') return 'EXECUTABLE';
+  if (normalized === 'PROJECTION_ONLY') return 'PROJECTION_ONLY';
+  if (normalized === 'BLOCKED') return 'BLOCKED';
+  return undefined;
+}
+
+function isProjectionOnlyPlayPayload(play: Play): boolean {
+  const lineSource = play.line_source?.trim().toUpperCase() ?? null;
+  const marketLineSource =
+    play.market_context?.wager?.line_source?.trim().toUpperCase() ?? null;
+  const projectionSource =
+    play.prop_decision?.projection_source?.trim().toUpperCase() ?? null;
+
+  return (
+    play.basis === 'PROJECTION_ONLY' ||
+    play.execution_status === 'PROJECTION_ONLY' ||
+    play.prop_display_state === 'PROJECTION_ONLY' ||
+    (lineSource != null && PROJECTION_ONLY_LINE_SOURCES.has(lineSource)) ||
+    (marketLineSource != null &&
+      PROJECTION_ONLY_LINE_SOURCES.has(marketLineSource)) ||
+    projectionSource === 'SYNTHETIC_FALLBACK'
+  );
 }
 
 export async function GET(request: NextRequest) {
@@ -1916,9 +1972,9 @@ export async function GET(request: NextRequest) {
             ? normalizedDisplaySelectionSide
             : baseNormalizedPrediction;
         const normalizedPlayerName = firstString(
-          payloadSelection?.player_name,
-          payloadPlay?.player_name,
           (payload as Record<string, unknown>).player_name,
+          payloadPlay?.player_name,
+          payloadSelection?.player_name,
         );
         const normalizedSelectionTeamBase = firstString(
           normalizedPlayerName,
@@ -1987,6 +2043,24 @@ export async function GET(request: NextRequest) {
           payloadPlay?.game_id,
         );
         const payloadDecision = toObject((payload as Record<string, unknown>).decision);
+        const payloadDecisionBasisMeta = toObject(
+          (payload as Record<string, unknown>).decision_basis_meta,
+        );
+        const normalizedDecisionBasis = normalizeDecisionBasisToken(
+          firstString(
+            (payload as Record<string, unknown>).basis,
+            (payload as Record<string, unknown>).decision_basis,
+            payloadDecisionBasisMeta?.decision_basis,
+            payloadPlay?.basis,
+            payloadPlay?.decision_basis,
+          ),
+        );
+        const normalizedExecutionStatus = normalizeExecutionStatusToken(
+          firstString(
+            (payload as Record<string, unknown>).execution_status,
+            payloadPlay?.execution_status,
+          ),
+        );
         const normalizedMu = firstNumber(
           (payload as Record<string, unknown>).mu,
           payloadPlay?.mu,
@@ -2082,17 +2156,14 @@ export async function GET(request: NextRequest) {
           rawPropDecision?.verdict,
           payloadPlayPropDecision?.verdict,
         );
-        const normalizedPropDecisionVerdict =
-          rawPropDecisionVerdict === 'PLAY' ||
-          rawPropDecisionVerdict === 'WATCH' ||
-          rawPropDecisionVerdict === 'NO_PLAY' ||
-          rawPropDecisionVerdict === 'PROJECTION'
-            ? (rawPropDecisionVerdict as
-                | 'PLAY'
-                | 'WATCH'
-                | 'NO_PLAY'
-                | 'PROJECTION')
-            : null;
+        // 'PASS' is the pitcher-K model's projection-only verdict — map it to
+        // 'PROJECTION' so the card's k_mean and related fields are not dropped.
+        const normalizedPropDecisionVerdict: 'PLAY' | 'WATCH' | 'NO_PLAY' | 'PROJECTION' | null =
+          rawPropDecisionVerdict === 'PLAY' ? 'PLAY'
+          : rawPropDecisionVerdict === 'WATCH' ? 'WATCH'
+          : rawPropDecisionVerdict === 'NO_PLAY' ? 'NO_PLAY'
+          : rawPropDecisionVerdict === 'PROJECTION' || rawPropDecisionVerdict === 'PASS' ? 'PROJECTION'
+          : null;
         const normalizedPropDecision = rawPropDecision &&
           normalizedPropDecisionVerdict
           ? {
@@ -2188,6 +2259,66 @@ export async function GET(request: NextRequest) {
                       : []),
                     ...(Array.isArray(payloadPlayPropDecision?.flags)
                       ? payloadPlayPropDecision.flags
+                      : []),
+                  ].map((value) => String(value)),
+                ),
+              ),
+              // Pitcher-K prop fields
+              k_mean:
+                firstNumber(
+                  rawPropDecision.k_mean,
+                  payloadPlayPropDecision?.k_mean,
+                ) ?? null,
+              probability_ladder:
+                (rawPropDecision.probability_ladder != null &&
+                typeof rawPropDecision.probability_ladder === 'object'
+                  ? (rawPropDecision.probability_ladder as Record<string, unknown>)
+                  : null) ??
+                (payloadPlayPropDecision?.probability_ladder != null &&
+                typeof payloadPlayPropDecision.probability_ladder === 'object'
+                  ? (payloadPlayPropDecision.probability_ladder as Record<string, unknown>)
+                  : null),
+              fair_prices:
+                (rawPropDecision.fair_prices != null &&
+                typeof rawPropDecision.fair_prices === 'object'
+                  ? (rawPropDecision.fair_prices as Record<string, unknown>)
+                  : null) ??
+                (payloadPlayPropDecision?.fair_prices != null &&
+                typeof payloadPlayPropDecision.fair_prices === 'object'
+                  ? (payloadPlayPropDecision.fair_prices as Record<string, unknown>)
+                  : null),
+              playability:
+                (rawPropDecision.playability != null &&
+                typeof rawPropDecision.playability === 'object'
+                  ? (rawPropDecision.playability as Record<string, unknown>)
+                  : null) ??
+                (payloadPlayPropDecision?.playability != null &&
+                typeof payloadPlayPropDecision.playability === 'object'
+                  ? (payloadPlayPropDecision.playability as Record<string, unknown>)
+                  : null),
+              projection_source:
+                firstString(
+                  rawPropDecision.projection_source,
+                  payloadPlayPropDecision?.projection_source,
+                ) ?? null,
+              status_cap:
+                firstString(
+                  rawPropDecision.status_cap,
+                  payloadPlayPropDecision?.status_cap,
+                ) ?? null,
+              pass_reason_code:
+                firstString(
+                  rawPropDecision.pass_reason_code,
+                  payloadPlayPropDecision?.pass_reason_code,
+                ) ?? null,
+              missing_inputs: Array.from(
+                new Set(
+                  [
+                    ...(Array.isArray(rawPropDecision.missing_inputs)
+                      ? rawPropDecision.missing_inputs
+                      : []),
+                    ...(Array.isArray(payloadPlayPropDecision?.missing_inputs)
+                      ? payloadPlayPropDecision.missing_inputs
                       : []),
                   ].map((value) => String(value)),
                 ),
@@ -2521,6 +2652,30 @@ export async function GET(request: NextRequest) {
                 payloadProjection?.score_away,
                 payloadPlayProjection?.score_away,
               ) ?? null,
+            // Pitcher-K prop fields (belt-and-suspenders fallback for transform)
+            k_mean:
+              firstNumber(
+                payloadProjection?.k_mean,
+                payloadPlayProjection?.k_mean,
+              ) ?? null,
+            probability_ladder:
+              (payloadProjection?.probability_ladder != null &&
+              typeof payloadProjection.probability_ladder === 'object'
+                ? (payloadProjection.probability_ladder as Record<string, unknown>)
+                : null) ??
+              (payloadPlayProjection?.probability_ladder != null &&
+              typeof payloadPlayProjection.probability_ladder === 'object'
+                ? (payloadPlayProjection.probability_ladder as Record<string, unknown>)
+                : null),
+            fair_prices:
+              (payloadProjection?.fair_prices != null &&
+              typeof payloadProjection.fair_prices === 'object'
+                ? (payloadProjection.fair_prices as Record<string, unknown>)
+                : null) ??
+              (payloadPlayProjection?.fair_prices != null &&
+              typeof payloadPlayProjection.fair_prices === 'object'
+                ? (payloadPlayProjection.fair_prices as Record<string, unknown>)
+                : null),
           },
           status: resolvedStatus,
           // Canonical decision fields (preferred over legacy status field)
@@ -2724,6 +2879,8 @@ export async function GET(request: NextRequest) {
           market_price_over: normalizedPriceOver,
           market_price_under: normalizedPriceUnder,
           market_bookmaker: normalizedMarketBookmaker,
+          basis: normalizedDecisionBasis,
+          execution_status: normalizedExecutionStatus,
           prop_display_state: normalizedPropDisplayState,
           prop_decision: normalizedPropDecision,
           consistency:
@@ -2774,6 +2931,19 @@ export async function GET(request: NextRequest) {
                   }
                 : undefined,
         };
+
+        // PROP plays (nhl-player-shots, mlb-pitcher-k) and designated projection-surface
+        // card types (nhl-pace-1p, mlb-f5) must pass through even when PROJECTION_ONLY.
+        // - PROP plays are shown in the Player Props tab with propVerdict='PROJECTION'
+        // - nhl-pace-1p / mlb-f5 are the sole data source for the Game Props tab
+        // Filtering them here means those tabs are permanently empty.
+        const isProjectionSurfaceCardType =
+          cardRow.card_type === 'nhl-pace-1p' || cardRow.card_type === 'mlb-f5';
+        const isPropMarket = play.market_type === 'PROP';
+
+        if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceCardType) {
+          continue;
+        }
 
         const canonicalGameId = canonicalGameIdForRow;
         const playSport =

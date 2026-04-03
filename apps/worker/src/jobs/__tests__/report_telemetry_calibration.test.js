@@ -28,25 +28,6 @@ function runInsert(db, sql, ...params) {
 
 function ensureTelemetryTables(db) {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS projection_perf_ledger (
-      id TEXT PRIMARY KEY,
-      card_id TEXT NOT NULL,
-      game_id TEXT NOT NULL,
-      sport TEXT,
-      prop_type TEXT,
-      player_name TEXT,
-      pick_side TEXT,
-      projection REAL,
-      prop_line REAL,
-      actual_result REAL,
-      won INTEGER,
-      confidence TEXT,
-      volatility_band TEXT,
-      recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      settled_at TEXT,
-      decision_basis TEXT NOT NULL DEFAULT 'PROJECTION_ONLY'
-    );
-
     CREATE TABLE IF NOT EXISTS clv_ledger (
       id TEXT PRIMARY KEY,
       card_id TEXT NOT NULL,
@@ -79,7 +60,6 @@ function clearTelemetryTables(db) {
   db.exec(`
     DELETE FROM card_results;
     DELETE FROM card_payloads;
-    DELETE FROM projection_perf_ledger;
     DELETE FROM clv_ledger;
     DELETE FROM odds_snapshots;
   `);
@@ -87,58 +67,6 @@ function clearTelemetryTables(db) {
 
 function seedBreachFixture(db) {
   const now = new Date().toISOString();
-
-  for (let index = 0; index < 60; index += 1) {
-    const won = index < 24 ? 1 : 0;
-    runInsert(
-      db,
-      `
-      INSERT INTO projection_perf_ledger (
-        id, card_id, game_id, sport, prop_type, pick_side, prop_line,
-        actual_result, won, confidence, recorded_at, settled_at, decision_basis
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-      `proj-high-${index}`,
-      `card-high-${index}`,
-      `game-high-${index}`,
-      'NHL',
-      'PLAYER_SHOTS',
-      'OVER',
-      2.5,
-      3.0,
-      won,
-      'HIGH',
-      now,
-      now,
-      'PROJECTION_ONLY',
-    );
-  }
-
-  for (let index = 0; index < 40; index += 1) {
-    const won = index < 22 ? 1 : 0;
-    runInsert(
-      db,
-      `
-      INSERT INTO projection_perf_ledger (
-        id, card_id, game_id, sport, prop_type, pick_side, prop_line,
-        actual_result, won, confidence, recorded_at, settled_at, decision_basis
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-      `proj-medium-${index}`,
-      `card-medium-${index}`,
-      `game-medium-${index}`,
-      'NHL',
-      'PLAYER_SHOTS',
-      'OVER',
-      2.5,
-      2.0,
-      won,
-      'MEDIUM',
-      now,
-      now,
-      'PROJECTION_ONLY',
-    );
-  }
 
   for (let index = 0; index < 150; index += 1) {
     const clv = index < 45 ? -0.06 : -0.015;
@@ -165,50 +93,6 @@ function seedBreachFixture(db) {
 
 function seedInsufficientFixture(db) {
   const now = new Date().toISOString();
-
-  for (let index = 0; index < 20; index += 1) {
-    runInsert(
-      db,
-      `
-      INSERT INTO projection_perf_ledger (
-        id, card_id, game_id, sport, prop_type, won, confidence,
-        recorded_at, settled_at, decision_basis
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-      `proj-small-${index}`,
-      `card-proj-small-${index}`,
-      `game-proj-small-${index}`,
-      'NBA',
-      'POINTS',
-      index % 2,
-      index % 3 === 0 ? 'HIGH' : 'MEDIUM',
-      now,
-      now,
-      'PROJECTION_ONLY',
-    );
-  }
-
-  for (let index = 0; index < 6; index += 1) {
-    runInsert(
-      db,
-      `
-      INSERT INTO projection_perf_ledger (
-        id, card_id, game_id, sport, prop_type, won, confidence,
-        recorded_at, settled_at, decision_basis
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-      `proj-open-${index}`,
-      `card-proj-open-${index}`,
-      `game-proj-open-${index}`,
-      'NBA',
-      'ASSISTS',
-      null,
-      'MEDIUM',
-      now,
-      null,
-      'PROJECTION_ONLY',
-    );
-  }
 
   for (let index = 0; index < 30; index += 1) {
     runInsert(
@@ -709,23 +593,20 @@ describe('telemetry calibration report', () => {
     removeIfExists(LOCK_PATH);
   });
 
-  test('computes all four thresholds and fails enforcement when breached', async () => {
+  test('computes CLV thresholds and fails enforcement when breached', async () => {
     const db = getDatabase();
     clearTelemetryTables(db);
     seedBreachFixture(db);
 
     const report = await generateTelemetryCalibrationReport({ db, days: 14 });
     expect(report.overallStatus).toBe('NO_GO');
-    expect(report.ledgers.projection.sampleSize).toBe(100);
     expect(report.ledgers.clv.sampleSize).toBe(150);
-    expect(report.ledgers.projection.checks.winRateFloor.status).toBe('FAIL');
-    expect(report.ledgers.projection.checks.confidenceDrift.status).toBe('FAIL');
     expect(report.ledgers.clv.checks.meanClv.status).toBe('FAIL');
     expect(report.ledgers.clv.checks.tailRisk.status).toBe('FAIL');
     expect(determineExitCode(report, true)).toBe(1);
 
     const text = formatTelemetryCalibrationReport(report, { enforce: true });
-    expect(text).toContain('projection_perf_ledger');
+    expect(text).not.toContain('projection_perf_ledger');
     expect(text).toContain('clv_ledger');
     expect(text).toContain('nhl_moneyline_calibration');
     expect(text).toContain('Overall status: NO_GO');
@@ -885,9 +766,7 @@ describe('telemetry calibration report', () => {
 
     const report = await generateTelemetryCalibrationReport({ db, days: 14 });
     expect(report.overallStatus).toBe('INSUFFICIENT_DATA');
-    expect(report.ledgers.projection.sampleGateMet).toBe(false);
     expect(report.ledgers.clv.sampleGateMet).toBe(false);
-    expect(report.diagnostics.projectionUnresolvedTopBuckets.length).toBeGreaterThan(0);
     expect(report.diagnostics.clvUnresolvedTopBuckets.length).toBeGreaterThan(0);
     expect(report.diagnostics.clvUnresolvedTopBuckets).toEqual(
       expect.arrayContaining([

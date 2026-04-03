@@ -33,6 +33,7 @@
     "input_hash": "94ea1b2768c2ba97b1e475dd5ee59d8ee01d4e9fefb6026649b49c03d3768373",
     "execution_status": "PROJECTION_ONLY",
     "market_type": "UNKNOWN",
+    "prop_decision_model_quality": "FULL_MODEL",
     "reason_codes_must_not_include": ["BLOCKED_MISSING_PRICING", "UNQUALIFIED_PITCHER"]
   },
   "_baseline_change_note": {

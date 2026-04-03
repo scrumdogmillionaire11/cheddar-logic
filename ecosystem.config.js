@@ -3,8 +3,8 @@ module.exports = {
     {
       name: 'cheddar-web',
       cwd: '/opt/cheddar-logic/web',
-      script: 'node_modules/.bin/next',
-      args: 'start',
+      script: '../scripts/start-web.sh',
+      interpreter: 'bash',
       env_file: '/opt/cheddar-logic/.env.production',
       instances: 1,
       autorestart: true,

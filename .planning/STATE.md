@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-04-02T18:30:00Z"
-last_activity: "2026-04-02 - WI-0731 complete (first weekly scorecard 2026-W14); WI-0728 remains"
+last_updated: "2026-04-03T00:00:00Z"
+last_activity: "2026-04-03 - WI-0747 complete: classifier module, pre-model audit block, INV-007, and input contract spec all merged"
 ---
 
 # Project State
@@ -35,12 +35,12 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 
 ## Review Cadence
 
-- Last reviewed: 2026-04-02
-- Next action: Run WI-0728 (baseline lock). WI-0729, WI-0730, and WI-0731 are complete.
+- Last reviewed: 2026-04-03
+- Next action: WI-0747 (MLB K pipeline hardening) is complete. Remaining WI-0742 implementation scope: run_nhl_model.js (NHL_1P_TOTAL), run_nhl_player_shots_model.js (NHL_PLAYER_SHOTS), compare_audit_snapshot.js, and 2 remaining PROJECTION_ONLY fixtures. WI-0728, WI-0729, WI-0730, WI-0731, WI-0742 spec, WI-0747 are complete.
 
 ## Sprint Plan — 2026-04-02 (Model Audit Rollout Cycle)
 
-**Context:** The model audit stack is complete (WI-0725, WI-0726). Per-event odds have been stripped and projection-only lanes formalized (WI-0727). The audit system now needs to be used to make actual product decisions. No new sports or models until the first baseline lock and scorecard review are done.
+**Context:** Baseline lock complete (WI-0728), card family registry established (WI-0730), first weekly scorecard complete (WI-0731). Projection-only families (NHL_1P_TOTAL, NHL_PLAYER_SHOTS, MLB_PITCHER_K, MLB_F5_TOTAL) emit `execution_status=PROJECTION_ONLY` but do not yet carry numeric projections. WI-0742 adds the numeric contract. No new sports or models until WI-0742 is complete.
 
 ---
 
@@ -54,16 +54,18 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 - WI-0729 ✓ — Model audit rollout runbook (docs/model_audit_rollout_runbook.md)
 - WI-0730 ✓ — Card family registry (4 LIVE, 4 PROJECTION_ONLY; audit/README.md added)
 - WI-0731 ✓ — First weekly scorecard 2026-W14 (all 8 families ranked; NBA_TOTAL Watch/model_decay; next review 2026-04-09)
+- WI-0741 ✓ — Harden audit artifact upload checks (CI gate)
 
 ---
 
 ### Dependency Chains — Model Audit Rollout
 
-- **WI-0728** — First baseline lock-in cycle; no deps → **READY**
+- **WI-0728** ✓ — First baseline lock-in cycle (2026-04-02)
 - **WI-0729** ✓ — Model audit rollout runbook (2026-04-02)
 - **WI-0730** ✓ — Card family registry with operational status (2026-04-02)
 - **WI-0731** ✓ — First weekly scorecard 2026-W14 (2026-04-02)
-
+- **WI-0742** ✓ — Projection-only decision-ready output contract spec; implementation sprint next
+- WI-0747 ✓ — MLB K pipeline hardening: `classifyMlbPitcherKQuality`, `[MLB_K_AUDIT]` log, INV-007, input contract spec (2026-04-03)
 ### Dependency Chains — Open FPL / Product
 
 - **WI-0705** — Fix Build Lab "New session" 422; no deps → **UNBLOCKED**
@@ -86,14 +88,15 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 
 ### Prioritized Open Work Queue
 
-#### P1 — Model Audit Rollout (this sprint)
+#### P1 — Implement WI-0742 Contract (current sprint)
 
-Run WI-0728 and WI-0730 in parallel first. WI-0729 can run alongside.
-
-- **WI-0728** — Run `audit:all`, review every fixture, lock baselines, set `baseline_reviewed: true`
-- **WI-0730** — Create `card-family-registry.json`: LIVE × 4 (`NBA_TOTAL`, `NBA_SPREAD`, `NHL_TOTAL`, `NHL_ML`), PROJECTION_ONLY × 4 (`NHL_1P_TOTAL`, `NHL_PLAYER_SHOTS`, `MLB_PITCHER_K`, `MLB_F5_TOTAL`)
-- **WI-0729** — Write `docs/model_audit_rollout_runbook.md`
-- **WI-0731** — Run first scorecard + publish ranked family table (gated on WI-0728 + WI-0730)
+- **WI-0747 ✓ COMPLETE** — MLB K pipeline hardening done: classifier, pre-model audit, INV-007, spec doc.
+- **WI-0742 remaining** — Wire decision-ready contract into remaining model jobs:
+  `run_nhl_model.js` (NHL_1P_TOTAL),
+  `run_nhl_player_shots_model.js` (NHL_PLAYER_SHOTS);
+  update `compare_audit_snapshot.js`;
+  update 2 remaining PROJECTION_ONLY fixtures.
+  Spec lives in `WORK_QUEUE/COMPLETE/WI-0742.md`.
 
 #### P2 — FPL Shell Repair (unblocked, run in parallel with P1)
 

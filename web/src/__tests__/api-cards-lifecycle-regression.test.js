@@ -327,19 +327,29 @@ async function runTests() {
       'utf8',
     );
     const gamesRouteSource = fs.readFileSync(
-      path.join(REPO_ROOT, 'web/src/app/api/games/route.ts'),
+      path.join(REPO_ROOT, 'web/src/lib/games/route-handler.ts'),
+      'utf8',
+    );
+    const gamesValidatorsSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'web/src/lib/games/validators.ts'),
       'utf8',
     );
     const filterSignature = "LOWER(COALESCE(rs.sport, rs.id, '')) IN";
-    const hasCoreRunStateGuards = [
+    const hasCardsCoreRunStateGuards = [
       cardsRouteSource,
       perGameCardsRouteSource,
-      gamesRouteSource,
     ].every(
       (source) =>
         source.includes('CORE_RUN_STATE_SPORTS') &&
         source.includes(filterSignature),
     );
+    const hasGamesCoreRunStateGuards =
+      gamesRouteSource.includes('getActiveRunIds,') &&
+      gamesRouteSource.includes('activeRunIds = getActiveRunIds(db);') &&
+      gamesValidatorsSource.includes('CORE_RUN_STATE_SPORTS') &&
+      gamesValidatorsSource.includes(filterSignature);
+    const hasCoreRunStateGuards =
+      hasCardsCoreRunStateGuards && hasGamesCoreRunStateGuards;
 
     if (hasCoreRunStateGuards) {
       console.log('✓ Canonical run-state guards present in cards/games routes\n');
