@@ -733,10 +733,10 @@ export default function ResultsPage() {
 
         {projectionSummaries.length > 0 && (
           <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
-            <h2 className="text-2xl font-semibold">Projection Model Accuracy</h2>
+            <h2 className="text-2xl font-semibold">Projection Models (Research Only)</h2>
             <p className="mt-2 text-sm text-cloud/70">
-              Projection-only markets tracked separately — no P&amp;L, just model
-              accuracy versus actuals.
+              Model Projection — No Line Applied. Projection-only markets tracked
+              separately — no P&amp;L, just model accuracy versus actuals.
             </p>
             <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
               <div className="grid grid-cols-5 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
@@ -763,7 +763,9 @@ export default function ResultsPage() {
                     <span>
                       {row.actualsAvailable && row.directionalAccuracy !== null
                         ? formatPercent(row.directionalAccuracy)
-                        : '—'}
+                        : row.actualsAvailable === false
+                          ? 'Awaiting settled outcome data'
+                          : '—'}
                     </span>
                   </div>
                 ))}
