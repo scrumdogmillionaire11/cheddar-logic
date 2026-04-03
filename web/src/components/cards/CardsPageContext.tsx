@@ -144,17 +144,11 @@ export function CardsPageProvider({
   const diagnosticsEnabled =
     process.env.NODE_ENV !== 'production' &&
     process.env.NEXT_PUBLIC_ENABLE_CARDS_DIAGNOSTICS === 'true';
-  // useState(false) guarantees server and client render identically on first
-  // pass (both omit the Props button), eliminating the hydration mismatch.
-  // NEXT_PUBLIC_* vars are inlined at bundle compile time, so the useEffect
-  // reads the correct compiled-in value after mount and shows the tab when
-  // the feature is enabled.
-  // NOTE: .env.vercel was previously `false` which caused the tab to hide on
-  // Pi production; it is now aligned to `true` so the effect resolves correctly.
-  const [propsEnabled, setPropsEnabled] = useState(false);
-  useEffect(() => {
-    setPropsEnabled(process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true');
-  }, []);
+  // Hydration safety is handled by the hasMounted guard in CardsModeTabs,
+  // which renders an empty container on SSR and first client pass regardless
+  // of this value. This const is therefore safe to read directly at render time.
+  // NOTE: all env files (including .env.vercel) are now aligned to true.
+  const propsEnabled = process.env.NEXT_PUBLIC_ENABLE_PLAYER_PROPS === 'true';
   const {
     sports: activeSports,
     timeWindow: activeTimeWindow,
