@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { StickyBackButton } from '@/components/sticky-back-button';
+import { ProjectionResultsTable } from '@/components/results/ProjectionResultsTable';
+import type { ProjectionSettledRow } from '@/app/api/results/projection-settled/route';
 
 type ResultsSummary = {
   totalCards: number;
@@ -218,6 +220,9 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [withoutOddsMode, setWithoutOddsMode] = useState(false);
+  const [projectionSettledRows, setProjectionSettledRows] = useState<ProjectionSettledRow[]>([]);
+  const [projectionActualsReady, setProjectionActualsReady] = useState(false);
+  const [projectionSettledLoading, setProjectionSettledLoading] = useState(true);
 
   // Filter state
   const [filterSport, setFilterSport] = useState<string>('');
@@ -289,6 +294,37 @@ export default function ResultsPage() {
   useEffect(() => {
     loadResults();
   }, [loadResults]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadProjectionSettled() {
+      try {
+        setProjectionSettledLoading(true);
+        const res = await fetch('/api/results/projection-settled');
+        if (!res.ok) return;
+        const payload = (await res.json()) as {
+          success: boolean;
+          data?: {
+            settledRows: ProjectionSettledRow[];
+            totalSettled: number;
+            actualsReady: boolean;
+          };
+        };
+        if (!cancelled && payload.success && payload.data) {
+          setProjectionSettledRows(payload.data.settledRows);
+          setProjectionActualsReady(payload.data.actualsReady);
+        }
+      } catch {
+        // non-critical — fail silently
+      } finally {
+        if (!cancelled) setProjectionSettledLoading(false);
+      }
+    }
+    void loadProjectionSettled();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const summaryCards = useMemo(() => {
     const isValidSummary = summary && typeof summary.totalCards === 'number';
@@ -730,6 +766,36 @@ export default function ResultsPage() {
             })}
           </div>
         </section>
+
+        {projectionActualsReady && !projectionSettledLoading && (
+          <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
+            <div className="mb-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-2xl font-semibold">Projection Settlement</h2>
+                  <p className="mt-2 text-sm text-cloud/70">
+                    Settled projection-only cards graded against actual game
+                    outcomes. No P&amp;L — model accuracy only.
+                  </p>
+                </div>
+                <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
+                  PROJECTION_ONLY
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-4 text-xs text-cloud/50">
+                <span>
+                  <span className="font-semibold text-cloud/70">NHL 1P Total</span>
+                  {' '}— Projected total vs fixed line 1.5. HIT = model direction correct.
+                </span>
+                <span>
+                  <span className="font-semibold text-cloud/70">MLB F5</span>
+                  {' '}— Projected F5 runs vs actual. Error = |projected − actual|.
+                </span>
+              </div>
+            </div>
+            <ProjectionResultsTable rows={projectionSettledRows} />
+          </section>
+        )}
 
         {projectionSummaries.length > 0 && (
           <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
