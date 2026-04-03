@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-03T00:00:00Z"
-last_activity: "2026-04-03 - WI-0742 spec complete and closed; implementation (model jobs, INV-007, fixtures) is next execution sprint"
+last_activity: "2026-04-03 - WI-0747 complete: classifier module, pre-model audit block, INV-007, and input contract spec all merged"
 ---
 
 # Project State
@@ -36,7 +36,7 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 ## Review Cadence
 
 - Last reviewed: 2026-04-03
-- Next action: Implement WI-0742 contract in model jobs (run_mlb_model.js, run_nhl_model.js, run_nhl_player_shots_model.js), audit_invariants.js (INV-007), compare_audit_snapshot.js, and 4 PROJECTION_ONLY fixtures. WI-0728, WI-0729, WI-0730, WI-0731, WI-0742 spec are complete.
+- Next action: WI-0747 (MLB K pipeline hardening) is complete. Remaining WI-0742 implementation scope: run_nhl_model.js (NHL_1P_TOTAL), run_nhl_player_shots_model.js (NHL_PLAYER_SHOTS), compare_audit_snapshot.js, and 2 remaining PROJECTION_ONLY fixtures. WI-0728, WI-0729, WI-0730, WI-0731, WI-0742 spec, WI-0747 are complete.
 
 ## Sprint Plan — 2026-04-02 (Model Audit Rollout Cycle)
 
@@ -65,7 +65,7 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 - **WI-0730** ✓ — Card family registry with operational status (2026-04-02)
 - **WI-0731** ✓ — First weekly scorecard 2026-W14 (2026-04-02)
 - **WI-0742** ✓ — Projection-only decision-ready output contract spec; implementation sprint next
-
+- WI-0747 ✓ — MLB K pipeline hardening: `classifyMlbPitcherKQuality`, `[MLB_K_AUDIT]` log, INV-007, input contract spec (2026-04-03)
 ### Dependency Chains — Open FPL / Product
 
 - **WI-0705** — Fix Build Lab "New session" 422; no deps → **UNBLOCKED**
@@ -90,13 +90,12 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 
 #### P1 — Implement WI-0742 Contract (current sprint)
 
-- **WI-0742 implementation** — Wire full decision-ready contract into model jobs:
-  `run_mlb_model.js` (MLB_PITCHER_K + MLB_F5_TOTAL),
+- **WI-0747 ✓ COMPLETE** — MLB K pipeline hardening done: classifier, pre-model audit, INV-007, spec doc.
+- **WI-0742 remaining** — Wire decision-ready contract into remaining model jobs:
   `run_nhl_model.js` (NHL_1P_TOTAL),
   `run_nhl_player_shots_model.js` (NHL_PLAYER_SHOTS);
-  add INV-007 to `audit_invariants.js`;
   update `compare_audit_snapshot.js`;
-  update 4 PROJECTION_ONLY fixtures.
+  update 2 remaining PROJECTION_ONLY fixtures.
   Spec lives in `WORK_QUEUE/COMPLETE/WI-0742.md`.
 
 #### P2 — FPL Shell Repair (unblocked, run in parallel with P1)
