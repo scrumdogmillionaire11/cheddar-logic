@@ -75,6 +75,17 @@ type LedgerRow = {
   modelFamily?: string | null;
 };
 
+type ProjectionSummaryRow = {
+  actualsAvailable: boolean;
+  bias: number | null;
+  cardFamily: string;
+  directionalAccuracy: number | null;
+  familyLabel: string;
+  mae: number | null;
+  rowsSeen: number;
+  sampleSize: number;
+};
+
 type ResultsResponse = {
   success: boolean;
   withoutOddsMode?: boolean;
@@ -82,6 +93,7 @@ type ResultsResponse = {
     summary: ResultsSummary;
     segments: SegmentRow[];
     segmentFamilies?: SegmentFamily[];
+    projectionSummaries?: ProjectionSummaryRow[];
     ledger: LedgerRow[];
     filters?: {
       sport: string | null;
@@ -207,6 +219,7 @@ const SEGMENT_DEFINITIONS: SegmentFamily[] = [
 export default function ResultsPage() {
   const [summary, setSummary] = useState<ResultsSummary | null>(null);
   const [segments, setSegments] = useState<SegmentRow[]>([]);
+  const [projectionSummaries, setProjectionSummaries] = useState<ProjectionSummaryRow[]>([]);
   const [ledger, setLedger] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -261,6 +274,7 @@ export default function ResultsPage() {
 
       setSummary(payload.data.summary);
       setSegments(payload.data.segments);
+      setProjectionSummaries(payload.data.projectionSummaries ?? []);
       setLedger(payload.data.ledger);
       setDataMeta(payload.data.meta || null);
       setError(null);
@@ -723,13 +737,54 @@ export default function ResultsPage() {
           </div>
         </section>
 
+        {projectionSummaries.length > 0 && (
+          <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
+            <h2 className="text-2xl font-semibold">Projection Model Accuracy</h2>
+            <p className="mt-2 text-sm text-cloud/70">
+              Projection-only markets tracked separately — no P&amp;L, just model
+              accuracy versus actuals.
+            </p>
+            <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
+              <div className="grid grid-cols-5 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+                <span>Model</span>
+                <span>Sample</span>
+                <span>MAE</span>
+                <span>Bias</span>
+                <span>Dir. Acc.</span>
+              </div>
+              <div className="divide-y divide-white/10">
+                {projectionSummaries.map((row) => (
+                  <div
+                    key={row.cardFamily}
+                    className="grid grid-cols-5 gap-4 px-4 py-3 text-sm text-cloud/70"
+                  >
+                    <span className="font-medium text-cloud">{row.familyLabel}</span>
+                    <span>{row.sampleSize > 0 ? row.sampleSize : '—'}</span>
+                    <span>
+                      {row.mae !== null ? formatDecimal(row.mae, 2) : '—'}
+                    </span>
+                    <span>
+                      {row.bias !== null ? formatDecimal(row.bias, 2) : '—'}
+                    </span>
+                    <span>
+                      {row.actualsAvailable && row.directionalAccuracy !== null
+                        ? formatPercent(row.directionalAccuracy)
+                        : '—'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
         <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="text-2xl font-semibold">Betting Ledger</h2>
               <p className="mt-2 text-sm text-cloud/70">
                 A full audit trail of odds-backed calls only. Projection-only
-                cards live in the separate accuracy lane above.
+                model accuracy is tracked in the section above.
               </p>
             </div>
             <button

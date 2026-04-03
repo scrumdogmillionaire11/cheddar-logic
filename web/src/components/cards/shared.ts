@@ -158,11 +158,21 @@ export function getCardDebugMeta(card: GameCard) {
       (card.play?.reason_codes?.includes('PASS_TOTAL_INSUFFICIENT_DATA') ||
         card.play?.tags?.includes('CONSISTENCY_BLOCK_TOTALS')),
   );
-  const hasDataError = Boolean(
-    card.play?.transform_meta?.quality === 'BROKEN' ||
-      card.play?.reason_codes?.includes('PASS_DATA_ERROR') ||
-      card.play?.gates?.some((gate) => gate.code === 'PASS_DATA_ERROR'),
-  );
+  // "missing: play" alone means no gameline model fired for this sport/game — not a
+  // pipeline failure. Only flag as a data error when drivers failed to load or other
+  // real error codes are present.
+  const missingInputs: string[] = card.play?.transform_meta?.missing_inputs ?? [];
+  const onlyMissingPlay =
+    missingInputs.length > 0 &&
+    missingInputs.every((inp) => inp === 'play') &&
+    !card.play?.reason_codes?.includes('MISSING_DATA_DRIVERS');
+  const hasDataError =
+    !onlyMissingPlay &&
+    Boolean(
+      card.play?.transform_meta?.quality === 'BROKEN' ||
+        card.play?.reason_codes?.includes('PASS_DATA_ERROR') ||
+        card.play?.gates?.some((gate) => gate.code === 'PASS_DATA_ERROR'),
+    );
 
   return {
     playCount,

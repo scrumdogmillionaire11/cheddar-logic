@@ -32,6 +32,7 @@ const PROJECTION_FAMILY_LABELS: Record<string, string> = {
   MLB_F5_TOTAL: 'MLB F5 Total',
   MLB_PITCHER_K: 'MLB Pitcher K',
   NHL_1P_TOTAL: 'NHL 1P Total',
+  NHL_PLAYER_BLOCKS: 'NHL Player Blocks',
   NHL_PLAYER_SHOTS: 'NHL Player Shots',
   NHL_PLAYER_SHOTS_1P: 'NHL Player Shots 1P',
 };
@@ -155,6 +156,9 @@ function deriveProjectionCardFamily(row: ProjectionMetricInputRow): string {
       return period === '1P'
         ? 'NHL_PLAYER_SHOTS_1P'
         : 'NHL_PLAYER_SHOTS';
+    }
+    if (propType === 'blocked_shots' || cardType === 'nhl-player-blk') {
+      return 'NHL_PLAYER_BLOCKS';
     }
     if (period === '1P' || cardType === 'nhl-pace-1p') return 'NHL_1P_TOTAL';
     return 'NHL_TOTAL';
@@ -321,6 +325,8 @@ const CARD_FAMILY_MAP: Record<string, string> = {
   // NHL player shots
   'nhl-player-shots': 'NHL_PLAYER_SHOTS',
   'nhl-player-shots-call': 'NHL_PLAYER_SHOTS',
+  // NHL player blocks
+  'nhl-player-blk': 'NHL_PLAYER_BLOCKS',
   // NHL blowout risk / synergy / matchup info cards
   'nhl-blowout-risk': 'NHL_INFO',
   'nhl-synergy': 'NHL_INFO',
@@ -352,6 +358,7 @@ const MODEL_FAMILY_LABELS: Record<string, string> = {
   NHL_1P_TOTAL: 'NHL 1P Totals',
   NHL_SPREAD: 'NHL Spread / Puckline',
   NHL_ML: 'NHL Moneyline',
+  NHL_PLAYER_BLOCKS: 'NHL Player Blocks',
   NHL_PLAYER_SHOTS: 'NHL Player Shots',
   NHL_INFO: 'NHL Context',
   NBA_TOTAL: 'NBA Cross-Market Totals',
@@ -370,6 +377,7 @@ const MODEL_VERSION_MAP: Record<string, string> = {
   NHL_1P_TOTAL: 'nhl-1p-v1',
   NHL_SPREAD: 'nhl-spread-v1',
   NHL_ML: 'nhl-ml-v1',
+  NHL_PLAYER_BLOCKS: 'nhl-player-blk-v1',
   NHL_PLAYER_SHOTS: 'nhl-player-shots-v1',
   NBA_TOTAL: 'nba-totals-v1',
   NBA_SPREAD: 'nba-spread-v1',

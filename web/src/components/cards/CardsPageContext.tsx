@@ -562,6 +562,12 @@ export function CardsPageProvider({
     return enrichedCards
       .filter((card) => {
         if (visibleIds.has(card.id)) return false;
+        const mis: string[] = card.play?.transform_meta?.missing_inputs ?? [];
+        const onlyMissingPlay =
+          mis.length > 0 &&
+          mis.every((inp) => inp === 'play') &&
+          !card.play?.reason_codes?.includes('MISSING_DATA_DRIVERS');
+        if (onlyMissingPlay) return false;
         return Boolean(
           card.play?.transform_meta?.quality === 'BROKEN' ||
             card.play?.reason_codes?.includes('PASS_DATA_ERROR') ||
