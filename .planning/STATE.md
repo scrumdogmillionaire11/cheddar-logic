@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-03T00:00:00Z"
-last_activity: "2026-04-03 - WI-0742 created (projection-only numeric contract); WI-0728/0731 complete"
+last_activity: "2026-04-03 - WI-0742 spec complete and closed; implementation (model jobs, INV-007, fixtures) is next execution sprint"
 ---
 
 # Project State
@@ -36,7 +36,7 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 ## Review Cadence
 
 - Last reviewed: 2026-04-03
-- Next action: Execute WI-0742 (projection-only numeric contract). WI-0728, WI-0729, WI-0730, WI-0731 are complete.
+- Next action: Implement WI-0742 contract in model jobs (run_mlb_model.js, run_nhl_model.js, run_nhl_player_shots_model.js), audit_invariants.js (INV-007), compare_audit_snapshot.js, and 4 PROJECTION_ONLY fixtures. WI-0728, WI-0729, WI-0730, WI-0731, WI-0742 spec are complete.
 
 ## Sprint Plan — 2026-04-02 (Model Audit Rollout Cycle)
 
@@ -64,7 +64,7 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 - **WI-0729** ✓ — Model audit rollout runbook (2026-04-02)
 - **WI-0730** ✓ — Card family registry with operational status (2026-04-02)
 - **WI-0731** ✓ — First weekly scorecard 2026-W14 (2026-04-02)
-- **WI-0742** — Projection-only numeric output contract; no deps → **READY**
+- **WI-0742** ✓ — Projection-only decision-ready output contract spec; implementation sprint next
 
 ### Dependency Chains — Open FPL / Product
 
@@ -88,9 +88,16 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 
 ### Prioritized Open Work Queue
 
-#### P1 — Operationalize Projection-Only (current sprint)
+#### P1 — Implement WI-0742 Contract (current sprint)
 
-- **WI-0742** — Projection-only numeric contract: emit `numeric_projection`, `projection_unit`, `recommended_direction`, `confidence` from all 4 PROJECTION_ONLY families; add INV-007; update fixtures + comparator
+- **WI-0742 implementation** — Wire full decision-ready contract into model jobs:
+  `run_mlb_model.js` (MLB_PITCHER_K + MLB_F5_TOTAL),
+  `run_nhl_model.js` (NHL_1P_TOTAL),
+  `run_nhl_player_shots_model.js` (NHL_PLAYER_SHOTS);
+  add INV-007 to `audit_invariants.js`;
+  update `compare_audit_snapshot.js`;
+  update 4 PROJECTION_ONLY fixtures.
+  Spec lives in `WORK_QUEUE/COMPLETE/WI-0742.md`.
 
 #### P2 — FPL Shell Repair (unblocked, run in parallel with P1)
 
