@@ -43,6 +43,21 @@ const PROJECTION_FAMILY_LABELS: Record<string, string> = {
   NHL_PLAYER_SHOTS_1P: 'NHL Player Shots 1P',
 };
 
+// Raw card_type strings that map to projection families.
+// Used by /api/results route.ts to run a direct query against card_results
+// (bypassing card_display_log) for games whose final result is known.
+// These card types are never displayed in the betting UI so they never
+// appear in card_display_log — the only way to surface them for accuracy
+// tracking is to query card_results directly joined on game_results.status='final'.
+export const PROJECTION_TRACKING_CARD_TYPES: readonly string[] = [
+  'mlb-f5',
+  'mlb-pitcher-k',
+  'nhl-pace-1p',
+  'nhl-player-shots',
+  'nhl-player-shots-1p',
+  'nhl-player-blk',
+] as const;
+
 const PROJECTION_LINE_SOURCES = new Set([
   'projection_floor',
   'synthetic',

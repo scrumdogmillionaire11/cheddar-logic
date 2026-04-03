@@ -16,6 +16,7 @@ import {
   deriveCardFamily,
   deriveModelFamily,
   deriveModelVersion,
+  PROJECTION_TRACKING_CARD_TYPES,
 } from './projection-metrics';
 
 const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
@@ -720,8 +721,37 @@ export async function GET(request: NextRequest) {
       )
       .all(...ids) as ActionableSourceRow[];
 
+    // Projection card types (mlb-f5, mlb-pitcher-k, nhl-player-shots, etc.) are
+    // never shown in the betting UI so they never appear in card_display_log.
+    // They also are not in status='settled' in card_results (settled as pending/error).
+    // Fetch them directly from card_results joined on completed game_results so
+    // buildProjectionSummaries can track model accuracy independently of the
+    // betting ledger path.
+    const projTrackingPlaceholders = PROJECTION_TRACKING_CARD_TYPES.map(() => '?').join(',');
+    const projTrackingSportFilter = buildSportFilter(sport, 'cr.sport');
+    const projectionTrackingRows = db
+      .prepare(
+        `
+      SELECT
+        cr.sport,
+        cr.card_type,
+        cp.payload_data,
+        gr.metadata AS game_result_metadata
+      FROM card_results cr
+      LEFT JOIN card_payloads cp ON cp.id = cr.card_id
+      INNER JOIN game_results gr ON gr.game_id = cr.game_id
+      WHERE cr.card_type IN (${projTrackingPlaceholders})
+        AND gr.status = 'final'
+        ${projTrackingSportFilter.sql}
+    `,
+      )
+      .all(
+        ...PROJECTION_TRACKING_CARD_TYPES,
+        ...projTrackingSportFilter.params,
+      ) as { sport: string; card_type: string; payload_data: string; game_result_metadata: string }[];
+
     const projectionSummaries = buildProjectionSummaries(
-      actionableSourceRows.map((row) => ({
+      projectionTrackingRows.map((row) => ({
         sport: row.sport,
         cardType: row.card_type,
         payload: safeJsonParse(row.payload_data).data as Record<string, unknown> | null,
