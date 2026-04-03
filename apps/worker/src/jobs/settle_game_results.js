@@ -1666,6 +1666,21 @@ async function settleGameResults({
                           selectedMatch.nhlSnapshot?.playerShots?.sources || null,
                       }
                     : null,
+                playerBlocks:
+                  selectedMatch.method.startsWith('nhl_api_')
+                    ? {
+                        fullGameByPlayerId:
+                          selectedMatch.nhlSnapshot?.playerBlocks?.fullGameByPlayerId ||
+                          {},
+                        playerNamesById:
+                          selectedMatch.nhlSnapshot?.playerBlocks?.playerNamesById || {},
+                        playerIdByNormalizedName:
+                          selectedMatch.nhlSnapshot?.playerBlocks
+                            ?.playerIdByNormalizedName || {},
+                        sources:
+                          selectedMatch.nhlSnapshot?.playerBlocks?.sources || null,
+                      }
+                    : null,
                 sportsRef: selectedMatch.sportsRef || null,
               },
             });

@@ -314,6 +314,45 @@ function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | n
   ) {
     return resolvePlayerShotsActualValue(row);
   }
+  if (cardFamily === 'NHL_PLAYER_BLOCKS') {
+    const playerBlocks =
+      row.gameResultMetadata?.playerBlocks &&
+      typeof row.gameResultMetadata.playerBlocks === 'object'
+        ? (row.gameResultMetadata.playerBlocks as Record<string, unknown>)
+        : null;
+    if (!playerBlocks) return null;
+
+    const valuesByPlayer = playerBlocks.fullGameByPlayerId;
+    if (!valuesByPlayer || typeof valuesByPlayer !== 'object') return null;
+
+    const playerId = String(
+      getPayloadValue(row.payload, ['play', 'player_id']) ||
+        row.payload?.player_id ||
+        '',
+    ).trim();
+    if (playerId) {
+      const direct = toNumber((valuesByPlayer as Record<string, unknown>)[playerId]);
+      if (direct !== null) return direct;
+    }
+
+    const playerName = normalizePlayerName(
+      getPayloadValue(row.payload, ['play', 'player_name']) ||
+        row.payload?.player_name,
+    );
+    if (!playerName) return null;
+
+    const playerIdByNormalizedName =
+      playerBlocks.playerIdByNormalizedName &&
+      typeof playerBlocks.playerIdByNormalizedName === 'object'
+        ? (playerBlocks.playerIdByNormalizedName as Record<string, unknown>)
+        : null;
+    const mappedPlayerId = playerIdByNormalizedName
+      ? String(playerIdByNormalizedName[playerName] || '').trim()
+      : '';
+    if (!mappedPlayerId) return null;
+
+    return toNumber((valuesByPlayer as Record<string, unknown>)[mappedPlayerId]);
+  }
   if (cardFamily === 'MLB_F5_TOTAL') {
     return toNumber(row.gameResultMetadata?.f5_total);
   }
