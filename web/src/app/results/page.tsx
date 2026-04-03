@@ -13,18 +13,6 @@ type ResultsSummary = {
   totalPnlUnits: number | null;
   winRate: number;
   avgPnl: number | null;
-  avgClvPct?: number | null;
-};
-
-type ProjectionSummaryRow = {
-  actualsAvailable: boolean;
-  bias: number | null;
-  cardFamily: string;
-  directionalAccuracy: number | null;
-  familyLabel: string;
-  mae: number | null;
-  rowsSeen: number;
-  sampleSize: number;
 };
 
 type SegmentRow = {
@@ -94,7 +82,6 @@ type ResultsResponse = {
     summary: ResultsSummary;
     segments: SegmentRow[];
     segmentFamilies?: SegmentFamily[];
-    projectionSummaries?: ProjectionSummaryRow[];
     ledger: LedgerRow[];
     filters?: {
       sport: string | null;
@@ -220,9 +207,6 @@ const SEGMENT_DEFINITIONS: SegmentFamily[] = [
 export default function ResultsPage() {
   const [summary, setSummary] = useState<ResultsSummary | null>(null);
   const [segments, setSegments] = useState<SegmentRow[]>([]);
-  const [projectionSummaries, setProjectionSummaries] = useState<
-    ProjectionSummaryRow[]
-  >([]);
   const [ledger, setLedger] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -266,7 +250,6 @@ export default function ResultsPage() {
 
       if (payload.withoutOddsMode) {
         setWithoutOddsMode(true);
-        setProjectionSummaries([]);
         setError(null);
         return;
       }
@@ -278,7 +261,6 @@ export default function ResultsPage() {
 
       setSummary(payload.data.summary);
       setSegments(payload.data.segments);
-      setProjectionSummaries(payload.data.projectionSummaries || []);
       setLedger(payload.data.ledger);
       setDataMeta(payload.data.meta || null);
       setError(null);
@@ -320,11 +302,6 @@ export default function ResultsPage() {
         label: 'ROI',
         value: isValidSummary ? formatPercent(summary.avgPnl) : 'N/A',
         note: 'Per 1u stake',
-      },
-      {
-        label: 'Avg CLV',
-        value: isValidSummary ? formatPercent(summary.avgClvPct) : 'N/A',
-        note: 'Closing-line value',
       },
     ];
   }, [summary]);
@@ -447,8 +424,8 @@ export default function ResultsPage() {
             <div>
               <h2 className="text-2xl font-semibold">Betting Record</h2>
               <p className="mt-2 text-sm text-cloud/70">
-                Profit/loss and CLV are computed from ODDS_BACKED settled bets
-                only. Projection-only rows are excluded from all W-L and units
+                Profit/loss is computed from ODDS_BACKED settled bets only.
+                Projection-only rows are excluded from all W-L and units
                 totals.
               </p>
             </div>
@@ -472,53 +449,6 @@ export default function ResultsPage() {
                 <p className="mt-2 text-sm text-cloud/60">{card.note}</p>
               </div>
             ))}
-          </div>
-        </section>
-
-        <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h2 className="text-2xl font-semibold">
-                Projection Models (Research Only)
-              </h2>
-              <p className="mt-2 text-sm text-cloud/70">
-                Model-only families are evaluated separately from betting P/L
-                using MAE, signed bias, directional accuracy, and settled
-                sample size.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 space-y-3">
-            {projectionSummaries.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-white/10 bg-night/30 px-4 py-6 text-sm text-cloud/60">
-                No projection-only families found in the current filtered result
-                set.
-              </div>
-            ) : (
-              projectionSummaries.map((row) => (
-                <article
-                  key={row.cardFamily}
-                  className="rounded-xl border border-dashed border-white/10 bg-night/30 px-4 py-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-cloud">
-                        {row.familyLabel}
-                      </p>
-                      <p className="mt-1 text-xs text-cloud/60">
-                        {row.actualsAvailable
-                          ? `${row.familyLabel} · MAE ${formatDecimal(row.mae)} · Bias ${formatDecimal(row.bias)} · Direction ${formatPercent(row.directionalAccuracy)} · n=${row.sampleSize}`
-                          : 'Awaiting settled outcome data'}
-                      </p>
-                    </div>
-                    <span className="rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-100">
-                      Model Projection — No Line Applied
-                    </span>
-                  </div>
-                </article>
-              ))
-            )}
           </div>
         </section>
 
