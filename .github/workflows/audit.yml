@@ -77,7 +77,8 @@ jobs:
       - name: Ensure audit artifacts exist
         if: always()
         run: |
-          OUTPUT_DIR="apps/worker/audit-output/${RUN_SCOPE}"
+          # TEMPORARY INTENTIONAL FAILURE for WI-0741 guard verification.
+          OUTPUT_DIR="apps/worker/audit-output/${RUN_SCOPE}-intentional-fail"
           echo "Available audit artifact files:"
           find apps/worker/audit-output -maxdepth 3 -type f | sort || true
 
