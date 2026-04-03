@@ -18,7 +18,26 @@ const nextConfig: NextConfig = {
   // Silence "multiple lockfiles" workspace root warning for monorepo setup.
   outputFileTracingRoot: path.join(__dirname, ".."),
   // better-sqlite3 is a native Node addon and cannot be bundled by webpack.
+  // serverExternalPackages prevents bundling; the webpack externals entry below
+  // prevents webpack's module-resolution from failing at build time when the
+  // package only exists under packages/data/node_modules (file: workspace dep).
   serverExternalPackages: ["better-sqlite3"],
+  webpack(config, { isServer }) {
+    if (isServer) {
+      // Prevent webpack from attempting to resolve (and failing on) better-sqlite3.
+      const prev = config.externals ?? [];
+      config.externals = Array.isArray(prev)
+        ? [...prev, "better-sqlite3"]
+        : [prev as never, "better-sqlite3"];
+    } else {
+      // Client bundles must never receive better-sqlite3; return an empty module.
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        "better-sqlite3": false,
+      };
+    }
+    return config;
+  },
   async rewrites() {
     return [
       {
