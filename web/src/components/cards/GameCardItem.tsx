@@ -26,6 +26,7 @@ import {
   formatConsensusConfidence,
   formatContributorMarketLabel,
   formatDate,
+  formatF5ProjectionBlock,
   formatMarketLabel,
   formatOddsLine,
   formatProjectedSentence,
@@ -610,6 +611,11 @@ export default function GameCardItem({
     displayPlay.market_type === 'INFO' ||
     displayPlay.market_type === 'PROP';
   const isNhlPace1p = displayPlay.cardType === 'nhl-pace-1p';
+  // mlb-f5 PROJECTION_ONLY: no odds, MAE-tracked surface only
+  const isMlbF5Projection =
+    card.sport === 'MLB' &&
+    displayPlay.cardType === 'mlb-f5' &&
+    displayPlay.execution_status === 'PROJECTION_ONLY';
   const pace1pDirection: 'OVER' | 'UNDER' | null =
     isNhlPace1p && typeof projectedTotal1p === 'number'
       ? projectedTotal1p > 1.5
@@ -747,7 +753,7 @@ export default function GameCardItem({
                 displayPlay.bet?.market_type,
                 displayPlay.market,
               )}
-              {!isNhlPace1p && (
+              {!isNhlPace1p && !isMlbF5Projection && (
                 <span
                   className={`px-2 py-1 text-xs font-bold rounded border ${
                     visibleDecision === 'PLAY'
@@ -777,13 +783,15 @@ export default function GameCardItem({
               )}
             </div>
           </div>
-          <p className="mt-2 text-xl font-bold text-cloud">{visibleBetText}</p>
-          {liveBook && visibleBetText !== 'NO PLAY' && (
+          {!isMlbF5Projection && (
+            <p className="mt-2 text-xl font-bold text-cloud">{visibleBetText}</p>
+          )}
+          {liveBook && visibleBetText !== 'NO PLAY' && !isMlbF5Projection && (
             <p className="mt-0.5 text-xs text-cloud/45">
               via {formatBookName(liveBook)}
             </p>
           )}
-          {!isNhlPace1p && (
+          {!isNhlPace1p && !isMlbF5Projection && (
             <p className="mt-1 text-xs text-cloud/65">{contextLine1}</p>
           )}
         </div>
@@ -819,7 +827,37 @@ export default function GameCardItem({
           </div>
         )}
 
-        {contextLine2 && (
+        {isMlbF5Projection && (() => {
+          const f5Block = formatF5ProjectionBlock(
+            projectedTotal,
+            projectedHomeF5Runs,
+            projectedAwayF5Runs,
+            card.homeTeam,
+            card.awayTeam,
+          );
+          return (
+            <div className="rounded-md border border-white/10 bg-white/5 p-3">
+              <p className="text-xs uppercase tracking-widest text-cloud/45 font-semibold mb-2">
+                F5 Total &mdash; Model Projection
+              </p>
+              <div className="space-y-1 text-sm text-cloud/80">
+                <p>
+                  <span className="text-cloud font-bold">{f5Block.headline}</span>
+                </p>
+                {(f5Block.awayLabel || f5Block.homeLabel) && (
+                  <p className="text-xs text-cloud/55 font-mono">
+                    {f5Block.awayLabel}
+                    {f5Block.awayLabel && f5Block.homeLabel ? ' · ' : ''}
+                    {f5Block.homeLabel}
+                  </p>
+                )}
+              </div>
+              <p className="mt-2 text-xs text-cloud/45">{f5Block.subLabel}</p>
+            </div>
+          );
+        })()}
+
+        {contextLine2 && !isMlbF5Projection && (
           <div className="rounded-md border border-white/10 bg-white/5 p-3">
             <p className="text-sm text-cloud/80">{contextLine2}</p>
           </div>

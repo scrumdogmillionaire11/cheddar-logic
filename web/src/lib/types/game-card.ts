@@ -400,6 +400,10 @@ export interface Play {
   gates?: CanonicalGate[];
   decision_data?: DecisionData;
   transform_meta?: TransformMeta;
+  /** Source card type (e.g. 'nhl-pace-1p', 'mlb-f5'). Present on all transformed plays. */
+  cardType?: string;
+  /** Pipeline execution status token. 'PROJECTION_ONLY' means no odds backing. */
+  execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
 
   // Canonical fields (preferred)
   market_type?: CanonicalMarketType;

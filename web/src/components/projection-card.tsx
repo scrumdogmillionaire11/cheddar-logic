@@ -2,6 +2,12 @@
 
 export interface RawProjectionPlay {
   projectedTotal: number | null;
+  projectedHomeF5Runs?: number | null;
+  projectedAwayF5Runs?: number | null;
+  projection?: {
+    projected_home_f5_runs?: number | null;
+    projected_away_f5_runs?: number | null;
+  } | null;
   line?: number;
   selection?: { side: string };
   reason_codes?: string[];
@@ -14,6 +20,7 @@ export interface RawProjectionPlay {
   goalie_away_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
   odds_context?: Record<string, unknown> | null;
   price?: number | null;
+  execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED' | null;
 }
 
 interface ProjectionCardProps {
@@ -56,12 +63,27 @@ export default function ProjectionCard({
   sport = 'NHL',
 }: ProjectionCardProps) {
   const isMlb = sport === 'MLB';
+  // mlb-f5 PROJECTION_ONLY: no market line, MAE-tracked surface only — no direction badge
+  const isMlbF5ProjectionOnly =
+    isMlb && play.execution_status === 'PROJECTION_ONLY';
   const side = play.selection?.side ?? 'NONE';
   const projectedTotal =
     typeof play.projectedTotal === 'number' ? play.projectedTotal : null;
+  const projectedHomeF5Runs =
+    typeof play.projectedHomeF5Runs === 'number'
+      ? play.projectedHomeF5Runs
+      : typeof play.projection?.projected_home_f5_runs === 'number'
+        ? play.projection.projected_home_f5_runs
+        : null;
+  const projectedAwayF5Runs =
+    typeof play.projectedAwayF5Runs === 'number'
+      ? play.projectedAwayF5Runs
+      : typeof play.projection?.projected_away_f5_runs === 'number'
+        ? play.projection.projected_away_f5_runs
+        : null;
   const line = typeof play.line === 'number' ? play.line : 1.5;
   const delta =
-    projectedTotal !== null
+    !isMlbF5ProjectionOnly && projectedTotal !== null
       ? Math.round((projectedTotal - line) * 100) / 100
       : null;
 
@@ -117,7 +139,7 @@ export default function ProjectionCard({
             {sport}
           </span>
           <span className="text-[10px] font-mono tracking-widest text-cloud/30 uppercase">
-            {isMlb ? 'F5 Total' : '1P Projection'}
+            {isMlbF5ProjectionOnly ? 'F5 Total \u2014 Model Projection' : isMlb ? 'F5 Total' : '1P Projection'}
           </span>
         </div>
         <span className="text-xs font-mono text-cloud/40">
@@ -130,7 +152,30 @@ export default function ProjectionCard({
         {awayTeam} @ {homeTeam}
       </div>
 
-      {/* Hero */}
+      {/* Hero — mlb-f5 PROJECTION_ONLY: no line, no direction badge */}
+      {isMlbF5ProjectionOnly ? (
+        <div className="space-y-2">
+          <div className="flex items-center gap-4">
+            <div className="text-center min-w-[56px]">
+              <div className="text-3xl font-bold font-mono text-cloud leading-none">
+                {projectedTotal !== null ? projectedTotal.toFixed(1) : '—'}
+              </div>
+              <div className="text-[10px] text-cloud/30 mt-1">proj. runs</div>
+            </div>
+            {(projectedAwayF5Runs !== null || projectedHomeF5Runs !== null) && (
+              <div className="flex flex-col gap-0.5 text-xs font-mono text-cloud/55">
+                {projectedAwayF5Runs !== null && (
+                  <span>{awayTeam}: {projectedAwayF5Runs.toFixed(1)}</span>
+                )}
+                {projectedHomeF5Runs !== null && (
+                  <span>{homeTeam}: {projectedHomeF5Runs.toFixed(1)}</span>
+                )}
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-cloud/40 font-mono">No market line &middot; MAE tracking</p>
+        </div>
+      ) : (
       <div className="flex items-center gap-5">
         {/* Projected value */}
         <div className="text-center min-w-[56px]">
@@ -195,6 +240,7 @@ export default function ProjectionCard({
           )}
         </div>
       </div>
+      )}
 
       {/* Goalie context */}
       {hasGoalieContext && (

@@ -490,3 +490,35 @@ export function formatContributorMarketLabel(
 export function driverRowKey(driver: DriverRow) {
   return `${driver.key}-${driver.market}-${driver.direction}-${driver.cardTitle}`;
 }
+
+/**
+ * Renders the MLB F5 projection block for PROJECTION_ONLY mlb-f5 cards.
+ * No direction badge, no line, no odds — MAE tracking surface only.
+ */
+export function formatF5ProjectionBlock(
+  projectedTotal: number | undefined,
+  projectedHome: number | undefined,
+  projectedAway: number | undefined,
+  homeTeam: string,
+  awayTeam: string,
+): {
+  headline: string;
+  subLabel: string;
+  homeLabel: string | null;
+  awayLabel: string | null;
+} {
+  const headline =
+    typeof projectedTotal === 'number'
+      ? `Projected: ${projectedTotal.toFixed(1)} runs`
+      : 'Projected: N/A';
+  const subLabel = 'No market line \u00b7 MAE tracking';
+  const homeLabel =
+    typeof projectedHome === 'number'
+      ? `${homeTeam}: ${projectedHome.toFixed(1)}`
+      : null;
+  const awayLabel =
+    typeof projectedAway === 'number'
+      ? `${awayTeam}: ${projectedAway.toFixed(1)}`
+      : null;
+  return { headline, subLabel, homeLabel, awayLabel };
+}

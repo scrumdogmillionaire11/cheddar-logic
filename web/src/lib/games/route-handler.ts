@@ -365,6 +365,9 @@ interface Play {
     k_mean?: number | null;
     probability_ladder?: Record<string, unknown> | null;
     fair_prices?: Record<string, unknown> | null;
+    // MLB F5 projected run splits
+    projected_home_f5_runs?: number | null;
+    projected_away_f5_runs?: number | null;
   };
   status?: ExpressionStatus;
   kind?: 'PLAY' | 'EVIDENCE';
@@ -2676,6 +2679,17 @@ export async function GET(request: NextRequest) {
               typeof payloadPlayProjection.fair_prices === 'object'
                 ? (payloadPlayProjection.fair_prices as Record<string, unknown>)
                 : null),
+            // MLB F5 projected run splits
+            projected_home_f5_runs:
+              firstNumber(
+                payloadProjection?.projected_home_f5_runs,
+                payloadPlayProjection?.projected_home_f5_runs,
+              ) ?? null,
+            projected_away_f5_runs:
+              firstNumber(
+                payloadProjection?.projected_away_f5_runs,
+                payloadPlayProjection?.projected_away_f5_runs,
+              ) ?? null,
           },
           status: resolvedStatus,
           // Canonical decision fields (preferred over legacy status field)
