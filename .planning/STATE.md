@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-03T00:00:00Z"
-last_activity: "2026-04-03 - WI-0747 complete: classifier module, pre-model audit block, INV-007, and input contract spec all merged"
+last_activity: "2026-04-03 - Completed quick task 118: WI-0757: Actual result ingestion for projection cards (nhl-pace-1p and mlb-f5)"
 ---
 
 # Project State
@@ -132,4 +132,10 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 **Edge retention review:** Schedule for 2–4 weeks after WI-0731 closes. That is when promotion, hold, or cut decisions for each card family are made.
 
 See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical quick-task archive.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 118 | WI-0757: Actual result ingestion for projection cards (nhl-pace-1p and mlb-f5) | 2026-04-03 | edcc5e9 | [118-wi-0757-actual-result-ingestion-for-proj](./quick/118-wi-0757-actual-result-ingestion-for-proj/) |
 
