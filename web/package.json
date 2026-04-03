@@ -53,5 +53,8 @@
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.8.0"
   }
 }

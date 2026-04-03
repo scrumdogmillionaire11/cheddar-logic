@@ -2,7 +2,7 @@
 
 ## Rule
 
-A play cannot be evaluated unless all required data is present and confirmed. Missing required data halts evaluation. Estimated or projected data is not a substitute for confirmed data. The engine does not guess.
+Current runtime can emit degraded/synthetic PASS rows when some inputs are missing, but it must not emit actionable plays without verified market data. Missing fields must be recorded in `missing_inputs` and `reason_codes`.
 
 ---
 
@@ -12,11 +12,11 @@ All pitcher inputs must be confirmed before Step 1 begins.
 
 | Field | Definition | Source | Missing = |
 |-------|-----------|--------|-----------|
-| `season_k9` | Full-season K/9 | Baseball Savant, FanGraphs | Halt |
+| `season_k_pct` | Full-season K% | Baseball Savant, FanGraphs | PASS fallback / HALT if insufficient starts |
 | `season_starts` | Number of starts this season | Baseball Reference | Halt |
-| `rolling_4start_k9` | K/9 over last 4 starts | Game log compilation | Halt if ≥4 starts exist |
-| `last_three_pitch_counts` | Pitches thrown in each of last 3 starts | Baseball Reference game logs | Halt |
-| `current_swstr_pct` | Season swinging-strike rate | Baseball Savant | BvP overlay blocked |
+| `rolling_4start_k_pct` | K% over last 4 starts | Game log compilation | Degrade if unavailable |
+| `last_three_pitch_counts` | Pitches thrown in each of last 3 starts | Baseball Reference game logs | Degrade if `recent_ip` / `avg_ip` also unavailable |
+| `current_swstr_pct` | Season swinging-strike rate | Baseball Savant | Degrade with whiff proxy |
 | `k_pct_last_4_starts` | K% over last 4 starts | Game log | Trend overlay blocked |
 | `k_pct_prior_4_starts` | K% over prior 4 starts | Game log | Trend overlay blocked |
 | `il_status` | Active IL designation or return status | MLB transaction wire | Halt if active |
@@ -34,20 +34,18 @@ All pitcher inputs must be confirmed before Step 1 begins.
 | `confirmed_lineup` | Official starting lineup in batting order | MLB Gameday / Twitter beat reporters | BvP blocked; vet for lineup context gap trap |
 | `opp_k_pct_vs_handedness_L30` | Opp K% vs. pitcher handedness, last 30 days | FanGraphs team splits | Use season split if <100 PA |
 | `opp_k_pct_vs_handedness_season` | Season-long opp K% vs. handedness | FanGraphs team splits | Fallback for L30 thin sample |
-| `opp_chase_rate_L30` | Opp chase rate (O-Swing%) last 30 days | FanGraphs team splits | Contact cap check blocked if missing |
+| `opp_obp` | Opp OBP vs pitcher handedness | FanGraphs team splits | Use neutral fallback and flag |
+| `opp_xwoba` | Opp xwOBA vs pitcher handedness | FanGraphs / Savant | Use neutral fallback and flag |
+| `opp_hard_hit_pct` | Opp hard-hit% vs pitcher handedness | FanGraphs / Savant | Use neutral fallback and flag |
 | `bvp_data` | Historical matchup PA/K for each confirmed batter | Baseball Reference splits | BvP overlay blocked |
 
 ---
 
-## Required data — market
+## Market data — currently deferred
 
-| Field | Definition | Source | Missing = |
-|-------|-----------|--------|-----------|
-| `opening_line` | Line at market open | Pinnacle / Circa / OddsJam historical | Block 4 defaults to 0 if missing |
-| `current_line` | Current market line at time of evaluation | OddsJam / book directly | Halt — no line = no margin |
-| `current_juice` | Vig on the side being evaluated | OddsJam / book directly | Halt |
-| `best_available_line` | Best line for play direction across all available books | OddsJam / Unabated odds screen | Recommended — use for margin calc |
-| `alt_lines_available` | Alt line options and their juice | Book prop pages | Optional — check if standard margin fails |
+There is no current live line requirement for MLB pitcher-K cards. Runtime cards must set `basis='PROJECTION_ONLY'`, `prediction='PASS'`, `line=null`, and `pass_reason_code='PASS_PROJECTION_ONLY_NO_MARKET'`.
+
+A separate follow-up WI must evaluate free DraftKings/FanDuel scraping first, then OddsTrader/OddsJam as fallback candidates, and define a standard + alt-line schema before any market comparison path is re-enabled.
 
 ---
 
@@ -80,7 +78,7 @@ All pitcher inputs must be confirmed before Step 1 begins.
 | Confirmed lineup | Must be official — not projected |
 | Pitch count data | Through most recent start |
 | Ump assignment | Confirmed same-day |
-| Market line | Within 30 minutes of play submission |
+| Market line | Not used in current runtime |
 | Weather | Within 2 hours of first pitch |
 | K/9, K%, SwStr% | Current season, updated through prior day |
 
@@ -99,10 +97,10 @@ For each data type, use sources in this order:
 1. FanGraphs team splits page (handedness splits, chase rate)
 2. Baseball Savant team batting filters
 
-**Market lines:**
-1. OddsJam (multi-book comparison, CLV tracking)
-2. Unabated odds screen (sharp book focus)
-3. Direct book pull (DraftKings, FanDuel, BetMGM, Pinnacle)
+**Market lines (future work only):**
+1. Direct book pull/scrape from DraftKings or FanDuel
+2. OddsTrader UI scrape
+3. OddsJam limited free access
 
 **Umpire data:**
 1. UmpScorecards.com (primary — K rate, called strike rate)
@@ -124,9 +122,9 @@ Run this checklist before beginning Step 1. If any required field is missing or 
 
 ```
 PITCHER
-[ ] Season K/9 confirmed
+[ ] Season K% confirmed
 [ ] Season starts count confirmed
-[ ] Rolling 4-start K/9 confirmed (if ≥4 starts)
+[ ] Rolling 4-start K% confirmed (if ≥4 starts)
 [ ] Last 3 pitch counts confirmed
 [ ] Current SwStr% confirmed
 [ ] IL status checked — no active IL
@@ -137,14 +135,12 @@ PITCHER
 OPPONENT
 [ ] Confirmed lineup posted — not projected
 [ ] Opp K% vs. handedness L30 confirmed (or season fallback noted)
-[ ] Chase rate confirmed (or missing — contact cap check blocked)
+[ ] Opp OBP / xwOBA / hard-hit profile confirmed or neutral fallback flagged
 [ ] BvP data pulled for confirmed lineup batters
 
 MARKET
-[ ] Current line confirmed at active book
-[ ] Opening line confirmed (or Block 4 defaults to 0)
-[ ] Current juice confirmed
-[ ] Best available line checked across books
+[ ] Current runtime remains projection-only PASS with no live line
+[ ] If restoring lines, use a separate WI/ADR and verify standard + alt-line parser quality first
 
 UMPIRE
 [ ] HP umpire assignment confirmed

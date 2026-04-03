@@ -47,9 +47,8 @@ const { selectMlbGameMarket, projectF5ML } = require('../models/mlb-model');
 const edgeCalculator = require('@cheddar-logic/models/src/edge-calculator');
 const MIN_MLB_GAMES_FOR_RECAL = parseInt(process.env.MIN_MLB_GAMES_FOR_RECAL || '20', 10);
 
-// Pitcher K model mode: 'PROJECTION_ONLY' enables the Sharp Cheddar K pipeline
-// without requiring market odds. Set PITCHER_KS_MODEL_MODE=PROJECTION_ONLY.
-const PITCHER_KS_MODEL_MODE = process.env.PITCHER_KS_MODEL_MODE || null;
+// Pitcher K runtime mode is intentionally PROJECTION_ONLY only.
+// Free sportsbook/aggregator line sourcing must be implemented in a separate WI.
 const MLB_K_PROP_FRESHNESS_MINUTES = Number(
   process.env.MLB_K_PROP_FRESHNESS_MINUTES || 75,
 );
@@ -110,7 +109,9 @@ const MLB_TEAM_ABBREVIATIONS = Object.freeze({
 const MLB_PROP_BOOKMAKER_PRIORITY = Object.freeze({
   draftkings: 1,
   fanduel: 2,
-  betmgm: 3,
+  oddstrader: 3,
+  oddsjam: 4,
+  betmgm: 5,
 });
 
 const MLB_F5_TEAM_OFFENSE_SPLITS = Object.freeze({
@@ -556,28 +557,13 @@ function deriveMlbExecutionEnvelope({
     if (rolloutState === 'OFF') {
       blockReason = 'rollout_state=OFF';
       kPropExecutionPath = 'DISABLED';
-    } else if (isProjectionOnly) {
+    } else {
+      // WI-0733: pitcher-K is PROJECTION_ONLY only until a separate free-line WI
+      // restores a verified market source.
       executionStatus = 'PROJECTION_ONLY';
       emitAllowed = true;
-      blockReason = pricingReason;
+      blockReason = pricingReason ?? null;
       kPropExecutionPath = 'PROJECTION_ONLY';
-    } else if (rolloutState === 'SHADOW') {
-      blockReason = 'rollout_state=SHADOW';
-      kPropExecutionPath = 'SHADOW_ROLLOUT';
-    } else if (driver?.basis === 'ODDS_BACKED' && normalizedPricingStatus === 'FRESH') {
-      executionStatus = 'EXECUTABLE';
-      publishReady = true;
-      emitAllowed = true;
-      blockReason = null;
-      kPropExecutionPath = 'ODDS_BACKED';
-    } else if (driver?.basis === 'ODDS_BACKED' && normalizedPricingStatus === 'MISSING') {
-      executionStatus = 'PROJECTION_ONLY';
-      emitAllowed = true;
-      blockReason = pricingReason || 'MARKET_MISSING';
-      kPropExecutionPath = 'QUALIFIED_BUT_NO_MARKET';
-    } else if (driver?.basis === 'ODDS_BACKED' && normalizedPricingStatus === 'STALE') {
-      blockReason = pricingReason || 'STALE_ODDS';
-      kPropExecutionPath = 'STALE_ODDS_BLOCKED';
     }
   } else if (isProjectionOnly || normalizedPricingStatus === 'NOT_REQUIRED') {
     executionStatus = 'PROJECTION_ONLY';
@@ -671,10 +657,6 @@ function attachRunId(card, runId) {
 }
 
 function resolvePitcherKsMode() {
-  const mode = String(
-    process.env.PITCHER_KS_MODEL_MODE || 'PROJECTION_ONLY',
-  ).toUpperCase();
-  if (mode === 'ODDS_BACKED') return 'ODDS_BACKED';
   return 'PROJECTION_ONLY';
 }
 
@@ -700,63 +682,71 @@ function getPitcherPropBookmakerPriority(bookmaker) {
   return MLB_PROP_BOOKMAKER_PRIORITY[normalized] ?? 99;
 }
 
-function selectBestPitcherUnderMarket(rows = []) {
-  if (!Array.isArray(rows) || rows.length === 0) return null;
-
-  const sorted = [...rows].sort((left, right) => {
-    const leftLine = toFiniteNumber(left?.line) ?? Number.NEGATIVE_INFINITY;
-    const rightLine = toFiniteNumber(right?.line) ?? Number.NEGATIVE_INFINITY;
-    if (rightLine !== leftLine) return rightLine - leftLine;
-
-    const leftUnder = toFiniteNumber(left?.under_price) ?? Number.NEGATIVE_INFINITY;
-    const rightUnder = toFiniteNumber(right?.under_price) ?? Number.NEGATIVE_INFINITY;
-    if (rightUnder !== leftUnder) return rightUnder - leftUnder;
-
-    return (
-      getPitcherPropBookmakerPriority(left?.bookmaker) -
-      getPitcherPropBookmakerPriority(right?.bookmaker)
-    );
-  });
-
-  const best = sorted[0];
-  return best
-    ? {
-        line: toFiniteNumber(best.line),
-        over_price: toFiniteNumber(best.over_price),
-        under_price: toFiniteNumber(best.under_price),
-        bookmaker: best.bookmaker ?? null,
-        fetched_at: best.fetched_at ?? null,
-      }
-    : null;
+function normalizePitcherKPrice(value) {
+  const price = toFiniteNumber(value);
+  return price === null ? null : Math.trunc(price);
 }
 
-function loadPitcherStrikeoutMarkets(db, gameId) {
-  if (!db || !gameId) return {};
-  const rows = db
-    .prepare(`
-      SELECT player_name, line, over_price, under_price, bookmaker, fetched_at
-      FROM player_prop_lines
-      WHERE sport = 'MLB'
-        AND game_id = ?
-        AND prop_type = 'pitcher_strikeouts'
-        AND period = 'full_game'
-    `)
-    .all(gameId);
+function buildPitcherKLineContract(rawEntry = null) {
+  if (!rawEntry || typeof rawEntry !== 'object') return null;
 
-  const grouped = new Map();
-  for (const row of rows) {
-    const key = normalizePitcherLookupKey(row.player_name);
-    if (!key) continue;
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(row);
+  const line = toFiniteNumber(rawEntry.line);
+  const bookmaker = String(rawEntry.bookmaker || rawEntry.book || '').trim() || null;
+  const lineSource =
+    String(rawEntry.line_source || rawEntry.source || bookmaker || '').trim() || null;
+  const currentTimestamp =
+    String(rawEntry.current_timestamp || rawEntry.fetched_at || '').trim() || null;
+  const altLines = (Array.isArray(rawEntry.alt_lines) ? rawEntry.alt_lines : [])
+    .map((altLine) => {
+      if (!altLine || typeof altLine !== 'object') return null;
+      const altLineValue = toFiniteNumber(altLine.line);
+      const side = String(altLine.side || '').trim().toLowerCase();
+      const juice = normalizePitcherKPrice(altLine.juice ?? altLine.price);
+      const book = String(altLine.book || altLine.bookmaker || '').trim() || null;
+      if (altLineValue === null || !['over', 'under'].includes(side)) return null;
+      return {
+        line: altLineValue,
+        side,
+        juice,
+        book,
+        source: String(altLine.source || altLine.line_source || lineSource || '').trim() || null,
+        captured_at:
+          String(altLine.captured_at || altLine.current_timestamp || currentTimestamp || '').trim() ||
+          null,
+      };
+    })
+    .filter(Boolean);
+
+  if (
+    line === null &&
+    normalizePitcherKPrice(rawEntry.over_price) === null &&
+    normalizePitcherKPrice(rawEntry.under_price) === null &&
+    altLines.length === 0
+  ) {
+    return null;
   }
 
-  const selected = {};
-  for (const [key, group] of grouped.entries()) {
-    const best = selectBestPitcherUnderMarket(group);
-    if (best) selected[key] = best;
-  }
-  return selected;
+  return {
+    line,
+    over_price: normalizePitcherKPrice(rawEntry.over_price),
+    under_price: normalizePitcherKPrice(rawEntry.under_price),
+    bookmaker,
+    line_source: lineSource,
+    opening_line: toFiniteNumber(rawEntry.opening_line),
+    opening_over_price: normalizePitcherKPrice(rawEntry.opening_over_price),
+    opening_under_price: normalizePitcherKPrice(rawEntry.opening_under_price),
+    best_available_line: pickFirstFinite(rawEntry.best_available_line, line),
+    best_available_over_price: normalizePitcherKPrice(
+      rawEntry.best_available_over_price ?? rawEntry.over_price,
+    ),
+    best_available_under_price: normalizePitcherKPrice(
+      rawEntry.best_available_under_price ?? rawEntry.under_price,
+    ),
+    best_available_bookmaker:
+      String(rawEntry.best_available_bookmaker || bookmaker || '').trim() || null,
+    current_timestamp: currentTimestamp,
+    alt_lines: altLines,
+  };
 }
 
 function isTimestampFresh(timestamp, maxAgeMinutes = MLB_K_PROP_FRESHNESS_MINUTES, now = Date.now()) {
@@ -764,29 +754,6 @@ function isTimestampFresh(timestamp, maxAgeMinutes = MLB_K_PROP_FRESHNESS_MINUTE
   const parsed = new Date(timestamp).getTime();
   if (!Number.isFinite(parsed)) return false;
   return now - parsed <= maxAgeMinutes * 60 * 1000;
-}
-
-function resolvePitcherKPublishGate(
-  oddsSnapshot,
-  { mode = resolvePitcherKsMode(), maxAgeMinutes = MLB_K_PROP_FRESHNESS_MINUTES, now = Date.now() } = {},
-) {
-  if (mode !== 'ODDS_BACKED') {
-    return { allowed: true, reason: null };
-  }
-
-  const rawData = parseMlbRawData(oddsSnapshot);
-  const strikeoutLines = rawData?.mlb?.strikeout_lines;
-  const lineRows = strikeoutLines && typeof strikeoutLines === 'object'
-    ? Object.values(strikeoutLines).filter(Boolean)
-    : [];
-  if (lineRows.length === 0) {
-    return { allowed: false, reason: 'STALE_ODDS' };
-  }
-
-  const hasFreshLine = lineRows.some((row) => isTimestampFresh(row?.fetched_at, maxAgeMinutes, now));
-  return hasFreshLine
-    ? { allowed: true, reason: null }
-    : { allowed: false, reason: 'STALE_ODDS' };
 }
 
 function filterSnapshotsByGameIds(snapshots = [], gameIds = null) {
@@ -808,35 +775,14 @@ function getPitcherRoleFromDriver(driver) {
   return null;
 }
 
-function getPitcherStrikeoutLineForDriver(oddsSnapshot, driver) {
-  const role = getPitcherRoleFromDriver(driver);
-  if (!role) return null;
-  const rawData = typeof oddsSnapshot?.raw_data === 'string'
-    ? JSON.parse(oddsSnapshot.raw_data)
-    : (oddsSnapshot?.raw_data ?? {});
-  const mlb = rawData?.mlb ?? {};
-  const pitcherName = mlb?.[`${role}_pitcher`]?.full_name ?? null;
-  const strikeoutLines = mlb?.strikeout_lines ?? {};
-  const pitcherKey = normalizePitcherLookupKey(pitcherName);
-  return strikeoutLines[pitcherKey] ?? null;
-}
-
-function evaluatePitcherPropPublishability(oddsSnapshot, driver) {
-  if (driver?.basis !== 'ODDS_BACKED') {
-    return { publishable: false, status: 'NOT_REQUIRED', reason: null, fetched_at: null };
-  }
-  const line = getPitcherStrikeoutLineForDriver(oddsSnapshot, driver);
-  if (!line || line.line == null) {
-    return { publishable: false, status: 'MISSING', reason: 'MARKET_MISSING', fetched_at: null };
-  }
-  if (!line?.fetched_at) {
-    return { publishable: false, status: 'MISSING', reason: 'MARKET_MISSING', fetched_at: null };
-  }
-  const ageMinutes = (Date.now() - Date.parse(line.fetched_at)) / 60000;
-  if (!Number.isFinite(ageMinutes) || ageMinutes > MLB_K_PROP_ODDS_MAX_AGE_MINUTES) {
-    return { publishable: false, status: 'STALE', reason: 'STALE_ODDS', fetched_at: line.fetched_at };
-  }
-  return { publishable: true, status: 'FRESH', reason: null, fetched_at: line.fetched_at };
+function evaluatePitcherPropPublishability(_oddsSnapshot, _driver) {
+  return {
+    publishable: false,
+    status: 'NOT_REQUIRED',
+    reason: null,
+    fetched_at: null,
+    line_contract: null,
+  };
 }
 
 function buildPitcherStrikeoutLookback(
@@ -889,7 +835,8 @@ function buildPitcherStrikeoutLookback(
 const PROJECTION_FLOOR_F5_FALLBACK = 4.5;
 
 /**
- * Look up ERA for a team from mlb_pitcher_stats. Returns null if not found.
+ * Look up starter skill RA9 for a team from mlb_pitcher_stats.
+ * Uses weighted SIERA/xFIP/xERA and returns null if no skill metric is present.
  * Used as a DB fallback when raw_data has no embedded pitcher info (WITHOUT_ODDS_MODE).
  * Tries all lookup keys (full name + abbreviation) via resolveMlbTeamLookupKeys.
  * @param {string} team - Full team name or abbreviation (e.g. 'Toronto Blue Jays' or 'TOR')
@@ -900,11 +847,22 @@ function getPitcherEraFromDb(team) {
   try {
     const db = getDatabase();
     const stmt = db.prepare(
-      'SELECT era FROM mlb_pitcher_stats WHERE team = ? AND era IS NOT NULL AND era > 0 ORDER BY updated_at DESC LIMIT 1',
+      'SELECT siera, x_fip, x_era FROM mlb_pitcher_stats WHERE team = ? ORDER BY updated_at DESC LIMIT 1',
     );
     for (const key of resolveMlbTeamLookupKeys(team)) {
       const row = stmt.get(key);
-      if (row) return toFiniteNumber(row.era);
+      if (!row) continue;
+      const parts = [
+        { value: toFiniteNumber(row.siera), weight: 0.4 },
+        { value: toFiniteNumber(row.x_fip), weight: 0.35 },
+        { value: toFiniteNumber(row.x_era), weight: 0.25 },
+      ].filter((part) => part.value !== null);
+      if (parts.length === 0) continue;
+      const totalWeight = parts.reduce((sum, part) => sum + part.weight, 0);
+      return parts.reduce(
+        (sum, part) => sum + (part.value * part.weight),
+        0,
+      ) / totalWeight;
     }
     return null;
   } catch (_) {
@@ -913,8 +871,8 @@ function getPitcherEraFromDb(team) {
 }
 
 /**
- * Derive a synthetic F5 total projection floor from pitcher ERA stats.
- * First attempts to read ERA from oddsSnapshot.raw_data.mlb (enriched snapshots).
+ * Derive a synthetic F5 total projection floor from starter skill metrics.
+ * First attempts to read weighted SIERA/xFIP/xERA from oddsSnapshot.raw_data.mlb.
  * Falls back to a direct mlb_pitcher_stats DB lookup by home_team/away_team
  * (used in WITHOUT_ODDS_MODE where raw_data is null).
  * Returns a value rounded to the nearest 0.5, or the fallback constant if
@@ -927,20 +885,33 @@ function computeProjectionFloorF5(oddsSnapshot) {
   try {
     const rawData = parseMlbRawData(oddsSnapshot);
     const mlb = rawData?.mlb && typeof rawData.mlb === 'object' ? rawData.mlb : {};
-    let homeEra = toFiniteNumber(mlb.home_pitcher?.era);
-    let awayEra = toFiniteNumber(mlb.away_pitcher?.era);
+    function resolvePitcherSkill(pitcher) {
+      const parts = [
+        { value: toFiniteNumber(pitcher?.siera), weight: 0.4 },
+        { value: toFiniteNumber(pitcher?.x_fip), weight: 0.35 },
+        { value: toFiniteNumber(pitcher?.x_era), weight: 0.25 },
+      ].filter((part) => part.value !== null);
+      if (parts.length === 0) return null;
+      const totalWeight = parts.reduce((sum, part) => sum + part.weight, 0);
+      return parts.reduce(
+        (sum, part) => sum + (part.value * part.weight),
+        0,
+      ) / totalWeight;
+    }
+
+    let homeSkillRa9 = resolvePitcherSkill(mlb.home_pitcher);
+    let awaySkillRa9 = resolvePitcherSkill(mlb.away_pitcher);
 
     // WITHOUT_ODDS_MODE: raw_data is null — fall back to DB lookup by team abbreviation
-    // Also skip era=0 (Opening Day pitcher with 0 IP so far — not a real ERA signal)
-    if ((homeEra === null || homeEra === 0) && oddsSnapshot?.home_team) {
-      homeEra = getPitcherEraFromDb(oddsSnapshot.home_team);
+    if (homeSkillRa9 === null && oddsSnapshot?.home_team) {
+      homeSkillRa9 = getPitcherEraFromDb(oddsSnapshot.home_team);
     }
-    if ((awayEra === null || awayEra === 0) && oddsSnapshot?.away_team) {
-      awayEra = getPitcherEraFromDb(oddsSnapshot.away_team);
+    if (awaySkillRa9 === null && oddsSnapshot?.away_team) {
+      awaySkillRa9 = getPitcherEraFromDb(oddsSnapshot.away_team);
     }
 
-    if (homeEra === null || awayEra === null) return PROJECTION_FLOOR_F5_FALLBACK;
-    const raw = (homeEra / 9) * 5 + (awayEra / 9) * 5;
+    if (homeSkillRa9 === null || awaySkillRa9 === null) return PROJECTION_FLOOR_F5_FALLBACK;
+    const raw = (homeSkillRa9 / 9) * 5 + (awaySkillRa9 / 9) * 5;
     return Math.round(raw * 2) / 2;
   } catch (_) {
     return PROJECTION_FLOOR_F5_FALLBACK;
@@ -1067,7 +1038,7 @@ function generateMLBCard(gameId, modelOutput, oddsSnapshot) {
 // K engine — required pitcher fields that must be non-null before scoring.
 // Based on pitcher_input_schema.md "Halt if missing" rows.
 const PITCHER_K_REQUIRED_FIELDS = [
-  'k_per_9',              // season_k9 — primary stat
+  'season_k_pct',         // starter K% — primary stat for k_interaction
   'season_starts',        // must be >= 3 for projection to be calculable
   'handedness',           // required for opp splits
   'days_since_last_start', // required for rest/leash gate
@@ -1105,6 +1076,13 @@ function checkPitcherFreshness(row, todayDate) {
  */
 function validatePitcherKInputs(pitcher) {
   const missing = PITCHER_K_REQUIRED_FIELDS.filter((f) => pitcher[f] == null);
+  if (
+    pitcher?.last_three_pitch_counts == null &&
+    pitcher?.recent_ip == null &&
+    pitcher?.avg_ip == null
+  ) {
+    missing.push('starter_leash');
+  }
   if (missing.length === 0) return null;
   return { code: 'PITCHER_REQUIRED_FIELD_NULL', missing_fields: missing };
 }
@@ -1142,6 +1120,7 @@ function buildPitcherKObject(row) {
     avg_ip: row.recent_ip,
     x_fip: row.x_fip ?? null,
     siera: row.siera ?? null,
+    x_era: row.x_era ?? null,
     bb_pct: row.bb_pct ?? null,
     hr_per_9: row.hr_per_9 ?? null,
     // K engine fields
@@ -1230,21 +1209,11 @@ function enrichMlbPitcherData(
     mlb.park_run_factor =
       mlb.park_run_factor ?? resolveMlbF5ParkRunFactor(homeTeam);
 
-    // Strikeout lines: look up player_prop_lines for pitcher_strikeouts when in
-    // ODDS_BACKED mode. Best-line logic: lowest over_line among DraftKings/FanDuel/BetMGM.
-    // In PROJECTION_ONLY mode, leave strikeout_lines as-is (null or existing).
-    if (forKEngine && resolvePitcherKsMode() === 'ODDS_BACKED') {
-      try {
-        const gameId = oddsSnapshot?.game_id ?? oddsSnapshot?.id ?? null;
-        if (gameId) {
-          mlb.strikeout_lines = loadPitcherStrikeoutMarkets(db, gameId);
-        }
-      } catch (_propErr) {
-        // Non-fatal — K engine falls back to PROJECTION_ONLY gating if no line found
-        console.warn(`[MLBModel] [pitcher-k] Failed to load strikeout_lines from player_prop_lines: ${_propErr.message}`);
-      }
-    } else if (!forKEngine) {
-      // Standard moneyline mode: leave strikeout_lines as-is (from existing raw_data or null)
+    // WI-0733: Pitcher K stays projection-only. Do not hydrate live strikeout
+    // market lines from player_prop_lines unless a future line-sourcing WI
+    // explicitly reintroduces that lane.
+    if (forKEngine) {
+      mlb.strikeout_lines = mlb.strikeout_lines ?? {};
     }
 
     // Look up weather for this game by (game_date, home_team)
@@ -1258,6 +1227,9 @@ function enrichMlbPitcherData(
         mlb.temp_f = weatherRow.temp_f ?? mlb.temp_f ?? null;
         mlb.wind_mph = weatherRow.wind_mph ?? mlb.wind_mph ?? null;
         mlb.wind_dir = weatherRow.wind_dir ?? mlb.wind_dir ?? null;
+      }
+      if (weatherRow?.conditions) {
+        mlb.roof = weatherRow.conditions;
       }
     } catch (_weatherErr) {
       // Non-fatal — model uses neutral defaults
@@ -1283,6 +1255,7 @@ function enrichMlbPitcherData(
               handedness: row.handedness ?? null,
               x_fip: row.x_fip ?? null,
               siera: row.siera ?? null,
+              x_era: row.x_era ?? null,
               bb_pct: row.bb_pct ?? null,
               hr_per_9: row.hr_per_9 ?? null,
               season_k_pct: row.season_k_pct ?? null,
@@ -1614,6 +1587,7 @@ async function runMLBModel({
                 classification: 'PASS',
                 ev_threshold_passed: false,
                 projection_source: 'SYNTHETIC_FALLBACK',
+                status_cap: 'PASS',
                 reason_codes: ['PASS_SYNTHETIC_FALLBACK', 'PASS_NO_EDGE'],
                 missing_inputs: ['market_line'],
                 pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
@@ -1774,12 +1748,6 @@ async function runMLBModel({
                 : driver.confidence >= 0.8
                 ? 'BEST'
                 : 'WATCH';
-            const pitcherKLeanSide =
-              driver.prop_decision?.lean_side ??
-              (driver.prediction === 'OVER' || driver.prediction === 'UNDER'
-                ? driver.prediction
-                : null);
-
             const payloadData = {
               game_id: gameId,
               sport: 'MLB',
@@ -1792,15 +1760,9 @@ async function runMLBModel({
               status: driver.status ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
               action: driver.action ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
               classification: driver.classification ?? (driver.ev_threshold_passed ? 'BASE' : 'PASS'),
-              prediction:
-                isPitcherK && pitcherKLeanSide
-                  ? pitcherKLeanSide
-                  : driver.prediction,
+              prediction: driver.prediction,
               selection: {
-                side:
-                  isPitcherK && pitcherKLeanSide
-                    ? pitcherKLeanSide
-                    : driver.prediction,
+                side: driver.prediction,
               },
               line,
               confidence: driver.confidence,
@@ -1814,6 +1776,7 @@ async function runMLBModel({
               reason_codes: Array.isArray(driver.reason_codes) ? driver.reason_codes : [],
               pass_reason_code: driver.pass_reason_code ?? null,
               projection_source: driver.projection_source ?? null,
+              status_cap: driver.status_cap ?? null,
               playability: driver.playability ?? null,
               missing_inputs: Array.isArray(driver.missing_inputs) ? driver.missing_inputs : [],
               disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
@@ -1848,7 +1811,11 @@ async function runMLBModel({
                       player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
                       canonical_market_key: 'pitcher_strikeouts',
                       basis: driver.basis || 'PROJECTION_ONLY',
-                      tags: (driver.basis === 'ODDS_BACKED') ? [] : ['no_odds_mode'],
+                      tags: ['no_odds_mode'],
+                      projection:
+                        driver.projection && typeof driver.projection === 'object'
+                          ? driver.projection
+                          : (projected !== null ? { k_mean: projected } : null),
                       prop_display_state: computePitcherKPropDisplayState(
                         driver.prop_decision?.verdict ?? driver.card_verdict,
                       ),
@@ -1903,13 +1870,9 @@ async function runMLBModel({
               ? `F5 ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
               : isF5ML
                 ? `F5 ML ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
-              : isPitcherK
-                ? `${pitcherTeam ?? '?'} SP Ks ${driver.prediction} [${
-                    payloadData.k_prop_execution_path === 'ODDS_BACKED'
-                      ? 'ODDS_BACKED'
-                      : 'PROJECTION_ONLY'
-                  }]`
-                : `${pitcherTeam ?? '?'} SP Strikeouts ${driver.prediction}`;
+                : isPitcherK
+                  ? `${pitcherTeam ?? '?'} SP Ks ${driver.prediction} [PROJECTION_ONLY]`
+                  : `${pitcherTeam ?? '?'} SP Strikeouts ${driver.prediction}`;
 
             const cardId = `card-mlb-${cardType}-${gameId}-${uuidV4().slice(0, 8)}`;
             const card = {
@@ -2046,7 +2009,6 @@ module.exports = {
   resolvePitcherKsMode,
   resolveMlbPitcherPropRolloutState,
   isTimestampFresh,
-  resolvePitcherKPublishGate,
   filterSnapshotsByGameIds,
   evaluatePitcherPropPublishability,
   deriveMlbExecutionEnvelope,
@@ -2055,7 +2017,7 @@ module.exports = {
   checkPitcherFreshness,
   validatePitcherKInputs,
   buildPitcherKObject,
-  selectBestPitcherUnderMarket,
+  buildPitcherKLineContract,
   buildPitcherStrikeoutLookback,
   // Exported for WI-0637 unit tests
   computeProjectionFloorF5,

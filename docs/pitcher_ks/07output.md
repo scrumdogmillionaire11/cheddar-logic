@@ -2,7 +2,7 @@
 
 ## Rule
 
-Every evaluated prop produces a structured verdict in a defined template. The template is not optional and is not abbreviated. Every field is populated. If a field cannot be populated (e.g., BvP unscored due to lineup not confirmed), the field states that explicitly — it is not omitted.
+Every evaluated pitcher produces a structured projection-only output in a defined template. The template is not optional and is not abbreviated. Every field is populated. If a field cannot be populated, the field states that explicitly and the row remains PASS.
 
 The verdict is the final record of the engine's reasoning. It must be reproducible — given the same inputs, the same verdict must be producible again.
 
@@ -12,13 +12,19 @@ The verdict is the final record of the engine's reasoning. It must be reproducib
 
 ```
 ## Pick
-[Pitcher full name] [o/u][line] Ks — [Book] [Juice]
+[Pitcher full name] Ks PASS [PROJECTION_ONLY]
 
 ## Projection
 [X.X] Ks
 
-## Margin
-[+X.X] Ks ([side] edge)
+## Distribution
+P(5+)=[x.xx]
+P(6+)=[x.xx]
+P(7+)=[x.xx]
+
+## Fair thresholds
+Over playable at <= [x.x]
+Under playable at >= [x.x]
 
 ## Leash
 [Full / Mod+ / Mod / Short] — [X.X] IP expected
@@ -53,32 +59,35 @@ or
 or
 [TRIGGERED: reason — evaluation halted at Step X]
 
+## Data quality
+Projection source: [FULL_MODEL / DEGRADED_MODEL / SYNTHETIC_FALLBACK]
+Missing inputs: [list or none]
+Reason codes: [list]
+
 ## Verdict
-[Play / Conditional play / Pass]
-
-[If Play or Conditional:]
-Side: [Over / Under]
-Line: [X.X] at [Book]
-Confidence: [X/10]
-[HIGH VIG] if applicable
-
-[If Pass:]
-Reason: [specific reason — thin margin / leash / trap / confidence below floor]
+PASS
+Reason: PASS_PROJECTION_ONLY_NO_MARKET
 ```
 
 ---
 
-## Populated example — play verdict
+## Populated example — full-model PASS verdict
 
 ```
 ## Pick
-Corbin Burnes o7.5 Ks — DraftKings -115
+Corbin Burnes Ks PASS [PROJECTION_ONLY]
 
 ## Projection
 8.4 Ks
 
-## Margin
-+0.9 Ks (over edge)
+## Distribution
+P(5+)=0.90
+P(6+)=0.80
+P(7+)=0.68
+
+## Fair thresholds
+Over playable at <= 7.5
+Under playable at >= 8.5
 
 ## Leash
 Full — 6.0 IP expected
@@ -107,26 +116,35 @@ CLEAR — no active flags
 ## Kill-switch check
 None triggered
 
+## Data quality
+Projection source: FULL_MODEL
+Missing inputs: []
+Reason codes: [PASS_PROJECTION_ONLY_NO_MARKET]
+
 ## Verdict
-Play
-Side: Over
-Line: o7.5 at DraftKings -115
-Confidence: 7/10
+PASS
+Reason: PASS_PROJECTION_ONLY_NO_MARKET
 ```
 
 ---
 
-## Populated example — conditional play verdict
+## Populated example — degraded PASS verdict
 
 ```
 ## Pick
-Logan Webb o5.5 Ks — FanDuel -120
+Logan Webb Ks PASS [PROJECTION_ONLY]
 
 ## Projection
 6.2 Ks
 
-## Margin
-+0.7 Ks (over edge)
+## Distribution
+P(5+)=0.73
+P(6+)=0.57
+P(7+)=0.40
+
+## Fair thresholds
+Over playable at <= 5.5
+Under playable at >= 6.5
 
 ## Leash
 Mod+ — 5.5 IP expected
@@ -155,13 +173,14 @@ CLEAR — no active flags
 ## Kill-switch check
 None triggered
 
+## Data quality
+Projection source: DEGRADED_MODEL
+Missing inputs: [starter_swstr_pct]
+Reason codes: [PASS_PROJECTION_ONLY_NO_MARKET, DEGRADED_INPUT:starter_swstr_pct]
+
 ## Verdict
-Conditional play
-Side: Over
-Line: o5.5 at FanDuel -120
-Confidence: 6/10
-Condition: Play only if lineup confirms no absence of high-K bats (Soler, Chapman). Re-run BvP if confirmed.
-Note: Marginal tier. Line must remain at 5.5 or better at time of play.
+PASS
+Reason: PASS_PROJECTION_ONLY_NO_MARKET
 ```
 
 ---
@@ -170,13 +189,19 @@ Note: Marginal tier. Line must remain at 5.5 or better at time of play.
 
 ```
 ## Pick
-[Evaluated: Zack Wheeler o8.5 Ks — DraftKings -110]
+Zack Wheeler Ks PASS [PROJECTION_ONLY]
 
 ## Projection
 8.1 Ks
 
-## Margin
--0.4 Ks (under the line — no over edge)
+## Distribution
+P(5+)=0.86
+P(6+)=0.72
+P(7+)=0.55
+
+## Fair thresholds
+Over playable at <= 7.5
+Under playable at >= 8.5
 
 ## Leash
 Full — 6.0 IP expected
@@ -197,11 +222,16 @@ N/A — halted at Step 4
 Not run — halted at Block 1
 
 ## Kill-switch check
-TRIGGERED: Block 1 = 0 — projection below line. No margin. Evaluation halted at Step 4.
+None triggered
+
+## Data quality
+Projection source: SYNTHETIC_FALLBACK
+Missing inputs: [opponent_contact_profile]
+Reason codes: [PASS_PROJECTION_ONLY_NO_MARKET, MISSING_INPUT:opponent_contact_profile]
 
 ## Verdict
 Pass
-Reason: No projection margin. Wheeler projected at 8.1, line set at 8.5. Overlays and leash are both favorable but the number is not there. Do not play the over. Under would require projection of 7.75 or below to clear the under floor — projection does not support that either. No play on either side.
+Reason: PASS_PROJECTION_ONLY_NO_MARKET. No verified line is attached, so this row is research output only.
 ```
 
 ---
@@ -212,7 +242,7 @@ When a kill-switch fires before scoring completes, use this condensed format:
 
 ```
 ## Evaluated
-[Pitcher] [side][line] — [Book]
+[Pitcher] Ks PASS [PROJECTION_ONLY]
 
 ## Status
 HALTED — [reason]
@@ -231,7 +261,7 @@ When two or more trap flags fire:
 
 ```
 ## Evaluated
-[Pitcher] [side][line] — [Book]
+[Pitcher] Ks PASS [PROJECTION_ONLY]
 
 ## Status
 SUSPENDED — environment compromised
@@ -250,11 +280,13 @@ No play issued — scoring suspended. Log as environment compromised.
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| Pick | Always | Include book and juice |
+| Pick | Always | Projection-only label, no book/juice |
 | Projection | Always | One decimal place |
-| Margin | Always | Show +/- and label side |
+| Distribution | Always | Include `P(5+)`, `P(6+)`, `P(7+)` |
+| Fair thresholds | Always | Research-only over/under thresholds |
 | Leash | Always | Include IP expectation and any flags |
 | Overlays | Always | All three shown; unscored must state why |
+| Data quality | Always | `projection_source`, `missing_inputs`, `reason_codes` |
 | Confidence score | Unless halted/suspended | Show tier label |
 | Score breakdown | Unless halted/suspended | All five blocks itemized |
 | Trap check | Unless halted before Step 5 | All six categories implicitly scanned |

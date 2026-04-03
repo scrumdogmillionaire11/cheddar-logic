@@ -6,15 +6,27 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const filePath = path.resolve('web/src/lib/game-card/transform/index.ts');
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../..',
+);
+const filePath = path.resolve(
+  repoRoot,
+  'web/src/lib/game-card/transform/index.ts',
+);
 const source = fs.readFileSync(filePath, 'utf8');
 const gameCardSource = fs.readFileSync(
-  path.resolve('web/src/components/cards/GameCardItem.tsx'),
+  path.resolve(repoRoot, 'web/src/components/cards/GameCardItem.tsx'),
+  'utf8',
+);
+const propGameCardSource = fs.readFileSync(
+  path.resolve(repoRoot, 'web/src/components/prop-game-card.tsx'),
   'utf8',
 );
 const titleInferenceSource = fs.readFileSync(
-  path.resolve('web/src/lib/game-card/transform/title-inference.ts'),
+  path.resolve(repoRoot, 'web/src/lib/game-card/transform/title-inference.ts'),
   'utf8',
 );
 
@@ -70,11 +82,11 @@ assert(
 );
 
 assert(
-  source.includes('prop_decision') &&
-    source.includes("rawPropDecision?.verdict === 'PLAY'") &&
-    source.includes("rawPropDisplayState === 'PROJECTION_ONLY'") &&
+  source.includes('const rawPropDecision = play.prop_decision;') &&
+    source.includes('const propVerdict = normalizePropVerdict(play, rawPropDecision);') &&
+    source.includes("play.prop_display_state === 'PROJECTION_ONLY'") &&
     source.includes('market_bookmaker'),
-  'transform props mode should prefer canonical prop_decision verdicts and keep prop_display_state as legacy fallback',
+  'transform props mode should resolve canonical prop_decision verdicts through normalizePropVerdict and keep prop_display_state as fallback',
 );
 
 assert(
@@ -87,16 +99,42 @@ assert(
 
 assert(
   source.includes('const canonicalPropProjection =') &&
+    source.includes("typeof rawPropDecision?.k_mean === 'number'") &&
     source.includes("typeof rawPropDecision?.projection === 'number'") &&
     source.includes('const mu = canonicalPropProjection;') &&
     source.includes('projection: canonicalPropProjection'),
-  'transform props mode should prefer prop_decision.projection as the canonical numeric projection for display',
+  'transform props mode should prefer prop_decision.k_mean / prop_decision.projection as the canonical numeric projection for display',
 );
 
 assert(
-  source.includes('projection_source?: \'FULL_MODEL\' | \'SYNTHETIC_FALLBACK\' | null;') &&
+  source.includes("play.basis === 'PROJECTION_ONLY'") &&
+    source.includes("projectionSource === 'SYNTHETIC_FALLBACK'") &&
+    source.includes("if (rawVerdict === 'PASS')") &&
+    source.includes("return 'PROJECTION';"),
+  'transform props mode should hard-demote projection-only or synthetic-fallback pitcher K rows before legacy action inference',
+);
+
+assert(
+  source.includes('const probabilityLadder =') &&
+    source.includes('const fairPrices =') &&
+    source.includes('const playability =') &&
+    source.includes('const projectionSource =') &&
+    source.includes('const statusCap =') &&
+    source.includes('const passReasonCode =') &&
+    source.includes('const passReason =') &&
+    source.includes('kMean,') &&
+    source.includes('probabilityLadder,') &&
+    source.includes('fairPrices,') &&
+    source.includes('missingInputs,'),
+  'transform props mode should preserve MLB pitcher K ladder, fair prices, playability, provenance, and PASS metadata',
+);
+
+assert(
+  source.includes('projection_source?: ProjectionSource | null;') &&
+    source.includes('status_cap?: StatusCap | null;') &&
     source.includes('projected_total_low?: number | null;') &&
     source.includes('projectionSource: sourcePlay?.projection_source ?? undefined') &&
+    source.includes('statusCap: sourcePlay?.status_cap ?? undefined') &&
     source.includes('playability: sourcePlay?.playability ?? undefined'),
   'transform game-line mode should preserve MLB F5 projection provenance and playable range metadata',
 );
@@ -104,6 +142,7 @@ assert(
 assert(
   gameCardSource.includes("const isF5TotalMarket = card.sport === 'MLB' && marketType === 'FIRST_PERIOD';") &&
     gameCardSource.includes('const projectionSourceLabel =') &&
+    gameCardSource.includes("displayPlay.projectionSource === 'DEGRADED_MODEL'") &&
     gameCardSource.includes('Playable O&lt;=') &&
     gameCardSource.includes('Team means:') &&
     gameCardSource.includes("displayPlay.projectionSource === 'SYNTHETIC_FALLBACK'"),
@@ -123,6 +162,19 @@ assert(
   source.includes("canonicalMarketKey === 'pitcher_strikeouts' || titleLower.includes('strikeout')") &&
     source.includes("propType = 'Strikeouts'"),
   'transform props mode should classify pitcher_strikeouts canonical_market_key as Strikeouts propType',
+);
+
+assert(
+  propGameCardSource.includes('const isProjectionOnlyProp = (prop: PropPlayRow) =>') &&
+    propGameCardSource.includes('K mean:') &&
+    propGameCardSource.includes('PITCHER_K_THRESHOLDS') &&
+    propGameCardSource.includes('Fair O') &&
+    propGameCardSource.includes('Playable thresholds:') &&
+    propGameCardSource.includes('Standard line:') &&
+    propGameCardSource.includes('PASS reason:') &&
+    propGameCardSource.includes('getSourceBadgeClass') &&
+    propGameCardSource.includes('getStatusCapBadgeClass'),
+  'PropGameCard should render pitcher K mean, ladder/fair odds, playable thresholds, source/cap badges, and PASS diagnostics with projection-only demotion',
 );
 
 assert(

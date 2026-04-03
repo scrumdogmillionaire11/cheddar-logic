@@ -23,6 +23,7 @@ const {
   scorePitcherK,
   scorePitcherKUnder,
   projectF5ML,
+  normalizePitcherKMarketInput,
   computePitcherKDriverCards,
 } = require('../../models/mlb-model');
 const {
@@ -30,14 +31,15 @@ const {
   validatePitcherKInputs,
   buildPitcherKObject,
   resolveMlbTeamLookupKeys,
-  selectBestPitcherUnderMarket,
   buildPitcherStrikeoutLookback,
   computeProjectionFloorF5,
+  resolvePitcherKsMode,
   resolveMlbPitcherPropRolloutState,
   evaluatePitcherPropPublishability,
   deriveMlbExecutionEnvelope,
   assertMlbExecutionInvariant,
   buildMlbPipelineState,
+  buildPitcherKLineContract,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -48,6 +50,10 @@ const {
 const fullPitcher = {
   k_per_9: 10.2,
   recent_k_per_9: 11.4,
+  season_k_pct: 0.282,
+  handedness: 'R',
+  bb_pct: 0.072,
+  xwoba_allowed: 0.304,
   season_starts: 8,
   starts: 8,
   recent_ip: 6.1,
@@ -65,8 +71,13 @@ const fullPitcher = {
 
 /** Neutral matchup — no opp K% data available (thin sample → neutral multiplier). */
 const neutralMatchup = {
-  opp_k_pct_vs_handedness_l30_pa: 0,
-  opp_k_pct_vs_handedness_season_pa: 0,
+  opp_k_pct_vs_handedness_l30: 0.229,
+  opp_k_pct_vs_handedness_l30_pa: 140,
+  opp_k_pct_vs_handedness_season: 0.229,
+  opp_k_pct_vs_handedness_season_pa: 600,
+  opp_obp: 0.311,
+  opp_xwoba: 0.318,
+  opp_hard_hit_pct: 38.7,
   park_k_factor: 1.0,
   confirmed_lineup: null,
   has_role_signal: false,
@@ -79,10 +90,21 @@ const f5HomePitcher = {
   whip: 1.12,
   k_per_9: 9.4,
   handedness: 'R',
+  siera: 3.48,
   x_fip: 3.42,
+  x_era: 3.51,
   bb_pct: 0.071,
+  gb_pct: 45.2,
   hr_per_9: 0.98,
   season_k_pct: 0.272,
+  xwoba_allowed: 0.302,
+  avg_ip: 5.8,
+  pitch_count_avg: 96,
+  times_through_order_profile: {
+    '1st': 0.296,
+    '2nd': 0.312,
+    '3rd': 0.337,
+  },
 };
 
 const f5AwayPitcher = {
@@ -90,10 +112,21 @@ const f5AwayPitcher = {
   whip: 1.28,
   k_per_9: 8.6,
   handedness: 'L',
+  siera: 3.98,
   x_fip: 3.95,
+  x_era: 4.08,
   bb_pct: 0.083,
+  gb_pct: 41.5,
   hr_per_9: 1.14,
   season_k_pct: 0.238,
+  xwoba_allowed: 0.326,
+  avg_ip: 5.4,
+  pitch_count_avg: 91,
+  times_through_order_profile: {
+    '1st': 0.302,
+    '2nd': 0.319,
+    '3rd': 0.346,
+  },
 };
 
 const f5FullContext = {
@@ -101,16 +134,25 @@ const f5FullContext = {
     wrc_plus_vs_lhp: 118,
     k_pct_vs_lhp: 0.208,
     iso_vs_lhp: 0.201,
+    bb_pct_vs_lhp: 0.089,
+    xwoba_vs_lhp: 0.341,
+    hard_hit_pct: 42.1,
+    rolling_14d_wrc_plus_vs_lhp: 112,
   },
   away_offense_profile: {
     wrc_plus_vs_rhp: 94,
     k_pct_vs_rhp: 0.247,
     iso_vs_rhp: 0.142,
+    bb_pct_vs_rhp: 0.077,
+    xwoba_vs_rhp: 0.308,
+    hard_hit_pct: 36.8,
+    rolling_14d_wrc_plus_vs_rhp: 91,
   },
   park_run_factor: 1.04,
   temp_f: 82,
   wind_mph: 12,
   wind_dir: 'OUT',
+  roof: 'OPEN',
 };
 
 const strongUnderHistory = [
@@ -177,11 +219,22 @@ describe('scorePitcherK — projection-only mode', () => {
     expect(result.reason_codes).toContain('BLOCK_1_SKIPPED:PROJECTION_ONLY');
     expect(result.reason_codes).toContain('BLOCK_4_SKIPPED:PROJECTION_ONLY');
 
-    // Net score is non-negative
-    expect(result.net_score).toBeGreaterThanOrEqual(0);
+    expect(result.k_mean).toBeCloseTo(result.projection, 1);
+    expect(result.probability_ladder).toMatchObject({
+      p_5_plus: expect.any(Number),
+      p_6_plus: expect.any(Number),
+      p_7_plus: expect.any(Number),
+    });
+    expect(result.playability).toMatchObject({
+      over_playable_at_or_below: expect.any(Number),
+      under_playable_at_or_above: expect.any(Number),
+    });
+    expect(result.projection_source).toBe('FULL_MODEL');
+    expect(result.status_cap).toBe('PASS');
 
-    // Verdict is a known value
-    expect(['Play', 'Conditional', 'Pass']).toContain(result.verdict);
+    // Net score is non-negative but the verdict remains PASS in projection-only mode.
+    expect(result.net_score).toBeGreaterThanOrEqual(0);
+    expect(result.verdict).toBe('PASS');
   });
 
   test('2. Thin-sample starters still emit projection-only results with an explicit flag', () => {
@@ -191,6 +244,7 @@ describe('scorePitcherK — projection-only mode', () => {
     expect(result.status).toBe('COMPLETE');
     expect(result.projection_only).toBe(true);
     expect(result.reason_codes).toContain('THIN_SAMPLE_STARTS');
+    expect(result.projection_source).toBe('DEGRADED_MODEL');
     expect(result.projection).toBeGreaterThan(0);
   });
 
@@ -208,6 +262,7 @@ describe('scorePitcherK — projection-only mode', () => {
     // reason_code should be a leash-kill reason (IP_PROXY maps to Short tier, not over-eligible)
     expect(result.verdict).toBe('PASS');
     expect(result.projection).toBeGreaterThan(0); // projection ran before leash gate
+    expect(result.probability_ladder.p_5_plus).toEqual(expect.any(Number));
   });
 
   test('4. Blocked: IL_RETURN kills over at Step 2', () => {
@@ -218,6 +273,7 @@ describe('scorePitcherK — projection-only mode', () => {
     expect(result.halted_at).toBe('STEP_2');
     expect(result.reason_code).toBe('IL_RETURN');
     expect(result.verdict).toBe('PASS');
+    expect(result.projection_source).toBe('FULL_MODEL');
   });
 });
 
@@ -227,6 +283,7 @@ describe('MLB F5 full-model projection', () => {
 
     expect(projection).toMatchObject({
       projection_source: 'FULL_MODEL',
+      status_cap: 'PLAY',
       missing_inputs: [],
       playability: {
         over_playable_at_or_below: expect.any(Number),
@@ -237,6 +294,33 @@ describe('MLB F5 full-model projection', () => {
     expect(projection.projected_home_f5_runs).toBeGreaterThan(0);
     expect(projection.projected_away_f5_runs).toBeGreaterThan(0);
     expect(projection.projected_total_high).toBeGreaterThan(projection.projected_total_low);
+  });
+
+  test('caps DEGRADED_MODEL F5 cards to WATCH when weather is missing but core inputs exist', () => {
+    const degradedContext = {
+      ...f5FullContext,
+      temp_f: null,
+      wind_mph: null,
+      wind_dir: null,
+    };
+    const projection = projectF5Total(f5HomePitcher, f5AwayPitcher, degradedContext);
+    const result = projectF5TotalCard(
+      f5HomePitcher,
+      f5AwayPitcher,
+      projection.base - 0.8,
+      degradedContext,
+    );
+
+    expect(projection.projection_source).toBe('DEGRADED_MODEL');
+    expect(projection.status_cap).toBe('LEAN');
+    expect(projection.missing_inputs).toEqual(
+      expect.arrayContaining(['home_weather', 'away_weather']),
+    );
+    expect(result.status).toBe('WATCH');
+    expect(result.action).toBe('HOLD');
+    expect(result.classification).toBe('LEAN');
+    expect(result.reason_codes).toContain('MODEL_DEGRADED_INPUTS');
+    expect(result.pass_reason_code).toBeNull();
   });
 
   test('falls back to SYNTHETIC_FALLBACK and records missing inputs when matchup context is incomplete', () => {
@@ -346,21 +430,211 @@ describe('MLB F5 full-model projection', () => {
       expect.arrayContaining(['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']),
     );
   });
+
+  test('higher starter leash and third-time exposure increases opponent F5 run expectation', () => {
+    const longLeashHomePitcher = {
+      ...f5HomePitcher,
+      avg_ip: 6.3,
+      pitch_count_avg: 102,
+      times_through_order_profile: {
+        '1st': 0.295,
+        '2nd': 0.312,
+        '3rd': 0.355,
+      },
+    };
+    const shortLeashHomePitcher = {
+      ...f5HomePitcher,
+      avg_ip: 4.4,
+      pitch_count_avg: 78,
+      times_through_order_profile: {
+        '1st': 0.295,
+        '2nd': 0.305,
+        '3rd': 0.310,
+      },
+    };
+
+    const longLeashProjection = projectF5Total(
+      longLeashHomePitcher,
+      f5AwayPitcher,
+      f5FullContext,
+    );
+    const shortLeashProjection = projectF5Total(
+      shortLeashHomePitcher,
+      f5AwayPitcher,
+      f5FullContext,
+    );
+
+    expect(longLeashProjection.projected_away_f5_runs).toBeGreaterThan(
+      shortLeashProjection.projected_away_f5_runs,
+    );
+    expect(longLeashProjection.away_starter_ip_f5_exp).toBeGreaterThanOrEqual(
+      shortLeashProjection.away_starter_ip_f5_exp,
+    );
+  });
+
+  test('hitter park with warm wind out raises F5 total versus neutral environment', () => {
+    const neutralProjection = projectF5Total(f5HomePitcher, f5AwayPitcher, {
+      ...f5FullContext,
+      park_run_factor: 1.0,
+      temp_f: 62,
+      wind_mph: 4,
+      wind_dir: 'IN',
+    });
+    const hitterParkProjection = projectF5Total(f5HomePitcher, f5AwayPitcher, {
+      ...f5FullContext,
+      park_run_factor: 1.08,
+      temp_f: 86,
+      wind_mph: 15,
+      wind_dir: 'OUT_TO_LF',
+    });
+
+    expect(hitterParkProjection.base).toBeGreaterThan(neutralProjection.base);
+  });
+
+  test('strong lineup split raises team F5 runs versus a weaker same-hand split', () => {
+    const weakSplitProjection = projectF5Total(f5HomePitcher, f5AwayPitcher, {
+      ...f5FullContext,
+      home_offense_profile: {
+        wrc_plus_vs_lhp: 88,
+        k_pct_vs_lhp: 0.255,
+        iso_vs_lhp: 0.132,
+        bb_pct_vs_lhp: 0.071,
+        xwoba_vs_lhp: 0.297,
+        hard_hit_pct: 34.2,
+      },
+    });
+    const strongSplitProjection = projectF5Total(f5HomePitcher, f5AwayPitcher, {
+      ...f5FullContext,
+      home_offense_profile: {
+        wrc_plus_vs_lhp: 122,
+        k_pct_vs_lhp: 0.19,
+        iso_vs_lhp: 0.214,
+        bb_pct_vs_lhp: 0.096,
+        xwoba_vs_lhp: 0.352,
+        hard_hit_pct: 43.8,
+      },
+    });
+
+    expect(strongSplitProjection.projected_home_f5_runs).toBeGreaterThan(
+      weakSplitProjection.projected_home_f5_runs,
+    );
+  });
+
+  test('ERA-only projection floor falls back to neutral synthetic floor instead of ERA math', () => {
+    const floor = computeProjectionFloorF5({
+      home_team: 'New York Yankees',
+      away_team: 'Boston Red Sox',
+      raw_data: {
+        mlb: {
+          home_pitcher: { era: 1.80 },
+          away_pitcher: { era: 7.20 },
+        },
+      },
+    });
+
+    expect(floor).toBe(4.5);
+  });
 });
 
 describe('MLB pitcher-K under monitoring', () => {
-  test('selectBestPitcherUnderMarket prefers highest line, then best under price, then bookmaker priority', () => {
-    const best = selectBestPitcherUnderMarket([
-      { line: 6.5, under_price: -105, over_price: -115, bookmaker: 'draftkings' },
-      { line: 7.5, under_price: -125, over_price: 105, bookmaker: 'fanduel' },
-      { line: 7.5, under_price: -115, over_price: 100, bookmaker: 'betmgm' },
-      { line: 7.5, under_price: -115, over_price: 100, bookmaker: 'draftkings' },
-    ]);
-
-    expect(best).toMatchObject({
-      line: 7.5,
-      under_price: -115,
+  test('buildPitcherKLineContract normalizes standard and alt K markets', () => {
+    const contract = buildPitcherKLineContract({
+      line: '7.5',
+      over_price: '-112',
+      under_price: '-108',
       bookmaker: 'draftkings',
+      line_source: 'draftkings',
+      fetched_at: '2026-04-03T01:15:00Z',
+      opening_line: '7.5',
+      opening_over_price: '-110',
+      opening_under_price: '-110',
+      alt_lines: [
+        { line: '6.5', side: 'over', juice: '-145', book: 'fanduel' },
+        { line: '8.5', side: 'under', price: '120', bookmaker: 'draftkings' },
+        { line: 'bad', side: 'over', juice: -110, book: 'draftkings' },
+      ],
+    });
+
+    expect(contract).toMatchObject({
+      line: 7.5,
+      over_price: -112,
+      under_price: -108,
+      bookmaker: 'draftkings',
+      line_source: 'draftkings',
+      current_timestamp: '2026-04-03T01:15:00Z',
+      opening_line: 7.5,
+      opening_over_price: -110,
+      opening_under_price: -110,
+      best_available_line: 7.5,
+      best_available_bookmaker: 'draftkings',
+      alt_lines: [
+        {
+          line: 6.5,
+          side: 'over',
+          juice: -145,
+          book: 'fanduel',
+          source: 'draftkings',
+          captured_at: '2026-04-03T01:15:00Z',
+        },
+        {
+          line: 8.5,
+          side: 'under',
+          juice: 120,
+          book: 'draftkings',
+          source: 'draftkings',
+          captured_at: '2026-04-03T01:15:00Z',
+        },
+      ],
+    });
+  });
+
+  test('normalizePitcherKMarketInput converts a dormant line contract into model market input', () => {
+    const marketInput = normalizePitcherKMarketInput({
+      line: 7.5,
+      over_price: -112,
+      under_price: -108,
+      bookmaker: 'draftkings',
+      line_source: 'draftkings',
+      current_timestamp: '2026-04-03T01:15:00Z',
+      opening_line: 7.0,
+      best_available_line: 8.0,
+      best_available_under_price: 110,
+      best_available_bookmaker: 'fanduel',
+      alt_lines: [
+        { line: 8.0, side: 'under', juice: 110, book: 'fanduel' },
+        { line: 6.5, side: 'over', juice: -145, book: 'draftkings' },
+      ],
+    });
+
+    expect(marketInput).toMatchObject({
+      line: 7.5,
+      over_price: -112,
+      under_price: -108,
+      bookmaker: 'draftkings',
+      line_source: 'draftkings',
+      current_timestamp: '2026-04-03T01:15:00Z',
+      opening_line: 7.0,
+      best_available_line: 8.0,
+      best_available_under_price: 110,
+      best_available_bookmaker: 'fanduel',
+      alt_lines: [
+        {
+          side: 'under',
+          line: 8.0,
+          juice: 110,
+          book: 'fanduel',
+          source: 'draftkings',
+          captured_at: '2026-04-03T01:15:00Z',
+        },
+        {
+          side: 'over',
+          line: 6.5,
+          juice: -145,
+          book: 'draftkings',
+          source: 'draftkings',
+          captured_at: '2026-04-03T01:15:00Z',
+        },
+      ],
     });
   });
 
@@ -450,7 +724,7 @@ describe('MLB pitcher-K under monitoring', () => {
     );
   });
 
-  test('computePitcherKDriverCards emits odds-backed UNDER play with prop_decision', () => {
+  test('computePitcherKDriverCards forces PASS projection-only rows even when ODDS_BACKED mode is requested', () => {
     const cards = computePitcherKDriverCards(
       'game-1',
       {
@@ -460,19 +734,16 @@ describe('MLB pitcher-K under monitoring', () => {
             temp_f: 86,
             home_pitcher: {
               ...fullPitcher,
-              full_name: 'Ace Under',
-              recent_k_per_9: 9.0,
-              recent_ip: 5.2,
-              last_three_pitch_counts: [89, 88, 87],
+              full_name: 'Projection Only',
               strikeout_history: strongUnderHistory,
             },
-            strikeout_lines: {
-              'ace under': {
-                line: 6.5,
-                under_price: -105,
-                over_price: -115,
-                bookmaker: 'draftkings',
-              },
+            away_offense_profile: {
+              wrc_plus_vs_rhp: 101,
+              k_pct_vs_rhp: 0.236,
+              iso_vs_rhp: 0.165,
+              bb_pct_vs_rhp: 0.082,
+              xwoba_vs_rhp: 0.319,
+              hard_hit_pct: 39.4,
             },
           },
         },
@@ -482,24 +753,46 @@ describe('MLB pitcher-K under monitoring', () => {
 
     expect(cards).toHaveLength(1);
     expect(cards[0]).toMatchObject({
-      prediction: 'UNDER',
+      prediction: 'PASS',
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
       emit_card: true,
-      card_verdict: 'PLAY',
-      basis: 'ODDS_BACKED',
+      card_verdict: 'PASS',
+      basis: 'PROJECTION_ONLY',
+      projection_source: 'FULL_MODEL',
+      status_cap: 'PASS',
+      line: null,
+      line_source: null,
+      over_price: null,
+      under_price: null,
+      best_line_bookmaker: null,
+      playability: {
+        over_playable_at_or_below: expect.any(Number),
+        under_playable_at_or_above: expect.any(Number),
+      },
     });
     expect(cards[0].prop_decision).toMatchObject({
-      verdict: 'PLAY',
-      lean_side: 'UNDER',
-      line: 6.5,
-      display_price: -105,
+      verdict: 'PASS',
+      lean_side: null,
+      line: null,
+      display_price: null,
+      projection_source: 'FULL_MODEL',
+      status_cap: 'PASS',
     });
-    expect(cards[0]).toMatchObject({
-      line: 6.5,
-      line_source: 'draftkings',
-      over_price: -115,
-      under_price: -105,
-      best_line_bookmaker: 'draftkings',
+    expect(cards[0].projection).toMatchObject({
+      k_mean: expect.any(Number),
+      projected_ip: expect.any(Number),
+      bf_exp: expect.any(Number),
+      k_interaction: expect.any(Number),
+      probability_ladder: {
+        p_5_plus: expect.any(Number),
+        p_6_plus: expect.any(Number),
+        p_7_plus: expect.any(Number),
+      },
     });
+    expect(cards[0].reason_codes).toContain('MODE_FORCED:ODDS_BACKED->PROJECTION_ONLY');
+    expect(cards[0].pass_reason_code).toBe('PASS_PROJECTION_ONLY_NO_MARKET');
   });
 
   test('computePitcherKDriverCards emits projection-only prop metadata for completed pitcher K rows', () => {
@@ -513,6 +806,14 @@ describe('MLB pitcher-K under monitoring', () => {
               ...fullPitcher,
               full_name: 'Projection Only',
             },
+            away_offense_profile: {
+              wrc_plus_vs_rhp: 102,
+              k_pct_vs_rhp: 0.241,
+              iso_vs_rhp: 0.171,
+              bb_pct_vs_rhp: 0.084,
+              xwoba_vs_rhp: 0.322,
+              hard_hit_pct: 40.1,
+            },
           },
         },
       },
@@ -522,18 +823,30 @@ describe('MLB pitcher-K under monitoring', () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]).toMatchObject({
       basis: 'PROJECTION_ONLY',
-      prediction: 'OVER',
+      prediction: 'PASS',
+      status: 'PASS',
       emit_card: true,
       ev_threshold_passed: false,
-      card_verdict: 'PROJECTION',
+      card_verdict: 'PASS',
       prop_display_state: 'PROJECTION_ONLY',
+      projection_source: 'FULL_MODEL',
+      status_cap: 'PASS',
     });
     expect(cards[0].prop_decision).toMatchObject({
-      verdict: 'PROJECTION',
-      lean_side: 'OVER',
+      verdict: 'PASS',
+      lean_side: null,
       line: null,
       display_price: null,
       projection: expect.any(Number),
+      probability_ladder: {
+        p_5_plus: expect.any(Number),
+        p_6_plus: expect.any(Number),
+        p_7_plus: expect.any(Number),
+      },
+      playability: {
+        over_playable_at_or_below: expect.any(Number),
+        under_playable_at_or_above: expect.any(Number),
+      },
     });
   });
 
@@ -550,6 +863,14 @@ describe('MLB pitcher-K under monitoring', () => {
               season_starts: 1,
               starts: 1,
             },
+            away_offense_profile: {
+              wrc_plus_vs_rhp: 97,
+              k_pct_vs_rhp: 0.229,
+              iso_vs_rhp: 0.154,
+              bb_pct_vs_rhp: 0.078,
+              xwoba_vs_rhp: 0.311,
+              hard_hit_pct: 37.9,
+            },
           },
         },
       },
@@ -558,7 +879,8 @@ describe('MLB pitcher-K under monitoring', () => {
 
     expect(cards).toHaveLength(1);
     expect(cards[0].emit_card).toBe(true);
-    expect(cards[0].card_verdict).toBe('PROJECTION');
+    expect(cards[0].card_verdict).toBe('PASS');
+    expect(cards[0].projection_source).toBe('DEGRADED_MODEL');
     expect(cards[0].prop_decision?.flags).toContain('THIN_SAMPLE_STARTS');
     expect(cards[0].pitcher_k_result?.reason_codes).toContain('THIN_SAMPLE_STARTS');
   });
@@ -574,6 +896,14 @@ describe('MLB pitcher-K under monitoring', () => {
               ...fullPitcher,
               full_name: 'Projection Only',
             },
+            away_offense_profile: {
+              wrc_plus_vs_rhp: 100,
+              k_pct_vs_rhp: 0.229,
+              iso_vs_rhp: 0.164,
+              bb_pct_vs_rhp: 0.081,
+              xwoba_vs_rhp: 0.318,
+              hard_hit_pct: 39.0,
+            },
           },
         },
       },
@@ -584,7 +914,60 @@ describe('MLB pitcher-K under monitoring', () => {
     expect(cards[0].emit_card).toBe(true);
     expect(cards[0].ev_threshold_passed).toBe(false);
     expect(cards[0].tier).toBeNull();
-    expect(cards[0].prop_decision?.verdict).toBe('PROJECTION');
+    expect(cards[0].prop_decision?.verdict).toBe('PASS');
+  });
+
+  test('computePitcherKDriverCards emits SYNTHETIC_FALLBACK PASS with missing-input metadata', () => {
+    const cards = computePitcherKDriverCards(
+      'game-1',
+      {
+        home_team: 'New York Yankees',
+        away_team: 'Boston Red Sox',
+        raw_data: {
+          mlb: {
+            home_pitcher: {
+              full_name: 'Missing Inputs',
+              season_starts: 6,
+              days_since_last_start: 5,
+              recent_ip: 5.5,
+              role: 'starter',
+            },
+          },
+        },
+      },
+      { mode: 'PROJECTION_ONLY' },
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      prediction: 'PASS',
+      emit_card: true,
+      card_verdict: 'PASS',
+      basis: 'PROJECTION_ONLY',
+      projection_source: 'SYNTHETIC_FALLBACK',
+      status_cap: 'PASS',
+      pass_reason_code: 'PASS_PROJECTION_ONLY_NO_MARKET',
+    });
+    expect(cards[0].missing_inputs).toEqual(
+      expect.arrayContaining([
+        'starter_k_pct',
+        'starter_handedness',
+        'opponent_k_pct_vs_hand',
+        'opponent_contact_profile',
+      ]),
+    );
+    expect(cards[0].reason_codes).toEqual(
+      expect.arrayContaining([
+        'PASS_PROJECTION_ONLY_NO_MARKET',
+        'PASS_SYNTHETIC_FALLBACK',
+        'PASS_MISSING_DRIVER_INPUTS',
+      ]),
+    );
+    expect(cards[0].projection.probability_ladder).toMatchObject({
+      p_5_plus: expect.any(Number),
+      p_6_plus: expect.any(Number),
+      p_7_plus: expect.any(Number),
+    });
   });
 });
 
@@ -676,7 +1059,13 @@ describe('MLB prop rollout + freshness gating', () => {
     expect(resolveMlbPitcherPropRolloutState()).toBe('SHADOW');
   });
 
-  test('evaluatePitcherPropPublishability marks fresh scoped odds as publishable', () => {
+  test('resolvePitcherKsMode is hard-pinned to PROJECTION_ONLY', () => {
+    process.env.PITCHER_KS_MODEL_MODE = 'ODDS_BACKED';
+    expect(resolvePitcherKsMode()).toBe('PROJECTION_ONLY');
+    delete process.env.PITCHER_KS_MODEL_MODE;
+  });
+
+  test('evaluatePitcherPropPublishability keeps projection-only drivers NOT_REQUIRED even when scoped odds exist', () => {
     jest.spyOn(Date, 'now').mockReturnValue(new Date('2026-03-26T18:00:00Z').getTime());
     const result = evaluatePitcherPropPublishability(
       {
@@ -692,58 +1081,13 @@ describe('MLB prop rollout + freshness gating', () => {
           },
         },
       },
-      { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
-    );
-
-    expect(result).toMatchObject({
-      publishable: true,
-      status: 'FRESH',
-    });
-  });
-
-  test('evaluatePitcherPropPublishability returns MISSING when no scoped line exists', () => {
-    const result = evaluatePitcherPropPublishability(
-      {
-        raw_data: {
-          mlb: {
-            home_pitcher: { full_name: 'Ace Under' },
-            strikeout_lines: {},
-          },
-        },
-      },
-      { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
+      { market: 'pitcher_k_home', basis: 'PROJECTION_ONLY' },
     );
 
     expect(result).toMatchObject({
       publishable: false,
-      status: 'MISSING',
-      reason: 'MARKET_MISSING',
-    });
-  });
-
-  test('evaluatePitcherPropPublishability blocks stale scoped odds with STALE status', () => {
-    jest.spyOn(Date, 'now').mockReturnValue(new Date('2026-03-26T18:45:00Z').getTime());
-    const result = evaluatePitcherPropPublishability(
-      {
-        raw_data: {
-          mlb: {
-            away_pitcher: { full_name: 'Stale Arm' },
-            strikeout_lines: {
-              'stale arm': {
-                line: 5.5,
-                fetched_at: '2026-03-26T16:00:00Z',
-              },
-            },
-          },
-        },
-      },
-      { market: 'pitcher_k_away', basis: 'ODDS_BACKED' },
-    );
-
-    expect(result).toMatchObject({
-      publishable: false,
-      status: 'STALE',
-      reason: 'STALE_ODDS',
+      status: 'NOT_REQUIRED',
+      reason: null,
     });
   });
 
@@ -759,28 +1103,11 @@ describe('MLB prop rollout + freshness gating', () => {
       reason: null,
     });
   });
+
 });
 
 describe('WI-0720 MLB execution envelope', () => {
   test.each([
-    [
-      'fresh odds-backed card',
-      {
-        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
-        pricingStatus: 'FRESH',
-        pricingCapturedAt: '2026-03-26T17:15:00Z',
-        isPitcherK: true,
-        rolloutState: 'FULL',
-      },
-      {
-        execution_status: 'EXECUTABLE',
-        actionable: true,
-        pricing_status: 'FRESH',
-        publish_ready: true,
-        emit_allowed: true,
-        k_prop_execution_path: 'ODDS_BACKED',
-      },
-    ],
     [
       'projection-floor game card',
       {
@@ -796,45 +1123,9 @@ describe('WI-0720 MLB execution envelope', () => {
       },
     ],
     [
-      'qualified pitcher K with no market',
+      'pitcher K stays PROJECTION_ONLY under shadow rollout even with ODDS_BACKED driver basis',
       {
         driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
-        pricingStatus: 'MISSING',
-        pricingReason: 'MARKET_MISSING',
-        isPitcherK: true,
-        rolloutState: 'FULL',
-      },
-      {
-        execution_status: 'PROJECTION_ONLY',
-        actionable: false,
-        pricing_status: 'MISSING',
-        publish_ready: false,
-        emit_allowed: true,
-        k_prop_execution_path: 'QUALIFIED_BUT_NO_MARKET',
-      },
-    ],
-    [
-      'stale odds-backed pitcher K is blocked',
-      {
-        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
-        pricingStatus: 'STALE',
-        pricingReason: 'STALE_ODDS',
-        isPitcherK: true,
-        rolloutState: 'FULL',
-      },
-      {
-        execution_status: 'BLOCKED',
-        actionable: false,
-        pricing_status: 'STALE',
-        publish_ready: false,
-        emit_allowed: false,
-        k_prop_execution_path: 'STALE_ODDS_BLOCKED',
-      },
-    ],
-    [
-      'projection-only pitcher K emits under shadow rollout',
-      {
-        driver: { market: 'pitcher_k_home', basis: 'PROJECTION_ONLY' },
         pricingStatus: 'NOT_REQUIRED',
         isPitcherK: true,
         rolloutState: 'SHADOW',
@@ -849,34 +1140,17 @@ describe('WI-0720 MLB execution envelope', () => {
       },
     ],
     [
-      'shadow rollout suppresses pitcher K output',
+      'projection-only pitcher K is blocked when rollout is OFF',
       {
-        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
-        pricingStatus: 'FRESH',
-        isPitcherK: true,
-        rolloutState: 'SHADOW',
-      },
-      {
-        execution_status: 'BLOCKED',
-        actionable: false,
-        pricing_status: 'FRESH',
-        publish_ready: false,
-        emit_allowed: false,
-        k_prop_execution_path: 'SHADOW_ROLLOUT',
-      },
-    ],
-    [
-      'disabled rollout suppresses pitcher K output',
-      {
-        driver: { market: 'pitcher_k_home', basis: 'ODDS_BACKED' },
-        pricingStatus: 'FRESH',
+        driver: { market: 'pitcher_k_home', basis: 'PROJECTION_ONLY' },
+        pricingStatus: 'NOT_REQUIRED',
         isPitcherK: true,
         rolloutState: 'OFF',
       },
       {
         execution_status: 'BLOCKED',
         actionable: false,
-        pricing_status: 'FRESH',
+        pricing_status: 'NOT_REQUIRED',
         publish_ready: false,
         emit_allowed: false,
         k_prop_execution_path: 'DISABLED',
@@ -960,21 +1234,22 @@ describe('validatePitcherKInputs — required field gates (WI-0596)', () => {
 
   /** Minimal valid pitcher: all PITCHER_K_REQUIRED_FIELDS present */
   const validPitcher = {
-    k_per_9: 10.2,
+    season_k_pct: 0.282,
     season_starts: 8,
     handedness: 'R',
     days_since_last_start: 5,
+    last_three_pitch_counts: [95, 92, 88],
   };
 
   test('valid pitcher: all required fields present → returns null', () => {
     expect(validatePitcherKInputs(validPitcher)).toBeNull();
   });
 
-  test('missing k_per_9 → PITCHER_REQUIRED_FIELD_NULL with k_per_9 in missing_fields', () => {
-    const result = validatePitcherKInputs({ ...validPitcher, k_per_9: null });
+  test('missing season_k_pct → PITCHER_REQUIRED_FIELD_NULL with season_k_pct in missing_fields', () => {
+    const result = validatePitcherKInputs({ ...validPitcher, season_k_pct: null });
     expect(result).not.toBeNull();
     expect(result.code).toBe('PITCHER_REQUIRED_FIELD_NULL');
-    expect(result.missing_fields).toContain('k_per_9');
+    expect(result.missing_fields).toContain('season_k_pct');
   });
 
   test('missing handedness → PITCHER_REQUIRED_FIELD_NULL with handedness in missing_fields', () => {
@@ -988,11 +1263,28 @@ describe('validatePitcherKInputs — required field gates (WI-0596)', () => {
     expect(result.missing_fields).toContain('days_since_last_start');
   });
 
-  test('all required fields null → all four appear in missing_fields', () => {
+  test('missing both pitch counts and recent IP → starter_leash appears in missing_fields', () => {
+    const result = validatePitcherKInputs({
+      ...validPitcher,
+      last_three_pitch_counts: null,
+      recent_ip: null,
+      avg_ip: null,
+    });
+    expect(result.code).toBe('PITCHER_REQUIRED_FIELD_NULL');
+    expect(result.missing_fields).toContain('starter_leash');
+  });
+
+  test('all required fields null → required pitcher fields and starter_leash appear in missing_fields', () => {
     const result = validatePitcherKInputs({});
     expect(result.code).toBe('PITCHER_REQUIRED_FIELD_NULL');
     expect(result.missing_fields).toEqual(
-      expect.arrayContaining(['k_per_9', 'season_starts', 'handedness', 'days_since_last_start']),
+      expect.arrayContaining([
+        'season_k_pct',
+        'season_starts',
+        'handedness',
+        'days_since_last_start',
+        'starter_leash',
+      ]),
     );
   });
 });

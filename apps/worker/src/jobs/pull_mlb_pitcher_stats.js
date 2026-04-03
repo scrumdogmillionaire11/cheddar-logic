@@ -161,6 +161,7 @@ async function fetchPitcherSeasonStats(pitcherId, season = MLB_SEASON) {
       hr_per_9: null,
       x_fip: null,
       siera: null,
+      x_era: null,
     };
   }
 
@@ -186,6 +187,7 @@ async function fetchPitcherSeasonStats(pitcherId, season = MLB_SEASON) {
     hr_per_9: hrPer9,
     x_fip: estimatePitcherXFip({ kPct: seasonKPct, bbPct, hrPer9 }),
     siera: null,
+    x_era: null,
   };
 }
 
@@ -466,6 +468,7 @@ async function fetchAllPitcherData(pitcherId, { teamFromSchedule = null } = {}) 
     hr_per_9: effectiveSeasonStats.hr_per_9,
     x_fip: effectiveSeasonStats.x_fip,
     siera: effectiveSeasonStats.siera,
+    x_era: effectiveSeasonStats.x_era,
     recent_k_per_9: effectiveRecentStats.recent_k_per_9,
     recent_ip: effectiveRecentStats.recent_ip,
     // pitcher_input_schema.md: last_three_pitch_counts required — leash classification
@@ -527,6 +530,7 @@ function ensurePitcherStatsTable(db) {
       season_avg_velo  REAL,
       x_fip          REAL,
       siera          REAL,
+      x_era          REAL,
       bb_pct         REAL,
       hr_per_9       REAL,
       recent_k_per_9  REAL,
@@ -559,6 +563,7 @@ function ensurePitcherStatsTable(db) {
     'ALTER TABLE mlb_pitcher_stats ADD COLUMN season_avg_velo REAL',
     'ALTER TABLE mlb_pitcher_stats ADD COLUMN x_fip REAL',
     'ALTER TABLE mlb_pitcher_stats ADD COLUMN siera REAL',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN x_era REAL',
     'ALTER TABLE mlb_pitcher_stats ADD COLUMN bb_pct REAL',
     'ALTER TABLE mlb_pitcher_stats ADD COLUMN hr_per_9 REAL',
   ];
@@ -595,13 +600,14 @@ function upsertPitcherRows(db, rows) {
       season_avg_velo,
       x_fip,
       siera,
+      x_era,
       bb_pct,
       hr_per_9,
       recent_k_per_9,
       recent_ip,
       updated_at
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')
     )
     ON CONFLICT(mlb_id) DO UPDATE SET
       full_name               = excluded.full_name,
@@ -626,6 +632,7 @@ function upsertPitcherRows(db, rows) {
       season_avg_velo         = excluded.season_avg_velo,
       x_fip                   = excluded.x_fip,
       siera                   = excluded.siera,
+      x_era                   = excluded.x_era,
       bb_pct                  = excluded.bb_pct,
       hr_per_9                = excluded.hr_per_9,
       recent_k_per_9          = excluded.recent_k_per_9,
@@ -660,6 +667,7 @@ function upsertPitcherRows(db, rows) {
       row.season_avg_velo,
       row.x_fip,
       row.siera,
+      row.x_era,
       row.bb_pct,
       row.hr_per_9,
       row.recent_k_per_9,

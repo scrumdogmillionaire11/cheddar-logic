@@ -128,7 +128,8 @@ MLB model note:
 MLB pitcher K prop note:
 
 - Pitcher K (strikeout over/under) cards are emitted by `job:run-mlb-model` — no separate job required.
-- Cards are projection-only for now. They emit with `tags: ['no_odds_mode']` and do not depend on live strikeout odds ingestion.
+- Cards are projection-only for now. They emit with `basis: 'PROJECTION_ONLY'`, `prediction: 'PASS'`, `tags: ['no_odds_mode']`, and do not depend on live strikeout odds ingestion.
+- There are no paid Odds API pitcher-K prop pulls in the current runtime path. If free DraftKings/FanDuel or aggregator line sourcing is added later, that must ship in a separate WI/ADR first.
 - Cards appear under the **Props** tab with stat-group filter `Strikeouts`. Use preset **Strikeouts Focus** to view only pitcher K cards.
 - Triage: if no pitcher K cards appear, ensure `ENABLE_MLB_MODEL` is not `false` and at least one game with pitcher stats has odds within the active window.
 

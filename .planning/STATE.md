@@ -29,10 +29,9 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 
 ### Pending Todos
 
-- `3` pending todos in `.planning/todos/pending/`
+- `2` pending todos in `.planning/todos/pending/`
 - `2026-02-28-per-sport-model-health-agents-nba-nhl-ncaam-agents-own-model-health-checks.md`
 - `2026-04-02-add-live-player-props-regression-coverage.md`
-- `2026-04-02-restore-configurable-mlb-pitcher-k-rollout-mode.md`
 
 ## Review Cadence
 

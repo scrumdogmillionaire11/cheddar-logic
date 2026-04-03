@@ -71,15 +71,15 @@ This document is the single source of truth for which markets are supported per 
 | Market | Type | Status | Notes |
 | --- | --- | --- | --- |
 | F5 Total (first 5 innings) | Game | ⚙️ | Projection-only lane; live F5 odds ingestion removed |
-| Pitcher Strikeouts (home) | Player Prop | ⚙️ | Projection-only lane; live prop pull removed |
-| Pitcher Strikeouts (away) | Player Prop | ⚙️ | Same projection-only posture as home side |
+| Pitcher Strikeouts (home) | Player Prop | ⚙️ | Projection-only PASS lane; no paid Odds API prop pulls; free line sourcing deferred to a separate WI |
+| Pitcher Strikeouts (away) | Player Prop | ⚙️ | Same projection-only PASS posture as home side |
 | F5 Moneyline | Game | ❌ | Out of scope — not a target market |
 | Full-game Total | Game | ❌ | Not a target market — full-game pitching context degrades after 5th inning |
 | Full-game Spread / ML | Game | ❌ | Out of scope |
 
 **Key constraints:**
 
-1. MLB F5 and pitcher-K cards are intentionally projection-only until a quota-safe featured-market strategy exists.
+1. MLB F5 and pitcher-K cards are intentionally projection-only until a quota-safe featured-market strategy exists. For pitcher Ks, current runtime emits PASS-only rows with Poisson ladder + fair-price metadata and no live line.
 2. Deprecated `odds_snapshots` F5 columns remain for compatibility but are no longer populated by the shared odds fetcher.
 
 ---

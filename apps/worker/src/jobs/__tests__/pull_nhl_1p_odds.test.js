@@ -28,7 +28,7 @@ describe('pull_nhl_1p_odds fail-closed guard', () => {
     process.env.ODDS_API_KEY = 'test-key';
   });
 
-  test('always skips because NHL 1P odds fetch is hard-disabled', async () => {
+  test('skips by default when NHL_1P_ODDS_ENABLED is unset', async () => {
     const { pullNhl1pOdds } = loadModule();
     const { insertJobRun, withDb } = require('@cheddar-logic/data');
 
@@ -37,7 +37,23 @@ describe('pull_nhl_1p_odds fail-closed guard', () => {
     expect(result).toEqual({
       success: true,
       skipped: true,
-      reason: 'projection_only_lane',
+      reason: 'not_enabled',
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(withDb).not.toHaveBeenCalled();
+    expect(insertJobRun).not.toHaveBeenCalled();
+  });
+
+  test('runs when NHL_1P_ODDS_ENABLED=true and dryRun is requested', async () => {
+    process.env.NHL_1P_ODDS_ENABLED = 'true';
+    const { pullNhl1pOdds } = loadModule();
+    const { insertJobRun, withDb } = require('@cheddar-logic/data');
+
+    const result = await pullNhl1pOdds({ dryRun: true });
+
+    expect(result).toEqual({
+      success: true,
+      dryRun: true,
     });
     expect(global.fetch).not.toHaveBeenCalled();
     expect(withDb).not.toHaveBeenCalled();
