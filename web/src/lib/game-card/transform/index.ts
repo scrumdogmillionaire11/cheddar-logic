@@ -2852,9 +2852,13 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
   }
 
   for (const game of games) {
-    // Extract all PROP plays from this game
+    // Extract all PROP plays from this game.
+    // PROJECTION_ONLY plays are intentionally included — normalizePropVerdict converts
+    // them to propVerdict='PROJECTION' / status='NO_PLAY' so they render as projections
+    // in the Player Props tab. Filtering them here would leave the tab empty whenever
+    // the model runs without live prop line prices (common during the day).
     const propPlays = game.plays.filter(
-      (p) => p.market_type === 'PROP' && !isProjectionOnlyPropPlay(p, p.prop_decision),
+      (p) => p.market_type === 'PROP',
     );
 
     // Skip games with no props
