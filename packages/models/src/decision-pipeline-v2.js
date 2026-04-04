@@ -92,6 +92,11 @@ const PIPELINE_STATE_STAGES = Object.freeze([
 const EDGE_SANITY_NON_TOTAL_THRESHOLD = 0.2;
 const PLAY_EDGE_MIN = 0.06;
 const LEAN_EDGE_MIN = 0.03;
+// Unit: percentage points (pp) — NOT percent.
+// Formula: abs(circa_handle_home - circa_handle_away) >= SHARP_CIRCA_DIVERGENCE_THRESHOLD_PP
+// Interpretation: one side has ~70%+ of total Circa handle (70/30 or more lopsided)
+// Tuning ladder: 20 pp = lean (60/40) | 40 pp = real divergence (70/30) | 60 pp = extreme (80/20)
+const SHARP_CIRCA_DIVERGENCE_THRESHOLD_PP = 40;
 const PROXY_SIGNAL_TAGS = new Set([
   'PROXY_MODEL_PROB_INFERRED',
   'PROXY_CARD',
@@ -947,6 +952,45 @@ function applyPlayCleanlinessCap({
   };
 }
 
+/**
+ * WI-0667: Sharp divergence annotation.
+ *
+ * Mutates payload.tags in-place — adds 'SHARP_MONEY_OPPOSITE' or 'SHARP_ALIGNED'
+ * when Circa handle diverges >= SHARP_CIRCA_DIVERGENCE_THRESHOLD_PP from our direction.
+ *
+ * No status mutation — official_status is never touched.
+ *
+ * @param {object} payload   - Decision payload (mutated in place)
+ * @param {object} oddsSnapshot - Odds snapshot from context (may be null)
+ */
+function computeSharpDivergenceAnnotation(payload, oddsSnapshot) {
+  const home = oddsSnapshot?.circa_handle_pct_home;
+  const away = oddsSnapshot?.circa_handle_pct_away;
+
+  // No-op when either Circa column is absent
+  if (home == null || away == null) return;
+
+  // Ensure tags array exists
+  if (!Array.isArray(payload.tags)) payload.tags = [];
+
+  const direction = String(payload.direction ?? '').toUpperCase();
+  const ourSide = direction === 'HOME' ? home : away;
+  const oppSide = direction === 'HOME' ? away : home;
+  const diff = Math.abs(ourSide - oppSide);
+
+  if (diff < SHARP_CIRCA_DIVERGENCE_THRESHOLD_PP) return;
+
+  if (oppSide > ourSide) {
+    // Circa handle majority on the OTHER side — sharp divergence against our pick
+    payload.tags.push('SHARP_MONEY_OPPOSITE');
+    payload.sharp_money_opposite = true;
+  } else {
+    // Circa handle majority WITH our pick — sharp alignment
+    payload.tags.push('SHARP_ALIGNED');
+    payload.sharp_aligned = true;
+  }
+}
+
 function resolvePrimaryReason({
   watchdogReasonCodes,
   watchdogStatus,
@@ -1439,6 +1483,9 @@ function buildDecisionV2(payload, context = {}) {
     });
     finalOfficialStatus = nbaQuarantineResult.officialStatus;
     finalPriceReasonCodes = nbaQuarantineResult.priceReasonCodes;
+
+    // WI-0667: annotate sharp/circa divergence (informational only — no status mutation)
+    computeSharpDivergenceAnnotation(payload, context?.oddsSnapshot);
 
     let primary_reason_code = resolvePrimaryReason({
       watchdogReasonCodes: watchdog.watchdog_reason_codes,
