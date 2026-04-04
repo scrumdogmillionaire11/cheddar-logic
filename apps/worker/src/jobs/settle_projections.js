@@ -7,6 +7,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  hasSuccessfulJobRun,
   shouldRunJobKey,
   withDb,
   getUnsettledProjectionCards,
@@ -89,6 +90,17 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
   return withDb(async () => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
       return { success: true, skipped: true, jobRunId: null };
+    }
+
+    // Sequential ordering guard: projection settlement must not run before game results complete
+    if (jobKey) {
+      const gameResultsJobKey = jobKey.split('|').slice(0, -1).join('|') + '|game-results';
+      if (!hasSuccessfulJobRun(gameResultsJobKey)) {
+        console.log(
+          `[${JOB_NAME}] SKIP: settle_game_results not yet SUCCESS for this window — skipping projection settlement (expected key: ${gameResultsJobKey})`,
+        );
+        return { success: true, jobRunId: null, skipped: true, guardedBy: 'game-results', jobKey };
+      }
     }
 
     let jobInserted = false;
