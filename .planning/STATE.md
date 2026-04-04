@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-04-04T00:00:00Z"
-last_activity: "2026-04-04 - Completed quick task 126: WI-0776 Circa sharp splits from VSIN"
+last_updated: "2026-04-04T23:44:00Z"
+last_activity: "2026-04-04 - Completed quick task 127: Wire model_outputs table to GET /api/model-outputs"
 ---
 
 # Project State
@@ -145,4 +145,5 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 | 124 | WI-0783: Sequential ordering guard — settle_pending_cards and settle_projections blocked until game-results succeeds | 2026-04-04 | 01070c0 | [124-wi-0783-sequential-ordering-guard-in-set](./quick/124-wi-0783-sequential-ordering-guard-in-set/) |
 | 125 | WI-0765: NHL blocked-shot pipeline hardening — warn-and-return on missing NST CSV URLs, per-player null WARN, card-level block_rates_stale flag | 2026-04-04 | 62ac8ad | [125-wi-0765-schedule-pull-nhl-player-blk-ret](./quick/125-wi-0765-schedule-pull-nhl-player-blk-ret/) |
 | 126 | WI-0776: Circa sharp splits from VSIN — migration 059, updateOddsSnapshotCircaSplits, soft-fail CIRCA fetch pass, sharp_divergence in NHL/NBA payloads | 2026-04-04 | cea1631 | [126-wi-0776-circa-sharp-splits-from-vsin-cir](./quick/126-wi-0776-circa-sharp-splits-from-vsin-cir/) |
+| 127 | WI-0760: Wire model_outputs table to GET /api/model-outputs — route with optional ?sport= filter, NHL model header correction, models.js read-surface comment | 2026-04-04 | a5b3bd1 | [127-wire-model-outputs-table-to-web-api-endp](./quick/127-wire-model-outputs-table-to-web-api-endp/) |
 
