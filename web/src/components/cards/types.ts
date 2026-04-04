@@ -134,6 +134,12 @@ export interface GameData {
     h2hConsensusAway: number | null;
     h2hConsensusConfidence: string | null;
     capturedAt: string | null;
+    // Public splits columns — populated after WI-0666 migration
+    publicBetsPctHome?: number | null;
+    publicBetsPctAway?: number | null;
+    publicHandlePctHome?: number | null;
+    publicHandlePctAway?: number | null;
+    splitsSource?: string | null;
   } | null;
   plays: Array<{
     cardType: string;

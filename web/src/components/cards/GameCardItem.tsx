@@ -5,11 +5,13 @@ import {
   getCardDecisionModel,
 } from '@/lib/game-card/decision';
 import { getDisplayVerdict } from '@/lib/game-card/display-verdict';
+import { deriveMarketSignals } from '@/lib/game-card/market-signals';
 import {
   hasEdgeVerification,
   hasProxyCap,
 } from '@/lib/game-card/tags';
 import type { DecisionModel, GameCard, GameData } from './types';
+import MarketSignalPills from './MarketSignalPills';
 import {
   deriveOnePModelCallFromReasons,
   hasProjectedTotal,
@@ -795,6 +797,8 @@ export default function GameCardItem({
             <p className="mt-1 text-xs text-cloud/65">{contextLine1}</p>
           )}
         </div>
+
+        <MarketSignalPills pills={deriveMarketSignals(card)} />
 
         {isNhlPace1p && typeof projectedTotal1p === 'number' && (
           <div className="rounded-md border border-white/10 bg-white/5 p-3">

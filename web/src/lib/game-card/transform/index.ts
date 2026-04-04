@@ -269,6 +269,13 @@ interface GameData {
     totalPriceOver: number | null;
     totalPriceUnder: number | null;
     capturedAt: string | null;
+    // Consensus / splits fields (optional — present after migrations)
+    spreadConsensusConfidence?: string | null;
+    publicBetsPctHome?: number | null;
+    publicBetsPctAway?: number | null;
+    publicHandlePctHome?: number | null;
+    publicHandlePctAway?: number | null;
+    splitsSource?: string | null;
   } | null;
   projection_inputs_complete?: boolean | null;
   projection_missing_inputs?: string[];
@@ -2460,6 +2467,18 @@ export function transformToGameCard(game: GameData): GameCard {
   const normalizedSport = normalizeSport(game.sport);
   const initialTags = normalizedSport === 'UNKNOWN' ? ['unknown_sport'] : [];
 
+  // Collect market signal data from odds snapshot (populated after WI-0666/0667)
+  const marketSignals = game.odds
+    ? {
+        publicBetsPctHome: game.odds.publicBetsPctHome ?? null,
+        publicBetsPctAway: game.odds.publicBetsPctAway ?? null,
+        publicHandlePctHome: game.odds.publicHandlePctHome ?? null,
+        publicHandlePctAway: game.odds.publicHandlePctAway ?? null,
+        splitsSource: game.odds.splitsSource ?? null,
+        spreadConsensusConfidence: game.odds.spreadConsensusConfidence ?? null,
+      }
+    : undefined;
+
   return {
     id: game.id,
     gameId: game.gameId,
@@ -2474,6 +2493,7 @@ export function transformToGameCard(game: GameData): GameCard {
     drivers,
     evidence,
     tags: initialTags,
+    marketSignals,
   };
 }
 

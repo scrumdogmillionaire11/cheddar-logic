@@ -259,6 +259,11 @@ interface GameRow {
   h2h_consensus_home: number | null;
   h2h_consensus_away: number | null;
   h2h_consensus_confidence: string | null;
+  public_bets_pct_home: number | null;
+  public_bets_pct_away: number | null;
+  public_handle_pct_home: number | null;
+  public_handle_pct_away: number | null;
+  splits_source: string | null;
   odds_captured_at: string | null;
   projection_inputs_complete: boolean | null;
   projection_missing_inputs: string[];
@@ -625,6 +630,11 @@ type GamesApiDataRow = {
     h2hConsensusHome: number | null;
     h2hConsensusAway: number | null;
     h2hConsensusConfidence: string | null;
+    publicBetsPctHome: number | null;
+    publicBetsPctAway: number | null;
+    publicHandlePctHome: number | null;
+    publicHandlePctAway: number | null;
+    splitsSource: string | null;
     capturedAt: string | null;
   } | null;
   consistency: Play['consistency'];
@@ -847,6 +857,11 @@ export function buildGamesResponseData(
             h2hConsensusHome: row.h2h_consensus_home,
             h2hConsensusAway: row.h2h_consensus_away,
             h2hConsensusConfidence: row.h2h_consensus_confidence ?? null,
+            publicBetsPctHome: row.public_bets_pct_home ?? null,
+            publicBetsPctAway: row.public_bets_pct_away ?? null,
+            publicHandlePctHome: row.public_handle_pct_home ?? null,
+            publicHandlePctAway: row.public_handle_pct_away ?? null,
+            splitsSource: row.splits_source ?? null,
             capturedAt: row.odds_captured_at,
           }
         : null,
@@ -1407,6 +1422,11 @@ export async function GET(request: NextRequest) {
           | 'h2h_consensus_home'
           | 'h2h_consensus_away'
           | 'h2h_consensus_confidence'
+          | 'public_bets_pct_home'
+          | 'public_bets_pct_away'
+          | 'public_handle_pct_home'
+          | 'public_handle_pct_away'
+          | 'splits_source'
           | 'odds_captured_at'
         >
       >;
@@ -1466,6 +1486,11 @@ export async function GET(request: NextRequest) {
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_consensus_home')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_consensus_away')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_consensus_confidence')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'public_bets_pct_home')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'public_bets_pct_away')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'public_handle_pct_home')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'public_handle_pct_away')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'splits_source')},
           o.captured_at AS odds_captured_at,
           o.raw_data
         FROM odds_snapshots o
@@ -1528,6 +1553,11 @@ export async function GET(request: NextRequest) {
         h2h_consensus_home: number | null;
         h2h_consensus_away: number | null;
         h2h_consensus_confidence: string | null;
+        public_bets_pct_home: number | null;
+        public_bets_pct_away: number | null;
+        public_handle_pct_home: number | null;
+        public_handle_pct_away: number | null;
+        splits_source: string | null;
         odds_captured_at: string | null;
         raw_data: string | null;
       }>;
@@ -1612,6 +1642,11 @@ export async function GET(request: NextRequest) {
           h2h_consensus_home: odds?.h2h_consensus_home ?? null,
           h2h_consensus_away: odds?.h2h_consensus_away ?? null,
           h2h_consensus_confidence: odds?.h2h_consensus_confidence ?? null,
+          public_bets_pct_home: odds?.public_bets_pct_home ?? null,
+          public_bets_pct_away: odds?.public_bets_pct_away ?? null,
+          public_handle_pct_home: odds?.public_handle_pct_home ?? null,
+          public_handle_pct_away: odds?.public_handle_pct_away ?? null,
+          splits_source: odds?.splits_source ?? null,
           odds_captured_at: odds?.odds_captured_at ?? null,
           projection_inputs_complete:
             projectionHealth.projection_inputs_complete,
