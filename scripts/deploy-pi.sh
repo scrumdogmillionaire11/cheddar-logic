@@ -58,20 +58,25 @@ cd "$DEPLOY_DIR/apps/worker"
 npm install --production --no-save > /dev/null 2>&1
 echo "✓ Worker dependencies installed"
 
-# 6. Run database migrations
+# 6. Stop worker before migrations (worker holds the DB write lock)
+echo "⚙️  Stopping cheddar-worker before migrations..."
+pm2 stop cheddar-worker 2>/dev/null || true
+echo "✓ Worker stopped"
+
+# 7. Run database migrations
 echo "⚙️  Running database migrations..."
 cd "$DEPLOY_DIR"
 npm --prefix packages/data run migrate
 echo "✓ Database migrations complete"
 
-# 7. Start/restart PM2 services
+# 8. Start/restart PM2 services
 echo "⚙️  Starting PM2 services..."
 cd "$DEPLOY_DIR"
 pm2 restart ecosystem.config.js || pm2 start ecosystem.config.js
 pm2 save
 echo "✓ PM2 services running"
 
-# 8. Summary
+# 9. Summary
 echo ""
 echo "=========================================="
 echo "✅ DEPLOYMENT COMPLETE"
