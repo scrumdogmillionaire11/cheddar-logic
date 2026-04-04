@@ -153,15 +153,40 @@ jobs:
               exit 1
             fi
             # ───────────────────────────────────────────────────────────────────
-            # Clean node_modules to avoid corrupted tar state from stale backups
-            rm -rf packages/*/node_modules apps/*/node_modules web/node_modules
+            # Clean node_modules to avoid corrupted tar state from stale backups.
+            # web/node_modules is intentionally excluded: better-sqlite3 uses
+            # prebuild-install to download an ARM binary from GitHub Releases
+            # on every full wipe, and that download hangs indefinitely on the Pi.
+            # Instead we do a hash-gated incremental install for web: wipe only
+            # when package-lock.json has changed since last deploy.
+            rm -rf packages/*/node_modules apps/*/node_modules
             # Install dependencies
             npm --prefix packages/data install --omit=dev
             npm --prefix packages/models install --omit=dev
             npm --prefix packages/adapters install --omit=dev
             npm --prefix packages/odds install --omit=dev
             npm --prefix apps/worker install --omit=dev
-            npm --prefix web install --include=dev
+            # Web: only wipe node_modules when the lockfile changed — prevents
+            # better-sqlite3 from re-downloading its ARM prebuild on every deploy.
+            WEB_LOCK_HASH=$(md5sum web/package-lock.json | awk '{print $1}')
+            WEB_LOCK_STAMP="/opt/cheddar-logic/.web-node-modules-lock-hash"
+            if [ -f "$WEB_LOCK_STAMP" ] && [ "$(cat "$WEB_LOCK_STAMP")" = "$WEB_LOCK_HASH" ] && [ -d "web/node_modules" ]; then
+              echo "web/package-lock.json unchanged — running incremental install (--prefer-offline)"
+              npm --prefix web install --include=dev --prefer-offline
+            else
+              echo "web/package-lock.json changed or node_modules absent — full install"
+              rm -rf web/node_modules
+              # Use timeout to prevent better-sqlite3 prebuild-install from hanging
+              # indefinitely. 600s is generous for a full install on ARM; a hang
+              # typically shows no output for several minutes.
+              timeout 600 npm --prefix web install --include=dev || {
+                echo "ERROR: npm --prefix web install timed out or failed (exit $?)"
+                echo "  Likely cause: better-sqlite3 prebuild-install ARM download hung."
+                echo "  Fix: SSH to Pi and run: npm --prefix /opt/cheddar-logic/web install --include=dev --build-from-source=better-sqlite3"
+                exit 1
+              }
+              echo "$WEB_LOCK_HASH" > "$WEB_LOCK_STAMP"
+            fi
             # Resolve canonical DB path from prod env (supports CHEDDAR_DB_PATH or CHEDDAR_DATA_DIR)
             set -a; . /opt/cheddar-logic/.env.production; set +a
             if [ -z "${CHEDDAR_DB_PATH:-}" ] && [ -z "${CHEDDAR_DATA_DIR:-}" ]; then
