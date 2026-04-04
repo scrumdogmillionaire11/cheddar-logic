@@ -33,6 +33,31 @@ function buildOddsSnapshot(overrides = {}) {
   };
 }
 
+const MINIMAL_PACE_RESULT = {
+  homeExpected: 3.0,
+  awayExpected: 2.8,
+  expectedTotal: 5.8,
+  rawTotalModel: 5.82,
+  regressedTotalModel: 5.79,
+  modifierBreakdown: {
+    base_5v5_total: 5.61,
+    special_teams_delta: 0.09,
+    home_ice_delta: 0.07,
+    rest_delta: 0.01,
+    goalie_delta_raw: 0.12,
+    goalie_delta_applied: 0.02,
+    raw_modifier_total: 0.21,
+    capped_modifier_total: 0.21,
+    modifier_cap_applied: false,
+  },
+  homeGoalieCertainty: 'CONFIRMED',
+  awayGoalieCertainty: 'CONFIRMED',
+  homeAdjustmentTrust: 'FULL',
+  awayAdjustmentTrust: 'FULL',
+  official_eligible: true,
+  first_period_model: { classification: 'PASS', reason_codes: [] },
+};
+
 function buildFakeDriverCard(gameId = 'nhl-sigma-game-001', descriptor = {}) {
   return {
     cardType: descriptor.cardType || 'nhl-pace-totals',
@@ -41,6 +66,11 @@ function buildFakeDriverCard(gameId = 'nhl-sigma-game-001', descriptor = {}) {
     cardTitle: descriptor.cardTitle || 'NHL Pace Total: OVER',
     modelOutputIds: null,
     runId: null,
+    // Include auditContext.paceResult so attachNhlSnapshotAuditFields does not throw
+    // (in test mode, emitNhlSnapshotInvariant throws when paceResult is missing)
+    auditContext: {
+      paceResult: MINIMAL_PACE_RESULT,
+    },
     payloadData: {
       game_id: gameId,
       sport: 'NHL',
