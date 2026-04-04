@@ -1,0 +1,102 @@
+{
+  "_fixture_meta": {
+    "status": "SYNTHETIC_SEED",
+    "note": "This is a synthetic fixture constructed from the adapter schema hypothesis. Replace with a real browser capture per CAPTURE_INSTRUCTIONS.md.",
+    "captured_date": null,
+    "sport": "MLB",
+    "adapter_version": "v2",
+    "wi": "WI-0759"
+  },
+  "games": [
+    {
+      "id": 229501,
+      "start_time": "2026-04-03T23:10:00Z",
+      "home_team": {
+        "id": 5,
+        "full_name": "New York Yankees",
+        "abbr": "NYY"
+      },
+      "away_team": {
+        "id": 3,
+        "full_name": "Boston Red Sox",
+        "abbr": "BOS"
+      },
+      "bets": [
+        {
+          "bet_type": "money_line",
+          "home_bets": 58,
+          "away_bets": 42,
+          "home_handle": 62,
+          "away_handle": 38,
+          "home_tickets": 58,
+          "away_tickets": 42
+        },
+        {
+          "bet_type": "spread",
+          "spread": -1.5,
+          "home_bets": 55,
+          "away_bets": 45,
+          "home_handle": 60,
+          "away_handle": 40,
+          "home_tickets": 55,
+          "away_tickets": 45
+        },
+        {
+          "bet_type": "total",
+          "total": 8.5,
+          "over_bets": 66,
+          "under_bets": 34,
+          "over_handle": 61,
+          "under_handle": 39,
+          "over_tickets": 66,
+          "under_tickets": 34
+        }
+      ]
+    },
+    {
+      "id": 229502,
+      "start_time": "2026-04-04T00:40:00Z",
+      "home_team": {
+        "id": 19,
+        "full_name": "Los Angeles Dodgers",
+        "abbr": "LAD"
+      },
+      "away_team": {
+        "id": 22,
+        "full_name": "San Francisco Giants",
+        "abbr": "SF"
+      },
+      "bets": [
+        {
+          "bet_type": "money_line",
+          "home_bets": 70,
+          "away_bets": 30,
+          "home_handle": 75,
+          "away_handle": 25,
+          "home_tickets": 70,
+          "away_tickets": 30
+        },
+        {
+          "bet_type": "spread",
+          "spread": -1.5,
+          "home_bets": 68,
+          "away_bets": 32,
+          "home_handle": 72,
+          "away_handle": 28,
+          "home_tickets": 68,
+          "away_tickets": 32
+        },
+        {
+          "bet_type": "total",
+          "total": 7.5,
+          "over_bets": 53,
+          "under_bets": 47,
+          "over_handle": 56,
+          "under_handle": 44,
+          "over_tickets": 53,
+          "under_tickets": 47
+        }
+      ]
+    }
+  ]
+}

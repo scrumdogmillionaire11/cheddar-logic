@@ -1,0 +1,102 @@
+{
+  "_fixture_meta": {
+    "status": "SYNTHETIC_SEED",
+    "note": "This is a synthetic fixture constructed from the adapter schema hypothesis. Replace with a real browser capture per CAPTURE_INSTRUCTIONS.md.",
+    "captured_date": null,
+    "sport": "NHL",
+    "adapter_version": "v2",
+    "wi": "WI-0759"
+  },
+  "games": [
+    {
+      "id": 334701,
+      "start_time": "2026-04-03T23:00:00Z",
+      "home_team": {
+        "id": 11,
+        "full_name": "Toronto Maple Leafs",
+        "abbr": "TOR"
+      },
+      "away_team": {
+        "id": 6,
+        "full_name": "Boston Bruins",
+        "abbr": "BOS"
+      },
+      "bets": [
+        {
+          "bet_type": "money_line",
+          "home_bets": 56,
+          "away_bets": 44,
+          "home_handle": 52,
+          "away_handle": 48,
+          "home_tickets": 56,
+          "away_tickets": 44
+        },
+        {
+          "bet_type": "spread",
+          "spread": -1.5,
+          "home_bets": 54,
+          "away_bets": 46,
+          "home_handle": 50,
+          "away_handle": 50,
+          "home_tickets": 54,
+          "away_tickets": 46
+        },
+        {
+          "bet_type": "total",
+          "total": 5.5,
+          "over_bets": 61,
+          "under_bets": 39,
+          "over_handle": 58,
+          "under_handle": 42,
+          "over_tickets": 61,
+          "under_tickets": 39
+        }
+      ]
+    },
+    {
+      "id": 334702,
+      "start_time": "2026-04-04T02:00:00Z",
+      "home_team": {
+        "id": 23,
+        "full_name": "Vegas Golden Knights",
+        "abbr": "VGK"
+      },
+      "away_team": {
+        "id": 13,
+        "full_name": "Colorado Avalanche",
+        "abbr": "COL"
+      },
+      "bets": [
+        {
+          "bet_type": "money_line",
+          "home_bets": 61,
+          "away_bets": 39,
+          "home_handle": 65,
+          "away_handle": 35,
+          "home_tickets": 61,
+          "away_tickets": 39
+        },
+        {
+          "bet_type": "spread",
+          "spread": -1.5,
+          "home_bets": 59,
+          "away_bets": 41,
+          "home_handle": 63,
+          "away_handle": 37,
+          "home_tickets": 59,
+          "away_tickets": 41
+        },
+        {
+          "bet_type": "total",
+          "total": 6.0,
+          "over_bets": 57,
+          "under_bets": 43,
+          "over_handle": 54,
+          "under_handle": 46,
+          "over_tickets": 57,
+          "under_tickets": 43
+        }
+      ]
+    }
+  ]
+}

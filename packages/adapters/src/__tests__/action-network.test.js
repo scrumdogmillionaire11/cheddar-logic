@@ -460,3 +460,134 @@ describe('matchSplitsToGameId', () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('unmatched'));
   });
 });
+
+// ─── Fixture-driven tests (synthetic seeds) ───────────────────────────────────
+//
+// These tests load the synthetic-seed fixtures from:
+//   packages/adapters/fixtures/action_network/{sport}.synthetic-seed.raw.json
+//
+// SYNTHETIC_SEED: fixtures are constructed from the adapter schema hypothesis
+// (WI-0759). When real browser captures replace these files per
+// CAPTURE_INSTRUCTIONS.md, change _fixture_meta.status to "REAL_CAPTURE_CONFIRMED"
+// and update the adapter header comment. Until then these tests verify that:
+//   1. normalizeSplitsResponse does not throw on representative raw shapes
+//   2. Each game produces the correct output structure
+//   3. All recognised bet_types yield valid markets with required fields
+//   4. market_key values match the MARKET_KEY_MAP entries (ML, SPREAD, TOTAL)
+
+const path = require('path');
+
+const FIXTURE_DIR = path.resolve(__dirname, '../../fixtures/action_network');
+
+function loadFixture(sport) {
+  return require(path.join(FIXTURE_DIR, `${sport.toLowerCase()}.synthetic-seed.raw.json`));
+}
+
+describe('fixture-driven: normalizeSplitsResponse (synthetic seeds)', () => {
+  const SPORTS = ['nba', 'mlb', 'nhl'];
+
+  for (const sport of SPORTS) {
+    describe(`${sport.toUpperCase()} synthetic seed`, () => {
+      let fixture;
+
+      beforeAll(() => {
+        fixture = loadFixture(sport);
+      });
+
+      it('fixture status is SYNTHETIC_SEED or REAL_CAPTURE_CONFIRMED', () => {
+        const validStatuses = ['SYNTHETIC_SEED', 'REAL_CAPTURE_CONFIRMED'];
+        expect(validStatuses).toContain(fixture._fixture_meta.status);
+      });
+
+      it('fixture has at least one game', () => {
+        expect(Array.isArray(fixture.games)).toBe(true);
+        expect(fixture.games.length).toBeGreaterThanOrEqual(1);
+      });
+
+      it('does not throw when passed to normalizeSplitsResponse', () => {
+        expect(() => normalizeSplitsResponse(fixture.games)).not.toThrow();
+      });
+
+      it('returns one normalized entry per fixture game', () => {
+        const result = normalizeSplitsResponse(fixture.games);
+        expect(result).toHaveLength(fixture.games.length);
+      });
+
+      it('every normalized game has required shape fields', () => {
+        const result = normalizeSplitsResponse(fixture.games);
+        for (const game of result) {
+          expect(typeof game.actionNetworkGameId).toBe('string');
+          expect(typeof game.homeTeam).toBe('string');
+          expect(game.homeTeam.length).toBeGreaterThan(0);
+          expect(typeof game.awayTeam).toBe('string');
+          expect(game.awayTeam.length).toBeGreaterThan(0);
+          expect(Array.isArray(game.markets)).toBe(true);
+        }
+      });
+
+      it('every fixture game yields ML, SPREAD, and TOTAL market entries', () => {
+        const result = normalizeSplitsResponse(fixture.games);
+        for (const game of result) {
+          const types = game.markets.map((m) => m.marketType);
+          expect(types).toContain('ML');
+          expect(types).toContain('SPREAD');
+          expect(types).toContain('TOTAL');
+        }
+      });
+
+      it('all markets are valid for the synthetic seed data', () => {
+        const result = normalizeSplitsResponse(fixture.games);
+        for (const game of result) {
+          for (const m of game.markets) {
+            expect(m.valid).toBe(true);
+          }
+        }
+      });
+
+      it('valid markets have required output fields', () => {
+        const result = normalizeSplitsResponse(fixture.games);
+        for (const game of result) {
+          for (const m of game.markets.filter((m) => m.valid)) {
+            expect(typeof m.marketType).toBe('string');
+            expect(typeof m.sourceMarketKey).toBe('string');
+            expect(m.source).toBe('ACTION_NETWORK');
+            expect(typeof m.home_or_over_bets_pct).toBe('number');
+            expect(typeof m.away_or_under_bets_pct).toBe('number');
+          }
+        }
+      });
+
+      it('TOTAL markets have OVER_UNDER scope and a numeric line', () => {
+        const result = normalizeSplitsResponse(fixture.games);
+        for (const game of result) {
+          const totals = game.markets.filter((m) => m.valid && m.marketType === 'TOTAL');
+          for (const m of totals) {
+            expect(m.selectionScope).toBe('OVER_UNDER');
+            expect(typeof m.line).toBe('number');
+          }
+        }
+      });
+
+      it('SPREAD markets have a numeric line', () => {
+        const result = normalizeSplitsResponse(fixture.games);
+        for (const game of result) {
+          const spreads = game.markets.filter((m) => m.valid && m.marketType === 'SPREAD');
+          for (const m of spreads) {
+            expect(typeof m.line).toBe('number');
+          }
+        }
+      });
+
+      it('ML markets have HOME_AWAY scope and null line', () => {
+        const result = normalizeSplitsResponse(fixture.games);
+        for (const game of result) {
+          const mls = game.markets.filter((m) => m.valid && m.marketType === 'ML');
+          for (const m of mls) {
+            expect(m.selectionScope).toBe('HOME_AWAY');
+            expect(m.line).toBeNull();
+          }
+        }
+      });
+    });
+  }
+});
