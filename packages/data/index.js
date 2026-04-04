@@ -194,6 +194,10 @@ module.exports = {
   claimTminusPullSlot: db.claimTminusPullSlot,
   purgeStaleTminusPullLog: db.purgeStaleTminusPullLog,
 
+  // Prop odds control table maintenance (called by scheduler on startup)
+  purgeStalePropOddsUsageLog: db.purgeStalePropOddsUsageLog,
+  purgeExpiredPropEventMappings: db.purgeExpiredPropEventMappings,
+
   // Line delta utility
   computeLineDelta: db.computeLineDelta,
 
