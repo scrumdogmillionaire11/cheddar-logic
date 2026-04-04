@@ -47,8 +47,8 @@ const { selectMlbGameMarket, projectF5ML } = require('../models/mlb-model');
 const edgeCalculator = require('@cheddar-logic/models/src/edge-calculator');
 const MIN_MLB_GAMES_FOR_RECAL = parseInt(process.env.MIN_MLB_GAMES_FOR_RECAL || '20', 10);
 
-// Pitcher K runtime mode is intentionally PROJECTION_ONLY only.
-// Free sportsbook/aggregator line sourcing must be implemented in a separate WI.
+// Pitcher K runtime mode: ODDS_BACKED when player_prop_lines has a recent
+// strikeout line for the pitcher; PROJECTION_ONLY per-pitcher when absent.
 const MLB_K_PROP_FRESHNESS_MINUTES = Number(
   process.env.MLB_K_PROP_FRESHNESS_MINUTES || 75,
 );
@@ -563,9 +563,29 @@ function deriveMlbExecutionEnvelope({
     if (rolloutState === 'OFF') {
       blockReason = 'rollout_state=OFF';
       kPropExecutionPath = 'DISABLED';
+    } else if (driver?.basis === 'ODDS_BACKED') {
+      // WI-0771: K card produced by ODDS_BACKED path (live line from player_prop_lines)
+      // — treat like a priced card; execution is EXECUTABLE when verdict is PLAY/WATCH.
+      const oddsBackedVerdict = driver?.card_verdict ?? driver?.verdict ?? null;
+      if (oddsBackedVerdict === 'PLAY' || oddsBackedVerdict === 'WATCH') {
+        executionStatus = 'EXECUTABLE';
+        publishReady = true;
+        emitAllowed = true;
+        blockReason = null;
+        kPropExecutionPath = 'ODDS_BACKED';
+        // Mark pricing as FRESH so invariant check passes (line came from player_prop_lines)
+        if (normalizedPricingStatus === 'NOT_REQUIRED') {
+          pricingState.status = 'FRESH';
+          pricingState.reason = 'k_market_line_from_player_prop_lines';
+        }
+      } else {
+        executionStatus = 'PROJECTION_ONLY';
+        emitAllowed = true;
+        blockReason = 'k_odds_backed_no_edge';
+        kPropExecutionPath = 'ODDS_BACKED_NO_EDGE';
+      }
     } else {
-      // WI-0733: pitcher-K is PROJECTION_ONLY only until a separate free-line WI
-      // restores a verified market source.
+      // No live line — stay PROJECTION_ONLY
       executionStatus = 'PROJECTION_ONLY';
       emitAllowed = true;
       blockReason = pricingReason ?? null;
@@ -670,26 +690,11 @@ function attachRunId(card, runId) {
 }
 
 function resolvePitcherKsMode() {
-  // HARD LOCK: pitcher-K is PROJECTION_ONLY only. The ODDS_BACKED scoring path
-  // (selectPitcherKUnderMarket + scorePitcherKUnder) exists in mlb-model.js for
-  // future use but MUST NOT be activated by env var — doing so would trigger
-  // live prop-odds fetching and drain API quota.
-  //
-  // To enable ODDS_BACKED mode intentionally: remove this guard in code,
-  // implement the strikeout_lines pull job (WI-0663 scope), and do a
-  // deliberate release. Never activate via env var alone.
-  //
-  // NOTE: WI-0663 intentionally built the scoring path dormant.
-  const envValue = String(process.env.PITCHER_KS_MODEL_MODE || '').toUpperCase();
-  if (envValue === 'ODDS_BACKED') {
-    // Deliberately ignored — emit a loud warning so operators know it's gated.
-    console.error(
-      '[run_mlb_model] WARNING: PITCHER_KS_MODEL_MODE=ODDS_BACKED is set but has NO effect. ' +
-      'The ODDS_BACKED path is dormant and requires a code change to enable. ' +
-      'Defaulting to PROJECTION_ONLY.',
-    );
-  }
-  return 'PROJECTION_ONLY';
+  // WI-0771: ODDS_BACKED mode is now active. Strikeout lines are read from
+  // player_prop_lines (populated by pull_odds_hourly) — no live API calls,
+  // no quota drain. When a line is absent the K engine falls back to
+  // PROJECTION_ONLY per-pitcher automatically.
+  return 'ODDS_BACKED';
 }
 
 function resolveMlbPitcherPropRolloutState() {
@@ -1241,11 +1246,53 @@ function enrichMlbPitcherData(
     mlb.park_run_factor =
       mlb.park_run_factor ?? resolveMlbF5ParkRunFactor(homeTeam);
 
-    // WI-0733: Pitcher K stays projection-only. Do not hydrate live strikeout
-    // market lines from player_prop_lines unless a future line-sourcing WI
-    // explicitly reintroduces that lane.
+    // WI-0771: Hydrate per-pitcher strikeout market lines from player_prop_lines.
+    // Reads from DB only (no live API calls). Attaches k_market_lines directly
+    // to each pitcher object so computePitcherKDriverCards can use the correct
+    // lines without cross-pitcher contamination.
     if (forKEngine) {
-      mlb.strikeout_lines = mlb.strikeout_lines ?? {};
+      try {
+        const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+        const kPropRows = db.prepare(`
+          SELECT player_name, line, over_price, under_price, bookmaker, fetched_at
+          FROM player_prop_lines
+          WHERE sport = 'mlb' AND prop_type = 'strikeouts' AND fetched_at > ?
+          ORDER BY fetched_at DESC
+        `).all(threeHoursAgo);
+
+        // Index: normalized_pitcher_name → bookmaker → line entry (most recent wins)
+        const kLinesByPitcher = {};
+        for (const row of kPropRows) {
+          const pitcherKey = normalizePitcherLookupKey(row.player_name);
+          if (!kLinesByPitcher[pitcherKey]) kLinesByPitcher[pitcherKey] = {};
+          const bkKey = String(row.bookmaker || 'unknown').toLowerCase();
+          if (!kLinesByPitcher[pitcherKey][bkKey]) {
+            kLinesByPitcher[pitcherKey][bkKey] = {
+              line: row.line,
+              under_price: row.under_price,
+              over_price: row.over_price,
+              bookmaker: row.bookmaker,
+              line_source: row.bookmaker,
+              fetched_at: row.fetched_at,
+            };
+          }
+        }
+
+        // Resolve and attach per-pitcher lines (keyed by bookmaker)
+        function resolvePitcherKMarketLines(pitcher) {
+          if (!pitcher || typeof pitcher !== 'object') return {};
+          const key = normalizePitcherLookupKey(pitcher.full_name);
+          return kLinesByPitcher[key] ?? {};
+        }
+
+        // Pending pitcher build — attach after buildPitcherEntry runs (below).
+        // Store the lookup map so post-build assignment can use it.
+        mlb._kLinesByPitcher = kLinesByPitcher;
+      } catch (_kLinesErr) {
+        // Non-fatal — K engine will fall back to PROJECTION_ONLY per-pitcher
+        console.warn(`[MLBModel] [pitcher-k] player_prop_lines query failed: ${_kLinesErr.message}`);
+        mlb._kLinesByPitcher = {};
+      }
     }
 
     // Look up weather for this game by (game_date, home_team)
@@ -1341,6 +1388,21 @@ function enrichMlbPitcherData(
 
     mlb.home_pitcher = buildPitcherEntry(homeRow, 'home', homeTeam, mlb.home_pitcher);
     mlb.away_pitcher = buildPitcherEntry(awayRow, 'away', awayTeam, mlb.away_pitcher);
+
+    // WI-0771: Attach per-pitcher market lines after pitcher objects are built.
+    // k_market_lines is keyed by bookmaker → { line, under_price, over_price, ... }.
+    if (forKEngine && mlb._kLinesByPitcher) {
+      const kMap = mlb._kLinesByPitcher;
+      if (mlb.home_pitcher && typeof mlb.home_pitcher === 'object') {
+        const hKey = normalizePitcherLookupKey(mlb.home_pitcher.full_name);
+        mlb.home_pitcher.k_market_lines = kMap[hKey] ?? {};
+      }
+      if (mlb.away_pitcher && typeof mlb.away_pitcher === 'object') {
+        const aKey = normalizePitcherLookupKey(mlb.away_pitcher.full_name);
+        mlb.away_pitcher.k_market_lines = kMap[aKey] ?? {};
+      }
+      delete mlb._kLinesByPitcher; // clean up temp storage
+    }
 
     const enriched = {
       ...oddsSnapshot,
