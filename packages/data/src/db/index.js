@@ -39,6 +39,7 @@ module.exports = {
   getActiveGamesForSplits: odds.getActiveGamesForSplits,
   updateOddsSnapshotSplits: odds.updateOddsSnapshotSplits,
   updateOddsSnapshotVsinSplits: odds.updateOddsSnapshotVsinSplits,
+  updateOddsSnapshotCircaSplits: odds.updateOddsSnapshotCircaSplits,
   getLatestOdds: odds.getLatestOdds,
   getOddsSnapshots: odds.getOddsSnapshots,
   computeLineDelta: odds.computeLineDelta,
