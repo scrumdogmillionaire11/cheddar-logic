@@ -34,6 +34,7 @@ const {
   parseLine,
   recordClvEntry,
   settleClvEntry,
+  hasSuccessfulJobRun,
   shouldRunJobKey,
   withDb,
 } = require('@cheddar-logic/data');
@@ -1836,6 +1837,17 @@ async function settlePendingCards({
         `[SettleCards] Skipping (already succeeded or running): ${jobKey}`,
       );
       return { success: true, jobRunId: null, skipped: true, jobKey };
+    }
+
+    // Sequential ordering guard: card settlement must not run before game results complete
+    if (jobKey) {
+      const gameResultsJobKey = jobKey.split('|').slice(0, -1).join('|') + '|game-results';
+      if (!hasSuccessfulJobRun(gameResultsJobKey)) {
+        console.log(
+          `SKIP: settle_game_results not yet SUCCESS for this window — skipping card settlement (expected key: ${gameResultsJobKey})`,
+        );
+        return { success: true, jobRunId: null, skipped: true, guardedBy: 'game-results', jobKey };
+      }
     }
 
     // DRY_RUN mode (log only, no execution)
