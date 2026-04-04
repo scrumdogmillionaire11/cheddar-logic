@@ -2156,7 +2156,10 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
 
     // ── ODDS_BACKED branch ─────────────────────────────────────────────────
     if (requestedMode === 'ODDS_BACKED') {
-      const strikeoutLinesMap = mlb.strikeout_lines ?? {};
+      // WI-0771: prefer per-pitcher k_market_lines (keyed by bookmaker) that
+      // enrichMlbPitcherData attaches from player_prop_lines. Fall back to
+      // the legacy mlb.strikeout_lines map if k_market_lines is absent.
+      const strikeoutLinesMap = pitcher.k_market_lines ?? mlb.strikeout_lines ?? {};
       const selectedMarket = selectPitcherKUnderMarket(
         strikeoutLinesMap,
         playerName,
@@ -2271,6 +2274,13 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
         : []),
       ...(!hasProjection ? ['PASS_MISSING_DRIVER_INPUTS'] : []),
     ]));
+    // WI-0771: annotate that k_market_line was absent when ODDS_BACKED was requested
+    const projectionOnlyMissingInputs = Array.isArray(result.missing_inputs)
+      ? [...result.missing_inputs]
+      : [];
+    if (requestedMode === 'ODDS_BACKED' && !projectionOnlyMissingInputs.includes('k_market_line')) {
+      projectionOnlyMissingInputs.push('k_market_line');
+    }
     const passReasonCode =
       reasonCodes.find((code) => code.startsWith('PASS_')) ??
       MLB_K_PROJECTION_ONLY_PASS_REASON;
@@ -2292,7 +2302,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       reasoning: _buildPitcherKReasoning(result),
       projection_source: result.projection_source ?? 'SYNTHETIC_FALLBACK',
       status_cap: result.status_cap ?? 'PASS',
-      missing_inputs: Array.isArray(result.missing_inputs) ? result.missing_inputs : [],
+      missing_inputs: projectionOnlyMissingInputs,
       reason_codes: reasonCodes,
       pass_reason_code: passReasonCode,
       playability: result.playability ?? null,
@@ -2334,7 +2344,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
         playability: result.playability ?? null,
         projection_source: result.projection_source ?? 'SYNTHETIC_FALLBACK',
         status_cap: result.status_cap ?? 'PASS',
-        missing_inputs: Array.isArray(result.missing_inputs) ? result.missing_inputs : [],
+        missing_inputs: projectionOnlyMissingInputs,
         line_delta: null,
         fair_prob: result.probability_ladder?.p_6_plus ?? null,
         implied_prob: null,

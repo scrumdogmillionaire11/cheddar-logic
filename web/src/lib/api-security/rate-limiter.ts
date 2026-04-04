@@ -83,7 +83,10 @@ class RateLimiter {
 }
 
 // Create a singleton instance
-export const globalRateLimiter = new RateLimiter(100, 60 * 60 * 1000); // 100 req/hour
+// 360 req/hour: accommodates 60s polling from up to ~2 open tabs with 3× headroom.
+// Previous limit (100/hr) was exhausted after ~50 min with two tabs, silently
+// blocking initial loads on reload (429 had no recovery path on first mount).
+export const globalRateLimiter = new RateLimiter(360, 60 * 60 * 1000); // 360 req/hour
 
 export function getClientIp(req: Request): string {
   const headerCandidates = [
@@ -120,7 +123,7 @@ export function checkRateLimit(req: Request): RateLimitResult {
   return {
     ...result,
     headers: {
-      'X-RateLimit-Limit': '100',
+      'X-RateLimit-Limit': '360',
       'X-RateLimit-Remaining': result.remaining.toString(),
       'X-RateLimit-Reset': Math.ceil(result.resetTime / 1000).toString(),
     },
