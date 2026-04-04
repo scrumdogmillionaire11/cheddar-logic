@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-03T00:00:00Z"
-last_activity: "2026-04-03 - Completed quick task 119: WI-0758: Actual result ingestion for player prop cards"
+last_activity: "2026-04-04 - Completed quick task 123: NHL total gating: build pull_nhl_goalie_starters.js + require real source"
 ---
 
 # Project State
