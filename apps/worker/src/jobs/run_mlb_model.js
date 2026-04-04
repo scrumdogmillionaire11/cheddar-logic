@@ -834,7 +834,8 @@ function buildPitcherStrikeoutLookback(
 
   const currentRows = db
     .prepare(`
-      SELECT season, game_date, strikeouts, number_of_pitches, innings_pitched
+      SELECT season, game_date, strikeouts, number_of_pitches, innings_pitched,
+             walks, batters_faced, home_away
       FROM mlb_pitcher_game_logs
       WHERE mlb_pitcher_id = ?
         AND season = ?
@@ -849,7 +850,8 @@ function buildPitcherStrikeoutLookback(
     remaining > 0
       ? db
           .prepare(`
-            SELECT season, game_date, strikeouts, number_of_pitches, innings_pitched
+            SELECT season, game_date, strikeouts, number_of_pitches, innings_pitched,
+                   walks, batters_faced, home_away
             FROM mlb_pitcher_game_logs
             WHERE mlb_pitcher_id = ?
               AND season < ?
@@ -866,6 +868,12 @@ function buildPitcherStrikeoutLookback(
     strikeouts: toFiniteNumber(row.strikeouts),
     number_of_pitches: toFiniteNumber(row.number_of_pitches),
     innings_pitched: toFiniteNumber(row.innings_pitched),
+    // WI-0763: walks + batters_faced feed BB% modifier; home_away feeds split adjustment
+    walks: toFiniteNumber(row.walks ?? 0),
+    batters_faced: toFiniteNumber(row.batters_faced ?? 0),
+    home_away: row.home_away ?? null,
+    // hits and earned_runs are fetched by pull_mlb_pitcher_stats.js but intentionally
+    // excluded here — H/9 and ERA-proxy carry negligible K rate signal value.
   }));
 }
 
