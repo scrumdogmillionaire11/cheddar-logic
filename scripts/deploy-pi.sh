@@ -34,7 +34,8 @@ echo "✓ Data directory ready"
 # 3. Build web
 echo "⚙️  Building Next.js web app..."
 cd "$DEPLOY_DIR/web"
-npm install --include=dev --no-save > /dev/null 2>&1
+# npm ci wipes node_modules before install → prevents TAR_ENTRY_ERROR from partial/corrupted installs
+npm ci 2>&1
 # Remove stale .next artifacts before building to prevent chunk name mismatches
 rm -rf .next
 npm run build
