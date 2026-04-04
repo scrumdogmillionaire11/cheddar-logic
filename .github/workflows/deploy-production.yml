@@ -174,17 +174,13 @@ jobs:
               echo "web/package-lock.json unchanged — running incremental install (--prefer-offline)"
               npm --prefix web install --include=dev --prefer-offline
             else
-              echo "web/package-lock.json changed or node_modules absent — full install"
+              echo "web/package-lock.json changed or node_modules absent — full install (build-from-source=better-sqlite3)"
               rm -rf web/node_modules
-              # Use timeout to prevent better-sqlite3 prebuild-install from hanging
-              # indefinitely. 600s is generous for a full install on ARM; a hang
-              # typically shows no output for several minutes.
-              timeout 600 npm --prefix web install --include=dev || {
-                echo "ERROR: npm --prefix web install timed out or failed (exit $?)"
-                echo "  Likely cause: better-sqlite3 prebuild-install ARM download hung."
-                echo "  Fix: SSH to Pi and run: npm --prefix /opt/cheddar-logic/web install --include=dev --build-from-source=better-sqlite3"
-                exit 1
-              }
+              # Force better-sqlite3 to compile from source rather than letting
+              # prebuild-install fetch an ARM binary from GitHub Releases, which
+              # hangs indefinitely on the Pi. Compiling takes ~2-5 min on ARM
+              # but always completes; the GitHub download silently stalls forever.
+              npm --prefix web install --include=dev --build-from-source=better-sqlite3
               echo "$WEB_LOCK_HASH" > "$WEB_LOCK_STAMP"
             fi
             # Resolve canonical DB path from prod env (supports CHEDDAR_DB_PATH or CHEDDAR_DATA_DIR)
