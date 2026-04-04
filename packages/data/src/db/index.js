@@ -56,6 +56,7 @@ module.exports = {
   deactivateTrackedPlayersNotInSet: players.deactivateTrackedPlayersNotInSet,
   upsertPlayerAvailability: players.upsertPlayerAvailability,
   getPlayerAvailability: players.getPlayerAvailability,
+  getPlayerAvailabilityByTeam: players.getPlayerAvailabilityByTeam,
   upsertPlayerPropLine: players.upsertPlayerPropLine,
   getPlayerPropLine: players.getPlayerPropLine,
   getPlayerPropLinesForGame: players.getPlayerPropLinesForGame,

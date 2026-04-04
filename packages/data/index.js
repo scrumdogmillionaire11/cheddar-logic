@@ -82,6 +82,7 @@ module.exports = {
   deactivateTrackedPlayersNotInSet: db.deactivateTrackedPlayersNotInSet,
   upsertPlayerAvailability: db.upsertPlayerAvailability,
   getPlayerAvailability: db.getPlayerAvailability,
+  getPlayerAvailabilityByTeam: db.getPlayerAvailabilityByTeam,
   upsertPlayerPropLine: db.upsertPlayerPropLine,
   getPlayerPropLine: db.getPlayerPropLine,
   getPlayerPropLinesForGame: db.getPlayerPropLinesForGame,

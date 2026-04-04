@@ -1482,9 +1482,20 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       console.log('[NHLModel] Recording job start...');
       insertJobRun('run_nhl_model', jobRunId, jobKey);
 
-      // WI-0646: Compute NHL base sigma for playoff-mode overrides.
-      // NHL does not yet use computeSigmaFromHistory — use getSigmaDefaults as base.
-      const nhlBaseSigma = edgeCalculator.getSigmaDefaults('NHL');
+      // WI-0773: Replace static sigma with computeSigmaFromHistory (same pattern as NBA).
+      const _computedSigma = edgeCalculator.computeSigmaFromHistory({
+        sport: 'NHL',
+        db: getDatabase(),
+      });
+      const _sigmaSource = _computedSigma.sigma_source; // 'computed' | 'fallback'
+      let nhlBaseSigma;
+      if (_sigmaSource === 'computed') {
+        console.log(`[NHL] sigma calibrated from ${_computedSigma.games_sampled} samples: ${JSON.stringify({ margin: _computedSigma.margin, total: _computedSigma.total })}`);
+        nhlBaseSigma = { margin: _computedSigma.margin, total: _computedSigma.total };
+      } else {
+        console.log('[NHL] insufficient history for sigma calibration — using defaults');
+        nhlBaseSigma = edgeCalculator.getSigmaDefaults('NHL');
+      }
 
       // Get latest NHL odds for UPCOMING games only (prevents stale data processing)
       console.log('[NHLModel] Fetching odds for upcoming NHL games...');
@@ -1759,6 +1770,17 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               sigmaTotal: effectiveSigma?.total,
             });
             attachRunId(card, jobRunId);
+            // WI-0773: Annotate sigma_source on card payload raw_data
+            if (card.payloadData && card.payloadData.raw_data !== undefined) {
+              card.payloadData.raw_data = {
+                ...card.payloadData.raw_data,
+                sigma_source: _sigmaSource === 'computed' ? 'calibrated' : 'default',
+              };
+            } else if (card.payloadData) {
+              card.payloadData.raw_data = {
+                sigma_source: _sigmaSource === 'computed' ? 'calibrated' : 'default',
+              };
+            }
             pendingCards.push({
               card,
               logLine: `  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
@@ -1841,6 +1863,17 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               sigmaTotal: effectiveSigma?.total,
             });
             attachRunId(card, jobRunId);
+            // WI-0773: Annotate sigma_source on card payload raw_data
+            if (card.payloadData && card.payloadData.raw_data !== undefined) {
+              card.payloadData.raw_data = {
+                ...card.payloadData.raw_data,
+                sigma_source: _sigmaSource === 'computed' ? 'calibrated' : 'default',
+              };
+            } else if (card.payloadData) {
+              card.payloadData.raw_data = {
+                sigma_source: _sigmaSource === 'computed' ? 'calibrated' : 'default',
+              };
+            }
             pendingCards.push({
               card,
               logLine: `  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,

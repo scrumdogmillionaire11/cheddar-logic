@@ -64,6 +64,8 @@ const {
   run: refreshTeamMetricsDaily,
 } = require('../jobs/refresh_team_metrics_daily');
 const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availability');
+const { syncNbaPlayerAvailability } = require('../jobs/sync_nba_player_availability');
+const { pullNhlGoalieStarters } = require('../jobs/pull_nhl_goalie_starters');
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
@@ -92,6 +94,10 @@ const TEAM_METRICS_MAX_AGE_MINUTES = Number(
 );
 const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC =
   process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC !== 'false';
+const ENABLE_NBA_PLAYER_AVAILABILITY_SYNC =
+  process.env.ENABLE_NBA_PLAYER_AVAILABILITY_SYNC !== 'false';
+const ENABLE_NHL_GOALIE_STARTERS =
+  process.env.ENABLE_NHL_GOALIE_STARTERS !== 'false';
 const ENABLE_NHL_SOG_PLAYER_SYNC =
   process.env.ENABLE_NHL_SOG_PLAYER_SYNC === 'true';
 const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 180);
@@ -187,6 +193,14 @@ function keyNightlySweep(nowEt) {
 
 function keyNhlPlayerAvailabilitySync(nowEt) {
   return `sync_nhl_player_availability|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+}
+
+function keyNbaPlayerAvailabilitySync(nowEt) {
+  return `sync_nba_player_availability|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+}
+
+function keyNhlGoalieStarters(nowEt) {
+  return `pull_nhl_goalie_starters|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
 }
 
 function keyNhlSogPlayerSync(nowEt) {
@@ -790,6 +804,32 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
+  // ========== NBA PLAYER AVAILABILITY SYNC (2.8b) ==========
+  // Hourly injury/availability poll to keep NBA player_availability fresh so
+  // run_nba_model.js can apply the key-player gate.
+  if (ENABLE_NBA_PLAYER_AVAILABILITY_SYNC) {
+    const jobKey = keyNbaPlayerAvailabilitySync(nowEt);
+    jobs.push({
+      jobName: 'sync_nba_player_availability',
+      jobKey,
+      execute: syncNbaPlayerAvailability,
+      args: { jobKey, dryRun },
+      reason: `hourly NBA player availability sync (${nowEt.toISODate()} ${nowEt.hour}h)`,
+    });
+  }
+
+  // ========== NHL GOALIE STARTERS PRE-FETCH (2.9) ==========
+  if (ENABLE_NHL_GOALIE_STARTERS) {
+    const jobKey = keyNhlGoalieStarters(nowEt);
+    jobs.push({
+      jobName: 'pull_nhl_goalie_starters',
+      jobKey,
+      execute: pullNhlGoalieStarters,
+      args: { jobKey, dryRun },
+      reason: `hourly NHL goalie starter pre-fetch (${nowEt.toISODate()} ${nowEt.hour}h)`,
+    });
+  }
+
   // ========== MODELS (3) ==========
   if (
     process.env.ENABLE_DISCORD_CARD_WEBHOOKS === 'true' &&
@@ -1252,6 +1292,7 @@ module.exports = {
   keyTminus,
   keyNightlySweep,
   keyNhlPlayerAvailabilitySync,
+  keyNhlGoalieStarters,
   keyNhlSogPlayerSync,
   keySettlementHealthReport,
   keyHourlySettlementSweep,

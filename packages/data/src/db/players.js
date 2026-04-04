@@ -430,17 +430,19 @@ function upsertPlayerPropLine(row) {
  * Upsert a player's availability/injury status.
  * Called by pull jobs after checking injury signals from the source API.
  *
- * @param {{ playerId: number, sport: string, status: string, statusReason?: string, checkedAt: string }} row
+ * @param {{ playerId: number, sport: string, status: string, statusReason?: string, checkedAt: string, playerName?: string, teamId?: string }} row
  */
 function upsertPlayerAvailability(row) {
   const db = getDatabase();
   const stmt = db.prepare(`
-    INSERT INTO player_availability (player_id, sport, status, status_reason, checked_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO player_availability (player_id, sport, status, status_reason, checked_at, player_name, team_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(player_id, sport) DO UPDATE SET
       status = excluded.status,
       status_reason = excluded.status_reason,
-      checked_at = excluded.checked_at
+      checked_at = excluded.checked_at,
+      player_name = COALESCE(excluded.player_name, player_name),
+      team_id = COALESCE(excluded.team_id, team_id)
   `);
   stmt.run(
     row.playerId,
@@ -448,6 +450,8 @@ function upsertPlayerAvailability(row) {
     row.status,
     row.statusReason || null,
     row.checkedAt,
+    row.playerName || null,
+    row.teamId || null,
   );
 }
 
@@ -468,6 +472,26 @@ function getPlayerAvailability(playerId, sport) {
     LIMIT 1
   `);
   return stmt.get(playerId, sport || 'NHL') || null;
+}
+
+/**
+ * Get all availability rows for a team (by ESPN team abbreviation) and sport.
+ * Used by the NBA model to check if any impact player on a given team is OUT/DTD.
+ * Returns empty array if no rows found (fail-open: caller proceeds normally).
+ *
+ * @param {string} teamId  ESPN team abbreviation, e.g. 'BOS', 'LAL'
+ * @param {string} sport   e.g. 'nba'
+ * @returns {Array<{ player_id: number, player_name: string|null, team_id: string|null, sport: string, status: string, status_reason: string|null, checked_at: string }>}
+ */
+function getPlayerAvailabilityByTeam(teamId, sport) {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT player_id, player_name, team_id, sport, status, status_reason, checked_at
+    FROM player_availability
+    WHERE team_id = ? AND sport = ?
+    ORDER BY player_name ASC
+  `);
+  return stmt.all(teamId, sport || 'nba');
 }
 
 /**
@@ -806,6 +830,7 @@ module.exports = {
   deactivateTrackedPlayersNotInSet,
   upsertPlayerAvailability,
   getPlayerAvailability,
+  getPlayerAvailabilityByTeam,
   upsertPlayerPropLine,
   getPlayerPropLine,
   getPlayerPropLinesForGame,

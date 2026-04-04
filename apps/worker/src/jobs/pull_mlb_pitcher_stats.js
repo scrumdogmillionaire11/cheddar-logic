@@ -144,6 +144,27 @@ function estimatePitcherXFip({ kPct, bbPct, hrPer9 }) {
   return Math.max(2.0, Math.min(6.8, Math.round(xFip * 100) / 100));
 }
 
+/**
+ * Estimate SIERA (Skill-Interactive ERA) from per-PA rates.
+ * Formula (simplified, per FanGraphs): SIERA = 6.145 - 16.986*(K/PA) + 11.434*(BB/PA) - 1.858*(GB_rate)
+ * GB rate defaults to MLB league average (≈0.44) when ground-ball tracking is not available.
+ * xERA (Statcast barrel/hard-hit based) is intentionally separate — see follow-on WI.
+ *
+ * @param {{ kPct: number|null, bbPct: number|null, gbRate?: number|null }} params
+ * @returns {number|null}
+ */
+function estimatePitcherSiera({ kPct, bbPct, gbRate = null }) {
+  // Explicit null guard: toFinite(null) === 0 because Number(null)===0; check before converting.
+  if (kPct == null || bbPct == null) return null;
+  const k = toFinite(kPct);
+  const bb = toFinite(bbPct);
+  if (k === null || bb === null) return null;
+  // Use provided GB rate or fall back to MLB league average.
+  const gb = (gbRate != null && toFinite(gbRate) !== null) ? toFinite(gbRate) : 0.44;
+  const siera = 6.145 - 16.986 * k + 11.434 * bb - 1.858 * gb;
+  return Math.max(2.0, Math.min(6.8, Math.round(siera * 100) / 100));
+}
+
 async function fetchPitcherSeasonStats(pitcherId, season = MLB_SEASON) {
   const url = `${MLB_API_BASE}/people/${pitcherId}/stats?stats=season&season=${season}&group=pitching`;
   const payload = await fetchJson(url);
@@ -161,6 +182,7 @@ async function fetchPitcherSeasonStats(pitcherId, season = MLB_SEASON) {
       hr_per_9: null,
       x_fip: null,
       siera: null,
+      // x_era requires Statcast barrel/hard-hit data — implement in separate WI.
       x_era: null,
     };
   }
@@ -186,7 +208,8 @@ async function fetchPitcherSeasonStats(pitcherId, season = MLB_SEASON) {
     bb_pct: bbPct,
     hr_per_9: hrPer9,
     x_fip: estimatePitcherXFip({ kPct: seasonKPct, bbPct, hrPer9 }),
-    siera: null,
+    siera: estimatePitcherSiera({ kPct: seasonKPct, bbPct }),
+    // x_era requires Statcast barrel/hard-hit data — implement in separate WI.
     x_era: null,
   };
 }
@@ -838,4 +861,6 @@ module.exports = {
   storeGamePkMap,
   parseCliArgs,
   pullMlbPitcherStats,
+  // Exported for WI-0764 unit tests
+  estimatePitcherSiera,
 };

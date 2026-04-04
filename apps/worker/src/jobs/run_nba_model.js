@@ -35,6 +35,8 @@ const {
   updateOddsSnapshotRawData,
   getDatabase,
   computeLineDelta,
+  getTeamMetricsWithGames,
+  getPlayerAvailabilityByTeam,
 } = require('@cheddar-logic/data');
 
 const {
@@ -78,6 +80,147 @@ const {
 } = require('../utils/playoff-detection');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
+
+// WI-0768: weight applied when blending pace-anchor total with market total
+const TEAM_CONTEXT_WEIGHT = 0.25;
+
+// WI-0769: Static set of impact players whose OUT/DTD status downgrades card tier.
+// Initial definition: well-known franchise stars. Expand via PR as needed —
+// avoid per-player minutes lookup (no minutes table exists in this milestone).
+const NBA_IMPACT_PLAYERS = new Set([
+  'LeBron James',
+  'Anthony Davis',
+  'Stephen Curry',
+  'Klay Thompson',
+  'Draymond Green',
+  'Giannis Antetokounmpo',
+  'Damian Lillard',
+  'Khris Middleton',
+  'Joel Embiid',
+  'Tyrese Maxey',
+  'Nikola Jokic',
+  'Jamal Murray',
+  'Luka Doncic',
+  'Kyrie Irving',
+  'Jayson Tatum',
+  'Jaylen Brown',
+  'Kevin Durant',
+  'Devin Booker',
+  'Shai Gilgeous-Alexander',
+  'Jalen Williams',
+  'Kawhi Leonard',
+  'Paul George',
+  'Trae Young',
+  'Dejounte Murray',
+  'De\'Aaron Fox',
+  'Donovan Mitchell',
+  'Darius Garland',
+  'Karl-Anthony Towns',
+  'Jalen Brunson',
+  'Julius Randle',
+  'Bam Adebayo',
+  'Jimmy Butler',
+  'Ja Morant',
+  'Desmond Bane',
+  'Zion Williamson',
+  'Brandon Ingram',
+  'Anthony Edwards',
+  'Rudy Gobert',
+  'Victor Wembanyama',
+  'Chet Holmgren',
+  'Paolo Banchero',
+]);
+
+// WI-0769: Odds-snapshot team name → ESPN team abbreviation.
+// Odds provider uses full city+team names; ESPN injuries use 2-3 letter codes.
+const NBA_TEAM_ABBR_MAP = {
+  'Atlanta Hawks': 'ATL',
+  'Boston Celtics': 'BOS',
+  'Brooklyn Nets': 'BKN',
+  'Charlotte Hornets': 'CHA',
+  'Chicago Bulls': 'CHI',
+  'Cleveland Cavaliers': 'CLE',
+  'Dallas Mavericks': 'DAL',
+  'Denver Nuggets': 'DEN',
+  'Detroit Pistons': 'DET',
+  'Golden State Warriors': 'GS',
+  'Houston Rockets': 'HOU',
+  'Indiana Pacers': 'IND',
+  'LA Clippers': 'LAC',
+  'Los Angeles Clippers': 'LAC',
+  'Los Angeles Lakers': 'LAL',
+  'Memphis Grizzlies': 'MEM',
+  'Miami Heat': 'MIA',
+  'Milwaukee Bucks': 'MIL',
+  'Minnesota Timberwolves': 'MIN',
+  'New Orleans Pelicans': 'NO',
+  'New York Knicks': 'NY',
+  'Oklahoma City Thunder': 'OKC',
+  'Orlando Magic': 'ORL',
+  'Philadelphia 76ers': 'PHI',
+  'Phoenix Suns': 'PHX',
+  'Portland Trail Blazers': 'POR',
+  'Sacramento Kings': 'SAC',
+  'San Antonio Spurs': 'SA',
+  'Toronto Raptors': 'TOR',
+  'Utah Jazz': 'UTAH',
+  'Washington Wizards': 'WSH',
+};
+
+/**
+ * WI-0769: Build key-player availability gate for a game.
+ *
+ * Queries player_availability for both teams. Checks whether any impact player
+ * (from NBA_IMPACT_PLAYERS) is OUT or DTD/GTD.
+ *
+ * Fail-open design:
+ * - No rows (sync hasn't run yet, or team unmappable) → empty flags, no degradation
+ * - Only emits flags when there is positive evidence of a player being OUT/DTD
+ *
+ * @param {string} homeTeam  Full team name from odds snapshot, e.g. 'Boston Celtics'
+ * @param {string} awayTeam  Full team name from odds snapshot, e.g. 'Miami Heat'
+ * @returns {{ missingFlags: string[], uncertainFlags: string[], availabilityFlags: Array<{player:string,team:string,status:string}> }}
+ */
+function buildNbaAvailabilityGate(homeTeam, awayTeam) {
+  const EMPTY = { missingFlags: [], uncertainFlags: [], availabilityFlags: [] };
+  try {
+    const homeAbbr = NBA_TEAM_ABBR_MAP[homeTeam] || null;
+    const awayAbbr = NBA_TEAM_ABBR_MAP[awayTeam] || null;
+
+    // No team mapping — can't query; proceed normally
+    if (!homeAbbr && !awayAbbr) return EMPTY;
+
+    const allRows = [];
+    if (homeAbbr) allRows.push(...getPlayerAvailabilityByTeam(homeAbbr, 'nba'));
+    if (awayAbbr) allRows.push(...getPlayerAvailabilityByTeam(awayAbbr, 'nba'));
+
+    // Sync hasn't run yet — fail-open, don't degrade cards
+    if (allRows.length === 0) return EMPTY;
+
+    const missingFlags = [];
+    const uncertainFlags = [];
+    const availabilityFlags = [];
+
+    for (const row of allRows) {
+      const playerName = row.player_name || '';
+      if (!NBA_IMPACT_PLAYERS.has(playerName)) continue;
+
+      if (row.status === 'OUT') {
+        if (!missingFlags.includes('key_player_out')) missingFlags.push('key_player_out');
+        availabilityFlags.push({ player: playerName, team: row.team_id, status: row.status });
+      } else if (row.status === 'DTD' || row.status === 'GTD') {
+        if (!uncertainFlags.includes('key_player_uncertain')) uncertainFlags.push('key_player_uncertain');
+        availabilityFlags.push({ player: playerName, team: row.team_id, status: row.status });
+      }
+    }
+
+    return { missingFlags, uncertainFlags, availabilityFlags };
+  } catch (err) {
+    // Fail-open: DB query errors must not block card generation
+    console.log(`  [availability] buildNbaAvailabilityGate error (${err.message}) — skipping gate`);
+    return EMPTY;
+  }
+}
 
 const NBA_DRIVER_WEIGHTS = {
   baseProjection: 0.35,
@@ -438,6 +581,98 @@ function getHomeTeamRecentRoadTrip(
       error.message,
     );
     return [];
+  }
+}
+
+/**
+ * WI-0768: Fetch team_metrics_cache entries for both teams and compute a pace-anchor
+ * total. Blends the anchor with the market total using TEAM_CONTEXT_WEIGHT.
+ * Mutates oddsSnapshot.raw_data to add pace_anchor_total and blended_total.
+ *
+ * @param {string} gameId
+ * @param {object} oddsSnapshot
+ * @returns {Promise<{available: boolean, paceAnchorTotal: number|null, blendedTotal: number|null, teamContextMissingInputs: string[]}>}
+ */
+async function applyNbaTeamContext(gameId, oddsSnapshot) {
+  const homeTeam = oddsSnapshot?.home_team;
+  const awayTeam = oddsSnapshot?.away_team;
+
+  if (!homeTeam || !awayTeam) {
+    return {
+      available: false,
+      paceAnchorTotal: null,
+      blendedTotal: null,
+      teamContextMissingInputs: ['nba_team_context'],
+    };
+  }
+
+  try {
+    const [homeResult, awayResult] = await Promise.all([
+      getTeamMetricsWithGames(homeTeam, 'NBA'),
+      getTeamMetricsWithGames(awayTeam, 'NBA'),
+    ]);
+
+    const hAvgPts = homeResult?.metrics?.avgPoints;
+    const hAvgPtsAllowed = homeResult?.metrics?.avgPointsAllowed;
+    const aAvgPts = awayResult?.metrics?.avgPoints;
+    const aAvgPtsAllowed = awayResult?.metrics?.avgPointsAllowed;
+
+    const hasContext = [
+      hAvgPts,
+      hAvgPtsAllowed,
+      aAvgPts,
+      aAvgPtsAllowed,
+    ].every((v) => Number.isFinite(v));
+
+    if (!hasContext) {
+      console.log(
+        `  [NBA_TEAM_CTX] ${gameId}: team_metrics_cache absent — missing_inputs: nba_team_context`,
+      );
+      return {
+        available: false,
+        paceAnchorTotal: null,
+        blendedTotal: null,
+        teamContextMissingInputs: ['nba_team_context'],
+      };
+    }
+
+    // pace-anchor: average of both teams' expected scoring contributions
+    const paceAnchorTotal =
+      (hAvgPts + hAvgPtsAllowed + aAvgPts + aAvgPtsAllowed) / 2;
+    const marketTotal = oddsSnapshot?.total ?? null;
+    const blendedTotal = Number.isFinite(marketTotal)
+      ? marketTotal * (1 - TEAM_CONTEXT_WEIGHT) +
+        paceAnchorTotal * TEAM_CONTEXT_WEIGHT
+      : paceAnchorTotal;
+
+    // Mutate raw_data so downstream models can read the anchor
+    if (oddsSnapshot.raw_data && typeof oddsSnapshot.raw_data === 'object') {
+      oddsSnapshot.raw_data.pace_anchor_total = Number(
+        paceAnchorTotal.toFixed(2),
+      );
+      oddsSnapshot.raw_data.blended_total = Number(blendedTotal.toFixed(2));
+    }
+
+    console.log(
+      `  [NBA_TEAM_CTX] ${gameId}: pace_anchor=${paceAnchorTotal.toFixed(2)}, blended=${blendedTotal.toFixed(2)} (market=${marketTotal ?? 'n/a'})`,
+    );
+
+    return {
+      available: true,
+      paceAnchorTotal: Number(paceAnchorTotal.toFixed(2)),
+      blendedTotal: Number(blendedTotal.toFixed(2)),
+      teamContextMissingInputs: [],
+    };
+  } catch (err) {
+    console.warn(
+      `  [NBA_TEAM_CTX] ${gameId}: failed to fetch team metrics — ${err.message}`,
+    );
+    return {
+      available: false,
+      paceAnchorTotal: null,
+      blendedTotal: null,
+      teamContextMissingInputs: ['nba_team_context'],
+    };
   }
 }
 
@@ -939,6 +1174,19 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             );
           }
 
+          // WI-0768: Fetch team_metrics_cache; compute and blend pace-anchor total
+          const teamCtx = await applyNbaTeamContext(gameId, oddsSnapshot);
+          // Re-persist raw_data if context enriched it with pace_anchor_total
+          if (teamCtx.available) {
+            try {
+              updateOddsSnapshotRawData(oddsSnapshot.id, oddsSnapshot.raw_data);
+            } catch (persistError) {
+              console.log(
+                `  [warn] ${gameId}: Failed to persist team context enrichment (${persistError.message})`,
+              );
+            }
+          }
+
           // WI-0646: Detect playoff game and apply threshold overrides
           const isPlayoff = isPlayoffGame(oddsSnapshot);
           if (isPlayoff) console.log(`[PLAYOFF_MODE] gameId: ${gameId}`);
@@ -980,6 +1228,19 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                 10,
               )
             : [];
+
+          // WI-0769: NBA key-player availability gate
+          const availabilityGate = buildNbaAvailabilityGate(
+            oddsSnapshot.home_team,
+            oddsSnapshot.away_team,
+          );
+          if (availabilityGate.missingFlags.length > 0) {
+            const flaggedPlayers = availabilityGate.availabilityFlags.map((f) => f.player).join(', ');
+            console.log(
+              `  [availability] ${gameId}: ${availabilityGate.missingFlags.join(', ')}` +
+              (flaggedPlayers ? ` (${flaggedPlayers})` : ''),
+            );
+          }
 
           const driverCards = computeNBADriverCards(gameId, oddsSnapshot, {
             recentRoadGames: homeTeamRoadTrip,
@@ -1071,8 +1332,41 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
 
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
+            // WI-0768: merge nba_team_context into missing_inputs when cache absent
+            if (teamCtx.teamContextMissingInputs.length > 0) {
+              card.payloadData.missing_inputs = [
+                ...(card.payloadData.missing_inputs || []),
+                ...teamCtx.teamContextMissingInputs,
+              ];
+            }
             applyNbaSettlementMarketContext(card);
             assignExecutionStatus(card, { withoutOddsMode });
+            // WI-0768: cap execution_status at PROJECTION_ONLY when nba_team_context absent
+            if (
+              teamCtx.teamContextMissingInputs.length > 0 &&
+              card.payloadData.execution_status === 'EXECUTABLE'
+            ) {
+              card.payloadData.execution_status = 'PROJECTION_ONLY';
+            }
+            // WI-0769: merge key-player availability flags and cap tier at LEAN
+            if (availabilityGate.missingFlags.length > 0 || availabilityGate.uncertainFlags.length > 0) {
+              card.payloadData.missing_inputs = [
+                ...(card.payloadData.missing_inputs || []),
+                ...availabilityGate.missingFlags,
+              ];
+              if (availabilityGate.availabilityFlags.length > 0) {
+                if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+                card.payloadData.raw_data.availability_flags = availabilityGate.availabilityFlags;
+              }
+              // Cap tier at LEAN when a starred player is confirmed OUT
+              if (
+                availabilityGate.missingFlags.includes('key_player_out') &&
+                card.payloadData.tier &&
+                (card.payloadData.tier === 'FIRE' || card.payloadData.tier === 'WATCH')
+              ) {
+                card.payloadData.tier = 'LEAN';
+              }
+            }
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -1125,8 +1419,55 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           }
           for (const card of nbaMarketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
+            // WI-0768: merge nba_team_context into missing_inputs when cache absent
+            if (teamCtx.teamContextMissingInputs.length > 0) {
+              card.payloadData.missing_inputs = [
+                ...(card.payloadData.missing_inputs || []),
+                ...teamCtx.teamContextMissingInputs,
+              ];
+            }
+            // WI-0768: apply blended total to nba-totals-call projection fields
+            if (
+              card.cardType === 'nba-totals-call' &&
+              teamCtx.available &&
+              Number.isFinite(teamCtx.blendedTotal)
+            ) {
+              if (card.payloadData?.projection) {
+                card.payloadData.projection.total = teamCtx.blendedTotal;
+              }
+              if (card.payloadData?.market_context?.projection) {
+                card.payloadData.market_context.projection.total =
+                  teamCtx.blendedTotal;
+              }
+            }
             applyNbaSettlementMarketContext(card);
             assignExecutionStatus(card, { withoutOddsMode });
+            // WI-0768: cap execution_status at PROJECTION_ONLY when nba_team_context absent
+            if (
+              teamCtx.teamContextMissingInputs.length > 0 &&
+              card.payloadData.execution_status === 'EXECUTABLE'
+            ) {
+              card.payloadData.execution_status = 'PROJECTION_ONLY';
+            }
+            // WI-0769: merge key-player availability flags and cap tier at LEAN
+            if (availabilityGate.missingFlags.length > 0 || availabilityGate.uncertainFlags.length > 0) {
+              card.payloadData.missing_inputs = [
+                ...(card.payloadData.missing_inputs || []),
+                ...availabilityGate.missingFlags,
+              ];
+              if (availabilityGate.availabilityFlags.length > 0) {
+                if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+                card.payloadData.raw_data.availability_flags = availabilityGate.availabilityFlags;
+              }
+              // Cap tier at LEAN when a starred player is confirmed OUT
+              if (
+                availabilityGate.missingFlags.includes('key_player_out') &&
+                card.payloadData.tier &&
+                (card.payloadData.tier === 'FIRE' || card.payloadData.tier === 'WATCH')
+              ) {
+                card.payloadData.tier = 'LEAN';
+              }
+            }
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
