@@ -11,7 +11,7 @@ JSON responses must be captured manually via browser DevTools.
 ## Endpoint URL Format
 
 ```
-https://api.actionnetwork.com/web/v1/game?league={SPORT}&date={YYYYMMDD}
+https://api.actionnetwork.com/web/v1/{sport_lowercase}?bookIds=BOOK_IDS&date={YYYYMMDD}&periods=event
 ```
 
 | Sport | `league` value |
@@ -23,7 +23,7 @@ https://api.actionnetwork.com/web/v1/game?league={SPORT}&date={YYYYMMDD}
 
 **Example (NBA, April 3 2026):**
 ```
-https://api.actionnetwork.com/web/v1/game?league=NBA&date=20260403
+https://api.actionnetwork.com/web/v1/nba?bookIds=15,30,1665,2028,2400,2029,1971,2031,2030,2127,79,2988&date=20260403&periods=event
 ```
 
 ---
@@ -42,7 +42,7 @@ https://api.actionnetwork.com/web/v1/game?league=NBA&date=20260403
    - NHL: `https://www.actionnetwork.com/nhl/game-splits`
 
 4. In the Network tab, find the request matching
-   `v1/game?league={SPORT}&date=...`.
+   `v1/{sport_lowercase}?bookIds=...&date=...&periods=event`.
 
 5. Right-click the request → **Copy → Copy Response**.
 

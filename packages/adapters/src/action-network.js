@@ -3,11 +3,12 @@
 /**
  * ActionNetwork public betting-splits adapter
  *
- * STATUS (2026-04-03): schema hypothesis — runtime blocked
+ * STATUS (2026-04-03): URL pattern confirmed via browser capture
  * ---------------------------------------------------------------------------
- * The endpoint https://api.actionnetwork.com/web/v1/game?league={SPORT}&date={YYYYMMDD}
- * is reachable from a browser but returns 404 from server/datacenter IPs via
- * Cloudfront. Direct worker access is not currently viable.
+ * The confirmed endpoint (browser capture 2026-04-03) is:
+ *   https://api.actionnetwork.com/web/v1/{sport_lowercase}?bookIds=...&date={YYYYMMDD}&periods=event
+ * The sport is a path segment (lowercase), not a query param.
+ * CloudFront still blocks direct server-side fetch — use a proxy or scraper worker.
  *
  * The response shape assumed below is a HYPOTHESIS based on community
  * references and public documentation. It has NOT been confirmed against a
@@ -30,7 +31,7 @@ const { resolveTeamVariant } = require('@cheddar-logic/data/src/normalize');
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const ACTION_NETWORK_BASE = 'https://api.actionnetwork.com/web/v1/game';
+const ACTION_NETWORK_BASE = 'https://api.actionnetwork.com/web/v1';
 
 /** Map our sport codes to ActionNetwork league strings */
 const SPORT_TO_LEAGUE = {
@@ -39,6 +40,12 @@ const SPORT_TO_LEAGUE = {
   NHL: 'NHL',
   MLB: 'MLB',
 };
+
+/**
+ * Confirmed book IDs from browser capture (2026-04-03).
+ * These are the major US sportsbooks tracked by ActionNetwork.
+ */
+const BOOK_IDS = '15,30,1665,2028,2400,2029,1971,2031,2030,2127,79,2988';
 
 /**
  * Explicit market key mapping.
@@ -243,8 +250,8 @@ function parseMarketEntry(entry) {
  *     'PARSE_ERROR'    - response was not valid JSON
  */
 async function fetchSplitsForDate({ sport, date }) {
-  const league = SPORT_TO_LEAGUE[sport] || sport;
-  const url = `${ACTION_NETWORK_BASE}?league=${league}&date=${date}`;
+  const sportSlug = (SPORT_TO_LEAGUE[sport] || sport).toLowerCase();
+  const url = `${ACTION_NETWORK_BASE}/${sportSlug}?bookIds=${BOOK_IDS}&date=${date}&periods=event`;
 
   let res;
   try {
@@ -252,7 +259,7 @@ async function fetchSplitsForDate({ sport, date }) {
       headers: { 'User-Agent': BROWSER_UA },
     });
   } catch (err) {
-    console.warn(`[ActionNetwork] fetch error for ${sport} ${date}: ${err.message}`);
+    console.warn(`[ActionNetwork] fetch error for ${sportSlug} ${date}: ${err.message}`);
     return { games: [], sourceStatus: 'FETCH_ERROR' };
   }
 
@@ -260,7 +267,7 @@ async function fetchSplitsForDate({ sport, date }) {
     const sourceStatus =
       res.status === 403 || res.status === 404 ? 'SOURCE_BLOCKED' : 'FETCH_ERROR';
     console.warn(
-      `[ActionNetwork] HTTP ${res.status} for ${sport} ${date} -> ${sourceStatus}`,
+      `[ActionNetwork] HTTP ${res.status} for ${sportSlug} ${date} -> ${sourceStatus}`,
     );
     return { games: [], sourceStatus };
   }
@@ -269,7 +276,7 @@ async function fetchSplitsForDate({ sport, date }) {
   try {
     body = await res.json();
   } catch (err) {
-    console.warn(`[ActionNetwork] JSON parse error for ${sport} ${date}: ${err.message}`);
+    console.warn(`[ActionNetwork] JSON parse error for ${sportSlug} ${date}: ${err.message}`);
     return { games: [], sourceStatus: 'PARSE_ERROR' };
   }
 

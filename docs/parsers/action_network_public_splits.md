@@ -10,7 +10,7 @@
 ## Endpoint
 
 ```
-GET https://api.actionnetwork.com/web/v1/game?league={SPORT}&date={YYYYMMDD}
+GET https://api.actionnetwork.com/web/v1/{sport_lowercase}?bookIds=BOOK_IDS&date={YYYYMMDD}&periods=event
 ```
 
 **Access constraint:** Blocked from server/datacenter IPs via CloudFront.

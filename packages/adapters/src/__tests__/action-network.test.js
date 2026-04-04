@@ -351,7 +351,7 @@ describe('fetchSplitsForDate', () => {
     global.fetch = makeFetchMock(200, { games: [] });
     await fetchSplitsForDate({ sport: 'NHL', date: '20260401' });
     const [url, opts] = global.fetch.mock.calls[0];
-    expect(url).toBe('https://api.actionnetwork.com/web/v1/game?league=NHL&date=20260401');
+    expect(url).toBe('https://api.actionnetwork.com/web/v1/nhl?bookIds=15,30,1665,2028,2400,2029,1971,2031,2030,2127,79,2988&date=20260401&periods=event');
     expect(opts.headers['User-Agent']).toMatch(/Mozilla\/5\.0/);
   });
 
