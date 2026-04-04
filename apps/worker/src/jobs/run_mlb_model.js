@@ -881,7 +881,11 @@ const PROJECTION_FLOOR_F5_FALLBACK = 4.5;
 
 /**
  * Look up starter skill RA9 for a team from mlb_pitcher_stats.
- * Uses weighted SIERA/xFIP/xERA and returns null if no skill metric is present.
+ * Uses normalized weighted blend: SIERA (0.40) + xFIP (0.35) + xERA (0.25).
+ * Only non-null signals contribute; weights are re-normalized so the result is
+ * never silently miscalibrated by absent inputs.
+ * Currently: SIERA is computed from K%/BB% (estimated via league-avg GB rate);
+ * xERA requires Statcast barrel data and is null until that WI ships.
  * Used as a DB fallback when raw_data has no embedded pitcher info (WITHOUT_ODDS_MODE).
  * Tries all lookup keys (full name + abbreviation) via resolveMlbTeamLookupKeys.
  * @param {string} team - Full team name or abbreviation (e.g. 'Toronto Blue Jays' or 'TOR')
@@ -898,9 +902,9 @@ function getPitcherEraFromDb(team) {
       const row = stmt.get(key);
       if (!row) continue;
       const parts = [
-        { value: toFiniteNumber(row.siera), weight: 0.4 },
-        { value: toFiniteNumber(row.x_fip), weight: 0.35 },
-        { value: toFiniteNumber(row.x_era), weight: 0.25 },
+        { value: row.siera != null ? toFiniteNumber(row.siera) : null, weight: 0.4 },
+        { value: row.x_fip != null ? toFiniteNumber(row.x_fip) : null, weight: 0.35 },
+        { value: row.x_era != null ? toFiniteNumber(row.x_era) : null, weight: 0.25 },
       ].filter((part) => part.value !== null);
       if (parts.length === 0) continue;
       const totalWeight = parts.reduce((sum, part) => sum + part.weight, 0);
@@ -917,7 +921,9 @@ function getPitcherEraFromDb(team) {
 
 /**
  * Derive a synthetic F5 total projection floor from starter skill metrics.
- * First attempts to read weighted SIERA/xFIP/xERA from oddsSnapshot.raw_data.mlb.
+ * First attempts to read normalized weighted blend SIERA/xFIP/xERA from oddsSnapshot.raw_data.mlb.
+ * Only non-null signals contribute; weights are re-normalized automatically.
+ * Currently: SIERA computed from K%/BB%; xERA null until Statcast WI ships.
  * Falls back to a direct mlb_pitcher_stats DB lookup by home_team/away_team
  * (used in WITHOUT_ODDS_MODE where raw_data is null).
  * Returns a value rounded to the nearest 0.5, or the fallback constant if
@@ -932,9 +938,9 @@ function computeProjectionFloorF5(oddsSnapshot) {
     const mlb = rawData?.mlb && typeof rawData.mlb === 'object' ? rawData.mlb : {};
     function resolvePitcherSkill(pitcher) {
       const parts = [
-        { value: toFiniteNumber(pitcher?.siera), weight: 0.4 },
-        { value: toFiniteNumber(pitcher?.x_fip), weight: 0.35 },
-        { value: toFiniteNumber(pitcher?.x_era), weight: 0.25 },
+        { value: pitcher?.siera != null ? toFiniteNumber(pitcher.siera) : null, weight: 0.4 },
+        { value: pitcher?.x_fip != null ? toFiniteNumber(pitcher.x_fip) : null, weight: 0.35 },
+        { value: pitcher?.x_era != null ? toFiniteNumber(pitcher.x_era) : null, weight: 0.25 },
       ].filter((part) => part.value !== null);
       if (parts.length === 0) return null;
       const totalWeight = parts.reduce((sum, part) => sum + part.weight, 0);
