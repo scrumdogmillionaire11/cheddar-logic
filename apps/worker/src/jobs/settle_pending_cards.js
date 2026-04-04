@@ -2319,6 +2319,10 @@ async function settlePendingCards({
           rawMarketType === 'TOTAL' && period === '1P'
             ? 'total_1p'
             : rawMarketType.toLowerCase();
+
+        // 1st-period totals are a temporary/non-recurring market — exclude from P&L record
+        if (trackingMarketType === 'total_1p') continue;
+
         const key = `${sport}|${trackingMarketType}`;
 
         if (!marketDeltas[key]) {
