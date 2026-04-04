@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-03T00:00:00Z"
-last_activity: "2026-04-04 - Completed quick task 124: WI-0783 sequential ordering guard in settlement pipeline"
+last_activity: "2026-04-04 - Completed quick task 125: WI-0765 NHL blocked-shot pipeline hardening"
 ---
 
 # Project State
@@ -143,4 +143,5 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 | 122 | WI-0773: NHL variance use historical settlement data (computeSigmaFromHistory) | 2026-04-04 | fbdba61 | [122-wi-0773-nhl-variance-use-historical-sett](./quick/122-wi-0773-nhl-variance-use-historical-sett/) |
 | 123 | WI-0774: NHL goalie starter pre-fetch pipeline (pull_nhl_goalie_starters + resolveGoalieState NHL_API_CONFIRMED) | 2026-04-04 | 0f10fb9 | [123-nhl-total-gating-build-pull-nhl-goalie-s](./quick/123-nhl-total-gating-build-pull-nhl-goalie-s/) |
 | 124 | WI-0783: Sequential ordering guard — settle_pending_cards and settle_projections blocked until game-results succeeds | 2026-04-04 | 01070c0 | [124-wi-0783-sequential-ordering-guard-in-set](./quick/124-wi-0783-sequential-ordering-guard-in-set/) |
+| 125 | WI-0765: NHL blocked-shot pipeline hardening — warn-and-return on missing NST CSV URLs, per-player null WARN, card-level block_rates_stale flag | 2026-04-04 | 62ac8ad | [125-wi-0765-schedule-pull-nhl-player-blk-ret](./quick/125-wi-0765-schedule-pull-nhl-player-blk-ret/) |
 
