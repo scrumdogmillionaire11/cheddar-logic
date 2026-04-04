@@ -146,4 +146,5 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 | 125 | WI-0765: NHL blocked-shot pipeline hardening — warn-and-return on missing NST CSV URLs, per-player null WARN, card-level block_rates_stale flag | 2026-04-04 | 62ac8ad | [125-wi-0765-schedule-pull-nhl-player-blk-ret](./quick/125-wi-0765-schedule-pull-nhl-player-blk-ret/) |
 | 126 | WI-0776: Circa sharp splits from VSIN — migration 059, updateOddsSnapshotCircaSplits, soft-fail CIRCA fetch pass, sharp_divergence in NHL/NBA payloads | 2026-04-04 | cea1631 | [126-wi-0776-circa-sharp-splits-from-vsin-cir](./quick/126-wi-0776-circa-sharp-splits-from-vsin-cir/) |
 | 127 | WI-0760: Wire model_outputs table to GET /api/model-outputs — route with optional ?sport= filter, NHL model header correction, models.js read-surface comment | 2026-04-04 | a5b3bd1 | [127-wire-model-outputs-table-to-web-api-endp](./quick/127-wire-model-outputs-table-to-web-api-endp/) |
+| 128 | Fix MLB model test failures — projection_source + F5 floor math (8 failures block MLB CI) | 2026-04-04 | 299595f | [128-fix-mlb-model-test-failures-projection-s](./quick/128-fix-mlb-model-test-failures-projection-s/) |
 
