@@ -87,6 +87,7 @@ function getModelOutputs(gameId) {
   return stmt.all(gameId);
 }
 
+// Read surface: called by GET /api/model-outputs in web/src/app/api/model-outputs/route.ts
 /**
  * Get model outputs for a sport since a given time
  * @param {string} sport - Sport name

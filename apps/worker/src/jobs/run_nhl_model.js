@@ -2,8 +2,10 @@
  * NHL Model Runner Job
  *
  * Reads latest NHL odds from DB, runs inference model, and stores:
- * - model_outputs (predictions + confidence)
  * - card_payloads (ready-to-render web cards)
+ *
+ * NOTE: This job does NOT write model_outputs. Only run_mlb_model.js and
+ * run_nfl_model.js call insertModelOutput(). See packages/data/src/db/models.js.
  *
  * Portable job runner that can be called from:
  * - A cron job (node apps/worker/src/jobs/run_nhl_model.js)
