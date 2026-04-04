@@ -1168,6 +1168,58 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     // 90–94.9: no modifier
   }
 
+  // WI-0763: BB% adjustment derived from game log walks/batters_faced.
+  // High walk-rate pitchers tend to have lower true K rates per batter because
+  // they fall behind in counts more often. Applies a down-weight when
+  // bb_pct_from_logs > 10%. Requires ≥ 3 starts with batters_faced data.
+  const strikeoutHistory = pitcher?.strikeout_history ?? [];
+  let bbPctFromLogs = null;
+  let bbPctAdjFactor = 1.0;
+  {
+    const startsWithBf = strikeoutHistory.filter(
+      (s) => Number.isFinite(s.batters_faced) && s.batters_faced > 0,
+    );
+    if (startsWithBf.length >= 3) {
+      const totalWalks = startsWithBf.reduce((sum, s) => sum + (s.walks ?? 0), 0);
+      const totalBf = startsWithBf.reduce((sum, s) => sum + s.batters_faced, 0);
+      bbPctFromLogs = totalBf > 0 ? totalWalks / totalBf : null;
+      if (bbPctFromLogs !== null && bbPctFromLogs > 0.10) {
+        bbPctAdjFactor = clampValue(1 - (bbPctFromLogs - 0.10) * 2.5, 0.88, 1.0);
+        kMean *= bbPctAdjFactor;
+      }
+    }
+  }
+
+  // WI-0763: Home/away split adjustment from game log home_away field.
+  // When a pitcher has ≥ 3 starts in each split bucket the model blends in
+  // a 30% weight from the split-specific K rate. Requires game_role ('home'|'away')
+  // passed from computePitcherKDriverCards.
+  const gameRole = pitcher?.game_role ?? null;
+  let homeAwayAdjFactor = 1.0;
+  let homeAwayAdjApplied = false;
+  if (gameRole === 'home' || gameRole === 'away') {
+    const isHomeStr = (s) => s.home_away === 'H' || s.home_away === 'home';
+    const isAwayStr = (s) => s.home_away === 'A' || s.home_away === 'away';
+    const homeStarts = strikeoutHistory.filter(isHomeStr);
+    const awayStarts = strikeoutHistory.filter(isAwayStr);
+    if (homeStarts.length >= 3 && awayStarts.length >= 3) {
+      const homeAvgK =
+        homeStarts.reduce((s, r) => s + (r.strikeouts ?? 0), 0) / homeStarts.length;
+      const awayAvgK =
+        awayStarts.reduce((s, r) => s + (r.strikeouts ?? 0), 0) / awayStarts.length;
+      const totalAvgK =
+        (homeAvgK * homeStarts.length + awayAvgK * awayStarts.length) /
+        (homeStarts.length + awayStarts.length);
+      if (totalAvgK > 0) {
+        const splitAvgK = gameRole === 'home' ? homeAvgK : awayAvgK;
+        const rawRatio = clampValue(splitAvgK / totalAvgK, 0.80, 1.20);
+        homeAwayAdjFactor = 0.70 + rawRatio * 0.30;
+        kMean *= homeAwayAdjFactor;
+        homeAwayAdjApplied = true;
+      }
+    }
+  }
+
   const roundedMean = Math.round(kMean * 10) / 10;
   const ladder = buildPitcherKProbabilityLadder(roundedMean);
   const overPlayableAtOrBelow = roundToHalf(
@@ -1206,6 +1258,10 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
       swstr_pct: starterSwStrPct,
       season_avg_velo: toFiniteNumberOrNull(pitcher?.season_avg_velo) ?? null,
     },
+    // WI-0763: traceability fields for BB% and home/away adjustments
+    bb_pct_from_logs: bbPctFromLogs !== null ? Math.round(bbPctFromLogs * 1000) / 1000 : null,
+    bb_pct_adjustment: bbPctAdjFactor !== 1.0 ? Math.round(bbPctAdjFactor * 1000) / 1000 : null,
+    home_away_adj: homeAwayAdjApplied ? Math.round(homeAwayAdjFactor * 1000) / 1000 : null,
     playability: {
       over_playable_at_or_below: overPlayableAtOrBelow,
       under_playable_at_or_above: underPlayableAtOrAbove,
@@ -2101,6 +2157,8 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       season_avg_velo: pitcher.season_avg_velo ?? null,
       last3_avg_velo: pitcher.last3_avg_velo ?? null,
       strikeout_history: pitcher.strikeout_history ?? [],
+      // WI-0763: game_role ('home'|'away') lets calculateProjectionK apply home/road split
+      game_role: role,
     };
 
     const opponentProfile = resolveTeamSplitProfile(
