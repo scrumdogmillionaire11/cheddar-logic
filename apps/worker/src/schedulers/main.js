@@ -70,6 +70,7 @@ const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
 const { runPullPublicSplits } = require('../jobs/pull_public_splits');
+const { runPullVsinSplits } = require('../jobs/pull_vsin_splits');
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
 
@@ -222,6 +223,10 @@ function keyHourlySettlementSweep(nowEt) {
 
 function keyPublicSplits(nowEt) {
   return `pull_public_splits|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+}
+
+function keyVsinSplits(nowEt) {
+  return `pull_vsin_splits|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
 }
 
 function keyHourlySettlementJob(nowEt, suffix) {
@@ -790,6 +795,21 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
+  // ========== VSIN/DK SPLITS (2.75) ==========
+  // 60-minute cadence during active hours (09:00–23:00 ET).
+  // Fetches DraftKings public bets/handle pct from VSIN and writes dk_* columns.
+  // Runs in parallel with pull_public_splits (Action Network) — separate column families.
+  if (nowEt.hour >= 9 && nowEt.hour < 23) {
+    const jobKey = keyVsinSplits(nowEt);
+    jobs.push({
+      jobName: 'pull_vsin_splits',
+      jobKey,
+      execute: runPullVsinSplits,
+      args: { jobKey, dryRun },
+      reason: `hourly VSIN/DK splits (${nowEt.toISODate()} ${nowEt.hour}h)`,
+    });
+  }
+
   // ========== NHL PLAYER AVAILABILITY SYNC (2.8) ==========
   // Hourly injury/availability poll to keep player_availability fresh between
   // pull_nhl_player_shots runs (which may run infrequently).
@@ -835,7 +855,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     process.env.ENABLE_DISCORD_CARD_WEBHOOKS === 'true' &&
     String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim()
   ) {
-    const discordSnapshotTimes = ['09:00', '12:00', '18:00'];
+    const discordSnapshotTimes = ['10:30', '12:30', '18:00'];
     for (const t of discordSnapshotTimes) {
       if (!isFixedDue(nowEt, t)) continue;
       const jobKey = keyDiscordCardsSnapshot(nowEt, t);

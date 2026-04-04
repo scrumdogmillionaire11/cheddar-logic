@@ -120,10 +120,53 @@ const TEAM_ABBREVIATIONS = {
   'boston bruins': 'BOS',      'carolina hurricanes': 'CAR',
 };
 
+// Mascot/nickname for each team — combined with abbreviation (e.g. "STL Blues")
+const TEAM_NICKNAMES = {
+  'arizona cardinals': 'Cardinals',    'atlanta falcons': 'Falcons',        'baltimore ravens': 'Ravens',
+  'buffalo bills': 'Bills',            'buffalo sabres': 'Sabres',          'carolina panthers': 'Panthers',
+  'carolina hurricanes': 'Hurricanes', 'chicago bears': 'Bears',            'chicago blackhawks': 'Blackhawks',
+  'chicago bulls': 'Bulls',            'chicago cubs': 'Cubs',              'chicago white sox': 'White Sox',
+  'cincinnati bengals': 'Bengals',     'cleveland browns': 'Browns',        'cleveland guardians': 'Guardians',
+  'colorado avalanche': 'Avalanche',   'colorado rockies': 'Rockies',       'dallas cowboys': 'Cowboys',
+  'dallas mavericks': 'Mavericks',     'dallas stars': 'Stars',             'denver broncos': 'Broncos',
+  'denver nuggets': 'Nuggets',         'detroit lions': 'Lions',            'detroit red wings': 'Red Wings',
+  'detroit pistons': 'Pistons',        'edmonton oilers': 'Oilers',         'florida panthers': 'Panthers',
+  'golden state warriors': 'Warriors', 'green bay packers': 'Packers',      'houston astros': 'Astros',
+  'houston rockets': 'Rockets',        'houston texans': 'Texans',          'indianapolis colts': 'Colts',
+  'jacksonville jaguars': 'Jaguars',   'kansas city chiefs': 'Chiefs',      'kansas city royals': 'Royals',
+  'las vegas raiders': 'Raiders',      'los angeles chargers': 'Chargers',  'los angeles clippers': 'Clippers',
+  'los angeles dodgers': 'Dodgers',    'los angeles kings': 'Kings',        'los angeles lakers': 'Lakers',
+  'los angeles rams': 'Rams',          'los angeles angels': 'Angels',      'miami dolphins': 'Dolphins',
+  'miami heat': 'Heat',                'miami marlins': 'Marlins',          'minnesota timberwolves': 'Timberwolves',
+  'minnesota twins': 'Twins',          'minnesota vikings': 'Vikings',      'minnesota wild': 'Wild',
+  'nashville predators': 'Predators',  'new england patriots': 'Patriots',  'new jersey devils': 'Devils',
+  'new orleans pelicans': 'Pelicans',  'new orleans saints': 'Saints',      'new york giants': 'Giants',
+  'new york islanders': 'Islanders',   'new york jets': 'Jets',             'new york knicks': 'Knicks',
+  'new york mets': 'Mets',             'new york rangers': 'Rangers',       'new york yankees': 'Yankees',
+  'oklahoma city thunder': 'Thunder',  'ottawa senators': 'Senators',       'philadelphia eagles': 'Eagles',
+  'philadelphia flyers': 'Flyers',     'philadelphia phillies': 'Phillies', 'philadelphia 76ers': '76ers',
+  'phoenix coyotes': 'Coyotes',        'phoenix suns': 'Suns',              'pittsburgh penguins': 'Penguins',
+  'pittsburgh pirates': 'Pirates',     'pittsburgh steelers': 'Steelers',   'portland trail blazers': 'Blazers',
+  'sacramento kings': 'Kings',         'san antonio spurs': 'Spurs',        'san jose sharks': 'Sharks',
+  'seattle kraken': 'Kraken',          'seattle mariners': 'Mariners',      'seattle seahawks': 'Seahawks',
+  'st. louis blues': 'Blues',          'st. louis cardinals': 'Cardinals',  'tampa bay buccaneers': 'Buccaneers',
+  'tampa bay lightning': 'Lightning',  'tampa bay rays': 'Rays',            'tennessee titans': 'Titans',
+  'toronto maple leafs': 'Leafs',      'toronto raptors': 'Raptors',        'toronto blue jays': 'Blue Jays',
+  'utah jazz': 'Jazz',                 'utah hockey club': 'Utah HC',       'vancouver canucks': 'Canucks',
+  'washington capitals': 'Capitals',   'washington commanders': 'Commanders','washington nationals': 'Nationals',
+  'washington wizards': 'Wizards',     'winnipeg jets': 'Jets',             'calgary flames': 'Flames',
+  'anaheim ducks': 'Ducks',            'arizona coyotes': 'Coyotes',        'columbus blue jackets': 'Blue Jackets',
+  'montreal canadiens': 'Canadiens',   'boston bruins': 'Bruins',           'boston celtics': 'Celtics',
+  'boston red sox': 'Red Sox',
+};
+
 function abbreviateTeam(name) {
   if (!name) return '';
   const lower = String(name).toLowerCase().trim();
-  if (TEAM_ABBREVIATIONS[lower]) return TEAM_ABBREVIATIONS[lower];
+  const abbrev   = TEAM_ABBREVIATIONS[lower];
+  const nickname = TEAM_NICKNAMES[lower];
+  if (abbrev && nickname) return `${abbrev} ${nickname}`;
+  if (abbrev) return abbrev;
   // Already short (≤4 chars) — assume it's already an abbreviation
   if (lower.length <= 4) return String(name).toUpperCase();
   // Generic fallback: first letter of each word, max 3 chars
@@ -441,33 +484,29 @@ function formatEdgeValue(raw) {
   return `${sign}${num.toFixed(2)}`;
 }
 
+// Extract the single best projection number for a card — shown inline on the pick line
+function projectionValue(card) {
+  const payload = card?.payloadData || {};
+  return safeScalar(
+    payload?.player_projection ??
+    payload?.projected_value ??
+    payload?.proj ??
+    payload?.model_projection ??
+    payload?.projection ??
+    payload?.expected_total,
+  );
+}
+
 function metricSummary(card) {
   const payload = card?.payloadData || {};
-  const isProp = isPlayerPropCard(card);
-
-  const model = safeScalar(
-    payload?.model_projection ?? payload?.model_line ?? payload?.projection ?? payload?.expected_total,
-  );
   const edgeRaw = safeScalar(payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp);
   const edge    = edgeRaw !== null ? formatEdgeValue(edgeRaw) : null;
-  const proj    = safeScalar(payload?.player_projection ?? payload?.projected_value ?? payload?.proj);
   const line    = safeScalar(payload?.line ?? payload?.total ?? payload?.market_line);
 
-  if (isProp) {
-    // Props: Proj: 2.7 | Line: 4.5 | Edge: -1.80
-    const parts = [];
-    if (proj)        parts.push(`Proj: ${proj}`);
-    else if (model)  parts.push(`Proj: ${model}`);
-    if (line)        parts.push(`Line: ${line}`);
-    if (edge)        parts.push(`Edge: ${edge}`);
-    return parts.join(' | ');
-  }
-
-  // Totals / spreads: Model: 235.8 | Line: 238.5 | Edge: -2.70
+  // Projection is shown inline on the pick line — this row carries Line + Edge only
   const parts = [];
-  if (model) parts.push(`Model: ${model}`);
-  if (line)  parts.push(`Line: ${line}`);
-  if (edge)  parts.push(`Edge: ${edge}`);
+  if (line) parts.push(`Line: ${line}`);
+  if (edge) parts.push(`Edge: ${edge}`);
   return parts.join(' | ');
 }
 
@@ -490,11 +529,13 @@ function renderDecisionLine(card, bucket) {
     const metrics = metricSummary(card);
     const why = summarizeReasoning(card);
 
+    const proj = projectionValue(card);
     const priced = pickStr
       ? (priceVal ? `${pickStr} (${priceVal})` : pickStr)
       : 'No selection';
+    const pricedWithProj = proj ? `${priced} · Proj: ${proj}` : priced;
 
-    const lines = [`PROP | ${priced}`];
+    const lines = [`PROP | ${pricedWithProj}`];
     if (metrics) lines.push(metrics);
     if (why)     lines.push(`Why: ${why}`);
     return lines.join('\n');
@@ -516,10 +557,12 @@ function renderDecisionLine(card, bucket) {
 
   const betCore = [selection, line].filter(Boolean).join(' ').trim() || 'TBD';
   const priced  = price ? `${betCore} (${price})` : betCore;
+  const proj    = projectionValue(card);
+  const pricedWithProj = proj ? `${priced} · Proj: ${proj}` : priced;
   const metrics = metricSummary(card);
   const why     = summarizeReasoning(card);
 
-  const lines = [`${market} | ${priced}`];
+  const lines = [`${market} | ${pricedWithProj}`];
   if (metrics) lines.push(metrics);
   if (why)     lines.push(`Why: ${why}`);
   return lines.join('\n');
@@ -732,12 +775,13 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
       `${sportLabel(seed?.sport)} | ${startEt}`,
       shortMatchup,
       `Snapshot: ${snapshotEt}`,
+      '─────────────────',
     ];
 
     const officialLines = sectionLines('🟢 PLAY', official, 'official');
     if (officialLines.length > 0) headerLines.push('', ...officialLines);
 
-    const leanLines = sectionLines('🟡 LEAN', leans, 'lean');
+    const leanLines = sectionLines('🟡 Slight Edge', leans, 'lean');
     if (leanLines.length > 0) headerLines.push('', ...leanLines);
 
     // PASS block only when nothing was rendered — avoids contradicting a lean

@@ -865,6 +865,14 @@ function generateNBAMarketCallCards(
             coverage: totalDecision.coverage,
           },
         },
+        splits_divergence: (() => {
+          const h = oddsSnapshot?.public_bets_pct_home;
+          const a = oddsSnapshot?.public_bets_pct_away;
+          if (h == null || a == null) return null;
+          if (h - a > 15) return 'PUBLIC_HEAVY_HOME';
+          if (a - h > 15) return 'PUBLIC_HEAVY_AWAY';
+          return 'BALANCED';
+        })(),
         disclaimer:
           'Analysis provided for educational purposes. Not a recommendation.',
         generated_at: now,
@@ -1032,6 +1040,14 @@ function generateNBAMarketCallCards(
             coverage: spreadDecision.coverage,
           },
         },
+        splits_divergence: (() => {
+          const h = oddsSnapshot?.public_bets_pct_home;
+          const a = oddsSnapshot?.public_bets_pct_away;
+          if (h == null || a == null) return null;
+          if (h - a > 15) return 'PUBLIC_HEAVY_HOME';
+          if (a - h > 15) return 'PUBLIC_HEAVY_AWAY';
+          return 'BALANCED';
+        })(),
         disclaimer:
           'Analysis provided for educational purposes. Not a recommendation.',
         generated_at: now,

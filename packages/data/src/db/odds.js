@@ -840,6 +840,60 @@ function updateOddsSnapshotSplits({ gameId, splitsData, jobRunId: _jobRunId }) {
   return result.changes;
 }
 
+/**
+ * Patch VSIN/DraftKings splits columns on the most-recent odds_snapshot for a game.
+ * Called by pull_vsin_splits after a successful VSIN fetch-and-match.
+ * Single-writer contract (ADR-0002): only pull_vsin_splits writes these columns.
+ *
+ * @param {object} opts
+ * @param {string} opts.gameId   - Our canonical game ID
+ * @param {object} opts.vsinData - DK split fields to write
+ * @returns {number} rows changed (0 = no snapshot found for this game)
+ */
+function updateOddsSnapshotVsinSplits({ gameId, vsinData }) {
+  const db = getDatabase();
+  const nowIso = new Date().toISOString();
+  const toN = (v) => (Number.isFinite(v) ? v : null);
+
+  const {
+    dk_bets_pct_home    = null,
+    dk_bets_pct_away    = null,
+    dk_handle_pct_home  = null,
+    dk_handle_pct_away  = null,
+    dk_tickets_pct_home = null,
+    dk_tickets_pct_away = null,
+  } = vsinData || {};
+
+  const result = db
+    .prepare(
+      `UPDATE odds_snapshots
+          SET dk_bets_pct_home    = ?,
+              dk_bets_pct_away    = ?,
+              dk_handle_pct_home  = ?,
+              dk_handle_pct_away  = ?,
+              dk_tickets_pct_home = ?,
+              dk_tickets_pct_away = ?,
+              vsin_captured_at    = ?
+        WHERE id = (
+          SELECT id FROM odds_snapshots
+           WHERE game_id = ?
+           ORDER BY captured_at DESC
+           LIMIT 1
+        )`,
+    )
+    .run(
+      toN(dk_bets_pct_home),
+      toN(dk_bets_pct_away),
+      toN(dk_handle_pct_home),
+      toN(dk_handle_pct_away),
+      toN(dk_tickets_pct_home),
+      toN(dk_tickets_pct_away),
+      nowIso,
+      gameId,
+    );
+  return result.changes;
+}
+
 module.exports = {
   insertOddsSnapshot,
   patchOddsSnapshot1p,
@@ -856,4 +910,5 @@ module.exports = {
   getOddsIngestFailureSummary,
   getActiveGamesForSplits,
   updateOddsSnapshotSplits,
+  updateOddsSnapshotVsinSplits,
 };
