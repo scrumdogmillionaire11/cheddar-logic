@@ -36,6 +36,7 @@ const {
   getDatabase,
   computeLineDelta,
   getTeamMetricsWithGames,
+  getPlayerAvailabilityByTeam,
 } = require('@cheddar-logic/data');
 
 const {
@@ -82,6 +83,147 @@ const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
 // WI-0768: weight applied when blending pace-anchor total with market total
 const TEAM_CONTEXT_WEIGHT = 0.25;
+
+// WI-0769: Static set of impact players whose OUT/DTD status downgrades card tier.
+// Initial definition: well-known franchise stars. Expand via PR as needed —
+// avoid per-player minutes lookup (no minutes table exists in this milestone).
+const NBA_IMPACT_PLAYERS = new Set([
+  'LeBron James',
+  'Anthony Davis',
+  'Stephen Curry',
+  'Klay Thompson',
+  'Draymond Green',
+  'Giannis Antetokounmpo',
+  'Damian Lillard',
+  'Khris Middleton',
+  'Joel Embiid',
+  'Tyrese Maxey',
+  'Nikola Jokic',
+  'Jamal Murray',
+  'Luka Doncic',
+  'Kyrie Irving',
+  'Jayson Tatum',
+  'Jaylen Brown',
+  'Kevin Durant',
+  'Devin Booker',
+  'Shai Gilgeous-Alexander',
+  'Jalen Williams',
+  'Kawhi Leonard',
+  'Paul George',
+  'Trae Young',
+  'Dejounte Murray',
+  'De\'Aaron Fox',
+  'Donovan Mitchell',
+  'Darius Garland',
+  'Karl-Anthony Towns',
+  'Jalen Brunson',
+  'Julius Randle',
+  'Bam Adebayo',
+  'Jimmy Butler',
+  'Ja Morant',
+  'Desmond Bane',
+  'Zion Williamson',
+  'Brandon Ingram',
+  'Anthony Edwards',
+  'Rudy Gobert',
+  'Victor Wembanyama',
+  'Chet Holmgren',
+  'Paolo Banchero',
+]);
+
+// WI-0769: Odds-snapshot team name → ESPN team abbreviation.
+// Odds provider uses full city+team names; ESPN injuries use 2-3 letter codes.
+const NBA_TEAM_ABBR_MAP = {
+  'Atlanta Hawks': 'ATL',
+  'Boston Celtics': 'BOS',
+  'Brooklyn Nets': 'BKN',
+  'Charlotte Hornets': 'CHA',
+  'Chicago Bulls': 'CHI',
+  'Cleveland Cavaliers': 'CLE',
+  'Dallas Mavericks': 'DAL',
+  'Denver Nuggets': 'DEN',
+  'Detroit Pistons': 'DET',
+  'Golden State Warriors': 'GS',
+  'Houston Rockets': 'HOU',
+  'Indiana Pacers': 'IND',
+  'LA Clippers': 'LAC',
+  'Los Angeles Clippers': 'LAC',
+  'Los Angeles Lakers': 'LAL',
+  'Memphis Grizzlies': 'MEM',
+  'Miami Heat': 'MIA',
+  'Milwaukee Bucks': 'MIL',
+  'Minnesota Timberwolves': 'MIN',
+  'New Orleans Pelicans': 'NO',
+  'New York Knicks': 'NY',
+  'Oklahoma City Thunder': 'OKC',
+  'Orlando Magic': 'ORL',
+  'Philadelphia 76ers': 'PHI',
+  'Phoenix Suns': 'PHX',
+  'Portland Trail Blazers': 'POR',
+  'Sacramento Kings': 'SAC',
+  'San Antonio Spurs': 'SA',
+  'Toronto Raptors': 'TOR',
+  'Utah Jazz': 'UTAH',
+  'Washington Wizards': 'WSH',
+};
+
+/**
+ * WI-0769: Build key-player availability gate for a game.
+ *
+ * Queries player_availability for both teams. Checks whether any impact player
+ * (from NBA_IMPACT_PLAYERS) is OUT or DTD/GTD.
+ *
+ * Conservative handling:
+ * - No rows for either team → ['nba_availability_unresolved'] (sync hasn't run today)
+ * - If team name can't be mapped to ESPN abbr → skip that team, don't block
+ *
+ * @param {string} homeTeam  Full team name from odds snapshot, e.g. 'Boston Celtics'
+ * @param {string} awayTeam  Full team name from odds snapshot, e.g. 'Miami Heat'
+ * @returns {{ missingFlags: string[], uncertainFlags: string[], availabilityFlags: Array<{player:string,team:string,status:string}> }}
+ */
+function buildNbaAvailabilityGate(homeTeam, awayTeam) {
+  try {
+    const homeAbbr = NBA_TEAM_ABBR_MAP[homeTeam] || null;
+    const awayAbbr = NBA_TEAM_ABBR_MAP[awayTeam] || null;
+
+    if (!homeAbbr && !awayAbbr) {
+      // Cannot map either team — treat as unresolved
+      return { missingFlags: ['nba_availability_unresolved'], uncertainFlags: [], availabilityFlags: [] };
+    }
+
+    const allRows = [];
+    if (homeAbbr) allRows.push(...getPlayerAvailabilityByTeam(homeAbbr, 'nba'));
+    if (awayAbbr) allRows.push(...getPlayerAvailabilityByTeam(awayAbbr, 'nba'));
+
+    if (allRows.length === 0) {
+      // Sync has not run yet for today — availability unresolved
+      return { missingFlags: ['nba_availability_unresolved'], uncertainFlags: [], availabilityFlags: [] };
+    }
+
+    const missingFlags = [];
+    const uncertainFlags = [];
+    const availabilityFlags = [];
+
+    for (const row of allRows) {
+      const playerName = row.player_name || '';
+      if (!NBA_IMPACT_PLAYERS.has(playerName)) continue;
+
+      if (row.status === 'OUT') {
+        if (!missingFlags.includes('key_player_out')) missingFlags.push('key_player_out');
+        availabilityFlags.push({ player: playerName, team: row.team_id, status: row.status });
+      } else if (row.status === 'DTD' || row.status === 'GTD') {
+        if (!uncertainFlags.includes('key_player_uncertain')) uncertainFlags.push('key_player_uncertain');
+        availabilityFlags.push({ player: playerName, team: row.team_id, status: row.status });
+      }
+    }
+
+    return { missingFlags, uncertainFlags, availabilityFlags };
+  } catch (err) {
+    // Fail-open: DB query errors must not block card generation
+    console.log(`  [availability] buildNbaAvailabilityGate error (${err.message}) — skipping gate`);
+    return { missingFlags: [], uncertainFlags: [], availabilityFlags: [] };
+  }
+}
 
 const NBA_DRIVER_WEIGHTS = {
   baseProjection: 0.35,
@@ -1090,6 +1232,19 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               )
             : [];
 
+          // WI-0769: NBA key-player availability gate
+          const availabilityGate = buildNbaAvailabilityGate(
+            oddsSnapshot.home_team,
+            oddsSnapshot.away_team,
+          );
+          if (availabilityGate.missingFlags.length > 0) {
+            const flaggedPlayers = availabilityGate.availabilityFlags.map((f) => f.player).join(', ');
+            console.log(
+              `  [availability] ${gameId}: ${availabilityGate.missingFlags.join(', ')}` +
+              (flaggedPlayers ? ` (${flaggedPlayers})` : ''),
+            );
+          }
+
           const driverCards = computeNBADriverCards(gameId, oddsSnapshot, {
             recentRoadGames: homeTeamRoadTrip,
           });
@@ -1196,6 +1351,25 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             ) {
               card.payloadData.execution_status = 'PROJECTION_ONLY';
             }
+            // WI-0769: merge key-player availability flags and cap tier at LEAN
+            if (availabilityGate.missingFlags.length > 0 || availabilityGate.uncertainFlags.length > 0) {
+              card.payloadData.missing_inputs = [
+                ...(card.payloadData.missing_inputs || []),
+                ...availabilityGate.missingFlags,
+              ];
+              if (availabilityGate.availabilityFlags.length > 0) {
+                if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+                card.payloadData.raw_data.availability_flags = availabilityGate.availabilityFlags;
+              }
+              // Cap tier at LEAN when a starred player is confirmed OUT
+              if (
+                availabilityGate.missingFlags.includes('key_player_out') &&
+                card.payloadData.tier &&
+                (card.payloadData.tier === 'FIRE' || card.payloadData.tier === 'WATCH')
+              ) {
+                card.payloadData.tier = 'LEAN';
+              }
+            }
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
@@ -1277,6 +1451,25 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               card.payloadData.execution_status === 'EXECUTABLE'
             ) {
               card.payloadData.execution_status = 'PROJECTION_ONLY';
+            }
+            // WI-0769: merge key-player availability flags and cap tier at LEAN
+            if (availabilityGate.missingFlags.length > 0 || availabilityGate.uncertainFlags.length > 0) {
+              card.payloadData.missing_inputs = [
+                ...(card.payloadData.missing_inputs || []),
+                ...availabilityGate.missingFlags,
+              ];
+              if (availabilityGate.availabilityFlags.length > 0) {
+                if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+                card.payloadData.raw_data.availability_flags = availabilityGate.availabilityFlags;
+              }
+              // Cap tier at LEAN when a starred player is confirmed OUT
+              if (
+                availabilityGate.missingFlags.includes('key_player_out') &&
+                card.payloadData.tier &&
+                (card.payloadData.tier === 'FIRE' || card.payloadData.tier === 'WATCH')
+              ) {
+                card.payloadData.tier = 'LEAN';
+              }
             }
             const validation = validateCardPayload(
               card.cardType,
