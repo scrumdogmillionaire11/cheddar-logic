@@ -6,6 +6,8 @@ const STARTER_SOURCES = [
   'SCRAPER_NAME_MATCH',
   'SEASON_TABLE_INFERENCE',
   'MERGED',
+  'NHL_API_CONFIRMED',
+  'NHL_API_PROBABLE',
 ];
 const GOALIE_TIERS = ['ELITE', 'STRONG', 'AVERAGE', 'WEAK', 'UNKNOWN'];
 const TIER_CONFIDENCE_LEVELS = ['HIGH', 'MEDIUM', 'LOW', 'NONE'];
@@ -329,13 +331,33 @@ function makeCanonicalGoalieState(fields = {}) {
 }
 
 /**
+ * Query nhl_goalie_starters for a confirmed or probable goalie row.
+ * Returns null if db is absent, table does not exist, or no row found.
+ *
+ * @param {object|null|undefined} db - better-sqlite3 Database instance
+ * @param {string|number} gameId
+ * @param {string} teamId - team abbreviation (e.g. 'TOR')
+ * @returns {{ goalie_id: string|null, goalie_name: string|null, confirmed: number }|null}
+ */
+function lookupApiGoalieRow(db, gameId, teamId) {
+  if (!db || typeof db.prepare !== 'function') return null;
+  try {
+    return db.prepare(
+      'SELECT goalie_id, goalie_name, confirmed FROM nhl_goalie_starters WHERE game_id = ? AND team_id = ?',
+    ).get(String(gameId), String(teamId)) || null;
+  } catch (_e) {
+    return null; // table may not exist in test envs without migration
+  }
+}
+
+/**
  * Resolve scraper and optional user inputs into one canonical goalie state.
  *
  * @param {object} scraperInput
  * @param {object|null} userInput
  * @param {string} gameId
  * @param {'home'|'away'} teamSide
- * @param {{ gameTimeUtc?: string|null, staleWindowMs?: number }} options
+ * @param {{ gameTimeUtc?: string|null, staleWindowMs?: number, db?: object, teamId?: string }} options
  * @returns {CanonicalGoalieState}
  */
 function resolveGoalieState(
@@ -346,8 +368,44 @@ function resolveGoalieState(
   options = {},
 ) {
   const scraper = normalizeScraperInput(scraperInput);
-  const user = evaluateUserInput(userInput, options);
   const evidenceFlags = [];
+
+  // ── NHL API lookup (highest priority source) ──────────────────────────────
+  const apiRow = lookupApiGoalieRow(options.db, gameId, options.teamId);
+  if (apiRow) {
+    const goalieTier = deriveGoalieTierFromGsax(scraper.gsax);
+
+    if (apiRow.confirmed) {
+      evidenceFlags.push('NHL_API_CONFIRMED');
+      const state = makeCanonicalGoalieState({
+        game_id: gameId,
+        team_side: teamSide,
+        starter_state: 'CONFIRMED',
+        starter_source: 'NHL_API_CONFIRMED',
+        goalie_name: apiRow.goalie_name || null,
+        goalie_tier: goalieTier,
+        tier_confidence: 'HIGH',
+        evidence_flags: evidenceFlags,
+      });
+      return state;
+    } else {
+      evidenceFlags.push('NHL_API_PROBABLE');
+      const state = makeCanonicalGoalieState({
+        game_id: gameId,
+        team_side: teamSide,
+        starter_state: 'EXPECTED',
+        starter_source: 'NHL_API_PROBABLE',
+        goalie_name: apiRow.goalie_name || null,
+        goalie_tier: goalieTier,
+        tier_confidence: 'MEDIUM',
+        evidence_flags: evidenceFlags,
+      });
+      return state;
+    }
+  }
+
+  // ── Existing user/scraper resolution chain ────────────────────────────────
+  const user = evaluateUserInput(userInput, options);
 
   if (user.malformed) evidenceFlags.push('MALFORMED_USER_INPUT');
   if (user.stale) evidenceFlags.push('STALE_USER_INPUT');
@@ -394,7 +452,7 @@ function resolveGoalieState(
     tierConfidence = 'LOW';
   }
 
-  return makeCanonicalGoalieState({
+  const state = makeCanonicalGoalieState({
     game_id: gameId,
     team_side: teamSide,
     starter_state: starterState,
@@ -404,6 +462,13 @@ function resolveGoalieState(
     tier_confidence: tierConfidence,
     evidence_flags: evidenceFlags,
   });
+
+  // ── Unresolved downgrade: no source could identify the goalie ─────────────
+  if (starterState === 'UNKNOWN' && !goalieName) {
+    state.missing_inputs = ['goalie_unresolved'];
+  }
+
+  return state;
 }
 
 module.exports = {
@@ -417,5 +482,6 @@ module.exports = {
   deriveAdjustmentTrust,
   validateCanonicalGoalieState,
   makeCanonicalGoalieState,
+  lookupApiGoalieRow,
   resolveGoalieState,
 };
