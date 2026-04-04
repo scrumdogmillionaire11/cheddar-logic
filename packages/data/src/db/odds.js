@@ -743,6 +743,103 @@ function getUpcomingGamesAsSyntheticSnapshots(sport, nowUtc, horizonUtc) {
   }));
 }
 
+/**
+ * Return games starting within the next 48 hours, limited to the given sports.
+ * Used by pull_public_splits to know which games need splits data.
+ *
+ * @param {string[]} sports - Upper-case sport codes e.g. ['MLB','NBA','NHL']
+ * @returns {{ game_id: string, home_team: string, away_team: string, sport: string, game_time_utc: string }[]}
+ */
+function getActiveGamesForSplits(sports = []) {
+  const db = getDatabase();
+  const nowIso = new Date().toISOString();
+  const horizonIso = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+
+  if (sports.length === 0) {
+    return db
+      .prepare(
+        `SELECT g.game_id, g.home_team, g.away_team, g.sport, g.game_time_utc
+         FROM games g
+         WHERE g.game_time_utc IS NOT NULL
+           AND g.game_time_utc >= ?
+           AND g.game_time_utc <= ?
+         ORDER BY g.game_time_utc ASC`,
+      )
+      .all(nowIso, horizonIso);
+  }
+
+  const placeholders = sports.map(() => '?').join(', ');
+  return db
+    .prepare(
+      `SELECT g.game_id, g.home_team, g.away_team, g.sport, g.game_time_utc
+       FROM games g
+       WHERE g.game_time_utc IS NOT NULL
+         AND g.game_time_utc >= ?
+         AND g.game_time_utc <= ?
+         AND UPPER(g.sport) IN (${placeholders})
+       ORDER BY g.game_time_utc ASC`,
+    )
+    .all(nowIso, horizonIso, ...sports.map((s) => s.toUpperCase()));
+}
+
+/**
+ * Patch public-splits columns on the most-recent odds_snapshot for a game.
+ * Called by pull_public_splits after a successful ActionNetwork fetch-and-match.
+ * Writes all 8 splits columns atomically.
+ *
+ * @param {object} opts
+ * @param {string} opts.gameId      - Our canonical game ID
+ * @param {object} opts.splitsData  - Public splits fields to write
+ * @param {string} [opts.jobRunId]  - Optional job run ID (reserved)
+ * @returns {number} rows changed (0 = no snapshot found for this game)
+ */
+function updateOddsSnapshotSplits({ gameId, splitsData, jobRunId: _jobRunId }) {
+  const db = getDatabase();
+  const nowIso = new Date().toISOString();
+  const toN = (v) => (Number.isFinite(v) ? v : null);
+
+  const {
+    public_bets_pct_home = null,
+    public_bets_pct_away = null,
+    public_handle_pct_home = null,
+    public_handle_pct_away = null,
+    public_tickets_pct_home = null,
+    public_tickets_pct_away = null,
+    splits_source = null,
+  } = splitsData || {};
+
+  const result = db
+    .prepare(
+      `UPDATE odds_snapshots
+          SET public_bets_pct_home    = ?,
+              public_bets_pct_away    = ?,
+              public_handle_pct_home  = ?,
+              public_handle_pct_away  = ?,
+              public_tickets_pct_home = ?,
+              public_tickets_pct_away = ?,
+              splits_source           = ?,
+              splits_captured_at      = ?
+        WHERE id = (
+          SELECT id FROM odds_snapshots
+           WHERE game_id = ?
+           ORDER BY captured_at DESC
+           LIMIT 1
+        )`,
+    )
+    .run(
+      toN(public_bets_pct_home),
+      toN(public_bets_pct_away),
+      toN(public_handle_pct_home),
+      toN(public_handle_pct_away),
+      toN(public_tickets_pct_home),
+      toN(public_tickets_pct_away),
+      splits_source,
+      nowIso,
+      gameId,
+    );
+  return result.changes;
+}
+
 module.exports = {
   insertOddsSnapshot,
   patchOddsSnapshot1p,
@@ -757,4 +854,6 @@ module.exports = {
   getUpcomingGamesAsSyntheticSnapshots,
   recordOddsIngestFailure,
   getOddsIngestFailureSummary,
+  getActiveGamesForSplits,
+  updateOddsSnapshotSplits,
 };

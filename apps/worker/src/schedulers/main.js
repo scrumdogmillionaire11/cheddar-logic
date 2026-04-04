@@ -67,6 +67,7 @@ const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availabil
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
+const { runPullPublicSplits } = require('../jobs/pull_public_splits');
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
 
@@ -203,6 +204,10 @@ function keySettlementHealthReport(nowEt) {
 
 function keyHourlySettlementSweep(nowEt) {
   return `settle|hourly|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+}
+
+function keyPublicSplits(nowEt) {
+  return `pull_public_splits|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
 }
 
 function keyHourlySettlementJob(nowEt, suffix) {
@@ -753,6 +758,21 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       execute: runSettlementHealthReport,
       args: { jobKey, dryRun },
       reason: 'daily settlement health diagnostic (08:00 ET)',
+    });
+  }
+
+  // ========== PUBLIC SPLITS (2.7) ==========
+  // 60-minute cadence during active hours (09:00–23:00 ET).
+  // Fetches Action Network public bet/handle pct and writes to odds_snapshots.
+  // Unmatched HIGH-consensus games are flagged as pinnacle_proxy for WI-0667.
+  if (nowEt.hour >= 9 && nowEt.hour < 23) {
+    const jobKey = keyPublicSplits(nowEt);
+    jobs.push({
+      jobName: 'pull_public_splits',
+      jobKey,
+      execute: runPullPublicSplits,
+      args: { jobKey, dryRun },
+      reason: `hourly public splits (${nowEt.toISODate()} ${nowEt.hour}h)`,
     });
   }
 
