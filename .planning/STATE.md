@@ -139,4 +139,5 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 |-----|---------------------------------------------------------------------------------|------------|---------|--------------------------------------------------------------------------------------------------------|
 | 118 | WI-0757: Actual result ingestion for projection cards (nhl-pace-1p and mlb-f5) | 2026-04-03 | edcc5e9 | [118-wi-0757-actual-result-ingestion-for-proj](./quick/118-wi-0757-actual-result-ingestion-for-proj/) |
 | 119 | WI-0758: Actual result ingestion for player prop cards                         | 2026-04-03 | 7284284 | [119-wi-0758-actual-result-ingestion-for-play](./quick/119-wi-0758-actual-result-ingestion-for-play/) |
+| 121 | Fix NHL model to consume existing Fenwick% and HDCF% inputs from MoneyPuck raw_data | 2026-04-04 | 7add789 | [121-fix-nhl-model-to-consume-existing-fenwic](./quick/121-fix-nhl-model-to-consume-existing-fenwic/) |
 
