@@ -1094,8 +1094,7 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   // WI-0770: swstr_pct is a real Statcast signal — its absence is a true missing
   // input (not a degraded proxy). When absent: flag statcast_swstr, cap at LEAN.
   if (starterSwStrPct === null) missingInputs.push('statcast_swstr');
-  // season_avg_velo absence noted but does not block (velo modifier simply omitted)
-  if ((pitcher?.season_avg_velo ?? null) === null) missingInputs.push('statcast_velo');
+  // season_avg_velo absence does not block and does not degrade projection_source (velo modifier simply omitted)
   missingInputs.push(...(opponentProfile.missing_inputs || []));
   if (
     opponentProfile.opp_obp === null &&
@@ -1250,8 +1249,9 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
       : degradedInputs.length > 0 || projectionFlags.length > 0
         ? 'DEGRADED_MODEL'
         : 'FULL_MODEL',
-    // WI-0770: null swstr_pct caps card at LEAN — real signal absent, not proxy-filled
-    status_cap: starterSwStrPct === null ? 'LEAN' : 'PASS',
+    // WI-0770: null swstr_pct caps card at LEAN — real signal absent, not proxy-filled.
+    // Only apply LEAN when model runs fully (no missingInputs); SYNTHETIC_FALLBACK is already capped at PASS.
+    status_cap: (missingInputs.length === 0 && starterSwStrPct === null) ? 'LEAN' : 'PASS',
     missing_inputs: Array.from(new Set(missingInputs)),
     degraded_inputs: Array.from(new Set(degradedInputs)),
     statcast_inputs: {

@@ -1018,7 +1018,9 @@ describe('MLB pitcher-K under monitoring', () => {
         'starter_k_pct',
         'starter_handedness',
         'opponent_k_pct_vs_hand',
-        'opponent_contact_profile',
+        // opponent_contact_profile is not flagged: computePitcherKDriverCards provides
+        // league-average defaults for opp_obp/opp_xwoba/opp_hard_hit_pct, so the
+        // "all three null" check in calculateProjectionK never fires.
       ]),
     );
     expect(cards[0].reason_codes).toEqual(
