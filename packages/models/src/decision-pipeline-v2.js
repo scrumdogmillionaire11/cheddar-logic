@@ -1065,8 +1065,11 @@ function computeWatchdog(payload, context = {}) {
     }
   }
 
+  // Stale threshold: 150 min (2.5 h) — loosened while tokens are being replenished.
+  // TODO: tighten back to 30 min once hourly odds pulls are restored.
+  const STALE_BLOCK_THRESHOLD_MINUTES = 150;
   let watchdogStatus = 'OK';
-  if (staleMinutes !== null && staleMinutes > 30) {
+  if (staleMinutes !== null && staleMinutes > STALE_BLOCK_THRESHOLD_MINUTES) {
     watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_MARKET_INPUT);
     watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_SNAPSHOT);
   }
@@ -1079,12 +1082,12 @@ function computeWatchdog(payload, context = {}) {
       code === WATCHDOG_REASONS.STALE_MARKET_INPUT ||
       (code === WATCHDOG_REASONS.STALE_SNAPSHOT &&
         staleMinutes !== null &&
-        staleMinutes > 30),
+        staleMinutes > STALE_BLOCK_THRESHOLD_MINUTES),
   );
 
   if (hasBlockingReason) {
     watchdogStatus = 'BLOCKED';
-  } else if (staleMinutes !== null && staleMinutes >= 5 && staleMinutes <= 30) {
+  } else if (staleMinutes !== null && staleMinutes >= 5 && staleMinutes <= STALE_BLOCK_THRESHOLD_MINUTES) {
     watchdogStatus = 'CAUTION';
     watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_SNAPSHOT);
   }
