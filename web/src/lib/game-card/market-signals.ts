@@ -13,7 +13,7 @@
 
 import type { GameCard } from '@/lib/types/game-card';
 
-export type MarketSignalPillColor = 'blue' | 'amber' | 'green' | 'slate';
+export type MarketSignalPillColor = 'blue' | 'amber' | 'green' | 'slate' | 'emerald';
 
 export interface MarketSignalPill {
   label: string;
@@ -59,13 +59,20 @@ export function deriveMarketSignals(card: GameCard): MarketSignalPill[] {
     play?.pass_reason_code ??
     null;
   const hasSharpDivergence =
-    primaryReasonCode === 'PASS_SHARP_MONEY_OPPOSITE' || hasFadePublicPositive;
+    primaryReasonCode === 'PASS_SHARP_MONEY_OPPOSITE' || // legacy dead code — preserved for old cards
+    tags.includes('SHARP_MONEY_OPPOSITE') ||
+    hasFadePublicPositive;
 
   // ── Pills ─────────────────────────────────────────────────────────────────
 
   // Sharp Divergence (blue)
   if (hasSharpDivergence) {
     pills.push({ label: 'Sharp Divergence', color: 'blue' });
+  }
+
+  // Sharp Aligned (emerald) — Circa agrees with our pick; suppressed if divergence also present
+  if (tags.includes('SHARP_ALIGNED') && !hasSharpDivergence) {
+    pills.push({ label: 'Sharp Aligned', color: 'emerald' });
   }
 
   // Public Heavy (amber) — show when > 65 % of bets on the recommended side
