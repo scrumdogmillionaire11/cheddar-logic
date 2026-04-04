@@ -187,12 +187,9 @@ function transformRow(row: DbSettledRow): ProjectionSettledRow {
 export async function GET(
   request: NextRequest,
 ): Promise<NextResponse<ProjectionSettledResponse>> {
-  const securityCheck = performSecurityChecks(request);
-  if (securityCheck) {
-    return addRateLimitHeaders(
-      securityCheck as NextResponse<ProjectionSettledResponse>,
-      request,
-    );
+  const securityCheck = performSecurityChecks(request, '/api/results/projection-settled');
+  if (!securityCheck.allowed) {
+    return securityCheck.error as NextResponse<ProjectionSettledResponse>;
   }
 
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
@@ -219,7 +216,7 @@ export async function GET(
       return addRateLimitHeaders(
         response as NextResponse<ProjectionSettledResponse>,
         request,
-      );
+      ) as NextResponse<ProjectionSettledResponse>;
     }
 
     const placeholders = PROJECTION_CARD_TYPES.map(() => '?').join(',');
@@ -269,7 +266,7 @@ export async function GET(
     return addRateLimitHeaders(
       response as NextResponse<ProjectionSettledResponse>,
       request,
-    );
+    ) as NextResponse<ProjectionSettledResponse>;
   } catch (error) {
     const message =
       error instanceof Error ? error.message : 'Unknown error';
@@ -281,7 +278,7 @@ export async function GET(
     return addRateLimitHeaders(
       errorResponse as NextResponse<ProjectionSettledResponse>,
       request,
-    );
+    ) as NextResponse<ProjectionSettledResponse>;
   } finally {
     if (db) {
       closeReadOnlyInstance(db);
