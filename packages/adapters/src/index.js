@@ -7,7 +7,9 @@
  */
 
 const actionNetwork = require('./action-network');
+const vsin = require('./vsin');
 
 module.exports = {
   actionNetwork,
+  vsin,
 };
