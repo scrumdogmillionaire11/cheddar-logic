@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-03T00:00:00Z"
-last_activity: "2026-04-04 - Completed quick task 123: NHL total gating: build pull_nhl_goalie_starters.js + require real source"
+last_activity: "2026-04-04 - Completed quick task 124: WI-0783 sequential ordering guard in settlement pipeline"
 ---
 
 # Project State
@@ -142,4 +142,5 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 | 121 | Fix NHL model to consume existing Fenwick% and HDCF% inputs from MoneyPuck raw_data | 2026-04-04 | 7add789 | [121-fix-nhl-model-to-consume-existing-fenwic](./quick/121-fix-nhl-model-to-consume-existing-fenwic/) |
 | 122 | WI-0773: NHL variance use historical settlement data (computeSigmaFromHistory) | 2026-04-04 | fbdba61 | [122-wi-0773-nhl-variance-use-historical-sett](./quick/122-wi-0773-nhl-variance-use-historical-sett/) |
 | 123 | WI-0774: NHL goalie starter pre-fetch pipeline (pull_nhl_goalie_starters + resolveGoalieState NHL_API_CONFIRMED) | 2026-04-04 | 0f10fb9 | [123-nhl-total-gating-build-pull-nhl-goalie-s](./quick/123-nhl-total-gating-build-pull-nhl-goalie-s/) |
+| 124 | WI-0783: Sequential ordering guard — settle_pending_cards and settle_projections blocked until game-results succeeds | 2026-04-04 | 01070c0 | [124-wi-0783-sequential-ordering-guard-in-set](./quick/124-wi-0783-sequential-ordering-guard-in-set/) |
 
