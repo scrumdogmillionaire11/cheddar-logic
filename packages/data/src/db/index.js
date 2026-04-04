@@ -38,6 +38,7 @@ module.exports = {
   prepareOddsSnapshotWrite: odds.prepareOddsSnapshotWrite,
   getActiveGamesForSplits: odds.getActiveGamesForSplits,
   updateOddsSnapshotSplits: odds.updateOddsSnapshotSplits,
+  updateOddsSnapshotVsinSplits: odds.updateOddsSnapshotVsinSplits,
   getLatestOdds: odds.getLatestOdds,
   getOddsSnapshots: odds.getOddsSnapshots,
   computeLineDelta: odds.computeLineDelta,
