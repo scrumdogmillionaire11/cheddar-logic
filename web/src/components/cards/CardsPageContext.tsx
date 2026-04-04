@@ -666,20 +666,32 @@ export function CardsPageProvider({
       }
 
       if (globalGamesBlockedUntil > now) {
-        const retryAfterSec = Math.max(
-          1,
-          Math.ceil((globalGamesBlockedUntil - now) / 1000),
-        );
+        const retryAfterMs = globalGamesBlockedUntil - now;
+        const retryAfterSec = Math.max(1, Math.ceil(retryAfterMs / 1000));
         if (!cancelled) {
           setError(
             `Server rate limited. Retrying in ${retryAfterSec} seconds...`,
           );
-          setLoading(false);
+          // Keep spinner active on initial load so the page doesn't go blank.
+          setLoading(wasInitialLoad);
+        }
+        // On initial load, schedule an auto-retry once the block expires.
+        // Without this the page stays blank until the 60s interval fires.
+        if (wasInitialLoad && initialLoadRetryTimeoutRef.current === null) {
+          initialLoadRetryTimeoutRef.current = setTimeout(() => {
+            initialLoadRetryTimeoutRef.current = null;
+            void fetchGames();
+          }, retryAfterMs + 100); // +100ms buffer past block expiry
         }
         return;
       }
 
+      // On initial mount always fetch regardless of the module-level throttle.
+      // globalGamesLastFetchAt persists across soft Next.js navigations; a fresh
+      // component mount must not be silenced by a poll that ran in a prior
+      // component lifetime — that would leave games=[] with no retry.
       if (
+        !wasInitialLoad &&
         globalGamesLastFetchAt &&
         now - globalGamesLastFetchAt < CLIENT_MIN_FETCH_INTERVAL_MS
       ) {
@@ -715,7 +727,16 @@ export function CardsPageProvider({
             CLIENT_DEFAULT_BACKOFF_MS;
           globalGamesBlockedUntil = Date.now() + retryAfterMs;
           const retryAfterSec = Math.max(1, Math.ceil(retryAfterMs / 1000));
-          console.warn('[cards] Rate limited, backing off', { retryAfterSec });
+          console.warn('[cards] Rate limited, backing off', {
+            retryAfterSec,
+            is_initial_load: wasInitialLoad,
+          });
+          // Mark recoverable so the finally block schedules an expedited retry
+          // via initialLoadRetryTimeoutRef. Without this the page stays blank
+          // on initial load until the 60s poll interval fires.
+          if (wasInitialLoad) {
+            failedRecoverably = true;
+          }
           if (!cancelled) {
             setError(
               `Server rate limited. Retrying in ${retryAfterSec} seconds...`,
