@@ -134,6 +134,12 @@ export interface GameData {
     h2hConsensusAway: number | null;
     h2hConsensusConfidence: string | null;
     capturedAt: string | null;
+    // Public splits columns — populated after WI-0666 migration
+    publicBetsPctHome?: number | null;
+    publicBetsPctAway?: number | null;
+    publicHandlePctHome?: number | null;
+    publicHandlePctAway?: number | null;
+    splitsSource?: string | null;
   } | null;
   plays: Array<{
     cardType: string;
@@ -148,8 +154,16 @@ export interface GameData {
     evPassed: boolean;
     driverKey: string;
     projectedTotal: number | null;
+    projectedHomeF5Runs?: number | null;
+    projectedAwayF5Runs?: number | null;
     edge: number | null;
     model_prob?: number | null;
+    execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED' | null;
+    projection?: {
+      projected_home_f5_runs?: number | null;
+      projected_away_f5_runs?: number | null;
+      projected_total?: number | null;
+    } | null;
     market_type?:
       | 'MONEYLINE'
       | 'SPREAD'

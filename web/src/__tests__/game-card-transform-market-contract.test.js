@@ -76,11 +76,16 @@ assert(
   'transform should not retain soccer-specific market or selection remap branches',
 );
 
+// PROJECTION_ONLY prop plays are intentionally kept in the prop plays list so the
+// Player Props tab is non-empty during daytime model runs (no live prop prices).
+// They are downgraded to propVerdict='PROJECTION' / status='NO_PLAY' via
+// normalizePropVerdict → isProjectionOnlyPropPlay rather than filtered out here.
+// Game-line surfaces still exclude them via isProjectionOnlyCardPlay guards.
 assert(
-  source.includes("(p) => p.market_type === 'PROP' && !isProjectionOnlyPropPlay(p, p.prop_decision)") &&
+  source.includes('isProjectionOnlyPropPlay(play, propDecision)') &&
     source.includes('!isProjectionOnlyCardPlay(play) &&') &&
     source.includes('!isProjectionOnlyCardPlay(game.true_play)'),
-  'transform should exclude projection-only rows from game-line and props betting surfaces',
+  'transform: game-line surfaces exclude projection-only rows; props surface downgrades them to propVerdict=PROJECTION via isProjectionOnlyPropPlay',
 );
 
 assert(
@@ -194,6 +199,14 @@ assert(
     source.includes("titleLower.includes('blocked shots') || play.cardType === 'nhl-player-blk'") &&
     source.includes("propType = 'Blocked Shots'"),
   'transform props mode should classify blocked-shot payloads from canonical market or nhl-player-blk card type',
+);
+
+// WI-0663: lean_side must flow through prop cards (supports ODDS_BACKED UNDER cards)
+assert(
+  source.includes("rawPropDecision?.lean_side === 'OVER'") &&
+    source.includes("rawPropDecision?.lean_side === 'UNDER'") &&
+    source.includes('rawPropDecision.lean_side'),
+  'transform props mode should pass through lean_side from prop_decision for ODDS_BACKED UNDER cards',
 );
 
 console.log('✅ Transform market contract source tests passed');

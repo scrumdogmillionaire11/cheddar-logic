@@ -199,6 +199,95 @@ function extractPlayerShotsFromBoxscore(boxscorePayload) {
   };
 }
 
+function collectPlayerBlockRows(node, rows = []) {
+  if (!node) return rows;
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      collectPlayerBlockRows(entry, rows);
+    }
+    return rows;
+  }
+
+  if (typeof node !== 'object') return rows;
+
+  const playerId =
+    node.playerId ??
+    node.playerID ??
+    node.id ??
+    node.personId ??
+    node.personID ??
+    node.skaterId;
+  const blocks =
+    toFiniteNumberOrNull(node.blockedShots) ??
+    toFiniteNumberOrNull(node.blocked_shots) ??
+    toFiniteNumberOrNull(node.bs) ??
+    toFiniteNumberOrNull(node.blocked) ??
+    toFiniteNumberOrNull(node?.stats?.blockedShots) ??
+    toFiniteNumberOrNull(node?.stats?.blocked_shots) ??
+    toFiniteNumberOrNull(node?.stats?.bs);
+
+  if (playerId !== null && playerId !== undefined && Number.isFinite(blocks)) {
+    rows.push({
+      playerId: String(playerId),
+      blocks,
+      firstName:
+        node?.firstName?.default ||
+        node?.firstName ||
+        node?.playerFirstName ||
+        node?.name?.first ||
+        null,
+      lastName:
+        node?.lastName?.default ||
+        node?.lastName ||
+        node?.playerLastName ||
+        node?.name?.last ||
+        null,
+      fullName:
+        node?.name?.default ||
+        node?.fullName ||
+        node?.playerName ||
+        node?.name ||
+        null,
+    });
+  }
+
+  for (const value of Object.values(node)) {
+    if (value && typeof value === 'object') {
+      collectPlayerBlockRows(value, rows);
+    }
+  }
+
+  return rows;
+}
+
+function extractPlayerBlocksFromBoxscore(boxscorePayload) {
+  const rows = collectPlayerBlockRows(boxscorePayload, []);
+  const byPlayerId = {};
+  const playerNamesById = {};
+
+  for (const row of rows) {
+    const key = String(row.playerId);
+    const current = Number(byPlayerId[key] || 0);
+    byPlayerId[key] = current + Number(row.blocks || 0);
+
+    const fullName =
+      String(row.fullName || '').trim() ||
+      [row.firstName, row.lastName]
+        .map((v) => String(v || '').trim())
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+    if (fullName) {
+      playerNamesById[key] = fullName;
+    }
+  }
+
+  return {
+    byPlayerId,
+    playerNamesById,
+  };
+}
+
 function isShotOnGoalPlay(play) {
   const token = [
     play?.typeDescKey,
@@ -337,7 +426,11 @@ function areNhlSnapshotsEquivalent(passOne, passTwo) {
 
   const passOne1p = normalizeShotsSnapshot(passOne?.playerShots?.firstPeriodByPlayerId);
   const passTwo1p = normalizeShotsSnapshot(passTwo?.playerShots?.firstPeriodByPlayerId);
-  return passOne1p === passTwo1p;
+  if (passOne1p !== passTwo1p) return false;
+
+  const passOneBlk = normalizeShotsSnapshot(passOne?.playerBlocks?.fullGameByPlayerId);
+  const passTwoBlk = normalizeShotsSnapshot(passTwo?.playerBlocks?.fullGameByPlayerId);
+  return passOneBlk === passTwoBlk;
 }
 
 async function fetchNhlSettlementSnapshot({
@@ -369,6 +462,10 @@ async function fetchNhlSettlementSnapshot({
     boxscoreResult.status === 'fulfilled'
       ? extractPlayerShotsFromBoxscore(boxscoreResult.value)
       : { byPlayerId: {}, playerNamesById: {} };
+  const boxscoreBlocksData =
+    boxscoreResult.status === 'fulfilled'
+      ? extractPlayerBlocksFromBoxscore(boxscoreResult.value)
+      : { byPlayerId: {}, playerNamesById: {} };
   const pbpData =
     pbpResult.status === 'fulfilled'
       ? extractFirstPeriodShotsFromPlayByPlay(pbpResult.value)
@@ -388,6 +485,14 @@ async function fetchNhlSettlementSnapshot({
         playByPlay: pbpResult.status === 'fulfilled',
       },
     },
+    playerBlocks: {
+      fullGameByPlayerId: boxscoreBlocksData.byPlayerId,
+      playerNamesById: boxscoreBlocksData.playerNamesById,
+      playerIdByNormalizedName: buildPlayerNameLookup(boxscoreBlocksData.playerNamesById),
+      sources: {
+        boxscore: boxscoreResult.status === 'fulfilled',
+      },
+    },
   };
 }
 
@@ -396,6 +501,7 @@ module.exports = {
   areNhlSnapshotsEquivalent,
   buildNhlApiUrls,
   extractFirstPeriodShotsFromPlayByPlay,
+  extractPlayerBlocksFromBoxscore,
   extractPlayerShotsFromBoxscore,
   fetchNhlSettlementSnapshot,
   normalizeNhlLandingSnapshot,

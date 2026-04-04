@@ -400,6 +400,10 @@ export interface Play {
   gates?: CanonicalGate[];
   decision_data?: DecisionData;
   transform_meta?: TransformMeta;
+  /** Source card type (e.g. 'nhl-pace-1p', 'mlb-f5'). Present on all transformed plays. */
+  cardType?: string;
+  /** Pipeline execution status token. 'PROJECTION_ONLY' means no odds backing. */
+  execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
 
   // Canonical fields (preferred)
   market_type?: CanonicalMarketType;
@@ -466,6 +470,20 @@ export interface Play {
 }
 
 /**
+ * Market condition signals derived from public splits + consensus data.
+ * Populated during transform from odds snapshot; null fields gracefully render no pills.
+ */
+export interface MarketSignalData {
+  publicBetsPctHome: number | null;
+  publicBetsPctAway: number | null;
+  publicHandlePctHome: number | null;
+  publicHandlePctAway: number | null;
+  splitsSource: string | null;
+  /** Included here so deriveMarketSignals stays a pure card→pills function. */
+  spreadConsensusConfidence: string | null;
+}
+
+/**
  * Normalized game card with derived tags for filtering
  */
 export interface GameCard {
@@ -484,6 +502,8 @@ export interface GameCard {
   drivers: DriverRow[];
   evidence?: EvidenceItem[];
   tags: string[]; // derived for fast filtering
+  /** Market signal pills source data. Absent when splits are not yet populated (WI-0666/0667). */
+  marketSignals?: MarketSignalData;
 }
 
 /**

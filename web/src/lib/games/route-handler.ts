@@ -259,6 +259,11 @@ interface GameRow {
   h2h_consensus_home: number | null;
   h2h_consensus_away: number | null;
   h2h_consensus_confidence: string | null;
+  public_bets_pct_home: number | null;
+  public_bets_pct_away: number | null;
+  public_handle_pct_home: number | null;
+  public_handle_pct_away: number | null;
+  splits_source: string | null;
   odds_captured_at: string | null;
   projection_inputs_complete: boolean | null;
   projection_missing_inputs: string[];
@@ -365,6 +370,9 @@ interface Play {
     k_mean?: number | null;
     probability_ladder?: Record<string, unknown> | null;
     fair_prices?: Record<string, unknown> | null;
+    // MLB F5 projected run splits
+    projected_home_f5_runs?: number | null;
+    projected_away_f5_runs?: number | null;
   };
   status?: ExpressionStatus;
   kind?: 'PLAY' | 'EVIDENCE';
@@ -622,6 +630,11 @@ type GamesApiDataRow = {
     h2hConsensusHome: number | null;
     h2hConsensusAway: number | null;
     h2hConsensusConfidence: string | null;
+    publicBetsPctHome: number | null;
+    publicBetsPctAway: number | null;
+    publicHandlePctHome: number | null;
+    publicHandlePctAway: number | null;
+    splitsSource: string | null;
     capturedAt: string | null;
   } | null;
   consistency: Play['consistency'];
@@ -844,6 +857,11 @@ export function buildGamesResponseData(
             h2hConsensusHome: row.h2h_consensus_home,
             h2hConsensusAway: row.h2h_consensus_away,
             h2hConsensusConfidence: row.h2h_consensus_confidence ?? null,
+            publicBetsPctHome: row.public_bets_pct_home ?? null,
+            publicBetsPctAway: row.public_bets_pct_away ?? null,
+            publicHandlePctHome: row.public_handle_pct_home ?? null,
+            publicHandlePctAway: row.public_handle_pct_away ?? null,
+            splitsSource: row.splits_source ?? null,
             capturedAt: row.odds_captured_at,
           }
         : null,
@@ -958,7 +976,6 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
     playProducerCardTypes: new Set([
       'nba-totals-call',
       'nba-spread-call',
-      'nba-moneyline-call',
     ]),
     evidenceOnlyCardTypes: new Set([
       'nba-base-projection',
@@ -1405,6 +1422,11 @@ export async function GET(request: NextRequest) {
           | 'h2h_consensus_home'
           | 'h2h_consensus_away'
           | 'h2h_consensus_confidence'
+          | 'public_bets_pct_home'
+          | 'public_bets_pct_away'
+          | 'public_handle_pct_home'
+          | 'public_handle_pct_away'
+          | 'splits_source'
           | 'odds_captured_at'
         >
       >;
@@ -1464,6 +1486,11 @@ export async function GET(request: NextRequest) {
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_consensus_home')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_consensus_away')},
           ${buildOptionalOddsSelect(oddsSnapshotColumns, 'h2h_consensus_confidence')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'public_bets_pct_home')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'public_bets_pct_away')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'public_handle_pct_home')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'public_handle_pct_away')},
+          ${buildOptionalOddsSelect(oddsSnapshotColumns, 'splits_source')},
           o.captured_at AS odds_captured_at,
           o.raw_data
         FROM odds_snapshots o
@@ -1526,6 +1553,11 @@ export async function GET(request: NextRequest) {
         h2h_consensus_home: number | null;
         h2h_consensus_away: number | null;
         h2h_consensus_confidence: string | null;
+        public_bets_pct_home: number | null;
+        public_bets_pct_away: number | null;
+        public_handle_pct_home: number | null;
+        public_handle_pct_away: number | null;
+        splits_source: string | null;
         odds_captured_at: string | null;
         raw_data: string | null;
       }>;
@@ -1610,6 +1642,11 @@ export async function GET(request: NextRequest) {
           h2h_consensus_home: odds?.h2h_consensus_home ?? null,
           h2h_consensus_away: odds?.h2h_consensus_away ?? null,
           h2h_consensus_confidence: odds?.h2h_consensus_confidence ?? null,
+          public_bets_pct_home: odds?.public_bets_pct_home ?? null,
+          public_bets_pct_away: odds?.public_bets_pct_away ?? null,
+          public_handle_pct_home: odds?.public_handle_pct_home ?? null,
+          public_handle_pct_away: odds?.public_handle_pct_away ?? null,
+          splits_source: odds?.splits_source ?? null,
           odds_captured_at: odds?.odds_captured_at ?? null,
           projection_inputs_complete:
             projectionHealth.projection_inputs_complete,
@@ -2676,6 +2713,17 @@ export async function GET(request: NextRequest) {
               typeof payloadPlayProjection.fair_prices === 'object'
                 ? (payloadPlayProjection.fair_prices as Record<string, unknown>)
                 : null),
+            // MLB F5 projected run splits
+            projected_home_f5_runs:
+              firstNumber(
+                payloadProjection?.projected_home_f5_runs,
+                payloadPlayProjection?.projected_home_f5_runs,
+              ) ?? null,
+            projected_away_f5_runs:
+              firstNumber(
+                payloadProjection?.projected_away_f5_runs,
+                payloadPlayProjection?.projected_away_f5_runs,
+              ) ?? null,
           },
           status: resolvedStatus,
           // Canonical decision fields (preferred over legacy status field)
@@ -3468,6 +3516,8 @@ export async function GET(request: NextRequest) {
     const response = NextResponse.json(payload, {
       headers: { 'Content-Type': 'application/json' },
     });
+    response.headers.set('X-Games-Mode', String(payload?.meta?.response_mode ?? 'full'));
+    response.headers.set('X-Games-Count', String(Array.isArray(payload?.data) ? payload.data.length : 0));
     return addRateLimitHeaders(response, request);
   } catch (error) {
     perf.totalMs = Date.now() - requestStartedAt;
@@ -3498,6 +3548,8 @@ export async function GET(request: NextRequest) {
         const response = NextResponse.json(fallbackPayload, {
           headers: { 'Content-Type': 'application/json' },
         });
+        response.headers.set('X-Games-Mode', String(fallbackPayload?.meta?.response_mode ?? 'timeout_fallback'));
+        response.headers.set('X-Games-Count', String(Array.isArray(fallbackPayload?.data) ? fallbackPayload.data.length : 0));
         return addRateLimitHeaders(response, request);
       }
     }
@@ -3508,6 +3560,8 @@ export async function GET(request: NextRequest) {
       { success: false, error: message },
       { status: 500 },
     );
+    response.headers.set('X-Games-Mode', 'error');
+    response.headers.set('X-Games-Count', '0');
     return addRateLimitHeaders(response, request);
   } finally {
     if (db) closeReadOnlyInstance(db);

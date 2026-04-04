@@ -25,6 +25,7 @@ const {
   projectF5ML,
   normalizePitcherKMarketInput,
   computePitcherKDriverCards,
+  selectPitcherKUnderMarket,
 } = require('../../models/mlb-model');
 const {
   checkPitcherFreshness,
@@ -1123,8 +1124,24 @@ describe('MLB prop rollout + freshness gating', () => {
     expect(resolveMlbPitcherPropRolloutState()).toBe('SHADOW');
   });
 
-  test('resolvePitcherKsMode is hard-pinned to PROJECTION_ONLY', () => {
+  test('resolvePitcherKsMode is hard-locked to PROJECTION_ONLY even when PITCHER_KS_MODEL_MODE=ODDS_BACKED', () => {
+    // ODDS_BACKED path is dormant. The env var must never trigger it \u2014 doing so
+    // would activate live prop-odds fetching and drain API quota.
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     process.env.PITCHER_KS_MODEL_MODE = 'ODDS_BACKED';
+    expect(resolvePitcherKsMode()).toBe('PROJECTION_ONLY');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('ODDS_BACKED is set but has NO effect'));
+    delete process.env.PITCHER_KS_MODEL_MODE;
+    errorSpy.mockRestore();
+  });
+
+  test('resolvePitcherKsMode returns PROJECTION_ONLY when PITCHER_KS_MODEL_MODE is unset', () => {
+    delete process.env.PITCHER_KS_MODEL_MODE;
+    expect(resolvePitcherKsMode()).toBe('PROJECTION_ONLY');
+  });
+
+  test('resolvePitcherKsMode returns PROJECTION_ONLY when PITCHER_KS_MODEL_MODE is set to unknown value', () => {
+    process.env.PITCHER_KS_MODEL_MODE = 'FULL';
     expect(resolvePitcherKsMode()).toBe('PROJECTION_ONLY');
     delete process.env.PITCHER_KS_MODEL_MODE;
   });
@@ -1597,5 +1614,206 @@ describe('projectF5ML — F5 ML side projection (WI-0603)', () => {
     expect(result.reasoning).toMatch(/F5 ML/);
     expect(result.reasoning).toMatch(/pWin\(H\)/);
     expect(result.reasoning).toMatch(/conf=/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-0663: selectPitcherKUnderMarket
+// ---------------------------------------------------------------------------
+
+const MLB_PROP_BOOKMAKER_PRIORITY_TEST = Object.freeze({
+  draftkings: 1,
+  fanduel: 2,
+  oddstrader: 3,
+  oddsjam: 4,
+  betmgm: 5,
+});
+
+describe('selectPitcherKUnderMarket', () => {
+  test('selects highest-line entry', () => {
+    const strikeoutLines = {
+      'ace pitcher': { line: 6.5, under_price: -110, bookmaker: 'draftkings' },
+      'other pitcher': { line: 7.0, under_price: -110, bookmaker: 'draftkings' },
+    };
+    const result = selectPitcherKUnderMarket(strikeoutLines, 'ace pitcher', MLB_PROP_BOOKMAKER_PRIORITY_TEST);
+    expect(result).not.toBeNull();
+    expect(result.line).toBe(7.0);
+  });
+
+  test('tiebreaks by best under_price (closest to 0 from negative side)', () => {
+    const strikeoutLines = {
+      'ace pitcher': { line: 6.5, under_price: -105, bookmaker: 'draftkings' },
+      'other pitcher': { line: 6.5, under_price: -115, bookmaker: 'fanduel' },
+    };
+    const result = selectPitcherKUnderMarket(strikeoutLines, 'ace pitcher', MLB_PROP_BOOKMAKER_PRIORITY_TEST);
+    expect(result).not.toBeNull();
+    expect(result.under_price).toBe(-105);
+  });
+
+  test('tiebreaks by bookmaker priority when line and under_price are equal', () => {
+    const strikeoutLines = {
+      'ace pitcher': { line: 6.5, under_price: -110, bookmaker: 'fanduel' },
+      'other pitcher': { line: 6.5, under_price: -110, bookmaker: 'draftkings' },
+    };
+    const result = selectPitcherKUnderMarket(strikeoutLines, 'ace pitcher', MLB_PROP_BOOKMAKER_PRIORITY_TEST);
+    expect(result).not.toBeNull();
+    // draftkings has priority 1 (best)
+    expect(result.bookmaker).toBe('draftkings');
+  });
+
+  test('returns null when strikeout_lines is empty', () => {
+    const result = selectPitcherKUnderMarket({}, 'ace pitcher', MLB_PROP_BOOKMAKER_PRIORITY_TEST);
+    expect(result).toBeNull();
+  });
+
+  test('returns null when strikeout_lines is null', () => {
+    const result = selectPitcherKUnderMarket(null, 'ace pitcher', MLB_PROP_BOOKMAKER_PRIORITY_TEST);
+    expect(result).toBeNull();
+  });
+
+  test('filters out entries with line below minimum (5.0)', () => {
+    const strikeoutLines = {
+      'ace pitcher': { line: 4.5, under_price: -110, bookmaker: 'draftkings' },
+    };
+    const result = selectPitcherKUnderMarket(strikeoutLines, 'ace pitcher', MLB_PROP_BOOKMAKER_PRIORITY_TEST);
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-0663: computePitcherKDriverCards ODDS_BACKED mode
+// ---------------------------------------------------------------------------
+
+function buildOddsSnapshot(pitcherOverrides = {}, strikeoutLines = null) {
+  const pitcher = {
+    full_name: 'Ace Pitcher',
+    mlb_id: 12345,
+    k_per_9: 10.2,
+    recent_k_per_9: 11.4,
+    season_k_pct: 0.282,
+    handedness: 'R',
+    bb_pct: 0.072,
+    xwoba_allowed: 0.304,
+    season_starts: 8,
+    starts: 8,
+    recent_ip: 6.1,
+    last_three_pitch_counts: [95, 92, 88],
+    il_return: false,
+    days_since_last_start: 5,
+    role: 'starter',
+    k_pct_last_4_starts: 0.32,
+    k_pct_prior_4_starts: 0.27,
+    current_season_swstr_pct: 0.13,
+    bvp_pa: 0,
+    bvp_k: 0,
+    strikeout_history: [],
+    ...pitcherOverrides,
+  };
+
+  const mlbData = {
+    home_pitcher: pitcher,
+    away_pitcher: null,
+  };
+
+  if (strikeoutLines !== null) {
+    mlbData.strikeout_lines = strikeoutLines;
+  }
+
+  return {
+    home_team: 'Boston Red Sox',
+    away_team: 'New York Yankees',
+    raw_data: { mlb: mlbData },
+  };
+}
+
+// Pitcher with declining K rate (season K/9 higher than recent) — produces UNDER_RECENT_K_DROP_MAJOR
+const decliningKPitcher = {
+  k_per_9: 11.4,
+  recent_k_per_9: 10.2, // declined: season - recent = 1.2 >= 0.75
+  season_k_pct: 0.282,
+  handedness: 'R',
+  bb_pct: 0.072,
+  xwoba_allowed: 0.304,
+  season_starts: 8,
+  starts: 8,
+  recent_ip: 5.1, // < 5.5 → UNDER_RECENT_IP_SUPPRESSION
+  last_three_pitch_counts: [87, 85, 86], // avg 86 < 90 → UNDER_PITCH_COUNT_SUPPRESSION
+  il_return: false,
+  days_since_last_start: 5,
+  role: 'starter',
+  k_pct_last_4_starts: 0.28,
+  k_pct_prior_4_starts: 0.27,
+  current_season_swstr_pct: 0.13,
+  bvp_pa: 0,
+  bvp_k: 0,
+};
+
+describe('computePitcherKDriverCards ODDS_BACKED mode (WI-0663)', () => {
+  test('emits PLAY card in ODDS_BACKED mode with strong under profile', () => {
+    // decliningKPitcher with strongUnderHistory and line 6.5 should score >= 7.5 → PLAY
+    // Scoring: UNDER_LAST5_80(+3) + UNDER_LAST10_70(+2) + UNDER_LINE_PLUS_1(+2)
+    //        + UNDER_RECENT_K_DROP_MAJOR(+1) + UNDER_PITCH_COUNT_SUPPRESSION(+1)
+    //        + UNDER_RECENT_IP_SUPPRESSION(+1) = 10 → PLAY
+    const snapshot = buildOddsSnapshot(
+      { ...decliningKPitcher, strikeout_history: strongUnderHistory },
+      { 'ace pitcher': { line: 6.5, under_price: -105, bookmaker: 'draftkings' } },
+    );
+    const cards = computePitcherKDriverCards('game-1', snapshot, {
+      mode: 'ODDS_BACKED',
+      bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY_TEST,
+    });
+    expect(cards.length).toBeGreaterThan(0);
+    const card = cards[0];
+    expect(card.basis).toBe('ODDS_BACKED');
+    expect(card.prop_decision.lean_side).toBe('UNDER');
+    expect(card.prop_decision.verdict).toBe('PLAY');
+    expect(card.emit_card).toBe(true);
+  });
+
+  test('emits WATCH card in ODDS_BACKED mode with moderate under profile', () => {
+    // watchUnderHistory has last5 under rate 60% (score 2) + last10 70% (score 2) + line_delta 0.7 (score 1)
+    // + UNDER_RECENT_K_DROP_MAJOR(+1) = 6.0 → WATCH (5.5-7.4)
+    const snapshot = buildOddsSnapshot(
+      { ...decliningKPitcher, strikeout_history: watchUnderHistory },
+      { 'ace pitcher': { line: 6.5, under_price: -105, bookmaker: 'draftkings' } },
+    );
+    const cards = computePitcherKDriverCards('game-2', snapshot, {
+      mode: 'ODDS_BACKED',
+      bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY_TEST,
+    });
+    expect(cards.length).toBeGreaterThan(0);
+    const card = cards[0];
+    expect(card.basis).toBe('ODDS_BACKED');
+    expect(['WATCH', 'PLAY']).toContain(card.prop_decision.verdict);
+    expect(card.emit_card).toBe(true);
+  });
+
+  test('falls back to PROJECTION_ONLY when ODDS_BACKED but no strikeout_lines', () => {
+    const snapshot = buildOddsSnapshot({ strikeout_history: strongUnderHistory }, null);
+    const cards = computePitcherKDriverCards('game-3', snapshot, {
+      mode: 'ODDS_BACKED',
+      bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY_TEST,
+    });
+    expect(cards.length).toBeGreaterThan(0);
+    const card = cards[0];
+    expect(card.basis).toBe('PROJECTION_ONLY');
+    expect(card.reason_codes).toContain('MODE_FORCED:ODDS_BACKED->PROJECTION_ONLY');
+  });
+
+  test('emits NO_PLAY card in ODDS_BACKED mode on hard gate (line too low)', () => {
+    const snapshot = buildOddsSnapshot(
+      { strikeout_history: strongUnderHistory },
+      { 'ace pitcher': { line: 4.5, under_price: -170, bookmaker: 'draftkings' } },
+    );
+    const cards = computePitcherKDriverCards('game-4', snapshot, {
+      mode: 'ODDS_BACKED',
+      bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY_TEST,
+    });
+    // line 4.5 is below minimum, so selectPitcherKUnderMarket returns null → fallback
+    expect(cards.length).toBeGreaterThan(0);
+    const card = cards[0];
+    // No qualifying market → falls back to PROJECTION_ONLY
+    expect(card.basis).toBe('PROJECTION_ONLY');
+    expect(card.reason_codes).toContain('MODE_FORCED:ODDS_BACKED->PROJECTION_ONLY');
   });
 });

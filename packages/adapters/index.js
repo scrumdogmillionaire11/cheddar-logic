@@ -5,7 +5,9 @@
  */
 
 const normalize = require('./normalize');
+const actionNetwork = require('./src/action-network');
 
 module.exports = {
   normalize,
+  actionNetwork,
 };

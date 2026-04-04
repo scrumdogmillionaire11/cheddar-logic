@@ -50,6 +50,7 @@ const { runNBAModel } = require('../jobs/run_nba_model');
 const { runNFLModel } = require('../jobs/run_nfl_model');
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { settleMlbF5 } = require('../jobs/settle_mlb_f5');
+const { settleProjections } = require('../jobs/settle_projections');
 const { syncGameStatuses } = require('../jobs/sync_game_statuses');
 const { settleGameResults } = require('../jobs/settle_game_results');
 const { settlePendingCards } = require('../jobs/settle_pending_cards');
@@ -66,6 +67,7 @@ const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availabil
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
+const { runPullPublicSplits } = require('../jobs/pull_public_splits');
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
 
@@ -202,6 +204,10 @@ function keySettlementHealthReport(nowEt) {
 
 function keyHourlySettlementSweep(nowEt) {
   return `settle|hourly|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+}
+
+function keyPublicSplits(nowEt) {
+  return `pull_public_splits|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
 }
 
 function keyHourlySettlementJob(nowEt, suffix) {
@@ -755,6 +761,21 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
+  // ========== PUBLIC SPLITS (2.7) ==========
+  // 60-minute cadence during active hours (09:00–23:00 ET).
+  // Fetches Action Network public bet/handle pct and writes to odds_snapshots.
+  // Unmatched HIGH-consensus games are flagged as pinnacle_proxy for WI-0667.
+  if (nowEt.hour >= 9 && nowEt.hour < 23) {
+    const jobKey = keyPublicSplits(nowEt);
+    jobs.push({
+      jobName: 'pull_public_splits',
+      jobKey,
+      execute: runPullPublicSplits,
+      args: { jobKey, dryRun },
+      reason: `hourly public splits (${nowEt.toISODate()} ${nowEt.hour}h)`,
+    });
+  }
+
   // ========== NHL PLAYER AVAILABILITY SYNC (2.8) ==========
   // Hourly injury/availability poll to keep player_availability fresh between
   // pull_nhl_player_shots runs (which may run infrequently).
@@ -985,6 +1006,20 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       execute: settleMlbF5,
       args: { jobKey: f5SettleKey, dryRun },
       reason: 'MLB F5 card settlement (post-game)',
+    });
+  }
+
+  // ========== PROJECTION ACTUAL RESULT INGESTION (4D) ==========
+  // Runs in the same window as MLB F5 settlement — post-game, hourly.
+  // Writes actual_result for nhl-pace-1p (goals_1p) and mlb-f5 (runs_f5) cards.
+  {
+    const projSettleKey = `settle_projections|${nowEt.toISODate()}|${nowEt.hour}`;
+    jobs.push({
+      jobName: 'settle_projections',
+      jobKey: projSettleKey,
+      execute: settleProjections,
+      args: { jobKey: projSettleKey, dryRun },
+      reason: 'Projection actual result ingestion (nhl-pace-1p, mlb-f5)',
     });
   }
 

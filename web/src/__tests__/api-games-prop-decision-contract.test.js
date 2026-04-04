@@ -98,4 +98,17 @@ for (const field of pitcherKFields) {
   );
 }
 
+// WI-0663: ODDS_BACKED WATCH/PLAY verdicts must not be remapped to PROJECTION
+// The PASS->PROJECTION mapping must be conditional on verdict === 'PASS'
+assert(
+  routeSource.includes("=== 'PASS' ? 'PROJECTION'") ||
+    routeSource.includes("=== 'PROJECTION' || rawPropDecisionVerdict === 'PASS'") ||
+    (
+      routeSource.includes("PASS' ? 'PROJECTION'") &&
+      !routeSource.includes("WATCH' ? 'PROJECTION'") &&
+      !routeSource.includes("PLAY' ? 'PROJECTION'")
+    ),
+  'Expected /api/games route to map only PASS (not WATCH or PLAY) verdict to PROJECTION — ODDS_BACKED WATCH/PLAY must pass through unchanged',
+);
+
 console.log('✅ API games prop decision contract test passed');

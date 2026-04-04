@@ -280,6 +280,37 @@ describe('mlb-pitcher-k validator — dormant ODDS_BACKED mode', () => {
     expect(result.errors).toEqual([]);
   });
 
+  // WI-0663: validate ODDS_BACKED WATCH card with lean_side='UNDER', line=6.5, under_price=-108
+  test('accepts ODDS_BACKED WATCH card with lean_side=UNDER, line=6.5, under_price=-108', () => {
+    const payload = buildOddsBackedPayload({
+      line: 6.5,
+      status: 'WATCH',
+      action: 'HOLD',
+      classification: 'LEAN',
+      tier: 'WATCH',
+      under_price: -108,
+      over_price: -112,
+      pitcher_k_line_contract: {
+        line: 6.5,
+        over_price: -112,
+        under_price: -108,
+        bookmaker: 'draftkings',
+        line_source: 'draftkings',
+        opening_line: 6.5,
+        opening_over_price: -110,
+        opening_under_price: -110,
+        best_available_line: 6.5,
+        best_available_under_price: -108,
+        best_available_bookmaker: 'draftkings',
+        current_timestamp: '2026-04-03T01:15:00Z',
+        alt_lines: [],
+      },
+    });
+    const result = validateCardPayload('mlb-pitcher-k', payload);
+    expect(result.success).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
   test('rejects ODDS_BACKED payload missing line_source', () => {
     const payload = buildOddsBackedPayload({ line_source: null });
     const result = validateCardPayload('mlb-pitcher-k', payload);

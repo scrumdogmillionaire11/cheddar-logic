@@ -14,39 +14,89 @@ See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decision
 
 ## Active Work Items
 
-**Updated**: 2026-03-26
+**Updated**: 2026-04-03
+
+Items below are listed in execution priority order. FPL workstream items are lowest priority and grouped at the end.
+
+---
+
+### Priority 1 — Projection feedback loop (close accuracy tracking gap)
+
+- `WI-0757`: Actual result ingestion for projection cards (nhl-pace-1p and mlb-f5)
+- `WI-0758`: Actual result ingestion for player prop cards (nhl-player-shots, nhl-player-blk, mlb-pitcher-k)
+- `WI-0751`: NHL Player Blocks — wire actual value resolution for projection accuracy tracking
+
+---
+
+### Priority 2 — Active sport pipeline extensions
+
+- `WI-0663`: MLB pitcher-K strong under monitoring
+- `WI-0664`: DB migration — add public betting splits columns to odds_snapshots
+- `WI-0665`: ActionNetwork adapter — fetch and normalize public betting splits
+- `WI-0666`: Worker job — pull_public_splits + scheduler registration + DB write layer *(depends on WI-0664, WI-0665)*
+- `WI-0667`: Pipeline gate — computePublicSplitsGate + wire PASS_SHARP_MONEY_OPPOSITE *(depends on WI-0666)*
+
+Execution order for splits chain: `WI-0664` → `WI-0665` → `WI-0666` → `WI-0667`.
+
+---
+
+### Priority 3 — CI / platform hardening
+
+- `WI-0741`: Harden audit artifact upload checks
+
+---
+
+### Priority 4 — FPL workstream (lowest priority, FPL last)
+
+Quick fixes first:
+
+- `WI-0705`: Fix Build Lab "New session" — frontend/backend contract mismatch
+- `WI-0706`: Persist manager profile across sessions — onboarding state lost on reload
+
+Data / API foundations:
+
+- `WI-0710`: Wire real OCR and live player registry into screenshot parser
+- `WI-0708`: API Contract Expansion for Posture-Aware Outputs
+- `WI-0709`: Derive nextGW ceiling/floor pts from FPL data to activate posture-aware transfer scoring
+
+Draft Lab features:
+
+- `WI-0668`: Natural Language Intent Translation Layer
+- `WI-0669`: Final Recommendation Terminal Output
+- `WI-0670`: Comparison as Core Behavior and Inline Tradeoff Surface
+- `WI-0672`: Draft Lab State Visibility and Reset to Baseline
+- `WI-0671`: Post-Draft Season Loop Foundation
+
+Housekeeping:
+
+- `WI-0662`: Standalone Sage frontend internal-only conversion and runbook cleanup
+
+---
+
+### Archived queued items (pre-existing, not yet started)
 
 - `WI-0485`: Phase 4 telemetry calibration report + enforcement gate
 - `WI-0486`: Phase 4 soak-window runbook + weekly go/no-go cadence (depends on `WI-0485`)
 - `WI-0487`: MLB expansion tranche A (odds-backed markets; depends on `WI-0485`)
 - `WI-0488`: MLB expansion tranche B (projection props + rollup separation audit; depends on `WI-0485`, `WI-0487`)
 - `WI-0489`: NFL expansion pack (deferred after MLB; depends on `WI-0485`, `WI-0488`)
-
-### NHL alignment pack (queued)
-
-- `WI-0500`: NHL 1P model hard alignment to WI-0385 target (formula, dead-zone, goalie certainty, reason codes)
-- `WI-0501`: NHL SOG matchup factor wiring (opponentFactor + paceFactor) + synthetic fallback observability
-- `WI-0502`: NHL calibration ledger wiring (CLV + projection) + settlement jobs
-- `WI-0506`: NHL results segmentation on `/results` (game vs 1P vs player shots props)
-- `WI-0503`: NHL cross-market orchestration dual-run (market-stratified engines + expression choice log)
-- `WI-0504`: NHL orchestration cutover (single best market expression per game, legacy blend retired)
-- `WI-0505`: NHL 1P Phase-2 gated fair-probability activation (only with stable real 1P lines)
-- `WI-0509`: NHL free-data settlement hardening (NHL API first, ESPN fallback) for 1P + player shots
-
-Recommended execution order: `WI-0485` -> (`WI-0486` + `WI-0487` in parallel if staffing allows) -> `WI-0488` -> `WI-0489`.
-
-NHL alignment execution order: `WI-0500` -> `WI-0501` -> `WI-0502` -> `WI-0506` -> `WI-0503` -> `WI-0504` -> `WI-0505`.
-
-### Production performance remediation (queued)
-
-- ~~`WI-0587`~~: Remove `ncaam-matchup-style` as an actionable betting source (DONE — qt-78)
+- `WI-0500`: NHL 1P model hard alignment to WI-0385 target
+- `WI-0501`: NHL SOG matchup factor wiring
+- `WI-0502`: NHL calibration ledger wiring
+- `WI-0503`: NHL cross-market orchestration dual-run
+- `WI-0504`: NHL orchestration cutover
+- `WI-0505`: NHL 1P Phase-2 gated fair-probability activation
+- `WI-0506`: NHL results segmentation on `/results`
+- `WI-0509`: NHL free-data settlement hardening
+- `WI-0520`: AH decision gate + architecture contract
+- `WI-0521`: Deterministic AH grading engine
+- `WI-0522`: AH pricing model (completed ahead of schedule — see governance note in COMPLETE/)
+- `WI-0523`: AH pipeline integration
 - `WI-0588`: Quarantine NBA totals by demoting actionable tiers one level
 - `WI-0589`: Confidence tier correction layer for PLAY vs LEAN
 - `WI-0590`: Diagnose NBA totals underperformance before permanent retuning
 - `WI-0591`: Wire empirical sigma overrides into NBA and NCAAM decisioning
 - `WI-0592`: NHL shots props breakout-usage overlay
-
-Recommended execution order: (`WI-0587` + `WI-0588`) -> `WI-0589`, with (`WI-0590` + `WI-0591`) in parallel as diagnostic/calibration enablers for later retuning.
 
 ### MLB Pitcher Ks rollout (complete ✓ — 2026-03-26)
 
@@ -58,23 +108,6 @@ Recommended execution order: (`WI-0587` + `WI-0588`) -> `WI-0589`, with (`WI-059
 - ~~`WI-0600`~~: ✓ Pitcher Ks rollout docs + acceptance pack
 
 **Rollout state:** Projection-only only. Event-level pitcher-K odds fetching was removed in `WI-0727`; see [docs/runbooks/pitcher-ks-rollout.md](../docs/runbooks/pitcher-ks-rollout.md) for the current operating contract.
-
-
-### Soccer Asian Handicap workstream (queued)
-
-- `WI-0520`: AH decision gate + architecture contract (Option A keep out vs Option B reintroduce)
-- `WI-0521`: Deterministic AH grading engine (whole/half/quarter/zero + split outcomes)
-- `WI-0522`: AH pricing model (de-vig + Poisson margin probabilities + EV)
-- `WI-0523`: AH pipeline integration (canonical markets + validators + runbook)
-
-Recommended execution order: `WI-0520` -> `WI-0521` -> `WI-0522` -> `WI-0523`.
-
-Proposed execution branches (when each WI starts):
-
-- `agent/github-copilot/WI-0520-ah-decision-contract`
-- `agent/github-copilot/WI-0521-ah-grading-engine`
-- `agent/github-copilot/WI-0522-ah-pricing-model`
-- `agent/github-copilot/WI-0523-ah-tier1-integration`
 
 ## Recently Completed
 

@@ -28,6 +28,12 @@ type ProjectionAccumulator = {
   sampleSize: number;
 };
 
+// PROJECTION_FAMILY_LABELS drives projection accuracy summaries (buildProjectionSummaries).
+// It intentionally covers families that are ALWAYS PROJECTION_ONLY — sub-period and
+// prop markets that never fetch live odds (per WI-0727).
+// Full-game odds-backed families (NHL_TOTAL, NHL_ML, NHL_SPREAD, NBA_*, MLB_*) live only
+// in CARD_FAMILY_MAP below, which feeds the betting ledger path in /api/results.
+// Note: NHL_1P_TOTAL is PROJECTION_ONLY only — it appears here but NOT in CARD_FAMILY_MAP.
 const PROJECTION_FAMILY_LABELS: Record<string, string> = {
   MLB_F5_TOTAL: 'MLB F5 Total',
   MLB_PITCHER_K: 'MLB Pitcher K',
@@ -36,6 +42,21 @@ const PROJECTION_FAMILY_LABELS: Record<string, string> = {
   NHL_PLAYER_SHOTS: 'NHL Player Shots',
   NHL_PLAYER_SHOTS_1P: 'NHL Player Shots 1P',
 };
+
+// Raw card_type strings that map to projection families.
+// Used by /api/results route.ts to run a direct query against card_results
+// (bypassing card_display_log) for games whose final result is known.
+// These card types are never displayed in the betting UI so they never
+// appear in card_display_log — the only way to surface them for accuracy
+// tracking is to query card_results directly joined on game_results.status='final'.
+export const PROJECTION_TRACKING_CARD_TYPES: readonly string[] = [
+  'mlb-f5',
+  'mlb-pitcher-k',
+  'nhl-pace-1p',
+  'nhl-player-shots',
+  'nhl-player-shots-1p',
+  'nhl-player-blk',
+] as const;
 
 const PROJECTION_LINE_SOURCES = new Set([
   'projection_floor',
@@ -293,6 +314,45 @@ function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | n
   ) {
     return resolvePlayerShotsActualValue(row);
   }
+  if (cardFamily === 'NHL_PLAYER_BLOCKS') {
+    const playerBlocks =
+      row.gameResultMetadata?.playerBlocks &&
+      typeof row.gameResultMetadata.playerBlocks === 'object'
+        ? (row.gameResultMetadata.playerBlocks as Record<string, unknown>)
+        : null;
+    if (!playerBlocks) return null;
+
+    const valuesByPlayer = playerBlocks.fullGameByPlayerId;
+    if (!valuesByPlayer || typeof valuesByPlayer !== 'object') return null;
+
+    const playerId = String(
+      getPayloadValue(row.payload, ['play', 'player_id']) ||
+        row.payload?.player_id ||
+        '',
+    ).trim();
+    if (playerId) {
+      const direct = toNumber((valuesByPlayer as Record<string, unknown>)[playerId]);
+      if (direct !== null) return direct;
+    }
+
+    const playerName = normalizePlayerName(
+      getPayloadValue(row.payload, ['play', 'player_name']) ||
+        row.payload?.player_name,
+    );
+    if (!playerName) return null;
+
+    const playerIdByNormalizedName =
+      playerBlocks.playerIdByNormalizedName &&
+      typeof playerBlocks.playerIdByNormalizedName === 'object'
+        ? (playerBlocks.playerIdByNormalizedName as Record<string, unknown>)
+        : null;
+    const mappedPlayerId = playerIdByNormalizedName
+      ? String(playerIdByNormalizedName[playerName] || '').trim()
+      : '';
+    if (!mappedPlayerId) return null;
+
+    return toNumber((valuesByPlayer as Record<string, unknown>)[mappedPlayerId]);
+  }
   if (cardFamily === 'MLB_F5_TOTAL') {
     return toNumber(row.gameResultMetadata?.f5_total);
   }
@@ -309,13 +369,22 @@ function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | n
 // Maps raw card_type strings to canonical card family keys.
 // Both driver types (nhl-pace-totals) and call types (nhl-totals-call) collapse
 // to the same family so results grouping never shows duplicate rows.
+//
+// IMPORTANT: Only ODDS_BACKED families belong here. This map feeds the betting
+// ledger grouping in /api/results (route.ts lines ~741, ~982) which is gated by
+// deriveResultCardMode === 'ODDS_BACKED' before it ever calls deriveCardFamily.
+//
+// NHL 1P totals (nhl-pace-1p, nhl-1p-call) are intentionally OMITTED:
+//   - pull_nhl_1p_odds.js is gated behind NHL_1P_ODDS_ENABLED=true (never set)
+//     and is not registered in the scheduler (WI-0736 / WI-0727).
+//   - run_nhl_model.js always sets execution_status=PROJECTION_ONLY when
+//     total_1p_price_over/under are null (which they always are today).
+//   - They appear in PROJECTION_FAMILY_LABELS above for the projection accuracy path.
+//   Re-add here only if NHL_1P_ODDS_ENABLED is activated in production.
 const CARD_FAMILY_MAP: Record<string, string> = {
   // NHL full-game totals
   'nhl-pace-totals': 'NHL_TOTAL',
   'nhl-totals-call': 'NHL_TOTAL',
-  // NHL 1P totals
-  'nhl-pace-1p': 'NHL_1P_TOTAL',
-  'nhl-1p-call': 'NHL_1P_TOTAL',
   // NHL spread / puckline
   'nhl-spread-call': 'NHL_SPREAD',
   'nhl-puckline': 'NHL_SPREAD',
@@ -336,9 +405,6 @@ const CARD_FAMILY_MAP: Record<string, string> = {
   'nba-totals-call': 'NBA_TOTAL',
   // NBA spread
   'nba-spread-call': 'NBA_SPREAD',
-  // NBA moneyline
-  'nba-ml-call': 'NBA_ML',
-  'nba-moneyline': 'NBA_ML',
   // MLB pitcher strikeouts
   'mlb-pitcher-k': 'MLB_PITCHER_K',
   // MLB F5
@@ -363,7 +429,6 @@ const MODEL_FAMILY_LABELS: Record<string, string> = {
   NHL_INFO: 'NHL Context',
   NBA_TOTAL: 'NBA Cross-Market Totals',
   NBA_SPREAD: 'NBA Spread',
-  NBA_ML: 'NBA Moneyline',
   MLB_PITCHER_K: 'MLB Pitcher Strikeouts',
   MLB_F5_TOTAL: 'MLB F5 Totals',
   MLB_F5_ML: 'MLB F5 Moneyline',
@@ -381,7 +446,6 @@ const MODEL_VERSION_MAP: Record<string, string> = {
   NHL_PLAYER_SHOTS: 'nhl-player-shots-v1',
   NBA_TOTAL: 'nba-totals-v1',
   NBA_SPREAD: 'nba-spread-v1',
-  NBA_ML: 'nba-ml-v1',
   MLB_PITCHER_K: 'mlb-pitcher-k-v1',
   MLB_F5_TOTAL: 'mlb-f5-v1',
   MLB_F5_ML: 'mlb-f5-v1',
@@ -436,11 +500,22 @@ export function buildProjectionSummaries(
   const grouped = new Map<string, ProjectionAccumulator>();
 
   for (const row of rows) {
-    if (deriveResultCardMode(row.payload) !== 'PROJECTION_ONLY') continue;
-
     const cardFamily = deriveProjectionCardFamily(row);
+
+    // Use PROJECTION_FAMILY_LABELS as a strict allowlist.
+    // This has two effects:
+    //   1. Blocks odds-backed families (NBA_TOTAL, NHL_TOTAL, etc.) from leaking
+    //      into this section when they happen to carry execution_status=PROJECTION_ONLY
+    //      (e.g., blocked model runs or cards with synthetic line source).
+    //   2. Includes all rows for model-projection families (NHL_PLAYER_SHOTS,
+    //      NHL_1P_TOTAL, MLB_F5_TOTAL, MLB_PITCHER_K, etc.) regardless of whether
+    //      the individual card was odds-backed in that era — the model always
+    //      emits a projection even when a real line is available, so tracking
+    //      them all gives a more complete accuracy picture.
+    if (!PROJECTION_FAMILY_LABELS[cardFamily]) continue;
+
     const accumulator =
-      grouped.get(cardFamily) ||
+      grouped.get(cardFamily) ??
       {
         absErrorSum: 0,
         biasSum: 0,
@@ -477,6 +552,7 @@ export function buildProjectionSummaries(
     grouped.set(cardFamily, accumulator);
   }
 
+  // Return summaries sorted so families with actuals come first, then by label.
   return Array.from(grouped.values())
     .map((summary) => ({
       actualsAvailable: summary.sampleSize > 0,
