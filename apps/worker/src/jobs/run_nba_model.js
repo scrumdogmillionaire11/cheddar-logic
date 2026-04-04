@@ -173,32 +173,29 @@ const NBA_TEAM_ABBR_MAP = {
  * Queries player_availability for both teams. Checks whether any impact player
  * (from NBA_IMPACT_PLAYERS) is OUT or DTD/GTD.
  *
- * Conservative handling:
- * - No rows for either team → ['nba_availability_unresolved'] (sync hasn't run today)
- * - If team name can't be mapped to ESPN abbr → skip that team, don't block
+ * Fail-open design:
+ * - No rows (sync hasn't run yet, or team unmappable) → empty flags, no degradation
+ * - Only emits flags when there is positive evidence of a player being OUT/DTD
  *
  * @param {string} homeTeam  Full team name from odds snapshot, e.g. 'Boston Celtics'
  * @param {string} awayTeam  Full team name from odds snapshot, e.g. 'Miami Heat'
  * @returns {{ missingFlags: string[], uncertainFlags: string[], availabilityFlags: Array<{player:string,team:string,status:string}> }}
  */
 function buildNbaAvailabilityGate(homeTeam, awayTeam) {
+  const EMPTY = { missingFlags: [], uncertainFlags: [], availabilityFlags: [] };
   try {
     const homeAbbr = NBA_TEAM_ABBR_MAP[homeTeam] || null;
     const awayAbbr = NBA_TEAM_ABBR_MAP[awayTeam] || null;
 
-    if (!homeAbbr && !awayAbbr) {
-      // Cannot map either team — treat as unresolved
-      return { missingFlags: ['nba_availability_unresolved'], uncertainFlags: [], availabilityFlags: [] };
-    }
+    // No team mapping — can't query; proceed normally
+    if (!homeAbbr && !awayAbbr) return EMPTY;
 
     const allRows = [];
     if (homeAbbr) allRows.push(...getPlayerAvailabilityByTeam(homeAbbr, 'nba'));
     if (awayAbbr) allRows.push(...getPlayerAvailabilityByTeam(awayAbbr, 'nba'));
 
-    if (allRows.length === 0) {
-      // Sync has not run yet for today — availability unresolved
-      return { missingFlags: ['nba_availability_unresolved'], uncertainFlags: [], availabilityFlags: [] };
-    }
+    // Sync hasn't run yet — fail-open, don't degrade cards
+    if (allRows.length === 0) return EMPTY;
 
     const missingFlags = [];
     const uncertainFlags = [];
@@ -221,7 +218,7 @@ function buildNbaAvailabilityGate(homeTeam, awayTeam) {
   } catch (err) {
     // Fail-open: DB query errors must not block card generation
     console.log(`  [availability] buildNbaAvailabilityGate error (${err.message}) — skipping gate`);
-    return { missingFlags: [], uncertainFlags: [], availabilityFlags: [] };
+    return EMPTY;
   }
 }
 

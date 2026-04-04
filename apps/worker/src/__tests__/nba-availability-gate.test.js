@@ -42,21 +42,18 @@ const NBA_TEAM_ABBR_MAP = {
  */
 function makeGateFn(stubGetByTeam) {
   return function buildNbaAvailabilityGate(homeTeam, awayTeam) {
+    const EMPTY = { missingFlags: [], uncertainFlags: [], availabilityFlags: [] };
     try {
       const homeAbbr = NBA_TEAM_ABBR_MAP[homeTeam] || null;
       const awayAbbr = NBA_TEAM_ABBR_MAP[awayTeam] || null;
 
-      if (!homeAbbr && !awayAbbr) {
-        return { missingFlags: ['nba_availability_unresolved'], uncertainFlags: [], availabilityFlags: [] };
-      }
+      if (!homeAbbr && !awayAbbr) return EMPTY;
 
       const allRows = [];
       if (homeAbbr) allRows.push(...stubGetByTeam(homeAbbr, 'nba'));
       if (awayAbbr) allRows.push(...stubGetByTeam(awayAbbr, 'nba'));
 
-      if (allRows.length === 0) {
-        return { missingFlags: ['nba_availability_unresolved'], uncertainFlags: [], availabilityFlags: [] };
-      }
+      if (allRows.length === 0) return EMPTY;
 
       const missingFlags = [];
       const uncertainFlags = [];
@@ -194,19 +191,20 @@ runTest('Full roster with no OUT impact players: no flags, tier unchanged', () =
   assert.strictEqual(card.payloadData.missing_inputs.length, 0);
 });
 
-// Test 3: No rows for either team → nba_availability_unresolved
-runTest('No availability rows: emits nba_availability_unresolved', () => {
+// Test 3: No rows for either team → fail-open (empty flags, no degradation)
+runTest('No availability rows: fail-open, no flags emitted', () => {
   const buildGate = makeGateFn(() => []);
 
   const gate = buildGate('Boston Celtics', 'Miami Heat');
-  assert.ok(gate.missingFlags.includes('nba_availability_unresolved'), 'should flag nba_availability_unresolved');
-  assert.strictEqual(gate.availabilityFlags.length, 0);
+  assert.strictEqual(gate.missingFlags.length, 0, 'should have no missing flags when no data');
+  assert.strictEqual(gate.uncertainFlags.length, 0, 'should have no uncertain flags when no data');
+  assert.strictEqual(gate.availabilityFlags.length, 0, 'should have no availability flags when no data');
 
-  // Tier must NOT be capped (nba_availability_unresolved does not trigger tier cap)
+  // Tier must not be touched
   const card = makeCard('FIRE');
   applyAvailabilityGateToCard(card, gate);
-  assert.strictEqual(card.payloadData.tier, 'FIRE', 'tier should NOT be capped for unresolved flag');
-  assert.ok(card.payloadData.missing_inputs.includes('nba_availability_unresolved'));
+  assert.strictEqual(card.payloadData.tier, 'FIRE', 'tier should be unchanged when no availability data');
+  assert.strictEqual(card.payloadData.missing_inputs.length, 0, 'no missing_inputs pollution when no data');
 });
 
 // Test 4: DTD impact player → key_player_uncertain, tier NOT capped
@@ -227,12 +225,14 @@ runTest('DTD impact player adds key_player_uncertain but does not cap tier', () 
   assert.strictEqual(card.payloadData.tier, 'FIRE', 'DTD should not cap tier');
 });
 
-// Test 5: Unknown team name → nba_availability_unresolved (can't map to abbr)
-runTest('Unknown team names produce nba_availability_unresolved', () => {
+// Test 5: Unknown team names → fail-open (empty flags, no degradation)
+runTest('Unknown team names produce empty flags (fail-open)', () => {
   const buildGate = makeGateFn(() => []);
 
   const gate = buildGate('Unknown FC', 'Mystery Team');
-  assert.ok(gate.missingFlags.includes('nba_availability_unresolved'));
+  assert.strictEqual(gate.missingFlags.length, 0, 'unknown teams should not emit any flags');
+  assert.strictEqual(gate.uncertainFlags.length, 0);
+  assert.strictEqual(gate.availabilityFlags.length, 0);
 });
 
 // Test 6: LEAN card with OUT impact player — tier stays LEAN (no further cap needed)
