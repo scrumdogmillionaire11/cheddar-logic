@@ -1053,6 +1053,26 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
     );
     const marketTotal = toNumber(oddsSnapshot?.total);
 
+    // WI-0772: MoneyPuck Fenwick% + HDCF% enrichment
+    const mpFenwickHome = toNumber(raw?.moneypuck?.fenwick_pct?.home ?? null);
+    const mpFenwickAway = toNumber(raw?.moneypuck?.fenwick_pct?.away ?? null);
+    const mpHdcfHome = toNumber(raw?.moneypuck?.hdcf_pct?.home ?? null);
+    const mpHdcfAway = toNumber(raw?.moneypuck?.hdcf_pct?.away ?? null);
+
+    const fenwickDiff =
+      mpFenwickHome !== null && mpFenwickAway !== null
+        ? Number((mpFenwickHome - mpFenwickAway).toFixed(3))
+        : null;
+    const hdcfDiff =
+      mpHdcfHome !== null && mpHdcfAway !== null
+        ? Number((mpHdcfHome - mpHdcfAway).toFixed(3))
+        : null;
+    const shotQualityEdge =
+      fenwickDiff !== null && hdcfDiff !== null
+        ? Number((0.5 * fenwickDiff + 0.5 * hdcfDiff).toFixed(3))
+        : null;
+    const shotQualityMissing = fenwickDiff === null || hdcfDiff === null;
+
     const homeSkaterInjuryFactor = homeSkaterInjuryFactorGlobal;
     const awaySkaterInjuryFactor = awaySkaterInjuryFactorGlobal;
     // Defense-side: conservative factor applied to full out-count (no positional data yet).
@@ -1088,8 +1108,13 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
 
     if (paceResult) {
       if (marketTotal !== null) {
+        const projTotalBase = Number(paceResult.expectedTotal.toFixed(3));
+        const shotQualityModifier =
+          shotQualityEdge !== null
+            ? Number((shotQualityEdge * 0.15).toFixed(3))
+            : 0;
         const projectedTotalForCard = Number(
-          paceResult.expectedTotal.toFixed(3),
+          (projTotalBase + shotQualityModifier).toFixed(3),
         );
         const edge =
           Math.round((projectedTotalForCard - marketTotal) * 100) / 100;
@@ -1163,6 +1188,17 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
             total_clamped_low: paceResult.totalClampedLow,
             modifier_cap_applied: paceResult.modifierCapApplied,
             modifier_breakdown: paceResult.modifierBreakdown,
+            proj_total_base: projTotalBase,
+            proj_total_adjusted: projectedTotalForCard,
+            shot_quality_inputs: {
+              fenwick_diff: fenwickDiff,
+              hdcf_diff: hdcfDiff,
+              shot_quality_edge: shotQualityEdge,
+              modifier: shotQualityModifier,
+            },
+            pricing_context: shotQualityMissing
+              ? 'fenwick_pct and hdcf_pct absent — shot quality modifier not applied'
+              : null,
           },
           driverScore: 0.5,
           driverStatus: 'ok',
