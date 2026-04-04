@@ -953,11 +953,14 @@ function computeProjectionFloorF5(oddsSnapshot) {
     let homeSkillRa9 = resolvePitcherSkill(mlb.home_pitcher);
     let awaySkillRa9 = resolvePitcherSkill(mlb.away_pitcher);
 
-    // WITHOUT_ODDS_MODE: raw_data is null — fall back to DB lookup by team abbreviation
-    if (homeSkillRa9 === null && oddsSnapshot?.home_team) {
+    // WITHOUT_ODDS_MODE: raw_data is null — fall back to DB lookup by team abbreviation.
+    // Guard: only call DB when the pitcher object itself is absent; if a pitcher object
+    // exists but lacks siera/xfip/xera (resolvePitcherSkill returns null), we fall
+    // through to PROJECTION_FLOOR_F5_FALLBACK rather than fetching stale DB data.
+    if (homeSkillRa9 === null && oddsSnapshot?.home_team && mlb.home_pitcher == null) {
       homeSkillRa9 = getPitcherEraFromDb(oddsSnapshot.home_team);
     }
-    if (awaySkillRa9 === null && oddsSnapshot?.away_team) {
+    if (awaySkillRa9 === null && oddsSnapshot?.away_team && mlb.away_pitcher == null) {
       awaySkillRa9 = getPitcherEraFromDb(oddsSnapshot.away_team);
     }
 
