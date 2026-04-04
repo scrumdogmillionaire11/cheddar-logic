@@ -1542,6 +1542,17 @@ async function runNHLPlayerShotsModel() {
         parsePlayerIds(process.env.NHL_SOG_EXCLUDE_PLAYER_IDS),
       );
       const nhlSeasonKey = resolveNhlSeasonKey();
+
+      // Hoist block-rates staleness check — single DB query per model run (not per player).
+      const blkRatesMaxAge = db.prepare(
+        `SELECT MAX(updated_at) AS max_updated_at FROM player_blk_rates WHERE season = ?`
+      ).get(nhlSeasonKey);
+      const blkRatesStale = (() => {
+        if (!blkRatesMaxAge?.max_updated_at) return true;
+        const ageMs = Date.now() - new Date(blkRatesMaxAge.max_updated_at).getTime();
+        return ageMs > 8 * 24 * 60 * 60 * 1000;
+      })();
+
       if (excludedPlayerIds.size > 0) {
         console.log(
           `[${JOB_NAME}] Applying NHL_SOG_EXCLUDE_PLAYER_IDS (${excludedPlayerIds.size} players)`,
@@ -3029,6 +3040,10 @@ async function runNHLPlayerShotsModel() {
                 LIMIT 1
               `).get(String(player.player_id), nhlSeasonKey);
 
+              if (!blkRateRow) {
+                console.warn(`[run-nhl-player-shots-model] WARN: no player_blk_rates row for player ${player.player_id} season ${nhlSeasonKey} — BLK mu will be 0`);
+              }
+
               const blkLineCandidates = EVENT_PRICING_DISABLED
                 ? []
                 : resolvePlayerPropLineCandidatesWithFallback({
@@ -3256,6 +3271,10 @@ async function runNHLPlayerShotsModel() {
                     role_stability: blkProjection.role_stability ?? roleStability,
                   },
                 };
+
+                if (blkRatesStale) {
+                  payloadDataBlk.missing_inputs = ['block_rates_stale'];
+                }
 
                 applyNhlDecisionBasisMeta(payloadDataBlk, {
                   usingRealLine: blkUsingRealLine,
