@@ -1506,12 +1506,17 @@ async function runMLBModel({
               const pd = driver.prop_decision;
               const missingInputs = pd.missing_inputs ?? [];
               const degradedInputs = pd.degraded_inputs ?? [];
-              // Map existing model-layer flags → classifier input signals
+              // WI-0770: use real swstr_pct from DB via model output (starter_swstr_pct
+              // is the raw DB value returned by calculateProjectionK — null when
+              // season_swstr_pct not yet populated by pull_mlb_statcast).
+              const _realSwstrPct = driver.projection?.starter_swstr_pct ?? null;
+              const _statcastSwstrMissing = missingInputs.includes('statcast_swstr');
+              // Map model-layer flags → classifier input signals
               const _starter = {
                 k_pct:       missingInputs.includes('starter_k_pct') ? null : 0.25,
-                swstr_pct:   degradedInputs.includes('starter_whiff_proxy') ? null : 0.12,
+                swstr_pct:   _statcastSwstrMissing ? null : _realSwstrPct,
                 csw_pct:     null,
-                whiff_proxy: degradedInputs.includes('starter_whiff_proxy') ? 0.1 : null,
+                whiff_proxy: null, // WI-0770: no hardcoded proxy — absent means absent
               };
               const _leash = {
                 pitch_count_avg: missingInputs.includes('leash_metric') ? null : 90,
@@ -1526,6 +1531,8 @@ async function runMLBModel({
               pd.model_quality        = _qr.model_quality;
               pd.proxy_fields         = _qr.proxies;
               pd.degradation_reasons  = [..._qr.hardMissing, ..._qr.proxies];
+              // WI-0770: surface statcast_inputs in prop_decision for downstream inspection
+              pd.statcast_inputs      = driver.pitcher_k_result?.statcast_inputs ?? null;
               // Dedup pre-existing missing_inputs and flags
               pd.missing_inputs = dedupeFlags(pd.missing_inputs ?? []);
               pd.flags          = dedupeFlags(pd.flags ?? []);
@@ -1536,7 +1543,7 @@ async function runMLBModel({
               const _pitcher = (_mlbRaw.mlb ?? {})[`${sideStr}_pitcher`];
               console.log(`[MLB_K_AUDIT] ${JSON.stringify({
                 pitcher:                  _pitcher?.full_name ?? `${sideStr}_sp`,
-                starter_skill_status:     (degradedInputs.includes('starter_whiff_proxy') ||
+                starter_skill_status:     (missingInputs.includes('statcast_swstr') ||
                                            missingInputs.includes('starter_k_pct')) ? 'PARTIAL' : 'COMPLETE',
                 opponent_contact_status:  missingInputs.includes('opponent_contact_profile') ? 'PARTIAL' : 'COMPLETE',
                 leash_status:             missingInputs.includes('leash_metric') ? 'PARTIAL' : 'COMPLETE',

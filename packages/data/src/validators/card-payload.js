@@ -294,11 +294,12 @@ const mlbPitcherKPayloadSchema = z
           message: 'PROJECTION_ONLY pitcher_k card must not set tier',
         });
       }
-      if (payload.status_cap && payload.status_cap !== 'PASS') {
+      if (payload.status_cap && payload.status_cap !== 'PASS' && payload.status_cap !== 'LEAN') {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['status_cap'],
-          message: 'PROJECTION_ONLY pitcher_k card must cap at PASS',
+          // WI-0770: LEAN allowed when statcast_swstr absent; PLAY is never valid for PROJECTION_ONLY
+          message: 'PROJECTION_ONLY pitcher_k card must cap at PASS or LEAN',
         });
       }
       for (const key of ['line_source', 'over_price', 'under_price', 'best_line_bookmaker', 'margin']) {
