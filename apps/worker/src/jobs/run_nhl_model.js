@@ -1098,6 +1098,16 @@ function generateNHLMarketCallCards(
           if (a - h > 15) return 'PUBLIC_HEAVY_AWAY';
           return 'BALANCED';
         })(),
+        sharp_divergence: (() => {
+          const circaH = oddsSnapshot?.circa_handle_pct_home;
+          const dkH    = oddsSnapshot?.dk_bets_pct_home;
+          // Either source absent → null
+          if (circaH == null || dkH == null) return null;
+          const diff = Math.abs(circaH - dkH);
+          if (diff >= 20) return 'SHARP_VS_PUBLIC';
+          if (diff < 10)  return 'SHARP_ALIGNED';
+          return null; // 10–19 range: inconclusive, emit null
+        })(),
         disclaimer:
           'Analysis provided for educational purposes. Not a recommendation.',
         generated_at: now,
@@ -1266,6 +1276,16 @@ function generateNHLMarketCallCards(
           if (h - a > 15) return 'PUBLIC_HEAVY_HOME';
           if (a - h > 15) return 'PUBLIC_HEAVY_AWAY';
           return 'BALANCED';
+        })(),
+        sharp_divergence: (() => {
+          const circaH = oddsSnapshot?.circa_handle_pct_home;
+          const dkH    = oddsSnapshot?.dk_bets_pct_home;
+          // Either source absent → null
+          if (circaH == null || dkH == null) return null;
+          const diff = Math.abs(circaH - dkH);
+          if (diff >= 20) return 'SHARP_VS_PUBLIC';
+          if (diff < 10)  return 'SHARP_ALIGNED';
+          return null; // 10–19 range: inconclusive, emit null
         })(),
         disclaimer:
           'Analysis provided for educational purposes. Not a recommendation.',
@@ -1443,6 +1463,16 @@ function generateNHLMarketCallCards(
           if (h - a > 15) return 'PUBLIC_HEAVY_HOME';
           if (a - h > 15) return 'PUBLIC_HEAVY_AWAY';
           return 'BALANCED';
+        })(),
+        sharp_divergence: (() => {
+          const circaH = oddsSnapshot?.circa_handle_pct_home;
+          const dkH    = oddsSnapshot?.dk_bets_pct_home;
+          // Either source absent → null
+          if (circaH == null || dkH == null) return null;
+          const diff = Math.abs(circaH - dkH);
+          if (diff >= 20) return 'SHARP_VS_PUBLIC';
+          if (diff < 10)  return 'SHARP_ALIGNED';
+          return null; // 10–19 range: inconclusive, emit null
         })(),
         disclaimer:
           'Analysis provided for educational purposes. Not a recommendation.',

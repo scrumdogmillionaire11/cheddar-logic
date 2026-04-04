@@ -23,6 +23,7 @@
 const {
   getActiveGamesForSplits,
   updateOddsSnapshotVsinSplits,
+  updateOddsSnapshotCircaSplits,
 } = require('@cheddar-logic/data');
 
 const {
@@ -173,11 +174,70 @@ async function runPullVsinSplits() {
 
   log(`Done — matched=${matches.length} written=${totalWritten}`);
 
+  // ─── CIRCA pass (soft-fail — sharp splits) ────────────────────────────────────
+  let circaTotalWritten = 0;
+  const circaSportStats = {};
+  try {
+    log('Starting CIRCA splits pass');
+    const { html: circaHtml, sourceStatus: circaStatus, error: circaFetchError } =
+      await fetchSplitsHtml({ source: 'CIRCA' });
+
+    if (circaStatus !== 'OK') {
+      warn(`CIRCA fetchSplitsHtml returned ${circaStatus}${circaFetchError ? ': ' + circaFetchError : ''} — skipping CIRCA pass`);
+    } else {
+      const circaGames = parseSplitsHtml(circaHtml, 'CIRCA');
+      log(`CIRCA: parsed ${circaGames.length} games`);
+
+      const circaMatches = matchSplitsToGameId(circaGames, knownGames);
+      log(`CIRCA: matched ${circaMatches.length}/${dbGames.length} games`);
+
+      for (const { gameId, game } of circaMatches) {
+        const sport = game.sport || 'UNKNOWN';
+        if (!SUPPORTED_SPORTS.includes(sport)) continue;
+
+        const validMarkets = (game.markets || []).filter((m) => m.valid);
+        const spreadMkt = validMarkets.find((m) => m.marketType === 'SPREAD');
+        const mlMkt     = validMarkets.find((m) => m.marketType === 'ML');
+        const src = spreadMkt || mlMkt;
+
+        if (!src) {
+          warn(`CIRCA ${sport} ${gameId}: no valid SPREAD or ML market — skipping`);
+          continue;
+        }
+
+        try {
+          const rows = updateOddsSnapshotCircaSplits({
+            gameId,
+            circaData: {
+              circa_handle_pct_home:  src.public_handle_pct_home  ?? null,
+              circa_handle_pct_away:  src.public_handle_pct_away  ?? null,
+              circa_tickets_pct_home: src.public_bets_pct_home    ?? null,
+              circa_tickets_pct_away: src.public_bets_pct_away    ?? null,
+            },
+          });
+          if (rows > 0) {
+            circaTotalWritten++;
+            if (!circaSportStats[sport]) circaSportStats[sport] = { matched: 0, written: 0 };
+            circaSportStats[sport].matched++;
+            circaSportStats[sport].written++;
+          }
+        } catch (err) {
+          error(`CIRCA DB write error for ${sport} ${gameId}: ${err.message}`);
+        }
+      }
+      log(`CIRCA done — matched=${circaMatches.length} written=${circaTotalWritten}`);
+    }
+  } catch (err) {
+    warn(`CIRCA pass failed (non-fatal): ${err.message}`);
+  }
+
   return {
     success: true,
     totalMatched: matches.length,
     totalWritten,
     sportStats,
+    circaTotalWritten,
+    circaSportStats,
   };
 }
 
