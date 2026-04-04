@@ -1091,7 +1091,11 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   }
   if (starterKPct === null) missingInputs.push('starter_k_pct');
   if (!pitcher?.handedness) missingInputs.push('starter_handedness');
-  if (starterSwStrPct === null) degradedInputs.push('starter_whiff_proxy');
+  // WI-0770: swstr_pct is a real Statcast signal — its absence is a true missing
+  // input (not a degraded proxy). When absent: flag statcast_swstr, cap at LEAN.
+  if (starterSwStrPct === null) missingInputs.push('statcast_swstr');
+  // season_avg_velo absence noted but does not block (velo modifier simply omitted)
+  if ((pitcher?.season_avg_velo ?? null) === null) missingInputs.push('statcast_velo');
   missingInputs.push(...(opponentProfile.missing_inputs || []));
   if (
     opponentProfile.opp_obp === null &&
@@ -1156,6 +1160,14 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   const temp = weather?.temp_at_first_pitch ?? weather?.temp_f ?? 72;
   if (temp < 45) kMean *= 0.95;
 
+  // WI-0770: velocity tier modifier — only applied when season_avg_velo is present
+  const veloMph = toFiniteNumberOrNull(pitcher?.season_avg_velo);
+  if (veloMph !== null) {
+    if (veloMph >= 95) kMean *= 1.025;      // high-velo advantage: +2.5%
+    else if (veloMph < 90) kMean *= 0.975; // low-velo penalty: -2.5%
+    // 90–94.9: no modifier
+  }
+
   const roundedMean = Math.round(kMean * 10) / 10;
   const ladder = buildPitcherKProbabilityLadder(roundedMean);
   const overPlayableAtOrBelow = roundToHalf(
@@ -1186,9 +1198,14 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
       : degradedInputs.length > 0 || projectionFlags.length > 0
         ? 'DEGRADED_MODEL'
         : 'FULL_MODEL',
-    status_cap: 'PASS',
+    // WI-0770: null swstr_pct caps card at LEAN — real signal absent, not proxy-filled
+    status_cap: starterSwStrPct === null ? 'LEAN' : 'PASS',
     missing_inputs: Array.from(new Set(missingInputs)),
     degraded_inputs: Array.from(new Set(degradedInputs)),
+    statcast_inputs: {
+      swstr_pct: starterSwStrPct,
+      season_avg_velo: toFiniteNumberOrNull(pitcher?.season_avg_velo) ?? null,
+    },
     playability: {
       over_playable_at_or_below: overPlayableAtOrBelow,
       under_playable_at_or_above: underPlayableAtOrAbove,
@@ -2394,4 +2411,6 @@ module.exports = {
   normalizePitcherKMarketInput,
   selectPitcherKUnderMarket,
   computePitcherKDriverCards,
+  // Exported for unit testing (WI-0770)
+  calculateProjectionK,
 };

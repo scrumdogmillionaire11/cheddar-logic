@@ -54,6 +54,7 @@ const { ingestNstBlkRates } = require('../jobs/ingest_nst_blk_rates');
 const { runNHLPlayerShotsModel } = require('../jobs/run_nhl_player_shots_model');
 const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
 const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
+const { pullMlbStatcast } = require('../jobs/pull_mlb_statcast');
 
 // ─── isFixedDue ──────────────────────────────────────────────────────────────
 // Copied from schedulers/main.js#isFixedDue — pure helper, no dependencies.
@@ -271,6 +272,14 @@ function computePlayerPropsDueJobs(
         execute: pullMlbPitcherStats,
         args: { jobKey: mlbStatsKey, dryRun },
         reason: `player-props daily MLB pitcher stats refresh (${hhmm} ET)`,
+      });
+      const mlbStatcastKey = `${keyMlbFixed(dateStr, hhmm)}|statcast`;
+      jobs.push({
+        jobName: 'pull_mlb_statcast',
+        jobKey: mlbStatcastKey,
+        execute: pullMlbStatcast,
+        args: { jobKey: mlbStatcastKey, dryRun },
+        reason: `player-props daily MLB Statcast velo/whiff% refresh (${hhmm} ET)`,
       });
       const mlbWeatherKey = `${keyMlbFixed(dateStr, hhmm)}|weather`;
       jobs.push({
