@@ -1,6 +1,7 @@
 'use strict';
 
 const { upsertPlayerBlkRates } = require('@cheddar-logic/data');
+const { deriveNhlSeasonKey } = require('./pull_moneypuck_blk_rates');
 
 function parseCsv(content) {
   const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
@@ -109,7 +110,7 @@ async function fetchCsv(url, fetchImpl = fetch) {
 }
 
 async function ingestNstBlkRates({
-  season = process.env.NHL_CURRENT_SEASON || '20242025',
+  season = process.env.NHL_CURRENT_SEASON || deriveNhlSeasonKey(),
   seasonUrl = process.env.NHL_BLK_NST_SEASON_CSV_URL,
   l10Url = process.env.NHL_BLK_NST_L10_CSV_URL,
   l5Url = process.env.NHL_BLK_NST_L5_CSV_URL,

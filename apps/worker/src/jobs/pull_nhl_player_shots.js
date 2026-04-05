@@ -13,6 +13,8 @@ const {
   listTrackedPlayers,
 } = require('@cheddar-logic/data');
 
+const { deriveNhlSeasonKey } = require('./pull_moneypuck_blk_rates');
+
 const NHL_API_BASE = 'https://api-web.nhle.com/v1/player';
 const DEFAULT_SLEEP_MS = Number(process.env.NHL_SOG_SLEEP_MS || 500);
 const MAX_RETRIES = Number(process.env.NHL_SOG_FETCH_RETRIES || 4);
@@ -393,7 +395,7 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
           let ppRatePer60 = null;
           try {
             const db = getDatabase();
-            const currentSeason = process.env.NHL_CURRENT_SEASON || '20242025';
+            const currentSeason = process.env.NHL_CURRENT_SEASON || deriveNhlSeasonKey();
             const ppRateRow = db
               .prepare(
                 'SELECT pp_shots_per60, pp_l10_shots_per60, pp_l5_shots_per60 FROM player_pp_rates WHERE nhl_player_id = ? AND season = ? LIMIT 1',
@@ -409,7 +411,7 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
           let ppRateL5Per60 = null;
           try {
             const db2 = getDatabase();
-            const currentSeason2 = process.env.NHL_CURRENT_SEASON || '20242025';
+            const currentSeason2 = process.env.NHL_CURRENT_SEASON || deriveNhlSeasonKey();
             const ppRateRow2 = db2
               .prepare(
                 'SELECT pp_l10_shots_per60, pp_l5_shots_per60 FROM player_pp_rates WHERE nhl_player_id = ? AND season = ? LIMIT 1',
