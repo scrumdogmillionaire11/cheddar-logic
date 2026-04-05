@@ -24,7 +24,7 @@ const dbBackup = require('../utils/db-backup.js');
 const {
   buildMarketKey,
   createMarketError,
-  incrementTrackingStat,
+  recomputeTrackingStats,
   insertProjectionAudit,
   getDatabase,
   insertJobRun,
@@ -2305,9 +2305,9 @@ async function settlePendingCards({
         `[SettleCards] CLV telemetry — resolvedAtSettlement: ${clvResolvedAtSettlement}, leftOpenAfterSettlement: ${clvOpenAfterSettlement}, reconciledOpenRows: ${clvReconciliation.reconciled}, stillOpen: ${clvReconciliation.unresolved}`,
       );
 
-      // --- Step 2: Increment tracking_stats (race-safe) ---
+      // --- Step 2: Write projection_audit rows + recompute tracking_stats ---
 
-      // Aggregate only cards settled in THIS run (delta-based), split by market.
+      // Write one projection_audit row per settled card in this run
       const aggregateRows = db
         .prepare(
           `
@@ -2320,8 +2320,6 @@ async function settlePendingCards({
         )
         .all(jobStartTime);
 
-      const marketDeltas = {};
-      const verificationDeltas = {};
       for (const row of aggregateRows) {
         const sport = String(row.sport || '').toUpperCase();
         const cardResultMetadata = parseJsonObject(row.metadata) || {};
@@ -2331,10 +2329,6 @@ async function settlePendingCards({
           cardResultMetadata,
         });
         const rawMarketType = String(row.market_type || 'UNKNOWN').toUpperCase();
-        const trackingMarketType =
-          rawMarketType === 'TOTAL' && period === '1P'
-            ? 'total_1p'
-            : rawMarketType.toLowerCase();
 
         // --- projection_audit: write one row per settled projection (all markets, including 1P) ---
         try {
@@ -2368,129 +2362,12 @@ async function settlePendingCards({
             `[SettleCards] insertProjectionAudit skipped for card_result ${row.id}: ${auditErr.message}`,
           );
         }
-
-        // 1st-period totals are a temporary/non-recurring market — exclude from P&L record
-        if (trackingMarketType === 'total_1p') continue;
-
-        const key = `${sport}|${trackingMarketType}`;
-
-        if (!marketDeltas[key]) {
-          marketDeltas[key] = {
-            sport,
-            marketType: trackingMarketType,
-            period,
-            deltaWins: 0,
-            deltaLosses: 0,
-            deltaPushes: 0,
-            deltaPnl: 0,
-          };
-        }
-
-        const pnl = Number(row.pnl_units) || 0;
-        if (row.result === 'win') {
-          marketDeltas[key].deltaWins += 1;
-          marketDeltas[key].deltaPnl += pnl;
-        } else if (row.result === 'loss') {
-          marketDeltas[key].deltaLosses += 1;
-          marketDeltas[key].deltaPnl += pnl;
-        } else if (row.result === 'push') {
-          marketDeltas[key].deltaPushes += 1;
-          marketDeltas[key].deltaPnl += pnl;
-        }
-
-        // Accumulate verification-status dimension
-        const verificationStatus = typeof row.sharp_price_status === 'string' && row.sharp_price_status
-          ? row.sharp_price_status
-          : 'UNTAGGED';
-        const vKey = `${sport}|${trackingMarketType}|${verificationStatus}`;
-        if (!verificationDeltas[vKey]) {
-          verificationDeltas[vKey] = {
-            sport,
-            marketType: trackingMarketType,
-            verificationStatus,
-            deltaWins: 0,
-            deltaLosses: 0,
-            deltaPushes: 0,
-            deltaPnl: 0,
-          };
-        }
-        if (row.result === 'win') {
-          verificationDeltas[vKey].deltaWins += 1;
-          verificationDeltas[vKey].deltaPnl += pnl;
-        } else if (row.result === 'loss') {
-          verificationDeltas[vKey].deltaLosses += 1;
-          verificationDeltas[vKey].deltaPnl += pnl;
-        } else if (row.result === 'push') {
-          verificationDeltas[vKey].deltaPushes += 1;
-          verificationDeltas[vKey].deltaPnl += pnl;
-        }
       }
 
-      let statsIncremented = 0;
-      for (const deltas of Object.values(marketDeltas)) {
-        const {
-          sport,
-          marketType,
-          period,
-          deltaWins,
-          deltaLosses,
-          deltaPushes,
-          deltaPnl,
-        } = deltas;
-
-        incrementTrackingStat({
-          id: `stat-${sport}-${marketType}-alltime`,
-          statKey: `${sport}|${marketType}|all|all|all|alltime`,
-          sport,
-          marketType,
-          direction: 'all',
-          confidenceTier: 'all',
-          driverKey: period === '1P' ? 'period_1p' : 'all',
-          timePeriod: 'alltime',
-          deltaWins,
-          deltaLosses,
-          deltaPushes,
-          deltaPnl,
-          metadata: {
-            lastIncrementAt: new Date().toISOString(),
-            jobRunId,
-            period,
-          },
-        });
-
-        console.log(
-          `[SettleCards] Incremented tracking_stat for ${sport}/${marketType}: +${deltaWins}W / +${deltaLosses}L / +${deltaPushes}P (pnl: ${deltaPnl >= 0 ? '+' : ''}${deltaPnl.toFixed(3)})`,
-        );
-        statsIncremented++;
-      }
-
-      // Emit verification-status segmented stats
-      for (const vd of Object.values(verificationDeltas)) {
-        const { sport, marketType, verificationStatus, deltaWins, deltaLosses, deltaPushes, deltaPnl } = vd;
-        const driverKey = `edge_verification:${verificationStatus}`;
-        incrementTrackingStat({
-          id: `stat-${sport}-${marketType}-${verificationStatus}-alltime`,
-          statKey: `${sport}|${marketType}|all|all|${driverKey}|alltime`,
-          sport,
-          marketType,
-          direction: 'all',
-          confidenceTier: 'all',
-          driverKey,
-          timePeriod: 'alltime',
-          deltaWins,
-          deltaLosses,
-          deltaPushes,
-          deltaPnl,
-          metadata: {
-            lastIncrementAt: new Date().toISOString(),
-            jobRunId,
-          },
-        });
-        statsIncremented++;
-      }
-
+      // --- Step 2b: Recompute tracking_stats from projection_audit (excludes 1P rows) ---
+      const recomputeResult = recomputeTrackingStats({ fullReplace: false });
       console.log(
-        `[SettleCards] Step 2 complete — ${statsIncremented} tracking_stats incremented`,
+        `[SettleCards] Step 2 complete — tracking_stats recomputed (${recomputeResult.rows} rows upserted)`,
       );
 
       const cardsArchived = 0;
@@ -2501,7 +2378,7 @@ async function settlePendingCards({
         `[SettleCards] Coverage after — pending: ${coverageAfter.totalPending}, settledFinalDisplayed: ${coverageAfter.settledDisplayedFinal}, missingResults: ${coverageAfter.finalDisplayedMissingResults}, unsettledFinalDisplayed: ${coverageAfter.finalDisplayedUnsettled}, blockedNoDisplay: ${coverageAfter.pendingWithFinalNoDisplay}, blockedMissingMarketKey: ${coverageAfter.pendingWithFinalMissingMarketKey}, blockedNoFinal: ${coverageAfter.pendingDisplayedWithoutFinal}`,
       );
       console.log(
-        `[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, cardsRaced: ${cardsRaced}, cardsSkipped: ${totalSkipped}, cardsArchived: ${cardsArchived}, statsIncremented: ${statsIncremented}`,
+        `[SettleCards] Job complete — cardsSettled: ${cardsSettled}, cardsErrored: ${cardsErrored}, cardsRaced: ${cardsRaced}, cardsSkipped: ${totalSkipped}, cardsArchived: ${cardsArchived}, trackingStatsRows: ${recomputeResult.rows}`,
       );
 
       return {
@@ -2513,7 +2390,7 @@ async function settlePendingCards({
         cardsRaced,
         cardsSkipped: totalSkipped,
         cardsArchived,
-        statsIncremented,
+        trackingStatsRows: recomputeResult.rows,
         coverage: {
           pending: coverageBefore.totalPending,
           eligible: eligibleCount,

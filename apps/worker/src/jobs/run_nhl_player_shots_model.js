@@ -1867,6 +1867,7 @@ async function runNHLPlayerShotsModel() {
 
             let opponentFactor = 1.0;
             let paceFactor = 1.0;
+            let blkOppAttemptFactor = 1.0;
             let opponentFactorMissing = false;
             let paceFactorMissing = false;
             const opponentLookupNote = !opponentAbbrev
@@ -1971,6 +1972,11 @@ async function runNHLPlayerShotsModel() {
 
               const teamPaceProxy = Number(factorRow?.team_pace_proxy);
               const opponentPaceProxy = Number(factorRow?.opponent_pace_proxy);
+              // BLK: opponent attempt factor — opponent's corsi proxy (shots generated ratio)
+              // Clamping to [0.90, 1.12] is enforced inside projectBlkV1.
+              if (Number.isFinite(opponentPaceProxy) && opponentPaceProxy > 0) {
+                blkOppAttemptFactor = opponentPaceProxy;
+              }
               if (
                 Number.isFinite(teamPaceProxy) &&
                 teamPaceProxy > 0 &&
@@ -3090,6 +3096,16 @@ async function runNHLPlayerShotsModel() {
                       ? 'OVER'
                       : 'UNDER'
                     : 'OVER';
+                // BLK: playoff tightening — games in NHL playoff window (Apr 19 – Jun 30) get 1.06 boost.
+                const blkGameDate = new Date(game.game_time_utc);
+                const blkGameMonth = blkGameDate.getUTCMonth() + 1; // 1-12
+                const blkGameDay = blkGameDate.getUTCDate();
+                const blkInPlayoffs =
+                  (blkGameMonth === 4 && blkGameDay >= 19) ||
+                  blkGameMonth === 5 ||
+                  blkGameMonth === 6;
+                const blkPlayoffFactor = blkInPlayoffs ? 1.06 : 1.0;
+
                 const blkProjection = projectBlkV1({
                   player_id: player.player_id,
                   game_id: resolvedGameId,
@@ -3106,7 +3122,15 @@ async function runNHLPlayerShotsModel() {
                   market_price_over: blkMarket.over_price,
                   market_price_under: blkMarket.under_price,
                   play_direction: blkLeanSide,
+                  opponent_attempt_factor: blkOppAttemptFactor,
+                  playoff_tightening_factor: blkPlayoffFactor,
+                  lines_to_price: blkLineCandidates
+                    .map((c) => c.line)
+                    .filter((l) => typeof l === 'number' && Number.isFinite(l)),
                 });
+                if (blkLineCandidates.length > 1) {
+                  console.debug(`[${JOB_NAME}] [blk-multi-line] ${playerName}: pricing ${blkLineCandidates.length} lines: ${blkLineCandidates.map((c) => c.line).join(', ')}`);
+                }
                 const blkConfidence = Math.max(
                   0.55,
                   Math.min(
@@ -3302,6 +3326,153 @@ async function runNHLPlayerShotsModel() {
                   console.error(
                     `[${JOB_NAME}] Failed to insert BLK card: ${insertErr.message}`,
                   );
+                }
+
+                // Multi-line BLK: emit additional cards for 2+ and 3+ lines when
+                // blk_mu meets the minimum threshold for that line to be meaningful.
+                // blkLineCandidates[0] was already emitted as the primary card above.
+                if (!EVENT_PRICING_DISABLED && blkLineCandidates.length > 1) {
+                  const BLK_EXTRA_LINE_MIN_MU = { '2.5': 2.0, '3.5': 2.8, '4.5': 3.6 };
+                  for (const extraCandidate of blkLineCandidates.slice(1)) {
+                    const extraLine = extraCandidate.line;
+                    const minMu = BLK_EXTRA_LINE_MIN_MU[String(extraLine)] ?? (extraLine - 0.5);
+                    if (blkProjection.blk_mu < minMu) continue;
+                    const extraFairOverProb = blkProjection.fair_over_prob_by_line?.[String(extraLine)];
+                    const extraFairUnderProb = blkProjection.fair_under_prob_by_line?.[String(extraLine)] ?? null;
+                    if (extraFairOverProb == null) continue;
+                    // Compute edge / EV inline for this line
+                    let extraEdgeOverPp = null;
+                    let extraEvOver = null;
+                    let extraEdgeUnderPp = null;
+                    let extraEvUnder = null;
+                    if (extraCandidate.over_price != null) {
+                      const implOvr = americanToImplied(extraCandidate.over_price);
+                      extraEdgeOverPp = extraFairOverProb - implOvr;
+                      const payoutOvr = extraCandidate.over_price >= 0
+                        ? extraCandidate.over_price / 100
+                        : 100 / Math.abs(extraCandidate.over_price);
+                      extraEvOver = extraFairOverProb * payoutOvr - (1 - extraFairOverProb);
+                    }
+                    if (extraCandidate.under_price != null && extraFairUnderProb != null) {
+                      const implUnd = americanToImplied(extraCandidate.under_price);
+                      extraEdgeUnderPp = extraFairUnderProb - implUnd;
+                      const payoutUnd = extraCandidate.under_price >= 0
+                        ? extraCandidate.under_price / 100
+                        : 100 / Math.abs(extraCandidate.under_price);
+                      extraEvUnder = extraFairUnderProb * payoutUnd - (1 - extraFairUnderProb);
+                    }
+                    const extraLeanSide = (extraFairOverProb != null && extraFairUnderProb != null)
+                      ? (extraFairOverProb >= extraFairUnderProb ? 'OVER' : 'UNDER')
+                      : 'OVER';
+                    const extraPropDecision = buildCanonicalPropDecision({
+                      projection: blkProjection.blk_mu,
+                      marketLine: extraLine,
+                      marketPriceOver: extraCandidate.over_price,
+                      marketPriceUnder: extraCandidate.under_price,
+                      fairOverProb: extraFairOverProb,
+                      fairUnderProb: extraFairUnderProb,
+                      impliedOverProb: extraCandidate.over_price != null
+                        ? americanToImplied(extraCandidate.over_price) : null,
+                      impliedUnderProb: extraCandidate.under_price != null
+                        ? americanToImplied(extraCandidate.under_price) : null,
+                      edgeOverPp: extraEdgeOverPp,
+                      edgeUnderPp: extraEdgeUnderPp,
+                      evOver: extraEvOver,
+                      evUnder: extraEvUnder,
+                      opportunityScore: blkProjection.opportunity_score,
+                      confidence: blkConfidence,
+                      roleStability: blkProjection.role_stability ?? roleStability,
+                      l5Mean: l5BlkMean,
+                      flags: blkFlags,
+                      usingRealLine: true,
+                    });
+                    const extraLegacy = deriveLegacyActionFromVerdict(extraPropDecision.verdict);
+                    const extraFairLine = roundToHalfLine(blkProjection.blk_mu) ?? extraLine;
+                    const extraPrediction = `${playerName} ${extraLeanSide} ${extraLine} BLK | Proj ${blkProjection.blk_mu.toFixed(1)} · Fair ${extraFairLine}`;
+                    const extraPayload = {
+                      ...payloadDataBlk,
+                      line: extraLine,
+                      market_price_over: extraCandidate.over_price,
+                      market_price_under: extraCandidate.under_price,
+                      market_bookmaker: extraCandidate.bookmaker ?? null,
+                      price: extraLeanSide === 'OVER'
+                        ? extraCandidate.over_price : extraCandidate.under_price,
+                      prediction: extraPrediction,
+                      action: extraLegacy.action,
+                      status: extraLegacy.status,
+                      classification: extraLegacy.classification,
+                      tier: extraPropDecision.verdict === 'PLAY'
+                        ? 'HOT' : extraPropDecision.verdict === 'WATCH' ? 'WATCH' : 'COLD',
+                      prop_decision: extraPropDecision,
+                      prop_display_state: computePropDisplayStateFromVerdict(extraPropDecision.verdict),
+                      suggested_line: extraFairLine,
+                      threshold: extraFairLine,
+                      reasoning: extraPropDecision.why,
+                      decision_v2: {
+                        official_status: extraLegacy.officialStatus,
+                        direction: extraLeanSide,
+                        edge_delta_pct: computeEdgePct(blkProjection.blk_mu, extraLine),
+                        fair_line: extraFairLine,
+                      },
+                      play: {
+                        ...payloadDataBlk.play,
+                        action: extraLegacy.action,
+                        status: extraLegacy.status,
+                        classification: extraLegacy.classification,
+                        decision_v2: {
+                          official_status: extraLegacy.officialStatus,
+                          direction: extraLeanSide,
+                          edge_delta_pct: computeEdgePct(blkProjection.blk_mu, extraLine),
+                          fair_line: extraFairLine,
+                        },
+                        prop_decision: extraPropDecision,
+                        pick_string: extraPrediction,
+                        selection: {
+                          side: extraLeanSide === 'OVER' ? 'over' : 'under',
+                          line: extraLine,
+                          price: extraLeanSide === 'OVER'
+                            ? extraCandidate.over_price : extraCandidate.under_price,
+                          team: player.team_abbrev,
+                          player_name: playerName,
+                          player_id: player.player_id.toString(),
+                        },
+                      },
+                      decision: {
+                        edge_pct: computeEdgePct(blkProjection.blk_mu, extraLine),
+                        projection: Math.round(blkProjection.blk_mu * 100) / 100,
+                        fair_line: extraFairLine,
+                        market_line: extraLine,
+                        direction: extraLeanSide,
+                        confidence: blkConfidence,
+                      },
+                    };
+                    applyNhlDecisionBasisMeta(extraPayload, {
+                      usingRealLine: true,
+                      edgePct: computeEdgePct(blkProjection.blk_mu, extraLine),
+                    });
+                    const extraCardId = `nhl-player-blk-${player.player_id}-${resolvedGameId}-${uuidV4().slice(0, 8)}`;
+                    const extraCard = {
+                      id: extraCardId,
+                      gameId: resolvedGameId,
+                      sport: 'NHL',
+                      cardType: 'nhl-player-blk',
+                      cardTitle: `${playerName} Blocked Shots`,
+                      createdAt: timestamp,
+                      payloadData: extraPayload,
+                    };
+                    attachRunId(extraCard, jobRunId);
+                    try {
+                      insertCardPayload(extraCard);
+                      cardsCreated++;
+                      console.log(
+                        `[${JOB_NAME}] ✓ Created ${extraPropDecision.verdict} BLK card (multi-line): ${playerName} ${extraLeanSide} ${extraLine}`,
+                      );
+                    } catch (extraInsertErr) {
+                      console.error(
+                        `[${JOB_NAME}] Failed to insert multi-line BLK card (line ${extraLine}): ${extraInsertErr.message}`,
+                      );
+                    }
+                  }
                 }
               }
             }

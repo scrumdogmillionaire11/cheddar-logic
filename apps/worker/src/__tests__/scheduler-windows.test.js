@@ -245,6 +245,47 @@ test('scheduler windows integration', async () => {
   await runSchedulerWindowTests();
 });
 
+test('MLB 09:00 heavy window includes statcast job in correct sequence', () => {
+  const { computePlayerPropsDueJobs } = require('../schedulers/player-props');
+  const { DateTime } = require('luxon');
+
+  // Simulate 09:01 ET on a weekday — well past 09:00, FIXED_CATCHUP=true (default)
+  const nowEt = DateTime.fromObject(
+    { year: 2026, month: 4, day: 7, hour: 9, minute: 1, second: 0 },
+    { zone: 'America/New_York' },
+  );
+
+  const jobs = computePlayerPropsDueJobs(nowEt, { quotaTier: 'FULL' });
+  const jobNames = jobs.map((j) => j.jobName);
+
+  expect(jobNames).toContain('pull_mlb_pitcher_stats');
+  expect(jobNames).toContain('pull_mlb_statcast');
+  expect(jobNames).toContain('pull_mlb_weather');
+
+  const statsIdx    = jobNames.indexOf('pull_mlb_pitcher_stats');
+  const statcastIdx = jobNames.indexOf('pull_mlb_statcast');
+  const weatherIdx  = jobNames.indexOf('pull_mlb_weather');
+
+  expect(statsIdx).toBeLessThan(statcastIdx);
+  expect(statcastIdx).toBeLessThan(weatherIdx);
+});
+
+test('NBA and NHL schedule pulls emitted at 04:00 ET', () => {
+  const { computeDueJobs } = require('../schedulers/main');
+  const { DateTime } = require('luxon');
+
+  const nowEt0400 = DateTime.fromObject(
+    { year: 2026, month: 4, day: 6, hour: 4, minute: 5, second: 0 },
+    { zone: 'America/New_York' },
+  );
+  const nowUtc0400 = nowEt0400.toUTC();
+  const due0400 = computeDueJobs({ nowEt: nowEt0400, nowUtc: nowUtc0400, games: [], dryRun: true });
+  const jobNames0400 = due0400.map((j) => j.jobName);
+
+  expect(jobNames0400).toContain('pull_schedule_nba');
+  expect(jobNames0400).toContain('pull_schedule_nhl');
+});
+
 if (require.main === module) {
   runSchedulerWindowTests()
     .then(() => process.exit(0))

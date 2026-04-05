@@ -23,7 +23,7 @@ require('dotenv').config();
 const {
   getDatabase,
   withDb,
-  upsertTrackingStat,
+  recomputeTrackingStats,
 } = require('@cheddar-logic/data');
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -245,67 +245,12 @@ async function resettleHistoricalCards() {
     );
 
     if (changed > 0 && !DRY_RUN) {
-      // Re-aggregate tracking_stats from scratch
-      console.log('[Resettle] Re-aggregating tracking_stats...');
-
-      const aggregateRows = db
-        .prepare(
-          `
-        SELECT sport, result, COUNT(*) AS count, SUM(pnl_units) AS total_pnl
-        FROM card_results
-        WHERE status = 'settled'
-        GROUP BY sport, result
-      `,
-        )
-        .all();
-
-      const sportStats = {};
-      for (const row of aggregateRows) {
-        const sport = row.sport;
-        if (!sportStats[sport]) {
-          sportStats[sport] = { wins: 0, losses: 0, pushes: 0, totalPnl: 0 };
-        }
-        const count = Number(row.count) || 0;
-        const pnl = Number(row.total_pnl) || 0;
-        if (row.result === 'win') {
-          sportStats[sport].wins += count;
-          sportStats[sport].totalPnl += pnl;
-        } else if (row.result === 'loss') {
-          sportStats[sport].losses += count;
-          sportStats[sport].totalPnl += pnl;
-        } else if (row.result === 'push') {
-          sportStats[sport].pushes += count;
-          sportStats[sport].totalPnl += pnl;
-        }
-      }
-
-      for (const [sport, stats] of Object.entries(sportStats)) {
-        const { wins, losses, pushes, totalPnl } = stats;
-        const total = wins + losses + pushes;
-        upsertTrackingStat({
-          id: `stat-${sport}-all-alltime`,
-          statKey: `${sport}|moneyline|all|all|all|alltime`,
-          sport,
-          marketType: 'moneyline',
-          direction: 'all',
-          confidenceTier: 'all',
-          driverKey: 'all',
-          timePeriod: 'alltime',
-          totalCards: total,
-          settledCards: total,
-          wins,
-          losses,
-          pushes,
-          totalPnlUnits: totalPnl,
-          winRate: wins + losses > 0 ? wins / (wins + losses) : 0,
-          avgPnlPerCard: total > 0 ? totalPnl / total : 0,
-          confidenceCalibration: null,
-          metadata: { computedAt: new Date().toISOString() },
-        });
-        console.log(
-          `[Resettle] Updated tracking_stat for ${sport}: ${wins}W / ${losses}L / ${pushes}P`,
-        );
-      }
+      // Re-aggregate tracking_stats from projection_audit
+      console.log('[Resettle] Recomputing tracking_stats from projection_audit...');
+      const recomputeResult = recomputeTrackingStats({ fullReplace: true });
+      console.log(
+        `[Resettle] tracking_stats recomputed — ${recomputeResult.rows} rows upserted.`,
+      );
     }
 
     if (DRY_RUN && changed > 0) {

@@ -536,6 +536,104 @@ describe('projection_audit rows written on settlement', () => {
   });
 });
 
+describe('tracking_stats reflects projection_audit after settlement', () => {
+  const TRACKING_DB_PATH = '/tmp/cheddar-test-tracking-stats-recompute.db';
+  const TRACKING_LOCK_PATH = `${TRACKING_DB_PATH}.lock`;
+
+  function removeTrackingBackups() {
+    const backupsDir = path.join(path.dirname(TRACKING_DB_PATH), 'backups');
+    if (!fs.existsSync(backupsDir)) return;
+    for (const entry of fs.readdirSync(backupsDir)) {
+      if (entry.startsWith('cheddar-before-settle-cards-') && entry.endsWith('.db')) {
+        try { fs.unlinkSync(path.join(backupsDir, entry)); } catch {}
+      }
+    }
+  }
+
+  beforeEach(async () => {
+    process.env.CHEDDAR_DB_PATH = TRACKING_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+
+    removeIfExists(TRACKING_DB_PATH);
+    removeIfExists(TRACKING_LOCK_PATH);
+    removeTrackingBackups();
+
+    await runMigrations();
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    removeIfExists(TRACKING_DB_PATH);
+    removeIfExists(TRACKING_LOCK_PATH);
+    removeTrackingBackups();
+  });
+
+  test('tracking_stats reflects projection_audit aggregates after settlement — 1P excluded', async () => {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+
+    // NBA full-game total OVER — wins (110+100 = 210 > 205.5)
+    insertScenario({
+      db, now,
+      gameId: 'ts-nba-win', sport: 'NBA',
+      homeTeam: 'Home A', awayTeam: 'Away A',
+      finalHome: 110, finalAway: 100,
+      cardId: 'ts-card-nba-win', resultId: 'ts-result-nba-win',
+      cardType: 'nba-totals-call', selection: 'OVER', line: 205.5, lockedPrice: -110,
+    });
+
+    // NBA full-game total OVER — loss (90+95 = 185 < 205.5)
+    insertScenario({
+      db, now,
+      gameId: 'ts-nba-loss', sport: 'NBA',
+      homeTeam: 'Home B', awayTeam: 'Away B',
+      finalHome: 90, finalAway: 95,
+      cardId: 'ts-card-nba-loss', resultId: 'ts-result-nba-loss',
+      cardType: 'nba-totals-call', selection: 'OVER', line: 205.5, lockedPrice: -115,
+    });
+
+    // NHL 1P total — should appear in projection_audit but NOT in tracking_stats
+    insertScenario({
+      db, now,
+      gameId: 'ts-nhl-1p', sport: 'NHL',
+      homeTeam: 'Home NHL', awayTeam: 'Away NHL',
+      finalHome: 3, finalAway: 2, firstPeriodHome: 2, firstPeriodAway: 0,
+      cardId: 'ts-card-nhl-1p', resultId: 'ts-result-nhl-1p',
+      cardType: 'nhl-pace-1p', selection: 'OVER', line: 1.5, lockedPrice: -110,
+      period: '1P',
+    });
+
+    await settlePendingCards();
+
+    const db2 = getDatabase();
+
+    // projection_audit has all 3 rows (including 1P)
+    const auditCount = db2.prepare('SELECT COUNT(*) AS cnt FROM projection_audit').get();
+    expect(auditCount.cnt).toBe(3);
+
+    // tracking_stats NBA total: 1 win + 1 loss (1P NHL excluded)
+    const nbaRow = db2.prepare('SELECT * FROM tracking_stats WHERE stat_key = ?')
+      .get('NBA|total|all|all|all|alltime');
+    expect(nbaRow).toBeDefined();
+    expect(nbaRow.wins).toBe(1);
+    expect(nbaRow.losses).toBe(1);
+    expect(nbaRow.total_cards).toBe(2);
+
+    // No total_1p stat_key should exist
+    const all1p = db2.prepare("SELECT stat_key FROM tracking_stats WHERE stat_key LIKE '%total_1p%'").all();
+    expect(all1p).toHaveLength(0);
+
+    // Settlement re-run is idempotent on tracking_stats
+    await settlePendingCards();
+    const db3 = getDatabase();
+    const nbaRowAfterRerun = db3.prepare('SELECT * FROM tracking_stats WHERE stat_key = ?')
+      .get('NBA|total|all|all|all|alltime');
+    expect(nbaRowAfterRerun.wins).toBe(1);
+    expect(nbaRowAfterRerun.losses).toBe(1);
+  });
+});
+
 describe('backfill_period_token job (backfillPeriodToken)', () => {
   const BACKFILL_DB_PATH = '/tmp/cheddar-test-backfill-period-token.db';
   const BACKFILL_LOCK_PATH = `${BACKFILL_DB_PATH}.lock`;

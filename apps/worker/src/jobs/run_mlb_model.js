@@ -1199,7 +1199,7 @@ function buildPitcherKObject(row) {
     il_status: Boolean(row.il_status),
     il_return: Boolean(row.il_return),
     role: row.role ?? 'starter',
-    // Statcast — null until pull_mlb_statcast is added
+    // Statcast — populated by pull_mlb_statcast (09:00 ET daily via player-props scheduler)
     swstr_pct: row.season_swstr_pct ?? null,
     season_avg_velo: row.season_avg_velo ?? null,
   };
