@@ -12,7 +12,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const {getDatabase, closeDatabase } = require('@cheddar-logic/data');
+const {getDatabase, closeDatabase, runMigrations } = require('@cheddar-logic/data');
 const { generateNHLMarketCallCards } = require('../run_nhl_model');
 const { computeNHLDriverCards } = require('../../models/index');
 
@@ -102,13 +102,16 @@ async function queryDb(fn) {
 }
 
 describe('run_nhl_model job', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.DATABASE_PATH = TEST_DB_PATH;
     process.env.CHEDDAR_DB_PATH = '';
     // Remove test DB if exists
     if (fs.existsSync(TEST_DB_PATH)) {
       fs.unlinkSync(TEST_DB_PATH);
     }
+
+    // Ensure schema is present even when pull-odds is skipped (no API key in CI)
+    await runMigrations();
 
     // Run odds job first to populate test data
     try {
