@@ -10,6 +10,7 @@ const tracking = require('./tracking');
 const quota = require('./quota');
 const scheduler = require('./scheduler');
 const authStore = require('./auth-store');
+const pipelineHealth = require('./pipeline-health');
 
 module.exports = {
   getDatabase: connection.getDatabase,
@@ -121,4 +122,7 @@ module.exports = {
   issueRefreshToken: authStore.issueRefreshToken,
   revokeRefreshToken: authStore.revokeRefreshToken,
   isRefreshTokenValid: authStore.isRefreshTokenValid,
+
+  // pipeline_health — read surface for WI-0761 Model Health Dashboard
+  getPipelineHealth: pipelineHealth.getPipelineHealth,
 };

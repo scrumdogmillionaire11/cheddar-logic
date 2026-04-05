@@ -87,6 +87,9 @@ module.exports = {
   getPlayerPropLine: db.getPlayerPropLine,
   getPlayerPropLinesForGame: db.getPlayerPropLinesForGame,
   
+  // Convenience exports - pipeline_health (WI-0761)
+  getPipelineHealth: db.getPipelineHealth,
+
   // Convenience exports - model_outputs
   insertModelOutput: db.insertModelOutput,
   deleteModelOutputsByGame: db.deleteModelOutputsByGame,
