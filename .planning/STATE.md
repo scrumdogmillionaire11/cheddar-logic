@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-04-05T02:00:00Z"
-last_activity: "2026-04-05 - Completed quick task 133: NHL BLK model audit — wire opponent_attempt_factor, playoff_tightening_factor, lines_to_price into projectBlkV1"
+last_updated: "2026-04-05T02:10:00Z"
+last_activity: "2026-04-05 - Completed quick task 134: WI-0787 insertProjectionAudit unit tests — normal write, confidence_band derivation, idempotency, optional-field tolerance"
 ---
 
 # Project State
@@ -157,4 +157,5 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 | 131 | WI-0799: Verify MLB Statcast scheduling chain — update stale comment in run_mlb_model.js + scheduler-windows test for pitcher_stats → statcast → weather ordering | 2026-04-05 | c1c24b2 | [131-wi-0799-verify-fix-mlb-statcast-scheduli](./quick/131-wi-0799-verify-fix-mlb-statcast-scheduli/) |
 | 132 | Wire pull_schedule_nba and pull_schedule_nhl into automate scheduler — export key builders, add computeDueJobs entries at 04:00/11:00 ET, scheduler-windows test | 2026-04-05 | 1bbe0b6 | [132-wire-pull-schedule-nba-nhl-into-automate](./quick/132-wire-pull-schedule-nba-nhl-into-automate/) |
 | 133 | NHL BLK model audit — wire opponent_attempt_factor (corsi proxy), playoff_tightening_factor (date heuristic), and lines_to_price into projectBlkV1 call site | 2026-04-05 | ff79fa8 | [133-nhl-blk-model-audit-opponent-factor-play](./quick/133-nhl-blk-model-audit-opponent-factor-play/) |
+| 134 | WI-0787: Add unit tests for insertProjectionAudit — normal write, confidence_band derivation (5 cases), INSERT OR IGNORE idempotency, optional-field NULL tolerance | 2026-04-05 | fbd7053 | [134-wi-0787-add-projection-audit-row-level-t](./quick/134-wi-0787-add-projection-audit-row-level-t/) |
 
