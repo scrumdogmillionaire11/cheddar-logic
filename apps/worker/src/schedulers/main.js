@@ -76,6 +76,8 @@ const { runPullVsinSplits } = require('../jobs/pull_vsin_splits');
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
 const { computeNflDueJobs } = require('./nfl');
+const { computeNhlDueJobs } = require('./nhl');
+const { computeNbaDueJobs } = require('./nba');
 const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 
 // Timezone for fixed-time windows
@@ -1010,6 +1012,16 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // const nflJobs = computeNflDueJobs(nowEt, { nowUtc, games, dryRun, quotaTier,
   //   maybeQueueTeamMetricsRefresh, claimTminusPullSlot, pullOddsHourly, ENABLE_WITHOUT_ODDS_MODE });
   // jobs.push(...nflJobs);
+  //
+  // WI-0780: computeNhlDueJobs wired here in Plan 03 after old sections removed
+  // const nhlJobs = computeNhlDueJobs(nowEt, { nowUtc, games, dryRun, quotaTier,
+  //   maybeQueueTeamMetricsRefresh, claimTminusPullSlot, pullOddsHourly, ENABLE_WITHOUT_ODDS_MODE });
+  // jobs.push(...nhlJobs);
+  //
+  // WI-0780: computeNbaDueJobs wired here in Plan 03 after old sections removed
+  // const nbaJobs = computeNbaDueJobs(nowEt, { nowUtc, games, dryRun, quotaTier,
+  //   maybeQueueTeamMetricsRefresh, claimTminusPullSlot, pullOddsHourly, ENABLE_WITHOUT_ODDS_MODE });
+  // jobs.push(...nbaJobs);
   // Settlement is disabled in Without Odds Mode — cards have no locked prices to settle against.
   if (!ENABLE_WITHOUT_ODDS_MODE && process.env.ENABLE_SETTLEMENT !== 'false') {
     const sweepDate = nowEt.toISODate();
