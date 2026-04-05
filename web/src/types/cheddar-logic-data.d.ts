@@ -20,6 +20,10 @@ declare module '@cheddar-logic/data' {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   export function getTeamMetricsWithGames(...args: any[]): any;
 
+  // model_outputs read surface (WI-0760)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  export function getModelOutputsBySport(sport: string, sinceUtc: string): any[];
+
   // pipeline_health read surface (WI-0761)
   export interface PipelineHealthRow {
     id: number;
