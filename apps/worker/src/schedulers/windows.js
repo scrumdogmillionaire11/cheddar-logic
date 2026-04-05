@@ -224,7 +224,16 @@ function dueTminusMinutes(nowUtc, startUtc) {
   );
 }
 
+/**
+ * Returns true if the sport uses projection models (NBA/NHL) that need
+ * team-metrics cache and T-minus odds pulls.
+ */
+function isProjectionModelSport(sport) {
+  return ['nba', 'nhl'].includes(String(sport || '').toLowerCase());
+}
+
 module.exports = {
+  isProjectionModelSport,
   keyEspnGamesDirect,
   keyOddsHourly,
   keyFixed,
