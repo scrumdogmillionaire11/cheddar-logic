@@ -3124,7 +3124,13 @@ async function runNHLPlayerShotsModel() {
                   play_direction: blkLeanSide,
                   opponent_attempt_factor: blkOppAttemptFactor,
                   playoff_tightening_factor: blkPlayoffFactor,
+                  lines_to_price: blkLineCandidates
+                    .map((c) => c.line)
+                    .filter((l) => typeof l === 'number' && Number.isFinite(l)),
                 });
+                if (blkLineCandidates.length > 1) {
+                  console.debug(`[${JOB_NAME}] [blk-multi-line] ${playerName}: pricing ${blkLineCandidates.length} lines: ${blkLineCandidates.map((c) => c.line).join(', ')}`);
+                }
                 const blkConfidence = Math.max(
                   0.55,
                   Math.min(
