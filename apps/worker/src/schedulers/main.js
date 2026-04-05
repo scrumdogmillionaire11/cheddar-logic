@@ -1128,6 +1128,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
   // ========== PLAYER PROPS SCHEDULER (8) ==========
   // NHL SOG/BLK + MLB pitcher-K prop ingest/model — dedicated cadence (09:00, 18:00, T-60).
+  // BLK chain at 09:00 ET: sync_nhl_blk_player_ids → pull_nhl_player_blk → ingest_nst_blk_rates → run_nhl_player_shots_model
+  // Weekly Monday 09:00 ET: pull_nst_blk_rates (NST block-rate CSV refresh → player_blk_rates)
   // See schedulers/player-props.js for window logic and key format.
   const playerPropsJobs = computePlayerPropsDueJobs(nowEt, {
     games,
