@@ -81,7 +81,11 @@ describe('checkMlbF5MarketAvailability', () => {
     expect(result.missing_f5_total_count).toBe(0);
     expect(result.missing_full_game_total_count).toBe(1);
     expect(result.reason).toContain('missing full-game totals (informational)');
-    expect(pipelineWrites).toEqual([]);
+    // An 'ok' row is written when F5 totals are available — the dashboard must show green state.
+    expect(pipelineWrites).toHaveLength(1);
+    expect(pipelineWrites[0][0]).toBe('mlb');
+    expect(pipelineWrites[0][1]).toBe('f5_market_availability');
+    expect(pipelineWrites[0][2]).toBe('ok');
   });
 
   test('fails with a distinct MLB row when F5 totals are missing', () => {
