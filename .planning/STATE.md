@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-05T01:00:00Z"
-last_activity: "2026-04-05 - Completed WI-0761 (Model Health Dashboard); added WI-0792 (health log + alert playbook brainstorm)"
+last_activity: "2026-04-05 - Completed quick task 131: WI-0799 Verify/fix MLB statcast scheduling chain — swstr_pct before model runs"
 ---
 
 # Project State
