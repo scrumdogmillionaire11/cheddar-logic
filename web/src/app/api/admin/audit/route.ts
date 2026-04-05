@@ -35,6 +35,9 @@ import {
 } from '../../../../lib/api-security/event-types';
 
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV !== 'development') {
+    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  }
   // Admin secret gate (behind ENABLE_AUTH_WALLS — not yet active)
   if (process.env.ENABLE_AUTH_WALLS === 'true') {
     const adminSecret = process.env.ADMIN_API_SECRET;

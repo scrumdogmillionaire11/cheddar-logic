@@ -23,6 +23,9 @@ import {
 } from '../../../../lib/api-security';
 
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV !== 'development') {
+    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  }
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
   try {
     const securityCheck = performSecurityChecks(request, '/api/admin/pipeline-health');
