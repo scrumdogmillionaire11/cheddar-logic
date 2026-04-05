@@ -245,6 +245,31 @@ test('scheduler windows integration', async () => {
   await runSchedulerWindowTests();
 });
 
+test('MLB 09:00 heavy window includes statcast job in correct sequence', () => {
+  const { computePlayerPropsDueJobs } = require('../schedulers/player-props');
+  const { DateTime } = require('luxon');
+
+  // Simulate 09:01 ET on a weekday — well past 09:00, FIXED_CATCHUP=true (default)
+  const nowEt = DateTime.fromObject(
+    { year: 2026, month: 4, day: 7, hour: 9, minute: 1, second: 0 },
+    { zone: 'America/New_York' },
+  );
+
+  const jobs = computePlayerPropsDueJobs(nowEt, { quotaTier: 'FULL' });
+  const jobNames = jobs.map((j) => j.jobName);
+
+  expect(jobNames).toContain('pull_mlb_pitcher_stats');
+  expect(jobNames).toContain('pull_mlb_statcast');
+  expect(jobNames).toContain('pull_mlb_weather');
+
+  const statsIdx    = jobNames.indexOf('pull_mlb_pitcher_stats');
+  const statcastIdx = jobNames.indexOf('pull_mlb_statcast');
+  const weatherIdx  = jobNames.indexOf('pull_mlb_weather');
+
+  expect(statsIdx).toBeLessThan(statcastIdx);
+  expect(statcastIdx).toBeLessThan(weatherIdx);
+});
+
 if (require.main === module) {
   runSchedulerWindowTests()
     .then(() => process.exit(0))
