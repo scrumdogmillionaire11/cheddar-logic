@@ -66,7 +66,9 @@ function checkScheduleFreshness() {
     .get(nowUtc.toISO(), endUtc.toISO()).cnt;
 
   if (count > 0) {
-    return { ok: true, reason: `${count} upcoming games found` };
+    const reason = `${count} upcoming games found`;
+    writePipelineHealth('schedule', 'freshness', 'ok', reason);
+    return { ok: true, reason };
   }
 
   const reason = 'No upcoming games in next 48h (schedule may be stale)';
@@ -130,10 +132,9 @@ function checkOddsFreshness() {
   }
 
   if (staleGames.length === 0) {
-    return {
-      ok: true,
-      reason: `All ${upcomingGames.length} games within T-6h have fresh odds`,
-    };
+    const reason = `All ${upcomingGames.length} games within T-6h have fresh odds`;
+    writePipelineHealth('odds', 'freshness', 'ok', reason);
+    return { ok: true, reason };
   }
 
   const reason = `${staleGames.length}/${upcomingGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)`;
@@ -193,10 +194,9 @@ function checkCardsFreshness() {
   }
 
   if (missingCards.length === 0) {
-    return {
-      ok: true,
-      reason: `All ${upcomingGames.length} games within T-2h have fresh cards`,
-    };
+    const reason = `All ${upcomingGames.length} games within T-2h have fresh cards`;
+    writePipelineHealth('cards', 'freshness', 'ok', reason);
+    return { ok: true, reason };
   }
 
   const reason = `${missingCards.length}/${upcomingGames.length} games within T-2h missing/stale cards (>${CARDS_FRESHNESS_MAX_AGE_MINUTES}m old)`;
@@ -312,6 +312,8 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
   const reason = reasonParts.join('; ');
   if (missingF5Total.length > 0) {
     writePipelineHealth('mlb', 'f5_market_availability', 'failed', reason);
+  } else if (upcomingGames.length > 0) {
+    writePipelineHealth('mlb', 'f5_market_availability', 'ok', reason);
   }
 
   return {
@@ -351,7 +353,9 @@ function checkSettlementBacklog() {
     .get().cnt;
 
   if (backlog === 0) {
-    return { ok: true, reason: 'No settlement backlog' };
+    const reason = 'No settlement backlog';
+    writePipelineHealth('settlement', 'backlog', 'ok', reason);
+    return { ok: true, reason };
   }
 
   const reason = `${backlog} final games pending settlement`;
