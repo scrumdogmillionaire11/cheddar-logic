@@ -68,6 +68,8 @@ const { syncNbaPlayerAvailability } = require('../jobs/sync_nba_player_availabil
 const { pullNhlGoalieStarters } = require('../jobs/pull_nhl_goalie_starters');
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
+const { pullScheduleNba } = require('../jobs/pull_schedule_nba');
+const { pullScheduleNhl } = require('../jobs/pull_schedule_nhl');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
 const { runPullPublicSplits } = require('../jobs/pull_public_splits');
 const { runPullVsinSplits } = require('../jobs/pull_vsin_splits');
@@ -102,6 +104,10 @@ const ENABLE_NHL_GOALIE_STARTERS =
   process.env.ENABLE_NHL_GOALIE_STARTERS !== 'false';
 const ENABLE_NHL_SOG_PLAYER_SYNC =
   process.env.ENABLE_NHL_SOG_PLAYER_SYNC === 'true';
+const ENABLE_PULL_SCHEDULE_NBA =
+  process.env.ENABLE_PULL_SCHEDULE_NBA !== 'false';
+const ENABLE_PULL_SCHEDULE_NHL =
+  process.env.ENABLE_PULL_SCHEDULE_NHL !== 'false';
 const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 180);
 // Conservative default: start the 3-hour baseline at 09:00 ET so it aligns with the first model window.
 const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 9);
@@ -212,6 +218,14 @@ function keyNhlSogPlayerSync(nowEt) {
 
 function keyNhlTeamStats(nowEt) {
   return `pull_nhl_team_stats|${nowEt.toISODate()}`;
+}
+
+function keyPullScheduleNba(nowEt) {
+  return `pull_schedule_nba|${nowEt.toISODate()}`;
+}
+
+function keyPullScheduleNhl(nowEt) {
+  return `pull_schedule_nhl|${nowEt.toISODate()}`;
 }
 
 function keySettlementHealthReport(nowEt) {
@@ -650,6 +664,33 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // ========== SCHEDULES (1) ==========
   // Use new time-aware schedule refresh logic (optional, can keep old hourly for now)
   // Old behavior maintained for backward compatibility
+
+  // ========== SCHEDULE PULLS (1) ==========
+  // Daily schedule refresh at 04:00 ET (full, covers overnight changes) and
+  // 11:00 ET (same-day sanity check). Aligns with getScheduleRefreshDue() windows.
+  // Keeps the games table current so team-sequence signals (Welcome Home Fade, etc.)
+  // have fresh game records independent of odds ingestion.
+  const scheduleRefresh = getScheduleRefreshDue(nowEt);
+  if (scheduleRefresh && ENABLE_PULL_SCHEDULE_NBA) {
+    const jobKey = keyPullScheduleNba(nowEt);
+    jobs.push({
+      jobName: 'pull_schedule_nba',
+      jobKey,
+      execute: pullScheduleNba,
+      args: { jobKey, dryRun },
+      reason: `NBA schedule refresh (${scheduleRefresh.reason})`,
+    });
+  }
+  if (scheduleRefresh && ENABLE_PULL_SCHEDULE_NHL) {
+    const jobKey = keyPullScheduleNhl(nowEt);
+    jobs.push({
+      jobName: 'pull_schedule_nhl',
+      jobKey,
+      execute: pullScheduleNhl,
+      args: { jobKey, dryRun },
+      reason: `NHL schedule refresh (${scheduleRefresh.reason})`,
+    });
+  }
 
   // ========== INGESTION (2) ==========
   // Without Odds Mode: use ESPN-direct ingestion instead of The Odds API.
@@ -1374,4 +1415,6 @@ module.exports = {
   shouldRefreshOddsForGame,
   getPipelineHealthJobs,
   getOddsHealthJobs,
+  keyPullScheduleNba,
+  keyPullScheduleNhl,
 };
