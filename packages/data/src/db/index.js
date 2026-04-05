@@ -106,6 +106,7 @@ module.exports = {
   incrementTrackingStat: tracking.incrementTrackingStat,
   getTrackingStats: tracking.getTrackingStats,
   insertProjectionAudit: tracking.insertProjectionAudit,
+  recomputeTrackingStats: tracking.recomputeTrackingStats,
   getTeamMetricsCache: tracking.getTeamMetricsCache,
   upsertTeamMetricsCache: tracking.upsertTeamMetricsCache,
   deleteStaleTeamMetricsCache: tracking.deleteStaleTeamMetricsCache,

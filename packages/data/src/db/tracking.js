@@ -397,11 +397,166 @@ function insertProjectionAudit(row) {
   );
 }
 
+/**
+ * Recompute tracking_stats aggregates from projection_audit rows.
+ * Replaces the live-increment pattern with a recompute-from-source pattern,
+ * making tracking_stats a fully regenerable cache.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.sport]          - Limit to one sport (optional)
+ * @param {string} [opts.sinceSettledAt] - ISO8601 lower bound (optional, default: all time)
+ * @param {boolean} [opts.fullReplace]   - If true, DELETE existing rows for scope before upsert
+ * @returns {{ rows: number }}
+ */
+function recomputeTrackingStats(opts = {}) {
+  const db = getDatabase();
+  const { sport, sinceSettledAt, fullReplace = false } = opts;
+
+  const whereClauses = ['(period IS NULL OR period != \'1P\')'];
+  const params = [];
+
+  if (sport) {
+    whereClauses.push('sport = ?');
+    params.push(sport);
+  }
+  if (sinceSettledAt) {
+    whereClauses.push('settled_at >= ?');
+    params.push(sinceSettledAt);
+  }
+
+  const where = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+  return db.transaction(() => {
+    // Optionally wipe existing rows for the scope before recomputing
+    if (fullReplace) {
+      if (sport) {
+        db.prepare(
+          `DELETE FROM tracking_stats WHERE sport = ? AND (stat_key LIKE '%|alltime' OR stat_key LIKE '%edge_verification:%')`
+        ).run(sport);
+      } else {
+        db.prepare(
+          `DELETE FROM tracking_stats WHERE stat_key LIKE '%|alltime' OR stat_key LIKE '%edge_verification:%'`
+        ).run();
+      }
+    }
+
+    let rowsUpserted = 0;
+
+    // Query A: market-level aggregates (sport + market_type)
+    const marketRows = db.prepare(`
+      SELECT
+        sport,
+        market_type,
+        COUNT(CASE WHEN result = 'win'  THEN 1 END) AS wins,
+        COUNT(CASE WHEN result = 'loss' THEN 1 END) AS losses,
+        COUNT(CASE WHEN result = 'push' THEN 1 END) AS pushes,
+        SUM(pnl_units) AS total_pnl,
+        COUNT(*) AS total
+      FROM projection_audit
+      ${where}
+      GROUP BY sport, market_type
+    `).all(...params);
+
+    const recomputedAt = new Date().toISOString();
+
+    for (const row of marketRows) {
+      const s = row.sport;
+      const mt = row.market_type;
+      const wins = Number(row.wins) || 0;
+      const losses = Number(row.losses) || 0;
+      const pushes = Number(row.pushes) || 0;
+      const total = Number(row.total) || 0;
+      const totalPnl = Number(row.total_pnl) || 0;
+      const decided = wins + losses;
+      const winRate = decided > 0 ? wins / decided : 0;
+      const avgPnl = total > 0 ? totalPnl / total : 0;
+
+      upsertTrackingStat({
+        id: `stat-${s}-${mt}-alltime`,
+        statKey: `${s}|${mt}|all|all|all|alltime`,
+        sport: s,
+        marketType: mt,
+        direction: 'all',
+        confidenceTier: 'all',
+        driverKey: 'all',
+        timePeriod: 'alltime',
+        totalCards: total,
+        settledCards: total,
+        wins,
+        losses,
+        pushes,
+        totalPnlUnits: totalPnl,
+        winRate,
+        avgPnlPerCard: avgPnl,
+        confidenceCalibration: null,
+        metadata: { recomputedAt },
+      });
+      rowsUpserted++;
+    }
+
+    // Query B: verification-segmented (sport + market_type + sharp_price_status)
+    const verifyRows = db.prepare(`
+      SELECT
+        sport,
+        market_type,
+        COALESCE(sharp_price_status, 'UNTAGGED') AS sharp_status,
+        COUNT(CASE WHEN result = 'win'  THEN 1 END) AS wins,
+        COUNT(CASE WHEN result = 'loss' THEN 1 END) AS losses,
+        COUNT(CASE WHEN result = 'push' THEN 1 END) AS pushes,
+        SUM(pnl_units) AS total_pnl,
+        COUNT(*) AS total
+      FROM projection_audit
+      ${where}
+      GROUP BY sport, market_type, COALESCE(sharp_price_status, 'UNTAGGED')
+    `).all(...params);
+
+    for (const row of verifyRows) {
+      const s = row.sport;
+      const mt = row.market_type;
+      const ss = row.sharp_status;
+      const wins = Number(row.wins) || 0;
+      const losses = Number(row.losses) || 0;
+      const pushes = Number(row.pushes) || 0;
+      const total = Number(row.total) || 0;
+      const totalPnl = Number(row.total_pnl) || 0;
+      const decided = wins + losses;
+      const winRate = decided > 0 ? wins / decided : 0;
+      const avgPnl = total > 0 ? totalPnl / total : 0;
+      const driverKey = `edge_verification:${ss}`;
+
+      upsertTrackingStat({
+        id: `stat-${s}-${mt}-${ss}-alltime`,
+        statKey: `${s}|${mt}|all|all|${driverKey}|alltime`,
+        sport: s,
+        marketType: mt,
+        direction: 'all',
+        confidenceTier: 'all',
+        driverKey,
+        timePeriod: 'alltime',
+        totalCards: total,
+        settledCards: total,
+        wins,
+        losses,
+        pushes,
+        totalPnlUnits: totalPnl,
+        winRate,
+        avgPnlPerCard: avgPnl,
+        confidenceCalibration: null,
+        metadata: { recomputedAt },
+      });
+      rowsUpserted++;
+    }
+
+    return { rows: rowsUpserted };
+  })();
+}
+
 module.exports = {
   upsertTrackingStat,
   incrementTrackingStat,
   getTrackingStats,
   insertProjectionAudit,
+  recomputeTrackingStats,
   getTeamMetricsCache,
   upsertTeamMetricsCache,
   deleteStaleTeamMetricsCache,
