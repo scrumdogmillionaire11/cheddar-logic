@@ -75,6 +75,7 @@ const { runPullPublicSplits } = require('../jobs/pull_public_splits');
 const { runPullVsinSplits } = require('../jobs/pull_vsin_splits');
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
+const { computeNflDueJobs } = require('./nfl');
 const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 
 // Timezone for fixed-time windows
@@ -1003,6 +1004,12 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   }
 
   // ========== SETTLEMENT (4) ==========
+  // WI-0780: computeNflDueJobs wired here in Plan 03 after old sections removed
+  // (existing SPORT_JOBS loop above still active until Plan 03 removes it —
+  //  this call is a no-op duplicate during migration)
+  // const nflJobs = computeNflDueJobs(nowEt, { nowUtc, games, dryRun, quotaTier,
+  //   maybeQueueTeamMetricsRefresh, claimTminusPullSlot, pullOddsHourly, ENABLE_WITHOUT_ODDS_MODE });
+  // jobs.push(...nflJobs);
   // Settlement is disabled in Without Odds Mode — cards have no locked prices to settle against.
   if (!ENABLE_WITHOUT_ODDS_MODE && process.env.ENABLE_SETTLEMENT !== 'false') {
     const sweepDate = nowEt.toISODate();
