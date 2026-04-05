@@ -10,6 +10,7 @@
 
 const { execSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 const {
   getDatabase,
   closeDatabase,
@@ -56,7 +57,8 @@ describe('pull_odds_hourly job', () => {
       const result = execSync(
         `DATABASE_PATH=${TEST_DB_PATH} npm run job:pull-odds`,
         {
-          cwd: '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+          cwd: path.resolve(__dirname, '../../..'),
+
           stdio: 'pipe',
           encoding: 'utf-8',
         },

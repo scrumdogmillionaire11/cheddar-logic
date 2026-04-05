@@ -11,6 +11,7 @@
 
 const { execSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 const {getDatabase, closeDatabase } = require('@cheddar-logic/data');
 const {
   generateNBAMarketCallCards,
@@ -71,6 +72,7 @@ async function queryDb(fn) {
 describe('run_nba_model job', () => {
   beforeAll(() => {
     process.env.DATABASE_PATH = TEST_DB_PATH;
+    process.env.CHEDDAR_DB_PATH = '';
     // Remove test DB if exists
     if (fs.existsSync(TEST_DB_PATH)) {
       fs.unlinkSync(TEST_DB_PATH);
@@ -79,7 +81,7 @@ describe('run_nba_model job', () => {
     // Run odds job first to populate test data
     try {
       execSync(`DATABASE_PATH=${TEST_DB_PATH} npm run job:pull-odds`, {
-        cwd: '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+        cwd: path.resolve(__dirname, '../../..'),
         stdio: 'pipe',
         encoding: 'utf-8',
       });
@@ -102,7 +104,8 @@ describe('run_nba_model job', () => {
       const result = execSync(
         `DATABASE_PATH=${TEST_DB_PATH} npm run job:run-nba-model`,
         {
-          cwd: '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+          cwd: path.resolve(__dirname, '../../..'),
+
           stdio: 'pipe',
           encoding: 'utf-8',
         },
