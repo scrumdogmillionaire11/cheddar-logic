@@ -52,6 +52,7 @@ const { syncNhlBlkPlayerIds } = require('../jobs/sync_nhl_blk_player_ids');
 const { pullNhlPlayerBlk } = require('../jobs/pull_nhl_player_blk');
 const { ingestNstBlkRates } = require('../jobs/ingest_nst_blk_rates');
 const { pullNstBlkRates } = require('../jobs/pull_nst_blk_rates');
+const { pullMoneyPuckBlkRates } = require('../jobs/pull_moneypuck_blk_rates');
 const { runNHLPlayerShotsModel } = require('../jobs/run_nhl_player_shots_model');
 const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
 const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
@@ -185,6 +186,18 @@ function keyNstBlkRatesWeekly(nowEt) {
   return `player_props|nst_blk_rates|weekly|${nowEt.year}-W${week}`;
 }
 
+/**
+ * Weekly MoneyPuck BLK rates pull key.
+ * Keyed to ISO week so the job is idempotent within a calendar week.
+ *
+ * @param {DateTime} nowEt
+ * @returns {string}
+ */
+function keyMoneyPuckBlkRatesWeekly(nowEt) {
+  const week = String(nowEt.weekNumber).padStart(2, '0');
+  return `player_props|moneypuck_blk_rates|weekly|${nowEt.year}-W${week}`;
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 /**
@@ -211,13 +224,18 @@ function computePlayerPropsDueJobs(
   const dateStr = nowEt.toISODate();
   const fixedTimes = getPlayerPropsFixedTimes();
   const blkEnabled = process.env.ENABLE_NHL_BLK_INGEST !== 'false';
+  const mpBlkEnabled = blkEnabled && process.env.NHL_MONEYPUCK_BLK_ENABLED !== 'false';
   const mlbFixedRefreshAllowed = quotaTier === 'FULL' || quotaTier === 'MEDIUM';
   const jobs = [];
 
-  // ── Weekly NST BLK rates pull (Monday 09:00 ET) ─────────────────────────
-  // NST block-rate exports are updated after game days and meaningful at weekly
-  // resolution. Runs Monday so data refreshes after weekend game activity.
-  // Keyed to ISO week — idempotent if the scheduler restarts mid-day.
+  // ── Weekly BLK rates pulls (Monday 09:00 ET) ────────────────────────────
+  // Two complementary sources — both run weekly on Monday so data refreshes
+  // after weekend game activity.  Both are idempotent within the ISO week.
+  //
+  // pull_nst_blk_rates: NST CSV export (requires NHL_BLK_NST_*_CSV_URL env vars;
+  //   warns and returns cleanly when URLs are unset).
+  // pull_moneypuck_blk_rates: MoneyPuck season-summary CSV (no env vars needed;
+  //   URL is derived from the calendar date and updated nightly).
   if (blkEnabled && nowEt.weekday === 1 && isFixedDue(nowEt, '09:00')) {
     const nstBlkKey = keyNstBlkRatesWeekly(nowEt);
     jobs.push({
@@ -227,6 +245,17 @@ function computePlayerPropsDueJobs(
       args: { jobKey: nstBlkKey, dryRun },
       reason: `weekly NST BLK rates pull (Monday 09:00 ET, week ${nowEt.year}-W${String(nowEt.weekNumber).padStart(2, '0')})`,
     });
+
+    const mpBlkKey = keyMoneyPuckBlkRatesWeekly(nowEt);
+    if (mpBlkEnabled) {
+      jobs.push({
+        jobName: 'pull_moneypuck_blk_rates',
+        jobKey: mpBlkKey,
+        execute: pullMoneyPuckBlkRates,
+        args: { jobKey: mpBlkKey, dryRun },
+        reason: `weekly MoneyPuck BLK rates pull (Monday 09:00 ET, week ${nowEt.year}-W${String(nowEt.weekNumber).padStart(2, '0')})`,
+      });
+    }
   }
 
   // ── Fixed-time windows ────────────────────────────────────────────────────
@@ -355,4 +384,5 @@ module.exports = {
   keyMlbFixed,
   keyMlbTminus,
   keyNstBlkRatesWeekly,
+  keyMoneyPuckBlkRatesWeekly,
 };
