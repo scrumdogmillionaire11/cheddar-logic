@@ -1839,14 +1839,16 @@ async function settlePendingCards({
       return { success: true, jobRunId: null, skipped: true, jobKey };
     }
 
-    // Sequential ordering guard: card settlement must not run before game results complete
+    // Sequential ordering guard: card settlement must not run before projection settlement completes.
+    // Job key format: settle|hourly|YYYY-MM-DD|HH|pending-cards (or settle|nightly|YYYY-MM-DD|pending-cards).
+    // Replace the |pending-cards suffix with |projections to derive the expected projections key.
     if (jobKey) {
-      const gameResultsJobKey = jobKey.split('|').slice(0, -1).join('|') + '|game-results';
-      if (!hasSuccessfulJobRun(gameResultsJobKey)) {
+      const projectionsJobKey = jobKey.replace(/\|pending-cards$/, '|projections');
+      if (!hasSuccessfulJobRun(projectionsJobKey)) {
         console.log(
-          `SKIP: settle_game_results not yet SUCCESS for this window — skipping card settlement (expected key: ${gameResultsJobKey})`,
+          `SKIP: settle_projections not yet SUCCESS for this window — skipping card settlement (expected key: ${projectionsJobKey})`,
         );
-        return { success: true, jobRunId: null, skipped: true, guardedBy: 'game-results', jobKey };
+        return { success: true, jobRunId: null, skipped: true, guardedBy: 'settle_projections', jobKey };
       }
     }
 
