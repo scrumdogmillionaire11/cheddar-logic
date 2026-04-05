@@ -26,6 +26,11 @@ const COLOR_CLASSES: Record<
     text: 'text-slate-200',
     border: 'border-slate-600/60',
   },
+  emerald: {
+    bg: 'bg-emerald-700/40',
+    text: 'text-emerald-200',
+    border: 'border-emerald-600/60',
+  },
 };
 
 interface MarketSignalPillsProps {
