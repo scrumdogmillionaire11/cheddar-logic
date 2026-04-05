@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-04-05T02:10:00Z"
-last_activity: "2026-04-05 - Completed quick task 134: WI-0787 insertProjectionAudit unit tests — normal write, confidence_band derivation, idempotency, optional-field tolerance"
+last_updated: "2026-04-05T21:45:00Z"
+last_activity: "2026-04-05 - Completed WI-0780: Decompose schedulers/main.js per-sport — windows.js, nfl.js, nhl.js, nba.js, mlb.js, settlement.js, quota.js; main.js slimmed to 259 lines"
 ---
 
 # Project State
