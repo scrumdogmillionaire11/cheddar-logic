@@ -154,4 +154,5 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 | 128 | Fix MLB model test failures — projection_source + F5 floor math (8 failures block MLB CI) | 2026-04-04 | 299595f | [128-fix-mlb-model-test-failures-projection-s](./quick/128-fix-mlb-model-test-failures-projection-s/) |
 | 129 | WI-0790: Fix decision-publisher.v2 stale-input BLOCKED test (160-min threshold) + post_discord_cards LEAN→Slight Edge label | 2026-04-05 | 9981f1f | [129-fix-decision-publisher-v2-stale-input-st](./quick/129-fix-decision-publisher-v2-stale-input-st/) |
 | 130 | WI-0798: Fix NHL_CURRENT_SEASON stale default — replace '20242025' fallbacks with deriveNhlSeasonKey(); pin NHL_CURRENT_SEASON=20252026 in .env.production | 2026-04-05 | b8567fd | [130-fix-nhl-current-season-stale-default-202](./quick/130-fix-nhl-current-season-stale-default-202/) |
+| 131 | WI-0799: Verify MLB Statcast scheduling chain — update stale comment in run_mlb_model.js + scheduler-windows test for pitcher_stats → statcast → weather ordering | 2026-04-05 | c1c24b2 | [131-wi-0799-verify-fix-mlb-statcast-scheduli](./quick/131-wi-0799-verify-fix-mlb-statcast-scheduli/) |
 
