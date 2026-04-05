@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-04-04T23:44:00Z"
-last_activity: "2026-04-04 - Completed quick task 127: Wire model_outputs table to GET /api/model-outputs"
+last_updated: "2026-04-05T01:00:00Z"
+last_activity: "2026-04-05 - Completed WI-0761 (Model Health Dashboard); added WI-0792 (health log + alert playbook brainstorm)"
 ---
 
 # Project State
@@ -32,6 +32,11 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 - `2` pending todos in `.planning/todos/pending/`
 - `2026-02-28-per-sport-model-health-agents-nba-nhl-ncaam-agents-own-model-health-checks.md`
 - `2026-04-02-add-live-player-props-regression-coverage.md`
+
+### Recently Completed (out-of-sprint)
+
+- **WI-0761 ✓** — Model Health Dashboard: replaced `/admin` stub with live pipeline-health + model-outputs dashboard; `🏥 Model Health 🏥` button on homepage. Commits: 4fdac4a, 3a03863, 30adc8b, 94dcd4c, 8c472da
+- **WI-0792 (open, low priority)** — Future brainstorm: model health log UX + alert reaction playbook. See `WORK_QUEUE/WI-0792.md`
 
 ## Review Cadence
 
