@@ -132,6 +132,7 @@ module.exports = {
   upsertTrackingStat: db.upsertTrackingStat,
   incrementTrackingStat: db.incrementTrackingStat,
   getTrackingStats: db.getTrackingStats,
+  insertProjectionAudit: db.insertProjectionAudit,
 
   // Convenience exports - team_metrics_cache
   getTeamMetricsCache: db.getTeamMetricsCache,

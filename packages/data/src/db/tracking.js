@@ -329,10 +329,79 @@ function deleteStaleTeamMetricsCache(beforeDate) {
   return info.changes;
 }
 
+/**
+ * Derive confidence_band label from a raw confidence score (0-1).
+ * @param {number|null} score
+ * @returns {string}
+ */
+function deriveConfidenceBand(score) {
+  if (score === null || score === undefined || isNaN(Number(score))) return 'unknown';
+  const s = Number(score);
+  if (s < 0.40) return '<40';
+  if (s < 0.50) return '40-50';
+  if (s < 0.60) return '50-60';
+  return '60+';
+}
+
+/**
+ * Insert a single row into projection_audit for a settled projection.
+ * Uses INSERT OR IGNORE so settlement re-runs are idempotent.
+ *
+ * @param {object} row
+ * @param {string} row.cardResultId          - card_results.id (used as PK)
+ * @param {string} row.sport                  - e.g. 'NBA', 'NHL'
+ * @param {string} row.marketType             - e.g. 'total', 'moneyline'
+ * @param {string|null} row.period            - '1P', '2P', or null for full-game
+ * @param {number|null} row.playerCount       - number of players in card
+ * @param {number|null} row.confidenceScore   - raw model confidence (0-1)
+ * @param {number|null} row.oddsAmerican      - locked_price integer
+ * @param {string|null} row.sharpPriceStatus  - 'CONFIRMED'|'ESTIMATED'|'UNTAGGED'
+ * @param {string|null} row.direction         - selection direction
+ * @param {string} row.result                 - 'win'|'loss'|'push'
+ * @param {number} row.pnlUnits
+ * @param {string} row.settledAt              - ISO8601
+ * @param {string|null} row.jobRunId
+ * @param {object|null} row.metadata          - extra context blob
+ */
+function insertProjectionAudit(row) {
+  const db = getDatabase();
+
+  const confidenceBand = deriveConfidenceBand(row.confidenceScore);
+
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO projection_audit (
+      id, card_result_id, sport, market_type, period,
+      player_count, confidence_score, confidence_band,
+      odds_american, sharp_price_status, direction,
+      result, pnl_units, settled_at, job_run_id, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  stmt.run(
+    row.cardResultId,
+    row.cardResultId,
+    row.sport || null,
+    row.marketType || null,
+    row.period || null,
+    row.playerCount !== undefined ? row.playerCount : null,
+    row.confidenceScore !== undefined ? row.confidenceScore : null,
+    confidenceBand,
+    row.oddsAmerican !== undefined ? row.oddsAmerican : null,
+    row.sharpPriceStatus || null,
+    row.direction || null,
+    row.result,
+    typeof row.pnlUnits === 'number' ? row.pnlUnits : 0,
+    row.settledAt,
+    row.jobRunId || null,
+    row.metadata ? JSON.stringify(row.metadata) : null
+  );
+}
+
 module.exports = {
   upsertTrackingStat,
   incrementTrackingStat,
   getTrackingStats,
+  insertProjectionAudit,
   getTeamMetricsCache,
   upsertTeamMetricsCache,
   deleteStaleTeamMetricsCache,

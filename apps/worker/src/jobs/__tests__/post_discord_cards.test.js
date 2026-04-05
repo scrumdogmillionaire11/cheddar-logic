@@ -263,7 +263,7 @@ describe('post_discord_cards helpers', () => {
     const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T17:05:00.000Z') });
 
     expect(snapshot.totalCards).toBe(1);
-    expect(snapshot.messages[0]).toContain('SPREAD');
+    expect(snapshot.messages[0]).toContain('Spread');
     expect(snapshot.messages[0]).toContain('HOME');
     expect(snapshot.messages[0]).not.toContain('AWAY -0.25');
   });

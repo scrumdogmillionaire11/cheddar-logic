@@ -25,6 +25,7 @@ const {
   buildMarketKey,
   createMarketError,
   incrementTrackingStat,
+  insertProjectionAudit,
   getDatabase,
   insertJobRun,
   markJobRunSuccess,
@@ -2310,7 +2311,8 @@ async function settlePendingCards({
       const aggregateRows = db
         .prepare(
           `
-        SELECT sport, market_type, card_type, metadata, result, pnl_units, sharp_price_status
+        SELECT id, sport, market_type, card_type, metadata, result, pnl_units,
+               sharp_price_status, selection, locked_price, settled_at
         FROM card_results
         WHERE status = 'settled'
           AND settled_at >= ?
@@ -2333,6 +2335,39 @@ async function settlePendingCards({
           rawMarketType === 'TOTAL' && period === '1P'
             ? 'total_1p'
             : rawMarketType.toLowerCase();
+
+        // --- projection_audit: write one row per settled projection (all markets, including 1P) ---
+        try {
+          const auditPlayerCount =
+            typeof cardResultMetadata.player_count === 'number'
+              ? cardResultMetadata.player_count
+              : null;
+          const auditConfidenceScore =
+            typeof cardResultMetadata.confidence_score === 'number'
+              ? cardResultMetadata.confidence_score
+              : null;
+
+          insertProjectionAudit({
+            cardResultId: row.id,
+            sport,
+            marketType: rawMarketType.toLowerCase(),
+            period: period || null,
+            playerCount: auditPlayerCount,
+            confidenceScore: auditConfidenceScore,
+            oddsAmerican: typeof row.locked_price === 'number' ? row.locked_price : null,
+            sharpPriceStatus: row.sharp_price_status || null,
+            direction: row.selection || null,
+            result: row.result,
+            pnlUnits: Number(row.pnl_units) || 0,
+            settledAt: row.settled_at,
+            jobRunId: jobRunId || null,
+            metadata: null,
+          });
+        } catch (auditErr) {
+          console.warn(
+            `[SettleCards] insertProjectionAudit skipped for card_result ${row.id}: ${auditErr.message}`,
+          );
+        }
 
         // 1st-period totals are a temporary/non-recurring market — exclude from P&L record
         if (trackingMarketType === 'total_1p') continue;
