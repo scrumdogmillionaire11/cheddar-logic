@@ -36,6 +36,7 @@ const {
   enrichOddsSnapshotWithEspnMetrics,
   updateOddsSnapshotRawData,
   getDatabase,
+  getPlayerAvailabilityByTeam,
 } = require('@cheddar-logic/data');
 const {
   enrichOddsSnapshotWithMoneyPuck,
@@ -369,6 +370,155 @@ function emitNhlSnapshotInvariant(level, message) {
 function assertNhlSnapshotInvariant(condition, level, message) {
   if (condition) return;
   emitNhlSnapshotInvariant(level, message);
+}
+
+// WI-0789: NHL key-player availability gate
+// Parallel to NBA_IMPACT_PLAYERS. Curated set of high-impact skaters and
+// starting goalies whose absence materially affects model output.
+const NHL_IMPACT_PLAYERS = new Set([
+  // Top skaters — forwards & defensemen
+  'Connor McDavid',
+  'Leon Draisaitl',
+  'Nathan MacKinnon',
+  'Cale Makar',
+  'David Pastrnak',
+  'Auston Matthews',
+  'Mitch Marner',
+  'Sidney Crosby',
+  'Evgeni Malkin',
+  'Alex Ovechkin',
+  'John Tavares',
+  'William Nylander',
+  'Matthew Tkachuk',
+  'Sam Reinhart',
+  'Aleksander Barkov',
+  'Mikko Rantanen',
+  'Brayden Point',
+  'Steven Stamkos',
+  'Nikita Kucherov',
+  'Victor Hedman',
+  'Roman Josi',
+  'Dougie Hamilton',
+  'Quinn Hughes',
+  'Mark Scheifele',
+  'Kyle Connor',
+  'Bo Horvat',
+  'Elias Pettersson',
+  'Kirill Kaprizov',
+  'Brady Tkachuk',
+  'Tim Stutzle',
+  'Joel Farabee',
+  'Tage Thompson',
+  'JJ Peterka',
+  'Clayton Keller',
+  // Top starting goalies
+  'Connor Hellebuyck',
+  'Igor Shesterkin',
+  'Andrei Vasilevskiy',
+  'Jake Oettinger',
+  'Logan Thompson',
+  'Linus Ullmark',
+  'Jeremy Swayman',
+  'Juuse Saros',
+  'Thatcher Demko',
+  'Frederik Andersen',
+  'Sam Montembeault',
+  'Stuart Skinner',
+  'Calvin Pickard',
+]);
+
+// WI-0789: Full odds-snapshot team name → ESPN abbreviation map (32 teams)
+const NHL_TEAM_ABBR_MAP = {
+  'Anaheim Ducks': 'ANA',
+  'Boston Bruins': 'BOS',
+  'Buffalo Sabres': 'BUF',
+  'Calgary Flames': 'CGY',
+  'Carolina Hurricanes': 'CAR',
+  'Chicago Blackhawks': 'CHI',
+  'Colorado Avalanche': 'COL',
+  'Columbus Blue Jackets': 'CBJ',
+  'Dallas Stars': 'DAL',
+  'Detroit Red Wings': 'DET',
+  'Edmonton Oilers': 'EDM',
+  'Florida Panthers': 'FLA',
+  'Los Angeles Kings': 'LAK',
+  'Minnesota Wild': 'MIN',
+  'Montreal Canadiens': 'MTL',
+  'Nashville Predators': 'NSH',
+  'New Jersey Devils': 'NJD',
+  'New York Islanders': 'NYI',
+  'New York Rangers': 'NYR',
+  'Ottawa Senators': 'OTT',
+  'Philadelphia Flyers': 'PHI',
+  'Pittsburgh Penguins': 'PIT',
+  'Seattle Kraken': 'SEA',
+  'San Jose Sharks': 'SJS',
+  'St. Louis Blues': 'STL',
+  'Tampa Bay Lightning': 'TBL',
+  'Toronto Maple Leafs': 'TOR',
+  'Utah Mammoth': 'UTA',
+  'Utah Hockey Club': 'UTA',
+  'Vancouver Canucks': 'VAN',
+  'Vegas Golden Knights': 'VGK',
+  'Washington Capitals': 'WSH',
+  'Winnipeg Jets': 'WPG',
+};
+
+/**
+ * WI-0789: Build key-player availability gate for an NHL game.
+ *
+ * Queries player_availability for both teams. Checks whether any impact player
+ * (from NHL_IMPACT_PLAYERS) is INJURED/OUT or DTD.
+ *
+ * Fail-open design:
+ * - No rows (sync hasn't run yet, or team unmappable) → empty flags, no degradation
+ * - Only emits flags when there is positive evidence of a player being INJURED/OUT/DTD
+ *
+ * @param {string} homeTeam  Full team name from odds snapshot, e.g. 'Edmonton Oilers'
+ * @param {string} awayTeam  Full team name from odds snapshot, e.g. 'Toronto Maple Leafs'
+ * @returns {{ missingFlags: string[], uncertainFlags: string[], availabilityFlags: Array<{player:string,team:string,status:string}> }}
+ */
+function buildNhlAvailabilityGate(homeTeam, awayTeam) {
+  const EMPTY = { missingFlags: [], uncertainFlags: [], availabilityFlags: [] };
+  try {
+    const homeAbbr = NHL_TEAM_ABBR_MAP[homeTeam] || null;
+    const awayAbbr = NHL_TEAM_ABBR_MAP[awayTeam] || null;
+
+    // No team mapping — can't query; proceed normally
+    if (!homeAbbr && !awayAbbr) return EMPTY;
+
+    const allRows = [];
+    if (homeAbbr) allRows.push(...getPlayerAvailabilityByTeam(homeAbbr, 'NHL'));
+    if (awayAbbr) allRows.push(...getPlayerAvailabilityByTeam(awayAbbr, 'NHL'));
+
+    // Sync hasn't run yet — fail-open, don't degrade cards
+    if (allRows.length === 0) {
+      return { ...EMPTY, missingFlags: ['nhl_availability_unresolved'] };
+    }
+
+    const missingFlags = [];
+    const uncertainFlags = [];
+    const availabilityFlags = [];
+
+    for (const row of allRows) {
+      const playerName = row.player_name || '';
+      if (!NHL_IMPACT_PLAYERS.has(playerName)) continue;
+
+      if (row.status === 'INJURED' || row.status === 'OUT') {
+        if (!missingFlags.includes('key_player_out')) missingFlags.push('key_player_out');
+        availabilityFlags.push({ player: playerName, team: row.team_id, status: row.status });
+      } else if (row.status === 'DTD' || row.status === 'GTD') {
+        if (!uncertainFlags.includes('key_player_uncertain')) uncertainFlags.push('key_player_uncertain');
+        availabilityFlags.push({ player: playerName, team: row.team_id, status: row.status });
+      }
+    }
+
+    return { missingFlags, uncertainFlags, availabilityFlags };
+  } catch (err) {
+    // Fail-open: DB query errors must not block card generation
+    console.log(`  [availability] buildNhlAvailabilityGate error (${err.message}) — skipping gate`);
+    return EMPTY;
+  }
 }
 
 function extractNhlPaceAuditContext(descriptors) {
@@ -1671,6 +1821,19 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               )
             : [];
 
+          // WI-0789: NHL key-player availability gate
+          const availabilityGate = buildNhlAvailabilityGate(
+            oddsSnapshot.home_team,
+            oddsSnapshot.away_team,
+          );
+          if (availabilityGate.missingFlags.length > 0 && !availabilityGate.missingFlags.includes('nhl_availability_unresolved')) {
+            const flaggedPlayers = availabilityGate.availabilityFlags.map((f) => f.player).join(', ');
+            console.log(
+              `  [availability] ${gameId}: ${availabilityGate.missingFlags.join(', ')}` +
+              (flaggedPlayers ? ` (${flaggedPlayers})` : ''),
+            );
+          }
+
           // Goalie state degradation path:
           // UNKNOWN starter_state → adjustment_trust='NEUTRALIZED' → goalie driver weight
           // zeroed, NOT total confidence. This is the sound path for unconfirmed or injured
@@ -1793,6 +1956,31 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             applyProjectionInputMetadata(card, projectionGate);
             applyNhlDriverContextMetadata(card, oddsSnapshot);
             applyNhlSettlementMarketContext(card, oddsSnapshot);
+            // WI-0789: merge key-player availability flags and cap tier at LEAN
+            if (availabilityGate.missingFlags.length > 0 || availabilityGate.uncertainFlags.length > 0) {
+              card.payloadData.missing_inputs = [
+                ...(card.payloadData.missing_inputs || []),
+                ...availabilityGate.missingFlags,
+              ];
+              if (availabilityGate.uncertainFlags.length > 0) {
+                card.payloadData.missing_inputs = [
+                  ...card.payloadData.missing_inputs,
+                  ...availabilityGate.uncertainFlags,
+                ];
+              }
+              if (availabilityGate.availabilityFlags.length > 0) {
+                if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+                card.payloadData.raw_data.availability_flags = availabilityGate.availabilityFlags;
+              }
+              // Cap tier at LEAN when a starred player is confirmed INJURED/OUT
+              if (
+                availabilityGate.missingFlags.includes('key_player_out') &&
+                card.payloadData.tier &&
+                (card.payloadData.tier === 'FIRE' || card.payloadData.tier === 'WATCH')
+              ) {
+                card.payloadData.tier = 'LEAN';
+              }
+            }
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
