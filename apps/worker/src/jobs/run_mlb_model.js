@@ -690,10 +690,13 @@ function attachRunId(card, runId) {
 }
 
 function resolvePitcherKsMode() {
-  // WI-0771: ODDS_BACKED mode is now active. Strikeout lines are read from
-  // player_prop_lines (populated by pull_odds_hourly) — no live API calls,
-  // no quota drain. When a line is absent the K engine falls back to
-  // PROJECTION_ONLY per-pitcher automatically.
+  // WI-0771: ODDS_BACKED mode is now active by default. Strikeout lines are
+  // read from player_prop_lines (populated by pull_odds_hourly) — no live
+  // API calls, no quota drain. When a line is absent the K engine falls back
+  // to PROJECTION_ONLY per-pitcher automatically.
+  // WI-0791: Respect PITCHER_KS_MODEL_MODE env override (used in tests).
+  const envMode = process.env.PITCHER_KS_MODEL_MODE;
+  if (envMode === 'PROJECTION_ONLY' || envMode === 'ODDS_BACKED') return envMode;
   return 'ODDS_BACKED';
 }
 
@@ -1573,10 +1576,19 @@ async function runMLBModel({
           });
 
           const gameDriverCards = computeMLBDriverCards(gameId, gameOddsSnapshot);
-          const rawPitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, {
-            mode: resolvePitcherKsMode(),
-            bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY,
-          });
+          // WI-0791: when F5 line is absent there is no odds context to back
+          // K props with — downgrade to PROJECTION_ONLY for this game even if
+          // the global mode is ODDS_BACKED. Only pass bookmakerPriority when
+          // the effective mode needs it.
+          const _globalKMode = resolvePitcherKsMode();
+          const _hasF5Line = baseOddsSnapshot.total_f5 != null;
+          const _effectiveKMode =
+            _globalKMode === 'ODDS_BACKED' && !_hasF5Line ? 'PROJECTION_ONLY' : _globalKMode;
+          const _kCallOptions =
+            _effectiveKMode === 'ODDS_BACKED'
+              ? { mode: _effectiveKMode, bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY }
+              : { mode: _effectiveKMode };
+          const rawPitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, _kCallOptions);
           const pitcherKDriverCards = rawPitcherKDriverCards.map((driver) => {
             if (!driver.market?.startsWith('pitcher_k_')) return driver;
 
