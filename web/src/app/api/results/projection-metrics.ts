@@ -3,6 +3,7 @@ export type ProjectionMetricInputRow = {
   cardType: string | null;
   payload: Record<string, unknown> | null;
   gameResultMetadata: Record<string, unknown> | null;
+  actualResult?: string | null;
 };
 
 export type ResultCardMode = 'ODDS_BACKED' | 'PROJECTION_ONLY';
@@ -357,7 +358,10 @@ function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | n
     return toNumber(row.gameResultMetadata?.f5_total);
   }
   if (cardFamily === 'MLB_PITCHER_K') {
-    return null;
+    if (!row.actualResult) return null;
+    const parsed = JSON.parse(row.actualResult);
+    const ks = parsed?.pitcher_ks;
+    return typeof ks === 'number' ? ks : null;
   }
   return null;
 }

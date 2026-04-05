@@ -49,6 +49,7 @@ const {
 const ESPN_SPORT_MAP = {
   NHL: 'hockey/nhl',
   NBA: 'basketball/nba',
+  MLB: 'baseball/mlb',
   NCAAM: 'basketball/mens-college-basketball',
 };
 
@@ -1364,11 +1365,16 @@ async function settleGameResults({
         );
 
         for (const dbGame of sportGames) {
+          // Extract ESPN event ID from espndirect_<sport>_<eventId> game IDs
+          // (games seeded by pull_espn_games_direct.js) so they match the
+          // scoreboard events without needing a game_id_map entry.
+          const _espnDirectMatch = String(dbGame.game_id).match(/^espndirect_[a-z]+_(\d+)$/);
           const mappedEspnEventId =
             mappedEspnEventIdByGameId.get(String(dbGame.game_id)) ||
             (/^\d+$/.test(String(dbGame.game_id))
               ? String(dbGame.game_id)
-              : null);
+              : null) ||
+            (_espnDirectMatch ? _espnDirectMatch[1] : null);
           let selectedMatch = null;
           let missReason = null;
 
