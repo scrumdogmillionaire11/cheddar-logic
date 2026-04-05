@@ -1576,18 +1576,14 @@ async function runMLBModel({
           });
 
           const gameDriverCards = computeMLBDriverCards(gameId, gameOddsSnapshot);
-          // WI-0791: when F5 line is absent there is no odds context to back
-          // K props with — downgrade to PROJECTION_ONLY for this game even if
-          // the global mode is ODDS_BACKED. Only pass bookmakerPriority when
-          // the effective mode needs it.
-          const _globalKMode = resolvePitcherKsMode();
-          const _hasF5Line = baseOddsSnapshot.total_f5 != null;
-          const _effectiveKMode =
-            _globalKMode === 'ODDS_BACKED' && !_hasF5Line ? 'PROJECTION_ONLY' : _globalKMode;
+          // K props draw from player_prop_lines — independent of F5 total line.
+          // Always pass the resolved mode; per-pitcher fallback to PROJECTION_ONLY
+          // happens inside computePitcherKDriverCards when no strikeout line is found.
+          const _kMode = resolvePitcherKsMode();
           const _kCallOptions =
-            _effectiveKMode === 'ODDS_BACKED'
-              ? { mode: _effectiveKMode, bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY }
-              : { mode: _effectiveKMode };
+            _kMode === 'ODDS_BACKED'
+              ? { mode: _kMode, bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY }
+              : { mode: _kMode };
           const rawPitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, _kCallOptions);
           const pitcherKDriverCards = rawPitcherKDriverCards.map((driver) => {
             if (!driver.market?.startsWith('pitcher_k_')) return driver;

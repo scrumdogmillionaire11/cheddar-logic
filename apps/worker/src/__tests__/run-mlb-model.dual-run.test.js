@@ -540,7 +540,7 @@ describe('runMLBModel dual-run orchestration', () => {
     );
   });
 
-  test('missing F5 line emits projection-floor mlb-f5 and still writes projection-only mlb-pitcher-k when ODDS_BACKED is requested', async () => {
+  test('missing F5 line emits projection-floor mlb-f5 and still calls computePitcherKDriverCards in ODDS_BACKED mode (per-pitcher fallback is PROJECTION_ONLY when no strikeout line)', async () => {
     const selection = {
       chosen_market: 'F5_TOTAL',
       why_this_market: 'Rule 1: only configured MLB game market',
@@ -577,10 +577,12 @@ describe('runMLBModel dual-run orchestration', () => {
     const result = await runMLBModel();
 
     expect(result.success).toBe(true);
+    // K props use player_prop_lines — independent of F5 line. Call site must
+    // stay in ODDS_BACKED mode; per-pitcher fallback is handled inside the model.
     expect(mocks.computePitcherKDriverCardsMock).toHaveBeenCalledWith(
       'mlb-game-001',
       expect.any(Object),
-      { mode: 'PROJECTION_ONLY' },
+      { mode: 'ODDS_BACKED', bookmakerPriority: expect.any(Object) },
     );
     const emittedTypes = mocks.insertCardPayload.mock.calls.map(([card]) => card.cardType);
     expect(emittedTypes).toEqual(expect.arrayContaining(['mlb-pitcher-k', 'mlb-f5']));
