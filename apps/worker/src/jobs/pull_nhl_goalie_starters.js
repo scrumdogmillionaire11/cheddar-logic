@@ -10,6 +10,7 @@ const {
   markJobRunFailure,
   shouldRunJobKey,
   withDb,
+  createJob,
 } = require('@cheddar-logic/data');
 
 const JOB_NAME = 'pull_nhl_goalie_starters';
@@ -171,12 +172,15 @@ async function pullNhlGoalieStarters({ jobKey = null, dryRun = false, dateStr } 
 }
 
 if (require.main === module) {
-  withDb(() => pullNhlGoalieStarters({ jobKey: 'smoke', dryRun: false }))
-    .then((result) => process.exit(result.success === false ? 1 : 0))
-    .catch((error) => {
-      console.error(`[${JOB_NAME}] Fatal:`, error.message);
-      process.exit(1);
-    });
+  createJob(JOB_NAME, async ({ dryRun }) => {
+    const result = await withDb(() =>
+      pullNhlGoalieStarters({ jobKey: 'smoke', dryRun }),
+    );
+    if (result && result.success === false) {
+      throw new Error(result.error || 'pull_nhl_goalie_starters returned success=false');
+    }
+    return result;
+  });
 }
 
 module.exports = {
