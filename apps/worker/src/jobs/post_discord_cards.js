@@ -10,6 +10,7 @@ const {
   shouldRunJobKey,
   withDb,
   getDatabase,
+  createJob,
 } = require('@cheddar-logic/data');
 
 const JOB_NAME = 'post_discord_cards';
@@ -900,32 +901,22 @@ async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
 }
 
 if (require.main === module) {
-  const dryRun = process.argv.includes('--dry-run');
-  postDiscordCards({ dryRun })
-    .then((result) => {
-      if (!result) {
-        console.error(`[${JOB_NAME}] No result returned`);
-        process.exit(1);
-      }
-      if (result.skipped) {
-        console.log(`[${JOB_NAME}] skipped — ${result.reason}: ${result.message || ''}`);
-        process.exit(0);
-      }
-      if (result.success === false) {
-        console.error(`[${JOB_NAME}] failed — ${result.error || 'unknown error'}`);
-        process.exit(1);
-      }
-      if (dryRun) {
-        console.log(`[${JOB_NAME}] dry-run — games:${result.totalGames} chunks:${result.chunks} cards:${result.totalCards} play:${result.sectionCounts?.official} lean:${result.sectionCounts?.lean} pass:${result.sectionCounts?.passBlocked}`);
-      } else {
-        console.log(`[${JOB_NAME}] sent — games:${result.totalGames} chunks:${result.chunks} cards:${result.totalCards} play:${result.sectionCounts?.official} lean:${result.sectionCounts?.lean} pass:${result.sectionCounts?.passBlocked}`);
-      }
-      process.exit(0);
-    })
-    .catch((error) => {
-      console.error(`[${JOB_NAME}] fatal:`, error.message);
-      process.exit(1);
-    });
+  createJob(JOB_NAME, async ({ dryRun }) => {
+    const result = await postDiscordCards({ dryRun });
+    if (!result) {
+      throw new Error('postDiscordCards returned no result');
+    }
+    if (result.skipped) {
+      console.log(`[${JOB_NAME}] skipped — ${result.reason}: ${result.message || ''}`);
+      return result;
+    }
+    if (result.success === false) {
+      throw new Error(result.error || 'postDiscordCards returned success=false');
+    }
+    const mode = dryRun ? 'dry-run' : 'sent';
+    console.log(`[${JOB_NAME}] ${mode} — games:${result.totalGames} chunks:${result.chunks} cards:${result.totalCards} play:${result.sectionCounts?.official} lean:${result.sectionCounts?.lean} pass:${result.sectionCounts?.passBlocked}`);
+    return result;
+  });
 }
 
 module.exports = {

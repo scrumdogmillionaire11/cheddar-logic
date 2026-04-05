@@ -29,6 +29,7 @@ const {
   withDb,
   getDatabase,
   deleteStaleTeamMetricsCache,
+  createJob,
 } = require('@cheddar-logic/data');
 
 const {
@@ -116,9 +117,10 @@ const STALE_DAYS = 7; // Delete cache entries older than 7 days
 /**
  * Main job execution
  */
-async function run() {
+async function run(dryRun = false) {
   const runId = uuidV4();
-  const dryRun = process.argv.includes('--dry-run');
+  // dryRun is injected by createJob; fall back to argv for manual invocation
+  dryRun = dryRun || process.argv.includes('--dry-run');
   const sportFilter = process.argv
     .find((arg) => arg.startsWith('--sport='))
     ?.split('=')[1]
@@ -242,7 +244,7 @@ async function run() {
       console.error(
         `[RefreshTeamMetrics] WARN: High failure rate (${failedCount}/${totalTeams})`,
       );
-      process.exit(1);
+      throw new Error(`High failure rate: ${failedCount}/${totalTeams} teams failed`);
     }
   } catch (err) {
     console.error('[RefreshTeamMetrics] Job failed:', err);
@@ -251,16 +253,13 @@ async function run() {
       markJobRunFailure(runId, err.message);
     }
 
-    process.exit(1);
+    throw err;
   }
 }
 
 // Run if invoked directly
 if (require.main === module) {
-  withDb(run).catch((err) => {
-    console.error('[RefreshTeamMetrics] Uncaught error:', err);
-    process.exit(1);
-  });
+  createJob('refresh_team_metrics_daily', ({ dryRun }) => withDb(() => run(dryRun)));
 }
 
 module.exports = { run };
