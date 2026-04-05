@@ -1069,6 +1069,9 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   const allowThinSample = options.allowThinSample === true;
   const projectionFlags = [];
   const missingInputs = [];
+  // Non-blocking missing fields: flagged in the output missing_inputs for observability
+  // but do NOT affect projection_source or status_cap.
+  const observabilityMissing = [];
   const degradedInputs = [];
   const opponentProfile = resolveOpponentPitcherKProfile(matchup);
   const expectedIp =
@@ -1094,7 +1097,8 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   // WI-0770: swstr_pct is a real Statcast signal — its absence is a true missing
   // input (not a degraded proxy). When absent: flag statcast_swstr, cap at LEAN.
   if (starterSwStrPct === null) missingInputs.push('statcast_swstr');
-  // season_avg_velo absence does not block and does not degrade projection_source (velo modifier simply omitted)
+  // WI-0770: season_avg_velo absence is non-blocking — velo modifier simply omitted,
+  // but still flagged in missing_inputs for observability. Does not affect status_cap.
   missingInputs.push(...(opponentProfile.missing_inputs || []));
   if (
     opponentProfile.opp_obp === null &&
@@ -1159,12 +1163,16 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   const temp = weather?.temp_at_first_pitch ?? weather?.temp_f ?? 72;
   if (temp < 45) kMean *= 0.95;
 
-  // WI-0770: velocity tier modifier — only applied when season_avg_velo is present
+  // WI-0770: velocity tier modifier — only applied when season_avg_velo is present.
+  // When absent, flag statcast_velo via observabilityMissing (non-blocking: does not
+  // affect projection_source or status_cap).
   const veloMph = toFiniteNumberOrNull(pitcher?.season_avg_velo);
   if (veloMph !== null) {
     if (veloMph >= 95) kMean *= 1.025;      // high-velo advantage: +2.5%
     else if (veloMph < 90) kMean *= 0.975; // low-velo penalty: -2.5%
     // 90–94.9: no modifier
+  } else {
+    observabilityMissing.push('statcast_velo');
   }
 
   // WI-0763: BB% adjustment derived from game log walks/batters_faced.
@@ -1250,9 +1258,11 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
         ? 'DEGRADED_MODEL'
         : 'FULL_MODEL',
     // WI-0770: null swstr_pct caps card at LEAN — real signal absent, not proxy-filled.
-    // Only apply LEAN when model runs fully (no missingInputs); SYNTHETIC_FALLBACK is already capped at PASS.
-    status_cap: (missingInputs.length === 0 && starterSwStrPct === null) ? 'LEAN' : 'PASS',
-    missing_inputs: Array.from(new Set(missingInputs)),
+    // Only cap at LEAN when statcast_swstr is the sole blocking missing input; when other
+    // inputs are also missing the projection degrades to SYNTHETIC_FALLBACK which already
+    // implies a PASS cap (no confident signal to act on).
+    status_cap: (missingInputs.length === 1 && missingInputs.includes('statcast_swstr')) ? 'LEAN' : 'PASS',
+    missing_inputs: Array.from(new Set([...missingInputs, ...observabilityMissing])),
     degraded_inputs: Array.from(new Set(degradedInputs)),
     statcast_inputs: {
       swstr_pct: starterSwStrPct,

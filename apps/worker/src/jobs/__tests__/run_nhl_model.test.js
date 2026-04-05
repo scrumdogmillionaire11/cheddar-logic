@@ -138,7 +138,7 @@ describe('run_nhl_model job', () => {
   test('job executes successfully with exit code 0', () => {
     try {
       const result = execSync(
-        `DATABASE_PATH=${TEST_DB_PATH} npm run job:run-nhl-model`,
+        `CHEDDAR_DB_PATH= DATABASE_PATH=${TEST_DB_PATH} npm run job:run-nhl-model`,
         {
           cwd: path.resolve(__dirname, '../../..'),
 

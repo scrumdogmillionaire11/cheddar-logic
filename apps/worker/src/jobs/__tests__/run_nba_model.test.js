@@ -105,7 +105,7 @@ describe('run_nba_model job', () => {
   test('job executes successfully with exit code 0', () => {
     try {
       const result = execSync(
-        `DATABASE_PATH=${TEST_DB_PATH} npm run job:run-nba-model`,
+        `CHEDDAR_DB_PATH= DATABASE_PATH=${TEST_DB_PATH} npm run job:run-nba-model`,
         {
           cwd: path.resolve(__dirname, '../../..'),
 
