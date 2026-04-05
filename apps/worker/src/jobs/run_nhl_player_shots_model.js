@@ -1867,6 +1867,7 @@ async function runNHLPlayerShotsModel() {
 
             let opponentFactor = 1.0;
             let paceFactor = 1.0;
+            let blkOppAttemptFactor = 1.0;
             let opponentFactorMissing = false;
             let paceFactorMissing = false;
             const opponentLookupNote = !opponentAbbrev
@@ -1971,6 +1972,11 @@ async function runNHLPlayerShotsModel() {
 
               const teamPaceProxy = Number(factorRow?.team_pace_proxy);
               const opponentPaceProxy = Number(factorRow?.opponent_pace_proxy);
+              // BLK: opponent attempt factor — opponent's corsi proxy (shots generated ratio)
+              // Clamping to [0.90, 1.12] is enforced inside projectBlkV1.
+              if (Number.isFinite(opponentPaceProxy) && opponentPaceProxy > 0) {
+                blkOppAttemptFactor = opponentPaceProxy;
+              }
               if (
                 Number.isFinite(teamPaceProxy) &&
                 teamPaceProxy > 0 &&
@@ -3090,6 +3096,16 @@ async function runNHLPlayerShotsModel() {
                       ? 'OVER'
                       : 'UNDER'
                     : 'OVER';
+                // BLK: playoff tightening — games in NHL playoff window (Apr 19 – Jun 30) get 1.06 boost.
+                const blkGameDate = new Date(game.game_time_utc);
+                const blkGameMonth = blkGameDate.getUTCMonth() + 1; // 1-12
+                const blkGameDay = blkGameDate.getUTCDate();
+                const blkInPlayoffs =
+                  (blkGameMonth === 4 && blkGameDay >= 19) ||
+                  blkGameMonth === 5 ||
+                  blkGameMonth === 6;
+                const blkPlayoffFactor = blkInPlayoffs ? 1.06 : 1.0;
+
                 const blkProjection = projectBlkV1({
                   player_id: player.player_id,
                   game_id: resolvedGameId,
@@ -3106,6 +3122,8 @@ async function runNHLPlayerShotsModel() {
                   market_price_over: blkMarket.over_price,
                   market_price_under: blkMarket.under_price,
                   play_direction: blkLeanSide,
+                  opponent_attempt_factor: blkOppAttemptFactor,
+                  playoff_tightening_factor: blkPlayoffFactor,
                 });
                 const blkConfidence = Math.max(
                   0.55,
