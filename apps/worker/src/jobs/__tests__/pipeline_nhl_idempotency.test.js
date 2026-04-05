@@ -10,6 +10,7 @@
 
 const { execSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
 const TEST_DB_PATH = '/tmp/cheddar-nhl-idempotency.db';
 
@@ -65,7 +66,7 @@ describe('pipeline idempotency (NHL)', () => {
     }
     runCommand(
       'node ../../packages/data/src/seed-test-odds.js',
-      '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+      path.resolve(__dirname, '../../..'),
     );
   });
 
@@ -80,7 +81,7 @@ describe('pipeline idempotency (NHL)', () => {
 
     runCommand(
       'npm run job:run-nhl-model',
-      '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+      path.resolve(__dirname, '../../..'),
       { JOB_KEY: jobKey },
     );
 
@@ -88,7 +89,8 @@ describe('pipeline idempotency (NHL)', () => {
 
     runCommand(
       'npm run job:run-nhl-model',
-      '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+      path.resolve(__dirname, '../../..'),
+
       { JOB_KEY: jobKey },
     );
 

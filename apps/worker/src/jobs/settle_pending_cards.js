@@ -25,6 +25,7 @@ const {
   buildMarketKey,
   createMarketError,
   incrementTrackingStat,
+  insertProjectionAudit,
   getDatabase,
   insertJobRun,
   markJobRunSuccess,
@@ -34,6 +35,7 @@ const {
   parseLine,
   recordClvEntry,
   settleClvEntry,
+  hasSuccessfulJobRun,
   shouldRunJobKey,
   withDb,
 } = require('@cheddar-logic/data');
@@ -1838,6 +1840,19 @@ async function settlePendingCards({
       return { success: true, jobRunId: null, skipped: true, jobKey };
     }
 
+    // Sequential ordering guard: card settlement must not run before projection settlement completes.
+    // Job key format: settle|hourly|YYYY-MM-DD|HH|pending-cards (or settle|nightly|YYYY-MM-DD|pending-cards).
+    // Replace the |pending-cards suffix with |projections to derive the expected projections key.
+    if (jobKey) {
+      const projectionsJobKey = jobKey.replace(/\|pending-cards$/, '|projections');
+      if (!hasSuccessfulJobRun(projectionsJobKey)) {
+        console.log(
+          `SKIP: settle_projections not yet SUCCESS for this window — skipping card settlement (expected key: ${projectionsJobKey})`,
+        );
+        return { success: true, jobRunId: null, skipped: true, guardedBy: 'settle_projections', jobKey };
+      }
+    }
+
     // DRY_RUN mode (log only, no execution)
     if (dryRun) {
       console.log(
@@ -2296,7 +2311,8 @@ async function settlePendingCards({
       const aggregateRows = db
         .prepare(
           `
-        SELECT sport, market_type, card_type, metadata, result, pnl_units, sharp_price_status
+        SELECT id, sport, market_type, card_type, metadata, result, pnl_units,
+               sharp_price_status, selection, locked_price, settled_at
         FROM card_results
         WHERE status = 'settled'
           AND settled_at >= ?
@@ -2319,6 +2335,43 @@ async function settlePendingCards({
           rawMarketType === 'TOTAL' && period === '1P'
             ? 'total_1p'
             : rawMarketType.toLowerCase();
+
+        // --- projection_audit: write one row per settled projection (all markets, including 1P) ---
+        try {
+          const auditPlayerCount =
+            typeof cardResultMetadata.player_count === 'number'
+              ? cardResultMetadata.player_count
+              : null;
+          const auditConfidenceScore =
+            typeof cardResultMetadata.confidence_score === 'number'
+              ? cardResultMetadata.confidence_score
+              : null;
+
+          insertProjectionAudit({
+            cardResultId: row.id,
+            sport,
+            marketType: rawMarketType.toLowerCase(),
+            period: period || null,
+            playerCount: auditPlayerCount,
+            confidenceScore: auditConfidenceScore,
+            oddsAmerican: typeof row.locked_price === 'number' ? row.locked_price : null,
+            sharpPriceStatus: row.sharp_price_status || null,
+            direction: row.selection || null,
+            result: row.result,
+            pnlUnits: Number(row.pnl_units) || 0,
+            settledAt: row.settled_at,
+            jobRunId: jobRunId || null,
+            metadata: null,
+          });
+        } catch (auditErr) {
+          console.warn(
+            `[SettleCards] insertProjectionAudit skipped for card_result ${row.id}: ${auditErr.message}`,
+          );
+        }
+
+        // 1st-period totals are a temporary/non-recurring market — exclude from P&L record
+        if (trackingMarketType === 'total_1p') continue;
+
         const key = `${sport}|${trackingMarketType}`;
 
         if (!marketDeltas[key]) {

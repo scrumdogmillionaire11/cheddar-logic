@@ -1,3 +1,8 @@
+// Decision (WI-0760): model_outputs is actively consumed via GET /api/model-outputs.
+// Option A (wire) was chosen over Option B (remove). Writers: run_mlb_model.js,
+// run_nfl_model.js, run_fpl_model.js. NHL and NBA models write card_payloads only.
+// Read surface: web/src/app/api/model-outputs/route.ts
+
 const { getDatabase } = require('./connection');
 
 /**
@@ -87,6 +92,7 @@ function getModelOutputs(gameId) {
   return stmt.all(gameId);
 }
 
+// Read surface: called by GET /api/model-outputs in web/src/app/api/model-outputs/route.ts
 /**
  * Get model outputs for a sport since a given time
  * @param {string} sport - Sport name

@@ -242,10 +242,10 @@ describe('decision publisher v2 pipeline', () => {
     );
   });
 
-  test('blocks when odds are stale beyond 30 minutes with explicit stale-input reason code', () => {
+  test('blocks when odds are stale beyond 150 minutes with explicit stale-input reason code', () => {
     const payload = buildWave1Payload({
       odds_context: {
-        captured_at: minutesAgoIso(60),
+        captured_at: minutesAgoIso(160),
       },
     });
     applyUiActionFields(payload);

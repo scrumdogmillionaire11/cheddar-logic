@@ -116,7 +116,8 @@ async function ingestNstBlkRates({
   fetchImpl = fetch,
 } = {}) {
   if (!seasonUrl || !l10Url || !l5Url) {
-    throw new Error('ingestNstBlkRates requires season, l10, and l5 NST CSV URLs');
+    console.warn('[ingest_nst_blk_rates] WARN: NHL_BLK_NST_SEASON_CSV_URL / L10 / L5 not set — skipping ingest. Set env vars to enable automated block-rate refresh.');
+    return { inserted: 0, skipped: 0, error: 'missing_urls' };
   }
 
   const [seasonCsv, l10Csv, l5Csv] = await Promise.all([

@@ -144,6 +144,37 @@ test('uses publicBetsPctAway when direction is AWAY', () => {
   assert.ok(!pills.some((p) => p.label === 'Public Heavy (28%)'), JSON.stringify(pills));
 });
 
+// ---------------------------------------------------------------------------
+// WI-0667: SHARP_MONEY_OPPOSITE + SHARP_ALIGNED tag-based pills
+// ---------------------------------------------------------------------------
+
+// 8. SHARP_MONEY_OPPOSITE tag alone → blue "Sharp Divergence" pill
+test('SHARP_MONEY_OPPOSITE tag → Sharp Divergence (blue) pill', () => {
+  const pills = deriveMarketSignals(makeCard({ tags: ['SHARP_MONEY_OPPOSITE'] }));
+  assert.ok(pills.some((p) => p.label === 'Sharp Divergence' && p.color === 'blue'), JSON.stringify(pills));
+});
+
+// 9. SHARP_ALIGNED tag alone → emerald "Sharp Aligned" pill
+test('SHARP_ALIGNED tag alone → Sharp Aligned (emerald) pill', () => {
+  const pills = deriveMarketSignals(makeCard({ tags: ['SHARP_ALIGNED'] }));
+  assert.ok(pills.some((p) => p.label === 'Sharp Aligned' && p.color === 'emerald'), JSON.stringify(pills));
+  assert.ok(!pills.some((p) => p.label === 'Sharp Divergence'), JSON.stringify(pills));
+});
+
+// 10. SHARP_MONEY_OPPOSITE + publicBetsPctHome:74 → both Sharp Divergence (blue) AND Public Heavy (amber)
+test('SHARP_MONEY_OPPOSITE + publicBetsPctHome:74 → Sharp Divergence AND Public Heavy double-signal', () => {
+  const pills = deriveMarketSignals(makeCard({ tags: ['SHARP_MONEY_OPPOSITE'], direction: 'HOME', publicBetsPctHome: 74 }));
+  assert.ok(pills.some((p) => p.label === 'Sharp Divergence' && p.color === 'blue'), JSON.stringify(pills));
+  assert.ok(pills.some((p) => p.label === 'Public Heavy (74%)' && p.color === 'amber'), JSON.stringify(pills));
+});
+
+// 11. Both SHARP_ALIGNED and SHARP_MONEY_OPPOSITE present → Sharp Divergence fires; Sharp Aligned suppressed
+test('SHARP_ALIGNED + SHARP_MONEY_OPPOSITE → Sharp Divergence fires, Sharp Aligned suppressed', () => {
+  const pills = deriveMarketSignals(makeCard({ tags: ['SHARP_ALIGNED', 'SHARP_MONEY_OPPOSITE'] }));
+  assert.ok(pills.some((p) => p.label === 'Sharp Divergence' && p.color === 'blue'), JSON.stringify(pills));
+  assert.ok(!pills.some((p) => p.label === 'Sharp Aligned'), JSON.stringify(pills));
+});
+
 const total = pass + fail;
 console.log(`\n${pass}/${total} tests passed`);
 if (fail > 0) process.exit(1);

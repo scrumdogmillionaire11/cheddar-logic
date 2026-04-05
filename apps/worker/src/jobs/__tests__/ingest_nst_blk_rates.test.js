@@ -19,6 +19,12 @@ describe('ingest_nst_blk_rates', () => {
     expect(rows[0].Player).toBe('Jaccob Slavin');
   });
 
+  test('returns missing_urls when URL env vars are absent', async () => {
+    const result = await ingestNstBlkRates({ seasonUrl: undefined, l10Url: undefined, l5Url: undefined });
+    expect(result).toEqual({ inserted: 0, skipped: 0, error: 'missing_urls' });
+    expect(mockUpsertPlayerBlkRates).not.toHaveBeenCalled();
+  });
+
   test('ingest merges season/l10/l5 CSVs and upserts rates', async () => {
     const csvSeason = 'Player,PlayerID,Team,EV BLK,EV TOI,PK BLK,PK TOI\nJaccob Slavin,8474565,CAR,40,400,20,100\n';
     const csvL10 = 'Player,PlayerID,Team,EV BLK,EV TOI,PK BLK,PK TOI\nJaccob Slavin,8474565,CAR,8,80,4,20\n';

@@ -690,10 +690,13 @@ function attachRunId(card, runId) {
 }
 
 function resolvePitcherKsMode() {
-  // WI-0771: ODDS_BACKED mode is now active. Strikeout lines are read from
-  // player_prop_lines (populated by pull_odds_hourly) — no live API calls,
-  // no quota drain. When a line is absent the K engine falls back to
-  // PROJECTION_ONLY per-pitcher automatically.
+  // WI-0771: ODDS_BACKED mode is now active by default. Strikeout lines are
+  // read from player_prop_lines (populated by pull_odds_hourly) — no live
+  // API calls, no quota drain. When a line is absent the K engine falls back
+  // to PROJECTION_ONLY per-pitcher automatically.
+  // WI-0791: Respect PITCHER_KS_MODEL_MODE env override (used in tests).
+  const envMode = process.env.PITCHER_KS_MODEL_MODE;
+  if (envMode === 'PROJECTION_ONLY' || envMode === 'ODDS_BACKED') return envMode;
   return 'ODDS_BACKED';
 }
 
@@ -953,11 +956,14 @@ function computeProjectionFloorF5(oddsSnapshot) {
     let homeSkillRa9 = resolvePitcherSkill(mlb.home_pitcher);
     let awaySkillRa9 = resolvePitcherSkill(mlb.away_pitcher);
 
-    // WITHOUT_ODDS_MODE: raw_data is null — fall back to DB lookup by team abbreviation
-    if (homeSkillRa9 === null && oddsSnapshot?.home_team) {
+    // WITHOUT_ODDS_MODE: raw_data is null — fall back to DB lookup by team abbreviation.
+    // Guard: only call DB when the pitcher object itself is absent; if a pitcher object
+    // exists but lacks siera/xfip/xera (resolvePitcherSkill returns null), we fall
+    // through to PROJECTION_FLOOR_F5_FALLBACK rather than fetching stale DB data.
+    if (homeSkillRa9 === null && oddsSnapshot?.home_team && mlb.home_pitcher == null) {
       homeSkillRa9 = getPitcherEraFromDb(oddsSnapshot.home_team);
     }
-    if (awaySkillRa9 === null && oddsSnapshot?.away_team) {
+    if (awaySkillRa9 === null && oddsSnapshot?.away_team && mlb.away_pitcher == null) {
       awaySkillRa9 = getPitcherEraFromDb(oddsSnapshot.away_team);
     }
 
@@ -1570,10 +1576,15 @@ async function runMLBModel({
           });
 
           const gameDriverCards = computeMLBDriverCards(gameId, gameOddsSnapshot);
-          const rawPitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, {
-            mode: resolvePitcherKsMode(),
-            bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY,
-          });
+          // K props draw from player_prop_lines — independent of F5 total line.
+          // Always pass the resolved mode; per-pitcher fallback to PROJECTION_ONLY
+          // happens inside computePitcherKDriverCards when no strikeout line is found.
+          const _kMode = resolvePitcherKsMode();
+          const _kCallOptions =
+            _kMode === 'ODDS_BACKED'
+              ? { mode: _kMode, bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY }
+              : { mode: _kMode };
+          const rawPitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, _kCallOptions);
           const pitcherKDriverCards = rawPitcherKDriverCards.map((driver) => {
             if (!driver.market?.startsWith('pitcher_k_')) return driver;
 

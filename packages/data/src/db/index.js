@@ -10,6 +10,7 @@ const tracking = require('./tracking');
 const quota = require('./quota');
 const scheduler = require('./scheduler');
 const authStore = require('./auth-store');
+const pipelineHealth = require('./pipeline-health');
 
 module.exports = {
   getDatabase: connection.getDatabase,
@@ -39,6 +40,7 @@ module.exports = {
   getActiveGamesForSplits: odds.getActiveGamesForSplits,
   updateOddsSnapshotSplits: odds.updateOddsSnapshotSplits,
   updateOddsSnapshotVsinSplits: odds.updateOddsSnapshotVsinSplits,
+  updateOddsSnapshotCircaSplits: odds.updateOddsSnapshotCircaSplits,
   getLatestOdds: odds.getLatestOdds,
   getOddsSnapshots: odds.getOddsSnapshots,
   computeLineDelta: odds.computeLineDelta,
@@ -103,6 +105,7 @@ module.exports = {
   upsertTrackingStat: tracking.upsertTrackingStat,
   incrementTrackingStat: tracking.incrementTrackingStat,
   getTrackingStats: tracking.getTrackingStats,
+  insertProjectionAudit: tracking.insertProjectionAudit,
   getTeamMetricsCache: tracking.getTeamMetricsCache,
   upsertTeamMetricsCache: tracking.upsertTeamMetricsCache,
   deleteStaleTeamMetricsCache: tracking.deleteStaleTeamMetricsCache,
@@ -120,4 +123,7 @@ module.exports = {
   issueRefreshToken: authStore.issueRefreshToken,
   revokeRefreshToken: authStore.revokeRefreshToken,
   isRefreshTokenValid: authStore.isRefreshTokenValid,
+
+  // pipeline_health — read surface for WI-0761 Model Health Dashboard
+  getPipelineHealth: pipelineHealth.getPipelineHealth,
 };

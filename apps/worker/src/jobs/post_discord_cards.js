@@ -409,7 +409,7 @@ function normalizeMarketTag(card) {
   const marketKey = String(payload?.market_key || '').toLowerCase();
   const token = `${marketType} ${marketKey} ${cardType}`;
 
-  if (token.includes('asian_handicap') || token.includes('spread') || token.includes('handicap')) return 'SPREAD';
+  if (token.includes('asian_handicap') || token.includes('spread') || token.includes('handicap')) return 'Spread';
   if (token.includes('moneyline') || token.includes(':h2h') || token.includes('ml')) return 'ML';
   if (token.includes('team_total')) return 'TEAM TOTAL';
   if (token.includes('tsoa')) return 'TSOA';
@@ -526,17 +526,23 @@ function renderDecisionLine(card, bucket) {
     );
     const pickStr = rawPick.replace(/^(lean|fire|watch|hold|play)\s+/i, '').trim();
     const priceVal = priceSummary(card);
-    const metrics = metricSummary(card);
     const why = summarizeReasoning(card);
 
     const proj = projectionValue(card);
     const priced = pickStr
       ? (priceVal ? `${pickStr} (${priceVal})` : pickStr)
       : 'No selection';
-    const pricedWithProj = proj ? `${priced} · Proj: ${proj}` : priced;
 
-    const lines = [`PROP | ${pricedWithProj}`];
-    if (metrics) lines.push(metrics);
+    // Second line: projection | edge
+    const edgeRawProp = safeScalar(payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp);
+    const edgeProp = edgeRawProp !== null ? formatEdgeValue(edgeRawProp) : null;
+    const propMetricParts = [];
+    if (proj) propMetricParts.push(proj);
+    if (edgeProp) propMetricParts.push(`Edge: ${edgeProp}`);
+    const propMetricsLine = propMetricParts.join(' | ');
+
+    const lines = [`PROP | ${priced}`];
+    if (propMetricsLine) lines.push(propMetricsLine);
     if (why)     lines.push(`Why: ${why}`);
     return lines.join('\n');
   }
@@ -558,12 +564,18 @@ function renderDecisionLine(card, bucket) {
   const betCore = [selection, line].filter(Boolean).join(' ').trim() || 'TBD';
   const priced  = price ? `${betCore} (${price})` : betCore;
   const proj    = projectionValue(card);
-  const pricedWithProj = proj ? `${priced} · Proj: ${proj}` : priced;
-  const metrics = metricSummary(card);
   const why     = summarizeReasoning(card);
 
-  const lines = [`${market} | ${pricedWithProj}`];
-  if (metrics) lines.push(metrics);
+  // Second line: projection | edge (line is already embedded in the pick string)
+  const edgeRaw2 = safeScalar(payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp);
+  const edgeFormatted2 = edgeRaw2 !== null ? formatEdgeValue(edgeRaw2) : null;
+  const metricParts2 = [];
+  if (proj) metricParts2.push(proj);
+  if (edgeFormatted2) metricParts2.push(`Edge: ${edgeFormatted2}`);
+  const metricsLine2 = metricParts2.join(' | ');
+
+  const lines = [`${market} | ${priced}`];
+  if (metricsLine2) lines.push(metricsLine2);
   if (why)     lines.push(`Why: ${why}`);
   return lines.join('\n');
 }
@@ -577,8 +589,8 @@ function sectionLines(title, cards, bucket) {
   for (const card of cards) {
     const rendered = renderDecisionLine(card, bucket);
     if (!rendered) continue;
-    rendered.split('\n').forEach((line, index) => {
-      renderedItems.push(index === 0 ? `- ${line}` : `  ${line}`);
+    rendered.split('\n').forEach((line) => {
+      renderedItems.push(line);
     });
   }
 
@@ -772,10 +784,10 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
     const startEt      = formatEtTime(seed?.gameTimeUtc);
 
     const headerLines = [
+      '─────────────────',
       `${sportLabel(seed?.sport)} | ${startEt}`,
       shortMatchup,
       `Snapshot: ${snapshotEt}`,
-      '─────────────────',
     ];
 
     const officialLines = sectionLines('🟢 PLAY', official, 'official');
@@ -790,6 +802,7 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
       continue; // no plays, no leans rendered — skip entirely (dead game to bettor)
     }
 
+    headerLines.push('─────────────────');
     messages.push(headerLines.join('\n'));
   }
 

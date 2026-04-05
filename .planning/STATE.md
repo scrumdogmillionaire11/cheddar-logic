@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-04-03T00:00:00Z"
-last_activity: "2026-04-04 - Completed quick task 123: NHL total gating: build pull_nhl_goalie_starters.js + require real source"
+last_updated: "2026-04-05T01:00:00Z"
+last_activity: "2026-04-05 - Completed WI-0761 (Model Health Dashboard); added WI-0792 (health log + alert playbook brainstorm)"
 ---
 
 # Project State
@@ -32,6 +32,11 @@ Historical quick-task completions have been moved to [COMPLETED_SPRINT_LOG.md](.
 - `2` pending todos in `.planning/todos/pending/`
 - `2026-02-28-per-sport-model-health-agents-nba-nhl-ncaam-agents-own-model-health-checks.md`
 - `2026-04-02-add-live-player-props-regression-coverage.md`
+
+### Recently Completed (out-of-sprint)
+
+- **WI-0761 ✓** — Model Health Dashboard: replaced `/admin` stub with live pipeline-health + model-outputs dashboard; `🏥 Model Health 🏥` button on homepage. Commits: 4fdac4a, 3a03863, 30adc8b, 94dcd4c, 8c472da
+- **WI-0792 (open, low priority)** — Future brainstorm: model health log UX + alert reaction playbook. See `WORK_QUEUE/WI-0792.md`
 
 ## Review Cadence
 
@@ -142,4 +147,10 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 | 121 | Fix NHL model to consume existing Fenwick% and HDCF% inputs from MoneyPuck raw_data | 2026-04-04 | 7add789 | [121-fix-nhl-model-to-consume-existing-fenwic](./quick/121-fix-nhl-model-to-consume-existing-fenwic/) |
 | 122 | WI-0773: NHL variance use historical settlement data (computeSigmaFromHistory) | 2026-04-04 | fbdba61 | [122-wi-0773-nhl-variance-use-historical-sett](./quick/122-wi-0773-nhl-variance-use-historical-sett/) |
 | 123 | WI-0774: NHL goalie starter pre-fetch pipeline (pull_nhl_goalie_starters + resolveGoalieState NHL_API_CONFIRMED) | 2026-04-04 | 0f10fb9 | [123-nhl-total-gating-build-pull-nhl-goalie-s](./quick/123-nhl-total-gating-build-pull-nhl-goalie-s/) |
+| 124 | WI-0783: Sequential ordering guard — settle_pending_cards and settle_projections blocked until game-results succeeds | 2026-04-04 | 01070c0 | [124-wi-0783-sequential-ordering-guard-in-set](./quick/124-wi-0783-sequential-ordering-guard-in-set/) |
+| 125 | WI-0765: NHL blocked-shot pipeline hardening — warn-and-return on missing NST CSV URLs, per-player null WARN, card-level block_rates_stale flag | 2026-04-04 | 62ac8ad | [125-wi-0765-schedule-pull-nhl-player-blk-ret](./quick/125-wi-0765-schedule-pull-nhl-player-blk-ret/) |
+| 126 | WI-0776: Circa sharp splits from VSIN — migration 059, updateOddsSnapshotCircaSplits, soft-fail CIRCA fetch pass, sharp_divergence in NHL/NBA payloads | 2026-04-04 | cea1631 | [126-wi-0776-circa-sharp-splits-from-vsin-cir](./quick/126-wi-0776-circa-sharp-splits-from-vsin-cir/) |
+| 127 | WI-0760: Wire model_outputs table to GET /api/model-outputs — route with optional ?sport= filter, NHL model header correction, models.js read-surface comment | 2026-04-04 | a5b3bd1 | [127-wire-model-outputs-table-to-web-api-endp](./quick/127-wire-model-outputs-table-to-web-api-endp/) |
+| 128 | Fix MLB model test failures — projection_source + F5 floor math (8 failures block MLB CI) | 2026-04-04 | 299595f | [128-fix-mlb-model-test-failures-projection-s](./quick/128-fix-mlb-model-test-failures-projection-s/) |
+| 129 | WI-0790: Fix decision-publisher.v2 stale-input BLOCKED test (160-min threshold) + post_discord_cards LEAN→Slight Edge label | 2026-04-05 | 9981f1f | [129-fix-decision-publisher-v2-stale-input-st](./quick/129-fix-decision-publisher-v2-stale-input-st/) |
 

@@ -11,6 +11,7 @@ jest.mock('@cheddar-logic/data', () => ({
   insertJobRun: jest.fn(),
   markJobRunSuccess: jest.fn(),
   markJobRunFailure: jest.fn(),
+  hasSuccessfulJobRun: jest.fn().mockReturnValue(false),
   shouldRunJobKey: jest.fn().mockReturnValue(true),
   withDb: jest.fn(async (fn) => fn()),
   getUnsettledProjectionCards: jest.fn(),
@@ -30,6 +31,7 @@ jest.mock('../settle_mlb_f5', () => ({
 const {
   getDatabase,
   getUnsettledProjectionCards,
+  hasSuccessfulJobRun,
   setProjectionActualResult,
 } = require('@cheddar-logic/data');
 
@@ -452,5 +454,65 @@ describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
 
     expect(setProjectionActualResult).not.toHaveBeenCalled();
     expect(result.skipped).toBeGreaterThanOrEqual(1);
+  });
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Sequential ordering guard — settle_projections must not run before game results
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('settleProjections — sequential ordering guard', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('skips with guardedBy=game-results when game-results not yet SUCCESS (hourly key)', async () => {
+    hasSuccessfulJobRun.mockReturnValue(false);
+
+    const jobKey = 'settle|hourly|2026-04-04|14|projections';
+    const result = await settleProjections({ jobKey, dryRun: false });
+
+    expect(result.success).toBe(true);
+    expect(result.skipped).toBe(true);
+    expect(result.guardedBy).toBe('game-results');
+    expect(hasSuccessfulJobRun).toHaveBeenCalledWith(
+      'settle|hourly|2026-04-04|14|game-results',
+    );
+    expect(setProjectionActualResult).not.toHaveBeenCalled();
+  });
+
+  test('skips with guardedBy=game-results when game-results not yet SUCCESS (nightly key)', async () => {
+    hasSuccessfulJobRun.mockReturnValue(false);
+
+    const jobKey = 'settle|nightly|2026-04-04|projections';
+    const result = await settleProjections({ jobKey, dryRun: false });
+
+    expect(result.success).toBe(true);
+    expect(result.skipped).toBe(true);
+    expect(result.guardedBy).toBe('game-results');
+    expect(hasSuccessfulJobRun).toHaveBeenCalledWith(
+      'settle|nightly|2026-04-04|game-results',
+    );
+  });
+
+  test('proceeds normally when game-results is SUCCESS', async () => {
+    hasSuccessfulJobRun.mockReturnValue(true);
+    getUnsettledProjectionCards.mockReturnValue([]);
+
+    const jobKey = 'settle|hourly|2026-04-04|14|projections';
+    const result = await settleProjections({ jobKey, dryRun: false });
+
+    expect(result.success).toBe(true);
+    expect(result.guardedBy).toBeUndefined();
+    expect(result.settled).toBe(0);
+  });
+
+  test('no guard check when jobKey is null', async () => {
+    hasSuccessfulJobRun.mockReturnValue(false);
+    getUnsettledProjectionCards.mockReturnValue([]);
+
+    const result = await settleProjections({ jobKey: null, dryRun: false });
+
+    expect(hasSuccessfulJobRun).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
   });
 });

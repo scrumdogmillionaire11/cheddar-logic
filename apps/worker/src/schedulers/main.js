@@ -951,6 +951,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
     // Enforce singleton settlement across all processes (race mitigation)
     const settlementGameRunning = hasRunningJobName('settle_game_results');
+    const settlementProjectionsRunning = hasRunningJobName('settle_projections');
     const settlementCardsRunning = hasRunningJobName('settle_pending_cards');
 
     // 4A) Hourly settlement sweep (default enabled)
@@ -986,6 +987,23 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       } else {
         console.log(
           `[Scheduler] Skipping settle_game_results — already running in another process`,
+        );
+      }
+
+      if (nightlySettlementOwnsHourlyWindow) {
+        // Nightly sweep owns settlement for this minute; keep hourly status sync only.
+      } else if (!settlementProjectionsRunning) {
+        const projectionsJobKey = keyHourlySettlementJob(nowEt, 'projections');
+        jobs.push({
+          jobName: 'settle_projections',
+          jobKey: projectionsJobKey,
+          execute: settleProjections,
+          args: { jobKey: projectionsJobKey, dryRun },
+          reason: `hourly projection settlement ${hourlyKey}`,
+        });
+      } else {
+        console.log(
+          `[Scheduler] Skipping settle_projections — already running in another process`,
         );
       }
 
@@ -1036,6 +1054,21 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         );
       }
 
+      if (!settlementProjectionsRunning) {
+        const projectionsJobKey = keyNightlySettlementJob(nowEt, 'projections');
+        jobs.push({
+          jobName: 'settle_projections',
+          jobKey: projectionsJobKey,
+          execute: settleProjections,
+          args: { jobKey: projectionsJobKey, dryRun },
+          reason: `nightly projection settlement ${sweepDate}`,
+        });
+      } else {
+        console.log(
+          `[Scheduler] Skipping settle_projections — already running in another process`,
+        );
+      }
+
       if (!settlementCardsRunning) {
         const pendingCardsJobKey = keyNightlySettlementJob(nowEt, 'pending-cards');
         jobs.push({
@@ -1069,19 +1102,11 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     });
   }
 
-  // ========== PROJECTION ACTUAL RESULT INGESTION (4D) ==========
-  // Runs in the same window as MLB F5 settlement — post-game, hourly.
-  // Writes actual_result for nhl-pace-1p (goals_1p) and mlb-f5 (runs_f5) cards.
-  {
-    const projSettleKey = `settle_projections|${nowEt.toISODate()}|${nowEt.hour}`;
-    jobs.push({
-      jobName: 'settle_projections',
-      jobKey: projSettleKey,
-      execute: settleProjections,
-      args: { jobKey: projSettleKey, dryRun },
-      reason: 'Projection actual result ingestion (nhl-pace-1p, mlb-f5)',
-    });
-  }
+  // ========== PROJECTION ACTUAL RESULT INGESTION (4D — moved into 4A/4B chain) ==========
+  // settle_projections is now enqueued inside the 4A hourly and 4B nightly settlement blocks
+  // above (after settle_game_results, before settle_pending_cards), using
+  // keyHourlySettlementJob(nowEt, 'projections') / keyNightlySettlementJob(nowEt, 'projections').
+  // This guarantees game results are confirmed before projection actuals are written.
 
   // ========== HEALTH WATCHDOG (5) ==========
   if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') {
@@ -1103,6 +1128,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
   // ========== PLAYER PROPS SCHEDULER (8) ==========
   // NHL SOG/BLK + MLB pitcher-K prop ingest/model — dedicated cadence (09:00, 18:00, T-60).
+  // BLK chain at 09:00 ET: sync_nhl_blk_player_ids → pull_nhl_player_blk → ingest_nst_blk_rates → run_nhl_player_shots_model
+  // Weekly Monday 09:00 ET: pull_nst_blk_rates (NST block-rate CSV refresh → player_blk_rates)
   // See schedulers/player-props.js for window logic and key format.
   const playerPropsJobs = computePlayerPropsDueJobs(nowEt, {
     games,

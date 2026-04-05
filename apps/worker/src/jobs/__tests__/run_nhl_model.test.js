@@ -11,7 +11,8 @@
 
 const { execSync } = require('child_process');
 const fs = require('fs');
-const {getDatabase, closeDatabase } = require('@cheddar-logic/data');
+const path = require('path');
+const {getDatabase, closeDatabase, runMigrations } = require('@cheddar-logic/data');
 const { generateNHLMarketCallCards } = require('../run_nhl_model');
 const { computeNHLDriverCards } = require('../../models/index');
 
@@ -101,17 +102,22 @@ async function queryDb(fn) {
 }
 
 describe('run_nhl_model job', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.DATABASE_PATH = TEST_DB_PATH;
+    process.env.CHEDDAR_DB_PATH = '';
     // Remove test DB if exists
     if (fs.existsSync(TEST_DB_PATH)) {
       fs.unlinkSync(TEST_DB_PATH);
     }
 
+    // Ensure schema is present even when pull-odds is skipped (no API key in CI)
+    await runMigrations();
+
     // Run odds job first to populate test data
     try {
       execSync(`DATABASE_PATH=${TEST_DB_PATH} npm run job:pull-odds`, {
-        cwd: '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+        cwd: path.resolve(__dirname, '../../..'),
+
         stdio: 'pipe',
         encoding: 'utf-8',
       });
@@ -132,9 +138,10 @@ describe('run_nhl_model job', () => {
   test('job executes successfully with exit code 0', () => {
     try {
       const result = execSync(
-        `DATABASE_PATH=${TEST_DB_PATH} npm run job:run-nhl-model`,
+        `CHEDDAR_DB_PATH= DATABASE_PATH=${TEST_DB_PATH} npm run job:run-nhl-model`,
         {
-          cwd: '/Users/ajcolubiale/projects/cheddar-logic/apps/worker',
+          cwd: path.resolve(__dirname, '../../..'),
+
           stdio: 'pipe',
           encoding: 'utf-8',
         },

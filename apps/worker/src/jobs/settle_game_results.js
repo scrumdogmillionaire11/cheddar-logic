@@ -1078,6 +1078,7 @@ async function settleGameResults({
 
     try {
       console.log('[SettleGames] Recording job start...');
+      // job_key closure contract: success→markJobRunSuccess (L1167, L1703), failure→markJobRunFailure (L1754)
       insertJobRun('settle_game_results', jobRunId, jobKey);
 
       // Initialize resilient ESPN client with env var config

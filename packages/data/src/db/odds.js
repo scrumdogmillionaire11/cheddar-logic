@@ -894,6 +894,51 @@ function updateOddsSnapshotVsinSplits({ gameId, vsinData }) {
   return result.changes;
 }
 
+/**
+ * Patch Circa Sports sharp-money splits columns on the most-recent odds_snapshot for a game.
+ * Called by pull_vsin_splits after a successful CIRCA fetch-and-match.
+ * Single-writer contract (ADR-0002): only pull_vsin_splits writes these columns.
+ *
+ * @param {object} opts
+ * @param {string} opts.gameId     - Our canonical game ID
+ * @param {object} opts.circaData  - Circa split fields to write
+ * @returns {number} rows changed (0 = no snapshot found for this game)
+ */
+function updateOddsSnapshotCircaSplits({ gameId, circaData }) {
+  const db = getDatabase();
+  const toN = (v) => (Number.isFinite(v) ? v : null);
+
+  const {
+    circa_handle_pct_home  = null,
+    circa_handle_pct_away  = null,
+    circa_tickets_pct_home = null,
+    circa_tickets_pct_away = null,
+  } = circaData || {};
+
+  const result = db
+    .prepare(
+      `UPDATE odds_snapshots
+          SET circa_handle_pct_home  = ?,
+              circa_handle_pct_away  = ?,
+              circa_tickets_pct_home = ?,
+              circa_tickets_pct_away = ?
+        WHERE id = (
+          SELECT id FROM odds_snapshots
+           WHERE game_id = ?
+           ORDER BY captured_at DESC
+           LIMIT 1
+        )`,
+    )
+    .run(
+      toN(circa_handle_pct_home),
+      toN(circa_handle_pct_away),
+      toN(circa_tickets_pct_home),
+      toN(circa_tickets_pct_away),
+      gameId,
+    );
+  return result.changes;
+}
+
 module.exports = {
   insertOddsSnapshot,
   patchOddsSnapshot1p,
@@ -911,4 +956,5 @@ module.exports = {
   getActiveGamesForSplits,
   updateOddsSnapshotSplits,
   updateOddsSnapshotVsinSplits,
+  updateOddsSnapshotCircaSplits,
 };

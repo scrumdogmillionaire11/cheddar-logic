@@ -62,3 +62,36 @@ jobs:
 
       - name: check-db-import-boundaries
         run: node scripts/check-db-imports.js
+
+  worker-tests:
+    runs-on: ubuntu-latest
+    env:
+      CHEDDAR_DB_PATH: /tmp/cheddar-logic/ci-safe.db
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            apps/worker/package-lock.json
+            packages/data/package-lock.json
+            packages/adapters/package-lock.json
+            packages/models/package-lock.json
+            packages/odds/package-lock.json
+
+      - name: Install local package dependencies
+        run: |
+          npm --prefix packages/data ci
+          npm --prefix packages/adapters ci
+          npm --prefix packages/models ci
+          npm --prefix packages/odds ci
+
+      - name: Install worker dependencies
+        run: npm --prefix apps/worker ci
+
+      - name: Run worker tests
+        run: npm --prefix apps/worker test

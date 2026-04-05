@@ -409,6 +409,133 @@ describe('settlement pipeline integration (totals + 1P)', () => {
   });
 });
 
+describe('projection_audit rows written on settlement', () => {
+  const AUDIT_DB_PATH = '/tmp/cheddar-test-projection-audit.db';
+  const AUDIT_LOCK_PATH = `${AUDIT_DB_PATH}.lock`;
+
+  function removeAuditBackups() {
+    const backupsDir = path.join(path.dirname(AUDIT_DB_PATH), 'backups');
+    if (!fs.existsSync(backupsDir)) return;
+    for (const entry of fs.readdirSync(backupsDir)) {
+      if (entry.startsWith('cheddar-before-settle-cards-') && entry.endsWith('.db')) {
+        try { fs.unlinkSync(path.join(backupsDir, entry)); } catch {}
+      }
+    }
+  }
+
+  beforeEach(async () => {
+    process.env.CHEDDAR_DB_PATH = AUDIT_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+
+    removeIfExists(AUDIT_DB_PATH);
+    removeIfExists(AUDIT_LOCK_PATH);
+    removeAuditBackups();
+
+    await runMigrations();
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    removeIfExists(AUDIT_DB_PATH);
+    removeIfExists(AUDIT_LOCK_PATH);
+    removeAuditBackups();
+  });
+
+  test('writes one projection_audit row per settled card', async () => {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+
+    insertScenario({
+      db, now,
+      gameId: 'audit-nba-win', sport: 'NBA',
+      homeTeam: 'Home A', awayTeam: 'Away A',
+      finalHome: 110, finalAway: 100,
+      cardId: 'audit-card-1', resultId: 'audit-result-1',
+      cardType: 'nba-totals-call', selection: 'OVER', line: 205.5, lockedPrice: -110,
+    });
+    insertScenario({
+      db, now,
+      gameId: 'audit-nba-loss', sport: 'NBA',
+      homeTeam: 'Home B', awayTeam: 'Away B',
+      finalHome: 90, finalAway: 95,
+      cardId: 'audit-card-2', resultId: 'audit-result-2',
+      cardType: 'nba-totals-call', selection: 'OVER', line: 205.5, lockedPrice: -115,
+    });
+
+    await settlePendingCards();
+
+    const db2 = getDatabase();
+    const auditRows = db2.prepare('SELECT * FROM projection_audit ORDER BY card_result_id').all();
+    expect(auditRows).toHaveLength(2);
+
+    const winRow = auditRows.find(r => r.card_result_id === 'audit-result-1');
+    expect(winRow).toMatchObject({
+      card_result_id: 'audit-result-1',
+      sport: 'NBA',
+      market_type: 'total',
+      result: 'win',
+      odds_american: -110,
+      direction: 'OVER',
+    });
+    expect(winRow.settled_at).toBeTruthy();
+
+    const lossRow = auditRows.find(r => r.card_result_id === 'audit-result-2');
+    expect(lossRow).toMatchObject({
+      card_result_id: 'audit-result-2',
+      sport: 'NBA',
+      market_type: 'total',
+      result: 'loss',
+      odds_american: -115,
+    });
+  });
+
+  test('1P card produces projection_audit row with period = "1P"', async () => {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+
+    insertScenario({
+      db, now,
+      gameId: 'audit-nhl-1p', sport: 'NHL',
+      homeTeam: 'Home NHL', awayTeam: 'Away NHL',
+      finalHome: 3, finalAway: 2, firstPeriodHome: 2, firstPeriodAway: 0,
+      cardId: 'audit-card-1p', resultId: 'audit-result-1p',
+      cardType: 'nhl-pace-1p', selection: 'OVER', line: 1.5, lockedPrice: -110,
+      period: '1P',
+    });
+
+    await settlePendingCards();
+
+    const db2 = getDatabase();
+    const row = db2.prepare('SELECT * FROM projection_audit WHERE card_result_id = ?').get('audit-result-1p');
+    expect(row).toBeTruthy();
+    expect(row.period).toBe('1P');
+    expect(row.market_type).toBe('total');
+    expect(row.result).toBe('win');
+  });
+
+  test('settlement re-run does not duplicate projection_audit rows (INSERT OR IGNORE)', async () => {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+
+    insertScenario({
+      db, now,
+      gameId: 'audit-idem', sport: 'NBA',
+      homeTeam: 'Home C', awayTeam: 'Away C',
+      finalHome: 120, finalAway: 100,
+      cardId: 'audit-card-idem', resultId: 'audit-result-idem',
+      cardType: 'nba-totals-call', selection: 'OVER', line: 210.5, lockedPrice: -110,
+    });
+
+    await settlePendingCards();
+    await settlePendingCards();
+
+    const db2 = getDatabase();
+    const count = db2.prepare('SELECT COUNT(*) AS cnt FROM projection_audit').get();
+    expect(count.cnt).toBe(1);
+  });
+});
+
 describe('backfill_period_token job (backfillPeriodToken)', () => {
   const BACKFILL_DB_PATH = '/tmp/cheddar-test-backfill-period-token.db';
   const BACKFILL_LOCK_PATH = `${BACKFILL_DB_PATH}.lock`;
