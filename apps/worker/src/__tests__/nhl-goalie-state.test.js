@@ -11,8 +11,7 @@
  * - resolveGoalieState with no DB row, scraper name present → SCRAPER_NAME_MATCH
  * - resolveGoalieState with no DB row, no scraper name → missing_inputs=['goalie_unresolved'], UNKNOWN
  *
- * Standalone pattern: uses Node assert only, no jest/mocha required.
- * Can be run via: node apps/worker/src/__tests__/nhl-goalie-state.test.js
+ * Run via Jest: npm --prefix apps/worker test -- --testPathPattern="nhl-goalie-state"
  */
 
 const assert = require('assert');
@@ -21,20 +20,7 @@ const {
   lookupApiGoalieRow,
 } = require('../models/nhl-goalie-state');
 
-let passed = 0;
-let failed = 0;
-
-function test(name, fn) {
-  try {
-    fn();
-    console.log(`  PASS  ${name}`);
-    passed += 1;
-  } catch (err) {
-    console.error(`  FAIL  ${name}`);
-    console.error(`        ${err.message}`);
-    failed += 1;
-  }
-}
+describe('nhl-goalie-state', () => {
 
 // ─── lookupApiGoalieRow ───────────────────────────────────────────────────────
 
@@ -190,11 +176,4 @@ test('resolveGoalieState: no db option at all, no scraper name → missing_input
   assert.ok(state.missing_inputs.includes('goalie_unresolved'));
 });
 
-// ─── Summary ─────────────────────────────────────────────────────────────────
-
-console.log('');
-console.log(`nhl-goalie-state: ${passed} passed, ${failed} failed`);
-
-if (failed > 0) {
-  process.exit(1);
-}
+}); // end describe('nhl-goalie-state')

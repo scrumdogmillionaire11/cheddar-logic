@@ -129,25 +129,10 @@ function makeCard(tier = 'FIRE') {
 // Tests
 // ---------------------------------------------------------------------------
 
-let passed = 0;
-let failed = 0;
-
-function runTest(name, fn) {
-  try {
-    fn();
-    console.log(`  ✓ ${name}`);
-    passed++;
-  } catch (err) {
-    console.error(`  ✗ ${name}`);
-    console.error(`    ${err.message}`);
-    failed++;
-  }
-}
-
-console.log('\n[nba-availability-gate] Running tests...\n');
+describe('nba-availability-gate', () => {
 
 // Test 1: OUT impact player → tier capped at LEAN, key_player_out in missing_inputs
-runTest('OUT impact player caps tier at LEAN and sets key_player_out', () => {
+test('OUT impact player caps tier at LEAN and sets key_player_out', () => {
   const gateRows = {
     BOS: [makeRow('Jayson Tatum', 'BOS', 'OUT'), makeRow('Jaylen Brown', 'BOS', 'ACTIVE')],
     MIA: [],
@@ -173,7 +158,7 @@ runTest('OUT impact player caps tier at LEAN and sets key_player_out', () => {
 });
 
 // Test 2: Full healthy roster (no impact players on injury report) → no flags, tier unchanged
-runTest('Full roster with no OUT impact players: no flags, tier unchanged', () => {
+test('Full roster with no OUT impact players: no flags, tier unchanged', () => {
   const gateRows = {
     LAL: [makeRow('Austin Reaves', 'LAL', 'OUT')],   // not an impact player
     GS: [makeRow('Andrew Wiggins', 'GS', 'DTD')],    // not an impact player
@@ -192,7 +177,7 @@ runTest('Full roster with no OUT impact players: no flags, tier unchanged', () =
 });
 
 // Test 3: No rows for either team → fail-open (empty flags, no degradation)
-runTest('No availability rows: fail-open, no flags emitted', () => {
+test('No availability rows: fail-open, no flags emitted', () => {
   const buildGate = makeGateFn(() => []);
 
   const gate = buildGate('Boston Celtics', 'Miami Heat');
@@ -208,7 +193,7 @@ runTest('No availability rows: fail-open, no flags emitted', () => {
 });
 
 // Test 4: DTD impact player → key_player_uncertain, tier NOT capped
-runTest('DTD impact player adds key_player_uncertain but does not cap tier', () => {
+test('DTD impact player adds key_player_uncertain but does not cap tier', () => {
   const gateRows = {
     DEN: [makeRow('Nikola Jokic', 'DEN', 'DTD')],
     MIA: [],
@@ -226,7 +211,7 @@ runTest('DTD impact player adds key_player_uncertain but does not cap tier', () 
 });
 
 // Test 5: Unknown team names → fail-open (empty flags, no degradation)
-runTest('Unknown team names produce empty flags (fail-open)', () => {
+test('Unknown team names produce empty flags (fail-open)', () => {
   const buildGate = makeGateFn(() => []);
 
   const gate = buildGate('Unknown FC', 'Mystery Team');
@@ -236,7 +221,7 @@ runTest('Unknown team names produce empty flags (fail-open)', () => {
 });
 
 // Test 6: LEAN card with OUT impact player — tier stays LEAN (no further cap needed)
-runTest('LEAN card with OUT impact player stays LEAN', () => {
+test('LEAN card with OUT impact player stays LEAN', () => {
   const gateRows = {
     BOS: [makeRow('Jayson Tatum', 'BOS', 'OUT')],
     MIA: [],
@@ -249,9 +234,4 @@ runTest('LEAN card with OUT impact player stays LEAN', () => {
   assert.strictEqual(card.payloadData.tier, 'LEAN', 'LEAN card should stay LEAN');
 });
 
-// ---------------------------------------------------------------------------
-// Summary
-// ---------------------------------------------------------------------------
-
-console.log(`\n[nba-availability-gate] Results: ${passed} passed, ${failed} failed\n`);
-if (failed > 0) process.exit(1);
+}); // end describe('nba-availability-gate')
