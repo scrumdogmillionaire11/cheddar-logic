@@ -73,6 +73,7 @@ const { runPullPublicSplits } = require('../jobs/pull_public_splits');
 const { runPullVsinSplits } = require('../jobs/pull_vsin_splits');
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
+const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 
 // Timezone for fixed-time windows
 const TZ = process.env.TZ || 'America/New_York';
@@ -662,6 +663,24 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         execute: pullEspnGamesDirect,
         args: { jobKey, dryRun },
         reason: `ESPN-direct ingestion (without-odds mode) slot=${ODDS_FETCH_SLOT_MINUTES}min`,
+      });
+    }
+  }
+
+  // ========== MLB ESPN-DIRECT SEEDING (2B) ==========
+  // When MLB odds are disabled in config (projection-only period) but the model is enabled,
+  // use pull_espn_games_direct to seed MLB game records so runMLBModel can find them.
+  // This is independent of the global ENABLE_WITHOUT_ODDS_MODE — NBA/NHL still use live odds.
+  if (!ENABLE_WITHOUT_ODDS_MODE && !ODDS_SPORTS_CONFIG.MLB.active && process.env.ENABLE_MLB_MODEL !== 'false') {
+    const isQuietHours = nowEt.hour < ODDS_FETCH_START_HOUR;
+    if (!isQuietHours) {
+      const jobKey = keyEspnGamesDirect(nowEt);
+      jobs.push({
+        jobName: 'pull_espn_games_direct',
+        jobKey,
+        execute: pullEspnGamesDirect,
+        args: { jobKey, dryRun },
+        reason: 'MLB ESPN-direct game seeding (MLB odds inactive, projection-only)',
       });
     }
   }

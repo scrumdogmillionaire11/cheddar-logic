@@ -736,6 +736,7 @@ export async function GET(request: NextRequest) {
         cr.sport,
         cr.card_type,
         cp.payload_data,
+        cp.actual_result,
         gr.metadata AS game_result_metadata
       FROM card_results cr
       LEFT JOIN card_payloads cp ON cp.id = cr.card_id
@@ -748,13 +749,14 @@ export async function GET(request: NextRequest) {
       .all(
         ...PROJECTION_TRACKING_CARD_TYPES,
         ...projTrackingSportFilter.params,
-      ) as { sport: string; card_type: string; payload_data: string; game_result_metadata: string }[];
+      ) as { sport: string; card_type: string; payload_data: string; actual_result: string | null; game_result_metadata: string }[];
 
     const projectionSummaries = buildProjectionSummaries(
       projectionTrackingRows.map((row) => ({
         sport: row.sport,
         cardType: row.card_type,
         payload: safeJsonParse(row.payload_data).data as Record<string, unknown> | null,
+        actualResult: row.actual_result,
         gameResultMetadata: safeJsonParse(row.game_result_metadata)
           .data as Record<string, unknown> | null,
       })),

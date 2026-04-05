@@ -173,6 +173,13 @@ function loadRunMlbModel({
     selectMlbGameMarket: selectMlbGameMarketMock,
   }));
 
+  // Mock the odds config so MLB active:false in the real config doesn't force
+  // withoutOddsMode=true on tests that expect odds-mode behavior.
+  jest.doMock('@cheddar-logic/odds/src/config', () => ({
+    SPORTS_CONFIG: { MLB: { active: true } },
+    getActiveSports: () => ['MLB'],
+  }));
+
   const moduleUnderTest = require('../jobs/run_mlb_model');
   return {
     ...moduleUnderTest,
