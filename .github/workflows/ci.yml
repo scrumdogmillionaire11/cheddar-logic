@@ -76,7 +76,19 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: apps/worker/package-lock.json
+          cache-dependency-path: |
+            apps/worker/package-lock.json
+            packages/data/package-lock.json
+            packages/adapters/package-lock.json
+            packages/models/package-lock.json
+            packages/odds/package-lock.json
+
+      - name: Install local package dependencies
+        run: |
+          npm --prefix packages/data ci
+          npm --prefix packages/adapters ci
+          npm --prefix packages/models ci
+          npm --prefix packages/odds ci
 
       - name: Install worker dependencies
         run: npm --prefix apps/worker ci
