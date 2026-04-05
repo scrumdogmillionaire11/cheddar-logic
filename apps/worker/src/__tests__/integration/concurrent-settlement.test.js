@@ -2,8 +2,8 @@ const fs = require('fs');
 const {
   closeDatabase,
   runMigrations,
-  incrementTrackingStat,
-  getTrackingStats,
+  insertProjectionAudit,
+  recomputeTrackingStats,
   getDatabase,
 } = require('@cheddar-logic/data');
 
@@ -38,175 +38,123 @@ describe('concurrent settlement race mitigation', () => {
     removeIfExists(LOCK_PATH);
   });
 
-  test('incrementTrackingStat accumulates deltas atomically', () => {
-    const statKey = 'NHL|moneyline|all|all|all|test-period';
-
-    // Simulate Process A settling 5 cards: 3 wins, 2 losses
-    incrementTrackingStat({
-      id: 'stat-nhl-test-1',
-      statKey,
-      sport: 'NHL',
-      marketType: 'moneyline',
-      direction: 'all',
-      confidenceTier: 'all',
-      driverKey: 'all',
-      timePeriod: 'test-period',
-      deltaWins: 3,
-      deltaLosses: 2,
-      deltaPushes: 0,
-      deltaPnl: 1.5,
-    });
-
-    // Simulate Process B settling 8 cards concurrently: 5 wins, 2 losses, 1 push
-    incrementTrackingStat({
-      id: 'stat-nhl-test-1', // Same ID (will be ignored due to stat_key conflict)
-      statKey,
-      sport: 'NHL',
-      marketType: 'moneyline',
-      direction: 'all',
-      confidenceTier: 'all',
-      driverKey: 'all',
-      timePeriod: 'test-period',
-      deltaWins: 5,
-      deltaLosses: 2,
-      deltaPushes: 1,
-      deltaPnl: 2.3,
-    });
-
-    // Simulate Process C settling 7 cards concurrently: 4 wins, 3 losses
-    incrementTrackingStat({
-      id: 'stat-nhl-test-1', // Same ID
-      statKey,
-      sport: 'NHL',
-      marketType: 'moneyline',
-      direction: 'all',
-      confidenceTier: 'all',
-      driverKey: 'all',
-      timePeriod: 'test-period',
-      deltaWins: 4,
-      deltaLosses: 3,
-      deltaPushes: 0,
-      deltaPnl: 0.8,
-    });
-
-    // Verify: All increments accumulated correctly
+  beforeEach(() => {
+    // Clear tables between tests for isolation
     const db = getDatabase();
-    const stmt = db.prepare('SELECT * FROM tracking_stats WHERE stat_key = ?');
-    const row = stmt.get(statKey);
-
-    expect(row).toBeDefined();
-    expect(row.wins).toBe(12); // 3 + 5 + 4
-    expect(row.losses).toBe(7); // 2 + 2 + 3
-    expect(row.pushes).toBe(1); // 0 + 1 + 0
-    expect(row.total_cards).toBe(20); // 5 + 8 + 7
-    expect(row.settled_cards).toBe(20);
-    expect(Math.abs(row.total_pnl_units - 4.6)).toBeLessThan(0.01); // 1.5 + 2.3 + 0.8
-    expect(Math.abs(row.win_rate - 12 / 19)).toBeLessThan(0.01); // 12 wins / 19 decided
-    expect(Math.abs(row.avg_pnl_per_card - 4.6 / 20)).toBeLessThan(0.01);
+    db.prepare('DELETE FROM tracking_stats').run();
+    db.prepare('DELETE FROM projection_audit').run();
   });
 
-  test('incrementTrackingStat creates new stat if not exists', () => {
-    const statKey = 'NBA|spread|HOME|all|all|new-period';
-
-    incrementTrackingStat({
-      id: 'stat-nba-new',
-      statKey,
+  function seedAuditRow(overrides = {}) {
+    insertProjectionAudit({
+      cardResultId: `cr-${Math.random().toString(36).slice(2)}`,
       sport: 'NBA',
-      marketType: 'spread',
-      direction: 'HOME',
-      confidenceTier: 'all',
-      driverKey: 'all',
-      timePeriod: 'new-period',
-      deltaWins: 7,
-      deltaLosses: 3,
-      deltaPushes: 0,
-      deltaPnl: 3.2,
-    });
-
-    const db = getDatabase();
-    const stmt = db.prepare('SELECT * FROM tracking_stats WHERE stat_key = ?');
-    const row = stmt.get(statKey);
-
-    expect(row).toBeDefined();
-    expect(row.wins).toBe(7);
-    expect(row.losses).toBe(3);
-    expect(row.pushes).toBe(0);
-    expect(row.total_cards).toBe(10);
-    expect(Math.abs(row.total_pnl_units - 3.2)).toBeLessThan(0.01);
-  });
-
-  test('incrementTrackingStat handles zero deltas gracefully', () => {
-    const statKey = 'NCAAM|total|all|all|all|zero-test';
-
-    // Initial increment
-    incrementTrackingStat({
-      id: 'stat-ncaam-zero',
-      statKey,
-      sport: 'NCAAM',
       marketType: 'total',
-      direction: 'all',
-      confidenceTier: 'all',
-      driverKey: 'all',
-      timePeriod: 'zero-test',
-      deltaWins: 5,
-      deltaLosses: 0,
-      deltaPushes: 0,
-      deltaPnl: 2.5,
+      period: null,
+      playerCount: null,
+      confidenceScore: null,
+      oddsAmerican: -110,
+      sharpPriceStatus: 'CONFIRMED',
+      direction: 'OVER',
+      result: 'win',
+      pnlUnits: 0.909,
+      settledAt: new Date().toISOString(),
+      jobRunId: null,
+      metadata: null,
+      ...overrides,
     });
+  }
 
-    // Increment with all zeros (no-op)
-    incrementTrackingStat({
-      id: 'stat-ncaam-zero',
-      statKey,
-      sport: 'NCAAM',
-      marketType: 'total',
-      direction: 'all',
-      confidenceTier: 'all',
-      driverKey: 'all',
-      timePeriod: 'zero-test',
-      deltaWins: 0,
-      deltaLosses: 0,
-      deltaPushes: 0,
-      deltaPnl: 0,
-    });
+  test('recomputeTrackingStats produces correct aggregates from projection_audit rows', () => {
+    // 2 wins + 1 loss for NBA total
+    seedAuditRow({ cardResultId: 'cr-agg-1', result: 'win', pnlUnits: 0.909 });
+    seedAuditRow({ cardResultId: 'cr-agg-2', result: 'win', pnlUnits: 0.909 });
+    seedAuditRow({ cardResultId: 'cr-agg-3', result: 'loss', pnlUnits: -1.0 });
+
+    recomputeTrackingStats();
 
     const db = getDatabase();
-    const stmt = db.prepare('SELECT * FROM tracking_stats WHERE stat_key = ?');
-    const row = stmt.get(statKey);
-
-    expect(row).toBeDefined();
-    expect(row.wins).toBe(5); // Unchanged
-    expect(row.losses).toBe(0);
-    expect(row.total_cards).toBe(5);
-  });
-
-  test('incrementTrackingStat handles negative PnL correctly', () => {
-    const statKey = 'MLB|moneyline|all|all|all|negative-pnl';
-
-    incrementTrackingStat({
-      id: 'stat-mlb-negative',
-      statKey,
-      sport: 'MLB',
-      marketType: 'moneyline',
-      direction: 'all',
-      confidenceTier: 'all',
-      driverKey: 'all',
-      timePeriod: 'negative-pnl',
-      deltaWins: 2,
-      deltaLosses: 8,
-      deltaPushes: 0,
-      deltaPnl: -3.5,
-    });
-
-    const db = getDatabase();
-    const stmt = db.prepare('SELECT * FROM tracking_stats WHERE stat_key = ?');
-    const row = stmt.get(statKey);
+    const row = db.prepare('SELECT * FROM tracking_stats WHERE stat_key = ?')
+      .get('NBA|total|all|all|all|alltime');
 
     expect(row).toBeDefined();
     expect(row.wins).toBe(2);
-    expect(row.losses).toBe(8);
-    expect(Math.abs(row.total_pnl_units - -3.5)).toBeLessThan(0.01);
-    expect(row.win_rate).toBeCloseTo(0.2, 2); // 2/10
-    expect(row.avg_pnl_per_card).toBeCloseTo(-0.35, 2);
+    expect(row.losses).toBe(1);
+    expect(row.pushes).toBe(0);
+    expect(row.total_cards).toBe(3);
+    expect(row.settled_cards).toBe(3);
+    expect(Math.abs(row.win_rate - 2/3)).toBeLessThan(0.01);
+  });
+
+  test('recomputeTrackingStats is idempotent — calling twice produces same result', () => {
+    seedAuditRow({ cardResultId: 'cr-idem-1', result: 'win', pnlUnits: 0.909 });
+    seedAuditRow({ cardResultId: 'cr-idem-2', result: 'loss', pnlUnits: -1.0 });
+    seedAuditRow({ cardResultId: 'cr-idem-3', result: 'win', pnlUnits: 0.909 });
+
+    recomputeTrackingStats();
+    recomputeTrackingStats();
+
+    const db = getDatabase();
+    const rows = db.prepare('SELECT * FROM tracking_stats WHERE stat_key LIKE \'NBA|total%|alltime\'').all();
+    // market-level row
+    const market = rows.find(r => r.stat_key === 'NBA|total|all|all|all|alltime');
+    expect(market).toBeDefined();
+    expect(market.wins).toBe(2);
+    expect(market.losses).toBe(1);
+    expect(market.total_cards).toBe(3);
+  });
+
+  test('recomputeTrackingStats excludes 1P rows from tracking_stats', () => {
+    seedAuditRow({ cardResultId: 'cr-1p-full-1', result: 'win', pnlUnits: 0.909, period: null });
+    seedAuditRow({ cardResultId: 'cr-1p-full-2', result: 'win', pnlUnits: 0.909, period: null });
+    // This 1P row should be excluded
+    seedAuditRow({ cardResultId: 'cr-1p-period', result: 'loss', pnlUnits: -1.0, period: '1P' });
+
+    recomputeTrackingStats();
+
+    const db = getDatabase();
+    const market = db.prepare('SELECT * FROM tracking_stats WHERE stat_key = ?')
+      .get('NBA|total|all|all|all|alltime');
+
+    expect(market).toBeDefined();
+    // Only the 2 full-game wins should be counted — 1P loss excluded
+    expect(market.wins).toBe(2);
+    expect(market.losses).toBe(0);
+    expect(market.total_cards).toBe(2);
+
+    // No stat_key should contain 'total_1p'
+    const allRows = db.prepare('SELECT stat_key FROM tracking_stats').all();
+    const has1p = allRows.some(r => r.stat_key.includes('total_1p'));
+    expect(has1p).toBe(false);
+  });
+
+  test('recomputeTrackingStats creates separate row for each sharp_price_status segment', () => {
+    seedAuditRow({
+      cardResultId: 'cr-seg-confirmed',
+      result: 'win', pnlUnits: 0.909,
+      sharpPriceStatus: 'CONFIRMED',
+    });
+    seedAuditRow({
+      cardResultId: 'cr-seg-estimated',
+      result: 'loss', pnlUnits: -1.0,
+      sharpPriceStatus: 'ESTIMATED',
+    });
+
+    recomputeTrackingStats();
+
+    const db = getDatabase();
+    const confirmed = db.prepare('SELECT * FROM tracking_stats WHERE stat_key = ?')
+      .get('NBA|total|all|all|edge_verification:CONFIRMED|alltime');
+    const estimated = db.prepare('SELECT * FROM tracking_stats WHERE stat_key = ?')
+      .get('NBA|total|all|all|edge_verification:ESTIMATED|alltime');
+
+    expect(confirmed).toBeDefined();
+    expect(confirmed.wins).toBe(1);
+    expect(confirmed.losses).toBe(0);
+
+    expect(estimated).toBeDefined();
+    expect(estimated.wins).toBe(0);
+    expect(estimated.losses).toBe(1);
   });
 });
+
