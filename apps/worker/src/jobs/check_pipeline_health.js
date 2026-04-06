@@ -25,6 +25,7 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   createJob,
+  wasJobRecentlySuccessful,
 } = require('@cheddar-logic/data');
 const { buildMlbMarketAvailability } = require('./run_mlb_model');
 
@@ -33,6 +34,10 @@ const ODDS_FRESHNESS_MAX_AGE_MINUTES = Number(
 );
 const CARDS_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.CARDS_FRESHNESS_MAX_AGE_MINUTES || 30,
+);
+// Per-sport model freshness threshold. Only fires when upcoming games exist.
+const MODEL_FRESHNESS_MAX_AGE_MINUTES = Number(
+  process.env.MODEL_FRESHNESS_MAX_AGE_MINUTES || 240, // 4h default
 );
 
 /**
@@ -366,6 +371,52 @@ function checkSettlementBacklog() {
 }
 
 /**
+ * Check: Per-sport model freshness
+ * Verifies the named job ran successfully within the threshold, but only
+ * reports when there are upcoming games for that sport (avoids false negatives
+ * on off-days and off-season).
+ */
+function checkSportModelFreshness(sport, jobName, checkName, maxAgeMinutes) {
+  const db = getDatabase();
+  const nowUtc = DateTime.utc();
+  const horizonUtc = nowUtc.plus({ hours: 6 });
+
+  const upcomingCount = db
+    .prepare(
+      `SELECT COUNT(*) as cnt FROM games
+       WHERE LOWER(sport) = LOWER(?)
+         AND game_time_utc >= ?
+         AND game_time_utc <= ?`,
+    )
+    .get(sport, nowUtc.toISO(), horizonUtc.toISO()).cnt;
+
+  if (upcomingCount === 0) {
+    return {
+      ok: true,
+      reason: `No ${sport.toUpperCase()} games within T-6h - model check skipped`,
+    };
+  }
+
+  const thresholdDesc =
+    maxAgeMinutes >= 60
+      ? `${Math.round(maxAgeMinutes / 60)}h`
+      : `${maxAgeMinutes}m`;
+
+  const recentlyRan = wasJobRecentlySuccessful(jobName, maxAgeMinutes);
+
+  if (recentlyRan) {
+    const reason = `${jobName} ran successfully within last ${thresholdDesc} (${upcomingCount} upcoming games)`;
+    writePipelineHealth(sport.toLowerCase(), checkName, 'ok', reason);
+    return { ok: true, reason };
+  }
+
+  const reason = `${jobName} has NOT run successfully in last ${thresholdDesc} — ${upcomingCount} upcoming ${sport.toUpperCase()} games at risk`;
+  writePipelineHealth(sport.toLowerCase(), checkName, 'failed', reason);
+  return { ok: false, reason };
+}
+
+
+/**
  * Main health check runner
  */
 async function checkPipelineHealth({ jobKey, dryRun }) {
@@ -387,6 +438,15 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       cards_freshness: checkCardsFreshness,
       mlb_f5_market_availability: checkMlbF5MarketAvailability,
       settlement_backlog: checkSettlementBacklog,
+      // Per-sport model freshness (only fires when upcoming games exist for that sport)
+      nhl_model_freshness: () =>
+        checkSportModelFreshness('nhl', 'run_nhl_model', 'model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
+      nhl_shots_model_freshness: () =>
+        checkSportModelFreshness('nhl', 'run-nhl-player-shots-model', 'shots_model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
+      nba_model_freshness: () =>
+        checkSportModelFreshness('nba', 'run_nba_model', 'model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
+      mlb_model_freshness: () =>
+        checkSportModelFreshness('mlb', 'run_mlb_model', 'model_freshness', 180),
     };
 
     const results = {};
