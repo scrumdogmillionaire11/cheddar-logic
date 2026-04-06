@@ -1,8 +1,8 @@
 /**
- * Admin layout — dev-only guard.
+ * Admin layout — dev-only guard (secondary layer after middleware).
  *
- * Calls notFound() for any request that isn't running under NODE_ENV=development
- * so the entire /admin subtree (page + API routes) is invisible in production.
+ * Calls notFound() for any request that isn't running under NODE_ENV=development.
+ * middleware.ts (proxy.ts) is the primary gate — this is belt-and-suspenders.
  */
 
 import { notFound } from 'next/navigation';
