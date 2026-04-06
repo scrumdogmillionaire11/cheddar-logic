@@ -261,25 +261,36 @@ export default function AdminPage() {
                 }`}
               >
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-                  {snapshot.map((row) => (
-                    <div
-                      key={`${row.phase}:${row.check_name}`}
-                      className="flex flex-col gap-1 rounded-lg border border-white/8 bg-surface/60 px-3 py-2"
-                      title={row.reason ?? ''}
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="font-mono text-xs font-semibold uppercase text-cloud/80">
-                          {row.phase}
-                        </span>
-                        <StatusDot status={row.status} />
+                  {snapshot.map((row) => {
+                    const streak = computeStreak(health, row.phase, row.check_name);
+                    const stale = isStale(row.created_at);
+                    return (
+                      <div
+                        key={`${row.phase}:${row.check_name}`}
+                        className={`flex flex-col gap-1 rounded-lg border border-white/8 bg-surface/60 px-3 py-2 ${stale ? 'opacity-50' : ''}`}
+                        title={row.reason ?? ''}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="font-mono text-xs font-semibold uppercase text-cloud/80">
+                            {row.phase}
+                          </span>
+                          <StatusDot status={row.status} />
+                        </div>
+                        <span className="text-xs text-cloud/50">{row.check_name}</span>
+                        <div className="flex items-center justify-between">
+                          <StatusBadge status={row.status} />
+                          {stale ? (
+                            <span className="rounded bg-white/5 px-1.5 py-0.5 text-xs text-cloud/30">
+                              check dormant
+                            </span>
+                          ) : (
+                            <span className="text-xs text-cloud/30">{formatAge(row.created_at)}</span>
+                          )}
+                        </div>
+                        <StreakBadge status={row.status} streak={streak} />
                       </div>
-                      <span className="text-xs text-cloud/50">{row.check_name}</span>
-                      <div className="flex items-center justify-between">
-                        <StatusBadge status={row.status} />
-                        <span className="text-xs text-cloud/30">{formatAge(row.created_at)}</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
