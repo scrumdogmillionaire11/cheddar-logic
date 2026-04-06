@@ -264,15 +264,17 @@ describe('projectSogV2 — two-stage model', () => {
       expect(result.ev_over).toBeNull();
     });
 
-    test('edge_over_pp = fair_over_prob(market_line) - implied_prob_from_american_odds', () => {
+    test('edge_over_pp = fair_over_prob(market_line) - two_sided_fair_prob (devigged)', () => {
       const inputs = buildInputs({
         market_line: 2.5,
         market_price_over: -110,
         market_price_under: -110,
       });
       const result = projectSogV2(inputs);
-      // implied prob for -110: 110 / (110 + 100) = 110/210 ≈ 0.5238
-      const impliedOver = 110 / (110 + 100);
+      // twoSidedFairProb(-110, -110): raw = 110/210 = 0.5238 each; devigged = 0.5238/1.0476 = 0.5
+      const rawOver = 110 / (110 + 100);
+      const rawUnder = 110 / (110 + 100);
+      const impliedOver = rawOver / (rawOver + rawUnder); // 0.5 — vig removed
       const fairOver = result.fair_over_prob_by_line['2.5'];
       const expectedEdge = fairOver - impliedOver;
       expect(result.edge_over_pp).toBeCloseTo(expectedEdge, 5);

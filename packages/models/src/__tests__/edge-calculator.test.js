@@ -13,6 +13,7 @@ const { describe, test } = require('node:test');
 const {
   impliedProbFromAmerican,
   noVigImplied,
+  twoSidedFairProb,
   computeConfidence,
   computeMoneylineEdge,
   computeSpreadEdge,
@@ -124,6 +125,50 @@ assert(
   'noVigImplied(null, -110) returns null',
   nullResult === null,
   `got ${nullResult}`
+);
+
+// ── twoSidedFairProb ─────────────────────────────────────────────────────────
+
+console.log('\n=== twoSidedFairProb ===');
+
+assert(
+  'twoSidedFairProb is exported',
+  typeof twoSidedFairProb === 'function',
+  'expected function'
+);
+
+// At -110/-110: raw implied = 0.5238, fair after devig = 0.500
+const tsfpEven = twoSidedFairProb(-110, -110);
+assert(
+  'twoSidedFairProb(-110, -110) ≈ 0.5000 (not 0.524)',
+  tsfpEven !== null && approx(tsfpEven, 0.5, 0.0001),
+  `got ${tsfpEven}`
+);
+
+// At -120/+105: raw implied A = 120/220 ≈ 0.5455, B = 100/205 ≈ 0.4878
+// total = 1.0333; fair A = 0.5455 / 1.0333 ≈ 0.5279 ≠ raw 0.5455
+const tsfpAsymm = twoSidedFairProb(-120, 105);
+const rawA = 120 / (120 + 100); // 0.5455
+assert(
+  'twoSidedFairProb(-120, +105) returns normalized fair prob (≠ raw implied of -120)',
+  tsfpAsymm !== null && !approx(tsfpAsymm, rawA, 0.001),
+  `got ${tsfpAsymm}, rawA=${rawA}`
+);
+
+// Null guard: one side null
+const tsfpNull = twoSidedFairProb(null, -110);
+assert(
+  'twoSidedFairProb(null, -110) returns null',
+  tsfpNull === null,
+  `got ${tsfpNull}`
+);
+
+// Zero guard: priceA=0 is invalid
+const tsfpZero = twoSidedFairProb(0, -110);
+assert(
+  'twoSidedFairProb(0, -110) returns null',
+  tsfpZero === null,
+  `got ${tsfpZero}`
 );
 
 // ── computeSpreadEdge with noVig ──────────────────────────────────────────────

@@ -39,6 +39,20 @@ function noVigImplied(priceHome, priceAway) {
 }
 
 /**
+ * Fair probability for side A in a two-sided market (vig removed).
+ * Alias for noVigImplied(priceA, priceB)?.home.
+ * At -110/-110: returns 0.5000 (not raw 0.5238).
+ *
+ * @param {number} priceA - American odds for side A (the side you are pricing)
+ * @param {number} priceB - American odds for side B (opposite)
+ * @returns {number|null}
+ */
+function twoSidedFairProb(priceA, priceB) {
+  const result = noVigImplied(priceA, priceB);
+  return result != null ? result.home : null;
+}
+
+/**
  * Inverse normal CDF (probit function) — Abramowitz & Stegun 26.2.17
  * Max |error| < 4.5e-4 for 0 < p < 1.
  * Inverse of normCdf: invNormCdf(normCdf(z)) ≈ z
@@ -456,6 +470,7 @@ function computeSigmaFromHistory({ sport, marketType, db, windowGames = 60 } = {
 module.exports = {
   impliedProbFromAmerican,
   noVigImplied,
+  twoSidedFairProb,
   normCdf,
   invNormCdf,
   computeConfidence,
