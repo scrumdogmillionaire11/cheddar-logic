@@ -363,10 +363,6 @@ jobs:
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
-            # Restart cloudflared to flush stale keep-alive connections to the old
-            # cheddar-web process. Without this, the tunnel returns 502 until the
-            # old connections time out (can take several minutes).
-            sudo systemctl restart cloudflared
             sleep 5
             restore_previous_next() {
               if [ "$ROLLBACK_READY" != "1" ] || [ ! -d "$PREV_NEXT_ROLLBACK" ]; then
@@ -377,7 +373,6 @@ jobs:
               rm -rf web/.next
               cp -a "$PREV_NEXT_ROLLBACK" web/.next
               sudo systemctl restart cheddar-web || true
-              sudo systemctl restart cloudflared || true
               sleep 5
               if [ -n "${CF_API_TOKEN:-}" ] && [ -n "${CF_ZONE_ID:-}" ]; then
                 echo "Purging Cloudflare cache after rollback (purge_everything)..."
