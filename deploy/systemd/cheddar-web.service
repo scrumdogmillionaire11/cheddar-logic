@@ -11,6 +11,9 @@ Environment="PORT=3000"
 EnvironmentFile=/opt/cheddar-logic/.env.production
 
 ExecStart=/usr/bin/node /opt/cheddar-logic/web/node_modules/.bin/next start --port 3000
+# Restart cloudflared whenever this service starts (deploy, crash-recovery, manual restart).
+# The + prefix runs as root, bypassing User= and NoNewPrivileges=.
+ExecStartPost=+/bin/systemctl restart cloudflared
 
 # Restart policy
 Restart=on-failure
