@@ -357,6 +357,16 @@ jobs:
               sudo journalctl -u cheddar-web -n 80 --no-pager || true
               exit 1
             }
+            # fail_deploy_no_rollback: for CF/CDN-side failures where the build
+            # itself is good (origin checks passed). Fails the CI job without
+            # reverting the deployed .next — the new build is already live.
+            fail_deploy_no_rollback() {
+              message="$1"
+              echo "ERROR (CF/CDN): $message"
+              echo "Build is deployed and origin checks passed. Failing CI without rollback."
+              sudo journalctl -u cheddar-web -n 30 --no-pager || true
+              exit 1
+            }
             retry_url() {
               url="$1"
               label="$2"
@@ -549,7 +559,7 @@ jobs:
                 -H "Content-Type: application/json" \
                 --data '{"purge_everything":true}' \
                 | tee /tmp/cloudflare_purge.json
-              grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json || fail_with_rollback "Cloudflare purge failed: $(cat /tmp/cloudflare_purge.json)"
+              grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json || fail_deploy_no_rollback "Cloudflare purge failed: $(cat /tmp/cloudflare_purge.json)"
               echo "Cloudflare cache purged (purge_everything) — waiting 60s for propagation..."
               sleep 60
             fi
@@ -563,7 +573,7 @@ jobs:
                   /fpl) echo "Checking public route /fpl HTML convergence..." ;;
                   /results) echo "Checking public route /results HTML convergence..." ;;
                 esac
-                retry_public_route_refs "$route" "$PUBLIC_DOMAIN_URL$route" || fail_with_rollback "route ${route} public HTML did not converge to origin asset refs after purge"
+                retry_public_route_refs "$route" "$PUBLIC_DOMAIN_URL$route" || fail_deploy_no_rollback "route ${route} public HTML did not converge to origin asset refs after purge"
                 PUBLIC_ROUTE_JS_REFS=$(
                   {
                     printf '%s\n' "$PUBLIC_ROUTE_JS_REFS"
@@ -578,8 +588,8 @@ jobs:
                 )
                 PUBLIC_ROUTE_JS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_JS_REFS" | awk -F'|' -v route="public:${route}" '$1 == route { count++ } END { print count + 0 }')
                 PUBLIC_ROUTE_CSS_COUNT=$(printf "%s\n" "$PUBLIC_ROUTE_CSS_REFS" | awk -F'|' -v route="public:${route}" '$1 == route { count++ } END { print count + 0 }')
-                test "$PUBLIC_ROUTE_JS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing JS asset references in public HTML after purge"
-                test "$PUBLIC_ROUTE_CSS_COUNT" -gt 0 || fail_with_rollback "route ${route} missing CSS asset references in public HTML after purge"
+                test "$PUBLIC_ROUTE_JS_COUNT" -gt 0 || fail_deploy_no_rollback "route ${route} missing JS asset references in public HTML after purge"
+                test "$PUBLIC_ROUTE_CSS_COUNT" -gt 0 || fail_deploy_no_rollback "route ${route} missing CSS asset references in public HTML after purge"
               done
               # ── WI-0636: Turbopack / dev-chunk guard ─────────────────────────────
               # If CF is serving HTML that references turbopack or HMR dev-mode chunks
@@ -598,16 +608,16 @@ jobs:
               printf '%s\n' "$PUBLIC_ROUTE_JS_REFS" | while IFS='|' read -r route ref; do
                 [ -n "$route" ] || continue
                 [ -n "$ref" ] || continue
-                retry_url "$PUBLIC_DOMAIN_URL$ref" "public js [$route] $ref" 1 || fail_with_rollback "public JS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-$PUBLIC_DOMAIN_URL$ref}"
+                retry_url "$PUBLIC_DOMAIN_URL$ref" "public js [$route] $ref" 1 || fail_deploy_no_rollback "public JS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-$PUBLIC_DOMAIN_URL$ref}"
               done
               printf '%s\n' "$PUBLIC_ROUTE_CSS_REFS" | while IFS='|' read -r route ref; do
                 [ -n "$route" ] || continue
                 [ -n "$ref" ] || continue
-                retry_url "$PUBLIC_DOMAIN_URL$ref" "public css [$route] $ref" 1 || fail_with_rollback "public CSS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-$PUBLIC_DOMAIN_URL$ref}"
+                retry_url "$PUBLIC_DOMAIN_URL$ref" "public css [$route] $ref" 1 || fail_deploy_no_rollback "public CSS request failed route=$route ref=$ref status=${LAST_RETRY_STATUS:-unknown} url=${LAST_RETRY_URL:-$PUBLIC_DOMAIN_URL$ref}"
               done
               if [ -n "$PREV_ARCHIVED_ASSET_REL" ]; then
                 retry_url "http://127.0.0.1:3000/_next/static/$PREV_ARCHIVED_ASSET_REL" "origin previous-release asset /_next/static/$PREV_ARCHIVED_ASSET_REL" || fail_with_rollback "previous-release origin static asset failed after deploy"
-                retry_url "$PUBLIC_DOMAIN_URL/_next/static/$PREV_ARCHIVED_ASSET_REL" "public previous-release asset /_next/static/$PREV_ARCHIVED_ASSET_REL" 1 || fail_with_rollback "previous-release public static asset failed after deploy"
+                retry_url "$PUBLIC_DOMAIN_URL/_next/static/$PREV_ARCHIVED_ASSET_REL" "public previous-release asset /_next/static/$PREV_ARCHIVED_ASSET_REL" 1 || fail_deploy_no_rollback "previous-release public static asset failed after deploy"
               else
                 echo "No prior static snapshot asset available for previous-release retention check"
               fi
