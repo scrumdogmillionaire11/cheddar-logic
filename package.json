@@ -1,6 +1,7 @@
 {
   "name": "cheddar-logic-root",
   "private": true,
+  "workspaces": ["packages/*", "apps/*", "web"],
   "scripts": {
     "db:sync": "bash scripts/sync-prod-db.sh",
     "refresh:ncaam-ft-csv": "node scripts/refresh-teamrankings-ncaam-ft.js",
