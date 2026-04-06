@@ -58,57 +58,8 @@ const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
 const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
 const { pullMlbStatcast } = require('../jobs/pull_mlb_statcast');
 
-// ─── isFixedDue ──────────────────────────────────────────────────────────────
-// Copied from schedulers/main.js#isFixedDue — pure helper, no dependencies.
-// Cannot require from main.js (circular). Body must be kept in sync manually.
-
-/**
- * Check if a fixed-time window is currently due.
- * Returns true only if:
- *   1) Current time is past the target time on the same calendar day
- *   2) FIXED_CATCHUP is enabled (or within 2×TICK_MS of the target)
- *
- * @param {DateTime} nowEt - Current ET time (Luxon DateTime)
- * @param {string}   hhmm  - Target time, e.g. "09:00"
- * @returns {boolean}
- */
-function isFixedDue(nowEt, hhmm) {
-  const [h, m] = hhmm.split(':').map(Number);
-  const target = nowEt.set({ hour: h, minute: m, second: 0, millisecond: 0 });
-
-  // Must be same day to prevent yesterday's windows from firing
-  const sameDay = nowEt.toISODate() === target.toISODate();
-  if (!sameDay) return false;
-
-  // Must be past the target time
-  if (nowEt < target) return false;
-
-  // If FIXED_CATCHUP is disabled, only fire if we're within one tick interval
-  const catchupEnabled = process.env.FIXED_CATCHUP !== 'false';
-  if (!catchupEnabled) {
-    const tickMs = Number(process.env.TICK_MS || 60_000);
-    const msSinceTarget = nowEt.diff(target, 'milliseconds').milliseconds;
-    // Only due if we just crossed the window (within 2x tick interval buffer)
-    return msSinceTarget <= tickMs * 2;
-  }
-
-  return true;
-}
-
-// ─── isTminusDue ─────────────────────────────────────────────────────────────
-
-/**
- * Detect whether a game is in the T-60 window (55–60 minutes before start).
- * Player props only fire at T-60. T-120, T-90, T-30 are intentionally excluded.
- *
- * @param {DateTime} nowUtc   - Current UTC time
- * @param {DateTime} startUtc - Game start UTC time
- * @returns {boolean}
- */
-function isTminusDue(nowUtc, startUtc) {
-  const delta = Math.floor(startUtc.diff(nowUtc, 'minutes').minutes);
-  return delta >= 55 && delta <= 60;
-}
+const { isFixedDue } = require('./windows');
+const { isTminusDue } = require('./utils');
 
 // ─── Config helpers ───────────────────────────────────────────────────────────
 
