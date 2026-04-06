@@ -412,10 +412,34 @@ jobs:
                 | awk -F'|' -v route="$route" '$1 == route && NF >= 2 { print $2 }' \
                 | sort -u
             }
-            ORIGIN_HOMEPAGE_HTML=$(curl -fsS "http://127.0.0.1:3000/" || true)
-            ORIGIN_CARDS_HTML=$(curl -fsS "http://127.0.0.1:3000/cards" || true)
-            ORIGIN_FPL_HTML=$(curl -fsS "http://127.0.0.1:3000/fpl" || true)
-            ORIGIN_RESULTS_HTML=$(curl -fsS "http://127.0.0.1:3000/results" || true)
+            # fetch_origin_page_html retries the HTML fetch until the response
+            # contains at least one /_next/static/ ref, protecting against:
+            #   1. First-request SSR 500 on cold-start (Next.js needs a warm-up
+            #      request for some SSR + DB-connected routes on the Pi)
+            #   2. curl -f silently returning empty on any non-200 response
+            # After 6 attempts the last body is returned regardless so the
+            # downstream test-gt-0 check still produces a meaningful error.
+            fetch_origin_page_html() {
+              local url="$1"
+              local label="$2"
+              local attempts=6
+              local delay=3
+              local result=""
+              for i in $(seq 1 "$attempts"); do
+                result=$(curl -sS -L --max-time 10 "$url" || true)
+                if printf '%s' "$result" | grep -q '/_next/static/'; then
+                  printf '%s' "$result"
+                  return 0
+                fi
+                echo "origin HTML warmup ($label): no /_next/static/ refs yet — attempt $i/$attempts"
+                sleep "$delay"
+              done
+              printf '%s' "$result"
+            }
+            ORIGIN_HOMEPAGE_HTML=$(fetch_origin_page_html "http://127.0.0.1:3000/" "/")
+            ORIGIN_CARDS_HTML=$(fetch_origin_page_html "http://127.0.0.1:3000/cards" "/cards")
+            ORIGIN_FPL_HTML=$(fetch_origin_page_html "http://127.0.0.1:3000/fpl" "/fpl")
+            ORIGIN_RESULTS_HTML=$(fetch_origin_page_html "http://127.0.0.1:3000/results" "/results")
             ORIGIN_ROUTE_JS_REFS=$(
               {
                 { extract_asset_refs "origin:/" "$ORIGIN_HOMEPAGE_HTML" "js"; } || true
