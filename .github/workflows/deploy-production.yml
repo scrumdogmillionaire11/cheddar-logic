@@ -227,6 +227,9 @@ jobs:
             # Run database migrations (will create DB if it doesn't exist)
             echo "Running migrations against: $CANONICAL_DB_PATH"
             CHEDDAR_DB_PATH="$CANONICAL_DB_PATH" NODE_ENV=production timeout 10m node scripts/run-migrations.js || { echo "ERROR: Migrations failed or timed out"; exit 1; }
+            # Ensure feature flags are present in .env.production (idempotent)
+            ENV_PROD=/opt/cheddar-logic/.env.production
+            grep -q '^ENABLE_CLV_LEDGER=' "$ENV_PROD" 2>/dev/null || echo 'ENABLE_CLV_LEDGER=true' >> "$ENV_PROD"
             sudo apt-get update -y
             sudo apt-get install -y sqlite3
             # Fail deploy if expected schema is missing from production DB
