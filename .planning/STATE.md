@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-06T01:25:39Z"
-last_activity: "2026-04-06 - Completed WI-0779-01: Create lib/types/index.ts barrel + update deep-path imports"
+last_activity: "2026-04-06 - Completed quick task 139: Fix raw implied probability — add two-sided vig removal across all sport models"
 ---
 
 # Project State
@@ -162,4 +162,5 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 | 136 | Enhance audit CI artifact guard — ARTIFACT_OWNER map, [OK]/[MISSING] per-artifact reporting, head-30 previews, Missing artifact summary before exit 1 | 2026-04-05 | 749b84d | [136-fail-ci-with-diagnostics-when-model-audi](./quick/136-fail-ci-with-diagnostics-when-model-audi/) |
 | 137 | WI-0799: Admin Dashboard consecutive failure streak badge + stale-card muting | 2026-04-06 | 05814b1 | [137-wi-0799-admin-dashboard-consecutive-fail](./quick/137-wi-0799-admin-dashboard-consecutive-fail/) |
 | 138 | Quota-aware odds freshness status — downgrade failed to warning when quota-constrained | 2026-04-06 | fc6cdf1 | [138-quota-aware-odds-freshness-status-downgr](./quick/138-quota-aware-odds-freshness-status-downgr/) |
+| 139 | Fix raw implied probability — add two-sided vig removal across all sport models | 2026-04-06 | dffaf82 | [139-fix-raw-implied-probability-add-two-side](./quick/139-fix-raw-implied-probability-add-two-side/) |
 
