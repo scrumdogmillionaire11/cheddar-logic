@@ -75,6 +75,57 @@ function formatAge(ts: string) {
   }
 }
 
+const STALE_THRESHOLD_MS = 35 * 60 * 1000;
+
+function computeStreak(
+  rows: PipelineHealthRow[],
+  phase: string,
+  checkName: string,
+): number {
+  const filtered = rows.filter(
+    (r) => r.phase === phase && r.check_name === checkName,
+  );
+  if (filtered.length === 0) return 0;
+  const currentStatus = filtered[0].status.toLowerCase();
+  let streak = 1;
+  for (let i = 1; i < filtered.length; i++) {
+    if (filtered[i].status.toLowerCase() === currentStatus) {
+      streak++;
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
+function isStale(ts: string): boolean {
+  try {
+    return Date.now() - new Date(ts).getTime() > STALE_THRESHOLD_MS;
+  } catch {
+    return false;
+  }
+}
+
+function StreakBadge({ status, streak }: { status: string; streak: number }) {
+  if (status.toLowerCase() === 'ok' || streak < 2) return null;
+  const colorMap: Record<string, string> = {
+    failed:
+      'bg-red-500/10 text-red-400/70 border border-red-500/20',
+    warning:
+      'bg-yellow-500/10 text-yellow-400/70 border border-yellow-500/20',
+  };
+  const cls =
+    colorMap[status.toLowerCase()] ??
+    'bg-white/10 text-cloud/50 border border-white/20';
+  return (
+    <span
+      className={`inline-flex items-center rounded px-2 py-0.5 text-xs ${cls}`}
+    >
+      {status.toLowerCase()} &times; {streak}
+    </span>
+  );
+}
+
 /**
  * Derive the single latest row per (phase, check_name) combination.
  * Since rows are already ordered newest-first from the API, first-seen wins.
@@ -91,7 +142,7 @@ function buildSnapshot(rows: PipelineHealthRow[]): PipelineHealthRow[] {
   }
   return snapshot.sort((a, b) => {
     // Sort: failed first, then warning, then ok; within each group alphabetical phase
-    const order = { failed: 0, warning: 1, ok: 2 };
+    const order: Record<string, number> = { failed: 0, warning: 1, ok: 2 };
     const ao = order[a.status.toLowerCase()] ?? 3;
     const bo = order[b.status.toLowerCase()] ?? 3;
     if (ao !== bo) return ao - bo;
