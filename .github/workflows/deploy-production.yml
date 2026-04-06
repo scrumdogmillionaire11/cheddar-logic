@@ -456,7 +456,7 @@ jobs:
               expected_origin_route="origin:${route}"
               expected_js=$(extract_route_ref_values "$ORIGIN_ROUTE_JS_REFS" "$expected_origin_route")
               expected_css=$(extract_route_ref_values "$ORIGIN_ROUTE_CSS_REFS" "$expected_origin_route")
-              attempts=18
+              attempts=30
               delay=5
               last_actual_js=""
               last_actual_css=""

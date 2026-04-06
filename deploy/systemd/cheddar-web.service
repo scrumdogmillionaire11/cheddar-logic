@@ -15,9 +15,10 @@ ExecStart=/usr/bin/node /opt/cheddar-logic/web/node_modules/.bin/next start --po
 # Restart policy
 Restart=on-failure
 RestartSec=10s
-# Web process is read-only (no DB writes). Kill fast so deploys don't hit the
-# 90-second systemd default timeout and get SIGKILLed mid-flight.
-TimeoutStopSec=15s
+# Web process is read-only (no DB writes). Allow enough time for Next.js to
+# drain in-flight requests before systemd falls back to SIGKILL.
+# 15s was too short — production loads caused SIGKILL on every deploy restart.
+TimeoutStopSec=30s
 
 # Logging
 StandardOutput=journal
