@@ -16,7 +16,7 @@
 const db = require('./src/db');
 const dbDualInit = require('./src/db-dual-init');
 const { runMigrations } = require('./src/migrate');
-const { withDb } = require('./src/job-runtime');
+const { withDb, createJob } = require('./src/job-runtime');
 const auth = require('./src/auth');
 const { validateCardPayload } = require('./src/validators/card-payload');
 const { getTeamMetrics, getTeamMetricsWithGames, computeMetricsFromGames } = require('./src/team-metrics');
@@ -36,6 +36,7 @@ module.exports = {
   // Migration runner
   runMigrations,
   withDb,
+  createJob,
   
   // Convenience exports - job_runs
   getDatabase: db.getDatabase,

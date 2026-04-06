@@ -14,7 +14,7 @@ import {
   derivePlayDecision,
   classificationToLegacyStatus,
 } from './decision-logic';
-import type { CanonicalPlay, WrapperContext } from '../types/canonical-play';
+import type { CanonicalPlay, WrapperContext } from '../types';
 
 declare const describe: (name: string, fn: () => void) => void;
 declare const it: (name: string, fn: () => void) => void;

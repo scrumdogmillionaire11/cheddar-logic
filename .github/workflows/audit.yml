@@ -78,18 +78,41 @@ jobs:
         if: always()
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
-          echo "Available audit artifact files:"
-          find apps/worker/audit-output -maxdepth 3 -type f | sort || true
+          echo "=== Audit artifact diagnostic ==="
+          echo "Run scope: ${RUN_SCOPE}"
+          echo "Output dir: ${OUTPUT_DIR}"
+          echo ""
 
-          missing=0
+          declare -A ARTIFACT_OWNER=(
+            ["audit-report.json"]="Run audit gate"
+            ["audit-summary.json"]="Run audit gate"
+            ["scorecard.json"]="Generate scorecard"
+            ["audit-scorecard.md"]="Generate scorecard"
+          )
+
+          missing_list=()
+
           for artifact in audit-report.json audit-summary.json scorecard.json audit-scorecard.md; do
-            if [ ! -f "$OUTPUT_DIR/$artifact" ]; then
-              echo "Missing required audit artifact: $OUTPUT_DIR/$artifact"
-              missing=1
+            artifact_path="$OUTPUT_DIR/$artifact"
+            owner="${ARTIFACT_OWNER[$artifact]}"
+            if [ -f "$artifact_path" ]; then
+              echo "[OK]  $artifact"
+              echo "--- preview (head -30) ---"
+              head -30 "$artifact_path" || true
+              echo "--- end preview ---"
+              echo ""
+            else
+              echo "[MISSING] $artifact  (produced by: $owner)"
+              missing_list+=("$artifact (produced by: $owner)")
+              echo ""
             fi
           done
 
-          if [ "$missing" -ne 0 ]; then
+          if [ "${#missing_list[@]}" -gt 0 ]; then
+            echo "=== Missing artifact summary ==="
+            for entry in "${missing_list[@]}"; do
+              echo "  - $entry"
+            done
             exit 1
           fi
 

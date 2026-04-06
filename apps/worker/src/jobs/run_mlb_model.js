@@ -1329,6 +1329,12 @@ function enrichMlbPitcherData(
       if (weatherRow && weatherRow.conditions !== 'INDOOR') {
         mlb.temp_f = weatherRow.temp_f ?? mlb.temp_f ?? null;
         mlb.wind_mph = weatherRow.wind_mph ?? mlb.wind_mph ?? null;
+        // wind_dir IS wired into the model: resolveWeatherRunFactor() in mlb-model.js
+        // applies a multiplicative coefficient to the run factor when wind_mph >= 10.
+        //   OUT (or OUT_*): factor *= (1 + windStep)  — higher run expectation
+        //   IN  (or IN_*):  factor *= (1 - windStep)  — lower run expectation
+        // windStep = min(0.08, (mph - 8) * 0.005), clamped total factor to [0.88, 1.12].
+        // This is NOT payload metadata — it affects F5 total projections.
         mlb.wind_dir = weatherRow.wind_dir ?? mlb.wind_dir ?? null;
       }
       if (weatherRow?.conditions) {

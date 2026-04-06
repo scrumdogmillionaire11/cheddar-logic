@@ -4,7 +4,7 @@
  */
 
 import type { GameFilters, ViewMode } from './filters';
-import type { ExpressionStatus } from '@/lib/types/game-card';
+import type { ExpressionStatus } from '@/lib/types';
 import { DEFAULT_FILTERS_BY_MODE, DEFAULT_PROJECTIONS_FILTERS } from './filters';
 
 export interface FilterPreset {

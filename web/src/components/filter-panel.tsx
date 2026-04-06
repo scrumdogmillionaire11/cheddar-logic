@@ -19,7 +19,7 @@ import type {
   Market,
   DriverTier,
   ExpressionStatus,
-} from '@/lib/types/game-card';
+} from '@/lib/types';
 import { getPresetsForMode } from '@/lib/game-card/presets';
 import { isNflSeason } from '@/lib/game-card/season-gates';
 

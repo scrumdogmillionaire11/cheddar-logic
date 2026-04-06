@@ -544,4 +544,24 @@ python tests_new/test_phase2_collector.py
 python tests_new/test_phase3_normalizer.py
 ```
 
+---
 
+## Relationship to cheddar-logic Main Worker
+
+FPL Sage is a **standalone application**. It has its own Python runtime, its
+own data store, and its own process lifecycle. It is **not** integrated with the
+main `cheddar-logic` Node.js worker.
+
+The main worker contains a FPL scheduler stub (`apps/worker/src/schedulers/fpl.js`)
+and a job entry point (`apps/worker/src/jobs/run_fpl_model.js`), but these are
+disabled by default (`ENABLE_FPL_MODEL=false` in `env.example`). They serve as a
+reserved entry point for a future integration if one is ever decided.
+
+**Architecture decision:** See
+[`docs/decisions/ADR-0011-fpl-integration.md`](../docs/decisions/ADR-0011-fpl-integration.md)
+for the full rationale. The chosen option is **Option C — Keep fully standalone**:
+no data bridge or DB integration is planned. FPL picks are not surfaced in the
+main cheddar-logic web UI.
+
+If in the future a `pull_fpl_data.js` job is built that feeds FPL context into
+the main worker DB, this section and ADR-0011 should both be updated.

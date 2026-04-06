@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 
 interface PipelineHealthRow {
@@ -41,12 +41,113 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function StatusDot({ status }: { status: string }) {
+  const colorMap: Record<string, string> = {
+    ok: 'bg-green-400',
+    warning: 'bg-yellow-400',
+    failed: 'bg-red-400',
+  };
+  return (
+    <span
+      className={`inline-block h-2 w-2 rounded-full ${colorMap[status.toLowerCase()] ?? 'bg-white/30'}`}
+    />
+  );
+}
+
 function formatTs(ts: string) {
   try {
     return new Date(ts).toLocaleString();
   } catch {
     return ts;
   }
+}
+
+function formatAge(ts: string) {
+  try {
+    const ageMs = Date.now() - new Date(ts).getTime();
+    const mins = Math.floor(ageMs / 60000);
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ${mins % 60}m ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  } catch {
+    return '?';
+  }
+}
+
+const STALE_THRESHOLD_MS = 35 * 60 * 1000;
+
+function computeStreak(
+  rows: PipelineHealthRow[],
+  phase: string,
+  checkName: string,
+): number {
+  const filtered = rows.filter(
+    (r) => r.phase === phase && r.check_name === checkName,
+  );
+  if (filtered.length === 0) return 0;
+  const currentStatus = filtered[0].status.toLowerCase();
+  let streak = 1;
+  for (let i = 1; i < filtered.length; i++) {
+    if (filtered[i].status.toLowerCase() === currentStatus) {
+      streak++;
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
+function isStale(ts: string): boolean {
+  try {
+    return Date.now() - new Date(ts).getTime() > STALE_THRESHOLD_MS;
+  } catch {
+    return false;
+  }
+}
+
+function StreakBadge({ status, streak }: { status: string; streak: number }) {
+  if (status.toLowerCase() === 'ok' || streak < 2) return null;
+  const colorMap: Record<string, string> = {
+    failed:
+      'bg-red-500/10 text-red-400/70 border border-red-500/20',
+    warning:
+      'bg-yellow-500/10 text-yellow-400/70 border border-yellow-500/20',
+  };
+  const cls =
+    colorMap[status.toLowerCase()] ??
+    'bg-white/10 text-cloud/50 border border-white/20';
+  return (
+    <span
+      className={`inline-flex items-center rounded px-2 py-0.5 text-xs ${cls}`}
+    >
+      {status.toLowerCase()} &times; {streak}
+    </span>
+  );
+}
+
+/**
+ * Derive the single latest row per (phase, check_name) combination.
+ * Since rows are already ordered newest-first from the API, first-seen wins.
+ */
+function buildSnapshot(rows: PipelineHealthRow[]): PipelineHealthRow[] {
+  const seen = new Set<string>();
+  const snapshot: PipelineHealthRow[] = [];
+  for (const row of rows) {
+    const key = `${row.phase}:${row.check_name}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      snapshot.push(row);
+    }
+  }
+  return snapshot.sort((a, b) => {
+    // Sort: failed first, then warning, then ok; within each group alphabetical phase
+    const order: Record<string, number> = { failed: 0, warning: 1, ok: 2 };
+    const ao = order[a.status.toLowerCase()] ?? 3;
+    const bo = order[b.status.toLowerCase()] ?? 3;
+    if (ao !== bo) return ao - bo;
+    return `${a.phase}:${a.check_name}`.localeCompare(`${b.phase}:${b.check_name}`);
+  });
 }
 
 export default function AdminPage() {
@@ -56,26 +157,47 @@ export default function AdminPage() {
   const [outputsLoading, setOutputsLoading] = useState(true);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [outputsError, setOutputsError] = useState<string | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-  useEffect(() => {
+  const loadHealth = useCallback(() => {
     fetch('/api/admin/pipeline-health')
       .then((r) => r.json())
-      .then((body: { success: boolean; data?: PipelineHealthRow[]; error?: string }) => {
-        if (body.success && body.data) setHealth(body.data);
-        else setHealthError(body.error ?? 'unknown error');
-      })
+      .then(
+        (body: { success: boolean; data?: PipelineHealthRow[]; error?: string }) => {
+          if (body.success && body.data) {
+            setHealth(body.data);
+            setLastRefresh(new Date());
+          } else setHealthError(body.error ?? 'unknown error');
+        },
+      )
       .catch((e: unknown) => setHealthError(String(e)))
       .finally(() => setHealthLoading(false));
+  }, []);
 
+  useEffect(() => {
+    loadHealth();
     fetch('/api/model-outputs')
       .then((r) => r.json())
-      .then((body: { success: boolean; data?: ModelOutputRow[]; error?: string }) => {
-        if (body.success && body.data) setOutputs(body.data.slice(0, 50));
-        else setOutputsError(body.error ?? 'unknown error');
-      })
+      .then(
+        (body: { success: boolean; data?: ModelOutputRow[]; error?: string }) => {
+          if (body.success && body.data) setOutputs(body.data.slice(0, 50));
+          else setOutputsError(body.error ?? 'unknown error');
+        },
+      )
       .catch((e: unknown) => setOutputsError(String(e)))
       .finally(() => setOutputsLoading(false));
-  }, []);
+  }, [loadHealth]);
+
+  // Auto-refresh health every 60s
+  useEffect(() => {
+    const id = setInterval(loadHealth, 60_000);
+    return () => clearInterval(id);
+  }, [loadHealth]);
+
+  const snapshot = buildSnapshot(health);
+  const overallOk =
+    snapshot.length > 0 && snapshot.every((r) => r.status.toLowerCase() === 'ok');
+  const hasFailure = snapshot.some((r) => r.status.toLowerCase() === 'failed');
 
   return (
     <div className="min-h-screen bg-night px-6 py-12 text-cloud">
@@ -96,23 +218,91 @@ export default function AdminPage() {
             </p>
           </div>
 
-          {/* Pipeline Health */}
+          {/* Current Health Snapshot */}
           <section>
-            <h2 className="mb-4 text-xl font-semibold">Pipeline Health</h2>
-            <div className="overflow-hidden rounded-xl border border-white/10 bg-surface/80">
-              {healthLoading && (
-                <div className="p-6 text-sm text-cloud/50">Loading…</div>
-              )}
-              {healthError && (
-                <div className="p-6 text-sm text-red-400">
-                  Error: {healthError}
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-xl font-semibold">Current Snapshot</h2>
+              <div className="flex items-center gap-3 text-xs text-cloud/40">
+                {lastRefresh && <span>Updated {formatAge(lastRefresh.toISOString())}</span>}
+                <button
+                  onClick={loadHealth}
+                  className="rounded border border-white/10 px-2 py-1 hover:border-white/20 hover:text-cloud/70"
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {healthLoading && (
+              <div className="rounded-xl border border-white/10 bg-surface/80 p-6 text-sm text-cloud/50">
+                Loading…
+              </div>
+            )}
+            {healthError && (
+              <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-6 text-sm text-red-400">
+                Error: {healthError}
+              </div>
+            )}
+            {!healthLoading && !healthError && snapshot.length === 0 && (
+              <div className="rounded-xl border border-white/10 bg-surface/80 p-6 text-sm text-cloud/50">
+                No health data yet. Run{' '}
+                <code className="font-mono">npm run job:check-pipeline-health</code>{' '}
+                from apps/worker to seed.
+              </div>
+            )}
+            {!healthLoading && !healthError && snapshot.length > 0 && (
+              <div
+                className={`rounded-xl border p-4 ${
+                  hasFailure
+                    ? 'border-red-500/30 bg-red-500/5'
+                    : overallOk
+                      ? 'border-green-500/20 bg-green-500/5'
+                      : 'border-yellow-500/20 bg-yellow-500/5'
+                }`}
+              >
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                  {snapshot.map((row) => {
+                    const streak = computeStreak(health, row.phase, row.check_name);
+                    const stale = isStale(row.created_at);
+                    return (
+                      <div
+                        key={`${row.phase}:${row.check_name}`}
+                        className={`flex flex-col gap-1 rounded-lg border border-white/8 bg-surface/60 px-3 py-2 ${stale ? 'opacity-50' : ''}`}
+                        title={row.reason ?? ''}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="font-mono text-xs font-semibold uppercase text-cloud/80">
+                            {row.phase}
+                          </span>
+                          <StatusDot status={row.status} />
+                        </div>
+                        <span className="text-xs text-cloud/50">{row.check_name}</span>
+                        <div className="flex items-center justify-between">
+                          <StatusBadge status={row.status} />
+                          {stale ? (
+                            <span className="rounded bg-white/5 px-1.5 py-0.5 text-xs text-cloud/30">
+                              check dormant
+                            </span>
+                          ) : (
+                            <span className="text-xs text-cloud/30">{formatAge(row.created_at)}</span>
+                          )}
+                        </div>
+                        <StreakBadge status={row.status} streak={streak} />
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
+              </div>
+            )}
+          </section>
+
+          {/* Pipeline Health History */}
+          <section>
+            <h2 className="mb-4 text-xl font-semibold">Health History</h2>
+            <div className="overflow-hidden rounded-xl border border-white/10 bg-surface/80">
               {!healthLoading && !healthError && health.length === 0 && (
                 <div className="p-6 text-sm text-cloud/50">
-                  No pipeline health records found. Run{' '}
-                  <code className="font-mono">check_pipeline_health.js</code> to
-                  seed.
+                  No pipeline health records found.
                 </div>
               )}
               {!healthLoading && !healthError && health.length > 0 && (

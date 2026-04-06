@@ -25,6 +25,7 @@ const {
   markJobRunFailure,
   shouldRunJobKey,
   withDb,
+  createJob,
 } = require('@cheddar-logic/data');
 
 const {
@@ -351,16 +352,7 @@ async function syncGameStatuses({ jobKey = null, dryRun = false } = {}) {
 
 // Direct execution
 if (require.main === module) {
-  const dryRun = process.argv.includes('--dry-run');
-  syncGameStatuses({ dryRun })
-    .then((result) => {
-      console.log('[SyncStatuses] Result:', JSON.stringify(result));
-      process.exit(0);
-    })
-    .catch((err) => {
-      console.error('[SyncStatuses] Fatal:', err.message);
-      process.exit(1);
-    });
+  createJob('sync_game_statuses', ({ dryRun }) => syncGameStatuses({ dryRun }));
 }
 
 module.exports = { syncGameStatuses };

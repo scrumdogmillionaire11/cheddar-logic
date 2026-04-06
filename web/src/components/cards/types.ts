@@ -14,7 +14,7 @@ import type {
   Sport,
   SupportGrade,
   PassReasonCode,
-} from '@/lib/types/game-card';
+} from '@/lib/types';
 
 export type SportCountMap = Record<string, number>;
 

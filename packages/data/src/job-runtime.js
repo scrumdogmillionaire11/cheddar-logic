@@ -23,6 +23,36 @@ async function withDb(fn) {
   }
 }
 
+/**
+ * Wrap a job's main entry-point with standardized lifecycle handling.
+ *
+ * - Reads dryRun from DRY_RUN env var OR --dry-run CLI arg
+ * - Logs [name] Starting (dryRun=…) before calling run
+ * - Logs [name] Complete on success, [name] Fatal: {msg} on error
+ * - Exits 0 on success (unless result.ok === false → exit 1)
+ * - Exits 1 on thrown error
+ *
+ * @param {string} name - Job key used in log lines (e.g. 'check_odds_health')
+ * @param {function({ dryRun: boolean }): Promise<any>} run - Async job function
+ * @returns {void} — calls process.exit; never resolves
+ */
+async function createJob(name, run) {
+  const dryRun =
+    process.env.DRY_RUN === 'true' || process.argv.includes('--dry-run');
+  console.log(`[${name}] Starting (dryRun=${dryRun})`);
+  try {
+    const result = await run({ dryRun });
+    console.log(`[${name}] Complete`);
+    // Allow health-check jobs to signal non-zero exit via { ok: false }
+    const exitCode = result && result.ok === false ? 1 : 0;
+    process.exit(exitCode);
+  } catch (err) {
+    console.error(`[${name}] Fatal:`, err.message);
+    process.exit(1);
+  }
+}
+
 module.exports = {
-  withDb
+  withDb,
+  createJob,
 };

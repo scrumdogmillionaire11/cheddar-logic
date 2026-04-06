@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
         `SELECT id, phase, check_name, status, reason, created_at
          FROM pipeline_health
          ORDER BY created_at DESC
-         LIMIT 50`,
+         LIMIT 100`,
       )
       .all() as PipelineHealthRow[];
 

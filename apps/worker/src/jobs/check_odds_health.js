@@ -9,7 +9,7 @@
  */
 
 require('dotenv').config();
-const {getJobRunHistory } = require('@cheddar-logic/data');
+const { getJobRunHistory, createJob } = require('@cheddar-logic/data');
 
 function getLatestSuccessfulRun(jobRuns) {
   return jobRuns.find((run) => run && run.status === 'success') || null;
@@ -61,14 +61,7 @@ async function checkOddsHealth() {
 }
 
 if (require.main === module) {
-  checkOddsHealth()
-    .then((result) => {
-      process.exit(result.ok ? 0 : 1);
-    })
-    .catch((error) => {
-      console.error('[OddsHealth] ERROR:', error.message);
-      process.exit(2);
-    });
+  createJob('check_odds_health', () => checkOddsHealth());
 }
 
 module.exports = { checkOddsHealth };

@@ -6,7 +6,7 @@
  */
 
 import { resolvePlayDisplayDecision } from './decision';
-import type { ExpressionStatus } from '@/lib/types/game-card';
+import type { ExpressionStatus } from '@/lib/types';
 
 export type Decision = 'FIRE' | 'WATCH' | 'HOLD' | 'PASS';
 export type Signal = 'STRONG' | 'MEDIUM' | 'WEAK';

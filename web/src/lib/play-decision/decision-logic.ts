@@ -15,8 +15,8 @@ import type {
   Sport,
   MarketType,
   PlayDecision,
-} from '../types/canonical-play';
-import { THRESHOLDS } from '../types/canonical-play';
+} from '../types';
+import { THRESHOLDS } from '../types';
 
 // Guardrail constants shared with transform/UI layers.
 export const EDGE_SANITY_NON_TOTAL_THRESHOLD = 0.2;
