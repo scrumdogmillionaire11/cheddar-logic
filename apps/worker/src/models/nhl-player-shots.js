@@ -1,5 +1,7 @@
 'use strict';
 
+const { twoSidedFairProb } = require('@cheddar-logic/models').edgeCalculator;
+
 /**
  * NHL Player Shots (SOG) Model
  *
@@ -491,9 +493,11 @@ function projectSogV2(inputs) {
 
   if (market_price_over !== null && market_price_over !== undefined && market_line !== null && market_line !== undefined) {
     const fairOverProb = fair_over_prob_by_line[String(market_line)];
-    const impliedOverProb = americanToImplied(market_price_over);
+    const impliedOverProb = twoSidedFairProb(market_price_over, market_price_under)
+      ?? americanToImplied(market_price_over);
     implied_over_prob = impliedOverProb;
-    edge_over_pp = fairOverProb - impliedOverProb;
+    edge_over_pp = fairOverProb != null && impliedOverProb != null
+      ? fairOverProb - impliedOverProb : null;
     const payoutDm1Over = market_price_over >= 0
       ? market_price_over / 100
       : 100 / Math.abs(market_price_over);
@@ -502,9 +506,11 @@ function projectSogV2(inputs) {
 
   if (market_price_under !== null && market_price_under !== undefined && market_line !== null && market_line !== undefined) {
     const fairUnderProb = fair_under_prob_by_line[String(market_line)];
-    const impliedUnderProb = americanToImplied(market_price_under);
+    const impliedUnderProb = twoSidedFairProb(market_price_under, market_price_over)
+      ?? americanToImplied(market_price_under);
     implied_under_prob = impliedUnderProb;
-    edge_under_pp = fairUnderProb - impliedUnderProb;
+    edge_under_pp = fairUnderProb != null && impliedUnderProb != null
+      ? fairUnderProb - impliedUnderProb : null;
     const payoutDm1Under = market_price_under >= 0
       ? market_price_under / 100
       : 100 / Math.abs(market_price_under);
@@ -719,8 +725,10 @@ function projectBlkV1(inputs) {
   if (market_price_over !== null && market_price_over !== undefined &&
       market_line !== null && market_line !== undefined) {
     const fairOverProb = fair_over_prob_by_line[String(market_line)];
-    const impliedOverProb = americanToImplied(market_price_over);
-    edge_over_pp = fairOverProb - impliedOverProb;
+    const impliedOverProb = twoSidedFairProb(market_price_over, market_price_under)
+      ?? americanToImplied(market_price_over);
+    edge_over_pp = fairOverProb != null && impliedOverProb != null
+      ? fairOverProb - impliedOverProb : null;
     const payoutDm1 = market_price_over >= 0
       ? market_price_over / 100
       : 100 / Math.abs(market_price_over);
@@ -730,8 +738,10 @@ function projectBlkV1(inputs) {
   if (market_price_under !== null && market_price_under !== undefined &&
       market_line !== null && market_line !== undefined) {
     const fairUnderProb = fair_under_prob_by_line[String(market_line)];
-    const impliedUnderProb = americanToImplied(market_price_under);
-    edge_under_pp = fairUnderProb - impliedUnderProb;
+    const impliedUnderProb = twoSidedFairProb(market_price_under, market_price_over)
+      ?? americanToImplied(market_price_under);
+    edge_under_pp = fairUnderProb != null && impliedUnderProb != null
+      ? fairUnderProb - impliedUnderProb : null;
     const payoutDm1 = market_price_under >= 0
       ? market_price_under / 100
       : 100 / Math.abs(market_price_under);

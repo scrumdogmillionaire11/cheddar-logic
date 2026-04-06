@@ -698,10 +698,13 @@ function computeNHLMarketDecisions(oddsSnapshot) {
           edgeCalculator.getSigmaDefaults('NHL').margin,
         )
       : null;
-  const impliedHome =
-    moneylineHome !== null ? oddsToProbability(moneylineHome) : null;
-  const impliedAway =
-    moneylineAway !== null ? oddsToProbability(moneylineAway) : null;
+  const mlNoVig = edgeCalculator.noVigImplied(moneylineHome, moneylineAway);
+  const impliedHome = mlNoVig != null
+    ? mlNoVig.home
+    : (moneylineHome !== null ? oddsToProbability(moneylineHome) : null);
+  const impliedAway = mlNoVig != null
+    ? mlNoVig.away
+    : (moneylineAway !== null ? oddsToProbability(moneylineAway) : null);
 
   const mlBaseNet = computeNet(
     applyDirection(renormalizeDriverWeights(spreadDrivers), 1),

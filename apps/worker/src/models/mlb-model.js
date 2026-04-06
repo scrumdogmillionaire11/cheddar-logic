@@ -666,9 +666,12 @@ function projectF5ML(homePitcher, awayPitcher, mlF5Home, mlF5Away) {
     if (!Number.isFinite(ml)) return null;
     return ml < 0 ? (-ml) / (-ml + 100) : 100 / (ml + 100);
   }
-  const impliedHome = mlToImplied(mlF5Home);
-  const impliedAway = mlToImplied(mlF5Away);
-  if (impliedHome === null || impliedAway === null) return null;
+  const rawHome = mlToImplied(mlF5Home);
+  const rawAway = mlToImplied(mlF5Away);
+  if (rawHome === null || rawAway === null) return null;
+  const total = rawHome + rawAway;
+  const impliedHome = rawHome / total;
+  const impliedAway = rawAway / total;
 
   const homeEdge = winProbHome - impliedHome;
   const awayEdge = (1 - winProbHome) - impliedAway;
