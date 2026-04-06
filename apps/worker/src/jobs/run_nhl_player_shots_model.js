@@ -33,6 +33,7 @@ const {
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 const { applyNhlDecisionBasisMeta } = require('../utils/nhl-shots-patch');
+const { twoSidedFairProb } = require('@cheddar-logic/models').edgeCalculator;
 
 const JOB_NAME = 'run-nhl-player-shots-model';
 
@@ -3149,13 +3150,11 @@ async function runNHLPlayerShotsModel() {
                   fairUnderProb:
                     blkProjection.fair_under_prob_by_line?.[String(blkMarket.line)] ?? null,
                   impliedOverProb:
-                    blkMarket.over_price != null
-                      ? americanToImplied(blkMarket.over_price)
-                      : null,
+                    twoSidedFairProb(blkMarket.over_price, blkMarket.under_price)
+                      ?? (blkMarket.over_price != null ? americanToImplied(blkMarket.over_price) : null),
                   impliedUnderProb:
-                    blkMarket.under_price != null
-                      ? americanToImplied(blkMarket.under_price)
-                      : null,
+                    twoSidedFairProb(blkMarket.under_price, blkMarket.over_price)
+                      ?? (blkMarket.under_price != null ? americanToImplied(blkMarket.under_price) : null),
                   edgeOverPp: blkProjection.edge_over_pp,
                   edgeUnderPp: blkProjection.edge_under_pp,
                   evOver: blkProjection.ev_over,
@@ -3346,7 +3345,8 @@ async function runNHLPlayerShotsModel() {
                     let extraEdgeUnderPp = null;
                     let extraEvUnder = null;
                     if (extraCandidate.over_price != null) {
-                      const implOvr = americanToImplied(extraCandidate.over_price);
+                      const implOvr = twoSidedFairProb(extraCandidate.over_price, extraCandidate.under_price)
+                        ?? americanToImplied(extraCandidate.over_price);
                       extraEdgeOverPp = extraFairOverProb - implOvr;
                       const payoutOvr = extraCandidate.over_price >= 0
                         ? extraCandidate.over_price / 100
@@ -3354,7 +3354,8 @@ async function runNHLPlayerShotsModel() {
                       extraEvOver = extraFairOverProb * payoutOvr - (1 - extraFairOverProb);
                     }
                     if (extraCandidate.under_price != null && extraFairUnderProb != null) {
-                      const implUnd = americanToImplied(extraCandidate.under_price);
+                      const implUnd = twoSidedFairProb(extraCandidate.under_price, extraCandidate.over_price)
+                        ?? americanToImplied(extraCandidate.under_price);
                       extraEdgeUnderPp = extraFairUnderProb - implUnd;
                       const payoutUnd = extraCandidate.under_price >= 0
                         ? extraCandidate.under_price / 100
@@ -3371,10 +3372,10 @@ async function runNHLPlayerShotsModel() {
                       marketPriceUnder: extraCandidate.under_price,
                       fairOverProb: extraFairOverProb,
                       fairUnderProb: extraFairUnderProb,
-                      impliedOverProb: extraCandidate.over_price != null
-                        ? americanToImplied(extraCandidate.over_price) : null,
-                      impliedUnderProb: extraCandidate.under_price != null
-                        ? americanToImplied(extraCandidate.under_price) : null,
+                      impliedOverProb: twoSidedFairProb(extraCandidate.over_price, extraCandidate.under_price)
+                        ?? (extraCandidate.over_price != null ? americanToImplied(extraCandidate.over_price) : null),
+                      impliedUnderProb: twoSidedFairProb(extraCandidate.under_price, extraCandidate.over_price)
+                        ?? (extraCandidate.under_price != null ? americanToImplied(extraCandidate.under_price) : null),
                       edgeOverPp: extraEdgeOverPp,
                       edgeUnderPp: extraEdgeUnderPp,
                       evOver: extraEvOver,
