@@ -6,7 +6,7 @@ import type {
   DriverRow,
   DriverTier,
   Market,
-} from '@/lib/types/game-card';
+} from '@/lib/types';
 import type { GameData } from './types';
 
 export const INFORMATIONAL_CODES = new Set([

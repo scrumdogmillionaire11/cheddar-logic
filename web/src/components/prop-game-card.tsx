@@ -5,7 +5,7 @@
  * Designed for player props view - shows multiple plays per game
  */
 
-import type { PropGameCard, PropPlayRow } from '@/lib/types/game-card';
+import type { PropGameCard, PropPlayRow } from '@/lib/types';
 import { useState } from 'react';
 
 interface PropGameCardProps {

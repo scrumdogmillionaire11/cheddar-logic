@@ -3,9 +3,9 @@
 import { getFilterDebugFlags } from '@/lib/game-card/filters';
 import { getPlayDisplayAction } from '@/lib/game-card/decision';
 import type { GameFilters, ViewMode } from '@/lib/game-card/filters';
-import { GAME_TAGS } from '@/lib/types/game-card';
+import { GAME_TAGS } from '@/lib/types';
 import { isNflSeason } from '@/lib/game-card/season-gates';
-import type { GameCard, PropPlayRow } from '@/lib/types/game-card';
+import type { GameCard, PropPlayRow } from '@/lib/types';
 import type {
   ApiResponse,
   DateCardGroup,

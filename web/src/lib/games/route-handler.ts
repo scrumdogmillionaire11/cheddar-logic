@@ -90,7 +90,7 @@ import {
   requireEntitlementForRequest,
   RESOURCE,
 } from '@/lib/api-security';
-import type { ExpressionStatus, CanonicalMarketType } from '@/lib/types/game-card';
+import type { ExpressionStatus, CanonicalMarketType } from '@/lib/types';
 import type { PlayDisplayAction } from '@/lib/game-card/decision';
 import {
   toObject,

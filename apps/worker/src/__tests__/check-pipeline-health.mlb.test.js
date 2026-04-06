@@ -45,7 +45,13 @@ describe('checkMlbF5MarketAvailability', () => {
     };
 
     jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => db),
       getDb: jest.fn(() => db),
+      insertJobRun: jest.fn(() => 1),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: jest.fn(() => false),
       recordJobStart: jest.fn(() => 'job-check-health'),
       recordJobSuccess: jest.fn(),
       recordJobError: jest.fn(),

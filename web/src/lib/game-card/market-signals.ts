@@ -11,7 +11,7 @@
  *  Consensus         (slate) — spreadConsensusConfidence === 'HIGH'  AND  no sharp divergence signal
  */
 
-import type { GameCard } from '@/lib/types/game-card';
+import type { GameCard } from '@/lib/types';
 
 export type MarketSignalPillColor = 'blue' | 'amber' | 'green' | 'slate' | 'emerald';
 
