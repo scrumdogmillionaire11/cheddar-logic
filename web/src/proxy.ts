@@ -20,11 +20,10 @@
  * it runs before any page or API route handler so even if an individual
  * file's check is accidentally removed, this block holds.
  *
- * TWO conditions must BOTH be true to allow access:
- *   1. NODE_ENV === 'development'
- *   2. MODEL_HEALTH_ENABLED === 'true'  (set only in .env.local, never .env.production)
+ * One condition must be true to allow access:
+ *   NODE_ENV === 'development'
  *
- * Do NOT add exceptions. Do NOT set MODEL_HEALTH_ENABLED in .env.production.
+ * Do NOT add exceptions. Do NOT add flags to re-enable in production.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -40,11 +39,7 @@ export function proxy(request: NextRequest): NextResponse {
     (prefix) => pathname === prefix || pathname.startsWith(prefix + '/'),
   );
 
-  const modelHealthEnabled =
-    process.env.NODE_ENV === 'development' &&
-    process.env.MODEL_HEALTH_ENABLED === 'true';
-
-  if (isDevOnlyRoute && !modelHealthEnabled) {
+  if (isDevOnlyRoute && process.env.NODE_ENV !== 'development') {
     // Return a plain 404 — do not reveal that the route exists or why it's
     // blocked. This prevents enumeration of internal tooling paths.
     return new NextResponse(null, { status: 404 });

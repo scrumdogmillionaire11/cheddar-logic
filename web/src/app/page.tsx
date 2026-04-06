@@ -58,15 +58,14 @@ export default function Home() {
             👾 Join Discord 👾
           </a>
 
-          {process.env.NODE_ENV === 'development' &&
-            process.env.MODEL_HEALTH_ENABLED === 'true' && (
-              <Link
-                href="/admin"
-                className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
-              >
-                🏥 Model Health 🏥
-              </Link>
-            )}
+          {process.env.NODE_ENV === 'development' && (
+            <Link
+              href="/admin"
+              className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
+            >
+              🏥 Model Health 🏥
+            </Link>
+          )}
         </nav>
 
         <footer className="pt-8 text-xs text-cloud/60">
