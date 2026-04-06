@@ -67,13 +67,23 @@ function getHitRate(wins, losses) {
 function runSportHealthQuery(db, sport, lookbackDays) {
   const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
-  // Settled results in window
+  // Settled results in window — deduplicated to one row per unique market
+  // (game_id + card_type + recommended_bet_type). Multiple identical cards from
+  // the same game/market are correlated, so counting each inflates all metrics.
+  const rawCount = db.prepare(`
+    SELECT COUNT(*) as n FROM card_results
+    WHERE sport = ? AND status = 'settled' AND settled_at >= ?
+  `).get(sport, cutoff)?.n ?? 0;
+
   const results = db.prepare(`
-    SELECT result, pnl_units, settled_at
+    SELECT result, AVG(pnl_units) as pnl_units, MAX(settled_at) as settled_at
     FROM card_results
     WHERE sport = ? AND status = 'settled' AND settled_at >= ?
+    GROUP BY game_id, card_type, recommended_bet_type
     ORDER BY settled_at DESC
   `).all(sport, cutoff);
+
+  const dupRatio = results.length > 0 ? (rawCount / results.length).toFixed(1) : '1.0';
 
   const wins = results.filter(r => r.result === 'win').length;
   const losses = results.filter(r => r.result === 'loss').length;
@@ -138,6 +148,8 @@ function runSportHealthQuery(db, sport, lookbackDays) {
     wins, losses, pushes,
     netUnits,
     roiPct,
+    rawCardCount: rawCount,
+    dupRatio,
     avgConfidence,
     streak,
     last10HitRate,
@@ -216,7 +228,9 @@ function printTextReport(data, opts) {
     console.log(`  ${icon} ${sport.toUpperCase().padEnd(6)}  Status: ${s.status.toUpperCase()}`);
     console.log(`     Hit Rate:    ${hrStr}  (last-10: ${l10Str})   Streak: ${s.streak}`);
     const pnlParts = [netStr, roiStr].filter(Boolean);
-    console.log(`     Record:      ${s.wins}W ${s.losses}L ${s.pushes}P  (${s.totalPredictions} total)   ${pnlParts.join('  ')}`);
+    const dupNote = Number(s.dupRatio) > 1.5 ? `  ⚠️  ${s.rawCardCount} raw cards (${s.dupRatio}x dup)` : '';
+    console.log(`     Record:      ${s.wins}W ${s.losses}L ${s.pushes}P  (${s.totalPredictions} unique markets${dupNote})`);
+    console.log(`     P&L:         ${pnlParts.join('  ')}`);
     console.log(`     Avg Conf:    ${confStr}   Last card: ${s.lastUpdatedAgo}`);
 
     if (s.degradationSignals.length > 0) {
