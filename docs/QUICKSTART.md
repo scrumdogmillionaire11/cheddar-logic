@@ -620,3 +620,16 @@ npm --prefix web run test:ui:cards
 npm --prefix web run test:ui:results
 npm --prefix web run test:decision:canonical
 ```
+
+
+---
+# Prod Quickstart
+```bash
+sudo systemctl stop cheddar-worker && \
+set -a && . /opt/cheddar-logic/.env.production && set +a && \
+npm --prefix /opt/cheddar-logic/apps/worker run job:pull-odds && \
+npm --prefix /opt/cheddar-logic/apps/worker run job:run-nba-model && \
+npm --prefix /opt/cheddar-logic/apps/worker run job:run-nhl-model && \
+npm --prefix /opt/cheddar-logic/apps/worker run job:run-mlb-model && \
+sudo systemctl start cheddar-worker
+```

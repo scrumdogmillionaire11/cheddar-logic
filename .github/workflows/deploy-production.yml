@@ -33,18 +33,23 @@ jobs:
       - name: Install web dependencies
         run: npm --prefix web install --include=dev
 
-      - name: Check no conflicting middleware files
-        # Next.js 16 uses proxy.ts as the middleware entry point.
-        # If middleware.ts exists alongside proxy.ts, Next.js throws an
-        # unhandled rejection at startup, silently killing all route handlers.
+      - name: Check middleware file integrity
+        # middleware.ts is the sole Next.js middleware entry point.
+        # proxy.ts was a prior mistake — it exported a named `proxy` function
+        # which Next.js never calls, leaving /admin unguarded in production.
+        # Fail if proxy.ts exists (regression guard) or middleware.ts is absent.
         run: |
-          if [ -f web/src/middleware.ts ]; then
-            echo "ERROR: web/src/middleware.ts must not exist — proxy.ts is the Next.js 16 middleware entry point."
-            echo "Having both files causes a startup crash that silently kills all API routes in production."
-            echo "Delete web/src/middleware.ts and move any logic into web/src/proxy.ts."
+          if [ -f web/src/proxy.ts ]; then
+            echo "ERROR: web/src/proxy.ts must not exist — it is not a valid Next.js middleware entry point."
+            echo "Next.js only executes src/middleware.ts exporting a function named 'middleware'."
+            echo "Delete proxy.ts; all logic must live in web/src/middleware.ts."
             exit 1
           fi
-          echo "OK: web/src/middleware.ts absent — proxy.ts is sole middleware entry point."
+          if [ ! -f web/src/middleware.ts ]; then
+            echo "ERROR: web/src/middleware.ts is missing — /admin and /api/admin/* are unguarded in production."
+            exit 1
+          fi
+          echo "OK: middleware.ts present, proxy.ts absent — admin route guard is active."
 
       - name: Lint web
         run: npm --prefix web run lint
@@ -114,12 +119,15 @@ jobs:
             cd /opt/cheddar-logic
             git fetch origin main
             git reset --hard origin/main
-            # Guard: middleware.ts must not exist alongside proxy.ts.
-            # If both are present, Next.js 16 crashes at startup — all API routes
-            # return nothing, only pre-injected scripts (e.g. RUM beacons) execute.
-            if [ -f web/src/middleware.ts ]; then
-              echo "ERROR: web/src/middleware.ts detected after git reset — this would crash cheddar-web at startup."
-              echo "proxy.ts is the sole Next.js 16 middleware entry point. Remove middleware.ts."
+            # Guard: proxy.ts must NOT exist (it was a broken non-middleware that
+            # left /admin unguarded in production). middleware.ts must be present.
+            if [ -f web/src/proxy.ts ]; then
+              echo "ERROR: web/src/proxy.ts detected after git reset — this file is not a valid Next.js middleware."
+              echo "Only src/middleware.ts exporting 'middleware' is executed by Next.js. Remove proxy.ts."
+              exit 1
+            fi
+            if [ ! -f web/src/middleware.ts ]; then
+              echo "ERROR: web/src/middleware.ts missing after git reset — /admin routes would be unguarded in production."
               exit 1
             fi
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker.service /etc/systemd/system/cheddar-worker.service

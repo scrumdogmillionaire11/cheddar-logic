@@ -1,5 +1,5 @@
 /**
- * Next.js Proxy (Next.js 16+ convention — replaces middleware.ts)
+ * Next.js Middleware (src/middleware.ts — the only recognized entry point)
  *
  * Applies security headers to all HTTP responses and enforces a production
  * firewall for dev-only routes (/admin, /api/admin/*).
@@ -8,13 +8,14 @@
  * be reachable in production. This file is the single authoritative gate —
  * it runs before any page or API route handler.
  *
- * ⚠️  CRITICAL: middleware.ts must NEVER exist alongside this file.
- * Next.js 16 throws an unhandled rejection at startup when both are present,
- * which silently kills all route handlers — /api/games, /api/cards, etc.
- * Only pre-injected scripts (e.g. Cloudflare RUM beacons) survive the crash.
- * CI and the Pi deploy script both enforce this invariant.
+ * ⚠️  CRITICAL: This file MUST be named middleware.ts (not proxy.ts or any
+ * other name). Next.js only executes Edge middleware from src/middleware.ts
+ * with an export named `middleware`. A file named proxy.ts with any other
+ * export name is silently ignored — the admin block never runs.
  *
- * Do NOT add exceptions. Do NOT add flags to re-enable in production.
+ * Do NOT add a separate proxy.ts alongside this file. A prior incarnation of
+ * this project had proxy.ts as a mistaken "middleware replacement" — that left
+ * /admin unguarded in production until this was corrected.
  */
 
 import type { NextRequest } from 'next/server';
@@ -45,7 +46,7 @@ const SECURITY_HEADERS: Record<string, string> = {
   'X-Permitted-Cross-Domain-Policies': 'none',
 };
 
-export function proxy(request: NextRequest): NextResponse {
+export function middleware(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
 
   const isDevOnlyRoute = DEV_ONLY_PREFIXES.some(
