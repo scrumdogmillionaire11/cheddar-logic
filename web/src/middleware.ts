@@ -12,4 +12,10 @@
  * security headers and the Model Health production firewall.
  */
 
-export { proxy as middleware, config } from './proxy';
+export { proxy as middleware } from './proxy';
+
+// config must be defined directly in this file — Next.js statically parses it
+// at compile time and cannot resolve re-exports.
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|public).*)'],
+};
