@@ -493,7 +493,7 @@ jobs:
               expected_origin_route="origin:${route}"
               expected_js=$(extract_route_ref_values "$ORIGIN_ROUTE_JS_REFS" "$expected_origin_route")
               expected_css=$(extract_route_ref_values "$ORIGIN_ROUTE_CSS_REFS" "$expected_origin_route")
-              attempts=30
+              attempts=60
               delay=5
               last_actual_js=""
               last_actual_css=""
@@ -505,10 +505,14 @@ jobs:
                   *\?*) sep='&' ;;
                 esac
                 probe_url="${probe_url}${sep}cf_html_probe=$(date +%s)-${i}"
-                html=$(curl -fsS \
+                cf_probe_status=""
+                html=$(curl -sSL --max-time 15 \
                   -H "Cache-Control: no-cache, no-store, must-revalidate" \
                   -H "Pragma: no-cache" \
-                  "$probe_url" || true)
+                  -w "\n__HTTP_STATUS__%{http_code}" \
+                  "$probe_url" 2>/dev/null || true)
+                cf_probe_status=$(printf '%s' "$html" | grep -o '__HTTP_STATUS__[0-9]*' | sed 's/__HTTP_STATUS__//' || true)
+                html=$(printf '%s' "$html" | sed 's/__HTTP_STATUS__[0-9]*$//' || true)
                 actual_js_refs=$(extract_asset_refs "public:${route}" "$html" "js" | sort -u)
                 actual_css_refs=$(extract_asset_refs "public:${route}" "$html" "css" | sort -u)
                 actual_js=$(extract_route_ref_values "$actual_js_refs" "public:${route}")
@@ -519,7 +523,8 @@ jobs:
                 last_actual_css="$actual_css"
 
                 if [ "$actual_js_count" -eq 0 ] || [ "$actual_css_count" -eq 0 ]; then
-                  echo "public route ${route} HTML missing asset refs (js=$actual_js_count css=$actual_css_count) attempt $i/$attempts"
+                  html_snippet=$(printf '%s' "$html" | head -c 300 | tr '\n' ' ' || true)
+                  echo "public route ${route} HTML missing asset refs (js=$actual_js_count css=$actual_css_count http=$cf_probe_status) attempt $i/$attempts — html-snippet: ${html_snippet:-<empty>}"
                   sleep "$delay"
                   continue
                 fi
@@ -563,8 +568,8 @@ jobs:
                 --data '{"purge_everything":true}' \
                 | tee /tmp/cloudflare_purge.json
               grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json || fail_deploy_no_rollback "Cloudflare purge failed: $(cat /tmp/cloudflare_purge.json)"
-              echo "Cloudflare cache purged (purge_everything) — waiting 60s for propagation..."
-              sleep 60
+              echo "Cloudflare cache purged (purge_everything) — waiting 90s for propagation..."
+              sleep 90
             fi
             if [ "$CF_PURGE_SKIPPED" = "false" ]; then
               PUBLIC_ROUTE_JS_REFS=""
