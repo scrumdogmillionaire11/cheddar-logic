@@ -17,12 +17,14 @@
  */
 
 require('dotenv').config();
+const { v4: uuidV4 } = require('uuid');
 const { DateTime } = require('luxon');
 const {
-  getDb,
-  recordJobStart,
-  recordJobSuccess,
-  recordJobError,
+  getDatabase,
+  insertJobRun,
+  markJobRunSuccess,
+  markJobRunFailure,
+  createJob,
 } = require('@cheddar-logic/data');
 const { buildMlbMarketAvailability } = require('./run_mlb_model');
 
@@ -37,7 +39,7 @@ const CARDS_FRESHNESS_MAX_AGE_MINUTES = Number(
  * Write health check result to pipeline_health table
  */
 function writePipelineHealth(phase, check, status, reason) {
-  const db = getDb();
+  const db = getDatabase();
   const stmt = db.prepare(`
     INSERT INTO pipeline_health (phase, check_name, status, reason, created_at)
     VALUES (?, ?, ?, ?, ?)
@@ -51,7 +53,7 @@ function writePipelineHealth(phase, check, status, reason) {
  * Verify we have upcoming games for today + next 2 days
  */
 function checkScheduleFreshness() {
-  const db = getDb();
+  const db = getDatabase();
   const nowUtc = DateTime.utc();
   const endUtc = nowUtc.plus({ days: 2 });
 
@@ -81,7 +83,7 @@ function checkScheduleFreshness() {
  * For games within T-6h, verify latest odds snapshot is < 15 min old
  */
 function checkOddsFreshness() {
-  const db = getDb();
+  const db = getDatabase();
   const nowUtc = DateTime.utc();
   const startUtc = nowUtc;
   const endUtc = nowUtc.plus({ hours: 6 });
@@ -147,7 +149,7 @@ function checkOddsFreshness() {
  * For games within T-2h, verify card_payloads exist and are recent
  */
 function checkCardsFreshness() {
-  const db = getDb();
+  const db = getDatabase();
   const nowUtc = DateTime.utc();
   const startUtc = nowUtc;
   const endUtc = nowUtc.plus({ hours: 2 });
@@ -224,7 +226,7 @@ function getLatestOddsSnapshot(db, gameId) {
  * from full-game totals so watchdog output matches MLB market intent.
  */
 function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
-  const db = getDb();
+  const db = getDatabase();
   const nowUtc = DateTime.utc();
   const endUtc = nowUtc.plus({ hours: 6 });
   const upcomingGames = db
@@ -335,7 +337,7 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
  * Find games with status='final' but no game_results entry
  */
 function checkSettlementBacklog() {
-  const db = getDb();
+  const db = getDatabase();
 
   const backlog = db
     .prepare(
@@ -373,7 +375,8 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
     return;
   }
 
-  const runId = recordJobStart('check_pipeline_health', jobKey);
+  const runId = uuidV4();
+  insertJobRun('check_pipeline_health', runId, jobKey);
 
   try {
     console.log(`[check_pipeline_health] Running health checks...`);
@@ -405,13 +408,22 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       ? 'All pipeline health checks passed'
       : 'Some pipeline health checks failed (see logs)';
 
-    recordJobSuccess(runId, { summary, results });
+    markJobRunSuccess(runId);
     console.log(`[check_pipeline_health] ${summary}`);
   } catch (error) {
     console.error(`[check_pipeline_health] Error:`, error);
-    recordJobError(runId, error.message);
+    markJobRunFailure(runId, error.message);
     throw error;
   }
+}
+
+if (require.main === module) {
+  createJob('check_pipeline_health', ({ dryRun }) =>
+    checkPipelineHealth({
+      jobKey: `check_pipeline_health-${new Date().toISOString().slice(0, 16)}`,
+      dryRun,
+    })
+  );
 }
 
 module.exports = {
