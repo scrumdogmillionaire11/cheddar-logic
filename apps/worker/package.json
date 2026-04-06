@@ -7,6 +7,8 @@
     "job:pull-odds": "node src/jobs/pull_odds_hourly.js",
     "job:check-odds-health": "node src/jobs/check_odds_health.js",
     "job:check-pipeline-health": "node src/jobs/check_pipeline_health.js",
+    "job:dr-claire": "node src/jobs/dr_claire_health_report.js",
+    "job:dr-claire:json": "node src/jobs/dr_claire_health_report.js --json",
     "job:pull-odds:test": "node -e \"require('./src/jobs/pull_odds_hourly.js').pullOddsHourly().then(console.log).catch(console.error)\"",
     "job:pull-schedule-nhl": "node src/jobs/pull_schedule_nhl.js",
     "job:sync-game-statuses": "node src/jobs/sync_game_statuses.js",
