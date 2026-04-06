@@ -178,6 +178,7 @@ export type PassReasonCode =
   | 'INSUFFICIENT_DATA'
 
   // Generic
+  | 'PASS_NO_EDGE'
   | 'UNKNOWN_REASON';
 
 // ============================================================================
