@@ -83,7 +83,7 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        source: "/(cards|results|fpl|admin|analytics|subscribe)",
+        source: "/(cards|results|fpl|analytics|subscribe)",
         headers: [
           {
             key: "Cache-Control",
