@@ -567,9 +567,23 @@ jobs:
                 -H "Content-Type: application/json" \
                 --data '{"purge_everything":true}' \
                 | tee /tmp/cloudflare_purge.json
-              grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json || fail_deploy_no_rollback "Cloudflare purge failed: $(cat /tmp/cloudflare_purge.json)"
-              echo "Cloudflare cache purged (purge_everything) — waiting 90s for propagation..."
-              sleep 90
+              if grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json; then
+                echo "Cloudflare cache purged (purge_everything) — waiting 90s for propagation..."
+                sleep 90
+              else
+                # Check for authentication error (code 10000) — token is expired or revoked.
+                # Treat as a warning: build is live, origin checks passed; failing the deploy
+                # over a stale CF secret would be a false-negative. Operator must rotate
+                # CF_API_TOKEN in GitHub Actions secrets to restore automatic cache purging.
+                CF_ERR=$(cat /tmp/cloudflare_purge.json)
+                if printf '%s' "$CF_ERR" | grep -q '"code":10000'; then
+                  echo "::warning::CF_API_TOKEN authentication error (code 10000) — Cloudflare purge SKIPPED. Build is live but users may see stale CF-cached assets until TTL expires. Rotate the CF_API_TOKEN GitHub Actions secret to restore automatic purge."
+                  echo "⚠️ **CF purge skipped (auth error)** — \`CF_API_TOKEN\` is expired or revoked. Rotate it in GitHub Actions secrets." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+                  CF_PURGE_SKIPPED=true
+                else
+                  fail_deploy_no_rollback "Cloudflare purge failed: $CF_ERR"
+                fi
+              fi
             fi
             if [ "$CF_PURGE_SKIPPED" = "false" ]; then
               PUBLIC_ROUTE_JS_REFS=""
