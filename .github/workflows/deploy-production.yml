@@ -456,7 +456,7 @@ jobs:
               expected_origin_route="origin:${route}"
               expected_js=$(extract_route_ref_values "$ORIGIN_ROUTE_JS_REFS" "$expected_origin_route")
               expected_css=$(extract_route_ref_values "$ORIGIN_ROUTE_CSS_REFS" "$expected_origin_route")
-              attempts=12
+              attempts=18
               delay=5
               last_actual_js=""
               last_actual_css=""
@@ -513,7 +513,8 @@ jobs:
             PUBLIC_DOMAIN_URL="${PUBLIC_DOMAIN_URL%/}"
             CF_PURGE_SKIPPED=false
             if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
-              echo "WARNING: Cloudflare secrets (CF_API_TOKEN / CF_ZONE_ID) not set — skipping CF cache purge. Set them as GitHub Actions secrets to enable automatic purge on every deploy."
+              echo "::warning::CF secrets missing — Cloudflare purge skipped. Users may see stale assets until CF TTL expires. Set CF_API_TOKEN and CF_ZONE_ID as GitHub Actions secrets to restore automatic purge."
+              echo "⚠️ **CF purge skipped** — \`CF_API_TOKEN\` or \`CF_ZONE_ID\` not set. Users may see stale Cloudflare-cached HTML/assets until TTL expires." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
               CF_PURGE_SKIPPED=true
             else
               # purge_everything clears HTML routes AND /_next/static/ chunk cache.
@@ -525,8 +526,8 @@ jobs:
                 --data '{"purge_everything":true}' \
                 | tee /tmp/cloudflare_purge.json
               grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json || fail_with_rollback "Cloudflare purge failed: $(cat /tmp/cloudflare_purge.json)"
-              echo "Cloudflare cache purged (purge_everything) — waiting 45s for propagation..."
-              sleep 45
+              echo "Cloudflare cache purged (purge_everything) — waiting 60s for propagation..."
+              sleep 60
             fi
             if [ "$CF_PURGE_SKIPPED" = "false" ]; then
               PUBLIC_ROUTE_JS_REFS=""
