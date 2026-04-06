@@ -1193,7 +1193,7 @@ function buildDecisionV2(payload, context = {}) {
         ? getFirstPeriodPriceFromOddsContext(payload, direction)
         : null;
     const price = payloadPrice ?? priceFromOddsContext;
-    const implied_prob = impliedProbFromAmerican(price);
+    let implied_prob = impliedProbFromAmerican(price);
     const winProbHome = asNumber(payload?.projection?.win_prob_home);
     let proxy_used = detectProxyUsed(payload);
     const proxy_allowed = payload?.proxy_policy_allow_priced === true;
@@ -1291,6 +1291,8 @@ function buildDecisionV2(payload, context = {}) {
             fair_prob = clamp(result.p_fair, 0, 1);
             edge_method = 'MARGIN_DELTA';
             edge_line_delta = result.edgePoints ?? null;
+            // WI-0805: capture devigged implied prob from computeSpreadEdge
+            if (result.p_implied != null) implied_prob = result.p_implied;
           }
         } else {
           proxy_used = true;
@@ -1339,6 +1341,8 @@ function buildDecisionV2(payload, context = {}) {
                 : result.edgePoints < 0
                   ? 'UNDER'
                   : null;
+            // WI-0805: capture devigged implied prob from computeTotalEdge
+            if (result.p_implied != null) implied_prob = result.p_implied;
           }
         } else {
           proxy_used = true;
@@ -1371,6 +1375,17 @@ function buildDecisionV2(payload, context = {}) {
       }
     }
 
+    // WI-0805: for MONEYLINE, devig implied_prob using both sides from odds_context
+    if (market_type === 'MONEYLINE' && implied_prob !== null && price !== null) {
+      const mlOdds = payload?.odds_context;
+      const oppositePrice = direction === 'HOME'
+        ? asNumber(mlOdds?.h2h_away ?? mlOdds?.moneyline_away)
+        : asNumber(mlOdds?.h2h_home ?? mlOdds?.moneyline_home);
+      if (oppositePrice !== null) {
+        const noVig = edgeCalculator.noVigImplied(price, oppositePrice);
+        if (noVig != null) implied_prob = noVig.home;
+      }
+    }
     const raw_edge_pct =
       fair_prob !== null && implied_prob !== null
         ? fair_prob - implied_prob
