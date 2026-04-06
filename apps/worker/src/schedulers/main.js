@@ -184,6 +184,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   // ========== WATCHDOGS / FPL / PLAYER-PROPS (5-8) ==========
   if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') jobs.push(...getPipelineHealthJobs(nowUtc));
   if (process.env.ENABLE_ODDS_HEALTH_WATCHDOG !== 'false') jobs.push(...getOddsHealthJobs(nowUtc));
+  // FPL is a standalone Python app (cheddar-fpl-sage/) — no main-worker DB integration.
+  // Set ENABLE_FPL_MODEL=false to disable entirely (default in env.example). See ADR-0011.
   jobs.push(...computeFplDueJobs(nowEt, { dryRun }));
   jobs.push(...computePlayerPropsDueJobs(nowEt, { games, dryRun, quotaTier }));
 
