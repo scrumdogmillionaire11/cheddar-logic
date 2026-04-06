@@ -33,13 +33,13 @@ import type {
   PlayabilityBand,
   ProjectionSource,
   StatusCap,
-} from '../../types/game-card';
+} from '../../types';
 import type {
   CanonicalPlay,
   MarketType,
   SelectionKey,
-  Sport as CanonicalSport,
-} from '../../types/canonical-play';
+} from '../../types';
+import type { Sport as CanonicalSport } from '../../types/canonical-play';
 import { deduplicateDrivers, resolvePlayDisplayDecision } from '../decision';
 import { DRIVER_ROLES } from '../driver-scoring';
 import {

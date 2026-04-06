@@ -3,8 +3,8 @@
  * Based on FILTER-FEATURE.md design
  */
 
-import type { GameCard, GameTag, ExpressionStatus, Direction } from '../types/game-card';
-import { GAME_TAGS } from '../types/game-card';
+import type { GameCard, GameTag, ExpressionStatus, Direction } from '../types';
+import { GAME_TAGS } from '../types';
 import { getPlayDisplayAction } from './decision';
 import { computeSupportScores } from './driver-scoring';
 import { hasEdgeVerificationSignals } from '../play-decision/decision-logic';

@@ -7,7 +7,7 @@ import type {
   CanonicalMarketType,
   GameMarkets,
   Market,
-} from '../../types/game-card';
+} from '../../types';
 import { isPlayItem } from './legacy-repair';
 
 type Prediction = 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';

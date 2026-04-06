@@ -5,7 +5,7 @@
  * loud driver cannot hijack the play status.
  */
 
-import type { DriverRow, Direction, DriverTier, SupportGrade } from '../types/game-card';
+import type { DriverRow, Direction, DriverTier, SupportGrade } from '../types';
 
 // ---------------------------------------------------------------------------
 // Driver role registry — keyed by card_type from DB

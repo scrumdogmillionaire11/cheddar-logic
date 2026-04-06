@@ -9,8 +9,8 @@ import type {
   Market,
   DriverTier,
   ExpressionStatus,
-} from '../types/game-card';
-import { GAME_TAGS } from '../types/game-card';
+} from '../types';
+import { GAME_TAGS } from '../types';
 import { getPlayDisplayAction } from './decision';
 import { isNflSeason } from './season-gates';
 

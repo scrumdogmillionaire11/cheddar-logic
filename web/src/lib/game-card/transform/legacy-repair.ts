@@ -3,8 +3,8 @@
  * Extracted from game-card/transform.ts (WI-0622)
  */
 
-import type { Sport, CanonicalMarketType, ExpressionStatus } from '../../types/game-card';
-import type { DecisionV2 } from '../../types/game-card';
+import type { Sport, CanonicalMarketType, ExpressionStatus } from '../../types';
+import type { DecisionV2 } from '../../types';
 import { resolvePlayDisplayDecision } from '../decision';
 
 // NOTE: ApiPlay is redefined here as a local interface to avoid circular imports.
