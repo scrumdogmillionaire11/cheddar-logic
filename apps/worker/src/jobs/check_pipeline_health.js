@@ -28,6 +28,7 @@ const {
   wasJobRecentlySuccessful,
 } = require('@cheddar-logic/data');
 const { buildMlbMarketAvailability } = require('./run_mlb_model');
+const { getCurrentQuotaTier } = require('../schedulers/quota');
 
 const ODDS_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES || 15,
@@ -142,6 +143,15 @@ function checkOddsFreshness() {
     const reason = `All ${upcomingGames.length} games within T-6h have fresh odds`;
     writePipelineHealth('odds', 'freshness', 'ok', reason);
     return { ok: true, reason };
+  }
+
+  const quotaTier = getCurrentQuotaTier();
+  const quotaConstrained = ['MEDIUM', 'LOW', 'CRITICAL'].includes(quotaTier);
+
+  if (quotaConstrained) {
+    const reason = `${staleGames.length}/${upcomingGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) — odds fetch paused (quota tier: ${quotaTier})`;
+    writePipelineHealth('odds', 'freshness', 'warning', reason);
+    return { ok: false, reason };
   }
 
   const reason = `${staleGames.length}/${upcomingGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)`;
