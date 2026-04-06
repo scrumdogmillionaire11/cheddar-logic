@@ -8,6 +8,12 @@
  * be reachable in production. This file is the single authoritative gate —
  * it runs before any page or API route handler.
  *
+ * ⚠️  CRITICAL: middleware.ts must NEVER exist alongside this file.
+ * Next.js 16 throws an unhandled rejection at startup when both are present,
+ * which silently kills all route handlers — /api/games, /api/cards, etc.
+ * Only pre-injected scripts (e.g. Cloudflare RUM beacons) survive the crash.
+ * CI and the Pi deploy script both enforce this invariant.
+ *
  * Do NOT add exceptions. Do NOT add flags to re-enable in production.
  */
 

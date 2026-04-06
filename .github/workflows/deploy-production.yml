@@ -33,6 +33,19 @@ jobs:
       - name: Install web dependencies
         run: npm --prefix web install --include=dev
 
+      - name: Check no conflicting middleware files
+        # Next.js 16 uses proxy.ts as the middleware entry point.
+        # If middleware.ts exists alongside proxy.ts, Next.js throws an
+        # unhandled rejection at startup, silently killing all route handlers.
+        run: |
+          if [ -f web/src/middleware.ts ]; then
+            echo "ERROR: web/src/middleware.ts must not exist — proxy.ts is the Next.js 16 middleware entry point."
+            echo "Having both files causes a startup crash that silently kills all API routes in production."
+            echo "Delete web/src/middleware.ts and move any logic into web/src/proxy.ts."
+            exit 1
+          fi
+          echo "OK: web/src/middleware.ts absent — proxy.ts is sole middleware entry point."
+
       - name: Lint web
         run: npm --prefix web run lint
 
@@ -101,6 +114,14 @@ jobs:
             cd /opt/cheddar-logic
             git fetch origin main
             git reset --hard origin/main
+            # Guard: middleware.ts must not exist alongside proxy.ts.
+            # If both are present, Next.js 16 crashes at startup — all API routes
+            # return nothing, only pre-injected scripts (e.g. RUM beacons) execute.
+            if [ -f web/src/middleware.ts ]; then
+              echo "ERROR: web/src/middleware.ts detected after git reset — this would crash cheddar-web at startup."
+              echo "proxy.ts is the sole Next.js 16 middleware entry point. Remove middleware.ts."
+              exit 1
+            fi
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker.service /etc/systemd/system/cheddar-worker.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-web.service /etc/systemd/system/cheddar-web.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-fpl-sage.service /etc/systemd/system/cheddar-fpl-sage.service
