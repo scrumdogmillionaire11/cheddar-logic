@@ -15,12 +15,16 @@
  * - Permissions-Policy - Restricts browser features
  *
  * Dev-only route enforcement:
- * /admin and /api/admin/* are development diagnostic tools that must NEVER
+ * /admin and /api/admin/* are Model Health diagnostic tools that must NEVER
  * be reachable in production. This proxy is the single authoritative gate —
  * it runs before any page or API route handler so even if an individual
- * file's NODE_ENV check is accidentally removed, this block holds.
+ * file's check is accidentally removed, this block holds.
  *
- * Do NOT add exceptions. Do NOT add a flag to re-enable in production.
+ * TWO conditions must BOTH be true to allow access:
+ *   1. NODE_ENV === 'development'
+ *   2. MODEL_HEALTH_ENABLED === 'true'  (set only in .env.local, never .env.production)
+ *
+ * Do NOT add exceptions. Do NOT set MODEL_HEALTH_ENABLED in .env.production.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -36,7 +40,11 @@ export function proxy(request: NextRequest): NextResponse {
     (prefix) => pathname === prefix || pathname.startsWith(prefix + '/'),
   );
 
-  if (isDevOnlyRoute && process.env.NODE_ENV !== 'development') {
+  const modelHealthEnabled =
+    process.env.NODE_ENV === 'development' &&
+    process.env.MODEL_HEALTH_ENABLED === 'true';
+
+  if (isDevOnlyRoute && !modelHealthEnabled) {
     // Return a plain 404 — do not reveal that the route exists or why it's
     // blocked. This prevents enumeration of internal tooling paths.
     return new NextResponse(null, { status: 404 });
