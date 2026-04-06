@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-06T00:00:00Z"
-last_activity: "2026-04-06 - Completed WI-0810: Residual Devig Issues (verify-only; pre-completed by quick-task-140 commit 16eb2df — BLK twoSidedFairProb 7 sites, calculateMoneylineEdge deleted, mlToImplied comment fixed)"
+last_activity: "2026-04-06 - Completed WI-0797: Pipeline health watchdog Discord alerts — shouldSendAlert streak+cooldown dedup, buildHealthAlertMessage, 13 new tests passing (86eca79, 9701219)"
 ---
 
 # Project State
