@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: active
 last_updated: "2026-04-05T22:10:00Z"
-last_activity: "2026-04-05 - Completed quick-136: Enhance audit CI artifact guard with structured diagnostics — ARTIFACT_OWNER map, [OK]/[MISSING] per-artifact reporting, head-30 previews, Missing artifact summary block before exit 1"
+last_activity: "2026-04-06 - Completed quick-138: Quota-aware odds freshness status — downgrade failed to warning when quota-constrained"
 ---
 
 # Project State
