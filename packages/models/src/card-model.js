@@ -54,38 +54,6 @@ function calculateSpreadEdge(
   return null;
 }
 
-function oddsToProbability(americanOdds) {
-  if (americanOdds == null) return null;
-  const odds = Number.parseInt(americanOdds, 10);
-  if (Number.isNaN(odds)) return null;
-  if (odds < 0) {
-    return Math.abs(odds) / (Math.abs(odds) + 100);
-  }
-  return 100 / (odds + 100);
-}
-
-function calculateMoneylineEdge(
-  recommendationType,
-  projWinProbHome,
-  marketMoneylineHome,
-  marketMoneylineAway,
-) {
-  if (projWinProbHome == null) return null;
-  if (recommendationType === RecommendationType.ML_HOME) {
-    if (marketMoneylineHome == null) return null;
-    const implied = oddsToProbability(marketMoneylineHome);
-    if (implied == null) return null;
-    return roundTo(projWinProbHome - implied, 3);
-  }
-  if (recommendationType === RecommendationType.ML_AWAY) {
-    if (marketMoneylineAway == null) return null;
-    const implied = oddsToProbability(marketMoneylineAway);
-    if (implied == null) return null;
-    return roundTo(1 - projWinProbHome - implied, 3);
-  }
-  return null;
-}
-
 function marginToWinProbability(marginHome, sigma = 12.0) {
   const z = marginHome / sigma;
   return 0.5 * (1 + erf(z / Math.sqrt(2.0)));
@@ -268,8 +236,6 @@ module.exports = {
   EdgeUnits,
   calculateTotalEdge,
   calculateSpreadEdge,
-  calculateMoneylineEdge,
-  oddsToProbability,
   marginToWinProbability,
   buildRecommendationFromPrediction,
   buildMatchup,

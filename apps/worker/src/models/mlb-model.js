@@ -661,7 +661,7 @@ function projectF5ML(homePitcher, awayPitcher, mlF5Home, mlF5Away) {
   // Logistic win probability from run differential (coefficient 0.8 empirical for F5)
   const winProbHome = 1 / (1 + Math.exp(-0.8 * runDiff));
 
-  // American odds → implied probability (includes vig)
+  // Raw implied probability — intermediate only; normalized via two-sided devig below
   function mlToImplied(ml) {
     if (!Number.isFinite(ml)) return null;
     return ml < 0 ? (-ml) / (-ml + 100) : 100 / (ml + 100);
