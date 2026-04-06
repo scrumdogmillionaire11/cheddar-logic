@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: active
-last_updated: "2026-04-05T22:00:00Z"
-last_activity: "2026-04-05 - Completed quick-135 (WI-0801): Extract isFixedDue/isTminusDue from player-props.js — utils.js created, player-props.js imports from windows+utils, 51 lines removed, all 31 scheduler tests pass"
+last_updated: "2026-04-05T22:10:00Z"
+last_activity: "2026-04-05 - Completed quick-136: Enhance audit CI artifact guard with structured diagnostics — ARTIFACT_OWNER map, [OK]/[MISSING] per-artifact reporting, head-30 previews, Missing artifact summary block before exit 1"
 ---
 
 # Project State
@@ -159,4 +159,5 @@ See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full historical qui
 | 133 | NHL BLK model audit — wire opponent_attempt_factor (corsi proxy), playoff_tightening_factor (date heuristic), and lines_to_price into projectBlkV1 call site | 2026-04-05 | ff79fa8 | [133-nhl-blk-model-audit-opponent-factor-play](./quick/133-nhl-blk-model-audit-opponent-factor-play/) |
 | 134 | WI-0787: Add unit tests for insertProjectionAudit — normal write, confidence_band derivation (5 cases), INSERT OR IGNORE idempotency, optional-field NULL tolerance | 2026-04-05 | fbd7053 | [134-wi-0787-add-projection-audit-row-level-t](./quick/134-wi-0787-add-projection-audit-row-level-t/) |
 | 135 | WI-0801: Extract isFixedDue/isTminusDue from player-props.js — create utils.js with isTminusDue, import isFixedDue from windows.js, remove manual-sync comment | 2026-04-05 | b74facd | [135-wi-0801-extract-isfixeddue-istminusdue-t](./quick/135-wi-0801-extract-isfixeddue-istminusdue-t/) |
+| 136 | Enhance audit CI artifact guard — ARTIFACT_OWNER map, [OK]/[MISSING] per-artifact reporting, head-30 previews, Missing artifact summary before exit 1 | 2026-04-05 | 749b84d | [136-fail-ci-with-diagnostics-when-model-audi](./quick/136-fail-ci-with-diagnostics-when-model-audi/) |
 
