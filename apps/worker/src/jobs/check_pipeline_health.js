@@ -29,6 +29,7 @@ const {
 } = require('@cheddar-logic/data');
 const { buildMlbMarketAvailability } = require('./run_mlb_model');
 const { getCurrentQuotaTier } = require('../schedulers/quota');
+const { sendDiscordMessages } = require('./post_discord_cards');
 
 const ODDS_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES || 15,
@@ -39,6 +40,12 @@ const CARDS_FRESHNESS_MAX_AGE_MINUTES = Number(
 // Per-sport model freshness threshold. Only fires when upcoming games exist.
 const MODEL_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.MODEL_FRESHNESS_MAX_AGE_MINUTES || 240, // 4h default
+);
+const PIPELINE_HEALTH_ALERT_CONSECUTIVE = Number(
+  process.env.PIPELINE_HEALTH_ALERT_CONSECUTIVE || 3,
+);
+const PIPELINE_HEALTH_COOLDOWN_MINUTES = Number(
+  process.env.PIPELINE_HEALTH_COOLDOWN_MINUTES || 30,
 );
 
 /**
@@ -427,6 +434,45 @@ function checkSportModelFreshness(sport, jobName, checkName, maxAgeMinutes) {
 
 
 /**
+ * Returns true when the given (phase, check_name) has reached consecutiveRequired
+ * consecutive 'failed' rows AND the oldest row in that streak was written within
+ * cooldownMinutes ago (i.e. the streak just crossed the threshold on this tick).
+ * Once the streak is older than the cooldown window we suppress further alerts.
+ */
+function shouldSendAlert(phase, checkName, consecutiveRequired, cooldownMinutes) {
+  const db = getDatabase();
+  const rows = db
+    .prepare(
+      `SELECT status, created_at
+       FROM pipeline_health
+       WHERE phase = ? AND check_name = ?
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(phase, checkName, consecutiveRequired);
+
+  if (rows.length < consecutiveRequired) return false;
+  if (rows.some((r) => r.status !== 'failed')) return false;
+
+  // oldest row in the streak is the last element (DESC order)
+  const oldestRow = rows[consecutiveRequired - 1];
+  const oldestAt = DateTime.fromISO(oldestRow.created_at, { zone: 'utc' });
+  const ageMinutes = DateTime.utc().diff(oldestAt, 'minutes').minutes;
+  return ageMinutes <= cooldownMinutes;
+}
+
+/**
+ * Formats a Discord alert message for a list of failed pipeline checks.
+ */
+function buildHealthAlertMessage(failedChecks) {
+  const lines = ['🚨 **Pipeline Health Alert**', '', 'The following checks are failing:'];
+  for (const { phase, checkName, reason } of failedChecks) {
+    lines.push(`• \`${phase} / ${checkName}\` — ${reason}`);
+  }
+  return lines.join('\n');
+}
+
+/**
  * Main health check runner
  */
 async function checkPipelineHealth({ jobKey, dryRun }) {
@@ -474,6 +520,44 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       }
     }
 
+    // --- Discord watchdog alert ---
+    if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true' && !allOk) {
+      const checkPhaseLookup = {
+        schedule_freshness: ['schedule', 'freshness'],
+        odds_freshness: ['odds', 'freshness'],
+        cards_freshness: ['cards', 'freshness'],
+        mlb_f5_market_availability: ['mlb', 'f5_market_availability'],
+        settlement_backlog: ['settlement', 'backlog'],
+        nhl_model_freshness: ['nhl', 'model_freshness'],
+        nhl_shots_model_freshness: ['nhl', 'shots_model_freshness'],
+        nba_model_freshness: ['nba', 'model_freshness'],
+        mlb_model_freshness: ['mlb', 'model_freshness'],
+      };
+
+      const alertCandidates = [];
+      for (const [key, result] of Object.entries(results)) {
+        if (result.ok) continue;
+        const mapping = checkPhaseLookup[key];
+        if (!mapping) continue;
+        const [phase, dbCheckName] = mapping;
+        if (shouldSendAlert(phase, dbCheckName, PIPELINE_HEALTH_ALERT_CONSECUTIVE, PIPELINE_HEALTH_COOLDOWN_MINUTES)) {
+          alertCandidates.push({ phase, checkName: dbCheckName, reason: result.reason });
+        }
+      }
+
+      if (alertCandidates.length > 0) {
+        const webhookUrl = process.env.DISCORD_CARD_WEBHOOK_URL;
+        if (!webhookUrl) {
+          console.warn('[check_pipeline_health] DISCORD_CARD_WEBHOOK_URL not set — skipping Discord alert');
+        } else {
+          const message = buildHealthAlertMessage(alertCandidates);
+          await sendDiscordMessages({ webhookUrl, messages: [message] });
+          console.log(`[check_pipeline_health] Sent Discord alert for ${alertCandidates.length} failed check(s)`);
+        }
+      }
+    }
+    // --- end Discord watchdog alert ---
+
     const summary = allOk
       ? 'All pipeline health checks passed'
       : 'Some pipeline health checks failed (see logs)';
@@ -500,4 +584,6 @@ module.exports = {
   checkPipelineHealth,
   checkMlbF5MarketAvailability,
   checkOddsFreshness,
+  shouldSendAlert,
+  buildHealthAlertMessage,
 };
