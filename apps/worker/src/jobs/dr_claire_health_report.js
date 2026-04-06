@@ -80,8 +80,9 @@ function runSportHealthQuery(db, sport, lookbackDays) {
   const pushes = results.filter(r => r.result === 'push').length;
   const total = wins + losses + pushes;
   const hitRate = getHitRate(wins, losses);
-  const pnlUnits = results.reduce((s, r) => s + (r.pnl_units ?? 0), 0);
-  const roi = (wins + losses) === 0 ? null : (pnlUnits / (wins + losses)) * 100;
+  const netUnits = results.reduce((s, r) => s + (r.pnl_units ?? 0), 0);
+  // ROI % — only meaningful with adequate sample size (>=10 settled)
+  const roiPct = (wins + losses) >= 10 ? (netUnits / (wins + losses)) * 100 : null;
 
   // Recent streak from last 20 settled outcomes
   const outcomes = results.slice(0, 20).map(r => r.result).filter(r => r === 'win' || r === 'loss');
@@ -121,8 +122,8 @@ function runSportHealthQuery(db, sport, lookbackDays) {
       degradationSignals.push(`Recent regression: last-10 hit rate (${pct(last10HitRate)}) dropped ${pct(hitRate - last10HitRate)} below 30-day avg`);
     }
   }
-  if (roi !== null && roi < -5) {
-    degradationSignals.push(`Negative ROI: ${roi.toFixed(1)} units`);
+  if (roiPct !== null && roiPct < -5) {
+    degradationSignals.push(`Negative ROI: ${roiPct.toFixed(1)}%`);
   }
   if (lastUpdatedMs && (Date.now() - lastUpdatedMs) > 6 * 60 * 60 * 1000) {
     degradationSignals.push(`No card payloads in 6+ hours (last: ${lastUpdatedAgo})`);
@@ -135,7 +136,8 @@ function runSportHealthQuery(db, sport, lookbackDays) {
     hitRate,
     totalPredictions: total,
     wins, losses, pushes,
-    roi,
+    netUnits,
+    roiPct,
     avgConfidence,
     streak,
     last10HitRate,
@@ -200,13 +202,21 @@ function printTextReport(data, opts) {
     const icon = statusIcon(s.status);
     const hrStr = s.hitRate !== null ? pct(s.hitRate) : 'N/A';
     const l10Str = s.last10HitRate !== null ? pct(s.last10HitRate) : 'N/A';
-    const roiStr = s.roi !== null ? `${s.roi > 0 ? '+' : ''}${s.roi.toFixed(1)}u ROI` : 'N/A';
+    const netStr = s.totalPredictions > 0
+      ? `${s.netUnits >= 0 ? '+' : ''}${s.netUnits.toFixed(2)}u net`
+      : null;
+    const roiStr = s.roiPct !== null
+      ? `${s.roiPct >= 0 ? '+' : ''}${s.roiPct.toFixed(1)}% ROI`
+      : s.totalPredictions > 0 && s.totalPredictions < 10
+        ? `(n=${s.totalPredictions} — too small for ROI)`
+        : 'N/A';
     const confStr = s.avgConfidence !== null ? s.avgConfidence.toFixed(3) : 'N/A';
 
     console.log('');
     console.log(`  ${icon} ${sport.toUpperCase().padEnd(6)}  Status: ${s.status.toUpperCase()}`);
     console.log(`     Hit Rate:    ${hrStr}  (last-10: ${l10Str})   Streak: ${s.streak}`);
-    console.log(`     Record:      ${s.wins}W ${s.losses}L ${s.pushes}P  (${s.totalPredictions} total)   ${roiStr}`);
+    const pnlParts = [netStr, roiStr].filter(Boolean);
+    console.log(`     Record:      ${s.wins}W ${s.losses}L ${s.pushes}P  (${s.totalPredictions} total)   ${pnlParts.join('  ')}`);
     console.log(`     Avg Conf:    ${confStr}   Last card: ${s.lastUpdatedAgo}`);
 
     if (s.degradationSignals.length > 0) {
