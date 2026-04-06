@@ -499,4 +499,5 @@ if (require.main === module) {
 module.exports = {
   checkPipelineHealth,
   checkMlbF5MarketAvailability,
+  checkOddsFreshness,
 };

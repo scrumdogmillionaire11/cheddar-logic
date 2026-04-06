@@ -1,5 +1,7 @@
 'use strict';
 
+const { DateTime } = require('luxon');
+
 describe('checkMlbF5MarketAvailability', () => {
   let upcomingGames;
   let latestOddsByGame;
@@ -155,5 +157,111 @@ describe('checkMlbF5MarketAvailability', () => {
     expect(result.expected_f5_ml_count).toBe(0);
     expect(result.missing_f5_ml_count).toBe(0);
     expect(result.reason).toContain('F5 ML health dormant');
+  });
+});
+
+describe('checkOddsFreshness — quota-aware status downgrade', () => {
+  let upcomingGames;
+  let latestOddsByGame;
+  let pipelineWrites;
+  let checkOddsFreshness;
+  let mockGetCurrentQuotaTier;
+
+  beforeEach(() => {
+    jest.resetModules();
+    upcomingGames = [];
+    latestOddsByGame = {};
+    pipelineWrites = [];
+
+    mockGetCurrentQuotaTier = jest.fn(() => 'FULL');
+
+    jest.doMock('../schedulers/quota', () => ({
+      getCurrentQuotaTier: mockGetCurrentQuotaTier,
+    }));
+
+    const db = {
+      prepare: jest.fn((sql) => {
+        if (sql.includes('INSERT INTO pipeline_health')) {
+          return {
+            run: (...args) => {
+              pipelineWrites.push(args);
+            },
+          };
+        }
+
+        if (
+          sql.includes('FROM games') &&
+          sql.includes('game_time_utc >= ?') &&
+          !sql.includes("LOWER(sport)") &&
+          !sql.includes('FROM odds_snapshots')
+        ) {
+          return {
+            all: () => upcomingGames,
+          };
+        }
+
+        if (
+          sql.includes('FROM odds_snapshots') &&
+          sql.includes('WHERE game_id = ?')
+        ) {
+          return {
+            get: (gameId) => latestOddsByGame[gameId] ?? null,
+          };
+        }
+
+        throw new Error(`Unhandled SQL in test: ${sql}`);
+      }),
+    };
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => db),
+      getDb: jest.fn(() => db),
+      insertJobRun: jest.fn(() => 1),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: jest.fn(() => false),
+      recordJobStart: jest.fn(() => 'job-check-health'),
+      recordJobSuccess: jest.fn(),
+      recordJobError: jest.fn(),
+    }));
+  });
+
+  test('writes warning (not failed) when odds are stale and quota tier is MEDIUM', () => {
+    upcomingGames = [{ game_id: 'g-001', game_time_utc: DateTime.utc().plus({ hours: 2 }).toISO() }];
+    latestOddsByGame['g-001'] = { captured_at: DateTime.utc().minus({ minutes: 30 }).toISO() };
+    mockGetCurrentQuotaTier.mockReturnValue('MEDIUM');
+
+    ({ checkOddsFreshness } = require('../jobs/check_pipeline_health'));
+    const result = checkOddsFreshness();
+
+    expect(result.ok).toBe(false);
+    expect(pipelineWrites[0][2]).toBe('warning');
+    expect(pipelineWrites[0][3]).toContain('MEDIUM');
+    expect(pipelineWrites[0][3]).toContain('paused');
+  });
+
+  test('writes failed when odds are stale and quota tier is FULL', () => {
+    upcomingGames = [{ game_id: 'g-002', game_time_utc: DateTime.utc().plus({ hours: 2 }).toISO() }];
+    latestOddsByGame['g-002'] = { captured_at: DateTime.utc().minus({ minutes: 30 }).toISO() };
+    mockGetCurrentQuotaTier.mockReturnValue('FULL');
+
+    ({ checkOddsFreshness } = require('../jobs/check_pipeline_health'));
+    const result = checkOddsFreshness();
+
+    expect(result.ok).toBe(false);
+    expect(pipelineWrites[0][2]).toBe('failed');
+  });
+
+  test('writes ok when odds are fresh regardless of quota tier', () => {
+    upcomingGames = [{ game_id: 'g-003', game_time_utc: DateTime.utc().plus({ hours: 2 }).toISO() }];
+    latestOddsByGame['g-003'] = { captured_at: DateTime.utc().minus({ minutes: 5 }).toISO() };
+    mockGetCurrentQuotaTier.mockReturnValue('CRITICAL');
+
+    ({ checkOddsFreshness } = require('../jobs/check_pipeline_health'));
+    const result = checkOddsFreshness();
+
+    expect(result.ok).toBe(true);
+    expect(pipelineWrites[0][2]).toBe('ok');
   });
 });
