@@ -73,32 +73,35 @@ const validContext = {
 // projectF5Total gate tests
 // ---------------------------------------------------------------------------
 describe('projectF5Total — WI-0820 input gate', () => {
-  test('null pitchers → NO_BET with status and missingCritical', () => {
+  test('null pitchers → SYNTHETIC_FALLBACK with missing pitcher inputs', () => {
     const result = projectF5Total(null, null, {});
-    expect(result.status).toBe('NO_BET');
-    expect(result.missingCritical).toBeDefined();
-    expect(result.missingCritical.length).toBeGreaterThan(0);
-    expect(result.projection_source).toBe('NO_BET');
+    expect(result.projection_source).toBe('SYNTHETIC_FALLBACK');
+    expect(result.missing_inputs).toEqual(
+      expect.arrayContaining(['home_starting_pitcher', 'away_starting_pitcher']),
+    );
+    expect(result.reason_codes).toEqual(
+      expect.arrayContaining(['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']),
+    );
   });
 
-  test('missing park_run_factor → NO_BET', () => {
+  test('missing park_run_factor → SYNTHETIC_FALLBACK (handled by downstream missingInputs)', () => {
     const result = projectF5Total(validHome, validAway, {
       home_offense_profile: validContext.home_offense_profile,
       away_offense_profile: validContext.away_offense_profile,
       park_run_factor: null,
     });
-    expect(result.status).toBe('NO_BET');
-    expect(result.missingCritical).toContain('park_run_factor');
+    expect(result.projection_source).toBe('SYNTHETIC_FALLBACK');
+    expect(result.missing_inputs).toContain('home_park_run_factor');
   });
 
-  test('missing offense profiles → NO_BET (wrc_plus required)', () => {
+  test('missing offense profiles → SYNTHETIC_FALLBACK (handled by downstream missingInputs)', () => {
     const result = projectF5Total(validHome, validAway, {
       park_run_factor: 1.04,
       home_offense_profile: null,
       away_offense_profile: null,
     });
-    expect(result.status).toBe('NO_BET');
-    expect(result.missingCritical).toBeDefined();
+    expect(result.projection_source).toBe('SYNTHETIC_FALLBACK');
+    expect(result.missing_inputs).toBeDefined();
   });
 
   test('full valid inputs → not NO_BET (no SYNTHETIC_FALLBACK in projection_source)', () => {
