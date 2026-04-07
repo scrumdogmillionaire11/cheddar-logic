@@ -5,6 +5,9 @@
  * Provides base projections for NBA and NHL with pace/rest/confidence adjustments.
  */
 
+const { classifyModelStatus, buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
+
+
 /**
  * Convert to number, return null if invalid
  */
@@ -158,14 +161,27 @@ function projectNBA(
   homeRest,
   awayRest,
 ) {
-  // Validate inputs
-  if (!homeOffense || !awayDefense || !awayOffense || !homeDefense) {
-    return {
-      homeProjected: null,
-      awayProjected: null,
-      confidence: 0.5,
-      reasoning: 'Missing offense/defense data',
-    };
+  // Gate: all six core inputs required; rest is optional/DEGRADED
+  const nbaGate = classifyModelStatus(
+    {
+      homeOffRtg: homeOffense ?? null,
+      awayOffRtg: awayOffense ?? null,
+      homeDefRtg: homeDefense ?? null,
+      awayDefRtg: awayDefense ?? null,
+      homePace: homePace ?? null,
+      awayPace: awayPace ?? null,
+      homeRest: homeRest ?? null,
+      awayRest: awayRest ?? null,
+    },
+    ['homeOffRtg', 'awayOffRtg', 'homeDefRtg', 'awayDefRtg', 'homePace', 'awayPace'],
+    ['homeRest', 'awayRest'],
+  );
+  if (nbaGate.status === 'NO_BET') {
+    return buildNoBetResult(nbaGate.missingCritical, {
+      projection_source: 'NO_BET',
+      sport: 'nba',
+      market: 'total',
+    });
   }
 
   // Pace multiplier matrix (from dashboard)
@@ -186,8 +202,8 @@ function projectNBA(
     return 'Avg';
   };
 
-  const homePaceCategory = categorizePace(homePace || 100);
-  const awayPaceCategory = categorizePace(awayPace || 100);
+  const homePaceCategory = categorizePace(homePace);
+  const awayPaceCategory = categorizePace(awayPace);
   const paceMultiplier =
     paceMap[`${homePaceCategory}|${awayPaceCategory}`] || 1.0;
 
@@ -244,6 +260,9 @@ function projectNBA(
 
   // Clamp confidence
   confidence = Math.max(25, Math.min(90, confidence));
+  if (nbaGate.status === 'DEGRADED') {
+    confidence = Math.min(confidence, DEGRADED_CONSTRAINTS.MAX_CONFIDENCE * 100); // scale to 0-100 range
+  }
 
   return {
     homeProjected: Math.round(homeProjected * 10) / 10,
@@ -253,6 +272,7 @@ function projectNBA(
     homeRestAdj,
     awayRestAdj,
     netRatingGap,
+    model_status: nbaGate.status,
   };
 }
 
@@ -383,15 +403,23 @@ function projectNBACanonical(
   awayPace,
   paceAdjustment = 0,
 ) {
-  if (
-    !homeOffRtg ||
-    !homeDefRtg ||
-    !homePace ||
-    !awayOffRtg ||
-    !awayDefRtg ||
-    !awayPace
-  ) {
-    return null;
+  const canonicalGate = classifyModelStatus(
+    {
+      homeOffRtg: homeOffRtg ?? null,
+      homeDefRtg: homeDefRtg ?? null,
+      homePace: homePace ?? null,
+      awayOffRtg: awayOffRtg ?? null,
+      awayDefRtg: awayDefRtg ?? null,
+      awayPace: awayPace ?? null,
+    },
+    ['homeOffRtg', 'homeDefRtg', 'homePace', 'awayOffRtg', 'awayDefRtg', 'awayPace'],
+  );
+  if (canonicalGate.status === 'NO_BET') {
+    return buildNoBetResult(canonicalGate.missingCritical, {
+      projection_source: 'NO_BET',
+      sport: 'nba',
+      market: 'canonical_total',
+    });
   }
 
   // PPP (points per possession) for each team

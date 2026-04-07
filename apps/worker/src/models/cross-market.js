@@ -10,6 +10,7 @@ const {
 } = require('@cheddar-logic/models');
 
 const { projectNHL, projectNBA } = require('./projections');
+const { DEGRADED_CONSTRAINTS, buildNoBetResult } = require('./input-gate');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { compareProjection } = require('../../../../packages/odds/src/market_evaluator.js');
 
@@ -331,6 +332,21 @@ function computeNHLMarketDecisions(oddsSnapshot) {
   const xgfAway = toNumber(
     raw?.xgf_away_pct ?? raw?.teams?.away?.xgf_pct ?? raw?.xgf?.away_pct,
   );
+
+  // WI-0820: Double-UNKNOWN goalie → hard NO_BET (not just confidence cap)
+  const homeGoalieCertaintyRaw = String(
+    raw?.goalie?.home?.certainty ?? raw?.goalie_home_certainty ?? '',
+  ).toUpperCase();
+  const awayGoalieCertaintyRaw = String(
+    raw?.goalie?.away?.certainty ?? raw?.goalie_away_certainty ?? '',
+  ).toUpperCase();
+  if (homeGoalieCertaintyRaw === 'UNKNOWN' && awayGoalieCertaintyRaw === 'UNKNOWN') {
+    console.log('[input-gate] sport=nhl market=total status=NO_BET');
+    return buildNoBetResult(
+      ['homeGoalieCertainty', 'awayGoalieCertainty'],
+      { projection_source: 'NO_BET', reason_detail: 'DOUBLE_UNKNOWN_GOALIE', sport: 'nhl' },
+    );
+  }
 
   const projection = projectNHL(
     goalsForHome,
@@ -777,6 +793,23 @@ function computeNHLMarketDecisions(oddsSnapshot) {
     riskFlags: mlCoinflip ? ['COINFLIP_ZONE'] : [],
   });
 
+  // WI-0820: DEGRADED enforcement for NHL (single-UNKNOWN goalie → cap + no PLAY)
+  const nhlDegraded = projection?.model_status === 'DEGRADED';
+  if (nhlDegraded) {
+    for (const dec of [totalDecision, spreadDecision, mlDecision].filter(Boolean)) {
+      if (dec.best_candidate && DEGRADED_CONSTRAINTS.FORBIDDEN_TIERS.includes(dec.best_candidate.tier)) {
+        dec.best_candidate.tier = 'WATCH';
+      }
+      if (dec.best_candidate?.confidence != null) {
+        dec.best_candidate.confidence = Math.min(dec.best_candidate.confidence, DEGRADED_CONSTRAINTS.MAX_CONFIDENCE);
+      }
+      dec.model_status = 'DEGRADED';
+    }
+  }
+  const nhlModelStatusLog = nhlDegraded ? 'DEGRADED'
+    : (homeGoalieCertaintyRaw === 'UNKNOWN' || awayGoalieCertaintyRaw === 'UNKNOWN' ? 'DEGRADED' : 'MODEL_OK');
+  console.log(`[input-gate] sport=nhl market=multi status=${nhlModelStatusLog}`);
+
   return {
     TOTAL: totalDecision,
     SPREAD: spreadDecision,
@@ -836,6 +869,22 @@ function computeNBAMarketDecisions(oddsSnapshot) {
     restDaysHome,
     restDaysAway,
   );
+
+  // Hard block: NO_BET from model means no card can emit
+  const nbaModelStatus = projection?.status ?? projection?.model_status ?? 'MODEL_OK';
+  if (nbaModelStatus === 'NO_BET') {
+    console.log('[input-gate] sport=nba market=total status=NO_BET');
+    return {
+      status: 'NO_BET',
+      reason: projection.reason ?? 'MISSING_CORE_INPUTS',
+      missingCritical: projection.missingCritical ?? [],
+      drivers: [],
+      decision: null,
+      confidence: 0,
+    };
+  }
+  const nbaDegraded = nbaModelStatus === 'DEGRADED';
+
   const projectedHome = projection.homeProjected;
   const projectedAway = projection.awayProjected;
   const projectedTotal =
@@ -1092,6 +1141,24 @@ function computeNBAMarketDecisions(oddsSnapshot) {
       ? toNumber(oddsSnapshot?.spread_price_home)
       : toNumber(oddsSnapshot?.spread_price_away),
   });
+
+  // DEGRADED enforcement: cap confidence + forbid PLAY tier
+  if (nbaDegraded) {
+    for (const dec of [totalDecision, spreadDecision]) {
+      if (dec.status && DEGRADED_CONSTRAINTS.FORBIDDEN_TIERS.includes(dec.status)) {
+        dec.status = 'WATCH';
+      }
+      if (dec.best_candidate) {
+        dec.best_candidate.confidence = Math.min(
+          dec.best_candidate.confidence ?? 1,
+          DEGRADED_CONSTRAINTS.MAX_CONFIDENCE,
+        );
+      }
+      dec.model_status = 'DEGRADED';
+    }
+  }
+
+  console.log(`[input-gate] sport=nba market=multi status=${nbaDegraded ? 'DEGRADED' : 'MODEL_OK'}`);
 
   return { TOTAL: totalDecision, SPREAD: spreadDecision };
 }
