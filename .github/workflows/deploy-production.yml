@@ -130,6 +130,8 @@ jobs:
               echo "ERROR: web/src/middleware.ts missing after git reset — /admin routes would be unguarded in production."
               exit 1
             fi
+            # Ensure deploy scripts are executable (git preserves the bit, but belt-and-suspenders).
+            chmod +x /opt/cheddar-logic/deploy/restart-cloudflared-when-ready.sh
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker.service /etc/systemd/system/cheddar-worker.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-web.service /etc/systemd/system/cheddar-web.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-fpl-sage.service /etc/systemd/system/cheddar-fpl-sage.service
