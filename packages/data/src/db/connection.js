@@ -692,6 +692,7 @@ function getDatabaseReadOnly() {
       try {
         const instance = new Database(filePath, { readonly: true });
         instance.pragma('foreign_keys = ON');
+        instance.pragma('busy_timeout = 5000');
         const waitedMs = Date.now() - startedAtMs;
         markReadOnlyOpenSuccess(filePath, attempts, waitedMs);
         return new ReadOnlyDatabaseProxy(instance);
