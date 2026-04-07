@@ -672,15 +672,38 @@ function insertCardPayload(card) {
     // Normalize sport to lowercase for consistency with odds_snapshots and games table
     const normalizedSport = card.sport ? card.sport.toLowerCase() : card.sport;
 
-  const stmt = db.prepare(`
-    INSERT INTO card_payloads (
+  const stmtInsert = db.prepare(`
+    INSERT OR IGNORE INTO card_payloads (
       id, game_id, sport, card_type, card_title, created_at,
       expires_at, payload_data, model_output_ids, metadata, run_id
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+
+  // For call cards: if INSERT was ignored (row already exists) and it is not settled,
+  // update payload with the latest model output.
+  // This implements the upsert contract for deterministic call-card IDs (WI-0812).
+  // The partial UNIQUE INDEX (uq_card_payloads_call_per_game on game_id, card_type WHERE
+  // card_type LIKE '%-call') prevents new duplicate rows from accumulating; this UPDATE
+  // refreshes the surviving canonical row when re-running for an in-progress game.
+  const stmtUpdate = db.prepare(`
+    UPDATE card_payloads
+    SET
+      payload_data = ?,
+      run_id       = ?,
+      created_at   = ?,
+      expires_at   = ?
+    WHERE game_id   = ?
+      AND card_type = ?
+      AND card_type LIKE '%-call'
+      AND NOT EXISTS (
+        SELECT 1 FROM card_results
+        WHERE card_id = card_payloads.id
+          AND status = 'settled'
+      )
+  `);
   
-  stmt.run(
+  stmtInsert.run(
     card.id,
     card.gameId,
     normalizedSport,
@@ -693,6 +716,17 @@ function insertCardPayload(card) {
     card.metadata ? JSON.stringify(card.metadata) : null,
     normalizedRunId
   );
+
+  if (String(card.cardType || '').endsWith('-call')) {
+    stmtUpdate.run(
+      JSON.stringify(payloadData),
+      normalizedRunId,
+      card.createdAt,
+      card.expiresAt || null,
+      card.gameId,
+      card.cardType,
+    );
+  }
 
   const recommendedBetType = lockedMarket
     ? toRecommendedBetType(lockedMarket.marketType)
