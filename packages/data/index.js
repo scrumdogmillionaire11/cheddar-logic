@@ -105,6 +105,7 @@ module.exports = {
   deleteCardPayloadsByGameAndType: db.deleteCardPayloadsByGameAndType,
   deleteCardPayloadsForGame: db.deleteCardPayloadsForGame,
   prepareModelAndCardWrite: db.prepareModelAndCardWrite,
+  runPerGameWriteTransaction: db.runPerGameWriteTransaction,
   getCardPayload: db.getCardPayload,
   getCardPayloads: db.getCardPayloads,
   getCardPayloadsByType: db.getCardPayloadsByType,

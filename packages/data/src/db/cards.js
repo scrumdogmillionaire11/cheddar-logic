@@ -93,13 +93,30 @@ function prepareModelAndCardWrite(gameId, modelName, cardType, options = {}) {
     throw error;
   }
 
-  const deletedOutputs = deleteModelOutputsByGame(gameId, modelName);
-  const deletedCards = deleteCardPayloadsByGameAndType(
-    gameId,
-    cardType,
-    { ...options, runId },
-  );
-  return { deletedOutputs, deletedCards };
+  // WI-0817: wrap both deletes atomically — if process crashes mid-delete,
+  // SQLite rolls back and old cards survive intact.
+  const db = getDatabase();
+  return db.transaction(() => {
+    const deletedOutputs = deleteModelOutputsByGame(gameId, modelName);
+    const deletedCards = deleteCardPayloadsByGameAndType(
+      gameId,
+      cardType,
+      { ...options, runId },
+    );
+    return { deletedOutputs, deletedCards };
+  })();
+}
+
+/**
+ * Run a synchronous per-game write phase (deletes + inserts) atomically.
+ * All DB operations inside fn() share a single SQLite transaction.
+ * If fn() throws, SQLite rolls back and old cards remain intact — no card blackout.
+ * @param {function} fn - Synchronous function containing only DB writes (no async).
+ * WI-0817: used by NBA/NHL/MLB model runners to wrap prepareModelAndCardWrite + insertCardPayload.
+ */
+function runPerGameWriteTransaction(fn) {
+  const db = getDatabase();
+  return db.transaction(fn)();
 }
 
 /**
@@ -1118,6 +1135,7 @@ module.exports = {
   deleteCardPayloadsByGameAndType,
   deleteCardPayloadsForGame,
   prepareModelAndCardWrite,
+  runPerGameWriteTransaction,
   insertCardPayload,
   getCardPayload,
   getCardPayloads,
