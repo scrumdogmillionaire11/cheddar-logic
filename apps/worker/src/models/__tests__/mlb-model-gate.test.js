@@ -73,35 +73,38 @@ const validContext = {
 // projectF5Total gate tests
 // ---------------------------------------------------------------------------
 describe('projectF5Total — WI-0820 input gate', () => {
-  test('null pitchers → SYNTHETIC_FALLBACK with missing pitcher inputs', () => {
+  test('null pitchers → NO_BET (gate intercepts, no SYNTHETIC_FALLBACK)', () => {
     const result = projectF5Total(null, null, {});
-    expect(result.projection_source).toBe('SYNTHETIC_FALLBACK');
-    expect(result.missing_inputs).toEqual(
-      expect.arrayContaining(['home_starting_pitcher', 'away_starting_pitcher']),
+    expect(result.status).toBe('NO_BET');
+    expect(result.projection_source).toBe('NO_BET');
+    expect(result.missingCritical).toEqual(
+      expect.arrayContaining(['starter_skill_ra9_home', 'starter_skill_ra9_away']),
     );
-    expect(result.reason_codes).toEqual(
-      expect.arrayContaining(['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']),
-    );
+    expect(result.confidence).toBe(0);
   });
 
-  test('missing park_run_factor → SYNTHETIC_FALLBACK (handled by downstream missingInputs)', () => {
+  test('missing park_run_factor → NO_BET', () => {
     const result = projectF5Total(validHome, validAway, {
       home_offense_profile: validContext.home_offense_profile,
       away_offense_profile: validContext.away_offense_profile,
       park_run_factor: null,
     });
-    expect(result.projection_source).toBe('SYNTHETIC_FALLBACK');
-    expect(result.missing_inputs).toContain('home_park_run_factor');
+    expect(result.status).toBe('NO_BET');
+    expect(result.projection_source).toBe('NO_BET');
+    expect(result.missingCritical).toContain('park_run_factor');
   });
 
-  test('missing offense profiles → SYNTHETIC_FALLBACK (handled by downstream missingInputs)', () => {
+  test('missing offense profiles → NO_BET (wrc_plus_vs_hand required)', () => {
     const result = projectF5Total(validHome, validAway, {
       park_run_factor: 1.04,
       home_offense_profile: null,
       away_offense_profile: null,
     });
-    expect(result.projection_source).toBe('SYNTHETIC_FALLBACK');
-    expect(result.missing_inputs).toBeDefined();
+    expect(result.status).toBe('NO_BET');
+    expect(result.projection_source).toBe('NO_BET');
+    expect(result.missingCritical).toEqual(
+      expect.arrayContaining(['wrc_plus_vs_hand_home', 'wrc_plus_vs_hand_away']),
+    );
   });
 
   test('full valid inputs → not NO_BET (no SYNTHETIC_FALLBACK in projection_source)', () => {

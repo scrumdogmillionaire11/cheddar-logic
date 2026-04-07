@@ -454,21 +454,8 @@ function projectStrikeouts(pitcherStats, line, overlays = {}) {
  * @returns {object|null}
  */
 function projectF5Total(homePitcher, awayPitcher, context = {}) {
-  // Null pitcher guard: return SYNTHETIC_FALLBACK before gate math
-  if (!homePitcher || !awayPitcher) {
-    const fallback = buildF5SyntheticFallbackProjection(homePitcher, awayPitcher);
-    fallback.missing_inputs = [
-      ...(!homePitcher ? ['home_starting_pitcher'] : []),
-      ...(!awayPitcher ? ['away_starting_pitcher'] : []),
-    ];
-    fallback.reason_codes = Array.from(new Set([
-      ...(fallback.reason_codes || []),
-      'PASS_MISSING_DRIVER_INPUTS',
-    ]));
-    return fallback;
-  }
-
   // --- INPUT GATE: validate core required features before any projection math ---
+  // Note: resolveStarterSkillProfile/resolveTeamSplitProfile handle null safely via ?.
   const gateFeatures = {
     starter_skill_ra9_home: resolveStarterSkillProfile(awayPitcher).starter_skill_ra9 ?? null,
     starter_skill_ra9_away: resolveStarterSkillProfile(homePitcher).starter_skill_ra9 ?? null,
@@ -484,7 +471,7 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
   };
   const gate = classifyModelStatus(
     gateFeatures,
-    ['starter_skill_ra9_home', 'starter_skill_ra9_away'],
+    ['starter_skill_ra9_home', 'starter_skill_ra9_away', 'wrc_plus_vs_hand_home', 'wrc_plus_vs_hand_away', 'park_run_factor'],
   );
   if (gate.status === 'NO_BET') {
     return buildNoBetResult(gate.missingCritical, { projection_source: 'NO_BET', sport: 'mlb', market: 'f5_total' });
