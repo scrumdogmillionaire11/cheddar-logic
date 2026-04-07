@@ -28,6 +28,7 @@ RestartSec=10s
 # drain in-flight requests before systemd falls back to SIGKILL.
 # 15s was too short — production loads caused SIGKILL on every deploy restart.
 TimeoutStopSec=30s
+MemoryLimit=512M
 
 # Logging
 StandardOutput=journal
