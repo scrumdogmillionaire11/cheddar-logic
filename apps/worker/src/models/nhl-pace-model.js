@@ -1,6 +1,7 @@
 'use strict';
 
 const { validateCanonicalGoalieState } = require('./nhl-goalie-state');
+const { buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
 
 /**
  * NHL Pace / Totals Model
@@ -289,8 +290,9 @@ function predictNHLGame(opts) {
   } = opts || {};
 
   // Cannot compute without base offensive/defensive stats
-  if (homeGoalsFor === null || awayGoalsFor === null) {
-    return null;
+  if (homeGoalsFor === null || awayGoalsFor === null ||
+      homeGoalsAgainst === null || awayGoalsAgainst === null) {
+    return null; // preserve existing null contract for missing base stats
   }
 
   const resolvedHomeGoalieState = normalizeCanonicalGoalieState(
@@ -726,6 +728,7 @@ function predictNHLGame(opts) {
     },
     adjustments,
     confidence,
+    model_status: goalieConfidenceCapped ? 'DEGRADED' : 'MODEL_OK',
   };
 
   validateNhlPaceResult(result);

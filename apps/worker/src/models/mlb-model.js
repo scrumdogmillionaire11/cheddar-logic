@@ -1,5 +1,7 @@
 'use strict';
 
+const { classifyModelStatus, buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
+
 /**
  * MLB Model — Pure arithmetic pitcher-based projections.
  *
@@ -370,8 +372,11 @@ function buildF5SyntheticFallbackProjection(homePitcher, awayPitcher) {
 function projectStrikeouts(pitcherStats, line, overlays = {}) {
   // Weighted K/9
   const seasonK9 = pitcherStats.k_per_9 ?? null;
+  const strikeoutGate = classifyModelStatus({ k_per_9: seasonK9 }, ['k_per_9']);
+  if (strikeoutGate.status === 'NO_BET') {
+    return buildNoBetResult(strikeoutGate.missingCritical, { projection_source: 'NO_BET', sport: 'mlb', market: 'strikeouts' });
+  }
   const recentK9 = pitcherStats.recent_k_per_9 ?? seasonK9;
-  if (seasonK9 === null) return null; // no stats yet
 
   const k9 = 0.7 * seasonK9 + 0.3 * recentK9;
   const expectedIp = pitcherStats.recent_ip ?? 5.5;
@@ -449,18 +454,29 @@ function projectStrikeouts(pitcherStats, line, overlays = {}) {
  * @returns {object|null}
  */
 function projectF5Total(homePitcher, awayPitcher, context = {}) {
-  if (!homePitcher || !awayPitcher) {
-    const fallback = buildF5SyntheticFallbackProjection(homePitcher, awayPitcher);
-    fallback.missing_inputs = [
-      ...(!homePitcher ? ['home_starting_pitcher'] : []),
-      ...(!awayPitcher ? ['away_starting_pitcher'] : []),
-    ];
-    fallback.reason_codes = Array.from(new Set([
-      ...(fallback.reason_codes || []),
-      'PASS_MISSING_DRIVER_INPUTS',
-    ]));
-    return fallback;
+  // --- INPUT GATE: validate core required features before any projection math ---
+  const gateFeatures = {
+    starter_skill_ra9_home: resolveStarterSkillProfile(awayPitcher).starter_skill_ra9 ?? null,
+    starter_skill_ra9_away: resolveStarterSkillProfile(homePitcher).starter_skill_ra9 ?? null,
+    wrc_plus_vs_hand_home: resolveTeamSplitProfile(
+      context?.home_offense_profile,
+      awayPitcher?.handedness,
+    )?.wrc_plus ?? null,
+    wrc_plus_vs_hand_away: resolveTeamSplitProfile(
+      context?.away_offense_profile,
+      homePitcher?.handedness,
+    )?.wrc_plus ?? null,
+    park_run_factor: context?.park_run_factor ?? null,
+  };
+  const gate = classifyModelStatus(
+    gateFeatures,
+    ['starter_skill_ra9_home', 'starter_skill_ra9_away', 'wrc_plus_vs_hand_home', 'wrc_plus_vs_hand_away', 'park_run_factor'],
+    ['starter_ip_f5_exp_home', 'starter_ip_f5_exp_away'],
+  );
+  if (gate.status === 'NO_BET') {
+    return buildNoBetResult(gate.missingCritical, { projection_source: 'NO_BET', sport: 'mlb', market: 'f5_total' });
   }
+  // --- END GATE ---
 
   const homeOffenseProfile = context?.home_offense_profile ?? null;
   const awayOffenseProfile = context?.away_offense_profile ?? null;
@@ -492,16 +508,7 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
   ]));
 
   if (missingInputs.length > 0) {
-    const fallback = buildF5SyntheticFallbackProjection(homePitcher, awayPitcher);
-    fallback.missing_inputs = Array.from(new Set([
-      ...missingInputs,
-      ...degradedInputs,
-    ]));
-    fallback.reason_codes = Array.from(new Set([
-      ...(fallback.reason_codes || []),
-      'PASS_MISSING_DRIVER_INPUTS',
-    ]));
-    return fallback;
+    return buildNoBetResult(missingInputs, { projection_source: 'NO_BET', sport: 'mlb', market: 'f5_total' });
   }
 
   const homeMean = homeTeamProjection.f5_runs;
@@ -523,14 +530,19 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
   if (avgWhip <= 1.18 && avgK9 >= 9.2) confidence += 1;
   if (base >= 3.2 && base <= 5.8) confidence += 1;
   confidence = Math.max(1, Math.min(10, confidence));
+  if (gate.status === 'DEGRADED') {
+    confidence = Math.min(confidence, DEGRADED_CONSTRAINTS.MAX_CONFIDENCE * 10); // scale to 1-10 range
+  }
 
   return {
     base,
     confidence,
     avgWhip,
     avgK9,
+    model_status: gate.status,
+    missingOptional: gate.missingOptional,
     projection_source: degradedInputs.length > 0 ? 'DEGRADED_MODEL' : 'FULL_MODEL',
-    status_cap: degradedInputs.length > 0 ? 'LEAN' : 'PLAY',
+    status_cap: gate.status === 'DEGRADED' || degradedInputs.length > 0 ? 'LEAN' : 'PLAY',
     missing_inputs: degradedInputs,
     degraded_inputs: degradedInputs,
     reason_codes: degradedInputs.length > 0 ? ['MODEL_DEGRADED_INPUTS'] : [],
