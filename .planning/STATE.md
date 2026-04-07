@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-06-10T00:00:00Z"
-last_activity: "2026-06-10 - WI-0812 complete: deterministic card IDs, INSERT OR IGNORE upsert, migration 062 deduplicate + partial UNIQUE INDEX. 223 data tests passing."
+last_updated: "2026-04-07T00:00:00Z"
+last_activity: "2026-04-07 - WI-0817 complete: SQLite transaction wrapping for all delete+insert phases in NBA/NHL/MLB runners. runPerGameWriteTransaction exported. 1253 worker + 227 data tests passing."
 ---
 
 # Project State
@@ -48,7 +48,7 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 |----|-------|----------|
 | ~~**WI-0820**~~ | ~~Core input gate — `NO_BET` / `DEGRADED` / `MODEL_OK` short-circuit~~ | ~~**Critical**~~ COMPLETE (2026-06-10) |
 | ~~**WI-0812**~~ | ~~Fix card payload duplication — deterministic ID + upsert `ON CONFLICT`~~ | ~~High~~ COMPLETE (2026-06-10) |
-| **WI-0817** | Wrap delete+insert in SQLite transaction in `prepareModelAndCardWrite` | Medium |
+| ~~**WI-0817**~~ | ~~Wrap delete+insert in SQLite transaction in `prepareModelAndCardWrite`~~ | ~~Medium~~ COMPLETE (2026-04-07) |
 | **WI-0816** | Odds API 5xx retry with exponential backoff | Medium |
 | **WI-0835** | Sigma provenance — `sigma_source` + `sigma_games_sampled` on card payloads | Medium |
 
