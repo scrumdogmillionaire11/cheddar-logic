@@ -121,6 +121,7 @@ function loadRunMlbModel({
   const insertCardPayload = jest.fn();
   const insertModelOutput = jest.fn();
   const prepareModelAndCardWrite = jest.fn();
+  const runPerGameWriteTransaction = jest.fn((fn) => fn());
   const validateCardPayloadMock = jest.fn(() => ({ success: true, errors: [] }));
   const computeMLBDriverCardsMock = jest.fn(() => gameDriverCards);
   const computePitcherKDriverCardsMock = jest.fn(() => pitcherKDriverCards);
@@ -157,6 +158,7 @@ function loadRunMlbModel({
     insertModelOutput,
     insertCardPayload,
     prepareModelAndCardWrite,
+    runPerGameWriteTransaction,
     validateCardPayload: validateCardPayloadMock,
     shouldRunJobKey: jest.fn(() => true),
     withDb: jest.fn(async (fn) => fn()),

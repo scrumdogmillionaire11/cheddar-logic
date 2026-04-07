@@ -593,6 +593,8 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
 function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
   const proj = projectF5Total(homePitcher, awayPitcher, context);
   if (!proj || f5Line == null) return null;
+  // WI-0820: gate fired upstream — propagate NO_BET instead of crashing on null proj.base
+  if (proj.status === 'NO_BET') return null;
 
   const edge = proj.base - f5Line;
   const leanSide = edge >= 0 ? 'OVER' : 'UNDER';

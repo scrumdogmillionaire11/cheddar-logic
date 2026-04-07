@@ -150,6 +150,7 @@ function loadNBATeamContextModule({
     deletedOutputs: 0,
     deletedCards: 0,
   }));
+  const runPerGameWriteTransaction = jest.fn((fn) => fn());
   const validateCardPayloadMock = jest.fn(() => ({ success: true, errors: [] }));
   const shouldRunJobKeyMock = jest.fn(() => true);
   const withDb = jest.fn(async (fn) => fn());
@@ -171,6 +172,7 @@ function loadNBATeamContextModule({
     getUpcomingGamesAsSyntheticSnapshots,
     insertCardPayload,
     prepareModelAndCardWrite,
+    runPerGameWriteTransaction,
     validateCardPayload: validateCardPayloadMock,
     shouldRunJobKey: shouldRunJobKeyMock,
     withDb,

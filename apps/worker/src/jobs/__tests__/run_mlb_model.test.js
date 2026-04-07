@@ -325,7 +325,7 @@ describe('MLB F5 full-model projection', () => {
     expect(result.pass_reason_code).toBeNull();
   });
 
-  test('falls back to SYNTHETIC_FALLBACK and records missing inputs when matchup context is incomplete', () => {
+  test('returns NO_BET when matchup context is missing required inputs (null offense profile / park factor)', () => {
     const projection = projectF5Total(f5HomePitcher, f5AwayPitcher, {
       home_offense_profile: null,
       away_offense_profile: null,
@@ -335,16 +335,13 @@ describe('MLB F5 full-model projection', () => {
       wind_dir: null,
     });
 
-    expect(projection.projection_source).toBe('SYNTHETIC_FALLBACK');
-    expect(projection.reason_codes).toEqual(
-      expect.arrayContaining(['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']),
-    );
-    expect(projection.missing_inputs).toEqual(
+    expect(projection.status).toBe('NO_BET');
+    expect(projection.projection_source).toBe('NO_BET');
+    expect(projection.missingCritical).toEqual(
       expect.arrayContaining([
-        'home_opponent_split_profile',
-        'away_opponent_split_profile',
-        'home_park_run_factor',
-        'away_park_run_factor',
+        'wrc_plus_vs_hand_home',
+        'wrc_plus_vs_hand_away',
+        'park_run_factor',
       ]),
     );
   });
@@ -404,7 +401,7 @@ describe('MLB F5 full-model projection', () => {
     });
   });
 
-  test('computeMLBDriverCards emits synthetic-fallback PASS when a starter is missing', () => {
+  test('computeMLBDriverCards returns empty when a starter is missing (NO_BET gate fires)', () => {
     const cards = computeMLBDriverCards('mlb-f5-missing-sp', {
       away_team: 'Boston Red Sox',
       home_team: 'New York Yankees',
@@ -418,19 +415,8 @@ describe('MLB F5 full-model projection', () => {
       },
     });
 
-    expect(cards).toHaveLength(1);
-    expect(cards[0]).toMatchObject({
-      status: 'PASS',
-      action: 'PASS',
-      classification: 'PASS',
-      projection_source: 'SYNTHETIC_FALLBACK',
-      pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
-      ev_threshold_passed: false,
-    });
-    expect(cards[0].missing_inputs).toContain('home_starting_pitcher');
-    expect(cards[0].reason_codes).toEqual(
-      expect.arrayContaining(['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']),
-    );
+    // WI-0820: null pitcher → gate fires → NO_BET → no card emitted
+    expect(cards).toHaveLength(0);
   });
 
   test('higher starter leash and third-time exposure increases opponent F5 run expectation', () => {
