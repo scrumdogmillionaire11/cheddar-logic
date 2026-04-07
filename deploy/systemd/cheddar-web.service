@@ -11,9 +11,15 @@ Environment="PORT=3000"
 EnvironmentFile=/opt/cheddar-logic/.env.production
 
 ExecStart=/usr/bin/node /opt/cheddar-logic/web/node_modules/.bin/next start --port 3000
-# Restart cloudflared whenever this service starts (deploy, crash-recovery, manual restart).
-# The + prefix runs as root, bypassing User= and NoNewPrivileges=.
-ExecStartPost=+/bin/systemctl restart cloudflared
+# Restart cloudflared AFTER Next.js is ready on port 3000 (not just after process fork).
+#
+# WHY: ExecStartPost fires at process start time (Type=simple). Next.js takes
+# 5-15s to cold-start. Restarting cloudflared before the origin is ready means
+# the tunnel is live but 127.0.0.1:3000 returns ECONNREFUSED → 502 for users.
+#
+# This script polls port 3000 until it responds, then restarts cloudflared.
+# The + prefix runs as root (required to call systemctl).
+ExecStartPost=+/opt/cheddar-logic/deploy/restart-cloudflared-when-ready.sh
 
 # Restart policy
 Restart=on-failure
