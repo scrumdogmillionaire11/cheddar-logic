@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-06T00:00:00Z"
-last_activity: "2026-04-06 - Sprint plan reprioritized; FPL/NFL/Auth frozen. WI-0820 through WI-0841 queued."
+last_updated: "2026-06-10T00:00:00Z"
+last_activity: "2026-06-10 - WI-0820 complete: input gate wired into mlb-model, nhl-pace-model, projections, cross-market. 140 tests passing."
 ---
 
 # Project State
@@ -46,7 +46,7 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 
 | WI | Title | Priority |
 |----|-------|----------|
-| **WI-0820** | Core input gate — `NO_BET` / `DEGRADED` / `MODEL_OK` short-circuit | **Critical** |
+| ~~**WI-0820**~~ | ~~Core input gate — `NO_BET` / `DEGRADED` / `MODEL_OK` short-circuit~~ | ~~**Critical**~~ COMPLETE (2026-06-10) |
 | **WI-0812** | Fix card payload duplication — deterministic ID + upsert `ON CONFLICT` | High |
 | **WI-0817** | Wrap delete+insert in SQLite transaction in `prepareModelAndCardWrite` | Medium |
 | **WI-0816** | Odds API 5xx retry with exponential backoff | Medium |
