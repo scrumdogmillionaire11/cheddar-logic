@@ -123,7 +123,7 @@ function buildMarketCallCard({
   const normalizedSport =
     typeof sport === 'string' ? sport.toUpperCase() : sport;
 
-  const cardId = `card-${cardType}-${gameId}-${uuidV4().slice(0, 8)}`;
+  const cardId = `card-${cardType}-${gameId}`;
 
   return {
     id: cardId,
