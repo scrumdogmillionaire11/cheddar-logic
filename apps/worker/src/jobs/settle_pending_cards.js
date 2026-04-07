@@ -567,7 +567,21 @@ function parseJsonObject(value) {
   }
 }
 
+// F5 card types are projection-only: they grade against F5 innings totals,
+// not full-game scores. settle_pending_cards must not touch them.
+const F5_CARD_TYPE_PREFIX = 'mlb-f5';
+
 function resolveNonActionableFinalReason(payloadData, row) {
+  // F5 market cards are projection-only — P&L is not tracked for them.
+  const cardTypeLower = String(row?.card_type || '').toLowerCase();
+  if (cardTypeLower.startsWith(F5_CARD_TYPE_PREFIX)) {
+    return {
+      code: 'PROJECTION_ONLY_F5',
+      message: 'F5 card type is projection-only — settled separately by settle_mlb_f5',
+      details: { cardType: row.card_type },
+    };
+  }
+
   // Rows with no market_key cannot be settled — auto-close with explicit reason
   if (!row?.market_key) {
     return {
@@ -629,6 +643,7 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
         cr.id AS result_id,
         cr.card_id,
         cr.game_id,
+        cr.card_type,
         cr.market_key,
         cr.metadata,
         cp.payload_data

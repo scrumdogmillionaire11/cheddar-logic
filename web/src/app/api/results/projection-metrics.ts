@@ -130,9 +130,28 @@ function normalizePeriodToken(
   return 'FULL_GAME';
 }
 
+// F5 card types are always projection-only: no live odds are fetched,
+// no locked price exists, so P&L cannot be tracked. Any card_type that
+// starts with 'mlb-f5' belongs to this family.
+const F5_CARD_TYPE_PREFIX = 'mlb-f5';
+
+/**
+ * Returns PROJECTION_ONLY or ODDS_BACKED for a settled card result.
+ *
+ * @param payload - parsed card_payloads.payload_data
+ * @param cardType - optional raw card_type from card_results (takes priority
+ *   over any card_type embedded inside the payload)
+ */
 export function deriveResultCardMode(
   payload: Record<string, unknown> | null,
+  cardType?: string | null,
 ): ResultCardMode {
+  // F5 market cards never have quoted odds — always projection-only.
+  const ct = String(
+    cardType || toLowerToken(payload?.card_type) || '',
+  ).toLowerCase();
+  if (ct.startsWith(F5_CARD_TYPE_PREFIX)) return 'PROJECTION_ONLY';
+
   const explicitBasis = toUpperToken(
     getPayloadValue(payload, ['decision_basis_meta', 'decision_basis']) ||
       payload?.basis ||
