@@ -28,6 +28,7 @@ const {
   getUpcomingGamesAsSyntheticSnapshots,
   insertCardPayload,
   prepareModelAndCardWrite,
+  runPerGameWriteTransaction,
   validateCardPayload,
   shouldRunJobKey,
   withDb,
@@ -1300,17 +1301,13 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           }
 
           // Only clear/write when we have actionable output; avoids wiping prior cards on transient data gaps.
+          // WI-0817: collect types now; deletes are deferred into the per-game write transaction below.
           const driverCardTypesToClear = [
             ...new Set([
               ...NBA_DRIVER_CARD_TYPES,
               ...driverCards.map((card) => card.cardType),
             ]),
           ];
-          for (const ct of driverCardTypesToClear) {
-            prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct, {
-              runId: jobRunId,
-            });
-          }
 
           const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);
 
@@ -1446,13 +1443,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             oddsSnapshot,
             { withoutOddsMode, lineContexts: nbaLineContexts, spreadLeanMin: effectiveSpreadLeanMin },
           );
-          if (nbaMarketCallCards.length > 0) {
-            for (const ct of ['nba-totals-call', 'nba-spread-call']) {
-              prepareModelAndCardWrite(gameId, 'nba-cross-market-v1', ct, {
-                runId: jobRunId,
-              });
-            }
-          }
+          // WI-0817: call card deletes are deferred into the per-game write transaction below.
           for (const card of nbaMarketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
             // WI-0768: merge nba_team_context into missing_inputs when cache absent
@@ -1558,16 +1549,28 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           });
           gamePipelineStates[gameId] = pipelineState;
 
+          // WI-0817: atomic write phase — all deletes + all inserts in one transaction.
+          // A crash or throw inside this block rolls back automatically; old cards survive intact.
+          runPerGameWriteTransaction(() => {
+            for (const ct of driverCardTypesToClear) {
+              prepareModelAndCardWrite(gameId, 'nba-drivers-v1', ct, { runId: jobRunId });
+            }
+            if (nbaMarketCallCards.length > 0) {
+              for (const ct of ['nba-totals-call', 'nba-spread-call']) {
+                prepareModelAndCardWrite(gameId, 'nba-cross-market-v1', ct, { runId: jobRunId });
+              }
+            }
+            for (const entry of pendingCards) {
+              entry.card.payloadData.pipeline_state = pipelineState;
+              assertNoDecisionMutation(
+                entry.card.payloadData,
+                entry.strictDecisionSnapshot,
+                { label: `${entry.card.cardType}:before_insert` },
+              );
+              insertCardPayload(entry.card);
+            }
+          });
           for (const entry of pendingCards) {
-            entry.card.payloadData.pipeline_state = pipelineState;
-            assertNoDecisionMutation(
-              entry.card.payloadData,
-              entry.strictDecisionSnapshot,
-              {
-                label: `${entry.card.cardType}:before_insert`,
-              },
-            );
-            insertCardPayload(entry.card);
             cardsGenerated++;
             console.log(entry.logLine);
           }

@@ -30,6 +30,7 @@ const {
   getUpcomingGamesAsSyntheticSnapshots,
   insertCardPayload,
   prepareModelAndCardWrite,
+  runPerGameWriteTransaction,
   validateCardPayload,
   shouldRunJobKey,
   withDb,
@@ -1925,17 +1926,13 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           }
 
           // Only clear/write when we have actionable output; avoids wiping prior cards on transient data gaps.
+          // WI-0817: collect types now; deletes are deferred into the per-game write transaction below.
           const driverCardTypesToClear = [
             ...new Set([
               ...NHL_DRIVER_CARD_TYPES,
               ...driverCards.map((card) => card.cardType),
             ]),
           ];
-          for (const ct of driverCardTypesToClear) {
-            prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct, {
-              runId: jobRunId,
-            });
-          }
 
           const cards = driverCards.map((descriptor) =>
             generateCard({
@@ -2044,17 +2041,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               withoutOddsMode,
             },
           );
-          if (marketCallCards.length > 0) {
-            for (const ct of [
-              'nhl-totals-call',
-              'nhl-spread-call',
-              'nhl-moneyline-call',
-            ]) {
-              prepareModelAndCardWrite(gameId, 'nhl-cross-market-v1', ct, {
-                runId: jobRunId,
-              });
-            }
-          }
+          // WI-0817: call card deletes are deferred into the per-game write transaction below.
           for (const card of marketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
             applyNhlDriverContextMetadata(card, oddsSnapshot);
@@ -2145,9 +2132,23 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           });
           gamePipelineStates[gameId] = pipelineState;
 
+          // WI-0817: atomic write phase — all deletes + all inserts in one transaction.
+          // A crash or throw inside this block rolls back automatically; old cards survive intact.
+          runPerGameWriteTransaction(() => {
+            for (const ct of driverCardTypesToClear) {
+              prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct, { runId: jobRunId });
+            }
+            if (marketCallCards.length > 0) {
+              for (const ct of ['nhl-totals-call', 'nhl-spread-call', 'nhl-moneyline-call']) {
+                prepareModelAndCardWrite(gameId, 'nhl-cross-market-v1', ct, { runId: jobRunId });
+              }
+            }
+            for (const entry of pendingCards) {
+              entry.card.payloadData.pipeline_state = pipelineState;
+              insertCardPayload(entry.card);
+            }
+          });
           for (const entry of pendingCards) {
-            entry.card.payloadData.pipeline_state = pipelineState;
-            insertCardPayload(entry.card);
             cardsGenerated++;
             console.log(entry.logLine);
           }
