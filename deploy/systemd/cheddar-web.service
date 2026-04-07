@@ -11,24 +11,30 @@ Environment="PORT=3000"
 EnvironmentFile=/opt/cheddar-logic/.env.production
 
 ExecStart=/usr/bin/node /opt/cheddar-logic/web/node_modules/.bin/next start --port 3000
-# Restart cloudflared AFTER Next.js is ready on port 3000 (not just after process fork).
+# ExecStartPost cloudflared restart intentionally removed.
 #
-# WHY: ExecStartPost fires at process start time (Type=simple). Next.js takes
-# 5-15s to cold-start. Restarting cloudflared before the origin is ready means
-# the tunnel is live but 127.0.0.1:3000 returns ECONNREFUSED → 502 for users.
-#
-# This script polls port 3000 until it responds, then restarts cloudflared.
-# The + prefix runs as root (required to call systemctl).
-ExecStartPost=+/opt/cheddar-logic/deploy/restart-cloudflared-when-ready.sh
+# WHY IT WAS HERE (wrong): the prior script restarted cloudflared after
+# Next.js became ready, on the theory that cloudflared needed a fresh
+# connection to the newly-started origin. This is incorrect and harmful:
+# cloudflared maintains its own tunnel and connection pool; when the origin
+# recovers it resumes proxying automatically. Restarting cloudflared on every
+# web-process lifecycle event added a SECOND 5-30s 502 window on top of the
+# unavoidable RestartSec gap, doubling every outage. Cloudflare returns 502
+# naturally while the origin is down; no cloudflared restart is needed.
 
 # Restart policy
 Restart=on-failure
 RestartSec=10s
+StartLimitInterval=300s
+StartLimitBurst=5
 # Web process is read-only (no DB writes). Allow enough time for Next.js to
 # drain in-flight requests before systemd falls back to SIGKILL.
-# 15s was too short — production loads caused SIGKILL on every deploy restart.
 TimeoutStopSec=30s
-MemoryLimit=512M
+# NODE_OPTIONS: tell V8 to GC aggressively when heap approaches 614 MB
+# (80% of the MemoryLimit ceiling), so Next.js GCs before systemd kills the
+# process. Without this, V8 may grow past the OOM trigger before running GC.
+Environment="NODE_OPTIONS=--max-old-space-size=614"
+MemoryLimit=768M
 
 # Logging
 StandardOutput=journal
