@@ -1525,8 +1525,13 @@ async function runMLBModel({
         );
       }
       console.log(`[SIGMA_SOURCE] sport=MLB source=${mlbSigma.sigma_source} games_sampled=${mlbSigma.games_sampled ?? null}`);
-
-      // Get latest MLB odds for UPCOMING games only (prevents stale data processing)
+      // WI-0814: warn when using uncalibrated sigma — MLB F5/moneyline cards will be downgraded to LEAN
+      if (mlbSigma.sigma_source === 'fallback') {
+        console.warn(
+          '[run_mlb_model] [SIGMA_FALLBACK] Fewer than 20 settled games — using uncalibrated sigma defaults. ' +
+          'All PLAY cards will be downgraded to LEAN until empirical sigma is available.',
+        );
+      }
       console.log('[MLBModel] Fetching odds for upcoming MLB games...');
       const { DateTime } = require('luxon');
       const nowUtc = DateTime.utc();

@@ -1133,6 +1133,13 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       });
       console.log('[run_nba_model] sigma:', JSON.stringify(computedSigma));
       console.log(`[SIGMA_SOURCE] sport=NBA source=${computedSigma.sigma_source} games_sampled=${computedSigma.games_sampled ?? null}`);
+      // WI-0814: warn when using uncalibrated sigma — all PLAY cards will be downgraded to LEAN
+      if (computedSigma.sigma_source === 'fallback') {
+        console.warn(
+          '[run_nba_model] [SIGMA_FALLBACK] Fewer than 20 settled games — using uncalibrated sigma defaults. ' +
+          'All PLAY cards will be downgraded to LEAN until empirical sigma is available.',
+        );
+      }
 
       const { DateTime } = require('luxon');
       const nowUtc = DateTime.utc();
