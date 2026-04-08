@@ -1695,6 +1695,8 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
         db: getDatabase(),
       });
       const _sigmaSource = _computedSigma.sigma_source; // 'computed' | 'fallback'
+      // WI-0773: Map internal sigma_source to card annotation label
+      const _sigmaAnnotation = _sigmaSource === 'computed' ? 'calibrated' : 'default';
       let nhlBaseSigma;
       if (_sigmaSource === 'computed') {
         console.log(`[NHL] sigma calibrated from ${_computedSigma.games_sampled} samples: ${JSON.stringify({ margin: _computedSigma.margin, total: _computedSigma.total })}`);
@@ -2014,7 +2016,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             attachRunId(card, jobRunId);
             // WI-0835: Annotate sigma provenance on card payload raw_data (supersedes WI-0773 naming)
             if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
-            card.payloadData.raw_data.sigma_source = _sigmaSource;
+            card.payloadData.raw_data.sigma_source = _sigmaAnnotation;
             card.payloadData.raw_data.sigma_games_sampled = _computedSigma.games_sampled ?? null;
             pendingCards.push({
               card,
@@ -2090,7 +2092,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             attachRunId(card, jobRunId);
             // WI-0835: Annotate sigma provenance on card payload raw_data (supersedes WI-0773 naming)
             if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
-            card.payloadData.raw_data.sigma_source = _sigmaSource;
+            card.payloadData.raw_data.sigma_source = _sigmaAnnotation;
             card.payloadData.raw_data.sigma_games_sampled = _computedSigma.games_sampled ?? null;
             pendingCards.push({
               card,
