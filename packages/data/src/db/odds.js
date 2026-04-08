@@ -791,6 +791,7 @@ function getActiveGamesForSplits(sports = []) {
  * @param {string} opts.gameId      - Our canonical game ID
  * @param {object} opts.splitsData  - Public splits fields to write
  * @param {string} [opts.jobRunId]  - Optional job run ID (reserved)
+ * @param {string} [opts.jobRunId]  - Optional job run ID for audit trail (unused in UPDATE, reserved)
  * @returns {number} rows changed (0 = no snapshot found for this game)
  */
 function updateOddsSnapshotSplits({ gameId, splitsData, jobRunId: _jobRunId }) {
