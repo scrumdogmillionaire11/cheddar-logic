@@ -83,6 +83,7 @@ module.exports = {
   deleteCardPayloadsByGameAndType: cards.deleteCardPayloadsByGameAndType,
   deleteCardPayloadsForGame: cards.deleteCardPayloadsForGame,
   prepareModelAndCardWrite: cards.prepareModelAndCardWrite,
+  runPerGameWriteTransaction: cards.runPerGameWriteTransaction,
   getCardPayload: cards.getCardPayload,
   getCardPayloads: cards.getCardPayloads,
   getCardPayloadsByType: cards.getCardPayloadsByType,

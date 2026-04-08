@@ -455,6 +455,7 @@ function projectStrikeouts(pitcherStats, line, overlays = {}) {
  */
 function projectF5Total(homePitcher, awayPitcher, context = {}) {
   // --- INPUT GATE: validate core required features before any projection math ---
+  // Note: resolveStarterSkillProfile/resolveTeamSplitProfile handle null safely via ?.
   const gateFeatures = {
     starter_skill_ra9_home: resolveStarterSkillProfile(awayPitcher).starter_skill_ra9 ?? null,
     starter_skill_ra9_away: resolveStarterSkillProfile(homePitcher).starter_skill_ra9 ?? null,
@@ -471,7 +472,6 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
   const gate = classifyModelStatus(
     gateFeatures,
     ['starter_skill_ra9_home', 'starter_skill_ra9_away', 'wrc_plus_vs_hand_home', 'wrc_plus_vs_hand_away', 'park_run_factor'],
-    ['starter_ip_f5_exp_home', 'starter_ip_f5_exp_away'],
   );
   if (gate.status === 'NO_BET') {
     return buildNoBetResult(gate.missingCritical, { projection_source: 'NO_BET', sport: 'mlb', market: 'f5_total' });
@@ -508,7 +508,16 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
   ]));
 
   if (missingInputs.length > 0) {
-    return buildNoBetResult(missingInputs, { projection_source: 'NO_BET', sport: 'mlb', market: 'f5_total' });
+    const fallback = buildF5SyntheticFallbackProjection(homePitcher, awayPitcher);
+    fallback.missing_inputs = Array.from(new Set([
+      ...missingInputs,
+      ...degradedInputs,
+    ]));
+    fallback.reason_codes = Array.from(new Set([
+      ...(fallback.reason_codes || []),
+      'PASS_MISSING_DRIVER_INPUTS',
+    ]));
+    return fallback;
   }
 
   const homeMean = homeTeamProjection.f5_runs;
@@ -584,6 +593,8 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
 function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
   const proj = projectF5Total(homePitcher, awayPitcher, context);
   if (!proj || f5Line == null) return null;
+  // WI-0820: gate fired upstream — propagate NO_BET instead of crashing on null proj.base
+  if (proj.status === 'NO_BET') return null;
 
   const edge = proj.base - f5Line;
   const leanSide = edge >= 0 ? 'OVER' : 'UNDER';

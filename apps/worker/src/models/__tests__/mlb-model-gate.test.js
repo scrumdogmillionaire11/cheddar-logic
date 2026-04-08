@@ -73,12 +73,14 @@ const validContext = {
 // projectF5Total gate tests
 // ---------------------------------------------------------------------------
 describe('projectF5Total — WI-0820 input gate', () => {
-  test('null pitchers → NO_BET with status and missingCritical', () => {
+  test('null pitchers → NO_BET (gate intercepts, no SYNTHETIC_FALLBACK)', () => {
     const result = projectF5Total(null, null, {});
     expect(result.status).toBe('NO_BET');
-    expect(result.missingCritical).toBeDefined();
-    expect(result.missingCritical.length).toBeGreaterThan(0);
     expect(result.projection_source).toBe('NO_BET');
+    expect(result.missingCritical).toEqual(
+      expect.arrayContaining(['starter_skill_ra9_home', 'starter_skill_ra9_away']),
+    );
+    expect(result.confidence).toBe(0);
   });
 
   test('missing park_run_factor → NO_BET', () => {
@@ -88,17 +90,21 @@ describe('projectF5Total — WI-0820 input gate', () => {
       park_run_factor: null,
     });
     expect(result.status).toBe('NO_BET');
+    expect(result.projection_source).toBe('NO_BET');
     expect(result.missingCritical).toContain('park_run_factor');
   });
 
-  test('missing offense profiles → NO_BET (wrc_plus required)', () => {
+  test('missing offense profiles → NO_BET (wrc_plus_vs_hand required)', () => {
     const result = projectF5Total(validHome, validAway, {
       park_run_factor: 1.04,
       home_offense_profile: null,
       away_offense_profile: null,
     });
     expect(result.status).toBe('NO_BET');
-    expect(result.missingCritical).toBeDefined();
+    expect(result.projection_source).toBe('NO_BET');
+    expect(result.missingCritical).toEqual(
+      expect.arrayContaining(['wrc_plus_vs_hand_home', 'wrc_plus_vs_hand_away']),
+    );
   });
 
   test('full valid inputs → not NO_BET (no SYNTHETIC_FALLBACK in projection_source)', () => {

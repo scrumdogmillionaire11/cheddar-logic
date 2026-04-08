@@ -258,6 +258,28 @@ describe('run_nba_model job', () => {
     }
   });
 
+  test('WI-0835: card payloads carry sigma_source and sigma_games_sampled in raw_data', async () => {
+    const results = await queryDb((db) => {
+      const stmt = db.prepare(`
+        SELECT payload_data FROM card_payloads
+        WHERE sport = 'NBA'  
+        LIMIT 100
+      `);
+      return stmt.all();
+    });
+
+    if (results && results.length > 0) {
+      results.forEach((row) => {
+        const parsed = JSON.parse(row.payload_data);
+        if (parsed.raw_data !== undefined && parsed.raw_data !== null) {
+          expect(['computed', 'fallback']).toContain(parsed.raw_data.sigma_source);
+          const sampled = parsed.raw_data.sigma_games_sampled;
+          expect(sampled === null || typeof sampled === 'number').toBe(true);
+        }
+      });
+    }
+  });
+
   test('card_results auto-enrolls for generated cards', async () => {
     const results = await queryDb((db) => {
       const stmt = db.prepare(`

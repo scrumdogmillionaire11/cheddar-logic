@@ -657,7 +657,7 @@ function computeLineDelta({
     opener_line: openerLine,
     current_line: currentLine,
     delta: Number(delta.toFixed(4)),
-    delta_pct,
+    delta_pct: deltaPct,
     snapshot_count: snapshotsWithLine.length,
   };
 }

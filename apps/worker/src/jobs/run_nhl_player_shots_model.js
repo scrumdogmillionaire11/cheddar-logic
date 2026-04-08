@@ -1806,6 +1806,9 @@ async function runNHLPlayerShotsModel() {
               ? player.player_name.trim()
               : `Player #${player.player_id}`;
             const roleStability = playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH';
+            // Hoisted to shared scope so the blkEnabled branch can access it
+            // when hasSogLookback is false (e.g. defensemen with <5 SOG logs).
+            let blkOppAttemptFactor = 1.0;
 
             if (hasSogLookback) {
             const l5Games = playerLookbackGames.slice(0, 5);
@@ -1868,7 +1871,7 @@ async function runNHLPlayerShotsModel() {
 
             let opponentFactor = 1.0;
             let paceFactor = 1.0;
-            let blkOppAttemptFactor = 1.0;
+            // blkOppAttemptFactor is declared in shared scope above (hoisted for BLK block).
             let opponentFactorMissing = false;
             let paceFactorMissing = false;
             const opponentLookupNote = !opponentAbbrev

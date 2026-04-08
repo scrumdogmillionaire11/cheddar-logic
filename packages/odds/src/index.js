@@ -201,6 +201,40 @@ async function fetchOdds({ sport, hoursAhead = 36 } = {}) {
 }
 
 /**
+ * axios.get with exponential-backoff retry for transient errors.
+ * Permanent errors (401, 402, 403) are rethrown immediately.
+ * @param {string} url
+ * @param {object} config - axios config (params, timeout, etc.)
+ * @param {number} maxRetries - default 2 (total attempts = 3)
+ * @returns {Promise<import('axios').AxiosResponse>}
+ */
+async function axiosGetWithRetry(url, config, maxRetries = 2) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await axios.get(url, config);
+    } catch (err) {
+      const status = err?.response?.status;
+      const isPermanent = status === 401 || status === 402 || status === 403;
+
+      if (isPermanent) {
+        throw err; // Propagate immediately — backup-key fallback handles these
+      }
+
+      if (attempt === maxRetries) {
+        throw err; // Out of retries
+      }
+
+      const delayMs = Math.pow(2, attempt) * 1000; // 1s, 2s
+      console.warn(
+        `[Odds] Transient error (HTTP ${status ?? err.code}) on attempt ${attempt + 1}/${maxRetries + 1} — retrying in ${delayMs}ms`,
+        { url, sport: config?.params?.sport },
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+}
+
+/**
  * Fetch from The Odds API and transform to internal format
  * @private
  */
@@ -218,7 +252,7 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
         oddsFormat: 'american',
       };
       console.log(`[Odds] API call: ${url}?markets=${config.markets.join(',')}`);
-      const response = await axios.get(url, { params, timeout: 10000 });
+      const response = await axiosGetWithRetry(url, { params, timeout: 10000 });
       const remaining = response.headers['x-requests-remaining'];
       if (remaining) {
         const remainingInt = parseInt(remaining);
@@ -246,7 +280,7 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
         console.log(
           `[Odds] Soccer spreads fallback: ${leagueKey} had no spreads for configured books; retrying spreads with pinnacle`,
         );
-        const spreadResponse = await axios.get(url, {
+        const spreadResponse = await axiosGetWithRetry(url, {
           params: spreadParams,
           timeout: 10000,
         });
@@ -275,7 +309,7 @@ async function fetchFromOddsAPI(sport, config, apiKey) {
   }
 
   console.log(`[Odds] API call: ${url}?markets=${config.markets.join(',')}`);
-  const response = await axios.get(url, { params, timeout: 10000 });
+  const response = await axiosGetWithRetry(url, { params, timeout: 10000 });
   const remaining = response.headers['x-requests-remaining'];
   let remainingTokens = null;
   if (remaining) {
@@ -374,6 +408,7 @@ function transformAPIResponse(apiData, sport) {
 
 module.exports = {
   fetchOdds,
+  axiosGetWithRetry, // Exported for unit testing
   // Expose config utilities for external use
   getSportConfig,
   getActiveSports: require('./config').getActiveSports,

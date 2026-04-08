@@ -32,6 +32,7 @@ const {
   insertModelOutput,
   insertCardPayload,
   prepareModelAndCardWrite,
+  runPerGameWriteTransaction,
   validateCardPayload,
   shouldRunJobKey,
   withDb,
@@ -1523,6 +1524,7 @@ async function runMLBModel({
           `[MLB_SIGMA_PRESEASON_DEFAULT] threshold=${MIN_MLB_GAMES_FOR_RECAL} sigma=${JSON.stringify(mlbSigma)}`,
         );
       }
+      console.log(`[SIGMA_SOURCE] sport=MLB source=${mlbSigma.sigma_source} games_sampled=${mlbSigma.games_sampled ?? null}`);
 
       // Get latest MLB odds for UPCOMING games only (prevents stale data processing)
       console.log('[MLBModel] Fetching odds for upcoming MLB games...');
@@ -1870,13 +1872,7 @@ async function runMLBModel({
               return driver;
             });
 
-          // Clean up stale cards from previous runs for this game
-          prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-model-output', { runId: jobRunId });
-          prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-strikeout', { runId: jobRunId });
-          prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-f5', { runId: jobRunId });
-          prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-f5-ml', { runId: jobRunId });
-          prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-pitcher-k', { runId: jobRunId });
-
+          // WI-0817: deletes are deferred to the per-game write transaction below (after qualified check).
           // pricing_ready = true only when odds-backed qualified cards exist (not floor-only)
           const oddsBackedQualified = qualified.filter((d) => !d.projection_floor);
           const pipelineState = buildMlbPipelineState({
@@ -1907,6 +1903,16 @@ async function runMLBModel({
             gameOddsSnapshot?.home_team,
             gameOddsSnapshot?.away_team,
           );
+
+          // WI-0817: atomic write phase — all deletes + all inserts in one transaction.
+          // A crash or throw inside this block rolls back automatically; old cards survive intact.
+          const _cardLogs = [];
+          runPerGameWriteTransaction(() => {
+            prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-model-output', { runId: jobRunId });
+            prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-strikeout', { runId: jobRunId });
+            prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-f5', { runId: jobRunId });
+            prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-f5-ml', { runId: jobRunId });
+            prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-pitcher-k', { runId: jobRunId });
 
           for (const driver of qualified) {
             const isF5 = driver.market === 'f5_total';
@@ -2110,11 +2116,19 @@ async function runMLBModel({
 
             card.modelOutputIds = modelOutputId;
             attachRunId(card, jobRunId);
+            // WI-0835: annotate sigma provenance on card payload raw_data
+            if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+            card.payloadData.raw_data.sigma_source = mlbSigma.sigma_source;
+            card.payloadData.raw_data.sigma_games_sampled = mlbSigma.games_sampled ?? null;
             card.payloadData.pipeline_state = pipelineState;
             insertCardPayload(card);
 
+            _cardLogs.push(`  ✅ ${gameId} [${cardType}]: ${driver.prediction} (${(driver.confidence * 100).toFixed(0)}%)`);
+          }
+          });
+          for (const _logLine of _cardLogs) {
             cardsGenerated++;
-            console.log(`  ✅ ${gameId} [${cardType}]: ${driver.prediction} (${(driver.confidence * 100).toFixed(0)}%)`);
+            console.log(_logLine);
           }
         } catch (gameError) {
           if (gameError.message.startsWith('Invalid')) {

@@ -89,6 +89,7 @@ function loadRunNHLModel({
     deletedOutputs: 0,
     deletedCards: 0,
   }));
+  const runPerGameWriteTransaction = jest.fn((fn) => fn());
   const validateCardPayloadMock = jest.fn(() => validationResult);
   const shouldRunJobKeyMock = jest.fn(() => shouldRunJobKey);
   const withDb = jest.fn(async (fn) => fn());
@@ -109,6 +110,7 @@ function loadRunNHLModel({
     getUpcomingGamesAsSyntheticSnapshots,
     insertCardPayload,
     prepareModelAndCardWrite,
+    runPerGameWriteTransaction,
     validateCardPayload: validateCardPayloadMock,
     shouldRunJobKey: shouldRunJobKeyMock,
     withDb,

@@ -30,6 +30,7 @@ const {
   getUpcomingGamesAsSyntheticSnapshots,
   insertCardPayload,
   prepareModelAndCardWrite,
+  runPerGameWriteTransaction,
   validateCardPayload,
   shouldRunJobKey,
   withDb,
@@ -1694,6 +1695,8 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
         db: getDatabase(),
       });
       const _sigmaSource = _computedSigma.sigma_source; // 'computed' | 'fallback'
+      // WI-0773: Map internal sigma_source to card annotation label
+      const _sigmaAnnotation = _sigmaSource === 'computed' ? 'calibrated' : 'default';
       let nhlBaseSigma;
       if (_sigmaSource === 'computed') {
         console.log(`[NHL] sigma calibrated from ${_computedSigma.games_sampled} samples: ${JSON.stringify({ margin: _computedSigma.margin, total: _computedSigma.total })}`);
@@ -1702,6 +1705,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
         console.log('[NHL] insufficient history for sigma calibration — using defaults');
         nhlBaseSigma = edgeCalculator.getSigmaDefaults('NHL');
       }
+      console.log(`[SIGMA_SOURCE] sport=NHL source=${_sigmaSource} games_sampled=${_computedSigma.games_sampled ?? null}`);
 
       // Get latest NHL odds for UPCOMING games only (prevents stale data processing)
       console.log('[NHLModel] Fetching odds for upcoming NHL games...');
@@ -1925,17 +1929,13 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           }
 
           // Only clear/write when we have actionable output; avoids wiping prior cards on transient data gaps.
+          // WI-0817: collect types now; deletes are deferred into the per-game write transaction below.
           const driverCardTypesToClear = [
             ...new Set([
               ...NHL_DRIVER_CARD_TYPES,
               ...driverCards.map((card) => card.cardType),
             ]),
           ];
-          for (const ct of driverCardTypesToClear) {
-            prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct, {
-              runId: jobRunId,
-            });
-          }
 
           const cards = driverCards.map((descriptor) =>
             generateCard({
@@ -2014,17 +2014,10 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               sigmaTotal: effectiveSigma?.total,
             });
             attachRunId(card, jobRunId);
-            // WI-0773: Annotate sigma_source on card payload raw_data
-            if (card.payloadData && card.payloadData.raw_data !== undefined) {
-              card.payloadData.raw_data = {
-                ...card.payloadData.raw_data,
-                sigma_source: _sigmaSource === 'computed' ? 'calibrated' : 'default',
-              };
-            } else if (card.payloadData) {
-              card.payloadData.raw_data = {
-                sigma_source: _sigmaSource === 'computed' ? 'calibrated' : 'default',
-              };
-            }
+            // WI-0835: Annotate sigma provenance on card payload raw_data (supersedes WI-0773 naming)
+            if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+            card.payloadData.raw_data.sigma_source = _sigmaAnnotation;
+            card.payloadData.raw_data.sigma_games_sampled = _computedSigma.games_sampled ?? null;
             pendingCards.push({
               card,
               logLine: `  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
@@ -2044,17 +2037,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               withoutOddsMode,
             },
           );
-          if (marketCallCards.length > 0) {
-            for (const ct of [
-              'nhl-totals-call',
-              'nhl-spread-call',
-              'nhl-moneyline-call',
-            ]) {
-              prepareModelAndCardWrite(gameId, 'nhl-cross-market-v1', ct, {
-                runId: jobRunId,
-              });
-            }
-          }
+          // WI-0817: call card deletes are deferred into the per-game write transaction below.
           for (const card of marketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
             applyNhlDriverContextMetadata(card, oddsSnapshot);
@@ -2107,17 +2090,10 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               sigmaTotal: effectiveSigma?.total,
             });
             attachRunId(card, jobRunId);
-            // WI-0773: Annotate sigma_source on card payload raw_data
-            if (card.payloadData && card.payloadData.raw_data !== undefined) {
-              card.payloadData.raw_data = {
-                ...card.payloadData.raw_data,
-                sigma_source: _sigmaSource === 'computed' ? 'calibrated' : 'default',
-              };
-            } else if (card.payloadData) {
-              card.payloadData.raw_data = {
-                sigma_source: _sigmaSource === 'computed' ? 'calibrated' : 'default',
-              };
-            }
+            // WI-0835: Annotate sigma provenance on card payload raw_data (supersedes WI-0773 naming)
+            if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+            card.payloadData.raw_data.sigma_source = _sigmaAnnotation;
+            card.payloadData.raw_data.sigma_games_sampled = _computedSigma.games_sampled ?? null;
             pendingCards.push({
               card,
               logLine: `  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
@@ -2145,9 +2121,23 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           });
           gamePipelineStates[gameId] = pipelineState;
 
+          // WI-0817: atomic write phase — all deletes + all inserts in one transaction.
+          // A crash or throw inside this block rolls back automatically; old cards survive intact.
+          runPerGameWriteTransaction(() => {
+            for (const ct of driverCardTypesToClear) {
+              prepareModelAndCardWrite(gameId, 'nhl-drivers-v1', ct, { runId: jobRunId });
+            }
+            if (marketCallCards.length > 0) {
+              for (const ct of ['nhl-totals-call', 'nhl-spread-call', 'nhl-moneyline-call']) {
+                prepareModelAndCardWrite(gameId, 'nhl-cross-market-v1', ct, { runId: jobRunId });
+              }
+            }
+            for (const entry of pendingCards) {
+              entry.card.payloadData.pipeline_state = pipelineState;
+              insertCardPayload(entry.card);
+            }
+          });
           for (const entry of pendingCards) {
-            entry.card.payloadData.pipeline_state = pipelineState;
-            insertCardPayload(entry.card);
             cardsGenerated++;
             console.log(entry.logLine);
           }

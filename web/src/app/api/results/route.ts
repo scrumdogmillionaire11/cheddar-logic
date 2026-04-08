@@ -764,13 +764,15 @@ export async function GET(request: NextRequest) {
     const oddsBackedLedgerIds = actionableSourceRows.flatMap((row) => {
       const parsed = safeJsonParse(row.payload_data);
       const payload = parsed.data as Record<string, unknown> | null;
-      return deriveResultCardMode(payload) === 'ODDS_BACKED' ? [row.id] : [];
+      return deriveResultCardMode(payload, row.card_type) === 'ODDS_BACKED'
+        ? [row.id]
+        : [];
     });
 
     const actionableRows = actionableSourceRows.flatMap((row) => {
       const parsed = safeJsonParse(row.payload_data);
       const payload = parsed.data as Record<string, unknown> | null;
-      if (deriveResultCardMode(payload) !== 'ODDS_BACKED') {
+      if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED') {
         return [];
       }
 
@@ -1007,7 +1009,7 @@ export async function GET(request: NextRequest) {
     const ledgerRows = ledger.flatMap((row) => {
       const parsed = safeJsonParse(row.payload_data);
       const payload = parsed.data as Record<string, unknown> | null;
-      if (deriveResultCardMode(payload) !== 'ODDS_BACKED') {
+      if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED') {
         return [];
       }
 

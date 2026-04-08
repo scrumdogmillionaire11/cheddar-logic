@@ -75,7 +75,7 @@ async function validateResultsSegmentationSourceContract(assert) {
     routeSource.includes("from './projection-metrics';") &&
       routeSource.includes('buildProjectionSummaries') &&
       routeSource.includes('deriveResultCardMode') &&
-      routeSource.includes("if (deriveResultCardMode(payload) !== 'ODDS_BACKED')") &&
+      routeSource.includes("if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED')") &&
       routeSource.includes('const projectionSummaries = buildProjectionSummaries(') &&
       routeSource.includes('projectionSummaries,'),
     'results route must split ODDS_BACKED betting rows from PROJECTION_ONLY projection summaries',

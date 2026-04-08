@@ -7,7 +7,9 @@ import {
 } from '@/lib/api-security';
 
 // Card types that support actual-result settlement (WI-0757 schema).
-const PROJECTION_CARD_TYPES = ['nhl-pace-1p', 'mlb-f5'] as const;
+// mlb-f5 is intentionally excluded: no bookmaker odds exist for F5 markets, so
+// showing them on /results implies false bet tracking.
+const PROJECTION_CARD_TYPES = ['nhl-pace-1p'] as const;
 
 // Fixed line for nhl-pace-1p binary outcome evaluation.
 const NHL_1P_LINE = 1.5;
