@@ -720,7 +720,7 @@ function insertCardPayload(card) {
       )
   `);
   
-  stmtInsert.run(
+  const insertInfo = stmtInsert.run(
     card.id,
     card.gameId,
     normalizedSport,
@@ -733,6 +733,24 @@ function insertCardPayload(card) {
     card.metadata ? JSON.stringify(card.metadata) : null,
     normalizedRunId
   );
+
+  // If INSERT OR IGNORE fired (0 changes) and the card's own ID is not in card_payloads,
+  // the insert was suppressed by the partial UNIQUE index (uq_card_payloads_call_per_game)
+  // rather than a PK collision. The canonical row for this (game_id, card_type) is a
+  // different card (typically settled). card.id does not exist in the DB so we must not
+  // write a card_results row that references it — that would fail the FK constraint.
+  // Log and return; the HARD_LOCKED gate already handled the decision layer.
+  if (insertInfo.changes === 0) {
+    const exists = db.prepare('SELECT 1 FROM card_payloads WHERE id = ?').get(card.id);
+    if (!exists) {
+      console.log(
+        `[DB] insertCardPayload: ${card.id} suppressed by UNIQUE index ` +
+        `(${card.cardType} for game ${card.gameId} already has a settled canonical row). ` +
+        `Skipping card_results insert.`,
+      );
+      return;
+    }
+  }
 
   if (String(card.cardType || '').endsWith('-call')) {
     stmtUpdate.run(

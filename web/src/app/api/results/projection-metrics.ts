@@ -35,8 +35,9 @@ type ProjectionAccumulator = {
 // Full-game odds-backed families (NHL_TOTAL, NHL_ML, NHL_SPREAD, NBA_*, MLB_*) live only
 // in CARD_FAMILY_MAP below, which feeds the betting ledger path in /api/results.
 // Note: NHL_1P_TOTAL is PROJECTION_ONLY only — it appears here but NOT in CARD_FAMILY_MAP.
+// MLB F5 is intentionally excluded: no bookmaker odds exist for F5 markets, so
+// displaying them on /results (even projection-only) implies false bet tracking.
 const PROJECTION_FAMILY_LABELS: Record<string, string> = {
-  MLB_F5_TOTAL: 'MLB F5 Total',
   MLB_PITCHER_K: 'MLB Pitcher K',
   NHL_1P_TOTAL: 'NHL 1P Total',
   NHL_PLAYER_BLOCKS: 'NHL Player Blocks',
@@ -51,7 +52,6 @@ const PROJECTION_FAMILY_LABELS: Record<string, string> = {
 // appear in card_display_log — the only way to surface them for accuracy
 // tracking is to query card_results directly joined on game_results.status='final'.
 export const PROJECTION_TRACKING_CARD_TYPES: readonly string[] = [
-  'mlb-f5',
   'mlb-pitcher-k',
   'nhl-pace-1p',
   'nhl-player-shots',
@@ -209,8 +209,6 @@ function deriveProjectionCardFamily(row: ProjectionMetricInputRow): string {
     if (canonicalMarketKey === 'pitcher_strikeouts' || cardType === 'mlb-pitcher-k') {
       return 'MLB_PITCHER_K';
     }
-    if (cardType === 'mlb-f5') return 'MLB_F5_TOTAL';
-    if (cardType === 'mlb-f5-ml') return 'MLB_F5_ML';
   }
 
   return `${sport}_${cardType || 'UNKNOWN'}`.toUpperCase();
@@ -373,9 +371,6 @@ function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | n
 
     return toNumber((valuesByPlayer as Record<string, unknown>)[mappedPlayerId]);
   }
-  if (cardFamily === 'MLB_F5_TOTAL') {
-    return toNumber(row.gameResultMetadata?.f5_total);
-  }
   if (cardFamily === 'MLB_PITCHER_K') {
     if (!row.actualResult) return null;
     const parsed = JSON.parse(row.actualResult);
@@ -430,10 +425,6 @@ const CARD_FAMILY_MAP: Record<string, string> = {
   'nba-spread-call': 'NBA_SPREAD',
   // MLB pitcher strikeouts
   'mlb-pitcher-k': 'MLB_PITCHER_K',
-  // MLB F5
-  'mlb-f5': 'MLB_F5_TOTAL',
-  'mlb-f5-call': 'MLB_F5_TOTAL',
-  'mlb-f5-ml': 'MLB_F5_ML',
   // MLB full-game totals
   'mlb-totals-call': 'MLB_TOTAL',
   // MLB spread
@@ -453,8 +444,6 @@ const MODEL_FAMILY_LABELS: Record<string, string> = {
   NBA_TOTAL: 'NBA Cross-Market Totals',
   NBA_SPREAD: 'NBA Spread',
   MLB_PITCHER_K: 'MLB Pitcher Strikeouts',
-  MLB_F5_TOTAL: 'MLB F5 Totals',
-  MLB_F5_ML: 'MLB F5 Moneyline',
   MLB_TOTAL: 'MLB Full-Game Totals',
   MLB_SPREAD: 'MLB Spread',
   MLB_ML: 'MLB Moneyline',
@@ -470,8 +459,6 @@ const MODEL_VERSION_MAP: Record<string, string> = {
   NBA_TOTAL: 'nba-totals-v1',
   NBA_SPREAD: 'nba-spread-v1',
   MLB_PITCHER_K: 'mlb-pitcher-k-v1',
-  MLB_F5_TOTAL: 'mlb-f5-v1',
-  MLB_F5_ML: 'mlb-f5-v1',
   MLB_TOTAL: 'mlb-totals-v1',
   MLB_SPREAD: 'mlb-spread-v1',
   MLB_ML: 'mlb-ml-v1',
