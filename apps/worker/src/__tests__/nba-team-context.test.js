@@ -157,7 +157,7 @@ function loadNBATeamContextModule({
   const enrichOddsSnapshotWithEspnMetrics = jest.fn(async (snap) => snap);
   const updateOddsSnapshotRawData = jest.fn();
   const getDatabase = jest.fn(() => ({
-    prepare: jest.fn(() => ({ all: jest.fn(() => []) })),
+    prepare: jest.fn(() => ({ all: jest.fn(() => []), get: jest.fn(() => ({ cnt: 0 })) })),
   }));
   const computeLineDelta = jest.fn(() => null);
   const getOddsWithUpcomingGames = jest.fn(() => oddsSnapshots);
