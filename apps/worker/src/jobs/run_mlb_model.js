@@ -1524,6 +1524,7 @@ async function runMLBModel({
           `[MLB_SIGMA_PRESEASON_DEFAULT] threshold=${MIN_MLB_GAMES_FOR_RECAL} sigma=${JSON.stringify(mlbSigma)}`,
         );
       }
+      console.log(`[SIGMA_SOURCE] sport=MLB source=${mlbSigma.sigma_source} games_sampled=${mlbSigma.games_sampled ?? null}`);
 
       // Get latest MLB odds for UPCOMING games only (prevents stale data processing)
       console.log('[MLBModel] Fetching odds for upcoming MLB games...');
@@ -2115,6 +2116,10 @@ async function runMLBModel({
 
             card.modelOutputIds = modelOutputId;
             attachRunId(card, jobRunId);
+            // WI-0835: annotate sigma provenance on card payload raw_data
+            if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+            card.payloadData.raw_data.sigma_source = mlbSigma.sigma_source;
+            card.payloadData.raw_data.sigma_games_sampled = mlbSigma.games_sampled ?? null;
             card.payloadData.pipeline_state = pipelineState;
             insertCardPayload(card);
 

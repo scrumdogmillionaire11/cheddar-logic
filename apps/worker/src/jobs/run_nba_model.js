@@ -1132,6 +1132,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
         db: getDatabase(),
       });
       console.log('[run_nba_model] sigma:', JSON.stringify(computedSigma));
+      console.log(`[SIGMA_SOURCE] sport=NBA source=${computedSigma.sigma_source} games_sampled=${computedSigma.games_sampled ?? null}`);
 
       const { DateTime } = require('luxon');
       const nowUtc = DateTime.utc();
@@ -1548,6 +1549,13 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             }),
           });
           gamePipelineStates[gameId] = pipelineState;
+
+          // WI-0835: annotate sigma provenance on all pending card payloads before write.
+          for (const entry of pendingCards) {
+            if (!entry.card.payloadData.raw_data) entry.card.payloadData.raw_data = {};
+            entry.card.payloadData.raw_data.sigma_source = computedSigma.sigma_source;
+            entry.card.payloadData.raw_data.sigma_games_sampled = computedSigma.games_sampled ?? null;
+          }
 
           // WI-0817: atomic write phase — all deletes + all inserts in one transaction.
           // A crash or throw inside this block rolls back automatically; old cards survive intact.

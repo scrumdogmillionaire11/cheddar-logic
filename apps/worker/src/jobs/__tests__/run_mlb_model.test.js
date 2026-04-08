@@ -1802,3 +1802,47 @@ describe('computePitcherKDriverCards ODDS_BACKED mode (WI-0663)', () => {
     expect(card.reason_codes).toContain('MODE_FORCED:ODDS_BACKED->PROJECTION_ONLY');
   });
 });
+
+describe('WI-0835: sigma provenance annotation on MLB card payloads', () => {
+  // Simulate the annotation logic from run_mlb_model.js that runs before insertCardPayload.
+  // The actual annotation is inlined in the job body; here we verify the contract.
+  function annotateCardSigma(card, mlbSigma) {
+    if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+    card.payloadData.raw_data.sigma_source = mlbSigma.sigma_source;
+    card.payloadData.raw_data.sigma_games_sampled = mlbSigma.games_sampled ?? null;
+    return card;
+  }
+
+  test('computed sigma: sigma_source=computed and sigma_games_sampled is a number', () => {
+    const card = { payloadData: { prediction: 'OVER', confidence: 0.62 } };
+    const mlbSigma = { sigma_source: 'computed', games_sampled: 240, margin: 0.8, total: 1.1 };
+    annotateCardSigma(card, mlbSigma);
+    expect(card.payloadData.raw_data.sigma_source).toBe('computed');
+    expect(typeof card.payloadData.raw_data.sigma_games_sampled).toBe('number');
+    expect(card.payloadData.raw_data.sigma_games_sampled).toBe(240);
+  });
+
+  test('fallback sigma: sigma_source=fallback and sigma_games_sampled is null', () => {
+    const card = { payloadData: { prediction: 'UNDER', confidence: 0.55 } };
+    const mlbSigma = { sigma_source: 'fallback', games_sampled: undefined, margin: 0.8, total: 1.1 };
+    annotateCardSigma(card, mlbSigma);
+    expect(card.payloadData.raw_data.sigma_source).toBe('fallback');
+    expect(card.payloadData.raw_data.sigma_games_sampled).toBeNull();
+  });
+
+  test('card without existing raw_data gets raw_data initialized', () => {
+    const card = { payloadData: {} };
+    const mlbSigma = { sigma_source: 'computed', games_sampled: 120 };
+    annotateCardSigma(card, mlbSigma);
+    expect(card.payloadData.raw_data).toBeDefined();
+    expect(['computed', 'fallback']).toContain(card.payloadData.raw_data.sigma_source);
+  });
+
+  test('card with existing raw_data preserves prior fields', () => {
+    const card = { payloadData: { raw_data: { prior_field: 'value' } } };
+    const mlbSigma = { sigma_source: 'computed', games_sampled: 80 };
+    annotateCardSigma(card, mlbSigma);
+    expect(card.payloadData.raw_data.prior_field).toBe('value');
+    expect(card.payloadData.raw_data.sigma_source).toBe('computed');
+  });
+});
