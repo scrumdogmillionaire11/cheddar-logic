@@ -50,6 +50,8 @@ const PRICE_REASONS = {
   FIRST_PERIOD_PROJECTION_LEAN: 'FIRST_PERIOD_PROJECTION_LEAN',
   FIRST_PERIOD_NO_PROJECTION: 'FIRST_PERIOD_NO_PROJECTION',
   LINE_MOVE_ADVERSE: 'LINE_MOVE_ADVERSE',
+  // WI-0814: emitted when PLAY is downgraded to LEAN due to fallback sigma
+  SIGMA_FALLBACK_DEGRADED: 'SIGMA_FALLBACK_DEGRADED',
 };
 
 /**
@@ -503,10 +505,11 @@ function impliedProbFromAmerican(price) {
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
-function getThresholdProfile(marketType, sport) {
+function getThresholdProfile(marketType, sport, sigmaSource = null) {
   return resolveThresholdProfile({
     sport,
     marketType,
+    sigmaSource,
   });
 }
 
@@ -882,8 +885,9 @@ function computeOfficialStatus({
   sport,
   marketType,
   proxyCapped = false,
+  sigmaSource = null,
 }) {
-  const thresholds = getThresholdProfile(marketType, sport);
+  const thresholds = getThresholdProfile(marketType, sport, sigmaSource);
 
   if (watchdogStatus === 'BLOCKED') return 'PASS';
   if (sharpPriceStatus === 'PENDING_VERIFICATION') return 'PASS';
@@ -898,6 +902,8 @@ function computeOfficialStatus({
     supportScore >= thresholds.support.play &&
     edgePct >= thresholds.edge.play_edge_min
   ) {
+    // WI-0814: Under fallback sigma, cap official status at LEAN (never PLAY).
+    if (sigmaSource === 'fallback') return 'LEAN';
     return proxyCapped ? 'LEAN' : 'PLAY';
   }
 
@@ -1251,6 +1257,11 @@ function buildDecisionV2(payload, context = {}) {
     let edge_lean = null;
     // WI-0591: sigma_source exposed in return value for auditability
     let resolvedSigmaSource = 'fallback';
+    // WI-0814: job-level sigma source — only set when sigmaOverride is explicitly provided.
+    // Used to drive the fallback safety gate (null means gate is inactive).
+    const jobSigmaSource = context?.sigmaOverride != null
+      ? (context.sigmaOverride.sigma_source ?? 'fallback')
+      : null;
 
     if (fair_prob === null) {
       const sport = normalizeSport(payload?.sport);
@@ -1431,9 +1442,10 @@ function buildDecisionV2(payload, context = {}) {
       sport,
       marketType: market_type,
       proxyCapped: proxy_capped,
+      sigmaSource: jobSigmaSource,
     });
 
-    const thresholdProfile = getThresholdProfile(market_type, sport);
+    const thresholdProfile = getThresholdProfile(market_type, sport, jobSigmaSource);
     const playCleanlinessResult = applyPlayCleanlinessCap({
       officialStatus: computedOfficialStatus,
       sport,
@@ -1447,6 +1459,31 @@ function buildDecisionV2(payload, context = {}) {
       playCleanlinessResult.priceReasonCodes,
       lineMoveReasonCodes,
     );
+
+    // WI-0814: If sigma was fallback and the official status was downgraded from PLAY to LEAN
+    // by computeOfficialStatus, inject SIGMA_FALLBACK_DEGRADED reason code so the
+    // downgrade is visible in card payloads and queryable in the DB.
+    if (
+      jobSigmaSource === 'fallback' &&
+      thresholdProfile.meta?.sigma_degraded === true &&
+      computedOfficialStatus === 'LEAN' &&
+      finalOfficialStatus === 'LEAN'
+    ) {
+      // Confirm the card would have been PLAY without the sigma gate
+      // (edge_pct >= original play_edge_min and support >= play support threshold)
+      const origPlayEdgeMin = thresholdProfile.meta.original_play_edge_min;
+      if (
+        typeof origPlayEdgeMin === 'number' &&
+        typeof edge_pct === 'number' &&
+        edge_pct >= origPlayEdgeMin &&
+        support_score >= thresholdProfile.support.play
+      ) {
+        finalPriceReasonCodes = uniqueReasonCodes(
+          finalPriceReasonCodes,
+          PRICE_REASONS.SIGMA_FALLBACK_DEGRADED,
+        );
+      }
+    }
 
     if (
       market_type === 'FIRST_PERIOD' &&
