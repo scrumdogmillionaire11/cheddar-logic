@@ -82,6 +82,41 @@ describe('insertCardPayload upsert behavior — WI-0812 Task 2', () => {
   });
 });
 
+describe('WI-0849: settled UUID call card + UNIQUE index suppresses deterministic insert', () => {
+  // Replicates the production FK failure:
+  //   old UUID-suffix call card is settled, migration 062 partial UNIQUE index present,
+  //   new deterministic call card INSERT is suppressed by the index,
+  //   card.id not in card_payloads → INSERT into card_results would fail FK.
+  it('INSERT OR IGNORE for deterministic ID is suppressed when settled UUID card occupies the index slot', () => {
+    const db = buildDb();
+    const OLD_CID = 'card-nba-totals-call-' + GAME_ID + '-ddb0875c'; // UUID-suffix (old format)
+    const NEW_CID = 'card-nba-totals-call-' + GAME_ID;               // deterministic (new format)
+
+    // 1. Insert old UUID card and mark result settled
+    db.prepare(INSERT_SQL).run(OLD_CID, GAME_ID, 'nba', 'nba-totals-call', 'T', NOW, null, '{}', null, null, 'run-old');
+    db.prepare(INSERT_RESULT_SQL).run('card-result-' + OLD_CID, OLD_CID, GAME_ID, 'nba', 'nba-totals-call', 'TOTAL', 'settled', NOW);
+
+    // 2. New deterministic ID insert is suppressed by the partial UNIQUE index
+    const info = db.prepare(INSERT_SQL).run(NEW_CID, GAME_ID, 'nba', 'nba-totals-call', 'T', NOW, null, '{}', null, null, 'run-new');
+    expect(info.changes).toBe(0); // UNIQUE index blocks the insert
+
+    // 3. NEW_CID is NOT in card_payloads — this is the condition cards.js now checks
+    expect(db.prepare('SELECT 1 FROM card_payloads WHERE id = ?').get(NEW_CID)).toBeUndefined();
+
+    // 4. FK violation: INSERT OR IGNORE does NOT suppress FK errors in SQLite.
+    //    cards.js fix: guard skips this call when card.id is absent from card_payloads.
+    expect(() =>
+      db.prepare('INSERT INTO card_results (id, card_id, game_id, sport, card_type, recommended_bet_type, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run('card-result-' + NEW_CID, NEW_CID, GAME_ID, 'nba', 'nba-totals-call', 'TOTAL', 'pending', NOW)
+    ).toThrow(/FOREIGN KEY/);
+
+    // 5. Settled result for old card still intact — not disturbed
+    expect(db.prepare('SELECT status FROM card_results WHERE card_id = ?').get(OLD_CID).status).toBe('settled');
+
+    db.close();
+  });
+});
+
 describe('migration 062 — deduplication SQL', () => {
   it('removes non-canonical call-card rows and their card_results', () => {
     const db2 = new Database(':memory:');
