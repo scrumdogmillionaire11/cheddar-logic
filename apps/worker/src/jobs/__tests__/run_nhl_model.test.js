@@ -13,7 +13,7 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const {getDatabase, closeDatabase, runMigrations } = require('@cheddar-logic/data');
-const { generateNHLMarketCallCards } = require('../run_nhl_model');
+const { generateNHLMarketCallCards, applyNhlSettlementMarketContext } = require('../run_nhl_model');
 const { computeNHLDriverCards } = require('../../models/index');
 
 const TEST_DB_PATH = '/tmp/cheddar-nhl-test.db';
@@ -434,6 +434,56 @@ describe('run_nhl_model job', () => {
         expect(card.driverInputs.fair_over_1_5_prob).toBeNull();
         expect(card.driverInputs.fair_under_1_5_prob).toBeNull();
       }
+    });
+  });
+
+  describe('WI-0839: NHL 1P sigma static gate', () => {
+    function build1pCard(overrides = {}) {
+      return {
+        cardType: 'nhl-pace-1p',
+        payloadData: {
+          status: 'FIRE',
+          classification: 'OVER_1P',
+          reason_codes: [],
+          ...overrides,
+        },
+      };
+    }
+
+    const playableOdds = {
+      total_1p: 1.5,
+      total_1p_price_over: -115,
+      total_1p_price_under: -105,
+    };
+
+    const noOdds = {};
+
+    test('sigma_1p_source is always static on 1P card payloads', () => {
+      const card = build1pCard();
+      applyNhlSettlementMarketContext(card, playableOdds, true);
+      expect(card.payloadData.sigma_1p_source).toBe('static');
+    });
+
+    test('PLAY card is downgraded to LEAN when sigma1pGatePassed is false', () => {
+      const card = build1pCard();
+      applyNhlSettlementMarketContext(card, playableOdds, false);
+      expect(card.payloadData.kind).toBe('LEAN');
+      expect(card.payloadData.reason_codes).toContain('SIGMA_1P_INSUFFICIENT_HISTORY');
+    });
+
+    test('PLAY card is NOT downgraded when sigma1pGatePassed is true', () => {
+      const card = build1pCard();
+      applyNhlSettlementMarketContext(card, playableOdds, true);
+      expect(card.payloadData.kind).toBe('PLAY');
+      expect(card.payloadData.reason_codes).not.toContain('SIGMA_1P_INSUFFICIENT_HISTORY');
+    });
+
+    test('EVIDENCE card is not affected by sigma1pGatePassed', () => {
+      // noOdds → sidePrice is null → isPlayable = false → kind = EVIDENCE
+      const card = build1pCard();
+      applyNhlSettlementMarketContext(card, noOdds, false);
+      expect(card.payloadData.kind).toBe('EVIDENCE');
+      expect(card.payloadData.reason_codes).not.toContain('SIGMA_1P_INSUFFICIENT_HISTORY');
     });
   });
 });

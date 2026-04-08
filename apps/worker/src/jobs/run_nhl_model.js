@@ -762,7 +762,7 @@ function deriveOnePeriodSelection(payloadData) {
   return null;
 }
 
-function applyNhlSettlementMarketContext(card, oddsSnapshot) {
+function applyNhlSettlementMarketContext(card, oddsSnapshot, sigma1pGatePassed = true) {
   if (!card?.payloadData || typeof card.payloadData !== 'object') return;
   const payload = card.payloadData;
   const marketType = String(payload.market_type || '').toUpperCase();
@@ -825,6 +825,16 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot) {
     payload.execution_status = 'PROJECTION_ONLY';
     payload.actionable = false;
     payload.publish_ready = false;
+  }
+  // WI-0839: Always annotate sigma provenance on 1P cards
+  payload.sigma_1p_source = 'static';
+  // WI-0839: Downgrade PLAY to LEAN when 1P sigma is uncalibrated (insufficient history)
+  if (payload.kind === 'PLAY' && !sigma1pGatePassed) {
+    payload.kind = 'LEAN';
+    payload.reason_codes = [
+      ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
+      'SIGMA_1P_INSUFFICIENT_HISTORY',
+    ];
   }
   // When demoted to EVIDENCE, set an explicit no-edge pass_reason_code so the
   // transform layer classifies this as a healthy no-play (quality='OK') rather
@@ -1707,6 +1717,28 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       }
       console.log(`[SIGMA_SOURCE] sport=NHL source=${_sigmaSource} games_sampled=${_computedSigma.games_sampled ?? null}`);
 
+      // WI-0839: Count settled NHL first-period game results to gate sigma1p
+      const _settled1pStmt = getDatabase().prepare(
+        `SELECT COUNT(*) AS cnt FROM game_results
+         WHERE sport = 'NHL'
+           AND status = 'final'
+           AND (
+             json_extract(metadata, '$.firstPeriodScores') IS NOT NULL
+             OR json_extract(metadata, '$.first_period_scores') IS NOT NULL
+           )`,
+      );
+      const settled1pCount = _settled1pStmt.get()?.cnt ?? 0;
+      const sigma1pGatePassed = settled1pCount >= 40;
+      console.log(
+        `[SIGMA_1P] settled_count=${settled1pCount} source=static sigma=${NHL_1P_SIGMA} gate_passed=${sigma1pGatePassed}`,
+      );
+      if (!sigma1pGatePassed) {
+        console.warn(
+          '[run_nhl_model] [SIGMA_1P_FALLBACK] Fewer than 40 settled NHL 1P results — ' +
+            'all 1P PLAY cards will be downgraded to LEAN until calibrated sigma is available.',
+        );
+      }
+
       // Get latest NHL odds for UPCOMING games only (prevents stale data processing)
       console.log('[NHLModel] Fetching odds for upcoming NHL games...');
       const { DateTime } = require('luxon');
@@ -1955,7 +1987,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
             applyNhlDriverContextMetadata(card, oddsSnapshot);
-            applyNhlSettlementMarketContext(card, oddsSnapshot);
+            applyNhlSettlementMarketContext(card, oddsSnapshot, sigma1pGatePassed);
             // WI-0789: merge key-player availability flags and cap tier at LEAN
             if (availabilityGate.missingFlags.length > 0 || availabilityGate.uncertainFlags.length > 0) {
               card.payloadData.missing_inputs = [
@@ -2041,7 +2073,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           for (const card of marketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
             applyNhlDriverContextMetadata(card, oddsSnapshot);
-            applyNhlSettlementMarketContext(card, oddsSnapshot);
+            applyNhlSettlementMarketContext(card, oddsSnapshot, sigma1pGatePassed);
             const validation = validateCardPayload(
               card.cardType,
               card.payloadData,
