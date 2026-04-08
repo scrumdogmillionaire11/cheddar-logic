@@ -9,7 +9,7 @@ const {
   edgeCalculator,
 } = require('@cheddar-logic/models');
 
-const { projectNHL, projectNBA } = require('./projections');
+const { projectNHL, projectNBACanonical } = require('./projections');
 const { DEGRADED_CONSTRAINTS, buildNoBetResult } = require('./input-gate');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { compareProjection } = require('../../../../packages/odds/src/market_evaluator.js');
@@ -859,15 +859,19 @@ function computeNBAMarketDecisions(oddsSnapshot) {
     raw?.espn_metrics?.away?.metrics?.restDays ?? null,
   );
 
-  const projection = projectNBA(
+  // analyzePaceSynergy MUST run before projectNBACanonical so paceAdjustment is available.
+  const synergy =
+    paceHome !== null && paceAway !== null
+      ? analyzePaceSynergy(paceHome, paceAway, avgPtsHome, avgPtsAway)
+      : null;
+  const projection = projectNBACanonical(
     avgPtsHome,
     avgPtsAllowedHome,
+    paceHome,
     avgPtsAway,
     avgPtsAllowedAway,
-    paceHome,
     paceAway,
-    restDaysHome,
-    restDaysAway,
+    synergy?.paceAdjustment ?? 0,
   );
 
   // Hard block: NO_BET from model means no card can emit
@@ -895,10 +899,8 @@ function computeNBAMarketDecisions(oddsSnapshot) {
     projectedHome !== null && projectedAway !== null
       ? projectedHome - projectedAway
       : null;
-  const paceSignalData =
-    paceHome !== null && paceAway !== null
-      ? analyzePaceSynergy(paceHome, paceAway, avgPtsHome, avgPtsAway)
-      : null;
+  // Reuse synergy computed above (called before projectNBACanonical to supply paceAdjustment)
+  const paceSignalData = synergy;
 
   const restGap =
     restDaysHome !== null && restDaysAway !== null

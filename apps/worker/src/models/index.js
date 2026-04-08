@@ -26,8 +26,10 @@ const http = require('http');
 const https = require('https');
 const {
   projectNBA,
+  projectNBACanonical,
   projectNHL,
 } = require('./projections');
+const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { computeMLBDriverCards, computePitcherKDriverCards, scorePitcherK } = require('./mlb-model');
 const { generateWelcomeHomeCard } = require('./welcome-home-v2');
 const {
@@ -1721,7 +1723,7 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
   // --- NBA Total Projection Driver ---
   //
   // Keep projected total aligned with cross-market totals decisions:
-  // use the same projectNBA() path + rounded projected_total output.
+  // uses the same projectNBACanonical() + analyzePaceSynergy() path as computeNBAMarketDecisions.
   {
     const homePace = toNumber(raw?.espn_metrics?.home?.metrics?.pace ?? null);
     const awayPace = toNumber(raw?.espn_metrics?.away?.metrics?.pace ?? null);
@@ -1746,15 +1748,18 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
       awayAvgAllowed &&
       marketTotal
     ) {
-      const projection = projectNBA(
+      const totalDriverSynergy =
+        homePace !== null && awayPace !== null
+          ? analyzePaceSynergy(homePace, awayPace, homeAvgPts, awayAvgPts)
+          : null;
+      const projection = projectNBACanonical(
         homeAvgPts,
         homeAvgAllowed,
+        homePace,
         awayAvgPts,
         awayAvgAllowed,
-        homePace,
         awayPace,
-        restDaysHome,
-        restDaysAway,
+        totalDriverSynergy?.paceAdjustment ?? 0,
       );
       if (
         projection &&
