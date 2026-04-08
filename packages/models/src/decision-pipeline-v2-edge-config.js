@@ -66,7 +66,7 @@ const SPORT_MARKET_THRESHOLDS_V2 = Object.freeze({
   }),
 });
 
-function resolveThresholdProfile({ sport, marketType }) {
+function resolveThresholdProfile({ sport, marketType, sigmaSource = null }) {
   const normalizedSport = typeof sport === 'string' ? sport.toUpperCase() : '';
   const normalizedMarket =
     typeof marketType === 'string' ? marketType.toUpperCase() : '';
@@ -77,7 +77,7 @@ function resolveThresholdProfile({ sport, marketType }) {
     lean_edge_min: DEFAULT_EDGE_THRESHOLDS.lean_edge_min,
   };
 
-  const profile = {
+  let profile = {
     sport: normalizedSport || null,
     market_type: normalizedMarket || null,
     source: 'default',
@@ -85,22 +85,36 @@ function resolveThresholdProfile({ sport, marketType }) {
     edge,
   };
 
-  if (!FLAGS.ENABLE_MARKET_THRESHOLDS_V2) {
-    return profile;
+  if (FLAGS.ENABLE_MARKET_THRESHOLDS_V2) {
+    const key = `${normalizedSport}:${normalizedMarket}`;
+    const mapped = SPORT_MARKET_THRESHOLDS_V2[key];
+    if (mapped) {
+      profile = {
+        ...profile,
+        source: 'sport_market_v2',
+        support: { ...support, ...mapped.support },
+        edge: { ...edge, ...mapped.edge },
+      };
+    }
   }
 
-  const key = `${normalizedSport}:${normalizedMarket}`;
-  const mapped = SPORT_MARKET_THRESHOLDS_V2[key];
-  if (!mapped) {
-    return profile;
+  // WI-0814: Sigma fallback safety gate — record degraded state in profile meta
+  // so callites can inspect it and so SIGMA_FALLBACK_DEGRADED can be emitted.
+  // Threshold values themselves are NOT changed here; the status cap lives in
+  // computeOfficialStatus (decision-pipeline-v2.js).
+  if (sigmaSource === 'fallback') {
+    profile = {
+      ...profile,
+      meta: {
+        ...(profile.meta ?? {}),
+        sigma_degraded: true,
+        sigma_degraded_reason: 'SIGMA_FALLBACK_DEGRADED',
+        original_play_edge_min: profile.edge.play_edge_min,
+      },
+    };
   }
 
-  return {
-    ...profile,
-    source: 'sport_market_v2',
-    support: { ...support, ...mapped.support },
-    edge: { ...edge, ...mapped.edge },
-  };
+  return profile;
 }
 
 function resolvePlayCleanlinessProfile({ sport, marketType }) {

@@ -1706,6 +1706,15 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
         nhlBaseSigma = edgeCalculator.getSigmaDefaults('NHL');
       }
       console.log(`[SIGMA_SOURCE] sport=NHL source=${_sigmaSource} games_sampled=${_computedSigma.games_sampled ?? null}`);
+      // WI-0814: warn when using uncalibrated sigma — all PLAY cards will be downgraded to LEAN
+      if (_sigmaSource === 'fallback') {
+        console.warn(
+          '[run_nhl_model] [SIGMA_FALLBACK] Fewer than 20 settled games — using uncalibrated sigma defaults. ' +
+          'All PLAY cards will be downgraded to LEAN until empirical sigma is available.',
+        );
+      }
+      // WI-0814: preserve sigma_source in nhlBaseSigma so decision pipeline can apply fallback gate
+      nhlBaseSigma = { ...nhlBaseSigma, sigma_source: _sigmaSource };
 
       // Get latest NHL odds for UPCOMING games only (prevents stale data processing)
       console.log('[NHLModel] Fetching odds for upcoming NHL games...');
