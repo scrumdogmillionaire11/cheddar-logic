@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-08T00:00:00Z"
-last_activity: "2026-04-08 - WI-0835 complete: sigma_source + sigma_games_sampled in payloadData.raw_data for NBA/NHL/MLB; [SIGMA_SOURCE] logs emitting; 132 tests passing."
+last_activity: "2026-04-08 - WI-0822 complete: NBA pace normalization — offRtg=(avgPoints/teamPace)*100 in projectNBACanonical; computeNBAMarketDecisions switched to canonical+analyzePaceSynergy; 117 tests passing."
 ---
 
 # Project State
@@ -61,8 +61,8 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 
 | WI | Title | Priority | Deps |
 |----|-------|----------|------|
-| **WI-0821** | MLB offense stack — replace 4-term multiplicative chain with 2-term composite | High | WI-0820 |
-| **WI-0822** | NBA pace normalization — fix ORtg proxy, retire dual pace framework | High | WI-0820 |
+| ~~**WI-0821**~~ | ~~MLB offense stack — replace 4-term multiplicative chain with 2-term composite~~ | ~~High~~ COMPLETE (2026-04-08) |
+| ~~**WI-0822**~~ | ~~NBA pace normalization — fix ORtg proxy, retire dual pace framework~~ | ~~High~~ COMPLETE (2026-04-08) |
 | **WI-0813** | Cross-book vig removal — fix same-book pairing in `selectTotalExecution` | High | none |
 | **WI-0814** | Sigma fallback safety gate — PLAY→LEAN when `sigma_source=fallback` | High | WI-0835 |
 | **WI-0839** | NHL 1P sigma static gate — LEAN when <40 settled 1P results | Medium | WI-0835 |
