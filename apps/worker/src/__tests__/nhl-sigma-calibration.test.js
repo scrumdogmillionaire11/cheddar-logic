@@ -130,7 +130,7 @@ function loadRunNHLModel({
   const enrichOddsSnapshotWithEspnMetrics = jest.fn(async (snap) => snap);
   const updateOddsSnapshotRawData = jest.fn();
   const getDatabase = jest.fn(() => ({
-    prepare: jest.fn(() => ({ all: jest.fn(() => []) })),
+    prepare: jest.fn(() => ({ all: jest.fn(() => []), get: jest.fn(() => ({ cnt: 0 })) })),
   }));
   const getOddsWithUpcomingGames = jest.fn(() => oddsSnapshots);
   const getUpcomingGamesAsSyntheticSnapshots = jest.fn(() => []);
