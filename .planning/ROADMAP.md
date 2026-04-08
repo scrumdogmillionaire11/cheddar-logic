@@ -31,7 +31,38 @@ packages/data/   → DB layer (sql.js + migrations)
 packages/odds/   → provider fetch + normalization (NO DB writes)
 ```
 
+---
+
+## Milestone 2: Play of the Day — Web Feature
+
+### Status: Planning
+
+A product-facing feature on cheddarlogic.com: one best play per day, signal-scored from live odds, published to the site and Discord, with a running $10 bankroll tracker.
+
+### Architecture
+```
+web/app/play-of-the-day/    → Next.js page route
+web/app/api/play-of-day/    → API routes (signal engine, publish, outcomes)
+apps/worker/                → Daily cron trigger (12–4PM window)
+packages/odds/              → The Odds API fetch (reused)
+```
+
+### Phase: potd-01 — Play of the Day: Signal Engine + Page + Discord
+**Goal**: Ship a fully working /play-of-the-day page on cheddarlogic.com. The system fetches live game lines from The Odds API daily, scores each game using the 4-dimension signal engine, selects the single best ELITE/HIGH-confidence play, sizes the wager with Quarter-Kelly (20% cap, $10 starting bankroll), publishes to the Cheddar UI page and Discord simultaneously, enforces a one-play-per-day gate, and maintains a persistent bankroll + play history ledger.
+
+**Sports in scope**: NBA, MLB, NHL (game lines only). NFL deferred.
+**Posting window**: 12–4PM daily, dynamically timed 90min before first game lock.
+
+**Plans**: TBD
+
+Plans:
+
+- [ ] TBD — planning in progress
+
+---
+
 ### Phase: mlb-k-harden — MLB Pitcher-K Pipeline Hardening
+
 **Goal**: Eliminate silent proxy substitution in the MLB pitcher-K model. Install an explicit
 input contract, a deterministic quality classifier, per-pitcher pre-model completeness logging,
 and card-level flag deduplication. Cards using proxies for core metrics must emit FALLBACK,

@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-08T00:00:00Z"
-last_activity: "2026-04-08 - WI-0822 complete: NBA pace normalization — offRtg=(avgPoints/teamPace)*100 in projectNBACanonical; computeNBAMarketDecisions switched to canonical+analyzePaceSynergy; 117 tests passing."
+last_updated: "2026-04-08T12:00:00Z"
+last_activity: "2026-04-08 - WI-0814 complete: sigma fallback safety gate — PLAY→LEAN cap in computeOfficialStatus when sigmaOverride.sigma_source='fallback'; SIGMA_FALLBACK_DEGRADED reason code; [SIGMA_FALLBACK] startup warn in NBA/NHL/MLB runners; NHL sigma_source propagation fix; 11 new tests (50 total passing)."
 ---
 
 # Project State
@@ -64,7 +64,7 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 | ~~**WI-0821**~~ | ~~MLB offense stack — replace 4-term multiplicative chain with 2-term composite~~ | ~~High~~ COMPLETE (2026-04-08) |
 | ~~**WI-0822**~~ | ~~NBA pace normalization — fix ORtg proxy, retire dual pace framework~~ | ~~High~~ COMPLETE (2026-04-08) |
 | **WI-0813** | Cross-book vig removal — fix same-book pairing in `selectTotalExecution` | High | none |
-| **WI-0814** | Sigma fallback safety gate — PLAY→LEAN when `sigma_source=fallback` | High | WI-0835 |
+| ~~**WI-0814**~~ | ~~Sigma fallback safety gate — PLAY→LEAN when `sigma_source=fallback`~~ | ~~High~~ COMPLETE (2026-04-08) | — |
 | **WI-0839** | NHL 1P sigma static gate — LEAN when <40 settled 1P results | Medium | WI-0835 |
 | **WI-0836** | Rest-days pipeline — compute `homeRest`/`awayRest`, thread into NBA + NHL models | Medium | none |
 | **WI-0840** | MLB dynamic league constants — replace hardcoded 2024 averages with live season stats | Medium | none |
