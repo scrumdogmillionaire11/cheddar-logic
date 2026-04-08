@@ -141,6 +141,9 @@ function buildProjectionNullDiagnostic(
 
 /**
  * Calculate NBA base projection
+ * @deprecated Use projectNBACanonical + analyzePaceSynergy instead.
+ *   projectNBACanonical corrects the pace double-counting present in this function.
+ *   This function is retained only for legacy callers (e.g. nba-base-projection driver card).
  * @param {number} homeOffense - avgPoints
  * @param {number} homeDefense - avgPointsAllowed
  * @param {number} awayOffense - avgPoints
@@ -382,14 +385,15 @@ function projectNHL(
  *   away_pts = base_away_ppp * adjusted_pace
  *   projected_total = home_pts + away_pts
  *
- * Uses avgPoints as ORtg proxy and avgPointsAllowed as DRtg proxy.
- * This is accurate when pace ≈ 100 (NBA average ~100 poss/game).
+ * Normalizes avgPoints to per-100-possession ORtg before PPP computation.
+ * offRtg = (avgPoints / teamPace) * 100 — removes pace contamination so that
+ * pace is applied exactly once via adjustedPace, not twice.
  *
- * @param {number} homeOffRtg - Home team avg points (ORtg proxy)
- * @param {number} homeDefRtg - Home team avg points allowed (DRtg proxy)
+ * @param {number} homeOffRtg - Home team avg points (normalized to ORtg internally)
+ * @param {number} homeDefRtg - Home team avg points allowed (normalized to DRtg internally)
  * @param {number} homePace   - Home team possessions per game
- * @param {number} awayOffRtg - Away team avg points (ORtg proxy)
- * @param {number} awayDefRtg - Away team avg points allowed (DRtg proxy)
+ * @param {number} awayOffRtg - Away team avg points (normalized to ORtg internally)
+ * @param {number} awayDefRtg - Away team avg points allowed (normalized to DRtg internally)
  * @param {number} awayPace   - Away team possessions per game
  * @param {number} paceAdjustment - Synergy pace delta (from PaceSynergyService)
  * @returns {object|null}
@@ -422,9 +426,16 @@ function projectNBACanonical(
     });
   }
 
-  // PPP (points per possession) for each team
-  const baseHomePPP = (homeOffRtg + awayDefRtg) / 200;
-  const baseAwayPPP = (awayOffRtg + homeDefRtg) / 200;
+  // Normalize raw avgPoints to per-100-possession ORtg/DRtg.
+  // avgPoints already embeds pace; dividing by own-team pace removes that contamination.
+  const homeOffRtgNorm = homePace > 0 ? (homeOffRtg / homePace) * 100 : homeOffRtg;
+  const homeDefRtgNorm = homePace > 0 ? (homeDefRtg / homePace) * 100 : homeDefRtg;
+  const awayOffRtgNorm = awayPace > 0 ? (awayOffRtg / awayPace) * 100 : awayOffRtg;
+  const awayDefRtgNorm = awayPace > 0 ? (awayDefRtg / awayPace) * 100 : awayDefRtg;
+
+  // PPP (points per possession) for each team using normalized ratings
+  const baseHomePPP = (homeOffRtgNorm + awayDefRtgNorm) / 200;
+  const baseAwayPPP = (awayOffRtgNorm + homeDefRtgNorm) / 200;
 
   // Pace: average then apply synergy adjustment
   const expectedPace = (homePace + awayPace) / 2;
