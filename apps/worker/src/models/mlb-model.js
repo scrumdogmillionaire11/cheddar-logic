@@ -23,6 +23,12 @@ const MLB_F5_DEFAULT_TEAM_ISO = 0.165;
 const MLB_F5_DEFAULT_TEAM_BB_PCT = 0.085;
 const MLB_F5_DEFAULT_TEAM_XWOBA = 0.320;
 const MLB_F5_DEFAULT_TEAM_HARD_HIT = 39.0;
+
+// Offense composite z-score constants (cross-team population)
+const MLB_LEAGUE_WRC_PLUS_MEAN = 100;
+const MLB_LEAGUE_WRC_PLUS_SD = 14;
+const MLB_LEAGUE_XWOBA_MEAN = 0.320;
+const MLB_LEAGUE_XWOBA_SD = 0.018;
 const MLB_F5_DEFAULT_PARK_FACTOR = 1.0;
 const MLB_F5_DEFAULT_TEMP_F = 72;
 const MLB_F5_DEFAULT_WIND_MPH = 0;
@@ -39,6 +45,10 @@ function toFiniteNumberOrNull(value) {
 
 function clampValue(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function zScore(value, mean, sd) {
+  return (value - mean) / sd;
 }
 
 function roundToTenth(value) {
@@ -142,7 +152,7 @@ function resolveTeamSplitProfile(offenseProfile, pitcherHandedness) {
       offenseProfile?.[`rolling_14d_wrc_plus_vs_${handToken}`],
     ) ?? toFiniteNumberOrNull(offenseProfile?.rolling_14d_wrc_plus_vs_hand);
 
-  if (wrcPlus === null || kPct === null || iso === null) return null;
+  if (wrcPlus === null) return null;
 
   return {
     wrc_plus: wrcPlus,
@@ -238,6 +248,24 @@ function resolveStarterLeashProfile(starterPitcher) {
   };
 }
 
+/**
+ * Composite offensive quality index.
+ * Returns a multiplier centred at 1.0, clamped to [0.88, 1.14].
+ * 60% wRC+ split / 40% xwOBA split.
+ */
+function resolveOffenseComposite(matchupProfile) {
+  const zWrc = zScore(
+    matchupProfile.wrc_plus,
+    MLB_LEAGUE_WRC_PLUS_MEAN,
+    MLB_LEAGUE_WRC_PLUS_SD,
+  );
+  const xwoba = matchupProfile.xwoba ?? MLB_F5_DEFAULT_TEAM_XWOBA;
+  const zXwoba = zScore(xwoba, MLB_LEAGUE_XWOBA_MEAN, MLB_LEAGUE_XWOBA_SD);
+  const composite = 0.60 * zWrc + 0.40 * zXwoba;
+  // Scale: 1 SD of composite ≈ 0.06 run adjustment
+  return clampValue(1.0 + composite * 0.06, 0.88, 1.14);
+}
+
 function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context) {
   const starterSkillProfile = resolveStarterSkillProfile(starterPitcher);
   const starterSkillRa9 = starterSkillProfile.starter_skill_ra9;
@@ -272,36 +300,15 @@ function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context
     };
   }
 
-  let adjustedRa9 = starterSkillRa9 * (matchupProfile.wrc_plus / 100);
-  adjustedRa9 *= clampValue(
-    1 + (matchupProfile.iso - MLB_F5_DEFAULT_TEAM_ISO) * 0.35,
-    0.9,
-    1.12,
-  );
-  adjustedRa9 *= clampValue(
-    1 - (matchupProfile.k_pct - MLB_F5_DEFAULT_TEAM_K_PCT) * 0.45,
-    0.9,
-    1.12,
-  );
-  adjustedRa9 *= clampValue(
-    1 + ((matchupProfile.bb_pct ?? MLB_F5_DEFAULT_TEAM_BB_PCT) - MLB_F5_DEFAULT_TEAM_BB_PCT) * 0.8,
-    0.94,
-    1.08,
-  );
-  const contactMult = clampValue(
-    1 +
-      ((matchupProfile.xwoba ?? MLB_F5_DEFAULT_TEAM_XWOBA) - MLB_F5_DEFAULT_TEAM_XWOBA) * 0.9 +
-      (((matchupProfile.hard_hit_pct ?? MLB_F5_DEFAULT_TEAM_HARD_HIT) - MLB_F5_DEFAULT_TEAM_HARD_HIT) / 100) * 0.25 +
-      ((starterSkillProfile.xwoba_allowed ?? MLB_F5_DEFAULT_STARTER_XWOBA) - MLB_F5_DEFAULT_STARTER_XWOBA) * 0.9,
-    0.9,
-    1.12,
-  );
-  adjustedRa9 *= contactMult;
+  // Single composite offense multiplier (WI-0821): replaces four-term wRC+/ISO/k%/bb%/contactMult chain
+  const offenseMult = resolveOffenseComposite(matchupProfile);
+  let adjustedRa9 = starterSkillRa9 * offenseMult;
   if (matchupProfile.rolling_14d_wrc_plus !== null) {
+    // Tightened from [0.95, 1.05] — composite already captures medium-term form
     adjustedRa9 *= clampValue(
       1 + ((matchupProfile.rolling_14d_wrc_plus - 100) / 100) * 0.15,
-      0.95,
-      1.05,
+      0.97,
+      1.03,
     );
   }
   adjustedRa9 *= clampValue(parkFactor, 0.9, 1.12);
@@ -317,7 +324,7 @@ function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context
     starter_ip_f5_exp: starterLeashProfile.starter_ip_f5_exp,
     ttop_penalty_mult: starterLeashProfile.ttop_penalty_mult,
     bf_exp: starterLeashProfile.bf_exp,
-    contact_mult: contactMult,
+    offense_composite: offenseMult,
     park_factor: parkFactor,
     weather_factor: weatherFactor ?? 1.0,
   };
@@ -2517,4 +2524,6 @@ module.exports = {
   computePitcherKDriverCards,
   // Exported for unit testing (WI-0770)
   calculateProjectionK,
+  // Exported for unit testing (WI-0821)
+  resolveOffenseComposite,
 };
