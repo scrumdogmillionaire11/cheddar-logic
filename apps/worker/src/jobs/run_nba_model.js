@@ -23,6 +23,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  wasJobRecentlySuccessful,
   setCurrentRunId,
   getOddsWithUpcomingGames,
   getUpcomingGamesAsSyntheticSnapshots,
@@ -81,11 +82,153 @@ const {
   PLAYOFF_EDGE_MIN_INCREMENT,
 } = require('../utils/playoff-detection');
 const { computeRestDays } = require('../utils/rest-days');
+const { sendDiscordMessages } = require('./post_discord_cards');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
 // WI-0768: weight applied when blending pace-anchor total with market total
 const TEAM_CONTEXT_WEIGHT = 0.25;
+const ESPN_NULL_ALERT_WINDOW_MINUTES = 60;
+const ESPN_NULL_ALERT_THRESHOLD_DEFAULT = 2;
+
+function normalizeEspnNullReason(reason) {
+  return (
+    String(reason || 'UNKNOWN')
+      .trim()
+      .replace(/\s+/g, '_')
+      .toUpperCase() || 'UNKNOWN'
+  );
+}
+
+function getEspnNullAlertThreshold() {
+  const parsed = Number.parseInt(
+    process.env.ESPN_NULL_ALERT_THRESHOLD ?? `${ESPN_NULL_ALERT_THRESHOLD_DEFAULT}`,
+    10,
+  );
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : ESPN_NULL_ALERT_THRESHOLD_DEFAULT;
+}
+
+function buildEspnNullTeamKey(team, reason) {
+  return `${String(team || '').trim().toUpperCase()}::${normalizeEspnNullReason(reason)}`;
+}
+
+function buildEspnNullAlertMessage(sport, nullMetricTeams) {
+  const lines = [
+    `⚠️ **${sport} ESPN Null Metrics Alert**`,
+    '',
+    `${nullMetricTeams.length} team(s) returned neutral ESPN metrics in the latest run:`,
+  ];
+  for (const entry of nullMetricTeams) {
+    lines.push(`• \`${entry.team}\` — ${entry.reason}`);
+  }
+  return lines.join('\n');
+}
+
+function extractNbaEspnNullMetricTeams({ homeTeam, awayTeam, homeResult, awayResult }) {
+  const entries = [];
+  const candidates = [
+    { team: homeTeam, result: homeResult },
+    { team: awayTeam, result: awayResult },
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate.result?.metrics?.avgPoints !== null) continue;
+    entries.push({
+      team: candidate.team || 'UNKNOWN_TEAM',
+      reason: normalizeEspnNullReason(candidate.result?.metrics?.espn_null_reason),
+    });
+  }
+
+  return entries;
+}
+
+function recordEspnNullTeams({
+  sport,
+  registry,
+  nullMetricTeams,
+  logger = console,
+}) {
+  const recorded = [];
+  for (const entry of nullMetricTeams) {
+    const normalizedEntry = {
+      team: entry?.team || 'UNKNOWN_TEAM',
+      reason: normalizeEspnNullReason(entry?.reason),
+    };
+    const key = buildEspnNullTeamKey(normalizedEntry.team, normalizedEntry.reason);
+    if (registry.has(key)) continue;
+    registry.set(key, normalizedEntry);
+    logger.warn(
+      `[ESPN_NULL] sport=${sport} team=${normalizedEntry.team} reason=${normalizedEntry.reason}`,
+    );
+    recorded.push(normalizedEntry);
+  }
+  return recorded;
+}
+
+async function sendEspnNullDiscordAlert({
+  sport,
+  nullMetricTeams,
+  logger = console,
+  sendDiscordMessagesFn = sendDiscordMessages,
+  wasJobRecentlySuccessfulFn = wasJobRecentlySuccessful,
+  insertJobRunFn = insertJobRun,
+  markJobRunSuccessFn = markJobRunSuccess,
+  markJobRunFailureFn = markJobRunFailure,
+}) {
+  const dedupedTeams = [];
+  const seen = new Set();
+  for (const entry of nullMetricTeams) {
+    const normalizedEntry = {
+      team: entry?.team || 'UNKNOWN_TEAM',
+      reason: normalizeEspnNullReason(entry?.reason),
+    };
+    const key = buildEspnNullTeamKey(normalizedEntry.team, normalizedEntry.reason);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    dedupedTeams.push(normalizedEntry);
+  }
+
+  if (dedupedTeams.length < getEspnNullAlertThreshold()) {
+    return { sent: false, reason: 'below_threshold', count: dedupedTeams.length };
+  }
+
+  if (process.env.ENABLE_DISCORD_CARD_WEBHOOKS !== 'true') {
+    return { sent: false, reason: 'discord_disabled', count: dedupedTeams.length };
+  }
+
+  const webhookUrl = String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim();
+  if (!webhookUrl) {
+    logger.warn(`[${sport}Model] DISCORD_CARD_WEBHOOK_URL not set — skipping ESPN null alert`);
+    return { sent: false, reason: 'missing_webhook_url', count: dedupedTeams.length };
+  }
+
+  const alertJobName = `espn_null_alert_${sport.toLowerCase()}`;
+  if (wasJobRecentlySuccessfulFn(alertJobName, ESPN_NULL_ALERT_WINDOW_MINUTES)) {
+    return { sent: false, reason: 'cooldown_active', count: dedupedTeams.length };
+  }
+
+  const alertRunId = uuidV4();
+  insertJobRunFn(alertJobName, alertRunId);
+  try {
+    await sendDiscordMessagesFn({
+      webhookUrl,
+      messages: [buildEspnNullAlertMessage(sport, dedupedTeams)],
+    });
+    markJobRunSuccessFn(alertRunId);
+    logger.log(
+      `[${sport}Model] Sent ESPN null alert for ${dedupedTeams.length} team(s)`,
+    );
+    return { sent: true, reason: 'sent', count: dedupedTeams.length };
+  } catch (error) {
+    markJobRunFailureFn(alertRunId, error.message);
+    logger.warn(
+      `[${sport}Model] Failed to send ESPN null alert: ${error.message}`,
+    );
+    return { sent: false, reason: 'send_failed', count: dedupedTeams.length };
+  }
+}
 
 /**
  * WI-0841: Build key-player availability gate for a game from live impact context.
@@ -656,6 +799,7 @@ async function applyNbaTeamContext(gameId, oddsSnapshot) {
       blendedTotal: null,
       teamContextMissingInputs: ['nba_team_context'],
       availabilityGate: { missingFlags: [], uncertainFlags: [], availabilityFlags: [] },
+      nullMetricTeams: [],
     };
   }
 
@@ -668,6 +812,12 @@ async function applyNbaTeamContext(gameId, oddsSnapshot) {
       homeResult?.impactContext || null,
       awayResult?.impactContext || null,
     );
+    const nullMetricTeams = extractNbaEspnNullMetricTeams({
+      homeTeam,
+      awayTeam,
+      homeResult,
+      awayResult,
+    });
 
     const hAvgPts = homeResult?.metrics?.avgPoints;
     const hAvgPtsAllowed = homeResult?.metrics?.avgPointsAllowed;
@@ -691,6 +841,7 @@ async function applyNbaTeamContext(gameId, oddsSnapshot) {
         blendedTotal: null,
         teamContextMissingInputs: ['nba_team_context'],
         availabilityGate,
+        nullMetricTeams,
       };
     }
 
@@ -721,6 +872,7 @@ async function applyNbaTeamContext(gameId, oddsSnapshot) {
       blendedTotal: Number(blendedTotal.toFixed(2)),
       teamContextMissingInputs: [],
       availabilityGate,
+      nullMetricTeams,
     };
   } catch (err) {
     console.warn(
@@ -732,6 +884,7 @@ async function applyNbaTeamContext(gameId, oddsSnapshot) {
       blendedTotal: null,
       teamContextMissingInputs: ['nba_team_context'],
       availabilityGate: { missingFlags: [], uncertainFlags: [], availabilityFlags: [] },
+      nullMetricTeams: [],
     };
   }
 }
@@ -1258,6 +1411,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       let projectionBlockedCount = 0;
       const gamePipelineStates = {};
       const errors = [];
+      const espnNullRegistry = new Map();
 
       for (const gameId of gameIds) {
         try {
@@ -1282,6 +1436,11 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
 
           // WI-0768: Fetch team_metrics_cache; compute and blend pace-anchor total
           const teamCtx = await applyNbaTeamContext(gameId, oddsSnapshot);
+          recordEspnNullTeams({
+            sport: 'NBA',
+            registry: espnNullRegistry,
+            nullMetricTeams: teamCtx.nullMetricTeams || [],
+          });
           // Re-persist raw_data if context enriched it with pace_anchor_total
           if (teamCtx.available) {
             try {
@@ -1677,6 +1836,10 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           `[NBAModel] Failed to update run state: ${runStateError.message}`,
         );
       }
+      await sendEspnNullDiscordAlert({
+        sport: 'NBA',
+        nullMetricTeams: [...espnNullRegistry.values()],
+      });
       console.log(
         `[NBAModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
       );
@@ -1720,6 +1883,9 @@ module.exports = {
   runNBAModel,
   buildNbaAvailabilityGate,
   applyNbaImpactGateToCard,
+  extractNbaEspnNullMetricTeams,
+  recordEspnNullTeams,
+  sendEspnNullDiscordAlert,
   generateNBAMarketCallCards,
   deriveExecutionStatusForCard,
   applyExecutionGateToNbaCard,

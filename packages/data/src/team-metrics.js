@@ -771,7 +771,11 @@ async function buildNbaImpactContext({ teamName, teamInfo = null, seasonYear = n
 // ---------------------------------------------------------------------------
 
 /** Neutral fallback returned when team is unknown or ESPN fails */
-function neutral() {
+function neutral(reason = 'UNKNOWN') {
+  const espnNullReason = String(reason || 'UNKNOWN')
+    .trim()
+    .replace(/\s+/g, '_')
+    .toUpperCase() || 'UNKNOWN';
   return {
     avgPoints: null,
     avgPointsAllowed: null,
@@ -782,7 +786,8 @@ function neutral() {
     freeThrowPct: null,
     freeThrowPctSource: null,
     rank: null,
-    record: null
+    record: null,
+    espn_null_reason: espnNullReason,
   };
 }
 
@@ -798,9 +803,9 @@ function computeMetricsFromGames(games, sport) {
     'computeMetricsFromGames'
   ) || String(sport || '').trim().toUpperCase();
 
-  if (!games || games.length === 0) return neutral();
+  if (!games || games.length === 0) return neutral('NO_GAMES');
   const scored = games.filter(g => g.pointsFor !== null && g.pointsAgainst !== null);
-  if (scored.length === 0) return neutral();
+  if (scored.length === 0) return neutral('NO_SCORED_GAMES');
 
   const avgPoints = scored.reduce((s, g) => s + g.pointsFor, 0) / scored.length;
   const avgPointsAllowed = scored.reduce((s, g) => s + g.pointsAgainst, 0) / scored.length;
@@ -1212,8 +1217,8 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
       
       if (cached && cached.status === 'ok') {
         const cachedMetrics = normalizedSport === 'NHL'
-          ? ensureNhlMetricAliases(cached.metrics || neutral())
-          : (cached.metrics || neutral());
+          ? ensureNhlMetricAliases(cached.metrics || neutral('CACHE_EMPTY'))
+          : (cached.metrics || neutral('CACHE_EMPTY'));
         if (hasSufficientNumericMetricsForSport(cachedMetrics, normalizedSport)) {
           const metricsWithFt =
             normalizedSport === 'NCAAM'
@@ -1258,7 +1263,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
     if (!table || !league) {
       console.warn(`[TeamMetrics] Unknown sport: ${sport}`);
       return {
-        metrics: neutral(),
+        metrics: neutral('UNKNOWN_SPORT'),
         teamInfo: null,
         games: [],
         impactContext: shouldBuildImpactContext
@@ -1285,7 +1290,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
         resolution,
       });
       return {
-        metrics: neutral(),
+        metrics: neutral(reason),
         teamInfo: null,
         games: [],
         impactContext: shouldBuildImpactContext
@@ -1349,7 +1354,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
         resolution,
       });
       return {
-        metrics: neutral(),
+        metrics: neutral('ESPN_NO_DATA'),
         teamInfo: null,
         games: [],
         impactContext: shouldBuildImpactContext
@@ -1450,7 +1455,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
       message: err.message,
     });
     return {
-      metrics: neutral(),
+      metrics: neutral('FETCH_ERROR'),
       teamInfo: null,
       games: [],
       impactContext: shouldBuildImpactContext
