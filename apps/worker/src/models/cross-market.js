@@ -12,6 +12,7 @@ const {
 const { projectNHL, projectNBACanonical } = require('./projections');
 const { DEGRADED_CONSTRAINTS, buildNoBetResult } = require('./input-gate');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
+const { resolveGoalieComposite } = require('./nhl-pace-model');
 const { compareProjection } = require('../../../../packages/odds/src/market_evaluator.js');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
@@ -302,9 +303,35 @@ function computeNHLMarketDecisions(oddsSnapshot) {
       raw?.goalie?.away?.gsax ??
       raw?.goalies?.away?.gsax,
   );
-  const goalieSum =
-    goalieHomeGsax !== null && goalieAwayGsax !== null
-      ? goalieHomeGsax + goalieAwayGsax
+  const homeGoalieSavePct = toNumber(
+    raw?.espn_metrics?.home?.metrics?.goalieSavePct ??
+      raw?.goalie_home_save_pct ??
+      raw?.goalie?.home?.save_pct ??
+      raw?.goalies?.home?.save_pct ??
+      null,
+  );
+  const awayGoalieSavePct = toNumber(
+    raw?.espn_metrics?.away?.metrics?.goalieSavePct ??
+      raw?.goalie_away_save_pct ??
+      raw?.goalie?.away?.save_pct ??
+      raw?.goalies?.away?.save_pct ??
+      null,
+  );
+  const homeGoalieComposite = resolveGoalieComposite(
+    homeGoalieSavePct,
+    goalieHomeGsax,
+  );
+  const awayGoalieComposite = resolveGoalieComposite(
+    awayGoalieSavePct,
+    goalieAwayGsax,
+  );
+  const goalieCompositeValues = [homeGoalieComposite, awayGoalieComposite]
+    .filter((entry) => entry.source !== 'NEUTRAL')
+    .map((entry) => entry.composite);
+  const goalieCompositeAverage =
+    goalieCompositeValues.length > 0
+      ? goalieCompositeValues.reduce((sum, value) => sum + value, 0) /
+        goalieCompositeValues.length
       : null;
 
   const pulledHomeSec = toNumber(
@@ -379,7 +406,10 @@ function computeNHLMarketDecisions(oddsSnapshot) {
       ? (restDaysHome + restDaysAway) / 2
       : null;
 
-  const goalieSignal = goalieSum === null ? 0 : clamp(-goalieSum / 6, -1, 1);
+  const goalieSignal =
+    goalieCompositeAverage === null
+      ? 0
+      : clamp(-goalieCompositeAverage / 2, -1, 1);
   const emptyNetSignal =
     pullAvg === null ? 0 : clamp((pullAvg - 60) / 60, -1, 1);
   const powerPlayEnvSignal = [ppHome, pkHome, ppAway, pkAway].every(
@@ -405,9 +435,14 @@ function computeNHLMarketDecisions(oddsSnapshot) {
     buildDriver({
       driverKey: 'goalie_quality',
       weight: 0.18,
-      eligible: goalieSum !== null,
+      eligible: goalieCompositeAverage !== null,
       signal: goalieSignal,
-      status: statusFromNumbers([goalieHomeGsax, goalieAwayGsax]),
+      status: statusFromNumbers([
+        goalieHomeGsax,
+        goalieAwayGsax,
+        homeGoalieSavePct,
+        awayGoalieSavePct,
+      ]),
       note: 'Combined goalie quality signal (higher quality favors UNDER).',
     }),
     buildDriver({

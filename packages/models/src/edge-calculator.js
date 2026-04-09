@@ -356,9 +356,14 @@ function computeTotalEdge({
   }
 
   let edge = p_fair - p_implied;
+  let effectiveConfidenceContext = confidenceContext;
   if (isNhlStyleTotal && Math.abs(edge) > 0.18) {
     edge = Math.sign(edge) * 0.18;
     railFlags.push('EDGE_SANITY_CLAMP_APPLIED');
+    effectiveConfidenceContext = {
+      ...confidenceContext,
+      watchdogStatus: 'CAUTION',
+    };
   }
   const edgePoints = mu - L;
 
@@ -369,7 +374,7 @@ function computeTotalEdge({
     p_implied: Number(p_implied.toFixed(4)),
     confidence: computeConfidence({
       baseConfidence: 0.88,
-      ...confidenceContext,
+      ...effectiveConfidenceContext,
     }),
     sigma_used: sigmaTotal,
     rail_flags: railFlags,

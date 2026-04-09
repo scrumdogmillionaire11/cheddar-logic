@@ -220,6 +220,47 @@ describe('cross-market orchestration', () => {
     expect(decisions.TOTAL.pricing_trace.price_source).toBe('odds_snapshot');
     expect(decisions.ML.pricing_trace.price_source).toBe('odds_snapshot');
   });
+
+  test('goalie signal can derive from composite save-pct-only inputs', () => {
+    const oddsSnapshot = {
+      total: 6.0,
+      total_price_over: -110,
+      total_price_under: -110,
+      spread_home: -1.5,
+      spread_price_home: -110,
+      spread_price_away: -110,
+      h2h_home: -125,
+      h2h_away: 105,
+      raw_data: {
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgGoalsFor: 3.4,
+              avgGoalsAgainst: 2.8,
+              restDays: 2,
+              goalieSavePct: 0.912,
+            },
+          },
+          away: {
+            metrics: {
+              avgGoalsFor: 3.0,
+              avgGoalsAgainst: 3.1,
+              restDays: 1,
+              goalieSavePct: 0.888,
+            },
+          },
+        },
+      },
+    };
+
+    const decisions = computeNHLMarketDecisions(oddsSnapshot);
+    const goalieDriver = decisions.TOTAL.drivers.find(
+      (driver) => driver.driverKey === 'goalie_quality',
+    );
+
+    expect(goalieDriver.eligible).toBe(true);
+    expect(goalieDriver.signal).not.toBe(0);
+  });
 });
 
 describe('goalieUncertaintyBlocks (WI-0382)', () => {
