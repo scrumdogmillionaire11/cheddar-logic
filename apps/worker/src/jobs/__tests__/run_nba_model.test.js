@@ -16,6 +16,7 @@ const {getDatabase, closeDatabase, runMigrations } = require('@cheddar-logic/dat
 const {
   generateNBAMarketCallCards,
   deriveExecutionStatusForCard,
+  applyExecutionGateToNbaCard,
 } = require('../run_nba_model');
 const {
   publishDecisionForCard,
@@ -164,6 +165,98 @@ describe('run_nba_model job', () => {
     };
 
     expect(deriveExecutionStatusForCard(card)).toBe('EXECUTABLE');
+  });
+
+  test('execution gate annotates executable market-call cards that clear the veto', () => {
+    const card = {
+      payloadData: {
+        execution_status: 'EXECUTABLE',
+        edge: 0.11,
+        confidence: 0.74,
+        model_status: 'MODEL_OK',
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        pass_reason_code: null,
+        reason_codes: [],
+        decision_v2: {
+          official_status: 'PLAY',
+        },
+      },
+    };
+    const nowMs = new Date(baseOdds.captured_at).getTime() + 90_000;
+
+    const result = applyExecutionGateToNbaCard(card, {
+      oddsSnapshot: baseOdds,
+      nowMs,
+    });
+
+    expect(result.evaluated).toBe(true);
+    expect(result.blocked).toBe(false);
+    expect(card.payloadData.execution_gate).toMatchObject({
+      evaluated: true,
+      should_bet: true,
+      model_status: 'MODEL_OK',
+      snapshot_age_ms: 90_000,
+    });
+    expect(card.payloadData.execution_gate.net_edge).toBeCloseTo(0.06, 6);
+    expect(card.payloadData.status).not.toBe('PASS');
+  });
+
+  test('execution gate demotes blocked executable market-call cards to PASS', () => {
+    const card = {
+      payloadData: {
+        execution_status: 'EXECUTABLE',
+        edge: 0.055,
+        confidence: 0.74,
+        model_status: 'MODEL_OK',
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        pass_reason_code: null,
+        reason_codes: [],
+        decision_v2: {
+          official_status: 'PLAY',
+        },
+      },
+    };
+    const nowMs = new Date(baseOdds.captured_at).getTime() + 90_000;
+
+    const decisionStatusBeforeGate =
+      card.payloadData.decision_v2?.official_status ?? null;
+    const result = applyExecutionGateToNbaCard(card, {
+      oddsSnapshot: baseOdds,
+      nowMs,
+    });
+
+    expect(result.evaluated).toBe(true);
+    expect(result.blocked).toBe(true);
+    expect(card.payloadData.execution_gate).toMatchObject({
+      evaluated: true,
+      should_bet: false,
+      snapshot_age_ms: 90_000,
+    });
+    expect(card.payloadData.execution_gate.blocked_by).toContain(
+      'NET_EDGE_INSUFFICIENT:0.0050',
+    );
+    expect(card.payloadData.classification).toBe('PASS');
+    expect(card.payloadData.action).toBe('PASS');
+    expect(card.payloadData.status).toBe('PASS');
+    expect(card.payloadData.execution_status).toBe('BLOCKED');
+    expect(card.payloadData.pass_reason_code).toBe(
+      'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
+    );
+    expect(card.payloadData.decision_v2?.official_status).toBe(
+      decisionStatusBeforeGate,
+    );
+    expect(result.strictDecisionSnapshot).toMatchObject({
+      classification: 'PASS',
+      action: 'PASS',
+      status: 'PASS',
+      execution_status: 'BLOCKED',
+      pass_reason_code: 'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
+      decision_v2_official_status: decisionStatusBeforeGate,
+    });
   });
 
   test('job_runs table records job execution as success', async () => {

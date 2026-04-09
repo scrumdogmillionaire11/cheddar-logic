@@ -39,6 +39,7 @@ const {
   evaluatePitcherPropPublishability,
   deriveMlbExecutionEnvelope,
   assertMlbExecutionInvariant,
+  applyExecutionGateToMlbPayload,
   buildMlbPipelineState,
   buildPitcherKLineContract,
   resolvePitcherKPayloadIdentity,
@@ -1315,6 +1316,106 @@ describe('WI-0720 MLB execution envelope', () => {
 
     expect(pipelineState.card_ready).toBe(true);
     expect(pipelineState.pricing_ready).toBe(false);
+  });
+
+  test('execution gate annotates executable MLB payloads that clear the veto', () => {
+    const payload = {
+      execution_status: 'EXECUTABLE',
+      edge: 0.09,
+      confidence: 0.72,
+      model_status: 'MODEL_OK',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      ev_passed: true,
+      reason_codes: [],
+      _publish_state: {
+        publish_ready: true,
+        emit_allowed: true,
+        execution_status: 'EXECUTABLE',
+      },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-03T01:15:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 120_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, {
+      oddsSnapshot,
+      nowMs,
+    });
+
+    expect(result).toEqual({ evaluated: true, blocked: false });
+    expect(payload.execution_gate).toMatchObject({
+      evaluated: true,
+      should_bet: true,
+      model_status: 'MODEL_OK',
+      snapshot_age_ms: 120_000,
+    });
+    expect(payload.execution_gate.net_edge).toBeCloseTo(0.04, 6);
+    expect(payload.status).toBe('FIRE');
+  });
+
+  test('execution gate demotes blocked executable MLB payloads to PASS', () => {
+    const payload = {
+      execution_status: 'EXECUTABLE',
+      edge: 0.055,
+      confidence: 0.72,
+      model_status: 'MODEL_OK',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      ev_passed: true,
+      reason_codes: [],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: {
+        publish_ready: true,
+        emit_allowed: true,
+        execution_status: 'EXECUTABLE',
+      },
+    };
+    const oddsSnapshot = { fetched_at: '2026-04-03T01:15:00Z' };
+    const nowMs = new Date(oddsSnapshot.fetched_at).getTime() + 180_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, {
+      oddsSnapshot,
+      nowMs,
+    });
+
+    expect(result).toEqual({ evaluated: true, blocked: true });
+    expect(payload.execution_gate).toMatchObject({
+      evaluated: true,
+      should_bet: false,
+      snapshot_age_ms: 180_000,
+    });
+    expect(payload.execution_gate.blocked_by).toContain(
+      'NET_EDGE_INSUFFICIENT:0.0050',
+    );
+    expect(payload.status).toBe('PASS');
+    expect(payload.action).toBe('PASS');
+    expect(payload.classification).toBe('PASS');
+    expect(payload.execution_status).toBe('BLOCKED');
+    expect(payload.actionable).toBe(false);
+    expect(payload.publish_ready).toBe(false);
+    expect(payload.pass_reason_code).toBe(
+      'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
+    );
+  });
+
+  test('execution gate skips projection-only MLB payloads', () => {
+    const payload = {
+      execution_status: 'PROJECTION_ONLY',
+      edge: 0.2,
+      confidence: 0.72,
+      model_status: 'MODEL_OK',
+    };
+
+    const result = applyExecutionGateToMlbPayload(payload, {
+      oddsSnapshot: { captured_at: '2026-04-03T01:15:00Z' },
+      nowMs: new Date('2026-04-03T01:16:00Z').getTime(),
+    });
+
+    expect(result).toEqual({ evaluated: false, blocked: false });
+    expect(payload.execution_gate).toBeUndefined();
   });
 });
 

@@ -78,6 +78,7 @@ const {
   classifyMlbPitcherKQuality,
   dedupeFlags,
 } = require('./mlb-k-input-classifier');
+const { evaluateExecution } = require('./execution-gate');
 
 // MLB-specific watchdog vocabulary stays local to this runner so WI-0604 can
 // document the new codes without widening shared registries.
@@ -625,6 +626,91 @@ function deriveMlbExecutionEnvelope({
       block_reason: blockReason,
     },
     ...(isPitcherK ? { k_prop_execution_path: kPropExecutionPath } : {}),
+  };
+}
+
+function resolveSnapshotAgeMs(oddsSnapshot, nowMs = Date.now()) {
+  const capturedAt = oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null;
+  if (!capturedAt) return null;
+
+  const capturedAtMs = new Date(capturedAt).getTime();
+  if (!Number.isFinite(capturedAtMs)) return null;
+
+  return Math.max(0, nowMs - capturedAtMs);
+}
+
+function toExecutionGatePassReasonCode(reason) {
+  const normalized = String(reason || '')
+    .toUpperCase()
+    .split(':')[0]
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return normalized
+    ? `PASS_EXECUTION_GATE_${normalized}`
+    : 'PASS_EXECUTION_GATE_BLOCKED';
+}
+
+function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.now() } = {}) {
+  if (!payload || typeof payload !== 'object') {
+    return { evaluated: false, blocked: false };
+  }
+
+  const executionStatus = String(payload.execution_status || '').toUpperCase();
+  const alreadyPass =
+    String(payload.status || '').toUpperCase() === 'PASS' ||
+    String(payload.action || '').toUpperCase() === 'PASS' ||
+    String(payload.classification || '').toUpperCase() === 'PASS';
+  if (executionStatus !== 'EXECUTABLE' || alreadyPass) {
+    return { evaluated: false, blocked: false };
+  }
+
+  const resolvedModelStatus = String(payload.model_status || 'MODEL_OK').toUpperCase();
+  const snapshotAgeMs = resolveSnapshotAgeMs(oddsSnapshot, nowMs);
+  const gateResult = evaluateExecution({
+    modelStatus: resolvedModelStatus,
+    rawEdge: Number.isFinite(payload.edge) ? payload.edge : null,
+    confidence: Number.isFinite(payload.confidence) ? payload.confidence : null,
+    snapshotAgeMs,
+  });
+
+  payload.execution_gate = {
+    evaluated: true,
+    should_bet: gateResult.shouldBet,
+    net_edge: gateResult.netEdge,
+    blocked_by: gateResult.blocked_by,
+    model_status: resolvedModelStatus,
+    snapshot_age_ms: snapshotAgeMs,
+    evaluated_at: new Date(nowMs).toISOString(),
+  };
+
+  if (!gateResult.shouldBet) {
+    const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
+    payload.status = 'PASS';
+    payload.action = 'PASS';
+    payload.classification = 'PASS';
+    payload.ev_passed = false;
+    payload.execution_status = 'BLOCKED';
+    payload.actionable = false;
+    payload.publish_ready = false;
+    payload.pass_reason_code = passReasonCode;
+    payload.reason_codes = Array.from(
+      new Set([passReasonCode, ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : [])]),
+    ).sort();
+    payload._publish_state = {
+      ...(payload._publish_state && typeof payload._publish_state === 'object'
+        ? payload._publish_state
+        : {}),
+      publish_ready: false,
+      emit_allowed: true,
+      execution_status: 'BLOCKED',
+      block_reason: gateResult.reason,
+    };
+  }
+
+  return {
+    evaluated: true,
+    blocked: !gateResult.shouldBet,
   };
 }
 
@@ -1981,6 +2067,7 @@ async function runMLBModel({
                 side: driver.prediction,
               },
               line,
+              model_status: driver.model_status ?? 'MODEL_OK',
               confidence: driver.confidence,
               tier,
               ev_passed:
@@ -2086,6 +2173,12 @@ async function runMLBModel({
               payloadData.line_fetched_at = null;
               payloadData.odds_freshness = null;
             }
+            applyExecutionGateToMlbPayload(payloadData, {
+              oddsSnapshot: {
+                captured_at: gameOddsSnapshot?.captured_at ?? null,
+                fetched_at: payloadData.line_fetched_at ?? null,
+              },
+            });
             assertMlbExecutionInvariant(payloadData);
 
             const cardTitle = isF5
@@ -2244,6 +2337,7 @@ module.exports = {
   evaluatePitcherPropPublishability,
   deriveMlbExecutionEnvelope,
   assertMlbExecutionInvariant,
+  applyExecutionGateToMlbPayload,
   // Exported for WI-0596 unit tests
   checkPitcherFreshness,
   validatePitcherKInputs,

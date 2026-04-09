@@ -65,8 +65,10 @@ const {
 } = require('@cheddar-logic/models');
 const {
   publishDecisionForCard,
+  capturePublishedDecisionState,
   assertNoDecisionMutation,
 } = require('../utils/decision-publisher');
+const { evaluateExecution } = require('./execution-gate');
 const {
   normalizeRawDataPayload,
 } = require('../utils/normalize-raw-data-payload');
@@ -363,6 +365,110 @@ function deriveGameBlockingReasonCodes({
 function canPriceCard(card) {
   const sharpPriceStatus = card?.payloadData?.decision_v2?.sharp_price_status;
   return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
+}
+
+function resolveSnapshotAgeMs(oddsSnapshot, nowMs = Date.now()) {
+  const capturedAt = oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null;
+  if (!capturedAt) return null;
+
+  const capturedAtMs = new Date(capturedAt).getTime();
+  if (!Number.isFinite(capturedAtMs)) return null;
+
+  return Math.max(0, nowMs - capturedAtMs);
+}
+
+function toExecutionGatePassReasonCode(reason) {
+  const normalized = String(reason || '')
+    .toUpperCase()
+    .split(':')[0]
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return normalized
+    ? `PASS_EXECUTION_GATE_${normalized}`
+    : 'PASS_EXECUTION_GATE_BLOCKED';
+}
+
+function applyExecutionGateToNbaCard(card, { oddsSnapshot, nowMs = Date.now() } = {}) {
+  if (!card?.payloadData || typeof card.payloadData !== 'object') {
+    return { evaluated: false, blocked: false, strictDecisionSnapshot: null };
+  }
+
+  const payload = card.payloadData;
+  const executionStatus = String(payload.execution_status || '').toUpperCase();
+  const alreadyPass =
+    String(payload.status || '').toUpperCase() === 'PASS' ||
+    String(payload.action || '').toUpperCase() === 'PASS' ||
+    String(payload.classification || '').toUpperCase() === 'PASS' ||
+    String(payload.decision_v2?.official_status || '').toUpperCase() === 'PASS';
+  const resolvedModelStatus = String(payload.model_status || 'MODEL_OK').toUpperCase();
+  const snapshotAgeMs = resolveSnapshotAgeMs(oddsSnapshot, nowMs);
+
+  if (executionStatus !== 'EXECUTABLE' || alreadyPass) {
+    payload.execution_gate = {
+      evaluated: false,
+      should_bet: null,
+      net_edge: null,
+      blocked_by: [alreadyPass ? 'NOT_BET_ELIGIBLE' : 'NOT_EXECUTABLE_PATH'],
+      model_status: resolvedModelStatus,
+      snapshot_age_ms: snapshotAgeMs,
+      evaluated_at: new Date(nowMs).toISOString(),
+    };
+
+    return {
+      evaluated: false,
+      blocked: false,
+      strictDecisionSnapshot: capturePublishedDecisionState(payload),
+    };
+  }
+
+  const gateResult = evaluateExecution({
+    modelStatus: resolvedModelStatus,
+    rawEdge: Number.isFinite(payload.edge) ? payload.edge : null,
+    confidence: Number.isFinite(payload.confidence) ? payload.confidence : null,
+    snapshotAgeMs,
+  });
+
+  payload.execution_gate = {
+    evaluated: true,
+    should_bet: gateResult.shouldBet,
+    net_edge: gateResult.netEdge,
+    blocked_by: gateResult.blocked_by,
+    model_status: resolvedModelStatus,
+    snapshot_age_ms: snapshotAgeMs,
+    evaluated_at: new Date(nowMs).toISOString(),
+  };
+
+  if (!gateResult.shouldBet) {
+    const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
+    payload.classification = 'PASS';
+    payload.action = 'PASS';
+    payload.status = 'PASS';
+    payload.ui_display_status = 'PASS';
+    payload.execution_status = 'BLOCKED';
+    payload.ev_passed = false;
+    payload.actionable = false;
+    payload.publish_ready = false;
+    payload.pass_reason_code = passReasonCode;
+    payload.reason_codes = Array.from(
+      new Set([passReasonCode, ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : [])]),
+    ).sort();
+    payload._publish_state = {
+      ...(payload._publish_state && typeof payload._publish_state === 'object'
+        ? payload._publish_state
+        : {}),
+      publish_ready: false,
+      emit_allowed: true,
+      execution_status: 'BLOCKED',
+      block_reason: gateResult.reason,
+    };
+  }
+
+  return {
+    evaluated: true,
+    blocked: !gateResult.shouldBet,
+    strictDecisionSnapshot: capturePublishedDecisionState(payload),
+  };
 }
 
 function deriveExecutionStatusForCard(
@@ -721,6 +827,7 @@ function generateNBAMarketCallCards(
         prediction: side,
         confidence,
         tier,
+        model_status: totalDecision.model_status ?? 'MODEL_OK',
         status,
         recommended_bet_type: 'total',
         kind: 'PLAY',
@@ -906,6 +1013,7 @@ function generateNBAMarketCallCards(
         prediction: side,
         confidence,
         tier,
+        model_status: spreadDecision.model_status ?? 'MODEL_OK',
         recommended_bet_type: 'spread',
         kind: 'PLAY',
         market_type: 'SPREAD',
@@ -1460,6 +1568,14 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                 `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
               );
             }
+            const executionGateOutcome = applyExecutionGateToNbaCard(card, {
+              oddsSnapshot,
+            });
+            if (executionGateOutcome.blocked) {
+              console.log(
+                `  [execution-gate] ${gameId} [${card.cardType}]: ${card.payloadData.pass_reason_code}`,
+              );
+            }
             assertExecutableCardsArePriced(card);
             attachRunId(card, jobRunId);
             // WI-0836: rest signal observability
@@ -1473,7 +1589,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               : '';
             pendingCards.push({
               card,
-              strictDecisionSnapshot: decisionOutcome.strictDecisionSnapshot,
+              strictDecisionSnapshot: executionGateOutcome.strictDecisionSnapshot,
               logLine: `  [ok] ${gameId} [${card.cardType}]${tierLabel}: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
             });
           }
@@ -1606,4 +1722,5 @@ module.exports = {
   applyNbaImpactGateToCard,
   generateNBAMarketCallCards,
   deriveExecutionStatusForCard,
+  applyExecutionGateToNbaCard,
 };
