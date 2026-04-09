@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-08T12:00:00Z"
-last_activity: "2026-04-08 - WI-0814 complete: sigma fallback safety gate — PLAY→LEAN cap in computeOfficialStatus when sigmaOverride.sigma_source='fallback'; SIGMA_FALLBACK_DEGRADED reason code; [SIGMA_FALLBACK] startup warn in NBA/NHL/MLB runners; NHL sigma_source propagation fix; 11 new tests (50 total passing)."
+last_updated: "2026-04-08T22:00:00Z"
+last_activity: "2026-04-08 - WI-0840 complete: MLB dynamic league constants — computeMLBLeagueAverages queries mlb_pitcher_stats AVG(season_k_pct|x_fip|bb_pct); setLeagueConstants setter; module-level mutables replace 8 hardcoded call-sites; [MLB_LEAGUE_AVG] log; 1265+234 tests passing."
 ---
 
 # Project State
@@ -67,7 +67,7 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 | ~~**WI-0814**~~ | ~~Sigma fallback safety gate — PLAY→LEAN when `sigma_source=fallback`~~ | ~~High~~ COMPLETE (2026-04-08) | — |
 | **WI-0839** | NHL 1P sigma static gate — LEAN when <40 settled 1P results | Medium | WI-0835 |
 | **WI-0836** | Rest-days pipeline — compute `homeRest`/`awayRest`, thread into NBA + NHL models | Medium | none |
-| **WI-0840** | MLB dynamic league constants — replace hardcoded 2024 averages with live season stats | Medium | none |
+| ~~**WI-0840**~~ | ~~MLB dynamic league constants — replace hardcoded 2024 averages with live season stats~~ | ~~Medium~~ COMPLETE (2026-04-08) | — |
 
 **Sprint 2 done when:** All 7 items land, CI green, no model test regressions.
 
