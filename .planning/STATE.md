@@ -75,7 +75,11 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 | ~~**WI-0814**~~ | ~~Sigma fallback safety gate — PLAY→LEAN when `sigma_source=fallback`~~ | ~~High~~ COMPLETE (2026-04-08) | — |
 | **WI-0839** | NHL 1P sigma static gate — LEAN when <40 settled 1P results | Medium | WI-0835 |
 | **WI-0836** | ~~Rest-days pipeline — compute `homeRest`/`awayRest`, thread into NBA + NHL models~~ | ~~Medium~~ COMPLETE (2026-04-08) | none |
+<<<<<<< Updated upstream
 | **WI-0840** | MLB dynamic league constants — replace hardcoded 2024 averages with live season stats | Medium | none |
+=======
+| ~~**WI-0840**~~ | ~~MLB dynamic league constants — replace hardcoded 2024 averages with live season stats~~ | ~~Medium~~ COMPLETE (2026-04-08) | — |
+>>>>>>> Stashed changes
 
 **Sprint 2 done when:** All 7 items land, CI green, no model test regressions.
 
