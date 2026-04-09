@@ -1,115 +1,107 @@
 'use strict';
 
 /**
- * WI-0769: NBA key-player availability gate tests.
+ * WI-0841: NBA impact-context gate tests.
  *
  * Tests:
- *  1. OUT impact player on home team → tier capped at LEAN, missing_inputs contains 'key_player_out'
- *  2. Full healthy roster (no OUT impact players) → no availability flags, tier unchanged
- *  3. No availability rows for either team → missing_inputs contains 'nba_availability_unresolved'
- *  4. DTD impact player → missing_inputs contains 'key_player_uncertain', tier NOT capped
+ *  1. ESPN injury feed with starter OUT → tier capped at LEAN, key_player_out emitted
+ *  2. ESPN injury feed with no injuries → no downgrade
  */
 
 const assert = require('assert');
+const {
+  buildNbaAvailabilityGate,
+  applyNbaImpactGateToCard,
+} = require('../jobs/run_nba_model');
 
-// ---------------------------------------------------------------------------
-// Inline isolated implementation of buildNbaAvailabilityGate for unit testing.
-// We intentionally avoid require('../jobs/run_nba_model') because that file
-// has heavy side-effects (DB init, env, scheduler hooks). Instead we extract
-// the pure logic and stub getPlayerAvailabilityByTeam.
-// ---------------------------------------------------------------------------
+const DATA_TEAM_METRICS_PATH = '../../../../packages/data/src/team-metrics';
+const DATA_ESPN_CLIENT_PATH = '../../../../packages/data/src/espn-client';
 
-const NBA_IMPACT_PLAYERS = new Set([
-  'LeBron James',
-  'Stephen Curry',
-  'Giannis Antetokounmpo',
-  'Nikola Jokic',
-  'Jayson Tatum',
-  'Joel Embiid',
-]);
+function makeTeamSchedule() {
+  return [
+    { date: '2026-03-01T00:00:00Z', pointsFor: 118, pointsAgainst: 110, result: 'W' },
+    { date: '2026-03-03T00:00:00Z', pointsFor: 112, pointsAgainst: 106, result: 'W' },
+    { date: '2026-03-05T00:00:00Z', pointsFor: 108, pointsAgainst: 101, result: 'W' },
+    { date: '2026-03-07T00:00:00Z', pointsFor: 116, pointsAgainst: 109, result: 'W' },
+    { date: '2026-03-09T00:00:00Z', pointsFor: 120, pointsAgainst: 114, result: 'W' },
+  ];
+}
 
-const NBA_TEAM_ABBR_MAP = {
-  'Boston Celtics': 'BOS',
-  'Miami Heat': 'MIA',
-  'Los Angeles Lakers': 'LAL',
-  'Golden State Warriors': 'GS',
-  'Denver Nuggets': 'DEN',
-};
+function makePlayerGameLog(points, starts) {
+  const events = {};
+  points.forEach((pts, index) => {
+    const day = String(index + 1).padStart(2, '0');
+    events[String(index + 1)] = {
+      date: `2026-03-${day}T00:00:00Z`,
+      stats: [pts, starts[index] ? 1 : 0],
+    };
+  });
 
-/**
- * Factory: build availability gate function with a stubbed DB query.
- * @param {function} stubGetByTeam  Replacement for getPlayerAvailabilityByTeam
- */
-function makeGateFn(stubGetByTeam) {
-  return function buildNbaAvailabilityGate(homeTeam, awayTeam) {
-    const EMPTY = { missingFlags: [], uncertainFlags: [], availabilityFlags: [] };
-    try {
-      const homeAbbr = NBA_TEAM_ABBR_MAP[homeTeam] || null;
-      const awayAbbr = NBA_TEAM_ABBR_MAP[awayTeam] || null;
-
-      if (!homeAbbr && !awayAbbr) return EMPTY;
-
-      const allRows = [];
-      if (homeAbbr) allRows.push(...stubGetByTeam(homeAbbr, 'nba'));
-      if (awayAbbr) allRows.push(...stubGetByTeam(awayAbbr, 'nba'));
-
-      if (allRows.length === 0) return EMPTY;
-
-      const missingFlags = [];
-      const uncertainFlags = [];
-      const availabilityFlags = [];
-
-      for (const row of allRows) {
-        const playerName = row.player_name || '';
-        if (!NBA_IMPACT_PLAYERS.has(playerName)) continue;
-
-        if (row.status === 'OUT') {
-          if (!missingFlags.includes('key_player_out')) missingFlags.push('key_player_out');
-          availabilityFlags.push({ player: playerName, team: row.team_id, status: row.status });
-        } else if (row.status === 'DTD' || row.status === 'GTD') {
-          if (!uncertainFlags.includes('key_player_uncertain')) uncertainFlags.push('key_player_uncertain');
-          availabilityFlags.push({ player: playerName, team: row.team_id, status: row.status });
-        }
-      }
-
-      return { missingFlags, uncertainFlags, availabilityFlags };
-    } catch (err) {
-      return { missingFlags: [], uncertainFlags: [], availabilityFlags: [] };
-    }
+  return {
+    labels: ['PTS', 'GS'],
+    events,
   };
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeRow(playerName, teamId, status) {
-  return { player_id: Math.floor(Math.random() * 1e6), player_name: playerName, team_id: teamId, sport: 'nba', status, status_reason: null, checked_at: new Date().toISOString() };
+function makeInjuryAthlete({ playerId, playerName, teamAbbr }) {
+  return {
+    id: String(playerId),
+    status: 'Out',
+    shortComment: `${playerName} unavailable`,
+    athlete: {
+      displayName: playerName,
+      links: [
+        {
+          href: `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/athletes/${playerId}/${playerName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+        },
+      ],
+      team: { abbreviation: teamAbbr },
+    },
+  };
 }
 
-/**
- * Apply the card-tier downgrade logic mirrored from run_nba_model.js.
- * Returns the modified card (mutates in place).
- */
-function applyAvailabilityGateToCard(card, availabilityGate) {
-  if (availabilityGate.missingFlags.length > 0 || availabilityGate.uncertainFlags.length > 0) {
-    card.payloadData.missing_inputs = [
-      ...(card.payloadData.missing_inputs || []),
-      ...availabilityGate.missingFlags,
-    ];
-    if (availabilityGate.availabilityFlags.length > 0) {
-      if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
-      card.payloadData.raw_data.availability_flags = availabilityGate.availabilityFlags;
-    }
-    if (
-      availabilityGate.missingFlags.includes('key_player_out') &&
-      card.payloadData.tier &&
-      (card.payloadData.tier === 'FIRE' || card.payloadData.tier === 'WATCH')
-    ) {
-      card.payloadData.tier = 'LEAN';
-    }
-  }
-  return card;
+async function loadImpactContextFromEspnFixtures({
+  injuriesPayload,
+  gameLogsByPlayerId = {},
+  teamName = 'Boston Celtics',
+  teamInfo = {
+    id: 2,
+    name: 'Boston Celtics',
+    abbreviation: 'BOS',
+    rank: 1,
+    record: '50-10',
+  },
+  teamSchedule = makeTeamSchedule(),
+} = {}) {
+  jest.resetModules();
+  const actualEspnClient = jest.requireActual(DATA_ESPN_CLIENT_PATH);
+
+  jest.doMock(DATA_ESPN_CLIENT_PATH, () => ({
+    ...actualEspnClient,
+    fetchTeamSchedule: jest.fn(async () => teamSchedule),
+    fetchTeamInfo: jest.fn(async () => teamInfo),
+    fetchTeamStatistics: jest.fn(async () => null),
+    fetchScoreboardEvents: jest.fn(async () => []),
+    fetchNbaInjuries: jest.fn(async () => injuriesPayload),
+    fetchNbaPlayerGameLog: jest.fn(async (playerId) => gameLogsByPlayerId[playerId] || null),
+  }));
+
+  jest.doMock('../../../../packages/data/src/db', () => ({
+    getTeamMetricsCache: jest.fn(() => null),
+    upsertTeamMetricsCache: jest.fn(() => null),
+  }));
+
+  jest.doMock('../../../../packages/data/src/teamrankings-ft', () => ({
+    lookupTeamRankingsFreeThrowPct: jest.fn(() => null),
+  }));
+
+  const { getTeamMetricsWithGames } = require(DATA_TEAM_METRICS_PATH);
+  const result = await getTeamMetricsWithGames(teamName, 'NBA', {
+    includeImpactContext: true,
+    skipCache: true,
+  });
+
+  return result.impactContext;
 }
 
 function makeCard(tier = 'FIRE') {
@@ -125,113 +117,77 @@ function makeCard(tier = 'FIRE') {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+describe('nba-impact-gate', () => {
+  test('ESPN injury feed with starter OUT caps tier at LEAN', async () => {
+    const impactContext = await loadImpactContextFromEspnFixtures({
+      injuriesPayload: {
+        injuries: [
+          {
+            displayName: 'Boston Celtics',
+            injuries: [
+              makeInjuryAthlete({ playerId: 0, playerName: 'Jayson Tatum', teamAbbr: 'BOS' }),
+              makeInjuryAthlete({ playerId: 1, playerName: 'Player One', teamAbbr: 'BOS' }),
+              makeInjuryAthlete({ playerId: 2, playerName: 'Player Two', teamAbbr: 'BOS' }),
+              makeInjuryAthlete({ playerId: 3, playerName: 'Player Three', teamAbbr: 'BOS' }),
+            ],
+          },
+        ],
+      },
+      gameLogsByPlayerId: {
+        0: makePlayerGameLog([14, 15, 13, 16, 12], [1, 1, 1, 1, 1]),
+        1: makePlayerGameLog([24, 23, 25, 22, 24], [0, 0, 0, 0, 0]),
+        2: makePlayerGameLog([21, 22, 20, 19, 23], [0, 0, 0, 0, 0]),
+        3: makePlayerGameLog([18, 17, 19, 20, 16], [0, 0, 0, 0, 0]),
+      },
+    });
 
-describe('nba-availability-gate', () => {
+    assert.ok(impactContext);
+    const tatum = impactContext.players.find((player) => player.playerName === 'Jayson Tatum');
+    assert.ok(tatum);
+    assert.strictEqual(tatum.rawStatus, 'OUT');
+    assert.strictEqual(tatum.isStarter, true);
+    assert.strictEqual(tatum.isTopScorer, false);
+    assert.strictEqual(tatum.isImpactPlayer, true);
+    assert.deepStrictEqual(tatum.impactReasons, ['starter']);
 
-// Test 1: OUT impact player → tier capped at LEAN, key_player_out in missing_inputs
-test('OUT impact player caps tier at LEAN and sets key_player_out', () => {
-  const gateRows = {
-    BOS: [makeRow('Jayson Tatum', 'BOS', 'OUT'), makeRow('Jaylen Brown', 'BOS', 'ACTIVE')],
-    MIA: [],
-  };
-  const buildGate = makeGateFn((teamId) => gateRows[teamId] || []);
+    const gate = buildNbaAvailabilityGate(impactContext, null);
 
-  const gate = buildGate('Boston Celtics', 'Miami Heat');
-  assert.ok(gate.missingFlags.includes('key_player_out'), 'missingFlags should include key_player_out');
-  assert.strictEqual(gate.availabilityFlags.length, 1, 'should have 1 availability flag');
-  assert.strictEqual(gate.availabilityFlags[0].player, 'Jayson Tatum');
-  assert.strictEqual(gate.availabilityFlags[0].status, 'OUT');
+    assert.ok(gate.missingFlags.includes('key_player_out'));
+    assert.strictEqual(gate.availabilityFlags.length, 4);
+    assert.deepStrictEqual(gate.availabilityFlags[0].impact_reasons, ['starter']);
+    assert.strictEqual(gate.availabilityFlags[0].is_impact_player, true);
 
-  // Apply to a FIRE-tier card — should downgrade to LEAN
-  const card = makeCard('FIRE');
-  applyAvailabilityGateToCard(card, gate);
-  assert.strictEqual(card.payloadData.tier, 'LEAN', 'FIRE card should be capped to LEAN');
-  assert.ok(card.payloadData.missing_inputs.includes('key_player_out'));
+    const card = makeCard('FIRE');
+    applyNbaImpactGateToCard(card, gate);
+    assert.strictEqual(card.payloadData.tier, 'LEAN');
+    assert.ok(card.payloadData.missing_inputs.includes('key_player_out'));
+    assert.strictEqual(card.payloadData.raw_data.availability_flags.length, 4);
+  });
 
-  // Also test on a WATCH-tier card
-  const watchCard = makeCard('WATCH');
-  applyAvailabilityGateToCard(watchCard, gate);
-  assert.strictEqual(watchCard.payloadData.tier, 'LEAN', 'WATCH card should be capped to LEAN');
+  test('ESPN injury feed with no injuries does not downgrade PLAY/FIRE', async () => {
+    const impactContext = await loadImpactContextFromEspnFixtures({
+      injuriesPayload: {
+        injuries: [
+          {
+            displayName: 'Boston Celtics',
+            injuries: [],
+          },
+        ],
+      },
+    });
+
+    assert.ok(impactContext);
+    assert.strictEqual(impactContext.available, true);
+    assert.deepStrictEqual(impactContext.players, []);
+
+    const gate = buildNbaAvailabilityGate(impactContext, null);
+    assert.strictEqual(gate.missingFlags.length, 0);
+    assert.strictEqual(gate.uncertainFlags.length, 0);
+    assert.strictEqual(gate.availabilityFlags.length, 0);
+
+    const card = makeCard('FIRE');
+    applyNbaImpactGateToCard(card, gate);
+    assert.strictEqual(card.payloadData.tier, 'FIRE');
+    assert.strictEqual(card.payloadData.missing_inputs.length, 0);
+  });
 });
-
-// Test 2: Full healthy roster (no impact players on injury report) → no flags, tier unchanged
-test('Full roster with no OUT impact players: no flags, tier unchanged', () => {
-  const gateRows = {
-    LAL: [makeRow('Austin Reaves', 'LAL', 'OUT')],   // not an impact player
-    GS: [makeRow('Andrew Wiggins', 'GS', 'DTD')],    // not an impact player
-  };
-  const buildGate = makeGateFn((teamId) => gateRows[teamId] || []);
-
-  const gate = buildGate('Los Angeles Lakers', 'Golden State Warriors');
-  assert.strictEqual(gate.missingFlags.length, 0, 'should have no missing flags');
-  assert.strictEqual(gate.uncertainFlags.length, 0, 'should have no uncertain flags');
-  assert.strictEqual(gate.availabilityFlags.length, 0, 'should have no availability flags');
-
-  const card = makeCard('FIRE');
-  applyAvailabilityGateToCard(card, gate);
-  assert.strictEqual(card.payloadData.tier, 'FIRE', 'tier should be unchanged');
-  assert.strictEqual(card.payloadData.missing_inputs.length, 0);
-});
-
-// Test 3: No rows for either team → fail-open (empty flags, no degradation)
-test('No availability rows: fail-open, no flags emitted', () => {
-  const buildGate = makeGateFn(() => []);
-
-  const gate = buildGate('Boston Celtics', 'Miami Heat');
-  assert.strictEqual(gate.missingFlags.length, 0, 'should have no missing flags when no data');
-  assert.strictEqual(gate.uncertainFlags.length, 0, 'should have no uncertain flags when no data');
-  assert.strictEqual(gate.availabilityFlags.length, 0, 'should have no availability flags when no data');
-
-  // Tier must not be touched
-  const card = makeCard('FIRE');
-  applyAvailabilityGateToCard(card, gate);
-  assert.strictEqual(card.payloadData.tier, 'FIRE', 'tier should be unchanged when no availability data');
-  assert.strictEqual(card.payloadData.missing_inputs.length, 0, 'no missing_inputs pollution when no data');
-});
-
-// Test 4: DTD impact player → key_player_uncertain, tier NOT capped
-test('DTD impact player adds key_player_uncertain but does not cap tier', () => {
-  const gateRows = {
-    DEN: [makeRow('Nikola Jokic', 'DEN', 'DTD')],
-    MIA: [],
-  };
-  const buildGate = makeGateFn((teamId) => gateRows[teamId] || []);
-
-  const gate = buildGate('Denver Nuggets', 'Miami Heat');
-  assert.strictEqual(gate.missingFlags.length, 0, 'DTD should not set missing flags');
-  assert.ok(gate.uncertainFlags.includes('key_player_uncertain'));
-  assert.strictEqual(gate.availabilityFlags[0].player, 'Nikola Jokic');
-
-  const card = makeCard('FIRE');
-  applyAvailabilityGateToCard(card, gate);
-  assert.strictEqual(card.payloadData.tier, 'FIRE', 'DTD should not cap tier');
-});
-
-// Test 5: Unknown team names → fail-open (empty flags, no degradation)
-test('Unknown team names produce empty flags (fail-open)', () => {
-  const buildGate = makeGateFn(() => []);
-
-  const gate = buildGate('Unknown FC', 'Mystery Team');
-  assert.strictEqual(gate.missingFlags.length, 0, 'unknown teams should not emit any flags');
-  assert.strictEqual(gate.uncertainFlags.length, 0);
-  assert.strictEqual(gate.availabilityFlags.length, 0);
-});
-
-// Test 6: LEAN card with OUT impact player — tier stays LEAN (no further cap needed)
-test('LEAN card with OUT impact player stays LEAN', () => {
-  const gateRows = {
-    BOS: [makeRow('Jayson Tatum', 'BOS', 'OUT')],
-    MIA: [],
-  };
-  const buildGate = makeGateFn((teamId) => gateRows[teamId] || []);
-
-  const gate = buildGate('Boston Celtics', 'Miami Heat');
-  const card = makeCard('LEAN');
-  applyAvailabilityGateToCard(card, gate);
-  assert.strictEqual(card.payloadData.tier, 'LEAN', 'LEAN card should stay LEAN');
-});
-
-}); // end describe('nba-availability-gate')

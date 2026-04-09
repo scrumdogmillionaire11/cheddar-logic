@@ -18,6 +18,11 @@ const {
   fetchTeamInfo,
   fetchTeamStatistics,
   fetchScoreboardEvents,
+  fetchNbaInjuries,
+  fetchNbaPlayerGameLog,
+  extractPlayerGameLogSummary,
+  normalizeEspnInjuryStatus,
+  extractPlayerIdFromAthleteLinks,
   extractFreeThrowPctFromStatisticsPayload,
 } = require('./espn-client');
 const { normalizeSportCode, resolveTeamVariant } = require('./normalize');
@@ -603,6 +608,164 @@ function withNcaamFreeThrowPct(metrics, options = {}) {
   return base;
 }
 
+const NBA_IMPACT_STATUSES = new Set(['OUT', 'DOUBTFUL']);
+
+function matchesNbaTeamGroup(teamGroup, teamCandidates) {
+  const groupName = normalizeTeamKey(teamGroup?.displayName || teamGroup?.team?.displayName || '');
+  if (!groupName) return false;
+
+  for (const candidate of teamCandidates) {
+    const normalizedCandidate = normalizeTeamKey(candidate);
+    if (!normalizedCandidate) continue;
+    if (groupName === normalizedCandidate) return true;
+    if (groupName.includes(normalizedCandidate) || normalizedCandidate.includes(groupName)) return true;
+  }
+
+  return false;
+}
+
+function finalizeNbaImpactContext(playerSnapshots, options = {}) {
+  const generatedAt = options.generatedAt || new Date().toISOString();
+  const available = options.available !== false;
+  const snapshots = Array.isArray(playerSnapshots)
+    ? playerSnapshots
+        .filter((player) => player && typeof player === 'object')
+        .map((player) => ({
+          playerId: String(player.playerId || '').trim(),
+          playerName: String(player.playerName || '').trim(),
+          teamAbbr: player.teamAbbr || null,
+          rawStatus: normalizeEspnInjuryStatus(player.rawStatus),
+          avgPointsLast5: Number.isFinite(Number(player.avgPointsLast5))
+            ? Number(player.avgPointsLast5)
+            : null,
+          startsLast5: Number.isFinite(Number(player.startsLast5))
+            ? Number(player.startsLast5)
+            : 0,
+          isStarter: false,
+          isTopScorer: false,
+          isImpactPlayer: false,
+          impactReasons: [],
+        }))
+        .filter((player) => player.playerId || player.playerName)
+    : [];
+
+  if (snapshots.length === 0) {
+    return { available, generatedAt, players: [] };
+  }
+
+  const topScorers = [...snapshots]
+    .sort((a, b) => {
+      const aPoints = Number.isFinite(a.avgPointsLast5) ? a.avgPointsLast5 : -Infinity;
+      const bPoints = Number.isFinite(b.avgPointsLast5) ? b.avgPointsLast5 : -Infinity;
+      if (aPoints !== bPoints) return bPoints - aPoints;
+      return a.playerName.localeCompare(b.playerName);
+    })
+    .slice(0, 3)
+    .map((player) => player.playerId);
+
+  const topScorerSet = new Set(topScorers);
+
+  const players = snapshots.map((player) => {
+    const isStarter = Number.isFinite(player.startsLast5) && player.startsLast5 >= 3;
+    const isTopScorer = topScorerSet.has(player.playerId);
+    const impactReasons = [];
+    if (isStarter) impactReasons.push('starter');
+    if (isTopScorer) impactReasons.push('top_3_scorer');
+    const isImpactPlayer =
+      NBA_IMPACT_STATUSES.has(player.rawStatus) && impactReasons.length > 0;
+    return {
+      ...player,
+      isStarter,
+      isTopScorer,
+      isImpactPlayer,
+      impactReasons,
+    };
+  });
+
+  return { available, generatedAt, players };
+}
+
+async function buildNbaImpactContext({ teamName, teamInfo = null, seasonYear = null }) {
+  const generatedAt = new Date().toISOString();
+
+  try {
+    const injuriesPayload = await fetchNbaInjuries();
+    if (!injuriesPayload || !Array.isArray(injuriesPayload.injuries)) {
+      return { available: false, generatedAt, players: [] };
+    }
+
+    const teamCandidates = [teamName, teamInfo?.name, teamInfo?.displayName]
+      .map((candidate) => String(candidate || '').trim())
+      .filter(Boolean);
+    const teamGroup = injuriesPayload.injuries.find((group) =>
+      matchesNbaTeamGroup(group, teamCandidates),
+    );
+
+    if (!teamGroup) {
+      return { available: false, generatedAt, players: [] };
+    }
+
+    const resolvedSeasonYear = Number.isFinite(Number(seasonYear))
+      ? Number(seasonYear)
+      : Number.isFinite(Number(injuriesPayload?.season?.year))
+        ? Number(injuriesPayload.season.year)
+        : new Date().getFullYear();
+    const injuredPlayers = Array.isArray(teamGroup.injuries) ? teamGroup.injuries : [];
+    const candidateEntries = injuredPlayers.filter((entry) => {
+      const status = normalizeEspnInjuryStatus(entry?.status);
+      return NBA_IMPACT_STATUSES.has(status);
+    });
+
+    if (candidateEntries.length === 0) {
+      return { available: true, generatedAt, players: [] };
+    }
+
+    const playerSnapshots = [];
+    let fetchFailure = false;
+
+    for (const entry of candidateEntries) {
+      const athlete = entry?.athlete || {};
+      const playerId = extractPlayerIdFromAthleteLinks(athlete, entry?.id);
+      const playerName = String(athlete.displayName || '').trim() ||
+        [athlete.firstName, athlete.lastName].map((value) => String(value || '').trim()).filter(Boolean).join(' ');
+      const teamAbbr = athlete?.team?.abbreviation || teamInfo?.abbreviation || null;
+      const rawStatus = normalizeEspnInjuryStatus(entry?.status);
+
+      if (!playerId || !playerName) {
+        fetchFailure = true;
+        continue;
+      }
+
+      const gamelogPayload = await fetchNbaPlayerGameLog(playerId, resolvedSeasonYear, 2);
+      const summary = extractPlayerGameLogSummary(gamelogPayload, { limit: 5 });
+      if (!summary) {
+        fetchFailure = true;
+        continue;
+      }
+
+      playerSnapshots.push({
+        playerId,
+        playerName,
+        teamAbbr,
+        rawStatus,
+        avgPointsLast5: summary.avgPointsLast5,
+        startsLast5: summary.startsLast5,
+      });
+    }
+
+    return finalizeNbaImpactContext(playerSnapshots, {
+      available: !fetchFailure,
+      generatedAt,
+    });
+  } catch (err) {
+    logTeamMetricsEvent('NBA_IMPACT_CONTEXT_ERROR', {
+      teamName,
+      message: err.message,
+    });
+    return { available: false, generatedAt, players: [] };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -1024,11 +1187,13 @@ async function getTeamMetrics(teamName, sport) {
  * @param {string} sport - 'NHL' | 'NBA' | 'NCAAM'
  * @param {object} options
  * @param {boolean} [options.includeGames=false]
+ * @param {boolean} [options.includeImpactContext=false]
  * @param {number} [options.limit=5]
  * @returns {Promise<{metrics: object, teamInfo: object|null, games: Array}>}
  */
 async function getTeamMetricsWithGames(teamName, sport, options = {}) {
   const includeGames = options.includeGames === true;
+  const includeImpactContext = options.includeImpactContext === true;
   const limit = Number.isFinite(options.limit) ? options.limit : 5;
   const strictVariantMatch = options.strictVariantMatch !== false;
   const skipCache = options.skipCache === true;
@@ -1036,6 +1201,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
     typeof sport === 'string' ? sport : String(sport || ''),
     'getTeamMetricsWithGames'
   ) || String(sport || '').trim().toUpperCase();
+  const shouldBuildImpactContext = includeImpactContext && normalizedSport === 'NBA';
 
   // Check daily DB cache first (unless skipCache=true)
   if (!skipCache) {
@@ -1054,12 +1220,19 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
               ? withNcaamFreeThrowPct(cachedMetrics, {
                   teamName,
                   preferExisting: true,
-                })
+              })
               : cachedMetrics;
+          const impactContext = shouldBuildImpactContext
+            ? await buildNbaImpactContext({
+                teamName,
+                teamInfo: cached.teamInfo || null,
+              })
+            : null;
           return {
             metrics: metricsWithFt,
             teamInfo: cached.teamInfo || null,
             games: includeGames && cached.recentGames ? cached.recentGames : [],
+            impactContext,
             resolution: {
               ...cached.resolution,
               cached: true,
@@ -1088,6 +1261,9 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
         metrics: neutral(),
         teamInfo: null,
         games: [],
+        impactContext: shouldBuildImpactContext
+          ? { available: false, generatedAt: new Date().toISOString(), players: [] }
+          : null,
         resolution: { status: 'unknown_sport', sport: normalizedSport }
       };
     }
@@ -1112,6 +1288,9 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
         metrics: neutral(),
         teamInfo: null,
         games: [],
+        impactContext: shouldBuildImpactContext
+          ? { available: false, generatedAt: new Date().toISOString(), players: [] }
+          : null,
         resolution: {
           ...resolution,
           sport: normalizedSport,
@@ -1173,6 +1352,9 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
         metrics: neutral(),
         teamInfo: null,
         games: [],
+        impactContext: shouldBuildImpactContext
+          ? { available: false, generatedAt: new Date().toISOString(), players: [] }
+          : null,
         resolution: {
           ...resolution,
           sport: normalizedSport,
@@ -1198,6 +1380,12 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
           statisticsPayload: teamStats,
         })
       : normalizedMetrics;
+    const impactContext = shouldBuildImpactContext
+      ? await buildNbaImpactContext({
+          teamName,
+          teamInfo: teamInfo || null,
+        })
+      : null;
 
     if (!hasSufficientNumericMetricsForSport(finalizedMetrics, normalizedSport)) {
       logTeamMetricsEvent('TEAM_METRICS_INSUFFICIENT_NUMERIC', {
@@ -1210,6 +1398,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
         metrics: finalizedMetrics,
         teamInfo: teamInfo || null,
         games: includeGames ? (games || []) : [],
+        impactContext,
         resolution: {
           ...resolution,
           sport: normalizedSport,
@@ -1250,6 +1439,7 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
       metrics: finalizedMetrics,
       teamInfo: teamInfo || null,
       games: includeGames ? (games || []) : [],
+      impactContext,
       resolution: finalResolution
     };
   } catch (err) {
@@ -1263,6 +1453,9 @@ async function getTeamMetricsWithGames(teamName, sport, options = {}) {
       metrics: neutral(),
       teamInfo: null,
       games: [],
+      impactContext: shouldBuildImpactContext
+        ? { available: false, generatedAt: new Date().toISOString(), players: [] }
+        : null,
       resolution: {
         status: 'error',
         sport: normalizedSport,
@@ -1280,5 +1473,6 @@ module.exports = {
   __testables: {
     lookupTeamFromScoreboardIndex,
     normalizeTeamKey,
+    finalizeNbaImpactContext,
   },
 };
