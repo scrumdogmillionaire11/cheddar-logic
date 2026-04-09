@@ -3,16 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-<<<<<<< HEAD
-<<<<<<< HEAD
-last_updated: "2026-04-08T22:00:00Z"
-=======
-last_updated: "2026-04-08T20:10:00Z"
->>>>>>> ec9dc8a (feat(WI-0836): activate rest-days signal in NBA and NHL pipelines)
-=======
-last_updated: "2026-04-08T20:10:00Z"
->>>>>>> working-branch
-last_activity: "2026-04-08 - WI-0836 complete: rest-days pipeline — computeRestDays utility wired into NBA (enrichedSnapshot + cross-market.js fallback) and NHL (enrichedSnapshot + projectNHL params 7-8); 1273 tests passing."
+last_updated: "2026-04-09T00:00:00Z"
+last_activity: "2026-04-09 - WI-0841 complete: NBA impact players — replaced static 41-name set with ESPN injury-feed driven tier; all tests passing."
 ---
 
 # Project State
@@ -75,11 +67,7 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 | ~~**WI-0814**~~ | ~~Sigma fallback safety gate — PLAY→LEAN when `sigma_source=fallback`~~ | ~~High~~ COMPLETE (2026-04-08) | — |
 | **WI-0839** | NHL 1P sigma static gate — LEAN when <40 settled 1P results | Medium | WI-0835 |
 | **WI-0836** | ~~Rest-days pipeline — compute `homeRest`/`awayRest`, thread into NBA + NHL models~~ | ~~Medium~~ COMPLETE (2026-04-08) | none |
-<<<<<<< Updated upstream
-| **WI-0840** | MLB dynamic league constants — replace hardcoded 2024 averages with live season stats | Medium | none |
-=======
 | ~~**WI-0840**~~ | ~~MLB dynamic league constants — replace hardcoded 2024 averages with live season stats~~ | ~~Medium~~ COMPLETE (2026-04-08) | — |
->>>>>>> Stashed changes
 
 **Sprint 2 done when:** All 7 items land, CI green, no model test regressions.
 
@@ -95,7 +83,7 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 | **WI-0815** | Edge sanity clamp → watchdog `CAUTION` propagation in `computeTotalEdge` | Medium | none |
 | **WI-0818** | Price staleness warning on hard-locked cards with stale price | Medium | none |
 | **WI-0837** | ESPN null metrics alerting — Discord warning + `[ESPN_NULL]` log | Medium | none |
-| **WI-0841** | NBA impact players — replace static 41-name set with ESPN injury-feed tier | Medium | none |
+| ~~**WI-0841**~~ | ~~NBA impact players — replace static 41-name set with ESPN injury-feed tier~~ | ~~Medium~~ COMPLETE (2026-04-09) | — |
 
 **Sprint 3 done when:** Goalie double-counting eliminated; execution gate rejects cards with no positive net edge; operators alerted on ESPN null and stale price.
 
