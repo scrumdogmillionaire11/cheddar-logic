@@ -109,7 +109,7 @@ function resolveStarterSkillProfile(pitcher) {
     0,
   ) / totalWeight;
   if (kPct !== null) {
-    skillRa9 *= clampValue(1 - (kPct - MLB_F5_DEFAULT_TEAM_K_PCT) * 0.35, 0.88, 1.12);
+    skillRa9 *= clampValue(1 - (kPct - _leagueAvgKPct) * 0.35, 0.88, 1.12);
   }
   if (bbPct !== null) {
     skillRa9 *= clampValue(1 + (bbPct - 0.085) * 0.8, 0.92, 1.12);
@@ -214,7 +214,7 @@ function resolveStarterLeashProfile(starterPitcher) {
 
   const expectedPitchesPerInning = clampValue(
     15.8 +
-      ((bbPct ?? MLB_F5_DEFAULT_TEAM_BB_PCT) - MLB_F5_DEFAULT_TEAM_BB_PCT) * 22 +
+      ((bbPct ?? _defaultBbPct) - _defaultBbPct) * 22 +
       ((xwobaAllowed ?? MLB_F5_DEFAULT_STARTER_XWOBA) - MLB_F5_DEFAULT_STARTER_XWOBA) * 18,
     13.5,
     19.5,
@@ -333,10 +333,10 @@ function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context
 function buildF5SyntheticFallbackProjection(homePitcher, awayPitcher) {
   const homeStarterSkill =
     resolveStarterSkillProfile(homePitcher).starter_skill_ra9 ??
-    MLB_F5_DEFAULT_XFIP;
+    _defaultXfip;
   const awayStarterSkill =
     resolveStarterSkillProfile(awayPitcher).starter_skill_ra9 ??
-    MLB_F5_DEFAULT_XFIP;
+    _defaultXfip;
   const homeLeashIp = resolveStarterLeashProfile(awayPitcher).starter_ip_f5_exp;
   const awayLeashIp = resolveStarterLeashProfile(homePitcher).starter_ip_f5_exp;
   const homeMean = Math.max(0.3, awayStarterSkill * (homeLeashIp / 9));
@@ -931,6 +931,19 @@ function selectMlbGameMarket(gameId, oddsSnapshot, driverCards = []) {
 // ============================================================
 
 const LEAGUE_AVG_K_PCT = 0.225; // ~22.5% — update seasonally
+
+// ── WI-0840: module-level mutables for dynamic league constants ──────────────
+// Initialised to static 2024 fallbacks; replaced at job start by
+// computeMLBLeagueAverages + setLeagueConstants in run_mlb_model.js.
+let _leagueAvgKPct = LEAGUE_AVG_K_PCT;        // covers LEAGUE_AVG_K_PCT + MLB_F5_DEFAULT_TEAM_K_PCT
+let _defaultXfip   = MLB_F5_DEFAULT_XFIP;
+let _defaultBbPct  = MLB_F5_DEFAULT_TEAM_BB_PCT;
+
+function setLeagueConstants({ kPct, xfip, bbPct } = {}) {
+  _leagueAvgKPct = kPct  != null ? kPct  : LEAGUE_AVG_K_PCT;
+  _defaultXfip   = xfip  != null ? xfip  : MLB_F5_DEFAULT_XFIP;
+  _defaultBbPct  = bbPct != null ? bbPct : MLB_F5_DEFAULT_TEAM_BB_PCT;
+}
 const MLB_K_DEFAULT_SWSTR_PCT = 0.112;
 const MLB_K_DEFAULT_OPP_OBP = 0.315;
 const MLB_K_DEFAULT_OPP_XWOBA = 0.320;
@@ -1072,7 +1085,7 @@ function resolveOpponentPitcherKProfile(matchup = {}) {
   }
 
   return {
-    opp_k_pct_vs_hand: seasonK ?? l30K ?? LEAGUE_AVG_K_PCT,
+    opp_k_pct_vs_hand: seasonK ?? l30K ?? _leagueAvgKPct,
     opp_obp: oppObp,
     opp_xwoba: oppXwoba,
     opp_hard_hit_pct: oppHardHitPct,
@@ -1144,14 +1157,14 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     projectionFlags.push('THIN_SAMPLE_OPPONENT_SPLIT');
   }
 
-  const effectiveStarterKPct = starterKPct ?? LEAGUE_AVG_K_PCT;
+  const effectiveStarterKPct = starterKPct ?? _leagueAvgKPct;
   const whiffProxyPct = starterSwStrPct ?? clampValue(
     effectiveStarterKPct * 0.42,
     0.08,
     0.18,
   );
   const oppKPctVsHand =
-    opponentProfile.opp_k_pct_vs_hand ?? LEAGUE_AVG_K_PCT;
+    opponentProfile.opp_k_pct_vs_hand ?? _leagueAvgKPct;
   const oppObp = opponentProfile.opp_obp ?? MLB_K_DEFAULT_OPP_OBP;
   const oppXwoba = opponentProfile.opp_xwoba ?? MLB_K_DEFAULT_OPP_XWOBA;
   const oppHardHitPct =
@@ -1159,7 +1172,7 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
 
   const battersPerInning = clampValue(
     MLB_F5_DEFAULT_BF_PER_INNING +
-      ((bbPct ?? MLB_F5_DEFAULT_TEAM_BB_PCT) - MLB_F5_DEFAULT_TEAM_BB_PCT) * 5.5 +
+      ((bbPct ?? _defaultBbPct) - _defaultBbPct) * 5.5 +
       ((xwobaAllowed ?? MLB_F5_DEFAULT_STARTER_XWOBA) - MLB_F5_DEFAULT_STARTER_XWOBA) * 8.0 +
       (oppObp - MLB_K_DEFAULT_OPP_OBP) * 4.5 +
       (oppXwoba - MLB_K_DEFAULT_OPP_XWOBA) * 5.5 +
@@ -1172,7 +1185,7 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     : expectedIp;
   const bfExp = projectedIp * battersPerInning;
   let kInteraction =
-    (effectiveStarterKPct * oppKPctVsHand) / LEAGUE_AVG_K_PCT;
+    (effectiveStarterKPct * oppKPctVsHand) / _leagueAvgKPct;
   kInteraction *= clampValue(
     1 + (whiffProxyPct - MLB_K_DEFAULT_SWSTR_PCT) * 0.45,
     0.93,
@@ -2526,4 +2539,6 @@ module.exports = {
   calculateProjectionK,
   // Exported for unit testing (WI-0821)
   resolveOffenseComposite,
+  // WI-0840: dynamic league constants
+  setLeagueConstants,
 };

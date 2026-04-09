@@ -36,11 +36,13 @@ const {
   validateCardPayload,
   shouldRunJobKey,
   withDb,
+  // WI-0840: dynamic league constants query
+  computeMLBLeagueAverages,
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
 const { getModel, computeMLBDriverCards, computePitcherKDriverCards } = require('../models');
-const { selectMlbGameMarket, projectF5ML } = require('../models/mlb-model');
+const { selectMlbGameMarket, projectF5ML, setLeagueConstants } = require('../models/mlb-model');
 
 // WI-0648: Empirical sigma recalibration gate
 // Threshold: once a team has accumulated >= MIN_MLB_GAMES_FOR_RECAL settled games
@@ -1579,6 +1581,13 @@ async function runMLBModel({
 
       const gameIdList = Object.keys(gameOdds);
       console.log(`[MLBModel] Running inference on ${gameIdList.length} games...`);
+
+      // WI-0840: compute dynamic league constants once per job run
+      const leagueConstants = computeMLBLeagueAverages(getDatabase());
+      setLeagueConstants(leagueConstants);
+      console.log(
+        `[MLB_LEAGUE_AVG] source=${leagueConstants.source} n=${leagueConstants.n}`,
+      );
 
       // Get model instance
       const model = getModel('MLB');

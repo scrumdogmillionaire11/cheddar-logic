@@ -163,6 +163,8 @@ function loadRunMlbModel({
     shouldRunJobKey: jest.fn(() => true),
     withDb: jest.fn(async (fn) => fn()),
     getPlayerPropLinesForGame: jest.fn(() => []),
+    // WI-0840: dynamic league constants — return static fallback in tests
+    computeMLBLeagueAverages: jest.fn(() => ({ kPct: 0.225, xfip: 4.3, bbPct: 0.085, source: 'static_2024', n: 0 })),
   }));
 
   jest.doMock('../models', () => ({
@@ -173,6 +175,9 @@ function loadRunMlbModel({
 
   jest.doMock('../models/mlb-model', () => ({
     selectMlbGameMarket: selectMlbGameMarketMock,
+    projectF5ML: jest.fn(),
+    // WI-0840: no-op in tests — static constants remain in effect
+    setLeagueConstants: jest.fn(),
   }));
 
   // Mock the odds config so MLB active:false in the real config doesn't force
