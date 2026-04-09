@@ -335,4 +335,62 @@ describe('post_discord_cards helpers', () => {
     expect(JSON.parse(calls[1].init.body).content).toBe('second');
     expect(JSON.parse(calls[2].init.body).content).toBe('third');
   });
+
+  test('buildDiscordSnapshot surfaces price_staleness_warning line when present on a hard-locked card', () => {
+    const stalenessCard = makeCard({
+      id: 'stale-1',
+      cardType: 'nhl-model-output',
+      payloadData: {
+        action: 'FIRE',
+        kind: 'PLAY',
+        pass_reason: null,
+        pass_reason_code: null,
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        price: -110,
+        line: 5.5,
+        projection_only: false,
+        edge: 0.04,
+        model_projection: 6.1,
+        price_staleness_warning: {
+          locked_price: -110,
+          current_candidate_price: -130,
+          delta_american: 20,
+          minutes_to_start: 30,
+          reason: 'HARD_LOCK_PRICE_DRIFT',
+        },
+        tags: ['PUBLISHED_FROM_GATE', 'PRICE_STALENESS_WARNING'],
+      },
+    });
+
+    const snapshot = buildDiscordSnapshot({ cards: [stalenessCard], now: new Date('2026-03-20T14:00:00.000Z') });
+
+    expect(snapshot.messages[0]).toContain('Hard-locked at -110');
+    expect(snapshot.messages[0]).toContain('-130');
+    expect(snapshot.messages[0]).toContain('20 pts drift');
+    expect(snapshot.messages[0]).toContain('T-30min');
+  });
+
+  test('buildDiscordSnapshot does not include staleness warning line when price_staleness_warning is absent', () => {
+    const cleanCard = makeCard({
+      id: 'clean-1',
+      cardType: 'nhl-model-output',
+      payloadData: {
+        action: 'FIRE',
+        kind: 'PLAY',
+        pass_reason: null,
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        price: -110,
+        line: 5.5,
+        projection_only: false,
+        edge: 0.04,
+        model_projection: 6.1,
+      },
+    });
+
+    const snapshot = buildDiscordSnapshot({ cards: [cleanCard], now: new Date('2026-03-20T14:00:00.000Z') });
+
+    expect(snapshot.messages[0]).not.toContain('Hard-locked');
+  });
 });

@@ -545,6 +545,8 @@ function renderDecisionLine(card, bucket) {
     const lines = [`PROP | ${priced}`];
     if (propMetricsLine) lines.push(propMetricsLine);
     if (why)     lines.push(`Why: ${why}`);
+    const wProp = payload?.price_staleness_warning;
+    if (wProp) lines.push(`⚠️ Hard-locked at ${wProp.locked_price} — current may be ${wProp.current_candidate_price} (${wProp.delta_american} pts drift, T-${wProp.minutes_to_start}min)`);
     return lines.join('\n');
   }
 
@@ -578,6 +580,8 @@ function renderDecisionLine(card, bucket) {
   const lines = [`${market} | ${priced}`];
   if (metricsLine2) lines.push(metricsLine2);
   if (why)     lines.push(`Why: ${why}`);
+  const w = payload?.price_staleness_warning;
+  if (w) lines.push(`⚠️ Hard-locked at ${w.locked_price} — current may be ${w.current_candidate_price} (${w.delta_american} pts drift, T-${w.minutes_to_start}min)`);
   return lines.join('\n');
 }
 
