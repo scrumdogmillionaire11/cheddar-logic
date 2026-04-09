@@ -296,6 +296,8 @@ function projectNHL(
   awayGoalsAgainst,
   homeGoalieConfirmed = true,
   awayGoalieConfirmed = true,
+  homeRest = 1,
+  awayRest = 1,
 ) {
   if (
     !homeGoalsFor ||
@@ -318,6 +320,19 @@ function projectNHL(
   // Goalie uncertainty penalty (0.98x multiplier = 2% reduction)
   if (!homeGoalieConfirmed) homeProjected *= 0.98;
   if (!awayGoalieConfirmed) awayProjected *= 0.98;
+
+  // Rest adjustments (days since last game) — scaled for goals (not pts)
+  const restAdjustment = (rest) => {
+    if (rest === 0) return -0.25; // Back-to-back penalty
+    if (rest === 1) return 0;
+    if (rest === 2) return 0;
+    if (rest >= 3) return 0.12; // Well-rested bonus
+    return 0;
+  };
+  const homeRestAdj = restAdjustment(homeRest);
+  const awayRestAdj = restAdjustment(awayRest);
+  homeProjected += homeRestAdj;
+  awayProjected += awayRestAdj;
 
   // Confidence calculation (base 45 — lower than NBA due to variance)
   let confidence = 45;
@@ -367,6 +382,8 @@ function projectNHL(
     totalProjected: Math.round(totalProjected * 100) / 100,
     goalieConfirmedPenalty:
       !homeGoalieConfirmed || !awayGoalieConfirmed ? -10 : 0,
+    homeRestAdj: homeRestAdj ?? 0,
+    awayRestAdj: awayRestAdj ?? 0,
   };
 }
 

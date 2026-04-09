@@ -82,6 +82,7 @@ const {
   isPlayoffGame,
   PLAYOFF_SIGMA_MULTIPLIER,
 } = require('../utils/playoff-detection');
+const { computeRestDays } = require('../utils/rest-days');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const USE_ORCHESTRATED_MARKET =
@@ -1912,7 +1913,15 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           });
           const nhlPaceAuditContext = extractNhlPaceAuditContext(driverCards);
 
-          const marketDecisions = computeNHLMarketDecisions(oddsSnapshot);
+          // WI-0836: Enrich oddsSnapshot with computed rest days before market decisions
+          const _homeRestResult = computeRestDays(oddsSnapshot.home_team, 'nhl', oddsSnapshot.game_time_utc);
+          const _awayRestResult = computeRestDays(oddsSnapshot.away_team, 'nhl', oddsSnapshot.game_time_utc);
+          const enrichedSnapshot = {
+            ...oddsSnapshot,
+            rest_days_home: _homeRestResult.restDays,
+            rest_days_away: _awayRestResult.restDays,
+          };
+          const marketDecisions = computeNHLMarketDecisions(enrichedSnapshot);
 
           // WI-0571: log projection comparison per game
           const nhlTotalPC = marketDecisions?.TOTAL?.projection_comparison;
@@ -2059,6 +2068,11 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
             card.payloadData.raw_data.sigma_source = _sigmaAnnotation;
             card.payloadData.raw_data.sigma_games_sampled = _computedSigma.games_sampled ?? null;
+            // WI-0836: rest signal observability
+            card.payloadData.raw_data.rest_days_home = _homeRestResult.restDays;
+            card.payloadData.raw_data.rest_days_away = _awayRestResult.restDays;
+            card.payloadData.raw_data.rest_source_home = _homeRestResult.restSource;
+            card.payloadData.raw_data.rest_source_away = _awayRestResult.restSource;
             pendingCards.push({
               card,
               logLine: `  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
@@ -2135,6 +2149,11 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
             card.payloadData.raw_data.sigma_source = _sigmaAnnotation;
             card.payloadData.raw_data.sigma_games_sampled = _computedSigma.games_sampled ?? null;
+            // WI-0836: rest signal observability
+            card.payloadData.raw_data.rest_days_home = _homeRestResult.restDays;
+            card.payloadData.raw_data.rest_days_away = _awayRestResult.restDays;
+            card.payloadData.raw_data.rest_source_home = _homeRestResult.restSource;
+            card.payloadData.raw_data.rest_source_away = _awayRestResult.restSource;
             pendingCards.push({
               card,
               logLine: `  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
