@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-09T00:00:00Z"
-last_activity: "2026-04-09 - WI-0841 complete: NBA impact players — replaced static 41-name set with ESPN injury-feed driven tier; all tests passing."
+last_activity: "2026-04-09 - Completed quick task 142: WI-0823: NHL unified goalie signal — consolidate GSaX and SV% into one score"
 ---
 
 # Project State
@@ -78,7 +78,7 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 
 | WI | Title | Priority | Deps |
 |----|-------|----------|------|
-| **WI-0823** | NHL unified goalie signal — consolidate GSaX + SV% into one composite | High | WI-0820 |
+| ~~**WI-0823**~~ | ~~NHL unified goalie signal — consolidate GSaX + SV% into one composite~~ | ~~High~~ COMPLETE (2026-04-09) | WI-0820 |
 | **WI-0824** | Two-layer bet execution gate — model fair prob ≠ executable edge | High | WI-0820 |
 | **WI-0815** | Edge sanity clamp → watchdog `CAUTION` propagation in `computeTotalEdge` | Medium | none |
 | **WI-0818** | Price staleness warning on hard-locked cards with stale price | Medium | none |
@@ -159,6 +159,14 @@ WI-0835 (sigma prov) --- WI-0814 / WI-0839
 
 See [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md) for full archive.
 Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix), WI-0810 (residual vig removal), WI-0799 (admin dashboard streak badges), quick tasks 131–140 (scheduler wiring, BLK audit, projection audit tests, quota-aware odds freshness, two-sided vig fix).
+
+---
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 142 | WI-0823: NHL unified goalie signal — consolidate GSaX and SV% into one score | 2026-04-09 | 77b726e | [142-wi-0823-nhl-unified-goalie-signal-consol](./quick/142-wi-0823-nhl-unified-goalie-signal-consol/) |
 
 ---
 
