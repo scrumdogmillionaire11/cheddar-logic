@@ -11,6 +11,7 @@ const quota = require('./quota');
 const scheduler = require('./scheduler');
 const authStore = require('./auth-store');
 const pipelineHealth = require('./pipeline-health');
+const mlbStats = require('./mlb-stats');
 
 module.exports = {
   getDatabase: connection.getDatabase,
@@ -128,4 +129,7 @@ module.exports = {
 
   // pipeline_health — read surface for WI-0761 Model Health Dashboard
   getPipelineHealth: pipelineHealth.getPipelineHealth,
+
+  // WI-0840: dynamic MLB league constants
+  computeMLBLeagueAverages: mlbStats.computeMLBLeagueAverages,
 };

@@ -3,7 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
+<<<<<<< HEAD
+<<<<<<< HEAD
+last_updated: "2026-04-08T22:00:00Z"
+=======
 last_updated: "2026-04-08T20:10:00Z"
+>>>>>>> ec9dc8a (feat(WI-0836): activate rest-days signal in NBA and NHL pipelines)
+=======
+last_updated: "2026-04-08T20:10:00Z"
+>>>>>>> working-branch
 last_activity: "2026-04-08 - WI-0836 complete: rest-days pipeline — computeRestDays utility wired into NBA (enrichedSnapshot + cross-market.js fallback) and NHL (enrichedSnapshot + projectNHL params 7-8); 1273 tests passing."
 ---
 
