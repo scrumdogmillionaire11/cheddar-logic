@@ -2,6 +2,7 @@
 
 const {
   predictNHLGame,
+  resolveGoalieComposite,
   NHL_PACE_AUDIT_RULES,
 } = require('../nhl-pace-model');
 const { makeCanonicalGoalieState } = require('../nhl-goalie-state');
@@ -44,6 +45,72 @@ function makeState(teamSide, starterState, tierConfidence = 'HIGH') {
     evidence_flags: starterState === 'CONFLICTING' ? ['CONFLICTING_SOURCE_EVIDENCE'] : [],
   });
 }
+
+describe('resolveGoalieComposite (WI-0823)', () => {
+  test('supports FULL source when save pct and gsax are both present', () => {
+    const result = resolveGoalieComposite(0.912, 0.28);
+
+    expect(result.source).toBe('FULL');
+    expect(result.composite).toBeGreaterThan(0);
+    expect(result.factor).toBeLessThan(1);
+  });
+
+  test('supports GSAX_ONLY source', () => {
+    const result = resolveGoalieComposite(null, 0.28);
+
+    expect(result.source).toBe('GSAX_ONLY');
+    expect(result.composite).toBeCloseTo(1, 5);
+    expect(result.factor).toBeCloseTo(0.85, 5);
+  });
+
+  test('supports SV_PCT_ONLY source', () => {
+    const result = resolveGoalieComposite(0.912, null);
+
+    expect(result.source).toBe('SV_PCT_ONLY');
+    expect(result.composite).toBeCloseTo(1, 5);
+    expect(result.factor).toBeCloseTo(0.85, 5);
+  });
+
+  test('returns neutral factor when both inputs are missing', () => {
+    expect(resolveGoalieComposite(null, null)).toEqual({
+      factor: 1,
+      composite: 0,
+      source: 'NEUTRAL',
+    });
+  });
+});
+
+describe('predictNHLGame goalie composite wiring (WI-0823)', () => {
+  test('gsax contributes to goalie adjustment even when save pct is neutral', () => {
+    const neutral = predictNHLGame(
+      buildBase({
+        homeGoalieSavePct: 0.9,
+        awayGoalieSavePct: 0.9,
+        homeGoalieGsax: null,
+        awayGoalieGsax: null,
+        homeGoalieState: makeState('home', 'CONFIRMED', 'HIGH'),
+        awayGoalieState: makeState('away', 'CONFIRMED', 'HIGH'),
+      }),
+    );
+    const withGsax = predictNHLGame(
+      buildBase({
+        homeGoalieSavePct: 0.9,
+        awayGoalieSavePct: 0.9,
+        homeGoalieGsax: 0.28,
+        awayGoalieGsax: -0.28,
+        homeGoalieState: makeState('home', 'CONFIRMED', 'HIGH'),
+        awayGoalieState: makeState('away', 'CONFIRMED', 'HIGH'),
+      }),
+    );
+
+    expect(withGsax.adjustments.away.opponent_goalie).toBeLessThan(
+      neutral.adjustments.away.opponent_goalie,
+    );
+    expect(withGsax.adjustments.home.opponent_goalie).toBeGreaterThan(
+      neutral.adjustments.home.opponent_goalie,
+    );
+  });
+});
 
 describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
   test('FULL trust canonical path is math-identical to legacy confirmed fallback', () => {
@@ -100,8 +167,8 @@ describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
     expect(result.homeAdjustmentTrust).toBe('FULL');
     expect(result.awayAdjustmentTrust).toBe('FULL');
     expect(result.official_eligible).toBe(true);
-    expect(result.adjustments.away.opponent_goalie).toBeCloseTo(0.925, 6);
-    expect(result.adjustments.home.opponent_goalie).toBeCloseTo(1.025, 6);
+    expect(result.adjustments.away.opponent_goalie).toBeCloseTo(0.85, 6);
+    expect(result.adjustments.home.opponent_goalie).toBeCloseTo(1.15, 6);
   });
 
   test('DEGRADED trust applies goalie factor at half weight', () => {
@@ -112,7 +179,7 @@ describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
       }),
     );
 
-    const fullFactor = 0.925;
+    const fullFactor = 0.85;
     const expectedDegradedFactor = 1 + (fullFactor - 1) * 0.5;
 
     expect(result.homeAdjustmentTrust).toBe('DEGRADED');

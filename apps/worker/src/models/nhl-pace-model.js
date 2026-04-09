@@ -29,6 +29,8 @@ const { buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
 // ============================================================================
 const LEAGUE_AVG_GOALS_PER_GAME = 3.0; // Per team per game
 const LEAGUE_AVG_SAVE_PCT = 0.9;
+const LEAGUE_GSAX_SD = 0.28;
+const LEAGUE_SV_PCT_SD = 0.012;
 const LEAGUE_AVG_PP_PCT = 0.22;
 const LEAGUE_AVG_PK_PCT = 0.8;
 
@@ -109,18 +111,39 @@ function normalCDF(x, mu, sigma) {
   return 0.5 * (1 + (z >= 0 ? erf : -erf));
 }
 
-/**
- * Compute goalie adjustment factor from save percentage.
- * A better goalie reduces the opponent's scoring:
- *   adjustment < 1.0 → fewer goals allowed
- *   adjustment > 1.0 → more goals allowed
- *
- * @param {number} savePct
- * @returns {number}
- */
-function goalieAdjFactor(savePct) {
-  const svDiff = savePct - LEAGUE_AVG_SAVE_PCT;
-  return clamp(1.0 - svDiff * GOALIE_ADJ_SCALE, GOALIE_ADJ_MIN, GOALIE_ADJ_MAX);
+function resolveGoalieComposite(savePct, gsax) {
+  const hasSv = Number.isFinite(savePct);
+  const hasGsax = Number.isFinite(gsax);
+
+  if (!hasSv && !hasGsax) {
+    return { factor: 1.0, composite: 0, source: 'NEUTRAL' };
+  }
+
+  let composite = 0;
+  let source = 'NEUTRAL';
+
+  if (hasSv && hasGsax) {
+    const zSv = (savePct - LEAGUE_AVG_SAVE_PCT) / LEAGUE_SV_PCT_SD;
+    const zGsax = gsax / LEAGUE_GSAX_SD;
+    composite = 0.3 * zSv + 0.7 * zGsax;
+    source = 'FULL';
+  } else if (hasGsax) {
+    composite = gsax / LEAGUE_GSAX_SD;
+    source = 'GSAX_ONLY';
+  } else {
+    composite = (savePct - LEAGUE_AVG_SAVE_PCT) / LEAGUE_SV_PCT_SD;
+    source = 'SV_PCT_ONLY';
+  }
+
+  return {
+    factor: clamp(
+      1.0 - composite * GOALIE_ADJ_SCALE * LEAGUE_GSAX_SD,
+      GOALIE_ADJ_MIN,
+      GOALIE_ADJ_MAX,
+    ),
+    composite,
+    source,
+  };
 }
 
 function certaintyFromStarterState(starterState) {
@@ -156,14 +179,14 @@ function adjustmentTrustFromCertainty(certainty) {
   return 'NEUTRALIZED';
 }
 
-function applyGoalieAdj(savePct, adjustmentTrust) {
+function applyGoalieAdj(savePct, gsax, adjustmentTrust) {
   if (adjustmentTrust === 'BLOCKED' || adjustmentTrust === 'NEUTRALIZED') {
     return {
       rawFactor: 1.0,
       appliedFactor: 1.0,
     };
   }
-  const rawFactor = goalieAdjFactor(savePct);
+  const { factor: rawFactor } = resolveGoalieComposite(savePct, gsax);
   if (adjustmentTrust === 'DEGRADED') {
     return {
       rawFactor,
@@ -225,6 +248,8 @@ function round3(value) {
  * @param {number|null} opts.awayPkPct
  * @param {number|null} opts.homeGoalieSavePct - home goalie save % (e.g. 0.912)
  * @param {number|null} opts.awayGoalieSavePct
+ * @param {number|null} opts.homeGoalieGsax
+ * @param {number|null} opts.awayGoalieGsax
  * @param {boolean}     opts.homeGoalieConfirmed - @deprecated use homeGoalieState
  * @param {boolean}     opts.awayGoalieConfirmed - @deprecated use awayGoalieState
  * @param {'CONFIRMED'|'EXPECTED'|'UNKNOWN'|null} opts.homeGoalieCertainty
@@ -264,6 +289,8 @@ function predictNHLGame(opts) {
     awayPkPct = null,
     homeGoalieSavePct = null,
     awayGoalieSavePct = null,
+    homeGoalieGsax = null,
+    awayGoalieGsax = null,
     // Legacy (deprecated — do not read in NHL totals path after WI-0383)
     // @deprecated use homeGoalieState instead
     homeGoalieConfirmed = false,
@@ -486,6 +513,7 @@ function predictNHLGame(opts) {
   if (homeGoalieSavePct !== null) {
     const { rawFactor, appliedFactor } = applyGoalieAdj(
       homeGoalieSavePct,
+      homeGoalieGsax,
       homeAdjustmentTrust,
     );
     const beforeAway = awayGoals;
@@ -497,6 +525,7 @@ function predictNHLGame(opts) {
   if (awayGoalieSavePct !== null) {
     const { rawFactor, appliedFactor } = applyGoalieAdj(
       awayGoalieSavePct,
+      awayGoalieGsax,
       awayAdjustmentTrust,
     );
     const beforeHome = homeGoals;
@@ -839,6 +868,7 @@ const NHL_PACE_AUDIT_RULES = Object.freeze({
 
 module.exports = {
   predictNHLGame,
+  resolveGoalieComposite,
   validateNhlPaceResult,
   NHL_PACE_AUDIT_RULES,
 };

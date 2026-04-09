@@ -125,6 +125,37 @@ describe('NHL pace calibration rails', () => {
     expect(expected.expectedTotal).toBeLessThan(unknown.expectedTotal);
   });
 
+  test('adding gsax to an already strong save-pct goalie does not increase total modifier magnitude', () => {
+    const svOnly = predictNHLGame(
+      buildBaseOverrides({
+        homeGoalieSavePct: 0.912,
+        awayGoalieSavePct: 0.888,
+        homeGoalieConfirmed: true,
+        awayGoalieConfirmed: true,
+        homeGoalieCertainty: 'CONFIRMED',
+        awayGoalieCertainty: 'CONFIRMED',
+      }),
+    );
+    const composite = predictNHLGame(
+      buildBaseOverrides({
+        homeGoalieSavePct: 0.912,
+        awayGoalieSavePct: 0.888,
+        homeGoalieGsax: 0.28,
+        awayGoalieGsax: -0.28,
+        homeGoalieConfirmed: true,
+        awayGoalieConfirmed: true,
+        homeGoalieCertainty: 'CONFIRMED',
+        awayGoalieCertainty: 'CONFIRMED',
+      }),
+    );
+
+    expect(
+      Math.abs(composite.modifierBreakdown.goalie_delta_applied),
+    ).toBeLessThanOrEqual(
+      Math.abs(svOnly.modifierBreakdown.goalie_delta_applied),
+    );
+  });
+
   test('treats OFFICIAL certainty token as confirmed even if legacy boolean is false', () => {
     const result = predictNHLGame(
       buildBaseOverrides({

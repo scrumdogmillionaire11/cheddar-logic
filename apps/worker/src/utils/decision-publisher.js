@@ -421,6 +421,7 @@ function applyPublishedDecisionToPayload(
   market,
   decisionKey,
   gateReason,
+  options = {},
 ) {
   if (!decision) return;
 
@@ -428,6 +429,12 @@ function applyPublishedDecisionToPayload(
   const side = decision.recommended_side;
   const line = decision.recommended_line ?? null;
   const price = decision.recommended_price ?? null;
+  const minutesToStart = Number.isFinite(options.minutesToStart)
+    ? options.minutesToStart
+    : 9999;
+  const candidatePrice = Number.isFinite(options.candidatePrice)
+    ? options.candidatePrice
+    : null;
   const homeTeam = payload.home_team || null;
   const awayTeam = payload.away_team || null;
 
@@ -451,6 +458,24 @@ function applyPublishedDecisionToPayload(
   payload.tags = Array.from(
     new Set([...(payload.tags || []), 'PUBLISHED_FROM_GATE']),
   );
+
+  const lockedPrice = decision.recommended_price ?? null;
+  const priceDelta =
+    Number.isFinite(lockedPrice) && Number.isFinite(candidatePrice)
+      ? Math.abs(candidatePrice - lockedPrice)
+      : null;
+  if (priceDelta != null && priceDelta > 0 && minutesToStart < 60) {
+    payload.price_staleness_warning = {
+      locked_price: lockedPrice,
+      current_candidate_price: candidatePrice,
+      delta_american: Number(priceDelta.toFixed(0)),
+      minutes_to_start: Math.round(minutesToStart),
+      reason: 'HARD_LOCK_PRICE_DRIFT',
+    };
+    payload.tags = Array.from(
+      new Set([...(payload.tags || []), 'PRICE_STALENESS_WARNING']),
+    );
+  }
 
   const pickText = buildPickText(market, side, line);
   const sportLabel = payload.sport
@@ -692,6 +717,7 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
       market,
       decisionKey,
       gateResult.reason_code,
+      { minutesToStart, candidatePrice: price },
     );
   }
 

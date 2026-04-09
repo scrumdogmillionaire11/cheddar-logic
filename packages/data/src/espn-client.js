@@ -12,6 +12,7 @@
 const https = require('https');
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
+const COMMON_BASE = 'https://site.web.api.espn.com/apis/common/v3/sports';
 
 /**
  * Make a GET request to the ESPN public API.
@@ -37,6 +38,179 @@ async function espnGet(path) {
     req.on('error', () => resolve(null));
     req.on('timeout', () => { req.destroy(); resolve(null); });
   });
+}
+
+async function fetchJsonUrl(url) {
+  return new Promise((resolve) => {
+    const req = https.get(url, { timeout: 5000 }, (res) => {
+      if (res.statusCode === 404) {
+        res.resume();
+        return resolve(null);
+      }
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
+
+function normalizeEspnInjuryStatus(rawStatus) {
+  const s = String(rawStatus || '').trim().toLowerCase();
+  if (s === 'out') return 'OUT';
+  if (s === 'doubtful') return 'DOUBTFUL';
+  if (s === 'day-to-day') return 'DTD';
+  if (s === 'questionable') return 'QUESTIONABLE';
+  if (s === 'probable') return 'PROBABLE';
+  if (!s) return null;
+  return s.toUpperCase();
+}
+
+function extractPlayerIdFromAthleteLinks(athlete, injuryId) {
+  const hrefs = Array.isArray(athlete?.links) ? athlete.links.map((link) => link?.href).filter(Boolean) : [];
+  for (const href of hrefs) {
+    const match = String(href).match(/\/id\/(\d+)\//);
+    if (match) return String(match[1]);
+  }
+  const fallback = Number(injuryId);
+  return Number.isFinite(fallback) ? String(fallback) : null;
+}
+
+function normalizeGameLogLabels(labels) {
+  return Array.isArray(labels)
+    ? labels.map((label) => String(label || '').trim().toUpperCase())
+    : [];
+}
+
+function statsRowToObject(labels, stats) {
+  const normalizedLabels = normalizeGameLogLabels(labels);
+  const out = {};
+  if (!Array.isArray(stats)) return out;
+  for (let i = 0; i < normalizedLabels.length && i < stats.length; i += 1) {
+    out[normalizedLabels[i]] = stats[i];
+  }
+  return out;
+}
+
+function coalesceFiniteNumber(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function parseGameLogStartedValue(row) {
+  const started = row?.GS ?? row?.STARTS ?? row?.STARTED ?? row?.START;
+  if (started === true) return true;
+  if (started === false) return false;
+  const parsed = Number(started);
+  if (Number.isFinite(parsed)) return parsed > 0;
+  const normalized = String(started || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return ['y', 'yes', 'true', 'started'].includes(normalized);
+}
+
+function extractPlayerGameLogSummary(gamelogPayload, options = {}) {
+  if (!gamelogPayload || typeof gamelogPayload !== 'object') return null;
+  const limit = Number.isFinite(options.limit) ? options.limit : 5;
+  const labels = Array.isArray(gamelogPayload.labels) ? gamelogPayload.labels : [];
+
+  const eventStatsById = new Map();
+
+  if (Array.isArray(gamelogPayload.seasonTypes)) {
+    for (const seasonType of gamelogPayload.seasonTypes) {
+      const categories = Array.isArray(seasonType?.categories) ? seasonType.categories : [];
+      for (const category of categories) {
+        if (String(category?.type || '').trim().toLowerCase() === 'total') continue;
+        const events = Array.isArray(category?.events) ? category.events : [];
+        for (const event of events) {
+          const eventId = String(event?.eventId || event?.id || '').trim();
+          if (!eventId || eventStatsById.has(eventId) || !Array.isArray(event?.stats)) continue;
+          eventStatsById.set(eventId, event.stats);
+        }
+      }
+    }
+  }
+
+  if (eventStatsById.size === 0 && gamelogPayload.events && typeof gamelogPayload.events === 'object') {
+    for (const [eventId, eventData] of Object.entries(gamelogPayload.events)) {
+      if (!eventId || eventStatsById.has(String(eventId))) continue;
+      if (Array.isArray(eventData?.stats)) {
+        eventStatsById.set(String(eventId), eventData.stats);
+      }
+    }
+  }
+
+  const recentEventIds = [];
+  const eventEntries = gamelogPayload.events && typeof gamelogPayload.events === 'object'
+    ? Object.entries(gamelogPayload.events).map(([eventId, eventData]) => ({
+        eventId: String(eventId),
+        eventData,
+      }))
+    : [];
+
+  if (eventEntries.length > 0) {
+    eventEntries.sort((a, b) => {
+      const aDate = new Date(a.eventData?.date || a.eventData?.gameDate || a.eventData?.startDate || 0).getTime();
+      const bDate = new Date(b.eventData?.date || b.eventData?.gameDate || b.eventData?.startDate || 0).getTime();
+      const aDateValid = Number.isFinite(aDate) && aDate > 0;
+      const bDateValid = Number.isFinite(bDate) && bDate > 0;
+      if (aDateValid && bDateValid && aDate !== bDate) return aDate - bDate;
+      if (aDateValid && !bDateValid) return 1;
+      if (!aDateValid && bDateValid) return -1;
+      const aNum = Number(a.eventId);
+      const bNum = Number(b.eventId);
+      if (Number.isFinite(aNum) && Number.isFinite(bNum) && aNum !== bNum) return aNum - bNum;
+      return String(a.eventId).localeCompare(String(b.eventId));
+    });
+    for (const entry of eventEntries.slice(-limit)) {
+      recentEventIds.push(entry.eventId);
+    }
+  } else {
+    recentEventIds.push(...Array.from(eventStatsById.keys()).slice(-limit));
+  }
+
+  const rows = [];
+  for (const eventId of recentEventIds) {
+    const stats = eventStatsById.get(String(eventId));
+    if (!Array.isArray(stats)) continue;
+    rows.push(statsRowToObject(labels, stats));
+  }
+
+  if (rows.length === 0) return null;
+
+  const points = rows.map((row) => coalesceFiniteNumber(row.PTS, row.POINTS)).filter((value) => value !== null);
+  if (points.length === 0) return null;
+
+  const starts = rows.reduce((count, row) => count + (parseGameLogStartedValue(row) ? 1 : 0), 0);
+  const averagePoints = points.reduce((sum, value) => sum + value, 0) / points.length;
+
+  return {
+    avgPointsLast5: Number(averagePoints.toFixed(2)),
+    startsLast5: starts,
+    gamesConsidered: rows.length,
+  };
+}
+
+async function fetchNbaInjuries() {
+  return espnGet('basketball/nba/injuries');
+}
+
+async function fetchNbaPlayerGameLog(playerId, seasonYear, seasonType = 2) {
+  if (!playerId) return null;
+  const params = new URLSearchParams();
+  if (seasonYear != null) params.set('season', String(seasonYear));
+  if (seasonType != null) params.set('seasontype', String(seasonType));
+  const qs = params.toString();
+  const suffix = qs ? `?${qs}` : '';
+  const url = `${COMMON_BASE}/basketball/nba/athletes/${playerId}/gamelog${suffix}`;
+  return fetchJsonUrl(url);
 }
 
 /**
@@ -264,9 +438,15 @@ async function fetchScoreboardEvents(espnLeague, dateStr = null, options = null)
 
 module.exports = {
   espnGet,
+  fetchJsonUrl,
   fetchTeamSchedule,
   fetchTeamInfo,
   fetchTeamStatistics,
   fetchScoreboardEvents,
+  fetchNbaInjuries,
+  fetchNbaPlayerGameLog,
+  extractPlayerGameLogSummary,
+  normalizeEspnInjuryStatus,
+  extractPlayerIdFromAthleteLinks,
   extractFreeThrowPctFromStatisticsPayload,
 };

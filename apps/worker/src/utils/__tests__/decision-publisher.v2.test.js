@@ -29,6 +29,10 @@ function minutesAgoIso(minutes) {
   return new Date(Date.now() - minutes * 60 * 1000).toISOString();
 }
 
+function minutesFromNowIso(minutes) {
+  return new Date(Date.now() + minutes * 60 * 1000).toISOString();
+}
+
 function buildWave1Payload(overrides = {}) {
   const payload = {
     sport: 'NBA',
@@ -1190,6 +1194,221 @@ describe('decision publisher v2 pipeline', () => {
         edgeUnits: 'decimal_fraction',
       }),
     );
+  });
+
+  test('publishDecisionForCard adds price staleness warning inside T-60 when current price drifts from locked price', () => {
+    const payload = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'SPREAD',
+      recommended_bet_type: 'spread',
+      selection: { side: 'AWAY' },
+      prediction: 'AWAY',
+      line: -4.5,
+      price: -130,
+      edge: null,
+      edge_available: false,
+      confidence: 0.62,
+      model_version: 'nba-drivers-v1',
+      home_team: 'Home',
+      away_team: 'Away',
+      reason_codes: [],
+      tags: [],
+    };
+    const card = {
+      gameId: 'game-stale-price-inside-t60',
+      cardType: 'nba-spread-call',
+      cardTitle: 'NBA Spread: Away -4.5',
+      payloadData: payload,
+    };
+    const market = normalizeMarketType(
+      payload.market_type,
+      payload.recommended_bet_type,
+    );
+    const period = normalizePeriod(payload);
+    const sideFamily = getSideFamily(market);
+    const inputsHash = computeInputsHash(payload);
+    const candidateHash = computeCandidateHash({
+      side: payload.selection.side,
+      line: payload.line,
+      price: payload.price,
+      inputsHash,
+      market,
+      period,
+      sideFamily,
+    });
+
+    data.getDecisionRecord.mockReturnValue({
+      decision_key: 'nba|game-stale-price-inside-t60|spread|full_game|home_away',
+      recommended_side: 'HOME',
+      recommended_line: -4.5,
+      recommended_price: -110,
+      edge: 0.04,
+      confidence: 0.58,
+      locked_status: 'HARD',
+      locked_at: null,
+      last_candidate_hash: candidateHash,
+      candidate_seen_count: 1,
+    });
+
+    const outcome = publishDecisionForCard({
+      card,
+      oddsSnapshot: {
+        game_time_utc: minutesFromNowIso(45),
+      },
+    });
+
+    expect(outcome.gated).toBe(true);
+    expect(outcome.allow).toBe(false);
+    expect(card.payloadData.price).toBe(-110);
+    expect(card.payloadData.price_staleness_warning).toEqual({
+      locked_price: -110,
+      current_candidate_price: -130,
+      delta_american: 20,
+      minutes_to_start: 45,
+      reason: 'HARD_LOCK_PRICE_DRIFT',
+    });
+    expect(card.payloadData.tags).toEqual(
+      expect.arrayContaining(['PUBLISHED_FROM_GATE', 'PRICE_STALENESS_WARNING']),
+    );
+  });
+
+  test('publishDecisionForCard does not add price staleness warning outside T-60 even when current price drifts from locked price', () => {
+    const payload = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'SPREAD',
+      recommended_bet_type: 'spread',
+      selection: { side: 'AWAY' },
+      prediction: 'AWAY',
+      line: -4.5,
+      price: -130,
+      edge: null,
+      edge_available: false,
+      confidence: 0.62,
+      model_version: 'nba-drivers-v1',
+      home_team: 'Home',
+      away_team: 'Away',
+      reason_codes: [],
+      tags: [],
+    };
+    const card = {
+      gameId: 'game-stale-price-outside-t60',
+      cardType: 'nba-spread-call',
+      cardTitle: 'NBA Spread: Away -4.5',
+      payloadData: payload,
+    };
+    const market = normalizeMarketType(
+      payload.market_type,
+      payload.recommended_bet_type,
+    );
+    const period = normalizePeriod(payload);
+    const sideFamily = getSideFamily(market);
+    const inputsHash = computeInputsHash(payload);
+    const candidateHash = computeCandidateHash({
+      side: payload.selection.side,
+      line: payload.line,
+      price: payload.price,
+      inputsHash,
+      market,
+      period,
+      sideFamily,
+    });
+
+    data.getDecisionRecord.mockReturnValue({
+      decision_key: 'nba|game-stale-price-outside-t60|spread|full_game|home_away',
+      recommended_side: 'HOME',
+      recommended_line: -4.5,
+      recommended_price: -110,
+      edge: 0.04,
+      confidence: 0.58,
+      locked_status: 'HARD',
+      locked_at: null,
+      last_candidate_hash: candidateHash,
+      candidate_seen_count: 1,
+    });
+
+    const outcome = publishDecisionForCard({
+      card,
+      oddsSnapshot: {
+        game_time_utc: minutesFromNowIso(90),
+      },
+    });
+
+    expect(outcome.gated).toBe(true);
+    expect(outcome.allow).toBe(false);
+    expect(card.payloadData.price).toBe(-110);
+    expect(card.payloadData.price_staleness_warning).toBeUndefined();
+    expect(card.payloadData.tags).toEqual(['PUBLISHED_FROM_GATE']);
+  });
+
+  test('publishDecisionForCard does not add price staleness warning when current price matches locked price inside T-60', () => {
+    const payload = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'SPREAD',
+      recommended_bet_type: 'spread',
+      selection: { side: 'AWAY' },
+      prediction: 'AWAY',
+      line: -4.5,
+      price: -110,
+      edge: null,
+      edge_available: false,
+      confidence: 0.62,
+      model_version: 'nba-drivers-v1',
+      home_team: 'Home',
+      away_team: 'Away',
+      reason_codes: [],
+      tags: [],
+    };
+    const card = {
+      gameId: 'game-stale-price-equal-inside-t60',
+      cardType: 'nba-spread-call',
+      cardTitle: 'NBA Spread: Away -4.5',
+      payloadData: payload,
+    };
+    const market = normalizeMarketType(
+      payload.market_type,
+      payload.recommended_bet_type,
+    );
+    const period = normalizePeriod(payload);
+    const sideFamily = getSideFamily(market);
+    const inputsHash = computeInputsHash(payload);
+    const candidateHash = computeCandidateHash({
+      side: payload.selection.side,
+      line: payload.line,
+      price: payload.price,
+      inputsHash,
+      market,
+      period,
+      sideFamily,
+    });
+
+    data.getDecisionRecord.mockReturnValue({
+      decision_key: 'nba|game-stale-price-equal-inside-t60|spread|full_game|home_away',
+      recommended_side: 'HOME',
+      recommended_line: -4.5,
+      recommended_price: -110,
+      edge: 0.04,
+      confidence: 0.58,
+      locked_status: 'HARD',
+      locked_at: null,
+      last_candidate_hash: candidateHash,
+      candidate_seen_count: 1,
+    });
+
+    const outcome = publishDecisionForCard({
+      card,
+      oddsSnapshot: {
+        game_time_utc: minutesFromNowIso(45),
+      },
+    });
+
+    expect(outcome.gated).toBe(true);
+    expect(outcome.allow).toBe(false);
+    expect(card.payloadData.price).toBe(-110);
+    expect(card.payloadData.price_staleness_warning).toBeUndefined();
+    expect(card.payloadData.tags).toEqual(['PUBLISHED_FROM_GATE']);
   });
 
   test('publishDecisionForCard emits edge_units=decimal_fraction in decision event for null-edge card', () => {

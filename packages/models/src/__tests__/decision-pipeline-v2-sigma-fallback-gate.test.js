@@ -160,6 +160,24 @@ describe('buildDecisionV2 — sigma fallback safety gate integration', () => {
     expect(result.official_status).toBe('LEAN');
   });
 
+  it('clamped NHL total does not stay PLAY under computed sigma', () => {
+    const payload = buildNhlTotalPlayPayload({
+      projection: { total: 8.5 },
+      odds_context: {
+        captured_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+        total: 5.5,
+        total_price_over: -110,
+        total_price_under: -110,
+      },
+    });
+    const context = { sigmaOverride: { margin: 7, total: 1.8, sigma_source: 'computed' } };
+
+    const result = buildDecisionV2(payload, context);
+    expect(result).not.toBeNull();
+    expect(result.watchdog_status).toBe('CAUTION');
+    expect(result.official_status).toBe('LEAN');
+  });
+
   it('PLAY card emits SIGMA_FALLBACK_DEGRADED reason code under fallback sigma', () => {
     const payload = buildNhlTotalPlayPayload();
     const context = { sigmaOverride: { margin: 7, total: 10, sigma_source: 'fallback' } };

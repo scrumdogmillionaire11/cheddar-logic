@@ -1047,6 +1047,18 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
         raw?.goalies?.away?.save_pct ??
         null,
     );
+    const homeGoalieGsax = toNumber(
+      raw?.goalie_home_gsax ??
+        raw?.goalie?.home?.gsax ??
+        raw?.goalies?.home?.gsax ??
+        null,
+    );
+    const awayGoalieGsax = toNumber(
+      raw?.goalie_away_gsax ??
+        raw?.goalie?.away?.gsax ??
+        raw?.goalies?.away?.gsax ??
+        null,
+    );
     const paceRestDaysHome = toNumber(
       raw?.espn_metrics?.home?.metrics?.restDays ?? raw?.rest_days_home ?? null,
     );
@@ -1089,6 +1101,8 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       awayGoalsAgainst: goalsAgainstAway,
       homeGoalieSavePct,
       awayGoalieSavePct,
+      homeGoalieGsax,
+      awayGoalieGsax,
       homeGoalieConfirmed,
       awayGoalieConfirmed,
       homeGoalieCertainty,

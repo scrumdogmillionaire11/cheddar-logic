@@ -615,6 +615,33 @@ describe('AUDIT-FIX-01: computeTotalEdge NHL half-integer continuity correction'
     expect(result.p_fair).toBeGreaterThan(0.5);
   });
 
+  test('clamped NHL total lowers confidence by 0.1 versus equivalent NBA sigma', () => {
+    const nhlClamped = computeTotalEdge({
+      projectionTotal: 8.5,
+      totalLine: 5.5,
+      totalPriceOver: -110,
+      totalPriceUnder: -110,
+      sigmaTotal: 1.8,
+      isPredictionOver: true,
+    });
+    const nbaEquivalent = computeTotalEdge({
+      projectionTotal: 8.5,
+      totalLine: 5.5,
+      totalPriceOver: -110,
+      totalPriceUnder: -110,
+      sigmaTotal: 14,
+      isPredictionOver: true,
+    });
+
+    expect(nhlClamped).not.toBeNull();
+    assertStrict.ok(
+      Array.isArray(nhlClamped.rail_flags) &&
+        nhlClamped.rail_flags.includes('EDGE_SANITY_CLAMP_APPLIED'),
+      JSON.stringify(nhlClamped),
+    );
+    expect(nhlClamped.confidence).toBeCloseTo(nbaEquivalent.confidence - 0.1, 2);
+  });
+
   test('integer NHL total (6, sigmaTotal=1.8) — adjustedLine must be 6.5 (old behaviour preserved)', () => {
     // With integer line: adjustedLine = 6 + 0.5 = 6.5 (continuity correction applied)
     // p_over = 1 - normCdf((6.5 - 6.2) / 1.8) = 1 - normCdf(0.167) ≈ 0.4338
