@@ -355,6 +355,8 @@ function computeNHLMarketDecisions(oddsSnapshot) {
     goalsAgainstAway,
     goalieHomeGsax !== null,
     goalieAwayGsax !== null,
+    restDaysHome ?? 1,
+    restDaysAway ?? 1,
   );
   const projectedMargin =
     projection.homeProjected != null && projection.awayProjected != null
@@ -853,10 +855,10 @@ function computeNBAMarketDecisions(oddsSnapshot) {
       null,
   );
   const restDaysHome = toNumber(
-    raw?.espn_metrics?.home?.metrics?.restDays ?? null,
+    raw?.espn_metrics?.home?.metrics?.restDays ?? raw?.rest_days_home ?? null,
   );
   const restDaysAway = toNumber(
-    raw?.espn_metrics?.away?.metrics?.restDays ?? null,
+    raw?.espn_metrics?.away?.metrics?.restDays ?? raw?.rest_days_away ?? null,
   );
 
   // analyzePaceSynergy MUST run before projectNBACanonical so paceAdjustment is available.

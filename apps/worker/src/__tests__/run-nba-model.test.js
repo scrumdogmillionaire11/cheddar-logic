@@ -84,7 +84,7 @@ function loadRunNBAModel({
   const enrichOddsSnapshotWithEspnMetrics = jest.fn(enrichImpl);
   const updateOddsSnapshotRawData = jest.fn();
   const getDatabase = jest.fn(() => ({
-    prepare: jest.fn(() => ({ all: jest.fn(() => []) })),
+    prepare: jest.fn(() => ({ all: jest.fn(() => []), get: jest.fn(() => null) })),
   }));
   const computeLineDelta = jest.fn(() => null);
   const getOddsWithUpcomingGames = jest.fn(() => oddsSnapshots);

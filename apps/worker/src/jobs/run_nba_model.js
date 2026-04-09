@@ -79,6 +79,7 @@ const {
   PLAYOFF_SIGMA_MULTIPLIER,
   PLAYOFF_EDGE_MIN_INCREMENT,
 } = require('../utils/playoff-detection');
+const { computeRestDays } = require('../utils/rest-days');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -1317,7 +1318,15 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             ]),
           ];
 
-          const nbaMarketDecisions = computeNBAMarketDecisions(oddsSnapshot);
+          // WI-0836: Enrich oddsSnapshot with computed rest days before market decisions
+          const _homeRestResult = computeRestDays(oddsSnapshot.home_team, 'nba', oddsSnapshot.game_time_utc);
+          const _awayRestResult = computeRestDays(oddsSnapshot.away_team, 'nba', oddsSnapshot.game_time_utc);
+          const enrichedSnapshot = {
+            ...oddsSnapshot,
+            rest_days_home: _homeRestResult.restDays,
+            rest_days_away: _awayRestResult.restDays,
+          };
+          const nbaMarketDecisions = computeNBAMarketDecisions(enrichedSnapshot);
 
           // WI-0571: log projection comparison per game
           const totalPC = nbaMarketDecisions?.TOTAL?.projection_comparison;
@@ -1434,6 +1443,12 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             }
             assertExecutableCardsArePriced(card);
             attachRunId(card, jobRunId);
+            // WI-0836: rest signal observability
+            if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+            card.payloadData.raw_data.rest_days_home = _homeRestResult.restDays;
+            card.payloadData.raw_data.rest_days_away = _awayRestResult.restDays;
+            card.payloadData.raw_data.rest_source_home = _homeRestResult.restSource;
+            card.payloadData.raw_data.rest_source_away = _awayRestResult.restSource;
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';
@@ -1529,6 +1544,12 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             }
             assertExecutableCardsArePriced(card);
             attachRunId(card, jobRunId);
+            // WI-0836: rest signal observability
+            if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+            card.payloadData.raw_data.rest_days_home = _homeRestResult.restDays;
+            card.payloadData.raw_data.rest_days_away = _awayRestResult.restDays;
+            card.payloadData.raw_data.rest_source_home = _homeRestResult.restSource;
+            card.payloadData.raw_data.rest_source_away = _awayRestResult.restSource;
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';
