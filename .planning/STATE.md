@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-10T20:45:00Z"
-last_activity: "2026-04-10 - Closed out WI-0799 admin dashboard streak badges and stale-card muting"
+last_updated: "2026-04-10T21:00:00Z"
+last_activity: "2026-04-10 - Completed WI-0862 parseSnapshotPayload flat-shape fix; 48/48 assertions pass; WI-0856 unblocked"
 ---
 
 # Project State
