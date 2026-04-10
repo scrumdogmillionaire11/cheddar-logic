@@ -12,7 +12,9 @@ const {
   withDb,
   getUnsettledProjectionCards,
   setProjectionActualResult,
+  batchInsertProjectionProxyEvals,
 } = require('@cheddar-logic/data');
+const { buildProjectionProxyMarketRows, CARD_TYPE_TO_FAMILY } = require('../audit/projection_evaluator');
 const { fetchNhlSettlementSnapshot } = require('./nhl-settlement-source');
 const { fetchF5Total } = require('./settle_mlb_f5');
 
@@ -168,6 +170,28 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             console.log(
               `  [${JOB_NAME}] nhl ${card.game_id}: goals_1p=${goals1p}`,
             );
+
+            // Persist proxy-line grades for NHL 1P
+            if (!dryRun) {
+              const actualResultObj = { goals_1p: goals1p };
+              const proxyRows = buildProjectionProxyMarketRows({
+                card_id: card.card_id,
+                game_id: card.game_id,
+                game_date: card.game_time_utc?.slice(0, 10),
+                sport: card.sport,
+                card_family: CARD_TYPE_TO_FAMILY[card.card_type],
+                model_projection: payload?.projected_total ?? null,
+                actual_result: JSON.stringify(actualResultObj),
+              });
+              if (proxyRows.length > 0) {
+                try {
+                  batchInsertProjectionProxyEvals(db, proxyRows);
+                } catch (proxyErr) {
+                  console.error('[settle_projections] proxy eval insert failed', card.card_id, proxyErr?.message);
+                }
+              }
+            }
+
             settled++;
             continue;
           }
@@ -212,6 +236,28 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             console.log(
               `  [${JOB_NAME}] mlb ${card.game_id}: runs_f5=${actualF5}`,
             );
+
+            // Persist proxy-line grades for MLB F5
+            if (!dryRun) {
+              const actualResultObj = { runs_f5: actualF5 };
+              const proxyRows = buildProjectionProxyMarketRows({
+                card_id: card.card_id,
+                game_id: card.game_id,
+                game_date: card.game_time_utc?.slice(0, 10),
+                sport: card.sport,
+                card_family: CARD_TYPE_TO_FAMILY[card.card_type],
+                model_projection: payload?.projected_total ?? null,
+                actual_result: JSON.stringify(actualResultObj),
+              });
+              if (proxyRows.length > 0) {
+                try {
+                  batchInsertProjectionProxyEvals(db, proxyRows);
+                } catch (proxyErr) {
+                  console.error('[settle_projections] proxy eval insert failed', card.card_id, proxyErr?.message);
+                }
+              }
+            }
+
             settled++;
             continue;
           }
