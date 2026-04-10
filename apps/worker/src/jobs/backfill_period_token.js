@@ -36,6 +36,7 @@ function normalizePeriodToken(value) {
     token === '1P' ||
     token === 'P1' ||
     token === 'FIRST_PERIOD' ||
+    token === 'FIRST_5_INNINGS' ||
     token === '1ST_PERIOD'
   ) {
     return '1P';
@@ -73,7 +74,7 @@ function derivePeriodToken(payloadData, cardType) {
   if (fromPayload) return fromPayload;
 
   const cardTypeToken = String(cardType || '').toUpperCase();
-  if (cardTypeToken.includes('1P') || cardTypeToken.includes('FIRST_PERIOD')) {
+  if (cardTypeToken.includes('1P') || cardTypeToken.includes('FIRST_PERIOD') || cardTypeToken.includes('FIRST_5_INNINGS')) {
     return '1P';
   }
 
