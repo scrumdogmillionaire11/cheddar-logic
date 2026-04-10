@@ -472,6 +472,51 @@ function computeSigmaFromHistory({ sport, marketType, db, windowGames = 60 } = {
   }
 }
 
+/**
+ * Quarter-Kelly stake fraction (advisory sizing signal).
+ *
+ * Full Kelly: f* = (p*b - q) / b
+ * Quarter-Kelly: f = fraction * f*  (default fraction = 0.25)
+ *
+ * @param {number} pFair        - Model fair win probability (0–1)
+ * @param {number} americanOdds - American odds for the bet side (e.g., -110, +130)
+ * @param {number} [fraction]   - Kelly multiplier, default 0.25 (quarter-Kelly)
+ * @returns {{ kelly_fraction: number|null, kelly_units: number|null }}
+ *   kelly_fraction: fraction of bankroll to wager (0–1, typically 0.01–0.05)
+ *   kelly_units: kelly_fraction * 100 (expressed as % of bankroll)
+ *   Returns { kelly_fraction: null, kelly_units: null } when inputs are invalid
+ *   or EV is negative.
+ */
+function kellyStake(pFair, americanOdds, fraction = 0.25) {
+  if (!Number.isFinite(pFair) || pFair <= 0 || pFair >= 1) {
+    return { kelly_fraction: null, kelly_units: null };
+  }
+  if (!Number.isFinite(americanOdds) || americanOdds === 0) {
+    return { kelly_fraction: null, kelly_units: null };
+  }
+
+  const decimalOdds =
+    americanOdds > 0
+      ? 1 + americanOdds / 100
+      : 1 + 100 / Math.abs(americanOdds);
+
+  const b = decimalOdds - 1; // net odds per unit staked
+  const q = 1 - pFair;
+  const fullKelly = (pFair * b - q) / b;
+
+  if (fullKelly <= 0) {
+    return { kelly_fraction: null, kelly_units: null }; // Negative EV
+  }
+
+  // Never recommend > 25% of bankroll as full Kelly cap
+  const kellyCapped = Math.min(fullKelly, 0.25);
+  const kellyFraction = Number((kellyCapped * fraction).toFixed(4));
+  return {
+    kelly_fraction: kellyFraction,
+    kelly_units: Number((kellyFraction * 100).toFixed(2)),
+  };
+}
+
 module.exports = {
   impliedProbFromAmerican,
   noVigImplied,
@@ -484,4 +529,5 @@ module.exports = {
   computeTotalEdge,
   getSigmaDefaults,
   computeSigmaFromHistory,
+  kellyStake,
 };
