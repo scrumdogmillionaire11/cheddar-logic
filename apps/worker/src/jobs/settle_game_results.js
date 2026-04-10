@@ -461,6 +461,7 @@ function getPendingGameCoverageDiagnostics(db, cutoffUtc) {
       INNER JOIN card_results cr ON cr.game_id = g.game_id
       WHERE g.game_time_utc < ?
         AND cr.status = 'pending'
+        AND cr.is_primary = 1
         AND g.game_id NOT IN (
           SELECT game_id FROM game_results WHERE status = 'final'
         )
@@ -477,6 +478,7 @@ function getPendingGameCoverageDiagnostics(db, cutoffUtc) {
       INNER JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
       WHERE g.game_time_utc < ?
         AND cr.status = 'pending'
+        AND cr.is_primary = 1
         AND g.game_id NOT IN (
           SELECT game_id FROM game_results WHERE status = 'final'
         )
@@ -493,6 +495,7 @@ function getPendingGameCoverageDiagnostics(db, cutoffUtc) {
       INNER JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
       WHERE g.game_time_utc < ?
         AND cr.status = 'pending'
+        AND cr.is_primary = 1
         AND g.game_id NOT IN (
           SELECT game_id FROM game_results WHERE status = 'final'
         )
@@ -509,6 +512,7 @@ function getPendingGameCoverageDiagnostics(db, cutoffUtc) {
       LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
       WHERE g.game_time_utc < ?
         AND cr.status = 'pending'
+        AND cr.is_primary = 1
         AND g.game_id NOT IN (
           SELECT game_id FROM game_results WHERE status = 'final'
         )
@@ -530,6 +534,7 @@ function getPendingGameCoverageDiagnostics(db, cutoffUtc) {
         LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
         WHERE g.game_time_utc < ?
           AND cr.status = 'pending'
+          AND cr.is_primary = 1
           AND g.game_id NOT IN (
             SELECT game_id FROM game_results WHERE status = 'final'
           )
@@ -1150,6 +1155,7 @@ async function settleGameResults({
           OR (? = 1 AND cdl.pick_id IS NOT NULL)
         )
           AND cr.status = 'pending'
+          AND cr.is_primary = 1
           AND g.game_id NOT IN (
             SELECT game_id FROM game_results WHERE status = 'final'
           )

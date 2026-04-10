@@ -165,6 +165,7 @@ function queryWinningMetrics(db, market, reportDate) {
       AND (market_type = ? OR recommended_bet_type = ?)
       AND status = 'settled'
       AND date(COALESCE(settled_at, created_at)) = ?
+      AND is_primary = 1
     ORDER BY COALESCE(settled_at, created_at) ASC
   `).all(sport, marketType, marketType, reportDate);
 

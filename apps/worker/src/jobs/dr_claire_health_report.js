@@ -72,13 +72,13 @@ function runSportHealthQuery(db, sport, lookbackDays) {
   // the same game/market are correlated, so counting each inflates all metrics.
   const rawCount = db.prepare(`
     SELECT COUNT(*) as n FROM card_results
-    WHERE sport = ? AND status = 'settled' AND settled_at >= ?
+    WHERE sport = ? AND status = 'settled' AND settled_at >= ? AND is_primary = 1
   `).get(sport, cutoff)?.n ?? 0;
 
   const results = db.prepare(`
     SELECT result, AVG(pnl_units) as pnl_units, MAX(settled_at) as settled_at
     FROM card_results
-    WHERE sport = ? AND status = 'settled' AND settled_at >= ?
+    WHERE sport = ? AND status = 'settled' AND settled_at >= ? AND is_primary = 1
     GROUP BY game_id, card_type, recommended_bet_type
     ORDER BY settled_at DESC
   `).all(sport, cutoff);
