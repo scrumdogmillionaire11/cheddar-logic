@@ -12,6 +12,7 @@ type MarketType =
   | 'PUCKLINE'
   | 'TEAM_TOTAL'
   | 'FIRST_PERIOD'
+  | 'FIRST_5_INNINGS'
   | 'PROP'
   | 'INFO';
 type Tier = 'SUPER' | 'BEST' | 'WATCH' | null;
@@ -78,6 +79,7 @@ export function normalizeMarketType(value: unknown): MarketType | undefined {
     upper === 'PUCKLINE' ||
     upper === 'TEAM_TOTAL' ||
     upper === 'FIRST_PERIOD' ||
+    upper === 'FIRST_5_INNINGS' ||
     upper === 'PROP' ||
     upper === 'INFO'
   ) {

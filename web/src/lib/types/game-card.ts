@@ -23,6 +23,7 @@ export type CanonicalMarketType =
   | 'PUCKLINE'
   | 'TEAM_TOTAL'
   | 'FIRST_PERIOD'
+  | 'FIRST_5_INNINGS'
   | 'PROP'
   | 'INFO';
 
