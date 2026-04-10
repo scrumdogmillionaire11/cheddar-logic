@@ -359,7 +359,7 @@ function buildSchedule(
   };
 }
 
-export async function getPotdResponseData(now = new Date()): Promise<PotdResponseData> {
+async function getPotdResponseData(now = new Date()): Promise<PotdResponseData> {
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
   try {
     await ensureDbReady();
