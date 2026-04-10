@@ -7,6 +7,8 @@ function loadSchedulerModule({ freshTeamMetrics = false } = {}) {
     getUpcomingGames: jest.fn(() => []),
     shouldRunJobKey: jest.fn(() => true),
     hasRunningJobRun: jest.fn(() => false),
+    hasRunningJobName: jest.fn(() => false),
+    wasJobKeyRecentlySuccessful: jest.fn(() => false),
     wasJobRecentlySuccessful: jest.fn((jobName) => {
       if (jobName === 'refresh_team_metrics_daily') return freshTeamMetrics;
       if (jobName === 'pull_odds_hourly') return true;
@@ -28,6 +30,7 @@ function loadSchedulerModule({ freshTeamMetrics = false } = {}) {
   jest.doMock('../jobs/refresh_team_metrics_daily', () => ({ run: jest.fn() }));
   jest.doMock('../jobs/sync_nhl_sog_player_ids', () => ({ syncNhlSogPlayerIds: jest.fn() }));
   jest.doMock('../jobs/sync_nhl_player_availability', () => ({ syncNhlPlayerAvailability: jest.fn() }));
+  jest.doMock('../jobs/run_calibration_report', () => ({ runCalibrationReport: jest.fn() }));
 
   return require('../schedulers/main');
 }

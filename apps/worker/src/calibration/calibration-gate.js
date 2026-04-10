@@ -127,7 +127,7 @@ function isMarketCalibrationEnabled(marketKey, context = {}) {
   try {
     const db = context.db || getDatabase();
     const row = db.prepare(`
-      SELECT kill_switch_active
+      SELECT kill_switch_active, ece, n_samples, computed_at
       FROM calibration_reports
       WHERE market = ?
       ORDER BY datetime(computed_at) DESC, id DESC
@@ -137,8 +137,18 @@ function isMarketCalibrationEnabled(marketKey, context = {}) {
     const enabled = !row || Number(row.kill_switch_active || 0) === 0;
     reportCache.set(resolvedKey, {
       enabled,
+      row: row || null,
       expiresAtMs: nowMs + CACHE_TTL_MS,
     });
+    if (!enabled) {
+      console.warn(
+        '[CALIB_GATE] Kill switch ACTIVE for %s — ECE=%s nSamples=%s computed_at=%s — cards will be blocked',
+        resolvedKey,
+        row.ece,
+        row.n_samples,
+        row.computed_at,
+      );
+    }
     return enabled;
   } catch (_error) {
     return true;

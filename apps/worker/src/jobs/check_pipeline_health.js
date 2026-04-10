@@ -435,6 +435,48 @@ function checkSportModelFreshness(sport, jobName, checkName, maxAgeMinutes) {
   return { ok: false, reason };
 }
 
+/**
+ * Check: Calibration kill switch state
+ * Queries calibration_reports for any active kill switches.
+ * Returns gracefully if the table does not exist (dev environment).
+ */
+function checkCalibrationKillSwitches() {
+  try {
+    const db = getDatabase();
+    // Latest row per market
+    const rows = db
+      .prepare(
+        `SELECT market, kill_switch_active, ece, n_samples, computed_at
+         FROM calibration_reports
+         GROUP BY market
+         HAVING computed_at = MAX(computed_at)
+         ORDER BY market`,
+      )
+      .all();
+
+    const activeSwitches = rows.filter((r) => Number(r.kill_switch_active || 0) === 1);
+
+    if (activeSwitches.length > 0) {
+      const detail = activeSwitches
+        .map((r) => `${r.market}(ECE=${r.ece},n=${r.n_samples})`)
+        .join(', ');
+      const reason = `CALIB_KILL_SWITCH_ACTIVE — ${activeSwitches.length} market(s) suppressed: ${detail}`;
+      writePipelineHealth('calibration', 'kill_switch', 'warning', reason);
+      return { ok: false, reason, calibrationKillSwitches: activeSwitches };
+    }
+
+    const reason = rows.length === 0
+      ? 'No calibration_reports rows found'
+      : `${rows.length} market(s) calibration OK — no active kill switches`;
+    if (rows.length > 0) {
+      writePipelineHealth('calibration', 'kill_switch', 'ok', reason);
+    }
+    return { ok: true, reason, calibrationKillSwitches: [] };
+  } catch (_err) {
+    // Table may not exist in dev — skip gracefully
+    return { ok: true, reason: 'calibration_reports table absent — skipped', calibrationKillSwitches: [] };
+  }
+}
 
 /**
  * Returns true when the given (phase, check_name) has reached consecutiveRequired
@@ -506,6 +548,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         checkSportModelFreshness('nba', 'run_nba_model', 'model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
       mlb_model_freshness: () =>
         checkSportModelFreshness('mlb', 'run_mlb_model', 'model_freshness', 180),
+      calibration_kill_switches: checkCalibrationKillSwitches,
     };
 
     const results = {};
@@ -535,6 +578,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         nhl_shots_model_freshness: ['nhl', 'shots_model_freshness'],
         nba_model_freshness: ['nba', 'model_freshness'],
         mlb_model_freshness: ['mlb', 'model_freshness'],
+        calibration_kill_switches: ['calibration', 'kill_switch'],
       };
 
       const alertCandidates = [];
@@ -567,6 +611,12 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
 
     markJobRunSuccess(runId);
     console.log(`[check_pipeline_health] ${summary}`);
+
+    const calibrationKillSwitches = (results.calibration_kill_switches?.calibrationKillSwitches) || [];
+    if (calibrationKillSwitches.length > 0) {
+      console.warn(`[check_pipeline_health] CALIB_KILL_SWITCH_ACTIVE: ${calibrationKillSwitches.map((r) => r.market).join(', ')}`);
+    }
+    return { allOk, summary, calibrationKillSwitches };
   } catch (error) {
     console.error(`[check_pipeline_health] Error:`, error);
     markJobRunFailure(runId, error.message);
@@ -587,6 +637,7 @@ module.exports = {
   checkPipelineHealth,
   checkMlbF5MarketAvailability,
   checkOddsFreshness,
+  checkCalibrationKillSwitches,
   shouldSendAlert,
   buildHealthAlertMessage,
 };

@@ -24,6 +24,7 @@ const {
   claimTminusPullSlot,
   purgeStaleTminusPullLog, purgeStalePropOddsUsageLog, purgeExpiredPropEventMappings,
   recoverStaleJobRuns,
+  wasJobKeyRecentlySuccessful,
 } = require('@cheddar-logic/data');
 
 const {
@@ -58,6 +59,7 @@ const { runPotdEngine } = require('../jobs/potd/run_potd_engine');
 const { mirrorPotdSettlement } = require('../jobs/potd/settlement-mirror');
 const { runClvSnapshot } = require('../jobs/run_clv_snapshot');
 const { runDailyPerformanceReport } = require('../jobs/run_daily_performance_report');
+const { runCalibrationReport } = require('../jobs/run_calibration_report');
 
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
@@ -126,6 +128,7 @@ function computePotdScheduleMetadata(nowEt, games = []) {
       : unclampedTarget > windowEnd
         ? windowEnd
         : unclampedTarget;
+  const postDeadline = todayStart.set({ hour: 16, minute: 15, second: 0, millisecond: 0 });
 
   return {
     playDate: nowEt.toISODate(),
@@ -133,6 +136,8 @@ function computePotdScheduleMetadata(nowEt, games = []) {
     targetPostTimeEt: targetPostTimeEt.toISO(),
     windowStartEt: windowStart.toISO(),
     windowEndEt: windowEnd.toISO(),
+    postDeadlineEt: postDeadline.toISO(),
+    windowCollapsed: targetPostTimeEt.toMillis() === windowEnd.toMillis(),
   };
 }
 
@@ -228,23 +233,61 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
 
   // ========== POTD (4.5) ==========
   if (ENABLE_POTD) {
-    const schedule = computePotdScheduleMetadata(nowEt, games);
-    const windowEnd = nowEt.startOf('day').set({ hour: 16, minute: 0, second: 0, millisecond: 0 });
-    if (schedule) {
-      const targetPostTimeEt = DateTime.fromISO(schedule.targetPostTimeEt, { zone: TZ });
+    const meta = computePotdScheduleMetadata(nowEt, games);
+    if (!meta) {
+      console.warn('[POTD] No eligible games today — skipping');
+    } else {
+      const targetPostTimeEt = DateTime.fromISO(meta.targetPostTimeEt, { zone: TZ });
+      const postDeadlineEt   = DateTime.fromISO(meta.postDeadlineEt,   { zone: TZ });
+
+      if (meta.windowCollapsed) {
+        console.warn(
+          `[POTD] Window collapsed — all games tip after 5:30 PM ET. ` +
+          `Effective window: [${targetPostTimeEt.toFormat('h:mm a')} – ${postDeadlineEt.toFormat('h:mm a')} ET]`,
+        );
+      }
+
       const publishJobKey = `potd|${nowEt.toISODate()}`;
       if (
         nowEt >= targetPostTimeEt &&
-        nowEt <= windowEnd &&
+        nowEt <  postDeadlineEt &&
         shouldRunJobKey(publishJobKey)
       ) {
         jobs.push({
           jobName: 'run_potd_engine',
-          jobKey: publishJobKey,
+          jobKey:  publishJobKey,
           execute: runPotdEngine,
-          args: { jobKey: publishJobKey, dryRun, schedule },
-          reason: `potd engine (${schedule.targetPostTimeEt})`,
+          args:    { jobKey: publishJobKey, dryRun, schedule: meta },
+          reason:  `potd engine (${meta.targetPostTimeEt})`,
         });
+      }
+
+      const forceFallbackDeadline = postDeadlineEt.plus({ minutes: 15 });
+      const fallbackJobKey   = `${publishJobKey}:fallback`;
+      const alreadySucceeded = wasJobKeyRecentlySuccessful(publishJobKey, 300) ||
+                                wasJobKeyRecentlySuccessful(fallbackJobKey, 300);
+
+      if (
+        nowEt >= postDeadlineEt &&
+        nowEt <  forceFallbackDeadline &&
+        !alreadySucceeded &&
+        shouldRunJobKey(fallbackJobKey)
+      ) {
+        console.warn('[POTD] Primary window missed — firing fallback publish');
+        jobs.push({
+          jobName: 'run_potd_engine',
+          jobKey:  fallbackJobKey,
+          execute: runPotdEngine,
+          args:    { jobKey: fallbackJobKey, dryRun, schedule: meta },
+          reason:  `potd fallback engine (primary window missed, ${nowEt.toISO()})`,
+        });
+      }
+
+      if (nowEt >= forceFallbackDeadline && !alreadySucceeded) {
+        console.error(
+          `[POTD] Hard deadline passed with no successful publish — ` +
+          `manual review needed (date=${meta.playDate})`,
+        );
       }
     }
 
@@ -285,6 +328,17 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       execute: () => runDailyPerformanceReport(),
       args: {},
       reason: `nightly daily performance report ${nowEt.toISODate()}`,
+    });
+  }
+  // run_calibration_report: ECE per market + kill switch refresh (04:00 ET)
+  if (process.env.ENABLE_SETTLEMENT !== 'false' && isFixedDue(nowEt, '04:00')) {
+    const calibrationReportKey = `calibration_report|${nowEt.toISODate()}`;
+    jobs.push({
+      jobName: 'run_calibration_report',
+      jobKey: calibrationReportKey,
+      execute: () => runCalibrationReport(),
+      args: {},
+      reason: `nightly calibration report + kill switch refresh ${nowEt.toISODate()}`,
     });
   }
 
