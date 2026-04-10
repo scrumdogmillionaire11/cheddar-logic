@@ -322,7 +322,8 @@ function parseSnapshotPayload(snapshot) {
       ? JSON.parse(snapshot.raw_data)
       : (snapshot.raw_data || {});
     return {
-      markets: payload && payload.markets ? payload.markets : {},
+      markets: payload?.markets
+        ?? (payload?.spreads || payload?.totals || payload?.h2h ? payload : {}),
       context: extractSnapshotContext(payload),
     };
   } catch (error) {
