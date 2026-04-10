@@ -94,7 +94,7 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 
 | WI | Title | Priority | Deps |
 |----|-------|----------|------|
-| **WI-0825** | Per-market Brier/ECE calibration tracking with kill switch | High | WI-0820, WI-0824 |
+| ~~**WI-0826**~~ | ~~CLV + firing/winning monitoring — extend DB + worker, expose to dashboard~~ | ~~High~~ COMPLETE (2026-04-10) | WI-0824 |
 | ~~**WI-0819**~~ | ~~Quarter-Kelly stake fraction on PLAY/LEAN card payloads~~ | ~~High~~ COMPLETE (2026-04-10) | WI-0813 |
 | **WI-0826** | CLV + firing/winning monitoring — extend DB + worker, expose to dashboard | High | WI-0824 |
 | **WI-0838** | CLV first-seen price lock — freeze `odds_at_pick` at card creation | Medium | WI-0812 |
