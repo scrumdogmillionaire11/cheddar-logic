@@ -613,6 +613,18 @@ function applyExecutionGateToNbaCard(card, { oddsSnapshot, nowMs = Date.now() } 
       execution_status: 'BLOCKED',
       block_reason: gateResult.reason,
     };
+  } else {
+    payload.publish_ready = true;
+    payload.actionable = true;
+    payload._publish_state = {
+      ...(payload._publish_state && typeof payload._publish_state === 'object'
+        ? payload._publish_state
+        : {}),
+      publish_ready: true,
+      emit_allowed: true,
+      execution_status: 'EXECUTABLE',
+      block_reason: null,
+    };
   }
 
   return {
