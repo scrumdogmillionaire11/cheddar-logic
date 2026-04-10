@@ -2064,7 +2064,7 @@ async function runMLBModel({
               away_team: gameOddsSnapshot?.away_team ?? null,
               matchup,
               start_time_utc: gameOddsSnapshot?.game_time_utc ?? null,
-              market_type: (isF5 || isF5ML) ? 'FIRST_PERIOD' : 'PROP',
+              market_type: (isF5 || isF5ML) ? 'FIRST_5_INNINGS' : 'PROP',
               status: driver.status ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
               action: driver.action ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
               classification: driver.classification ?? (driver.ev_threshold_passed ? 'BASE' : 'PASS'),
