@@ -1,0 +1,541 @@
+'use strict';
+
+function isFiniteNumber(value) {
+  return Number.isFinite(value);
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function round(value, digits = 4) {
+  if (!isFiniteNumber(value)) return null;
+  return Number(value.toFixed(digits));
+}
+
+function median(values) {
+  const numbers = values.filter(isFiniteNumber).sort((a, b) => a - b);
+  if (numbers.length === 0) return null;
+  const middle = Math.floor(numbers.length / 2);
+  if (numbers.length % 2 === 1) return numbers[middle];
+  return round((numbers[middle - 1] + numbers[middle]) / 2);
+}
+
+function stddev(values) {
+  const numbers = values.filter(isFiniteNumber);
+  if (numbers.length === 0) return null;
+  if (numbers.length === 1) return 0;
+  const mean = numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+  const variance =
+    numbers.reduce((sum, value) => sum + (value - mean) ** 2, 0) / numbers.length;
+  return round(Math.sqrt(variance));
+}
+
+function americanToImplied(price) {
+  if (!isFiniteNumber(price) || price === 0) return null;
+  if (price > 0) return round(100 / (price + 100), 6);
+  return round(Math.abs(price) / (Math.abs(price) + 100), 6);
+}
+
+function removeVig(priceA, priceB) {
+  const impliedA = americanToImplied(priceA);
+  const impliedB = americanToImplied(priceB);
+  if (!isFiniteNumber(impliedA) || !isFiniteNumber(impliedB)) {
+    return { fairProbA: null, fairProbB: null };
+  }
+  const total = impliedA + impliedB;
+  if (!isFiniteNumber(total) || total <= 0) {
+    return { fairProbA: null, fairProbB: null };
+  }
+  return {
+    fairProbA: round(impliedA / total, 6),
+    fairProbB: round(impliedB / total, 6),
+  };
+}
+
+function confidenceThreshold(minConfidence) {
+  if (typeof minConfidence === 'number') return minConfidence;
+  const token = String(minConfidence || 'HIGH').trim().toUpperCase();
+  if (token === 'ELITE') return 0.75;
+  if (token === 'HIGH') return 0.5;
+  return 0;
+}
+
+function confidenceLabel(score) {
+  if (!isFiniteNumber(score)) return 'LOW';
+  if (score >= 0.75) return 'ELITE';
+  if (score >= 0.5) return 'HIGH';
+  return 'LOW';
+}
+
+function toSelectionLabel({ selection, homeTeam, awayTeam, line }) {
+  if (selection === 'HOME') {
+    return `${homeTeam}${isFiniteNumber(line) ? ` ${line > 0 ? '+' : ''}${line}` : ''}`.trim();
+  }
+  if (selection === 'AWAY') {
+    return `${awayTeam}${isFiniteNumber(line) ? ` ${line > 0 ? '+' : ''}${line}` : ''}`.trim();
+  }
+  if (selection === 'OVER' || selection === 'UNDER') {
+    return `${selection} ${line}`;
+  }
+  return selection;
+}
+
+function selectBestRow(rows, { lineKey = null, priceKey, linePreference = 'higher' }) {
+  let best = null;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const price = row?.[priceKey];
+    if (!isFiniteNumber(price)) continue;
+    const line = lineKey ? row?.[lineKey] : null;
+    if (lineKey && !isFiniteNumber(line)) continue;
+    if (!best) {
+      best = { row, line, price };
+      continue;
+    }
+    const betterLine =
+      !lineKey
+        ? false
+        : linePreference === 'lower'
+          ? line < best.line
+          : line > best.line;
+    const tiedLine = !lineKey || line === best.line;
+    const betterPrice = price > best.price;
+    if (betterLine || (tiedLine && betterPrice)) {
+      best = { row, line, price };
+    }
+  }
+  return best;
+}
+
+function computeConsensus(entries, marketType) {
+  const rows = Array.isArray(entries) ? entries : [];
+  if (marketType === 'SPREAD') {
+    return {
+      homeLine: median(rows.map((row) => row.home_line)),
+      awayLine: median(rows.map((row) => row.away_line)),
+      homePrice: median(rows.map((row) => row.home_price)),
+      awayPrice: median(rows.map((row) => row.away_price)),
+    };
+  }
+  if (marketType === 'TOTAL') {
+    return {
+      line: median(rows.map((row) => row.line)),
+      overPrice: median(rows.map((row) => row.over)),
+      underPrice: median(rows.map((row) => row.under)),
+    };
+  }
+  return {
+    homePrice: median(rows.map((row) => row.home)),
+    awayPrice: median(rows.map((row) => row.away)),
+  };
+}
+
+function buildMarketConsensusScore({ lineValues = [], priceValues = [], sourceCount, marketType }) {
+  const lineDispersion = stddev(lineValues);
+  const priceDispersion = stddev(priceValues);
+  const sourceScore = clamp(((sourceCount || 0) - 1) / 4, 0, 1);
+  const lineScale = marketType === 'MONEYLINE' ? 1 : 1.5;
+  const lineScore =
+    marketType === 'MONEYLINE'
+      ? null
+      : lineDispersion === null
+        ? 0.5
+        : clamp(1 - lineDispersion / lineScale, 0, 1);
+  const priceScore =
+    priceDispersion === null
+      ? 0.5
+      : clamp(1 - priceDispersion / 40, 0, 1);
+
+  if (marketType === 'MONEYLINE') {
+    return round(priceScore * 0.7 + sourceScore * 0.3, 6);
+  }
+
+  return round((lineScore * 0.55) + (priceScore * 0.2) + (sourceScore * 0.25), 6);
+}
+
+function buildSpreadCandidates(game) {
+  const rows = Array.isArray(game?.market?.spreads) ? game.market.spreads : [];
+  const consensus = computeConsensus(rows, 'SPREAD');
+  const homeBest = selectBestRow(rows, {
+    lineKey: 'home_line',
+    priceKey: 'home_price',
+    linePreference: 'higher',
+  });
+  const awayBest = selectBestRow(rows, {
+    lineKey: 'away_line',
+    priceKey: 'away_price',
+    linePreference: 'higher',
+  });
+
+  const candidates = [];
+  if (homeBest) {
+    candidates.push({
+      gameId: game.gameId,
+      sport: game.sport,
+      home_team: game.homeTeam,
+      away_team: game.awayTeam,
+      commence_time: game.gameTimeUtc,
+      marketType: 'SPREAD',
+      selection: 'HOME',
+      selectionLabel: toSelectionLabel({
+        selection: 'HOME',
+        homeTeam: game.homeTeam,
+        awayTeam: game.awayTeam,
+        line: homeBest.line,
+      }),
+      line: homeBest.line,
+      price: homeBest.price,
+      oddsContext: {
+        bookmaker: homeBest.row.book || null,
+        spread_home: homeBest.line,
+        spread_away: isFiniteNumber(homeBest.line) ? round(homeBest.line * -1) : null,
+        spread_price_home: homeBest.price,
+        spread_price_away: isFiniteNumber(homeBest.row.away_price) ? homeBest.row.away_price : consensus.awayPrice,
+        captured_at: game.capturedAtUtc || new Date().toISOString(),
+        market_rows: rows,
+      },
+      consensusLine: consensus.homeLine,
+      consensusPrice: consensus.homePrice,
+      counterpartConsensusPrice: consensus.awayPrice,
+      comparableLines: rows.map((row) => row.home_line),
+      comparablePrices: rows.map((row) => row.home_price),
+      sourceCount: rows.length,
+    });
+  }
+  if (awayBest) {
+    candidates.push({
+      gameId: game.gameId,
+      sport: game.sport,
+      home_team: game.homeTeam,
+      away_team: game.awayTeam,
+      commence_time: game.gameTimeUtc,
+      marketType: 'SPREAD',
+      selection: 'AWAY',
+      selectionLabel: toSelectionLabel({
+        selection: 'AWAY',
+        homeTeam: game.homeTeam,
+        awayTeam: game.awayTeam,
+        line: awayBest.line,
+      }),
+      line: awayBest.line,
+      price: awayBest.price,
+      oddsContext: {
+        bookmaker: awayBest.row.book || null,
+        spread_home: isFiniteNumber(awayBest.line) ? round(awayBest.line * -1) : null,
+        spread_away: awayBest.line,
+        spread_price_home: isFiniteNumber(awayBest.row.home_price) ? awayBest.row.home_price : consensus.homePrice,
+        spread_price_away: awayBest.price,
+        captured_at: game.capturedAtUtc || new Date().toISOString(),
+        market_rows: rows,
+      },
+      consensusLine: consensus.awayLine,
+      consensusPrice: consensus.awayPrice,
+      counterpartConsensusPrice: consensus.homePrice,
+      comparableLines: rows.map((row) => row.away_line),
+      comparablePrices: rows.map((row) => row.away_price),
+      sourceCount: rows.length,
+    });
+  }
+
+  return candidates;
+}
+
+function buildTotalCandidates(game) {
+  const rows = Array.isArray(game?.market?.totals) ? game.market.totals : [];
+  const consensus = computeConsensus(rows, 'TOTAL');
+  const overBest = selectBestRow(rows, {
+    lineKey: 'line',
+    priceKey: 'over',
+    linePreference: 'lower',
+  });
+  const underBest = selectBestRow(rows, {
+    lineKey: 'line',
+    priceKey: 'under',
+    linePreference: 'higher',
+  });
+
+  const candidates = [];
+  if (overBest) {
+    candidates.push({
+      gameId: game.gameId,
+      sport: game.sport,
+      home_team: game.homeTeam,
+      away_team: game.awayTeam,
+      commence_time: game.gameTimeUtc,
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      selectionLabel: toSelectionLabel({
+        selection: 'OVER',
+        homeTeam: game.homeTeam,
+        awayTeam: game.awayTeam,
+        line: overBest.line,
+      }),
+      line: overBest.line,
+      price: overBest.price,
+      oddsContext: {
+        bookmaker: overBest.row.book || null,
+        total: overBest.line,
+        total_price_over: overBest.price,
+        total_price_under: isFiniteNumber(overBest.row.under) ? overBest.row.under : consensus.underPrice,
+        captured_at: game.capturedAtUtc || new Date().toISOString(),
+        market_rows: rows,
+      },
+      consensusLine: consensus.line,
+      consensusPrice: consensus.overPrice,
+      counterpartConsensusPrice: consensus.underPrice,
+      comparableLines: rows.map((row) => row.line),
+      comparablePrices: rows.map((row) => row.over),
+      sourceCount: rows.length,
+    });
+  }
+  if (underBest) {
+    candidates.push({
+      gameId: game.gameId,
+      sport: game.sport,
+      home_team: game.homeTeam,
+      away_team: game.awayTeam,
+      commence_time: game.gameTimeUtc,
+      marketType: 'TOTAL',
+      selection: 'UNDER',
+      selectionLabel: toSelectionLabel({
+        selection: 'UNDER',
+        homeTeam: game.homeTeam,
+        awayTeam: game.awayTeam,
+        line: underBest.line,
+      }),
+      line: underBest.line,
+      price: underBest.price,
+      oddsContext: {
+        bookmaker: underBest.row.book || null,
+        total: underBest.line,
+        total_price_over: isFiniteNumber(underBest.row.over) ? underBest.row.over : consensus.overPrice,
+        total_price_under: underBest.price,
+        captured_at: game.capturedAtUtc || new Date().toISOString(),
+        market_rows: rows,
+      },
+      consensusLine: consensus.line,
+      consensusPrice: consensus.underPrice,
+      counterpartConsensusPrice: consensus.overPrice,
+      comparableLines: rows.map((row) => row.line),
+      comparablePrices: rows.map((row) => row.under),
+      sourceCount: rows.length,
+    });
+  }
+
+  return candidates;
+}
+
+function buildMoneylineCandidates(game) {
+  const rows = Array.isArray(game?.market?.h2h) ? game.market.h2h : [];
+  const consensus = computeConsensus(rows, 'MONEYLINE');
+  const homeBest = selectBestRow(rows, { priceKey: 'home' });
+  const awayBest = selectBestRow(rows, { priceKey: 'away' });
+
+  const candidates = [];
+  if (homeBest) {
+    candidates.push({
+      gameId: game.gameId,
+      sport: game.sport,
+      home_team: game.homeTeam,
+      away_team: game.awayTeam,
+      commence_time: game.gameTimeUtc,
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: game.homeTeam,
+      line: null,
+      price: homeBest.price,
+      oddsContext: {
+        bookmaker: homeBest.row.book || null,
+        h2h_home: homeBest.price,
+        h2h_away: isFiniteNumber(homeBest.row.away) ? homeBest.row.away : consensus.awayPrice,
+        captured_at: game.capturedAtUtc || new Date().toISOString(),
+        market_rows: rows,
+      },
+      consensusLine: null,
+      consensusPrice: consensus.homePrice,
+      counterpartConsensusPrice: consensus.awayPrice,
+      comparableLines: [],
+      comparablePrices: rows.map((row) => row.home),
+      sourceCount: rows.length,
+    });
+  }
+  if (awayBest) {
+    candidates.push({
+      gameId: game.gameId,
+      sport: game.sport,
+      home_team: game.homeTeam,
+      away_team: game.awayTeam,
+      commence_time: game.gameTimeUtc,
+      marketType: 'MONEYLINE',
+      selection: 'AWAY',
+      selectionLabel: game.awayTeam,
+      line: null,
+      price: awayBest.price,
+      oddsContext: {
+        bookmaker: awayBest.row.book || null,
+        h2h_home: isFiniteNumber(awayBest.row.home) ? awayBest.row.home : consensus.homePrice,
+        h2h_away: awayBest.price,
+        captured_at: game.capturedAtUtc || new Date().toISOString(),
+        market_rows: rows,
+      },
+      consensusLine: null,
+      consensusPrice: consensus.awayPrice,
+      counterpartConsensusPrice: consensus.homePrice,
+      comparableLines: [],
+      comparablePrices: rows.map((row) => row.away),
+      sourceCount: rows.length,
+    });
+  }
+
+  return candidates;
+}
+
+function buildCandidates(game) {
+  if (
+    !game ||
+    !game.gameId ||
+    !game.homeTeam ||
+    !game.awayTeam ||
+    !game.gameTimeUtc ||
+    !game.market ||
+    typeof game.market !== 'object'
+  ) {
+    return [];
+  }
+
+  return [
+    ...buildSpreadCandidates(game),
+    ...buildTotalCandidates(game),
+    ...buildMoneylineCandidates(game),
+  ];
+}
+
+function scoreCandidate(candidate) {
+  if (!candidate || !isFiniteNumber(candidate.price)) {
+    return null;
+  }
+
+  const impliedProb = americanToImplied(candidate.price);
+  if (!isFiniteNumber(impliedProb)) return null;
+
+  let lineDelta = 0;
+  if (candidate.marketType === 'SPREAD') {
+    lineDelta = isFiniteNumber(candidate.line) && isFiniteNumber(candidate.consensusLine)
+      ? candidate.line - candidate.consensusLine
+      : 0;
+  } else if (candidate.marketType === 'TOTAL') {
+    if (isFiniteNumber(candidate.line) && isFiniteNumber(candidate.consensusLine)) {
+      lineDelta =
+        candidate.selection === 'OVER'
+          ? candidate.consensusLine - candidate.line
+          : candidate.line - candidate.consensusLine;
+    }
+  }
+
+  const priceDelta =
+    isFiniteNumber(candidate.consensusPrice) && isFiniteNumber(candidate.price)
+      ? candidate.price - candidate.consensusPrice
+      : 0;
+
+  // Parity with consensus is neutral at 0.5. Better lines/prices push toward 1.0.
+  const lineComponent =
+    candidate.marketType === 'MONEYLINE'
+      ? 0.5
+      : clamp(0.5 + lineDelta / 2, 0, 1);
+  const priceComponent = clamp(0.5 + priceDelta / 80, 0, 1);
+  const lineValue =
+    candidate.marketType === 'MONEYLINE'
+      ? round(priceComponent, 6)
+      : round((lineComponent * 0.75) + (priceComponent * 0.25), 6);
+
+  const marketConsensus = buildMarketConsensusScore({
+    lineValues: candidate.comparableLines,
+    priceValues: candidate.comparablePrices,
+    sourceCount: candidate.sourceCount,
+    marketType: candidate.marketType,
+  });
+
+  const fairPair = removeVig(candidate.consensusPrice, candidate.counterpartConsensusPrice);
+  const modelFairProbability =
+    candidate.selection === 'HOME' || candidate.selection === 'OVER'
+      ? fairPair.fairProbA
+      : fairPair.fairProbB;
+
+  if (!isFiniteNumber(modelFairProbability)) return null;
+
+  const edgePct = round(modelFairProbability - impliedProb, 6);
+  const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
+
+  return {
+    ...candidate,
+    lineValue,
+    marketConsensus,
+    totalScore,
+    modelWinProb: modelFairProbability,
+    impliedProb,
+    edgePct,
+    confidenceLabel: confidenceLabel(totalScore),
+    scoreBreakdown: {
+      lineValue,
+      marketConsensus,
+    },
+  };
+}
+
+function selectBestPlay(scoredCandidates, { minConfidence = 'HIGH' } = {}) {
+  const threshold = confidenceThreshold(minConfidence);
+  const viable = (Array.isArray(scoredCandidates) ? scoredCandidates : [])
+    .filter(Boolean)
+    .filter((candidate) => isFiniteNumber(candidate.edgePct) && candidate.edgePct > 0)
+    .filter((candidate) => isFiniteNumber(candidate.totalScore) && candidate.totalScore >= threshold)
+    .sort((left, right) => {
+      if (right.totalScore !== left.totalScore) return right.totalScore - left.totalScore;
+      return (right.edgePct || 0) - (left.edgePct || 0);
+    });
+
+  return viable[0] || null;
+}
+
+function kellySize({
+  edgePct,
+  impliedProb,
+  bankroll,
+  kellyFraction = 0.25,
+  maxWagerPct = 0.2,
+}) {
+  if (
+    !isFiniteNumber(edgePct) ||
+    edgePct <= 0 ||
+    !isFiniteNumber(impliedProb) ||
+    impliedProb <= 0 ||
+    impliedProb >= 1 ||
+    !isFiniteNumber(bankroll) ||
+    bankroll <= 0
+  ) {
+    return 0;
+  }
+
+  const winProb = impliedProb + edgePct;
+  if (!isFiniteNumber(winProb) || winProb <= 0 || winProb >= 1) return 0;
+
+  const decimalOdds = 1 / impliedProb;
+  const b = decimalOdds - 1;
+  if (!isFiniteNumber(b) || b <= 0) return 0;
+
+  const q = 1 - winProb;
+  const rawKelly = ((b * winProb) - q) / b;
+  if (!isFiniteNumber(rawKelly) || rawKelly <= 0) return 0;
+
+  const stakeFraction = clamp(rawKelly * kellyFraction, 0, maxWagerPct);
+  return round(bankroll * stakeFraction, 2) || 0;
+}
+
+module.exports = {
+  americanToImplied,
+  buildCandidates,
+  confidenceThreshold,
+  kellySize,
+  removeVig,
+  scoreCandidate,
+  selectBestPlay,
+};

@@ -691,6 +691,7 @@ function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS } = {}) {
         FROM card_payloads cp
         LEFT JOIN games g ON g.game_id = cp.game_id
         WHERE LOWER(cp.sport) != 'fpl'
+          AND LOWER(cp.card_type) != 'potd-call'
           AND g.game_time_utc IS NOT NULL
           AND datetime(g.game_time_utc) > datetime('now')
           AND NOT EXISTS (

@@ -36,6 +36,13 @@ export default function Home() {
           </Link>
 
           <Link
+            href="/play-of-the-day"
+            className="rounded-xl border border-teal/30 bg-teal/10 px-8 py-6 text-lg font-semibold text-teal-100 transition hover:border-teal/50 hover:bg-teal/15"
+          >
+            🎯 Play of the Day 🎯
+          </Link>
+
+          <Link
             href="/results"
             className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
           >

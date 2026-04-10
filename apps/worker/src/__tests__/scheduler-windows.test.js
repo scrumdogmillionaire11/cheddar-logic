@@ -327,6 +327,8 @@ function loadSchedulerModule(dataOverrides = {}) {
   jest.doMock('../jobs/sync_nhl_sog_player_ids', () => ({ syncNhlSogPlayerIds: jest.fn() }));
   jest.doMock('../jobs/sync_nhl_player_availability', () => ({ syncNhlPlayerAvailability: jest.fn() }));
   jest.doMock('../jobs/post_discord_cards', () => ({ postDiscordCards: jest.fn() }));
+  jest.doMock('../jobs/potd/run_potd_engine', () => ({ runPotdEngine: jest.fn() }));
+  jest.doMock('../jobs/potd/settlement-mirror', () => ({ mirrorPotdSettlement: jest.fn() }));
 
   return require('../schedulers/main');
 }
@@ -576,5 +578,126 @@ describe('scheduler settlement windows', () => {
 
     const now = new Date('2026-03-24T15:06:00Z');
     await expect(scheduler.tick({ now, dryRun: false })).resolves.toBeUndefined();
+  });
+});
+
+describe('scheduler POTD windows', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env = { ...originalEnv };
+    process.env.ENABLE_ODDS_PULL = 'false';
+    process.env.ENABLE_SETTLEMENT = 'true';
+    process.env.ENABLE_HOURLY_SETTLEMENT_SWEEP = 'true';
+    process.env.ENABLE_NHL_MODEL = 'true';
+    process.env.ENABLE_NBA_MODEL = 'true';
+    process.env.ENABLE_NFL_MODEL = 'false';
+    process.env.ENABLE_MLB_MODEL = 'false';
+    process.env.ENABLE_POTD = 'true';
+    process.env.FIXED_CATCHUP = 'false';
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  function sampleGames() {
+    return [
+      {
+        game_id: 'nhl-game-1',
+        sport: 'nhl',
+        game_time_utc: '2026-03-24T18:00:00.000Z',
+      },
+    ];
+  }
+
+  test('does not queue POTD publish before computed target time', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-24T12:20:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: sampleGames(),
+      dryRun: true,
+    });
+
+    expect(dueJobs.some((job) => job.jobName === 'run_potd_engine')).toBe(false);
+  });
+
+  test('queues POTD publish exactly at computed target time', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-24T12:30:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: sampleGames(),
+      dryRun: true,
+    });
+
+    const potdJob = dueJobs.find((job) => job.jobName === 'run_potd_engine');
+    expect(potdJob).toBeDefined();
+    expect(potdJob.jobKey).toBe('potd|2026-03-24');
+    expect(potdJob.args.schedule.targetPostTimeEt).toContain('2026-03-24T12:30:00.000');
+  });
+
+  test('same-day successful publish suppresses duplicate POTD enqueue', () => {
+    const scheduler = loadSchedulerModule({
+      shouldRunJobKey: jest.fn((jobKey) => jobKey !== 'potd|2026-03-24'),
+    });
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-24T13:15:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: sampleGames(),
+      dryRun: true,
+    });
+
+    expect(dueJobs.some((job) => job.jobName === 'run_potd_engine')).toBe(false);
+  });
+
+  test('queues settlement mirror only after canonical settlement jobs are due', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-24T01:02:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: [],
+      dryRun: true,
+    });
+
+    const mirrorIndex = dueJobs.findIndex((job) => job.jobName === 'mirror_potd_settlement');
+    const lastSettlementIndex = Math.max(
+      dueJobs.findIndex((job) => job.jobName === 'settle_game_results'),
+      dueJobs.findIndex((job) => job.jobName === 'settle_projections'),
+      dueJobs.findIndex((job) => job.jobName === 'settle_pending_cards'),
+    );
+
+    expect(mirrorIndex).toBeGreaterThan(-1);
+    expect(mirrorIndex).toBeGreaterThan(lastSettlementIndex);
   });
 });

@@ -6,6 +6,8 @@ const {
   sendDiscordMessages,
   postDiscordCards,
 } = require('../post_discord_cards');
+const fs = require('fs');
+const Database = require('better-sqlite3');
 
 function makeCard(overrides = {}) {
   return {
@@ -392,5 +394,104 @@ describe('post_discord_cards helpers', () => {
     const snapshot = buildDiscordSnapshot({ cards: [cleanCard], now: new Date('2026-03-20T14:00:00.000Z') });
 
     expect(snapshot.messages[0]).not.toContain('Hard-locked');
+  });
+});
+
+describe('postDiscordCards integration', () => {
+  const TEST_DB_PATH = '/tmp/cheddar-test-post-discord-cards.db';
+  const LOCK_PATH = `${TEST_DB_PATH}.lock`;
+  let dataModule;
+
+  function removeIfExists(filePath) {
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch {
+      // best effort
+    }
+  }
+
+  function resetTables() {
+    const db = new Database(TEST_DB_PATH);
+    db.exec(`
+      DELETE FROM card_results;
+      DELETE FROM card_payloads;
+      DELETE FROM games;
+      DELETE FROM job_runs;
+    `);
+    db.close();
+  }
+
+  beforeAll(async () => {
+    process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/cards';
+
+    removeIfExists(TEST_DB_PATH);
+    removeIfExists(LOCK_PATH);
+
+    dataModule = require('@cheddar-logic/data');
+    await dataModule.runMigrations();
+    dataModule.closeDatabase();
+  });
+
+  beforeEach(() => {
+    dataModule.closeDatabase();
+    resetTables();
+  });
+
+  afterAll(() => {
+    try {
+      dataModule.closeDatabase();
+    } catch {
+      // best effort
+    }
+  });
+
+  test('dry-run snapshot excludes potd-call from generic Discord cards feed', async () => {
+    const db = new Database(TEST_DB_PATH);
+    db.prepare(
+      `INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+       VALUES (?, 'nhl', ?, ?, ?, ?, 'scheduled')`,
+    ).run(
+      'game-1',
+      'game-1',
+      'Boston Bruins',
+      'Toronto Maple Leafs',
+      '2035-04-10T00:00:00.000Z',
+    );
+    db.prepare(
+      `INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+       VALUES
+       (?, ?, 'nhl', 'potd-call', 'POTD', '2026-04-09T18:00:00.000Z', ?),
+       (?, ?, 'nhl', 'nhl-moneyline-call', 'Regular Card', '2026-04-09T18:01:00.000Z', ?)`,
+    ).run(
+      'potd-card',
+      'game-1',
+      JSON.stringify({
+        action: 'FIRE',
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        price: 115,
+        line: 5.5,
+      }),
+      'regular-card',
+      'game-1',
+      JSON.stringify({
+        action: 'FIRE',
+        kind: 'PLAY',
+        market_type: 'MONEYLINE',
+        selection: { side: 'HOME' },
+        price: -115,
+        line: null,
+      }),
+    );
+    db.close();
+
+    const result = await postDiscordCards({ dryRun: true });
+    expect(result.success).toBe(true);
+    expect(result.totalCards).toBe(1);
   });
 });
