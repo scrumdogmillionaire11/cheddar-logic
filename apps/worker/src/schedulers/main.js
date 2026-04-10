@@ -362,15 +362,18 @@ async function tick() {
   const seen = new Set();
   const uniqueDue = computeDueJobs({ nowEt, nowUtc, games, dryRun }).filter((j) => { if (seen.has(j.jobKey)) return false; seen.add(j.jobKey); return true; });
   console.log(`[SCHEDULER] Tick ${nowEt.toISO()} ET — due candidates: ${uniqueDue.length}`);
-  let staleOddsSkipLogged = false;
   for (const job of uniqueDue) {
-    if (isModelJob(job.jobName) && !hasFreshInputsForModels({ requireFresh: REQUIRE_FRESH_ODDS_FOR_MODELS, withoutOddsMode: ENABLE_WITHOUT_ODDS_MODE, maxAgeMinutes: MODEL_ODDS_MAX_AGE_MINUTES })) {
-      if (!staleOddsSkipLogged) {
-        console.warn(`[SCHEDULER][GATE] Skipping model jobs: no successful ${ENABLE_WITHOUT_ODDS_MODE ? 'pull_espn_games_direct' : 'pull_odds_hourly'} in last ${MODEL_ODDS_MAX_AGE_MINUTES} minutes`);
-        staleOddsSkipLogged = true;
+    if (isModelJob(job.jobName)) {
+      // Use per-job withoutOddsMode when set (e.g. MLB projection-only), falling
+      // back to the global flag. This lets MLB model runs check ESPN-direct
+      // freshness rather than pull_odds_hourly when MLB odds are inactive.
+      const jobWithoutOddsMode = job.withoutOddsMode !== undefined ? job.withoutOddsMode : ENABLE_WITHOUT_ODDS_MODE;
+      if (!hasFreshInputsForModels({ requireFresh: REQUIRE_FRESH_ODDS_FOR_MODELS, withoutOddsMode: jobWithoutOddsMode, maxAgeMinutes: MODEL_ODDS_MAX_AGE_MINUTES })) {
+        const gateSource = jobWithoutOddsMode ? 'pull_espn_games_direct' : 'pull_odds_hourly';
+        console.warn(`[SCHEDULER][GATE] Skipping ${job.jobName} (${job.jobKey}): no successful ${gateSource} in last ${MODEL_ODDS_MAX_AGE_MINUTES} minutes`);
+        console.log(`  skip ${job.jobKey} (${job.jobName}) — stale inputs`);
+        continue;
       }
-      console.log(`  skip ${job.jobKey} (${job.jobName}) — stale inputs`);
-      continue;
     }
     if (!shouldRunJobKey(job.jobKey)) { console.log(`  skip ${job.jobKey} (${job.jobName})`); continue; }
     if (hasRunningJobRun(job.jobKey)) { console.log(`  running ${job.jobKey} (${job.jobName})`); continue; }
