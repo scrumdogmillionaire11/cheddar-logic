@@ -171,12 +171,12 @@ describe('decision publisher v2 pipeline', () => {
 
     expect(payload.decision_v2).toBeDefined();
     expect(payload.decision_v2.pipeline_version).toBe('v2');
-    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.official_status).toBe('PLAY');
     expect(payload.decision_v2.play_tier).toBe('GOOD');
     expect(payload.decision_v2.primary_reason_code).toBe('EDGE_CLEAR');
-    expect(payload.action).toBe('HOLD');
-    expect(payload.status).toBe('WATCH');
-    expect(payload.classification).toBe('LEAN');
+    expect(payload.action).toBe('FIRE');
+    expect(payload.status).toBe('FIRE');
+    expect(payload.classification).toBe('BASE');
   });
 
   test('preserves additive pipeline_state metadata', () => {
@@ -199,7 +199,7 @@ describe('decision publisher v2 pipeline', () => {
 
     expect(payload.pipeline_state).toEqual(pipelineState);
     expect(payload.decision_v2).toBeDefined();
-    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.official_status).toBe('PLAY');
   });
 
   test('synthesizes required consistency fields when missing', () => {
