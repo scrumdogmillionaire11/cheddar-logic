@@ -19,11 +19,17 @@ describe('checkWatchdogHeartbeat', () => {
     const db = {
       prepare: jest.fn((sql) => {
         if (sql.includes('INSERT INTO pipeline_health')) {
-          return { run: (...args) => { pipelineWrites.push(args); } };
+          return {
+            run: (...args) => {
+              pipelineWrites.push(args);
+            },
+          };
         }
+
         if (sql.includes('FROM job_runs') && sql.includes("job_name = 'check_pipeline_health'")) {
           return { get: () => jobRunsRow };
         }
+
         throw new Error(`Unhandled SQL in test: ${sql}`);
       }),
     };
@@ -37,11 +43,11 @@ describe('checkWatchdogHeartbeat', () => {
       wasJobRecentlySuccessful: jest.fn(() => true),
     }));
 
-    jest.doMock('../jobs/run_mlb_model', () => ({ buildMlbMarketAvailability: jest.fn() }));
-    jest.doMock('../schedulers/quota', () => ({ getCurrentQuotaTier: jest.fn(() => 'FULL') }));
-    jest.doMock('../jobs/post_discord_cards', () => ({ sendDiscordMessages }));
+    jest.doMock('../run_mlb_model', () => ({ buildMlbMarketAvailability: jest.fn() }));
+    jest.doMock('../../schedulers/quota', () => ({ getCurrentQuotaTier: jest.fn(() => 'FULL') }));
+    jest.doMock('../post_discord_cards', () => ({ sendDiscordMessages }));
 
-    ({ checkWatchdogHeartbeat } = require('../jobs/check_pipeline_health'));
+    ({ checkWatchdogHeartbeat } = require('../check_pipeline_health'));
   });
 
   afterEach(() => {
