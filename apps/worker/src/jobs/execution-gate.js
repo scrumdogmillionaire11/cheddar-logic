@@ -4,7 +4,11 @@ const { isMarketCalibrationEnabled } = require('../calibration/calibration-gate'
 
 const VIG_COST_STANDARD = 0.045;
 const SLIPPAGE_ESTIMATE = 0.005;
-const MAX_SNAPSHOT_AGE_MS = 5 * 60 * 1000;
+// Default: 5 minutes for the automated pipeline (odds pull → model run back-to-back).
+// Set EXECUTION_GATE_MAX_SNAPSHOT_AGE_MS env var (ms) to override for manual recovery runs
+// e.g. EXECUTION_GATE_MAX_SNAPSHOT_AGE_MS=3600000 allows up to 1 hour.
+const MAX_SNAPSHOT_AGE_MS =
+  parseInt(process.env.EXECUTION_GATE_MAX_SNAPSHOT_AGE_MS, 10) || 5 * 60 * 1000;
 
 /**
  * Evaluate whether a model output is executable as a live bet.
