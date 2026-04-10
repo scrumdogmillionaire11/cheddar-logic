@@ -672,6 +672,12 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     rawEdge: Number.isFinite(payload.edge) ? payload.edge : null,
     confidence: Number.isFinite(payload.confidence) ? payload.confidence : null,
     snapshotAgeMs,
+    marketKey: payload.market_key ?? null,
+    sport: payload.sport ?? 'MLB',
+    recommendedBetType: payload.recommended_bet_type ?? null,
+    marketType: payload.market_type ?? null,
+    period: payload.period ?? payload.market?.period ?? null,
+    cardType: payload.card_type ?? null,
   });
 
   payload.execution_gate = {

@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-09T23:34:00Z"
-last_activity: "2026-04-10 - Completed potd-01-06: POTD gap closure — require.main guard, npm scripts, ENABLE_POTD=true"
+last_updated: "2026-04-10T13:04:06Z"
+last_activity: "2026-04-10 - Completed quick task 143 / WI-0825: calibration tracking, report job, and execution-gate kill switch"
 ---
 
 # Project State
@@ -173,6 +173,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 143 | WI-0825: calibration tracking, report job, and execution-gate kill switch | 2026-04-10 | local | [143-wi-0825](./quick/143-wi-0825/) |
 | 142 | WI-0823: NHL unified goalie signal — consolidate GSaX and SV% into one score | 2026-04-09 | 77b726e | [142-wi-0823-nhl-unified-goalie-signal-consol](./quick/142-wi-0823-nhl-unified-goalie-signal-consol/) |
 
 ---

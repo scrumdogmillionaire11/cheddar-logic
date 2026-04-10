@@ -192,6 +192,59 @@ function toFiniteNumberOrNull(value) {
   return parsed;
 }
 
+function recordCalibrationPredictionForCard({ db, card, payloadData, lockedMarket }) {
+  const { recordPrediction } = require('../../../../apps/worker/src/calibration/calibration-tracker');
+  const { resolveCalibrationMarketKey } = require('../../../../apps/worker/src/calibration/calibration-gate');
+  const modelStatus = toUpperToken(payloadData?.model_status || 'MODEL_OK');
+  if (modelStatus !== 'MODEL_OK') return;
+
+  const fairProb = toFiniteNumberOrNull(
+    payloadData?.fair_prob ??
+      payloadData?.p_fair ??
+      payloadData?.model_prob,
+  );
+  if (fairProb === null || fairProb < 0 || fairProb > 1) return;
+
+  const impliedProb = toFiniteNumberOrNull(
+    payloadData?.implied_prob ??
+      payloadData?.p_implied,
+  );
+  const market = resolveCalibrationMarketKey(payloadData?.market_key ?? null, {
+    sport: card?.sport,
+    recommendedBetType:
+      payloadData?.recommended_bet_type ??
+      lockedMarket?.marketType ??
+      payloadData?.market_type,
+    marketType: payloadData?.market_type,
+    period: payloadData?.period ?? lockedMarket?.period ?? payloadData?.market?.period,
+    cardType: card?.cardType,
+  });
+  const side = toUpperToken(
+    lockedMarket?.selection ??
+      payloadData?.selection?.side ??
+      payloadData?.selection,
+  );
+
+  if (!market || !side) return;
+
+  try {
+    recordPrediction({
+      db,
+      gameId: card.gameId,
+      market,
+      side,
+      fairProb,
+      impliedProb,
+      modelStatus,
+      createdAt: card.createdAt || new Date().toISOString(),
+    });
+  } catch (error) {
+    console.warn(
+      `[DB] calibration_predictions write skipped for ${card.id}: ${error.message}`,
+    );
+  }
+}
+
 function resolveOfficialPlayStatus(payloadData) {
   const officialStatus = toUpperToken(payloadData?.decision_v2?.official_status);
   if (officialStatus === 'PLAY' || officialStatus === 'LEAN' || officialStatus === 'PASS') {
@@ -834,6 +887,13 @@ function insertCardPayload(card) {
       payloadData,
     });
   }
+
+  recordCalibrationPredictionForCard({
+    db,
+    card,
+    payloadData,
+    lockedMarket,
+  });
 }
 
 /**
