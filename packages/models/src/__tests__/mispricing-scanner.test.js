@@ -349,6 +349,72 @@ console.log('\n=== scanOddsDiscrepancies ===');
   assertNoForbiddenOutputTerms('OddsGap outputs avoid forbidden recommendation terms', scanOddsDiscrepancies([snapshot]));
 }
 
+// ── Regression: prod storage shape (no markets wrapper) ──────────────────────
+console.log('\n=== parseSnapshotPayload - prod storage shape ===');
+{
+  // pull_odds_hourly stores rawData: normalized.market (flat { spreads, totals, h2h })
+  // parseSnapshotPayload must fall back to payload itself when payload.markets is absent
+  const snap1 = {
+    game_id: 'test-prod-shape-001',
+    sport: 'baseball_mlb',
+    captured_at: new Date().toISOString(),
+    raw_data: JSON.stringify({
+      spreads: [
+        { book: 'DraftKings', home: -1.5, away: 1.5, price_home: -110, price_away: -110 },
+        { book: 'FanDuel',    home: -1.5, away: 1.5, price_home: -110, price_away: -110 },
+        { book: 'BetMGM',     home: -3.0, away: 3.0, price_home: -110, price_away: -110 },
+      ],
+      totals: [],
+      h2h: [],
+    }),
+  };
+  const gaps = scanLineDiscrepancies([snap1], { minBooks: 3, recencyWindowMs: 3600000 });
+  assert('prod-shape: scanLineDiscrepancies finds LineGap', gaps.length > 0, JSON.stringify(gaps));
+  assert('prod-shape: LineGap sport', gaps[0]?.sport === 'baseball_mlb', gaps[0]?.sport);
+  assert('prod-shape: LineGap outlierBook is BetMGM', gaps[0]?.outlierBook === 'BetMGM', gaps[0]?.outlierBook);
+}
+{
+  // Backward-compat: wrapped shape { markets: { spreads, totals, h2h } } must still work
+  const snap2 = {
+    game_id: 'test-wrapped-shape-001',
+    sport: 'baseball_mlb',
+    captured_at: new Date().toISOString(),
+    raw_data: JSON.stringify({
+      markets: {
+        spreads: [
+          { book: 'DraftKings', home: -1.5, away: 1.5, price_home: -110, price_away: -110 },
+          { book: 'FanDuel',    home: -1.5, away: 1.5, price_home: -110, price_away: -110 },
+          { book: 'BetMGM',     home: -3.0, away: 3.0, price_home: -110, price_away: -110 },
+        ],
+        totals: [],
+        h2h: [],
+      },
+    }),
+  };
+  const wgaps = scanLineDiscrepancies([snap2], { minBooks: 3, recencyWindowMs: 3600000 });
+  assert('wrapped-shape: scanLineDiscrepancies still finds LineGap', wgaps.length > 0, JSON.stringify(wgaps));
+}
+{
+  // scanOddsDiscrepancies must also work on flat prod shape (must_haves truth 2)
+  const snap3 = {
+    game_id: 'test-prod-shape-odds-001',
+    sport: 'basketball_nba',
+    captured_at: new Date().toISOString(),
+    raw_data: JSON.stringify({
+      spreads: [],
+      totals: [],
+      h2h: [
+        { book: 'DraftKings', home: -105, away: 100 },
+        { book: 'FanDuel',    home: -115, away: 100 },
+        { book: 'BetMGM',     home: -115, away: 100 },
+      ],
+    }),
+  };
+  const ogaps = scanOddsDiscrepancies([snap3], { recencyWindowMs: 3600000 });
+  assert('prod-shape: scanOddsDiscrepancies finds OddsGap', ogaps.length > 0, JSON.stringify(ogaps));
+  assert('prod-shape: OddsGap sport', ogaps[0]?.sport === 'basketball_nba', ogaps[0]?.sport);
+}
+
 console.log(`\n============================`);
 console.log(`Results: ${passed} passed, ${failed} failed`);
 console.log(`============================\n`);
