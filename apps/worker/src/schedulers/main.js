@@ -56,6 +56,8 @@ const { pullScheduleNhl } = require('../jobs/pull_schedule_nhl');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
 const { runPotdEngine } = require('../jobs/potd/run_potd_engine');
 const { mirrorPotdSettlement } = require('../jobs/potd/settlement-mirror');
+const { runClvSnapshot } = require('../jobs/run_clv_snapshot');
+const { runDailyPerformanceReport } = require('../jobs/run_daily_performance_report');
 
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
@@ -260,6 +262,30 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         reason: 'potd settlement mirror after canonical settlement jobs',
       });
     }
+  }
+
+  // ========== NIGHTLY REPORTING: CLV SNAPSHOT + DAILY PERFORMANCE (4.9) ==========
+  // run_clv_snapshot: converts settled clv_ledger rows into clv_entries (03:00 ET)
+  if (process.env.ENABLE_SETTLEMENT !== 'false' && isFixedDue(nowEt, '03:00')) {
+    const clvSnapshotKey = `clv_snapshot|${nowEt.toISODate()}`;
+    jobs.push({
+      jobName: 'run_clv_snapshot',
+      jobKey: clvSnapshotKey,
+      execute: () => runClvSnapshot(),
+      args: {},
+      reason: `nightly CLV snapshot ${nowEt.toISODate()}`,
+    });
+  }
+  // run_daily_performance_report: aggregates firing+winning metrics per market (03:30 ET)
+  if (isFixedDue(nowEt, '03:30')) {
+    const perfReportKey = `perf_report|${nowEt.toISODate()}`;
+    jobs.push({
+      jobName: 'run_daily_performance_report',
+      jobKey: perfReportKey,
+      execute: () => runDailyPerformanceReport(),
+      args: {},
+      reason: `nightly daily performance report ${nowEt.toISODate()}`,
+    });
   }
 
   // ========== WATCHDOGS / FPL / PLAYER-PROPS (5-8) ==========
