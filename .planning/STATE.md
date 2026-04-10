@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-10T16:00:00Z"
-last_activity: "2026-04-10 - Sprint 4 verification complete: all 6 WIs verified (WI-0809, WI-0811, WI-0819, WI-0825, WI-0826, WI-0838)"
+last_activity: "2026-04-10 - Completed quick task 144: WI-0842 WI-0843 settlement expiry sweep and card results dedup"
 ---
 
 # Project State
@@ -173,6 +173,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 144 | WI-0819: quarter-Kelly stake fraction on PLAY/LEAN card payloads | 2026-04-10 | c52c2ad | [WI-0819](../.planning/phases/WI-0819/) |
+| 144 | WI-0842 + WI-0843: settlement expiry sweep and card_results dedup | 2026-04-10 | a97c1ff | [144-wi-0842-wi-0843](./quick/144-wi-0842-wi-0843-settlement-expiry-sweep-/) |
 | 143 | WI-0825: calibration tracking, report job, and execution-gate kill switch | 2026-04-10 | local | [143-wi-0825](./quick/143-wi-0825/) |
 | 142 | WI-0823: NHL unified goalie signal — consolidate GSaX and SV% into one score | 2026-04-09 | 77b726e | [142-wi-0823-nhl-unified-goalie-signal-consol](./quick/142-wi-0823-nhl-unified-goalie-signal-consol/) |
 
