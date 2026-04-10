@@ -30,9 +30,15 @@ const {
 const { buildMlbMarketAvailability } = require('./run_mlb_model');
 const { getCurrentQuotaTier } = require('../schedulers/quota');
 const { sendDiscordMessages } = require('./post_discord_cards');
+const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 
+// Align freshness threshold with the fetch slot size so alerts don't fire
+// continuously during the normal gap between pulls. When ODDS_FETCH_SLOT_MINUTES
+// is 180 (April 2026 budget mode) a hardcoded 15-min threshold fires on every
+// check. Default: slot + 15 min buffer, minimum 15 min.
+const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 60);
 const ODDS_FRESHNESS_MAX_AGE_MINUTES = Number(
-  process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES || 15,
+  process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES || Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
 );
 const CARDS_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.CARDS_FRESHNESS_MAX_AGE_MINUTES || 30,
@@ -101,19 +107,31 @@ function checkOddsFreshness() {
   const startUtc = nowUtc;
   const endUtc = nowUtc.plus({ hours: 6 });
 
-  // Find games within T-6h
+  // Only check sports whose odds are actively fetched. Sports with active:false
+  // (e.g. MLB in projection-only periods) will never have fresh odds snapshots
+  // and would always inflate the stale count spuriously.
+  const activeSports = Object.entries(ODDS_SPORTS_CONFIG)
+    .filter(([, cfg]) => cfg.active)
+    .map(([sport]) => sport.toLowerCase());
+
+  if (activeSports.length === 0) {
+    return { ok: true, reason: 'No sports with active odds configured' };
+  }
+
+  const sportPlaceholders = activeSports.map(() => '?').join(', ');
+
+  // Find games within T-6h for active-odds sports only
   const upcomingGames = db
     .prepare(
-      `
-    SELECT game_id, game_time_utc
-    FROM games
-    WHERE game_time_utc >= ? AND game_time_utc <= ?
-  `,
+      `SELECT game_id, game_time_utc
+       FROM games
+       WHERE game_time_utc >= ? AND game_time_utc <= ?
+         AND LOWER(sport) IN (${sportPlaceholders})`,
     )
-    .all(startUtc.toISO(), endUtc.toISO());
+    .all(startUtc.toISO(), endUtc.toISO(), ...activeSports);
 
   if (upcomingGames.length === 0) {
-    return { ok: true, reason: 'No games within T-6h' };
+    return { ok: true, reason: 'No games within T-6h for active-odds sports' };
   }
 
   // Check latest odds snapshot age for these games
@@ -251,6 +269,22 @@ function getLatestOddsSnapshot(db, gameId) {
  * gametime so their absence at that point is expected, not a pipeline failure.
  */
 function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
+  // When MLB odds are disabled (projection-only period), F5 market data will
+  // never be present in odds_snapshots — the check would always fail spuriously.
+  if (!ODDS_SPORTS_CONFIG.MLB.active) {
+    const skipReason = 'MLB odds disabled (projection-only) — F5 market check skipped';
+    writePipelineHealth('mlb', 'f5_market_availability', 'ok', skipReason);
+    return {
+      ok: true,
+      reason: skipReason,
+      games_checked: 0,
+      missing_f5_total_count: 0,
+      missing_full_game_total_count: 0,
+      expected_f5_ml_count: 0,
+      missing_f5_ml_count: 0,
+    };
+  }
+
   const db = getDatabase();
   const nowUtc = DateTime.utc();
   // Exclude games within 15 minutes of start — F5 markets are already closed
@@ -594,7 +628,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       nba_model_freshness: () =>
         checkSportModelFreshness('nba', 'run_nba_model', 'model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
       mlb_model_freshness: () =>
-        checkSportModelFreshness('mlb', 'run_mlb_model', 'model_freshness', 180),
+        checkSportModelFreshness('mlb', 'run_mlb_model', 'model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
       calibration_kill_switches: checkCalibrationKillSwitches,
     };
 

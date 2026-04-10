@@ -23,6 +23,7 @@ const {
 
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { pullEspnGamesDirect } = require('../jobs/pull_espn_games_direct');
+const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 
 /**
  * Compute due MLB jobs for this tick
@@ -46,6 +47,11 @@ function computeMlbDueJobs(nowEt, {
 
   if (!ENABLE_MLB_MODEL) return [];
 
+  // When MLB odds are inactive (projection-only period), the model runs without
+  // live odds — seeded via ESPN-direct. Mark jobs accordingly so the scheduler
+  // gate checks pull_espn_games_direct freshness instead of pull_odds_hourly.
+  const mlbWithoutOddsMode = !ODDS_SPORTS_CONFIG.MLB.active || ENABLE_WITHOUT_ODDS_MODE;
+
   const jobs = [];
 
   // ========== MLB ESPN-DIRECT SEEDING (2B) ==========
@@ -67,7 +73,11 @@ function computeMlbDueJobs(nowEt, {
   }
 
   // ========== MLB FIXED-TIME MODEL RUNS ==========
-  const fixedTimes = ['09:00', '12:00'];
+  // Three anchors keep model_freshness (MODEL_FRESHNESS_MAX_AGE_MINUTES, default 4h) satisfied:
+  //   09:00 → covers until 13:00
+  //   12:00 → covers until 16:00
+  //   15:00 → covers until 19:00, after which T-minus runs carry the load
+  const fixedTimes = ['09:00', '12:00', '15:00'];
   for (const t of fixedTimes) {
     if (!isFixedDue(nowEt, t)) continue;
     maybeQueueTeamMetricsRefresh(`fixed ${t} ET`, 'mlb');
@@ -75,9 +85,10 @@ function computeMlbDueJobs(nowEt, {
     jobs.push({
       jobName: 'run_mlb_model',
       jobKey,
+      withoutOddsMode: mlbWithoutOddsMode,
       execute: runMLBModel,
-      args: { jobKey, dryRun, withoutOddsMode: ENABLE_WITHOUT_ODDS_MODE },
-      reason: `fixed ${t} ET${ENABLE_WITHOUT_ODDS_MODE ? ' [WITHOUT_ODDS]' : ''}`,
+      args: { jobKey, dryRun, withoutOddsMode: mlbWithoutOddsMode },
+      reason: `fixed ${t} ET${mlbWithoutOddsMode ? ' [WITHOUT_ODDS]' : ''}`,
     });
   }
 
@@ -98,9 +109,10 @@ function computeMlbDueJobs(nowEt, {
       jobs.push({
         jobName: 'run_mlb_model',
         jobKey,
+        withoutOddsMode: mlbWithoutOddsMode,
         execute: runMLBModel,
-        args: { jobKey, dryRun, withoutOddsMode: ENABLE_WITHOUT_ODDS_MODE },
-        reason: `T-${mins} for ${g.game_id}${ENABLE_WITHOUT_ODDS_MODE ? ' [WITHOUT_ODDS]' : ''}`,
+        args: { jobKey, dryRun, withoutOddsMode: mlbWithoutOddsMode },
+        reason: `T-${mins} for ${g.game_id}${mlbWithoutOddsMode ? ' [WITHOUT_ODDS]' : ''}`,
       });
     }
   }
