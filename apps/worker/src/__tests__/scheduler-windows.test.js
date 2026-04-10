@@ -308,6 +308,7 @@ function loadSchedulerModule(dataOverrides = {}) {
       if (jobName === 'pull_odds_hourly') return true;
       return false;
     }),
+    wasJobKeyRecentlySuccessful: jest.fn(() => false),
     ...dataOverrides,
   }));
 
@@ -672,6 +673,155 @@ describe('scheduler POTD windows', () => {
     });
 
     expect(dueJobs.some((job) => job.jobName === 'run_potd_engine')).toBe(false);
+  });
+
+  // ---- WI-0858 tests ----
+
+  test('computePotdScheduleMetadata returns windowCollapsed=true when earliest game tips after 5:30 PM', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromObject(
+      { year: 2026, month: 3, day: 24, hour: 12, minute: 0 },
+      { zone: 'America/New_York' },
+    );
+    const games = [{ game_id: 'nhl-late-1', sport: 'nhl', game_time_utc: '2026-03-24T23:00:00.000Z' }]; // 7 PM ET
+    const meta = scheduler.computePotdScheduleMetadata(nowEt, games);
+
+    expect(meta).not.toBeNull();
+    expect(meta.windowCollapsed).toBe(true);
+    expect(meta.postDeadlineEt).toContain('T16:15:00');
+  });
+
+  test('queues POTD at 4:14 PM when window is collapsed (all games tip 7 PM+)', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromObject(
+      { year: 2026, month: 3, day: 24, hour: 16, minute: 14 },
+      { zone: 'America/New_York' },
+    );
+    const nowUtc = nowEt.toUTC();
+    const games = [{ game_id: 'nhl-late-1', sport: 'nhl', game_time_utc: '2026-03-24T23:00:00.000Z' }];
+
+    const dueJobs = scheduler.computeDueJobs({ nowEt, nowUtc, games, dryRun: true });
+    const potdJob = dueJobs.find((j) => j.jobName === 'run_potd_engine' && j.jobKey === 'potd|2026-03-24');
+    expect(potdJob).toBeDefined();
+  });
+
+  test('does NOT queue POTD at 4:15 PM when window is collapsed', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromObject(
+      { year: 2026, month: 3, day: 24, hour: 16, minute: 15 },
+      { zone: 'America/New_York' },
+    );
+    const nowUtc = nowEt.toUTC();
+    const games = [{ game_id: 'nhl-late-1', sport: 'nhl', game_time_utc: '2026-03-24T23:00:00.000Z' }];
+
+    const dueJobs = scheduler.computeDueJobs({ nowEt, nowUtc, games, dryRun: true });
+    expect(dueJobs.some((j) => j.jobName === 'run_potd_engine' && j.jobKey === 'potd|2026-03-24')).toBe(false);
+  });
+
+  test('does not queue POTD and does not throw when no games today', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromObject(
+      { year: 2026, month: 3, day: 24, hour: 13, minute: 0 },
+      { zone: 'America/New_York' },
+    );
+    const nowUtc = nowEt.toUTC();
+
+    expect(() => {
+      const dueJobs = scheduler.computeDueJobs({ nowEt, nowUtc, games: [], dryRun: true });
+      expect(dueJobs.some((j) => j.jobName === 'run_potd_engine')).toBe(false);
+    }).not.toThrow();
+  });
+
+  // ---- WI-0859 tests ----
+
+  test('queues fallback potd job at 4:15 PM when no success recorded', () => {
+    const scheduler = loadSchedulerModule({
+      wasJobKeyRecentlySuccessful: jest.fn(() => false),
+    });
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromObject(
+      { year: 2026, month: 3, day: 24, hour: 16, minute: 15 },
+      { zone: 'America/New_York' },
+    );
+    const nowUtc = nowEt.toUTC();
+    const games = [{ game_id: 'nhl-late-1', sport: 'nhl', game_time_utc: '2026-03-24T23:00:00.000Z' }];
+
+    const dueJobs = scheduler.computeDueJobs({ nowEt, nowUtc, games, dryRun: true });
+    const fallbackJob = dueJobs.find((j) => j.jobName === 'run_potd_engine' && j.jobKey === 'potd|2026-03-24:fallback');
+    expect(fallbackJob).toBeDefined();
+  });
+
+  test('does NOT queue fallback when primary already succeeded', () => {
+    const scheduler = loadSchedulerModule({
+      wasJobKeyRecentlySuccessful: jest.fn(() => true),
+    });
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromObject(
+      { year: 2026, month: 3, day: 24, hour: 16, minute: 16 },
+      { zone: 'America/New_York' },
+    );
+    const nowUtc = nowEt.toUTC();
+    const games = [{ game_id: 'nhl-late-1', sport: 'nhl', game_time_utc: '2026-03-24T23:00:00.000Z' }];
+
+    const dueJobs = scheduler.computeDueJobs({ nowEt, nowUtc, games, dryRun: true });
+    expect(dueJobs.some((j) => j.jobName === 'run_potd_engine')).toBe(false);
+  });
+
+  test('does NOT queue fallback at 4:30 PM (past fallback window) and logs hard deadline', () => {
+    const scheduler = loadSchedulerModule({
+      wasJobKeyRecentlySuccessful: jest.fn(() => false),
+    });
+    const { DateTime } = require('luxon');
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const nowEt = DateTime.fromObject(
+      { year: 2026, month: 3, day: 24, hour: 16, minute: 30 },
+      { zone: 'America/New_York' },
+    );
+    const nowUtc = nowEt.toUTC();
+    const games = [{ game_id: 'nhl-late-1', sport: 'nhl', game_time_utc: '2026-03-24T23:00:00.000Z' }];
+
+    const dueJobs = scheduler.computeDueJobs({ nowEt, nowUtc, games, dryRun: true });
+    expect(dueJobs.some((j) => j.jobName === 'run_potd_engine')).toBe(false);
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[POTD] Hard deadline passed'));
+    consoleSpy.mockRestore();
+  });
+
+  test('fallback key is distinct from primary key', () => {
+    const date = '2026-03-24';
+    const primaryKey = `potd|${date}`;
+    const fallbackKey = `${primaryKey}:fallback`;
+    expect(fallbackKey).not.toBe(primaryKey);
+    expect(fallbackKey).toBe('potd|2026-03-24:fallback');
+  });
+
+  test('hard-deadline silent when fallback succeeded', () => {
+    const scheduler = loadSchedulerModule({
+      wasJobKeyRecentlySuccessful: jest.fn((key) => key.endsWith(':fallback')),
+    });
+    const { DateTime } = require('luxon');
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const nowEt = DateTime.fromObject(
+      { year: 2026, month: 3, day: 24, hour: 16, minute: 31 },
+      { zone: 'America/New_York' },
+    );
+    const nowUtc = nowEt.toUTC();
+    const games = [{ game_id: 'nhl-late-1', sport: 'nhl', game_time_utc: '2026-03-24T23:00:00.000Z' }];
+
+    scheduler.computeDueJobs({ nowEt, nowUtc, games, dryRun: true });
+    expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('[POTD] Hard deadline'));
+    consoleSpy.mockRestore();
   });
 
   test('queues settlement mirror only after canonical settlement jobs are due', () => {
