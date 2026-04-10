@@ -40,6 +40,7 @@ const {
   getDatabase,
   getPlayerAvailabilityByTeam,
 } = require('@cheddar-logic/data');
+const { kellyStake } = require('@cheddar-logic/models/src/edge-calculator');
 const {
   enrichOddsSnapshotWithMoneyPuck,
   fetchMoneyPuckSnapshot,
@@ -2458,6 +2459,20 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             }),
           });
           gamePipelineStates[gameId] = pipelineState;
+
+          // WI-0819: attach advisory Kelly stake fraction to PLAY/LEAN cards.
+          for (const entry of pendingCards) {
+            const pd = entry.card.payloadData;
+            const officialStatus = pd.decision_v2?.official_status;
+            if (officialStatus === 'PLAY' || officialStatus === 'LEAN') {
+              const { kelly_fraction, kelly_units } = kellyStake(pd.p_fair, pd.price);
+              pd.kelly_fraction = kelly_fraction;
+              pd.kelly_units = kelly_units;
+            } else {
+              pd.kelly_fraction = null;
+              pd.kelly_units = null;
+            }
+          }
 
           // WI-0817: atomic write phase — all deletes + all inserts in one transaction.
           // A crash or throw inside this block rolls back automatically; old cards survive intact.

@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-10T13:04:06Z"
-last_activity: "2026-04-10 - Completed WI-0826: CLV + firing/winning monitoring dashboard data"
+last_updated: "2026-04-10T14:00:00Z"
+last_activity: "2026-04-10 - Completed WI-0819: quarter-Kelly stake fraction on PLAY/LEAN card payloads"
 ---
 
 # Project State
@@ -94,9 +94,9 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 
 | WI | Title | Priority | Deps |
 |----|-------|----------|------|
-| **WI-0825** | Per-market Brier/ECE calibration tracking with kill switch | High | WI-0820, WI-0824 |
-| **WI-0819** | Quarter-Kelly stake fraction on PLAY/LEAN card payloads | High | WI-0813 |
 | ~~**WI-0826**~~ | ~~CLV + firing/winning monitoring — extend DB + worker, expose to dashboard~~ | ~~High~~ COMPLETE (2026-04-10) | WI-0824 |
+| ~~**WI-0819**~~ | ~~Quarter-Kelly stake fraction on PLAY/LEAN card payloads~~ | ~~High~~ COMPLETE (2026-04-10) | WI-0813 |
+| **WI-0826** | CLV + firing/winning monitoring — extend DB + worker, expose to dashboard | High | WI-0824 |
 | **WI-0838** | CLV first-seen price lock — freeze `odds_at_pick` at card creation | Medium | WI-0812 |
 | **WI-0809** | Rolling cohort windows (14/30/60/90d) in decision-tier calibration report | Medium | none |
 | **WI-0811** | Book-to-book mispricing scanner — deterministic `MispricingCandidate` emitter | Medium | none |
@@ -173,6 +173,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 144 | WI-0819: quarter-Kelly stake fraction on PLAY/LEAN card payloads | 2026-04-10 | c52c2ad | [WI-0819](../.planning/phases/WI-0819/) |
 | 143 | WI-0825: calibration tracking, report job, and execution-gate kill switch | 2026-04-10 | local | [143-wi-0825](./quick/143-wi-0825/) |
 | 142 | WI-0823: NHL unified goalie signal — consolidate GSaX and SV% into one score | 2026-04-09 | 77b726e | [142-wi-0823-nhl-unified-goalie-signal-consol](./quick/142-wi-0823-nhl-unified-goalie-signal-consol/) |
 
