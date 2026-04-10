@@ -7,6 +7,7 @@ const {
 const {
   clearCalibrationGateCache,
   resolveCalibrationMarketKey,
+  isMarketCalibrationEnabled,
 } = require('../calibration/calibration-gate');
 
 describe('computeBrier', () => {
@@ -105,5 +106,79 @@ describe('evaluateExecution calibration kill switch', () => {
     expect(result.should_bet).toBe(false);
     expect(result.block_reason).toBe('CALIBRATION_KILL_SWITCH');
     expect(result.blocked_by).toContain('CALIBRATION_KILL_SWITCH');
+  });
+});
+
+describe('isMarketCalibrationEnabled kill switch logging (WI-0861)', () => {
+  beforeEach(() => {
+    clearCalibrationGateCache();
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    clearCalibrationGateCache();
+  });
+
+  test('emits [CALIB_GATE] warn when kill switch is active', () => {
+    const db = {
+      prepare: jest.fn(() => ({
+        get: jest.fn(() => ({
+          kill_switch_active: 1,
+          ece: 0.09,
+          n_samples: 72,
+          computed_at: '2026-04-10T04:00:00Z',
+        })),
+      })),
+    };
+
+    const result = isMarketCalibrationEnabled('NBA_TOTAL', { db });
+
+    expect(result).toBe(false);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('[CALIB_GATE]'),
+      'NBA_TOTAL',
+      0.09,
+      72,
+      '2026-04-10T04:00:00Z',
+    );
+  });
+
+  test('does NOT emit [CALIB_GATE] warn when kill switch is inactive', () => {
+    const db = {
+      prepare: jest.fn(() => ({
+        get: jest.fn(() => ({
+          kill_switch_active: 0,
+          ece: 0.03,
+          n_samples: 80,
+          computed_at: '2026-04-10T04:00:00Z',
+        })),
+      })),
+    };
+
+    const result = isMarketCalibrationEnabled('NBA_TOTAL', { db });
+
+    expect(result).toBe(true);
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  test('does NOT emit [CALIB_GATE] warn on cache hit (log once per TTL)', () => {
+    const getMock = jest.fn(() => ({
+      kill_switch_active: 1,
+      ece: 0.09,
+      n_samples: 72,
+      computed_at: '2026-04-10T04:00:00Z',
+    }));
+    const db = { prepare: jest.fn(() => ({ get: getMock })) };
+    const nowMs = Date.now();
+
+    // First call — cache miss, should warn
+    isMarketCalibrationEnabled('NBA_TOTAL', { db, nowMs });
+    expect(console.warn).toHaveBeenCalledTimes(1);
+
+    // Second call within TTL — cache hit, should NOT warn again
+    isMarketCalibrationEnabled('NBA_TOTAL', { db, nowMs: nowMs + 1000 });
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(getMock).toHaveBeenCalledTimes(1); // only one DB hit
   });
 });

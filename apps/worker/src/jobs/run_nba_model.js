@@ -1742,6 +1742,12 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               console.log(
                 `  [execution-gate] ${gameId} [${card.cardType}]: ${card.payloadData.pass_reason_code}`,
               );
+              if (
+                Array.isArray(card.payloadData?.execution_gate?.blocked_by) &&
+                card.payloadData.execution_gate.blocked_by.includes('CALIBRATION_KILL_SWITCH')
+              ) {
+                console.log('[NBA_MODEL] %s blocked: CALIBRATION_KILL_SWITCH', jobKey || gameId);
+              }
             }
             assertExecutableCardsArePriced(card);
             attachRunId(card, jobRunId);

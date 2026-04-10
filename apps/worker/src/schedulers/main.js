@@ -59,6 +59,7 @@ const { runPotdEngine } = require('../jobs/potd/run_potd_engine');
 const { mirrorPotdSettlement } = require('../jobs/potd/settlement-mirror');
 const { runClvSnapshot } = require('../jobs/run_clv_snapshot');
 const { runDailyPerformanceReport } = require('../jobs/run_daily_performance_report');
+const { runCalibrationReport } = require('../jobs/run_calibration_report');
 
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
@@ -327,6 +328,17 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       execute: () => runDailyPerformanceReport(),
       args: {},
       reason: `nightly daily performance report ${nowEt.toISODate()}`,
+    });
+  }
+  // run_calibration_report: ECE per market + kill switch refresh (04:00 ET)
+  if (process.env.ENABLE_SETTLEMENT !== 'false' && isFixedDue(nowEt, '04:00')) {
+    const calibrationReportKey = `calibration_report|${nowEt.toISODate()}`;
+    jobs.push({
+      jobName: 'run_calibration_report',
+      jobKey: calibrationReportKey,
+      execute: () => runCalibrationReport(),
+      args: {},
+      reason: `nightly calibration report + kill switch refresh ${nowEt.toISODate()}`,
     });
   }
 
