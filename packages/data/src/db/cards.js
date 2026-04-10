@@ -744,9 +744,10 @@ function insertCardPayload(card) {
   const stmtInsert = db.prepare(`
     INSERT OR IGNORE INTO card_payloads (
       id, game_id, sport, card_type, card_title, created_at,
-      expires_at, payload_data, model_output_ids, metadata, run_id
+      expires_at, payload_data, model_output_ids, metadata, run_id,
+      first_seen_price
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   // For call cards: if INSERT was ignored (row already exists) and it is not settled,
@@ -783,7 +784,9 @@ function insertCardPayload(card) {
     JSON.stringify(payloadData),
     card.modelOutputIds || null,
     card.metadata ? JSON.stringify(card.metadata) : null,
-    normalizedRunId
+    normalizedRunId,
+    // first_seen_price: written once at creation, never overwritten (WI-0838)
+    lockedMarket?.lockedPrice ?? null
   );
 
   // If INSERT OR IGNORE fired (0 changes) and the card's own ID is not in card_payloads,

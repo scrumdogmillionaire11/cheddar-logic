@@ -175,4 +175,69 @@ describe('settle_pending_cards market contract', () => {
     });
     expect(projectionOnly).toBeNull();
   });
+
+  // WI-0838: first_seen_price lock tests
+  test('buildClvEntryFromPendingCard uses first_seen_price when present, ignoring drifted lockedPrice', () => {
+    // Simulate: card was created at -115, model re-ran and lockedPrice drifted to -125
+    const pendingCard = {
+      card_id: 'card-fsp-001',
+      game_id: 'game-fsp-001',
+      sport: 'NHL',
+      first_seen_price: -115, // original opening-line pick price
+    };
+    const payloadData = {
+      decision_basis_meta: {
+        decision_basis: 'ODDS_BACKED',
+        volatility_band: 'MEDIUM',
+      },
+    };
+    const lockedMarket = {
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      line: 5.5,
+      lockedPrice: -125, // drifted on most-recent model run
+    };
+
+    const entry = __private.buildClvEntryFromPendingCard({
+      pendingCard,
+      payloadData,
+      lockedMarket,
+    });
+
+    expect(entry).not.toBeNull();
+    // Must use first_seen_price (-115), not the drifted lockedPrice (-125)
+    expect(entry.oddsAtPick).toBe(-115);
+  });
+
+  test('buildClvEntryFromPendingCard falls back to lockedPrice when first_seen_price is null', () => {
+    // Simulate: card predates migration — first_seen_price column exists but is null
+    const pendingCard = {
+      card_id: 'card-fsp-002',
+      game_id: 'game-fsp-002',
+      sport: 'NBA',
+      first_seen_price: null,
+    };
+    const payloadData = {
+      decision_basis_meta: {
+        decision_basis: 'ODDS_BACKED',
+        volatility_band: 'LOW',
+      },
+    };
+    const lockedMarket = {
+      marketType: 'TOTAL',
+      selection: 'UNDER',
+      line: 220.5,
+      lockedPrice: -110,
+    };
+
+    const entry = __private.buildClvEntryFromPendingCard({
+      pendingCard,
+      payloadData,
+      lockedMarket,
+    });
+
+    expect(entry).not.toBeNull();
+    // Falls back to lockedPrice when first_seen_price is null
+    expect(entry.oddsAtPick).toBe(-110);
+  });
 });

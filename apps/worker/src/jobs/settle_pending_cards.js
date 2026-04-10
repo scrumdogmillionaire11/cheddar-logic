@@ -78,7 +78,14 @@ function buildClvEntryFromPendingCard({ pendingCard, payloadData, lockedMarket }
   if (!pendingCard || !lockedMarket) return null;
   if (!isClvEligiblePayload(payloadData)) return null;
 
-  const oddsAtPick = Number(lockedMarket.lockedPrice);
+  // Prefer first_seen_price (written once at card creation, never overwritten on
+  // upsert) over lockedMarket.lockedPrice, which reflects the last model run and
+  // may have drifted away from the original opening-line price (WI-0838).
+  const rawOddsAtPick =
+    pendingCard.first_seen_price !== null && pendingCard.first_seen_price !== undefined
+      ? Number(pendingCard.first_seen_price)
+      : Number(lockedMarket.lockedPrice);
+  const oddsAtPick = rawOddsAtPick;
   if (!Number.isFinite(oddsAtPick)) return null;
 
   const cardId = pendingCard.card_id ? String(pendingCard.card_id).trim() : '';
@@ -1932,6 +1939,7 @@ async function settlePendingCards({
           cdl.displayed_at,
           cdl.api_endpoint,
           cp.payload_data,
+          cp.first_seen_price,
           gr.final_score_home,
           gr.final_score_away,
           gr.metadata AS game_result_metadata
