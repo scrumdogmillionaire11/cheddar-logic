@@ -658,54 +658,98 @@ describe('telemetry calibration report', () => {
     expect(text).toContain('verdict: NOT_JUSTIFIED');
   });
 
-  test('includes targeted PLAY vs LEAN tier audit in json and text output', async () => {
+  test('includes targeted PLAY vs LEAN tier audit in windowed and all-time output', async () => {
     const db = getDatabase();
     clearTelemetryTables(db);
     seedDecisionTierAuditFixture(db);
 
     const report = await generateTelemetryCalibrationReport({ db, days: 14 });
-    expect(report.decisionTierAudit).toMatchObject({
-      status: 'OK',
-      sampleWindow: {
-        days: 14,
-        anchorField: 'settled_at',
-      },
-      sports: ['NBA', 'NHL'],
-      marketTypes: ['MONEYLINE', 'SPREAD', 'TOTAL', 'PUCKLINE', 'TEAM_TOTAL'],
-    });
 
-    const playTier = report.decisionTierAudit.tiers.find(
-      (tier) => tier.tier === 'PLAY',
+    // Top-level structure: windows array (4 entries) + allTime array
+    expect(report.decisionTierAudit.windows).toHaveLength(4);
+    expect(report.decisionTierAudit.windows.map((w) => w.days)).toEqual([14, 30, 60, 90]);
+    expect(Array.isArray(report.decisionTierAudit.allTime)).toBe(true);
+
+    // All 4 valid fixture cards are recent (timestamp=now), so they appear in every window
+    const w14 = report.decisionTierAudit.windows.find((w) => w.days === 14);
+    expect(w14.rows).toHaveLength(4);
+
+    // Verify specific rows in allTime
+    const nbaTotal = report.decisionTierAudit.allTime.find(
+      (r) => r.sport === 'NBA' && r.market_type === 'TOTAL' && r.tier === 'PLAY',
     );
-    const leanTier = report.decisionTierAudit.tiers.find(
-      (tier) => tier.tier === 'LEAN',
+    expect(nbaTotal).toMatchObject({ n: 1, win_rate: 1, total_pnl: 0.91 });
+
+    const nhlMoneyline = report.decisionTierAudit.allTime.find(
+      (r) => r.sport === 'NHL' && r.market_type === 'MONEYLINE' && r.tier === 'PLAY',
     );
-    expect(playTier).toMatchObject({
-      sampleSize: 2,
-      wins: 1,
-      losses: 1,
-      pushes: 0,
-      winRate: 0.5,
-      totalPnlUnits: -0.09,
-      avgPnlPerCard: -0.045,
-      roi: -0.045,
-    });
-    expect(leanTier).toMatchObject({
-      sampleSize: 2,
-      wins: 1,
-      losses: 0,
-      pushes: 1,
-      winRate: 1,
-      totalPnlUnits: 0.91,
-      avgPnlPerCard: 0.455,
-      roi: 0.455,
-    });
+    expect(nhlMoneyline).toMatchObject({ n: 1, win_rate: 0, total_pnl: -1 });
+
+    // NCAAM card must be excluded from all rows
+    expect(report.decisionTierAudit.allTime.find((r) => r.sport === 'NCAAM')).toBeUndefined();
 
     const text = formatTelemetryCalibrationReport(report, { enforce: true });
     expect(text).toContain('decision_tier_audit');
-    expect(text).toContain('scope: sports=NBA, NHL | markets=MONEYLINE, SPREAD, TOTAL, PUCKLINE, TEAM_TOTAL');
-    expect(text).toContain('PLAY | 1W-1L-0P (2)');
-    expect(text).toContain('LEAN | 1W-0L-1P (2)');
+    expect(text).toContain('--- 14-day window ---');
+    expect(text).toContain('--- All-time ---');
+    expect(text).toContain('NBA/TOTAL/PLAY');
+    expect(text).toContain('NHL/MONEYLINE/PLAY');
+  });
+
+  test('rolling window returns only cards settled within each window boundary', async () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+
+    const daysAgo = (n) =>
+      new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+    const recent = daysAgo(10); // within 14-day window
+    const older = daysAgo(45);  // within 60-day/90-day but NOT 14-day or 30-day
+
+    for (let i = 0; i < 5; i++) {
+      insertSettledDecisionTierCard(db, {
+        id: `rolling-recent-${i}`,
+        gameId: `rolling-recent-game-${i}`,
+        sport: 'NBA',
+        marketType: 'TOTAL',
+        result: 'win',
+        pnlUnits: 0.91,
+        officialStatus: 'PLAY',
+        timestamp: recent,
+      });
+    }
+    for (let i = 0; i < 5; i++) {
+      insertSettledDecisionTierCard(db, {
+        id: `rolling-older-${i}`,
+        gameId: `rolling-older-game-${i}`,
+        sport: 'NBA',
+        marketType: 'TOTAL',
+        result: 'loss',
+        pnlUnits: -1.0,
+        officialStatus: 'PLAY',
+        timestamp: older,
+      });
+    }
+
+    const report = await generateTelemetryCalibrationReport({ db });
+    const { windows, allTime } = report.decisionTierAudit;
+    const totalN = (rows) => rows.reduce((sum, r) => sum + r.n, 0);
+
+    const w14 = windows.find((w) => w.days === 14);
+    const w30 = windows.find((w) => w.days === 30);
+    const w60 = windows.find((w) => w.days === 60);
+    const w90 = windows.find((w) => w.days === 90);
+
+    expect(totalN(w14.rows)).toBe(5);   // only recent (10d ago)
+    expect(totalN(w30.rows)).toBe(5);   // only recent (45d-old not in 30d window)
+    expect(totalN(w60.rows)).toBe(10);  // recent + older
+    expect(totalN(w90.rows)).toBe(10);  // recent + older
+    expect(totalN(allTime)).toBe(10);   // all cards
+
+    // monotonically non-decreasing: 14d ≤ 30d ≤ 60d ≤ 90d ≤ all-time
+    expect(totalN(w14.rows)).toBeLessThanOrEqual(totalN(w30.rows));
+    expect(totalN(w30.rows)).toBeLessThanOrEqual(totalN(w60.rows));
+    expect(totalN(w60.rows)).toBeLessThanOrEqual(totalN(w90.rows));
+    expect(totalN(w90.rows)).toBeLessThanOrEqual(totalN(allTime));
   });
 
   test('reports breakout-tagged vs non-breakout NHL shots calibration buckets', async () => {

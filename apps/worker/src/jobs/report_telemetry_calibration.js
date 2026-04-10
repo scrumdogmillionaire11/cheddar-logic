@@ -33,6 +33,7 @@ const DECISION_TIER_AUDIT_MARKET_TYPES = Object.freeze([
   'TEAM_TOTAL',
 ]);
 const DECISION_TIER_AUDIT_STATUSES = Object.freeze(['PLAY', 'LEAN']);
+const DECISION_TIER_AUDIT_WINDOW_DAYS = Object.freeze([14, 30, 60, 90]);
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -372,30 +373,15 @@ function finalizeDecisionTierBucket(bucket) {
   };
 }
 
-function buildDecisionTierAudit(db, windowDays, generatedAtIso) {
-  const generatedAtMs = Date.parse(generatedAtIso);
-  const nowMs = Number.isFinite(generatedAtMs) ? generatedAtMs : Date.now();
-  const dayMs = 24 * 60 * 60 * 1000;
-  const sampleWindow = {
-    days: windowDays,
-    anchorField: 'settled_at',
-    startUtc: new Date(nowMs - windowDays * dayMs).toISOString(),
-    endUtc: new Date(nowMs).toISOString(),
-  };
-  const baseReport = {
-    status: 'INSUFFICIENT_DATA',
-    sampleWindow,
-    sports: [...DECISION_TIER_AUDIT_SPORTS],
-    marketTypes: [...DECISION_TIER_AUDIT_MARKET_TYPES],
-    tiers: DECISION_TIER_AUDIT_STATUSES.map((status) =>
-      buildEmptyDecisionTierBucket(status),
-    ),
-  };
+function buildDecisionTierAudit(db, { daysBack = null } = {}) {
   const hasCardResults = tableExists(db, 'card_results');
   const hasCardPayloads = tableExists(db, 'card_payloads');
-  if (!hasCardResults || !hasCardPayloads) {
-    return baseReport;
-  }
+  if (!hasCardResults || !hasCardPayloads) return [];
+
+  const dateClause =
+    daysBack != null
+      ? `AND datetime(cr.settled_at) >= datetime('now', '-${Math.trunc(daysBack)} days')`
+      : '';
 
   const rows = db
     .prepare(
@@ -403,62 +389,71 @@ function buildDecisionTierAudit(db, windowDays, generatedAtIso) {
       SELECT
         cr.result,
         cr.pnl_units,
+        cr.sport,
+        cr.market_type,
         cp.payload_data
       FROM card_results cr
       INNER JOIN card_payloads cp ON cp.id = cr.card_id
       WHERE LOWER(COALESCE(cr.status, '')) = 'settled'
         AND cr.settled_at IS NOT NULL
-        AND datetime(cr.settled_at) >= datetime('now', ?)
+        ${dateClause}
         AND UPPER(COALESCE(cr.sport, '')) IN (${DECISION_TIER_AUDIT_SPORTS.map(() => '?').join(', ')})
         AND UPPER(COALESCE(cr.market_type, '')) IN (${DECISION_TIER_AUDIT_MARKET_TYPES.map(() => '?').join(', ')})
-    `,
+      `,
     )
-    .all(
-      `-${windowDays} days`,
-      ...DECISION_TIER_AUDIT_SPORTS,
-      ...DECISION_TIER_AUDIT_MARKET_TYPES,
-    );
+    .all(...DECISION_TIER_AUDIT_SPORTS, ...DECISION_TIER_AUDIT_MARKET_TYPES);
 
-  const buckets = Object.fromEntries(
-    DECISION_TIER_AUDIT_STATUSES.map((status) => [
-      status,
-      {
-        ...buildEmptyDecisionTierBucket(status),
-        totalPnlUnits: 0,
-      },
-    ]),
-  );
-
+  const buckets = new Map();
   for (const row of rows) {
     const payloadData = parseJsonObject(row.payload_data);
     const officialStatus = toUpperToken(payloadData?.decision_v2?.official_status);
-    if (!DECISION_TIER_AUDIT_STATUSES.includes(officialStatus)) {
-      continue;
+    if (!DECISION_TIER_AUDIT_STATUSES.includes(officialStatus)) continue;
+
+    const sport = toUpperToken(row.sport);
+    const marketType = toUpperToken(row.market_type);
+    if (!sport || !marketType) continue;
+
+    const key = `${sport}|${marketType}|${officialStatus}`;
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        sport,
+        market_type: marketType,
+        tier: officialStatus,
+        wins: 0,
+        losses: 0,
+        n: 0,
+        pnl: 0,
+      });
     }
 
-    const bucket = buckets[officialStatus];
-    if (!bucket) continue;
-
-    bucket.sampleSize += 1;
+    const bucket = buckets.get(key);
+    bucket.n += 1;
     const result = toUpperToken(row.result);
     if (result === 'WIN') bucket.wins += 1;
     else if (result === 'LOSS') bucket.losses += 1;
-    else if (result === 'PUSH') bucket.pushes += 1;
-
-    const pnlUnits = toNumber(row.pnl_units, 0);
-    bucket.totalPnlUnits += pnlUnits;
+    bucket.pnl += toNumber(row.pnl_units, 0);
   }
 
-  const tiers = DECISION_TIER_AUDIT_STATUSES.map((status) =>
-    finalizeDecisionTierBucket(buckets[status]),
-  );
-  const sampleSize = tiers.reduce((total, tier) => total + tier.sampleSize, 0);
+  return Array.from(buckets.values()).map((b) => {
+    const decisions = b.wins + b.losses;
+    return {
+      sport: b.sport,
+      market_type: b.market_type,
+      tier: b.tier,
+      n: b.n,
+      win_rate: decisions > 0 ? toRounded(b.wins / decisions) : null,
+      total_pnl: toRounded(b.pnl),
+    };
+  });
+}
 
-  return {
-    ...baseReport,
-    status: sampleSize > 0 ? 'OK' : 'INSUFFICIENT_DATA',
-    tiers,
-  };
+function buildDecisionTierAuditWindows(db) {
+  const windows = DECISION_TIER_AUDIT_WINDOW_DAYS.map((days) => ({
+    days,
+    rows: buildDecisionTierAudit(db, { daysBack: days }),
+  }));
+  const allTime = buildDecisionTierAudit(db, { daysBack: null });
+  return { windows, allTime };
 }
 
 function computeLowerQuartile(values = []) {
@@ -1010,7 +1005,7 @@ async function generateTelemetryCalibrationReport({
       windowDays,
       generatedAt,
     );
-    const decisionTierAudit = buildDecisionTierAudit(reader, windowDays, generatedAt);
+    const decisionTierAudit = buildDecisionTierAuditWindows(reader);
     const edgeVerification = buildEdgeVerificationReport(reader);
     const checks = collectChecks(clv);
     const diagnostics = buildFetchDiagnostics(reader, windowDays, clv);
@@ -1112,16 +1107,29 @@ function formatTelemetryCalibrationReport(report, { enforce = false } = {}) {
   lines.push('');
 
   lines.push('decision_tier_audit');
-  lines.push(
-    `- status: ${report.decisionTierAudit.status} | window: ${report.decisionTierAudit.sampleWindow.startUtc} -> ${report.decisionTierAudit.sampleWindow.endUtc} (${report.decisionTierAudit.sampleWindow.anchorField})`,
-  );
-  lines.push(
-    `- scope: sports=${report.decisionTierAudit.sports.join(', ')} | markets=${report.decisionTierAudit.marketTypes.join(', ')}`,
-  );
-  for (const tier of report.decisionTierAudit.tiers) {
-    lines.push(
-      `- ${tier.tier} | ${tier.wins}W-${tier.losses}L-${tier.pushes}P (${tier.sampleSize}) | win_rate ${formatPct(tier.winRate)} | total_pnl ${Number.isFinite(tier.totalPnlUnits) ? tier.totalPnlUnits.toFixed(3) : 'n/a'} | avg_pnl ${Number.isFinite(tier.avgPnlPerCard) ? tier.avgPnlPerCard.toFixed(3) : 'n/a'} | roi ${formatPct(tier.roi)}`,
-    );
+  const windowLabels = { 14: '14-day', 30: '30-day', 60: '60-day', 90: '90-day' };
+  for (const win of report.decisionTierAudit.windows) {
+    const label = windowLabels[win.days] || `${win.days}-day`;
+    lines.push(`--- ${label} window ---`);
+    if (win.rows.length === 0) {
+      lines.push('  (no data)');
+    } else {
+      for (const row of win.rows) {
+        lines.push(
+          `- ${row.sport}/${row.market_type}/${row.tier} | n=${row.n} | win_rate ${formatPct(row.win_rate)} | total_pnl ${Number.isFinite(row.total_pnl) ? row.total_pnl.toFixed(3) : 'n/a'}`,
+        );
+      }
+    }
+  }
+  lines.push('--- All-time ---');
+  if (report.decisionTierAudit.allTime.length === 0) {
+    lines.push('  (no data)');
+  } else {
+    for (const row of report.decisionTierAudit.allTime) {
+      lines.push(
+        `- ${row.sport}/${row.market_type}/${row.tier} | n=${row.n} | win_rate ${formatPct(row.win_rate)} | total_pnl ${Number.isFinite(row.total_pnl) ? row.total_pnl.toFixed(3) : 'n/a'}`,
+      );
+    }
   }
   lines.push('');
 
@@ -1199,6 +1207,7 @@ module.exports = {
     buildEmptyMappingStats,
     buildClvLedgerReport,
     buildDecisionTierAudit,
+    buildDecisionTierAuditWindows,
     buildFetchDiagnostics,
     buildNhlMoneylineCalibrationReport,
     buildReliabilityBinTemplate,
