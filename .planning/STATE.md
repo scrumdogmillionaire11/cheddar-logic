@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-10T13:04:06Z"
-last_activity: "2026-04-10 - Completed quick task 143 / WI-0825: calibration tracking, report job, and execution-gate kill switch"
+last_activity: "2026-04-10 - Completed WI-0826: CLV + firing/winning monitoring dashboard data"
 ---
 
 # Project State
@@ -96,7 +96,7 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 |----|-------|----------|------|
 | **WI-0825** | Per-market Brier/ECE calibration tracking with kill switch | High | WI-0820, WI-0824 |
 | **WI-0819** | Quarter-Kelly stake fraction on PLAY/LEAN card payloads | High | WI-0813 |
-| **WI-0826** | CLV + firing/winning monitoring — extend DB + worker, expose to dashboard | High | WI-0824 |
+| ~~**WI-0826**~~ | ~~CLV + firing/winning monitoring — extend DB + worker, expose to dashboard~~ | ~~High~~ COMPLETE (2026-04-10) | WI-0824 |
 | **WI-0838** | CLV first-seen price lock — freeze `odds_at_pick` at card creation | Medium | WI-0812 |
 | **WI-0809** | Rolling cohort windows (14/30/60/90d) in decision-tier calibration report | Medium | none |
 | **WI-0811** | Book-to-book mispricing scanner — deterministic `MispricingCandidate` emitter | Medium | none |
