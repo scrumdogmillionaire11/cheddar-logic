@@ -4,10 +4,9 @@
 Multiple agents contribute safely by enforcing exclusive scopes, work-item claims, and serialized shared touchpoints.
 
 ## Current State Snapshot (Authoritative)
-- Source: `.planning/STATE.md` (last activity: 2026-03-07)
-- Current phase: `2 of 4` complete
-- Status: `Ready for Phase 3 (Documentation & Handoff)`
-- Phase 3 objective: formalize ownership contracts, runbooks, and enforcement guardrails
+
+- Source: `.planning/STATE.md` (always check for latest activity)
+- Milestone: `v1.1 — Model Integrity & Betting Execution Hardening`
 - DB architecture: **single-writer** — worker is sole DB writer; web server is read-only (see ADR-0002)
 
 ## Source-Of-Truth Order
@@ -58,9 +57,19 @@ When files conflict, apply this precedence in order:
 - **Production DB lock is intentional:** `/opt/data/cheddar-prod.db.lock` indicates the active writer (normally worker). If lock errors occur during manual maintenance/backfills, stop worker first, run the maintenance command, then restart worker. Do **not** bypass with `CHEDDAR_DB_ALLOW_MULTI_PROCESS=true` in production.
 
 ## Branch/Commit Protocol
+
+- **Main is protected.** Direct pushes to `main` are blocked. All work enters via PR.
 - Branch: `agent/<agent-name>/WI-####-short-slug`
 - Commit: `WI-####: <imperative summary>`
 - One work item maps to one PR.
+
+**Required sequence for every new effort:**
+
+1. `git fetch origin main`
+2. `git checkout -b <branch-name> origin/main`
+3. `git push -u origin <branch-name>` — do this **before** any commits so the branch tracks its own remote ref, not `origin/main`
+4. Do all work and commits on the feature branch
+5. Open a PR via `gh pr create` — never push directly to `main`
 
 ## Scope Hygiene
 Agents must not:
