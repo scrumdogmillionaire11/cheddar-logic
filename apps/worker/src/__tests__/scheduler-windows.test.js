@@ -685,7 +685,7 @@ describe('scheduler POTD windows', () => {
       { year: 2026, month: 3, day: 24, hour: 12, minute: 0 },
       { zone: 'America/New_York' },
     );
-    const games = [{ game_id: 'nhl-late-1', sport: 'nhl', game_time_utc: '2026-03-24T23:00:00.000Z' }];
+    const games = [{ game_id: 'nhl-late-1', sport: 'nhl', game_time_utc: '2026-03-24T23:00:00.000Z' }]; // 7 PM ET
     const meta = scheduler.computePotdScheduleMetadata(nowEt, games);
 
     expect(meta).not.toBeNull();
