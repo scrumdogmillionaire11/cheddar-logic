@@ -211,6 +211,9 @@ module.exports = {
   // Line delta utility
   computeLineDelta: db.computeLineDelta,
 
+  // MLB league averages (dynamic constants for model calibration, WI-0840)
+  computeMLBLeagueAverages: db.computeMLBLeagueAverages,
+
   // JWT revocation persistence (WI-0608)
   insertRevokedToken: db.insertRevokedToken,
   isTokenRevoked: db.isTokenRevoked,

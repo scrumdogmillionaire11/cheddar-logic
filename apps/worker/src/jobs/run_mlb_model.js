@@ -2217,7 +2217,9 @@ async function runMLBModel({
               predictedAt: now,
               confidence: driver.confidence,
               outputData: driver,
-              oddsSnapshotId: baseOddsSnapshot.id,
+              // WITHOUT_ODDS_MODE: synthetic snapshots are not persisted to odds_snapshots,
+              // so passing their id would break the FK constraint. Pass null instead.
+              oddsSnapshotId: baseOddsSnapshot.id?.startsWith('synthetic-') ? null : baseOddsSnapshot.id,
               jobRunId,
             });
 
