@@ -16,6 +16,7 @@ jest.mock('@cheddar-logic/data', () => ({
   withDb: jest.fn(async (fn) => fn()),
   getUnsettledProjectionCards: jest.fn(),
   setProjectionActualResult: jest.fn(),
+  batchInsertProjectionProxyEvals: jest.fn(),
 }));
 
 // Mock nhl-settlement-source
@@ -33,6 +34,7 @@ const {
   getUnsettledProjectionCards,
   hasSuccessfulJobRun,
   setProjectionActualResult,
+  batchInsertProjectionProxyEvals,
 } = require('@cheddar-logic/data');
 
 const { fetchNhlSettlementSnapshot } = require('../nhl-settlement-source');
@@ -514,5 +516,106 @@ describe('settleProjections — sequential ordering guard', () => {
 
     expect(hasSuccessfulJobRun).not.toHaveBeenCalled();
     expect(result.success).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// proxy eval integration (WI-0866)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeProjectionCard(cardType, projection) {
+  const isNhl = cardType.startsWith('nhl');
+  return {
+    card_id: `card-${cardType}-proj`,
+    game_id: isNhl ? '2024020001' : 'mlb-proj-game',
+    sport: isNhl ? 'nhl' : 'baseball_mlb',
+    card_type: cardType,
+    payload_data: JSON.stringify({ projected_total: projection }),
+    game_time_utc: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+    home_team: 'BOS',
+    away_team: 'NYY',
+  };
+}
+
+describe('settleProjections — proxy eval integration', () => {
+  const { fetchF5Total } = require('../settle_mlb_f5');
+  const { fetchNhlSettlementSnapshot: fetchNhlSnapshot } = require('../nhl-settlement-source');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    getDatabase.mockReturnValue({
+      prepare: jest.fn().mockReturnValue({
+        get: jest.fn().mockReturnValue({ game_pk: '745340' }),
+      }),
+    });
+  });
+
+  test('Case 1: mlb-f5 card triggers batchInsertProjectionProxyEvals with 2 rows', async () => {
+    getUnsettledProjectionCards.mockReturnValue([makeProjectionCard('mlb-f5', 4.82)]);
+    fetchF5Total.mockResolvedValue(5);
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.settled).toBe(1);
+    expect(batchInsertProjectionProxyEvals).toHaveBeenCalledTimes(1);
+    const [, rows] = batchInsertProjectionProxyEvals.mock.calls[0];
+    expect(rows).toHaveLength(2);  // lines 3.5 and 4.5
+    expect(rows.every((r) => r.card_family === 'MLB_F5_TOTAL')).toBe(true);
+    expect(rows.every((r) => r.actual_value === 5)).toBe(true);
+    expect(rows.every((r) => r.game_id === 'mlb-proj-game')).toBe(true);
+  });
+
+  test('Case 2: nhl-pace-1p card triggers batchInsertProjectionProxyEvals with 1 row', async () => {
+    getUnsettledProjectionCards.mockReturnValue([makeProjectionCard('nhl-pace-1p', 1.70)]);
+    fetchNhlSnapshot.mockResolvedValue({
+      available: true,
+      isFirstPeriodComplete: true,
+      homeFirstPeriodScore: 1,
+      awayFirstPeriodScore: 1,
+    });
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.settled).toBe(1);
+    expect(batchInsertProjectionProxyEvals).toHaveBeenCalledTimes(1);
+    const [, rows] = batchInsertProjectionProxyEvals.mock.calls[0];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].proxy_line).toBe(1.5);
+    expect(rows[0].card_family).toBe('NHL_1P_TOTAL');
+  });
+
+  test('Case 3: nhl-player-shots card does NOT call batchInsertProjectionProxyEvals', async () => {
+    getUnsettledProjectionCards.mockReturnValue([makeProjectionCard('nhl-player-shots', 3.0)]);
+    fetchNhlSnapshot.mockResolvedValue({
+      available: true,
+      isFinal: true,
+      playerShots: { fullGameByPlayerId: {} },
+    });
+
+    // Player not found → settled=0, skipped=1, no proxy eval
+    await settleProjections({ dryRun: false });
+
+    expect(batchInsertProjectionProxyEvals).not.toHaveBeenCalled();
+  });
+
+  test('Case 4: proxy eval insert failure does NOT abort settlement', async () => {
+    getUnsettledProjectionCards.mockReturnValue([makeProjectionCard('mlb-f5', 4.82)]);
+    fetchF5Total.mockResolvedValue(5);
+    batchInsertProjectionProxyEvals.mockImplementation(() => { throw new Error('DB locked'); });
+
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.success).toBe(true);
+    expect(result.settled).toBe(1);
+    expect(setProjectionActualResult).toHaveBeenCalledWith('card-mlb-f5-proj', { runs_f5: 5 });
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[settle_projections] proxy eval insert failed',
+      'card-mlb-f5-proj',
+      'DB locked',
+    );
+
+    consoleSpy.mockRestore();
   });
 });

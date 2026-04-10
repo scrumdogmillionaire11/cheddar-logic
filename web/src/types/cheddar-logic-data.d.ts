@@ -39,4 +39,12 @@ declare module '@cheddar-logic/data' {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const _default: any;
   export default _default;
+
+  // projection-accuracy data layer (WI-0864/0867)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  export function getProjectionAccuracySummary(db: any, opts?: {
+    cardFamily?: string;
+    gameDateGte?: string;
+    gameDateLte?: string;
+  }): any;
 }
