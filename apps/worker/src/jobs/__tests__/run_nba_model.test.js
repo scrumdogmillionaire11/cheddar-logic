@@ -16,6 +16,10 @@ const {getDatabase, closeDatabase, runMigrations } = require('@cheddar-logic/dat
 const {
   generateNBAMarketCallCards,
   deriveExecutionStatusForCard,
+  applyExecutionGateToNbaCard,
+  extractNbaEspnNullMetricTeams,
+  recordEspnNullTeams,
+  sendEspnNullDiscordAlert,
 } = require('../run_nba_model');
 const {
   publishDecisionForCard,
@@ -164,6 +168,233 @@ describe('run_nba_model job', () => {
     };
 
     expect(deriveExecutionStatusForCard(card)).toBe('EXECUTABLE');
+  });
+
+  test('execution gate annotates executable market-call cards that clear the veto', () => {
+    const card = {
+      payloadData: {
+        execution_status: 'EXECUTABLE',
+        edge: 0.11,
+        confidence: 0.74,
+        model_status: 'MODEL_OK',
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        pass_reason_code: null,
+        reason_codes: [],
+        decision_v2: {
+          official_status: 'PLAY',
+        },
+      },
+    };
+    const nowMs = new Date(baseOdds.captured_at).getTime() + 90_000;
+
+    const result = applyExecutionGateToNbaCard(card, {
+      oddsSnapshot: baseOdds,
+      nowMs,
+    });
+
+    expect(result.evaluated).toBe(true);
+    expect(result.blocked).toBe(false);
+    expect(card.payloadData.execution_gate).toMatchObject({
+      evaluated: true,
+      should_bet: true,
+      model_status: 'MODEL_OK',
+      snapshot_age_ms: 90_000,
+    });
+    expect(card.payloadData.execution_gate.net_edge).toBeCloseTo(0.06, 6);
+    expect(card.payloadData.status).not.toBe('PASS');
+  });
+
+  test('execution gate demotes blocked executable market-call cards to PASS', () => {
+    const card = {
+      payloadData: {
+        execution_status: 'EXECUTABLE',
+        edge: 0.055,
+        confidence: 0.74,
+        model_status: 'MODEL_OK',
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        pass_reason_code: null,
+        reason_codes: [],
+        decision_v2: {
+          official_status: 'PLAY',
+        },
+      },
+    };
+    const nowMs = new Date(baseOdds.captured_at).getTime() + 90_000;
+
+    const decisionStatusBeforeGate =
+      card.payloadData.decision_v2?.official_status ?? null;
+    const result = applyExecutionGateToNbaCard(card, {
+      oddsSnapshot: baseOdds,
+      nowMs,
+    });
+
+    expect(result.evaluated).toBe(true);
+    expect(result.blocked).toBe(true);
+    expect(card.payloadData.execution_gate).toMatchObject({
+      evaluated: true,
+      should_bet: false,
+      snapshot_age_ms: 90_000,
+    });
+    expect(card.payloadData.execution_gate.blocked_by).toContain(
+      'NET_EDGE_INSUFFICIENT:0.0050',
+    );
+    expect(card.payloadData.classification).toBe('PASS');
+    expect(card.payloadData.action).toBe('PASS');
+    expect(card.payloadData.status).toBe('PASS');
+    expect(card.payloadData.execution_status).toBe('BLOCKED');
+    expect(card.payloadData.pass_reason_code).toBe(
+      'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
+    );
+    expect(card.payloadData.decision_v2?.official_status).toBe(
+      decisionStatusBeforeGate,
+    );
+    expect(result.strictDecisionSnapshot).toMatchObject({
+      classification: 'PASS',
+      action: 'PASS',
+      status: 'PASS',
+      execution_status: 'BLOCKED',
+      pass_reason_code: 'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
+      decision_v2_official_status: decisionStatusBeforeGate,
+    });
+  });
+
+  test('extracts and logs unique NBA ESPN null metrics teams', () => {
+    const entries = extractNbaEspnNullMetricTeams({
+      homeTeam: 'Boston Celtics',
+      awayTeam: 'New York Knicks',
+      homeResult: {
+        metrics: {
+          avgPoints: null,
+          avgPointsAllowed: null,
+          espn_null_reason: 'team_map_miss',
+        },
+      },
+      awayResult: {
+        metrics: {
+          avgPoints: null,
+          avgPointsAllowed: null,
+          espn_null_reason: 'espn_no_data',
+        },
+      },
+    });
+
+    expect(entries).toEqual([
+      { team: 'Boston Celtics', reason: 'TEAM_MAP_MISS' },
+      { team: 'New York Knicks', reason: 'ESPN_NO_DATA' },
+    ]);
+
+    const registry = new Map();
+    const warn = jest.fn();
+    const logger = { warn };
+    recordEspnNullTeams({
+      sport: 'NBA',
+      registry,
+      nullMetricTeams: [...entries, entries[0]],
+      logger,
+    });
+
+    expect(registry.size).toBe(2);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenNthCalledWith(
+      1,
+      '[ESPN_NULL] sport=NBA team=Boston Celtics reason=TEAM_MAP_MISS',
+    );
+    expect(warn).toHaveBeenNthCalledWith(
+      2,
+      '[ESPN_NULL] sport=NBA team=New York Knicks reason=ESPN_NO_DATA',
+    );
+  });
+
+  test('sends NBA ESPN null Discord alert at threshold and records cooldown run', async () => {
+    const origEnabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    const origWebhook = process.env.DISCORD_CARD_WEBHOOK_URL;
+    const origThreshold = process.env.ESPN_NULL_ALERT_THRESHOLD;
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.ESPN_NULL_ALERT_THRESHOLD = '2';
+
+    const sendDiscordMessagesFn = jest.fn().mockResolvedValue(1);
+    const wasJobRecentlySuccessfulFn = jest.fn(() => false);
+    const insertJobRunFn = jest.fn();
+    const markJobRunSuccessFn = jest.fn();
+    const markJobRunFailureFn = jest.fn();
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = await sendEspnNullDiscordAlert({
+      sport: 'NBA',
+      nullMetricTeams: [
+        { team: 'Boston Celtics', reason: 'TEAM_MAP_MISS' },
+        { team: 'New York Knicks', reason: 'ESPN_NO_DATA' },
+      ],
+      logger,
+      sendDiscordMessagesFn,
+      wasJobRecentlySuccessfulFn,
+      insertJobRunFn,
+      markJobRunSuccessFn,
+      markJobRunFailureFn,
+    });
+
+    expect(result).toMatchObject({ sent: true, reason: 'sent', count: 2 });
+    expect(sendDiscordMessagesFn).toHaveBeenCalledTimes(1);
+    expect(sendDiscordMessagesFn.mock.calls[0][0]).toMatchObject({
+      webhookUrl: 'https://discord.example/webhook',
+    });
+    expect(sendDiscordMessagesFn.mock.calls[0][0].messages[0]).toContain(
+      'Boston Celtics',
+    );
+    expect(wasJobRecentlySuccessfulFn).toHaveBeenCalledWith(
+      'espn_null_alert_nba',
+      60,
+    );
+    expect(insertJobRunFn).toHaveBeenCalledTimes(1);
+    expect(markJobRunSuccessFn).toHaveBeenCalledTimes(1);
+    expect(markJobRunFailureFn).not.toHaveBeenCalled();
+
+    if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
+    else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    if (origWebhook !== undefined) process.env.DISCORD_CARD_WEBHOOK_URL = origWebhook;
+    else delete process.env.DISCORD_CARD_WEBHOOK_URL;
+    if (origThreshold !== undefined) process.env.ESPN_NULL_ALERT_THRESHOLD = origThreshold;
+    else delete process.env.ESPN_NULL_ALERT_THRESHOLD;
+  });
+
+  test('suppresses NBA ESPN null Discord alert during cooldown', async () => {
+    const origEnabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    const origWebhook = process.env.DISCORD_CARD_WEBHOOK_URL;
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+
+    const sendDiscordMessagesFn = jest.fn();
+    const wasJobRecentlySuccessfulFn = jest.fn(() => true);
+
+    const result = await sendEspnNullDiscordAlert({
+      sport: 'NBA',
+      nullMetricTeams: [
+        { team: 'Boston Celtics', reason: 'TEAM_MAP_MISS' },
+        { team: 'New York Knicks', reason: 'ESPN_NO_DATA' },
+      ],
+      sendDiscordMessagesFn,
+      wasJobRecentlySuccessfulFn,
+      insertJobRunFn: jest.fn(),
+      markJobRunSuccessFn: jest.fn(),
+      markJobRunFailureFn: jest.fn(),
+    });
+
+    expect(result).toMatchObject({
+      sent: false,
+      reason: 'cooldown_active',
+      count: 2,
+    });
+    expect(sendDiscordMessagesFn).not.toHaveBeenCalled();
+
+    if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
+    else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    if (origWebhook !== undefined) process.env.DISCORD_CARD_WEBHOOK_URL = origWebhook;
+    else delete process.env.DISCORD_CARD_WEBHOOK_URL;
   });
 
   test('job_runs table records job execution as success', async () => {

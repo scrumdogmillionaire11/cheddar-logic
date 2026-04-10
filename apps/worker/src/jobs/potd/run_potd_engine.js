@@ -1,0 +1,472 @@
+'use strict';
+
+require('dotenv').config();
+
+const { v4: uuidV4 } = require('uuid');
+const { DateTime } = require('luxon');
+const {
+  insertJobRun,
+  markJobRunSuccess,
+  markJobRunFailure,
+  shouldRunJobKey,
+  withDb,
+  getDatabase,
+  insertCardPayload,
+  upsertGame,
+  createJob,
+} = require('@cheddar-logic/data');
+const { fetchOdds } = require('@cheddar-logic/odds');
+const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
+const {
+  buildCandidates,
+  scoreCandidate,
+  selectBestPlay,
+  kellySize,
+} = require('./signal-engine');
+const { formatPotdDiscordMessage } = require('./format-discord');
+const { sendDiscordMessages } = require('../post_discord_cards');
+
+const JOB_NAME = 'run_potd_engine';
+const DEFAULT_TIMEZONE = 'America/New_York';
+// Publish window: 12:00 PM – 4:00 PM ET (scheduler enforces this too, but guard here
+// prevents accidental posts when the job is invoked manually outside the window)
+const PUBLISH_WINDOW_START_HOUR = 12; // noon ET (inclusive)
+const PUBLISH_WINDOW_END_HOUR = 16;   // 4 PM ET (exclusive)
+const DEFAULT_BANKROLL = Number(process.env.POTD_STARTING_BANKROLL || 10);
+const DEFAULT_KELLY_FRACTION = Number(process.env.POTD_KELLY_FRACTION || 0.25);
+const DEFAULT_MAX_WAGER_PCT = Number(process.env.POTD_MAX_WAGER_PCT || 0.2);
+const POTD_SPORT_ENV = {
+  NHL: 'ENABLE_NHL_MODEL',
+  NBA: 'ENABLE_NBA_MODEL',
+  MLB: 'ENABLE_MLB_MODEL',
+  NFL: 'ENABLE_NFL_MODEL',
+};
+
+function getActivePotdSports() {
+  return Object.entries(POTD_SPORT_ENV)
+    .filter(([sport, envKey]) => ODDS_SPORTS_CONFIG[sport] && process.env[envKey] !== 'false')
+    .map(([sport]) => sport);
+}
+
+function buildPotdIds(playDate) {
+  return {
+    playId: `potd-play-${playDate}`,
+    cardId: `potd-card-${playDate}`,
+    seedLedgerId: `potd-bankroll-initial-${playDate}`,
+    playLedgerId: `potd-bankroll-play-${playDate}`,
+  };
+}
+
+function getLatestBankrollRow(db) {
+  return (
+    db
+      .prepare(
+        `SELECT * FROM potd_bankroll
+         ORDER BY datetime(created_at) DESC, id DESC
+         LIMIT 1`,
+      )
+      .get() || null
+  );
+}
+
+function ensureInitialBankroll(db, { playDate, nowIso, startingBankroll }) {
+  const latest = getLatestBankrollRow(db);
+  if (latest) {
+    return {
+      created: false,
+      bankroll: Number(latest.amount_after),
+    };
+  }
+
+  const ids = buildPotdIds(playDate);
+  db.prepare(
+    `INSERT INTO potd_bankroll (
+      id, event_date, event_type, play_id, card_id,
+      amount_before, amount_change, amount_after, notes, created_at
+    ) VALUES (?, ?, 'initial', NULL, NULL, 0, ?, ?, ?, ?)`,
+  ).run(
+    ids.seedLedgerId,
+    playDate,
+    startingBankroll,
+    startingBankroll,
+    'Initial POTD bankroll seed',
+    nowIso,
+  );
+
+  return {
+    created: true,
+    bankroll: startingBankroll,
+  };
+}
+
+function buildSelectionObject(candidate) {
+  if (candidate.marketType === 'TOTAL') {
+    return { side: candidate.selection };
+  }
+  const team =
+    candidate.selection === 'HOME'
+      ? candidate.home_team
+      : candidate.away_team;
+  return {
+    side: candidate.selection,
+    team,
+  };
+}
+
+function recommendedBetTypeFor(marketType) {
+  if (marketType === 'TOTAL') return 'total';
+  if (marketType === 'SPREAD') return 'spread';
+  return 'moneyline';
+}
+
+function buildCardPayloadData(candidate, { nowIso, wagerAmount, bankrollAtPost, kellyFraction }) {
+  return {
+    game_id: candidate.gameId,
+    sport: candidate.sport,
+    kind: 'PLAY',
+    action: 'FIRE',
+    status: 'FIRE',
+    classification: 'BASE',
+    decision_v2: { official_status: 'PLAY' },
+    prediction: candidate.selection,
+    confidence: candidate.totalScore,
+    confidence_pct: Math.round(candidate.totalScore * 100),
+    confidence_label: candidate.confidenceLabel,
+    recommended_bet_type: recommendedBetTypeFor(candidate.marketType),
+    market_type: candidate.marketType,
+    selection: buildSelectionObject(candidate),
+    selection_label: candidate.selectionLabel,
+    line: candidate.line,
+    price: candidate.price,
+    edge_pct: candidate.edgePct,
+    total_score: candidate.totalScore,
+    model_win_prob: candidate.modelWinProb,
+    implied_prob: candidate.impliedProb,
+    score_breakdown: candidate.scoreBreakdown,
+    home_team: candidate.home_team,
+    away_team: candidate.away_team,
+    start_time_utc: candidate.commence_time,
+    generated_at: nowIso,
+    wager_amount: wagerAmount,
+    bankroll_at_post: bankrollAtPost,
+    kelly_fraction: kellyFraction,
+    odds_context: candidate.oddsContext,
+  };
+}
+
+function buildPotdPlayRow(candidate, {
+  playId,
+  cardId,
+  playDate,
+  nowIso,
+  wagerAmount,
+  bankrollAtPost,
+  kellyFraction,
+}) {
+  return {
+    id: playId,
+    play_date: playDate,
+    game_id: candidate.gameId,
+    card_id: cardId,
+    sport: candidate.sport,
+    home_team: candidate.home_team,
+    away_team: candidate.away_team,
+    market_type: candidate.marketType,
+    selection: candidate.selection,
+    selection_label: candidate.selectionLabel,
+    line: candidate.line,
+    price: candidate.price,
+    confidence_label: candidate.confidenceLabel,
+    total_score: candidate.totalScore,
+    model_win_prob: candidate.modelWinProb,
+    implied_prob: candidate.impliedProb,
+    edge_pct: candidate.edgePct,
+    score_breakdown: JSON.stringify(candidate.scoreBreakdown || {}),
+    wager_amount: wagerAmount,
+    bankroll_at_post: bankrollAtPost,
+    kelly_fraction: kellyFraction,
+    game_time_utc: candidate.commence_time,
+    posted_at: nowIso,
+  };
+}
+
+function buildPotdCard(candidate, row, { cardId, nowIso }) {
+  const payloadData = buildCardPayloadData(candidate, {
+    nowIso,
+    wagerAmount: row.wager_amount,
+    bankrollAtPost: row.bankroll_at_post,
+    kellyFraction: row.kelly_fraction,
+  });
+
+  return {
+    id: cardId,
+    gameId: candidate.gameId,
+    sport: candidate.sport,
+    cardType: 'potd-call',
+    cardTitle: `POTD: ${candidate.selectionLabel}`,
+    createdAt: nowIso,
+    expiresAt: null,
+    payloadData,
+    modelOutputIds: null,
+  };
+}
+
+async function gatherBestCandidate({
+  fetchOddsFn,
+  buildCandidatesFn,
+  scoreCandidateFn,
+  selectBestPlayFn,
+}) {
+  const sports = getActivePotdSports();
+  const scoredCandidates = [];
+  const fetchErrors = [];
+
+  for (const sport of sports) {
+    const result = await fetchOddsFn({ sport, hoursAhead: 24 });
+    if (Array.isArray(result?.errors) && result.errors.length > 0) {
+      fetchErrors.push(...result.errors);
+    }
+    for (const game of result?.games || []) {
+      const candidates = buildCandidatesFn(game);
+      for (const candidate of candidates) {
+        const scored = scoreCandidateFn(candidate);
+        if (scored) scoredCandidates.push(scored);
+      }
+    }
+  }
+
+  return {
+    bestCandidate: selectBestPlayFn(scoredCandidates, { minConfidence: 'HIGH' }),
+    fetchErrors,
+    activeSports: sports,
+  };
+}
+
+async function runPotdEngine({
+  jobKey = null,
+  dryRun = false,
+  force = false,
+  schedule = null,
+  fetchOddsFn = fetchOdds,
+  buildCandidatesFn = buildCandidates,
+  scoreCandidateFn = scoreCandidate,
+  selectBestPlayFn = selectBestPlay,
+  kellySizeFn = kellySize,
+  sendDiscordMessagesFn = sendDiscordMessages,
+  nowFn = () => DateTime.now().setZone(DEFAULT_TIMEZONE),
+} = {}) {
+  const nowEt = nowFn();
+
+  // Enforce publish window: 12:00 PM – 4:00 PM ET
+  // Pass force=true to override (manual testing / backfill only)
+  if (!force && (nowEt.hour < PUBLISH_WINDOW_START_HOUR || nowEt.hour >= PUBLISH_WINDOW_END_HOUR)) {
+    return {
+      success: true,
+      skipped: true,
+      reason: 'outside_publish_window',
+      currentEt: nowEt.toFormat('HH:mm'),
+      window: `${PUBLISH_WINDOW_START_HOUR}:00–${PUBLISH_WINDOW_END_HOUR}:00 ET`,
+    };
+  }
+
+  const nowIso = nowEt.toUTC().toISO();
+  const playDate = nowEt.toISODate();
+  const { playId, cardId, playLedgerId } = buildPotdIds(playDate);
+  const jobRunId = `job-potd-${playDate}-${uuidV4().slice(0, 8)}`;
+  const webhookUrl = String(process.env.DISCORD_POTD_WEBHOOK_URL || '').trim();
+
+  return withDb(async () => {
+    if (jobKey && !shouldRunJobKey(jobKey)) {
+      return { success: true, skipped: true, jobKey };
+    }
+
+    if (dryRun) {
+      return { success: true, dryRun: true, jobKey, schedule };
+    }
+
+    insertJobRun(JOB_NAME, jobRunId, jobKey);
+
+    try {
+      const db = getDatabase();
+      const existingPlay = db
+        .prepare(`SELECT * FROM potd_plays WHERE play_date = ? LIMIT 1`)
+        .get(playDate);
+      if (existingPlay) {
+        markJobRunSuccess(jobRunId, { already_published: true, play_date: playDate });
+        return {
+          success: true,
+          jobRunId,
+          alreadyPublished: true,
+          playDate,
+        };
+      }
+
+      const { bestCandidate, fetchErrors, activeSports } = await gatherBestCandidate({
+        fetchOddsFn,
+        buildCandidatesFn,
+        scoreCandidateFn,
+        selectBestPlayFn,
+      });
+
+      const bankrollState = ensureInitialBankroll(db, {
+        playDate,
+        nowIso,
+        startingBankroll: DEFAULT_BANKROLL,
+      });
+      const bankrollAtPost = bankrollState.bankroll;
+
+      if (!bestCandidate) {
+        markJobRunSuccess(jobRunId, {
+          no_play: true,
+          play_date: playDate,
+          active_sports: activeSports.join(','),
+          fetch_errors: fetchErrors.length,
+        });
+        return {
+          success: true,
+          jobRunId,
+          noPlay: true,
+          playDate,
+          fetchErrors,
+        };
+      }
+
+      const wagerAmount = kellySizeFn({
+        edgePct: bestCandidate.edgePct,
+        impliedProb: bestCandidate.impliedProb,
+        bankroll: bankrollAtPost,
+        kellyFraction: DEFAULT_KELLY_FRACTION,
+        maxWagerPct: DEFAULT_MAX_WAGER_PCT,
+      });
+
+      if (!Number.isFinite(wagerAmount) || wagerAmount <= 0) {
+        markJobRunSuccess(jobRunId, {
+          no_play: true,
+          reason: 'zero_wager',
+          play_date: playDate,
+        });
+        return {
+          success: true,
+          jobRunId,
+          noPlay: true,
+          reason: 'zero_wager',
+          playDate,
+        };
+      }
+
+      const playRow = buildPotdPlayRow(bestCandidate, {
+        playId,
+        cardId,
+        playDate,
+        nowIso,
+        wagerAmount,
+        bankrollAtPost,
+        kellyFraction: DEFAULT_KELLY_FRACTION,
+      });
+
+      const transaction = db.transaction(() => {
+        upsertGame({
+          id: `game-${String(bestCandidate.sport || '').toLowerCase()}-${bestCandidate.gameId}`,
+          gameId: bestCandidate.gameId,
+          sport: bestCandidate.sport,
+          homeTeam: bestCandidate.home_team,
+          awayTeam: bestCandidate.away_team,
+          gameTimeUtc: bestCandidate.commence_time,
+          status: 'scheduled',
+        });
+
+        db.prepare(
+          `INSERT INTO potd_plays (
+            id, play_date, game_id, card_id, sport, home_team, away_team,
+            market_type, selection, selection_label, line, price, confidence_label,
+            total_score, model_win_prob, implied_prob, edge_pct, score_breakdown,
+            wager_amount, bankroll_at_post, kelly_fraction, game_time_utc, posted_at
+          ) VALUES (
+            @id, @play_date, @game_id, @card_id, @sport, @home_team, @away_team,
+            @market_type, @selection, @selection_label, @line, @price, @confidence_label,
+            @total_score, @model_win_prob, @implied_prob, @edge_pct, @score_breakdown,
+            @wager_amount, @bankroll_at_post, @kelly_fraction, @game_time_utc, @posted_at
+          )`,
+        ).run(playRow);
+
+        db.prepare(
+          `INSERT INTO potd_bankroll (
+            id, event_date, event_type, play_id, card_id,
+            amount_before, amount_change, amount_after, notes, created_at
+          ) VALUES (?, ?, 'play_posted', ?, ?, ?, 0, ?, ?, ?)`,
+        ).run(
+          playLedgerId,
+          playDate,
+          playId,
+          cardId,
+          bankrollAtPost,
+          bankrollAtPost,
+          `Posted ${bestCandidate.selectionLabel}`,
+          nowIso,
+        );
+
+        insertCardPayload(buildPotdCard(bestCandidate, playRow, { cardId, nowIso }));
+      });
+
+      transaction();
+
+      let discordPosted = false;
+      let discordError = null;
+      if (webhookUrl) {
+        try {
+          await sendDiscordMessagesFn({
+            webhookUrl,
+            messages: [formatPotdDiscordMessage(playRow)],
+          });
+          discordPosted = true;
+          db.prepare(
+            `UPDATE potd_plays
+             SET discord_posted = 1, discord_posted_at = ?
+             WHERE id = ?`,
+          ).run(nowIso, playId);
+        } catch (error) {
+          discordError = error.message;
+          console.warn(`[POTD] Discord publish failed: ${error.message}`);
+        }
+      }
+
+      markJobRunSuccess(jobRunId, {
+        play_date: playDate,
+        card_id: cardId,
+        discord_posted: discordPosted,
+      });
+
+      return {
+        success: true,
+        jobRunId,
+        playDate,
+        cardId,
+        playId,
+        wagerAmount,
+        bankrollAtPost,
+        discordPosted,
+        discordError,
+        fetchErrors,
+      };
+    } catch (error) {
+      markJobRunFailure(jobRunId, error.message);
+      throw error;
+    }
+  });
+}
+
+if (require.main === module) {
+  // Pass --force to bypass the publish-window guard (e.g. manual backfills)
+  const force = process.argv.includes('--force');
+  createJob(JOB_NAME, async ({ dryRun }) => runPotdEngine({ dryRun, force }));
+}
+
+module.exports = {
+  runPotdEngine,
+  __private: {
+    buildCardPayloadData,
+    buildPotdPlayRow,
+    buildPotdCard,
+    getActivePotdSports,
+  },
+};

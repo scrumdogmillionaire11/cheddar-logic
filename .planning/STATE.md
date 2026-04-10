@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-09T00:00:00Z"
-last_activity: "2026-04-09 - Completed quick task 142: WI-0823: NHL unified goalie signal — consolidate GSaX and SV% into one score"
+last_updated: "2026-04-09T23:34:00Z"
+last_activity: "2026-04-10 - Completed potd-01-06: POTD gap closure — require.main guard, npm scripts, ENABLE_POTD=true"
 ---
 
 # Project State
@@ -80,8 +80,8 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 |----|-------|----------|------|
 | ~~**WI-0823**~~ | ~~NHL unified goalie signal — consolidate GSaX + SV% into one composite~~ | ~~High~~ COMPLETE (2026-04-09) | WI-0820 |
 | **WI-0824** | Two-layer bet execution gate — model fair prob ≠ executable edge | High | WI-0820 |
-| **WI-0815** | Edge sanity clamp → watchdog `CAUTION` propagation in `computeTotalEdge` | Medium | none |
-| **WI-0818** | Price staleness warning on hard-locked cards with stale price | Medium | none |
+| ~~**WI-0815**~~ | ~~Edge sanity clamp → watchdog `CAUTION` propagation in `computeTotalEdge`~~ | ~~Medium~~ COMPLETE (2026-04-09) | none |
+| ~~**WI-0818**~~ | ~~Price staleness warning on hard-locked cards with stale price~~ | ~~Medium~~ COMPLETE (2026-04-09) | none |
 | **WI-0837** | ESPN null metrics alerting — Discord warning + `[ESPN_NULL]` log | Medium | none |
 | ~~**WI-0841**~~ | ~~NBA impact players — replace static 41-name set with ESPN injury-feed tier~~ | ~~Medium~~ COMPLETE (2026-04-09) | — |
 

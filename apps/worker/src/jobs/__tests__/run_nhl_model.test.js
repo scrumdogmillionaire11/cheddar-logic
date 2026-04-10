@@ -13,7 +13,13 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const {getDatabase, closeDatabase, runMigrations } = require('@cheddar-logic/data');
-const { generateNHLMarketCallCards, applyNhlSettlementMarketContext } = require('../run_nhl_model');
+const {
+  generateNHLMarketCallCards,
+  applyNhlSettlementMarketContext,
+  extractNhlEspnNullMetricTeams,
+  recordEspnNullTeams,
+  sendEspnNullDiscordAlert,
+} = require('../run_nhl_model');
 const { computeNHLDriverCards } = require('../../models/index');
 
 const TEST_DB_PATH = '/tmp/cheddar-nhl-test.db';
@@ -152,6 +158,140 @@ describe('run_nhl_model job', () => {
         `Job failed with exit code ${error.status}: ${error.stdout || error.message}`,
       );
     }
+  });
+
+  test('extracts and logs unique NHL ESPN null metrics teams from raw_data', () => {
+    const entries = extractNhlEspnNullMetricTeams({
+      home_team: 'Boston Bruins',
+      away_team: 'New York Rangers',
+      raw_data: {
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgGoalsFor: null,
+              avgGoalsAgainst: null,
+              espn_null_reason: 'espn_no_data',
+            },
+          },
+          away: {
+            metrics: {
+              avgGoalsFor: null,
+              avgGoalsAgainst: null,
+              espn_null_reason: 'fetch_error',
+            },
+          },
+        },
+      },
+    });
+
+    expect(entries).toEqual([
+      { team: 'Boston Bruins', reason: 'ESPN_NO_DATA' },
+      { team: 'New York Rangers', reason: 'FETCH_ERROR' },
+    ]);
+
+    const registry = new Map();
+    const warn = jest.fn();
+    recordEspnNullTeams({
+      sport: 'NHL',
+      registry,
+      nullMetricTeams: [...entries, entries[1]],
+      logger: { warn },
+    });
+
+    expect(registry.size).toBe(2);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenNthCalledWith(
+      1,
+      '[ESPN_NULL] sport=NHL team=Boston Bruins reason=ESPN_NO_DATA',
+    );
+    expect(warn).toHaveBeenNthCalledWith(
+      2,
+      '[ESPN_NULL] sport=NHL team=New York Rangers reason=FETCH_ERROR',
+    );
+  });
+
+  test('sends NHL ESPN null Discord alert at threshold and records cooldown run', async () => {
+    const origEnabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    const origWebhook = process.env.DISCORD_CARD_WEBHOOK_URL;
+    const origThreshold = process.env.ESPN_NULL_ALERT_THRESHOLD;
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.ESPN_NULL_ALERT_THRESHOLD = '2';
+
+    const sendDiscordMessagesFn = jest.fn().mockResolvedValue(1);
+    const wasJobRecentlySuccessfulFn = jest.fn(() => false);
+    const insertJobRunFn = jest.fn();
+    const markJobRunSuccessFn = jest.fn();
+    const markJobRunFailureFn = jest.fn();
+
+    const result = await sendEspnNullDiscordAlert({
+      sport: 'NHL',
+      nullMetricTeams: [
+        { team: 'Boston Bruins', reason: 'ESPN_NO_DATA' },
+        { team: 'New York Rangers', reason: 'FETCH_ERROR' },
+      ],
+      logger: { log: jest.fn(), warn: jest.fn() },
+      sendDiscordMessagesFn,
+      wasJobRecentlySuccessfulFn,
+      insertJobRunFn,
+      markJobRunSuccessFn,
+      markJobRunFailureFn,
+    });
+
+    expect(result).toMatchObject({ sent: true, reason: 'sent', count: 2 });
+    expect(sendDiscordMessagesFn).toHaveBeenCalledTimes(1);
+    expect(sendDiscordMessagesFn.mock.calls[0][0].messages[0]).toContain(
+      'Boston Bruins',
+    );
+    expect(wasJobRecentlySuccessfulFn).toHaveBeenCalledWith(
+      'espn_null_alert_nhl',
+      60,
+    );
+    expect(insertJobRunFn).toHaveBeenCalledTimes(1);
+    expect(markJobRunSuccessFn).toHaveBeenCalledTimes(1);
+    expect(markJobRunFailureFn).not.toHaveBeenCalled();
+
+    if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
+    else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    if (origWebhook !== undefined) process.env.DISCORD_CARD_WEBHOOK_URL = origWebhook;
+    else delete process.env.DISCORD_CARD_WEBHOOK_URL;
+    if (origThreshold !== undefined) process.env.ESPN_NULL_ALERT_THRESHOLD = origThreshold;
+    else delete process.env.ESPN_NULL_ALERT_THRESHOLD;
+  });
+
+  test('suppresses NHL ESPN null Discord alert during cooldown', async () => {
+    const origEnabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    const origWebhook = process.env.DISCORD_CARD_WEBHOOK_URL;
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+
+    const sendDiscordMessagesFn = jest.fn();
+    const wasJobRecentlySuccessfulFn = jest.fn(() => true);
+
+    const result = await sendEspnNullDiscordAlert({
+      sport: 'NHL',
+      nullMetricTeams: [
+        { team: 'Boston Bruins', reason: 'ESPN_NO_DATA' },
+        { team: 'New York Rangers', reason: 'FETCH_ERROR' },
+      ],
+      sendDiscordMessagesFn,
+      wasJobRecentlySuccessfulFn,
+      insertJobRunFn: jest.fn(),
+      markJobRunSuccessFn: jest.fn(),
+      markJobRunFailureFn: jest.fn(),
+    });
+
+    expect(result).toMatchObject({
+      sent: false,
+      reason: 'cooldown_active',
+      count: 2,
+    });
+    expect(sendDiscordMessagesFn).not.toHaveBeenCalled();
+
+    if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
+    else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    if (origWebhook !== undefined) process.env.DISCORD_CARD_WEBHOOK_URL = origWebhook;
+    else delete process.env.DISCORD_CARD_WEBHOOK_URL;
   });
 
   test('orchestrated market routing reduces legacy actionable cards to one canonical card', () => {

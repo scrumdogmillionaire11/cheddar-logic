@@ -44,6 +44,8 @@
     "job:backfill-period-token:dry-run": "node src/jobs/backfill_period_token.js --dry-run",
     "job:settle-games": "node src/jobs/settle_game_results.js",
     "job:settle-cards": "node src/jobs/settle_pending_cards.js",
+    "job:run-potd-engine": "node src/jobs/potd/run_potd_engine.js",
+    "job:potd-settlement-mirror": "node src/jobs/potd/settlement-mirror.js",
     "job:settlement-report": "node src/jobs/report_settlement_health.js",
     "job:report-telemetry-calibration": "node src/jobs/report_telemetry_calibration.js",
     "db:backup": "node -e \"require('./src/utils/db-backup.js').backupDatabase('manual')\"",
@@ -91,6 +93,7 @@
     "uuid": "^9.0.0"
   },
   "devDependencies": {
+    "better-sqlite3": "^12.8.0",
     "jest": "^29.7.0"
   },
   "overrides": {

@@ -54,6 +54,8 @@ const { run: refreshTeamMetricsDaily } = require('../jobs/refresh_team_metrics_d
 const { pullScheduleNba } = require('../jobs/pull_schedule_nba');
 const { pullScheduleNhl } = require('../jobs/pull_schedule_nhl');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
+const { runPotdEngine } = require('../jobs/potd/run_potd_engine');
+const { mirrorPotdSettlement } = require('../jobs/potd/settlement-mirror');
 
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
@@ -75,6 +77,7 @@ const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 9);
 const ENABLE_ODDS_BACKSTOP = process.env.ENABLE_ODDS_BACKSTOP === 'true';
 const ENABLE_PULL_SCHEDULE_NBA = process.env.ENABLE_PULL_SCHEDULE_NBA !== 'false';
 const ENABLE_PULL_SCHEDULE_NHL = process.env.ENABLE_PULL_SCHEDULE_NHL !== 'false';
+const ENABLE_POTD = process.env.ENABLE_POTD === 'true';
 
 const SPORT_JOBS = {
   nhl: { env: 'ENABLE_NHL_MODEL' },
@@ -91,6 +94,45 @@ function enabledSports() {
 }
 
 function nowET() { return DateTime.now().setZone(TZ); }
+
+function computePotdScheduleMetadata(nowEt, games = []) {
+  const eligibleSports = new Set(
+    enabledSports().filter((sport) => ODDS_SPORTS_CONFIG[String(sport || '').toUpperCase()]),
+  );
+  const todayStart = nowEt.startOf('day');
+  const todayEnd = todayStart.plus({ days: 1 });
+  const windowStart = todayStart.set({ hour: 12, minute: 0, second: 0, millisecond: 0 });
+  const windowEnd = todayStart.set({ hour: 16, minute: 0, second: 0, millisecond: 0 });
+
+  const todayGames = (Array.isArray(games) ? games : [])
+    .filter((game) => eligibleSports.has(String(game?.sport || '').toLowerCase()))
+    .map((game) => ({
+      ...game,
+      gameTimeEt: DateTime.fromISO(game.game_time_utc, { zone: 'utc' }).setZone(TZ),
+    }))
+    .filter((game) => game.gameTimeEt.isValid)
+    .filter((game) => game.gameTimeEt >= todayStart && game.gameTimeEt < todayEnd)
+    .sort((left, right) => left.gameTimeEt.toMillis() - right.gameTimeEt.toMillis());
+
+  if (todayGames.length === 0) return null;
+
+  const earliestGameEt = todayGames[0].gameTimeEt;
+  const unclampedTarget = earliestGameEt.minus({ minutes: 90 });
+  const targetPostTimeEt =
+    unclampedTarget < windowStart
+      ? windowStart
+      : unclampedTarget > windowEnd
+        ? windowEnd
+        : unclampedTarget;
+
+  return {
+    playDate: nowEt.toISODate(),
+    earliestGameTimeEt: earliestGameEt.toISO(),
+    targetPostTimeEt: targetPostTimeEt.toISO(),
+    windowStartEt: windowStart.toISO(),
+    windowEndEt: windowEnd.toISO(),
+  };
+}
 
 function isModelJob(jobName) {
   return typeof jobName === 'string' && jobName.startsWith('run_') && jobName.endsWith('_model');
@@ -179,7 +221,46 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   jobs.push(...computeNbaDueJobs(nowEt, subCtx));
   jobs.push(...computeMlbDueJobs(nowEt, subCtx));
   jobs.push(...computeNflDueJobs(nowEt, subCtx));
-  jobs.push(...computeSettlementDueJobs(nowEt, { nowUtc, dryRun, ENABLE_WITHOUT_ODDS_MODE }));
+  const settlementJobs = computeSettlementDueJobs(nowEt, { nowUtc, dryRun, ENABLE_WITHOUT_ODDS_MODE });
+  jobs.push(...settlementJobs);
+
+  // ========== POTD (4.5) ==========
+  if (ENABLE_POTD) {
+    const schedule = computePotdScheduleMetadata(nowEt, games);
+    const windowEnd = nowEt.startOf('day').set({ hour: 16, minute: 0, second: 0, millisecond: 0 });
+    if (schedule) {
+      const targetPostTimeEt = DateTime.fromISO(schedule.targetPostTimeEt, { zone: TZ });
+      const publishJobKey = `potd|${nowEt.toISODate()}`;
+      if (
+        nowEt >= targetPostTimeEt &&
+        nowEt <= windowEnd &&
+        shouldRunJobKey(publishJobKey)
+      ) {
+        jobs.push({
+          jobName: 'run_potd_engine',
+          jobKey: publishJobKey,
+          execute: runPotdEngine,
+          args: { jobKey: publishJobKey, dryRun, schedule },
+          reason: `potd engine (${schedule.targetPostTimeEt})`,
+        });
+      }
+    }
+
+    const settlementDue = settlementJobs.some((job) =>
+      ['backfill_card_results', 'settle_game_results', 'settle_projections', 'settle_pending_cards']
+        .includes(job.jobName),
+    );
+    if (settlementDue) {
+      const mirrorJobKey = `potd-settlement|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+      jobs.push({
+        jobName: 'mirror_potd_settlement',
+        jobKey: mirrorJobKey,
+        execute: mirrorPotdSettlement,
+        args: { jobKey: mirrorJobKey, dryRun },
+        reason: 'potd settlement mirror after canonical settlement jobs',
+      });
+    }
+  }
 
   // ========== WATCHDOGS / FPL / PLAYER-PROPS (5-8) ==========
   if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') jobs.push(...getPipelineHealthJobs(nowUtc));
@@ -227,6 +308,7 @@ async function start() {
   console.log(`  ENABLE_ODDS_PULL=${process.env.ENABLE_ODDS_PULL !== 'false'} | ODDS_FETCH_SLOT_MINUTES=${ODDS_FETCH_SLOT_MINUTES} | ODDS_FETCH_START_HOUR=${ODDS_FETCH_START_HOUR}h ET`);
   console.log(`  REQUIRE_FRESH_ODDS=${REQUIRE_FRESH_ODDS_FOR_MODELS} | MODEL_ODDS_MAX_AGE=${MODEL_ODDS_MAX_AGE_MINUTES}min | REQUIRE_FRESH_TEAM_METRICS=${REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS}`);
   console.log(`  ENABLE_SETTLEMENT=${process.env.ENABLE_SETTLEMENT !== 'false'} | ENABLE_HOURLY_SETTLEMENT_SWEEP=${process.env.ENABLE_HOURLY_SETTLEMENT_SWEEP !== 'false'}`);
+  console.log(`  ENABLE_POTD=${ENABLE_POTD}`);
   console.log('='.repeat(60) + '\n');
 
   console.log('[SCHEDULER] Database ready.');
@@ -258,4 +340,5 @@ module.exports = {
   isHourlySettlementDue, isFixedDue, dueTminusMinutes, TMINUS_BANDS,
   getOddsIntervalMinutes, getScheduleRefreshDue, shouldRefreshOddsForGame,
   getPipelineHealthJobs, getOddsHealthJobs, keyPullScheduleNba, keyPullScheduleNhl,
+  computePotdScheduleMetadata,
 };

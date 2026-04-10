@@ -5,6 +5,7 @@ const {
   applyNhlDriverContextMetadata,
   attachNhlDriverContextToRawData,
   buildDualRunRecord,
+  applyExecutionGateToNhlCard,
 } = require('../run_nhl_model');
 const { validateCardPayload } = require('@cheddar-logic/data');
 
@@ -356,6 +357,92 @@ describe('run_nhl_model market call generation', () => {
     });
     expect(validateCardPayload(cards[0].cardType, cards[0].payloadData)).toEqual(
       { success: true, errors: [] },
+    );
+  });
+
+  test('execution gate annotates executable NHL market-call cards that clear the veto', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const mlCard = {
+      payloadData: {
+        execution_status: 'EXECUTABLE',
+        edge: 0.11,
+        confidence: 0.74,
+        model_status: 'MODEL_OK',
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        pass_reason_code: null,
+        reason_codes: [],
+        decision_v2: {
+          official_status: 'PLAY',
+        },
+      },
+    };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 120_000;
+
+    const result = applyExecutionGateToNhlCard(mlCard, {
+      oddsSnapshot,
+      nowMs,
+    });
+
+    expect(result.evaluated).toBe(true);
+    expect(result.blocked).toBe(false);
+    expect(mlCard.payloadData.execution_gate).toMatchObject({
+      evaluated: true,
+      should_bet: true,
+      model_status: 'MODEL_OK',
+      snapshot_age_ms: 120_000,
+    });
+  });
+
+  test('execution gate demotes blocked NHL market-call cards to PASS without rewriting decision_v2', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const mlCard = {
+      payloadData: {
+        execution_status: 'EXECUTABLE',
+        edge: 0.055,
+        confidence: 0.74,
+        model_status: 'MODEL_OK',
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        pass_reason_code: null,
+        reason_codes: [],
+        decision_v2: {
+          official_status: 'PLAY',
+        },
+      },
+    };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 120_000;
+    const decisionStatusBeforeGate =
+      mlCard.payloadData.decision_v2?.official_status ?? null;
+
+    const result = applyExecutionGateToNhlCard(mlCard, {
+      oddsSnapshot,
+      nowMs,
+    });
+
+    expect(result.evaluated).toBe(true);
+    expect(result.blocked).toBe(true);
+    expect(mlCard.payloadData.execution_gate).toMatchObject({
+      evaluated: true,
+      should_bet: false,
+      snapshot_age_ms: 120_000,
+    });
+    expect(
+      mlCard.payloadData.execution_gate.blocked_by.some((reason) =>
+        reason.startsWith('NET_EDGE_INSUFFICIENT:'),
+      ),
+    ).toBe(true);
+    expect(mlCard.payloadData.classification).toBe('PASS');
+    expect(mlCard.payloadData.action).toBe('PASS');
+    expect(mlCard.payloadData.status).toBe('PASS');
+    expect(mlCard.payloadData.execution_status).toBe('BLOCKED');
+    expect(mlCard.payloadData.pass_reason_code).toBe(
+      'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
+    );
+    expect(mlCard.payloadData.decision_v2?.official_status).toBe(
+      decisionStatusBeforeGate,
     );
   });
 

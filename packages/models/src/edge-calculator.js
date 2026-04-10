@@ -449,7 +449,7 @@ function computeSigmaFromHistory({ sport, marketType, db, windowGames = 60 } = {
         AND final_score_away IS NOT NULL
       ORDER BY settled_at DESC
       LIMIT ?
-    `).all(sport?.toUpperCase?.() ?? sport, windowGames);
+    `).all(sport?.toLowerCase?.() ?? sport, windowGames);
 
     if (!rows || rows.length < 20) {
       return fallback;
