@@ -40,6 +40,8 @@ const {
   getTeamMetricsWithGames,
 } = require('@cheddar-logic/data');
 
+const { kellyStake } = require('@cheddar-logic/models/src/edge-calculator');
+
 const {
   computeNBADriverCards,
   generateCard,
@@ -1782,6 +1784,20 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             if (!entry.card.payloadData.raw_data) entry.card.payloadData.raw_data = {};
             entry.card.payloadData.raw_data.sigma_source = computedSigma.sigma_source;
             entry.card.payloadData.raw_data.sigma_games_sampled = computedSigma.games_sampled ?? null;
+          }
+
+          // WI-0819: attach advisory Kelly stake fraction to PLAY/LEAN cards.
+          for (const entry of pendingCards) {
+            const pd = entry.card.payloadData;
+            const officialStatus = pd.decision_v2?.official_status;
+            if (officialStatus === 'PLAY' || officialStatus === 'LEAN') {
+              const { kelly_fraction, kelly_units } = kellyStake(pd.p_fair, pd.price);
+              pd.kelly_fraction = kelly_fraction;
+              pd.kelly_units = kelly_units;
+            } else {
+              pd.kelly_fraction = null;
+              pd.kelly_units = null;
+            }
           }
 
           // WI-0817: atomic write phase — all deletes + all inserts in one transaction.

@@ -18,6 +18,7 @@ const {
   computeMoneylineEdge,
   computeSpreadEdge,
   computeTotalEdge,
+  kellyStake,
 } = require('../edge-calculator');
 
 // eslint-disable-next-line no-redeclare
@@ -763,3 +764,79 @@ describe('WI-0591: buildDecisionV2 sigma override', () => {
   });
 
 });
+
+// ─── kellyStake ──────────────────────────────────────────────────────────────
+
+describe('kellyStake — WI-0819 quarter-Kelly stake sizing', () => {
+  test('slight favourite at juice (-110, p=0.55) yields small positive fraction', () => {
+    const result = kellyStake(0.55, -110);
+    assertStrict.ok(result.kelly_fraction !== null, 'should be positive EV');
+    assertStrict.ok(result.kelly_fraction > 0, 'fraction must be > 0');
+    assertStrict.ok(result.kelly_fraction < 0.10, 'quarter-Kelly should be conservative');
+    assertStrict.ok(result.kelly_units !== null);
+    // acceptance: kellyStake(0.55, -110) ≈ 0.0138 (5.5% edge / 4 = ~1.4% bankroll)
+    assertStrict.ok(result.kelly_fraction > 0.01 && result.kelly_fraction < 0.03, `expected ~0.014 got ${result.kelly_fraction}`);
+  });
+
+  test('break-even at juice (-110, p=0.5238) is negative EV → null', () => {
+    // 0.5238 ≈ implied prob of -110 with no edge
+    const result = kellyStake(0.50, -110);
+    assertStrict.strictEqual(result.kelly_fraction, null);
+    assertStrict.strictEqual(result.kelly_units, null);
+  });
+
+  test('strong edge (p=0.60, -110) yields conservative positive fraction', () => {
+    const result = kellyStake(0.60, -110);
+    assertStrict.ok(result.kelly_fraction !== null);
+    assertStrict.ok(result.kelly_fraction > 0);
+    assertStrict.ok(result.kelly_fraction < 0.10, 'quarter-Kelly should be < 10%');
+  });
+
+  test('kelly_fraction is never > 0.0625 (25% bankroll cap × 0.25 fraction)', () => {
+    // Large underdog with massive implied edge
+    const result = kellyStake(0.90, +500);
+    assertStrict.ok(result.kelly_fraction !== null);
+    assertStrict.ok(result.kelly_fraction <= 0.0625, `got ${result.kelly_fraction}`);
+  });
+
+  test('large underdog (+130, p=0.60) yields positive fraction', () => {
+    const result = kellyStake(0.60, +130);
+    assertStrict.ok(result.kelly_fraction !== null);
+    assertStrict.ok(result.kelly_fraction > 0);
+  });
+
+  test('invalid pFair (0) returns null', () => {
+    const result = kellyStake(0, -110);
+    assertStrict.strictEqual(result.kelly_fraction, null);
+    assertStrict.strictEqual(result.kelly_units, null);
+  });
+
+  test('invalid pFair (1) returns null', () => {
+    const result = kellyStake(1, -110);
+    assertStrict.strictEqual(result.kelly_fraction, null);
+    assertStrict.strictEqual(result.kelly_units, null);
+  });
+
+  test('NaN americanOdds returns null', () => {
+    const result = kellyStake(0.55, NaN);
+    assertStrict.strictEqual(result.kelly_fraction, null);
+    assertStrict.strictEqual(result.kelly_units, null);
+  });
+
+  test('zero americanOdds returns null', () => {
+    const result = kellyStake(0.55, 0);
+    assertStrict.strictEqual(result.kelly_fraction, null);
+    assertStrict.strictEqual(result.kelly_units, null);
+  });
+
+  test('kelly_units equals kelly_fraction * 100 (sanity)', () => {
+    const result = kellyStake(0.58, -110);
+    if (result.kelly_fraction !== null) {
+      assertStrict.strictEqual(
+        result.kelly_units,
+        Number((result.kelly_fraction * 100).toFixed(2)),
+      );
+    }
+  });
+});
+

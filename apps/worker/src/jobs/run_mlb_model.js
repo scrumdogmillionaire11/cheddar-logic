@@ -2235,6 +2235,22 @@ async function runMLBModel({
             if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
             card.payloadData.raw_data.sigma_source = mlbSigma.sigma_source;
             card.payloadData.raw_data.sigma_games_sampled = mlbSigma.games_sampled ?? null;
+            // WI-0819: attach advisory Kelly stake fraction to actionable cards.
+            {
+              const pd = card.payloadData;
+              const isPass =
+                String(pd.status || '').toUpperCase() === 'PASS' ||
+                String(pd.action || '').toUpperCase() === 'PASS' ||
+                String(pd.classification || '').toUpperCase() === 'PASS';
+              if (!isPass && Number.isFinite(pd.p_fair) && Number.isFinite(pd.price)) {
+                const { kelly_fraction, kelly_units } = edgeCalculator.kellyStake(pd.p_fair, pd.price);
+                pd.kelly_fraction = kelly_fraction;
+                pd.kelly_units = kelly_units;
+              } else {
+                pd.kelly_fraction = null;
+                pd.kelly_units = null;
+              }
+            }
             card.payloadData.pipeline_state = pipelineState;
             insertCardPayload(card);
 
