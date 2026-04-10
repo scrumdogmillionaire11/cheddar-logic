@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-10T15:00:00Z"
-last_activity: "2026-04-10 - Completed WI-0811: Book-to-book mispricing scanner — deterministic MispricingCandidate emitter with 43 tests"
+last_updated: "2026-04-10T16:00:00Z"
+last_activity: "2026-04-10 - Sprint 4 verification complete: all 6 WIs verified (WI-0809, WI-0811, WI-0819, WI-0825, WI-0826, WI-0838)"
 ---
 
 # Project State
@@ -96,9 +96,8 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 |----|-------|----------|------|
 | ~~**WI-0826**~~ | ~~CLV + firing/winning monitoring — extend DB + worker, expose to dashboard~~ | ~~High~~ COMPLETE (2026-04-10) | WI-0824 |
 | ~~**WI-0819**~~ | ~~Quarter-Kelly stake fraction on PLAY/LEAN card payloads~~ | ~~High~~ COMPLETE (2026-04-10) | WI-0813 |
-| **WI-0826** | CLV + firing/winning monitoring — extend DB + worker, expose to dashboard | High | WI-0824 |
 | ~~**WI-0838**~~ | ~~CLV first-seen price lock — freeze `odds_at_pick` at card creation~~ | ~~Medium~~ COMPLETE (2026-04-10) | WI-0812 |
-| **WI-0809** | Rolling cohort windows (14/30/60/90d) in decision-tier calibration report | Medium | none |
+| ~~**WI-0809**~~ | ~~Rolling cohort windows (14/30/60/90d) in decision-tier calibration report~~ | ~~Medium~~ COMPLETE (2026-04-10) | none |
 | ~~**WI-0811**~~ | ~~Book-to-book mispricing scanner — deterministic `MispricingCandidate` emitter~~ | ~~Medium~~ COMPLETE (2026-04-10) | none |
 
 **Execution waves:**

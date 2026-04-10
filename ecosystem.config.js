@@ -29,13 +29,6 @@ module.exports = {
         ENABLE_NBA_MODEL: 'true',
         ENABLE_MLB_MODEL: 'true',
         ENABLE_NFL_MODEL: 'false',
-        // ── Odds API quota conservation (April 2026 emergency budget: 2,000 tokens) ──
-        // 180-min slots = 8 fetches/day × 4 tokens = 32 tokens/day → 896/28 days
-        // Leaves ~1,104 tokens for testing and manual runs.
-        ODDS_FETCH_SLOT_MINUTES: '180',
-        ODDS_MONTHLY_LIMIT: '2000',
-        ODDS_BUDGET_RESERVE_PCT: '10',
-        ENABLE_ODDS_BACKSTOP: 'false',
       },
       instances: 1,
       autorestart: true,
