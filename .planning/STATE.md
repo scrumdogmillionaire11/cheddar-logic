@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-10T14:00:00Z"
-last_activity: "2026-04-10 - Completed WI-0819: quarter-Kelly stake fraction on PLAY/LEAN card payloads"
+last_updated: "2026-04-10T14:30:00Z"
+last_activity: "2026-04-10 - Completed WI-0853: MLB F5 market token FIRST_PERIOD → FIRST_5_INNINGS (worker + web layers)"
 ---
 
 # Project State
