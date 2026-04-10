@@ -28,6 +28,10 @@ const { sendDiscordMessages } = require('../post_discord_cards');
 
 const JOB_NAME = 'run_potd_engine';
 const DEFAULT_TIMEZONE = 'America/New_York';
+// Publish window: 12:00 PM – 4:00 PM ET (scheduler enforces this too, but guard here
+// prevents accidental posts when the job is invoked manually outside the window)
+const PUBLISH_WINDOW_START_HOUR = 12; // noon ET (inclusive)
+const PUBLISH_WINDOW_END_HOUR = 16;   // 4 PM ET (exclusive)
 const DEFAULT_BANKROLL = Number(process.env.POTD_STARTING_BANKROLL || 10);
 const DEFAULT_KELLY_FRACTION = Number(process.env.POTD_KELLY_FRACTION || 0.25);
 const DEFAULT_MAX_WAGER_PCT = Number(process.env.POTD_MAX_WAGER_PCT || 0.2);
@@ -241,6 +245,7 @@ async function gatherBestCandidate({
 async function runPotdEngine({
   jobKey = null,
   dryRun = false,
+  force = false,
   schedule = null,
   fetchOddsFn = fetchOdds,
   buildCandidatesFn = buildCandidates,
@@ -251,6 +256,19 @@ async function runPotdEngine({
   nowFn = () => DateTime.now().setZone(DEFAULT_TIMEZONE),
 } = {}) {
   const nowEt = nowFn();
+
+  // Enforce publish window: 12:00 PM – 4:00 PM ET
+  // Pass force=true to override (manual testing / backfill only)
+  if (!force && (nowEt.hour < PUBLISH_WINDOW_START_HOUR || nowEt.hour >= PUBLISH_WINDOW_END_HOUR)) {
+    return {
+      success: true,
+      skipped: true,
+      reason: 'outside_publish_window',
+      currentEt: nowEt.toFormat('HH:mm'),
+      window: `${PUBLISH_WINDOW_START_HOUR}:00–${PUBLISH_WINDOW_END_HOUR}:00 ET`,
+    };
+  }
+
   const nowIso = nowEt.toUTC().toISO();
   const playDate = nowEt.toISODate();
   const { playId, cardId, playLedgerId } = buildPotdIds(playDate);
@@ -438,7 +456,9 @@ async function runPotdEngine({
 }
 
 if (require.main === module) {
-  createJob(JOB_NAME, async ({ dryRun }) => runPotdEngine({ dryRun }));
+  // Pass --force to bypass the publish-window guard (e.g. manual backfills)
+  const force = process.argv.includes('--force');
+  createJob(JOB_NAME, async ({ dryRun }) => runPotdEngine({ dryRun, force }));
 }
 
 module.exports = {

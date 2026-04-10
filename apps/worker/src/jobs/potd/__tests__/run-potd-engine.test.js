@@ -103,6 +103,7 @@ describe('runPotdEngine', () => {
 
     const result = await runPotdEngine({
       jobKey: 'potd|2026-04-09',
+      force: true,
       fetchOddsFn: async () => ({ games: [], errors: [] }),
     });
 
@@ -118,6 +119,7 @@ describe('runPotdEngine', () => {
 
     const result = await runPotdEngine({
       jobKey: 'potd|2026-04-09',
+      force: true,
       fetchOddsFn: async () => ({
         games: [{ gameId: candidate.gameId }],
         errors: [],
@@ -219,6 +221,7 @@ describe('runPotdEngine', () => {
 
     const result = await runPotdEngine({
       jobKey: `potd|${candidate.marketType}`,
+      force: true,
       fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
       buildCandidatesFn: () => [candidate],
       scoreCandidateFn: (value) => value,
@@ -246,6 +249,7 @@ describe('runPotdEngine', () => {
 
     const result = await runPotdEngine({
       jobKey: 'potd|discord-failure',
+      force: true,
       fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
       buildCandidatesFn: () => [candidate],
       scoreCandidateFn: (value) => value,
