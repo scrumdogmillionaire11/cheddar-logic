@@ -17,6 +17,7 @@
 
 require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
+const { DateTime } = require('luxon');
 
 // Import cheddar-logic data layer
 const {
@@ -127,6 +128,17 @@ const MLB_PROP_BOOKMAKER_PRIORITY = Object.freeze({
   oddsjam: 4,
   betmgm: 5,
 });
+
+const MLB_SEED_CONTEXT_MAX_AGE_MINUTES = Number(
+  process.env.MODEL_ODDS_MAX_AGE_MINUTES ||
+    process.env.ODDS_GAP_ALERT_MINUTES ||
+    210,
+);
+const MLB_PROJECTION_ONLY_MARKET_FLAGS = Object.freeze([
+  'PROJECTION_ONLY_NO_MARKET_TRUST',
+  'PROJECTION_ONLY_NOT_ACTIONABLE',
+  'NO_ANCHOR_PRICE_VALIDATION',
+]);
 
 const MLB_F5_TEAM_OFFENSE_SPLITS = Object.freeze({
   AZ: { wrc_plus_vs_lhp: 104, wrc_plus_vs_rhp: 98, k_pct_vs_lhp: 0.212, k_pct_vs_rhp: 0.222, iso_vs_lhp: 0.172, iso_vs_rhp: 0.165 },
@@ -531,6 +543,67 @@ function buildMlbPipelineState({
     expect_f5_total: availability.expect_f5_total,
     expect_f5_ml: availability.expect_f5_ml,
   };
+}
+
+function getLatestSuccessfulJobStartedAt(jobName) {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `SELECT started_at
+       FROM job_runs
+       WHERE job_name = ?
+         AND status = 'success'
+       ORDER BY started_at DESC
+       LIMIT 1`,
+    )
+    .get(jobName);
+  return row?.started_at ?? null;
+}
+
+function buildMlbProjectionOnlyRuntimeContext({
+  nowUtc = DateTime.utc(),
+  maxAgeMinutes = MLB_SEED_CONTEXT_MAX_AGE_MINUTES,
+} = {}) {
+  const seedLastSuccessAt = getLatestSuccessfulJobStartedAt(
+    'pull_espn_games_direct',
+  );
+  let seedDataStatus = 'MISSING';
+
+  if (seedLastSuccessAt) {
+    const lastSuccess = DateTime.fromISO(seedLastSuccessAt, { zone: 'utc' });
+    const ageMinutes = nowUtc.diff(lastSuccess, 'minutes').minutes;
+    seedDataStatus = ageMinutes <= maxAgeMinutes ? 'FRESH' : 'STALE';
+  }
+
+  return {
+    run_mode: 'PROJECTION_ONLY',
+    seed_data_status: seedDataStatus,
+    seed_last_success_at: seedLastSuccessAt,
+    games_seeded_count: 0,
+    market_expression_enabled: false,
+  };
+}
+
+function applyMlbProjectionOnlyGuards(target, runtimeContext) {
+  if (!target || typeof target !== 'object' || !runtimeContext) return target;
+
+  const flags = [...MLB_PROJECTION_ONLY_MARKET_FLAGS];
+  if (runtimeContext.seed_data_status === 'STALE') {
+    flags.push('STALE_SEED_DATA');
+  }
+
+  target.run_mode = runtimeContext.run_mode;
+  target.market_expression_enabled = false;
+  target.market_trust_flags = flags;
+  target.reason_codes = uniqueReasonCodes([
+    ...(Array.isArray(target.reason_codes) ? target.reason_codes : []),
+    ...flags,
+  ]);
+  if (!target.raw_data || typeof target.raw_data !== 'object') {
+    target.raw_data = {};
+  }
+  target.raw_data.mlb_runtime_context = { ...runtimeContext };
+  return target;
 }
 
 function deriveMlbExecutionEnvelope({
@@ -1598,6 +1671,15 @@ async function runMLBModel({
       // Start job run
       console.log('[MLBModel] Recording job start...');
       insertJobRun('run_mlb_model', jobRunId, jobKey);
+      const nowUtc = DateTime.utc();
+      const projectionOnlyRuntimeContext = withoutOddsMode
+        ? buildMlbProjectionOnlyRuntimeContext({ nowUtc })
+        : null;
+      if (projectionOnlyRuntimeContext) {
+        console.log(
+          `[MLBModel] PROJECTION_ONLY_CONTEXT_START ${JSON.stringify(projectionOnlyRuntimeContext)}`,
+        );
+      }
 
       // WI-0648: MLB empirical sigma recalibration gate.
       // Queries settled game_results for MLB. Falls back to getSigmaDefaults('MLB')
@@ -1627,8 +1709,6 @@ async function runMLBModel({
         );
       }
       console.log('[MLBModel] Fetching odds for upcoming MLB games...');
-      const { DateTime } = require('luxon');
-      const nowUtc = DateTime.utc();
       const horizonUtc = nowUtc.plus({ hours: 36 }).toISO();
       const oddsSnapshots = getOddsWithUpcomingGames(
         'MLB',
@@ -1640,7 +1720,12 @@ async function runMLBModel({
         if (!withoutOddsMode) {
           console.log('[MLBModel] No recent MLB odds found, exiting.');
           markJobRunSuccess(jobRunId);
-          return { success: true, jobRunId, cardsGenerated: 0 };
+          return {
+            success: true,
+            jobRunId,
+            cardsGenerated: 0,
+            projection_only_context: projectionOnlyRuntimeContext,
+          };
         }
         // Without-Odds-Mode: no odds_snapshots but games exist — synthesize from games table
         console.log('[MLBModel] WITHOUT_ODDS_MODE: no odds snapshots, building synthetic snapshots from games table');
@@ -1648,7 +1733,12 @@ async function runMLBModel({
         if (oddsSnapshots.length === 0) {
           console.log('[MLBModel] No upcoming MLB games found in games table, exiting.');
           markJobRunSuccess(jobRunId);
-          return { success: true, jobRunId, cardsGenerated: 0 };
+          return {
+            success: true,
+            jobRunId,
+            cardsGenerated: 0,
+            projection_only_context: projectionOnlyRuntimeContext,
+          };
         }
       }
 
@@ -1672,6 +1762,12 @@ async function runMLBModel({
       });
 
       const gameIdList = Object.keys(gameOdds);
+      if (projectionOnlyRuntimeContext) {
+        projectionOnlyRuntimeContext.games_seeded_count = gameIdList.length;
+        console.log(
+          `[MLBModel] PROJECTION_ONLY_CONTEXT_RESOLVED ${JSON.stringify(projectionOnlyRuntimeContext)}`,
+        );
+      }
       console.log(`[MLBModel] Running inference on ${gameIdList.length} games...`);
 
       // WI-0840: compute dynamic league constants once per job run
@@ -2179,6 +2275,18 @@ async function runMLBModel({
               payloadData.line_fetched_at = null;
               payloadData.odds_freshness = null;
             }
+            const effectiveProjectionOnlyContext =
+              driver.without_odds_mode ||
+              withoutOddsMode ||
+              payloadData.execution_status === 'PROJECTION_ONLY'
+                ? projectionOnlyRuntimeContext
+                : null;
+            if (effectiveProjectionOnlyContext) {
+              applyMlbProjectionOnlyGuards(
+                payloadData,
+                effectiveProjectionOnlyContext,
+              );
+            }
             applyExecutionGateToMlbPayload(payloadData, {
               oddsSnapshot: {
                 captured_at: gameOddsSnapshot?.captured_at ?? null,
@@ -2213,6 +2321,16 @@ async function runMLBModel({
             }
 
             const modelOutputId = `model-mlb-${gameId}-${uuidV4().slice(0, 8)}`;
+            const modelOutputData = effectiveProjectionOnlyContext
+              ? applyMlbProjectionOnlyGuards(
+                  {
+                    ...driver,
+                    runtime_context: { ...effectiveProjectionOnlyContext },
+                    projection_only_flags: payloadData.market_trust_flags,
+                  },
+                  effectiveProjectionOnlyContext,
+                )
+              : driver;
             insertModelOutput({
               id: modelOutputId,
               gameId,
@@ -2222,7 +2340,7 @@ async function runMLBModel({
               predictionType: cardType,
               predictedAt: now,
               confidence: driver.confidence,
-              outputData: driver,
+              outputData: modelOutputData,
               // WITHOUT_ODDS_MODE: synthetic snapshots are not persisted to odds_snapshots,
               // so passing their id would break the FK constraint. Pass null instead.
               oddsSnapshotId: baseOddsSnapshot.id?.startsWith('synthetic-') ? null : baseOddsSnapshot.id,
@@ -2313,6 +2431,7 @@ async function runMLBModel({
         errors,
         pipeline_states: gamePipelineStates,
         pitcher_prop_summary: pitcherPropSummary,
+        projection_only_context: projectionOnlyRuntimeContext,
       };
     } catch (error) {
       console.error(`[MLBModel] ❌ Job failed:`, error.message);
@@ -2346,6 +2465,8 @@ if (require.main === module) {
 
 module.exports = {
   runMLBModel,
+  buildMlbProjectionOnlyRuntimeContext,
+  applyMlbProjectionOnlyGuards,
   generateMLBCard,
   buildMlbDualRunRecord,
   buildMlbF5OddsContext,

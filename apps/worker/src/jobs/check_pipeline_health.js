@@ -40,6 +40,9 @@ const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 60
 const ODDS_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES || Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
 );
+const SEED_FRESHNESS_MAX_AGE_MINUTES = Number(
+  process.env.SEED_FRESHNESS_MAX_AGE_MINUTES || Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
+);
 const CARDS_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.CARDS_FRESHNESS_MAX_AGE_MINUTES || 30,
 );
@@ -424,6 +427,51 @@ function checkSettlementBacklog() {
   return { ok: false, reason };
 }
 
+function checkMlbSeedFreshness(maxAgeMinutes = SEED_FRESHNESS_MAX_AGE_MINUTES) {
+  if (ODDS_SPORTS_CONFIG.MLB.active) {
+    const reason = 'MLB odds active - seed freshness check skipped';
+    writePipelineHealth('mlb', 'seed_freshness', 'ok', reason);
+    return { ok: true, reason };
+  }
+
+  const db = getDatabase();
+  const nowUtc = DateTime.utc();
+  const horizonUtc = nowUtc.plus({ hours: 6 });
+  const upcomingCount = db
+    .prepare(
+      `SELECT COUNT(*) as cnt FROM games
+       WHERE LOWER(sport) = 'mlb'
+         AND game_time_utc >= ?
+         AND game_time_utc <= ?`,
+    )
+    .get(nowUtc.toISO(), horizonUtc.toISO()).cnt;
+
+  if (upcomingCount === 0) {
+    const reason = 'No MLB games within T-6h - seed freshness check skipped';
+    writePipelineHealth('mlb', 'seed_freshness', 'ok', reason);
+    return { ok: true, reason };
+  }
+
+  const thresholdDesc =
+    maxAgeMinutes >= 60
+      ? `${Math.round(maxAgeMinutes / 60)}h`
+      : `${maxAgeMinutes}m`;
+  const recentlyRan = wasJobRecentlySuccessful(
+    'pull_espn_games_direct',
+    maxAgeMinutes,
+  );
+
+  if (recentlyRan) {
+    const reason = `pull_espn_games_direct ran successfully within last ${thresholdDesc} (${upcomingCount} upcoming MLB games)`;
+    writePipelineHealth('mlb', 'seed_freshness', 'ok', reason);
+    return { ok: true, reason };
+  }
+
+  const reason = `pull_espn_games_direct has NOT run successfully in last ${thresholdDesc} — ${upcomingCount} upcoming MLB games at risk`;
+  writePipelineHealth('mlb', 'seed_freshness', 'failed', reason);
+  return { ok: false, reason };
+}
+
 /**
  * Check: Per-sport model freshness
  * Verifies the named job ran successfully within the threshold, but only
@@ -619,6 +667,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       odds_freshness: checkOddsFreshness,
       cards_freshness: checkCardsFreshness,
       mlb_f5_market_availability: checkMlbF5MarketAvailability,
+      mlb_seed_freshness: () => checkMlbSeedFreshness(),
       settlement_backlog: checkSettlementBacklog,
       // Per-sport model freshness (only fires when upcoming games exist for that sport)
       nhl_model_freshness: () =>
@@ -654,6 +703,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         odds_freshness: ['odds', 'freshness'],
         cards_freshness: ['cards', 'freshness'],
         mlb_f5_market_availability: ['mlb', 'f5_market_availability'],
+        mlb_seed_freshness: ['mlb', 'seed_freshness'],
         settlement_backlog: ['settlement', 'backlog'],
         nhl_model_freshness: ['nhl', 'model_freshness'],
         nhl_shots_model_freshness: ['nhl', 'shots_model_freshness'],
@@ -717,6 +767,7 @@ if (require.main === module) {
 module.exports = {
   checkPipelineHealth,
   checkMlbF5MarketAvailability,
+  checkMlbSeedFreshness,
   checkOddsFreshness,
   checkCalibrationKillSwitches,
   checkWatchdogHeartbeat,

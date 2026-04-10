@@ -7,16 +7,25 @@
 const { DateTime } = require('luxon');
 
 const TZ = 'America/New_York';
+let mockWasJobRecentlySuccessful;
+let mockRunNBAModel;
+let mockRunMLBModel;
+let mockPullEspnGamesDirect;
 
 function loadSchedulerModule() {
   jest.resetModules();
+
+  mockWasJobRecentlySuccessful = jest.fn(() => true);
+  mockRunNBAModel = jest.fn();
+  mockRunMLBModel = jest.fn();
+  mockPullEspnGamesDirect = jest.fn();
 
   jest.doMock('@cheddar-logic/data', () => ({
     getUpcomingGames: jest.fn(() => []),
     shouldRunJobKey: jest.fn(() => true),
     hasRunningJobRun: jest.fn(() => false),
     hasRunningJobName: jest.fn(() => false),
-    wasJobRecentlySuccessful: jest.fn(() => true),
+    wasJobRecentlySuccessful: mockWasJobRecentlySuccessful,
     claimTminusPullSlot: jest.fn(() => true),
     purgeStaleTminusPullLog: jest.fn(),
     purgeStalePropOddsUsageLog: jest.fn(),
@@ -26,12 +35,12 @@ function loadSchedulerModule() {
 
   jest.doMock('../jobs/pull_odds_hourly', () => ({ pullOddsHourly: jest.fn() }));
   jest.doMock('../jobs/refresh_stale_odds', () => ({ refreshStaleOdds: jest.fn() }));
-  jest.doMock('../jobs/pull_espn_games_direct', () => ({ pullEspnGamesDirect: jest.fn() }));
+  jest.doMock('../jobs/pull_espn_games_direct', () => ({ pullEspnGamesDirect: mockPullEspnGamesDirect }));
   jest.doMock('../jobs/run_nhl_model', () => ({ runNHLModel: jest.fn() }));
-  jest.doMock('../jobs/run_nba_model', () => ({ runNBAModel: jest.fn() }));
+  jest.doMock('../jobs/run_nba_model', () => ({ runNBAModel: mockRunNBAModel }));
   jest.doMock('../jobs/run_fpl_model', () => ({ runFPLModel: jest.fn() }));
   jest.doMock('../jobs/run_nfl_model', () => ({ runNFLModel: jest.fn() }));
-  jest.doMock('../jobs/run_mlb_model', () => ({ runMLBModel: jest.fn() }));
+  jest.doMock('../jobs/run_mlb_model', () => ({ runMLBModel: mockRunMLBModel }));
   jest.doMock('../jobs/settle_game_results', () => ({ settleGameResults: jest.fn() }));
   jest.doMock('../jobs/settle_pending_cards', () => ({ settlePendingCards: jest.fn() }));
   jest.doMock('../jobs/backfill_card_results', () => ({ backfillCardResults: jest.fn() }));
@@ -48,6 +57,14 @@ function loadSchedulerModule() {
   jest.doMock('../jobs/run_clv_snapshot', () => ({ runClvSnapshot: jest.fn() }));
   jest.doMock('../jobs/run_daily_performance_report', () => ({ runDailyPerformanceReport: jest.fn() }));
   jest.doMock('../jobs/run_calibration_report', () => ({ runCalibrationReport: jest.fn() }));
+  jest.doMock('@cheddar-logic/odds/src/config', () => ({
+    SPORTS_CONFIG: {
+      NHL: { active: true },
+      NBA: { active: true },
+      MLB: { active: false },
+      NFL: { active: false },
+    },
+  }));
 
   return require('../schedulers/main');
 }
@@ -58,7 +75,9 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
   beforeEach(() => {
     jest.clearAllMocks();
     process.env = { ...originalEnv };
+    jest.useRealTimers();
     process.env.ENABLE_ODDS_PULL = 'false';
+    process.env.REQUIRE_FRESH_ODDS_FOR_MODELS = 'true';
     process.env.ENABLE_SETTLEMENT = 'true';
     process.env.ENABLE_NBA_MODEL = 'false';
     process.env.ENABLE_NHL_MODEL = 'false';
@@ -72,6 +91,10 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
 
   afterAll(() => {
     process.env = originalEnv;
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   test('queues run_calibration_report at exactly 04:00 ET', () => {
@@ -124,5 +147,47 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
     const calibJob = jobs.find((j) => j.jobName === 'run_calibration_report');
 
     expect(calibJob).toBeUndefined();
+  });
+
+  test('MLB projection-only descriptor disables freshness gating and records projection-only metadata', () => {
+    process.env.ENABLE_MLB_MODEL = 'true';
+    const scheduler = loadSchedulerModule();
+
+    const nowEt = DateTime.fromISO('2026-04-10T12:00:00', { zone: TZ });
+    const nowUtc = nowEt.toUTC();
+
+    const jobs = scheduler.computeDueJobs({ nowEt, nowUtc, games: [], dryRun: false });
+    const mlbJob = jobs.find((j) => j.jobName === 'run_mlb_model');
+
+    expect(mlbJob).toBeDefined();
+    expect(mlbJob.requireFreshInputs).toBe(false);
+    expect(mlbJob.freshnessSourceJobs).toEqual(['pull_espn_games_direct']);
+    expect(mlbJob.runMode).toBe('PROJECTION_ONLY');
+    expect(mlbJob.withoutOddsMode).toBe(true);
+  });
+
+  test('tick runs projection-only MLB even when recent seed freshness is stale', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-04-10T16:00:00Z'));
+    process.env.ENABLE_MLB_MODEL = 'true';
+    const scheduler = loadSchedulerModule();
+    mockWasJobRecentlySuccessful.mockReturnValue(false);
+
+    await scheduler.tick();
+
+    expect(mockRunMLBModel).toHaveBeenCalled();
+  });
+
+  test('tick still blocks NBA when fresh inputs are required and stale', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-04-10T16:00:00Z'));
+    process.env.ENABLE_ODDS_PULL = 'true';
+    process.env.ENABLE_NBA_MODEL = 'true';
+    const scheduler = loadSchedulerModule();
+    mockWasJobRecentlySuccessful.mockReturnValue(false);
+
+    await scheduler.tick();
+
+    expect(mockRunNBAModel).not.toHaveBeenCalled();
   });
 });
