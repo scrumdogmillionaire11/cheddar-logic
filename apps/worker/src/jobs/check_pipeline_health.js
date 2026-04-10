@@ -246,10 +246,15 @@ function getLatestOddsSnapshot(db, gameId) {
  * Check 4: MLB F5 market availability
  * For upcoming MLB games within T-6h, report F5 total availability separately
  * from full-game totals so watchdog output matches MLB market intent.
+ *
+ * Games within T-15min of gametime are excluded: F5 markets close before
+ * gametime so their absence at that point is expected, not a pipeline failure.
  */
 function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
   const db = getDatabase();
   const nowUtc = DateTime.utc();
+  // Exclude games within 15 minutes of start — F5 markets are already closed
+  const checkFromUtc = nowUtc.plus({ minutes: 15 });
   const endUtc = nowUtc.plus({ hours: 6 });
   const upcomingGames = db
     .prepare(
@@ -261,7 +266,7 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
       AND game_time_utc <= ?
   `,
     )
-    .all(nowUtc.toISO(), endUtc.toISO());
+    .all(checkFromUtc.toISO(), endUtc.toISO());
 
   if (upcomingGames.length === 0) {
     return {
@@ -329,8 +334,6 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
     reasonParts.push(
       `${missingF5Ml.length}/${expectedF5MlCount} missing F5 ML`,
     );
-  } else {
-    reasonParts.push('F5 ML health dormant');
   }
 
   const reason = reasonParts.join('; ');

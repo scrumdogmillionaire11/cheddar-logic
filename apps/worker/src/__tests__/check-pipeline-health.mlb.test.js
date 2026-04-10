@@ -156,7 +156,7 @@ describe('checkMlbF5MarketAvailability', () => {
     expect(result.ok).toBe(true);
     expect(result.expected_f5_ml_count).toBe(0);
     expect(result.missing_f5_ml_count).toBe(0);
-    expect(result.reason).toContain('F5 ML health dormant');
+    expect(result.reason).not.toContain('missing');
   });
 });
 
