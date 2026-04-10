@@ -43,6 +43,7 @@ function normalizePeriod(value) {
     token === '1P' ||
     token === 'P1' ||
     token === 'FIRST_PERIOD' ||
+    token === 'FIRST_5_INNINGS' ||
     token === 'FIRST_5' ||
     token === 'F5'
   ) {
@@ -83,7 +84,8 @@ function resolveCalibrationMarketKey(marketKey, context = {}) {
       period === '1P' ||
       cardType.includes('MLB_F5') ||
       directToken.includes('F5') ||
-      marketTypeToken === 'FIRST_PERIOD'
+      marketTypeToken === 'FIRST_PERIOD' ||
+      marketTypeToken === 'FIRST_5_INNINGS'
     ) {
       return 'MLB_F5_TOTAL';
     }

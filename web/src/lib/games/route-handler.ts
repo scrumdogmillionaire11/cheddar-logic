@@ -1026,7 +1026,7 @@ const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
   MLB: {
     playProducerCardTypes: new Set(['mlb-strikeout', 'mlb-f5', 'mlb-pitcher-k']),
     evidenceOnlyCardTypes: new Set(['mlb-model-output']),
-    expectedPlayableMarkets: new Set<MarketType>(['PROP', 'FIRST_PERIOD']),
+    expectedPlayableMarkets: new Set<MarketType>(['PROP', 'FIRST_5_INNINGS']),
   },
 };
 
@@ -1999,7 +1999,10 @@ export async function GET(request: NextRequest) {
             payloadPlay?.market_type ??
             payloadMarketContext?.market_type,
         );
-        const normalizedMarketType = normalizedMarketTypeRaw;
+        const normalizedMarketType =
+          rowSport === 'MLB' && normalizedMarketTypeRaw === 'FIRST_PERIOD'
+            ? ('FIRST_5_INNINGS' as const)
+            : normalizedMarketTypeRaw;
         const normalizedDisplaySelectionSide = normalizedSelectionSide;
         const normalizedPrediction =
           normalizedDisplaySelectionSide === 'HOME' ||

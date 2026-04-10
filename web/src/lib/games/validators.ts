@@ -127,6 +127,7 @@ export function hasMinimumViability(
     | 'PUCKLINE'
     | 'TEAM_TOTAL'
     | 'FIRST_PERIOD'
+    | 'FIRST_5_INNINGS'
     | 'PROP'
     | 'INFO',
 ): boolean {

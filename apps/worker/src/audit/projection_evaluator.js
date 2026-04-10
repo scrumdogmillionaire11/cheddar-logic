@@ -71,7 +71,7 @@ function normalizePlayerName(value) {
 function normalizePeriodToken(value) {
   const token = toUpperToken(value);
   if (!token) return 'FULL_GAME';
-  if (token === 'FIRST_PERIOD' || token === '1ST_PERIOD' || token === '1P') {
+  if (token === 'FIRST_PERIOD' || token === 'FIRST_5_INNINGS' || token === '1ST_PERIOD' || token === '1P') {
     return '1P';
   }
   return 'FULL_GAME';

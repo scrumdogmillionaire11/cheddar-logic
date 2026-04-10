@@ -126,6 +126,7 @@ function normalizeClvSettlementPeriod(period) {
     token === '1P' ||
     token === 'P1' ||
     token === 'FIRST_PERIOD' ||
+    token === 'FIRST_5_INNINGS' ||
     token === '1ST_PERIOD'
   ) {
     return '1P';
@@ -372,7 +373,7 @@ function toBackfillFiniteNumberOrNull(value) {
 function normalizeBackfillMarketType(value) {
   const token = toBackfillUpperToken(value);
   if (!token) return '';
-  if (token === 'FIRST_PERIOD' || token === '1P' || token === 'P1') {
+  if (token === 'FIRST_PERIOD' || token === 'FIRST_5_INNINGS' || token === '1P' || token === 'P1') {
     return 'TOTAL';
   }
   if (token === 'TOTAL' || token === 'TOTALS' || token === 'OVER_UNDER' || token === 'OU') {
@@ -934,6 +935,7 @@ function normalizePeriodToken(value) {
     token === '1P' ||
     token === 'P1' ||
     token === 'FIRST_PERIOD' ||
+    token === 'FIRST_5_INNINGS' ||
     token === '1ST_PERIOD'
   ) {
     return '1P';
@@ -954,7 +956,7 @@ function normalizeSettlementPeriod(value, cardType = null) {
   if (normalized) return normalized;
 
   const cardTypeToken = String(cardType || '').toUpperCase();
-  if (cardTypeToken.includes('1P') || cardTypeToken.includes('FIRST_PERIOD')) {
+  if (cardTypeToken.includes('1P') || cardTypeToken.includes('FIRST_PERIOD') || cardTypeToken.includes('FIRST_5_INNINGS')) {
     return '1P';
   }
 

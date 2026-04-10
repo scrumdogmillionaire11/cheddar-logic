@@ -94,6 +94,7 @@ function normalizePeriodToken(payload = {}) {
     const token = asToken(candidate);
     if (!token) continue;
     if (token === 'P1') return '1P';
+    if (token === 'FIRST_5_INNINGS') return 'F5';
     if (token === 'FIRST_PERIOD') return '1P';
     return token;
   }

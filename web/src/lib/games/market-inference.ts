@@ -17,6 +17,7 @@ type MarketType =
   | 'PUCKLINE'
   | 'TEAM_TOTAL'
   | 'FIRST_PERIOD'
+  | 'FIRST_5_INNINGS'
   | 'PROP'
   | 'INFO';
 type Classification = 'BASE' | 'LEAN' | 'PASS';
@@ -100,6 +101,7 @@ const WAVE1_MARKETS = new Set<MarketType>([
   'PUCKLINE',
   'TEAM_TOTAL',
   'FIRST_PERIOD',
+  'FIRST_5_INNINGS',
   'PROP',
 ]);
 
@@ -138,7 +140,7 @@ export function inferMarketFromCardType(cardType: string): MarketType | undefine
     return 'PROP';
   }
   if (normalized === 'mlb-f5') {
-    return 'FIRST_PERIOD';
+    return 'FIRST_5_INNINGS';
   }
   return undefined;
 }
