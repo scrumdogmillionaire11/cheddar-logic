@@ -46,5 +46,6 @@ declare module '@cheddar-logic/data' {
     cardFamily?: string;
     gameDateGte?: string;
     gameDateLte?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }): any;
 }
