@@ -518,6 +518,51 @@ function buildHealthAlertMessage(failedChecks) {
 }
 
 /**
+ * Self-check: alert when check_pipeline_health hasn't run successfully in > 2h.
+ * Writes a pipeline_health row with phase='watchdog', check_name='heartbeat'.
+ */
+async function checkWatchdogHeartbeat() {
+  const db = getDatabase();
+  const prev = db
+    .prepare(
+      `SELECT started_at FROM job_runs
+       WHERE job_name = 'check_pipeline_health' AND status = 'success'
+       ORDER BY started_at DESC LIMIT 1`,
+    )
+    .get();
+
+  if (!prev) return; // First ever run — skip
+
+  const gapMs = Date.now() - new Date(prev.started_at).getTime();
+  const gapH = (gapMs / 3600000).toFixed(1);
+  const isGap = gapMs > 2 * 60 * 60 * 1000;
+
+  writePipelineHealth(
+    'watchdog',
+    'heartbeat',
+    isGap ? 'warning' : 'ok',
+    isGap
+      ? `Last watchdog run was ${gapH}h ago`
+      : `Heartbeat OK (${gapH}h since last run)`,
+  );
+
+  if (isGap && process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') {
+    const webhookUrl = process.env.DISCORD_CARD_WEBHOOK_URL;
+    if (!webhookUrl) {
+      console.warn('[check_pipeline_health] DISCORD_CARD_WEBHOOK_URL not set — skipping watchdog heartbeat alert');
+    } else {
+      const message = buildHealthAlertMessage([{
+        phase: 'watchdog',
+        checkName: 'heartbeat',
+        reason: `check_pipeline_health gap: ${gapH}h (threshold: 2h)`,
+      }]);
+      await sendDiscordMessages({ webhookUrl, messages: [message] });
+      console.warn(`[check_pipeline_health] Watchdog heartbeat alert sent — ${gapH}h gap`);
+    }
+  }
+}
+
+/**
  * Main health check runner
  */
 async function checkPipelineHealth({ jobKey, dryRun }) {
@@ -532,6 +577,8 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
 
   try {
     console.log(`[check_pipeline_health] Running health checks...`);
+
+    await checkWatchdogHeartbeat();
 
     const checks = {
       schedule_freshness: checkScheduleFreshness,
@@ -638,6 +685,7 @@ module.exports = {
   checkMlbF5MarketAvailability,
   checkOddsFreshness,
   checkCalibrationKillSwitches,
+  checkWatchdogHeartbeat,
   shouldSendAlert,
   buildHealthAlertMessage,
 };

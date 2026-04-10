@@ -112,6 +112,7 @@ describe('mirrorPotdSettlement', () => {
     process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
     process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
     process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+    process.env.POTD_STARTING_BANKROLL = '10';
 
     removeIfExists(TEST_DB_PATH);
     removeIfExists(LOCK_PATH);
@@ -127,6 +128,7 @@ describe('mirrorPotdSettlement', () => {
   });
 
   afterAll(() => {
+    delete process.env.POTD_STARTING_BANKROLL;
     try {
       dataModule.closeDatabase();
     } catch {
