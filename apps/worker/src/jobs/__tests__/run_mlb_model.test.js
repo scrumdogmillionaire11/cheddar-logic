@@ -40,6 +40,7 @@ const {
   deriveMlbExecutionEnvelope,
   assertMlbExecutionInvariant,
   applyExecutionGateToMlbPayload,
+  applyMlbProjectionOnlyGuards,
   buildMlbPipelineState,
   buildPitcherKLineContract,
   resolvePitcherKPayloadIdentity,
@@ -1945,5 +1946,60 @@ describe('WI-0835: sigma provenance annotation on MLB card payloads', () => {
     annotateCardSigma(card, mlbSigma);
     expect(card.payloadData.raw_data.prior_field).toBe('value');
     expect(card.payloadData.raw_data.sigma_source).toBe('computed');
+  });
+});
+
+describe('WI-0863: projection-only market trust guards', () => {
+  test('adds projection-only non-actionable flags and runtime context', () => {
+    const payload = {
+      reason_codes: ['PASS_SYNTHETIC_FALLBACK'],
+      raw_data: { sigma_source: 'computed' },
+    };
+    const runtimeContext = {
+      run_mode: 'PROJECTION_ONLY',
+      seed_data_status: 'FRESH',
+      seed_last_success_at: '2026-04-10T15:00:00Z',
+      games_seeded_count: 6,
+      market_expression_enabled: false,
+    };
+
+    applyMlbProjectionOnlyGuards(payload, runtimeContext);
+
+    expect(payload.run_mode).toBe('PROJECTION_ONLY');
+    expect(payload.market_expression_enabled).toBe(false);
+    expect(payload.market_trust_flags).toEqual(
+      expect.arrayContaining([
+        'PROJECTION_ONLY_NO_MARKET_TRUST',
+        'PROJECTION_ONLY_NOT_ACTIONABLE',
+        'NO_ANCHOR_PRICE_VALIDATION',
+      ]),
+    );
+    expect(payload.market_trust_flags).not.toContain('STALE_SEED_DATA');
+    expect(payload.reason_codes).toEqual(
+      expect.arrayContaining([
+        'PASS_SYNTHETIC_FALLBACK',
+        'PROJECTION_ONLY_NO_MARKET_TRUST',
+        'PROJECTION_ONLY_NOT_ACTIONABLE',
+        'NO_ANCHOR_PRICE_VALIDATION',
+      ]),
+    );
+    expect(payload.raw_data.mlb_runtime_context).toEqual(runtimeContext);
+  });
+
+  test('marks stale seed data explicitly when runtime context is stale', () => {
+    const payload = { reason_codes: [] };
+    const runtimeContext = {
+      run_mode: 'PROJECTION_ONLY',
+      seed_data_status: 'STALE',
+      seed_last_success_at: '2026-04-10T09:00:00Z',
+      games_seeded_count: 2,
+      market_expression_enabled: false,
+    };
+
+    applyMlbProjectionOnlyGuards(payload, runtimeContext);
+
+    expect(payload.market_trust_flags).toContain('STALE_SEED_DATA');
+    expect(payload.reason_codes).toContain('STALE_SEED_DATA');
+    expect(payload.raw_data.mlb_runtime_context.seed_data_status).toBe('STALE');
   });
 });

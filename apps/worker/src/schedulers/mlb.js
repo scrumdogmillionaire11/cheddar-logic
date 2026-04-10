@@ -85,6 +85,11 @@ function computeMlbDueJobs(nowEt, {
     jobs.push({
       jobName: 'run_mlb_model',
       jobKey,
+      requireFreshInputs: !mlbWithoutOddsMode,
+      freshnessSourceJobs: mlbWithoutOddsMode
+        ? ['pull_espn_games_direct']
+        : ['pull_odds_hourly'],
+      runMode: mlbWithoutOddsMode ? 'PROJECTION_ONLY' : 'ODDS_BACKED',
       withoutOddsMode: mlbWithoutOddsMode,
       execute: runMLBModel,
       args: { jobKey, dryRun, withoutOddsMode: mlbWithoutOddsMode },
@@ -109,6 +114,11 @@ function computeMlbDueJobs(nowEt, {
       jobs.push({
         jobName: 'run_mlb_model',
         jobKey,
+        requireFreshInputs: !mlbWithoutOddsMode,
+        freshnessSourceJobs: mlbWithoutOddsMode
+          ? ['pull_espn_games_direct']
+          : ['pull_odds_hourly'],
+        runMode: mlbWithoutOddsMode ? 'PROJECTION_ONLY' : 'ODDS_BACKED',
         withoutOddsMode: mlbWithoutOddsMode,
         execute: runMLBModel,
         args: { jobKey, dryRun, withoutOddsMode: mlbWithoutOddsMode },

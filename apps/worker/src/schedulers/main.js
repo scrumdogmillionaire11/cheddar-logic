@@ -364,15 +364,22 @@ async function tick() {
   console.log(`[SCHEDULER] Tick ${nowEt.toISO()} ET — due candidates: ${uniqueDue.length}`);
   for (const job of uniqueDue) {
     if (isModelJob(job.jobName)) {
-      // Use per-job withoutOddsMode when set (e.g. MLB projection-only), falling
-      // back to the global flag. This lets MLB model runs check ESPN-direct
-      // freshness rather than pull_odds_hourly when MLB odds are inactive.
+      const requireFreshInputs = job.requireFreshInputs !== false;
       const jobWithoutOddsMode = job.withoutOddsMode !== undefined ? job.withoutOddsMode : ENABLE_WITHOUT_ODDS_MODE;
-      if (!hasFreshInputsForModels({ requireFresh: REQUIRE_FRESH_ODDS_FOR_MODELS, withoutOddsMode: jobWithoutOddsMode, maxAgeMinutes: MODEL_ODDS_MAX_AGE_MINUTES })) {
-        const gateSource = jobWithoutOddsMode ? 'pull_espn_games_direct' : 'pull_odds_hourly';
+      const freshnessSources =
+        Array.isArray(job.freshnessSourceJobs) && job.freshnessSourceJobs.length > 0
+          ? job.freshnessSourceJobs
+          : [jobWithoutOddsMode ? 'pull_espn_games_direct' : 'pull_odds_hourly'];
+      if (requireFreshInputs && !hasFreshInputsForModels({ requireFresh: REQUIRE_FRESH_ODDS_FOR_MODELS, withoutOddsMode: jobWithoutOddsMode, maxAgeMinutes: MODEL_ODDS_MAX_AGE_MINUTES })) {
+        const gateSource = freshnessSources.join(', ');
         console.warn(`[SCHEDULER][GATE] Skipping ${job.jobName} (${job.jobKey}): no successful ${gateSource} in last ${MODEL_ODDS_MAX_AGE_MINUTES} minutes`);
         console.log(`  skip ${job.jobKey} (${job.jobName}) — stale inputs`);
         continue;
+      }
+      if (!requireFreshInputs && job.runMode === 'PROJECTION_ONLY') {
+        console.log(
+          `  note ${job.jobKey} (${job.jobName}) — projection-only run ungated; seed freshness reported separately via ${freshnessSources.join(', ')}`,
+        );
       }
     }
     if (!shouldRunJobKey(job.jobKey)) { console.log(`  skip ${job.jobKey} (${job.jobName})`); continue; }

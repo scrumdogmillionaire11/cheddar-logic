@@ -283,3 +283,98 @@ describe('checkOddsFreshness — quota-aware status downgrade', () => {
     expect(pipelineWrites[0][2]).toBe('ok');
   });
 });
+
+describe('checkMlbSeedFreshness', () => {
+  let pipelineWrites;
+  let upcomingCount;
+  let mockWasJobRecentlySuccessful;
+  let checkMlbSeedFreshness;
+
+  beforeEach(() => {
+    jest.resetModules();
+    pipelineWrites = [];
+    upcomingCount = 0;
+    mockWasJobRecentlySuccessful = jest.fn(() => false);
+
+    jest.doMock('@cheddar-logic/odds/src/config', () => ({
+      SPORTS_CONFIG: {
+        NHL: { active: true },
+        NBA: { active: true },
+        MLB: { active: false },
+        NFL: { active: false },
+      },
+    }));
+
+    const db = {
+      prepare: jest.fn((sql) => {
+        if (sql.includes('INSERT INTO pipeline_health')) {
+          return {
+            run: (...args) => {
+              pipelineWrites.push(args);
+            },
+          };
+        }
+
+        if (
+          sql.includes('SELECT COUNT(*) as cnt FROM games') &&
+          sql.includes("LOWER(sport) = 'mlb'")
+        ) {
+          return {
+            get: () => ({ cnt: upcomingCount }),
+          };
+        }
+
+        throw new Error(`Unhandled SQL in test: ${sql}`);
+      }),
+    };
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => db),
+      getDb: jest.fn(() => db),
+      insertJobRun: jest.fn(() => 1),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: mockWasJobRecentlySuccessful,
+      recordJobStart: jest.fn(() => 'job-check-health'),
+      recordJobSuccess: jest.fn(),
+      recordJobError: jest.fn(),
+    }));
+
+    ({ checkMlbSeedFreshness } = require('../jobs/check_pipeline_health'));
+  });
+
+  test('writes failed when MLB games exist and ESPN-direct seed is stale', () => {
+    upcomingCount = 4;
+    mockWasJobRecentlySuccessful.mockReturnValue(false);
+
+    const result = checkMlbSeedFreshness(75);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('pull_espn_games_direct has NOT run successfully');
+    expect(pipelineWrites[0][0]).toBe('mlb');
+    expect(pipelineWrites[0][1]).toBe('seed_freshness');
+    expect(pipelineWrites[0][2]).toBe('failed');
+  });
+
+  test('writes ok when MLB games exist and ESPN-direct seed is fresh', () => {
+    upcomingCount = 3;
+    mockWasJobRecentlySuccessful.mockReturnValue(true);
+
+    const result = checkMlbSeedFreshness(75);
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('pull_espn_games_direct ran successfully');
+    expect(pipelineWrites[0][2]).toBe('ok');
+  });
+
+  test('writes ok with skipped reason when no MLB games are within T-6h', () => {
+    upcomingCount = 0;
+
+    const result = checkMlbSeedFreshness(75);
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('seed freshness check skipped');
+    expect(pipelineWrites[0][2]).toBe('ok');
+  });
+});
