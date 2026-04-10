@@ -24,6 +24,7 @@ const SPORTS = ['nba', 'nhl', 'mlb', 'ncaam', 'nfl'];
 const HEALTHY_HIT_RATE = 0.52;
 const DEGRADED_HIT_RATE_MIN = 0.45;
 const STALE_MINUTES = 90;
+const MODEL_FRESHNESS_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
 function parseArgs(argv = process.argv.slice(2)) {
   const opts = { json: false, sport: null, days: LOOKBACK_DAYS };
@@ -39,9 +40,10 @@ function statusIcon(status) {
   return { healthy: '✅', degraded: '⚠️ ', stale: '🚨', critical: '❌', 'no-data': '⬜' }[status] ?? '❓';
 }
 
-function assignStatus(hitRate, lastUpdatedMs) {
+function assignStatus(hitRate, lastUpdatedMs, modelIsOk = null) {
   const staleMs = STALE_MINUTES * 60 * 1000;
-  if (!lastUpdatedMs || (Date.now() - lastUpdatedMs) > staleMs) return 'stale';
+  if (modelIsOk === false) return 'stale';
+  if (modelIsOk === null && (!lastUpdatedMs || (Date.now() - lastUpdatedMs) > staleMs)) return 'stale';
   if (hitRate === null) return 'no-data';
   if (hitRate >= HEALTHY_HIT_RATE) return 'healthy';
   if (hitRate >= DEGRADED_HIT_RATE_MIN) return 'degraded';
@@ -110,10 +112,22 @@ function runSportHealthQuery(db, sport, lookbackDays) {
     WHERE sport = ? ORDER BY created_at DESC LIMIT 1
   `).get(sport);
 
+  const modelHealthRow = db.prepare(`
+    SELECT status, created_at FROM pipeline_health
+    WHERE LOWER(phase) = LOWER(?) AND check_name = 'model_freshness'
+    ORDER BY created_at DESC LIMIT 1
+  `).get(sport);
+
   const lastUpdatedMs = latestCard ? new Date(latestCard.created_at).getTime() : null;
   const lastUpdatedAgo = lastUpdatedMs
     ? formatAge(lastUpdatedMs)
     : 'never';
+  const modelFreshMs = modelHealthRow ? new Date(modelHealthRow.created_at).getTime() : null;
+  const hasFreshModelHealth = Number.isFinite(modelFreshMs)
+    && (Date.now() - modelFreshMs) < MODEL_FRESHNESS_MAX_AGE_MS;
+  const modelIsOk = hasFreshModelHealth
+    ? modelHealthRow?.status === 'ok'
+    : null;
 
   // Model output confidence (last 30 days)
   const modelConf = db.prepare(`
@@ -139,7 +153,7 @@ function runSportHealthQuery(db, sport, lookbackDays) {
     degradationSignals.push(`No card payloads in 6+ hours (last: ${lastUpdatedAgo})`);
   }
 
-  const status = assignStatus(hitRate, lastUpdatedMs);
+  const status = assignStatus(hitRate, lastUpdatedMs, modelIsOk);
 
   return {
     status,
@@ -339,7 +353,14 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error('[dr_claire] Fatal error:', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error('[dr_claire] Fatal error:', err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  assignStatus,
+  runSportHealthQuery,
+};

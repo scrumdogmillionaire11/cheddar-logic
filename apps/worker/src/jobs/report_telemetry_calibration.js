@@ -333,45 +333,6 @@ function buildEdgeVerificationReport(db) {
   return { tablePresent: true, buckets };
 }
 
-function buildEmptyDecisionTierBucket(officialStatus) {
-  return {
-    tier: officialStatus,
-    sampleSize: 0,
-    wins: 0,
-    losses: 0,
-    pushes: 0,
-    winRate: null,
-    totalPnlUnits: null,
-    avgPnlPerCard: null,
-    roi: null,
-  };
-}
-
-function finalizeDecisionTierBucket(bucket) {
-  const decisions = bucket.wins + bucket.losses;
-  const hasSample = bucket.sampleSize > 0;
-  const totalPnlUnits =
-    hasSample && Number.isFinite(bucket.totalPnlUnits)
-      ? bucket.totalPnlUnits
-      : null;
-  return {
-    tier: bucket.tier,
-    sampleSize: bucket.sampleSize,
-    wins: bucket.wins,
-    losses: bucket.losses,
-    pushes: bucket.pushes,
-    winRate: decisions > 0 ? toRounded(bucket.wins / decisions) : null,
-    totalPnlUnits: Number.isFinite(totalPnlUnits) ? toRounded(totalPnlUnits) : null,
-    avgPnlPerCard:
-      hasSample && Number.isFinite(totalPnlUnits)
-        ? toRounded(totalPnlUnits / bucket.sampleSize)
-        : null,
-    roi:
-      hasSample && Number.isFinite(totalPnlUnits)
-        ? toRounded(totalPnlUnits / bucket.sampleSize)
-        : null,
-  };
-}
 
 function buildDecisionTierAudit(db, { daysBack = null } = {}) {
   const hasCardResults = tableExists(db, 'card_results');
