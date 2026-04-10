@@ -14,6 +14,15 @@ describe('checkMlbF5MarketAvailability', () => {
     latestOddsByGame = {};
     pipelineWrites = [];
 
+    jest.doMock('@cheddar-logic/odds/src/config', () => ({
+      SPORTS_CONFIG: {
+        NHL: { active: true },
+        NBA: { active: true },
+        MLB: { active: true },
+        NFL: { active: false },
+      },
+    }));
+
     const db = {
       prepare: jest.fn((sql) => {
         if (sql.includes('INSERT INTO pipeline_health')) {
@@ -179,6 +188,15 @@ describe('checkOddsFreshness — quota-aware status downgrade', () => {
       getCurrentQuotaTier: mockGetCurrentQuotaTier,
     }));
 
+    jest.doMock('@cheddar-logic/odds/src/config', () => ({
+      SPORTS_CONFIG: {
+        NHL: { active: true },
+        NBA: { active: true },
+        MLB: { active: false },
+        NFL: { active: false },
+      },
+    }));
+
     const db = {
       prepare: jest.fn((sql) => {
         if (sql.includes('INSERT INTO pipeline_health')) {
@@ -192,7 +210,7 @@ describe('checkOddsFreshness — quota-aware status downgrade', () => {
         if (
           sql.includes('FROM games') &&
           sql.includes('game_time_utc >= ?') &&
-          !sql.includes("LOWER(sport)") &&
+          sql.includes('LOWER(sport) IN') &&
           !sql.includes('FROM odds_snapshots')
         ) {
           return {
@@ -229,7 +247,7 @@ describe('checkOddsFreshness — quota-aware status downgrade', () => {
 
   test('writes warning (not failed) when odds are stale and quota tier is MEDIUM', () => {
     upcomingGames = [{ game_id: 'g-001', game_time_utc: DateTime.utc().plus({ hours: 2 }).toISO() }];
-    latestOddsByGame['g-001'] = { captured_at: DateTime.utc().minus({ minutes: 30 }).toISO() };
+    latestOddsByGame['g-001'] = { captured_at: DateTime.utc().minus({ minutes: 90 }).toISO() };
     mockGetCurrentQuotaTier.mockReturnValue('MEDIUM');
 
     ({ checkOddsFreshness } = require('../jobs/check_pipeline_health'));
@@ -243,7 +261,7 @@ describe('checkOddsFreshness — quota-aware status downgrade', () => {
 
   test('writes failed when odds are stale and quota tier is FULL', () => {
     upcomingGames = [{ game_id: 'g-002', game_time_utc: DateTime.utc().plus({ hours: 2 }).toISO() }];
-    latestOddsByGame['g-002'] = { captured_at: DateTime.utc().minus({ minutes: 30 }).toISO() };
+    latestOddsByGame['g-002'] = { captured_at: DateTime.utc().minus({ minutes: 90 }).toISO() };
     mockGetCurrentQuotaTier.mockReturnValue('FULL');
 
     ({ checkOddsFreshness } = require('../jobs/check_pipeline_health'));
