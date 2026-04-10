@@ -1,6 +1,6 @@
 import { closeDatabaseReadOnly } from '@cheddar-logic/data';
 import PlayOfTheDayClient from '@/components/play-of-the-day-client';
-import { getPotdResponseData } from '@/app/api/potd/route';
+import { getPotdResponseData } from '@/lib/potd-server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
