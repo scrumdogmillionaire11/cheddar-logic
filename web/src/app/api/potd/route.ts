@@ -329,13 +329,21 @@ function buildSchedule(
   const todayEt = getEtDateParts(now);
   const windowStart = zonedTimeToUtc(todayEt, 12, 0);
   const windowEnd = zonedTimeToUtc(todayEt, 16, 0);
-  const targetPostTime = new Date(earliestGame.getTime() - 90 * 60 * 1000);
-  const clampedTarget =
-    targetPostTime < windowStart
-      ? windowStart
-      : targetPostTime > windowEnd
-        ? windowEnd
-        : targetPostTime;
+  // Guard 3: MLB day games (e.g. 1:05 PM ET) would produce an 11:35 AM target —
+  // before the window opens. Any game kicking off before 1:30 PM ET snaps to windowStart.
+  const windowOpenThreshold = zonedTimeToUtc(todayEt, 13, 30);
+  let clampedTarget: Date;
+  if (earliestGame < windowOpenThreshold) {
+    clampedTarget = windowStart;
+  } else {
+    const targetPostTime = new Date(earliestGame.getTime() - 90 * 60 * 1000);
+    clampedTarget =
+      targetPostTime < windowStart
+        ? windowStart
+        : targetPostTime > windowEnd
+          ? windowEnd
+          : targetPostTime;
+  }
 
   return {
     playDate: getEtDateKey(now),

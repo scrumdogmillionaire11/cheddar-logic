@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-09T23:34:00Z"
-last_activity: "2026-04-09 - Completed WI-0818: Price staleness warning on hard-locked cards with stale price"
+last_activity: "2026-04-10 - Completed potd-01-06: POTD gap closure — require.main guard, npm scripts, ENABLE_POTD=true"
 ---
 
 # Project State

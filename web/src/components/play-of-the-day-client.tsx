@@ -257,39 +257,26 @@ function renderEmptyState(schedule: PotdSchedule | null) {
       </p>
 
       {schedule ? (
-        <div className="mt-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
-              Earliest Game
+        <div className="mt-8 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
+              <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
+                Target Post Time
+              </div>
+              <div className="mt-2 text-lg font-semibold text-cloud">
+                {schedule.targetPostTimeEtLabel}
+              </div>
             </div>
-            <div className="mt-2 text-lg font-semibold text-cloud">
-              {schedule.earliestGameTimeEtLabel}
-            </div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
-              Target Post Time
-            </div>
-            <div className="mt-2 text-lg font-semibold text-cloud">
-              {schedule.targetPostTimeEtLabel}
-            </div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
-              Window Start
-            </div>
-            <div className="mt-2 text-lg font-semibold text-cloud">
-              {schedule.windowStartTimeEtLabel}
+            <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
+              <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
+                Earliest Game
+              </div>
+              <div className="mt-2 text-lg font-semibold text-cloud">
+                {schedule.earliestGameTimeEtLabel}
+              </div>
             </div>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
-              Window End
-            </div>
-            <div className="mt-2 text-lg font-semibold text-cloud">
-              {schedule.windowEndTimeEtLabel}
-            </div>
-          </div>
+          <p className="text-xs text-cloud/45">Picks post between 12:00 PM– 4:00 PM ET daily</p>
         </div>
       ) : (
         <div className="mt-8 rounded-2xl border border-white/10 bg-night/35 p-4 text-sm text-cloud/62">
