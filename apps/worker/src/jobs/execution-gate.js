@@ -1,5 +1,7 @@
 'use strict';
 
+const { isMarketCalibrationEnabled } = require('../calibration/calibration-gate');
+
 const VIG_COST_STANDARD = 0.045;
 const SLIPPAGE_ESTIMATE = 0.005;
 const MAX_SNAPSHOT_AGE_MS = 5 * 60 * 1000;
@@ -12,11 +14,17 @@ const MAX_SNAPSHOT_AGE_MS = 5 * 60 * 1000;
  * @param {number|null} params.rawEdge
  * @param {number|null} params.confidence
  * @param {number|null} params.snapshotAgeMs
+ * @param {string|null} [params.marketKey]
+ * @param {string|null} [params.sport]
+ * @param {string|null} [params.recommendedBetType]
+ * @param {string|null} [params.marketType]
+ * @param {string|null} [params.period]
+ * @param {string|null} [params.cardType]
  * @param {number} [params.vigCost]
  * @param {number} [params.slippageCost]
  * @param {number} [params.minNetEdge]
  * @param {number} [params.minConfidence]
- * @returns {{ shouldBet: boolean, reason: string, netEdge: number|null, blocked_by: string[] }}
+ * @returns {{ shouldBet: boolean, should_bet: boolean, reason: string, block_reason: string|null, netEdge: number|null, blocked_by: string[] }}
  */
 function evaluateExecution(params) {
   const {
@@ -24,6 +32,12 @@ function evaluateExecution(params) {
     rawEdge,
     confidence,
     snapshotAgeMs,
+    marketKey = null,
+    sport = null,
+    recommendedBetType = null,
+    marketType = null,
+    period = null,
+    cardType = null,
     vigCost = VIG_COST_STANDARD,
     slippageCost = SLIPPAGE_ESTIMATE,
     minNetEdge = 0.025,
@@ -57,10 +71,31 @@ function evaluateExecution(params) {
     blocked_by.push(`STALE_SNAPSHOT:${Math.round(snapshotAgeMs / 1000)}s`);
   }
 
+  if (
+    marketKey &&
+    !isMarketCalibrationEnabled(marketKey, {
+      sport,
+      recommendedBetType,
+      marketType,
+      period,
+      cardType,
+    })
+  ) {
+    blocked_by.push('CALIBRATION_KILL_SWITCH');
+  }
+
   const shouldBet = blocked_by.length === 0;
   const reason = shouldBet ? 'ALL_GATES_PASSED' : blocked_by[0];
+  const block_reason = shouldBet ? null : blocked_by[0];
 
-  return { shouldBet, reason, netEdge, blocked_by };
+  return {
+    shouldBet,
+    should_bet: shouldBet,
+    reason,
+    block_reason,
+    netEdge,
+    blocked_by,
+  };
 }
 
 module.exports = {
