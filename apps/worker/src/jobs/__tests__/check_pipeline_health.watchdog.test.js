@@ -52,14 +52,14 @@ describe('checkWatchdogHeartbeat', () => {
 
   afterEach(() => {
     delete process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG;
-    delete process.env.DISCORD_CARD_WEBHOOK_URL;
+    delete process.env.DISCORD_ALERT_WEBHOOK_URL;
   });
 
   test('3h gap → writes warning heartbeat row and sends Discord alert', async () => {
     const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
     jobRunsRow = { started_at: threeHoursAgo };
     process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
-    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
 
     await checkWatchdogHeartbeat();
 
@@ -79,7 +79,7 @@ describe('checkWatchdogHeartbeat', () => {
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     jobRunsRow = { started_at: thirtyMinutesAgo };
     process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
-    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
 
     await checkWatchdogHeartbeat();
 
@@ -106,7 +106,7 @@ describe('checkWatchdogHeartbeat', () => {
     const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
     jobRunsRow = { started_at: threeHoursAgo };
     process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'false';
-    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
 
     await checkWatchdogHeartbeat();
 

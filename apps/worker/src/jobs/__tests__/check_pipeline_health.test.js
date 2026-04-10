@@ -101,7 +101,7 @@ function staleFailedRows(n = 3, cooldownMinutes = 30) {
 beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG;
-  delete process.env.DISCORD_CARD_WEBHOOK_URL;
+  delete process.env.DISCORD_ALERT_WEBHOOK_URL;
 });
 
 // ===========================================================================
@@ -175,7 +175,7 @@ describe('checkPipelineHealth Discord alert integration', () => {
 
   test('calls sendDiscordMessages when watchdog=true, check fails, and shouldSendAlert returns true', async () => {
     process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
-    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
     // scheduleCount=0 → schedule_freshness fails; pipelineRows → shouldSendAlert returns true
     getDatabase.mockReturnValue(makeDb({ scheduleCount: 0, pipelineRows: freshFailedRows(3) }));
 
@@ -190,7 +190,7 @@ describe('checkPipelineHealth Discord alert integration', () => {
 
   test('does NOT call sendDiscordMessages when watchdog=true but all checks pass', async () => {
     process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
-    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
     // scheduleCount=5 → schedule ok; game list empty → odds/cards/mlb ok; backlog=0 → settlement ok
     getDatabase.mockReturnValue(makeDb({ scheduleCount: 5, backlogCount: 0 }));
 
@@ -201,16 +201,16 @@ describe('checkPipelineHealth Discord alert integration', () => {
 
   test('does NOT call sendDiscordMessages when dryRun=true', async () => {
     process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
-    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
 
     await checkPipelineHealth({ jobKey: 'test', dryRun: true });
 
     expect(sendDiscordMessages).not.toHaveBeenCalled();
   });
 
-  test('does NOT call sendDiscordMessages when DISCORD_CARD_WEBHOOK_URL is unset', async () => {
+  test('does NOT call sendDiscordMessages when DISCORD_ALERT_WEBHOOK_URL is unset', async () => {
     process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
-    // DISCORD_CARD_WEBHOOK_URL intentionally not set
+    // DISCORD_ALERT_WEBHOOK_URL intentionally not set
     getDatabase.mockReturnValue(makeDb({ scheduleCount: 0, pipelineRows: freshFailedRows(3) }));
 
     await checkPipelineHealth({ jobKey: 'test', dryRun: false });
@@ -220,7 +220,7 @@ describe('checkPipelineHealth Discord alert integration', () => {
 
   test('warning-only failures (settlement_backlog writes warning) do NOT trigger Discord alert', async () => {
     process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
-    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
     // backlogCount=5 → checkSettlementBacklog returns { ok: false } and writes 'warning'
     // scheduleCount=5 → schedule ok; game list empty → odds/cards/mlb ok
     // pipelineRows contains 'warning' rows → shouldSendAlert finds no 'failed' streak → returns false

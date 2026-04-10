@@ -311,10 +311,10 @@ describe('run_nba_model job', () => {
 
   test('sends NBA ESPN null Discord alert at threshold and records cooldown run', async () => {
     const origEnabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
-    const origWebhook = process.env.DISCORD_CARD_WEBHOOK_URL;
+    const origWebhook = process.env.DISCORD_ALERT_WEBHOOK_URL;
     const origThreshold = process.env.ESPN_NULL_ALERT_THRESHOLD;
     process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
-    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
     process.env.ESPN_NULL_ALERT_THRESHOLD = '2';
 
     const sendDiscordMessagesFn = jest.fn().mockResolvedValue(1);
@@ -356,17 +356,17 @@ describe('run_nba_model job', () => {
 
     if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
     else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
-    if (origWebhook !== undefined) process.env.DISCORD_CARD_WEBHOOK_URL = origWebhook;
-    else delete process.env.DISCORD_CARD_WEBHOOK_URL;
+    if (origWebhook !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origWebhook;
+    else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
     if (origThreshold !== undefined) process.env.ESPN_NULL_ALERT_THRESHOLD = origThreshold;
     else delete process.env.ESPN_NULL_ALERT_THRESHOLD;
   });
 
   test('suppresses NBA ESPN null Discord alert during cooldown', async () => {
     const origEnabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
-    const origWebhook = process.env.DISCORD_CARD_WEBHOOK_URL;
+    const origWebhook = process.env.DISCORD_ALERT_WEBHOOK_URL;
     process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
-    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
 
     const sendDiscordMessagesFn = jest.fn();
     const wasJobRecentlySuccessfulFn = jest.fn(() => true);
@@ -393,8 +393,8 @@ describe('run_nba_model job', () => {
 
     if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
     else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
-    if (origWebhook !== undefined) process.env.DISCORD_CARD_WEBHOOK_URL = origWebhook;
-    else delete process.env.DISCORD_CARD_WEBHOOK_URL;
+    if (origWebhook !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origWebhook;
+    else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
   });
 
   test('job_runs table records job execution as success', async () => {

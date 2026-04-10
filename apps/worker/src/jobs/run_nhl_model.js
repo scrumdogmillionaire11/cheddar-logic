@@ -222,9 +222,9 @@ async function sendEspnNullDiscordAlert({
     return { sent: false, reason: 'discord_disabled', count: dedupedTeams.length };
   }
 
-  const webhookUrl = String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim();
+  const webhookUrl = String(process.env.DISCORD_ALERT_WEBHOOK_URL || '').trim();
   if (!webhookUrl) {
-    logger.warn(`[${sport}Model] DISCORD_CARD_WEBHOOK_URL not set — skipping ESPN null alert`);
+    logger.warn(`[${sport}Model] DISCORD_ALERT_WEBHOOK_URL not set — skipping ESPN null alert`);
     return { sent: false, reason: 'missing_webhook_url', count: dedupedTeams.length };
   }
 

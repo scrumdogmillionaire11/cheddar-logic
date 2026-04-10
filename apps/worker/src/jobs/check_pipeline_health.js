@@ -629,9 +629,9 @@ async function checkWatchdogHeartbeat() {
   );
 
   if (isGap && process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') {
-    const webhookUrl = process.env.DISCORD_CARD_WEBHOOK_URL;
+    const webhookUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
     if (!webhookUrl) {
-      console.warn('[check_pipeline_health] DISCORD_CARD_WEBHOOK_URL not set — skipping watchdog heartbeat alert');
+      console.warn('[check_pipeline_health] DISCORD_ALERT_WEBHOOK_URL not set — skipping watchdog heartbeat alert');
     } else {
       const message = buildHealthAlertMessage([{
         phase: 'watchdog',
@@ -724,9 +724,9 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       }
 
       if (alertCandidates.length > 0) {
-        const webhookUrl = process.env.DISCORD_CARD_WEBHOOK_URL;
+        const webhookUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
         if (!webhookUrl) {
-          console.warn('[check_pipeline_health] DISCORD_CARD_WEBHOOK_URL not set — skipping Discord alert');
+          console.warn('[check_pipeline_health] DISCORD_ALERT_WEBHOOK_URL not set — skipping Discord alert');
         } else {
           const message = buildHealthAlertMessage(alertCandidates);
           await sendDiscordMessages({ webhookUrl, messages: [message] });
