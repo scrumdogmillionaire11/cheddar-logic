@@ -193,8 +193,7 @@ function toFiniteNumberOrNull(value) {
 }
 
 function recordCalibrationPredictionForCard({ db, card, payloadData, lockedMarket }) {
-  const { recordPrediction } = require('../../../../apps/worker/src/calibration/calibration-tracker');
-  const { resolveCalibrationMarketKey } = require('../../../../apps/worker/src/calibration/calibration-gate');
+  const { recordPrediction, resolveCalibrationMarketKey } = require('../calibration-utils');
   const modelStatus = toUpperToken(payloadData?.model_status || 'MODEL_OK');
   if (modelStatus !== 'MODEL_OK') return;
 
