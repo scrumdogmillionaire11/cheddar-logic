@@ -190,6 +190,109 @@ Incident rule:
 
 Note: Vercel/Cloudflare static chunk 404 incidents are delivery-layer issues, not decision-contract logic.
 
+### NBA totals staged reactivation
+
+Use this when re-enabling NBA totals after the quarantine rollout. NBA spreads are not code-quarantined and should be treated as a validation-only surface during this procedure.
+
+#### What changes
+
+- Disable the explicit totals demotion by setting `QUARANTINE_NBA_TOTAL=0` in the worker environment.
+- Keep the existing safety rails unchanged:
+  - `CALIBRATION_KILL_SWITCH` remains authoritative for `NBA_TOTAL`
+  - stale-odds / stale-snapshot checks remain authoritative
+  - spread thresholds and spread execution logic remain unchanged
+
+#### Preflight
+
+```bash
+# Load canonical production env
+set -a; source /opt/cheddar-logic/.env.production; set +a
+
+# Confirm worker is pointed at the canonical DB
+sudo systemctl show cheddar-worker -p Environment | grep CHEDDAR_DB_PATH
+
+# Check pipeline health for stale odds and calibration state
+npm --prefix apps/worker run job:check-pipeline-health
+
+# Expected calibration log format includes per-market detail:
+# [check_pipeline_health] Calibration rows: NBA_TOTAL(ECE=...,n=...,kill=0), ...
+
+# Confirm fresh same-day NBA odds exist in the production DB
+sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT g.away_team || ' @ ' || g.home_team AS matchup, MAX(o.captured_at) AS latest_captured_at
+FROM games g
+LEFT JOIN odds_snapshots o ON o.game_id = g.game_id
+WHERE lower(g.sport) = 'nba'
+  AND datetime(g.game_time_utc) >= datetime('now')
+  AND datetime(g.game_time_utc) <= datetime('now', '+36 hours')
+GROUP BY g.game_id
+ORDER BY latest_captured_at DESC;
+"
+```
+
+Preflight interpretation:
+
+- If `job:check-pipeline-health` reports `CALIB_KILL_SWITCH_ACTIVE` for `NBA_TOTAL`, totals will still be blocked after the env flip until calibration clears.
+- If the odds freshness check reports stale NBA games, totals may still be suppressed by stale-market rules after the env flip.
+- NBA spreads do not require a config change here; only confirm they continue to surface normally.
+
+#### Rollout
+
+```bash
+# Edit /opt/cheddar-logic/.env.production and set:
+QUARANTINE_NBA_TOTAL=0
+
+# Restart worker so the flag is re-read
+sudo systemctl restart cheddar-worker
+
+# Follow worker logs during the first model cycle
+sudo journalctl -u cheddar-worker -f
+```
+
+#### Post-rollout validation
+
+```bash
+# Re-check stale odds + calibration state
+npm --prefix apps/worker run job:check-pipeline-health
+
+# Inspect fresh NBA cards
+curl -s "http://localhost:3000/api/games?sport=NBA&limit=200" | jq '
+  .data[]
+  | .awayTeam + " @ " + .homeTeam as $matchup
+  | .plays[]
+  | select(.market_type == "TOTAL" or .market_type == "SPREAD")
+  | {
+      matchup: $matchup,
+      market_type,
+      official_status: .decision_v2.official_status,
+      primary_reason_code: .decision_v2.primary_reason_code,
+      price_reason_codes: .decision_v2.price_reason_codes,
+      captured_at: .odds_context.captured_at,
+      execution_blocked_by: .execution_gate.blocked_by
+    }'
+```
+
+Expected results:
+
+- Fresh NBA totals no longer include `NBA_TOTAL_QUARANTINE_DEMOTE`.
+- NBA totals may now surface as `PLAY` or `LEAN` when support, freshness, and calibration all pass.
+- Any remaining NBA total suppression should be attributable only to standard gates such as `CALIBRATION_KILL_SWITCH`, stale snapshot / stale market, low support, or other existing execution-gate reasons.
+- NBA spreads should remain visible and behave the same as before the rollout.
+
+#### Rollback
+
+```bash
+# Restore prior env/default behavior
+# Remove QUARANTINE_NBA_TOTAL=0 or set QUARANTINE_NBA_TOTAL=1
+
+sudo systemctl restart cheddar-worker
+```
+
+Rollback expectation:
+
+- NBA totals resume the quarantine demotion path (`PLAY -> LEAN`, `LEAN -> PASS`).
+- No code revert is required.
+
 ### Settlement verification (display -> results parity)
 
 Use this when validating that every displayed play is eligible for settlement and appears on `/api/results`.

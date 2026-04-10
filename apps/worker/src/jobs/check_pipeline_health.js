@@ -536,7 +536,15 @@ function checkCalibrationKillSwitches() {
       )
       .all();
 
-    const activeSwitches = rows.filter((r) => Number(r.kill_switch_active || 0) === 1);
+    const calibrationRows = rows.map((row) => ({
+      market: row.market,
+      kill_switch_active: Number(row.kill_switch_active || 0),
+      ece: row.ece,
+      n_samples: row.n_samples,
+      computed_at: row.computed_at,
+    }));
+
+    const activeSwitches = calibrationRows.filter((r) => r.kill_switch_active === 1);
 
     if (activeSwitches.length > 0) {
       const detail = activeSwitches
@@ -544,19 +552,32 @@ function checkCalibrationKillSwitches() {
         .join(', ');
       const reason = `CALIB_KILL_SWITCH_ACTIVE — ${activeSwitches.length} market(s) suppressed: ${detail}`;
       writePipelineHealth('calibration', 'kill_switch', 'warning', reason);
-      return { ok: false, reason, calibrationKillSwitches: activeSwitches };
+      return {
+        ok: false,
+        reason,
+        calibrationKillSwitches: activeSwitches,
+        calibrationRows,
+      };
     }
 
-    const reason = rows.length === 0
+    const detail = calibrationRows
+      .map((r) => `${r.market}(ECE=${r.ece},n=${r.n_samples},kill=${r.kill_switch_active})`)
+      .join(', ');
+    const reason = calibrationRows.length === 0
       ? 'No calibration_reports rows found'
-      : `${rows.length} market(s) calibration OK — no active kill switches`;
-    if (rows.length > 0) {
+      : `${calibrationRows.length} market(s) calibration OK — no active kill switches: ${detail}`;
+    if (calibrationRows.length > 0) {
       writePipelineHealth('calibration', 'kill_switch', 'ok', reason);
     }
-    return { ok: true, reason, calibrationKillSwitches: [] };
+    return { ok: true, reason, calibrationKillSwitches: [], calibrationRows };
   } catch (_err) {
     // Table may not exist in dev — skip gracefully
-    return { ok: true, reason: 'calibration_reports table absent — skipped', calibrationKillSwitches: [] };
+    return {
+      ok: true,
+      reason: 'calibration_reports table absent — skipped',
+      calibrationKillSwitches: [],
+      calibrationRows: [],
+    };
   }
 }
 
@@ -744,10 +765,16 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
     console.log(`[check_pipeline_health] ${summary}`);
 
     const calibrationKillSwitches = (results.calibration_kill_switches?.calibrationKillSwitches) || [];
+    const calibrationRows = (results.calibration_kill_switches?.calibrationRows) || [];
+    if (calibrationRows.length > 0) {
+      console.log(
+        `[check_pipeline_health] Calibration rows: ${calibrationRows.map((r) => `${r.market}(ECE=${r.ece},n=${r.n_samples},kill=${r.kill_switch_active})`).join(', ')}`,
+      );
+    }
     if (calibrationKillSwitches.length > 0) {
       console.warn(`[check_pipeline_health] CALIB_KILL_SWITCH_ACTIVE: ${calibrationKillSwitches.map((r) => r.market).join(', ')}`);
     }
-    return { allOk, summary, calibrationKillSwitches };
+    return { allOk, summary, calibrationKillSwitches, calibrationRows };
   } catch (error) {
     console.error(`[check_pipeline_health] Error:`, error);
     markJobRunFailure(runId, error.message);

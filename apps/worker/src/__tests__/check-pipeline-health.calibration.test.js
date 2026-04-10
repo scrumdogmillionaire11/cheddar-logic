@@ -57,6 +57,7 @@ describe('checkCalibrationKillSwitches', () => {
     expect(result.reason).toContain('NBA_TOTAL');
     expect(result.calibrationKillSwitches).toHaveLength(1);
     expect(result.calibrationKillSwitches[0].market).toBe('NBA_TOTAL');
+    expect(result.calibrationRows).toHaveLength(2);
     expect(pipelineWrites).toHaveLength(1);
     expect(pipelineWrites[0][0]).toBe('calibration');
     expect(pipelineWrites[0][1]).toBe('kill_switch');
@@ -73,6 +74,9 @@ describe('checkCalibrationKillSwitches', () => {
 
     expect(result.ok).toBe(true);
     expect(result.calibrationKillSwitches).toEqual([]);
+    expect(result.calibrationRows).toHaveLength(2);
+    expect(result.reason).toContain('NBA_TOTAL(ECE=0.04,n=80,kill=0)');
+    expect(result.reason).toContain('NHL_TOTAL(ECE=0.03,n=95,kill=0)');
     expect(pipelineWrites).toHaveLength(1);
     expect(pipelineWrites[0][2]).toBe('ok');
   });
@@ -104,6 +108,7 @@ describe('checkCalibrationKillSwitches', () => {
     expect(result.ok).toBe(true);
     expect(result.reason).toMatch(/absent|skipped/i);
     expect(result.calibrationKillSwitches).toEqual([]);
+    expect(result.calibrationRows).toEqual([]);
     // No pipeline_health write expected when table is absent
   });
 
@@ -114,6 +119,7 @@ describe('checkCalibrationKillSwitches', () => {
 
     expect(result.ok).toBe(true);
     expect(result.calibrationKillSwitches).toEqual([]);
+    expect(result.calibrationRows).toEqual([]);
     // No pipeline_health write when no rows
     expect(pipelineWrites).toHaveLength(0);
   });

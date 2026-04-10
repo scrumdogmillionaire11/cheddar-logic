@@ -24,6 +24,7 @@ const { enrichOddsSnapshotWithEspnMetrics, enrichOddsSnapshotsWithEspnMetrics } 
 const marketContract = require('./src/market-contract');
 const dbPath = require('./src/db-path');
 const dbTelemetry = require('./src/db-telemetry');
+const projAccuracy = require('./src/db/projection-accuracy');
 
 // Ensure migrations are run on first import (optional but recommended)
 // Uncomment to auto-run migrations:
@@ -194,7 +195,6 @@ module.exports = {
   // Additive telemetry (flag-gated, default-off)
   recordClvEntry: dbTelemetry.recordClvEntry,
   settleClvEntry: dbTelemetry.settleClvEntry,
-
   // Token quota ledger
   getQuotaLedger: db.getQuotaLedger,
   upsertQuotaLedger: db.upsertQuotaLedger,
@@ -226,4 +226,10 @@ module.exports = {
   getDualDb: dbDualInit.getDb,
   RECORD_TABLES: dbDualInit.RECORD_TABLES,
   LOCAL_TABLES: dbDualInit.LOCAL_TABLES,
+
+  // projection-accuracy (proxy eval data layer — WI-0864)
+  insertProjectionProxyEval:       projAccuracy.insertProjectionProxyEval,
+  batchInsertProjectionProxyEvals: projAccuracy.batchInsertProjectionProxyEvals,
+  getProjectionProxyEvals:         projAccuracy.getProjectionProxyEvals,
+  getProjectionAccuracySummary:    projAccuracy.getProjectionAccuracySummary,
 };

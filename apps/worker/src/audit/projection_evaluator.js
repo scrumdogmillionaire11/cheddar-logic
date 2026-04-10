@@ -42,6 +42,41 @@ const PROJECTION_FAMILY_THRESHOLDS = Object.freeze({
   }),
 });
 
+/**
+ * Proxy lines per card family.
+ *   MLB_F5_TOTAL  → 3.5 and 4.5 (two most common F5 market anchors)
+ *   NHL_1P_TOTAL  → 1.5 only (canonical market; always half-integer, no pushes)
+ */
+const PROXY_LINES_BY_FAMILY = Object.freeze({
+  MLB_F5_TOTAL: [3.5, 4.5],
+  NHL_1P_TOTAL: [1.5],
+});
+
+/**
+ * Pass band and tier thresholds (based on abs(edge_vs_line)).
+ */
+const PROXY_TIER_BANDS = [
+  { min: 0,    max: 0.25,       tier: 'PASS',   bucket: 'MICRO'  },
+  { min: 0.25, max: 0.50,       tier: 'LEAN',   bucket: 'SMALL'  },
+  { min: 0.50, max: 0.75,       tier: 'PLAY',   bucket: 'MEDIUM' },
+  { min: 0.75, max: Infinity,   tier: 'STRONG', bucket: 'LARGE'  },
+];
+
+const PROXY_TIER_WEIGHTS = Object.freeze({
+  LEAN:   1.0,
+  PLAY:   1.5,
+  STRONG: 2.0,
+});
+
+/**
+ * Maps card_type (DB column in card_payloads) to card_family (PROXY_LINES_BY_FAMILY key).
+ * WI-0866 must import this and use CARD_TYPE_TO_FAMILY[card.card_type] to derive card_family.
+ */
+const CARD_TYPE_TO_FAMILY = Object.freeze({
+  'mlb-f5':      'MLB_F5_TOTAL',
+  'nhl-pace-1p': 'NHL_1P_TOTAL',
+});
+
 function toUpperToken(value) {
   if (value === null || value === undefined) return null;
   const normalized = String(value).trim().toUpperCase();
@@ -188,6 +223,15 @@ function resolveMlbF5ActualValue(row) {
   return toNumber(row?.game_result_metadata?.f5_total);
 }
 
+function resolveMlbPitcherKActualValue(row) {
+  try {
+    const parsed = JSON.parse(row?.actual_result || '{}');
+    return toNumber(parsed?.pitcher_ks);
+  } catch {
+    return null;
+  }
+}
+
 function resolveActualValue(row) {
   switch (row?.card_family) {
     case 'NHL_1P_TOTAL':
@@ -198,7 +242,7 @@ function resolveActualValue(row) {
     case 'MLB_F5_TOTAL':
       return resolveMlbF5ActualValue(row);
     case 'MLB_PITCHER_K':
-      return null;
+      return resolveMlbPitcherKActualValue(row);
     default:
       return null;
   }
@@ -320,7 +364,6 @@ function evaluateProjectionRows(rows = [], cardFamily = null) {
 function getProjectionThresholds(cardFamily) {
   return PROJECTION_FAMILY_THRESHOLDS[cardFamily] || null;
 }
-
 function collectProjectionAlerts(segment, windowName) {
   if (!PROJECTION_ALERT_WINDOWS.has(windowName)) return [];
   if (segment?.card_mode !== 'PROJECTION_ONLY') return [];
@@ -384,6 +427,169 @@ function collectProjectionAlerts(segment, windowName) {
   return alerts;
 }
 
+// ── Proxy-line grading functions (WI-0865) ────────────────────────────────────
+
+/**
+ * Classify a signed edge (proj_value - proxy_line) into tier, side, and bucket.
+ * Returns { recommended_side, tier, confidence_bucket }.
+ */
+function classifyProxyEdge(edgeVsLine) {
+  const absEdge = Math.abs(edgeVsLine);
+  const band = PROXY_TIER_BANDS.find(
+    (b) => absEdge >= b.min && absEdge < b.max,
+  ) || PROXY_TIER_BANDS[PROXY_TIER_BANDS.length - 1];
+
+  if (band.tier === 'PASS') {
+    return { recommended_side: 'PASS', tier: 'PASS', confidence_bucket: 'MICRO' };
+  }
+  return {
+    recommended_side: edgeVsLine > 0 ? 'OVER' : 'UNDER',
+    tier: band.tier,
+    confidence_bucket: band.bucket,
+  };
+}
+
+/**
+ * Grade a proxy market recommendation against actual result.
+ * Returns { graded_result, hit_flag }.
+ * All proxy lines are half-integers so there are no pushes.
+ */
+function gradeProxyMarket(recommended_side, actual_value, proxy_line) {
+  if (recommended_side === 'PASS') {
+    return { graded_result: 'NO_BET', hit_flag: 0 };
+  }
+  const win =
+    recommended_side === 'OVER'
+      ? actual_value > proxy_line
+      : actual_value < proxy_line;
+  return { graded_result: win ? 'WIN' : 'LOSS', hit_flag: win ? 1 : 0 };
+}
+
+/**
+ * Score a single proxy market decision.
+ * PASS = 0. WIN = +weight, LOSS = -weight.
+ */
+function scoreTierResult(tier, graded_result) {
+  if (graded_result === 'NO_BET') return 0;
+  const weight = PROXY_TIER_WEIGHTS[tier] ?? 0;
+  return graded_result === 'WIN' ? weight : -weight;
+}
+
+/**
+ * Given an array of classified markets for the SAME game, derive agreement_group.
+ * markets: array of { recommended_side, tier }
+ *
+ * CONSENSUS_OVER   — all non-PASS sides are OVER
+ * CONSENSUS_UNDER  — all non-PASS sides are UNDER
+ * SPLIT            — at least one OVER and one UNDER (both non-PASS)
+ * PASS_ONLY        — all markets are PASS
+ */
+function resolveAgreementGroup(markets) {
+  const activeSides = markets
+    .map((m) => m.recommended_side)
+    .filter((s) => s !== 'PASS');
+
+  if (activeSides.length === 0) return 'PASS_ONLY';
+  const uniqueSides = [...new Set(activeSides)];
+  if (uniqueSides.length === 1) {
+    return uniqueSides[0] === 'OVER' ? 'CONSENSUS_OVER' : 'CONSENSUS_UNDER';
+  }
+  return 'SPLIT';
+}
+
+/**
+ * Compute consensus bonus for a game.
+ * +1.0 if all non-PASS markets won (CONSENSUS group, all WIN).
+ * -1.0 if all non-PASS markets lost (CONSENSUS group, all LOSS).
+ * 0 otherwise.
+ */
+function computeConsensusBonus(markets) {
+  const agreementGroup = resolveAgreementGroup(markets);
+  if (agreementGroup !== 'CONSENSUS_OVER' && agreementGroup !== 'CONSENSUS_UNDER') {
+    return 0;
+  }
+  const activeGrades = markets
+    .filter((m) => m.graded_result !== 'NO_BET')
+    .map((m) => m.graded_result);
+
+  if (activeGrades.length === 0) return 0;
+  if (activeGrades.every((g) => g === 'WIN')) return 1.0;
+  if (activeGrades.every((g) => g === 'LOSS')) return -1.0;
+  return 0;
+}
+
+/**
+ * Build proxy-market evaluation rows for a single settled projection card.
+ *
+ * @param {object} row - Must have: card_id, game_id, game_date, sport,
+ *   card_family, model_projection (numeric), actual_result (JSON string)
+ * @returns {Array<object>} Array of proxy eval rows ready for DB insert.
+ *   Returns [] if card_family has no proxy lines or projection/actual is null.
+ */
+function buildProjectionProxyMarketRows(row) {
+  const proxyLines = PROXY_LINES_BY_FAMILY[row?.card_family];
+  if (!proxyLines || proxyLines.length === 0) return [];
+
+  const projValue = toNumber(row?.model_projection);
+  // Parse actual_value from actual_result JSON string (not game_result_metadata).
+  // resolveActualValue() reads row.game_result_metadata which does not exist here.
+  function resolveProxyActualValue(r) {
+    if (r.actual_value != null) return r.actual_value;
+    try {
+      const p = JSON.parse(r?.actual_result || '{}');
+      if (r.card_family === 'MLB_F5_TOTAL') return toNumber(p.runs_f5);
+      if (r.card_family === 'NHL_1P_TOTAL') return toNumber(p.goals_1p);
+      return null;
+    } catch { return null; }
+  }
+  const actualValue = resolveProxyActualValue(row);
+
+  if (projValue === null || actualValue === null) return [];
+
+  // Classify each proxy line
+  const classifiedMarkets = proxyLines.map((proxyLine) => {
+    const edgeVsLine = round(projValue - proxyLine, 4);
+    const { recommended_side, tier, confidence_bucket } = classifyProxyEdge(edgeVsLine);
+    const { graded_result, hit_flag } = gradeProxyMarket(
+      recommended_side,
+      actualValue,
+      proxyLine,
+    );
+    const tier_score = scoreTierResult(tier, graded_result);
+    return {
+      card_id: row.card_id || row.id,
+      game_id: row.game_id,
+      game_date: row.game_date,
+      sport: row.sport,
+      card_family: row.card_family,
+      proj_value: projValue,
+      actual_value: actualValue,
+      proxy_line: proxyLine,
+      edge_vs_line: edgeVsLine,
+      recommended_side,
+      tier,
+      confidence_bucket,
+      agreement_group: '',   // filled in after all markets computed
+      graded_result,
+      hit_flag,
+      tier_score,
+      consensus_bonus: 0,   // filled in after all markets computed
+    };
+  });
+
+  // Resolve agreement_group and consensus_bonus across all proxy lines for this game
+  const agreementGroup = resolveAgreementGroup(classifiedMarkets);
+  const consensusBonus = computeConsensusBonus(classifiedMarkets);
+
+  return classifiedMarkets.map((m, i) => ({
+    ...m,
+    agreement_group: agreementGroup,
+    // Only apply consensus_bonus to the first row to avoid double-counting in DB SUM queries.
+    // The bonus represents a per-game score, not per-line.
+    consensus_bonus: i === 0 ? consensusBonus : 0,
+  }));
+}
+
 module.exports = {
   collectProjectionAlerts,
   evaluateProjectionRows,
@@ -393,4 +599,14 @@ module.exports = {
   resolveActualValue,
   resolveDirection,
   resolvePredictionValue,
+  // New proxy-line grading exports (WI-0865)
+  CARD_TYPE_TO_FAMILY,
+  classifyProxyEdge,
+  gradeProxyMarket,
+  scoreTierResult,
+  resolveAgreementGroup,
+  computeConsensusBonus,
+  buildProjectionProxyMarketRows,
+  PROXY_LINES_BY_FAMILY,
+  PROXY_TIER_BANDS,
 };
