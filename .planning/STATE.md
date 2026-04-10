@@ -101,6 +101,13 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 | **WI-0809** | Rolling cohort windows (14/30/60/90d) in decision-tier calibration report | Medium | none |
 | **WI-0811** | Book-to-book mispricing scanner — deterministic `MispricingCandidate` emitter | Medium | none |
 
+**Execution waves:**
+
+| Wave | WIs (run in parallel) | Notes |
+|------|-----------------------|-------|
+| 1 | WI-0809, WI-0811, WI-0819, WI-0825, WI-0838 | All independent of each other |
+| 2 | WI-0826 | Requires WI-0825 (calibration tables) and WI-0838 (accurate `clv_ledger.odds_at_pick`) |
+
 **Sprint 4 done when:** Calibration kill switch suppressing bad markets; Kelly fractions on payloads; CLV trackable from Day 1 of new card cycle.
 
 ---
