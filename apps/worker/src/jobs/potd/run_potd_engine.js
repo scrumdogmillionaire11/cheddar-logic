@@ -35,7 +35,14 @@ const PUBLISH_WINDOW_START_HOUR = 12; // noon ET (inclusive)
 const PUBLISH_WINDOW_END_HOUR = 16;   // 4 PM ET (exclusive)
 const DEFAULT_BANKROLL = Number(process.env.POTD_STARTING_BANKROLL || 10);
 const DEFAULT_KELLY_FRACTION = Number(process.env.POTD_KELLY_FRACTION || 0.25);
-const DEFAULT_MAX_WAGER_PCT = Number(process.env.POTD_MAX_WAGER_PCT || 0.2);
+// Cap at 2 % of bankroll (was 20 % — much too loose for a featured single play).
+const DEFAULT_MAX_WAGER_PCT = Number(process.env.POTD_MAX_WAGER_PCT || 0.02);
+// Minimum model edge required to publish a POTD.  Plays below this threshold
+// are skipped entirely rather than printed with couch-cushion wager amounts.
+const POTD_MIN_EDGE = Number(process.env.POTD_MIN_EDGE || 0.02);  // 2.0 %
+// If quarter-Kelly stake lands below this fraction of bankroll, reject the play
+// (Kelly is screaming the edge is too thin — honour that signal).
+const POTD_MIN_STAKE_PCT = Number(process.env.POTD_MIN_STAKE_PCT || 0.005); // 0.5 %
 const POTD_SPORT_ENV = {
   NHL: 'ENABLE_NHL_MODEL',
   NBA: 'ENABLE_NBA_MODEL',
@@ -246,7 +253,7 @@ async function gatherBestCandidate({
   }
 
   return {
-    bestCandidate: selectBestPlayFn(scoredCandidates, { minConfidence: 'HIGH' }),
+    bestCandidate: selectBestPlayFn(scoredCandidates, { minConfidence: 'HIGH', minEdgePct: POTD_MIN_EDGE }),
     fetchErrors,
     activeSports: sports,
   };
@@ -341,7 +348,7 @@ async function runPotdEngine({
         };
       }
 
-      const wagerAmount = kellySizeFn({
+      const rawWager = kellySizeFn({
         edgePct: bestCandidate.edgePct,
         impliedProb: bestCandidate.impliedProb,
         bankroll: bankrollAtPost,
@@ -349,7 +356,7 @@ async function runPotdEngine({
         maxWagerPct: DEFAULT_MAX_WAGER_PCT,
       });
 
-      if (!Number.isFinite(wagerAmount) || wagerAmount <= 0) {
+      if (!Number.isFinite(rawWager) || rawWager <= 0) {
         markJobRunSuccess(jobRunId, {
           no_play: true,
           reason: 'zero_wager',
@@ -363,6 +370,30 @@ async function runPotdEngine({
           playDate,
         };
       }
+
+      // Minimum-stake gate: if Kelly says bet less than 0.5 % of bankroll the
+      // play is not worth featuring — reject rather than post dust.
+      if (rawWager / bankrollAtPost < POTD_MIN_STAKE_PCT) {
+        markJobRunSuccess(jobRunId, {
+          no_play: true,
+          reason: 'stake_below_minimum',
+          edge_pct: bestCandidate.edgePct,
+          raw_wager: rawWager,
+          bankroll: bankrollAtPost,
+          min_stake_pct: POTD_MIN_STAKE_PCT,
+          play_date: playDate,
+        });
+        return {
+          success: true,
+          jobRunId,
+          noPlay: true,
+          reason: 'stake_below_minimum',
+          playDate,
+        };
+      }
+
+      // Round to nearest $0.50 for clean UX; stays within the 2 % cap.
+      const wagerAmount = Math.round(rawWager * 2) / 2;
 
       const playRow = buildPotdPlayRow(bestCandidate, {
         playId,
