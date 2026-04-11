@@ -4,7 +4,8 @@
  * Runs every 5 minutes to check the health of all pipeline phases:
  * 1. Schedule freshness (upcoming games exist)
  * 2. Odds freshness (recent snapshots for upcoming games)
- * 3. Cards freshness (card payloads generated for upcoming games)
+ * 3. Cards freshness (expected recent model windows ran for upcoming games;
+ *    card payload age is informational only because some models emit no card)
  * 4. Settlement backlog (final games without results)
  *
  * Writes failures to pipeline_health table for UI visibility.
@@ -12,8 +13,8 @@
  * Env:
  * - ENABLE_PIPELINE_HEALTH_WATCHDOG (default: false)
  * - PIPELINE_HEALTH_INTERVAL_MINUTES (default: 5)
- * - ODDS_FRESHNESS_MAX_AGE_MINUTES (default: 15)
- * - CARDS_FRESHNESS_MAX_AGE_MINUTES (default: 30)
+ * - ODDS_FRESHNESS_MAX_AGE_MINUTES (default: slot + 15 minutes, minimum 15)
+ * - CARDS_FRESHNESS_MAX_AGE_MINUTES (default: 30; informational stale-card age only)
  */
 
 require('dotenv').config();
@@ -29,6 +30,7 @@ const {
 } = require('@cheddar-logic/data');
 const { buildMlbMarketAvailability } = require('./run_mlb_model');
 const { getCurrentQuotaTier } = require('../schedulers/quota');
+const { keyTminus, TMINUS_BANDS } = require('../schedulers/windows');
 const { sendDiscordMessages } = require('./post_discord_cards');
 const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 
@@ -56,6 +58,12 @@ const PIPELINE_HEALTH_ALERT_CONSECUTIVE = Number(
 const PIPELINE_HEALTH_COOLDOWN_MINUTES = Number(
   process.env.PIPELINE_HEALTH_COOLDOWN_MINUTES || 30,
 );
+const CARD_HEALTH_MODEL_JOB_BY_SPORT = Object.freeze({
+  nba: { jobName: 'run_nba_model', env: 'ENABLE_NBA_MODEL' },
+  nhl: { jobName: 'run_nhl_model', env: 'ENABLE_NHL_MODEL' },
+  mlb: { jobName: 'run_mlb_model', env: 'ENABLE_MLB_MODEL' },
+  nfl: { jobName: 'run_nfl_model', env: 'ENABLE_NFL_MODEL' },
+});
 
 /**
  * Write health check result to pipeline_health table
@@ -189,7 +197,9 @@ function checkOddsFreshness() {
 
 /**
  * Check 3: Cards freshness
- * For games within T-2h, verify card_payloads exist and are recent
+ * For games within T-2h, verify the most recent completed model window ran
+ * successfully. Missing/stale card_payloads are informational only because some
+ * model runners legitimately emit no actionable card.
  */
 function checkCardsFreshness() {
   const db = getDatabase();
@@ -200,7 +210,7 @@ function checkCardsFreshness() {
   const upcomingGames = db
     .prepare(
       `
-    SELECT game_id, game_time_utc
+    SELECT game_id, game_time_utc, sport
     FROM games
     WHERE game_time_utc >= ? AND game_time_utc <= ?
   `,
@@ -211,8 +221,15 @@ function checkCardsFreshness() {
     return { ok: true, reason: 'No games within T-2h' };
   }
 
-  const missingCards = [];
+  const modelRunMisses = [];
+  let dueWindowCount = 0;
+  let awaitingFirstWindowCount = 0;
+  let unsupportedSportCount = 0;
+  let informationalCardLagCount = 0;
+
   for (const game of upcomingGames) {
+    const sport = String(game.sport || '').toLowerCase();
+    const descriptor = CARD_HEALTH_MODEL_JOB_BY_SPORT[sport] || null;
     const latestCard = db
       .prepare(
         `
@@ -225,27 +242,86 @@ function checkCardsFreshness() {
       )
       .get(game.game_id);
 
-    if (!latestCard) {
-      missingCards.push(game.game_id);
+    const latestCardAgeMinutes = latestCard
+      ? nowUtc.diff(DateTime.fromISO(latestCard.created_at, { zone: 'utc' }), 'minutes').minutes
+      : null;
+    const hasCardLag = latestCardAgeMinutes === null || latestCardAgeMinutes > CARDS_FRESHNESS_MAX_AGE_MINUTES;
+
+    if (!descriptor || process.env[descriptor.env] === 'false') {
+      unsupportedSportCount += 1;
+      if (hasCardLag) informationalCardLagCount += 1;
       continue;
     }
 
-    const createdAt = DateTime.fromISO(latestCard.created_at, { zone: 'utc' });
-    const ageMinutes = nowUtc.diff(createdAt, 'minutes').minutes;
+    const minsUntilStart = Math.floor(
+      DateTime.fromISO(game.game_time_utc, { zone: 'utc' }).diff(nowUtc, 'minutes').minutes,
+    );
+    const completedBands = TMINUS_BANDS.filter((band) => minsUntilStart < band.min);
+    const latestCompletedBand = completedBands[completedBands.length - 1] || null;
 
-    if (ageMinutes > CARDS_FRESHNESS_MAX_AGE_MINUTES) {
-      missingCards.push(game.game_id);
+    if (!latestCompletedBand) {
+      awaitingFirstWindowCount += 1;
+      if (hasCardLag) informationalCardLagCount += 1;
+      continue;
     }
+
+    dueWindowCount += 1;
+    const jobKey = keyTminus(sport, game.game_id, latestCompletedBand.minutes);
+    const recentModelRun = db
+      .prepare(
+        `
+      SELECT started_at
+      FROM job_runs
+      WHERE job_name = ?
+        AND job_key = ?
+        AND status = 'success'
+      ORDER BY started_at DESC
+      LIMIT 1
+    `,
+      )
+      .get(descriptor.jobName, jobKey);
+
+    if (!recentModelRun) {
+      modelRunMisses.push({
+        gameId: game.game_id,
+        sport,
+        expectedWindowMinutes: latestCompletedBand.minutes,
+      });
+      continue;
+    }
+
+    if (hasCardLag) informationalCardLagCount += 1;
   }
 
-  if (missingCards.length === 0) {
-    const reason = `All ${upcomingGames.length} games within T-2h have fresh cards`;
+  if (modelRunMisses.length === 0) {
+    const reasonParts = [];
+    if (dueWindowCount === 0) {
+      reasonParts.push(`No games within T-2h have a completed model window yet`);
+    } else {
+      reasonParts.push(`All ${dueWindowCount} completed model windows within T-2h have recent model runs`);
+    }
+    if (awaitingFirstWindowCount > 0) {
+      reasonParts.push(`${awaitingFirstWindowCount} games awaiting first model window`);
+    }
+    if (unsupportedSportCount > 0) {
+      reasonParts.push(`${unsupportedSportCount} games skipped (unsupported or disabled sport model)`);
+    }
+    if (informationalCardLagCount > 0) {
+      reasonParts.push(`${informationalCardLagCount}/${upcomingGames.length} missing/stale cards are informational`);
+    }
+    const reason = reasonParts.join('; ');
     writePipelineHealth('cards', 'freshness', 'ok', reason);
     return { ok: true, reason };
   }
 
-  const reason = `${missingCards.length}/${upcomingGames.length} games within T-2h missing/stale cards (>${CARDS_FRESHNESS_MAX_AGE_MINUTES}m old)`;
-  writePipelineHealth('cards', 'freshness', 'failed', reason);
+  const reasonParts = [
+    `${modelRunMisses.length}/${dueWindowCount} games within T-2h missing expected model runs`,
+  ];
+  if (informationalCardLagCount > 0) {
+    reasonParts.push(`${informationalCardLagCount}/${upcomingGames.length} missing/stale cards are informational`);
+  }
+  const reason = reasonParts.join('; ');
+  writePipelineHealth('cards', 'freshness', 'warning', reason);
   return { ok: false, reason };
 }
 
@@ -793,6 +869,7 @@ if (require.main === module) {
 
 module.exports = {
   checkPipelineHealth,
+  checkCardsFreshness,
   checkMlbF5MarketAvailability,
   checkMlbSeedFreshness,
   checkOddsFreshness,
