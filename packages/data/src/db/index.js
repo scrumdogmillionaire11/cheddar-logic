@@ -97,6 +97,7 @@ module.exports = {
   insertDecisionEvent: cards.insertDecisionEvent,
   setProjectionActualResult: cards.setProjectionActualResult,
   getUnsettledProjectionCards: cards.getUnsettledProjectionCards,
+  getLatestNhlModelOutput: cards.getLatestNhlModelOutput,
   getUpcomingGames: games.getUpcomingGames,
   upsertGame: games.upsertGame,
   upsertGameIdMap: games.upsertGameIdMap,

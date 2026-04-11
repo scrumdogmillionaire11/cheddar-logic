@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-11T00:00:00Z"
-last_activity: "2026-04-11 - Completed quick task 151: WI-0883 POTD confidence-weighted sizing"
+last_activity: "2026-04-11 - Completed quick task 154: WI-0881 wire NHL goalie composite into POTD signal"
 ---
 
 # Project State
@@ -172,6 +172,8 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 156 | WI-0881: Wire NHL goalie composite into POTD signal — resolveNHLModelSignal, getLatestNhlModelOutput, nhlSnapshot wiring, 22 new tests | 2026-04-11 | 096653b | [154-wire-nhl-goalie-composite-into-potd-sign](./quick/154-wire-nhl-goalie-composite-into-potd-sign/) |
+| 155 | WI-0884: POTD multi-day sanity tracking — potd_daily_stats migration 075, stats writes on all engine paths, sanity-check script, 3 new tests | 2026-04-11 | a8f5360 | [152-wi-0884-potd-multi-day-sanity-tracking](./quick/152-wi-0884-potd-multi-day-sanity-tracking/) |
 | 154 | WI-0883 POTD confidence-weighted sizing — confidenceMultiplier, migration 074, 4 new tests | 2026-04-11 | 0db8488 | [151-wi-0883-potd-confidence-weighted-sizing](./quick/151-wi-0883-potd-confidence-weighted-sizing/) |
 | 153 | WI-0880 Add h2h market to NHL odds fetch | 2026-04-11 | 66e8269 | [150-wi-0880-add-h2h-market-to-nhl-odds-fetch](./quick/150-wi-0880-add-h2h-market-to-nhl-odds-fetch/) |
 | 152 | WI-0879: POTD reasoning string — deterministic builder, migration 073, web surface (api + UI card) | 2026-04-12 | 30d4b13 | [WI-0879](./phases/WI-0879/) |
