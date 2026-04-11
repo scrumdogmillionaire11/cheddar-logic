@@ -3,7 +3,7 @@ phase: mlb-07-full-game-expansion
 plan: 03
 type: execute
 wave: 3
-depends_on: ["mlb-07-02"]
+depends_on: ["mlb-07-01", "mlb-07-02"]
 files_modified:
   - apps/worker/src/models/mlb-model.js
   - apps/worker/src/jobs/run_mlb_model.js
