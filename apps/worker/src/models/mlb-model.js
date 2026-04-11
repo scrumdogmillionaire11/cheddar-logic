@@ -2970,6 +2970,80 @@ function _buildPitcherKReasoning(result) {
   return parts.join(' | ');
 }
 
+/**
+ * WI-0874: Resolve the best MLB model signal for a POTD candidate.
+ *
+ * Picks the highest-confidence FIRE full_game_ml card from computeMLBDriverCards
+ * and returns { modelWinProb, edge, projection_source } so scoreCandidate can
+ * use pitcher-quality signal instead of consensus fair-pair probability.
+ *
+ * Returns null when:
+ *   - ENABLE_MLB_MODEL=false
+ *   - No FIRE cards exist
+ *   - Best card is a total market (f5_total / full_game_total) — not an ML signal
+ *   - projection_source contains 'SYNTHETIC' or 'FALLBACK'
+ *   - drivers array is empty or win_prob_home is missing/invalid
+ *
+ * @param {{ gameId: string, oddsSnapshot: object, sport: string }} game
+ * @returns {{ modelWinProb: number, edge: number, projection_source: string } | null}
+ */
+function resolveMLBModelSignal(game) {
+  if (process.env.ENABLE_MLB_MODEL === 'false') return null;
+
+  const cards = computeMLBDriverCards(game.gameId, game.oddsSnapshot);
+  if (!Array.isArray(cards) || cards.length === 0) return null;
+
+  // Only FIRE cards with no SYNTHETIC/FALLBACK projection
+  const fireCards = cards.filter((card) => {
+    if (!card.ev_threshold_passed || card.status !== 'FIRE') return false;
+    const src = card.projection_source ?? '';
+    if (src.includes('SYNTHETIC') || src.includes('FALLBACK')) return false;
+    return true;
+  });
+
+  if (fireCards.length === 0) return null;
+
+  // Market priority: full_game_ml > f5_total > full_game_total
+  const MARKET_PRIORITY = { full_game_ml: 0, f5_total: 1, full_game_total: 2 };
+  fireCards.sort((a, b) => {
+    const pa = MARKET_PRIORITY[a.market] ?? 99;
+    const pb = MARKET_PRIORITY[b.market] ?? 99;
+    if (pa !== pb) return pa - pb;
+    // Same market: higher confidence wins
+    return (b.confidence ?? 0) - (a.confidence ?? 0);
+  });
+
+  const best = fireCards[0];
+
+  // Total market cards: no ML win-prob — return null so consensus path is used
+  if (best.market === 'f5_total' || best.market === 'full_game_total') return null;
+
+  // full_game_ml card
+  if (best.market === 'full_game_ml') {
+    const driver = best.drivers?.[0];
+    if (!driver) return null;
+    const { win_prob_home, edge, side } = driver;
+    if (!Number.isFinite(win_prob_home) || !Number.isFinite(edge)) return null;
+
+    let modelWinProb;
+    if (side === 'HOME') {
+      modelWinProb = win_prob_home;
+    } else if (side === 'AWAY') {
+      modelWinProb = 1 - win_prob_home;
+    } else {
+      return null;
+    }
+
+    return {
+      modelWinProb,
+      edge,
+      projection_source: best.projection_source,
+    };
+  }
+
+  return null;
+}
+
 module.exports = {
   projectStrikeouts,
   projectF5Total,
@@ -2998,4 +3072,6 @@ module.exports = {
   projectTeamF5RunsAgainstStarter,
   // WI-0840: dynamic league constants
   setLeagueConstants,
+  // WI-0874: POTD MLB model signal resolver
+  resolveMLBModelSignal,
 };

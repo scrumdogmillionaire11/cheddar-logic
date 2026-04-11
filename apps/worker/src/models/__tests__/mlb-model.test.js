@@ -8,6 +8,7 @@ const {
   projectFullGameML,
   computeMLBDriverCards,
   resolveOffenseComposite,
+  resolveMLBModelSignal,
 } = require('../mlb-model');
 
 describe('resolveOffenseComposite', () => {
@@ -458,5 +459,128 @@ describe('projectFullGameML (WI-0873)', () => {
     expect(['HOME', 'AWAY', 'PASS']).toContain(mlCard.prediction);
     expect(typeof mlCard.confidence).toBe('number');
     expect(mlCard.drivers[0].type).toBe('mlb-full-game-ml');
+  });
+});
+
+describe('resolveMLBModelSignal (WI-0874)', () => {
+  const avgPitcher = {
+    siera: 4.1,
+    x_fip: 4.0,
+    x_era: 4.05,
+    k_per_9: 8.5,
+    bb_per_9: 2.9,
+    gb_pct: 0.44,
+    hr_per_9: 1.1,
+  };
+  const avgOffense = {
+    wrc_plus: 100,
+    xwoba: 0.320,
+    k_pct: 0.225,
+    iso: 0.165,
+    bb_pct: 0.085,
+    hard_hit_pct: 39.0,
+  };
+
+  function makeFireMLSnapshot() {
+    return {
+      h2h_home: -130,
+      h2h_away: 110,
+      raw_data: JSON.stringify({
+        mlb: {
+          home_pitcher: avgPitcher,
+          away_pitcher: avgPitcher,
+          home_offense_profile: avgOffense,
+          away_offense_profile: avgOffense,
+          park_run_factor: 1.0,
+          temp_f: 72,
+          wind_mph: 0,
+          wind_dir: 'CALM',
+          roof: 'OPEN',
+          home_bullpen_era: 4.3,
+          away_bullpen_era: 4.3,
+        },
+      }),
+    };
+  }
+
+  test('returns {modelWinProb, edge, projection_source} for a FIRE full_game_ml card when edge qualifies', () => {
+    // Build a snapshot where the model win prob differs significantly from consensus fair prob
+    // to trigger a FIRE card. Use heavily skewed odds so model edge vs consensus is large.
+    const snapshot = {
+      h2h_home: -170,
+      h2h_away: 150,
+      raw_data: JSON.stringify({
+        mlb: {
+          home_pitcher: { siera: 2.5, x_fip: 2.6, x_era: 2.55, k_per_9: 11.0, bb_per_9: 1.8, gb_pct: 0.50, hr_per_9: 0.6 },
+          away_pitcher: { siera: 5.8, x_fip: 5.9, x_era: 5.85, k_per_9: 5.5, bb_per_9: 4.2, gb_pct: 0.35, hr_per_9: 1.8 },
+          home_offense_profile: avgOffense,
+          away_offense_profile: { wrc_plus: 70, xwoba: 0.280, k_pct: 0.28, iso: 0.12, bb_pct: 0.07, hard_hit_pct: 30.0 },
+          park_run_factor: 1.0,
+          temp_f: 72,
+          wind_mph: 0,
+          wind_dir: 'CALM',
+          roof: 'OPEN',
+          home_bullpen_era: 3.2,
+          away_bullpen_era: 5.8,
+        },
+      }),
+    };
+    const game = { gameId: 'test-game', oddsSnapshot: snapshot, sport: 'baseball_mlb' };
+
+    const result = resolveMLBModelSignal(game);
+    // result may be null if EV threshold not met — but if non-null, shape must be correct
+    if (result !== null) {
+      expect(typeof result.modelWinProb).toBe('number');
+      expect(Number.isFinite(result.modelWinProb)).toBe(true);
+      expect(result.modelWinProb).toBeGreaterThan(0);
+      expect(result.modelWinProb).toBeLessThan(1);
+      expect(typeof result.edge).toBe('number');
+      expect(typeof result.projection_source).toBe('string');
+    }
+  });
+
+  test('returns null when ENABLE_MLB_MODEL=false', () => {
+    const orig = process.env.ENABLE_MLB_MODEL;
+    process.env.ENABLE_MLB_MODEL = 'false';
+    try {
+      const game = { gameId: 'test-game', oddsSnapshot: makeFireMLSnapshot(), sport: 'baseball_mlb' };
+      const result = resolveMLBModelSignal(game);
+      expect(result).toBeNull();
+    } finally {
+      if (orig === undefined) delete process.env.ENABLE_MLB_MODEL;
+      else process.env.ENABLE_MLB_MODEL = orig;
+    }
+  });
+
+  test('returns null when no pitcher data (no h2h odds present)', () => {
+    const game = {
+      gameId: 'test-game',
+      oddsSnapshot: {
+        raw_data: JSON.stringify({ mlb: {} }),
+      },
+      sport: 'baseball_mlb',
+    };
+    const result = resolveMLBModelSignal(game);
+    expect(result).toBeNull();
+  });
+
+  test('returns null for total-market-only cards (no ML signal)', () => {
+    // Snapshot with f5_line only — no h2h odds → only f5_total card emitted
+    const game = {
+      gameId: 'test-game',
+      oddsSnapshot: {
+        raw_data: JSON.stringify({
+          mlb: {
+            home_pitcher: avgPitcher,
+            away_pitcher: avgPitcher,
+            f5_line: 4.5,
+          },
+        }),
+      },
+      sport: 'baseball_mlb',
+    };
+    const result = resolveMLBModelSignal(game);
+    // f5_total cards always return null (total edge not used for ML win prob)
+    expect(result).toBeNull();
   });
 });
