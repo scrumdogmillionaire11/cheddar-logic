@@ -81,6 +81,7 @@ type PotdPlayRow = {
   result: string | null;
   settled_at: string | null;
   pnl_dollars: number | null;
+  reasoning: string | null;
 };
 
 type BankrollAggRow = {
@@ -136,6 +137,7 @@ export type PotdApiPlay = {
   result: string | null;
   settledAt: string | null;
   pnlDollars: number | null;
+  reasoning: string | null;
 };
 
 export type PotdBankrollSummary = {
@@ -279,6 +281,7 @@ function mapPlayRow(row: PotdPlayRow): PotdApiPlay {
     result: row.result,
     settledAt: row.settled_at,
     pnlDollars: row.pnl_dollars,
+    reasoning: row.reasoning ?? null,
   };
 }
 
