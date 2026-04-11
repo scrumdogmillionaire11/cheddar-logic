@@ -286,6 +286,44 @@ test('NBA and NHL schedule pulls emitted at 04:00 ET', () => {
   expect(jobNames0400).toContain('pull_schedule_nhl');
 });
 
+test('pipeline watchdog also queues Dr. Claire persistence every 5 minutes', () => {
+  const { DateTime } = require('luxon');
+
+  process.env.ENABLE_ODDS_PULL = 'false';
+  process.env.ENABLE_SETTLEMENT = 'false';
+  process.env.ENABLE_NHL_MODEL = 'false';
+  process.env.ENABLE_NBA_MODEL = 'false';
+  process.env.ENABLE_FPL_MODEL = 'false';
+  process.env.ENABLE_NFL_MODEL = 'false';
+  process.env.ENABLE_MLB_MODEL = 'false';
+  process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC = 'false';
+  process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'false';
+  process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
+  process.env.ENABLE_ODDS_HEALTH_WATCHDOG = 'false';
+
+  const scheduler = loadSchedulerModule();
+
+  const nowEt = DateTime.fromISO('2026-04-10T09:15:00', {
+    zone: 'America/New_York',
+  });
+  const nowUtc = nowEt.toUTC();
+  const dueJobs = scheduler.computeDueJobs({
+    nowEt,
+    nowUtc,
+    games: [],
+    dryRun: true,
+  });
+
+  const drClaireJob = dueJobs.find((job) => job.jobName === 'dr_claire_health_report');
+  expect(drClaireJob).toBeDefined();
+  expect(drClaireJob.jobKey).toBe('health|dr-claire|2026-04-10T13:15');
+  expect(drClaireJob.args).toEqual({
+    jobKey: 'health|dr-claire|2026-04-10T13:15',
+    dryRun: false,
+    persist: true,
+  });
+});
+
 if (require.main === module) {
   runSchedulerWindowTests()
     .then(() => process.exit(0))
@@ -324,6 +362,7 @@ function loadSchedulerModule(dataOverrides = {}) {
   jest.doMock('../jobs/settle_pending_cards', () => ({ settlePendingCards: jest.fn() }));
   jest.doMock('../jobs/backfill_card_results', () => ({ backfillCardResults: jest.fn() }));
   jest.doMock('../jobs/check_pipeline_health', () => ({ checkPipelineHealth: jest.fn() }));
+  jest.doMock('../jobs/dr_claire_health_report', () => ({ runDrClaireHealthReport: jest.fn() }));
   jest.doMock('../jobs/refresh_team_metrics_daily', () => ({ run: jest.fn() }));
   jest.doMock('../jobs/sync_nhl_sog_player_ids', () => ({ syncNhlSogPlayerIds: jest.fn() }));
   jest.doMock('../jobs/sync_nhl_player_availability', () => ({ syncNhlPlayerAvailability: jest.fn() }));

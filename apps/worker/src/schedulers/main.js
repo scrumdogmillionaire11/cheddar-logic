@@ -50,6 +50,7 @@ const { pullOddsHourly } = require('../jobs/pull_odds_hourly');
 const { pullEspnGamesDirect } = require('../jobs/pull_espn_games_direct');
 const { refreshStaleOdds } = require('../jobs/refresh_stale_odds');
 const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
+const { runDrClaireHealthReport } = require('../jobs/dr_claire_health_report');
 const { checkOddsHealth } = require('../jobs/check_odds_health');
 const { run: refreshTeamMetricsDaily } = require('../jobs/refresh_team_metrics_daily');
 const { pullScheduleNba } = require('../jobs/pull_schedule_nba');
@@ -149,6 +150,23 @@ function getPipelineHealthJobs(nowUtc) {
   if (nowUtc.minute % 5 !== 0) return [];
   const jobKey = `health|watchdog|${nowUtc.toISO().slice(0, 16)}`;
   return [{ jobName: 'check_pipeline_health', jobKey, execute: checkPipelineHealth, args: { jobKey, dryRun: false }, reason: 'pipeline health watchdog (5-min cadence)' }];
+}
+
+function getDrClairePersistJobs(nowUtc) {
+  if (nowUtc.minute % 5 !== 0) return [];
+  const bucket = nowUtc.toISO().slice(0, 16);
+  const jobKey = `health|dr-claire|${bucket}`;
+  return [{
+    jobName: 'dr_claire_health_report',
+    jobKey,
+    execute: runDrClaireHealthReport,
+    args: {
+      jobKey,
+      dryRun: false,
+      persist: true,
+    },
+    reason: 'dr claire model health snapshot (5-min cadence)',
+  }];
 }
 
 function getOddsHealthJobs(nowUtc) {
@@ -343,7 +361,10 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   }
 
   // ========== WATCHDOGS / FPL / PLAYER-PROPS (5-8) ==========
-  if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') jobs.push(...getPipelineHealthJobs(nowUtc));
+  if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') {
+    jobs.push(...getPipelineHealthJobs(nowUtc));
+    jobs.push(...getDrClairePersistJobs(nowUtc));
+  }
   if (process.env.ENABLE_ODDS_HEALTH_WATCHDOG !== 'false') jobs.push(...getOddsHealthJobs(nowUtc));
   // FPL is a standalone Python app (cheddar-fpl-sage/) — no main-worker DB integration.
   // Set ENABLE_FPL_MODEL=false to disable entirely (default in env.example). See ADR-0011.
@@ -429,6 +450,6 @@ module.exports = {
   keySettlementHealthReport, keyHourlySettlementSweep, keyHourlySettlementJob, keyNightlySettlementJob,
   isHourlySettlementDue, isFixedDue, dueTminusMinutes, TMINUS_BANDS,
   getOddsIntervalMinutes, getScheduleRefreshDue, shouldRefreshOddsForGame,
-  getPipelineHealthJobs, getOddsHealthJobs, keyPullScheduleNba, keyPullScheduleNhl,
+  getPipelineHealthJobs, getDrClairePersistJobs, getOddsHealthJobs, keyPullScheduleNba, keyPullScheduleNhl,
   computePotdScheduleMetadata,
 };

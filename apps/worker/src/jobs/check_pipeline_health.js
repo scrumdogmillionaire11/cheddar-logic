@@ -161,7 +161,7 @@ function checkOddsFreshness() {
       .get(game.game_id);
 
     if (!latestOdds) {
-      staleGames.push(game.game_id);
+      staleGames.push(game);
       continue;
     }
 
@@ -171,7 +171,7 @@ function checkOddsFreshness() {
     const ageMinutes = nowUtc.diff(capturedAt, 'minutes').minutes;
 
     if (ageMinutes > ODDS_FRESHNESS_MAX_AGE_MINUTES) {
-      staleGames.push(game.game_id);
+      staleGames.push(game);
     }
   }
 
@@ -180,6 +180,13 @@ function checkOddsFreshness() {
     writePipelineHealth('odds', 'freshness', 'ok', reason);
     return { ok: true, reason };
   }
+
+  // Only escalate to failed/alert when stale games are within T-2h.
+  // Games 2-6h out with stale odds are expected slack — flag as warning only.
+  const alertWindowEnd = nowUtc.plus({ hours: 2 });
+  const staleNearTerm = staleGames.filter(
+    (g) => DateTime.fromISO(g.game_time_utc, { zone: 'utc' }) <= alertWindowEnd,
+  );
 
   const quotaTier = getCurrentQuotaTier();
   const quotaConstrained = ['MEDIUM', 'LOW', 'CRITICAL'].includes(quotaTier);
@@ -190,7 +197,13 @@ function checkOddsFreshness() {
     return { ok: false, reason };
   }
 
-  const reason = `${staleGames.length}/${upcomingGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)`;
+  if (staleNearTerm.length === 0) {
+    const reason = `${staleGames.length}/${upcomingGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) but none within T-2h`;
+    writePipelineHealth('odds', 'freshness', 'warning', reason);
+    return { ok: false, reason };
+  }
+
+  const reason = `${staleNearTerm.length}/${upcomingGames.length} games within T-2h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)`;
   writePipelineHealth('odds', 'freshness', 'failed', reason);
   return { ok: false, reason };
 }

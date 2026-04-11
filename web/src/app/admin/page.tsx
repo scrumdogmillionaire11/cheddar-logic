@@ -23,11 +23,32 @@ interface ModelOutputRow {
   confidence: number | null;
 }
 
+interface ModelHealthSnapshot {
+  sport: string;
+  run_at: string;
+  hit_rate: number | null;
+  roi_units: number | null;
+  roi_pct: number | null;
+  total_unique: number;
+  wins: number;
+  losses: number;
+  streak: string | null;
+  last10_hit_rate: number | null;
+  status: string;
+  signals: string[];
+  lookback_days: number;
+}
+
 function StatusBadge({ status }: { status: string }) {
   const colorMap: Record<string, string> = {
     ok: 'bg-green-500/20 text-green-400 border border-green-500/30',
+    healthy: 'bg-green-500/20 text-green-400 border border-green-500/30',
     warning: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+    degraded: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+    stale: 'bg-orange-500/20 text-orange-300 border border-orange-500/30',
     failed: 'bg-red-500/20 text-red-400 border border-red-500/30',
+    critical: 'bg-red-500/20 text-red-400 border border-red-500/30',
+    'no-data': 'bg-white/10 text-cloud/70 border border-white/20',
   };
   const cls =
     colorMap[status.toLowerCase()] ??
@@ -44,8 +65,13 @@ function StatusBadge({ status }: { status: string }) {
 function StatusDot({ status }: { status: string }) {
   const colorMap: Record<string, string> = {
     ok: 'bg-green-400',
+    healthy: 'bg-green-400',
     warning: 'bg-yellow-400',
+    degraded: 'bg-yellow-400',
+    stale: 'bg-orange-300',
     failed: 'bg-red-400',
+    critical: 'bg-red-400',
+    'no-data': 'bg-white/30',
   };
   return (
     <span
@@ -60,6 +86,16 @@ function formatTs(ts: string) {
   } catch {
     return ts;
   }
+}
+
+function formatPct(value: number | null) {
+  if (value == null) return 'N/A';
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatUnits(value: number | null) {
+  if (value == null) return 'N/A';
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}u`;
 }
 
 function formatAge(ts: string) {
@@ -152,10 +188,13 @@ function buildSnapshot(rows: PipelineHealthRow[]): PipelineHealthRow[] {
 
 export default function AdminPage() {
   const [health, setHealth] = useState<PipelineHealthRow[]>([]);
+  const [modelHealth, setModelHealth] = useState<ModelHealthSnapshot[]>([]);
   const [outputs, setOutputs] = useState<ModelOutputRow[]>([]);
   const [healthLoading, setHealthLoading] = useState(true);
+  const [modelHealthLoading, setModelHealthLoading] = useState(true);
   const [outputsLoading, setOutputsLoading] = useState(true);
   const [healthError, setHealthError] = useState<string | null>(null);
+  const [modelHealthError, setModelHealthError] = useState<string | null>(null);
   const [outputsError, setOutputsError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
@@ -165,6 +204,7 @@ export default function AdminPage() {
       .then(
         (body: { success: boolean; data?: PipelineHealthRow[]; error?: string }) => {
           if (body.success && body.data) {
+            setHealthError(null);
             setHealth(body.data);
             setLastRefresh(new Date());
           } else setHealthError(body.error ?? 'unknown error');
@@ -174,25 +214,55 @@ export default function AdminPage() {
       .finally(() => setHealthLoading(false));
   }, []);
 
-  useEffect(() => {
+  const loadModelHealth = useCallback(() => {
+    fetch('/api/admin/model-health')
+      .then((r) => r.json())
+      .then(
+        (
+          body: {
+            success: boolean;
+            data?: ModelHealthSnapshot[];
+            error?: string;
+          },
+        ) => {
+          if (body.success && body.data) {
+            setModelHealthError(null);
+            setModelHealth(body.data);
+            setLastRefresh(new Date());
+          } else setModelHealthError(body.error ?? 'unknown error');
+        },
+      )
+      .catch((e: unknown) => setModelHealthError(String(e)))
+      .finally(() => setModelHealthLoading(false));
+  }, []);
+
+  const refreshAdminHealth = useCallback(() => {
     loadHealth();
+    loadModelHealth();
+  }, [loadHealth, loadModelHealth]);
+
+  useEffect(() => {
+    refreshAdminHealth();
     fetch('/api/model-outputs')
       .then((r) => r.json())
       .then(
         (body: { success: boolean; data?: ModelOutputRow[]; error?: string }) => {
-          if (body.success && body.data) setOutputs(body.data.slice(0, 50));
+          if (body.success && body.data) {
+            setOutputsError(null);
+            setOutputs(body.data.slice(0, 50));
+          }
           else setOutputsError(body.error ?? 'unknown error');
         },
       )
       .catch((e: unknown) => setOutputsError(String(e)))
       .finally(() => setOutputsLoading(false));
-  }, [loadHealth]);
+  }, [refreshAdminHealth]);
 
   // Auto-refresh health every 60s
   useEffect(() => {
-    const id = setInterval(loadHealth, 60_000);
+    const id = setInterval(refreshAdminHealth, 60_000);
     return () => clearInterval(id);
-  }, [loadHealth]);
+  }, [refreshAdminHealth]);
 
   const snapshot = buildSnapshot(health);
   const overallOk =
@@ -218,6 +288,119 @@ export default function AdminPage() {
             </p>
           </div>
 
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-xl font-semibold">Model Performance (30d)</h2>
+              <div className="flex items-center gap-3 text-xs text-cloud/40">
+                {lastRefresh && <span>Updated {formatAge(lastRefresh.toISOString())}</span>}
+                <button
+                  onClick={refreshAdminHealth}
+                  className="rounded border border-white/10 px-2 py-1 hover:border-white/20 hover:text-cloud/70"
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {modelHealthLoading && (
+              <div className="rounded-xl border border-white/10 bg-surface/80 p-6 text-sm text-cloud/50">
+                Loading…
+              </div>
+            )}
+            {modelHealthError && (
+              <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-6 text-sm text-red-400">
+                Error: {modelHealthError}
+              </div>
+            )}
+            {!modelHealthLoading && !modelHealthError && modelHealth.length === 0 && (
+              <div className="rounded-xl border border-white/10 bg-surface/80 p-6 text-sm text-cloud/50">
+                No model health snapshots yet. Run{' '}
+                <code className="font-mono">npm run job:dr-claire -- --persist</code>{' '}
+                from apps/worker to seed.
+              </div>
+            )}
+            {!modelHealthLoading && !modelHealthError && modelHealth.length > 0 && (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {modelHealth.map((snapshot) => (
+                  <article
+                    key={snapshot.sport}
+                    className="rounded-xl border border-white/10 bg-surface/80 p-4"
+                  >
+                    <div className="mb-4 flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <StatusDot status={snapshot.status} />
+                          <h3 className="font-mono text-sm font-semibold uppercase tracking-wide text-cloud/85">
+                            {snapshot.sport}
+                          </h3>
+                        </div>
+                        <p className="mt-1 text-xs text-cloud/40">
+                          Updated {formatAge(snapshot.run_at)}
+                        </p>
+                      </div>
+                      <StatusBadge status={snapshot.status} />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div className="rounded-lg border border-white/8 bg-night/40 px-3 py-2">
+                        <div className="text-xs uppercase tracking-wide text-cloud/40">
+                          Hit Rate
+                        </div>
+                        <div className="mt-1 font-semibold text-cloud">
+                          {formatPct(snapshot.hit_rate)}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-white/8 bg-night/40 px-3 py-2">
+                        <div className="text-xs uppercase tracking-wide text-cloud/40">
+                          ROI Units
+                        </div>
+                        <div className="mt-1 font-semibold text-cloud">
+                          {formatUnits(snapshot.roi_units)}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-white/8 bg-night/40 px-3 py-2">
+                        <div className="text-xs uppercase tracking-wide text-cloud/40">
+                          Last 10
+                        </div>
+                        <div className="mt-1 font-semibold text-cloud">
+                          {formatPct(snapshot.last10_hit_rate)}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-white/8 bg-night/40 px-3 py-2">
+                        <div className="text-xs uppercase tracking-wide text-cloud/40">
+                          Streak
+                        </div>
+                        <div className="mt-1 font-semibold text-cloud">
+                          {snapshot.streak ?? 'N/A'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between text-xs text-cloud/55">
+                      <span>
+                        {snapshot.wins}W {snapshot.losses}L
+                      </span>
+                      <span>{snapshot.total_unique} unique markets</span>
+                    </div>
+
+                    {snapshot.signals.length > 0 && (
+                      <div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-3">
+                        <div className="mb-2 text-xs uppercase tracking-wide text-yellow-300/80">
+                          Degradation Signals
+                        </div>
+                        <ul className="space-y-1 text-sm text-cloud/70">
+                          {snapshot.signals.map((signal) => (
+                            <li key={signal}>{signal}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
           {/* Current Health Snapshot */}
           <section>
             <div className="mb-3 flex items-center justify-between">
@@ -225,7 +408,7 @@ export default function AdminPage() {
               <div className="flex items-center gap-3 text-xs text-cloud/40">
                 {lastRefresh && <span>Updated {formatAge(lastRefresh.toISOString())}</span>}
                 <button
-                  onClick={loadHealth}
+                  onClick={refreshAdminHealth}
                   className="rounded border border-white/10 px-2 py-1 hover:border-white/20 hover:text-cloud/70"
                 >
                   Refresh
