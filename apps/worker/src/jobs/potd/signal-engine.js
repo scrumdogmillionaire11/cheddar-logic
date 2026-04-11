@@ -450,10 +450,17 @@ function scoreCandidate(candidate) {
       : 0;
 
   // Parity with consensus is neutral at 0.5. Better lines/prices push toward 1.0.
+  // Divide lineDelta by the consensus line magnitude so a 1-point delta on a
+  // ±1.5 runline (~0.67/pt) is correctly valued more than the same delta on a
+  // 7-point NBA spread (~0.14/pt). Floor at 1 avoids divide-by-zero.
   const lineComponent =
     candidate.marketType === 'MONEYLINE'
       ? 0.5
-      : clamp(0.5 + lineDelta / 2, 0, 1);
+      : clamp(
+          0.5 + lineDelta / Math.max(Math.abs(candidate.consensusLine), 1),
+          0,
+          1
+        );
   const priceComponent = clamp(0.5 + priceDelta / 80, 0, 1);
   const lineValue =
     candidate.marketType === 'MONEYLINE'

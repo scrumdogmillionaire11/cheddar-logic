@@ -4,6 +4,9 @@
 const {
   projectF5ML,
   projectF5Total,
+  projectFullGameTotal,
+  projectLateInningsRuns,
+  computeMLBDriverCards,
   resolveOffenseComposite,
 } = require('../mlb-model');
 

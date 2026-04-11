@@ -37,15 +37,20 @@ function buildGame(overrides = {}) {
 }
 
 function buildEliteGame() {
+  // NHL total with a significant line outlier at book-e (+value price too).
+  // Under the AC2 consensus-magnitude normalization, a 1.5-point delta on a
+  // ~5.5 consensus line (lineDelta/consensusLine ≈ 0.27) still produces a
+  // high lineValue when combined with a much better price at that book.
+  // Expected: best OVER candidate scores ELITE (totalScore >= 0.75).
   return buildGame({
-    sport: 'NBA',
+    sport: 'NHL',
     market: {
       totals: [
-        { book: 'book-a', line: 220.5, over: -108, under: -112 },
-        { book: 'book-b', line: 220.5, over: -109, under: -111 },
-        { book: 'book-c', line: 220.5, over: -107, under: -113 },
-        { book: 'book-d', line: 220.5, over: -110, under: -110 },
-        { book: 'book-e', line: 219, over: 125, under: -140 },
+        { book: 'book-a', line: 5.5, over: -115, under: 110 },
+        { book: 'book-b', line: 5.5, over: -115, under: 110 },
+        { book: 'book-c', line: 5.5, over: -115, under: 110 },
+        { book: 'book-d', line: 5.5, over: -115, under: 110 },
+        { book: 'book-e', line: 3.5, over: 100, under: -115 },
       ],
     },
   });
@@ -277,5 +282,27 @@ describe('potd signal engine', () => {
     expect(scored).not.toBeNull();
     // lineValue should exceed 0.5 because we have a favorable line delta
     expect(scored.lineValue).toBeGreaterThan(0.5);
+
+    // AC2: same absolute lineDelta produces a larger lineValue boost on a
+    // small consensus line (runline-like ~1.5) than on a large one (NBA ~7).
+    // This confirms normalization is magnitude-relative, not hardcoded.
+    const smallConsensus = scoreCandidate({
+      ...nhlOver,
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      line: 1.0,
+      consensusLine: 1.5,  // runline-scale: lineDelta = 1.5 - 1.0 = 0.5
+      comparableLines: [1.5, 1.5, 1.5],
+    });
+    const largeConsensus = scoreCandidate({
+      ...nhlOver,
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      line: 6.5,
+      consensusLine: 7.0,  // NBA-scale: lineDelta = 7.0 - 6.5 = 0.5
+      comparableLines: [7.0, 7.0, 7.0],
+    });
+    // Same lineDelta (0.5) but smaller consensus magnitude → bigger lineValue boost
+    expect(smallConsensus.lineValue).toBeGreaterThan(largeConsensus.lineValue);
   });
 });
