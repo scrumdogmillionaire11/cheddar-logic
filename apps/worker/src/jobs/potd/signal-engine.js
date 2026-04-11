@@ -482,6 +482,29 @@ function scoreCandidate(candidate) {
 
   if (!isFiniteNumber(modelFairProbability)) return null;
 
+  // MLB model override: replace consensus fair prob + edge with pitcher-quality model signal
+  const mlbSignal = candidate.mlbSignal ?? null;
+  if (mlbSignal && Number.isFinite(mlbSignal.modelWinProb) && Number.isFinite(mlbSignal.edge)) {
+    const modelEdge = round(mlbSignal.edge, 6);
+    const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
+    return {
+      ...candidate,
+      lineValue,
+      marketConsensus,
+      totalScore,
+      modelWinProb: round(mlbSignal.modelWinProb, 6),
+      impliedProb,
+      edgePct: modelEdge,
+      confidenceLabel: confidenceLabel(totalScore),
+      scoreBreakdown: {
+        lineValue,
+        marketConsensus,
+        model_win_prob: round(mlbSignal.modelWinProb, 6),
+        projection_source: mlbSignal.projection_source ?? null,
+      },
+    };
+  }
+
   const edgePct = round(modelFairProbability - impliedProb, 6);
   const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
 
