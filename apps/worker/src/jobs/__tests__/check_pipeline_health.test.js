@@ -34,6 +34,7 @@ const {
   shouldSendAlert,
   buildHealthAlertMessage,
   checkCardsFreshness,
+  checkOddsFreshness,
   checkPipelineHealth,
 } = require('../check_pipeline_health');
 
@@ -49,6 +50,7 @@ function makeDb({
   backlogCount = 0,
   upcomingGames = [],
   latestCardsByGame = {},
+  latestOddsByGame = {},
   jobRunsByKey = {},
 } = {}) {
   return {
@@ -84,6 +86,12 @@ function makeDb({
       if (s.includes('FROM card_payloads') && s.includes('WHERE game_id = ?')) {
         return {
           get: jest.fn((gameId) => latestCardsByGame[gameId] ?? null),
+        };
+      }
+
+      if (s.includes('FROM odds_snapshots') && s.includes('WHERE game_id = ?')) {
+        return {
+          get: jest.fn((gameId) => latestOddsByGame[gameId] ?? null),
         };
       }
 
@@ -252,6 +260,79 @@ describe('checkCardsFreshness', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('missing expected model runs');
     expect(writes[0][2]).toBe('warning');
+  });
+});
+
+// ===========================================================================
+describe('checkOddsFreshness', () => {
+  test('dedupes ESPN numeric and espndirect duplicates when a fresh canonical matchup exists', () => {
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: '401811039',
+        sport: 'NBA',
+        away_team: 'Golden State Warriors',
+        home_team: 'Sacramento Kings',
+        game_time_utc: now.plus({ minutes: 20 }).toISO(),
+      },
+      {
+        game_id: 'espndirect_nba_401811039',
+        sport: 'NBA',
+        away_team: 'Golden State Warriors',
+        home_team: 'Sacramento Kings',
+        game_time_utc: now.plus({ minutes: 20 }).toISO(),
+      },
+      {
+        game_id: 'canonical-warriors-kings',
+        sport: 'NBA',
+        away_team: 'Golden State Warriors',
+        home_team: 'Sacramento Kings',
+        game_time_utc: now.plus({ minutes: 30 }).toISO(),
+      },
+    ];
+    const latestOddsByGame = {
+      espndirect_nba_401811039: { captured_at: now.minus({ minutes: 141 }).toISO() },
+      'canonical-warriors-kings': { captured_at: now.minus({ minutes: 10 }).toISO() },
+    };
+
+    getDatabase.mockReturnValue(makeDb({ upcomingGames, latestOddsByGame }));
+
+    const result = checkOddsFreshness();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('All 1 games within T-6h have fresh odds');
+    expect(result.reason).toContain('duplicate game_id rows ignored');
+  });
+
+  test('reports one stale matchup when all duplicate rows for the matchup are stale', () => {
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: '401811040',
+        sport: 'NBA',
+        away_team: 'Phoenix Suns',
+        home_team: 'Los Angeles Lakers',
+        game_time_utc: now.plus({ minutes: 45 }).toISO(),
+      },
+      {
+        game_id: 'espndirect_nba_401811040',
+        sport: 'NBA',
+        away_team: 'Phoenix Suns',
+        home_team: 'Los Angeles Lakers',
+        game_time_utc: now.plus({ minutes: 45 }).toISO(),
+      },
+    ];
+    const latestOddsByGame = {
+      espndirect_nba_401811040: { captured_at: now.minus({ minutes: 141 }).toISO() },
+    };
+
+    getDatabase.mockReturnValue(makeDb({ upcomingGames, latestOddsByGame }));
+
+    const result = checkOddsFreshness();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('1/1 games within T-2h have stale odds');
+    expect(result.reason).toContain('duplicate game_id rows ignored');
   });
 });
 

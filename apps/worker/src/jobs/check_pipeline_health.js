@@ -108,6 +108,56 @@ function checkScheduleFreshness() {
   return { ok: false, reason };
 }
 
+function buildOddsFreshnessMatchupKey(game) {
+  const sport = String(game.sport || '').toLowerCase();
+  const away = String(game.away_team || '').trim().toUpperCase();
+  const home = String(game.home_team || '').trim().toUpperCase();
+  const gameDate = String(game.game_time_utc || '').slice(0, 10);
+  return `${sport}|${away}|${home}|${gameDate}`;
+}
+
+function dedupeOddsFreshnessGames(gamesWithFreshness) {
+  const byMatchup = new Map();
+
+  for (const game of gamesWithFreshness) {
+    const key = buildOddsFreshnessMatchupKey(game);
+    const bucket = byMatchup.get(key);
+    if (bucket) {
+      bucket.push(game);
+    } else {
+      byMatchup.set(key, [game]);
+    }
+  }
+
+  const deduped = [];
+  for (const duplicates of byMatchup.values()) {
+    duplicates.sort((a, b) => {
+      const aFresh = !a.isStale;
+      const bFresh = !b.isStale;
+      if (aFresh !== bFresh) return aFresh ? -1 : 1;
+
+      const aHasSnapshot = Boolean(a.latestCapturedAt);
+      const bHasSnapshot = Boolean(b.latestCapturedAt);
+      if (aHasSnapshot !== bHasSnapshot) return aHasSnapshot ? -1 : 1;
+
+      const aCapturedAt = a.latestCapturedAt || '';
+      const bCapturedAt = b.latestCapturedAt || '';
+      if (aCapturedAt !== bCapturedAt) return bCapturedAt.localeCompare(aCapturedAt);
+
+      return String(a.game_time_utc || '').localeCompare(String(b.game_time_utc || ''));
+    });
+
+    const winner = duplicates[0];
+    deduped.push({
+      ...winner,
+      duplicateGameIds: duplicates.map((entry) => entry.game_id),
+      duplicateCount: duplicates.length,
+    });
+  }
+
+  return deduped;
+}
+
 /**
  * Check 2: Odds freshness
  * For games within T-6h, verify latest odds snapshot is < 15 min old
@@ -134,7 +184,7 @@ function checkOddsFreshness() {
   // Find games within T-6h for active-odds sports only
   const upcomingGames = db
     .prepare(
-      `SELECT game_id, game_time_utc
+      `SELECT game_id, sport, home_team, away_team, game_time_utc
        FROM games
        WHERE game_time_utc >= ? AND game_time_utc <= ?
          AND LOWER(sport) IN (${sportPlaceholders})`,
@@ -146,7 +196,7 @@ function checkOddsFreshness() {
   }
 
   // Check latest odds snapshot age for these games
-  const staleGames = [];
+  const gamesWithFreshness = [];
   for (const game of upcomingGames) {
     const latestOdds = db
       .prepare(
@@ -160,23 +210,32 @@ function checkOddsFreshness() {
       )
       .get(game.game_id);
 
-    if (!latestOdds) {
-      staleGames.push(game);
-      continue;
-    }
+    const capturedAt = latestOdds?.captured_at
+      ? DateTime.fromISO(latestOdds.captured_at, { zone: 'utc' })
+      : null;
+    const ageMinutes = capturedAt
+      ? nowUtc.diff(capturedAt, 'minutes').minutes
+      : null;
+    const isStale = !capturedAt || ageMinutes > ODDS_FRESHNESS_MAX_AGE_MINUTES;
 
-    const capturedAt = DateTime.fromISO(latestOdds.captured_at, {
-      zone: 'utc',
+    gamesWithFreshness.push({
+      ...game,
+      latestCapturedAt: latestOdds?.captured_at || null,
+      ageMinutes,
+      isStale,
     });
-    const ageMinutes = nowUtc.diff(capturedAt, 'minutes').minutes;
-
-    if (ageMinutes > ODDS_FRESHNESS_MAX_AGE_MINUTES) {
-      staleGames.push(game);
-    }
   }
 
+  const dedupedGames = dedupeOddsFreshnessGames(gamesWithFreshness);
+  const staleGames = dedupedGames.filter((game) => game.isStale);
+  const duplicateRowsIgnored = upcomingGames.length - dedupedGames.length;
+
   if (staleGames.length === 0) {
-    const reason = `All ${upcomingGames.length} games within T-6h have fresh odds`;
+    const duplicateSuffix =
+      duplicateRowsIgnored > 0
+        ? ` (${duplicateRowsIgnored} duplicate game_id rows ignored)`
+        : '';
+    const reason = `All ${dedupedGames.length} games within T-6h have fresh odds${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'ok', reason);
     return { ok: true, reason };
   }
@@ -190,20 +249,24 @@ function checkOddsFreshness() {
 
   const quotaTier = getCurrentQuotaTier();
   const quotaConstrained = ['MEDIUM', 'LOW', 'CRITICAL'].includes(quotaTier);
+  const duplicateSuffix =
+    duplicateRowsIgnored > 0
+      ? ` (${duplicateRowsIgnored} duplicate game_id rows ignored)`
+      : '';
 
   if (quotaConstrained) {
-    const reason = `${staleGames.length}/${upcomingGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) — odds fetch paused (quota tier: ${quotaTier})`;
+    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) — odds fetch paused (quota tier: ${quotaTier})${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'warning', reason);
     return { ok: false, reason };
   }
 
   if (staleNearTerm.length === 0) {
-    const reason = `${staleGames.length}/${upcomingGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) but none within T-2h`;
+    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) but none within T-2h${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'warning', reason);
     return { ok: false, reason };
   }
 
-  const reason = `${staleNearTerm.length}/${upcomingGames.length} games within T-2h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)`;
+  const reason = `${staleNearTerm.length}/${dedupedGames.length} games within T-2h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)${duplicateSuffix}`;
   writePipelineHealth('odds', 'freshness', 'failed', reason);
   return { ok: false, reason };
 }

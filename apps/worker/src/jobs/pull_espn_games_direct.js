@@ -32,11 +32,13 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   setCurrentRunId,
+  getDatabase,
   upsertGame,
   insertOddsSnapshot,
   enrichOddsSnapshotWithEspnMetrics,
   withDb,
 } = require('@cheddar-logic/data');
+const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 
 const { fetchScoreboardEvents } =
   require('../../../../packages/data/src/espn-client');
@@ -85,6 +87,53 @@ function extractTeamName(competitor) {
     competitor?.team?.name ||
     null
   );
+}
+
+function normalizeTeamName(name) {
+  if (!name) return '';
+  return name.replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+function scoreMatchConfidence(deltaMinutes) {
+  if (deltaMinutes <= 15) return 1.0;
+  if (deltaMinutes <= 30) return 0.9;
+  if (deltaMinutes <= 90) return 0.75;
+  return 0;
+}
+
+function selectBestCandidate(candidates, target) {
+  const targetHome = normalizeTeamName(target.homeTeam);
+  const targetAway = normalizeTeamName(target.awayTeam);
+  const targetTime = new Date(target.gameTimeUtc).getTime();
+
+  const matches = candidates
+    .map((candidate) => {
+      const home = normalizeTeamName(candidate.home_team);
+      const away = normalizeTeamName(candidate.away_team);
+      if (home !== targetHome || away !== targetAway) return null;
+
+      const candidateTime = new Date(candidate.game_time_utc).getTime();
+      const deltaMinutes = Math.abs(candidateTime - targetTime) / 60000;
+      if (deltaMinutes > 90) return null;
+
+      return {
+        candidate,
+        deltaMinutes,
+        confidence: scoreMatchConfidence(deltaMinutes),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.deltaMinutes - b.deltaMinutes);
+
+  if (matches.length === 0) return { status: 'no_candidate' };
+  if (
+    matches.length > 1 &&
+    matches[0].deltaMinutes === matches[1].deltaMinutes
+  ) {
+    return { status: 'ambiguous', matches };
+  }
+
+  return { status: 'matched', match: matches[0] };
 }
 
 /**
@@ -152,11 +201,13 @@ async function pullEspnGamesDirect({
     setCurrentRunId(jobRunId);
 
     const errors = [];
+    const db = getDatabase();
     const kpis = {
       sportsAttempted: 0,
       gamesFound: 0,
       gamesUpserted: 0,
       snapshotsInserted: 0,
+      duplicateSeedsSkipped: 0,
       espnEnrichmentHits: 0,
       espnEnrichmentMisses: 0,
       errors: 0,
@@ -210,6 +261,38 @@ async function pullEspnGamesDirect({
 
       for (const descriptor of sportGames.values()) {
         try {
+          const activeOddsSport = Boolean(ODDS_SPORTS_CONFIG[descriptor.sport]?.active);
+          if (activeOddsSport) {
+            const eventTime = new Date(descriptor.gameTimeUtc);
+            if (!Number.isNaN(eventTime.getTime())) {
+              const windowStart = new Date(
+                eventTime.getTime() - 24 * 60 * 60 * 1000,
+              ).toISOString();
+              const windowEnd = new Date(
+                eventTime.getTime() + 24 * 60 * 60 * 1000,
+              ).toISOString();
+              const existingGames = db.prepare(`
+                SELECT game_id, game_time_utc, home_team, away_team
+                FROM games
+                WHERE LOWER(sport) = ?
+                  AND game_time_utc >= ?
+                  AND game_time_utc <= ?
+              `).all(
+                String(descriptor.sport).toLowerCase(),
+                windowStart,
+                windowEnd,
+              );
+              const existingMatch = selectBestCandidate(existingGames, descriptor);
+              if (existingMatch.status === 'matched') {
+                console.log(
+                  `[EspnGamesDirect] ${descriptor.sport}: skipping duplicate seed for ${descriptor.espnEventId}; matched existing game_id=${existingMatch.match.candidate.game_id}`,
+                );
+                kpis.duplicateSeedsSkipped++;
+                continue;
+              }
+            }
+          }
+
           // Upsert game record
           const stableId = `game-${sport.toLowerCase()}-${descriptor.gameId}`;
           upsertGame({
@@ -335,6 +418,7 @@ async function pullEspnGamesDirect({
       gamesFound: kpis.gamesFound,
       gamesUpserted: kpis.gamesUpserted,
       snapshotsInserted: kpis.snapshotsInserted,
+      duplicateSeedsSkipped: kpis.duplicateSeedsSkipped,
       espnEnrichmentHits: kpis.espnEnrichmentHits,
       espnEnrichmentMisses: kpis.espnEnrichmentMisses,
       errors: errors.length,
