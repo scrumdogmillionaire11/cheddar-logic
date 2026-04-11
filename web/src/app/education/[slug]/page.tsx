@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
@@ -8,6 +9,26 @@ import {
 type EducationArticlePageProps = {
   params: Promise<{ slug: string }>;
 };
+
+export async function generateMetadata({
+  params,
+}: EducationArticlePageProps): Promise<Metadata> {
+  const { slug } = await params;
+  const article = getEducationArticleBySlug(slug);
+  if (!article) return {};
+  return {
+    title: `${article.title} | Cheddar Logic`,
+    description:
+      article.summary ?? `${article.title} — Cheddar Logic educational content.`,
+    openGraph: {
+      title: article.title,
+      description:
+        article.summary ??
+        `${article.title} — Cheddar Logic educational content.`,
+      url: `https://cheddarlogic.com/education/${slug}`,
+    },
+  };
+}
 
 export async function generateStaticParams() {
   return EDUCATION_ARTICLES.map((article) => ({ slug: article.slug }));

@@ -1,8 +1,21 @@
+import type { Metadata } from 'next';
 import { closeDatabaseReadOnly } from '@cheddar-logic/data';
 import FPLPageClient from '@/components/fpl-page-client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = {
+  title: 'FPL Analytics | Cheddar Logic',
+  description:
+    'Fantasy Premier League player projections and signal-qualified differentials.',
+  openGraph: {
+    title: 'FPL Analytics | Cheddar Logic',
+    description:
+      'Fantasy Premier League player projections and signal-qualified differentials.',
+    url: 'https://cheddarlogic.com/fpl',
+  },
+};
 
 export default async function FPLPage() {
   try {

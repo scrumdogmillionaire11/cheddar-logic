@@ -1,4 +1,17 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
+
+export const metadata: Metadata = {
+  title: 'Subscribe | Cheddar Logic',
+  description:
+    'Get access to Cheddar Logic signal outputs and analytical card feeds.',
+  openGraph: {
+    title: 'Subscribe | Cheddar Logic',
+    description:
+      'Get access to Cheddar Logic signal outputs and analytical card feeds.',
+    url: 'https://cheddarlogic.com/subscribe',
+  },
+};
 
 export default function SubscribePage() {
   return (

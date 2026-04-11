@@ -1,7 +1,20 @@
+import type { Metadata } from 'next';
 import { closeDatabaseReadOnly } from '@cheddar-logic/data';
 import CardsPageClient from '@/components/cards-page-client';
 
 export const runtime = 'nodejs';
+
+export const metadata: Metadata = {
+  title: 'Cards | Cheddar Logic',
+  description:
+    'Live analytical cards ranked by signal confidence across MLB, NBA, and NHL.',
+  openGraph: {
+    title: 'Cards | Cheddar Logic',
+    description:
+      'Live analytical cards ranked by signal confidence across MLB, NBA, and NHL.',
+    url: 'https://cheddarlogic.com/cards',
+  },
+};
 export const dynamic = 'force-dynamic';
 
 export default async function CardsPage() {
