@@ -328,7 +328,7 @@ const mlbF5PayloadSchema = basePayloadSchema
     model_version: z.string().min(1),
     home_team: z.string().min(1).nullable(),
     away_team: z.string().min(1).nullable(),
-    market_type: z.literal('FIRST_PERIOD'),
+    market_type: z.literal('FIRST_5_INNINGS'),
     selection: z.object({
       side: z.enum(['OVER', 'UNDER']),
     }),

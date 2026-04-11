@@ -55,6 +55,30 @@ function removeVig(priceA, priceB) {
   };
 }
 
+// Compute median of implied probabilities from an array of American-odds prices.
+// Avoids the mixed-sign discontinuity: median([-105, -105, -102, 100, 100, 105])
+// lands near 0 on the American scale (=> 0.99% implied), but the median of the
+// corresponding implied probs is a well-behaved ~50%.
+function medianImplied(prices) {
+  return median(prices.map(americanToImplied));
+}
+
+// removeVig variant that accepts already-computed implied probabilities.
+// Used in scoreCandidate to bypass re-conversion from American odds.
+function removeVigFromImplied(impliedA, impliedB) {
+  if (!isFiniteNumber(impliedA) || !isFiniteNumber(impliedB)) {
+    return { fairProbA: null, fairProbB: null };
+  }
+  const total = impliedA + impliedB;
+  if (!isFiniteNumber(total) || total <= 0) {
+    return { fairProbA: null, fairProbB: null };
+  }
+  return {
+    fairProbA: round(impliedA / total, 6),
+    fairProbB: round(impliedB / total, 6),
+  };
+}
+
 function confidenceThreshold(minConfidence) {
   if (typeof minConfidence === 'number') return minConfidence;
   const token = String(minConfidence || 'HIGH').trim().toUpperCase();
@@ -122,6 +146,8 @@ function computeConsensus(entries, marketType) {
       awayLine: median(rows.map((row) => row.away_line)),
       homePrice: median(rows.map((row) => row.home_price)),
       awayPrice: median(rows.map((row) => row.away_price)),
+      homeImplied: medianImplied(rows.map((row) => row.home_price)),
+      awayImplied: medianImplied(rows.map((row) => row.away_price)),
     };
   }
   if (marketType === 'TOTAL') {
@@ -129,11 +155,15 @@ function computeConsensus(entries, marketType) {
       line: median(rows.map((row) => row.line)),
       overPrice: median(rows.map((row) => row.over)),
       underPrice: median(rows.map((row) => row.under)),
+      overImplied: medianImplied(rows.map((row) => row.over)),
+      underImplied: medianImplied(rows.map((row) => row.under)),
     };
   }
   return {
     homePrice: median(rows.map((row) => row.home)),
     awayPrice: median(rows.map((row) => row.away)),
+    homeImplied: medianImplied(rows.map((row) => row.home)),
+    awayImplied: medianImplied(rows.map((row) => row.away)),
   };
 }
 
@@ -216,6 +246,8 @@ function buildSpreadCandidates(game) {
       consensusLine: consensus.homeLine,
       consensusPrice: consensus.homePrice,
       counterpartConsensusPrice: consensus.awayPrice,
+      consensusImplied: consensus.homeImplied,
+      counterpartConsensusImplied: consensus.awayImplied,
       comparableLines: rows.map((row) => row.home_line),
       comparablePrices: rows.map((row) => row.home_price),
       sourceCount: rows.length,
@@ -250,6 +282,8 @@ function buildSpreadCandidates(game) {
       consensusLine: consensus.awayLine,
       consensusPrice: consensus.awayPrice,
       counterpartConsensusPrice: consensus.homePrice,
+      consensusImplied: consensus.awayImplied,
+      counterpartConsensusImplied: consensus.homeImplied,
       comparableLines: rows.map((row) => row.away_line),
       comparablePrices: rows.map((row) => row.away_price),
       sourceCount: rows.length,
@@ -302,6 +336,8 @@ function buildTotalCandidates(game) {
       consensusLine: consensus.line,
       consensusPrice: consensus.overPrice,
       counterpartConsensusPrice: consensus.underPrice,
+      consensusImplied: consensus.overImplied,
+      counterpartConsensusImplied: consensus.underImplied,
       comparableLines: rows.map((row) => row.line),
       comparablePrices: rows.map((row) => row.over),
       sourceCount: rows.length,
@@ -335,6 +371,8 @@ function buildTotalCandidates(game) {
       consensusLine: consensus.line,
       consensusPrice: consensus.underPrice,
       counterpartConsensusPrice: consensus.overPrice,
+      consensusImplied: consensus.underImplied,
+      counterpartConsensusImplied: consensus.overImplied,
       comparableLines: rows.map((row) => row.line),
       comparablePrices: rows.map((row) => row.under),
       sourceCount: rows.length,
@@ -373,6 +411,8 @@ function buildMoneylineCandidates(game) {
       consensusLine: null,
       consensusPrice: consensus.homePrice,
       counterpartConsensusPrice: consensus.awayPrice,
+      consensusImplied: consensus.homeImplied,
+      counterpartConsensusImplied: consensus.awayImplied,
       comparableLines: [],
       comparablePrices: rows.map((row) => row.home),
       sourceCount: rows.length,
@@ -400,6 +440,8 @@ function buildMoneylineCandidates(game) {
       consensusLine: null,
       consensusPrice: consensus.awayPrice,
       counterpartConsensusPrice: consensus.homePrice,
+      consensusImplied: consensus.awayImplied,
+      counterpartConsensusImplied: consensus.homeImplied,
       comparableLines: [],
       comparablePrices: rows.map((row) => row.away),
       sourceCount: rows.length,
@@ -441,6 +483,48 @@ function buildCandidates(game) {
     ...candidate,
     mlbSignal,
   }));
+}
+
+function qualityLabel(score) {
+  if (score >= 0.67) return 'strong';
+  if (score >= 0.5) return 'solid';
+  return 'below average';
+}
+
+function buildReasoningString({
+  selectionLabel,
+  price,
+  edgePct,
+  modelWinProb,
+  lineValue,
+  marketConsensus,
+  marketType,
+  projectionSource,
+}) {
+  const priceStr = price > 0 ? `+${price}` : String(price);
+  const edgeStr = isFiniteNumber(edgePct)
+    ? `edge +${(edgePct * 100).toFixed(1)}pp`
+    : null;
+  const winProbStr = isFiniteNumber(modelWinProb)
+    ? `win prob ${(modelWinProb * 100).toFixed(1)}%`
+    : null;
+  const stats = [
+    edgeStr,
+    winProbStr,
+    `line value ${qualityLabel(lineValue)}`,
+    `market consensus ${qualityLabel(marketConsensus)}`,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  if (marketType === 'MONEYLINE' && projectionSource) {
+    const sourceLabel = projectionSource.startsWith('FULL_MODEL')
+      ? 'Full model projection'
+      : `Model projection (${projectionSource})`;
+    return `${sourceLabel} backs ${selectionLabel} at ${priceStr}: ${stats}.`;
+  }
+
+  return `Model likes ${selectionLabel} at ${priceStr}: ${stats}.`;
 }
 
 function scoreCandidate(candidate) {
@@ -495,11 +579,19 @@ function scoreCandidate(candidate) {
     marketType: candidate.marketType,
   });
 
-  const fairPair = removeVig(candidate.consensusPrice, candidate.counterpartConsensusPrice);
-  const modelFairProbability =
-    candidate.selection === 'HOME' || candidate.selection === 'OVER'
-      ? fairPair.fairProbA
-      : fairPair.fairProbB;
+  // Use median-of-implied-probs consensus to avoid mixed-sign American-odds median
+  // producing a near-zero implied probability (e.g. [-105,-105,-102,100,100,105] => -1).
+  // Candidates from buildMoneylineCandidates et al. carry pre-computed consensusImplied;
+  // hand-crafted or legacy candidates fall back to deriving implied from American odds.
+  // fairProbA is always the selection's own win probability.
+  const impliedConsensus = isFiniteNumber(candidate.consensusImplied)
+    ? candidate.consensusImplied
+    : americanToImplied(candidate.consensusPrice);
+  const impliedCounterpart = isFiniteNumber(candidate.counterpartConsensusImplied)
+    ? candidate.counterpartConsensusImplied
+    : americanToImplied(candidate.counterpartConsensusPrice);
+  const fairPair = removeVigFromImplied(impliedConsensus, impliedCounterpart);
+  const modelFairProbability = fairPair.fairProbA;
 
   if (!isFiniteNumber(modelFairProbability)) return null;
 
@@ -528,6 +620,16 @@ function scoreCandidate(candidate) {
         model_win_prob: round(mlbSignal.modelWinProb, 6),
         projection_source: mlbSignal.projection_source ?? null,
       },
+      reasoning: buildReasoningString({
+        selectionLabel: candidate.selectionLabel,
+        price: candidate.price,
+        edgePct: modelEdge,
+        modelWinProb: round(mlbSignal.modelWinProb, 6),
+        lineValue,
+        marketConsensus,
+        marketType: candidate.marketType,
+        projectionSource: mlbSignal.projection_source ?? null,
+      }),
     };
   }
 
@@ -547,6 +649,16 @@ function scoreCandidate(candidate) {
       lineValue,
       marketConsensus,
     },
+    reasoning: buildReasoningString({
+      selectionLabel: candidate.selectionLabel,
+      price: candidate.price,
+      edgePct,
+      modelWinProb: modelFairProbability,
+      lineValue,
+      marketConsensus,
+      marketType: candidate.marketType,
+      projectionSource: null,
+    }),
   };
 }
 

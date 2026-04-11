@@ -152,6 +152,7 @@ function buildCardPayloadData(candidate, { nowIso, wagerAmount, bankrollAtPost, 
     bankroll_at_post: bankrollAtPost,
     kelly_fraction: kellyFraction,
     odds_context: candidate.oddsContext,
+    reasoning: candidate.reasoning ?? null,
   };
 }
 
@@ -188,6 +189,7 @@ function buildPotdPlayRow(candidate, {
     kelly_fraction: kellyFraction,
     game_time_utc: candidate.commence_time,
     posted_at: nowIso,
+    reasoning: candidate.reasoning ?? null,
   };
 }
 
@@ -388,12 +390,14 @@ async function runPotdEngine({
             id, play_date, game_id, card_id, sport, home_team, away_team,
             market_type, selection, selection_label, line, price, confidence_label,
             total_score, model_win_prob, implied_prob, edge_pct, score_breakdown,
-            wager_amount, bankroll_at_post, kelly_fraction, game_time_utc, posted_at
+            wager_amount, bankroll_at_post, kelly_fraction, game_time_utc, posted_at,
+            reasoning
           ) VALUES (
             @id, @play_date, @game_id, @card_id, @sport, @home_team, @away_team,
             @market_type, @selection, @selection_label, @line, @price, @confidence_label,
             @total_score, @model_win_prob, @implied_prob, @edge_pct, @score_breakdown,
-            @wager_amount, @bankroll_at_post, @kelly_fraction, @game_time_utc, @posted_at
+            @wager_amount, @bankroll_at_post, @kelly_fraction, @game_time_utc, @posted_at,
+            @reasoning
           )`,
         ).run(playRow);
 

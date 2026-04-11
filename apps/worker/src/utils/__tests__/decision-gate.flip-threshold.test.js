@@ -7,7 +7,7 @@
  * 1. CANONICAL_EDGE_CONTRACT documents unit='decimal_fraction' unambiguously
  * 2. shouldFlip edge-delta comparisons use decimal-fraction units (not percent)
  * 3. Allow/block behavior across current, moderate, aggressive threshold profiles
- * 4. EDGE_UPGRADE_MIN=0.5 (50pp) is the conservative baseline; tests confirm
+ * 4. EDGE_UPGRADE_MIN=0.04 (4pp) is the realistic flip floor; tests confirm
  *    it blocks small improvements while allowing genuine 50pp+ jumps
  *
  * NOTE: Do not tune threshold numbers in this file — audit and document only.
@@ -51,9 +51,9 @@ describe('CANONICAL_EDGE_CONTRACT unit audit (WI-0539)', () => {
     expect(CANONICAL_EDGE_CONTRACT.unit).toBe('decimal_fraction');
   });
 
-  test('upgrade_min is expressed in decimal_fraction (0.5 = 50pp, not 50%)', () => {
-    // 0.5 decimal_fraction = 50 percentage points — this is conservative by design
-    expect(CANONICAL_EDGE_CONTRACT.upgrade_min).toBe(0.5);
+  test('upgrade_min is expressed in decimal_fraction (0.04 = 4pp, not 4%)', () => {
+    // 0.04 decimal_fraction = 4 percentage points — this is the realistic flip floor
+    expect(CANONICAL_EDGE_CONTRACT.upgrade_min).toBe(0.04);
     expect(CANONICAL_EDGE_CONTRACT.upgrade_min).toBeLessThan(1);
     expect(CANONICAL_EDGE_CONTRACT.upgrade_min).toBeGreaterThan(0);
   });
@@ -98,7 +98,7 @@ describe('shouldFlip — same-side refresh (WI-0539)', () => {
 describe('shouldFlip — side flip edge-delta behavior (WI-0539)', () => {
   const stableCtx = { candidateSeenCount: 3 };
 
-  test('BASELINE threshold: blocks flip when edge delta < 0.5 (50pp)', () => {
+  test('BASELINE threshold: blocks flip when edge delta < 0.04 (4pp)', () => {
     // Small improvement: current=0.06, candidate=0.09 → delta=+0.03 (3pp)
     const current = makeDecision({ edge: 0.06 });
     const candidate = makeCandidate({ edge: 0.09 });
@@ -109,7 +109,7 @@ describe('shouldFlip — side flip edge-delta behavior (WI-0539)', () => {
     expect(result.edge_delta).toBeCloseTo(0.03, 4);
   });
 
-  test('BASELINE threshold: allows flip when edge delta >= 0.5 (50pp)', () => {
+  test('BASELINE threshold: allows flip when edge delta >= 0.04 (4pp)', () => {
     // Large improvement: current=0.05, candidate=0.60 → delta=+0.55
     const current = makeDecision({ edge: 0.05 });
     const candidate = makeCandidate({ edge: 0.60 });

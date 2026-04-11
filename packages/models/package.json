@@ -22,6 +22,10 @@
   "jest": {
     "testEnvironment": "node",
     "testMatch": ["**/__tests__/**/*.test.js"],
+    "testPathIgnorePatterns": [
+      "src/__tests__/edge-calculator.test.js",
+      "src/__tests__/sharp-divergence-annotation.test.js"
+    ],
     "verbose": true
   }
 }

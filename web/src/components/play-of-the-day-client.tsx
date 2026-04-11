@@ -33,6 +33,7 @@ type PotdApiPlay = {
   result: string | null;
   settledAt: string | null;
   pnlDollars: number | null;
+  reasoning: string | null;
 };
 
 type PotdBankrollSummary = {
@@ -238,6 +239,15 @@ function renderTodayCard(today: PotdApiPlay) {
           </div>
         </div>
       </div>
+
+      {today.reasoning && (
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
+            Reasoning
+          </div>
+          <div className="mt-2 text-sm text-cloud/75">{today.reasoning}</div>
+        </div>
+      )}
     </section>
   );
 }

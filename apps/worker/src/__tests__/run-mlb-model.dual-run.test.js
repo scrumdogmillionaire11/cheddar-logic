@@ -258,7 +258,7 @@ describe('mlb dual-run helpers', () => {
       away_team: snapshot.away_team,
       matchup: `${snapshot.away_team} @ ${snapshot.home_team}`,
       start_time_utc: snapshot.game_time_utc,
-      market_type: 'FIRST_PERIOD',
+      market_type: 'FIRST_5_INNINGS',
       prediction: 'OVER',
       selection: { side: 'OVER' },
       line: 4.5,

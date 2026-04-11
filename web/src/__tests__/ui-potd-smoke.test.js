@@ -56,6 +56,7 @@ async function validatePotdSourceContract(assert) {
     'WIN',
     'LOSS',
     'PUSH',
+    'Reasoning',
   ].forEach((token) => {
     assert.ok(
       clientSource.includes(token),

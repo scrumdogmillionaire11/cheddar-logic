@@ -31,7 +31,10 @@ function deriveAction({ tier }) {
   // Simple tier-based mapping ensures UI sees plays immediately
   if (t === 'SUPER') return 'FIRE';
   if (t === 'BEST') return 'HOLD';
+  if (t === 'GOOD') return 'HOLD';
   if (t === 'WATCH') return 'HOLD';
+  if (t === 'OK') return 'PASS';
+  if (t === 'BAD') return 'PASS';
   return 'PASS';
 }
 
@@ -95,6 +98,36 @@ function mapActionToClassification(action) {
   if (normalizedAction === 'FIRE') return 'BASE';
   if (normalizedAction === 'HOLD') return 'LEAN';
   return 'PASS';
+}
+
+function applyDecisionVeto(cardOrDecision, vetoReason) {
+  if (!cardOrDecision || typeof cardOrDecision !== 'object') return cardOrDecision;
+
+  cardOrDecision.action = 'PASS';
+  cardOrDecision.classification = 'PASS';
+  cardOrDecision.status = 'PASS';
+  cardOrDecision.ui_display_status = 'PASS';
+  cardOrDecision.execution_status = 'BLOCKED';
+  cardOrDecision.ev_passed = false;
+  cardOrDecision.actionable = false;
+  cardOrDecision.publish_ready = false;
+  cardOrDecision.pass_reason_code = vetoReason;
+
+  const reasonCodes = Array.isArray(cardOrDecision.reason_codes)
+    ? [...cardOrDecision.reason_codes]
+    : [];
+  if (!reasonCodes.includes(vetoReason)) {
+    reasonCodes.push(vetoReason);
+  }
+  cardOrDecision.reason_codes = normalizeStrictReasonCodes(reasonCodes);
+
+  if (cardOrDecision.decision_v2 && typeof cardOrDecision.decision_v2 === 'object') {
+    cardOrDecision.decision_v2.official_status = 'PASS';
+    cardOrDecision.decision_v2.is_settleable = false;
+    cardOrDecision.decision_v2.veto_reason = vetoReason;
+  }
+
+  return cardOrDecision;
 }
 
 function resolveExecutionStatus(payload) {
@@ -174,13 +207,7 @@ function assertNoDecisionMutation(payload, expectedSnapshot, context = {}) {
   );
   error.code = 'INVARIANT_BREACH';
   error.diffs = diffs;
-
-  if (context.throwOnViolation ?? process.env.NODE_ENV === 'test') {
-    throw error;
-  }
-
-  console.warn(error.message);
-  return diffs;
+  throw error;
 }
 
 function derivePaceTier(payload) {
@@ -744,6 +771,7 @@ function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
 module.exports = {
   publishDecisionForCard,
   applyUiActionFields,
+  applyDecisionVeto,
   finalizeDecisionFields,
   capturePublishedDecisionState,
   assertNoDecisionMutation,

@@ -364,3 +364,75 @@ describe('potd signal engine', () => {
     expect(smallConsensus.lineValue).toBeGreaterThan(largeConsensus.lineValue);
   });
 });
+
+describe('scoreCandidate - reasoning string', () => {
+  const baseCandidate = {
+    sport: 'NHL',
+    gameId: 'game-r-001',
+    home_team: 'Boston Bruins',
+    away_team: 'Toronto Maple Leafs',
+    marketType: 'TOTAL',
+    selection: 'OVER',
+    selectionLabel: 'OVER 5.5',
+    line: 5.5,
+    price: 115,
+    consensusLine: 5.5,
+    consensusPrice: -110,
+    counterpartConsensusPrice: -110,
+    comparableLines: [5.5, 5.5, 5.5],
+    comparablePrices: [115, -110, -110],
+    sourceCount: 3,
+  };
+
+  test('scored candidate includes a non-empty reasoning string', () => {
+    const scored = scoreCandidate(baseCandidate);
+    expect(scored).not.toBeNull();
+    expect(typeof scored.reasoning).toBe('string');
+    expect(scored.reasoning.length).toBeGreaterThan(0);
+    expect(scored.reasoning).toContain('OVER 5.5');
+    expect(scored.reasoning).toContain('+115');
+  });
+
+  test('reasoning includes edge and win prob formatted values', () => {
+    const scored = scoreCandidate(baseCandidate);
+    expect(scored).not.toBeNull();
+    // edge formatted as +X.Xpp
+    expect(scored.reasoning).toMatch(/edge \+[\d.]+pp/);
+    // win prob formatted as XX.X%
+    expect(scored.reasoning).toMatch(/win prob [\d.]+%/);
+  });
+
+  test('MLB moneyline reasoning references projection source not "Model likes"', () => {
+    const mlbCandidate = {
+      sport: 'baseball_mlb',
+      gameId: 'game-mlb-r-001',
+      home_team: 'Red Sox',
+      away_team: 'Yankees',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Red Sox',
+      line: null,
+      price: -160,
+      consensusLine: null,
+      consensusPrice: -155,
+      counterpartConsensusPrice: 145,
+      comparableLines: [],
+      comparablePrices: [-155, -158, -160],
+      sourceCount: 3,
+      mlbSignal: {
+        modelWinProb: 0.572,
+        edge: 0.031,
+        projection_source: 'FULL_MODEL',
+      },
+    };
+
+    const scored = scoreCandidate(mlbCandidate);
+    expect(scored).not.toBeNull();
+    expect(typeof scored.reasoning).toBe('string');
+    expect(scored.reasoning.length).toBeGreaterThan(0);
+    // MLB model path references FULL_MODEL, not "Model likes"
+    expect(scored.reasoning).toContain('Full model projection backs');
+    expect(scored.reasoning).not.toContain('Model likes');
+    expect(scored.reasoning).toContain('Red Sox');
+  });
+});

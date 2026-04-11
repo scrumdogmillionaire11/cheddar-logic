@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2025-07-25T00:00:00Z"
-last_activity: "2026-04-11 - Completed quick task 147: WI-0874 POTD MLB integration — resolveMLBModelSignal + scoreCandidate MLB override path, 6 new tests, 1514 pass"
+last_updated: "2026-04-12T00:00:00Z"
+last_activity: "2026-04-12 - Completed WI-0879-01: POTD reasoning string — deterministic reasoning builder, migration 073, web surface"
 ---
 
 # Project State
@@ -172,6 +172,9 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 152 | WI-0879: POTD reasoning string — deterministic builder, migration 073, web surface (api + UI card) | 2026-04-12 | 30d4b13 | [WI-0879](./phases/WI-0879/) |
+| 151 | WI-0833: feature_correlation_check.js audit script — 3-tier threshold, suppression expiry, 8 tests | 2026-04-11 | fdd5ba4 | [149-wi-0833-feature-correlation-cluster-dete](./quick/149-wi-0833-feature-correlation-cluster-dete/) |
+| 150 | WI-0833: feature correlation cluster detection in CI — pearsonR module, NBA/NHL/MLB fixture gate, CI step | 2026-04-11 | e5384ca | [148-wi-0833-feature-correlation-cluster-dete](./quick/148-wi-0833-feature-correlation-cluster-dete/) |
 | 149 | WI-0874: POTD MLB integration — resolveMLBModelSignal + scoreCandidate MLB override path, 6 new tests | 2026-04-11 | 4d2136b | [147-wi-0874-potd-mlb-integration-wire-mlb-ed](./quick/147-wi-0874-potd-mlb-integration-wire-mlb-ed/) |
 | 148 | WI-0873: implement projectFullGameML — full-game ML win probability model, full_game_ml driver card, 5 new tests | 2026-04-11 | 9c7f87f | [146-wi-0873-implement-projectfullgameml-full](./quick/146-wi-0873-implement-projectfullgameml-full/) |
 | 147 | WI-0878: POTD signal-engine sport-fairness fixes — lineDelta normalization, fixed-line fallback, per-sport pool | 2026-04-11 | ffe2e93 | [145-potd-signal-engine-sport-fairness-fixes](./quick/145-potd-signal-engine-sport-fairness-fixes/) |

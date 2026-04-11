@@ -1,0 +1,12 @@
+{
+  "suppressions": [
+    {
+      "sport": "NHL",
+      "feature_a": "goalie_gsax",
+      "feature_b": "homeGoalieSavePct",
+      "threshold_override": 0.85,
+      "rationale": "Being unified by WI-0823; suppressed until that WI lands",
+      "expires_after_wi": "WI-0823"
+    }
+  ]
+}

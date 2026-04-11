@@ -90,7 +90,10 @@ const ENABLE_WELCOME_HOME =
 const TIER_SCORE: Record<DriverTier, number> = {
   BEST: 1,
   SUPER: 0.72,
+  GOOD: 0.6,
   WATCH: 0.52,
+  OK: 0.3,
+  BAD: 0.1,
 };
 
 const OPPOSITE_DIRECTION: Partial<Record<Direction, Direction>> = {
@@ -1514,7 +1517,14 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             }
           : null));
   const sourcePlay = selectedSource?.play ?? scopedPlayCandidates[0];
-  const sourceAction = getSourcePlayAction(sourcePlay);
+  const sourceAction =
+    sourcePlay?.decision_v2?.official_status === 'PLAY'
+      ? 'FIRE'
+      : sourcePlay?.decision_v2?.official_status === 'LEAN'
+        ? 'HOLD'
+        : sourcePlay?.decision_v2?.official_status === 'PASS'
+          ? 'PASS'
+          : getSourcePlayAction(sourcePlay);
   const sourceInference =
     selectedSource?.inference ??
     (sourcePlay
@@ -1925,10 +1935,35 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     wrapper_blocks: false, // set true in wrappers (NHL goalie, Soccer scope, etc.)
   };
 
-  // Derive canonical decision (classification + action)
-  const decision = derivePlayDecision(playForDecision, marketContext, {
+  // Always derive the full decision shape so decision.play stays populated.
+  // When a stored backend decision exists on a non-wave1 payload, keep that
+  // official status authoritative instead of re-deriving from web thresholds.
+  const baseDecision = derivePlayDecision(playForDecision, marketContext, {
     sport: playForDecision.sport,
   });
+  const storedStatus = sourcePlay?.decision_v2?.official_status;
+  const decision =
+    storedStatus === 'PLAY' || storedStatus === 'LEAN' || storedStatus === 'PASS'
+      ? {
+          ...baseDecision,
+          classification:
+            storedStatus === 'PLAY'
+              ? 'BASE'
+              : storedStatus === 'LEAN'
+                ? 'LEAN'
+                : 'PASS',
+          action:
+            storedStatus === 'PLAY'
+              ? 'FIRE'
+              : storedStatus === 'LEAN'
+                ? 'HOLD'
+                : 'PASS',
+          reason_source: 'canonical' as const,
+        }
+      : {
+          ...baseDecision,
+          reason_source: 'NON_CANONICAL_RENDER_FALLBACK' as const,
+        };
   const market_key = buildMarketKey(
     resolvedMarketType,
     normalizeSideForCanonicalMarket(
@@ -2375,6 +2410,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           : undefined,
     reason_codes: reasonCodesUnique,
     tags: dedupedTags,
+    reason_source: decision.reason_source,
     // Canonical fields (preferred)
     classification: resolvedDisplayDecision.classification,
     action: resolvedDisplayDecision.action,

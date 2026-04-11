@@ -340,11 +340,20 @@ const NBA_DRIVER_CARD_TYPES = [
  * Only multiplies finite numeric fields so null/undefined gracefully pass through.
  */
 function applyPlayoffSigmaMultiplier(sigma, multiplier) {
-  if (!sigma) return sigma;
+  if (!sigma || !multiplier) return sigma;
+  const scale = (value) =>
+    typeof value === 'number' && !Number.isNaN(value)
+      ? value * multiplier
+      : value ?? null;
+
   return {
-    ...sigma,
-    spread: Number.isFinite(sigma.spread) ? sigma.spread * multiplier : sigma.spread,
-    total: Number.isFinite(sigma.total) ? sigma.total * multiplier : sigma.total,
+    sigma_source: sigma.sigma_source,
+    games_sampled: sigma.games_sampled ?? null,
+    margin: scale(sigma.margin),
+    total: scale(sigma.total),
+    spread: scale(sigma.spread),
+    adjusted_for_playoffs: true,
+    playoff_sigma_multiplier: multiplier,
   };
 }
 
@@ -1962,4 +1971,5 @@ module.exports = {
   generateNBAMarketCallCards,
   deriveExecutionStatusForCard,
   applyExecutionGateToNbaCard,
+  applyPlayoffSigmaMultiplier,
 };

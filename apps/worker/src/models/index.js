@@ -1496,30 +1496,41 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
 
   // --- Base Projection Driver (Real Formula) ---
   if (avgPtsHome && avgPtsAway && avgPtsAllowedHome && avgPtsAllowedAway) {
-    const projection = projectNBA(
+    const paceData =
+      paceHome && paceAway
+        ? analyzePaceSynergy(paceHome, paceAway, avgPtsHome, avgPtsAway)
+        : null;
+    const projection = projectNBACanonical(
       avgPtsHome,
       avgPtsAllowedHome,
+      paceHome || 100,
       avgPtsAway,
       avgPtsAllowedAway,
-      paceHome || 100,
       paceAway || 100,
-      restDaysHome || 1,
-      restDaysAway || 1,
+      paceData?.paceAdjustment || 0,
     );
 
     if (projection.homeProjected && projection.awayProjected) {
       const projectedMargin =
         projection.homeProjected - projection.awayProjected;
-      const highConfidenceProjection = projection.confidence >= 0.7;
+      const projectedTotal = projection.homeProjected + projection.awayProjected;
+      const restDiff = Math.abs((restDaysHome || 1) - (restDaysAway || 1));
+      let projectionConfidence = 0.55;
+      if (Math.abs(projectedMargin) >= 10) projectionConfidence += 0.15;
+      else if (Math.abs(projectedMargin) >= 5) projectionConfidence += 0.1;
+      else if (Math.abs(projectedMargin) < 3) projectionConfidence -= 0.05;
+      if (restDiff >= 2) projectionConfidence += 0.08;
+      projectionConfidence = clamp(projectionConfidence, 0.25, 0.9);
+      const highConfidenceProjection = projectionConfidence >= 0.7;
 
       descriptors.push({
         cardType: 'nba-base-projection',
         cardTitle: `NBA Projection: ${projectedMargin > 0 ? 'HOME' : 'AWAY'} ${Math.abs(projectedMargin).toFixed(1)}`,
-        confidence: projection.confidence,
-        tier: determineTier(projection.confidence),
+        confidence: projectionConfidence,
+        tier: determineTier(projectionConfidence),
         prediction: projectedMargin > 0 ? 'HOME' : 'AWAY',
-        reasoning: `Base projection: ${projection.homeProjected.toFixed(1)} vs ${projection.awayProjected.toFixed(1)} (pace multiplier: ${projection.paceMultiplier.toFixed(2)}x, rest adj: ${projection.homeRestAdj}/${projection.awayRestAdj})`,
-        ev_threshold_passed: projection.confidence > 0.6,
+        reasoning: `Base projection: ${projection.homeProjected.toFixed(1)} vs ${projection.awayProjected.toFixed(1)} (pace adj: ${(paceData?.paceAdjustment || 0).toFixed(1)}, rest diff: ${restDiff})`,
+        ev_threshold_passed: projectionConfidence > 0.6,
         driverKey: 'baseProjection',
         driverInputs: {
           home_avg_pts: avgPtsHome,
@@ -1531,6 +1542,7 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
           home_rest: restDaysHome,
           away_rest: restDaysAway,
           projected_margin: projectedMargin,
+          projected_total: projectedTotal,
         },
         driverScore: clamp((projectedMargin + 20) / 40, 0, 1), // Normalize to 0-1
         driverStatus: 'ok',
@@ -1539,7 +1551,8 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
         projectionDetails: {
           homeProjected: projection.homeProjected,
           awayProjected: projection.awayProjected,
-          paceMultiplier: projection.paceMultiplier,
+          projectedTotal,
+          paceAdjustment: paceData?.paceAdjustment || 0,
           netRatingGap: projection.netRatingGap,
         },
       });

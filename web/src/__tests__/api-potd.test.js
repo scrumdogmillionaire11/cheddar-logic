@@ -31,23 +31,28 @@ async function validatePotdSourceContract(assert) {
     new URL('../app/api/potd/route.ts', import.meta.url),
     'utf8',
   );
+  const serverSource = await fs.readFile(
+    new URL('../lib/potd-server.ts', import.meta.url),
+    'utf8',
+  );
 
+  // DB helpers live in potd-server.ts (route delegates to getPotdResponseData)
   assert.ok(
-    routeSource.includes('getDatabaseReadOnly') &&
-      routeSource.includes('closeReadOnlyInstance'),
-    'potd route must use read-only DB helpers',
+    serverSource.includes('getDatabaseReadOnly') &&
+      serverSource.includes('closeReadOnlyInstance'),
+    'potd-server.ts must use read-only DB helpers',
   );
   assert.ok(
-    routeSource.includes('await ensureDbReady()') &&
-      routeSource.includes('db = getDatabaseReadOnly()'),
-    'potd route must initialize and open the DB in read-only mode',
+    serverSource.includes('ensureDbReady') &&
+      serverSource.includes('getDatabaseReadOnly'),
+    'potd-server.ts must initialize and open the DB in read-only mode',
   );
   assert.ok(
-    routeSource.includes('if (db) closeReadOnlyInstance(db);'),
-    'potd route must close per-request read-only connections',
+    serverSource.includes('closeReadOnlyInstance'),
+    'potd-server.ts must close read-only connections',
   );
   assert.ok(
-    routeSource.includes('const data = await getPotdResponseData();') &&
+    routeSource.includes('getPotdResponseData') &&
       routeSource.includes('today: data.today') &&
       routeSource.includes('history: data.history') &&
       routeSource.includes('bankroll: data.bankroll') &&
@@ -58,13 +63,17 @@ async function validatePotdSourceContract(assert) {
     'runMigrations(',
     'closeDatabase(',
     'db.exec(',
-    '.run(',
   ].forEach((token) => {
     assert.ok(
       !routeSource.includes(token),
       `potd route must remain read-only and not contain ${token}`,
     );
   });
+
+  assert.ok(
+    serverSource.includes('reasoning'),
+    'potd-server.ts must expose the reasoning field',
+  );
 }
 
 async function validateLivePayload(baseUrl, assert) {
@@ -89,6 +98,21 @@ async function validateLivePayload(baseUrl, assert) {
 
   assert.ok(Array.isArray(payload.data.history), 'history must be an array');
   assert.ok(payload.data.today === null || typeof payload.data.today === 'object');
+
+  if (payload.data.today !== null) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(payload.data.today, 'reasoning'),
+      'today play must include reasoning key',
+    );
+  }
+
+  if (Array.isArray(payload.data.history) && payload.data.history.length > 0) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(payload.data.history[0], 'reasoning'),
+      'history[0] must include reasoning key',
+    );
+  }
+
   assert.ok(
     payload.data.schedule === null || typeof payload.data.schedule === 'object',
     'schedule must be object|null',

@@ -396,7 +396,14 @@ function filterByDriverStrength(
 ): boolean {
   if (!filters.minTier && !filters.minConfidence) return true;
 
-  const tierRank: Record<DriverTier, number> = { BEST: 3, SUPER: 2, WATCH: 1 };
+  const tierRank: Record<DriverTier, number> = {
+    BEST: 3,
+    SUPER: 2,
+    GOOD: 2,
+    WATCH: 1,
+    OK: 1,
+    BAD: 0,
+  };
 
   for (const driver of card.drivers) {
     // Check tier
@@ -611,7 +618,10 @@ function getSortValue(card: GameCard, sortMode: SortMode): number {
       const tierRank: Record<DriverTier, number> = {
         BEST: 3,
         SUPER: 2,
+        GOOD: 2,
         WATCH: 1,
+        OK: 1,
+        BAD: 0,
       };
       const maxTier = Math.max(0, ...card.drivers.map((d) => tierRank[d.tier]));
       const maxConfidence = Math.max(
