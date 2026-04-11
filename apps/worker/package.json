@@ -54,6 +54,8 @@
     "db:restore": "node src/utils/restore-backup.js",
     "job:resettle-history": "node src/jobs/resettle_historical_cards.js",
     "job:resettle-history:dry-run": "node src/jobs/resettle_historical_cards.js --dry-run",
+    "job:reset-potd-today": "node src/jobs/reset_potd_today.js",
+    "job:reset-potd-today:dry-run": "node src/jobs/reset_potd_today.js --dry-run",
     "job:import-historical-settled": "node src/jobs/import_historical_settled_results.js --apply",
     "job:import-historical-settled:dry-run": "node src/jobs/import_historical_settled_results.js --dry-run",
     "job:refresh-game-lines": "node src/jobs/pull_odds_hourly.js && node src/jobs/refresh_team_metrics_daily.js && node src/jobs/pull_mlb_pitcher_stats.js && node src/jobs/pull_mlb_weather.js && node src/jobs/run_nba_model.js && node src/jobs/run_nhl_model.js && node src/jobs/run_mlb_model.js && node src/jobs/run_soccer_model.js",
