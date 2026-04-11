@@ -2,7 +2,7 @@
 phase: mlb-07-full-game-expansion
 plan: 03
 type: execute
-wave: 2
+wave: 3
 depends_on: ["mlb-07-02"]
 files_modified:
   - apps/worker/src/models/mlb-model.js
@@ -228,12 +228,13 @@ it('projectFullGameML produces small edge for even matchup', () => {
 Test 3 — selectMlbGameMarket 3-way ranking picks highest score:
 ```js
 it('selectMlbGameMarket selects highest edge*confidence market', () => {
-  const cards = {
-    f5_total:        { edge: 0.04, confidence: 0.6, ev_threshold_passed: true },
-    full_game_total: { edge: 0.08, confidence: 0.7, ev_threshold_passed: true },
-    full_game_ml:    { edge: 0.03, confidence: 0.5, ev_threshold_passed: true },
-  };
-  const result = selectMlbGameMarket(cards);
+  const cards = [
+    { market: 'f5_total',        edge: 0.04, confidence: 0.6, ev_threshold_passed: true },
+    { market: 'full_game_total', edge: 0.08, confidence: 0.7, ev_threshold_passed: true },
+    { market: 'full_game_ml',    edge: 0.03, confidence: 0.5, ev_threshold_passed: true },
+  ];
+  // selectMlbGameMarket signature: (gameId, oddsSnapshot, driverCards[])
+  const result = selectMlbGameMarket("test-id", {}, cards);
   expect(result.market).toBe('full_game_total');
 });
 ```

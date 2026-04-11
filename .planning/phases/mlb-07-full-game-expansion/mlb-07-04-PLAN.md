@@ -2,7 +2,7 @@
 phase: mlb-07-full-game-expansion
 plan: 04
 type: execute
-wave: 3
+wave: 4
 depends_on: ["mlb-07-01", "mlb-07-02", "mlb-07-03"]
 files_modified:
   - apps/worker/src/jobs/potd/run_potd_engine.js
@@ -120,7 +120,8 @@ function buildMLBModelCandidates(game) {
     if (!driverCards) return [];
 
     const candidates = [];
-    for (const [market, card] of Object.entries(driverCards)) {
+    for (const card of driverCards) {
+      const market = card.market; // computeMLBDriverCards returns Array<{market,...}>, not a keyed object
       if (!card || !card.ev_threshold_passed) continue;
       candidates.push({
         gameId: game.game_id,
