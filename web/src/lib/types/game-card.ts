@@ -30,7 +30,7 @@ export type CanonicalMarketType =
 // Legacy market types for UI compatibility
 export type Market = 'TOTAL' | 'SPREAD' | 'ML' | 'RISK' | 'UNKNOWN';
 
-export type DriverTier = 'BEST' | 'SUPER' | 'WATCH';
+export type DriverTier = 'BEST' | 'SUPER' | 'WATCH' | 'GOOD' | 'OK' | 'BAD';
 export type Direction = 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';
 
 /** Role classification for driver gating logic */
@@ -411,6 +411,7 @@ export interface Play {
   selection?: Selection;
   reason_codes?: (PassReasonCode | string)[];
   tags?: (RiskTag | string)[];
+  reason_source?: 'canonical' | 'NON_CANONICAL_RENDER_FALLBACK' | string;
   kind?: 'PLAY' | 'EVIDENCE';
   evidence_count?: number;
   consistency?: {

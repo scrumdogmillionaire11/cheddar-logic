@@ -395,7 +395,7 @@ describe('run_nhl_model market call generation', () => {
     });
   });
 
-  test('execution gate demotes blocked NHL market-call cards to PASS without rewriting decision_v2', () => {
+  test('execution gate demotes blocked NHL market-call cards to PASS and rewrites decision_v2 consistently', () => {
     const oddsSnapshot = buildBaseOddsSnapshot();
     const mlCard = {
       payloadData: {
@@ -441,9 +441,7 @@ describe('run_nhl_model market call generation', () => {
     expect(mlCard.payloadData.pass_reason_code).toBe(
       'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
     );
-    expect(mlCard.payloadData.decision_v2?.official_status).toBe(
-      decisionStatusBeforeGate,
-    );
+    expect(mlCard.payloadData.decision_v2?.official_status).toBe('PASS');
   });
 
   test('emits 1P period odds context fields for nhl-pace-1p cards', () => {

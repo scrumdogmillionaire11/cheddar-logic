@@ -64,6 +64,14 @@ const SPORT_MARKET_THRESHOLDS_V2 = Object.freeze({
     support: Object.freeze({ play: 0.57, lean: 0.45 }),
     edge: Object.freeze({ play_edge_min: 0.058, lean_edge_min: 0.029 }),
   }),
+  'NHL:SPREAD': Object.freeze({
+    support: Object.freeze({ play: 0.57, lean: 0.45 }),
+    edge: Object.freeze({ play_edge_min: 0.058, lean_edge_min: 0.029 }),
+  }),
+  'NHL:PUCKLINE': Object.freeze({
+    support: Object.freeze({ play: 0.59, lean: 0.46 }),
+    edge: Object.freeze({ play_edge_min: 0.065, lean_edge_min: 0.032 }),
+  }),
 });
 
 function resolveThresholdProfile({ sport, marketType, sigmaSource = null }) {

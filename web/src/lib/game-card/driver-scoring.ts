@@ -57,7 +57,10 @@ export const DRIVER_ROLES: Record<string, DriverRole> = {
 export const TIER_WEIGHTS: Record<DriverTier, number> = {
   BEST:  1.00,
   SUPER: 0.70,
+  GOOD:  0.60,
   WATCH: 0.40,
+  OK:    0.20,
+  BAD:   0.05,
 };
 
 export const GATE = {

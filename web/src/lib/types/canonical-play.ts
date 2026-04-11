@@ -271,8 +271,16 @@ export interface CanonicalPlay {
 // ============================================================================
 
 /**
- * Thresholds to determine BASE vs LEAN
- * Keep explicit, never bury in scattered code
+ * @deprecated These web-side thresholds are NOT used for decision-making.
+ * The backend model (decision-pipeline-v2.js) is the sole authority on
+ * whether a card is PLAY/LEAN/PASS. Backend thresholds are 5-6.2% for PLAY.
+ *
+ * These values exist only for legacy fallback rendering when decision_v2
+ * is absent from a stored card payload. Any new code must read
+ * `payload.decision_v2.official_status` instead of computing from
+ * these thresholds.
+ *
+ * See: web/src/lib/game-card/transform/index.ts NON_CANONICAL_RENDER_FALLBACK
  */
 export const THRESHOLDS = {
   // TOTAL (NBA + NHL)
@@ -355,6 +363,7 @@ export interface PlayDecision {
   play: CanonicalPlay;
   classification: Classification;
   action: Action;
+  reason_source?: 'canonical' | 'NON_CANONICAL_RENDER_FALLBACK' | string;
   why_code?: string; // Human-readable reason (e.g., "EDGE_FOUND_BASE")
   why_text?: string; // Long-form explanation
 }

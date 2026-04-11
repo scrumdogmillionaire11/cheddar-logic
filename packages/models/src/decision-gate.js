@@ -14,19 +14,18 @@ const nodeCrypto = require('crypto');
  *   2. payload.edge          (set explicitly by model runners that compute CDF edge)
  *   3. null                  (edge unavailable — do not coerce to 0)
  *
- * EDGE_UPGRADE_MIN: minimum edge *improvement* (in decimal_fraction units) required
- * for a side-flip to be permitted. 0.5 = 50 percentage points improvement.
- * NOTE: This threshold is intentionally conservative and is not to be tuned in this WI.
+ * EDGE_UPGRADE_MIN: minimum edge improvement (in decimal_fraction units)
+ * required to permit a side-flip. 0.04 = 4 percentage points.
  */
 const CANONICAL_EDGE_CONTRACT = Object.freeze({
   unit: 'decimal_fraction',
   description: 'edge = p_fair - p_implied; 0.06 = 6% edge',
-  upgrade_min: 0.5,
+  upgrade_min: 0.04,
   sources: ['decision_v2.edge_pct (wave-1)', 'decision_v2.edge_delta_pct (nhl props)', 'payload.edge', 'null'],
 });
 
 const DEFAULTS = {
-  EDGE_UPGRADE_MIN: 0.5, // unit: decimal_fraction — 0.5 = 50 percentage points improvement required
+  EDGE_UPGRADE_MIN: 0.04, // unit: decimal_fraction — 0.04 = 4 percentage points improvement required
   REQUIRE_STABILITY_RUNS: 2,
   HARD_LOCK_MINUTES: 120,
   LINE_MOVE_MIN: 0.5,
@@ -346,7 +345,10 @@ function shouldFlip(current, candidate, ctx = {}) {
     };
   }
 
-  if (edgeDelta !== null && edgeDelta >= config.EDGE_UPGRADE_MIN) {
+  if (
+    edgeDelta !== null &&
+    edgeDelta + Number.EPSILON >= config.EDGE_UPGRADE_MIN
+  ) {
     return {
       allow: true,
       reason_code: 'EDGE_UPGRADE',

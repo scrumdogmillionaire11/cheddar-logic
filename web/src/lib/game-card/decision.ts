@@ -73,7 +73,14 @@ interface Odds {
   capturedAt: string | null;
 }
 
-const TIER_RANK: Record<DriverTier, number> = { BEST: 3, SUPER: 2, WATCH: 1 };
+const TIER_RANK: Record<DriverTier, number> = {
+  BEST: 3,
+  SUPER: 2,
+  GOOD: 2,
+  WATCH: 1,
+  OK: 1,
+  BAD: 0,
+};
 const DIRECTION_OPPOSITE: Partial<Record<Direction, Direction>> = {
   HOME: 'AWAY',
   AWAY: 'HOME',

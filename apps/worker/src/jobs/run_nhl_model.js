@@ -75,6 +75,7 @@ const {
 const {
   publishDecisionForCard,
   applyUiActionFields,
+  applyDecisionVeto,
 } = require('../utils/decision-publisher');
 const { evaluateExecution } = require('./execution-gate');
 const {
@@ -290,11 +291,20 @@ const NHL_SNAPSHOT_CARD_TYPES = new Set([
  * Only multiplies finite numeric fields so null/undefined gracefully pass through.
  */
 function applyPlayoffSigmaMultiplier(sigma, multiplier) {
-  if (!sigma) return sigma;
+  if (!sigma || !multiplier) return sigma;
+  const scale = (value) =>
+    typeof value === 'number' && !Number.isNaN(value)
+      ? value * multiplier
+      : value ?? null;
+
   return {
-    ...sigma,
-    spread: Number.isFinite(sigma.spread) ? sigma.spread * multiplier : sigma.spread,
-    total: Number.isFinite(sigma.total) ? sigma.total * multiplier : sigma.total,
+    sigma_source: sigma.sigma_source,
+    games_sampled: sigma.games_sampled ?? null,
+    margin: scale(sigma.margin),
+    total: scale(sigma.total),
+    spread: scale(sigma.spread),
+    adjusted_for_playoffs: true,
+    playoff_sigma_multiplier: multiplier,
   };
 }
 
@@ -380,6 +390,40 @@ function buildGamePipelineState({
     card_ready: derivedCardReady,
     blocking_reason_codes: blockingReasonCodes,
   });
+}
+
+function applyNoBetGuard({
+  marketDecisions,
+  gameId,
+  oddsSnapshot,
+  gamePipelineStates,
+  noBetCount = 0,
+  logger = console,
+}) {
+  if (marketDecisions?.status !== 'NO_BET') {
+    return { handled: false, noBetCount };
+  }
+
+  const reason =
+    marketDecisions.reason_detail ??
+    marketDecisions.reason ??
+    'NO_BET';
+
+  logger.log(`  [NO_BET] ${gameId}: ${reason}`);
+  gamePipelineStates[gameId] = buildGamePipelineState({
+    oddsSnapshot,
+    projectionReady: true,
+    driversReady: false,
+    pricingReady: false,
+    cardReady: false,
+    blockingReasonCodes: [reason],
+  });
+
+  return {
+    handled: true,
+    noBetCount: noBetCount + 1,
+    reason,
+  };
 }
 
 function deriveGameBlockingReasonCodes({
@@ -513,18 +557,7 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
 
   if (!gateResult.shouldBet) {
     const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
-    payload.classification = 'PASS';
-    payload.action = 'PASS';
-    payload.status = 'PASS';
-    payload.ui_display_status = 'PASS';
-    payload.execution_status = 'BLOCKED';
-    payload.ev_passed = false;
-    payload.actionable = false;
-    payload.publish_ready = false;
-    payload.pass_reason_code = passReasonCode;
-    payload.reason_codes = Array.from(
-      new Set([passReasonCode, ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : [])]),
-    ).sort();
+    applyDecisionVeto(payload, passReasonCode);
     payload._publish_state = {
       ...(payload._publish_state && typeof payload._publish_state === 'object'
         ? payload._publish_state
@@ -2088,6 +2121,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       let cardsFailed = 0;
       let gatedCount = 0;
       let blockedCount = 0;
+      let noBetCount = 0;
       let projectionBlockedCount = 0;
       const gamePipelineStates = {};
       const errors = [];
@@ -2237,6 +2271,17 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             rest_days_away: _awayRestResult.restDays,
           };
           const marketDecisions = computeNHLMarketDecisions(enrichedSnapshot);
+          const noBetGuard = applyNoBetGuard({
+            marketDecisions,
+            gameId,
+            oddsSnapshot,
+            gamePipelineStates,
+            noBetCount,
+          });
+          if (noBetGuard.handled) {
+            noBetCount = noBetGuard.noBetCount;
+            continue;
+          }
 
           // WI-0571: log projection comparison per game
           const nhlTotalPC = marketDecisions?.TOTAL?.projection_comparison;
@@ -2611,6 +2656,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       const summary = {
         cardsGenerated,
         cardsFailed,
+        noBetCount,
         errors,
         pipeline_states: gamePipelineStates,
       };
@@ -2734,4 +2780,6 @@ module.exports = {
   attachNhlDriverContextToRawData,
   buildDualRunRecord,
   applyExecutionGateToNhlCard,
+  applyNoBetGuard,
+  applyPlayoffSigmaMultiplier,
 };

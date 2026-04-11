@@ -2078,6 +2078,17 @@ async function settlePendingCards({
         try {
           let result;
 
+          const isContradiction =
+            toBackfillUpperToken(payloadData?.action) === 'PASS' &&
+            toBackfillUpperToken(payloadData?.decision_v2?.official_status) === 'PLAY';
+          if (isContradiction) {
+            console.error(
+              `[INVARIANT_BREACH] card ${pendingCard.card_id} has action=PASS but decision_v2.official_status=PLAY — skipping settlement`,
+            );
+            cardsSkipped++;
+            continue;
+          }
+
           if (isNhlShotsCard) {
             lockedMarket = resolveNhlShotsSettlementContext(
               pendingCard,
