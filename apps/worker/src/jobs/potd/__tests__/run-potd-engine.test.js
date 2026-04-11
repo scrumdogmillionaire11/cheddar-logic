@@ -19,6 +19,7 @@ function resetTables() {
   db.exec(`
     DELETE FROM potd_bankroll;
     DELETE FROM potd_plays;
+    DELETE FROM potd_daily_stats;
     DELETE FROM card_results;
     DELETE FROM card_payloads;
     DELETE FROM odds_snapshots;
@@ -503,6 +504,74 @@ describe('runPotdEngine', () => {
 
     dataModule.closeDatabase();
     resetTables();
+  });
+
+  test('fired path writes potd_daily_stats row with potd_fired=1 and non-null selected_edge_pct', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const candidate = buildSelectedCandidate({ gameId: 'potd-stats-fired-001' });
+    insertGameRow({ gameId: candidate.gameId, sport: candidate.sport, homeTeam: candidate.home_team, awayTeam: candidate.away_team, gameTimeUtc: candidate.commence_time });
+
+    await runPotdEngine({
+      jobKey: 'potd|stats-fired-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      selectBestPlayFn: (vs) => vs[0],
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => {},
+    });
+
+    const rows = readRows('SELECT * FROM potd_daily_stats');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].potd_fired).toBe(1);
+    expect(rows[0].selected_edge_pct).not.toBeNull();
+    expect(rows[0].candidate_count).toBeGreaterThanOrEqual(1);
+    expect(rows[0].viable_count).toBeGreaterThanOrEqual(1);
+  });
+
+  test('no-viable path writes potd_daily_stats row with potd_fired=0 and null selected_edge_pct', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+
+    await runPotdEngine({
+      jobKey: 'potd|stats-no-play-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [], errors: [] }),
+      buildCandidatesFn: () => [],
+      scoreCandidateFn: (v) => v,
+      selectBestPlayFn: () => null,
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: async () => {},
+    });
+
+    const rows = readRows('SELECT * FROM potd_daily_stats');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].potd_fired).toBe(0);
+    expect(rows[0].selected_edge_pct).toBeNull();
+    expect(rows[0].candidate_count).toBe(0);
+  });
+
+  test('second run on same play_date upserts — row count stays 1', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+
+    const commonOpts = {
+      jobKey: 'potd|stats-upsert-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [], errors: [] }),
+      buildCandidatesFn: () => [],
+      scoreCandidateFn: (v) => v,
+      selectBestPlayFn: () => null,
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: async () => {},
+    };
+
+    await runPotdEngine(commonOpts);
+    // Second run: jobKey changes so alreadyPublished guard doesn't fire,
+    // but play_date is the same so upsert should keep row count at 1
+    await runPotdEngine({ ...commonOpts, jobKey: 'potd|stats-upsert-test-2' });
+
+    const rows = readRows('SELECT * FROM potd_daily_stats');
+    expect(rows).toHaveLength(1);
   });
 });
 

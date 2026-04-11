@@ -2,6 +2,51 @@
 
 require('dotenv').config();
 
+function isFiniteNumber(v) { return typeof v === 'number' && Number.isFinite(v); }
+
+function writeDailyStats(db, {
+  playDate,
+  potdFired,
+  candidateCount,
+  viableCount,
+  topEdgePct,
+  topScore,
+  selectedEdgePct,
+  selectedScore,
+  stakePctOfBankroll,
+}) {
+  db.prepare(`
+    INSERT INTO potd_daily_stats (
+      play_date, potd_fired, candidate_count, viable_count,
+      top_edge_pct, top_score, selected_edge_pct, selected_score,
+      stake_pct_of_bankroll
+    ) VALUES (
+      @play_date, @potd_fired, @candidate_count, @viable_count,
+      @top_edge_pct, @top_score, @selected_edge_pct, @selected_score,
+      @stake_pct_of_bankroll
+    )
+    ON CONFLICT(play_date) DO UPDATE SET
+      potd_fired            = excluded.potd_fired,
+      candidate_count       = excluded.candidate_count,
+      viable_count          = excluded.viable_count,
+      top_edge_pct          = excluded.top_edge_pct,
+      top_score             = excluded.top_score,
+      selected_edge_pct     = excluded.selected_edge_pct,
+      selected_score        = excluded.selected_score,
+      stake_pct_of_bankroll = excluded.stake_pct_of_bankroll
+  `).run({
+    play_date: playDate,
+    potd_fired: potdFired ? 1 : 0,
+    candidate_count: candidateCount,
+    viable_count: viableCount,
+    top_edge_pct: topEdgePct ?? null,
+    top_score: topScore ?? null,
+    selected_edge_pct: selectedEdgePct ?? null,
+    selected_score: selectedScore ?? null,
+    stake_pct_of_bankroll: stakePctOfBankroll ?? null,
+  });
+}
+
 const { v4: uuidV4 } = require('uuid');
 const { DateTime } = require('luxon');
 const {
@@ -21,6 +66,7 @@ const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/c
 const {
   buildCandidates,
   confidenceMultiplier,
+  confidenceThreshold,
   scoreCandidate,
   selectBestPlay,
   kellySize,
@@ -257,10 +303,20 @@ async function gatherBestCandidate({
     }
   }
 
+  const viableCandidates = scoredCandidates.filter(
+    c =>
+      isFiniteNumber(c.edgePct) &&
+      c.edgePct > POTD_MIN_EDGE &&
+      isFiniteNumber(c.totalScore) &&
+      c.totalScore >= confidenceThreshold('HIGH'),
+  );
+
   return {
     bestCandidate: selectBestPlayFn(scoredCandidates, { minConfidence: 'HIGH', minEdgePct: POTD_MIN_EDGE }),
     fetchErrors,
     activeSports: sports,
+    candidatesCount: scoredCandidates.length,
+    viableCount: viableCandidates.length,
   };
 }
 
@@ -323,7 +379,7 @@ async function runPotdEngine({
         };
       }
 
-      const { bestCandidate, fetchErrors, activeSports } = await gatherBestCandidate({
+      const { bestCandidate, fetchErrors, activeSports, candidatesCount, viableCount } = await gatherBestCandidate({
         fetchOddsFn,
         buildCandidatesFn,
         scoreCandidateFn,
@@ -338,6 +394,17 @@ async function runPotdEngine({
       const bankrollAtPost = bankrollState.bankroll;
 
       if (!bestCandidate) {
+        writeDailyStats(db, {
+          playDate,
+          potdFired: false,
+          candidateCount: candidatesCount,
+          viableCount,
+          topEdgePct: null,
+          topScore: null,
+          selectedEdgePct: null,
+          selectedScore: null,
+          stakePctOfBankroll: null,
+        });
         markJobRunSuccess(jobRunId, {
           no_play: true,
           play_date: playDate,
@@ -362,6 +429,17 @@ async function runPotdEngine({
       });
 
       if (!Number.isFinite(rawWager) || rawWager <= 0) {
+        writeDailyStats(db, {
+          playDate,
+          potdFired: false,
+          candidateCount: candidatesCount,
+          viableCount,
+          topEdgePct: bestCandidate.edgePct ?? null,
+          topScore: bestCandidate.totalScore ?? null,
+          selectedEdgePct: null,
+          selectedScore: null,
+          stakePctOfBankroll: null,
+        });
         markJobRunSuccess(jobRunId, {
           no_play: true,
           reason: 'zero_wager',
@@ -379,6 +457,17 @@ async function runPotdEngine({
       // Minimum-stake gate: if Kelly says bet less than 0.5 % of bankroll the
       // play is not worth featuring — reject rather than post dust.
       if (rawWager / bankrollAtPost < POTD_MIN_STAKE_PCT) {
+        writeDailyStats(db, {
+          playDate,
+          potdFired: false,
+          candidateCount: candidatesCount,
+          viableCount,
+          topEdgePct: bestCandidate.edgePct ?? null,
+          topScore: bestCandidate.totalScore ?? null,
+          selectedEdgePct: null,
+          selectedScore: null,
+          stakePctOfBankroll: null,
+        });
         markJobRunSuccess(jobRunId, {
           no_play: true,
           reason: 'stake_below_minimum',
@@ -460,6 +549,18 @@ async function runPotdEngine({
       });
 
       transaction();
+
+      writeDailyStats(db, {
+        playDate,
+        potdFired: true,
+        candidateCount: candidatesCount,
+        viableCount,
+        topEdgePct: bestCandidate.edgePct,
+        topScore: bestCandidate.totalScore,
+        selectedEdgePct: bestCandidate.edgePct,
+        selectedScore: bestCandidate.totalScore,
+        stakePctOfBankroll: wagerAmount / bankrollAtPost,
+      });
 
       let discordPosted = false;
       let discordError = null;

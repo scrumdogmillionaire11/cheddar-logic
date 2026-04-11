@@ -77,7 +77,8 @@
     "test:pipeline:settlement": "jest src/__tests__/settlement-pipeline-integration.test.js",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "deployment:verify": "node ../../scripts/deployment-verify.js"
+    "deployment:verify": "node ../../scripts/deployment-verify.js",
+    "stats:potd": "node src/scripts/potd-sanity-check.js"
   },
   "keywords": [
     "worker",
