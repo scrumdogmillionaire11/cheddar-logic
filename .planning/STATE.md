@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-12T00:00:00Z"
-last_activity: "2026-04-12 - Completed WI-0879-01: POTD reasoning string — deterministic reasoning builder, migration 073, web surface"
+last_updated: "2026-04-11T00:00:00Z"
+last_activity: "2026-04-11 - Completed WI-0882: Fix getActivePotdSports active:false filter — MLB/NFL now correctly excluded without env var override"
 ---
 
 # Project State

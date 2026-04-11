@@ -307,6 +307,17 @@ describe('runPotdEngine', () => {
   });
 
   test('hydrates MLB games from persisted odds snapshots before candidate construction', async () => {
+    // MLB has active:false in production config, but this test exercises the engine's
+    // MLB-specific odds-hydration code path. Mock MLB as active so it enters the pipeline.
+    jest.resetModules();
+    jest.mock('@cheddar-logic/odds/src/config', () => ({
+      SPORTS_CONFIG: {
+        NHL: { active: true },
+        NBA: { active: true },
+        MLB: { active: true },
+        NFL: { active: false },
+      },
+    }));
     const { runPotdEngine } = require('../run_potd_engine');
     let receivedGame = null;
 
@@ -491,5 +502,53 @@ describe('runPotdEngine', () => {
 
     dataModule.closeDatabase();
     resetTables();
+  });
+});
+
+describe('getActivePotdSports', () => {
+  let getActivePotdSports;
+  let mockOddsSportsConfig;
+
+  beforeEach(() => {
+    jest.resetModules();
+
+    mockOddsSportsConfig = {
+      NHL: { active: true },
+      NBA: { active: true },
+      MLB: { active: false },
+      NFL: { active: false },
+    };
+
+    jest.mock('@cheddar-logic/odds/src/config', () => ({
+      SPORTS_CONFIG: mockOddsSportsConfig,
+    }));
+
+    ({ __private: { getActivePotdSports } } = require('../run_potd_engine'));
+  });
+
+  afterEach(() => {
+    delete process.env.ENABLE_NHL_MODEL;
+    delete process.env.ENABLE_NBA_MODEL;
+    delete process.env.ENABLE_MLB_MODEL;
+    delete process.env.ENABLE_NFL_MODEL;
+  });
+
+  it('excludes sports with active:false', () => {
+    const result = getActivePotdSports();
+    expect(result).not.toContain('MLB');
+    expect(result).not.toContain('NFL');
+  });
+
+  it('includes sports with active:true', () => {
+    const result = getActivePotdSports();
+    expect(result).toContain('NHL');
+    expect(result).toContain('NBA');
+  });
+
+  it('excludes a sport when its env var is set to "false", even if active:true', () => {
+    process.env.ENABLE_NHL_MODEL = 'false';
+    const result = getActivePotdSports();
+    expect(result).not.toContain('NHL');
+    expect(result).toContain('NBA');
   });
 });

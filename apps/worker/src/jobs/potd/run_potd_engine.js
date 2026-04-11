@@ -52,7 +52,7 @@ const POTD_SPORT_ENV = {
 
 function getActivePotdSports() {
   return Object.entries(POTD_SPORT_ENV)
-    .filter(([sport, envKey]) => ODDS_SPORTS_CONFIG[sport] && process.env[envKey] !== 'false')
+    .filter(([sport, envKey]) => ODDS_SPORTS_CONFIG[sport] && ODDS_SPORTS_CONFIG[sport].active !== false && process.env[envKey] !== 'false')
     .map(([sport]) => sport);
 }
 
