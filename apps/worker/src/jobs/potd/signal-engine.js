@@ -443,6 +443,48 @@ function buildCandidates(game) {
   }));
 }
 
+function qualityLabel(score) {
+  if (score >= 0.67) return 'strong';
+  if (score >= 0.5) return 'solid';
+  return 'below average';
+}
+
+function buildReasoningString({
+  selectionLabel,
+  price,
+  edgePct,
+  modelWinProb,
+  lineValue,
+  marketConsensus,
+  marketType,
+  projectionSource,
+}) {
+  const priceStr = price > 0 ? `+${price}` : String(price);
+  const edgeStr = isFiniteNumber(edgePct)
+    ? `edge +${(edgePct * 100).toFixed(1)}pp`
+    : null;
+  const winProbStr = isFiniteNumber(modelWinProb)
+    ? `win prob ${(modelWinProb * 100).toFixed(1)}%`
+    : null;
+  const stats = [
+    edgeStr,
+    winProbStr,
+    `line value ${qualityLabel(lineValue)}`,
+    `market consensus ${qualityLabel(marketConsensus)}`,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  if (marketType === 'MONEYLINE' && projectionSource) {
+    const sourceLabel = projectionSource.startsWith('FULL_MODEL')
+      ? 'Full model projection'
+      : `Model projection (${projectionSource})`;
+    return `${sourceLabel} backs ${selectionLabel} at ${priceStr}: ${stats}.`;
+  }
+
+  return `Model likes ${selectionLabel} at ${priceStr}: ${stats}.`;
+}
+
 function scoreCandidate(candidate) {
   if (!candidate || !isFiniteNumber(candidate.price)) {
     return null;
@@ -528,6 +570,16 @@ function scoreCandidate(candidate) {
         model_win_prob: round(mlbSignal.modelWinProb, 6),
         projection_source: mlbSignal.projection_source ?? null,
       },
+      reasoning: buildReasoningString({
+        selectionLabel: candidate.selectionLabel,
+        price: candidate.price,
+        edgePct: modelEdge,
+        modelWinProb: round(mlbSignal.modelWinProb, 6),
+        lineValue,
+        marketConsensus,
+        marketType: candidate.marketType,
+        projectionSource: mlbSignal.projection_source ?? null,
+      }),
     };
   }
 
@@ -547,6 +599,16 @@ function scoreCandidate(candidate) {
       lineValue,
       marketConsensus,
     },
+    reasoning: buildReasoningString({
+      selectionLabel: candidate.selectionLabel,
+      price: candidate.price,
+      edgePct,
+      modelWinProb: modelFairProbability,
+      lineValue,
+      marketConsensus,
+      marketType: candidate.marketType,
+      projectionSource: null,
+    }),
   };
 }
 
