@@ -20,6 +20,7 @@ const { fetchOdds } = require('@cheddar-logic/odds');
 const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 const {
   buildCandidates,
+  confidenceMultiplier,
   scoreCandidate,
   selectBestPlay,
   kellySize,
@@ -127,7 +128,7 @@ function recommendedBetTypeFor(marketType) {
   return 'moneyline';
 }
 
-function buildCardPayloadData(candidate, { nowIso, wagerAmount, bankrollAtPost, kellyFraction }) {
+function buildCardPayloadData(candidate, { nowIso, wagerAmount, bankrollAtPost, kellyFraction, confidenceMultiplier: confidenceMultiplierValue }) {
   return {
     game_id: candidate.gameId,
     sport: candidate.sport,
@@ -158,6 +159,7 @@ function buildCardPayloadData(candidate, { nowIso, wagerAmount, bankrollAtPost, 
     wager_amount: wagerAmount,
     bankroll_at_post: bankrollAtPost,
     kelly_fraction: kellyFraction,
+    confidence_multiplier: confidenceMultiplierValue ?? null,
     odds_context: candidate.oddsContext,
     reasoning: candidate.reasoning ?? null,
   };
@@ -171,6 +173,7 @@ function buildPotdPlayRow(candidate, {
   wagerAmount,
   bankrollAtPost,
   kellyFraction,
+  confidenceMultiplier: confidenceMultiplierValue,
 }) {
   return {
     id: playId,
@@ -194,6 +197,7 @@ function buildPotdPlayRow(candidate, {
     wager_amount: wagerAmount,
     bankroll_at_post: bankrollAtPost,
     kelly_fraction: kellyFraction,
+    confidence_multiplier: confidenceMultiplierValue ?? null,
     game_time_utc: candidate.commence_time,
     posted_at: nowIso,
     reasoning: candidate.reasoning ?? null,
@@ -206,6 +210,7 @@ function buildPotdCard(candidate, row, { cardId, nowIso }) {
     wagerAmount: row.wager_amount,
     bankrollAtPost: row.bankroll_at_post,
     kellyFraction: row.kelly_fraction,
+    confidenceMultiplier: row.confidence_multiplier,
   });
 
   return {
@@ -392,8 +397,10 @@ async function runPotdEngine({
         };
       }
 
-      // Round to nearest $0.50 for clean UX; stays within the 2 % cap.
-      const wagerAmount = Math.round(rawWager * 2) / 2;
+      // Apply confidence multiplier AFTER Kelly cap (cap lives inside kellySize),
+      // then round to nearest $0.50 for clean UX.
+      const adjustedWager = Math.round(rawWager * confidenceMultiplier(bestCandidate.confidenceLabel) * 100) / 100;
+      const wagerAmount = Math.round(adjustedWager * 2) / 2;
 
       const playRow = buildPotdPlayRow(bestCandidate, {
         playId,
@@ -403,6 +410,7 @@ async function runPotdEngine({
         wagerAmount,
         bankrollAtPost,
         kellyFraction: DEFAULT_KELLY_FRACTION,
+        confidenceMultiplier: confidenceMultiplier(bestCandidate.confidenceLabel),
       });
 
       const transaction = db.transaction(() => {
@@ -421,14 +429,14 @@ async function runPotdEngine({
             id, play_date, game_id, card_id, sport, home_team, away_team,
             market_type, selection, selection_label, line, price, confidence_label,
             total_score, model_win_prob, implied_prob, edge_pct, score_breakdown,
-            wager_amount, bankroll_at_post, kelly_fraction, game_time_utc, posted_at,
-            reasoning
+            wager_amount, bankroll_at_post, kelly_fraction, confidence_multiplier,
+            game_time_utc, posted_at, reasoning
           ) VALUES (
             @id, @play_date, @game_id, @card_id, @sport, @home_team, @away_team,
             @market_type, @selection, @selection_label, @line, @price, @confidence_label,
             @total_score, @model_win_prob, @implied_prob, @edge_pct, @score_breakdown,
-            @wager_amount, @bankroll_at_post, @kelly_fraction, @game_time_utc, @posted_at,
-            @reasoning
+            @wager_amount, @bankroll_at_post, @kelly_fraction, @confidence_multiplier,
+            @game_time_utc, @posted_at, @reasoning
           )`,
         ).run(playRow);
 
