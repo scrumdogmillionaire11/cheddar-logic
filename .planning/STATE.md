@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-10T22:00:00Z"
-last_activity: "2026-04-10 - Completed WI-0856 /api/market-pulse route with 4.5-min cache; branch agent/copilot/WI-0856-market-pulse-api"
+last_updated: "2025-07-25T00:00:00Z"
+last_activity: "2025-07-25 - Completed S5-01, S5-02, S5-03 on branch agent/copilot/S5-model-advanced-architecture — WI-0830 (score-engine), WI-0831 (isotonic calibration), WI-0829 (residual projection)"
 ---
 
 # Project State
@@ -116,10 +116,10 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 
 | WI | Title | Priority | Deps |
 |----|-------|----------|------|
-| **WI-0830** | Additive z-score model core — shared bounded scoring framework (NBA/NHL/MLB) | High | WI-0820, WI-0821, WI-0822, WI-0823 |
-| **WI-0831** | Isotonic regression calibration — fit per-market calibrator, apply at inference | High | WI-0825 |
+| ~~**WI-0830**~~ | ~~Additive z-score model core — shared bounded scoring framework (NBA/NHL/MLB)~~ | ~~High~~ COMPLETE (2025-07-25) | WI-0820, WI-0821, WI-0822, WI-0823 |
+| ~~**WI-0831**~~ | ~~Isotonic regression calibration — fit per-market calibrator, apply at inference~~ | ~~High~~ COMPLETE (2025-07-25) | WI-0825 |
 | **WI-0832** | Backtest closing-line substitution removal — enforce pre-game odds only | High | none |
-| **WI-0829** | Residual modeling layer — predict fair line vs market line delta | Medium | WI-0822, WI-0823, WI-0824, WI-0826 |
+| ~~**WI-0829**~~ | ~~Residual modeling layer — predict fair line vs market line delta~~ | ~~Medium~~ COMPLETE (2025-07-25) | WI-0822, WI-0823, WI-0824, WI-0826 |
 
 **Sprint 5 done when:** All sport models produce a bounded `modelScore in (0,1)` via additive z-score path; backtests no longer use closing lines.
 
