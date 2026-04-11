@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-10T20:00:00Z"
-last_activity: "2026-04-10 - Completed WI-0864/0865/0866/0867 Projection Proxy Eval sprint; 4 WIs, 1413/1413 worker tests pass, tsc 0 errors; branch agent/copilot/WI-0864-projection-proxy-eval"
+last_updated: "2026-04-10T21:30:00Z"
+last_activity: "2026-04-10 - Completed WI-0870 per-page metadata/OG tags; 9 files modified, 1 created, build passes; branch agent/copilot/WI-0870-per-page-metadata"
 ---
 
 # Project State
