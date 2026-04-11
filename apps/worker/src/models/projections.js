@@ -6,6 +6,7 @@
  */
 
 const { classifyModelStatus, buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
+const { buildModelOutput } = require('./model-output');
 const scoreEngine = require('../utils/score-engine');
 
 
@@ -473,7 +474,30 @@ function projectNBACanonical(
   const awayProjected = baseAwayPPP * adjustedPace;
   const projectedTotal = homeProjected + awayProjected;
 
-  return {
+  return buildModelOutput({
+    market: 'NBA_TOTAL',
+    model_status: 'MODEL_OK',
+    fairProb: null,
+    fairLine: Math.round(projectedTotal * 10) / 10,
+    confidence: 0,
+    featuresUsed: {
+      homeOffRtg,
+      homeDefRtg,
+      homePace,
+      awayOffRtg,
+      awayDefRtg,
+      awayPace,
+      paceAdjustment,
+      homeOffRtgNorm: Math.round(homeOffRtgNorm * 1000) / 1000,
+      homeDefRtgNorm: Math.round(homeDefRtgNorm * 1000) / 1000,
+      awayOffRtgNorm: Math.round(awayOffRtgNorm * 1000) / 1000,
+      awayDefRtgNorm: Math.round(awayDefRtgNorm * 1000) / 1000,
+    },
+    missingOptional: [],
+    missingCritical: [],
+    diagnostics: {
+      projection_source: 'CANONICAL',
+    },
     homeProjected: Math.round(homeProjected * 10) / 10,
     awayProjected: Math.round(awayProjected * 10) / 10,
     projectedTotal: Math.round(projectedTotal * 10) / 10,
@@ -488,7 +512,7 @@ function projectNBACanonical(
     internalOffenseScore: Math.round(internalOffenseScore * 1000) / 1000,
     offenseContributions: offenseContributions ?? null,
     offenseZScores: offenseZScores ?? null,
-  };
+  });
 }
 
 module.exports = {
