@@ -12,7 +12,7 @@ autonomous: true
 
 must_haves:
   truths:
-    - "projectFullGameML() uses projectFullGameTotal() run expectations with logistic coefficient 0.55"
+    - "computeMLBDriverCards() returns a full_game_ml card with edge and projected_win_prob_home fields when ml_home/ml_away prices are present in the snapshot"
     - "computeMLBDriverCards() returns a full_game_ml card when full-game ML line is available"
     - "selectMlbGameMarket() ranks all three markets (f5_total, full_game_total, full_game_ml) by edge*confidence and returns the highest"
     - "run_mlb_model.js resolves ml_home/ml_away prices and setsfull_game_ml_ok in pipeline state"
@@ -111,9 +111,9 @@ function marketScore(card) {
   return Math.abs(card.edge) * (card.confidence || 0.5);
 }
 const candidates = [
-  { key: 'f5_total',       card: driverCards.f5_total },
-  { key: 'full_game_total', card: driverCards.full_game_total },
-  { key: 'full_game_ml',   card: driverCards.full_game_ml },
+  { key: 'f5_total',        card: driverCards.find(d => d.market === 'f5_total') ?? null },
+  { key: 'full_game_total', card: driverCards.find(d => d.market === 'full_game_total') ?? null },
+  { key: 'full_game_ml',    card: driverCards.find(d => d.market === 'full_game_ml') ?? null },
 ].filter(c => c.card != null);
 const best = candidates.reduce((a, b) => marketScore(a.card) >= marketScore(b.card) ? a : b, candidates[0]);
 if (!best || !best.card.ev_threshold_passed) return { market: null, reason: 'no_qualifying_market' };
@@ -123,8 +123,37 @@ return { market: best.key, card: best.card, score: marketScore(best.card) };
 **Wire full_game_ml into computeMLBDriverCards():**
 After the block that builds `full_game_total` card, add:
 ```js
-if (context.ml_home != null && context.ml_away != null) {
-  driverCards.full_game_ml = projectFullGameML(homePitcher, awayPitcher, context.ml_home, context.ml_away, context);
+if (mlb.ml_home != null && mlb.ml_away != null) {
+  const fgMlContext = {
+    home_offense_profile: mlb.home_offense_profile ?? null,
+    away_offense_profile: mlb.away_offense_profile ?? null,
+    park_run_factor: mlb.park_run_factor ?? null,
+    temp_f: mlb.temp_f ?? null,
+    wind_mph: mlb.wind_mph ?? null,
+    wind_dir: mlb.wind_dir ?? null,
+    roof: mlb.roof ?? null,
+    home_bullpen_era: mlb.home_bullpen_era ?? null,
+    away_bullpen_era: mlb.away_bullpen_era ?? null,
+  };
+  const fgMlResult = projectFullGameML(homePitcher, awayPitcher, mlb.ml_home, mlb.ml_away, fgMlContext);
+  if (fgMlResult) {
+    cards.push({
+      market: 'full_game_ml',
+      prediction: fgMlResult.side,
+      confidence: fgMlResult.confidence,
+      ev_threshold_passed: fgMlResult.ev_threshold_passed,
+      reasoning: fgMlResult.reasoning,
+      edge: fgMlResult.edge,
+      projected_win_prob_home: fgMlResult.projected_win_prob_home,
+      projection_source: fgMlResult.projection_source,
+      drivers: [{
+        type: 'mlb-fg-ml',
+        edge: fgMlResult.edge,
+        side: fgMlResult.side,
+        win_prob: fgMlResult.projected_win_prob_home,
+      }],
+    });
+  }
 }
 ```
 

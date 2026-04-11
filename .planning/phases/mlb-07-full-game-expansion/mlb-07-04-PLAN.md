@@ -94,7 +94,29 @@ function buildMLBModelCandidates(game) {
     const away = game.away_pitcher ?? null;
     if (!home || !away) return [];
 
-    const driverCards = computeMLBDriverCards(home, away, context);
+    // computeMLBDriverCards signature is (gameId, oddsSnapshot) — build synthetic snapshot
+    const syntheticSnapshot = {
+      total: game.total_line ?? null,
+      raw_data: JSON.stringify({
+        mlb: {
+          home_pitcher: home,
+          away_pitcher: away,
+          home_offense_profile: game.home_offense_profile ?? null,
+          away_offense_profile: game.away_offense_profile ?? null,
+          park_run_factor: game.park_factor ?? null,
+          temp_f: game.temp_f ?? null,
+          wind_mph: game.wind_mph ?? null,
+          wind_dir: game.wind_dir ?? null,
+          roof: game.roof ?? null,
+          home_bullpen_era: game.home_bullpen_era ?? null,
+          away_bullpen_era: game.away_bullpen_era ?? null,
+          f5_line: game.f5_line ?? null,
+          ml_home: game.ml_home ?? null,
+          ml_away: game.ml_away ?? null,
+        },
+      }),
+    };
+    const driverCards = computeMLBDriverCards(game.game_id ?? 'potd-synthetic', syntheticSnapshot);
     if (!driverCards) return [];
 
     const candidates = [];

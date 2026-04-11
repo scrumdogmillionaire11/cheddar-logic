@@ -373,7 +373,7 @@ All tests pass. grep shows ≥10 references to the new functions.
 </verification>
 
 <success_criteria>
-- `projectLateInningsRuns()`, `projectFullGameTotal()`, `projectFullGameTotalCard()` exist and are exported
+- `projectLateInningsRuns()`, `projectFullGameTotal()`, `projectFullGameTotalCard()` exist and are explicitly added to `module.exports` in `mlb-model.js`
 - `computeMLBDriverCards()` produces `full_game_total` card when total line present
 - Full-game total is always greater than F5 for the same matchup
 - All pre-existing MLB model tests pass
