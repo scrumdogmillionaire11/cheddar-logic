@@ -15,7 +15,12 @@
 
 require('dotenv').config();
 
-const { getDatabaseReadOnly, closeReadOnlyInstance } = require('@cheddar-logic/data');
+const {
+  getDatabase,
+  getDatabaseReadOnly,
+  closeDatabase,
+  closeReadOnlyInstance,
+} = require('@cheddar-logic/data');
 
 const LOOKBACK_DAYS = Number(process.env.HEALTH_LOOKBACK_DAYS || 30);
 const SPORTS = ['nba', 'nhl', 'mlb', 'ncaam', 'nfl'];
@@ -27,13 +32,22 @@ const STALE_MINUTES = 90;
 const MODEL_FRESHNESS_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
 function parseArgs(argv = process.argv.slice(2)) {
-  const opts = { json: false, sport: null, days: LOOKBACK_DAYS };
+  const opts = { json: false, persist: false, sport: null, days: LOOKBACK_DAYS };
   for (const arg of argv) {
     if (arg === '--json') { opts.json = true; continue; }
+    if (arg === '--persist') { opts.persist = true; continue; }
     if (arg.startsWith('--days=')) { opts.days = Number(arg.split('=')[1]); continue; }
     if (arg.startsWith('--sport=')) { opts.sport = arg.split('=')[1].toLowerCase(); continue; }
   }
   return opts;
+}
+
+function floorToFiveMinuteBucketUtc(input = new Date()) {
+  const date = new Date(input);
+  const floored = new Date(date.getTime());
+  floored.setUTCSeconds(0, 0);
+  floored.setUTCMinutes(Math.floor(floored.getUTCMinutes() / 5) * 5);
+  return floored.toISOString();
 }
 
 function statusIcon(status) {
@@ -307,17 +321,17 @@ function printTextReport(data, opts) {
   console.log('');
 }
 
-async function main() {
-  const opts = parseArgs();
-  const lookbackDays = opts.days;
+function buildDrClaireReport(opts = {}, deps = {}) {
+  const lookbackDays = opts.days ?? LOOKBACK_DAYS;
   const sportsToRun = opts.sport ? [opts.sport] : SPORTS;
-
-  let db;
+  const openReadOnlyDb = deps.openReadOnlyDb || getDatabaseReadOnly;
+  const closeReadOnlyDb = deps.closeReadOnlyDb || closeReadOnlyInstance;
+  let db = null;
   try {
-    db = getDatabaseReadOnly();
+    db = openReadOnlyDb();
   } catch (err) {
     console.error(`[dr_claire] Failed to connect to database: ${err.message}`);
-    process.exit(1);
+    throw err;
   }
 
   try {
@@ -342,15 +356,103 @@ async function main() {
       sports: sportResults,
       pipeline,
     };
-
-    if (opts.json) {
-      console.log(JSON.stringify(report, null, 2));
-    } else {
-      printTextReport(report, opts);
-    }
+    return report;
   } finally {
-    closeReadOnlyInstance();
+    closeReadOnlyDb(db);
   }
+}
+
+function persistModelHealthSnapshots(report, opts = {}, deps = {}) {
+  if (!opts.persist) {
+    return { persisted: false, rowCount: 0, runAt: null };
+  }
+
+  const openWriterDb = deps.openWriterDb || getDatabase;
+  const closeWriterDb = deps.closeWriterDb || closeDatabase;
+  const runAt = opts.runAt || floorToFiveMinuteBucketUtc(report.generatedAt);
+  let db = null;
+  let rowCount = 0;
+
+  try {
+    db = openWriterDb();
+    const stmt = db.prepare(`
+      INSERT INTO model_health_snapshots (
+        sport,
+        run_at,
+        hit_rate,
+        roi_units,
+        roi_pct,
+        total_unique,
+        wins,
+        losses,
+        streak,
+        last10_hit_rate,
+        status,
+        signals_json,
+        lookback_days
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(sport, run_at, lookback_days) DO UPDATE SET
+        hit_rate = excluded.hit_rate,
+        roi_units = excluded.roi_units,
+        roi_pct = excluded.roi_pct,
+        total_unique = excluded.total_unique,
+        wins = excluded.wins,
+        losses = excluded.losses,
+        streak = excluded.streak,
+        last10_hit_rate = excluded.last10_hit_rate,
+        status = excluded.status,
+        signals_json = excluded.signals_json,
+        created_at = CURRENT_TIMESTAMP
+    `);
+
+    for (const [sport, snapshot] of Object.entries(report.sports || {})) {
+      stmt.run(
+        sport,
+        runAt,
+        snapshot.hitRate,
+        snapshot.netUnits,
+        snapshot.roiPct,
+        snapshot.totalPredictions ?? 0,
+        snapshot.wins ?? 0,
+        snapshot.losses ?? 0,
+        snapshot.streak ?? null,
+        snapshot.last10HitRate,
+        snapshot.status,
+        JSON.stringify(snapshot.degradationSignals || []),
+        opts.days ?? report.lookbackDays ?? LOOKBACK_DAYS,
+      );
+      rowCount += 1;
+    }
+
+    return { persisted: true, rowCount, runAt };
+  } finally {
+    if (db) closeWriterDb(db);
+  }
+}
+
+async function runDrClaireHealthReport(opts = {}, deps = {}) {
+  const resolvedOpts = {
+    json: Boolean(opts.json),
+    persist: Boolean(opts.persist),
+    sport: opts.sport ?? null,
+    days: opts.days ?? LOOKBACK_DAYS,
+    runAt: opts.runAt ?? null,
+  };
+  const report = buildDrClaireReport(resolvedOpts, deps);
+  const persistResult = persistModelHealthSnapshots(report, resolvedOpts, deps);
+
+  if (resolvedOpts.json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    printTextReport(report, resolvedOpts);
+  }
+
+  return { report, persistResult };
+}
+
+async function main() {
+  await runDrClaireHealthReport(parseArgs());
 }
 
 if (require.main === module) {
@@ -362,5 +464,10 @@ if (require.main === module) {
 
 module.exports = {
   assignStatus,
+  buildDrClaireReport,
+  floorToFiveMinuteBucketUtc,
+  parseArgs,
+  persistModelHealthSnapshots,
   runSportHealthQuery,
+  runDrClaireHealthReport,
 };

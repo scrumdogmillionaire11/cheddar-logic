@@ -2,6 +2,9 @@
 
 const {
   assignStatus,
+  floorToFiveMinuteBucketUtc,
+  parseArgs,
+  persistModelHealthSnapshots,
   runSportHealthQuery,
 } = require('../dr_claire_health_report');
 
@@ -61,6 +64,162 @@ describe('assignStatus', () => {
     const staleCardMs = Date.now() - (200 * 60 * 1000);
 
     expect(assignStatus(0.6, staleCardMs, true)).toBe('healthy');
+  });
+});
+
+describe('parseArgs', () => {
+  test('supports --persist alongside existing flags', () => {
+    const opts = parseArgs(['--persist', '--json', '--days=14', '--sport=nba']);
+
+    expect(opts).toEqual({
+      persist: true,
+      json: true,
+      days: 14,
+      sport: 'nba',
+    });
+  });
+});
+
+describe('floorToFiveMinuteBucketUtc', () => {
+  test('floors timestamps to the 5-minute UTC bucket', () => {
+    expect(floorToFiveMinuteBucketUtc('2026-04-10T18:07:49.123Z')).toBe(
+      '2026-04-10T18:05:00.000Z',
+    );
+  });
+});
+
+describe('persistModelHealthSnapshots', () => {
+  function makeReport() {
+    return {
+      generatedAt: '2026-04-10T18:07:49.123Z',
+      lookbackDays: 30,
+      sports: {
+        nba: {
+          hitRate: 0.55,
+          netUnits: 3.25,
+          roiPct: 4.5,
+          totalPredictions: 20,
+          wins: 11,
+          losses: 9,
+          streak: 'W2',
+          last10HitRate: 0.6,
+          status: 'healthy',
+          degradationSignals: ['Negative ROI: -1.0%'],
+        },
+        nhl: {
+          hitRate: 0.48,
+          netUnits: -1.5,
+          roiPct: -2.1,
+          totalPredictions: 18,
+          wins: 8,
+          losses: 10,
+          streak: 'L1',
+          last10HitRate: 0.4,
+          status: 'degraded',
+          degradationSignals: [],
+        },
+      },
+    };
+  }
+
+  function makeWriterDeps(runCalls) {
+    return {
+      openWriterDb: jest.fn(() => ({
+        prepare: jest.fn(() => ({
+          run: jest.fn((...args) => {
+            runCalls.push(args);
+          }),
+        })),
+      })),
+      closeWriterDb: jest.fn(),
+    };
+  }
+
+  test('does not open the writer without --persist', () => {
+    const runCalls = [];
+    const deps = makeWriterDeps(runCalls);
+
+    const result = persistModelHealthSnapshots(makeReport(), { persist: false }, deps);
+
+    expect(result).toEqual({ persisted: false, rowCount: 0, runAt: null });
+    expect(deps.openWriterDb).not.toHaveBeenCalled();
+    expect(runCalls).toHaveLength(0);
+  });
+
+  test('writes one upsert row per sport in the bucketed run window', () => {
+    const runCalls = [];
+    const deps = makeWriterDeps(runCalls);
+
+    const result = persistModelHealthSnapshots(
+      makeReport(),
+      { persist: true, days: 30 },
+      deps,
+    );
+
+    expect(result).toEqual({
+      persisted: true,
+      rowCount: 2,
+      runAt: '2026-04-10T18:05:00.000Z',
+    });
+    expect(deps.openWriterDb).toHaveBeenCalledTimes(1);
+    expect(deps.closeWriterDb).toHaveBeenCalledTimes(1);
+    expect(runCalls).toHaveLength(2);
+    expect(runCalls[0]).toEqual([
+      'nba',
+      '2026-04-10T18:05:00.000Z',
+      0.55,
+      3.25,
+      4.5,
+      20,
+      11,
+      9,
+      'W2',
+      0.6,
+      'healthy',
+      JSON.stringify(['Negative ROI: -1.0%']),
+      30,
+    ]);
+    expect(runCalls[1][0]).toBe('nhl');
+  });
+
+  test('supports single-sport persistence', () => {
+    const runCalls = [];
+    const deps = makeWriterDeps(runCalls);
+    const report = makeReport();
+    report.sports = { nba: report.sports.nba };
+
+    const result = persistModelHealthSnapshots(
+      report,
+      { persist: true, days: 30, runAt: '2026-04-10T18:10:00.000Z' },
+      deps,
+    );
+
+    expect(result.rowCount).toBe(1);
+    expect(result.runAt).toBe('2026-04-10T18:10:00.000Z');
+    expect(runCalls).toHaveLength(1);
+    expect(runCalls[0][0]).toBe('nba');
+  });
+
+  test('keeps different lookback windows isolated within the same bucket', () => {
+    const runCalls = [];
+    const deps = makeWriterDeps(runCalls);
+    const report = makeReport();
+
+    persistModelHealthSnapshots(
+      report,
+      { persist: true, days: 14, runAt: '2026-04-10T18:05:00.000Z' },
+      deps,
+    );
+    persistModelHealthSnapshots(
+      report,
+      { persist: true, days: 30, runAt: '2026-04-10T18:05:00.000Z' },
+      deps,
+    );
+
+    expect(runCalls).toHaveLength(4);
+    expect(runCalls[0][12]).toBe(14);
+    expect(runCalls[2][12]).toBe(30);
+    expect(runCalls[0][1]).toBe(runCalls[2][1]);
   });
 });
 
