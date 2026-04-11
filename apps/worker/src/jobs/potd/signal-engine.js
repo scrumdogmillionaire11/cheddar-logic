@@ -1,5 +1,7 @@
 'use strict';
 
+const { resolveMLBModelSignal } = require('../../models/mlb-model');
+
 function isFiniteNumber(value) {
   return Number.isFinite(value);
 }
@@ -66,6 +68,11 @@ function confidenceLabel(score) {
   if (score >= 0.75) return 'ELITE';
   if (score >= 0.5) return 'HIGH';
   return 'LOW';
+}
+
+function isMlbSport(sport) {
+  const token = String(sport || '').trim().toUpperCase();
+  return token === 'MLB' || token === 'BASEBALL_MLB';
 }
 
 function toSelectionLabel({ selection, homeTeam, awayTeam, line }) {
@@ -415,11 +422,25 @@ function buildCandidates(game) {
     return [];
   }
 
-  return [
+  const candidates = [
     ...buildSpreadCandidates(game),
     ...buildTotalCandidates(game),
     ...buildMoneylineCandidates(game),
   ];
+
+  if (!isMlbSport(game.sport) || !game.oddsSnapshot) {
+    return candidates;
+  }
+
+  const mlbSignal = resolveMLBModelSignal(game);
+  if (!mlbSignal) {
+    return candidates;
+  }
+
+  return candidates.map((candidate) => ({
+    ...candidate,
+    mlbSignal,
+  }));
 }
 
 function scoreCandidate(candidate) {
@@ -484,7 +505,12 @@ function scoreCandidate(candidate) {
 
   // MLB model override: replace consensus fair prob + edge with pitcher-quality model signal
   const mlbSignal = candidate.mlbSignal ?? null;
-  if (mlbSignal && Number.isFinite(mlbSignal.modelWinProb) && Number.isFinite(mlbSignal.edge)) {
+  const useMlbModelSignal =
+    isMlbSport(candidate.sport) &&
+    candidate.marketType === 'MONEYLINE' &&
+    Number.isFinite(mlbSignal?.modelWinProb) &&
+    Number.isFinite(mlbSignal?.edge);
+  if (useMlbModelSignal) {
     const modelEdge = round(mlbSignal.edge, 6);
     const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
     return {
