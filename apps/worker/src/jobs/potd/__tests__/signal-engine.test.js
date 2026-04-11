@@ -257,6 +257,64 @@ describe('potd signal engine', () => {
     expect(best.totalScore).toBe(0.68);
   });
 
+  test('MLB model signal overrides consensus fair prob in scoreCandidate', () => {
+    const candidate = {
+      gameId: 'mlb-game-001',
+      sport: 'baseball_mlb',
+      home_team: 'Cubs',
+      away_team: 'Cardinals',
+      commence_time: new Date().toISOString(),
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Cubs',
+      line: null,
+      price: -130,
+      consensusLine: null,
+      consensusPrice: -132,
+      counterpartConsensusPrice: 112,
+      comparableLines: [],
+      comparablePrices: [-132, -130, -128],
+      sourceCount: 3,
+      mlbSignal: { modelWinProb: 0.58, edge: 0.06, projection_source: 'FULL_MODEL' },
+    };
+
+    const result = scoreCandidate(candidate);
+    expect(result).not.toBeNull();
+    expect(result.modelWinProb).toBe(0.58);
+    expect(result.edgePct).toBe(0.06);
+    expect(result.scoreBreakdown.model_win_prob).toBe(0.58);
+    expect(result.scoreBreakdown.projection_source).toBe('FULL_MODEL');
+  });
+
+  test('MLB candidate without mlbSignal falls back to consensus path', () => {
+    const candidate = {
+      gameId: 'mlb-game-002',
+      sport: 'baseball_mlb',
+      home_team: 'Cubs',
+      away_team: 'Cardinals',
+      commence_time: new Date().toISOString(),
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Cubs',
+      line: null,
+      price: -130,
+      consensusLine: null,
+      consensusPrice: -132,
+      counterpartConsensusPrice: 112,
+      comparableLines: [],
+      comparablePrices: [-132, -130, -128],
+      sourceCount: 3,
+      // no mlbSignal property
+    };
+
+    const result = scoreCandidate(candidate);
+    expect(result).not.toBeNull();
+    // edgePct must NOT be the model edge (0.06) — it is the consensus edge
+    expect(result.edgePct).not.toBe(0.06);
+    // scoreBreakdown must not have model_win_prob
+    expect(result.scoreBreakdown.model_win_prob).toBeUndefined();
+  });
+
   test('favorable line delta increases lineValue above neutral 0.5', () => {
     // A candidate whose line is better than consensus should score above neutral
     const nhlOver = {

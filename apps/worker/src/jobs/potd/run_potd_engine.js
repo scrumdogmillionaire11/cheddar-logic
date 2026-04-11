@@ -11,6 +11,7 @@ const {
   shouldRunJobKey,
   withDb,
   getDatabase,
+  getLatestOdds,
   insertCardPayload,
   upsertGame,
   createJob,
@@ -227,7 +228,14 @@ async function gatherBestCandidate({
       fetchErrors.push(...result.errors);
     }
     for (const game of result?.games || []) {
-      const candidates = buildCandidatesFn(game);
+      const candidateGame =
+        sport === 'MLB' && game?.gameId
+          ? {
+              ...game,
+              oddsSnapshot: getLatestOdds(game.gameId) || null,
+            }
+          : game;
+      const candidates = buildCandidatesFn(candidateGame);
       for (const candidate of candidates) {
         const scored = scoreCandidateFn(candidate);
         if (scored) scoredCandidates.push(scored);

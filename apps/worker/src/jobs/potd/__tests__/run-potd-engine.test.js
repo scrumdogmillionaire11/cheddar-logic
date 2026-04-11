@@ -21,6 +21,7 @@ function resetTables() {
     DELETE FROM potd_plays;
     DELETE FROM card_results;
     DELETE FROM card_payloads;
+    DELETE FROM odds_snapshots;
     DELETE FROM games;
     DELETE FROM job_runs;
   `);
@@ -63,6 +64,40 @@ function buildSelectedCandidate(overrides = {}) {
     },
     ...overrides,
   };
+}
+
+function insertGameRow({
+  gameId,
+  sport,
+  homeTeam,
+  awayTeam,
+  gameTimeUtc,
+  status = 'scheduled',
+}) {
+  const db = new Database(TEST_DB_PATH);
+  db.prepare(`
+    INSERT INTO games (game_id, sport, home_team, away_team, game_time_utc, status)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(gameId, sport, homeTeam, awayTeam, gameTimeUtc, status);
+  db.close();
+}
+
+function insertOddsSnapshotRow({
+  id,
+  gameId,
+  sport,
+  capturedAt,
+  h2hHome,
+  h2hAway,
+  rawData,
+}) {
+  const db = new Database(TEST_DB_PATH);
+  db.prepare(`
+    INSERT INTO odds_snapshots (
+      id, game_id, sport, captured_at, h2h_home, h2h_away, raw_data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, gameId, sport, capturedAt, h2hHome, h2hAway, rawData);
+  db.close();
 }
 
 describe('runPotdEngine', () => {
@@ -268,5 +303,152 @@ describe('runPotdEngine', () => {
       `SELECT discord_posted FROM potd_plays LIMIT 1`,
     )[0];
     expect(playRow.discord_posted).toBe(0);
+  });
+
+  test('hydrates MLB games from persisted odds snapshots before candidate construction', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    let receivedGame = null;
+
+    insertGameRow({
+      gameId: 'mlb-potd-001',
+      sport: 'mlb',
+      homeTeam: 'Dodgers',
+      awayTeam: 'Rockies',
+      gameTimeUtc: '2026-04-12T01:10:00.000Z',
+    });
+    insertOddsSnapshotRow({
+      id: 'mlb-potd-001-snapshot',
+      gameId: 'mlb-potd-001',
+      sport: 'mlb',
+      capturedAt: '2026-04-11T18:00:00.000Z',
+      h2hHome: -170,
+      h2hAway: 150,
+      rawData: JSON.stringify({
+        mlb: {
+          home_pitcher: {
+            siera: 2.5,
+            x_fip: 2.6,
+            x_era: 2.55,
+            k_per_9: 11.0,
+            bb_per_9: 1.8,
+            gb_pct: 0.5,
+            hr_per_9: 0.6,
+          },
+          away_pitcher: {
+            siera: 5.8,
+            x_fip: 5.9,
+            x_era: 5.85,
+            k_per_9: 5.5,
+            bb_per_9: 4.2,
+            gb_pct: 0.35,
+            hr_per_9: 1.8,
+          },
+          home_offense_profile: {
+            wrc_plus: 100,
+            xwoba: 0.32,
+            k_pct: 0.225,
+            iso: 0.165,
+            bb_pct: 0.085,
+            hard_hit_pct: 39,
+          },
+          away_offense_profile: {
+            wrc_plus: 70,
+            xwoba: 0.28,
+            k_pct: 0.28,
+            iso: 0.12,
+            bb_pct: 0.07,
+            hard_hit_pct: 30,
+          },
+          park_run_factor: 1,
+          temp_f: 72,
+          wind_mph: 0,
+          wind_dir: 'CALM',
+          roof: 'OPEN',
+          home_bullpen_era: 3.2,
+          away_bullpen_era: 5.8,
+        },
+      }),
+    });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|mlb-runtime-signal',
+      force: true,
+      fetchOddsFn: async ({ sport }) => {
+        if (sport !== 'MLB') {
+          return { games: [], errors: [] };
+        }
+        return {
+          games: [
+            {
+              gameId: 'mlb-potd-001',
+              sport: 'MLB',
+              homeTeam: 'Dodgers',
+              awayTeam: 'Rockies',
+              gameTimeUtc: '2026-04-12T01:10:00.000Z',
+              capturedAtUtc: '2026-04-11T18:05:00.000Z',
+              market: {
+                spreads: [],
+                totals: [],
+                h2h: [
+                  { book: 'book-a', home: -170, away: 150 },
+                  { book: 'book-b', home: -165, away: 145 },
+                  { book: 'book-c', home: -160, away: 140 },
+                ],
+              },
+            },
+          ],
+          errors: [],
+        };
+      },
+      buildCandidatesFn: (game) => {
+        receivedGame = game;
+        return [
+          buildSelectedCandidate({
+            gameId: game.gameId,
+            sport: game.sport,
+            home_team: game.homeTeam,
+            away_team: game.awayTeam,
+            commence_time: game.gameTimeUtc,
+            marketType: 'MONEYLINE',
+            selection: 'HOME',
+            selectionLabel: game.homeTeam,
+            line: null,
+            price: -160,
+            oddsContext: {
+              h2h_home: -160,
+              h2h_away: 140,
+              captured_at: game.capturedAtUtc,
+            },
+            modelWinProb: 0.61,
+            edgePct: 0.05,
+            scoreBreakdown: {
+              lineValue: 0.56,
+              marketConsensus: 0.77,
+            },
+          }),
+        ];
+      },
+      scoreCandidateFn: (candidate) => candidate,
+      selectBestPlayFn: (values) => values[0],
+      kellySizeFn: () => 1.5,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(receivedGame).not.toBeNull();
+    expect(receivedGame.oddsSnapshot).toMatchObject({
+      game_id: 'mlb-potd-001',
+      h2h_home: -170,
+      h2h_away: 150,
+    });
+
+    const playRow = readRows(
+      `SELECT market_type, selection, sport
+       FROM potd_plays
+       LIMIT 1`,
+    )[0];
+    expect(playRow.market_type).toBe('MONEYLINE');
+    expect(playRow.selection).toBe('HOME');
+    expect(playRow.sport).toBe('MLB');
   });
 });
