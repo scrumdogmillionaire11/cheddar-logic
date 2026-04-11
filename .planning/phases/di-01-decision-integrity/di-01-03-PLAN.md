@@ -8,6 +8,7 @@ files_modified:
   - apps/worker/src/utils/decision-publisher.js
   - apps/worker/src/utils/__tests__/decision-publisher.tier-vocab.test.js
   - web/src/lib/game-card/transform/index.ts
+  - web/src/lib/types/game-card.ts
 autonomous: true
 
 must_haves:
@@ -102,14 +103,27 @@ After the change: `deriveAction({ tier: 'GOOD' })` must return `'HOLD'`.
 
 <task type="auto">
   <name>Task 2: Extend TIER_SCORE in web transform + write tier vocabulary test</name>
-  <files>web/src/lib/game-card/transform/index.ts, apps/worker/src/utils/__tests__/decision-publisher.tier-vocab.test.js</files>
+  <files>web/src/lib/types/game-card.ts, web/src/lib/game-card/transform/index.ts, apps/worker/src/utils/__tests__/decision-publisher.tier-vocab.test.js</files>
   <action>
-**In `web/src/lib/game-card/transform/index.ts`:**
+**Step 1 — Expand `DriverTier` in `web/src/lib/types/game-card.ts` (REQUIRED FIRST):**
 
-Find the `TIER_SCORE` constant (approximately line 88). It currently has entries for `BEST`, `SUPER`, `WATCH`. Extend it to include the decision-pipeline-v2 tier vocabulary:
+Find approximately line 33: `export type DriverTier = 'BEST' | 'SUPER' | 'WATCH';`
+
+Replace with:
+```typescript
+export type DriverTier = 'BEST' | 'SUPER' | 'WATCH' | 'GOOD' | 'OK' | 'BAD';
+```
+
+This MUST be done before touching `TIER_SCORE`. The constant is typed
+`Record<DriverTier, number>` — adding keys not in the union is a TypeScript
+compile error until the union is expanded first.
+
+**Step 2 — Extend `TIER_SCORE` in `web/src/lib/game-card/transform/index.ts`:**
+
+Find the `TIER_SCORE` constant (approximately line 88-95). It has entries for `BEST`, `SUPER`, `WATCH`. Add the three new keys:
 
 ```typescript
-const TIER_SCORE: Record<string, number> = {
+const TIER_SCORE: Record<DriverTier, number> = {
   SUPER: 0.72,
   BEST: 1.0,
   GOOD: 0.60,   // ADD: decision-pipeline-v2 vocabulary
@@ -120,6 +134,7 @@ const TIER_SCORE: Record<string, number> = {
 ```
 
 Do NOT change the existing values for SUPER/BEST/WATCH. Only add the three new entries.
+Run `cd web && npx tsc --noEmit` after both changes to confirm zero errors before writing the test.
 
 **Create `apps/worker/src/utils/__tests__/decision-publisher.tier-vocab.test.js`:**
 

@@ -76,41 +76,38 @@ Locate the call to `derivePlayDecision(playForDecision, marketContext, { sport }
 Replace it with a guarded version:
 
 ```typescript
-// Backend decision_v2 is authoritative. Only call derivePlayDecision() as a
-// rendering fallback when no canonical backend decision exists.
-const decision = (() => {
-  const storedStatus = payload?.decision_v2?.official_status;
-  if (storedStatus) {
-    // Use backend canonical decision directly — do NOT recompute.
-    const classificationMap: Record<string, string> = {
-      PLAY: 'BASE',
-      LEAN: 'LEAN',
-      PASS: 'PASS',
+// Always call derivePlayDecision() to get the full PlayDecision shape (including .play).
+// decision.play is accessed downstream at lines 2303/2311 — it must not be null.
+// Only override action/classification/reason_source when backend canonical status exists.
+const baseDecision = derivePlayDecision(playForDecision, marketContext, { sport });
+const storedStatus = payload?.decision_v2?.official_status as 'PLAY' | 'LEAN' | 'PASS' | undefined;
+const classificationMap: Partial<Record<string, string>> = {
+  PLAY: 'BASE',
+  LEAN: 'LEAN',
+  PASS: 'PASS',
+};
+const actionMap: Partial<Record<string, string>> = {
+  PLAY: 'FIRE',
+  LEAN: 'HOLD',
+  PASS: 'PASS',
+};
+const decision = storedStatus
+  ? {
+      ...baseDecision,
+      classification: (classificationMap[storedStatus] ?? baseDecision.classification) as typeof baseDecision.classification,
+      action: (actionMap[storedStatus] ?? baseDecision.action) as typeof baseDecision.action,
+      reason_source: 'canonical' as const,
+    }
+  : {
+      ...baseDecision,
+      reason_source: 'NON_CANONICAL_RENDER_FALLBACK' as const,
     };
-    const actionMap: Record<string, string> = {
-      PLAY: 'FIRE',
-      LEAN: 'HOLD',
-      PASS: 'PASS',
-    };
-    return {
-      official_status: storedStatus,
-      classification: classificationMap[storedStatus] ?? 'PASS',
-      action: actionMap[storedStatus] ?? 'PASS',
-      reason_source: 'canonical',
-    };
-  }
-  // No backend decision present — render-layer fallback only.
-  const fallbackDecision = derivePlayDecision(playForDecision, marketContext, { sport });
-  return {
-    ...fallbackDecision,
-    reason_source: 'NON_CANONICAL_RENDER_FALLBACK',
-  };
-})();
 ```
 
 Make sure:
-- The existing variable that was assigned the result of `derivePlayDecision()` is now assigned `decision` from the above block.
-- The `classificationMap` / `actionMap` are typed correctly to prevent TS errors.
+- `baseDecision` is the result of `derivePlayDecision()` — call signature unchanged.
+- The downstream variable previously assigned `derivePlayDecision()` is now `decision` (the spread-override version).
+- `decision.play` is valid — it comes from `baseDecision` via spread.
 - No change to any other logic around this code block.
   </action>
   <verify>

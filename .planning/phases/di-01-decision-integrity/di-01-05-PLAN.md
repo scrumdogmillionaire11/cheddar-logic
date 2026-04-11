@@ -3,7 +3,7 @@ phase: di-01-decision-integrity
 plan: "05"
 type: execute
 wave: 2
-depends_on: ["di-01-03"]
+depends_on: ["di-01-01"]
 files_modified:
   - apps/worker/src/models/index.js
   - apps/worker/src/models/__tests__/nba-projection-parity.test.js

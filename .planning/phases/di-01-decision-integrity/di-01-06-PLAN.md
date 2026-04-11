@@ -3,7 +3,7 @@ phase: di-01-decision-integrity
 plan: "06"
 type: execute
 wave: 2
-depends_on: []
+depends_on: ["di-01-01"]
 files_modified:
   - packages/models/src/decision-pipeline-v2-edge-config.js
   - packages/models/src/__tests__/threshold-registry-completeness.test.js
