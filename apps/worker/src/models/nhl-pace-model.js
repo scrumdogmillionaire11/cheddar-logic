@@ -2,6 +2,7 @@
 
 const { validateCanonicalGoalieState } = require('./nhl-goalie-state');
 const { buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
+const scoreEngine = require('../utils/score-engine');
 
 /**
  * NHL Pace / Totals Model
@@ -420,6 +421,14 @@ function predictNHLGame(opts) {
   // ---- 2. Combined pace (dampened multiplicative) ----
   const hPace = homePaceFactor !== null ? homePaceFactor : 1.0;
   const aPace = awayPaceFactor !== null ? awayPaceFactor : 1.0;
+  // WI-0830: scoreEngine for pace signal metadata (informational; does not alter combinedPace).
+  // The combined-pace formula uses the established dampened multiplicative form to preserve
+  // existing calibration — changing it would shift projection totals and break boundary tests.
+  const { score: paceSignalScore } = scoreEngine.aggregate([
+    { name: 'home_pace', value: hPace, mean: 1.0, std: 0.05, weight: 0.5 },
+    { name: 'away_pace', value: aPace, mean: 1.0, std: 0.05, weight: 0.5 },
+  ]);
+  // Established multiplicative dampening formula (unchanged from prior implementation)
   const rawCombinedPace = hPace * aPace;
   const combinedPace = 1.0 + (rawCombinedPace - 1.0) * PACE_DAMPENING;
 
@@ -758,6 +767,10 @@ function predictNHLGame(opts) {
     adjustments,
     confidence,
     model_status: goalieConfidenceCapped ? 'DEGRADED' : 'MODEL_OK',
+    // WI-0829: expose fairLine for residual projection layer
+    fairLine: Math.round((homeGoals + awayGoals) * 1000) / 1000,
+    // WI-0830: pace signal from scoreEngine (metadata only)
+    paceSignalScore: Math.round(paceSignalScore * 1000) / 1000,
   };
 
   validateNhlPaceResult(result);

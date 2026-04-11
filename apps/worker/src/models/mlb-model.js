@@ -1,6 +1,7 @@
 'use strict';
 
 const { classifyModelStatus, buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
+const scoreEngine = require('../utils/score-engine');
 
 /**
  * MLB Model — Pure arithmetic pitcher-based projections.
@@ -254,16 +255,16 @@ function resolveStarterLeashProfile(starterPitcher) {
  * 60% wRC+ split / 40% xwOBA split.
  */
 function resolveOffenseComposite(matchupProfile) {
-  const zWrc = zScore(
-    matchupProfile.wrc_plus,
-    MLB_LEAGUE_WRC_PLUS_MEAN,
-    MLB_LEAGUE_WRC_PLUS_SD,
-  );
   const xwoba = matchupProfile.xwoba ?? MLB_F5_DEFAULT_TEAM_XWOBA;
-  const zXwoba = zScore(xwoba, MLB_LEAGUE_XWOBA_MEAN, MLB_LEAGUE_XWOBA_SD);
-  const composite = 0.60 * zWrc + 0.40 * zXwoba;
-  // Scale: 1 SD of composite ≈ 0.06 run adjustment
-  return clampValue(1.0 + composite * 0.06, 0.88, 1.14);
+  // WI-0830: use shared additive z-score layer instead of explicit composite
+  const { score } = scoreEngine.aggregate([
+    { name: 'wrc_plus', value: matchupProfile.wrc_plus, mean: MLB_LEAGUE_WRC_PLUS_MEAN, std: MLB_LEAGUE_WRC_PLUS_SD, weight: 0.60 },
+    { name: 'xwoba',   value: xwoba,                   mean: MLB_LEAGUE_XWOBA_MEAN,    std: MLB_LEAGUE_XWOBA_SD,    weight: 0.40 },
+  ]);
+  // score ∈ (0.2, 0.8); midpoint 0.5 → composite 0.  Scale to run-adjustment range:
+  // (score - 0.5) maps ±0.3 to ±0.06 run adjustment, matching prior SD-based formula.
+  const composite = (score - 0.5) * (0.06 / 0.3);
+  return clampValue(1.0 + composite, 0.88, 1.14);
 }
 
 function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context) {
@@ -301,6 +302,11 @@ function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context
   }
 
   // Single composite offense multiplier (WI-0821): replaces four-term wRC+/ISO/k%/bb%/contactMult chain
+  // WI-0830: run scoreEngine for contributions metadata (separate from the scalar return)
+  const { contributions: offenseContributions, zScores: offenseZScores } = scoreEngine.aggregate([
+    { name: 'wrc_plus', value: matchupProfile.wrc_plus, mean: MLB_LEAGUE_WRC_PLUS_MEAN, std: MLB_LEAGUE_WRC_PLUS_SD, weight: 0.60 },
+    { name: 'xwoba',   value: matchupProfile.xwoba ?? MLB_F5_DEFAULT_TEAM_XWOBA, mean: MLB_LEAGUE_XWOBA_MEAN, std: MLB_LEAGUE_XWOBA_SD, weight: 0.40 },
+  ]);
   const offenseMult = resolveOffenseComposite(matchupProfile);
   let adjustedRa9 = starterSkillRa9 * offenseMult;
   if (matchupProfile.rolling_14d_wrc_plus !== null) {
@@ -325,6 +331,9 @@ function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context
     ttop_penalty_mult: starterLeashProfile.ttop_penalty_mult,
     bf_exp: starterLeashProfile.bf_exp,
     offense_composite: offenseMult,
+    // WI-0830: score-engine contributions + zScores for driver wiring
+    offense_contributions: offenseContributions ?? null,
+    offense_z_scores: offenseZScores ?? null,
     park_factor: parkFactor,
     weather_factor: weatherFactor ?? 1.0,
   };
