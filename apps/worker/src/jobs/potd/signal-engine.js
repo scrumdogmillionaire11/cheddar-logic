@@ -662,11 +662,14 @@ function scoreCandidate(candidate) {
   };
 }
 
-function selectBestPlay(scoredCandidates, { minConfidence = 'HIGH' } = {}) {
+function selectBestPlay(scoredCandidates, { minConfidence = 'HIGH', minEdgePct = 0 } = {}) {
   const threshold = confidenceThreshold(minConfidence);
+  // minEdgePct = 0 keeps legacy behaviour (edge just has to be > 0);
+  // callers that want a real qualification floor pass e.g. minEdgePct = 0.02.
+  const edgeFloor = minEdgePct > 0 ? minEdgePct : 0;
   const viable = (Array.isArray(scoredCandidates) ? scoredCandidates : [])
     .filter(Boolean)
-    .filter((candidate) => isFiniteNumber(candidate.edgePct) && candidate.edgePct > 0)
+    .filter((candidate) => isFiniteNumber(candidate.edgePct) && candidate.edgePct > 0 && candidate.edgePct >= edgeFloor)
     .filter((candidate) => isFiniteNumber(candidate.totalScore) && candidate.totalScore >= threshold);
 
   if (viable.length === 0) return null;
