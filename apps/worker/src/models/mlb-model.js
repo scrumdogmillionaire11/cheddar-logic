@@ -639,7 +639,7 @@ function projectLateInningsRuns(offenseProfile, pitcherHandedness, opponentBullp
   return {
     late_runs: Math.max(0.1, lateMean),
     bullpen_ra9_used: bullpen_ra9,
-    degraded_inputs,
+    degraded_inputs: degradedInputs,
   };
 }
 
@@ -2835,6 +2835,8 @@ module.exports = {
   projectFullGameTotal,
   // Exported for unit testing (WI-0821)
   resolveOffenseComposite,
+  // WI-0877: synthetic-line F5 edge driver
+  projectTeamF5RunsAgainstStarter,
   // WI-0840: dynamic league constants
   setLeagueConstants,
 };
