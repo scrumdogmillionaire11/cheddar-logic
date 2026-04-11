@@ -166,7 +166,8 @@ describe('decision publisher v2 pipeline', () => {
   });
 
   test('attaches decision_v2 for wave1 payload and preserves the actionable decision envelope', () => {
-    const payload = buildWave1Payload();
+    // Use NHL:TOTAL to avoid NBA total quarantine demoting PLAY->LEAN
+    const payload = buildWave1Payload({ sport: 'NHL', market_type: 'TOTAL' });
     applyUiActionFields(payload);
 
     expect(payload.decision_v2).toBeDefined();
@@ -191,7 +192,10 @@ describe('decision publisher v2 pipeline', () => {
       card_ready: false,
       blocking_reason_codes: [],
     };
+    // Use NHL:TOTAL to avoid NBA total quarantine demoting PLAY->LEAN
     const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
       pipeline_state: pipelineState,
     });
 
