@@ -134,9 +134,21 @@ function buildMarketConsensusScore({ lineValues = [], priceValues = [], sourceCo
   const lineDispersion = stddev(lineValues);
   const priceDispersion = stddev(priceValues);
   const sourceScore = clamp(((sourceCount || 0) - 1) / 4, 0, 1);
-  const lineScale = marketType === 'MONEYLINE' ? 1 : 1.5;
+
+  // Fixed-line markets (e.g. MLB runline +-1.5, NHL puck line +-1.5) always have
+  // zero line dispersion. Treat them like MONEYLINE so they don't receive an
+  // unearned lineScore=1.0 boost; score on price quality only instead.
+  const isFixedLine =
+    marketType !== 'MONEYLINE' &&
+    lineValues.length > 1 &&
+    lineDispersion === 0 &&
+    lineValues.every((v) => isFiniteNumber(v) && Math.abs(v) === 1.5);
+
+  const effectiveType = isFixedLine ? 'MONEYLINE' : marketType;
+
+  const lineScale = effectiveType === 'MONEYLINE' ? 1 : 1.5;
   const lineScore =
-    marketType === 'MONEYLINE'
+    effectiveType === 'MONEYLINE'
       ? null
       : lineDispersion === null
         ? 0.5
@@ -146,7 +158,7 @@ function buildMarketConsensusScore({ lineValues = [], priceValues = [], sourceCo
       ? 0.5
       : clamp(1 - priceDispersion / 40, 0, 1);
 
-  if (marketType === 'MONEYLINE') {
+  if (effectiveType === 'MONEYLINE') {
     return round(priceScore * 0.7 + sourceScore * 0.3, 6);
   }
 
@@ -487,13 +499,32 @@ function selectBestPlay(scoredCandidates, { minConfidence = 'HIGH' } = {}) {
   const viable = (Array.isArray(scoredCandidates) ? scoredCandidates : [])
     .filter(Boolean)
     .filter((candidate) => isFiniteNumber(candidate.edgePct) && candidate.edgePct > 0)
-    .filter((candidate) => isFiniteNumber(candidate.totalScore) && candidate.totalScore >= threshold)
-    .sort((left, right) => {
-      if (right.totalScore !== left.totalScore) return right.totalScore - left.totalScore;
-      return (right.edgePct || 0) - (left.edgePct || 0);
-    });
+    .filter((candidate) => isFiniteNumber(candidate.totalScore) && candidate.totalScore >= threshold);
 
-  return viable[0] || null;
+  if (viable.length === 0) return null;
+
+  // Pick the best candidate per sport first, then compare sport winners.
+  // This prevents high-volume sports (e.g. 14+ MLB games/day) from dominating
+  // purely through candidate count rather than signal quality.
+  const bySport = {};
+  for (const candidate of viable) {
+    const key = candidate.sport || '__unknown__';
+    if (
+      !bySport[key] ||
+      candidate.totalScore > bySport[key].totalScore ||
+      (candidate.totalScore === bySport[key].totalScore &&
+        (candidate.edgePct || 0) > (bySport[key].edgePct || 0))
+    ) {
+      bySport[key] = candidate;
+    }
+  }
+
+  const sportWinners = Object.values(bySport).sort((a, b) => {
+    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+    return (b.edgePct || 0) - (a.edgePct || 0);
+  });
+
+  return sportWinners[0] || null;
 }
 
 function kellySize({

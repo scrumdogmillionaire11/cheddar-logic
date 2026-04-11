@@ -191,4 +191,91 @@ describe('potd signal engine', () => {
     expect(best).not.toBeNull();
     expect(best.marketType).toBe('TOTAL');
   });
+
+  test('fixed-line runline (+-1.5) scores like MONEYLINE not like a floating spread', () => {
+    const fixedLineGame = buildGame({
+      sport: 'baseball_mlb',
+      market: {
+        spreads: [
+          { book: 'book-a', home_line: -1.5, away_line: 1.5, home_price: -130, away_price: 110 },
+          { book: 'book-b', home_line: -1.5, away_line: 1.5, home_price: -128, away_price: 108 },
+          { book: 'book-c', home_line: -1.5, away_line: 1.5, home_price: -125, away_price: 105 },
+        ],
+        totals: [],
+        h2h: [],
+      },
+    });
+
+    const floatingLineGame = buildGame({
+      sport: 'basketball_nba',
+      market: {
+        spreads: [
+          { book: 'book-a', home_line: -7.0, away_line: 7.0, home_price: -110, away_price: -110 },
+          { book: 'book-b', home_line: -7.5, away_line: 7.5, home_price: -108, away_price: -112 },
+          { book: 'book-c', home_line: -7.0, away_line: 7.0, home_price: -112, away_price: -108 },
+        ],
+        totals: [],
+        h2h: [],
+      },
+    });
+
+    const mlbHome = buildCandidates(fixedLineGame).find(
+      (c) => c.marketType === 'SPREAD' && c.selection === 'HOME',
+    );
+    const nbaHome = buildCandidates(floatingLineGame).find(
+      (c) => c.marketType === 'SPREAD' && c.selection === 'HOME',
+    );
+
+    const mlbScored = scoreCandidate(mlbHome);
+    const nbaScored = scoreCandidate(nbaHome);
+
+    expect(mlbScored).not.toBeNull();
+    expect(nbaScored).not.toBeNull();
+    // Fixed-line market must not get a free lineScore=1.0 boost
+    expect(mlbScored.marketConsensus).toBeLessThan(1.0);
+    expect(nbaScored.marketConsensus).toBeLessThan(1.0);
+  });
+
+  test('per-sport pool: NBA candidate with highest score wins even when MLB has more candidates', () => {
+    const mlbCandidates = [
+      { sport: 'baseball_mlb', totalScore: 0.62, edgePct: 0.03 },
+      { sport: 'baseball_mlb', totalScore: 0.63, edgePct: 0.02 },
+      { sport: 'baseball_mlb', totalScore: 0.64, edgePct: 0.02 },
+    ];
+    const nbaCandidates = [
+      { sport: 'basketball_nba', totalScore: 0.68, edgePct: 0.04 },
+    ];
+
+    const best = selectBestPlay([...mlbCandidates, ...nbaCandidates], { minConfidence: 0 });
+    expect(best).not.toBeNull();
+    expect(best.sport).toBe('basketball_nba');
+    expect(best.totalScore).toBe(0.68);
+  });
+
+  test('favorable line delta increases lineValue above neutral 0.5', () => {
+    // A candidate whose line is better than consensus should score above neutral
+    const nhlOver = {
+      gameId: 'nhl-test',
+      sport: 'NHL',
+      home_team: 'A',
+      away_team: 'B',
+      commence_time: new Date().toISOString(),
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      selectionLabel: 'OVER 5.0',
+      line: 5.0,        // better (lower) than consensus for OVER
+      price: 105,
+      consensusLine: 5.5,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      comparableLines: [5.5, 5.5, 5.5],
+      comparablePrices: [-110, -108, -112],
+      sourceCount: 3,
+    };
+
+    const scored = scoreCandidate(nhlOver);
+    expect(scored).not.toBeNull();
+    // lineValue should exceed 0.5 because we have a favorable line delta
+    expect(scored.lineValue).toBeGreaterThan(0.5);
+  });
 });
