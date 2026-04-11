@@ -60,6 +60,9 @@ jobs:
       - name: Run deterministic web smoke gate
         run: npm --prefix web run test:ci:smoke
 
+      - name: Run packages/models tests (feature correlation gate)
+        run: npm --prefix packages/models test
+
       - name: check-db-import-boundaries
         run: node scripts/check-db-imports.js
 
