@@ -351,6 +351,13 @@ test('computeMLBDriverCards includes full_game_total card when total line presen
 ```
 
 Import `projectLateInningsRuns`, `projectFullGameTotal` from the module at the top of the test file.
+
+
+**Test E -- avg-starter + avg-bullpen game projects 8.5-9.5 (WI-0872 acceptance #4):**
+Add test asserting projectFullGameTotal(avgHome, avgAway, ctx).projected_fg_total_mean is between 8.5 and 9.5 when both pitchers have league-average metrics (siera~4.2, era~4.2), avg offense (wrc_plus=100), avg bullpen (era=4.0), neutral park/weather.
+
+**Test F -- elite-starter game projects lower total than avg-starter (WI-0872 acceptance #5):**
+Add test asserting projectFullGameTotal(eliteHome, oppAway, ctx).projected_fg_total_mean < projectFullGameTotal(avgHome, oppAway, ctx).projected_fg_total_mean where eliteHome has siera~2.6/era~2.6 and avgHome has siera~4.2/era~4.2, same away pitcher and context for both calls.
   </action>
   <verify>
     ```bash
