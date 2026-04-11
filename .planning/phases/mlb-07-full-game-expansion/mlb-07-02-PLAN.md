@@ -172,6 +172,7 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
     projected_home_f5_runs: f5Proj.projected_home_f5_runs,
     projected_away_f5_runs: f5Proj.projected_away_f5_runs,
     projected_fg_total_mean: fgTotal,
+    projected_total_mean: fgTotal,          // alias -- WI-0872 acceptance criterion 1
     projected_fg_total_low:  Math.max(0, fgTotal - rangeWidth),
     projected_fg_total_high: fgTotal + rangeWidth,
     home_bullpen_era: homeLate.bullpen_era_used,

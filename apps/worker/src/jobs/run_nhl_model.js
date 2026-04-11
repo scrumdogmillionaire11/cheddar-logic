@@ -88,6 +88,7 @@ const {
 const { computeRestDays } = require('../utils/rest-days');
 const { sendDiscordMessages } = require('./post_discord_cards');
 const { applyCalibration } = require('../utils/calibration');
+const { assertFeatureTimeliness } = require('../models/feature-time-guard');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const USE_ORCHESTRATED_MARKET =
@@ -961,6 +962,26 @@ function buildScraperGoalieInput(rawData, side) {
     save_pct: savePct,
     source_type: goalieName ? 'SCRAPER_NAME_MATCH' : 'SEASON_TABLE_INFERENCE',
   };
+}
+
+/**
+ * WI-0827: Look up the most recent fetched_at for a team's goalie starter row.
+ * Used to populate feature_timestamps.homeGoalieCertainty / awayGoalieCertainty.
+ *
+ * @param {object} db - better-sqlite3 Database instance
+ * @param {string} teamId - team abbreviation matching nhl_goalie_starters.team_id
+ * @returns {string|null} ISO8601 fetched_at or null if not found
+ */
+function lookupGoalieStarterFetchedAt(db, teamId) {
+  if (!db || typeof db.prepare !== 'function') return null;
+  try {
+    const row = db.prepare(
+      'SELECT fetched_at FROM nhl_goalie_starters WHERE team_id = ? ORDER BY fetched_at DESC LIMIT 1',
+    ).get(String(teamId));
+    return row?.fetched_at ?? null;
+  } catch (_e) {
+    return null; // table may not exist in test envs without migration
+  }
 }
 
 function attachNhlDriverContextToRawData(rawData) {
@@ -2174,6 +2195,28 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             ),
           };
 
+          // WI-0827: Stamp goalie available_at into raw_data.feature_timestamps so
+          // assertFeatureTimeliness can detect future-leakage on homeGoalieCertainty /
+          // awayGoalieCertainty. Uses the most-recent fetched_at from nhl_goalie_starters.
+          {
+            const _homeGoalieFetchedAt = lookupGoalieStarterFetchedAt(getDatabase(), oddsSnapshot.home_team);
+            const _awayGoalieFetchedAt = lookupGoalieStarterFetchedAt(getDatabase(), oddsSnapshot.away_team);
+            if (_homeGoalieFetchedAt || _awayGoalieFetchedAt) {
+              if (typeof oddsSnapshot.raw_data !== 'object' || !oddsSnapshot.raw_data) {
+                oddsSnapshot.raw_data = {};
+              }
+              if (!oddsSnapshot.raw_data.feature_timestamps) {
+                oddsSnapshot.raw_data.feature_timestamps = {};
+              }
+              if (_homeGoalieFetchedAt) {
+                oddsSnapshot.raw_data.feature_timestamps.homeGoalieCertainty = _homeGoalieFetchedAt;
+              }
+              if (_awayGoalieFetchedAt) {
+                oddsSnapshot.raw_data.feature_timestamps.awayGoalieCertainty = _awayGoalieFetchedAt;
+              }
+            }
+          }
+
           // Compute per-driver card descriptors
           // WI-0505: Phase-2 fair prob requires a confirmed real 1P market line
           const hasReal1pLine = typeof oddsSnapshot.total_1p === 'number';
@@ -2505,6 +2548,23 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             } else {
               pd.kelly_fraction = null;
               pd.kelly_units = null;
+            }
+          }
+
+          // WI-0827: feature timeliness audit — warn on future-leakage violations (Phase 1).
+          {
+            const _betPlacedAt = oddsSnapshot.captured_at ?? null;
+            if (_betPlacedAt) {
+              const _timeliness = assertFeatureTimeliness(oddsSnapshot.raw_data ?? {}, _betPlacedAt);
+              if (!_timeliness.ok) {
+                console.warn(
+                  `[FeatureGuard] ${gameId}: ${_timeliness.violations.length} violation(s): ` +
+                    _timeliness.violations.map((v) => v.field).join(', '),
+                );
+              }
+              for (const entry of pendingCards) {
+                entry.card.payloadData.feature_timeliness = _timeliness;
+              }
             }
           }
 

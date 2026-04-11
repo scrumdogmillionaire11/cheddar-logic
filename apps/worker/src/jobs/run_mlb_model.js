@@ -81,6 +81,7 @@ const {
 } = require('./mlb-k-input-classifier');
 const { evaluateExecution } = require('./execution-gate');
 const { applyCalibration } = require('../utils/calibration');
+const { assertFeatureTimeliness } = require('../models/feature-time-guard');
 
 // MLB-specific watchdog vocabulary stays local to this runner so WI-0604 can
 // document the new codes without widening shared registries.
@@ -2389,6 +2390,23 @@ async function runMLBModel({
               }
             }
             card.payloadData.pipeline_state = pipelineState;
+            // WI-0827: feature timeliness audit — warn on future-leakage violations (Phase 1).
+            {
+              const _betPlacedAt = baseOddsSnapshot?.captured_at ?? null;
+              if (_betPlacedAt) {
+                const _timeliness = assertFeatureTimeliness(
+                  (typeof baseOddsSnapshot?.raw_data === 'object' ? baseOddsSnapshot.raw_data : {}) ?? {},
+                  _betPlacedAt,
+                );
+                if (!_timeliness.ok) {
+                  console.warn(
+                    `[FeatureGuard] ${gameId}: ${_timeliness.violations.length} violation(s): ` +
+                      _timeliness.violations.map((v) => v.field).join(', '),
+                  );
+                }
+                card.payloadData.feature_timeliness = _timeliness;
+              }
+            }
             insertCardPayload(card);
 
             _cardLogs.push(`  ✅ ${gameId} [${cardType}]: ${driver.prediction} (${(driver.confidence * 100).toFixed(0)}%)`);
