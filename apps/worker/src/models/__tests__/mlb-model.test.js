@@ -5,7 +5,7 @@ const {
   projectF5ML,
   projectF5Total,
   projectFullGameTotal,
-  projectLateInningsRuns,
+  projectFullGameML,
   computeMLBDriverCards,
   resolveOffenseComposite,
 } = require('../mlb-model');
@@ -237,5 +237,226 @@ describe('projectF5ML alignment (WI-0871)', () => {
         'away_times_through_order_profile',
       ]),
     );
+  });
+});
+
+// ── WI-0872: projectFullGameTotal ────────────────────────────────────────────
+
+const avgPitcher = {
+  era: 4.3,
+  whip: 1.28,
+  k_per_9: 8.5,
+  handedness: 'R',
+  siera: 4.20,
+  x_fip: 4.15,
+  x_era: 4.25,
+  bb_pct: 0.082,
+  gb_pct: 42.0,
+  hr_per_9: 1.15,
+  season_k_pct: 0.230,
+  xwoba_allowed: 0.325,
+  avg_ip: 5.0,
+  pitch_count_avg: 90,
+  times_through_order_profile: { '1st': 0.310, '2nd': 0.330, '3rd': 0.355 },
+};
+
+const elitePitcher = {
+  era: 2.9,
+  whip: 1.02,
+  k_per_9: 11.2,
+  handedness: 'L',
+  siera: 2.85,
+  x_fip: 2.90,
+  x_era: 2.95,
+  bb_pct: 0.055,
+  gb_pct: 50.0,
+  hr_per_9: 0.65,
+  season_k_pct: 0.298,
+  xwoba_allowed: 0.285,
+  avg_ip: 6.2,
+  pitch_count_avg: 100,
+  times_through_order_profile: { '1st': 0.280, '2nd': 0.298, '3rd': 0.315 },
+};
+
+const avgOffense = {
+  wrc_plus_vs_rhp: 100,
+  wrc_plus_vs_lhp: 100,
+  xwoba_vs_rhp: 0.320,
+  xwoba_vs_lhp: 0.320,
+  rolling_14d_wrc_plus_vs_rhp: 100,
+  rolling_14d_wrc_plus_vs_lhp: 100,
+};
+
+const baseContext = {
+  home_offense_profile: avgOffense,
+  away_offense_profile: avgOffense,
+  park_run_factor: 1.0,
+  temp_f: 72,
+  wind_mph: 0,
+  wind_dir: 'CALM',
+  roof: 'OPEN',
+  home_bullpen_era: 4.3,
+  away_bullpen_era: 4.3,
+};
+
+describe('projectFullGameTotal (WI-0872)', () => {
+  test('AC1: returns projected_total_mean, low, high, home_proj, away_proj', () => {
+    const result = projectFullGameTotal(avgPitcher, avgPitcher, baseContext);
+
+    expect(result.projected_total_mean).toBeGreaterThan(0);
+    expect(result.projected_total_low).toBeGreaterThanOrEqual(0);
+    expect(result.projected_total_high).toBeGreaterThan(result.projected_total_low);
+    expect(result.home_proj).toBeGreaterThan(0);
+    expect(result.away_proj).toBeGreaterThan(0);
+  });
+
+  test('AC2: fullGameMean is greater than F5-only mean for the same pitchers', () => {
+    const fullGame = projectFullGameTotal(avgPitcher, avgPitcher, baseContext);
+    const f5 = projectF5Total(avgPitcher, avgPitcher, baseContext);
+
+    expect(fullGame.projected_total_mean).toBeGreaterThan(f5.projected_total_mean);
+  });
+
+  test('AC3: projection_source is FULL_MODEL when bullpen_era present; DEGRADED_MODEL when absent', () => {
+    const full = projectFullGameTotal(avgPitcher, avgPitcher, baseContext);
+    expect(full.projection_source).toBe('FULL_MODEL');
+
+    const degraded = projectFullGameTotal(avgPitcher, avgPitcher, {
+      ...baseContext,
+      home_bullpen_era: null,
+      away_bullpen_era: null,
+    });
+    expect(degraded.projection_source).toBe('DEGRADED_MODEL');
+  });
+
+  test('AC4: avg-starter + avg-bullpen game projects between 8.5 and 9.5 total', () => {
+    const result = projectFullGameTotal(avgPitcher, avgPitcher, baseContext);
+
+    expect(result.projected_total_mean).toBeGreaterThanOrEqual(8.5);
+    expect(result.projected_total_mean).toBeLessThanOrEqual(9.5);
+  });
+
+  test('AC5: elite-starter game projects lower total than avg-starter game', () => {
+    const avgGame = projectFullGameTotal(avgPitcher, avgPitcher, baseContext);
+    const eliteGame = projectFullGameTotal(elitePitcher, elitePitcher, baseContext);
+
+    expect(eliteGame.projected_total_mean).toBeLessThan(avgGame.projected_total_mean);
+  });
+});
+
+describe('computeMLBDriverCards full_game_total card (WI-0872)', () => {
+  test('AC6: includes full_game_total card when full-game line is available in raw_data.mlb', () => {
+    const oddsSnapshot = {
+      home_team: 'NYY',
+      away_team: 'BOS',
+      raw_data: JSON.stringify({
+        mlb: {
+          home_pitcher: avgPitcher,
+          away_pitcher: avgPitcher,
+          home_offense_profile: avgOffense,
+          away_offense_profile: avgOffense,
+          park_run_factor: 1.0,
+          temp_f: 72,
+          wind_mph: 0,
+          wind_dir: 'CALM',
+          roof: 'OPEN',
+          home_bullpen_era: 4.3,
+          away_bullpen_era: 4.3,
+          f5_line: 4.5,
+          full_game_line: 8.5,
+        },
+      }),
+    };
+
+    const cards = computeMLBDriverCards('game-1', oddsSnapshot);
+    const fullGameCard = cards.find((c) => c.market === 'full_game_total');
+
+    expect(fullGameCard).toBeDefined();
+    expect(fullGameCard.projection.projected_total).toBeGreaterThan(0);
+    expect(fullGameCard.projection.home_proj).toBeGreaterThan(0);
+    expect(fullGameCard.projection.away_proj).toBeGreaterThan(0);
+  });
+});
+
+// ── WI-0873: projectFullGameML ────────────────────────────────────────────────
+
+describe('projectFullGameML (WI-0873)', () => {
+  // Pitcher fixtures reused from projectFullGameTotal tests above
+  const homePitcher = avgPitcher; // average starter
+  const awayPitcher = avgPitcher;
+
+  const cleanContext = {
+    home_offense_profile: avgOffense,
+    away_offense_profile: avgOffense,
+    park_run_factor: 1.0,
+    temp_f: 72,
+    wind_mph: 0,
+    wind_dir: 'CALM',
+    roof: 'OPEN',
+    home_bullpen_era: 4.3,
+    away_bullpen_era: 4.3,
+  };
+
+  test('AC4: team facing weaker pitcher has run disadvantage — win_prob_home < 0.5 when home faces elite pitcher', () => {
+    // home team faces an elite away pitcher → home_proj < away_proj → win_prob_home < 0.5
+    const result = projectFullGameML(avgPitcher, elitePitcher, -110, -110, cleanContext);
+    expect(result).not.toBeNull();
+    expect(result.projected_home_runs).toBeLessThan(result.projected_away_runs);
+    expect(result.projected_win_prob_home).toBeLessThan(0.5);
+  });
+
+  test('AC5: symmetric matchup yields win_prob_home between 0.49 and 0.51', () => {
+    // Same pitcher on both sides with same offense → near-equal run projections
+    const result = projectFullGameML(homePitcher, homePitcher, -110, -110, cleanContext);
+    expect(result).not.toBeNull();
+    expect(result.projected_win_prob_home).toBeGreaterThan(0.49);
+    expect(result.projected_win_prob_home).toBeLessThan(0.51);
+  });
+
+  test('AC3: two-sided de-vig — win_prob_home is a valid probability and edge is numeric', () => {
+    const result = projectFullGameML(homePitcher, awayPitcher, -130, +110, cleanContext);
+    expect(result).not.toBeNull();
+    // win_prob_home is a proper probability in (0, 1)
+    expect(result.projected_win_prob_home).toBeGreaterThan(0);
+    expect(result.projected_win_prob_home).toBeLessThan(1);
+    // complementary probs sum to 1 by construction
+    expect(result.projected_win_prob_home + (1 - result.projected_win_prob_home)).toBeCloseTo(1.0, 10);
+    // edge is a finite number
+    expect(typeof result.edge).toBe('number');
+    expect(Number.isFinite(result.edge)).toBe(true);
+  });
+
+  test('AC null-guard: returns null when pitchers are missing (NO_BET gate)', () => {
+    expect(projectFullGameML(null, null, -110, -110, {})).toBeNull();
+    expect(projectFullGameML(null, avgPitcher, -110, -110, cleanContext)).toBeNull();
+    expect(projectFullGameML(avgPitcher, null, -110, -110, cleanContext)).toBeNull();
+  });
+
+  test('computeMLBDriverCards emits full_game_ml card when h2h odds are present', () => {
+    const snapshot = {
+      h2h_home: -115,
+      h2h_away: -105,
+      raw_data: JSON.stringify({
+        mlb: {
+          home_pitcher: avgPitcher,
+          away_pitcher: avgPitcher,
+          home_offense_profile: avgOffense,
+          away_offense_profile: avgOffense,
+          park_run_factor: 1.0,
+          temp_f: 72,
+          wind_mph: 0,
+          wind_dir: 'CALM',
+          roof: 'OPEN',
+          home_bullpen_era: 4.3,
+          away_bullpen_era: 4.3,
+        },
+      }),
+    };
+    const cards = computeMLBDriverCards('test-game-id', snapshot);
+    const mlCard = cards.find((c) => c.market === 'full_game_ml');
+    expect(mlCard).toBeDefined();
+    expect(['HOME', 'AWAY', 'PASS']).toContain(mlCard.prediction);
+    expect(typeof mlCard.confidence).toBe('number');
+    expect(mlCard.drivers[0].type).toBe('mlb-full-game-ml');
   });
 });

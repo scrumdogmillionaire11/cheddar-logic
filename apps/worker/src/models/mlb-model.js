@@ -1,6 +1,7 @@
 'use strict';
 
 const { classifyModelStatus, buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
+const { buildModelOutput } = require('./model-output');
 const scoreEngine = require('../utils/score-engine');
 
 /**
@@ -789,7 +790,34 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
     ...(degradedProjection && evThresholdPassed ? ['MODEL_DEGRADED_INPUTS'] : []),
   ]));
 
-  return {
+  return buildModelOutput({
+    market: 'MLB_F5_TOTAL',
+    model_status:
+      proj.status === 'NO_BET'
+        ? 'NO_BET'
+        : (degradedProjection || proj.model_status === 'DEGRADED')
+          ? 'DEGRADED'
+          : 'MODEL_OK',
+    fairProb: null,
+    fairLine: roundToTenth(proj.projected_total_mean ?? proj.base),
+    confidence: proj.confidence,
+    featuresUsed: {
+      home_starter_skill_ra9: proj.home_starter_skill_ra9 ?? null,
+      away_starter_skill_ra9: proj.away_starter_skill_ra9 ?? null,
+      projected_home_f5_runs: roundToTenth(proj.projected_home_f5_runs),
+      projected_away_f5_runs: roundToTenth(proj.projected_away_f5_runs),
+      park_run_factor: proj.park_run_factor ?? null,
+      weather_factor: proj.weather_factor ?? null,
+    },
+    missingOptional: [
+      ...(proj.missingOptional || []),
+      ...(proj.missing_inputs || []),
+    ],
+    missingCritical: proj.missingCritical || [],
+    diagnostics: {
+      projection_source: proj.projection_source,
+      status_cap: proj.status_cap ?? null,
+    },
     prediction,
     status,
     action: status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS',
@@ -818,7 +846,7 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
       away_ttop_penalty_mult: roundToTenth(proj.away_ttop_penalty_mult),
     },
     reasoning: `${sourceLabel} projected ${proj.base.toFixed(2)} vs line ${f5Line} (edge ${edge >= 0 ? '+' : ''}${edge.toFixed(2)}, playable O<=${proj.playability?.over_playable_at_or_below ?? 'n/a'} U>=${proj.playability?.under_playable_at_or_above ?? 'n/a'}, range ${roundToTenth(proj.projected_total_low)}-${roundToTenth(proj.projected_total_high)}, conf ${proj.confidence}/10)`,
-  };
+  });
 }
 
 /**
@@ -972,6 +1000,90 @@ function projectF5ML(
     degraded_inputs: projection.degradedInputs,
     ev_threshold_passed: side !== 'PASS',
     reasoning: `F5 ML: homeExp=${homeExpected.toFixed(2)} awayExp=${awayExpected.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp conf=${confidence}/10`,
+  };
+}
+
+/**
+ * Project full-game moneyline win probability from the full-game run differential.
+ *
+ * Algorithm:
+ *   1. Call projectFullGameTotal() to get home/away projected run means.
+ *   2. runDiff = home_proj - away_proj
+ *   3. winProbHome = 1 / (1 + exp(-0.5 * runDiff))
+ *      Coefficient 0.5 (vs 0.8 for F5) because 9-inning differentials are larger
+ *      in absolute magnitude than F5 differentials, so a smaller k keeps the
+ *      sigmoid from saturating prematurely.
+ *   4. De-vig mlHome / mlAway with two-sided normalization (same as projectF5ML).
+ *   5. homeEdge = winProbHome - fairHome; emit HOME/AWAY/PASS.
+ *
+ * @param {object} homePitcher
+ * @param {object} awayPitcher
+ * @param {number} mlHome  American odds for home (e.g. -120)
+ * @param {number} mlAway  American odds for away (e.g. +105)
+ * @param {object} [context={}]
+ * @returns {object|null}
+ */
+function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {}) {
+  if (!homePitcher || !awayPitcher) return null;
+  if (mlHome == null || mlAway == null) return null;
+
+  const proj = projectFullGameTotal(homePitcher, awayPitcher, context);
+  if (!proj || proj.projection_source === 'NO_BET' || proj.projected_total_mean == null) return null;
+
+  const homeProj = proj.home_proj;
+  const awayProj = proj.away_proj;
+  const runDiff = homeProj - awayProj;
+
+  // Coefficient 0.5 for full game (vs 0.8 for F5) — see JSDoc above
+  const winProbHome = 1 / (1 + Math.exp(-0.5 * runDiff));
+
+  function mlToImplied(ml) {
+    if (!Number.isFinite(ml)) return null;
+    return ml < 0 ? (-ml) / (-ml + 100) : 100 / (ml + 100);
+  }
+  const rawHome = mlToImplied(mlHome);
+  const rawAway = mlToImplied(mlAway);
+  if (rawHome === null || rawAway === null) return null;
+  const total = rawHome + rawAway;
+  const impliedHome = rawHome / total;
+  const impliedAway = rawAway / total;
+
+  const homeEdge = winProbHome - impliedHome;
+  const awayEdge = (1 - winProbHome) - impliedAway;
+
+  const LEAN_EDGE_MIN = 0.04;
+  const CONFIDENCE_MIN = 6;
+
+  let side = 'PASS';
+  let edge = 0;
+  if (homeEdge >= LEAN_EDGE_MIN && proj.confidence >= CONFIDENCE_MIN) {
+    side = 'HOME';
+    edge = homeEdge;
+  } else if (awayEdge >= LEAN_EDGE_MIN && proj.confidence >= CONFIDENCE_MIN) {
+    side = 'AWAY';
+    edge = awayEdge;
+  }
+
+  const isDegraded = proj.projection_source === 'DEGRADED_MODEL';
+  const reasonCodes = [
+    ...(isDegraded ? ['FULL_GAME_ML_DEGRADED'] : []),
+  ];
+
+  return {
+    side,
+    prediction: side,
+    edge,
+    projected_win_prob_home: winProbHome,
+    projected_home_runs: homeProj,
+    projected_away_runs: awayProj,
+    confidence: proj.confidence,
+    projection_source: proj.projection_source,
+    status_cap: proj.status_cap,
+    reason_codes: reasonCodes,
+    degraded_inputs: proj.degraded_inputs,
+    missing_inputs: proj.missing_inputs,
+    ev_threshold_passed: side !== 'PASS',
+    reasoning: `FullGameML: homeProj=${homeProj.toFixed(2)} awayProj=${awayProj.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp conf=${proj.confidence}/10`,
   };
 }
 
@@ -1160,6 +1272,51 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
           edge,
           projected: proj.projected_total_mean,
           projection_source: proj.projection_source,
+        }],
+      });
+    }
+  }
+
+  // Full-game ML card (WI-0873)
+  const mlHome = toFiniteNumberOrNull(oddsSnapshot?.h2h_home);
+  const mlAway = toFiniteNumberOrNull(oddsSnapshot?.h2h_away);
+  if (mlHome != null && mlAway != null) {
+    const mlResult = projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, {
+      home_offense_profile: mlb.home_offense_profile ?? null,
+      away_offense_profile: mlb.away_offense_profile ?? null,
+      park_run_factor: mlb.park_run_factor ?? null,
+      temp_f: mlb.temp_f ?? null,
+      wind_mph: mlb.wind_mph ?? null,
+      wind_dir: mlb.wind_dir ?? null,
+      roof: mlb.roof ?? null,
+      home_bullpen_era: mlb.home_bullpen_era ?? null,
+      away_bullpen_era: mlb.away_bullpen_era ?? null,
+    });
+    if (mlResult) {
+      const isDegraded = mlResult.projection_source === 'DEGRADED_MODEL';
+      const status = !mlResult.ev_threshold_passed ? 'PASS' : isDegraded ? 'WATCH' : 'FIRE';
+      const action = status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS';
+      const classification = status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS';
+      cards.push({
+        market: 'full_game_ml',
+        prediction: mlResult.prediction,
+        confidence: mlResult.confidence / 10,
+        ev_threshold_passed: mlResult.ev_threshold_passed,
+        reasoning: mlResult.reasoning,
+        status,
+        action,
+        classification,
+        projection_source: mlResult.projection_source,
+        status_cap: mlResult.status_cap,
+        pass_reason_code: !mlResult.ev_threshold_passed ? 'PASS_NO_EDGE' : null,
+        reason_codes: mlResult.reason_codes,
+        missing_inputs: mlResult.missing_inputs,
+        drivers: [{
+          type: 'mlb-full-game-ml',
+          side: mlResult.side,
+          edge: mlResult.edge,
+          win_prob_home: mlResult.projected_win_prob_home,
+          projection_source: mlResult.projection_source,
         }],
       });
     }
@@ -2833,6 +2990,8 @@ module.exports = {
   // WI-0872: full-game total model
   projectLateInningsRuns,
   projectFullGameTotal,
+  // WI-0873: full-game ML model
+  projectFullGameML,
   // Exported for unit testing (WI-0821)
   resolveOffenseComposite,
   // WI-0877: synthetic-line F5 edge driver
