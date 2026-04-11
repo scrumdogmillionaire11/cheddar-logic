@@ -43,7 +43,7 @@ const {
 
 // Import pluggable inference layer
 const { getModel, computeMLBDriverCards, computePitcherKDriverCards } = require('../models');
-const { selectMlbGameMarket, projectF5ML, setLeagueConstants } = require('../models/mlb-model');
+const { selectMlbGameMarket, projectF5ML, projectTeamF5RunsAgainstStarter, setLeagueConstants } = require('../models/mlb-model');
 
 // WI-0648: Empirical sigma recalibration gate
 // Threshold: once a team has accumulated >= MIN_MLB_GAMES_FOR_RECAL settled games
@@ -1149,6 +1149,128 @@ function computeProjectionFloorF5(oddsSnapshot) {
   }
 }
 
+const MLB_F5_SYNTHETIC_EDGE_THRESHOLD = 0.5;
+
+/**
+ * WI-0877: Synthetic-line F5 total edge driver for withoutOddsMode.
+ *
+ * @param {Object} mlb - Parsed mlb object from raw_data
+ * @param {Object} context - { park_run_factor, temp_f, wind_mph, wind_dir, roof }
+ * @param {string} gameId - Game identifier (for logging)
+ * @returns {Object|null}
+ */
+function computeSyntheticLineF5Driver(mlb, context, gameId) {
+  if (mlb.home_offense_profile == null || mlb.away_offense_profile == null) {
+    return null;
+  }
+
+  // homeResult: away offense sees home starter (away team projected runs)
+  // awayResult: home offense sees away starter (home team projected runs)
+  const homeResult = projectTeamF5RunsAgainstStarter(
+    mlb.home_pitcher ?? null,
+    mlb.away_offense_profile,
+    context,
+  );
+  const awayResult = projectTeamF5RunsAgainstStarter(
+    mlb.away_pitcher ?? null,
+    mlb.home_offense_profile,
+    context,
+  );
+
+  if (homeResult.f5_runs === null || awayResult.f5_runs === null) {
+    return null;
+  }
+
+  const projectedBase = homeResult.f5_runs + awayResult.f5_runs;
+  const syntheticLine = projectedBase < 4.0 ? 3.5 : 4.5;
+  const edge = projectedBase - syntheticLine;
+
+  // Confidence: 6 baseline (synthetic line carries more risk than a real market line).
+  // Subtract 1 per degraded side; floor at 4.
+  const homeDegraded = (homeResult.degraded_inputs || []).length > 0;
+  const awayDegraded = (awayResult.degraded_inputs || []).length > 0;
+  const rawConf = Math.max(4, 6 - (homeDegraded ? 1 : 0) - (awayDegraded ? 1 : 0));
+
+  const reasonCodes = ['SYNTHETIC_LINE_ASSUMPTION'];
+  if (homeDegraded) reasonCodes.push('DEGRADED_INPUT_HOME');
+  if (awayDegraded) reasonCodes.push('DEGRADED_INPUT_AWAY');
+
+  let prediction;
+  let status;
+  let action;
+  let classification;
+  let evThresholdPassed;
+
+  // FIRE only when projection clears the dead zone (>=5.0 OVER, <=3.0 UNDER)
+  // and confidence is at maximum (rawConf 6 = no degraded inputs on either side).
+  if (projectedBase >= 5.0 && rawConf >= 6) {
+    prediction = 'OVER';
+    status = action = classification = 'FIRE';
+    evThresholdPassed = true;
+  } else if (projectedBase <= 3.0 && rawConf >= 6) {
+    prediction = 'UNDER';
+    status = action = classification = 'FIRE';
+    evThresholdPassed = true;
+  } else if (edge >= MLB_F5_SYNTHETIC_EDGE_THRESHOLD && rawConf === 5) {
+    prediction = 'OVER';
+    status = action = classification = 'WATCH';
+    evThresholdPassed = false;
+  } else if (edge <= -MLB_F5_SYNTHETIC_EDGE_THRESHOLD && rawConf === 5) {
+    prediction = 'UNDER';
+    status = action = classification = 'WATCH';
+    evThresholdPassed = false;
+  } else {
+    prediction = edge >= 0 ? 'OVER' : 'UNDER';
+    status = action = classification = 'PASS';
+    evThresholdPassed = false;
+  }
+
+  const projectedHomeFiveRuns = Math.round(awayResult.f5_runs * 10) / 10;
+  const projectedAwayFiveRuns = Math.round(homeResult.f5_runs * 10) / 10;
+  const projectedTotal = Math.round(projectedBase * 10) / 10;
+
+  console.log(
+    `[MLBModel] SYNTHETIC_EDGE_F5: ${gameId} — projectedBase=${projectedTotal} syntheticLine=${syntheticLine} edge=${edge.toFixed(2)} status=${status} rawConf=${rawConf}`,
+  );
+
+  return {
+    market: 'f5_total',
+    prediction,
+    confidence: rawConf / 10,
+    status,
+    action,
+    classification,
+    ev_threshold_passed: evThresholdPassed,
+    projection_source: 'FULL_MODEL',
+    reason_codes: reasonCodes,
+    missing_inputs: [],
+    ...(status === 'PASS' ? { pass_reason_code: 'PASS_NO_EDGE' } : {}),
+    playability: {
+      over_playable_at_or_below: syntheticLine,
+      under_playable_at_or_above: syntheticLine,
+    },
+    projection: {
+      projected_total: projectedTotal,
+      projected_total_low: Math.max(0, Math.round((projectedBase - MLB_F5_SYNTHETIC_EDGE_THRESHOLD) * 10) / 10),
+      projected_total_high: Math.round((projectedBase + MLB_F5_SYNTHETIC_EDGE_THRESHOLD) * 10) / 10,
+      projected_home_f5_runs: projectedHomeFiveRuns,
+      projected_away_f5_runs: projectedAwayFiveRuns,
+    },
+    reasoning: `F5 SYNTHETIC_LINE edge=${edge.toFixed(2)} projectedBase=${projectedTotal} syntheticLine=${syntheticLine}; projection_source=FULL_MODEL`,
+    drivers: [{
+      type: 'mlb-f5-synthetic-line',
+      projected: projectedTotal,
+      projected_home_f5_runs: projectedHomeFiveRuns,
+      projected_away_f5_runs: projectedAwayFiveRuns,
+      edge,
+      synthetic_line: syntheticLine,
+      projection_source: 'FULL_MODEL',
+    }],
+    without_odds_mode: true,
+    projection_floor: false,
+  };
+}
+
 function buildMlbDualRunRecord(gameId, oddsSnapshot, selection) {
   return {
     game_id: gameId,
@@ -1940,19 +2062,35 @@ async function runMLBModel({
             console.log(`[MLBModel] WITHOUT_ODDS_MODE: ${gameId} — using projection floor F5=${projectionFloorF5}`);
           }
 
+          // Parse mlb raw data once for both F5 ML and synthetic-line F5 edge paths.
+          const gameRawData = parseMlbRawData(gameOddsSnapshot);
+          const mlb = gameRawData?.mlb && typeof gameRawData.mlb === 'object' ? gameRawData.mlb : {};
+          const syntheticContext = {
+            park_run_factor: mlb.park_run_factor ?? null,
+            temp_f: mlb.temp_f ?? null,
+            wind_mph: mlb.wind_mph ?? null,
+            wind_dir: mlb.wind_dir ?? null,
+            roof: mlb.roof ?? null,
+          };
+
           // F5 ML side-projection card
           const f5MlContext = resolveMlbF5MoneylineContext(gameOddsSnapshot);
           let f5MlDriverCard = null;
           if (f5MlContext.home !== null && f5MlContext.away !== null) {
-            const mlbRaw = (typeof gameOddsSnapshot.raw_data === 'string'
-              ? JSON.parse(gameOddsSnapshot.raw_data)
-              : gameOddsSnapshot.raw_data) ?? {};
-            const mlb = mlbRaw.mlb ?? {};
             const f5MlResult = projectF5ML(
               mlb.home_pitcher ?? null,
               mlb.away_pitcher ?? null,
               f5MlContext.home,
               f5MlContext.away,
+              mlb.home_offense_profile ?? null,
+              mlb.away_offense_profile ?? null,
+              {
+                park_run_factor: mlb.park_run_factor ?? null,
+                temp_f: mlb.temp_f ?? null,
+                wind_mph: mlb.wind_mph ?? null,
+                wind_dir: mlb.wind_dir ?? null,
+                roof: mlb.roof ?? null,
+              },
             );
             if (f5MlResult) {
               f5MlDriverCard = {
@@ -1976,44 +2114,51 @@ async function runMLBModel({
 
           const selectedGameDriver = gameSelection.selected_driver;
 
-          // Synthesize a PROJECTION_ONLY F5 driver when the floor was applied (no market line available)
-          const projectionFloorDriver = (marketAvailability.projection_floor && projectionFloorF5 !== null)
-            ? {
-                market: 'f5_total',
-                prediction: 'OVER',
-                confidence: 0.5,
-                status: 'PASS',
-                action: 'PASS',
-                classification: 'PASS',
-                ev_threshold_passed: false,
-                projection_source: 'SYNTHETIC_FALLBACK',
-                status_cap: 'PASS',
-                reason_codes: ['PASS_SYNTHETIC_FALLBACK', 'PASS_NO_EDGE'],
-                missing_inputs: ['market_line'],
-                pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
-                playability: {
-                  over_playable_at_or_below: projectionFloorF5 - 0.5,
-                  under_playable_at_or_above: projectionFloorF5 + 0.5,
-                },
-                projection: {
-                  projected_total: projectionFloorF5,
-                  projected_total_low: Math.max(0, projectionFloorF5 - 0.5),
-                  projected_total_high: projectionFloorF5 + 0.5,
-                  projected_home_f5_runs: Math.round((projectionFloorF5 / 2) * 10) / 10,
-                  projected_away_f5_runs: Math.round((projectionFloorF5 / 2) * 10) / 10,
-                },
-                reasoning: `F5 SYNTHETIC_FALLBACK projection floor ${projectionFloorF5.toFixed(1)}; PASS only until a real F5 market line is available`,
-                drivers: [{
-                  type: 'mlb-f5-projection-floor',
-                  projected: projectionFloorF5,
-                  edge: 0,
-                  projection_source: 'SYNTHETIC_FALLBACK',
-                }],
-                without_odds_mode: true,
-                projection_floor: true,
-                projection_floor_line: projectionFloorF5,
-              }
+          // WI-0877: Try full-model synthetic-line edge driver first.
+          // Falls back to SYNTHETIC_FALLBACK PASS when offense profiles are absent or
+          // either side has missing projection inputs.
+          const syntheticEdgeDriver = (marketAvailability.projection_floor && projectionFloorF5 !== null)
+            ? computeSyntheticLineF5Driver(mlb, syntheticContext, gameId)
             : null;
+          const projectionFloorDriver = syntheticEdgeDriver !== null
+            ? syntheticEdgeDriver
+            : (marketAvailability.projection_floor && projectionFloorF5 !== null)
+              ? {
+                  market: 'f5_total',
+                  prediction: 'OVER',
+                  confidence: 0.5,
+                  status: 'PASS',
+                  action: 'PASS',
+                  classification: 'PASS',
+                  ev_threshold_passed: false,
+                  projection_source: 'SYNTHETIC_FALLBACK',
+                  status_cap: 'PASS',
+                  reason_codes: ['PASS_SYNTHETIC_FALLBACK', 'PASS_NO_EDGE'],
+                  missing_inputs: ['market_line'],
+                  pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
+                  playability: {
+                    over_playable_at_or_below: projectionFloorF5 - 0.5,
+                    under_playable_at_or_above: projectionFloorF5 + 0.5,
+                  },
+                  projection: {
+                    projected_total: projectionFloorF5,
+                    projected_total_low: Math.max(0, projectionFloorF5 - 0.5),
+                    projected_total_high: projectionFloorF5 + 0.5,
+                    projected_home_f5_runs: Math.round((projectionFloorF5 / 2) * 10) / 10,
+                    projected_away_f5_runs: Math.round((projectionFloorF5 / 2) * 10) / 10,
+                  },
+                  reasoning: `F5 SYNTHETIC_FALLBACK projection floor ${projectionFloorF5.toFixed(1)}; PASS only until a real F5 market line is available`,
+                  drivers: [{
+                    type: 'mlb-f5-projection-floor',
+                    projected: projectionFloorF5,
+                    edge: 0,
+                    projection_source: 'SYNTHETIC_FALLBACK',
+                  }],
+                  without_odds_mode: true,
+                  projection_floor: true,
+                  projection_floor_line: projectionFloorF5,
+                }
+              : null;
           const gamePricingStatus = gameOddsSnapshot?.captured_at ? 'FRESH' : 'MISSING';
           const gamePricingReason = gameOddsSnapshot?.captured_at
             ? null
@@ -2528,6 +2673,8 @@ module.exports = {
   buildPitcherStrikeoutLookback,
   // Exported for WI-0637 unit tests
   computeProjectionFloorF5,
+  // Exported for WI-0877 unit tests
+  computeSyntheticLineF5Driver,
   // Exported for WI-0648 unit tests
   MIN_MLB_GAMES_FOR_RECAL,
 };

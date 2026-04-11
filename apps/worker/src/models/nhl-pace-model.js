@@ -2,6 +2,7 @@
 
 const { validateCanonicalGoalieState } = require('./nhl-goalie-state');
 const { buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
+const { buildModelOutput } = require('./model-output');
 const scoreEngine = require('../utils/score-engine');
 
 /**
@@ -732,7 +733,49 @@ function predictNHLGame(opts) {
     confidence = Math.min(confidence, 0.5);
   }
 
-  const result = {
+  const missingOptional = [
+    ['homePpPct', homePpPct],
+    ['awayPpPct', awayPpPct],
+    ['homePkPct', homePkPct],
+    ['awayPkPct', awayPkPct],
+    ['homeGoalieSavePct', homeGoalieSavePct],
+    ['awayGoalieSavePct', awayGoalieSavePct],
+    ['homeGoalieGsax', homeGoalieGsax],
+    ['awayGoalieGsax', awayGoalieGsax],
+    ['homeGoalsForL5', homeGoalsForL5],
+    ['awayGoalsForL5', awayGoalsForL5],
+    ['homeGoalsAgainstL5', homeGoalsAgainstL5],
+    ['awayGoalsAgainstL5', awayGoalsAgainstL5],
+    ['restDaysHome', restDaysHome],
+    ['restDaysAway', restDaysAway],
+  ]
+    .filter(([, value]) => value === null)
+    .map(([name]) => name);
+
+  const result = buildModelOutput({
+    market: 'NHL_TOTAL',
+    model_status: goalieConfidenceCapped ? 'DEGRADED' : 'MODEL_OK',
+    fairProb: null,
+    fairLine: Math.round((homeGoals + awayGoals) * 1000) / 1000,
+    confidence,
+    featuresUsed: {
+      homeGoalsFor,
+      homeGoalsAgainst,
+      awayGoalsFor,
+      awayGoalsAgainst,
+      homePaceFactor: hPace,
+      awayPaceFactor: aPace,
+      combinedPace: round3(combinedPace),
+      homeGoalieCertainty: homeCertainty,
+      awayGoalieCertainty: awayCertainty,
+      l5Blended,
+      hasPpPk,
+    },
+    missingOptional,
+    missingCritical: [],
+    diagnostics: {
+      official_eligible: officialEligible,
+    },
     homeExpected,
     awayExpected,
     expectedTotal,
@@ -766,12 +809,9 @@ function predictNHLGame(opts) {
     },
     adjustments,
     confidence,
-    model_status: goalieConfidenceCapped ? 'DEGRADED' : 'MODEL_OK',
-    // WI-0829: expose fairLine for residual projection layer
-    fairLine: Math.round((homeGoals + awayGoals) * 1000) / 1000,
     // WI-0830: pace signal from scoreEngine (metadata only)
     paceSignalScore: Math.round(paceSignalScore * 1000) / 1000,
-  };
+  });
 
   validateNhlPaceResult(result);
   return result;

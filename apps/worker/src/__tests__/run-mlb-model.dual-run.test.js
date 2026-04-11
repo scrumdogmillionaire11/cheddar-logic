@@ -176,6 +176,8 @@ function loadRunMlbModel({
   jest.doMock('../models/mlb-model', () => ({
     selectMlbGameMarket: selectMlbGameMarketMock,
     projectF5ML: jest.fn(),
+    // WI-0877: stub so computeSyntheticLineF5Driver can call the function
+    projectTeamF5RunsAgainstStarter: jest.fn(() => ({ f5_runs: null, missing_inputs: ['stub'], degraded_inputs: [] })),
     // WI-0840: no-op in tests — static constants remain in effect
     setLeagueConstants: jest.fn(),
   }));

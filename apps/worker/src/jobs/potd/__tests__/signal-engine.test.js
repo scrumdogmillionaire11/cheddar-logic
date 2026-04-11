@@ -37,15 +37,20 @@ function buildGame(overrides = {}) {
 }
 
 function buildEliteGame() {
+  // NHL total with a significant line outlier at book-e (+value price too).
+  // Under the AC2 consensus-magnitude normalization, a 1.5-point delta on a
+  // ~5.5 consensus line (lineDelta/consensusLine ≈ 0.27) still produces a
+  // high lineValue when combined with a much better price at that book.
+  // Expected: best OVER candidate scores ELITE (totalScore >= 0.75).
   return buildGame({
-    sport: 'NBA',
+    sport: 'NHL',
     market: {
       totals: [
-        { book: 'book-a', line: 220.5, over: -108, under: -112 },
-        { book: 'book-b', line: 220.5, over: -109, under: -111 },
-        { book: 'book-c', line: 220.5, over: -107, under: -113 },
-        { book: 'book-d', line: 220.5, over: -110, under: -110 },
-        { book: 'book-e', line: 219, over: 125, under: -140 },
+        { book: 'book-a', line: 5.5, over: -115, under: 110 },
+        { book: 'book-b', line: 5.5, over: -115, under: 110 },
+        { book: 'book-c', line: 5.5, over: -115, under: 110 },
+        { book: 'book-d', line: 5.5, over: -115, under: 110 },
+        { book: 'book-e', line: 3.5, over: 100, under: -115 },
       ],
     },
   });
@@ -190,5 +195,114 @@ describe('potd signal engine', () => {
     const best = selectBestPlay(scored, { minConfidence: 'HIGH' });
     expect(best).not.toBeNull();
     expect(best.marketType).toBe('TOTAL');
+  });
+
+  test('fixed-line runline (+-1.5) scores like MONEYLINE not like a floating spread', () => {
+    const fixedLineGame = buildGame({
+      sport: 'baseball_mlb',
+      market: {
+        spreads: [
+          { book: 'book-a', home_line: -1.5, away_line: 1.5, home_price: -130, away_price: 110 },
+          { book: 'book-b', home_line: -1.5, away_line: 1.5, home_price: -128, away_price: 108 },
+          { book: 'book-c', home_line: -1.5, away_line: 1.5, home_price: -125, away_price: 105 },
+        ],
+        totals: [],
+        h2h: [],
+      },
+    });
+
+    const floatingLineGame = buildGame({
+      sport: 'basketball_nba',
+      market: {
+        spreads: [
+          { book: 'book-a', home_line: -7.0, away_line: 7.0, home_price: -110, away_price: -110 },
+          { book: 'book-b', home_line: -7.5, away_line: 7.5, home_price: -108, away_price: -112 },
+          { book: 'book-c', home_line: -7.0, away_line: 7.0, home_price: -112, away_price: -108 },
+        ],
+        totals: [],
+        h2h: [],
+      },
+    });
+
+    const mlbHome = buildCandidates(fixedLineGame).find(
+      (c) => c.marketType === 'SPREAD' && c.selection === 'HOME',
+    );
+    const nbaHome = buildCandidates(floatingLineGame).find(
+      (c) => c.marketType === 'SPREAD' && c.selection === 'HOME',
+    );
+
+    const mlbScored = scoreCandidate(mlbHome);
+    const nbaScored = scoreCandidate(nbaHome);
+
+    expect(mlbScored).not.toBeNull();
+    expect(nbaScored).not.toBeNull();
+    // Fixed-line market must not get a free lineScore=1.0 boost
+    expect(mlbScored.marketConsensus).toBeLessThan(1.0);
+    expect(nbaScored.marketConsensus).toBeLessThan(1.0);
+  });
+
+  test('per-sport pool: NBA candidate with highest score wins even when MLB has more candidates', () => {
+    const mlbCandidates = [
+      { sport: 'baseball_mlb', totalScore: 0.62, edgePct: 0.03 },
+      { sport: 'baseball_mlb', totalScore: 0.63, edgePct: 0.02 },
+      { sport: 'baseball_mlb', totalScore: 0.64, edgePct: 0.02 },
+    ];
+    const nbaCandidates = [
+      { sport: 'basketball_nba', totalScore: 0.68, edgePct: 0.04 },
+    ];
+
+    const best = selectBestPlay([...mlbCandidates, ...nbaCandidates], { minConfidence: 0 });
+    expect(best).not.toBeNull();
+    expect(best.sport).toBe('basketball_nba');
+    expect(best.totalScore).toBe(0.68);
+  });
+
+  test('favorable line delta increases lineValue above neutral 0.5', () => {
+    // A candidate whose line is better than consensus should score above neutral
+    const nhlOver = {
+      gameId: 'nhl-test',
+      sport: 'NHL',
+      home_team: 'A',
+      away_team: 'B',
+      commence_time: new Date().toISOString(),
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      selectionLabel: 'OVER 5.0',
+      line: 5.0,        // better (lower) than consensus for OVER
+      price: 105,
+      consensusLine: 5.5,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      comparableLines: [5.5, 5.5, 5.5],
+      comparablePrices: [-110, -108, -112],
+      sourceCount: 3,
+    };
+
+    const scored = scoreCandidate(nhlOver);
+    expect(scored).not.toBeNull();
+    // lineValue should exceed 0.5 because we have a favorable line delta
+    expect(scored.lineValue).toBeGreaterThan(0.5);
+
+    // AC2: same absolute lineDelta produces a larger lineValue boost on a
+    // small consensus line (runline-like ~1.5) than on a large one (NBA ~7).
+    // This confirms normalization is magnitude-relative, not hardcoded.
+    const smallConsensus = scoreCandidate({
+      ...nhlOver,
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      line: 1.0,
+      consensusLine: 1.5,  // runline-scale: lineDelta = 1.5 - 1.0 = 0.5
+      comparableLines: [1.5, 1.5, 1.5],
+    });
+    const largeConsensus = scoreCandidate({
+      ...nhlOver,
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      line: 6.5,
+      consensusLine: 7.0,  // NBA-scale: lineDelta = 7.0 - 6.5 = 0.5
+      comparableLines: [7.0, 7.0, 7.0],
+    });
+    // Same lineDelta (0.5) but smaller consensus magnitude → bigger lineValue boost
+    expect(smallConsensus.lineValue).toBeGreaterThan(largeConsensus.lineValue);
   });
 });

@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2025-07-25T00:00:00Z"
-last_activity: "2025-07-25 - Completed S5-01, S5-02, S5-03 on branch agent/copilot/S5-model-advanced-architecture — WI-0830 (score-engine), WI-0831 (isotonic calibration), WI-0829 (residual projection)"
+last_activity: "2026-04-11 - Completed quick task 148: WI-0873 implement projectFullGameML full-game ML win probability model — 5 new tests, all 40 pass"
 ---
 
 # Project State
@@ -172,6 +172,9 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 148 | WI-0873: implement projectFullGameML — full-game ML win probability model, full_game_ml driver card, 5 new tests | 2026-04-11 | 9c7f87f | [146-wi-0873-implement-projectfullgameml-full](./quick/146-wi-0873-implement-projectfullgameml-full/) |
+| 147 | WI-0878: POTD signal-engine sport-fairness fixes — lineDelta normalization, fixed-line fallback, per-sport pool | 2026-04-11 | ffe2e93 | [145-potd-signal-engine-sport-fairness-fixes](./quick/145-potd-signal-engine-sport-fairness-fixes/) |
+| 146 | WI-0871: Fix F5 ML formula — align projectF5ML with projectTeamF5RunsAgainstStarter shared run path | 2026-04-11 | 702c77c | [WI-0871](../.planning/phases/WI-0871/) |
 | 145 | WI-0856: /api/market-pulse route with 4.5-min server cache | 2026-04-10 | 3f0f608 | [WI-0856](../.planning/phases/WI-0856/) |
 | 144 | WI-0819: quarter-Kelly stake fraction on PLAY/LEAN card payloads | 2026-04-10 | c52c2ad | [WI-0819](../.planning/phases/WI-0819/) |
 | 144 | WI-0842 + WI-0843: settlement expiry sweep and card_results dedup | 2026-04-10 | a97c1ff | [144-wi-0842-wi-0843](./quick/144-wi-0842-wi-0843-settlement-expiry-sweep-/) |

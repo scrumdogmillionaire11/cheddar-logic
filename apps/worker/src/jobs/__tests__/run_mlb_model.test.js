@@ -44,6 +44,7 @@ const {
   buildMlbPipelineState,
   buildPitcherKLineContract,
   resolvePitcherKPayloadIdentity,
+  computeSyntheticLineF5Driver,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -2001,5 +2002,103 @@ describe('WI-0863: projection-only market trust guards', () => {
     expect(payload.market_trust_flags).toContain('STALE_SEED_DATA');
     expect(payload.reason_codes).toContain('STALE_SEED_DATA');
     expect(payload.raw_data.mlb_runtime_context.seed_data_status).toBe('STALE');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-0877: computeSyntheticLineF5Driver — synthetic-line F5 edge driver
+// ---------------------------------------------------------------------------
+
+describe('WI-0877: computeSyntheticLineF5Driver', () => {
+  /** Minimal pitcher that drives a clean projection. */
+  const elitePitcher = {
+    siera: 2.70, x_fip: 2.75, x_era: 2.80, handedness: 'R',
+    avg_ip: 6.2, pitch_count_avg: 100, bb_pct: 0.06, k_per_9: 11.0, whip: 0.95, era: 2.70,
+    times_through_order_profile: { '1st': 2.8, '3rd': 3.2 },
+  };
+  const avgPitcher = {
+    siera: 4.20, x_fip: 4.10, x_era: 4.20, handedness: 'R',
+    avg_ip: 5.3, pitch_count_avg: 88, bb_pct: 0.09, k_per_9: 7.8, whip: 1.30, era: 4.20,
+    times_through_order_profile: { '1st': 3.8, '3rd': 4.2 },
+  };
+  const goodOffense = { wrc_plus: 110, xwoba: 0.340 };
+  const avgOffense = { wrc_plus: 100, xwoba: 0.320 };
+  const weakOffense = { wrc_plus: 85, xwoba: 0.295 };
+  const context = {
+    park_run_factor: 1.0, temp_f: 72, wind_mph: 3, wind_dir: null, roof: null,
+  };
+
+  test('missing home_offense_profile → returns null (SYNTHETIC_FALLBACK fallback)', () => {
+    const mlb = {
+      home_pitcher: avgPitcher,
+      away_pitcher: avgPitcher,
+      home_offense_profile: null,
+      away_offense_profile: avgOffense,
+      park_run_factor: 1.0, temp_f: 72, wind_mph: 3, wind_dir: null, roof: null,
+    };
+    expect(computeSyntheticLineF5Driver(mlb, context, 'test-game-001')).toBeNull();
+  });
+
+  test('missing away_offense_profile → returns null (SYNTHETIC_FALLBACK fallback)', () => {
+    const mlb = {
+      home_pitcher: avgPitcher,
+      away_pitcher: avgPitcher,
+      home_offense_profile: avgOffense,
+      away_offense_profile: null,
+      park_run_factor: 1.0, temp_f: 72, wind_mph: 3, wind_dir: null, roof: null,
+    };
+    expect(computeSyntheticLineF5Driver(mlb, context, 'test-game-002')).toBeNull();
+  });
+
+  test('f5_runs null from either side (missing pitcher inputs) → returns null', () => {
+    // Pass null pitchers — projectTeamF5RunsAgainstStarter will return f5_runs: null
+    const mlb = {
+      home_pitcher: null,
+      away_pitcher: null,
+      home_offense_profile: avgOffense,
+      away_offense_profile: avgOffense,
+      park_run_factor: 1.0, temp_f: 72, wind_mph: 3, wind_dir: null, roof: null,
+    };
+    expect(computeSyntheticLineF5Driver(mlb, context, 'test-game-003')).toBeNull();
+  });
+
+  test('high-offense vs weak pitching (projectedBase >= 5.0) → OVER FIRE, projection_source=FULL_MODEL', () => {
+    // Use avg pitchers vs good offense + neutral park to get projectedBase >= 5.0
+    const mlb = {
+      home_pitcher: avgPitcher,
+      away_pitcher: avgPitcher,
+      home_offense_profile: goodOffense,
+      away_offense_profile: goodOffense,
+      park_run_factor: 1.0, temp_f: 72, wind_mph: 3, wind_dir: null, roof: null,
+    };
+    const result = computeSyntheticLineF5Driver(mlb, context, 'test-game-004');
+    expect(result).not.toBeNull();
+    expect(result.projection_source).toBe('FULL_MODEL');
+    expect(result.reason_codes).toContain('SYNTHETIC_LINE_ASSUMPTION');
+    if (result.projection.projected_total >= 5.0) {
+      expect(result.status).toBe('FIRE');
+      expect(result.prediction).toBe('OVER');
+      expect(result.ev_threshold_passed).toBe(true);
+    }
+  });
+
+  test('elite pitching both sides (projectedBase <= 3.0) → UNDER FIRE, projection_source=FULL_MODEL', () => {
+    const mlb = {
+      home_pitcher: elitePitcher,
+      away_pitcher: elitePitcher,
+      home_offense_profile: weakOffense,
+      away_offense_profile: weakOffense,
+      park_run_factor: 0.92, temp_f: 50, wind_mph: 2, wind_dir: 'IN', roof: null,
+    };
+    const eliteContext = { park_run_factor: 0.92, temp_f: 50, wind_mph: 2, wind_dir: 'IN', roof: null };
+    const result = computeSyntheticLineF5Driver(mlb, eliteContext, 'test-game-005');
+    expect(result).not.toBeNull();
+    expect(result.projection_source).toBe('FULL_MODEL');
+    expect(result.reason_codes).toContain('SYNTHETIC_LINE_ASSUMPTION');
+    if (result.projection.projected_total <= 3.0) {
+      expect(result.status).toBe('FIRE');
+      expect(result.prediction).toBe('UNDER');
+      expect(result.ev_threshold_passed).toBe(true);
+    }
   });
 });

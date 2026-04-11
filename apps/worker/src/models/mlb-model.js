@@ -1,6 +1,7 @@
 'use strict';
 
 const { classifyModelStatus, buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
+const { buildModelOutput } = require('./model-output');
 const scoreEngine = require('../utils/score-engine');
 
 /**
@@ -593,6 +594,157 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
   };
 }
 
+const MLB_FULL_GAME_DEFAULT_BULLPEN_ERA = 4.3;
+const MLB_FULL_GAME_POISSON_RANGE_SCALE = 0.38;
+const MLB_FULL_GAME_EDGE_THRESHOLD = 0.5;
+
+/**
+ * Project late-innings (inn 6-9) run contribution for one team.
+ *
+ * Models bullpen-driven run scoring via bullpen ERA proxy rather than scaling
+ * the starter's F5 line. Applies the same offense composite + park/weather
+ * adjustments as the F5 path.
+ *
+ * @param {object|null} offenseProfile  Team's offense split profile
+ * @param {string|null} pitcherHandedness  Opposing starter handedness (for split selection)
+ * @param {number|null} opponentBullpenEra  Opponent bullpen ERA (null → league avg 4.3)
+ * @param {object} environment  { park_run_factor, temp_f, wind_mph, wind_dir, roof }
+ * @returns {{ late_runs: number, bullpen_ra9_used: number, degraded_inputs: string[] }}
+ */
+function projectLateInningsRuns(offenseProfile, pitcherHandedness, opponentBullpenEra, environment = {}) {
+  const degradedInputs = [];
+  const bullpenEra = toFiniteNumberOrNull(opponentBullpenEra);
+  if (bullpenEra === null) degradedInputs.push('bullpen_era');
+  const bullpen_ra9 = bullpenEra ?? MLB_FULL_GAME_DEFAULT_BULLPEN_ERA;
+
+  // Base late-innings projection: bullpen ERA scaled to 4 innings
+  let lateMean = bullpen_ra9 * (4 / 9);
+
+  // Apply offense composite multiplier (same clamping as F5: [0.88, 1.14])
+  const matchupProfile = resolveTeamSplitProfile(offenseProfile, pitcherHandedness);
+  if (matchupProfile) {
+    const offenseMult = resolveOffenseComposite(matchupProfile);
+    lateMean *= offenseMult;
+  }
+
+  // Apply park factor
+  const parkFactor = toFiniteNumberOrNull(environment?.park_run_factor);
+  if (parkFactor !== null) {
+    lateMean *= clampValue(parkFactor, 0.9, 1.12);
+  }
+
+  // Apply weather factor
+  const weatherFactor = resolveWeatherRunFactor(environment);
+  lateMean *= weatherFactor ?? 1.0;
+
+  return {
+    late_runs: Math.max(0.1, lateMean),
+    bullpen_ra9_used: bullpen_ra9,
+    degraded_inputs: degradedInputs,
+  };
+}
+
+/**
+ * Project full-game run total by summing F5 (starter-driven) + late-innings
+ * (inn 6-9, bullpen-proxy) run segments for both teams.
+ *
+ * @param {object} homePitcher
+ * @param {object} awayPitcher
+ * @param {object} [context={}]  home/away_offense_profile, park_run_factor,
+ *   temp_f, wind_mph, wind_dir, roof, home_bullpen_era, away_bullpen_era
+ * @returns {object}  projected_total_mean, projected_total_low, projected_total_high,
+ *   home_proj, away_proj, projection_source, confidence, status_cap, ...
+ */
+function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
+  const homeOffenseProfile = context?.home_offense_profile ?? null;
+  const awayOffenseProfile = context?.away_offense_profile ?? null;
+  const environment = {
+    park_run_factor: context?.park_run_factor,
+    temp_f: context?.temp_f,
+    wind_mph: context?.wind_mph,
+    wind_dir: context?.wind_dir,
+    roof: context?.roof,
+  };
+
+  // F5 segments — reuse existing per-team projection
+  const homeF5 = projectTeamF5RunsAgainstStarter(awayPitcher, homeOffenseProfile, environment);
+  const awayF5 = projectTeamF5RunsAgainstStarter(homePitcher, awayOffenseProfile, environment);
+
+  const f5MissingInputs = Array.from(new Set([
+    ...(homeF5.missing_inputs || []).map((n) => `home_${n}`),
+    ...(awayF5.missing_inputs || []).map((n) => `away_${n}`),
+  ]));
+
+  // Late-innings segments — opponent bullpen ERA governs each side
+  const homeLate = projectLateInningsRuns(
+    homeOffenseProfile,
+    awayPitcher?.handedness ?? null,
+    context?.away_bullpen_era ?? null,
+    environment,
+  );
+  const awayLate = projectLateInningsRuns(
+    awayOffenseProfile,
+    homePitcher?.handedness ?? null,
+    context?.home_bullpen_era ?? null,
+    environment,
+  );
+
+  const degradedInputs = Array.from(new Set([
+    ...(homeF5.degraded_inputs || []).map((n) => `home_${n}`),
+    ...(awayF5.degraded_inputs || []).map((n) => `away_${n}`),
+    ...(homeLate.degraded_inputs || []).map((n) => `home_${n}`),
+    ...(awayLate.degraded_inputs || []).map((n) => `away_${n}`),
+  ]));
+
+  const bullpenMissing = degradedInputs.some((d) => d.includes('bullpen_era'));
+
+  if (f5MissingInputs.length > 0) {
+    return {
+      projected_total_mean: null,
+      projected_total_low: null,
+      projected_total_high: null,
+      home_proj: null,
+      away_proj: null,
+      projection_source: 'NO_BET',
+      confidence: 0,
+      status_cap: 'NO_BET',
+      missing_inputs: f5MissingInputs,
+      degraded_inputs: degradedInputs,
+    };
+  }
+
+  const homeProj = homeF5.f5_runs + homeLate.late_runs;
+  const awayProj = awayF5.f5_runs + awayLate.late_runs;
+  const fullGameMean = homeProj + awayProj;
+  const rangeWidth = Math.max(0.5, Math.sqrt(Math.max(fullGameMean, 0.1)) * MLB_FULL_GAME_POISSON_RANGE_SCALE);
+
+  // Confidence: 7 base, +1 if both FULL_MODEL (zero degraded), -1 if bullpen_era missing
+  let confidence = 7;
+  if (degradedInputs.length === 0) confidence += 1;
+  if (bullpenMissing) confidence -= 1;
+  confidence = Math.max(1, Math.min(10, confidence));
+
+  const projectionSource = degradedInputs.length === 0 ? 'FULL_MODEL' : 'DEGRADED_MODEL';
+  const statusCap = projectionSource === 'FULL_MODEL' ? 'PLAY' : 'LEAN';
+
+  return {
+    projected_total_mean: fullGameMean,
+    projected_total_low: Math.max(0, fullGameMean - rangeWidth),
+    projected_total_high: fullGameMean + rangeWidth,
+    home_proj: homeProj,
+    away_proj: awayProj,
+    projection_source: projectionSource,
+    confidence,
+    status_cap: statusCap,
+    missing_inputs: [],
+    degraded_inputs: degradedInputs,
+    home_f5_runs: homeF5.f5_runs,
+    away_f5_runs: awayF5.f5_runs,
+    home_late_runs: homeLate.late_runs,
+    away_late_runs: awayLate.late_runs,
+  };
+}
+
 /**
  * Project F5 total card with OVER/UNDER/PASS signal.
  *
@@ -638,7 +790,34 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
     ...(degradedProjection && evThresholdPassed ? ['MODEL_DEGRADED_INPUTS'] : []),
   ]));
 
-  return {
+  return buildModelOutput({
+    market: 'MLB_F5_TOTAL',
+    model_status:
+      proj.status === 'NO_BET'
+        ? 'NO_BET'
+        : (degradedProjection || proj.model_status === 'DEGRADED')
+          ? 'DEGRADED'
+          : 'MODEL_OK',
+    fairProb: null,
+    fairLine: roundToTenth(proj.projected_total_mean ?? proj.base),
+    confidence: proj.confidence,
+    featuresUsed: {
+      home_starter_skill_ra9: proj.home_starter_skill_ra9 ?? null,
+      away_starter_skill_ra9: proj.away_starter_skill_ra9 ?? null,
+      projected_home_f5_runs: roundToTenth(proj.projected_home_f5_runs),
+      projected_away_f5_runs: roundToTenth(proj.projected_away_f5_runs),
+      park_run_factor: proj.park_run_factor ?? null,
+      weather_factor: proj.weather_factor ?? null,
+    },
+    missingOptional: [
+      ...(proj.missingOptional || []),
+      ...(proj.missing_inputs || []),
+    ],
+    missingCritical: proj.missingCritical || [],
+    diagnostics: {
+      projection_source: proj.projection_source,
+      status_cap: proj.status_cap ?? null,
+    },
     prediction,
     status,
     action: status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS',
@@ -667,34 +846,114 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
       away_ttop_penalty_mult: roundToTenth(proj.away_ttop_penalty_mult),
     },
     reasoning: `${sourceLabel} projected ${proj.base.toFixed(2)} vs line ${f5Line} (edge ${edge >= 0 ? '+' : ''}${edge.toFixed(2)}, playable O<=${proj.playability?.over_playable_at_or_below ?? 'n/a'} U>=${proj.playability?.under_playable_at_or_above ?? 'n/a'}, range ${roundToTenth(proj.projected_total_low)}-${roundToTenth(proj.projected_total_high)}, conf ${proj.confidence}/10)`,
-  };
+  });
 }
 
 /**
  * Project F5 Moneyline side pick from pitcher matchup vs. published F5 ML prices.
  *
  * Algorithm:
- *   1. Derive per-team expected F5 runs from ERA (same as projectF5Total base).
- *   2. Convert run differential to home win probability via logistic function.
- *   3. Compare projected win probability to implied probability from ML prices.
- *   4. Emit HOME / AWAY / PASS based on edge vs. lean_edge_min (0.04) and confidence.
+ *   1. Prefer the shared per-team F5 run projection path when offense/context inputs exist.
+ *   2. Fall back to legacy ERA arithmetic when aligned inputs are unavailable.
+ *   3. Convert run differential to home win probability via logistic function.
+ *   4. Compare projected win probability to implied probability from ML prices.
+ *   5. Emit HOME / AWAY / PASS based on edge vs. lean_edge_min (0.04) and confidence.
  *
  * @param {object} homePitcher - { era, whip, k_per_9 }
  * @param {object} awayPitcher - { era, whip, k_per_9 }
  * @param {number} mlF5Home - American odds for home side (e.g. -120)
  * @param {number} mlF5Away - American odds for away side (e.g. +105)
+ * @param {object|null} [homeOffenseProfile=null]
+ * @param {object|null} [awayOffenseProfile=null]
+ * @param {object|null} [context=null]
  * @returns {object|null}
  */
-function projectF5ML(homePitcher, awayPitcher, mlF5Home, mlF5Away) {
+function projectF5ML(
+  homePitcher,
+  awayPitcher,
+  mlF5Home,
+  mlF5Away,
+  homeOffenseProfile = null,
+  awayOffenseProfile = null,
+  context = null,
+) {
   if (!homePitcher || !awayPitcher) return null;
   if (mlF5Home == null || mlF5Away == null) return null;
-  if (homePitcher.era == null || awayPitcher.era == null) return null;
 
-  const LEAGUE_AVG_RPG = 4.5;
-  // Home team expected F5 runs = function of away pitcher ERA
-  const homeExpected = (awayPitcher.era + LEAGUE_AVG_RPG) / 2 * (5 / 9);
-  // Away team expected F5 runs = function of home pitcher ERA
-  const awayExpected = (homePitcher.era + LEAGUE_AVG_RPG) / 2 * (5 / 9);
+  function buildEraFallbackProjection() {
+    if (homePitcher.era == null || awayPitcher.era == null) return null;
+
+    const LEAGUE_AVG_RPG = 4.5;
+    // Home team expected F5 runs = function of away pitcher ERA
+    const homeExpected = (awayPitcher.era + LEAGUE_AVG_RPG) / 2 * (5 / 9);
+    // Away team expected F5 runs = function of home pitcher ERA
+    const awayExpected = (homePitcher.era + LEAGUE_AVG_RPG) / 2 * (5 / 9);
+    const avgEra = (homePitcher.era + awayPitcher.era) / 2;
+    const avgWhip = ((homePitcher.whip ?? 1.3) + (awayPitcher.whip ?? 1.3)) / 2;
+    const avgK9 = ((homePitcher.k_per_9 ?? 8.0) + (awayPitcher.k_per_9 ?? 8.0)) / 2;
+    let confidence = 6;
+    if (avgEra <= 3.5) confidence += 1;
+    if (avgWhip <= 1.2) confidence += 1;
+    if (avgK9 >= 8.5) confidence += 1;
+
+    return {
+      homeExpected,
+      awayExpected,
+      confidence: Math.min(confidence, 10),
+      projectionSource: 'F5_ML_FALLBACK_ERA',
+      reasonCodes: ['F5_ML_FALLBACK_ERA'],
+      degradedInputs: [],
+    };
+  }
+
+  let projection = null;
+  if (homeOffenseProfile && awayOffenseProfile) {
+    const projectionContext = context ?? {};
+    const homeRunsResult = projectTeamF5RunsAgainstStarter(
+      awayPitcher,
+      homeOffenseProfile,
+      projectionContext,
+    );
+    const awayRunsResult = projectTeamF5RunsAgainstStarter(
+      homePitcher,
+      awayOffenseProfile,
+      projectionContext,
+    );
+    if (
+      Number.isFinite(homeRunsResult?.f5_runs) &&
+      Number.isFinite(awayRunsResult?.f5_runs)
+    ) {
+      const homeDegradedInputs = Array.isArray(homeRunsResult.degraded_inputs)
+        ? homeRunsResult.degraded_inputs
+        : [];
+      const awayDegradedInputs = Array.isArray(awayRunsResult.degraded_inputs)
+        ? awayRunsResult.degraded_inputs
+        : [];
+      projection = {
+        homeExpected: homeRunsResult.f5_runs,
+        awayExpected: awayRunsResult.f5_runs,
+        confidence: Math.max(
+          5,
+          7 -
+            (homeDegradedInputs.length > 0 ? 1 : 0) -
+            (awayDegradedInputs.length > 0 ? 1 : 0),
+        ),
+        projectionSource: 'FULL_MODEL',
+        reasonCodes: [],
+        degradedInputs: Array.from(new Set([
+          ...homeDegradedInputs.map((name) => `home_${name}`),
+          ...awayDegradedInputs.map((name) => `away_${name}`),
+        ])),
+      };
+    }
+  }
+
+  projection = projection ?? buildEraFallbackProjection();
+  if (!projection) return null;
+
+  const homeExpected = projection.homeExpected;
+  const awayExpected = projection.awayExpected;
+  const confidence = projection.confidence;
   const runDiff = homeExpected - awayExpected; // positive = home advantage
 
   // Logistic win probability from run differential (coefficient 0.8 empirical for F5)
@@ -715,23 +974,6 @@ function projectF5ML(homePitcher, awayPitcher, mlF5Home, mlF5Away) {
   const homeEdge = winProbHome - impliedHome;
   const awayEdge = (1 - winProbHome) - impliedAway;
 
-  // Prefer full-model confidence, but preserve the legacy ERA/WHIP fallback for
-  // F5 ML because this market still uses the simpler side-projection path.
-  const proj = projectF5Total(homePitcher, awayPitcher);
-  const fallbackConfidence = (() => {
-    const avgEra = (homePitcher.era + awayPitcher.era) / 2;
-    const avgWhip = ((homePitcher.whip ?? 1.3) + (awayPitcher.whip ?? 1.3)) / 2;
-    const avgK9 = ((homePitcher.k_per_9 ?? 8.0) + (awayPitcher.k_per_9 ?? 8.0)) / 2;
-    let score = 6;
-    if (avgEra <= 3.5) score += 1;
-    if (avgWhip <= 1.2) score += 1;
-    if (avgK9 >= 8.5) score += 1;
-    return Math.min(score, 10);
-  })();
-  const confidence = proj && proj.projection_source === 'FULL_MODEL'
-    ? proj.confidence
-    : fallbackConfidence;
-
   const LEAN_EDGE_MIN = 0.04; // F5 ML edge threshold (slightly wider than totals)
   const CONFIDENCE_MIN = 6;
 
@@ -750,9 +992,98 @@ function projectF5ML(homePitcher, awayPitcher, mlF5Home, mlF5Away) {
     prediction: side,
     edge,
     projected_win_prob_home: winProbHome,
+    projected_home_f5_runs: homeExpected,
+    projected_away_f5_runs: awayExpected,
     confidence,
+    projection_source: projection.projectionSource,
+    reason_codes: projection.reasonCodes,
+    degraded_inputs: projection.degradedInputs,
     ev_threshold_passed: side !== 'PASS',
     reasoning: `F5 ML: homeExp=${homeExpected.toFixed(2)} awayExp=${awayExpected.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp conf=${confidence}/10`,
+  };
+}
+
+/**
+ * Project full-game moneyline win probability from the full-game run differential.
+ *
+ * Algorithm:
+ *   1. Call projectFullGameTotal() to get home/away projected run means.
+ *   2. runDiff = home_proj - away_proj
+ *   3. winProbHome = 1 / (1 + exp(-0.5 * runDiff))
+ *      Coefficient 0.5 (vs 0.8 for F5) because 9-inning differentials are larger
+ *      in absolute magnitude than F5 differentials, so a smaller k keeps the
+ *      sigmoid from saturating prematurely.
+ *   4. De-vig mlHome / mlAway with two-sided normalization (same as projectF5ML).
+ *   5. homeEdge = winProbHome - fairHome; emit HOME/AWAY/PASS.
+ *
+ * @param {object} homePitcher
+ * @param {object} awayPitcher
+ * @param {number} mlHome  American odds for home (e.g. -120)
+ * @param {number} mlAway  American odds for away (e.g. +105)
+ * @param {object} [context={}]
+ * @returns {object|null}
+ */
+function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {}) {
+  if (!homePitcher || !awayPitcher) return null;
+  if (mlHome == null || mlAway == null) return null;
+
+  const proj = projectFullGameTotal(homePitcher, awayPitcher, context);
+  if (!proj || proj.projection_source === 'NO_BET' || proj.projected_total_mean == null) return null;
+
+  const homeProj = proj.home_proj;
+  const awayProj = proj.away_proj;
+  const runDiff = homeProj - awayProj;
+
+  // Coefficient 0.5 for full game (vs 0.8 for F5) — see JSDoc above
+  const winProbHome = 1 / (1 + Math.exp(-0.5 * runDiff));
+
+  function mlToImplied(ml) {
+    if (!Number.isFinite(ml)) return null;
+    return ml < 0 ? (-ml) / (-ml + 100) : 100 / (ml + 100);
+  }
+  const rawHome = mlToImplied(mlHome);
+  const rawAway = mlToImplied(mlAway);
+  if (rawHome === null || rawAway === null) return null;
+  const total = rawHome + rawAway;
+  const impliedHome = rawHome / total;
+  const impliedAway = rawAway / total;
+
+  const homeEdge = winProbHome - impliedHome;
+  const awayEdge = (1 - winProbHome) - impliedAway;
+
+  const LEAN_EDGE_MIN = 0.04;
+  const CONFIDENCE_MIN = 6;
+
+  let side = 'PASS';
+  let edge = 0;
+  if (homeEdge >= LEAN_EDGE_MIN && proj.confidence >= CONFIDENCE_MIN) {
+    side = 'HOME';
+    edge = homeEdge;
+  } else if (awayEdge >= LEAN_EDGE_MIN && proj.confidence >= CONFIDENCE_MIN) {
+    side = 'AWAY';
+    edge = awayEdge;
+  }
+
+  const isDegraded = proj.projection_source === 'DEGRADED_MODEL';
+  const reasonCodes = [
+    ...(isDegraded ? ['FULL_GAME_ML_DEGRADED'] : []),
+  ];
+
+  return {
+    side,
+    prediction: side,
+    edge,
+    projected_win_prob_home: winProbHome,
+    projected_home_runs: homeProj,
+    projected_away_runs: awayProj,
+    confidence: proj.confidence,
+    projection_source: proj.projection_source,
+    status_cap: proj.status_cap,
+    reason_codes: reasonCodes,
+    degraded_inputs: proj.degraded_inputs,
+    missing_inputs: proj.missing_inputs,
+    ev_threshold_passed: side !== 'PASS',
+    reasoning: `FullGameML: homeProj=${homeProj.toFixed(2)} awayProj=${awayProj.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp conf=${proj.confidence}/10`,
   };
 }
 
@@ -876,6 +1207,116 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
           edge: result.edge,
           projected: result.projected,
           projection_source: result.projection_source,
+        }],
+      });
+    }
+  }
+
+  // Full-game total card (WI-0872)
+  const fullGameLine = toFiniteNumberOrNull(mlb.full_game_line);
+  if (fullGameLine != null) {
+    const proj = projectFullGameTotal(homePitcher, awayPitcher, {
+      home_offense_profile: mlb.home_offense_profile ?? null,
+      away_offense_profile: mlb.away_offense_profile ?? null,
+      park_run_factor: mlb.park_run_factor ?? null,
+      temp_f: mlb.temp_f ?? null,
+      wind_mph: mlb.wind_mph ?? null,
+      wind_dir: mlb.wind_dir ?? null,
+      roof: mlb.roof ?? null,
+      home_bullpen_era: mlb.home_bullpen_era ?? null,
+      away_bullpen_era: mlb.away_bullpen_era ?? null,
+    });
+    if (proj && proj.projected_total_mean != null) {
+      const edge = proj.projected_total_mean - fullGameLine;
+      const leanSide = edge >= 0 ? 'OVER' : 'UNDER';
+      const hasEdge = Math.abs(edge) >= MLB_FULL_GAME_EDGE_THRESHOLD;
+      const isOver = hasEdge && edge > 0 && proj.confidence >= 8;
+      const isUnder = hasEdge && edge < 0 && proj.confidence >= 8;
+      const prediction = isOver ? 'OVER' : isUnder ? 'UNDER' : leanSide;
+      const evThresholdPassed = isOver || isUnder;
+      const status = !evThresholdPassed ? 'PASS' : proj.projection_source === 'FULL_MODEL' ? 'FIRE' : 'WATCH';
+      const action = status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS';
+      const classification = status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS';
+      const playability = {
+        over_playable_at_or_below: roundToHalf(proj.projected_total_mean - MLB_FULL_GAME_EDGE_THRESHOLD, 'floor'),
+        under_playable_at_or_above: roundToHalf(proj.projected_total_mean + MLB_FULL_GAME_EDGE_THRESHOLD, 'ceil'),
+      };
+      cards.push({
+        market: 'full_game_total',
+        prediction,
+        confidence: proj.confidence / 10,
+        ev_threshold_passed: evThresholdPassed,
+        reasoning: `Full-game ${proj.projection_source} projected ${proj.projected_total_mean.toFixed(2)} vs line ${fullGameLine} (edge ${edge >= 0 ? '+' : ''}${edge.toFixed(2)}, range ${roundToTenth(proj.projected_total_low)}-${roundToTenth(proj.projected_total_high)}, conf ${proj.confidence}/10)`,
+        status,
+        action,
+        classification,
+        projection_source: proj.projection_source,
+        status_cap: proj.status_cap,
+        pass_reason_code: !evThresholdPassed ? 'PASS_NO_EDGE' : null,
+        reason_codes: proj.degraded_inputs.length > 0 ? ['MODEL_DEGRADED_INPUTS'] : [],
+        missing_inputs: proj.missing_inputs,
+        playability,
+        projection: {
+          projected_total: roundToTenth(proj.projected_total_mean),
+          projected_total_low: roundToTenth(proj.projected_total_low),
+          projected_total_high: roundToTenth(proj.projected_total_high),
+          home_proj: roundToTenth(proj.home_proj),
+          away_proj: roundToTenth(proj.away_proj),
+          home_f5_runs: roundToTenth(proj.home_f5_runs),
+          away_f5_runs: roundToTenth(proj.away_f5_runs),
+          home_late_runs: roundToTenth(proj.home_late_runs),
+          away_late_runs: roundToTenth(proj.away_late_runs),
+        },
+        drivers: [{
+          type: 'mlb-full-game',
+          edge,
+          projected: proj.projected_total_mean,
+          projection_source: proj.projection_source,
+        }],
+      });
+    }
+  }
+
+  // Full-game ML card (WI-0873)
+  const mlHome = toFiniteNumberOrNull(oddsSnapshot?.h2h_home);
+  const mlAway = toFiniteNumberOrNull(oddsSnapshot?.h2h_away);
+  if (mlHome != null && mlAway != null) {
+    const mlResult = projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, {
+      home_offense_profile: mlb.home_offense_profile ?? null,
+      away_offense_profile: mlb.away_offense_profile ?? null,
+      park_run_factor: mlb.park_run_factor ?? null,
+      temp_f: mlb.temp_f ?? null,
+      wind_mph: mlb.wind_mph ?? null,
+      wind_dir: mlb.wind_dir ?? null,
+      roof: mlb.roof ?? null,
+      home_bullpen_era: mlb.home_bullpen_era ?? null,
+      away_bullpen_era: mlb.away_bullpen_era ?? null,
+    });
+    if (mlResult) {
+      const isDegraded = mlResult.projection_source === 'DEGRADED_MODEL';
+      const status = !mlResult.ev_threshold_passed ? 'PASS' : isDegraded ? 'WATCH' : 'FIRE';
+      const action = status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS';
+      const classification = status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS';
+      cards.push({
+        market: 'full_game_ml',
+        prediction: mlResult.prediction,
+        confidence: mlResult.confidence / 10,
+        ev_threshold_passed: mlResult.ev_threshold_passed,
+        reasoning: mlResult.reasoning,
+        status,
+        action,
+        classification,
+        projection_source: mlResult.projection_source,
+        status_cap: mlResult.status_cap,
+        pass_reason_code: !mlResult.ev_threshold_passed ? 'PASS_NO_EDGE' : null,
+        reason_codes: mlResult.reason_codes,
+        missing_inputs: mlResult.missing_inputs,
+        drivers: [{
+          type: 'mlb-full-game-ml',
+          side: mlResult.side,
+          edge: mlResult.edge,
+          win_prob_home: mlResult.projected_win_prob_home,
+          projection_source: mlResult.projection_source,
         }],
       });
     }
@@ -2546,8 +2987,15 @@ module.exports = {
   computePitcherKDriverCards,
   // Exported for unit testing (WI-0770)
   calculateProjectionK,
+  // WI-0872: full-game total model
+  projectLateInningsRuns,
+  projectFullGameTotal,
+  // WI-0873: full-game ML model
+  projectFullGameML,
   // Exported for unit testing (WI-0821)
   resolveOffenseComposite,
+  // WI-0877: synthetic-line F5 edge driver
+  projectTeamF5RunsAgainstStarter,
   // WI-0840: dynamic league constants
   setLeagueConstants,
 };

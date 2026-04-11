@@ -164,7 +164,7 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
     confidence,
     projection_source: bullpenDataPresent
       ? f5Proj.projection_source
-      : f5Proj.projection_source === 'FULL_MODEL' ? 'FULL_MODEL_AVG_BULLPEN' : f5Proj.projection_source,
+      : 'DEGRADED_MODEL',
     status_cap: f5Proj.status_cap,
     missing_inputs: f5Proj.missing_inputs,
     projected_home_fg_runs: homeFullGameRuns,
@@ -354,10 +354,52 @@ Import `projectLateInningsRuns`, `projectFullGameTotal` from the module at the t
 
 
 **Test E -- avg-starter + avg-bullpen game projects 8.5-9.5 (WI-0872 acceptance #4):**
-Add test asserting projectFullGameTotal(avgHome, avgAway, ctx).projected_fg_total_mean is between 8.5 and 9.5 when both pitchers have league-average metrics (siera~4.2, era~4.2), avg offense (wrc_plus=100), avg bullpen (era=4.0), neutral park/weather.
+```js
+test('avg-starter + avg-bullpen game projects between 8.5-9.5 total', () => {
+  const avgHome = { siera: 4.20, x_fip: 4.10, x_era: 4.20, handedness: 'R',
+    avg_ip: 5.3, pitch_count_avg: 88, bb_pct: 0.09, k_per_9: 7.8, whip: 1.30, era: 4.20,
+    times_through_order_profile: { '1st': 3.8, '3rd': 4.2 } };
+  const avgAway = { siera: 4.20, x_fip: 4.10, x_era: 4.20, handedness: 'R',
+    avg_ip: 5.3, pitch_count_avg: 88, bb_pct: 0.09, k_per_9: 7.8, whip: 1.30, era: 4.20,
+    times_through_order_profile: { '1st': 3.8, '3rd': 4.2 } };
+  const ctx = {
+    home_offense_profile: { wrc_plus: 100, xwoba: 0.320 },
+    away_offense_profile: { wrc_plus: 100, xwoba: 0.320 },
+    home_bullpen_era: 4.0, away_bullpen_era: 4.0,
+    park_run_factor: 1.0, temp_f: 72, wind_mph: 3, wind_dir: null, roof: null,
+  };
+  const result = projectFullGameTotal(avgHome, avgAway, ctx);
+  expect(result).not.toBeNull();
+  expect(result.projected_fg_total_mean).toBeGreaterThanOrEqual(8.5);
+  expect(result.projected_fg_total_mean).toBeLessThanOrEqual(9.5);
+});
+```
 
 **Test F -- elite-starter game projects lower total than avg-starter (WI-0872 acceptance #5):**
-Add test asserting projectFullGameTotal(eliteHome, oppAway, ctx).projected_fg_total_mean < projectFullGameTotal(avgHome, oppAway, ctx).projected_fg_total_mean where eliteHome has siera~2.6/era~2.6 and avgHome has siera~4.2/era~4.2, same away pitcher and context for both calls.
+```js
+test('elite-starter game projects lower total than avg-starter game', () => {
+  const eliteHome = { siera: 2.60, x_fip: 2.65, x_era: 2.70, handedness: 'R',
+    avg_ip: 6.5, pitch_count_avg: 102, bb_pct: 0.06, k_per_9: 11.5, whip: 0.92, era: 2.60,
+    times_through_order_profile: { '1st': 2.8, '3rd': 3.1 } };
+  const avgHome  = { siera: 4.20, x_fip: 4.10, x_era: 4.20, handedness: 'R',
+    avg_ip: 5.3, pitch_count_avg: 88, bb_pct: 0.09, k_per_9: 7.8, whip: 1.30, era: 4.20,
+    times_through_order_profile: { '1st': 3.8, '3rd': 4.2 } };
+  const oppAway  = { siera: 4.00, x_fip: 3.90, x_era: 4.10, handedness: 'R',
+    avg_ip: 5.5, pitch_count_avg: 90, bb_pct: 0.08, k_per_9: 8.5, whip: 1.22, era: 4.00,
+    times_through_order_profile: { '1st': 3.6, '3rd': 4.0 } };
+  const ctx = {
+    home_offense_profile: { wrc_plus: 100, xwoba: 0.320 },
+    away_offense_profile: { wrc_plus: 100, xwoba: 0.320 },
+    home_bullpen_era: 4.0, away_bullpen_era: 4.0,
+    park_run_factor: 1.0, temp_f: 72, wind_mph: 3, wind_dir: null, roof: null,
+  };
+  const eliteResult = projectFullGameTotal(eliteHome, oppAway, ctx);
+  const avgResult   = projectFullGameTotal(avgHome,   oppAway, ctx);
+  expect(eliteResult).not.toBeNull();
+  expect(avgResult).not.toBeNull();
+  expect(eliteResult.projected_fg_total_mean).toBeLessThan(avgResult.projected_fg_total_mean);
+});
+```
   </action>
   <verify>
     ```bash
