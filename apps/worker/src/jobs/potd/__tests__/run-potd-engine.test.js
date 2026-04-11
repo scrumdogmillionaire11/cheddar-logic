@@ -195,10 +195,11 @@ describe('runPotdEngine', () => {
        FROM potd_plays`,
     );
     expect(playRows).toHaveLength(1);
+    // kellySizeFn returns 2.5; HIGH multiplier (0.85) → 2.125 → rounds to nearest $0.50 = 2.0
     expect(playRows[0]).toMatchObject({
       market_type: 'TOTAL',
       selection: 'OVER',
-      wager_amount: 2.5,
+      wager_amount: 2.0,
       bankroll_at_post: 10,
       discord_posted: 1,
     });
@@ -502,6 +503,49 @@ describe('runPotdEngine', () => {
 
     dataModule.closeDatabase();
     resetTables();
+  });
+});
+
+describe('confidence-weighted wager sizing', () => {
+  test('ELITE candidate produces a higher wagerAmount than HIGH candidate for identical edge inputs', async () => {
+    jest.resetModules();
+    const localDataModule = require('@cheddar-logic/data');
+    const { runPotdEngine } = require('../run_potd_engine');
+
+    // Run with ELITE confidence
+    resetTables();
+    const eliteCandidate = buildSelectedCandidate({ confidenceLabel: 'ELITE', edgePct: 0.05 });
+    const eliteResult = await runPotdEngine({
+      jobKey: 'potd|elite-wager-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: eliteCandidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [eliteCandidate],
+      scoreCandidateFn: (v) => v,
+      selectBestPlayFn: (vs) => vs[0],
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+    expect(eliteResult.success).toBe(true);
+    const [elitePlay] = readRows('SELECT wager_amount FROM potd_plays LIMIT 1');
+
+    // Run with HIGH confidence
+    resetTables();
+    const highCandidate = buildSelectedCandidate({ confidenceLabel: 'HIGH', edgePct: 0.05 });
+    const highResult = await runPotdEngine({
+      jobKey: 'potd|high-wager-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: highCandidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [highCandidate],
+      scoreCandidateFn: (v) => v,
+      selectBestPlayFn: (vs) => vs[0],
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+    expect(highResult.success).toBe(true);
+    const [highPlay] = readRows('SELECT wager_amount FROM potd_plays LIMIT 1');
+
+    // ELITE wager must exceed HIGH wager
+    expect(elitePlay.wager_amount).toBeGreaterThan(highPlay.wager_amount);
   });
 });
 

@@ -94,6 +94,10 @@ function confidenceLabel(score) {
   return 'LOW';
 }
 
+function confidenceMultiplier(label) {
+  return { ELITE: 1.0, HIGH: 0.85, MEDIUM: 0.65, LOW: 0.40 }[label] ?? 0.85;
+}
+
 function isMlbSport(sport) {
   const token = String(sport || '').trim().toUpperCase();
   return token === 'MLB' || token === 'BASEBALL_MLB';
@@ -735,6 +739,7 @@ function kellySize({
 module.exports = {
   americanToImplied,
   buildCandidates,
+  confidenceMultiplier,
   confidenceThreshold,
   kellySize,
   removeVig,

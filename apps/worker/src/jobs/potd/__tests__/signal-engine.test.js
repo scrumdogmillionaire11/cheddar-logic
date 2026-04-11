@@ -365,6 +365,32 @@ describe('potd signal engine', () => {
   });
 });
 
+describe('confidenceMultiplier', () => {
+  const { confidenceMultiplier, kellySize } = require('../signal-engine');
+
+  test('returns correct multiplier for each tier label', () => {
+    expect(confidenceMultiplier('ELITE')).toBe(1.0);
+    expect(confidenceMultiplier('HIGH')).toBe(0.85);
+    expect(confidenceMultiplier('MEDIUM')).toBe(0.65);
+    expect(confidenceMultiplier('LOW')).toBe(0.40);
+  });
+
+  test('returns 0.85 safe default for unknown or missing label', () => {
+    expect(confidenceMultiplier('UNKNOWN_LABEL')).toBe(0.85);
+    expect(confidenceMultiplier(undefined)).toBe(0.85);
+    expect(confidenceMultiplier(null)).toBe(0.85);
+  });
+
+  test('ELITE / HIGH ratio is approximately 1.176 using identical kellySize inputs', () => {
+    const inputs = { edgePct: 0.05, impliedProb: 0.476, bankroll: 10, kellyFraction: 0.25, maxWagerPct: 0.2 };
+    const rawWager = kellySize(inputs);
+    const eliteWager = Math.round(rawWager * confidenceMultiplier('ELITE') * 100) / 100;
+    const highWager = Math.round(rawWager * confidenceMultiplier('HIGH') * 100) / 100;
+    const ratio = eliteWager / highWager;
+    expect(ratio).toBeCloseTo(1.0 / 0.85, 1); // ≈ 1.176, tolerance 0.1
+  });
+});
+
 describe('scoreCandidate - reasoning string', () => {
   const baseCandidate = {
     sport: 'NHL',
