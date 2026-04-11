@@ -1,4 +1,17 @@
+import type { Metadata } from 'next';
 import CardsContainer from '@/components/cards-container';
+
+export const metadata: Metadata = {
+  title: 'Analytics | Cheddar Logic',
+  description:
+    'Model analytics and market efficiency metrics for active game slates.',
+  openGraph: {
+    title: 'Analytics | Cheddar Logic',
+    description:
+      'Model analytics and market efficiency metrics for active game slates.',
+    url: 'https://cheddarlogic.com/analytics',
+  },
+};
 
 export default function AnalyticsPage() {
   // In production, this would get the game ID from URL params or API

@@ -1,7 +1,20 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 
 // Revalidate homepage every 5 minutes to prevent stale HTML with old chunk references
 export const revalidate = 300;
+
+export const metadata: Metadata = {
+  title: 'Cheddar Logic | Signal-Qualified Analytics',
+  description:
+    'Signal-qualified analytical outputs built on confidence thresholds and uncertainty controls.',
+  openGraph: {
+    title: 'Cheddar Logic | Signal-Qualified Analytics',
+    description:
+      'Signal-qualified analytical outputs built on confidence thresholds and uncertainty controls.',
+    url: 'https://cheddarlogic.com',
+  },
+};
 
 export default function Home() {
   const discordInvite =

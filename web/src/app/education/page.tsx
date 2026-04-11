@@ -1,5 +1,18 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { EDUCATION_ARTICLES } from '@/lib/education/content';
+
+export const metadata: Metadata = {
+  title: 'Education | Cheddar Logic',
+  description:
+    'Guides and frameworks for probabilistic thinking and signal-qualified betting.',
+  openGraph: {
+    title: 'Education | Cheddar Logic',
+    description:
+      'Guides and frameworks for probabilistic thinking and signal-qualified betting.',
+    url: 'https://cheddarlogic.com/education',
+  },
+};
 
 export default function EducationPage() {
   return (
