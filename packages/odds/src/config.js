@@ -8,9 +8,9 @@
  *
  * Canonical featured-market budget — MUST stay focused on sport-level markets:
  *   NBA  (main job): totals + spreads                        = 2 tokens
- *   NHL  (main job): totals                                  = 1 token
+ *   NHL  (main job): totals + h2h                            = 2 tokens
  *   MLB  (schedule baseline): h2h                            = 1 token
- *   ──────────────────────────────────────────────────────── = 4 tokens
+ *   ──────────────────────────────────────────────────────── = 5 tokens
  *
  * Per-event / alternate-period markets are intentionally excluded here.
  * NHL 1P, NHL props, MLB F5, and MLB pitcher-K now run projection-only and
@@ -26,8 +26,8 @@ const SPORTS_CONFIG = {
   NHL: {
     active: true,
     season: { start: '10-01', end: '04-30' },
-    markets: ['totals'],
-    tokensPerFetch: 1,
+    markets: ['totals', 'h2h'],
+    tokensPerFetch: 2,
     defaultTTL: 240, // 4 hours standard
     pregameTTL: 30, // 30 min inside 2 hours
     sharpWindowTTL: 0, // Don't cache inside 1 hour — fetch on demand
