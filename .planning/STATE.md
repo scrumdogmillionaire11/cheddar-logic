@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-10T21:30:00Z"
-last_activity: "2026-04-10 - Completed WI-0870 per-page metadata/OG tags; 9 files modified, 1 created, build passes; branch agent/copilot/WI-0870-per-page-metadata"
+last_updated: "2026-04-10T22:00:00Z"
+last_activity: "2026-04-10 - Completed WI-0856 /api/market-pulse route with 4.5-min cache; branch agent/copilot/WI-0856-market-pulse-api"
 ---
 
 # Project State
@@ -172,6 +172,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 145 | WI-0856: /api/market-pulse route with 4.5-min server cache | 2026-04-10 | 3f0f608 | [WI-0856](../.planning/phases/WI-0856/) |
 | 144 | WI-0819: quarter-Kelly stake fraction on PLAY/LEAN card payloads | 2026-04-10 | c52c2ad | [WI-0819](../.planning/phases/WI-0819/) |
 | 144 | WI-0842 + WI-0843: settlement expiry sweep and card_results dedup | 2026-04-10 | a97c1ff | [144-wi-0842-wi-0843](./quick/144-wi-0842-wi-0843-settlement-expiry-sweep-/) |
 | 143 | WI-0825: calibration tracking, report job, and execution-gate kill switch | 2026-04-10 | local | [143-wi-0825](./quick/143-wi-0825/) |

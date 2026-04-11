@@ -25,7 +25,7 @@ jest.mock('../run_mlb_model', () => ({
 }));
 
 jest.mock('../../schedulers/quota', () => ({
-  getCurrentQuotaTier: jest.fn(() => 'HIGH'),
+  getCurrentQuotaTier: jest.fn(() => 'FULL'),
 }));
 
 const { getDatabase } = require('@cheddar-logic/data');
@@ -33,6 +33,7 @@ const { sendDiscordMessages } = require('../post_discord_cards');
 const {
   shouldSendAlert,
   buildHealthAlertMessage,
+  checkCardsFreshness,
   checkPipelineHealth,
 } = require('../check_pipeline_health');
 
@@ -42,7 +43,14 @@ const {
 // backlogCount:  returned for settlement backlog query
 // pipelineRows:  returned for pipeline_health SELECT queries (used by shouldSendAlert)
 // ---------------------------------------------------------------------------
-function makeDb({ pipelineRows = [], scheduleCount = 5, backlogCount = 0 } = {}) {
+function makeDb({
+  pipelineRows = [],
+  scheduleCount = 5,
+  backlogCount = 0,
+  upcomingGames = [],
+  latestCardsByGame = {},
+  jobRunsByKey = {},
+} = {}) {
   return {
     prepare: jest.fn((sql) => {
       const s = sql.replace(/\s+/g, ' ').trim();
@@ -67,9 +75,21 @@ function makeDb({ pipelineRows = [], scheduleCount = 5, backlogCount = 0 } = {})
         return { get: jest.fn(() => ({ cnt: scheduleCount })) };
       }
 
-      // game list queries (T-6h, T-2h for odds/cards/mlb checks): return empty so those checks pass
+      if (s.includes('FROM job_runs') && s.includes('job_key = ?') && s.includes("status = 'success'")) {
+        return {
+          get: jest.fn((jobName, jobKey) => jobRunsByKey[`${jobName}|${jobKey}`] ?? null),
+        };
+      }
+
+      if (s.includes('FROM card_payloads') && s.includes('WHERE game_id = ?')) {
+        return {
+          get: jest.fn((gameId) => latestCardsByGame[gameId] ?? null),
+        };
+      }
+
+      // game list queries (T-6h, T-2h for odds/cards/mlb checks)
       if (s.includes('FROM games') && s.includes('game_time_utc')) {
-        return { all: jest.fn(() => []) };
+        return { all: jest.fn(() => upcomingGames) };
       }
 
       // default fallback
@@ -102,6 +122,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG;
   delete process.env.DISCORD_ALERT_WEBHOOK_URL;
+  delete process.env.PIPELINE_HEALTH_ALERT_CONSECUTIVE;
 });
 
 // ===========================================================================
@@ -154,6 +175,83 @@ describe('buildHealthAlertMessage', () => {
     expect(msg).toContain('No upcoming games in next 48h');
     expect(msg).toContain('cards');
     expect(msg).toContain('3/5 games missing cards');
+  });
+});
+
+// ===========================================================================
+describe('checkCardsFreshness', () => {
+  test('returns ok when NBA model window succeeded even if no card was emitted', () => {
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: 'nba-001',
+        sport: 'NBA',
+        game_time_utc: now.plus({ minutes: 80 }).toISO(),
+      },
+    ];
+    const jobRunsByKey = {
+      'run_nba_model|nba|tminus|nba-001|90': { started_at: now.minus({ minutes: 8 }).toISO() },
+    };
+    getDatabase.mockReturnValue(makeDb({ upcomingGames, jobRunsByKey }));
+
+    const result = checkCardsFreshness();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('recent model runs');
+    expect(result.reason).toContain('informational');
+  });
+
+  test('returns ok during the natural gap before the first due model window closes', () => {
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: 'nba-002',
+        sport: 'NBA',
+        game_time_utc: now.plus({ minutes: 118 }).toISO(),
+      },
+    ];
+    getDatabase.mockReturnValue(makeDb({ upcomingGames }));
+
+    const result = checkCardsFreshness();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('awaiting first model window');
+  });
+
+  test('returns warning when the expected model job has not run after a due window closes', () => {
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: 'nhl-001',
+        sport: 'NHL',
+        game_time_utc: now.plus({ minutes: 50 }).toISO(),
+      },
+    ];
+    const db = makeDb({ upcomingGames });
+    const writes = [];
+    db.prepare = jest.fn((sql) => {
+      const s = sql.replace(/\s+/g, ' ').trim();
+      if (s.includes('INSERT INTO pipeline_health')) {
+        return { run: jest.fn((...args) => writes.push(args)) };
+      }
+      if (s.includes('FROM card_payloads') && s.includes('WHERE game_id = ?')) {
+        return { get: jest.fn(() => null) };
+      }
+      if (s.includes('FROM job_runs') && s.includes('job_key = ?') && s.includes("status = 'success'")) {
+        return { get: jest.fn(() => null) };
+      }
+      if (s.includes('FROM games') && s.includes('game_time_utc')) {
+        return { all: jest.fn(() => upcomingGames) };
+      }
+      return makeDb().prepare(sql);
+    });
+    getDatabase.mockReturnValue(db);
+
+    const result = checkCardsFreshness();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('missing expected model runs');
+    expect(writes[0][2]).toBe('warning');
   });
 });
 
@@ -236,5 +334,74 @@ describe('checkPipelineHealth Discord alert integration', () => {
     await checkPipelineHealth({ jobKey: 'test', dryRun: false });
 
     expect(sendDiscordMessages).not.toHaveBeenCalled();
+  });
+
+  test('cards freshness warnings do NOT trigger Discord alert', async () => {
+    process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
+    const warningRows = [
+      { status: 'warning', created_at: DateTime.utc().minus({ minutes: 2 }).toISO() },
+      { status: 'warning', created_at: DateTime.utc().minus({ minutes: 4 }).toISO() },
+      { status: 'warning', created_at: DateTime.utc().minus({ minutes: 6 }).toISO() },
+      { status: 'warning', created_at: DateTime.utc().minus({ minutes: 8 }).toISO() },
+    ];
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: 'nba-003',
+        sport: 'NBA',
+        game_time_utc: now.plus({ minutes: 50 }).toISO(),
+      },
+    ];
+    getDatabase.mockReturnValue(makeDb({ scheduleCount: 5, backlogCount: 0, pipelineRows: warningRows, upcomingGames }));
+
+    await checkPipelineHealth({ jobKey: 'test', dryRun: false });
+
+    expect(sendDiscordMessages).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+describe('checkPipelineHealth alert threshold env override', () => {
+  test('PIPELINE_HEALTH_ALERT_CONSECUTIVE=4 pages on the fourth consecutive failed row', async () => {
+    jest.resetModules();
+    process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
+    process.env.PIPELINE_HEALTH_ALERT_CONSECUTIVE = '4';
+
+    const mockGetDatabase = jest.fn(() =>
+      makeDb({ scheduleCount: 0, pipelineRows: freshFailedRows(4) }),
+    );
+    const mockSendDiscordMessages = jest.fn().mockResolvedValue(1);
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: mockGetDatabase,
+      insertJobRun: jest.fn(),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: jest.fn(() => true),
+    }));
+    jest.doMock('../post_discord_cards', () => ({
+      sendDiscordMessages: mockSendDiscordMessages,
+    }));
+    jest.doMock('../run_mlb_model', () => ({
+      buildMlbMarketAvailability: jest.fn(() => ({
+        f5_line_ok: true,
+        full_game_total_ok: true,
+        expect_f5_ml: false,
+        f5_ml_ok: true,
+      })),
+    }));
+    jest.doMock('../../schedulers/quota', () => ({
+      getCurrentQuotaTier: jest.fn(() => 'FULL'),
+    }));
+
+    const isolated = require('../check_pipeline_health');
+    await isolated.checkPipelineHealth({ jobKey: 'test', dryRun: false });
+
+    expect(mockSendDiscordMessages).toHaveBeenCalledTimes(1);
+
+    delete process.env.PIPELINE_HEALTH_ALERT_CONSECUTIVE;
   });
 });
