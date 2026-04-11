@@ -75,3 +75,24 @@ Plans:
 - [ ] mlb-k-harden-02-PLAN.md — Spec doc (mlb_projection_input_contract.md) + WI-0742 FALLBACK addendum (Wave 1)
 - [ ] mlb-k-harden-03-PLAN.md — Wire classifier into run_mlb_model.js + pre-model audit block + flag dedup (Wave 2)
 - [ ] mlb-k-harden-04-PLAN.md — INV-007 audit invariant + update/create MLB_PITCHER_K fixtures (Wave 3)
+
+
+---
+
+### Phase: di-01-decision-integrity — Decision Source-of-Truth Hardening
+
+**Goal**: Eliminate all multiple-truth-layer decision mutations. Enforce a single canonical decision object per card, fix web reclassification, kill ghost bets from execution gate contradiction, make NHL NO_BET explicit, unify tier vocabularies, complete projection path consolidation, and lock all behavior with regression tests.
+
+**Audit source**: `.planning/codebase/HARDENING_AUDIT.md` — CF-001 through CF-010
+
+**Plans**: 8 plans in 3 waves
+
+Plans:
+- [ ] di-01-01-PLAN.md — Kill web-layer reclassification; add NON_CANONICAL_RENDER_FALLBACK guard (Wave 1)
+- [ ] di-01-02-PLAN.md — NHL NO_BET explicit skip state; blockingReasonCodes in pipeline state (Wave 1)
+- [ ] di-01-03-PLAN.md — Tier vocabulary unification: GOOD/OK/BAD in deriveAction + TIER_SCORE (Wave 1)
+- [ ] di-01-04-PLAN.md — applyDecisionVeto helper; execution gate mutation fix; settlement contradiction guard (Wave 2)
+- [ ] di-01-05-PLAN.md — Deprecated projectNBA migration in computeNBADriverCards (Wave 2)
+- [ ] di-01-06-PLAN.md — Threshold registry completeness: NHL SPREAD/PUCKLINE + exhaustive coverage test (Wave 2)
+- [ ] di-01-07-PLAN.md — Stale threshold to env var; EDGE_UPGRADE_MIN recalibrated to 0.04; assertNoDecisionMutation hardened (Wave 3)
+- [ ] di-01-08-PLAN.md — Playoff sigma explicit contract + 5-case test suite (Wave 3)
