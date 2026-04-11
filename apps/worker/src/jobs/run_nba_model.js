@@ -85,6 +85,7 @@ const {
 } = require('../utils/playoff-detection');
 const { computeRestDays } = require('../utils/rest-days');
 const { sendDiscordMessages } = require('./post_discord_cards');
+const { applyCalibration } = require('../utils/calibration');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -1802,6 +1803,38 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             if (!entry.card.payloadData.raw_data) entry.card.payloadData.raw_data = {};
             entry.card.payloadData.raw_data.sigma_source = computedSigma.sigma_source;
             entry.card.payloadData.raw_data.sigma_games_sampled = computedSigma.games_sampled ?? null;
+          }
+
+          // WI-0831: apply isotonic calibration to fair_prob before Kelly and card write.
+          const NBA_MARKET_CAL_KEY = Object.freeze({
+            TOTAL: 'NBA_TOTAL',
+            SPREAD: 'SPREAD',
+          });
+          let _calStmtNba = null;
+          try {
+            _calStmtNba = db.prepare(
+              'SELECT breakpoints_json FROM calibration_models WHERE sport = ? AND market_type = ?',
+            );
+          } catch (_e) {
+            console.log('[CAL_APPLY] NBA calibration_models table not ready — using raw');
+          }
+          for (const entry of pendingCards) {
+            const pd = entry.card.payloadData;
+            if (Number.isFinite(pd.p_fair)) {
+              const mType = String(pd.market_type || '').toUpperCase();
+              const calKey = NBA_MARKET_CAL_KEY[mType] ?? null;
+              let breakpoints = null;
+              if (_calStmtNba && calKey) {
+                try {
+                  const calRow = _calStmtNba.get('NBA', calKey);
+                  breakpoints = calRow ? JSON.parse(calRow.breakpoints_json) : null;
+                } catch (_e) { /* table missing or parse error — use raw */ }
+              }
+              const { calibratedProb, calibrationSource } = applyCalibration(pd.p_fair, breakpoints);
+              pd.p_fair = calibratedProb;
+              if (!pd.raw_data) pd.raw_data = {};
+              pd.raw_data.calibration_source = calibrationSource;
+            }
           }
 
           // WI-0819: attach advisory Kelly stake fraction to PLAY/LEAN cards.

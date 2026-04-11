@@ -6,6 +6,7 @@
  */
 
 const { classifyModelStatus, buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
+const scoreEngine = require('../utils/score-engine');
 
 
 /**
@@ -454,7 +455,16 @@ function projectNBACanonical(
   const baseHomePPP = (homeOffRtgNorm + awayDefRtgNorm) / 200;
   const baseAwayPPP = (awayOffRtgNorm + homeDefRtgNorm) / 200;
 
-  // Pace: average then apply synergy adjustment
+  // WI-0830: scoreEngine for offense signal metadata (informational; does not alter adjustedPace).
+  // League-average per-100 ORtg ≈ 110 (2024-25 empirical), std ≈ 4.0.
+  // At avg teams (ORtgNorm ≈ 110), score ≈ 0.5 → no adjustment (near-identity preserved).
+  const NBA_LEAGUE_AVG_ORTG = 110.0;
+  const NBA_LEAGUE_ORTG_SD  = 4.0;
+  const { score: internalOffenseScore, contributions: offenseContributions, zScores: offenseZScores } = scoreEngine.aggregate([
+    { name: 'homeOffRtgNorm', value: homeOffRtgNorm, mean: NBA_LEAGUE_AVG_ORTG, std: NBA_LEAGUE_ORTG_SD, weight: 0.5 },
+    { name: 'awayOffRtgNorm', value: awayOffRtgNorm, mean: NBA_LEAGUE_AVG_ORTG, std: NBA_LEAGUE_ORTG_SD, weight: 0.5 },
+  ]);
+  // Pace: average then apply synergy adjustment (adjustedPace formula unchanged from prior)
   const expectedPace = (homePace + awayPace) / 2;
   const adjustedPace = Math.max(expectedPace + paceAdjustment, 85); // 85 poss/game floor
 
@@ -467,11 +477,17 @@ function projectNBACanonical(
     homeProjected: Math.round(homeProjected * 10) / 10,
     awayProjected: Math.round(awayProjected * 10) / 10,
     projectedTotal: Math.round(projectedTotal * 10) / 10,
+    // WI-0829: expose fairLine for residual projection layer
+    fairLine: Math.round(projectedTotal * 10) / 10,
     expectedPace: Math.round(expectedPace * 10) / 10,
     adjustedPace: Math.round(adjustedPace * 10) / 10,
     paceAdjustment,
     baseHomePPP: Math.round(baseHomePPP * 1000) / 1000,
     baseAwayPPP: Math.round(baseAwayPPP * 1000) / 1000,
+    // WI-0830: offense signal from scoreEngine (metadata; does not alter projection)
+    internalOffenseScore: Math.round(internalOffenseScore * 1000) / 1000,
+    offenseContributions: offenseContributions ?? null,
+    offenseZScores: offenseZScores ?? null,
   };
 }
 

@@ -171,6 +171,7 @@ async function pullScheduleNhl({ jobKey = null, dryRun = false } = {}) {
       const db = getDatabase();
 
       let gamesUpserted = 0;
+      let gamesSkippedCanonical = 0;
       let daysWithEvents = 0;
       let mappingsCreated = 0;
       let mappingsFailedNoCandidate = 0;
@@ -185,21 +186,20 @@ async function pullScheduleNhl({ jobKey = null, dryRun = false } = {}) {
           const normalized = normalizeEvent(event);
           if (!normalized) continue;
 
-          const stableGameId = `game-${SPORT}-${normalized.gameId}`;
-          upsertGame({
-            id: stableGameId,
-            gameId: normalized.gameId,
-            sport: SPORT,
-            homeTeam: normalized.homeTeam,
-            awayTeam: normalized.awayTeam,
-            gameTimeUtc: normalized.gameTimeUtc,
-            status: normalized.status,
-          });
-          gamesUpserted += 1;
-
           const eventTime = new Date(normalized.gameTimeUtc);
           if (Number.isNaN(eventTime.getTime())) {
             mappingsFailedNoCandidate += 1;
+            const stableGameId = `game-${SPORT}-${normalized.gameId}`;
+            upsertGame({
+              id: stableGameId,
+              gameId: normalized.gameId,
+              sport: SPORT,
+              homeTeam: normalized.homeTeam,
+              awayTeam: normalized.awayTeam,
+              gameTimeUtc: normalized.gameTimeUtc,
+              status: normalized.status,
+            });
+            gamesUpserted += 1;
             continue;
           }
 
@@ -228,31 +228,41 @@ async function pullScheduleNhl({ jobKey = null, dryRun = false } = {}) {
 
           if (selection.status === 'no_candidate') {
             mappingsFailedNoCandidate += 1;
-            continue;
-          }
-
-          if (selection.status === 'ambiguous') {
+          } else if (selection.status === 'ambiguous') {
             mappingsFailedAmbiguous += 1;
+          } else {
+            const match = selection.match;
+            upsertGameIdMap({
+              sport: SPORT,
+              provider: 'espn',
+              externalGameId: normalized.gameId,
+              gameId: match.candidate.game_id,
+              matchMethod: 'teams_time_fuzzy',
+              matchConfidence: match.confidence,
+              matchedAt: new Date().toISOString(),
+              extGameTimeUtc: normalized.gameTimeUtc,
+              extHomeTeam: normalized.homeTeam,
+              extAwayTeam: normalized.awayTeam,
+              oddsGameTimeUtc: match.candidate.game_time_utc,
+              oddsHomeTeam: match.candidate.home_team,
+              oddsAwayTeam: match.candidate.away_team,
+            });
+            mappingsCreated += 1;
+            gamesSkippedCanonical += 1;
             continue;
           }
 
-          const match = selection.match;
-          upsertGameIdMap({
+          const stableGameId = `game-${SPORT}-${normalized.gameId}`;
+          upsertGame({
+            id: stableGameId,
+            gameId: normalized.gameId,
             sport: SPORT,
-            provider: 'espn',
-            externalGameId: normalized.gameId,
-            gameId: match.candidate.game_id,
-            matchMethod: 'teams_time_fuzzy',
-            matchConfidence: match.confidence,
-            matchedAt: new Date().toISOString(),
-            extGameTimeUtc: normalized.gameTimeUtc,
-            extHomeTeam: normalized.homeTeam,
-            extAwayTeam: normalized.awayTeam,
-            oddsGameTimeUtc: match.candidate.game_time_utc,
-            oddsHomeTeam: match.candidate.home_team,
-            oddsAwayTeam: match.candidate.away_team,
+            homeTeam: normalized.homeTeam,
+            awayTeam: normalized.awayTeam,
+            gameTimeUtc: normalized.gameTimeUtc,
+            status: normalized.status,
           });
-          mappingsCreated += 1;
+          gamesUpserted += 1;
         }
       }
 
@@ -261,13 +271,14 @@ async function pullScheduleNhl({ jobKey = null, dryRun = false } = {}) {
         `[Schedule:NHL] OK: upserted ${gamesUpserted} games across ${daysWithEvents}/${days.length} days`,
       );
       console.log(
-        `[Schedule:NHL] Mapping: created=${mappingsCreated} no_candidate=${mappingsFailedNoCandidate} ambiguous=${mappingsFailedAmbiguous}`,
+        `[Schedule:NHL] Mapping: created=${mappingsCreated} no_candidate=${mappingsFailedNoCandidate} ambiguous=${mappingsFailedAmbiguous} skipped_canonical=${gamesSkippedCanonical}`,
       );
       return {
         success: true,
         jobRunId,
         jobKey,
         gamesUpserted,
+        gamesSkippedCanonical,
         daysScanned: days.length,
         daysWithEvents,
         mappingsCreated,
