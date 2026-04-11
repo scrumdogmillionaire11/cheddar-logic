@@ -2,7 +2,9 @@
 
 const {
   buildCandidates,
+  isNhlSport,
   kellySize,
+  resolveNHLModelSignal,
   scoreCandidate,
   selectBestPlay,
 } = require('../signal-engine');
@@ -460,5 +462,278 @@ describe('scoreCandidate - reasoning string', () => {
     expect(scored.reasoning).toContain('Full model projection backs');
     expect(scored.reasoning).not.toContain('Model likes');
     expect(scored.reasoning).toContain('Red Sox');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isNhlSport
+// ---------------------------------------------------------------------------
+describe('isNhlSport', () => {
+  it('returns true for NHL', () => {
+    expect(isNhlSport('NHL')).toBe(true);
+  });
+
+  it('returns true for icehockey_nhl (lowercase)', () => {
+    expect(isNhlSport('icehockey_nhl')).toBe(true);
+  });
+
+  it('returns true for ICEHOCKEY_NHL (uppercase)', () => {
+    expect(isNhlSport('ICEHOCKEY_NHL')).toBe(true);
+  });
+
+  it('returns false for MLB', () => {
+    expect(isNhlSport('MLB')).toBe(false);
+  });
+
+  it('returns false for NBA', () => {
+    expect(isNhlSport('NBA')).toBe(false);
+  });
+
+  it('returns false for null/undefined', () => {
+    expect(isNhlSport(null)).toBe(false);
+    expect(isNhlSport(undefined)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveNHLModelSignal
+// ---------------------------------------------------------------------------
+describe('resolveNHLModelSignal', () => {
+  function buildNhlGameWithSnapshot(overrides = {}) {
+    return {
+      gameId: 'nhl-game-001',
+      sport: 'NHL',
+      homeTeam: 'Boston Bruins',
+      awayTeam: 'Toronto Maple Leafs',
+      gameTimeUtc: '2026-04-10T00:00:00.000Z',
+      market: {
+        h2h: [
+          { book: 'book-a', home: -115, away: -105 },
+          { book: 'book-b', home: -112, away: -108 },
+          { book: 'book-c', home: -118, away: -102 },
+        ],
+      },
+      nhlSnapshot: {
+        homeGoalie: { savePct: 0.918, gsax: 2.0 },
+        awayGoalie: { savePct: 0.910, gsax: -1.0 },
+      },
+      ...overrides,
+    };
+  }
+
+  it('returns null when nhlSnapshot is null', () => {
+    const game = buildNhlGameWithSnapshot({ nhlSnapshot: null });
+    expect(resolveNHLModelSignal(game)).toBeNull();
+  });
+
+  it('returns null when nhlSnapshot is missing (undefined)', () => {
+    const game = { gameId: 'x', market: { h2h: [] } };
+    expect(resolveNHLModelSignal(game)).toBeNull();
+  });
+
+  it('returns null when both goalies have no data (savePct and gsax both null)', () => {
+    const game = buildNhlGameWithSnapshot({
+      nhlSnapshot: {
+        homeGoalie: { savePct: null, gsax: null },
+        awayGoalie: { savePct: null, gsax: null },
+      },
+    });
+    expect(resolveNHLModelSignal(game)).toBeNull();
+  });
+
+  it('elite home goalie vs weak away produces homeModelWinProb > vig-removed consensus', () => {
+    const game = buildNhlGameWithSnapshot({
+      nhlSnapshot: {
+        homeGoalie: { savePct: 0.928, gsax: 8.5 },
+        awayGoalie: { savePct: 0.901, gsax: -2.1 },
+      },
+    });
+    const signal = resolveNHLModelSignal(game);
+    expect(signal).not.toBeNull();
+    // The signal should push homeModelWinProb above vig-removed consensus
+    // At -115/-105, vig-removed home is approximately 0.523
+    expect(signal.homeModelWinProb).toBeGreaterThan(0.523);
+    expect(signal.homeModelWinProb).toBeLessThanOrEqual(0.95);
+    expect(signal.projection_source).toBe('NHL_GOALIE_COMPOSITE');
+  });
+
+  it('reports projection_source NHL_GOALIE_COMPOSITE when both goalies have data', () => {
+    const game = buildNhlGameWithSnapshot();
+    const signal = resolveNHLModelSignal(game);
+    expect(signal).not.toBeNull();
+    expect(signal.projection_source).toBe('NHL_GOALIE_COMPOSITE');
+  });
+
+  it('reports projection_source NHL_GOALIE_PARTIAL when only home goalie has data', () => {
+    const game = buildNhlGameWithSnapshot({
+      nhlSnapshot: {
+        homeGoalie: { savePct: 0.920, gsax: 3.0 },
+        awayGoalie: { savePct: null, gsax: null },
+      },
+    });
+    const signal = resolveNHLModelSignal(game);
+    expect(signal).not.toBeNull();
+    expect(signal.projection_source).toBe('NHL_GOALIE_PARTIAL');
+  });
+
+  it('reports projection_source NHL_GOALIE_PARTIAL when only away goalie has data', () => {
+    const game = buildNhlGameWithSnapshot({
+      nhlSnapshot: {
+        homeGoalie: { savePct: null, gsax: null },
+        awayGoalie: { savePct: 0.915, gsax: 1.5 },
+      },
+    });
+    const signal = resolveNHLModelSignal(game);
+    expect(signal).not.toBeNull();
+    expect(signal.projection_source).toBe('NHL_GOALIE_PARTIAL');
+  });
+
+  it('clamps goalieEdgeDelta to [-0.06, 0.06]', () => {
+    // Extreme goalie difference — delta should be clamped
+    const game = buildNhlGameWithSnapshot({
+      nhlSnapshot: {
+        homeGoalie: { savePct: 0.950, gsax: 30.0 },
+        awayGoalie: { savePct: 0.870, gsax: -20.0 },
+      },
+    });
+    const signal = resolveNHLModelSignal(game);
+    expect(signal).not.toBeNull();
+    // homeModelWinProb is at most consensus + 0.06
+    expect(signal.homeModelWinProb).toBeLessThanOrEqual(0.95);
+  });
+
+  it('clamps homeModelWinProb to [0.05, 0.95]', () => {
+    const game = buildNhlGameWithSnapshot({
+      nhlSnapshot: {
+        homeGoalie: { savePct: 0.950, gsax: 30.0 },
+        awayGoalie: { savePct: 0.870, gsax: -20.0 },
+      },
+    });
+    const signal = resolveNHLModelSignal(game);
+    expect(signal).not.toBeNull();
+    expect(signal.homeModelWinProb).toBeGreaterThanOrEqual(0.05);
+    expect(signal.homeModelWinProb).toBeLessThanOrEqual(0.95);
+  });
+
+  it('returns null when h2h market is empty (cannot derive consensus)', () => {
+    const game = buildNhlGameWithSnapshot({
+      market: { h2h: [] },
+    });
+    expect(resolveNHLModelSignal(game)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scoreCandidate - NHL moneyline override
+// ---------------------------------------------------------------------------
+describe('scoreCandidate - NHL moneyline override', () => {
+  function buildNhlMoneylineCandidate(selection, overrides = {}) {
+    return {
+      gameId: 'nhl-game-001',
+      sport: 'NHL',
+      homeTeam: 'Boston Bruins',
+      awayTeam: 'Toronto Maple Leafs',
+      gameTimeUtc: '2026-04-10T00:00:00.000Z',
+      marketType: 'MONEYLINE',
+      selection,
+      selectionLabel: selection === 'HOME' ? 'Boston Bruins' : 'Toronto Maple Leafs',
+      price: selection === 'HOME' ? -120 : 102,
+      consensusPrice: selection === 'HOME' ? -115 : -105,
+      counterpartConsensusPrice: selection === 'HOME' ? -105 : -115,
+      consensusImplied: selection === 'HOME' ? 0.535 : 0.488,
+      counterpartConsensusImplied: selection === 'HOME' ? 0.488 : 0.535,
+      comparableLines: [],
+      comparablePrices: selection === 'HOME' ? [-115, -118, -120] : [-105, -102, 102],
+      sourceCount: 3,
+      line: null,
+      consensusLine: null,
+      nhlSignal: {
+        homeModelWinProb: 0.56,
+        projection_source: 'NHL_GOALIE_COMPOSITE',
+      },
+      ...overrides,
+    };
+  }
+
+  it('HOME candidate edgePct = homeModelWinProb - impliedProb(homePrice)', () => {
+    const candidate = buildNhlMoneylineCandidate('HOME');
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    // impliedProb(-120) = 120/220 ≈ 0.5455
+    const expectedImplied = 120 / 220;
+    const expectedEdge = 0.56 - expectedImplied;
+    expect(scored.edgePct).toBeCloseTo(expectedEdge, 4);
+    expect(scored.modelWinProb).toBe(0.56);
+  });
+
+  it('AWAY candidate edgePct = (1 - homeModelWinProb) - impliedProb(awayPrice)', () => {
+    const candidate = buildNhlMoneylineCandidate('AWAY');
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    // awayModelWinProb = 1 - 0.56 = 0.44
+    // impliedProb(+102) = 100/(102+100) ≈ 0.4950
+    const awayModelWinProb = 1 - 0.56;
+    const expectedImplied = 100 / (102 + 100);
+    const expectedEdge = awayModelWinProb - expectedImplied;
+    expect(scored.edgePct).toBeCloseTo(expectedEdge, 4);
+    expect(scored.modelWinProb).toBeCloseTo(awayModelWinProb, 6);
+  });
+
+  it('HOME and AWAY edgePct are not equal (AWAY is complement, not mirror)', () => {
+    const homeScored = scoreCandidate(buildNhlMoneylineCandidate('HOME'));
+    const awayScored = scoreCandidate(buildNhlMoneylineCandidate('AWAY'));
+    expect(homeScored).not.toBeNull();
+    expect(awayScored).not.toBeNull();
+    expect(homeScored.edgePct).not.toBe(awayScored.edgePct);
+  });
+
+  it('scoreBreakdown includes model_win_prob and projection_source when nhlSignal present', () => {
+    const candidate = buildNhlMoneylineCandidate('HOME');
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    expect(scored.scoreBreakdown.model_win_prob).toBe(0.56);
+    expect(scored.scoreBreakdown.projection_source).toBe('NHL_GOALIE_COMPOSITE');
+  });
+
+  it('falls through to consensus path when no nhlSignal (scoreBreakdown has no model_win_prob)', () => {
+    const candidate = buildNhlMoneylineCandidate('HOME', { nhlSignal: null });
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    expect(scored.scoreBreakdown.model_win_prob).toBeUndefined();
+    expect(scored.scoreBreakdown.projection_source).toBeUndefined();
+  });
+
+  it('MLB scoreCandidate path is unaffected by nhlSignal logic', () => {
+    const mlbCandidate = {
+      gameId: 'mlb-game-002',
+      sport: 'MLB',
+      homeTeam: 'Yankees',
+      awayTeam: 'Red Sox',
+      gameTimeUtc: '2026-04-10T00:00:00.000Z',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Yankees',
+      price: -150,
+      consensusPrice: -145,
+      counterpartConsensusPrice: 132,
+      consensusImplied: 0.592,
+      counterpartConsensusImplied: 0.431,
+      comparableLines: [],
+      comparablePrices: [-145, -148, -150],
+      sourceCount: 3,
+      line: null,
+      consensusLine: null,
+      mlbSignal: {
+        modelWinProb: 0.61,
+        edge: 0.04,
+        projection_source: 'FULL_MODEL',
+      },
+      // Should not trigger NHL path
+      nhlSignal: null,
+    };
+    const scored = scoreCandidate(mlbCandidate);
+    expect(scored).not.toBeNull();
+    expect(scored.modelWinProb).toBe(0.61);
+    expect(scored.edgePct).toBeCloseTo(0.04, 4);
   });
 });

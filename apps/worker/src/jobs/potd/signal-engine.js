@@ -1,6 +1,7 @@
 'use strict';
 
 const { resolveMLBModelSignal } = require('../../models/mlb-model');
+const { resolveGoalieComposite } = require('../../models/nhl-pace-model');
 
 function isFiniteNumber(value) {
   return Number.isFinite(value);
@@ -101,6 +102,52 @@ function confidenceMultiplier(label) {
 function isMlbSport(sport) {
   const token = String(sport || '').trim().toUpperCase();
   return token === 'MLB' || token === 'BASEBALL_MLB';
+}
+
+function isNhlSport(sport) {
+  const token = String(sport || '').trim().toUpperCase();
+  return token === 'NHL' || token === 'ICEHOCKEY_NHL';
+}
+
+function resolveNHLModelSignal(game) {
+  const snap = game?.nhlSnapshot;
+  if (!snap) return null;
+  const home = snap.homeGoalie ?? {};
+  const away = snap.awayGoalie ?? {};
+  const homeHasData = home.savePct != null || home.gsax != null;
+  const awayHasData = away.savePct != null || away.gsax != null;
+  if (!homeHasData && !awayHasData) return null;
+
+  // Use neutral composite (0.5) for a side with no data
+  const homeComposite = homeHasData
+    ? resolveGoalieComposite(home.savePct, home.gsax)
+    : { composite: 0.5 };
+  const awayComposite = awayHasData
+    ? resolveGoalieComposite(away.savePct, away.gsax)
+    : { composite: 0.5 };
+
+  const goalieEdgeDelta = clamp(
+    homeComposite.composite - awayComposite.composite,
+    -0.06,
+    0.06
+  );
+
+  // consensusImpliedHome: median of implied probs from h2h home prices
+  // Raw h2h rows use { home, away } field names (not homePrice/awayPrice).
+  const h2hRows = game.market?.h2h || [];
+  const homePrices = h2hRows.map((r) => r?.home ?? r?.homePrice).filter(isFiniteNumber);
+  const awayPrices = h2hRows.map((r) => r?.away ?? r?.awayPrice).filter(isFiniteNumber);
+  const rawHomeImplied = medianImplied(homePrices);
+  const rawAwayImplied = medianImplied(awayPrices);
+  if (!isFiniteNumber(rawHomeImplied) || !isFiniteNumber(rawAwayImplied)) return null;
+  const { fairProbA: consensusImpliedHome } = removeVigFromImplied(rawHomeImplied, rawAwayImplied);
+  if (!isFiniteNumber(consensusImpliedHome)) return null;
+
+  const homeModelWinProb = clamp(consensusImpliedHome + goalieEdgeDelta, 0.05, 0.95);
+  const projection_source =
+    homeHasData && awayHasData ? 'NHL_GOALIE_COMPOSITE' : 'NHL_GOALIE_PARTIAL';
+
+  return { homeModelWinProb: round(homeModelWinProb, 6), projection_source };
 }
 
 function toSelectionLabel({ selection, homeTeam, awayTeam, line }) {
@@ -475,6 +522,13 @@ function buildCandidates(game) {
   ];
 
   if (!isMlbSport(game.sport) || !game.oddsSnapshot) {
+    // NHL model signal block
+    if (isNhlSport(game.sport) && game.nhlSnapshot) {
+      const nhlSignal = resolveNHLModelSignal(game);
+      if (nhlSignal) {
+        return candidates.map((candidate) => ({ ...candidate, nhlSignal }));
+      }
+    }
     return candidates;
   }
 
@@ -637,6 +691,47 @@ function scoreCandidate(candidate) {
     };
   }
 
+  // NHL model override: replace consensus fair prob + edge with goalie-composite signal
+  const nhlSignal = candidate.nhlSignal ?? null;
+  const useNhlModelSignal =
+    isNhlSport(candidate.sport) &&
+    candidate.marketType === 'MONEYLINE' &&
+    Number.isFinite(nhlSignal?.homeModelWinProb);
+  if (useNhlModelSignal) {
+    const modelWinProb =
+      candidate.selection === 'HOME'
+        ? nhlSignal.homeModelWinProb
+        : round(1 - nhlSignal.homeModelWinProb, 6);
+    const modelEdge = round(modelWinProb - impliedProb, 6);
+    const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
+    return {
+      ...candidate,
+      lineValue,
+      marketConsensus,
+      totalScore,
+      modelWinProb,
+      impliedProb,
+      edgePct: modelEdge,
+      confidenceLabel: confidenceLabel(totalScore),
+      scoreBreakdown: {
+        lineValue,
+        marketConsensus,
+        model_win_prob: modelWinProb,
+        projection_source: nhlSignal.projection_source ?? null,
+      },
+      reasoning: buildReasoningString({
+        selectionLabel: candidate.selectionLabel,
+        price: candidate.price,
+        edgePct: modelEdge,
+        modelWinProb,
+        lineValue,
+        marketConsensus,
+        marketType: candidate.marketType,
+        projectionSource: nhlSignal.projection_source ?? null,
+      }),
+    };
+  }
+
   const edgePct = round(modelFairProbability - impliedProb, 6);
   const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
 
@@ -741,8 +836,10 @@ module.exports = {
   buildCandidates,
   confidenceMultiplier,
   confidenceThreshold,
+  isNhlSport,
   kellySize,
   removeVig,
+  resolveNHLModelSignal,
   scoreCandidate,
   selectBestPlay,
 };

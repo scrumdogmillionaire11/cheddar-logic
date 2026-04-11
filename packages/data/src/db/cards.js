@@ -1219,12 +1219,12 @@ function insertDecisionEvent(event) {
 function getLatestNhlModelOutput(gameId) {
   const db = getDatabase();
   const row = db.prepare(`
-    SELECT raw_data FROM card_payloads
+    SELECT payload_data FROM card_payloads
     WHERE game_id = ? AND sport = 'icehockey_nhl'
     ORDER BY created_at DESC LIMIT 1
   `).get(gameId);
   if (!row) return null;
-  const rd = JSON.parse(row.raw_data);
+  const rd = JSON.parse(row.payload_data);
   return {
     homeGoalie: {
       savePct: rd.goalie_home_save_pct ?? rd.goalie?.home?.save_pct ?? null,
